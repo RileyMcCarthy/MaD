@@ -59,6 +59,14 @@ jobs:
         working-directory: Software/MaDControl
         run: npm install --legacy-peer-deps
 
+      - name: Clean up existing symlinks
+        working-directory: Software/MaDControl
+        run: |
+          # Remove existing symlinks that might cause conflicts
+          if [ -L "src/node_modules" ]; then rm "src/node_modules"; fi
+          if [ -L ".erb/node_modules" ]; then rm ".erb/node_modules"; fi
+        shell: bash
+
       - name: Build
         working-directory: Software/MaDControl
         run: npm run build
@@ -124,6 +132,14 @@ jobs:
       - name: Install dependencies
         working-directory: Software/MaDControl
         run: npm install --legacy-peer-deps
+
+      - name: Clean up existing symlinks
+        working-directory: Software/MaDControl
+        run: |
+          # Remove existing symlinks that might cause conflicts
+          if [ -L "src/node_modules" ]; then rm "src/node_modules"; fi
+          if [ -L ".erb/node_modules" ]; then rm ".erb/node_modules"; fi
+        shell: bash
 
       - name: Set cross-compilation environment
         run: |
