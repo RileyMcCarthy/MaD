@@ -1,0 +1,4 @@
+(fp_lib_table
+  (lib (name digikey-footprints)(type KiCad)(uri C:/Users/riley/Documents/digikey-kicad-library-master/digikey-footprints.pretty)(options "")(descr ""))
+  (lib (name MaD_Power_Board)(type KiCad)(uri ${KIPRJMOD}/Librarys/MaD_Power_Board.pretty)(options "")(descr ""))
+)

@@ -1,0 +1,20 @@
+{
+  "name": "mad-control",
+  "version": "1.0.0",
+  "description": "Control for the MaD Tensile Testing Machine",
+  "license": "MIT",
+  "author": {
+    "name": "Riley McCarthy",
+    "email": "riley.mccarthy@yahoo.com",
+    "url": "https://github.com/RileyMcCarthy/MaDControl"
+  },
+  "main": "./dist/main/main.js",
+  "scripts": {
+    "rebuild": "node -r ts-node/register ../../.erb/scripts/electron-rebuild.js",
+    "postinstall": "npm run rebuild && npm run link-modules",
+    "link-modules": "node -r ts-node/register ../../.erb/scripts/link-modules.ts"
+  },
+  "dependencies": {
+    "serialport": "^13.0.0"
+  }
+}

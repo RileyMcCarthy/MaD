@@ -1,0 +1,4 @@
+(sym_lib_table
+  (lib (name "DS2_Addon")(type "Legacy")(uri "${KIPRJMOD}/Librarys/DS2_Addon.lib")(options "")(descr ""))
+  (lib (name "DS2_Addon-rescue")(type "Legacy")(uri "${KIPRJMOD}/DS2_Addon-rescue.lib")(options "")(descr ""))
+)

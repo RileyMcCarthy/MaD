@@ -1,0 +1,79 @@
+//
+// Created by Riley McCarthy on 25/04/24.
+//
+/**********************************************************************
+ * Includes
+ **********************************************************************/
+#include "dev_nvram_machineProfile.h"
+#include "mjson.h"
+#include <limits.h>
+/**********************************************************************
+ * Constants
+ **********************************************************************/
+
+/*********************************************************************
+ * Macros
+ **********************************************************************/
+
+/**********************************************************************
+ * Typedefs
+ **********************************************************************/
+
+/**********************************************************************
+ * Private Variable Definitions
+ **********************************************************************/
+
+/**********************************************************************
+ * Private Function Prototypes
+ **********************************************************************/
+
+/**********************************************************************
+ * Private Function Definitions
+ **********************************************************************/
+
+/**********************************************************************
+ * Public Function Definitions
+ **********************************************************************/
+
+#define STRINGIFY(x) #x
+#define LENGTH(x) (sizeof(STRINGIFY(x)) - 1)
+#define MAX_INT_DIGITS (LENGTH(INT_MAX) + 1)
+
+static MachinePerformance machinePerformance;
+static const struct json_attr_t json_attrs_machinePerformance[] = {
+    {"Min Position", t_integer, &machinePerformance.minPosition},
+    {"Max Position", t_integer, &machinePerformance.maxPosition},
+    {"Max Velocity", t_integer, &machinePerformance.maxVelocity},
+    {"Max Acceleration", t_integer, &machinePerformance.maxAcceleration},
+    {"Max Force Tensile", t_integer, &machinePerformance.maxForceTensile},
+    {"Max Force Compression", t_integer, &machinePerformance.maxForceCompression},
+    {"Force Gauge Neutral Offset", t_integer, &machinePerformance.forceGaugeNeutralOffset},
+    {NULL},
+};
+
+static const char json_format_machinePerformance[] =
+    "{"
+    "\t\"Min Position\":%d,"
+    "\t\"Max Position\":%d,"
+    "\t\"Max Velocity\":%d,"
+    "\t\"Max Acceleration\":%d,"
+    "\t\"Max Force Tensile\":%d,"
+    "\t\"Max Force Compression\":%d,"
+    "\t\"Force Gauge Neutral Offset\":%d"
+    "}";
+#define JSON_FORMAT_MACHINEPERFORMANCE_SIZE (sizeof(json_format_machinePerformance) + MAX_INT_DIGITS * 11)
+static char json_buf_machinePerformance[JSON_FORMAT_MACHINEPERFORMANCE_SIZE];
+
+char *dev_nvram_encodeMachinePerformance(const char *buf, MachineProfile *machineProfile)
+{
+    status = json_read_object(buf, json_attrs_machinePerformance, NULL);
+    if (status != 0)
+    {
+        return status;
+    }
+    return 0;
+}
+
+/**********************************************************************
+ * End of File
+ **********************************************************************/

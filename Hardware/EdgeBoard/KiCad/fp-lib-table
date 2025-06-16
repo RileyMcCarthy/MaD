@@ -1,0 +1,12 @@
+(fp_lib_table
+  (lib (name "PROPELLER_2")(type "KiCad")(uri "${KIPRJMOD}/Library/PROPELLER_2")(options "")(descr ""))
+  (lib (name "P2_EDGE_MODULE_SOCKET")(type "KiCad")(uri "${KIPRJMOD}/Library/P2_EDGE_MODULE_SOCKET")(options "")(descr ""))
+  (lib (name "ISO6731DWR")(type "KiCad")(uri "${KIPRJMOD}/Library/ISO6731DWR")(options "")(descr ""))
+  (lib (name "ISO6741DWR")(type "KiCad")(uri "${KIPRJMOD}/Library/ISO6741DWR")(options "")(descr ""))
+  (lib (name "ISO6742DWR")(type "KiCad")(uri "${KIPRJMOD}/Library/ISO6742DWR")(options "")(descr ""))
+  (lib (name "NSI50010YT1G")(type "KiCad")(uri "${KIPRJMOD}/Library/NSI50010YT1G")(options "")(descr ""))
+  (lib (name "UCC12040DVER")(type "KiCad")(uri "${KIPRJMOD}/Library/UCC12040DVER")(options "")(descr ""))
+  (lib (name "ISO6721")(type "KiCad")(uri "${KIPRJMOD}/Library/ISO6721")(options "")(descr ""))
+  (lib (name "70553-0106")(type "KiCad")(uri "${KIPRJMOD}/Library/70553-0106")(options "")(descr ""))
+  (lib (name "ISO6740FDWR")(type "KiCad")(uri "${KIPRJMOD}/Library/ISO6740FDWR")(options "")(descr ""))
+)

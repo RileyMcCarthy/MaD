@@ -1,0 +1,32 @@
+# Build outputs
+release/app/dist/
+release/build/
+.erb/dll/
+
+# Dependencies
+node_modules/
+
+# Generated files
+*.css.d.ts
+*.sass.d.ts
+*.scss.d.ts
+
+# Coverage
+coverage/
+
+# Logs
+logs/
+*.log
+
+# ESLint cache
+.eslintcache
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+
+# eslint ignores hidden directories by default:
+# https://github.com/eslint/eslint/issues/8429
+!.erb

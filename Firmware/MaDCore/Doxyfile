@@ -1,0 +1,57 @@
+# Project settings
+PROJECT_NAME           = "MaD-Firmware"
+OUTPUT_DIRECTORY       = docs
+CREATE_SUBDIRS        = NO
+ALLOW_UNICODE_NAMES   = NO
+OUTPUT_LANGUAGE       = English
+
+# Build settings
+EXTRACT_ALL           = YES
+EXTRACT_PRIVATE       = YES
+EXTRACT_STATIC        = YES
+EXTRACT_LOCAL_CLASSES = YES
+
+# Input settings
+INPUT                 = src/
+FILE_PATTERNS         = *.c *.h
+RECURSIVE             = YES
+EXCLUDE_PATTERNS      = */old/* */test/*
+
+# Dependency graph settings
+HAVE_DOT             = YES
+CLASS_GRAPH          = YES
+COLLABORATION_GRAPH   = YES
+GROUP_GRAPHS         = YES
+INCLUDE_GRAPH        = YES
+INCLUDED_BY_GRAPH    = YES
+CALL_GRAPH           = YES
+CALLER_GRAPH         = YES
+GRAPHICAL_HIERARCHY  = YES
+DIRECTORY_GRAPH      = YES
+DOT_IMAGE_FORMAT     = svg
+INTERACTIVE_SVG      = YES
+DOT_GRAPH_MAX_NODES  = 100
+MAX_DOT_GRAPH_DEPTH  = 0
+DOT_TRANSPARENT      = YES
+DOT_MULTI_TARGETS    = YES
+
+# Exclude standard headers and system files
+EXCLUDE_SYMBOLS       = std::* boost::*
+EXCLUDE              = /usr/include /usr/local/include
+EXCLUDE_PATTERNS    += */stdio.h */stdlib.h */string.h */math.h */time.h */stdint.h */stdbool.h */propeller2.h
+
+# Skip unnecessary dependencies
+BUILTIN_STL_SUPPORT  = NO
+HIDE_UNDOC_RELATIONS = YES
+OPTIMIZE_OUTPUT_FOR_C = YES
+SHOW_USED_FILES      = NO
+SHOW_FILES           = YES
+SHOW_NAMESPACES      = NO
+
+# Output settings
+GENERATE_HTML        = YES
+GENERATE_LATEX       = NO
+HTML_OUTPUT          = html
+HTML_FILE_EXTENSION  = .html
+HTML_COLORSTYLE      = LIGHT
+GENERATE_TREEVIEW    = YES 

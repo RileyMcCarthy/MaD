@@ -1,0 +1,8 @@
+{
+  "name": "HW",
+  "version": "1.0.0",
+  "keywords": "Hardware Layer",
+  "description": "Hardware specific drivers",
+  "platforms": ["platform-propeller"],
+  "dependencies": []
+}
