@@ -28,6 +28,7 @@ jobs:
     - name: Install PlatformIO Core
       run: pip install --upgrade platformio
     - name: Install propeller platformio platform
+      working-directory: Firmware/MaDCore
       run: pio pkg install --platform https://github.com/RileyMcCarthy/platform-propeller.git
     - name: Extract version from tag
       id: get_version
