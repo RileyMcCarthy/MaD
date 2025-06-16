@@ -2,9 +2,8 @@ name: Build MaD Hardware
 
 on:
   push:
-    branches: [ "main" ]
-    paths:
-      - 'Hardware/**'
+    branches: 
+      - "main"
     tags:
       - 'hardware-v*'
   pull_request:

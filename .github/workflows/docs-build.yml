@@ -1,10 +1,9 @@
-name: Build and Deploy Documentation
+name: Build MaD Documentation
 
 on:
   push:
-    branches: [ "main" ]
-    paths:
-      - 'Docs/**'
+    branches: 
+      - "main"
     tags:
       - 'docs-v*'
   pull_request:

@@ -1,16 +1,13 @@
-name: Build and Release Software
+name: Build MaD Software
 
 on:
   push:
-    branches:
-      - main
-    paths:
-      - 'Software/**'
+    branches: 
+      - "main"
     tags:
       - 'software-v*'
   pull_request:
-    branches:
-      - main
+    branches: [ "main" ]
     paths:
       - 'Software/**'
 

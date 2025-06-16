@@ -2,9 +2,8 @@ name: Build MaD Firmware
 
 on:
   push:
-    branches: [ "main" ]
-    paths:
-      - 'Firmware/**'
+    branches: 
+      - "main"
     tags:
       - 'firmware-v*'
   pull_request:
