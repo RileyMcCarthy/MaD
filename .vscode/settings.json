@@ -1,8 +1,0 @@
-{
-    "files.associations": {
-        "statemachine.h": "c",
-        "statemachinedefinition.h": "c",
-        "json.h": "c",
-        "tiny-json.h": "c"
-    }
-}

@@ -1,0 +1,149 @@
+name: Build MaD Hardware
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - 'Hardware/**'
+    tags:
+      - 'hardware-v*'
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - 'Hardware/**'
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build-hardware:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        project: [PowerBoard, EdgeBoard, DS2Addon]
+
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install KiCad
+      run: |
+        sudo add-apt-repository --yes ppa:kicad/kicad-7.0-releases
+        sudo apt update
+        sudo apt install --install-recommends kicad -y
+    
+    - name: Check if project exists
+      id: check_project
+      run: |
+        if [ -d "Hardware/${{ matrix.project }}" ]; then
+          echo "exists=true" >> $GITHUB_OUTPUT
+          # Find KiCad project files
+          if find "Hardware/${{ matrix.project }}" -name "*.kicad_pro" | head -1 | read; then
+            echo "has_kicad=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_kicad=false" >> $GITHUB_OUTPUT
+          fi
+        else
+          echo "exists=false" >> $GITHUB_OUTPUT
+        fi
+    
+    - name: Generate manufacturing files
+      if: steps.check_project.outputs.exists == 'true' && steps.check_project.outputs.has_kicad == 'true'
+      run: |
+        mkdir -p release-assets/${{ matrix.project }}
+        cd Hardware/${{ matrix.project }}
+        
+        # Find the KiCad project file
+        PROJECT_FILE=$(find . -name "*.kicad_pro" | head -1)
+        PROJECT_NAME=$(basename "$PROJECT_FILE" .kicad_pro)
+        
+        # Check if we have KiCad or KICAD directory
+        KICAD_DIR=""
+        if [ -d "KICAD" ]; then
+          KICAD_DIR="KICAD"
+        elif [ -d "KiCad" ]; then
+          KICAD_DIR="KiCad"
+        fi
+        
+        if [ -n "$KICAD_DIR" ]; then
+          cd "$KICAD_DIR"
+          PROJECT_FILE=$(find . -name "*.kicad_pro" | head -1)
+          if [ -n "$PROJECT_FILE" ]; then
+            PROJECT_NAME=$(basename "$PROJECT_FILE" .kicad_pro)
+          fi
+        fi
+        
+        # Generate Gerbers
+        if [ -f "${PROJECT_NAME}.kicad_pcb" ]; then
+          kicad-cli pcb export gerber "${PROJECT_NAME}.kicad_pcb" -o gerbers/
+          
+          # Generate drill files
+          kicad-cli pcb export drill "${PROJECT_NAME}.kicad_pcb" -o gerbers/
+          
+          # Create zip of gerbers
+          cd gerbers
+          zip -r "../${PROJECT_NAME}_gerbers.zip" .
+          cd ..
+          
+          # Move to release assets
+          cp "${PROJECT_NAME}_gerbers.zip" "../../release-assets/${{ matrix.project }}/"
+        fi
+        
+        # Generate PDFs
+        if [ -f "${PROJECT_NAME}.kicad_sch" ]; then
+          kicad-cli sch export pdf "${PROJECT_NAME}.kicad_sch" -o "${PROJECT_NAME}_schematic.pdf"
+          cp "${PROJECT_NAME}_schematic.pdf" "../../release-assets/${{ matrix.project }}/"
+        fi
+        
+        # Generate BOM if possible
+        if [ -f "${PROJECT_NAME}.kicad_sch" ]; then
+          kicad-cli sch export bom "${PROJECT_NAME}.kicad_sch" -o "${PROJECT_NAME}_bom.csv" || true
+          if [ -f "${PROJECT_NAME}_bom.csv" ]; then
+            cp "${PROJECT_NAME}_bom.csv" "../../release-assets/${{ matrix.project }}/"
+          fi
+        fi
+    
+    - name: Upload artifacts
+      if: steps.check_project.outputs.exists == 'true' && steps.check_project.outputs.has_kicad == 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.project }}-hardware-${{ github.run_number }}
+        path: release-assets/${{ matrix.project }}/
+
+  create-release:
+    needs: [build-hardware]
+    if: startsWith(github.ref, 'refs/tags/hardware-v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          
+      - name: Display structure of downloaded files
+        run: ls -R artifacts
+          
+      - name: Get tag version
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/hardware-}" >> $GITHUB_OUTPUT
+      
+      - name: Organize release files
+        run: |
+          mkdir -p release
+          # Copy all hardware artifacts to release folder
+          find artifacts -name "*-hardware-*" -type d | while read dir; do
+            project_name=$(basename "$dir" | sed 's/-hardware-[0-9]*$//')
+            mkdir -p "release/$project_name"
+            cp -r "$dir"/* "release/$project_name/" 2>/dev/null || true
+          done
+          
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: MaD Hardware ${{ steps.get_version.outputs.VERSION }}
+          tag_name: hardware-${{ steps.get_version.outputs.VERSION }}
+          files: release/**/*
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
