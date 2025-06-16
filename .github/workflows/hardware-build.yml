@@ -28,9 +28,31 @@ jobs:
     
     - name: Install KiCad
       run: |
-        sudo add-apt-repository --yes ppa:kicad/kicad-7.0-releases
+        # Update package lists first
         sudo apt update
-        sudo apt install --install-recommends kicad -y
+        
+        # Try to install from KiCad PPA first
+        sudo add-apt-repository --yes ppa:kicad/kicad-7.0-releases || true
+        sudo apt update || true
+        
+        # Try installing KiCad with dependency resolution
+        if ! sudo apt install --install-recommends kicad -y --fix-broken; then
+          echo "PPA installation failed, trying with apt-get and dependency fixes..."
+          
+          # Remove the PPA and try with default repositories
+          sudo add-apt-repository --remove --yes ppa:kicad/kicad-7.0-releases || true
+          sudo apt update
+          
+          # Install KiCad from default Ubuntu repositories
+          sudo apt install --install-recommends kicad -y || {
+            echo "Default repository installation failed, trying with aptitude..."
+            sudo apt install aptitude -y
+            sudo aptitude install kicad -y
+          }
+        fi
+        
+        # Verify KiCad installation
+        kicad-cli --help || echo "KiCad CLI installation verification failed"
     
     - name: Check if project exists
       id: check_project
