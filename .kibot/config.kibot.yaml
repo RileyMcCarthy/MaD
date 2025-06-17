@@ -1,0 +1,198 @@
+kibot:
+  version: 1
+
+preflight:
+  run_erc: true
+  run_drc: true
+  check_zone_fills: true
+  ignore_unconnected: false
+
+outputs:
+  # Gerber files for manufacturing
+  - name: 'gerbers'
+    comment: "Gerber files for PCB manufacturing"
+    type: gerber
+    dir: Manufacturing/gerbers
+    options:
+      exclude_edge_layer: true
+      exclude_pads_from_silkscreen: false
+      use_aux_axis_as_origin: false
+      plot_sheet_reference: false
+      plot_footprint_refs: true
+      plot_footprint_values: true
+      force_plot_invisible_refs_vals: false
+      tent_vias: true
+      line_width: 0.1
+      subtract_mask_from_silk: false
+      use_protel_extensions: false
+      gerber_precision: 4.6
+      create_gerber_job_file: true
+      output: "%f.%x"
+      use_gerber_x2_attributes: true
+      use_gerber_net_attributes: true
+
+  # Drill files
+  - name: 'drill'
+    comment: "Excellon drill files"
+    type: excellon
+    dir: Manufacturing/gerbers
+    options:
+      pth_and_npth_single_file: false
+      pth_id: ''
+      npth_id: '-NPTH'
+      metric_units: true
+      output: "%f%i.drl"
+
+  # Pick and place files
+  - name: 'position'
+    comment: "Pick and place files for assembly"
+    type: position
+    dir: Manufacturing
+    options:
+      format: ASCII
+      units: millimeters
+      separate_files_for_front_and_back: true
+      only_smd: true
+      output: "%f_cpl.%x"
+
+  # Bill of Materials
+  - name: 'bom'
+    comment: "Bill of Materials in CSV format"
+    type: bom
+    dir: Manufacturing
+    options:
+      output: '%f_bom.%x'
+      ref_separator: ','
+      columns:
+        - Row
+        - field: References
+          name: Designator
+        - field: Value
+          name: Comment
+        - field: Footprint
+          name: Footprint
+        - field: Quantity Per PCB
+          name: Quantity
+        - Fitted
+        - field: Manufacturer
+          name: Manufacturer
+        - field: Manufacturer Part Number
+          name: 'Manufacturer Part Number'
+        - field: Supplier
+          name: Supplier
+        - field: Supplier Part Number
+          name: 'Supplier Part Number'
+      csv:
+        hide_pcb_info: true
+        hide_stats_info: true
+        quote_all: true
+
+  # Interactive HTML BOM
+  - name: 'ibom'
+    comment: "Interactive HTML BOM"
+    type: ibom
+    dir: Documentation
+    options:
+      blacklist: 'DNF*'
+      include_tracks: false
+      include_nets: false
+      sort_order: 'C,R,L,D,U,Y,X,F,SW,A'
+      output: '%f_ibom.%x'
+
+  # Schematic PDF
+  - name: 'schematic_pdf'
+    comment: "Schematic in PDF format"
+    type: pdf_sch_print
+    dir: Documentation
+    options:
+      output: '%f_schematic.%x'
+
+  # PCB PDF prints
+  - name: 'pcb_top_pdf'
+    comment: "PCB top view PDF"
+    type: pdf_pcb_print
+    dir: Documentation
+    options:
+      output: '%f_pcb_top.%x'
+      plot_sheet_reference: false
+      layers:
+        - layer: F.Cu
+        - layer: F.Mask
+        - layer: F.Silkscreen
+        - layer: Edge.Cuts
+
+  - name: 'pcb_bottom_pdf'
+    comment: "PCB bottom view PDF"
+    type: pdf_pcb_print
+    dir: Documentation
+    options:
+      output: '%f_pcb_bottom.%x'
+      plot_sheet_reference: false
+      layers:
+        - layer: B.Cu
+        - layer: B.Mask
+        - layer: B.Silkscreen
+        - layer: Edge.Cuts
+
+  # PCB renders (3D-like view)
+  - name: 'pcb_top_render'
+    comment: "PCB top 3D render"
+    type: pcbdraw
+    dir: Documentation/renders
+    options:
+      format: svg
+      style: set-white-enig
+      output: '%f_top.%x'
+
+  - name: 'pcb_bottom_render'
+    comment: "PCB bottom 3D render"  
+    type: pcbdraw
+    dir: Documentation/renders
+    options:
+      format: svg
+      style: set-white-enig
+      bottom: true
+      output: '%f_bottom.%x'
+
+  # 3D model export
+  - name: 'step'
+    comment: "3D model in STEP format"
+    type: step
+    dir: Manufacturing
+    options:
+      output: '%f.%x'
+      origin: grid
+
+  # Compressed gerber package for manufacturers
+  - name: 'gerber_zip'
+    comment: "Compressed gerber package"
+    type: compress
+    dir: Manufacturing
+    options:
+      files:
+        - from_output: gerbers
+          dest: /
+        - from_output: drill
+          dest: /
+        - from_output: position
+          dest: /
+      output: '%f_gerbers.%x'
+
+  # Documentation package
+  - name: 'docs_zip'
+    comment: "Documentation package"
+    type: compress
+    dir: .
+    options:
+      files:
+        - from_output: schematic_pdf
+          dest: /
+        - from_output: pcb_top_pdf
+          dest: /
+        - from_output: pcb_bottom_pdf
+          dest: /
+        - from_output: ibom
+          dest: /
+        - from_output: bom
+          dest: /
+      output: '%f_documentation.%x' 
