@@ -96,10 +96,15 @@ jobs:
         
         # Generate Gerbers
         if [ -f "${PROJECT_NAME}.kicad_pcb" ]; then
-          kicad-cli pcb export gerber "${PROJECT_NAME}.kicad_pcb" -o gerbers/
+          mkdir -p gerbers
+          # Export all standard PCB layers
+          kicad-cli pcb export gerber "${PROJECT_NAME}.kicad_pcb" -o gerbers/ \
+            --layers "F.Cu,B.Cu,F.Paste,B.Paste,F.Silkscreen,B.Silkscreen,F.Mask,B.Mask,Edge.Cuts" \
+            --use-drill-file-origin
           
           # Generate drill files
-          kicad-cli pcb export drill "${PROJECT_NAME}.kicad_pcb" -o gerbers/
+          kicad-cli pcb export drill "${PROJECT_NAME}.kicad_pcb" -o gerbers/ \
+            --format excellon --drill-origin plot --excellon-separate-th
           
           # Create zip of gerbers
           cd gerbers
