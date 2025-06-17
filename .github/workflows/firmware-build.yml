@@ -44,7 +44,7 @@ jobs:
         fi
     - name: Build Platformio project
       working-directory: Firmware/MaDCore
-      run: pio run -e propeller2 --build-flags="-DFIRMWARE_VERSION=\"${{ steps.get_version.outputs.VERSION }}\""
+      run: pio run -e propeller2 --build-flag="-DFIRMWARE_VERSION=\"${{ steps.get_version.outputs.VERSION }}\""
     - name: Copy and rename build artifact
       run: |
         mkdir -p release-assets
