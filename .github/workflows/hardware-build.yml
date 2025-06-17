@@ -20,7 +20,13 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        project: [PowerBoard, EdgeBoard, DS2Addon]
+        include:
+          - project: EdgeBoard
+            pcb_path: Hardware/EdgeBoard/KiCad/MaD_Edge.kicad_pcb
+            sch_path: Hardware/EdgeBoard/KiCad/MaD_Edge.kicad_sch
+          - project: DS2Addon
+            pcb_path: Hardware/DS2Addon/KICAD/DS2_Addon.kicad_pcb
+            sch_path: Hardware/DS2Addon/KICAD/DS2_Addon.kicad_sch
 
     steps:
     - uses: actions/checkout@v4
@@ -29,8 +35,8 @@ jobs:
       uses: INTI-CMNB/KiBot@v2_k7
       with:
         config: .kibot/config.kibot.yaml
-        board: Hardware/${{ matrix.project }}/**/*.kicad_pcb
-        schema: Hardware/${{ matrix.project }}/**/*.kicad_sch
+        board: ${{ matrix.pcb_path }}
+        schema: ${{ matrix.sch_path }}
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
