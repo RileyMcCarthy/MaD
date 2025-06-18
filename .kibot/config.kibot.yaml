@@ -53,7 +53,7 @@ outputs:
       units: millimeters
       separate_files_for_front_and_back: true
       only_smd: true
-      output: "%f_cpl.%x"
+      output: "%f_cpl%i.%x"
 
   # Bill of Materials
   - name: 'bom'
