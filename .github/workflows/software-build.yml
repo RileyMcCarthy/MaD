@@ -3,6 +3,8 @@ name: Build Software
 on:
   push:
     branches: [main]
+    paths:
+      - 'Software/**'
     tags:
       - 'software-v*'
   pull_request:
@@ -23,6 +25,14 @@ jobs:
         with:
           node-version: 20
           cache: npm
+        
+      - name: Install dependencies
+        run: |
+          brew install rpm
+
+      - name: Force detach disk before build
+        run: |
+          hdiutil detach /dev/disk2 || true
 
       - name: Install dependencies
         working-directory: Software/MaDControl
