@@ -26,7 +26,10 @@ jobs:
 
       - name: Install dependencies
         working-directory: Software/MaDControl
-        run: npm ci --legacy-peer-deps
+        run: |
+          npm install
+          npm run postinstall
+          npm run build
 
       - name: Build and publish
         working-directory: Software/MaDControl
