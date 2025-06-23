@@ -30,8 +30,8 @@ jobs:
     
       - name: Ensure Python distutils is available
         run: |
-          python3 -m pip install --upgrade pip setuptools
-          python3 -m pip install setuptools
+          python3 -m pip install --upgrade pip setuptools --break-system-packages
+          python3 -m pip install setuptools --break-system-packages
 
       - name: Build application
         working-directory: Software/MaDControl
