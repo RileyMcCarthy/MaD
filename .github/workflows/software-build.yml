@@ -26,13 +26,13 @@ jobs:
 
       - name: Install dependencies
         working-directory: Software/MaDControl
-        run: |
-          npm install
-          npm run postinstall
-          npm run build
+        run: npm ci --legacy-peer-deps --ignore-scripts
 
-      - name: Build and publish
+      - name: Build application
         working-directory: Software/MaDControl
-        run: npm exec electron-builder -- --publish always --win --mac --linux
+        run: |
+          npm run build:dll
+          npm run build
+          npm exec electron-builder -- --publish always --win --mac --linux --skip-app-deps
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
