@@ -206,7 +206,19 @@
       "type": "development",
       "hardenedRuntime": false,
       "gatekeeperAssess": false,
-      "icon": "assets/icon.icns"
+      "icon": "assets/icon.icns",
+      "identity": null,
+      "signIgnore": [
+        "dist/main/main.js",
+        "dist/preload/preload.js"
+      ],
+      "entitlements": null,
+      "entitlementsInherit": null,
+      "extendInfo": {
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": true
+        }
+      }
     },
     "win": {
       "target": [
