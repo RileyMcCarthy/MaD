@@ -4,6 +4,8 @@ on:
   push:
     branches: 
       - "main"
+    paths:
+      - 'Firmware/**'
     tags:
       - 'firmware-v*'
   pull_request:
