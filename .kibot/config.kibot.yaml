@@ -82,6 +82,8 @@ outputs:
           name: Supplier
         - field: Supplier Part Number
           name: 'Supplier Part Number'
+        - field: LCSC
+          name: Supplier Part Number
       csv:
         hide_pcb_info: true
         hide_stats_info: true
