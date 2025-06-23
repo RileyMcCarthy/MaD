@@ -73,17 +73,10 @@ outputs:
           name: Footprint
         - field: Quantity Per PCB
           name: Quantity
-        - Fitted
-        - field: Manufacturer
-          name: Manufacturer
-        - field: Manufacturer Part Number
-          name: 'Manufacturer Part Number'
-        - field: Supplier
-          name: Supplier
-        - field: Supplier Part Number
-          name: 'Supplier Part Number'
+        - field: Datasheet
+          name: Datasheet
         - field: LCSC
-          name: Supplier Part Number
+          name: LCSC Part Number
       csv:
         hide_pcb_info: true
         hide_stats_info: true
@@ -112,10 +105,11 @@ outputs:
   # PCB PDF prints
   - name: 'pcb_top_pdf'
     comment: "PCB top view PDF"
-    type: pdf_pcb_print
+    type: pcb_print
     dir: Documentation
     options:
       output: '%f_pcb_top.%x'
+      format: PDF
       plot_sheet_reference: false
       layers:
         - layer: F.Cu
@@ -125,10 +119,11 @@ outputs:
 
   - name: 'pcb_bottom_pdf'
     comment: "PCB bottom view PDF"
-    type: pdf_pcb_print
+    type: pcb_print
     dir: Documentation
     options:
       output: '%f_pcb_bottom.%x'
+      format: PDF
       plot_sheet_reference: false
       layers:
         - layer: B.Cu
@@ -228,7 +223,7 @@ outputs:
       output: '%f_3d_back.%x'
       ray_tracing: true
       orthographic: false
-      view: back
+      view: rear
       zoom: 0
       rotate_x: 0
       rotate_y: 0
