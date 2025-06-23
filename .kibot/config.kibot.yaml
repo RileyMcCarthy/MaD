@@ -163,6 +163,133 @@ outputs:
       output: '%f.%x'
       origin: grid
 
+  # 3D Renderings - Multiple views
+  - name: '3d_top'
+    comment: "3D render - top view"
+    type: render_3d
+    dir: Documentation/3d_renders
+    options:
+      output: '%f_3d_top.%x'
+      ray_tracing: true
+      orthographic: false
+      view: top
+      zoom: 0
+      rotate_x: 0
+      rotate_y: 0
+      rotate_z: 0
+      width: 1920
+      height: 1080
+      background1: '#66667F'
+      background2: '#CCCCE5'
+
+  - name: '3d_bottom'
+    comment: "3D render - bottom view"
+    type: render_3d
+    dir: Documentation/3d_renders
+    options:
+      output: '%f_3d_bottom.%x'
+      ray_tracing: true
+      orthographic: false
+      view: bottom
+      zoom: 0
+      rotate_x: 0
+      rotate_y: 0
+      rotate_z: 0
+      width: 1920
+      height: 1080
+      background1: '#66667F'
+      background2: '#CCCCE5'
+
+  - name: '3d_front'
+    comment: "3D render - front view"
+    type: render_3d
+    dir: Documentation/3d_renders
+    options:
+      output: '%f_3d_front.%x'
+      ray_tracing: true
+      orthographic: false
+      view: front
+      zoom: 0
+      rotate_x: 0
+      rotate_y: 0
+      rotate_z: 0
+      width: 1920
+      height: 1080
+      background1: '#66667F'
+      background2: '#CCCCE5'
+
+  - name: '3d_back'
+    comment: "3D render - back view"
+    type: render_3d
+    dir: Documentation/3d_renders
+    options:
+      output: '%f_3d_back.%x'
+      ray_tracing: true
+      orthographic: false
+      view: back
+      zoom: 0
+      rotate_x: 0
+      rotate_y: 0
+      rotate_z: 0
+      width: 1920
+      height: 1080
+      background1: '#66667F'
+      background2: '#CCCCE5'
+
+  - name: '3d_left'
+    comment: "3D render - left side view"
+    type: render_3d
+    dir: Documentation/3d_renders
+    options:
+      output: '%f_3d_left.%x'
+      ray_tracing: true
+      orthographic: false
+      view: left
+      zoom: 0
+      rotate_x: 0
+      rotate_y: 0
+      rotate_z: 0
+      width: 1920
+      height: 1080
+      background1: '#66667F'
+      background2: '#CCCCE5'
+
+  - name: '3d_right'
+    comment: "3D render - right side view"
+    type: render_3d
+    dir: Documentation/3d_renders
+    options:
+      output: '%f_3d_right.%x'
+      ray_tracing: true
+      orthographic: false
+      view: right
+      zoom: 0
+      rotate_x: 0
+      rotate_y: 0
+      rotate_z: 0
+      width: 1920
+      height: 1080
+      background1: '#66667F'
+      background2: '#CCCCE5'
+
+  - name: '3d_isometric'
+    comment: "3D render - isometric view"
+    type: render_3d
+    dir: Documentation/3d_renders
+    options:
+      output: '%f_3d_isometric.%x'
+      ray_tracing: true
+      orthographic: false
+      view: z
+      zoom: 0
+      rotate_x: 30
+      rotate_y: 0
+      rotate_z: 45
+      width: 1920
+      height: 1080
+      background1: '#66667F'
+      background2: '#CCCCE5'
+
   # Compressed gerber package for manufacturers
   - name: 'gerber_zip'
     comment: "Compressed gerber package"
@@ -195,4 +322,18 @@ outputs:
           dest: /
         - from_output: bom
           dest: /
+        - from_output: 3d_top
+          dest: /3d_renders/
+        - from_output: 3d_bottom
+          dest: /3d_renders/
+        - from_output: 3d_front
+          dest: /3d_renders/
+        - from_output: 3d_back
+          dest: /3d_renders/
+        - from_output: 3d_left
+          dest: /3d_renders/
+        - from_output: 3d_right
+          dest: /3d_renders/
+        - from_output: 3d_isometric
+          dest: /3d_renders/
       output: '%f_documentation.%x' 
