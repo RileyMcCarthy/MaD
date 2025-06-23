@@ -27,12 +27,17 @@ jobs:
       - name: Install dependencies
         working-directory: Software/MaDControl
         run: npm install
+    
+      - name: Ensure Python distutils is available
+        run: |
+          python3 -m pip install --upgrade pip setuptools
+          python3 -m pip install setuptools
 
       - name: Build application
         working-directory: Software/MaDControl
         run: |
           npm run build:dll
           npm run build
-          npm exec electron-builder -- --publish always --mac --arm64
+          npm exec electron-builder -- --publish always --win --mac --linux
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
