@@ -32,7 +32,8 @@ jobs:
       - name: Install and build
         working-directory: Software/MaDControl
         run: |
-          npm ci --legacy-peer-deps
+          npm ci --legacy-peer-deps --ignore-scripts
+          npm run build:dll
           npm run build
           npm run package
 
@@ -76,7 +77,8 @@ jobs:
       - name: Install and build for ARM64
         working-directory: Software/MaDControl
         run: |
-          npm ci --legacy-peer-deps
+          npm ci --legacy-peer-deps --ignore-scripts
+          npm run build:dll
           npm run build
           npm run package
         env:
