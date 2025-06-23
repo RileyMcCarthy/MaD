@@ -21,18 +21,15 @@ jobs:
       - name: Install Node.js and npm
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 20
           cache: npm
 
       - name: Install dependencies
         working-directory: Software/MaDControl
-        run: npm ci --legacy-peer-deps --ignore-scripts
+        run: npm ci --legacy-peer-dep
 
       - name: Build application
         working-directory: Software/MaDControl
-        run: |
-          npm run build:dll
-          npm run build
-          npm exec electron-builder -- --publish always --win --mac --linux
+        run: npm exec electron-builder -- --publish always --win --mac --linux
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
