@@ -12,11 +12,7 @@ on:
 
 jobs:
   build:
-    runs-on: ${{ matrix.os }}
-
-    strategy:
-      matrix:
-        os: [macos-latest, ubuntu-latest, windows-latest]
+    runs-on: macos-latest
 
     steps:
       - name: Checkout Git repository
@@ -25,75 +21,15 @@ jobs:
       - name: Install Node.js and npm
         uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: 22
           cache: npm
-          cache-dependency-path: Software/MaDControl/package-lock.json
 
-      - name: Install and build
+      - name: Install dependencies
         working-directory: Software/MaDControl
-        run: |
-          npm ci --legacy-peer-deps --ignore-scripts
-          npm run build:dll
-          npm run build
-          npx ts-node ./.erb/scripts/clean.js dist
-          npx electron-builder build --publish never --skip-app-deps
+        run: npm ci --legacy-peer-deps
 
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ runner.os }}-build-${{ github.run_number }}
-          path: |
-            Software/MaDControl/release/build/*.dmg
-            Software/MaDControl/release/build/*.AppImage
-            Software/MaDControl/release/build/*.exe
-            Software/MaDControl/release/build/*.deb
-            Software/MaDControl/release/build/*.rpm
-            Software/MaDControl/release/build/*.snap
-
-  build-raspberry-pi:
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/software-v')
-
-    steps:
-      - name: Checkout Git repository
-        uses: actions/checkout@v4
-
-      - name: Install Node.js and npm
-        uses: actions/setup-node@v4
-        with:
-          node-version: 18
-          cache: npm
-          cache-dependency-path: Software/MaDControl/package-lock.json
-
-      - name: Set up Python for native modules
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.10'
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential libnss3-dev libatk-bridge2.0-dev libdrm2 libxkbcommon-dev libxss1 libasound2-dev
-
-      - name: Install and build for ARM64
+      - name: Build and publish
         working-directory: Software/MaDControl
-        run: |
-          npm ci --legacy-peer-deps --ignore-scripts
-          npm run build:dll
-          npm run build
-          npx ts-node ./.erb/scripts/clean.js dist
-          npx electron-builder build --publish never --skip-app-deps
+        run: npm exec electron-builder -- --publish always --win --mac --linux
         env:
-          npm_config_target_arch: arm64
-          npm_config_arch: arm64
-          CC: aarch64-linux-gnu-gcc
-          CXX: aarch64-linux-gnu-g++
-
-      - name: Upload Raspberry Pi artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: raspberry-pi-build-${{ github.run_number }}
-          path: |
-            Software/MaDControl/release/build/*.AppImage
-            Software/MaDControl/release/build/*.deb
-            Software/MaDControl/release/build/*.rpm 
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
