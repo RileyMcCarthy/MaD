@@ -33,6 +33,6 @@ jobs:
         run: |
           npm run build:dll
           npm run build
-          npm exec electron-builder -- --publish always --win --mac --linux
+          npm exec electron-builder -- --publish always --mac --arm64
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
