@@ -30,6 +30,9 @@ jobs:
 
       - name: Build application
         working-directory: Software/MaDControl
-        run: npm exec electron-builder -- --publish always --win --mac --linux
+        run: |
+          npm run build:dll
+          npm run build
+          npm exec electron-builder -- --publish always --win --mac --linux
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
