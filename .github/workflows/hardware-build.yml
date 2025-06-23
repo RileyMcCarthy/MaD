@@ -43,8 +43,10 @@ jobs:
       with:
         name: ${{ matrix.project }}-hardware-${{ github.run_number }}
         path: |
-          Hardware/${{ matrix.project }}/Manufacturing/
-          Hardware/${{ matrix.project }}/Documentation/
+          Manufacturing/
+          Documentation/
+          *_documentation.zip
+          *_gerbers.zip
 
   create-release:
     needs: [build-hardware]
