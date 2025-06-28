@@ -21,7 +21,7 @@ coverage/
 .eslintcache
 
 # Dependency directories
-node_modules/
+**/node_modules
 jspm_packages/
 
 # TypeScript cache

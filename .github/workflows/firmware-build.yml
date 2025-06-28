@@ -44,18 +44,24 @@ jobs:
           echo "VERSION=dev" >> $GITHUB_OUTPUT
           echo "Using default version: dev"
         fi
-    - name: Build Platformio project
+    - name: Build Firmware - Debug Version
       working-directory: Firmware/MaDCore
-      run: pio run -e propeller2 --program-arg="-DFIRMWARE_VERSION=\"${{ steps.get_version.outputs.VERSION }}\""
-    - name: Copy and rename build artifact
+      run: pio run -e propeller2_debug --program-arg="-DFIRMWARE_VERSION=\"${{ steps.get_version.outputs.VERSION }}\""
+    - name: Build Firmware - Release Version
+      working-directory: Firmware/MaDCore
+      run: pio run -e propeller2_release --program-arg="-DFIRMWARE_VERSION=\"${{ steps.get_version.outputs.VERSION }}\""
+    - name: Copy and rename build artifacts
       run: |
         mkdir -p release-assets
-        cp Firmware/MaDCore/.pio/build/propeller2/program release-assets/program
-    - name: Upload build artifact
+        # Copy debug version with .bin extension
+        cp Firmware/MaDCore/.pio/build/propeller2_debug/program release-assets/MaD-Firmware-${{ steps.get_version.outputs.VERSION }}-debug.bin
+        # Copy release version with .bin extension
+        cp Firmware/MaDCore/.pio/build/propeller2_release/program release-assets/MaD-Firmware-${{ steps.get_version.outputs.VERSION }}-release.bin
+    - name: Upload build artifacts
       uses: actions/upload-artifact@v4
       with:
         name: MaD-Firmware-${{ github.run_number }}
-        path: release-assets/program
+        path: release-assets/
 
   create-release:
     needs: [build]
@@ -74,17 +80,17 @@ jobs:
         id: get_version
         run: echo "VERSION=${GITHUB_REF#refs/tags/firmware-}" >> $GITHUB_OUTPUT
       
-      - name: Copy program to release folder
+      - name: Copy firmware files to release folder
         run: |
           mkdir -p release
-          cp artifacts/MaD-Firmware-*/program release/
+          cp artifacts/MaD-Firmware-*/*.bin release/
           
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
           name: MaD Firmware ${{ steps.get_version.outputs.VERSION }}
           tag_name: firmware-${{ steps.get_version.outputs.VERSION }}
-          files: release/program
+          files: release/*.bin
           draft: false
           prerelease: false
         env:
