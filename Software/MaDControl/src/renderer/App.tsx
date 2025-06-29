@@ -13,12 +13,12 @@ import { Grid } from '@mui/material';
 import Control from './components/Control';
 import Parameters from './components/Parameters';
 import BasicLineChart from './components/Graph';
-import Dashboard from './Dashboard';
-import Connect from './Connect';
-import MachineConfigPage from './MachineConfig';
-import TestProfileForm from './TestProfile';
-import FirmwareUpdate from './FirmwareUpdate';
-
+import Dashboard from './pages/Dashboard';
+import Connect from './pages/Connect';
+import MachineConfigPage from './pages/MachineConfig';
+import TestProfileForm from './pages/TestProfile';
+import FirmwareUpdate from './pages/FirmwareUpdate';
+import { DeviceProvider } from './hooks/useDevice';
 
 const darkTheme = createTheme({
   palette: {
@@ -28,20 +28,22 @@ const darkTheme = createTheme({
 
 export default function App() {
   return (
-    <ThemeProvider theme={darkTheme}>
-      <Router>
-        <SideBar>
-          <NotificationComponent />
-          <Routes>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/dashboard" element={<Dashboard />} />
-            <Route path="/connect" element={<Connect />} />
-            <Route path="/config" element={<MachineConfigPage />} />
-            <Route path="/create" element={<TestProfileForm />} />
-            <Route path="/firmware" element={<FirmwareUpdate />} />
-          </Routes>
-        </SideBar>
-      </Router>
-    </ThemeProvider>
+    <DeviceProvider>
+      <ThemeProvider theme={darkTheme}>
+        <Router>
+          <SideBar>
+            <NotificationComponent />
+            <Routes>
+              <Route path="/" element={<Dashboard />} />
+              <Route path="/dashboard" element={<Dashboard />} />
+              <Route path="/connect" element={<Connect />} />
+              <Route path="/config" element={<MachineConfigPage />} />
+              <Route path="/create" element={<TestProfileForm />} />
+              <Route path="/firmware" element={<FirmwareUpdate />} />
+            </Routes>
+          </SideBar>
+        </Router>
+      </ThemeProvider>
+    </DeviceProvider>
   );
 }

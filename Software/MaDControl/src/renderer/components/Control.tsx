@@ -1,15 +1,13 @@
-import React, { useEffect, useState } from 'react';
 import { IconButton, Tooltip, Box, Grid, Paper } from '@mui/material';
 import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
 import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
 import HomeIcon from '@mui/icons-material/Home';
 import LockIcon from '@mui/icons-material/Lock';
 import LockOpenIcon from '@mui/icons-material/LockOpen';
-import RestoreIcon from '@mui/icons-material/Restore';
 import { styled } from '@mui/material/styles';
-import { Typography } from '@mui/material';
-import { FaultedReason, MachineState } from '@shared/SharedInterface';
 import SpeedIcon from '@mui/icons-material/Speed';
+import { componentLogger } from '../utils/logger';
+import { useDevice } from '@renderer/hooks';
 
 const Item = styled(Paper)(({ theme }) => ({
   backgroundColor: theme.palette.mode === 'dark' ? '#1A2027' : '#fff',
@@ -20,94 +18,54 @@ const Item = styled(Paper)(({ theme }) => ({
 }));
 
 function Control() {
-  const [isLocked, setIsLocked] = useState(true);
+  const [state, actions] = useDevice();
+  const isLocked = state.machineState?.motionEnabled === false;
 
-  useEffect(() => {
-    // Function to fetch the initial machine state
-    const fetchInitialMachineState = async () => {
-      try {
-        const status: MachineState | null = await window.electron.ipcRenderer.invoke('device-state');
-        if (status) {
-          console.log("checking control", status);
-          setIsLocked(status.motionEnabled === 0);
-        }
-      } catch (error) {
-        console.error('Failed to fetch initial machine state:', error);
-      }
-    };
-
-    // Fetch the initial machine state on load
-    fetchInitialMachineState();
-
-    // Function to handle updated machine state
-    const handleMachineStateUpdated = (status: MachineState) => {
-      console.log('Machine state updated:', status, status.motionEnabled, status.motionEnabled === 0);
-      setIsLocked(status.motionEnabled === 0);
-    };
-
-    // Listen for machine-state-updated event
-    const unsubscribe = window.electron.ipcRenderer.on('machine-state-updated', handleMachineStateUpdated);
-
-    // Cleanup the event listener on component unmount
-    return () => {
-      unsubscribe();
-    };
-  }, []);
-
-  const handleUpClick = async () => {
+  const handleEnableMotion = async () => {
     try {
-      await window.electron.ipcRenderer.invoke('manual-move', 200, 100);
+      await actions.setMotionEnabled(true);
     } catch (error) {
-      console.error('Failed to fetch initial machine state:', error);
+      componentLogger.error('Failed to enable motion:', error);
     }
   };
 
-  const handleHomeClick = async () => {
-    // Handle home click
+  const handleDisableMotion = async () => {
     try {
-      await window.electron.ipcRenderer.invoke('home');
+      await actions.setMotionEnabled(false);
     } catch (error) {
-      console.error('Failed to fetch initial machine state:', error);
+      componentLogger.error('Failed to disable motion:', error);
     }
   };
 
-  const handleZeroLength = async () => {
-    // Handle zero length click
+  const handleHomeAxis = async () => {
     try {
-      await window.electron.ipcRenderer.invoke('set_length_zero');
+      await actions.homeAxis();
     } catch (error) {
-      console.error('Failed to fetch initial machine state:', error);
+      componentLogger.error('Failed to home axis:', error);
     }
   };
 
   const handleZeroForce = async () => {
-    // Handle zero force click
     try {
-      await window.electron.ipcRenderer.invoke('set_force_zero');
+      await actions.zeroForce();
     } catch (error) {
-      console.error('Failed to fetch initial machine state:', error);
+      componentLogger.error('Failed to zero force:', error);
     }
   };
 
-  const handleDownClick = async () => {
+  const handleMoveUp = async () => {
     try {
-      await window.electron.ipcRenderer.invoke('manual-move', -200, 100);
+      await actions.manualMove(10, 100); // Move up 10mm at 100mm/min
     } catch (error) {
-      console.error('Failed to fetch initial machine state:', error);
+      componentLogger.error('Failed to move up:', error);
     }
   };
 
-  const handleLockToggleClick = async () => {
+  const handleMoveDown = async () => {
     try {
-      const prevIsLocked = isLocked;
-      const success: boolean = await window.electron.ipcRenderer.invoke('set-motion-enabled', isLocked);
-      if (success) {
-        //alert('Motion ' + (prevIsLocked ? 'enabled' : 'disabled') + ' successfully');
-      } else {
-        alert('Failed to ' + (prevIsLocked ? 'enable' : 'disable') + ' motion');
-      }
+      await actions.manualMove(-10, 100); // Move down 10mm at 100mm/min
     } catch (error) {
-      console.error('Failed to fetch initial machine state:', error);
+      componentLogger.error('Failed to move down:', error);
     }
   };
 
@@ -120,7 +78,7 @@ function Control() {
               <Grid item>
                 <Tooltip title="Move Up">
                   <IconButton
-                    onClick={handleUpClick}
+                    onClick={handleMoveUp}
                     sx={{ padding: '16px', margin: '3px' }}
                   >
                     <ArrowUpwardIcon fontSize="large" />
@@ -130,7 +88,7 @@ function Control() {
               <Grid item>
                 <Tooltip title="Move Down">
                   <IconButton
-                    onClick={handleDownClick}
+                    onClick={handleMoveDown}
                     sx={{ padding: '16px', margin: '3px' }}
                   >
                     <ArrowDownwardIcon fontSize="large" />
@@ -144,7 +102,7 @@ function Control() {
               <Grid item>
                 <Tooltip title="Home">
                   <IconButton
-                    onClick={handleHomeClick}
+                    onClick={handleHomeAxis}
                     sx={{ padding: '16px', margin: '3px' }}
                   >
                     <HomeIcon fontSize="large" />
@@ -154,7 +112,7 @@ function Control() {
               <Grid item>
                 <Tooltip title={isLocked ? 'Enable Motion' : 'Disable Motion'}>
                   <IconButton
-                    onClick={handleLockToggleClick}
+                    onClick={isLocked ? handleEnableMotion : handleDisableMotion}
                     sx={{ padding: '16px', margin: '3px' }}
                   >
                     {isLocked ? (
@@ -171,16 +129,6 @@ function Control() {
             <Grid container direction="column" alignItems="center" spacing={1}>
               <Grid item>
                 <Tooltip title="Zero Length">
-                  <IconButton
-                    onClick={handleZeroLength}
-                    sx={{ padding: '16px', margin: '3px' }}
-                  >
-                    <RestoreIcon fontSize="large" />
-                  </IconButton>
-                </Tooltip>
-              </Grid>
-              <Grid item>
-                <Tooltip title="Zero Force">
                   <IconButton
                     onClick={handleZeroForce}
                     sx={{ padding: '16px', margin: '3px' }}

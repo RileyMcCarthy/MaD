@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron';
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import { dataLogger } from '@utils/logger';
 
 // Map to store run numbers for each sample profile
 const sampleRunNumbers = new Map<string, number>();
@@ -16,7 +17,7 @@ async function loadRunNumbers() {
     });
   } catch (error) {
     // File doesn't exist or is invalid, start with empty map
-    console.log('No existing run numbers found, starting fresh');
+    dataLogger.info('No existing run numbers found, starting fresh');
   }
 }
 

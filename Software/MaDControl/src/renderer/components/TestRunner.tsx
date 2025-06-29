@@ -22,6 +22,7 @@ import {
   MotionProfile,
 } from '@shared/SharedInterface';
 import GCodeGenerator from './GCodeGenerator';
+import { componentLogger } from '../utils/logger';
 
 const Item = styled(Paper)(({ theme }) => ({
   backgroundColor: theme.palette.mode === 'dark' ? '#1A2027' : '#fff',
@@ -73,7 +74,7 @@ export default function TestRunner({ onRunTest }: TestRunnerProps) {
         };
         reader.readAsText(file);
       } catch (error) {
-        console.error('Error reading sample profile:', error);
+        componentLogger.error('Error reading sample profile:', error);
       }
     }
   };
@@ -92,7 +93,7 @@ export default function TestRunner({ onRunTest }: TestRunnerProps) {
         };
         reader.readAsText(file);
       } catch (error) {
-        console.error('Error reading motion profile:', error);
+        componentLogger.error('Error reading motion profile:', error);
       }
     }
   };
@@ -126,7 +127,7 @@ export default function TestRunner({ onRunTest }: TestRunnerProps) {
       });
       handleCloseDialog();
     } catch (error) {
-      console.error('Failed to run test:', error);
+      componentLogger.error('Failed to run test:', error);
       alert('Failed to run test');
     } finally {
       setIsLoading(false);

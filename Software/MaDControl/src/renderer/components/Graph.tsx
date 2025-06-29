@@ -1,56 +1,42 @@
-import * as React from 'react';
-import { LineChart } from '@mui/x-charts/LineChart';
 import { useEffect, useState } from 'react';
-import { MachineConfiguration, SampleData } from '@shared/SharedInterface';
-import { Typography, Box } from '@mui/material';
-import Paper from '@mui/material/Paper';
-import Grid from '@mui/material/Grid';
+import { LineChart } from '@mui/x-charts/LineChart';
+import { SampleData } from '@shared/SharedInterface';
 import Skeleton from '@mui/material/Skeleton';
 import { axisClasses } from '@mui/x-charts/ChartsAxis';
+import { useDevice } from '@renderer/hooks';
+import { componentLogger } from '../utils/logger';
 
 export default function BasicLineChart() {
+  const [deviceState, actions] = useDevice();
   const [samples, setSamples] = useState<SampleData[]>([]);
-  const [config, setConfig] = useState<MachineConfiguration[]>([]);
 
   useEffect(() => {
     // Function to initialize data on page load
     const initializeData = async () => {
       try {
-        const data: SampleData[] | null = await window.electron.ipcRenderer.invoke('device-data-all');
-        const config = await window.electron.ipcRenderer.invoke('get-machine-configuration');
-        if (config) {
-          setConfig(config);
-        }
+        const data = await actions.getAllDeviceData();
         if (data && data.length > 0) {
           setSamples(data.slice(-100)); // Save up to 100 samples
         }
       } catch (error) {
-        console.error('Failed to initialize data:', error);
+        componentLogger.error('Failed to initialize data:', error);
       }
     };
 
     // Call the function to initialize data on page load
     initializeData();
+  }, [actions]);
 
-    // Function to handle new sample data
-    const handleSampleDataUpdated = (newSample: SampleData) => {
-      setSamples((prevSamples) => {
-        const updatedSamples = [...prevSamples, newSample];
-        if (updatedSamples.length > 100) {
-          updatedSamples.shift(); // Keep only the latest 100 samples
-        }
-        return updatedSamples;
+  // Update samples when new sample data comes from the hook
+  useEffect(() => {
+    if (deviceState.latestSampleData) {
+      componentLogger.debug('New sample data received:', deviceState.latestSampleData);
+      setSamples((prevData) => {
+        const updatedData = [...prevData, deviceState.latestSampleData!];
+        return updatedData.slice(-100); // Keep only the last 100 samples
       });
-    };
-
-    // Listen for sample-data-updated event
-    const unsubscribe = window.electron.ipcRenderer.on('sample-data-updated', handleSampleDataUpdated);
-
-    // Cleanup the event listener on component unmount
-    return () => {
-      unsubscribe();
-    };
-  }, []);
+    }
+  }, [deviceState.latestSampleData]);
 
   const force = samples.map((sample) => sample['Sample Force (N)']);
   const position = samples.map((sample) => sample['Sample Position (mm)']);
@@ -61,6 +47,36 @@ export default function BasicLineChart() {
   const gaugeForce = samples.map(
     (sample) => sample['Machine Force (N)'] - sample['Sample Force (N)'],
   );
+
+  const getAxisLimits = () => {
+    const config = deviceState.machineConfiguration;
+    if (!config || gaugeForce.length === 0 || gaugeLength.length === 0) {
+      return {
+        forceMin: 0,
+        forceMax: 5,
+        lengthMin: 0,
+        lengthMax: 1000,
+      };
+    }
+
+    const forceMin = Math.min(...gaugeForce);
+    const forceMax = Math.max(...gaugeForce);
+    const lengthMin = Math.min(...gaugeLength);
+    const lengthMax = Math.max(...gaugeLength);
+
+    const tensileForceMax = config['Tensile Force Max (N)'] as number;
+    const positionMax = config['Position Max (mm)'] as number;
+
+    return {
+      forceMin: -forceMin || 0,
+      forceMax: (tensileForceMax - forceMax) / 1000 || 5,
+      lengthMin: -lengthMin || 0,
+      lengthMax: (positionMax - lengthMax) || 1000,
+    };
+  };
+
+  const { forceMin, forceMax, lengthMin, lengthMax } = getAxisLimits();
+
   return force.length && position.length ? (
     <LineChart
       grid={{ horizontal: true }}
@@ -69,15 +85,15 @@ export default function BasicLineChart() {
           id: 'force',
           scaleType: 'linear',
           label: 'Force (N)',
-          min: -gaugeForce.pop() || 0,
-          max: (config['Tensile Force Max (N)'] - gaugeForce.pop()) /1000 || 5,
+          min: forceMin,
+          max: forceMax,
         },
         {
           id: 'position',
           scaleType: 'linear',
           label: 'Position (mm)',
-          min: -gaugeLength.pop() || 0,
-          max: (config['Position Max (mm)'] - gaugeLength.pop()) || 1000,
+          min: lengthMin,
+          max: lengthMax,
         },
       ]}
       series={[

@@ -22,6 +22,7 @@ import DataProcessor from './handlers/DataProcessor';
 import NotificationSender from './handlers/NotificationSender';
 import DeviceInterface from './handlers/DeviceInterface';
 import { initializeSampleProfiles, cleanup as cleanupSampleProfiles } from './sampleProfiles';
+import { deviceLogger } from '@utils/logger';
 
 class AppUpdater {
   constructor() {
@@ -55,7 +56,9 @@ const installExtensions = async () => {
       extensions.map((name) => installer[name]),
       forceDownload,
     )
-    .catch(console.log);
+    .catch((error: Error) => {
+      deviceLogger.error('Failed to install extensions:', error);
+    });
 };
 
 const createWindow = async () => {
@@ -109,7 +112,7 @@ const createWindow = async () => {
     serialPortHandler,
     mainWindow,
   );
-  serialPortHandler.connect('/tmp/tty.rpi', 115200); // for debugging, should either remember settings or start at settings page
+  // serialPortHandler.connect('/tmp/tty.rpi', 115200); // for debugging, should either remember settings or start at settings page
 
   const menuBuilder = new MenuBuilder(mainWindow);
   menuBuilder.buildMenu();
@@ -149,4 +152,6 @@ app
       if (mainWindow === null) createWindow();
     });
   })
-  .catch(console.log);
+  .catch((error: Error) => {
+    deviceLogger.error('Failed to initialize app:', error);
+  });

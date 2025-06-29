@@ -1,15 +1,10 @@
-import { useEffect, useState } from 'react';
-import { FaultedReason, RestrictedReason, MachineState } from '@shared/SharedInterface';
+import { FaultedReason, RestrictedReason } from '@shared/SharedInterface';
 import { Typography, Box, Tooltip } from '@mui/material';
-import CheckCircleIcon from '@mui/icons-material/CheckCircle';
-import CancelIcon from '@mui/icons-material/Cancel';
-import WarningIcon from '@mui/icons-material/Warning';
-import StopIcon from '@mui/icons-material/Stop';
-import ManualIcon from '@mui/icons-material/Build';
-import { styled } from '@mui/material/styles';
 import Paper from '@mui/material/Paper';
+import { styled } from '@mui/material/styles';
 import Grid from '@mui/material/Grid';
 import Skeleton from '@mui/material/Skeleton';
+import { useDevice } from '@renderer/hooks';
 
 const Item = styled(Paper)(({ theme }) => ({
   backgroundColor: theme.palette.mode === 'dark' ? '#1A2027' : '#fff',
@@ -95,11 +90,12 @@ function getStyledTestRunning(testRunning: boolean) {
 }
 
 function StatusComponent() {
-  const [statusData, setStatusData] = useState<MachineState | null>(null);
+  const [state] = useDevice();
+  const machineState = state.machineState;
   const height = 200;
 
   function styledStateParameters() {
-    if (statusData) {
+    if (machineState) {
       return (
         <Item>
           <Box>
@@ -115,7 +111,7 @@ function StatusComponent() {
               >
                 <Typography noWrap>Disabled Reason</Typography>
                 <Typography noWrap>
-                  {getStyledFaultedReason(statusData.faultedReason)}
+                  {getStyledFaultedReason(machineState.faultedReason)}
                 </Typography>
               </Grid>
               <Grid
@@ -126,7 +122,7 @@ function StatusComponent() {
               >
                 <Typography noWrap>Restricted Reason</Typography>
                 <Typography noWrap>
-                  {getStyledRestrictedReason(statusData.restrictedReason)}
+                  {getStyledRestrictedReason(machineState.restrictedReason)}
                 </Typography>
               </Grid>
               <Grid
@@ -137,7 +133,7 @@ function StatusComponent() {
               >
                 <Typography noWrap>Motion State</Typography>
                 <Typography noWrap>
-                  {getStyledMotionEnabled(statusData.motionEnabled)}
+                  {getStyledMotionEnabled(machineState.motionEnabled)}
                 </Typography>
               </Grid>
               <Grid
@@ -148,7 +144,7 @@ function StatusComponent() {
               >
                 <Typography noWrap>Test State</Typography>
                 <Typography noWrap>
-                  {getStyledTestRunning(statusData.testRunning)}
+                  {getStyledTestRunning(machineState.testRunning)}
                 </Typography>
               </Grid>
             </Grid>
@@ -158,44 +154,6 @@ function StatusComponent() {
     }
     return <Skeleton animation="wave" variant="rounded" sx={{ height }} />;
   }
-
-  useEffect(() => {
-    const fetchDeviceState = () => {
-      window.electron.ipcRenderer
-        .invoke('device-state')
-        .then((status: MachineState | null) => {
-          if (!status) {
-            return;
-          }
-          setStatusData(status);
-          console.log(status);
-          return null;
-        })
-        .catch((error) => {
-          console.error('Failed to get device state:', error);
-        });
-    };
-
-    fetchDeviceState(); // Fetch immediately on load
-
-    // Function to handle updated machine state
-    const handleMachineStateUpdated = (status: MachineState) => {
-      console.log('Machine state updated:', status);
-      if (status) {
-        setStatusData(status);
-      }
-    };
-
-    // Listen for machine-state-updated event
-    const unsubscribe = window.electron.ipcRenderer.on(
-      'machine-state-updated',
-      handleMachineStateUpdated,
-    );
-
-    return () => {
-      unsubscribe();
-    };
-  }, []);
 
   return (
     <Box sx={{ flexGrow: 1, p: 2 }}>

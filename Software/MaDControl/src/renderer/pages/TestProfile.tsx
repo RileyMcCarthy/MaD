@@ -15,7 +15,6 @@ import {
   Divider,
   Paper,
   SelectChangeEvent,
-  CircularProgress,
 } from '@mui/material';
 import {
   Save as SaveIcon,
@@ -23,7 +22,6 @@ import {
   Add as AddIcon,
   Code as CodeIcon,
   DragIndicator,
-  PlayArrow as PlayArrowIcon,
 } from '@mui/icons-material';
 import { styled } from '@mui/material/styles';
 import {
@@ -38,7 +36,7 @@ import {
   TestProfile,
   Move,
 } from '@shared/SharedInterface';
-import GCodeGenerator from './components/GCodeGenerator';
+import GCodeGenerator from '../components/GCodeGenerator';
 
 const Item = styled(Box)(({ theme }) => ({
   backgroundColor: theme.palette.mode === 'dark' ? '#1A2027' : '#f8f9fa',
@@ -125,38 +123,12 @@ const initialSet = {
   moves: [initialMove],
 };
 
-const initialSampleProfile: SampleProfile = {
-  maxForce: 0,
-  maxVelocity: 0,
-  maxDisplacement: 0,
-  sampleWidth: 0,
-  serialNumber: '',
-};
-
-const initialMotionProfile: MotionProfile = {
-  name: 'Default',
-  description: '',
-  sets: [initialSet],
-};
-
 const DragHandle = styled('div')(() => ({
   position: 'absolute',
   right: 8,
   top: 8,
   cursor: 'grab',
   zIndex: 2,
-  '&:active': {
-    cursor: 'grabbing',
-  },
-}));
-
-const MoveDragHandle = styled('div')(({ theme }) => ({
-  position: 'absolute',
-  right: theme.spacing(1),
-  top: '50%',
-  transform: 'translateY(-50%)',
-  cursor: 'grab',
-  zIndex: 1,
   '&:active': {
     cursor: 'grabbing',
   },
@@ -320,31 +292,6 @@ const TestProfileForm: React.FC = () => {
       ...motionProfile,
       sets: newSets,
     });
-  };
-
-  const handleSaveProfile = () => {
-    const jsonProfile = JSON.stringify(motionProfile, null, 2);
-    const blob = new Blob([jsonProfile], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${motionProfile.name}.mp`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
-  const handleLoadProfile = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const jsonProfile = e.target?.result as string;
-        const loadedProfile = JSON.parse(jsonProfile) as MotionProfile;
-        setMotionProfile(loadedProfile);
-        setSets(loadedProfile.sets);
-      };
-      reader.readAsText(file);
-    }
   };
 
   const handleSaveSet = (index: number) => {

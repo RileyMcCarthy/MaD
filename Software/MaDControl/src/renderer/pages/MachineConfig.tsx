@@ -1,23 +1,36 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Button, Grid, TextField, Typography } from '@mui/material';
 import { MachineConfiguration } from '@shared/SharedInterface';
+import { useDevice } from '@renderer/hooks';
+import { componentLogger } from '../utils/logger';
 
 export default function MachineConfigPage() {
+  const [deviceState, actions] = useDevice();
   const [config, setConfig] = useState<MachineConfiguration | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    window.electron.ipcRenderer
-      .invoke('get-machine-configuration')
-      .then((machineConfig: MachineConfiguration) => {
+    const loadConfig = async () => {
+      try {
+        const machineConfig = await actions.getMachineConfiguration();
         setConfig(machineConfig);
         setLoading(false);
-      })
-      .catch((error) => {
-        console.error('Failed to get machine configuration:', error);
+      } catch (error) {
+        componentLogger.error('Failed to get machine configuration:', error);
         setLoading(false);
-      });
-  }, []);
+      }
+    };
+
+    loadConfig();
+  }, [actions]);
+
+  // Also update local config when device state changes
+  useEffect(() => {
+    if (deviceState.machineConfiguration && !config) {
+      setConfig(deviceState.machineConfiguration);
+      setLoading(false);
+    }
+  }, [deviceState.machineConfiguration, config]);
 
   const handleChange = (field: keyof MachineConfiguration) => (event: React.ChangeEvent<HTMLInputElement>) => {
     if (config) {
@@ -29,14 +42,15 @@ export default function MachineConfigPage() {
     }
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (config) {
-      window.electron.ipcRenderer
-        .invoke('save-machine-configuration', config)
-        .catch((error) => {
-          console.error('Failed to save machine configuration:', error);
-          alert('Failed to save machine configuration');
-        });
+      try {
+        await actions.saveMachineConfiguration(config);
+        componentLogger.info('Machine configuration saved successfully');
+      } catch (error) {
+        componentLogger.error('Failed to save machine configuration:', error);
+        alert('Failed to save machine configuration');
+      }
     }
   };
 

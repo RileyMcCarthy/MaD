@@ -13,19 +13,23 @@ import {
   Divider,
 } from '@mui/material';
 import SystemUpdateAltIcon from '@mui/icons-material/SystemUpdateAlt';
+import CancelIcon from '@mui/icons-material/Cancel';
 import GitHubIcon from '@mui/icons-material/GitHub';
+import { componentLogger } from '@renderer/utils/logger';
+import { useDevice } from '@renderer/hooks';
 
 function FirmwareUpdate(): React.ReactElement {
+  const [deviceState, actions] = useDevice();
+  const [firmwareVersion, setFirmwareVersion] = useState('Unknown');
   const [loading, setLoading] = useState(false);
+  const [isFlashing, setIsFlashing] = useState(false);
+  const [progress, setProgress] = useState(0);
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
   const [logs, setLogs] = useState<string[]>([]);
-  const [firmwareVersion, setFirmwareVersion] = useState('');
-  const [isConnected, setIsConnected] = useState(false);
-  const [isResponding, setIsResponding] = useState(false);
 
   useEffect(() => {
-    // Set up event listeners for firmware update progress and errors
+    // Set up event listeners for firmware update progress
     const progressListener = window.electron.ipcRenderer.on(
       'firmware-update-progress',
       (...args: unknown[]) => {
@@ -35,69 +39,103 @@ function FirmwareUpdate(): React.ReactElement {
       },
     );
 
-    const errorListener = window.electron.ipcRenderer.on(
-      'firmware-update-error',
+    // Add dedicated status listener for proper state management
+    const statusListener = window.electron.ipcRenderer.on(
+      'firmware-flash-status',
       (...args: unknown[]) => {
-        const message = args[0] as string;
-        setLogs((prevLogs) => [...prevLogs, `ERROR: ${message}`]);
-        setError(message);
+        const statusData = args[0] as { status: string; message: string };
+
+        switch (statusData.status) {
+          case 'preparing':
+            setIsFlashing(false);
+            setStatus('Preparing firmware flash...');
+            break;
+          case 'flashing':
+            setIsFlashing(true);
+            setStatus('Flashing firmware...');
+            break;
+          case 'success':
+            setIsFlashing(false);
+            setStatus('Firmware flashed successfully!');
+            setError('');
+            break;
+          case 'error':
+            setIsFlashing(false);
+            setError(statusData.message);
+            break;
+          case 'canceled':
+            setIsFlashing(false);
+            setStatus('Firmware flashing canceled');
+            setError('');
+            break;
+          default:
+            componentLogger.warn(
+              'Unknown firmware flash status:',
+              statusData.status,
+            );
+        }
       },
     );
 
-    // Check device connection status
-    const checkConnection = async () => {
-      try {
-        // Check if a serial port is connected
-        const connected =
-          await window.electron.ipcRenderer.invoke('device-connected');
-        setIsConnected(connected);
-
-        // Check if the device is responding to commands
-        const responding =
-          await window.electron.ipcRenderer.invoke('device-responding');
-        setIsResponding(responding);
-
-        if (responding) {
-          // Get current firmware version
-          const version = await window.electron.ipcRenderer.invoke(
-            'get-firmware-version',
-          );
+    const checkFirmwareVersion = async () => {
+      if (deviceState.isResponding) {
+        try {
+          const version = await actions.getFirmwareVersion();
           setFirmwareVersion(version || 'Unknown');
+        } catch (err) {
+          componentLogger.error('Error getting firmware version:', err);
+          setFirmwareVersion('Unknown');
         }
-      } catch (err) {
-        console.error('Error checking connection:', err);
-        setError('Failed to check device connection');
       }
     };
 
-    const interval = setInterval(checkConnection, 2000);
+    // Check firmware version when device becomes responsive
+    checkFirmwareVersion();
 
-    // Initial check
-    checkConnection();
+    // Set up interval to check firmware version periodically
+    const interval = setInterval(checkFirmwareVersion, 5000);
+
+    // Cleanup function to cancel flashing when component unmounts
+    const cleanup = async () => {
+      if (isFlashing) {
+        try {
+          await actions.cancelFirmwareFlash();
+          componentLogger.info(
+            'Canceled firmware flashing due to page navigation',
+          );
+        } catch (err) {
+          componentLogger.error(
+            'Error canceling firmware flash on cleanup:',
+            err,
+          );
+        }
+      }
+    };
 
     // Clean up
     return () => {
       clearInterval(interval);
       progressListener();
-      errorListener();
+      statusListener();
+      cleanup(); // Cancel any ongoing flashing when leaving the page
     };
-  }, []);
+  }, [deviceState.isResponding, actions]);
 
   const getDeviceStatusText = () => {
-    if (isResponding) {
+    if (deviceState.isResponding) {
       return 'Responding';
     }
-    if (isConnected) {
+    if (deviceState.isConnected) {
       return 'Not Responding';
     }
     return 'Disconnected';
   };
 
   const getStatusColor = () => {
-    if (isResponding) {
+    if (deviceState.isResponding) {
       return 'success';
     }
-    if (isConnected) {
+    if (deviceState.isConnected) {
       return 'warning';
     }
     return 'error';
@@ -106,6 +144,7 @@ function FirmwareUpdate(): React.ReactElement {
   const handleFlashFirmware = async () => {
     try {
       setLoading(true);
+      setIsFlashing(false);
       setStatus('Selecting firmware file...');
       setError('');
       setLogs([]); // Clear previous logs
@@ -113,9 +152,8 @@ function FirmwareUpdate(): React.ReactElement {
       // Add initial log
       setLogs(['Opening file selector...']);
 
-      // Call the flash-from-file handler
-      const result =
-        await window.electron.ipcRenderer.invoke('flash-from-file');
+      // Call the flash-from-file handler using the hook
+      const result = await actions.flashFirmwareFromFile();
 
       if (result.success) {
         setStatus('Firmware updated successfully from file!');
@@ -129,11 +167,31 @@ function FirmwareUpdate(): React.ReactElement {
         setError(result.error || 'Unknown error occurred');
       }
     } catch (err) {
-      console.error('Error updating firmware from file:', err);
-      setError(
-        'Failed to update firmware from file. See console for details.',
-      );
+      componentLogger.error('Error updating firmware from file:', err);
+      setError('Failed to update firmware from file. See console for details.');
     } finally {
+      setLoading(false);
+      setIsFlashing(false);
+    }
+  };
+
+  const handleCancelFlash = async () => {
+    try {
+      const result = await actions.cancelFirmwareFlash();
+      if (result.success) {
+        setStatus('Firmware flashing canceled');
+        setLogs((prevLogs) => [
+          ...prevLogs,
+          'Firmware flashing canceled by user',
+        ]);
+      } else {
+        setError(result.error || 'Failed to cancel firmware flashing');
+      }
+    } catch (err) {
+      componentLogger.error('Error canceling firmware flash:', err);
+      setError('Failed to cancel firmware flashing');
+    } finally {
+      setIsFlashing(false);
       setLoading(false);
     }
   };
@@ -154,7 +212,7 @@ function FirmwareUpdate(): React.ReactElement {
               <Alert severity={getStatusColor()} sx={{ mb: 2 }}>
                 <Typography>
                   Connection:{' '}
-                  <strong>{isConnected ? 'Connected' : 'Disconnected'}</strong>
+                  <strong>{deviceState.isConnected ? 'Connected' : 'Disconnected'}</strong>
                 </Typography>
                 <Typography>
                   Device: <strong>{getDeviceStatusText()}</strong>
@@ -181,11 +239,7 @@ function FirmwareUpdate(): React.ReactElement {
               <Typography variant="h6" gutterBottom>
                 Flash Firmware
               </Typography>
-              <Typography
-                variant="body2"
-                color="text.secondary"
-                sx={{ mb: 2 }}
-              >
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
                 Select a firmware file (.bin) from your computer to flash to the
                 device. Download firmware files from the GitHub releases link
                 above.
@@ -196,14 +250,28 @@ function FirmwareUpdate(): React.ReactElement {
                 color="primary"
                 startIcon={<SystemUpdateAltIcon />}
                 onClick={handleFlashFirmware}
-                disabled={loading || !isConnected}
+                disabled={loading || !deviceState.isConnected}
                 size="large"
                 fullWidth
+                sx={{ mb: 1 }}
               >
                 {loading ? 'Flashing...' : 'Select & Flash Firmware File'}
               </Button>
 
-              {!isConnected && (
+              {isFlashing && (
+                <Button
+                  variant="outlined"
+                  color="error"
+                  startIcon={<CancelIcon />}
+                  onClick={handleCancelFlash}
+                  size="large"
+                  fullWidth
+                >
+                  Cancel Firmware Flash
+                </Button>
+              )}
+
+              {!deviceState.isConnected && (
                 <Typography
                   variant="body2"
                   color="error"
@@ -211,6 +279,18 @@ function FirmwareUpdate(): React.ReactElement {
                 >
                   Connect to a serial port before flashing firmware
                 </Typography>
+              )}
+
+              {isFlashing && (
+                <Alert severity="warning" sx={{ mt: 2 }}>
+                  <Typography variant="body2">
+                    <strong>Firmware flashing in progress!</strong>
+                    <br />
+                    Do not disconnect the device or close the application.
+                    <br />
+                    This process may take several minutes.
+                  </Typography>
+                </Alert>
               )}
             </CardContent>
           </Card>
@@ -259,9 +339,7 @@ function FirmwareUpdate(): React.ReactElement {
                 <Typography
                   key={`${log}-${Math.random()}`}
                   variant="body2"
-                  color={
-                    log.startsWith('ERROR:') ? 'error' : 'text.secondary'
-                  }
+                  color={log.startsWith('ERROR:') ? 'error' : 'text.secondary'}
                   sx={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}
                 >
                   {log}

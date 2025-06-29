@@ -1,5 +1,6 @@
 import { BrowserWindow } from 'electron';
-import { Notification, NotificationType } from '../../shared/SharedInterface';
+import { Notification, NotificationType } from '@shared/SharedInterface';
+import { uiLogger } from '@utils/logger';
 
 class NotificationSender {
   private window: BrowserWindow;
@@ -9,7 +10,7 @@ class NotificationSender {
   }
 
   sendNotification(notification: Notification) {
-    console.log(`Notification (${notification.Type}):`, notification.Message);
+    uiLogger.info(`Notification (${notification.Type}):`, notification.Message);
 
     switch (notification.Type) {
       case NotificationType.ERROR:
@@ -30,22 +31,22 @@ class NotificationSender {
   }
 
   sendError(notification: string) {
-    console.log('Error:', notification);
+    uiLogger.error('Error:', notification);
     this.window.webContents.send('notification-error', notification);
   }
 
   sendWarning(notification: string) {
-    console.log('Warning:', notification);
+    uiLogger.warn('Warning:', notification);
     this.window.webContents.send('notification-warning', notification);
   }
 
   sendInfo(notification: string) {
-    console.log('Info:', notification);
+    uiLogger.info('Info:', notification);
     this.window.webContents.send('notification-info', notification);
   }
 
   sendSuccess(notification: string) {
-    console.log('Success:', notification);
+    uiLogger.info('Success:', notification);
     this.window.webContents.send('notification-success', notification);
   }
 }

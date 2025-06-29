@@ -3,7 +3,7 @@
 import { EventEmitter } from 'events';
 import { Notification } from '@shared/SharedInterface';
 import SerialPortHandler from './SerialPortHandler';
-import { Message } from 'rsuite';
+import { dataLogger } from '@utils/logger';
 
 export enum ReadType {
   SAMPLE,
@@ -70,6 +70,9 @@ class DataProcessor extends EventEmitter {
   constructor(private serialport: SerialPortHandler) {
     super();
     serialport.on('data', (data: Buffer) => {
+      dataLogger.debug('DataProcessor received raw data:', data.length, 'bytes');
+      dataLogger.debug('Raw data:', Array.from(data).map(b => `0x${b.toString(16).padStart(2, '0')}`).join(' '));
+
       // Process each byte in the buffer
       for (let i = 0; i < data.length; i++) {
         this.processByte(data[i]);
@@ -159,7 +162,7 @@ class DataProcessor extends EventEmitter {
     // NACK/ACK do not have length/data/crc and can be emitted now to save bandwidth
     switch (type) {
       case ResponseType.NACK:
-        console.log('NACK:', messageCommand);
+        dataLogger.warn('NACK:', messageCommand);
         this.emit('ack', messageCommand, false);
         append = false;
         break;
@@ -175,7 +178,7 @@ class DataProcessor extends EventEmitter {
         break;
       default:
         append = false;
-        console.log('Unknown type:', type);
+        dataLogger.warn('Unknown type:', type);
     }
     return append;
   }
@@ -201,14 +204,14 @@ class DataProcessor extends EventEmitter {
               ) as Notification,
             );
           } catch (error) {
-            console.log('Notification:', messageData.toString());
-            console.error('Failed to parse notification:', error);
+            dataLogger.warn('Notification:', messageData.toString());
+            dataLogger.error('Failed to parse notification:', error);
           }
           break;
         case ResponseType.NACK:
         case ResponseType.ACK:
         default:
-          console.log('Unknown type:', messageType);
+          dataLogger.warn('Unknown type:', messageType);
       }
     }
   }

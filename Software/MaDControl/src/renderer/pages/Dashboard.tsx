@@ -1,15 +1,16 @@
-import MachineStatus from './components/MachineStatus';
-import './App.css';
+import MachineStatus from '../components/MachineStatus';
+import '../App.css';
 import 'react-toastify/dist/ReactToastify.css';
 import { Grid, Box } from '@mui/material';
-import Control from './components/Control';
-import Parameters from './components/Parameters';
-import BasicLineChart from './components/Graph';
-import TestRunner from './components/TestRunner';
+import Control from '../components/Control';
+import Parameters from '../components/Parameters';
+import BasicLineChart from '../components/Graph';
+import TestRunner from '../components/TestRunner';
+import { componentLogger } from '../utils/logger';
 
 export default function Dashboard() {
   const handleRunTest = (testName: string) => {
-    console.log(`Running test: ${testName}`);
+    componentLogger.info(`Running test: ${testName}`);
     // Implementation needed: Handle test execution
   };
 

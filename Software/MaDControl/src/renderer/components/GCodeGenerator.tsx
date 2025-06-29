@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Box, Button, Typography, Grid } from '@mui/material';
+import { Box, Typography, Grid } from '@mui/material';
 import { LineChart } from '@mui/x-charts/LineChart';
-import { TestProfile, MoveType } from '@shared/SharedInterface';
+import { TestProfile } from '@shared/SharedInterface';
 import { axisClasses } from '@mui/x-charts/ChartsAxis';
 
 interface GCodeGeneratorProps {

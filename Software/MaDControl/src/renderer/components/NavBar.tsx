@@ -1,7 +1,6 @@
-import React, { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import React, { useState, useMemo } from 'react';
+import { Link, useLocation } from 'react-router-dom';
 import { styled, useTheme, Theme, CSSObject } from '@mui/material/styles';
-import { useLocation } from 'react-router-dom';
 import Box from '@mui/material/Box';
 import MuiDrawer from '@mui/material/Drawer';
 import MuiAppBar, { AppBarProps as MuiAppBarProps } from '@mui/material/AppBar';
@@ -19,15 +18,16 @@ import ListItemButton from '@mui/material/ListItemButton';
 import ListItemIcon from '@mui/material/ListItemIcon';
 import ListItemText from '@mui/material/ListItemText';
 import DashboardIcon from '@mui/icons-material/Dashboard';
-import SettingsIcon from '@mui/icons-material/Settings';
 import SourceIcon from '@mui/icons-material/Source';
-import DeviceHubIcon from '@mui/icons-material/DeviceHub';
-import LinkIcon from '@mui/icons-material/Link';
 import CreateIcon from '@mui/icons-material/Create';
+import LinkIcon from '@mui/icons-material/Link';
+import DeviceHubIcon from '@mui/icons-material/DeviceHub';
 import SystemUpdateAltIcon from '@mui/icons-material/SystemUpdateAlt';
+import SettingsIcon from '@mui/icons-material/Settings';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
+import { useDevice } from '@renderer/hooks';
 
 const drawerWidth = 240;
 
@@ -107,19 +107,18 @@ type MiniDrawerProps = {
 function SideBar({ children }: MiniDrawerProps) {
   const theme = useTheme();
   const [open, setOpen] = useState(false);
-  const [isConnected, setIsConnected] = useState(false); // State to track connection status
-  const [isDeviceResponding, setIsDeviceResponding] = useState(false); // State to track device responding status
+  const [deviceState] = useDevice();
   const location = useLocation();
 
-  const pageNames = {
+  const pageNames: Record<string, string> = {
     '/dashboard': 'Dashboard',
     '/connect': 'Connect',
-    '/create': 'Create',
-    '/view': 'View',
-    '/config': 'Machine Configuration',
-    '/firmware': 'Firmware Update',
-    // Add more paths and names as needed
+    '/create': 'Create Test',
+    '/view': 'View Tests',
+    '/config': 'Configuration',
+    '/firmware': 'Firmware',
   };
+
   const currentPageName = pageNames[location.pathname] || 'Dashboard';
 
   const handleDrawerOpen = () => {
@@ -130,36 +129,46 @@ function SideBar({ children }: MiniDrawerProps) {
     setOpen(false);
   };
 
-  // This will fetch and update device status every 2 seconds
-  const checkConnection = async () => {
-    try {
-      // Check if a serial port is connected
-      const connected = await window.electron.ipcRenderer.invoke('device-connected');
-
-      // Check if device is responding
-      const responding = await window.electron.ipcRenderer.invoke('device-responding');
-
-      if (connected !== isConnected) {
-        setIsConnected(connected);
-      }
-
-      if (responding !== isDeviceResponding) {
-        setIsDeviceResponding(responding);
-      }
-    } catch (error) {
-      console.error('Error checking connection status:', error);
+  const deviceStatus = useMemo(() => {
+    if (deviceState.isConnected) {
+      return (
+        <Box sx={{ display: 'flex', alignItems: 'center' }}>
+          <CheckCircleOutlineIcon
+            fontSize="small"
+            color="success"
+            sx={{ mr: 0.5 }}
+          />
+          Port Connected
+          {deviceState.isResponding ? (
+            <Box component="span" sx={{ ml: 1 }}>
+              <CheckCircleIcon
+                fontSize="small"
+                color="success"
+                sx={{ mr: 0.5 }}
+              />
+              Device Responding
+            </Box>
+          ) : (
+            <Box component="span" sx={{ ml: 1 }}>
+              <ErrorOutlineIcon
+                fontSize="small"
+                color="warning"
+                sx={{ mr: 0.5 }}
+              />
+              Device Not Responding
+            </Box>
+          )}
+        </Box>
+      );
     }
-  };
 
-  useEffect(() => {
-    checkConnection(); // Fetch immediately on load
-
-    const intervalId = setInterval(checkConnection, 2000); // Poll every 2 seconds
-
-    return () => {
-      clearInterval(intervalId);
-    };
-  }, []);
+    return (
+      <Box sx={{ display: 'flex', alignItems: 'center' }}>
+        <ErrorOutlineIcon fontSize="small" color="error" sx={{ mr: 0.5 }} />
+        Not Connected
+      </Box>
+    );
+  }, [deviceState.isConnected, deviceState.isResponding]);
 
   return (
     <Box sx={{ display: 'flex' }}>
@@ -182,44 +191,7 @@ function SideBar({ children }: MiniDrawerProps) {
             {currentPageName}
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            {isConnected ? (
-              <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                <CheckCircleOutlineIcon
-                  fontSize="small"
-                  color="success"
-                  sx={{ mr: 0.5 }}
-                />
-                Port Connected
-                {isDeviceResponding ? (
-                  <Box component="span" sx={{ ml: 1 }}>
-                    <CheckCircleIcon
-                      fontSize="small"
-                      color="success"
-                      sx={{ mr: 0.5 }}
-                    />
-                    Device Responding
-                  </Box>
-                ) : (
-                  <Box component="span" sx={{ ml: 1 }}>
-                    <ErrorOutlineIcon
-                      fontSize="small"
-                      color="warning"
-                      sx={{ mr: 0.5 }}
-                    />
-                    Device Not Responding
-                  </Box>
-                )}
-              </Box>
-            ) : (
-              <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                <ErrorOutlineIcon
-                  fontSize="small"
-                  color="error"
-                  sx={{ mr: 0.5 }}
-                />
-                Not Connected
-              </Box>
-            )}
+            {deviceStatus}
           </Typography>
         </Toolbar>
       </AppBar>
@@ -245,9 +217,13 @@ function SideBar({ children }: MiniDrawerProps) {
               path: '/config',
               icon: <DeviceHubIcon />,
             },
-            { text: 'Firmware Update', path: '/firmware', icon: <SystemUpdateAltIcon /> },
+            {
+              text: 'Firmware Update',
+              path: '/firmware',
+              icon: <SystemUpdateAltIcon />,
+            },
             { text: 'Settings', path: '/drafts', icon: <SettingsIcon /> },
-          ].map((item, index) => (
+          ].map((item) => (
             <ListItem key={item.text} disablePadding sx={{ display: 'block' }}>
               <ListItemButton
                 component={Link}

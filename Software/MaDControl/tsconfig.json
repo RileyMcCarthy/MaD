@@ -6,6 +6,11 @@
     "lib": ["dom", "es2022"],
     "jsx": "react-jsx",
     "strict": true,
+    "noImplicitAny": true,
+    "noImplicitReturns": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "exactOptionalPropertyTypes": true,
     "sourceMap": true,
     "moduleResolution": "node16",
     "esModuleInterop": true,
@@ -15,7 +20,11 @@
     "outDir": ".erb/dll",
     "baseUrl": ".",
     "paths": {
-      "@shared/*": ["src/shared/*"]
+      "@shared/*": ["src/shared/*"],
+      "@components/*": ["src/renderer/components/*"],
+      "@utils/*": ["src/utils/*"],
+      "@main/*": ["src/main/*"],
+      "@renderer/*": ["src/renderer/*"]
     }
   },
   "exclude": ["test", "release/build", "release/app/dist", ".erb/dll"]
