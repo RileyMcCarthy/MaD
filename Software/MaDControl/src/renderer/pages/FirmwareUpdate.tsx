@@ -28,6 +28,35 @@ function FirmwareUpdate(): React.ReactElement {
   const [logs, setLogs] = useState<string[]>([]);
 
   useEffect(() => {
+    const checkFirmwareVersion = async () => {
+      if (deviceState.isResponding) {
+        try {
+          const versionData = await actions.getFirmwareVersion();
+          // Extract version string from FirmwareVersion object
+          if (
+            versionData &&
+            typeof versionData === 'object' &&
+            'version' in versionData
+          ) {
+            setFirmwareVersion(
+              (versionData as { version: string }).version || 'Unknown',
+            );
+          } else if (typeof versionData === 'string') {
+            // Handle case where it might still be a string
+            setFirmwareVersion(versionData);
+          } else {
+            setFirmwareVersion('Unknown');
+          }
+        } catch (err) {
+          componentLogger.error('Error getting firmware version:', err);
+          setFirmwareVersion('Unknown');
+        }
+      } else {
+        // Reset firmware version when device is not responding
+        setFirmwareVersion('Unknown');
+      }
+    };
+
     // Set up event listeners for firmware update progress
     const progressListener = window.electron.ipcRenderer.on(
       'firmware-update-progress',
@@ -57,6 +86,8 @@ function FirmwareUpdate(): React.ReactElement {
             setIsFlashing(false);
             setStatus('Firmware flashed successfully!');
             setError('');
+            // Check firmware version after successful flash
+            checkFirmwareVersion();
             break;
           case 'error':
             setIsFlashing(false);
@@ -76,37 +107,8 @@ function FirmwareUpdate(): React.ReactElement {
       },
     );
 
-    const checkFirmwareVersion = async () => {
-      if (deviceState.isResponding) {
-        try {
-          const versionData = await actions.getFirmwareVersion();
-          // Extract version string from FirmwareVersion object
-          if (
-            versionData &&
-            typeof versionData === 'object' &&
-            'version' in versionData
-          ) {
-            setFirmwareVersion(
-              (versionData as { version: string }).version || 'Unknown',
-            );
-          } else if (typeof versionData === 'string') {
-            // Handle case where it might still be a string
-            setFirmwareVersion(versionData);
-          } else {
-            setFirmwareVersion('Unknown');
-          }
-        } catch (err) {
-          componentLogger.error('Error getting firmware version:', err);
-          setFirmwareVersion('Unknown');
-        }
-      }
-    };
-
-    // Check firmware version when device becomes responsive
+    // Check firmware version when device becomes responsive (only on state change)
     checkFirmwareVersion();
-
-    // Set up interval to check firmware version periodically
-    const interval = setInterval(checkFirmwareVersion, 5000);
 
     // Cleanup function to cancel flashing when component unmounts
     const cleanup = async () => {
@@ -127,12 +129,11 @@ function FirmwareUpdate(): React.ReactElement {
 
     // Clean up
     return () => {
-      clearInterval(interval);
       progressListener();
       statusListener();
       cleanup(); // Cancel any ongoing flashing when leaving the page
     };
-  }, [deviceState.isResponding, actions]);
+  }, [deviceState.isResponding, actions, isFlashing]);
 
   const getDeviceStatusText = () => {
     if (deviceState.isResponding) {
