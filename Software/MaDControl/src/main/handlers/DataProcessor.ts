@@ -192,7 +192,7 @@ class DataProcessor extends EventEmitter {
     if (crc8(messageData) === crc) {
       switch (messageType) {
         case ResponseType.DATA:
-          //console.log('Data:', messageCommand, messageData.toString());
+          // Emit generic data event with command type and data
           this.emit('data', messageCommand, messageData.toString());
           break;
         case ResponseType.NOTIFICATION:

@@ -362,21 +362,54 @@ class DeviceInterface {
     });
 
     // Set up data processor event handlers
-    this.dataProcessor.on('data', (data: SampleData) => {
-      deviceLogger.debug('Received sample data from device:', data);
-      this.sample_data_buffer.push(data);
-      this.last_sample_data_ms = Date.now();
-      const wasResponding = this.device_connected;
-      this.device_connected = true;
-      this.window.webContents.send('sample-data-updates', data);
+    this.dataProcessor.on('data', (command: ReadType, data: string) => {
+      try {
+        switch (command) {
+          case ReadType.SAMPLE:
+            const sampleData: SampleData = JSON.parse(data);
+            this.sample_data_buffer.push(sampleData);
+            this.last_sample_data_ms = Date.now();
+            const wasResponding = this.device_connected;
+            this.device_connected = true;
+            this.window.webContents.send('sample-data-updates', sampleData);
 
-      // Emit responding status if it changed from not responding to responding
-      if (!wasResponding) {
-        this.window.webContents.send('device-status-updates', {
-          responding: true,
-          connected: this.serialport.getCurrentPath() !== null,
-          message: 'Device is responding'
-        });
+            // Emit responding status if it changed from not responding to responding
+            if (!wasResponding) {
+              this.window.webContents.send('device-status-updates', {
+                responding: true,
+                connected: this.serialport.getCurrentPath() !== null,
+                message: 'Device is responding'
+              });
+            }
+            break;
+
+          case ReadType.STATE:
+            const state: MachineState = JSON.parse(data);
+            this.machine_state = state;
+            this.window.webContents.send('machine-state-updates', state);
+            break;
+
+          case ReadType.MACHINE_CONFIGURATION:
+            const config: MachineConfiguration = JSON.parse(data);
+            this.machine_configuration = config;
+            this.window.webContents.send('machine-configuration-updates', config);
+            ipcMain.emit('machine-configuration-updated', config);
+            break;
+
+          case ReadType.FIRMWARE_VERSION:
+            const version: FirmwareVersion = JSON.parse(data);
+            this.firmwareVersion = version;
+            this.window.webContents.send('firmware-version-updates', version);
+            ipcMain.emit('firmware-version-updated', version);
+            break;
+
+          default:
+            deviceLogger.warn('Received unknown data command type:', command);
+            break;
+        }
+      } catch (error) {
+        deviceLogger.error('Failed to parse data for command', command, ':', error);
+        deviceLogger.debug('Raw data:', data);
       }
     });
 
@@ -388,27 +421,9 @@ class DeviceInterface {
       }
     });
 
-    this.dataProcessor.on('state', (state: MachineState) => {
-      deviceLogger.debug('Received machine state from device:', state);
-      this.machine_state = state;
-      this.window.webContents.send('machine-state-updates', state);
-    });
-
     this.dataProcessor.on('motion-enabled', (enabled: boolean) => {
       deviceLogger.debug('motion enabled ack', enabled);
       ipcMain.emit('motion-enabled-ack', enabled);
-    });
-
-    this.dataProcessor.on('machine-configuration', (config: MachineConfiguration) => {
-      this.machine_configuration = config;
-      this.window.webContents.send('machine-configuration-updates', config);
-      ipcMain.emit('machine-configuration-updated', config);
-    });
-
-    this.dataProcessor.on('firmware-version', (version: FirmwareVersion) => {
-      this.firmwareVersion = version;
-      this.window.webContents.send('firmware-version-updates', version);
-      ipcMain.emit('firmware-version-updated', version);
     });
 
     this.dataProcessor.on('notification', (notification: Notification) => {
@@ -417,51 +432,6 @@ class DeviceInterface {
 
     this.dataProcessor.on('unknown', (_type: string, _data: Buffer) => {
       deviceLogger.warn('Received unknown data type');
-    });
-
-    this.dataProcessor.on('sample-data', (data: SampleData) => {
-      // deviceLogger.debug("Sample Data: ", data);
-      this.sample_data_buffer.push(data);
-      this.last_sample_data_ms = Date.now();
-      const wasResponding = this.device_connected;
-      this.device_connected = true;
-      this.window.webContents.send('sample-data-updates', data);
-
-      // Emit responding status if it changed from not responding to responding
-      if (!wasResponding) {
-        this.window.webContents.send('device-status-updates', {
-          responding: true,
-          connected: this.serialport.getCurrentPath() !== null,
-          message: 'Device is responding'
-        });
-      }
-    });
-
-    this.dataProcessor.on('machine-state', (state: MachineState) => {
-      this.machine_state = state;
-      // deviceLogger.debug("machine state: ", this.machine_state);
-      this.window.webContents.send('machine-state-updates', state);
-    });
-
-    this.dataProcessor.on('machine-configuration', (config: MachineConfiguration) => {
-      this.machine_configuration = config;
-      deviceLogger.info("Machine Configuration", this.machine_configuration);
-      this.window.webContents.send('machine-configuration-updates', config);
-      ipcMain.emit('machine-configuration-updated', config);
-    });
-
-    this.dataProcessor.on('firmware-version', (version: FirmwareVersion) => {
-      this.firmwareVersion = version;
-      this.window.webContents.send('firmware-version-updates', version);
-      ipcMain.emit('firmware-version-updated', version);
-    });
-
-    this.dataProcessor.on('notification', (notification: Notification) => {
-      this.notificationSender.sendNotification(notification);
-    });
-
-    this.dataProcessor.on('unknown', (_type: string, _data: Buffer) => {
-      deviceLogger.info('message type unknown');
     });
 
     this.serialport.on('open', (message: string) => {

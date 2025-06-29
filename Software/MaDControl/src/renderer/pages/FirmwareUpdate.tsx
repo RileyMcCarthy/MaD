@@ -23,7 +23,6 @@ function FirmwareUpdate(): React.ReactElement {
   const [firmwareVersion, setFirmwareVersion] = useState('Unknown');
   const [loading, setLoading] = useState(false);
   const [isFlashing, setIsFlashing] = useState(false);
-  const [progress, setProgress] = useState(0);
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
   const [logs, setLogs] = useState<string[]>([]);
@@ -80,8 +79,22 @@ function FirmwareUpdate(): React.ReactElement {
     const checkFirmwareVersion = async () => {
       if (deviceState.isResponding) {
         try {
-          const version = await actions.getFirmwareVersion();
-          setFirmwareVersion(version || 'Unknown');
+          const versionData = await actions.getFirmwareVersion();
+          // Extract version string from FirmwareVersion object
+          if (
+            versionData &&
+            typeof versionData === 'object' &&
+            'version' in versionData
+          ) {
+            setFirmwareVersion(
+              (versionData as { version: string }).version || 'Unknown',
+            );
+          } else if (typeof versionData === 'string') {
+            // Handle case where it might still be a string
+            setFirmwareVersion(versionData);
+          } else {
+            setFirmwareVersion('Unknown');
+          }
         } catch (err) {
           componentLogger.error('Error getting firmware version:', err);
           setFirmwareVersion('Unknown');
