@@ -1,33 +1,253 @@
-# MCP Playwright Tools - Practical Usage Guide for MaD Control
+# Microsoft Playwright MCP Integration for MaD Control
 
-This guide provides real-world examples of using Playwright MCP tools to debug, test, and validate the MaD Control Electron application during development.
+This guide shows how to use Microsoft's official Playwright MCP server to debug, test, and validate the MaD Control Electron application during development.
 
-## Prerequisites
+## What is Microsoft Playwright MCP?
 
-1. Build the application first:
+Microsoft's Playwright MCP is an official Model Context Protocol server that provides browser automation capabilities using Playwright's accessibility tree, not pixel-based screenshots. This makes it fast, lightweight, and perfect for LLM-driven development.
+
+## Setup
+
+### 1. Install Dependencies
+
+The MCP server is already installed in the project:
+```bash
+npm install --save-dev @playwright/mcp
+```
+
+### 2. Configure Your MCP Client
+
+Use the configuration in `mcp-config.json`:
+```json
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": [
+        "@playwright/mcp@latest"
+      ]
+    }
+  }
+}
+```
+
+### 3. Build the Application
+
+Before testing with MCP tools, build the application:
 ```bash
 cd Software/MaDControl
 npm run build
 ```
 
-2. Launch the app in development mode:
+## Using Microsoft Playwright MCP Tools
+
+### Available MCP Tools
+
+The Microsoft Playwright MCP provides these tools through the MCP interface:
+
+- **browser_navigate** - Navigate to URLs
+- **browser_snapshot** - Capture accessibility snapshots
+- **browser_click** - Click elements  
+- **browser_type** - Type text into elements
+- **browser_hover** - Hover over elements
+- **browser_select_option** - Select dropdown options
+- **browser_drag** - Drag and drop
+- **browser_press_key** - Press keyboard keys
+- **browser_take_screenshot** - Take screenshots
+- **browser_evaluate** - Execute JavaScript
+- **browser_wait_for** - Wait for conditions
+- **browser_file_upload** - Upload files
+- **browser_handle_dialog** - Handle dialogs
+- **browser_tab_new** - Create new tabs
+- **browser_tab_select** - Switch tabs
+- **browser_tab_close** - Close tabs
+- **browser_console_messages** - Get console logs
+- **browser_network_requests** - Monitor network
+- **browser_resize** - Resize browser window
+
+### Testing the MaD Control App
+
+#### 1. Launch the Application
+
+First, start the Electron app in development mode:
 ```bash
-npm run dev:mcp
+npm run start
 ```
 
-## MCP Tool Usage Examples
+#### 2. Connect and Navigate
 
-### 1. Initial App Inspection
+Using MCP tools in your AI coding assistant (VS Code, Cursor, etc.):
 
-**Navigate to the application:**
 ```
-Tool: playwright-mcp-server-browser_navigate
+Tool: browser_navigate
 Parameters: {
-  "url": "file:///path/to/MaDControl/release/app/dist/index.html"
+  "url": "file:///absolute/path/to/MaDControl/release/app/dist/index.html"
 }
 ```
 
-**Take an initial screenshot:**
+Or if testing the development server:
+```
+Tool: browser_navigate  
+Parameters: {
+  "url": "http://localhost:1212"
+}
+```
+
+#### 3. Take Accessibility Snapshot
+
+Get the current page structure:
+```
+Tool: browser_snapshot
+```
+
+This returns a structured accessibility tree that shows all interactive elements, perfect for understanding the app layout without screenshots.
+
+#### 4. Test Navigation
+
+Click on navigation elements:
+```
+Tool: browser_click
+Parameters: {
+  "element": "Dashboard navigation button",
+  "ref": "[data-testid='nav-dashboard']"
+}
+```
+
+#### 5. Test Form Interactions
+
+Type in input fields:
+```
+Tool: browser_type
+Parameters: {
+  "element": "Serial port input field",
+  "ref": "#serial-port-input",
+  "text": "COM3"
+}
+```
+
+#### 6. Capture Screenshots for Debugging
+
+Take screenshots at key points:
+```
+Tool: browser_take_screenshot
+Parameters: {
+  "filename": "mad-control-dashboard.png"
+}
+```
+
+### Common Testing Scenarios
+
+#### Scenario 1: UI Navigation Testing
+
+1. **Load the app** - Navigate to the application
+2. **Take snapshot** - Get accessibility tree
+3. **Click navigation** - Test different sections
+4. **Verify content** - Check that sections load properly
+5. **Take screenshots** - Document the current state
+
+#### Scenario 2: Form Validation Testing  
+
+1. **Navigate to settings** - Go to configuration page
+2. **Fill forms** - Enter various input values
+3. **Submit forms** - Test form submission
+4. **Check responses** - Validate error/success messages
+5. **Test edge cases** - Try invalid inputs
+
+#### Scenario 3: Responsive Design Testing
+
+1. **Resize window** - Test different screen sizes
+2. **Take snapshots** - Check layout at each size  
+3. **Test interactions** - Ensure UI remains functional
+4. **Document issues** - Screenshot any problems
+
+## Integration with Development Workflow
+
+### For Feature Development
+
+1. **Start development server**: `npm run start`
+2. **Use MCP tools** to interact with your changes in real-time
+3. **Take screenshots** to document new features
+4. **Test accessibility** with snapshots to ensure proper structure
+5. **Validate forms** and interactions
+
+### For Bug Investigation  
+
+1. **Reproduce the issue** using MCP tools
+2. **Take screenshots** at each step
+3. **Capture console logs** with `browser_console_messages`
+4. **Monitor network requests** with `browser_network_requests`
+5. **Document the bug** with evidence
+
+### For Testing New PRs
+
+1. **Build the changes**: `npm run build`
+2. **Launch the app**: `npm run start`
+3. **Use MCP tools** to test the PR changes
+4. **Compare before/after** screenshots
+5. **Validate functionality** with accessibility snapshots
+
+## Best Practices
+
+1. **Always build first** - Run `npm run build` before testing
+2. **Use accessibility snapshots** - Faster and more reliable than screenshots
+3. **Test systematically** - Follow consistent testing patterns
+4. **Document with screenshots** - Visual proof of functionality
+5. **Monitor console/network** - Catch issues early
+6. **Test responsive design** - Verify different screen sizes
+
+## Troubleshooting
+
+### App Won't Load
+- Ensure `npm run build` was successful
+- Check that Electron app is running: `npm run start`
+- Verify the file path in `browser_navigate`
+
+### MCP Tools Not Working
+- Make sure `@playwright/mcp` is installed
+- Check your MCP client configuration
+- Verify the MCP server is running
+
+### Screenshots Are Blank
+- Wait for app to fully load before taking screenshots
+- Use `browser_wait_for` to wait for specific content
+- Check that the Electron app window is visible
+
+## Example Testing Session
+
+```javascript
+// 1. Navigate to app
+browser_navigate({ url: "http://localhost:1212" })
+
+// 2. Wait for app to load  
+browser_wait_for({ time: 3 })
+
+// 3. Take initial snapshot
+browser_snapshot()
+
+// 4. Take screenshot of main interface
+browser_take_screenshot({ filename: "main-interface.png" })
+
+// 5. Test navigation
+browser_click({ element: "Settings tab", ref: "[data-testid='nav-settings']" })
+
+// 6. Wait for page change
+browser_wait_for({ time: 1 })
+
+// 7. Take settings screenshot
+browser_take_screenshot({ filename: "settings-page.png" })
+
+// 8. Test form input
+browser_type({ element: "Port input", ref: "#port-input", text: "COM3" })
+
+// 9. Submit form
+browser_click({ element: "Connect button", ref: "#connect-btn" })
+
+// 10. Check final state
+browser_snapshot()
+browser_take_screenshot({ filename: "connected-state.png" })
+```
+
+This workflow provides comprehensive testing and debugging capabilities for the MaD Control application using Microsoft's official Playwright MCP tools.
 ```
 Tool: playwright-mcp-server-browser_take_screenshot
 Parameters: {

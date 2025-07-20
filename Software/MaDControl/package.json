@@ -50,7 +50,7 @@
     "start:preload": "cross-env NODE_ENV=development TS_NODE_TRANSPILE_ONLY=true NODE_OPTIONS=\"-r ts-node/register --no-warnings\" webpack --config ./.erb/configs/webpack.config.preload.dev.ts",
     "start:renderer": "cross-env NODE_ENV=development TS_NODE_TRANSPILE_ONLY=true NODE_OPTIONS=\"-r ts-node/register --no-warnings\" webpack serve --config ./.erb/configs/webpack.config.renderer.dev.ts",
     "test": "jest",
-    "dev:mcp": "cross-env NODE_ENV=development npm run start"
+    "mcp:server": "npx @playwright/mcp"
   },
   "browserslist": [
     "extends browserslist-config-erb"
@@ -127,6 +127,7 @@
   },
   "devDependencies": {
     "@electron/rebuild": "^3.7.1",
+    "@playwright/mcp": "^0.0.31",
     "@playwright/test": "^1.54.1",
     "@pmmmwh/react-refresh-webpack-plugin": "^0.5.15",
     "@svgr/webpack": "^8.1.0",
