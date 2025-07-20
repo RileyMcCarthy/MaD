@@ -15,17 +15,12 @@ export const test = base.extend<{
         '--disable-setuid-sandbox', 
         '--disable-dev-shm-usage',
         '--disable-web-security',
-        '--disable-features=VizDisplayCompositor',
-        '--headless',
       ],
-      // Set environment for headless operation
+      // Set environment
       env: {
         ...process.env,
-        DISPLAY: ':99',
-        ELECTRON_HEADLESS: '1',
+        ELECTRON_DEV: '0',
       },
-      // Enable for debugging
-      // env: { ...process.env, ELECTRON_DEV: '1' },
     });
 
     // Use the app
@@ -45,4 +40,3 @@ export const test = base.extend<{
   },
 });
 
-export { expect } from '@playwright/test';

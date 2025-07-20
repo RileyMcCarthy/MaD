@@ -114,3 +114,14 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+
+# Playwright test artifacts
+test-results/
+playwright-report/
+screenshot-*.png
+debug-app-structure.png
+loading-debug.png
+app-screenshot.png
+
+# Keep proof screenshots (showing Playwright works)
+!proof-*.png
