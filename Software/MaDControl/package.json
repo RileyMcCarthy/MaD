@@ -50,11 +50,7 @@
     "start:preload": "cross-env NODE_ENV=development TS_NODE_TRANSPILE_ONLY=true NODE_OPTIONS=\"-r ts-node/register --no-warnings\" webpack --config ./.erb/configs/webpack.config.preload.dev.ts",
     "start:renderer": "cross-env NODE_ENV=development TS_NODE_TRANSPILE_ONLY=true NODE_OPTIONS=\"-r ts-node/register --no-warnings\" webpack serve --config ./.erb/configs/webpack.config.renderer.dev.ts",
     "test": "jest",
-    "screenshot": "node screenshot-app.js",
-    "test:e2e": "xvfb-run -a npx playwright test",
-    "test:e2e:headed": "xvfb-run -a npx playwright test --headed",
-    "test:e2e:debug": "xvfb-run -a npx playwright test --debug",
-    "test:e2e:ui": "xvfb-run -a npx playwright test --ui"
+    "dev:mcp": "cross-env NODE_ENV=development npm run start"
   },
   "browserslist": [
     "extends browserslist-config-erb"
