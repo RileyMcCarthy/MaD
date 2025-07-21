@@ -1,0 +1,67 @@
+name: Playwright Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'Software/MaDControl/**'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'Software/MaDControl/**'
+
+jobs:
+  playwright-tests:
+    timeout-minutes: 60
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/setup-node@v4
+      with:
+        node-version: lts/*
+
+    - name: Install dependencies
+      working-directory: ./Software/MaDControl
+      run: |
+        npm ci
+        npm run electron:install
+
+    - name: Install Playwright Browsers and Dependencies
+      working-directory: ./Software/MaDControl
+      run: |
+        npx playwright install --with-deps
+        # Install Xvfb for headless Electron testing
+        sudo apt-get update
+        sudo apt-get install -y xvfb
+
+    - name: Build application
+      working-directory: ./Software/MaDControl
+      run: npm run build
+
+    - name: Run Playwright tests
+      working-directory: ./Software/MaDControl
+      run: |
+        # Start Xvfb and run tests
+        DISPLAY=:99 xvfb-run --server-args="-screen 0 1280x960x24" npx playwright test
+      env:
+        CI: true
+
+    - name: Upload screenshots and test results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: playwright-results-${{ github.run_number }}
+        path: |
+          Software/MaDControl/test-results/
+          Software/MaDControl/playwright-report/
+        retention-days: 30
+
+    - name: Upload app screenshots
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: app-screenshots-${{ github.run_number }}
+        path: Software/MaDControl/test-results/screenshots/
+        retention-days: 30

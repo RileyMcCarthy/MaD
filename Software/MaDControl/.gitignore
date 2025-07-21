@@ -122,6 +122,4 @@ screenshot-*.png
 debug-app-structure.png
 loading-debug.png
 app-screenshot.png
-
-# Keep proof screenshots (showing Playwright works)
-!proof-*.png
+proof-*.png
