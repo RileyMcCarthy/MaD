@@ -31,113 +31,93 @@ test.describe('MaD Control App Screenshots', () => {
     }
   });
 
-  test('should capture dashboard page screenshot', async () => {
+  test('should automatically screenshot all navbar pages', async () => {
     // Wait for the app to be fully loaded
     await page.waitForLoadState('networkidle');
-    await page.waitForTimeout(2000); // Extra wait for all components to render
-    
-    // Take screenshot
-    await page.screenshot({ 
-      path: 'test-results/screenshots/dashboard.png',
-      fullPage: true 
-    });
+    await page.waitForTimeout(3000);
 
     // Verify the page loaded correctly
     await expect(page).toHaveTitle(/MAD Control|MaD Control|Electron/i);
-  });
 
-  test('should capture settings page screenshot', async () => {
-    // Try to navigate to settings if there's a way to do so
-    try {
-      // Try to find settings navigation
-      const settingsButton = page.locator('text=Settings').first();
-      if (await settingsButton.isVisible({ timeout: 5000 })) {
-        await settingsButton.click();
-        await page.waitForTimeout(1500);
-      }
-    } catch {
-      // Try alternative selectors
-      try {
-        const settingsLink = page.locator('[data-testid="settings"], .settings-link, a[href*="settings"]').first();
-        if (await settingsLink.isVisible({ timeout: 5000 })) {
-          await settingsLink.click();
-          await page.waitForTimeout(1500);
-        }
-      } catch {
-        console.log('Settings page not found, taking screenshot of current page');
-      }
-    }
+    // Find all navigation links in the sidebar
+    const navLinks = await page.locator('nav a, [role="button"] a, .MuiListItemButton-root').all();
     
-    // Wait for page to load
-    await page.waitForLoadState('networkidle');
-    await page.waitForTimeout(1500);
-    
-    // Take screenshot
+    console.log(`Found ${navLinks.length} navigation elements`);
+
+    // Take screenshot of initial state
     await page.screenshot({ 
-      path: 'test-results/screenshots/settings.png',
+      path: 'test-results/screenshots/initial-state.png',
       fullPage: true 
     });
-  });
 
-  test('should capture serial communication page screenshot', async () => {
-    // Try to navigate to serial/communication section
-    try {
-      const serialButton = page.locator('text=Serial, text=Communication').first();
-      if (await serialButton.isVisible({ timeout: 5000 })) {
-        await serialButton.click();
-        await page.waitForTimeout(1500);
-      }
-    } catch {
+    // If we can't find nav links via selectors, try to find them by traversing the navbar structure
+    const sidebarNavItems = await page.locator('.MuiList-root .MuiListItem-root').all();
+    
+    console.log(`Found ${sidebarNavItems.length} sidebar navigation items`);
+
+    for (let i = 0; i < sidebarNavItems.length; i++) {
       try {
-        const serialLink = page.locator('[data-testid="serial"], .serial-link, a[href*="serial"]').first();
-        if (await serialLink.isVisible({ timeout: 5000 })) {
-          await serialLink.click();
-          await page.waitForTimeout(1500);
-        }
-      } catch {
-        console.log('Serial communication page not found, taking screenshot of current page');
+        const navItem = sidebarNavItems[i];
+        
+        // Get the text content to name the screenshot
+        const textContent = await navItem.textContent();
+        const pageName = (textContent || `page-${i}`).toLowerCase().replace(/[^a-z0-9]/g, '-');
+        
+        console.log(`Navigating to: ${textContent || `Page ${i}`}`);
+        
+        // Click the navigation item
+        await navItem.click();
+        
+        // Wait for navigation and page load
+        await page.waitForLoadState('networkidle');
+        await page.waitForTimeout(3000); // Extra time for React components
+        
+        // Take screenshot
+        await page.screenshot({ 
+          path: `test-results/screenshots/${pageName}.png`,
+          fullPage: true 
+        });
+        
+      } catch (error) {
+        console.log(`Error navigating to item ${i}:`, error);
+        // Still take a screenshot of the current state
+        await page.screenshot({ 
+          path: `test-results/screenshots/error-state-${i}.png`,
+          fullPage: true 
+        });
       }
     }
-    
-    // Wait for page to load
-    await page.waitForLoadState('networkidle');
-    await page.waitForTimeout(1500);
-    
-    // Take screenshot
-    await page.screenshot({ 
-      path: 'test-results/screenshots/serial-communication.png',
-      fullPage: true 
-    });
-  });
 
-  test('should capture test control page screenshot', async () => {
-    // Try to navigate to test control section
-    try {
-      const controlButton = page.locator('text=Test Control, text=Control').first();
-      if (await controlButton.isVisible({ timeout: 5000 })) {
-        await controlButton.click();
-        await page.waitForTimeout(1500);
-      }
-    } catch {
-      try {
-        const controlLink = page.locator('[data-testid="test-control"], .control-link, a[href*="control"]').first();
-        if (await controlLink.isVisible({ timeout: 5000 })) {
-          await controlLink.click();
-          await page.waitForTimeout(1500);
+    // If no sidebar items found, take screenshots of known routes directly
+    if (sidebarNavItems.length === 0) {
+      const knownRoutes = [
+        { path: '/dashboard', name: 'dashboard' },
+        { path: '/connect', name: 'connect' },
+        { path: '/config', name: 'config' },
+        { path: '/create', name: 'create' },
+        { path: '/firmware', name: 'firmware' }
+      ];
+
+      for (const route of knownRoutes) {
+        try {
+          console.log(`Navigating to route: ${route.path}`);
+          
+          // Navigate using page.goto or evaluate
+          await page.evaluate((path) => {
+            window.location.hash = path;
+          }, route.path);
+          
+          await page.waitForLoadState('networkidle');
+          await page.waitForTimeout(2000);
+          
+          await page.screenshot({ 
+            path: `test-results/screenshots/${route.name}.png`,
+            fullPage: true 
+          });
+        } catch (error) {
+          console.log(`Error navigating to ${route.path}:`, error);
         }
-      } catch {
-        console.log('Test control page not found, taking screenshot of current page');
       }
     }
-    
-    // Wait for page to load
-    await page.waitForLoadState('networkidle');
-    await page.waitForTimeout(1500);
-    
-    // Take screenshot
-    await page.screenshot({ 
-      path: 'test-results/screenshots/test-control.png',
-      fullPage: true 
-    });
   });
 });

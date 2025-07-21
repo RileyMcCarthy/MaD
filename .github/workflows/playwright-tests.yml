@@ -24,9 +24,7 @@ jobs:
 
     - name: Install dependencies
       working-directory: ./Software/MaDControl
-      run: |
-        npm ci
-        npm run electron:install
+      run: npm ci
 
     - name: Install Playwright Browsers and Dependencies
       working-directory: ./Software/MaDControl
