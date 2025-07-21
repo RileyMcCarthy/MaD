@@ -39,21 +39,41 @@ test.describe('MaD Control App Screenshots', () => {
     // Verify the page loaded correctly
     await expect(page).toHaveTitle(/MAD Control|MaD Control|Electron/i);
 
-    // Find all navigation links in the sidebar
-    const navLinks = await page.locator('nav a, [role="button"] a, .MuiListItemButton-root').all();
-    
-    console.log(`Found ${navLinks.length} navigation elements`);
-
     // Take screenshot of initial state
     await page.screenshot({ 
       path: 'test-results/screenshots/initial-state.png',
       fullPage: true 
     });
 
-    // If we can't find nav links via selectors, try to find them by traversing the navbar structure
-    const sidebarNavItems = await page.locator('.MuiList-root .MuiListItem-root').all();
+    // Try different selectors to find navigation items
+    const possibleSelectors = [
+      '.MuiList-root .MuiListItem-root',
+      'nav a',
+      '[role="button"]',
+      '.MuiListItemButton-root',
+      '.sidebar a',
+      '.navigation a',
+      'nav ul li',
+      '[data-testid*="nav"]'
+    ];
+
+    let sidebarNavItems = [];
+    for (const selector of possibleSelectors) {
+      const items = await page.locator(selector).all();
+      if (items.length > 0) {
+        console.log(`Found ${items.length} items using selector: ${selector}`);
+        sidebarNavItems = items;
+        break;
+      }
+    }
     
-    console.log(`Found ${sidebarNavItems.length} sidebar navigation items`);
+    console.log(`Final count: ${sidebarNavItems.length} sidebar navigation items`);
+    
+    // If no navigation items found, don't take any more screenshots
+    if (sidebarNavItems.length === 0) {
+      console.log('No navigation items found. Only initial screenshot taken.');
+      return;
+    }
 
     for (let i = 0; i < sidebarNavItems.length; i++) {
       try {
@@ -85,38 +105,6 @@ test.describe('MaD Control App Screenshots', () => {
           path: `test-results/screenshots/error-state-${i}.png`,
           fullPage: true 
         });
-      }
-    }
-
-    // If no sidebar items found, take screenshots of known routes directly
-    if (sidebarNavItems.length === 0) {
-      const knownRoutes = [
-        { path: '/dashboard', name: 'dashboard' },
-        { path: '/connect', name: 'connect' },
-        { path: '/config', name: 'config' },
-        { path: '/create', name: 'create' },
-        { path: '/firmware', name: 'firmware' }
-      ];
-
-      for (const route of knownRoutes) {
-        try {
-          console.log(`Navigating to route: ${route.path}`);
-          
-          // Navigate using page.goto or evaluate
-          await page.evaluate((path) => {
-            window.location.hash = path;
-          }, route.path);
-          
-          await page.waitForLoadState('networkidle');
-          await page.waitForTimeout(2000);
-          
-          await page.screenshot({ 
-            path: `test-results/screenshots/${route.name}.png`,
-            fullPage: true 
-          });
-        } catch (error) {
-          console.log(`Error navigating to ${route.path}:`, error);
-        }
       }
     }
   });

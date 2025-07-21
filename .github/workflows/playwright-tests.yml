@@ -46,7 +46,7 @@ jobs:
       env:
         CI: true
 
-    - name: Upload screenshots and test results
+    - name: Upload test results and screenshots
       uses: actions/upload-artifact@v4
       if: always()
       with:
@@ -54,12 +54,4 @@ jobs:
         path: |
           Software/MaDControl/test-results/
           Software/MaDControl/playwright-report/
-        retention-days: 30
-
-    - name: Upload app screenshots
-      uses: actions/upload-artifact@v4
-      if: always()
-      with:
-        name: app-screenshots-${{ github.run_number }}
-        path: Software/MaDControl/test-results/screenshots/
         retention-days: 30
