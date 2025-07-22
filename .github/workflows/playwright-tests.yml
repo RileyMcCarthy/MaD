@@ -44,6 +44,12 @@ jobs:
       working-directory: ./Software/MaDControl
       run: |
         npm run build
+        # Ensure preload script is available for development mode testing
+        mkdir -p .erb/dll
+        cp release/app/dist/main/preload.js .erb/dll/preload.js
+        # Also copy to release location for Electron app testing
+        mkdir -p release/app/.erb/dll
+        cp release/app/dist/main/preload.js release/app/.erb/dll/preload.js
 
     - name: Run Playwright tests
       working-directory: ./Software/MaDControl
