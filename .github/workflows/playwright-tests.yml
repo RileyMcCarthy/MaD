@@ -30,9 +30,11 @@ jobs:
       working-directory: ./Software/MaDControl
       run: |
         npx playwright install --with-deps
-        # Install Xvfb for headless Electron testing
+        # Install Xvfb for headless Electron testing and socat for serial emulation
         sudo apt-get update
-        sudo apt-get install -y xvfb
+        sudo apt-get install -y xvfb socat python3-pip
+        # Install Python dependencies for firmware emulation
+        pip3 install pyserial
 
     - name: Build application
       working-directory: ./Software/MaDControl

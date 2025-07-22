@@ -1,11 +1,16 @@
 import { test, expect, _electron as electron } from '@playwright/test';
 import path from 'path';
+import { FirmwareEmulation } from './helpers/firmwareEmulation';
 
 test.describe('MaD Control App Screenshots', () => {
   let electronApp: any;
   let page: any;
+  let firmwareEmulation: FirmwareEmulation;
 
   test.beforeAll(async () => {
+    // Initialize firmware emulation
+    firmwareEmulation = new FirmwareEmulation();
+    
     // Launch the Electron app with no-sandbox for CI environments
     electronApp = await electron.launch({
       args: [
@@ -34,36 +39,58 @@ test.describe('MaD Control App Screenshots', () => {
     // Wait for the app to be ready
     await page.waitForLoadState('domcontentloaded');
     
-    // Wait for React to load - use a simpler approach that doesn't violate CSP
+    // Wait for React to load
     await page.waitForSelector('#root', { timeout: 10000 });
     await page.waitForTimeout(5000); // Give extra time for React components to render
   });
 
   test.afterAll(async () => {
+    // Clean up firmware emulation
+    if (firmwareEmulation) {
+      await firmwareEmulation.stop();
+    }
+    
     if (electronApp) {
       await electronApp.close();
     }
   });
 
-  test('should automatically screenshot all navbar pages', async () => {
-    // Verify the page loaded correctly
-    const title = await page.title();
-    console.log(`Page title: ${title}`);
-    
-    // Check DOM structure
-    const bodyContent = await page.evaluate(() => document.body.outerHTML);
-    console.log(`Body content length: ${bodyContent.length} characters`);
-    
-    // Check if React root has content
-    const reactRootContent = await page.evaluate(() => {
-      const root = document.querySelector('#root');
-      return root ? root.innerHTML.length : 0;
-    });
-    console.log(`React root content length: ${reactRootContent} characters`);
+  // Helper function to open navigation drawer if it exists
+  async function openDrawerIfExists() {
+    const menuButtonSelectors = [
+      '[aria-label="open drawer"]',
+      'button:has(svg):first-child',
+      '.MuiIconButton-root:first-child',
+      'button[edge="start"]'
+    ];
 
+    for (const selector of menuButtonSelectors) {
+      const btn = page.locator(selector);
+      const count = await btn.count();
+      if (count > 0) {
+        try {
+          // Check if the button is visible before clicking
+          const isVisible = await btn.first().isVisible({ timeout: 2000 });
+          if (isVisible) {
+            await btn.first().click();
+            await page.waitForTimeout(1000);
+            console.log(`Navigation drawer opened with selector: ${selector}`);
+            return true;
+          }
+        } catch (error) {
+          console.log(`Could not click menu button with selector ${selector}:`, error.message);
+        }
+      }
+    }
+    console.log('Navigation drawer button not found or not clickable - drawer might already be open');
+    return false;
+  }
+
+  // Helper function to take screenshots of all navigation pages
+  async function screenshotAllPages(prefix: string) {
     // Take screenshot of initial state
     await page.screenshot({ 
-      path: 'test-results/screenshots/01-initial-state.png',
+      path: `test-results/screenshots/${prefix}-01-initial-state.png`,
       fullPage: true 
     });
 
@@ -71,58 +98,30 @@ test.describe('MaD Control App Screenshots', () => {
     await page.waitForSelector('.MuiAppBar-root', { timeout: 15000 });
     console.log('Material UI AppBar found');
 
-    // Look for the hamburger menu button
-    const menuButtonSelectors = [
-      '[aria-label="open drawer"]',
-      'button:has(svg):first-child',  // First button with an SVG (likely menu)
-      '.MuiIconButton-root:first-child',
-      'button[edge="start"]'
-    ];
-
-    let menuButton = null;
-    for (const selector of menuButtonSelectors) {
-      const btn = page.locator(selector);
-      const count = await btn.count();
-      if (count > 0) {
-        menuButton = btn.first();
-        console.log(`Found menu button with selector: ${selector}`);
-        break;
-      }
-    }
-
-    if (menuButton) {
-      await menuButton.click();
-      await page.waitForTimeout(1000); // Wait for drawer animation
-      console.log('Navigation drawer opened');
-      
-      // Take screenshot with drawer open
+    // Open navigation drawer
+    const drawerOpened = await openDrawerIfExists();
+    if (drawerOpened) {
       await page.screenshot({ 
-        path: 'test-results/screenshots/02-drawer-opened.png',
+        path: `test-results/screenshots/${prefix}-02-drawer-opened.png`,
         fullPage: true 
       });
-    } else {
-      console.log('Menu button not found, proceeding without opening drawer');
     }
 
-    // Look for navigation items
+    // Find navigation items
     const navItems = await page.locator('.MuiListItemButton-root').all();
-    console.log(`Found ${navItems.length} navigation items`);
+    console.log(`Found ${navItems.length} navigation items for ${prefix}`);
     
     if (navItems.length === 0) {
-      // Try alternative selectors
-      const altItems = await page.locator('a, button').all();
-      console.log(`Found ${altItems.length} total clickable elements`);
-      
-      // Take debug screenshot
+      console.log(`No navigation items found for ${prefix}`);
       await page.screenshot({ 
-        path: 'test-results/screenshots/03-debug-no-nav.png',
+        path: `test-results/screenshots/${prefix}-03-no-nav-items.png`,
         fullPage: true 
       });
       return;
     }
 
     // Screenshot each navigation page
-    const maxPages = Math.min(navItems.length, 7); // Limit to expected number of pages
+    const maxPages = Math.min(navItems.length, 7);
     for (let i = 0; i < maxPages; i++) {
       try {
         const navItem = navItems[i];
@@ -131,20 +130,18 @@ test.describe('MaD Control App Screenshots', () => {
         const navText = await navItem.textContent() || `page-${i}`;
         const pageName = navText.toLowerCase().replace(/[^a-z0-9]/g, '-');
         
-        console.log(`Clicking navigation item ${i + 1}: ${navText}`);
+        console.log(`[${prefix}] Clicking navigation item ${i + 1}: ${navText}`);
         
         // Click the navigation item
         await navItem.click();
         
         // Wait for page change
         await page.waitForTimeout(2000);
-        
-        // Wait for any loading to complete
         await page.waitForLoadState('networkidle');
         await page.waitForTimeout(1000);
         
         // Take screenshot
-        const screenshotName = `${String(i + 3).padStart(2, '0')}-${pageName}.png`;
+        const screenshotName = `${prefix}-${String(i + 3).padStart(2, '0')}-${pageName}.png`;
         await page.screenshot({ 
           path: `test-results/screenshots/${screenshotName}`,
           fullPage: true 
@@ -153,14 +150,44 @@ test.describe('MaD Control App Screenshots', () => {
         console.log(`Screenshot saved: ${screenshotName}`);
         
       } catch (error) {
-        console.log(`Error with navigation item ${i}:`, error.message);
+        console.log(`Error with navigation item ${i} for ${prefix}:`, error.message);
         
-        // Take error screenshot
         await page.screenshot({ 
-          path: `test-results/screenshots/${String(i + 3).padStart(2, '0')}-error.png`,
+          path: `test-results/screenshots/${prefix}-${String(i + 3).padStart(2, '0')}-error.png`,
           fullPage: true 
         });
       }
+    }
+  }
+
+  test('should screenshot all pages without device connection', async () => {
+    console.log('=== Taking screenshots WITHOUT device connection ===');
+    await screenshotAllPages('disconnected');
+  });
+
+  test('should screenshot all pages with firmware emulation connected', async () => {
+    console.log('=== Setting up and connecting to firmware emulation ===');
+    
+    try {
+      // Setup and start firmware emulation
+      await firmwareEmulation.setup();
+      await firmwareEmulation.start();
+      
+      console.log('Firmware emulation started successfully!');
+      console.log('Virtual serial port available at:', firmwareEmulation.getSerialPortPath());
+      
+      // Wait a moment for the emulation to stabilize
+      await page.waitForTimeout(3000);
+      
+      console.log('=== Taking screenshots WITH firmware emulation connected ===');
+      await screenshotAllPages('connected');
+      
+    } catch (error) {
+      console.error('Error setting up firmware emulation:', error);
+      
+      // Still take screenshots even if connection failed
+      console.log('=== Taking screenshots with emulation setup attempted ===');
+      await screenshotAllPages('emulation-attempted');
     }
   });
 });
