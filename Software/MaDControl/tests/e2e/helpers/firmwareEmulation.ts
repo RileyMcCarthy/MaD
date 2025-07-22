@@ -4,16 +4,20 @@ import fs from 'fs';
 
 export class FirmwareEmulation {
   private socatProcess: ChildProcess | null = null;
-  private mockSerialProcess: ChildProcess | null = null;
+  private firmwareProcess: ChildProcess | null = null;
   private isRunning: boolean = false;
+  private firmwareEmulationPath: string;
 
   constructor() {
-    // Simple virtual serial port emulation without full firmware build
+    // Use the actual firmware emulation makefile setup
+    this.firmwareEmulationPath = path.resolve(__dirname, '../../../../../Firmware/MaDCore/Emulation');
   }
 
   async setup(): Promise<void> {
-    console.log('Setting up firmware emulation (simple mode)...');
-    // No setup required for simple socat-based emulation
+    console.log('Setting up firmware emulation using makefile...');
+    
+    // Use the makefile to setup venv and install dependencies
+    await this.runCommand('make', ['venv'], this.firmwareEmulationPath);
     console.log('Firmware emulation setup complete');
   }
 
@@ -23,7 +27,7 @@ export class FirmwareEmulation {
       return;
     }
 
-    console.log('Starting firmware emulation (virtual serial port only)...');
+    console.log('Starting firmware emulation...');
     
     // Kill any existing socat processes that might interfere
     try {
@@ -49,8 +53,6 @@ export class FirmwareEmulation {
       throw new Error('Failed to start socat process for virtual serial port');
     }
 
-    this.isRunning = true;
-
     // Log output for debugging
     this.socatProcess.stdout?.on('data', (data) => {
       console.log(`Socat stdout: ${data.toString()}`);
@@ -62,93 +64,55 @@ export class FirmwareEmulation {
 
     this.socatProcess.on('close', (code) => {
       console.log(`Socat process exited with code ${code}`);
-      this.isRunning = false;
     });
 
     // Wait for the virtual serial port to be created
     await this.waitForSerialPort();
 
-    // Start a simple mock serial responder
-    await this.startMockSerialResponder();
+    // Start the actual firmware emulator using makefile
+    await this.startFirmwareEmulator();
+    
+    this.isRunning = true;
   }
 
-  private async startMockSerialResponder(): Promise<void> {
-    console.log('Starting mock serial responder...');
+  private async startFirmwareEmulator(): Promise<void> {
+    console.log('Starting firmware emulator...');
     
-    // Simple Python script to respond to serial commands
-    const mockScript = `
-import serial
-import time
-import sys
-
-try:
-    ser = serial.Serial('/tmp/tty.rpi', 9600, timeout=1)
-    print("Mock serial responder connected to /tmp/tty.rpi")
-    
-    while True:
-        try:
-            if ser.in_waiting > 0:
-                data = ser.readline().decode('utf-8').strip()
-                print(f"Received: {data}")
-                
-                # Respond to common commands
-                if data.startswith('AT'):
-                    ser.write(b'OK\\n')
-                elif data.startswith('INIT'):
-                    ser.write(b'READY\\n')
-                elif data.startswith('STATUS'):
-                    ser.write(b'CONNECTED\\n')
-                else:
-                    ser.write(b'ACK\\n')
-                    
-            time.sleep(0.1)
-        except Exception as e:
-            print(f"Error: {e}")
-            time.sleep(1)
-            
-except Exception as e:
-    print(f"Failed to connect to serial port: {e}")
-    sys.exit(1)
-`;
-
-    // Write the mock script to a temporary file
-    const scriptPath = '/tmp/mock_serial.py';
-    fs.writeFileSync(scriptPath, mockScript);
-
-    // Start the mock serial responder
-    this.mockSerialProcess = spawn('python3', [scriptPath], {
+    // Use the makefile to run the firmware emulator
+    this.firmwareProcess = spawn('make', ['run'], {
+      cwd: this.firmwareEmulationPath,
       stdio: ['pipe', 'pipe', 'pipe'],
       detached: false
     });
 
-    if (!this.mockSerialProcess) {
-      console.warn('Failed to start mock serial responder, but socat is running');
+    if (!this.firmwareProcess) {
+      console.warn('Failed to start firmware emulator, but socat is running');
       return;
     }
 
-    this.mockSerialProcess.stdout?.on('data', (data) => {
-      console.log(`Mock serial stdout: ${data.toString()}`);
+    this.firmwareProcess.stdout?.on('data', (data) => {
+      console.log(`Firmware stdout: ${data.toString()}`);
     });
 
-    this.mockSerialProcess.stderr?.on('data', (data) => {
-      console.log(`Mock serial stderr: ${data.toString()}`);
+    this.firmwareProcess.stderr?.on('data', (data) => {
+      console.log(`Firmware stderr: ${data.toString()}`);
     });
 
-    this.mockSerialProcess.on('close', (code) => {
-      console.log(`Mock serial process exited with code ${code}`);
+    this.firmwareProcess.on('close', (code) => {
+      console.log(`Firmware process exited with code ${code}`);
     });
 
     // Give it a moment to start
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    console.log('Mock serial responder started');
+    await new Promise(resolve => setTimeout(resolve, 3000));
+    console.log('Firmware emulator started');
   }
 
   async stop(): Promise<void> {
     console.log('Stopping firmware emulation...');
 
-    if (this.mockSerialProcess) {
-      this.mockSerialProcess.kill('SIGTERM');
-      this.mockSerialProcess = null;
+    if (this.firmwareProcess) {
+      this.firmwareProcess.kill('SIGTERM');
+      this.firmwareProcess = null;
     }
     
     if (this.socatProcess) {
@@ -161,13 +125,6 @@ except Exception as e:
       await this.runCommand('pkill', ['-f', 'socat']);
     } catch (error) {
       // Ignore errors if no processes found
-    }
-
-    // Clean up temporary files
-    try {
-      fs.unlinkSync('/tmp/mock_serial.py');
-    } catch (error) {
-      // Ignore if file doesn't exist
     }
 
     this.isRunning = false;

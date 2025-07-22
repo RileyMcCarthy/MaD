@@ -87,12 +87,7 @@
     ],
     "moduleNameMapper": {
       "\\.(jpg|jpeg|png|gif|eot|otf|webp|svg|ttf|woff|woff2|mp4|webm|wav|mp3|m4a|aac|oga)$": "<rootDir>/.erb/mocks/fileMock.js",
-      "\\.(css|less|sass|scss)$": "identity-obj-proxy",
-      "@shared/(.*)": "<rootDir>/src/shared/$1",
-      "@components/(.*)": "<rootDir>/src/renderer/components/$1",
-      "@utils/(.*)": "<rootDir>/src/utils/$1",
-      "@main/(.*)": "<rootDir>/src/main/$1",
-      "@renderer/(.*)": "<rootDir>/src/renderer/$1"
+      "\\.(css|less|sass|scss)$": "identity-obj-proxy"
     },
     "setupFiles": [
       "./.erb/scripts/check-build-exists.ts"

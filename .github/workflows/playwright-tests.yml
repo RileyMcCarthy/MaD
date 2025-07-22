@@ -32,17 +32,18 @@ jobs:
         npx playwright install --with-deps
         # Install Xvfb for headless Electron testing and socat for serial emulation
         sudo apt-get update
-        sudo apt-get install -y xvfb socat python3-pip
-        # Install Python dependencies for firmware emulation
-        pip3 install pyserial
+        sudo apt-get install -y xvfb socat
+
+    - name: Setup firmware emulation
+      working-directory: ./Firmware/MaDCore/Emulation
+      run: |
+        # Use the makefile to create venv and install dependencies
+        make venv
 
     - name: Build application
       working-directory: ./Software/MaDControl
       run: |
         npm run build
-        # Fix preload script path issue for testing
-        mkdir -p release/app/.erb/dll
-        cp release/app/dist/main/preload.js release/app/.erb/dll/preload.js
 
     - name: Run Playwright tests
       working-directory: ./Software/MaDControl
