@@ -12,7 +12,8 @@ test.describe('MaD Control App Screenshots', () => {
         path.join(__dirname, '../../release/app/dist/main/main.js'),
         '--no-sandbox',
         '--disable-dev-shm-usage',
-        '--disable-web-security'
+        '--disable-web-security',
+        '--disable-features=VizDisplayCompositor'
       ],
       executablePath: process.env.ELECTRON_EXECUTABLE || undefined,
     });
@@ -20,9 +21,22 @@ test.describe('MaD Control App Screenshots', () => {
     // Get the first page (main window)
     page = await electronApp.firstWindow();
     
+    // Setup console log monitoring
+    page.on('console', (msg) => {
+      console.log(`Console ${msg.type()}: ${msg.text()}`);
+    });
+    
+    // Setup error monitoring
+    page.on('pageerror', (error) => {
+      console.log(`Page error: ${error.message}`);
+    });
+    
     // Wait for the app to be ready
     await page.waitForLoadState('domcontentloaded');
-    await page.waitForTimeout(3000); // Allow React components to render and load fully
+    
+    // Wait for React to load - use a simpler approach that doesn't violate CSP
+    await page.waitForSelector('#root', { timeout: 10000 });
+    await page.waitForTimeout(5000); // Give extra time for React components to render
   });
 
   test.afterAll(async () => {
@@ -32,77 +46,118 @@ test.describe('MaD Control App Screenshots', () => {
   });
 
   test('should automatically screenshot all navbar pages', async () => {
-    // Wait for the app to be fully loaded
-    await page.waitForLoadState('networkidle');
-    await page.waitForTimeout(3000);
-
     // Verify the page loaded correctly
-    await expect(page).toHaveTitle(/MAD Control|MaD Control|Electron/i);
+    const title = await page.title();
+    console.log(`Page title: ${title}`);
+    
+    // Check DOM structure
+    const bodyContent = await page.evaluate(() => document.body.outerHTML);
+    console.log(`Body content length: ${bodyContent.length} characters`);
+    
+    // Check if React root has content
+    const reactRootContent = await page.evaluate(() => {
+      const root = document.querySelector('#root');
+      return root ? root.innerHTML.length : 0;
+    });
+    console.log(`React root content length: ${reactRootContent} characters`);
 
     // Take screenshot of initial state
     await page.screenshot({ 
-      path: 'test-results/screenshots/initial-state.png',
+      path: 'test-results/screenshots/01-initial-state.png',
       fullPage: true 
     });
 
-    // Try different selectors to find navigation items
-    const possibleSelectors = [
-      '.MuiList-root .MuiListItem-root',
-      'nav a',
-      '[role="button"]',
-      '.MuiListItemButton-root',
-      '.sidebar a',
-      '.navigation a',
-      'nav ul li',
-      '[data-testid*="nav"]'
+    // Wait for Material UI components to load
+    await page.waitForSelector('.MuiAppBar-root', { timeout: 15000 });
+    console.log('Material UI AppBar found');
+
+    // Look for the hamburger menu button
+    const menuButtonSelectors = [
+      '[aria-label="open drawer"]',
+      'button:has(svg):first-child',  // First button with an SVG (likely menu)
+      '.MuiIconButton-root:first-child',
+      'button[edge="start"]'
     ];
 
-    let sidebarNavItems = [];
-    for (const selector of possibleSelectors) {
-      const items = await page.locator(selector).all();
-      if (items.length > 0) {
-        console.log(`Found ${items.length} items using selector: ${selector}`);
-        sidebarNavItems = items;
+    let menuButton = null;
+    for (const selector of menuButtonSelectors) {
+      const btn = page.locator(selector);
+      const count = await btn.count();
+      if (count > 0) {
+        menuButton = btn.first();
+        console.log(`Found menu button with selector: ${selector}`);
         break;
       }
     }
+
+    if (menuButton) {
+      await menuButton.click();
+      await page.waitForTimeout(1000); // Wait for drawer animation
+      console.log('Navigation drawer opened');
+      
+      // Take screenshot with drawer open
+      await page.screenshot({ 
+        path: 'test-results/screenshots/02-drawer-opened.png',
+        fullPage: true 
+      });
+    } else {
+      console.log('Menu button not found, proceeding without opening drawer');
+    }
+
+    // Look for navigation items
+    const navItems = await page.locator('.MuiListItemButton-root').all();
+    console.log(`Found ${navItems.length} navigation items`);
     
-    console.log(`Final count: ${sidebarNavItems.length} sidebar navigation items`);
-    
-    // If no navigation items found, don't take any more screenshots
-    if (sidebarNavItems.length === 0) {
-      console.log('No navigation items found. Only initial screenshot taken.');
+    if (navItems.length === 0) {
+      // Try alternative selectors
+      const altItems = await page.locator('a, button').all();
+      console.log(`Found ${altItems.length} total clickable elements`);
+      
+      // Take debug screenshot
+      await page.screenshot({ 
+        path: 'test-results/screenshots/03-debug-no-nav.png',
+        fullPage: true 
+      });
       return;
     }
 
-    for (let i = 0; i < sidebarNavItems.length; i++) {
+    // Screenshot each navigation page
+    const maxPages = Math.min(navItems.length, 7); // Limit to expected number of pages
+    for (let i = 0; i < maxPages; i++) {
       try {
-        const navItem = sidebarNavItems[i];
+        const navItem = navItems[i];
         
-        // Get the text content to name the screenshot
-        const textContent = await navItem.textContent();
-        const pageName = (textContent || `page-${i}`).toLowerCase().replace(/[^a-z0-9]/g, '-');
+        // Get navigation text for naming
+        const navText = await navItem.textContent() || `page-${i}`;
+        const pageName = navText.toLowerCase().replace(/[^a-z0-9]/g, '-');
         
-        console.log(`Navigating to: ${textContent || `Page ${i}`}`);
+        console.log(`Clicking navigation item ${i + 1}: ${navText}`);
         
         // Click the navigation item
         await navItem.click();
         
-        // Wait for navigation and page load
+        // Wait for page change
+        await page.waitForTimeout(2000);
+        
+        // Wait for any loading to complete
         await page.waitForLoadState('networkidle');
-        await page.waitForTimeout(3000); // Extra time for React components
+        await page.waitForTimeout(1000);
         
         // Take screenshot
+        const screenshotName = `${String(i + 3).padStart(2, '0')}-${pageName}.png`;
         await page.screenshot({ 
-          path: `test-results/screenshots/${pageName}.png`,
+          path: `test-results/screenshots/${screenshotName}`,
           fullPage: true 
         });
         
+        console.log(`Screenshot saved: ${screenshotName}`);
+        
       } catch (error) {
-        console.log(`Error navigating to item ${i}:`, error);
-        // Still take a screenshot of the current state
+        console.log(`Error with navigation item ${i}:`, error.message);
+        
+        // Take error screenshot
         await page.screenshot({ 
-          path: `test-results/screenshots/error-state-${i}.png`,
+          path: `test-results/screenshots/${String(i + 3).padStart(2, '0')}-error.png`,
           fullPage: true 
         });
       }
