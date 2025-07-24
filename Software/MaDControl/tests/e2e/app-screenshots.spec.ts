@@ -79,9 +79,15 @@ test.describe('MaD Control App Screenshots', () => {
 
   // Helper function to take screenshots of all navigation pages
   async function screenshotAllPages(prefix: string) {
+    // Ensure screenshot directory exists
+    const screenshotDir = 'test-results/screenshots';
+    if (!fs.existsSync(screenshotDir)) {
+      fs.mkdirSync(screenshotDir, { recursive: true });
+    }
+
     // Take screenshot of initial state
     await page.screenshot({ 
-      path: `test-results/screenshots/${prefix}-01-initial-state.png`,
+      path: `${screenshotDir}/${prefix}-01-initial-state.png`,
       fullPage: true 
     });
 
@@ -93,7 +99,7 @@ test.describe('MaD Control App Screenshots', () => {
     const drawerOpened = await openDrawerIfExists();
     if (drawerOpened) {
       await page.screenshot({ 
-        path: `test-results/screenshots/${prefix}-02-drawer-opened.png`,
+        path: `${screenshotDir}/${prefix}-02-drawer-opened.png`,
         fullPage: true 
       });
     }
@@ -105,7 +111,7 @@ test.describe('MaD Control App Screenshots', () => {
     if (navItems.length === 0) {
       console.log(`No navigation items found for ${prefix}`);
       await page.screenshot({ 
-        path: `test-results/screenshots/${prefix}-03-no-nav-items.png`,
+        path: `${screenshotDir}/${prefix}-03-no-nav-items.png`,
         fullPage: true 
       });
       return;
@@ -134,7 +140,7 @@ test.describe('MaD Control App Screenshots', () => {
         // Take screenshot
         const screenshotName = `${prefix}-${String(i + 3).padStart(2, '0')}-${pageName}.png`;
         await page.screenshot({ 
-          path: `test-results/screenshots/${screenshotName}`,
+          path: `${screenshotDir}/${screenshotName}`,
           fullPage: true 
         });
         
@@ -144,7 +150,7 @@ test.describe('MaD Control App Screenshots', () => {
         console.log(`Error with navigation item ${i} for ${prefix}:`, error.message);
         
         await page.screenshot({ 
-          path: `test-results/screenshots/${prefix}-${String(i + 3).padStart(2, '0')}-error.png`,
+          path: `${screenshotDir}/${prefix}-${String(i + 3).padStart(2, '0')}-error.png`,
           fullPage: true 
         });
       }

@@ -34,6 +34,11 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y xvfb socat
 
+    - name: Install PlatformIO CLI
+      run: |
+        # Install PlatformIO CLI for firmware emulation
+        pip install platformio
+
     - name: Setup firmware emulation
       working-directory: ./Firmware/MaDCore/Emulation
       run: |
@@ -57,11 +62,7 @@ jobs:
 
     - name: Build application
       working-directory: ./Software/MaDControl
-      run: |
-        npm run build
-        # Copy preload script to expected location for testing
-        mkdir -p release/app/.erb/dll
-        cp release/app/dist/main/preload.js release/app/.erb/dll/preload.js
+      run: npm run build
 
     - name: Run Playwright tests
       working-directory: ./Software/MaDControl
@@ -71,13 +72,23 @@ jobs:
       env:
         CI: true
 
+    - name: Create artifact directories
+      run: |
+        mkdir -p /tmp/artifacts/Logs
+        mkdir -p /tmp/artifacts/Screenshots
+        # Copy firmware emulator logs
+        cp /tmp/firmware-emulator.log /tmp/artifacts/Logs/ || echo "No firmware log found"
+
+    - name: Copy screenshots to artifact directory
+      working-directory: ./Software/MaDControl
+      run: |
+        # Copy all screenshots from test results
+        find test-results/ -name "*.png" -exec cp {} /tmp/artifacts/Screenshots/ \; || echo "No screenshots found"
+
     - name: Upload test results and screenshots
       uses: actions/upload-artifact@v4
       if: always()
       with:
         name: playwright-results-${{ github.run_number }}
-        path: |
-          Software/MaDControl/test-results/
-          Software/MaDControl/playwright-report/
-          /tmp/firmware-emulator.log
+        path: /tmp/artifacts/
         retention-days: 30
