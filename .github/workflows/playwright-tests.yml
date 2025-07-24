@@ -87,7 +87,8 @@ jobs:
         export DISPLAY=:99
         Xvfb :99 -screen 0 1280x960x24 -ac &
         sleep 2
-        npx playwright test
+        # Capture Playwright logs to a file
+        npx playwright test 2>&1 | tee /tmp/playwright-test.log
       env:
         CI: true
 
@@ -97,6 +98,8 @@ jobs:
         mkdir -p /tmp/artifacts/Screenshots
         # Copy firmware emulator logs
         cp /tmp/firmware-emulator.log /tmp/artifacts/Logs/ || echo "No firmware log found"
+        # Copy Playwright test logs
+        cp /tmp/playwright-test.log /tmp/artifacts/Logs/ || echo "No Playwright log found"
 
     - name: Copy screenshots to artifact directory
       working-directory: ./Software/MaDControl

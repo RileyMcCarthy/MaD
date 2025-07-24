@@ -172,16 +172,94 @@ test.describe('MaD Control App Screenshots', () => {
       
       if (portExists) {
         console.log('Virtual serial port found at:', serialPortPath);
-        console.log('Virtual serial port is available for testing UI connection features');
         
-        // Navigate to the Connect page to test serial connection UI
-        try {
-          await page.click('text=Connect');
-          await page.waitForTimeout(2000);
-          console.log('Navigated to Connect page for serial port testing');
-        } catch (error) {
-          console.log('Could not navigate to Connect page:', error.message);
+        // Navigate to the Connect page
+        console.log('Navigating to Connect page...');
+        await page.goto('#/connect');
+        await page.waitForTimeout(3000);
+        await page.waitForLoadState('networkidle');
+        
+        // Wait for the Connect page to load completely
+        await page.waitForSelector('text=Connect to Device', { timeout: 10000 });
+        console.log('Connect page loaded successfully');
+        
+        // Wait for the port selection dropdown to be available
+        await page.waitForSelector('input[name="port"]', { timeout: 10000 });
+        console.log('Port input field found');
+        
+        // Clear and enter the virtual serial port path
+        await page.click('input[name="port"]');
+        await page.fill('input[name="port"]', '');
+        await page.fill('input[name="port"]', serialPortPath);
+        console.log(`Entered serial port: ${serialPortPath}`);
+        
+        // Select baud rate (should already be defaulted to 230400)
+        const baudRateField = page.locator('input[name="baudRate"]');
+        const baudRateExists = await baudRateField.count() > 0;
+        if (baudRateExists) {
+          console.log('Baud rate field found');
         }
+        
+        // Take screenshot before connection
+        await page.screenshot({ 
+          path: 'test-results/screenshots/before-connection.png',
+          fullPage: true 
+        });
+        console.log('Screenshot taken before connection attempt');
+        
+        // Click the Connect button
+        const connectButton = page.locator('button[type="submit"]:has-text("Connect")');
+        await connectButton.waitFor({ state: 'visible', timeout: 5000 });
+        console.log('Connect button found, attempting to click...');
+        
+        await connectButton.click();
+        console.log('Connect button clicked');
+        
+        // Wait for connection attempt - either success or error
+        await page.waitForTimeout(5000);
+        
+        // Check for connection status
+        const successAlert = page.locator('[role="alert"]').filter({ hasText: /success/i });
+        const errorAlert = page.locator('[role="alert"]').filter({ hasText: /error|fail/i });
+        const connectingText = page.locator('text=Connecting...');
+        
+        // Wait a bit more for the connection to complete
+        await page.waitForTimeout(3000);
+        
+        const hasSuccess = await successAlert.count() > 0;
+        const hasError = await errorAlert.count() > 0;
+        const isConnecting = await connectingText.count() > 0;
+        
+        if (hasSuccess) {
+          console.log('✅ Connection successful!');
+          const successText = await successAlert.first().textContent();
+          console.log('Success message:', successText);
+        } else if (hasError) {
+          console.log('❌ Connection failed');
+          const errorText = await errorAlert.first().textContent();
+          console.log('Error message:', errorText);
+        } else if (isConnecting) {
+          console.log('⏳ Still connecting, waiting longer...');
+          await page.waitForTimeout(5000);
+        } else {
+          console.log('⚠️ No clear connection status found');
+        }
+        
+        // Take screenshot after connection attempt
+        await page.screenshot({ 
+          path: 'test-results/screenshots/after-connection.png',
+          fullPage: true 
+        });
+        console.log('Screenshot taken after connection attempt');
+        
+        // Log the current page state for debugging
+        const pageTitle = await page.title();
+        const currentUrl = page.url();
+        console.log(`Current page: ${pageTitle}, URL: ${currentUrl}`);
+        
+        // Navigate back to main area to screenshot all pages in connected state
+        await page.goto('#/dashboard');
+        await page.waitForTimeout(2000);
         
       } else {
         console.log('Virtual serial port not found - testing UI without serial functionality');
@@ -192,6 +270,12 @@ test.describe('MaD Control App Screenshots', () => {
       
     } catch (error) {
       console.error('Error during emulation setup testing:', error);
+      
+      // Take error screenshot
+      await page.screenshot({ 
+        path: 'test-results/screenshots/error-state.png',
+        fullPage: true 
+      });
       
       // Still take screenshots even if connection testing failed
       console.log('=== Taking screenshots despite emulation issues ===');

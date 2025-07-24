@@ -246,33 +246,33 @@ static void writeNavKey16(NavKey *navkey, uint8_t reg, uint16_t data)
 }
 
 /** Send to the NavKey 4 byte for floating number **/
-static void __attribute__((unused)) writeNavKeyFloat(NavKey *navkey, uint8_t reg, float data)
-{
-  navkey->_tem_data.fval = data;
-
-  i2c_start(&(navkey->i2cBus));
-  i2c_write(&(navkey->i2cBus), navkey->_add & 0b11111110);
-  i2c_write(&(navkey->i2cBus), reg);
-  i2c_write(&(navkey->i2cBus), navkey->_tem_data.bval[3]);
-  i2c_write(&(navkey->i2cBus), navkey->_tem_data.bval[2]);
-  i2c_write(&(navkey->i2cBus), navkey->_tem_data.bval[1]);
-  i2c_write(&(navkey->i2cBus), navkey->_tem_data.bval[0]);
-  i2c_stop(&(navkey->i2cBus));
-}
+// static void writeNavKeyFloat(NavKey *navkey, uint8_t reg, float data)
+// {
+//   navkey->_tem_data.fval = data;
+// 
+//   i2c_start(&(navkey->i2cBus));
+//   i2c_write(&(navkey->i2cBus), navkey->_add & 0b11111110);
+//   i2c_write(&(navkey->i2cBus), reg);
+//   i2c_write(&(navkey->i2cBus), navkey->_tem_data.bval[3]);
+//   i2c_write(&(navkey->i2cBus), navkey->_tem_data.bval[2]);
+//   i2c_write(&(navkey->i2cBus), navkey->_tem_data.bval[1]);
+//   i2c_write(&(navkey->i2cBus), navkey->_tem_data.bval[0]);
+//   i2c_stop(&(navkey->i2cBus));
+// }
 
 /** Send to the NavKey 3 byte **/
-static void __attribute__((unused)) writeNavKey24(NavKey *navkey, uint8_t reg, uint32_t data)
-{
-  navkey->_tem_data.val = data;
-
-  i2c_start(&(navkey->i2cBus));
-  i2c_write(&(navkey->i2cBus), navkey->_add & 0b11111110);
-  i2c_write(&(navkey->i2cBus), reg);
-  i2c_write(&(navkey->i2cBus), navkey->_tem_data.bval[2]);
-  i2c_write(&(navkey->i2cBus), navkey->_tem_data.bval[1]);
-  i2c_write(&(navkey->i2cBus), navkey->_tem_data.bval[0]);
-  i2c_stop(&(navkey->i2cBus));
-}
+// static void writeNavKey24(NavKey *navkey, uint8_t reg, uint32_t data)
+// {
+//   navkey->_tem_data.val = data;
+// 
+//   i2c_start(&(navkey->i2cBus));
+//   i2c_write(&(navkey->i2cBus), navkey->_add & 0b11111110);
+//   i2c_write(&(navkey->i2cBus), reg);
+//   i2c_write(&(navkey->i2cBus), navkey->_tem_data.bval[2]);
+//   i2c_write(&(navkey->i2cBus), navkey->_tem_data.bval[1]);
+//   i2c_write(&(navkey->i2cBus), navkey->_tem_data.bval[0]);
+//   i2c_stop(&(navkey->i2cBus));
+// }
 
 /*********************************** Public functions *************************************/
 /** Used for initialize the NavKey **/

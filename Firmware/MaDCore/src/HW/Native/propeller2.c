@@ -1,5 +1,3 @@
-#define _POSIX_C_SOURCE 199309L
-#define _GNU_SOURCE
 #include "propeller2.h"
 #include <pthread.h>
 #include <sys/time.h>
