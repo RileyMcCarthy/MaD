@@ -162,7 +162,7 @@ test.describe('MaD Control App Screenshots', () => {
     await screenshotAllPages('disconnected');
   });
 
-  test('should screenshot all pages with firmware emulation connected', async () => {
+  test('should screenshot all pages with firmware emulation setup', async () => {
     console.log('=== Checking for firmware emulation connection ===');
     
     try {
@@ -172,29 +172,30 @@ test.describe('MaD Control App Screenshots', () => {
       
       if (portExists) {
         console.log('Virtual serial port found at:', serialPortPath);
-        console.log('Firmware emulation should be running - attempting to connect via UI...');
+        console.log('Virtual serial port is available for testing UI connection features');
         
-        // Navigate to the Connect page to test serial connection
-        await page.click('text=Connect');
-        await page.waitForTimeout(2000);
-        
-        // Look for serial port selection UI and try to select our virtual port
-        // This will depend on how the MaD Control app handles serial port selection
-        console.log('Looking for serial port selection interface...');
+        // Navigate to the Connect page to test serial connection UI
+        try {
+          await page.click('text=Connect');
+          await page.waitForTimeout(2000);
+          console.log('Navigated to Connect page for serial port testing');
+        } catch (error) {
+          console.log('Could not navigate to Connect page:', error.message);
+        }
         
       } else {
-        console.log('Virtual serial port not found - firmware emulation may not be running');
+        console.log('Virtual serial port not found - testing UI without serial functionality');
       }
       
-      console.log('=== Taking screenshots WITH firmware emulation setup ===');
+      console.log('=== Taking screenshots with emulation setup attempted ===');
       await screenshotAllPages('connected');
       
     } catch (error) {
-      console.error('Error setting up firmware emulation connection:', error);
+      console.error('Error during emulation setup testing:', error);
       
-      // Still take screenshots even if connection failed
-      console.log('=== Taking screenshots with emulation setup attempted ===');
-      await screenshotAllPages('emulation-attempted');
+      // Still take screenshots even if connection testing failed
+      console.log('=== Taking screenshots despite emulation issues ===');
+      await screenshotAllPages('fallback');
     }
   });
 });
