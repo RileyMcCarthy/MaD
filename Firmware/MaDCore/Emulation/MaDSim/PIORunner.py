@@ -33,7 +33,7 @@ class FirmwareRunner:
     
     def clean(self):
         try:
-            subprocess.check_call(['pio', 'run', '-t', 'clean', '--project-dir', self.directory])
+            subprocess.check_call(['pio', 'run', '-t', 'clean', '-e', self.env, '--project-dir', self.directory])
         except subprocess.CalledProcessError:
             # There was an error - command exited with non-zero code
             logger.error("Error cleaning firmware")
