@@ -57,7 +57,11 @@ jobs:
 
     - name: Build application
       working-directory: ./Software/MaDControl
-      run: npm run build
+      run: |
+        npm run build
+        # Copy preload script to expected location for testing
+        mkdir -p release/app/.erb/dll
+        cp release/app/dist/main/preload.js release/app/.erb/dll/preload.js
 
     - name: Run Playwright tests
       working-directory: ./Software/MaDControl

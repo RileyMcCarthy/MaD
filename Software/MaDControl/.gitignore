@@ -95,6 +95,7 @@ Thumbs.db
 
 # Electron build output
 release/app/dist/
+release/app/.erb/
 release/build/
 .erb/dll/
 
