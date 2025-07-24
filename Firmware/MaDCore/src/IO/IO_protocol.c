@@ -164,7 +164,7 @@ IO_protocol_incommingType_E IO_protocol_recieveRequest(IO_protocol_readType_E *r
         while (IO_fullDuplexSerial_available(IO_FULLDUPLEXSERIAL_CHANNEL_MAIN) > 0)
         {
             const uint16_t index = LIB_UTILITY_LIMIT(IO_protocol_data.recieve.dataIndex, 0U, maxSize);
-            if (IO_protocol_private_recieveByte(&data[index]))
+            if (IO_protocol_private_recieveByte(&((uint8_t*)data)[index]))
             {
                 IO_protocol_data.recieve.dataIndex++;
                 if (IO_protocol_data.recieve.dataIndex >= IO_protocol_data.recieve.dataLength)

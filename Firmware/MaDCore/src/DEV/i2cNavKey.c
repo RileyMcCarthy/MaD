@@ -246,7 +246,7 @@ static void writeNavKey16(NavKey *navkey, uint8_t reg, uint16_t data)
 }
 
 /** Send to the NavKey 4 byte for floating number **/
-static void writeNavKeyFloat(NavKey *navkey, uint8_t reg, float data)
+static void __attribute__((unused)) writeNavKeyFloat(NavKey *navkey, uint8_t reg, float data)
 {
   navkey->_tem_data.fval = data;
 
@@ -261,7 +261,7 @@ static void writeNavKeyFloat(NavKey *navkey, uint8_t reg, float data)
 }
 
 /** Send to the NavKey 3 byte **/
-static void writeNavKey24(NavKey *navkey, uint8_t reg, uint32_t data)
+static void __attribute__((unused)) writeNavKey24(NavKey *navkey, uint8_t reg, uint32_t data)
 {
   navkey->_tem_data.val = data;
 
