@@ -7,6 +7,7 @@
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <sys/select.h>
 #include "lib_staticQueue.h"
 #include "IO_Debug.h"
 

@@ -1,9 +1,12 @@
+#define _POSIX_C_SOURCE 199309L
+#define _GNU_SOURCE
 #include "propeller2.h"
 #include <pthread.h>
 #include <sys/time.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <time.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
@@ -61,6 +64,7 @@ static void *incrementMicroseconds(void *arg)
         // Sleep for a short period to reduce CPU usage
         usleep(1000); // Sleep for 1 millisecond
     }
+    return NULL; // Never reached, but needed for function signature
 }
 
 // Initialization function to start the microseconds incrementing thread
@@ -196,7 +200,7 @@ int _cogstart(void (*func)(void *), void *arg, void *stack_base, uint32_t stack_
     pthread_attr_setstack(&attr, stack_base, stack_size);
 
     // Create and start the new pthread
-    if (pthread_create(&thread, &attr, (void *_Nullable (*_Nonnull)(void *_Nullable))func, (void *)arg) != 0)
+    if (pthread_create(&thread, &attr, (void *(*)(void *))func, (void *)arg) != 0)
     {
         return -1; // Error occurred
     }
