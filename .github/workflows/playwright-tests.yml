@@ -40,16 +40,24 @@ jobs:
         # Use the makefile to create venv and install dependencies
         make venv
 
+    - name: Start firmware emulator
+      run: |
+        # Create virtual serial port pair
+        socat -d -d pty,raw,echo=0,link=/tmp/tty.rpi_client pty,raw,echo=0,link=/tmp/tty.rpi &
+        echo $! > /tmp/socat.pid
+        # Wait for virtual serial ports to be created
+        sleep 2
+        # Start firmware emulator in background
+        cd Firmware/MaDCore/Emulation
+        nohup make run > /tmp/firmware-emulator.log 2>&1 &
+        echo $! > /tmp/firmware.pid
+        # Give emulator time to start
+        sleep 5
+        echo "Firmware emulator started, logs available in /tmp/firmware-emulator.log"
+
     - name: Build application
       working-directory: ./Software/MaDControl
-      run: |
-        npm run build
-        # Ensure preload script is available for development mode testing
-        mkdir -p .erb/dll
-        cp release/app/dist/main/preload.js .erb/dll/preload.js
-        # Also copy to release location for Electron app testing
-        mkdir -p release/app/.erb/dll
-        cp release/app/dist/main/preload.js release/app/.erb/dll/preload.js
+      run: npm run build
 
     - name: Run Playwright tests
       working-directory: ./Software/MaDControl
@@ -67,4 +75,5 @@ jobs:
         path: |
           Software/MaDControl/test-results/
           Software/MaDControl/playwright-report/
+          /tmp/firmware-emulator.log
         retention-days: 30
