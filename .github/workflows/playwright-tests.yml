@@ -74,13 +74,20 @@ jobs:
 
     - name: Build application
       working-directory: ./Software/MaDControl
-      run: npm run build
+      run: |
+        npm run build
+        # Copy preload script to expected location for testing
+        mkdir -p release/app/.erb/dll
+        cp release/app/dist/main/preload.js release/app/.erb/dll/preload.js
 
     - name: Run Playwright tests
       working-directory: ./Software/MaDControl
       run: |
-        # Start Xvfb and run tests
-        DISPLAY=:99 xvfb-run --server-args="-screen 0 1280x960x24" npx playwright test
+        # Start Xvfb and run tests with proper X server setup
+        export DISPLAY=:99
+        Xvfb :99 -screen 0 1280x960x24 -ac &
+        sleep 2
+        npx playwright test
       env:
         CI: true
 
