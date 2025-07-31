@@ -53,6 +53,10 @@
     "test:playwright": "playwright test",
     "test:playwright:ui": "playwright test --ui",
     "test:screenshots": "playwright test tests/e2e/app-screenshots.spec.ts",
+    "test:profiles": "playwright test tests/e2e/profile-management.spec.ts",
+    "test:sil": "playwright test tests/e2e/",
+    "test:sil:headed": "playwright test tests/e2e/ --headed",
+    "test:sil:debug": "playwright test tests/e2e/ --debug",
     "mcp:server": "npx @playwright/mcp"
   },
   "browserslist": [

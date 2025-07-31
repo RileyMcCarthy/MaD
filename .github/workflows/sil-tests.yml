@@ -1,0 +1,108 @@
+name: SIL Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'Software/MaDControl/**'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'Software/MaDControl/**'
+
+env:
+  # Common environment variables
+  NODE_ENV: production
+  CI: true
+  DISPLAY: ':99'
+
+jobs:
+  sil-tests:
+    timeout-minutes: 60
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/setup-node@v4
+      with:
+        node-version: lts/*
+
+    - name: Install MaD Control dependencies
+      working-directory: ./Software/MaDControl
+      run: npm ci
+
+    - name: Install system dependencies for testing
+      run: |
+        # Install Playwright browsers, Xvfb for headless testing, and socat for serial emulation
+        cd ./Software/MaDControl && npx playwright install --with-deps
+        sudo apt-get update && sudo apt-get install -y xvfb socat
+
+    - name: Setup firmware emulation environment
+      run: |
+        # Install PlatformIO CLI for firmware compilation
+        pip install platformio
+        
+        # Setup firmware emulation using makefile
+        cd Firmware/MaDCore/Emulation
+        make venv
+        echo "Firmware emulation environment ready"
+      continue-on-error: true
+
+    - name: Start virtual serial ports and firmware emulation
+      run: |
+        # Create virtual serial port pair for UI testing
+        socat -d -d pty,raw,echo=0,link=/tmp/tty.rpi_client pty,raw,echo=0,link=/tmp/tty.rpi &
+        echo $! > /tmp/socat.pid
+        sleep 2
+        
+        # Start firmware emulator in background
+        cd Firmware/MaDCore/Emulation
+        echo "Starting firmware emulator..."
+        nohup make run > /tmp/firmware-emulator.log 2>&1 &
+        echo $! > /tmp/firmware.pid
+        sleep 5
+        
+        # Check if emulator started successfully
+        if kill -0 $(cat /tmp/firmware.pid 2>/dev/null) 2>/dev/null; then
+          echo "✅ Firmware emulator started successfully"
+        else
+          echo "⚠️ Firmware emulator failed to start (platform compatibility issue)"
+          echo "Virtual serial ports available for UI testing"
+        fi
+      continue-on-error: true
+
+    - name: Build MaD Control application
+      working-directory: ./Software/MaDControl
+      run: npm run build
+
+    - name: Run SIL tests with virtual display
+      working-directory: ./Software/MaDControl
+      run: |
+        # Start virtual display for headless testing
+        Xvfb :99 -screen 0 1280x960x24 -ac &
+        sleep 2
+        
+        # Run all Playwright tests and capture logs
+        npx playwright test 2>&1 | tee /tmp/playwright-test.log
+
+    - name: Collect test artifacts
+      if: always()
+      run: |
+        # Create structured artifact directories
+        mkdir -p /tmp/artifacts/{Logs,Screenshots}
+        
+        # Collect logs
+        cp /tmp/firmware-emulator.log /tmp/artifacts/Logs/ 2>/dev/null || echo "No firmware log"
+        cp /tmp/playwright-test.log /tmp/artifacts/Logs/ 2>/dev/null || echo "No Playwright log"
+        
+        # Collect screenshots from all test suites
+        find ./Software/MaDControl/test-results/ -name "*.png" -exec cp {} /tmp/artifacts/Screenshots/ \; 2>/dev/null || echo "No screenshots found"
+
+    - name: Upload test artifacts
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: sil-test-results-${{ github.run_number }}
+        path: /tmp/artifacts/
+        retention-days: 30

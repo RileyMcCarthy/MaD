@@ -271,14 +271,9 @@ test.describe('MaD Control App Screenshots', () => {
         const currentUrl = page.url();
         console.log(`Current page: ${pageTitle}, URL: ${currentUrl}`);
         
-        // Take a final screenshot showing the connected state
-        await page.screenshot({ 
-          path: 'test-results/screenshots/connected-state.png',
-          fullPage: true 
-        });
-        console.log('Screenshot taken of connected state');
-        
-        console.log('✅ Connection test completed successfully');
+        // Now take screenshots of all pages while connected
+        console.log('=== Taking screenshots WITH device connected ===');
+        await screenshotAllPages('connected');
         
       } else {
         console.log('Virtual serial port not found - testing UI without serial functionality');
