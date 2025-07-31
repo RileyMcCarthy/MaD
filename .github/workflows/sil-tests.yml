@@ -83,21 +83,40 @@ jobs:
         Xvfb :99 -screen 0 1280x960x24 -ac &
         sleep 2
         
-        # Run all Playwright tests and capture logs
-        npx playwright test 2>&1 | tee /tmp/playwright-test.log
+        # Run all Playwright tests with proper reporting and capture logs
+        echo "Running Playwright SIL tests..."
+        npx playwright test --reporter=github,list 2>&1 | tee /tmp/playwright-test.log
+        
+        # Check test results and show summary
+        if [ $? -eq 0 ]; then
+          echo "✅ All Playwright tests passed successfully"
+        else
+          echo "❌ Some Playwright tests failed - check logs for details"
+          exit 1
+        fi
 
     - name: Collect test artifacts
       if: always()
       run: |
         # Create structured artifact directories
-        mkdir -p /tmp/artifacts/{Logs,Screenshots}
+        mkdir -p /tmp/artifacts/{Logs,Screenshots,TestResults}
         
         # Collect logs
-        cp /tmp/firmware-emulator.log /tmp/artifacts/Logs/ 2>/dev/null || echo "No firmware log"
-        cp /tmp/playwright-test.log /tmp/artifacts/Logs/ 2>/dev/null || echo "No Playwright log"
+        cp /tmp/firmware-emulator.log /tmp/artifacts/Logs/ 2>/dev/null || echo "No firmware log found"
+        cp /tmp/playwright-test.log /tmp/artifacts/Logs/ 2>/dev/null || echo "No Playwright log found"
         
         # Collect screenshots from all test suites
         find ./Software/MaDControl/test-results/ -name "*.png" -exec cp {} /tmp/artifacts/Screenshots/ \; 2>/dev/null || echo "No screenshots found"
+        
+        # Collect test results and traces
+        find ./Software/MaDControl/test-results/ -name "*.zip" -exec cp {} /tmp/artifacts/TestResults/ \; 2>/dev/null || echo "No trace files found"
+        find ./Software/MaDControl/test-results/ -name "*.html" -exec cp {} /tmp/artifacts/TestResults/ \; 2>/dev/null || echo "No HTML reports found"
+        
+        # Show artifact summary
+        echo "=== Test Artifacts Summary ==="
+        echo "Logs: $(ls -1 /tmp/artifacts/Logs/ 2>/dev/null | wc -l) files"
+        echo "Screenshots: $(ls -1 /tmp/artifacts/Screenshots/ 2>/dev/null | wc -l) files"
+        echo "Test Results: $(ls -1 /tmp/artifacts/TestResults/ 2>/dev/null | wc -l) files"
 
     - name: Upload test artifacts
       uses: actions/upload-artifact@v4
