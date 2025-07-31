@@ -31,8 +31,13 @@ jobs:
     - name: Install MaD Control dependencies
       working-directory: ./Software/MaDControl
       run: |
-        # Install dependencies with legacy peer deps support
-        npm ci --legacy-peer-deps
+        # Install dependencies with legacy peer deps support, skipping postinstall to avoid ts-node/typescript dependency issues
+        npm ci --ignore-scripts --legacy-peer-deps
+        
+        # Now manually run the postinstall steps with dependencies available
+        npx ts-node .erb/scripts/check-native-dep.js
+        npx electron-builder install-app-deps
+        npm run build:dll
 
     - name: Install system dependencies for testing
       run: |
