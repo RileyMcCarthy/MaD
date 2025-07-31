@@ -30,7 +30,14 @@ jobs:
 
     - name: Install MaD Control dependencies
       working-directory: ./Software/MaDControl
-      run: npm ci
+      run: |
+        # Install dependencies without running postinstall scripts
+        npm ci --ignore-scripts --legacy-peer-deps
+        
+        # Run the postinstall steps manually with proper Node.js setup
+        npx ts-node .erb/scripts/check-native-dep.js
+        npx electron-builder install-app-deps
+        npm run build:dll
 
     - name: Install system dependencies for testing
       run: |
