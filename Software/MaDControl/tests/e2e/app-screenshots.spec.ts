@@ -7,10 +7,18 @@ test.describe('MaD Control App Screenshots', () => {
   let page: any;
 
   test.beforeAll(async () => {
+    // Determine the app path - use pre-built artifacts if available
+    const distPath = process.env.MAD_CONTROL_DIST_PATH;
+    const appPath = distPath 
+      ? path.join(distPath, 'main/main.js')
+      : path.join(__dirname, '../../release/app/dist/main/main.js');
+    
+    console.log(`Launching Electron app from: ${appPath}`);
+    
     // Launch the Electron app with no-sandbox for CI environments
     electronApp = await electron.launch({
       args: [
-        path.join(__dirname, '../../release/app/dist/main/main.js'),
+        appPath,
         '--no-sandbox',
         '--disable-dev-shm-usage',
         '--disable-web-security',

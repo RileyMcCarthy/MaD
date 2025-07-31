@@ -32,7 +32,14 @@ except Exception as e:
     print("Continuing without virtual serial ports...")
 
 # Build firmware
-firmware = MaDSim.FirmwareRunner("native", "../")
+prebuilt_executable = os.getenv('MAD_FIRMWARE_EXECUTABLE')
+if prebuilt_executable and os.path.exists(prebuilt_executable):
+    print(f"Using prebuilt firmware executable: {prebuilt_executable}")
+    firmware = MaDSim.FirmwareRunner("native", "../", prebuilt_executable)
+else:
+    print("Building firmware from source...")
+    firmware = MaDSim.FirmwareRunner("native", "../")
+
 firmware.clean()
 firmware.build()
 

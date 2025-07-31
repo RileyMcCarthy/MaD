@@ -5,10 +5,12 @@ on:
     branches: [ main, develop ]
     paths:
       - 'Software/MaDControl/**'
+      - 'Firmware/**'
   pull_request:
     branches: [ main, develop ]
     paths:
       - 'Software/MaDControl/**'
+      - 'Firmware/**'
 
 env:
   # Common environment variables
@@ -17,7 +19,81 @@ env:
   DISPLAY: ':99'
 
 jobs:
+  # Build dependencies if they don't exist as artifacts
+  build-dependencies:
+    runs-on: ubuntu-latest
+    outputs:
+      software-artifact-name: ${{ steps.build-info.outputs.software-artifact-name }}
+      firmware-artifact-name: ${{ steps.build-info.outputs.firmware-artifact-name }}
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set build info
+      id: build-info
+      run: |
+        echo "software-artifact-name=MaD-Control-${{ github.run_number }}" >> $GITHUB_OUTPUT
+        echo "firmware-artifact-name=MaD-Firmware-${{ github.run_number }}" >> $GITHUB_OUTPUT
+
+    - uses: actions/setup-node@v4
+      with:
+        node-version: lts/*
+
+    - name: Build MaD Control
+      working-directory: ./Software/MaDControl
+      run: |
+        npm install
+        npm run build
+        
+        # Create a distributable package for testing
+        mkdir -p /tmp/mad-control-dist
+        cp -r release/app/dist/* /tmp/mad-control-dist/
+        cp -r release/app/.erb /tmp/mad-control-dist/ || true
+        cp package.json /tmp/mad-control-dist/
+        
+        # Copy node_modules needed for Playwright
+        mkdir -p /tmp/mad-control-dist/node_modules
+        cp -r node_modules/@playwright /tmp/mad-control-dist/node_modules/ || true
+        cp -r node_modules/playwright* /tmp/mad-control-dist/node_modules/ || true
+
+    - name: Upload Software Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ steps.build-info.outputs.software-artifact-name }}
+        path: /tmp/mad-control-dist/
+        retention-days: 1
+
+    - uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+        
+    - name: Build Firmware (Native)
+      run: |
+        # Install PlatformIO Core
+        pip install --upgrade platformio
+        
+        # Install propeller platform
+        cd Firmware/MaDCore
+        pio pkg install --platform https://github.com/RileyMcCarthy/platform-propeller.git
+        
+        # Build native version for emulation
+        pio run -e native --program-arg="-DFIRMWARE_VERSION=\"dev\""
+        
+        # Prepare emulation environment
+        mkdir -p /tmp/firmware-dist
+        cp -r Emulation /tmp/firmware-dist/
+        cp .pio/build/native/program /tmp/firmware-dist/mad-firmware-native
+        chmod +x /tmp/firmware-dist/mad-firmware-native
+
+    - name: Upload Firmware Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ steps.build-info.outputs.firmware-artifact-name }}
+        path: /tmp/firmware-dist/
+        retention-days: 1
+
   sil-tests:
+    needs: build-dependencies
     timeout-minutes: 60
     runs-on: ubuntu-latest
     
@@ -28,33 +104,68 @@ jobs:
       with:
         node-version: lts/*
 
-    - name: Install MaD Control dependencies
-      working-directory: ./Software/MaDControl
-      run: npm install
+    - name: Download Software Build Artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: ${{ needs.build-dependencies.outputs.software-artifact-name }}
+        path: /tmp/mad-control/
+
+    - name: Download Firmware Build Artifacts  
+      uses: actions/download-artifact@v4
+      with:
+        name: ${{ needs.build-dependencies.outputs.firmware-artifact-name }}
+        path: /tmp/firmware/
+
+    - name: Setup artifacts
+      run: |
+        echo "Setting up downloaded artifacts..."
+        
+        # Verify software artifacts
+        echo "✅ Software artifacts:"
+        ls -la /tmp/mad-control/
+        
+        # Verify firmware artifacts  
+        echo "✅ Firmware artifacts:"
+        ls -la /tmp/firmware/
+        
+        # Make firmware emulator executable
+        chmod +x /tmp/firmware/mad-firmware-native
 
     - name: Install system dependencies for testing
       run: |
-        # Install Playwright browsers, Xvfb for headless testing, and socat for serial emulation
-        cd ./Software/MaDControl && npx playwright install --with-deps
-        sudo apt-get update && sudo apt-get install -y xvfb socat
+        # Install Playwright browsers and Xvfb for headless testing
+        sudo apt-get update && sudo apt-get install -y xvfb socat python3-venv
 
-    - name: Setup firmware emulation environment
+    - name: Setup Playwright for testing
       run: |
-        # Install PlatformIO CLI for firmware compilation
-        pip install platformio
+        cd ./Software/MaDControl
+        # Install minimal dependencies needed for Playwright
+        npm ci --omit=optional --ignore-scripts
+        npx playwright install --with-deps
+
+    - name: Setup firmware emulation
+      run: |
+        echo "Setting up firmware emulation from artifacts..."
+        cd /tmp/firmware/Emulation
         
-        # Setup firmware emulation using makefile
-        cd Firmware/MaDCore/Emulation
-        make venv
+        # Setup Python virtual environment
+        python3 -m venv venv
+        source venv/bin/activate
+        pip install -r requirements.txt
+        
         echo "Firmware emulation environment ready"
-      continue-on-error: true
 
     - name: Start firmware emulation
       run: |
-        # Start firmware emulator in background (Server.py handles socat creation)
-        cd Firmware/MaDCore/Emulation
-        echo "Starting firmware emulator with virtual serial port support..."
-        nohup make run > /tmp/firmware-emulator.log 2>&1 &
+        echo "Starting firmware emulator..."
+        cd /tmp/firmware/Emulation
+        
+        # Set environment variable for prebuilt firmware
+        export MAD_FIRMWARE_EXECUTABLE="/tmp/firmware/mad-firmware-native"
+        
+        # Start emulator using the pre-built native executable
+        source venv/bin/activate
+        nohup python3 Server.py > /tmp/firmware-emulator.log 2>&1 &
         echo $! > /tmp/firmware.pid
         sleep 5
         
@@ -65,19 +176,17 @@ jobs:
           if [ -e "/tmp/tty.rpi_client" ]; then
             echo "✅ Virtual serial ports available at /tmp/tty.rpi_client"
           else
-            echo "⚠️ Virtual serial ports not found (may need manual socat setup)"
+            echo "⚠️ Virtual serial ports not found"
           fi
         else
-          echo "⚠️ Firmware emulator failed to start (platform compatibility issue)"
+          echo "⚠️ Firmware emulator failed to start"
         fi
       continue-on-error: true
 
-    - name: Build MaD Control application
-      working-directory: ./Software/MaDControl
-      run: npm run build
-
     - name: Run SIL tests with virtual display
       working-directory: ./Software/MaDControl
+      env:
+        MAD_CONTROL_DIST_PATH: /tmp/mad-control
       run: |
         # Start virtual display for headless testing
         Xvfb :99 -screen 0 1280x960x24 -ac &

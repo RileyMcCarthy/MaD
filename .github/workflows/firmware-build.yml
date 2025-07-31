@@ -50,6 +50,9 @@ jobs:
     - name: Build Firmware - Release Version
       working-directory: Firmware/MaDCore
       run: pio run -e propeller2_release --program-arg="-DFIRMWARE_VERSION=\"${{ steps.get_version.outputs.VERSION }}\""
+    - name: Build Firmware - Native Version (for SIL testing)
+      working-directory: Firmware/MaDCore
+      run: pio run -e native --program-arg="-DFIRMWARE_VERSION=\"${{ steps.get_version.outputs.VERSION }}\""
     - name: Copy and rename build artifacts
       run: |
         mkdir -p release-assets
@@ -57,6 +60,11 @@ jobs:
         cp Firmware/MaDCore/.pio/build/propeller2_debug/program release-assets/MaD-Firmware-${{ steps.get_version.outputs.VERSION }}-debug.bin
         # Copy release version with .bin extension
         cp Firmware/MaDCore/.pio/build/propeller2_release/program release-assets/MaD-Firmware-${{ steps.get_version.outputs.VERSION }}-release.bin
+        # Copy native version (executable for SIL testing)
+        cp Firmware/MaDCore/.pio/build/native/program release-assets/MaD-Firmware-${{ steps.get_version.outputs.VERSION }}-native
+        chmod +x release-assets/MaD-Firmware-${{ steps.get_version.outputs.VERSION }}-native
+        # Copy the entire emulation directory for SIL testing
+        cp -r Firmware/MaDCore/Emulation release-assets/Emulation
     - name: Upload build artifacts
       uses: actions/upload-artifact@v4
       with:
