@@ -31,13 +31,8 @@ jobs:
     - name: Install MaD Control dependencies
       working-directory: ./Software/MaDControl
       run: |
-        # Install dependencies without running postinstall scripts
-        npm ci --ignore-scripts --legacy-peer-deps
-        
-        # Run the postinstall steps manually with proper Node.js setup
-        npx ts-node .erb/scripts/check-native-dep.js
-        npx electron-builder install-app-deps
-        npm run build:dll
+        # Install dependencies with legacy peer deps support
+        npm ci --legacy-peer-deps
 
     - name: Install system dependencies for testing
       run: |
@@ -56,16 +51,11 @@ jobs:
         echo "Firmware emulation environment ready"
       continue-on-error: true
 
-    - name: Start virtual serial ports and firmware emulation
+    - name: Start firmware emulation
       run: |
-        # Create virtual serial port pair for UI testing
-        socat -d -d pty,raw,echo=0,link=/tmp/tty.rpi_client pty,raw,echo=0,link=/tmp/tty.rpi &
-        echo $! > /tmp/socat.pid
-        sleep 2
-        
-        # Start firmware emulator in background
+        # Start firmware emulator in background (Server.py handles socat creation)
         cd Firmware/MaDCore/Emulation
-        echo "Starting firmware emulator..."
+        echo "Starting firmware emulator with virtual serial port support..."
         nohup make run > /tmp/firmware-emulator.log 2>&1 &
         echo $! > /tmp/firmware.pid
         sleep 5
@@ -73,9 +63,14 @@ jobs:
         # Check if emulator started successfully
         if kill -0 $(cat /tmp/firmware.pid 2>/dev/null) 2>/dev/null; then
           echo "✅ Firmware emulator started successfully"
+          # Check if virtual serial ports were created
+          if [ -e "/tmp/tty.rpi_client" ]; then
+            echo "✅ Virtual serial ports available at /tmp/tty.rpi_client"
+          else
+            echo "⚠️ Virtual serial ports not found (may need manual socat setup)"
+          fi
         else
           echo "⚠️ Firmware emulator failed to start (platform compatibility issue)"
-          echo "Virtual serial ports available for UI testing"
         fi
       continue-on-error: true
 
