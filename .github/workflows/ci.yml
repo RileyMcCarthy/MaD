@@ -5,10 +5,20 @@ on:
     paths:
       - 'Software/**'
       - 'Firmware/**'
+      - 'Hardware/**'
+    tags:
+      - 'software-v*'
+      - 'firmware-v*'
+      - 'hardware-v*'
   pull_request:
     paths:
       - 'Software/**'
       - 'Firmware/**'
+      - 'Hardware/**'
+
+permissions:
+  contents: write
+  packages: write
 
 jobs:
   # Determine which components need to be built based on changed files
@@ -17,6 +27,10 @@ jobs:
     outputs:
       software: ${{ steps.changes.outputs.software }}
       firmware: ${{ steps.changes.outputs.firmware }}
+      hardware: ${{ steps.changes.outputs.hardware }}
+      is_software_release: ${{ startsWith(github.ref, 'refs/tags/software-v') }}
+      is_firmware_release: ${{ startsWith(github.ref, 'refs/tags/firmware-v') }}
+      is_hardware_release: ${{ startsWith(github.ref, 'refs/tags/hardware-v') }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v2
@@ -27,11 +41,16 @@ jobs:
               - 'Software/**'
             firmware:
               - 'Firmware/**'
+            hardware:
+              - 'Hardware/**'
 
   build-software:
     needs: changes
-    # Build software if either software or firmware changes (needed for SIL testing)
-    if: needs.changes.outputs.software == 'true' || needs.changes.outputs.firmware == 'true'
+    # Build software for SIL testing when software/firmware changes, or always for software releases
+    if: |
+      startsWith(github.ref, 'refs/tags/software-v') ||
+      (!startsWith(github.ref, 'refs/tags/') && 
+       (needs.changes.outputs.software == 'true' || needs.changes.outputs.firmware == 'true'))
     runs-on: macos-latest-large
     outputs:
       artifact-name: ${{ steps.artifact.outputs.name }}
@@ -54,14 +73,32 @@ jobs:
         working-directory: Software/MaDControl
         run: npm install
     
+      - name: Set version for build
+        id: get_version
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/software-v* ]]; then
+            # Extract version from software release tag
+            VERSION=${GITHUB_REF#refs/tags/software-v}
+            echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+            echo "Using software release version: $VERSION"
+          else
+            # CI workflow uses dev version
+            echo "VERSION=dev-${{ github.run_number }}" >> $GITHUB_OUTPUT
+            echo "Using CI version: dev-${{ github.run_number }}"
+          fi
+
       - name: Build application
         working-directory: Software/MaDControl
         run: |
           npm run build:dll
           npm run build
-          # CI workflow only creates artifacts for testing - releases handled by separate workflows
-          echo "Building for CI testing - creating artifacts only"
-          npm exec electron-builder -- --publish never --win --mac --linux
+          if [[ "${{ github.ref }}" == refs/tags/software-v* ]]; then
+            echo "Building for software release"
+            npm exec electron-builder -- --publish never --win --mac --linux
+          else
+            echo "Building for CI testing - creating artifacts only"
+            npm exec electron-builder -- --publish never --win --mac --linux
+          fi
 
       - name: Set artifact name
         id: artifact
@@ -80,8 +117,11 @@ jobs:
 
   build-firmware:
     needs: changes
-    # Build firmware if either software or firmware changes (needed for SIL testing)
-    if: needs.changes.outputs.software == 'true' || needs.changes.outputs.firmware == 'true'
+    # Build firmware for SIL testing when software/firmware changes, or always for firmware releases
+    if: |
+      startsWith(github.ref, 'refs/tags/firmware-v') ||
+      (!startsWith(github.ref, 'refs/tags/') && 
+       (needs.changes.outputs.software == 'true' || needs.changes.outputs.firmware == 'true'))
     runs-on: ubuntu-latest
     outputs:
       artifact-name: ${{ steps.artifact.outputs.name }}
@@ -99,9 +139,16 @@ jobs:
       - name: Set version for CI build
         id: get_version
         run: |
-          # CI workflow always uses dev version - releases handled by separate workflows
-          echo "VERSION=dev-${{ github.run_number }}" >> $GITHUB_OUTPUT
-          echo "Using CI version: dev-${{ github.run_number }}"
+          if [[ "${{ github.ref }}" == refs/tags/firmware-v* ]]; then
+            # Extract version from firmware release tag
+            VERSION=${GITHUB_REF#refs/tags/firmware-v}
+            echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+            echo "Using firmware release version: $VERSION"
+          else
+            # CI workflow uses dev version
+            echo "VERSION=dev-${{ github.run_number }}" >> $GITHUB_OUTPUT
+            echo "Using CI version: dev-${{ github.run_number }}"
+          fi
       - name: Build Firmware - Debug Version
         working-directory: Firmware/MaDCore
         run: pio run -e propeller2_debug --program-arg="-DFIRMWARE_VERSION=\"${{ steps.get_version.outputs.VERSION }}\""
@@ -132,12 +179,56 @@ jobs:
           name: ${{ steps.artifact.outputs.name }}
           path: release-assets/
 
+  build-hardware:
+    needs: changes
+    # Build hardware when hardware changes or for hardware releases
+    if: |
+      startsWith(github.ref, 'refs/tags/hardware-v') ||
+      (!startsWith(github.ref, 'refs/tags/') && needs.changes.outputs.hardware == 'true')
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - project: EdgeBoard
+            pcb_path: Hardware/EdgeBoard/KiCad/MaD_Edge.kicad_pcb
+            sch_path: Hardware/EdgeBoard/KiCad/MaD_Edge.kicad_sch
+          - project: DS2Addon
+            pcb_path: Hardware/DS2Addon/KICAD/DS2_Addon.kicad_pcb
+            sch_path: Hardware/DS2Addon/KICAD/DS2_Addon.kicad_sch
+    outputs:
+      artifact-name: ${{ steps.artifact.outputs.name }}
+
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Generate manufacturing files using KiBot
+      uses: INTI-CMNB/KiBot@v2_k7
+      with:
+        config: .kibot/config.kibot.yaml
+        board: ${{ matrix.pcb_path }}
+        schema: ${{ matrix.sch_path }}
+
+    - name: Set artifact name
+      id: artifact
+      run: echo "name=${{ matrix.project }}-hardware-${{ github.run_number }}" >> $GITHUB_OUTPUT
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ steps.artifact.outputs.name }}
+        path: |
+          Manufacturing/
+          Documentation/
+          *_documentation.zip
+          *_gerbers.zip
+
   sil-tests:
     needs: [changes, build-software, build-firmware]
-    # Run SIL tests when either software or firmware changes
+    # Run SIL tests when either software or firmware changes (not hardware-only, not for releases)
     # Both builds must succeed since they both run when either component changes
     if: |
       always() && 
+      !startsWith(github.ref, 'refs/tags/') &&
       (needs.changes.outputs.software == 'true' || needs.changes.outputs.firmware == 'true') &&
       needs.build-software.result == 'success' &&
       needs.build-firmware.result == 'success'
@@ -209,8 +300,10 @@ jobs:
       - name: Setup Playwright for testing
         run: |
           cd ./Software/MaDControl
-          # Install minimal dependencies needed for Playwright
-          npm ci --omit=optional --ignore-scripts
+          # Install full dependencies including electron for Playwright testing
+          npm ci --legacy-peer-deps
+          # Ensure electron is properly installed
+          npx electron --version || npm install electron --save-dev
           npx playwright install --with-deps
 
       - name: Setup firmware emulation environment
@@ -248,21 +341,27 @@ jobs:
         working-directory: ./Software/MaDControl
         env:
           MAD_CONTROL_DIST_PATH: ../../mad-control
+          DISPLAY: :99
         run: |
           # Start virtual display for headless testing
           Xvfb :99 -screen 0 1280x960x24 -ac &
-          sleep 2
+          export DISPLAY=:99
+          sleep 3
           
           # Run all Playwright tests with proper reporting and capture logs
           echo "Running Playwright SIL tests against pre-built artifacts..."
+          set +e  # Don't exit on first error to capture exit code
           npx playwright test --reporter=github,list 2>&1 | tee /tmp/playwright-test.log
+          TEST_EXIT_CODE=$?
+          set -e
           
           # Check test results and show summary
-          if [ $? -eq 0 ]; then
+          if [ $TEST_EXIT_CODE -eq 0 ]; then
             echo "✅ All Playwright tests passed successfully"
           else
-            echo "❌ Some Playwright tests failed - check logs for details"
-            exit 1
+            echo "❌ Playwright tests failed with exit code $TEST_EXIT_CODE"
+            echo "See test artifacts for detailed failure information"
+            exit $TEST_EXIT_CODE
           fi
 
       - name: Collect test artifacts
@@ -295,3 +394,88 @@ jobs:
           name: sil-test-results-${{ github.run_number }}
           path: ./artifacts/
           retention-days: 30
+
+  # Release jobs - only run when tags are pushed
+  release-software:
+    needs: [changes, build-software]
+    if: |
+      startsWith(github.ref, 'refs/tags/software-v') &&
+      needs.build-software.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download software artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build-software.outputs.artifact-name }}
+          path: artifacts
+          
+      - name: Get tag version
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/software-v}" >> $GITHUB_OUTPUT
+      
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: MaD Control ${{ steps.get_version.outputs.VERSION }}
+          tag_name: software-v${{ steps.get_version.outputs.VERSION }}
+          files: artifacts/*
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  release-firmware:
+    needs: [changes, build-firmware]
+    if: |
+      startsWith(github.ref, 'refs/tags/firmware-v') &&
+      needs.build-firmware.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download firmware artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build-firmware.outputs.artifact-name }}
+          path: artifacts
+          
+      - name: Get tag version
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/firmware-v}" >> $GITHUB_OUTPUT
+      
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: MaD Firmware ${{ steps.get_version.outputs.VERSION }}
+          tag_name: firmware-v${{ steps.get_version.outputs.VERSION }}
+          files: artifacts/*.bin
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  release-hardware:
+    needs: [changes, build-hardware]
+    if: |
+      startsWith(github.ref, 'refs/tags/hardware-v') &&
+      needs.build-hardware.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all hardware artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: '*-hardware-*'
+          
+      - name: Get tag version
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/hardware-v}" >> $GITHUB_OUTPUT
+          
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: MaD Hardware ${{ steps.get_version.outputs.VERSION }}
+          tag_name: hardware-v${{ steps.get_version.outputs.VERSION }}
+          files: artifacts/**/*
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
