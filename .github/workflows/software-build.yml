@@ -3,10 +3,14 @@ name: Build Software
 on:
   push:
     branches: [main]
+    paths:
+      - 'Software/**'
     tags:
       - 'software-v*'
   pull_request:
     branches: [main]
+    paths:
+      - 'Software/**'
 
 jobs:
   build:
