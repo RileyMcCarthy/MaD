@@ -5,9 +5,6 @@ on:
     paths:
       - 'Software/**'
       - 'Firmware/**'
-    tags:
-      - 'software-v*'
-      - 'firmware-v*'
   pull_request:
     paths:
       - 'Software/**'
@@ -33,7 +30,8 @@ jobs:
 
   build-software:
     needs: changes
-    if: needs.changes.outputs.software == 'true'
+    # Build software if either software or firmware changes (needed for SIL testing)
+    if: needs.changes.outputs.software == 'true' || needs.changes.outputs.firmware == 'true'
     runs-on: macos-latest-large
     outputs:
       artifact-name: ${{ steps.artifact.outputs.name }}
@@ -61,22 +59,15 @@ jobs:
         run: |
           npm run build:dll
           npm run build
-          if [[ $GITHUB_REF == refs/tags/software-v* ]]; then
-            echo "Building from tag - will publish to GitHub releases"
-            npm exec electron-builder -- --publish onTag --win --mac --linux
-          else
-            echo "Building from push - will create artifacts only"
-            npm exec electron-builder -- --publish never --win --mac --linux
-          fi
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # CI workflow only creates artifacts for testing - releases handled by separate workflows
+          echo "Building for CI testing - creating artifacts only"
+          npm exec electron-builder -- --publish never --win --mac --linux
 
       - name: Set artifact name
         id: artifact
         run: echo "name=MaD-Control-${{ github.run_number }}" >> $GITHUB_OUTPUT
 
       - name: Upload build artifacts
-        if: ${{ !startsWith(github.ref, 'refs/tags/software-v') }}
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.artifact.outputs.name }}
@@ -89,7 +80,8 @@ jobs:
 
   build-firmware:
     needs: changes
-    if: needs.changes.outputs.firmware == 'true'
+    # Build firmware if either software or firmware changes (needed for SIL testing)
+    if: needs.changes.outputs.software == 'true' || needs.changes.outputs.firmware == 'true'
     runs-on: ubuntu-latest
     outputs:
       artifact-name: ${{ steps.artifact.outputs.name }}
@@ -104,19 +96,12 @@ jobs:
       - name: Install propeller platformio platform
         working-directory: Firmware/MaDCore
         run: pio pkg install --platform https://github.com/RileyMcCarthy/platform-propeller.git
-      - name: Extract version from tag
+      - name: Set version for CI build
         id: get_version
         run: |
-          if [[ $GITHUB_REF == refs/tags/firmware-v* ]]; then
-            # If building from a firmware tag, extract the version number
-            VERSION=${GITHUB_REF#refs/tags/firmware-v}
-            echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
-            echo "Using version from tag: $VERSION"
-          else
-            # Default version for non-tag builds
-            echo "VERSION=dev" >> $GITHUB_OUTPUT
-            echo "Using default version: dev"
-          fi
+          # CI workflow always uses dev version - releases handled by separate workflows
+          echo "VERSION=dev-${{ github.run_number }}" >> $GITHUB_OUTPUT
+          echo "Using CI version: dev-${{ github.run_number }}"
       - name: Build Firmware - Debug Version
         working-directory: Firmware/MaDCore
         run: pio run -e propeller2_debug --program-arg="-DFIRMWARE_VERSION=\"${{ steps.get_version.outputs.VERSION }}\""
@@ -147,49 +132,15 @@ jobs:
           name: ${{ steps.artifact.outputs.name }}
           path: release-assets/
 
-  create-firmware-release:
-    needs: [changes, build-firmware]
-    if: needs.changes.outputs.firmware == 'true' && startsWith(github.ref, 'refs/tags/firmware-v')
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ needs.build-firmware.outputs.artifact-name }}
-          path: artifacts
-          
-      - name: Display structure of downloaded files
-        run: ls -R artifacts
-          
-      - name: Get tag version
-        id: get_version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/firmware-}" >> $GITHUB_OUTPUT
-      
-      - name: Copy firmware files to release folder
-        run: |
-          mkdir -p release
-          cp artifacts/*.bin release/
-          
-      - name: Create Release
-        uses: softprops/action-gh-release@v1
-        with:
-          name: MaD Firmware ${{ steps.get_version.outputs.VERSION }}
-          tag_name: firmware-${{ steps.get_version.outputs.VERSION }}
-          files: release/*.bin
-          draft: false
-          prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
   sil-tests:
     needs: [changes, build-software, build-firmware]
-    # Run SIL tests if both software and firmware changes are present
-    # Skip if jobs were skipped due to no changes in their respective areas
+    # Run SIL tests when either software or firmware changes
+    # Both builds must succeed since they both run when either component changes
     if: |
       always() && 
-      (needs.changes.outputs.software == 'true' && needs.changes.outputs.firmware == 'true') &&
-      (needs.build-software.result == 'success' || needs.build-software.result == 'skipped') &&
-      (needs.build-firmware.result == 'success' || needs.build-firmware.result == 'skipped')
+      (needs.changes.outputs.software == 'true' || needs.changes.outputs.firmware == 'true') &&
+      needs.build-software.result == 'success' &&
+      needs.build-firmware.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     
@@ -201,14 +152,12 @@ jobs:
           node-version: lts/*
 
       - name: Download Software Build Artifacts
-        if: needs.changes.outputs.software == 'true'
         uses: actions/download-artifact@v4
         with:
           name: ${{ needs.build-software.outputs.artifact-name }}
           path: ./software-artifacts/
         
       - name: Prepare software for testing
-        if: needs.changes.outputs.software == 'true'
         run: |
           echo "Preparing software artifacts for testing..."
           
@@ -228,14 +177,12 @@ jobs:
           ls -la ./mad-control/
 
       - name: Download Firmware Build Artifacts
-        if: needs.changes.outputs.firmware == 'true'
         uses: actions/download-artifact@v4
         with:
           name: ${{ needs.build-firmware.outputs.artifact-name }}
           path: ./firmware-artifacts/
         
       - name: Prepare firmware for testing
-        if: needs.changes.outputs.firmware == 'true'
         run: |
           echo "Preparing firmware artifacts for testing..."
           
@@ -267,7 +214,6 @@ jobs:
           npx playwright install --with-deps
 
       - name: Setup firmware emulation environment
-        if: needs.changes.outputs.firmware == 'true'
         run: |
           echo "Setting up firmware emulation environment using makefile..."
           cd Firmware/MaDCore/Emulation
@@ -278,7 +224,6 @@ jobs:
           echo "✅ Firmware emulation environment ready"
 
       - name: Start firmware emulation
-        if: needs.changes.outputs.firmware == 'true'
         run: |
           echo "Starting firmware emulator with pre-built binary..."
           cd Firmware/MaDCore/Emulation

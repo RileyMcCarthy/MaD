@@ -2,13 +2,13 @@
 
 ## Overview
 
-The MaD project uses a unified CI workflow with job dependencies for robust testing and deployment. This follows the industry standard pattern used by major projects like React, Vue, and Angular.
+The MaD project uses a unified CI workflow for testing with separate release workflows for independent component releases. This provides comprehensive SIL testing while maintaining flexible release management.
 
 ## Workflow Structure
 
 ### Main CI Workflow (`ci.yml`)
 
-The primary workflow handles all build and test operations with explicit job dependencies:
+The primary workflow handles builds and SIL testing for pull requests and pushes:
 
 ```
 ┌─────────────┐
@@ -16,39 +16,48 @@ The primary workflow handles all build and test operations with explicit job dep
 └─────┬───────┘
       │
     ┌─▼─────────────────────────────────────┐
-    │                                       │
+    │     When either component changes     │
 ┌───▼──────────┐                  ┌────▼───────────┐
 │build-software│                  │ build-firmware │
-│(Software/**)  │                  │ (Firmware/**)  │
+│   (always)   │                  │   (always)     │
 └───┬──────────┘                  └────┬───────────┘
     │                                  │
     └─────────────┐      ┌─────────────┘
                   │      │
                ┌──▼──────▼──┐
-               │ sil-tests  │ ← Runs only when both builds succeed
+               │ sil-tests  │ ← Runs when either component changes
                └────────────┘
 ```
 
-### Job Dependencies
+### Separate Release Workflows
 
-- **`changes`**: Uses `dorny/paths-filter` to detect which areas changed
-- **`build-software`**: Runs only when `Software/**` files change
-- **`build-firmware`**: Runs only when `Firmware/**` files change  
-- **`sil-tests`**: Depends on both builds, runs only when both areas have changes and builds succeed
-- **Release jobs**: Handle tag-based releases independently
+- **`software-build.yml`**: Triggered only by `software-v*` tags
+- **`firmware-build.yml`**: Triggered only by `firmware-v*` tags  
+- **`hardware-build.yml`**: Triggered by `hardware-v*` tags
+
+### Key Logic Changes
+
+- **Both builds always run**: When either Software/ or Firmware/ changes, both components are built
+- **SIL tests run for any change**: Tests run when either component changes (not just both)
+- **Independent releases**: CI workflow only handles testing; releases are handled by separate workflows
 
 ### Benefits
 
+✅ **Comprehensive testing**: SIL tests validate integration when either component changes  
+✅ **Independent releases**: Each component can be released separately without affecting others  
+✅ **No release conflicts**: CI workflow never interferes with release processes  
 ✅ **Immediate visibility**: All jobs show up as checks in PRs immediately  
 ✅ **Required checks**: Easy to set SIL tests as required in branch protection  
-✅ **No timing issues**: Explicit dependencies ensure proper execution order  
-✅ **Resource efficient**: Jobs only run when relevant files change  
-✅ **Robust**: Eliminates race conditions and artifact synchronization issues  
 
-### Legacy Workflows
+## Release Strategy
 
-- `software-build.yml`: Handles only tagged software releases
-- `firmware-build.yml`: Handles only tagged firmware releases
+Each component maintains independent release cycles:
+
+- **Software releases**: Create `software-v1.2.3` tags to trigger software-only releases
+- **Firmware releases**: Create `firmware-v1.2.3` tags to trigger firmware-only releases  
+- **Hardware releases**: Create `hardware-v1.2.3` tags to trigger hardware-only releases
+
+The CI workflow never interferes with these releases and only handles testing.
 
 ## Setting Up Required Checks
 
