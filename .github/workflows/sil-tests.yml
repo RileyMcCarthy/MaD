@@ -1,16 +1,21 @@
 name: SIL Tests
 
 on:
+  workflow_run:
+    workflows: ["Build Software", "Build MaD Firmware"]
+    types:
+      - completed
+    branches: [main, develop]
   push:
-    branches: [ main, develop ]
+    branches: [main, develop]
     paths:
-      - 'Software/MaDControl/**'
-      - 'Firmware/**'
+      - '.github/workflows/sil-tests.yml'
+      - 'Software/MaDControl/tests/**'
   pull_request:
-    branches: [ main, develop ]
+    branches: [main, develop]
     paths:
-      - 'Software/MaDControl/**'
-      - 'Firmware/**'
+      - '.github/workflows/sil-tests.yml'
+      - 'Software/MaDControl/tests/**'
 
 env:
   # Common environment variables
@@ -19,81 +24,13 @@ env:
   DISPLAY: ':99'
 
 jobs:
-  # Build dependencies if they don't exist as artifacts
-  build-dependencies:
-    runs-on: ubuntu-latest
-    outputs:
-      software-artifact-name: ${{ steps.build-info.outputs.software-artifact-name }}
-      firmware-artifact-name: ${{ steps.build-info.outputs.firmware-artifact-name }}
-    
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Set build info
-      id: build-info
-      run: |
-        echo "software-artifact-name=MaD-Control-${{ github.run_number }}" >> $GITHUB_OUTPUT
-        echo "firmware-artifact-name=MaD-Firmware-${{ github.run_number }}" >> $GITHUB_OUTPUT
-
-    - uses: actions/setup-node@v4
-      with:
-        node-version: lts/*
-
-    - name: Build MaD Control
-      working-directory: ./Software/MaDControl
-      run: |
-        npm install
-        npm run build
-        
-        # Create a distributable package for testing
-        mkdir -p /tmp/mad-control-dist
-        cp -r release/app/dist/* /tmp/mad-control-dist/
-        cp -r release/app/.erb /tmp/mad-control-dist/ || true
-        cp package.json /tmp/mad-control-dist/
-        
-        # Copy node_modules needed for Playwright
-        mkdir -p /tmp/mad-control-dist/node_modules
-        cp -r node_modules/@playwright /tmp/mad-control-dist/node_modules/ || true
-        cp -r node_modules/playwright* /tmp/mad-control-dist/node_modules/ || true
-
-    - name: Upload Software Artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: ${{ steps.build-info.outputs.software-artifact-name }}
-        path: /tmp/mad-control-dist/
-        retention-days: 1
-
-    - uses: actions/setup-python@v4
-      with:
-        python-version: '3.9'
-        
-    - name: Build Firmware (Native)
-      run: |
-        # Install PlatformIO Core
-        pip install --upgrade platformio
-        
-        # Install propeller platform
-        cd Firmware/MaDCore
-        pio pkg install --platform https://github.com/RileyMcCarthy/platform-propeller.git
-        
-        # Build native version for emulation
-        pio run -e native --program-arg="-DFIRMWARE_VERSION=\"dev\""
-        
-        # Prepare emulation environment
-        mkdir -p /tmp/firmware-dist
-        cp -r Emulation /tmp/firmware-dist/
-        cp .pio/build/native/program /tmp/firmware-dist/mad-firmware-native
-        chmod +x /tmp/firmware-dist/mad-firmware-native
-
-    - name: Upload Firmware Artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: ${{ steps.build-info.outputs.firmware-artifact-name }}
-        path: /tmp/firmware-dist/
-        retention-days: 1
-
   sil-tests:
-    needs: build-dependencies
+    # Only run if both workflows completed successfully, or if manually triggered
+    if: |
+      github.event_name == 'push' || 
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'workflow_run' && 
+       github.event.workflow_run.conclusion == 'success')
     timeout-minutes: 60
     runs-on: ubuntu-latest
     
@@ -104,32 +41,69 @@ jobs:
       with:
         node-version: lts/*
 
+    - name: Get latest workflow run IDs
+      id: get-runs
+      run: |
+        # Get the latest successful runs for both workflows
+        SOFTWARE_RUN=$(gh run list --workflow=software-build.yml --status=success --limit=1 --json databaseId --jq '.[0].databaseId')
+        FIRMWARE_RUN=$(gh run list --workflow=firmware-build.yml --status=success --limit=1 --json databaseId --jq '.[0].databaseId')
+        
+        echo "software-run-id=$SOFTWARE_RUN" >> $GITHUB_OUTPUT
+        echo "firmware-run-id=$FIRMWARE_RUN" >> $GITHUB_OUTPUT
+        
+        echo "Latest successful software build: $SOFTWARE_RUN"
+        echo "Latest successful firmware build: $FIRMWARE_RUN"
+      env:
+        GH_TOKEN: ${{ github.token }}
+
     - name: Download Software Build Artifacts
-      uses: actions/download-artifact@v4
-      with:
-        name: ${{ needs.build-dependencies.outputs.software-artifact-name }}
-        path: /tmp/mad-control/
+      run: |
+        echo "Downloading software artifacts from run ${{ steps.get-runs.outputs.software-run-id }}..."
+        gh run download ${{ steps.get-runs.outputs.software-run-id }} --name "MaD-Control-${{ steps.get-runs.outputs.software-run-id }}" --dir /tmp/software-artifacts/
+        
+        # Extract and prepare the software for testing
+        mkdir -p /tmp/mad-control/
+        
+        # Find and extract the Linux AppImage or other distributable
+        if ls /tmp/software-artifacts/*.AppImage 1> /dev/null 2>&1; then
+          echo "Found AppImage distribution"
+          cp /tmp/software-artifacts/*.AppImage /tmp/mad-control/
+        elif ls /tmp/software-artifacts/*.zip 1> /dev/null 2>&1; then
+          echo "Found ZIP distribution"
+          unzip /tmp/software-artifacts/*.zip -d /tmp/mad-control/
+        else
+          echo "No suitable distribution found"
+          ls -la /tmp/software-artifacts/
+          exit 1
+        fi
+        
+        echo "✅ Software artifacts ready:"
+        ls -la /tmp/mad-control/
+      env:
+        GH_TOKEN: ${{ github.token }}
 
     - name: Download Firmware Build Artifacts  
-      uses: actions/download-artifact@v4
-      with:
-        name: ${{ needs.build-dependencies.outputs.firmware-artifact-name }}
-        path: /tmp/firmware/
-
-    - name: Setup artifacts
       run: |
-        echo "Setting up downloaded artifacts..."
+        echo "Downloading firmware artifacts from run ${{ steps.get-runs.outputs.firmware-run-id }}..."
+        gh run download ${{ steps.get-runs.outputs.firmware-run-id }} --name "MaD-Firmware-${{ steps.get-runs.outputs.firmware-run-id }}" --dir /tmp/firmware-artifacts/
         
-        # Verify software artifacts
-        echo "✅ Software artifacts:"
-        ls -la /tmp/mad-control/
+        # Find and prepare the native firmware binary
+        mkdir -p /tmp/firmware/
         
-        # Verify firmware artifacts  
-        echo "✅ Firmware artifacts:"
+        if ls /tmp/firmware-artifacts/*-native.bin 1> /dev/null 2>&1; then
+          cp /tmp/firmware-artifacts/*-native.bin /tmp/firmware/mad-firmware-native.bin
+          chmod +x /tmp/firmware/mad-firmware-native.bin
+          echo "✅ Native firmware binary ready"
+        else
+          echo "❌ Native firmware binary not found"
+          ls -la /tmp/firmware-artifacts/
+          exit 1
+        fi
+        
+        echo "✅ Firmware artifacts ready:"
         ls -la /tmp/firmware/
-        
-        # Make firmware emulator executable
-        chmod +x /tmp/firmware/mad-firmware-native
+      env:
+        GH_TOKEN: ${{ github.token }}
 
     - name: Install system dependencies for testing
       run: |
@@ -143,9 +117,13 @@ jobs:
         npm ci --omit=optional --ignore-scripts
         npx playwright install --with-deps
 
-    - name: Setup firmware emulation
+    - name: Setup firmware emulation environment
       run: |
-        echo "Setting up firmware emulation from artifacts..."
+        echo "Setting up firmware emulation environment..."
+        
+        # Copy emulation scripts from source code
+        cp -r Firmware/MaDCore/Emulation /tmp/firmware/
+        
         cd /tmp/firmware/Emulation
         
         # Setup Python virtual environment
@@ -153,15 +131,15 @@ jobs:
         source venv/bin/activate
         pip install -r requirements.txt
         
-        echo "Firmware emulation environment ready"
+        echo "✅ Firmware emulation environment ready"
 
     - name: Start firmware emulation
       run: |
-        echo "Starting firmware emulator..."
+        echo "Starting firmware emulator with pre-built binary..."
         cd /tmp/firmware/Emulation
         
         # Set environment variable for prebuilt firmware
-        export MAD_FIRMWARE_EXECUTABLE="/tmp/firmware/mad-firmware-native"
+        export MAD_FIRMWARE_EXECUTABLE="/tmp/firmware/mad-firmware-native.bin"
         
         # Start emulator using the pre-built native executable
         source venv/bin/activate
@@ -193,7 +171,7 @@ jobs:
         sleep 2
         
         # Run all Playwright tests with proper reporting and capture logs
-        echo "Running Playwright SIL tests..."
+        echo "Running Playwright SIL tests against pre-built artifacts..."
         npx playwright test --reporter=github,list 2>&1 | tee /tmp/playwright-test.log
         
         # Check test results and show summary
