@@ -5,7 +5,6 @@ on:
     workflows: ["Build Software", "Build MaD Firmware"]
     types:
       - completed
-    branches: [main, develop]
 
 env:
   # Common environment variables
@@ -15,7 +14,7 @@ env:
 
 jobs:
   sil-tests:
-    # Only run if both workflows completed successfully
+    # Only run if the triggering workflow completed successfully
     if: github.event.workflow_run.conclusion == 'success'
     timeout-minutes: 60
     runs-on: ubuntu-latest
@@ -33,16 +32,34 @@ jobs:
         # Get the head SHA from the triggering workflow
         HEAD_SHA="${{ github.event.workflow_run.head_sha }}"
         echo "Target commit SHA: $HEAD_SHA"
+        echo "Triggering workflow: ${{ github.event.workflow_run.name }}"
         
         # Find successful runs for both workflows for this specific commit
-        SOFTWARE_RUN=$(gh run list --workflow=software-build.yml --status=success --limit=10 --json databaseId,headSha --jq ".[] | select(.headSha == \"$HEAD_SHA\") | .databaseId" | head -1)
-        FIRMWARE_RUN=$(gh run list --workflow=firmware-build.yml --status=success --limit=10 --json databaseId,headSha --jq ".[] | select(.headSha == \"$HEAD_SHA\") | .databaseId" | head -1)
+        SOFTWARE_RUN=$(gh run list --workflow=software-build.yml --status=success --limit=20 --json databaseId,headSha --jq ".[] | select(.headSha == \"$HEAD_SHA\") | .databaseId" | head -1)
+        FIRMWARE_RUN=$(gh run list --workflow=firmware-build.yml --status=success --limit=20 --json databaseId,headSha --jq ".[] | select(.headSha == \"$HEAD_SHA\") | .databaseId" | head -1)
+        
+        echo "Software run found: $SOFTWARE_RUN"
+        echo "Firmware run found: $FIRMWARE_RUN"
         
         if [ -z "$SOFTWARE_RUN" ] || [ -z "$FIRMWARE_RUN" ]; then
-          echo "❌ Could not find successful runs for both workflows at commit $HEAD_SHA"
-          echo "Software run: $SOFTWARE_RUN"
-          echo "Firmware run: $FIRMWARE_RUN"
-          exit 1
+          echo "⚠️  Could not find successful runs for both workflows at commit $HEAD_SHA"
+          echo "This may be expected if one workflow hasn't completed yet."
+          echo "Software run: ${SOFTWARE_RUN:-'Not found'}"
+          echo "Firmware run: ${FIRMWARE_RUN:-'Not found'}"
+          
+          # Wait a bit and try again in case the other workflow is still running
+          echo "Waiting 30 seconds for other workflow to potentially complete..."
+          sleep 30
+          
+          SOFTWARE_RUN=$(gh run list --workflow=software-build.yml --status=success --limit=20 --json databaseId,headSha --jq ".[] | select(.headSha == \"$HEAD_SHA\") | .databaseId" | head -1)
+          FIRMWARE_RUN=$(gh run list --workflow=firmware-build.yml --status=success --limit=20 --json databaseId,headSha --jq ".[] | select(.headSha == \"$HEAD_SHA\") | .databaseId" | head -1)
+          
+          if [ -z "$SOFTWARE_RUN" ] || [ -z "$FIRMWARE_RUN" ]; then
+            echo "❌ Still could not find successful runs for both workflows at commit $HEAD_SHA"
+            echo "Software run: ${SOFTWARE_RUN:-'Not found'}"
+            echo "Firmware run: ${FIRMWARE_RUN:-'Not found'}"
+            exit 1
+          fi
         fi
         
         echo "software-run-id=$SOFTWARE_RUN" >> $GITHUB_OUTPUT
