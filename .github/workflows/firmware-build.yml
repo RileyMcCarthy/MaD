@@ -1,14 +1,9 @@
-name: Build MaD Firmware
+name: Build MaD Firmware (Release Only)
 
 on:
   push:
-    paths:
-      - 'Firmware/**'
     tags:
       - 'firmware-v*'
-  pull_request:
-    paths:
-      - 'Firmware/**'
 
 permissions:
   contents: write
@@ -31,16 +26,10 @@ jobs:
     - name: Extract version from tag
       id: get_version
       run: |
-        if [[ $GITHUB_REF == refs/tags/firmware-v* ]]; then
-          # If building from a firmware tag, extract the version number
-          VERSION=${GITHUB_REF#refs/tags/firmware-v}
-          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
-          echo "Using version from tag: $VERSION"
-        else
-          # Default version for non-tag builds
-          echo "VERSION=dev" >> $GITHUB_OUTPUT
-          echo "Using default version: dev"
-        fi
+        # If building from a firmware tag, extract the version number
+        VERSION=${GITHUB_REF#refs/tags/firmware-v}
+        echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+        echo "Using version from tag: $VERSION"
     - name: Build Firmware - Debug Version
       working-directory: Firmware/MaDCore
       run: pio run -e propeller2_debug --program-arg="-DFIRMWARE_VERSION=\"${{ steps.get_version.outputs.VERSION }}\""
@@ -68,7 +57,6 @@ jobs:
 
   create-release:
     needs: [build]
-    if: startsWith(github.ref, 'refs/tags/firmware-v')
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts

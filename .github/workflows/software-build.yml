@@ -1,14 +1,9 @@
-name: Build Software
+name: Build Software (Release Only)
 
 on:
   push:
-    paths:
-      - 'Software/**'
     tags:
       - 'software-v*'
-  pull_request:
-    paths:
-      - 'Software/**'
 
 jobs:
   build:
@@ -32,29 +27,12 @@ jobs:
         working-directory: Software/MaDControl
         run: npm install
     
-      - name: Build application
+      - name: Build and publish release
         working-directory: Software/MaDControl
         run: |
           npm run build:dll
           npm run build
-          if [[ $GITHUB_REF == refs/tags/software-v* ]]; then
-            echo "Building from tag - will publish to GitHub releases"
-            npm exec electron-builder -- --publish onTag --win --mac --linux
-          else
-            echo "Building from push - will create artifacts only"
-            npm exec electron-builder -- --publish never --win --mac --linux
-          fi
+          echo "Building release from tag - will publish to GitHub releases"
+          npm exec electron-builder -- --publish onTag --win --mac --linux
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload build artifacts (for non-tag builds)
-        if: ${{ !startsWith(github.ref, 'refs/tags/software-v') }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: MaD-Control-${{ github.run_number }}
-          path: |
-            Software/MaDControl/release/build/*.dmg
-            Software/MaDControl/release/build/*.zip
-            Software/MaDControl/release/build/*.exe
-            Software/MaDControl/release/build/*.AppImage
-            Software/MaDControl/release/build/*.deb 
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
