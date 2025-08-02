@@ -254,19 +254,21 @@ jobs:
         run: |
           echo "Preparing software artifacts for testing..."
           
-          # Check for unpacked app structure (for Playwright testing)
-          if [ -d "./software-artifacts/dist" ]; then
+          # The artifacts contain app/dist/ structure as built by electron-builder
+          if [ -d "./software-artifacts/app/dist" ]; then
             echo "✅ Found unpacked app structure for Playwright testing"
             mkdir -p ./mad-control/
             # Create the expected structure for tests: main/main.js
-            cp -r ./software-artifacts/dist/main ./mad-control/
-            cp -r ./software-artifacts/dist/renderer ./mad-control/
+            cp -r ./software-artifacts/app/dist/main ./mad-control/
+            cp -r ./software-artifacts/app/dist/renderer ./mad-control/
             echo "✅ Unpacked app structure ready for testing:"
             ls -la ./mad-control/main/
           else
-            echo "❌ Unpacked app structure not found"
+            echo "❌ Unpacked app structure not found at expected path: ./software-artifacts/app/dist"
             echo "Available artifacts:"
             ls -la ./software-artifacts/
+            echo "Contents of app directory (if exists):"
+            ls -la ./software-artifacts/app/ 2>/dev/null || echo "app directory not found"
             exit 1
           fi
 
