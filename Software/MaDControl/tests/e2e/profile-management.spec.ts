@@ -20,6 +20,7 @@ test.describe('MaD Control Profile Management', () => {
       args: [
         appPath,
         '--no-sandbox',
+        '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
         '--disable-web-security',
         '--disable-features=VizDisplayCompositor'

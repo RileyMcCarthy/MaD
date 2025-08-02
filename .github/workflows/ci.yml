@@ -227,7 +227,6 @@ jobs:
   sil-tests:
     needs: [changes, build-software, build-firmware]
     # Run SIL tests when either software or firmware changes (not hardware-only, not for releases)
-    # Both builds must succeed since they both run when either component changes
     if: |
       always() && 
       needs.changes.outputs.is_release != 'true' &&
@@ -235,244 +234,74 @@ jobs:
       needs.build-software.result == 'success' &&
       needs.build-firmware.result == 'success'
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 30
     
     steps:
       - uses: actions/checkout@v4
-      
       - uses: actions/setup-node@v4
         with:
           node-version: lts/*
 
-      - name: Download Software Build Artifacts
+      - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
-          name: ${{ needs.build-software.outputs.artifact-name }}
-          path: ./software-artifacts/
-        
-      - name: Prepare software for testing
-        run: |
-          echo "Preparing software artifacts for testing..."
-          
-          # The artifacts contain app/dist/ structure as built by electron-builder
-          if [ -d "./software-artifacts/app/dist" ]; then
-            echo "✅ Found unpacked app structure for Playwright testing"
-            mkdir -p ./mad-control/
-            # Create the expected structure for tests: main/main.js
-            cp -r ./software-artifacts/app/dist/main ./mad-control/
-            cp -r ./software-artifacts/app/dist/renderer ./mad-control/
-            
-            # Copy package.json and node_modules if they exist for Electron runtime
-            if [ -f "./software-artifacts/app/package.json" ]; then
-              cp ./software-artifacts/app/package.json ./mad-control/
-              echo "✅ Copied package.json"
-            fi
-            if [ -d "./software-artifacts/app/node_modules" ]; then
-              cp -r ./software-artifacts/app/node_modules ./mad-control/
-              echo "✅ Copied node_modules"
-            fi
-            
-            echo "✅ Unpacked app structure ready for testing:"
-            ls -la ./mad-control/
-            echo "Main directory contents:"
-            ls -la ./mad-control/main/
-            echo "Checking main.js exists:"
-            if [ -f "./mad-control/main/main.js" ]; then
-              echo "✅ main.js found"
-              head -5 ./mad-control/main/main.js
-            else
-              echo "❌ main.js not found"
-              exit 1
-            fi
-          else
-            echo "❌ Unpacked app structure not found at expected path: ./software-artifacts/app/dist"
-            echo "Available artifacts:"
-            ls -la ./software-artifacts/
-            echo "Contents of app directory (if exists):"
-            ls -la ./software-artifacts/app/ 2>/dev/null || echo "app directory not found"
-            exit 1
-          fi
+          pattern: "*-${{ github.run_number }}"
+          path: ./artifacts/
 
-      - name: Download Firmware Build Artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ needs.build-firmware.outputs.artifact-name }}
-          path: ./firmware-artifacts/
-        
-      - name: Prepare firmware for testing
+      - name: Prepare test environment
         run: |
-          echo "Preparing firmware artifacts for testing..."
+          # Setup software artifacts
+          mkdir -p ./mad-control/
+          cp -r ./artifacts/*/app/dist/main ./mad-control/ 2>/dev/null || cp -r ./artifacts/*/main ./mad-control/
+          cp -r ./artifacts/*/app/dist/renderer ./mad-control/ 2>/dev/null || cp -r ./artifacts/*/renderer ./mad-control/
           
-          # Find the native firmware binary
-          if ls ./firmware-artifacts/*-native.bin 1> /dev/null 2>&1; then
-            mkdir -p ./firmware/
-            cp ./firmware-artifacts/*-native.bin ./firmware/mad-firmware-native.bin
-            chmod +x ./firmware/mad-firmware-native.bin
-            echo "✅ Native firmware binary ready"
-          else
-            echo "❌ Native firmware binary not found"
-            ls -la ./firmware-artifacts/
-            exit 1
-          fi
-          
-          echo "✅ Firmware ready for testing:"
-          ls -la ./firmware/
+          # Setup firmware artifacts  
+          mkdir -p ./firmware/
+          cp ./artifacts/*/*-native.bin ./firmware/mad-firmware-native.bin
+          chmod +x ./firmware/mad-firmware-native.bin
 
-      - name: Install system dependencies for testing
+      - name: Install dependencies
         run: |
-          # Install Playwright browsers and Xvfb for headless testing
+          # System dependencies
           sudo apt-get update && sudo apt-get install -y xvfb python3-venv
-
-      - name: Setup Playwright for testing
-        run: |
+          
+          # Node.js dependencies for testing
           cd ./Software/MaDControl
-          # Install full dependencies including electron for Playwright testing
-          echo "Installing dependencies for Playwright testing..."
           npm ci --legacy-peer-deps
-          
-          # Verify electron installation
-          echo "Verifying Electron installation..."
-          if npx electron --version; then
-            echo "✅ Electron installed successfully"
-          else
-            echo "⚠️ Electron not found, installing explicitly..."
-            npm install electron --save-dev
-            npx electron --version
-          fi
-          
-          # Install Playwright browsers
-          echo "Installing Playwright browsers..."
           npx playwright install --with-deps
           
-          # Verify Playwright installation
-          echo "Verifying Playwright installation..."
-          npx playwright --version
-
-      - name: Setup firmware emulation environment
-        run: |
-          echo "Setting up firmware emulation environment using makefile..."
-          cd Firmware/MaDCore/Emulation
-          
-          # Use makefile to setup Python virtual environment
+          # Firmware emulation environment
+          cd ../../../Firmware/MaDCore/Emulation
           make venv
-          
-          echo "✅ Firmware emulation environment ready"
 
-      - name: Start firmware emulation
+      - name: Start firmware emulator
         run: |
-          echo "Starting firmware emulator with pre-built binary..."
           cd Firmware/MaDCore/Emulation
-          
-          # Set environment variable for prebuilt firmware
           export MAD_FIRMWARE_EXECUTABLE="$(pwd)/../../../firmware/mad-firmware-native.bin"
-          
-          # Start emulator using makefile (Server.py handles socat creation)
           nohup make run > /tmp/firmware-emulator.log 2>&1 &
-          echo $! > /tmp/firmware.pid
           sleep 5
-          
-          # Check if emulator started successfully
-          if kill -0 $(cat /tmp/firmware.pid 2>/dev/null) 2>/dev/null; then
-            echo "✅ Firmware emulator started successfully"
-          else
-            echo "⚠️ Firmware emulator failed to start"
-          fi
-        continue-on-error: true
 
-      - name: Run SIL tests with virtual display
+      - name: Run SIL tests
         working-directory: ./Software/MaDControl
         env:
           MAD_CONTROL_DIST_PATH: ../../mad-control
-          DISPLAY: :99
         run: |
-          # Start virtual display for headless testing
+          # Start virtual display
           Xvfb :99 -screen 0 1280x960x24 -ac &
           export DISPLAY=:99
           sleep 3
           
-          # Verify test environment before running tests
-          echo "Verifying test environment..."
-          echo "MAD_CONTROL_DIST_PATH: $MAD_CONTROL_DIST_PATH"
-          echo "Expected app path: $MAD_CONTROL_DIST_PATH/main/main.js"
-          if [ -f "$MAD_CONTROL_DIST_PATH/main/main.js" ]; then
-            echo "✅ App main.js found"
-          else
-            echo "❌ App main.js not found at expected path"
-            echo "Available files in mad-control:"
-            find $MAD_CONTROL_DIST_PATH -name "*.js" | head -10
-            exit 1
-          fi
-          
-          echo "Checking Node.js and Electron versions..."
-          node --version
-          npx electron --version
-          
-          # Run all Playwright tests with proper reporting and capture logs
-          echo "Running Playwright SIL tests against pre-built artifacts..."
-          
-          # Store output in temp file and capture exit code properly
-          set +e
-          npx playwright test --reporter=github,list > /tmp/playwright-test.log 2>&1
-          PLAYWRIGHT_EXIT_CODE=$?
-          set -e
-          
-          # Display the test output
-          cat /tmp/playwright-test.log
-          
-          echo "==== SIL Test Results ===="
-          echo "Playwright exit code: $PLAYWRIGHT_EXIT_CODE"
-          
-          # Parse test results from output to double-check
-          if grep -q "failed" /tmp/playwright-test.log; then
-            FAILED_TESTS=$(grep -o "[0-9]\+ failed" /tmp/playwright-test.log | head -1 | cut -d' ' -f1)
-            echo "Detected $FAILED_TESTS failed tests in output"
-            if [ "$FAILED_TESTS" -gt 0 ]; then
-              echo "❌ SIL tests failed: $FAILED_TESTS test(s) failed"
-              echo "=== Test Summary ==="
-              tail -30 /tmp/playwright-test.log
-              exit 1
-            fi
-          fi
-          
-          # Check exit code
-          if [ $PLAYWRIGHT_EXIT_CODE -eq 0 ]; then
-            echo "✅ All SIL tests passed successfully"
-          else
-            echo "❌ SIL tests failed with exit code $PLAYWRIGHT_EXIT_CODE"
-            echo "=== Test Summary ==="
-            tail -30 /tmp/playwright-test.log
-            exit $PLAYWRIGHT_EXIT_CODE
-          fi
-
-      - name: Collect test artifacts
-        if: always()
-        run: |
-          # Create structured artifact directories
-          mkdir -p ./artifacts/{Logs,Screenshots,TestResults}
-          
-          # Collect logs
-          cp /tmp/firmware-emulator.log ./artifacts/Logs/ 2>/dev/null || echo "No firmware log found"
-          cp /tmp/playwright-test.log ./artifacts/Logs/ 2>/dev/null || echo "No Playwright log found"
-          
-          # Collect screenshots from all test suites
-          find ./Software/MaDControl/test-results/ -name "*.png" -exec cp {} ./artifacts/Screenshots/ \; 2>/dev/null || echo "No screenshots found"
-          
-          # Collect test results and traces
-          find ./Software/MaDControl/test-results/ -name "*.zip" -exec cp {} ./artifacts/TestResults/ \; 2>/dev/null || echo "No trace files found"
-          find ./Software/MaDControl/test-results/ -name "*.html" -exec cp {} ./artifacts/TestResults/ \; 2>/dev/null || echo "No HTML reports found"
-          
-          # Show artifact summary
-          echo "=== Test Artifacts Summary ==="
-          echo "Logs: $(ls -1 ./artifacts/Logs/ 2>/dev/null | wc -l) files"
-          echo "Screenshots: $(ls -1 ./artifacts/Screenshots/ 2>/dev/null | wc -l) files"
-          echo "Test Results: $(ls -1 ./artifacts/TestResults/ 2>/dev/null | wc -l) files"
+          # Run tests with proper CI environment
+          npx playwright test --reporter=github,list
 
       - name: Upload test artifacts
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: sil-test-results-${{ github.run_number }}
-          path: ./artifacts/
+          path: |
+            /tmp/firmware-emulator.log
+            ./Software/MaDControl/test-results/
           retention-days: 30
 
   # Release jobs - only run when tags are pushed
