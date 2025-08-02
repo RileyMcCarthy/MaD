@@ -260,14 +260,15 @@ jobs:
           cp ./artifacts/*/*-native.bin ./firmware/mad-firmware-native.bin
           chmod +x ./firmware/mad-firmware-native.bin
 
-      - name: Install dependencies
+      - name: Install testing dependencies
         run: |
           # System dependencies
           sudo apt-get update && sudo apt-get install -y xvfb python3-venv
           
-          # Node.js dependencies for testing
+          # Install only the minimal dependencies needed for Playwright testing
+          # We already have the built app from artifacts, just need test runner
           cd ./Software/MaDControl
-          npm ci --legacy-peer-deps
+          npm install --no-save @playwright/test
           npx playwright install --with-deps
           
           # Firmware emulation environment
