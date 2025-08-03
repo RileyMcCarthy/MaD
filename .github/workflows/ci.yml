@@ -272,7 +272,7 @@ jobs:
           npx playwright install --with-deps
           
           # Firmware emulation environment
-          cd ../../../Firmware/MaDCore/Emulation
+          cd ../../Firmware/MaDCore/Emulation
           make venv
 
       - name: Start firmware emulator
