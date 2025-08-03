@@ -254,6 +254,14 @@ jobs:
           mkdir -p ./mad-control/
           cp -r ./artifacts/*/app/. ./mad-control/ 2>/dev/null || true
           
+          # Verify critical dependencies are included
+          echo "=== Verifying software artifacts ==="
+          ls -la ./mad-control/ || echo "mad-control directory empty"
+          ls -la ./mad-control/dist/main/ || echo "main directory missing"
+          ls -la ./mad-control/node_modules/ | head -10 || echo "node_modules missing"
+          [ -d "./mad-control/node_modules/serialport" ] && echo "✓ serialport found" || echo "❌ serialport missing"
+          [ -f "./mad-control/dist/main/main.js" ] && echo "✓ main.js found" || echo "❌ main.js missing"
+          
           # Setup firmware artifacts  
           mkdir -p ./firmware/
           cp ./artifacts/*/*-native.bin ./firmware/mad-firmware-native.bin
@@ -291,8 +299,26 @@ jobs:
           export DISPLAY=:99
           sleep 3
           
-          # Run tests with proper CI environment
-          npx playwright test --reporter=github,list
+          # Debug: Verify artifact structure
+          echo "=== Debugging artifact structure ==="
+          echo "Current directory: $(pwd)"
+          echo "MAD_CONTROL_DIST_PATH: ${MAD_CONTROL_DIST_PATH}"
+          ls -la ../../mad-control/ 2>/dev/null || echo "mad-control directory not found"
+          ls -la ../../mad-control/dist/ 2>/dev/null || echo "dist directory not found"
+          ls -la ../../mad-control/dist/main/ 2>/dev/null || echo "main directory not found"
+          ls -la ../../mad-control/node_modules/serialport/ 2>/dev/null || echo "serialport dependency not found"
+          
+          # Test a simple electron app launch to isolate the issue
+          echo "=== Testing basic Electron launch ==="
+          timeout 10s npx electron ../../mad-control/dist/main/main.js --version 2>&1 || echo "Basic electron launch failed"
+          
+          echo "=== Running Playwright tests ==="
+          # Run tests with proper CI environment and enhanced error reporting
+          npx playwright test --reporter=github,list || {
+            echo "=== Playwright tests failed, checking logs ==="
+            echo "Exit code: $?"
+            exit 1
+          }
 
       - name: Upload test artifacts
         uses: actions/upload-artifact@v4
