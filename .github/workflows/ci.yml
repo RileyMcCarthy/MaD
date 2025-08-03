@@ -115,7 +115,7 @@ jobs:
             Software/MaDControl/release/build/*.exe
             Software/MaDControl/release/build/*.AppImage
             Software/MaDControl/release/build/*.deb
-            Software/MaDControl/release/app/dist/
+            Software/MaDControl/release/app/
 
   build-firmware:
     needs: changes
@@ -252,8 +252,7 @@ jobs:
         run: |
           # Setup software artifacts
           mkdir -p ./mad-control/
-          cp -r ./artifacts/*/app/dist/main ./mad-control/ 2>/dev/null || cp -r ./artifacts/*/main ./mad-control/
-          cp -r ./artifacts/*/app/dist/renderer ./mad-control/ 2>/dev/null || cp -r ./artifacts/*/renderer ./mad-control/
+          cp -r ./artifacts/*/app/. ./mad-control/ 2>/dev/null || true
           
           # Setup firmware artifacts  
           mkdir -p ./firmware/
@@ -285,7 +284,7 @@ jobs:
       - name: Run SIL tests
         working-directory: ./Software/MaDControl
         env:
-          MAD_CONTROL_DIST_PATH: ../../mad-control
+          MAD_CONTROL_DIST_PATH: ../../mad-control/dist
         run: |
           # Start virtual display
           Xvfb :99 -screen 0 1280x960x24 -ac &
