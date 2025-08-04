@@ -299,26 +299,42 @@ jobs:
           export DISPLAY=:99
           sleep 3
           
-          # Debug: Verify artifact structure
-          echo "=== Debugging artifact structure ==="
-          echo "Current directory: $(pwd)"
-          echo "MAD_CONTROL_DIST_PATH: ${MAD_CONTROL_DIST_PATH}"
-          ls -la ../../mad-control/ 2>/dev/null || echo "mad-control directory not found"
-          ls -la ../../mad-control/dist/ 2>/dev/null || echo "dist directory not found"
-          ls -la ../../mad-control/dist/main/ 2>/dev/null || echo "main directory not found"
-          ls -la ../../mad-control/node_modules/serialport/ 2>/dev/null || echo "serialport dependency not found"
-          
-          # Test a simple electron app launch to isolate the issue
-          echo "=== Testing basic Electron launch ==="
-          timeout 10s npx electron ../../mad-control/dist/main/main.js --version 2>&1 || echo "Basic electron launch failed"
-          
-          echo "=== Running Playwright tests ==="
-          # Run tests with proper CI environment and enhanced error reporting
-          npx playwright test --reporter=github,list || {
-            echo "=== Playwright tests failed, checking logs ==="
-            echo "Exit code: $?"
+          # Verify critical paths exist
+          if [ ! -f "../../mad-control/dist/main/main.js" ]; then
+            echo "❌ main.js not found at expected path"
+            ls -la ../../mad-control/dist/main/ || echo "main directory doesn't exist"
             exit 1
-          }
+          fi
+          
+          if [ ! -d "../../mad-control/node_modules/serialport" ]; then
+            echo "❌ serialport dependency not found"
+            ls -la ../../mad-control/node_modules/ | head -10 || echo "node_modules missing"
+            exit 1
+          fi
+          
+          echo "✅ App structure verified"
+          
+          # Test basic Electron executable first
+          echo "Testing Electron version..."
+          npx electron --version || echo "Electron version check failed"
+          
+          # Test basic app launch (non-interactive)
+          echo "Testing basic Electron app launch..."
+          timeout 10s npx electron ../../mad-control/dist/main/main.js --version 2>&1 || echo "Basic app launch test completed"
+          
+          echo "Running Playwright tests..."
+          
+          # Run tests and capture exit code properly
+          npx playwright test --project=electron --reporter=github,list
+          TEST_EXIT_CODE=$?
+          
+          echo "Tests completed with exit code: $TEST_EXIT_CODE"
+          if [ $TEST_EXIT_CODE -ne 0 ]; then
+            echo "❌ SIL tests failed"
+            exit $TEST_EXIT_CODE
+          else
+            echo "✅ All SIL tests passed"
+          fi
 
       - name: Upload test artifacts
         uses: actions/upload-artifact@v4

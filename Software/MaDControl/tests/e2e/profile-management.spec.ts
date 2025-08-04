@@ -14,43 +14,56 @@ test.describe('MaD Control Profile Management', () => {
       : path.join(__dirname, '../../release/app/dist/main/main.js');
     
     console.log(`Launching Electron app from: ${appPath}`);
+    console.log(`App path exists: ${fs.existsSync(appPath)}`);
     
-    // Launch the Electron app with no-sandbox for CI environments
-    electronApp = await electron.launch({
-      args: [
-        appPath,
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-web-security',
-        '--disable-features=VizDisplayCompositor'
-      ],
-      executablePath: process.env.ELECTRON_EXECUTABLE || undefined,
-      env: {
-        ...process.env,
-        DISPLAY: process.env.DISPLAY || ':99'
-      }
-    });
+    try {
+      // Launch the Electron app with no-sandbox for CI environments
+      electronApp = await electron.launch({
+        args: [
+          appPath,
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-web-security',
+          '--disable-features=VizDisplayCompositor',
+          '--disable-background-timer-throttling',
+          '--disable-backgrounding-occluded-windows',
+          '--disable-renderer-backgrounding'
+        ],
+        executablePath: process.env.ELECTRON_EXECUTABLE || undefined,
+        env: {
+          ...process.env,
+          DISPLAY: process.env.DISPLAY || ':99'
+        },
+        timeout: 60000
+      });
 
-    // Get the first page (main window)
-    page = await electronApp.firstWindow();
-    
-    // Setup console log monitoring
-    page.on('console', (msg) => {
-      console.log(`Console ${msg.type()}: ${msg.text()}`);
-    });
-    
-    // Setup error monitoring
-    page.on('pageerror', (error) => {
-      console.log(`Page error: ${error.message}`);
-    });
-    
-    // Wait for the app to be ready
-    await page.waitForLoadState('domcontentloaded');
-    
-    // Wait for React to load
-    await page.waitForSelector('#root', { timeout: 10000 });
-    await page.waitForTimeout(5000); // Give extra time for React components to render
+      // Get the first page (main window)
+      page = await electronApp.firstWindow();
+      
+      // Setup console log monitoring
+      page.on('console', (msg) => {
+        console.log(`Console ${msg.type()}: ${msg.text()}`);
+      });
+      
+      // Setup error monitoring
+      page.on('pageerror', (error) => {
+        console.log(`Page error: ${error.message}`);
+      });
+      
+      // Wait for the app to be ready
+      await page.waitForLoadState('domcontentloaded');
+      
+      // Wait for React to load
+      await page.waitForSelector('#root', { timeout: 10000 });
+      await page.waitForTimeout(5000); // Give extra time for React components to render
+      
+    } catch (error) {
+      console.error(`Failed to launch Electron app: ${error.message}`);
+      console.error(`App path: ${appPath}`);
+      console.error(`App exists: ${fs.existsSync(appPath)}`);
+      throw error;
+    }
   });
 
   test.afterAll(async () => {
