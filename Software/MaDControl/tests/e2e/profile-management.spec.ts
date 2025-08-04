@@ -40,6 +40,9 @@ test.describe('MaD Control Profile Management', () => {
     
     try {
       console.log('Launching Electron with enhanced sandbox disabling...');
+      console.log(`Electron executable: ${process.env.ELECTRON_EXECUTABLE || 'default'}`);
+      console.log(`Display environment: ${process.env.DISPLAY}`);
+      
       // Launch the Electron app with comprehensive sandbox disabling for CI environments
       electronApp = await electron.launch({
         args: [
@@ -64,9 +67,13 @@ test.describe('MaD Control Profile Management', () => {
         timeout: 90000  // Increased timeout for CI environments
       });
 
-      console.log('Electron launched, waiting for first window...');
-      // Get the first page (main window) with timeout
-      page = await electronApp.firstWindow();
+      console.log('Electron launched successfully, waiting for first window...');
+      console.log('This may take up to 60 seconds in CI environments...');
+      
+      // Get the first page (main window) with extended timeout for CI environments
+      page = await electronApp.firstWindow({ timeout: 60000 }); // 60 seconds timeout
+      
+      console.log('✓ First window obtained successfully');
       
       // Setup console log monitoring
       page.on('console', (msg) => {
@@ -78,6 +85,7 @@ test.describe('MaD Control Profile Management', () => {
         console.log(`Page error: ${error.message}`);
       });
       
+      console.log('Waiting for app to be ready...');
       // Wait for the app to be ready
       await page.waitForLoadState('domcontentloaded');
       
@@ -85,11 +93,28 @@ test.describe('MaD Control Profile Management', () => {
       await page.waitForSelector('#root', { timeout: 10000 });
       await page.waitForTimeout(5000); // Give extra time for React components to render
       
+      console.log('✓ App is fully loaded and ready');
+      
     } catch (error) {
-      console.error('Failed to launch Electron:', error);
+      console.error('❌ Failed to launch Electron:', error);
+      console.error('Error type:', error.constructor.name);
       console.error('Error details:', error.message);
       console.error(`App path: ${appPath}`);
       console.error(`App exists: ${fs.existsSync(appPath)}`);
+      
+      // Additional debugging for timeout errors
+      if (error.message.includes('timeout') || error.message.includes('Timeout')) {
+        console.error('This appears to be a timeout error. Possible causes:');
+        console.error('1. Electron app is not creating a window');
+        console.error('2. Display server (Xvfb) is not running properly');
+        console.error('3. App is failing to load renderer content');
+        console.error('4. Sandbox restrictions are preventing window creation');
+        console.error('');
+        console.error('Environment check:');
+        console.error(`DISPLAY: ${process.env.DISPLAY}`);
+        console.error(`ELECTRON_DISABLE_SANDBOX: ${process.env.ELECTRON_DISABLE_SANDBOX}`);
+      }
+      
       throw error;
     }
   }); // Removed timeout parameter as it's set inside with test.setTimeout()

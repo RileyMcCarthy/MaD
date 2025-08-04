@@ -299,10 +299,44 @@ jobs:
           MAD_CONTROL_DIST_PATH: ../../mad-control/dist
           ELECTRON_DISABLE_SANDBOX: 1
         run: |
-          # Start virtual display
-          Xvfb :99 -screen 0 1280x960x24 -ac &
+          # Start virtual display with improved configuration for Electron
+          Xvfb :99 -screen 0 1920x1080x24 -ac -nolisten tcp -dpi 96 &
           export DISPLAY=:99
-          sleep 3
+          sleep 5
+          
+          # Verify display is working
+          echo "=== Display Configuration ==="
+          echo "DISPLAY: $DISPLAY"
+          xdpyinfo -display :99 | head -20 || echo "Warning: xdpyinfo failed"
+          
+          # Test basic Electron launch before running full tests
+          echo "=== Testing Basic Electron Launch ==="
+          timeout 30s node -e "
+            const { _electron } = require('@playwright/test');
+            (async () => {
+              try {
+                console.log('Testing Electron launch...');
+                const app = await _electron.launch({
+                  args: ['../../mad-control/dist/main/main.js', '--no-sandbox', '--disable-setuid-sandbox'],
+                  env: { ...process.env, DISPLAY: ':99', ELECTRON_DISABLE_SANDBOX: '1' },
+                  timeout: 30000
+                });
+                console.log('✓ Electron launched successfully');
+                await app.close();
+                console.log('✓ Electron closed successfully');
+              } catch (error) {
+                console.error('❌ Electron launch test failed:', error.message);
+                process.exit(1);
+              }
+            })();
+          " || {
+            echo "❌ Basic Electron launch test failed"
+            echo "=== Troubleshooting Information ==="
+            ps aux | grep -i xvfb || echo "Xvfb process not found"
+            ps aux | grep -i electron || echo "No Electron processes found"
+            ls -la ../../mad-control/dist/main/main.js || echo "main.js not found"
+            exit 1
+          }
           
           # Check MAD_CONTROL_DIST_PATH environment variable
           echo "=== Environment Variables ==="
