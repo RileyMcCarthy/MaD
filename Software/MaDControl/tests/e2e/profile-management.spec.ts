@@ -7,17 +7,40 @@ test.describe('MaD Control Profile Management', () => {
   let page: any;
 
   test.beforeAll(async () => {
+    // Set timeout for this hook
+    test.setTimeout(120000); // 2 minute timeout
+    
     // Determine the app path - use pre-built artifacts if available
     const distPath = process.env.MAD_CONTROL_DIST_PATH;
     const appPath = distPath 
       ? path.join(distPath, 'main/main.js')
       : path.join(__dirname, '../../release/app/dist/main/main.js');
     
+    console.log(`Environment variables:`);
+    console.log(`  MAD_CONTROL_DIST_PATH: ${process.env.MAD_CONTROL_DIST_PATH}`);
+    console.log(`  ELECTRON_DISABLE_SANDBOX: ${process.env.ELECTRON_DISABLE_SANDBOX}`);
+    console.log(`  DISPLAY: ${process.env.DISPLAY}`);
+    
     console.log(`Launching Electron app from: ${appPath}`);
     console.log(`App path exists: ${fs.existsSync(appPath)}`);
     
+    if (!fs.existsSync(appPath)) {
+      console.error(`❌ App file not found at: ${appPath}`);
+      if (distPath) {
+        console.log(`Contents of ${distPath}:`);
+        try {
+          const files = fs.readdirSync(distPath);
+          console.log(files);
+        } catch (e) {
+          console.error(`Failed to read directory: ${e}`);
+        }
+      }
+      throw new Error(`Electron app not found at expected path: ${appPath}`);
+    }
+    
     try {
-      // Launch the Electron app with no-sandbox for CI environments
+      console.log('Launching Electron with enhanced sandbox disabling...');
+      // Launch the Electron app with comprehensive sandbox disabling for CI environments
       electronApp = await electron.launch({
         args: [
           appPath,
@@ -28,17 +51,21 @@ test.describe('MaD Control Profile Management', () => {
           '--disable-features=VizDisplayCompositor',
           '--disable-background-timer-throttling',
           '--disable-backgrounding-occluded-windows',
-          '--disable-renderer-backgrounding'
+          '--disable-renderer-backgrounding',
+          '--disable-gpu',
+          '--disable-gpu-sandbox'
         ],
         executablePath: process.env.ELECTRON_EXECUTABLE || undefined,
         env: {
           ...process.env,
-          DISPLAY: process.env.DISPLAY || ':99'
+          DISPLAY: process.env.DISPLAY || ':99',
+          ELECTRON_DISABLE_SANDBOX: '1'
         },
-        timeout: 60000
+        timeout: 90000  // Increased timeout for CI environments
       });
 
-      // Get the first page (main window)
+      console.log('Electron launched, waiting for first window...');
+      // Get the first page (main window) with timeout
       page = await electronApp.firstWindow();
       
       // Setup console log monitoring
@@ -59,12 +86,13 @@ test.describe('MaD Control Profile Management', () => {
       await page.waitForTimeout(5000); // Give extra time for React components to render
       
     } catch (error) {
-      console.error(`Failed to launch Electron app: ${error.message}`);
+      console.error('Failed to launch Electron:', error);
+      console.error('Error details:', error.message);
       console.error(`App path: ${appPath}`);
       console.error(`App exists: ${fs.existsSync(appPath)}`);
       throw error;
     }
-  });
+  }); // Removed timeout parameter as it's set inside with test.setTimeout()
 
   test.afterAll(async () => {
     if (electronApp) {
