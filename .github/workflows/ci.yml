@@ -278,6 +278,10 @@ jobs:
           npm install --no-save @playwright/test
           npx playwright install --with-deps
           
+          # Fix Electron sandbox permissions for CI environment
+          sudo chown root ./node_modules/electron/dist/chrome-sandbox || true
+          sudo chmod 4755 ./node_modules/electron/dist/chrome-sandbox || true
+          
           # Firmware emulation environment
           cd ../../Firmware/MaDCore/Emulation
           make venv
@@ -293,6 +297,7 @@ jobs:
         working-directory: ./Software/MaDControl
         env:
           MAD_CONTROL_DIST_PATH: ../../mad-control/dist
+          ELECTRON_DISABLE_SANDBOX: 1
         run: |
           # Start virtual display
           Xvfb :99 -screen 0 1280x960x24 -ac &
@@ -316,11 +321,11 @@ jobs:
           
           # Test basic Electron executable first
           echo "Testing Electron version..."
-          npx electron --version || echo "Electron version check failed"
+          npx electron --version --no-sandbox || echo "Electron version check failed"
           
           # Test basic app launch (non-interactive)
           echo "Testing basic Electron app launch..."
-          timeout 10s npx electron ../../mad-control/dist/main/main.js --version 2>&1 || echo "Basic app launch test completed"
+          timeout 10s npx electron ../../mad-control/dist/main/main.js --no-sandbox --disable-setuid-sandbox --version 2>&1 || echo "Basic app launch test completed"
           
           echo "Running Playwright tests..."
           
