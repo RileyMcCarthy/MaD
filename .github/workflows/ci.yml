@@ -271,8 +271,30 @@ jobs:
             if [ -f "squashfs-root/mad-control" ]; then
               chmod +x squashfs-root/mad-control
               echo "✓ Extracted executable ready: $(ls -la squashfs-root/mad-control)"
+              
+              # Check the structure of the extracted AppImage
+              echo "=== Extracted AppImage Structure ==="
+              echo "Contents of squashfs-root:"
+              ls -la squashfs-root/ | head -20
+              
+              # Look for Electron-specific files
+              echo "Looking for Electron files:"
+              find squashfs-root/ -name "*.js" -o -name "package.json" -o -name "electron" | head -10
+              
+              # Check if there's a main.js or similar entry point
+              if [ -f "squashfs-root/resources/app/package.json" ]; then
+                echo "Found app package.json:"
+                cat squashfs-root/resources/app/package.json | head -20
+              fi
+              
+              # Test if the executable has proper dependencies
+              echo "Testing executable dependencies:"
+              ldd squashfs-root/mad-control 2>&1 | grep -E "(not found|missing)" || echo "All dependencies seem available"
+              
             else
               echo "❌ Extracted executable not found"
+              echo "Contents of squashfs-root:"
+              ls -la squashfs-root/ || echo "squashfs-root directory doesn't exist"
               exit 1
             fi
             cd ..
@@ -346,12 +368,50 @@ jobs:
           
           echo "✅ Executable verified: $(ls -la $MAD_CONTROL_EXECUTABLE_PATH)"
           
-          # Test basic executable launch (non-interactive)
+          # Test basic executable launch with comprehensive diagnostics
           echo "=== Testing Basic Executable Launch ==="
-          timeout 10s "$MAD_CONTROL_EXECUTABLE_PATH" --version 2>&1 || echo "Basic executable test completed (expected in headless)"
+          echo "Testing if executable runs at all..."
+          
+          # Check executable permissions and file info
+          file "$MAD_CONTROL_EXECUTABLE_PATH" || echo "file command failed"
+          ldd "$MAD_CONTROL_EXECUTABLE_PATH" 2>&1 | head -20 || echo "ldd failed (static binary?)"
+          
+          # Try to run with version flag (should exit quickly)
+          echo "Testing --version flag..."
+          timeout 10s "$MAD_CONTROL_EXECUTABLE_PATH" --version 2>&1 || echo "Version test completed"
+          
+          # Try to run with help flag
+          echo "Testing --help flag..."
+          timeout 10s "$MAD_CONTROL_EXECUTABLE_PATH" --help 2>&1 || echo "Help test completed"
+          
+          # Try to run executable directly and capture any error output
+          echo "Testing direct execution (5 second timeout)..."
+          timeout 5s "$MAD_CONTROL_EXECUTABLE_PATH" 2>&1 | head -10 || echo "Direct execution test completed"
+          
+          # Check if the executable attempts to create any files or directories
+          echo "Checking if app creates any files..."
+          ls -la /tmp/ | grep -i mad || echo "No mad-related files in /tmp"
+          ls -la ~/ | grep -i mad || echo "No mad-related files in home"
           
           echo "=== Running Playwright SIL Tests ==="
           
+          # Try a direct Electron test first to validate the approach
+          echo "=== Testing Electron Launch Without Playwright ==="
+          
+          # Install electron package directly to test launching
+          npm install --no-save electron
+          
+          # Test if we can launch electron with the extracted app
+          echo "Testing if Electron can launch the extracted application..."
+          timeout 30s npx electron --version || echo "Electron version check completed"
+          
+          # Try launching the app through electron CLI to see what happens
+          echo "Attempting to launch through Electron CLI..."
+          cd ../../mad-control/squashfs-root/
+          timeout 30s npx electron . --no-sandbox --disable-gpu 2>&1 | head -20 || echo "Electron CLI test completed"
+          cd ../../Software/MaDControl/
+          
+          echo "=== Now running Playwright tests ==="
           # Run tests and capture exit code properly
           npx playwright test --project=electron --reporter=github,list
           TEST_EXIT_CODE=$?
