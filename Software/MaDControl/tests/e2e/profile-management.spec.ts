@@ -10,33 +10,33 @@ test.describe('MaD Control Profile Management', () => {
     // Set timeout for this hook
     test.setTimeout(120000); // 2 minute timeout
     
-    // Use the built executable instead of main.js for more realistic testing
-    const executablePath = process.env.MAD_CONTROL_EXECUTABLE_PATH;
+    // Use the built application main.js instead of executable for more reliable testing
+    const appPath = process.env.MAD_CONTROL_DIST_PATH;
     
     console.log(`Environment variables:`);
-    console.log(`  MAD_CONTROL_EXECUTABLE_PATH: ${executablePath}`);
+    console.log(`  MAD_CONTROL_DIST_PATH: ${appPath}`);
     console.log(`  ELECTRON_DISABLE_SANDBOX: ${process.env.ELECTRON_DISABLE_SANDBOX}`);
     console.log(`  DISPLAY: ${process.env.DISPLAY}`);
     
-    if (!executablePath) {
-      throw new Error('MAD_CONTROL_EXECUTABLE_PATH environment variable not set');
+    if (!appPath) {
+      throw new Error('MAD_CONTROL_DIST_PATH environment variable not set');
     }
     
-    console.log(`Launching executable: ${executablePath}`);
-    console.log(`Executable exists: ${fs.existsSync(executablePath)}`);
+    console.log(`Launching Electron app: ${appPath}`);
+    console.log(`App main.js exists: ${fs.existsSync(appPath)}`);
     
-    if (!fs.existsSync(executablePath)) {
-      throw new Error(`Executable not found at: ${executablePath}`);
+    if (!fs.existsSync(appPath)) {
+      throw new Error(`App main.js not found at: ${appPath}`);
     }
     
     try {
-      console.log('Launching MaD Control executable...');
+      console.log('Launching MaD Control Electron app...');
       console.log(`Display environment: ${process.env.DISPLAY}`);
       
-      // Launch the built executable with necessary flags for CI environments
+      // Launch using Electron CLI with the built app main.js (avoids native dependency corruption)
       electronApp = await electron.launch({
-        executablePath: executablePath,
         args: [
+          appPath,
           '--no-sandbox',
           '--disable-setuid-sandbox',
           '--disable-dev-shm-usage',
@@ -44,7 +44,6 @@ test.describe('MaD Control Profile Management', () => {
           '--disable-features=VizDisplayCompositor',
           '--disable-background-timer-throttling',
           '--disable-backgrounding-occluded-windows',
-          '--disable-renderer-backgrounding',
           '--disable-gpu',
           '--disable-gpu-sandbox'
         ],
@@ -85,11 +84,11 @@ test.describe('MaD Control Profile Management', () => {
       console.log('✓ App is fully loaded and ready');
       
     } catch (error) {
-      console.error('❌ Failed to launch executable:', error);
+      console.error('❌ Failed to launch Electron app:', error);
       console.error('Error type:', error.constructor.name);
       console.error('Error details:', error.message);
-      console.log(`Executable path: ${executablePath}`);
-      console.log(`Executable exists: ${fs.existsSync(executablePath)}`);
+      console.log(`App main.js path: ${appPath}`);
+      console.log(`App main.js exists: ${fs.existsSync(appPath)}`);
       
       // Additional debugging for timeout errors
       if (error.message.includes('timeout') || error.message.includes('Timeout')) {
