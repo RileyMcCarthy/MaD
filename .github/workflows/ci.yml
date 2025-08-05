@@ -268,9 +268,9 @@ jobs:
             ls -la squashfs-root/ | head -10
             
             # Verify extracted executable exists
-            if [ -f "squashfs-root/MaD-Control" ]; then
-              chmod +x squashfs-root/MaD-Control
-              echo "✓ Extracted executable ready: $(ls -la squashfs-root/MaD-Control)"
+            if [ -f "squashfs-root/mad-control" ]; then
+              chmod +x squashfs-root/mad-control
+              echo "✓ Extracted executable ready: $(ls -la squashfs-root/mad-control)"
             else
               echo "❌ Extracted executable not found"
               exit 1
@@ -317,7 +317,7 @@ jobs:
       - name: Run SIL tests
         working-directory: ./Software/MaDControl
         env:
-          MAD_CONTROL_EXECUTABLE_PATH: ../../mad-control/squashfs-root/MaD-Control
+          MAD_CONTROL_EXECUTABLE_PATH: ../../mad-control/squashfs-root/mad-control
           ELECTRON_DISABLE_SANDBOX: 1
         run: |
           # Start virtual display with improved configuration for Electron
