@@ -259,7 +259,23 @@ jobs:
           if [ -n "$APPIMAGE_FILE" ]; then
             cp "$APPIMAGE_FILE" ./mad-control/MaD-Control.AppImage
             chmod +x ./mad-control/MaD-Control.AppImage
-            echo "✓ AppImage executable ready: $(ls -la ./mad-control/MaD-Control.AppImage)"
+            echo "✓ AppImage found: $(ls -la ./mad-control/MaD-Control.AppImage)"
+            
+            # Extract AppImage contents (FUSE not available in CI)
+            cd ./mad-control/
+            ./MaD-Control.AppImage --appimage-extract
+            echo "✓ AppImage extracted to squashfs-root/"
+            ls -la squashfs-root/ | head -10
+            
+            # Verify extracted executable exists
+            if [ -f "squashfs-root/MaD-Control" ]; then
+              chmod +x squashfs-root/MaD-Control
+              echo "✓ Extracted executable ready: $(ls -la squashfs-root/MaD-Control)"
+            else
+              echo "❌ Extracted executable not found"
+              exit 1
+            fi
+            cd ..
           else
             echo "❌ No AppImage found in artifacts"
             echo "Available artifacts:"
@@ -301,7 +317,7 @@ jobs:
       - name: Run SIL tests
         working-directory: ./Software/MaDControl
         env:
-          MAD_CONTROL_EXECUTABLE_PATH: ../../mad-control/MaD-Control.AppImage
+          MAD_CONTROL_EXECUTABLE_PATH: ../../mad-control/squashfs-root/MaD-Control
           ELECTRON_DISABLE_SANDBOX: 1
         run: |
           # Start virtual display with improved configuration for Electron
@@ -324,6 +340,7 @@ jobs:
           if [ ! -f "$MAD_CONTROL_EXECUTABLE_PATH" ]; then
             echo "❌ Executable not found at: $MAD_CONTROL_EXECUTABLE_PATH"
             ls -la ../../mad-control/ || echo "mad-control directory doesn't exist"
+            ls -la ../../mad-control/squashfs-root/ || echo "squashfs-root directory doesn't exist"
             exit 1
           fi
           
