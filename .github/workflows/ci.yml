@@ -395,21 +395,16 @@ jobs:
           
           echo "=== Running Playwright SIL Tests ==="
           
-          # Try a direct Electron test first to validate the approach
-          echo "=== Testing Electron Launch Without Playwright ==="
+          # Try a basic executable test to validate the approach
+          echo "=== Testing Basic Executable Launch ==="
           
-          # Install electron package directly to test launching
-          npm install --no-save electron
+          # Test the extracted executable directly (not through Electron CLI)
+          echo "Testing if extracted executable launches properly..."
+          timeout 5s "$MAD_CONTROL_EXECUTABLE_PATH" --version 2>&1 || echo "Version test completed"
           
-          # Test if we can launch electron with the extracted app
-          echo "Testing if Electron can launch the extracted application..."
-          timeout 30s npx electron --version || echo "Electron version check completed"
-          
-          # Try launching the app through electron CLI to see what happens
-          echo "Attempting to launch through Electron CLI..."
-          cd ../../mad-control/squashfs-root/
-          timeout 30s npx electron . --no-sandbox --disable-gpu 2>&1 | head -20 || echo "Electron CLI test completed"
-          cd ../../Software/MaDControl/
+          # Test if executable starts and exits cleanly
+          echo "Testing basic executable startup..."
+          timeout 3s "$MAD_CONTROL_EXECUTABLE_PATH" 2>&1 | head -10 || echo "Basic startup test completed"
           
           echo "=== Now running Playwright tests ==="
           # Run tests and capture exit code properly
