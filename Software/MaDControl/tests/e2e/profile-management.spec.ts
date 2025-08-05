@@ -10,43 +10,33 @@ test.describe('MaD Control Profile Management', () => {
     // Set timeout for this hook
     test.setTimeout(120000); // 2 minute timeout
     
-    // Determine the app path - use pre-built artifacts if available
-    const distPath = process.env.MAD_CONTROL_DIST_PATH;
-    const appPath = distPath 
-      ? path.join(distPath, 'main/main.js')
-      : path.join(__dirname, '../../release/app/dist/main/main.js');
+    // Use the built executable instead of main.js for more realistic testing
+    const executablePath = process.env.MAD_CONTROL_EXECUTABLE_PATH;
     
     console.log(`Environment variables:`);
-    console.log(`  MAD_CONTROL_DIST_PATH: ${process.env.MAD_CONTROL_DIST_PATH}`);
+    console.log(`  MAD_CONTROL_EXECUTABLE_PATH: ${executablePath}`);
     console.log(`  ELECTRON_DISABLE_SANDBOX: ${process.env.ELECTRON_DISABLE_SANDBOX}`);
     console.log(`  DISPLAY: ${process.env.DISPLAY}`);
     
-    console.log(`Launching Electron app from: ${appPath}`);
-    console.log(`App path exists: ${fs.existsSync(appPath)}`);
+    if (!executablePath) {
+      throw new Error('MAD_CONTROL_EXECUTABLE_PATH environment variable not set');
+    }
     
-    if (!fs.existsSync(appPath)) {
-      console.error(`❌ App file not found at: ${appPath}`);
-      if (distPath) {
-        console.log(`Contents of ${distPath}:`);
-        try {
-          const files = fs.readdirSync(distPath);
-          console.log(files);
-        } catch (e) {
-          console.error(`Failed to read directory: ${e}`);
-        }
-      }
-      throw new Error(`Electron app not found at expected path: ${appPath}`);
+    console.log(`Launching executable: ${executablePath}`);
+    console.log(`Executable exists: ${fs.existsSync(executablePath)}`);
+    
+    if (!fs.existsSync(executablePath)) {
+      throw new Error(`Executable not found at: ${executablePath}`);
     }
     
     try {
-      console.log('Launching Electron with enhanced sandbox disabling...');
-      console.log(`Electron executable: ${process.env.ELECTRON_EXECUTABLE || 'default'}`);
+      console.log('Launching MaD Control executable...');
       console.log(`Display environment: ${process.env.DISPLAY}`);
       
-      // Launch the Electron app with comprehensive sandbox disabling for CI environments
+      // Launch the built executable with necessary flags for CI environments
       electronApp = await electron.launch({
+        executablePath: executablePath,
         args: [
-          appPath,
           '--no-sandbox',
           '--disable-setuid-sandbox',
           '--disable-dev-shm-usage',
@@ -58,7 +48,6 @@ test.describe('MaD Control Profile Management', () => {
           '--disable-gpu',
           '--disable-gpu-sandbox'
         ],
-        executablePath: process.env.ELECTRON_EXECUTABLE || undefined,
         env: {
           ...process.env,
           DISPLAY: process.env.DISPLAY || ':99',
@@ -67,7 +56,7 @@ test.describe('MaD Control Profile Management', () => {
         timeout: 90000  // Increased timeout for CI environments
       });
 
-      console.log('Electron launched successfully, waiting for first window...');
+      console.log('Executable launched successfully, waiting for first window...');
       console.log('This may take up to 60 seconds in CI environments...');
       
       // Get the first page (main window) with extended timeout for CI environments
@@ -96,11 +85,11 @@ test.describe('MaD Control Profile Management', () => {
       console.log('✓ App is fully loaded and ready');
       
     } catch (error) {
-      console.error('❌ Failed to launch Electron:', error);
+      console.error('❌ Failed to launch executable:', error);
       console.error('Error type:', error.constructor.name);
       console.error('Error details:', error.message);
-      console.error(`App path: ${appPath}`);
-      console.error(`App exists: ${fs.existsSync(appPath)}`);
+      console.log(`Executable path: ${executablePath}`);
+      console.log(`Executable exists: ${fs.existsSync(executablePath)}`);
       
       // Additional debugging for timeout errors
       if (error.message.includes('timeout') || error.message.includes('Timeout')) {
@@ -117,7 +106,7 @@ test.describe('MaD Control Profile Management', () => {
       
       throw error;
     }
-  }); // Removed timeout parameter as it's set inside with test.setTimeout()
+  }, 120000);
 
   test.afterAll(async () => {
     if (electronApp) {

@@ -250,17 +250,22 @@ jobs:
 
       - name: Prepare test environment
         run: |
-          # Setup software artifacts
+          # Setup software executable from build artifacts
+          echo "=== Preparing executable for testing ==="
           mkdir -p ./mad-control/
-          cp -r ./artifacts/*/app/. ./mad-control/ 2>/dev/null || true
           
-          # Verify critical dependencies are included
-          echo "=== Verifying software artifacts ==="
-          ls -la ./mad-control/ || echo "mad-control directory empty"
-          ls -la ./mad-control/dist/main/ || echo "main directory missing"
-          ls -la ./mad-control/node_modules/ | head -10 || echo "node_modules missing"
-          [ -d "./mad-control/node_modules/serialport" ] && echo "✓ serialport found" || echo "❌ serialport missing"
-          [ -f "./mad-control/dist/main/main.js" ] && echo "✓ main.js found" || echo "❌ main.js missing"
+          # Find and copy the AppImage executable (for Linux CI)
+          APPIMAGE_FILE=$(find ./artifacts/ -name "*.AppImage" | head -1)
+          if [ -n "$APPIMAGE_FILE" ]; then
+            cp "$APPIMAGE_FILE" ./mad-control/MaD-Control.AppImage
+            chmod +x ./mad-control/MaD-Control.AppImage
+            echo "✓ AppImage executable ready: $(ls -la ./mad-control/MaD-Control.AppImage)"
+          else
+            echo "❌ No AppImage found in artifacts"
+            echo "Available artifacts:"
+            find ./artifacts/ -type f -name "*" | head -10
+            exit 1
+          fi
           
           # Setup firmware artifacts  
           mkdir -p ./firmware/
@@ -296,7 +301,7 @@ jobs:
       - name: Run SIL tests
         working-directory: ./Software/MaDControl
         env:
-          MAD_CONTROL_DIST_PATH: ../../mad-control/dist
+          MAD_CONTROL_EXECUTABLE_PATH: ../../mad-control/MaD-Control.AppImage
           ELECTRON_DISABLE_SANDBOX: 1
         run: |
           # Start virtual display with improved configuration for Electron
@@ -309,76 +314,38 @@ jobs:
           echo "DISPLAY: $DISPLAY"
           xdpyinfo -display :99 | head -20 || echo "Warning: xdpyinfo failed"
           
-          # Test basic Electron launch before running full tests
-          echo "=== Testing Basic Electron Launch ==="
-          timeout 30s node -e "
-            const { _electron } = require('@playwright/test');
-            (async () => {
-              try {
-                console.log('Testing Electron launch...');
-                const app = await _electron.launch({
-                  args: ['../../mad-control/dist/main/main.js', '--no-sandbox', '--disable-setuid-sandbox'],
-                  env: { ...process.env, DISPLAY: ':99', ELECTRON_DISABLE_SANDBOX: '1' },
-                  timeout: 30000
-                });
-                console.log('✓ Electron launched successfully');
-                await app.close();
-                console.log('✓ Electron closed successfully');
-              } catch (error) {
-                console.error('❌ Electron launch test failed:', error.message);
-                process.exit(1);
-              }
-            })();
-          " || {
-            echo "❌ Basic Electron launch test failed"
-            echo "=== Troubleshooting Information ==="
-            ps aux | grep -i xvfb || echo "Xvfb process not found"
-            ps aux | grep -i electron || echo "No Electron processes found"
-            ls -la ../../mad-control/dist/main/main.js || echo "main.js not found"
-            exit 1
-          }
-          
-          # Check MAD_CONTROL_DIST_PATH environment variable
+          # Check executable path environment variable
           echo "=== Environment Variables ==="
-          echo "MAD_CONTROL_DIST_PATH: $MAD_CONTROL_DIST_PATH"
+          echo "MAD_CONTROL_EXECUTABLE_PATH: $MAD_CONTROL_EXECUTABLE_PATH"
           echo "ELECTRON_DISABLE_SANDBOX: $ELECTRON_DISABLE_SANDBOX"
           echo "DISPLAY: $DISPLAY"
           
-          # Verify critical paths exist
-          if [ ! -f "../../mad-control/dist/main/main.js" ]; then
-            echo "❌ main.js not found at expected path"
-            ls -la ../../mad-control/dist/main/ || echo "main directory doesn't exist"
+          # Verify executable exists and is ready
+          if [ ! -f "$MAD_CONTROL_EXECUTABLE_PATH" ]; then
+            echo "❌ Executable not found at: $MAD_CONTROL_EXECUTABLE_PATH"
+            ls -la ../../mad-control/ || echo "mad-control directory doesn't exist"
             exit 1
           fi
           
-          if [ ! -d "../../mad-control/node_modules/serialport" ]; then
-            echo "❌ serialport dependency not found"
-            ls -la ../../mad-control/node_modules/ | head -10 || echo "node_modules missing"
-            exit 1
-          fi
+          echo "✅ Executable verified: $(ls -la $MAD_CONTROL_EXECUTABLE_PATH)"
           
-          echo "✅ App structure verified"
+          # Test basic executable launch (non-interactive)
+          echo "=== Testing Basic Executable Launch ==="
+          timeout 10s "$MAD_CONTROL_EXECUTABLE_PATH" --version 2>&1 || echo "Basic executable test completed (expected in headless)"
           
-          # Test basic Electron executable first
-          echo "Testing Electron version..."
-          npx electron --version --no-sandbox || echo "Electron version check failed"
-          
-          # Test basic app launch (non-interactive)
-          echo "Testing basic Electron app launch..."
-          timeout 10s npx electron ../../mad-control/dist/main/main.js --no-sandbox --disable-setuid-sandbox --version 2>&1 || echo "Basic app launch test completed"
-          
-          echo "Running Playwright tests..."
+          echo "=== Running Playwright SIL Tests ==="
           
           # Run tests and capture exit code properly
           npx playwright test --project=electron --reporter=github,list
           TEST_EXIT_CODE=$?
           
-          echo "Tests completed with exit code: $TEST_EXIT_CODE"
+          echo "=== SIL Test Results ==="
+          echo "Test exit code: $TEST_EXIT_CODE"
           if [ $TEST_EXIT_CODE -ne 0 ]; then
-            echo "❌ SIL tests failed"
+            echo "❌ SIL tests failed with exit code: $TEST_EXIT_CODE"
             exit $TEST_EXIT_CODE
           else
-            echo "✅ All SIL tests passed"
+            echo "✅ All SIL tests passed successfully"
           fi
 
       - name: Upload test artifacts
