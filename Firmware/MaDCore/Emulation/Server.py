@@ -1,12 +1,45 @@
 import MaDSim
 from time import sleep
+import subprocess
+import os
+import signal
+import sys
 
 # The base port should be sent to firmware cause it sometimes has conflicts with existing ports
 # MAYBE ONCE STABLE RUN IN DOCKER
 socket_port_base = 9600
 
+# Setup virtual serial ports for UI testing
+print("Setting up virtual serial ports...")
+try:
+    # Create virtual serial port pair for UI testing
+    socat_cmd = ["socat", "-d", "-d", 
+                 "pty,raw,echo=0,link=/tmp/tty.rpi_client", 
+                 "pty,raw,echo=0,link=/tmp/tty.rpi"]
+    socat_process = subprocess.Popen(socat_cmd, 
+                                   stdout=subprocess.PIPE, 
+                                   stderr=subprocess.PIPE)
+    
+    # Store PID for cleanup
+    with open('/tmp/socat.pid', 'w') as f:
+        f.write(str(socat_process.pid))
+    
+    # Wait a bit for socat to create the ports
+    sleep(2)
+    print("✅ Virtual serial ports created: /tmp/tty.rpi_client and /tmp/tty.rpi")
+except Exception as e:
+    print(f"⚠️ Could not create virtual serial ports: {e}")
+    print("Continuing without virtual serial ports...")
+
 # Build firmware
-firmware = MaDSim.FirmwareRunner("native", "../")
+prebuilt_executable = os.getenv('MAD_FIRMWARE_EXECUTABLE')
+if prebuilt_executable and os.path.exists(prebuilt_executable):
+    print(f"Using prebuilt firmware executable: {prebuilt_executable}")
+    firmware = MaDSim.FirmwareRunner("native", "../", prebuilt_executable)
+else:
+    print("Building firmware from source...")
+    firmware = MaDSim.FirmwareRunner("native", "../")
+
 firmware.clean()
 firmware.build()
 
@@ -121,10 +154,23 @@ try:
                 break
         sample.apply_force()
         sleep(0.1)
+except KeyboardInterrupt:
+    print("Received shutdown signal, cleaning up...")
 finally:
+    print("Cleaning up processes...")
     firmware.stop()
     for async_server_instance in async_server:
             if not async_server_instance.stop():
                 MaDSim.logger.error("Async server has stopped, Exiting server process")
                 break
     MaDSim.async_handler.stop_loop()
+    
+    # Cleanup socat process
+    try:
+        if 'socat_process' in locals() and socat_process.poll() is None:
+            socat_process.terminate()
+            print("✅ Virtual serial ports cleaned up")
+    except Exception as e:
+        print(f"⚠️ Error cleaning up socat: {e}")
+    
+    print("Server shutdown complete.")

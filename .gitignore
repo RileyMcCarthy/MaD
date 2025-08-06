@@ -40,3 +40,20 @@ node_modules/
 .env
 .env.local
 .env.*.local
+
+# Test results
+test-results/
+
+# Python virtual environments
+**/mad_venv/
+**/__pycache__/
+*.pyc
+*.pyo
+
+# Local build artifacts (temporary for testing)
+mad-control/
+firmware/
+*.bin
+
+# Firmware build artifacts
+**/.pio/

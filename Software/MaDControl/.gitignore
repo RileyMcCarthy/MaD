@@ -95,6 +95,7 @@ Thumbs.db
 
 # Electron build output
 release/app/dist/
+release/app/.erb/
 release/build/
 .erb/dll/
 
@@ -114,3 +115,12 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+
+# Playwright test artifacts
+test-results/
+playwright-report/
+screenshot-*.png
+debug-app-structure.png
+loading-debug.png
+app-screenshot.png
+proof-*.png

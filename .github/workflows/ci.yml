@@ -1,0 +1,495 @@
+name: CI
+
+on:
+  push:
+    paths:
+      - 'Software/**'
+      - 'Firmware/**'
+      - 'Hardware/**'
+    tags:
+      - 'software-v*'
+      - 'firmware-v*'
+      - 'hardware-v*'
+  pull_request:
+    paths:
+      - 'Software/**'
+      - 'Firmware/**'
+      - 'Hardware/**'
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  # Determine which components need to be built based on changed files
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      software: ${{ steps.changes.outputs.software }}
+      firmware: ${{ steps.changes.outputs.firmware }}
+      hardware: ${{ steps.changes.outputs.hardware }}
+      is_release: ${{ startsWith(github.ref, 'refs/tags/') }}
+      is_software_release: ${{ startsWith(github.ref, 'refs/tags/software-v') }}
+      is_firmware_release: ${{ startsWith(github.ref, 'refs/tags/firmware-v') }}
+      is_hardware_release: ${{ startsWith(github.ref, 'refs/tags/hardware-v') }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v2
+        id: changes
+        with:
+          filters: |
+            software:
+              - 'Software/**'
+            firmware:
+              - 'Firmware/**'
+            hardware:
+              - 'Hardware/**'
+
+  build-software:
+    needs: changes
+    # Build software for SIL testing when software/firmware changes, or always for software releases
+    if: |
+      needs.changes.outputs.is_software_release == 'true' ||
+      (needs.changes.outputs.is_release != 'true' && 
+       (needs.changes.outputs.software == 'true' || needs.changes.outputs.firmware == 'true'))
+    runs-on: macos-latest-large
+    outputs:
+      artifact-name: ${{ steps.artifact.outputs.name }}
+    
+    steps:
+      - name: Checkout Git repository
+        uses: actions/checkout@v4
+
+      - name: Install Node.js and npm
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+        
+      - name: Ensure Python distutils is available
+        run: |
+          python3 -m pip install --upgrade pip setuptools --break-system-packages
+
+      - name: Install dependencies
+        working-directory: Software/MaDControl
+        run: npm install
+    
+      - name: Set version for build
+        id: get_version
+        run: |
+          if [[ "${{ needs.changes.outputs.is_software_release }}" == "true" ]]; then
+            # Extract version from software release tag
+            VERSION=${GITHUB_REF#refs/tags/software-v}
+            echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+            echo "Using software release version: $VERSION"
+          else
+            # CI workflow uses dev version
+            echo "VERSION=dev-${{ github.run_number }}" >> $GITHUB_OUTPUT
+            echo "Using CI version: dev-${{ github.run_number }}"
+          fi
+
+      - name: Build application
+        working-directory: Software/MaDControl
+        run: |
+          npm run build:dll
+          npm run build
+          if [[ "${{ needs.changes.outputs.is_software_release }}" == "true" ]]; then
+            echo "Building for software release"
+            npm exec electron-builder -- --publish never --win --mac --linux
+          else
+            echo "Building for CI testing - creating artifacts only"
+            npm exec electron-builder -- --publish never --win --mac --linux
+          fi
+
+      - name: Set artifact name
+        id: artifact
+        run: echo "name=MaD-Control-${{ github.run_number }}" >> $GITHUB_OUTPUT
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.artifact.outputs.name }}
+          path: |
+            Software/MaDControl/release/build/*.dmg
+            Software/MaDControl/release/build/*.zip
+            Software/MaDControl/release/build/*.exe
+            Software/MaDControl/release/build/*.AppImage
+            Software/MaDControl/release/build/*.deb
+            Software/MaDControl/release/app/
+
+  build-firmware:
+    needs: changes
+    # Build firmware for SIL testing when software/firmware changes, or always for firmware releases
+    if: |
+      needs.changes.outputs.is_firmware_release == 'true' ||
+      (needs.changes.outputs.is_release != 'true' && 
+       (needs.changes.outputs.software == 'true' || needs.changes.outputs.firmware == 'true'))
+    runs-on: ubuntu-latest
+    outputs:
+      artifact-name: ${{ steps.artifact.outputs.name }}
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+      - name: Install PlatformIO Core
+        run: pip install --upgrade platformio
+      - name: Install propeller platformio platform
+        working-directory: Firmware/MaDCore
+        run: pio pkg install --platform https://github.com/RileyMcCarthy/platform-propeller.git
+      - name: Set version for CI build
+        id: get_version
+        run: |
+          if [[ "${{ needs.changes.outputs.is_firmware_release }}" == "true" ]]; then
+            # Extract version from firmware release tag
+            VERSION=${GITHUB_REF#refs/tags/firmware-v}
+            echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+            echo "Using firmware release version: $VERSION"
+          else
+            # CI workflow uses dev version
+            echo "VERSION=dev-${{ github.run_number }}" >> $GITHUB_OUTPUT
+            echo "Using CI version: dev-${{ github.run_number }}"
+          fi
+      - name: Build Firmware - Debug Version
+        working-directory: Firmware/MaDCore
+        run: pio run -e propeller2_debug --program-arg="-DFIRMWARE_VERSION=\"${{ steps.get_version.outputs.VERSION }}\""
+      - name: Build Firmware - Release Version
+        working-directory: Firmware/MaDCore
+        run: pio run -e propeller2_release --program-arg="-DFIRMWARE_VERSION=\"${{ steps.get_version.outputs.VERSION }}\""
+      - name: Build Firmware - Native Version (for SIL testing)
+        working-directory: Firmware/MaDCore
+        run: pio run -e native --program-arg="-DFIRMWARE_VERSION=\"${{ steps.get_version.outputs.VERSION }}\""
+      - name: Copy and rename build artifacts
+        run: |
+          mkdir -p release-assets
+          # Copy debug version with .bin extension
+          cp Firmware/MaDCore/.pio/build/propeller2_debug/program release-assets/MaD-Firmware-${{ steps.get_version.outputs.VERSION }}-debug.bin
+          # Copy release version with .bin extension
+          cp Firmware/MaDCore/.pio/build/propeller2_release/program release-assets/MaD-Firmware-${{ steps.get_version.outputs.VERSION }}-release.bin
+          # Copy native version with .bin extension for SIL testing
+          cp Firmware/MaDCore/.pio/build/native/program release-assets/MaD-Firmware-${{ steps.get_version.outputs.VERSION }}-native.bin
+          chmod +x release-assets/MaD-Firmware-${{ steps.get_version.outputs.VERSION }}-native.bin
+
+      - name: Set artifact name
+        id: artifact
+        run: echo "name=MaD-Firmware-${{ github.run_number }}" >> $GITHUB_OUTPUT
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.artifact.outputs.name }}
+          path: release-assets/
+
+  build-hardware:
+    needs: changes
+    # Build hardware when hardware changes or for hardware releases
+    if: |
+      needs.changes.outputs.is_hardware_release == 'true' ||
+      (needs.changes.outputs.is_release != 'true' && needs.changes.outputs.hardware == 'true')
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - project: EdgeBoard
+            pcb_path: Hardware/EdgeBoard/KiCad/MaD_Edge.kicad_pcb
+            sch_path: Hardware/EdgeBoard/KiCad/MaD_Edge.kicad_sch
+          - project: DS2Addon
+            pcb_path: Hardware/DS2Addon/KICAD/DS2_Addon.kicad_pcb
+            sch_path: Hardware/DS2Addon/KICAD/DS2_Addon.kicad_sch
+    outputs:
+      artifact-name: ${{ steps.artifact.outputs.name }}
+
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Generate manufacturing files using KiBot
+      uses: INTI-CMNB/KiBot@v2_k7
+      with:
+        config: .kibot/config.kibot.yaml
+        board: ${{ matrix.pcb_path }}
+        schema: ${{ matrix.sch_path }}
+
+    - name: Set artifact name
+      id: artifact
+      run: echo "name=${{ matrix.project }}-hardware-${{ github.run_number }}" >> $GITHUB_OUTPUT
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ steps.artifact.outputs.name }}
+        path: |
+          Manufacturing/
+          Documentation/
+          *_documentation.zip
+          *_gerbers.zip
+
+  sil-tests:
+    needs: [changes, build-software, build-firmware]
+    # Run SIL tests when either software or firmware changes (not hardware-only, not for releases)
+    if: |
+      always() && 
+      needs.changes.outputs.is_release != 'true' &&
+      (needs.changes.outputs.software == 'true' || needs.changes.outputs.firmware == 'true') &&
+      needs.build-software.result == 'success' &&
+      needs.build-firmware.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: "*-${{ github.run_number }}"
+          path: ./artifacts/
+
+      - name: Prepare test environment
+        run: |
+          # Setup software executable from build artifacts
+          echo "=== Preparing executable for testing ==="
+          mkdir -p ./mad-control/
+          
+          # Instead of using extracted AppImage (which corrupts native modules),
+          # use the built app directory which preserves native dependencies
+          echo "Setting up built app directory for testing..."
+          
+          # Find the release/app directory from build artifacts
+          APP_DIR=$(find ./artifacts/ -name "app" -type d | head -1)
+          if [ -n "$APP_DIR" ] && [ -d "$APP_DIR" ]; then
+            echo "✓ Found built app directory: $APP_DIR"
+            cp -r "$APP_DIR"/* ./mad-control/
+            
+            echo "=== Built App Structure ==="
+            ls -la ./mad-control/ | head -20
+            
+            # Find the main.js entry point
+            if [ -f "./mad-control/dist/main/main.js" ]; then
+              echo "✓ Found main.js entry point"
+              echo "App structure looks correct for Electron testing"
+            else
+              echo "❌ main.js not found - checking alternative locations"
+              find ./mad-control/ -name "main.js" -o -name "*.js" | head -10
+            fi
+            
+            # Verify native dependencies are intact
+            echo "=== Checking Native Dependencies ==="
+            if [ -d "./mad-control/node_modules/@serialport" ]; then
+              echo "✓ Serialport native modules found"
+              find ./mad-control/node_modules/@serialport -name "*.node" | head -5
+            else
+              echo "⚠️  Serialport modules not found in app directory"
+            fi
+            
+          else
+            echo "❌ Built app directory not found, falling back to npm build approach"
+            
+            # Alternative: Build the app from source for testing (more reliable for CI)
+            echo "Building app from source for testing..."
+            cd ./Software/MaDControl
+            npm install
+            npm run build:dll
+            npm run build
+            
+            # Copy built app to test location
+            cp -r ./release/app/* ../../mad-control/
+            cd ../..
+            
+            echo "✓ App built from source successfully"
+          fi
+          
+          # Setup firmware artifacts  
+          mkdir -p ./firmware/
+          cp ./artifacts/*/*-native.bin ./firmware/mad-firmware-native.bin
+          chmod +x ./firmware/mad-firmware-native.bin
+
+      - name: Install testing dependencies
+        run: |
+          # System dependencies
+          sudo apt-get update && sudo apt-get install -y xvfb python3-venv
+          
+          # Install only the minimal dependencies needed for Playwright testing
+          # We already have the built app from artifacts, just need test runner
+          cd ./Software/MaDControl
+          npm install --no-save @playwright/test
+          npx playwright install --with-deps
+          
+          # Fix Electron sandbox permissions for CI environment
+          sudo chown root ./node_modules/electron/dist/chrome-sandbox || true
+          sudo chmod 4755 ./node_modules/electron/dist/chrome-sandbox || true
+          
+          # Firmware emulation environment
+          cd ../../Firmware/MaDCore/Emulation
+          make venv
+
+      - name: Start firmware emulator
+        run: |
+          cd Firmware/MaDCore/Emulation
+          export MAD_FIRMWARE_EXECUTABLE="$(pwd)/../../../firmware/mad-firmware-native.bin"
+          nohup make run > /tmp/firmware-emulator.log 2>&1 &
+          sleep 5
+
+      - name: Run SIL tests
+        working-directory: ./Software/MaDControl
+        env:
+          MAD_CONTROL_DIST_PATH: ../../mad-control/dist/main/main.js
+          ELECTRON_DISABLE_SANDBOX: 1
+        run: |
+          # Start virtual display with improved configuration for Electron
+          Xvfb :99 -screen 0 1920x1080x24 -ac -nolisten tcp -dpi 96 &
+          export DISPLAY=:99
+          sleep 5
+          
+          # Verify display is working
+          echo "=== Display Configuration ==="
+          echo "DISPLAY: $DISPLAY"
+          xdpyinfo -display :99 | head -20 || echo "Warning: xdpyinfo failed"
+          
+          # Check app path environment variable
+          echo "=== Environment Variables ==="
+          echo "MAD_CONTROL_DIST_PATH: $MAD_CONTROL_DIST_PATH"
+          echo "ELECTRON_DISABLE_SANDBOX: $ELECTRON_DISABLE_SANDBOX"
+          echo "DISPLAY: $DISPLAY"
+          
+          # Verify app main.js exists and is ready
+          if [ ! -f "$MAD_CONTROL_DIST_PATH" ]; then
+            echo "❌ App main.js not found at: $MAD_CONTROL_DIST_PATH"
+            ls -la ../../mad-control/ || echo "mad-control directory doesn't exist"
+            ls -la ../../mad-control/dist/ || echo "dist directory doesn't exist"
+            
+            # Try alternative location
+            if [ -f "../../mad-control/main.js" ]; then
+              echo "Found main.js in alternative location, updating path"
+              export MAD_CONTROL_DIST_PATH="../../mad-control/main.js"
+            else
+              echo "Searching for main.js files:"
+              find ../../mad-control/ -name "main.js" -o -name "index.js" | head -10
+              exit 1
+            fi
+          fi
+          
+          echo "✅ App main.js verified: $(ls -la $MAD_CONTROL_DIST_PATH)"
+          
+          # Test basic app launch capability
+          echo "=== Testing Basic App Launch ==="
+          echo "Testing Electron app launch with main.js..."
+          
+          # Check if we can run electron at all
+          npx electron --version || echo "Electron CLI test completed"
+          
+          # Test basic app functionality (quick validation)
+          echo "Testing app launch (5 second timeout)..."
+          timeout 5s npx electron "$MAD_CONTROL_DIST_PATH" --no-sandbox --disable-gpu 2>&1 | head -10 || echo "Basic app test completed"
+          
+          echo "=== Running Playwright SIL Tests ==="
+          # Run tests and capture exit code properly
+          npx playwright test --project=electron --reporter=github,list
+          TEST_EXIT_CODE=$?
+          
+          echo "=== SIL Test Results ==="
+          echo "Test exit code: $TEST_EXIT_CODE"
+          if [ $TEST_EXIT_CODE -ne 0 ]; then
+            echo "❌ SIL tests failed with exit code: $TEST_EXIT_CODE"
+            exit $TEST_EXIT_CODE
+          else
+            echo "✅ All SIL tests passed successfully"
+          fi
+
+      - name: Upload test artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sil-test-results-${{ github.run_number }}
+          path: |
+            /tmp/firmware-emulator.log
+            ./Software/MaDControl/test-results/
+          retention-days: 30
+
+  # Release jobs - only run when tags are pushed
+  release-software:
+    needs: [changes, build-software]
+    if: |
+      needs.changes.outputs.is_software_release == 'true' &&
+      needs.build-software.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download software artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build-software.outputs.artifact-name }}
+          path: artifacts
+          
+      - name: Get tag version
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/software-v}" >> $GITHUB_OUTPUT
+      
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: MaD Control ${{ steps.get_version.outputs.VERSION }}
+          tag_name: software-v${{ steps.get_version.outputs.VERSION }}
+          files: artifacts/*
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  release-firmware:
+    needs: [changes, build-firmware]
+    if: |
+      needs.changes.outputs.is_firmware_release == 'true' &&
+      needs.build-firmware.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download firmware artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build-firmware.outputs.artifact-name }}
+          path: artifacts
+          
+      - name: Get tag version
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/firmware-v}" >> $GITHUB_OUTPUT
+      
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: MaD Firmware ${{ steps.get_version.outputs.VERSION }}
+          tag_name: firmware-v${{ steps.get_version.outputs.VERSION }}
+          files: artifacts/*.bin
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  release-hardware:
+    needs: [changes, build-hardware]
+    if: |
+      needs.changes.outputs.is_hardware_release == 'true' &&
+      needs.build-hardware.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all hardware artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: '*-hardware-*'
+          
+      - name: Get tag version
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/hardware-v}" >> $GITHUB_OUTPUT
+          
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: MaD Hardware ${{ steps.get_version.outputs.VERSION }}
+          tag_name: hardware-v${{ steps.get_version.outputs.VERSION }}
+          files: artifacts/**/*
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

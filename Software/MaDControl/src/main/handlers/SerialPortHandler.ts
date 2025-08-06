@@ -14,6 +14,15 @@ class SerialPortHandler extends EventEmitter {
       serialLogger.info('Raw ports detected:', portPaths);
       serialLogger.info('Platform:', process.platform);
 
+      // Check for virtual serial ports created by firmware emulation
+      const virtualPorts = ['/tmp/tty.rpi_client', '/tmp/tty.rpi'];
+      virtualPorts.forEach((virtualPort) => {
+        if (fs.existsSync(virtualPort)) {
+          portPaths.push(virtualPort);
+          serialLogger.info(`Added virtual serial port: ${virtualPort}`);
+        }
+      });
+
       // On macOS, transform tty.* devices to cu.* devices for outgoing connections
       if (process.platform === 'darwin') {
         const transformedPorts: string[] = [];
