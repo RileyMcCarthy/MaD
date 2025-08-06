@@ -280,20 +280,9 @@ jobs:
             fi
             
           else
-            echo "❌ Built app directory not found, falling back to npm build approach"
-            
-            # Fallback: Build the app from source for testing
-            echo "Building app from source for testing..."
-            cd ./Software/MaDControl
-            npm install
-            npm run build:dll
-            npm run build
-            
-            # Copy built app to test location
-            cp -r ./release/app/* ../../mad-control/
-            cd ../..
-            
-            echo "✓ App built from source successfully"
+            echo "❌ Built app directory not found - test cannot proceed without built artifacts"
+            echo "Make sure the build step completed successfully and produced the app directory"
+            exit 1
           fi
           
           # Final verification
