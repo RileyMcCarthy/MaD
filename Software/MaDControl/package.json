@@ -129,6 +129,7 @@
     "styled-components": "^6.1.8"
   },
   "devDependencies": {
+    "@electron/fuses": "^1.8.0",
     "@electron/rebuild": "^3.7.1",
     "@playwright/mcp": "^0.0.31",
     "@playwright/test": "^1.54.1",
@@ -208,6 +209,8 @@
       "node_modules",
       "package.json"
     ],
+    "electronVersion": "35.2.1",
+    "beforeBuild": ".erb/scripts/configure-fuses.js",
     "mac": {
       "target": {
         "target": "default",

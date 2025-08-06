@@ -123,9 +123,11 @@ const createWindow = async () => {
     return { action: 'deny' };
   });
 
-  // Remove this if your app does not use auto updates
-  // eslint-disable-next-line
-  new AppUpdater();
+  // Skip auto updater in CI/testing environments
+  if (process.env.NODE_ENV === 'production' && !process.env.CI && !process.env.ELECTRON_DISABLE_SANDBOX) {
+    // eslint-disable-next-line
+    new AppUpdater();
+  }
 
   initializeSampleProfiles();
 };
