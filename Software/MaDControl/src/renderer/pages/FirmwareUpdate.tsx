@@ -226,7 +226,9 @@ function FirmwareUpdate(): React.ReactElement {
               <Alert severity={getStatusColor()} sx={{ mb: 2 }}>
                 <Typography>
                   Connection:{' '}
-                  <strong>{deviceState.isConnected ? 'Connected' : 'Disconnected'}</strong>
+                  <strong>
+                    {deviceState.isConnected ? 'Connected' : 'Disconnected'}
+                  </strong>
                 </Typography>
                 <Typography>
                   Device: <strong>{getDeviceStatusText()}</strong>

@@ -9,7 +9,10 @@ interface GCodeGeneratorProps {
   onGcodeGenerated?: (gcode: string[]) => void;
 }
 
-const GCodeGenerator: React.FC<GCodeGeneratorProps> = ({ profile, onGcodeGenerated }) => {
+const GCodeGenerator: React.FC<GCodeGeneratorProps> = ({
+  profile,
+  onGcodeGenerated,
+}) => {
   const [gcode, setGcode] = useState<string[]>([]);
   const [distanceData, setDistanceData] = useState<number[]>([]);
   const [timeData, setTimeData] = useState<number[]>([]);
@@ -24,7 +27,7 @@ const GCodeGenerator: React.FC<GCodeGeneratorProps> = ({ profile, onGcodeGenerat
     const timePoints: number[] = [0];
     let currentTime = 0;
     let currentPosition = 0;
-    let currentMode: 'absolute' | 'relative' | undefined = undefined;
+    let currentMode: 'absolute' | 'relative' | undefined;
 
     // Add header comments
     gcodeLines.push(`; Test Profile: ${profileData.name}`);
@@ -37,7 +40,9 @@ const GCodeGenerator: React.FC<GCodeGeneratorProps> = ({ profile, onGcodeGenerat
 
     profileData.sets.forEach((set, setIndex) => {
       // Add set header comment
-      gcodeLines.push(`; Set ${setIndex + 1}: ${set.name} (${set.executions} executions)`);
+      gcodeLines.push(
+        `; Set ${setIndex + 1}: ${set.name} (${set.executions} executions)`,
+      );
       gcodeLines.push('');
 
       for (let i = 0; i < set.executions; i++) {
@@ -50,16 +55,23 @@ const GCodeGenerator: React.FC<GCodeGeneratorProps> = ({ profile, onGcodeGenerat
           const velocity = Number(move.moveParameters.velocity) || 0;
           const moveDistance = Number(move.moveParameters.distance) || 0;
           const dwellTime = Number(move.moveParameters.time) || 0;
-          const circularOffset = Number(move.moveParameters.circularOffset) || 0;
+          const circularOffset =
+            Number(move.moveParameters.circularOffset) || 0;
 
           const startPosition = currentPosition;
           const startTime = currentTime;
 
           // Set positioning mode if different from current
-          if (move.absoluteOrRelative === 'absolute' && currentMode !== 'absolute') {
+          if (
+            move.absoluteOrRelative === 'absolute' &&
+            currentMode !== 'absolute'
+          ) {
             gcodeLines.push('G90 ; Set absolute positioning');
             currentMode = 'absolute';
-          } else if (move.absoluteOrRelative === 'relative' && currentMode !== 'relative') {
+          } else if (
+            move.absoluteOrRelative === 'relative' &&
+            currentMode !== 'relative'
+          ) {
             gcodeLines.push('G91 ; Set relative positioning');
             currentMode = 'relative';
           }
@@ -112,9 +124,12 @@ const GCodeGenerator: React.FC<GCodeGeneratorProps> = ({ profile, onGcodeGenerat
                 for (let j = 0; j <= numPoints; j++) {
                   const t = j / numPoints;
                   // Use quadratic interpolation for arc approximation
-                  const interpolatedPosition = startPosition + (currentPosition - startPosition) * t +
+                  const interpolatedPosition =
+                    startPosition +
+                    (currentPosition - startPosition) * t +
                     Math.sin(t * Math.PI) * circularOffset;
-                  const interpolatedTime = startTime + (currentTime - startTime) * t;
+                  const interpolatedTime =
+                    startTime + (currentTime - startTime) * t;
                   distancePoints.push(interpolatedPosition);
                   timePoints.push(interpolatedTime);
                 }
@@ -129,9 +144,12 @@ const GCodeGenerator: React.FC<GCodeGeneratorProps> = ({ profile, onGcodeGenerat
                 for (let j = 0; j <= numPoints; j++) {
                   const t = j / numPoints;
                   // Use quadratic interpolation for arc approximation
-                  const interpolatedPosition = startPosition + (currentPosition - startPosition) * t +
+                  const interpolatedPosition =
+                    startPosition +
+                    (currentPosition - startPosition) * t +
                     Math.sin(t * Math.PI) * circularOffset;
-                  const interpolatedTime = startTime + (currentTime - startTime) * t;
+                  const interpolatedTime =
+                    startTime + (currentTime - startTime) * t;
                   distancePoints.push(interpolatedPosition);
                   timePoints.push(interpolatedTime);
                 }

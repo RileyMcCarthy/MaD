@@ -210,7 +210,8 @@
       "package.json"
     ],
     "electronVersion": "35.2.1",
-    "beforeBuild": ".erb/scripts/configure-fuses.js",
+    "beforeBuild": null,
+    "afterPack": ".erb/scripts/configure-fuses.js",
     "mac": {
       "target": {
         "target": "default",

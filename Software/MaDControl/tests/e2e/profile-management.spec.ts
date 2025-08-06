@@ -9,30 +9,32 @@ test.describe('MaD Control Profile Management', () => {
   test.beforeAll(async () => {
     // Set timeout for this hook
     test.setTimeout(120000); // 2 minute timeout
-    
+
     // Use the built application main.js instead of executable for more reliable testing
     const appPath = process.env.MAD_CONTROL_DIST_PATH;
-    
+
     console.log(`Environment variables:`);
     console.log(`  MAD_CONTROL_DIST_PATH: ${appPath}`);
-    console.log(`  ELECTRON_DISABLE_SANDBOX: ${process.env.ELECTRON_DISABLE_SANDBOX}`);
+    console.log(
+      `  ELECTRON_DISABLE_SANDBOX: ${process.env.ELECTRON_DISABLE_SANDBOX}`,
+    );
     console.log(`  DISPLAY: ${process.env.DISPLAY}`);
-    
+
     if (!appPath) {
       throw new Error('MAD_CONTROL_DIST_PATH environment variable not set');
     }
-    
+
     console.log(`Launching Electron app: ${appPath}`);
     console.log(`App main.js exists: ${fs.existsSync(appPath)}`);
-    
+
     if (!fs.existsSync(appPath)) {
       throw new Error(`App main.js not found at: ${appPath}`);
     }
-    
+
     try {
       console.log('Launching MaD Control Electron app...');
       console.log(`Display environment: ${process.env.DISPLAY}`);
-      
+
       // Launch using Electron CLI with the built app main.js (avoids native dependency corruption)
       electronApp = await electron.launch({
         args: [
@@ -45,53 +47,57 @@ test.describe('MaD Control Profile Management', () => {
           '--disable-background-timer-throttling',
           '--disable-backgrounding-occluded-windows',
           '--disable-gpu',
-          '--disable-gpu-sandbox'
+          '--disable-gpu-sandbox',
         ],
         env: {
           ...process.env,
           DISPLAY: process.env.DISPLAY || ':99',
-          ELECTRON_DISABLE_SANDBOX: '1'
+          ELECTRON_DISABLE_SANDBOX: '1',
         },
-        timeout: 90000  // Increased timeout for CI environments
+        timeout: 90000, // Increased timeout for CI environments
       });
 
-      console.log('Executable launched successfully, waiting for first window...');
+      console.log(
+        'Executable launched successfully, waiting for first window...',
+      );
       console.log('This may take up to 60 seconds in CI environments...');
-      
+
       // Get the first page (main window) with extended timeout for CI environments
       page = await electronApp.firstWindow({ timeout: 60000 }); // 60 seconds timeout
-      
+
       console.log('✓ First window obtained successfully');
-      
+
       // Setup console log monitoring
       page.on('console', (msg) => {
         console.log(`Console ${msg.type()}: ${msg.text()}`);
       });
-      
+
       // Setup error monitoring
       page.on('pageerror', (error) => {
         console.log(`Page error: ${error.message}`);
       });
-      
+
       console.log('Waiting for app to be ready...');
       // Wait for the app to be ready
       await page.waitForLoadState('domcontentloaded');
-      
+
       // Wait for React to load
       await page.waitForSelector('#root', { timeout: 10000 });
       await page.waitForTimeout(5000); // Give extra time for React components to render
-      
+
       console.log('✓ App is fully loaded and ready');
-      
     } catch (error) {
       console.error('❌ Failed to launch Electron app:', error);
       console.error('Error type:', error.constructor.name);
       console.error('Error details:', error.message);
       console.log(`App main.js path: ${appPath}`);
       console.log(`App main.js exists: ${fs.existsSync(appPath)}`);
-      
+
       // Additional debugging for timeout errors
-      if (error.message.includes('timeout') || error.message.includes('Timeout')) {
+      if (
+        error.message.includes('timeout') ||
+        error.message.includes('Timeout')
+      ) {
         console.error('This appears to be a timeout error. Possible causes:');
         console.error('1. Electron app is not creating a window');
         console.error('2. Display server (Xvfb) is not running properly');
@@ -100,9 +106,11 @@ test.describe('MaD Control Profile Management', () => {
         console.error('');
         console.error('Environment check:');
         console.error(`DISPLAY: ${process.env.DISPLAY}`);
-        console.error(`ELECTRON_DISABLE_SANDBOX: ${process.env.ELECTRON_DISABLE_SANDBOX}`);
+        console.error(
+          `ELECTRON_DISABLE_SANDBOX: ${process.env.ELECTRON_DISABLE_SANDBOX}`,
+        );
       }
-      
+
       throw error;
     }
   }, 120000);
@@ -119,7 +127,7 @@ test.describe('MaD Control Profile Management', () => {
       '[aria-label="open drawer"]',
       'button:has(svg):first-child',
       '.MuiIconButton-root:first-child',
-      'button[edge="start"]'
+      'button[edge="start"]',
     ];
 
     for (const selector of menuButtonSelectors) {
@@ -135,30 +143,37 @@ test.describe('MaD Control Profile Management', () => {
             return true;
           }
         } catch (error) {
-          console.log(`Could not click menu button with selector ${selector}:`, error.message);
+          console.log(
+            `Could not click menu button with selector ${selector}:`,
+            error.message,
+          );
         }
       }
     }
-    console.log('Navigation drawer button not found or not clickable - drawer might already be open');
+    console.log(
+      'Navigation drawer button not found or not clickable - drawer might already be open',
+    );
     return false;
   }
 
   // Helper function to navigate to a specific page
   async function navigateToPage(pageName: string) {
     console.log(`Navigating to ${pageName} page...`);
-    
+
     // Open navigation drawer if needed
     await openDrawerIfExists();
     await page.waitForTimeout(1000);
-    
+
     // Find and click the navigation item
-    const navItem = page.locator('.MuiListItemButton-root').filter({ hasText: pageName });
+    const navItem = page
+      .locator('.MuiListItemButton-root')
+      .filter({ hasText: pageName });
     await navItem.waitFor({ state: 'visible', timeout: 10000 });
     await navItem.click();
     await page.waitForTimeout(2000);
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(1000);
-    
+
     console.log(`Successfully navigated to ${pageName} page`);
   }
 
@@ -168,131 +183,165 @@ test.describe('MaD Control Profile Management', () => {
     if (!fs.existsSync(screenshotDir)) {
       fs.mkdirSync(screenshotDir, { recursive: true });
     }
-    
-    await page.screenshot({ 
+
+    await page.screenshot({
       path: `${screenshotDir}/${filename}`,
-      fullPage: true 
+      fullPage: true,
     });
-    
+
     console.log(`Screenshot saved: ${filename}`);
   }
 
   test('should create and manage sample profiles with file operations', async () => {
     console.log('=== Starting Profile Management Test ===');
-    
+
     try {
       // Step 1: Navigate to Create page
       await navigateToPage('Create');
       await takeScreenshot('01-create-page-initial.png');
-      
+
       // Step 2: Create a sample test profile
       console.log('Creating sample test profile...');
-      
+
       // Look for profile creation form elements
-      const profileNameInput = page.locator('input[name="profileName"], input[placeholder*="name"], input[placeholder*="Profile"]').first();
-      const profileExists = await profileNameInput.count() > 0;
-      
+      const profileNameInput = page
+        .locator(
+          'input[name="profileName"], input[placeholder*="name"], input[placeholder*="Profile"]',
+        )
+        .first();
+      const profileExists = (await profileNameInput.count()) > 0;
+
       if (profileExists) {
         // Fill in profile details
         await profileNameInput.fill('Test Profile Sample');
         await page.waitForTimeout(1000);
         await takeScreenshot('02-profile-name-entered.png');
-        
+
         // Look for additional profile configuration fields
-        const descriptionField = page.locator('textarea[name="description"], input[name="description"]').first();
-        const descriptionExists = await descriptionField.count() > 0;
-        
+        const descriptionField = page
+          .locator('textarea[name="description"], input[name="description"]')
+          .first();
+        const descriptionExists = (await descriptionField.count()) > 0;
+
         if (descriptionExists) {
-          await descriptionField.fill('Sample test profile for automated testing');
+          await descriptionField.fill(
+            'Sample test profile for automated testing',
+          );
           await page.waitForTimeout(1000);
           await takeScreenshot('03-profile-description-entered.png');
         }
-        
+
         // Look for test type selection
-        const testTypeDropdown = page.locator('select[name="testType"], .MuiSelect-root').first();
-        const testTypeExists = await testTypeDropdown.count() > 0;
-        
+        const testTypeDropdown = page
+          .locator('select[name="testType"], .MuiSelect-root')
+          .first();
+        const testTypeExists = (await testTypeDropdown.count()) > 0;
+
         if (testTypeExists) {
           await testTypeDropdown.click();
           await page.waitForTimeout(500);
-          
+
           // Try to select a test type option
-          const tensileOption = page.locator('li:has-text("Tensile"), option:has-text("Tensile")').first();
-          const tensileExists = await tensileOption.count() > 0;
-          
+          const tensileOption = page
+            .locator('li:has-text("Tensile"), option:has-text("Tensile")')
+            .first();
+          const tensileExists = (await tensileOption.count()) > 0;
+
           if (tensileExists) {
             await tensileOption.click();
             await page.waitForTimeout(1000);
             await takeScreenshot('04-test-type-selected.png');
           }
         }
-        
+
         // Step 3: Save the profile
         console.log('Saving test profile...');
-        const saveButton = page.locator('button:has-text("Save"), button:has-text("Create"), button[type="submit"]').first();
-        const saveExists = await saveButton.count() > 0;
-        
+        const saveButton = page
+          .locator(
+            'button:has-text("Save"), button:has-text("Create"), button[type="submit"]',
+          )
+          .first();
+        const saveExists = (await saveButton.count()) > 0;
+
         if (saveExists) {
           await saveButton.click();
           await page.waitForTimeout(3000);
           await takeScreenshot('05-profile-saved.png');
           console.log('Test profile saved successfully');
         } else {
-          console.log('Save button not found - taking screenshot of current state');
+          console.log(
+            'Save button not found - taking screenshot of current state',
+          );
           await takeScreenshot('05-save-button-not-found.png');
         }
-        
       } else {
-        console.log('Profile creation form not found - taking screenshot of current page');
+        console.log(
+          'Profile creation form not found - taking screenshot of current page',
+        );
         await takeScreenshot('02-profile-form-not-found.png');
       }
-      
+
       // Step 4: Navigate to motion profile creation
       console.log('Creating motion profile...');
-      
+
       // Look for motion profile or advanced settings
-      const motionProfileTab = page.locator('[role="tab"]:has-text("Motion"), button:has-text("Motion"), .MuiTab-root:has-text("Motion")').first();
-      const motionTabExists = await motionProfileTab.count() > 0;
-      
+      const motionProfileTab = page
+        .locator(
+          '[role="tab"]:has-text("Motion"), button:has-text("Motion"), .MuiTab-root:has-text("Motion")',
+        )
+        .first();
+      const motionTabExists = (await motionProfileTab.count()) > 0;
+
       if (motionTabExists) {
         await motionProfileTab.click();
         await page.waitForTimeout(2000);
         await takeScreenshot('06-motion-profile-tab.png');
-        
+
         // Configure motion parameters
-        const speedInput = page.locator('input[name="speed"], input[placeholder*="speed"], input[label*="Speed"]').first();
-        const speedExists = await speedInput.count() > 0;
-        
+        const speedInput = page
+          .locator(
+            'input[name="speed"], input[placeholder*="speed"], input[label*="Speed"]',
+          )
+          .first();
+        const speedExists = (await speedInput.count()) > 0;
+
         if (speedExists) {
           await speedInput.fill('10');
           await page.waitForTimeout(1000);
           await takeScreenshot('07-motion-speed-entered.png');
         }
-        
-        const distanceInput = page.locator('input[name="distance"], input[placeholder*="distance"], input[label*="Distance"]').first();
-        const distanceExists = await distanceInput.count() > 0;
-        
+
+        const distanceInput = page
+          .locator(
+            'input[name="distance"], input[placeholder*="distance"], input[label*="Distance"]',
+          )
+          .first();
+        const distanceExists = (await distanceInput.count()) > 0;
+
         if (distanceExists) {
           await distanceInput.fill('50');
           await page.waitForTimeout(1000);
           await takeScreenshot('08-motion-distance-entered.png');
         }
-        
+
         // Save motion profile
-        const saveMotionButton = page.locator('button:has-text("Save Motion"), button:has-text("Apply")').first();
-        const saveMotionExists = await saveMotionButton.count() > 0;
-        
+        const saveMotionButton = page
+          .locator('button:has-text("Save Motion"), button:has-text("Apply")')
+          .first();
+        const saveMotionExists = (await saveMotionButton.count()) > 0;
+
         if (saveMotionExists) {
           await saveMotionButton.click();
           await page.waitForTimeout(2000);
           await takeScreenshot('09-motion-profile-saved.png');
         }
-        
       } else {
         // Try to find motion configuration in the current page
-        const motionSection = page.locator('[data-testid*="motion"], .motion-config, #motion').first();
-        const motionSectionExists = await motionSection.count() > 0;
-        
+        const motionSection = page
+          .locator('[data-testid*="motion"], .motion-config, #motion')
+          .first();
+        const motionSectionExists = (await motionSection.count()) > 0;
+
         if (motionSectionExists) {
           await motionSection.scrollIntoViewIfNeeded();
           await page.waitForTimeout(1000);
@@ -302,70 +351,88 @@ test.describe('MaD Control Profile Management', () => {
           await takeScreenshot('06-motion-not-found.png');
         }
       }
-      
+
       // Step 5: Preview G-code generation
       console.log('Previewing G-code generation...');
-      
-      const previewButton = page.locator('button:has-text("Preview"), button:has-text("G-code"), button:has-text("Generate")').first();
-      const previewExists = await previewButton.count() > 0;
-      
+
+      const previewButton = page
+        .locator(
+          'button:has-text("Preview"), button:has-text("G-code"), button:has-text("Generate")',
+        )
+        .first();
+      const previewExists = (await previewButton.count()) > 0;
+
       if (previewExists) {
         await previewButton.click();
         await page.waitForTimeout(3000);
         await takeScreenshot('10-gcode-preview-opened.png');
-        
+
         // Look for G-code content
-        const gcodeContent = page.locator('code, pre, .gcode, [data-testid*="gcode"]').first();
-        const gcodeExists = await gcodeContent.count() > 0;
-        
+        const gcodeContent = page
+          .locator('code, pre, .gcode, [data-testid*="gcode"]')
+          .first();
+        const gcodeExists = (await gcodeContent.count()) > 0;
+
         if (gcodeExists) {
           const gcodeText = await gcodeContent.textContent();
-          console.log('G-code preview content found:', gcodeText?.substring(0, 200) + '...');
+          console.log(
+            'G-code preview content found:',
+            `${gcodeText?.substring(0, 200)}...`,
+          );
           await takeScreenshot('11-gcode-content-visible.png');
         } else {
           console.log('G-code content not found in preview');
           await takeScreenshot('11-gcode-content-not-found.png');
         }
-        
+
         // Close preview if there's a close button
-        const closeButton = page.locator('button:has-text("Close"), button[aria-label="close"]').first();
-        const closeExists = await closeButton.count() > 0;
-        
+        const closeButton = page
+          .locator('button:has-text("Close"), button[aria-label="close"]')
+          .first();
+        const closeExists = (await closeButton.count()) > 0;
+
         if (closeExists) {
           await closeButton.click();
           await page.waitForTimeout(1000);
           await takeScreenshot('12-gcode-preview-closed.png');
         }
-        
       } else {
         console.log('G-code preview button not found');
         await takeScreenshot('10-preview-button-not-found.png');
       }
-      
+
       // Step 6: Test file saving functionality
       console.log('Testing file save functionality...');
-      
-      const saveAsButton = page.locator('button:has-text("Save As"), button:has-text("Export"), button:has-text("Download")').first();
-      const saveAsExists = await saveAsButton.count() > 0;
-      
+
+      const saveAsButton = page
+        .locator(
+          'button:has-text("Save As"), button:has-text("Export"), button:has-text("Download")',
+        )
+        .first();
+      const saveAsExists = (await saveAsButton.count()) > 0;
+
       if (saveAsExists) {
         await saveAsButton.click();
         await page.waitForTimeout(2000);
         await takeScreenshot('13-save-dialog-opened.png');
-        
+
         // Look for file name input in save dialog
-        const fileNameInput = page.locator('input[type="text"]:visible, input[placeholder*="filename"]').last();
-        const fileNameExists = await fileNameInput.count() > 0;
-        
+        const fileNameInput = page
+          .locator('input[type="text"]:visible, input[placeholder*="filename"]')
+          .last();
+        const fileNameExists = (await fileNameInput.count()) > 0;
+
         if (fileNameExists) {
           await fileNameInput.fill('test-profile-sample.json');
           await page.waitForTimeout(1000);
           await takeScreenshot('14-filename-entered.png');
-          
+
           // Click save button in dialog
-          const confirmSaveButton = page.locator('button:has-text("Save"), button:has-text("OK")').last();
-          const confirmSaveExists = await confirmSaveButton.count() > 0;
-          
+          const confirmSaveButton = page
+            .locator('button:has-text("Save"), button:has-text("OK")')
+            .last();
+          const confirmSaveExists = (await confirmSaveButton.count()) > 0;
+
           if (confirmSaveExists) {
             await confirmSaveButton.click();
             await page.waitForTimeout(2000);
@@ -377,32 +444,40 @@ test.describe('MaD Control Profile Management', () => {
         console.log('Save As functionality not found in current page');
         await takeScreenshot('13-save-as-not-found.png');
       }
-      
+
       // Step 7: Test file loading functionality
       console.log('Testing file load functionality...');
-      
+
       // Navigate to a page that might have load functionality
-      const loadButton = page.locator('button:has-text("Load"), button:has-text("Open"), button:has-text("Import")').first();
-      const loadExists = await loadButton.count() > 0;
-      
+      const loadButton = page
+        .locator(
+          'button:has-text("Load"), button:has-text("Open"), button:has-text("Import")',
+        )
+        .first();
+      const loadExists = (await loadButton.count()) > 0;
+
       if (loadExists) {
         await loadButton.click();
         await page.waitForTimeout(2000);
         await takeScreenshot('16-load-dialog-opened.png');
-        
+
         // Look for file selection in load dialog
-        const fileList = page.locator('.file-list, [data-testid*="file"], li:has-text(".json")').first();
-        const fileListExists = await fileList.count() > 0;
-        
+        const fileList = page
+          .locator('.file-list, [data-testid*="file"], li:has-text(".json")')
+          .first();
+        const fileListExists = (await fileList.count()) > 0;
+
         if (fileListExists) {
           await fileList.click();
           await page.waitForTimeout(1000);
           await takeScreenshot('17-file-selected.png');
-          
+
           // Click load button in dialog
-          const confirmLoadButton = page.locator('button:has-text("Load"), button:has-text("Open")').last();
-          const confirmLoadExists = await confirmLoadButton.count() > 0;
-          
+          const confirmLoadButton = page
+            .locator('button:has-text("Load"), button:has-text("Open")')
+            .last();
+          const confirmLoadExists = (await confirmLoadButton.count()) > 0;
+
           if (confirmLoadExists) {
             await confirmLoadButton.click();
             await page.waitForTimeout(2000);
@@ -413,38 +488,42 @@ test.describe('MaD Control Profile Management', () => {
           console.log('File list not found in load dialog');
           await takeScreenshot('17-file-list-not-found.png');
         }
-        
       } else {
         console.log('Load functionality not found - may be in different page');
         await takeScreenshot('16-load-not-found.png');
-        
+
         // Try navigating to Tests page to find load functionality
         await navigateToPage('Tests');
         await takeScreenshot('19-tests-page-for-loading.png');
-        
-        const testsLoadButton = page.locator('button:has-text("Load"), button:has-text("Open"), button:has-text("Import")').first();
-        const testsLoadExists = await testsLoadButton.count() > 0;
-        
+
+        const testsLoadButton = page
+          .locator(
+            'button:has-text("Load"), button:has-text("Open"), button:has-text("Import")',
+          )
+          .first();
+        const testsLoadExists = (await testsLoadButton.count()) > 0;
+
         if (testsLoadExists) {
           await testsLoadButton.click();
           await page.waitForTimeout(2000);
           await takeScreenshot('20-tests-load-dialog.png');
         }
       }
-      
+
       // Step 8: Final verification screenshot
       await takeScreenshot('21-final-state.png');
-      
+
       console.log('✅ Profile management test completed successfully');
-      
     } catch (error) {
       console.error('Error during profile management testing:', error);
-      
+
       // Take error screenshot
       await takeScreenshot('error-profile-management.png');
-      
+
       // Don't fail the test, just log the error
-      console.log('Profile management test completed with errors, but UI functionality was tested');
+      console.log(
+        'Profile management test completed with errors, but UI functionality was tested',
+      );
     }
   });
 });

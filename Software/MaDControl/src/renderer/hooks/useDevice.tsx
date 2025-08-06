@@ -1,5 +1,15 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { MachineState, SampleData, MachineConfiguration } from '@shared/SharedInterface';
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  useCallback,
+} from 'react';
+import {
+  MachineState,
+  SampleData,
+  MachineConfiguration,
+} from '@shared/SharedInterface';
 import useDeviceStatusQuery from './useDeviceStatusQuery';
 
 interface DeviceState {
@@ -50,7 +60,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
   // Update device state when status changes
   useEffect(() => {
     if (deviceStatus.data) {
-      setDeviceState(prev => ({
+      setDeviceState((prev) => ({
         ...prev,
         isConnected: deviceStatus.data?.connected || false,
         isResponding: deviceStatus.data?.responding || false,
@@ -62,7 +72,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const handleSampleData = (...args: unknown[]) => {
       const data = args[0] as SampleData;
-      setDeviceState(prev => ({
+      setDeviceState((prev) => ({
         ...prev,
         latestSampleData: data,
       }));
@@ -70,7 +80,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
 
     const handleMachineState = (...args: unknown[]) => {
       const state = args[0] as MachineState;
-      setDeviceState(prev => ({
+      setDeviceState((prev) => ({
         ...prev,
         machineState: state,
       }));
@@ -78,76 +88,132 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
 
     const handleMachineConfiguration = (...args: unknown[]) => {
       const config = args[0] as MachineConfiguration;
-      setDeviceState(prev => ({ ...prev, machineConfiguration: config }));
+      setDeviceState((prev) => ({ ...prev, machineConfiguration: config }));
     };
 
     // Set up IPC listeners with standardized event names
     window.electron.ipcRenderer.on('sample-data-updates', handleSampleData);
     window.electron.ipcRenderer.on('machine-state-updates', handleMachineState);
-    window.electron.ipcRenderer.on('machine-configuration-updates', handleMachineConfiguration);
+    window.electron.ipcRenderer.on(
+      'machine-configuration-updates',
+      handleMachineConfiguration,
+    );
 
     // Cleanup listeners on unmount
     return () => {
       window.electron.ipcRenderer.removeAllListeners('sample-data-updates');
       window.electron.ipcRenderer.removeAllListeners('machine-state-updates');
-      window.electron.ipcRenderer.removeAllListeners('machine-configuration-updates');
+      window.electron.ipcRenderer.removeAllListeners(
+        'machine-configuration-updates',
+      );
     };
   }, []);
 
   // Device actions
-  const connect = useCallback(async (portPath: string, baudRate: number): Promise<string> => {
-    try {
-      return await window.electron.ipcRenderer.invoke('device-connect', portPath, baudRate);
-    } catch (error) {
-      throw new Error(error instanceof Error ? error.message : 'Connection failed');
-    }
-  }, []);
+  const connect = useCallback(
+    async (portPath: string, baudRate: number): Promise<string> => {
+      try {
+        return await window.electron.ipcRenderer.invoke(
+          'device-connect',
+          portPath,
+          baudRate,
+        );
+      } catch (error) {
+        throw new Error(
+          error instanceof Error ? error.message : 'Connection failed',
+        );
+      }
+    },
+    [],
+  );
 
   const listPorts = useCallback(async (): Promise<string[]> => {
     try {
       return await window.electron.ipcRenderer.invoke('device-list-ports');
     } catch (error) {
-      throw new Error(error instanceof Error ? error.message : 'Failed to list ports');
+      throw new Error(
+        error instanceof Error ? error.message : 'Failed to list ports',
+      );
     }
   }, []);
 
-  const getMachineConfiguration = useCallback(async (): Promise<MachineConfiguration> => {
-    try {
-      return await window.electron.ipcRenderer.invoke('get-machine-configuration');
-    } catch (error) {
-      throw new Error(error instanceof Error ? error.message : 'Failed to get machine configuration');
-    }
-  }, []);
+  const getMachineConfiguration =
+    useCallback(async (): Promise<MachineConfiguration> => {
+      try {
+        return await window.electron.ipcRenderer.invoke(
+          'get-machine-configuration',
+        );
+      } catch (error) {
+        throw new Error(
+          error instanceof Error
+            ? error.message
+            : 'Failed to get machine configuration',
+        );
+      }
+    }, []);
 
-  const saveMachineConfiguration = useCallback(async (config: MachineConfiguration): Promise<boolean> => {
-    try {
-      return await window.electron.ipcRenderer.invoke('save-machine-configuration', config);
-    } catch (error) {
-      throw new Error(error instanceof Error ? error.message : 'Failed to save machine configuration');
-    }
-  }, []);
+  const saveMachineConfiguration = useCallback(
+    async (config: MachineConfiguration): Promise<boolean> => {
+      try {
+        return await window.electron.ipcRenderer.invoke(
+          'save-machine-configuration',
+          config,
+        );
+      } catch (error) {
+        throw new Error(
+          error instanceof Error
+            ? error.message
+            : 'Failed to save machine configuration',
+        );
+      }
+    },
+    [],
+  );
 
-  const setMotionEnabled = useCallback(async (enabled: boolean): Promise<boolean> => {
-    try {
-      return await window.electron.ipcRenderer.invoke('set-motion-enabled', enabled);
-    } catch (error) {
-      throw new Error(error instanceof Error ? error.message : 'Failed to set motion enabled');
-    }
-  }, []);
+  const setMotionEnabled = useCallback(
+    async (enabled: boolean): Promise<boolean> => {
+      try {
+        return await window.electron.ipcRenderer.invoke(
+          'set-motion-enabled',
+          enabled,
+        );
+      } catch (error) {
+        throw new Error(
+          error instanceof Error
+            ? error.message
+            : 'Failed to set motion enabled',
+        );
+      }
+    },
+    [],
+  );
 
-  const manualMove = useCallback(async (mm: number, speed: number): Promise<boolean> => {
-    try {
-      return await window.electron.ipcRenderer.invoke('manual-move', mm, speed);
-    } catch (error) {
-      throw new Error(error instanceof Error ? error.message : 'Failed to execute manual move');
-    }
-  }, []);
+  const manualMove = useCallback(
+    async (mm: number, speed: number): Promise<boolean> => {
+      try {
+        return await window.electron.ipcRenderer.invoke(
+          'manual-move',
+          mm,
+          speed,
+        );
+      } catch (error) {
+        throw new Error(
+          error instanceof Error
+            ? error.message
+            : 'Failed to execute manual move',
+        );
+      }
+    },
+    [],
+  );
 
   const homeAxis = useCallback(async (): Promise<boolean> => {
     try {
       return await window.electron.ipcRenderer.invoke('home-axis');
     } catch (error) {
-      throw new Error(error instanceof Error ? error.message : 'Failed to home axis');
+      throw new Error(
+        error instanceof Error ? error.message : 'Failed to home axis',
+      );
     }
   }, []);
 
@@ -155,26 +221,36 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     try {
       return await window.electron.ipcRenderer.invoke('zero-force');
     } catch (error) {
-      throw new Error(error instanceof Error ? error.message : 'Failed to zero force');
+      throw new Error(
+        error instanceof Error ? error.message : 'Failed to zero force',
+      );
     }
   }, []);
 
-  const streamGCode = useCallback(async (gcode: string): Promise<{ success: boolean; error?: string }> => {
-    try {
-      return await window.electron.ipcRenderer.invoke('stream-gcode', gcode);
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to stream G-code'
-      };
-    }
-  }, []);
+  const streamGCode = useCallback(
+    async (gcode: string): Promise<{ success: boolean; error?: string }> => {
+      try {
+        return await window.electron.ipcRenderer.invoke('stream-gcode', gcode);
+      } catch (error) {
+        return {
+          success: false,
+          error:
+            error instanceof Error ? error.message : 'Failed to stream G-code',
+        };
+      }
+    },
+    [],
+  );
 
   const getAllDeviceData = useCallback(async (): Promise<SampleData[]> => {
     try {
       return await window.electron.ipcRenderer.invoke('device-data-all');
     } catch (error) {
-      throw new Error(error instanceof Error ? error.message : 'Failed to get all device data');
+      throw new Error(
+        error instanceof Error
+          ? error.message
+          : 'Failed to get all device data',
+      );
     }
   }, []);
 
@@ -182,28 +258,44 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     try {
       return await window.electron.ipcRenderer.invoke('get-firmware-version');
     } catch (error) {
-      throw new Error(error instanceof Error ? error.message : 'Failed to get firmware version');
+      throw new Error(
+        error instanceof Error
+          ? error.message
+          : 'Failed to get firmware version',
+      );
     }
   }, []);
 
-  const flashFirmwareFromFile = useCallback(async (): Promise<{ success: boolean; error?: string }> => {
+  const flashFirmwareFromFile = useCallback(async (): Promise<{
+    success: boolean;
+    error?: string;
+  }> => {
     try {
       return await window.electron.ipcRenderer.invoke('flash-from-file');
     } catch (error) {
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Failed to flash firmware from file'
+        error:
+          error instanceof Error
+            ? error.message
+            : 'Failed to flash firmware from file',
       };
     }
   }, []);
 
-  const cancelFirmwareFlash = useCallback(async (): Promise<{ success: boolean; error?: string }> => {
+  const cancelFirmwareFlash = useCallback(async (): Promise<{
+    success: boolean;
+    error?: string;
+  }> => {
     try {
       return await window.electron.ipcRenderer.invoke('cancel-firmware-flash');
     } catch (error) {
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Failed to cancel firmware flash'
+        error:
+          error instanceof Error
+            ? error.message
+            : 'Failed to cancel firmware flash',
       };
     }
   }, []);

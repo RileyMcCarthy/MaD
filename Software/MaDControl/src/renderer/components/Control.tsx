@@ -6,8 +6,8 @@ import LockIcon from '@mui/icons-material/Lock';
 import LockOpenIcon from '@mui/icons-material/LockOpen';
 import { styled } from '@mui/material/styles';
 import SpeedIcon from '@mui/icons-material/Speed';
-import { componentLogger } from '../utils/logger';
 import { useDevice } from '@renderer/hooks';
+import { componentLogger } from '../utils/logger';
 
 const Item = styled(Paper)(({ theme }) => ({
   backgroundColor: theme.palette.mode === 'dark' ? '#1A2027' : '#fff',
@@ -112,7 +112,9 @@ function Control() {
               <Grid item>
                 <Tooltip title={isLocked ? 'Enable Motion' : 'Disable Motion'}>
                   <IconButton
-                    onClick={isLocked ? handleEnableMotion : handleDisableMotion}
+                    onClick={
+                      isLocked ? handleEnableMotion : handleDisableMotion
+                    }
                     sx={{ padding: '16px', margin: '3px' }}
                   >
                     {isLocked ? (

@@ -40,7 +40,9 @@ class SerialPortHandler extends EventEmitter {
             } else {
               // If cu.* doesn't exist, keep the tty.* device
               transformedPorts.push(ttyPath);
-              serialLogger.info(`Kept ${ttyPath} (no corresponding cu.* device found)`);
+              serialLogger.info(
+                `Kept ${ttyPath} (no corresponding cu.* device found)`,
+              );
             }
           } else {
             // Keep non-tty devices as-is
@@ -49,7 +51,9 @@ class SerialPortHandler extends EventEmitter {
         });
 
         portPaths = transformedPorts;
-        serialLogger.info('macOS: Transformed tty.* devices to cu.* for outgoing connections');
+        serialLogger.info(
+          'macOS: Transformed tty.* devices to cu.* for outgoing connections',
+        );
         serialLogger.info('Final transformed ports:', portPaths);
       }
 

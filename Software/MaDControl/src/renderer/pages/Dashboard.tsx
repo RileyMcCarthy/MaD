@@ -15,10 +15,12 @@ export default function Dashboard() {
   };
 
   return (
-    <Box sx={{
-      height: 'calc(100vh - 64px)', // Subtract header height
-      overflow: 'auto',
-    }}>
+    <Box
+      sx={{
+        height: 'calc(100vh - 64px)', // Subtract header height
+        overflow: 'auto',
+      }}
+    >
       <Grid container spacing={0.5}>
         <Grid item xs={12} md={4}>
           <Grid container spacing={0.5}>

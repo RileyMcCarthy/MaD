@@ -32,15 +32,18 @@ export default function MachineConfigPage() {
     }
   }, [deviceState.machineConfiguration, config]);
 
-  const handleChange = (field: keyof MachineConfiguration) => (event: React.ChangeEvent<HTMLInputElement>) => {
-    if (config) {
-      const value = event.target.value;
-      setConfig({
-        ...config,
-        [field]: typeof config[field] === 'number' ? parseFloat(value) : value,
-      });
-    }
-  };
+  const handleChange =
+    (field: keyof MachineConfiguration) =>
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      if (config) {
+        const { value } = event.target;
+        setConfig({
+          ...config,
+          [field]:
+            typeof config[field] === 'number' ? parseFloat(value) : value,
+        });
+      }
+    };
 
   const handleSave = async () => {
     if (config) {
@@ -72,7 +75,11 @@ export default function MachineConfigPage() {
               value={config[key as keyof MachineConfiguration]}
               onChange={handleChange(key as keyof MachineConfiguration)}
               fullWidth
-              type={typeof config[key as keyof MachineConfiguration] === 'number' ? 'number' : 'text'}
+              type={
+                typeof config[key as keyof MachineConfiguration] === 'number'
+                  ? 'number'
+                  : 'text'
+              }
             />
           </Grid>
         ))}
@@ -84,4 +91,4 @@ export default function MachineConfigPage() {
       </Box>
     </Box>
   );
-};
+}
