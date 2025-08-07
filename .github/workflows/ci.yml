@@ -285,6 +285,15 @@ jobs:
             exit 1
           fi
           
+          # Ensure preload script is in the expected location for Electron
+          if [ -f "./mad-control/dist/main/preload.js" ]; then
+            mkdir -p "./mad-control/.erb/dll"
+            cp "./mad-control/dist/main/preload.js" "./mad-control/.erb/dll/preload.js"
+            echo "✓ Preload script copied to expected location"
+          else
+            echo "⚠️  Preload script not found - app may have IPC issues"
+          fi
+          
           # Final verification
           if [ -f "./mad-control/dist/main/main.js" ]; then
             echo "✅ App setup complete - main.js found at expected location"
