@@ -1,0 +1,274 @@
+name: CI
+
+on:
+  push:
+    paths:
+      - 'Software/**'
+      - 'Firmware/**'
+      - 'Hardware/**'
+    tags:
+      - 'software-v*'
+      - 'firmware-v*'
+      - 'hardware-v*'
+  pull_request:
+    paths:
+      - 'Software/**'
+      - 'Firmware/**'
+      - 'Hardware/**'
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  # Determine which components need to be built based on changed files
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      software: ${{ steps.changes.outputs.software }}
+      firmware: ${{ steps.changes.outputs.firmware }}
+      hardware: ${{ steps.changes.outputs.hardware }}
+      is_release: ${{ startsWith(github.ref, 'refs/tags/') }}
+      is_software_release: ${{ startsWith(github.ref, 'refs/tags/software-v') }}
+      is_firmware_release: ${{ startsWith(github.ref, 'refs/tags/firmware-v') }}
+      is_hardware_release: ${{ startsWith(github.ref, 'refs/tags/hardware-v') }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v2
+        id: changes
+        with:
+          filters: |
+            software:
+              - 'Software/**'
+            firmware:
+              - 'Firmware/**'
+            hardware:
+              - 'Hardware/**'
+
+  build-software:
+    needs: changes
+    # Build software when software/firmware changes or for software releases
+    if: |
+      needs.changes.outputs.is_software_release == 'true' ||
+      (needs.changes.outputs.software == 'true' || needs.changes.outputs.firmware == 'true')
+    runs-on: macos-latest-large
+    outputs:
+      artifact-name: ${{ steps.artifact.outputs.name }}
+    
+    steps:
+      - name: Checkout Git repository
+        uses: actions/checkout@v4
+
+      - name: Install Node.js and npm
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+        
+      - name: Ensure Python distutils is available
+        run: |
+          python3 -m pip install --upgrade pip setuptools --break-system-packages
+
+      - name: Install dependencies
+        working-directory: Software/MaDControl
+        run: npm install
+
+      - name: Set version
+        id: get_version
+        run: |
+          if [[ "${{ needs.changes.outputs.is_software_release }}" == "true" ]]; then
+            VERSION=${GITHUB_REF#refs/tags/software-v}
+            echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+            echo "Using software release version: $VERSION"
+          else
+            echo "VERSION=dev-${{ github.run_number }}" >> $GITHUB_OUTPUT
+            echo "Using CI version: dev-${{ github.run_number }}"
+          fi
+
+      - name: Build application
+        working-directory: Software/MaDControl
+        run: |
+          npm run build:dll
+          npm run build
+          npm exec electron-builder -- --publish never --win --mac --linux
+
+      - name: Set artifact name
+        id: artifact
+        run: echo "name=MaD-Control-${{ github.run_number }}" >> $GITHUB_OUTPUT
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.artifact.outputs.name }}
+          path: |
+            Software/MaDControl/release/build/*.dmg
+            Software/MaDControl/release/build/*.zip
+            Software/MaDControl/release/build/*.exe
+            Software/MaDControl/release/build/*.AppImage
+            Software/MaDControl/release/build/*.deb
+            Software/MaDControl/release/app/
+
+  build-firmware:
+    needs: changes
+    # Build firmware when software/firmware changes or for firmware releases
+    if: |
+      needs.changes.outputs.is_firmware_release == 'true' ||
+      (needs.changes.outputs.software == 'true' || needs.changes.outputs.firmware == 'true')
+    runs-on: ubuntu-latest
+    outputs:
+      artifact-name: ${{ steps.artifact.outputs.name }}
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+      - name: Install PlatformIO Core
+        run: pip install --upgrade platformio
+      - name: Install propeller platformio platform
+        working-directory: Firmware/MaDCore
+        run: pio pkg install --platform https://github.com/RileyMcCarthy/platform-propeller.git
+      - name: Set version for CI build
+        id: get_version
+        run: |
+          if [[ "${{ needs.changes.outputs.is_firmware_release }}" == "true" ]]; then
+            VERSION=${GITHUB_REF#refs/tags/firmware-v}
+            echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+            echo "Using firmware release version: $VERSION"
+          else
+            echo "VERSION=dev-${{ github.run_number }}" >> $GITHUB_OUTPUT
+            echo "Using CI version: dev-${{ github.run_number }}"
+          fi
+      - name: Build Firmware - Debug Version
+        working-directory: Firmware/MaDCore
+        run: pio run -e propeller2_debug --program-arg="-DFIRMWARE_VERSION=\"${{ steps.get_version.outputs.VERSION }}\""
+      - name: Build Firmware - Release Version
+        working-directory: Firmware/MaDCore
+        run: pio run -e propeller2_release --program-arg="-DFIRMWARE_VERSION=\"${{ steps.get_version.outputs.VERSION }}\""
+      - name: Build Firmware - Native Version (for SIL testing)
+        working-directory: Firmware/MaDCore
+        run: pio run -e native --program-arg="-DFIRMWARE_VERSION=\"${{ steps.get_version.outputs.VERSION }}\""
+      - name: Copy and rename build artifacts
+        run: |
+          mkdir -p release-assets
+          cp Firmware/MaDCore/.pio/build/propeller2_debug/program release-assets/MaD-Firmware-${{ steps.get_version.outputs.VERSION }}-debug.bin
+          cp Firmware/MaDCore/.pio/build/propeller2_release/program release-assets/MaD-Firmware-${{ steps.get_version.outputs.VERSION }}-release.bin
+          cp Firmware/MaDCore/.pio/build/native/program release-assets/MaD-Firmware-${{ steps.get_version.outputs.VERSION }}-native.bin
+          chmod +x release-assets/MaD-Firmware-${{ steps.get_version.outputs.VERSION }}-native.bin
+
+      - name: Set artifact name
+        id: artifact
+        run: echo "name=MaD-Firmware-${{ github.run_number }}" >> $GITHUB_OUTPUT
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.artifact.outputs.name }}
+          path: release-assets/
+
+  build-hardware:
+    needs: changes
+    # Build hardware when hardware changes or for hardware releases
+    if: |
+      needs.changes.outputs.is_hardware_release == 'true' ||
+      needs.changes.outputs.hardware == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - project: EdgeBoard
+            pcb_path: Hardware/EdgeBoard/KiCad/MaD_Edge.kicad_pcb
+            sch_path: Hardware/EdgeBoard/KiCad/MaD_Edge.kicad_sch
+          - project: DS2Addon
+            pcb_path: Hardware/DS2Addon/KICAD/DS2_Addon.kicad_pcb
+            sch_path: Hardware/DS2Addon/KICAD/DS2_Addon.kicad_sch
+    outputs:
+      artifact-name: ${{ steps.artifact.outputs.name }}
+
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Generate manufacturing files using KiBot
+      uses: INTI-CMNB/KiBot@v2_k7
+      with:
+        config: .kibot/config.kibot.yaml
+        board: ${{ matrix.pcb_path }}
+        schema: ${{ matrix.sch_path }}
+
+    - name: Set artifact name
+      id: artifact
+      run: echo "name=${{ matrix.project }}-hardware-${{ github.run_number }}" >> $GITHUB_OUTPUT
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ steps.artifact.outputs.name }}
+        path: |
+          Manufacturing/
+          Documentation/
+          *_documentation.zip
+          *_gerbers.zip
+
+  sil-tests:
+    needs: [changes, build-software, build-firmware]
+    # Run SIL tests when either software or firmware changes (not hardware-only, not for releases)
+    if: |
+      always() && 
+      needs.changes.outputs.is_release != 'true' &&
+      (needs.changes.outputs.software == 'true' || needs.changes.outputs.firmware == 'true') &&
+      needs.build-software.result == 'success' &&
+      needs.build-firmware.result == 'success'
+    runs-on: macos-latest-large
+    timeout-minutes: 30
+    
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: "*-${{ github.run_number }}"
+          path: ./artifacts/
+
+      - name: Prepare test environment
+        run: |
+          mkdir -p ./mad-control/
+          APP_DIR=$(find ./artifacts/ -name "app" -type d | head -1)
+          cp -r "$APP_DIR"/* ./mad-control/
+          
+          mkdir -p ./firmware/
+          cp ./artifacts/*/*-native.bin ./firmware/mad-firmware-native.bin
+          chmod +x ./firmware/mad-firmware-native.bin
+
+      - name: Install testing dependencies
+        working-directory: ./mad-control
+        run: |
+          # Copy test files 
+          cp ../Software/MaDControl/playwright.config.ts .
+          cp -r ../Software/MaDControl/tests .
+          
+          # Install dependencies
+          npm install --no-save @playwright/test electron serialport
+          npx playwright install --with-deps
+
+      - name: Setup firmware emulation environment
+        working-directory: ./Firmware/MaDCore/Emulation
+        run: make venv
+
+      - name: Start firmware emulator
+        run: |
+          cd Firmware/MaDCore/Emulation
+          export MAD_FIRMWARE_EXECUTABLE="$(pwd)/../../../firmware/mad-firmware-native.bin"
+          nohup make run > /tmp/firmware-emulator.log 2>&1 &
+          sleep 5
+
+      - name: Run SIL tests
+        working-directory: ./mad-control
+        env:
+          MAD_CONTROL_DIST_PATH: ./dist/main/main.js
+          ELECTRON_DISABLE_SANDBOX: 1
+        run: |
+          npx playwright test --project=electron --reporter=list
