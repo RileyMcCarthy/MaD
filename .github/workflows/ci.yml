@@ -254,8 +254,7 @@ jobs:
           echo "=== Preparing executable for testing ==="
           mkdir -p ./mad-control/
           
-          # Use the built app directory which preserves native dependencies
-          # instead of extracted AppImage (which can corrupt native modules)
+          # Use the built app directory which preserves most dependencies
           echo "Setting up built app directory for testing..."
           
           # Find the release/app directory from build artifacts
@@ -270,35 +269,12 @@ jobs:
             else
               echo "❌ main.js not found - checking alternative locations"
               find ./mad-control/ -name "main.js" -o -name "*.js" | head -5
-            fi
-            
-            # Verify native dependencies are intact
-            if [ -d "./mad-control/node_modules/@serialport" ]; then
-              echo "✓ Serialport native modules found"
-            else
-              echo "⚠️  Serialport modules not found in app directory"
+              exit 1
             fi
             
           else
             echo "❌ Built app directory not found - test cannot proceed without built artifacts"
             echo "Make sure the build step completed successfully and produced the app directory"
-            exit 1
-          fi
-          
-          # Ensure preload script is in the expected location for Electron
-          if [ -f "./mad-control/dist/main/preload.js" ]; then
-            mkdir -p "./mad-control/.erb/dll"
-            cp "./mad-control/dist/main/preload.js" "./mad-control/.erb/dll/preload.js"
-            echo "✓ Preload script copied to expected location"
-          else
-            echo "⚠️  Preload script not found - app may have IPC issues"
-          fi
-          
-          # Final verification
-          if [ -f "./mad-control/dist/main/main.js" ]; then
-            echo "✅ App setup complete - main.js found at expected location"
-          else
-            echo "❌ App setup failed - main.js not found"
             exit 1
           fi
           
@@ -312,9 +288,33 @@ jobs:
           # System dependencies
           sudo apt-get update && sudo apt-get install -y xvfb python3-venv
           
-          # Install only the minimal dependencies needed for Playwright testing
-          # We already have the built app from artifacts, just need test runner
-          cd ./Software/MaDControl
+          # Fix native dependency corruption by rebuilding only the problematic modules
+          echo "=== Rebuilding native dependencies to fix architecture issues ==="
+          cd ./mad-control
+          
+          # Remove and rebuild only the problematic native dependencies
+          rm -rf node_modules/@serialport/
+          npm install @serialport/bindings-cpp --no-save
+          
+          # Verify the native dependency is now working
+          if [ -f "node_modules/@serialport/bindings-cpp/build/Release/bindings.node" ]; then
+            echo "✓ Serialport native module rebuilt successfully"
+            file node_modules/@serialport/bindings-cpp/build/Release/bindings.node
+          else
+            echo "❌ Failed to rebuild serialport native module"
+            exit 1
+          fi
+          
+          # Ensure preload script is in the expected location for Electron
+          if [ -f "./dist/main/preload.js" ]; then
+            mkdir -p "./.erb/dll"
+            cp "./dist/main/preload.js" "./.erb/dll/preload.js"
+            echo "✓ Preload script copied to expected location"
+          else
+            echo "⚠️  Preload script not found - app may have IPC issues"
+          fi
+          
+          # Install Playwright for testing
           npm install --no-save @playwright/test
           npx playwright install --with-deps
           
@@ -322,8 +322,11 @@ jobs:
           sudo chown root ./node_modules/electron/dist/chrome-sandbox || true
           sudo chmod 4755 ./node_modules/electron/dist/chrome-sandbox || true
           
+          # Return to root directory
+          cd ..
+          
           # Firmware emulation environment
-          cd ../../Firmware/MaDCore/Emulation
+          cd ./Firmware/MaDCore/Emulation
           make venv
 
       - name: Start firmware emulator
@@ -334,9 +337,9 @@ jobs:
           sleep 5
 
       - name: Run SIL tests
-        working-directory: ./Software/MaDControl
+        working-directory: ./mad-control
         env:
-          MAD_CONTROL_DIST_PATH: ../../mad-control/dist/main/main.js
+          MAD_CONTROL_DIST_PATH: ./dist/main/main.js
           ELECTRON_DISABLE_SANDBOX: 1
         run: |
           # Start virtual display with improved configuration for Electron
@@ -347,15 +350,9 @@ jobs:
           # Verify app main.js exists and is ready
           if [ ! -f "$MAD_CONTROL_DIST_PATH" ]; then
             echo "❌ App main.js not found at: $MAD_CONTROL_DIST_PATH"
-            # Try alternative location
-            if [ -f "../../mad-control/main.js" ]; then
-              echo "Found main.js in alternative location, updating path"
-              export MAD_CONTROL_DIST_PATH="../../mad-control/main.js"
-            else
-              echo "❌ Could not find main.js file"
-              find ../../mad-control/ -name "main.js" -o -name "index.js" | head -5
-              exit 1
-            fi
+            echo "❌ Could not find main.js file"
+            find . -name "main.js" -o -name "index.js" | head -5
+            exit 1
           fi
           
           echo "✅ App main.js verified: $(ls -la $MAD_CONTROL_DIST_PATH)"
@@ -371,7 +368,8 @@ jobs:
           # Check for critical errors in the launch log
           if grep -q "invalid ELF header" /tmp/electron-launch.log; then
             echo "❌ Critical error detected: invalid ELF header in native dependencies"
-            cat /tmp/electron-launch.log
+            echo "App threw an error during load"
+            cat /tmp/electron-launch.log | head -20
             exit 1
           elif grep -q "App version is not a valid semver version" /tmp/electron-launch.log; then
             echo "❌ Critical error detected: invalid app version for electron-updater"
@@ -402,7 +400,7 @@ jobs:
           name: sil-test-results-${{ github.run_number }}
           path: |
             /tmp/firmware-emulator.log
-            ./Software/MaDControl/test-results/
+            ./mad-control/test-results/
           retention-days: 30
 
   # Release jobs - only run when tags are pushed
