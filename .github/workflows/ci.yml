@@ -52,7 +52,7 @@ jobs:
       needs.changes.outputs.is_software_release == 'true' ||
       (needs.changes.outputs.is_release != 'true' && 
        (needs.changes.outputs.software == 'true' || needs.changes.outputs.firmware == 'true'))
-    runs-on: macos-latest-large
+    runs-on: ubuntu-latest
     outputs:
       artifact-name: ${{ steps.artifact.outputs.name }}
     
@@ -288,22 +288,8 @@ jobs:
           # System dependencies
           sudo apt-get update && sudo apt-get install -y xvfb python3-venv
           
-          # Fix native dependency corruption by rebuilding only the problematic modules
-          echo "=== Rebuilding native dependencies to fix architecture issues ==="
+          # Since build and test both run on Ubuntu, native dependencies should be compatible
           cd ./mad-control
-          
-          # Remove and rebuild only the problematic native dependencies
-          rm -rf node_modules/@serialport/
-          npm install @serialport/bindings-cpp --no-save
-          
-          # Verify the native dependency is now working
-          if [ -f "node_modules/@serialport/bindings-cpp/build/Release/bindings.node" ]; then
-            echo "✓ Serialport native module rebuilt successfully"
-            file node_modules/@serialport/bindings-cpp/build/Release/bindings.node
-          else
-            echo "❌ Failed to rebuild serialport native module"
-            exit 1
-          fi
           
           # Ensure preload script is in the expected location for Electron
           if [ -f "./dist/main/preload.js" ]; then
