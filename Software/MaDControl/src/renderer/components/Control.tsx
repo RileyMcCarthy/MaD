@@ -6,8 +6,8 @@ import LockIcon from '@mui/icons-material/Lock';
 import LockOpenIcon from '@mui/icons-material/LockOpen';
 import { styled } from '@mui/material/styles';
 import SpeedIcon from '@mui/icons-material/Speed';
-import { componentLogger } from '../utils/logger';
 import { useDevice } from '@renderer/hooks';
+import { componentLogger } from '../utils/logger';
 
 const Item = styled(Paper)(({ theme }) => ({
   backgroundColor: theme.palette.mode === 'dark' ? '#1A2027' : '#fff',
@@ -19,10 +19,18 @@ const Item = styled(Paper)(({ theme }) => ({
 
 function Control() {
   const [state, actions] = useDevice();
-  const isLocked = state.machineState?.motionEnabled === false;
+  const isMotionEnabled = Boolean(state.machineState?.motionEnabled);
+
+  // Debug logging
+  console.log('Control component render:', {
+    motionEnabled: state.machineState?.motionEnabled,
+    isMotionEnabled,
+    machineState: state.machineState
+  });
 
   const handleEnableMotion = async () => {
     try {
+      console.log('handleEnableMotion called - setting motion to TRUE');
       await actions.setMotionEnabled(true);
     } catch (error) {
       componentLogger.error('Failed to enable motion:', error);
@@ -31,6 +39,7 @@ function Control() {
 
   const handleDisableMotion = async () => {
     try {
+      console.log('handleDisableMotion called - setting motion to FALSE');
       await actions.setMotionEnabled(false);
     } catch (error) {
       componentLogger.error('Failed to disable motion:', error);
@@ -110,15 +119,22 @@ function Control() {
                 </Tooltip>
               </Grid>
               <Grid item>
-                <Tooltip title={isLocked ? 'Enable Motion' : 'Disable Motion'}>
+                <Tooltip title={isMotionEnabled ? 'Disable Motion' : 'Enable Motion'}>
                   <IconButton
-                    onClick={isLocked ? handleEnableMotion : handleDisableMotion}
+                    onClick={() => {
+                      console.log('Button clicked! isMotionEnabled:', isMotionEnabled);
+                      if (isMotionEnabled) {
+                        handleDisableMotion();
+                      } else {
+                        handleEnableMotion();
+                      }
+                    }}
                     sx={{ padding: '16px', margin: '3px' }}
                   >
-                    {isLocked ? (
-                      <LockIcon fontSize="large" sx={{ color: 'red' }} />
-                    ) : (
+                    {isMotionEnabled ? (
                       <LockOpenIcon fontSize="large" sx={{ color: 'green' }} />
+                    ) : (
+                      <LockIcon fontSize="large" sx={{ color: 'red' }} />
                     )}
                   </IconButton>
                 </Tooltip>

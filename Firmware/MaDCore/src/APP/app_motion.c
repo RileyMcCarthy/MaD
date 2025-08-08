@@ -113,9 +113,14 @@ static void app_motion_private_processInputs()
 static void app_motion_private_processOutputs()
 {
     // need memcmp to keep this cog from blocking if nothing has changed
+    int32_t setpoint = 0;
     APP_MOTION_LOCK_REQ_BLOCK();
     const int32_t gaugeSetpoint = dev_stepper_getTarget(DEV_STEPPER_CHANNEL_MAIN);
-    app_motion_data.output.setpoint = LIB_UTILITY_MM_TO_UM(gaugeSetpoint / app_motion_data.stepsPerMM);
+    if (app_motion_data.stepsPerMM != 0)
+    {
+        setpoint = LIB_UTILITY_MM_TO_UM(gaugeSetpoint / app_motion_data.stepsPerMM);
+    }
+    app_motion_data.output.setpoint = setpoint;
     APP_MOTION_LOCK_REL();
 }
 
@@ -350,8 +355,12 @@ int32_t app_motion_getSetpoint()
 
 int32_t app_motion_getPosition()
 {
+    int32_t position = 0;
     APP_MOTION_LOCK_REQ_BLOCK();
-    int32_t position = app_motion_data.inputs.positionSteps / app_motion_data.stepsPerMM;
+    if (app_motion_data.inputs.positionSteps != 0)
+    {
+        position = app_motion_data.inputs.positionSteps / app_motion_data.stepsPerMM;
+    }
     APP_MOTION_LOCK_REL();
     return position;
 }

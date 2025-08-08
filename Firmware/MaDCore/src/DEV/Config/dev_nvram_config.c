@@ -25,10 +25,10 @@
 DEV_NVRAM_CHANNEL_DATA_CREATE(MachineProfile) = {
     "Default", // name
     (4 * 2048),         // encoderStepsPerMM
-    0,         // servoStepsPerMM
+    100,         // servoStepsPerMM
     -658,         // forceGaugeNPerStep
     16119601,         // forceGaugeZeroOffset
-    0,         // maxPosition
+    1000,         // maxPosition
     200,         // maxVelocity
     100,         // maxAcceleration
     5000,         // maxForceTensile

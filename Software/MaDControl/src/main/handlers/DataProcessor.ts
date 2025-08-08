@@ -2,8 +2,8 @@
 /* eslint-disable no-bitwise */
 import { EventEmitter } from 'events';
 import { Notification } from '@shared/SharedInterface';
-import SerialPortHandler from './SerialPortHandler';
 import { dataLogger } from '@utils/logger';
+import SerialPortHandler from './SerialPortHandler';
 
 export enum ReadType {
   SAMPLE,
@@ -70,8 +70,17 @@ class DataProcessor extends EventEmitter {
   constructor(private serialport: SerialPortHandler) {
     super();
     serialport.on('data', (data: Buffer) => {
-      dataLogger.debug('DataProcessor received raw data:', data.length, 'bytes');
-      dataLogger.debug('Raw data:', Array.from(data).map(b => `0x${b.toString(16).padStart(2, '0')}`).join(' '));
+      //dataLogger.debug(
+      //  'DataProcessor received raw data:',
+      //  data.length,
+      //  'bytes',
+      //);
+      //dataLogger.debug(
+      //  'Raw data:',
+      //  Array.from(data)
+      //    .map((b) => `0x${b.toString(16).padStart(2, '0')}`)
+      //    .join(' '),
+      //);
 
       // Process each byte in the buffer
       for (let i = 0; i < data.length; i++) {

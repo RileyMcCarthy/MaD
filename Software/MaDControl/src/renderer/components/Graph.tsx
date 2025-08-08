@@ -30,7 +30,10 @@ export default function BasicLineChart() {
   // Update samples when new sample data comes from the hook
   useEffect(() => {
     if (deviceState.latestSampleData) {
-      componentLogger.debug('New sample data received:', deviceState.latestSampleData);
+      componentLogger.debug(
+        'New sample data received:',
+        deviceState.latestSampleData,
+      );
       setSamples((prevData) => {
         const updatedData = [...prevData, deviceState.latestSampleData!];
         return updatedData.slice(-100); // Keep only the last 100 samples
@@ -71,7 +74,7 @@ export default function BasicLineChart() {
       forceMin: -forceMin || 0,
       forceMax: (tensileForceMax - forceMax) / 1000 || 5,
       lengthMin: -lengthMin || 0,
-      lengthMax: (positionMax - lengthMax) || 1000,
+      lengthMax: positionMax - lengthMax || 1000,
     };
   };
 

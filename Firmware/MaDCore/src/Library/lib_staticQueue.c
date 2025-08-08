@@ -78,6 +78,9 @@ bool lib_staticQueue_isempty(lib_staticQueue_S *queue)
 
 bool lib_staticQueue_isfull(lib_staticQueue_S *queue)
 {
+    if (queue->max_size <= 0) {
+        return true; // Consider invalid queue as full
+    }
     return ((queue->rear + 1) % queue->max_size) == queue->front;
 }
 

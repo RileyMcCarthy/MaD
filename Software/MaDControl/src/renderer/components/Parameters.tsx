@@ -1,5 +1,4 @@
-import { Typography, Grid } from '@mui/material';
-import { Box, Paper } from '@mui/material';
+import { Typography, Grid, Box, Paper } from '@mui/material';
 import { styled } from '@mui/material/styles';
 import { useDevice } from '@renderer/hooks';
 

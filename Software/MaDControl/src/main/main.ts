@@ -1,8 +1,6 @@
 /* eslint global-require: off, no-console: off, promise/always-return: off */
 
 import { app, BrowserWindow, shell } from 'electron';
-// Set the app name before anything else
-app.setName('MAD Control');
 
 /**
  * This module executes inside of electron's main process. You can start
@@ -15,14 +13,19 @@ app.setName('MAD Control');
 import path from 'path';
 import { autoUpdater } from 'electron-updater';
 import log from 'electron-log';
+import { deviceLogger } from '@utils/logger';
 import MenuBuilder from './menu';
 import { resolveHtmlPath } from './util';
 import SerialPortHandler from './handlers/SerialPortHandler';
 import DataProcessor from './handlers/DataProcessor';
 import NotificationSender from './handlers/NotificationSender';
 import DeviceInterface from './handlers/DeviceInterface';
-import { initializeSampleProfiles, cleanup as cleanupSampleProfiles } from './sampleProfiles';
-import { deviceLogger } from '@utils/logger';
+import {
+  initializeSampleProfiles,
+  cleanup as cleanupSampleProfiles,
+} from './sampleProfiles';
+// Set the app name before anything else
+app.setName('MAD Control');
 
 class AppUpdater {
   constructor() {
