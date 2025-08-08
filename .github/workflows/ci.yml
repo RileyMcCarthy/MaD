@@ -306,9 +306,9 @@ jobs:
           cp ./Software/MaDControl/playwright.config.ts ./mad-control/
           cp -r ./Software/MaDControl/tests ./mad-control/
           
-          # Install Playwright for testing in the test directory
+          # Install Playwright and Electron for testing in the test directory
           cd ./mad-control
-          npm install --no-save @playwright/test
+          npm install --no-save @playwright/test electron
           npx playwright install --with-deps
           
           # Return to root directory
