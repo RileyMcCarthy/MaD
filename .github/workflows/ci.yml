@@ -302,7 +302,11 @@ jobs:
 
       - name: Install testing dependencies
         run: |
-          # Install Playwright for testing
+          # Copy test configuration and files from source to test directory
+          cp ./Software/MaDControl/playwright.config.ts ./mad-control/
+          cp -r ./Software/MaDControl/tests ./mad-control/
+          
+          # Install Playwright for testing in the test directory
           cd ./mad-control
           npm install --no-save @playwright/test
           npx playwright install --with-deps
