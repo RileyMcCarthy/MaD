@@ -52,7 +52,7 @@ jobs:
       needs.changes.outputs.is_software_release == 'true' ||
       (needs.changes.outputs.is_release != 'true' && 
        (needs.changes.outputs.software == 'true' || needs.changes.outputs.firmware == 'true'))
-    runs-on: ubuntu-latest
+    runs-on: macos-latest-large
     outputs:
       artifact-name: ${{ steps.artifact.outputs.name }}
     
@@ -72,7 +72,24 @@ jobs:
 
       - name: Install dependencies
         working-directory: Software/MaDControl
-        run: npm install
+        run: |
+          # Create release/app directory structure first
+          mkdir -p release/app
+          cat > release/app/package.json << 'EOF'
+          {
+            "name": "mad-control",
+            "description": "Control for the MaD Tensile Testing Machine",
+            "license": "MIT",
+            "main": "./dist/main/main.js",
+            "version": "1.0.0",
+            "author": {
+              "name": "Riley McCarthy",
+              "email": "riley.mccarthy@yahoo.com"
+            },
+            "dependencies": {}
+          }
+          EOF
+          npm install
     
       - name: Set version for build
         id: get_version
@@ -233,7 +250,7 @@ jobs:
       (needs.changes.outputs.software == 'true' || needs.changes.outputs.firmware == 'true') &&
       needs.build-software.result == 'success' &&
       needs.build-firmware.result == 'success'
-    runs-on: ubuntu-latest
+    runs-on: macos-latest-large
     timeout-minutes: 30
     
     steps:
@@ -285,28 +302,10 @@ jobs:
 
       - name: Install testing dependencies
         run: |
-          # System dependencies
-          sudo apt-get update && sudo apt-get install -y xvfb python3-venv
-          
-          # Since build and test both run on Ubuntu, native dependencies should be compatible
-          cd ./mad-control
-          
-          # Ensure preload script is in the expected location for Electron
-          if [ -f "./dist/main/preload.js" ]; then
-            mkdir -p "./.erb/dll"
-            cp "./dist/main/preload.js" "./.erb/dll/preload.js"
-            echo "✓ Preload script copied to expected location"
-          else
-            echo "⚠️  Preload script not found - app may have IPC issues"
-          fi
-          
           # Install Playwright for testing
+          cd ./mad-control
           npm install --no-save @playwright/test
           npx playwright install --with-deps
-          
-          # Fix Electron sandbox permissions for CI environment
-          sudo chown root ./node_modules/electron/dist/chrome-sandbox || true
-          sudo chmod 4755 ./node_modules/electron/dist/chrome-sandbox || true
           
           # Return to root directory
           cd ..
@@ -328,11 +327,6 @@ jobs:
           MAD_CONTROL_DIST_PATH: ./dist/main/main.js
           ELECTRON_DISABLE_SANDBOX: 1
         run: |
-          # Start virtual display with improved configuration for Electron
-          Xvfb :99 -screen 0 1920x1080x24 -ac -nolisten tcp -dpi 96 &
-          export DISPLAY=:99
-          sleep 5
-          
           # Verify app main.js exists and is ready
           if [ ! -f "$MAD_CONTROL_DIST_PATH" ]; then
             echo "❌ App main.js not found at: $MAD_CONTROL_DIST_PATH"
@@ -342,6 +336,15 @@ jobs:
           fi
           
           echo "✅ App main.js verified: $(ls -la $MAD_CONTROL_DIST_PATH)"
+          
+          # Ensure preload script is in the expected location for Electron
+          if [ -f "./dist/main/preload.js" ]; then
+            mkdir -p "./.erb/dll"
+            cp "./dist/main/preload.js" "./.erb/dll/preload.js"
+            echo "✓ Preload script copied to expected location"
+          else
+            echo "⚠️  Preload script not found - app may have IPC issues"
+          fi
           
           # Test basic app launch capability (reduced verbosity)
           echo "=== Testing Basic App Launch ==="

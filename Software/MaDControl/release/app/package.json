@@ -1,0 +1,12 @@
+{
+  "name": "mad-control",
+  "description": "Control for the MaD Tensile Testing Machine",
+  "license": "MIT",
+  "main": "./dist/main/main.js",
+  "version": "1.0.0",
+  "author": {
+    "name": "Riley McCarthy",
+    "email": "riley.mccarthy@yahoo.com"
+  },
+  "dependencies": {}
+}
