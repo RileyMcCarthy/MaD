@@ -96,7 +96,9 @@ function Connect() {
           } else {
             // If no ports found, show common ports as options
             setPorts(commonPorts);
-            setErrorMessage('No serial ports detected. Showing common port names.');
+            setErrorMessage(
+              'No serial ports detected. Showing common port names.',
+            );
           }
         } catch (err) {
           componentLogger.error('Failed to list ports:', err);
@@ -121,7 +123,7 @@ function Connect() {
       componentLogger.error('Port and baud rate are required');
       setConnectionStatus({
         status: 'error',
-        message: 'Port and baud rate are required'
+        message: 'Port and baud rate are required',
       });
       return;
     }
@@ -132,14 +134,14 @@ function Connect() {
       componentLogger.error('Invalid baud rate');
       setConnectionStatus({
         status: 'error',
-        message: 'Invalid baud rate'
+        message: 'Invalid baud rate',
       });
       return;
     }
 
     setConnectionStatus({
       status: 'connecting',
-      message: `Connecting to ${portValue} at ${baudRate} baud...`
+      message: `Connecting to ${portValue} at ${baudRate} baud...`,
     });
 
     try {
@@ -147,14 +149,17 @@ function Connect() {
       componentLogger.info('Connection result:', result);
       setConnectionStatus({
         status: 'success',
-        message: result || `Successfully connected to ${portValue}`
+        message: result || `Successfully connected to ${portValue}`,
       });
     } catch (connectError) {
       componentLogger.error('Failed to connect:', connectError);
-      const errorMsg = connectError instanceof Error ? connectError.message : 'Unknown connection error';
+      const errorMsg =
+        connectError instanceof Error
+          ? connectError.message
+          : 'Unknown connection error';
       setConnectionStatus({
         status: 'error',
-        message: `Failed to connect: ${errorMsg}`
+        message: `Failed to connect: ${errorMsg}`,
       });
     }
   };
@@ -242,7 +247,12 @@ function Connect() {
             ))}
           </TextField>
 
-          <Button type="submit" variant="contained" color="primary" disabled={connectionStatus.status === 'connecting'}>
+          <Button
+            type="submit"
+            variant="contained"
+            color="primary"
+            disabled={connectionStatus.status === 'connecting'}
+          >
             {connectionStatus.status === 'connecting' ? (
               <>
                 <CircularProgress size={20} sx={{ mr: 1 }} />
@@ -256,8 +266,11 @@ function Connect() {
           {connectionStatus.status !== 'idle' && (
             <Alert
               severity={
-                connectionStatus.status === 'success' ? 'success' :
-                connectionStatus.status === 'error' ? 'error' : 'info'
+                connectionStatus.status === 'success'
+                  ? 'success'
+                  : connectionStatus.status === 'error'
+                    ? 'error'
+                    : 'info'
               }
               sx={{ width: '100%', mt: 1 }}
             >

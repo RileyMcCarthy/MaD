@@ -172,38 +172,40 @@ const TestProfileForm: React.FC = () => {
     });
   };
 
-  const handleMotionProfileChange = (field: keyof MotionProfile) => (
-    event: React.ChangeEvent<HTMLInputElement>
-  ) => {
-    const value = event.target.value;
-    setMotionProfile((prev) => ({
-      ...prev,
-      [field]: value,
-    }));
-  };
-
-  const handleSampleProfileChange = (field: keyof SampleProfile) => (
-    event: React.ChangeEvent<HTMLInputElement>
-  ) => {
-    const value = event.target.value;
-    setSampleProfile((prev) => ({
-      ...prev,
-      [field]: field === 'serialNumber' ? value : Number(value),
-    }));
-  };
-
-  const handleSetChange = (index: number, field: string) => (event: React.ChangeEvent<HTMLInputElement | { value: unknown }>) => {
-    const newSets = [...sets];
-    newSets[index] = {
-      ...newSets[index],
-      [field]: event.target.value,
+  const handleMotionProfileChange =
+    (field: keyof MotionProfile) =>
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      const { value } = event.target;
+      setMotionProfile((prev) => ({
+        ...prev,
+        [field]: value,
+      }));
     };
-    setSets(newSets);
-    setMotionProfile({
-      ...motionProfile,
-      sets: newSets,
-    });
-  };
+
+  const handleSampleProfileChange =
+    (field: keyof SampleProfile) =>
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      const { value } = event.target;
+      setSampleProfile((prev) => ({
+        ...prev,
+        [field]: field === 'serialNumber' ? value : Number(value),
+      }));
+    };
+
+  const handleSetChange =
+    (index: number, field: string) =>
+    (event: React.ChangeEvent<HTMLInputElement | { value: unknown }>) => {
+      const newSets = [...sets];
+      newSets[index] = {
+        ...newSets[index],
+        [field]: event.target.value,
+      };
+      setSets(newSets);
+      setMotionProfile({
+        ...motionProfile,
+        sets: newSets,
+      });
+    };
 
   const handleMoveDragEnd = (setIndex: number, result: DropResult) => {
     if (!result.destination) return;
@@ -222,26 +224,28 @@ const TestProfileForm: React.FC = () => {
     });
   };
 
-  const handleMoveChange = (setIndex: number, moveIndex: number, field: keyof Move) => (event: SelectChangeEvent<string>) => {
-    const newSets = [...sets];
-    newSets[setIndex] = {
-      ...newSets[setIndex],
-      moves: newSets[setIndex].moves.map((move, i) => {
-        if (i === moveIndex) {
-          return {
-            ...move,
-            [field]: event.target.value,
-          };
-        }
-        return move;
-      }),
+  const handleMoveChange =
+    (setIndex: number, moveIndex: number, field: keyof Move) =>
+    (event: SelectChangeEvent<string>) => {
+      const newSets = [...sets];
+      newSets[setIndex] = {
+        ...newSets[setIndex],
+        moves: newSets[setIndex].moves.map((move, i) => {
+          if (i === moveIndex) {
+            return {
+              ...move,
+              [field]: event.target.value,
+            };
+          }
+          return move;
+        }),
+      };
+      setSets(newSets);
+      setMotionProfile({
+        ...motionProfile,
+        sets: newSets,
+      });
     };
-    setSets(newSets);
-    setMotionProfile({
-      ...motionProfile,
-      sets: newSets,
-    });
-  };
 
   const handleAddMove = (setIndex: number) => {
     const newSets = [...sets];
@@ -269,30 +273,32 @@ const TestProfileForm: React.FC = () => {
     });
   };
 
-  const handleMoveParameterChange = (setIndex: number, moveIndex: number, field: string) => (event: React.ChangeEvent<HTMLInputElement>) => {
-    const newSets = [...sets];
-    const inputValue = event.target.value;
-    newSets[setIndex] = {
-      ...newSets[setIndex],
-      moves: newSets[setIndex].moves.map((move, i) => {
-        if (i === moveIndex) {
-          return {
-            ...move,
-            moveParameters: {
-              ...move.moveParameters,
-              [field]: inputValue,
-            },
-          };
-        }
-        return move;
-      }),
+  const handleMoveParameterChange =
+    (setIndex: number, moveIndex: number, field: string) =>
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      const newSets = [...sets];
+      const inputValue = event.target.value;
+      newSets[setIndex] = {
+        ...newSets[setIndex],
+        moves: newSets[setIndex].moves.map((move, i) => {
+          if (i === moveIndex) {
+            return {
+              ...move,
+              moveParameters: {
+                ...move.moveParameters,
+                [field]: inputValue,
+              },
+            };
+          }
+          return move;
+        }),
+      };
+      setSets(newSets);
+      setMotionProfile({
+        ...motionProfile,
+        sets: newSets,
+      });
     };
-    setSets(newSets);
-    setMotionProfile({
-      ...motionProfile,
-      sets: newSets,
-    });
-  };
 
   const handleSaveSet = (index: number) => {
     const set = sets[index];
@@ -306,7 +312,10 @@ const TestProfileForm: React.FC = () => {
     URL.revokeObjectURL(url);
   };
 
-  const handleLoadSet = (index: number, event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleLoadSet = (
+    index: number,
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
     const file = event.target.files?.[0];
     if (file) {
       const reader = new FileReader();
@@ -335,19 +344,23 @@ const TestProfileForm: React.FC = () => {
   };
 
   return (
-    <Box sx={{
-      p: 4,
-      pt: 4,
-      height: 'calc(100vh - 64px)', // Subtract header height
-      overflowY: 'auto',
-      position: 'relative',
-      display: 'flex',
-      flexDirection: 'column',
-      gap: 4
-    }}>
+    <Box
+      sx={{
+        p: 4,
+        pt: 4,
+        height: 'calc(100vh - 64px)', // Subtract header height
+        overflowY: 'auto',
+        position: 'relative',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 4,
+      }}
+    >
       {/* Sample Profile Section */}
       <Paper elevation={2} sx={{ p: 3 }}>
-        <Typography variant="h5" sx={{ mb: 3, fontWeight: 'bold' }}>Sample Profile</Typography>
+        <Typography variant="h5" sx={{ mb: 3, fontWeight: 'bold' }}>
+          Sample Profile
+        </Typography>
         <Grid container spacing={2}>
           <Grid item xs={12} sm={4}>
             <TextField
@@ -401,7 +414,9 @@ const TestProfileForm: React.FC = () => {
             startIcon={<SaveIcon />}
             onClick={() => {
               const jsonProfile = JSON.stringify(sampleProfile, null, 2);
-              const blob = new Blob([jsonProfile], { type: 'application/json' });
+              const blob = new Blob([jsonProfile], {
+                type: 'application/json',
+              });
               const url = URL.createObjectURL(blob);
               const a = document.createElement('a');
               a.href = url;
@@ -429,7 +444,9 @@ const TestProfileForm: React.FC = () => {
                   const reader = new FileReader();
                   reader.onload = (e) => {
                     const jsonProfile = e.target?.result as string;
-                    const loadedProfile = JSON.parse(jsonProfile) as SampleProfile;
+                    const loadedProfile = JSON.parse(
+                      jsonProfile,
+                    ) as SampleProfile;
                     setSampleProfile(loadedProfile);
                   };
                   reader.readAsText(file);
@@ -444,7 +461,9 @@ const TestProfileForm: React.FC = () => {
 
       {/* Motion Profile Section */}
       <Paper elevation={2} sx={{ p: 3 }}>
-        <Typography variant="h5" sx={{ mb: 3, fontWeight: 'bold' }}>Motion Profile</Typography>
+        <Typography variant="h5" sx={{ mb: 3, fontWeight: 'bold' }}>
+          Motion Profile
+        </Typography>
         <Grid container spacing={2} sx={{ mb: 4 }}>
           <Grid item xs={12} sm={6}>
             <TextField
@@ -476,7 +495,11 @@ const TestProfileForm: React.FC = () => {
                 ref={provided.innerRef}
               >
                 {sets.map((set, setIndex) => (
-                  <Draggable key={setIndex} draggableId={`set-${setIndex}`} index={setIndex}>
+                  <Draggable
+                    key={setIndex}
+                    draggableId={`set-${setIndex}`}
+                    index={setIndex}
+                  >
                     {(provided) => (
                       <Grid
                         item
@@ -502,12 +525,19 @@ const TestProfileForm: React.FC = () => {
                                 label="Executions"
                                 type="number"
                                 value={set.executions}
-                                onChange={handleSetChange(setIndex, 'executions')}
+                                onChange={handleSetChange(
+                                  setIndex,
+                                  'executions',
+                                )}
                                 fullWidth
                               />
                             </Grid>
                             <Grid item xs={12}>
-                              <DragDropContext onDragEnd={(result) => handleMoveDragEnd(setIndex, result)}>
+                              <DragDropContext
+                                onDragEnd={(result) =>
+                                  handleMoveDragEnd(setIndex, result)
+                                }
+                              >
                                 <Droppable droppableId={`moves-${setIndex}`}>
                                   {(provided) => (
                                     <Grid
@@ -533,119 +563,216 @@ const TestProfileForm: React.FC = () => {
                                                 <FormControlStyled>
                                                   <Select
                                                     value={move.moveType}
-                                                    onChange={handleMoveChange(setIndex, moveIndex, 'moveType')}
+                                                    onChange={handleMoveChange(
+                                                      setIndex,
+                                                      moveIndex,
+                                                      'moveType',
+                                                    )}
                                                     size="small"
                                                   >
-                                                    <MenuItem value="linear">Linear</MenuItem>
-                                                    <MenuItem value="dwell">Dwell</MenuItem>
-                                                    <MenuItem value="arc">Arc</MenuItem>
-                                                    <MenuItem value="math">Math</MenuItem>
+                                                    <MenuItem value="linear">
+                                                      Linear
+                                                    </MenuItem>
+                                                    <MenuItem value="dwell">
+                                                      Dwell
+                                                    </MenuItem>
+                                                    <MenuItem value="arc">
+                                                      Arc
+                                                    </MenuItem>
+                                                    <MenuItem value="math">
+                                                      Math
+                                                    </MenuItem>
                                                   </Select>
                                                 </FormControlStyled>
 
                                                 {move.moveType !== 'dwell' && (
                                                   <FormControlStyled>
                                                     <Select
-                                                      value={move.absoluteOrRelative}
-                                                      onChange={handleMoveChange(setIndex, moveIndex, 'absoluteOrRelative')}
+                                                      value={
+                                                        move.absoluteOrRelative
+                                                      }
+                                                      onChange={handleMoveChange(
+                                                        setIndex,
+                                                        moveIndex,
+                                                        'absoluteOrRelative',
+                                                      )}
                                                       size="small"
                                                     >
-                                                      <MenuItem value="absolute">Absolute</MenuItem>
-                                                      <MenuItem value="relative">Relative</MenuItem>
+                                                      <MenuItem value="absolute">
+                                                        Absolute
+                                                      </MenuItem>
+                                                      <MenuItem value="relative">
+                                                        Relative
+                                                      </MenuItem>
                                                     </Select>
                                                   </FormControlStyled>
                                                 )}
 
-                                                {move.moveType === 'linear' && move.absoluteOrRelative === 'absolute' && (
-                                                  <>
-                                                    <TextFieldStyled
-                                                      label="Position (mm)"
-                                                      type="text"
-                                                      value={move.moveParameters.position}
-                                                      onChange={handleMoveParameterChange(setIndex, moveIndex, 'position')}
-                                                      size="small"
-                                                    />
-                                                    <TextFieldStyled
-                                                      label="Velocity (mm/s)"
-                                                      type="number"
-                                                      value={move.moveParameters.velocity}
-                                                      onChange={handleMoveParameterChange(setIndex, moveIndex, 'velocity')}
-                                                      size="small"
-                                                    />
-                                                  </>
-                                                )}
+                                                {move.moveType === 'linear' &&
+                                                  move.absoluteOrRelative ===
+                                                    'absolute' && (
+                                                    <>
+                                                      <TextFieldStyled
+                                                        label="Position (mm)"
+                                                        type="text"
+                                                        value={
+                                                          move.moveParameters
+                                                            .position
+                                                        }
+                                                        onChange={handleMoveParameterChange(
+                                                          setIndex,
+                                                          moveIndex,
+                                                          'position',
+                                                        )}
+                                                        size="small"
+                                                      />
+                                                      <TextFieldStyled
+                                                        label="Velocity (mm/s)"
+                                                        type="number"
+                                                        value={
+                                                          move.moveParameters
+                                                            .velocity
+                                                        }
+                                                        onChange={handleMoveParameterChange(
+                                                          setIndex,
+                                                          moveIndex,
+                                                          'velocity',
+                                                        )}
+                                                        size="small"
+                                                      />
+                                                    </>
+                                                  )}
 
-                                                {move.moveType === 'linear' && move.absoluteOrRelative === 'relative' && (
-                                                  <>
-                                                    <TextFieldStyled
-                                                      label="Distance (mm)"
-                                                      type="text"
-                                                      value={move.moveParameters.distance}
-                                                      onChange={handleMoveParameterChange(setIndex, moveIndex, 'distance')}
-                                                      size="small"
-                                                    />
-                                                    <TextFieldStyled
-                                                      label="Velocity (mm/s)"
-                                                      type="number"
-                                                      value={move.moveParameters.velocity}
-                                                      onChange={handleMoveParameterChange(setIndex, moveIndex, 'velocity')}
-                                                      size="small"
-                                                    />
-                                                  </>
-                                                )}
+                                                {move.moveType === 'linear' &&
+                                                  move.absoluteOrRelative ===
+                                                    'relative' && (
+                                                    <>
+                                                      <TextFieldStyled
+                                                        label="Distance (mm)"
+                                                        type="text"
+                                                        value={
+                                                          move.moveParameters
+                                                            .distance
+                                                        }
+                                                        onChange={handleMoveParameterChange(
+                                                          setIndex,
+                                                          moveIndex,
+                                                          'distance',
+                                                        )}
+                                                        size="small"
+                                                      />
+                                                      <TextFieldStyled
+                                                        label="Velocity (mm/s)"
+                                                        type="number"
+                                                        value={
+                                                          move.moveParameters
+                                                            .velocity
+                                                        }
+                                                        onChange={handleMoveParameterChange(
+                                                          setIndex,
+                                                          moveIndex,
+                                                          'velocity',
+                                                        )}
+                                                        size="small"
+                                                      />
+                                                    </>
+                                                  )}
 
                                                 {move.moveType === 'dwell' && (
                                                   <TextFieldStyled
                                                     label="Time (ms)"
                                                     type="number"
-                                                    value={move.moveParameters.time}
-                                                    onChange={handleMoveParameterChange(setIndex, moveIndex, 'time')}
+                                                    value={
+                                                      move.moveParameters.time
+                                                    }
+                                                    onChange={handleMoveParameterChange(
+                                                      setIndex,
+                                                      moveIndex,
+                                                      'time',
+                                                    )}
                                                     size="small"
                                                   />
                                                 )}
 
-                                                {move.moveType === 'arc' && move.absoluteOrRelative === 'absolute' && (
-                                                  <>
-                                                    <TextFieldStyled
-                                                      label="Position"
-                                                      type="text"
-                                                      value={move.moveParameters.position}
-                                                      onChange={handleMoveParameterChange(setIndex, moveIndex, 'position')}
-                                                      size="small"
-                                                    />
-                                                    <TextFieldStyled
-                                                      label="Circular Offset"
-                                                      type="number"
-                                                      value={move.moveParameters.circularOffset}
-                                                      onChange={handleMoveParameterChange(setIndex, moveIndex, 'circularOffset')}
-                                                      size="small"
-                                                    />
-                                                  </>
-                                                )}
+                                                {move.moveType === 'arc' &&
+                                                  move.absoluteOrRelative ===
+                                                    'absolute' && (
+                                                    <>
+                                                      <TextFieldStyled
+                                                        label="Position"
+                                                        type="text"
+                                                        value={
+                                                          move.moveParameters
+                                                            .position
+                                                        }
+                                                        onChange={handleMoveParameterChange(
+                                                          setIndex,
+                                                          moveIndex,
+                                                          'position',
+                                                        )}
+                                                        size="small"
+                                                      />
+                                                      <TextFieldStyled
+                                                        label="Circular Offset"
+                                                        type="number"
+                                                        value={
+                                                          move.moveParameters
+                                                            .circularOffset
+                                                        }
+                                                        onChange={handleMoveParameterChange(
+                                                          setIndex,
+                                                          moveIndex,
+                                                          'circularOffset',
+                                                        )}
+                                                        size="small"
+                                                      />
+                                                    </>
+                                                  )}
 
-                                                {move.moveType === 'arc' && move.absoluteOrRelative === 'relative' && (
-                                                  <>
-                                                    <TextFieldStyled
-                                                      label="Distance"
-                                                      type="text"
-                                                      value={move.moveParameters.distance}
-                                                      onChange={handleMoveParameterChange(setIndex, moveIndex, 'distance')}
-                                                      size="small"
-                                                    />
-                                                    <TextFieldStyled
-                                                      label="Circular Offset"
-                                                      type="number"
-                                                      value={move.moveParameters.circularOffset}
-                                                      onChange={handleMoveParameterChange(setIndex, moveIndex, 'circularOffset')}
-                                                      size="small"
-                                                    />
-                                                  </>
-                                                )}
+                                                {move.moveType === 'arc' &&
+                                                  move.absoluteOrRelative ===
+                                                    'relative' && (
+                                                    <>
+                                                      <TextFieldStyled
+                                                        label="Distance"
+                                                        type="text"
+                                                        value={
+                                                          move.moveParameters
+                                                            .distance
+                                                        }
+                                                        onChange={handleMoveParameterChange(
+                                                          setIndex,
+                                                          moveIndex,
+                                                          'distance',
+                                                        )}
+                                                        size="small"
+                                                      />
+                                                      <TextFieldStyled
+                                                        label="Circular Offset"
+                                                        type="number"
+                                                        value={
+                                                          move.moveParameters
+                                                            .circularOffset
+                                                        }
+                                                        onChange={handleMoveParameterChange(
+                                                          setIndex,
+                                                          moveIndex,
+                                                          'circularOffset',
+                                                        )}
+                                                        size="small"
+                                                      />
+                                                    </>
+                                                  )}
 
                                                 <DeleteButton
                                                   variant="contained"
                                                   color="error"
-                                                  onClick={() => handleDeleteMove(setIndex, moveIndex)}
+                                                  onClick={() =>
+                                                    handleDeleteMove(
+                                                      setIndex,
+                                                      moveIndex,
+                                                    )
+                                                  }
                                                   size="small"
                                                 >
                                                   ×
@@ -660,7 +787,13 @@ const TestProfileForm: React.FC = () => {
                                   )}
                                 </Droppable>
                               </DragDropContext>
-                              <Box sx={{ display: 'flex', justifyContent: 'center', my: 2 }}>
+                              <Box
+                                sx={{
+                                  display: 'flex',
+                                  justifyContent: 'center',
+                                  my: 2,
+                                }}
+                              >
                                 <Button
                                   variant="outlined"
                                   color="primary"
@@ -726,7 +859,10 @@ const TestProfileForm: React.FC = () => {
             color="primary"
             startIcon={<AddIcon />}
             onClick={() => {
-              const newSets = [...sets, { ...initialSet, name: `Set ${sets.length + 1}` }];
+              const newSets = [
+                ...sets,
+                { ...initialSet, name: `Set ${sets.length + 1}` },
+              ];
               setSets(newSets);
               setMotionProfile({
                 ...motionProfile,
@@ -745,7 +881,9 @@ const TestProfileForm: React.FC = () => {
             startIcon={<SaveIcon />}
             onClick={() => {
               const jsonProfile = JSON.stringify(motionProfile, null, 2);
-              const blob = new Blob([jsonProfile], { type: 'application/json' });
+              const blob = new Blob([jsonProfile], {
+                type: 'application/json',
+              });
               const url = URL.createObjectURL(blob);
               const a = document.createElement('a');
               a.href = url;
@@ -773,7 +911,9 @@ const TestProfileForm: React.FC = () => {
                   const reader = new FileReader();
                   reader.onload = (e) => {
                     const jsonProfile = e.target?.result as string;
-                    const loadedProfile = JSON.parse(jsonProfile) as MotionProfile;
+                    const loadedProfile = JSON.parse(
+                      jsonProfile,
+                    ) as MotionProfile;
                     setMotionProfile(loadedProfile);
                     setSets(loadedProfile.sets);
                   };
@@ -801,7 +941,9 @@ const TestProfileForm: React.FC = () => {
       >
         <DialogTitle>Generated G-code and Graph</DialogTitle>
         <DialogContent>
-          <GCodeGenerator profile={{ ...motionProfile, sampleProfile } as TestProfile} />
+          <GCodeGenerator
+            profile={{ ...motionProfile, sampleProfile } as TestProfile}
+          />
         </DialogContent>
         <DialogActions>
           <Button onClick={handleCloseDialog} color="primary">

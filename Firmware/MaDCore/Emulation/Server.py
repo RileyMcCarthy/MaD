@@ -1,12 +1,37 @@
 import MaDSim
 from time import sleep
+import os
+import signal
+import sys
 
 # The base port should be sent to firmware cause it sometimes has conflicts with existing ports
 # MAYBE ONCE STABLE RUN IN DOCKER
 socket_port_base = 9600
 
+# Setup virtual serial ports for UI testing
+print("Setting up virtual serial ports...")
+try:
+    # Create virtual serial port pair for UI testing using VirtualSerialPort
+    rpi_virtual_port = MaDSim.VirtualSerialPort("rpi_client", "rpi")
+    rpi_virtual_port.start()
+    
+    # Wait a bit for socat to create the ports
+    sleep(2)
+    print("✅ Virtual serial ports created: /tmp/tty.rpi_client and /tmp/tty.rpi")
+except Exception as e:
+    print(f"⚠️ Could not create virtual serial ports: {e}")
+    print("Continuing without virtual serial ports...")
+    rpi_virtual_port = None
+
 # Build firmware
-firmware = MaDSim.FirmwareRunner("native", "../")
+prebuilt_executable = os.getenv('MAD_FIRMWARE_EXECUTABLE')
+if prebuilt_executable and os.path.exists(prebuilt_executable):
+    print(f"Using prebuilt firmware executable: {prebuilt_executable}")
+    firmware = MaDSim.FirmwareRunner("native", "../", prebuilt_executable)
+else:
+    print("Building firmware from source...")
+    firmware = MaDSim.FirmwareRunner("native", "../")
+
 firmware.clean()
 firmware.build()
 
@@ -79,11 +104,9 @@ sample = MaDSim.TestSample(servo, forceGauge)
 
 # socat -d -d pty,raw,echo=0,link=/tmp/tty.rpi_client pty,raw,echo=0,link=/tmp/tty.rpi
 rpi_pin = 53
-#rpi_serial = MaDSim.VirtualSerialPort("rpi_client", "rpi") #run it manually, its easier lol
 rpi_async_serial_server = MaDSim.AsyncSerialServer("rpi_client")
 MaDSim.AsyncConectorSingle(rpi_async_serial_server, async_server[53])
 MaDSim.AsyncConectorSingle(async_server[55], rpi_async_serial_server)
-#rpi_serial.start()
 rpi_async_serial_server.run()
 
 firmware.run()
@@ -106,11 +129,11 @@ try:
         if not firmware.is_running():
             MaDSim.logger.error("Firmware has stopped, Exiting server process")
             break
-        #if not rpi_serial.is_running():
-        #    MaDSim.logger.error("RPI VSP has stopped, Exiting server process")
-        #    break
         if not rpi_async_serial_server.is_running():
             MaDSim.logger.error("RPI async serial server has stopped, Exiting server process")
+            break
+        if not rpi_virtual_port.is_running():
+            MaDSim.logger.error("RPI virtual serial port has stopped, Exiting server process")
             break
         if not MaDSim.async_handler.is_running():
             MaDSim.logger.error("Async handler has stopped, Exiting server process")
@@ -121,10 +144,23 @@ try:
                 break
         sample.apply_force()
         sleep(0.1)
+except KeyboardInterrupt:
+    print("Received shutdown signal, cleaning up...")
 finally:
+    print("Cleaning up processes...")
     firmware.stop()
     for async_server_instance in async_server:
             if not async_server_instance.stop():
                 MaDSim.logger.error("Async server has stopped, Exiting server process")
                 break
     MaDSim.async_handler.stop_loop()
+    
+    # Cleanup virtual serial port
+    try:
+        if 'rpi_virtual_port' in locals() and rpi_virtual_port and rpi_virtual_port.is_running():
+            rpi_virtual_port.stop()
+            print("✅ Virtual serial ports cleaned up")
+    except Exception as e:
+        print(f"⚠️ Error cleaning up virtual serial port: {e}")
+    
+    print("Server shutdown complete.")

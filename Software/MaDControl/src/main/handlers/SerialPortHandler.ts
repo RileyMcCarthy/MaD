@@ -14,6 +14,15 @@ class SerialPortHandler extends EventEmitter {
       serialLogger.info('Raw ports detected:', portPaths);
       serialLogger.info('Platform:', process.platform);
 
+      // Check for virtual serial ports created by firmware emulation
+      const virtualPorts = ['/tmp/tty.rpi'];
+      virtualPorts.forEach((virtualPort) => {
+        if (fs.existsSync(virtualPort)) {
+          portPaths.push(virtualPort);
+          serialLogger.info(`Added virtual serial port: ${virtualPort}`);
+        }
+      });
+
       // On macOS, transform tty.* devices to cu.* devices for outgoing connections
       if (process.platform === 'darwin') {
         const transformedPorts: string[] = [];
@@ -31,7 +40,9 @@ class SerialPortHandler extends EventEmitter {
             } else {
               // If cu.* doesn't exist, keep the tty.* device
               transformedPorts.push(ttyPath);
-              serialLogger.info(`Kept ${ttyPath} (no corresponding cu.* device found)`);
+              serialLogger.info(
+                `Kept ${ttyPath} (no corresponding cu.* device found)`,
+              );
             }
           } else {
             // Keep non-tty devices as-is
@@ -40,7 +51,9 @@ class SerialPortHandler extends EventEmitter {
         });
 
         portPaths = transformedPorts;
-        serialLogger.info('macOS: Transformed tty.* devices to cu.* for outgoing connections');
+        serialLogger.info(
+          'macOS: Transformed tty.* devices to cu.* for outgoing connections',
+        );
         serialLogger.info('Final transformed ports:', portPaths);
       }
 

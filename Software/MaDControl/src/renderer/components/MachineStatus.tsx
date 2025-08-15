@@ -24,7 +24,8 @@ function getStyledFaultedReason(reason: FaultedReason) {
     [FaultedReason.ESD_UPPER]: 'Upper ESD fault detected.',
     [FaultedReason.ESD_LOWER]: 'Lower ESD fault detected.',
     [FaultedReason.SERVO_COMMUNICATION]: 'Servo communication fault detected.',
-    [FaultedReason.FORCE_GAGUE_COMMUNICATION]: 'Force gauge communication fault detected.',
+    [FaultedReason.FORCE_GAGUE_COMMUNICATION]:
+      'Force gauge communication fault detected.',
     [FaultedReason.USER_REQUEST]: 'User requested to disable the machine.',
   };
 
@@ -58,7 +59,9 @@ function getStyledRestrictedReason(reason: RestrictedReason) {
 
   return (
     <Tooltip title={explanation}>
-      <Typography style={{ color: reason === RestrictedReason.NONE ? 'green' : 'yellow' }}>
+      <Typography
+        style={{ color: reason === RestrictedReason.NONE ? 'green' : 'yellow' }}
+      >
         {reasonText}
       </Typography>
     </Tooltip>
@@ -66,7 +69,9 @@ function getStyledRestrictedReason(reason: RestrictedReason) {
 }
 
 function getStyledMotionEnabled(motionEnabled: boolean) {
-  const explanation = motionEnabled ? 'Motion is enabled.' : 'Motion is disabled.';
+  const explanation = motionEnabled
+    ? 'Motion is enabled.'
+    : 'Motion is disabled.';
 
   return (
     <Tooltip title={explanation}>
@@ -78,7 +83,9 @@ function getStyledMotionEnabled(motionEnabled: boolean) {
 }
 
 function getStyledTestRunning(testRunning: boolean) {
-  const explanation = testRunning ? 'The test is currently running.' : 'The test is currently idle.';
+  const explanation = testRunning
+    ? 'The test is currently running.'
+    : 'The test is currently idle.';
 
   return (
     <Tooltip title={explanation}>
@@ -91,7 +98,7 @@ function getStyledTestRunning(testRunning: boolean) {
 
 function StatusComponent() {
   const [state] = useDevice();
-  const machineState = state.machineState;
+  const { machineState } = state;
   const height = 200;
 
   function styledStateParameters() {

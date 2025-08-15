@@ -39,8 +39,10 @@ interface TestRunnerProps {
 }
 
 export default function TestRunner({ onRunTest }: TestRunnerProps) {
-  const [selectedSampleProfile, setSelectedSampleProfile] = useState<SampleProfile | null>(null);
-  const [selectedMotionProfile, setSelectedMotionProfile] = useState<MotionProfile | null>(null);
+  const [selectedSampleProfile, setSelectedSampleProfile] =
+    useState<SampleProfile | null>(null);
+  const [selectedMotionProfile, setSelectedMotionProfile] =
+    useState<MotionProfile | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [runIndex, setRunIndex] = useState<number | null>(null);
   const [openDialog, setOpenDialog] = useState(false);
@@ -107,7 +109,8 @@ export default function TestRunner({ onRunTest }: TestRunnerProps) {
   };
 
   const handleRunTest = async () => {
-    if (!selectedSampleProfile || !selectedMotionProfile || runIndex === null) return;
+    if (!selectedSampleProfile || !selectedMotionProfile || runIndex === null)
+      return;
 
     try {
       setIsLoading(true);
@@ -208,10 +211,12 @@ export default function TestRunner({ onRunTest }: TestRunnerProps) {
         <DialogContent>
           {selectedSampleProfile && selectedMotionProfile && (
             <GCodeGenerator
-              profile={{
-                ...selectedMotionProfile,
-                sampleProfile: selectedSampleProfile,
-              } as unknown as TestProfile}
+              profile={
+                {
+                  ...selectedMotionProfile,
+                  sampleProfile: selectedSampleProfile,
+                } as unknown as TestProfile
+              }
               onGcodeGenerated={setGeneratedGcode}
             />
           )}
@@ -225,7 +230,9 @@ export default function TestRunner({ onRunTest }: TestRunnerProps) {
             color="primary"
             variant="contained"
             disabled={isLoading}
-            startIcon={isLoading ? <CircularProgress size={24} /> : <PlayArrowIcon />}
+            startIcon={
+              isLoading ? <CircularProgress size={24} /> : <PlayArrowIcon />
+            }
           >
             {isLoading ? 'Running...' : 'Run Test'}
           </Button>

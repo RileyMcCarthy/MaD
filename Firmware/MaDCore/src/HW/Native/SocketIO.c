@@ -7,6 +7,7 @@
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <sys/select.h>
 #include "lib_staticQueue.h"
 #include "IO_Debug.h"
 
@@ -100,13 +101,20 @@ bool socketio_poll(int32_t socket_id)
 
 int32_t socketio_receiveTimeout(int32_t socket_id, uint8_t *data, uint32_t length, uint32_t timeout_us)
 {
+    // Validate socket descriptor
+    if (socket_id < 0) {
+        DEBUG_ERROR("Invalid socket descriptor: %d\n", socket_id);
+        return 0;
+    }
+
     fd_set readfds;
     FD_ZERO(&readfds);
     FD_SET(socket_id, &readfds);
 
     struct timeval timeout;
-    timeout.tv_sec = 0;
-    timeout.tv_usec = timeout_us;
+    // Handle timeout values >= 1 second
+    timeout.tv_sec = timeout_us / 1000000;
+    timeout.tv_usec = timeout_us % 1000000;
 
     int ready = select(socket_id + 1, &readfds, NULL, NULL, &timeout);
 
@@ -128,7 +136,8 @@ int32_t socketio_receiveTimeout(int32_t socket_id, uint8_t *data, uint32_t lengt
     else
     {
         // Handle error or connection closed
-        perror("Error in select");
+        DEBUG_ERROR("Error in select() - socket_id: %d, timeout: %d.%06d, errno: %d (%s)\n", 
+                   socket_id, (int)timeout.tv_sec, (int)timeout.tv_usec, errno, strerror(errno));
         return 0;
     }
 }

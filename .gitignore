@@ -40,3 +40,4 @@ node_modules/
 .env
 .env.local
 .env.*.local
+Software/MaDControl/sample-runs.json

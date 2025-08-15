@@ -12,11 +12,11 @@ import {
   NotificationType,
   FirmwareVersion,
 } from '@shared/SharedInterface';
+import { deviceLogger } from '@utils/logger';
 import DataProcessor, { ReadType, WriteType } from './DataProcessor';
 import NotificationSender from './NotificationSender';
 import SerialPortHandler from './SerialPortHandler';
 import { showFirmwareFileDialog } from '../util';
-import { deviceLogger } from '@utils/logger';
 
 function emitAndWaitForResponse(
   emitter: EventEmitter,
@@ -99,17 +99,19 @@ class DeviceInterface {
     // Periodic task to request SAMPLE every 100ms
     setInterval(() => {
       if (this.serialport.getCurrentPath()) {
-        //deviceLogger.debug('Requesting sample data from device');
+        // deviceLogger.debug('Requesting sample data from device');
         this.dataProcessor.readData(ReadType.SAMPLE);
       }
       // Check if device stopped responding and emit event if status changed
       const now = Date.now();
       const wasResponding = this.device_connected;
-      const isResponding = (now - this.last_sample_data_ms) <= 1000;
+      const isResponding = now - this.last_sample_data_ms <= 1000;
 
       if (wasResponding !== isResponding) {
         if (!isResponding && wasResponding) {
-          deviceLogger.warn('Device stopped responding - no sample data received for >1 second');
+          deviceLogger.warn(
+            'Device stopped responding - no sample data received for >1 second',
+          );
         }
         this.device_connected = isResponding;
 
@@ -117,7 +119,9 @@ class DeviceInterface {
         this.window.webContents.send('device-status-updates', {
           responding: isResponding,
           connected: this.serialport.getCurrentPath() !== null,
-          message: isResponding ? 'Device is responding' : 'Device stopped responding'
+          message: isResponding
+            ? 'Device is responding'
+            : 'Device stopped responding',
         });
       }
     }, this.sample_interval_ms);
@@ -125,7 +129,7 @@ class DeviceInterface {
     // Periodic task to request MACHINE_STATE every 100ms
     setInterval(() => {
       if (this.serialport.getCurrentPath()) {
-        //deviceLogger.debug('Requesting machine state from device');
+        // deviceLogger.debug('Requesting machine state from device');
         this.dataProcessor.readData(ReadType.STATE);
       }
     }, 1000);
@@ -139,9 +143,12 @@ class DeviceInterface {
         return `Connected to ${portPath}`;
       } catch (error) {
         // Check if this is a "Canceled" error
-        const errorMessage = error instanceof Error ? error.message : String(error);
+        const errorMessage =
+          error instanceof Error ? error.message : String(error);
         if (errorMessage.includes('Canceled')) {
-          deviceLogger.warn('Caught "Canceled" error during device connect, handling gracefully');
+          deviceLogger.warn(
+            'Caught "Canceled" error during device connect, handling gracefully',
+          );
           this.notificationSender.sendNotification({
             Type: NotificationType.WARN,
             Message: 'Connection was canceled. Please try again.',
@@ -174,13 +181,21 @@ class DeviceInterface {
     });
 
     ipcMain.handle('device-responding', async () => {
-      console.log('🔍 DeviceInterface: device-responding handler called, returning:', this.device_connected);
+      console.log(
+        '🔍 DeviceInterface: device-responding handler called, returning:',
+        this.device_connected,
+      );
       return this.device_connected;
     });
 
     ipcMain.handle('device-connected', async () => {
       const isConnected = this.serialport.getCurrentPath() !== null;
-      console.log('🔍 DeviceInterface: device-connected handler called, port path:', this.serialport.getCurrentPath(), 'returning:', isConnected);
+      console.log(
+        '🔍 DeviceInterface: device-connected handler called, port path:',
+        this.serialport.getCurrentPath(),
+        'returning:',
+        isConnected,
+      );
       return isConnected;
     });
 
@@ -190,7 +205,9 @@ class DeviceInterface {
       return waitForResponse(ipcMain, 'machine-configuration-updated', 1000);
     });
 
-    ipcMain.handle('save-machine-configuration', async (_event, newConfig: MachineConfiguration) => {
+    ipcMain.handle(
+      'save-machine-configuration',
+      async (_event, newConfig: MachineConfiguration) => {
         this.dataProcessor.writeData(
           WriteType.MACHINE_CONFIGURATION,
           Buffer.from(JSON.stringify(newConfig)),
@@ -205,7 +222,15 @@ class DeviceInterface {
         WriteType.MOTION_ENABLE,
         Buffer.from(enabled ? '1' : '0'),
       );
-      return waitForResponse(ipcMain, 'motion-enabled-ack', 1000);
+      deviceLogger.debug('set-motion-enabled', enabled);
+      const result = await waitForResponse(ipcMain, 'motion-enabled-ack', 1000);
+
+      // Request updated machine state immediately after motion command
+      setTimeout(() => {
+        this.dataProcessor.readData(ReadType.STATE);
+      }, 100); // Small delay to ensure command is processed
+
+      return result;
     });
 
     ipcMain.handle('manual-move', async (_event, mm: number, speed: number) => {
@@ -230,7 +255,10 @@ class DeviceInterface {
     });
 
     ipcMain.handle('home-axis', async () => {
-      this.dataProcessor.writeData(WriteType.MANUAL_MOVE, Buffer.from('{"G":28}'));
+      this.dataProcessor.writeData(
+        WriteType.MANUAL_MOVE,
+        Buffer.from('{"G":28}'),
+      );
       return true;
     });
 
@@ -240,7 +268,7 @@ class DeviceInterface {
     });
 
     ipcMain.handle('stream-gcode', async (_event, gcode: string) => {
-      const lines = gcode.split('\n').filter(line => line.trim() !== '');
+      const lines = gcode.split('\n').filter((line) => line.trim() !== '');
 
       const streamGcode = async () => {
         for (let i = 0; i < lines.length; i++) {
@@ -253,12 +281,17 @@ class DeviceInterface {
 
           while (!success && retryCount < maxRetries) {
             try {
-              this.dataProcessor.writeData(WriteType.TEST_MOVE, Buffer.from(line));
+              this.dataProcessor.writeData(
+                WriteType.TEST_MOVE,
+                Buffer.from(line),
+              );
 
               // Wait for acknowledgment with timeout
               await new Promise((resolve, reject) => {
                 const timeout = setTimeout(() => {
-                  reject(new Error('Timeout waiting for G-code acknowledgment'));
+                  reject(
+                    new Error('Timeout waiting for G-code acknowledgment'),
+                  );
                 }, 5000);
 
                 const handleAck = () => {
@@ -273,10 +306,16 @@ class DeviceInterface {
             } catch (error) {
               retryCount++;
               if (retryCount < maxRetries) {
-                deviceLogger.warn(`Retrying G-code line (attempt ${retryCount}/${maxRetries}):`, line);
-                await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1s before retry
+                deviceLogger.warn(
+                  `Retrying G-code line (attempt ${retryCount}/${maxRetries}):`,
+                  line,
+                );
+                await new Promise((resolve) => setTimeout(resolve, 1000)); // Wait 1s before retry
               } else {
-                deviceLogger.error(`Failed to send G-code line after ${maxRetries} attempts:`, line);
+                deviceLogger.error(
+                  `Failed to send G-code line after ${maxRetries} attempts:`,
+                  line,
+                );
                 throw error;
               }
             }
@@ -289,7 +328,10 @@ class DeviceInterface {
         return { success: true };
       } catch (error) {
         deviceLogger.error('Error in G-code streaming process:', error);
-        return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        };
       }
     });
 
@@ -307,7 +349,7 @@ class DeviceInterface {
         if (!result) {
           return {
             success: false,
-            error: 'No file selected'
+            error: 'No file selected',
           };
         }
 
@@ -317,7 +359,7 @@ class DeviceInterface {
         if (!fs.existsSync(firmwarePath)) {
           return {
             success: false,
-            error: 'Selected file does not exist'
+            error: 'Selected file does not exist',
           };
         }
 
@@ -325,7 +367,7 @@ class DeviceInterface {
         if (fileExtension !== '.bin') {
           return {
             success: false,
-            error: 'Invalid file type. Please select a .bin file.'
+            error: 'Invalid file type. Please select a .bin file.',
           };
         }
 
@@ -333,13 +375,13 @@ class DeviceInterface {
         const flashResult = await this.flashFirmware(firmwarePath);
 
         return flashResult;
-
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+        const errorMessage =
+          error instanceof Error ? error.message : 'Unknown error occurred';
         deviceLogger.error('Unhandled error in flash-from-file:', errorMessage);
         return {
           success: false,
-          error: errorMessage
+          error: errorMessage,
         };
       }
     });
@@ -378,7 +420,7 @@ class DeviceInterface {
               this.window.webContents.send('device-status-updates', {
                 responding: true,
                 connected: this.serialport.getCurrentPath() !== null,
-                message: 'Device is responding'
+                message: 'Device is responding',
               });
             }
             break;
@@ -392,7 +434,10 @@ class DeviceInterface {
           case ReadType.MACHINE_CONFIGURATION:
             const config: MachineConfiguration = JSON.parse(data);
             this.machine_configuration = config;
-            this.window.webContents.send('machine-configuration-updates', config);
+            this.window.webContents.send(
+              'machine-configuration-updates',
+              config,
+            );
             ipcMain.emit('machine-configuration-updated', config);
             break;
 
@@ -408,22 +453,22 @@ class DeviceInterface {
             break;
         }
       } catch (error) {
-        deviceLogger.error('Failed to parse data for command', command, ':', error);
+        deviceLogger.error(
+          'Failed to parse data for command',
+          command,
+          ':',
+          error,
+        );
         deviceLogger.debug('Raw data:', data);
       }
     });
 
-    this.dataProcessor.on('ack', (command: string, ack: boolean) => {
+    this.dataProcessor.on('ack', (command: WriteType, ack: boolean) => {
       deviceLogger.debug('Received ACK from device:', command, ack);
-      if (command === 'MOTION_ENABLE') {
+      if (command === WriteType.MOTION_ENABLE) {
         deviceLogger.debug('motion enabled ack1', command, ack);
         ipcMain.emit('motion-enabled-ack', ack);
       }
-    });
-
-    this.dataProcessor.on('motion-enabled', (enabled: boolean) => {
-      deviceLogger.debug('motion enabled ack', enabled);
-      ipcMain.emit('motion-enabled-ack', enabled);
     });
 
     this.dataProcessor.on('notification', (notification: Notification) => {
@@ -435,7 +480,10 @@ class DeviceInterface {
     });
 
     this.serialport.on('open', (message: string) => {
-      console.log('🔌 DeviceInterface: Serial port opened, sending connection status:', message);
+      console.log(
+        '🔌 DeviceInterface: Serial port opened, sending connection status:',
+        message,
+      );
       this.window.webContents.send('device-status-updates', {
         connected: true,
         responding: this.device_connected,
@@ -444,7 +492,10 @@ class DeviceInterface {
     });
 
     this.serialport.on('open-callback', (message: string) => {
-      console.log('🔌 DeviceInterface: Serial port open-callback, sending connection status:', message);
+      console.log(
+        '🔌 DeviceInterface: Serial port open-callback, sending connection status:',
+        message,
+      );
       this.window.webContents.send('device-status-updates', {
         connected: true,
         responding: this.device_connected,
@@ -453,7 +504,10 @@ class DeviceInterface {
     });
 
     this.serialport.on('close', (message: string) => {
-      console.log('🔌 DeviceInterface: Serial port closed, sending connection status:', message);
+      console.log(
+        '🔌 DeviceInterface: Serial port closed, sending connection status:',
+        message,
+      );
       this.device_connected = false;
       this.window.webContents.send('device-status-updates', {
         connected: false,
@@ -463,7 +517,10 @@ class DeviceInterface {
     });
 
     this.serialport.on('error', (error: Error) => {
-      console.log('🔌 DeviceInterface: Serial port error, sending connection status:', error.message);
+      console.log(
+        '🔌 DeviceInterface: Serial port error, sending connection status:',
+        error.message,
+      );
       this.device_connected = false;
       this.window.webContents.send('device-status-updates', {
         connected: false,
@@ -486,7 +543,9 @@ class DeviceInterface {
    * Flash firmware to the device
    * @param firmwarePath Path to firmware file to flash
    */
-  public async flashFirmware(firmwarePath: string): Promise<{ success: boolean; error?: string }> {
+  public async flashFirmware(
+    firmwarePath: string,
+  ): Promise<{ success: boolean; error?: string }> {
     try {
       this.sendProgressMessage('Preparing to flash firmware...');
 
@@ -497,7 +556,8 @@ class DeviceInterface {
       if (!portPath) {
         return {
           success: false,
-          error: 'No serial port connected. Please connect to a port first before updating firmware.',
+          error:
+            'No serial port connected. Please connect to a port first before updating firmware.',
         };
       }
 
@@ -506,12 +566,14 @@ class DeviceInterface {
       try {
         await this.serialport.disconnect();
         // Add a small delay to ensure the port is fully closed
-        await new Promise(resolve => setTimeout(resolve, 500));
+        await new Promise((resolve) => setTimeout(resolve, 500));
         this.sendProgressMessage('Serial port closed successfully');
       } catch (closeErr) {
         // Log the error but continue anyway - the port might already be closed
         deviceLogger.warn('Warning while closing serial port:', closeErr);
-        this.sendProgressMessage('Warning while closing serial port, continuing anyway...');
+        this.sendProgressMessage(
+          'Warning while closing serial port, continuing anyway...',
+        );
       }
 
       // Get the loadp2 binary path from the local bin directory
@@ -541,14 +603,20 @@ class DeviceInterface {
       }
 
       // Flash the firmware
-      const flashResult = await this.flashWithLoadP2(loadp2Path, firmwarePath, portPath);
+      const flashResult = await this.flashWithLoadP2(
+        loadp2Path,
+        firmwarePath,
+        portPath,
+      );
 
       // Only attempt to reconnect if the flash was successful
       if (flashResult.success && portPath && baudRate) {
-        this.sendProgressMessage('Firmware flashed successfully. Reconnecting to device...');
+        this.sendProgressMessage(
+          'Firmware flashed successfully. Reconnecting to device...',
+        );
         try {
           // Wait a moment before reconnecting to give the device time to reboot
-          await new Promise(resolve => setTimeout(resolve, 1000));
+          await new Promise((resolve) => setTimeout(resolve, 1000));
 
           // Attempt to reconnect
           await this.serialport.connect(portPath, baudRate);
@@ -556,7 +624,9 @@ class DeviceInterface {
         } catch (reconnectErr) {
           // Log the error but don't fail the overall operation - flashing was successful
           deviceLogger.warn('Warning while reconnecting:', reconnectErr);
-          this.sendProgressMessage('Note: Could not automatically reconnect. Please reconnect manually if needed.');
+          this.sendProgressMessage(
+            'Note: Could not automatically reconnect. Please reconnect manually if needed.',
+          );
         }
       }
 
@@ -591,7 +661,7 @@ class DeviceInterface {
         // Send flashing started event
         this.window.webContents.send('firmware-flash-status', {
           status: 'preparing',
-          message: 'Preparing to flash firmware...'
+          message: 'Preparing to flash firmware...',
         });
 
         // First, check if the firmware file exists and has content
@@ -605,7 +675,7 @@ class DeviceInterface {
           if (stats.size === 0) {
             this.window.webContents.send('firmware-flash-status', {
               status: 'error',
-              message: 'Firmware file is empty'
+              message: 'Firmware file is empty',
             });
             return resolve({
               success: false,
@@ -616,7 +686,7 @@ class DeviceInterface {
           const errorMsg = err instanceof Error ? err.message : String(err);
           this.window.webContents.send('firmware-flash-status', {
             status: 'error',
-            message: `Error accessing firmware file: ${errorMsg}`
+            message: `Error accessing firmware file: ${errorMsg}`,
           });
           return resolve({
             success: false,
@@ -625,12 +695,16 @@ class DeviceInterface {
         }
 
         // Next, check if the flashloader exists
-        const flashloaderPath = path.join(process.cwd(), 'bin', 'P2ES_flashloader.bin');
+        const flashloaderPath = path.join(
+          process.cwd(),
+          'bin',
+          'P2ES_flashloader.bin',
+        );
 
         if (!fs.existsSync(flashloaderPath)) {
           this.window.webContents.send('firmware-flash-status', {
             status: 'error',
-            message: `Flash loader not found at ${flashloaderPath}`
+            message: `Flash loader not found at ${flashloaderPath}`,
           });
           return resolve({
             success: false,
@@ -647,7 +721,9 @@ class DeviceInterface {
           );
         } catch (err) {
           // Just log this one, not critical
-          deviceLogger.warn(`Warning: Could not get flash loader file size: ${err}`);
+          deviceLogger.warn(
+            `Warning: Could not get flash loader file size: ${err}`,
+          );
         }
 
         // Construct the two-stage flash command
@@ -656,8 +732,9 @@ class DeviceInterface {
 
         // Command to flash firmware with loadp2
         const cmdArgs = [
-          '-b230400',  // Baud rate
-          '-p', port,  // Port
+          '-b230400', // Baud rate
+          '-p',
+          port, // Port
           twoStageCmd, // Two-stage flash command
         ];
 
@@ -669,7 +746,7 @@ class DeviceInterface {
         // Send flashing started event
         this.window.webContents.send('firmware-flash-status', {
           status: 'flashing',
-          message: 'Firmware flashing in progress...'
+          message: 'Firmware flashing in progress...',
         });
 
         const flashProcess = spawn(loadp2Path, cmdArgs);
@@ -680,21 +757,24 @@ class DeviceInterface {
         let processCompleted = false;
 
         // Set up a timeout to kill the process if it hangs (5 minutes)
-        const timeout = setTimeout(() => {
-          if (!processCompleted && flashProcess && !flashProcess.killed) {
-            deviceLogger.warn('Flash process timed out, killing process');
-            flashProcess.kill('SIGKILL');
-            this.currentFlashProcess = null;
-            this.window.webContents.send('firmware-flash-status', {
-              status: 'error',
-              message: 'Firmware flashing timed out after 5 minutes'
-            });
-            resolve({
-              success: false,
-              error: 'Firmware flashing timed out after 5 minutes',
-            });
-          }
-        }, 5 * 60 * 1000); // 5 minutes
+        const timeout = setTimeout(
+          () => {
+            if (!processCompleted && flashProcess && !flashProcess.killed) {
+              deviceLogger.warn('Flash process timed out, killing process');
+              flashProcess.kill('SIGKILL');
+              this.currentFlashProcess = null;
+              this.window.webContents.send('firmware-flash-status', {
+                status: 'error',
+                message: 'Firmware flashing timed out after 5 minutes',
+              });
+              resolve({
+                success: false,
+                error: 'Firmware flashing timed out after 5 minutes',
+              });
+            }
+          },
+          5 * 60 * 1000,
+        ); // 5 minutes
 
         const cleanup = () => {
           processCompleted = true;
@@ -718,7 +798,9 @@ class DeviceInterface {
 
         flashProcess.on('close', (code, signal) => {
           cleanup();
-          deviceLogger.info(`LoadP2 process exited with code ${code}, signal ${signal}`);
+          deviceLogger.info(
+            `LoadP2 process exited with code ${code}, signal ${signal}`,
+          );
 
           if (signal === 'SIGTERM' || signal === 'SIGKILL') {
             this.window.webContents.send(
@@ -727,7 +809,7 @@ class DeviceInterface {
             );
             this.window.webContents.send('firmware-flash-status', {
               status: 'canceled',
-              message: 'Firmware flashing was canceled by user'
+              message: 'Firmware flashing was canceled by user',
             });
             resolve({
               success: false,
@@ -743,7 +825,7 @@ class DeviceInterface {
             );
             this.window.webContents.send('firmware-flash-status', {
               status: 'success',
-              message: 'Firmware flashed successfully'
+              message: 'Firmware flashed successfully',
             });
             resolve({ success: true });
           } else {
@@ -751,18 +833,22 @@ class DeviceInterface {
             let errorMessage = `LoadP2 exited with code ${code}.`;
 
             if (errorOutput.includes('cannot open serial port')) {
-              errorMessage = 'Error: Cannot open serial port. The port may be in use or you may need permission to access it.';
+              errorMessage =
+                'Error: Cannot open serial port. The port may be in use or you may need permission to access it.';
             } else if (errorOutput.includes('No such file or directory')) {
               errorMessage = 'Error: Could not find the firmware file.';
-            } else if (errorOutput.toLowerCase().includes('permission denied')) {
-              errorMessage = 'Error: Permission denied when accessing the port. Try running as administrator or change port permissions.';
+            } else if (
+              errorOutput.toLowerCase().includes('permission denied')
+            ) {
+              errorMessage =
+                'Error: Permission denied when accessing the port. Try running as administrator or change port permissions.';
             } else {
               errorMessage += ` ${errorOutput}`;
             }
 
             this.window.webContents.send('firmware-flash-status', {
               status: 'error',
-              message: errorMessage
+              message: errorMessage,
             });
 
             resolve({
@@ -779,7 +865,7 @@ class DeviceInterface {
 
           this.window.webContents.send('firmware-flash-status', {
             status: 'error',
-            message: `Failed to run LoadP2 tool: ${errorMsg}`
+            message: `Failed to run LoadP2 tool: ${errorMsg}`,
           });
 
           resolve({
@@ -787,14 +873,13 @@ class DeviceInterface {
             error: `Failed to run LoadP2 tool: ${errorMsg}`,
           });
         });
-
       } catch (err) {
         // Handle any unexpected errors
         const errorMsg = err instanceof Error ? err.message : String(err);
         deviceLogger.error('Unexpected error in flashWithLoadP2:', errorMsg);
         this.window.webContents.send('firmware-flash-status', {
           status: 'error',
-          message: `Unexpected error during flashing: ${errorMsg}`
+          message: `Unexpected error during flashing: ${errorMsg}`,
         });
         resolve({
           success: false,

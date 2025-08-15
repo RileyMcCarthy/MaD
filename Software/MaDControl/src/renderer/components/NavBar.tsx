@@ -252,11 +252,7 @@ function SideBar({ children }: MiniDrawerProps) {
           ))}
         </List>
       </Drawer>
-      <Box
-        id="navbarMain"
-        component="main"
-        sx={{ flex: 1, marginTop: '64px' }}
-      >
+      <Box id="navbarMain" component="main" sx={{ flex: 1, marginTop: '64px' }}>
         {children}
       </Box>
     </Box>

@@ -50,11 +50,8 @@ void mad_begin()
   }
 
   mad_startupNVRAM(criticalLock); // start the non-volatile memory system
-
   watchdog_init(criticalLock);
   dev_cogManager_init(criticalLock);
-
-  app_notification_send(APP_NOTIFICATION_TYPE_SUCCESS, "Device is alive!\n");
 
   while (true)
   {

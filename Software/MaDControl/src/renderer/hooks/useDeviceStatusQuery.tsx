@@ -25,8 +25,10 @@ export default function useDeviceStatusQuery(): DeviceStatusQueryResult {
         setError(null);
 
         // Query initial connection and responding status
-        const connected = await window.electron.ipcRenderer.invoke('device-connected');
-        const responding = await window.electron.ipcRenderer.invoke('device-responding');
+        const connected =
+          await window.electron.ipcRenderer.invoke('device-connected');
+        const responding =
+          await window.electron.ipcRenderer.invoke('device-responding');
 
         const status: DeviceStatus = {
           connected,

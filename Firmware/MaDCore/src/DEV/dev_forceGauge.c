@@ -131,7 +131,7 @@ static void dev_forceGauge_private_runAction(dev_forceGauge_channel_E channel)
         dev_forceGauge_data.channel[channel].output.ready = false;
         break;
     case DEV_FORCEGAUGE_STATE_RUNNING:
-        dev_forceGauge_data.channel[channel].input.responding = IO_ADS122U04_receiveConversion(dev_forceGauge_channelConfig[channel].adcChannel, &dev_forceGauge_data.channel[channel].input.rawADC, 100000);
+        dev_forceGauge_data.channel[channel].input.responding = IO_ADS122U04_receiveConversion(dev_forceGauge_channelConfig[channel].adcChannel, &dev_forceGauge_data.channel[channel].input.rawADC, 1000000);
         if (dev_forceGauge_data.channel[channel].input.rawADC > dev_forceGauge_data.channel[channel].nvram.zeroForceCount)
         {
             const int32_t nomalizedCount = dev_forceGauge_data.channel[channel].input.rawADC - dev_forceGauge_data.channel[channel].nvram.zeroForceCount;
