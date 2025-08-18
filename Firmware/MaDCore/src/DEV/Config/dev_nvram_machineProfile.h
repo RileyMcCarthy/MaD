@@ -19,6 +19,8 @@ typedef struct
     int maxVelocity;     // Maximum velocity of the machine (mm/s)
     int maxAcceleration; // Maximum acceleration of the machine (mm/s2)
     int maxForceTensile; // Maximum force tensile of the machine (mN)
+    int homingVelocity;  // Velocity for homing routine (mm/s)
+    int homingOffset;    // Distance to move off endstop after homing (mm)
 } MachineProfile;
 
 typedef struct SampleProfile

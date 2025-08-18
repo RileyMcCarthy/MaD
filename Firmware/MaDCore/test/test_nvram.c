@@ -7,32 +7,17 @@ extern dev_nvram_config_t dev_nvram_config;
 extern MachineProfile dev_nvram_machineProfileDefault;
 
 static const MachineProfile dev_nvram_machineProfileTest1 = {
-    "Test1", // name
-    {
-        "DYN4Test",    // motorType
-        0,             // maxMotorTorque
-        0,             // maxMotorRPM
-        0,             // gearDiameter
-        0,             // gearPitch
-        0,             // systemIntertia
-        0,             // staticTorque
-        0,             // load
-        "EncoderTest", // positionEncoderType
-        0,             // encoderStepsPermm
-        0,             // servoStepPermm
-        "DS2Test",     // forceGauge
-        0,             // forceGaugeGain
-        0,             // forceGaugeOffset
-    },
-    {
-        0, // minPosition
-        0, // maxPosition
-        0, // maxVelocity
-        0, // maxAcceleration
-        0, // maxForceTensile
-        0, // maxForceCompression
-        0, // forceGaugeNeutralOffset
-    },
+    "Test1",    // name
+    1000,       // encoderStepsPerMM
+    1000,       // servoStepsPerMM
+    -500,       // forceGaugeNPerStep
+    16000000,   // forceGaugeZeroOffset
+    80,         // maxPosition
+    15,         // maxVelocity
+    40,         // maxAcceleration
+    4000,       // maxForceTensile
+    8,          // homingVelocity
+    3,          // homingOffset
 };
 
 void test_dev_nvram_loadDefaultMachineProfile(void)
@@ -40,7 +25,8 @@ void test_dev_nvram_loadDefaultMachineProfile(void)
     // Ensure default values are correct
     MachineProfile *defaultProfile = (MachineProfile *)dev_nvram_config.channels[DEV_NVRAM_CHANNEL_MACHINE_PROFILE].dataDefault;
     TEST_ASSERT_EQUAL_CHAR_ARRAY(defaultProfile->name, "Default", strlen("Default"));
-    TEST_ASSERT_EQUAL_INT(defaultProfile->configuration.maxMotorRPM, 0);
+    TEST_ASSERT_EQUAL_INT(defaultProfile->homingVelocity, 10);
+    TEST_ASSERT_EQUAL_INT(defaultProfile->homingOffset, 5);
     TEST_ASSERT_EQUAL_INT(dev_nvram_config.channels[DEV_NVRAM_CHANNEL_MACHINE_PROFILE].size, sizeof(MachineProfile));
 
     // Ensure that default profile is not yet loaded

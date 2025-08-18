@@ -28,6 +28,8 @@ bool json_to_machine_profile(MachineProfile *profile, char *json)
     success &= json_property_to_int(parser, "Velocity Max (mm/s)", &(profile->maxVelocity));
     success &= json_property_to_int(parser, "Acceleration Max (mm/s^2)", &(profile->maxAcceleration));
     success &= json_property_to_int(parser, "Tensile Force Max (N)", &(profile->maxForceTensile));
+    success &= json_property_to_int(parser, "Homing Velocity (mm/s)", &(profile->homingVelocity));
+    success &= json_property_to_int(parser, "Homing Offset (mm)", &(profile->homingOffset));
     DEBUG_INFO("SUCESS: %d\n", success);
     return success;
 }

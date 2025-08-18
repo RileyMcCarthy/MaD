@@ -25,13 +25,15 @@
 DEV_NVRAM_CHANNEL_DATA_CREATE(MachineProfile) = {
     "Default", // name
     (4 * 2048),         // encoderStepsPerMM
-    100,         // servoStepsPerMM
+    (4 * 2048),         // servoStepsPerMM
     -658,         // forceGaugeNPerStep
     16119601,         // forceGaugeZeroOffset
-    1000,         // maxPosition
-    200,         // maxVelocity
-    100,         // maxAcceleration
+    100,         // maxPosition
+    20,         // maxVelocity
+    50,         // maxAcceleration
     5000,         // maxForceTensile
+    10,         // homingVelocity
+    5,          // homingOffset
 };
 
 // should rename to have prefix like lib or app or io etc

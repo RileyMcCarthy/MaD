@@ -72,6 +72,8 @@ typedef struct
     lib_timer_S endstopTimer;
     int32_t stepsPerMM;
     int32_t maxPosition;
+    int32_t homingVelocity;
+    int32_t homingOffset;
     app_motion_move_t currentMove;
     app_motion_state_E state;
     int lock;
@@ -182,7 +184,7 @@ static bool app_motion_private_homing_run(void)
     {
     case APP_MOTION_HOME_START:
         DEBUG_INFO("%s", "Homing Moving\n");
-        dev_stepper_move(DEV_STEPPER_CHANNEL_MAIN, app_motion_data.inputs.positionSteps - app_motion_data.stepsPerMM * app_motion_data.maxPosition, 100 * app_motion_data.stepsPerMM);
+        dev_stepper_move(DEV_STEPPER_CHANNEL_MAIN, app_motion_data.inputs.positionSteps - app_motion_data.stepsPerMM * app_motion_data.maxPosition, app_motion_data.homingVelocity * app_motion_data.stepsPerMM);
         app_motion_data.homeState = APP_MOTION_HOME_MOVING;
         break;
     case APP_MOTION_HOME_MOVING:
@@ -205,7 +207,8 @@ static bool app_motion_private_homing_run(void)
             DEBUG_INFO("%s", "Homing Backoff\n");
             app_monitor_zeroPosition();                         // zero encoder feedback
             dev_stepper_zeroPosition(DEV_STEPPER_CHANNEL_MAIN); // zero stepper position
-            dev_stepper_move(DEV_STEPPER_CHANNEL_MAIN, app_motion_data.stepsPerMM * 5U, 5 * app_motion_data.stepsPerMM);
+            // Use configurable homing offset with 1/5th of homing velocity for precise backoff movement
+            dev_stepper_move(DEV_STEPPER_CHANNEL_MAIN, app_motion_data.stepsPerMM * app_motion_data.homingOffset, (app_motion_data.homingVelocity * app_motion_data.stepsPerMM) / 5);
             app_motion_data.homeState = APP_MOTION_HOME_BACKOFF;
         }
         break;
@@ -317,6 +320,8 @@ void app_motion_init(int lock)
     dev_nvram_getChannelData(DEV_NVRAM_CHANNEL_MACHINE_PROFILE, &machineProfile, sizeof(MachineProfile));
     app_motion_data.stepsPerMM = machineProfile.servoStepsPerMM;
     app_motion_data.maxPosition = machineProfile.maxPosition;
+    app_motion_data.homingVelocity = machineProfile.homingVelocity;
+    app_motion_data.homingOffset = machineProfile.homingOffset;
     (void)lib_staticQueue_init(&app_motion_data.manualQueue, app_motion_data.manualBuffer, MOTION_MANUAL_BUFFER_SIZE, sizeof(app_motion_move_t), lock);
     (void)lib_staticQueue_init(&app_motion_data.testQueue, app_motion_data.testBuffer, MOTION_TEST_BUFFER_SIZE, sizeof(app_motion_move_t), lock);
     lib_timer_init(&app_motion_data.endstopTimer, 1000);

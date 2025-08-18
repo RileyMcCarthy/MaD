@@ -127,7 +127,9 @@ static app_message_slave_responseType_E app_message_slave_private_handleRead(IO_
                 \"Position Max (mm)\":%d,\
                 \"Velocity Max (mm/s)\":%d,\
                 \"Acceleration Max (mm/s^2)\":%d,\
-                \"Tensile Force Max (N)\":%d}",
+                \"Tensile Force Max (N)\":%d,\
+                \"Homing Velocity (mm/s)\":%d,\
+                \"Homing Offset (mm)\":%d}",
                  app_message_slave_data.machineProfile.name,
                  app_message_slave_data.machineProfile.encoderStepsPerMM,
                  app_message_slave_data.machineProfile.servoStepsPerMM,
@@ -136,7 +138,9 @@ static app_message_slave_responseType_E app_message_slave_private_handleRead(IO_
                  app_message_slave_data.machineProfile.maxPosition,
                  app_message_slave_data.machineProfile.maxVelocity,
                  app_message_slave_data.machineProfile.maxAcceleration,
-                 app_message_slave_data.machineProfile.maxForceTensile);
+                 app_message_slave_data.machineProfile.maxForceTensile,
+                 app_message_slave_data.machineProfile.homingVelocity,
+                 app_message_slave_data.machineProfile.homingOffset);
         responseType = APP_MESSAGE_SLAVE_RESPONSE_TYPE_DATA;
         DEBUG_INFO("%s", "responding with machine profile\n");
     }
