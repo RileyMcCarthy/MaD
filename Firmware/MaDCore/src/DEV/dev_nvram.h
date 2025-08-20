@@ -62,5 +62,6 @@ bool dev_nvram_getChannelData(dev_nvram_channel_t channel, void *data, size_t si
 // non thread-safe functions
 dev_nvram_state_t dev_nvram_getState(dev_nvram_channel_t channel);
 bool dev_nvram_nosync_runUntilReady(void);
+void dev_nvram_forceSave(dev_nvram_channel_t channel);
 
 #endif // WATCHDOG_H

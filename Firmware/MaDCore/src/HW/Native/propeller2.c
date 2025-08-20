@@ -376,30 +376,7 @@ uint32_t _clockmode()
 // Makes new directory if it doesn't exist for "sd card" files to exist in
 int mount(char *user_name, void *v)
 {
-    struct stat st = {0};
-    if (stat(user_name, &st) != -1)
-    {
-        return -1;
-    }
-    mkdir(user_name, 0755); // Create the directory with read/write/execute permissions for owner and read/execute permissions for group and others
-
-    FILE *fptr = fopen("_mount.lock", "r");
-
-    if (fptr != NULL)
-    {
-        fclose(fptr); // Close the lock file
-        return -1; // "sd card" already mounted, error
-    }
-
-    fptr = fopen("_mount.lock", "w"); // Create the lock file
-
-    if (fptr == NULL)
-    {
-        return -1; // Error creating lock file
-    }
-
-    fclose(fptr); // Close the lock file
-
+    mkdir(user_name, 0755);
     return 0;
 }
 

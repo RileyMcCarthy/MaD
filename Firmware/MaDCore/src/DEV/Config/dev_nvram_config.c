@@ -38,7 +38,7 @@ DEV_NVRAM_CHANNEL_DATA_CREATE(MachineProfile) = {
 
 // should rename to have prefix like lib or app or io etc
 const dev_nvram_config_t dev_nvram_config = {
-    {DEV_NVRAM_CHANNEL_CONFIG_CREATE(MachineProfile, SD_CARD_MOUNT_PATH "MachineProfile.bin", true)},
+    {DEV_NVRAM_CHANNEL_CONFIG_CREATE(MachineProfile, SD_CARD_MOUNT_PATH "/MachineProfile.bin", true)},
 };
 
 /**********************************************************************

@@ -51,7 +51,6 @@ typedef struct
     bool hasError;
     bool dirty;
     bool readComplete;
-    bool mountComplete;
     FILE *file;
     dev_nvram_state_t state;
 } dev_nvram_channelData_t;
@@ -83,10 +82,10 @@ void dev_nvram_private_stageRequest(dev_nvram_channel_t channel)
     if (DEV_NVRAM_CHANNEL_VALID(channel))
     {
         SM_LOCK_REQ_BLOCK();
-        dev_nvram_data.channels[channel].dirty = dev_nvram_data.channels[channel].request.dirty;
         if (dev_nvram_data.channels[channel].request.dirty)
         {
             memcpy(dev_nvram_data.channels[channel].data, dev_nvram_data.channels[channel].request.data, DEV_NVRAM_CHANNEL_CONFIG(channel).size);
+            dev_nvram_data.channels[channel].dirty = true;
             dev_nvram_data.channels[channel].request.dirty = false;
         }
         SM_LOCK_REL();
@@ -157,6 +156,10 @@ dev_nvram_state_t dev_nvram_private_getDesiredState(dev_nvram_channel_t channel)
         }
         break;
     case DEV_NVRAM_ERROR:
+        if (dev_nvram_data.channels[channel].hasError == false)
+        {
+            desiredState = DEV_NVRAM_READY;
+        }
         break;
     default:
         break;
@@ -196,11 +199,10 @@ void dev_nvram_private_entryAction(dev_nvram_channel_t channel)
     switch (dev_nvram_data.channels[channel].state)
     {
     case DEV_NVRAM_INIT:
-        dev_nvram_data.channels[channel].mountComplete = (mount(SD_CARD_MOUNT_PATH, _vfs_open_sdcard()) == 0);
         break;
     case DEV_NVRAM_BOOT_LOAD:
         dev_nvram_data.channels[channel].readComplete = false;
-        if (dev_nvram_data.channels[channel].mountComplete)
+        if (mount(SD_CARD_MOUNT_PATH, _vfs_open_sdcard()) == 0)
         {
             dev_nvram_data.channels[channel].file = fopen(dev_nvram_config.channels[channel].path, "r");
         }
@@ -208,6 +210,7 @@ void dev_nvram_private_entryAction(dev_nvram_channel_t channel)
         {
             dev_nvram_data.channels[channel].file = NULL;
             dev_nvram_data.channels[channel].hasError = true;
+            DEBUG_ERROR("failed to mount sd card: %s\n", dev_nvram_config.channels[channel].path);
         }
         break;
     case DEV_NVRAM_READY:
@@ -233,7 +236,7 @@ void dev_nvram_private_runAction(dev_nvram_channel_t channel)
         if (dev_nvram_data.channels[channel].file == NULL)
         {
             // Load default data
-            dev_nvram_data.channels[channel].readComplete = true;
+            dev_nvram_data.channels[channel].hasError = true;
             memcpy(dev_nvram_data.channels[channel].data, dev_nvram_config.channels[channel].dataDefault, dev_nvram_config.channels[channel].size);
         }
         else
@@ -304,7 +307,6 @@ void dev_nvram_init(int lock)
         dev_nvram_data.channels[channel].hasError = false;
         dev_nvram_data.channels[channel].dirty = false;
         dev_nvram_data.channels[channel].readComplete = false;
-        dev_nvram_data.channels[channel].mountComplete = false;
         dev_nvram_data.channels[channel].file = NULL;
         dev_nvram_data.channels[channel].state = DEV_NVRAM_INIT;
 
@@ -324,6 +326,7 @@ void dev_nvram_run()
         dev_nvram_state_t desiredState = dev_nvram_private_getDesiredState(channel);
         if (desiredState != dev_nvram_data.channels[channel].state)
         {
+            DEBUG_INFO("dev_nvram_run: %d -> %d\n", dev_nvram_data.channels[channel].state, desiredState);
             dev_nvram_private_exitAction(channel);
             dev_nvram_data.channels[channel].state = desiredState;
             dev_nvram_private_entryAction(channel);
@@ -366,6 +369,15 @@ bool dev_nvram_getChannelData(dev_nvram_channel_t channel, void *data, size_t si
         }
     }
     return requestValid;
+}
+
+void dev_nvram_forceSave(dev_nvram_channel_t channel)
+{
+    if (DEV_NVRAM_CHANNEL_VALID(channel))
+    {
+        dev_nvram_data.channels[channel].request.dirty = true;
+        dev_nvram_data.channels[channel].hasError = false;
+    }
 }
 
 /**********************************************************************

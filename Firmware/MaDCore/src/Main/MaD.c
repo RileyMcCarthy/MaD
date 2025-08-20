@@ -24,6 +24,7 @@ void mad_startupNVRAM(int dev_nvram_lock)
   if (dev_nvram_nosync_runUntilReady() == false)
   {
     DEBUG_ERROR("%s", "WARNING NVRAM INIT FAILED!!!, Using failsafe records\n");
+    dev_nvram_forceSave(DEV_NVRAM_CHANNEL_MACHINE_PROFILE);
   }
 }
 
