@@ -27,7 +27,7 @@ typedef enum
     DEV_COGMANAGER_CHANNEL_CONTROL,       // control
     DEV_COGMANAGER_CHANNEL_LOGGER,        // logger
     DEV_COGMANAGER_CHANNEL_FORCEGAUGE,    // force gauge
-    DEV_COGMANAGER_CHANNEL_FULLDUPLEXSERIAL, // full duplex serial
+    DEV_COGMANAGER_CHANNEL_SERIAL,        // full duplex serial
     DEV_COGMANAGER_CHANNEL_COUNT,
 } dev_cogManager_channel_E;
 /**********************************************************************

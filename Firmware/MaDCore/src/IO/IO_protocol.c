@@ -71,7 +71,7 @@ static bool IO_protocol_private_timeout(void)
 
 static bool IO_protocol_private_recieveByte(uint8_t *byte)
 {
-    return IO_fullDuplexSerial_receive(IO_FULLDUPLEXSERIAL_CHANNEL_MAIN, byte, 1U);;
+    return IO_fullDuplexSerial_receive(IO_FULLDUPLEXSERIAL_CHANNEL_MAIN, byte, 1U);
 }
 
 bool IO_protocol_private_recieveSync()

@@ -62,11 +62,6 @@ void HAL_pulseOut_start(HAL_pulseOut_channel_E ch, uint32_t pulses, uint32_t fre
 
 bool HAL_pulseOut_run(HAL_pulseOut_channel_E ch, uint32_t *pulses)
 {
-    // uhh so moving makes the waittime 0 seconds
-    // but homing at 1000 steps/s makes it 255ms and wayy to slow.
-    // the slowness might make sense. if its 8120 steps/mm then 1000 steps/s is 0.1225 mm/s
-    // which makes sense as we move really slow. just wondering if 
-    // might need to rethink this one
     uint32_t remainingPulses = HAL_pulseOut_channelData[ch].pulses - HAL_pulseOut_channelData[ch].currentPulse;
     remainingPulses = (remainingPulses > HAL_PULSE_OUT_MAX_STEPS_PER_SECOND) ? HAL_PULSE_OUT_MAX_STEPS_PER_SECOND : remainingPulses;
     uint32_t waittime = ((1000000*remainingPulses) / HAL_pulseOut_channelData[ch].frequency); // 255 / 1000 = 0.255 seconds
@@ -76,8 +71,6 @@ bool HAL_pulseOut_run(HAL_pulseOut_channel_E ch, uint32_t *pulses)
         DEBUG_WARNING("%s\n", "Moving too fast, waittime is 0 seconds");
     }
     _waitus(waittime);
-    //DEBUG_INFO("remainingPulses: %d, waittime: %d\n", remainingPulses, waittime);
-    // soooo for some reason if I remove this info statement I get watchdog error, otherwise I dont. idk why tbh
     HAL_pulseOut_channelData[ch].currentPulse+=remainingPulses;
     *pulses = HAL_pulseOut_channelData[ch].currentPulse;
     return (HAL_pulseOut_channelData[ch].currentPulse == HAL_pulseOut_channelData[ch].pulses);

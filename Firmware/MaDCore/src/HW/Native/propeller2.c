@@ -60,7 +60,7 @@ static void *incrementMicroseconds(void *arg)
         __microseconds = elapsedMicroseconds;
 
         // Sleep for a short period to reduce CPU usage
-        usleep(1000); // Sleep for 1 millisecond
+        usleep(100); // Sleep for 0.1 milliseconds
     }
     return NULL; // Never reached, but needed for function signature
 }

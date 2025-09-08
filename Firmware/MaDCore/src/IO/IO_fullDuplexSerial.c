@@ -10,6 +10,7 @@
 #include <string.h>
 #include "propeller2.h"
 #include "IO_Debug.h"
+#include "emulation_helpers.h"
 /**********************************************************************
  * Constants
  **********************************************************************/
@@ -21,6 +22,7 @@
 #define IO_FULLDUPLEXSERIAL_LOCK_REQ_BLOCK()        \
     while (IO_FULLDUPLEXSERIAL_LOCK_REQ() == false) \
     {                                     \
+        EMULATION_YIELD_LOCK();           \
     }
 #define IO_FULLDUPLEXSERIAL_LOCK_REL() _lockrel(IO_fullDuplexSerial_data.lock)
 /**********************************************************************
@@ -88,6 +90,7 @@ void IO_fullDuplexSerial_run(void)
             // TODO: Handle overflow
         }
         IO_FULLDUPLEXSERIAL_LOCK_REL();
+        EMULATION_YIELD_SERIAL();
     }
 }
 

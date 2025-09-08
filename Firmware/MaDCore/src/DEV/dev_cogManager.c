@@ -9,6 +9,7 @@
 #include "dev_cogManager.h"
 #include "IO_Debug.h"
 #include "lib_utility.h"
+#include "emulation_helpers.h"
 
 #include <string.h>
 /**********************************************************************
@@ -21,7 +22,9 @@
 #define APP_COGMANAGER_LOCK_REQ() _locktry(dev_cogManager_data.lock)
 #define APP_COGMANAGER_LOCK_REQ_BLOCK()        \
     while (APP_COGMANAGER_LOCK_REQ() == false) \
-        ;
+    {                                          \
+        EMULATION_YIELD_LOCK();                \
+    }
 #define APP_COGMANAGER_LOCK_REL() _lockrel(dev_cogManager_data.lock)
 
 /**********************************************************************
@@ -58,8 +61,38 @@ extern const dev_cogManager_config_S dev_cogManager_config;
  **********************************************************************/
 static dev_cogManager_data_S dev_cogManager_data;
 /**********************************************************************
- * Private Function Prototypes
+ * Private Function Definitions
  **********************************************************************/
+
+static void dev_cogManager_private_wrapper(void *arg)
+{
+    const dev_cogManager_channelConfig_S * config = (dev_cogManager_channelConfig_S *)arg;
+    const uint32_t targetFrequencyHz = config->targetFrequencyHz;
+    const uint32_t maxWaitTime = 1000000 / targetFrequencyHz;
+    while (1)
+    {
+        const uint32_t startTime = _getus();
+        watchdog_kick(config->watchdogChannel);
+        config->cogFunctionRun(NULL);
+        if (targetFrequencyHz != 0U)
+        {
+            const uint32_t endTime = _getus();
+            const uint32_t duration = endTime - startTime;
+            if (duration > maxWaitTime)
+            {
+#if !defined(__EMULATION__)
+                // emulator doesnt run fast enough to catch this
+                DEBUG_ERROR("Scheduling overrun (%d/%d us) %s\n", duration, maxWaitTime, config->name);
+#endif
+            }
+            else
+            {
+                const uint32_t waitTime = maxWaitTime - duration;
+                _waitus(waitTime);
+            }
+        }
+    }
+}
 
 void dev_cogManager_private_stageOutput(dev_cogManager_channel_E channel)
 {
@@ -68,18 +101,11 @@ void dev_cogManager_private_stageOutput(dev_cogManager_channel_E channel)
     APP_COGMANAGER_LOCK_REL();
 }
 
-/**********************************************************************
- * Private Function Definitions
- **********************************************************************/
-
 dev_cogManager_state_E dev_cogManager_getDesiredState(dev_cogManager_channel_E channel)
 {
     dev_cogManager_state_E desiredState = dev_cogManager_data.channels[channel].state;
     switch (dev_cogManager_data.channels[channel].state)
     {
-    case DEV_COGMANAGER_STATE_INIT:
-        desiredState = DEV_COGMANAGER_STATE_INITIALIZE;
-        break;
     case DEV_COGMANAGER_STATE_INITIALIZE:
         if (dev_cogManager_data.channels[channel].lockid == -1)
         {
@@ -111,36 +137,15 @@ void dev_cogManager_entryAction(dev_cogManager_channel_E channel)
 {
     switch (dev_cogManager_data.channels[channel].state)
     {
-    case DEV_COGMANAGER_STATE_INIT:
-        break;
     case DEV_COGMANAGER_STATE_INITIALIZE:
         dev_cogManager_data.channels[channel].lockid = _locknew();
         dev_cogManager_config.channels[channel].cogFunctionInit(dev_cogManager_data.channels[channel].lockid);
         break;
     case DEV_COGMANAGER_STATE_BOOT:
-        dev_cogManager_data.channels[channel].cogid = _cogstart(dev_cogManager_config.channels[channel].cogFunctionRun,
-                                                                NULL,
+        dev_cogManager_data.channels[channel].cogid = _cogstart(dev_cogManager_private_wrapper,
+                                                                (void *)&dev_cogManager_config.channels[channel],
                                                                 dev_cogManager_config.channels[channel].stack,
                                                                 dev_cogManager_config.channels[channel].stackSize);
-        break;
-    case DEV_COGMANAGER_STATE_RUNNING:
-        break;
-    case DEV_COGMANAGER_STATE_ERROR:
-        break;
-    default:
-        break;
-    }
-}
-
-void dev_cogManager_exitAction(dev_cogManager_channel_E channel)
-{
-    switch (dev_cogManager_data.channels[channel].state)
-    {
-    case DEV_COGMANAGER_STATE_INIT:
-        break;
-    case DEV_COGMANAGER_STATE_INITIALIZE:
-        break;
-    case DEV_COGMANAGER_STATE_BOOT:
         break;
     case DEV_COGMANAGER_STATE_RUNNING:
         break;
@@ -155,8 +160,6 @@ void dev_cogManager_runAction(dev_cogManager_channel_E channel)
 {
     switch (dev_cogManager_data.channels[channel].state)
     {
-    case DEV_COGMANAGER_STATE_INIT:
-        break;
     case DEV_COGMANAGER_STATE_INITIALIZE:
         break;
     case DEV_COGMANAGER_STATE_BOOT:
@@ -195,10 +198,11 @@ void dev_cogManager_init(int lock)
     dev_cogManager_data.lock = lock;
     for (dev_cogManager_channel_E channel = (dev_cogManager_channel_E)0U; channel < DEV_COGMANAGER_CHANNEL_COUNT; channel++)
     {
-        dev_cogManager_data.channels[channel].state = DEV_COGMANAGER_STATE_INIT;
+        dev_cogManager_data.channels[channel].state = DEV_COGMANAGER_STATE_INITIALIZE;
         dev_cogManager_data.channels[channel].cogid = -1;
         dev_cogManager_data.channels[channel].crcLower = lib_utility_CRC8(dev_cogManager_config.channels[channel].lowerCanary, DEV_COGMANAGER_STACK_CANARY_SIZE);
         dev_cogManager_data.channels[channel].crcUpper = lib_utility_CRC8(dev_cogManager_config.channels[channel].upperCanary, DEV_COGMANAGER_STACK_CANARY_SIZE);
+        dev_cogManager_entryAction(channel);
     }
 }
 
@@ -210,7 +214,6 @@ void dev_cogManager_run(void)
         dev_cogManager_state_E desiredState = dev_cogManager_getDesiredState(channel);
         if (desiredState != currentState)
         {
-            dev_cogManager_exitAction(channel);
             dev_cogManager_data.channels[channel].state = desiredState;
             dev_cogManager_entryAction(channel);
         }

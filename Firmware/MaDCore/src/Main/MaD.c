@@ -59,5 +59,6 @@ void mad_begin()
     dev_nvram_run();
     dev_cogManager_run();
     watchdog_run();
+    _waitms(100);
   }
 }

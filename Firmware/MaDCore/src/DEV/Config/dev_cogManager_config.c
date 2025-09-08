@@ -23,7 +23,6 @@
 #include "IO_protocol.h"
 #include "IO_fullDuplexSerial.h"
 
-#include "watchdog.h"
 #include "IO_Debug.h"
 /**********************************************************************
  * Constants
@@ -46,14 +45,9 @@ DEV_COGMANAGER_CHANNEL_CREATE_INIT(MONITOR, 1024U)
     app_monitor_init(lock);
 }
 
-DEV_COGMANAGER_CHANNEL_CREATE_RUN(MONITOR)
+DEV_COGMANAGER_CHANNEL_CREATE_RUN(MONITOR, 1000U)
 {
-    DEBUG_INFO("%s", "Monitor cog running\n");
-    while (1)
-    {
-        app_monitor_run();
-        watchdog_kick(WATCHDOG_CHANNEL_MONITOR);
-    }
+    app_monitor_run();
 }
 
 DEV_COGMANAGER_CHANNEL_CREATE_INIT(MOTOR, 1024U)
@@ -62,14 +56,10 @@ DEV_COGMANAGER_CHANNEL_CREATE_INIT(MOTOR, 1024U)
     dev_stepper_init(lock);
 }
 
-DEV_COGMANAGER_CHANNEL_CREATE_RUN(MOTOR)
+DEV_COGMANAGER_CHANNEL_CREATE_RUN(MOTOR, 0U)
 {
-    DEBUG_INFO("%s", "Stepper cog running\n");
-    while (1)
-    {
-        dev_stepper_run();
-        watchdog_kick(WATCHDOG_CHANNEL_MOTOR);
-    }
+    // Run stepper as fast as possible, we we use IO_pulseOut for handle timing
+    dev_stepper_run();
 }
 
 DEV_COGMANAGER_CHANNEL_CREATE_INIT(COMMUNICATION, 2048)
@@ -78,35 +68,25 @@ DEV_COGMANAGER_CHANNEL_CREATE_INIT(COMMUNICATION, 2048)
     IO_protocol_init();
     app_messageSlave_init(lock);
     app_notification_init(lock);
-    app_motion_init(lock); // temp spot until control is fixed
 }
 
-DEV_COGMANAGER_CHANNEL_CREATE_RUN(COMMUNICATION)
+DEV_COGMANAGER_CHANNEL_CREATE_RUN(COMMUNICATION, 100U)
 {
-    DEBUG_INFO("%s", "Communication cog running\n");
-    while (1)
-    {
-        app_notification_run();
-        app_messageSlave_run();
-        app_motion_run();
-        watchdog_kick(WATCHDOG_CHANNEL_COMMUNICATION);
-    }
+    app_notification_run();
+    app_messageSlave_run();
 }
 
 DEV_COGMANAGER_CHANNEL_CREATE_INIT(CONTROL, 1024)
 {
     DEBUG_INFO("%s", "Control cog initializing\n");
+    app_motion_init(lock);
     app_control_init(lock);
 }
 
-DEV_COGMANAGER_CHANNEL_CREATE_RUN(CONTROL)
+DEV_COGMANAGER_CHANNEL_CREATE_RUN(CONTROL, 1000)
 {
-    DEBUG_INFO("%s", "Control cog running\n");
-    while (1)
-    {
-        app_control_run();
-        watchdog_kick(WATCHDOG_CHANNEL_CONTROL);
-    }
+    app_motion_run();
+    app_control_run();
 }
 
 DEV_COGMANAGER_CHANNEL_CREATE_INIT(LOGGER, 1024)
@@ -115,14 +95,9 @@ DEV_COGMANAGER_CHANNEL_CREATE_INIT(LOGGER, 1024)
     IO_logger_init(lock);
 }
 
-DEV_COGMANAGER_CHANNEL_CREATE_RUN(LOGGER)
+DEV_COGMANAGER_CHANNEL_CREATE_RUN(LOGGER, 1000U)
 {
-    DEBUG_INFO("%s", "Logger cog running\n");
-    while (1)
-    {
-        IO_logger_run();
-        watchdog_kick(WATCHDOG_CHANNEL_LOGGER);
-    }
+    IO_logger_run();
 }
 
 DEV_COGMANAGER_CHANNEL_CREATE_INIT(FORCEGAUGE, 1024)
@@ -131,30 +106,21 @@ DEV_COGMANAGER_CHANNEL_CREATE_INIT(FORCEGAUGE, 1024)
     dev_forceGauge_init(lock);
 }
 
-DEV_COGMANAGER_CHANNEL_CREATE_RUN(FORCEGAUGE)
+DEV_COGMANAGER_CHANNEL_CREATE_RUN(FORCEGAUGE, 0U)
 {
-    DEBUG_INFO("%s", "Force gauge cog running\n");
-    while (1)
-    {
-        dev_forceGauge_run();
-        watchdog_kick(WATCHDOG_CHANNEL_FORCEGAUGE);
-    }
+    // Run forcegauge as fast as possible, we use IO_serial to handle timing
+    dev_forceGauge_run();
 }
 
-DEV_COGMANAGER_CHANNEL_CREATE_INIT(FULLDUPLEXSERIAL, 1024)
+DEV_COGMANAGER_CHANNEL_CREATE_INIT(SERIAL, 1024)
 {
     DEBUG_INFO("%s", "Serial cog initializing\n");
     IO_fullDuplexSerial_init(lock);
 }
 
-DEV_COGMANAGER_CHANNEL_CREATE_RUN(FULLDUPLEXSERIAL)
+DEV_COGMANAGER_CHANNEL_CREATE_RUN(SERIAL, 0U)
 {
-    DEBUG_INFO("%s", "Serial cog running\n");
-    while (1)
-    {
-        IO_fullDuplexSerial_run();
-        watchdog_kick(WATCHDOG_CHANNEL_SERIAL);
-    }
+    IO_fullDuplexSerial_run();
 }
 
 const dev_cogManager_config_S dev_cogManager_config = {
@@ -165,7 +131,7 @@ const dev_cogManager_config_S dev_cogManager_config = {
         DEV_COGMANAGER_CHANNEL_CONFIG_CREATE(CONTROL),
         DEV_COGMANAGER_CHANNEL_CONFIG_CREATE(LOGGER),
         DEV_COGMANAGER_CHANNEL_CONFIG_CREATE(FORCEGAUGE),
-        DEV_COGMANAGER_CHANNEL_CONFIG_CREATE(FULLDUPLEXSERIAL),
+        DEV_COGMANAGER_CHANNEL_CONFIG_CREATE(SERIAL),
     },
 };
 /**********************************************************************

@@ -25,6 +25,7 @@
 #include "lib_utility.h"
 
 #include "IO_Debug.h"
+#include "emulation_helpers.h"
 #include "watchdog.h"
 /**********************************************************************
  * Constants
@@ -39,7 +40,9 @@
 #define APP_MOTION_LOCK_REQ() _locktry(app_motion_data.lock)
 #define APP_MOTION_LOCK_REQ_BLOCK()        \
     while (APP_MOTION_LOCK_REQ() == false) \
-        ;
+    {                                      \
+        EMULATION_YIELD_LOCK();            \
+    }
 #define APP_MOTION_LOCK_REL() _lockrel(app_motion_data.lock)
 /**********************************************************************
  * Typedefs
@@ -115,14 +118,13 @@ static void app_motion_private_processInputs()
 
 static void app_motion_private_processOutputs()
 {
-    // need memcmp to keep this cog from blocking if nothing has changed
     int32_t setpoint = 0;
-    APP_MOTION_LOCK_REQ_BLOCK();
     const int32_t gaugeSetpoint = dev_stepper_getTarget(DEV_STEPPER_CHANNEL_MAIN);
     if (app_motion_data.stepsPerMM != 0)
     {
         setpoint = LIB_UTILITY_MM_TO_UM(gaugeSetpoint / app_motion_data.stepsPerMM);
     }
+    APP_MOTION_LOCK_REQ_BLOCK();
     app_motion_data.output.setpoint = setpoint;
     APP_MOTION_LOCK_REL();
 }
