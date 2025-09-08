@@ -59,6 +59,9 @@ export interface MachineConfiguration {
   'Velocity Max (mm/s)': number;
   'Acceleration Max (mm/s^2)': number;
   'Tensile Force Max (N)': number;
+  'Homing Velocity (mm/s)': number;
+  'Homing Offset (mm)': number;
+  'Jaw Offset (mm)': number;
 }
 
 export interface FirmwareVersion {
@@ -90,7 +93,8 @@ export interface SampleProfile {
   maxVelocity: number;
   maxDisplacement: number;
   sampleWidth: number;
-  serialNumber: string;
+  sampleThickness: number;
+  serial: string;
 }
 
 export interface MotionProfile {

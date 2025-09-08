@@ -34,6 +34,7 @@ DEV_NVRAM_CHANNEL_DATA_CREATE(MachineProfile) = {
     5000,         // maxForceTensile
     10,         // homingVelocity
     5,          // homingOffset
+    25,         // jawOffset - default distance between jaws at endstop (mm)
 };
 
 // should rename to have prefix like lib or app or io etc

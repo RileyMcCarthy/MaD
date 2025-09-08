@@ -49,9 +49,9 @@ static HAL_serial_channelConfig_S HAL_serial_channelConfig[HAL_SERIAL_CHANNEL_CO
     {HW_PIN_FORCE_GAUGE_RX, HW_PIN_FORCE_GAUGE_TX, 115200, HAL_SERIAL_TYPE_HARDWARE, false}, // FORCE_GAUGE
 #if ENABLE_DEBUG_SERIAL
     // leave the MAIN_RX and MAIN_TX open for debug serial
-    {HW_PIN_RPI_RX, HW_PIN_RPI_TX, 230400, HAL_SERIAL_TYPE_HARDWARE, false}, // MAIN
+    {HW_PIN_RPI_RX, HW_PIN_RPI_TX, 2000000, HAL_SERIAL_TYPE_HARDWARE, false}, // MAIN
 #else
-    {HW_PIN_MAIN_RX, HW_PIN_MAIN_TX, 230400, HAL_SERIAL_TYPE_BUILTIN, false}, // MAIN
+    {HW_PIN_MAIN_RX, HW_PIN_MAIN_TX, 2000000, HAL_SERIAL_TYPE_BUILTIN, false}, // MAIN
 #endif
 };
 /**********************************************************************

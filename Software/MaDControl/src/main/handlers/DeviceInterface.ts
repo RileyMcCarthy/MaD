@@ -11,6 +11,7 @@ import {
   Notification,
   NotificationType,
   FirmwareVersion,
+  SampleProfile,
 } from '@shared/SharedInterface';
 import { deviceLogger } from '@utils/logger';
 import DataProcessor, { ReadType, WriteType } from './DataProcessor';
@@ -267,6 +268,38 @@ class DeviceInterface {
       return true;
     });
 
+    ipcMain.handle('zero-length', async () => {
+      this.dataProcessor.writeData(WriteType.GAUGE_LENGTH, Buffer.from('0'));
+      return true;
+    });
+
+    ipcMain.handle('get-sample-profile', async () => {
+      deviceLogger.info('Getting Sample Profile');
+      this.dataProcessor.readData(ReadType.SAMPLE_PROFILE);
+      return waitForResponse(ipcMain, 'sample-profile-updated', 1000);
+    });
+
+    ipcMain.handle(
+      'save-sample-profile',
+      async (_event, newProfile: SampleProfile) => {
+        this.dataProcessor.writeData(
+          WriteType.SAMPLE_PROFILE,
+          Buffer.from(JSON.stringify(newProfile)),
+        );
+        deviceLogger.info('Saving Sample Profile:', newProfile);
+        const result = await waitForResponse(ipcMain, 'sample-profile-ack', 1000);
+
+        if (result) {
+          // ACK received successfully, now get the saved profile
+          setTimeout(() => {
+            this.dataProcessor.readData(ReadType.SAMPLE_PROFILE);
+          }, 100); // Small delay to ensure save is processed
+        }
+
+        return result;
+      },
+    );
+
     ipcMain.handle('stream-gcode', async (_event, gcode: string) => {
       const lines = gcode.split('\n').filter((line) => line.trim() !== '');
 
@@ -448,6 +481,15 @@ class DeviceInterface {
             ipcMain.emit('firmware-version-updated', version);
             break;
 
+          case ReadType.SAMPLE_PROFILE:
+            const sampleProfile: SampleProfile = JSON.parse(data);
+            this.window.webContents.send(
+              'sample-profile-updates',
+              sampleProfile,
+            );
+            ipcMain.emit('sample-profile-updated', sampleProfile);
+            break;
+
           default:
             deviceLogger.warn('Received unknown data command type:', command);
             break;
@@ -468,6 +510,10 @@ class DeviceInterface {
       if (command === WriteType.MOTION_ENABLE) {
         deviceLogger.debug('motion enabled ack1', command, ack);
         ipcMain.emit('motion-enabled-ack', ack);
+      }
+      if (command === WriteType.SAMPLE_PROFILE) {
+        deviceLogger.debug('sample profile ack', command, ack);
+        ipcMain.emit('sample-profile-ack', ack);
       }
     });
 

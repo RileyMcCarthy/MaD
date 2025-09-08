@@ -6,6 +6,7 @@ import LockIcon from '@mui/icons-material/Lock';
 import LockOpenIcon from '@mui/icons-material/LockOpen';
 import { styled } from '@mui/material/styles';
 import SpeedIcon from '@mui/icons-material/Speed';
+import StraightenIcon from '@mui/icons-material/Straighten';
 import { useDevice } from '@renderer/hooks';
 import { componentLogger } from '../utils/logger';
 
@@ -62,6 +63,14 @@ function Control() {
     }
   };
 
+  const handleZeroLength = async () => {
+    try {
+      await actions.zeroLength();
+    } catch (error) {
+      componentLogger.error('Failed to zero length:', error);
+    }
+  };
+
   const handleMoveUp = async () => {
     try {
       await actions.manualMove(10, 100); // Move up 10mm at 100mm/min
@@ -79,7 +88,7 @@ function Control() {
   };
 
   return (
-    <Box sx={{ p: 2 }}>
+    <Box sx={{ flexGrow: 1 }}>
       <Item>
         <Grid container spacing={1}>
           <Grid item xs={4}>
@@ -144,12 +153,22 @@ function Control() {
           <Grid item xs={4}>
             <Grid container direction="column" alignItems="center" spacing={1}>
               <Grid item>
-                <Tooltip title="Zero Length">
+                <Tooltip title="Zero Force">
                   <IconButton
                     onClick={handleZeroForce}
                     sx={{ padding: '16px', margin: '3px' }}
                   >
                     <SpeedIcon fontSize="large" />
+                  </IconButton>
+                </Tooltip>
+              </Grid>
+              <Grid item>
+                <Tooltip title="Zero Length">
+                  <IconButton
+                    onClick={handleZeroLength}
+                    sx={{ padding: '16px', margin: '3px' }}
+                  >
+                    <StraightenIcon fontSize="large" />
                   </IconButton>
                 </Tooltip>
               </Grid>

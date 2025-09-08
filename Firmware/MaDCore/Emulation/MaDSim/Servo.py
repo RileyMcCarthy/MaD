@@ -49,11 +49,11 @@ class Servo():
                 self.enc_b.set_state(0)
         # this doesnt seem to work if number is not 0
         step_per_mm = 4 * 2048
-        endstop_position = -(step_per_mm * 10)
-        if (self.lastSteps > endstop_position) and endstop_position:
+        endstop_position = -(step_per_mm * 10) # put endstop -10mm 
+        if (self.lastSteps > endstop_position) and (self.steps < endstop_position):
             print("Endstop triggered")
             self.endstop.set_state(1)
-        elif (self.lastSteps <= endstop_position) and (self.steps > endstop_position):
+        elif (self.lastSteps <= endstop_position) and (self.steps >= endstop_position):
             print("Endstop released")
             self.endstop.set_state(0)
         self.lastSteps = self.steps

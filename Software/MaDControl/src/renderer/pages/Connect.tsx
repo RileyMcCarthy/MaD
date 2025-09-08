@@ -17,7 +17,7 @@ import { useDevice } from '@renderer/hooks';
 import { componentLogger } from '../utils/logger';
 
 const baudRates = [
-  9600, 14400, 19200, 38400, 57600, 115200, 230400, 460800, 921600,
+  9600, 14400, 19200, 38400, 57600, 115200, 230400, 460800, 921600, 2000000
 ];
 
 // Common serial port paths for different platforms

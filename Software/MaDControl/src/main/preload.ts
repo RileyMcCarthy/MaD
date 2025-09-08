@@ -24,6 +24,7 @@ export type Channels =
   | 'manual-move'
   | 'home-axis'
   | 'zero-force'
+  | 'zero-length'
   | 'stream-gcode'
 
   // Legacy motion (keeping for compatibility)
@@ -42,6 +43,8 @@ export type Channels =
 
   // Sample profiles and testing
   | 'sample-profile-run'
+  | 'get-sample-profile'
+  | 'save-sample-profile'
   | 'run-test'
 
   // Serial port management
@@ -51,6 +54,7 @@ export type Channels =
   | 'sample-data-updates' // Replaces: sample-data, sample-data-updated
   | 'machine-state-updates' // Replaces: machine-state, machine-state-updated
   | 'machine-configuration-updates' // Replaces: machine-configuration
+  | 'sample-profile-updates' // New: sample-profile updates
   | 'firmware-version-updates' // Replaces: firmware-version
   | 'device-status-updates' // Replaces: serial-connection-status, device-responding-status
   | 'notification-error'

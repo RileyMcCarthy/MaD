@@ -46,6 +46,7 @@ void dev_stepper_run(void);
 bool dev_stepper_move(dev_stepper_channel_E ch, int32_t targetSteps, uint32_t stepsPerSecond);
 void dev_stepper_stop(dev_stepper_channel_E ch);
 void dev_stepper_zeroPosition(dev_stepper_channel_E ch);
+void dev_stepper_setPosition(dev_stepper_channel_E ch, int32_t positionSteps);
 
 int32_t dev_stepper_getSteps(dev_stepper_channel_E ch);
 dev_stepper_state_E dev_stepper_getState(dev_stepper_channel_E ch);

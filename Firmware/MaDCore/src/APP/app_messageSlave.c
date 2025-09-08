@@ -129,7 +129,8 @@ static app_message_slave_responseType_E app_message_slave_private_handleRead(IO_
                 \"Acceleration Max (mm/s^2)\":%d,\
                 \"Tensile Force Max (N)\":%d,\
                 \"Homing Velocity (mm/s)\":%d,\
-                \"Homing Offset (mm)\":%d}",
+                \"Homing Offset (mm)\":%d,\
+                \"Jaw Offset (mm)\":%d}",
                  app_message_slave_data.machineProfile.name,
                  app_message_slave_data.machineProfile.encoderStepsPerMM,
                  app_message_slave_data.machineProfile.servoStepsPerMM,
@@ -140,7 +141,8 @@ static app_message_slave_responseType_E app_message_slave_private_handleRead(IO_
                  app_message_slave_data.machineProfile.maxAcceleration,
                  app_message_slave_data.machineProfile.maxForceTensile,
                  app_message_slave_data.machineProfile.homingVelocity,
-                 app_message_slave_data.machineProfile.homingOffset);
+                 app_message_slave_data.machineProfile.homingOffset,
+                 app_message_slave_data.machineProfile.jawOffset);
         responseType = APP_MESSAGE_SLAVE_RESPONSE_TYPE_DATA;
         DEBUG_INFO("%s", "responding with machine profile\n");
     }
@@ -150,6 +152,22 @@ static app_message_slave_responseType_E app_message_slave_private_handleRead(IO_
         DEBUG_INFO("responding with firmware version: %s\n", APP_MESSAGE_SLAVE_VERSION);
         dataSize = snprintf(app_message_slave_data.dataTX, APP_MESSAGE_SLAVE_TX_BUFFER_SIZE,
                  "{\"version\":\"%s\"}", APP_MESSAGE_SLAVE_VERSION);
+        responseType = APP_MESSAGE_SLAVE_RESPONSE_TYPE_DATA;
+    }
+    break;
+    case IO_PROTOCOL_READ_TYPE_SAMPLE_PROFILE:
+    {
+        DEBUG_INFO("%s", "responding with sample profile\n");
+        app_monitor_sampleProfile_S sampleProfile;
+        app_monitor_getSampleProfile(&sampleProfile);
+        dataSize = snprintf(app_message_slave_data.dataTX, APP_MESSAGE_SLAVE_TX_BUFFER_SIZE,
+                 "{\"maxForce\":%u,\"maxVelocity\":%u,\"maxDisplacement\":%u,\"sampleWidth\":%u,\"sampleThickness\":%u,\"serial\":\"%s\"}",
+                 sampleProfile.maxForce,
+                 sampleProfile.maxVelocity,
+                 sampleProfile.maxDisplacement,
+                 sampleProfile.sampleWidth,
+                 sampleProfile.sampleThickness,
+                 sampleProfile.serial);
         responseType = APP_MESSAGE_SLAVE_RESPONSE_TYPE_DATA;
     }
     break;
@@ -301,17 +319,18 @@ static app_message_slave_responseType_E app_message_slave_private_handleWrite(IO
     case IO_PROTOCOL_WRITE_TYPE_SAMPLE_PROFILE:
     {
         DEBUG_INFO("%s", "Receiving sample profile\n");
-        SampleProfile sampleProfile;
+        app_monitor_sampleProfile_S sampleProfile;
         if (json_to_sample_profile(&sampleProfile, app_message_slave_data.dataRX))
         {
-            DEBUG_INFO("Sample profile: maxForce=%u, maxVelocity=%u, maxDisplacement=%u, sampleWidth=%u, serialNumber=%u\n",
+            DEBUG_INFO("Sample profile: maxForce=%u, maxVelocity=%u, maxDisplacement=%u, sampleWidth=%u, sampleThickness=%u, serial=%s\n",
                        sampleProfile.maxForce,
                        sampleProfile.maxVelocity,
                        sampleProfile.maxDisplacement,
                        sampleProfile.sampleWidth,
-                       sampleProfile.serialNumber);
+                       sampleProfile.sampleThickness,
+                       sampleProfile.serial);
 
-            if (app_control_setSampleProfile(&sampleProfile))
+            if (app_monitor_setSampleProfile(&sampleProfile))
             {
                 DEBUG_INFO("%s", "Sample profile set successfully\n");
                 responseType = APP_MESSAGE_SLAVE_RESPONSE_TYPE_ACK;
@@ -331,11 +350,11 @@ static app_message_slave_responseType_E app_message_slave_private_handleWrite(IO
     }
     case IO_PROTOCOL_WRITE_TYPE_GAUGE_LENGTH:
         DEBUG_INFO("%s", "Setting gauge length\n");
-        app_monitor_zeroGaugeLength(); // zero encoder feedback
+        app_monitor_zeroSamplePosition(); // zero encoder feedback
         break;
     case IO_PROTOCOL_WRITE_TYPE_GAUGE_FORCE:
         DEBUG_INFO("%s", "Setting gauge force\n");
-        app_monitor_zeroGaugeForce();
+        app_monitor_zeroSampleForce();
         break;
     case IO_PROTOCOL_WRITE_TYPE_COUNT:
     default:

@@ -75,7 +75,6 @@ bool app_control_triggerTestStart(void);
 bool app_control_triggerTestEnd(void);
 bool app_control_triggerMotionEnabled(void);
 bool app_control_triggerMotionDisabled(void);
-bool app_control_setSampleProfile(SampleProfile *profile);
 /**********************************************************************
  * End of File
  **********************************************************************/

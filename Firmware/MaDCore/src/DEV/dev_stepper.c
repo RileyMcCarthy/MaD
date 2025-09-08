@@ -44,8 +44,9 @@ typedef struct
 
 typedef struct
 {
-    bool zeroPosition;
     bool stop;
+    bool setPosition;
+    int32_t setPositionValue;
 } dev_stepper_channelRequest_S;
 
 typedef struct
@@ -97,10 +98,10 @@ static dev_stepper_data_S dev_stepper_data;
 static void dev_stepper_private_processRequests(dev_stepper_channel_E ch)
 {
     SM_LOCK_REQ_BLOCK();
-    if (dev_stepper_data.channels[ch].request.zeroPosition)
+    if (dev_stepper_data.channels[ch].request.setPosition)
     {
-        dev_stepper_data.channels[ch].request.zeroPosition = false;
-        dev_stepper_data.channels[ch].currentSteps = 0;
+        dev_stepper_data.channels[ch].request.setPosition = false;
+        dev_stepper_data.channels[ch].currentSteps = dev_stepper_data.channels[ch].request.setPositionValue;
     }
     if (dev_stepper_data.channels[ch].request.stop)
     {
@@ -335,7 +336,16 @@ bool dev_stepper_isReady(dev_stepper_channel_E ch)
 void dev_stepper_zeroPosition(dev_stepper_channel_E ch)
 {
     SM_LOCK_REQ_BLOCK();
-    dev_stepper_data.channels[ch].request.zeroPosition = true;
+    dev_stepper_data.channels[ch].request.setPosition = true;
+    dev_stepper_data.channels[ch].request.setPositionValue = 0;
+    SM_LOCK_REL();
+}
+
+void dev_stepper_setPosition(dev_stepper_channel_E ch, int32_t positionSteps)
+{
+    SM_LOCK_REQ_BLOCK();
+    dev_stepper_data.channels[ch].request.setPosition = true;
+    dev_stepper_data.channels[ch].request.setPositionValue = positionSteps;
     SM_LOCK_REL();
 }
 

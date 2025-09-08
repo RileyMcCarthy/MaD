@@ -8,7 +8,6 @@
 
 typedef struct
 {
-    // make V2 and sync with UI
     char name[DEV_NVRAM_MAX_MACHINE_PROFILE_NAME]; // Name of the machine profile
     int encoderStepsPerMM;                         // Steps per mm of the encoder
     int servoStepsPerMM;                           // Steps per mm of the servo
@@ -21,15 +20,7 @@ typedef struct
     int maxForceTensile; // Maximum force tensile of the machine (mN)
     int homingVelocity;  // Velocity for homing routine (mm/s)
     int homingOffset;    // Distance to move off endstop after homing (mm)
+    int jawOffset;       // Distance between upper and lower jaw at endstop (mm)
 } MachineProfile;
-
-typedef struct SampleProfile
-{
-    uint32_t maxForce;        // Maximum force (mN)
-    uint32_t maxVelocity;     // Maximum velocity (mm/s)
-    uint32_t maxDisplacement; // Maximum displacement (mm)
-    uint32_t sampleWidth;     // Sample width (mm)
-    uint32_t serialNumber;     // Serial number (0-99999)
-} SampleProfile;
 
 #endif // DEV_NVRAM_CONFIG_MACHINEPROFILE_H

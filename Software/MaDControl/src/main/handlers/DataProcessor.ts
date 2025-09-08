@@ -10,6 +10,7 @@ export enum ReadType {
   STATE,
   MACHINE_CONFIGURATION,
   FIRMWARE_VERSION,
+  SAMPLE_PROFILE,
 }
 
 export enum WriteType {

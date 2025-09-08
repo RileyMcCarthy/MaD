@@ -9,6 +9,7 @@ import {
   MachineState,
   SampleData,
   MachineConfiguration,
+  SampleProfile,
 } from '@shared/SharedInterface';
 import useDeviceStatusQuery from './useDeviceStatusQuery';
 
@@ -18,6 +19,7 @@ interface DeviceState {
   machineState: MachineState | null;
   latestSampleData: SampleData | null;
   machineConfiguration: MachineConfiguration | null;
+  sampleProfile: SampleProfile | null;
 }
 
 interface DeviceActions {
@@ -29,6 +31,9 @@ interface DeviceActions {
   manualMove: (mm: number, speed: number) => Promise<boolean>;
   homeAxis: () => Promise<boolean>;
   zeroForce: () => Promise<boolean>;
+  zeroLength: () => Promise<boolean>;
+  getSampleProfile: () => Promise<SampleProfile>;
+  saveSampleProfile: (profile: SampleProfile) => Promise<boolean>;
   streamGCode: (gcode: string) => Promise<{ success: boolean; error?: string }>;
   getAllDeviceData: () => Promise<SampleData[]>;
   getFirmwareVersion: () => Promise<string>;
@@ -55,6 +60,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     machineState: null,
     latestSampleData: null,
     machineConfiguration: null,
+    sampleProfile: null,
   });
 
   // Update device state when status changes
@@ -91,12 +97,21 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       setDeviceState((prev) => ({ ...prev, machineConfiguration: config }));
     };
 
+    const handleSampleProfile = (...args: unknown[]) => {
+      const profile = args[0] as SampleProfile;
+      setDeviceState((prev) => ({ ...prev, sampleProfile: profile }));
+    };
+
     // Set up IPC listeners with standardized event names
     window.electron.ipcRenderer.on('sample-data-updates', handleSampleData);
     window.electron.ipcRenderer.on('machine-state-updates', handleMachineState);
     window.electron.ipcRenderer.on(
       'machine-configuration-updates',
       handleMachineConfiguration,
+    );
+    window.electron.ipcRenderer.on(
+      'sample-profile-updates',
+      handleSampleProfile,
     );
 
     // Cleanup listeners on unmount
@@ -106,6 +121,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       window.electron.ipcRenderer.removeAllListeners(
         'machine-configuration-updates',
       );
+      window.electron.ipcRenderer.removeAllListeners('sample-profile-updates');
     };
   }, []);
 
@@ -227,6 +243,44 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  const zeroLength = useCallback(async (): Promise<boolean> => {
+    try {
+      return await window.electron.ipcRenderer.invoke('zero-length');
+    } catch (error) {
+      throw new Error(
+        error instanceof Error ? error.message : 'Failed to zero length',
+      );
+    }
+  }, []);
+
+  const getSampleProfile = useCallback(async (): Promise<SampleProfile> => {
+    try {
+      return await window.electron.ipcRenderer.invoke('get-sample-profile');
+    } catch (error) {
+      throw new Error(
+        error instanceof Error ? error.message : 'Failed to get sample profile',
+      );
+    }
+  }, []);
+
+  const saveSampleProfile = useCallback(
+    async (profile: SampleProfile): Promise<boolean> => {
+      try {
+        return await window.electron.ipcRenderer.invoke(
+          'save-sample-profile',
+          profile,
+        );
+      } catch (error) {
+        throw new Error(
+          error instanceof Error
+            ? error.message
+            : 'Failed to save sample profile',
+        );
+      }
+    },
+    [],
+  );
+
   const streamGCode = useCallback(
     async (gcode: string): Promise<{ success: boolean; error?: string }> => {
       try {
@@ -309,6 +363,9 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     manualMove,
     homeAxis,
     zeroForce,
+    zeroLength,
+    getSampleProfile,
+    saveSampleProfile,
     streamGCode,
     getAllDeviceData,
     getFirmwareVersion,

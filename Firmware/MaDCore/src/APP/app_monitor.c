@@ -120,7 +120,10 @@ typedef struct
 {
     bool setGaugeLength;
     bool setGaugeForce;
-    bool zeroPositionFeedback;
+    bool setPositionFeedback;
+    int32_t setPositionValue;
+    bool setSampleProfile;
+    app_monitor_sampleProfile_S sampleProfileValue;
 } app_monitor_requestData_t;
 
 typedef struct
@@ -130,6 +133,9 @@ typedef struct
     int32_t position;
     int32_t gaugeLength;
     int32_t gaugeForce;
+    bool forceExceeded;
+    bool velocityExceeded;
+    bool displacementExceeded;
 } app_monitor_output_S;
 
 typedef struct
@@ -146,6 +152,8 @@ typedef struct
 
     app_monitor_sample_t sample;
     app_monitor_output_S out;
+    app_monitor_sampleProfile_S sampleProfile;
+    bool sampleProfileLoaded;
 } app_monitor_data_t;
 
 /**********************************************************************
@@ -187,10 +195,16 @@ void app_monitor_private_processRequests()
         app_monitor_data.gaugeForce = app_monitor_data.input.force;
         app_monitor_data.request.setGaugeForce = false;
     }
-    if (app_monitor_data.request.zeroPositionFeedback)
+    if (app_monitor_data.request.setPositionFeedback)
     {
-        IO_positionFeedback_setValue(IO_POSITION_FEEDBACK_CHANNEL_SERVO_FEEDBACK, 0);
-        app_monitor_data.request.zeroPositionFeedback = false;
+        IO_positionFeedback_setValue(IO_POSITION_FEEDBACK_CHANNEL_SERVO_FEEDBACK, app_monitor_data.request.setPositionValue);
+        app_monitor_data.request.setPositionFeedback = false;
+    }
+    if (app_monitor_data.request.setSampleProfile)
+    {
+        memcpy(&app_monitor_data.sampleProfile, &app_monitor_data.request.sampleProfileValue, sizeof(app_monitor_sampleProfile_S));
+        app_monitor_data.sampleProfileLoaded = true;
+        app_monitor_data.request.setSampleProfile = false;
     }
     APP_MONITOR_LOCK_REL();
 }
@@ -212,6 +226,30 @@ void app_monitor_private_setOutput(void)
     app_monitor_data.out.force = app_monitor_data.input.force;
     app_monitor_data.out.position = app_monitor_data.input.position;
     memcpy(&app_monitor_data.out.sample, &app_monitor_data.sample, sizeof(app_monitor_sample_t));
+    
+    // Check limits if sample profile is loaded
+    if (app_monitor_data.sampleProfileLoaded)
+    {
+        // Force limit check (convert from mN to N for comparison)
+        uint32_t currentForceN = (uint32_t)(abs(app_monitor_data.sample.force) / 1000);
+        app_monitor_data.out.forceExceeded = (currentForceN > app_monitor_data.sampleProfile.maxForce);
+        
+        // Velocity limit check - velocity checking would require derivative calculation
+        // For now, set to false as velocity is not directly available in sample data
+        app_monitor_data.out.velocityExceeded = false;
+        
+        // Displacement limit check (convert from um to mm for comparison)
+        uint32_t currentDisplacement = (uint32_t)abs(app_monitor_data.sample.position);
+        app_monitor_data.out.displacementExceeded = (currentDisplacement > app_monitor_data.sampleProfile.maxDisplacement);
+    }
+    else
+    {
+        // No profile loaded, no limits exceeded
+        app_monitor_data.out.forceExceeded = false;
+        app_monitor_data.out.velocityExceeded = false;
+        app_monitor_data.out.displacementExceeded = false;
+    }
+    
     APP_MONITOR_LOCK_REL();
 }
 
@@ -263,6 +301,7 @@ void app_monitor_init(int lock)
     app_monitor_data.lock = lock;
     app_monitor_data.gaugeLength = 0;
     app_monitor_data.loggingState = APP_MONITOR_LOGGING_STATE_IDLE;
+    app_monitor_data.sampleProfileLoaded = false;
 }
 
 void app_monitor_run()
@@ -321,14 +360,14 @@ int32_t app_monitor_getGaugeLength(void)
     return gaugeLength;
 }
 
-void app_monitor_zeroGaugeLength()
+void app_monitor_zeroSamplePosition()
 {
     APP_MONITOR_LOCK_REQ_BLOCK();
     app_monitor_data.request.setGaugeLength = true;
     APP_MONITOR_LOCK_REL();
 }
 
-void app_monitor_zeroGaugeForce()
+void app_monitor_zeroSampleForce()
 {
     APP_MONITOR_LOCK_REQ_BLOCK();
     app_monitor_data.request.setGaugeForce = true;
@@ -338,7 +377,16 @@ void app_monitor_zeroGaugeForce()
 void app_monitor_zeroPosition()
 {
     APP_MONITOR_LOCK_REQ_BLOCK();
-    app_monitor_data.request.zeroPositionFeedback = true;
+    app_monitor_data.request.setPositionFeedback = true;
+    app_monitor_data.request.setPositionValue = 0;
+    APP_MONITOR_LOCK_REL();
+}
+
+void app_monitor_setPosition(int32_t positionUM)
+{
+    APP_MONITOR_LOCK_REQ_BLOCK();
+    app_monitor_data.request.setPositionFeedback = true;
+    app_monitor_data.request.setPositionValue = positionUM;
     APP_MONITOR_LOCK_REL();
 }
 
@@ -348,6 +396,65 @@ void app_monitor_setTestName(const char *testName)
     strncpy(app_monitor_data.testName, testName, sizeof(app_monitor_data.testName) - 1);
     app_monitor_data.testName[sizeof(app_monitor_data.testName) - 1] = '\0';
     APP_MONITOR_LOCK_REL();
+}
+
+bool app_monitor_setSampleProfile(app_monitor_sampleProfile_S *profile)
+{
+    if (profile == NULL)
+    {
+        return false;
+    }
+    
+    APP_MONITOR_LOCK_REQ_BLOCK();
+    memcpy(&app_monitor_data.request.sampleProfileValue, profile, sizeof(app_monitor_sampleProfile_S));
+    app_monitor_data.request.setSampleProfile = true;
+    APP_MONITOR_LOCK_REL();
+    
+    return true;
+}
+
+void app_monitor_getSampleProfile(app_monitor_sampleProfile_S *profile)
+{
+    if (profile == NULL)
+    {
+        return;
+    }
+    
+    APP_MONITOR_LOCK_REQ_BLOCK();
+    memcpy(profile, &app_monitor_data.sampleProfile, sizeof(app_monitor_sampleProfile_S));
+    APP_MONITOR_LOCK_REL();
+}
+
+bool app_monitor_isSampleProfileLoaded(void)
+{
+    APP_MONITOR_LOCK_REQ_BLOCK();
+    bool loaded = app_monitor_data.sampleProfileLoaded;
+    APP_MONITOR_LOCK_REL();
+    return loaded;
+}
+
+bool app_monitor_isForceExceeded(void)
+{
+    APP_MONITOR_LOCK_REQ_BLOCK();
+    bool exceeded = app_monitor_data.out.forceExceeded;
+    APP_MONITOR_LOCK_REL();
+    return exceeded;
+}
+
+bool app_monitor_isVelocityExceeded(void)
+{
+    APP_MONITOR_LOCK_REQ_BLOCK();
+    bool exceeded = app_monitor_data.out.velocityExceeded;
+    APP_MONITOR_LOCK_REL();
+    return exceeded;
+}
+
+bool app_monitor_isDisplacementExceeded(void)
+{
+    APP_MONITOR_LOCK_REQ_BLOCK();
+    bool exceeded = app_monitor_data.out.displacementExceeded;
+    APP_MONITOR_LOCK_REL();
+    return exceeded;
 }
 
 /**********************************************************************

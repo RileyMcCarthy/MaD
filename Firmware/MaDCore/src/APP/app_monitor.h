@@ -39,6 +39,16 @@ typedef enum
     APP_MONITOR_LOGGING_STATE_COUNT,
 } app_monitor_loggingState_E;
 
+typedef struct
+{
+    uint32_t maxForce;        // Maximum force (mN)
+    uint32_t maxVelocity;     // Maximum velocity (mm/s)
+    uint32_t maxDisplacement; // Maximum displacement (mm)
+    uint32_t sampleWidth;     // Sample width (mm)
+    uint32_t sampleThickness; // Sample thickness (mm)
+    char serial[100];         // Serial number string
+} app_monitor_sampleProfile_S;
+
 /**********************************************************************
  * Public Function Definitions
  **********************************************************************/
@@ -55,10 +65,19 @@ int32_t app_monitor_getAbsolutePosition(void); // position relative to upper end
 
 int32_t app_monitor_getGaugeLength(void);
 
-void app_monitor_zeroGaugeLength(void);
-void app_monitor_zeroGaugeForce(void);
+void app_monitor_zeroSamplePosition(void);
+void app_monitor_zeroSampleForce(void);
 void app_monitor_zeroPosition(void);
+void app_monitor_setPosition(int32_t positionUM);
 void app_monitor_setTestName(const char *testName);
+
+bool app_monitor_setSampleProfile(app_monitor_sampleProfile_S *profile);
+void app_monitor_getSampleProfile(app_monitor_sampleProfile_S *profile);
+bool app_monitor_isSampleProfileLoaded(void);
+
+bool app_monitor_isForceExceeded(void);
+bool app_monitor_isVelocityExceeded(void);
+bool app_monitor_isDisplacementExceeded(void);
 /**********************************************************************
  * End of File
  **********************************************************************/

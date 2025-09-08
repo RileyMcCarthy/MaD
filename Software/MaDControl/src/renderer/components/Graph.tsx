@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { LineChart } from '@mui/x-charts/LineChart';
 import { SampleData } from '@shared/SharedInterface';
 import Skeleton from '@mui/material/Skeleton';
+import { Paper, Box } from '@mui/material';
 import { axisClasses } from '@mui/x-charts/ChartsAxis';
 import { useDevice } from '@renderer/hooks';
 import { componentLogger } from '../utils/logger';
@@ -80,55 +81,69 @@ export default function BasicLineChart() {
 
   const { forceMin, forceMax, lengthMin, lengthMax } = getAxisLimits();
 
-  return force.length && position.length ? (
-    <LineChart
-      grid={{ horizontal: true }}
-      yAxis={[
-        {
-          id: 'force',
-          scaleType: 'linear',
-          label: 'Force (N)',
-          min: forceMin,
-          max: forceMax,
-        },
-        {
-          id: 'position',
-          scaleType: 'linear',
-          label: 'Position (mm)',
-          min: lengthMin,
-          max: lengthMax,
-        },
-      ]}
-      series={[
-        {
-          yAxisKey: 'force',
-          data: force,
-          type: 'line',
-          showMark: false,
-          label: 'Sample Force',
-        },
-        {
-          yAxisKey: 'position',
-          data: position,
-          type: 'line',
-          showMark: false,
-          label: 'Sample Position',
-        },
-      ]}
-      leftAxis="position"
-      rightAxis="force"
-      height={400}
-      margin={{ top: 50, right: 80, bottom: 50, left: 80 }}
-      sx={{
-        [`.${axisClasses.left} .${axisClasses.label}`]: {
-          transform: 'translate(-20px, 0)',
-        },
-        [`.${axisClasses.right} .${axisClasses.label}`]: {
-          transform: 'translate(20px, 0)',
-        },
-      }}
-    />
-  ) : (
-    <Skeleton variant="rounded" width="100%" height="400px" />
+    return (
+    <Box sx={{ flexGrow: 1 }}>
+      <Paper
+        elevation={1}
+        sx={{
+          padding: (theme) => theme.spacing(1),
+          backgroundColor: (theme) => theme.palette.mode === 'dark' ? '#1A2027' : '#fff',
+          color: (theme) => theme.palette.text.secondary,
+        }}
+      >
+
+      {force.length && position.length ? (
+        <LineChart
+          grid={{ horizontal: true }}
+          yAxis={[
+            {
+              id: 'force',
+              scaleType: 'linear',
+              label: 'Force (N)',
+              min: forceMin,
+              max: forceMax,
+            },
+            {
+              id: 'position',
+              scaleType: 'linear',
+              label: 'Position (mm)',
+              min: lengthMin,
+              max: lengthMax,
+            },
+          ]}
+          series={[
+            {
+              yAxisKey: 'force',
+              data: force,
+              type: 'line',
+              showMark: false,
+              label: 'Sample Force',
+            },
+            {
+              yAxisKey: 'position',
+              data: position,
+              type: 'line',
+              showMark: false,
+              label: 'Sample Position',
+            },
+          ]}
+          leftAxis="position"
+          rightAxis="force"
+          height={400}
+          margin={{ top: 50, right: 80, bottom: 50, left: 80 }}
+          sx={{
+            [`.${axisClasses.left} .${axisClasses.label}`]: {
+              transform: 'translate(-20px, 0)',
+            },
+            [`.${axisClasses.right} .${axisClasses.label}`]: {
+              transform: 'translate(20px, 0)',
+            },
+          }}
+        />
+      ) : (
+        <Skeleton variant="rounded" width="100%" height="400px" />
+      )}
+      </Paper>
+    </Box>
   );
 }

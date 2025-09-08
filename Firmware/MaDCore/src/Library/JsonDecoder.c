@@ -30,6 +30,7 @@ bool json_to_machine_profile(MachineProfile *profile, char *json)
     success &= json_property_to_int(parser, "Tensile Force Max (N)", &(profile->maxForceTensile));
     success &= json_property_to_int(parser, "Homing Velocity (mm/s)", &(profile->homingVelocity));
     success &= json_property_to_int(parser, "Homing Offset (mm)", &(profile->homingOffset));
+    success &= json_property_to_int(parser, "Jaw Offset (mm)", &(profile->jawOffset));
     DEBUG_INFO("SUCESS: %d\n", success);
     return success;
 }
@@ -77,7 +78,7 @@ bool json_to_move(lib_json_move_S *move, char *json)
     return success;
 }
 
-bool json_to_sample_profile(SampleProfile *profile, char *json)
+bool json_to_sample_profile(app_monitor_sampleProfile_S *profile, char *json)
 {
     // Use tiny-json to parse the string
     const json_t *parser = json_create_static(json);
@@ -92,7 +93,8 @@ bool json_to_sample_profile(SampleProfile *profile, char *json)
     success &= json_property_to_uint32(parser, "maxVelocity", &(profile->maxVelocity));
     success &= json_property_to_uint32(parser, "maxDisplacement", &(profile->maxDisplacement));
     success &= json_property_to_uint32(parser, "sampleWidth", &(profile->sampleWidth));
-    success &= json_property_to_uint32(parser, "serialNumber", &profile->serialNumber);
+    success &= json_property_to_uint32(parser, "sampleThickness", &(profile->sampleThickness));
+    success &= json_property_to_string(parser, "serial", profile->serial, sizeof(profile->serial));
 
     return success;
 }

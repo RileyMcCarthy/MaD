@@ -69,7 +69,6 @@ typedef struct
 
     app_control_state_E state;
     app_control_nvram_S nvram;
-    SampleProfile sampleProfile;
 
     int32_t lock;
 } app_control_data_S;
@@ -374,15 +373,6 @@ bool app_control_triggerMotionDisabled(void)
 {
     APP_CONTROL_LOCK_REQ_BLOCK();
     app_control_data.request.triggerMotionDisabled = true;
-    APP_CONTROL_LOCK_REL();
-    return true;
-}
-
-bool app_control_setSampleProfile(SampleProfile *profile)
-{
-    APP_CONTROL_LOCK_REQ_BLOCK();
-    // Store the sample profile
-    (void)memcpy(&app_control_data.sampleProfile, profile, sizeof(SampleProfile));
     APP_CONTROL_LOCK_REL();
     return true;
 }

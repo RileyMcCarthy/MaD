@@ -140,7 +140,8 @@ const TestProfileForm: React.FC = () => {
     maxVelocity: 0,
     maxDisplacement: 0,
     sampleWidth: 0,
-    serialNumber: '',
+    sampleThickness: 0,
+    serial: '',
   });
 
   const [motionProfile, setMotionProfile] = useState<MotionProfile>({
@@ -188,7 +189,7 @@ const TestProfileForm: React.FC = () => {
       const { value } = event.target;
       setSampleProfile((prev) => ({
         ...prev,
-        [field]: field === 'serialNumber' ? value : Number(value),
+        [field]: field === 'serial' ? value : Number(value),
       }));
     };
 
@@ -400,9 +401,18 @@ const TestProfileForm: React.FC = () => {
           </Grid>
           <Grid item xs={12} sm={4}>
             <TextField
+              label="Sample Thickness (mm)"
+              type="number"
+              value={sampleProfile.sampleThickness}
+              onChange={handleSampleProfileChange('sampleThickness')}
+              fullWidth
+            />
+          </Grid>
+          <Grid item xs={12} sm={4}>
+            <TextField
               label="Serial Number"
-              value={sampleProfile.serialNumber}
-              onChange={handleSampleProfileChange('serialNumber')}
+              value={sampleProfile.serial}
+              onChange={handleSampleProfileChange('serial')}
               fullWidth
             />
           </Grid>
@@ -420,7 +430,7 @@ const TestProfileForm: React.FC = () => {
               const url = URL.createObjectURL(blob);
               const a = document.createElement('a');
               a.href = url;
-              a.download = `${sampleProfile.serialNumber}.sp`;
+              a.download = `${sampleProfile.serial}.sp`;
               a.click();
               URL.revokeObjectURL(url);
             }}

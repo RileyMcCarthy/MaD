@@ -7,4 +7,5 @@ export { default as TestRunner } from './TestRunner';
 export { default as Control } from './Control';
 export { default as GCodeGenerator } from './GCodeGenerator';
 export { default as Graph } from './Graph';
+export { default as StressStrainChart } from './StressStrainChart';
 export { default as MachineStatus } from './MachineStatus';
