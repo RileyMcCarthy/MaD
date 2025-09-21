@@ -95,47 +95,28 @@ jobs:
         id: artifact
         run: echo "name=MaD-Control-${{ github.run_number }}" >> $GITHUB_OUTPUT
 
-      - name: Create installation instructions for macOS
+      - name: Prepare flat artifact structure for release
         run: |
-          cat > Software/MaDControl/release/build/README-macOS.txt << 'EOF'
-          IMPORTANT: macOS Installation Instructions
-          ========================================
+          mkdir -p release-artifacts
+          # Copy all build files to a flat structure for easier release handling
+          cp Software/MaDControl/release/build/*.dmg release-artifacts/ 2>/dev/null || echo "No DMG files"
+          cp Software/MaDControl/release/build/*.zip release-artifacts/ 2>/dev/null || echo "No ZIP files"  
+          cp Software/MaDControl/release/build/*.exe release-artifacts/ 2>/dev/null || echo "No EXE files"
+          cp Software/MaDControl/release/build/*.AppImage release-artifacts/ 2>/dev/null || echo "No AppImage files"
+          cp Software/MaDControl/release/build/*.deb release-artifacts/ 2>/dev/null || echo "No DEB files"
+          cp Software/MaDControl/release/build/README-macOS.txt release-artifacts/ 2>/dev/null || echo "No README"
+          # Also keep the original structure for SIL tests
+          mkdir -p release-artifacts/app
+          cp -r Software/MaDControl/release/app/* release-artifacts/app/ 2>/dev/null || echo "No app directory"
           
-          This app is not code signed, so macOS will block it by default.
-          To run the app, use ONE of these methods:
-          
-          Method 1 (Terminal - Recommended):
-          1. Open Terminal
-          2. Navigate to this folder
-          3. Run: xattr -dr com.apple.quarantine "MaD Control.app"
-          4. Double-click the app to run normally
-          
-          Method 2 (System Preferences):
-          1. Try to open the app (it will be blocked)
-          2. Go to System Preferences > Security & Privacy > General
-          3. Click "Allow Anyway" next to the blocked app message
-          4. Try opening again and click "Open"
-          
-          Method 3 (Right-click):
-          1. Right-click on the app
-          2. Select "Open" from context menu
-          3. Click "Open" in the security dialog
-          
-          For more details, see: https://github.com/RileyMcCarthy/MaD/tree/main/Software/MaDControl#macos-users---important-security-notice
-          EOF
+          echo "=== Release artifacts prepared ==="
+          ls -la release-artifacts/
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.artifact.outputs.name }}
-          path: |
-            Software/MaDControl/release/build/*.dmg
-            Software/MaDControl/release/build/*.zip
-            Software/MaDControl/release/build/*.exe
-            Software/MaDControl/release/build/*.AppImage
-            Software/MaDControl/release/build/*.deb
-            Software/MaDControl/release/build/README-macOS.txt
-            Software/MaDControl/release/app/
+          path: release-artifacts/
 
   build-firmware:
     needs: changes
@@ -419,13 +400,27 @@ jobs:
       - name: Get tag version
         id: get_version
         run: echo "VERSION=${GITHUB_REF#refs/tags/software-v}" >> $GITHUB_OUTPUT
+
+      - name: Debug artifact structure
+        run: |
+          echo "=== Artifact structure ==="
+          find artifacts -type f -name "*.dmg" -o -name "*.zip" -o -name "*.exe" -o -name "*.AppImage" -o -name "*.deb" -o -name "README-macOS.txt" | head -20
+          echo "=== All files in artifacts ==="
+          ls -la artifacts/ || echo "No artifacts directory"
+          find artifacts -type f | head -10
       
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
           name: MaD Control ${{ steps.get_version.outputs.VERSION }}
           tag_name: software-v${{ steps.get_version.outputs.VERSION }}
-          files: artifacts/*
+          files: |
+            artifacts/*.dmg
+            artifacts/*.zip
+            artifacts/*.exe
+            artifacts/*.AppImage
+            artifacts/*.deb
+            artifacts/README-macOS.txt
           draft: false
           prerelease: false
         env:
