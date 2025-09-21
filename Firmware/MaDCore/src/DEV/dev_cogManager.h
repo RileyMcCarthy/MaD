@@ -53,11 +53,10 @@ typedef struct
     static const char dev_cogManager_name##channel[] = #channel;                          \
     void dev_cogManager_taskInit##channel(int lock)
 
-#define DEV_COGMANAGER_CHANNEL_CREATE_RUN(channel, frequency) \
-    static const uint32_t dev_cogManager_targetFrequencyHz##channel = frequency; \
+#define DEV_COGMANAGER_CHANNEL_CREATE_RUN(channel) \
     void dev_cogManager_taskRun##channel(void *arg)
 
-#define DEV_COGMANAGER_CHANNEL_CONFIG_CREATE(channel)           \
+#define DEV_COGMANAGER_CHANNEL_CONFIG_CREATE(channel, frequency)           \
     {                                                           \
         dev_cogManager_taskInit##channel,                       \
         dev_cogManager_taskRun##channel,                        \
@@ -65,7 +64,7 @@ typedef struct
         LIB_UTILITY_ARRAY_COUNT(dev_cogManager_stack##channel), \
         dev_cogManager_lowerCanary##channel,                    \
         dev_cogManager_upperCanary##channel,                    \
-        dev_cogManager_targetFrequencyHz##channel,              \
+        frequency,              \
         WATCHDOG_CHANNEL_##channel,                             \
         dev_cogManager_name##channel,                           \
     }

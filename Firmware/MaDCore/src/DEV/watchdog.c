@@ -10,6 +10,7 @@
 #include <string.h>
 #include "watchdog.h"
 #include "IO_Debug.h"
+#include "emulation_helpers.h"
 /**********************************************************************
  * Constants
  **********************************************************************/
@@ -19,9 +20,7 @@
  * Macros
  **********************************************************************/
 #define SM_LOCK_REQ() _locktry(watchdog_data.lock)
-#define SM_LOCK_REQ_BLOCK()        \
-    while (SM_LOCK_REQ() == false) \
-        ;
+#define SM_LOCK_REQ_BLOCK() while (SM_LOCK_REQ() == false) EMULATION_YIELD_LOCK();
 #define SM_LOCK_REL() _lockrel(watchdog_data.lock)
 
 #define WATCHDOG_CHANNEL_VALID(channel) (channel >= 0 || channel < WATCHDOG_CHANNEL_COUNT)

@@ -20,6 +20,7 @@
 #include "IO_Debug.h"
 #include "lib_utility.h"
 #include "IO_gcode.h"
+#include "emulation_helpers.h"
 /**********************************************************************
  * Constants
  **********************************************************************/
@@ -35,9 +36,7 @@
  * Macros
  **********************************************************************/
 #define APP_MESSAGESLAVE_LOCK_REQ() _locktry(app_message_slave_data.lock)
-#define APP_MESSAGESLAVE_LOCK_REQ_BLOCK()        \
-    while (APP_MESSAGESLAVE_LOCK_REQ() == false) \
-        ;
+#define APP_MESSAGESLAVE_LOCK_REQ_BLOCK() while (APP_MESSAGESLAVE_LOCK_REQ() == false) EMULATION_YIELD_LOCK();
 #define APP_MESSAGESLAVE_LOCK_REL() _lockrel(app_message_slave_data.lock)
 /**********************************************************************
  * Typedefs
@@ -100,6 +99,7 @@ static app_message_slave_responseType_E app_message_slave_private_handleRead(IO_
         dataSize = snprintf(app_message_slave_data.dataTX, APP_MESSAGE_SLAVE_TX_BUFFER_SIZE,
                  "{\"Machine Force (N)\":%0.3f,\"Machine Position (mm)\":%d,\"Machine Setpoint (mm)\":%d,\"Sample Force (N)\":%0.3f,\"Sample Position (mm)\":%d,\"Index\":%u}",
                  LIB_UTILITY_MN_TO_N(machineForce), machinePosition, LIB_UTILITY_UM_TO_MM(machineSetpoint), LIB_UTILITY_MN_TO_N(sample.force), LIB_UTILITY_UM_TO_MM(sample.position), sample.index);
+        //DEBUG_INFO("responding with sample: %s\n", app_message_slave_data.dataTX);
         responseType = APP_MESSAGE_SLAVE_RESPONSE_TYPE_DATA;
         break;
     }

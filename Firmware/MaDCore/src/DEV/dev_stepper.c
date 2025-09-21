@@ -11,6 +11,7 @@
 #include <smartpins.h>
 #include "IO_Debug.h"
 #include <string.h>
+#include "emulation_helpers.h"
 /**********************************************************************
  * Constants
  **********************************************************************/
@@ -19,9 +20,7 @@
  * Macros
  **********************************************************************/
 #define SM_LOCK_REQ() _locktry(dev_stepper_data.lock)
-#define SM_LOCK_REQ_BLOCK()        \
-    while (SM_LOCK_REQ() == false) \
-        ;
+#define SM_LOCK_REQ_BLOCK() while (SM_LOCK_REQ() == false) EMULATION_YIELD_LOCK();
 #define SM_LOCK_REL() _lockrel(dev_stepper_data.lock)
 
 // Hardware uses 16 bit value for clockcycles per half pulse cycle

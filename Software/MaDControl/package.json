@@ -221,10 +221,7 @@
       "gatekeeperAssess": false,
       "icon": "assets/icon.icns",
       "identity": null,
-      "signIgnore": [
-        "dist/main/main.js",
-        "dist/preload/preload.js"
-      ],
+      "sign": false,
       "entitlements": null,
       "entitlementsInherit": null,
       "extendInfo": {

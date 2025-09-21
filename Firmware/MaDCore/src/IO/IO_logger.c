@@ -10,6 +10,7 @@
 
 #include "IO_logger.h"
 #include "lib_staticQueue.h"
+#include "emulation_helpers.h"
 /**********************************************************************
  * Constants
  **********************************************************************/
@@ -18,10 +19,7 @@
  * Macros
  **********************************************************************/
 #define IO_LOGGER_LOCK_REQ() _locktry(IO_logger_data.lock)
-#define IO_LOGGER_LOCK_REQ_BLOCK()        \
-    while (IO_LOGGER_LOCK_REQ() == false) \
-    {                                     \
-    }
+#define IO_LOGGER_LOCK_REQ_BLOCK() while (IO_LOGGER_LOCK_REQ() == false) EMULATION_YIELD_LOCK();
 #define IO_LOGGER_LOCK_REL() _lockrel(IO_logger_data.lock)
 
 #define IO_LOGGER_LOCKED_INPUT(channel) IO_logger_data.channelData[channel].externalInput

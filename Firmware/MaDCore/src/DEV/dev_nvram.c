@@ -10,6 +10,7 @@
 #include "propeller2.h"
 #include "dev_nvram.h"
 #include "IO_Debug.h"
+#include "emulation_helpers.h"
 /**********************************************************************
  * Constants
  **********************************************************************/
@@ -18,9 +19,7 @@
  * Macros
  **********************************************************************/
 #define SM_LOCK_REQ() _locktry(dev_nvram_data.lock)
-#define SM_LOCK_REQ_BLOCK()        \
-    while (SM_LOCK_REQ() == false) \
-        ;
+#define SM_LOCK_REQ_BLOCK() while (SM_LOCK_REQ() == false) EMULATION_YIELD_LOCK();
 #define SM_LOCK_REL() _lockrel(dev_nvram_data.lock)
 
 #define DEV_NVRAM_CHANNEL_VALID(channel) (channel >= 0 || channel < DEV_NVRAM_CHANNEL_COUNT)
@@ -210,7 +209,7 @@ void dev_nvram_private_entryAction(dev_nvram_channel_t channel)
         {
             dev_nvram_data.channels[channel].file = NULL;
             dev_nvram_data.channels[channel].hasError = true;
-            DEBUG_ERROR("failed to mount sd card: %s\n", dev_nvram_config.channels[channel].path);
+            DEBUG_ERROR("failed to mount sd card: %s\n", SD_CARD_MOUNT_PATH);
         }
         break;
     case DEV_NVRAM_READY:
@@ -242,13 +241,8 @@ void dev_nvram_private_runAction(dev_nvram_channel_t channel)
         else
         {
             // Read data from file
-            size_t n = fread(dev_nvram_data.channels[channel].data, dev_nvram_config.channels[channel].size, 1, dev_nvram_data.channels[channel].file);
-#if defined(__EMULATION__)
+            const size_t n = fread(dev_nvram_data.channels[channel].data, dev_nvram_config.channels[channel].size, 1, dev_nvram_data.channels[channel].file);
             if (n != 1)
-#else
-            // propeller fread returns the number of bytes read
-            if (n != dev_nvram_config.channels[channel].size)
-#endif
             {
                 DEBUG_ERROR("incorrect number of bytes read: %zu\n", n);
                 dev_nvram_data.channels[channel].hasError = true;
@@ -271,12 +265,7 @@ void dev_nvram_private_runAction(dev_nvram_channel_t channel)
         {
             // Write data from request
             size_t n = fwrite(dev_nvram_data.channels[channel].request.data, dev_nvram_config.channels[channel].size, 1, dev_nvram_data.channels[channel].file);
-#if defined(__EMULATION__)
             if (n != 1)
-#else
-            // propeller fread returns the number of bytes read
-            if (n != dev_nvram_config.channels[channel].size)
-#endif
             {
                 DEBUG_ERROR("incorrect number of bytes read: %zu\n", n);
                 dev_nvram_data.channels[channel].hasError = true;

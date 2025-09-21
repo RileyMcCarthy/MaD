@@ -7,6 +7,7 @@
  **********************************************************************/
 #include "HAL_pulseOut.h"
 #include "HAL_pulseOut_private.h"
+#include "IO_Debug.h"
 
 #include "propeller2.h"
 /**********************************************************************
@@ -54,7 +55,8 @@ static HAL_pulseOut_channelData_S HAL_pulseOut_channelData[HAL_PULSE_OUT_CHANNEL
 void HAL_pulseOut_private_startHardwarePulse(HAL_pulseOut_channel_E ch, uint32_t pulses, uint32_t clockCyclesPerPulse)
 {
     _pinstart(HAL_pulseOut_channelConfig[ch].pin, P_TRANSITION | P_OE, clockCyclesPerPulse >> 1, 0);
-    _wypin(HAL_pulseOut_channelConfig[ch].pin, pulses);
+    // Transition mode counts transitions, two transitions per full pulse
+    _wypin(HAL_pulseOut_channelConfig[ch].pin, pulses * 2U);
 
     HAL_pulseOut_channelData[ch].startx = _cnt();
     HAL_pulseOut_channelData[ch].pulses = pulses;
@@ -63,7 +65,7 @@ void HAL_pulseOut_private_startHardwarePulse(HAL_pulseOut_channel_E ch, uint32_t
 
 bool HAL_pulseOut_private_updateHardwarePulse(HAL_pulseOut_channel_E ch)
 {
-    return (_pinr(HAL_pulseOut_channelConfig[ch].pin) == 0);
+    return (_pinr(HAL_pulseOut_channelConfig[ch].pin) == 1);
 }
 
 uint32_t HAL_pulseOut_private_getHardwarePulseCount(HAL_pulseOut_channel_E ch)
@@ -104,15 +106,17 @@ bool HAL_pulseOut_private_updateSoftwarePulse(HAL_pulseOut_channel_E ch)
 void HAL_pulseOut_start(HAL_pulseOut_channel_E ch, uint32_t pulses, uint32_t frequency)
 {
     const uint32_t clockCyclesPerStep = _clockfreq() / frequency;
-    if (clockCyclesPerStep < HAL_pulseOut_channelConfig[ch].maxHardwareClockCyclePerStep)
+    if (clockCyclesPerStep > HAL_pulseOut_channelConfig[ch].maxHardwareClockCyclePerStep)
     {
         HAL_pulseOut_private_startSoftwarePulse(ch, pulses, clockCyclesPerStep);
         HAL_pulseOut_channelData[ch].usingHardware = false;
+        DEBUG_INFO("starting software pulse: %d, %d, %d, %d\n", clockCyclesPerStep, pulses, frequency, _clockfreq());
     }
     else
     {
         HAL_pulseOut_private_startHardwarePulse(ch, pulses, clockCyclesPerStep);
         HAL_pulseOut_channelData[ch].usingHardware = true;
+        DEBUG_INFO("starting hardware pulse: %d, %d, %d\n", clockCyclesPerStep, pulses, frequency);
     }
     HAL_pulseOut_channelData[ch].enabled = true;
 }
@@ -131,6 +135,7 @@ bool HAL_pulseOut_run(HAL_pulseOut_channel_E ch, uint32_t *pulses)
         {
             running = HAL_pulseOut_private_updateSoftwarePulse(ch);
             *pulses = HAL_pulseOut_channelData[ch].currentPulse;
+            //DEBUG_INFO("running software pulse: %d, %d\n", *pulses, HAL_pulseOut_channelData[ch].currentPulse);
         }
     }
     return running;

@@ -8,6 +8,7 @@
 #include "dev_nvram.h"
 #include "IO_Debug.h"
 #include <string.h>
+#include "emulation_helpers.h"
 /**********************************************************************
  * Constants
  **********************************************************************/
@@ -19,6 +20,7 @@
 #define DEV_FORCEGAUGE_REQ_BLOCK()             \
     while (DEV_FORCEGAUGE_LOCK_REQ() == false) \
     {                                          \
+        EMULATION_YIELD_LOCK();                \
     }
 #define DEV_FORCEGAUGE_LOCK_REL() _lockrel(dev_forceGauge_data.lock)
 /**********************************************************************

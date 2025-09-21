@@ -95,6 +95,35 @@ jobs:
         id: artifact
         run: echo "name=MaD-Control-${{ github.run_number }}" >> $GITHUB_OUTPUT
 
+      - name: Create installation instructions for macOS
+        run: |
+          cat > Software/MaDControl/release/build/README-macOS.txt << 'EOF'
+          IMPORTANT: macOS Installation Instructions
+          ========================================
+          
+          This app is not code signed, so macOS will block it by default.
+          To run the app, use ONE of these methods:
+          
+          Method 1 (Terminal - Recommended):
+          1. Open Terminal
+          2. Navigate to this folder
+          3. Run: xattr -dr com.apple.quarantine "MaD Control.app"
+          4. Double-click the app to run normally
+          
+          Method 2 (System Preferences):
+          1. Try to open the app (it will be blocked)
+          2. Go to System Preferences > Security & Privacy > General
+          3. Click "Allow Anyway" next to the blocked app message
+          4. Try opening again and click "Open"
+          
+          Method 3 (Right-click):
+          1. Right-click on the app
+          2. Select "Open" from context menu
+          3. Click "Open" in the security dialog
+          
+          For more details, see: https://github.com/RileyMcCarthy/MaD/tree/main/Software/MaDControl#macos-users---important-security-notice
+          EOF
+
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -105,6 +134,7 @@ jobs:
             Software/MaDControl/release/build/*.exe
             Software/MaDControl/release/build/*.AppImage
             Software/MaDControl/release/build/*.deb
+            Software/MaDControl/release/build/README-macOS.txt
             Software/MaDControl/release/app/
 
   build-firmware:
@@ -413,6 +443,7 @@ jobs:
         with:
           name: ${{ needs.build-firmware.outputs.artifact-name }}
           path: artifacts
+          merge-multiple: true
           
       - name: Get tag version
         id: get_version
