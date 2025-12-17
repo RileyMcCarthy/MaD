@@ -32,8 +32,20 @@ typedef struct
     static uint8_t name##_rxBuffer[rxBufferSize]; \
     static uint8_t name##_txBuffer[txBufferSize]
 
+#if defined(__FLEXC__)
 #define IO_FULLDUPLEXSERIAL_CHANNEL_CONFIG(name, hwChannel) \
     { hwChannel, name##_rxBuffer, sizeof(name##_rxBuffer), name##_txBuffer, sizeof(name##_txBuffer) }
+#else
+#define IO_FULLDUPLEXSERIAL_CHANNEL_CONFIG(name, hwChannel) \
+    [IO_FULLDUPLEXSERIAL_CHANNEL_##name] =                  \
+    {                                                       \
+        .hardwareSerialChannel = hwChannel,                 \
+        .rxBuffer = name##_rxBuffer,                        \
+        .rxBufferSize = sizeof(name##_rxBuffer),            \
+        .txBuffer = name##_txBuffer,                        \
+        .txBufferSize = sizeof(name##_txBuffer)             \
+    }
+#endif
 /**********************************************************************
  * Public Function Definitions
  **********************************************************************/

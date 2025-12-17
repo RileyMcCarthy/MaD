@@ -85,8 +85,9 @@ Definitions
 #include "dev_forceGauge.h"
 #include "IO_positionFeedback.h"
 #include "IO_Debug.h"
-
+#include "emulation_helpers.h"
 #include "lib_utility.h"
+
 /**********************************************************************
  * Constants
  **********************************************************************/
@@ -96,9 +97,7 @@ Definitions
  **********************************************************************/
 
 #define APP_MONITOR_LOCK_REQ() _locktry(app_monitor_data.lock)
-#define APP_MONITOR_LOCK_REQ_BLOCK()        \
-    while (APP_MONITOR_LOCK_REQ() == false) \
-        ;
+#define APP_MONITOR_LOCK_REQ_BLOCK() while (APP_MONITOR_LOCK_REQ() == false) EMULATION_YIELD_LOCK();
 #define APP_MONITOR_LOCK_REL() _lockrel(app_monitor_data.lock)
 
 /**********************************************************************

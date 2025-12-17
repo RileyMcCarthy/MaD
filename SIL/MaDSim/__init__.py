@@ -23,6 +23,7 @@ assert sim_loop is not None
 
 from MaDSim.VirtualSerialPort import VirtualSerialPort
 from MaDSim.PIORunner import FirmwareRunner
+from MaDSim.ElectronRunner import ElectronRunner
 from MaDSim.Async import AsyncHandler, AsyncConnector, AsyncConectorSingle
 from MaDSim.AsyncSocket import AsyncSocketServer
 from MaDSim.ForceGauge import SimulatedADS122U04

@@ -41,3 +41,4 @@ node_modules/
 .env.local
 .env.*.local
 Software/MaDControl/sample-runs.json
+SIL/sd/profile.bin

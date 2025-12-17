@@ -33,5 +33,11 @@ typedef enum
 
     HW_PIN_MAIN_RX = 63,
     HW_PIN_MAIN_TX = 62,
+    
+    // SD Card pins (P2 Edge Module standard configuration)
+    HW_PIN_SD_CLK = 61,
+    HW_PIN_SD_MOSI = 60,
+    HW_PIN_SD_MISO = 59,
+    HW_PIN_SD_CS = 58,
 } HW_pin_E;
 #endif /* HW_PINS_H */

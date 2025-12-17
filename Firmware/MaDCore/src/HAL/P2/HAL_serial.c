@@ -173,6 +173,7 @@ void HAL_serial_stop(HAL_serial_channel_E channel)
                 _pinclear(HAL_serial_channelConfig[channel].tx);
                 break;
             case HAL_SERIAL_TYPE_BUILTIN:
+            case HAL_SERIAL_TYPE_COUNT:
                 // do not disable the serial port
                 break;
         }

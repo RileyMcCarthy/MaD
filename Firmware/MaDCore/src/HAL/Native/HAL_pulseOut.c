@@ -32,9 +32,12 @@ typedef struct
 /**********************************************************************
  * External Variables
  **********************************************************************/
-const HAL_pulseOut_channelConfig_S HAL_pulseOut_channelConfig[HAL_PULSE_OUT_CHANNEL_COUNT] = {
-    {HW_PIN_SERVO_PUL}, // pin
+static const HAL_pulseOut_channelConfig_S HAL_pulseOut_channelConfig[HAL_PULSE_OUT_CHANNEL_COUNT] = {
+    [HAL_PULSE_OUT_CHANNEL_SERVO] = {
+        .pin = HW_PIN_SERVO_PUL,
+    }
 };
+
 /**********************************************************************
  * Private Variable Definitions
  **********************************************************************/
@@ -53,7 +56,6 @@ static HAL_pulseOut_channelData_S HAL_pulseOut_channelData[HAL_PULSE_OUT_CHANNEL
 
 void HAL_pulseOut_start(HAL_pulseOut_channel_E ch, uint32_t pulses, uint32_t frequency)
 {
-    DEBUG_INFO("pulses: %d, frequency: %d\n", pulses, frequency);
     HAL_pulseOut_channelData[ch].socket_id = get_pin_socketid(HAL_pulseOut_channelConfig[ch].pin);
     HAL_pulseOut_channelData[ch].pulses = pulses;
     HAL_pulseOut_channelData[ch].frequency = frequency;

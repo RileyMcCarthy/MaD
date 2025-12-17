@@ -7,8 +7,7 @@
 #include "IO_positionFeedback.h"
 #include "dev_nvram.h"
 
-#include "Encoder.h"
-#include "HW_pins.h"
+#include "HAL_encoder.h"
 
 #include "lib_utility.h"
 /**********************************************************************
@@ -25,11 +24,14 @@
 typedef struct
 {
     int32_t stepPerMM;
-
-    Encoder encoder;
+    HAL_encoder_channel_E encoderChannel;
 } IO_positionFeedback_channelData_S;
 
-IO_positionFeedback_channelData_S IO_positionFeedback_channelData[IO_POSITION_FEEDBACK_CHANNEL_COUNT];
+typedef struct
+{
+    HAL_encoder_channel_E encoderChannel;
+} IO_positionFeedback_channelConfig_S;
+
 /**********************************************************************
  * External Variables
  **********************************************************************/
@@ -37,21 +39,23 @@ IO_positionFeedback_channelData_S IO_positionFeedback_channelData[IO_POSITION_FE
 /**********************************************************************
  * Private Variable Definitions
  **********************************************************************/
+static IO_positionFeedback_channelData_S IO_positionFeedback_channelData[IO_POSITION_FEEDBACK_CHANNEL_COUNT];
 
-typedef struct
-{
-    // ideally this just has a HAL_quadrature channel but cause of SPIN its easier to give raw pin values
-    // using direct HW channels is fine for now tbh
-    HW_pin_E encoderA;
-    HW_pin_E encoderB;
-} IO_positionFeedback_channeConfig_S;
-
-IO_positionFeedback_channeConfig_S IO_positionFeedback_channelConfig[IO_POSITION_FEEDBACK_CHANNEL_COUNT] = {
+// Configuration mapping position feedback channels to encoder channels
+#ifdef __FLEXC__
+static const IO_positionFeedback_channelConfig_S IO_positionFeedback_channelConfig[IO_POSITION_FEEDBACK_CHANNEL_COUNT] = {
     {
-        HW_PIN_SERVO_ENCODER_A,
-        HW_PIN_SERVO_ENCODER_B,
+        HAL_ENCODER_CHANNEL_SERVO,
     },
 };
+#else
+static const IO_positionFeedback_channelConfig_S IO_positionFeedback_channelConfig[IO_POSITION_FEEDBACK_CHANNEL_COUNT] = {
+    [IO_POSITION_FEEDBACK_CHANNEL_SERVO_FEEDBACK] = {
+        .encoderChannel = HAL_ENCODER_CHANNEL_SERVO,
+    },
+};
+#endif
+
 /**********************************************************************
  * Private Function Prototypes
  **********************************************************************/
@@ -62,7 +66,17 @@ IO_positionFeedback_channeConfig_S IO_positionFeedback_channelConfig[IO_POSITION
 
 void IO_positionFeedback_init(IO_positionFeedback_channel_E ch, int lock, int32_t stepPerMM)
 {
-    encoder_start(&IO_positionFeedback_channelData[ch].encoder, IO_positionFeedback_channelConfig[ch].encoderA, IO_positionFeedback_channelConfig[ch].encoderB, -1, false, 0, -1000000, 1000000);
+    if (ch >= IO_POSITION_FEEDBACK_CHANNEL_COUNT)
+    {
+        return;
+    }
+    
+    // Get encoder channel from config
+    HAL_encoder_channel_E encoderChannel = IO_positionFeedback_channelConfig[ch].encoderChannel;
+    IO_positionFeedback_channelData[ch].encoderChannel = encoderChannel;
+    
+    // Start the encoder (hardware configuration is in HAL_encoder)
+    HAL_encoder_start(encoderChannel);
     IO_positionFeedback_channelData[ch].stepPerMM = stepPerMM == 0 ? 1 : stepPerMM; // ensure non-zero value
 }
 
@@ -71,7 +85,7 @@ int32_t IO_positionFeedback_getValue(IO_positionFeedback_channel_E ch)
     int32_t positionUM = 0;
     if (ch < IO_POSITION_FEEDBACK_CHANNEL_COUNT)
     {
-        const int32_t encoderSteps = encoder_value(&IO_positionFeedback_channelData[ch].encoder);
+        const int32_t encoderSteps = HAL_encoder_value(IO_positionFeedback_channelData[ch].encoderChannel);
         positionUM = LIB_UTILITY_MM_TO_UM(encoderSteps / IO_positionFeedback_channelData[ch].stepPerMM);
     }
     return positionUM;
@@ -83,7 +97,7 @@ bool IO_positionFeedback_setValue(IO_positionFeedback_channel_E ch, int32_t posi
     if (ch < IO_POSITION_FEEDBACK_CHANNEL_COUNT)
     {
         const int32_t encoderSteps = (positionUM * IO_positionFeedback_channelData[ch].stepPerMM) / 1000;
-        encoder_set(&IO_positionFeedback_channelData[ch].encoder, encoderSteps);
+        HAL_encoder_set(IO_positionFeedback_channelData[ch].encoderChannel, encoderSteps);
         success = true;
     }
     return success;

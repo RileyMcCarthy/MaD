@@ -4,8 +4,9 @@
 /**********************************************************************
  * Includes
  **********************************************************************/
-#include <propeller2.h>
+#include <propeller.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include "dev_cogManager.h"
 #include "IO_Debug.h"
 #include "lib_utility.h"
@@ -142,10 +143,17 @@ void dev_cogManager_entryAction(dev_cogManager_channel_E channel)
         dev_cogManager_config.channels[channel].cogFunctionInit(dev_cogManager_data.channels[channel].lockid);
         break;
     case DEV_COGMANAGER_STATE_BOOT:
-        dev_cogManager_data.channels[channel].cogid = _cogstart(dev_cogManager_private_wrapper,
-                                                                (void *)&dev_cogManager_config.channels[channel],
-                                                                dev_cogManager_config.channels[channel].stack,
+#ifdef __FLEXC__
+    dev_cogManager_data.channels[channel].cogid = _cogstart(dev_cogManager_private_wrapper,
+        (void *)&dev_cogManager_config.channels[channel],
+        dev_cogManager_config.channels[channel].stack,
+        dev_cogManager_config.channels[channel].stackSize);
+#else
+        dev_cogManager_data.channels[channel].cogid = cogstart(dev_cogManager_private_wrapper,
+                                                                (int)(intptr_t)&dev_cogManager_config.channels[channel],
+                                                                (int *)dev_cogManager_config.channels[channel].stack,
                                                                 dev_cogManager_config.channels[channel].stackSize);
+#endif
         break;
     case DEV_COGMANAGER_STATE_RUNNING:
         break;

@@ -43,12 +43,24 @@ typedef struct
  * Private Variable Definitions
  **********************************************************************/
 static HAL_serial_channelConfig_S HAL_serial_channelConfig[HAL_SERIAL_CHANNEL_COUNT] = {
-    {HW_PIN_FORCE_GAUGE_RX, HW_PIN_FORCE_GAUGE_TX, 115200}, // FORCE_GAUGE
+    [HAL_SERIAL_CHANNEL_FORCE_GAUGE] = {
+        .rx = HW_PIN_FORCE_GAUGE_RX,
+        .tx = HW_PIN_FORCE_GAUGE_TX,
+        .baud = 115200,
+    }, // FORCE_GAUGE
 #if ENABLE_DEBUG_SERIAL
     // leave the MAIN_RX and MAIN_TX open for debug serial
-    {HW_PIN_RPI_RX, HW_PIN_RPI_TX, 230400}, // MAIN
+    [HAL_SERIAL_CHANNEL_MAIN] = {
+        .rx = HW_PIN_RPI_RX,
+        .tx = HW_PIN_RPI_TX,
+        .baud = 230400,
+    }, // MAIN/DEBUG
 #else
-    {HW_PIN_MAIN_RX, HW_PIN_MAIN_TX, 230400}, // MAIN/DEBUG
+    [HAL_SERIAL_CHANNEL_MAIN] = {
+        .rx = HW_PIN_MAIN_RX,
+        .tx = HW_PIN_MAIN_TX,
+        .baud = 230400,
+    }, // MAIN/DEBUG
 #endif
 };
 

@@ -56,6 +56,8 @@ typedef struct
 #define DEV_COGMANAGER_CHANNEL_CREATE_RUN(channel) \
     void dev_cogManager_taskRun##channel(void *arg)
 
+#if PROPELLER_FRAMEWORK == FLEXCC
+// flexc compiler does not support nested designated initializers
 #define DEV_COGMANAGER_CHANNEL_CONFIG_CREATE(channel, frequency)           \
     {                                                           \
         dev_cogManager_taskInit##channel,                       \
@@ -68,7 +70,20 @@ typedef struct
         WATCHDOG_CHANNEL_##channel,                             \
         dev_cogManager_name##channel,                           \
     }
-
+#else
+#define DEV_COGMANAGER_CHANNEL_CONFIG_CREATE(channel, frequency)           \
+    [DEV_COGMANAGER_CHANNEL_##channel] = {                           \
+        .cogFunctionInit = dev_cogManager_taskInit##channel,       \
+        .cogFunctionRun = dev_cogManager_taskRun##channel,         \
+        .stack = dev_cogManager_stack##channel,                   \
+        .stackSize = LIB_UTILITY_ARRAY_COUNT(dev_cogManager_stack##channel), \
+        .lowerCanary = dev_cogManager_lowerCanary##channel,       \
+        .upperCanary = dev_cogManager_upperCanary##channel,       \
+        .targetFrequencyHz = frequency,                           \
+        .watchdogChannel = WATCHDOG_CHANNEL_##channel,            \
+        .name = dev_cogManager_name##channel,                     \
+    }
+#endif
 typedef struct
 {
     const dev_cogManager_channelConfig_S channels[DEV_COGMANAGER_CHANNEL_COUNT];

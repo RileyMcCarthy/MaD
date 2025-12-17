@@ -24,16 +24,22 @@ except Exception as e:
     rpi_virtual_port = None
 
 # Build firmware
-prebuilt_executable = os.getenv('MAD_FIRMWARE_EXECUTABLE')
-if prebuilt_executable and os.path.exists(prebuilt_executable):
-    print(f"Using prebuilt firmware executable: {prebuilt_executable}")
-    firmware = MaDSim.FirmwareRunner("native", "../", prebuilt_executable)
-else:
-    print("Building firmware from source...")
-    firmware = MaDSim.FirmwareRunner("native", "../")
+# First check for prebuilt binary in SIL/build/firmware
+script_dir = os.path.dirname(os.path.abspath(__file__))
+prebuilt_path = os.path.join(script_dir, "../build/firmware/mad-firmware-native.bin")
 
-firmware.clean()
-firmware.build()
+prebuilt_executable = os.getenv('MAD_FIRMWARE_EXECUTABLE', prebuilt_path)
+
+if os.path.exists(prebuilt_executable):
+    print(f"Using prebuilt firmware executable: {prebuilt_executable}")
+    # Firmware source is at ../../Firmware/MaDCore from SIL/emulator
+    firmware = MaDSim.FirmwareRunner("native", "../../Firmware/MaDCore", prebuilt_executable)
+else:
+    print("No prebuilt firmware found, building from source...")
+    print(f"Checked path: {prebuilt_executable}")
+    firmware = MaDSim.FirmwareRunner("native", "../../Firmware/MaDCore")
+    firmware.clean()
+    firmware.build()
 
 # Create a socket connection for each 64 pins
 async_server = []

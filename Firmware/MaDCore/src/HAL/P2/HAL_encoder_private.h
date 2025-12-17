@@ -1,13 +1,18 @@
-#ifndef HAL_PULSE_OUT_CONFIG_H
-#define HAL_PULSE_OUT_CONFIG_H
+#ifndef HAL_ENCODER_PRIVATE_H
+#define HAL_ENCODER_PRIVATE_H
+
 //
-// Created by Riley McCarthy on 25/04/24.
-// @brief Non threadsafe implementation of hardware PWM out
+// Created by Riley McCarthy on 05/10/25.
+// @brief Private definitions for HAL encoder implementation
 //
+
 /**********************************************************************
  * Includes
  **********************************************************************/
+#include <stdint.h>
 #include <stdbool.h>
+#include "HAL_encoder.h"
+
 /**********************************************************************
  * Constants
  **********************************************************************/
@@ -21,14 +26,19 @@
  **********************************************************************/
 typedef struct
 {
-    const uint32_t maxHardwareClockCyclePerStep;
-    const uint8_t pin;
-} HAL_pulseOut_channelConfig_S;
+    int32_t pinA;                  // A input pin
+    int32_t pinB;                  // B input pin  
+    int32_t offset;                // Offset for preset values
+    int32_t lolimit;               // Lower limit
+    int32_t hilimit;               // Upper limit
+    bool setup;                    // True when pin is configured
+} HAL_encoder_channelData_S;
+
 /**********************************************************************
- * Public Function Definitions
+ * Private Function Prototypes
  **********************************************************************/
 
 /**********************************************************************
  * End of File
  **********************************************************************/
-#endif /* HAL_PULSE_OUT_CONFIG_H */
+#endif /* HAL_ENCODER_PRIVATE_H */

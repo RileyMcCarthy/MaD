@@ -38,6 +38,7 @@ extern "C" {
 #include <stdlib.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stddef.h>
 
 #define json_containerOf( ptr, type, member ) \
     ((type*)( (char*)ptr - offsetof( type, member ) ))

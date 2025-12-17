@@ -50,13 +50,6 @@
     "start:preload": "cross-env NODE_ENV=development TS_NODE_TRANSPILE_ONLY=true NODE_OPTIONS=\"-r ts-node/register --no-warnings\" webpack --config ./.erb/configs/webpack.config.preload.dev.ts",
     "start:renderer": "cross-env NODE_ENV=development TS_NODE_TRANSPILE_ONLY=true NODE_OPTIONS=\"-r ts-node/register --no-warnings\" webpack serve --config ./.erb/configs/webpack.config.renderer.dev.ts",
     "test": "jest",
-    "test:playwright": "playwright test",
-    "test:playwright:ui": "playwright test --ui",
-    "test:screenshots": "playwright test tests/e2e/app-screenshots.spec.ts",
-    "test:profiles": "playwright test tests/e2e/profile-management.spec.ts",
-    "test:sil": "playwright test tests/e2e/",
-    "test:sil:headed": "playwright test tests/e2e/ --headed",
-    "test:sil:debug": "playwright test tests/e2e/ --debug",
     "mcp:server": "npx @playwright/mcp"
   },
   "browserslist": [

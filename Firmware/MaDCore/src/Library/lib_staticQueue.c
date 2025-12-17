@@ -32,7 +32,6 @@ bool lib_staticQueue_push(lib_staticQueue_S *queue, void *data)
     {
         DEBUG_ERROR("%s", "lib_staticQueue_push: data is FULL\n");
         _lockrel(queue->lock);
-        exit(1);
         return false;
     }
 

@@ -21,12 +21,12 @@
 /**********************************************************************
  * Private Variable Definitions
  **********************************************************************/
-IO_FULLDUPLEXSERIAL_CHANNEL_DEFINE(main, 8096, 8096);
+IO_FULLDUPLEXSERIAL_CHANNEL_DEFINE(MAIN, 8096, 8096);
 /**********************************************************************
  * External Variables
  **********************************************************************/
 IO_fullDuplexSerial_channelConfig_S IO_fullDuplexSerial_channelConfig[IO_FULLDUPLEXSERIAL_CHANNEL_COUNT] = {
-    IO_FULLDUPLEXSERIAL_CHANNEL_CONFIG(main, HAL_SERIAL_CHANNEL_MAIN)
+    IO_FULLDUPLEXSERIAL_CHANNEL_CONFIG(MAIN, HAL_SERIAL_CHANNEL_MAIN)
 };
 /**********************************************************************
  * Private Function Prototypes

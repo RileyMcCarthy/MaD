@@ -1,0 +1,29 @@
+{
+  "name": "mad-sil-testing",
+  "version": "1.0.0",
+  "description": "Software-in-the-Loop testing for MaD Control with firmware emulator",
+  "private": true,
+  "scripts": {
+    "test": "playwright test --project=electron",
+    "test:headed": "playwright test --headed --project=electron",
+    "test:ui": "playwright test --ui",
+    "show-report": "playwright show-report test-results/html",
+    "show-trace": "playwright show-trace",
+    "install:deps": "npm install && cd emulator && make venv"
+  },
+  "keywords": [
+    "testing",
+    "sil",
+    "playwright",
+    "electron"
+  ],
+  "author": "Riley McCarthy",
+  "license": "MIT",
+  "devDependencies": {
+    "@playwright/test": "^1.54.1",
+    "@types/node": "^22.13.10",
+    "typescript": "^5.8.2",
+    "electron": "^35.0.2"
+  }
+}
+

@@ -17,6 +17,7 @@
 #include "HAL_GPIO.h"
 #include <propeller2.h>
 #include <string.h>
+#include "emulation_helpers.h"
 /**********************************************************************
  * Constants
  **********************************************************************/
@@ -28,6 +29,7 @@
 #define APP_CONTROL_LOCK_REQ_BLOCK()        \
     while (APP_CONTROL_LOCK_REQ() == false) \
     {                                       \
+        EMULATION_YIELD_LOCK();            \
     }
 #define APP_CONTROL_LOCK_REL() (void)_lockrel(app_control_data.lock)
 /**********************************************************************

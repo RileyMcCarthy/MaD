@@ -7,7 +7,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-#include "propeller2.h"
+#include "propeller.h"
 #include "dev_nvram.h"
 #include "IO_Debug.h"
 #include "emulation_helpers.h"
@@ -52,6 +52,7 @@ typedef struct
     bool readComplete;
     FILE *file;
     dev_nvram_state_t state;
+    char sd_path[256];  // Full path including "sd:/" prefix for p2llvm or direct path for FlexC
 } dev_nvram_channelData_t;
 
 typedef struct
@@ -201,9 +202,11 @@ void dev_nvram_private_entryAction(dev_nvram_channel_t channel)
         break;
     case DEV_NVRAM_BOOT_LOAD:
         dev_nvram_data.channels[channel].readComplete = false;
+#ifdef __FLEXC__
+        // FlexC VFS mount
         if (mount(SD_CARD_MOUNT_PATH, _vfs_open_sdcard()) == 0)
         {
-            dev_nvram_data.channels[channel].file = fopen(dev_nvram_config.channels[channel].path, "r");
+            dev_nvram_data.channels[channel].file = fopen(dev_nvram_data.channels[channel].sd_path, "r");
         }
         else
         {
@@ -211,12 +214,31 @@ void dev_nvram_private_entryAction(dev_nvram_channel_t channel)
             dev_nvram_data.channels[channel].hasError = true;
             DEBUG_ERROR("failed to mount sd card: %s\n", SD_CARD_MOUNT_PATH);
         }
+#else
+        // p2llvm SD card mount using sdcard.h API
+        // Mount SD card with standard P2 Edge Module pins
+        if (sd_mount(0, HW_PIN_SD_CS, HW_PIN_SD_CLK, HW_PIN_SD_MOSI, HW_PIN_SD_MISO) == 0)
+        {
+            DEBUG_INFO("%s", "SD card mounted successfully\n");
+            dev_nvram_data.channels[channel].file = fopen(dev_nvram_data.channels[channel].sd_path, "r");
+            if (dev_nvram_data.channels[channel].file == NULL)
+            {
+                DEBUG_ERROR("failed to open file: %s\n", dev_nvram_data.channels[channel].sd_path);
+            }
+        }
+        else
+        {
+            dev_nvram_data.channels[channel].file = NULL;
+            dev_nvram_data.channels[channel].hasError = true;
+            DEBUG_ERROR("%s", "failed to mount SD card\n");
+        }
+#endif
         break;
     case DEV_NVRAM_READY:
         // Open file
         break;
     case DEV_NVRAM_WRITE:
-        dev_nvram_data.channels[channel].file = fopen(dev_nvram_config.channels[channel].path, "w");
+        dev_nvram_data.channels[channel].file = fopen(dev_nvram_data.channels[channel].sd_path, "w");
         break;
     case DEV_NVRAM_ERROR:
         break;
@@ -258,7 +280,7 @@ void dev_nvram_private_runAction(dev_nvram_channel_t channel)
     case DEV_NVRAM_WRITE:
         if (dev_nvram_data.channels[channel].file == NULL)
         {
-            DEBUG_ERROR("failed to open file to write: %s\n", dev_nvram_config.channels[channel].path);
+            DEBUG_ERROR("failed to open file to write: %s\n", dev_nvram_data.channels[channel].sd_path);
             dev_nvram_data.channels[channel].hasError = true;
         }
         else
@@ -298,6 +320,16 @@ void dev_nvram_init(int lock)
         dev_nvram_data.channels[channel].readComplete = false;
         dev_nvram_data.channels[channel].file = NULL;
         dev_nvram_data.channels[channel].state = DEV_NVRAM_INIT;
+
+        // Initialize the path based on compiler
+#ifdef __FLEXC__
+        // FlexC uses the path directly
+        strncpy(dev_nvram_data.channels[channel].sd_path, dev_nvram_config.channels[channel].path, sizeof(dev_nvram_data.channels[channel].sd_path) - 1);
+        dev_nvram_data.channels[channel].sd_path[sizeof(dev_nvram_data.channels[channel].sd_path) - 1] = '\0';
+#else
+        // p2llvm requires "sd:/" prefix
+        snprintf(dev_nvram_data.channels[channel].sd_path, sizeof(dev_nvram_data.channels[channel].sd_path), "sd:%s", dev_nvram_config.channels[channel].path);
+#endif
 
         dev_nvram_data.channels[channel].request.data = dev_nvram_config.channels[channel].dataExternal;
         dev_nvram_data.channels[channel].output.data = dev_nvram_config.channels[channel].dataExternal;
