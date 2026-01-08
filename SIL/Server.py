@@ -21,9 +21,9 @@ print("✅ Virtual serial ports created: /tmp/tty.rpi_client and /tmp/tty.rpi")
 # CLI arguments
 parser = argparse.ArgumentParser(description='MaD SIL Emulator and Test Runner')
 parser.add_argument('--skip-tests', action='store_true', help='Skip running Playwright tests (dev mode)')
+parser.add_argument('--run-app', action='store_true', help='Run the Electron app (without Playwright tests)')
 parser.add_argument('--headed', action='store_true', help='Run Playwright in headed mode')
 parser.add_argument('--skip-app-build', action='store_true', help='Skip Electron app build even if artifacts missing')
-parser.add_argument('--rebuild', action='store_true', help='Clean all SIL build artifacts before building')
 args, _ = parser.parse_known_args()
 
 
@@ -32,26 +32,16 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 sil_root = script_dir
 project_root = os.path.abspath(os.path.join(script_dir, '..'))
 
-# Optionally clean build artifacts first
-if args.rebuild:
-    try:
-        build_dir = os.path.join(script_dir, 'build')
-        if os.path.isdir(build_dir):
-            shutil.rmtree(build_dir)
-            print('🧹 Cleaned SIL/build directory')
-    except Exception as e:
-        print(f"⚠️  Failed to clean build directory: {e}")
+electron_runner = MaDSim.ElectronRunner(
+    sil_root=sil_root,
+    project_root=project_root,
+    skip_build=args.skip_app_build,
+    headed=args.headed,
+)
 
-# Prepare Electron app and Playwright deps first (if tests are enabled)
+# Prepare Electron assets depending on mode
 if not args.skip_tests:
-    electron_runner = MaDSim.ElectronRunner(
-        sil_root=sil_root,
-        project_root=project_root,
-        skip_build=args.skip_app_build,
-        headed=args.headed,
-        rebuild=args.rebuild,
-    )
-    electron_runner.prepare()
+    electron_runner.prepare_for_tests()
 
 # Firmware: First check for prebuilt binary in SIL/build/firmware
 mad_core_executable = os.path.join(sil_root, "build/firmware/mad-firmware-native.bin")
@@ -153,6 +143,8 @@ endstop_door.set_state(0)
 
 if not args.skip_tests:
     electron_runner.run_tests()
+elif args.run_app:
+    electron_runner.run_app()
 try:
     while True:
         if not firmware.is_running():
@@ -187,7 +179,7 @@ finally:
                 MaDSim.logger.error("Async server has stopped, Exiting server process")
                 break
     MaDSim.async_handler.stop_loop()
-    if not args.skip_tests:
+    if not args.skip_tests or args.run_app:
         electron_runner.stop()
     # Cleanup virtual serial port
     try:

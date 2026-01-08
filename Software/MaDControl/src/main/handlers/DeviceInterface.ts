@@ -282,11 +282,22 @@ class DeviceInterface {
     ipcMain.handle(
       'save-sample-profile',
       async (_event, newProfile: SampleProfile) => {
+        // Convert UI units to firmware units before sending.
+        // Firmware expects integers; force in mN, velocity in mm/s, displacement/geometry in mm.
+        const firmwareProfile: SampleProfile = {
+          maxForce: Math.max(0, Math.round((newProfile.maxForce ?? 0) * 1000)),
+          maxVelocity: Math.max(0, Math.round(newProfile.maxVelocity ?? 0)),
+          maxDisplacement: Math.max(0, Math.round(newProfile.maxDisplacement ?? 0)),
+          sampleWidth: Math.max(0, Math.round(newProfile.sampleWidth ?? 0)),
+          sampleThickness: Math.max(0, Math.round(newProfile.sampleThickness ?? 0)),
+          serial: String(newProfile.serial ?? '').slice(0, 99),
+        };
+
         this.dataProcessor.writeData(
           WriteType.SAMPLE_PROFILE,
-          Buffer.from(JSON.stringify(newProfile)),
+          Buffer.from(JSON.stringify(firmwareProfile)),
         );
-        deviceLogger.info('Saving Sample Profile:', newProfile);
+        deviceLogger.info('Saving Sample Profile (firmware units):', firmwareProfile);
         const result = await waitForResponse(ipcMain, 'sample-profile-ack', 1000);
 
         if (result) {
@@ -482,12 +493,26 @@ class DeviceInterface {
             break;
 
           case ReadType.SAMPLE_PROFILE:
-            const sampleProfile: SampleProfile = JSON.parse(data);
-            this.window.webContents.send(
-              'sample-profile-updates',
-              sampleProfile,
-            );
-            ipcMain.emit('sample-profile-updated', sampleProfile);
+            // Convert firmware units back to UI units (force from mN to N).
+            try {
+              const parsed = JSON.parse(data) as SampleProfile;
+              const sampleProfile: SampleProfile = {
+                maxForce: (parsed.maxForce ?? 0) / 1000,
+                maxVelocity: parsed.maxVelocity ?? 0,
+                maxDisplacement: parsed.maxDisplacement ?? 0,
+                sampleWidth: parsed.sampleWidth ?? 0,
+                sampleThickness: parsed.sampleThickness ?? 0,
+                serial: String(parsed.serial ?? ''),
+              };
+
+              this.window.webContents.send(
+                'sample-profile-updates',
+                sampleProfile,
+              );
+              ipcMain.emit('sample-profile-updated', sampleProfile);
+            } catch (err) {
+              deviceLogger.error('Failed to parse sample profile from firmware:', err, data);
+            }
             break;
 
           default:
@@ -513,6 +538,12 @@ class DeviceInterface {
       }
       if (command === WriteType.SAMPLE_PROFILE) {
         deviceLogger.debug('sample profile ack', command, ack);
+        if (!ack) {
+          this.notificationSender.sendNotification({
+            Type: NotificationType.ERROR,
+            Message: 'Device rejected the sample profile. Previous limits will remain in use.',
+          });
+        }
         ipcMain.emit('sample-profile-ack', ack);
       }
     });

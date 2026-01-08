@@ -318,7 +318,7 @@ static app_message_slave_responseType_E app_message_slave_private_handleWrite(IO
     }
     case IO_PROTOCOL_WRITE_TYPE_SAMPLE_PROFILE:
     {
-        DEBUG_INFO("%s", "Receiving sample profile\n");
+        DEBUG_INFO("%s:%s", "Receiving sample profile\n", app_message_slave_data.dataRX);
         app_monitor_sampleProfile_S sampleProfile;
         if (json_to_sample_profile(&sampleProfile, app_message_slave_data.dataRX))
         {

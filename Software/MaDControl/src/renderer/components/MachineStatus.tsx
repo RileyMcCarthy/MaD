@@ -24,7 +24,7 @@ function getStyledFaultedReason(reason: FaultedReason) {
     [FaultedReason.ESD_UPPER]: 'Upper ESD fault detected.',
     [FaultedReason.ESD_LOWER]: 'Lower ESD fault detected.',
     [FaultedReason.SERVO_COMMUNICATION]: 'Servo communication fault detected.',
-    [FaultedReason.FORCE_GAGUE_COMMUNICATION]:
+    [FaultedReason.FORCE_GAUGE_COMMUNICATION]:
       'Force gauge communication fault detected.',
     [FaultedReason.USER_REQUEST]: 'User requested to disable the machine.',
   };

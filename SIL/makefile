@@ -21,7 +21,7 @@ run:
 	$(PYTHON) Server.py --rebuild
 
 playground:
-	$(PYTHON) Server.py --rebuild --skip-tests --skip-app-build
+	$(PYTHON) Server.py --rebuild --skip-tests --run-app
 
 setup:
 	npm install

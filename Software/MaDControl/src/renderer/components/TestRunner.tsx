@@ -78,7 +78,7 @@ export default function TestRunner({ onRunTest }: TestRunnerProps) {
             maxDisplacement: fileProfile.maxDisplacement,
             sampleWidth: fileProfile.sampleWidth,
             sampleThickness: fileProfile.sampleThickness,
-            serial: typeof fileProfile.serialNumber === 'string' ? fileProfile.serialNumber : fileProfile.serialNumber.toString(),
+            serial: typeof fileProfile.serial === 'string' ? fileProfile.serial : fileProfile.serial.toString(),
           };
 
                               // Save profile to firmware

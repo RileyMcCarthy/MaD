@@ -109,7 +109,7 @@ DEV_COGMANAGER_CHANNEL_CREATE_INIT(FORCEGAUGE, 1024)
 DEV_COGMANAGER_CHANNEL_CREATE_RUN(FORCEGAUGE)
 {
     // Run forcegauge as fast as possible, we use IO_serial to handle timing
-    //dev_forceGauge_run();
+    dev_forceGauge_run();
 }
 
 DEV_COGMANAGER_CHANNEL_CREATE_INIT(SERIAL, 1024)

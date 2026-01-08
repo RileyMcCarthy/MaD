@@ -1,4 +1,4 @@
-import { IconButton, Tooltip, Box, Grid, Paper } from '@mui/material';
+import { IconButton, Tooltip, Box, Grid, Paper, TextField } from '@mui/material';
 import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
 import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
 import HomeIcon from '@mui/icons-material/Home';
@@ -9,6 +9,7 @@ import SpeedIcon from '@mui/icons-material/Speed';
 import StraightenIcon from '@mui/icons-material/Straighten';
 import { useDevice } from '@renderer/hooks';
 import { componentLogger } from '../utils/logger';
+import { useState } from 'react';
 
 const Item = styled(Paper)(({ theme }) => ({
   backgroundColor: theme.palette.mode === 'dark' ? '#1A2027' : '#fff',
@@ -20,6 +21,8 @@ const Item = styled(Paper)(({ theme }) => ({
 
 function Control() {
   const [state, actions] = useDevice();
+  const [moveDistance, setMoveDistance] = useState(10); // mm
+  const [moveSpeed, setMoveSpeed] = useState(100); // mm/s
   const isMotionEnabled = Boolean(state.machineState?.motionEnabled);
 
   // Debug logging
@@ -73,7 +76,7 @@ function Control() {
 
   const handleMoveUp = async () => {
     try {
-      await actions.manualMove(10, 100); // Move up 10mm at 100mm/min
+      await actions.manualMove(moveDistance, moveSpeed);
     } catch (error) {
       componentLogger.error('Failed to move up:', error);
     }
@@ -81,7 +84,7 @@ function Control() {
 
   const handleMoveDown = async () => {
     try {
-      await actions.manualMove(-10, 100); // Move down 10mm at 100mm/min
+      await actions.manualMove(-moveDistance, moveSpeed);
     } catch (error) {
       componentLogger.error('Failed to move down:', error);
     }
@@ -91,6 +94,32 @@ function Control() {
     <Box sx={{ flexGrow: 1 }}>
       <Item>
         <Grid container spacing={1}>
+          <Grid item xs={12}>
+            <Grid container spacing={1}>
+              <Grid item xs={6}>
+                <TextField
+                  fullWidth
+                  label="Move Distance (mm)"
+                  type="number"
+                  size="small"
+                  value={moveDistance}
+                  onChange={(e) => setMoveDistance(Number(e.target.value) || 0)}
+                  inputProps={{ min: 0, step: 1 }}
+                />
+              </Grid>
+              <Grid item xs={6}>
+                <TextField
+                  fullWidth
+                  label="Move Speed (mm/s)"
+                  type="number"
+                  size="small"
+                  value={moveSpeed}
+                  onChange={(e) => setMoveSpeed(Number(e.target.value) || 0)}
+                  inputProps={{ min: 0, step: 10 }}
+                />
+              </Grid>
+            </Grid>
+          </Grid>
           <Grid item xs={4}>
             <Grid container direction="column" alignItems="center" spacing={1}>
               <Grid item>

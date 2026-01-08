@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo, useCallback } from 'react';
 import { ScatterChart } from '@mui/x-charts/ScatterChart';
+import { ChartsReferenceLine } from '@mui/x-charts/ChartsReferenceLine';
 import { SampleData } from '@shared/SharedInterface';
 import { Paper, Box, Typography, IconButton, Tooltip } from '@mui/material';
 import { Clear as ClearIcon } from '@mui/icons-material';
@@ -99,16 +100,9 @@ export default function StressStrainChart() {
     // Get jaw offset from machine configuration
     const jawOffset = deviceState.machineConfiguration['Jaw Offset (mm)']; // Default fallback
 
-    // Calculate initial jaw separation: jaw offset + initial machine position
-    // This represents the actual distance between jaws at the start of the test
-    const initialJawSeparation = jawOffset;
-
     const stressStrainData = samples.map((sample) => {
       const force = sample['Sample Force (N)'];
       const currentMachinePosition = sample['Machine Position (mm)'];
-
-      // Calculate current jaw separation: jaw offset + current machine position
-      const currentJawSeparation =  currentMachinePosition;
 
       // Stress = Force / Area (MPa = N/mm²)
       const stress = Math.abs(force) / crossSectionalArea;
@@ -116,8 +110,8 @@ export default function StressStrainChart() {
       // Strain = ΔL / L₀ (dimensionless)
       // ΔL = change in jaw separation from initial position
       // L₀ = initial jaw separation (actual sample length)
-      const deltaLength = Math.abs(currentJawSeparation - initialJawSeparation);
-      const strain = initialJawSeparation > 0 ? deltaLength / initialJawSeparation : 0;
+      const deltaLength = Math.abs(currentMachinePosition - jawOffset);
+      const strain = jawOffset > 0 ? deltaLength / jawOffset : 0;
 
       return {
         x: strain * 100, // Convert to percentage strain
@@ -138,33 +132,35 @@ export default function StressStrainChart() {
   }, []);
 
   // Memoize axis limits calculation
-  const { stressMin, stressMax, strainMin, strainMax } = useMemo(() => {
-    // Use sample profile limits if available
+  const { stressMin, stressMax, strainMin, strainMax, limitStress, limitStrain } = useMemo(() => {
     if (sampleProfile && hasValidProfile) {
-      // Calculate max stress from max force and sample dimensions
       const sampleWidth = sampleProfile.sampleWidth; // mm
       const sampleThickness = sampleProfile.sampleThickness; // mm
       const crossSectionalArea = sampleWidth * sampleThickness; // mm²
-      const maxStress = sampleProfile.maxForce / crossSectionalArea; // MPa
+      const maxStress = crossSectionalArea > 0 ? sampleProfile.maxForce / crossSectionalArea : 0; // MPa
 
-      // Calculate max strain from max displacement and jaw offset
       const jawOffset = deviceState.machineConfiguration?.['Jaw Offset (mm)'] || 50;
-      const maxStrain = jawOffset > 0 ? (sampleProfile.maxDisplacement / jawOffset) * 100 : 5; // percentage
+      const maxStrain = jawOffset > 0 ? (sampleProfile.maxDisplacement / jawOffset) * 100 : 0; // percentage
 
-      return {
-        stressMin: 0,
-        stressMax: maxStress * 1.1, // Add 10% margin
-        strainMin: 0,
-        strainMax: Math.max(maxStrain * 1.1, 5), // Add 10% margin, minimum 5%
-      };
+      if (maxStress > 0 && maxStrain > 0) {
+        return {
+          stressMin: 0,
+          stressMax: maxStress * 1.1,
+          strainMin: 0,
+          strainMax: maxStrain * 1.1,
+          limitStress: maxStress,
+          limitStrain: maxStrain,
+        };
+      }
     }
 
-    // Fallback to default ranges if no profile
     return {
       stressMin: 0,
       stressMax: 10,
       strainMin: 0,
       strainMax: 5,
+      limitStress: undefined,
+      limitStrain: undefined,
     };
   }, [sampleProfile, hasValidProfile, deviceState.machineConfiguration]);
 
@@ -233,6 +229,35 @@ export default function StressStrainChart() {
               color: '#1976d2',
             },
           ]}
+          slots={{
+            referenceLine: ChartsReferenceLine,
+          }}
+          slotProps={{
+            referenceLine: {
+              labelStyle: { fontSize: 12 },
+              lineStyle: { strokeWidth: 1.5 },
+            },
+          }}
+          children={(
+            <>
+              {limitStrain !== undefined && (
+                <ChartsReferenceLine
+                  x={limitStrain}
+                  label="Max Strain"
+                  lineStyle={{ stroke: '#ef6c00' }}
+                  labelAlign="start"
+                />
+              )}
+              {limitStress !== undefined && (
+                <ChartsReferenceLine
+                  y={limitStress}
+                  label="Max Stress"
+                  lineStyle={{ stroke: '#c62828' }}
+                  labelAlign="start"
+                />
+              )}
+            </>
+          )}
           height={400}
           margin={{ top: 50, right: 80, bottom: 80, left: 80 }}
           disableAxisListener

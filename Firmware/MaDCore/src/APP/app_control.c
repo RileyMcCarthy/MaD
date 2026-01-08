@@ -133,7 +133,7 @@ static app_control_fault_E app_control_private_processFaults(void)
     app_control_data.fault[APP_CONTROL_FAULT_ESD_UPPER] = HAL_GPIO_getActive(HAL_GPIO_ESD_UPPER);
     app_control_data.fault[APP_CONTROL_FAULT_ESD_LOWER] = HAL_GPIO_getActive(HAL_GPIO_ESD_LOWER);
     app_control_data.fault[APP_CONTROL_FAULT_SERVO_COMMUNICATION] = (dev_stepper_isReady(DEV_STEPPER_CHANNEL_MAIN) == false);
-    app_control_data.fault[APP_CONTROL_FAULT_FORCE_GAGUE_COMMUNICATION] = (dev_forceGauge_isReady(DEV_FORCEGAUGE_CHANNEL_MAIN) == false);
+    app_control_data.fault[APP_CONTROL_FAULT_FORCE_GAUGE_COMMUNICATION] = (dev_forceGauge_isReady(DEV_FORCEGAUGE_CHANNEL_MAIN) == false);
 
     // Select the first fault as the reason
     app_control_fault_E fault = APP_CONTROL_FAULT_NONE;
