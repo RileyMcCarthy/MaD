@@ -311,6 +311,90 @@ class DeviceInterface {
       },
     );
 
+    // Run Test handler - wraps stream-gcode with test state management
+    ipcMain.handle(
+      'run-test',
+      async (
+        _event,
+        params: { sampleProfile: unknown; gcode: string[]; testName: string },
+      ) => {
+        const { gcode, testName } = params;
+        deviceLogger.info(`Starting test: ${testName}`);
+
+        // Notify test is starting
+        this.dataProcessor.writeData(WriteType.TEST_RUN, Buffer.from([1]));
+
+        try {
+          // Join gcode array into a single string and stream it
+          const gcodeString = gcode.join('\n');
+          const lines = gcodeString
+            .split('\n')
+            .filter((line) => line.trim() !== '');
+
+          for (let i = 0; i < lines.length; i++) {
+            const line = lines[i].trim();
+            if (line === '' || line.startsWith(';')) continue; // Skip empty lines and comments
+
+            let success = false;
+            let retryCount = 0;
+            const maxRetries = 3;
+
+            while (!success && retryCount < maxRetries) {
+              try {
+                this.dataProcessor.writeData(
+                  WriteType.TEST_MOVE,
+                  Buffer.from(line),
+                );
+
+                // Wait for acknowledgment with timeout
+                await new Promise((resolve, reject) => {
+                  const timeout = setTimeout(() => {
+                    reject(
+                      new Error('Timeout waiting for G-code acknowledgment'),
+                    );
+                  }, 5000);
+
+                  const handleAck = () => {
+                    clearTimeout(timeout);
+                    resolve(undefined);
+                  };
+
+                  this.dataProcessor.once('ack', handleAck);
+                });
+
+                success = true;
+              } catch (error) {
+                retryCount++;
+                if (retryCount < maxRetries) {
+                  deviceLogger.warn(
+                    `Retrying G-code line (attempt ${retryCount}/${maxRetries}):`,
+                    line,
+                  );
+                  await new Promise((resolve) => setTimeout(resolve, 1000));
+                } else {
+                  throw error;
+                }
+              }
+            }
+          }
+
+          // Test completed successfully
+          deviceLogger.info(`Test ${testName} completed successfully`);
+          this.dataProcessor.writeData(WriteType.TEST_RUN, Buffer.from([0]));
+          return { success: true, testName };
+        } catch (error) {
+          deviceLogger.error(`Test ${testName} failed:`, error);
+          // Notify test has stopped
+          this.dataProcessor.writeData(WriteType.TEST_RUN, Buffer.from([0]));
+          return {
+            success: false,
+            error: error instanceof Error ? error.message : 'Unknown error',
+            testName,
+          };
+        }
+      },
+    );
+
     ipcMain.handle('stream-gcode', async (_event, gcode: string) => {
       const lines = gcode.split('\n').filter((line) => line.trim() !== '');
 

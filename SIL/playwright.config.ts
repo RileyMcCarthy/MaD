@@ -1,72 +1,64 @@
-import { defineConfig, devices } from '@playwright/test';
-import path from 'path';
+import { defineConfig } from '@playwright/test';
 
 /**
- * Playwright configuration for SIL (Software-in-the-Loop) testing
- * Tests run against the built MaDControl app with firmware emulator
+ * Playwright Configuration for MaD SIL Testing
+ * 
+ * This config uses:
+ * - Global setup: Starts firmware emulator before all tests
+ * - Global teardown: Stops emulator after all tests
+ * - Custom fixtures: Provides app/window to all tests (see fixtures.ts)
+ * 
+ * Run tests:
+ *   npm test              # Run all tests
+ *   npm run test:headed   # Run with visible browser
+ *   npm run test:debug    # Run with Playwright Inspector
  */
 export default defineConfig({
   testDir: './tests',
   
-  // Timeout for each test
-  timeout: 120000, // 2 minutes for tests involving firmware communication
+  // Global setup/teardown for firmware emulator
+  globalSetup: './tests/global-setup.ts',
+  globalTeardown: './tests/global-teardown.ts',
   
-  // Maximum time to wait for fixtures
-  expect: {
-    timeout: 10000,
-  },
+  // Timeouts
+  timeout: 90_000,           // 90s per test (includes emulator startup ~7s + firmware communication)
+  expect: { timeout: 10_000 }, // 10s for assertions
   
-  // Run tests in parallel
-  fullyParallel: false, // Sequential for hardware emulation
-  
-  // Fail build on CI if you accidentally left test.only
-  forbidOnly: !!process.env.CI,
-  
-  // Retry on CI only
-  retries: process.env.CI ? 2 : 0,
-  
-  // Limit workers (firmware emulator can only handle one instance)
+  // Sequential execution (firmware emulator is single-instance)
+  fullyParallel: false,
   workers: 1,
   
-  // Reporter configuration
+  // Fail fast - stop on first failure
+  maxFailures: 1,
+  
+  // CI settings
+  forbidOnly: !!process.env.CI,
+  retries: process.env.CI ? 2 : 0,
+  
+  // Reporters
   reporter: [
-    ['html', { outputFolder: 'test-results/html' }],
     ['list'],
+    ['html', { outputFolder: 'test-results/html', open: 'never' }],
     ['json', { outputFile: 'test-results/results.json' }],
   ],
   
-  // Shared settings for all projects
+  // Shared settings
   use: {
-    // Base URL for the app (not used for Electron, but good to have)
-    baseURL: 'file://',
-    
-    // Collect trace on failure for debugging
     trace: 'retain-on-failure',
-    
-    // Take screenshots on failure
     screenshot: 'only-on-failure',
-    
-    // Record video on failure
-    video: 'retain-on-failure',
-    
-    // Action timeout
-    actionTimeout: 10000,
+    video: 'on', // Always record video for all tests
+    actionTimeout: 10_000,
   },
   
-  // Configure projects
+  // Single project for Electron tests
   projects: [
     {
       name: 'electron',
-      use: {
-        // Enable trace recording for all tests
-        trace: 'on',
-        screenshot: 'on',
-        video: 'on',
-      },
+      testMatch: '**/*.spec.ts',
     },
   ],
   
-  // Output directory for test artifacts
+  // Output directory
   outputDir: 'test-results/artifacts',
 });
 

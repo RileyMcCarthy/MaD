@@ -165,6 +165,10 @@ const GCodeGenerator: React.FC<GCodeGeneratorProps> = ({
       }
     });
 
+    // Add G122 STOP command at the end to signal test completion
+    gcodeLines.push('');
+    gcodeLines.push('G122 ; Stop - signal test complete');
+
     setGcode(gcodeLines);
     setDistanceData(distancePoints);
     setTimeData(timePoints);

@@ -84,9 +84,11 @@ const createWindow = async () => {
     icon: getAssetPath('icon.png'),
     title: 'MAD Control',
     webPreferences: {
-      preload: app.isPackaged
-        ? path.join(__dirname, 'preload.js')
-        : path.join(__dirname, '../../.erb/dll/preload.js'),
+      // Use production preload path if packaged OR if SIL_TEST env is set
+      preload:
+        app.isPackaged || process.env.SIL_TEST === '1'
+          ? path.join(__dirname, 'preload.js')
+          : path.join(__dirname, '../../.erb/dll/preload.js'),
     },
   });
 

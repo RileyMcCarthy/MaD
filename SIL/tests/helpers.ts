@@ -5,6 +5,10 @@
 import { ElectronApplication, Page, _electron as electron } from '@playwright/test';
 import path from 'path';
 
+// Use Electron binary from devDependencies for deterministic startup
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const electronPath = require('electron') as string;
+
 export interface TestContext {
   app: ElectronApplication;
   window: Page;
@@ -15,12 +19,13 @@ export interface TestContext {
  */
 export async function launchMaDControl(): Promise<TestContext> {
   const projectRoot = path.join(__dirname, '../..');
-  const appPath = path.join(projectRoot, 'SIL/build/MaDControl');
-  const mainPath = path.join(appPath, 'dist/main/main.js');
+  const appPath = path.join(projectRoot, 'Software/MaDControl');
+  const mainPath = path.join(appPath, 'release/app/dist/main/main.js');
   
   console.log(`Launching MaDControl from: ${mainPath}`);
   
   const app = await electron.launch({
+    executablePath: electronPath,
     args: [mainPath],
     env: {
       ...process.env,

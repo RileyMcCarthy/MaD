@@ -4,12 +4,17 @@
   "description": "Software-in-the-Loop testing for MaD Control with firmware emulator",
   "private": true,
   "scripts": {
-    "test": "playwright test --project=electron",
-    "test:headed": "playwright test --headed --project=electron",
-    "test:ui": "playwright test --ui",
-    "show-report": "playwright show-report test-results/html",
-    "show-trace": "playwright show-trace",
-    "install:deps": "npm install && cd emulator && make venv"
+    "test": "npx playwright test",
+    "test:headed": "npx playwright test --headed",
+    "test:debug": "npx playwright test --debug",
+    "test:ui": "npx playwright test --ui",
+    "report": "npx playwright show-report test-results/html",
+    "trace": "npx playwright show-trace",
+    "build:firmware": "cd ../Firmware/MaDCore && pio run -e native && mkdir -p ../SIL/build/firmware && cp .pio/build/native/program ../SIL/build/firmware/mad-firmware-native.bin",
+    "build:app": "cd ../Software/MaDControl && npm run build",
+    "build": "npm run build:firmware && npm run build:app",
+    "clean": "rm -rf test-results .emulator.pid build/firmware",
+    "setup": "npm install && python3 -m venv venv && ./venv/bin/pip install -r requirements.txt"
   },
   "keywords": [
     "testing",
@@ -22,8 +27,8 @@
   "devDependencies": {
     "@playwright/test": "^1.54.1",
     "@types/node": "^22.13.10",
-    "typescript": "^5.8.2",
-    "electron": "^35.0.2"
+    "electron": "^35.0.2",
+    "typescript": "^5.8.2"
   }
 }
 
