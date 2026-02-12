@@ -1,0 +1,63 @@
+<!-- Trace Viewer — view content (injected into embsim-ui shell) -->
+<!-- External deps loaded here since view JS needs them -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2"></script>
+
+<div class="trace-header">
+  <div class="trace-status">
+    <div class="trace-status-dot" id="traceStatusDot"></div>
+    <span id="traceStatusText">Connecting…</span>
+  </div>
+  <div class="trace-controls">
+    <select id="sampleRate" title="Sample rate (polling interval)">
+      <option value="1">1ms</option>
+      <option value="5">5ms</option>
+      <option value="10" selected>10ms</option>
+      <option value="20">20ms</option>
+      <option value="50">50ms</option>
+      <option value="100">100ms</option>
+    </select>
+    <select id="timeWindow" title="Time window">
+      <option value="5">5s</option>
+      <option value="10" selected>10s</option>
+      <option value="30">30s</option>
+      <option value="60">60s</option>
+      <option value="0">All</option>
+    </select>
+    <button id="pauseBtn" title="Pause/Resume">⏸ Pause</button>
+    <button id="clearBtn" title="Clear all charts">✕ Clear All</button>
+  </div>
+</div>
+
+<div class="trace-main">
+  <div class="trace-sidebar">
+    <div class="trace-sidebar-header">Active Signals</div>
+    <div class="trace-signal-list-container" id="signalList"></div>
+    <div class="trace-active-count" id="activeCount">No signals active</div>
+  </div>
+  <div class="trace-chart-area">
+    <div class="trace-empty-state" id="emptyState">
+      Click <b>+</b> on a signal group to add signals
+    </div>
+    <div class="trace-charts-scroll" id="chartsScroll" style="display:none"></div>
+  </div>
+</div>
+
+<div class="trace-info-bar">
+  <div class="trace-info-item">
+    <span class="trace-info-label">Active:</span>
+    <span class="trace-info-value" id="infoActive">0</span>
+  </div>
+  <div class="trace-info-item">
+    <span class="trace-info-label">Samples:</span>
+    <span class="trace-info-value" id="infoSamples">0</span>
+  </div>
+  <div class="trace-info-item">
+    <span class="trace-info-label">Time:</span>
+    <span class="trace-info-value" id="infoTime">0.000s</span>
+  </div>
+  <div class="trace-info-item">
+    <span class="trace-info-label">Updates:</span>
+    <span class="trace-info-value" id="infoUpdates">0/s</span>
+  </div>
+</div>

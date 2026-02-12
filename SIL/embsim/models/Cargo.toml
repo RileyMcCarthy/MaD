@@ -1,0 +1,11 @@
+[package]
+name = "embsim-models"
+version = "0.1.0"
+edition = "2021"
+description = "Reusable hardware component models for embsim (ADC, stepper, limit switch)"
+
+[dependencies]
+embsim-core = { path = "../core" }
+nix = { version = "0.29", features = ["term", "fs"] }
+libc = "0.2"
+tracing = "0.1"

@@ -1,6 +1,6 @@
 #define P2_TARGET_MHZ 200
 #include "MaD.h"
-#include <propeller.h>
+#include "HAL_system.h"
 #if PROPELLER_FRAMEWORK == P2LLVM
 #include <sys/p2es_clock.h>
 #endif
@@ -23,19 +23,15 @@ enum
 #ifdef __EMULATION__
 int main() {
     setbuf(stdout, NULL);
-    init_simulator();
+    HAL_system_init();
     mad_begin();
     return 0;
 }
 #else
 int main()
 {
-#if PROPELLER_FRAMEWORK == P2LLVM
-    _clkset(_SETFREQ, _CLOCKFREQ);
-    _uart_init(DBG_UART_RX_PIN, DBG_UART_TX_PIN, 230400, 0);
-#endif
+    HAL_system_init();
     printf("Starting MaD Board\n");
-    printf("framework: %d == %d, not %d\n", PROPELLER_FRAMEWORK, P2LLVM, FLEXCC);
     mad_begin();
     while (1)
         ;

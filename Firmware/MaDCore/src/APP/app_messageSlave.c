@@ -12,6 +12,7 @@
 #include "app_notification.h"
 
 #include "dev_forceGauge.h"
+#include "HAL_lock.h"
 
 #include "IO_protocol.h"
 #include "JsonDecoder.h"
@@ -35,9 +36,9 @@
 /*********************************************************************
  * Macros
  **********************************************************************/
-#define APP_MESSAGESLAVE_LOCK_REQ() _locktry(app_message_slave_data.lock)
+#define APP_MESSAGESLAVE_LOCK_REQ() HAL_lock_try(app_message_slave_data.lock)
 #define APP_MESSAGESLAVE_LOCK_REQ_BLOCK() while (APP_MESSAGESLAVE_LOCK_REQ() == false) EMULATION_YIELD_LOCK();
-#define APP_MESSAGESLAVE_LOCK_REL() _lockrel(app_message_slave_data.lock)
+#define APP_MESSAGESLAVE_LOCK_REL() HAL_lock_release(app_message_slave_data.lock)
 /**********************************************************************
  * Typedefs
  **********************************************************************/

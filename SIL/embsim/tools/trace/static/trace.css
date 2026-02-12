@@ -1,0 +1,348 @@
+/* Trace Viewer — styles (scoped by .trace- prefix convention) */
+
+/* Header bar within trace view */
+.trace-header {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 6px 16px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-shrink: 0;
+}
+.trace-status { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-dim); }
+.trace-status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--red); }
+.trace-status-dot.connected { background: var(--green); }
+.trace-controls { margin-left: auto; display: flex; gap: 8px; }
+.trace-controls button, .trace-controls select {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 4px 12px;
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 12px;
+}
+.trace-controls button { cursor: pointer; }
+.trace-controls button:hover { background: var(--border); }
+
+/* Main layout */
+.trace-main { display: flex; flex: 1; overflow: hidden; }
+
+/* Sidebar */
+.trace-sidebar {
+  width: 260px;
+  min-width: 260px;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+.trace-sidebar-header {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.trace-signal-list-container { flex: 1; overflow-y: auto; }
+
+/* Group sections */
+.trace-signal-group {
+  border-bottom: 1px solid var(--border);
+}
+.trace-signal-group-header {
+  display: flex;
+  align-items: center;
+  padding: 6px 12px;
+  gap: 8px;
+}
+.trace-signal-group-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--accent);
+  font-weight: 600;
+  flex: 1;
+}
+.trace-signal-group-count {
+  font-size: 10px;
+  color: var(--text-dim);
+}
+.trace-add-signal-btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--accent);
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.trace-add-signal-btn:hover { background: var(--surface2); border-color: var(--accent); }
+
+/* Active signal items in sidebar */
+.trace-signal-item {
+  display: flex;
+  align-items: center;
+  padding: 3px 12px 3px 20px;
+  gap: 6px;
+  user-select: none;
+}
+.trace-signal-item:hover { background: var(--surface2); }
+.trace-signal-color {
+  width: 8px; height: 8px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+.trace-signal-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  min-width: 0;
+}
+.trace-signal-value {
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+.trace-signal-remove {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 2px;
+  line-height: 1;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+.trace-signal-item:hover .trace-signal-remove { opacity: 1; }
+.trace-signal-remove:hover { color: var(--red); }
+
+.trace-active-count {
+  padding: 6px 12px;
+  font-size: 11px;
+  color: var(--text-dim);
+  border-top: 1px solid var(--border);
+  text-align: center;
+}
+
+/* Chart area */
+.trace-chart-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.trace-charts-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 8px;
+}
+.trace-chart-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 6px;
+  overflow: hidden;
+}
+.trace-chart-panel-header {
+  display: flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--border);
+  gap: 8px;
+}
+.trace-chart-panel-swatch {
+  width: 10px; height: 10px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+.trace-chart-panel-title {
+  flex: 1;
+  font-size: 11px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.trace-chart-panel-value {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.trace-chart-panel-close {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 2px;
+  line-height: 1;
+}
+.trace-chart-panel-close:hover { color: var(--red); }
+
+/* Enum badge in chart panel header */
+.trace-chart-enum-badge {
+  display: inline-block;
+  font-size: 9px;
+  color: var(--accent);
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0 4px;
+  margin-left: 6px;
+  vertical-align: middle;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* Enum badge in add-signal modal */
+.trace-modal-item-enum {
+  font-size: 9px;
+  color: var(--accent);
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0 4px;
+  flex-shrink: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.trace-chart-canvas-wrapper {
+  position: relative;
+  width: 100%;
+  height: 120px;
+}
+.trace-empty-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  color: var(--text-dim);
+  font-size: 13px;
+  text-align: center;
+  line-height: 2;
+}
+
+/* Modal overlay for adding signals */
+.trace-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+.trace-modal {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  width: 480px;
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+}
+.trace-modal-header {
+  display: flex;
+  align-items: center;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  gap: 8px;
+}
+.trace-modal-title {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--accent);
+}
+.trace-modal-close {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+}
+.trace-modal-close:hover { color: var(--red); }
+.trace-modal-search {
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.trace-modal-search input {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 8px 12px;
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 12px;
+  outline: none;
+}
+.trace-modal-search input:focus { border-color: var(--accent); }
+.trace-modal-search input::placeholder { color: var(--text-dim); }
+.trace-modal-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+  max-height: 400px;
+}
+.trace-modal-item {
+  padding: 6px 16px;
+  cursor: pointer;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  word-break: break-all;
+}
+.trace-modal-item:hover { background: var(--surface2); }
+.trace-modal-item.already-active {
+  opacity: 0.4;
+  cursor: default;
+}
+.trace-modal-item-name { flex: 1; }
+.trace-modal-item-badge {
+  font-size: 10px;
+  color: var(--green);
+  flex-shrink: 0;
+}
+.trace-modal-count {
+  padding: 6px 16px;
+  font-size: 11px;
+  color: var(--text-dim);
+  border-top: 1px solid var(--border);
+  text-align: center;
+}
+
+/* Info bar */
+.trace-info-bar {
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  padding: 6px 16px;
+  display: flex;
+  gap: 24px;
+  font-size: 11px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+.trace-info-item { display: flex; gap: 4px; }
+.trace-info-label { color: var(--text-dim); }
+.trace-info-value { color: var(--text); font-variant-numeric: tabular-nums; }

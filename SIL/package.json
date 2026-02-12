@@ -10,11 +10,11 @@
     "test:ui": "npx playwright test --ui",
     "report": "npx playwright show-report test-results/html",
     "trace": "npx playwright show-trace",
-    "build:firmware": "cd ../Firmware/MaDCore && pio run -e native && mkdir -p ../SIL/build/firmware && cp .pio/build/native/program ../SIL/build/firmware/mad-firmware-native.bin",
+    "build:emulator": "cd emulator && cargo build",
     "build:app": "cd ../Software/MaDControl && npm run build",
-    "build": "npm run build:firmware && npm run build:app",
-    "clean": "rm -rf test-results .emulator.pid build/firmware",
-    "setup": "npm install && python3 -m venv venv && ./venv/bin/pip install -r requirements.txt"
+    "build": "npm run build:emulator && npm run build:app",
+    "clean": "rm -rf test-results build",
+    "setup": "npm install"
   },
   "keywords": [
     "testing",

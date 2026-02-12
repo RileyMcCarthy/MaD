@@ -1,5 +1,5 @@
 #include "lib_staticQueue.h"
-#include <propeller2.h>
+#include "HAL_lock.h"
 #include <string.h>
 #include <stdio.h>
 #include "IO_Debug.h"
@@ -23,7 +23,7 @@ bool lib_staticQueue_push(lib_staticQueue_S *queue, void *data)
         return false;
     }
 
-    while (_locktry(queue->lock) == false)
+    while (HAL_lock_try(queue->lock) == false)
     {
         // wait for lock
     }
@@ -31,7 +31,7 @@ bool lib_staticQueue_push(lib_staticQueue_S *queue, void *data)
     if (lib_staticQueue_isfull(queue))
     {
         DEBUG_ERROR("%s", "lib_staticQueue_push: data is FULL\n");
-        _lockrel(queue->lock);
+        HAL_lock_release(queue->lock);
         return false;
     }
 
@@ -40,19 +40,19 @@ bool lib_staticQueue_push(lib_staticQueue_S *queue, void *data)
     if (queue->rear == queue->max_size)
         queue->rear = 0;
 
-    _lockrel(queue->lock);
+    HAL_lock_release(queue->lock);
     return true;
 }
 
 bool lib_staticQueue_pop(lib_staticQueue_S *queue, void *data)
 {
-    while (_locktry(queue->lock) == false)
+    while (HAL_lock_try(queue->lock) == false)
     {
         // wait for lock
     }
     if (lib_staticQueue_isempty(queue))
     {
-        _lockrel(queue->lock);
+        HAL_lock_release(queue->lock);
         return false;
     }
 
@@ -66,7 +66,7 @@ bool lib_staticQueue_pop(lib_staticQueue_S *queue, void *data)
         queue->front = 0;
     }
 
-    _lockrel(queue->lock);
+    HAL_lock_release(queue->lock);
     return true;
 }
 
@@ -85,18 +85,18 @@ bool lib_staticQueue_isfull(lib_staticQueue_S *queue)
 
 void lib_staticQueue_empty(lib_staticQueue_S *queue)
 {
-    while (_locktry(queue->lock) == 0)
+    while (HAL_lock_try(queue->lock) == 0)
     {
         // wait for lock
     }
     queue->front = 0;
     queue->rear = 0;
-    _lockrel(queue->lock);
+    HAL_lock_release(queue->lock);
 }
 
 int32_t lib_staticQueue_count(lib_staticQueue_S *queue)
 {
-    while (_locktry(queue->lock) == 0)
+    while (HAL_lock_try(queue->lock) == 0)
     {
         // wait for lock
     }
@@ -109,6 +109,6 @@ int32_t lib_staticQueue_count(lib_staticQueue_S *queue)
     {
         count = queue->max_size - queue->front + queue->rear;
     }
-    _lockrel(queue->lock);
+    HAL_lock_release(queue->lock);
     return count;
 }

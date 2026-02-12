@@ -1,5 +1,5 @@
 #include <unity.h>
-#include <propeller2.h>
+#include "HAL_lock.h"
 #include <string.h>
 #include "watchdog.h"
 #include "dev_nvram.h"
@@ -20,8 +20,8 @@ void setUp(void)
     }
 
     // set stuff up here
-    _stdio_debug_lock = _locknew();
-    int lock = _locknew();
+    _stdio_debug_lock = HAL_lock_create();
+    int lock = HAL_lock_create();
     dev_nvram_init(lock);
     watchdog_init(lock);
 }

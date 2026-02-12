@@ -7,8 +7,8 @@
 #include "dev_stepper.h"
 
 #include "HAL_pulseOut.h"
-#include <propeller2.h>
-#include <smartpins.h>
+#include "HAL_lock.h"
+#include "HAL_GPIO.h"
 #include "IO_Debug.h"
 #include <string.h>
 #include "emulation_helpers.h"
@@ -19,9 +19,9 @@
 /*********************************************************************
  * Macros
  **********************************************************************/
-#define SM_LOCK_REQ() _locktry(dev_stepper_data.lock)
+#define SM_LOCK_REQ() HAL_lock_try(dev_stepper_data.lock)
 #define SM_LOCK_REQ_BLOCK() while (SM_LOCK_REQ() == false) EMULATION_YIELD_LOCK();
-#define SM_LOCK_REL() _lockrel(dev_stepper_data.lock)
+#define SM_LOCK_REL() HAL_lock_release(dev_stepper_data.lock)
 
 // Hardware uses 16 bit value for clockcycles per half pulse cycle
 #define DEV_STEPPER_MIN_HARDWARE_SPEED (65535U * 2U)
@@ -200,14 +200,14 @@ static void dev_stepper_private_entryAction(dev_stepper_channel_E ch)
         {
             // CW
             dev_stepper_data.channels[ch].directionCW = true;
-            _pinl(dev_stepper_channelConfig[ch].pinDirection);
+            HAL_GPIO_setActive(dev_stepper_channelConfig[ch].gpioDirection, false);
             HAL_pulseOut_start(dev_stepper_channelConfig[ch].pulseChannel, (dev_stepper_data.channels[ch].input.move.targetSteps - dev_stepper_data.channels[ch].currentSteps), dev_stepper_data.channels[ch].currentMove.stepsPerSecond);
         }
         else
         {
             // CCW
             dev_stepper_data.channels[ch].directionCW = false;
-            _pinh(dev_stepper_channelConfig[ch].pinDirection);
+            HAL_GPIO_setActive(dev_stepper_channelConfig[ch].gpioDirection, true);
             HAL_pulseOut_start(dev_stepper_channelConfig[ch].pulseChannel, (dev_stepper_data.channels[ch].currentSteps - dev_stepper_data.channels[ch].input.move.targetSteps), dev_stepper_data.channels[ch].currentMove.stepsPerSecond);
         }
         break;

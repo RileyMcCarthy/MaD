@@ -5,7 +5,7 @@ MaD is a low-cost (<$4k), portable, open-source uniaxial tensile testing machine
 
 1. **Firmware** (`Firmware/MaDCore/`) - Embedded C for Propeller 2 microcontroller
 2. **Software** (`Software/MaDControl/`) - Electron/React/TypeScript desktop UI
-3. **SIL** (`SIL/`) - Software-in-the-Loop testing with Python emulator + Playwright tests
+3. **SIL** (`SIL/`) - Software-in-the-Loop testing with Rust emulator + Playwright tests
 
 ## Architecture: Firmware (Embedded C)
 
@@ -52,7 +52,7 @@ Use `template.ch` for headers - minimal Doxygen comments (`@brief`, `@details`).
 ### PlatformIO Environments
 - **propeller2**: Real hardware build (FlexC compiler, Propeller 2 board)
 - **propeller2_debug**: Hardware with `ENABLE_DEBUG_SERIAL=1`
-- **native**: x86 emulation build for SIL testing (gcc, `-fsanitize=address`)
+- **native_emulator**: Builds firmware as `libfirmware.a` for the Rust SIL emulator (gcc)
 - **native_test**: Unity unit tests (run with `pio test -e native_test`)
 
 **Key Flags**:
@@ -63,7 +63,7 @@ Use `template.ch` for headers - minimal Doxygen comments (`@brief`, `@details`).
 ```bash
 cd Firmware/MaDCore
 pio run -e propeller2        # Hardware build
-pio run -e native            # Emulation build
+pio run -e native_emulator   # Build libfirmware.a for Rust emulator
 pio test -e native_test      # Unit tests
 pio check                    # MISRA C:2023 + CERT checks via cppcheck
 ```
@@ -102,8 +102,29 @@ npm run lint:fix             # ESLint auto-fix
 
 ### Purpose
 Test complete firmware ↔ UI integration using:
-- **Emulator**: Native firmware build + Python virtual serial ports (`MaDSim/`)
+- **Rust Emulator** (`SIL/emulator/`): Compiles firmware C code as `libfirmware.a`, provides HAL implementations in Rust, physics simulation, and a PTY-based virtual serial port — all in a single binary
 - **Playwright**: E2E tests against real Electron UI (`tests/*.spec.ts`)
+
+### Emulator Architecture
+```
+┌──────────────────────────────────────────┐
+│     Firmware C code (libfirmware.a)       │
+│  APP / DEV / IO / Library / Main layers   │
+├──────────────────────────────────────────┤
+│    Rust HAL implementations (driver/)     │
+│  gpio, serial, encoder, pulse_out, i2c    │
+│  lock, time, system (thread spawning)     │
+├──────────────────────────────────────────┤
+│    Physics simulation (model/)            │
+│  servo, force_gauge, sample, gpio_sim     │
+├──────────────────────────────────────────┤
+│    Wiring layer (wiring/)                 │
+│  Connects HAL callbacks → model updates   │
+│  PTY serial port (replaces socat)         │
+└──────────────────────────────────────────┘
+         │ PTY (/tmp/tty.rpi_client)
+    Electron UI
+```
 
 ### Running SIL Tests
 ```bash
@@ -116,7 +137,7 @@ make playground              # Start emulator + UI without tests (dev mode)
 **Artifacts**: `test-results/` contains screenshots, traces, HTML reports
 
 ### Virtual Serial Ports
-Python creates `/tmp/tty.rpi_client` ↔ `/tmp/tty.rpi` pairs. UI connects to `_client`, emulator reads from base port.
+The Rust emulator creates a PTY pair. The slave end is symlinked to `/tmp/tty.rpi_client` which the Electron UI connects to.
 
 ### Test Helpers
 Use `tests/helpers.ts`:
@@ -135,7 +156,7 @@ const state = await getMachineState(window);
 4. Add to `platformio.ini` include paths if new directory
 5. If multi-core, integrate with `dev_cogManager` channel
 6. Update `IO_protocol` if UI needs to communicate with it
-7. Add native emulation code in `HAL/Native/` or `HW/Native/` for SIL compatibility
+7. Add Rust HAL implementation in `SIL/emulator/src/driver/` for SIL compatibility
 
 ### Debugging Serial Protocol Issues
 1. Enable debug serial: Build with `propeller2_debug` environment
@@ -168,7 +189,7 @@ The MCP + terminal tools enable full-stack autonomous development:
 
 | Task | Command |
 |------|---------|
-| Build firmware (native) | `cd Firmware/MaDCore && pio run -e native` |
+| Build firmware (emulator lib) | `cd Firmware/MaDCore && pio run -e native_emulator` |
 | Build firmware (hardware) | `cd Firmware/MaDCore && pio run -e propeller2` |
 | Run firmware unit tests | `cd Firmware/MaDCore && pio test -e native_test` |
 | MISRA compliance check | `cd Firmware/MaDCore && pio check` |
@@ -200,7 +221,10 @@ Use Playwright MCP to interact with the running Electron app:
 - `Software/MaDControl/src/renderer/hooks/useDevice.tsx` - UI device state management
 - `Software/MaDControl/src/renderer/components/GCodeGenerator.tsx` - Motion profile to G-code conversion
 - `Software/MaDControl/src/renderer/components/TestRunner.tsx` - Test execution UI component
-- `SIL/Server.py` - Test orchestration entry point
+- `SIL/emulator/src/main.rs` - Rust emulator entry point
+- `SIL/emulator/src/driver/` - Rust HAL implementations
+- `SIL/emulator/src/model/` - Physics simulation (servo, force gauge, sample)
+- `SIL/emulator/src/wiring/` - HAL ↔ simulation wiring and PTY serial
 - `SIL/tests/helpers.ts` - Common test utilities
 
 ## G-Code Protocol
@@ -301,12 +325,20 @@ Defines test execution pattern with sets, executions, and moves:
 ```
 SIL/tests/
 ├── helpers.ts                    # Common utilities (launchMaDControl, connectToEmulator, etc.)
-├── global-setup.ts               # Pre-test: build firmware, start emulator
+├── fixtures.ts                   # Playwright test fixtures
+├── global-setup.ts               # Pre-test: build firmware + emulator
 ├── global-teardown.ts            # Post-test: cleanup processes
-├── basic-connection.spec.ts      # App launch and serial connection tests
+├── app-launch.spec.ts            # App launch tests
 ├── connect-serial.spec.ts        # Serial port management tests
 ├── dashboard-motion.spec.ts      # Dashboard UI and motion control tests
-└── profile-test-execution.spec.ts # Profile creation and test execution tests
+├── firmware-connection.spec.ts   # Firmware connection tests
+├── firmware-update.spec.ts       # Firmware update tests
+├── machine-config.spec.ts        # Machine configuration tests
+├── motion-speed-distance.spec.ts # Motion speed/distance tests
+├── navigation.spec.ts            # Navigation tests
+├── profile-operations.spec.ts    # Profile management tests
+├── profile-test-execution.spec.ts # Profile creation and test execution tests
+└── zeroing-homing.spec.ts        # Zeroing and homing tests
 ```
 
 ### Test Fixtures
@@ -398,7 +430,7 @@ npx playwright show-trace test-results/artifacts/<trace-file>.zip
 Videos are saved to `SIL/test-results/artifacts/<test-name>/video.webm`
 
 ### Common Issues
-1. **Stale processes**: Kill with `pkill -f 'Server.py|mad-firmware-native|socat'`
+1. **Stale processes**: Kill with `pkill -f 'mad-emulator|MaD Control'`
 2. **Serial port busy**: Check `/tmp/tty.rpi*` exists and no other process using it
 3. **Element not found**: Use `{ exact: true }` for text that matches multiple elements
 4. **Test timeout**: Increase timeout or check firmware is responding
@@ -423,5 +455,4 @@ Videos are saved to `SIL/test-results/artifacts/<test-name>/video.webm`
 | `machine-state-updates` | `MachineState` | Machine state changes |
 | `device-status-changed` | `{connected, error}` | Connection status |
 | `test-progress` | `{current, total}` | G-code execution progress |
-- `SIL/MaDSim/VirtualSerialPort.py` - Serial emulation
 - `.vscode/mcp.json` - MCP server configuration

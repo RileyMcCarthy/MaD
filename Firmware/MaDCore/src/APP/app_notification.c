@@ -4,7 +4,6 @@
 /**********************************************************************
  * Includes
  **********************************************************************/
-#include <propeller2.h>
 #include <stdarg.h>
 #include <string.h>
 #include "app_notification.h"

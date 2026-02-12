@@ -6,8 +6,7 @@
  **********************************************************************/
 #include <string.h>
 #include <stdlib.h>
-#include <propeller2.h>
-#include <smartpins.h>
+#include "HAL_lock.h"
 #include <math.h>
 
 #include "app_motion.h"
@@ -37,13 +36,13 @@
 #define MOTION_MANUAL_BUFFER_SIZE 100
 #define MOTION_TEST_BUFFER_SIZE 100
 
-#define APP_MOTION_LOCK_REQ() _locktry(app_motion_data.lock)
+#define APP_MOTION_LOCK_REQ() HAL_lock_try(app_motion_data.lock)
 #define APP_MOTION_LOCK_REQ_BLOCK()        \
     while (APP_MOTION_LOCK_REQ() == false) \
     {                                      \
         EMULATION_YIELD_LOCK();            \
     }
-#define APP_MOTION_LOCK_REL() _lockrel(app_motion_data.lock)
+#define APP_MOTION_LOCK_REL() HAL_lock_release(app_motion_data.lock)
 /**********************************************************************
  * Typedefs
  **********************************************************************/

@@ -8,7 +8,7 @@
 #include "IO_Debug.h"
 #include "IO_fullDuplexSerial.h"
 #include "lib_utility.h"
-#include <propeller2.h>
+#include "HAL_time.h"
 #include <string.h>
 /**********************************************************************
  * Constants
@@ -66,7 +66,7 @@ IO_protocol_data_S IO_protocol_data;
 
 static bool IO_protocol_private_timeout(void)
 {
-    return ((_getms() - IO_PROTOCOL_RECIEVE_TIMEOUT_MS) > IO_protocol_data.recieve.startms);
+    return ((HAL_time_getMs() - IO_PROTOCOL_RECIEVE_TIMEOUT_MS) > IO_protocol_data.recieve.startms);
 }
 
 static bool IO_protocol_private_recieveByte(uint8_t *byte)
@@ -102,7 +102,7 @@ IO_protocol_incommingType_E IO_protocol_recieveRequest(IO_protocol_readType_E *r
         if (IO_protocol_private_recieveSync())
         {
             IO_protocol_data.recieve.state = IO_PROTOCOL_RECIEVE_STATE_TYPE;
-            IO_protocol_data.recieve.startms = _getms();
+            IO_protocol_data.recieve.startms = HAL_time_getMs();
         }
         break;
     case IO_PROTOCOL_RECIEVE_STATE_TYPE:

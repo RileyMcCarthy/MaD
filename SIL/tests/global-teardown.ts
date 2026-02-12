@@ -11,11 +11,9 @@ import { execSync } from 'child_process';
 async function globalTeardown() {
   console.log('\n🧹 Global Teardown: Cleaning up stale processes...\n');
 
-  // Kill any remaining related processes (safety net)
+  // Kill any remaining Rust emulator processes (safety net)
   try {
-    execSync('pkill -f "socat.*tty.rpi" 2>/dev/null || true', { stdio: 'ignore' });
-    execSync('pkill -f "Server.py" 2>/dev/null || true', { stdio: 'ignore' });
-    execSync('pkill -f "mad-firmware-native.bin" 2>/dev/null || true', { stdio: 'ignore' });
+    execSync('pkill -f "mad-emulator" 2>/dev/null || true', { stdio: 'ignore' });
   } catch {
     // Ignore errors - processes may already be dead
   }

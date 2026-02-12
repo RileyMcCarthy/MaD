@@ -10,7 +10,7 @@
 #include "HAL_serial.h"
 #include "IO_Debug.h"
 
-#include <propeller2.h>
+#include "HAL_time.h"
 /**********************************************************************
  * Constants
  **********************************************************************/
@@ -328,7 +328,7 @@ bool IO_ADS122U04_start(IO_ADS122U04_channel_E channel)
 
     // reset the device
     IO_ADS122U04_sendCommand(channel, IO_ADS122U04_CMD_RESET);
-    _waitms(100);
+    HAL_time_waitMs(100);
 
 
     // write the configuration

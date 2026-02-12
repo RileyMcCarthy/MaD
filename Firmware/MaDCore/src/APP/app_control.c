@@ -15,7 +15,7 @@
 #include "watchdog.h"
 
 #include "HAL_GPIO.h"
-#include <propeller2.h>
+#include "HAL_lock.h"
 #include <string.h>
 #include "emulation_helpers.h"
 /**********************************************************************
@@ -25,13 +25,13 @@
 /*********************************************************************
  * Macros
  **********************************************************************/
-#define APP_CONTROL_LOCK_REQ() _locktry(app_control_data.lock)
+#define APP_CONTROL_LOCK_REQ() HAL_lock_try(app_control_data.lock)
 #define APP_CONTROL_LOCK_REQ_BLOCK()        \
     while (APP_CONTROL_LOCK_REQ() == false) \
     {                                       \
         EMULATION_YIELD_LOCK();            \
     }
-#define APP_CONTROL_LOCK_REL() (void)_lockrel(app_control_data.lock)
+#define APP_CONTROL_LOCK_REL() (void)HAL_lock_release(app_control_data.lock)
 /**********************************************************************
  * Typedefs
  **********************************************************************/

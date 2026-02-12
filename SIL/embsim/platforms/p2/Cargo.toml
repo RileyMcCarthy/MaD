@@ -1,0 +1,10 @@
+[package]
+name = "embsim-p2"
+version = "0.1.0"
+edition = "2021"
+description = "Propeller 2 platform for embsim — FFI trampolines + P2 constants"
+
+[dependencies]
+embsim-core = { path = "../../core" }
+embsim-peripherals = { path = "../../peripherals" }
+tracing = "0.1"

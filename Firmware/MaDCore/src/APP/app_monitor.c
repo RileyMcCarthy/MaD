@@ -74,7 +74,8 @@ Definitions
 /**********************************************************************
  * Includes
  **********************************************************************/
-#include <propeller2.h>
+#include "HAL_lock.h"
+#include "HAL_time.h"
 #include <string.h>
 #include "app_monitor.h"
 #include "app_motion.h"
@@ -96,9 +97,9 @@ Definitions
  * Macros
  **********************************************************************/
 
-#define APP_MONITOR_LOCK_REQ() _locktry(app_monitor_data.lock)
+#define APP_MONITOR_LOCK_REQ() HAL_lock_try(app_monitor_data.lock)
 #define APP_MONITOR_LOCK_REQ_BLOCK() while (APP_MONITOR_LOCK_REQ() == false) EMULATION_YIELD_LOCK();
-#define APP_MONITOR_LOCK_REL() _lockrel(app_monitor_data.lock)
+#define APP_MONITOR_LOCK_REL() HAL_lock_release(app_monitor_data.lock)
 
 /**********************************************************************
  * Typedefs
@@ -177,7 +178,7 @@ void app_monitor_private_processInputs()
     app_monitor_data.input.forceIndex = newIndex;
     app_monitor_data.input.position = IO_positionFeedback_getValue(IO_POSITION_FEEDBACK_CHANNEL_SERVO_FEEDBACK);
     app_monitor_data.input.setpoint = app_motion_getSetpoint();
-    app_monitor_data.input.time = _getus();
+    app_monitor_data.input.time = HAL_time_getUs();
     app_monitor_data.input.testRunning = app_control_testRunning();
 }
 

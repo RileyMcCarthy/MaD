@@ -30,7 +30,7 @@ const dev_stepper_channelConfig_S dev_stepper_channelConfig[DEV_STEPPER_CHANNEL_
     {
         HW_PIN_SERVO_ENA,
         HW_PIN_SERVO_PUL,
-        HW_PIN_SERVO_DIR,
+        HAL_GPIO_SERVO_DIR,
         HAL_PULSE_OUT_CHANNEL_SERVO,
     },
 };

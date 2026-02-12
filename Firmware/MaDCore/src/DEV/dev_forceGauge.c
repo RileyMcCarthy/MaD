@@ -6,6 +6,7 @@
  **********************************************************************/
 #include "dev_forceGauge.h"
 #include "dev_nvram.h"
+#include "HAL_lock.h"
 #include "IO_Debug.h"
 #include <string.h>
 #include "emulation_helpers.h"
@@ -16,13 +17,13 @@
 /*********************************************************************
  * Macros
  **********************************************************************/
-#define DEV_FORCEGAUGE_LOCK_REQ() _locktry(dev_forceGauge_data.lock)
+#define DEV_FORCEGAUGE_LOCK_REQ() HAL_lock_try(dev_forceGauge_data.lock)
 #define DEV_FORCEGAUGE_REQ_BLOCK()             \
     while (DEV_FORCEGAUGE_LOCK_REQ() == false) \
     {                                          \
         EMULATION_YIELD_LOCK();                \
     }
-#define DEV_FORCEGAUGE_LOCK_REL() _lockrel(dev_forceGauge_data.lock)
+#define DEV_FORCEGAUGE_LOCK_REL() HAL_lock_release(dev_forceGauge_data.lock)
 /**********************************************************************
  * Typedefs
  **********************************************************************/

@@ -1,0 +1,197 @@
+<!-- MaD Machine Visualizer -->
+<div class="machine-root">
+  <!-- ── Left: Physical Machine Diagram ── -->
+  <div class="machine-left">
+    <!-- Coordinate legend -->
+    <div class="coord-legend">
+      <div class="coord-legend-title">Machine Coordinates</div>
+      <div class="coord-legend-item">
+        <span class="coord-arrow">↓</span>
+        <span>+X (positive direction)</span>
+      </div>
+      <div class="coord-legend-item">
+        <span class="coord-zero">0</span>
+        <span>= Upper jaw grip lip</span>
+      </div>
+    </div>
+
+    <div class="machine-frame">
+      <!-- Fixed upper jaw — sits above the track, not inside it -->
+      <div class="upper-jaw-assembly">
+        <div class="force-gauge-inline">
+          <span class="force-gauge-icon">⚖</span>
+          <span class="force-gauge-value" id="forceValue">0.000 N</span>
+        </div>
+        <div class="jaw-body upper">
+          <div class="jaw-grip-surface"></div>
+        </div>
+        <div class="jaw-label">Upper Jaw <span class="jaw-type">(Fixed)</span></div>
+      </div>
+
+      <!-- Track: ruler on left, visualization in center -->
+      <div class="track-wrapper">
+        <!-- Position ruler (left side) -->
+        <div class="ruler" id="ruler"></div>
+
+        <!-- Track area -->
+        <div class="track" id="track">
+          <!-- Rail guides -->
+          <div class="rail rail-left"></div>
+          <div class="rail rail-right"></div>
+
+          <!-- Upper endstop (at -10mm) — dashed line across track -->
+          <div class="endstop-marker" id="endstopUpper">
+            <div class="endstop-line upper"></div>
+            <div class="endstop-label-left">
+              <span class="endstop-name">Upper Endstop</span>
+              <span class="endstop-pos">−10 mm</span>
+            </div>
+          </div>
+
+          <!-- Sample material (stretches from 0mm to gantry) -->
+          <div class="sample" id="sample">
+            <div class="sample-label" id="sampleLabel"></div>
+          </div>
+
+          <!-- Gantry — the moving lower jaw -->
+          <div class="gantry" id="gantry">
+            <div class="jaw-body lower">
+              <div class="jaw-grip-surface"></div>
+            </div>
+            <div class="gantry-crossbar"></div>
+            <div class="gantry-readout" id="gantryReadout">0.000 mm</div>
+          </div>
+
+          <!-- Lower endstop (at 300mm) — dashed line across track -->
+          <div class="endstop-marker" id="endstopLower">
+            <div class="endstop-line lower"></div>
+            <div class="endstop-label-left">
+              <span class="endstop-name">Lower Endstop</span>
+              <span class="endstop-pos">300 mm</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Right: Information Panels ── -->
+  <div class="machine-right">
+    <!-- State panel -->
+    <div class="info-panel">
+      <div class="info-panel-title">Machine State</div>
+      <div class="info-row">
+        <span class="info-label">State</span>
+        <span class="info-value" id="stateValue">—</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">Fault</span>
+        <span class="info-value" id="faultValue">NONE</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">Restriction</span>
+        <span class="info-value" id="restrictionValue">NONE</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">Motion Enabled</span>
+        <span class="info-value" id="motionEnabledValue">—</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">Test Running</span>
+        <span class="info-value" id="testRunningValue">—</span>
+      </div>
+    </div>
+
+    <!-- Position / motion -->
+    <div class="info-panel">
+      <div class="info-panel-title">Position &amp; Motion</div>
+      <div class="info-row">
+        <span class="info-label">Position</span>
+        <span class="info-value" id="positionValue">0.000 mm</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">Encoder</span>
+        <span class="info-value" id="encoderValue">0 steps</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">Servo Enabled</span>
+        <span class="info-value" id="servoEnaValue">—</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">Direction</span>
+        <span class="info-value" id="directionValue">—</span>
+      </div>
+    </div>
+
+    <!-- Force -->
+    <div class="info-panel">
+      <div class="info-panel-title">Force Measurement</div>
+      <div class="info-row">
+        <span class="info-label">Force</span>
+        <span class="info-value" id="forceInfoValue">0.000 N</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">Strain Gauge</span>
+        <span class="info-value" id="strainValue">0.000 mV</span>
+      </div>
+    </div>
+
+    <!-- Endstop Status -->
+    <div class="info-panel">
+      <div class="info-panel-title">Endstop Status</div>
+      <div class="endstop-status-row" id="statusEndstopUpper">
+        <div class="endstop-status-indicator off"></div>
+        <span class="endstop-status-name">Upper Endstop</span>
+        <span class="endstop-status-detail">pos &lt; −10 mm</span>
+      </div>
+      <div class="endstop-status-row" id="statusEndstopLower">
+        <div class="endstop-status-indicator off"></div>
+        <span class="endstop-status-name">Lower Endstop</span>
+        <span class="endstop-status-detail">pos &gt; 300 mm</span>
+      </div>
+    </div>
+
+    <!-- GPIO / Safety -->
+    <div class="info-panel">
+      <div class="info-panel-title">Safety &amp; GPIO</div>
+      <div class="gpio-grid">
+        <div class="gpio-item" id="gpioEndstopUpper">
+          <div class="gpio-led off"></div>
+          <span>Endstop Upper</span>
+        </div>
+        <div class="gpio-item" id="gpioEndstopLower">
+          <div class="gpio-led off"></div>
+          <span>Endstop Lower</span>
+        </div>
+        <div class="gpio-item" id="gpioEsdUpper">
+          <div class="gpio-led off"></div>
+          <span>ESD Upper</span>
+        </div>
+        <div class="gpio-item" id="gpioEsdLower">
+          <div class="gpio-led off"></div>
+          <span>ESD Lower</span>
+        </div>
+        <div class="gpio-item" id="gpioEsdSwitch">
+          <div class="gpio-led off"></div>
+          <span>ESD Switch</span>
+        </div>
+        <div class="gpio-item" id="gpioEsdPower">
+          <div class="gpio-led off"></div>
+          <span>ESD Power</span>
+        </div>
+        <div class="gpio-item" id="gpioDoor">
+          <div class="gpio-led off"></div>
+          <span>Door</span>
+        </div>
+        <div class="gpio-item" id="gpioChargePump">
+          <div class="gpio-led off"></div>
+          <span>Charge Pump</span>
+        </div>
+        <div class="gpio-item" id="gpioServoReady">
+          <div class="gpio-led off"></div>
+          <span>Servo Ready</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

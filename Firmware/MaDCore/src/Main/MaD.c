@@ -1,5 +1,7 @@
 #include <stdint.h>
-#include <propeller2.h>
+#include "HAL_lock.h"
+#include "HAL_time.h"
+#include "HAL_system.h"
 #include "MaD.h"
 #include "JSON.h"
 #include "app_motion.h"
@@ -16,8 +18,8 @@ void mad_startupNVRAM(int dev_nvram_lock)
   if (dev_nvram_lock == -1)
   {
     DEBUG_ERROR("%s", "WARNING NO LOCKS AVAILABLE!!!, EXITING PROGRAM\n");
-    _waitms(1000);
-    _reboot();
+    HAL_time_waitMs(1000);
+    HAL_system_reboot();
   }
 
   dev_nvram_init(dev_nvram_lock);
@@ -31,23 +33,23 @@ void mad_startupNVRAM(int dev_nvram_lock)
 void mad_begin()
 {
   // Create a lock for the debug output
-  _stdio_debug_lock = _locknew();
+  _stdio_debug_lock = HAL_lock_create();
   if (_stdio_debug_lock == -1)
   {
     printf("WARNING NO LOCKS AVAILABLE!!!, EXITING PROGRAM\n");
-    _waitms(1000);
-    _reboot();
+    HAL_time_waitMs(1000);
+    HAL_system_reboot();
   }
 
   DEBUG_INFO("%s", "Starting MaD\n");
 
   // Start up nvram before everything else
-  int criticalLock = _locknew();
+  int criticalLock = HAL_lock_create();
   if (criticalLock == -1)
   {
     DEBUG_ERROR("%s", "WARNING NO LOCKS AVAILABLE!!!, EXITING PROGRAM\n");
-    _waitms(1000);
-    _reboot();
+    HAL_time_waitMs(1000);
+    HAL_system_reboot();
   }
 
   mad_startupNVRAM(criticalLock); // start the non-volatile memory system
@@ -59,6 +61,6 @@ void mad_begin()
     dev_nvram_run();
     dev_cogManager_run();
     watchdog_run();
-    _waitms(100);
+    HAL_time_waitMs(100);
   }
 }

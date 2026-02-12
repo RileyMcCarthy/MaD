@@ -5,13 +5,10 @@ build/
 node_modules/
 build/**/node_modules/
 
-# Python virtual environment
-venv/
-**/__pycache__/
-**/*.pyc
+# Rust build artifacts
+emulator/target/
 
 # Emulator/logs
-MaDSim.log
 *.log
 npm-debug.log*
 yarn-debug.log*

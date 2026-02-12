@@ -146,6 +146,10 @@ test.describe('Profile Operations', () => {
       const fileInput = window.locator('input[type="file"][accept=".mp"]');
       await fileInput.setInputFiles(MOTION_PROFILE_SIMPLE_PATH);
       await window.waitForTimeout(500);
+
+      // Click the Preview G-code button to generate the preview
+      await window.getByRole('button', { name: 'Preview G-code' }).click();
+      await window.waitForTimeout(500);
       
       // Look for G-code commands in page
       const pageText = await window.locator('body').textContent();
@@ -160,6 +164,10 @@ test.describe('Profile Operations', () => {
     test('G-code should include G122 STOP command', async ({ window }) => {
       const fileInput = window.locator('input[type="file"][accept=".mp"]');
       await fileInput.setInputFiles(MOTION_PROFILE_SIMPLE_PATH);
+      await window.waitForTimeout(500);
+
+      // Click the Preview G-code button to generate the preview
+      await window.getByRole('button', { name: 'Preview G-code' }).click();
       await window.waitForTimeout(500);
       
       // Verify G122 is in the generated G-code

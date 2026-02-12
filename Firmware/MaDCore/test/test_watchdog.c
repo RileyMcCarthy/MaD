@@ -1,5 +1,5 @@
 #include <unity.h>
-#include <propeller2.h>
+#include "HAL_time.h"
 #include <string.h>
 #include "watchdog.h"
 
@@ -14,7 +14,7 @@ void test_watchdog(void)
     watchdog_run();
 
     TEST_ASSERT_TRUE(watchdog_isAllAlive());
-    global_timeus += TIME_SEC_TO_US(1);
+    global_timeus += TIME_SEC_TO_US(3);
     watchdog_run();
 
     TEST_ASSERT_FALSE(watchdog_isAllAlive());

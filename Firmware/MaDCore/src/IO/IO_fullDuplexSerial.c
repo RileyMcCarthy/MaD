@@ -8,7 +8,7 @@
 #include "lib_utility.h"
 #include <stdlib.h>
 #include <string.h>
-#include "propeller2.h"
+#include "HAL_lock.h"
 #include "IO_Debug.h"
 #include "emulation_helpers.h"
 /**********************************************************************
@@ -18,13 +18,13 @@
 /*********************************************************************
  * Macros
  **********************************************************************/
-#define IO_FULLDUPLEXSERIAL_LOCK_REQ() _locktry(IO_fullDuplexSerial_data.lock)
+#define IO_FULLDUPLEXSERIAL_LOCK_REQ() HAL_lock_try(IO_fullDuplexSerial_data.lock)
 #define IO_FULLDUPLEXSERIAL_LOCK_REQ_BLOCK()        \
     while (IO_FULLDUPLEXSERIAL_LOCK_REQ() == false) \
     {                                     \
         EMULATION_YIELD_LOCK();           \
     }
-#define IO_FULLDUPLEXSERIAL_LOCK_REL() _lockrel(IO_fullDuplexSerial_data.lock)
+#define IO_FULLDUPLEXSERIAL_LOCK_REL() HAL_lock_release(IO_fullDuplexSerial_data.lock)
 /**********************************************************************
  * Typedefs
  **********************************************************************/

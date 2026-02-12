@@ -1,0 +1,493 @@
+/* MaD Machine Visualizer — Catppuccin Mocha theme */
+
+.machine-root {
+  display: flex;
+  gap: 24px;
+  height: 100%;
+  padding: 16px;
+  box-sizing: border-box;
+  font-family: 'Inter', 'SF Pro', -apple-system, sans-serif;
+  color: #cdd6f4;
+  overflow: hidden;
+}
+
+/* ── Left Column: Physical Machine Diagram ── */
+
+.machine-left {
+  flex: 0 0 300px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+}
+
+/* Coordinate system legend */
+.coord-legend {
+  width: 100%;
+  background: #1e1e2e;
+  border: 1px solid #313244;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.coord-legend-title {
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: #cba6f7;
+  margin-bottom: 4px;
+  font-size: 10px;
+}
+
+.coord-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #888aaa;
+  padding: 1px 0;
+}
+
+.coord-arrow {
+  color: #a6e3a1;
+  font-weight: bold;
+  width: 16px;
+  text-align: center;
+}
+
+.coord-zero {
+  color: #89b4fa;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-weight: bold;
+  width: 16px;
+  text-align: center;
+}
+
+/* Machine frame — vertical column layout */
+.machine-frame {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 1;
+  min-height: 0;
+}
+
+/* ── Upper Jaw Assembly (fixed, above track) ── */
+
+.upper-jaw-assembly {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex-shrink: 0;
+  margin-bottom: 0;
+}
+
+.force-gauge-inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: #1e1e2e;
+  border: 1px solid #45475a;
+  border-radius: 6px;
+  margin-bottom: 6px;
+}
+
+.force-gauge-icon {
+  font-size: 14px;
+}
+
+.force-gauge-value {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 14px;
+  font-weight: 600;
+  color: #a6e3a1;
+}
+
+.force-gauge-value.tension {
+  color: #f38ba8;
+}
+
+.jaw-body {
+  width: 100px;
+  height: 20px;
+  border: 1px solid #7f849c;
+  border-radius: 3px;
+  position: relative;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+}
+
+.jaw-body.upper {
+  background: linear-gradient(180deg, #6c7086, #585b70);
+  border-bottom: none;
+  border-radius: 3px 3px 0 0;
+}
+
+.jaw-body.lower {
+  background: linear-gradient(180deg, #585b70, #6c7086);
+  border-top: none;
+  border-radius: 0 0 3px 3px;
+}
+
+.jaw-grip-surface {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 40px;
+  height: 4px;
+  background: #cba6f7;
+  border-radius: 2px;
+}
+
+.upper-jaw-assembly .jaw-grip-surface {
+  bottom: -2px;
+}
+
+.gantry .jaw-grip-surface {
+  top: -2px;
+}
+
+.jaw-label {
+  font-size: 9px;
+  color: #888aaa;
+  margin-top: 2px;
+  text-align: center;
+}
+
+.jaw-type {
+  color: #585b70;
+}
+
+/* ── Track Wrapper (ruler + track side by side) ── */
+
+.track-wrapper {
+  display: flex;
+  flex-direction: row;
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+}
+
+/* ── Ruler (left of track) ── */
+
+.ruler {
+  position: relative;
+  width: 52px;
+  flex-shrink: 0;
+}
+
+.ruler-tick {
+  position: absolute;
+  right: 0;
+  width: 6px;
+  height: 1px;
+  background: #45475a;
+}
+
+.ruler-tick.major {
+  width: 10px;
+  background: #585b70;
+}
+
+.ruler-tick.origin {
+  width: 14px;
+  height: 2px;
+  background: #89b4fa;
+}
+
+.ruler-tick-label {
+  position: absolute;
+  right: 14px;
+  font-size: 9px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  color: #585b70;
+  transform: translateY(-50%);
+  white-space: nowrap;
+  text-align: right;
+}
+
+.ruler-tick-label.origin {
+  color: #89b4fa;
+  font-weight: 600;
+}
+
+/* ── Track (main visualization area) ── */
+
+.track {
+  position: relative;
+  flex: 1;
+  min-width: 140px;
+  overflow: hidden;
+}
+
+/* Rail guides — thin vertical lines */
+.rail {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: #45475a;
+  z-index: 1;
+}
+
+.rail-left { left: 25px; }
+.rail-right { right: 25px; }
+
+/* ── Endstop Markers ── */
+
+.endstop-marker {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 6;
+  pointer-events: none;
+}
+
+.endstop-line {
+  width: 100%;
+  height: 2px;
+}
+
+.endstop-line.upper,
+.endstop-line.lower {
+  background: #f9e2af;
+  box-shadow: 0 0 6px rgba(249, 226, 175, 0.3);
+}
+
+/* Endstop label — inside the track, right-aligned */
+.endstop-label-left {
+  position: absolute;
+  right: 4px;
+  top: 4px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 9px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.endstop-name {
+  color: #f9e2af;
+  font-weight: 600;
+}
+
+.endstop-pos {
+  color: #f9e2af;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  opacity: 0.7;
+  font-size: 8px;
+}
+
+/* Triggered state — pulsing red */
+.endstop-marker.triggered .endstop-line {
+  height: 3px;
+  box-shadow: 0 0 12px rgba(243, 139, 168, 0.7);
+  background: #f38ba8;
+  animation: endstop-pulse 0.8s ease infinite;
+}
+
+.endstop-marker.triggered .endstop-name,
+.endstop-marker.triggered .endstop-pos {
+  color: #f38ba8;
+}
+
+@keyframes endstop-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* ── Sample material ── */
+
+.sample {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 30px;
+  background: linear-gradient(90deg, #74c7ec44, #89b4fa44);
+  border: 1px solid #74c7ec88;
+  border-radius: 2px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 4px;
+}
+
+.sample-label {
+  font-size: 8px;
+  color: #cdd6f4;
+  writing-mode: vertical-rl;
+  white-space: nowrap;
+}
+
+/* ── Gantry (lower jaw + crossbar) ── */
+
+.gantry {
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  z-index: 8;
+}
+
+.gantry-crossbar {
+  width: 120px;
+  height: 6px;
+  background: linear-gradient(180deg, #45475a, #585b70);
+  border: 1px solid #7f849c;
+  border-radius: 2px;
+  margin-top: 1px;
+}
+
+.gantry-readout {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 10px;
+  color: #a6e3a1;
+  background: #1e1e2ecc;
+  padding: 1px 6px;
+  border-radius: 3px;
+  border: 1px solid #313244;
+  margin-top: 3px;
+}
+
+/* ── Right Column: Info Panels ── */
+
+.machine-right {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  min-width: 260px;
+  max-width: 380px;
+}
+
+.info-panel {
+  background: #1e1e2e;
+  border: 1px solid #313244;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.info-panel-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: #cba6f7;
+  margin-bottom: 8px;
+  padding-bottom: 5px;
+  border-bottom: 1px solid #313244;
+}
+
+.info-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 2px 0;
+  font-size: 12px;
+}
+
+.info-label {
+  color: #888aaa;
+}
+
+.info-value {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 11px;
+  color: #cdd6f4;
+}
+
+.info-value.state-disabled { color: #6c7086; }
+.info-value.state-restricted { color: #f9e2af; }
+.info-value.state-manual { color: #a6e3a1; }
+.info-value.state-test { color: #89b4fa; }
+.info-value.fault { color: #f38ba8; }
+.info-value.ok { color: #a6e3a1; }
+.info-value.on { color: #a6e3a1; }
+.info-value.off { color: #6c7086; }
+
+/* ── Endstop Status Panel ── */
+
+.endstop-status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 12px;
+}
+
+.endstop-status-indicator {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1px solid #45475a;
+  flex-shrink: 0;
+  transition: background 0.15s, box-shadow 0.15s;
+}
+
+.endstop-status-indicator.off {
+  background: #313244;
+}
+
+.endstop-status-indicator.on {
+  background: #f38ba8;
+  box-shadow: 0 0 8px rgba(243, 139, 168, 0.6);
+  border-color: #f38ba8;
+}
+
+.endstop-status-name {
+  color: #cdd6f4;
+  flex: 1;
+}
+
+.endstop-status-detail {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 10px;
+  color: #585b70;
+}
+
+/* ── GPIO Grid ── */
+
+.gpio-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px;
+}
+
+.gpio-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #888aaa;
+}
+
+.gpio-led {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1px solid #45475a;
+  flex-shrink: 0;
+  transition: background 0.15s, box-shadow 0.15s;
+}
+
+.gpio-led.off {
+  background: #313244;
+}
+
+.gpio-led.on {
+  background: #a6e3a1;
+  box-shadow: 0 0 6px rgba(166, 227, 161, 0.5);
+  border-color: #a6e3a1;
+}
+
+.gpio-led.on.esd {
+  background: #f38ba8;
+  box-shadow: 0 0 6px rgba(243, 139, 168, 0.5);
+  border-color: #f38ba8;
+}

@@ -4,7 +4,8 @@
 /**********************************************************************
  * Includes
  **********************************************************************/
-#include "propeller2.h"
+#include "HAL_lock.h"
+#include "HAL_time.h"
 #include <time.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,9 +20,9 @@
 /*********************************************************************
  * Macros
  **********************************************************************/
-#define SM_LOCK_REQ() _locktry(watchdog_data.lock)
+#define SM_LOCK_REQ() HAL_lock_try(watchdog_data.lock)
 #define SM_LOCK_REQ_BLOCK() while (SM_LOCK_REQ() == false) EMULATION_YIELD_LOCK();
-#define SM_LOCK_REL() _lockrel(watchdog_data.lock)
+#define SM_LOCK_REL() HAL_lock_release(watchdog_data.lock)
 
 #define WATCHDOG_CHANNEL_VALID(channel) (channel >= 0 || channel < WATCHDOG_CHANNEL_COUNT)
 /**********************************************************************
@@ -91,7 +92,7 @@ void watchdog_private_stageOutput(watchdog_channel_t channel)
 void watchdog_private_processInputs(watchdog_channel_t channel)
 {
     const uint32_t lastKick = watchdog_data.channels[channel].request.lastKick;
-    const uint32_t currentTime = _getms();
+    const uint32_t currentTime = HAL_time_getMs();
 
     uint32_t timeSinceLastKick = currentTime - lastKick;
     if (lastKick > currentTime)
@@ -190,7 +191,7 @@ void watchdog_init(int lock)
     for (watchdog_channel_t channel = (watchdog_channel_t)0U; channel < WATCHDOG_CHANNEL_COUNT; channel++)
     {
         watchdog_data.channels[channel].state = WATCHDOG_INIT;
-        watchdog_data.channels[channel].stagedRequest.lastKick = _getms();
+        watchdog_data.channels[channel].stagedRequest.lastKick = HAL_time_getMs();
         watchdog_data.channels[channel].stagedOutput.timeBetweenKick = 0;
         watchdog_data.channels[channel].stagedOutput.isAlive = true;
         watchdog_private_stageOutput(channel);
@@ -228,7 +229,7 @@ void watchdog_kick(watchdog_channel_t channel)
     if (WATCHDOG_CHANNEL_VALID(channel))
     {
         SM_LOCK_REQ_BLOCK();
-        watchdog_data.channels[channel].stagedRequest.lastKick = _getms();
+        watchdog_data.channels[channel].stagedRequest.lastKick = HAL_time_getMs();
         SM_LOCK_REL();
     }
 }

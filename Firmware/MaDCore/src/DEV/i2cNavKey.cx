@@ -13,7 +13,7 @@
 //
 
 #include "i2cNavKey.h"
-#include <propeller2.h>
+#include "HAL_time.h"
 enum I2C_Register
 {
   REG_GCONF = 0x00,
@@ -281,7 +281,7 @@ void navkey_begin(NavKey *navkey, int scl, int sda, uint8_t addr, uint8_t conf)
   navkey->_add = addr;
   i2c_setup(&(navkey->i2cBus), scl, sda, 10, 1);
   writeNavKey8(navkey, REG_GCONF, (uint8_t)0x80);
-  _waitms(100);
+  HAL_time_waitMs(100);
   writeNavKey8(navkey, REG_GCONF, conf);
   navkey->_gconf = conf;
 }
@@ -289,7 +289,7 @@ void navkey_reset(NavKey *navkey)
 
 {
   writeNavKey8(navkey, REG_GCONF, (uint8_t)0x80);
-  _waitms(10);
+  HAL_time_waitMs(10);
 }
 
 /*********************************** Read functions *************************************/

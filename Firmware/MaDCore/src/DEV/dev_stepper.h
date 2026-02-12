@@ -11,6 +11,7 @@
 
 #include "dev_stepper_config.h"
 #include "HAL_pulseOut.h"
+#include "HAL_GPIO.h"
 /**********************************************************************
  * Constants
  **********************************************************************/
@@ -34,7 +35,7 @@ typedef struct
 {
     const uint8_t pinEnable;
     const uint8_t pinStep;
-    const uint8_t pinDirection;
+    const HAL_GPIO_channel_E gpioDirection;
     HAL_pulseOut_channel_E pulseChannel;
 } dev_stepper_channelConfig_S;
 /**********************************************************************

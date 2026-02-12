@@ -1,0 +1,16 @@
+[package]
+name = "embsim-trace"
+version = "0.1.0"
+edition = "2021"
+description = "Live trace viewer for embsim — records and visualizes model states, peripheral values, and C variables"
+
+[dependencies]
+embsim-core = { path = "../../core" }
+embsim-memory-inspect = { path = "../memory-inspect" }
+embsim-ui = { path = "../ui" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+axum = { version = "0.8", features = ["ws"] }
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+parking_lot = "0.12"

@@ -7,7 +7,9 @@
 import { test, expect } from './fixtures';
 
 test.describe('Firmware Connection', () => {
-  test('should detect emulator virtual port', async ({ listPorts, emulatorPort }) => {
+  test('should detect emulator virtual port', async ({ listPorts, emulatorPort, emulator }) => {
+    // emulator fixture ensures the Rust emulator is running
+    void emulator;
     const ports = await listPorts();
     
     console.log('Available ports:', ports);

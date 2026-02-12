@@ -4,7 +4,7 @@
 /**********************************************************************
  * Includes
  **********************************************************************/
-#include "propeller2.h"
+#include "HAL_lock.h"
 #include <string.h>
 #include "IO_Debug.h"
 
@@ -18,9 +18,9 @@
 /*********************************************************************
  * Macros
  **********************************************************************/
-#define IO_LOGGER_LOCK_REQ() _locktry(IO_logger_data.lock)
+#define IO_LOGGER_LOCK_REQ() HAL_lock_try(IO_logger_data.lock)
 #define IO_LOGGER_LOCK_REQ_BLOCK() while (IO_LOGGER_LOCK_REQ() == false) EMULATION_YIELD_LOCK();
-#define IO_LOGGER_LOCK_REL() _lockrel(IO_logger_data.lock)
+#define IO_LOGGER_LOCK_REL() HAL_lock_release(IO_logger_data.lock)
 
 #define IO_LOGGER_LOCKED_INPUT(channel) IO_logger_data.channelData[channel].externalInput
 #define IO_LOGGER_INTERNAL_INPUT(channel) IO_logger_data.channelData[channel].input

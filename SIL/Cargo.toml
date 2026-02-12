@@ -1,0 +1,12 @@
+[workspace]
+members = [
+    "embsim/core",
+    "embsim/peripherals",
+    "embsim/platforms/p2",
+    "embsim/models",
+    "embsim/tools/memory-inspect",
+    "embsim/tools/ui",
+    "embsim/tools/trace",
+    "MaDSim",
+]
+resolver = "2"

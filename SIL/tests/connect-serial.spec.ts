@@ -1,6 +1,6 @@
 /**
  * Connects to /tmp/tty.rpi and verifies connection status via IPC completes.
- * Run via: make run  (Server.py starts emulator and then runs tests)
+ * Run via: make test  (Rust emulator starts per-test via fixtures)
  */
 
 import { test, expect } from './fixtures';
@@ -41,7 +41,9 @@ test.describe('Serial Connection', () => {
     expect(responding).toBe(true);
   });
   
-  test('can list available serial ports', async ({ window, waitForIPC, emulatorPort }) => {
+  test('can list available serial ports', async ({ window, waitForIPC, emulatorPort, emulator }) => {
+    // emulator fixture ensures the Rust emulator is running
+    void emulator;
     await waitForIPC();
     
     // Get list of ports

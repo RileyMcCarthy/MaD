@@ -78,12 +78,12 @@ test.describe('Zeroing and Homing', () => {
       await window.getByRole('button', { name: 'Move Up' }).click();
       await window.waitForTimeout(1000);
       
-      // Get position element
-      const posContainer = window.locator('text=Machine Position (mm):').locator('..');
+      // Get sample position element (Zero Length resets Sample Position, not Machine Position)
+      const samplePosContainer = window.locator('text=Sample Position (mm):').locator('..');
       
-      // Verify position is NOT zero
-      let posText = await posContainer.textContent();
-      let posValue = extractNumber(posText, 'Machine Position \\(mm\\)');
+      // Verify sample position is NOT zero
+      let posText = await samplePosContainer.textContent();
+      let posValue = extractNumber(posText, 'Sample Position \\(mm\\)');
       expect(posValue).not.toBeNull();
       expect(Math.abs(posValue!)).toBeGreaterThan(1); // Should be ~5mm
       
@@ -91,9 +91,9 @@ test.describe('Zeroing and Homing', () => {
       await window.getByRole('button', { name: 'Zero Length' }).click();
       await window.waitForTimeout(1000);
       
-      // Verify position IS now zero
-      posText = await posContainer.textContent();
-      posValue = extractNumber(posText, 'Machine Position \\(mm\\)');
+      // Verify sample position IS now zero
+      posText = await samplePosContainer.textContent();
+      posValue = extractNumber(posText, 'Sample Position \\(mm\\)');
       expect(posValue).not.toBeNull();
       expect(Math.abs(posValue!)).toBeLessThan(0.5); // Within ±0.5mm
     });

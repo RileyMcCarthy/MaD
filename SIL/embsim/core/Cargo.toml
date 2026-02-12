@@ -1,0 +1,9 @@
+[package]
+name = "embsim-core"
+version = "0.1.0"
+edition = "2021"
+description = "Embedded MCU simulator — core infrastructure (virtual clock, serial PTY)"
+
+[dependencies]
+nix = { version = "0.29", features = ["term", "fs"] }
+tracing = "0.1"

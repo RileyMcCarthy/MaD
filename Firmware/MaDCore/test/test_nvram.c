@@ -1,5 +1,5 @@
 #include <unity.h>
-#include <propeller2.h>
+#include "HAL_lock.h"
 #include <string.h>
 #include "dev_nvram.h"
 

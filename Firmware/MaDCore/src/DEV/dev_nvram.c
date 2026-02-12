@@ -7,7 +7,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-#include "propeller.h"
+#include "HAL_lock.h"
 #include "dev_nvram.h"
 #include "IO_Debug.h"
 #include "emulation_helpers.h"
@@ -18,9 +18,9 @@
 /*********************************************************************
  * Macros
  **********************************************************************/
-#define SM_LOCK_REQ() _locktry(dev_nvram_data.lock)
+#define SM_LOCK_REQ() HAL_lock_try(dev_nvram_data.lock)
 #define SM_LOCK_REQ_BLOCK() while (SM_LOCK_REQ() == false) EMULATION_YIELD_LOCK();
-#define SM_LOCK_REL() _lockrel(dev_nvram_data.lock)
+#define SM_LOCK_REL() HAL_lock_release(dev_nvram_data.lock)
 
 #define DEV_NVRAM_CHANNEL_VALID(channel) (channel >= 0 || channel < DEV_NVRAM_CHANNEL_COUNT)
 #define DEV_NVRAM_CHANNEL_DATA(channel) dev_nvram_data.channels[channel]
@@ -214,6 +214,13 @@ void dev_nvram_private_entryAction(dev_nvram_channel_t channel)
             dev_nvram_data.channels[channel].hasError = true;
             DEBUG_ERROR("failed to mount sd card: %s\n", SD_CARD_MOUNT_PATH);
         }
+#elif defined(__EMULATION__)
+        // Native/emulation build: just open the file directly (no SD mount needed)
+        dev_nvram_data.channels[channel].file = fopen(dev_nvram_data.channels[channel].sd_path, "r");
+        if (dev_nvram_data.channels[channel].file == NULL)
+        {
+            DEBUG_INFO("file not found, using defaults: %s\n", dev_nvram_data.channels[channel].sd_path);
+        }
 #else
         // p2llvm SD card mount using sdcard.h API
         // Mount SD card with standard P2 Edge Module pins
@@ -256,9 +263,9 @@ void dev_nvram_private_runAction(dev_nvram_channel_t channel)
     case DEV_NVRAM_BOOT_LOAD:
         if (dev_nvram_data.channels[channel].file == NULL)
         {
-            // Load default data
-            dev_nvram_data.channels[channel].hasError = true;
+            // Load default data (file doesn't exist yet, which is OK on first boot)
             memcpy(dev_nvram_data.channels[channel].data, dev_nvram_config.channels[channel].dataDefault, dev_nvram_config.channels[channel].size);
+            dev_nvram_data.channels[channel].readComplete = true;
         }
         else
         {
@@ -322,8 +329,8 @@ void dev_nvram_init(int lock)
         dev_nvram_data.channels[channel].state = DEV_NVRAM_INIT;
 
         // Initialize the path based on compiler
-#ifdef __FLEXC__
-        // FlexC uses the path directly
+#if defined(__FLEXC__) || defined(__EMULATION__)
+        // FlexC and emulation use the path directly
         strncpy(dev_nvram_data.channels[channel].sd_path, dev_nvram_config.channels[channel].path, sizeof(dev_nvram_data.channels[channel].sd_path) - 1);
         dev_nvram_data.channels[channel].sd_path[sizeof(dev_nvram_data.channels[channel].sd_path) - 1] = '\0';
 #else

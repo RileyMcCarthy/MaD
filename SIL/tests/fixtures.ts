@@ -33,8 +33,8 @@ const SIL_ROOT = path.resolve(__dirname, '..');
 const PROJECT_ROOT = path.resolve(SIL_ROOT, '..');
 const MADCONTROL_DIR = path.join(PROJECT_ROOT, 'Software/MaDControl');
 const MADCONTROL_MAIN = path.join(MADCONTROL_DIR, 'release/app/dist/main/main.js');
-const VENV_PYTHON = path.join(SIL_ROOT, 'venv/bin/python3');
-const SERVER_SCRIPT = path.join(SIL_ROOT, 'Server.py');
+const EMULATOR_BIN = path.join(SIL_ROOT, 'target/debug/mad-emulator');
+const SD_PATH = path.join(SIL_ROOT, 'sd');
 
 // Virtual serial port path (created by emulator)
 const EMULATOR_PORT = '/tmp/tty.rpi';
@@ -64,9 +64,7 @@ function waitForPort(portPath: string, timeoutMs = 15000): Promise<void> {
  */
 function killEmulatorProcesses(): void {
   try {
-    execSync('pkill -f "socat.*tty.rpi" 2>/dev/null || true', { stdio: 'ignore' });
-    execSync('pkill -f "Server.py.*skip-tests" 2>/dev/null || true', { stdio: 'ignore' });
-    execSync('pkill -f "mad-firmware-native.bin" 2>/dev/null || true', { stdio: 'ignore' });
+    execSync('pkill -f "mad-emulator" 2>/dev/null || true', { stdio: 'ignore' });
   } catch {
     // Ignore - processes may not exist
   }
@@ -103,9 +101,16 @@ export const test = base.extend<MaDTestFixtures>({
     killEmulatorProcesses();
     await new Promise((r) => setTimeout(r, 500));
 
-    // Start the emulator
-    console.log('🚀 Starting firmware emulator for test...');
-    const emulatorProcess = spawn(VENV_PYTHON, [SERVER_SCRIPT, '--skip-tests'], {
+    // Remove stale PTY symlink
+    try { fs.unlinkSync(EMULATOR_PORT); } catch { /* ignore */ }
+
+    // Start the Rust emulator
+    console.log('🚀 Starting Rust emulator for test...');
+    const emulatorProcess = spawn(EMULATOR_BIN, [
+      '--sd-path', SD_PATH,
+      '--pty-path', EMULATOR_PORT,
+      '--log-level', 'info',
+    ], {
       cwd: SIL_ROOT,
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: false, // Keep attached so we can kill it properly

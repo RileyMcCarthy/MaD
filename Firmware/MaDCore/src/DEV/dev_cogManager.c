@@ -4,10 +4,12 @@
 /**********************************************************************
  * Includes
  **********************************************************************/
-#include <propeller.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include "dev_cogManager.h"
+#include "HAL_lock.h"
+#include "HAL_time.h"
+#include "HAL_system.h"
 #include "IO_Debug.h"
 #include "lib_utility.h"
 #include "emulation_helpers.h"
@@ -20,13 +22,13 @@
 /*********************************************************************
  * Macros
  **********************************************************************/
-#define APP_COGMANAGER_LOCK_REQ() _locktry(dev_cogManager_data.lock)
+#define APP_COGMANAGER_LOCK_REQ() HAL_lock_try(dev_cogManager_data.lock)
 #define APP_COGMANAGER_LOCK_REQ_BLOCK()        \
     while (APP_COGMANAGER_LOCK_REQ() == false) \
     {                                          \
         EMULATION_YIELD_LOCK();                \
     }
-#define APP_COGMANAGER_LOCK_REL() _lockrel(dev_cogManager_data.lock)
+#define APP_COGMANAGER_LOCK_REL() HAL_lock_release(dev_cogManager_data.lock)
 
 /**********************************************************************
  * Typedefs
@@ -72,12 +74,12 @@ static void dev_cogManager_private_wrapper(void *arg)
     const uint32_t maxWaitTime = 1000000 / targetFrequencyHz;
     while (1)
     {
-        const uint32_t startTime = _getus();
+        const uint32_t startTime = HAL_time_getUs();
         watchdog_kick(config->watchdogChannel);
         config->cogFunctionRun(NULL);
         if (targetFrequencyHz != 0U)
         {
-            const uint32_t endTime = _getus();
+            const uint32_t endTime = HAL_time_getUs();
             const uint32_t duration = endTime - startTime;
             if (duration > maxWaitTime)
             {
@@ -89,7 +91,7 @@ static void dev_cogManager_private_wrapper(void *arg)
             else
             {
                 const uint32_t waitTime = maxWaitTime - duration;
-                _waitus(waitTime);
+                HAL_time_waitUs(waitTime);
             }
         }
     }
@@ -139,21 +141,14 @@ void dev_cogManager_entryAction(dev_cogManager_channel_E channel)
     switch (dev_cogManager_data.channels[channel].state)
     {
     case DEV_COGMANAGER_STATE_INITIALIZE:
-        dev_cogManager_data.channels[channel].lockid = _locknew();
+        dev_cogManager_data.channels[channel].lockid = HAL_lock_create();
         dev_cogManager_config.channels[channel].cogFunctionInit(dev_cogManager_data.channels[channel].lockid);
         break;
     case DEV_COGMANAGER_STATE_BOOT:
-#ifdef __FLEXC__
-    dev_cogManager_data.channels[channel].cogid = _cogstart(dev_cogManager_private_wrapper,
-        (void *)&dev_cogManager_config.channels[channel],
-        dev_cogManager_config.channels[channel].stack,
-        dev_cogManager_config.channels[channel].stackSize);
-#else
-        dev_cogManager_data.channels[channel].cogid = cogstart(dev_cogManager_private_wrapper,
-                                                                (int)(intptr_t)&dev_cogManager_config.channels[channel],
-                                                                (int *)dev_cogManager_config.channels[channel].stack,
-                                                                dev_cogManager_config.channels[channel].stackSize);
-#endif
+        dev_cogManager_data.channels[channel].cogid = HAL_system_startThread(dev_cogManager_private_wrapper,
+            (void *)&dev_cogManager_config.channels[channel],
+            dev_cogManager_config.channels[channel].stack,
+            dev_cogManager_config.channels[channel].stackSize);
         break;
     case DEV_COGMANAGER_STATE_RUNNING:
         break;

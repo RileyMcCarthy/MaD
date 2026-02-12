@@ -1,0 +1,11 @@
+[package]
+name = "embsim-ui"
+version = "0.1.0"
+edition = "2021"
+description = "Pluggable web UI shell for embsim — views register themselves, served via a single axum server"
+
+[dependencies]
+axum = { version = "0.8", features = ["ws"] }
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+parking_lot = "0.12"
