@@ -38,6 +38,8 @@ const SD_PATH = path.join(SIL_ROOT, 'sd');
 
 // Virtual serial port path (created by emulator)
 const EMULATOR_PORT = '/tmp/tty.rpi';
+// PTYs don't support non-standard baud rates like 2Mbaud.
+// Use a standard rate for SIL - actual throughput is unlimited on virtual ports.
 const EMULATOR_BAUD_RATE = 115200;
 
 /**

@@ -22,7 +22,7 @@
  * Typedefs
  **********************************************************************/
 
-typedef struct
+typedef struct __attribute__((packed))
 {
     int32_t force;    // mN
     int32_t position; // um
@@ -46,7 +46,6 @@ typedef struct
     uint32_t maxDisplacement; // Maximum displacement (mm)
     uint32_t sampleWidth;     // Sample width (mm)
     uint32_t sampleThickness; // Sample thickness (mm)
-    char serial[100];         // Serial number string
 } app_monitor_sampleProfile_S;
 
 /**********************************************************************
@@ -70,6 +69,8 @@ void app_monitor_zeroSampleForce(void);
 void app_monitor_zeroPosition(void);
 void app_monitor_setPosition(int32_t positionUM);
 void app_monitor_setTestName(const char *testName);
+bool app_monitor_getNextTestName(char *outName, uint32_t size);
+void app_monitor_getTestName(char *outName, uint32_t size);
 
 bool app_monitor_setSampleProfile(app_monitor_sampleProfile_S *profile);
 void app_monitor_getSampleProfile(app_monitor_sampleProfile_S *profile);

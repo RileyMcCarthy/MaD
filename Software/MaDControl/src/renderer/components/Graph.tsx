@@ -60,7 +60,6 @@ export default function BasicLineChart() {
     lengthMax,
     limitForce,
     limitPosition,
-    debug,
   } = useMemo(() => {
     const config = deviceState.machineConfiguration;
     const sampleProfile = deviceState.sampleProfile;
@@ -100,22 +99,8 @@ export default function BasicLineChart() {
       lengthMax: posBase * margin,
       limitForce: limitForceVal,
       limitPosition: limitPosVal,
-      debug: {
-        sampleMaxForce: sampleProfile?.maxForce,
-        machineMaxForce: config?.['Tensile Force Max (N)'],
-        sampleMaxDisplacement: sampleProfile?.maxDisplacement,
-        machineMaxPosition: config?.['Position Max (mm)'],
-        dataForceMax,
-        dataPosMax,
-        forceBase,
-        posBase,
-      },
     };
   }, [deviceState.machineConfiguration, deviceState.sampleProfile, gaugeForce, gaugeLength]);
-
-  useEffect(() => {
-    componentLogger.info('Graph bounds debug', debug);
-  }, [debug]);
 
   // Wait for machine profile before rendering bounds
   const hasMachineConfig = Boolean(deviceState.machineConfiguration);

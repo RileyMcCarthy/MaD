@@ -8,6 +8,7 @@ import {
   MenuItem,
   Select,
   FormControl,
+  InputLabel,
   Dialog,
   DialogTitle,
   DialogContent,
@@ -15,6 +16,9 @@ import {
   Divider,
   Paper,
   SelectChangeEvent,
+  Snackbar,
+  Alert,
+  IconButton,
 } from '@mui/material';
 import {
   Save as SaveIcon,
@@ -22,6 +26,8 @@ import {
   Add as AddIcon,
   Code as CodeIcon,
   DragIndicator,
+  FileUpload as ImportIcon,
+  Delete as DeleteIcon,
 } from '@mui/icons-material';
 import { styled } from '@mui/material/styles';
 import {
@@ -37,6 +43,8 @@ import {
   Move,
 } from '@shared/SharedInterface';
 import GCodeGenerator from '../components/GCodeGenerator';
+import { componentLogger } from '../utils/logger';
+import { useProfiles } from '../hooks';
 
 const Item = styled(Box)(({ theme }) => ({
   backgroundColor: theme.palette.mode === 'dark' ? '#1A2027' : '#f8f9fa',
@@ -141,8 +149,8 @@ const TestProfileForm: React.FC = () => {
     maxDisplacement: 0,
     sampleWidth: 0,
     sampleThickness: 0,
-    serial: '',
   });
+  const [sampleName, setSampleName] = useState<string>('');
 
   const [motionProfile, setMotionProfile] = useState<MotionProfile>({
     name: '',
@@ -152,6 +160,152 @@ const TestProfileForm: React.FC = () => {
 
   const [sets, setSets] = useState([initialSet]);
   const [openDialog, setOpenDialog] = useState(false);
+
+  // ── Database-backed profile lists (shared hook) ─────────────────
+  const {
+    sampleProfiles: savedSampleProfiles,
+    motionProfiles: savedMotionProfiles,
+    refreshProfiles,
+  } = useProfiles();
+
+  const [selectedSampleProfileId, setSelectedSampleProfileId] = useState<string>('');
+  const [selectedMotionProfileId, setSelectedMotionProfileId] = useState<string>('');
+
+  // ── Feedback ────────────────────────────────────────────────────
+  const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'success' | 'error' | 'info' }>({
+    open: false,
+    message: '',
+    severity: 'success',
+  });
+
+  const showSnackbar = (message: string, severity: 'success' | 'error' | 'info' = 'success') => {
+    setSnackbar({ open: true, message, severity });
+  };
+
+  // ── Save to database ────────────────────────────────────────────
+  const handleSaveSampleProfile = async () => {
+    if (!sampleName) {
+      showSnackbar('Please enter a sample name before saving', 'error');
+      return;
+    }
+    try {
+      const result = await window.electron.ipcRenderer.invoke('data-save-sample-profile', sampleName, sampleProfile) as { exists?: boolean; name?: string; entry?: SampleProfileEntry };
+      if (result.exists) {
+        // eslint-disable-next-line no-restricted-globals
+        const overwrite = confirm(`A sample profile named "${result.name}" already exists. Replace it?`);
+        if (!overwrite) return;
+        await window.electron.ipcRenderer.invoke('data-overwrite-sample-profile', sampleName, sampleProfile);
+      }
+      await refreshProfiles();
+      showSnackbar(`Sample profile "${sampleName}" saved`);
+    } catch (error) {
+      showSnackbar('Failed to save sample profile', 'error');
+    }
+  };
+
+  const handleSaveMotionProfile = async () => {
+    if (!motionProfile.name) {
+      showSnackbar('Please enter a profile name before saving', 'error');
+      return;
+    }
+    // Sync sets into motionProfile before saving
+    const profileToSave = { ...motionProfile, sets };
+    try {
+      const result = await window.electron.ipcRenderer.invoke('data-save-motion-profile', profileToSave) as { exists?: boolean; name?: string; entry?: MotionProfileEntry };
+      if (result.exists) {
+        // eslint-disable-next-line no-restricted-globals
+        const overwrite = confirm(`A motion profile named "${result.name}" already exists. Replace it?`);
+        if (!overwrite) return;
+        await window.electron.ipcRenderer.invoke('data-overwrite-motion-profile', profileToSave);
+      }
+      await refreshProfiles();
+      showSnackbar(`Motion profile "${motionProfile.name}" saved`);
+    } catch (error) {
+      showSnackbar('Failed to save motion profile', 'error');
+    }
+  };
+
+  // ── Load from database via dropdown ─────────────────────────────
+  const handleLoadSampleProfile = (profileId: string) => {
+    setSelectedSampleProfileId(profileId);
+    const entry = savedSampleProfiles.find((p) => p.id === profileId);
+    if (entry) {
+      setSampleProfile(entry.profile);
+      setSampleName(entry.name);
+      showSnackbar(`Loaded sample profile "${entry.name}"`, 'info');
+    }
+  };
+
+  const handleLoadMotionProfile = (profileId: string) => {
+    setSelectedMotionProfileId(profileId);
+    const entry = savedMotionProfiles.find((p) => p.id === profileId);
+    if (entry) {
+      setMotionProfile(entry.profile);
+      setSets(entry.profile.sets.length > 0 ? entry.profile.sets : [initialSet]);
+      showSnackbar(`Loaded motion profile "${entry.name}"`, 'info');
+    }
+  };
+
+  // ── Delete from database ────────────────────────────────────────
+  const handleDeleteSampleProfile = async (profileId: string) => {
+    try {
+      await window.electron.ipcRenderer.invoke('data-delete-sample-profile', profileId);
+      if (selectedSampleProfileId === profileId) setSelectedSampleProfileId('');
+      await refreshProfiles();
+      showSnackbar('Sample profile deleted', 'info');
+    } catch (error) {
+      showSnackbar('Failed to delete sample profile', 'error');
+    }
+  };
+
+  const handleDeleteMotionProfile = async (profileId: string) => {
+    try {
+      await window.electron.ipcRenderer.invoke('data-delete-motion-profile', profileId);
+      if (selectedMotionProfileId === profileId) setSelectedMotionProfileId('');
+      await refreshProfiles();
+      showSnackbar('Motion profile deleted', 'info');
+    } catch (error) {
+      showSnackbar('Failed to delete motion profile', 'error');
+    }
+  };
+
+  // ── Import from file (secondary option) ─────────────────────────
+  const handleImportSampleProfileFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      const content = await file.text();
+      const loadedProfile = JSON.parse(content) as SampleProfile;
+      setSampleProfile(loadedProfile);
+      const importName = file.name.replace(/\.sp$/i, '') || 'profile';
+      setSampleName(importName);
+      await window.electron.ipcRenderer.invoke('data-overwrite-sample-profile', importName, loadedProfile);
+      await refreshProfiles();
+      showSnackbar(`Imported and saved "${importName}"`, 'success');
+    } catch (error) {
+      showSnackbar('Failed to import sample profile', 'error');
+    }
+    // eslint-disable-next-line no-param-reassign
+    event.target.value = '';
+  };
+
+  const handleImportMotionProfileFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      const content = await file.text();
+      const loadedProfile = JSON.parse(content) as MotionProfile;
+      setMotionProfile(loadedProfile);
+      setSets(loadedProfile.sets.length > 0 ? loadedProfile.sets : [initialSet]);
+      await window.electron.ipcRenderer.invoke('data-overwrite-motion-profile', loadedProfile);
+      await refreshProfiles();
+      showSnackbar(`Imported and saved "${loadedProfile.name || 'profile'}"`, 'success');
+    } catch (error) {
+      showSnackbar('Failed to import motion profile', 'error');
+    }
+    // eslint-disable-next-line no-param-reassign
+    event.target.value = '';
+  };
 
   const handleOpenDialog = () => {
     setOpenDialog(true);
@@ -189,7 +343,7 @@ const TestProfileForm: React.FC = () => {
       const { value } = event.target;
       setSampleProfile((prev) => ({
         ...prev,
-        [field]: field === 'serial' ? value : Number(value),
+        [field]: Number(value),
       }));
     };
 
@@ -301,37 +455,57 @@ const TestProfileForm: React.FC = () => {
       });
     };
 
-  const handleSaveSet = (index: number) => {
+  const handleSaveSet = async (index: number) => {
     const set = sets[index];
-    const jsonSet = JSON.stringify(set, null, 2);
-    const blob = new Blob([jsonSet], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${set.name || `set_${index + 1}`}.set`;
-    a.click();
-    URL.revokeObjectURL(url);
+    if (!set.name) {
+      alert('Please enter a set name before saving.');
+      return;
+    }
+    try {
+      const result = await window.electron.ipcRenderer.invoke(
+        'data-save-set',
+        set,
+      );
+      if (result.exists) {
+        const overwrite = window.confirm(
+          `A set named "${result.name}" already exists. Do you want to replace it?`,
+        );
+        if (!overwrite) return;
+        await window.electron.ipcRenderer.invoke('data-overwrite-set', set);
+      }
+    } catch (error) {
+      componentLogger.error('Failed to save set:', error);
+    }
   };
 
-  const handleLoadSet = (
-    index: number,
-    event: React.ChangeEvent<HTMLInputElement>,
-  ) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const jsonSet = e.target?.result as string;
-        const loadedSet = JSON.parse(jsonSet);
-        const newSets = [...sets];
-        newSets[index] = loadedSet;
-        setSets(newSets);
-        setMotionProfile({
-          ...motionProfile,
-          sets: newSets,
-        });
-      };
-      reader.readAsText(file);
+  const handleLoadSet = async (index: number) => {
+    try {
+      const savedSets = await window.electron.ipcRenderer.invoke('data-get-sets');
+      if (!savedSets || savedSets.length === 0) {
+        alert('No saved sets found.');
+        return;
+      }
+      // Show a simple selection dialog using the set names
+      const setNames = savedSets.map((s: { name: string }) => s.name);
+      const selectedName = window.prompt(
+        `Available sets:\n${setNames.map((n: string, i: number) => `${i + 1}. ${n}`).join('\n')}\n\nEnter the number of the set to load:`,
+      );
+      if (!selectedName) return;
+      const selectedIndex = parseInt(selectedName, 10) - 1;
+      if (isNaN(selectedIndex) || selectedIndex < 0 || selectedIndex >= savedSets.length) {
+        alert('Invalid selection.');
+        return;
+      }
+      const loadedSet = savedSets[selectedIndex];
+      const newSets = [...sets];
+      newSets[index] = loadedSet;
+      setSets(newSets);
+      setMotionProfile({
+        ...motionProfile,
+        sets: newSets,
+      });
+    } catch (error) {
+      componentLogger.error('Failed to load set:', error);
     }
   };
 
@@ -410,60 +584,74 @@ const TestProfileForm: React.FC = () => {
           </Grid>
           <Grid item xs={12} sm={4}>
             <TextField
-              label="Serial Number"
-              value={sampleProfile.serial}
-              onChange={handleSampleProfileChange('serial')}
+              label="Sample Name"
+              value={sampleName}
+              onChange={(e) => setSampleName(e.target.value)}
               fullWidth
             />
           </Grid>
         </Grid>
-        <Box sx={{ mt: 2, display: 'flex', gap: 2 }}>
-          <Button
-            variant="contained"
-            color="primary"
-            startIcon={<SaveIcon />}
-            onClick={() => {
-              const jsonProfile = JSON.stringify(sampleProfile, null, 2);
-              const blob = new Blob([jsonProfile], {
-                type: 'application/json',
-              });
-              const url = URL.createObjectURL(blob);
-              const a = document.createElement('a');
-              a.href = url;
-              a.download = `${sampleProfile.serial}.sp`;
-              a.click();
-              URL.revokeObjectURL(url);
-            }}
-          >
-            Save Sample Profile
-          </Button>
-          <Button
-            variant="contained"
-            color="secondary"
-            startIcon={<LoadIcon />}
-            component="label"
-          >
-            Load Sample Profile
-            <input
-              type="file"
-              accept=".sp"
-              hidden
-              onChange={(event) => {
-                const file = event.target.files?.[0];
-                if (file) {
-                  const reader = new FileReader();
-                  reader.onload = (e) => {
-                    const jsonProfile = e.target?.result as string;
-                    const loadedProfile = JSON.parse(
-                      jsonProfile,
-                    ) as SampleProfile;
-                    setSampleProfile(loadedProfile);
-                  };
-                  reader.readAsText(file);
-                }
-              }}
-            />
-          </Button>
+        <Box sx={{ mt: 2, display: 'flex', flexDirection: 'column', gap: 2 }}>
+          {/* Load from saved profiles */}
+          <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+            <FormControl sx={{ flex: 1 }} size="small">
+              <InputLabel>Load Saved Profile</InputLabel>
+              <Select
+                value={selectedSampleProfileId}
+                label="Load Saved Profile"
+                onChange={(e) => handleLoadSampleProfile(e.target.value as string)}
+              >
+                {savedSampleProfiles.map((sp) => (
+                  <MenuItem key={sp.id} value={sp.id}>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', width: '100%', alignItems: 'center' }}>
+                      <span>{sp.name} — {sp.profile.maxForce}N, {sp.profile.maxDisplacement}mm</span>
+                    </Box>
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            {selectedSampleProfileId && (
+              <IconButton
+                size="small"
+                color="error"
+                onClick={() => handleDeleteSampleProfile(selectedSampleProfileId)}
+                title="Delete selected profile"
+              >
+                <DeleteIcon fontSize="small" />
+              </IconButton>
+            )}
+            <IconButton
+              size="small"
+              onClick={() => window.electron.ipcRenderer.invoke('data-open-data-dir')}
+              title="Open profiles folder"
+            >
+              <LoadIcon fontSize="small" />
+            </IconButton>
+          </Box>
+          {/* Action buttons */}
+          <Box sx={{ display: 'flex', gap: 2 }}>
+            <Button
+              variant="contained"
+              color="primary"
+              startIcon={<SaveIcon />}
+              onClick={handleSaveSampleProfile}
+            >
+              Save Sample Profile
+            </Button>
+            <Button
+              variant="outlined"
+              component="label"
+              startIcon={<ImportIcon />}
+            >
+              Import from File
+              <input
+                type="file"
+                accept=".sp"
+                hidden
+                onChange={handleImportSampleProfileFile}
+              />
+            </Button>
+          </Box>
         </Box>
       </Paper>
 
@@ -830,16 +1018,10 @@ const TestProfileForm: React.FC = () => {
                                   variant="contained"
                                   color="secondary"
                                   startIcon={<LoadIcon />}
-                                  component="label"
+                                  onClick={() => handleLoadSet(setIndex)}
                                   sx={{ flex: 1 }}
                                 >
                                   Load Set
-                                  <input
-                                    type="file"
-                                    accept=".set"
-                                    hidden
-                                    onChange={(e) => handleLoadSet(setIndex, e)}
-                                  />
                                 </Button>
                                 <Button
                                   variant="contained"
@@ -884,62 +1066,73 @@ const TestProfileForm: React.FC = () => {
           </Button>
         </Box>
 
-        <Box sx={{ mt: 4, display: 'flex', gap: 2 }}>
-          <Button
-            variant="contained"
-            color="primary"
-            startIcon={<SaveIcon />}
-            onClick={() => {
-              const jsonProfile = JSON.stringify(motionProfile, null, 2);
-              const blob = new Blob([jsonProfile], {
-                type: 'application/json',
-              });
-              const url = URL.createObjectURL(blob);
-              const a = document.createElement('a');
-              a.href = url;
-              a.download = `${motionProfile.name}.mp`;
-              a.click();
-              URL.revokeObjectURL(url);
-            }}
-          >
-            Save Motion Profile
-          </Button>
-          <Button
-            variant="contained"
-            color="secondary"
-            startIcon={<LoadIcon />}
-            component="label"
-          >
-            Load Motion Profile
-            <input
-              type="file"
-              accept=".mp"
-              hidden
-              onChange={(event) => {
-                const file = event.target.files?.[0];
-                if (file) {
-                  const reader = new FileReader();
-                  reader.onload = (e) => {
-                    const jsonProfile = e.target?.result as string;
-                    const loadedProfile = JSON.parse(
-                      jsonProfile,
-                    ) as MotionProfile;
-                    setMotionProfile(loadedProfile);
-                    setSets(loadedProfile.sets);
-                  };
-                  reader.readAsText(file);
-                }
-              }}
-            />
-          </Button>
-          <Button
-            variant="contained"
-            color="primary"
-            startIcon={<CodeIcon />}
-            onClick={handleOpenDialog}
-          >
-            Preview G-code
-          </Button>
+        <Box sx={{ mt: 4, display: 'flex', flexDirection: 'column', gap: 2 }}>
+          {/* Load from saved profiles */}
+          <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+            <FormControl sx={{ flex: 1 }} size="small">
+              <InputLabel>Load Saved Profile</InputLabel>
+              <Select
+                value={selectedMotionProfileId}
+                label="Load Saved Profile"
+                onChange={(e) => handleLoadMotionProfile(e.target.value as string)}
+              >
+                {savedMotionProfiles.map((mp) => (
+                  <MenuItem key={mp.id} value={mp.id}>
+                    {mp.name}{mp.description ? ` — ${mp.description}` : ''}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            {selectedMotionProfileId && (
+              <IconButton
+                size="small"
+                color="error"
+                onClick={() => handleDeleteMotionProfile(selectedMotionProfileId)}
+                title="Delete selected profile"
+              >
+                <DeleteIcon fontSize="small" />
+              </IconButton>
+            )}
+            <IconButton
+              size="small"
+              onClick={() => window.electron.ipcRenderer.invoke('data-open-data-dir')}
+              title="Open profiles folder"
+            >
+              <LoadIcon fontSize="small" />
+            </IconButton>
+          </Box>
+          {/* Action buttons */}
+          <Box sx={{ display: 'flex', gap: 2 }}>
+            <Button
+              variant="contained"
+              color="primary"
+              startIcon={<SaveIcon />}
+              onClick={handleSaveMotionProfile}
+            >
+              Save Motion Profile
+            </Button>
+            <Button
+              variant="outlined"
+              component="label"
+              startIcon={<ImportIcon />}
+            >
+              Import from File
+              <input
+                type="file"
+                accept=".mp"
+                hidden
+                onChange={handleImportMotionProfileFile}
+              />
+            </Button>
+            <Button
+              variant="contained"
+              color="primary"
+              startIcon={<CodeIcon />}
+              onClick={handleOpenDialog}
+            >
+              Preview G-code
+            </Button>
+          </Box>
         </Box>
       </Paper>
 
@@ -961,6 +1154,22 @@ const TestProfileForm: React.FC = () => {
           </Button>
         </DialogActions>
       </Dialog>
+
+      <Snackbar
+        open={snackbar.open}
+        autoHideDuration={3000}
+        onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert
+          onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
+          severity={snackbar.severity}
+          variant="filled"
+          sx={{ width: '100%' }}
+        >
+          {snackbar.message}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 };

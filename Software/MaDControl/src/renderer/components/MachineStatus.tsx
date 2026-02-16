@@ -1,18 +1,9 @@
 import { FaultedReason, RestrictedReason } from '@shared/SharedInterface';
 import { Typography, Box, Tooltip } from '@mui/material';
-import Paper from '@mui/material/Paper';
-import { styled } from '@mui/material/styles';
 import Grid from '@mui/material/Grid';
 import Skeleton from '@mui/material/Skeleton';
 import { useDevice } from '@renderer/hooks';
-
-const Item = styled(Paper)(({ theme }) => ({
-  backgroundColor: theme.palette.mode === 'dark' ? '#1A2027' : '#fff',
-  ...theme.typography.body2,
-  padding: theme.spacing(1),
-  textAlign: 'center',
-  color: theme.palette.text.secondary,
-}));
+import { CardPanel } from './StyledComponents';
 
 function getStyledFaultedReason(reason: FaultedReason) {
   const explanations = {
@@ -104,7 +95,7 @@ function StatusComponent() {
   function styledStateParameters() {
     if (machineState) {
       return (
-        <Item>
+        <CardPanel>
           <Box>
             <Typography variant="h6" noWrap>
               Machine State
@@ -156,7 +147,7 @@ function StatusComponent() {
               </Grid>
             </Grid>
           </Box>
-        </Item>
+        </CardPanel>
       );
     }
     return <Skeleton animation="wave" variant="rounded" sx={{ height }} />;

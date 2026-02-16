@@ -6,12 +6,6 @@
 #include "dev_nvram.h"
 #include "app_monitor.h"
 
-typedef struct TestDataRequest
-{
-    uint32_t index; // Index of the requested data
-    uint8_t count;  // Number of data points requested
-} TestDataRequest;
-
 typedef struct
 {
     int g;
@@ -22,7 +16,6 @@ typedef struct
 
 bool json_to_machine_profile(MachineProfile *profile, char *json);
 bool json_to_sample_profile(app_monitor_sampleProfile_S *profile, char *json);
-bool json_to_test_data_request(TestDataRequest *request, char *json);
 bool json_to_test_header_name(const char **name, char *json);
 bool json_to_move(lib_json_move_S *move, char *json);
 

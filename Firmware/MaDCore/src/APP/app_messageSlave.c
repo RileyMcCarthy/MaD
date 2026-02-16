@@ -17,11 +17,11 @@
 #include "IO_protocol.h"
 #include "JsonDecoder.h"
 #include "dev_nvram.h"
-#include "IO_logger.h"
+#include "IO_SDCard.h"
 #include "IO_Debug.h"
 #include "lib_utility.h"
-#include "IO_gcode.h"
 #include "emulation_helpers.h"
+
 /**********************************************************************
  * Constants
  **********************************************************************/
@@ -162,13 +162,12 @@ static app_message_slave_responseType_E app_message_slave_private_handleRead(IO_
         app_monitor_sampleProfile_S sampleProfile;
         app_monitor_getSampleProfile(&sampleProfile);
         dataSize = snprintf(app_message_slave_data.dataTX, APP_MESSAGE_SLAVE_TX_BUFFER_SIZE,
-                 "{\"maxForce\":%u,\"maxVelocity\":%u,\"maxDisplacement\":%u,\"sampleWidth\":%u,\"sampleThickness\":%u,\"serial\":\"%s\"}",
-                 sampleProfile.maxForce,
-                 sampleProfile.maxVelocity,
-                 sampleProfile.maxDisplacement,
-                 sampleProfile.sampleWidth,
-                 sampleProfile.sampleThickness,
-                 sampleProfile.serial);
+                            "{\"maxForce\":%u,\"maxVelocity\":%u,\"maxDisplacement\":%u,\"sampleWidth\":%u,\"sampleThickness\":%u}",
+                            sampleProfile.maxForce,
+                            sampleProfile.maxVelocity,
+                            sampleProfile.maxDisplacement,
+                            sampleProfile.sampleWidth,
+                            sampleProfile.sampleThickness);
         responseType = APP_MESSAGE_SLAVE_RESPONSE_TYPE_DATA;
     }
     break;
@@ -257,14 +256,36 @@ static app_message_slave_responseType_E app_message_slave_private_handleWrite(IO
     case IO_PROTOCOL_WRITE_TYPE_TEST_RUN:
         if (app_message_slave_data.dataRX[0] != '\0')
         {
-            // Set the test name before starting the test
-            app_monitor_setTestName(app_message_slave_data.dataRX);
-            if (app_control_triggerTestStart())
+            // Close gcode write channel and wait for it to finish writing
+            IO_SDCard_close(IO_SDCARD_CHANNEL_GCODE);
+            while (!IO_SDCard_isClosed(IO_SDCARD_CHANNEL_GCODE))
             {
-                responseType = APP_MESSAGE_SLAVE_RESPONSE_TYPE_ACK;
+                EMULATION_YIELD_LOCK();
+            }
+
+            // Get next test name from SD card index file
+            char nextTestName[16];
+            if (app_monitor_getNextTestName(nextTestName, sizeof(nextTestName)))
+            {
+                app_monitor_setTestName(nextTestName);
+
+                // app_motion will open gcode channel in READ mode when it detects testRunning
+
+                if (app_control_triggerTestStart())
+                {
+                    // Respond with DATA containing the assigned test name
+                    const uint16_t nameLen = (uint16_t)strlen(nextTestName);
+                    IO_protocol_respondData((IO_protocol_readType_E)writeType, (uint8_t *)nextTestName, nameLen);
+                    DEBUG_INFO("TEST_RUN: started test with name %s\n", nextTestName);
+                }
+                else
+                {
+                    responseType = APP_MESSAGE_SLAVE_RESPONSE_TYPE_NACK;
+                }
             }
             else
             {
+                DEBUG_ERROR("%s", "TEST_RUN: failed to get next test name from SD card\n");
                 responseType = APP_MESSAGE_SLAVE_RESPONSE_TYPE_NACK;
             }
         }
@@ -297,13 +318,40 @@ static app_message_slave_responseType_E app_message_slave_private_handleWrite(IO
     }
     case IO_PROTOCOL_WRITE_TYPE_TEST_MOVE:
     {
-        // Decode G-code into move structure
-        app_motion_move_t move = {0};
-        DEBUG_INFO("Recieved G-code: %s\n", app_message_slave_data.dataRX);
-        if (IO_gcode_decodeMove(app_message_slave_data.dataRX, &move))
+        // Write binary move structs via IO_SDCard channel
+        if (dataSize == 0 || app_message_slave_data.dataRX[0] == '\0')
         {
-            if (app_motion_addTestMove(&move))
+            // Empty payload: open gcode channel in WRITE mode (truncates with "wb")
+            if (IO_SDCard_open(IO_SDCARD_CHANNEL_GCODE, "", IO_SDCARD_MODE_WRITE))
             {
+                DEBUG_INFO("%s", "GCODE: opened channel for upload\n");
+                responseType = APP_MESSAGE_SLAVE_RESPONSE_TYPE_ACK;
+            }
+            else
+            {
+                DEBUG_ERROR("%s", "GCODE: failed to open channel\n");
+                responseType = APP_MESSAGE_SLAVE_RESPONSE_TYPE_NACK;
+            }
+        }
+        else if ((dataSize % sizeof(app_motion_move_t)) == 0)
+        {
+            // Batch push: payload contains N packed move structs
+            const uint32_t moveCount = dataSize / sizeof(app_motion_move_t);
+            bool allPushed = true;
+            for (uint32_t i = 0; i < moveCount; i++)
+            {
+                app_motion_move_t move;
+                memcpy(&move, &app_message_slave_data.dataRX[i * sizeof(app_motion_move_t)], sizeof(app_motion_move_t));
+                if (!IO_SDCard_push(IO_SDCARD_CHANNEL_GCODE, &move, sizeof(app_motion_move_t)))
+                {
+                    DEBUG_ERROR("GCODE: queue full at move %u of %u\n", i, moveCount);
+                    allPushed = false;
+                    break;
+                }
+            }
+            if (allPushed)
+            {
+                DEBUG_INFO("GCODE: queued %u moves\n", moveCount);
                 responseType = APP_MESSAGE_SLAVE_RESPONSE_TYPE_ACK;
             }
             else
@@ -313,6 +361,7 @@ static app_message_slave_responseType_E app_message_slave_private_handleWrite(IO
         }
         else
         {
+            DEBUG_ERROR("GCODE: unexpected data size %u (not a multiple of %u)\n", dataSize, (uint32_t)sizeof(app_motion_move_t));
             responseType = APP_MESSAGE_SLAVE_RESPONSE_TYPE_NACK;
         }
         break;
@@ -323,13 +372,12 @@ static app_message_slave_responseType_E app_message_slave_private_handleWrite(IO
         app_monitor_sampleProfile_S sampleProfile;
         if (json_to_sample_profile(&sampleProfile, app_message_slave_data.dataRX))
         {
-            DEBUG_INFO("Sample profile: maxForce=%u, maxVelocity=%u, maxDisplacement=%u, sampleWidth=%u, sampleThickness=%u, serial=%s\n",
+            DEBUG_INFO("Sample profile: maxForce=%u, maxVelocity=%u, maxDisplacement=%u, sampleWidth=%u, sampleThickness=%u\n",
                        sampleProfile.maxForce,
                        sampleProfile.maxVelocity,
                        sampleProfile.maxDisplacement,
                        sampleProfile.sampleWidth,
-                       sampleProfile.sampleThickness,
-                       sampleProfile.serial);
+                       sampleProfile.sampleThickness);
 
             if (app_monitor_setSampleProfile(&sampleProfile))
             {
@@ -357,6 +405,75 @@ static app_message_slave_responseType_E app_message_slave_private_handleWrite(IO
         DEBUG_INFO("%s", "Setting gauge force\n");
         app_monitor_zeroSampleForce();
         break;
+    case IO_PROTOCOL_WRITE_TYPE_FILE_INFO:
+    {
+        // Removed — no longer used. Kept as NACK for backwards compatibility.
+        DEBUG_WARNING("%s", "FILE_INFO: deprecated command received\n");
+        responseType = APP_MESSAGE_SLAVE_RESPONSE_TYPE_NACK;
+        break;
+    }
+    case IO_PROTOCOL_WRITE_TYPE_FILE_DOWNLOAD:
+    {
+        // Request payload is binary: testName(16 bytes) + sampleIndex(uint32_t) + sampleCount(uint32_t)
+        const uint32_t headerSize = 16 + sizeof(uint32_t) + sizeof(uint32_t);
+        if (dataSize >= headerSize)
+        {
+            char testName[17];
+            memcpy(testName, app_message_slave_data.dataRX, 16);
+            testName[16] = '\0';
+            // Trim trailing nulls/spaces
+            for (int i = 15; i >= 0; i--)
+            {
+                if (testName[i] == '\0' || testName[i] == ' ')
+                {
+                    testName[i] = '\0';
+                }
+                else
+                {
+                    break;
+                }
+            }
+
+            uint32_t sampleIndex;
+            uint32_t sampleCount;
+            memcpy(&sampleIndex, &app_message_slave_data.dataRX[16], sizeof(uint32_t));
+            memcpy(&sampleCount, &app_message_slave_data.dataRX[20], sizeof(uint32_t));
+
+            DEBUG_INFO("FILE_DOWNLOAD: test=%s sampleIndex=%u sampleCount=%u\n", testName, sampleIndex, sampleCount);
+
+            // Limit to TX buffer capacity
+            const uint32_t sampleSize = sizeof(app_monitor_sample_t);
+            const uint32_t maxSamples = (APP_MESSAGE_SLAVE_TX_BUFFER_SIZE) / sampleSize;
+            const uint32_t readCount = LIB_UTILITY_MIN(sampleCount, maxSamples);
+
+            const uint32_t itemsRead = IO_SDCard_readDirect(
+                IO_SDCARD_CHANNEL_SAMPLE_DATA,
+                testName,
+                app_message_slave_data.dataTX,
+                sampleIndex,
+                readCount);
+
+            if (itemsRead > 0U)
+            {
+                // Respond with raw binary sample structs (0 bytes = EOF)
+                const uint16_t len = LIB_UTILITY_LIMIT(itemsRead * sampleSize, 0, 65535);
+                IO_protocol_respondData((IO_protocol_readType_E)writeType, (uint8_t *)app_message_slave_data.dataTX, len);
+                DEBUG_INFO("FILE_DOWNLOAD: sent %u samples (%u bytes)\n", itemsRead, len);
+            }
+            else
+            {
+                // 0 items = EOF or file not found — respond with empty data
+                IO_protocol_respondData((IO_protocol_readType_E)writeType, (uint8_t *)app_message_slave_data.dataTX, 0);
+                DEBUG_INFO("%s", "FILE_DOWNLOAD: 0 samples read (EOF or not found)\n");
+            }
+        }
+        else
+        {
+            DEBUG_ERROR("FILE_DOWNLOAD: invalid request size %u (expected >= %u)\n", dataSize, headerSize);
+            responseType = APP_MESSAGE_SLAVE_RESPONSE_TYPE_NACK;
+        }
+        break;
+    }
     case IO_PROTOCOL_WRITE_TYPE_COUNT:
     default:
         break;

@@ -94,7 +94,6 @@ bool json_to_sample_profile(app_monitor_sampleProfile_S *profile, char *json)
     success &= json_property_to_uint32(parser, "maxDisplacement", &(profile->maxDisplacement));
     success &= json_property_to_uint32(parser, "sampleWidth", &(profile->sampleWidth));
     success &= json_property_to_uint32(parser, "sampleThickness", &(profile->sampleThickness));
-    success &= json_property_to_string(parser, "serial", profile->serial, sizeof(profile->serial));
 
     return success;
 }

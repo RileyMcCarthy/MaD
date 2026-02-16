@@ -1,7 +1,7 @@
-import { Typography, Grid, Box, Paper, Tooltip } from '@mui/material';
-import { styled } from '@mui/material/styles';
+import { Typography, Grid, Box, Tooltip } from '@mui/material';
 import { useDevice } from '@renderer/hooks';
 import { SampleData } from '@shared/SharedInterface';
+import { CardPanel } from './StyledComponents';
 
 // Descriptions for sample data fields to show in tooltips
 const SampleDataDescriptions: Partial<Record<keyof SampleData, string>> = {
@@ -11,21 +11,13 @@ const SampleDataDescriptions: Partial<Record<keyof SampleData, string>> = {
   'Sample Position (mm)': 'Starting position of the motion profile',
 };
 
-const Item = styled(Paper)(({ theme }) => ({
-  backgroundColor: theme.palette.mode === 'dark' ? '#1A2027' : '#fff',
-  ...theme.typography.body2,
-  padding: theme.spacing(1),
-  textAlign: 'center',
-  color: theme.palette.text.secondary,
-}));
-
 function Parameters() {
   const [deviceState] = useDevice();
   const latestSample = deviceState.latestSampleData;
 
   return (
     <Box sx={{ flexGrow: 1 }}>
-      <Item>
+      <CardPanel>
         <Grid container direction="column">
           {latestSample ? (
             Object.entries(latestSample).map(([key, value]) => {
@@ -68,7 +60,7 @@ function Parameters() {
             <Typography>Loading...</Typography>
           )}
         </Grid>
-      </Item>
+      </CardPanel>
     </Box>
   );
 }

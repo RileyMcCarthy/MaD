@@ -39,6 +39,7 @@ interface DeviceActions {
   getFirmwareVersion: () => Promise<string>;
   flashFirmwareFromFile: () => Promise<{ success: boolean; error?: string }>;
   cancelFirmwareFlash: () => Promise<{ success: boolean; error?: string }>;
+  downloadTestFile: (testName: string, savePath: string) => Promise<{ success: boolean; error?: string; filePath?: string; fileSize?: number }>;
 }
 
 interface DeviceContextType {
@@ -354,6 +355,34 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  const downloadTestFile = useCallback(
+    async (
+      testName: string,
+      savePath: string,
+    ): Promise<{
+      success: boolean;
+      error?: string;
+      filePath?: string;
+      fileSize?: number;
+    }> => {
+      try {
+        return await window.electron.ipcRenderer.invoke('download-test-file', {
+          testName,
+          savePath,
+        });
+      } catch (error) {
+        return {
+          success: false,
+          error:
+            error instanceof Error
+              ? error.message
+              : 'Failed to download test file',
+        };
+      }
+    },
+    [],
+  );
+
   const actions: DeviceActions = {
     connect,
     listPorts,
@@ -371,6 +400,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     getFirmwareVersion,
     flashFirmwareFromFile,
     cancelFirmwareFlash,
+    downloadTestFile,
   };
 
   const contextValue: DeviceContextType = {

@@ -1,23 +1,15 @@
-import { IconButton, Tooltip, Box, Grid, Paper, TextField } from '@mui/material';
+import { IconButton, Tooltip, Box, Grid, TextField } from '@mui/material';
 import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
 import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
 import HomeIcon from '@mui/icons-material/Home';
 import LockIcon from '@mui/icons-material/Lock';
 import LockOpenIcon from '@mui/icons-material/LockOpen';
-import { styled } from '@mui/material/styles';
 import SpeedIcon from '@mui/icons-material/Speed';
 import StraightenIcon from '@mui/icons-material/Straighten';
 import { useDevice } from '@renderer/hooks';
 import { componentLogger } from '../utils/logger';
 import { useState } from 'react';
-
-const Item = styled(Paper)(({ theme }) => ({
-  backgroundColor: theme.palette.mode === 'dark' ? '#1A2027' : '#fff',
-  ...theme.typography.body2,
-  padding: theme.spacing(1),
-  textAlign: 'center',
-  color: theme.palette.text.secondary,
-}));
+import { CardPanel } from './StyledComponents';
 
 function Control() {
   const [state, actions] = useDevice();
@@ -25,16 +17,8 @@ function Control() {
   const [moveSpeed, setMoveSpeed] = useState(100); // mm/s
   const isMotionEnabled = Boolean(state.machineState?.motionEnabled);
 
-  // Debug logging
-  console.log('Control component render:', {
-    motionEnabled: state.machineState?.motionEnabled,
-    isMotionEnabled,
-    machineState: state.machineState
-  });
-
   const handleEnableMotion = async () => {
     try {
-      console.log('handleEnableMotion called - setting motion to TRUE');
       await actions.setMotionEnabled(true);
     } catch (error) {
       componentLogger.error('Failed to enable motion:', error);
@@ -43,7 +27,6 @@ function Control() {
 
   const handleDisableMotion = async () => {
     try {
-      console.log('handleDisableMotion called - setting motion to FALSE');
       await actions.setMotionEnabled(false);
     } catch (error) {
       componentLogger.error('Failed to disable motion:', error);
@@ -92,7 +75,7 @@ function Control() {
 
   return (
     <Box sx={{ flexGrow: 1 }}>
-      <Item>
+      <CardPanel>
         <Grid container spacing={1}>
           <Grid item xs={12}>
             <Grid container spacing={1}>
@@ -160,7 +143,6 @@ function Control() {
                 <Tooltip title={isMotionEnabled ? 'Disable Motion' : 'Enable Motion'}>
                   <IconButton
                     onClick={() => {
-                      console.log('Button clicked! isMotionEnabled:', isMotionEnabled);
                       if (isMotionEnabled) {
                         handleDisableMotion();
                       } else {
@@ -204,7 +186,7 @@ function Control() {
             </Grid>
           </Grid>
         </Grid>
-      </Item>
+      </CardPanel>
     </Box>
   );
 }

@@ -87,7 +87,7 @@ export default function StressStrainChart() {
     }
 
     // Check if we have a valid sample profile loaded from firmware
-    if (!sampleProfile || !sampleProfile.serial || !deviceState.machineConfiguration) {
+    if (!sampleProfile || !sampleProfile.sampleWidth || !sampleProfile.sampleThickness || !deviceState.machineConfiguration) {
       return { stressStrainData: [], hasValidProfile: false };
     }
 

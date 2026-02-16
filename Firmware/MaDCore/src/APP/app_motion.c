@@ -24,6 +24,7 @@
 #include "lib_utility.h"
 
 #include "IO_Debug.h"
+#include "IO_SDCard.h"
 #include "emulation_helpers.h"
 #include "watchdog.h"
 /**********************************************************************
@@ -34,7 +35,7 @@
  * Macros
  **********************************************************************/
 #define MOTION_MANUAL_BUFFER_SIZE 100
-#define MOTION_TEST_BUFFER_SIZE 100
+#define MOTION_STAGED_MOVE_BUFFER_SIZE 32
 
 #define APP_MOTION_LOCK_REQ() HAL_lock_try(app_motion_data.lock)
 #define APP_MOTION_LOCK_REQ_BLOCK()        \
@@ -65,7 +66,6 @@ typedef struct
 typedef struct
 {
     app_motion_dataInputs_t inputs;
-    lib_staticQueue_S testQueue;
     lib_staticQueue_S manualQueue;
 
     bool moveComplete;
@@ -85,7 +85,11 @@ typedef struct
     app_motion_outputs_t output;
 
     app_motion_move_t manualBuffer[MOTION_MANUAL_BUFFER_SIZE];
-    app_motion_move_t testBuffer[MOTION_TEST_BUFFER_SIZE];
+
+    // Staged move buffer for test mode — filled in bulk from IO_SDCard queue
+    app_motion_move_t stagedMoves[MOTION_STAGED_MOVE_BUFFER_SIZE];
+    uint32_t stagedCount;
+    uint32_t stagedIndex;
 } app_motion_data_t;
 /**********************************************************************
  * Variable Definitions
@@ -132,11 +136,50 @@ static bool app_motion_private_hasValidMove(void)
 {
     if (app_motion_data.inputs.testRunning == false)
     {
+        // Manual mode: pop from manual queue
         return lib_staticQueue_pop(&app_motion_data.manualQueue, &app_motion_data.currentMove);
     }
     else
     {
-        return lib_staticQueue_pop(&app_motion_data.testQueue, &app_motion_data.currentMove);
+        // Test mode: open gcode channel on first call
+        if (IO_SDCard_isClosed(IO_SDCARD_CHANNEL_GCODE))
+        {
+            IO_SDCard_open(IO_SDCARD_CHANNEL_GCODE, "", IO_SDCARD_MODE_READ);
+            app_motion_data.stagedCount = 0U;
+            app_motion_data.stagedIndex = 0U;
+            return false;
+        }
+
+        // Consume from staged buffer first
+        if (app_motion_data.stagedIndex < app_motion_data.stagedCount)
+        {
+            app_motion_data.currentMove = app_motion_data.stagedMoves[app_motion_data.stagedIndex];
+            app_motion_data.stagedIndex++;
+            return true;
+        }
+
+        // Staged buffer empty — refill in bulk from IO_SDCard queue
+        app_motion_data.stagedIndex = 0U;
+        app_motion_data.stagedCount = IO_SDCard_popMultiple(
+            IO_SDCARD_CHANNEL_GCODE,
+            app_motion_data.stagedMoves,
+            MOTION_STAGED_MOVE_BUFFER_SIZE);
+
+        if (app_motion_data.stagedCount > 0U)
+        {
+            app_motion_data.currentMove = app_motion_data.stagedMoves[app_motion_data.stagedIndex];
+            app_motion_data.stagedIndex++;
+            return true;
+        }
+
+        // No move available — check if reader is done (EOF + queue empty)
+        if (IO_SDCard_isReadDone(IO_SDCARD_CHANNEL_GCODE))
+        {
+            DEBUG_INFO("%s", "GCODE: reader done, ending test\n");
+            IO_SDCard_close(IO_SDCARD_CHANNEL_GCODE);
+            app_control_triggerTestEnd();
+        }
+        return false;
     }
 }
 
@@ -328,7 +371,6 @@ void app_motion_init(int lock)
     app_motion_data.homingOffset = machineProfile.homingOffset;
     app_motion_data.jawOffset = machineProfile.jawOffset;
     (void)lib_staticQueue_init(&app_motion_data.manualQueue, app_motion_data.manualBuffer, MOTION_MANUAL_BUFFER_SIZE, sizeof(app_motion_move_t), lock);
-    (void)lib_staticQueue_init(&app_motion_data.testQueue, app_motion_data.testBuffer, MOTION_TEST_BUFFER_SIZE, sizeof(app_motion_move_t), lock);
     lib_timer_init(&app_motion_data.endstopTimer, 1000);
 }
 
@@ -339,11 +381,6 @@ void app_motion_run()
     app_motion_private_processOutputs();
 }
 
-bool app_motion_addTestMove(app_motion_move_t *command)
-{
-    return lib_staticQueue_push(&app_motion_data.testQueue, command);
-}
-
 bool app_motion_addManualMove(app_motion_move_t *command)
 {
     return lib_staticQueue_push(&app_motion_data.manualQueue, command);
@@ -351,7 +388,6 @@ bool app_motion_addManualMove(app_motion_move_t *command)
 
 void app_motion_clearMoveQueue()
 {
-    lib_staticQueue_empty(&app_motion_data.testQueue);
     lib_staticQueue_empty(&app_motion_data.manualQueue);
 }
 

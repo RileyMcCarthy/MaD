@@ -14,7 +14,7 @@
 #include "app_notification.h"
 #include "app_messageSlave.h"
 
-#include "IO_logger.h"
+#include "IO_SDCard.h"
 #include "dev_stepper.h"
 #include "dev_forceGauge.h"
 #include "IO_positionFeedback.h"
@@ -92,12 +92,12 @@ DEV_COGMANAGER_CHANNEL_CREATE_RUN(CONTROL)
 DEV_COGMANAGER_CHANNEL_CREATE_INIT(LOGGER, 1024)
 {
     DEBUG_INFO("%s", "Logger cog initializing\n");
-    IO_logger_init(lock);
+    IO_SDCard_init(lock);
 }
 
 DEV_COGMANAGER_CHANNEL_CREATE_RUN(LOGGER)
 {
-    IO_logger_run();
+    IO_SDCard_run();
 }
 
 DEV_COGMANAGER_CHANNEL_CREATE_INIT(FORCEGAUGE, 1024)

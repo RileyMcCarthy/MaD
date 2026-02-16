@@ -13,7 +13,7 @@
  * Constants
  **********************************************************************/
 #define APP_MESSAGE_SLAVE_RX_BUFFER_SIZE 1023
-#define APP_MESSAGE_SLAVE_TX_BUFFER_SIZE 1023
+#define APP_MESSAGE_SLAVE_TX_BUFFER_SIZE 4096
 /*********************************************************************
  * Macros
  **********************************************************************/

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   TextField,
   Button,
@@ -45,7 +45,6 @@ function Connect() {
     status: 'idle' | 'connecting' | 'success' | 'error';
     message: string;
   }>({ status: 'idle', message: '' });
-  const hasLoadedInitially = useRef(false);
 
   const loadPorts = useCallback(async () => {
     setLoading(true);
@@ -57,7 +56,6 @@ function Connect() {
 
       if (newPorts && newPorts.length > 0) {
         setPorts(newPorts);
-        // Set the first port as default only on initial load (when selectedPort is the default value)
         setSelectedPort((current) => {
           if (!current || current === '/dev/serial0') {
             return newPorts[0];
@@ -65,7 +63,6 @@ function Connect() {
           return current;
         });
       } else {
-        // If no ports found, show common ports as options
         setPorts(commonPorts);
         setErrorMessage('No serial ports detected. Showing common port names.');
       }
@@ -78,39 +75,10 @@ function Connect() {
     }
   }, [actions]);
 
+  // Load ports on mount
   useEffect(() => {
-    if (!hasLoadedInitially.current) {
-      hasLoadedInitially.current = true;
-      // Inline the port loading logic to avoid dependency issues
-      const initialLoadPorts = async () => {
-        setLoading(true);
-        setErrorMessage(null);
-        try {
-          componentLogger.info('Loading ports...');
-          const newPorts = await actions.listPorts();
-          componentLogger.info('Ports loaded:', newPorts);
-
-          if (newPorts && newPorts.length > 0) {
-            setPorts(newPorts);
-            setSelectedPort(newPorts[0]);
-          } else {
-            // If no ports found, show common ports as options
-            setPorts(commonPorts);
-            setErrorMessage(
-              'No serial ports detected. Showing common port names.',
-            );
-          }
-        } catch (err) {
-          componentLogger.error('Failed to list ports:', err);
-          setPorts(commonPorts);
-          setErrorMessage('Failed to load ports. Showing common port names.');
-        } finally {
-          setLoading(false);
-        }
-      };
-      initialLoadPorts();
-    }
-  }, [actions]);
+    loadPorts();
+  }, [loadPorts]);
 
   const handleConnect = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -237,7 +205,7 @@ function Connect() {
             select
             label="Baud Rate"
             name="baudRate"
-            defaultValue={230400} // Set default baud rate
+            defaultValue={2000000} // Set default baud rate
             fullWidth
           >
             {baudRates.map((option) => (

@@ -222,7 +222,7 @@ function SideBar({ children }: MiniDrawerProps) {
               path: '/firmware',
               icon: <SystemUpdateAltIcon />,
             },
-            { text: 'Settings', path: '/drafts', icon: <SettingsIcon /> },
+            { text: 'Settings', path: '/settings', icon: <SettingsIcon /> },
           ].map((item) => (
             <ListItem key={item.text} disablePadding sx={{ display: 'block' }}>
               <ListItemButton

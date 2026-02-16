@@ -22,6 +22,7 @@
 typedef enum
 {
     IO_LOGGER_CHANNEL_SAMPLE_DATA,
+    IO_LOGGER_CHANNEL_GCODE,
     IO_LOGGER_CHANNEL_COUNT,
 } IO_logger_channel_E;
 
@@ -38,6 +39,13 @@ typedef struct
 {
     char header[255];
 } IO_logger_testSampleHeader_S;
+
+#define IO_LOGGER_GCODE_LINE_SIZE 128
+
+typedef struct
+{
+    char line[IO_LOGGER_GCODE_LINE_SIZE];
+} IO_logger_gcodeLine_S;
 
 /**********************************************************************
  * Public Function Definitions

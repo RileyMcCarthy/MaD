@@ -11,6 +11,7 @@
 
 #include "IO_logger_config.h"
 #include "app_monitor.h"
+#include "app_motion.h"
 #include "lib_staticQueue.h"
 /**********************************************************************
  * Constants
@@ -75,9 +76,17 @@ void IO_logger_run(void);
 bool IO_logger_open(IO_logger_channel_E channel, const char *fileName);
 bool IO_logger_reopen(IO_logger_channel_E channel);
 bool IO_logger_close(IO_logger_channel_E channel);
+bool IO_logger_isClosed(IO_logger_channel_E channel);
 bool IO_logger_push(IO_logger_channel_E channel, void *data, uint32_t size);
 bool IO_logger_isEmpty(IO_logger_channel_E channel);
 bool IO_logger_addComment(IO_logger_channel_E channel, const char *comment, uint32_t size);
+
+// Gcode reader: reads gcode lines from SD file into a queue of decoded moves
+// IO_logger_run() does the actual file I/O on the LOGGER cog
+bool IO_logger_openGcodeReader(const char *filePath);
+bool IO_logger_closeGcodeReader(void);
+bool IO_logger_popGcodeMove(app_motion_move_t *move);
+bool IO_logger_isGcodeReaderDone(void);
 /**********************************************************************
  * End of File
  **********************************************************************/

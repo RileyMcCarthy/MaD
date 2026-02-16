@@ -28,10 +28,6 @@ function createRendererLogger(context: string): Logger {
 }
 
 // Pre-configured loggers for different renderer contexts
-export const uiLogger = createRendererLogger('UI');
-export const deviceLogger = createRendererLogger('Device');
-export const dataLogger = createRendererLogger('Data');
-export const hookLogger = createRendererLogger('Hook');
 export const componentLogger = createRendererLogger('Component');
 
 export default createRendererLogger;

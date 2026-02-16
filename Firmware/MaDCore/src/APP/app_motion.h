@@ -51,7 +51,7 @@ typedef enum
     APP_MOTION_HOME_COUNT,
 } app_motion_home_E;
 
-typedef struct
+typedef struct __attribute__((packed))
 {
     uint8_t g;  // Gcode command
     int32_t x;  // Position in um
@@ -66,7 +66,6 @@ void app_motion_init(int lock);
 void app_motion_run();
 
 // Requests
-bool app_motion_addTestMove(app_motion_move_t *move);
 bool app_motion_addManualMove(app_motion_move_t *move);
 void app_motion_clearMoveQueue(void);
 void app_motion_zeroPosition(void);

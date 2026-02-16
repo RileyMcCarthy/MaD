@@ -1,331 +1,378 @@
 /**
  * Dashboard and Motion Control Tests
- * 
- * These tests verify END-TO-END behavior:
- * - Buttons actually change machine state
- * - Motion commands actually change position readings
- * - Enable/disable actually affects motion capability
- * 
- * Each test has concrete numeric/state assertions to verify actions succeeded.
+ *
+ * Comprehensive tests for the Dashboard page covering:
+ * - Status display (Machine State panel, sample data readouts)
+ * - Motion enable/disable with state verification
+ * - Manual motion control (Move Up, Move Down) with position assertions
+ * - Distance accuracy (5mm, 10mm moves)
+ * - Bidirectional and sequential movement
+ * - Zeroing (force and length)
+ * - Homing
+ * - Safety (motion prevented when disabled, disable mid-move)
  */
 
 import { test, expect } from './fixtures';
 
 /**
- * Extract numeric position value from the UI display
+ * Extract numeric value from a UI text container using a label pattern.
  */
-function extractPosition(text: string | null): number | null {
+function extractValue(text: string | null, label: string): number | null {
   if (!text) return null;
-  const match = text.match(/Machine Position \(mm\):\s*([-\d.]+)/);
+  const pattern = new RegExp(`${label}:\\s*([-\\d.]+)`);
+  const match = text.match(pattern);
   return match ? parseFloat(match[1]) : null;
 }
 
-/**
- * Extract sample position value from the UI display (used for Zero Length)
- */
-function extractSamplePosition(text: string | null): number | null {
-  if (!text) return null;
-  const match = text.match(/Sample Position \(mm\):\s*([-\d.]+)/);
-  return match ? parseFloat(match[1]) : null;
-}
+const getPosition = async (posContainer: any) =>
+  extractValue(await posContainer.textContent(), 'Machine Position \\(mm\\)');
 
-/**
- * Extract numeric force value from the UI display
- */
-function extractForce(text: string | null): number | null {
-  if (!text) return null;
-  const match = text.match(/Machine Force \(N\):\s*([-\d.]+)/);
-  return match ? parseFloat(match[1]) : null;
-}
+const getSamplePosition = async (container: any) =>
+  extractValue(await container.textContent(), 'Sample Position \\(mm\\)');
 
-/**
- * Extract sample force value from the UI display (used for Zero Force)
- */
-function extractSampleForce(text: string | null): number | null {
-  if (!text) return null;
-  const match = text.match(/Sample Force \(N\):\s*([-\d.]+)/);
-  return match ? parseFloat(match[1]) : null;
-}
+const getSampleForce = async (container: any) =>
+  extractValue(await container.textContent(), 'Sample Force \\(N\\)');
 
 test.describe('Dashboard and Motion Control', () => {
-  
+
   test.beforeEach(async ({ connectToEmulator, window }) => {
     await connectToEmulator();
-    // Emulator restarts per-test, ensuring fresh firmware state
     await window.getByRole('link', { name: 'Dashboard' }).click();
     await expect(window.getByText('Loading...')).not.toBeVisible({ timeout: 15000 });
     await expect(window.getByRole('heading', { name: 'Machine State', level: 6 })).toBeVisible();
   });
 
+  // ── Dashboard Display ───────────────────────────────────────────
+
   test.describe('Dashboard Display', () => {
-    
-    test('machine status panel shows state fields with values', async ({ window }) => {
-      // Verify status panel exists and has actual values (not placeholders)
+
+    test('machine status shows state fields with correct initial values', async ({ window }) => {
       await expect(window.getByRole('heading', { name: 'Machine State', level: 6 })).toBeVisible();
-      
-      // Motion State should show "Disabled" or "Enabled" (not empty)
+
+      // Motion State should start "Disabled" on fresh emulator
       const motionStateRow = window.locator('text=Motion State').locator('..');
-      const motionStateText = await motionStateRow.textContent();
-      expect(motionStateText).toMatch(/Disabled|Enabled/);
-      
-      // Test State should show "Idle" or "Running" (not empty)
+      await expect(motionStateRow).toContainText('Disabled');
+
+      // Test State should be "Idle"
       const testStateRow = window.locator('text=Test State').locator('..');
-      const testStateText = await testStateRow.textContent();
-      expect(testStateText).toMatch(/Idle|Running/);
+      await expect(testStateRow).toContainText('Idle');
     });
 
-    test('sample data displays numeric force and position values', async ({ window }) => {
-      // Get position container and verify it shows a real number
+    test('sample data displays finite numeric values', async ({ window }) => {
       const posContainer = window.locator('text=Machine Position (mm):').locator('..');
-      const posText = await posContainer.textContent();
-      const posValue = extractPosition(posText);
-      
-      expect(posValue).not.toBeNull();
-      expect(typeof posValue).toBe('number');
-      expect(Number.isFinite(posValue)).toBe(true);
-      
-      // Get force container and verify it shows a real number
       const forceContainer = window.locator('text=Machine Force (N):').locator('..');
-      const forceText = await forceContainer.textContent();
-      const forceValue = extractForce(forceText);
-      
+
+      const posValue = getPosition(posContainer);
+      expect(await posValue).not.toBeNull();
+      expect(Number.isFinite(await posValue)).toBe(true);
+
+      const forceValue = extractValue(await forceContainer.textContent(), 'Machine Force \\(N\\)');
       expect(forceValue).not.toBeNull();
-      expect(typeof forceValue).toBe('number');
       expect(Number.isFinite(forceValue)).toBe(true);
     });
 
     test('move inputs accept and retain values', async ({ window }) => {
       const distanceInput = window.getByLabel('Move Distance (mm)');
       const speedInput = window.getByLabel('Move Speed (mm/s)');
-      
-      // Change values
+
       await distanceInput.fill('7.5');
       await speedInput.fill('25');
-      
-      // Verify values are retained
+
       await expect(distanceInput).toHaveValue('7.5');
       await expect(speedInput).toHaveValue('25');
     });
   });
 
+  // ── Motion Enable/Disable ──────────────────────────────────────
+
   test.describe('Motion Enable/Disable', () => {
-    
-    test('Enable Motion button changes state from Disabled to Enabled', async ({ window }) => {
-      const enableButton = window.getByRole('button', { name: 'Enable Motion' });
-      const disableButton = window.getByRole('button', { name: 'Disable Motion' });
-      
-      // Fresh emulator starts with motion disabled
-      await expect(enableButton).toBeVisible({ timeout: 5000 });
-      const initialState = window.locator('text=Motion State').locator('..');
-      expect(await initialState.textContent()).toContain('Disabled');
-      
-      // Click Enable Motion
-      await enableButton.click();
-      
-      // Verify state changed to Enabled
-      await expect(disableButton).toBeVisible({ timeout: 5000 });
-      const newState = window.locator('text=Motion State').locator('..');
-      await expect(newState).toContainText('Enabled', { timeout: 5000 });
+
+    test('Enable Motion changes state from Disabled to Enabled', async ({ window }) => {
+      const enableBtn = window.getByRole('button', { name: 'Enable Motion' });
+      const disableBtn = window.getByRole('button', { name: 'Disable Motion' });
+      const stateRow = window.locator('text=Motion State').locator('..');
+
+      // Starts disabled
+      await expect(enableBtn).toBeVisible({ timeout: 5000 });
+      await expect(stateRow).toContainText('Disabled');
+
+      // Enable
+      await enableBtn.click();
+      await expect(disableBtn).toBeVisible({ timeout: 5000 });
+      await expect(stateRow).toContainText('Enabled', { timeout: 5000 });
     });
 
-    test('Disable Motion button changes state from Enabled to Disabled', async ({ window }) => {
-      const enableButton = window.getByRole('button', { name: 'Enable Motion' });
-      const disableButton = window.getByRole('button', { name: 'Disable Motion' });
-      
-      // Fresh emulator starts with motion disabled, so enable it first
-      await expect(enableButton).toBeVisible({ timeout: 5000 });
-      await enableButton.click();
-      await expect(disableButton).toBeVisible({ timeout: 5000 });
-      
-      // Verify state is Enabled
+    test('Disable Motion changes state from Enabled back to Disabled', async ({ window }) => {
+      const enableBtn = window.getByRole('button', { name: 'Enable Motion' });
+      const disableBtn = window.getByRole('button', { name: 'Disable Motion' });
       const stateRow = window.locator('text=Motion State').locator('..');
+
+      await expect(enableBtn).toBeVisible({ timeout: 5000 });
+      await enableBtn.click();
+      await expect(disableBtn).toBeVisible({ timeout: 5000 });
       await expect(stateRow).toContainText('Enabled', { timeout: 5000 });
-      
-      // Click Disable Motion
-      await disableButton.click();
-      
-      // Verify state changed to Disabled
-      await expect(enableButton).toBeVisible({ timeout: 5000 });
+
+      await disableBtn.click();
+      await expect(enableBtn).toBeVisible({ timeout: 5000 });
       await expect(stateRow).toContainText('Disabled', { timeout: 5000 });
     });
   });
 
+  // ── Manual Motion Control ──────────────────────────────────────
+
   test.describe('Manual Motion Control', () => {
-    
-    test('Move Up actually increases position value', async ({ window }) => {
-      const enableButton = window.getByRole('button', { name: 'Enable Motion' });
-      const disableButton = window.getByRole('button', { name: 'Disable Motion' });
-      
-      // Fresh emulator starts with motion disabled and position zeroed
-      await expect(enableButton).toBeVisible({ timeout: 5000 });
-      await enableButton.click();
-      await expect(disableButton).toBeVisible({ timeout: 5000 });
-      
-      // Get initial position (should be near zero from reset)
+
+    test('Move Up 5mm increases position by approximately 5mm', async ({ window }) => {
+      // Enable motion
+      await window.getByRole('button', { name: 'Enable Motion' }).click();
+      await expect(window.getByRole('button', { name: 'Disable Motion' })).toBeVisible({ timeout: 5000 });
+
       const posContainer = window.locator('text=Machine Position (mm):').locator('..');
-      const initialPos = extractPosition(await posContainer.textContent());
+      const initialPos = await getPosition(posContainer);
       expect(initialPos).not.toBeNull();
-      
-      // Set move distance and speed
+
       await window.getByLabel('Move Distance (mm)').fill('5');
       await window.getByLabel('Move Speed (mm/s)').fill('20');
-      
-      // Click Move Up
       await window.getByRole('button', { name: 'Move Up' }).click();
-      
-      // Wait for movement to complete (5mm at 20mm/s = 0.25s + margin)
       await window.waitForTimeout(1000);
-      
-      // Get final position
-      const finalPos = extractPosition(await posContainer.textContent());
+
+      const finalPos = await getPosition(posContainer);
       expect(finalPos).not.toBeNull();
-      
-      // Position should have increased by approximately 5mm
       const delta = finalPos! - initialPos!;
-      expect(delta).toBeGreaterThan(2);  // At least 2mm increase
-      expect(delta).toBeLessThan(8);     // At most 8mm increase
+      expect(delta).toBeGreaterThan(3);
+      expect(delta).toBeLessThan(7);
     });
 
-    test('Move Down actually decreases position value', async ({ window }) => {
-      const enableButton = window.getByRole('button', { name: 'Enable Motion' });
-      const disableButton = window.getByRole('button', { name: 'Disable Motion' });
-      
-      // Fresh emulator starts with motion disabled
-      await expect(enableButton).toBeVisible({ timeout: 5000 });
-      await enableButton.click();
-      await expect(disableButton).toBeVisible({ timeout: 5000 });
-      
-      // Move up first to have room to move down
+    test('Move Up 10mm increases position by approximately 10mm', async ({ window }) => {
+      await window.getByRole('button', { name: 'Enable Motion' }).click();
+      await expect(window.getByRole('button', { name: 'Disable Motion' })).toBeVisible({ timeout: 5000 });
+
+      const posContainer = window.locator('text=Machine Position (mm):').locator('..');
+      const startPos = await getPosition(posContainer);
+      expect(startPos).not.toBeNull();
+
       await window.getByLabel('Move Distance (mm)').fill('10');
       await window.getByLabel('Move Speed (mm/s)').fill('20');
       await window.getByRole('button', { name: 'Move Up' }).click();
       await window.waitForTimeout(1500);
-      
-      // Get starting position (should be positive now)
+
+      const endPos = await getPosition(posContainer);
+      expect(endPos).not.toBeNull();
+      const delta = endPos! - startPos!;
+      expect(delta).toBeGreaterThan(7);
+      expect(delta).toBeLessThan(13);
+    });
+
+    test('Move Down decreases position after moving up', async ({ window }) => {
+      await window.getByRole('button', { name: 'Enable Motion' }).click();
+      await expect(window.getByRole('button', { name: 'Disable Motion' })).toBeVisible({ timeout: 5000 });
+
       const posContainer = window.locator('text=Machine Position (mm):').locator('..');
-      const startPos = extractPosition(await posContainer.textContent());
+
+      // Move up first
+      await window.getByLabel('Move Distance (mm)').fill('10');
+      await window.getByLabel('Move Speed (mm/s)').fill('20');
+      await window.getByRole('button', { name: 'Move Up' }).click();
+      await window.waitForTimeout(1500);
+
+      const startPos = await getPosition(posContainer);
       expect(startPos).not.toBeNull();
       expect(startPos!).toBeGreaterThan(5);
-      
-      // Now move down
+
+      // Move down
       await window.getByLabel('Move Distance (mm)').fill('5');
       await window.getByRole('button', { name: 'Move Down' }).click();
       await window.waitForTimeout(1000);
-      
-      // Get final position
-      const endPos = extractPosition(await posContainer.textContent());
+
+      const endPos = await getPosition(posContainer);
       expect(endPos).not.toBeNull();
-      
-      // Position should have decreased
       expect(endPos!).toBeLessThan(startPos!);
-      expect(startPos! - endPos!).toBeGreaterThan(2);  // At least 2mm decrease
+      expect(startPos! - endPos!).toBeGreaterThan(2);
     });
 
+    test('Move Up then Down same distance returns near start position', async ({ window }) => {
+      await window.getByRole('button', { name: 'Enable Motion' }).click();
+      await expect(window.getByRole('button', { name: 'Disable Motion' })).toBeVisible({ timeout: 5000 });
+
+      const posContainer = window.locator('text=Machine Position (mm):').locator('..');
+      const startPos = await getPosition(posContainer);
+      expect(startPos).not.toBeNull();
+
+      await window.getByLabel('Move Distance (mm)').fill('5');
+      await window.getByLabel('Move Speed (mm/s)').fill('20');
+
+      // Up
+      await window.getByRole('button', { name: 'Move Up' }).click();
+      await window.waitForTimeout(1000);
+      const midPos = await getPosition(posContainer);
+      expect(midPos).not.toBeNull();
+      expect(Math.abs(midPos! - startPos!)).toBeGreaterThan(2);
+
+      // Down
+      await window.getByRole('button', { name: 'Move Down' }).click();
+      await window.waitForTimeout(1000);
+      const endPos = await getPosition(posContainer);
+      expect(endPos).not.toBeNull();
+      expect(Math.abs(endPos! - startPos!)).toBeLessThan(2);
+    });
+
+    test('sequential 3mm moves accumulate correctly (~9mm total)', async ({ window }) => {
+      await window.getByRole('button', { name: 'Enable Motion' }).click();
+      await expect(window.getByRole('button', { name: 'Disable Motion' })).toBeVisible({ timeout: 5000 });
+
+      const posContainer = window.locator('text=Machine Position (mm):').locator('..');
+      const startPos = await getPosition(posContainer);
+      expect(startPos).not.toBeNull();
+
+      await window.getByLabel('Move Distance (mm)').fill('3');
+      await window.getByLabel('Move Speed (mm/s)').fill('20');
+
+      for (let i = 0; i < 3; i++) {
+        await window.getByRole('button', { name: 'Move Up' }).click();
+        await window.waitForTimeout(600);
+      }
+
+      const endPos = await getPosition(posContainer);
+      expect(endPos).not.toBeNull();
+      const totalDelta = endPos! - startPos!;
+      expect(totalDelta).toBeGreaterThan(6);
+      expect(totalDelta).toBeLessThan(12);
+    });
+
+    test('inputs retain values after move completes', async ({ window }) => {
+      await window.getByRole('button', { name: 'Enable Motion' }).click();
+      await expect(window.getByRole('button', { name: 'Disable Motion' })).toBeVisible({ timeout: 5000 });
+
+      await window.getByLabel('Move Distance (mm)').fill('7');
+      await window.getByLabel('Move Speed (mm/s)').fill('15');
+      await window.getByRole('button', { name: 'Move Up' }).click();
+      await window.waitForTimeout(1000);
+
+      await expect(window.getByLabel('Move Distance (mm)')).toHaveValue('7');
+      await expect(window.getByLabel('Move Speed (mm/s)')).toHaveValue('15');
+    });
+  });
+
+  // ── Zeroing ─────────────────────────────────────────────────────
+
+  test.describe('Zeroing', () => {
+
     test('Zero Length resets sample position to zero', async ({ window }) => {
-      const enableButton = window.getByRole('button', { name: 'Enable Motion' });
-      const disableButton = window.getByRole('button', { name: 'Disable Motion' });
-      
-      // Fresh emulator starts with motion disabled
-      await expect(enableButton).toBeVisible({ timeout: 5000 });
-      await enableButton.click();
-      await expect(disableButton).toBeVisible({ timeout: 5000 });
-      
-      // Move to create non-zero position
+      await window.getByRole('button', { name: 'Enable Motion' }).click();
+      await expect(window.getByRole('button', { name: 'Disable Motion' })).toBeVisible({ timeout: 5000 });
+
+      // Move to create non-zero sample position
       await window.getByLabel('Move Distance (mm)').fill('5');
       await window.getByLabel('Move Speed (mm/s)').fill('20');
       await window.getByRole('button', { name: 'Move Up' }).click();
       await window.waitForTimeout(1000);
-      
-      // Verify Sample Position is NOT zero (after moving up)
+
       const samplePosContainer = window.locator('text=Sample Position (mm):').locator('..');
-      let samplePos = extractSamplePosition(await samplePosContainer.textContent());
-      expect(samplePos).not.toBeNull();
-      expect(Math.abs(samplePos!)).toBeGreaterThan(2);
-      
-      // Click Zero Length - this should reset Sample Position to zero
+      const posBefore = await getSamplePosition(samplePosContainer);
+      expect(posBefore).not.toBeNull();
+      expect(Math.abs(posBefore!)).toBeGreaterThan(2);
+
+      // Zero Length
       await window.getByRole('button', { name: 'Zero Length' }).click();
-      
-      // Wait and poll for the zero to take effect (firmware response time)
-      // Zero Length affects "Sample Position", not "Machine Position"
+
       await expect(async () => {
-        const currentSamplePos = extractSamplePosition(await samplePosContainer.textContent());
-        expect(currentSamplePos).not.toBeNull();
-        expect(Math.abs(currentSamplePos!)).toBeLessThan(1);
+        const pos = await getSamplePosition(samplePosContainer);
+        expect(pos).not.toBeNull();
+        expect(Math.abs(pos!)).toBeLessThan(1);
       }).toPass({ timeout: 5000 });
     });
 
     test('Zero Force resets sample force to zero', async ({ window }) => {
-      // Fresh emulator starts with zeroed readings, but clicking Zero Force should still work
-      // Get sample force container - Zero Force affects Sample Force, not Machine Force
       const sampleForceContainer = window.locator('text=Sample Force (N):').locator('..');
-      
-      // Click Zero Force
+
       await window.getByRole('button', { name: 'Zero Force' }).click();
-      
-      // Wait and poll for the zero to take effect
+
       await expect(async () => {
-        const forceValue = extractSampleForce(await sampleForceContainer.textContent());
-        expect(forceValue).not.toBeNull();
-        expect(Math.abs(forceValue!)).toBeLessThan(1);
+        const force = await getSampleForce(sampleForceContainer);
+        expect(force).not.toBeNull();
+        expect(Math.abs(force!)).toBeLessThan(1);
       }).toPass({ timeout: 3000 });
     });
+  });
 
-    test('motion is prevented when disabled', async ({ window }) => {
-      const enableButton = window.getByRole('button', { name: 'Enable Motion' });
-      
-      // Fresh emulator starts with motion disabled
-      await expect(enableButton).toBeVisible({ timeout: 5000 });
-      
-      // Get initial position
-      const posContainer = window.locator('text=Machine Position (mm):').locator('..');
-      const initialPos = extractPosition(await posContainer.textContent());
-      expect(initialPos).not.toBeNull();
-      
-      // Try to move (should be ignored)
+  // ── Homing ──────────────────────────────────────────────────────
+
+  test.describe('Homing', () => {
+
+    test('Home initiates homing sequence without fault', async ({ window }) => {
+      await window.getByRole('button', { name: 'Enable Motion' }).click();
+      await expect(window.getByRole('button', { name: 'Disable Motion' })).toBeVisible({ timeout: 5000 });
+
+      // Move to non-zero position
+      await window.getByLabel('Move Distance (mm)').fill('5');
+      await window.getByLabel('Move Speed (mm/s)').fill('20');
       await window.getByRole('button', { name: 'Move Up' }).click();
       await window.waitForTimeout(1000);
-      
-      // Position should NOT have changed
-      const finalPos = extractPosition(await posContainer.textContent());
+
+      const posContainer = window.locator('text=Machine Position (mm):').locator('..');
+      const posBefore = await getPosition(posContainer);
+      expect(posBefore).not.toBeNull();
+      expect(Math.abs(posBefore!)).toBeGreaterThan(1);
+
+      // Home
+      await window.getByRole('button', { name: 'Home' }).click();
+      await window.waitForTimeout(3000);
+
+      // No fault — Home button still enabled, motion still enabled
+      await expect(window.getByRole('button', { name: 'Home' })).toBeEnabled();
+      await expect(window.getByRole('button', { name: 'Disable Motion' })).toBeVisible();
+    });
+  });
+
+  // ── Safety ──────────────────────────────────────────────────────
+
+  test.describe('Safety', () => {
+
+    test('motion is prevented when disabled', async ({ window }) => {
+      const enableBtn = window.getByRole('button', { name: 'Enable Motion' });
+      await expect(enableBtn).toBeVisible({ timeout: 5000 });
+
+      const posContainer = window.locator('text=Machine Position (mm):').locator('..');
+      const initialPos = await getPosition(posContainer);
+      expect(initialPos).not.toBeNull();
+
+      // Try to move while disabled
+      await window.getByRole('button', { name: 'Move Up' }).click();
+      await window.waitForTimeout(1000);
+
+      const finalPos = await getPosition(posContainer);
       expect(finalPos).not.toBeNull();
       expect(Math.abs(finalPos! - initialPos!)).toBeLessThan(0.5);
     });
 
-    test('disabling motion mid-move stops the movement', async ({ window }) => {
-      const enableButton = window.getByRole('button', { name: 'Enable Motion' });
-      const disableButton = window.getByRole('button', { name: 'Disable Motion' });
-      
-      // Fresh emulator starts with motion disabled and position zeroed
-      await expect(enableButton).toBeVisible({ timeout: 5000 });
-      await enableButton.click();
-      await expect(disableButton).toBeVisible({ timeout: 5000 });
-      
-      // Start a long move
+    test('disabling motion mid-move stops movement', async ({ window }) => {
+      const enableBtn = window.getByRole('button', { name: 'Enable Motion' });
+      const disableBtn = window.getByRole('button', { name: 'Disable Motion' });
+
+      await expect(enableBtn).toBeVisible({ timeout: 5000 });
+      await enableBtn.click();
+      await expect(disableBtn).toBeVisible({ timeout: 5000 });
+
+      // Start long slow move
       await window.getByLabel('Move Distance (mm)').fill('50');
-      await window.getByLabel('Move Speed (mm/s)').fill('5');  // Slow so we can interrupt
+      await window.getByLabel('Move Speed (mm/s)').fill('5');
       await window.getByRole('button', { name: 'Move Up' }).click();
-      
-      // Wait briefly then disable
+
+      // Interrupt
       await window.waitForTimeout(500);
-      await disableButton.click();
-      
-      // Verify motion is disabled
-      await expect(enableButton).toBeVisible({ timeout: 5000 });
-      
-      // Get position at stop
+      await disableBtn.click();
+      await expect(enableBtn).toBeVisible({ timeout: 5000 });
+
       const posContainer = window.locator('text=Machine Position (mm):').locator('..');
-      const stoppedPos = extractPosition(await posContainer.textContent());
+      const stoppedPos = await getPosition(posContainer);
       expect(stoppedPos).not.toBeNull();
-      
-      // Wait a moment more
+
       await window.waitForTimeout(1000);
-      
-      // Position should NOT continue changing
-      const laterPos = extractPosition(await posContainer.textContent());
+      const laterPos = await getPosition(posContainer);
       expect(laterPos).not.toBeNull();
       expect(Math.abs(laterPos! - stoppedPos!)).toBeLessThan(0.5);
-      
-      // Should have moved LESS than full 50mm (interrupted)
+
+      // Should have moved less than full distance
       expect(stoppedPos!).toBeLessThan(45);
     });
   });

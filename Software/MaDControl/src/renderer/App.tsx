@@ -9,6 +9,9 @@ import Connect from './pages/Connect';
 import MachineConfigPage from './pages/MachineConfig';
 import TestProfileForm from './pages/TestProfile';
 import FirmwareUpdate from './pages/FirmwareUpdate';
+import TestRuns from './pages/TestRuns';
+import TestRunViewer from './pages/TestRunViewer';
+import Settings from './pages/Settings';
 import { DeviceProvider } from './hooks/useDevice';
 
 const darkTheme = createTheme({
@@ -31,6 +34,9 @@ export default function App() {
               <Route path="/config" element={<MachineConfigPage />} />
               <Route path="/create" element={<TestProfileForm />} />
               <Route path="/firmware" element={<FirmwareUpdate />} />
+              <Route path="/view" element={<TestRuns />} />
+              <Route path="/view/:id" element={<TestRunViewer />} />
+              <Route path="/settings" element={<Settings />} />
             </Routes>
           </SideBar>
         </Router>

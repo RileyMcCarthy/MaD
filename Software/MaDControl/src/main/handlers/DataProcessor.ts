@@ -22,6 +22,8 @@ export enum WriteType {
   SAMPLE_PROFILE,
   GAUGE_LENGTH,
   GAUGE_FORCE,
+  FILE_INFO_DEPRECATED, // Deprecated, kept for enum value stability
+  FILE_DOWNLOAD,
   READ_FIRMWARE_VERSION,
 }
 
@@ -202,8 +204,13 @@ class DataProcessor extends EventEmitter {
     if (crc8(messageData) === crc) {
       switch (messageType) {
         case ResponseType.DATA:
-          // Emit generic data event with command type and data
-          this.emit('data', messageCommand, messageData.toString());
+          // For file download commands, emit raw binary buffer
+          if (messageCommand === (WriteType.FILE_DOWNLOAD as unknown as ReadType)) {
+            this.emit('binary-data', messageCommand, messageData);
+          } else {
+            // Emit generic data event with command type and data as string
+            this.emit('data', messageCommand, messageData.toString());
+          }
           break;
         case ResponseType.NOTIFICATION:
           try {

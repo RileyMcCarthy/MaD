@@ -82,7 +82,7 @@ Definitions
 #include "app_control.h"
 
 #include "dev_nvram.h"
-#include "IO_logger.h"
+#include "IO_SDCard.h"
 #include "dev_forceGauge.h"
 #include "IO_positionFeedback.h"
 #include "IO_Debug.h"
@@ -261,7 +261,7 @@ void app_monitor_private_processLogging()
     case APP_MONITOR_LOGGING_STATE_IDLE:
         if (app_monitor_data.input.testRunning)
         {
-            if (IO_logger_open(IO_LOGGER_CHANNEL_SAMPLE_DATA, app_monitor_data.testName))
+            if (IO_SDCard_open(IO_SDCARD_CHANNEL_SAMPLE_DATA, app_monitor_data.testName, IO_SDCARD_MODE_WRITE))
             {
                 app_monitor_data.loggingState = APP_MONITOR_LOGGING_STATE_RUNNING;
                 app_monitor_data.startTime = app_monitor_data.input.time;
@@ -280,11 +280,11 @@ void app_monitor_private_processLogging()
         else if (app_monitor_data.input.updatedIndex)
         {
             //DEBUG_ERROR("%s", "Logging sample data\n");
-            IO_logger_push(IO_LOGGER_CHANNEL_SAMPLE_DATA, &app_monitor_data.sample, sizeof(app_monitor_sample_t));
+            IO_SDCard_push(IO_SDCARD_CHANNEL_SAMPLE_DATA, &app_monitor_data.sample, sizeof(app_monitor_sample_t));
         }
         break;
     case APP_MONITOR_LOGGING_STATE_STOPPING:
-        IO_logger_close(IO_LOGGER_CHANNEL_SAMPLE_DATA);
+        IO_SDCard_close(IO_SDCARD_CHANNEL_SAMPLE_DATA);
         app_monitor_data.loggingState = APP_MONITOR_LOGGING_STATE_IDLE;
         break;
     default:
@@ -395,6 +395,56 @@ void app_monitor_setTestName(const char *testName)
     APP_MONITOR_LOCK_REQ_BLOCK();
     strncpy(app_monitor_data.testName, testName, sizeof(app_monitor_data.testName) - 1);
     app_monitor_data.testName[sizeof(app_monitor_data.testName) - 1] = '\0';
+    APP_MONITOR_LOCK_REL();
+}
+
+bool app_monitor_getNextTestName(char *outName, uint32_t size)
+{
+    if (outName == NULL || size < 7)
+    {
+        return false;
+    }
+
+    char indexPath[256];
+    snprintf(indexPath, sizeof(indexPath), SD_CARD_MOUNT_PATH "/test/index.txt");
+
+    uint32_t nextIndex = 0;
+
+    // Read current index from file
+    FILE *file = fopen(indexPath, "r");
+    if (file != NULL)
+    {
+        if (fscanf(file, "%u", &nextIndex) != 1)
+        {
+            nextIndex = 0;
+        }
+        fclose(file);
+    }
+
+    // Format the test name as 6-digit zero-padded number
+    snprintf(outName, size, "%06u", nextIndex);
+
+    // Increment and write back
+    uint32_t updatedIndex = nextIndex + 1;
+    file = fopen(indexPath, "w");
+    if (file != NULL)
+    {
+        fprintf(file, "%u", updatedIndex);
+        fclose(file);
+    }
+    else
+    {
+        return false;
+    }
+
+    return true;
+}
+
+void app_monitor_getTestName(char *outName, uint32_t size)
+{
+    APP_MONITOR_LOCK_REQ_BLOCK();
+    strncpy(outName, app_monitor_data.testName, size - 1);
+    outName[size - 1] = '\0';
     APP_MONITOR_LOCK_REL();
 }
 

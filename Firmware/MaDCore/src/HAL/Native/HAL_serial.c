@@ -53,13 +53,13 @@ static HAL_serial_channelConfig_S HAL_serial_channelConfig[HAL_SERIAL_CHANNEL_CO
     [HAL_SERIAL_CHANNEL_MAIN] = {
         .rx = HW_PIN_RPI_RX,
         .tx = HW_PIN_RPI_TX,
-        .baud = 230400,
+        .baud = 2000000,
     }, // MAIN/DEBUG
 #else
     [HAL_SERIAL_CHANNEL_MAIN] = {
         .rx = HW_PIN_MAIN_RX,
         .tx = HW_PIN_MAIN_TX,
-        .baud = 230400,
+        .baud = 2000000,
     }, // MAIN/DEBUG
 #endif
 };

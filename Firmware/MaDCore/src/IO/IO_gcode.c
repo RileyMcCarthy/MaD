@@ -28,8 +28,14 @@ bool IO_gcode_decodeMove(const char *gcode, app_motion_move_t *move)
         switch (token[0])
         {
         case 'G':
-            sscanf(token + 1, "%hhu", &move->g);
+        {
+            unsigned int g_val;
+            if (sscanf(token + 1, "%u", &g_val) == 1)
+            {
+                move->g = (uint8_t)g_val;
+            }
             break;
+        }
         case 'X':
         {
             double x;
@@ -49,8 +55,14 @@ bool IO_gcode_decodeMove(const char *gcode, app_motion_move_t *move)
             break;
         }
         case 'P':
-            sscanf(token + 1, "%u", &move->p);
+        {
+            unsigned int p_val;
+            if (sscanf(token + 1, "%u", &p_val) == 1)
+            {
+                move->p = (uint32_t)p_val;
+            }
             break;
+        }
         default:
             // Ignore unknown parameters
             break;

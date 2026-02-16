@@ -10,11 +10,13 @@
 
 #include "IO_logger.h"
 #include "lib_staticQueue.h"
+#include "IO_gcode.h"
 #include "emulation_helpers.h"
 /**********************************************************************
  * Constants
  **********************************************************************/
 #define IO_LOGGER_COMMENT_SIZE 512
+#define IO_LOGGER_GCODE_READ_BUFFER_SIZE 64
 /*********************************************************************
  * Macros
  **********************************************************************/
@@ -67,6 +69,44 @@ typedef struct
     int32_t lock;
 } IO_logger_data_S;
 
+/**
+ * @brief Gcode reader state machine — reads gcode lines from SD file,
+ *        decodes them, and pushes decoded moves into a queue for app_motion.
+ */
+typedef enum
+{
+    IO_LOGGER_READER_STATE_IDLE,
+    IO_LOGGER_READER_STATE_OPEN,
+    IO_LOGGER_READER_STATE_READING,
+    IO_LOGGER_READER_STATE_DONE,
+    IO_LOGGER_READER_STATE_CLOSE,
+} IO_logger_readerState_E;
+
+typedef struct
+{
+    char filePath[256];
+} IO_logger_readerInput_S;
+
+typedef struct
+{
+    bool open;
+    bool close;
+} IO_logger_readerRequest_S;
+
+typedef struct
+{
+    IO_logger_readerInput_S externalInput;
+    IO_logger_readerInput_S input;
+    IO_logger_readerRequest_S externalRequest;
+    IO_logger_readerRequest_S request;
+
+    IO_logger_readerState_E state;
+    FILE *file;
+    bool eof;
+    lib_staticQueue_S queue;
+    app_motion_move_t queueBuffer[IO_LOGGER_GCODE_READ_BUFFER_SIZE];
+} IO_logger_readerData_S;
+
 /**********************************************************************
  * External Variables
  **********************************************************************/
@@ -75,9 +115,11 @@ extern IO_logger_config_S IO_logger_config;
  * Private Variable Definitions
  **********************************************************************/
 static IO_logger_data_S IO_logger_data;
+static IO_logger_readerData_S IO_logger_readerData;
 /**********************************************************************
  * Private Function Prototypes
  **********************************************************************/
+static void IO_logger_private_readerRun(void);
 
 /**********************************************************************
  * Private Function Definitions
@@ -222,6 +264,130 @@ static void IO_logger_private_stageInputs(IO_logger_channel_E channel)
 }
 
 /**********************************************************************
+ * Gcode Reader Private Functions
+ **********************************************************************/
+
+static void IO_logger_private_readerStageInputs(void)
+{
+    IO_LOGGER_LOCK_REQ_BLOCK();
+    if (IO_logger_readerData.externalRequest.open)
+    {
+        IO_logger_readerData.request.open = true;
+        IO_logger_readerData.externalRequest.open = false;
+        memcpy(&IO_logger_readerData.input, &IO_logger_readerData.externalInput, sizeof(IO_logger_readerInput_S));
+    }
+    if (IO_logger_readerData.externalRequest.close)
+    {
+        IO_logger_readerData.request.close = true;
+        IO_logger_readerData.externalRequest.close = false;
+    }
+    IO_LOGGER_LOCK_REL();
+}
+
+static void IO_logger_private_readerRun(void)
+{
+    IO_logger_private_readerStageInputs();
+
+    switch (IO_logger_readerData.state)
+    {
+    case IO_LOGGER_READER_STATE_IDLE:
+        if (IO_logger_readerData.request.open)
+        {
+            IO_logger_readerData.request.open = false;
+            IO_logger_readerData.file = fopen(IO_logger_readerData.input.filePath, "r");
+            if (IO_logger_readerData.file != NULL)
+            {
+                IO_logger_readerData.eof = false;
+                lib_staticQueue_empty(&IO_logger_readerData.queue);
+                IO_logger_readerData.state = IO_LOGGER_READER_STATE_READING;
+                DEBUG_INFO("GCODE_READER: opened %s\n", IO_logger_readerData.input.filePath);
+            }
+            else
+            {
+                DEBUG_ERROR("GCODE_READER: failed to open %s\n", IO_logger_readerData.input.filePath);
+                IO_logger_readerData.eof = true;
+                IO_logger_readerData.state = IO_LOGGER_READER_STATE_DONE;
+            }
+        }
+        break;
+
+    case IO_LOGGER_READER_STATE_READING:
+        if (IO_logger_readerData.request.close)
+        {
+            IO_logger_readerData.request.close = false;
+            IO_logger_readerData.state = IO_LOGGER_READER_STATE_CLOSE;
+        }
+        else if (!lib_staticQueue_isfull(&IO_logger_readerData.queue))
+        {
+            // Read lines and decode into moves until queue is full or EOF
+            char line[IO_LOGGER_GCODE_LINE_SIZE];
+            while (!lib_staticQueue_isfull(&IO_logger_readerData.queue) &&
+                   fgets(line, sizeof(line), IO_logger_readerData.file) != NULL)
+            {
+                // Strip newline
+                size_t len = strlen(line);
+                while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r'))
+                {
+                    line[--len] = '\0';
+                }
+
+                // Skip empty lines and comments
+                if (len == 0 || line[0] == ';')
+                {
+                    continue;
+                }
+
+                // Decode the gcode line into a move
+                app_motion_move_t move;
+                if (IO_gcode_decodeMove(line, &move))
+                {
+                    lib_staticQueue_push(&IO_logger_readerData.queue, &move);
+                }
+                else
+                {
+                    DEBUG_WARNING("GCODE_READER: failed to decode: %s\n", line);
+                }
+            }
+
+            // Check if we hit EOF
+            if (feof(IO_logger_readerData.file))
+            {
+                IO_logger_readerData.eof = true;
+                fclose(IO_logger_readerData.file);
+                IO_logger_readerData.file = NULL;
+                IO_logger_readerData.state = IO_LOGGER_READER_STATE_DONE;
+                DEBUG_INFO("%s", "GCODE_READER: reached EOF\n");
+            }
+        }
+        break;
+
+    case IO_LOGGER_READER_STATE_DONE:
+        // Stay in DONE until closed or all moves consumed
+        if (IO_logger_readerData.request.close)
+        {
+            IO_logger_readerData.request.close = false;
+            IO_logger_readerData.state = IO_LOGGER_READER_STATE_CLOSE;
+        }
+        break;
+
+    case IO_LOGGER_READER_STATE_CLOSE:
+        if (IO_logger_readerData.file != NULL)
+        {
+            fclose(IO_logger_readerData.file);
+            IO_logger_readerData.file = NULL;
+        }
+        lib_staticQueue_empty(&IO_logger_readerData.queue);
+        IO_logger_readerData.eof = false;
+        IO_logger_readerData.state = IO_LOGGER_READER_STATE_IDLE;
+        DEBUG_INFO("%s", "GCODE_READER: closed\n");
+        break;
+
+    default:
+        break;
+    }
+}
+
+/**********************************************************************
  * Public Function Definitions
  **********************************************************************/
 void IO_logger_init(int lock)
@@ -236,10 +402,25 @@ void IO_logger_init(int lock)
                              IO_logger_config.channelConfig[channel].queueBufferItemSize,
                              IO_logger_data.lock);
     }
+
+    // Initialize gcode reader
+    IO_logger_readerData.state = IO_LOGGER_READER_STATE_IDLE;
+    IO_logger_readerData.file = NULL;
+    IO_logger_readerData.eof = false;
+    IO_logger_readerData.externalRequest.open = false;
+    IO_logger_readerData.externalRequest.close = false;
+    IO_logger_readerData.request.open = false;
+    IO_logger_readerData.request.close = false;
+    lib_staticQueue_init(&IO_logger_readerData.queue,
+                         IO_logger_readerData.queueBuffer,
+                         IO_LOGGER_GCODE_READ_BUFFER_SIZE,
+                         sizeof(app_motion_move_t),
+                         lock);
 }
 
 void IO_logger_run(void)
 {
+    // Process write channels
     for (IO_logger_channel_E channel = (IO_logger_channel_E)0U; channel < IO_LOGGER_CHANNEL_COUNT; channel++)
     {
         IO_logger_private_stageInputs(channel);
@@ -252,6 +433,9 @@ void IO_logger_run(void)
             IO_logger_private_entryAction(channel);
         }
     }
+
+    // Process gcode reader
+    IO_logger_private_readerRun();
 }
 
 bool IO_logger_open(IO_logger_channel_E channel, const char *fileName)
@@ -325,6 +509,16 @@ bool IO_logger_close(IO_logger_channel_E channel)
     return success;
 }
 
+bool IO_logger_isClosed(IO_logger_channel_E channel)
+{
+    bool closed = false;
+    if (channel < IO_LOGGER_CHANNEL_COUNT)
+    {
+        closed = (IO_logger_data.channelData[channel].state == IO_LOGGER_STATE_INIT);
+    }
+    return closed;
+}
+
 bool IO_logger_push(IO_logger_channel_E channel, void *data, uint32_t size)
 {
     bool success = false;
@@ -343,6 +537,35 @@ bool IO_logger_isEmpty(IO_logger_channel_E channel)
         isEmpty = lib_staticQueue_isempty(&IO_logger_data.channelData[channel].queue);
     }
     return isEmpty;
+}
+
+bool IO_logger_openGcodeReader(const char *filePath)
+{
+    IO_LOGGER_LOCK_REQ_BLOCK();
+    strncpy(IO_logger_readerData.externalInput.filePath, filePath, sizeof(IO_logger_readerData.externalInput.filePath) - 1);
+    IO_logger_readerData.externalInput.filePath[sizeof(IO_logger_readerData.externalInput.filePath) - 1] = '\0';
+    IO_logger_readerData.externalRequest.open = true;
+    IO_LOGGER_LOCK_REL();
+    return true;
+}
+
+bool IO_logger_closeGcodeReader(void)
+{
+    IO_LOGGER_LOCK_REQ_BLOCK();
+    IO_logger_readerData.externalRequest.close = true;
+    IO_LOGGER_LOCK_REL();
+    return true;
+}
+
+bool IO_logger_popGcodeMove(app_motion_move_t *move)
+{
+    return lib_staticQueue_pop(&IO_logger_readerData.queue, move);
+}
+
+bool IO_logger_isGcodeReaderDone(void)
+{
+    // Reader is done when EOF was reached AND queue is empty
+    return IO_logger_readerData.eof && lib_staticQueue_isempty(&IO_logger_readerData.queue);
 }
 
 /**********************************************************************

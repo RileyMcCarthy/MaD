@@ -4,13 +4,6 @@ import log from 'electron-log';
 log.transports.file.level = 'info';
 log.transports.console.level = 'debug';
 
-export enum LogLevel {
-  ERROR = 'error',
-  WARN = 'warn',
-  INFO = 'info',
-  DEBUG = 'debug',
-}
-
 export class Logger {
   private context: string;
 

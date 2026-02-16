@@ -21,9 +21,9 @@ import DataProcessor from './handlers/DataProcessor';
 import NotificationSender from './handlers/NotificationSender';
 import DeviceInterface from './handlers/DeviceInterface';
 import {
-  initializeSampleProfiles,
-  cleanup as cleanupSampleProfiles,
-} from './sampleProfiles';
+  initializeDataManager,
+  cleanupDataManager,
+} from './dataManager';
 // Set the app name before anything else
 app.setName('MAD Control');
 
@@ -132,7 +132,7 @@ const createWindow = async () => {
   // eslint-disable-next-line
   new AppUpdater();
 
-  initializeSampleProfiles();
+  initializeDataManager();
 };
 
 /**
@@ -140,11 +140,10 @@ const createWindow = async () => {
  */
 
 app.on('window-all-closed', () => {
-  cleanupSampleProfiles().then(() => {
-    if (process.platform !== 'darwin') {
-      app.quit();
-    }
-  });
+  cleanupDataManager();
+  if (process.platform !== 'darwin') {
+    app.quit();
+  }
 });
 
 app

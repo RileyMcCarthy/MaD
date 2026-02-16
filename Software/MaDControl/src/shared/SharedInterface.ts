@@ -113,3 +113,42 @@ export interface TestHeader {
   test_name: string;
   'Data and Time': string;
 }
+
+export interface FileDownloadProgress {
+  fileName: string;
+  bytesDownloaded: number;
+  totalBytes: number;
+  status: 'downloading' | 'complete' | 'error';
+  error?: string;
+}
+
+// ─── Data Management Types ────────────────────────────────────────
+
+export interface SampleProfileEntry {
+  id: string;
+  name: string;
+  createdAt: string;
+  profile: SampleProfile;
+}
+
+export interface MotionProfileEntry {
+  id: string;
+  name: string;
+  description: string;
+  createdAt: string;
+  profile: MotionProfile;
+}
+
+export interface TestRunEntry {
+  id: string;
+  testName: string;
+  sampleProfileId: string;
+  motionProfileId: string;
+  sampleProfile: SampleProfile;
+  motionProfile: MotionProfile;
+  gcode: string[];
+  startedAt: string;
+  completedAt?: string;
+  status: 'running' | 'completed' | 'downloaded' | 'error';
+  dataFilePath?: string;
+}

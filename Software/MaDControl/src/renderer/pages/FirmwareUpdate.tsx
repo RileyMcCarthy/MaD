@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Box,
   Button,
@@ -27,12 +27,15 @@ function FirmwareUpdate(): React.ReactElement {
   const [error, setError] = useState('');
   const [logs, setLogs] = useState<string[]>([]);
 
+  const isFlashingRef = useRef(isFlashing);
+  isFlashingRef.current = isFlashing;
+
+  // Check firmware version when device responsiveness changes
   useEffect(() => {
     const checkFirmwareVersion = async () => {
       if (deviceState.isResponding) {
         try {
           const versionData = await actions.getFirmwareVersion();
-          // Extract version string from FirmwareVersion object
           if (
             versionData &&
             typeof versionData === 'object' &&
@@ -42,7 +45,6 @@ function FirmwareUpdate(): React.ReactElement {
               (versionData as { version: string }).version || 'Unknown',
             );
           } else if (typeof versionData === 'string') {
-            // Handle case where it might still be a string
             setFirmwareVersion(versionData);
           } else {
             setFirmwareVersion('Unknown');
@@ -52,12 +54,15 @@ function FirmwareUpdate(): React.ReactElement {
           setFirmwareVersion('Unknown');
         }
       } else {
-        // Reset firmware version when device is not responding
         setFirmwareVersion('Unknown');
       }
     };
 
-    // Set up event listeners for firmware update progress
+    checkFirmwareVersion();
+  }, [deviceState.isResponding, actions]);
+
+  // Subscribe to firmware update IPC events (once on mount)
+  useEffect(() => {
     const progressListener = window.electron.ipcRenderer.on(
       'firmware-update-progress',
       (...args: unknown[]) => {
@@ -67,7 +72,6 @@ function FirmwareUpdate(): React.ReactElement {
       },
     );
 
-    // Add dedicated status listener for proper state management
     const statusListener = window.electron.ipcRenderer.on(
       'firmware-flash-status',
       (...args: unknown[]) => {
@@ -86,8 +90,6 @@ function FirmwareUpdate(): React.ReactElement {
             setIsFlashing(false);
             setStatus('Firmware flashed successfully!');
             setError('');
-            // Check firmware version after successful flash
-            checkFirmwareVersion();
             break;
           case 'error':
             setIsFlashing(false);
@@ -107,33 +109,20 @@ function FirmwareUpdate(): React.ReactElement {
       },
     );
 
-    // Check firmware version when device becomes responsive (only on state change)
-    checkFirmwareVersion();
-
-    // Cleanup function to cancel flashing when component unmounts
-    const cleanup = async () => {
-      if (isFlashing) {
-        try {
-          await actions.cancelFirmwareFlash();
-          componentLogger.info(
-            'Canceled firmware flashing due to page navigation',
-          );
-        } catch (err) {
+    // Cancel any ongoing flashing when leaving the page
+    return () => {
+      progressListener();
+      statusListener();
+      if (isFlashingRef.current) {
+        actions.cancelFirmwareFlash().catch((err: unknown) => {
           componentLogger.error(
             'Error canceling firmware flash on cleanup:',
             err,
           );
-        }
+        });
       }
     };
-
-    // Clean up
-    return () => {
-      progressListener();
-      statusListener();
-      cleanup(); // Cancel any ongoing flashing when leaving the page
-    };
-  }, [deviceState.isResponding, actions, isFlashing]);
+  }, [actions]);
 
   const getDeviceStatusText = () => {
     if (deviceState.isResponding) {

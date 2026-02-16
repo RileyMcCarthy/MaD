@@ -3,7 +3,6 @@ import EventEmitter from 'events';
 import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
-import os from 'os';
 import {
   MachineState,
   SampleData,
@@ -12,12 +11,100 @@ import {
   NotificationType,
   FirmwareVersion,
   SampleProfile,
+  FileDownloadProgress,
 } from '@shared/SharedInterface';
 import { deviceLogger } from '@utils/logger';
 import DataProcessor, { ReadType, WriteType } from './DataProcessor';
 import NotificationSender from './NotificationSender';
 import SerialPortHandler from './SerialPortHandler';
 import { showFirmwareFileDialog } from '../util';
+
+/**
+ * Size of packed app_motion_move_t struct: uint8_t(1) + int32_t(4) + int32_t(4) + uint32_t(4) = 13 bytes
+ */
+const MOVE_STRUCT_SIZE = 13;
+
+/**
+ * Size of packed app_monitor_sample_t struct: int32_t(4) * 5 = 20 bytes
+ */
+const SAMPLE_STRUCT_SIZE = 20;
+
+/**
+ * Number of moves to batch into a single TEST_MOVE message
+ */
+const BATCH_MOVE_COUNT = 32;
+
+/**
+ * Encode a G-code text line into a packed binary app_motion_move_t struct (13 bytes).
+ * Struct layout (packed, little-endian):
+ *   uint8_t  g  (1 byte)  - G-code command number
+ *   int32_t  x  (4 bytes) - Position in um
+ *   int32_t  f  (4 bytes) - Feedrate in um/s
+ *   uint32_t p  (4 bytes) - Dwell time in ms
+ */
+function encodeGcodeToBinaryMove(line: string): Buffer | null {
+  const tokens = line.trim().split(/\s+/);
+  if (tokens.length === 0) return null;
+
+  let g = 0;
+  let x = 0; // um
+  let f = 0; // um/s
+  let p = 0; // ms
+
+  for (const token of tokens) {
+    const code = token[0].toUpperCase();
+    const value = parseFloat(token.substring(1));
+    if (isNaN(value)) continue;
+
+    switch (code) {
+      case 'G':
+        g = Math.round(value);
+        break;
+      case 'X':
+        x = Math.round(value * 1000); // mm -> um
+        break;
+      case 'F':
+        f = Math.round(value * 1000); // mm/s -> um/s
+        break;
+      case 'P':
+        p = Math.round(value); // ms
+        break;
+    }
+  }
+
+  const buf = Buffer.alloc(MOVE_STRUCT_SIZE);
+  buf.writeUInt8(g, 0);
+  buf.writeInt32LE(x, 1);
+  buf.writeInt32LE(f, 5);
+  buf.writeUInt32LE(p, 9);
+  return buf;
+}
+
+/**
+ * Decode binary sample data (packed app_monitor_sample_t structs) into CSV string.
+ * Each struct is 20 bytes (packed):
+ *   int32_t  force    (4 bytes) - mN
+ *   int32_t  position (4 bytes) - um
+ *   uint32_t time     (4 bytes) - us
+ *   uint32_t index    (4 bytes) - sample id
+ *   int32_t  setpoint (4 bytes) - um
+ */
+function decodeBinarySampleDataToCSV(data: Buffer): string {
+  const lines: string[] = ['time_us,index,force_mN,position_um,setpoint_um'];
+  const numSamples = Math.floor(data.length / SAMPLE_STRUCT_SIZE);
+
+  for (let i = 0; i < numSamples; i++) {
+    const offset = i * SAMPLE_STRUCT_SIZE;
+    const force = data.readInt32LE(offset);
+    const position = data.readInt32LE(offset + 4);
+    const time = data.readUInt32LE(offset + 8);
+    const index = data.readUInt32LE(offset + 12);
+    const setpoint = data.readInt32LE(offset + 16);
+    lines.push(`${time},${index},${force},${position},${setpoint}`);
+  }
+
+  return lines.join('\n') + '\n';
+}
 
 function emitAndWaitForResponse(
   emitter: EventEmitter,
@@ -170,34 +257,12 @@ class DeviceInterface {
       return this.sample_data_buffer;
     });
 
-    ipcMain.handle('sample-data-latest', async () => {
-      return this.sample_data_buffer[this.sample_data_buffer.length - 1];
-    });
-
-    ipcMain.handle('device-state', async () => {
-      if (this.machine_state === null) {
-        return null;
-      }
-      return this.machine_state;
-    });
-
     ipcMain.handle('device-responding', async () => {
-      console.log(
-        '🔍 DeviceInterface: device-responding handler called, returning:',
-        this.device_connected,
-      );
       return this.device_connected;
     });
 
     ipcMain.handle('device-connected', async () => {
-      const isConnected = this.serialport.getCurrentPath() !== null;
-      console.log(
-        '🔍 DeviceInterface: device-connected handler called, port path:',
-        this.serialport.getCurrentPath(),
-        'returning:',
-        isConnected,
-      );
-      return isConnected;
+      return this.serialport.getCurrentPath() !== null;
     });
 
     ipcMain.handle('get-machine-configuration', async () => {
@@ -290,7 +355,6 @@ class DeviceInterface {
           maxDisplacement: Math.max(0, Math.round(newProfile.maxDisplacement ?? 0)),
           sampleWidth: Math.max(0, Math.round(newProfile.sampleWidth ?? 0)),
           sampleThickness: Math.max(0, Math.round(newProfile.sampleThickness ?? 0)),
-          serial: String(newProfile.serial ?? '').slice(0, 99),
         };
 
         this.dataProcessor.writeData(
@@ -311,29 +375,55 @@ class DeviceInterface {
       },
     );
 
-    // Run Test handler - wraps stream-gcode with test state management
+    // Run Test handler - uploads binary move structs to firmware SD card, then starts test
     ipcMain.handle(
       'run-test',
       async (
         _event,
-        params: { sampleProfile: unknown; gcode: string[]; testName: string },
+        params: { gcode: string[] },
       ) => {
-        const { gcode, testName } = params;
-        deviceLogger.info(`Starting test: ${testName}`);
-
-        // Notify test is starting
-        this.dataProcessor.writeData(WriteType.TEST_RUN, Buffer.from([1]));
+        const { gcode } = params;
+        deviceLogger.info('Starting test run...');
 
         try {
-          // Join gcode array into a single string and stream it
-          const gcodeString = gcode.join('\n');
-          const lines = gcodeString
-            .split('\n')
-            .filter((line) => line.trim() !== '');
+          // Step 1: Clear the gcode file on firmware SD card
+          deviceLogger.info('Clearing gcode file on SD card...');
+          this.dataProcessor.writeData(
+            WriteType.TEST_MOVE,
+            Buffer.from([0]),
+          );
+          await new Promise<void>((resolve, reject) => {
+            const timeout = setTimeout(() => {
+              reject(new Error('Timeout waiting for gcode clear ACK'));
+            }, 5000);
+            this.dataProcessor.once('ack', () => {
+              clearTimeout(timeout);
+              resolve();
+            });
+          });
 
-          for (let i = 0; i < lines.length; i++) {
-            const line = lines[i].trim();
-            if (line === '' || line.startsWith(';')) continue; // Skip empty lines and comments
+          // Step 2: Convert gcode lines to binary move structs and upload in batches
+          const lines = gcode.filter((line) => {
+            const trimmed = line.trim();
+            return trimmed !== '' && !trimmed.startsWith(';');
+          });
+
+          // Encode all lines into move buffers
+          const moveBuffers: Buffer[] = [];
+          for (const line of lines) {
+            const moveBuffer = encodeGcodeToBinaryMove(line.trim());
+            if (moveBuffer) {
+              moveBuffers.push(moveBuffer);
+            } else {
+              deviceLogger.warn(`Skipping unparseable gcode line: ${line}`);
+            }
+          }
+
+          deviceLogger.info(`Uploading ${moveBuffers.length} gcode moves in batches of ${BATCH_MOVE_COUNT}...`);
+
+          for (let i = 0; i < moveBuffers.length; i += BATCH_MOVE_COUNT) {
+            const batch = moveBuffers.slice(i, Math.min(i + BATCH_MOVE_COUNT, moveBuffers.length));
+            const batchBuffer = Buffer.concat(batch);
 
             let success = false;
             let retryCount = 0;
@@ -343,23 +433,17 @@ class DeviceInterface {
               try {
                 this.dataProcessor.writeData(
                   WriteType.TEST_MOVE,
-                  Buffer.from(line),
+                  batchBuffer,
                 );
 
-                // Wait for acknowledgment with timeout
-                await new Promise((resolve, reject) => {
+                await new Promise<void>((resolve, reject) => {
                   const timeout = setTimeout(() => {
-                    reject(
-                      new Error('Timeout waiting for G-code acknowledgment'),
-                    );
+                    reject(new Error('Timeout waiting for gcode upload ACK'));
                   }, 5000);
-
-                  const handleAck = () => {
+                  this.dataProcessor.once('ack', () => {
                     clearTimeout(timeout);
-                    resolve(undefined);
-                  };
-
-                  this.dataProcessor.once('ack', handleAck);
+                    resolve();
+                  });
                 });
 
                 success = true;
@@ -367,8 +451,7 @@ class DeviceInterface {
                 retryCount++;
                 if (retryCount < maxRetries) {
                   deviceLogger.warn(
-                    `Retrying G-code line (attempt ${retryCount}/${maxRetries}):`,
-                    line,
+                    `Retrying gcode batch upload (attempt ${retryCount}/${maxRetries}) at index ${i}`,
                   );
                   await new Promise((resolve) => setTimeout(resolve, 1000));
                 } else {
@@ -378,30 +461,174 @@ class DeviceInterface {
             }
           }
 
-          // Test completed successfully
-          deviceLogger.info(`Test ${testName} completed successfully`);
-          this.dataProcessor.writeData(WriteType.TEST_RUN, Buffer.from([0]));
+          deviceLogger.info('Gcode upload complete. Starting test...');
+
+          // Step 3: Start the test — firmware picks test name and responds with DATA
+          const testNamePromise = new Promise<string>((resolve, reject) => {
+            const timeout = setTimeout(() => {
+              reject(new Error('Timeout waiting for test name from firmware'));
+            }, 5000);
+
+            const handler = (command: number, data: string) => {
+              if (command === WriteType.TEST_RUN) {
+                clearTimeout(timeout);
+                this.dataProcessor.removeListener('data', handler);
+                resolve(data);
+              }
+            };
+            this.dataProcessor.on('data', handler);
+          });
+
+          this.dataProcessor.writeData(WriteType.TEST_RUN, Buffer.from([1]));
+
+          const testName = await testNamePromise;
+          deviceLogger.info(`Firmware assigned test name: ${testName}`);
+
+          // Test is now running autonomously from the SD card binary move file.
+          // The firmware will end the test when it reaches G122 or EOF.
           return { success: true, testName };
         } catch (error) {
-          deviceLogger.error(`Test ${testName} failed:`, error);
-          // Notify test has stopped
-          this.dataProcessor.writeData(WriteType.TEST_RUN, Buffer.from([0]));
+          const errMsg = error instanceof Error ? error.message : 'Unknown error';
+          deviceLogger.error(`Test failed: ${errMsg}`);
           return {
             success: false,
-            error: error instanceof Error ? error.message : 'Unknown error',
-            testName,
+            error: errMsg,
+            testName: '',
           };
         }
       },
     );
 
+    // Download test data file from firmware SD card
+    ipcMain.handle(
+      'download-test-file',
+      async (
+        _event,
+        params: { testName: string; savePath: string },
+      ) => {
+        const { testName, savePath } = params;
+        deviceLogger.info(`Starting file download: ${testName} -> ${savePath}`);
+
+        // Max samples per request (limited by TX buffer on firmware)
+        const SAMPLES_PER_REQUEST = 100;
+
+        try {
+          const allSampleBuffers: Buffer[] = [];
+          let sampleIndex = 0;
+          let done = false;
+
+          while (!done) {
+            // Build binary request: testName(16 bytes) + sampleIndex(uint32LE) + sampleCount(uint32LE)
+            const requestBuf = Buffer.alloc(24);
+            requestBuf.fill(0);
+            requestBuf.write(testName, 0, Math.min(testName.length, 16), 'utf-8');
+            requestBuf.writeUInt32LE(sampleIndex, 16);
+            requestBuf.writeUInt32LE(SAMPLES_PER_REQUEST, 20);
+
+            const chunkPromise = new Promise<Buffer>((resolve, reject) => {
+              const timeout = setTimeout(() => {
+                reject(new Error(`Timeout waiting for samples at index ${sampleIndex}`));
+              }, 10000);
+
+              const handler = (_command: number, data: Buffer) => {
+                clearTimeout(timeout);
+                this.dataProcessor.removeListener('binary-data', handler);
+                resolve(data);
+              };
+              this.dataProcessor.on('binary-data', handler);
+            });
+
+            this.dataProcessor.writeData(
+              WriteType.FILE_DOWNLOAD,
+              requestBuf,
+            );
+
+            const chunk = await chunkPromise;
+
+            if (chunk.length === 0) {
+              // EOF — no more samples
+              done = true;
+            } else {
+              allSampleBuffers.push(chunk);
+              const samplesReceived = Math.floor(chunk.length / SAMPLE_STRUCT_SIZE);
+              sampleIndex += samplesReceived;
+
+              // Send progress to renderer
+              const progress: FileDownloadProgress = {
+                fileName: testName,
+                bytesDownloaded: sampleIndex,
+                totalBytes: 0, // unknown total
+                status: 'downloading',
+              };
+              this.window.webContents.send('file-download-progress', progress);
+
+              // If we received fewer samples than requested, we've hit EOF
+              if (samplesReceived < SAMPLES_PER_REQUEST) {
+                done = true;
+              }
+            }
+          }
+
+          // Decode binary struct data to CSV and save
+          const binaryData = Buffer.concat(allSampleBuffers);
+          const csvContent = decodeBinarySampleDataToCSV(binaryData);
+          fs.writeFileSync(savePath, csvContent);
+          deviceLogger.info(`CSV saved to ${savePath} (${sampleIndex} samples, ${binaryData.length} binary bytes → ${csvContent.length} CSV bytes)`);
+
+          // Send completion
+          const completionProgress: FileDownloadProgress = {
+            fileName: testName,
+            bytesDownloaded: sampleIndex,
+            totalBytes: sampleIndex,
+            status: 'complete',
+          };
+          this.window.webContents.send('file-download-progress', completionProgress);
+
+          return {
+            success: true,
+            filePath: savePath,
+            fileSize: binaryData.length,
+          };
+        } catch (error) {
+          const errMsg = error instanceof Error ? error.message : 'Unknown error';
+          deviceLogger.error(`File download failed: ${errMsg}`);
+
+          const errorProgress: FileDownloadProgress = {
+            fileName: testName,
+            bytesDownloaded: 0,
+            totalBytes: 0,
+            status: 'error',
+            error: errMsg,
+          };
+          this.window.webContents.send('file-download-progress', errorProgress);
+
+          return { success: false, error: errMsg };
+        }
+      },
+    );
+
     ipcMain.handle('stream-gcode', async (_event, gcode: string) => {
-      const lines = gcode.split('\n').filter((line) => line.trim() !== '');
+      const lines = gcode.split('\n').filter((line) => {
+        const trimmed = line.trim();
+        return trimmed !== '' && !trimmed.startsWith(';');
+      });
 
       const streamGcode = async () => {
-        for (let i = 0; i < lines.length; i++) {
-          const line = lines[i].trim();
-          if (line === '') continue;
+        // Encode all lines into move buffers
+        const moveBuffers: Buffer[] = [];
+        for (const line of lines) {
+          const moveBuffer = encodeGcodeToBinaryMove(line.trim());
+          if (moveBuffer) {
+            moveBuffers.push(moveBuffer);
+          } else {
+            deviceLogger.warn(`Skipping unparseable gcode line: ${line}`);
+          }
+        }
+
+        // Send in batches
+        for (let i = 0; i < moveBuffers.length; i += BATCH_MOVE_COUNT) {
+          const batch = moveBuffers.slice(i, Math.min(i + BATCH_MOVE_COUNT, moveBuffers.length));
+          const batchBuffer = Buffer.concat(batch);
 
           let success = false;
           let retryCount = 0;
@@ -411,7 +638,7 @@ class DeviceInterface {
             try {
               this.dataProcessor.writeData(
                 WriteType.TEST_MOVE,
-                Buffer.from(line),
+                batchBuffer,
               );
 
               // Wait for acknowledgment with timeout
@@ -435,14 +662,12 @@ class DeviceInterface {
               retryCount++;
               if (retryCount < maxRetries) {
                 deviceLogger.warn(
-                  `Retrying G-code line (attempt ${retryCount}/${maxRetries}):`,
-                  line,
+                  `Retrying G-code batch (attempt ${retryCount}/${maxRetries}) at index ${i}`,
                 );
                 await new Promise((resolve) => setTimeout(resolve, 1000)); // Wait 1s before retry
               } else {
                 deviceLogger.error(
-                  `Failed to send G-code line after ${maxRetries} attempts:`,
-                  line,
+                  `Failed to send G-code batch after ${maxRetries} attempts at index ${i}`,
                 );
                 throw error;
               }
@@ -586,7 +811,6 @@ class DeviceInterface {
                 maxDisplacement: parsed.maxDisplacement ?? 0,
                 sampleWidth: parsed.sampleWidth ?? 0,
                 sampleThickness: parsed.sampleThickness ?? 0,
-                serial: String(parsed.serial ?? ''),
               };
 
               this.window.webContents.send(
@@ -641,10 +865,7 @@ class DeviceInterface {
     });
 
     this.serialport.on('open', (message: string) => {
-      console.log(
-        '🔌 DeviceInterface: Serial port opened, sending connection status:',
-        message,
-      );
+      deviceLogger.info('Serial port opened:', message);
       this.window.webContents.send('device-status-updates', {
         connected: true,
         responding: this.device_connected,
@@ -653,10 +874,7 @@ class DeviceInterface {
     });
 
     this.serialport.on('open-callback', (message: string) => {
-      console.log(
-        '🔌 DeviceInterface: Serial port open-callback, sending connection status:',
-        message,
-      );
+      deviceLogger.info('Serial port open-callback:', message);
       this.window.webContents.send('device-status-updates', {
         connected: true,
         responding: this.device_connected,
@@ -665,10 +883,7 @@ class DeviceInterface {
     });
 
     this.serialport.on('close', (message: string) => {
-      console.log(
-        '🔌 DeviceInterface: Serial port closed, sending connection status:',
-        message,
-      );
+      deviceLogger.info('Serial port closed:', message);
       this.device_connected = false;
       this.window.webContents.send('device-status-updates', {
         connected: false,
@@ -678,10 +893,7 @@ class DeviceInterface {
     });
 
     this.serialport.on('error', (error: Error) => {
-      console.log(
-        '🔌 DeviceInterface: Serial port error, sending connection status:',
-        error.message,
-      );
+      deviceLogger.error('Serial port error:', error.message);
       this.device_connected = false;
       this.window.webContents.send('device-status-updates', {
         connected: false,
@@ -893,7 +1105,7 @@ class DeviceInterface {
 
         // Command to flash firmware with loadp2
         const cmdArgs = [
-          '-b230400', // Baud rate
+          '-b2000000', // Baud rate
           '-p',
           port, // Port
           twoStageCmd, // Two-stage flash command

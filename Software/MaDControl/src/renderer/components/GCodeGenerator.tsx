@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Box, Typography, Grid } from '@mui/material';
 import { LineChart } from '@mui/x-charts/LineChart';
 import { TestProfile } from '@shared/SharedInterface';
@@ -16,8 +16,14 @@ const GCodeGenerator: React.FC<GCodeGeneratorProps> = ({
   const [gcode, setGcode] = useState<string[]>([]);
   const [distanceData, setDistanceData] = useState<number[]>([]);
   const [timeData, setTimeData] = useState<number[]>([]);
+  const prevProfileJson = useRef<string>('');
 
   useEffect(() => {
+    // Deep-compare by JSON to avoid infinite re-render when parent
+    // reconstructs the profile object on every render.
+    const json = JSON.stringify(profile);
+    if (json === prevProfileJson.current) return;
+    prevProfileJson.current = json;
     generateGcode(profile);
   }, [profile]);
 

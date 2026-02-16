@@ -36,7 +36,7 @@ test.describe('Profile Operations', () => {
       await expect(window.getByLabel('Max Displacement (mm)')).toBeVisible();
       await expect(window.getByLabel('Sample Width (mm)')).toBeVisible();
       await expect(window.getByLabel('Sample Thickness (mm)')).toBeVisible();
-      await expect(window.getByLabel('Serial Number')).toBeVisible();
+      await expect(window.getByLabel('Sample Name')).toBeVisible();
     });
 
     test('form fields should accept numeric input', async ({ window }) => {
@@ -50,9 +50,9 @@ test.describe('Profile Operations', () => {
       await expect(window.getByLabel('Max Displacement (mm)')).toHaveValue('200');
     });
 
-    test('serial number should accept text input', async ({ window }) => {
-      await window.getByLabel('Serial Number').fill('TEST-SERIAL-001');
-      await expect(window.getByLabel('Serial Number')).toHaveValue('TEST-SERIAL-001');
+    test('sample name should accept text input', async ({ window }) => {
+      await window.getByLabel('Sample Name').fill('TEST-SERIAL-001');
+      await expect(window.getByLabel('Sample Name')).toHaveValue('TEST-SERIAL-001');
     });
 
     test('loading profile should populate all fields correctly', async ({ window }) => {
@@ -66,7 +66,7 @@ test.describe('Profile Operations', () => {
       await expect(window.getByLabel('Max Displacement (mm)')).toHaveValue('100');
       await expect(window.getByLabel('Sample Width (mm)')).toHaveValue('10');
       await expect(window.getByLabel('Sample Thickness (mm)')).toHaveValue('2');
-      await expect(window.getByLabel('Serial Number')).toHaveValue('TEST001');
+      await expect(window.getByLabel('Sample Name')).toHaveValue('TEST001');
     });
 
     test('loaded values can be modified', async ({ window }) => {
@@ -81,7 +81,7 @@ test.describe('Profile Operations', () => {
       
       // Other values should remain unchanged
       await expect(window.getByLabel('Max Velocity (mm/s)')).toHaveValue('25');
-      await expect(window.getByLabel('Serial Number')).toHaveValue('TEST001');
+      await expect(window.getByLabel('Sample Name')).toHaveValue('TEST001');
     });
 
     test('Save Sample Profile button should be enabled', async ({ window }) => {
