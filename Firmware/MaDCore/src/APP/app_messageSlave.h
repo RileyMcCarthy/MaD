@@ -7,8 +7,9 @@
 /**********************************************************************
  * Includes
  **********************************************************************/
+#include <stdbool.h>
 #include <stdint.h>
-#include "IO_protocol.h"
+#include "protoemb.h"
 /**********************************************************************
  * Constants
  **********************************************************************/
@@ -27,9 +28,8 @@
  **********************************************************************/
 void app_messageSlave_init(int lock);
 void app_messageSlave_run(void);
+bool app_messageSlave_sendNotification(const ProtoEmb_Notification_t *notification);
 
-bool app_messageSlave_requestMotionEnabled(void);
-bool app_messageSlave_requestTestMode(void);
 /**********************************************************************
  * End of File
  **********************************************************************/

@@ -5,552 +5,372 @@
  * Includes
  **********************************************************************/
 #include <string.h>
+
 #include "app_messageSlave.h"
+#include "app_control.h"
 #include "app_monitor.h"
 #include "app_motion.h"
-#include "app_control.h"
 #include "app_notification.h"
 
 #include "dev_forceGauge.h"
-#include "HAL_lock.h"
-
-#include "IO_protocol.h"
-#include "JsonDecoder.h"
 #include "dev_nvram.h"
-#include "IO_SDCard.h"
+
+#include "HAL_lock.h"
+#include "HAL_time.h"
+
 #include "IO_Debug.h"
-#include "lib_utility.h"
+#include "IO_SDCard.h"
+#include "IO_fullDuplexSerial.h"
+
 #include "emulation_helpers.h"
+#include "lib_utility.h"
+#include "protoemb_runtime.h"
 
-/**********************************************************************
- * Constants
- **********************************************************************/
-
-// Firmware version string - this will be set during build
 #ifdef FIRMWARE_VERSION
-  static const char* APP_MESSAGE_SLAVE_VERSION = FIRMWARE_VERSION;
+static const char *APP_MESSAGE_SLAVE_VERSION = FIRMWARE_VERSION;
 #else
-  static const char* APP_MESSAGE_SLAVE_VERSION = "0.0.0"; // development, no version set
+static const char *APP_MESSAGE_SLAVE_VERSION = "0.0.0";
 #endif
 
-/*********************************************************************
- * Macros
- **********************************************************************/
 #define APP_MESSAGESLAVE_LOCK_REQ() HAL_lock_try(app_message_slave_data.lock)
-#define APP_MESSAGESLAVE_LOCK_REQ_BLOCK() while (APP_MESSAGESLAVE_LOCK_REQ() == false) EMULATION_YIELD_LOCK();
+#define APP_MESSAGESLAVE_LOCK_REQ_BLOCK()        \
+    while (APP_MESSAGESLAVE_LOCK_REQ() == false) \
+        EMULATION_YIELD_LOCK();
 #define APP_MESSAGESLAVE_LOCK_REL() HAL_lock_release(app_message_slave_data.lock)
-/**********************************************************************
- * Typedefs
- **********************************************************************/
-
-typedef enum
-{
-    APP_MESSAGE_SLAVE_RESPONSE_TYPE_NONE, // invalid message, request should be ignored
-    APP_MESSAGE_SLAVE_RESPONSE_TYPE_ACK,
-    APP_MESSAGE_SLAVE_RESPONSE_TYPE_NACK,
-    APP_MESSAGE_SLAVE_RESPONSE_TYPE_DATA,
-} app_message_slave_responseType_E;
 
 typedef struct
 {
-    bool triggerTest;
-} app_message_slave_output_S;
-
-typedef struct
-{
-    char dataRX[APP_MESSAGE_SLAVE_RX_BUFFER_SIZE];
-    char dataTX[APP_MESSAGE_SLAVE_TX_BUFFER_SIZE];
     MachineProfile machineProfile;
     int lock;
-
-    app_message_slave_output_S stagedOutput;
-    app_message_slave_output_S output;
+    ProtoEmb_Runtime_t runtime;
+    app_monitor_sample_t sampleReadBuffer[APP_MESSAGE_SLAVE_TX_BUFFER_SIZE / sizeof(app_monitor_sample_t)];
 } app_message_slave_data_S;
 
-/**********************************************************************
- * External Variables
- **********************************************************************/
-
-/**********************************************************************
- * Private Variable Definitions
- **********************************************************************/
 static app_message_slave_data_S app_message_slave_data;
-/**********************************************************************
- * Private Function Prototypes
- **********************************************************************/
 
-/**********************************************************************
- * Private Function Definitions
- **********************************************************************/
-
-static app_message_slave_responseType_E app_message_slave_private_handleRead(IO_protocol_readType_E readType)
+static bool app_message_slave_runtimeSendBytes(const uint8_t *data, uint16_t size, void *user_ctx)
 {
-    app_message_slave_responseType_E responseType = APP_MESSAGE_SLAVE_RESPONSE_TYPE_NONE;
-    int32_t dataSize = 0;
-    switch (readType)
-    {
-    case IO_PROTOCOL_READ_TYPE_SAMPLE:
-    {
-        app_monitor_sample_t sample;
-        app_monitor_getSample(&sample);
-        const int32_t machinePosition = app_motion_getPosition();
-        const int32_t machineSetpoint = app_motion_getSetpoint();
-        const int32_t machineForce = dev_forceGauge_getForce(DEV_FORCEGAUGE_CHANNEL_MAIN);
-
-        dataSize = snprintf(app_message_slave_data.dataTX, APP_MESSAGE_SLAVE_TX_BUFFER_SIZE,
-                 "{\"Machine Force (N)\":%0.3f,\"Machine Position (mm)\":%d,\"Machine Setpoint (mm)\":%d,\"Sample Force (N)\":%0.3f,\"Sample Position (mm)\":%d,\"Index\":%u}",
-                 LIB_UTILITY_MN_TO_N(machineForce), machinePosition, LIB_UTILITY_UM_TO_MM(machineSetpoint), LIB_UTILITY_MN_TO_N(sample.force), LIB_UTILITY_UM_TO_MM(sample.position), sample.index);
-        //DEBUG_INFO("responding with sample: %s\n", app_message_slave_data.dataTX);
-        responseType = APP_MESSAGE_SLAVE_RESPONSE_TYPE_DATA;
-        break;
-    }
-    case IO_PROTOCOL_READ_TYPE_STATE:
-    {
-        const app_control_fault_E faultedReason = app_control_getFault();
-        const app_control_restriction_E restrictedReason = app_control_getRestriction();
-        const bool testRunning = app_control_testRunning();
-        const bool motionEnabled = app_control_motionEnabled();
-        dataSize = snprintf(app_message_slave_data.dataTX, APP_MESSAGE_SLAVE_TX_BUFFER_SIZE,
-                 "{\"faultedReason\":%d,\"restrictedReason\":%d,\"testRunning\":%d,\"motionEnabled\":%d}",
-                 faultedReason, restrictedReason, testRunning, motionEnabled);
-        responseType = APP_MESSAGE_SLAVE_RESPONSE_TYPE_DATA;
-        break;
-    }
-    case IO_PROTOCOL_READ_TYPE_MACHINE_CONFIGURATION:
-    {
-        // Respond with current nvram machine profile
-        dataSize = snprintf(app_message_slave_data.dataTX, APP_MESSAGE_SLAVE_TX_BUFFER_SIZE,
-                 "{\"Name\":\"%s\",\
-                \"Encoder (step/mm)\":%d,\
-                \"Servo (step/mm)\":%d,\
-                \"Force Gauge (N/step)\":%d,\
-                \"Force Gauge Zero Offset (steps)\":%d,\
-                \"Position Max (mm)\":%d,\
-                \"Velocity Max (mm/s)\":%d,\
-                \"Acceleration Max (mm/s^2)\":%d,\
-                \"Tensile Force Max (N)\":%d,\
-                \"Homing Velocity (mm/s)\":%d,\
-                \"Homing Offset (mm)\":%d,\
-                \"Jaw Offset (mm)\":%d}",
-                 app_message_slave_data.machineProfile.name,
-                 app_message_slave_data.machineProfile.encoderStepsPerMM,
-                 app_message_slave_data.machineProfile.servoStepsPerMM,
-                 app_message_slave_data.machineProfile.forceGaugeNPerStep,
-                 app_message_slave_data.machineProfile.forceGaugeZeroOffset,
-                 app_message_slave_data.machineProfile.maxPosition,
-                 app_message_slave_data.machineProfile.maxVelocity,
-                 app_message_slave_data.machineProfile.maxAcceleration,
-                 app_message_slave_data.machineProfile.maxForceTensile,
-                 app_message_slave_data.machineProfile.homingVelocity,
-                 app_message_slave_data.machineProfile.homingOffset,
-                 app_message_slave_data.machineProfile.jawOffset);
-        responseType = APP_MESSAGE_SLAVE_RESPONSE_TYPE_DATA;
-        DEBUG_INFO("%s", "responding with machine profile\n");
-    }
-    break;
-    case IO_PROTOCOL_READ_TYPE_FIRMWARE_VERSION:
-    {
-        DEBUG_INFO("responding with firmware version: %s\n", APP_MESSAGE_SLAVE_VERSION);
-        dataSize = snprintf(app_message_slave_data.dataTX, APP_MESSAGE_SLAVE_TX_BUFFER_SIZE,
-                 "{\"version\":\"%s\"}", APP_MESSAGE_SLAVE_VERSION);
-        responseType = APP_MESSAGE_SLAVE_RESPONSE_TYPE_DATA;
-    }
-    break;
-    case IO_PROTOCOL_READ_TYPE_SAMPLE_PROFILE:
-    {
-        DEBUG_INFO("%s", "responding with sample profile\n");
-        app_monitor_sampleProfile_S sampleProfile;
-        app_monitor_getSampleProfile(&sampleProfile);
-        dataSize = snprintf(app_message_slave_data.dataTX, APP_MESSAGE_SLAVE_TX_BUFFER_SIZE,
-                            "{\"maxForce\":%u,\"maxVelocity\":%u,\"maxDisplacement\":%u,\"sampleWidth\":%u,\"sampleThickness\":%u}",
-                            sampleProfile.maxForce,
-                            sampleProfile.maxVelocity,
-                            sampleProfile.maxDisplacement,
-                            sampleProfile.sampleWidth,
-                            sampleProfile.sampleThickness);
-        responseType = APP_MESSAGE_SLAVE_RESPONSE_TYPE_DATA;
-    }
-    break;
-    case IO_PROTOCOL_READ_TYPE_COUNT:
-    default:
-        break;
-    }
-
-    if (dataSize > APP_MESSAGE_SLAVE_TX_BUFFER_SIZE)
-    {
-        DEBUG_ERROR("data size is too large: %d\n", dataSize);
-        responseType = APP_MESSAGE_SLAVE_RESPONSE_TYPE_NACK;
-        app_message_slave_data.dataTX[0] = '\0';
-    }
-    else if (dataSize < 0)
-    {
-        DEBUG_ERROR("data size is negative: %d\n", dataSize);
-        responseType = APP_MESSAGE_SLAVE_RESPONSE_TYPE_NACK;
-        app_message_slave_data.dataTX[0] = '\0';
-    }
-    else
-    {
-        // DEBUG_INFO("data size is valid: %d\n", dataSize);
-    }
-    app_message_slave_data.dataTX[APP_MESSAGE_SLAVE_TX_BUFFER_SIZE - 1] = '\0';
-    return responseType;
+    (void)user_ctx;
+    return IO_fullDuplexSerial_send(IO_FULLDUPLEXSERIAL_CHANNEL_MAIN, data, size);
 }
 
-static app_message_slave_responseType_E app_message_slave_private_handleWrite(IO_protocol_writeType_E writeType, char *data, uint32_t dataSize)
+static uint32_t app_message_slave_runtimeGetTimeMs(void *user_ctx)
 {
-    // confirm string is null terminated
-    app_message_slave_data.dataRX[dataSize] = '\0';
-
-    app_message_slave_responseType_E responseType = APP_MESSAGE_SLAVE_RESPONSE_TYPE_NONE;
-    switch (writeType)
-    {
-    case IO_PROTOCOL_WRITE_TYPE_MACHINE_CONFIGURATION:
-    {
-        // Save incomming configuration to NVRAM
-        MachineProfile newProfile;
-        if (json_to_machine_profile(&newProfile, app_message_slave_data.dataRX))
-        {
-            dev_nvram_updateChannelData(DEV_NVRAM_CHANNEL_MACHINE_PROFILE, &newProfile, sizeof(MachineProfile));
-            // HACK: should have this notify once it successfully writes to NVRAM, this should really just be on UI side once ACK recieved
-            app_notification_send(APP_NOTIFICATION_TYPE_SUCCESS, "Machine profile saved to SD Card, please reboot\n");
-            responseType = APP_MESSAGE_SLAVE_RESPONSE_TYPE_ACK;
-            DEBUG_INFO("%s", "saved new machine profile\n");
-        }
-        else
-        {
-            DEBUG_WARNING("%s", "failed to parse machine profile\n");
-            responseType = APP_MESSAGE_SLAVE_RESPONSE_TYPE_NACK;
-        }
-    }
-    break;
-    case IO_PROTOCOL_WRITE_TYPE_MOTION_ENABLE:
-        if (app_message_slave_data.dataRX[0] == '1')
-        {
-            DEBUG_INFO("%s", "motion enabled\n");
-            if (app_control_triggerMotionEnabled())
-            {
-                responseType = APP_MESSAGE_SLAVE_RESPONSE_TYPE_ACK;
-            }
-            else
-            {
-                responseType = APP_MESSAGE_SLAVE_RESPONSE_TYPE_NACK;
-            }
-        }
-        else if (app_message_slave_data.dataRX[0] == '0')
-        {
-            DEBUG_INFO("%s", "motion disabled\n");
-            if (app_control_triggerMotionDisabled())
-            {
-                responseType = APP_MESSAGE_SLAVE_RESPONSE_TYPE_ACK;
-            }
-            else
-            {
-                responseType = APP_MESSAGE_SLAVE_RESPONSE_TYPE_NACK;
-            }
-        }
-        else
-        {
-            responseType = APP_MESSAGE_SLAVE_RESPONSE_TYPE_NACK;
-        }
-        break;
-    case IO_PROTOCOL_WRITE_TYPE_TEST_RUN:
-        if (app_message_slave_data.dataRX[0] != '\0')
-        {
-            // Close gcode write channel and wait for it to finish writing
-            IO_SDCard_close(IO_SDCARD_CHANNEL_GCODE);
-            while (!IO_SDCard_isClosed(IO_SDCARD_CHANNEL_GCODE))
-            {
-                EMULATION_YIELD_LOCK();
-            }
-
-            // Get next test name from SD card index file
-            char nextTestName[16];
-            if (app_monitor_getNextTestName(nextTestName, sizeof(nextTestName)))
-            {
-                app_monitor_setTestName(nextTestName);
-
-                // app_motion will open gcode channel in READ mode when it detects testRunning
-
-                if (app_control_triggerTestStart())
-                {
-                    // Respond with DATA containing the assigned test name
-                    const uint16_t nameLen = (uint16_t)strlen(nextTestName);
-                    IO_protocol_respondData((IO_protocol_readType_E)writeType, (uint8_t *)nextTestName, nameLen);
-                    DEBUG_INFO("TEST_RUN: started test with name %s\n", nextTestName);
-                }
-                else
-                {
-                    responseType = APP_MESSAGE_SLAVE_RESPONSE_TYPE_NACK;
-                }
-            }
-            else
-            {
-                DEBUG_ERROR("%s", "TEST_RUN: failed to get next test name from SD card\n");
-                responseType = APP_MESSAGE_SLAVE_RESPONSE_TYPE_NACK;
-            }
-        }
-        break;
-    case IO_PROTOCOL_WRITE_TYPE_MANUAL_MOVE:
-    {
-        lib_json_move_S moveJSON;
-        if (json_to_move(&moveJSON, app_message_slave_data.dataRX))
-        {
-            app_motion_move_t move;
-            move.x = moveJSON.x * 1000; // mm -> um
-            move.f = moveJSON.f * 1000; // mm/s -> um/s
-            move.g = moveJSON.g;
-            move.p = moveJSON.p;
-            if (app_motion_addManualMove(&move))
-            {
-                DEBUG_INFO("manual move added: %dum at %dum/s\n", move.x, move.f);
-                responseType = APP_MESSAGE_SLAVE_RESPONSE_TYPE_ACK;
-            }
-            else
-            {
-                responseType = APP_MESSAGE_SLAVE_RESPONSE_TYPE_NACK;
-            }
-        }
-        else
-        {
-            responseType = APP_MESSAGE_SLAVE_RESPONSE_TYPE_NACK;
-        }
-        break;
-    }
-    case IO_PROTOCOL_WRITE_TYPE_TEST_MOVE:
-    {
-        // Write binary move structs via IO_SDCard channel
-        if (dataSize == 0 || app_message_slave_data.dataRX[0] == '\0')
-        {
-            // Empty payload: open gcode channel in WRITE mode (truncates with "wb")
-            if (IO_SDCard_open(IO_SDCARD_CHANNEL_GCODE, "", IO_SDCARD_MODE_WRITE))
-            {
-                DEBUG_INFO("%s", "GCODE: opened channel for upload\n");
-                responseType = APP_MESSAGE_SLAVE_RESPONSE_TYPE_ACK;
-            }
-            else
-            {
-                DEBUG_ERROR("%s", "GCODE: failed to open channel\n");
-                responseType = APP_MESSAGE_SLAVE_RESPONSE_TYPE_NACK;
-            }
-        }
-        else if ((dataSize % sizeof(app_motion_move_t)) == 0)
-        {
-            // Batch push: payload contains N packed move structs
-            const uint32_t moveCount = dataSize / sizeof(app_motion_move_t);
-            bool allPushed = true;
-            for (uint32_t i = 0; i < moveCount; i++)
-            {
-                app_motion_move_t move;
-                memcpy(&move, &app_message_slave_data.dataRX[i * sizeof(app_motion_move_t)], sizeof(app_motion_move_t));
-                if (!IO_SDCard_push(IO_SDCARD_CHANNEL_GCODE, &move, sizeof(app_motion_move_t)))
-                {
-                    DEBUG_ERROR("GCODE: queue full at move %u of %u\n", i, moveCount);
-                    allPushed = false;
-                    break;
-                }
-            }
-            if (allPushed)
-            {
-                DEBUG_INFO("GCODE: queued %u moves\n", moveCount);
-                responseType = APP_MESSAGE_SLAVE_RESPONSE_TYPE_ACK;
-            }
-            else
-            {
-                responseType = APP_MESSAGE_SLAVE_RESPONSE_TYPE_NACK;
-            }
-        }
-        else
-        {
-            DEBUG_ERROR("GCODE: unexpected data size %u (not a multiple of %u)\n", dataSize, (uint32_t)sizeof(app_motion_move_t));
-            responseType = APP_MESSAGE_SLAVE_RESPONSE_TYPE_NACK;
-        }
-        break;
-    }
-    case IO_PROTOCOL_WRITE_TYPE_SAMPLE_PROFILE:
-    {
-        DEBUG_INFO("%s:%s", "Receiving sample profile\n", app_message_slave_data.dataRX);
-        app_monitor_sampleProfile_S sampleProfile;
-        if (json_to_sample_profile(&sampleProfile, app_message_slave_data.dataRX))
-        {
-            DEBUG_INFO("Sample profile: maxForce=%u, maxVelocity=%u, maxDisplacement=%u, sampleWidth=%u, sampleThickness=%u\n",
-                       sampleProfile.maxForce,
-                       sampleProfile.maxVelocity,
-                       sampleProfile.maxDisplacement,
-                       sampleProfile.sampleWidth,
-                       sampleProfile.sampleThickness);
-
-            if (app_monitor_setSampleProfile(&sampleProfile))
-            {
-                DEBUG_INFO("%s", "Sample profile set successfully\n");
-                responseType = APP_MESSAGE_SLAVE_RESPONSE_TYPE_ACK;
-            }
-            else
-            {
-                DEBUG_ERROR("%s", "Failed to set sample profile\n");
-                responseType = APP_MESSAGE_SLAVE_RESPONSE_TYPE_NACK;
-            }
-        }
-        else
-        {
-            DEBUG_ERROR("%s", "Failed to parse sample profile\n");
-            responseType = APP_MESSAGE_SLAVE_RESPONSE_TYPE_NACK;
-        }
-        break;
-    }
-    case IO_PROTOCOL_WRITE_TYPE_GAUGE_LENGTH:
-        DEBUG_INFO("%s", "Setting gauge length\n");
-        app_monitor_zeroSamplePosition(); // zero encoder feedback
-        break;
-    case IO_PROTOCOL_WRITE_TYPE_GAUGE_FORCE:
-        DEBUG_INFO("%s", "Setting gauge force\n");
-        app_monitor_zeroSampleForce();
-        break;
-    case IO_PROTOCOL_WRITE_TYPE_FILE_INFO:
-    {
-        // Removed — no longer used. Kept as NACK for backwards compatibility.
-        DEBUG_WARNING("%s", "FILE_INFO: deprecated command received\n");
-        responseType = APP_MESSAGE_SLAVE_RESPONSE_TYPE_NACK;
-        break;
-    }
-    case IO_PROTOCOL_WRITE_TYPE_FILE_DOWNLOAD:
-    {
-        // Request payload is binary: testName(16 bytes) + sampleIndex(uint32_t) + sampleCount(uint32_t)
-        const uint32_t headerSize = 16 + sizeof(uint32_t) + sizeof(uint32_t);
-        if (dataSize >= headerSize)
-        {
-            char testName[17];
-            memcpy(testName, app_message_slave_data.dataRX, 16);
-            testName[16] = '\0';
-            // Trim trailing nulls/spaces
-            for (int i = 15; i >= 0; i--)
-            {
-                if (testName[i] == '\0' || testName[i] == ' ')
-                {
-                    testName[i] = '\0';
-                }
-                else
-                {
-                    break;
-                }
-            }
-
-            uint32_t sampleIndex;
-            uint32_t sampleCount;
-            memcpy(&sampleIndex, &app_message_slave_data.dataRX[16], sizeof(uint32_t));
-            memcpy(&sampleCount, &app_message_slave_data.dataRX[20], sizeof(uint32_t));
-
-            DEBUG_INFO("FILE_DOWNLOAD: test=%s sampleIndex=%u sampleCount=%u\n", testName, sampleIndex, sampleCount);
-
-            // Limit to TX buffer capacity
-            const uint32_t sampleSize = sizeof(app_monitor_sample_t);
-            const uint32_t maxSamples = (APP_MESSAGE_SLAVE_TX_BUFFER_SIZE) / sampleSize;
-            const uint32_t readCount = LIB_UTILITY_MIN(sampleCount, maxSamples);
-
-            const uint32_t itemsRead = IO_SDCard_readDirect(
-                IO_SDCARD_CHANNEL_SAMPLE_DATA,
-                testName,
-                app_message_slave_data.dataTX,
-                sampleIndex,
-                readCount);
-
-            if (itemsRead > 0U)
-            {
-                // Respond with raw binary sample structs (0 bytes = EOF)
-                const uint16_t len = LIB_UTILITY_LIMIT(itemsRead * sampleSize, 0, 65535);
-                IO_protocol_respondData((IO_protocol_readType_E)writeType, (uint8_t *)app_message_slave_data.dataTX, len);
-                DEBUG_INFO("FILE_DOWNLOAD: sent %u samples (%u bytes)\n", itemsRead, len);
-            }
-            else
-            {
-                // 0 items = EOF or file not found — respond with empty data
-                IO_protocol_respondData((IO_protocol_readType_E)writeType, (uint8_t *)app_message_slave_data.dataTX, 0);
-                DEBUG_INFO("%s", "FILE_DOWNLOAD: 0 samples read (EOF or not found)\n");
-            }
-        }
-        else
-        {
-            DEBUG_ERROR("FILE_DOWNLOAD: invalid request size %u (expected >= %u)\n", dataSize, headerSize);
-            responseType = APP_MESSAGE_SLAVE_RESPONSE_TYPE_NACK;
-        }
-        break;
-    }
-    case IO_PROTOCOL_WRITE_TYPE_COUNT:
-    default:
-        break;
-    }
-
-    return responseType;
+    (void)user_ctx;
+    return HAL_time_getMs();
 }
 
-static void app_message_slave_private_handleIncomming()
-{
-    uint32_t dataSize = 0U;
-    IO_protocol_readType_E readType = IO_PROTOCOL_READ_TYPE_COUNT;
-    IO_protocol_writeType_E writeType = IO_PROTOCOL_WRITE_TYPE_COUNT;
-    app_message_slave_responseType_E responseType = APP_MESSAGE_SLAVE_RESPONSE_TYPE_NONE;
-    switch (IO_protocol_recieveRequest(&readType, &writeType, app_message_slave_data.dataRX, &dataSize, sizeof(app_message_slave_data.dataRX)))
-    {
-    case IO_PROTOCOL_INCOMMING_TYPE_READ:
-        // DEBUG_INFO("Recieved read: %d\n", readType);
-        responseType = app_message_slave_private_handleRead(readType);
-        break;
-    case IO_PROTOCOL_INCOMMING_TYPE_WRITE:
-        // DEBUG_INFO("Recieved write: .%s.\n", app_message_slave_data.dataRX);
-        responseType = app_message_slave_private_handleWrite(writeType, app_message_slave_data.dataRX, dataSize);
-        break;
-    case IO_PROTOCOL_INCOMMING_TYPE_NONE:
-    default:
-        break;
-    }
-    const uint16_t len = LIB_UTILITY_LIMIT(strlen(app_message_slave_data.dataTX), 0, 65535);
-    switch (responseType)
-    {
-    case APP_MESSAGE_SLAVE_RESPONSE_TYPE_ACK:
-        IO_protocol_respondACK(writeType);
-        break;
-    case APP_MESSAGE_SLAVE_RESPONSE_TYPE_NACK:
-        IO_protocol_respondNACK(writeType);
-        break;
-    case APP_MESSAGE_SLAVE_RESPONSE_TYPE_DATA:
-        IO_protocol_respondData(readType, (uint8_t *)app_message_slave_data.dataTX, len);
-        break;
-    case APP_MESSAGE_SLAVE_RESPONSE_TYPE_NONE:
-    default:
-        break;
-    }
-}
-
-static void app_messageSlave_private_stageOutputs()
+static void app_message_slave_copyMachineProfile(MachineProfile *dst)
 {
     APP_MESSAGESLAVE_LOCK_REQ_BLOCK();
-    memcpy(&app_message_slave_data.output, &app_message_slave_data.stagedOutput, sizeof(app_message_slave_output_S));
+    memcpy(dst, &app_message_slave_data.machineProfile, sizeof(MachineProfile));
     APP_MESSAGESLAVE_LOCK_REL();
 }
 
-/**********************************************************************
- * Public Function Definitions
- **********************************************************************/
+static void app_message_slave_setMachineProfile(const MachineProfile *src)
+{
+    APP_MESSAGESLAVE_LOCK_REQ_BLOCK();
+    memcpy(&app_message_slave_data.machineProfile, src, sizeof(MachineProfile));
+    APP_MESSAGESLAVE_LOCK_REL();
+}
+
+static void app_message_slave_fillMove(app_motion_move_t *dst, const ProtoEmb_Move_t *src)
+{
+    dst->g = (uint8_t)src->g;
+    dst->x = src->x;
+    dst->f = src->f;
+    dst->p = src->p;
+}
+
+bool ProtoEmb_onRead_sample(ProtoEmb_Sample_t *out)
+{
+    app_monitor_sample_t storedSample;
+    /* Jaw separation from encoder (same basis as sample position = feedback − gauge). */
+    const int32_t machinePosition = app_monitor_getAbsolutePosition();
+    const int32_t machineSetpoint = app_motion_getSetpoint();
+    const int32_t machineForce = dev_forceGauge_getForce(DEV_FORCEGAUGE_CHANNEL_MAIN);
+
+    app_monitor_getSample(&storedSample);
+    (void)memset(out, 0, sizeof(*out));
+
+    out->index = storedSample.index;
+    ProtoEmb_Sample_setMachineForce_raw(out, machineForce);
+    ProtoEmb_Sample_setMachinePosition_raw(out, machinePosition);
+    ProtoEmb_Sample_setMachineSetpoint_raw(out, machineSetpoint);
+    ProtoEmb_Sample_setSampleForce_raw(out, storedSample.force);
+    ProtoEmb_Sample_setSamplePosition_raw(out, storedSample.position);
+
+    return true;
+}
+
+bool ProtoEmb_onRead_state(ProtoEmb_MachineState_t *out)
+{
+    out->faultedReason = (ProtoEmb_FaultedReason_E)app_control_getFault();
+    out->restrictedReason = (ProtoEmb_RestrictedReason_E)app_control_getRestriction();
+    out->testRunning = app_control_testRunning();
+    out->motionEnabled = app_control_motionEnabled();
+    return true;
+}
+
+bool ProtoEmb_onRead_machine_configuration(ProtoEmb_MachineConfiguration_t *out)
+{
+    MachineProfile profile;
+    app_message_slave_copyMachineProfile(&profile);
+
+    (void)memset(out, 0, sizeof(*out));
+    out->encoderStepsPerMM = profile.encoderStepsPerMM;
+    out->servoStepsPerMM = profile.servoStepsPerMM;
+    out->forceGaugeNPerStep = profile.forceGaugeNPerStep;
+    out->forceGaugeZeroOffset = profile.forceGaugeZeroOffset;
+    out->maxPosition = profile.maxPosition;
+    out->maxVelocity = profile.maxVelocity;
+    out->maxAcceleration = profile.maxAcceleration;
+    out->maxForceTensile = profile.maxForceTensile;
+    out->homingVelocity = profile.homingVelocity;
+    out->homingOffset = profile.homingOffset;
+    out->jawOffset = profile.jawOffset;
+    memcpy(out->name, profile.name, DEV_NVRAM_MAX_MACHINE_PROFILE_NAME);
+    DEBUG_INFO("%s", "responding with machine profile\n");
+    return true;
+}
+
+bool ProtoEmb_onRead_firmware_version(ProtoEmb_FirmwareVersion_t *out)
+{
+    (void)memset(out, 0, sizeof(*out));
+    strncpy(out->version, APP_MESSAGE_SLAVE_VERSION, sizeof(out->version) - 1U);
+    return true;
+}
+
+bool ProtoEmb_onRead_sample_profile(ProtoEmb_SampleProfile_t *out)
+{
+    app_monitor_sampleProfile_S sampleProfile;
+    app_monitor_getSampleProfile(&sampleProfile);
+
+    out->maxForce = sampleProfile.maxForce;
+    out->maxVelocity = sampleProfile.maxVelocity;
+    out->maxDisplacement = sampleProfile.maxDisplacement;
+    out->sampleWidth = sampleProfile.sampleWidth;
+    out->sampleThickness = sampleProfile.sampleThickness;
+    return true;
+}
+
+ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWrite_machine_configuration_write(const ProtoEmb_MachineConfiguration_t *in)
+{
+    MachineProfile newProfile;
+    memset(&newProfile, 0, sizeof(newProfile));
+    memcpy(newProfile.name, in->name, DEV_NVRAM_MAX_MACHINE_PROFILE_NAME);
+    newProfile.encoderStepsPerMM = in->encoderStepsPerMM;
+    newProfile.servoStepsPerMM = in->servoStepsPerMM;
+    newProfile.forceGaugeNPerStep = in->forceGaugeNPerStep;
+    newProfile.forceGaugeZeroOffset = in->forceGaugeZeroOffset;
+    newProfile.maxPosition = in->maxPosition;
+    newProfile.maxVelocity = in->maxVelocity;
+    newProfile.maxAcceleration = in->maxAcceleration;
+    newProfile.maxForceTensile = in->maxForceTensile;
+    newProfile.homingVelocity = in->homingVelocity;
+    newProfile.homingOffset = in->homingOffset;
+    newProfile.jawOffset = in->jawOffset;
+
+    dev_nvram_updateChannelData(DEV_NVRAM_CHANNEL_MACHINE_PROFILE, &newProfile, sizeof(MachineProfile));
+    app_message_slave_setMachineProfile(&newProfile);
+    app_notification_send(APP_NOTIFICATION_TYPE_SUCCESS, "Machine profile saved to SD Card, please reboot\n");
+    return PROTOEMB_RUNTIME_WRITE_DISPOSITION_ACK;
+}
+
+ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWrite_motion_enable(bool in)
+{
+    if (in)
+    {
+        return app_control_triggerMotionEnabled() ? PROTOEMB_RUNTIME_WRITE_DISPOSITION_ACK : PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK;
+    }
+    return app_control_triggerMotionDisabled() ? PROTOEMB_RUNTIME_WRITE_DISPOSITION_ACK : PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK;
+}
+
+ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWrite_test_run(const ProtoEmb_TestRun_t *in)
+{
+    char gcodeId[sizeof(in->gcodeId) + 1U];
+    char testDataId[sizeof(in->testDataId) + 1U];
+    memset(gcodeId, 0, sizeof(gcodeId));
+    memset(testDataId, 0, sizeof(testDataId));
+    memcpy(gcodeId, in->gcodeId, sizeof(in->gcodeId));
+    memcpy(testDataId, in->testDataId, sizeof(in->testDataId));
+
+    /* Finish any prior test session before opening/upload targets again — avoids leaving
+     * app_control testRunning latched or the motion planner stuck without consuming SD moves */
+    (void)app_control_triggerTestEnd();
+    while (app_control_testRunning())
+    {
+        EMULATION_YIELD_LOCK();
+    }
+
+    IO_SDCard_close(IO_SDCARD_CHANNEL_GCODE);
+    while (!IO_SDCard_isClosed(IO_SDCARD_CHANNEL_GCODE))
+    {
+        EMULATION_YIELD_LOCK();
+    }
+
+    app_monitor_setTestName(testDataId);
+    app_motion_setGcodeId(gcodeId);
+    return app_control_triggerTestStart() ? PROTOEMB_RUNTIME_WRITE_DISPOSITION_ACK : PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK;
+}
+
+ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWrite_manual_move(const ProtoEmb_Move_t *in)
+{
+    app_motion_move_t move;
+    app_message_slave_fillMove(&move, in);
+    return app_motion_addManualMove(&move) ? PROTOEMB_RUNTIME_WRITE_DISPOSITION_ACK : PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK;
+}
+
+ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWrite_test_move(const ProtoEmb_Move_t *in)
+{
+    app_motion_move_t move;
+    app_message_slave_fillMove(&move, in);
+    return IO_SDCard_push(IO_SDCARD_CHANNEL_GCODE, &move, sizeof(app_motion_move_t)) ? PROTOEMB_RUNTIME_WRITE_DISPOSITION_ACK : PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK;
+}
+
+ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWriteRaw_test_move(const uint8_t *payload,
+                                                                 uint16_t payloadSize)
+{
+    if ((payloadSize > 0U) && ((payloadSize % PROTOEMB_MOVE_WIRE_SIZE) != 0U))
+    {
+        char gcodeId[7];
+        memset(gcodeId, 0, sizeof(gcodeId));
+        memcpy(gcodeId, payload, payloadSize < (sizeof(gcodeId) - 1U) ? payloadSize : (sizeof(gcodeId) - 1U));
+        return IO_SDCard_open(IO_SDCARD_CHANNEL_GCODE, gcodeId, IO_SDCARD_MODE_WRITE) ? PROTOEMB_RUNTIME_WRITE_DISPOSITION_ACK : PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK;
+    }
+
+    if ((payloadSize > 0U) && ((payloadSize % PROTOEMB_MOVE_WIRE_SIZE) == 0U))
+    {
+        const uint32_t moveCount = payloadSize / PROTOEMB_MOVE_WIRE_SIZE;
+        for (uint32_t i = 0U; i < moveCount; i++)
+        {
+            ProtoEmb_Move_t protoMove;
+            app_motion_move_t move;
+            ProtoEmb_Move_decode(&payload[i * PROTOEMB_MOVE_WIRE_SIZE], &protoMove);
+            app_message_slave_fillMove(&move, &protoMove);
+            if (!IO_SDCard_push(IO_SDCARD_CHANNEL_GCODE, &move, sizeof(app_motion_move_t)))
+            {
+                return PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK;
+            }
+        }
+        return PROTOEMB_RUNTIME_WRITE_DISPOSITION_ACK;
+    }
+
+    return PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK;
+}
+
+ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWrite_sample_profile_write(const ProtoEmb_SampleProfile_t *in)
+{
+    app_monitor_sampleProfile_S sampleProfile;
+    sampleProfile.maxForce = in->maxForce;
+    sampleProfile.maxVelocity = in->maxVelocity;
+    sampleProfile.maxDisplacement = in->maxDisplacement;
+    sampleProfile.sampleWidth = in->sampleWidth;
+    sampleProfile.sampleThickness = in->sampleThickness;
+    return app_monitor_setSampleProfile(&sampleProfile) ? PROTOEMB_RUNTIME_WRITE_DISPOSITION_ACK : PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK;
+}
+
+ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWrite_gauge_length(void)
+{
+    app_monitor_zeroSamplePosition();
+    return PROTOEMB_RUNTIME_WRITE_DISPOSITION_ACK;
+}
+
+ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWrite_gauge_force(void)
+{
+    app_monitor_zeroSampleForce();
+    return PROTOEMB_RUNTIME_WRITE_DISPOSITION_ACK;
+}
+
+ProtoEmb_RuntimeQueryDisposition_E ProtoEmb_onQuery_file_download(const uint8_t *payload,
+                                                                  uint16_t payloadSize,
+                                                                  uint8_t *outPayload,
+                                                                  uint16_t *outSize)
+{
+    const uint32_t headerSize = 16U + sizeof(uint32_t) + sizeof(uint32_t);
+    *outSize = 0U;
+
+    if (payloadSize < headerSize)
+    {
+        return PROTOEMB_RUNTIME_QUERY_DISPOSITION_NACK;
+    }
+
+    char testName[17];
+    uint32_t sampleIndex = 0U;
+    uint32_t sampleCount = 0U;
+    memcpy(testName, payload, 16U);
+    testName[16] = '\0';
+    for (int i = 15; i >= 0; i--)
+    {
+        if ((testName[i] == '\0') || (testName[i] == ' '))
+        {
+            testName[i] = '\0';
+        }
+        else
+        {
+            break;
+        }
+    }
+    memcpy(&sampleIndex, &payload[16], sizeof(uint32_t));
+    memcpy(&sampleCount, &payload[20], sizeof(uint32_t));
+
+    const uint32_t maxEncodedSamples = APP_MESSAGE_SLAVE_TX_BUFFER_SIZE / PROTOEMB_STOREDSAMPLE_WIRE_SIZE;
+    const uint32_t maxBufferedSamples = sizeof(app_message_slave_data.sampleReadBuffer) / sizeof(app_message_slave_data.sampleReadBuffer[0]);
+    const uint32_t readCount = LIB_UTILITY_MIN(sampleCount, LIB_UTILITY_MIN(maxEncodedSamples, maxBufferedSamples));
+
+    IO_SDCard_readDirectStatus_E readStatus = IO_SDCARD_READDIRECT_STATUS_OK;
+    const uint32_t itemsRead = IO_SDCard_readDirectEx(IO_SDCARD_CHANNEL_SAMPLE_DATA,
+                                                      testName,
+                                                      app_message_slave_data.sampleReadBuffer,
+                                                      sampleIndex,
+                                                      readCount,
+                                                      &readStatus);
+
+    if (readStatus != IO_SDCARD_READDIRECT_STATUS_OK)
+    {
+        return PROTOEMB_RUNTIME_QUERY_DISPOSITION_NACK;
+    }
+
+    for (uint32_t i = 0U; i < itemsRead; i++)
+    {
+        ProtoEmb_StoredSample_t sample;
+        (void)memset(&sample, 0, sizeof(sample));
+        ProtoEmb_StoredSample_setForce_raw(&sample, app_message_slave_data.sampleReadBuffer[i].force);
+        ProtoEmb_StoredSample_setPosition_raw(&sample, app_message_slave_data.sampleReadBuffer[i].position);
+        sample.time = app_message_slave_data.sampleReadBuffer[i].time;
+        sample.index = app_message_slave_data.sampleReadBuffer[i].index;
+        ProtoEmb_StoredSample_setSetpoint_raw(&sample, app_message_slave_data.sampleReadBuffer[i].setpoint);
+        ProtoEmb_StoredSample_encode(&outPayload[i * PROTOEMB_STOREDSAMPLE_WIRE_SIZE], &sample);
+    }
+
+    *outSize = (uint16_t)(itemsRead * PROTOEMB_STOREDSAMPLE_WIRE_SIZE);
+    return PROTOEMB_RUNTIME_QUERY_DISPOSITION_DATA;
+}
 
 void app_messageSlave_init(int lock)
 {
     app_message_slave_data.lock = lock;
     dev_nvram_getChannelData(DEV_NVRAM_CHANNEL_MACHINE_PROFILE, &app_message_slave_data.machineProfile, sizeof(MachineProfile));
+    ProtoEmb_Runtime_init(&app_message_slave_data.runtime,
+                          app_message_slave_runtimeSendBytes,
+                          app_message_slave_runtimeGetTimeMs,
+                          NULL);
 }
 
-void app_messageSlave_run()
+void app_messageSlave_run(void)
 {
-    app_message_slave_private_handleIncomming();
-    app_messageSlave_private_stageOutputs();
+    uint8_t byte = 0U;
+    while (IO_fullDuplexSerial_available(IO_FULLDUPLEXSERIAL_CHANNEL_MAIN) > 0U)
+    {
+        if (IO_fullDuplexSerial_receive(IO_FULLDUPLEXSERIAL_CHANNEL_MAIN, &byte, 1U))
+        {
+            ProtoEmb_Runtime_feedByte(&app_message_slave_data.runtime, byte);
+        }
+    }
+    ProtoEmb_Runtime_tick(&app_message_slave_data.runtime);
 }
 
-bool app_messageSlave_triggerTest(void)
+bool app_messageSlave_sendNotification(const ProtoEmb_Notification_t *notification)
 {
-    APP_MESSAGESLAVE_LOCK_REQ_BLOCK();
-    bool triggerTest = app_message_slave_data.output.triggerTest;
-    APP_MESSAGESLAVE_LOCK_REL();
-    return triggerTest;
+    return ProtoEmb_Runtime_sendNotification(&app_message_slave_data.runtime, notification);
 }
-
-/**********************************************************************
- * End of File
- **********************************************************************/
