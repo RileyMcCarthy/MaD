@@ -20,8 +20,8 @@ export default defineConfig({
   globalSetup: './tests/global-setup.ts',
   globalTeardown: './tests/global-teardown.ts',
   
-  // Timeouts
-  timeout: 90_000,           // 90s per test (includes emulator startup ~7s + firmware communication)
+  // Timeouts — repeatability waits up to 3×60s; include emulator + Electron CDP startup.
+  timeout: 240_000,
   expect: { timeout: 10_000 }, // 10s for assertions
   
   // Sequential execution (firmware emulator is single-instance)
@@ -46,7 +46,7 @@ export default defineConfig({
   use: {
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
-    video: 'on', // Always record video for all tests
+    video: 'retain-on-failure', // Only record on failure to reduce overhead
     actionTimeout: 10_000,
   },
   

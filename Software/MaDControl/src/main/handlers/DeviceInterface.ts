@@ -1,5 +1,4 @@
 import { ipcMain, BrowserWindow } from 'electron';
-import EventEmitter from 'events';
 import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
@@ -7,48 +6,46 @@ import {
   MachineState,
   SampleData,
   MachineConfiguration,
-  Notification,
   NotificationType,
   FirmwareVersion,
   SampleProfile,
   FileDownloadProgress,
 } from '@shared/SharedInterface';
 import { deviceLogger } from '@utils/logger';
-import DataProcessor, { ReadType, WriteType } from './DataProcessor';
+import {
+  encodeMove,
+  decodeStoredSample,
+  Move as ProtoMove,
+  GCode,
+  STOREDSAMPLE_WIRE_SIZE,
+  MSG_SAMPLE_PERIOD_MS,
+  MSG_WRITE_TEST_RUN,
+  MSG_WRITE_MOTION_ENABLE,
+  MSG_WRITE_MANUAL_MOVE,
+  MSG_WRITE_SAMPLE_PROFILE_WRITE,
+  MSG_WRITE_TEST_MOVE,
+  MSG_WRITE_FILE_DOWNLOAD,
+} from '../generated/protoemb';
 import NotificationSender from './NotificationSender';
-import SerialPortHandler from './SerialPortHandler';
+import BridgeHandler from './BridgeHandler';
 import { showFirmwareFileDialog } from '../util';
 
 /**
- * Size of packed app_motion_move_t struct: uint8_t(1) + int32_t(4) + int32_t(4) + uint32_t(4) = 13 bytes
- */
-const MOVE_STRUCT_SIZE = 13;
-
-/**
- * Size of packed app_monitor_sample_t struct: int32_t(4) * 5 = 20 bytes
- */
-const SAMPLE_STRUCT_SIZE = 20;
-
-/**
- * Number of moves to batch into a single TEST_MOVE message
+ * Number of moves to batch into a single TEST_MOVE message.
  */
 const BATCH_MOVE_COUNT = 32;
 
 /**
- * Encode a G-code text line into a packed binary app_motion_move_t struct (13 bytes).
- * Struct layout (packed, little-endian):
- *   uint8_t  g  (1 byte)  - G-code command number
- *   int32_t  x  (4 bytes) - Position in um
- *   int32_t  f  (4 bytes) - Feedrate in um/s
- *   uint32_t p  (4 bytes) - Dwell time in ms
+ * Parse a G-code text line into a ProtoMove struct.
+ * Returns null for unparseable lines.
  */
-function encodeGcodeToBinaryMove(line: string): Buffer | null {
+function parseGcodeToMove(line: string): ProtoMove | null {
   const tokens = line.trim().split(/\s+/);
   if (tokens.length === 0) return null;
 
   let g = 0;
-  let x = 0; // um
-  let f = 0; // um/s
+  let x = 0; // mm (UI units)
+  let f = 0; // mm/s (UI units)
   let p = 0; // ms
 
   for (const token of tokens) {
@@ -61,10 +58,10 @@ function encodeGcodeToBinaryMove(line: string): Buffer | null {
         g = Math.round(value);
         break;
       case 'X':
-        x = Math.round(value * 1000); // mm -> um
+        x = value; // already mm
         break;
       case 'F':
-        f = Math.round(value * 1000); // mm/s -> um/s
+        f = value; // already mm/s
         break;
       case 'P':
         p = Math.round(value); // ms
@@ -72,357 +69,555 @@ function encodeGcodeToBinaryMove(line: string): Buffer | null {
     }
   }
 
-  const buf = Buffer.alloc(MOVE_STRUCT_SIZE);
-  buf.writeUInt8(g, 0);
-  buf.writeInt32LE(x, 1);
-  buf.writeInt32LE(f, 5);
-  buf.writeUInt32LE(p, 9);
-  return buf;
+  // g is the actual G-code number (0, 1, 28, 90, 91, 122, etc.)
+  // encodeMove will map it to wire index via GCODE_VALUE_TO_WIRE
+  return { g: g as GCode, x, f, p };
 }
 
 /**
- * Decode binary sample data (packed app_monitor_sample_t structs) into CSV string.
- * Each struct is 20 bytes (packed):
- *   int32_t  force    (4 bytes) - mN
- *   int32_t  position (4 bytes) - um
- *   uint32_t time     (4 bytes) - us
- *   uint32_t index    (4 bytes) - sample id
- *   int32_t  setpoint (4 bytes) - um
+ * Decode binary StoredSample structs into CSV string for file downloads.
+ * position_um / setpoint_um are the firmware sample frame (machine µm minus gauge length at zero-length).
  */
 function decodeBinarySampleDataToCSV(data: Buffer): string {
   const lines: string[] = ['time_us,index,force_mN,position_um,setpoint_um'];
-  const numSamples = Math.floor(data.length / SAMPLE_STRUCT_SIZE);
+  const numSamples = Math.floor(data.length / STOREDSAMPLE_WIRE_SIZE);
 
   for (let i = 0; i < numSamples; i++) {
-    const offset = i * SAMPLE_STRUCT_SIZE;
-    const force = data.readInt32LE(offset);
-    const position = data.readInt32LE(offset + 4);
-    const time = data.readUInt32LE(offset + 8);
-    const index = data.readUInt32LE(offset + 12);
-    const setpoint = data.readInt32LE(offset + 16);
-    lines.push(`${time},${index},${force},${position},${setpoint}`);
+    const offset = i * STOREDSAMPLE_WIRE_SIZE;
+    const sample = decodeStoredSample(
+      data.subarray(offset, offset + STOREDSAMPLE_WIRE_SIZE),
+    );
+    // StoredSample fields are in UI units (N, mm) — convert back to raw for CSV
+    const forceMN = Math.round(sample.force * 1000);
+    const positionUM = Math.round(sample.position * 1000);
+    const setpointUM = Math.round(sample.setpoint * 1000);
+    lines.push(
+      `${sample.time},${sample.index},${forceMN},${positionUM},${setpointUM}`,
+    );
   }
 
-  return lines.join('\n') + '\n';
+  return `${lines.join('\n')}\n`;
 }
 
-function emitAndWaitForResponse(
-  emitter: EventEmitter,
-  emitEvent: string,
-  responseEvent: string,
+/**
+ * Helper: wait for a single event from BridgeHandler with timeout.
+ */
+function waitForBridgeEvent(
+  bridge: BridgeHandler,
+  eventName: string,
   timeout: number,
+  filter?: (...args: any[]) => boolean,
 ): Promise<any> {
   return new Promise((resolve, reject) => {
     const timeoutId = setTimeout(() => {
-      reject(new Error(`Timeout error on ${responseEvent}`));
+      bridge.removeListener(eventName, handler);
+      reject(new Error(`Timeout waiting for bridge event: ${eventName}`));
     }, timeout);
 
-    emitter.once(responseEvent, (response) => {
+    const handler = (...args: any[]) => {
+      if (filter && !filter(...args)) return; // keep listening
       clearTimeout(timeoutId);
-      resolve(response);
-    });
+      bridge.removeListener(eventName, handler);
+      resolve(args.length === 1 ? args[0] : args);
+    };
 
-    emitter.emit(emitEvent);
+    bridge.on(eventName, handler);
   });
 }
 
-function waitForResponse(
-  emitter: EventEmitter,
-  responseEvent: string,
+function waitForDownloadChunkOrNack(
+  bridge: BridgeHandler,
   timeout: number,
-): Promise<any> {
+): Promise<{ kind: 'data'; chunk: Buffer } | { kind: 'nack' }> {
   return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      clearTimeout(timeoutId);
+      bridge.removeListener('data', onData);
+      bridge.removeListener('ack', onAck);
+    };
+
     const timeoutId = setTimeout(() => {
-      reject(new Error(`Timeout error on ${responseEvent}`)); // I think I need to pass something here, nuthing is returning undefined and im seconding it tostring after failed read of machineprofile after writing it...
+      cleanup();
+      reject(new Error('Timeout waiting for file-download response'));
     }, timeout);
 
-    emitter.once(responseEvent, (response) => {
-      clearTimeout(timeoutId);
-      resolve(response);
-    });
+    const onData = (command: number, payload: Buffer) => {
+      if (command !== MSG_WRITE_FILE_DOWNLOAD) return;
+      cleanup();
+      resolve({ kind: 'data', chunk: payload });
+    };
+
+    const onAck = (command: number, success: boolean) => {
+      if (command !== MSG_WRITE_FILE_DOWNLOAD) return;
+      if (success) return;
+      cleanup();
+      resolve({ kind: 'nack' });
+    };
+
+    bridge.on('data', onData);
+    bridge.on('ack', onAck);
   });
 }
 
 class DeviceInterface {
-  // Interface for handling device connections
-  // also stores asyncronous data like state, data
-  // will handle ack for retrying gcode messages etc
-  private serialport: SerialPortHandler;
-
-  private dataProcessor: DataProcessor;
+  private bridge: BridgeHandler;
 
   private notificationSender: NotificationSender;
 
-  private sample_data_buffer: SampleData[] = [];
-
-  private machine_state: MachineState | null = null;
-
-  private machine_configuration: MachineConfiguration | null = null;
-
-  private device_connected: boolean = false;
-
   private window: BrowserWindow;
 
-  private sample_interval_ms: number;
+  private deviceConnected: boolean = false;
 
-  private last_sample_data_ms: number;
+  private deviceResponding: boolean = false;
 
-  private firmwareVersion: FirmwareVersion | null = null;
+  /** Latest firmware machine flags from bridge (for tests / diagnostics). */
+  private lastMachineState: MachineState | null = null;
 
-  private currentFlashProcess: any = null; // Track the current flashing process
+  /** Latest live sample from bridge (for SIL / diagnostics; DOM may lag). */
+  private lastSample: SampleData | null = null;
+
+  private currentFlashProcess: any = null;
+
+  private connectedPort: string | null = null;
+
+  private connectedBaud: number = 115200;
 
   constructor(
-    dataProcessor: DataProcessor,
+    bridge: BridgeHandler,
     notificationSender: NotificationSender,
-    serialport: SerialPortHandler,
     window: BrowserWindow,
   ) {
-    this.serialport = serialport;
-    this.dataProcessor = dataProcessor;
+    this.bridge = bridge;
     this.notificationSender = notificationSender;
     this.window = window;
-    this.sample_interval_ms = 100;
-    this.last_sample_data_ms = Date.now();
 
-    // Periodic task to request SAMPLE every 100ms
-    setInterval(() => {
-      if (this.serialport.getCurrentPath()) {
-        // deviceLogger.debug('Requesting sample data from device');
-        this.dataProcessor.readData(ReadType.SAMPLE);
-      }
-      // Check if device stopped responding and emit event if status changed
-      const now = Date.now();
-      const wasResponding = this.device_connected;
-      const isResponding = now - this.last_sample_data_ms <= 1000;
+    this.setupBridgeEventHandlers();
+    this.setupIPCHandlers();
+  }
 
-      if (wasResponding !== isResponding) {
-        if (!isResponding && wasResponding) {
-          deviceLogger.warn(
-            'Device stopped responding - no sample data received for >1 second',
-          );
-        }
-        this.device_connected = isResponding;
-
-        // Emit event to notify frontend of responding status change
+  /**
+   * Wire up BridgeHandler events → renderer IPC sends.
+   */
+  private setupBridgeEventHandlers(): void {
+    // Live sample data → renderer
+    this.bridge.on('sample', (sampleData: SampleData) => {
+      if (!this.deviceResponding) {
+        this.deviceResponding = true;
         this.window.webContents.send('device-status-updates', {
-          responding: isResponding,
-          connected: this.serialport.getCurrentPath() !== null,
-          message: isResponding
-            ? 'Device is responding'
-            : 'Device stopped responding',
+          responding: true,
+          connected: this.deviceConnected,
+          message: 'Device is responding',
         });
       }
-    }, this.sample_interval_ms);
+      this.lastSample = sampleData;
+      this.window.webContents.send('sample-data-updates', sampleData);
+    });
 
-    // Periodic task to request MACHINE_STATE every 100ms
-    setInterval(() => {
-      if (this.serialport.getCurrentPath()) {
-        // deviceLogger.debug('Requesting machine state from device');
-        this.dataProcessor.readData(ReadType.STATE);
-      }
-    }, 1000);
+    // Machine state → renderer
+    this.bridge.on('state', (state: MachineState) => {
+      this.lastMachineState = state;
+      this.window.webContents.send('machine-state-updates', state);
+    });
 
-    ipcMain.handle('device-connect', async (_event, portPath, baudRate) => {
-      deviceLogger.info('Attempting to connect to device');
-      this.device_connected = false;
+    // Machine configuration → renderer
+    this.bridge.on('configuration', (config: MachineConfiguration) => {
+      this.window.webContents.send('machine-configuration-updates', config);
+      ipcMain.emit('machine-configuration-updated', config);
+    });
 
-      try {
-        await this.serialport.connect(portPath, baudRate);
-        return `Connected to ${portPath}`;
-      } catch (error) {
-        // Check if this is a "Canceled" error
-        const errorMessage =
-          error instanceof Error ? error.message : String(error);
-        if (errorMessage.includes('Canceled')) {
-          deviceLogger.warn(
-            'Caught "Canceled" error during device connect, handling gracefully',
-          );
-          this.notificationSender.sendNotification({
-            Type: NotificationType.WARN,
-            Message: 'Connection was canceled. Please try again.',
-          });
-          return 'Connection was canceled. Please try again.';
-        }
+    // Firmware version → renderer
+    this.bridge.on('firmware-version', (version: FirmwareVersion) => {
+      this.window.webContents.send('firmware-version-updates', version);
+      ipcMain.emit('firmware-version-updated', version);
+    });
 
-        // For other errors, rethrow
-        throw error;
+    // Sample profile → renderer
+    this.bridge.on('sample-profile', (profile: SampleProfile) => {
+      this.window.webContents.send('sample-profile-updates', profile);
+      ipcMain.emit('sample-profile-updated', profile);
+    });
+
+    // Notifications → notification sender
+    this.bridge.on('notification', (notification: any) => {
+      this.notificationSender.sendNotification(notification);
+    });
+
+    // Connection events
+    this.bridge.on('connected', (port: string) => {
+      deviceLogger.info(`Device connected to ${port}`);
+      this.deviceConnected = true;
+      this.connectedPort = port;
+      this.window.webContents.send('device-status-updates', {
+        connected: true,
+        responding: this.deviceResponding,
+        message: `Connected to ${port}`,
+      });
+    });
+
+    this.bridge.on('disconnected', () => {
+      deviceLogger.info('Device disconnected');
+      this.deviceConnected = false;
+      this.deviceResponding = false;
+      this.connectedPort = null;
+      this.lastMachineState = null;
+      this.lastSample = null;
+      this.window.webContents.send('device-status-updates', {
+        connected: false,
+        responding: false,
+        message: 'Disconnected',
+      });
+    });
+
+    // Bridge process died
+    this.bridge.on('bridge-exit', (code: number | null) => {
+      deviceLogger.warn(`Bridge process exited with code ${code}`);
+      this.deviceConnected = false;
+      this.deviceResponding = false;
+      this.lastMachineState = null;
+      this.lastSample = null;
+      this.window.webContents.send('device-status-updates', {
+        connected: false,
+        responding: false,
+        message: 'Bridge process exited unexpectedly',
+      });
+    });
+
+    // Timeout — device stopped responding
+    this.bridge.on('timeout', () => {
+      if (this.deviceResponding) {
+        this.deviceResponding = false;
+        deviceLogger.warn('Device stopped responding (timeout)');
+        this.window.webContents.send('device-status-updates', {
+          responding: false,
+          connected: this.deviceConnected,
+          message: 'Device stopped responding',
+        });
       }
     });
 
+    // Bridge errors
+    this.bridge.on('error', (message: string) => {
+      deviceLogger.error(`Bridge error: ${message}`);
+    });
+  }
+
+  /**
+   * Register all IPC handlers.
+   */
+  private setupIPCHandlers(): void {
+    ipcMain.handle(
+      'device-connect',
+      async (_event, portPath: string, baudRate: number) => {
+        deviceLogger.info(`Attempting to connect to device at ${portPath}`);
+        this.deviceConnected = false;
+        this.deviceResponding = false;
+        this.connectedBaud = baudRate;
+
+        try {
+          // Ensure bridge is running
+          if (!this.bridge.isRunning()) {
+            this.bridge.start();
+            await new Promise((resolve) => setTimeout(resolve, 500));
+          }
+
+          // Send connect request and wait for 'connected' event
+          const connectPromise = waitForBridgeEvent(
+            this.bridge,
+            'connected',
+            5000,
+          );
+          this.bridge.connect(portPath, baudRate);
+          await connectPromise;
+
+          // Start periodic polling for sample and state data
+          this.bridge.registerPeriodicPolling();
+
+          return `Connected to ${portPath}`;
+        } catch (error) {
+          const errorMessage =
+            error instanceof Error ? error.message : String(error);
+          deviceLogger.error('Connection failed:', errorMessage);
+          throw new Error(errorMessage);
+        }
+      },
+    );
+
     ipcMain.handle('device-list-ports', async () => {
-      return await this.serialport.listPorts();
+      if (!this.bridge.isRunning()) {
+        this.bridge.start();
+        // If start() failed (e.g. binary missing), don't wait and retry
+        if (!this.bridge.isRunning()) {
+          return [];
+        }
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+
+      const portsPromise = waitForBridgeEvent(this.bridge, 'ports', 3000);
+      this.bridge.listPorts();
+      const ports = await portsPromise;
+
+      // Post-process: add virtual port for SIL testing
+      const portList: string[] = Array.isArray(ports) ? ports : [];
+      if (
+        fs.existsSync('/tmp/tty.rpi') &&
+        !portList.includes('/tmp/tty.rpi')
+      ) {
+        portList.unshift('/tmp/tty.rpi');
+      }
+
+      // macOS: transform tty.* to cu.* for compatibility
+      if (process.platform === 'darwin') {
+        return portList.map((p: string) => p.replace('/dev/tty.', '/dev/cu.'));
+      }
+      return portList;
     });
 
     ipcMain.handle('device-data-all', async () => {
-      return this.sample_data_buffer;
+      const storedPromise = waitForBridgeEvent(
+        this.bridge,
+        'stored-samples',
+        3000,
+      );
+      this.bridge.getStoredSamples();
+      const samples = await storedPromise;
+      return Array.isArray(samples) ? samples : [];
+    });
+
+    ipcMain.handle('device-sample-period-ms', async () => {
+      return MSG_SAMPLE_PERIOD_MS;
     });
 
     ipcMain.handle('device-responding', async () => {
-      return this.device_connected;
+      return this.deviceResponding;
     });
 
     ipcMain.handle('device-connected', async () => {
-      return this.serialport.getCurrentPath() !== null;
+      return this.deviceConnected;
+    });
+
+    ipcMain.handle('device-machine-state', async () => {
+      if (!this.deviceConnected) {
+        return this.lastMachineState;
+      }
+      try {
+        const fresh = waitForBridgeEvent(this.bridge, 'state', 3000);
+        this.bridge.readMachineStateNow();
+        await fresh;
+      } catch {
+        deviceLogger.debug(
+          'device-machine-state: timed out waiting for read; returning cache',
+        );
+      }
+      return this.lastMachineState;
+    });
+
+    ipcMain.handle('device-latest-sample', async () => {
+      return this.lastSample;
     });
 
     ipcMain.handle('get-machine-configuration', async () => {
       deviceLogger.info('Getting Machine Configuration');
-      this.dataProcessor.readData(ReadType.MACHINE_CONFIGURATION);
-      return waitForResponse(ipcMain, 'machine-configuration-updated', 1000);
+      const configPromise = waitForBridgeEvent(
+        this.bridge,
+        'configuration',
+        2000,
+      );
+      this.bridge.readMachineConfiguration();
+      return configPromise;
     });
 
     ipcMain.handle(
       'save-machine-configuration',
       async (_event, newConfig: MachineConfiguration) => {
-        this.dataProcessor.writeData(
-          WriteType.MACHINE_CONFIGURATION,
-          Buffer.from(JSON.stringify(newConfig)),
-        );
         deviceLogger.info('Saving Machine Configuration:', newConfig);
+        this.bridge.writeMachineConfiguration(newConfig);
         return true;
       },
     );
 
     ipcMain.handle('set-motion-enabled', async (_event, enabled: boolean) => {
-      this.dataProcessor.writeData(
-        WriteType.MOTION_ENABLE,
-        Buffer.from(enabled ? '1' : '0'),
-      );
       deviceLogger.debug('set-motion-enabled', enabled);
-      const result = await waitForResponse(ipcMain, 'motion-enabled-ack', 1000);
-
-      // Request updated machine state immediately after motion command
-      setTimeout(() => {
-        this.dataProcessor.readData(ReadType.STATE);
-      }, 100); // Small delay to ensure command is processed
-
-      return result;
+      const ackPromise = waitForBridgeEvent(
+        this.bridge,
+        'ack',
+        2000,
+        (command: number) => command === MSG_WRITE_MOTION_ENABLE,
+      );
+      this.bridge.writeMotionEnable(enabled);
+      const [, success] = await ackPromise;
+      return success;
     });
 
     ipcMain.handle('manual-move', async (_event, mm: number, speed: number) => {
-      // Using a simplified G-code like format for manual moves
-      // The actual Move interface doesn't match what's used here, but this format works with the device
-      const moveString = `{
-        "G": 0,
-        "X": ${mm.toFixed(6)},
-        "F": ${speed.toFixed(6)},
-        "P": 0
-      }`;
-      const incrementalMove = `{"G":91}`;
-      this.dataProcessor.writeData(
-        WriteType.MANUAL_MOVE,
-        Buffer.from(incrementalMove),
+      const s = this.lastMachineState;
+      deviceLogger.info(
+        `manual-move mm=${mm} speed=${speed} state=motionEnabled:${s?.motionEnabled} testRunning:${s?.testRunning} fault:${s?.faultedReason} restriction:${s?.restrictedReason} pos=${this.lastSample?.['Machine Position (mm)']}`,
       );
-      this.dataProcessor.writeData(
-        WriteType.MANUAL_MOVE,
-        Buffer.from(moveString),
-      );
+      if (!this.deviceConnected) {
+        deviceLogger.warn('manual-move ignored: device not connected');
+        return false;
+      }
+      // G91 must be applied before the relative G0; wait for each firmware ACK so the pair
+      // cannot reorder across the bridge (fixes flaky SIL jogs when writes pile up).
+      const moves: ProtoMove[] = [
+        { g: 91 as GCode, x: 0, f: 0, p: 0 },
+        { g: 0 as GCode, x: mm, f: speed, p: 0 },
+      ];
+      for (const move of moves) {
+        const ackPromise = waitForBridgeEvent(
+          this.bridge,
+          'ack',
+          5000,
+          (command: number) => command === MSG_WRITE_MANUAL_MOVE,
+        );
+        this.bridge.writeManualMove(move);
+        try {
+          const [, success] = await ackPromise;
+          deviceLogger.info(
+            `manual-move g${move.g} x=${move.x} f=${move.f} ack=${success}`,
+          );
+          if (!success) {
+            return false;
+          }
+        } catch (err) {
+          deviceLogger.error(
+            `manual-move g${move.g} x=${move.x} f=${move.f} failed: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+          return false;
+        }
+      }
       return true;
     });
 
     ipcMain.handle('home-axis', async () => {
-      this.dataProcessor.writeData(
-        WriteType.MANUAL_MOVE,
-        Buffer.from('{"G":28}'),
-      );
+      this.bridge.writeManualMove({ g: 28 as GCode, x: 0, f: 0, p: 0 }); // G28
       return true;
     });
 
     ipcMain.handle('zero-force', async () => {
-      this.dataProcessor.writeData(WriteType.GAUGE_FORCE, Buffer.from('0'));
+      this.bridge.writeGaugeForce();
       return true;
     });
 
     ipcMain.handle('zero-length', async () => {
-      this.dataProcessor.writeData(WriteType.GAUGE_LENGTH, Buffer.from('0'));
+      this.bridge.writeGaugeLength();
       return true;
     });
 
     ipcMain.handle('get-sample-profile', async () => {
       deviceLogger.info('Getting Sample Profile');
-      this.dataProcessor.readData(ReadType.SAMPLE_PROFILE);
-      return waitForResponse(ipcMain, 'sample-profile-updated', 1000);
+      const profilePromise = waitForBridgeEvent(
+        this.bridge,
+        'sample-profile',
+        2000,
+      );
+      this.bridge.readSampleProfile();
+      return profilePromise;
     });
 
     ipcMain.handle(
       'save-sample-profile',
       async (_event, newProfile: SampleProfile) => {
         // Convert UI units to firmware units before sending.
-        // Firmware expects integers; force in mN, velocity in mm/s, displacement/geometry in mm.
+        // Firmware expects: force in mN, velocity in mm/s, displacement/geometry in mm.
         const firmwareProfile: SampleProfile = {
-          maxForce: Math.max(0, Math.round((newProfile.maxForce ?? 0) * 1000)),
+          maxForce: Math.max(0, newProfile.maxForce ?? 0),
           maxVelocity: Math.max(0, Math.round(newProfile.maxVelocity ?? 0)),
-          maxDisplacement: Math.max(0, Math.round(newProfile.maxDisplacement ?? 0)),
+          maxDisplacement: Math.max(
+            0,
+            Math.round(newProfile.maxDisplacement ?? 0),
+          ),
           sampleWidth: Math.max(0, Math.round(newProfile.sampleWidth ?? 0)),
-          sampleThickness: Math.max(0, Math.round(newProfile.sampleThickness ?? 0)),
+          sampleThickness: Math.max(
+            0,
+            Math.round(newProfile.sampleThickness ?? 0),
+          ),
+          serial: newProfile.serial ?? '',
         };
 
-        this.dataProcessor.writeData(
-          WriteType.SAMPLE_PROFILE,
-          Buffer.from(JSON.stringify(firmwareProfile)),
+        const ackPromise = waitForBridgeEvent(
+          this.bridge,
+          'ack',
+          2000,
+          (command: number) => command === MSG_WRITE_SAMPLE_PROFILE_WRITE,
         );
-        deviceLogger.info('Saving Sample Profile (firmware units):', firmwareProfile);
-        const result = await waitForResponse(ipcMain, 'sample-profile-ack', 1000);
+        this.bridge.writeSampleProfile(firmwareProfile);
+        deviceLogger.info(
+          'Saving Sample Profile (firmware units):',
+          firmwareProfile,
+        );
 
-        if (result) {
-          // ACK received successfully, now get the saved profile
-          setTimeout(() => {
-            this.dataProcessor.readData(ReadType.SAMPLE_PROFILE);
-          }, 100); // Small delay to ensure save is processed
+        const [, success] = await ackPromise;
+
+        if (!success) {
+          this.notificationSender.sendNotification({
+            Type: NotificationType.ERROR,
+            Message:
+              'Device rejected the sample profile. Previous limits will remain in use.',
+          });
+        } else {
+          // Re-read the saved profile
+          setTimeout(() => this.bridge.readSampleProfile(), 100);
         }
 
-        return result;
+        return success;
       },
     );
 
-    // Run Test handler - uploads binary move structs to firmware SD card, then starts test
+    // Run Test handler — uploads binary move structs then starts test
     ipcMain.handle(
       'run-test',
       async (
         _event,
-        params: { gcode: string[] },
+        params: { gcode: string[]; gcodeId: string; testDataId: string },
       ) => {
-        const { gcode } = params;
-        deviceLogger.info('Starting test run...');
+        const { gcode, gcodeId, testDataId } = params;
+        deviceLogger.info(
+          `Starting test run (gcodeId=${gcodeId}, testDataId=${testDataId})...`,
+        );
 
         try {
-          // Step 1: Clear the gcode file on firmware SD card
-          deviceLogger.info('Clearing gcode file on SD card...');
-          this.dataProcessor.writeData(
-            WriteType.TEST_MOVE,
-            Buffer.from([0]),
+          // Step 1: Open gcode file on firmware SD card with gcodeId
+          deviceLogger.info(`Opening gcode file with id ${gcodeId}...`);
+          const openAck = waitForBridgeEvent(
+            this.bridge,
+            'ack',
+            5000,
+            (command: number) => command === MSG_WRITE_TEST_MOVE,
           );
-          await new Promise<void>((resolve, reject) => {
-            const timeout = setTimeout(() => {
-              reject(new Error('Timeout waiting for gcode clear ACK'));
-            }, 5000);
-            this.dataProcessor.once('ack', () => {
-              clearTimeout(timeout);
-              resolve();
-            });
-          });
+          // Send gcodeId as ASCII bytes to open the file
+          const idBuf = Buffer.alloc(6, 0);
+          idBuf.write(gcodeId.slice(0, 6), 0, 'ascii');
+          this.bridge.writeTestMove(Array.from(idBuf));
+          await openAck;
 
-          // Step 2: Convert gcode lines to binary move structs and upload in batches
+          // Step 2: Convert gcode lines to binary moves and upload in batches
           const lines = gcode.filter((line) => {
             const trimmed = line.trim();
             return trimmed !== '' && !trimmed.startsWith(';');
           });
 
-          // Encode all lines into move buffers
           const moveBuffers: Buffer[] = [];
           for (const line of lines) {
-            const moveBuffer = encodeGcodeToBinaryMove(line.trim());
-            if (moveBuffer) {
-              moveBuffers.push(moveBuffer);
+            const move = parseGcodeToMove(line.trim());
+            if (move) {
+              moveBuffers.push(encodeMove(move));
             } else {
               deviceLogger.warn(`Skipping unparseable gcode line: ${line}`);
             }
           }
 
-          deviceLogger.info(`Uploading ${moveBuffers.length} gcode moves in batches of ${BATCH_MOVE_COUNT}...`);
+          deviceLogger.info(
+            `Uploading ${moveBuffers.length} gcode moves in batches of ${BATCH_MOVE_COUNT}...`,
+          );
 
           for (let i = 0; i < moveBuffers.length; i += BATCH_MOVE_COUNT) {
-            const batch = moveBuffers.slice(i, Math.min(i + BATCH_MOVE_COUNT, moveBuffers.length));
+            const batch = moveBuffers.slice(
+              i,
+              Math.min(i + BATCH_MOVE_COUNT, moveBuffers.length),
+            );
             const batchBuffer = Buffer.concat(batch);
 
             let success = false;
@@ -431,24 +626,17 @@ class DeviceInterface {
 
             while (!success && retryCount < maxRetries) {
               try {
-                this.dataProcessor.writeData(
-                  WriteType.TEST_MOVE,
-                  batchBuffer,
+                const batchAck = waitForBridgeEvent(
+                  this.bridge,
+                  'ack',
+                  5000,
+                  (command: number) => command === MSG_WRITE_TEST_MOVE,
                 );
-
-                await new Promise<void>((resolve, reject) => {
-                  const timeout = setTimeout(() => {
-                    reject(new Error('Timeout waiting for gcode upload ACK'));
-                  }, 5000);
-                  this.dataProcessor.once('ack', () => {
-                    clearTimeout(timeout);
-                    resolve();
-                  });
-                });
-
+                this.bridge.writeTestMove(Array.from(batchBuffer));
+                await batchAck;
                 success = true;
               } catch (error) {
-                retryCount++;
+                retryCount += 1;
                 if (retryCount < maxRetries) {
                   deviceLogger.warn(
                     `Retrying gcode batch upload (attempt ${retryCount}/${maxRetries}) at index ${i}`,
@@ -463,38 +651,25 @@ class DeviceInterface {
 
           deviceLogger.info('Gcode upload complete. Starting test...');
 
-          // Step 3: Start the test — firmware picks test name and responds with DATA
-          const testNamePromise = new Promise<string>((resolve, reject) => {
-            const timeout = setTimeout(() => {
-              reject(new Error('Timeout waiting for test name from firmware'));
-            }, 5000);
+          // Step 3: Start the test — send gcodeId + testDataId, firmware responds with ACK
+          const testAck = waitForBridgeEvent(
+            this.bridge,
+            'ack',
+            5000,
+            (command: number) => command === MSG_WRITE_TEST_RUN,
+          );
+          this.bridge.writeTestRun(gcodeId, testDataId);
+          await testAck;
+          deviceLogger.info(
+            `Test started: gcodeId=${gcodeId}, testDataId=${testDataId}`,
+          );
 
-            const handler = (command: number, data: string) => {
-              if (command === WriteType.TEST_RUN) {
-                clearTimeout(timeout);
-                this.dataProcessor.removeListener('data', handler);
-                resolve(data);
-              }
-            };
-            this.dataProcessor.on('data', handler);
-          });
-
-          this.dataProcessor.writeData(WriteType.TEST_RUN, Buffer.from([1]));
-
-          const testName = await testNamePromise;
-          deviceLogger.info(`Firmware assigned test name: ${testName}`);
-
-          // Test is now running autonomously from the SD card binary move file.
-          // The firmware will end the test when it reaches G122 or EOF.
-          return { success: true, testName };
+          return { success: true, gcodeId, testDataId };
         } catch (error) {
-          const errMsg = error instanceof Error ? error.message : 'Unknown error';
+          const errMsg =
+            error instanceof Error ? error.message : 'Unknown error';
           deviceLogger.error(`Test failed: ${errMsg}`);
-          return {
-            success: false,
-            error: errMsg,
-            testName: '',
-          };
+          return { success: false, error: errMsg, gcodeId: '', testDataId: '' };
         }
       },
     );
@@ -502,87 +677,108 @@ class DeviceInterface {
     // Download test data file from firmware SD card
     ipcMain.handle(
       'download-test-file',
-      async (
-        _event,
-        params: { testName: string; savePath: string },
-      ) => {
+      async (_event, params: { testName: string; savePath: string }) => {
         const { testName, savePath } = params;
-        deviceLogger.info(`Starting file download: ${testName} -> ${savePath}`);
+        deviceLogger.info(
+          `Starting file download: ${testName} -> ${savePath}`,
+        );
 
-        // Max samples per request (limited by TX buffer on firmware)
         const SAMPLES_PER_REQUEST = 100;
+        const MAX_NOT_READY_RETRIES = 80;
+        const NOT_READY_RETRY_DELAY_MS = 100;
 
         try {
           const allSampleBuffers: Buffer[] = [];
           let sampleIndex = 0;
+          let downloadedBinaryBytes = 0;
           let done = false;
 
           while (!done) {
-            // Build binary request: testName(16 bytes) + sampleIndex(uint32LE) + sampleCount(uint32LE)
+            // Build binary request: testName(16) + sampleIndex(u32LE) + sampleCount(u32LE)
             const requestBuf = Buffer.alloc(24);
             requestBuf.fill(0);
-            requestBuf.write(testName, 0, Math.min(testName.length, 16), 'utf-8');
+            requestBuf.write(
+              testName,
+              0,
+              Math.min(testName.length, 16),
+              'utf-8',
+            );
             requestBuf.writeUInt32LE(sampleIndex, 16);
             requestBuf.writeUInt32LE(SAMPLES_PER_REQUEST, 20);
 
-            const chunkPromise = new Promise<Buffer>((resolve, reject) => {
-              const timeout = setTimeout(() => {
-                reject(new Error(`Timeout waiting for samples at index ${sampleIndex}`));
-              }, 10000);
+            let response:
+              | { kind: 'data'; chunk: Buffer }
+              | { kind: 'nack' }
+              | null = null;
+            let notReadyRetries = 0;
 
-              const handler = (_command: number, data: Buffer) => {
-                clearTimeout(timeout);
-                this.dataProcessor.removeListener('binary-data', handler);
-                resolve(data);
-              };
-              this.dataProcessor.on('binary-data', handler);
-            });
+            while (response === null) {
+              this.bridge.writeFileDownload(Array.from(requestBuf));
+              const next = await waitForDownloadChunkOrNack(this.bridge, 10000);
 
-            this.dataProcessor.writeData(
-              WriteType.FILE_DOWNLOAD,
-              requestBuf,
-            );
+              if (next.kind === 'nack') {
+                if (sampleIndex === 0 && notReadyRetries < MAX_NOT_READY_RETRIES) {
+                  notReadyRetries += 1;
+                  await new Promise((resolve) =>
+                    setTimeout(resolve, NOT_READY_RETRY_DELAY_MS),
+                  );
+                  continue;
+                }
 
-            const chunk = await chunkPromise;
+                throw new Error('Test data not ready');
+              }
+
+              response = next;
+            }
+
+            const { chunk } = response;
 
             if (chunk.length === 0) {
-              // EOF — no more samples
               done = true;
             } else {
               allSampleBuffers.push(chunk);
-              const samplesReceived = Math.floor(chunk.length / SAMPLE_STRUCT_SIZE);
+              downloadedBinaryBytes += chunk.length;
+              const samplesReceived = Math.floor(
+                chunk.length / STOREDSAMPLE_WIRE_SIZE,
+              );
               sampleIndex += samplesReceived;
 
-              // Send progress to renderer
               const progress: FileDownloadProgress = {
                 fileName: testName,
-                bytesDownloaded: sampleIndex,
-                totalBytes: 0, // unknown total
+                // Report actual binary payload bytes (not sample count).
+                bytesDownloaded: downloadedBinaryBytes,
+                // Unknown total until transfer ends.
+                totalBytes: 0,
                 status: 'downloading',
               };
-              this.window.webContents.send('file-download-progress', progress);
+              this.window.webContents.send(
+                'file-download-progress',
+                progress,
+              );
 
-              // If we received fewer samples than requested, we've hit EOF
               if (samplesReceived < SAMPLES_PER_REQUEST) {
                 done = true;
               }
             }
           }
 
-          // Decode binary struct data to CSV and save
           const binaryData = Buffer.concat(allSampleBuffers);
           const csvContent = decodeBinarySampleDataToCSV(binaryData);
           fs.writeFileSync(savePath, csvContent);
-          deviceLogger.info(`CSV saved to ${savePath} (${sampleIndex} samples, ${binaryData.length} binary bytes → ${csvContent.length} CSV bytes)`);
+          deviceLogger.info(
+            `CSV saved to ${savePath} (${sampleIndex} samples, ${binaryData.length} binary bytes → ${csvContent.length} CSV bytes)`,
+          );
 
-          // Send completion
           const completionProgress: FileDownloadProgress = {
             fileName: testName,
-            bytesDownloaded: sampleIndex,
-            totalBytes: sampleIndex,
+            bytesDownloaded: binaryData.length,
+            totalBytes: binaryData.length,
             status: 'complete',
           };
-          this.window.webContents.send('file-download-progress', completionProgress);
+          this.window.webContents.send(
+            'file-download-progress',
+            completionProgress,
+          );
 
           return {
             success: true,
@@ -590,7 +786,8 @@ class DeviceInterface {
             fileSize: binaryData.length,
           };
         } catch (error) {
-          const errMsg = error instanceof Error ? error.message : 'Unknown error';
+          const errMsg =
+            error instanceof Error ? error.message : 'Unknown error';
           deviceLogger.error(`File download failed: ${errMsg}`);
 
           const errorProgress: FileDownloadProgress = {
@@ -600,7 +797,10 @@ class DeviceInterface {
             status: 'error',
             error: errMsg,
           };
-          this.window.webContents.send('file-download-progress', errorProgress);
+          this.window.webContents.send(
+            'file-download-progress',
+            errorProgress,
+          );
 
           return { success: false, error: errMsg };
         }
@@ -613,21 +813,22 @@ class DeviceInterface {
         return trimmed !== '' && !trimmed.startsWith(';');
       });
 
-      const streamGcode = async () => {
-        // Encode all lines into move buffers
+      try {
         const moveBuffers: Buffer[] = [];
         for (const line of lines) {
-          const moveBuffer = encodeGcodeToBinaryMove(line.trim());
-          if (moveBuffer) {
-            moveBuffers.push(moveBuffer);
+          const move = parseGcodeToMove(line.trim());
+          if (move) {
+            moveBuffers.push(encodeMove(move));
           } else {
             deviceLogger.warn(`Skipping unparseable gcode line: ${line}`);
           }
         }
 
-        // Send in batches
         for (let i = 0; i < moveBuffers.length; i += BATCH_MOVE_COUNT) {
-          const batch = moveBuffers.slice(i, Math.min(i + BATCH_MOVE_COUNT, moveBuffers.length));
+          const batch = moveBuffers.slice(
+            i,
+            Math.min(i + BATCH_MOVE_COUNT, moveBuffers.length),
+          );
           const batchBuffer = Buffer.concat(batch);
 
           let success = false;
@@ -636,51 +837,32 @@ class DeviceInterface {
 
           while (!success && retryCount < maxRetries) {
             try {
-              this.dataProcessor.writeData(
-                WriteType.TEST_MOVE,
-                batchBuffer,
+              const batchAck = waitForBridgeEvent(
+                this.bridge,
+                'ack',
+                5000,
+                (command: number) => command === MSG_WRITE_TEST_MOVE,
               );
-
-              // Wait for acknowledgment with timeout
-              await new Promise((resolve, reject) => {
-                const timeout = setTimeout(() => {
-                  reject(
-                    new Error('Timeout waiting for G-code acknowledgment'),
-                  );
-                }, 5000);
-
-                const handleAck = () => {
-                  clearTimeout(timeout);
-                  resolve(undefined);
-                };
-
-                this.dataProcessor.once('ack', handleAck);
-              });
-
+              this.bridge.writeTestMove(Array.from(batchBuffer));
+              await batchAck;
               success = true;
             } catch (error) {
-              retryCount++;
+              retryCount += 1;
               if (retryCount < maxRetries) {
                 deviceLogger.warn(
                   `Retrying G-code batch (attempt ${retryCount}/${maxRetries}) at index ${i}`,
                 );
-                await new Promise((resolve) => setTimeout(resolve, 1000)); // Wait 1s before retry
+                await new Promise((resolve) => setTimeout(resolve, 1000));
               } else {
-                deviceLogger.error(
-                  `Failed to send G-code batch after ${maxRetries} attempts at index ${i}`,
-                );
                 throw error;
               }
             }
           }
         }
-      };
 
-      try {
-        await streamGcode();
         return { success: true };
       } catch (error) {
-        deviceLogger.error('Error in G-code streaming process:', error);
+        deviceLogger.error('Error in G-code streaming:', error);
         return {
           success: false,
           error: error instanceof Error ? error.message : 'Unknown error',
@@ -690,8 +872,13 @@ class DeviceInterface {
 
     ipcMain.handle('get-firmware-version', async () => {
       deviceLogger.info('Getting Firmware Version');
-      this.dataProcessor.readData(ReadType.FIRMWARE_VERSION);
-      return waitForResponse(ipcMain, 'firmware-version-updated', 1000);
+      const versionPromise = waitForBridgeEvent(
+        this.bridge,
+        'firmware-version',
+        2000,
+      );
+      this.bridge.readFirmwareVersion();
+      return versionPromise;
     });
 
     ipcMain.handle('flash-from-file', async () => {
@@ -700,20 +887,13 @@ class DeviceInterface {
         const result = await showFirmwareFileDialog(this.window);
 
         if (!result) {
-          return {
-            success: false,
-            error: 'No file selected',
-          };
+          return { success: false, error: 'No file selected' };
         }
 
         const firmwarePath = result;
 
-        // Validate file exists and has correct extension
         if (!fs.existsSync(firmwarePath)) {
-          return {
-            success: false,
-            error: 'Selected file does not exist',
-          };
+          return { success: false, error: 'Selected file does not exist' };
         }
 
         const fileExtension = path.extname(firmwarePath).toLowerCase();
@@ -724,22 +904,18 @@ class DeviceInterface {
           };
         }
 
-        // Flash the firmware
-        const flashResult = await this.flashFirmware(firmwarePath);
-
-        return flashResult;
+        return await this.flashFirmware(firmwarePath);
       } catch (error) {
         const errorMessage =
           error instanceof Error ? error.message : 'Unknown error occurred';
-        deviceLogger.error('Unhandled error in flash-from-file:', errorMessage);
-        return {
-          success: false,
-          error: errorMessage,
-        };
+        deviceLogger.error(
+          'Unhandled error in flash-from-file:',
+          errorMessage,
+        );
+        return { success: false, error: errorMessage };
       }
     });
 
-    // Add handler to cancel firmware flashing
     ipcMain.handle('cancel-firmware-flash', async () => {
       if (this.currentFlashProcess) {
         try {
@@ -755,166 +931,10 @@ class DeviceInterface {
       }
       return { success: false, error: 'No flash process running' };
     });
-
-    // Set up data processor event handlers
-    this.dataProcessor.on('data', (command: ReadType, data: string) => {
-      try {
-        switch (command) {
-          case ReadType.SAMPLE:
-            const sampleData: SampleData = JSON.parse(data);
-            this.sample_data_buffer.push(sampleData);
-            this.last_sample_data_ms = Date.now();
-            const wasResponding = this.device_connected;
-            this.device_connected = true;
-            this.window.webContents.send('sample-data-updates', sampleData);
-
-            // Emit responding status if it changed from not responding to responding
-            if (!wasResponding) {
-              this.window.webContents.send('device-status-updates', {
-                responding: true,
-                connected: this.serialport.getCurrentPath() !== null,
-                message: 'Device is responding',
-              });
-            }
-            break;
-
-          case ReadType.STATE:
-            const state: MachineState = JSON.parse(data);
-            this.machine_state = state;
-            this.window.webContents.send('machine-state-updates', state);
-            break;
-
-          case ReadType.MACHINE_CONFIGURATION:
-            const config: MachineConfiguration = JSON.parse(data);
-            this.machine_configuration = config;
-            this.window.webContents.send(
-              'machine-configuration-updates',
-              config,
-            );
-            ipcMain.emit('machine-configuration-updated', config);
-            break;
-
-          case ReadType.FIRMWARE_VERSION:
-            const version: FirmwareVersion = JSON.parse(data);
-            this.firmwareVersion = version;
-            this.window.webContents.send('firmware-version-updates', version);
-            ipcMain.emit('firmware-version-updated', version);
-            break;
-
-          case ReadType.SAMPLE_PROFILE:
-            // Convert firmware units back to UI units (force from mN to N).
-            try {
-              const parsed = JSON.parse(data) as SampleProfile;
-              const sampleProfile: SampleProfile = {
-                maxForce: (parsed.maxForce ?? 0) / 1000,
-                maxVelocity: parsed.maxVelocity ?? 0,
-                maxDisplacement: parsed.maxDisplacement ?? 0,
-                sampleWidth: parsed.sampleWidth ?? 0,
-                sampleThickness: parsed.sampleThickness ?? 0,
-              };
-
-              this.window.webContents.send(
-                'sample-profile-updates',
-                sampleProfile,
-              );
-              ipcMain.emit('sample-profile-updated', sampleProfile);
-            } catch (err) {
-              deviceLogger.error('Failed to parse sample profile from firmware:', err, data);
-            }
-            break;
-
-          default:
-            deviceLogger.warn('Received unknown data command type:', command);
-            break;
-        }
-      } catch (error) {
-        deviceLogger.error(
-          'Failed to parse data for command',
-          command,
-          ':',
-          error,
-        );
-        deviceLogger.debug('Raw data:', data);
-      }
-    });
-
-    this.dataProcessor.on('ack', (command: WriteType, ack: boolean) => {
-      deviceLogger.debug('Received ACK from device:', command, ack);
-      if (command === WriteType.MOTION_ENABLE) {
-        deviceLogger.debug('motion enabled ack1', command, ack);
-        ipcMain.emit('motion-enabled-ack', ack);
-      }
-      if (command === WriteType.SAMPLE_PROFILE) {
-        deviceLogger.debug('sample profile ack', command, ack);
-        if (!ack) {
-          this.notificationSender.sendNotification({
-            Type: NotificationType.ERROR,
-            Message: 'Device rejected the sample profile. Previous limits will remain in use.',
-          });
-        }
-        ipcMain.emit('sample-profile-ack', ack);
-      }
-    });
-
-    this.dataProcessor.on('notification', (notification: Notification) => {
-      this.notificationSender.sendNotification(notification);
-    });
-
-    this.dataProcessor.on('unknown', (_type: string, _data: Buffer) => {
-      deviceLogger.warn('Received unknown data type');
-    });
-
-    this.serialport.on('open', (message: string) => {
-      deviceLogger.info('Serial port opened:', message);
-      this.window.webContents.send('device-status-updates', {
-        connected: true,
-        responding: this.device_connected,
-        message,
-      });
-    });
-
-    this.serialport.on('open-callback', (message: string) => {
-      deviceLogger.info('Serial port open-callback:', message);
-      this.window.webContents.send('device-status-updates', {
-        connected: true,
-        responding: this.device_connected,
-        message,
-      });
-    });
-
-    this.serialport.on('close', (message: string) => {
-      deviceLogger.info('Serial port closed:', message);
-      this.device_connected = false;
-      this.window.webContents.send('device-status-updates', {
-        connected: false,
-        responding: false,
-        message,
-      });
-    });
-
-    this.serialport.on('error', (error: Error) => {
-      deviceLogger.error('Serial port error:', error.message);
-      this.device_connected = false;
-      this.window.webContents.send('device-status-updates', {
-        connected: false,
-        responding: false,
-        message: error.message,
-      });
-    });
-
-    // Handle cleanup when serial port is closed
-    this.serialport.on('close', async () => {
-      try {
-        // Optional: Add any cleanup logic here
-      } catch (closeErr) {
-        deviceLogger.warn('Warning while closing serial port:', closeErr);
-      }
-    });
   }
 
   /**
-   * Flash firmware to the device
-   * @param firmwarePath Path to firmware file to flash
+   * Flash firmware to the device.
    */
   public async flashFirmware(
     firmwarePath: string,
@@ -922,9 +942,8 @@ class DeviceInterface {
     try {
       this.sendProgressMessage('Preparing to flash firmware...');
 
-      // Get the current port path and baud rate before disconnecting
-      const portPath = this.serialport.getCurrentPath();
-      const baudRate = this.serialport.getCurrentBaudRate();
+      const portPath = this.connectedPort;
+      const baudRate = this.connectedBaud;
 
       if (!portPath) {
         return {
@@ -934,30 +953,28 @@ class DeviceInterface {
         };
       }
 
-      // Close the serial port and wait for it to fully close
+      // Disconnect bridge serial (but keep process alive)
       this.sendProgressMessage('Closing serial port before flashing...');
       try {
-        await this.serialport.disconnect();
-        // Add a small delay to ensure the port is fully closed
+        this.bridge.unregisterPeriodicPolling();
+        this.bridge.disconnect();
         await new Promise((resolve) => setTimeout(resolve, 500));
         this.sendProgressMessage('Serial port closed successfully');
       } catch (closeErr) {
-        // Log the error but continue anyway - the port might already be closed
         deviceLogger.warn('Warning while closing serial port:', closeErr);
         this.sendProgressMessage(
           'Warning while closing serial port, continuing anyway...',
         );
       }
 
-      // Get the loadp2 binary path from the local bin directory
+      // Get the loadp2 binary path
       const loadp2BinaryName = (() => {
         if (process.platform === 'win32') return 'loadp2.exe';
         if (process.platform === 'darwin') return 'loadp2.mac';
-        return 'loadp2'; // Linux/others
+        return 'loadp2';
       })();
       const loadp2Path = path.join(process.cwd(), 'bin', loadp2BinaryName);
 
-      // Check if the loadp2 binary exists
       if (!fs.existsSync(loadp2Path)) {
         return {
           success: false,
@@ -965,7 +982,6 @@ class DeviceInterface {
         };
       }
 
-      // Make sure the binary is executable (on Unix systems)
       if (process.platform !== 'win32') {
         try {
           fs.chmodSync(loadp2Path, '755');
@@ -975,27 +991,29 @@ class DeviceInterface {
         }
       }
 
-      // Flash the firmware
       const flashResult = await this.flashWithLoadP2(
         loadp2Path,
         firmwarePath,
         portPath,
       );
 
-      // Only attempt to reconnect if the flash was successful
+      // Reconnect after successful flash
       if (flashResult.success && portPath && baudRate) {
         this.sendProgressMessage(
           'Firmware flashed successfully. Reconnecting to device...',
         );
         try {
-          // Wait a moment before reconnecting to give the device time to reboot
           await new Promise((resolve) => setTimeout(resolve, 1000));
-
-          // Attempt to reconnect
-          await this.serialport.connect(portPath, baudRate);
+          const connectPromise = waitForBridgeEvent(
+            this.bridge,
+            'connected',
+            5000,
+          );
+          this.bridge.connect(portPath, baudRate);
+          await connectPromise;
+          this.bridge.registerPeriodicPolling();
           this.sendProgressMessage('Reconnected to device successfully');
         } catch (reconnectErr) {
-          // Log the error but don't fail the overall operation - flashing was successful
           deviceLogger.warn('Warning while reconnecting:', reconnectErr);
           this.sendProgressMessage(
             'Note: Could not automatically reconnect. Please reconnect manually if needed.',
@@ -1007,17 +1025,12 @@ class DeviceInterface {
     } catch (err: unknown) {
       const error = err instanceof Error ? err.message : String(err);
       deviceLogger.error('Error in firmware flashing:', error);
-
-      return {
-        success: false,
-        error: `Error flashing firmware: ${error}`,
-      };
+      return { success: false, error: `Error flashing firmware: ${error}` };
     }
   }
 
   /**
-   * Flash firmware using the LoadP2 tool with a two-stage approach
-   * First flashes the P2ES_flashloader.bin at address 0, then the actual firmware at address 0x8000
+   * Flash firmware using LoadP2 with two-stage approach.
    */
   private flashWithLoadP2(
     loadp2Path: string,
@@ -1028,16 +1041,15 @@ class DeviceInterface {
       try {
         this.window.webContents.send(
           'firmware-update-progress',
-          `Using LoadP2 tool to flash firmware in two stages...`,
+          'Using LoadP2 tool to flash firmware in two stages...',
         );
 
-        // Send flashing started event
         this.window.webContents.send('firmware-flash-status', {
           status: 'preparing',
           message: 'Preparing to flash firmware...',
         });
 
-        // First, check if the firmware file exists and has content
+        // Validate firmware file
         try {
           const stats = fs.statSync(firmwarePath);
           this.window.webContents.send(
@@ -1067,7 +1079,7 @@ class DeviceInterface {
           });
         }
 
-        // Next, check if the flashloader exists
+        // Check flashloader
         const flashloaderPath = path.join(
           process.cwd(),
           'bin',
@@ -1085,7 +1097,6 @@ class DeviceInterface {
           });
         }
 
-        // Check the flash loader file size
         try {
           const loaderStats = fs.statSync(flashloaderPath);
           this.window.webContents.send(
@@ -1093,43 +1104,30 @@ class DeviceInterface {
             `Flash loader size: ${loaderStats.size} bytes`,
           );
         } catch (err) {
-          // Just log this one, not critical
           deviceLogger.warn(
             `Warning: Could not get flash loader file size: ${err}`,
           );
         }
 
-        // Construct the two-stage flash command
-        // Format: @0=/path/to/flashloader.bin,@8000+/path/to/program.bin
         const twoStageCmd = `@0=${flashloaderPath},@8000+${firmwarePath}`;
-
-        // Command to flash firmware with loadp2
-        const cmdArgs = [
-          '-b2000000', // Baud rate
-          '-p',
-          port, // Port
-          twoStageCmd, // Two-stage flash command
-        ];
+        const cmdArgs = ['-b2000000', '-p', port, twoStageCmd];
 
         this.window.webContents.send(
           'firmware-update-progress',
           `Running command: ${loadp2Path} ${cmdArgs.join(' ')}`,
         );
 
-        // Send flashing started event
         this.window.webContents.send('firmware-flash-status', {
           status: 'flashing',
           message: 'Firmware flashing in progress...',
         });
 
         const flashProcess = spawn(loadp2Path, cmdArgs);
-        this.currentFlashProcess = flashProcess; // Track the process
+        this.currentFlashProcess = flashProcess;
 
-        let output = '';
         let errorOutput = '';
         let processCompleted = false;
 
-        // Set up a timeout to kill the process if it hangs (5 minutes)
         const timeout = setTimeout(
           () => {
             if (!processCompleted && flashProcess && !flashProcess.killed) {
@@ -1147,7 +1145,7 @@ class DeviceInterface {
             }
           },
           5 * 60 * 1000,
-        ); // 5 minutes
+        );
 
         const cleanup = () => {
           processCompleted = true;
@@ -1155,14 +1153,13 @@ class DeviceInterface {
           this.currentFlashProcess = null;
         };
 
-        flashProcess.stdout.on('data', (data) => {
+        flashProcess.stdout.on('data', (data: Buffer) => {
           const message = data.toString();
-          output += message;
           deviceLogger.info(`LoadP2 stdout: ${message}`);
           this.window.webContents.send('firmware-update-progress', message);
         });
 
-        flashProcess.stderr.on('data', (data) => {
+        flashProcess.stderr.on('data', (data: Buffer) => {
           const message = data.toString();
           errorOutput += message;
           deviceLogger.error(`LoadP2 stderr: ${message}`);
@@ -1202,7 +1199,6 @@ class DeviceInterface {
             });
             resolve({ success: true });
           } else {
-            // Provide helpful error message based on the error output
             let errorMessage = `LoadP2 exited with code ${code}.`;
 
             if (errorOutput.includes('cannot open serial port')) {
@@ -1214,7 +1210,7 @@ class DeviceInterface {
               errorOutput.toLowerCase().includes('permission denied')
             ) {
               errorMessage =
-                'Error: Permission denied when accessing the port. Try running as administrator or change port permissions.';
+                'Error: Permission denied when accessing the port.';
             } else {
               errorMessage += ` ${errorOutput}`;
             }
@@ -1223,11 +1219,7 @@ class DeviceInterface {
               status: 'error',
               message: errorMessage,
             });
-
-            resolve({
-              success: false,
-              error: errorMessage,
-            });
+            resolve({ success: false, error: errorMessage });
           }
         });
 
@@ -1240,14 +1232,12 @@ class DeviceInterface {
             status: 'error',
             message: `Failed to run LoadP2 tool: ${errorMsg}`,
           });
-
           resolve({
             success: false,
             error: `Failed to run LoadP2 tool: ${errorMsg}`,
           });
         });
       } catch (err) {
-        // Handle any unexpected errors
         const errorMsg = err instanceof Error ? err.message : String(err);
         deviceLogger.error('Unexpected error in flashWithLoadP2:', errorMsg);
         this.window.webContents.send('firmware-flash-status', {
@@ -1264,17 +1254,6 @@ class DeviceInterface {
 
   private sendProgressMessage(message: string): void {
     this.window.webContents.send('firmware-update-progress', message);
-  }
-
-  private cleanupTempDir(dirPath: string): void {
-    try {
-      if (fs.existsSync(dirPath)) {
-        fs.rmSync(dirPath, { recursive: true, force: true });
-        this.sendProgressMessage(`Cleaned up temporary files in ${dirPath}`);
-      }
-    } catch (error) {
-      deviceLogger.error('Error cleaning up temp directory:', error);
-    }
   }
 }
 

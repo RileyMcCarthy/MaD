@@ -29,11 +29,41 @@ const CMD_POWERDOWN: u8 = 0x01;
 
 const REGISTER_COUNT: usize = 5;
 
-/// Conversion interval in virtual microseconds (10ms = 100 Hz, matching Python)
-const CONVERSION_INTERVAL_US: u64 = 10_000;
+/// Index of CONFIG1 — encodes data-rate (bits 7:5) and operating mode (bit 4).
+const REG_CONFIG1: usize = 1;
+
+/// Default conversion interval if CONFIG1 is unwritten (datasheet reset = 20 SPS).
+const DEFAULT_CONVERSION_INTERVAL_US: u64 = 50_000;
 
 /// ADC resolution (24-bit, but effective range is 23-bit + sign).
 const ADC_MAX_CODE: f64 = 8_388_608.0; // 2^23
+
+/// Compute the conversion interval (virtual µs) from the contents of CONFIG1.
+///
+/// CONFIG1 bit layout (per ADS122U04 datasheet):
+///   [7:5] DR   — data rate (000=20 SPS … 110=1000 SPS)
+///   [4]   MODE — 0 = normal, 1 = turbo (doubles the rate)
+///
+/// Reserved DR codes (111) fall back to the fastest configured rate.
+fn conversion_interval_us(reg_config1: u8) -> u64 {
+    let dr = (reg_config1 >> 5) & 0b111;
+    let turbo = ((reg_config1 >> 4) & 0b1) == 1;
+    let normal_us: u64 = match dr {
+        0b000 => 50_000, // 20 SPS
+        0b001 => 22_222, // 45 SPS
+        0b010 => 11_111, // 90 SPS
+        0b011 => 5_714,  // 175 SPS
+        0b100 => 3_030,  // 330 SPS
+        0b101 => 1_667,  // 600 SPS
+        0b110 => 1_000,  // 1000 SPS
+        _ => 1_000,
+    };
+    if turbo {
+        normal_us / 2
+    } else {
+        normal_us
+    }
+}
 
 // ============================================================
 // Configuration
@@ -174,17 +204,29 @@ fn protocol_loop(adc: &Ads122u04) {
             }
         }
 
-        // Send continuous conversion data if active
+        // Send continuous conversion data if active. The conversion interval
+        // is derived from CONFIG1 (DR bits + Turbo flag) so the model honors
+        // whatever rate the firmware configured via WREG (1000 SPS by default
+        // in MaD firmware).
         if continuous {
+            let reg1 = adc.registers.lock().unwrap()[REG_CONFIG1];
+            let interval_us = if reg1 == 0 {
+                DEFAULT_CONVERSION_INTERVAL_US
+            } else {
+                conversion_interval_us(reg1)
+            };
             let now_us = embsim_core::virtual_clock::virtual_us();
-            if now_us >= last_conversion_us + CONVERSION_INTERVAL_US {
+            if now_us >= last_conversion_us + interval_us {
                 last_conversion_us = now_us;
                 send_conversion(adc, model_fd);
             }
         }
 
-        // Sleep briefly to avoid busy-looping (1ms virtual time)
-        let wall_us = embsim_core::virtual_clock::virtual_to_wall_us(1_000);
+        // Sleep briefly to avoid busy-looping. Must be substantially finer than
+        // the configured conversion interval so we don't miss the 1000 SPS edge
+        // (1 ms period). 250 µs gives at least 4× oversample at the fastest
+        // non-turbo rate the firmware supports.
+        let wall_us = embsim_core::virtual_clock::virtual_to_wall_us(250);
         if wall_us > 0 {
             std::thread::sleep(std::time::Duration::from_micros(wall_us));
         }

@@ -7,8 +7,11 @@ export type Channels =
   | 'device-connect'
   | 'device-list-ports'
   | 'device-data-all'
+  | 'device-sample-period-ms'
   | 'device-connected'
   | 'device-responding'
+  | 'device-machine-state'
+  | 'device-latest-sample'
 
   // Machine configuration
   | 'get-machine-configuration'

@@ -1,24 +1,159 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { LineChart } from '@mui/x-charts/LineChart';
 import { ChartsReferenceLine } from '@mui/x-charts/ChartsReferenceLine';
 import { axisClasses } from '@mui/x-charts/ChartsAxis';
 import Skeleton from '@mui/material/Skeleton';
-import { Box, Paper } from '@mui/material';
+import {
+  Box,
+  Paper,
+  ToggleButton,
+  ToggleButtonGroup,
+  Typography,
+} from '@mui/material';
 import { SampleData } from '@shared/SharedInterface';
 import { useDevice } from '@renderer/hooks';
 import { componentLogger } from '../utils/logger';
 
+type CoordinateSystem = 'sample' | 'machine';
+
 export default function BasicLineChart() {
   const [deviceState, actions] = useDevice();
-  const [samples, setSamples] = useState<SampleData[]>([]);
+  const [coordinateSystem, setCoordinateSystem] =
+    useState<CoordinateSystem>('machine');
+  const [renderTick, setRenderTick] = useState(0);
+  const liveSampleLimit = deviceState.liveSampleBufferSize;
+  const liveSamplePeriodMs = deviceState.liveSamplePeriodMs;
+  const SWEEP_DURATION_S = 60;
+  const sampleForceBufferRef = useRef<Array<number | null>>([]);
+  const samplePositionBufferRef = useRef<Array<number | null>>([]);
+  const machineForceBufferRef = useRef<Array<number | null>>([]);
+  const machinePositionBufferRef = useRef<Array<number | null>>([]);
+  const timeAxisRef = useRef<number[]>([]);
+  const writeIndexRef = useRef(0);
+  const filledCountRef = useRef(0);
+  const sweepStartSampleIndexRef = useRef<number | null>(null);
+
+  // Store actions in a ref to avoid re-running the effect when actions reference changes
+  const actionsRef = useRef(actions);
+  actionsRef.current = actions;
+
+  const resetSweepBuffers = () => {
+    sampleForceBufferRef.current = new Array<number | null>(liveSampleLimit).fill(
+      null,
+    );
+    samplePositionBufferRef.current = new Array<number | null>(
+      liveSampleLimit,
+    ).fill(null);
+    machineForceBufferRef.current = new Array<number | null>(
+      liveSampleLimit,
+    ).fill(null);
+    machinePositionBufferRef.current = new Array<number | null>(
+      liveSampleLimit,
+    ).fill(null);
+    timeAxisRef.current = new Array<number>(liveSampleLimit).fill(0);
+    writeIndexRef.current = 0;
+    filledCountRef.current = 0;
+    sweepStartSampleIndexRef.current = null;
+  };
+
+  const writeSampleToBuffers = (sample: SampleData, elapsedSec: number) => {
+    const idx = writeIndexRef.current;
+    const sampleForce = Number(sample['Sample Force (N)']);
+    const samplePosition = Number(sample['Sample Position (mm)']);
+    const machineForce = Number(sample['Machine Force (N)']);
+    const machinePosition = Number(sample['Machine Position (mm)']);
+
+    sampleForceBufferRef.current[idx] = Number.isFinite(sampleForce)
+      ? sampleForce
+      : null;
+    samplePositionBufferRef.current[idx] = Number.isFinite(samplePosition)
+      ? Number(samplePosition.toFixed(3))
+      : null;
+    machineForceBufferRef.current[idx] = Number.isFinite(machineForce)
+      ? machineForce
+      : null;
+    machinePositionBufferRef.current[idx] = Number.isFinite(machinePosition)
+      ? Number(machinePosition.toFixed(3))
+      : null;
+    timeAxisRef.current[idx] = elapsedSec;
+
+    writeIndexRef.current = (idx + 1) % liveSampleLimit;
+    filledCountRef.current = Math.min(filledCountRef.current + 1, liveSampleLimit);
+  };
+
+  const pushSampleToBuffers = (sample: SampleData) => {
+    if (sampleForceBufferRef.current.length !== liveSampleLimit) {
+      resetSweepBuffers();
+    }
+
+    const sampleIndex = Number(sample.Index);
+    if (!Number.isFinite(sampleIndex)) {
+      return;
+    }
+
+    if (sweepStartSampleIndexRef.current === null) {
+      sweepStartSampleIndexRef.current = sampleIndex;
+    }
+
+    // Firmware index is our source-of-truth time basis for live data.
+    // If index goes backwards (counter reset/new stream), restart sweep.
+    if (sampleIndex < sweepStartSampleIndexRef.current) {
+      resetSweepBuffers();
+      sweepStartSampleIndexRef.current = sampleIndex;
+    }
+
+    let elapsedSec =
+      ((sampleIndex - (sweepStartSampleIndexRef.current ?? sampleIndex)) *
+        liveSamplePeriodMs) /
+      1000;
+    if (elapsedSec >= SWEEP_DURATION_S) {
+      // Start a fresh sweep every 60s and continue plotting.
+      resetSweepBuffers();
+      sweepStartSampleIndexRef.current = sampleIndex;
+      elapsedSec = 0;
+    }
+
+    if (filledCountRef.current >= liveSampleLimit) {
+      // Safety: if buffer fills before 60s due sample-rate mismatch, restart.
+      resetSweepBuffers();
+      sweepStartSampleIndexRef.current = sampleIndex;
+      elapsedSec = 0;
+    }
+    writeSampleToBuffers(sample, elapsedSec);
+  };
 
   useEffect(() => {
+    resetSweepBuffers();
+
     // Function to initialize data on page load
     const initializeData = async () => {
       try {
-        const data = await actions.getAllDeviceData();
+        const data = await actionsRef.current.getCachedDeviceData(liveSampleLimit);
         if (data && data.length > 0) {
-          setSamples(data.slice(-100)); // Save up to 100 samples
+          // Seed with cached data so chart is immediately populated.
+          const seeded = data.slice(-liveSampleLimit);
+          const firstIndex = Number(seeded[0]?.Index);
+          sweepStartSampleIndexRef.current = Number.isFinite(firstIndex)
+            ? firstIndex
+            : null;
+
+          seeded.forEach((sample) => {
+            const sampleIndex = Number(sample.Index);
+            const startIndex =
+              sweepStartSampleIndexRef.current ?? sampleIndex;
+            const elapsedSec =
+              Number.isFinite(sampleIndex) && Number.isFinite(startIndex)
+                ? ((sampleIndex - startIndex) * liveSamplePeriodMs) / 1000
+                : 0;
+            if (
+              Number.isFinite(elapsedSec) &&
+              elapsedSec >= 0 &&
+              elapsedSec <= SWEEP_DURATION_S
+            ) {
+              writeSampleToBuffers(sample, elapsedSec);
+            }
+          });
+          setRenderTick((prev) => prev + 1);
         }
       } catch (error) {
         componentLogger.error('Failed to initialize data:', error);
@@ -27,7 +162,7 @@ export default function BasicLineChart() {
 
     // Call the function to initialize data on page load
     initializeData();
-  }, [actions]);
+  }, [liveSampleLimit, liveSamplePeriodMs]);
 
   // Update samples when new sample data comes from the hook
   useEffect(() => {
@@ -36,22 +171,20 @@ export default function BasicLineChart() {
         'New sample data received:',
         deviceState.latestSampleData,
       );
-      setSamples((prevData) => {
-        const updatedData = [...prevData, deviceState.latestSampleData!];
-        return updatedData.slice(-100); // Keep only the last 100 samples
-      });
+      pushSampleToBuffers(deviceState.latestSampleData);
+      setRenderTick((prev) => prev + 1);
     }
-  }, [deviceState.latestSampleData]);
+  }, [deviceState.latestSampleData, liveSampleLimit, liveSamplePeriodMs]);
 
-  const force = samples.map((sample) => sample['Sample Force (N)']);
-  const position = samples.map((sample) => sample['Sample Position (mm)']);
-  const gaugeLength = samples.map(
-    (sample) =>
-      sample['Machine Position (mm)'] - sample['Sample Position (mm)'],
-  );
-  const gaugeForce = samples.map(
-    (sample) => sample['Machine Force (N)'] - sample['Sample Force (N)'],
-  );
+  const force =
+    coordinateSystem === 'machine'
+      ? machineForceBufferRef.current
+      : sampleForceBufferRef.current;
+  const position =
+    coordinateSystem === 'machine'
+      ? machinePositionBufferRef.current
+      : samplePositionBufferRef.current;
+  const hasSweepData = filledCountRef.current > 0;
 
   const {
     forceMin,
@@ -74,18 +207,30 @@ export default function BasicLineChart() {
       return filtered.length ? Math.min(...filtered) : undefined;
     };
 
-    const limitForceVal = minPositive([
-      sampleProfile?.maxForce,
-      (config?.['Tensile Force Max (N)'] as number | undefined),
-    ]);
+    const limitForceVal =
+      coordinateSystem === 'machine'
+        ? asPositive(config?.['Tensile Force Max (N)'] as number | undefined)
+        : minPositive([
+            sampleProfile?.maxForce,
+            (config?.['Tensile Force Max (N)'] as number | undefined),
+          ]);
 
-    const limitPosVal = minPositive([
-      sampleProfile?.maxDisplacement,
-      (config?.['Position Max (mm)'] as number | undefined),
-    ]);
+    const limitPosVal =
+      coordinateSystem === 'machine'
+        ? asPositive(config?.['Position Max (mm)'] as number | undefined)
+        : minPositive([
+            sampleProfile?.maxDisplacement,
+            (config?.['Position Max (mm)'] as number | undefined),
+          ]);
 
-    const dataForceMax = gaugeForce.length ? Math.max(...gaugeForce.map((v) => Math.abs(v))) : 0;
-    const dataPosMax = gaugeLength.length ? Math.max(...gaugeLength.map((v) => Math.abs(v))) : 0;
+    const absMax = (values: Array<number | null>) =>
+      values.reduce<number>((max, value) => {
+        if (value === null || !Number.isFinite(value)) return max;
+        return Math.max(max, Math.abs(value));
+      }, 0);
+
+    const dataForceMax = absMax(force);
+    const dataPosMax = absMax(position);
 
     const forceBase = limitForceVal ?? (dataForceMax > 0 ? dataForceMax : 5);
     const posBase = limitPosVal ?? (dataPosMax > 0 ? dataPosMax : 1000);
@@ -100,7 +245,12 @@ export default function BasicLineChart() {
       limitForce: limitForceVal,
       limitPosition: limitPosVal,
     };
-  }, [deviceState.machineConfiguration, deviceState.sampleProfile, gaugeForce, gaugeLength]);
+  }, [
+    deviceState.machineConfiguration,
+    deviceState.sampleProfile,
+    renderTick,
+    coordinateSystem,
+  ]);
 
   // Wait for machine profile before rendering bounds
   const hasMachineConfig = Boolean(deviceState.machineConfiguration);
@@ -115,21 +265,61 @@ export default function BasicLineChart() {
           color: (theme) => theme.palette.text.secondary,
         }}
       >
-        {hasMachineConfig && force.length && position.length ? (
+        <Box
+          sx={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            mb: 1,
+          }}
+        >
+          <Typography variant="subtitle2">
+            Coordinate System: {coordinateSystem === 'machine' ? 'Machine' : 'Sample'}
+          </Typography>
+          <ToggleButtonGroup
+            size="small"
+            value={coordinateSystem}
+            exclusive
+            onChange={(_event, value: CoordinateSystem | null) => {
+              if (value) setCoordinateSystem(value);
+            }}
+          >
+            <ToggleButton value="sample">Sample</ToggleButton>
+            <ToggleButton value="machine">Machine</ToggleButton>
+          </ToggleButtonGroup>
+        </Box>
+        {hasMachineConfig && hasSweepData ? (
           <LineChart
-            grid={{ horizontal: true, vertical: true }}
+            grid={{ horizontal: true, vertical: false }}
+            xAxis={[
+              {
+                id: 'time',
+                data: timeAxisRef.current,
+                label: 'Time (s)',
+                min: 0,
+                max: SWEEP_DURATION_S,
+                tickNumber: 7,
+                valueFormatter: (value: number) => `${value.toFixed(0)}s`,
+              },
+            ]}
             yAxis={[
               {
                 id: 'force',
                 scaleType: 'linear',
-                label: 'Force (N)',
+                label:
+                  coordinateSystem === 'machine'
+                    ? 'Machine Force (N)'
+                    : 'Sample Force (N)',
                 min: forceMin,
                 max: forceMax,
               },
               {
                 id: 'position',
                 scaleType: 'linear',
-                label: 'Position (mm)',
+                label:
+                  coordinateSystem === 'machine'
+                    ? 'Machine Position (mm)'
+                    : 'Sample Position (mm)',
                 min: lengthMin,
                 max: lengthMax,
               },
@@ -140,7 +330,10 @@ export default function BasicLineChart() {
                 data: force,
                 type: 'line',
                 showMark: false,
-                label: 'Sample Force',
+                label:
+                  coordinateSystem === 'machine'
+                    ? 'Machine Force'
+                    : 'Sample Force',
                 color: '#1976d2',
               },
               {
@@ -148,7 +341,10 @@ export default function BasicLineChart() {
                 data: position,
                 type: 'line',
                 showMark: false,
-                label: 'Sample Position',
+                label:
+                  coordinateSystem === 'machine'
+                    ? 'Machine Position'
+                    : 'Sample Position',
                 color: '#388e3c',
               },
             ]}

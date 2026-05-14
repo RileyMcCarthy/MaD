@@ -8,7 +8,7 @@ use embsim_p2;
 use embsim_peripherals::{encoder, filesystem, lock, pulse_out, serial, system};
 use std::os::fd::AsRawFd;
 use std::path::Path;
-use tracing::{info, Level};
+use tracing::{info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
 
 /// MaD Tensile Testing Machine — SIL Emulator
@@ -117,6 +117,24 @@ fn main() {
 
     // Wire PTY to serial channel MAIN
     serial::init_channel_fd(serial_main, pty.master.as_raw_fd());
+
+    // Optional deterministic baud-rate pacing on the MAIN serial channel.
+    // Enabled by setting MAD_SIM_BAUD to a positive integer (e.g. 230400).
+    // When unset or 0, TX is instant (default behaviour).
+    match std::env::var("MAD_SIM_BAUD") {
+        Ok(raw) => match raw.trim().parse::<u32>() {
+            Ok(0) => info!("MAD_SIM_BAUD=0; serial baud pacing disabled"),
+            Ok(baud) => {
+                serial::set_baud(serial_main, baud);
+                info!(
+                    "Serial MAIN baud pacing enabled at {} bps (deterministic, full-duplex)",
+                    baud
+                );
+            }
+            Err(_) => warn!("MAD_SIM_BAUD={:?} is not a valid u32; pacing disabled", raw),
+        },
+        Err(_) => {}
+    }
 
     // Wire machine: register callbacks, set initial GPIO states
     wiring::init(&fw);

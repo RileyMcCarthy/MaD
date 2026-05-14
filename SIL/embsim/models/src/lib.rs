@@ -7,7 +7,7 @@
 //! wiring layer connects these callback chains together.
 
 pub mod ads122u04;
+pub mod gantry;
 pub mod limit_switch;
 pub mod sample;
-pub mod stepper;
 pub mod strain_gauge;

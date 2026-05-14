@@ -29,44 +29,69 @@ import {
   Refresh as RefreshIcon,
 } from '@mui/icons-material';
 import {
-  TestRunEntry,
   FileDownloadProgress,
+  TestRunEntry,
 } from '@shared/SharedInterface';
 import { useDevice } from '../hooks/useDevice';
 import { componentLogger } from '../utils/logger';
 
+type TestRunListEntry = Pick<
+  TestRunEntry,
+  'id' | 'testName' | 'sampleProfileId' | 'motionProfileId' | 'status' | 'startedAt' | 'completedAt'
+> & {
+  sampleProfileName?: string;
+  motionProfileName?: string;
+};
+
+type TestRunListResponse = {
+  runs: TestRunListEntry[];
+  total: number;
+  hasMore: boolean;
+};
+
+const PAGE_SIZE = 10;
+
 export default function TestRuns() {
   const [, actions] = useDevice();
   const navigate = useNavigate();
-  const [testRuns, setTestRuns] = useState<TestRunEntry[]>([]);
+  const [testRuns, setTestRuns] = useState<TestRunListEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [downloadProgress, setDownloadProgress] =
     useState<FileDownloadProgress | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
 
-  const loadTestRuns = useCallback(async () => {
+  const loadTestRuns = useCallback(
+    async ({ reset, offset }: { reset: boolean; offset: number }) => {
     try {
-      setLoading(true);
-      const runs = await window.electron.ipcRenderer.invoke(
+      if (reset) {
+        setLoading(true);
+      } else {
+        setLoadingMore(true);
+      }
+
+      const response = (await window.electron.ipcRenderer.invoke(
         'data-get-test-runs',
-      );
-      // Sort by newest first
-      setTestRuns(
-        (runs || []).sort(
-          (a: TestRunEntry, b: TestRunEntry) =>
-            new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime(),
-        ),
-      );
+        { offset, limit: PAGE_SIZE },
+      )) as TestRunListResponse;
+
+      const runs = response?.runs || [];
+      setTestRuns((prev) => (reset ? runs : [...prev, ...runs]));
+      setHasMore(Boolean(response?.hasMore));
     } catch (error) {
       componentLogger.error('Failed to load test runs:', error);
     } finally {
       setLoading(false);
+      setLoadingMore(false);
     }
-  }, []);
+    },
+    [],
+  );
 
   useEffect(() => {
-    loadTestRuns();
+    loadTestRuns({ reset: true, offset: 0 });
   }, [loadTestRuns]);
 
   // Listen for download progress
@@ -80,7 +105,7 @@ export default function TestRuns() {
           setTimeout(() => {
             setDownloadingId(null);
             setDownloadProgress(null);
-            loadTestRuns(); // Refresh after download
+            loadTestRuns({ reset: true, offset: 0 }); // Refresh after download
           }, 1000);
         }
       },
@@ -90,7 +115,7 @@ export default function TestRuns() {
     };
   }, [loadTestRuns]);
 
-  const handleDownload = async (run: TestRunEntry) => {
+  const handleDownload = async (run: TestRunListEntry) => {
     try {
       setDownloadingId(run.id);
 
@@ -116,7 +141,7 @@ export default function TestRuns() {
         );
 
         componentLogger.info(`Downloaded test data for ${run.testName}`);
-        loadTestRuns();
+        loadTestRuns({ reset: true, offset: 0 });
       } else {
         componentLogger.error(
           `Download failed for ${run.testName}: ${result.error}`,
@@ -130,11 +155,11 @@ export default function TestRuns() {
     }
   };
 
-  const handleView = (run: TestRunEntry) => {
+  const handleView = (run: TestRunListEntry) => {
     navigate(`/view/${run.id}`);
   };
 
-  const handleExport = async (run: TestRunEntry) => {
+  const handleExport = async (run: TestRunListEntry) => {
     try {
       // Use electron dialog to pick export path
       const testRunsDir: string = await window.electron.ipcRenderer.invoke(
@@ -160,13 +185,13 @@ export default function TestRuns() {
     try {
       await window.electron.ipcRenderer.invoke('data-delete-test-run', id);
       setDeleteConfirmId(null);
-      loadTestRuns();
+      loadTestRuns({ reset: true, offset: 0 });
     } catch (error) {
       componentLogger.error('Delete error:', error);
     }
   };
 
-  const getStatusChip = (status: TestRunEntry['status']) => {
+  const getStatusChip = (status: TestRunListEntry['status']) => {
     const statusConfig: Record<
       string,
       { color: 'default' | 'primary' | 'success' | 'error' | 'warning'; label: string }
@@ -201,7 +226,7 @@ export default function TestRuns() {
         <Typography variant="h4">Test Runs</Typography>
         <Button
           startIcon={<RefreshIcon />}
-          onClick={loadTestRuns}
+          onClick={() => loadTestRuns({ reset: true, offset: 0 })}
           variant="outlined"
         >
           Refresh
@@ -214,18 +239,28 @@ export default function TestRuns() {
           <Typography variant="body2" gutterBottom>
             Downloading {downloadProgress.fileName}...
           </Typography>
-          <LinearProgress
-            variant="determinate"
-            value={
-              (downloadProgress.bytesDownloaded /
-                downloadProgress.totalBytes) *
-              100
-            }
-          />
-          <Typography variant="caption" color="text.secondary">
-            {Math.round(downloadProgress.bytesDownloaded / 1024)} /{' '}
-            {Math.round(downloadProgress.totalBytes / 1024)} KB
-          </Typography>
+          {downloadProgress.totalBytes > 0 ? (
+            <LinearProgress
+              variant="determinate"
+              value={
+                (downloadProgress.bytesDownloaded /
+                  downloadProgress.totalBytes) *
+                100
+              }
+            />
+          ) : (
+            <LinearProgress variant="indeterminate" />
+          )}
+          {downloadProgress.totalBytes > 0 ? (
+            <Typography variant="caption" color="text.secondary">
+              {Math.round(downloadProgress.bytesDownloaded / 1024)} /{' '}
+              {Math.round(downloadProgress.totalBytes / 1024)} KB
+            </Typography>
+          ) : (
+            <Typography variant="caption" color="text.secondary">
+              {Math.round(downloadProgress.bytesDownloaded / 1024)} KB downloaded
+            </Typography>
+          )}
         </Paper>
       )}
 
@@ -250,99 +285,113 @@ export default function TestRuns() {
           </Typography>
         </Paper>
       ) : (
-        <TableContainer component={Paper}>
-          <Table>
-            <TableHead>
-              <TableRow>
-                <TableCell>Test Name</TableCell>
-                <TableCell>Sample Profile</TableCell>
-                <TableCell>Motion Profile</TableCell>
-                <TableCell>Status</TableCell>
-                <TableCell>Started</TableCell>
-                <TableCell align="right">Actions</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {testRuns.map((run) => (
-                <TableRow key={run.id} hover>
-                  <TableCell>
-                    <Typography variant="body2" fontWeight="bold">
-                      {run.testName}
-                    </Typography>
-                  </TableCell>
-                  <TableCell>
-                    <Typography variant="body2">
-                      {run.sampleProfileId}
-                    </Typography>
-                  </TableCell>
-                  <TableCell>
-                    <Typography variant="body2">
-                      {run.motionProfile?.name || run.motionProfileId}
-                    </Typography>
-                  </TableCell>
-                  <TableCell>{getStatusChip(run.status)}</TableCell>
-                  <TableCell>
-                    <Typography variant="body2">
-                      {formatDate(run.startedAt)}
-                    </Typography>
-                  </TableCell>
-                  <TableCell align="right">
-                    {/* Download button — only if not yet downloaded */}
-                    {run.status !== 'downloaded' && (
-                      <Tooltip title="Download data from device">
-                        <span>
-                          <IconButton
-                            onClick={() => handleDownload(run)}
-                            disabled={downloadingId === run.id}
-                            color="primary"
-                          >
-                            {downloadingId === run.id ? (
-                              <CircularProgress size={20} />
-                            ) : (
-                              <DownloadIcon />
-                            )}
-                          </IconButton>
-                        </span>
-                      </Tooltip>
-                    )}
-
-                    {/* View button — only if data is downloaded */}
-                    {run.status === 'downloaded' && (
-                      <>
-                        <Tooltip title="View test data">
-                          <IconButton
-                            onClick={() => handleView(run)}
-                            color="primary"
-                          >
-                            <ViewIcon />
-                          </IconButton>
-                        </Tooltip>
-                        <Tooltip title="Export CSV with metadata">
-                          <IconButton
-                            onClick={() => handleExport(run)}
-                            color="secondary"
-                          >
-                            <ExportIcon />
-                          </IconButton>
-                        </Tooltip>
-                      </>
-                    )}
-
-                    {/* Delete button */}
-                    <Tooltip title="Delete test run">
-                      <IconButton
-                        onClick={() => setDeleteConfirmId(run.id)}
-                        color="error"
-                      >
-                        <DeleteIcon />
-                      </IconButton>
-                    </Tooltip>
-                  </TableCell>
+        <>
+          <TableContainer component={Paper}>
+            <Table>
+              <TableHead>
+                <TableRow>
+                  <TableCell>Test Name</TableCell>
+                  <TableCell>Sample Profile</TableCell>
+                  <TableCell>Motion Profile</TableCell>
+                  <TableCell>Status</TableCell>
+                  <TableCell>Started</TableCell>
+                  <TableCell align="right">Actions</TableCell>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </TableContainer>
+              </TableHead>
+              <TableBody>
+                {testRuns.map((run) => (
+                  <TableRow key={run.id} hover>
+                    <TableCell>
+                      <Typography variant="body2" fontWeight="bold">
+                        {run.testName}
+                      </Typography>
+                    </TableCell>
+                    <TableCell>
+                      <Typography variant="body2">
+                        {run.sampleProfileName || run.sampleProfileId}
+                      </Typography>
+                    </TableCell>
+                    <TableCell>
+                      <Typography variant="body2">
+                        {run.motionProfileName || run.motionProfileId}
+                      </Typography>
+                    </TableCell>
+                    <TableCell>{getStatusChip(run.status)}</TableCell>
+                    <TableCell>
+                      <Typography variant="body2">
+                        {formatDate(run.startedAt)}
+                      </Typography>
+                    </TableCell>
+                    <TableCell align="right">
+                      {/* Download button — only if not yet downloaded */}
+                      {run.status !== 'downloaded' && (
+                        <Tooltip title="Download data from device">
+                          <span>
+                            <IconButton
+                              onClick={() => handleDownload(run)}
+                              disabled={downloadingId === run.id}
+                              color="primary"
+                            >
+                              {downloadingId === run.id ? (
+                                <CircularProgress size={20} />
+                              ) : (
+                                <DownloadIcon />
+                              )}
+                            </IconButton>
+                          </span>
+                        </Tooltip>
+                      )}
+
+                      {/* View button — only if data is downloaded */}
+                      {run.status === 'downloaded' && (
+                        <>
+                          <Tooltip title="View test data">
+                            <IconButton
+                              onClick={() => handleView(run)}
+                              color="primary"
+                            >
+                              <ViewIcon />
+                            </IconButton>
+                          </Tooltip>
+                          <Tooltip title="Export CSV with metadata">
+                            <IconButton
+                              onClick={() => handleExport(run)}
+                              color="secondary"
+                            >
+                              <ExportIcon />
+                            </IconButton>
+                          </Tooltip>
+                        </>
+                      )}
+
+                      {/* Delete button */}
+                      <Tooltip title="Delete test run">
+                        <IconButton
+                          onClick={() => setDeleteConfirmId(run.id)}
+                          color="error"
+                        >
+                          <DeleteIcon />
+                        </IconButton>
+                      </Tooltip>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+          {hasMore && (
+            <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2 }}>
+              <Button
+                variant="outlined"
+                onClick={() =>
+                  loadTestRuns({ reset: false, offset: testRuns.length })}
+                disabled={loadingMore}
+              >
+                {loadingMore ? 'Loading…' : `Load older runs (${PAGE_SIZE})`}
+              </Button>
+            </Box>
+          )}
+        </>
       )}
 
       {/* Delete Confirmation Dialog */}

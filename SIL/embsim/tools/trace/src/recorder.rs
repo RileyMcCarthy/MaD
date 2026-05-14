@@ -80,10 +80,19 @@ pub struct Sample {
 }
 
 /// Per-signal data with a monotonic write counter for cursor tracking.
+///
+/// Writers (event sources) call [`record`] which only updates `latest_value`.
+/// The `samples` ring buffer is written exclusively by [`resample_all`] at the
+/// configured trace poll cadence, so trace volume is bounded by `signals × poll_rate`
+/// regardless of how fast event sources emit. [`record_at`] bypasses this and
+/// writes directly to `samples` (used for batch imports / replay).
 struct SignalData {
     samples: Vec<Sample>,
     /// Total samples ever written (monotonic, does not decrease on ring eviction).
     total_written: usize,
+    /// Most recent value pushed via `record()`. `None` until the first call.
+    /// `resample_all()` reads this to append a periodic time-series sample.
+    latest_value: Option<f64>,
 }
 
 impl SignalData {
@@ -91,6 +100,7 @@ impl SignalData {
         Self {
             samples: Vec::new(),
             total_written: 0,
+            latest_value: None,
         }
     }
 }
@@ -178,21 +188,26 @@ pub fn register(signal: Signal) {
     s.catalog_version += 1;
 }
 
-/// Record a value for a signal at the current virtual time.
+/// Update a signal's latest value. Cheap and idempotent — does NOT append to
+/// the time-series ring. Time-series samples are produced exclusively by the
+/// periodic [`resample_all`] poller at the configured trace cadence, so
+/// high-frequency callers (e.g. `pulse_out::on_progress` at multi-kHz)
+/// cannot blow up trace storage or push the UI past its poll budget.
+///
+/// Trade-off: edge events (GPIO toggles, state transitions) are timestamped to
+/// the next poll boundary rather than the exact event time, with up to one
+/// poll interval (~10 ms) of slop. That's invisible for human-readable
+/// debugging visualization. If you need exact event timing, use [`record_at`].
 pub fn record(signal_name: &str, value: f64) {
-    let time_us = virtual_clock::virtual_us();
     let mut s = store().write();
-    let max = s.max_samples;
     if let Some(sd) = s.data.get_mut(signal_name) {
-        if sd.samples.len() >= max {
-            sd.samples.remove(0);
-        }
-        sd.samples.push(Sample { time_us, value });
-        sd.total_written += 1;
+        sd.latest_value = Some(value);
     }
 }
 
-/// Record a value with an explicit timestamp (for batch imports).
+/// Record a sample with an explicit timestamp, writing directly to the
+/// time-series ring. Used for batch imports / replay where the original
+/// timestamp matters and back-pressure is the caller's concern.
 pub fn record_at(signal_name: &str, time_us: u64, value: f64) {
     let mut s = store().write();
     let max = s.max_samples;
@@ -202,6 +217,7 @@ pub fn record_at(signal_name: &str, time_us: u64, value: f64) {
         }
         sd.samples.push(Sample { time_us, value });
         sd.total_written += 1;
+        sd.latest_value = Some(value);
     }
 }
 
@@ -240,29 +256,23 @@ pub fn set_poll_interval_us(us: u64) {
     tracing::info!("Trace poll interval set to {}µs ({}ms)", clamped, clamped / 1000);
 }
 
-/// Re-record the last known value for every active Model/Peripheral signal
-/// at the current virtual time. This ensures all signals have samples at
-/// the configured poll rate, not just when their value changes.
+/// Snapshot the latest cached value of every registered signal into the
+/// time-series ring at the current virtual time. This is the **only** writer
+/// to the ring under the cache-and-snapshot model: event sources (Model,
+/// Peripheral, and Firmware C-variable polls alike) push values into
+/// `latest_value` via [`record`], and this function — driven by the trace
+/// poll thread at [`POLL_INTERVAL_US`] cadence — writes them as samples.
+///
+/// Signals that have never received a `record()` call (no `latest_value`)
+/// are skipped so the chart doesn't get spurious leading zeroes.
 pub fn resample_all() {
     let time_us = virtual_clock::virtual_us();
     let mut s = store().write();
     let max = s.max_samples;
-    // Collect signal names that are Model or Peripheral (not Firmware —
-    // firmware signals are already polled by the C-variable loop).
-    let names: Vec<String> = s.signal_order.iter()
-        .filter(|name| {
-            matches!(
-                s.signals.get(*name).map(|sig| sig.group),
-                Some(SignalGroup::Model) | Some(SignalGroup::Peripheral)
-            )
-        })
-        .cloned()
-        .collect();
+    let names: Vec<String> = s.signal_order.clone();
     for name in &names {
         if let Some(sd) = s.data.get_mut(name) {
-            // Only resample if the signal has at least one prior sample
-            if let Some(last) = sd.samples.last() {
-                let value = last.value;
+            if let Some(value) = sd.latest_value {
                 if sd.samples.len() >= max {
                     sd.samples.remove(0);
                 }

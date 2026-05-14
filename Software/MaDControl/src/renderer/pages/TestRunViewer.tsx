@@ -12,8 +12,13 @@ import {
   TableBody,
   TableCell,
   TableRow,
+  Tooltip,
+  IconButton,
 } from '@mui/material';
-import { ArrowBack as ArrowBackIcon } from '@mui/icons-material';
+import {
+  ArrowBack as ArrowBackIcon,
+  HelpOutline as HelpOutlineIcon,
+} from '@mui/icons-material';
 import { LineChart } from '@mui/x-charts/LineChart';
 import { ScatterChart } from '@mui/x-charts/ScatterChart';
 import { ChartsReferenceLine } from '@mui/x-charts/ChartsReferenceLine';
@@ -52,34 +57,64 @@ function parseCsv(csvContent: string): CsvRow[] {
  * Generate expected position/time data from a motion profile's G-code.
  * This replicates the GCodeGenerator logic to create the expected motion curve.
  */
-function generateExpectedMotion(gcode: string[]): {
+function generateExpectedMotion(
+  gcode: string[],
+  initialPositionMm: number,
+): {
   time: number[];
   position: number[];
 } {
   const timePoints: number[] = [0];
-  const positionPoints: number[] = [0];
+  const positionPoints: number[] = [initialPositionMm];
   let currentTime = 0;
-  let currentPosition = 0;
+  let currentPosition = initialPositionMm;
   let currentMode: 'absolute' | 'relative' = 'absolute';
 
   gcode.forEach((rawLine) => {
     const line = rawLine.trim();
     if (line === '' || line.startsWith(';')) return;
 
-    if (line === 'G90') {
+    const tokens = line.split(/\s+/);
+    let g: number | null = null;
+    let x: number | null = null;
+    let f: number | null = null;
+    let p: number | null = null;
+
+    tokens.forEach((token) => {
+      if (!token) return;
+      const code = token[0].toUpperCase();
+      const value = parseFloat(token.slice(1));
+      if (Number.isNaN(value)) return;
+
+      switch (code) {
+        case 'G':
+          g = Math.round(value);
+          break;
+        case 'X':
+          x = value;
+          break;
+        case 'F':
+          f = value;
+          break;
+        case 'P':
+          p = value;
+          break;
+        default:
+          break;
+      }
+    });
+
+    if (g === 90) {
       currentMode = 'absolute';
       return;
     }
-    if (line === 'G91') {
+
+    if (g === 91) {
       currentMode = 'relative';
       return;
     }
 
-    // G1 X<pos> F<vel>
-    const g1Match = line.match(/^G[01]\s+X([\d.e+-]+)\s+F([\d.e+-]+)/i);
-    if (g1Match) {
-      const x = parseFloat(g1Match[1]);
-      const f = parseFloat(g1Match[2]);
+    if ((g === 0 || g === 1) && x !== null) {
       const startPos = currentPosition;
       const startTime = currentTime;
 
@@ -90,7 +125,8 @@ function generateExpectedMotion(gcode: string[]): {
       }
 
       const dist = Math.abs(currentPosition - startPos);
-      currentTime += f > 0 ? dist / f : 0;
+      const feed = f ?? 0;
+      currentTime += feed > 0 ? dist / feed : 0;
 
       positionPoints.push(startPos);
       timePoints.push(startTime);
@@ -99,10 +135,8 @@ function generateExpectedMotion(gcode: string[]): {
       return;
     }
 
-    // G4 P<ms>
-    const g4Match = line.match(/^G4\s+P([\d.e+-]+)/i);
-    if (g4Match) {
-      const dwellMs = parseFloat(g4Match[1]);
+    if (g === 4 && p !== null) {
+      const dwellMs = p;
       const startTime = currentTime;
       currentTime += dwellMs / 1000;
 
@@ -165,23 +199,91 @@ export default function TestRunViewer() {
     loadTestRun(id);
   }, [id]);
 
-  // Convert raw data to chart-friendly units
+  // Logged CSV is firmware sample frame (µm → mm here).
   const chartData = useMemo(() => {
     if (csvRows.length === 0) return null;
 
     const time = csvRows.map((r) => r.time_us / 1_000_000); // seconds
     const force = csvRows.map((r) => r.force_mN / 1000); // N
-    const position = csvRows.map((r) => r.position_um / 1000); // mm
-    const setpoint = csvRows.map((r) => r.setpoint_um / 1000); // mm
+    const samplePositionMm = csvRows.map((r) => r.position_um / 1000);
+    const sampleSetpointMm = csvRows.map((r) => r.setpoint_um / 1000);
 
-    return { time, force, position, setpoint };
+    return { time, force, samplePositionMm, sampleSetpointMm };
   }, [csvRows]);
 
-  // Expected motion from G-code
-  const expectedMotion = useMemo(() => {
-    if (!run?.gcode || run.gcode.length === 0) return null;
-    return generateExpectedMotion(run.gcode);
-  }, [run?.gcode]);
+  /** Position chart in sample coordinates (same frame as logged CSV setpoint/position). */
+  const positionChart = useMemo(() => {
+    if (!chartData) return null;
+    return {
+      frame: 'sample' as const,
+      actual: chartData.samplePositionMm,
+      setpoint: chartData.sampleSetpointMm,
+      yAxisLabel: 'Sample extension (mm)',
+    };
+  }, [chartData]);
+
+  // Expected motion from G-code in sample coordinates.
+  const expectedPositionData = useMemo(() => {
+    if (!run?.gcode || run.gcode.length === 0 || !chartData || !positionChart)
+      return null;
+    // Anchor expected trace to the run's observed sample-frame baseline so
+    // relative G-code starts from the same coordinate as logged data.
+    const initialSampleMm =
+      chartData.samplePositionMm[0] ?? chartData.sampleSetpointMm[0] ?? 0;
+    const expected = generateExpectedMotion(run.gcode, initialSampleMm);
+    const { time: expTime, position: expPos } = expected;
+    if (expTime.length < 2) return null;
+
+    const lastIdx = expTime.length - 1;
+    const [firstTime] = expTime;
+    const [firstPos] = expPos;
+    const lastTime = expTime[lastIdx];
+    const lastPos = expPos[lastIdx];
+
+    // O(n + m) interpolation (sample times + expected segments) to keep large
+    // test-run pages responsive.
+    const out: number[] = [];
+    let seg = 0;
+    chartData.time.forEach((t) => {
+      if (t <= firstTime) {
+        out.push(firstPos);
+        return;
+      }
+      if (t >= lastTime) {
+        out.push(lastPos);
+        return;
+      }
+
+      while (seg < lastIdx - 1 && t > expTime[seg + 1]) {
+        seg += 1;
+      }
+      const t0 = expTime[seg];
+      const t1 = expTime[seg + 1];
+      const p0 = expPos[seg];
+      const p1 = expPos[seg + 1];
+      const frac = (t - t0) / (t1 - t0 || 1);
+      out.push(p0 + frac * (p1 - p0));
+    });
+    return out;
+  }, [run?.gcode, chartData, positionChart]);
+
+  // Expose baseline for E2E assertions without parsing chart SVG output.
+  const expectedBaselineForTests = useMemo(() => {
+    const initialSampleMm =
+      chartData?.samplePositionMm?.[0] ?? chartData?.sampleSetpointMm?.[0] ?? 0;
+    const expectedStartMm = expectedPositionData?.[0] ?? null;
+    return { initialSampleMm, expectedStartMm };
+  }, [chartData, expectedPositionData]);
+
+  // Gauge length reference used for strain calculations.
+  // Prefer persisted machine/sample coordinate relationship from the run.
+  const strainGaugeLengthMm = useMemo(() => {
+    if (run?.gaugeLengthMm !== undefined && Number.isFinite(run.gaugeLengthMm) && run.gaugeLengthMm > 0) {
+      return run.gaugeLengthMm;
+    }
+    // Fallback for legacy runs that did not persist gaugeLengthMm.
+    return 1;
+  }, [run?.gaugeLengthMm]);
 
   // Stress-strain data
   const stressStrainData = useMemo(() => {
@@ -191,17 +293,17 @@ export default function TestRunViewer() {
     const area = sp.sampleWidth * sp.sampleThickness; // mm²
     if (area <= 0) return null;
 
-    // We use the first position as gauge length reference
-    const initialPosition = chartData.position[0] || 0;
+    // Sample extension in CSV is sample-frame; strain denominator comes from
+    // machine/sample reference captured at run start (gaugeLengthMm).
+    const initialPosition = chartData.samplePositionMm[0] || 0;
 
     const data = chartData.time
       .map((_, i) => {
         const forceN = chartData.force[i];
-        const pos = chartData.position[i];
+        const pos = chartData.samplePositionMm[i];
         const stress = Math.abs(forceN) / area; // MPa
         const deltaL = Math.abs(pos - initialPosition);
-        const gaugeLength = initialPosition > 0 ? initialPosition : 1;
-        const strain = (deltaL / gaugeLength) * 100; // %
+        const strain = (deltaL / strainGaugeLengthMm) * 100; // %
 
         return { x: strain, y: stress, id: i };
       })
@@ -211,7 +313,7 @@ export default function TestRunViewer() {
       );
 
     return data;
-  }, [chartData, run?.sampleProfile]);
+  }, [chartData, run?.sampleProfile, strainGaugeLengthMm]);
 
   // Sample profile restriction limits for stress-strain
   const stressStrainLimits = useMemo(() => {
@@ -223,7 +325,7 @@ export default function TestRunViewer() {
     if (area <= 0) return { maxStress: undefined, maxStrain: undefined };
 
     const maxStress = sp.maxForce / area; // MPa
-    const initialPosition = chartData?.position?.[0] || 1;
+    const initialPosition = chartData?.samplePositionMm?.[0] || 1;
     const maxStrain = (sp.maxDisplacement / initialPosition) * 100; // %
 
     return { maxStress, maxStrain };
@@ -376,6 +478,13 @@ export default function TestRunViewer() {
                     <TableCell>Data Points</TableCell>
                     <TableCell>{csvRows.length}</TableCell>
                   </TableRow>
+                  {run.gaugeLengthMm !== undefined &&
+                    Number.isFinite(run.gaugeLengthMm) && (
+                      <TableRow>
+                        <TableCell>Gauge length (saved)</TableCell>
+                        <TableCell>{run.gaugeLengthMm.toFixed(3)} mm</TableCell>
+                      </TableRow>
+                    )}
                 </TableBody>
               </Table>
             ) : (
@@ -386,7 +495,7 @@ export default function TestRunViewer() {
       </Grid>
 
       {/* Charts */}
-      {chartData ? (
+      {chartData && positionChart ? (
         <Grid container spacing={2}>
           {/* Force vs Time */}
           <Grid item xs={12}>
@@ -435,8 +544,37 @@ export default function TestRunViewer() {
           {/* Position vs Time — actual vs expected */}
           <Grid item xs={12}>
             <Paper sx={{ p: 2 }}>
-              <Typography variant="h6" gutterBottom>
-                Position vs Time (Actual vs Expected)
+              <Box data-testid="expected-gcode-baseline" sx={{ display: 'none' }}>
+                {JSON.stringify(expectedBaselineForTests)}
+              </Box>
+              <Box
+                sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 0.5,
+                  mb: 1,
+                  flexWrap: 'wrap',
+                }}
+              >
+                <Typography variant="h6" component="span">
+                  Position vs Time (Actual vs Expected)
+                </Typography>
+                <Tooltip
+                  title={
+                    'Shown in sample coordinates. Logged CSV position_um / setpoint_um are sample-relative, and expected G-code is plotted in the same sample frame.'
+                  }
+                >
+                  <IconButton size="small" aria-label="Position chart help">
+                    <HelpOutlineIcon fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+              </Box>
+              <Typography
+                variant="body2"
+                color="text.secondary"
+                sx={{ mb: 1 }}
+              >
+                Sample coordinate frame — expected and measured traces are directly comparable without gauge-length offset.
               </Typography>
               <LineChart
                 xAxis={[
@@ -449,26 +587,38 @@ export default function TestRunViewer() {
                 yAxis={[
                   {
                     id: 'position',
-                    label: 'Position (mm)',
+                    label: positionChart.yAxisLabel,
                   },
                 ]}
                 series={[
                   {
                     yAxisKey: 'position',
-                    data: chartData.position,
-                    label: 'Actual Position',
+                    data: positionChart.actual,
+                    label: 'Actual (sample)',
                     showMark: false,
                     curve: 'linear',
                     color: '#1976d2',
                   },
                   {
                     yAxisKey: 'position',
-                    data: chartData.setpoint,
-                    label: 'Setpoint',
+                    data: positionChart.setpoint,
+                    label: 'Setpoint (sample)',
                     showMark: false,
                     curve: 'linear',
                     color: '#4caf50',
                   },
+                  ...(expectedPositionData
+                    ? [
+                        {
+                          yAxisKey: 'position' as const,
+                          data: expectedPositionData,
+                          label: 'Expected (G-code X)',
+                          showMark: false,
+                          curve: 'linear' as const,
+                          color: '#ff9800',
+                        },
+                      ]
+                    : []),
                 ]}
                 height={350}
                 margin={{ top: 40, right: 40, bottom: 50, left: 60 }}
@@ -478,7 +628,7 @@ export default function TestRunViewer() {
                   },
                 }}
               >
-                {/* Max displacement restriction line */}
+                {/* Max displacement applies to sample extension magnitude. */}
                 {sp && (
                   <ChartsReferenceLine
                     y={sp.maxDisplacement}
@@ -490,48 +640,6 @@ export default function TestRunViewer() {
               </LineChart>
             </Paper>
           </Grid>
-
-          {/* Expected Motion Profile overlay */}
-          {expectedMotion && expectedMotion.time.length > 1 && (
-            <Grid item xs={12}>
-              <Paper sx={{ p: 2 }}>
-                <Typography variant="h6" gutterBottom>
-                  Expected Motion Profile
-                </Typography>
-                <LineChart
-                  xAxis={[
-                    {
-                      data: expectedMotion.time,
-                      label: 'Time (s)',
-                    },
-                  ]}
-                  yAxis={[
-                    {
-                      id: 'position',
-                      label: 'Expected Position (mm)',
-                    },
-                  ]}
-                  series={[
-                    {
-                      yAxisKey: 'position',
-                      data: expectedMotion.position,
-                      label: 'Expected',
-                      showMark: false,
-                      curve: 'linear',
-                      color: '#ff9800',
-                    },
-                  ]}
-                  height={300}
-                  margin={{ top: 40, right: 40, bottom: 50, left: 60 }}
-                  sx={{
-                    [`.${axisClasses.left} .${axisClasses.label}`]: {
-                      transform: 'translate(-10px, 0)',
-                    },
-                  }}
-                />
-              </Paper>
-            </Grid>
-          )}
 
           {/* Stress-Strain Chart */}
           <Grid item xs={12}>
@@ -547,9 +655,6 @@ export default function TestRunViewer() {
                       id: 'strain',
                       label: 'Strain (%)',
                       min: 0,
-                      ...(stressStrainLimits.maxStrain != null && {
-                        max: stressStrainLimits.maxStrain * 1.1,
-                      }),
                     },
                   ]}
                   yAxis={[
@@ -557,9 +662,6 @@ export default function TestRunViewer() {
                       id: 'stress',
                       label: 'Stress (MPa)',
                       min: 0,
-                      ...(stressStrainLimits.maxStress != null && {
-                        max: stressStrainLimits.maxStress * 1.1,
-                      }),
                     },
                   ]}
                   series={[
@@ -567,6 +669,7 @@ export default function TestRunViewer() {
                       data: stressStrainData,
                       label: 'Stress-Strain',
                       color: '#1976d2',
+                      markerSize: 2,
                     },
                   ]}
                   height={400}
@@ -623,6 +726,7 @@ export default function TestRunViewer() {
               )}
             </Paper>
           </Grid>
+
         </Grid>
       ) : (
         <Paper sx={{ p: 4, textAlign: 'center' }}>

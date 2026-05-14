@@ -9,30 +9,35 @@
 //!
 //! Callback chain:
 //! ```text
-//!   pulse_out ──on_start────────────> stepper::start_motion(pulses, freq)
-//!                                       │ (stepper thread steps at 10ms period)
-//!   stepper::on_change(pos_mm) ─────>   ├──> encoder::set_value()
-//!                                       ├──> limit_switch::update(pos_mm)
-//!                                       └──> sample::on_position(pos_mm)
-//!                                              └──> strain_gauge::set_force(force_n)
-//!                                                     └──> ads122u04::set_voltage(voltage_mv)
-//!                                                            (ads122u04 thread sends ADC data
-//!                                                             over serial at 100Hz)
+//!   pulse_out (single integrator: emitted = freq × elapsed_virtual_time;
+//!              what firmware reads via HAL_pulseOut_run)
+//!     ├── on_start ─────> snapshot encoder base + direction (from SERVO_DIR GPIO)
+//!     └── on_progress ──> encoder::set(base + dir * emitted)   ← matches firmware exactly
+//!                          ├── gantry::on_position(pos_mm)
+//!                          │     ├── extension_mm ──> sample::on_extension(extension_mm)
+//!                          │     └── upper/lower ──> endstop GPIO
+//!                          └── strain_gauge::set_force(force_n)
+//!                                         └── ads122u04::set_voltage(voltage_mv)
+//!                                                (ads122u04 thread sends ADC data
+//!                                                 over serial at 100Hz)
 //!
-//!   gpio SERVO_ENA ──on_change──────> stepper::set_enabled()
-//!   gpio SERVO_DIR ──on_change──────> stepper::set_direction()
+//!   gpio SERVO_ENA ──on_change──> trace only (informational)
+//!   gpio SERVO_DIR ──on_change──> trace only; direction is sampled at on_start
 //!
-//!   limit_switch::on_upper_change ──> gpio::set_state(ENDSTOP_UPPER)
-//!   limit_switch::on_lower_change ──> gpio::set_state(ENDSTOP_LOWER)
+//!   gantry::on_upper_change ──> gpio::set_state(ENDSTOP_UPPER)
+//!   gantry::on_lower_change ──> gpio::set_state(ENDSTOP_LOWER)
 //!
 //!   serial ch0 (FORCE_GAUGE) ───fd──> ads122u04 (socketpair)
 //!   serial ch1 (MAIN)        ───fd──> PTY (set in main.rs)
 //! ```
 
+use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::Arc;
+
 use embsim_memory_inspect::FirmwareInfo;
 use embsim_peripherals::{encoder, gpio, pulse_out, serial};
-use embsim_models::{ads122u04, limit_switch, stepper, strain_gauge};
-use embsim_models::sample::Sample;
+use embsim_models::{ads122u04, gantry, strain_gauge};
+use embsim_models::sample::{Config as SampleConfig, MaterialProperties, Sample};
 use embsim_trace::{self, Signal, SignalGroup};
 use tracing::info;
 
@@ -89,11 +94,9 @@ pub fn init(fw: &FirmwareInfo) {
 
     // ── Create model instances with machine-specific configuration ──
 
-    let stepper = stepper::Stepper::new(stepper::Config {
-        steps_per_mm: STEPS_PER_MM,
-    });
-
-    let limit_sw = limit_switch::LimitSwitch::new(limit_switch::Config {
+    let gantry_model = gantry::Gantry::new(gantry::Config {
+        engagement_slack_mm: 15.0,
+        tension_on_decreasing_position: false,
         upper_threshold_mm: -10.0,
         lower_threshold_mm: 300.0,
     });
@@ -115,13 +118,28 @@ pub fn init(fw: &FirmwareInfo) {
         zero_offset: 16119601,
     });
 
-    let sample = Sample::new();
+    let sample = Sample::new(SampleConfig {
+        // Fallback if material inputs are invalid.
+        stiffness_n_per_mm: 5.0 / (100.0 - 15.0),
+        tension_on_decreasing_position: false,
+        // Material-based simulation: k = E*A/L0.
+        // Chosen to preserve previous force profile target (~5N at 100mm with 15mm slack):
+        //   k ~= 5 / (100 - 15) = 0.0588235 N/mm
+        //   with A=20 mm² and L0=20 mm -> E ~= k*L0/A ~= 0.0588235 MPa
+        material: Some(MaterialProperties {
+            name: "SIL-Linear-Reference",
+            youngs_modulus_mpa: 5.0 / (100.0 - 15.0),
+            area_mm2: 20.0,
+            gauge_length_mm: 20.0,
+        }),
+    });
 
     // ── Register trace signals ──
 
     embsim_trace::register(Signal::with_unit("stepper.position_mm", SignalGroup::Model, "mm"));
     embsim_trace::register(Signal::with_unit("stepper.enabled", SignalGroup::Model, "bool"));
     embsim_trace::register(Signal::with_unit("stepper.direction_cw", SignalGroup::Model, "bool"));
+    embsim_trace::register(Signal::with_unit("sample.extension_mm", SignalGroup::Model, "mm"));
     embsim_trace::register(Signal::with_unit("sample.force_n", SignalGroup::Model, "N"));
     embsim_trace::register(Signal::with_unit("strain_gauge.voltage_mv", SignalGroup::Model, "mV"));
     embsim_trace::register(Signal::with_unit("encoder.position", SignalGroup::Peripheral, "steps"));
@@ -136,42 +154,57 @@ pub fn init(fw: &FirmwareInfo) {
 
     // ── Wire callbacks ──
 
-    // GPIO → stepper model
+    // GPIO traces (motor enable + direction are informational here; the actual
+    // direction used to advance the encoder is read from this same GPIO inside
+    // the pulse_out::on_start callback, so the two cannot diverge).
+    gpio::on_change(pin_servo_ena, |v| {
+        embsim_trace::record("gpio.servo_ena", if v { 1.0 } else { 0.0 });
+        embsim_trace::record("stepper.enabled", if v { 1.0 } else { 0.0 });
+    });
+    gpio::on_change(pin_servo_dir, |v| {
+        embsim_trace::record("gpio.servo_dir", if v { 1.0 } else { 0.0 });
+        embsim_trace::record("stepper.direction_cw", if !v { 1.0 } else { 0.0 });
+    });
+
+    // pulse_out is the single integrator. on_start snapshots the baseline; on_progress
+    // applies the running emitted count to the encoder and downstream physics so the
+    // encoder always shows exactly what `HAL_pulseOut_run` reports to firmware.
+    let enc_base = Arc::new(AtomicI32::new(0));
+    let enc_dir = Arc::new(AtomicI32::new(1));
     {
-        let s = stepper.clone();
-        gpio::on_change(pin_servo_ena, move |v| {
-            s.set_enabled(v);
-            embsim_trace::record("gpio.servo_ena", if v { 1.0 } else { 0.0 });
-            embsim_trace::record("stepper.enabled", if v { 1.0 } else { 0.0 });
+        let enc_base = Arc::clone(&enc_base);
+        let enc_dir = Arc::clone(&enc_dir);
+        pulse_out::on_start(servo_pulse_out, move |_pulses, _freq| {
+            enc_base.store(encoder::value(servo_encoder), Ordering::Relaxed);
+            // Firmware convention: SERVO_DIR active=false → CW → increasing step count.
+            let dir = if gpio::get_active(pin_servo_dir) { -1 } else { 1 };
+            enc_dir.store(dir, Ordering::Relaxed);
         });
     }
     {
-        let s = stepper.clone();
-        gpio::on_change(pin_servo_dir, move |v| {
-            s.set_direction(v);
-            embsim_trace::record("gpio.servo_dir", if v { 1.0 } else { 0.0 });
-            embsim_trace::record("stepper.direction_cw", if !v { 1.0 } else { 0.0 });
-        });
-    }
+        let gantry = gantry_model.clone();
+        let enc_base = Arc::clone(&enc_base);
+        let enc_dir = Arc::clone(&enc_dir);
+        pulse_out::on_progress(servo_pulse_out, move |emitted| {
+            let base = enc_base.load(Ordering::Relaxed);
+            let dir = enc_dir.load(Ordering::Relaxed);
+            let pos_steps = base.wrapping_add(dir.wrapping_mul(emitted as i32));
+            encoder::set(servo_encoder, pos_steps);
 
-    // pulse_out → stepper (queues motion, stepper thread executes over time)
-    {
-        let s = stepper.clone();
-        pulse_out::on_start(servo_pulse_out, move |p, f| s.start_motion(p, f));
-    }
+            let pos_mm = pos_steps as f64 / STEPS_PER_MM;
+            gantry.on_position(pos_mm);
 
-    // stepper position (mm) → encoder + limit_switch + sample
-    {
-        let lsw = limit_sw.clone();
-        let smp = sample.clone();
-        stepper.on_change(move |pos_mm| {
-            // Encoder still needs steps (integer)
-            let pos_steps = (pos_mm * STEPS_PER_MM) as i32;
-            encoder::set_value(servo_encoder, pos_steps);
-            lsw.update(pos_mm);
-            smp.on_position(pos_mm);
             embsim_trace::record("stepper.position_mm", pos_mm);
             embsim_trace::record("encoder.position", pos_steps as f64);
+        });
+    }
+
+    // gantry extension -> sample strain
+    {
+        let smp = sample.clone();
+        gantry_model.on_extension_change(move |extension_mm| {
+            smp.on_extension(extension_mm);
+            embsim_trace::record("sample.extension_mm", extension_mm);
         });
     }
 
@@ -191,12 +224,12 @@ pub fn init(fw: &FirmwareInfo) {
         });
     }
 
-    // limit switch state changes → GPIO
-    limit_sw.on_upper_change(move |triggered| {
+    // gantry limit state changes → GPIO
+    gantry_model.on_upper_change(move |triggered| {
         gpio::set_state(pin_endstop_upper, triggered);
         embsim_trace::record("limit_switch.upper", if triggered { 1.0 } else { 0.0 });
     });
-    limit_sw.on_lower_change(move |triggered| {
+    gantry_model.on_lower_change(move |triggered| {
         gpio::set_state(pin_endstop_lower, triggered);
         embsim_trace::record("limit_switch.lower", if triggered { 1.0 } else { 0.0 });
     });
@@ -231,6 +264,7 @@ pub fn init(fw: &FirmwareInfo) {
     embsim_trace::record("stepper.position_mm", 0.0);
     embsim_trace::record("stepper.enabled", 0.0);
     embsim_trace::record("stepper.direction_cw", 0.0);
+    embsim_trace::record("sample.extension_mm", 0.0);
     embsim_trace::record("sample.force_n", 0.0);
     embsim_trace::record("strain_gauge.voltage_mv", 0.0);
     embsim_trace::record("encoder.position", 0.0);

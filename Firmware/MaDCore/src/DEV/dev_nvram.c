@@ -273,8 +273,12 @@ void dev_nvram_private_runAction(dev_nvram_channel_t channel)
             const size_t n = fread(dev_nvram_data.channels[channel].data, dev_nvram_config.channels[channel].size, 1, dev_nvram_data.channels[channel].file);
             if (n != 1)
             {
-                DEBUG_ERROR("incorrect number of bytes read: %zu\n", n);
-                dev_nvram_data.channels[channel].hasError = true;
+                DEBUG_ERROR("incorrect number of bytes read: %zu (expected 1 record of %u bytes) — using defaults\n", n,
+                            (unsigned int)dev_nvram_config.channels[channel].size);
+                (void)memcpy(dev_nvram_data.channels[channel].data, dev_nvram_config.channels[channel].dataDefault,
+                             dev_nvram_config.channels[channel].size);
+                dev_nvram_data.channels[channel].hasError = false;
+                dev_nvram_data.channels[channel].readComplete = true;
             }
             else
             {

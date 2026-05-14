@@ -1,34 +1,22 @@
 /**
  * Shared Playwright Fixtures for MaD SIL Testing
- * 
- * This module extends Playwright's base test with fixtures that:
- * 1. Launch the Electron app with proper configuration
- * 2. Start a fresh firmware emulator per-test for true isolation
- * 3. Provide helpers for connecting to the emulator
- * 4. Handle cleanup automatically
- * 
- * Each test gets a completely fresh firmware state - the emulator is
- * started before the test and stopped after.
- * 
- * Usage in tests:
- *   import { test, expect } from './fixtures';
- *   
- *   test('my test', async ({ window, connectToEmulator }) => {
- *     await connectToEmulator(); // Emulator auto-starts, connects, waits for responding
- *     await expect(window).toHaveTitle(/MaD/);
- *   });
+ *
+ * Uses CDP (Chrome DevTools Protocol) to connect to the Electron app instead
+ * of electron.launch(), which is broken on macOS with Electron 30+ because
+ * Playwright passes --remote-debugging-port=0 as a CLI arg that macOS Electron
+ * rejects. Instead, main.ts reads ELECTRON_CDP_PORT and calls
+ * app.commandLine.appendSwitch() before the app is ready.
+ *
+ * Each test gets a completely fresh firmware state - the emulator is started
+ * before the test and stopped after.
  */
 
-import { test as base, _electron as electron, ElectronApplication, Page } from '@playwright/test';
+import { test as base, chromium, Browser, Page } from '@playwright/test';
 import { spawn, execSync, ChildProcess } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 
-// Use Electron from SIL's node_modules
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const electronPath = require('electron') as string;
-
-// Paths (centralized)
+// Use MaDControl's Electron binary (matches the version the app was built for)
 const SIL_ROOT = path.resolve(__dirname, '..');
 const PROJECT_ROOT = path.resolve(SIL_ROOT, '..');
 const MADCONTROL_DIR = path.join(PROJECT_ROOT, 'Software/MaDControl');
@@ -36,11 +24,21 @@ const MADCONTROL_MAIN = path.join(MADCONTROL_DIR, 'release/app/dist/main/main.js
 const EMULATOR_BIN = path.join(SIL_ROOT, 'target/debug/mad-emulator');
 const SD_PATH = path.join(SIL_ROOT, 'sd');
 
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const electronPath = require(path.join(MADCONTROL_DIR, 'node_modules/electron')) as string;
+
 // Virtual serial port path (created by emulator)
 const EMULATOR_PORT = '/tmp/tty.rpi';
-// PTYs don't support non-standard baud rates like 2Mbaud.
-// Use a standard rate for SIL - actual throughput is unlimited on virtual ports.
 const EMULATOR_BAUD_RATE = 115200;
+
+// Fixed CDP port for SIL tests (workers: 1, so no conflicts)
+const CDP_PORT = 9222;
+
+// Custom app handle that replaces ElectronApplication
+export type AppHandle = {
+  close: () => Promise<void>;
+  firstWindow: () => Promise<Page>;
+};
 
 /**
  * Wait for a file to exist on disk
@@ -68,14 +66,42 @@ function killEmulatorProcesses(): void {
   try {
     execSync('pkill -f "mad-emulator" 2>/dev/null || true', { stdio: 'ignore' });
   } catch {
-    // Ignore - processes may not exist
+    // Ignore
   }
+}
+
+/**
+ * Kill any stale Electron processes from previous test runs
+ */
+function killElectronProcesses(): void {
+  try {
+    execSync('pkill -f "Electron" 2>/dev/null || true', { stdio: 'ignore' });
+  } catch {
+    // Ignore
+  }
+}
+
+/**
+ * Wait for CDP to become available on the given port
+ */
+async function connectWithRetry(port: number, timeoutMs = 90000): Promise<Browser> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    try {
+      return await chromium.connectOverCDP(`http://localhost:${port}`);
+    } catch {
+      await new Promise((r) => setTimeout(r, 500));
+    }
+  }
+  throw new Error(`CDP not available on port ${port} after ${timeoutMs}ms`);
 }
 
 // Type definitions for our custom fixtures
 export type MaDTestFixtures = {
-  /** The running Electron application instance */
-  app: ElectronApplication;
+  /** Optional baud pacing for emulator (MAD_SIM_BAUD). 0 disables pacing. */
+  madSimBaud: number;
+  /** The running Electron application handle */
+  app: AppHandle;
   /** The main browser window (Page) */
   window: Page;
   /** Helper to wait for IPC to be ready */
@@ -94,11 +120,14 @@ export type MaDTestFixtures = {
  * Extended test with MaD-specific fixtures
  */
 export const test = base.extend<MaDTestFixtures>({
+  // Option fixture: baud pacing for emulator, default off.
+  madSimBaud: [0, { option: true }],
+
   // Emulator port is a constant
   emulatorPort: EMULATOR_PORT,
 
   // Per-test emulator: start before test, stop after
-  emulator: async ({}, use) => {
+  emulator: async ({ madSimBaud }, use) => {
     // Kill any stale processes from previous tests
     killEmulatorProcesses();
     await new Promise((r) => setTimeout(r, 500));
@@ -114,11 +143,14 @@ export const test = base.extend<MaDTestFixtures>({
       '--log-level', 'info',
     ], {
       cwd: SIL_ROOT,
+      env: {
+        ...process.env,
+        ...(madSimBaud > 0 ? { MAD_SIM_BAUD: String(madSimBaud) } : {}),
+      },
       stdio: ['ignore', 'pipe', 'pipe'],
-      detached: false, // Keep attached so we can kill it properly
+      detached: false,
     });
 
-    // Log emulator output if DEBUG_EMULATOR is set
     emulatorProcess.stdout?.on('data', (data) => {
       const line = data.toString().trim();
       if (line && process.env.DEBUG_EMULATOR) {
@@ -132,36 +164,22 @@ export const test = base.extend<MaDTestFixtures>({
       }
     });
 
-    // Wait for virtual serial port to be ready
     await waitForPort(EMULATOR_PORT, 15000);
-    
-    // Give firmware cogs time to initialize
-    await new Promise((r) => setTimeout(r, 2000));
+    await new Promise((r) => setTimeout(r, 1000));
     console.log('✅ Emulator ready');
 
-    // Provide emulator to test
     await use(emulatorProcess);
 
-    // Cleanup: stop emulator after test
     console.log('🛑 Stopping emulator...');
-    
-    // Kill the process tree
     if (emulatorProcess.pid) {
-      try {
-        process.kill(emulatorProcess.pid, 'SIGTERM');
-      } catch {
-        // Process may have already exited
-      }
+      try { process.kill(emulatorProcess.pid, 'SIGTERM'); } catch { /* ignore */ }
     }
-    
-    // Safety net: kill any remaining processes
     killEmulatorProcesses();
     await new Promise((r) => setTimeout(r, 500));
   },
 
-  // Launch Electron app before each test, close after
+  // Launch Electron app via CDP before each test, close after
   app: async ({}, use) => {
-    // Verify the app is built
     if (!fs.existsSync(MADCONTROL_MAIN)) {
       throw new Error(
         `MaDControl not built. Run 'npm run build' in ${MADCONTROL_DIR}\n` +
@@ -169,34 +187,67 @@ export const test = base.extend<MaDTestFixtures>({
       );
     }
 
-    // Launch Electron
-    const app = await electron.launch({
-      executablePath: electronPath,
-      args: [MADCONTROL_MAIN],
+    // Kill any stale Electron from previous tests
+    killElectronProcesses();
+    await new Promise((r) => setTimeout(r, 2000));
+
+    // Launch Electron with CDP port set via env var (avoids broken --remote-debugging-port CLI flag)
+    const appProcess = spawn(electronPath, [MADCONTROL_MAIN], {
       env: {
         ...process.env,
         NODE_ENV: 'production',
-        SIL_TEST: '1', // Tells main.ts to use production preload path
+        SIL_TEST: '1',
+        ELECTRON_CDP_PORT: String(CDP_PORT),
         ELECTRON_DISABLE_SANDBOX: '1',
       },
-      timeout: 30000,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      detached: false,
     });
 
-    // Use the app in the test
-    await use(app);
+    appProcess.stdout?.on('data', (data) => {
+      if (process.env.DEBUG_APP) console.log(`[app] ${data.toString().trim()}`);
+    });
+    appProcess.stderr?.on('data', (data) => {
+      if (process.env.DEBUG_APP) console.error(`[app:err] ${data.toString().trim()}`);
+    });
 
-    // Cleanup: close app after test
-    await app.close();
+    let browser: Browser | null = null;
+
+    const appHandle: AppHandle = {
+      firstWindow: async () => {
+        const start = Date.now();
+        while (Date.now() - start < 90000) {
+          for (const ctx of browser!.contexts()) {
+            const pages = ctx.pages();
+            if (pages.length > 0) return pages[0];
+          }
+          await new Promise((r) => setTimeout(r, 200));
+        }
+        throw new Error('No Electron window appeared within 90s');
+      },
+      close: async () => {
+        try { await browser?.close(); } catch { /* ignore */ }
+        if (appProcess.pid) {
+          try { process.kill(appProcess.pid, 'SIGTERM'); } catch { /* ignore */ }
+        }
+        await new Promise((r) => setTimeout(r, 500));
+      },
+    };
+
+    try {
+      // Connect to Electron via CDP (retries until Chromium is ready)
+      browser = await connectWithRetry(CDP_PORT, 90000);
+      await use(appHandle);
+    } finally {
+      await appHandle.close();
+    }
   },
 
   // Get the main window from the app
   window: async ({ app }, use) => {
     const window = await app.firstWindow();
     await window.waitForLoadState('domcontentloaded');
-    
-    // Give React a moment to hydrate
-    await window.waitForTimeout(500);
-    
+    await window.waitForTimeout(200);
     await use(window);
   },
 
@@ -207,7 +258,7 @@ export const test = base.extend<MaDTestFixtures>({
       for (let i = 0; i < maxAttempts; i++) {
         try {
           const ready = await window.evaluate(() => {
-            return typeof window.electron?.ipcRenderer?.invoke === 'function';
+            return typeof (window as any).electron?.ipcRenderer?.invoke === 'function';
           });
           if (ready) return;
         } catch {
@@ -224,64 +275,81 @@ export const test = base.extend<MaDTestFixtures>({
   listPorts: async ({ window, waitForIPC }, use) => {
     const helper = async (): Promise<string[]> => {
       await waitForIPC();
-      return window.evaluate(async () => {
-        return window.electron.ipcRenderer.invoke('device-list-ports');
-      });
+
+      const maxAttempts = 20;
+      let latestPorts: string[] = [];
+
+      for (let index = 0; index < maxAttempts; index++) {
+        latestPorts = await window.evaluate(async () => {
+          return (window as any).electron.ipcRenderer.invoke('device-list-ports');
+        });
+
+        if (latestPorts.length > 0) {
+          return latestPorts;
+        }
+
+        await window.waitForTimeout(500);
+      }
+
+      return latestPorts;
     };
     await use(helper);
   },
 
   // Helper: connect to the emulator and verify device is responding
-  // Depends on `emulator` fixture to ensure emulator is running
   connectToEmulator: async ({ window, waitForIPC, emulatorPort, emulator }, use) => {
-    // Just referencing `emulator` ensures it's started before this runs
-    void emulator;
-    
+    void emulator; // ensures emulator fixture runs first
+
     const helper = async () => {
       await waitForIPC();
-      
-      // Wait for port to appear in list
-      const maxPortAttempts = 20;
-      for (let i = 0; i < maxPortAttempts; i++) {
-        const ports: string[] = await window.evaluate(async () => {
-          return window.electron.ipcRenderer.invoke('device-list-ports');
+
+      // Try to connect directly with retries. Port listing can be temporarily empty
+      // even when the emulator PTY is available.
+      const maxConnectAttempts = 20;
+      let lastSeenPorts: string[] = [];
+
+      for (let attempt = 0; attempt < maxConnectAttempts; attempt++) {
+        lastSeenPorts = await window.evaluate(async () => {
+          return (window as any).electron.ipcRenderer.invoke('device-list-ports');
         });
-        if (ports.includes(emulatorPort)) {
+
+        try {
+          await window.evaluate(async ({ port, baudRate }) => {
+            return (window as any).electron.ipcRenderer.invoke('device-connect', port, baudRate);
+          }, { port: emulatorPort, baudRate: EMULATOR_BAUD_RATE });
+        } catch {
+          // ignore and retry below
+        }
+
+        const isConnected = await window.evaluate(async () => {
+          return (window as any).electron.ipcRenderer.invoke('device-connected');
+        });
+        if (isConnected) {
           break;
         }
-        if (i === maxPortAttempts - 1) {
-          throw new Error(`Emulator port ${emulatorPort} not found. Available: ${ports.join(', ')}`);
+
+        if (attempt === maxConnectAttempts - 1) {
+          throw new Error(
+            `Failed to connect to emulator port ${emulatorPort}. Last available ports: ${lastSeenPorts.join(', ')}`,
+          );
         }
+
         await window.waitForTimeout(500);
-      }
-
-      // Connect to the port
-      await window.evaluate(async ({ port, baudRate }) => {
-        return window.electron.ipcRenderer.invoke('device-connect', port, baudRate);
-      }, { port: emulatorPort, baudRate: EMULATOR_BAUD_RATE });
-
-      // Verify connection succeeded
-      const isConnected = await window.evaluate(async () => {
-        return window.electron.ipcRenderer.invoke('device-connected');
-      });
-      if (!isConnected) {
-        throw new Error('Failed to connect to emulator port');
       }
 
       // Wait for device to start responding (firmware communication)
-      const maxRespondAttempts = 30; // 15 seconds max
+      const maxRespondAttempts = 30;
       for (let i = 0; i < maxRespondAttempts; i++) {
         const isResponding = await window.evaluate(async () => {
-          return window.electron.ipcRenderer.invoke('device-responding');
+          return (window as any).electron.ipcRenderer.invoke('device-responding');
         });
         if (isResponding) {
           console.log(`Device responding after ${(i + 1) * 0.5}s`);
-          return; // Success!
+          return;
         }
         await window.waitForTimeout(500);
       }
-      
-      // If we get here, device never responded
+
       throw new Error('Connected to port but firmware is not responding. Is the emulator running?');
     };
     await use(helper);
