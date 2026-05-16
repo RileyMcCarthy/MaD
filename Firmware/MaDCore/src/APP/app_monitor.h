@@ -28,6 +28,9 @@ typedef struct __attribute__((packed))
     int32_t position; // um
     uint32_t time;    // us
     uint32_t index;   // sample id, should determine overflow at 1000sps
+    /* Segment target: dev_stepper target steps converted to um, minus gauge (test coords).
+     * During G0/G1 this is the move endpoint, not the instantaneous commanded position along
+     * the segment; encoder `position` may differ until the segment finishes (expected). */
     int32_t setpoint; // um
 } app_monitor_sample_t;
 
@@ -69,7 +72,6 @@ void app_monitor_zeroSampleForce(void);
 void app_monitor_zeroPosition(void);
 void app_monitor_setPosition(int32_t positionUM);
 void app_monitor_setTestName(const char *testName);
-bool app_monitor_getNextTestName(char *outName, uint32_t size);
 void app_monitor_getTestName(char *outName, uint32_t size);
 
 bool app_monitor_setSampleProfile(app_monitor_sampleProfile_S *profile);

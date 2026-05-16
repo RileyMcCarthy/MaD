@@ -88,10 +88,14 @@ Definitions
 #include "IO_Debug.h"
 #include "emulation_helpers.h"
 #include "lib_utility.h"
+#include "lib_timer.h"
 
 /**********************************************************************
  * Constants
  **********************************************************************/
+
+/** After `testRunning` goes false, keep flushing samples before `IO_SDCard_close` (`lib_timer` / HAL ms). */
+#define APP_MONITOR_STOP_LOGGING_TAIL_MS (100U)
 
 /*********************************************************************
  * Macros
@@ -144,9 +148,10 @@ typedef struct
     app_monitor_inputData_t input;
 
     int lock;
-    uint32_t gaugeLength;
-    uint32_t gaugeForce;
+    int32_t gaugeLength;
+    int32_t gaugeForce;
     uint32_t startTime;
+    lib_timer_S stopLoggingTail;
     app_monitor_loggingState_E loggingState;
     char testName[DEV_NVRAM_MAX_SAMPLE_PROFILE_NAME];
 
@@ -215,7 +220,7 @@ void app_monitor_private_processSample()
     app_monitor_data.sample.position = app_monitor_data.input.position - app_monitor_data.gaugeLength;
     app_monitor_data.sample.time = app_monitor_data.input.time - app_monitor_data.startTime;
     app_monitor_data.sample.index = app_monitor_data.input.forceIndex;
-    app_monitor_data.sample.setpoint = app_monitor_data.input.setpoint;
+    app_monitor_data.sample.setpoint = app_monitor_data.input.setpoint - app_monitor_data.gaugeLength;
 }
 
 void app_monitor_private_setOutput(void)
@@ -230,17 +235,17 @@ void app_monitor_private_setOutput(void)
     // Check limits if sample profile is loaded
     if (app_monitor_data.sampleProfileLoaded)
     {
-        // Force limit check (convert from mN to N for comparison)
-        uint32_t currentForceN = (uint32_t)(abs(app_monitor_data.sample.force) / 1000);
-        app_monitor_data.out.forceExceeded = (currentForceN > app_monitor_data.sampleProfile.maxForce);
-        
+        uint32_t currentForceMN = (uint32_t)abs(app_monitor_data.sample.force);
+        app_monitor_data.out.forceExceeded = (currentForceMN > app_monitor_data.sampleProfile.maxForce);
+
         // Velocity limit check - velocity checking would require derivative calculation
         // For now, set to false as velocity is not directly available in sample data
         app_monitor_data.out.velocityExceeded = false;
-        
-        // Displacement limit check (convert from um to mm for comparison)
+
+        // Displacement limit check (sample position is um, profile limit is mm)
         uint32_t currentDisplacement = (uint32_t)abs(app_monitor_data.sample.position);
-        app_monitor_data.out.displacementExceeded = (currentDisplacement > app_monitor_data.sampleProfile.maxDisplacement);
+        app_monitor_data.out.displacementExceeded =
+            (currentDisplacement > LIB_UTILITY_MM_TO_UM(app_monitor_data.sampleProfile.maxDisplacement));
     }
     else
     {
@@ -275,6 +280,7 @@ void app_monitor_private_processLogging()
     case APP_MONITOR_LOGGING_STATE_RUNNING:
         if (app_monitor_data.input.testRunning == false)
         {
+            lib_timer_start(&app_monitor_data.stopLoggingTail);
             app_monitor_data.loggingState = APP_MONITOR_LOGGING_STATE_STOPPING;
         }
         else if (app_monitor_data.input.updatedIndex)
@@ -284,8 +290,17 @@ void app_monitor_private_processLogging()
         }
         break;
     case APP_MONITOR_LOGGING_STATE_STOPPING:
-        IO_SDCard_close(IO_SDCARD_CHANNEL_SAMPLE_DATA);
-        app_monitor_data.loggingState = APP_MONITOR_LOGGING_STATE_IDLE;
+        if (app_monitor_data.input.updatedIndex)
+        {
+            IO_SDCard_push(IO_SDCARD_CHANNEL_SAMPLE_DATA, &app_monitor_data.sample, sizeof(app_monitor_sample_t));
+        }
+
+        if (lib_timer_expired(&app_monitor_data.stopLoggingTail))
+        {
+            lib_timer_stop(&app_monitor_data.stopLoggingTail);
+            IO_SDCard_close(IO_SDCARD_CHANNEL_SAMPLE_DATA);
+            app_monitor_data.loggingState = APP_MONITOR_LOGGING_STATE_IDLE;
+        }
         break;
     default:
         break;
@@ -300,6 +315,9 @@ void app_monitor_init(int lock)
 {
     app_monitor_data.lock = lock;
     app_monitor_data.gaugeLength = 0;
+    app_monitor_data.gaugeForce = 0;
+    lib_timer_init(&app_monitor_data.stopLoggingTail, APP_MONITOR_STOP_LOGGING_TAIL_MS);
+    lib_timer_stop(&app_monitor_data.stopLoggingTail);
     app_monitor_data.loggingState = APP_MONITOR_LOGGING_STATE_IDLE;
     app_monitor_data.sampleProfileLoaded = false;
 }
@@ -396,48 +414,6 @@ void app_monitor_setTestName(const char *testName)
     strncpy(app_monitor_data.testName, testName, sizeof(app_monitor_data.testName) - 1);
     app_monitor_data.testName[sizeof(app_monitor_data.testName) - 1] = '\0';
     APP_MONITOR_LOCK_REL();
-}
-
-bool app_monitor_getNextTestName(char *outName, uint32_t size)
-{
-    if (outName == NULL || size < 7)
-    {
-        return false;
-    }
-
-    char indexPath[256];
-    snprintf(indexPath, sizeof(indexPath), SD_CARD_MOUNT_PATH "/test/index.txt");
-
-    uint32_t nextIndex = 0;
-
-    // Read current index from file
-    FILE *file = fopen(indexPath, "r");
-    if (file != NULL)
-    {
-        if (fscanf(file, "%u", &nextIndex) != 1)
-        {
-            nextIndex = 0;
-        }
-        fclose(file);
-    }
-
-    // Format the test name as 6-digit zero-padded number
-    snprintf(outName, size, "%06u", nextIndex);
-
-    // Increment and write back
-    uint32_t updatedIndex = nextIndex + 1;
-    file = fopen(indexPath, "w");
-    if (file != NULL)
-    {
-        fprintf(file, "%u", updatedIndex);
-        fclose(file);
-    }
-    else
-    {
-        return false;
-    }
-
-    return true;
 }
 
 void app_monitor_getTestName(char *outName, uint32_t size)
