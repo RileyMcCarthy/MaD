@@ -4,6 +4,8 @@ import React, {
   useState,
   useEffect,
   useCallback,
+  useMemo,
+  useRef,
 } from 'react';
 import {
   MachineState,
@@ -20,6 +22,8 @@ interface DeviceState {
   latestSampleData: SampleData | null;
   machineConfiguration: MachineConfiguration | null;
   sampleProfile: SampleProfile | null;
+  liveSamplePeriodMs: number;
+  liveSampleBufferSize: number;
 }
 
 interface DeviceActions {
@@ -36,6 +40,7 @@ interface DeviceActions {
   saveSampleProfile: (profile: SampleProfile) => Promise<boolean>;
   streamGCode: (gcode: string) => Promise<{ success: boolean; error?: string }>;
   getAllDeviceData: () => Promise<SampleData[]>;
+  getCachedDeviceData: (limit?: number) => Promise<SampleData[]>;
   getFirmwareVersion: () => Promise<string>;
   flashFirmwareFromFile: () => Promise<{ success: boolean; error?: string }>;
   cancelFirmwareFlash: () => Promise<{ success: boolean; error?: string }>;
@@ -54,6 +59,13 @@ const DeviceContext = createContext<DeviceContextType | undefined>(undefined);
 export function DeviceProvider({ children }: { children: React.ReactNode }) {
   // Use the standard naming convention for device status - SINGLE INSTANCE
   const deviceStatus = useDeviceStatusQuery();
+  const ONE_MINUTE_MS = 60_000;
+  const DEFAULT_SAMPLE_PERIOD_MS = 100;
+  const computeLiveBufferSize = (periodMs: number) =>
+    Math.max(1, Math.ceil(ONE_MINUTE_MS / periodMs));
+  const initialLiveSampleBufferSize = computeLiveBufferSize(
+    DEFAULT_SAMPLE_PERIOD_MS,
+  );
 
   const [deviceState, setDeviceState] = useState<DeviceState>({
     isConnected: false,
@@ -62,7 +74,12 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     latestSampleData: null,
     machineConfiguration: null,
     sampleProfile: null,
+    liveSamplePeriodMs: DEFAULT_SAMPLE_PERIOD_MS,
+    liveSampleBufferSize: initialLiveSampleBufferSize,
   });
+  const liveSampleBufferSizeRef = useRef(initialLiveSampleBufferSize);
+  const sampleCacheRef = useRef<SampleData[]>([]);
+  const sampleCacheLoadPromiseRef = useRef<Promise<SampleData[]> | null>(null);
 
   // Update device state when status changes
   useEffect(() => {
@@ -75,10 +92,40 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     }
   }, [deviceStatus.data]);
 
+  useEffect(() => {
+    const loadSamplePeriod = async () => {
+      try {
+        const periodMs = await window.electron.ipcRenderer.invoke(
+          'device-sample-period-ms',
+        );
+        const numericPeriod = Number(periodMs);
+        if (!Number.isFinite(numericPeriod) || numericPeriod <= 0) return;
+
+        const nextLiveSampleBufferSize = computeLiveBufferSize(numericPeriod);
+        liveSampleBufferSizeRef.current = nextLiveSampleBufferSize;
+        sampleCacheRef.current = sampleCacheRef.current.slice(
+          -nextLiveSampleBufferSize,
+        );
+        setDeviceState((prev) => ({
+          ...prev,
+          liveSamplePeriodMs: numericPeriod,
+          liveSampleBufferSize: nextLiveSampleBufferSize,
+        }));
+      } catch {
+        // Leave defaults if protocol period query fails.
+      }
+    };
+
+    loadSamplePeriod();
+  }, []);
+
   // Listen for other device events (sample data, machine state, etc.)
   useEffect(() => {
     const handleSampleData = (...args: unknown[]) => {
       const data = args[0] as SampleData;
+      sampleCacheRef.current = [...sampleCacheRef.current, data].slice(
+        -liveSampleBufferSizeRef.current,
+      );
       setDeviceState((prev) => ({
         ...prev,
         latestSampleData: data,
@@ -309,6 +356,37 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  const hydrateSampleCache = useCallback(async (): Promise<SampleData[]> => {
+    if (sampleCacheRef.current.length > 0) {
+      return sampleCacheRef.current;
+    }
+
+    if (!sampleCacheLoadPromiseRef.current) {
+      sampleCacheLoadPromiseRef.current = (async () => {
+        const fetchedSamples = await getAllDeviceData();
+        sampleCacheRef.current = fetchedSamples.slice(
+          -liveSampleBufferSizeRef.current,
+        );
+        return sampleCacheRef.current;
+      })().finally(() => {
+        sampleCacheLoadPromiseRef.current = null;
+      });
+    }
+
+    return sampleCacheLoadPromiseRef.current;
+  }, [getAllDeviceData]);
+
+  const getCachedDeviceData = useCallback(
+    async (limit?: number): Promise<SampleData[]> => {
+      const samples = await hydrateSampleCache();
+      if (limit === undefined || limit <= 0) {
+        return samples;
+      }
+      return samples.slice(-limit);
+    },
+    [hydrateSampleCache],
+  );
+
   const getFirmwareVersion = useCallback(async (): Promise<string> => {
     try {
       return await window.electron.ipcRenderer.invoke('get-firmware-version');
@@ -383,7 +461,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     [],
   );
 
-  const actions: DeviceActions = {
+  const actions: DeviceActions = useMemo(() => ({
     connect,
     listPorts,
     getMachineConfiguration,
@@ -397,16 +475,36 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     saveSampleProfile,
     streamGCode,
     getAllDeviceData,
+    getCachedDeviceData,
     getFirmwareVersion,
     flashFirmwareFromFile,
     cancelFirmwareFlash,
     downloadTestFile,
-  };
+  }), [
+    connect,
+    listPorts,
+    getMachineConfiguration,
+    saveMachineConfiguration,
+    setMotionEnabled,
+    manualMove,
+    homeAxis,
+    zeroForce,
+    zeroLength,
+    getSampleProfile,
+    saveSampleProfile,
+    streamGCode,
+    getAllDeviceData,
+    getCachedDeviceData,
+    getFirmwareVersion,
+    flashFirmwareFromFile,
+    cancelFirmwareFlash,
+    downloadTestFile,
+  ]);
 
-  const contextValue: DeviceContextType = {
+  const contextValue: DeviceContextType = useMemo(() => ({
     deviceState,
     actions,
-  };
+  }), [deviceState, actions]);
 
   return (
     <DeviceContext.Provider value={contextValue}>

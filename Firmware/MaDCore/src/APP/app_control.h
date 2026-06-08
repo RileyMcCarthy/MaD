@@ -68,10 +68,7 @@ app_control_restriction_E app_control_getRestriction(void);
 
 bool app_control_motionEnabled(void);
 bool app_control_speedLimited(void);
-bool app_control_testRunning(void);
 
-bool app_control_triggerTestStart(void);
-bool app_control_triggerTestEnd(void);
 bool app_control_triggerMotionEnabled(void);
 bool app_control_triggerMotionDisabled(void);
 /**********************************************************************

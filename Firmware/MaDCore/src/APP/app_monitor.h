@@ -22,16 +22,19 @@
  * Typedefs
  **********************************************************************/
 
+/* Note on sample identification: the firmware no longer carries a per-sample index in this
+ * struct or in the wire protocol (ProtoEmb_Sample / ProtoEmb_StoredSample). Rows are
+ * implicitly ordered by `time`, and the host treats each row as one logging tick. As a
+ * consequence the host UI cannot detect dropped/duplicated samples — live charts use
+ * wall-clock pacing (renderer Graph.tsx) and stored CSVs use row offset as id. If you
+ * need drop detection again, add `index` back here AND to MaDProtocol.yaml + regenerate. */
 typedef struct __attribute__((packed))
 {
-    int32_t force;    // mN
-    int32_t position; // um
-    uint32_t time;    // us
-    uint32_t index;   // sample id, should determine overflow at 1000sps
-    /* Segment target: dev_stepper target steps converted to um, minus gauge (test coords).
-     * During G0/G1 this is the move endpoint, not the instantaneous commanded position along
-     * the segment; encoder `position` may differ until the segment finishes (expected). */
-    int32_t setpoint; // um
+    int32_t force;    // mN (sample frame)
+    int32_t position; // um (sample frame)
+    uint32_t time;    // us since test start
+    /* Segment target: machine setpoint (um) minus gauge length (sample coords). */
+    int32_t setpoint; // um (sample frame)
 } app_monitor_sample_t;
 
 typedef enum
@@ -58,17 +61,6 @@ typedef struct
 void app_monitor_init(int lock);
 void app_monitor_run(void);
 
-void app_monitor_getSample(app_monitor_sample_t *sample);
-int32_t app_monitor_getSampleForce(void);
-int32_t app_monitor_getSamplePosition(void);
-
-int32_t app_monitor_getAbsoluteForce(void);    // force gauge feedback
-int32_t app_monitor_getAbsolutePosition(void); // position relative to upper endstop
-
-int32_t app_monitor_getGaugeLength(void);
-
-void app_monitor_zeroSamplePosition(void);
-void app_monitor_zeroSampleForce(void);
 void app_monitor_zeroPosition(void);
 void app_monitor_setPosition(int32_t positionUM);
 void app_monitor_setTestName(const char *testName);

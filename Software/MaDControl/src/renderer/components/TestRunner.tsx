@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Box,
   Typography,
@@ -20,10 +20,10 @@ import {
   Add as AddIcon,
 } from '@mui/icons-material';
 import { TestProfile } from '@shared/SharedInterface';
+import { useDevice, useProfiles } from '@renderer/hooks';
 import GCodeGenerator from './GCodeGenerator';
 import { CardPanel } from './StyledComponents';
 import { componentLogger } from '../utils/logger';
-import { useDevice, useProfiles } from '@renderer/hooks';
 
 interface TestRunnerProps {
   onRunTest: (testName: string) => void;
@@ -47,6 +47,29 @@ export default function TestRunner({ onRunTest }: TestRunnerProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [openDialog, setOpenDialog] = useState(false);
   const [generatedGcode, setGeneratedGcode] = useState<string[]>([]);
+  const activeEntryId = useRef<string | null>(null);
+
+  // Reset isLoading when firmware confirms testRunning then completes
+  const prevTestRunning = useRef(false);
+  useEffect(() => {
+    const running = Boolean(deviceState.machineState?.testRunning);
+    if (prevTestRunning.current && !running) {
+      // Test just finished — mark as completed in the database
+      setIsLoading(false);
+      if (activeEntryId.current) {
+        window.electron.ipcRenderer
+          .invoke('data-update-test-run', activeEntryId.current, {
+            status: 'completed',
+            completedAt: new Date().toISOString(),
+          })
+          .catch((err: unknown) =>
+            componentLogger.error('Failed to update test run status:', err),
+          );
+        activeEntryId.current = null;
+      }
+    }
+    prevTestRunning.current = running;
+  }, [deviceState.machineState?.testRunning]);
 
   // Derive current profile name from selection
   const currentSampleProfileName =
@@ -107,40 +130,79 @@ export default function TestRunner({ onRunTest }: TestRunnerProps) {
     try {
       setIsLoading(true);
 
-      // Run the test — firmware assigns the test name from SD card index
+      // Step 1: Reserve the test name and create the DB entry before touching firmware.
+      // This way the name is known up front and the record exists even if the run fails.
+      const snap = deviceState.latestSampleData;
+      let gaugeLengthMm: number | undefined;
+      let initialMachinePositionMm: number | undefined;
+      if (snap) {
+        const machineMm = snap['Machine Position (mm)'];
+        const sampleMm = snap['Sample Position (mm)'];
+        if (Number.isFinite(machineMm)) {
+          initialMachinePositionMm = machineMm;
+        }
+        if (Number.isFinite(machineMm) && Number.isFinite(sampleMm)) {
+          const g = machineMm - sampleMm;
+          if (Number.isFinite(g)) gaugeLengthMm = g;
+        }
+      }
+
+      const entry = await window.electron.ipcRenderer.invoke(
+        'data-create-test-run',
+        {
+          sampleProfileId: selectedSampleProfileId,
+          motionProfileId: selectedMotionProfileId,
+          sampleProfile: selectedSampleProfile,
+          motionProfile: selectedMotionProfile,
+          gcode: generatedGcode,
+          ...(gaugeLengthMm !== undefined ? { gaugeLengthMm } : {}),
+          ...(initialMachinePositionMm !== undefined
+            ? { initialMachinePositionMm }
+            : {}),
+        },
+      );
+      /* `testName` is a new reserved id every run (see dataManager `reserveTestName`).
+       * Protocol only carries six ASCII chars per field; main truncates if longer.
+       * We send the same token as gcodeId and testDataId so the uploaded motion file
+       * and the logged sample stream share one SD basename per run. */
+      const { testName: firmwareRunId } = entry;
+
       const result = await window.electron.ipcRenderer.invoke('run-test', {
         gcode: generatedGcode,
+        gcodeId: firmwareRunId,
+        testDataId: firmwareRunId,
+        ...(gaugeLengthMm !== undefined ? { gaugeLengthMm } : {}),
       });
 
-      if (!result.success || !result.testName) {
+      if (!result.success) {
+        // Mark the pre-created entry as errored so it's visible in TestRuns
+        await window.electron.ipcRenderer.invoke(
+          'data-update-test-run',
+          entry.id,
+          {
+            status: 'error',
+          },
+        );
         throw new Error(result.error || 'Failed to start test');
       }
 
-      const testName: string = result.testName;
-
-      // Create test run entry in database with firmware-assigned name
-      await window.electron.ipcRenderer.invoke('data-create-test-run', {
-        testName,
-        sampleProfileId: selectedSampleProfileId,
-        motionProfileId: selectedMotionProfileId,
-        sampleProfile: selectedSampleProfile,
-        motionProfile: selectedMotionProfile,
-        gcode: generatedGcode,
-      });
-
-      onRunTest(testName);
+      activeEntryId.current = entry.id;
+      onRunTest(firmwareRunId);
       handleCloseDialog();
+      // Keep isLoading=true until firmware reports testRunning=true via state poll.
+      // This avoids a brief gap where neither flag is set and the button flickers to "Run Test".
     } catch (error) {
       componentLogger.error('Failed to run test:', error);
       alert('Failed to run test');
-    } finally {
       setIsLoading(false);
     }
   };
 
   return (
     <Box sx={{ flexGrow: 1 }}>
-      <CardPanel sx={{ p: 2, height: '100%', display: 'flex', flexDirection: 'column' }}>
+      <CardPanel
+        sx={{ p: 2, height: '100%', display: 'flex', flexDirection: 'column' }}
+      >
         <Typography variant="h6" gutterBottom>
           Test Runner
         </Typography>
@@ -158,8 +220,7 @@ export default function TestRunner({ onRunTest }: TestRunnerProps) {
               onClick={handleOpenDialog}
               fullWidth
               disabled={
-                isLoading ||
-                Boolean(deviceState.machineState?.testRunning)
+                isLoading || Boolean(deviceState.machineState?.testRunning)
               }
               startIcon={
                 isLoading || deviceState.machineState?.testRunning ? (

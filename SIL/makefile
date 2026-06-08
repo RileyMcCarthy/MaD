@@ -10,8 +10,12 @@
 
 FIRMWARE_DIR = ../Firmware/MaDCore
 FIRMWARE_LIB = $(FIRMWARE_DIR)/.pio/build/native_emulator/libfirmware.a
+PROTOEMB_GENERATOR = ../Protocol/ProtoEmb/core/generate.py
+PROTOEMB_SCHEMA = ../Protocol/MaDProtocol.yaml
+PROTOEMB_TEMPLATES = ../Protocol/ProtoEmb/core/templates
+PROTOEMB_RUNTIME_DIR = ../Protocol/ProtoEmb/runtime
 
-.PHONY: setup firmware emulator test playground clean
+.PHONY: setup firmware protocol bridge emulator test playground clean
 
 # First-time setup
 setup:
@@ -22,8 +26,16 @@ setup:
 firmware:
 	cd $(FIRMWARE_DIR) && pio run -e native_emulator
 
+# Generate Rust protocol types used by SIL
+protocol:
+	python3 $(PROTOEMB_GENERATOR) --schema $(PROTOEMB_SCHEMA) --target rs --output ./embsim/peripherals/src/generated --templates $(PROTOEMB_TEMPLATES)
+
+# Build generic ProtoEmb bridge binary used by MaDControl main process
+bridge:
+	cd $(PROTOEMB_RUNTIME_DIR) && cargo build --bin protoemb-bridge
+
 # Build Rust emulator (depends on firmware library)
-emulator: firmware
+emulator: firmware protocol bridge
 	cargo build
 
 # Run tests

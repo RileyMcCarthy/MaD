@@ -8,11 +8,13 @@
 
 #include "dev_cogManager_config.h"
 #include "dev_cogManager.h"
+#include "app_gauge.h"
 #include "app_monitor.h"
 #include "app_motion.h"
 #include "app_control.h"
 #include "app_notification.h"
 #include "app_messageSlave.h"
+#include "app_testManagement.h"
 
 #include "IO_SDCard.h"
 #include "dev_stepper.h"
@@ -42,6 +44,7 @@ DEV_COGMANAGER_CHANNEL_CREATE_INIT(MONITOR, 1024U)
     MachineProfile machineProfile;
     dev_nvram_getChannelData(DEV_NVRAM_CHANNEL_MACHINE_PROFILE, &machineProfile, sizeof(MachineProfile));
     IO_positionFeedback_init(IO_POSITION_FEEDBACK_CHANNEL_SERVO_FEEDBACK, lock, machineProfile.encoderStepsPerMM);
+    app_gauge_init(lock);
     app_monitor_init(lock);
 }
 
@@ -80,11 +83,15 @@ DEV_COGMANAGER_CHANNEL_CREATE_INIT(CONTROL, 1024)
 {
     DEBUG_INFO("%s", "Control cog initializing\n");
     app_motion_init(lock);
+    app_testManagement_init(lock);
     app_control_init(lock);
 }
 
 DEV_COGMANAGER_CHANNEL_CREATE_RUN(CONTROL)
 {
+    /* Order matters: testManagement feeds motion's queue, then motion executes,
+     * then control evaluates state. */
+    app_testManagement_run();
     app_motion_run();
     app_control_run();
 }

@@ -24,9 +24,6 @@ Thumbs.db
 # OS generated files
 Icon?
 
-# Git
-.git/
-
 # Build artifacts (general)
 build/
 dist/
@@ -36,6 +33,20 @@ target/
 # Dependencies
 node_modules/
 
+# Auto-generated protocol code
+Firmware/MaDCore/src/Generated/
+Firmware/MaDCore/src/IO/generated/
+Software/MaDControl/src/main/generated/
+SIL/embsim/peripherals/src/generated/
+Protocol/ProtoEmb/core/__pycache__/
+Protocol/ProtoEmb/framing/target/
+Protocol/ProtoEmb/runtime/target/
+
+# SIL generated artifacts
+SIL/sd/gcode/*.bin
+SIL/sd/test/*.bin
+SIL/sd/test/index.txt
+
 # Environment files
 .env
 .env.local
@@ -43,6 +54,5 @@ node_modules/
 Software/MaDControl/sample-runs.json
 SIL/sd/profile.bin
 Hardware/DS2Addon/KICAD/jlcpcb/project.db
-.gitignore
 Hardware/ForceGauge/ForceGauge-backups/ForceGauge-2025-12-21_214747.zip
 Hardware/DS2Addon/KICAD/jlcpcb/production_files/GERBER-DS2_Addon.zip

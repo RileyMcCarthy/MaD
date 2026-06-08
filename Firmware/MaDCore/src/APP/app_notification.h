@@ -36,11 +36,9 @@ typedef enum
     APP_NOTIFICATION_TYPE_COUNT,
 } app_notification_type_E;
 
-typedef struct
-{
-    char message[APP_NOTIFICATION_MAX_MESSAGE_SIZE];
-    app_notification_type_E type;
-} app_notification_message_S;
+/* Note: the internal queue item is `ProtoEmb_Notification_t` (from protoemb.h);
+ * there is no separate app-local struct because the protocol type already carries
+ * exactly the same fields. */
 /**********************************************************************
  * Public Function Definitions
  **********************************************************************/

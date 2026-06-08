@@ -328,6 +328,7 @@ export default function TestRuns() {
                         <Tooltip title="Download data from device">
                           <span>
                             <IconButton
+                              aria-label="Download test data"
                               onClick={() => handleDownload(run)}
                               disabled={downloadingId === run.id}
                               color="primary"
@@ -347,6 +348,7 @@ export default function TestRuns() {
                         <>
                           <Tooltip title="View test data">
                             <IconButton
+                              aria-label="View test data"
                               onClick={() => handleView(run)}
                               color="primary"
                             >
@@ -355,6 +357,7 @@ export default function TestRuns() {
                           </Tooltip>
                           <Tooltip title="Export CSV with metadata">
                             <IconButton
+                              aria-label="Export test data"
                               onClick={() => handleExport(run)}
                               color="secondary"
                             >
@@ -367,6 +370,7 @@ export default function TestRuns() {
                       {/* Delete button */}
                       <Tooltip title="Delete test run">
                         <IconButton
+                          aria-label="Delete test run"
                           onClick={() => setDeleteConfirmId(run.id)}
                           color="error"
                         >

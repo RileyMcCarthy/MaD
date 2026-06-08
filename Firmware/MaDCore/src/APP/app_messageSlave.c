@@ -8,9 +8,11 @@
 
 #include "app_messageSlave.h"
 #include "app_control.h"
+#include "app_gauge.h"
 #include "app_monitor.h"
 #include "app_motion.h"
 #include "app_notification.h"
+#include "app_testManagement.h"
 
 #include "dev_forceGauge.h"
 #include "dev_nvram.h"
@@ -84,21 +86,13 @@ static void app_message_slave_fillMove(app_motion_move_t *dst, const ProtoEmb_Mo
 
 bool ProtoEmb_onRead_sample(ProtoEmb_Sample_t *out)
 {
-    app_monitor_sample_t storedSample;
-    /* Jaw separation from encoder (same basis as sample position = feedback − gauge). */
-    const int32_t machinePosition = app_monitor_getAbsolutePosition();
-    const int32_t machineSetpoint = app_motion_getSetpoint();
-    const int32_t machineForce = dev_forceGauge_getForce(DEV_FORCEGAUGE_CHANNEL_MAIN);
-
-    app_monitor_getSample(&storedSample);
     (void)memset(out, 0, sizeof(*out));
 
-    out->index = storedSample.index;
-    ProtoEmb_Sample_setMachineForce_raw(out, machineForce);
-    ProtoEmb_Sample_setMachinePosition_raw(out, machinePosition);
-    ProtoEmb_Sample_setMachineSetpoint_raw(out, machineSetpoint);
-    ProtoEmb_Sample_setSampleForce_raw(out, storedSample.force);
-    ProtoEmb_Sample_setSamplePosition_raw(out, storedSample.position);
+    ProtoEmb_Sample_setMachineForce_raw(out, app_gauge_getForce(APP_GAUGE_COORD_MACHINE));
+    ProtoEmb_Sample_setMachinePosition_raw(out, app_gauge_getPosition(APP_GAUGE_COORD_MACHINE));
+    ProtoEmb_Sample_setMachineSetpoint_raw(out, app_motion_getSetpoint());
+    ProtoEmb_Sample_setSampleForce_raw(out, app_gauge_getForce(APP_GAUGE_COORD_SAMPLE));
+    ProtoEmb_Sample_setSamplePosition_raw(out, app_gauge_getPosition(APP_GAUGE_COORD_SAMPLE));
 
     return true;
 }
@@ -107,7 +101,7 @@ bool ProtoEmb_onRead_state(ProtoEmb_MachineState_t *out)
 {
     out->faultedReason = (ProtoEmb_FaultedReason_E)app_control_getFault();
     out->restrictedReason = (ProtoEmb_RestrictedReason_E)app_control_getRestriction();
-    out->testRunning = app_control_testRunning();
+    out->testRunning = app_testManagement_isRunning();
     out->motionEnabled = app_control_motionEnabled();
     return true;
 }
@@ -195,30 +189,26 @@ ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWrite_test_run(const ProtoEmb_Test
     memcpy(gcodeId, in->gcodeId, sizeof(in->gcodeId));
     memcpy(testDataId, in->testDataId, sizeof(in->testDataId));
 
-    /* Finish any prior test session before opening/upload targets again — avoids leaving
-     * app_control testRunning latched or the motion planner stuck without consuming SD moves */
-    (void)app_control_triggerTestEnd();
-    while (app_control_testRunning())
+    /* Finish any prior test session before launching a new one. Only request END when
+     * a session is active/busy; requesting END while IDLE can race a fresh START. */
+    if (app_testManagement_isBusy())
     {
-        EMULATION_YIELD_LOCK();
+        (void)app_testManagement_triggerTestEnd();
     }
-
-    IO_SDCard_close(IO_SDCARD_CHANNEL_GCODE);
-    while (!IO_SDCard_isClosed(IO_SDCARD_CHANNEL_GCODE))
+    while (app_testManagement_isBusy())
     {
         EMULATION_YIELD_LOCK();
     }
 
     app_monitor_setTestName(testDataId);
-    app_motion_setGcodeId(gcodeId);
-    return app_control_triggerTestStart() ? PROTOEMB_RUNTIME_WRITE_DISPOSITION_ACK : PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK;
+    return app_testManagement_triggerTestStart(gcodeId) ? PROTOEMB_RUNTIME_WRITE_DISPOSITION_ACK : PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK;
 }
 
 ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWrite_manual_move(const ProtoEmb_Move_t *in)
 {
     app_motion_move_t move;
     app_message_slave_fillMove(&move, in);
-    return app_motion_addManualMove(&move) ? PROTOEMB_RUNTIME_WRITE_DISPOSITION_ACK : PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK;
+    return app_testManagement_addManualMove(&move) ? PROTOEMB_RUNTIME_WRITE_DISPOSITION_ACK : PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK;
 }
 
 ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWrite_test_move(const ProtoEmb_Move_t *in)
@@ -272,13 +262,13 @@ ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWrite_sample_profile_write(const P
 
 ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWrite_gauge_length(void)
 {
-    app_monitor_zeroSamplePosition();
+    app_gauge_setGaugeLength();
     return PROTOEMB_RUNTIME_WRITE_DISPOSITION_ACK;
 }
 
 ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWrite_gauge_force(void)
 {
-    app_monitor_zeroSampleForce();
+    app_gauge_setGaugeForce();
     return PROTOEMB_RUNTIME_WRITE_DISPOSITION_ACK;
 }
 
@@ -338,7 +328,6 @@ ProtoEmb_RuntimeQueryDisposition_E ProtoEmb_onQuery_file_download(const uint8_t 
         ProtoEmb_StoredSample_setForce_raw(&sample, app_message_slave_data.sampleReadBuffer[i].force);
         ProtoEmb_StoredSample_setPosition_raw(&sample, app_message_slave_data.sampleReadBuffer[i].position);
         sample.time = app_message_slave_data.sampleReadBuffer[i].time;
-        sample.index = app_message_slave_data.sampleReadBuffer[i].index;
         ProtoEmb_StoredSample_setSetpoint_raw(&sample, app_message_slave_data.sampleReadBuffer[i].setpoint);
         ProtoEmb_StoredSample_encode(&outPayload[i * PROTOEMB_STOREDSAMPLE_WIRE_SIZE], &sample);
     }

@@ -10,9 +10,7 @@
 #include <math.h>
 
 #include "app_motion.h"
-#include "app_monitor.h"
 #include "app_control.h"
-#include "app_notification.h"
 
 #include "dev_stepper.h"
 #include "dev_nvram.h"
@@ -24,7 +22,7 @@
 #include "lib_utility.h"
 
 #include "IO_Debug.h"
-#include "IO_SDCard.h"
+#include "IO_positionFeedback.h"
 #include "emulation_helpers.h"
 #include "watchdog.h"
 /**********************************************************************
@@ -34,8 +32,7 @@
 /*********************************************************************
  * Macros
  **********************************************************************/
-#define MOTION_MANUAL_BUFFER_SIZE 100
-#define MOTION_STAGED_MOVE_BUFFER_SIZE 32
+#define MOTION_QUEUE_SIZE 100
 
 #define APP_MOTION_LOCK_REQ() HAL_lock_try(app_motion_data.lock)
 #define APP_MOTION_LOCK_REQ_BLOCK()        \
@@ -48,13 +45,18 @@
  * Typedefs
  **********************************************************************/
 
+/* All external state read by this module must be cached here by
+ * app_motion_private_processInputs() so the rest of the tick operates on a
+ * single consistent snapshot. Do not call external getters from helpers,
+ * state-machine handlers, or processOutputs. */
 typedef struct
 {
     bool motionEnabled;
     bool limitSpeed;
-    bool testRunning;
     int32_t positionSteps;
     bool atTarget;
+    int32_t gaugeSetpointSteps;     /* dev_stepper_getTarget(MAIN)            */
+    bool endstopUpperActive;        /* HAL_GPIO_getActive(ENDSTOP_UPPER)      */
 } app_motion_dataInputs_t;
 
 typedef struct
@@ -66,9 +68,8 @@ typedef struct
 typedef struct
 {
     app_motion_dataInputs_t inputs;
-    lib_staticQueue_S manualQueue;
+    lib_staticQueue_S queue;
 
-    bool moveComplete;
     bool absoluteMode;
     lib_timer_S dwellTimer;
     lib_timer_S endstopTimer;
@@ -84,12 +85,7 @@ typedef struct
 
     app_motion_outputs_t output;
 
-    app_motion_move_t manualBuffer[MOTION_MANUAL_BUFFER_SIZE];
-
-    // Staged move buffer for test mode — filled in bulk from IO_SDCard queue
-    app_motion_move_t stagedMoves[MOTION_STAGED_MOVE_BUFFER_SIZE];
-    uint32_t stagedCount;
-    uint32_t stagedIndex;
+    app_motion_move_t queueBuffer[MOTION_QUEUE_SIZE];
 } app_motion_data_t;
 /**********************************************************************
  * Variable Definitions
@@ -99,96 +95,44 @@ static app_motion_data_t app_motion_data;
  * Private Function Prototypes
  **********************************************************************/
 
-static void app_motion_private_processInputs();
-static void app_motion_private_processOutputs();
-static app_motion_state_E app_motion_private_getDesiredState();
+static void app_motion_private_processInputs(void);
+static void app_motion_private_processOutputs(void);
+static app_motion_state_E app_motion_private_getDesiredState(void);
 static void app_motion_private_moveManager_start(void);
 static bool app_motion_private_moveManager_run(void);
-static bool app_motion_private_hasValidMove(void);
 
 /**********************************************************************
  * Private Functions
  **********************************************************************/
 
-static void app_motion_private_processInputs()
+static void app_motion_private_processInputs(void)
 {
     app_motion_data.inputs.motionEnabled = app_control_motionEnabled();
     app_motion_data.inputs.limitSpeed = app_control_speedLimited();
-    app_motion_data.inputs.testRunning = app_control_testRunning();
     app_motion_data.inputs.positionSteps = dev_stepper_getSteps(DEV_STEPPER_CHANNEL_MAIN);
     app_motion_data.inputs.atTarget = dev_stepper_atTarget(DEV_STEPPER_CHANNEL_MAIN);
+    app_motion_data.inputs.gaugeSetpointSteps = dev_stepper_getTarget(DEV_STEPPER_CHANNEL_MAIN);
+    app_motion_data.inputs.endstopUpperActive = HAL_GPIO_getActive(HAL_GPIO_ENDSTOP_UPPER);
 }
 
-static void app_motion_private_processOutputs()
+static void app_motion_private_processOutputs(void)
 {
     int32_t setpoint = 0;
-    const int32_t gaugeSetpoint = dev_stepper_getTarget(DEV_STEPPER_CHANNEL_MAIN);
     if (app_motion_data.stepsPerMM != 0)
     {
-        setpoint = LIB_UTILITY_MM_TO_UM(gaugeSetpoint / app_motion_data.stepsPerMM);
+        setpoint = (int32_t)(((int64_t)app_motion_data.inputs.gaugeSetpointSteps * 1000LL) / app_motion_data.stepsPerMM);
     }
     APP_MOTION_LOCK_REQ_BLOCK();
     app_motion_data.output.setpoint = setpoint;
     APP_MOTION_LOCK_REL();
 }
 
-static bool app_motion_private_hasValidMove(void)
-{
-    if (app_motion_data.inputs.testRunning == false)
-    {
-        // Manual mode: pop from manual queue
-        return lib_staticQueue_pop(&app_motion_data.manualQueue, &app_motion_data.currentMove);
-    }
-    else
-    {
-        // Test mode: open gcode channel on first call
-        if (IO_SDCard_isClosed(IO_SDCARD_CHANNEL_GCODE))
-        {
-            IO_SDCard_open(IO_SDCARD_CHANNEL_GCODE, "", IO_SDCARD_MODE_READ);
-            app_motion_data.stagedCount = 0U;
-            app_motion_data.stagedIndex = 0U;
-            return false;
-        }
-
-        // Consume from staged buffer first
-        if (app_motion_data.stagedIndex < app_motion_data.stagedCount)
-        {
-            app_motion_data.currentMove = app_motion_data.stagedMoves[app_motion_data.stagedIndex];
-            app_motion_data.stagedIndex++;
-            return true;
-        }
-
-        // Staged buffer empty — refill in bulk from IO_SDCard queue
-        app_motion_data.stagedIndex = 0U;
-        app_motion_data.stagedCount = IO_SDCard_popMultiple(
-            IO_SDCARD_CHANNEL_GCODE,
-            app_motion_data.stagedMoves,
-            MOTION_STAGED_MOVE_BUFFER_SIZE);
-
-        if (app_motion_data.stagedCount > 0U)
-        {
-            app_motion_data.currentMove = app_motion_data.stagedMoves[app_motion_data.stagedIndex];
-            app_motion_data.stagedIndex++;
-            return true;
-        }
-
-        // No move available — check if reader is done (EOF + queue empty)
-        if (IO_SDCard_isReadDone(IO_SDCARD_CHANNEL_GCODE))
-        {
-            DEBUG_INFO("%s", "GCODE: reader done, ending test\n");
-            IO_SDCard_close(IO_SDCARD_CHANNEL_GCODE);
-            app_control_triggerTestEnd();
-        }
-        return false;
-    }
-}
-
-static app_motion_state_E app_motion_private_getDesiredState()
+static app_motion_state_E app_motion_private_getDesiredState(void)
 {
     app_motion_state_E desiredState = app_motion_data.state;
     if (app_motion_data.inputs.motionEnabled == false)
     {
-        app_motion_clearMoveQueue();
+        lib_staticQueue_empty(&app_motion_data.queue);
         dev_stepper_stop(DEV_STEPPER_CHANNEL_MAIN);
         dev_stepper_enable(DEV_STEPPER_CHANNEL_MAIN, false);
         desiredState = APP_MOTION_DISABLED;
@@ -202,7 +146,7 @@ static app_motion_state_E app_motion_private_getDesiredState()
             desiredState = APP_MOTION_WAITING;
             break;
         case APP_MOTION_WAITING:
-            if (app_motion_private_hasValidMove())
+            if (lib_staticQueue_pop(&app_motion_data.queue, &app_motion_data.currentMove))
             {
                 app_motion_private_moveManager_start();
                 desiredState = APP_MOTION_MOVING;
@@ -233,7 +177,7 @@ static bool app_motion_private_homing_run(void)
         app_motion_data.homeState = APP_MOTION_HOME_MOVING;
         break;
     case APP_MOTION_HOME_MOVING:
-        if (HAL_GPIO_getActive(HAL_GPIO_ENDSTOP_UPPER))
+        if (app_motion_data.inputs.endstopUpperActive)
         {
             DEBUG_INFO("%s", "Homing Endstop\n");
             lib_timer_start(&app_motion_data.endstopTimer);
@@ -250,10 +194,14 @@ static bool app_motion_private_homing_run(void)
         if (lib_timer_expired(&app_motion_data.endstopTimer))
         {
             DEBUG_INFO("%s", "Homing Backoff\n");
-            // Set both encoder and stepper positions to jaw offset to establish coordinate system
+            // Set both encoder and stepper positions to jaw offset to establish coordinate system.
+            // Important: set encoder synchronously before starting backoff move so pulse-out
+            // snapshots the correct base position.
             const int32_t jawOffsetSteps = app_motion_data.stepsPerMM * app_motion_data.jawOffset;
             const int32_t homingOffsetSteps = app_motion_data.stepsPerMM * app_motion_data.homingOffset;
-            app_monitor_setPosition(LIB_UTILITY_MM_TO_UM(app_motion_data.jawOffset));
+            (void)IO_positionFeedback_setValue(
+                IO_POSITION_FEEDBACK_CHANNEL_SERVO_FEEDBACK,
+                LIB_UTILITY_MM_TO_UM(app_motion_data.jawOffset));
             dev_stepper_setPosition(DEV_STEPPER_CHANNEL_MAIN, jawOffsetSteps);
             dev_stepper_move(DEV_STEPPER_CHANNEL_MAIN, jawOffsetSteps + homingOffsetSteps, (app_motion_data.homingVelocity * app_motion_data.stepsPerMM));
             app_motion_data.homeState = APP_MOTION_HOME_BACKOFF;
@@ -287,17 +235,21 @@ static void app_motion_private_moveManager_start(void)
         if (app_motion_data.currentMove.f == 0U)
         {
             DEBUG_WARNING("G0/G1 Command has zero feedrate: %d\n", app_motion_data.currentMove.f);
-            return;
         }
-        int32_t steps = (app_motion_data.currentMove.x * app_motion_data.stepsPerMM) / 1000;
-        const int32_t feedrate = (app_motion_data.currentMove.f * app_motion_data.stepsPerMM) / 1000;
-        if (app_motion_data.absoluteMode == false)
+        else
         {
-            steps += app_motion_data.inputs.positionSteps;
+            /* move.x on SD is machine µm (host converts sample G-code at upload). */
+            const int32_t moveTargetUm = app_motion_data.currentMove.x;
+            int32_t steps = (int32_t)(((int64_t)moveTargetUm * app_motion_data.stepsPerMM) / 1000LL);
+            const int32_t feedrate = (int32_t)(((int64_t)app_motion_data.currentMove.f * app_motion_data.stepsPerMM) / 1000LL);
+            if (app_motion_data.absoluteMode == false)
+            {
+                steps += app_motion_data.inputs.positionSteps;
+            }
+            DEBUG_INFO("G0 command moving to steps %d at %d steps/s\n", steps, feedrate);
+            DEBUG_INFO("moving from position (mm) %d to setpoint (mm) %d\n", app_motion_data.inputs.positionSteps / app_motion_data.stepsPerMM, steps / app_motion_data.stepsPerMM);
+            dev_stepper_move(DEV_STEPPER_CHANNEL_MAIN, steps, feedrate);
         }
-        DEBUG_INFO("G0 command moving to steps %d at %d steps/s\n", steps, feedrate);
-        DEBUG_INFO("moving from position (mm) %d to setpoint (mm) %d\n", app_motion_data.inputs.positionSteps / app_motion_data.stepsPerMM, steps / app_motion_data.stepsPerMM);
-        dev_stepper_move(DEV_STEPPER_CHANNEL_MAIN, steps, feedrate);
         break;
     case G2_CW_ARC_MOVE:
     case G3_CCW_ARC_MOVE:
@@ -319,8 +271,8 @@ static void app_motion_private_moveManager_start(void)
         app_motion_data.absoluteMode = false;
         break;
     case G122_STOP:
-        app_notification_send(APP_NOTIFICATION_TYPE_INFO, "%s", "Test Complete!");
-        app_control_triggerTestEnd();
+        /* Test lifecycle owns G122. app_testManagement intercepts it before
+         * pushing to motion; this case is defensive and treats it as a no-op. */
         break;
     default:
         break;
@@ -370,28 +322,33 @@ void app_motion_init(int lock)
     app_motion_data.homingVelocity = machineProfile.homingVelocity;
     app_motion_data.homingOffset = machineProfile.homingOffset;
     app_motion_data.jawOffset = machineProfile.jawOffset;
-    (void)lib_staticQueue_init(&app_motion_data.manualQueue, app_motion_data.manualBuffer, MOTION_MANUAL_BUFFER_SIZE, sizeof(app_motion_move_t), lock);
+    (void)lib_staticQueue_init(&app_motion_data.queue, app_motion_data.queueBuffer, MOTION_QUEUE_SIZE, sizeof(app_motion_move_t), lock);
     lib_timer_init(&app_motion_data.endstopTimer, 1000);
 }
 
-void app_motion_run()
+void app_motion_run(void)
 {
     app_motion_private_processInputs();
     app_motion_data.state = app_motion_private_getDesiredState();
     app_motion_private_processOutputs();
 }
 
-bool app_motion_addManualMove(app_motion_move_t *command)
+bool app_motion_addMove(const app_motion_move_t *move)
 {
-    return lib_staticQueue_push(&app_motion_data.manualQueue, command);
+    return lib_staticQueue_push(&app_motion_data.queue, (void *)move);
 }
 
-void app_motion_clearMoveQueue()
+void app_motion_abortAndClear(void)
 {
-    lib_staticQueue_empty(&app_motion_data.manualQueue);
+    dev_stepper_stop(DEV_STEPPER_CHANNEL_MAIN);
+    lib_staticQueue_empty(&app_motion_data.queue);
+    if (app_motion_data.state == APP_MOTION_MOVING)
+    {
+        app_motion_data.state = APP_MOTION_WAITING;
+    }
 }
 
-int32_t app_motion_getSetpoint()
+int32_t app_motion_getSetpoint(void)
 {
     APP_MOTION_LOCK_REQ_BLOCK();
     int32_t setpoint = app_motion_data.output.setpoint;
@@ -399,13 +356,13 @@ int32_t app_motion_getSetpoint()
     return setpoint;
 }
 
-int32_t app_motion_getPosition()
+int32_t app_motion_getPosition(void)
 {
     int32_t position = 0;
     APP_MOTION_LOCK_REQ_BLOCK();
-    if (app_motion_data.inputs.positionSteps != 0)
+    if (app_motion_data.stepsPerMM != 0)
     {
-        position = app_motion_data.inputs.positionSteps / app_motion_data.stepsPerMM;
+        position = (int32_t)(((int64_t)app_motion_data.inputs.positionSteps * 1000LL) / app_motion_data.stepsPerMM);
     }
     APP_MOTION_LOCK_REL();
     return position;

@@ -29,7 +29,7 @@
  **********************************************************************/
 
 IO_SDCARD_CHANNEL_DATA_DEFINE(SAMPLE_DATA, app_monitor_sample_t, 64, SD_CARD_MOUNT_PATH "/test/%s.bin");
-IO_SDCARD_CHANNEL_DATA_DEFINE(GCODE, app_motion_move_t, 64, SD_CARD_MOUNT_PATH "/gcode/profile.bin");
+IO_SDCARD_CHANNEL_DATA_DEFINE(GCODE, app_motion_move_t, 64, SD_CARD_MOUNT_PATH "/gcode/%s.bin");
 
 IO_SDCard_config_S IO_SDCard_config = {
     {

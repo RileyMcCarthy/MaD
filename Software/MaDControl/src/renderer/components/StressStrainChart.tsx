@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useCallback } from 'react';
+import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { ScatterChart } from '@mui/x-charts/ScatterChart';
 import { ChartsReferenceLine } from '@mui/x-charts/ChartsReferenceLine';
 import { SampleData } from '@shared/SharedInterface';
@@ -10,6 +10,8 @@ import { componentLogger } from '../utils/logger';
 
 export default function StressStrainChart() {
   const [deviceState, actions] = useDevice();
+  const actionsRef = useRef(actions);
+  actionsRef.current = actions;
   const [samples, setSamples] = useState<SampleData[]>([]);
   const [lastTestRunning, setLastTestRunning] = useState<boolean>(false);
   const [, setUpdateCounter] = useState<number>(0);
@@ -18,7 +20,7 @@ export default function StressStrainChart() {
     // Function to initialize data on page load
     const initializeData = async () => {
       try {
-        const data = await actions.getAllDeviceData();
+        const data = await actionsRef.current.getCachedDeviceData(500);
         if (data && data.length > 0) {
           setSamples(data.slice(-500)); // Save up to 500 samples for better performance
         }
@@ -29,7 +31,7 @@ export default function StressStrainChart() {
 
     // Call the function to initialize data on page load
     initializeData();
-  }, [actions]);
+  }, []);
 
   // Clear data when test state changes
   useEffect(() => {
@@ -100,7 +102,7 @@ export default function StressStrainChart() {
     // Get jaw offset from machine configuration
     const jawOffset = deviceState.machineConfiguration['Jaw Offset (mm)']; // Default fallback
 
-    const stressStrainData = samples.map((sample) => {
+    const stressStrainData = samples.map((sample, pointIndex) => {
       const force = sample['Sample Force (N)'];
       const currentMachinePosition = sample['Machine Position (mm)'];
 
@@ -116,7 +118,7 @@ export default function StressStrainChart() {
       return {
         x: strain * 100, // Convert to percentage strain
         y: stress,
-        id: sample.Index,
+        id: pointIndex,
       };
     }).filter(point => point.x >= 0 && point.y >= 0 && isFinite(point.x) && isFinite(point.y));
 

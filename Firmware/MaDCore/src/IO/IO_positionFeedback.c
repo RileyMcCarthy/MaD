@@ -86,7 +86,8 @@ int32_t IO_positionFeedback_getValue(IO_positionFeedback_channel_E ch)
     if (ch < IO_POSITION_FEEDBACK_CHANNEL_COUNT)
     {
         const int32_t encoderSteps = HAL_encoder_value(IO_positionFeedback_channelData[ch].encoderChannel);
-        positionUM = LIB_UTILITY_MM_TO_UM(encoderSteps / IO_positionFeedback_channelData[ch].stepPerMM);
+        positionUM = lib_utility_muldiv64_signed(
+            encoderSteps, 1000, IO_positionFeedback_channelData[ch].stepPerMM);
     }
     return positionUM;
 }
@@ -96,7 +97,8 @@ bool IO_positionFeedback_setValue(IO_positionFeedback_channel_E ch, int32_t posi
     bool success = false;
     if (ch < IO_POSITION_FEEDBACK_CHANNEL_COUNT)
     {
-        const int32_t encoderSteps = (positionUM * IO_positionFeedback_channelData[ch].stepPerMM) / 1000;
+        const int32_t encoderSteps = lib_utility_muldiv64_signed(
+            positionUM, IO_positionFeedback_channelData[ch].stepPerMM, 1000);
         HAL_encoder_set(IO_positionFeedback_channelData[ch].encoderChannel, encoderSteps);
         success = true;
     }

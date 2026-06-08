@@ -7,7 +7,8 @@
 #include <stdarg.h>
 #include <string.h>
 #include "app_notification.h"
-#include "IO_protocol.h"
+#include "app_messageSlave.h"
+#include "protoemb.h"
 #include "lib_staticQueue.h"
 #include "IO_Debug.h"
 /**********************************************************************
@@ -18,7 +19,6 @@
  * Macros
  **********************************************************************/
 #define APP_NOTIFICATION_BUFFER_SIZE 10
-#define APP_NOTIFICATION_MAX_JSON_SIZE 255
 /**********************************************************************
  * Typedefs
  **********************************************************************/
@@ -26,11 +26,11 @@
 typedef struct
 {
     lib_staticQueue_S notificationQueue;
-    app_notification_message_S notificationBuffer[APP_NOTIFICATION_BUFFER_SIZE];
-    app_notification_message_S currentNotification;
+    ProtoEmb_Notification_t notificationBuffer[APP_NOTIFICATION_BUFFER_SIZE];
+    ProtoEmb_Notification_t currentNotification;
     bool notificationReady;
     bool sendComplete;
-    char notificationJSON[APP_NOTIFICATION_MAX_JSON_SIZE];
+    uint8_t notificationBinary[PROTOEMB_NOTIFICATION_WIRE_SIZE];
 
     app_notification_state_E state;
     int32_t lock;
@@ -43,13 +43,6 @@ typedef struct
 /**********************************************************************
  * Private Variable Definitions
  **********************************************************************/
-static const char *app_notification_private_typeToString[APP_NOTIFICATION_TYPE_COUNT] = {
-    "message",
-    "info",
-    "warning",
-    "error",
-    "success",
-};
 static app_notification_data_S app_notification_data;
 /**********************************************************************
  * Private Function Prototypes
@@ -60,12 +53,12 @@ static app_notification_data_S app_notification_data;
  **********************************************************************/
 void app_notification_stageRequest()
 {
-    app_notification_message_S notification;
+    ProtoEmb_Notification_t notification;
     if (app_notification_data.notificationReady == false)
     {
         if (lib_staticQueue_pop(&app_notification_data.notificationQueue, &notification))
         {
-            memcpy(&app_notification_data.currentNotification, &notification, sizeof(app_notification_message_S));
+            memcpy(&app_notification_data.currentNotification, &notification, sizeof(ProtoEmb_Notification_t));
             app_notification_data.notificationReady = true;
             app_notification_data.sendComplete = false;
         }
@@ -124,7 +117,7 @@ void app_notification_runEntryAction()
         break;
     case APP_NOTIFICATION_STATE_SENDING:
         app_notification_data.sendComplete = false;
-        strcpy(app_notification_data.notificationJSON, "");
+        memset(app_notification_data.notificationBinary, 0, sizeof(app_notification_data.notificationBinary));
         break;
     default:
         break;
@@ -140,14 +133,8 @@ void app_notification_runAction()
     case APP_NOTIFICATION_STATE_READY:
         break;
     case APP_NOTIFICATION_STATE_SENDING:
-        snprintf(app_notification_data.notificationJSON, APP_NOTIFICATION_MAX_JSON_SIZE,
-                 "{\"Type\":\"%s\",\"Message\":\"%s\"}",
-                 app_notification_private_typeToString[app_notification_data.currentNotification.type],
-                 app_notification_data.currentNotification.message);
-        if (strncmp(app_notification_data.notificationJSON, "", APP_NOTIFICATION_MAX_JSON_SIZE) != 0)
-        {
-            app_notification_data.sendComplete = IO_protocol_sendNotification((uint8_t *)app_notification_data.notificationJSON, strlen(app_notification_data.notificationJSON));
-        }
+        app_notification_data.sendComplete =
+            app_messageSlave_sendNotification(&app_notification_data.currentNotification);
         break;
     default:
         break;
@@ -161,21 +148,13 @@ void app_notification_init(int lock)
     app_notification_data.lock = lock;
     app_notification_data.notificationReady = false;
     app_notification_data.state = APP_NOTIFICATION_STATE_INIT;
-    strcpy(app_notification_data.notificationJSON, "");
-    lib_staticQueue_init(&app_notification_data.notificationQueue, app_notification_data.notificationBuffer, APP_NOTIFICATION_BUFFER_SIZE, sizeof(app_notification_message_S), lock);
+    memset(app_notification_data.notificationBinary, 0, sizeof(app_notification_data.notificationBinary));
+    lib_staticQueue_init(&app_notification_data.notificationQueue, app_notification_data.notificationBuffer, APP_NOTIFICATION_BUFFER_SIZE, sizeof(ProtoEmb_Notification_t), lock);
 }
 
 void app_notification_run()
 {
     app_notification_stageRequest();
-    app_notification_message_S notification;
-    if (lib_staticQueue_pop(&app_notification_data.notificationQueue, &notification))
-    {
-        snprintf(app_notification_data.notificationJSON, APP_NOTIFICATION_MAX_JSON_SIZE,
-                 "{\"Type\":\"%s\",\"Message\":\"%s\"}",
-                 app_notification_private_typeToString[app_notification_data.currentNotification.type],
-                 app_notification_data.currentNotification.message);
-    }
     app_notification_state_E desiredState = app_notification_getDesiredState();
     if (app_notification_data.state != desiredState)
     {
@@ -190,10 +169,11 @@ void app_notification_run()
 void app_notification_send(app_notification_type_E type, const char *format, ...)
 {
     va_list args;
-    app_notification_message_S notification;
-    notification.type = type;
+    ProtoEmb_Notification_t notification;
+    notification.type = (ProtoEmb_NotificationType_E)type;
+    memset(notification.message, 0, sizeof(notification.message));
     va_start(args, format);
-    vsnprintf(notification.message, APP_NOTIFICATION_MAX_MESSAGE_SIZE, format, args);
+    vsnprintf(notification.message, sizeof(notification.message), format, args);
     va_end(args);
     lib_staticQueue_push(&app_notification_data.notificationQueue, &notification);
 }

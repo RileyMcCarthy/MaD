@@ -98,8 +98,6 @@ Rust **Cargo workspace** under `SIL/` (see `SIL/Cargo.toml`):
 - **`embsim/models`** — Physics-style models (e.g. gantry, force path, sampling).
 - **`embsim/tools/*`** — trace viewer, memory inspect, UI shell helpers.
 
-**Behavior specs** for coverage live in `SIL/specs/` (indexed in `SIL/specs/README.md` and `COVERAGE_MAPPING.md`).
-
 Playwright tests in `SIL/tests/` drive the real Electron UI against the emulator; config uses a single worker where the emulator is single-instance.
 
 ### Communication Protocol

@@ -3,7 +3,6 @@
 #include "HAL_time.h"
 #include "HAL_system.h"
 #include "MaD.h"
-#include "JSON.h"
 #include "app_motion.h"
 #include "app_notification.h"
 #include "IO_Debug.h"

@@ -16,7 +16,6 @@ export interface SampleData {
   'Machine Setpoint (mm)': number;
   'Sample Force (N)': number;
   'Sample Position (mm)': number;
-  Index: number;
 }
 
 export enum FaultedReason {
@@ -140,13 +139,22 @@ export interface MotionProfileEntry {
 }
 
 export interface TestRunEntry {
+  /** UUID for the Electron-side record (lists, DB row). */
   id: string;
+  /**
+   * Unique run key reserved when the run starts (monotonic counter, six ASCII digits).
+   * Sent to firmware as both gcode file id and sample-log id so SD artifacts stay paired.
+   */
   testName: string;
   sampleProfileId: string;
   motionProfileId: string;
   sampleProfile: SampleProfile;
   motionProfile: MotionProfile;
   gcode: string[];
+  /** Machine position minus sample extension (mm) when zero-length was set — used to relate logged CSV to G-code X. */
+  gaugeLengthMm?: number;
+  /** Machine position (mm) captured immediately before the run starts; anchors relative G-code replay. */
+  initialMachinePositionMm?: number;
   startedAt: string;
   completedAt?: string;
   status: 'running' | 'completed' | 'downloaded' | 'error';

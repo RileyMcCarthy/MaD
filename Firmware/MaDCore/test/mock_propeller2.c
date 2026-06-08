@@ -3,11 +3,18 @@
 #include "HAL_time.h"
 #include "HAL_system.h"
 #include <stdlib.h>
+#include <string.h>
 
 static int lockIndex = 0;
 static bool locks[8] = {0};
 
 uint32_t global_timeus;
+
+void HAL_lock_mock_reset(void)
+{
+    lockIndex = 0;
+    memset(locks, 0, sizeof(locks));
+}
 
 // HAL time mock implementations
 uint32_t HAL_time_getMs(void) { return global_timeus / 1000; }
@@ -20,6 +27,12 @@ uint32_t HAL_time_getClockFreq(void) { return 200000000; }
 // HAL lock mock implementations
 bool HAL_lock_try(int32_t lock)
 {
+    if (lock < 0 || lock >= (int32_t)(sizeof(locks) / sizeof(locks[0])))
+    {
+        TEST_FAIL();
+        return false;
+    }
+
     if (locks[lock] == 0)
     {
         locks[lock] = 1;
@@ -30,6 +43,12 @@ bool HAL_lock_try(int32_t lock)
 }
 void HAL_lock_release(int32_t lock)
 {
+    if (lock < 0 || lock >= (int32_t)(sizeof(locks) / sizeof(locks[0])))
+    {
+        TEST_FAIL();
+        return;
+    }
+
     if (locks[lock] == 0)
     {
         TEST_FAIL();
@@ -37,7 +56,15 @@ void HAL_lock_release(int32_t lock)
     }
     locks[lock] = 0;
 }
-int32_t HAL_lock_create(void) { return lockIndex++; }
+int32_t HAL_lock_create(void)
+{
+    if (lockIndex >= (int32_t)(sizeof(locks) / sizeof(locks[0])))
+    {
+        TEST_FAIL();
+        return -1;
+    }
+    return lockIndex++;
+}
 
 // HAL system mock implementations
 void HAL_system_init(void) {}

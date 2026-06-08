@@ -12,7 +12,10 @@
  **********************************************************************/
 #define LIB_UTILITY_UM_PER_MM (1000U)
 #define LIB_UTILITY_MM_TO_UM(mm) ((mm) * LIB_UTILITY_UM_PER_MM)
-#define LIB_UTILITY_UM_TO_MM(um) ((um) / 1000)
+#define LIB_UTILITY_UM_TO_MM(um) ((um) / LIB_UTILITY_UM_PER_MM)
+
+#define LIB_UTILITY_US_PER_MS (1000U)
+#define LIB_UTILITY_MS_TO_US(ms) ((ms) * LIB_UTILITY_US_PER_MS)
 #define LIB_UTILITY_MN_TO_N(mN) ((mN) / 1000.0f)
 
 #define LIB_UTILITY_BIT_MASK_1 0x01
@@ -51,6 +54,18 @@
  * Public Function Definitions
  **********************************************************************/
 uint8_t lib_utility_CRC8(uint8_t *addr, uint16_t len);
+
+/**
+ * Signed (a * b) / c with a 32x32 -> 64 intermediate, returned as int32.
+ *
+ * On the Propeller 2 (FlexC) this lowers to the CORDIC: QMUL produces the
+ * 64-bit unsigned product (QX/QY), then SETQ+QDIV does a 64/32 unsigned
+ * divide. Sign handling is done in C. On native/SIL builds the same math
+ * is performed using host int64 arithmetic.
+ *
+ * Returns 0 if c == 0 (no exception is raised).
+ */
+int32_t lib_utility_muldiv64_signed(int32_t a, int32_t b, int32_t c);
 /**********************************************************************
  * End of File
  **********************************************************************/

@@ -77,9 +77,11 @@ Definitions
 #include "HAL_lock.h"
 #include "HAL_time.h"
 #include <string.h>
+#include "app_gauge.h"
 #include "app_monitor.h"
 #include "app_motion.h"
 #include "app_control.h"
+#include "app_testManagement.h"
 
 #include "dev_nvram.h"
 #include "IO_SDCard.h"
@@ -122,8 +124,6 @@ typedef struct
 
 typedef struct
 {
-    bool setGaugeLength;
-    bool setGaugeForce;
     bool setPositionFeedback;
     int32_t setPositionValue;
     bool setSampleProfile;
@@ -135,8 +135,6 @@ typedef struct
     app_monitor_sample_t sample;
     int32_t force;
     int32_t position;
-    int32_t gaugeLength;
-    int32_t gaugeForce;
     bool forceExceeded;
     bool velocityExceeded;
     bool displacementExceeded;
@@ -148,8 +146,6 @@ typedef struct
     app_monitor_inputData_t input;
 
     int lock;
-    int32_t gaugeLength;
-    int32_t gaugeForce;
     uint32_t startTime;
     lib_timer_S stopLoggingTail;
     app_monitor_loggingState_E loggingState;
@@ -177,29 +173,19 @@ static app_monitor_data_t app_monitor_data;
 
 void app_monitor_private_processInputs()
 {
-    app_monitor_data.input.force = dev_forceGauge_getForce(DEV_FORCEGAUGE_CHANNEL_MAIN);
+    app_monitor_data.input.force = app_gauge_getForce(APP_GAUGE_COORD_MACHINE);
     uint32_t newIndex = dev_forceGauge_getIndex(DEV_FORCEGAUGE_CHANNEL_MAIN);
     app_monitor_data.input.updatedIndex = (newIndex != app_monitor_data.input.forceIndex);
     app_monitor_data.input.forceIndex = newIndex;
-    app_monitor_data.input.position = IO_positionFeedback_getValue(IO_POSITION_FEEDBACK_CHANNEL_SERVO_FEEDBACK);
+    app_monitor_data.input.position = app_gauge_getPosition(APP_GAUGE_COORD_MACHINE);
     app_monitor_data.input.setpoint = app_motion_getSetpoint();
     app_monitor_data.input.time = HAL_time_getUs();
-    app_monitor_data.input.testRunning = app_control_testRunning();
+    app_monitor_data.input.testRunning = app_testManagement_isRunning();
 }
 
 void app_monitor_private_processRequests()
 {
     APP_MONITOR_LOCK_REQ_BLOCK();
-    if (app_monitor_data.request.setGaugeLength)
-    {
-        app_monitor_data.gaugeLength = app_monitor_data.input.position;
-        app_monitor_data.request.setGaugeLength = false;
-    }
-    if (app_monitor_data.request.setGaugeForce)
-    {
-        app_monitor_data.gaugeForce = app_monitor_data.input.force;
-        app_monitor_data.request.setGaugeForce = false;
-    }
     if (app_monitor_data.request.setPositionFeedback)
     {
         IO_positionFeedback_setValue(IO_POSITION_FEEDBACK_CHANNEL_SERVO_FEEDBACK, app_monitor_data.request.setPositionValue);
@@ -216,18 +202,20 @@ void app_monitor_private_processRequests()
 
 void app_monitor_private_processSample()
 {
-    app_monitor_data.sample.force = app_monitor_data.input.force - app_monitor_data.gaugeForce;
-    app_monitor_data.sample.position = app_monitor_data.input.position - app_monitor_data.gaugeLength;
+    /* Derive sample-frame values from the snapshot captured in processInputs so all four
+     * fields in one row come from a single ADC/encoder read. Re-reading app_gauge here
+     * would race processInputs and produce rows whose force/position don't match time. */
+    const int32_t gaugeForce_mN = app_gauge_getGaugeForce_mN();
+    const int32_t gaugeLength_um = app_gauge_getGaugeLength_um();
+    app_monitor_data.sample.force = app_monitor_data.input.force - gaugeForce_mN;
+    app_monitor_data.sample.position = app_monitor_data.input.position - gaugeLength_um;
     app_monitor_data.sample.time = app_monitor_data.input.time - app_monitor_data.startTime;
-    app_monitor_data.sample.index = app_monitor_data.input.forceIndex;
-    app_monitor_data.sample.setpoint = app_monitor_data.input.setpoint - app_monitor_data.gaugeLength;
+    app_monitor_data.sample.setpoint = app_monitor_data.input.setpoint - gaugeLength_um;
 }
 
 void app_monitor_private_setOutput(void)
 {
     APP_MONITOR_LOCK_REQ_BLOCK();
-    app_monitor_data.out.gaugeForce = app_monitor_data.gaugeForce;
-    app_monitor_data.out.gaugeLength = app_monitor_data.gaugeLength;
     app_monitor_data.out.force = app_monitor_data.input.force;
     app_monitor_data.out.position = app_monitor_data.input.position;
     memcpy(&app_monitor_data.out.sample, &app_monitor_data.sample, sizeof(app_monitor_sample_t));
@@ -314,8 +302,6 @@ void app_monitor_private_processLogging()
 void app_monitor_init(int lock)
 {
     app_monitor_data.lock = lock;
-    app_monitor_data.gaugeLength = 0;
-    app_monitor_data.gaugeForce = 0;
     lib_timer_init(&app_monitor_data.stopLoggingTail, APP_MONITOR_STOP_LOGGING_TAIL_MS);
     lib_timer_stop(&app_monitor_data.stopLoggingTail);
     app_monitor_data.loggingState = APP_MONITOR_LOGGING_STATE_IDLE;
@@ -329,67 +315,6 @@ void app_monitor_run()
     app_monitor_private_processSample();
     app_monitor_private_processLogging();
     app_monitor_private_setOutput();
-}
-
-void app_monitor_getSample(app_monitor_sample_t *sample)
-{
-    APP_MONITOR_LOCK_REQ_BLOCK();
-    memcpy(sample, &app_monitor_data.out.sample, sizeof(app_monitor_sample_t));
-    APP_MONITOR_LOCK_REL();
-}
-
-int32_t app_monitor_getSampleForce(void)
-{
-    APP_MONITOR_LOCK_REQ_BLOCK();
-    int32_t force = app_monitor_data.out.sample.force;
-    APP_MONITOR_LOCK_REL();
-    return force;
-}
-
-int32_t app_monitor_getSamplePosition(void)
-{
-    APP_MONITOR_LOCK_REQ_BLOCK();
-    int32_t position = app_monitor_data.out.sample.position;
-    APP_MONITOR_LOCK_REL();
-    return position;
-}
-
-int32_t app_monitor_getAbsoluteForce(void)
-{
-    APP_MONITOR_LOCK_REQ_BLOCK();
-    int32_t force = app_monitor_data.out.force;
-    APP_MONITOR_LOCK_REL();
-    return force;
-}
-
-int32_t app_monitor_getAbsolutePosition(void)
-{
-    APP_MONITOR_LOCK_REQ_BLOCK();
-    int32_t position = app_monitor_data.out.position;
-    APP_MONITOR_LOCK_REL();
-    return position;
-}
-
-int32_t app_monitor_getGaugeLength(void)
-{
-    APP_MONITOR_LOCK_REQ_BLOCK();
-    int32_t gaugeLength = app_monitor_data.out.gaugeLength;
-    APP_MONITOR_LOCK_REL();
-    return gaugeLength;
-}
-
-void app_monitor_zeroSamplePosition()
-{
-    APP_MONITOR_LOCK_REQ_BLOCK();
-    app_monitor_data.request.setGaugeLength = true;
-    APP_MONITOR_LOCK_REL();
-}
-
-void app_monitor_zeroSampleForce()
-{
-    APP_MONITOR_LOCK_REQ_BLOCK();
-    app_monitor_data.request.setGaugeForce = true;
-    APP_MONITOR_LOCK_REL();
 }
 
 void app_monitor_zeroPosition()

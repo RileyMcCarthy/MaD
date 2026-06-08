@@ -1,23 +1,26 @@
 /**
- * Machine Configuration Page Tests
+ * Machine Configuration (consolidated)
  *
- * Validates:
- * 1. Configuration page loads with Save button and editable fields
- * 2. Number and text fields can be edited and retain values
- * 3. Save Configuration does not produce errors
+ * One test that exercises:
+ *   - Device Configuration page loads with Save button and editable fields
+ *   - Number and text fields can be edited and retain values
+ *   - Config write/read round trip via IPC (restores original)
+ *   - Firmware flash safety: cancel reports a clear error when no flash is active
  */
 
 import { test, expect } from './fixtures';
 
 test.describe('Machine Configuration', () => {
-
-  test.beforeEach(async ({ connectToEmulator, window }) => {
+  test('page UI + IPC round trip + flash safety', async ({
+    connectToEmulator,
+    window,
+  }) => {
     await connectToEmulator();
+
+    // ── 1. Page load: Save button visible (or loading / failed state) ──
     await window.getByRole('link', { name: 'Device Configuration' }).click();
     await window.waitForTimeout(2000);
-  });
 
-  test('page loads with Save Configuration button and editable fields', async ({ window }) => {
     const saveButton = window.getByRole('button', { name: 'Save Configuration' });
     const loadingText = window.getByText('Loading...');
     const failedText = window.getByText('Failed to load machine configuration');
@@ -25,65 +28,81 @@ test.describe('Machine Configuration', () => {
     const isLoaded = await saveButton.isVisible().catch(() => false);
     const isLoading = await loadingText.isVisible().catch(() => false);
     const isFailed = await failedText.isVisible().catch(() => false);
-
     expect(isLoaded || isLoading || isFailed).toBe(true);
 
     if (isLoaded) {
       await expect(saveButton).toBeEnabled();
 
-      // Should have editable input fields
+      // Editable fields exist
       const inputs = window.locator('input[type="text"], input[type="number"]');
-      const inputCount = await inputs.count();
-      expect(inputCount).toBeGreaterThan(0);
+      expect(await inputs.count()).toBeGreaterThan(0);
+
+      // Number fields editable + restorable
+      const numberInputs = window.locator('input[type="number"]');
+      const numCount = await numberInputs.count();
+      if (numCount > 0) {
+        const numInput = numberInputs.first();
+        const originalNum = await numInput.inputValue();
+        await numInput.fill('12345');
+        await expect(numInput).toHaveValue('12345');
+        await numInput.fill(originalNum);
+        await expect(numInput).toHaveValue(originalNum);
+      }
+
+      // Text fields editable + restorable
+      const textInputs = window.locator('input[type="text"]');
+      const textCount = await textInputs.count();
+      if (textCount > 0) {
+        const textInput = textInputs.first();
+        const originalText = await textInput.inputValue();
+        await textInput.fill('TestValue');
+        await expect(textInput).toHaveValue('TestValue');
+        await textInput.fill(originalText);
+        await expect(textInput).toHaveValue(originalText);
+      }
     }
-  });
 
-  test('number fields can be edited and retain values', async ({ window }) => {
-    const saveButton = window.getByRole('button', { name: 'Save Configuration' });
-    if (!(await saveButton.isVisible().catch(() => false))) return;
+    // ── 2. IPC round trip: write → re-read → restore ───────────────────
+    const original = (await window.evaluate(async () =>
+      (globalThis as any).electron.ipcRenderer.invoke('get-machine-configuration'),
+    )) as Record<string, unknown>;
+    expect(original).toBeTruthy();
 
-    const numberInputs = window.locator('input[type="number"]');
-    const count = await numberInputs.count();
-    if (count === 0) return;
+    const fieldKey = 'Position Max (mm)';
+    const baseValue = Number(original[fieldKey]);
+    expect(Number.isFinite(baseValue)).toBe(true);
 
-    const input = numberInputs.first();
-    const originalValue = await input.inputValue();
+    const updated = { ...original, [fieldKey]: baseValue + 1 };
+    const saveOk = await window.evaluate(
+      async ({ cfg }: { cfg: Record<string, unknown> }) =>
+        (globalThis as any).electron.ipcRenderer.invoke('save-machine-configuration', cfg),
+      { cfg: updated },
+    );
+    expect(Boolean(saveOk)).toBe(true);
 
-    await input.fill('12345');
-    await expect(input).toHaveValue('12345');
+    const reread = (await window.evaluate(async () =>
+      (globalThis as any).electron.ipcRenderer.invoke('get-machine-configuration'),
+    )) as Record<string, unknown>;
+    expect(Number(reread[fieldKey])).toBe(baseValue + 1);
 
-    // Restore
-    await input.fill(originalValue);
-    await expect(input).toHaveValue(originalValue);
-  });
+    const restoreOk = await window.evaluate(
+      async ({ cfg }: { cfg: Record<string, unknown> }) =>
+        (globalThis as any).electron.ipcRenderer.invoke('save-machine-configuration', cfg),
+      { cfg: original },
+    );
+    expect(Boolean(restoreOk)).toBe(true);
 
-  test('text fields can be edited and retain values', async ({ window }) => {
-    const saveButton = window.getByRole('button', { name: 'Save Configuration' });
-    if (!(await saveButton.isVisible().catch(() => false))) return;
+    const restored = (await window.evaluate(async () =>
+      (globalThis as any).electron.ipcRenderer.invoke('get-machine-configuration'),
+    )) as Record<string, unknown>;
+    expect(Number(restored[fieldKey])).toBe(baseValue);
 
-    const textInputs = window.locator('input[type="text"]');
-    const count = await textInputs.count();
-    if (count === 0) return;
+    // ── 3. Firmware flash cancel safety ─────────────────────────────────
+    const cancelResult = (await window.evaluate(async () =>
+      (globalThis as any).electron.ipcRenderer.invoke('cancel-firmware-flash'),
+    )) as { success: boolean; error?: string };
 
-    const input = textInputs.first();
-    const originalValue = await input.inputValue();
-
-    await input.fill('TestValue');
-    await expect(input).toHaveValue('TestValue');
-
-    await input.fill(originalValue);
-    await expect(input).toHaveValue(originalValue);
-  });
-
-  test('clicking Save Configuration does not cause errors', async ({ window }) => {
-    const saveButton = window.getByRole('button', { name: 'Save Configuration' });
-    if (!(await saveButton.isVisible().catch(() => false))) return;
-
-    await saveButton.click();
-    await window.waitForTimeout(500);
-
-    // Button should still be there and enabled (no crash/error)
-    await expect(saveButton).toBeVisible();
-    await expect(saveButton).toBeEnabled();
+    expect(cancelResult.success).toBe(false);
+    expect((cancelResult.error || '').toLowerCase()).toContain('no flash process');
   });
 });

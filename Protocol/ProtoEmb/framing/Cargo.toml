@@ -1,0 +1,6 @@
+[package]
+name = "protoemb-framing"
+version = "0.1.0"
+edition = "2021"
+description = "ProtoEmb protocol framing layer — shared wire format parser and builder"
+publish = false

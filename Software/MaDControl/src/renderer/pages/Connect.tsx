@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   TextField,
   Button,
@@ -37,6 +37,8 @@ const commonPorts = [
 
 function Connect() {
   const [, actions] = useDevice();
+  const actionsRef = useRef(actions);
+  actionsRef.current = actions;
   const [ports, setPorts] = useState<string[]>([]);
   const [selectedPort, setSelectedPort] = useState<string>('/dev/serial0');
   const [loading, setLoading] = useState(true);
@@ -51,7 +53,7 @@ function Connect() {
     setErrorMessage(null);
     try {
       componentLogger.info('Loading ports...');
-      const newPorts = await actions.listPorts();
+      const newPorts = await actionsRef.current.listPorts();
       componentLogger.info('Ports loaded:', newPorts);
 
       if (newPorts && newPorts.length > 0) {
@@ -73,7 +75,7 @@ function Connect() {
     } finally {
       setLoading(false);
     }
-  }, [actions]);
+  }, []);
 
   // Load ports on mount
   useEffect(() => {

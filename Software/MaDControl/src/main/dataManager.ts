@@ -28,11 +28,13 @@ import { dataLogger } from '@utils/logger';
 
 // ─── Settings persistence (always in Electron userData) ───────────
 
-const SETTINGS_PATH = path.join(app.getPath('userData'), 'settings.json');
-const DEFAULT_DATA_DIR = path.join(app.getPath('documents'), 'MaDControl');
+// Lazily initialized after app.whenReady() — app.getPath() is not safe at module level
+let SETTINGS_PATH: string;
+let DEFAULT_DATA_DIR: string;
 
 interface AppSettings {
   dataDir: string;
+  testCounter: number;
 }
 
 function loadSettings(): AppSettings {
@@ -43,7 +45,7 @@ function loadSettings(): AppSettings {
   } catch {
     dataLogger.warn('Corrupt settings.json — using defaults');
   }
-  return { dataDir: DEFAULT_DATA_DIR };
+  return { dataDir: DEFAULT_DATA_DIR, testCounter: 0 };
 }
 
 function saveSettings(settings: AppSettings) {
@@ -52,11 +54,11 @@ function saveSettings(settings: AppSettings) {
 
 // ─── Dynamic paths ───────────────────────────────────────────────
 
-let DATA_DIR = loadSettings().dataDir;
-let SAMPLE_PROFILES_DIR = path.join(DATA_DIR, 'sampleProfiles');
-let MOTION_PROFILES_DIR = path.join(DATA_DIR, 'motionProfiles');
-let SETS_DIR = path.join(DATA_DIR, 'sets');
-let TEST_RUNS_DIR = path.join(DATA_DIR, 'testRuns');
+let DATA_DIR: string;
+let SAMPLE_PROFILES_DIR: string;
+let MOTION_PROFILES_DIR: string;
+let SETS_DIR: string;
+let TEST_RUNS_DIR: string;
 
 function updatePaths(newDataDir: string) {
   DATA_DIR = newDataDir;
@@ -150,16 +152,186 @@ function loadAllTestRuns(): TestRunEntry[] {
   ensureDirs();
   const entries: TestRunEntry[] = [];
   for (const file of fs.readdirSync(TEST_RUNS_DIR)) {
-    if (!file.endsWith('.json')) continue;
+    if (!file.endsWith('.json') || file === 'index.json') continue;
     const entry = readJsonFile<TestRunEntry>(path.join(TEST_RUNS_DIR, file));
     if (entry) entries.push(entry);
   }
   return entries;
 }
 
+// ── Test name counter (UI-owned 6.3 sequential name) ─────────────
+
+/**
+ * Reserve the next test name (e.g. "000007"), atomically increment
+ * the counter in settings.json, and return the reserved name.
+ */
+function reserveTestName(): string {
+  const settings = loadSettings();
+  const counter = settings.testCounter ?? 0;
+  saveSettings({ ...settings, testCounter: counter + 1 });
+  /* Firmware / bridge use six ASCII chars per id; keep length stable past 999999. */
+  return (counter % 1_000_000).toString().padStart(6, '0');
+}
+
+// ── Test run index (lightweight manifest in testRuns/index.json) ──
+
+interface TestRunIndexEntry {
+  id: string;
+  testName: string;
+  sampleProfileId: string;
+  motionProfileId: string;
+  sampleProfileName: string;
+  motionProfileName: string;
+  sampleSerial: string;
+  startedAt: string;
+  status: string;
+  completedAt: string | undefined;
+}
+
+interface TestRunIndex {
+  runs: TestRunIndexEntry[];
+}
+
+interface TestRunListEntry {
+  id: string;
+  testName: string;
+  sampleProfileId: string;
+  motionProfileId: string;
+  sampleProfileName: string;
+  motionProfileName: string;
+  startedAt: string;
+  completedAt?: string;
+  status: TestRunEntry['status'];
+}
+
+interface TestRunListOptions {
+  offset?: number;
+  limit?: number;
+}
+
+interface TestRunListResponse {
+  runs: TestRunListEntry[];
+  total: number;
+  hasMore: boolean;
+}
+
+function testRunIndexPath(): string {
+  return path.join(TEST_RUNS_DIR, 'index.json');
+}
+
+function loadTestRunIndex(): TestRunIndex {
+  const idx = readJsonFile<TestRunIndex>(testRunIndexPath());
+  if (idx) return idx;
+  // First run — build index from existing per-run JSON files (backward compat)
+  const runs: TestRunIndexEntry[] = loadAllTestRuns().map((entry) => ({
+    id: entry.id,
+    testName: entry.testName,
+    sampleProfileId: entry.sampleProfileId,
+    motionProfileId: entry.motionProfileId,
+    sampleProfileName: entry.sampleProfile?.serial || entry.sampleProfileId,
+    motionProfileName: entry.motionProfile?.name || entry.motionProfileId,
+    sampleSerial: entry.sampleProfile?.serial || '',
+    startedAt: entry.startedAt,
+    status: entry.status,
+    completedAt: entry.completedAt,
+  }));
+  const built: TestRunIndex = { runs };
+  writeJsonFile(testRunIndexPath(), built);
+  return built;
+}
+
+function upsertIndexEntry(entry: TestRunEntry, sampleProfileName?: string): void {
+  ensureDirs();
+  const idx = loadTestRunIndex();
+  const indexEntry: TestRunIndexEntry = {
+    id: entry.id,
+    testName: entry.testName,
+    sampleProfileId: entry.sampleProfileId,
+    motionProfileId: entry.motionProfileId,
+    sampleProfileName: sampleProfileName ?? entry.sampleProfile?.serial ?? entry.sampleProfileId,
+    motionProfileName: entry.motionProfile?.name ?? entry.motionProfileId,
+    sampleSerial: entry.sampleProfile?.serial ?? '',
+    startedAt: entry.startedAt,
+    status: entry.status,
+    completedAt: entry.completedAt,
+  };
+  const existing = idx.runs.findIndex((r) => r.id === entry.id);
+  if (existing >= 0) {
+    idx.runs[existing] = indexEntry;
+  } else {
+    idx.runs.push(indexEntry);
+  }
+  writeJsonFile(testRunIndexPath(), idx);
+}
+
+function removeIndexEntry(id: string): void {
+  ensureDirs();
+  const idx = loadTestRunIndex();
+  idx.runs = idx.runs.filter((r) => r.id !== id);
+  writeJsonFile(testRunIndexPath(), idx);
+}
+
+function loadTestRunList(options?: TestRunListOptions): TestRunListResponse {
+  ensureDirs();
+  const idx = loadTestRunIndex();
+  const sortedRuns = idx.runs
+    .slice()
+    .sort(
+      (a, b) =>
+        new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime(),
+    );
+  const total = sortedRuns.length;
+  const safeOffset = Math.max(0, options?.offset ?? 0);
+  const safeLimit =
+    options?.limit !== undefined ? Math.max(1, options.limit) : total;
+
+  const pagedRuns = sortedRuns
+    .slice(safeOffset, safeOffset + safeLimit)
+    .map((run) => ({
+    id: run.id,
+    testName: run.testName,
+    sampleProfileId: run.sampleProfileId || '',
+    motionProfileId: run.motionProfileId || '',
+    sampleProfileName: run.sampleProfileName,
+    motionProfileName: run.motionProfileName,
+    startedAt: run.startedAt,
+    completedAt: run.completedAt,
+    status: run.status as TestRunEntry['status'],
+  }));
+
+  return {
+    runs: pagedRuns,
+    total,
+    hasMore: safeOffset + pagedRuns.length < total,
+  };
+}
+
+function loadTestRunById(id: string): TestRunEntry | null {
+  ensureDirs();
+  const idx = loadTestRunIndex();
+  const run = idx.runs.find((r) => r.id === id);
+  if (run) {
+    const byName = readJsonFile<TestRunEntry>(testRunPath(run.testName));
+    if (byName) return byName;
+  }
+
+  // Fallback for any stale index entries.
+  const all = loadAllTestRuns();
+  return all.find((entry) => entry.id === id) || null;
+}
+
 // ─── Public init / cleanup ────────────────────────────────────────
 
 export function initializeDataManager() {
+  // Initialize paths now that app is ready and app.getPath() is available
+  SETTINGS_PATH = path.join(app.getPath('userData'), 'settings.json');
+  DEFAULT_DATA_DIR = path.join(app.getPath('documents'), 'MaDControl');
+  DATA_DIR = loadSettings().dataDir;
+  SAMPLE_PROFILES_DIR = path.join(DATA_DIR, 'sampleProfiles');
+  MOTION_PROFILES_DIR = path.join(DATA_DIR, 'motionProfiles');
+  SETS_DIR = path.join(DATA_DIR, 'sets');
+  TEST_RUNS_DIR = path.join(DATA_DIR, 'testRuns');
+
   // ── Sample Profiles CRUD ────────────────────────────────────────
 
   ipcMain.handle('data-get-sample-profiles', async () => {
@@ -333,23 +505,23 @@ export function initializeDataManager() {
 
   ipcMain.handle('data-set-data-dir', async (_event, newDir: string) => {
     updatePaths(newDir);
-    saveSettings({ dataDir: newDir });
+    saveSettings({ ...loadSettings(), dataDir: newDir });
     ensureDirs();
-    sampleRunNumbers.clear();
-    loadRunNumbers();
     dataLogger.info(`Data directory changed to: ${newDir}`);
     return DATA_DIR;
   });
 
   // ── Test Runs CRUD ──────────────────────────────────────────────
 
-  ipcMain.handle('data-get-test-runs', async () => {
-    return loadAllTestRuns();
-  });
+  ipcMain.handle(
+    'data-get-test-runs',
+    async (_event, options?: TestRunListOptions) => {
+      return loadTestRunList(options);
+    },
+  );
 
   ipcMain.handle('data-get-test-run', async (_event, id: string) => {
-    const all = loadAllTestRuns();
-    return all.find((r) => r.id === id) || null;
+    return loadTestRunById(id);
   });
 
   ipcMain.handle(
@@ -357,27 +529,40 @@ export function initializeDataManager() {
     async (
       _event,
       params: {
-        testName: string;
         sampleProfileId: string;
         motionProfileId: string;
         sampleProfile: SampleProfile;
         motionProfile: MotionProfile;
         gcode: string[];
+        gaugeLengthMm?: number;
+        initialMachinePositionMm?: number;
       },
     ) => {
       ensureDirs();
+      const testName = reserveTestName();
       const entry: TestRunEntry = {
         id: crypto.randomUUID(),
-        testName: params.testName,
+        testName,
         sampleProfileId: params.sampleProfileId,
         motionProfileId: params.motionProfileId,
         sampleProfile: params.sampleProfile,
         motionProfile: params.motionProfile,
         gcode: params.gcode,
+        ...(params.gaugeLengthMm !== undefined &&
+        Number.isFinite(params.gaugeLengthMm)
+          ? { gaugeLengthMm: params.gaugeLengthMm }
+          : {}),
+        ...(params.initialMachinePositionMm !== undefined &&
+        Number.isFinite(params.initialMachinePositionMm)
+          ? { initialMachinePositionMm: params.initialMachinePositionMm }
+          : {}),
         startedAt: new Date().toISOString(),
         status: 'running',
       };
-      writeJsonFile(testRunPath(params.testName), entry);
+      writeJsonFile(testRunPath(testName), entry);
+      // Look up human-readable sample profile name for the index
+      const sp = loadAllSampleProfiles().find((p) => p.id === params.sampleProfileId);
+      upsertIndexEntry(entry, sp?.name);
       return entry;
     },
   );
@@ -385,25 +570,23 @@ export function initializeDataManager() {
   ipcMain.handle(
     'data-update-test-run',
     async (_event, id: string, updates: Partial<TestRunEntry>) => {
-      const all = loadAllTestRuns();
-      const run = all.find((r) => r.id === id);
+      const run = loadTestRunById(id);
       if (!run) return null;
       const updated = { ...run, ...updates };
       writeJsonFile(testRunPath(run.testName), updated);
+      upsertIndexEntry(updated);
       return updated;
     },
   );
 
   ipcMain.handle('data-delete-test-run', async (_event, id: string) => {
-    const all = loadAllTestRuns();
-    const run = all.find((r) => r.id === id);
+    const run = loadTestRunById(id);
     if (!run) return true;
-    // Delete JSON metadata
     const jsonPath = testRunPath(run.testName);
     if (fs.existsSync(jsonPath)) fs.unlinkSync(jsonPath);
-    // Delete CSV data
     const csvPath = testRunCsvPath(run.testName);
     if (fs.existsSync(csvPath)) fs.unlinkSync(csvPath);
+    removeIndexEntry(run.id);
     return true;
   });
 
@@ -412,8 +595,7 @@ export function initializeDataManager() {
   ipcMain.handle(
     'data-save-test-csv',
     async (_event, testRunId: string, csvData: Buffer) => {
-      const all = loadAllTestRuns();
-      const run = all.find((r) => r.id === testRunId);
+      const run = loadTestRunById(testRunId);
       if (!run) return { success: false, error: 'Test run not found' };
 
       const csvPath = testRunCsvPath(run.testName);
@@ -431,8 +613,7 @@ export function initializeDataManager() {
   // ── Read test CSV data ───────────────────────────────────────────
 
   ipcMain.handle('data-read-test-csv', async (_event, testRunId: string) => {
-    const all = loadAllTestRuns();
-    const run = all.find((r) => r.id === testRunId);
+    const run = loadTestRunById(testRunId);
     if (!run) return { success: false, error: 'Test run not found' };
 
     const csvPath = testRunCsvPath(run.testName);
@@ -448,8 +629,7 @@ export function initializeDataManager() {
   ipcMain.handle(
     'data-export-test-csv',
     async (_event, testRunId: string, exportPath: string) => {
-      const all = loadAllTestRuns();
-      const run = all.find((r) => r.id === testRunId);
+      const run = loadTestRunById(testRunId);
       if (!run) return { success: false, error: 'Test run not found' };
 
       const csvPath = testRunCsvPath(run.testName);
@@ -473,6 +653,11 @@ export function initializeDataManager() {
         );
         lines.push(
           `# Sample Width: ${sp.profile.sampleWidth} mm, Sample Thickness: ${sp.profile.sampleThickness} mm`,
+        );
+      }
+      if (run.gaugeLengthMm !== undefined && Number.isFinite(run.gaugeLengthMm)) {
+        lines.push(
+          `# Gauge length (machine position − sample extension at zero-length): ${run.gaugeLengthMm} mm`,
         );
       }
       if (mp) {

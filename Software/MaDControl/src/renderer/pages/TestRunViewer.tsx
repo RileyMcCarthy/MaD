@@ -40,13 +40,14 @@ function parseCsv(csvContent: string): CsvRow[] {
 
   return lines.slice(1).reduce<CsvRow[]>((rows, line) => {
     const parts = line.split(',');
-    if (parts.length >= 5) {
+    if (parts.length >= 4) {
+      const hasIndexColumn = parts.length >= 5;
       rows.push({
         time_us: parseFloat(parts[0]),
-        index: parseInt(parts[1], 10),
-        force_mN: parseFloat(parts[2]),
-        position_um: parseFloat(parts[3]),
-        setpoint_um: parseFloat(parts[4]),
+        index: hasIndexColumn ? parseInt(parts[1], 10) : rows.length,
+        force_mN: parseFloat(hasIndexColumn ? parts[2] : parts[1]),
+        position_um: parseFloat(hasIndexColumn ? parts[3] : parts[2]),
+        setpoint_um: parseFloat(hasIndexColumn ? parts[4] : parts[3]),
       });
     }
     return rows;
@@ -271,9 +272,13 @@ export default function TestRunViewer() {
   const expectedBaselineForTests = useMemo(() => {
     const initialSampleMm =
       chartData?.samplePositionMm?.[0] ?? chartData?.sampleSetpointMm?.[0] ?? 0;
-    const expectedStartMm = expectedPositionData?.[0] ?? null;
+    let expectedStartMm: number | null = null;
+    if (run?.gcode?.length && chartData) {
+      const raw = generateExpectedMotion(run.gcode, initialSampleMm);
+      expectedStartMm = raw.position[0] ?? null;
+    }
     return { initialSampleMm, expectedStartMm };
-  }, [chartData, expectedPositionData]);
+  }, [chartData, run?.gcode]);
 
   // Gauge length reference used for strain calculations.
   // Prefer persisted machine/sample coordinate relationship from the run.

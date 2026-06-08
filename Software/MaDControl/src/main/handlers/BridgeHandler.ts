@@ -643,7 +643,6 @@ class BridgeHandler extends EventEmitter {
       'Machine Setpoint (mm)': sample.machineSetpoint,
       'Sample Force (N)': sample.sampleForce,
       'Sample Position (mm)': sample.samplePosition,
-      Index: sample.index,
     };
   }
 

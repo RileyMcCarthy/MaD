@@ -1,0 +1,151 @@
+/**
+ * @file {{ prefix_lower }}_runtime.h
+ * @brief Auto-generated ProtoEmb C runtime callbacks + framing — DO NOT EDIT
+ */
+#ifndef {{ prefix_upper }}_RUNTIME_H
+#define {{ prefix_upper }}_RUNTIME_H
+
+#include <stdbool.h>
+#include <stdint.h>
+#include "{{ prefix_lower }}.h"
+
+#ifndef {{ prefix_upper }}_RUNTIME_MAX_PAYLOAD
+#define {{ prefix_upper }}_RUNTIME_MAX_PAYLOAD 4096U
+#endif
+
+#ifndef {{ prefix_upper }}_RUNTIME_TIMEOUT_MS
+#define {{ prefix_upper }}_RUNTIME_TIMEOUT_MS 100U
+#endif
+
+typedef enum
+{
+    {{ prefix_upper }}_RUNTIME_WRITE_DISPOSITION_NACK = 0,
+    {{ prefix_upper }}_RUNTIME_WRITE_DISPOSITION_ACK = 1,
+} {{ prefix }}_RuntimeWriteDisposition_E;
+
+typedef enum
+{
+    {{ prefix_upper }}_RUNTIME_QUERY_DISPOSITION_NACK = 0,
+    {{ prefix_upper }}_RUNTIME_QUERY_DISPOSITION_DATA = 1,
+} {{ prefix }}_RuntimeQueryDisposition_E;
+
+typedef enum
+{
+    {{ prefix_upper }}_RUNTIME_STATE_SYNC = 0,
+    {{ prefix_upper }}_RUNTIME_STATE_TYPE,
+    {{ prefix_upper }}_RUNTIME_STATE_COMMAND,
+    {{ prefix_upper }}_RUNTIME_STATE_LENGTH_LO,
+    {{ prefix_upper }}_RUNTIME_STATE_LENGTH_HI,
+    {{ prefix_upper }}_RUNTIME_STATE_DATA,
+    {{ prefix_upper }}_RUNTIME_STATE_CRC,
+} {{ prefix }}_RuntimeState_E;
+
+typedef bool (*{{ prefix }}_RuntimeSendBytesFn)(const uint8_t *data, uint16_t size, void *user_ctx);
+typedef uint32_t (*{{ prefix }}_RuntimeGetTimeMsFn)(void *user_ctx);
+
+typedef struct
+{
+    {{ prefix }}_RuntimeSendBytesFn sendBytes;
+    {{ prefix }}_RuntimeGetTimeMsFn getTimeMs;
+    void *userCtx;
+
+    {{ prefix }}_RuntimeState_E state;
+    uint32_t startMs;
+    uint8_t frameType;
+    uint8_t command;
+    uint16_t payloadLength;
+    uint16_t payloadIndex;
+    uint8_t payload[{{ prefix_upper }}_RUNTIME_MAX_PAYLOAD];
+} {{ prefix }}_Runtime_t;
+
+/**
+ * Initialize runtime state machine.
+ */
+void {{ prefix }}_Runtime_init({{ prefix }}_Runtime_t *runtime,
+                               {{ prefix }}_RuntimeSendBytesFn sendBytes,
+                               {{ prefix }}_RuntimeGetTimeMsFn getTimeMs,
+                               void *userCtx);
+
+/**
+ * Feed one incoming byte from transport into parser/dispatcher.
+ */
+void {{ prefix }}_Runtime_feedByte({{ prefix }}_Runtime_t *runtime, uint8_t byte);
+
+/**
+ * Call periodically to enforce parser timeout.
+ */
+void {{ prefix }}_Runtime_tick({{ prefix }}_Runtime_t *runtime);
+
+/**
+ * Send async notification payload from a typed struct.
+ */
+bool {{ prefix }}_Runtime_sendNotification({{ prefix }}_Runtime_t *runtime, const {{ prefix }}_Notification_t *notification);
+
+/**
+ * Send an async notification using user callback fill stub.
+ */
+bool {{ prefix }}_Runtime_sendNotificationFromCallback({{ prefix }}_Runtime_t *runtime);
+
+/* ============================================================
+ * User Callback Stubs (override in application)
+ *
+ * Semantic callbacks:
+ *   - onRead_*: READ-frame providers (returns true/false)
+ *   - onQuery_*: WRITE-frame queries (returns DATA/NACK)
+ *   - onWrite_*: WRITE-frame commands (returns ACK/NACK)
+ * ============================================================ */
+{% for msg in runtime_read_messages %}
+{% set struct_name = msg._response_name %}
+{% if struct_name %}
+bool {{ prefix }}_onRead_{{ msg._name }}({{ prefix }}_{{ struct_name }}_t *out);
+{% else %}
+bool {{ prefix }}_onRead_{{ msg._name }}(uint8_t *outPayload, uint16_t *outSize);
+{% endif %}
+{% endfor %}
+
+{% for msg in runtime_write_messages %}
+{% if msg._request_name %}
+{% if msg._semantic == "query" %}
+{{ prefix }}_RuntimeQueryDisposition_E {{ prefix }}_onQuery_{{ msg._name }}(const {{ prefix }}_{{ msg._request_name }}_t *in,
+                                                                            uint8_t *outPayload,
+                                                                            uint16_t *outSize);
+{{ prefix }}_RuntimeQueryDisposition_E {{ prefix }}_onQueryRaw_{{ msg._name }}(const uint8_t *payload,
+                                                                               uint16_t payloadSize,
+                                                                               uint8_t *outPayload,
+                                                                               uint16_t *outSize);
+{% else %}
+{{ prefix }}_RuntimeWriteDisposition_E {{ prefix }}_onWrite_{{ msg._name }}(const {{ prefix }}_{{ msg._request_name }}_t *in);
+{{ prefix }}_RuntimeWriteDisposition_E {{ prefix }}_onWriteRaw_{{ msg._name }}(const uint8_t *payload,
+                                                                               uint16_t payloadSize);
+{% endif %}
+{% elif msg._payload_type == "bool" %}
+{% if msg._semantic == "query" %}
+{{ prefix }}_RuntimeQueryDisposition_E {{ prefix }}_onQuery_{{ msg._name }}(bool in,
+                                                                            uint8_t *outPayload,
+                                                                            uint16_t *outSize);
+{% else %}
+{{ prefix }}_RuntimeWriteDisposition_E {{ prefix }}_onWrite_{{ msg._name }}(bool in);
+{% endif %}
+{% elif msg._payload_type == "none" %}
+{% if msg._semantic == "query" %}
+{{ prefix }}_RuntimeQueryDisposition_E {{ prefix }}_onQuery_{{ msg._name }}(uint8_t *outPayload,
+                                                                            uint16_t *outSize);
+{% else %}
+{{ prefix }}_RuntimeWriteDisposition_E {{ prefix }}_onWrite_{{ msg._name }}(void);
+{% endif %}
+{% else %}
+{% if msg._semantic == "query" %}
+{{ prefix }}_RuntimeQueryDisposition_E {{ prefix }}_onQuery_{{ msg._name }}(const uint8_t *payload,
+                                                                            uint16_t payloadSize,
+                                                                            uint8_t *outPayload,
+                                                                            uint16_t *outSize);
+{% else %}
+{{ prefix }}_RuntimeWriteDisposition_E {{ prefix }}_onWrite_{{ msg._name }}(const uint8_t *payload,
+                                                                            uint16_t payloadSize);
+{% endif %}
+{% endif %}
+{% endfor %}
+
+bool {{ prefix }}_fill_notification({{ prefix }}_Notification_t *out);
+
+#endif /* {{ prefix_upper }}_RUNTIME_H */

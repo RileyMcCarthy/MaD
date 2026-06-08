@@ -8,11 +8,17 @@ extern void test_dev_nvram_loadDefaultMachineProfile(void);
 extern void test_dev_nvram_saveMachineProfile(void);
 extern void test_dev_nvram_loadMachineProfile(void);
 extern void test_watchdog(void);
+extern void test_protoemb_stored_sample_roundtrip(void);
+extern void test_protoemb_runtime_send_notification_frame(void);
+extern void test_lib_utility_muldiv64_signed(void);
+extern void HAL_lock_mock_reset(void);
 int _stdio_debug_lock;
 extern dev_nvram_config_t dev_nvram_config;
 
 void setUp(void)
 {
+    HAL_lock_mock_reset();
+
     // Remove previous run files
     for (dev_nvram_channel_t channel = (dev_nvram_channel_t)0U; channel < DEV_NVRAM_CHANNEL_COUNT; channel++)
     {
@@ -38,6 +44,9 @@ void process()
     RUN_TEST(test_dev_nvram_saveMachineProfile);
     RUN_TEST(test_dev_nvram_loadMachineProfile);
     RUN_TEST(test_watchdog);
+    RUN_TEST(test_protoemb_stored_sample_roundtrip);
+    RUN_TEST(test_protoemb_runtime_send_notification_frame);
+    RUN_TEST(test_lib_utility_muldiv64_signed);
     UNITY_END();
 }
 

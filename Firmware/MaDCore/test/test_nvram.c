@@ -71,7 +71,7 @@ void test_dev_nvram_saveMachineProfile(void)
     TEST_ASSERT_EQUAL_MEMORY(&currentProfile, &dev_nvram_machineProfileTest1, sizeof(MachineProfile));
 
     // Check that the file was created and contains the new data
-    FILE *file = fopen("./test/sd/MachineProfile.json", "r");
+    FILE *file = fopen("./test/sd/profile.bin", "r");
     TEST_ASSERT_NOT_NULL(file);
     MachineProfile fileProfile;
     TEST_ASSERT_EQUAL_INT(fread(&fileProfile, sizeof(MachineProfile), 1, file), 1);
@@ -82,7 +82,7 @@ void test_dev_nvram_saveMachineProfile(void)
 void test_dev_nvram_loadMachineProfile(void)
 {
     // create a file with the test profile
-    FILE *file = fopen("./test/sd/MachineProfile.json", "w");
+    FILE *file = fopen("./test/sd/profile.bin", "w");
     TEST_ASSERT_NOT_NULL(file);
     TEST_ASSERT_EQUAL_INT(fwrite(&dev_nvram_machineProfileTest1, sizeof(MachineProfile), 1, file), 1);
     fclose(file);

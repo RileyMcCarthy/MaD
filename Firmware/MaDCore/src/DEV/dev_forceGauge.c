@@ -10,6 +10,7 @@
 #include "IO_Debug.h"
 #include <string.h>
 #include "emulation_helpers.h"
+#include "lib_utility.h"
 /**********************************************************************
  * Constants
  **********************************************************************/
@@ -38,8 +39,12 @@ typedef enum
 
 typedef struct
 {
-    uint32_t zeroForceCount; // adc at zero force
-    int32_t countPerForce;  // adc count per force
+    uint32_t zeroForceCount; // raw ADC reading at 0 N
+    /* ADC counts per Newton (signed: sign encodes load-cell polarity). Despite the
+     * misleading `forceGaugeNPerStep` name on the wire / UI side (kept for protocol
+     * back-compat), the stored value is counts-per-N — confirmed by the default
+     * calibration of -658 (an N-per-count value would round to 0 in int32). */
+    int32_t countPerForce;
 } dev_forceGauge_channelNVRAM_S;
 
 typedef struct
@@ -50,7 +55,7 @@ typedef struct
 
 typedef struct
 {
-    int32_t force;
+    int32_t force; // mN
     uint32_t index;
     bool ready;
 } dev_forceGauge_channelOutput_S;
@@ -135,15 +140,14 @@ static void dev_forceGauge_private_runAction(dev_forceGauge_channel_E channel)
         break;
     case DEV_FORCEGAUGE_STATE_RUNNING:
         dev_forceGauge_data.channel[channel].input.responding = IO_ADS122U04_receiveConversion(dev_forceGauge_channelConfig[channel].adcChannel, &dev_forceGauge_data.channel[channel].input.rawADC, 1000000);
-        if (dev_forceGauge_data.channel[channel].input.rawADC > dev_forceGauge_data.channel[channel].nvram.zeroForceCount)
         {
-            const int32_t nomalizedCount = dev_forceGauge_data.channel[channel].input.rawADC - dev_forceGauge_data.channel[channel].nvram.zeroForceCount;
-            dev_forceGauge_data.channel[channel].output.force = (nomalizedCount) / dev_forceGauge_data.channel[channel].nvram.countPerForce;
-        }
-        else
-        {
-            const int32_t nomalizedCount = dev_forceGauge_data.channel[channel].nvram.zeroForceCount - dev_forceGauge_data.channel[channel].input.rawADC;
-            dev_forceGauge_data.channel[channel].output.force = -1*(nomalizedCount) / dev_forceGauge_data.channel[channel].nvram.countPerForce;
+            /* mN = (counts * 1000) / (counts/N).  *1000 is the only unit shift vs the previous
+             * version that returned N — downstream (app_control, sample log) now expects mN.
+             * lib_utility_muldiv64_signed returns 0 when countPerForce == 0. */
+            const int32_t normalizedCount = (int32_t)dev_forceGauge_data.channel[channel].input.rawADC -
+                                            (int32_t)dev_forceGauge_data.channel[channel].nvram.zeroForceCount;
+            dev_forceGauge_data.channel[channel].output.force = lib_utility_muldiv64_signed(
+                normalizedCount, 1000, dev_forceGauge_data.channel[channel].nvram.countPerForce);
         }
         //DEBUG_INFO("Force Gauge %d: %d, %d, %d, %d\n", channel, dev_forceGauge_data.channel[channel].output.force, dev_forceGauge_data.channel[channel].input.rawADC, dev_forceGauge_data.channel[channel].nvram.zeroForceCount, dev_forceGauge_data.channel[channel].nvram.countPerForce);
         dev_forceGauge_data.channel[channel].output.index++;

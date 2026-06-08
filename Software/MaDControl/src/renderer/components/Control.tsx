@@ -166,6 +166,7 @@ function Control() {
               <Grid item>
                 <Tooltip title="Zero Force">
                   <IconButton
+                    aria-label="Zero Force"
                     onClick={handleZeroForce}
                     sx={{ padding: '16px', margin: '3px' }}
                   >
@@ -176,6 +177,7 @@ function Control() {
               <Grid item>
                 <Tooltip title="Zero Length">
                   <IconButton
+                    aria-label="Zero Length"
                     onClick={handleZeroLength}
                     sx={{ padding: '16px', margin: '3px' }}
                   >

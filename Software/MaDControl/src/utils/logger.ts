@@ -37,6 +37,5 @@ export const createLogger = (context: string): Logger => new Logger(context);
 
 // Pre-configured loggers for common modules
 export const deviceLogger = createLogger('DeviceInterface');
-export const serialLogger = createLogger('SerialPort');
 export const dataLogger = createLogger('DataProcessor');
 export const uiLogger = createLogger('UI');

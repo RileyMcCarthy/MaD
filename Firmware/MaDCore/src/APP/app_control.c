@@ -5,8 +5,10 @@
  * Includes
  **********************************************************************/
 #include "app_control.h"
+#include "app_gauge.h"
 #include "app_monitor.h"
 #include "app_messageSlave.h"
+#include "app_testManagement.h"
 
 #include "dev_nvram.h"
 #include "dev_cogManager.h"
@@ -38,8 +40,6 @@
 
 typedef struct
 {
-    bool triggerTestStart;
-    bool triggerTestEnd;
     bool triggerMotionEnabled;
     bool triggerMotionDisabled;
 } app_control_request_S;
@@ -48,7 +48,6 @@ typedef struct
 {
     bool motionEnabled;
     bool limitSpeed;
-    bool testRunning;
 } app_control_output_S;
 
 typedef struct
@@ -98,18 +97,6 @@ static app_control_state_E app_control_private_getDesiredState(void);
 static void app_control_private_processRequests(void)
 {
     APP_CONTROL_LOCK_REQ_BLOCK();
-    if (app_control_data.request.triggerTestStart)
-    {
-        app_control_data.testRunning = true;
-        app_control_data.request.triggerTestStart = false;
-    }
-
-    if (app_control_data.request.triggerTestEnd)
-    {
-        app_control_data.testRunning = false;
-        app_control_data.request.triggerTestEnd = false;
-    }
-
     if (app_control_data.request.triggerMotionEnabled)
     {
         app_control_data.motionEnabled = true;
@@ -151,11 +138,11 @@ static app_control_fault_E app_control_private_processFaults(void)
 
 static app_control_restriction_E app_control_private_processRestrictions(void)
 {
-    if (app_control_data.out.testRunning)
+    if (app_control_data.testRunning)
     {
         /*// Check sample profile limits during test execution
-        int32_t currentForce = app_monitor_getSampleForce();
-        int32_t currentPosition = app_monitor_getSamplePosition();
+        int32_t currentForce = app_gauge_getForce(APP_GAUGE_COORD_SAMPLE);
+        int32_t currentPosition = app_gauge_getPosition(APP_GAUGE_COORD_SAMPLE);
 
         // Convert current force from mN to N for comparison
         float currentForceN = currentForce / 1000.0f;
@@ -194,7 +181,8 @@ static app_control_restriction_E app_control_private_processRestrictions(void)
         app_control_data.restriction[APP_CONTROL_RESTRICTION_SAMPLE_TENSION] = false;
     }
 
-    app_control_data.restriction[APP_CONTROL_RESTRICTION_MACHINE_TENSION] = (app_monitor_getAbsoluteForce() > app_control_data.nvram.maxMachineTension);
+    app_control_data.restriction[APP_CONTROL_RESTRICTION_MACHINE_TENSION] =
+        (app_gauge_getForce(APP_GAUGE_COORD_MACHINE) > app_control_data.nvram.maxMachineTension);
     app_control_data.restriction[APP_CONTROL_RESTRICTION_UPPER_ENDSTOP] = HAL_GPIO_getActive(HAL_GPIO_ENDSTOP_UPPER);
     app_control_data.restriction[APP_CONTROL_RESTRICTION_LOWER_ENDSTOP] = HAL_GPIO_getActive(HAL_GPIO_ENDSTOP_LOWER);
     app_control_data.restriction[APP_CONTROL_RESTRICTION_DOOR] = HAL_GPIO_getActive(HAL_GPIO_ENDSTOP_DOOR);
@@ -247,22 +235,18 @@ static void app_control_private_setOutput(void)
     case APP_CONTROL_STATE_DISABLED:
         app_control_data.out.motionEnabled = false;
         app_control_data.out.limitSpeed = false;
-        app_control_data.out.testRunning = false;
         break;
     case APP_CONTROL_STATE_RESTRICTED:
         app_control_data.out.motionEnabled = true;
         app_control_data.out.limitSpeed = true;
-        app_control_data.out.testRunning = false;
         break;
     case APP_CONTROL_STATE_MANUAL:
         app_control_data.out.motionEnabled = true;
         app_control_data.out.limitSpeed = false;
-        app_control_data.out.testRunning = false;
         break;
     case APP_CONTROL_STATE_TEST:
         app_control_data.out.motionEnabled = true;
         app_control_data.out.limitSpeed = false;
-        app_control_data.out.testRunning = true;
         break;
     case APP_CONTROL_STATE_COUNT:
     default:
@@ -286,6 +270,7 @@ void app_control_init(int lock)
 void app_control_run(void)
 {
     app_control_private_processRequests();
+    app_control_data.testRunning = app_testManagement_isRunning();
     app_control_data.faultedReason = app_control_private_processFaults();
     app_control_data.restrictedReason = app_control_private_processRestrictions();
     app_control_data.state = app_control_private_getDesiredState();
@@ -327,35 +312,6 @@ bool app_control_speedLimited(void)
     const bool limitSpeed = app_control_data.out.limitSpeed;
     APP_CONTROL_LOCK_REL();
     return limitSpeed;
-}
-
-bool app_control_testRunning(void)
-{
-    APP_CONTROL_LOCK_REQ_BLOCK();
-    const bool testRunning = app_control_data.out.testRunning;
-    APP_CONTROL_LOCK_REL();
-    return testRunning;
-}
-
-bool app_control_triggerTestStart(void)
-{
-    bool testReady = false;
-    APP_CONTROL_LOCK_REQ_BLOCK();
-    if (app_control_data.out.motionEnabled)
-    {
-        app_control_data.request.triggerTestStart = true;
-        testReady = true;
-    }
-    APP_CONTROL_LOCK_REL();
-    return testReady;
-}
-
-bool app_control_triggerTestEnd(void)
-{
-    APP_CONTROL_LOCK_REQ_BLOCK();
-    app_control_data.request.triggerTestEnd = true;
-    APP_CONTROL_LOCK_REL();
-    return true;
 }
 
 bool app_control_triggerMotionEnabled(void)

@@ -1,0 +1,426 @@
+protocol_version: 1
+
+nodes:
+  - ui
+  - madcore
+
+defaults:
+  encoding: packed
+  byte_order: little_endian
+  bit_order: lsb_first
+  reserved_bits: 0
+
+# ============================================================
+# Priority Model
+# ============================================================
+# The serial link is half-duplex request/response. The UI queues
+# outgoing messages into two priority levels:
+#
+#   HIGH — on_write and on_request messages (gcode uploads, config
+#          reads/writes, commands). Sent first, in FIFO order.
+#
+#   LOW  — periodic polling reads (sample, state). Coalesced so
+#          only the latest request per type is kept. Sent only
+#          when the high-priority queue is empty.
+#
+# Only one message is in-flight at a time. The next message is
+# sent after the firmware responds (ACK/NACK/DATA) or after a
+# 2-second timeout.
+#
+# This ensures that interactive operations (motion commands,
+# gcode streaming, file downloads) are never blocked by
+# background telemetry polling.
+
+# ============================================================
+# Enums
+# ============================================================
+enums:
+  FaultedReason:
+    description: "Machine fault codes"
+    variants:
+      - NONE
+      - COG
+      - WATCHDOG
+      - ESD_POWER
+      - ESD_SWITCH
+      - ESD_UPPER
+      - ESD_LOWER
+      - SERVO_COMMUNICATION
+      - FORCE_GAUGE_COMMUNICATION
+
+  RestrictedReason:
+    description: "Motion restriction codes"
+    variants:
+      - NONE
+      - SAMPLE_LENGTH
+      - SAMPLE_TENSION
+      - MACHINE_TENSION
+      - UPPER_ENDSTOP
+      - LOWER_ENDSTOP
+      - DOOR
+
+  MotionState:
+    description: "Motion subsystem state"
+    variants:
+      - DISABLED
+      - WAITING
+      - MOVING
+
+  GCode:
+    description: "G-code command identifiers"
+    remap: true
+    variants:
+      - { name: RAPID_MOVE,   value: 0 }
+      - { name: LINEAR_MOVE,  value: 1 }
+      - { name: CW_ARC,       value: 2 }
+      - { name: CCW_ARC,      value: 3 }
+      - { name: DWELL,        value: 4 }
+      - { name: HOME,         value: 28 }
+      - { name: ABSOLUTE,     value: 90 }
+      - { name: INCREMENTAL,  value: 91 }
+      - { name: STOP,         value: 122 }
+
+  NotificationType:
+    description: "Notification severity levels"
+    variants:
+      - MESSAGE
+      - INFO
+      - WARNING
+      - ERROR
+      - SUCCESS
+
+  LoggingState:
+    description: "Data logging state"
+    variants:
+      - IDLE
+      - RUNNING
+      - STOPPING
+
+# ============================================================
+# Structs
+# ============================================================
+structs:
+  # ── High-frequency wire messages (packed for bandwidth) ──
+
+  MachineState:
+    encoding: packed
+    description: "Machine state flags and status"
+    fields:
+      - name: faultedReason
+        type: FaultedReason
+      - name: restrictedReason
+        type: RestrictedReason
+      - name: testRunning
+        type: bool
+      - name: motionEnabled
+        type: bool
+    # 4+3+1+1 = 9 bits → 2 bytes
+
+  Sample:
+    encoding: packed
+    description: "Live sample data sent periodically"
+    fields:
+      - name: machineForce
+        type: int32
+        unit: N
+        scale: 1000        # struct stores mN; use set/get accessors for N
+        raw_storage: true
+        min: -100
+        max: 100
+      - name: machinePosition
+        type: int32
+        unit: mm
+        scale: 1000        # struct stores µm; use set/get accessors for mm
+        raw_storage: true
+        min: -200
+        max: 200
+      - name: machineSetpoint
+        type: int32
+        unit: mm
+        scale: 1000        # struct stores µm; use set/get accessors for mm
+        raw_storage: true
+        min: -200
+        max: 200
+      - name: sampleForce
+        type: int32
+        unit: N
+        scale: 1000        # struct stores mN; use set/get accessors for N
+        raw_storage: true
+        min: -100
+        max: 100
+      - name: samplePosition
+        type: int32
+        unit: mm
+        scale: 1000        # struct stores µm; use set/get accessors for mm
+        raw_storage: true
+        min: -200
+        max: 200
+
+  Move:
+    encoding: packed
+    description: "Binary motion command (G-code move)"
+    fields:
+      - name: g
+        type: GCode
+      - name: x
+        type: int32
+        unit: mm
+        scale: 1000        # 1 µm precision
+        min: -200
+        max: 200
+      - name: f
+        type: int32
+        unit: mm/s
+        scale: 1000        # 1 µm/s precision
+        min: 0
+        max: 100
+      - name: p
+        type: uint32
+        unit: ms
+        scale: 1
+        min: 0
+        max: 65535
+
+  # ── Storage struct (packed for faster serial download) ──
+
+  StoredSample:
+    encoding: packed
+    description: "Sample written to SD card binary files"
+    fields:
+      - name: force
+        type: int32
+        unit: N
+        scale: 1000        # stored as mN wire steps
+        raw_storage: true
+        min: -100
+        max: 100
+      - name: position
+        type: int32
+        unit: mm
+        scale: 1000        # stored as µm wire steps
+        raw_storage: true
+        min: -200
+        max: 200
+      - name: time
+        type: uint32
+        unit: us
+        scale: 1
+        min: 0
+        max: 4294967295
+      - name: setpoint
+        type: int32
+        unit: mm
+        scale: 1000        # stored as µm wire steps
+        raw_storage: true
+        min: -200
+        max: 200
+
+  # ── Config structs (infrequent, byte-aligned) ──
+
+  MachineConfiguration:
+    encoding: aligned
+    description: "Machine profile stored in NVRAM"
+    fields:
+      - name: name
+        type: string
+        max_length: 20
+      - name: encoderStepsPerMM
+        type: int32
+        unit: steps/mm
+        scale: 1
+      - name: servoStepsPerMM
+        type: int32
+        unit: steps/mm
+        scale: 1
+      - name: forceGaugeNPerStep
+        type: int32
+        unit: N/step
+        scale: 1
+      - name: forceGaugeZeroOffset
+        type: int32
+        unit: steps
+        scale: 1
+      - name: maxPosition
+        type: int32
+        unit: mm
+        scale: 1
+      - name: maxVelocity
+        type: int32
+        unit: mm/s
+        scale: 1
+      - name: maxAcceleration
+        type: int32
+        unit: mm/s2
+        scale: 1
+      - name: maxForceTensile
+        type: int32
+        unit: N
+        scale: 1000       # stored as mN
+      - name: homingVelocity
+        type: int32
+        unit: mm/s
+        scale: 1
+      - name: homingOffset
+        type: int32
+        unit: mm
+        scale: 1
+      - name: jawOffset
+        type: int32
+        unit: mm
+        scale: 1
+
+  SampleProfile:
+    encoding: aligned
+    description: "Sample profile — material test limits"
+    fields:
+      - name: maxForce
+        type: uint32
+        unit: N
+        scale: 1000       # stored as mN
+      - name: maxVelocity
+        type: uint32
+        unit: mm/s
+        scale: 1
+      - name: maxDisplacement
+        type: uint32
+        unit: mm
+        scale: 1
+      - name: sampleWidth
+        type: uint32
+        unit: mm
+        scale: 1
+      - name: sampleThickness
+        type: uint32
+        unit: mm
+        scale: 1
+
+  FirmwareVersion:
+    encoding: aligned
+    description: "Firmware version string"
+    fields:
+      - name: version
+        type: string
+        max_length: 16
+
+  TestRun:
+    encoding: aligned
+    description: "Test run command — references uploaded G-code and assigns test data ID"
+    fields:
+      - name: gcodeId
+        type: string
+        max_length: 7
+      - name: testDataId
+        type: string
+        max_length: 7
+
+  Notification:
+    encoding: aligned
+    description: "Firmware notification message"
+    fields:
+      - name: type
+        type: NotificationType
+      - name: message
+        type: string
+        max_length: 100
+
+# ============================================================
+# Messages — routing table with timing
+# ============================================================
+messages:
+  # ── Periodic telemetry (madcore transmits) ──
+  sample:
+    tx_node: madcore
+    period_ms: 10
+    command_id: 0
+    priority: low
+    response: Sample
+
+  state:
+    tx_node: madcore
+    period_ms: 1000
+    command_id: 1
+    priority: low
+    response: MachineState
+
+  # ── Read/query (UI transmits request) ──
+  machine_configuration:
+    tx_node: ui
+    command_id: 2
+    priority: high
+    response: MachineConfiguration
+
+  firmware_version:
+    tx_node: ui
+    command_id: 3
+    priority: high
+    response: FirmwareVersion
+
+  sample_profile:
+    tx_node: ui
+    command_id: 4
+    priority: high
+    response: SampleProfile
+
+  # ── Commands (UI transmits; ACK/NACK unless response provided) ──
+  machine_configuration_write:
+    tx_node: ui
+    command_id: 0
+    priority: high
+    request: MachineConfiguration
+
+  motion_enable:
+    tx_node: ui
+    command_id: 1
+    priority: high
+    request: bool
+
+  test_run:
+    tx_node: ui
+    command_id: 2
+    priority: high
+    request: TestRun
+
+  manual_move:
+    tx_node: ui
+    command_id: 3
+    priority: high
+    request: Move
+
+  test_move:
+    tx_node: ui
+    command_id: 4
+    priority: high
+    request: Move
+    note: "Empty payload opens gcode channel; packed moves are appended"
+
+  sample_profile_write:
+    tx_node: ui
+    command_id: 5
+    priority: high
+    request: SampleProfile
+
+  gauge_length:
+    tx_node: ui
+    command_id: 6
+    priority: high
+    request: none
+
+  gauge_force:
+    tx_node: ui
+    command_id: 7
+    priority: high
+    request: none
+
+  file_download:
+    tx_node: ui
+    command_id: 9
+    priority: high
+    request: raw
+    note: "Binary request: testName(16) + sampleIndex(u32) + sampleCount(u32)"
+    response: StoredSample
+
+  # ── Async (madcore transmits unsolicited) ──
+  notification:
+    tx_node: madcore
+    priority: high
+    response: Notification

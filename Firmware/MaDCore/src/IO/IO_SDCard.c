@@ -55,6 +55,7 @@ typedef struct
     bool queueFull;
     bool eof;
     FILE *file;
+    bool lastOpenFailed;
 
     IO_SDCard_state_E state;
     IO_SDCard_mode_E mode;
@@ -212,6 +213,10 @@ static void IO_SDCard_private_exitAction(IO_SDCard_channel_E channel)
         IO_SDCARD_INTERNAL_REQUEST(channel).enable = false;
         break;
     case IO_SDCARD_STATE_OPEN:
+        if (IO_SDCard_data.channelData[channel].file == NULL)
+        {
+            IO_SDCard_data.channelData[channel].lastOpenFailed = true;
+        }
         break;
     case IO_SDCARD_STATE_ACTIVE:
         break;
@@ -275,6 +280,7 @@ void IO_SDCard_init(int lock)
         IO_SDCard_data.channelData[channel].state = IO_SDCARD_STATE_INIT;
         IO_SDCard_data.channelData[channel].file = NULL;
         IO_SDCard_data.channelData[channel].eof = false;
+        IO_SDCard_data.channelData[channel].lastOpenFailed = false;
         lib_staticQueue_init(&IO_SDCard_data.channelData[channel].queue,
                              IO_SDCard_config.channelConfig[channel].queueBuffer,
                              IO_SDCard_config.channelConfig[channel].queueBufferSize,
@@ -309,6 +315,7 @@ bool IO_SDCard_open(IO_SDCard_channel_E channel, const char *fileName, IO_SDCard
     if (channel < IO_SDCARD_CHANNEL_COUNT)
     {
         IO_SDCARD_LOCK_REQ_BLOCK();
+        IO_SDCard_data.channelData[channel].lastOpenFailed = false;
         IO_SDCARD_LOCKED_REQUEST(channel).enable = true;
         IO_SDCARD_LOCKED_INPUT(channel).mode = mode;
         snprintf(IO_SDCARD_LOCKED_INPUT(channel).fileName, sizeof(IO_SDCARD_LOCKED_INPUT(channel).fileName),
@@ -327,8 +334,21 @@ bool IO_SDCard_close(IO_SDCard_channel_E channel)
     if (channel < IO_SDCARD_CHANNEL_COUNT)
     {
         IO_SDCARD_LOCK_REQ_BLOCK();
-        IO_SDCARD_LOCKED_REQUEST(channel).disable = true;
-        success = true;
+        /* Closing while already INIT must not latch disable: INIT never consumes disable in the
+         * state machine (only OPEN/ACTIVE does), so a redundant close leaves disable stuck and the
+         * next WRITE session can reopen then immediately fall through ACTIVE→CLOSE with an empty
+         * queue (truncated file before new moves are queued). */
+        if (IO_SDCard_data.channelData[channel].state == IO_SDCARD_STATE_INIT)
+        {
+            IO_SDCARD_LOCKED_REQUEST(channel).disable = false;
+            IO_SDCARD_INTERNAL_REQUEST(channel).disable = false;
+            success = true;
+        }
+        else
+        {
+            IO_SDCARD_LOCKED_REQUEST(channel).disable = true;
+            success = true;
+        }
         IO_SDCARD_LOCK_REL();
     }
     return success;
@@ -342,6 +362,28 @@ bool IO_SDCard_isClosed(IO_SDCard_channel_E channel)
         closed = (IO_SDCard_data.channelData[channel].state == IO_SDCARD_STATE_INIT);
     }
     return closed;
+}
+
+bool IO_SDCard_lastOpenFailed(IO_SDCard_channel_E channel)
+{
+    bool failed = false;
+    if (channel < IO_SDCARD_CHANNEL_COUNT)
+    {
+        IO_SDCARD_LOCK_REQ_BLOCK();
+        failed = IO_SDCard_data.channelData[channel].lastOpenFailed;
+        IO_SDCARD_LOCK_REL();
+    }
+    return failed;
+}
+
+void IO_SDCard_clearLastOpenFailed(IO_SDCard_channel_E channel)
+{
+    if (channel < IO_SDCARD_CHANNEL_COUNT)
+    {
+        IO_SDCARD_LOCK_REQ_BLOCK();
+        IO_SDCard_data.channelData[channel].lastOpenFailed = false;
+        IO_SDCARD_LOCK_REL();
+    }
 }
 
 bool IO_SDCard_push(IO_SDCard_channel_E channel, void *data, uint32_t size)
@@ -383,12 +425,34 @@ uint32_t IO_SDCard_popMultiple(IO_SDCard_channel_E channel, void *buffer, uint32
     return count;
 }
 
-uint32_t IO_SDCard_readDirect(IO_SDCard_channel_E channel, const char *fileName,
-                              void *buffer, uint32_t itemIndex, uint32_t itemCount)
+uint32_t IO_SDCard_readDirectEx(IO_SDCard_channel_E channel, const char *fileName,
+                                void *buffer, uint32_t itemIndex, uint32_t itemCount,
+                                IO_SDCard_readDirectStatus_E *outStatus)
 {
     uint32_t itemsRead = 0U;
+    if (outStatus != NULL)
+    {
+        *outStatus = IO_SDCARD_READDIRECT_STATUS_FILE_ERROR;
+    }
+
     if ((channel >= IO_SDCARD_CHANNEL_COUNT) || (buffer == NULL) || (itemCount == 0U))
     {
+        return 0U;
+    }
+
+    IO_SDCard_state_E channelState;
+    IO_SDCard_mode_E channelMode;
+    IO_SDCARD_LOCK_REQ_BLOCK();
+    channelState = IO_SDCard_data.channelData[channel].state;
+    channelMode = IO_SDCard_data.channelData[channel].mode;
+    IO_SDCARD_LOCK_REL();
+
+    if ((channelState != IO_SDCARD_STATE_INIT) && (channelMode == IO_SDCARD_MODE_WRITE))
+    {
+        if (outStatus != NULL)
+        {
+            *outStatus = IO_SDCARD_READDIRECT_STATUS_BUSY;
+        }
         return 0U;
     }
 
@@ -404,15 +468,33 @@ uint32_t IO_SDCard_readDirect(IO_SDCard_channel_E channel, const char *fileName,
         if (fseek(file, seekOffset, SEEK_SET) == 0)
         {
             itemsRead = (uint32_t)fread(buffer, itemSize, itemCount, file);
+            if (outStatus != NULL)
+            {
+                *outStatus = IO_SDCARD_READDIRECT_STATUS_OK;
+            }
+        }
+        else if (outStatus != NULL)
+        {
+            *outStatus = IO_SDCARD_READDIRECT_STATUS_SEEK_ERROR;
         }
         fclose(file);
     }
     else
     {
         DEBUG_ERROR("IO_SDCard_readDirect: failed to open %s\n", filePath);
+        if (outStatus != NULL)
+        {
+            *outStatus = IO_SDCARD_READDIRECT_STATUS_FILE_ERROR;
+        }
     }
 
     return itemsRead;
+}
+
+uint32_t IO_SDCard_readDirect(IO_SDCard_channel_E channel, const char *fileName,
+                              void *buffer, uint32_t itemIndex, uint32_t itemCount)
+{
+    return IO_SDCard_readDirectEx(channel, fileName, buffer, itemIndex, itemCount, NULL);
 }
 
 bool IO_SDCard_isReadDone(IO_SDCard_channel_E channel)

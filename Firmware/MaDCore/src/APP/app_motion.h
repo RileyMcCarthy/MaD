@@ -2,7 +2,9 @@
 #define APP_MOTION_H
 //
 // Created by Riley McCarthy on 25/04/24.
-// @ this is a nested state machine, I think we dont actually need the main one
+// @brief Pure motion executor: pops moves from a queue and drives the stepper.
+//        Knows nothing about manual vs test sources or the SD card.
+//        See app_testManagement for the test session lifecycle.
 //
 /**********************************************************************
  * Includes
@@ -63,12 +65,14 @@ typedef struct __attribute__((packed))
  * Public Function Definitions
  **********************************************************************/
 void app_motion_init(int lock);
-void app_motion_run();
+void app_motion_run(void);
 
-// Requests
-bool app_motion_addManualMove(app_motion_move_t *move);
-void app_motion_clearMoveQueue(void);
-void app_motion_zeroPosition(void);
+// Push a move onto the queue. Returns false if the queue is full.
+bool app_motion_addMove(const app_motion_move_t *move);
+
+// Stop the in-flight move (if any) and empty the queue. Used by
+// app_testManagement on test end.
+void app_motion_abortAndClear(void);
 
 // Getters
 int32_t app_motion_getSetpoint(void);

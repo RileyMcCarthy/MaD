@@ -71,6 +71,14 @@ typedef struct
 {
     IO_SDCard_channelConfig_S channelConfig[IO_SDCARD_CHANNEL_COUNT];
 } IO_SDCard_config_S;
+
+typedef enum
+{
+    IO_SDCARD_READDIRECT_STATUS_OK = 0,
+    IO_SDCARD_READDIRECT_STATUS_BUSY,
+    IO_SDCARD_READDIRECT_STATUS_FILE_ERROR,
+    IO_SDCARD_READDIRECT_STATUS_SEEK_ERROR,
+} IO_SDCard_readDirectStatus_E;
 /**********************************************************************
  * Public Function Definitions
  **********************************************************************/
@@ -95,6 +103,14 @@ bool IO_SDCard_close(IO_SDCard_channel_E channel);
  * @brief Check if a channel is in INIT state (closed / idle).
  */
 bool IO_SDCard_isClosed(IO_SDCard_channel_E channel);
+
+/**
+ * @brief True if the last completed open attempt on this channel failed (fopen returned NULL).
+ * @details Cleared by IO_SDCard_open (new attempt) and IO_SDCard_clearLastOpenFailed.
+ */
+bool IO_SDCard_lastOpenFailed(IO_SDCard_channel_E channel);
+
+void IO_SDCard_clearLastOpenFailed(IO_SDCard_channel_E channel);
 
 /**
  * @brief Push a struct into a WRITE-mode channel's queue.
@@ -131,6 +147,10 @@ uint32_t IO_SDCard_popMultiple(IO_SDCard_channel_E channel, void *buffer, uint32
  */
 uint32_t IO_SDCard_readDirect(IO_SDCard_channel_E channel, const char *fileName,
                               void *buffer, uint32_t itemIndex, uint32_t itemCount);
+
+uint32_t IO_SDCard_readDirectEx(IO_SDCard_channel_E channel, const char *fileName,
+                                void *buffer, uint32_t itemIndex, uint32_t itemCount,
+                                IO_SDCard_readDirectStatus_E *outStatus);
 
 /**
  * @brief Check if a READ-mode channel has reached EOF and its queue is empty.

@@ -1,0 +1,51 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Build artifacts
+target/
+**/target/
+.pio/
+**/.pio/
+release/build/
+release/app/dist/
+**/dist/
+**/build/
+
+# SIL artifacts
+SIL/test-results/
+SIL/playwright-report/
+SIL/sd/
+
+# Firmware generated/build
+Firmware/MaDCore/src/Generated/
+Firmware/MaDCore/.pio/
+
+# Software generated
+Software/MaDControl/src/main/generated/
+
+# Rust generated protocol
+SIL/embsim/peripherals/src/generated/
+
+# Hardware backups & large binaries
+**/*.kicad_pcb-bak
+**/*.kicad_sch-bak
+**/*-backups/
+**/fp-info-cache
+
+# Logs / coverage / caches
+**/*.log
+coverage/
+.cache/
+.next/
+.turbo/
+
+# Lockfiles (huge, low semantic value)
+**/package-lock.json
+**/yarn.lock
+**/Cargo.lock
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/

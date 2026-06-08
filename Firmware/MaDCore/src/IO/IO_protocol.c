@@ -144,9 +144,17 @@ IO_protocol_incommingType_E IO_protocol_recieveRequest(IO_protocol_readType_E *r
             {
                 const uint16_t dataLength = bytes[0] | (bytes[1] << 8);
                 IO_protocol_data.recieve.dataLength = LIB_UTILITY_LIMIT(dataLength, 0U, maxSize);
-                IO_protocol_data.recieve.state = IO_PROTOCOL_RECIEVE_STATE_DATA;
                 IO_protocol_data.recieve.dataIndex = 0U;
                 DEBUG_INFO("Recieved data length: %d\n", IO_protocol_data.recieve.dataLength);
+                if (IO_protocol_data.recieve.dataLength == 0U)
+                {
+                    // Zero-length payload: skip DATA state, go directly to CRC
+                    IO_protocol_data.recieve.state = IO_PROTOCOL_RECIEVE_STATE_CRC;
+                }
+                else
+                {
+                    IO_protocol_data.recieve.state = IO_PROTOCOL_RECIEVE_STATE_DATA;
+                }
             }
             else
             {

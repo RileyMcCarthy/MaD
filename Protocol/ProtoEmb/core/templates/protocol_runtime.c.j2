@@ -1,0 +1,600 @@
+/**
+ * @file {{ prefix_lower }}_runtime.c
+ * @brief Auto-generated ProtoEmb C runtime callbacks + framing — DO NOT EDIT
+ */
+
+#include "{{ prefix_lower }}_runtime.h"
+
+#include <string.h>
+
+#ifndef {{ prefix_upper }}_RUNTIME_WEAK
+#if defined(__GNUC__) || defined(__clang__)
+#define {{ prefix_upper }}_RUNTIME_WEAK __attribute__((weak))
+#else
+#define {{ prefix_upper }}_RUNTIME_WEAK
+#endif
+#endif
+
+#define {{ prefix_upper }}_FRAME_SYNC (0x55U)
+#define {{ prefix_upper }}_FRAME_TYPE_READ_OR_NACK (0x00U)
+#define {{ prefix_upper }}_FRAME_TYPE_WRITE_OR_ACK (0x01U)
+#define {{ prefix_upper }}_FRAME_TYPE_DATA (0x02U)
+#define {{ prefix_upper }}_FRAME_TYPE_NOTIFICATION (0x03U)
+
+static uint8_t {{ prefix }}_Runtime_crc8(const uint8_t *data, uint16_t len)
+{
+    uint8_t crc = 0U;
+    for (uint16_t i = 0U; i < len; i++)
+    {
+        uint8_t inbyte = data[i];
+        for (uint8_t j = 0U; j < 8U; j++)
+        {
+            const uint8_t mix = (uint8_t)((crc ^ inbyte) & 0x01U);
+            crc >>= 1U;
+            if (mix != 0U)
+            {
+                crc ^= 0x8CU;
+            }
+            inbyte >>= 1U;
+        }
+    }
+    return crc;
+}
+
+static void {{ prefix }}_Runtime_reset({{ prefix }}_Runtime_t *runtime)
+{
+    runtime->state = {{ prefix_upper }}_RUNTIME_STATE_SYNC;
+    runtime->payloadLength = 0U;
+    runtime->payloadIndex = 0U;
+}
+
+static bool {{ prefix }}_Runtime_sendFrame({{ prefix }}_Runtime_t *runtime,
+                                           uint8_t frameType,
+                                           uint8_t command,
+                                           const uint8_t *payload,
+                                           uint16_t payloadSize)
+{
+    if ((runtime == NULL) || (runtime->sendBytes == NULL))
+    {
+        return false;
+    }
+
+    if ((payloadSize > 0U) && (payload == NULL))
+    {
+        return false;
+    }
+
+    if (payloadSize > {{ prefix_upper }}_RUNTIME_MAX_PAYLOAD)
+    {
+        return false;
+    }
+
+    if ((frameType == {{ prefix_upper }}_FRAME_TYPE_READ_OR_NACK) || (frameType == {{ prefix_upper }}_FRAME_TYPE_WRITE_OR_ACK))
+    {
+        const uint8_t frame[3] = { {{ prefix_upper }}_FRAME_SYNC, frameType, command };
+        return runtime->sendBytes(frame, 3U, runtime->userCtx);
+    }
+
+    {
+        const uint8_t header[5] = {
+            {{ prefix_upper }}_FRAME_SYNC,
+            frameType,
+            command,
+            (uint8_t)(payloadSize & 0xFFU),
+            (uint8_t)((payloadSize >> 8U) & 0xFFU),
+        };
+        const uint8_t crc = {{ prefix }}_Runtime_crc8(payload, payloadSize);
+        bool ok = runtime->sendBytes(header, 5U, runtime->userCtx);
+        if (ok && (payloadSize > 0U))
+        {
+            ok = runtime->sendBytes(payload, payloadSize, runtime->userCtx);
+        }
+        if (ok)
+        {
+            ok = runtime->sendBytes(&crc, 1U, runtime->userCtx);
+        }
+        return ok;
+    }
+}
+
+static bool {{ prefix }}_Runtime_sendAck({{ prefix }}_Runtime_t *runtime, uint8_t command)
+{
+    return {{ prefix }}_Runtime_sendFrame(runtime, {{ prefix_upper }}_FRAME_TYPE_WRITE_OR_ACK, command, NULL, 0U);
+}
+
+static bool {{ prefix }}_Runtime_sendNack({{ prefix }}_Runtime_t *runtime, uint8_t command)
+{
+    return {{ prefix }}_Runtime_sendFrame(runtime, {{ prefix_upper }}_FRAME_TYPE_READ_OR_NACK, command, NULL, 0U);
+}
+
+static bool {{ prefix }}_Runtime_sendData({{ prefix }}_Runtime_t *runtime, uint8_t command, const uint8_t *payload, uint16_t payloadSize)
+{
+    return {{ prefix }}_Runtime_sendFrame(runtime, {{ prefix_upper }}_FRAME_TYPE_DATA, command, payload, payloadSize);
+}
+
+{% for msg in runtime_read_messages %}
+{% set struct_name = msg._response_name %}
+{% if struct_name %}
+{{ prefix_upper }}_RUNTIME_WEAK bool {{ prefix }}_onRead_{{ msg._name }}({{ prefix }}_{{ struct_name }}_t *out)
+{
+    (void)out;
+    return false;
+}
+{% else %}
+{{ prefix_upper }}_RUNTIME_WEAK bool {{ prefix }}_onRead_{{ msg._name }}(uint8_t *outPayload, uint16_t *outSize)
+{
+    (void)outPayload;
+    if (outSize != NULL)
+    {
+        *outSize = 0U;
+    }
+    return false;
+}
+{% endif %}
+{% endfor %}
+
+{% for msg in runtime_write_messages %}
+{% if msg._request_name %}
+{% if msg._semantic == "query" %}
+{{ prefix_upper }}_RUNTIME_WEAK {{ prefix }}_RuntimeQueryDisposition_E {{ prefix }}_onQuery_{{ msg._name }}(const {{ prefix }}_{{ msg._request_name }}_t *in,
+                                                                                                             uint8_t *outPayload,
+                                                                                                             uint16_t *outSize)
+{
+    (void)in;
+    (void)outPayload;
+    if (outSize != NULL)
+    {
+        *outSize = 0U;
+    }
+    return {{ prefix_upper }}_RUNTIME_QUERY_DISPOSITION_NACK;
+}
+{{ prefix_upper }}_RUNTIME_WEAK {{ prefix }}_RuntimeQueryDisposition_E {{ prefix }}_onQueryRaw_{{ msg._name }}(const uint8_t *payload,
+                                                                                                                uint16_t payloadSize,
+                                                                                                                uint8_t *outPayload,
+                                                                                                                uint16_t *outSize)
+{
+    (void)payload;
+    (void)payloadSize;
+    (void)outPayload;
+    if (outSize != NULL)
+    {
+        *outSize = 0U;
+    }
+    return {{ prefix_upper }}_RUNTIME_QUERY_DISPOSITION_NACK;
+}
+{% else %}
+{{ prefix_upper }}_RUNTIME_WEAK {{ prefix }}_RuntimeWriteDisposition_E {{ prefix }}_onWrite_{{ msg._name }}(const {{ prefix }}_{{ msg._request_name }}_t *in)
+{
+    (void)in;
+    return {{ prefix_upper }}_RUNTIME_WRITE_DISPOSITION_NACK;
+}
+{{ prefix_upper }}_RUNTIME_WEAK {{ prefix }}_RuntimeWriteDisposition_E {{ prefix }}_onWriteRaw_{{ msg._name }}(const uint8_t *payload,
+                                                                                                               uint16_t payloadSize)
+{
+    (void)payload;
+    (void)payloadSize;
+    return {{ prefix_upper }}_RUNTIME_WRITE_DISPOSITION_NACK;
+}
+{% endif %}
+{% elif msg._payload_type == "bool" %}
+{% if msg._semantic == "query" %}
+{{ prefix_upper }}_RUNTIME_WEAK {{ prefix }}_RuntimeQueryDisposition_E {{ prefix }}_onQuery_{{ msg._name }}(bool in,
+                                                                                                             uint8_t *outPayload,
+                                                                                                             uint16_t *outSize)
+{
+    (void)in;
+    (void)outPayload;
+    if (outSize != NULL)
+    {
+        *outSize = 0U;
+    }
+    return {{ prefix_upper }}_RUNTIME_QUERY_DISPOSITION_NACK;
+}
+{% else %}
+{{ prefix_upper }}_RUNTIME_WEAK {{ prefix }}_RuntimeWriteDisposition_E {{ prefix }}_onWrite_{{ msg._name }}(bool in)
+{
+    (void)in;
+    return {{ prefix_upper }}_RUNTIME_WRITE_DISPOSITION_NACK;
+}
+{% endif %}
+{% elif msg._payload_type == "none" %}
+{% if msg._semantic == "query" %}
+{{ prefix_upper }}_RUNTIME_WEAK {{ prefix }}_RuntimeQueryDisposition_E {{ prefix }}_onQuery_{{ msg._name }}(uint8_t *outPayload,
+                                                                                                             uint16_t *outSize)
+{
+    (void)outPayload;
+    if (outSize != NULL)
+    {
+        *outSize = 0U;
+    }
+    return {{ prefix_upper }}_RUNTIME_QUERY_DISPOSITION_NACK;
+}
+{% else %}
+{{ prefix_upper }}_RUNTIME_WEAK {{ prefix }}_RuntimeWriteDisposition_E {{ prefix }}_onWrite_{{ msg._name }}(void)
+{
+    return {{ prefix_upper }}_RUNTIME_WRITE_DISPOSITION_NACK;
+}
+{% endif %}
+{% else %}
+{% if msg._semantic == "query" %}
+{{ prefix_upper }}_RUNTIME_WEAK {{ prefix }}_RuntimeQueryDisposition_E {{ prefix }}_onQuery_{{ msg._name }}(const uint8_t *payload,
+                                                                                                             uint16_t payloadSize,
+                                                                                                             uint8_t *outPayload,
+                                                                                                             uint16_t *outSize)
+{
+    (void)payload;
+    (void)payloadSize;
+    (void)outPayload;
+    if (outSize != NULL)
+    {
+        *outSize = 0U;
+    }
+    return {{ prefix_upper }}_RUNTIME_QUERY_DISPOSITION_NACK;
+}
+{% else %}
+{{ prefix_upper }}_RUNTIME_WEAK {{ prefix }}_RuntimeWriteDisposition_E {{ prefix }}_onWrite_{{ msg._name }}(const uint8_t *payload,
+                                                                                                             uint16_t payloadSize)
+{
+    (void)payload;
+    (void)payloadSize;
+    return {{ prefix_upper }}_RUNTIME_WRITE_DISPOSITION_NACK;
+}
+{% endif %}
+{% endif %}
+{% endfor %}
+
+{{ prefix_upper }}_RUNTIME_WEAK bool {{ prefix }}_fill_notification({{ prefix }}_Notification_t *out)
+{
+    (void)out;
+    return false;
+}
+
+static void {{ prefix }}_Runtime_applyWriteDisposition({{ prefix }}_Runtime_t *runtime,
+                                                       uint8_t command,
+                                                       {{ prefix }}_RuntimeWriteDisposition_E disposition)
+{
+    switch (disposition)
+    {
+    case {{ prefix_upper }}_RUNTIME_WRITE_DISPOSITION_ACK:
+        (void){{ prefix }}_Runtime_sendAck(runtime, command);
+        break;
+    case {{ prefix_upper }}_RUNTIME_WRITE_DISPOSITION_NACK:
+    default:
+        (void){{ prefix }}_Runtime_sendNack(runtime, command);
+        break;
+    }
+}
+
+static void {{ prefix }}_Runtime_applyQueryDisposition({{ prefix }}_Runtime_t *runtime,
+                                                       uint8_t command,
+                                                       {{ prefix }}_RuntimeQueryDisposition_E disposition,
+                                                       const uint8_t *outPayload,
+                                                       uint16_t outSize)
+{
+    switch (disposition)
+    {
+    case {{ prefix_upper }}_RUNTIME_QUERY_DISPOSITION_DATA:
+        (void){{ prefix }}_Runtime_sendData(runtime, command, outPayload, outSize);
+        break;
+    case {{ prefix_upper }}_RUNTIME_QUERY_DISPOSITION_NACK:
+    default:
+        (void){{ prefix }}_Runtime_sendNack(runtime, command);
+        break;
+    }
+}
+
+static void {{ prefix }}_Runtime_dispatchRead({{ prefix }}_Runtime_t *runtime, uint8_t command)
+{
+    switch (command)
+    {
+{% for msg in runtime_read_messages %}
+{% set struct_name = msg._response_name or msg._payload_name %}
+    case {{ prefix_upper }}_MSG_READ_{{ msg._name|upper_snake }}:
+    {
+{% if struct_name %}
+        {{ prefix }}_{{ struct_name }}_t response;
+        uint8_t payload[{{ prefix_upper }}_{{ struct_name|upper_snake }}_WIRE_SIZE];
+        (void)memset(&response, 0, sizeof(response));
+        if ({{ prefix }}_onRead_{{ msg._name }}(&response))
+        {
+            {{ prefix }}_{{ struct_name }}_encode(payload, &response);
+            (void){{ prefix }}_Runtime_sendData(runtime, command, payload, {{ prefix_upper }}_{{ struct_name|upper_snake }}_WIRE_SIZE);
+        }
+        else
+        {
+            (void){{ prefix }}_Runtime_sendNack(runtime, command);
+        }
+{% else %}
+        uint16_t outSize = 0U;
+        uint8_t outPayload[{{ prefix_upper }}_RUNTIME_MAX_PAYLOAD];
+        if ({{ prefix }}_onRead_{{ msg._name }}(outPayload, &outSize) && (outSize <= {{ prefix_upper }}_RUNTIME_MAX_PAYLOAD))
+        {
+            (void){{ prefix }}_Runtime_sendData(runtime, command, outPayload, outSize);
+        }
+        else
+        {
+            (void){{ prefix }}_Runtime_sendNack(runtime, command);
+        }
+{% endif %}
+        break;
+    }
+{% endfor %}
+    default:
+        (void){{ prefix }}_Runtime_sendNack(runtime, command);
+        break;
+    }
+}
+
+static void {{ prefix }}_Runtime_dispatchWrite({{ prefix }}_Runtime_t *runtime,
+                                               uint8_t command,
+                                               const uint8_t *payload,
+                                               uint16_t payloadSize)
+{
+    uint8_t outPayload[{{ prefix_upper }}_RUNTIME_MAX_PAYLOAD];
+    uint16_t outSize = 0U;
+
+    switch (command)
+    {
+{% for msg in runtime_write_messages %}
+    case {{ prefix_upper }}_MSG_WRITE_{{ msg._name|upper_snake }}:
+    {
+{% if msg._request_name %}
+        if (payloadSize == {{ prefix_upper }}_{{ msg._request_name|upper_snake }}_WIRE_SIZE)
+        {
+            {{ prefix }}_{{ msg._request_name }}_t request;
+            (void)memset(&request, 0, sizeof(request));
+            {{ prefix }}_{{ msg._request_name }}_decode(payload, &request);
+{% if msg._semantic == "query" %}
+            {{ prefix }}_Runtime_applyQueryDisposition(runtime,
+                                                      command,
+                                                      {{ prefix }}_onQuery_{{ msg._name }}(&request, outPayload, &outSize),
+                                                      outPayload,
+                                                      outSize);
+{% else %}
+            {{ prefix }}_Runtime_applyWriteDisposition(runtime,
+                                                      command,
+                                                      {{ prefix }}_onWrite_{{ msg._name }}(&request));
+{% endif %}
+            break;
+        }
+{% if msg._semantic == "query" %}
+        {{ prefix }}_Runtime_applyQueryDisposition(runtime,
+                                                  command,
+                                                  {{ prefix }}_onQueryRaw_{{ msg._name }}(payload, payloadSize, outPayload, &outSize),
+                                                  outPayload,
+                                                  outSize);
+{% else %}
+        {{ prefix }}_Runtime_applyWriteDisposition(runtime,
+                                                  command,
+                                                  {{ prefix }}_onWriteRaw_{{ msg._name }}(payload, payloadSize));
+{% endif %}
+{% elif msg._payload_type == "bool" %}
+        if (payloadSize >= 1U)
+        {
+{% if msg._semantic == "query" %}
+            {{ prefix }}_Runtime_applyQueryDisposition(runtime,
+                                                      command,
+                                                      {{ prefix }}_onQuery_{{ msg._name }}(payload[0] != 0U, outPayload, &outSize),
+                                                      outPayload,
+                                                      outSize);
+{% else %}
+            {{ prefix }}_Runtime_applyWriteDisposition(runtime,
+                                                      command,
+                                                      {{ prefix }}_onWrite_{{ msg._name }}(payload[0] != 0U));
+{% endif %}
+        }
+        else
+        {
+            (void){{ prefix }}_Runtime_sendNack(runtime, command);
+        }
+{% elif msg._payload_type == "none" %}
+        if (payloadSize == 0U)
+        {
+{% if msg._semantic == "query" %}
+            {{ prefix }}_Runtime_applyQueryDisposition(runtime,
+                                                      command,
+                                                      {{ prefix }}_onQuery_{{ msg._name }}(outPayload, &outSize),
+                                                      outPayload,
+                                                      outSize);
+{% else %}
+            {{ prefix }}_Runtime_applyWriteDisposition(runtime,
+                                                      command,
+                                                      {{ prefix }}_onWrite_{{ msg._name }}());
+{% endif %}
+        }
+        else
+        {
+            (void){{ prefix }}_Runtime_sendNack(runtime, command);
+        }
+{% else %}
+{% if msg._semantic == "query" %}
+    {{ prefix }}_Runtime_applyQueryDisposition(runtime,
+                          command,
+                          {{ prefix }}_onQuery_{{ msg._name }}(payload, payloadSize, outPayload, &outSize),
+                          outPayload,
+                          outSize);
+{% else %}
+        {{ prefix }}_Runtime_applyWriteDisposition(runtime,
+                                                  command,
+                          {{ prefix }}_onWrite_{{ msg._name }}(payload, payloadSize));
+{% endif %}
+{% endif %}
+        break;
+    }
+{% endfor %}
+    default:
+        (void){{ prefix }}_Runtime_sendNack(runtime, command);
+        break;
+    }
+}
+
+void {{ prefix }}_Runtime_init({{ prefix }}_Runtime_t *runtime,
+                               {{ prefix }}_RuntimeSendBytesFn sendBytes,
+                               {{ prefix }}_RuntimeGetTimeMsFn getTimeMs,
+                               void *userCtx)
+{
+    if (runtime == NULL)
+    {
+        return;
+    }
+
+    (void)memset(runtime, 0, sizeof(*runtime));
+    runtime->sendBytes = sendBytes;
+    runtime->getTimeMs = getTimeMs;
+    runtime->userCtx = userCtx;
+    runtime->state = {{ prefix_upper }}_RUNTIME_STATE_SYNC;
+    if (runtime->getTimeMs != NULL)
+    {
+        runtime->startMs = runtime->getTimeMs(runtime->userCtx);
+    }
+}
+
+void {{ prefix }}_Runtime_feedByte({{ prefix }}_Runtime_t *runtime, uint8_t byte)
+{
+    if (runtime == NULL)
+    {
+        return;
+    }
+
+    switch (runtime->state)
+    {
+    case {{ prefix_upper }}_RUNTIME_STATE_SYNC:
+        if (byte == {{ prefix_upper }}_FRAME_SYNC)
+        {
+            runtime->state = {{ prefix_upper }}_RUNTIME_STATE_TYPE;
+            if (runtime->getTimeMs != NULL)
+            {
+                runtime->startMs = runtime->getTimeMs(runtime->userCtx);
+            }
+        }
+        break;
+
+    case {{ prefix_upper }}_RUNTIME_STATE_TYPE:
+        runtime->frameType = byte;
+        if ((byte == {{ prefix_upper }}_FRAME_TYPE_READ_OR_NACK) || (byte == {{ prefix_upper }}_FRAME_TYPE_WRITE_OR_ACK))
+        {
+            runtime->state = {{ prefix_upper }}_RUNTIME_STATE_COMMAND;
+        }
+        else
+        {
+            {{ prefix }}_Runtime_reset(runtime);
+        }
+        break;
+
+    case {{ prefix_upper }}_RUNTIME_STATE_COMMAND:
+        runtime->command = byte;
+        if (runtime->frameType == {{ prefix_upper }}_FRAME_TYPE_READ_OR_NACK)
+        {
+            {{ prefix }}_Runtime_dispatchRead(runtime, runtime->command);
+            {{ prefix }}_Runtime_reset(runtime);
+        }
+        else
+        {
+            runtime->state = {{ prefix_upper }}_RUNTIME_STATE_LENGTH_LO;
+        }
+        break;
+
+    case {{ prefix_upper }}_RUNTIME_STATE_LENGTH_LO:
+        runtime->payloadLength = (uint16_t)byte;
+        runtime->state = {{ prefix_upper }}_RUNTIME_STATE_LENGTH_HI;
+        break;
+
+    case {{ prefix_upper }}_RUNTIME_STATE_LENGTH_HI:
+        runtime->payloadLength = (uint16_t)(runtime->payloadLength | ((uint16_t)byte << 8U));
+        runtime->payloadIndex = 0U;
+        if (runtime->payloadLength > {{ prefix_upper }}_RUNTIME_MAX_PAYLOAD)
+        {
+            {{ prefix }}_Runtime_reset(runtime);
+        }
+        else if (runtime->payloadLength == 0U)
+        {
+            runtime->state = {{ prefix_upper }}_RUNTIME_STATE_CRC;
+        }
+        else
+        {
+            runtime->state = {{ prefix_upper }}_RUNTIME_STATE_DATA;
+        }
+        break;
+
+    case {{ prefix_upper }}_RUNTIME_STATE_DATA:
+        if (runtime->payloadIndex < {{ prefix_upper }}_RUNTIME_MAX_PAYLOAD)
+        {
+            runtime->payload[runtime->payloadIndex] = byte;
+            runtime->payloadIndex++;
+            if (runtime->payloadIndex >= runtime->payloadLength)
+            {
+                runtime->state = {{ prefix_upper }}_RUNTIME_STATE_CRC;
+            }
+        }
+        else
+        {
+            {{ prefix }}_Runtime_reset(runtime);
+        }
+        break;
+
+    case {{ prefix_upper }}_RUNTIME_STATE_CRC:
+    {
+        const uint8_t crc = {{ prefix }}_Runtime_crc8(runtime->payload, runtime->payloadLength);
+        if (crc == byte)
+        {
+            {{ prefix }}_Runtime_dispatchWrite(runtime, runtime->command, runtime->payload, runtime->payloadLength);
+        }
+        else
+        {
+            (void){{ prefix }}_Runtime_sendNack(runtime, runtime->command);
+        }
+        {{ prefix }}_Runtime_reset(runtime);
+        break;
+    }
+
+    default:
+        {{ prefix }}_Runtime_reset(runtime);
+        break;
+    }
+}
+
+void {{ prefix }}_Runtime_tick({{ prefix }}_Runtime_t *runtime)
+{
+    if ((runtime == NULL) || (runtime->getTimeMs == NULL))
+    {
+        return;
+    }
+
+    if (runtime->state == {{ prefix_upper }}_RUNTIME_STATE_SYNC)
+    {
+        return;
+    }
+
+    const uint32_t now = runtime->getTimeMs(runtime->userCtx);
+    if ((now - runtime->startMs) > {{ prefix_upper }}_RUNTIME_TIMEOUT_MS)
+    {
+        {{ prefix }}_Runtime_reset(runtime);
+    }
+}
+
+bool {{ prefix }}_Runtime_sendNotification({{ prefix }}_Runtime_t *runtime, const {{ prefix }}_Notification_t *notification)
+{
+    uint8_t payload[{{ prefix_upper }}_NOTIFICATION_WIRE_SIZE];
+    if ((runtime == NULL) || (notification == NULL))
+    {
+        return false;
+    }
+
+    {{ prefix }}_Notification_encode(payload, notification);
+    return {{ prefix }}_Runtime_sendFrame(runtime,
+                                          {{ prefix_upper }}_FRAME_TYPE_NOTIFICATION,
+                                          0U,
+                                          payload,
+                                          {{ prefix_upper }}_NOTIFICATION_WIRE_SIZE);
+}
+
+bool {{ prefix }}_Runtime_sendNotificationFromCallback({{ prefix }}_Runtime_t *runtime)
+{
+    {{ prefix }}_Notification_t notification;
+    (void)memset(&notification, 0, sizeof(notification));
+    if (!{{ prefix }}_fill_notification(&notification))
+    {
+        return false;
+    }
+    return {{ prefix }}_Runtime_sendNotification(runtime, &notification);
+}

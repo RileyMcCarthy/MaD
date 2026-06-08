@@ -16,9 +16,8 @@ import log from 'electron-log';
 import { deviceLogger } from '@utils/logger';
 import MenuBuilder from './menu';
 import { resolveHtmlPath } from './util';
-import SerialPortHandler from './handlers/SerialPortHandler';
-import DataProcessor from './handlers/DataProcessor';
 import NotificationSender from './handlers/NotificationSender';
+import BridgeHandler from './handlers/BridgeHandler';
 import DeviceInterface from './handlers/DeviceInterface';
 import {
   initializeDataManager,
@@ -26,6 +25,11 @@ import {
 } from './dataManager';
 // Set the app name before anything else
 app.setName('MAD Control');
+
+// Enable remote debugging for SIL testing (must be called before app is ready)
+if (process.env.SIL_TEST === '1' && process.env.ELECTRON_CDP_PORT) {
+  app.commandLine.appendSwitch('remote-debugging-port', process.env.ELECTRON_CDP_PORT);
+}
 
 class AppUpdater {
   constructor() {
@@ -36,6 +40,7 @@ class AppUpdater {
 }
 
 let mainWindow: BrowserWindow | null = null;
+let bridge: BridgeHandler | null = null;
 
 if (process.env.NODE_ENV === 'production') {
   const sourceMapSupport = require('source-map-support');
@@ -109,15 +114,15 @@ const createWindow = async () => {
   });
 
   const notificationSender = new NotificationSender(mainWindow);
-  const serialPortHandler = new SerialPortHandler();
-  const dataProcessor = new DataProcessor(serialPortHandler);
-  const deviceInterface = new DeviceInterface(
-    dataProcessor,
+  bridge = new BridgeHandler();
+  // DeviceInterface registers IPC handlers and bridge event listeners in its constructor.
+  // It must be created BEFORE bridge.start() so that 'error' events are handled.
+  void new DeviceInterface(
+    bridge,
     notificationSender,
-    serialPortHandler,
     mainWindow,
   );
-  // serialPortHandler.connect('/tmp/tty.rpi', 115200); // for debugging, should either remember settings or start at settings page
+  bridge.start();
 
   const menuBuilder = new MenuBuilder(mainWindow);
   menuBuilder.buildMenu();
@@ -141,6 +146,10 @@ const createWindow = async () => {
 
 app.on('window-all-closed', () => {
   cleanupDataManager();
+  if (bridge) {
+    bridge.stop();
+    bridge = null;
+  }
   if (process.platform !== 'darwin') {
     app.quit();
   }

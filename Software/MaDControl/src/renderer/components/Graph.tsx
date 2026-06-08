@@ -31,7 +31,7 @@ export default function BasicLineChart() {
   const timeAxisRef = useRef<number[]>([]);
   const writeIndexRef = useRef(0);
   const filledCountRef = useRef(0);
-  const sweepStartSampleIndexRef = useRef<number | null>(null);
+  const sweepStartTimeMsRef = useRef<number | null>(null);
 
   // Store actions in a ref to avoid re-running the effect when actions reference changes
   const actionsRef = useRef(actions);
@@ -53,7 +53,7 @@ export default function BasicLineChart() {
     timeAxisRef.current = new Array<number>(liveSampleLimit).fill(0);
     writeIndexRef.current = 0;
     filledCountRef.current = 0;
-    sweepStartSampleIndexRef.current = null;
+    sweepStartTimeMsRef.current = null;
   };
 
   const writeSampleToBuffers = (sample: SampleData, elapsedSec: number) => {
@@ -86,37 +86,21 @@ export default function BasicLineChart() {
       resetSweepBuffers();
     }
 
-    const sampleIndex = Number(sample.Index);
-    if (!Number.isFinite(sampleIndex)) {
-      return;
+    const nowMs = Date.now();
+    if (sweepStartTimeMsRef.current === null) {
+      sweepStartTimeMsRef.current = nowMs;
     }
 
-    if (sweepStartSampleIndexRef.current === null) {
-      sweepStartSampleIndexRef.current = sampleIndex;
-    }
-
-    // Firmware index is our source-of-truth time basis for live data.
-    // If index goes backwards (counter reset/new stream), restart sweep.
-    if (sampleIndex < sweepStartSampleIndexRef.current) {
-      resetSweepBuffers();
-      sweepStartSampleIndexRef.current = sampleIndex;
-    }
-
-    let elapsedSec =
-      ((sampleIndex - (sweepStartSampleIndexRef.current ?? sampleIndex)) *
-        liveSamplePeriodMs) /
-      1000;
+    let elapsedSec = (nowMs - sweepStartTimeMsRef.current) / 1000;
     if (elapsedSec >= SWEEP_DURATION_S) {
-      // Start a fresh sweep every 60s and continue plotting.
       resetSweepBuffers();
-      sweepStartSampleIndexRef.current = sampleIndex;
+      sweepStartTimeMsRef.current = nowMs;
       elapsedSec = 0;
     }
 
     if (filledCountRef.current >= liveSampleLimit) {
-      // Safety: if buffer fills before 60s due sample-rate mismatch, restart.
       resetSweepBuffers();
-      sweepStartSampleIndexRef.current = sampleIndex;
+      sweepStartTimeMsRef.current = nowMs;
       elapsedSec = 0;
     }
     writeSampleToBuffers(sample, elapsedSec);
@@ -132,26 +116,14 @@ export default function BasicLineChart() {
         if (data && data.length > 0) {
           // Seed with cached data so chart is immediately populated.
           const seeded = data.slice(-liveSampleLimit);
-          const firstIndex = Number(seeded[0]?.Index);
-          sweepStartSampleIndexRef.current = Number.isFinite(firstIndex)
-            ? firstIndex
-            : null;
+          sweepStartTimeMsRef.current = Date.now();
 
-          seeded.forEach((sample) => {
-            const sampleIndex = Number(sample.Index);
-            const startIndex =
-              sweepStartSampleIndexRef.current ?? sampleIndex;
-            const elapsedSec =
-              Number.isFinite(sampleIndex) && Number.isFinite(startIndex)
-                ? ((sampleIndex - startIndex) * liveSamplePeriodMs) / 1000
-                : 0;
-            if (
-              Number.isFinite(elapsedSec) &&
-              elapsedSec >= 0 &&
-              elapsedSec <= SWEEP_DURATION_S
-            ) {
-              writeSampleToBuffers(sample, elapsedSec);
-            }
+          seeded.forEach((sample, i) => {
+            const elapsedSec = Math.min(
+              (i * liveSamplePeriodMs) / 1000,
+              SWEEP_DURATION_S,
+            );
+            writeSampleToBuffers(sample, elapsedSec);
           });
           setRenderTick((prev) => prev + 1);
         }

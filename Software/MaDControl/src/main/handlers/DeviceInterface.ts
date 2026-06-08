@@ -25,6 +25,8 @@ import {
   MSG_WRITE_SAMPLE_PROFILE_WRITE,
   MSG_WRITE_TEST_MOVE,
   MSG_WRITE_FILE_DOWNLOAD,
+  GCODE_VALUE_TO_WIRE,
+  GCODE_WIRE_TO_VALUE,
 } from '../generated/protoemb';
 import NotificationSender from './NotificationSender';
 import BridgeHandler from './BridgeHandler';
@@ -74,12 +76,88 @@ function parseGcodeToMove(line: string): ProtoMove | null {
   return { g: g as GCode, x, f, p };
 }
 
+const GCODE_LINEAR_MOVE = new Set([0, 1, 2, 3]);
+
+/** G-code command number (0, 1, 90, 91, …) from Move.g (wire index or literal). */
+function moveGcodeNumber(g: GCode): number {
+  const raw = g as number;
+  if (GCODE_VALUE_TO_WIRE[raw] !== undefined) {
+    return raw;
+  }
+  return GCODE_WIRE_TO_VALUE[raw] ?? raw;
+}
+
+/**
+ * Resolve gauge length (mm) for sample → machine G-code conversion at upload.
+ */
+function resolveGaugeLengthMm(
+  gaugeLengthMm: number | undefined,
+  lastSample: SampleData | null,
+): number {
+  if (gaugeLengthMm !== undefined && Number.isFinite(gaugeLengthMm)) {
+    return gaugeLengthMm;
+  }
+  if (lastSample) {
+    const machineMm = lastSample['Machine Position (mm)'];
+    const sampleMm = lastSample['Sample Position (mm)'];
+    if (Number.isFinite(machineMm) && Number.isFinite(sampleMm)) {
+      const g = machineMm - sampleMm;
+      if (Number.isFinite(g)) {
+        return g;
+      }
+    }
+  }
+  return 0;
+}
+
+/**
+ * Parse profile G-code (sample mm) and encode moves in machine frame for firmware SD.
+ * Absolute G0/G1 targets: x_machine = x_sample + gaugeLength. G91 deltas unchanged.
+ */
+function gcodeLinesToMachineMoveBuffers(
+  lines: string[],
+  gaugeLengthMm: number,
+): Buffer[] {
+  let absoluteMode = true;
+  const moveBuffers: Buffer[] = [];
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed === '' || trimmed.startsWith(';')) {
+      continue;
+    }
+
+    const move = parseGcodeToMove(trimmed);
+    if (!move) {
+      deviceLogger.warn(`Skipping unparseable gcode line: ${line}`);
+      continue;
+    }
+
+    const gNum = moveGcodeNumber(move.g);
+    if (gNum === 90) {
+      absoluteMode = true;
+    } else if (gNum === 91) {
+      absoluteMode = false;
+    } else if (
+      absoluteMode &&
+      GCODE_LINEAR_MOVE.has(gNum) &&
+      Number.isFinite(gaugeLengthMm)
+    ) {
+      move.x += gaugeLengthMm;
+    }
+
+    moveBuffers.push(encodeMove(move));
+  }
+
+  return moveBuffers;
+}
+
 /**
  * Decode binary StoredSample structs into CSV string for file downloads.
  * position_um / setpoint_um are the firmware sample frame (machine µm minus gauge length at zero-length).
  */
 function decodeBinarySampleDataToCSV(data: Buffer): string {
-  const lines: string[] = ['time_us,index,force_mN,position_um,setpoint_um'];
+  const lines: string[] = ['time_us,force_mN,position_um,setpoint_um'];
   const numSamples = Math.floor(data.length / STOREDSAMPLE_WIRE_SIZE);
 
   for (let i = 0; i < numSamples; i++) {
@@ -91,9 +169,7 @@ function decodeBinarySampleDataToCSV(data: Buffer): string {
     const forceMN = Math.round(sample.force * 1000);
     const positionUM = Math.round(sample.position * 1000);
     const setpointUM = Math.round(sample.setpoint * 1000);
-    lines.push(
-      `${sample.time},${sample.index},${forceMN},${positionUM},${setpointUM}`,
-    );
+    lines.push(`${sample.time},${forceMN},${positionUM},${setpointUM}`);
   }
 
   return `${lines.join('\n')}\n`;
@@ -571,9 +647,14 @@ class DeviceInterface {
       'run-test',
       async (
         _event,
-        params: { gcode: string[]; gcodeId: string; testDataId: string },
+        params: {
+          gcode: string[];
+          gcodeId: string;
+          testDataId: string;
+          gaugeLengthMm?: number;
+        },
       ) => {
-        const { gcode, gcodeId, testDataId } = params;
+        const { gcode, gcodeId, testDataId, gaugeLengthMm } = params;
         deviceLogger.info(
           `Starting test run (gcodeId=${gcodeId}, testDataId=${testDataId})...`,
         );
@@ -599,15 +680,14 @@ class DeviceInterface {
             return trimmed !== '' && !trimmed.startsWith(';');
           });
 
-          const moveBuffers: Buffer[] = [];
-          for (const line of lines) {
-            const move = parseGcodeToMove(line.trim());
-            if (move) {
-              moveBuffers.push(encodeMove(move));
-            } else {
-              deviceLogger.warn(`Skipping unparseable gcode line: ${line}`);
-            }
-          }
+          const gaugeMm = resolveGaugeLengthMm(
+            gaugeLengthMm,
+            this.lastSample,
+          );
+          deviceLogger.info(
+            `G-code upload: sample → machine using gauge length ${gaugeMm.toFixed(3)} mm`,
+          );
+          const moveBuffers = gcodeLinesToMachineMoveBuffers(lines, gaugeMm);
 
           deviceLogger.info(
             `Uploading ${moveBuffers.length} gcode moves in batches of ${BATCH_MOVE_COUNT}...`,
@@ -814,15 +894,8 @@ class DeviceInterface {
       });
 
       try {
-        const moveBuffers: Buffer[] = [];
-        for (const line of lines) {
-          const move = parseGcodeToMove(line.trim());
-          if (move) {
-            moveBuffers.push(encodeMove(move));
-          } else {
-            deviceLogger.warn(`Skipping unparseable gcode line: ${line}`);
-          }
-        }
+        const gaugeMm = resolveGaugeLengthMm(undefined, this.lastSample);
+        const moveBuffers = gcodeLinesToMachineMoveBuffers(lines, gaugeMm);
 
         for (let i = 0; i < moveBuffers.length; i += BATCH_MOVE_COUNT) {
           const batch = moveBuffers.slice(
