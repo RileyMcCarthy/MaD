@@ -69,10 +69,32 @@ export const {{ name | upper_snake }}_WIRE_SIZE = {{ s._wire_size }};
 {% endfor %}
 
 // ============================================================
-// Bit Packing Helpers
+// Byte-buffer helpers (browser-safe: Uint8Array + DataView, no Node Buffer)
 // ============================================================
 
-function packBits(buf: Buffer, bitOff: number, bits: number, value: number): void {
+const _textEncoder = new TextEncoder();
+const _textDecoder = new TextDecoder();
+
+/** DataView over a Uint8Array, honoring its byteOffset/byteLength. */
+function viewOf(buf: Uint8Array): DataView {
+    return new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+}
+
+/** Write a UTF-8 string into `buf` at `offset`, truncated to `maxLen` bytes. */
+function writeString(buf: Uint8Array, offset: number, value: string, maxLen: number): void {
+    const bytes = _textEncoder.encode(value || '');
+    const n = Math.min(bytes.length, maxLen);
+    buf.set(bytes.subarray(0, n), offset);
+}
+
+/** Read a NUL-terminated UTF-8 string of at most `maxLen` bytes from `buf`. */
+function readString(buf: Uint8Array, offset: number, maxLen: number): string {
+    const raw = buf.subarray(offset, offset + maxLen);
+    const nullIdx = raw.indexOf(0);
+    return _textDecoder.decode(raw.subarray(0, nullIdx >= 0 ? nullIdx : maxLen));
+}
+
+function packBits(buf: Uint8Array, bitOff: number, bits: number, value: number): void {
     for (let i = 0; i < bits; i++) {
         const byteIdx = Math.floor((bitOff + i) / 8);
         const bitIdx = (bitOff + i) % 8;
@@ -82,7 +104,7 @@ function packBits(buf: Buffer, bitOff: number, bits: number, value: number): voi
     }
 }
 
-function unpackBits(buf: Buffer, bitOff: number, bits: number): number {
+function unpackBits(buf: Uint8Array, bitOff: number, bits: number): number {
     let value = 0;
     for (let i = 0; i < bits; i++) {
         const byteIdx = Math.floor((bitOff + i) / 8);
@@ -103,8 +125,8 @@ function unpackBits(buf: Buffer, bitOff: number, bits: number): number {
  * Encode {{ name }} → {{ s._wire_size }} bytes.
  * Input values are in unit (see field `unit`); scale is applied to produce wire steps.
  */
-export function encode{{ name }}(src: {{ name }}): Buffer {
-    const buf = Buffer.alloc({{ s._wire_size }});
+export function encode{{ name }}(src: {{ name }}): Uint8Array {
+    const buf = new Uint8Array({{ s._wire_size }});
 {% if s._is_packed %}
     {% for f in s.fields %}
     {% if f._is_bool %}
@@ -131,10 +153,14 @@ export function encode{{ name }}(src: {{ name }}): Buffer {
     {% endif %}
     {% endfor %}
 {% else %}
+    {% set _numeric = s.fields | rejectattr('_is_string') | rejectattr('_is_bool') | rejectattr('_is_enum') | list %}
+    {% if _numeric %}
+    const view = viewOf(buf);
+    {% endif %}
     let offset = 0;
     {% for f in s.fields %}
     {% if f._is_string %}
-    buf.write(src.{{ f.name }} || '', offset, Math.min((src.{{ f.name }} || '').length, {{ f.max_length }}), 'utf-8');
+    writeString(buf, offset, src.{{ f.name }}, {{ f.max_length }});
     offset += {{ f.max_length }};
     {% elif f._is_bool %}
     buf[offset] = src.{{ f.name }} ? 1 : 0;
@@ -144,20 +170,20 @@ export function encode{{ name }}(src: {{ name }}): Buffer {
     offset += 1;
     {% elif f._is_signed %}
     {% if f._byte_size == 1 %}
-    buf.writeInt8(Math.round(src.{{ f.name }} * {{ f._scale }}), offset);
+    view.setInt8(offset, Math.round(src.{{ f.name }} * {{ f._scale }}));
     {% elif f._byte_size == 2 %}
-    buf.writeInt16LE(Math.round(src.{{ f.name }} * {{ f._scale }}), offset);
+    view.setInt16(offset, Math.round(src.{{ f.name }} * {{ f._scale }}), true);
     {% else %}
-    buf.writeInt32LE(Math.round(src.{{ f.name }} * {{ f._scale }}), offset);
+    view.setInt32(offset, Math.round(src.{{ f.name }} * {{ f._scale }}), true);
     {% endif %}
     offset += {{ f._byte_size }};
     {% else %}
     {% if f._byte_size == 1 %}
-    buf.writeUInt8(Math.round(src.{{ f.name }} * {{ f._scale }}) >>> 0, offset);
+    view.setUint8(offset, Math.round(src.{{ f.name }} * {{ f._scale }}) >>> 0);
     {% elif f._byte_size == 2 %}
-    buf.writeUInt16LE(Math.round(src.{{ f.name }} * {{ f._scale }}) >>> 0, offset);
+    view.setUint16(offset, Math.round(src.{{ f.name }} * {{ f._scale }}) >>> 0, true);
     {% else %}
-    buf.writeUInt32LE(Math.round(src.{{ f.name }} * {{ f._scale }}) >>> 0, offset);
+    view.setUint32(offset, Math.round(src.{{ f.name }} * {{ f._scale }}) >>> 0, true);
     {% endif %}
     offset += {{ f._byte_size }};
     {% endif %}
@@ -170,7 +196,7 @@ export function encode{{ name }}(src: {{ name }}): Buffer {
  * Decode {{ s._wire_size }} bytes → {{ name }}.
  * Output values are in unit (see field `unit`); scale is applied as divisor.
  */
-export function decode{{ name }}(buf: Buffer): {{ name }} {
+export function decode{{ name }}(buf: Uint8Array): {{ name }} {
 {% if s._is_packed %}
     return {
         {% for f in s.fields %}
@@ -199,12 +225,14 @@ export function decode{{ name }}(buf: Buffer): {{ name }} {
         {% endfor %}
     };
 {% else %}
+    {% set _numeric = s.fields | rejectattr('_is_string') | rejectattr('_is_bool') | rejectattr('_is_enum') | list %}
+    {% if _numeric %}
+    const view = viewOf(buf);
+    {% endif %}
     let offset = 0;
     {% for f in s.fields %}
     {% if f._is_string %}
-    const {{ f.name }}_raw = buf.subarray(offset, offset + {{ f.max_length }});
-    const {{ f.name }}_nullIdx = {{ f.name }}_raw.indexOf(0);
-    const {{ f.name }} = {{ f.name }}_raw.subarray(0, {{ f.name }}_nullIdx >= 0 ? {{ f.name }}_nullIdx : {{ f.max_length }}).toString('utf-8');
+    const {{ f.name }} = readString(buf, offset, {{ f.max_length }});
     offset += {{ f.max_length }};
     {% elif f._is_bool %}
     const {{ f.name }} = buf[offset] !== 0;
@@ -214,20 +242,20 @@ export function decode{{ name }}(buf: Buffer): {{ name }} {
     offset += 1;
     {% elif f._is_signed %}
     {% if f._byte_size == 1 %}
-    const {{ f.name }} = buf.readInt8(offset) / {{ f._scale }};
+    const {{ f.name }} = view.getInt8(offset) / {{ f._scale }};
     {% elif f._byte_size == 2 %}
-    const {{ f.name }} = buf.readInt16LE(offset) / {{ f._scale }};
+    const {{ f.name }} = view.getInt16(offset, true) / {{ f._scale }};
     {% else %}
-    const {{ f.name }} = buf.readInt32LE(offset) / {{ f._scale }};
+    const {{ f.name }} = view.getInt32(offset, true) / {{ f._scale }};
     {% endif %}
     offset += {{ f._byte_size }};
     {% else %}
     {% if f._byte_size == 1 %}
-    const {{ f.name }} = buf.readUInt8(offset) / {{ f._scale }};
+    const {{ f.name }} = view.getUint8(offset) / {{ f._scale }};
     {% elif f._byte_size == 2 %}
-    const {{ f.name }} = buf.readUInt16LE(offset) / {{ f._scale }};
+    const {{ f.name }} = view.getUint16(offset, true) / {{ f._scale }};
     {% else %}
-    const {{ f.name }} = buf.readUInt32LE(offset) / {{ f._scale }};
+    const {{ f.name }} = view.getUint32(offset, true) / {{ f._scale }};
     {% endif %}
     offset += {{ f._byte_size }};
     {% endif %}

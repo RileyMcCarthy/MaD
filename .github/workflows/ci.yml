@@ -28,6 +28,7 @@ jobs:
       software: ${{ steps.changes.outputs.software }}
       firmware: ${{ steps.changes.outputs.firmware }}
       hardware: ${{ steps.changes.outputs.hardware }}
+      wasm_control: ${{ steps.changes.outputs.wasm_control }}
       is_release: ${{ startsWith(github.ref, 'refs/tags/') }}
       is_software_release: ${{ startsWith(github.ref, 'refs/tags/software-v') }}
       is_firmware_release: ${{ startsWith(github.ref, 'refs/tags/firmware-v') }}
@@ -44,6 +45,46 @@ jobs:
               - 'Firmware/**'
             hardware:
               - 'Hardware/**'
+            wasm_control:
+              - 'Software/MaDWasmControl/**'
+              - 'Protocol/**'
+
+  # Offline gate for the frontend-only Web Serial + WASM control app: Rust unit
+  # tests for the protocol core, then build wasm + generated codec, then the app
+  # verify gate (typecheck + eslint + vitest + production build).
+  wasm-control-ci:
+    needs: changes
+    if: needs.changes.outputs.wasm_control == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Software/MaDWasmControl
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: Software/MaDWasmControl/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Cargo test (protoemb-runtime)
+        working-directory: Protocol/ProtoEmb/runtime
+        run: cargo test
+      - name: Install dependencies
+        run: npm ci
+      - name: Build wasm + generate protocol bindings
+        run: |
+          npm run build:wasm
+          npm run generate:proto
+      - name: Verify (typecheck + lint + tests + build)
+        run: npm run verify
 
   build-software:
     needs: changes

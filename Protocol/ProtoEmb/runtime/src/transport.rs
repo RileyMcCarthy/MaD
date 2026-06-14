@@ -7,10 +7,22 @@
 use std::io;
 use std::time::Duration;
 
+/// On native targets, transports must be `Send` so they can run on worker
+/// threads. On wasm32 there are no threads and the in-memory transport uses
+/// `Rc`, so the `Send` bound is dropped there.
+#[cfg(not(target_arch = "wasm32"))]
+pub trait MaybeSend: Send {}
+#[cfg(not(target_arch = "wasm32"))]
+impl<T: Send> MaybeSend for T {}
+#[cfg(target_arch = "wasm32")]
+pub trait MaybeSend {}
+#[cfg(target_arch = "wasm32")]
+impl<T> MaybeSend for T {}
+
 /// Abstraction over a bidirectional byte stream (serial port, PTY, socket, etc.).
 ///
-/// Implementations must be `Send` so they can be used from worker threads.
-pub trait Transport: Send {
+/// Implementations must be `Send` on native targets (see [`MaybeSend`]).
+pub trait Transport: MaybeSend {
     /// Write bytes to the transport. Must send all bytes or return an error.
     fn write_all(&mut self, data: &[u8]) -> io::Result<()>;
 
@@ -29,11 +41,13 @@ pub trait Transport: Send {
 }
 
 /// Serial port transport using the `serialport` crate.
+#[cfg(not(target_arch = "wasm32"))]
 pub struct SerialTransport {
     port: Box<dyn serialport::SerialPort>,
     path: String,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl SerialTransport {
     /// Open a serial port at the given path and baud rate.
     pub fn open(path: &str, baud_rate: u32) -> io::Result<Self> {
@@ -51,6 +65,7 @@ impl SerialTransport {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Transport for SerialTransport {
     fn write_all(&mut self, data: &[u8]) -> io::Result<()> {
         use std::io::Write;

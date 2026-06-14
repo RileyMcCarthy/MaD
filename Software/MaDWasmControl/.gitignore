@@ -1,0 +1,12 @@
+node_modules/
+dist/
+dist-ssr/
+*.local
+.DS_Store
+*.tsbuildinfo
+
+# Generated WASM package (built via `npm run build:wasm`)
+src/wasm/
+
+# Generated protocol types (built via `npm run generate:proto`)
+src/protocol/generated/
