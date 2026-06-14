@@ -68,5 +68,5 @@ void test_protoemb_runtime_send_notification_frame(void)
     TEST_ASSERT_EQUAL_HEX8((uint8_t)((PROTOEMB_NOTIFICATION_WIRE_SIZE >> 8U) & 0xFFU), test_tx_buffer[4]);
 }
 
-#include "../src/Generated/protoemb.c"
-#include "../src/Generated/protoemb_runtime.c"
+#include "../../src/Generated/protoemb.c"
+#include "../../src/Generated/protoemb_runtime.c"
