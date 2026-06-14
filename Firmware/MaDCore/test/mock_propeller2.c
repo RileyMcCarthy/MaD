@@ -10,6 +10,13 @@ static bool locks[8] = {0};
 
 uint32_t global_timeus;
 
+/* Shared across every suite: Library/ objects (compiled into all suites via
+ * build_src_filter) reference _stdio_debug_lock through the DEBUG_* macros, so
+ * it must be defined once per suite binary. Defining it here (test root → linked
+ * into every suite) covers them all. A suite that exercises DEBUG output should
+ * still assign it a real lock id via HAL_lock_create() in setUp. */
+int _stdio_debug_lock = 0;
+
 void HAL_lock_mock_reset(void)
 {
     lockIndex = 0;

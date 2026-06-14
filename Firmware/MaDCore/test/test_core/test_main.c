@@ -27,7 +27,7 @@ extern void test_app_testManagement_motionDisabledAbortsRun(void);
 extern void test_app_testManagement_sampleLimitAbortsRun(void);
 extern void test_app_testManagement_openFailureEndsStart(void);
 extern void HAL_lock_mock_reset(void);
-int _stdio_debug_lock;
+extern int _stdio_debug_lock; /* defined in shared test/mock_propeller2.c */
 extern dev_nvram_config_t dev_nvram_config;
 
 void setUp(void)
