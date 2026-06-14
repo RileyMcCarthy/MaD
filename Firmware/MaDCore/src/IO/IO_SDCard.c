@@ -134,11 +134,32 @@ static IO_SDCard_state_E IO_SDCard_getDesiredState(IO_SDCard_channel_E channel)
     return desiredState;
 }
 
+/* Channel queues are cross-cog (COMM/MONITOR push, CONTROL pops, this LOGGER
+ * cog pumps file I/O — roles change with the channel mode), which exceeds the
+ * queue's lock-free SPSC contract. Every mutating queue op is wrapped in the
+ * module lock — per op, never across fread/fwrite, so file I/O latency can't
+ * stall the other cogs. */
+static bool IO_SDCard_private_lockedPop(IO_SDCard_channel_E channel, void *data)
+{
+    IO_SDCARD_LOCK_REQ_BLOCK();
+    const bool ok = lib_staticQueue_pop(&IO_SDCard_data.channelData[channel].queue, data);
+    IO_SDCARD_LOCK_REL();
+    return ok;
+}
+
+static bool IO_SDCard_private_lockedPush(IO_SDCard_channel_E channel, void *data)
+{
+    IO_SDCARD_LOCK_REQ_BLOCK();
+    const bool ok = lib_staticQueue_push(&IO_SDCard_data.channelData[channel].queue, data);
+    IO_SDCARD_LOCK_REL();
+    return ok;
+}
+
 static void IO_SDCard_private_processWrite(IO_SDCard_channel_E channel)
 {
     // Write all queued items to file as raw binary structs
     uint8_t itemBuffer[IO_SDCard_config.channelConfig[channel].queueBufferItemSize];
-    while (lib_staticQueue_pop(&IO_SDCard_data.channelData[channel].queue, itemBuffer))
+    while (IO_SDCard_private_lockedPop(channel, itemBuffer))
     {
         fwrite(itemBuffer, IO_SDCard_config.channelConfig[channel].queueBufferItemSize, 1,
                IO_SDCard_data.channelData[channel].file);
@@ -166,7 +187,7 @@ static void IO_SDCard_private_processRead(IO_SDCard_channel_E channel)
             DEBUG_INFO("%s", "IO_SDCARD: reached EOF on read channel\n");
             break;
         }
-        lib_staticQueue_push(&IO_SDCard_data.channelData[channel].queue, itemBuffer);
+        (void)IO_SDCard_private_lockedPush(channel, itemBuffer);
     }
 }
 
@@ -198,7 +219,9 @@ static void IO_SDCard_private_entryAction(IO_SDCard_channel_E channel)
         fclose(IO_SDCard_data.channelData[channel].file);
         IO_SDCard_data.channelData[channel].file = NULL;
         IO_SDCard_data.channelData[channel].eof = false;
+        IO_SDCARD_LOCK_REQ_BLOCK();
         lib_staticQueue_empty(&IO_SDCard_data.channelData[channel].queue);
+        IO_SDCARD_LOCK_REL();
         break;
     default:
         break;
@@ -244,7 +267,7 @@ static void IO_SDCard_private_stageInputs(IO_SDCard_channel_E channel)
     }
     IO_SDCARD_LOCK_REL();
 
-    // Static queue is thread safe
+    // Snapshot reads (advisory; exact enough for state-machine pacing).
     IO_SDCard_data.channelData[channel].queueEmpty = lib_staticQueue_isempty(&IO_SDCard_data.channelData[channel].queue);
     IO_SDCard_data.channelData[channel].queueFull = lib_staticQueue_isfull(&IO_SDCard_data.channelData[channel].queue);
 }
@@ -284,8 +307,7 @@ void IO_SDCard_init(int lock)
         lib_staticQueue_init(&IO_SDCard_data.channelData[channel].queue,
                              IO_SDCard_config.channelConfig[channel].queueBuffer,
                              IO_SDCard_config.channelConfig[channel].queueBufferSize,
-                             IO_SDCard_config.channelConfig[channel].queueBufferItemSize,
-                             IO_SDCard_data.lock);
+                             IO_SDCard_config.channelConfig[channel].queueBufferItemSize);
     }
 }
 
@@ -391,7 +413,7 @@ bool IO_SDCard_push(IO_SDCard_channel_E channel, void *data, uint32_t size)
     bool success = false;
     if ((channel < IO_SDCARD_CHANNEL_COUNT) && (size == IO_SDCard_config.channelConfig[channel].queueBufferItemSize))
     {
-        success = lib_staticQueue_push(&IO_SDCard_data.channelData[channel].queue, data);
+        success = IO_SDCard_private_lockedPush(channel, data);
     }
     return success;
 }
@@ -401,7 +423,7 @@ bool IO_SDCard_pop(IO_SDCard_channel_E channel, void *data)
     bool success = false;
     if (channel < IO_SDCARD_CHANNEL_COUNT)
     {
-        success = lib_staticQueue_pop(&IO_SDCard_data.channelData[channel].queue, data);
+        success = IO_SDCard_private_lockedPop(channel, data);
     }
     return success;
 }
@@ -413,6 +435,8 @@ uint32_t IO_SDCard_popMultiple(IO_SDCard_channel_E channel, void *buffer, uint32
     {
         const uint32_t itemSize = IO_SDCard_config.channelConfig[channel].queueBufferItemSize;
         uint8_t *dst = (uint8_t *)buffer;
+        // One lock for the whole batch: memory-to-memory, bounded by maxCount.
+        IO_SDCARD_LOCK_REQ_BLOCK();
         while (count < maxCount)
         {
             if (!lib_staticQueue_pop(&IO_SDCard_data.channelData[channel].queue, &dst[count * itemSize]))
@@ -421,6 +445,7 @@ uint32_t IO_SDCard_popMultiple(IO_SDCard_channel_E channel, void *buffer, uint32
             }
             count++;
         }
+        IO_SDCARD_LOCK_REL();
     }
     return count;
 }

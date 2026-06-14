@@ -322,7 +322,12 @@ void app_motion_init(int lock)
     app_motion_data.homingVelocity = machineProfile.homingVelocity;
     app_motion_data.homingOffset = machineProfile.homingOffset;
     app_motion_data.jawOffset = machineProfile.jawOffset;
-    (void)lib_staticQueue_init(&app_motion_data.queue, app_motion_data.queueBuffer, MOTION_QUEUE_SIZE, sizeof(app_motion_move_t), lock);
+    /* The move queue needs no locking: it is touched ONLY by the CONTROL cog
+     * (app_testManagement pushes — test feed + staged manual moves — and
+     * app_motion pops/clears, all from the same run loop). Manual moves from
+     * the COMMUNICATION cog go through app_testManagement's request slots, not
+     * this queue. Single-cog access ⇒ within the queue's SPSC contract. */
+    (void)lib_staticQueue_init(&app_motion_data.queue, app_motion_data.queueBuffer, MOTION_QUEUE_SIZE, sizeof(app_motion_move_t));
     lib_timer_init(&app_motion_data.endstopTimer, 1000);
 }
 
@@ -346,6 +351,17 @@ void app_motion_abortAndClear(void)
     {
         app_motion_data.state = APP_MOTION_WAITING;
     }
+}
+
+bool app_motion_isIdle(void)
+{
+    APP_MOTION_LOCK_REQ_BLOCK();
+    const app_motion_state_E state = app_motion_data.state;
+    APP_MOTION_LOCK_REL();
+    /* Unlocked isempty is safe: the queue is CONTROL-cog-only and this is
+     * called from app_testManagement's run loop on that same cog. */
+    return (state == APP_MOTION_WAITING) &&
+           lib_staticQueue_isempty(&app_motion_data.queue);
 }
 
 int32_t app_motion_getSetpoint(void)

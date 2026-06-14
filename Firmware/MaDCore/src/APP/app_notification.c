@@ -10,6 +10,7 @@
 #include "app_messageSlave.h"
 #include "protoemb.h"
 #include "lib_staticQueue.h"
+#include "HAL_lock.h"
 #include "IO_Debug.h"
 /**********************************************************************
  * Constants
@@ -19,6 +20,18 @@
  * Macros
  **********************************************************************/
 #define APP_NOTIFICATION_BUFFER_SIZE 10
+
+/* The notification queue is multi-producer (send() is called from the CONTROL
+ * cog — testManagement — and the COMMUNICATION cog — messageSlave) with one
+ * consumer (this module's run loop on COMM). That exceeds the queue's lock-free
+ * SPSC contract, so this module wraps every queue op in its own lock. Rule:
+ * never call another module's API while holding it. */
+#define APP_NOTIFICATION_LOCK_REQ_BLOCK()                       \
+    while (HAL_lock_try(app_notification_data.lock) == false)   \
+    {                                                           \
+        /* wait for lock */                                     \
+    }
+#define APP_NOTIFICATION_LOCK_REL() HAL_lock_release(app_notification_data.lock)
 /**********************************************************************
  * Typedefs
  **********************************************************************/
@@ -56,7 +69,10 @@ void app_notification_stageRequest()
     ProtoEmb_Notification_t notification;
     if (app_notification_data.notificationReady == false)
     {
-        if (lib_staticQueue_pop(&app_notification_data.notificationQueue, &notification))
+        APP_NOTIFICATION_LOCK_REQ_BLOCK();
+        const bool popped = lib_staticQueue_pop(&app_notification_data.notificationQueue, &notification);
+        APP_NOTIFICATION_LOCK_REL();
+        if (popped)
         {
             memcpy(&app_notification_data.currentNotification, &notification, sizeof(ProtoEmb_Notification_t));
             app_notification_data.notificationReady = true;
@@ -149,7 +165,7 @@ void app_notification_init(int lock)
     app_notification_data.notificationReady = false;
     app_notification_data.state = APP_NOTIFICATION_STATE_INIT;
     memset(app_notification_data.notificationBinary, 0, sizeof(app_notification_data.notificationBinary));
-    lib_staticQueue_init(&app_notification_data.notificationQueue, app_notification_data.notificationBuffer, APP_NOTIFICATION_BUFFER_SIZE, sizeof(ProtoEmb_Notification_t), lock);
+    lib_staticQueue_init(&app_notification_data.notificationQueue, app_notification_data.notificationBuffer, APP_NOTIFICATION_BUFFER_SIZE, sizeof(ProtoEmb_Notification_t));
 }
 
 void app_notification_run()
@@ -175,7 +191,9 @@ void app_notification_send(app_notification_type_E type, const char *format, ...
     va_start(args, format);
     vsnprintf(notification.message, sizeof(notification.message), format, args);
     va_end(args);
-    lib_staticQueue_push(&app_notification_data.notificationQueue, &notification);
+    APP_NOTIFICATION_LOCK_REQ_BLOCK();
+    (void)lib_staticQueue_push(&app_notification_data.notificationQueue, &notification);
+    APP_NOTIFICATION_LOCK_REL();
 }
 
 /**********************************************************************

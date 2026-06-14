@@ -120,6 +120,7 @@ git tag hardware-v1.0.0 && git push --tags   # Hardware release
 
 - **Firmware layer violations**: Do not include or call low-level MCU headers from APP/DEV/IO — go through HAL (and appropriate HW headers only where HAL already depends on them).
 - **Thread safety**: `IO_protocol` and shared protocol/JSON buffers are not casually thread-safe from multiple cogs — use the project locking patterns where applicable.
+- **Locking rules**: `lib_staticQueue` (and Library data structures generally) are unsynchronized — the owning module wraps ops in its own HAL lock when its topology needs one (SPSC use is lock-free by contract). HAL locks are **not reentrant**, and a module must **never call another module's API while holding its own lock** (prevents both self-deadlock and cross-cog ABBA deadlocks).
 - **Native vs P2**: Always exercise `native_emulator` / `native_test`; pointer sizes and timing differ from the Propeller 2.
 - **SIL concurrency**: Treat the emulator as single-instance; Playwright uses `workers: 1` where required.
 - **G-code**: Profiles/tests that must signal completion to firmware should end appropriately (e.g. **`G122`** where the firmware contract requires it).

@@ -74,6 +74,10 @@ bool app_motion_addMove(const app_motion_move_t *move);
 // app_testManagement on test end.
 void app_motion_abortAndClear(void);
 
+// True when there is no queued or in-flight move (state WAITING + empty queue).
+// Used by app_testManagement to drain the motion before completing a test.
+bool app_motion_isIdle(void);
+
 // Getters
 int32_t app_motion_getSetpoint(void);
 int32_t app_motion_getPosition(void);
