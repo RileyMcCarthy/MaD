@@ -4,8 +4,8 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use tracing::trace;
 
-/// Maximum GPIO channels supported.
-const MAX_CHANNELS: usize = 64;
+/// Maximum GPIO channels supported (hard ceiling of the backing array).
+pub const MAX_CHANNELS: usize = 64;
 
 /// Configured channel count (set at init, default 0).
 static CHANNEL_COUNT: AtomicUsize = AtomicUsize::new(0);
@@ -28,14 +28,26 @@ static CHANNEL_NAMES: Mutex<Option<&'static [&'static str]>> = Mutex::new(None);
 // ============================================================
 
 /// Configure the GPIO peripheral with the number of channels and optional names.
-/// Must be called before firmware starts.
+/// Must be called before firmware starts. Resets any prior state, so calling it
+/// again (in-process restart) yields a clean bank.
 pub fn init(count: usize, names: Option<&'static [&'static str]>) {
     assert!(count <= MAX_CHANNELS, "GPIO count {} exceeds max {}", count, MAX_CHANNELS);
+    reset();
     CHANNEL_COUNT.store(count, Ordering::Relaxed);
     *CHANNEL_NAMES.lock().unwrap() = names;
     // Ensure callback vec is sized for all channels
     let mut cbs = CALLBACKS.lock().unwrap();
     cbs.resize_with(count, || None);
+}
+
+/// Clear all channel state, callbacks, and names (used by `init` and teardown).
+pub fn reset() {
+    CHANNEL_COUNT.store(0, Ordering::Relaxed);
+    for state in GPIO_STATE.iter() {
+        state.store(false, Ordering::Relaxed);
+    }
+    CALLBACKS.lock().unwrap().clear();
+    *CHANNEL_NAMES.lock().unwrap() = None;
 }
 
 /// Get a channel name for logging (falls back to index if no names set).

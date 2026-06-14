@@ -6,8 +6,9 @@
 //!
 //! Has no knowledge of GPIO or any MCU peripheral.
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use crate::edge::EdgeDetector;
+use embsim_core::event::Observers;
+use std::sync::Arc;
 
 // ============================================================
 // Configuration
@@ -28,10 +29,10 @@ pub struct Config {
 
 pub struct LimitSwitch {
     config: Config,
-    upper_triggered: AtomicBool,
-    lower_triggered: AtomicBool,
-    on_upper_change: Mutex<Option<Box<dyn Fn(bool) + Send>>>,
-    on_lower_change: Mutex<Option<Box<dyn Fn(bool) + Send>>>,
+    upper: EdgeDetector,
+    lower: EdgeDetector,
+    on_upper_change: Observers<bool>,
+    on_lower_change: Observers<bool>,
 }
 
 impl LimitSwitch {
@@ -43,40 +44,31 @@ impl LimitSwitch {
         );
         Arc::new(Self {
             config,
-            upper_triggered: AtomicBool::new(false),
-            lower_triggered: AtomicBool::new(false),
-            on_upper_change: Mutex::new(None),
-            on_lower_change: Mutex::new(None),
+            upper: EdgeDetector::new(false),
+            lower: EdgeDetector::new(false),
+            on_upper_change: Observers::new(),
+            on_lower_change: Observers::new(),
         })
     }
 
-    /// Register callback for upper limit switch state changes.
+    /// Subscribe to upper limit switch transitions. Multiple subscribers allowed.
     pub fn on_upper_change(&self, cb: impl Fn(bool) + Send + 'static) {
-        *self.on_upper_change.lock().unwrap() = Some(Box::new(cb));
+        self.on_upper_change.subscribe(cb);
     }
 
-    /// Register callback for lower limit switch state changes.
+    /// Subscribe to lower limit switch transitions. Multiple subscribers allowed.
     pub fn on_lower_change(&self, cb: impl Fn(bool) + Send + 'static) {
-        *self.on_lower_change.lock().unwrap() = Some(Box::new(cb));
+        self.on_lower_change.subscribe(cb);
     }
 
     /// Update limit switch states for the given position in mm.
     /// Fires callbacks only on transitions.
     pub fn update(&self, position_mm: f64) {
-        let upper = position_mm < self.config.upper_threshold_mm;
-        let prev_upper = self.upper_triggered.swap(upper, Ordering::Relaxed);
-        if upper != prev_upper {
-            if let Some(cb) = self.on_upper_change.lock().unwrap().as_ref() {
-                cb(upper);
-            }
+        if let Some(upper) = self.upper.update(position_mm < self.config.upper_threshold_mm) {
+            self.on_upper_change.emit(upper);
         }
-
-        let lower = position_mm > self.config.lower_threshold_mm;
-        let prev_lower = self.lower_triggered.swap(lower, Ordering::Relaxed);
-        if lower != prev_lower {
-            if let Some(cb) = self.on_lower_change.lock().unwrap().as_ref() {
-                cb(lower);
-            }
+        if let Some(lower) = self.lower.update(position_mm > self.config.lower_threshold_mm) {
+            self.on_lower_change.emit(lower);
         }
     }
 }

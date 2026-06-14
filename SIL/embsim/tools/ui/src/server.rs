@@ -13,10 +13,22 @@ use tracing::info;
 static SERVER_STARTED: AtomicBool = AtomicBool::new(false);
 
 /// Start the web server on a background thread. Idempotent.
-pub fn start(port: u16) {
+///
+/// Binds synchronously so a bind failure (port in use, bad `EMBSIM_UI_BIND`)
+/// is returned to the caller instead of panicking on a detached thread. The
+/// serve loop then runs on a background thread.
+pub fn start(port: u16) -> std::io::Result<()> {
     if SERVER_STARTED.swap(true, Ordering::Relaxed) {
-        return;
+        return Ok(());
     }
+
+    // Bind loopback by default — this is a local dev tool, not a network
+    // service. Override via EMBSIM_UI_BIND (e.g. "0.0.0.0") to expose it.
+    let host = std::env::var("EMBSIM_UI_BIND").unwrap_or_else(|_| "127.0.0.1".to_string());
+    let addr = format!("{host}:{port}");
+    let std_listener = std::net::TcpListener::bind(&addr)?;
+    std_listener.set_nonblocking(true)?;
+    info!("🖥  embsim UI: http://localhost:{}", port);
 
     std::thread::Builder::new()
         .name("embsim-ui".into())
@@ -29,21 +41,19 @@ pub fn start(port: u16) {
             rt.block_on(async move {
                 let app = Router::new()
                     .route("/", get(index_handler))
-                    .route("/ws/{view_id}", get(ws_handler));
+                    .route("/ws/{view_id}", get(ws_handler))
+                    .route("/asset/{view_id}/{name}", get(asset_handler));
 
-                let addr = format!("0.0.0.0:{}", port);
-                info!("🖥  embsim UI: http://localhost:{}", port);
-
-                let listener = tokio::net::TcpListener::bind(&addr)
-                    .await
-                    .expect("Failed to bind UI server");
+                let listener = tokio::net::TcpListener::from_std(std_listener)
+                    .expect("Failed to adopt UI listener into tokio runtime");
 
                 axum::serve(listener, app)
                     .await
                     .expect("UI server error");
             });
-        })
-        .expect("Failed to start UI server thread");
+        })?;
+
+    Ok(())
 }
 
 /// Serve the shell HTML page with all registered views.
@@ -51,6 +61,28 @@ async fn index_handler() -> impl IntoResponse {
     let registered = views().read();
     let html = shell::render(&registered);
     Html(html)
+}
+
+/// Serve a view's static asset (vendored library, image, etc.).
+async fn asset_handler(Path((view_id, name)): Path<(String, String)>) -> impl IntoResponse {
+    use axum::http::{header, StatusCode};
+    let found = {
+        let registered = views().read();
+        registered.iter().find(|v| v.id == view_id).and_then(|v| {
+            v.assets
+                .iter()
+                .find(|a| a.name == name)
+                .map(|a| (a.content_type.clone(), a.bytes))
+        })
+    };
+    match found {
+        Some((content_type, bytes)) => (
+            [(header::CONTENT_TYPE, content_type)],
+            bytes,
+        )
+            .into_response(),
+        None => (StatusCode::NOT_FOUND, "asset not found").into_response(),
+    }
 }
 
 /// Route WebSocket connections to the matching view handler.

@@ -15,32 +15,49 @@ use tracing::{debug, info, trace};
 type GimliReader<'a> = EndianSlice<'a, RunTimeEndian>;
 
 impl FirmwareInfo {
-    /// Parse all DWARF debug info from a firmware static library archive.
+    /// Parse all DWARF debug info from a firmware static library archive, using
+    /// the default [`ParseOptions`].
     ///
     /// Iterates through every `.o` file in the `.a` archive, extracts
     /// enum definitions, struct layouts, and variable declarations.
+    ///
+    /// Returns a `String` error for backward compatibility; use
+    /// [`from_archive_with`](Self::from_archive_with) for a structured error and
+    /// target/convention options.
     pub fn from_archive(archive_path: &Path) -> Result<Self, String> {
-        let file_data = std::fs::read(archive_path)
-            .map_err(|e| format!("Failed to read {}: {}", archive_path.display(), e))?;
+        Self::from_archive_with(archive_path, &ParseOptions::default())
+            .map_err(|e| e.to_string())
+    }
+
+    /// Parse a firmware archive with explicit [`ParseOptions`] (pointer size,
+    /// channel-count suffix convention).
+    pub fn from_archive_with(
+        archive_path: &Path,
+        options: &ParseOptions,
+    ) -> Result<Self, MemInspectError> {
+        let file_data = std::fs::read(archive_path).map_err(MemInspectError::Io)?;
 
         let archive = ArchiveFile::parse(&*file_data)
-            .map_err(|e| format!("Failed to parse archive: {}", e))?;
+            .map_err(|e| MemInspectError::Archive(e.to_string()))?;
 
         let mut info = FirmwareInfo::new();
+        info.count_suffix = options.count_suffix.clone();
         let mut obj_count = 0;
 
         for member in archive.members() {
-            let member = member.map_err(|e| format!("Failed to read archive member: {}", e))?;
+            let member =
+                member.map_err(|e| MemInspectError::Archive(e.to_string()))?;
             let name = String::from_utf8_lossy(member.name()).to_string();
 
-            let data = member.data(&*file_data)
-                .map_err(|e| format!("Failed to read data for {}: {}", name, e))?;
+            let data = member
+                .data(&*file_data)
+                .map_err(|e| MemInspectError::Archive(e.to_string()))?;
 
             // Try to parse as an object file
             match object::File::parse(data) {
                 Ok(obj) => {
                     trace!("Parsing DWARF from: {}", name);
-                    if let Err(e) = parse_object_dwarf(&obj, &mut info) {
+                    if let Err(e) = parse_object_dwarf(&obj, &mut info, options.pointer_size) {
                         debug!("DWARF parse warning for {}: {}", name, e);
                     }
                     obj_count += 1;
@@ -65,7 +82,11 @@ impl FirmwareInfo {
 }
 
 /// Parse DWARF from a single object file and add to FirmwareInfo.
-fn parse_object_dwarf(obj: &object::File, info: &mut FirmwareInfo) -> Result<(), String> {
+fn parse_object_dwarf(
+    obj: &object::File,
+    info: &mut FirmwareInfo,
+    pointer_size: usize,
+) -> Result<(), String> {
     // Load DWARF sections
     let endian = if obj.is_little_endian() {
         RunTimeEndian::Little
@@ -91,7 +112,7 @@ fn parse_object_dwarf(obj: &object::File, info: &mut FirmwareInfo) -> Result<(),
             .map_err(|e| format!("Failed to parse unit: {}", e))?;
 
         // First pass: build a type map (offset → type info) for this compilation unit
-        let type_map = build_type_map(&dwarf, &unit)?;
+        let type_map = build_type_map(&dwarf, &unit, pointer_size)?;
 
         // Second pass: extract named enums, structs, and variables
         extract_entries(&dwarf, &unit, &type_map, info)?;
@@ -104,6 +125,24 @@ fn parse_object_dwarf(obj: &object::File, info: &mut FirmwareInfo) -> Result<(),
 // Type resolution
 // ============================================================
 
+/// Parsed layout of a single struct/union member.
+///
+/// Captures bitfield attributes when present so the byte-decode path can
+/// extract the correct bits instead of mis-reading the containing storage.
+#[derive(Debug, Clone)]
+struct MemberDef {
+    name: String,
+    /// Byte offset of the member from the start of the aggregate.
+    offset: usize,
+    /// Reference to the member's declared type.
+    type_offset: UnitOffset,
+    /// `DW_AT_bit_size`: present only for bitfield members.
+    bit_size: Option<u64>,
+    /// `DW_AT_data_bit_offset`: bit offset of the field from the start of the
+    /// aggregate's allocation for this member (DWARF v4+ form).
+    data_bit_offset: Option<u64>,
+}
+
 /// Intermediate type representation during parsing.
 #[derive(Debug, Clone)]
 enum DwarfType {
@@ -111,6 +150,10 @@ enum DwarfType {
         name: String,
         byte_size: usize,
         signed: bool,
+    },
+    Float {
+        name: String,
+        byte_size: usize,
     },
     Enum {
         typedef_name: Option<String>,
@@ -120,7 +163,13 @@ enum DwarfType {
     Struct {
         typedef_name: Option<String>,
         byte_size: usize,
-        fields: Vec<(String, usize, UnitOffset)>, // (name, offset, type_offset)
+        fields: Vec<MemberDef>,
+    },
+    /// A `union` — like a struct, but every member is laid out at offset 0.
+    Union {
+        typedef_name: Option<String>,
+        byte_size: usize,
+        fields: Vec<MemberDef>,
     },
     Array {
         element_type: UnitOffset,
@@ -143,6 +192,7 @@ enum DwarfType {
 fn build_type_map(
     dwarf: &Dwarf<GimliReader>,
     unit: &Unit<GimliReader>,
+    pointer_size: usize,
 ) -> Result<HashMap<UnitOffset, DwarfType>, String> {
     let mut map = HashMap::new();
     let mut entries = unit.entries();
@@ -154,6 +204,7 @@ fn build_type_map(
             gimli::DW_TAG_base_type => parse_base_type(dwarf, entry),
             gimli::DW_TAG_enumeration_type => parse_enumeration(dwarf, unit, entry),
             gimli::DW_TAG_structure_type => parse_structure(dwarf, unit, entry),
+            gimli::DW_TAG_union_type => parse_union(dwarf, unit, entry),
             gimli::DW_TAG_array_type => parse_array(unit, entry),
             gimli::DW_TAG_typedef => parse_typedef(dwarf, entry),
             gimli::DW_TAG_pointer_type => Some(DwarfType::Pointer {
@@ -162,7 +213,7 @@ fn build_type_map(
                     .ok()
                     .flatten()
                     .and_then(|v| attr_to_usize(&v))
-                    .unwrap_or(8), // default pointer size
+                    .unwrap_or(pointer_size), // target pointer size when DWARF omits it
             }),
             gimli::DW_TAG_subroutine_type => Some(DwarfType::Opaque { byte_size: 8 }),
             gimli::DW_TAG_const_type | gimli::DW_TAG_volatile_type => {
@@ -219,6 +270,9 @@ fn build_type_map(
                 DwarfType::Struct { typedef_name, .. } if typedef_name.is_none() => {
                     *typedef_name = Some(name);
                 }
+                DwarfType::Union { typedef_name, .. } if typedef_name.is_none() => {
+                    *typedef_name = Some(name);
+                }
                 DwarfType::Enum { typedef_name, .. } if typedef_name.is_none() => {
                     *typedef_name = Some(name);
                 }
@@ -253,11 +307,19 @@ fn resolve_type_inner(
             byte_size: *byte_size,
             signed: *signed,
         },
+        Some(DwarfType::Float { name, byte_size }) => TypeInfo::Float {
+            name: name.clone(),
+            byte_size: *byte_size,
+        },
         Some(DwarfType::Enum { typedef_name, byte_size, .. }) => TypeInfo::Enum {
             type_name: typedef_name.clone().unwrap_or_default(),
             byte_size: *byte_size,
         },
         Some(DwarfType::Struct { typedef_name, byte_size, .. }) => TypeInfo::Struct {
+            type_name: typedef_name.clone().unwrap_or_default(),
+            byte_size: *byte_size,
+        },
+        Some(DwarfType::Union { typedef_name, byte_size, .. }) => TypeInfo::Union {
             type_name: typedef_name.clone().unwrap_or_default(),
             byte_size: *byte_size,
         },
@@ -278,6 +340,51 @@ fn resolve_type_inner(
             byte_size: *byte_size,
         },
         None => TypeInfo::Unknown { byte_size: 0 },
+    }
+}
+
+/// Resolve a single struct/union member into a [`FieldInfo`].
+///
+/// If the member carries bitfield attributes (`DW_AT_bit_size`), the resulting
+/// type is a [`TypeInfo::Bitfield`] that records where the bits live within the
+/// underlying storage so the byte-decode path can extract them correctly. The
+/// member's signedness is taken from its underlying integer/enum type.
+fn member_to_field(
+    type_map: &HashMap<UnitOffset, DwarfType>,
+    member: &MemberDef,
+) -> FieldInfo {
+    let resolved = resolve_type(type_map, member.type_offset);
+
+    let type_info = if let Some(bit_size) = member.bit_size {
+        let storage_size = resolved.byte_size().max(1);
+        let signed = match &resolved {
+            TypeInfo::Base { signed, .. } => *signed,
+            // Enum bitfields are decoded as their (typically signed) integer.
+            TypeInfo::Enum { .. } => true,
+            _ => false,
+        };
+        // DWARF v4+ uses DW_AT_data_bit_offset (from the start of the struct
+        // allocation). Normalize it to be relative to the member's byte
+        // `offset` (where the decoder reads the storage unit). When absent
+        // (older producers) we fall back to 0.
+        let bit_offset = member
+            .data_bit_offset
+            .map(|abs| abs.saturating_sub((member.offset as u64) * 8))
+            .unwrap_or(0);
+        TypeInfo::Bitfield {
+            bit_offset,
+            bit_size,
+            storage_size,
+            signed,
+        }
+    } else {
+        resolved
+    };
+
+    FieldInfo {
+        name: member.name.clone(),
+        offset: member.offset,
+        type_info,
     }
 }
 
@@ -328,42 +435,78 @@ fn extract_entries(
                 if let Some((_, dtype)) = follow_typedefs(type_map, target) {
                     match dtype {
                         DwarfType::Enum { byte_size, variants, .. } => {
-                            if !info.enums.contains_key(&name) {
-                                let enum_info = EnumInfo {
-                                    name: name.clone(),
-                                    byte_size: *byte_size,
-                                    variants: variants.clone(),
-                                };
-                                // Register all variants for flat lookup
-                                for (vname, vval) in &enum_info.variants {
-                                    info.enum_variants.insert(
-                                        vname.clone(),
-                                        (name.clone(), *vval),
+                            match info.enums.get(&name) {
+                                None => {
+                                    let enum_info = EnumInfo {
+                                        name: name.clone(),
+                                        byte_size: *byte_size,
+                                        variants: variants.clone(),
+                                    };
+                                    // Register all variants for flat lookup
+                                    for (vname, vval) in &enum_info.variants {
+                                        info.enum_variants.insert(
+                                            vname.clone(),
+                                            (name.clone(), *vval),
+                                        );
+                                    }
+                                    info.enums.insert(name, enum_info);
+                                }
+                                // First-definition-wins, but warn on a genuine
+                                // conflict (same name, different shape) so a
+                                // mismatched ODR violation isn't silent.
+                                Some(existing)
+                                    if existing.byte_size != *byte_size
+                                        || existing.variants.len() != variants.len() =>
+                                {
+                                    debug!(
+                                        "enum '{}' redefined with a different shape \
+                                         (kept first: {}B/{} variants, ignored: {}B/{} variants)",
+                                        name,
+                                        existing.byte_size,
+                                        existing.variants.len(),
+                                        byte_size,
+                                        variants.len()
                                     );
                                 }
-                                info.enums.insert(name, enum_info);
+                                Some(_) => {}
                             }
                         }
-                        DwarfType::Struct { byte_size, fields, .. } => {
-                            if !info.structs.contains_key(&name) {
-                                let resolved_fields: Vec<FieldInfo> = fields
-                                    .iter()
-                                    .map(|(fname, foffset, ftype_offset)| {
-                                        FieldInfo {
-                                            name: fname.clone(),
-                                            offset: *foffset,
-                                            type_info: resolve_type(type_map, *ftype_offset),
-                                        }
-                                    })
-                                    .collect();
-                                info.structs.insert(
-                                    name.clone(),
-                                    StructInfo {
+                        DwarfType::Struct { byte_size, fields, .. }
+                        | DwarfType::Union { byte_size, fields, .. } => {
+                            // Unions are stored alongside structs; their members
+                            // all sit at offset 0, which is already encoded in
+                            // each MemberDef.
+                            match info.structs.get(&name) {
+                                None => {
+                                    let resolved_fields: Vec<FieldInfo> = fields
+                                        .iter()
+                                        .map(|m| member_to_field(type_map, m))
+                                        .collect();
+                                    info.structs.insert(
+                                        name.clone(),
+                                        StructInfo {
+                                            name,
+                                            byte_size: *byte_size,
+                                            fields: resolved_fields,
+                                        },
+                                    );
+                                }
+                                // First-definition-wins; warn on a real conflict.
+                                Some(existing)
+                                    if existing.byte_size != *byte_size
+                                        || existing.fields.len() != fields.len() =>
+                                {
+                                    debug!(
+                                        "struct/union '{}' redefined with a different shape \
+                                         (kept first: {}B/{} fields, ignored: {}B/{} fields)",
                                         name,
-                                        byte_size: *byte_size,
-                                        fields: resolved_fields,
-                                    },
-                                );
+                                        existing.byte_size,
+                                        existing.fields.len(),
+                                        byte_size,
+                                        fields.len()
+                                    );
+                                }
+                                Some(_) => {}
                             }
                         }
                         _ => {}
@@ -436,6 +579,14 @@ fn parse_base_type(
     let encoding = entry
         .attr_value(gimli::DW_AT_encoding)
         .ok()??;
+
+    // `float`/`double` (and `_Float*`/`long double`) carry DW_ATE_float. These
+    // MUST be decoded with f32/f64::from_le_bytes — reading their bytes as an
+    // integer produces garbage for any float telemetry.
+    if matches!(encoding, AttributeValue::Encoding(gimli::DW_ATE_float)) {
+        return Some(DwarfType::Float { name, byte_size });
+    }
+
     let signed = matches!(
         encoding,
         AttributeValue::Encoding(gimli::DW_ATE_signed | gimli::DW_ATE_signed_char)
@@ -477,6 +628,61 @@ fn parse_enumeration(
     })
 }
 
+/// Collect the `DW_TAG_member` children of a struct or union into `MemberDef`s,
+/// capturing bitfield attributes (`DW_AT_bit_size` / `DW_AT_data_bit_offset`)
+/// when present. Shared by [`parse_structure`] and [`parse_union`].
+fn collect_members(
+    dwarf: &Dwarf<GimliReader>,
+    unit: &Unit<GimliReader>,
+    entry: &DebuggingInformationEntry<GimliReader>,
+) -> Vec<MemberDef> {
+    let mut fields = Vec::new();
+    let mut tree = match unit.entries_tree(Some(entry.offset())) {
+        Ok(t) => t,
+        Err(_) => return fields,
+    };
+    let root = match tree.root() {
+        Ok(r) => r,
+        Err(_) => return fields,
+    };
+    let mut children = root.children();
+    while let Ok(Some(child)) = children.next() {
+        let child_entry = child.entry();
+        if child_entry.tag() != gimli::DW_TAG_member {
+            continue;
+        }
+        let name = get_name(dwarf, child_entry).unwrap_or_default();
+        // Union members have no DW_AT_data_member_location and sit at offset 0.
+        let offset = child_entry
+            .attr_value(gimli::DW_AT_data_member_location)
+            .ok()
+            .flatten()
+            .and_then(|v| attr_to_usize(&v))
+            .unwrap_or(0);
+        let type_offset = get_type_ref(child_entry).unwrap_or(UnitOffset(0));
+        let bit_size = child_entry
+            .attr_value(gimli::DW_AT_bit_size)
+            .ok()
+            .flatten()
+            .and_then(|v| attr_to_usize(&v))
+            .map(|n| n as u64);
+        let data_bit_offset = child_entry
+            .attr_value(gimli::DW_AT_data_bit_offset)
+            .ok()
+            .flatten()
+            .and_then(|v| attr_to_usize(&v))
+            .map(|n| n as u64);
+        fields.push(MemberDef {
+            name,
+            offset,
+            type_offset,
+            bit_size,
+            data_bit_offset,
+        });
+    }
+    fields
+}
+
 fn parse_structure(
     dwarf: &Dwarf<GimliReader>,
     unit: &Unit<GimliReader>,
@@ -489,30 +695,29 @@ fn parse_structure(
         .and_then(|v| attr_to_usize(&v))
         .unwrap_or(0);
 
-    // Collect member children
-    let mut fields = Vec::new();
-    let mut tree = unit.entries_tree(Some(entry.offset())).ok()?;
-    let root = tree.root().ok()?;
-    let mut children = root.children();
-    while let Ok(Some(child)) = children.next() {
-        let child_entry = child.entry();
-        if child_entry.tag() == gimli::DW_TAG_member {
-            let fname = get_name(dwarf, child_entry).unwrap_or_default();
-            let foffset = child_entry
-                .attr_value(gimli::DW_AT_data_member_location)
-                .ok()
-                .flatten()
-                .and_then(|v| attr_to_usize(&v))
-                .unwrap_or(0);
-            let ftype = get_type_ref(child_entry).unwrap_or(UnitOffset(0));
-            fields.push((fname, foffset, ftype));
-        }
-    }
-
     Some(DwarfType::Struct {
         typedef_name: None,
         byte_size,
-        fields,
+        fields: collect_members(dwarf, unit, entry),
+    })
+}
+
+fn parse_union(
+    dwarf: &Dwarf<GimliReader>,
+    unit: &Unit<GimliReader>,
+    entry: &DebuggingInformationEntry<GimliReader>,
+) -> Option<DwarfType> {
+    let byte_size = entry
+        .attr_value(gimli::DW_AT_byte_size)
+        .ok()
+        .flatten()
+        .and_then(|v| attr_to_usize(&v))
+        .unwrap_or(0);
+
+    Some(DwarfType::Union {
+        typedef_name: None,
+        byte_size,
+        fields: collect_members(dwarf, unit, entry),
     })
 }
 

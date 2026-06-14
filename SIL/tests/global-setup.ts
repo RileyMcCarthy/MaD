@@ -86,9 +86,10 @@ async function globalSetup() {
     }
   }
 
-  // 0. Kill any stale emulator processes from previous runs
+  // 0. Kill any stale emulator processes from previous runs. Match the full
+  //    binary path so unrelated processes mentioning "mad-emulator" survive.
   try {
-    execSync('pkill -f "mad-emulator" 2>/dev/null || true', { stdio: 'ignore' });
+    execSync(`pkill -f "${EMULATOR_BIN}" 2>/dev/null || true`, { stdio: 'ignore' });
     await new Promise((r) => setTimeout(r, 500));
   } catch {
     // Ignore errors - no processes to kill is fine

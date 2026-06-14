@@ -2,6 +2,46 @@
 
 use std::collections::HashMap;
 
+/// Options controlling how a firmware archive is parsed.
+///
+/// Defaults match a 64-bit host build with the common `_COUNT` channel-count
+/// convention; override for other targets/conventions via
+/// [`FirmwareInfo::from_archive_with`].
+#[derive(Debug, Clone)]
+pub struct ParseOptions {
+    /// Pointer size in bytes for the target (used when DWARF omits it). Default 8.
+    pub pointer_size: usize,
+    /// Suffix of the "count" enum variant looked up by [`FirmwareInfo::channel_count`]
+    /// (e.g. `HAL_GPIO_channel_COUNT`). Default `"_COUNT"`.
+    pub count_suffix: String,
+}
+
+impl Default for ParseOptions {
+    fn default() -> Self {
+        Self { pointer_size: 8, count_suffix: "_COUNT".to_string() }
+    }
+}
+
+/// Errors raised while parsing a firmware archive.
+#[derive(Debug)]
+pub enum MemInspectError {
+    /// The archive file could not be read.
+    Io(std::io::Error),
+    /// The bytes are not a valid `ar` archive.
+    Archive(String),
+}
+
+impl std::fmt::Display for MemInspectError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MemInspectError::Io(e) => write!(f, "failed to read firmware archive: {e}"),
+            MemInspectError::Archive(e) => write!(f, "failed to parse firmware archive: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for MemInspectError {}
+
 /// Complete firmware debug info parsed from DWARF.
 #[derive(Debug, Clone)]
 pub struct FirmwareInfo {
@@ -10,10 +50,12 @@ pub struct FirmwareInfo {
     /// All enum variants flattened: variant_name → (type_name, value)
     /// This allows O(1) lookup of any enum variant by name.
     pub enum_variants: HashMap<String, (String, i64)>,
-    /// All struct types: type_name → StructInfo  
+    /// All struct types: type_name → StructInfo
     pub structs: HashMap<String, StructInfo>,
     /// All variables: variable_name → VariableInfo
     pub variables: HashMap<String, VariableInfo>,
+    /// Channel-count variant suffix convention (default `"_COUNT"`).
+    pub count_suffix: String,
 }
 
 /// A C enum type with its named variants.
@@ -52,11 +94,19 @@ pub struct FieldInfo {
 /// Type information for a field or variable.
 #[derive(Debug, Clone)]
 pub enum TypeInfo {
-    /// Primitive type (int, uint8_t, bool, etc.)
+    /// Primitive integer/bool/char type (int, uint8_t, bool, etc.)
     Base {
         name: String,
         byte_size: usize,
         signed: bool,
+    },
+    /// IEEE-754 floating point type (`float` = 4 bytes, `double` = 8 bytes).
+    ///
+    /// Decoded with `f32::from_le_bytes` / `f64::from_le_bytes` rather than as
+    /// an integer — decoding float bytes as an integer yields garbage.
+    Float {
+        name: String,
+        byte_size: usize,
     },
     /// Enum type (stored as integer)
     Enum {
@@ -67,6 +117,30 @@ pub enum TypeInfo {
     Struct {
         type_name: String,
         byte_size: usize,
+    },
+    /// Union type (all members share offset 0).
+    ///
+    /// Stored alongside structs in `FirmwareInfo::structs`; field offsets are
+    /// all `0`. Treated like a struct for field-path resolution.
+    Union {
+        type_name: String,
+        byte_size: usize,
+    },
+    /// A C bitfield member: a sub-byte run of bits within an underlying
+    /// integer storage unit.
+    ///
+    /// - `bit_offset` is the offset, in bits, from the start of the field's
+    ///   storage (`DW_AT_data_bit_offset`, which is measured from the start of
+    ///   the containing struct's allocation for this member — see decode).
+    /// - `bit_size` is the width of the bitfield in bits (`DW_AT_bit_size`).
+    /// - `storage_size` is the byte size of the underlying integer type.
+    /// - `signed` indicates whether the underlying type is signed (sign-extend
+    ///   on decode).
+    Bitfield {
+        bit_offset: u64,
+        bit_size: u64,
+        storage_size: usize,
+        signed: bool,
     },
     /// Fixed-size array
     Array {
@@ -85,11 +159,18 @@ pub enum TypeInfo {
 
 impl TypeInfo {
     /// Get the byte size of this type.
+    ///
+    /// For a [`TypeInfo::Bitfield`] this returns the size of the underlying
+    /// integer storage unit (the number of bytes that must be read to extract
+    /// the bitfield), not the bit width.
     pub fn byte_size(&self) -> usize {
         match self {
             TypeInfo::Base { byte_size, .. } => *byte_size,
+            TypeInfo::Float { byte_size, .. } => *byte_size,
             TypeInfo::Enum { byte_size, .. } => *byte_size,
             TypeInfo::Struct { byte_size, .. } => *byte_size,
+            TypeInfo::Union { byte_size, .. } => *byte_size,
+            TypeInfo::Bitfield { storage_size, .. } => *storage_size,
             TypeInfo::Array { element_type, count } => element_type.byte_size() * count,
             TypeInfo::Pointer { byte_size } => *byte_size,
             TypeInfo::Unknown { byte_size } => *byte_size,
@@ -113,14 +194,61 @@ pub struct VariableInfo {
 // ============================================================
 
 impl FirmwareInfo {
-    /// Create an empty FirmwareInfo.
+    /// Create an empty FirmwareInfo with the default `"_COUNT"` convention.
     pub fn new() -> Self {
         Self {
             enums: HashMap::new(),
             enum_variants: HashMap::new(),
             structs: HashMap::new(),
             variables: HashMap::new(),
+            count_suffix: "_COUNT".to_string(),
         }
+    }
+
+    // ── Fallible lookups ──
+    //
+    // The enum/struct/variable names differ between firmware projects, so a
+    // new consumer needs to *probe* for symbols (and report all that are
+    // missing) rather than crash one panic at a time. The `try_*` methods
+    // return `Option`; the original methods below are thin panicking wrappers
+    // for call sites that have already validated the symbol exists.
+
+    /// `true` if an enum *variant* with this name exists.
+    pub fn has_enum_variant(&self, variant_name: &str) -> bool {
+        self.enum_variants.contains_key(variant_name)
+    }
+
+    /// `true` if an enum *type* with this name exists.
+    pub fn has_enum_type(&self, type_name: &str) -> bool {
+        self.enums.contains_key(type_name)
+    }
+
+    /// Look up an enum variant value by name, or `None` if absent.
+    pub fn try_enum_value(&self, variant_name: &str) -> Option<i64> {
+        self.enum_variants.get(variant_name).map(|(_, v)| *v)
+    }
+
+    /// Look up an enum variant value as `usize`, or `None` if absent.
+    pub fn try_enum_channel(&self, variant_name: &str) -> Option<usize> {
+        self.try_enum_value(variant_name).map(|v| v as usize)
+    }
+
+    /// Get all variants of a named enum type, or `None` if absent.
+    pub fn try_enum_variants(&self, type_name: &str) -> Option<&[(String, i64)]> {
+        self.enums.get(type_name).map(|e| e.variants.as_slice())
+    }
+
+    /// Get the count variant of an enum type (the variant whose name ends with
+    /// [`count_suffix`](FirmwareInfo::count_suffix), default `"_COUNT"`), or
+    /// `None` if the type is absent or has no such variant.
+    pub fn try_channel_count(&self, type_name: &str) -> Option<usize> {
+        let suffix = &self.count_suffix;
+        self.enums.get(type_name).and_then(|info| {
+            info.variants
+                .iter()
+                .find(|(name, _)| name.ends_with(suffix.as_str()))
+                .map(|(_, v)| *v as usize)
+        })
     }
 
     /// Look up an enum variant value by name. Panics if not found.
@@ -129,10 +257,8 @@ impl FirmwareInfo {
     /// let val = fw.enum_value("HAL_GPIO_SERVO_ENA"); // e.g. 0i64
     /// ```
     pub fn enum_value(&self, variant_name: &str) -> i64 {
-        self.enum_variants
-            .get(variant_name)
+        self.try_enum_value(variant_name)
             .unwrap_or_else(|| panic!("Firmware enum variant '{}' not found in DWARF debug info", variant_name))
-            .1
     }
 
     /// Look up an enum variant value as `usize` (for channel indices). Panics if not found.
@@ -144,13 +270,16 @@ impl FirmwareInfo {
         self.enum_value(variant_name) as usize
     }
 
+    /// MCU-neutral alias for [`enum_channel`](Self::enum_channel): look up an
+    /// enum variant's value as `usize` (e.g. a peripheral channel index).
+    pub fn enum_value_usize(&self, variant_name: &str) -> usize {
+        self.enum_channel(variant_name)
+    }
+
     /// Get all variants of a named enum type. Panics if not found.
     pub fn enum_variants(&self, type_name: &str) -> &[(String, i64)] {
-        self.enums
-            .get(type_name)
+        self.try_enum_variants(type_name)
             .unwrap_or_else(|| panic!("Firmware enum type '{}' not found in DWARF debug info", type_name))
-            .variants
-            .as_slice()
     }
 
     /// Get the `_COUNT` variant of an enum type (by convention). Panics if not found.
@@ -159,21 +288,29 @@ impl FirmwareInfo {
     /// let count = fw.channel_count("HAL_GPIO_channel_E");
     /// ```
     pub fn channel_count(&self, type_name: &str) -> usize {
-        let info = self.enums
-            .get(type_name)
-            .unwrap_or_else(|| panic!("Firmware enum type '{}' not found in DWARF debug info", type_name));
-        info.variants
-            .iter()
-            .find(|(name, _)| name.ends_with("_COUNT"))
+        if !self.has_enum_type(type_name) {
+            panic!("Firmware enum type '{}' not found in DWARF debug info", type_name);
+        }
+        self.try_channel_count(type_name)
             .unwrap_or_else(|| panic!("Firmware enum type '{}' has no _COUNT variant", type_name))
-            .1 as usize
+    }
+
+    /// Get struct layout by type name, or `None` if absent.
+    pub fn try_struct_info(&self, type_name: &str) -> Option<&StructInfo> {
+        self.structs.get(type_name)
     }
 
     /// Get struct layout by type name. Panics if not found.
     pub fn struct_info(&self, type_name: &str) -> &StructInfo {
-        self.structs
-            .get(type_name)
+        self.try_struct_info(type_name)
             .unwrap_or_else(|| panic!("Firmware struct type '{}' not found in DWARF debug info", type_name))
+    }
+
+    /// Resolve a field path to a byte offset within a struct type, or `None` if
+    /// the type or field path is absent.
+    pub fn try_field_offset(&self, type_name: &str, path: &str) -> Option<usize> {
+        let struct_info = self.structs.get(type_name)?;
+        self.resolve_field_offset(struct_info, path)
     }
 
     /// Resolve a field path to a byte offset within a struct type. Panics if not found.
@@ -183,9 +320,10 @@ impl FirmwareInfo {
     /// - `"channels[0].state"` → offset of first element's `state` field
     /// - `"channels[2].output.running"` → nested field access
     pub fn field_offset(&self, type_name: &str, path: &str) -> usize {
-        let struct_info = self.structs.get(type_name)
-            .unwrap_or_else(|| panic!("Firmware struct type '{}' not found in DWARF debug info", type_name));
-        self.resolve_field_offset(struct_info, path)
+        if !self.structs.contains_key(type_name) {
+            panic!("Firmware struct type '{}' not found in DWARF debug info", type_name);
+        }
+        self.try_field_offset(type_name, path)
             .unwrap_or_else(|| panic!("Field path '{}' not found in struct '{}'", path, type_name))
     }
 
@@ -213,15 +351,15 @@ impl FirmwareInfo {
             &field.type_info
         };
 
-        // If there's more path to resolve, recurse into the struct type
+        // If there's more path to resolve, recurse into the struct/union type
         if let Some(remaining) = rest {
             match field_type {
-                TypeInfo::Struct { type_name, .. } => {
+                TypeInfo::Struct { type_name, .. } | TypeInfo::Union { type_name, .. } => {
                     let nested = self.structs.get(type_name)?;
                     let nested_offset = self.resolve_field_offset(nested, remaining)?;
                     Some(offset + nested_offset)
                 }
-                _ => None, // Can't descend into non-struct
+                _ => None, // Can't descend into non-struct/non-union
             }
         } else {
             Some(offset)
@@ -254,7 +392,7 @@ impl FirmwareInfo {
 
         if let Some(remaining) = rest {
             match field_type {
-                TypeInfo::Struct { type_name, .. } => {
+                TypeInfo::Struct { type_name, .. } | TypeInfo::Union { type_name, .. } => {
                     let nested = self.structs.get(type_name)?;
                     self.resolve_field_type(nested, remaining)
                 }
@@ -323,5 +461,49 @@ mod tests {
         assert_eq!(parse_array_access("channels"), ("channels", None));
         assert_eq!(parse_array_access("channels[0]"), ("channels", Some(0)));
         assert_eq!(parse_array_access("channels[42]"), ("channels", Some(42)));
+    }
+
+    fn sample_fw() -> FirmwareInfo {
+        let mut fw = FirmwareInfo::new();
+        fw.enums.insert(
+            "HAL_GPIO_channel_E".to_string(),
+            EnumInfo {
+                name: "HAL_GPIO_channel_E".to_string(),
+                byte_size: 4,
+                variants: vec![
+                    ("HAL_GPIO_SERVO_ENA".to_string(), 0),
+                    ("HAL_GPIO_SERVO_DIR".to_string(), 1),
+                    ("HAL_GPIO_channel_COUNT".to_string(), 2),
+                ],
+            },
+        );
+        fw.enum_variants.insert("HAL_GPIO_SERVO_ENA".to_string(), ("HAL_GPIO_channel_E".to_string(), 0));
+        fw.enum_variants.insert("HAL_GPIO_SERVO_DIR".to_string(), ("HAL_GPIO_channel_E".to_string(), 1));
+        fw.enum_variants.insert("HAL_GPIO_channel_COUNT".to_string(), ("HAL_GPIO_channel_E".to_string(), 2));
+        fw
+    }
+
+    #[test]
+    fn try_lookups_return_none_for_missing() {
+        let fw = sample_fw();
+        // Present
+        assert_eq!(fw.try_enum_value("HAL_GPIO_SERVO_DIR"), Some(1));
+        assert_eq!(fw.try_enum_channel("HAL_GPIO_SERVO_DIR"), Some(1));
+        assert_eq!(fw.try_channel_count("HAL_GPIO_channel_E"), Some(2));
+        assert!(fw.has_enum_variant("HAL_GPIO_SERVO_ENA"));
+        assert!(fw.has_enum_type("HAL_GPIO_channel_E"));
+        // Absent
+        assert_eq!(fw.try_enum_value("HAL_GPIO_NOPE"), None);
+        assert_eq!(fw.try_channel_count("Nonexistent_E"), None);
+        assert!(!fw.has_enum_variant("HAL_GPIO_NOPE"));
+        assert!(!fw.has_enum_type("Nonexistent_E"));
+    }
+
+    #[test]
+    fn panicking_wrappers_agree_with_try() {
+        let fw = sample_fw();
+        assert_eq!(fw.enum_channel("HAL_GPIO_SERVO_DIR"), 1);
+        assert_eq!(fw.channel_count("HAL_GPIO_channel_E"), 2);
+        assert_eq!(fw.enum_variants("HAL_GPIO_channel_E").len(), 3);
     }
 }

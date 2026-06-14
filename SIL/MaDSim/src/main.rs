@@ -1,12 +1,12 @@
+#[cfg(feature = "web")]
 mod machine_ui;
+#[cfg(feature = "web")]
 mod machine_view;
 mod wiring;
 
 use clap::Parser;
 use embsim_memory_inspect::FirmwareInfo;
-use embsim_p2;
-use embsim_peripherals::{encoder, filesystem, lock, pulse_out, serial, system};
-use std::os::fd::AsRawFd;
+use embsim_runtime::Emulator;
 use std::path::Path;
 use tracing::{info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
@@ -49,11 +49,70 @@ extern "C" {
     fn mad_begin();
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
-    // Setup logging
-    let level = match args.log_level.as_str() {
+    init_logging(&args.log_level);
+
+    info!("MaD Emulator v{}", env!("CARGO_PKG_VERSION"));
+    info!("Speed: {}x  PTY: {}  SD: {}", args.speed, args.pty_path, args.sd_path);
+
+    // Parse firmware DWARF debug info once; reused for UI setup and the emulator.
+    let fw = FirmwareInfo::from_archive(Path::new(&args.firmware_lib))?;
+
+    // Register UI views + machine view BEFORE the emulator starts (they only
+    // need firmware enum info, not initialized peripherals). No-op without the
+    // `web` feature (headless build).
+    let trace_enabled = setup_trace_ui(args.trace_port, &fw)?;
+
+    let baud = host_serial_baud_from_env();
+
+    Emulator::builder(embsim_p2::P2)
+        .firmware(fw)
+        .machine(Box::new(wiring::MadMachine))
+        .clock_speed(args.speed)
+        .host_pty(args.pty_path)
+        .sd_path(args.sd_path)
+        .host_serial_baud(baud)
+        .entry(|| unsafe { mad_begin() })
+        .on_wired(move |fw| {
+            if trace_enabled {
+                // Drive the trace: the poller (now owned by embsim-trace) turns
+                // record() calls + activated C variables into the time-series.
+                embsim_trace::spawn_poller(fw);
+            }
+        })
+        .build()?
+        .run()?;
+
+    info!("Exiting.");
+    Ok(())
+}
+
+/// Register the trace viewer + machine visualizer web UI and start the server.
+/// Returns whether tracing is enabled. With the `web` feature off this is a
+/// no-op that always returns `false` (headless build).
+#[cfg(feature = "web")]
+fn setup_trace_ui(port: u16, fw: &FirmwareInfo) -> Result<bool, Box<dyn std::error::Error>> {
+    if port == 0 {
+        return Ok(false);
+    }
+    embsim_trace::register_view();
+    machine_view::register_view();
+    embsim_ui::start_server(port)?;
+    machine_view::init(fw);
+    embsim_trace::set_firmware_info(fw);
+    Ok(true)
+}
+
+#[cfg(not(feature = "web"))]
+fn setup_trace_ui(_port: u16, _fw: &FirmwareInfo) -> Result<bool, Box<dyn std::error::Error>> {
+    Ok(false)
+}
+
+/// Configure the global tracing subscriber from a log-level string.
+fn init_logging(log_level: &str) {
+    let level = match log_level {
         "error" => Level::ERROR,
         "warn" => Level::WARN,
         "info" => Level::INFO,
@@ -61,7 +120,6 @@ fn main() {
         "trace" => Level::TRACE,
         _ => Level::INFO,
     };
-
     let subscriber = FmtSubscriber::builder()
         .with_max_level(level)
         .with_target(true)
@@ -70,140 +128,25 @@ fn main() {
         .finish();
     tracing::subscriber::set_global_default(subscriber)
         .expect("Failed to set tracing subscriber");
-
-    info!("MaD Emulator v{}", env!("CARGO_PKG_VERSION"));
-    info!("Speed: {}x", args.speed);
-    info!("PTY path: {}", args.pty_path);
-    info!("SD path: {}", args.sd_path);
-
-    // Register UI views and start the web server
-    if args.trace_port > 0 {
-        embsim_trace::register_view();
-        machine_view::register_view();
-        embsim_ui::start_server(args.trace_port);
-    }
-
-    // Parse firmware DWARF debug info for enum/struct introspection
-    let fw = FirmwareInfo::from_archive(Path::new(&args.firmware_lib))
-        .expect("Failed to parse firmware debug info");
-
-    // Initialize machine view GPIO channel mappings (needs fw info)
-    if args.trace_port > 0 {
-        machine_view::init(&fw);
-    }
-
-    // Resolve channel counts from firmware enums
-    let serial_count = fw.channel_count("HAL_serial_channel_E");
-    let encoder_count = fw.channel_count("HAL_encoder_channel_E");
-    let pulse_out_count = fw.channel_count("HAL_pulseOut_channel_E");
-
-    let serial_main = fw.enum_channel("HAL_SERIAL_CHANNEL_MAIN");
-
-    // Initialize embsim infrastructure with P2 constants
-    embsim_core::virtual_clock::init(args.speed, embsim_p2::P2_CLOCK_FREQ);
-
-    // Initialize peripherals with firmware-derived channel counts
-    serial::init(serial_count);
-    encoder::init(encoder_count);
-    pulse_out::init(pulse_out_count);
-    lock::init(embsim_p2::P2_MAX_LOCKS);
-    system::init(embsim_p2::P2_MAX_COGS);
-    filesystem::init(&args.sd_path);
-
-    // Create PTY pair for UI serial communication
-    let pty = embsim_core::serial_pty::Pty::new(&args.pty_path)
-        .expect("Failed to create PTY pair");
-    info!("UI can connect to: {}", pty.symlink_path);
-
-    // Wire PTY to serial channel MAIN
-    serial::init_channel_fd(serial_main, pty.master.as_raw_fd());
-
-    // Optional deterministic baud-rate pacing on the MAIN serial channel.
-    // Enabled by setting MAD_SIM_BAUD to a positive integer (e.g. 230400).
-    // When unset or 0, TX is instant (default behaviour).
-    match std::env::var("MAD_SIM_BAUD") {
-        Ok(raw) => match raw.trim().parse::<u32>() {
-            Ok(0) => info!("MAD_SIM_BAUD=0; serial baud pacing disabled"),
-            Ok(baud) => {
-                serial::set_baud(serial_main, baud);
-                info!(
-                    "Serial MAIN baud pacing enabled at {} bps (deterministic, full-duplex)",
-                    baud
-                );
-            }
-            Err(_) => warn!("MAD_SIM_BAUD={:?} is not a valid u32; pacing disabled", raw),
-        },
-        Err(_) => {}
-    }
-
-    // Wire machine: register callbacks, set initial GPIO states
-    wiring::init(&fw);
-
-    // Register C firmware variables for trace polling
-    if args.trace_port > 0 {
-        // Build the firmware variable catalog from DWARF debug info.
-        // Variables are NOT activated at startup — they are activated on-demand
-        // from the trace viewer UI when the user selects them.
-        embsim_trace::set_firmware_info(&fw);
-
-        // Start C variable polling thread
-        let fw_clone = fw.clone();
-        std::thread::Builder::new()
-            .name("trace-poll".into())
-            .spawn(move || poll_c_variables(&fw_clone))
-            .expect("Failed to start trace poll thread");
-    }
-
-    info!("Starting firmware...");
-
-    // Call the firmware's mad_begin() entry point
-    unsafe {
-        mad_begin();
-    }
-
-    // Firmware main() should not return in normal operation,
-    // but if it does, we wait for threads to finish
-    info!("Firmware main() returned, waiting for threads...");
-    system::join_all_threads();
-    info!("All threads finished. Exiting.");
 }
 
-/// Periodically poll registered C firmware variables and record to trace.
-fn poll_c_variables(fw: &FirmwareInfo) {
-    use embsim_memory_inspect::SymbolResolver;
-
-    // Wait a moment for firmware to initialize
-    std::thread::sleep(std::time::Duration::from_millis(500));
-
-    let resolver = match SymbolResolver::new() {
-        Ok(r) => r,
-        Err(e) => {
-            tracing::warn!("Trace C-variable polling disabled: {}", e);
-            return;
-        }
-    };
-
-    loop {
-        let watches = embsim_trace::c_watches();
-        for watch in &watches {
-            let value: Option<f64> = unsafe {
-                resolver.read_field_as_f64(fw, &watch.var_name, &watch.field_path)
-            };
-            if let Some(v) = value {
-                embsim_trace::record(&watch.signal_name, v);
+/// Optional deterministic baud-rate pacing on the host serial channel.
+/// Enabled by setting `MAD_SIM_BAUD` to a positive integer (e.g. 230400).
+/// Unset or 0 means instant TX (the default).
+fn host_serial_baud_from_env() -> u32 {
+    match std::env::var("MAD_SIM_BAUD") {
+        Ok(raw) => match raw.trim().parse::<u32>() {
+            Ok(0) => {
+                info!("MAD_SIM_BAUD=0; serial baud pacing disabled");
+                0
             }
-        }
-
-        // Re-record all model/peripheral signals at the current time so
-        // that the trace has uniform sample density at the configured rate.
-        embsim_trace::resample_all();
-
-        // Poll at configurable rate (default 10ms / 100Hz)
-        let interval_us = embsim_trace::poll_interval_us();
-        let wall_us = embsim_core::virtual_clock::virtual_to_wall_us(interval_us);
-        if wall_us > 0 {
-            std::thread::sleep(std::time::Duration::from_micros(wall_us));
-        }
+            Ok(baud) => baud,
+            Err(_) => {
+                warn!("MAD_SIM_BAUD={raw:?} is not a valid u32; pacing disabled");
+                0
+            }
+        },
+        Err(_) => 0,
     }
 }
 

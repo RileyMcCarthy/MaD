@@ -31,3 +31,22 @@ pub const P2_MAX_LOCKS: usize = 32;
 
 /// Propeller 2 max GPIO channels (64 I/O pins).
 pub const P2_MAX_GPIO: usize = 64;
+
+/// The Propeller 2 platform, for use with `embsim_runtime::Emulator::builder`.
+///
+/// A zero-sized handle that supplies the P2's clock/core/lock constants so a
+/// consumer never threads `P2_*` constants by hand.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct P2;
+
+impl embsim_runtime::Platform for P2 {
+    fn clock_freq_hz(&self) -> u32 {
+        P2_CLOCK_FREQ
+    }
+    fn max_cores(&self) -> usize {
+        P2_MAX_COGS
+    }
+    fn max_locks(&self) -> usize {
+        P2_MAX_LOCKS
+    }
+}

@@ -16,20 +16,20 @@
 //! subscribe via [`on_progress`] and receive the **same integer** the firmware
 //! sees on the same call, so they cannot drift from the firmware's view.
 //!
-//! ## Cog occupancy
+//! ## Core occupancy
 //!
 //! `run()` sleeps for [`POLL_TICK_US`] of virtual time between polls when the
-//! sequence is still in progress. This bounds the cog's polling rate without
-//! tying it to the pulse frequency, and lets the cog scheduler service other
-//! cogs while the pulse train continues. When the sequence is complete the
-//! call returns immediately so the cog can move on to the next move.
+//! sequence is still in progress. This bounds the calling core's polling rate
+//! without tying it to the pulse frequency, and lets the scheduler service
+//! other cores while the pulse train continues. When the sequence is complete
+//! the call returns immediately so the core can move on to the next move.
 //!
 //! ## Concurrency
 //!
 //! Per-channel state is protected by a single global mutex held only across
-//! field reads/writes — never across a sleep — so multiple cogs can drive
-//! independent channels in parallel without false serialization. Two cogs
-//! driving the *same* channel is undefined (just like sharing a smart pin
+//! field reads/writes — never across a sleep — so multiple cores can drive
+//! independent channels in parallel without false serialization. Two cores
+//! driving the *same* channel is undefined (just like sharing an output pin
 //! on real hardware).
 
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -38,21 +38,21 @@ use tracing::trace;
 
 /// Polling cadence of `run()` while a sequence is in progress (virtual µs).
 ///
-/// Bounds cog occupancy without coupling to the configured pulse frequency.
+/// Bounds core occupancy without coupling to the configured pulse frequency.
 /// On every poll, `on_progress` fires the running emitted count so the encoder
 /// atomic and downstream physics stay in sync with virtual time. Anything that
 /// reads the encoder afterwards will see a value at most `POLL_TICK_US` stale.
 ///
 /// This must be **substantially finer** than the rate at which the encoder is
-/// read by firmware (the MONITOR cog runs at 1 ms). A matching cadence aliases
+/// read by firmware (a typical monitor loop runs at ~1 ms). A matching cadence aliases
 /// against the read clock and produces visible "stutter" — every few samples
 /// land in the same encoder window and report a 0-µm delta. 250 µs gives a
 /// clean 4:1 oversample of the 1 ms read rate, eliminating the artifact while
 /// keeping trace volume manageable.
 const POLL_TICK_US: u64 = 250;
 
-/// Maximum pulse out channels supported.
-const MAX_CHANNELS: usize = 16;
+/// Maximum pulse out channels supported (hard ceiling of the backing array).
+pub const MAX_CHANNELS: usize = 16;
 
 static CHANNEL_COUNT: AtomicUsize = AtomicUsize::new(0);
 
@@ -81,6 +81,7 @@ static PULSE_STATE: Mutex<[PulseState; MAX_CHANNELS]> = Mutex::new({
 // ============================================================
 
 /// Configure the peripheral with the number of channels.
+/// Resets all per-channel callbacks and pulse state, so re-init is a clean start.
 pub fn init(count: usize) {
     assert!(
         count <= MAX_CHANNELS,
@@ -88,10 +89,23 @@ pub fn init(count: usize) {
         count,
         MAX_CHANNELS
     );
+    reset();
     CHANNEL_COUNT.store(count, Ordering::Relaxed);
     START_CALLBACKS.lock().unwrap().resize_with(count, || None);
     STOP_CALLBACKS.lock().unwrap().resize_with(count, || None);
     PROGRESS_CALLBACKS.lock().unwrap().resize_with(count, || None);
+}
+
+/// Clear all channel callbacks and pulse state (used by `init` and teardown).
+pub fn reset() {
+    CHANNEL_COUNT.store(0, Ordering::Relaxed);
+    START_CALLBACKS.lock().unwrap().clear();
+    STOP_CALLBACKS.lock().unwrap().clear();
+    PROGRESS_CALLBACKS.lock().unwrap().clear();
+    let mut state = PULSE_STATE.lock().unwrap();
+    for s in state.iter_mut() {
+        *s = PulseState { total_pulses: 0, frequency: 1, start_us: 0 };
+    }
 }
 
 // ============================================================
@@ -268,13 +282,9 @@ mod tests {
         PROGRESS_CALLBACKS.clear_poison();
         PULSE_STATE.clear_poison();
 
+        // `init` now fully resets per-channel callbacks and pulse state, so no
+        // manual per-channel clearing is needed here.
         init(channels);
-        for ch in 0..channels {
-            *START_CALLBACKS.lock().unwrap().get_mut(ch).unwrap() = None;
-            *STOP_CALLBACKS.lock().unwrap().get_mut(ch).unwrap() = None;
-            *PROGRESS_CALLBACKS.lock().unwrap().get_mut(ch).unwrap() = None;
-            stop(ch);
-        }
     }
 
     #[test]

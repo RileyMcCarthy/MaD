@@ -9,7 +9,8 @@
 #   make clean      - Remove build artifacts
 
 FIRMWARE_DIR = ../Firmware/MaDCore
-FIRMWARE_LIB = $(FIRMWARE_DIR)/.pio/build/native_emulator/libfirmware.a
+PIO_ENV = native_emulator
+FIRMWARE_LIB = $(FIRMWARE_DIR)/.pio/build/$(PIO_ENV)/libfirmware.a
 PROTOEMB_GENERATOR = ../Protocol/ProtoEmb/core/generate.py
 PROTOEMB_SCHEMA = ../Protocol/MaDProtocol.yaml
 PROTOEMB_TEMPLATES = ../Protocol/ProtoEmb/core/templates
@@ -24,11 +25,12 @@ setup:
 
 # Build firmware as static library
 firmware:
-	cd $(FIRMWARE_DIR) && pio run -e native_emulator
+	cd $(FIRMWARE_DIR) && pio run -e $(PIO_ENV)
 
-# Generate Rust protocol types used by SIL
+# Generate Rust protocol types used by SIL (MaD-specific; kept out of the
+# generic embsim crates — lands in the mad-protocol crate).
 protocol:
-	python3 $(PROTOEMB_GENERATOR) --schema $(PROTOEMB_SCHEMA) --target rs --output ./embsim/peripherals/src/generated --templates $(PROTOEMB_TEMPLATES)
+	python3 $(PROTOEMB_GENERATOR) --schema $(PROTOEMB_SCHEMA) --target rs --output ./mad-protocol/src/generated --templates $(PROTOEMB_TEMPLATES)
 
 # Build generic ProtoEmb bridge binary used by MaDControl main process
 bridge:
@@ -50,4 +52,4 @@ playground: emulator
 clean:
 	rm -rf test-results build
 	cargo clean
-	cd $(FIRMWARE_DIR) && pio run -e native_emulator -t clean
+	cd $(FIRMWARE_DIR) && pio run -e $(PIO_ENV) -t clean

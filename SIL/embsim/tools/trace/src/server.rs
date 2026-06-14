@@ -25,7 +25,7 @@ use tracing::info;
 /// Register the trace viewer as a view in embsim-ui.
 /// Call this before `embsim_ui::start_server()`.
 pub fn register_view() {
-    embsim_ui::register_view(embsim_ui::View::new(
+    let view = embsim_ui::View::new(
         "trace",
         "Trace Viewer",
         "📊",
@@ -33,7 +33,19 @@ pub fn register_view() {
         ui::CSS,
         ui::JS,
         Some(ws_handler),
-    ));
+    )
+    // Vendored so the viewer works offline (no CDN dependency).
+    .with_asset(
+        "chart.umd.min.js",
+        include_bytes!("../static/vendor/chart.umd.min.js"),
+        "application/javascript",
+    )
+    .with_asset(
+        "chartjs-plugin-zoom.min.js",
+        include_bytes!("../static/vendor/chartjs-plugin-zoom.min.js"),
+        "application/javascript",
+    );
+    embsim_ui::register_view(view);
 }
 
 /// WebSocket handler factory — matches the `embsim_ui::WsHandler` signature.

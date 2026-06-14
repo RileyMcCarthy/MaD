@@ -258,10 +258,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "embsim-build"
+version = "0.1.0"
+
+[[package]]
 name = "embsim-core"
 version = "0.1.0"
 dependencies = [
  "nix",
+ "tracing",
+]
+
+[[package]]
+name = "embsim-mad-models"
+version = "0.1.0"
+dependencies = [
+ "embsim-core",
+ "embsim-models",
  "tracing",
 ]
 
@@ -273,6 +286,16 @@ dependencies = [
  "object",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "embsim-minimal-example"
+version = "0.1.0"
+dependencies = [
+ "embsim-core",
+ "embsim-memory-inspect",
+ "embsim-peripherals",
+ "embsim-runtime",
 ]
 
 [[package]]
@@ -291,6 +314,7 @@ version = "0.1.0"
 dependencies = [
  "embsim-core",
  "embsim-peripherals",
+ "embsim-runtime",
  "tracing",
 ]
 
@@ -301,6 +325,16 @@ dependencies = [
  "embsim-core",
  "nix",
  "parking_lot",
+ "tracing",
+]
+
+[[package]]
+name = "embsim-runtime"
+version = "0.1.0"
+dependencies = [
+ "embsim-core",
+ "embsim-memory-inspect",
+ "embsim-peripherals",
  "tracing",
 ]
 
@@ -334,16 +368,6 @@ name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
-
-[[package]]
-name = "errno"
-version = "0.3.14"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
-dependencies = [
- "libc",
- "windows-sys 0.61.2",
-]
 
 [[package]]
 name = "fallible-iterator"
@@ -592,20 +616,25 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "clap",
+ "embsim-build",
  "embsim-core",
+ "embsim-mad-models",
  "embsim-memory-inspect",
  "embsim-models",
  "embsim-p2",
  "embsim-peripherals",
+ "embsim-runtime",
  "embsim-trace",
  "embsim-ui",
- "libc",
- "nix",
  "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",
 ]
+
+[[package]]
+name = "mad-protocol"
+version = "0.1.0"
 
 [[package]]
 name = "matchers"
@@ -936,16 +965,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "signal-hook-registry"
-version = "1.4.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c4db69cba1110affc0e9f7bcd48bbf87b3f4fc7c61fc9155afd4c469eb3d6c1b"
-dependencies = [
- "errno",
- "libc",
-]
-
-[[package]]
 name = "simd-adler32"
 version = "0.3.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1046,9 +1065,7 @@ dependencies = [
  "bytes",
  "libc",
  "mio",
- "parking_lot",
  "pin-project-lite",
- "signal-hook-registry",
  "socket2",
  "tokio-macros",
  "windows-sys 0.61.2",

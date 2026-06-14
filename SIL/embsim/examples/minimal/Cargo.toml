@@ -1,0 +1,17 @@
+[package]
+name = "embsim-minimal-example"
+version.workspace = true
+edition.workspace = true
+description = "Smallest possible embsim consumer — a hand-rolled Platform + Machine with no real firmware, as an onboarding template"
+publish = false
+
+[dependencies]
+# The owning entry abstraction: the `Emulator` builder + `Platform`/`Machine` traits.
+embsim-runtime = { path = "../../runtime" }
+# Generic peripheral free-functions (gpio/serial/encoder/...) that `wire` talks to.
+embsim-peripherals = { path = "../../peripherals" }
+# `FirmwareInfo` — parsed firmware debug info; `::new()` makes an empty one.
+embsim-memory-inspect = { path = "../../tools/memory-inspect" }
+# Core primitives (virtual clock, PTY, event). Not strictly required by this
+# example, but listed so the template shows where the bottom layer comes from.
+embsim-core = { path = "../../core" }

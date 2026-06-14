@@ -1,0 +1,11 @@
+[package]
+name = "embsim-build"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Build-script helpers for embsim emulator binaries (locate & link the firmware static library)"
+keywords = ["embedded", "emulator", "build-dependencies", "sil"]
+categories = ["development-tools::build-utils", "embedded"]
+
+[dependencies]

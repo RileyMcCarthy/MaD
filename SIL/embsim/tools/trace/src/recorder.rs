@@ -14,6 +14,7 @@
 //! polling and added to the active signal store.
 
 use embsim_core::virtual_clock;
+use std::collections::VecDeque;
 use embsim_memory_inspect::{FirmwareInfo, TypeInfo};
 use parking_lot::RwLock;
 use serde::Serialize;
@@ -27,44 +28,48 @@ const DEFAULT_POLL_INTERVAL_US: u64 = 10_000;
 /// Configurable poll interval for C variable sampling (virtual µs).
 static POLL_INTERVAL_US: AtomicU64 = AtomicU64::new(DEFAULT_POLL_INTERVAL_US);
 
-/// Signal grouping for UI organization.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-pub enum SignalGroup {
-    /// Rust model outputs (stepper, sample, strain gauge, etc.)
-    Model,
-    /// MCU peripheral state (GPIO, encoder, pulse_out, etc.)
-    Peripheral,
-    /// C firmware variables read via memory-inspect
-    Firmware,
+/// Conventional signal-group names. Groups are free-form strings, so a project
+/// can define its own (e.g. "Sensors", "Actuators"); these are just the ones the
+/// MaD wiring and firmware discovery use. The viewer orders these first, then
+/// any custom groups alphabetically.
+pub mod groups {
+    /// Rust hardware-model outputs (the physical components being simulated).
+    pub const MODEL: &str = "Model";
+    /// MCU peripheral state (GPIO, encoder, pulse_out, etc.).
+    pub const PERIPHERAL: &str = "Peripheral";
+    /// C firmware variables read via memory-inspect.
+    pub const FIRMWARE: &str = "Firmware";
 }
 
 /// Signal metadata (active signal being traced).
 #[derive(Debug, Clone, Serialize)]
 pub struct Signal {
-    /// Unique signal name (e.g., "stepper.position_mm")
+    /// Unique signal name (e.g., "motor.position")
     pub name: String,
-    /// Display group
-    pub group: SignalGroup,
+    /// Display group — a free-form label (see [`groups`] for conventional names).
+    pub group: String,
     /// Unit label (e.g., "mm", "N", "bool")
     pub unit: String,
 }
 
 impl Signal {
-    /// Create a new signal with automatic unit detection.
-    pub fn new(name: &str, group: SignalGroup) -> Self {
-        let unit = guess_unit(name);
+    /// Create a new signal with no unit label, in the given group.
+    ///
+    /// embsim is unit-agnostic — pass units explicitly with [`Signal::with_unit`].
+    /// (Domain-specific unit guessing belongs in the consumer, not this crate.)
+    pub fn new(name: &str, group: &str) -> Self {
         Self {
             name: name.to_string(),
-            group,
-            unit,
+            group: group.to_string(),
+            unit: String::new(),
         }
     }
 
     /// Create a signal with an explicit unit.
-    pub fn with_unit(name: &str, group: SignalGroup, unit: &str) -> Self {
+    pub fn with_unit(name: &str, group: &str, unit: &str) -> Self {
         Self {
             name: name.to_string(),
-            group,
+            group: group.to_string(),
             unit: unit.to_string(),
         }
     }
@@ -87,7 +92,9 @@ pub struct Sample {
 /// regardless of how fast event sources emit. [`record_at`] bypasses this and
 /// writes directly to `samples` (used for batch imports / replay).
 struct SignalData {
-    samples: Vec<Sample>,
+    /// Ring buffer of samples. `VecDeque` so front-eviction is O(1) (a `Vec`
+    /// did `remove(0)`, which is O(n) on the 100k-sample buffer once full).
+    samples: VecDeque<Sample>,
     /// Total samples ever written (monotonic, does not decrease on ring eviction).
     total_written: usize,
     /// Most recent value pushed via `record()`. `None` until the first call.
@@ -98,7 +105,7 @@ struct SignalData {
 impl SignalData {
     fn new() -> Self {
         Self {
-            samples: Vec::new(),
+            samples: VecDeque::new(),
             total_written: 0,
             latest_value: None,
         }
@@ -188,6 +195,15 @@ pub fn register(signal: Signal) {
     s.catalog_version += 1;
 }
 
+/// Reset the trace store to empty (signals, samples, firmware catalog, watches).
+///
+/// Used to start a fresh trace for an in-process emulator restart. The store is
+/// a process-global default (one emulator per process by construction); this is
+/// the lightweight reset rather than a full instance handle.
+pub fn clear() {
+    *store().write() = TraceStore::new();
+}
+
 /// Update a signal's latest value. Cheap and idempotent — does NOT append to
 /// the time-series ring. Time-series samples are produced exclusively by the
 /// periodic [`resample_all`] poller at the configured trace cadence, so
@@ -213,16 +229,16 @@ pub fn record_at(signal_name: &str, time_us: u64, value: f64) {
     let max = s.max_samples;
     if let Some(sd) = s.data.get_mut(signal_name) {
         if sd.samples.len() >= max {
-            sd.samples.remove(0);
+            sd.samples.pop_front();
         }
-        sd.samples.push(Sample { time_us, value });
+        sd.samples.push_back(Sample { time_us, value });
         sd.total_written += 1;
         sd.latest_value = Some(value);
     }
 }
 
 /// Register a C firmware variable for periodic polling (called on-demand from UI).
-pub fn register_c_variable(var_name: &str, field_path: &str, group: SignalGroup) {
+pub fn register_c_variable(var_name: &str, field_path: &str, group: &str) {
     let signal_name = if field_path.is_empty() {
         var_name.to_string()
     } else {
@@ -274,9 +290,9 @@ pub fn resample_all() {
         if let Some(sd) = s.data.get_mut(name) {
             if let Some(value) = sd.latest_value {
                 if sd.samples.len() >= max {
-                    sd.samples.remove(0);
+                    sd.samples.pop_front();
                 }
-                sd.samples.push(Sample { time_us, value });
+                sd.samples.push_back(Sample { time_us, value });
                 sd.total_written += 1;
             }
         }
@@ -320,7 +336,7 @@ pub fn read_new_samples(
                 // If ring buffer evicted some, we can only send what's still in the buffer
                 let send_count = new_count.min(available);
                 let start = available - send_count;
-                let new_samples: Vec<Sample> = sd.samples[start..].to_vec();
+                let new_samples: Vec<Sample> = sd.samples.range(start..).cloned().collect();
                 data_out.insert(name.clone(), new_samples);
             }
             new_cursors.insert(name.clone(), total);
@@ -333,6 +349,60 @@ pub fn read_new_samples(
 /// Get the list of registered C variable watches.
 pub fn c_watches() -> Vec<CVariableWatch> {
     store().read().c_watches.clone()
+}
+
+/// Spawn the background poller that drives the trace.
+///
+/// `record()` only updates each signal's latest value; this thread is what
+/// actually writes time-series samples (re-recording model/peripheral signals
+/// and reading any activated firmware C variables) at the configured cadence.
+/// Without it, the store has no time series — so a consumer that wants tracing
+/// just calls this once after wiring (the emulator runtime's `on_wired` hook is
+/// the natural place). Reads firmware C variables via a [`SymbolResolver`];
+/// if symbol resolution is unavailable, model/peripheral resampling still runs.
+pub fn spawn_poller(fw: &FirmwareInfo) {
+    let fw = fw.clone();
+    std::thread::Builder::new()
+        .name("trace-poll".into())
+        .spawn(move || poll_loop(&fw))
+        .expect("Failed to start trace poll thread");
+}
+
+fn poll_loop(fw: &FirmwareInfo) {
+    use embsim_memory_inspect::SymbolResolver;
+
+    // Give the firmware a moment to initialize before resolving symbols.
+    std::thread::sleep(std::time::Duration::from_millis(500));
+
+    let resolver = match SymbolResolver::new() {
+        Ok(r) => Some(r),
+        Err(e) => {
+            tracing::warn!("Trace C-variable polling disabled: {}", e);
+            None
+        }
+    };
+
+    loop {
+        if let Some(resolver) = &resolver {
+            for watch in c_watches() {
+                let value: Option<f64> = unsafe {
+                    resolver.read_field_as_f64(&fw, &watch.var_name, &watch.field_path)
+                };
+                if let Some(v) = value {
+                    record(&watch.signal_name, v);
+                }
+            }
+        }
+
+        // Re-record model/peripheral signals so the trace has uniform density.
+        resample_all();
+
+        let interval_us = poll_interval_us();
+        let wall_us = embsim_core::virtual_clock::virtual_to_wall_us(interval_us);
+        if wall_us > 0 {
+            std::thread::sleep(std::time::Duration::from_micros(wall_us));
+        }
+    }
 }
 
 // ============================================================
@@ -399,7 +469,7 @@ pub fn activate_firmware_signal(signal_name: &str) -> bool {
             .cloned()
     };
     if let Some(fv) = entry {
-        register_c_variable(&fv.var_name, &fv.field_path, SignalGroup::Firmware);
+        register_c_variable(&fv.var_name, &fv.field_path, groups::FIRMWARE);
         true
     } else {
         false
@@ -477,7 +547,37 @@ fn walk_type_fields(
                 });
             }
         }
-        TypeInfo::Struct { type_name, .. } => {
+        // Floats and bitfields are recordable scalars (read via read_field_as_f64).
+        TypeInfo::Float { byte_size, .. } => {
+            if [4, 8].contains(byte_size) {
+                let (signal_name, field_path) = if field_prefix.is_empty() {
+                    (var_name.to_string(), String::new())
+                } else {
+                    (format!("{}.{}", var_name, field_prefix), field_prefix.to_string())
+                };
+                catalog.push(FirmwareVariable {
+                    signal_name,
+                    var_name: var_name.to_string(),
+                    field_path,
+                    enum_type: None,
+                });
+            }
+        }
+        TypeInfo::Bitfield { .. } => {
+            let (signal_name, field_path) = if field_prefix.is_empty() {
+                (var_name.to_string(), String::new())
+            } else {
+                (format!("{}.{}", var_name, field_prefix), field_prefix.to_string())
+            };
+            catalog.push(FirmwareVariable {
+                signal_name,
+                var_name: var_name.to_string(),
+                field_path,
+                enum_type: None,
+            });
+        }
+        // Unions are stored alongside structs; recurse into their members.
+        TypeInfo::Struct { type_name, .. } | TypeInfo::Union { type_name, .. } => {
             if let Some(struct_info) = fw.structs.get(type_name) {
                 for field in &struct_info.fields {
                     let path = if field_prefix.is_empty() {
@@ -512,14 +612,3 @@ fn walk_type_fields(
 // Internal helpers
 // ============================================================
 
-fn guess_unit(name: &str) -> String {
-    let n = name.to_lowercase();
-    if n.contains("_mm") || n.ends_with("position") { "mm".into() }
-    else if n.contains("force") || n.contains("_n") { "N".into() }
-    else if n.contains("voltage") || n.contains("_mv") { "mV".into() }
-    else if n.contains("enabled") || n.contains("triggered") || n.contains("active") { "bool".into() }
-    else if n.contains("steps") || n.contains("encoder") { "steps".into() }
-    else if n.contains("freq") || n.contains("_hz") { "Hz".into() }
-    else if n.contains("state") { "enum".into() }
-    else { "".into() }
-}

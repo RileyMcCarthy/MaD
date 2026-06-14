@@ -3,8 +3,8 @@
 use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 use tracing::trace;
 
-/// Maximum encoder channels supported.
-const MAX_CHANNELS: usize = 16;
+/// Maximum encoder channels supported (hard ceiling of the backing array).
+pub const MAX_CHANNELS: usize = 16;
 
 /// Configured channel count.
 static CHANNEL_COUNT: AtomicUsize = AtomicUsize::new(0);
@@ -20,9 +20,19 @@ static ENCODER_VALUES: [AtomicI32; MAX_CHANNELS] = {
 // ============================================================
 
 /// Configure the encoder peripheral with the number of channels.
+/// Resets all counters, so re-init yields a clean state.
 pub fn init(count: usize) {
     assert!(count <= MAX_CHANNELS, "Encoder count {} exceeds max {}", count, MAX_CHANNELS);
+    reset();
     CHANNEL_COUNT.store(count, Ordering::Relaxed);
+}
+
+/// Clear all encoder values and channel count (used by `init` and teardown).
+pub fn reset() {
+    CHANNEL_COUNT.store(0, Ordering::Relaxed);
+    for v in ENCODER_VALUES.iter() {
+        v.store(0, Ordering::Relaxed);
+    }
 }
 
 // ============================================================

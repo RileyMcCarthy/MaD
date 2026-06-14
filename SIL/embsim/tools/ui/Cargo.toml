@@ -1,11 +1,15 @@
 [package]
 name = "embsim-ui"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
 description = "Pluggable web UI shell for embsim — views register themselves, served via a single axum server"
+keywords = ["embedded", "emulator", "web-ui", "sil"]
+categories = ["embedded", "simulation", "development-tools"]
 
 [dependencies]
-axum = { version = "0.8", features = ["ws"] }
-tokio = { version = "1", features = ["full"] }
-tracing = "0.1"
-parking_lot = "0.12"
+axum.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+parking_lot.workspace = true

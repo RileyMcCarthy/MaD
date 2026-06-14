@@ -1,10 +1,15 @@
 [package]
 name = "embsim-p2"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
 description = "Propeller 2 platform for embsim — FFI trampolines + P2 constants"
+keywords = ["embedded", "emulator", "propeller2", "sil"]
+categories = ["embedded", "simulation"]
 
 [dependencies]
 embsim-core = { path = "../../core" }
 embsim-peripherals = { path = "../../peripherals" }
-tracing = "0.1"
+embsim-runtime = { path = "../../runtime" }
+tracing.workspace = true

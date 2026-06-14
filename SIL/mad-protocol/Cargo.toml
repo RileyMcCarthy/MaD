@@ -1,0 +1,8 @@
+[package]
+name = "mad-protocol"
+version.workspace = true
+edition.workspace = true
+description = "MaD wire-protocol types (encode/decode) generated from Protocol/MaDProtocol.yaml"
+publish = false
+
+[dependencies]

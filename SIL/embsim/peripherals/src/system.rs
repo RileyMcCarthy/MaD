@@ -1,15 +1,17 @@
 //! System — Thread management and system lifecycle.
 //!
-//! Maps MCU cores/cogs to OS threads. Firmware-provided stack buffers
-//! are ignored (OS manages thread stacks).
+//! Maps MCU execution cores to OS threads. Firmware-provided stack buffers
+//! are ignored (OS manages thread stacks). "core" is the MCU-neutral term;
+//! a platform's own vocabulary (e.g. the Propeller 2's "cog") stays in that
+//! platform crate.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::thread;
 use tracing::info;
 
-/// Maximum threads supported.
-const MAX_THREADS: usize = 32;
+/// Maximum threads supported (hard ceiling of the handle table).
+pub const MAX_THREADS: usize = 32;
 
 /// Configured max thread count.
 static MAX_THREAD_COUNT: AtomicUsize = AtomicUsize::new(8);
@@ -30,19 +32,30 @@ fn ensure_initialized() {
 // Initialization
 // ============================================================
 
-/// Configure the system peripheral with max thread count.
+/// Configure the system peripheral with max thread count. Resets the handle
+/// table first, so re-init (after [`join_all_threads`]) is a clean start.
 pub fn init(max_threads: usize) {
     assert!(max_threads <= MAX_THREADS, "Thread count {} exceeds max {}", max_threads, MAX_THREADS);
+    reset();
     MAX_THREAD_COUNT.store(max_threads, Ordering::Relaxed);
     ensure_initialized();
     info!("system::init: emulator platform initialized (max_threads={})", max_threads);
+}
+
+/// Clear the thread handle table.
+///
+/// Only safe once spawned threads have finished — call [`join_all_threads`]
+/// first. Clearing live handles would detach (not stop) those threads; the
+/// firmware is one-per-process by construction, so a restart joins then resets.
+pub fn reset() {
+    THREAD_HANDLES.lock().unwrap().clear();
 }
 
 // ============================================================
 // Core API
 // ============================================================
 
-/// Start a new thread. Returns thread/cog ID (>= 0) or -1 on failure.
+/// Start a new thread. Returns the thread/core ID (>= 0) or -1 on failure.
 ///
 /// # Safety
 /// The function pointer and argument must be valid for the lifetime of the thread.
@@ -72,7 +85,7 @@ pub unsafe fn start_thread(
 
     let arg_usize = arg as usize;
     let func_ptr = func as usize;
-    let thread_name = format!("cog-{}", slot_id);
+    let thread_name = format!("core-{}", slot_id);
 
     let handle = thread::Builder::new()
         .name(thread_name.clone())
@@ -88,9 +101,9 @@ pub unsafe fn start_thread(
 
     match handle {
         Ok(h) => {
-            info!("system::start_thread: started cog-{}", slot_id);
+            info!("system::start_thread: started core-{}", slot_id);
             handles[slot_id] = Some(h);
-            0
+            slot_id as i32
         }
         Err(e) => {
             tracing::error!("system::start_thread: failed to spawn thread: {}", e);
@@ -104,7 +117,7 @@ pub fn join_all_threads() {
     let mut handles = THREAD_HANDLES.lock().unwrap();
     for (i, handle) in handles.iter_mut().enumerate() {
         if let Some(h) = handle.take() {
-            info!("Joining cog-{}", i);
+            info!("Joining core-{}", i);
             let _ = h.join();
         }
     }

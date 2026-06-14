@@ -10,7 +10,7 @@
     "test:ui": "npx playwright test --ui",
     "report": "npx playwright show-report test-results/html",
     "trace": "npx playwright show-trace",
-    "build:emulator": "cd emulator && cargo build",
+    "build:emulator": "cd MaDSim && cargo build",
     "build:app": "cd ../Software/MaDControl && npm run build",
     "build": "npm run build:emulator && npm run build:app",
     "clean": "rm -rf test-results build",

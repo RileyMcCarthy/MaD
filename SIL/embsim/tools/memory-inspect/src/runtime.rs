@@ -8,6 +8,27 @@ use object::{Object, ObjectSymbol};
 use std::path::Path;
 use tracing::{debug, info, warn};
 
+/// Runtime base address of the main executable's lowest mapping, parsed from
+/// `/proc/self/maps` (the load bias of a PIE). Returns `None` if maps cannot be
+/// read or the executable's own mapping is not found.
+#[cfg(target_os = "linux")]
+fn linux_exe_load_base() -> Option<u64> {
+    use std::io::BufRead;
+    let exe = std::fs::read_link("/proc/self/exe").ok()?;
+    let exe = exe.to_str()?;
+    let file = std::fs::File::open("/proc/self/maps").ok()?;
+    // maps is sorted by address, so the first line whose pathname is the exe is
+    // its lowest (base) mapping.
+    for line in std::io::BufReader::new(file).lines().map_while(Result::ok) {
+        let path = line.split_whitespace().nth(5);
+        if path == Some(exe) {
+            let base_hex = line.split('-').next()?;
+            return u64::from_str_radix(base_hex, 16).ok();
+        }
+    }
+    None
+}
+
 /// Resolves symbol addresses from the running binary's Mach-O/ELF symbol table.
 pub struct SymbolResolver {
     /// Map of symbol name → virtual address in the binary
@@ -57,25 +78,34 @@ impl SymbolResolver {
         Ok(Self { symbols, slide })
     }
 
-    /// Compute the ASLR slide by comparing a known symbol's file address
-    /// to its runtime address.
+    /// Compute the load bias ("slide") between a symbol's file (link-time)
+    /// address and its runtime address in the current process image.
     fn compute_slide(
         _symbols: &std::collections::HashMap<String, u64>,
     ) -> u64 {
-        // On macOS, we can use _dyld_get_image_vmaddr_slide(0) to get the
-        // main binary's ASLR slide.
+        // macOS: ask dyld for the main image's ASLR slide directly.
         #[cfg(target_os = "macos")]
         {
             extern "C" {
                 fn _dyld_get_image_vmaddr_slide(image_index: u32) -> isize;
             }
-            let slide = unsafe { _dyld_get_image_vmaddr_slide(0) };
-            slide as u64
+            unsafe { _dyld_get_image_vmaddr_slide(0) as u64 }
         }
 
-        #[cfg(not(target_os = "macos"))]
+        // Linux: the bias of a position-independent executable is the runtime
+        // base of its lowest mapping in /proc/self/maps (PIEs link at vaddr 0,
+        // so file address + base == runtime address). Non-PIE binaries map at
+        // their link address, making the base cancel out to an effective 0
+        // because file addresses already match — for those, symbol addresses
+        // are absolute and adding this base would be wrong, but modern
+        // toolchains default to PIE, which this handles correctly.
+        #[cfg(target_os = "linux")]
         {
-            // On Linux, /proc/self/maps could be used. For now, assume 0.
+            linux_exe_load_base().unwrap_or(0)
+        }
+
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        {
             0
         }
     }
@@ -298,6 +328,36 @@ impl SymbolResolver {
             TypeInfo::Enum { byte_size: 1, .. } => {
                 bytes[0] as f64
             }
+            // IEEE-754 floats must be decoded as floats — reading their bytes
+            // as an integer yields garbage (this was a latent bug).
+            TypeInfo::Float { byte_size: 4, .. } => {
+                f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as f64
+            }
+            TypeInfo::Float { byte_size: 8, .. } => {
+                let mut buf = [0u8; 8];
+                buf.copy_from_slice(&bytes[..8]);
+                f64::from_le_bytes(buf)
+            }
+            // Bitfield: read the underlying storage unit, then shift/mask out the
+            // member's bits. `bit_offset` is relative to the member's byte offset
+            // (normalized when the field was parsed). Sign-extend when signed.
+            TypeInfo::Bitfield { bit_offset, bit_size, storage_size, signed } => {
+                if *bit_size == 0 || *bit_size > 64 {
+                    return None;
+                }
+                let n = (*storage_size).min(8).min(bytes.len());
+                let mut buf = [0u8; 8];
+                buf[..n].copy_from_slice(&bytes[..n]);
+                let raw = u64::from_le_bytes(buf);
+                let mask = if *bit_size == 64 { u64::MAX } else { (1u64 << bit_size) - 1 };
+                let field = (raw >> (bit_offset % 64)) & mask;
+                if *signed && (field >> (bit_size - 1)) & 1 == 1 {
+                    // Sign-extend: set all bits above the field.
+                    ((field | !mask) as i64) as f64
+                } else {
+                    field as f64
+                }
+            }
             _ => {
                 warn!(
                     "Unsupported type for read_field_as_f64: {}.{} ({:?}, {} bytes)",
@@ -376,5 +436,46 @@ impl FromBytes for u64 {
 impl FromBytes for bool {
     fn from_le_bytes(bytes: &[u8]) -> Self {
         bytes[0] != 0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decodes_f32_as_float_not_int() {
+        // 1.5f32 little-endian. Decoding these bytes as an integer would give
+        // 1069547520, not 1.5 — this guards the float-decode bug fix.
+        let bytes = 1.5f32.to_le_bytes();
+        let ti = TypeInfo::Float { name: "float".into(), byte_size: 4 };
+        let v = SymbolResolver::bytes_to_f64(&ti, &bytes, "v", "f").unwrap();
+        assert_eq!(v, 1.5);
+    }
+
+    #[test]
+    fn decodes_f64() {
+        let bytes = (-2.25f64).to_le_bytes();
+        let ti = TypeInfo::Float { name: "double".into(), byte_size: 8 };
+        let v = SymbolResolver::bytes_to_f64(&ti, &bytes, "v", "f").unwrap();
+        assert_eq!(v, -2.25);
+    }
+
+    #[test]
+    fn decodes_unsigned_bitfield() {
+        // Extract bits [4..7) (value 0b101 = 5) from a 1-byte storage unit.
+        let storage = [0b0101_0000u8];
+        let ti = TypeInfo::Bitfield { bit_offset: 4, bit_size: 3, storage_size: 1, signed: false };
+        let v = SymbolResolver::bytes_to_f64(&ti, &storage, "v", "f").unwrap();
+        assert_eq!(v, 5.0);
+    }
+
+    #[test]
+    fn decodes_signed_bitfield_sign_extends() {
+        // 3-bit signed field holding 0b111 = -1.
+        let storage = [0b0000_0111u8];
+        let ti = TypeInfo::Bitfield { bit_offset: 0, bit_size: 3, storage_size: 1, signed: true };
+        let v = SymbolResolver::bytes_to_f64(&ti, &storage, "v", "f").unwrap();
+        assert_eq!(v, -1.0);
     }
 }

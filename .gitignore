@@ -37,7 +37,7 @@ node_modules/
 Firmware/MaDCore/src/Generated/
 Firmware/MaDCore/src/IO/generated/
 Software/MaDControl/src/main/generated/
-SIL/embsim/peripherals/src/generated/
+SIL/mad-protocol/src/generated/
 Protocol/ProtoEmb/core/__pycache__/
 Protocol/ProtoEmb/framing/target/
 Protocol/ProtoEmb/runtime/target/

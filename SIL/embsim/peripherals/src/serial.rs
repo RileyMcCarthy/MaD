@@ -2,18 +2,25 @@
 //!
 //! Bridges firmware serial channels to file descriptors. The peripheral
 //! manages raw FDs and has no knowledge of what's on the other end
-//! (PTY, force gauge, etc). Channel assignment is done by the project
-//! wiring layer via `init_channel_fd()`.
+//! (a host PTY, a peer socket, a sensor model, etc). Channel assignment is
+//! done by the project wiring layer via `init_channel_fd()`.
 
 use std::os::fd::{BorrowedFd, RawFd};
 use std::sync::atomic::{AtomicI32, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use tracing::{trace, debug};
 
-/// Maximum serial channels supported.
-const MAX_CHANNELS: usize = 16;
+/// Maximum serial channels supported (hard ceiling of the backing array).
+pub const MAX_CHANNELS: usize = 16;
 
-/// Bits clocked per byte on the wire (8N1: 1 start + 8 data + 1 stop).
-const BITS_PER_BYTE: u64 = 10;
+/// Bits clocked per byte on the wire, for baud pacing. Defaults to 10 (8N1:
+/// 1 start + 8 data + 1 stop). Configure via [`set_frame_bits`] for other UART
+/// frames (e.g. 11 for 8E1 / 8N2, 9 for 7N1).
+static BITS_PER_BYTE: AtomicU64 = AtomicU64::new(10);
+
+/// Set the number of bits clocked per byte (used by baud pacing). Default 10.
+pub fn set_frame_bits(bits: u64) {
+    BITS_PER_BYTE.store(bits.max(1), Ordering::Relaxed);
+}
 
 /// Configured channel count.
 static CHANNEL_COUNT: AtomicUsize = AtomicUsize::new(0);
@@ -49,9 +56,23 @@ static CHANNEL_RX_NEXT_V_US: [AtomicU64; MAX_CHANNELS] = {
 // ============================================================
 
 /// Configure the serial peripheral with the number of channels.
+/// Resets FDs, baud, and pacing schedules, so re-init yields a clean state.
 pub fn init(count: usize) {
     assert!(count <= MAX_CHANNELS, "Serial count {} exceeds max {}", count, MAX_CHANNELS);
+    reset();
     CHANNEL_COUNT.store(count, Ordering::Relaxed);
+}
+
+/// Disconnect all channels and clear baud/pacing state (used by `init` and
+/// teardown). Does not close FDs — the owner of the FD (e.g. the PTY) does that.
+pub fn reset() {
+    CHANNEL_COUNT.store(0, Ordering::Relaxed);
+    for ch in 0..MAX_CHANNELS {
+        CHANNEL_FDS[ch].store(-1, Ordering::Relaxed);
+        CHANNEL_BAUD[ch].store(0, Ordering::Relaxed);
+        CHANNEL_TX_NEXT_V_US[ch].store(0, Ordering::Relaxed);
+        CHANNEL_RX_NEXT_V_US[ch].store(0, Ordering::Relaxed);
+    }
 }
 
 /// Initialize a serial channel with a file descriptor.
@@ -88,7 +109,7 @@ pub fn set_baud(channel: usize, baud: u32) {
             "Serial channel {} baud pacing enabled at {} bps ({} us/byte, full-duplex)",
             channel,
             baud,
-            BITS_PER_BYTE * 1_000_000 / baud as u64
+            BITS_PER_BYTE.load(Ordering::Relaxed) * 1_000_000 / baud as u64
         );
     }
 }
@@ -100,7 +121,8 @@ fn pace_bytes(slot: &AtomicU64, baud: u32, n: usize) {
         return;
     }
 
-    let cost_v_us = (n as u64).saturating_mul(BITS_PER_BYTE * 1_000_000) / baud as u64;
+    let bits_per_byte = BITS_PER_BYTE.load(Ordering::Relaxed);
+    let cost_v_us = (n as u64).saturating_mul(bits_per_byte * 1_000_000) / baud as u64;
     if cost_v_us == 0 {
         return;
     }

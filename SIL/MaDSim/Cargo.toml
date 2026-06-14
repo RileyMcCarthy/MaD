@@ -1,26 +1,34 @@
 [package]
 name = "mad-emulator"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 description = "MaD Tensile Testing Machine — SIL emulator"
+publish = false
+
+[features]
+default = ["web"]
+# The trace viewer + machine visualizer web UI. Disable
+# (`--no-default-features`) for a headless emulator with no axum/tokio/web.
+web = ["dep:embsim-ui", "dep:axum", "dep:tokio", "dep:serde_json", "embsim-trace/web"]
 
 [dependencies]
 embsim-core = { path = "../embsim/core" }
 embsim-peripherals = { path = "../embsim/peripherals" }
 embsim-p2 = { path = "../embsim/platforms/p2" }
+embsim-runtime = { path = "../embsim/runtime" }
 embsim-models = { path = "../embsim/models" }
+embsim-mad-models = { path = "../embsim-mad-models" }
 embsim-memory-inspect = { path = "../embsim/tools/memory-inspect" }
-embsim-trace = { path = "../embsim/tools/trace" }
-embsim-ui = { path = "../embsim/tools/ui" }
-nix = { version = "0.29", features = ["term", "fs"] }
-libc = "0.2"
-clap = { version = "4", features = ["derive"] }
-tracing = "0.1"
-tracing-subscriber = "0.3"
-serde_json = "1"
-axum = { version = "0.8", features = ["ws"] }
-tokio = { version = "1", features = ["full"] }
+embsim-trace = { path = "../embsim/tools/trace", default-features = false }
+embsim-ui = { path = "../embsim/tools/ui", optional = true }
+clap.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+serde_json = { workspace = true, optional = true }
+axum = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
 
 [build-dependencies]
-# No build-dependencies — firmware is pre-built by PlatformIO
-# (pio run -e native_emulator)
+# Firmware itself is pre-built by PlatformIO (pio run -e native_emulator);
+# this just locates & links the resulting static library.
+embsim-build = { path = "../embsim/build-support" }
