@@ -1,0 +1,30 @@
+# Makes the ProtoEmb code generator pip-installable as `protoemb-gen`.
+#
+#   pip install ./core
+#   protoemb-gen --schema my.yaml --target c --output gen/c
+#
+# The bundled Jinja templates are installed as package data; pass --templates to
+# override. (When run from a source checkout, `python3 core/generate.py ...`
+# works without installing.)
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "protoemb-gen"
+version = "0.1.0"
+description = "ProtoEmb code generator — YAML protocol schema to C / TypeScript / Rust"
+readme = "../README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+dependencies = ["pyyaml>=6.0", "jinja2>=3.1"]
+keywords = ["protocol", "embedded", "codegen", "serial"]
+
+[project.scripts]
+protoemb-gen = "generate:main"
+
+[tool.setuptools]
+py-modules = ["generate"]
+
+[tool.setuptools.package-data]
+"*" = ["templates/*.j2"]
