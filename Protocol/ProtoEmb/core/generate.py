@@ -232,6 +232,12 @@ def process_schema(schema, prefix=DEFAULT_PREFIX):
             field["_array_len"] = field.get("count", 1)
             n = field["_array_len"]
 
+            # Optional fields prepend a 1-bit (packed) / 1-byte (aligned) presence
+            # flag before the value; the value is always allocated on the wire so
+            # the fixed-wire-size model holds. The flag sits at `_bit_offset`/
+            # `_byte_offset`; the value at `_value_bit_offset`/`_value_byte_offset`.
+            field["_is_optional"] = bool(field.get("optional", False))
+
             if is_packed:
                 if field["_is_struct"]:
                     child = structs[ftype]
@@ -239,9 +245,11 @@ def process_schema(schema, prefix=DEFAULT_PREFIX):
                     elem_bits = child["_total_bits"]
                 else:
                     elem_bits = compute_field_bits(field, enums)
+                flag_bits = 1 if field["_is_optional"] else 0
                 field["_elem_bits"] = elem_bits
-                field["_bits"] = elem_bits * n
+                field["_bits"] = flag_bits + elem_bits * n
                 field["_bit_offset"] = total_bits
+                field["_value_bit_offset"] = total_bits + flag_bits
                 total_bits += field["_bits"]
             else:
                 # Aligned — use standard C type sizes
@@ -262,7 +270,7 @@ def process_schema(schema, prefix=DEFAULT_PREFIX):
                     }
                     elem_bs = type_sizes.get(ftype, 4)
                 field["_elem_byte_size"] = elem_bs
-                field["_byte_size"] = elem_bs * n
+                field["_byte_size"] = (1 if field["_is_optional"] else 0) + elem_bs * n
 
             field["_scale"] = field.get("scale", 1)
             field["_has_scale"] = field.get("scale", 1) != 1
@@ -284,6 +292,7 @@ def process_schema(schema, prefix=DEFAULT_PREFIX):
             byte_offset = 0
             for field in struct_def["fields"]:
                 field["_byte_offset"] = byte_offset
+                field["_value_byte_offset"] = byte_offset + (1 if field["_is_optional"] else 0)
                 byte_offset += field["_byte_size"]
             struct_def["_wire_size"] = byte_offset
         struct_def["_has_nested"] = has_nested
@@ -509,6 +518,15 @@ def validate_schema(data):
                     errors.append(
                         f"Struct {name}.{field['name']}: string arrays are not supported"
                     )
+                if field.get("optional"):
+                    errors.append(
+                        f"Struct {name}.{field['name']}: a field cannot be both optional and an array"
+                    )
+
+            if field.get("optional") and field.get("_is_string"):
+                errors.append(
+                    f"Struct {name}.{field['name']}: optional strings are not supported"
+                )
 
             # A fractional scale only has a well-defined wire representation on a
             # float field; on an integer field it would silently truncate.

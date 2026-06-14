@@ -82,16 +82,16 @@ export const {{ name | upper_snake }}_VALUE_TO_WIRE: Record<number, number> = {
 export interface {{ name }} {
     {% for f in s.fields %}
     {% if f._is_struct %}
-    {{ f.name }}: {{ f.type }}{% if f._is_array %}[]{% endif %};
+    {{ f.name }}: {{ f.type }}{% if f._is_array %}[]{% endif %}{% if f._is_optional %} | null{% endif %};
     {% elif f._is_string %}
     {{ f.name }}: string;
     {% elif f._is_bool %}
-    {{ f.name }}: boolean{% if f._is_array %}[]{% endif %};
+    {{ f.name }}: boolean{% if f._is_array %}[]{% endif %}{% if f._is_optional %} | null{% endif %};
     {% elif f._is_enum %}
-    {{ f.name }}: {{ f.type }}{% if f._is_array %}[]{% endif %};
+    {{ f.name }}: {{ f.type }}{% if f._is_array %}[]{% endif %}{% if f._is_optional %} | null{% endif %};
     {% else %}
     /** unit: {{ f._unit }}{% if f._has_scale %}, scale: {{ f._scale }} (precision: 1/{{ f._scale }}){% endif %} */
-    {{ f.name }}: number{% if f._is_array %}[]{% endif %};
+    {{ f.name }}: number{% if f._is_array %}[]{% endif %}{% if f._is_optional %} | null{% endif %};
     {% endif %}
     {% endfor %}
 }
@@ -165,6 +165,11 @@ function pack{{ name }}Into(buf: Uint8Array, base: number, src: {{ name }}): voi
     for (let i = 0; i < {{ f._array_len }}; i++) {
         {{ ts_pack_leaf(f, 'base + ' ~ f._bit_offset ~ ' + i * ' ~ f._elem_bits, 'src.' ~ f.name ~ '[i]') }}
     }
+    {% elif f._is_optional %}
+    packBits(buf, base + {{ f._bit_offset }}, 1, src.{{ f.name }} !== null ? 1 : 0);
+    if (src.{{ f.name }} !== null) {
+        {{ ts_pack_leaf(f, 'base + ' ~ f._value_bit_offset, 'src.' ~ f.name) }}
+    }
     {% elif f._is_struct %}
     pack{{ f.type }}Into(buf, base + {{ f._bit_offset }}, src.{{ f.name }});
     {% elif f._is_bool %}
@@ -198,6 +203,8 @@ function unpack{{ name }}From(buf: Uint8Array, base: number): {{ name }} {
         {% for f in s.fields %}
         {% if f._is_array %}
         {{ f.name }}: Array.from({ length: {{ f._array_len }} }, (_, i) => {{ ts_unpack_expr(f, 'base + ' ~ f._bit_offset ~ ' + i * ' ~ f._elem_bits) }}),
+        {% elif f._is_optional %}
+        {{ f.name }}: unpackBits(buf, base + {{ f._bit_offset }}, 1) !== 0 ? {{ ts_unpack_expr(f, 'base + ' ~ f._value_bit_offset) }} : null,
         {% elif f._is_struct %}
         {{ f.name }}: unpack{{ f.type }}From(buf, base + {{ f._bit_offset }}),
         {% elif f._is_bool %}
@@ -242,6 +249,11 @@ export function encode{{ name }}(src: {{ name }}): Uint8Array {
     for (let i = 0; i < {{ f._array_len }}; i++) {
         {{ ts_pack_leaf(f, f._bit_offset ~ ' + i * ' ~ f._elem_bits, 'src.' ~ f.name ~ '[i]') }}
     }
+    {% elif f._is_optional %}
+    packBits(buf, {{ f._bit_offset }}, 1, src.{{ f.name }} !== null ? 1 : 0);
+    if (src.{{ f.name }} !== null) {
+        {{ ts_pack_leaf(f, f._value_bit_offset|string, 'src.' ~ f.name) }}
+    }
     {% elif f._is_bool %}
     packBits(buf, {{ f._bit_offset }}, 1, src.{{ f.name }} ? 1 : 0);
     {% elif f._is_enum %}
@@ -276,6 +288,12 @@ export function encode{{ name }}(src: {{ name }}): Uint8Array {
     {% if f._is_array %}
     for (let i = 0; i < {{ f._array_len }}; i++) {
         {{ ts_aligned_encode_leaf(f, 'offset + i * ' ~ f._elem_byte_size, 'src.' ~ f.name ~ '[i]') }}
+    }
+    offset += {{ f._byte_size }};
+    {% elif f._is_optional %}
+    buf[offset] = src.{{ f.name }} !== null ? 1 : 0;
+    if (src.{{ f.name }} !== null) {
+        {{ ts_aligned_encode_leaf(f, 'offset + 1', 'src.' ~ f.name) }}
     }
     offset += {{ f._byte_size }};
     {% elif f._is_struct %}
@@ -327,6 +345,8 @@ export function decode{{ name }}(buf: Uint8Array): {{ name }} {
         {% for f in s.fields %}
         {% if f._is_array %}
         {{ f.name }}: Array.from({ length: {{ f._array_len }} }, (_, i) => {{ ts_unpack_expr(f, f._bit_offset ~ ' + i * ' ~ f._elem_bits) }}),
+        {% elif f._is_optional %}
+        {{ f.name }}: unpackBits(buf, {{ f._bit_offset }}, 1) !== 0 ? {{ ts_unpack_expr(f, f._value_bit_offset|string) }} : null,
         {% elif f._is_bool %}
         {{ f.name }}: unpackBits(buf, {{ f._bit_offset }}, 1) !== 0,
         {% elif f._is_enum %}
@@ -361,6 +381,9 @@ export function decode{{ name }}(buf: Uint8Array): {{ name }} {
     {% for f in s.fields %}
     {% if f._is_array %}
     const {{ f.name }} = Array.from({ length: {{ f._array_len }} }, (_, i) => {{ ts_aligned_decode_expr(f, 'offset + i * ' ~ f._elem_byte_size) }});
+    offset += {{ f._byte_size }};
+    {% elif f._is_optional %}
+    const {{ f.name }} = buf[offset] !== 0 ? {{ ts_aligned_decode_expr(f, 'offset + 1') }} : null;
     offset += {{ f._byte_size }};
     {% elif f._is_struct %}
     const {{ f.name }} = decode{{ f.type }}(buf.subarray(offset));

@@ -122,6 +122,9 @@ typedef struct
     {% endif %}
     {{ _ct }} {{ f.name }}{% if f._is_array %}[{{ f._array_len }}]{% endif %};
     {% endif %}
+    {% if f._is_optional %}
+    bool {{ f.name }}_present;
+    {% endif %}
     {% endfor %}
 } {{ prefix }}_{{ name }}_t;
 {% endfor %}
