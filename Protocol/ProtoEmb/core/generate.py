@@ -19,11 +19,39 @@ Usage:
 import argparse
 import math
 import os
+import re
 import sys
 from pathlib import Path
 
 import yaml
 from jinja2 import Environment, FileSystemLoader
+
+
+# ── YAML loader that only treats `true`/`false` as booleans ──
+# Stock PyYAML (YAML 1.1) also coerces OFF/ON/YES/NO to booleans, which silently
+# mangles enum-variant names like `OFF`. Restrict bool resolution so such names
+# stay strings.
+class _SchemaLoader(yaml.SafeLoader):
+    pass
+
+
+for _ch in list(_SchemaLoader.yaml_implicit_resolvers):
+    _SchemaLoader.yaml_implicit_resolvers[_ch] = [
+        (tag, regexp)
+        for (tag, regexp) in _SchemaLoader.yaml_implicit_resolvers[_ch]
+        if tag != "tag:yaml.org,2002:bool"
+    ]
+_SchemaLoader.add_implicit_resolver(
+    "tag:yaml.org,2002:bool",
+    re.compile(r"^(?:true|True|TRUE|false|False|FALSE)$"),
+    list("tTfF"),
+)
+
+
+def load_yaml(path):
+    """Load a YAML file with the schema-safe loader."""
+    with open(path, "r") as f:
+        return yaml.load(f, Loader=_SchemaLoader)
 
 # ── Library prefix / identity ──
 # Default is "ProtoEmb", but it is configurable so multiple independent
@@ -423,8 +451,7 @@ def load_generator_config(config_path):
     if not config_path:
         return {}
 
-    with open(config_path, "r") as f:
-        cfg = yaml.safe_load(f) or {}
+    cfg = load_yaml(config_path) or {}
 
     if not isinstance(cfg, dict):
         raise SystemExit("Generator config must be a YAML mapping")
@@ -729,8 +756,7 @@ def main():
     template_dir = args.templates or str(script_dir / "templates")
 
     # Load schema
-    with open(args.schema, "r") as f:
-        schema = yaml.safe_load(f)
+    schema = load_yaml(args.schema)
 
     generator_config = load_generator_config(args.config)
 

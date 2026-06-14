@@ -1,0 +1,82 @@
+# A deliberately NON-MaD example protocol for a smart thermostat, exercising the
+# full ProtoEmb feature set: custom prefix, multiple nodes, remap enums, nested
+# structs, fixed-count arrays, optional fields, and both packed + aligned layouts.
+# Generate with: --prefix Thermostat (or rely on the `prefix` key below).
+prefix: Thermostat
+protocol_version: 1
+
+nodes:
+  - hub
+  - sensor
+
+defaults:
+  encoding: packed
+
+enums:
+  Mode:
+    description: "HVAC mode"
+    variants: [OFF, HEAT, COOL, AUTO]
+
+  FanCmd:
+    description: "Fan command (sparse values to exercise remap)"
+    remap: true
+    variants:
+      - { name: OFF,  value: 0 }
+      - { name: LOW,  value: 1 }
+      - { name: HIGH, value: 2 }
+      - { name: AUTO, value: 9 }
+
+structs:
+  Reading:
+    encoding: packed
+    description: "A single sensor reading"
+    fields:
+      - { name: temp, type: int16, unit: C, scale: 10, min: -40, max: 85 }   # 0.1 C
+      - { name: humidity, type: uint8, unit: pct, min: 0, max: 100 }
+
+  ZoneState:
+    encoding: packed
+    description: "Desired + measured state of one zone (nested Reading)"
+    fields:
+      - { name: mode, type: Mode }
+      - { name: fan, type: FanCmd }
+      - { name: setpoint, type: int16, unit: C, scale: 10, min: 0, max: 40 }
+      - { name: occupied, type: bool }
+      - { name: current, type: Reading }                                     # nested struct
+
+  Schedule:
+    encoding: aligned
+    description: "Named weekly schedule with 8 setpoint slots (array)"
+    fields:
+      - { name: name, type: string, max_length: 16 }
+      - { name: slots, type: int16, count: 8, unit: C, scale: 10 }           # fixed-count array
+      - { name: active, type: bool }
+
+  SensorPacket:
+    encoding: packed
+    description: "Sensor telemetry with optional fault + optional zone snapshot"
+    fields:
+      - { name: id, type: uint8, min: 0, max: 31 }
+      - { name: reading, type: Reading }                                     # nested
+      - { name: fault, type: bool, optional: true }                         # optional scalar
+      - { name: zone, type: ZoneState, optional: true }                     # optional nested struct
+
+messages:
+  reading:
+    tx_node: sensor
+    command_id: 0
+    period_ms: 5000
+    response: Reading
+  packet:
+    tx_node: sensor
+    command_id: 1
+    priority: low
+    response: SensorPacket
+  set_zone:
+    tx_node: hub
+    command_id: 0
+    request: ZoneState
+  get_schedule:
+    tx_node: hub
+    command_id: 2
+    response: Schedule
