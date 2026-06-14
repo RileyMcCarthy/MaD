@@ -44,6 +44,9 @@ jobs:
         with:
           python-version: '3.x'
 
+      - name: Install protocol generator deps (pyyaml, jinja2)
+        run: pip install -r ../../Protocol/ProtoEmb/core/requirements.txt
+
       - name: Install dependencies
         run: npm ci
 

@@ -74,6 +74,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.x'
+      - name: Install protocol generator deps (pyyaml, jinja2)
+        run: pip install -r ../../Protocol/ProtoEmb/core/requirements.txt
       - name: Cargo test (protoemb-runtime)
         working-directory: Protocol/ProtoEmb/runtime
         run: cargo test
