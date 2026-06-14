@@ -92,6 +92,26 @@ and the emulator playground is injected by the harness (`e2e/`), never baked int
 `build:wasm` and `generate:proto` after cloning (and whenever the protocol schema
 or Rust core changes).
 
+## Deploying (GitHub Pages)
+
+The app is published to GitHub Pages by the `Deploy web app (GitHub Pages)`
+workflow (`.github/workflows/pages.yml`), which builds the wasm + protocol
+bindings, runs `vite build` with the project base path (`/<repo>/`), and deploys
+`dist/`. HashRouter keeps client routing working without server rewrites; Web
+Serial + File System Access work because Pages is served over HTTPS.
+
+**Release process — to publish the current code, cut a tag:**
+
+```bash
+git tag webapp-v1.0.0
+git push origin webapp-v1.0.0     # → builds + deploys to Pages
+```
+
+The live URL is `https://<owner>.github.io/<repo>/` (for this repo,
+`https://rileymccarthy.github.io/MaD/`). A manual deploy of any branch is also
+available via the workflow's **Run workflow** button (`workflow_dispatch`).
+One-time setup: repo **Settings → Pages → Source = GitHub Actions**.
+
 ## Not included
 
 - **Firmware flashing** — the native `loadp2` bootloader cannot run in a browser;
