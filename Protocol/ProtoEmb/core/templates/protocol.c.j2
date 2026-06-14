@@ -65,6 +65,7 @@ static int32_t sign_extend(uint32_t value, uint32_t bits)
 
 /* ── {{ name }} ({{ s._encoding }}, {{ s._wire_size }} bytes) ── */
 
+{% if not (s._needs_pack_helper or s._has_nested) %}
 void {{ prefix }}_{{ name }}_encode(uint8_t *buf, const {{ prefix }}_{{ name }}_t *src)
 {
     memset(buf, 0, {{ prefix_upper }}_{{ name | upper_snake }}_WIRE_SIZE);
@@ -130,7 +131,84 @@ void {{ prefix }}_{{ name }}_encode(uint8_t *buf, const {{ prefix }}_{{ name }}_
     (void)offset; /* suppress unused warning */
 {% endif %}
 }
+{% elif s._is_packed %}
+/* Bit-pack {{ name }} at an arbitrary base bit offset (composes when nested). */
+static void {{ prefix }}_{{ name }}_pack(uint8_t *buf, uint32_t base, const {{ prefix }}_{{ name }}_t *src)
+{
+    {% for f in s.fields %}
+    {% if f._is_struct %}
+    {{ prefix }}_{{ f.type }}_pack(buf, base + {{ f._bit_offset }}U, &src->{{ f.name }});
+    {% elif f._is_bool %}
+    pack_bits(buf, base + {{ f._bit_offset }}U, 1, src->{{ f.name }} ? 1U : 0U);
+    {% elif f._is_enum %}
+    {% set enum_def = enums[f.type] %}
+    {% if enum_def._is_remap %}
+    {% if enum_def._remap_style == 'array' %}
+    pack_bits(buf, base + {{ f._bit_offset }}U, {{ f._bits }}, {{ prefix_upper }}_{{ f.type | upper_snake }}_VALUE_TO_WIRE[src->{{ f.name }}]);
+    {% else %}
+    pack_bits(buf, base + {{ f._bit_offset }}U, {{ f._bits }}, {{ prefix }}_{{ f.type }}_valueToWire((uint8_t)src->{{ f.name }}));
+    {% endif %}
+    {% else %}
+    pack_bits(buf, base + {{ f._bit_offset }}U, {{ f._bits }}, (uint32_t)src->{{ f.name }});
+    {% endif %}
+    {% elif f._raw_storage %}
+    {% if f._min_wire is not none %}
+    pack_bits(buf, base + {{ f._bit_offset }}U, {{ f._bits }}, (uint32_t)(src->{{ f.name }} - ({{ f._min_wire }})));
+    {% else %}
+    pack_bits(buf, base + {{ f._bit_offset }}U, {{ f._bits }}, (uint32_t)src->{{ f.name }});
+    {% endif %}
+    {% elif f._is_signed %}
+    {% if f._min is not none %}
+    {% if f._is_float %}
+    pack_bits(buf, base + {{ f._bit_offset }}U, {{ f._bits }}, (uint32_t)((src->{{ f.name }} - ({{ f._min }}f)) * {{ f._scale }}f));
+    {% else %}
+    pack_bits(buf, base + {{ f._bit_offset }}U, {{ f._bits }}, (uint32_t)((src->{{ f.name }} - ({{ f._min | int }})) * {{ f._scale }}));
+    {% endif %}
+    {% else %}
+    pack_bits(buf, base + {{ f._bit_offset }}U, {{ f._bits }}, (uint32_t)(src->{{ f.name }} * {{ f._scale }}));
+    {% endif %}
+    {% else %}
+    {% if f._min is not none and f._min != 0 %}
+    pack_bits(buf, base + {{ f._bit_offset }}U, {{ f._bits }}, (uint32_t)((src->{{ f.name }} - ({{ f._min | int }})) * {{ f._scale }}));
+    {% else %}
+    pack_bits(buf, base + {{ f._bit_offset }}U, {{ f._bits }}, (uint32_t)(src->{{ f.name }} * {{ f._scale }}));
+    {% endif %}
+    {% endif %}
+    {% endfor %}
+}
 
+void {{ prefix }}_{{ name }}_encode(uint8_t *buf, const {{ prefix }}_{{ name }}_t *src)
+{
+    memset(buf, 0, {{ prefix_upper }}_{{ name | upper_snake }}_WIRE_SIZE);
+    {{ prefix }}_{{ name }}_pack(buf, 0U, src);
+}
+{% else %}
+/* Byte-encode {{ name }} at an arbitrary base byte offset (composes when nested). */
+static void {{ prefix }}_{{ name }}_encodeAt(uint8_t *buf, uint32_t base, const {{ prefix }}_{{ name }}_t *src)
+{
+    {% for f in s.fields %}
+    {% if f._is_struct %}
+    {{ prefix }}_{{ f.type }}_encodeAt(buf, base + {{ f._byte_offset }}U, &src->{{ f.name }});
+    {% elif f._is_string %}
+    memcpy(&buf[base + {{ f._byte_offset }}U], src->{{ f.name }}, {{ f.max_length }});
+    {% elif f._is_bool %}
+    buf[base + {{ f._byte_offset }}U] = src->{{ f.name }} ? 1U : 0U;
+    {% elif f._is_enum %}
+    buf[base + {{ f._byte_offset }}U] = (uint8_t)src->{{ f.name }};
+    {% else %}
+    memcpy(&buf[base + {{ f._byte_offset }}U], &src->{{ f.name }}, {{ f._byte_size }});
+    {% endif %}
+    {% endfor %}
+}
+
+void {{ prefix }}_{{ name }}_encode(uint8_t *buf, const {{ prefix }}_{{ name }}_t *src)
+{
+    memset(buf, 0, {{ prefix_upper }}_{{ name | upper_snake }}_WIRE_SIZE);
+    {{ prefix }}_{{ name }}_encodeAt(buf, 0U, src);
+}
+{% endif %}
+
+{% if not (s._needs_pack_helper or s._has_nested) %}
 void {{ prefix }}_{{ name }}_decode(const uint8_t *buf, {{ prefix }}_{{ name }}_t *dst)
 {
     memset(dst, 0, sizeof({{ prefix }}_{{ name }}_t));
@@ -195,4 +273,79 @@ void {{ prefix }}_{{ name }}_decode(const uint8_t *buf, {{ prefix }}_{{ name }}_
     (void)offset;
 {% endif %}
 }
+{% elif s._is_packed %}
+/* Bit-unpack {{ name }} from an arbitrary base bit offset (composes when nested). */
+static void {{ prefix }}_{{ name }}_unpack(const uint8_t *buf, uint32_t base, {{ prefix }}_{{ name }}_t *dst)
+{
+    {% for f in s.fields %}
+    {% if f._is_struct %}
+    {{ prefix }}_{{ f.type }}_unpack(buf, base + {{ f._bit_offset }}U, &dst->{{ f.name }});
+    {% elif f._is_bool %}
+    dst->{{ f.name }} = unpack_bits(buf, base + {{ f._bit_offset }}U, 1) != 0;
+    {% elif f._is_enum %}
+    {% set enum_def = enums[f.type] %}
+    {% if enum_def._is_remap %}
+    {
+        const uint32_t wire_idx = unpack_bits(buf, base + {{ f._bit_offset }}U, {{ f._bits }});
+        dst->{{ f.name }} = ({{ prefix }}_{{ f.type }}_E){{ prefix_upper }}_{{ f.type | upper_snake }}_WIRE_TO_VALUE[wire_idx];
+    }
+    {% else %}
+    dst->{{ f.name }} = ({{ prefix }}_{{ f.type }}_E)unpack_bits(buf, base + {{ f._bit_offset }}U, {{ f._bits }});
+    {% endif %}
+    {% elif f._raw_storage %}
+    {% if f._min_wire is not none %}
+    dst->{{ f.name }} = (int32_t)unpack_bits(buf, base + {{ f._bit_offset }}U, {{ f._bits }}) + ({{ f._min_wire }});
+    {% else %}
+    dst->{{ f.name }} = (int32_t)unpack_bits(buf, base + {{ f._bit_offset }}U, {{ f._bits }});
+    {% endif %}
+    {% elif f._is_signed %}
+    {% if f._min is not none %}
+    {% if f._is_float %}
+    dst->{{ f.name }} = (float)unpack_bits(buf, base + {{ f._bit_offset }}U, {{ f._bits }}) / {{ f._scale }}f + ({{ f._min }}f);
+    {% else %}
+    dst->{{ f.name }} = (int32_t)unpack_bits(buf, base + {{ f._bit_offset }}U, {{ f._bits }}) / {{ f._scale }} + ({{ f._min | int }});
+    {% endif %}
+    {% else %}
+    dst->{{ f.name }} = sign_extend(unpack_bits(buf, base + {{ f._bit_offset }}U, {{ f._bits }}), {{ f._bits }}) / {{ f._scale }};
+    {% endif %}
+    {% else %}
+    {% if f._min is not none and f._min != 0 %}
+    dst->{{ f.name }} = unpack_bits(buf, base + {{ f._bit_offset }}U, {{ f._bits }}) / {{ f._scale }} + ({{ f._min | int }});
+    {% else %}
+    dst->{{ f.name }} = unpack_bits(buf, base + {{ f._bit_offset }}U, {{ f._bits }}) / {{ f._scale }};
+    {% endif %}
+    {% endif %}
+    {% endfor %}
+}
+
+void {{ prefix }}_{{ name }}_decode(const uint8_t *buf, {{ prefix }}_{{ name }}_t *dst)
+{
+    memset(dst, 0, sizeof({{ prefix }}_{{ name }}_t));
+    {{ prefix }}_{{ name }}_unpack(buf, 0U, dst);
+}
+{% else %}
+/* Byte-decode {{ name }} from an arbitrary base byte offset (composes when nested). */
+static void {{ prefix }}_{{ name }}_decodeAt(const uint8_t *buf, uint32_t base, {{ prefix }}_{{ name }}_t *dst)
+{
+    {% for f in s.fields %}
+    {% if f._is_struct %}
+    {{ prefix }}_{{ f.type }}_decodeAt(buf, base + {{ f._byte_offset }}U, &dst->{{ f.name }});
+    {% elif f._is_string %}
+    memcpy(dst->{{ f.name }}, &buf[base + {{ f._byte_offset }}U], {{ f.max_length }});
+    {% elif f._is_bool %}
+    dst->{{ f.name }} = buf[base + {{ f._byte_offset }}U] != 0;
+    {% elif f._is_enum %}
+    dst->{{ f.name }} = ({{ prefix }}_{{ f.type }}_E)buf[base + {{ f._byte_offset }}U];
+    {% else %}
+    memcpy(&dst->{{ f.name }}, &buf[base + {{ f._byte_offset }}U], {{ f._byte_size }});
+    {% endif %}
+    {% endfor %}
+}
+
+void {{ prefix }}_{{ name }}_decode(const uint8_t *buf, {{ prefix }}_{{ name }}_t *dst)
+{
+    memset(dst, 0, sizeof({{ prefix }}_{{ name }}_t));
+    {{ prefix }}_{{ name }}_decodeAt(buf, 0U, dst);
+}
+{% endif %}
 {% endfor %}

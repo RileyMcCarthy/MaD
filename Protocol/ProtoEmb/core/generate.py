@@ -105,6 +105,34 @@ def compute_field_bits(field, enums):
         return type_bits.get(ftype, 32)
 
 
+def topo_sort_structs(structs):
+    """Order structs so nested-struct children precede their parents.
+
+    Raises SystemExit on a reference cycle. With no nested-struct fields this
+    returns the structs in their original definition order.
+    """
+    state = {}  # name -> "visiting" | "done"
+    order = []
+
+    def visit(name, stack):
+        st = state.get(name)
+        if st == "done":
+            return
+        if st == "visiting":
+            raise SystemExit(f"Struct reference cycle: {' -> '.join(stack + [name])}")
+        state[name] = "visiting"
+        for field in structs[name]["fields"]:
+            ftype = field["type"]
+            if ftype in structs:
+                visit(ftype, stack + [name])
+        state[name] = "done"
+        order.append(name)
+
+    for name in structs:
+        visit(name, [])
+    return order
+
+
 def process_schema(schema, prefix=DEFAULT_PREFIX):
     """Process raw schema YAML into enriched data for templates."""
     prefix_upper = prefix.upper()
@@ -159,33 +187,60 @@ def process_schema(schema, prefix=DEFAULT_PREFIX):
                 processed_variants, key=lambda v: v["value"]
             )
 
-    # Enrich structs
+    # Enrich structs. Nested-struct fields need their child sized first, so we
+    # process in dependency (topological) order, then re-key `structs` into that
+    # order so generated typedefs/functions emit children before parents.
     defaults = schema.get("defaults", {})
-    for name, struct_def in structs.items():
+    struct_order = topo_sort_structs(structs)
+    for name in struct_order:
+        struct_def = structs[name]
         struct_def["_name"] = name
         encoding = struct_def.get("encoding", defaults.get("encoding", "packed"))
         struct_def["_encoding"] = encoding
         is_packed = encoding == "packed"
         struct_def["_is_packed"] = is_packed
+        struct_def.setdefault("_needs_pack_helper", False)
 
         total_bits = 0
+        has_nested = False
         for field in struct_def["fields"]:
             ftype = field["type"]
             field["_is_enum"] = ftype in enums
+            field["_is_struct"] = ftype in structs
             field["_is_bool"] = ftype == "bool"
             field["_is_string"] = ftype == "string"
             field["_is_float"] = ftype == "float"
-            field["_is_numeric"] = not field["_is_enum"] and not field["_is_bool"] and not field["_is_string"]
+            field["_is_numeric"] = not (field["_is_enum"] or field["_is_bool"]
+                                        or field["_is_string"] or field["_is_struct"])
             field["_is_signed"] = ftype.startswith("int") and not ftype.startswith("uint")
 
+            if field["_is_struct"]:
+                has_nested = True
+                child = structs[ftype]
+                # A nested child must share the parent's encoding so its layout
+                # composes cleanly (bit-packed into bits, byte-aligned into bytes).
+                if child["_is_packed"] != is_packed:
+                    raise SystemExit(
+                        f"Struct {name}.{field['name']}: nested struct '{ftype}' uses "
+                        f"'{child['_encoding']}' encoding but parent is '{encoding}'"
+                    )
+
             if is_packed:
-                bits = compute_field_bits(field, enums)
+                if field["_is_struct"]:
+                    child = structs[ftype]
+                    child["_needs_pack_helper"] = True
+                    bits = child["_total_bits"]
+                else:
+                    bits = compute_field_bits(field, enums)
                 field["_bits"] = bits
                 field["_bit_offset"] = total_bits
                 total_bits += bits
             else:
                 # Aligned — use standard C type sizes
-                if field["_is_string"]:
+                if field["_is_struct"]:
+                    structs[ftype]["_needs_pack_helper"] = True
+                    field["_byte_size"] = structs[ftype]["_wire_size"]
+                elif field["_is_string"]:
                     field["_byte_size"] = field.get("max_length", 16)
                 elif field["_is_enum"]:
                     field["_byte_size"] = 1
@@ -221,6 +276,11 @@ def process_schema(schema, prefix=DEFAULT_PREFIX):
                 field["_byte_offset"] = byte_offset
                 byte_offset += field["_byte_size"]
             struct_def["_wire_size"] = byte_offset
+        struct_def["_has_nested"] = has_nested
+
+    # Re-key structs into dependency order so generated typedefs/functions emit
+    # nested children before the parents that embed them.
+    structs = {name: structs[name] for name in struct_order}
 
     # Enrich messages
     read_messages = []

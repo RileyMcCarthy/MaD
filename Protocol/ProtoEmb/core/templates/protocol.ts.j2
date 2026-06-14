@@ -47,7 +47,9 @@ export const {{ name | upper_snake }}_VALUE_TO_WIRE: Record<number, number> = {
 /** {{ s.get('description', '') }} — {{ s._wire_size }} bytes on wire */
 export interface {{ name }} {
     {% for f in s.fields %}
-    {% if f._is_string %}
+    {% if f._is_struct %}
+    {{ f.name }}: {{ f.type }};
+    {% elif f._is_string %}
     {{ f.name }}: string;
     {% elif f._is_bool %}
     {{ f.name }}: boolean;
@@ -120,6 +122,70 @@ function unpackBits(buf: Uint8Array, bitOff: number, bits: number): number {
 // Encode / Decode Functions
 // ============================================================
 {% for name, s in structs.items() %}
+{% if s._is_packed and (s._needs_pack_helper or s._has_nested) %}
+
+/** Bit-pack {{ name }} into `buf` at base bit offset `base` (composes when nested). */
+function pack{{ name }}Into(buf: Uint8Array, base: number, src: {{ name }}): void {
+    {% for f in s.fields %}
+    {% if f._is_struct %}
+    pack{{ f.type }}Into(buf, base + {{ f._bit_offset }}, src.{{ f.name }});
+    {% elif f._is_bool %}
+    packBits(buf, base + {{ f._bit_offset }}, 1, src.{{ f.name }} ? 1 : 0);
+    {% elif f._is_enum %}
+    {% set enum_def = enums[f.type] %}
+    {% if enum_def._is_remap %}
+    packBits(buf, base + {{ f._bit_offset }}, {{ f._bits }}, {{ f.type | upper_snake }}_VALUE_TO_WIRE[src.{{ f.name }}] ?? 0);
+    {% else %}
+    packBits(buf, base + {{ f._bit_offset }}, {{ f._bits }}, src.{{ f.name }});
+    {% endif %}
+    {% elif f._is_signed %}
+    {% if f._min is not none %}
+    packBits(buf, base + {{ f._bit_offset }}, {{ f._bits }}, Math.round((src.{{ f.name }} - ({{ f._min }})) * {{ f._scale }}));
+    {% else %}
+    packBits(buf, base + {{ f._bit_offset }}, {{ f._bits }}, Math.round(src.{{ f.name }} * {{ f._scale }}));
+    {% endif %}
+    {% else %}
+    {% if f._min is not none and f._min != 0 %}
+    packBits(buf, base + {{ f._bit_offset }}, {{ f._bits }}, Math.round((src.{{ f.name }} - ({{ f._min }})) * {{ f._scale }}));
+    {% else %}
+    packBits(buf, base + {{ f._bit_offset }}, {{ f._bits }}, Math.round(src.{{ f.name }} * {{ f._scale }}));
+    {% endif %}
+    {% endif %}
+    {% endfor %}
+}
+
+/** Bit-unpack {{ name }} from `buf` at base bit offset `base`. */
+function unpack{{ name }}From(buf: Uint8Array, base: number): {{ name }} {
+    return {
+        {% for f in s.fields %}
+        {% if f._is_struct %}
+        {{ f.name }}: unpack{{ f.type }}From(buf, base + {{ f._bit_offset }}),
+        {% elif f._is_bool %}
+        {{ f.name }}: unpackBits(buf, base + {{ f._bit_offset }}, 1) !== 0,
+        {% elif f._is_enum %}
+        {% set enum_def = enums[f.type] %}
+        {% if enum_def._is_remap %}
+        {{ f.name }}: {{ f.type | upper_snake }}_WIRE_TO_VALUE[unpackBits(buf, base + {{ f._bit_offset }}, {{ f._bits }})] as {{ f.type }},
+        {% else %}
+        {{ f.name }}: unpackBits(buf, base + {{ f._bit_offset }}, {{ f._bits }}) as {{ f.type }},
+        {% endif %}
+        {% elif f._is_signed %}
+        {% if f._min is not none %}
+        {{ f.name }}: unpackBits(buf, base + {{ f._bit_offset }}, {{ f._bits }}) / {{ f._scale }} + ({{ f._min }}),
+        {% else %}
+        {{ f.name }}: unpackBits(buf, base + {{ f._bit_offset }}, {{ f._bits }}) / {{ f._scale }},
+        {% endif %}
+        {% else %}
+        {% if f._min is not none and f._min != 0 %}
+        {{ f.name }}: unpackBits(buf, base + {{ f._bit_offset }}, {{ f._bits }}) / {{ f._scale }} + ({{ f._min }}),
+        {% else %}
+        {{ f.name }}: unpackBits(buf, base + {{ f._bit_offset }}, {{ f._bits }}) / {{ f._scale }},
+        {% endif %}
+        {% endif %}
+        {% endfor %}
+    };
+}
+{% endif %}
 
 /**
  * Encode {{ name }} → {{ s._wire_size }} bytes.
@@ -128,6 +194,9 @@ function unpackBits(buf: Uint8Array, bitOff: number, bits: number): number {
 export function encode{{ name }}(src: {{ name }}): Uint8Array {
     const buf = new Uint8Array({{ s._wire_size }});
 {% if s._is_packed %}
+{% if s._needs_pack_helper or s._has_nested %}
+    pack{{ name }}Into(buf, 0, src);
+{% else %}
     {% for f in s.fields %}
     {% if f._is_bool %}
     packBits(buf, {{ f._bit_offset }}, 1, src.{{ f.name }} ? 1 : 0);
@@ -152,14 +221,18 @@ export function encode{{ name }}(src: {{ name }}): Uint8Array {
     {% endif %}
     {% endif %}
     {% endfor %}
+{% endif %}
 {% else %}
-    {% set _numeric = s.fields | rejectattr('_is_string') | rejectattr('_is_bool') | rejectattr('_is_enum') | list %}
+    {% set _numeric = s.fields | rejectattr('_is_string') | rejectattr('_is_bool') | rejectattr('_is_enum') | rejectattr('_is_struct') | list %}
     {% if _numeric %}
     const view = viewOf(buf);
     {% endif %}
     let offset = 0;
     {% for f in s.fields %}
-    {% if f._is_string %}
+    {% if f._is_struct %}
+    buf.set(encode{{ f.type }}(src.{{ f.name }}), offset);
+    offset += {{ f.type | upper_snake }}_WIRE_SIZE;
+    {% elif f._is_string %}
     writeString(buf, offset, src.{{ f.name }}, {{ f.max_length }});
     offset += {{ f.max_length }};
     {% elif f._is_bool %}
@@ -198,6 +271,9 @@ export function encode{{ name }}(src: {{ name }}): Uint8Array {
  */
 export function decode{{ name }}(buf: Uint8Array): {{ name }} {
 {% if s._is_packed %}
+{% if s._needs_pack_helper or s._has_nested %}
+    return unpack{{ name }}From(buf, 0);
+{% else %}
     return {
         {% for f in s.fields %}
         {% if f._is_bool %}
@@ -224,14 +300,18 @@ export function decode{{ name }}(buf: Uint8Array): {{ name }} {
         {% endif %}
         {% endfor %}
     };
+{% endif %}
 {% else %}
-    {% set _numeric = s.fields | rejectattr('_is_string') | rejectattr('_is_bool') | rejectattr('_is_enum') | list %}
+    {% set _numeric = s.fields | rejectattr('_is_string') | rejectattr('_is_bool') | rejectattr('_is_enum') | rejectattr('_is_struct') | list %}
     {% if _numeric %}
     const view = viewOf(buf);
     {% endif %}
     let offset = 0;
     {% for f in s.fields %}
-    {% if f._is_string %}
+    {% if f._is_struct %}
+    const {{ f.name }} = decode{{ f.type }}(buf.subarray(offset));
+    offset += {{ f.type | upper_snake }}_WIRE_SIZE;
+    {% elif f._is_string %}
     const {{ f.name }} = readString(buf, offset, {{ f.max_length }});
     offset += {{ f.max_length }};
     {% elif f._is_bool %}

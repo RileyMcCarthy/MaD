@@ -105,7 +105,9 @@ static inline uint8_t {{ prefix }}_{{ name }}_valueToWire(uint8_t value)
 typedef struct
 {
     {% for f in s.fields %}
-    {% if f._is_string %}
+    {% if f._is_struct %}
+    {{ prefix }}_{{ f.type }}_t {{ f.name }};
+    {% elif f._is_string %}
     char {{ f.name }}[{{ f.max_length }}];
     {% elif f._is_bool %}
     bool {{ f.name }};
