@@ -36,7 +36,30 @@ else
 fi
 echo "   ok"
 
+echo "== Conformance: C / Rust / TS must produce byte-identical wire output =="
+# Each dumper encodes the same fixed values and prints hex; the three outputs
+# must match exactly — a single source of truth enforced across all backends.
+cp "$here/conformance/dump.c" "$out/c/dump.c"
+cc -std=c11 -Wall -I "$out/c" "$out/c/thermostat.c" "$out/c/dump.c" -o "$out/c/dump"
+"$out/c/dump" > "$out/c.hex"
+
+cp "$here/conformance/dump.rs" "$out/rs/dump.rs"
+rustc --edition 2021 "$out/rs/dump.rs" -o "$out/rs/dump" 2>/dev/null
+"$out/rs/dump" > "$out/rs.hex"
+
+cp "$here/conformance/dump.ts" "$out/ts/dump.ts"
+tsc_bin() { if command -v tsc >/dev/null 2>&1; then tsc "$@"; else npx --yes -p typescript tsc "$@"; fi; }
+tsc_bin --target es2020 --module commonjs --moduleResolution node --skipLibCheck --outDir "$out/ts/js" "$out/ts/dump.ts"
+node "$out/ts/js/dump.js" > "$out/ts.hex"
+
+if diff "$out/c.hex" "$out/rs.hex" >/dev/null && diff "$out/c.hex" "$out/ts.hex" >/dev/null; then
+  echo "   ok — C == Rust == TS:"; sed 's/^/     /' "$out/c.hex"
+else
+  echo "   MISMATCH:"; echo "C:"; cat "$out/c.hex"; echo "Rust:"; cat "$out/rs.hex"; echo "TS:"; cat "$out/ts.hex"
+  exit 1
+fi
+
 echo ""
-echo "ALL TARGETS OK — ProtoEmb generated a complete C/Rust/TS codec for a"
-echo "non-MaD protocol (custom prefix, multiple nodes, remap enum, nested"
-echo "structs, fixed-count arrays, optional fields, packed + aligned)."
+echo "ALL TARGETS OK — ProtoEmb generated a complete, wire-conformant C/Rust/TS"
+echo "codec for a non-MaD protocol (custom prefix, multiple nodes, remap enum,"
+echo "nested structs, arrays, optional fields, tagged unions, packed + aligned)."
