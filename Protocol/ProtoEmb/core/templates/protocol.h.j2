@@ -17,6 +17,13 @@
  * ============================================================ */
 #define {{ prefix_upper }}_PROTOCOL_VERSION {{ protocol_version }}
 
+{% if nodes %}
+/* Node IDs (for multi-node / addressed framing; see build_*_frame_from). */
+{% for node in nodes %}
+#define {{ prefix_upper }}_NODE_{{ node | upper_snake }} {{ loop.index0 }}U
+{% endfor %}
+{% endif %}
+
 /* ============================================================
  * Enums
  * ============================================================ */

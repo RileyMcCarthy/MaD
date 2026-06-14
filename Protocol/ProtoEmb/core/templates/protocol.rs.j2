@@ -8,6 +8,13 @@
 /// Protocol version
 pub const PROTOCOL_VERSION: u32 = {{ protocol_version }};
 
+{% if nodes %}
+// Node IDs (for multi-node / addressed framing).
+{% for node in nodes %}
+pub const NODE_{{ node | upper_snake }}: u8 = {{ loop.index0 }};
+{% endfor %}
+{% endif %}
+
 {# ── Per-element leaf macros (used for array elements; off/val are expressions) ── #}
 {% macro rs_pack_leaf(f, buf, off, val) -%}
 {% if f._is_struct or f._is_union %}{{ val }}.pack_into({{ buf }}, {{ off }});

@@ -124,11 +124,45 @@ pub fn build_write_frame(command: u8, data: &[u8]) -> Vec<u8> {
     frame
 }
 
+// ── Multi-node addressing (opt-in) ──
+//
+// On a shared bus (RS-485, multi-drop), a receiver needs to know which node
+// sent a frame. With addressing enabled, a 1-byte source address follows SYNC:
+//
+//   READ:   [SYNC] [SRC] [0x00] [COMMAND]
+//   WRITE:  [SYNC] [SRC] [0x01] [COMMAND] [LEN_LO] [LEN_HI] [DATA...] [CRC8]
+//
+// Point-to-point links (e.g. MaD) leave addressing off and the frame is
+// unchanged. The CRC still covers only the payload.
+
+/// Build an addressed READ frame: `[SYNC] [SRC] [TYPE=0x00] [COMMAND]`.
+pub fn build_read_frame_from(source: u8, command: u8) -> Vec<u8> {
+    vec![SYNC_BYTE, source, 0x00, command]
+}
+
+/// Build an addressed WRITE frame:
+/// `[SYNC] [SRC] [TYPE=0x01] [COMMAND] [LEN_LO] [LEN_HI] [DATA...] [CRC8]`.
+pub fn build_write_frame_from(source: u8, command: u8, data: &[u8]) -> Vec<u8> {
+    let len = data.len() as u16;
+    let crc = crc8(data);
+    let mut frame = Vec::with_capacity(7 + data.len());
+    frame.push(SYNC_BYTE);
+    frame.push(source);
+    frame.push(0x01);
+    frame.push(command);
+    frame.push(len as u8);
+    frame.push((len >> 8) as u8);
+    frame.extend_from_slice(data);
+    frame.push(crc);
+    frame
+}
+
 // ── Frame parser (state machine) ──
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ParseState {
     Sync,
+    Source,
     Type,
     Command,
     LengthLo,
@@ -147,6 +181,8 @@ enum ParseState {
 #[derive(Debug)]
 pub struct FrameParser {
     state: ParseState,
+    addressing: bool,
+    source: u8,
     frame_type: u8,
     command: u8,
     data_len: u16,
@@ -164,6 +200,8 @@ impl FrameParser {
     pub fn new() -> Self {
         Self {
             state: ParseState::Sync,
+            addressing: false,
+            source: 0,
             frame_type: 0,
             command: 0,
             data_len: 0,
@@ -172,7 +210,20 @@ impl FrameParser {
         }
     }
 
-    /// Reset the parser to initial state.
+    /// Create a parser that expects a 1-byte source address after SYNC.
+    pub fn with_addressing() -> Self {
+        let mut p = Self::new();
+        p.addressing = true;
+        p
+    }
+
+    /// Source-node address of the most recently parsed frame (0 unless
+    /// addressing is enabled).
+    pub fn source(&self) -> u8 {
+        self.source
+    }
+
+    /// Reset the parser to initial state (keeps the addressing mode).
     pub fn reset(&mut self) {
         self.state = ParseState::Sync;
         self.frame_type = 0;
@@ -189,8 +240,18 @@ impl FrameParser {
         match self.state {
             ParseState::Sync => {
                 if byte == SYNC_BYTE {
-                    self.state = ParseState::Type;
+                    self.state = if self.addressing {
+                        ParseState::Source
+                    } else {
+                        ParseState::Type
+                    };
                 }
+                None
+            }
+
+            ParseState::Source => {
+                self.source = byte;
+                self.state = ParseState::Type;
                 None
             }
 
@@ -341,6 +402,37 @@ mod tests {
         assert_eq!(frame[5], 0xAA);
         assert_eq!(frame[6], 0xBB);
         assert_eq!(frame[7], crc8(&data)); // CRC
+    }
+
+    #[test]
+    fn test_addressed_build_and_parse_data() {
+        let data = [0x11, 0x22, 0x33];
+        let frame = build_write_frame_from(0x07, 0x04, &data);
+        assert_eq!(frame[0], SYNC_BYTE);
+        assert_eq!(frame[1], 0x07); // source
+        assert_eq!(frame[2], 0x01); // WRITE
+        assert_eq!(frame[3], 0x04); // command
+
+        // Parse a DATA frame carrying source 0x09.
+        let mut data_frame = vec![SYNC_BYTE, 0x09, 0x02, 0x05, data.len() as u8, 0x00];
+        data_frame.extend_from_slice(&data);
+        data_frame.push(crc8(&data));
+        let mut parser = FrameParser::with_addressing();
+        let frames = parser.feed_bytes(&data_frame);
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0], ParsedFrame::Data { command: 0x05, payload: data.to_vec() });
+        assert_eq!(parser.source(), 0x09);
+    }
+
+    #[test]
+    fn test_addressed_read_frame_roundtrip() {
+        let frame = build_read_frame_from(0x03, 0x02);
+        assert_eq!(frame, vec![SYNC_BYTE, 0x03, 0x00, 0x02]);
+        let mut parser = FrameParser::with_addressing();
+        let frames = parser.feed_bytes(&frame);
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0], ParsedFrame::Nack(0x02)); // type 0x00 = NACK inbound
+        assert_eq!(parser.source(), 0x03);
     }
 
     #[test]

@@ -10,6 +10,15 @@
 
 export const PROTOCOL_VERSION = {{ protocol_version }};
 
+{% if nodes %}
+/** Node IDs (for multi-node / addressed framing). */
+export const NODE = {
+{% for node in nodes %}
+    {{ node | upper_snake }}: {{ loop.index0 }},
+{% endfor %}
+} as const;
+{% endif %}
+
 /* ── Per-element leaf macros (used for array elements; off/val are expressions) ── */
 {% macro ts_pack_leaf(f, off, val) -%}
 {% if f._is_struct or f._is_union %}pack{{ f.type }}Into(buf, {{ off }}, {{ val }});
