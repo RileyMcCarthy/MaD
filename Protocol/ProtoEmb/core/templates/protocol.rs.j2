@@ -8,6 +8,42 @@
 /// Protocol version
 pub const PROTOCOL_VERSION: u32 = {{ protocol_version }};
 
+{# ── Per-element leaf macros (used for array elements; off/val are expressions) ── #}
+{% macro rs_pack_leaf(f, buf, off, val) -%}
+{% if f._is_struct %}{{ val }}.pack_into({{ buf }}, {{ off }});
+{%- elif f._is_bool %}pack_bits({{ buf }}, {{ off }}, 1, if {{ val }} { 1 } else { 0 });
+{%- elif f._is_enum %}pack_bits({{ buf }}, {{ off }}, {{ f._elem_bits }}, {{ val }}.to_wire() as u32);
+{%- elif f._is_float %}{% if f._min is not none %}pack_bits({{ buf }}, {{ off }}, {{ f._elem_bits }}, (({{ val }} - ({{ f._min }}f32)) * {{ f._scale }}f32) as u32);{% else %}pack_bits({{ buf }}, {{ off }}, {{ f._elem_bits }}, ({{ val }} * {{ f._scale }}f32) as u32);{% endif %}
+{%- elif f._is_signed %}{% if f._min is not none %}pack_bits({{ buf }}, {{ off }}, {{ f._elem_bits }}, (({{ val }} - ({{ f._min | int }}i32)){% if f._has_scale %}.wrapping_mul({{ f._scale }}i32){% endif %}) as u32);{% else %}pack_bits({{ buf }}, {{ off }}, {{ f._elem_bits }}, ({{ val }}{% if f._has_scale %}.wrapping_mul({{ f._scale }}i32){% endif %}) as u32);{% endif %}
+{%- else %}{% if f._min is not none and f._min != 0 %}pack_bits({{ buf }}, {{ off }}, {{ f._elem_bits }}, ({{ val }}.wrapping_sub({{ f._min | int }}u32)){% if f._has_scale %}.wrapping_mul({{ f._scale }}u32){% endif %});{% else %}pack_bits({{ buf }}, {{ off }}, {{ f._elem_bits }}, {{ val }}{% if f._has_scale %}.wrapping_mul({{ f._scale }}u32){% endif %});{% endif %}
+{%- endif %}
+{%- endmacro %}
+{% macro rs_aligned_encode_leaf(f, val) -%}
+{% if f._is_struct %}buf[offset..offset + {{ f.type }}::WIRE_SIZE].copy_from_slice(&{{ val }}.encode());
+{%- elif f._is_bool %}buf[offset] = if {{ val }} { 1 } else { 0 };
+{%- elif f._is_enum %}buf[offset] = {{ val }}.to_wire();
+{%- elif f._is_signed %}{% if f._elem_byte_size == 1 %}buf[offset] = ({{ val }} as i8) as u8;{% elif f._elem_byte_size == 2 %}buf[offset..offset + 2].copy_from_slice(&({{ val }} as i16).to_le_bytes());{% else %}buf[offset..offset + 4].copy_from_slice(&{{ val }}.to_le_bytes());{% endif %}
+{%- else %}{% if f._elem_byte_size == 1 %}buf[offset] = {{ val }} as u8;{% elif f._elem_byte_size == 2 %}buf[offset..offset + 2].copy_from_slice(&({{ val }} as u16).to_le_bytes());{% else %}buf[offset..offset + 4].copy_from_slice(&{{ val }}.to_le_bytes());{% endif %}
+{%- endif %}
+{%- endmacro %}
+{% macro rs_aligned_decode_expr(f, off) -%}
+{% if f._is_struct %}{{ f.type }}::decode(&buf[{{ off }}..]).unwrap_or_default()
+{%- elif f._is_bool %}buf[{{ off }}] != 0
+{%- elif f._is_enum %}{{ f.type }}::from_wire(buf[{{ off }}]).unwrap_or_default()
+{%- elif f._is_signed %}{% if f._elem_byte_size == 1 %}(buf[{{ off }}] as i8) as i32{% elif f._elem_byte_size == 2 %}i16::from_le_bytes([buf[{{ off }}], buf[{{ off }} + 1]]) as i32{% else %}i32::from_le_bytes([buf[{{ off }}], buf[{{ off }} + 1], buf[{{ off }} + 2], buf[{{ off }} + 3]]){% endif %}
+{%- else %}{% if f._elem_byte_size == 1 %}buf[{{ off }}] as u32{% elif f._elem_byte_size == 2 %}u16::from_le_bytes([buf[{{ off }}], buf[{{ off }} + 1]]) as u32{% else %}u32::from_le_bytes([buf[{{ off }}], buf[{{ off }} + 1], buf[{{ off }} + 2], buf[{{ off }} + 3]]){% endif %}
+{%- endif %}
+{%- endmacro %}
+{% macro rs_unpack_expr(f, off) -%}
+{% if f._is_struct %}{{ f.type }}::unpack_from(buf, {{ off }})
+{%- elif f._is_bool %}unpack_bits(buf, {{ off }}, 1) != 0
+{%- elif f._is_enum %}{{ f.type }}::from_wire(unpack_bits(buf, {{ off }}, {{ f._elem_bits }}) as u8).unwrap_or_default()
+{%- elif f._is_float %}{% if f._min is not none %}(unpack_bits(buf, {{ off }}, {{ f._elem_bits }}) as f32) / {{ f._scale }}f32 + ({{ f._min }}f32){% else %}(unpack_bits(buf, {{ off }}, {{ f._elem_bits }}) as f32) / {{ f._scale }}f32{% endif %}
+{%- elif f._is_signed %}{% if f._min is not none %}(unpack_bits(buf, {{ off }}, {{ f._elem_bits }}) as i32){% if f._has_scale %} / {{ f._scale }}i32{% endif %} + ({{ f._min | int }}i32){% else %}(unpack_bits(buf, {{ off }}, {{ f._elem_bits }}) as i32){% if f._has_scale %} / {{ f._scale }}i32{% endif %}{% endif %}
+{%- else %}{% if f._min is not none and f._min != 0 %}(unpack_bits(buf, {{ off }}, {{ f._elem_bits }}){% if f._has_scale %} / {{ f._scale }}u32{% endif %}).wrapping_add({{ f._min | int }}u32){% else %}unpack_bits(buf, {{ off }}, {{ f._elem_bits }}){% if f._has_scale %} / {{ f._scale }}u32{% endif %}{% endif %}
+{%- endif %}
+{%- endmacro %}
+
 // ============================================================
 // Enums
 // ============================================================
@@ -91,20 +127,17 @@ pub const {{ name | upper_snake }}_WIRE_SIZE: usize = {{ s._wire_size }};
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct {{ name }} {
     {% for f in s.fields %}
-    {% if f._is_struct %}
-    pub {{ f.name | snake_case | rust_safe }}: {{ f.type }},
-    {% elif f._is_string %}
+    {% if f._is_string %}
     pub {{ f.name | snake_case | rust_safe }}: String,
-    {% elif f._is_bool %}
-    pub {{ f.name | snake_case | rust_safe }}: bool,
-    {% elif f._is_enum %}
-    pub {{ f.name | snake_case | rust_safe }}: {{ f.type }},
-    {% elif f._is_float %}
-    pub {{ f.name | snake_case | rust_safe }}: f32,
-    {% elif f._is_signed %}
-    pub {{ f.name | snake_case | rust_safe }}: i32,
     {% else %}
-    pub {{ f.name | snake_case | rust_safe }}: u32,
+    {% if f._is_struct %}{% set _rt = f.type %}
+    {% elif f._is_bool %}{% set _rt = 'bool' %}
+    {% elif f._is_enum %}{% set _rt = f.type %}
+    {% elif f._is_float %}{% set _rt = 'f32' %}
+    {% elif f._is_signed %}{% set _rt = 'i32' %}
+    {% else %}{% set _rt = 'u32' %}
+    {% endif %}
+    pub {{ f.name | snake_case | rust_safe }}: {% if f._is_array %}[{{ _rt }}; {{ f._array_len }}]{% else %}{{ _rt }}{% endif %},
     {% endif %}
     {% endfor %}
 }
@@ -116,7 +149,11 @@ impl {{ name }} {
     /// Bit-pack into `buf` at base bit offset `base` (composes when nested).
     fn pack_into(&self, buf: &mut [u8], base: u32) {
         {% for f in s.fields %}
-        {% if f._is_struct %}
+        {% if f._is_array %}
+        for i in 0..{{ f._array_len }} {
+            {{ rs_pack_leaf(f, 'buf', 'base + ' ~ f._bit_offset ~ ' + (i as u32) * ' ~ f._elem_bits, 'self.' ~ (f.name | snake_case | rust_safe) ~ '[i]') }}
+        }
+        {% elif f._is_struct %}
         self.{{ f.name | snake_case | rust_safe }}.pack_into(buf, base + {{ f._bit_offset }});
         {% elif f._is_bool %}
         pack_bits(buf, base + {{ f._bit_offset }}, 1, if self.{{ f.name | snake_case | rust_safe }} { 1 } else { 0 });
@@ -148,7 +185,9 @@ impl {{ name }} {
     fn unpack_from(buf: &[u8], base: u32) -> Self {
         Self {
             {% for f in s.fields %}
-            {% if f._is_struct %}
+            {% if f._is_array %}
+            {{ f.name | snake_case | rust_safe }}: core::array::from_fn(|i| {{ rs_unpack_expr(f, 'base + ' ~ f._bit_offset ~ ' + (i as u32) * ' ~ f._elem_bits) }}),
+            {% elif f._is_struct %}
             {{ f.name | snake_case | rust_safe }}: {{ f.type }}::unpack_from(buf, base + {{ f._bit_offset }}),
             {% elif f._is_bool %}
             {{ f.name | snake_case | rust_safe }}: unpack_bits(buf, base + {{ f._bit_offset }}, 1) != 0,
@@ -188,7 +227,11 @@ impl {{ name }} {
         self.pack_into(&mut buf, 0);
 {% else %}
         {% for f in s.fields %}
-        {% if f._is_bool %}
+        {% if f._is_array %}
+        for i in 0..{{ f._array_len }} {
+            {{ rs_pack_leaf(f, '&mut buf', f._bit_offset ~ ' + (i as u32) * ' ~ f._elem_bits, 'self.' ~ (f.name | snake_case | rust_safe) ~ '[i]') }}
+        }
+        {% elif f._is_bool %}
         pack_bits(&mut buf, {{ f._bit_offset }}, 1, if self.{{ f.name | snake_case | rust_safe }} { 1 } else { 0 });
         {% elif f._is_enum %}
         {% set enum_def = enums[f.type] %}
@@ -217,7 +260,12 @@ impl {{ name }} {
 {% else %}
         let mut offset = 0usize;
         {% for f in s.fields %}
-        {% if f._is_struct %}
+        {% if f._is_array %}
+        for i in 0..{{ f._array_len }} {
+            {{ rs_aligned_encode_leaf(f, 'self.' ~ (f.name | snake_case | rust_safe) ~ '[i]') }}
+            offset += {{ f._elem_byte_size }};
+        }
+        {% elif f._is_struct %}
         buf[offset..offset + {{ f.type }}::WIRE_SIZE].copy_from_slice(&self.{{ f.name | snake_case | rust_safe }}.encode());
         offset += {{ f.type }}::WIRE_SIZE;
         {% elif f._is_string %}
@@ -271,7 +319,9 @@ impl {{ name }} {
 {% else %}
         Some(Self {
             {% for f in s.fields %}
-            {% if f._is_bool %}
+            {% if f._is_array %}
+            {{ f.name | snake_case | rust_safe }}: core::array::from_fn(|i| {{ rs_unpack_expr(f, f._bit_offset ~ ' + (i as u32) * ' ~ f._elem_bits) }}),
+            {% elif f._is_bool %}
             {{ f.name | snake_case | rust_safe }}: unpack_bits(buf, {{ f._bit_offset }}, 1) != 0,
             {% elif f._is_enum %}
             {{ f.name | snake_case | rust_safe }}: {{ f.type }}::from_wire(unpack_bits(buf, {{ f._bit_offset }}, {{ f._bits }}) as u8)
@@ -301,7 +351,10 @@ impl {{ name }} {
 {% else %}
         let mut offset = 0usize;
         {% for f in s.fields %}
-        {% if f._is_struct %}
+        {% if f._is_array %}
+        let {{ f.name | snake_case | rust_safe }} = { let base = offset; core::array::from_fn(|i| {{ rs_aligned_decode_expr(f, 'base + i * ' ~ f._elem_byte_size) }}) };
+        offset += {{ f._byte_size }};
+        {% elif f._is_struct %}
         let {{ f.name | snake_case | rust_safe }} = {{ f.type }}::decode(&buf[offset..])?;
         offset += {{ f.type }}::WIRE_SIZE;
         {% elif f._is_string %}

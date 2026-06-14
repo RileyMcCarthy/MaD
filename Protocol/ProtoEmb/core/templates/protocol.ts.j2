@@ -10,6 +10,40 @@
 
 export const PROTOCOL_VERSION = {{ protocol_version }};
 
+/* ── Per-element leaf macros (used for array elements; off/val are expressions) ── */
+{% macro ts_pack_leaf(f, off, val) -%}
+{% if f._is_struct %}pack{{ f.type }}Into(buf, {{ off }}, {{ val }});
+{%- elif f._is_bool %}packBits(buf, {{ off }}, 1, {{ val }} ? 1 : 0);
+{%- elif f._is_enum %}{% if enums[f.type]._is_remap %}packBits(buf, {{ off }}, {{ f._elem_bits }}, {{ f.type | upper_snake }}_VALUE_TO_WIRE[{{ val }}] ?? 0);{% else %}packBits(buf, {{ off }}, {{ f._elem_bits }}, {{ val }});{% endif %}
+{%- elif f._is_signed %}{% if f._min is not none %}packBits(buf, {{ off }}, {{ f._elem_bits }}, Math.round(({{ val }} - ({{ f._min }})) * {{ f._scale }}));{% else %}packBits(buf, {{ off }}, {{ f._elem_bits }}, Math.round({{ val }} * {{ f._scale }}));{% endif %}
+{%- else %}{% if f._min is not none and f._min != 0 %}packBits(buf, {{ off }}, {{ f._elem_bits }}, Math.round(({{ val }} - ({{ f._min }})) * {{ f._scale }}));{% else %}packBits(buf, {{ off }}, {{ f._elem_bits }}, Math.round({{ val }} * {{ f._scale }}));{% endif %}
+{%- endif %}
+{%- endmacro %}
+{% macro ts_unpack_expr(f, off) -%}
+{% if f._is_struct %}unpack{{ f.type }}From(buf, {{ off }})
+{%- elif f._is_bool %}unpackBits(buf, {{ off }}, 1) !== 0
+{%- elif f._is_enum %}{% if enums[f.type]._is_remap %}{{ f.type | upper_snake }}_WIRE_TO_VALUE[unpackBits(buf, {{ off }}, {{ f._elem_bits }})] as {{ f.type }}{% else %}unpackBits(buf, {{ off }}, {{ f._elem_bits }}) as {{ f.type }}{% endif %}
+{%- elif f._is_signed %}{% if f._min is not none %}unpackBits(buf, {{ off }}, {{ f._elem_bits }}) / {{ f._scale }} + ({{ f._min }}){% else %}unpackBits(buf, {{ off }}, {{ f._elem_bits }}) / {{ f._scale }}{% endif %}
+{%- else %}{% if f._min is not none and f._min != 0 %}unpackBits(buf, {{ off }}, {{ f._elem_bits }}) / {{ f._scale }} + ({{ f._min }}){% else %}unpackBits(buf, {{ off }}, {{ f._elem_bits }}) / {{ f._scale }}{% endif %}
+{%- endif %}
+{%- endmacro %}
+{% macro ts_aligned_encode_leaf(f, off, val) -%}
+{% if f._is_struct %}buf.set(encode{{ f.type }}({{ val }}), {{ off }});
+{%- elif f._is_bool %}buf[{{ off }}] = {{ val }} ? 1 : 0;
+{%- elif f._is_enum %}buf[{{ off }}] = {{ val }};
+{%- elif f._is_signed %}{% if f._elem_byte_size == 1 %}view.setInt8({{ off }}, Math.round({{ val }} * {{ f._scale }}));{% elif f._elem_byte_size == 2 %}view.setInt16({{ off }}, Math.round({{ val }} * {{ f._scale }}), true);{% else %}view.setInt32({{ off }}, Math.round({{ val }} * {{ f._scale }}), true);{% endif %}
+{%- else %}{% if f._elem_byte_size == 1 %}view.setUint8({{ off }}, Math.round({{ val }} * {{ f._scale }}) >>> 0);{% elif f._elem_byte_size == 2 %}view.setUint16({{ off }}, Math.round({{ val }} * {{ f._scale }}) >>> 0, true);{% else %}view.setUint32({{ off }}, Math.round({{ val }} * {{ f._scale }}) >>> 0, true);{% endif %}
+{%- endif %}
+{%- endmacro %}
+{% macro ts_aligned_decode_expr(f, off) -%}
+{% if f._is_struct %}decode{{ f.type }}(buf.subarray({{ off }}))
+{%- elif f._is_bool %}buf[{{ off }}] !== 0
+{%- elif f._is_enum %}buf[{{ off }}] as {{ f.type }}
+{%- elif f._is_signed %}{% if f._elem_byte_size == 1 %}view.getInt8({{ off }}) / {{ f._scale }}{% elif f._elem_byte_size == 2 %}view.getInt16({{ off }}, true) / {{ f._scale }}{% else %}view.getInt32({{ off }}, true) / {{ f._scale }}{% endif %}
+{%- else %}{% if f._elem_byte_size == 1 %}view.getUint8({{ off }}) / {{ f._scale }}{% elif f._elem_byte_size == 2 %}view.getUint16({{ off }}, true) / {{ f._scale }}{% else %}view.getUint32({{ off }}, true) / {{ f._scale }}{% endif %}
+{%- endif %}
+{%- endmacro %}
+
 // ============================================================
 // Enums
 // ============================================================
@@ -48,16 +82,16 @@ export const {{ name | upper_snake }}_VALUE_TO_WIRE: Record<number, number> = {
 export interface {{ name }} {
     {% for f in s.fields %}
     {% if f._is_struct %}
-    {{ f.name }}: {{ f.type }};
+    {{ f.name }}: {{ f.type }}{% if f._is_array %}[]{% endif %};
     {% elif f._is_string %}
     {{ f.name }}: string;
     {% elif f._is_bool %}
-    {{ f.name }}: boolean;
+    {{ f.name }}: boolean{% if f._is_array %}[]{% endif %};
     {% elif f._is_enum %}
-    {{ f.name }}: {{ f.type }};
+    {{ f.name }}: {{ f.type }}{% if f._is_array %}[]{% endif %};
     {% else %}
     /** unit: {{ f._unit }}{% if f._has_scale %}, scale: {{ f._scale }} (precision: 1/{{ f._scale }}){% endif %} */
-    {{ f.name }}: number;
+    {{ f.name }}: number{% if f._is_array %}[]{% endif %};
     {% endif %}
     {% endfor %}
 }
@@ -127,7 +161,11 @@ function unpackBits(buf: Uint8Array, bitOff: number, bits: number): number {
 /** Bit-pack {{ name }} into `buf` at base bit offset `base` (composes when nested). */
 function pack{{ name }}Into(buf: Uint8Array, base: number, src: {{ name }}): void {
     {% for f in s.fields %}
-    {% if f._is_struct %}
+    {% if f._is_array %}
+    for (let i = 0; i < {{ f._array_len }}; i++) {
+        {{ ts_pack_leaf(f, 'base + ' ~ f._bit_offset ~ ' + i * ' ~ f._elem_bits, 'src.' ~ f.name ~ '[i]') }}
+    }
+    {% elif f._is_struct %}
     pack{{ f.type }}Into(buf, base + {{ f._bit_offset }}, src.{{ f.name }});
     {% elif f._is_bool %}
     packBits(buf, base + {{ f._bit_offset }}, 1, src.{{ f.name }} ? 1 : 0);
@@ -158,7 +196,9 @@ function pack{{ name }}Into(buf: Uint8Array, base: number, src: {{ name }}): voi
 function unpack{{ name }}From(buf: Uint8Array, base: number): {{ name }} {
     return {
         {% for f in s.fields %}
-        {% if f._is_struct %}
+        {% if f._is_array %}
+        {{ f.name }}: Array.from({ length: {{ f._array_len }} }, (_, i) => {{ ts_unpack_expr(f, 'base + ' ~ f._bit_offset ~ ' + i * ' ~ f._elem_bits) }}),
+        {% elif f._is_struct %}
         {{ f.name }}: unpack{{ f.type }}From(buf, base + {{ f._bit_offset }}),
         {% elif f._is_bool %}
         {{ f.name }}: unpackBits(buf, base + {{ f._bit_offset }}, 1) !== 0,
@@ -198,7 +238,11 @@ export function encode{{ name }}(src: {{ name }}): Uint8Array {
     pack{{ name }}Into(buf, 0, src);
 {% else %}
     {% for f in s.fields %}
-    {% if f._is_bool %}
+    {% if f._is_array %}
+    for (let i = 0; i < {{ f._array_len }}; i++) {
+        {{ ts_pack_leaf(f, f._bit_offset ~ ' + i * ' ~ f._elem_bits, 'src.' ~ f.name ~ '[i]') }}
+    }
+    {% elif f._is_bool %}
     packBits(buf, {{ f._bit_offset }}, 1, src.{{ f.name }} ? 1 : 0);
     {% elif f._is_enum %}
     {% set enum_def = enums[f.type] %}
@@ -229,7 +273,12 @@ export function encode{{ name }}(src: {{ name }}): Uint8Array {
     {% endif %}
     let offset = 0;
     {% for f in s.fields %}
-    {% if f._is_struct %}
+    {% if f._is_array %}
+    for (let i = 0; i < {{ f._array_len }}; i++) {
+        {{ ts_aligned_encode_leaf(f, 'offset + i * ' ~ f._elem_byte_size, 'src.' ~ f.name ~ '[i]') }}
+    }
+    offset += {{ f._byte_size }};
+    {% elif f._is_struct %}
     buf.set(encode{{ f.type }}(src.{{ f.name }}), offset);
     offset += {{ f.type | upper_snake }}_WIRE_SIZE;
     {% elif f._is_string %}
@@ -276,7 +325,9 @@ export function decode{{ name }}(buf: Uint8Array): {{ name }} {
 {% else %}
     return {
         {% for f in s.fields %}
-        {% if f._is_bool %}
+        {% if f._is_array %}
+        {{ f.name }}: Array.from({ length: {{ f._array_len }} }, (_, i) => {{ ts_unpack_expr(f, f._bit_offset ~ ' + i * ' ~ f._elem_bits) }}),
+        {% elif f._is_bool %}
         {{ f.name }}: unpackBits(buf, {{ f._bit_offset }}, 1) !== 0,
         {% elif f._is_enum %}
         {% set enum_def = enums[f.type] %}
@@ -308,7 +359,10 @@ export function decode{{ name }}(buf: Uint8Array): {{ name }} {
     {% endif %}
     let offset = 0;
     {% for f in s.fields %}
-    {% if f._is_struct %}
+    {% if f._is_array %}
+    const {{ f.name }} = Array.from({ length: {{ f._array_len }} }, (_, i) => {{ ts_aligned_decode_expr(f, 'offset + i * ' ~ f._elem_byte_size) }});
+    offset += {{ f._byte_size }};
+    {% elif f._is_struct %}
     const {{ f.name }} = decode{{ f.type }}(buf.subarray(offset));
     offset += {{ f.type | upper_snake }}_WIRE_SIZE;
     {% elif f._is_string %}

@@ -225,34 +225,44 @@ def process_schema(schema, prefix=DEFAULT_PREFIX):
                         f"'{child['_encoding']}' encoding but parent is '{encoding}'"
                     )
 
+            # Fixed-count arrays: a `count: N` makes the field N consecutive
+            # elements of `type`. The element size is computed as for a scalar
+            # and multiplied by N (preserves the fixed-wire-size model).
+            field["_is_array"] = "count" in field
+            field["_array_len"] = field.get("count", 1)
+            n = field["_array_len"]
+
             if is_packed:
                 if field["_is_struct"]:
                     child = structs[ftype]
                     child["_needs_pack_helper"] = True
-                    bits = child["_total_bits"]
+                    elem_bits = child["_total_bits"]
                 else:
-                    bits = compute_field_bits(field, enums)
-                field["_bits"] = bits
+                    elem_bits = compute_field_bits(field, enums)
+                field["_elem_bits"] = elem_bits
+                field["_bits"] = elem_bits * n
                 field["_bit_offset"] = total_bits
-                total_bits += bits
+                total_bits += field["_bits"]
             else:
                 # Aligned — use standard C type sizes
                 if field["_is_struct"]:
                     structs[ftype]["_needs_pack_helper"] = True
-                    field["_byte_size"] = structs[ftype]["_wire_size"]
+                    elem_bs = structs[ftype]["_wire_size"]
                 elif field["_is_string"]:
-                    field["_byte_size"] = field.get("max_length", 16)
+                    elem_bs = field.get("max_length", 16)
                 elif field["_is_enum"]:
-                    field["_byte_size"] = 1
+                    elem_bs = 1
                 elif field["_is_bool"]:
-                    field["_byte_size"] = 1
+                    elem_bs = 1
                 else:
                     type_sizes = {
                         "int8": 1, "uint8": 1,
                         "int16": 2, "uint16": 2,
                         "int32": 4, "uint32": 4,
                     }
-                    field["_byte_size"] = type_sizes.get(ftype, 4)
+                    elem_bs = type_sizes.get(ftype, 4)
+                field["_elem_byte_size"] = elem_bs
+                field["_byte_size"] = elem_bs * n
 
             field["_scale"] = field.get("scale", 1)
             field["_has_scale"] = field.get("scale", 1) != 1
@@ -486,6 +496,18 @@ def validate_schema(data):
                     errors.append(
                         f"Struct {name}.{field['name']}: max {fmax} above {ftype} "
                         f"maximum {tmax} — widen the type or lower max"
+                    )
+
+            # Fixed-count array constraints.
+            count = field.get("count", None)
+            if count is not None:
+                if not isinstance(count, int) or count < 1:
+                    errors.append(
+                        f"Struct {name}.{field['name']}: count must be a positive integer, got {count!r}"
+                    )
+                if field.get("_is_string"):
+                    errors.append(
+                        f"Struct {name}.{field['name']}: string arrays are not supported"
                     )
 
             # A fractional scale only has a well-defined wire representation on a
