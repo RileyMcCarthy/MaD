@@ -10,7 +10,7 @@ pub const PROTOCOL_VERSION: u32 = {{ protocol_version }};
 
 {# ── Per-element leaf macros (used for array elements; off/val are expressions) ── #}
 {% macro rs_pack_leaf(f, buf, off, val) -%}
-{% if f._is_struct %}{{ val }}.pack_into({{ buf }}, {{ off }});
+{% if f._is_struct or f._is_union %}{{ val }}.pack_into({{ buf }}, {{ off }});
 {%- elif f._is_bool %}pack_bits({{ buf }}, {{ off }}, 1, if {{ val }} { 1 } else { 0 });
 {%- elif f._is_enum %}pack_bits({{ buf }}, {{ off }}, {{ f._elem_bits }}, {{ val }}.to_wire() as u32);
 {%- elif f._is_float %}{% if f._min is not none %}pack_bits({{ buf }}, {{ off }}, {{ f._elem_bits }}, (({{ val }} - ({{ f._min }}f32)) * {{ f._scale }}f32) as u32);{% else %}pack_bits({{ buf }}, {{ off }}, {{ f._elem_bits }}, ({{ val }} * {{ f._scale }}f32) as u32);{% endif %}
@@ -19,7 +19,7 @@ pub const PROTOCOL_VERSION: u32 = {{ protocol_version }};
 {%- endif %}
 {%- endmacro %}
 {% macro rs_aligned_encode_leaf(f, val) -%}
-{% if f._is_struct %}buf[offset..offset + {{ f.type }}::WIRE_SIZE].copy_from_slice(&{{ val }}.encode());
+{% if f._is_struct or f._is_union %}buf[offset..offset + {{ f.type }}::WIRE_SIZE].copy_from_slice(&{{ val }}.encode());
 {%- elif f._is_bool %}buf[offset] = if {{ val }} { 1 } else { 0 };
 {%- elif f._is_enum %}buf[offset] = {{ val }}.to_wire();
 {%- elif f._is_signed %}{% if f._elem_byte_size == 1 %}buf[offset] = ({{ val }} as i8) as u8;{% elif f._elem_byte_size == 2 %}buf[offset..offset + 2].copy_from_slice(&({{ val }} as i16).to_le_bytes());{% else %}buf[offset..offset + 4].copy_from_slice(&{{ val }}.to_le_bytes());{% endif %}
@@ -27,7 +27,7 @@ pub const PROTOCOL_VERSION: u32 = {{ protocol_version }};
 {%- endif %}
 {%- endmacro %}
 {% macro rs_aligned_decode_expr(f, off) -%}
-{% if f._is_struct %}{{ f.type }}::decode(&buf[{{ off }}..]).unwrap_or_default()
+{% if f._is_struct or f._is_union %}{{ f.type }}::decode(&buf[{{ off }}..]).unwrap_or_default()
 {%- elif f._is_bool %}buf[{{ off }}] != 0
 {%- elif f._is_enum %}{{ f.type }}::from_wire(buf[{{ off }}]).unwrap_or_default()
 {%- elif f._is_signed %}{% if f._elem_byte_size == 1 %}(buf[{{ off }}] as i8) as i32{% elif f._elem_byte_size == 2 %}i16::from_le_bytes([buf[{{ off }}], buf[{{ off }} + 1]]) as i32{% else %}i32::from_le_bytes([buf[{{ off }}], buf[{{ off }} + 1], buf[{{ off }} + 2], buf[{{ off }} + 3]]){% endif %}
@@ -35,7 +35,7 @@ pub const PROTOCOL_VERSION: u32 = {{ protocol_version }};
 {%- endif %}
 {%- endmacro %}
 {% macro rs_unpack_expr(f, off) -%}
-{% if f._is_struct %}{{ f.type }}::unpack_from(buf, {{ off }})
+{% if f._is_struct or f._is_union %}{{ f.type }}::unpack_from(buf, {{ off }})
 {%- elif f._is_bool %}unpack_bits(buf, {{ off }}, 1) != 0
 {%- elif f._is_enum %}{{ f.type }}::from_wire(unpack_bits(buf, {{ off }}, {{ f._elem_bits }}) as u8).unwrap_or_default()
 {%- elif f._is_float %}{% if f._min is not none %}(unpack_bits(buf, {{ off }}, {{ f._elem_bits }}) as f32) / {{ f._scale }}f32 + ({{ f._min }}f32){% else %}(unpack_bits(buf, {{ off }}, {{ f._elem_bits }}) as f32) / {{ f._scale }}f32{% endif %}
@@ -110,6 +110,108 @@ impl Default for {{ name }} {
 }
 {% endfor %}
 
+{% if unions %}
+// ============================================================
+// Tagged Unions
+// ============================================================
+{% for name, u in unions.items() %}
+
+/// {{ u.get('description', '') }} ({{ u._encoding }}, {{ u._wire_size }} bytes on wire)
+#[derive(Debug, Clone, PartialEq)]
+pub enum {{ name }} {
+    {% for v in u.variants %}
+    {% if v._is_enum %}{% set _vt = v.type %}{% elif v._is_bool %}{% set _vt = 'bool' %}{% elif v._is_float %}{% set _vt = 'f32' %}{% elif v._is_signed %}{% set _vt = 'i32' %}{% else %}{% set _vt = 'u32' %}{% endif %}
+    {{ v.name | camel_case }}({{ _vt }}),
+    {% endfor %}
+}
+
+impl Default for {{ name }} {
+    fn default() -> Self {
+        {{ name }}::{{ u.variants[0].name | camel_case }}(Default::default())
+    }
+}
+
+impl {{ name }} {
+    pub const WIRE_SIZE: usize = {{ u._wire_size }};
+{% if u._is_packed %}
+
+    fn pack_into(&self, buf: &mut [u8], base: u32) {
+        match self {
+            {% for v in u.variants %}
+            {{ name }}::{{ v.name | camel_case }}(x) => {
+                pack_bits(buf, base, {{ u._tag_bits }}, {{ v._index }});
+                {{ rs_pack_leaf(v, 'buf', 'base + ' ~ u._payload_offset, '(*x)') }}
+            }
+            {% endfor %}
+        }
+    }
+
+    fn unpack_from(buf: &[u8], base: u32) -> Self {
+        match unpack_bits(buf, base, {{ u._tag_bits }}) {
+            {% for v in u.variants %}
+            {{ v._index }} => {{ name }}::{{ v.name | camel_case }}({{ rs_unpack_expr(v, 'base + ' ~ u._payload_offset) }}),
+            {% endfor %}
+            _ => {{ name }}::default(),
+        }
+    }
+
+    /// Encode to wire bytes ({{ u._wire_size }} bytes).
+    pub fn encode(&self) -> [u8; {{ u._wire_size }}] {
+        let mut buf = [0u8; {{ u._wire_size }}];
+        self.pack_into(&mut buf, 0);
+        buf
+    }
+
+    /// Decode from wire bytes.
+    pub fn decode(buf: &[u8]) -> Option<Self> {
+        if buf.len() < {{ u._wire_size }} {
+            return None;
+        }
+        Some(Self::unpack_from(buf, 0))
+    }
+{% else %}
+
+    fn encode_into(&self, buf: &mut [u8], base: usize) {
+        match self {
+            {% for v in u.variants %}
+            {{ name }}::{{ v.name | camel_case }}(x) => {
+                buf[base] = {{ v._index }};
+                let offset = base + {{ u._payload_offset }};
+                {{ rs_aligned_encode_leaf(v, '(*x)') }}
+            }
+            {% endfor %}
+        }
+    }
+
+    fn decode_at(buf: &[u8], base: usize) -> Self {
+        let offset = base + {{ u._payload_offset }};
+        match buf[base] {
+            {% for v in u.variants %}
+            {{ v._index }} => {{ name }}::{{ v.name | camel_case }}({{ rs_aligned_decode_expr(v, 'offset') }}),
+            {% endfor %}
+            _ => {{ name }}::default(),
+        }
+    }
+
+    /// Encode to wire bytes ({{ u._wire_size }} bytes).
+    pub fn encode(&self) -> [u8; {{ u._wire_size }}] {
+        let mut buf = [0u8; {{ u._wire_size }}];
+        self.encode_into(&mut buf, 0);
+        buf
+    }
+
+    /// Decode from wire bytes.
+    pub fn decode(buf: &[u8]) -> Option<Self> {
+        if buf.len() < {{ u._wire_size }} {
+            return None;
+        }
+        Some(Self::decode_at(buf, 0))
+    }
+{% endif %}
+}
+{% endfor %}
+{% endif %}
+
 // ============================================================
 // Struct Wire Sizes
 // ============================================================
@@ -130,7 +232,7 @@ pub struct {{ name }} {
     {% if f._is_string %}
     pub {{ f.name | snake_case | rust_safe }}: {% if f._is_optional %}Option<String>{% else %}String{% endif %},
     {% else %}
-    {% if f._is_struct %}{% set _rt = f.type %}
+    {% if f._is_struct or f._is_union %}{% set _rt = f.type %}
     {% elif f._is_bool %}{% set _rt = 'bool' %}
     {% elif f._is_enum %}{% set _rt = f.type %}
     {% elif f._is_float %}{% set _rt = 'f32' %}
@@ -158,7 +260,7 @@ impl {{ name }} {
         if let Some(ref v) = self.{{ f.name | snake_case | rust_safe }} {
             {{ rs_pack_leaf(f, 'buf', 'base + ' ~ f._value_bit_offset, ('v' if f._is_struct else '(*v)')) }}
         }
-        {% elif f._is_struct %}
+        {% elif f._is_struct or f._is_union %}
         self.{{ f.name | snake_case | rust_safe }}.pack_into(buf, base + {{ f._bit_offset }});
         {% elif f._is_bool %}
         pack_bits(buf, base + {{ f._bit_offset }}, 1, if self.{{ f.name | snake_case | rust_safe }} { 1 } else { 0 });
@@ -194,7 +296,7 @@ impl {{ name }} {
             {{ f.name | snake_case | rust_safe }}: core::array::from_fn(|i| {{ rs_unpack_expr(f, 'base + ' ~ f._bit_offset ~ ' + (i as u32) * ' ~ f._elem_bits) }}),
             {% elif f._is_optional %}
             {{ f.name | snake_case | rust_safe }}: if unpack_bits(buf, base + {{ f._bit_offset }}, 1) != 0 { Some({{ rs_unpack_expr(f, 'base + ' ~ f._value_bit_offset) }}) } else { None },
-            {% elif f._is_struct %}
+            {% elif f._is_struct or f._is_union %}
             {{ f.name | snake_case | rust_safe }}: {{ f.type }}::unpack_from(buf, base + {{ f._bit_offset }}),
             {% elif f._is_bool %}
             {{ f.name | snake_case | rust_safe }}: unpack_bits(buf, base + {{ f._bit_offset }}, 1) != 0,
@@ -284,7 +386,7 @@ impl {{ name }} {
             {{ rs_aligned_encode_leaf(f, ('v' if f._is_struct else '(*v)')) }}
         }
         offset += {{ f._elem_byte_size }};
-        {% elif f._is_struct %}
+        {% elif f._is_struct or f._is_union %}
         buf[offset..offset + {{ f.type }}::WIRE_SIZE].copy_from_slice(&self.{{ f.name | snake_case | rust_safe }}.encode());
         offset += {{ f.type }}::WIRE_SIZE;
         {% elif f._is_string %}
@@ -377,7 +479,7 @@ impl {{ name }} {
         offset += {{ f._byte_size }};
         {% elif f._is_optional %}
         let {{ f.name | snake_case | rust_safe }} = { let present = buf[offset] != 0; offset += 1; let v = if present { Some({{ rs_aligned_decode_expr(f, 'offset') }}) } else { None }; offset += {{ f._elem_byte_size }}; v };
-        {% elif f._is_struct %}
+        {% elif f._is_struct or f._is_union %}
         let {{ f.name | snake_case | rust_safe }} = {{ f.type }}::decode(&buf[offset..])?;
         offset += {{ f.type }}::WIRE_SIZE;
         {% elif f._is_string %}

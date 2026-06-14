@@ -26,6 +26,15 @@ enums:
       - { name: HIGH, value: 2 }
       - { name: AUTO, value: 9 }
 
+unions:
+  Sample:
+    encoding: packed
+    description: "One channel reading: a temperature, a humidity, or a fan state"
+    variants:
+      - { name: temperature, type: int16, unit: C, scale: 10, min: -40, max: 85 }
+      - { name: humidity, type: uint8, unit: pct, min: 0, max: 100 }
+      - { name: fan, type: FanCmd }
+
 structs:
   Reading:
     encoding: packed
@@ -33,6 +42,13 @@ structs:
     fields:
       - { name: temp, type: int16, unit: C, scale: 10, min: -40, max: 85 }   # 0.1 C
       - { name: humidity, type: uint8, unit: pct, min: 0, max: 100 }
+
+  Datum:
+    encoding: packed
+    description: "A tagged channel value (uses the Sample union)"
+    fields:
+      - { name: channel, type: uint8, min: 0, max: 15 }
+      - { name: value, type: Sample }                                        # union field
 
   ZoneState:
     encoding: packed

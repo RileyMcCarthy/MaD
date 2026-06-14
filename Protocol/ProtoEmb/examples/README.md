@@ -14,6 +14,7 @@ A smart-thermostat protocol that uses:
 - **nested structs** (`ZoneState.current: Reading`, `SensorPacket.reading`)
 - a **fixed-count array** (`Schedule.slots: int16[8]`)
 - **optional fields** (`SensorPacket.fault`, `SensorPacket.zone`)
+- a **tagged union** (`Sample`, used as `Datum.value`)
 - both **packed** (bit-level) and **aligned** (byte-level) encodings
 - the generated **typed facade** (`Inbound::decode_data` / `decodeData`)
 

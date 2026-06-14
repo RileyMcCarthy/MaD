@@ -68,6 +68,12 @@ table + binary search when the value span is large and sparse).
   flag precedes the always-allocated value. If the flag is clear the value is
   ignored on decode (`None` / `null` / `*_present == false`). Cannot combine
   with `count` or `string`.
+- **Tagged union** (a top-level `unions:` type used as a field): a discriminant
+  tag (`ceil(log2(N))` bits packed / 1 byte aligned) followed by a payload
+  region sized to the **largest** variant, so the wire size stays fixed. Decode
+  reads the tag and interprets the payload as that variant. Emitted as a C
+  tagged struct, a Rust enum, and a TS discriminated union (`{ tag, value }`).
+  Variants are scalars/enums/bools (struct variants are future work).
 
 ### Strings
 

@@ -60,7 +60,7 @@ static int32_t sign_extend(uint32_t value, uint32_t bits)
 
 {# ── Per-element leaf macros (used for array elements; off/val are expressions) ── #}
 {% macro c_pack_leaf(f, off, val) -%}
-{% if f._is_struct %}{{ prefix }}_{{ f.type }}_pack(buf, {{ off }}, &{{ val }});
+{% if f._is_struct or f._is_union %}{{ prefix }}_{{ f.type }}_pack(buf, {{ off }}, &{{ val }});
 {%- elif f._is_bool %}pack_bits(buf, {{ off }}, 1, {{ val }} ? 1U : 0U);
 {%- elif f._is_enum %}{% set ed = enums[f.type] %}{% if ed._is_remap and ed._remap_style == 'array' %}pack_bits(buf, {{ off }}, {{ f._elem_bits }}, {{ prefix_upper }}_{{ f.type | upper_snake }}_VALUE_TO_WIRE[{{ val }}]);{% elif ed._is_remap %}pack_bits(buf, {{ off }}, {{ f._elem_bits }}, {{ prefix }}_{{ f.type }}_valueToWire((uint8_t){{ val }}));{% else %}pack_bits(buf, {{ off }}, {{ f._elem_bits }}, (uint32_t){{ val }});{% endif %}
 {%- elif f._raw_storage %}{% if f._min_wire is not none %}pack_bits(buf, {{ off }}, {{ f._elem_bits }}, (uint32_t)({{ val }} - ({{ f._min_wire }})));{% else %}pack_bits(buf, {{ off }}, {{ f._elem_bits }}, (uint32_t){{ val }});{% endif %}
@@ -69,7 +69,7 @@ static int32_t sign_extend(uint32_t value, uint32_t bits)
 {%- endif %}
 {%- endmacro %}
 {% macro c_unpack_leaf(f, off, lval) -%}
-{% if f._is_struct %}{{ prefix }}_{{ f.type }}_unpack(buf, {{ off }}, &{{ lval }});
+{% if f._is_struct or f._is_union %}{{ prefix }}_{{ f.type }}_unpack(buf, {{ off }}, &{{ lval }});
 {%- elif f._is_bool %}{{ lval }} = unpack_bits(buf, {{ off }}, 1) != 0;
 {%- elif f._is_enum %}{% if enums[f.type]._is_remap %}{{ lval }} = ({{ prefix }}_{{ f.type }}_E){{ prefix_upper }}_{{ f.type | upper_snake }}_WIRE_TO_VALUE[unpack_bits(buf, {{ off }}, {{ f._elem_bits }})];{% else %}{{ lval }} = ({{ prefix }}_{{ f.type }}_E)unpack_bits(buf, {{ off }}, {{ f._elem_bits }});{% endif %}
 {%- elif f._raw_storage %}{% if f._min_wire is not none %}{{ lval }} = (int32_t)unpack_bits(buf, {{ off }}, {{ f._elem_bits }}) + ({{ f._min_wire }});{% else %}{{ lval }} = (int32_t)unpack_bits(buf, {{ off }}, {{ f._elem_bits }});{% endif %}
@@ -78,19 +78,112 @@ static int32_t sign_extend(uint32_t value, uint32_t bits)
 {%- endif %}
 {%- endmacro %}
 {% macro c_encode_leaf(f, off, val) -%}
-{% if f._is_struct %}{{ prefix }}_{{ f.type }}_encodeAt(buf, {{ off }}, &{{ val }});
+{% if f._is_struct or f._is_union %}{{ prefix }}_{{ f.type }}_encodeAt(buf, {{ off }}, &{{ val }});
 {%- elif f._is_bool %}buf[{{ off }}] = {{ val }} ? 1U : 0U;
 {%- elif f._is_enum %}buf[{{ off }}] = (uint8_t){{ val }};
 {%- else %}memcpy(&buf[{{ off }}], &{{ val }}, {{ f._elem_byte_size }});
 {%- endif %}
 {%- endmacro %}
 {% macro c_decode_leaf(f, off, lval) -%}
-{% if f._is_struct %}{{ prefix }}_{{ f.type }}_decodeAt(buf, {{ off }}, &{{ lval }});
+{% if f._is_struct or f._is_union %}{{ prefix }}_{{ f.type }}_decodeAt(buf, {{ off }}, &{{ lval }});
 {%- elif f._is_bool %}{{ lval }} = buf[{{ off }}] != 0;
 {%- elif f._is_enum %}{{ lval }} = ({{ prefix }}_{{ f.type }}_E)buf[{{ off }}];
 {%- else %}memcpy(&{{ lval }}, &buf[{{ off }}], {{ f._elem_byte_size }});
 {%- endif %}
 {%- endmacro %}
+{% if unions %}
+/* ============================================================
+ * Tagged Union Encode / Decode Implementations
+ * ============================================================ */
+{% for name, u in unions.items() %}
+{% if u._is_packed %}
+static void {{ prefix }}_{{ name }}_pack(uint8_t *buf, uint32_t base, const {{ prefix }}_{{ name }}_t *src)
+{
+    pack_bits(buf, base + 0U, {{ u._tag_bits }}, (uint32_t)src->tag);
+    switch (src->tag)
+    {
+    {% for v in u.variants %}
+    case {{ prefix_upper }}_{{ name | upper_snake }}_TAG_{{ v.name | upper_snake }}:
+        {{ c_pack_leaf(v, 'base + ' ~ u._payload_offset ~ 'U', 'src->u.' ~ v.name) }}
+        break;
+    {% endfor %}
+    default:
+        break;
+    }
+}
+
+static void {{ prefix }}_{{ name }}_unpack(const uint8_t *buf, uint32_t base, {{ prefix }}_{{ name }}_t *dst)
+{
+    dst->tag = ({{ prefix }}_{{ name }}_Tag_E)unpack_bits(buf, base + 0U, {{ u._tag_bits }});
+    switch (dst->tag)
+    {
+    {% for v in u.variants %}
+    case {{ prefix_upper }}_{{ name | upper_snake }}_TAG_{{ v.name | upper_snake }}:
+        {{ c_unpack_leaf(v, 'base + ' ~ u._payload_offset ~ 'U', 'dst->u.' ~ v.name) }}
+        break;
+    {% endfor %}
+    default:
+        break;
+    }
+}
+
+void {{ prefix }}_{{ name }}_encode(uint8_t *buf, const {{ prefix }}_{{ name }}_t *src)
+{
+    memset(buf, 0, {{ prefix_upper }}_{{ name | upper_snake }}_WIRE_SIZE);
+    {{ prefix }}_{{ name }}_pack(buf, 0U, src);
+}
+
+void {{ prefix }}_{{ name }}_decode(const uint8_t *buf, {{ prefix }}_{{ name }}_t *dst)
+{
+    memset(dst, 0, sizeof({{ prefix }}_{{ name }}_t));
+    {{ prefix }}_{{ name }}_unpack(buf, 0U, dst);
+}
+{% else %}
+static void {{ prefix }}_{{ name }}_encodeAt(uint8_t *buf, uint32_t base, const {{ prefix }}_{{ name }}_t *src)
+{
+    buf[base + 0U] = (uint8_t)src->tag;
+    switch (src->tag)
+    {
+    {% for v in u.variants %}
+    case {{ prefix_upper }}_{{ name | upper_snake }}_TAG_{{ v.name | upper_snake }}:
+        {{ c_encode_leaf(v, 'base + ' ~ u._payload_offset ~ 'U', 'src->u.' ~ v.name) }}
+        break;
+    {% endfor %}
+    default:
+        break;
+    }
+}
+
+static void {{ prefix }}_{{ name }}_decodeAt(const uint8_t *buf, uint32_t base, {{ prefix }}_{{ name }}_t *dst)
+{
+    dst->tag = ({{ prefix }}_{{ name }}_Tag_E)buf[base + 0U];
+    switch (dst->tag)
+    {
+    {% for v in u.variants %}
+    case {{ prefix_upper }}_{{ name | upper_snake }}_TAG_{{ v.name | upper_snake }}:
+        {{ c_decode_leaf(v, 'base + ' ~ u._payload_offset ~ 'U', 'dst->u.' ~ v.name) }}
+        break;
+    {% endfor %}
+    default:
+        break;
+    }
+}
+
+void {{ prefix }}_{{ name }}_encode(uint8_t *buf, const {{ prefix }}_{{ name }}_t *src)
+{
+    memset(buf, 0, {{ prefix_upper }}_{{ name | upper_snake }}_WIRE_SIZE);
+    {{ prefix }}_{{ name }}_encodeAt(buf, 0U, src);
+}
+
+void {{ prefix }}_{{ name }}_decode(const uint8_t *buf, {{ prefix }}_{{ name }}_t *dst)
+{
+    memset(dst, 0, sizeof({{ prefix }}_{{ name }}_t));
+    {{ prefix }}_{{ name }}_decodeAt(buf, 0U, dst);
+}
+{% endif %}
+{% endfor %}
+
+{% endif %}
 /* ============================================================
  * Struct Encode / Decode Implementations
  * ============================================================ */
@@ -204,7 +297,7 @@ static void {{ prefix }}_{{ name }}_pack(uint8_t *buf, uint32_t base, const {{ p
     {
         {{ c_pack_leaf(f, 'base + ' ~ f._value_bit_offset ~ 'U', 'src->' ~ f.name) }}
     }
-    {% elif f._is_struct %}
+    {% elif f._is_struct or f._is_union %}
     {{ prefix }}_{{ f.type }}_pack(buf, base + {{ f._bit_offset }}U, &src->{{ f.name }});
     {% elif f._is_bool %}
     pack_bits(buf, base + {{ f._bit_offset }}U, 1, src->{{ f.name }} ? 1U : 0U);
@@ -266,7 +359,7 @@ static void {{ prefix }}_{{ name }}_encodeAt(uint8_t *buf, uint32_t base, const 
     {
         {{ c_encode_leaf(f, 'base + ' ~ f._value_byte_offset ~ 'U', 'src->' ~ f.name) }}
     }
-    {% elif f._is_struct %}
+    {% elif f._is_struct or f._is_union %}
     {{ prefix }}_{{ f.type }}_encodeAt(buf, base + {{ f._byte_offset }}U, &src->{{ f.name }});
     {% elif f._is_string %}
     memcpy(&buf[base + {{ f._byte_offset }}U], src->{{ f.name }}, {{ f.max_length }});
@@ -392,7 +485,7 @@ static void {{ prefix }}_{{ name }}_unpack(const uint8_t *buf, uint32_t base, {{
     {
         {{ c_unpack_leaf(f, 'base + ' ~ f._value_bit_offset ~ 'U', 'dst->' ~ f.name) }}
     }
-    {% elif f._is_struct %}
+    {% elif f._is_struct or f._is_union %}
     {{ prefix }}_{{ f.type }}_unpack(buf, base + {{ f._bit_offset }}U, &dst->{{ f.name }});
     {% elif f._is_bool %}
     dst->{{ f.name }} = unpack_bits(buf, base + {{ f._bit_offset }}U, 1) != 0;
@@ -453,7 +546,7 @@ static void {{ prefix }}_{{ name }}_decodeAt(const uint8_t *buf, uint32_t base, 
     {
         {{ c_decode_leaf(f, 'base + ' ~ f._value_byte_offset ~ 'U', 'dst->' ~ f.name) }}
     }
-    {% elif f._is_struct %}
+    {% elif f._is_struct or f._is_union %}
     {{ prefix }}_{{ f.type }}_decodeAt(buf, base + {{ f._byte_offset }}U, &dst->{{ f.name }});
     {% elif f._is_string %}
     memcpy(dst->{{ f.name }}, &buf[base + {{ f._byte_offset }}U], {{ f.max_length }});

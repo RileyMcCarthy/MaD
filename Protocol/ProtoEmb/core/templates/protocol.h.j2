@@ -89,6 +89,38 @@ static inline uint8_t {{ prefix }}_{{ name }}_valueToWire(uint8_t value)
 {% endif %}
 {% endfor %}
 
+{% if unions %}
+/* ============================================================
+ * Tagged Unions
+ * ============================================================ */
+{% for name, u in unions.items() %}
+
+/** {{ u.get('description', '') }} ({{ u._encoding }}, {{ u._wire_size }} bytes on wire) */
+#define {{ prefix_upper }}_{{ name | upper_snake }}_WIRE_SIZE {{ u._wire_size }}
+
+typedef enum
+{
+    {% for v in u.variants %}
+    {{ prefix_upper }}_{{ name | upper_snake }}_TAG_{{ v.name | upper_snake }} = {{ v._index }},
+    {% endfor %}
+} {{ prefix }}_{{ name }}_Tag_E;
+
+typedef struct
+{
+    {{ prefix }}_{{ name }}_Tag_E tag;
+    union
+    {
+        {% for v in u.variants %}
+        {% if v._is_enum %}{{ prefix }}_{{ v.type }}_E{% elif v._is_bool %}bool{% elif v.type == 'uint8' %}uint8_t{% elif v.type == 'int8' %}int8_t{% elif v.type == 'uint16' %}uint16_t{% elif v.type == 'int16' %}int16_t{% elif v.type == 'uint32' %}uint32_t{% elif v.type == 'int32' %}int32_t{% elif v.type == 'float' %}float{% else %}int32_t{% endif %} {{ v.name }};
+        {% endfor %}
+    } u;
+} {{ prefix }}_{{ name }}_t;
+
+void {{ prefix }}_{{ name }}_encode(uint8_t *buf, const {{ prefix }}_{{ name }}_t *src);
+void {{ prefix }}_{{ name }}_decode(const uint8_t *buf, {{ prefix }}_{{ name }}_t *dst);
+{% endfor %}
+
+{% endif %}
 /* ============================================================
  * Struct Wire Sizes
  * ============================================================ */
@@ -108,7 +140,7 @@ typedef struct
     {% if f._is_string %}
     char {{ f.name }}[{{ f.max_length }}];
     {% else %}
-    {% if f._is_struct %}{% set _ct = prefix ~ '_' ~ f.type ~ '_t' %}
+    {% if f._is_struct or f._is_union %}{% set _ct = prefix ~ '_' ~ f.type ~ '_t' %}
     {% elif f._is_bool %}{% set _ct = 'bool' %}
     {% elif f._is_enum %}{% set _ct = prefix ~ '_' ~ f.type ~ '_E' %}
     {% elif f.type == 'uint8' %}{% set _ct = 'uint8_t' %}

@@ -133,32 +133,105 @@ def compute_field_bits(field, enums):
         return type_bits.get(ftype, 32)
 
 
-def topo_sort_structs(structs):
-    """Order structs so nested-struct children precede their parents.
+def topo_sort_types(structs, unions):
+    """Order structs and unions so a referenced type precedes its users.
 
-    Raises SystemExit on a reference cycle. With no nested-struct fields this
-    returns the structs in their original definition order.
+    A struct field or union variant may reference another struct/union; this
+    returns `(kind, name)` pairs in dependency order. Raises on a cycle. With no
+    composite references it preserves definition order (structs, then unions).
     """
     state = {}  # name -> "visiting" | "done"
     order = []
+
+    def referenced_types(name):
+        if name in structs:
+            return [f["type"] for f in structs[name]["fields"]]
+        return [v["type"] for v in unions[name]["variants"]]
 
     def visit(name, stack):
         st = state.get(name)
         if st == "done":
             return
         if st == "visiting":
-            raise SystemExit(f"Struct reference cycle: {' -> '.join(stack + [name])}")
+            raise SystemExit(f"Type reference cycle: {' -> '.join(stack + [name])}")
         state[name] = "visiting"
-        for field in structs[name]["fields"]:
-            ftype = field["type"]
-            if ftype in structs:
-                visit(ftype, stack + [name])
+        for t in referenced_types(name):
+            if t in structs or t in unions:
+                visit(t, stack + [name])
         state[name] = "done"
-        order.append(name)
+        order.append(("union" if name in unions else "struct", name))
 
-    for name in structs:
+    for name in list(structs) + list(unions):
         visit(name, [])
     return order
+
+
+def enrich_union(udef, name, structs, unions, enums, defaults):
+    """Size a tagged union: a discriminant tag + the largest variant payload.
+
+    Each variant is enriched like a field so the codec leaf-macros can emit it.
+    """
+    udef["_name"] = name
+    encoding = udef.get("encoding", defaults.get("encoding", "packed"))
+    udef["_encoding"] = encoding
+    is_packed = encoding == "packed"
+    udef["_is_packed"] = is_packed
+    udef.setdefault("_needs_pack_helper", False)
+
+    variants = udef["variants"]
+    count = len(variants)
+    udef["_tag_count"] = count
+    tag_bits = max(1, math.ceil(math.log2(count))) if count > 1 else 1
+    udef["_tag_bits"] = tag_bits
+
+    max_bits = 0
+    max_bytes = 0
+    for i, v in enumerate(variants):
+        vt = v["type"]
+        v["_index"] = i
+        v["_is_enum"] = vt in enums
+        v["_is_struct"] = vt in structs
+        v["_is_union"] = vt in unions
+        v["_is_bool"] = vt == "bool"
+        v["_is_string"] = vt == "string"
+        v["_is_float"] = vt == "float"
+        v["_is_numeric"] = not (v["_is_enum"] or v["_is_bool"]
+                                or v["_is_string"] or v["_is_struct"] or v["_is_union"])
+        v["_is_signed"] = vt.startswith("int") and not vt.startswith("uint")
+        v["_scale"] = v.get("scale", 1)
+        v["_has_scale"] = v.get("scale", 1) != 1
+        v["_raw_storage"] = False
+        v["_min"] = v.get("min", None)
+        v["_max"] = v.get("max", None)
+        v["_min_wire"] = int(v["_min"] * v["_scale"]) if v["_min"] is not None else None
+        v["_max_wire"] = int(v["_max"] * v["_scale"]) if v["_max"] is not None else None
+        if is_packed:
+            if v["_is_struct"]:
+                structs[vt]["_needs_pack_helper"] = True
+                vb = structs[vt]["_total_bits"]
+            else:
+                vb = compute_field_bits(v, enums)
+            v["_elem_bits"] = vb
+            max_bits = max(max_bits, vb)
+        else:
+            if v["_is_struct"]:
+                structs[vt]["_needs_pack_helper"] = True
+                vbs = structs[vt]["_wire_size"]
+            elif v["_is_enum"] or v["_is_bool"]:
+                vbs = 1
+            else:
+                vbs = {"int8": 1, "uint8": 1, "int16": 2,
+                       "uint16": 2, "int32": 4, "uint32": 4}.get(vt, 4)
+            v["_elem_byte_size"] = vbs
+            max_bytes = max(max_bytes, vbs)
+
+    if is_packed:
+        udef["_payload_offset"] = tag_bits
+        udef["_total_bits"] = tag_bits + max_bits
+        udef["_wire_size"] = math.ceil((tag_bits + max_bits) / 8)
+    else:
+        udef["_payload_offset"] = 1
+        udef["_wire_size"] = 1 + max_bytes
 
 
 def process_schema(schema, prefix=DEFAULT_PREFIX):
@@ -167,6 +240,7 @@ def process_schema(schema, prefix=DEFAULT_PREFIX):
     prefix_lower = prefix.lower()
     enums = schema.get("enums", {})
     structs = schema.get("structs", {})
+    unions = schema.get("unions", {})
     messages = schema.get("messages", {})
 
     # Enrich enums
@@ -219,8 +293,11 @@ def process_schema(schema, prefix=DEFAULT_PREFIX):
     # process in dependency (topological) order, then re-key `structs` into that
     # order so generated typedefs/functions emit children before parents.
     defaults = schema.get("defaults", {})
-    struct_order = topo_sort_structs(structs)
-    for name in struct_order:
+    type_order = topo_sort_types(structs, unions)
+    for _kind, name in type_order:
+        if _kind == "union":
+            enrich_union(unions[name], name, structs, unions, enums, defaults)
+            continue
         struct_def = structs[name]
         struct_def["_name"] = name
         encoding = struct_def.get("encoding", defaults.get("encoding", "packed"))
@@ -235,21 +312,23 @@ def process_schema(schema, prefix=DEFAULT_PREFIX):
             ftype = field["type"]
             field["_is_enum"] = ftype in enums
             field["_is_struct"] = ftype in structs
+            field["_is_union"] = ftype in unions
             field["_is_bool"] = ftype == "bool"
             field["_is_string"] = ftype == "string"
             field["_is_float"] = ftype == "float"
             field["_is_numeric"] = not (field["_is_enum"] or field["_is_bool"]
-                                        or field["_is_string"] or field["_is_struct"])
+                                        or field["_is_string"] or field["_is_struct"]
+                                        or field["_is_union"])
             field["_is_signed"] = ftype.startswith("int") and not ftype.startswith("uint")
 
-            if field["_is_struct"]:
+            if field["_is_struct"] or field["_is_union"]:
                 has_nested = True
-                child = structs[ftype]
-                # A nested child must share the parent's encoding so its layout
-                # composes cleanly (bit-packed into bits, byte-aligned into bytes).
+                child = structs[ftype] if field["_is_struct"] else unions[ftype]
+                # A nested struct/union must share the parent's encoding so its
+                # layout composes (bit-packed into bits, byte-aligned into bytes).
                 if child["_is_packed"] != is_packed:
                     raise SystemExit(
-                        f"Struct {name}.{field['name']}: nested struct '{ftype}' uses "
+                        f"Struct {name}.{field['name']}: nested '{ftype}' uses "
                         f"'{child['_encoding']}' encoding but parent is '{encoding}'"
                     )
 
@@ -267,8 +346,8 @@ def process_schema(schema, prefix=DEFAULT_PREFIX):
             field["_is_optional"] = bool(field.get("optional", False))
 
             if is_packed:
-                if field["_is_struct"]:
-                    child = structs[ftype]
+                if field["_is_struct"] or field["_is_union"]:
+                    child = structs[ftype] if field["_is_struct"] else unions[ftype]
                     child["_needs_pack_helper"] = True
                     elem_bits = child["_total_bits"]
                 else:
@@ -281,9 +360,10 @@ def process_schema(schema, prefix=DEFAULT_PREFIX):
                 total_bits += field["_bits"]
             else:
                 # Aligned — use standard C type sizes
-                if field["_is_struct"]:
-                    structs[ftype]["_needs_pack_helper"] = True
-                    elem_bs = structs[ftype]["_wire_size"]
+                if field["_is_struct"] or field["_is_union"]:
+                    child = structs[ftype] if field["_is_struct"] else unions[ftype]
+                    child["_needs_pack_helper"] = True
+                    elem_bs = child["_wire_size"]
                 elif field["_is_string"]:
                     elem_bs = field.get("max_length", 16)
                 elif field["_is_enum"]:
@@ -325,9 +405,10 @@ def process_schema(schema, prefix=DEFAULT_PREFIX):
             struct_def["_wire_size"] = byte_offset
         struct_def["_has_nested"] = has_nested
 
-    # Re-key structs into dependency order so generated typedefs/functions emit
-    # nested children before the parents that embed them.
-    structs = {name: structs[name] for name in struct_order}
+    # Re-key structs/unions into dependency order so generated typedefs/functions
+    # emit nested children before the parents that embed them.
+    structs = {n: structs[n] for (k, n) in type_order if k == "struct"}
+    unions = {n: unions[n] for (k, n) in type_order if k == "union"}
 
     # Enrich messages
     read_messages = []
@@ -440,6 +521,7 @@ def process_schema(schema, prefix=DEFAULT_PREFIX):
         "runtime_timeout_ms": int(runtime_cfg.get("frame_timeout_ms", 100)),
         "enums": enums,
         "structs": structs,
+        "unions": unions,
         "messages": messages,
         "runtime_read_messages": read_messages,
         "runtime_write_messages": write_messages,
@@ -477,9 +559,44 @@ TYPE_RANGES = {
 }
 
 
+_PRIMITIVE_TYPES = {
+    "bool", "float", "int8", "uint8", "int16", "uint16",
+    "int32", "uint32", "int64", "uint64",
+}
+
+
+def validate_unions(data, errors):
+    """Validate tagged unions: variants reference known, supported types."""
+    enums = data["enums"]
+    structs = data["structs"]
+    unions = data["unions"]
+    for name, udef in unions.items():
+        variants = udef.get("variants", [])
+        if not variants:
+            errors.append(f"Union {name}: must have at least one variant")
+        seen = set()
+        for v in variants:
+            vn = v.get("name")
+            if vn in seen:
+                errors.append(f"Union {name}: duplicate variant name '{vn}'")
+            seen.add(vn)
+            vt = v.get("type")
+            if vt == "string":
+                errors.append(f"Union {name}.{vn}: string variants are not supported")
+            elif vt in unions:
+                errors.append(f"Union {name}.{vn}: nested unions are not supported")
+            elif vt in structs:
+                # Struct variants would force interleaving union/struct emission;
+                # scalar/enum/bool variants keep unions emittable before structs.
+                errors.append(f"Union {name}.{vn}: struct variants are not yet supported")
+            elif not (vt in _PRIMITIVE_TYPES or vt in enums):
+                errors.append(f"Union {name}.{vn}: references unknown type '{vt}'")
+
+
 def validate_schema(data):
     """Validate the processed schema. Raises on error."""
     errors = []
+    validate_unions(data, errors)
     enums = data["enums"]
     structs = data["structs"]
     messages = data["messages"]
