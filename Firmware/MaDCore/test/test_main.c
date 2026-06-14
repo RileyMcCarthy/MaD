@@ -16,6 +16,16 @@ extern void test_enum_compat_fault_codes(void);
 extern void test_enum_compat_restriction_codes(void);
 extern void test_enum_compat_notification_types(void);
 extern void test_enum_compat_gcode_proto_path(void);
+extern void test_app_testManagement_doubleStartRejected(void);
+extern void test_app_testManagement_startNotDroppedWhenMotionLags(void);
+extern void test_app_testManagement_manualMoveGatedWhileBusy(void);
+extern void test_app_testManagement_manualMoveSlotsBounded(void);
+extern void test_app_testManagement_happyPathLifecycle(void);
+extern void test_app_testManagement_g122TerminatesFeed(void);
+extern void test_app_testManagement_userEndStopsRun(void);
+extern void test_app_testManagement_motionDisabledAbortsRun(void);
+extern void test_app_testManagement_sampleLimitAbortsRun(void);
+extern void test_app_testManagement_openFailureEndsStart(void);
 extern void HAL_lock_mock_reset(void);
 int _stdio_debug_lock;
 extern dev_nvram_config_t dev_nvram_config;
@@ -57,6 +67,16 @@ void process()
     RUN_TEST(test_enum_compat_restriction_codes);
     RUN_TEST(test_enum_compat_notification_types);
     RUN_TEST(test_enum_compat_gcode_proto_path);
+    RUN_TEST(test_app_testManagement_doubleStartRejected);
+    RUN_TEST(test_app_testManagement_startNotDroppedWhenMotionLags);
+    RUN_TEST(test_app_testManagement_manualMoveGatedWhileBusy);
+    RUN_TEST(test_app_testManagement_manualMoveSlotsBounded);
+    RUN_TEST(test_app_testManagement_happyPathLifecycle);
+    RUN_TEST(test_app_testManagement_g122TerminatesFeed);
+    RUN_TEST(test_app_testManagement_userEndStopsRun);
+    RUN_TEST(test_app_testManagement_motionDisabledAbortsRun);
+    RUN_TEST(test_app_testManagement_sampleLimitAbortsRun);
+    RUN_TEST(test_app_testManagement_openFailureEndsStart);
     UNITY_END();
 }
 
