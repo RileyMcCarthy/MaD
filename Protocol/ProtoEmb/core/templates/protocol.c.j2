@@ -75,7 +75,11 @@ void {{ prefix }}_{{ name }}_encode(uint8_t *buf, const {{ prefix }}_{{ name }}_
     {% elif f._is_enum %}
     {% set enum_def = enums[f.type] %}
     {% if enum_def._is_remap %}
+    {% if enum_def._remap_style == 'array' %}
     pack_bits(buf, {{ f._bit_offset }}, {{ f._bits }}, {{ prefix_upper }}_{{ f.type | upper_snake }}_VALUE_TO_WIRE[src->{{ f.name }}]);
+    {% else %}
+    pack_bits(buf, {{ f._bit_offset }}, {{ f._bits }}, {{ prefix }}_{{ f.type }}_valueToWire((uint8_t)src->{{ f.name }}));
+    {% endif %}
     {% else %}
     pack_bits(buf, {{ f._bit_offset }}, {{ f._bits }}, (uint32_t)src->{{ f.name }});
     {% endif %}
@@ -152,14 +156,6 @@ void {{ prefix }}_{{ name }}_decode(const uint8_t *buf, {{ prefix }}_{{ name }}_
     dst->{{ f.name }} = (int32_t)unpack_bits(buf, {{ f._bit_offset }}, {{ f._bits }});
     {% endif %}
     {% elif f._is_signed %}
-    {% if name == 'Move' and (f.name == 'x' or f.name == 'f') %}
-    /* Preserve scaled precision for Move fields (e.g. mm→um, mm/s→um/s). */
-    {% if f._min is not none %}
-    dst->{{ f.name }} = (int32_t)unpack_bits(buf, {{ f._bit_offset }}, {{ f._bits }}) + ({{ f._min_wire }});
-    {% else %}
-    dst->{{ f.name }} = sign_extend(unpack_bits(buf, {{ f._bit_offset }}, {{ f._bits }}), {{ f._bits }});
-    {% endif %}
-    {% else %}
     {% if f._min is not none %}
     /* Offset binary: decode = wire / scale + min */
     {% if f._is_float %}
@@ -169,7 +165,6 @@ void {{ prefix }}_{{ name }}_decode(const uint8_t *buf, {{ prefix }}_{{ name }}_
     {% endif %}
     {% else %}
     dst->{{ f.name }} = sign_extend(unpack_bits(buf, {{ f._bit_offset }}, {{ f._bits }}), {{ f._bits }}) / {{ f._scale }};
-    {% endif %}
     {% endif %}
     {% else %}
     {% if f._min is not none and f._min != 0 %}

@@ -42,7 +42,8 @@ static const uint8_t {{ prefix_upper }}_{{ name | upper_snake }}_WIRE_TO_VALUE[{
     {% endfor %}
 };
 
-/** Remap: actual value → wire index (sparse, size={{ enum._max_value + 1 }}) */
+{% if enum._remap_style == 'array' %}
+/** Remap: actual value → wire index (dense array, size={{ enum._max_value + 1 }}) */
 static const uint8_t {{ prefix_upper }}_{{ name | upper_snake }}_VALUE_TO_WIRE[{{ enum._max_value + 1 }}] = {
     {% for i in range(enum._max_value + 1) %}
     {% set found = false %}
@@ -54,6 +55,37 @@ static const uint8_t {{ prefix_upper }}_{{ name | upper_snake }}_VALUE_TO_WIRE[{
     {% endfor %}
     {% endfor %}
 };
+{% else %}
+/** Remap: actual value → wire index (sorted table + binary search, for sparse/large enums) */
+typedef struct { uint8_t value; uint8_t wire; } {{ prefix }}_{{ name }}_Remap_t;
+static const {{ prefix }}_{{ name }}_Remap_t {{ prefix_upper }}_{{ name | upper_snake }}_VALUE_WIRE_SORTED[{{ enum._count }}] = {
+    {% for v in enum._sorted_variants %}
+    { {{ v.value }}U, {{ v.index }}U }{{ "," if not loop.last else "" }}  /* {{ v.name }} */
+    {% endfor %}
+};
+static inline uint8_t {{ prefix }}_{{ name }}_valueToWire(uint8_t value)
+{
+    uint32_t lo = 0U;
+    uint32_t hi = {{ enum._count }}U;
+    while (lo < hi)
+    {
+        const uint32_t mid = lo + ((hi - lo) / 2U);
+        if ({{ prefix_upper }}_{{ name | upper_snake }}_VALUE_WIRE_SORTED[mid].value < value)
+        {
+            lo = mid + 1U;
+        }
+        else
+        {
+            hi = mid;
+        }
+    }
+    if ((lo < {{ enum._count }}U) && ({{ prefix_upper }}_{{ name | upper_snake }}_VALUE_WIRE_SORTED[lo].value == value))
+    {
+        return {{ prefix_upper }}_{{ name | upper_snake }}_VALUE_WIRE_SORTED[lo].wire;
+    }
+    return 0U;
+}
+{% endif %}
 {% endif %}
 {% endfor %}
 

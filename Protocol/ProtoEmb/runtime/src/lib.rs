@@ -2,8 +2,10 @@
 //!
 //! Generic serial protocol client library for ProtoEmb-based protocols.
 //! This crate is **project-independent** — it works with raw command IDs
-//! and byte payloads. Project-specific generated types (from the ProtoEmb
-//! code generator) plug in via the [`MessageSpec`] trait.
+//! and byte payloads. Project-specific typing is supplied by the generated
+//! code (command-ID constants + `encode`/`decode` per struct, and the
+//! generated typed facade), which lives alongside the caller; the runtime
+//! itself never depends on any particular schema.
 //!
 //! # Architecture
 //!

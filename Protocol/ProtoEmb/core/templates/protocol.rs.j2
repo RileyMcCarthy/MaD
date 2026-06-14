@@ -88,7 +88,7 @@ pub const {{ name | upper_snake }}_WIRE_SIZE: usize = {{ s._wire_size }};
 {% for name, s in structs.items() %}
 
 /// {{ s.get('description', '') }} ({{ s._encoding }}, {{ s._wire_size }} bytes on wire)
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct {{ name }} {
     {% for f in s.fields %}
     {% if f._is_string %}
@@ -288,6 +288,67 @@ pub const MSG_{{ name | upper_snake }}_PERIOD_MS: u32 = {{ msg.period_ms }};
 {% endfor %}
 
 // ============================================================
+// Message Priorities (host scheduling hint; not on the wire)
+// ============================================================
+{% for name, msg in messages.items() %}
+{% if msg._command_id is not none %}
+pub const MSG_{{ name | upper_snake }}_PRIORITY: &str = "{{ msg._priority }}";
+{% endif %}
+{% endfor %}
+
+// ============================================================
+// Typed message facade
+// ============================================================
+// Bridges the generic runtime (raw command id + payload bytes) to typed,
+// decoded payloads — the "last mile" so callers don't hand-map ids to structs.
+
+/// A decoded inbound payload (a DATA response or an async notification),
+/// tagged with the message it belongs to.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Inbound {
+    {% for name, msg in messages.items() %}
+    {% if msg._response_name and msg._command_id is not none %}
+    /// DATA response for `{{ name }}` (command {{ msg.command_id }}).
+    {{ name | camel_case }}({{ msg._response_name }}),
+    {% endif %}
+    {% endfor %}
+    {% for name, msg in messages.items() %}
+    {% if msg._is_async and msg._response_name %}
+    /// Async `{{ name }}` notification.
+    {{ name | camel_case }}({{ msg._response_name }}),
+    {% endif %}
+    {% endfor %}
+    /// Command not recognized as a DATA producer — raw bytes preserved.
+    Unknown { command: u8, payload: Vec<u8> },
+}
+
+impl Inbound {
+    /// Decode a DATA response for `command` into its typed payload. Unknown
+    /// commands and decode failures yield [`Inbound::Unknown`].
+    pub fn decode_data(command: u8, payload: &[u8]) -> Self {
+        match command {
+            {% for name, msg in messages.items() %}
+            {% if msg._response_name and msg._command_id is not none %}
+            {{ msg.command_id }} => {{ msg._response_name }}::decode(payload)
+                .map(Inbound::{{ name | camel_case }})
+                .unwrap_or_else(|| Inbound::Unknown { command, payload: payload.to_vec() }),
+            {% endif %}
+            {% endfor %}
+            _ => Inbound::Unknown { command, payload: payload.to_vec() },
+        }
+    }
+    {% for name, msg in messages.items() %}
+    {% if msg._is_async and msg._response_name %}
+
+    /// Decode an async `{{ name }}` notification payload into its typed struct.
+    pub fn decode_{{ name | snake_case }}(payload: &[u8]) -> Option<{{ msg._response_name }}> {
+        {{ msg._response_name }}::decode(payload)
+    }
+    {% endif %}
+    {% endfor %}
+}
+
+// ============================================================
 // Bit Packing Helpers
 // ============================================================
 
@@ -362,6 +423,21 @@ mod tests {
         assert_eq!({{ name }}::from_value({{ v.value }}).unwrap(), {{ name }}::{{ v.name | camel_case }});
         assert_eq!({{ name }}::{{ v.name | camel_case }}.to_value(), {{ v.value }});
         {% endfor %}
+    }
+    {% endif %}
+    {% endfor %}
+
+    // Typed facade: a DATA response must decode back to the right variant.
+    {% for name, msg in messages.items() %}
+    {% if msg._response_name and msg._command_id is not none %}
+    #[test]
+    fn test_facade_{{ name | snake_case }}_decode_data() {
+        let original = {{ msg._response_name }}::default();
+        let bytes = original.encode();
+        match Inbound::decode_data({{ msg.command_id }}, &bytes) {
+            Inbound::{{ name | camel_case }}(v) => assert_eq!(v, original),
+            other => panic!("expected {{ name | camel_case }}, got {:?}", other),
+        }
     }
     {% endif %}
     {% endfor %}

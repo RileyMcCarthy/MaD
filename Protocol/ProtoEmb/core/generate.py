@@ -25,10 +25,28 @@ from pathlib import Path
 import yaml
 from jinja2 import Environment, FileSystemLoader
 
-# ── Fixed prefix — ProtoEmb is the library name, not configurable ──
-PREFIX = "ProtoEmb"
-PREFIX_UPPER = PREFIX.upper()
-PREFIX_LOWER = PREFIX.lower()
+# ── Library prefix / identity ──
+# Default is "ProtoEmb", but it is configurable so multiple independent
+# protocols can be generated into one codebase without symbol/file collisions.
+# Resolution order (highest first): --prefix CLI flag, schema `prefix` (or
+# `library_name`) key, then this default.
+DEFAULT_PREFIX = "ProtoEmb"
+
+
+def resolve_prefix(schema, cli_prefix=None):
+    """Resolve the library prefix from CLI flag, schema, or default."""
+    prefix = (
+        cli_prefix
+        or schema.get("prefix")
+        or schema.get("library_name")
+        or DEFAULT_PREFIX
+    )
+    if not isinstance(prefix, str) or not prefix.isidentifier():
+        raise SystemExit(
+            f"Invalid prefix {prefix!r}: must be a valid identifier "
+            "(letters, digits, underscore; not starting with a digit)"
+        )
+    return prefix
 
 
 # ============================================================
@@ -59,6 +77,11 @@ def compute_field_bits(field, enums):
     if ftype == "string":
         return field.get("max_length", 16) * 8
 
+    # Explicit bit-width override for packed numeric fields.
+    explicit_bits = field.get("bits", None)
+    if explicit_bits is not None:
+        return int(explicit_bits)
+
     # Numeric with min/max
     fmin = field.get("min", None)
     fmax = field.get("max", None)
@@ -82,8 +105,10 @@ def compute_field_bits(field, enums):
         return type_bits.get(ftype, 32)
 
 
-def process_schema(schema):
+def process_schema(schema, prefix=DEFAULT_PREFIX):
     """Process raw schema YAML into enriched data for templates."""
+    prefix_upper = prefix.upper()
+    prefix_lower = prefix.lower()
     enums = schema.get("enums", {})
     structs = schema.get("structs", {})
     messages = schema.get("messages", {})
@@ -113,9 +138,26 @@ def process_schema(schema):
         enum_def["_variants"] = processed_variants
         enum_def["_count"] = len(processed_variants)
 
-        # For remap enums, compute max actual value for C array sizing
+        # For remap enums, compute max actual value for C array sizing, and
+        # pick a value→wire strategy: a dense lookup array (fast, but O(max_value)
+        # bytes) or a binary search over a sorted table (compact for sparse,
+        # large-valued enums). Auto-selects search when the dense array would
+        # exceed 256 entries; override per-enum with `remap_style: array|search`.
         if is_remap:
-            enum_def["_max_value"] = max(v["value"] for v in processed_variants)
+            max_value = max(v["value"] for v in processed_variants)
+            enum_def["_max_value"] = max_value
+            style = enum_def.get("remap_style", None)
+            if style not in ("array", "search"):
+                # Dense array costs (max_value + 1) bytes. Switch to a sorted
+                # table + binary search when that array is both non-trivial and
+                # mostly empty (sparse), e.g. GCode's 9 values spread over 0..122.
+                dense_size = max_value + 1
+                sparse = dense_size > 32 and (len(processed_variants) * 2) < dense_size
+                style = "search" if sparse else "array"
+            enum_def["_remap_style"] = style
+            enum_def["_sorted_variants"] = sorted(
+                processed_variants, key=lambda v: v["value"]
+            )
 
     # Enrich structs
     defaults = schema.get("defaults", {})
@@ -218,11 +260,15 @@ def process_schema(schema):
         has_request_payload = (request_name is not None) or (request_scalar in ("bool", "raw", "bytes"))
         msg_def["_has_request_payload"] = has_request_payload
 
-        # Auto-calculate wire command frame kind:
+        # Wire command frame kind. An explicit `command_frame: read|write` in the
+        # schema overrides inference; otherwise it is auto-derived:
         # - periodic and plain request/response reads => READ frame
         # - state-changing commands and payload queries => WRITE frame
+        explicit_frame = msg_def.get("command_frame", None)
         if msg_def["_command_id"] is not None:
-            if is_periodic:
+            if explicit_frame in ("read", "write"):
+                command_frame = explicit_frame
+            elif is_periodic:
                 command_frame = "read"
             elif (response_name is not None) and (not has_request_payload):
                 command_frame = "read"
@@ -232,6 +278,14 @@ def process_schema(schema):
             command_frame = None
 
         msg_def["_command_frame"] = command_frame
+        msg_def["_command_frame_explicit"] = explicit_frame is not None
+
+        # Priority is informational metadata (enforced by the host queue, not on
+        # the wire). Normalize + default it so it can be emitted as a constant.
+        priority = msg_def.get("priority", None)
+        if priority is None:
+            priority = "low" if is_periodic else "high"
+        msg_def["_priority"] = priority
 
         # Semantic class (for docs/templates, not wire bytes)
         if is_periodic:
@@ -264,13 +318,19 @@ def process_schema(schema):
     read_messages.sort(key=lambda m: m["_command_id"])
     write_messages.sort(key=lambda m: m["_command_id"])
 
+    # Runtime config (device-side frame assembly). Defaults preserve the
+    # historical hardcoded values so existing protocols regenerate unchanged.
+    runtime_cfg = schema.get("runtime", {}) or {}
+
     return {
         "protocol_version": schema.get("protocol_version", 1),
-        "prefix": PREFIX,
-        "prefix_upper": PREFIX_UPPER,
-        "prefix_lower": PREFIX_LOWER,
+        "prefix": prefix,
+        "prefix_upper": prefix_upper,
+        "prefix_lower": prefix_lower,
         "byte_order": defaults.get("byte_order", "little_endian"),
         "bit_order": defaults.get("bit_order", "lsb_first"),
+        "runtime_max_payload": int(runtime_cfg.get("max_payload", 4096)),
+        "runtime_timeout_ms": int(runtime_cfg.get("frame_timeout_ms", 100)),
         "enums": enums,
         "structs": structs,
         "messages": messages,
@@ -297,6 +357,20 @@ def load_generator_config(config_path):
 # Validation
 # ============================================================
 
+# Native integer type ranges, used to validate that a field's declared
+# min/max actually fit the storage type (catches e.g. int8 with min -1000).
+TYPE_RANGES = {
+    "int8":  (-128, 127),
+    "uint8": (0, 255),
+    "int16": (-32768, 32767),
+    "uint16": (0, 65535),
+    "int32": (-2147483648, 2147483647),
+    "uint32": (0, 4294967295),
+    "int64": (-9223372036854775808, 9223372036854775807),
+    "uint64": (0, 18446744073709551615),
+}
+
+
 def validate_schema(data):
     """Validate the processed schema. Raises on error."""
     errors = []
@@ -309,6 +383,7 @@ def validate_schema(data):
     allowed_nodes = schema_nodes if schema_nodes else config_nodes
     seen_read_command_ids = {}
     seen_write_command_ids = {}
+    seen_data_command_ids = {}
 
     if allowed_nodes and not isinstance(allowed_nodes, list):
         errors.append("Generator config 'nodes' must be a list of strings")
@@ -335,6 +410,33 @@ def validate_schema(data):
 
             if field["_is_enum"] and field["type"] not in enums:
                 errors.append(f"Struct {name}.{field['name']}: references unknown enum '{field['type']}'")
+
+            # Field min/max must fit the declared storage type.
+            ftype = field["type"]
+            if ftype in TYPE_RANGES:
+                tmin, tmax = TYPE_RANGES[ftype]
+                fmin = field.get("min", None)
+                fmax = field.get("max", None)
+                if fmin is not None and fmin < tmin:
+                    errors.append(
+                        f"Struct {name}.{field['name']}: min {fmin} below {ftype} "
+                        f"minimum {tmin} — widen the type or raise min"
+                    )
+                if fmax is not None and fmax > tmax:
+                    errors.append(
+                        f"Struct {name}.{field['name']}: max {fmax} above {ftype} "
+                        f"maximum {tmax} — widen the type or lower max"
+                    )
+
+            # A fractional scale only has a well-defined wire representation on a
+            # float field; on an integer field it would silently truncate.
+            if field["_is_numeric"] and not field["_is_float"]:
+                fscale = field.get("scale", 1)
+                if isinstance(fscale, float) and not fscale.is_integer():
+                    errors.append(
+                        f"Struct {name}.{field['name']}: fractional scale {fscale} "
+                        f"requires a 'float' field type (integer fields need an integer scale)"
+                    )
 
             if struct_def["_is_packed"] and field["_is_numeric"]:
                 fmin = field.get("min", None)
@@ -385,6 +487,18 @@ def validate_schema(data):
         if response is not None and response not in structs:
             errors.append(f"Message {name}.response: references unknown struct '{response}'")
 
+        explicit_frame = msg_def.get("command_frame", None)
+        if explicit_frame is not None and explicit_frame not in ("read", "write"):
+            errors.append(
+                f"Message {name}.command_frame: must be 'read' or 'write', got {explicit_frame!r}"
+            )
+
+        priority = msg_def.get("priority", None)
+        if priority is not None and priority not in ("high", "low"):
+            errors.append(
+                f"Message {name}.priority: must be 'high' or 'low', got {priority!r}"
+            )
+
         command_frame = msg_def.get("_command_frame", None)
         if command_id is not None and command_frame == "read":
             if command_id in seen_read_command_ids:
@@ -404,6 +518,19 @@ def validate_schema(data):
             else:
                 seen_write_command_ids[command_id] = name
 
+        # DATA-producing messages (read responses + write-frame queries) must have
+        # unique command ids so the typed facade can dispatch a DATA frame
+        # unambiguously back to its payload type.
+        if command_id is not None and response is not None:
+            if command_id in seen_data_command_ids:
+                errors.append(
+                    f"Message {name}.command_id: DATA command_id {command_id} collides with "
+                    f"{seen_data_command_ids[command_id]} — both return a payload, so the "
+                    f"typed facade cannot tell their DATA frames apart"
+                )
+            else:
+                seen_data_command_ids[command_id] = name
+
     if errors:
         for e in errors:
             print(f"ERROR: {e}", file=sys.stderr)
@@ -416,16 +543,18 @@ def validate_schema(data):
 # Code Generation
 # ============================================================
 
-TARGET_FILES = {
-    "c":  [
-        ("protocol.h.j2", f"{PREFIX_LOWER}.h"),
-        ("protocol.c.j2", f"{PREFIX_LOWER}.c"),
-        ("protocol_runtime.h.j2", f"{PREFIX_LOWER}_runtime.h"),
-        ("protocol_runtime.c.j2", f"{PREFIX_LOWER}_runtime.c"),
-    ],
-    "ts": [("protocol.ts.j2", f"{PREFIX_LOWER}.ts")],
-    "rs": [("protocol.rs.j2", f"{PREFIX_LOWER}.rs")],
-}
+def target_files(prefix_lower):
+    """Return the (template, output-filename) pairs for each target, named by prefix."""
+    return {
+        "c":  [
+            ("protocol.h.j2", f"{prefix_lower}.h"),
+            ("protocol.c.j2", f"{prefix_lower}.c"),
+            ("protocol_runtime.h.j2", f"{prefix_lower}_runtime.h"),
+            ("protocol_runtime.c.j2", f"{prefix_lower}_runtime.c"),
+        ],
+        "ts": [("protocol.ts.j2", f"{prefix_lower}.ts")],
+        "rs": [("protocol.rs.j2", f"{prefix_lower}.rs")],
+    }
 
 
 def generate(data, target, output_dir, template_dir):
@@ -467,7 +596,7 @@ def generate(data, target, output_dir, template_dir):
 
     os.makedirs(output_dir, exist_ok=True)
 
-    files = TARGET_FILES.get(target)
+    files = target_files(data["prefix_lower"]).get(target)
     if not files:
         raise ValueError(f"Unknown target: {target}")
 
@@ -488,6 +617,8 @@ def main():
     parser = argparse.ArgumentParser(description="ProtoEmb Code Generator")
     parser.add_argument("--schema", required=True, help="Path to protocol YAML schema")
     parser.add_argument("--config", required=False, help="Path to generator config YAML")
+    parser.add_argument("--prefix", required=False, default=None,
+                        help="Library prefix / identity (default: schema `prefix` key, else 'ProtoEmb')")
     parser.add_argument("--target", required=True, choices=["c", "ts", "rs"], help="Target language")
     parser.add_argument("--output", required=True, help="Output directory")
     parser.add_argument("--templates", default=None, help="Templates directory (default: templates/ next to this script)")
@@ -503,8 +634,11 @@ def main():
 
     generator_config = load_generator_config(args.config)
 
+    # Resolve library prefix (CLI > schema > default)
+    prefix = resolve_prefix(schema, args.prefix)
+
     # Process and validate
-    data = process_schema(schema)
+    data = process_schema(schema, prefix)
     data["nodes"] = schema.get("nodes", [])
     data["generator_config"] = generator_config
     validate_schema(data)

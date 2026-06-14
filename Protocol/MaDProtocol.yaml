@@ -165,13 +165,15 @@ structs:
       - name: x
         type: int32
         unit: mm
-        scale: 1000        # 1 µm precision
+        scale: 1000        # struct stores µm; use set/get accessors for mm
+        raw_storage: true  # firmware consumes µm directly (1 µm precision)
         min: -200
         max: 200
       - name: f
         type: int32
         unit: mm/s
-        scale: 1000        # 1 µm/s precision
+        scale: 1000        # struct stores µm/s; use set/get accessors for mm/s
+        raw_storage: true  # firmware consumes µm/s directly (1 µm/s precision)
         min: 0
         max: 100
       - name: p

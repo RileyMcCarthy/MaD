@@ -290,3 +290,44 @@ export const MSG_WRITE_{{ name | upper_snake }} = {{ msg.command_id }};
 export const MSG_{{ name | upper_snake }}_PERIOD_MS = {{ msg.period_ms }};
 {% endif %}
 {% endfor %}
+
+// ============================================================
+// Message Priorities (host scheduling hint; not on the wire)
+// ============================================================
+{% for name, msg in messages.items() %}
+{% if msg._command_id is not none %}
+export const MSG_{{ name | upper_snake }}_PRIORITY = '{{ msg._priority }}' as const;
+{% endif %}
+{% endfor %}
+
+// ============================================================
+// Typed message facade
+// ============================================================
+// Bridges the generic runtime (raw command id + payload bytes) to typed,
+// decoded payloads — the "last mile" so callers don't hand-map ids to structs.
+
+/** A decoded inbound payload (a DATA response or an async notification). */
+export type Inbound =
+{% for name, msg in messages.items() %}
+{% if msg._response_name and msg._command_id is not none %}
+    | { kind: '{{ name }}'; value: {{ msg._response_name }} }
+{% endif %}
+{% endfor %}
+{% for name, msg in messages.items() %}
+{% if msg._is_async and msg._response_name %}
+    | { kind: '{{ name }}'; value: {{ msg._response_name }} }
+{% endif %}
+{% endfor %}
+    | { kind: 'unknown'; command: number; payload: Uint8Array };
+
+/** Decode a DATA response for `command` into its typed payload. */
+export function decodeData(command: number, payload: Uint8Array): Inbound {
+    switch (command) {
+    {% for name, msg in messages.items() %}
+    {% if msg._response_name and msg._command_id is not none %}
+        case {{ msg.command_id }}: return { kind: '{{ name }}', value: decode{{ msg._response_name }}(payload) };
+    {% endif %}
+    {% endfor %}
+        default: return { kind: 'unknown', command, payload };
+    }
+}

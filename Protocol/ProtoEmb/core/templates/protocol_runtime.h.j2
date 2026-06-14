@@ -10,11 +10,11 @@
 #include "{{ prefix_lower }}.h"
 
 #ifndef {{ prefix_upper }}_RUNTIME_MAX_PAYLOAD
-#define {{ prefix_upper }}_RUNTIME_MAX_PAYLOAD 4096U
+#define {{ prefix_upper }}_RUNTIME_MAX_PAYLOAD {{ runtime_max_payload }}U
 #endif
 
 #ifndef {{ prefix_upper }}_RUNTIME_TIMEOUT_MS
-#define {{ prefix_upper }}_RUNTIME_TIMEOUT_MS 100U
+#define {{ prefix_upper }}_RUNTIME_TIMEOUT_MS {{ runtime_timeout_ms }}U
 #endif
 
 typedef enum
