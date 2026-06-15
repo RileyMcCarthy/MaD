@@ -106,10 +106,16 @@ void test_enum_compat_gcode_proto_path(void)
     TEST_ASSERT_EQUAL_INT(PROTOEMB_GCODE_CW_ARC,      G2_CW_ARC_MOVE);
     TEST_ASSERT_EQUAL_INT(PROTOEMB_GCODE_CCW_ARC,     G3_CCW_ARC_MOVE);
     TEST_ASSERT_EQUAL_INT(PROTOEMB_GCODE_DWELL,       G4_DWELL);
-    /* G28/G90/G91: remap:true means enum stores compact index (5/6/7).
-     * ProtoEmb_Move_decode applies WIRE_TO_VALUE so the decoded .g holds
-     * the real G-code number. Assert the lookup matches the firmware constant. */
-    TEST_ASSERT_EQUAL_INT(PROTOEMB_GCODE_WIRE_TO_VALUE[PROTOEMB_GCODE_HOME],        G28_HOME);
-    TEST_ASSERT_EQUAL_INT(PROTOEMB_GCODE_WIRE_TO_VALUE[PROTOEMB_GCODE_ABSOLUTE],    G90_ABSOLUTE);
-    TEST_ASSERT_EQUAL_INT(PROTOEMB_GCODE_WIRE_TO_VALUE[PROTOEMB_GCODE_INCREMENTAL], G91_INCREMENTAL);
+    /* G28/G90/G91/G122: the protocol enum value now equals the real G-code number
+     * (the wire form uses a separate compact index via PROTOEMB_GCODE_WIRE_TO_VALUE,
+     * but ProtoEmb_Move_decode resolves .g to the real value), so it must match the
+     * firmware constant directly. NB: WIRE_TO_VALUE is sized PROTOEMB_GCODE_COUNT and
+     * indexed by wire position — indexing it by the enum value (e.g. [28]) is OOB. */
+    TEST_ASSERT_EQUAL_INT(PROTOEMB_GCODE_HOME,        G28_HOME);
+    TEST_ASSERT_EQUAL_INT(PROTOEMB_GCODE_ABSOLUTE,    G90_ABSOLUTE);
+    TEST_ASSERT_EQUAL_INT(PROTOEMB_GCODE_INCREMENTAL, G91_INCREMENTAL);
+    TEST_ASSERT_EQUAL_INT(PROTOEMB_GCODE_STOP,        G122_STOP);
+    /* The wire remap table is sized to the enum count (indexed by wire position). */
+    TEST_ASSERT_EQUAL_INT(PROTOEMB_GCODE_COUNT,
+                          (int)(sizeof(PROTOEMB_GCODE_WIRE_TO_VALUE) / sizeof(PROTOEMB_GCODE_WIRE_TO_VALUE[0])));
 }
