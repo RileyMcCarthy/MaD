@@ -41,10 +41,11 @@ void setUp(void)
 {
     HAL_lock_mock_reset();
     _stdio_debug_lock = HAL_lock_create();
-    /* Start the clock above 100 ms: IO_protocol_private_timeout does an unsigned
-     * (getMs - 100) > startms, which underflows (spurious timeout) for getMs<100.
-     * The firmware's HAL clock is always well past 100 ms, so mirror that here. */
-    global_timeus = 1000000; /* getMs = 1000 */
+    /* Clock starts at 0. With the rollover-safe timeout fix, a near-zero clock no
+     * longer triggers a spurious DATA-state timeout, so the multi-byte WRITE tests
+     * below (which failed against the old unsigned getMs-100 underflow) double as
+     * the regression guard for that fix. */
+    global_timeus = 0;
     d_rxLen = d_rxPos = d_txLen = 0;
     d_sendReturn = true;
     memset(&IO_protocol_data, 0, sizeof(IO_protocol_data));
@@ -143,7 +144,7 @@ void test_timeout_resets_to_sync(void)
     IO_protocol_readType_E rt = 0; IO_protocol_writeType_E wt = 0; uint8_t data[16]; uint32_t size = 0;
     IO_protocol_recieveRequest(&rt, &wt, data, &size, 16); /* SYNC -> TYPE, startms = 0 */
     TEST_ASSERT_EQUAL_INT(IO_PROTOCOL_RECIEVE_STATE_TYPE, IO_protocol_data.recieve.state);
-    global_timeus = 1200000; /* 1200 ms: 1200-100 > startms(1000) -> timeout */
+    global_timeus = 200000; /* elapsed 200 ms > 100 ms timeout -> reset to SYNC */
     IO_protocol_recieveRequest(&rt, &wt, data, &size, 16); /* TYPE times out -> SYNC */
     TEST_ASSERT_EQUAL_INT(IO_PROTOCOL_RECIEVE_STATE_SYNC, IO_protocol_data.recieve.state);
 }
