@@ -30,6 +30,9 @@ dist/
 out/
 target/
 
+# Documentation site build output (mkdocs)
+/site/
+
 # Dependencies
 node_modules/
 

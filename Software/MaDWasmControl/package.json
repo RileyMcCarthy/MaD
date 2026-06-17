@@ -20,7 +20,8 @@
     "e2e": "node e2e/run-all.mjs",
     "sil:bridge": "node tools/sil-ws-bridge.mjs",
     "sil:smoke": "node e2e/sil-smoke.mjs",
-    "sil:app": "node e2e/sil-playground.mjs"
+    "sil:app": "node e2e/sil-playground.mjs",
+    "docs:screenshots": "node e2e/capture-screenshots.mjs"
   },
   "dependencies": {
     "comlink": "^4.4.2",

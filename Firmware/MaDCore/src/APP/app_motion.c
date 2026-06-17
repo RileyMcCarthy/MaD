@@ -16,6 +16,7 @@
 #include "dev_nvram.h"
 
 #include "HAL_GPIO.h"
+#include "HAL_time.h"
 
 #include "lib_staticQueue.h"
 #include "lib_timer.h"
@@ -41,6 +42,22 @@
         EMULATION_YIELD_LOCK();            \
     }
 #define APP_MOTION_LOCK_REL() HAL_lock_release(app_motion_data.lock)
+
+/* Waveform (G123): the firmware generates the f(t) trajectory itself (no host G1
+ * expansion). It streams the analytic instantaneous velocity each motion tick to
+ * the stepper's continuous-velocity (NCO) output, so the pulse rate follows the
+ * waveform smoothly rather than as discrete stop/start segments. */
+#define APP_MOTION_TWO_PI 6.283185307179586f
+/* The waveform is "settled" (and the move complete) once it is within this many
+ * steps of the centre. Exact-equality completion could hang if the servo's
+ * reported position never lands exactly on centre (quantisation / settling). */
+#define APP_MOTION_WAVEFORM_SETTLE_STEPS 2
+/* Defensive clamp on the commanded step rate (steps/s). The host validates peak
+ * velocity, but extreme/unvalidated params (high freq × high amplitude × a fine
+ * steps/mm) could otherwise overflow the int32/uint32 rate. 30 Msteps/s sits
+ * well above any real stepper rate yet far below the 2^31 overflow point. */
+#define APP_MOTION_WAVEFORM_MAX_STEPS_PER_S 30000000.0f
+
 /**********************************************************************
  * Typedefs
  **********************************************************************/
@@ -83,6 +100,14 @@ typedef struct
     int lock;
     app_motion_home_E homeState;
 
+    /* Waveform (G123) playback state. */
+    int32_t waveformCentreSteps;     /* position the wave oscillates about      */
+    int32_t waveformAmplitudeSteps;  /* peak excursion in steps                 */
+    uint32_t waveformFreqMilliHz;    /* frequency in milli-Hz                   */
+    uint64_t waveformDurationUs;     /* cycles / frequency, in microseconds     */
+    uint64_t waveformElapsedUs;      /* wrap-safe elapsed time since start      */
+    uint32_t waveformLastUs;         /* last HAL_time_getUs() reading           */
+
     app_motion_outputs_t output;
 
     app_motion_move_t queueBuffer[MOTION_QUEUE_SIZE];
@@ -100,6 +125,7 @@ static void app_motion_private_processOutputs(void);
 static app_motion_state_E app_motion_private_getDesiredState(void);
 static void app_motion_private_moveManager_start(void);
 static bool app_motion_private_moveManager_run(void);
+static bool app_motion_private_waveform_run(void);
 
 /**********************************************************************
  * Private Functions
@@ -274,9 +300,102 @@ static void app_motion_private_moveManager_start(void)
         /* Test lifecycle owns G122. app_testManagement intercepts it before
          * pushing to motion; this case is defensive and treats it as a no-op. */
         break;
+    case G123_WAVEFORM:
+    {
+        /* Reinterpret the move record for a firmware-native waveform:
+         *   x = amplitude (µm), p = cycles,
+         *   f = (shape << 24) | frequency-in-milli-Hz (low 24 bits).
+         * The wave oscillates about the position the machine is at right now
+         * (the program ramps to the mean with a preceding G1). */
+        const int32_t amplitudeUm = app_motion_data.currentMove.x;
+        const uint32_t fField = (uint32_t)app_motion_data.currentMove.f;
+        const uint32_t freqMilliHz = fField & 0x00FFFFFFU;
+        const uint32_t cycles = app_motion_data.currentMove.p;
+        app_motion_data.waveformCentreSteps = app_motion_data.inputs.positionSteps;
+        app_motion_data.waveformAmplitudeSteps =
+            (int32_t)(((int64_t)amplitudeUm * app_motion_data.stepsPerMM) / 1000LL);
+        app_motion_data.waveformFreqMilliHz = freqMilliHz;
+        app_motion_data.waveformDurationUs =
+            (freqMilliHz == 0U)
+                ? 0U
+                : (((uint64_t)cycles * 1000000000ULL) / (uint64_t)freqMilliHz);
+        app_motion_data.waveformElapsedUs = 0U;
+        app_motion_data.waveformLastUs = HAL_time_getUs();
+        DEBUG_INFO("G123 waveform: amp=%d steps freq=%u mHz cycles=%u\n",
+                   app_motion_data.waveformAmplitudeSteps, freqMilliHz, cycles);
+        break;
+    }
     default:
         break;
     }
+}
+
+/* Firmware-native waveform playback. Called every motion tick while a G123 is
+ * the current move. Streams the analytic instantaneous velocity (2πf·A·cos) to
+ * the stepper's continuous-velocity (NCO) output, sampling at the *real* elapsed
+ * time so the cycle frequency holds regardless of tick jitter. The closed-loop
+ * servo realises the commanded trajectory; firmware only emits the ideal rate. */
+static bool app_motion_private_waveform_run(void)
+{
+    const uint32_t now = HAL_time_getUs();
+    /* Wrap-safe accumulate: per-tick delta is tiny vs the uint32 µs wrap. */
+    app_motion_data.waveformElapsedUs += (uint64_t)(now - app_motion_data.waveformLastUs);
+    app_motion_data.waveformLastUs = now;
+
+    if ((app_motion_data.waveformFreqMilliHz == 0U) ||
+        (app_motion_data.waveformAmplitudeSteps == 0))
+    {
+        return true; /* degenerate params — nothing to play */
+    }
+
+    const float freqHz = (float)app_motion_data.waveformFreqMilliHz / 1000.0f;
+    const float ampSteps = (float)app_motion_data.waveformAmplitudeSteps;
+
+    if (app_motion_data.waveformElapsedUs >= app_motion_data.waveformDurationUs)
+    {
+        /* Whole cycles end at the centre; a settle move (exits velocity mode)
+         * parks exactly on centre, completing on a small tolerance so a servo
+         * that never lands exactly on centre can't wedge the move. */
+        const float ampAbs = (ampSteps < 0.0f) ? -ampSteps : ampSteps;
+        float peakVelF = APP_MOTION_TWO_PI * freqHz * ampAbs;
+        if (peakVelF > APP_MOTION_WAVEFORM_MAX_STEPS_PER_S)
+        {
+            peakVelF = APP_MOTION_WAVEFORM_MAX_STEPS_PER_S; /* clamp (no overflow) */
+        }
+        uint32_t peakVel = (uint32_t)peakVelF;
+        if (peakVel == 0U)
+        {
+            peakVel = 1U;
+        }
+        dev_stepper_move(DEV_STEPPER_CHANNEL_MAIN, app_motion_data.waveformCentreSteps, peakVel);
+        const int32_t settleErr =
+            app_motion_data.inputs.positionSteps - app_motion_data.waveformCentreSteps;
+        return ((settleErr <= APP_MOTION_WAVEFORM_SETTLE_STEPS) &&
+                (settleErr >= -APP_MOTION_WAVEFORM_SETTLE_STEPS));
+    }
+
+    /* Stream the analytic instantaneous velocity of the trajectory:
+     *   d/dt[ centre + A·sin(2πf t) ] = 2πf·A·cos(2πf t)   (steps/s, signed).
+     * The stepper's NCO output follows the rate continuously (no per-segment
+     * stop/start); position integrates to the sine. The sign of cos flips at the
+     * position peaks, where the rate is ~0, so direction reversals are smooth.
+     * The closed-loop servo realises the commanded trajectory. */
+    const float t = (float)app_motion_data.waveformElapsedUs / 1.0e6f;
+    const float phase = APP_MOTION_TWO_PI * freqHz * t;
+    float velocity = APP_MOTION_TWO_PI * freqHz * ampSteps * cosf(phase);
+    /* Clamp to the safe rate (prevents int32 overflow on extreme params). */
+    if (velocity > APP_MOTION_WAVEFORM_MAX_STEPS_PER_S)
+    {
+        velocity = APP_MOTION_WAVEFORM_MAX_STEPS_PER_S;
+    }
+    else if (velocity < -APP_MOTION_WAVEFORM_MAX_STEPS_PER_S)
+    {
+        velocity = -APP_MOTION_WAVEFORM_MAX_STEPS_PER_S;
+    }
+    /* Round (not truncate) so sub-step rates near the turning points still move
+     * in the correct direction instead of snapping to a momentary halt. */
+    dev_stepper_setVelocity(DEV_STEPPER_CHANNEL_MAIN, (int32_t)roundf(velocity));
+    return false;
 }
 
 static bool app_motion_private_moveManager_run(void)
@@ -300,6 +419,9 @@ static bool app_motion_private_moveManager_run(void)
     case G91_INCREMENTAL:
     case G122_STOP:
         moveComplete = true;
+        break;
+    case G123_WAVEFORM:
+        moveComplete = app_motion_private_waveform_run();
         break;
     default:
         break;

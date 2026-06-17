@@ -41,6 +41,7 @@ typedef enum
     G90_ABSOLUTE = 90,
     G91_INCREMENTAL = 91,
     G122_STOP = 122,
+    G123_WAVEFORM = 123,
 } app_motion_gcode_E;
 
 typedef enum

@@ -60,6 +60,12 @@ static uint32_t d_startFrequency;
 static uint32_t d_stopCount;
 static HAL_pulseOut_channel_E d_stopChannel;
 
+/* HAL_pulseOut velocity-mode (NCO) capture. */
+static uint32_t d_startVelocityCount;
+static uint32_t d_startVelocityFreq;
+static uint32_t d_setFrequencyCount;
+static uint32_t d_lastSetFrequency;
+
 /* HAL_GPIO_setActive capture. */
 static uint32_t d_gpioCount;
 static HAL_GPIO_channel_E d_gpioChannel;
@@ -78,6 +84,11 @@ static void doubles_reset(void)
 
     d_stopCount = 0U;
     d_stopChannel = HAL_PULSE_OUT_CHANNEL_COUNT;
+
+    d_startVelocityCount = 0U;
+    d_startVelocityFreq = 0U;
+    d_setFrequencyCount = 0U;
+    d_lastSetFrequency = 0U;
 
     d_gpioCount = 0U;
     d_gpioChannel = HAL_GPIO_COUNT;
@@ -108,6 +119,21 @@ void HAL_pulseOut_stop(HAL_pulseOut_channel_E channel)
 {
     d_stopCount++;
     d_stopChannel = channel;
+}
+
+void HAL_pulseOut_startVelocity(HAL_pulseOut_channel_E channel, uint32_t frequency)
+{
+    (void)channel;
+    d_startVelocityCount++;
+    d_startVelocityFreq = frequency;
+    d_run_delta = 0U; /* real HAL resets the emitted counter on (re)start/re-baseline */
+}
+
+void HAL_pulseOut_setFrequency(HAL_pulseOut_channel_E channel, uint32_t frequency)
+{
+    (void)channel;
+    d_setFrequencyCount++;
+    d_lastSetFrequency = frequency;
 }
 
 /* --- HAL_GPIO --- */
@@ -436,6 +462,51 @@ void test_dev_stepper_fullMoveLifecycle(void)
     TEST_ASSERT_EQUAL_UINT32(1U, d_stopCount);
 }
 
+/* Velocity (NCO) mode: setVelocity enters VELOCITY, integrates position from the
+ * emitted count, reverses direction by re-baselining (so position stays
+ * continuous), and exits on stop. */
+void test_dev_stepper_velocityModeIntegratesAndReverses(void)
+{
+    dev_stepper_enable(CH, true);
+    dev_stepper_setVelocity(CH, 1000); /* +CW */
+    dev_stepper_run();                 /* DISABLED -> STOPPED */
+    TEST_ASSERT_EQUAL_INT(DEV_STEPPER_STATE_STOPPED, dev_stepper_getState(CH));
+    dev_stepper_run();                 /* STOPPED -> VELOCITY (entry: startVelocity) */
+    TEST_ASSERT_EQUAL_INT(DEV_STEPPER_STATE_VELOCITY, dev_stepper_getState(CH));
+    TEST_ASSERT_EQUAL_UINT32(1U, d_startVelocityCount);
+    TEST_ASSERT_EQUAL_UINT32(1000U, d_startVelocityFreq);
+    TEST_ASSERT_FALSE(d_gpioActive); /* CW => SERVO_DIR inactive */
+
+    /* Emitted is cumulative since start; CW => position increases. */
+    d_run_delta = 50U;
+    dev_stepper_run();
+    TEST_ASSERT_EQUAL_INT32(50, dev_stepper_getSteps(CH));
+    d_run_delta = 120U;
+    dev_stepper_run();
+    TEST_ASSERT_EQUAL_INT32(120, dev_stepper_getSteps(CH));
+    TEST_ASSERT_TRUE(d_setFrequencyCount >= 1U); /* rate retargeted on the fly */
+
+    /* Reverse: re-baseline at current position, flip DIR, restart the NCO. */
+    dev_stepper_setVelocity(CH, -500); /* CCW */
+    dev_stepper_run();
+    TEST_ASSERT_EQUAL_INT(DEV_STEPPER_STATE_VELOCITY, dev_stepper_getState(CH));
+    TEST_ASSERT_EQUAL_UINT32(2U, d_startVelocityCount); /* re-baselined */
+    TEST_ASSERT_EQUAL_UINT32(500U, d_startVelocityFreq);
+    TEST_ASSERT_TRUE(d_gpioActive);                 /* CCW => SERVO_DIR active */
+    TEST_ASSERT_EQUAL_INT32(120, dev_stepper_getSteps(CH)); /* position continuous */
+
+    /* Fresh emitted after the reversal decreases position (CCW). */
+    d_run_delta = 30U;
+    dev_stepper_run();
+    TEST_ASSERT_EQUAL_INT32(90, dev_stepper_getSteps(CH));
+
+    /* Stop leaves velocity mode and halts the train. */
+    dev_stepper_stop(CH);
+    dev_stepper_run();
+    TEST_ASSERT_EQUAL_INT(DEV_STEPPER_STATE_STOPPED, dev_stepper_getState(CH));
+    TEST_ASSERT_TRUE(d_stopCount >= 1U);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -457,5 +528,6 @@ int main(void)
     RUN_TEST(test_dev_stepper_zeroPositionResetsSteps);
     RUN_TEST(test_dev_stepper_isReadyStagedByRun);
     RUN_TEST(test_dev_stepper_fullMoveLifecycle);
+    RUN_TEST(test_dev_stepper_velocityModeIntegratesAndReverses);
     return UNITY_END();
 }

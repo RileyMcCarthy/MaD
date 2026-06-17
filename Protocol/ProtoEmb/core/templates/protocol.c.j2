@@ -77,18 +77,24 @@ static int32_t sign_extend(uint32_t value, uint32_t bits)
 {%- else %}{% if f._min is not none and f._min != 0 %}{{ lval }} = unpack_bits(buf, {{ off }}, {{ f._elem_bits }}) / {{ f._scale }} + ({{ f._min | int }});{% else %}{{ lval }} = unpack_bits(buf, {{ off }}, {{ f._elem_bits }}) / {{ f._scale }};{% endif %}
 {%- endif %}
 {%- endmacro %}
+{# Aligned numeric leaf: a raw_storage field already holds the wire integer, and a
+   scale==1 field needs no transform, so both keep the plain byte copy. A scaled
+   field applies * / scale (matching the TS aligned codec; aligned uses the full
+   native width so the offset-binary `min` is not applied, unlike the packed path). #}
 {% macro c_encode_leaf(f, off, val) -%}
 {% if f._is_struct or f._is_union %}{{ prefix }}_{{ f.type }}_encodeAt(buf, {{ off }}, &{{ val }});
 {%- elif f._is_bool %}buf[{{ off }}] = {{ val }} ? 1U : 0U;
 {%- elif f._is_enum %}buf[{{ off }}] = (uint8_t){{ val }};
-{%- else %}memcpy(&buf[{{ off }}], &{{ val }}, {{ f._elem_byte_size }});
+{%- elif f._raw_storage or not f._has_scale %}memcpy(&buf[{{ off }}], &{{ val }}, {{ f._elem_byte_size }});
+{%- else %}{ {{ 'int' if f._is_signed else 'uint' }}{{ f._elem_byte_size * 8 }}_t _w = ({{ 'int' if f._is_signed else 'uint' }}{{ f._elem_byte_size * 8 }}_t)({{ val }} * {{ f._scale }}); memcpy(&buf[{{ off }}], &_w, {{ f._elem_byte_size }}); }
 {%- endif %}
 {%- endmacro %}
 {% macro c_decode_leaf(f, off, lval) -%}
 {% if f._is_struct or f._is_union %}{{ prefix }}_{{ f.type }}_decodeAt(buf, {{ off }}, &{{ lval }});
 {%- elif f._is_bool %}{{ lval }} = buf[{{ off }}] != 0;
 {%- elif f._is_enum %}{{ lval }} = ({{ prefix }}_{{ f.type }}_E)buf[{{ off }}];
-{%- else %}memcpy(&{{ lval }}, &buf[{{ off }}], {{ f._elem_byte_size }});
+{%- elif f._raw_storage or not f._has_scale %}memcpy(&{{ lval }}, &buf[{{ off }}], {{ f._elem_byte_size }});
+{%- else %}{ {{ 'int' if f._is_signed else 'uint' }}{{ f._elem_byte_size * 8 }}_t _w; memcpy(&_w, &buf[{{ off }}], {{ f._elem_byte_size }}); {{ lval }} = _w / {{ f._scale }}; }
 {%- endif %}
 {%- endmacro %}
 {% if unions %}
@@ -273,8 +279,11 @@ void {{ prefix }}_{{ name }}_encode(uint8_t *buf, const {{ prefix }}_{{ name }}_
     {% elif f._is_enum %}
     buf[offset] = (uint8_t)src->{{ f.name }};
     offset += 1;
-    {% else %}
+    {% elif f._raw_storage or not f._has_scale %}
     memcpy(&buf[offset], &src->{{ f.name }}, {{ f._byte_size }});
+    offset += {{ f._byte_size }};
+    {% else %}
+    { {{ 'int' if f._is_signed else 'uint' }}{{ f._byte_size * 8 }}_t _w = ({{ 'int' if f._is_signed else 'uint' }}{{ f._byte_size * 8 }}_t)(src->{{ f.name }} * {{ f._scale }}); memcpy(&buf[offset], &_w, {{ f._byte_size }}); }
     offset += {{ f._byte_size }};
     {% endif %}
     {% endfor %}
@@ -367,8 +376,10 @@ static void {{ prefix }}_{{ name }}_encodeAt(uint8_t *buf, uint32_t base, const 
     buf[base + {{ f._byte_offset }}U] = src->{{ f.name }} ? 1U : 0U;
     {% elif f._is_enum %}
     buf[base + {{ f._byte_offset }}U] = (uint8_t)src->{{ f.name }};
-    {% else %}
+    {% elif f._raw_storage or not f._has_scale %}
     memcpy(&buf[base + {{ f._byte_offset }}U], &src->{{ f.name }}, {{ f._byte_size }});
+    {% else %}
+    { {{ 'int' if f._is_signed else 'uint' }}{{ f._byte_size * 8 }}_t _w = ({{ 'int' if f._is_signed else 'uint' }}{{ f._byte_size * 8 }}_t)(src->{{ f.name }} * {{ f._scale }}); memcpy(&buf[base + {{ f._byte_offset }}U], &_w, {{ f._byte_size }}); }
     {% endif %}
     {% endfor %}
 }
@@ -461,8 +472,11 @@ void {{ prefix }}_{{ name }}_decode(const uint8_t *buf, {{ prefix }}_{{ name }}_
     {% elif f._is_enum %}
     dst->{{ f.name }} = ({{ prefix }}_{{ f.type }}_E)buf[offset];
     offset += 1;
-    {% else %}
+    {% elif f._raw_storage or not f._has_scale %}
     memcpy(&dst->{{ f.name }}, &buf[offset], {{ f._byte_size }});
+    offset += {{ f._byte_size }};
+    {% else %}
+    { {{ 'int' if f._is_signed else 'uint' }}{{ f._byte_size * 8 }}_t _w; memcpy(&_w, &buf[offset], {{ f._byte_size }}); dst->{{ f.name }} = _w / {{ f._scale }}; }
     offset += {{ f._byte_size }};
     {% endif %}
     {% endfor %}
@@ -554,8 +568,10 @@ static void {{ prefix }}_{{ name }}_decodeAt(const uint8_t *buf, uint32_t base, 
     dst->{{ f.name }} = buf[base + {{ f._byte_offset }}U] != 0;
     {% elif f._is_enum %}
     dst->{{ f.name }} = ({{ prefix }}_{{ f.type }}_E)buf[base + {{ f._byte_offset }}U];
-    {% else %}
+    {% elif f._raw_storage or not f._has_scale %}
     memcpy(&dst->{{ f.name }}, &buf[base + {{ f._byte_offset }}U], {{ f._byte_size }});
+    {% else %}
+    { {{ 'int' if f._is_signed else 'uint' }}{{ f._byte_size * 8 }}_t _w; memcpy(&_w, &buf[base + {{ f._byte_offset }}U], {{ f._byte_size }}); dst->{{ f.name }} = _w / {{ f._scale }}; }
     {% endif %}
     {% endfor %}
 }

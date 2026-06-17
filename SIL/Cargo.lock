@@ -315,6 +315,7 @@ dependencies = [
  "embsim-core",
  "embsim-peripherals",
  "embsim-runtime",
+ "libc",
  "tracing",
 ]
 

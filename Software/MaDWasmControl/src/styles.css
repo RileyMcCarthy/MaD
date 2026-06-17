@@ -208,6 +208,19 @@ h2 {
   font-weight: 600;
 }
 
+/* Keep the uPlot cursor legend values from jittering as data streams. uPlot
+   renders the legend as a <table> whose value column auto-sizes to its widest
+   current value, so a gained integer digit or minus sign reflows every row.
+   Pin the column to a fixed width (wide enough for "-1000.000") with equal digit
+   widths and right alignment so the layout holds still regardless of the value.
+   Paired with the per-series fixedDecimals() formatters. */
+.u-legend .u-value {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  width: 10ch;
+  min-width: 10ch;
+}
+
 button {
   font: inherit;
   background: var(--panel-2);

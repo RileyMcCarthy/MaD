@@ -61,6 +61,40 @@ export function refLinesPlugin(opts: { x?: RefLine[]; y?: RefLine[] }): uPlot.Pl
   };
 }
 
+/**
+ * Build a uPlot `series.value` formatter that renders a fixed number of decimal
+ * places (and shows `—` when the cursor is off the data). Constant decimals keep
+ * the live legend from jittering as values stream in; pair with the
+ * `.u-legend` tabular-nums rule in styles.css so digit widths stay constant too.
+ */
+export function fixedDecimals(decimals: number): (u: uPlot, v: number | null) => string {
+  return (_u, v) => (v == null || !Number.isFinite(v) ? '—' : v.toFixed(decimals));
+}
+
+/**
+ * uPlot scale `range` for a live, accumulating series that grows from 0 — e.g. a
+ * stress–strain curve. Unlike `stableRange`, the frame is anchored at 0 and is
+ * **monotonic**: it only ever expands, so the plot holds still instead of
+ * refitting (and visibly rescaling) on every redraw as points stream in. Seed it
+ * with a known maximum (a profile limit) so the axis is stable from the very
+ * first point; the top snaps to a round number for readable ticks.
+ */
+export function growingZeroRange(seedMax?: number): (u: uPlot, min: number, max: number) => [number, number] {
+  const niceCeil = (v: number): number => {
+    if (!(v > 0)) return 1;
+    const mag = 10 ** Math.floor(Math.log10(v));
+    const n = v / mag; // 1..10
+    const step = n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10;
+    return step * mag;
+  };
+  let top = Number.isFinite(seedMax) && (seedMax as number) > 0 ? niceCeil(seedMax as number) : 0;
+  return (_u, _min, max) => {
+    const want = Math.max(Number.isFinite(max) ? max : 0, top, 1e-9);
+    top = Math.max(top, niceCeil(want));
+    return [0, top];
+  };
+}
+
 /** Build a uPlot scale `range` fn that keeps the given ref values in view. */
 export function rangeIncluding(refs: RefLine[]): (u: uPlot, min: number, max: number) => [number, number] {
   const vals = refs.map((r) => r.value).filter((v) => Number.isFinite(v));

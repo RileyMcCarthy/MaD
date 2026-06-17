@@ -3,7 +3,7 @@ import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
 import { useStore } from '@/store/useStore';
 import { deviceClient } from '@/device/session';
-import { refLinesPlugin, RefLine, stableRange } from './uplotRef';
+import { fixedDecimals, growingZeroRange, refLinesPlugin, RefLine } from './uplotRef';
 
 const MAX_POINTS = 1000;
 
@@ -97,15 +97,16 @@ export default function LiveStressStrainChart({ active }: { active: boolean }) {
     const opts: uPlot.Options = {
       width: container.clientWidth || 700,
       height: 300,
-      // Snapped ranges keep the axis labels readable while points stream in.
-      scales: { x: { time: false, range: stableRange(xRefs) }, y: { range: stableRange(refs) } },
+      // Zero-anchored, monotonic ranges: the frame holds still (seeded from the
+      // profile limits) and only grows, instead of refitting on every redraw.
+      scales: { x: { time: false, range: growingZeroRange(maxStrain) }, y: { range: growingZeroRange(maxStress) } },
       axes: [
         { stroke: '#8b93a3', label: 'Strain (%)', grid: { stroke: '#2a2f3a' }, ticks: { stroke: '#2a2f3a' } },
         { stroke: '#8b93a3', label: 'Stress (MPa)', grid: { stroke: '#2a2f3a' }, ticks: { stroke: '#2a2f3a' } },
       ],
       series: [
-        {},
-        { label: 'Stress', stroke: '#4ea1ff', fill: '#4ea1ff', paths: () => null, points: { show: true, size: 4 } },
+        { value: fixedDecimals(3) },
+        { label: 'Stress', stroke: '#4ea1ff', fill: '#4ea1ff', paths: () => null, points: { show: true, size: 4 }, value: fixedDecimals(3) },
       ],
       plugins: refs.length || xRefs.length ? [refLinesPlugin({ y: refs, x: xRefs })] : [],
     };

@@ -65,6 +65,12 @@ struct PulseState {
     total_pulses: u32,
     frequency: u32,
     start_us: u64,
+    /// Continuous-velocity (NCO) mode: an unbounded train whose rate can be
+    /// retargeted on the fly. `emitted_base` carries the cumulative pulse count
+    /// from before the latest `set_frequency`, so the running total stays
+    /// monotonic across rate changes.
+    velocity_mode: bool,
+    emitted_base: u64,
 }
 
 static PULSE_STATE: Mutex<[PulseState; MAX_CHANNELS]> = Mutex::new({
@@ -72,6 +78,8 @@ static PULSE_STATE: Mutex<[PulseState; MAX_CHANNELS]> = Mutex::new({
         total_pulses: 0,
         frequency: 1,
         start_us: 0,
+        velocity_mode: false,
+        emitted_base: 0,
     };
     [INIT; MAX_CHANNELS]
 });
@@ -104,7 +112,13 @@ pub fn reset() {
     PROGRESS_CALLBACKS.lock().unwrap().clear();
     let mut state = PULSE_STATE.lock().unwrap();
     for s in state.iter_mut() {
-        *s = PulseState { total_pulses: 0, frequency: 1, start_us: 0 };
+        *s = PulseState {
+            total_pulses: 0,
+            frequency: 1,
+            start_us: 0,
+            velocity_mode: false,
+            emitted_base: 0,
+        };
     }
 }
 
@@ -174,6 +188,8 @@ pub fn start(channel: usize, pulses: u32, frequency: u32) {
             total_pulses: pulses,
             frequency: freq,
             start_us: embsim_core::virtual_clock::virtual_us(),
+            velocity_mode: false,
+            emitted_base: 0,
         };
     }
 
@@ -183,6 +199,54 @@ pub fn start(channel: usize, pulses: u32, frequency: u32) {
         }
     }
     fire_progress(channel, 0);
+}
+
+/// Begin (or re-baseline) a continuous-velocity (NCO) pulse train at `frequency`
+/// steps/s. Resets the emitted counter to 0 and fires `on_start` so subscribers
+/// snapshot the current direction/baseline — callers re-invoke this on a
+/// direction reversal (where the rate is ~0) so `pos = base + dir × emitted`
+/// stays correct across the reversal. `frequency` 0 holds (no pulses).
+pub fn start_velocity(channel: usize, frequency: u32) {
+    if channel >= CHANNEL_COUNT.load(Ordering::Relaxed) {
+        return;
+    }
+    trace!("pulse_out::start_velocity(ch={}, freq={})", channel, frequency);
+    {
+        let mut state = PULSE_STATE.lock().unwrap();
+        state[channel] = PulseState {
+            total_pulses: u32::MAX, // unbounded; velocity mode never "completes"
+            frequency,
+            start_us: embsim_core::virtual_clock::virtual_us(),
+            velocity_mode: true,
+            emitted_base: 0,
+        };
+    }
+    if let Ok(cbs) = START_CALLBACKS.lock() {
+        if let Some(cb) = cbs.get(channel).and_then(|c| c.as_ref()) {
+            cb(0, frequency);
+        }
+    }
+    fire_progress(channel, 0);
+}
+
+/// Retarget the continuous-velocity rate without resetting the emitted counter.
+/// The pulses already emitted at the previous rate are banked into `emitted_base`
+/// so the running total stays monotonic. No-op outside velocity mode.
+pub fn set_frequency(channel: usize, frequency: u32) {
+    if channel >= CHANNEL_COUNT.load(Ordering::Relaxed) {
+        return;
+    }
+    let mut state = PULSE_STATE.lock().unwrap();
+    let s = &mut state[channel];
+    if !s.velocity_mode {
+        return;
+    }
+    let now = embsim_core::virtual_clock::virtual_us();
+    let elapsed = now.saturating_sub(s.start_us);
+    let emitted_at_old = elapsed.saturating_mul(s.frequency as u64) / 1_000_000;
+    s.emitted_base = s.emitted_base.saturating_add(emitted_at_old);
+    s.frequency = frequency;
+    s.start_us = now;
 }
 
 /// Poll a running pulse sequence. Returns `(emitted_pulses, done)`.
@@ -208,6 +272,20 @@ pub fn run(channel: usize) -> (u32, bool) {
 
     let now = embsim_core::virtual_clock::virtual_us();
     let elapsed_us = now.saturating_sub(snapshot.start_us);
+
+    // Continuous-velocity mode: cumulative emitted = banked + rate × elapsed.
+    // Never completes (the caller stops it); still yields the core via the poll
+    // sleep and fires progress so the encoder/physics track virtual time.
+    if snapshot.velocity_mode {
+        let emitted = snapshot
+            .emitted_base
+            .saturating_add(elapsed_us.saturating_mul(snapshot.frequency as u64) / 1_000_000)
+            as u32;
+        fire_progress(channel, emitted);
+        sleep_virtual_us(POLL_TICK_US);
+        return (emitted, false);
+    }
+
     let emitted = ((elapsed_us.saturating_mul(snapshot.frequency as u64)) / 1_000_000)
         .min(snapshot.total_pulses as u64) as u32;
     let done = emitted >= snapshot.total_pulses;
@@ -235,6 +313,7 @@ pub fn stop(channel: usize) {
     {
         let mut state = PULSE_STATE.lock().unwrap();
         state[channel].total_pulses = 0;
+        state[channel].velocity_mode = false;
     }
     if let Ok(cbs) = STOP_CALLBACKS.lock() {
         if let Some(cb) = cbs.get(channel).and_then(|c| c.as_ref()) {
@@ -259,37 +338,20 @@ mod tests {
     use super::*;
     use std::sync::{
         atomic::{AtomicU32, Ordering as AtomicOrdering},
-        Arc, Mutex as StdMutex, OnceLock,
+        Arc,
     };
 
-    /// All tests share global peripheral state — serialize them and recover
-    /// from any panic-induced lock poisoning.
-    static TEST_LOCK: StdMutex<()> = StdMutex::new(());
-
-    fn lock_or_recover() -> std::sync::MutexGuard<'static, ()> {
-        TEST_LOCK.lock().unwrap_or_else(|p| {
-            TEST_LOCK.clear_poison();
-            p.into_inner()
-        })
-    }
-
+    /// Take the crate-wide test lock, pin the shared virtual clock, and reset
+    /// pulse-out state to a clean `channels`-wide bank. `init` fully clears all
+    /// per-channel callbacks and pulse state, so no manual clearing is needed.
     fn test_setup(channels: usize) {
-        static CLOCK: OnceLock<()> = OnceLock::new();
-        CLOCK.get_or_init(|| embsim_core::virtual_clock::init(1.0, 180_000_000));
-
-        START_CALLBACKS.clear_poison();
-        STOP_CALLBACKS.clear_poison();
-        PROGRESS_CALLBACKS.clear_poison();
-        PULSE_STATE.clear_poison();
-
-        // `init` now fully resets per-channel callbacks and pulse state, so no
-        // manual per-channel clearing is needed here.
+        crate::test_support::ensure_clock();
         init(channels);
     }
 
     #[test]
     fn out_of_range_channel_is_a_no_op() {
-        let _g = lock_or_recover();
+        let _g = crate::test_support::guard();
         test_setup(1);
         // Channel 99 was never configured; calls return safely.
         start(99, 100, 1000);
@@ -299,7 +361,7 @@ mod tests {
 
     #[test]
     fn idle_channel_reports_done_immediately() {
-        let _g = lock_or_recover();
+        let _g = crate::test_support::guard();
         test_setup(1);
         // start() never called → total_pulses == 0 → run() reports done.
         assert_eq!(run(0), (0, true));
@@ -307,7 +369,7 @@ mod tests {
 
     #[test]
     fn start_fires_initial_progress_at_zero() {
-        let _g = lock_or_recover();
+        let _g = crate::test_support::guard();
         test_setup(1);
         let progress = Arc::new(AtomicU32::new(u32::MAX));
         {
@@ -320,7 +382,7 @@ mod tests {
 
     #[test]
     fn run_emits_progress_and_eventually_completes() {
-        let _g = lock_or_recover();
+        let _g = crate::test_support::guard();
         test_setup(1);
         let progress = Arc::new(AtomicU32::new(0));
         {
@@ -346,8 +408,42 @@ mod tests {
     }
 
     #[test]
+    fn velocity_mode_integrates_continuously_and_retargets() {
+        let _g = crate::test_support::guard();
+        test_setup(1);
+        let progress = Arc::new(AtomicU32::new(0));
+        {
+            let p = Arc::clone(&progress);
+            on_progress(0, move |emitted| p.store(emitted, AtomicOrdering::Relaxed));
+        }
+
+        // Continuous 1 kHz train: emitted advances with virtual time, never "done".
+        start_velocity(0, 1_000);
+        let mut last = 0u32;
+        for _ in 0..50 {
+            let (emitted, done) = run(0);
+            assert!(!done, "velocity mode never completes on its own");
+            assert!(emitted >= last, "emitted is monotonic");
+            last = emitted;
+        }
+        assert!(last > 0, "continuous velocity advanced the emitted count");
+        assert_eq!(progress.load(AtomicOrdering::Relaxed), last, "progress matches run()");
+
+        // Retarget to 0 (hold) → the cumulative count freezes (no rewind).
+        set_frequency(0, 0);
+        let (a, _) = run(0);
+        let (b, _) = run(0);
+        assert_eq!(a, b, "rate 0 holds the emitted count");
+        assert!(a >= last, "held count never goes backwards");
+
+        // Stop leaves velocity mode.
+        stop(0);
+        assert_eq!(run(0), (0, true), "stop ends the velocity train");
+    }
+
+    #[test]
     fn stop_cancels_in_flight_sequence() {
-        let _g = lock_or_recover();
+        let _g = crate::test_support::guard();
         test_setup(1);
         let stops = Arc::new(AtomicU32::new(0));
         {
@@ -365,7 +461,7 @@ mod tests {
 
     #[test]
     fn restart_resets_baseline() {
-        let _g = lock_or_recover();
+        let _g = crate::test_support::guard();
         test_setup(1);
         start(0, 10, 1_000);
         // Drain to completion.
@@ -383,11 +479,114 @@ mod tests {
 
     #[test]
     fn frequency_zero_is_clamped() {
-        let _g = lock_or_recover();
+        let _g = crate::test_support::guard();
         test_setup(1);
         // Frequency of 0 would divide-by-zero; the driver clamps to 1 Hz.
         start(0, 5, 0);
         let (emitted, _) = run(0);
         assert!(emitted <= 5);
+    }
+
+    #[test]
+    #[should_panic(expected = "exceeds max")]
+    fn init_above_max_channels_panics() {
+        let _g = crate::test_support::guard();
+        crate::test_support::ensure_clock();
+        // A count above the backing-array ceiling is a configuration error.
+        init(MAX_CHANNELS + 1);
+    }
+
+    #[test]
+    fn on_start_fires_with_pulses_and_frequency() {
+        let _g = crate::test_support::guard();
+        test_setup(1);
+        // on_start receives the exact (pulses, frequency) passed to start(),
+        // with frequency clamped to at least 1.
+        let seen = Arc::new(std::sync::Mutex::new((0u32, 0u32)));
+        {
+            let s = Arc::clone(&seen);
+            on_start(0, move |pulses, freq| *s.lock().unwrap() = (pulses, freq));
+        }
+        start(0, 42, 0); // freq 0 clamps to 1
+        assert_eq!(*seen.lock().unwrap(), (42, 1));
+    }
+
+    #[test]
+    fn callbacks_are_one_per_channel_and_overwrite() {
+        let _g = crate::test_support::guard();
+        test_setup(1);
+        // Re-registering on_start replaces the previous callback (one per channel).
+        let first = Arc::new(AtomicU32::new(0));
+        let second = Arc::new(AtomicU32::new(0));
+        {
+            let f = Arc::clone(&first);
+            on_start(0, move |_, _| {
+                f.fetch_add(1, AtomicOrdering::Relaxed);
+            });
+        }
+        {
+            let s = Arc::clone(&second);
+            on_start(0, move |_, _| {
+                s.fetch_add(1, AtomicOrdering::Relaxed);
+            });
+        }
+        start(0, 1, 1);
+        assert_eq!(first.load(AtomicOrdering::Relaxed), 0, "first cb overwritten");
+        assert_eq!(second.load(AtomicOrdering::Relaxed), 1, "only second cb fires");
+    }
+
+    #[test]
+    fn register_out_of_range_channel_is_ignored() {
+        let _g = crate::test_support::guard();
+        test_setup(1);
+        // Registering a callback past MAX_CHANNELS is silently dropped, not a panic.
+        let hits = Arc::new(AtomicU32::new(0));
+        {
+            let h = Arc::clone(&hits);
+            on_progress(MAX_CHANNELS, move |_| {
+                h.fetch_add(1, AtomicOrdering::Relaxed);
+            });
+        }
+        // Configured channel 0 still works and fires its own (unset) progress.
+        start(0, 1, 1);
+        assert_eq!(hits.load(AtomicOrdering::Relaxed), 0);
+    }
+
+    #[test]
+    fn run_clamps_emitted_to_total_after_overrun() {
+        let _g = crate::test_support::guard();
+        test_setup(1);
+        // A tiny, high-frequency sequence finishes well before we poll, so the
+        // raw integration would exceed `total`; run() must clamp to exactly total.
+        start(0, 1, 1_000_000);
+        // Drain to completion; emitted is never allowed above total.
+        let mut last = (0u32, false);
+        for _ in 0..200 {
+            last = run(0);
+            assert!(last.0 <= 1, "emitted clamped to total");
+            if last.1 {
+                break;
+            }
+        }
+        assert_eq!(last, (1, true), "completes with exactly total emitted");
+    }
+
+    #[test]
+    fn reset_clears_channel_count_and_callbacks() {
+        let _g = crate::test_support::guard();
+        test_setup(1);
+        let hits = Arc::new(AtomicU32::new(0));
+        {
+            let h = Arc::clone(&hits);
+            on_progress(0, move |_| {
+                h.fetch_add(1, AtomicOrdering::Relaxed);
+            });
+        }
+        reset();
+        // After reset, channel 0 is no longer configured: start/run are no-ops
+        // and the previously-registered callback can never fire.
+        start(0, 5, 1);
+        assert_eq!(run(0), (0, true));
+        assert_eq!(hits.load(AtomicOrdering::Relaxed), 0);
     }
 }

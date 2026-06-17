@@ -127,3 +127,172 @@ pub fn clear_views() {
 pub fn start_server(port: u16) -> std::io::Result<()> {
     server::start(port)
 }
+
+/// Crate-wide test serialization for the global `VIEWS` registry.
+///
+/// Both the `lib.rs` registry tests and the `server.rs` handler tests mutate the
+/// process-global registry, so they must run one at a time across the whole test
+/// binary — a single shared lock guarantees that.
+#[cfg(test)]
+pub(crate) mod test_lock {
+    use std::sync::Mutex;
+
+    static LOCK: Mutex<()> = Mutex::new(());
+
+    /// Take the registry lock, recovering from poison left by a panicking test
+    /// (matches the `pulse_out.rs` pattern).
+    pub fn guard() -> std::sync::MutexGuard<'static, ()> {
+        LOCK.lock().unwrap_or_else(|p| {
+            LOCK.clear_poison();
+            p.into_inner()
+        })
+    }
+}
+
+// ============================================================
+// Tests
+// ============================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Registry tests share the crate-wide `VIEWS` lock (see [`crate::test_lock`])
+    /// so they serialize against the `server.rs` handler tests as well.
+    use crate::test_lock::guard as lock_or_recover;
+
+    /// Build a minimal view with distinct, asserting-friendly field values.
+    fn sample_view(id: &str) -> View {
+        View::new(
+            id,
+            "Display Name",
+            "🔥",
+            "<p>body</p>",
+            ".x { color: red; }",
+            "console.log('hi');",
+            None,
+        )
+    }
+
+    // ── View::new ──
+
+    /// `View::new` copies every argument into the matching field and starts with
+    /// an empty asset list and no WebSocket handler.
+    #[test]
+    fn view_new_sets_all_fields_and_empty_assets() {
+        let v = View::new(
+            "trace",
+            "Trace Viewer",
+            "📊",
+            "<div>html</div>",
+            ".css{}",
+            "var js;",
+            None,
+        );
+        assert_eq!(v.id, "trace");
+        assert_eq!(v.name, "Trace Viewer");
+        assert_eq!(v.icon, "📊");
+        assert_eq!(v.html, "<div>html</div>");
+        assert_eq!(v.css, ".css{}");
+        assert_eq!(v.js, "var js;");
+        assert!(v.ws_handler.is_none());
+        assert!(v.assets.is_empty(), "a fresh view has no assets");
+    }
+
+    /// A `View` can carry a WebSocket handler; `ws_handler` is `Some` when one
+    /// is supplied to `new`.
+    #[test]
+    fn view_new_accepts_ws_handler() {
+        fn handler(_ws: WebSocket) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+            Box::pin(async {})
+        }
+        let h: WsHandler = handler;
+        let v = View::new("ws", "WS", "🔌", "", "", "", Some(h));
+        assert!(v.ws_handler.is_some(), "supplied handler is stored");
+    }
+
+    // ── View::with_asset ──
+
+    /// `with_asset` appends a `ViewAsset` with the given name, bytes, and
+    /// content-type, and returns the view for chaining.
+    #[test]
+    fn with_asset_appends_one_asset() {
+        let v = sample_view("v").with_asset("chart.js", b"BYTES", "application/javascript");
+        assert_eq!(v.assets.len(), 1);
+        let a = &v.assets[0];
+        assert_eq!(a.name, "chart.js");
+        assert_eq!(a.bytes, b"BYTES");
+        assert_eq!(a.content_type, "application/javascript");
+    }
+
+    /// `with_asset` chains: each call appends (never overwrites), preserving the
+    /// call order of the assets.
+    #[test]
+    fn with_asset_chains_and_preserves_order() {
+        let v = sample_view("v")
+            .with_asset("a.js", b"AAA", "text/javascript")
+            .with_asset("b.css", b"BBB", "text/css")
+            .with_asset("c.png", b"CCC", "image/png");
+        assert_eq!(v.assets.len(), 3, "all three assets are appended");
+        let names: Vec<&str> = v.assets.iter().map(|a| a.name.as_str()).collect();
+        assert_eq!(names, ["a.js", "b.css", "c.png"], "append order preserved");
+        assert_eq!(v.assets[1].bytes, b"BBB");
+        assert_eq!(v.assets[2].content_type, "image/png");
+    }
+
+    /// An empty byte slice is a valid asset payload.
+    #[test]
+    fn with_asset_allows_empty_bytes() {
+        let v = sample_view("v").with_asset("empty", b"", "text/plain");
+        assert_eq!(v.assets.len(), 1);
+        assert!(v.assets[0].bytes.is_empty());
+    }
+
+    // ── register_view / clear_views / views() ──
+
+    /// After `clear_views()` then a single `register_view`, the registry holds
+    /// exactly that one view.
+    #[test]
+    fn register_then_views_contains_exactly_that_view() {
+        let _g = lock_or_recover();
+        clear_views();
+        register_view(sample_view("only"));
+        let reg = views().read();
+        assert_eq!(reg.len(), 1, "exactly one registered view");
+        assert_eq!(reg[0].id, "only");
+    }
+
+    /// `clear_views()` empties the registry even when several views are present.
+    #[test]
+    fn clear_views_empties_the_registry() {
+        let _g = lock_or_recover();
+        clear_views();
+        register_view(sample_view("a"));
+        register_view(sample_view("b"));
+        assert_eq!(views().read().len(), 2);
+        clear_views();
+        assert!(views().read().is_empty(), "registry empty after clear");
+    }
+
+    /// Registering two views preserves their insertion order.
+    #[test]
+    fn register_preserves_insertion_order() {
+        let _g = lock_or_recover();
+        clear_views();
+        register_view(sample_view("first"));
+        register_view(sample_view("second"));
+        let reg = views().read();
+        assert_eq!(reg.len(), 2);
+        assert_eq!(reg[0].id, "first");
+        assert_eq!(reg[1].id, "second");
+    }
+
+    /// `clear_views()` on an already-empty registry is a no-op (idempotent).
+    #[test]
+    fn clear_views_on_empty_is_noop() {
+        let _g = lock_or_recover();
+        clear_views();
+        clear_views();
+        assert!(views().read().is_empty());
+    }
+}

@@ -33,9 +33,11 @@
 typedef enum
 {
     {% for v in enum._variants %}
-    {{ prefix_upper }}_{{ name | upper_snake }}_{{ v.name }} = {{ v.index }},
+    {{ prefix_upper }}_{{ name | upper_snake }}_{{ v.name }} = {{ v.value if enum._is_remap else v.index }},
     {% endfor %}
-    {{ prefix_upper }}_{{ name | upper_snake }}_COUNT
+    {# Pin _COUNT to the variant count: for a remap enum the constants carry sparse
+       semantic values, so a bare auto-incremented sentinel would be wrong. #}
+    {{ prefix_upper }}_{{ name | upper_snake }}_COUNT = {{ enum._count }}
 } {{ prefix }}_{{ name }}_E;
 
 /** Bits needed on wire: {{ enum._bits }} */

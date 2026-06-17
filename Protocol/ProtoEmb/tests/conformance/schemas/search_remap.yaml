@@ -1,0 +1,53 @@
+# A protocol whose remap enum is large and sparse enough to force the generator's
+# *binary-search* value<->wire strategy (dense_size > 32 and 2*count < dense_size),
+# the path the thermostat example (small/dense FanCmd) never exercises. This is the
+# shape of MaD's real G-code enum. Used by the cross-language conformance suite to
+# prove the search-remap codec is byte-identical across C / Rust / TypeScript.
+prefix: Gcodes
+protocol_version: 1
+
+nodes:
+  - dev
+
+defaults:
+  encoding: packed
+
+enums:
+  GCode:
+    description: "Sparse G-code values spanning 0..122 -> search remap style"
+    remap: true
+    variants:
+      - { name: RAPID, value: 0 }
+      - { name: MOVE,  value: 1 }
+      - { name: DWELL, value: 4 }
+      - { name: HOME,  value: 28 }
+      - { name: END,   value: 122 }
+
+unions:
+  Op:
+    encoding: packed
+    description: "Either a decoded G-code or a raw opcode"
+    variants:
+      - { name: gcode, type: GCode }
+      - { name: raw, type: uint16 }
+
+structs:
+  Command:
+    encoding: packed
+    description: "A G-code plus a signed argument"
+    fields:
+      - { name: code, type: GCode }
+      - { name: arg, type: int16, min: -1000, max: 1000 }
+
+  Packet:
+    encoding: packed
+    description: "A sequence number plus a tagged op (exercises union over remap)"
+    fields:
+      - { name: seq, type: uint8, min: 0, max: 255 }
+      - { name: op, type: Op }
+
+messages:
+  command:
+    tx_node: dev
+    command_id: 0
+    response: Command

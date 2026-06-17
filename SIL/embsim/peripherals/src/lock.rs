@@ -126,3 +126,162 @@ pub fn release(lock: i32) {
         trace!("lock::release({}): released", lock);
     }
 }
+
+// ============================================================
+// Tests
+// ============================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Take the crate test lock (lock-pool state is process-global), pin the
+    /// clock, and reset the allocator + any locks held by this thread.
+    fn setup(max: usize) {
+        crate::test_support::ensure_clock();
+        init(max);
+    }
+
+    #[test]
+    fn init_at_max_locks_is_allowed() {
+        let _g = crate::test_support::guard();
+        // Exactly MAX_LOCKS is the inclusive upper bound.
+        setup(MAX_LOCKS);
+        assert_eq!(create(), 0);
+        // Cleanup so we don't leave locks held for the next test.
+        reset();
+    }
+
+    #[test]
+    #[should_panic(expected = "exceeds max")]
+    fn init_above_max_locks_panics() {
+        let _g = crate::test_support::guard();
+        crate::test_support::ensure_clock();
+        init(MAX_LOCKS + 1);
+    }
+
+    #[test]
+    fn create_returns_increasing_ids_then_minus_one_when_exhausted() {
+        let _g = crate::test_support::guard();
+        setup(3);
+        assert_eq!(create(), 0);
+        assert_eq!(create(), 1);
+        assert_eq!(create(), 2);
+        // Pool exhausted → -1.
+        assert_eq!(create(), -1);
+        assert_eq!(create(), -1);
+        reset();
+    }
+
+    #[test]
+    fn try_acquire_then_release_round_trip() {
+        let _g = crate::test_support::guard();
+        setup(4);
+        let id = create();
+        assert!(try_acquire(id), "fresh lock acquires");
+        release(id);
+        // After release it can be acquired again (by this same thread).
+        assert!(try_acquire(id), "re-acquire after release");
+        release(id);
+        reset();
+    }
+
+    #[test]
+    fn try_acquire_out_of_range_or_negative_is_false() {
+        let _g = crate::test_support::guard();
+        setup(2);
+        // Negative id and ids at/above the configured max are rejected.
+        assert!(!try_acquire(-1));
+        assert!(!try_acquire(2));
+        assert!(!try_acquire(1000));
+        reset();
+    }
+
+    #[test]
+    fn double_acquire_same_thread_panics() {
+        let _g = crate::test_support::guard();
+        setup(2);
+        let id = create();
+        assert!(try_acquire(id), "first acquire succeeds");
+        // A second acquire by the SAME thread hits the self-deadlock guard and
+        // panics. Catch it ON THIS THREAD so we can release the lock we still
+        // hold: libtest runs each test on its own worker thread and `reset()`
+        // only frees locks held by the calling thread, so a panic that left
+        // LOCK[id] locked would break every sibling test that reuses slot 0.
+        let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = try_acquire(id);
+        }));
+        assert!(panicked.is_err(), "re-entrant acquire must panic");
+        let payload = panicked.err().unwrap();
+        let text = payload
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| payload.downcast_ref::<&str>().copied())
+            .unwrap_or("");
+        assert!(text.contains("re-entrant"), "panic names the self-deadlock: {text:?}");
+        // Free the still-held lock + restore a clean pool for the next test.
+        release(id);
+        reset();
+    }
+
+    #[test]
+    fn lock_held_by_one_thread_blocks_another_until_release() {
+        let _g = crate::test_support::guard();
+        setup(2);
+        let id = create();
+        assert!(try_acquire(id), "main thread acquires");
+
+        // Another thread cannot acquire while we hold it.
+        let acquired_while_held = std::thread::spawn(move || try_acquire(id))
+            .join()
+            .unwrap();
+        assert!(!acquired_while_held, "other thread blocked while held");
+
+        // After we release, another thread can acquire it.
+        release(id);
+        let acquired_after_release = std::thread::spawn(move || {
+            let got = try_acquire(id);
+            if got {
+                release(id); // tidy up the other thread's hold
+            }
+            got
+        })
+        .join()
+        .unwrap();
+        assert!(acquired_after_release, "other thread acquires after release");
+        reset();
+    }
+
+    #[test]
+    fn release_of_unheld_or_out_of_range_is_a_safe_no_op() {
+        let _g = crate::test_support::guard();
+        setup(2);
+        let id = create();
+        // Releasing a never-acquired lock is harmless.
+        release(id);
+        // Releasing out-of-range / negative ids is harmless.
+        release(-1);
+        release(999);
+        // The lock is still freely acquirable afterwards.
+        assert!(try_acquire(id));
+        release(id);
+        reset();
+    }
+
+    #[test]
+    fn reset_resets_allocator_and_releases_held_locks() {
+        let _g = crate::test_support::guard();
+        setup(4);
+        let id = create();
+        assert_eq!(id, 0);
+        assert!(try_acquire(id), "hold a lock before reset");
+        reset();
+        // Allocator restarted from 0.
+        assert_eq!(create(), 0);
+        // reset() released the lock held by this thread, so a fresh acquire of
+        // the same slot succeeds again.
+        assert!(try_acquire(0), "lock freed by reset is acquirable");
+        release(0);
+        reset();
+    }
+}

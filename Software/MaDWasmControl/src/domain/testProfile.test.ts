@@ -3,9 +3,9 @@ import {
   generateTestGcode,
   waveformSample,
   waveformPeakVelocity,
-  WAVEFORM_SEGMENTS_PER_CYCLE,
 } from './testProfile';
-import { gcodeLinesToMachineMoveBuffers } from './gcode';
+import { gcodeLinesToProgram } from './gcode';
+import { decodeWaveformMove, WaveformShape } from '@/protocol/generated/protoemb';
 import { TestProfile, MoveParameters } from './types';
 
 const base: TestProfile = {
@@ -113,47 +113,52 @@ function waveformProfile(params: Partial<MoveParameters>): TestProfile {
 }
 
 describe('generateTestGcode — waveform (math) move', () => {
-  it('expands a sine waveform into ~segments-per-cycle × cycles G1 moves oscillating ±amplitude', () => {
+  it('emits one firmware-native G123 with the waveform params (no host segment expansion)', () => {
     const cycles = 2;
     const amplitude = 5;
     const { gcode, distance, time } = generateTestGcode(
       waveformProfile({ waveform: 'sine', amplitude, frequency: 1, cycles }),
     );
-    const g1 = gcode.filter((l) => /^G1 /.test(l));
-    expect(g1.length).toBe(cycles * WAVEFORM_SEGMENTS_PER_CYCLE); // centre==start ⇒ no ramp-in
-    // Oscillates around 0 by ±amplitude (relative, centre = start position 0).
+    // Exactly one G123 line; NO per-segment G1s for the oscillation.
+    const g123 = gcode.filter((l) => /^G123 /.test(l));
+    expect(g123.length).toBe(1);
+    expect(g123[0]).toMatch(/^G123 A5 F1 C2 W0\b/);
+    // Centre == start (relative, 0) ⇒ no ramp-in G1 needed.
+    expect(gcode.some((l) => /^G1 /.test(l))).toBe(false);
+    // Preview series still oscillates ±amplitude about the centre, monotonic in time.
     expect(Math.max(...distance)).toBeCloseTo(amplitude, 1);
     expect(Math.min(...distance)).toBeCloseTo(-amplitude, 1);
-    // Time strictly advances and the trailing stop is present.
     for (let i = 1; i < time.length; i++) expect(time[i]).toBeGreaterThanOrEqual(time[i - 1]);
     expect(gcode[gcode.length - 1]).toBe('G122 ; Stop - signal test complete');
   });
 
   it('a degenerate waveform (no cycles) emits no motion', () => {
     const { gcode } = generateTestGcode(waveformProfile({ waveform: 'sine', amplitude: 5, frequency: 1, cycles: 0 }));
-    expect(gcode.some((l) => /^G1 /.test(l))).toBe(false);
+    expect(gcode.some((l) => /^G(1|123) /.test(l))).toBe(false);
   });
 
-  it('segment feedrates stay within the encodable range for a modest waveform', () => {
+  it('v1 is sine-only: a legacy triangle profile is coerced to sine (W0), never silently W1', () => {
     const { gcode } = generateTestGcode(
-      waveformProfile({ waveform: 'sine', amplitude: 5, frequency: 1, cycles: 1 }),
+      waveformProfile({ waveform: 'triangle', amplitude: 5, frequency: 1, cycles: 1 }),
     );
-    const feeds = gcode
-      .map((l) => /F([\d.]+)/.exec(l)?.[1])
-      .filter((f): f is string => f !== undefined)
-      .map(Number);
-    expect(feeds.length).toBeGreaterThan(0);
-    // Sine peak velocity = 2π·5·1 ≈ 31.4 mm/s, well within the codec's ~131 mm/s.
-    expect(Math.max(...feeds)).toBeLessThan(40);
+    const g123 = gcode.find((l) => /^G123 /.test(l));
+    expect(g123).toMatch(/\bW0\b/);
+    expect(g123).not.toMatch(/\bW1\b/);
   });
 
-  it('generated waveform converts to uploadable machine-move buffers (full pipeline)', () => {
+  it('generated waveform becomes a single uploadable WaveformMove op (full pipeline)', () => {
     const { gcode } = generateTestGcode(
-      waveformProfile({ waveform: 'triangle', amplitude: 4, frequency: 1, cycles: 1 }),
+      waveformProfile({ waveform: 'sine', amplitude: 4, frequency: 1, cycles: 3 }),
     );
-    // Validates + encodes every move (incl. gauge offset, range checks) — must not throw.
-    const buffers = gcodeLinesToMachineMoveBuffers(gcode, 15);
-    expect(buffers.length).toBeGreaterThan(0);
-    expect(buffers.every((b) => b.length === 7)).toBe(true); // 7-byte Move wire size
+    // Validates + encodes the whole program — must not throw.
+    const ops = gcodeLinesToProgram(gcode, 15);
+    const waveforms = ops.filter((o) => o.kind === 'waveform');
+    expect(waveforms.length).toBe(1);
+    expect(waveforms[0].buf.length).toBe(9); // 9-byte WaveformMove wire size
+    const wf = decodeWaveformMove(waveforms[0].buf);
+    expect(wf.shape).toBe(WaveformShape.SINE); // v1 is sine-only
+    expect(wf.amplitude).toBeCloseTo(4, 3);
+    expect(wf.frequency).toBeCloseTo(1, 3);
+    expect(wf.cycles).toBe(3);
   });
 });

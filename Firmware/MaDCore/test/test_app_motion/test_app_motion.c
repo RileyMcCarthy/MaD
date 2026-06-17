@@ -99,6 +99,17 @@ bool dev_stepper_move(dev_stepper_channel_E ch, int32_t targetSteps, uint32_t st
     d_lastMoveStepsPerSecond = stepsPerSecond;
     return true;
 }
+
+/* --- dev_stepper velocity (NCO) mode (record the last call + count) --- */
+static uint32_t d_setVelocityCount;
+static int32_t d_lastSetVelocity;
+
+void dev_stepper_setVelocity(dev_stepper_channel_E ch, int32_t signedStepsPerSecond)
+{
+    TEST_ASSERT_EQUAL_INT(DEV_STEPPER_CHANNEL_MAIN, ch);
+    d_setVelocityCount++;
+    d_lastSetVelocity = signedStepsPerSecond;
+}
 void dev_stepper_stop(dev_stepper_channel_E ch)
 {
     TEST_ASSERT_EQUAL_INT(DEV_STEPPER_CHANNEL_MAIN, ch);
@@ -162,6 +173,8 @@ static void doubles_reset(void)
     d_moveCount = 0U;
     d_lastMoveTarget = 0;
     d_lastMoveStepsPerSecond = 0U;
+    d_setVelocityCount = 0U;
+    d_lastSetVelocity = 0;
     d_stopCount = 0U;
     d_enableCount = 0U;
     d_lastEnable = false;
@@ -616,6 +629,168 @@ void test_isIdle_false_when_move_queued(void)
 }
 
 /**********************************************************************
+ * Tests: G123 waveform (firmware-native segmentation)
+ **********************************************************************/
+
+/* A G123 waveform streams the analytic velocity 2πf·A·cos(2πf·t): the commanded
+ * rate reaches ±peak (=2πfA), reverses sign twice per cycle (at the position
+ * peaks), and the move completes after cycles/frequency seconds (settling at the
+ * centre). This is the firmware-side proof that we follow the expected f'(t). */
+void test_waveform_streams_cosine_velocity_and_completes(void)
+{
+    motion_driveToWaiting();
+    d_setVelocityCount = 0U;
+
+    /* amplitude 5mm = 5000um -> 500 steps @100/mm; 1 Hz; 1 cycle -> 1s.
+     * f field = (shape<<24) | freq_milli_Hz = (SINE<<24) | 1000.
+     * Peak velocity = 2π·f·A = 2π·1·500 ≈ 3142 steps/s. */
+    app_motion_move_t wf = make_move((uint8_t)G123_WAVEFORM, 5000, 1000, 1U);
+    TEST_ASSERT_TRUE(app_motion_addMove(&wf));
+
+    app_motion_run(); /* WAITING -> pop + moveManager_start(WAVEFORM) -> MOVING */
+    TEST_ASSERT_FALSE(app_motion_isIdle());
+
+    const int32_t peakVel = (int32_t)(2.0 * 3.14159265 * 1.0 * 500.0); /* ≈ 3141 */
+    int32_t maxV = INT32_MIN;
+    int32_t minV = INT32_MAX;
+    int signChanges = 0;
+    int32_t prevV = 0;
+    bool havePrev = false;
+
+    /* Drive one cycle (1s) in 5 ms steps; a velocity is streamed every tick. */
+    for (uint32_t t = 0U; t < 1000000U; t += 5000U)
+    {
+        global_timeus = t;
+        const uint32_t before = d_setVelocityCount;
+        app_motion_run();
+        if (d_setVelocityCount > before)
+        {
+            const int32_t v = d_lastSetVelocity;
+            if (v > maxV) { maxV = v; }
+            if (v < minV) { minV = v; }
+            if (havePrev && (((prevV <= 0) && (v > 0)) || ((prevV >= 0) && (v < 0))))
+            {
+                signChanges++;
+            }
+            prevV = v;
+            havePrev = true;
+        }
+    }
+
+    /* Velocity reaches ±peak (2πfA) — proves amplitude × frequency. */
+    TEST_ASSERT_INT_WITHIN(250, peakVel, maxV);
+    TEST_ASSERT_INT_WITHIN(250, -peakVel, minV);
+    /* cos reverses sign at the two position peaks per cycle. */
+    TEST_ASSERT_TRUE(signChanges >= 2);
+
+    /* Past the duration: a settle move parks at the centre, then complete. */
+    global_timeus = 1100000U;
+    d_steps = 0; /* centre reached */
+    app_motion_run();
+    TEST_ASSERT_TRUE(app_motion_isIdle());
+}
+
+/* A degenerate waveform (zero frequency) completes without commanding motion. */
+void test_waveform_zero_frequency_completes_without_motion(void)
+{
+    motion_driveToWaiting();
+    d_setVelocityCount = 0U;
+
+    app_motion_move_t wf = make_move((uint8_t)G123_WAVEFORM, 5000, 0, 1U);
+    TEST_ASSERT_TRUE(app_motion_addMove(&wf));
+    app_motion_run(); /* pop + start -> MOVING */
+    global_timeus = 1000U;
+    app_motion_run(); /* moveManager_run -> degenerate -> complete */
+    TEST_ASSERT_TRUE(app_motion_isIdle());
+    TEST_ASSERT_EQUAL_UINT32(0U, d_setVelocityCount); /* no velocity commanded */
+}
+
+/* Run one G123 waveform to completion, capturing the streamed velocity extremes
+ * and sign reversals. Drives ~200 ticks across the waveform duration. */
+static void run_waveform_capture(int32_t ampUm, uint32_t freqMilliHz, uint32_t cycles,
+                                 int32_t *outMaxV, int32_t *outMinV, int *outSignChanges)
+{
+    motion_driveToWaiting();
+    d_setVelocityCount = 0U;
+    d_steps = 0;
+    global_timeus = 0U;
+
+    app_motion_move_t wf = make_move((uint8_t)G123_WAVEFORM, ampUm, (int32_t)freqMilliHz, cycles);
+    TEST_ASSERT_TRUE(app_motion_addMove(&wf));
+    app_motion_run(); /* WAITING -> MOVING (start) */
+
+    int32_t maxV = INT32_MIN;
+    int32_t minV = INT32_MAX;
+    int signChanges = 0;
+    int32_t prevV = 0;
+    bool havePrev = false;
+    const float freqHz = (float)freqMilliHz / 1000.0f;
+    const uint32_t durationUs = (uint32_t)(((float)cycles / freqHz) * 1.0e6f);
+    uint32_t step = durationUs / 200U;
+    if (step == 0U) { step = 1U; }
+    for (uint32_t t = 0U; t < durationUs; t += step)
+    {
+        global_timeus = t;
+        const uint32_t before = d_setVelocityCount;
+        app_motion_run();
+        if (d_setVelocityCount > before)
+        {
+            const int32_t v = d_lastSetVelocity;
+            if (v > maxV) { maxV = v; }
+            if (v < minV) { minV = v; }
+            if (havePrev && (((prevV <= 0) && (v > 0)) || ((prevV >= 0) && (v < 0))))
+            {
+                signChanges++;
+            }
+            prevV = v;
+            havePrev = true;
+        }
+    }
+    *outMaxV = maxV;
+    *outMinV = minV;
+    *outSignChanges = signChanges;
+
+    /* Complete: past duration, settle at centre. */
+    global_timeus = durationUs + 200000U;
+    d_steps = 0;
+    app_motion_run();
+    TEST_ASSERT_TRUE(app_motion_isIdle());
+}
+
+/* Sweep several waveforms: the streamed peak velocity must equal 2π·f·A and the
+ * direction must reverse ~twice per cycle, for every amplitude/frequency/cycle
+ * combination — proving the firmware follows f'(t) for arbitrary waveforms. */
+void test_waveform_velocity_matches_2piFA_across_params(void)
+{
+    struct
+    {
+        int32_t ampUm;
+        uint32_t fMilli;
+        uint32_t cycles;
+    } cases[] = {
+        {2000U, 2000U, 1U},  /* 2mm @ 2Hz x1  -> 200 steps, peak 2π·2·200 ≈ 2513 */
+        {10000U, 500U, 2U},  /* 10mm @ 0.5Hz x2 -> 1000 steps, peak 2π·0.5·1000 ≈ 3142 */
+        {5000U, 1000U, 3U},  /* 5mm @ 1Hz x3  -> 500 steps, peak 2π·1·500 ≈ 3142 */
+        {1000U, 4000U, 2U},  /* 1mm @ 4Hz x2  -> 100 steps, peak 2π·4·100 ≈ 2513 */
+    };
+    for (size_t i = 0U; i < (sizeof(cases) / sizeof(cases[0])); i++)
+    {
+        int32_t maxV = 0;
+        int32_t minV = 0;
+        int signChanges = 0;
+        run_waveform_capture(cases[i].ampUm, cases[i].fMilli, cases[i].cycles, &maxV, &minV, &signChanges);
+
+        const float fHz = (float)cases[i].fMilli / 1000.0f;
+        const float ampSteps = (float)cases[i].ampUm * 100.0f / 1000.0f; /* stepsPerMM = 100 */
+        const int32_t peak = (int32_t)(2.0f * 3.14159265f * fHz * ampSteps);
+        const int32_t tol = (peak / 8) + 30;
+        TEST_ASSERT_INT_WITHIN(tol, peak, maxV);   /* +peak velocity = 2πfA */
+        TEST_ASSERT_INT_WITHIN(tol, -peak, minV);  /* -peak velocity */
+        TEST_ASSERT_TRUE(signChanges >= (int)(2U * cases[i].cycles) - 1); /* ~2 reversals/cycle */
+    }
+}
+
+/**********************************************************************
  * main
  **********************************************************************/
 int main(void)
@@ -643,6 +818,10 @@ int main(void)
     RUN_TEST(test_addMove_queue_is_bounded);
     RUN_TEST(test_abortAndClear_stops_clears_and_returns_to_waiting);
     RUN_TEST(test_isIdle_false_when_move_queued);
+
+    RUN_TEST(test_waveform_streams_cosine_velocity_and_completes);
+    RUN_TEST(test_waveform_zero_frequency_completes_without_motion);
+    RUN_TEST(test_waveform_velocity_matches_2piFA_across_params);
 
     return UNITY_END();
 }

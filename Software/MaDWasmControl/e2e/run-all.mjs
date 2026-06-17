@@ -80,6 +80,73 @@ async function readDownloadedCsvSeries(page) {
   });
 }
 
+// Rigorously assert a recorded position series actually traces the COMMANDED sine
+// waveform — not merely that it oscillates. Checks: peak-to-peak ≈ 2·amplitude;
+// a least-squares sinusoid fit at the commanded frequency explains the motion
+// (R² high — a ramp/triangle/wrong-frequency would fail); the fitted amplitude
+// matches; and the number of midline crossings matches the commanded cycles.
+// This is the end-to-end proof that the firmware-native waveform = f(t).
+function assertSineMatch(series, { amplitudeMm, frequencyHz, cycles }, label) {
+  assert(series && series.pos.length > 40, `${label}: enough samples (${series?.pos.length})`);
+  const posMm = series.pos.map((p) => p / 1000);
+  const tS = series.time.map((t) => t / 1e6);
+
+  // Skip the leading ramp-to-centre (a small monotonic fraction) before fitting.
+  const skip = Math.floor(posMm.length * 0.2);
+  const p = posMm.slice(skip);
+  const t = tS.slice(skip);
+  const n = p.length;
+  const t0 = t[0];
+
+  const maxP = Math.max(...p);
+  const minP = Math.min(...p);
+  const excursion = maxP - minP;
+  assert(
+    Math.abs(excursion - 2 * amplitudeMm) < Math.max(2, amplitudeMm * 0.4),
+    `${label}: peak-to-peak ≈ 2A=${(2 * amplitudeMm).toFixed(1)}mm (got ${excursion.toFixed(2)})`,
+  );
+
+  // Least-squares fit  x(t) ≈ a·cos(ω t') + b·sin(ω t')  about the mean, ω=2πf.
+  const w = 2 * Math.PI * frequencyHz;
+  const mean = p.reduce((s, v) => s + v, 0) / n;
+  let Scc = 0, Sss = 0, Scs = 0, Sxc = 0, Sxs = 0, SStot = 0;
+  for (let i = 0; i < n; i++) {
+    const c = Math.cos(w * (t[i] - t0));
+    const s = Math.sin(w * (t[i] - t0));
+    const x = p[i] - mean;
+    Scc += c * c; Sss += s * s; Scs += c * s; Sxc += x * c; Sxs += x * s; SStot += x * x;
+  }
+  const det = Scc * Sss - Scs * Scs;
+  const a = (Sxc * Sss - Scs * Sxs) / det;
+  const b = (Scc * Sxs - Scs * Sxc) / det;
+  let SSres = 0;
+  for (let i = 0; i < n; i++) {
+    const fit = a * Math.cos(w * (t[i] - t0)) + b * Math.sin(w * (t[i] - t0));
+    const x = p[i] - mean;
+    SSres += (x - fit) * (x - fit);
+  }
+  const r2 = 1 - SSres / SStot;
+  const fitAmp = Math.sqrt(a * a + b * b);
+  assert(r2 > 0.8, `${label}: sinusoid fit R²>0.8 at ${frequencyHz}Hz (got ${r2.toFixed(3)})`);
+  assert(
+    Math.abs(fitAmp - amplitudeMm) < Math.max(1.5, amplitudeMm * 0.3),
+    `${label}: fitted amplitude ≈ ${amplitudeMm}mm (got ${fitAmp.toFixed(2)})`,
+  );
+
+  // Midline crossings over the whole series ≈ 2 per cycle (deadband = 0.3A).
+  const fullMean = posMm.reduce((s, v) => s + v, 0) / posMm.length;
+  let crossings = 0;
+  let dir = 0;
+  for (const v of posMm) {
+    if (v > fullMean + 0.3 * amplitudeMm) { if (dir === -1) crossings++; dir = 1; }
+    else if (v < fullMean - 0.3 * amplitudeMm) { if (dir === 1) crossings++; dir = -1; }
+  }
+  assert(
+    crossings >= 2 * cycles - 1,
+    `${label}: ≥ ${2 * cycles - 1} midline crossings for ${cycles} cycle(s) (got ${crossings})`,
+  );
+}
+
 // Run the currently-selected profiles and wait for the run to auto-complete + download.
 // Returns the run row locator. Assumes profiles are seeded + selected by the caller.
 async function runAndDownload(page, { completeTimeout = 60000 } = {}) {
@@ -712,9 +779,17 @@ const scenarios = [
       } finally { await browser.close(); }
     },
   },
-  {
-    id: 'WAVE-sine',
-    name: 'Waveform (math) move oscillates position as a sine (host-expanded to G1 segments)',
+  // Firmware-native G123 waveform: the host emits ONE test_waveform; the firmware
+  // streams the velocity f'(t)=2πfA·cos to its NCO output. For several distinct
+  // waveforms we assert the RECORDED position actually traces the commanded sine
+  // (least-squares sinusoid fit at the commanded frequency), not just oscillates.
+  ...[
+    { id: 'WAVE-sine', label: 'A=5mm f=1Hz ×2', amplitude: 5, frequency: 1, cycles: 2, distance: 6, maxDisp: 100 },
+    { id: 'WAVE-sine-slow-large', label: 'A=10mm f=0.5Hz ×2', amplitude: 10, frequency: 0.5, cycles: 2, distance: 12, maxDisp: 100 },
+    { id: 'WAVE-sine-fast', label: 'A=3mm f=2Hz ×3', amplitude: 3, frequency: 2, cycles: 3, distance: 5, maxDisp: 100 },
+  ].map((wf) => ({
+    id: wf.id,
+    name: `Waveform G123 — recorded position matches the commanded sine (${wf.label})`,
     async run() {
       const { browser, page, errors } = await newSilPage();
       try {
@@ -722,36 +797,20 @@ const scenarios = [
         await chooseDataFolder(page);
         await page.waitForTimeout(2500);
         await zeroLength(page);
-        // A 2-cycle sine, amplitude 5mm, centred +6mm from start (stays positive).
-        // Expands host-side into G1 segments — the position must OSCILLATE, not ramp.
         await seedProfiles(page, {
-          sample: { serial: 'Wave-Sample', maxForce: 500, maxVelocity: 50, maxDisplacement: 100, sampleWidth: 4, sampleThickness: 1.5 },
-          motion: { name: 'SineWave', moves: [
-            { moveType: 'math', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 0, distance: 6, time: 0, waveform: 'sine', amplitude: 5, frequency: 1, cycles: 2 } },
+          sample: { serial: `Wave-${wf.id}`, maxForce: 500, maxVelocity: 60, maxDisplacement: wf.maxDisp, sampleWidth: 4, sampleThickness: 1.5 },
+          motion: { name: wf.id, moves: [
+            { moveType: 'math', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 0, distance: wf.distance, time: 0, waveform: 'sine', amplitude: wf.amplitude, frequency: wf.frequency, cycles: wf.cycles } },
           ] },
         });
         await selectSeeded(page);
-        const row = await runAndDownload(page);
+        await runAndDownload(page);
         const s = await readDownloadedCsvSeries(page);
-        assert(s && s.pos.length > 50, `enough data (${s?.pos.length} rows)`);
-        const posMm = s.pos.map((p) => p / 1000);
-        const exc = Math.max(...posMm) - Math.min(...posMm);
-        assert(exc > 8 && exc < 14, `oscillation excursion ≈ 2×amplitude (10mm); got ${exc.toFixed(1)}mm`);
-        // Midline crossings with a 1mm deadband: a 2-cycle sine reverses direction
-        // repeatedly (≥3), whereas a linear/ramp move would cross at most once.
-        const mid = (Math.max(...posMm) + Math.min(...posMm)) / 2;
-        let crossings = 0;
-        let dir = 0;
-        for (const p of posMm) {
-          if (p > mid + 1) { if (dir === -1) crossings++; dir = 1; }
-          else if (p < mid - 1) { if (dir === 1) crossings++; dir = -1; }
-        }
-        assert(crossings >= 3, `position oscillated (≥3 midline crossings); got ${crossings}`);
+        assertSineMatch(s, { amplitudeMm: wf.amplitude, frequencyHz: wf.frequency, cycles: wf.cycles }, wf.id);
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
-        void row;
       } finally { await browser.close(); }
     },
-  },
+  })),
   {
     id: 'TC4-dwell',
     name: 'Dwell (G4) holds position — adds to test duration',

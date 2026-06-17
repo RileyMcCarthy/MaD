@@ -150,6 +150,20 @@ pub unsafe extern "C" fn HAL_pulseOut_stop(channel: i32) {
     }
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn HAL_pulseOut_startVelocity(channel: i32, frequency: u32) {
+    if channel >= 0 {
+        pulse_out::start_velocity(channel as usize, frequency);
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn HAL_pulseOut_setFrequency(channel: i32, frequency: u32) {
+    if channel >= 0 {
+        pulse_out::set_frequency(channel as usize, frequency);
+    }
+}
+
 // ============================================================
 // Timer
 // ============================================================

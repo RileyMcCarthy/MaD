@@ -506,4 +506,347 @@ mod tests {
         assert_eq!(fw.channel_count("HAL_GPIO_channel_E"), 2);
         assert_eq!(fw.enum_variants("HAL_GPIO_channel_E").len(), 3);
     }
+
+    // ── Path parsing additional cases ──
+
+    /// `split_path` handles dots inside bracketed indices and trailing segments.
+    #[test]
+    fn split_path_extra_cases() {
+        // A dot inside brackets does not split (no array literals use it here,
+        // but the depth guard must still hold for the bracket scan).
+        assert_eq!(split_path("channels[2].output.running"), ("channels[2]", Some("output.running")));
+        // Bare index with no trailing field.
+        assert_eq!(split_path("channels[2]"), ("channels[2]", None));
+        // Empty string is its own first segment.
+        assert_eq!(split_path(""), ("", None));
+        // Leading dot yields an empty first segment.
+        assert_eq!(split_path(".rest"), ("", Some("rest")));
+    }
+
+    /// `parse_array_access` parses indices, including zero and large values, and
+    /// returns `None` for a non-numeric index.
+    #[test]
+    fn parse_array_access_extra_cases() {
+        assert_eq!(parse_array_access("x[0]"), ("x", Some(0)));
+        assert_eq!(parse_array_access("x[12345]"), ("x", Some(12345)));
+        // Non-numeric index → name with None (the parse fails).
+        assert_eq!(parse_array_access("x[abc]"), ("x", None));
+    }
+
+    // ── byte_size() for EVERY TypeInfo variant ──
+
+    /// [`TypeInfo::byte_size`] returns the right size for every variant, with
+    /// `Array` multiplying element size by count and `Bitfield` returning the
+    /// storage unit size (not the bit width).
+    #[test]
+    fn byte_size_covers_every_variant() {
+        assert_eq!(TypeInfo::Base { name: "i".into(), byte_size: 4, signed: true }.byte_size(), 4);
+        assert_eq!(TypeInfo::Float { name: "f".into(), byte_size: 8 }.byte_size(), 8);
+        assert_eq!(TypeInfo::Enum { type_name: "E".into(), byte_size: 2 }.byte_size(), 2);
+        assert_eq!(TypeInfo::Struct { type_name: "S".into(), byte_size: 16 }.byte_size(), 16);
+        assert_eq!(TypeInfo::Union { type_name: "U".into(), byte_size: 8 }.byte_size(), 8);
+        // Bitfield returns the storage unit size, regardless of bit width.
+        assert_eq!(
+            TypeInfo::Bitfield { bit_offset: 0, bit_size: 3, storage_size: 1, signed: false }.byte_size(),
+            1
+        );
+        // Array: element size (4) × count (5) = 20.
+        let arr = TypeInfo::Array {
+            element_type: Box::new(TypeInfo::Base { name: "i".into(), byte_size: 4, signed: true }),
+            count: 5,
+        };
+        assert_eq!(arr.byte_size(), 20);
+        // Nested array-of-arrays multiplies through.
+        let nested = TypeInfo::Array {
+            element_type: Box::new(arr),
+            count: 2,
+        };
+        assert_eq!(nested.byte_size(), 40);
+        assert_eq!(TypeInfo::Pointer { byte_size: 8 }.byte_size(), 8);
+        assert_eq!(TypeInfo::Unknown { byte_size: 0 }.byte_size(), 0);
+    }
+
+    // ── resolve_field_offset / resolve_field_type via a hand-built struct map ──
+
+    /// A small firmware model with a nested struct, an array of structs, and a
+    /// union, used to drive field-path resolution without a real archive.
+    fn layout_fw() -> FirmwareInfo {
+        let mut fw = FirmwareInfo::new();
+
+        // inner_S { uint8_t a; uint8_t b; } size 2
+        fw.structs.insert(
+            "inner_S".to_string(),
+            StructInfo {
+                name: "inner_S".to_string(),
+                byte_size: 2,
+                fields: vec![
+                    FieldInfo { name: "a".into(), offset: 0, type_info: TypeInfo::Base { name: "u8".into(), byte_size: 1, signed: false } },
+                    FieldInfo { name: "b".into(), offset: 1, type_info: TypeInfo::Base { name: "u8".into(), byte_size: 1, signed: false } },
+                ],
+            },
+        );
+
+        // conv_U union: raw @0, as_f @0, both 4 bytes
+        fw.structs.insert(
+            "conv_U".to_string(),
+            StructInfo {
+                name: "conv_U".to_string(),
+                byte_size: 4,
+                fields: vec![
+                    FieldInfo { name: "raw".into(), offset: 0, type_info: TypeInfo::Base { name: "u32".into(), byte_size: 4, signed: false } },
+                    FieldInfo { name: "as_f".into(), offset: 0, type_info: TypeInfo::Float { name: "float".into(), byte_size: 4 } },
+                ],
+            },
+        );
+
+        // outer_S {
+        //   inner_S nested;                 @0
+        //   inner_S arr[3];                 @2   (element size 2)
+        //   conv_U conv;                    @8
+        //   int32_t flat;                   @12
+        // }
+        fw.structs.insert(
+            "outer_S".to_string(),
+            StructInfo {
+                name: "outer_S".to_string(),
+                byte_size: 16,
+                fields: vec![
+                    FieldInfo { name: "nested".into(), offset: 0, type_info: TypeInfo::Struct { type_name: "inner_S".into(), byte_size: 2 } },
+                    FieldInfo {
+                        name: "arr".into(),
+                        offset: 2,
+                        type_info: TypeInfo::Array {
+                            element_type: Box::new(TypeInfo::Struct { type_name: "inner_S".into(), byte_size: 2 }),
+                            count: 3,
+                        },
+                    },
+                    FieldInfo { name: "conv".into(), offset: 8, type_info: TypeInfo::Union { type_name: "conv_U".into(), byte_size: 4 } },
+                    FieldInfo { name: "flat".into(), offset: 12, type_info: TypeInfo::Base { name: "i32".into(), byte_size: 4, signed: true } },
+                ],
+            },
+        );
+        fw
+    }
+
+    /// Nested-struct, array-index, and union field paths resolve to the right
+    /// byte offsets.
+    #[test]
+    fn resolve_field_offset_paths() {
+        let fw = layout_fw();
+
+        // Flat field at the top level.
+        assert_eq!(fw.field_offset("outer_S", "flat"), 12);
+
+        // Nested struct path: nested(@0) + b(@1) = 1.
+        assert_eq!(fw.field_offset("outer_S", "nested.a"), 0);
+        assert_eq!(fw.field_offset("outer_S", "nested.b"), 1);
+
+        // Array index: arr(@2) + idx*elem_size(2) + a(@0).
+        assert_eq!(fw.field_offset("outer_S", "arr[0].a"), 2);
+        assert_eq!(fw.field_offset("outer_S", "arr[1].a"), 4);
+        assert_eq!(fw.field_offset("outer_S", "arr[2].b"), 7);
+
+        // Union: every member sits at the same offset (conv @8).
+        assert_eq!(fw.field_offset("outer_S", "conv.raw"), 8);
+        assert_eq!(fw.field_offset("outer_S", "conv.as_f"), 8);
+        assert_eq!(
+            fw.field_offset("outer_S", "conv.raw"),
+            fw.field_offset("outer_S", "conv.as_f")
+        );
+    }
+
+    /// Field-path resolution returns `None` for out-of-bounds indices, indexing
+    /// a non-array, descending into a non-struct, and missing field names.
+    #[test]
+    fn resolve_field_offset_none_paths() {
+        let fw = layout_fw();
+
+        // Out-of-bounds array index (arr has 3 elements).
+        assert_eq!(fw.try_field_offset("outer_S", "arr[3].a"), None);
+        assert_eq!(fw.try_field_offset("outer_S", "arr[99].a"), None);
+
+        // Indexing a non-array field.
+        assert_eq!(fw.try_field_offset("outer_S", "flat[0]"), None);
+
+        // Descending into a non-struct/non-union leaf (flat is an int).
+        assert_eq!(fw.try_field_offset("outer_S", "flat.x"), None);
+
+        // Missing field name.
+        assert_eq!(fw.try_field_offset("outer_S", "does_not_exist"), None);
+
+        // Missing nested field name.
+        assert_eq!(fw.try_field_offset("outer_S", "nested.zzz"), None);
+
+        // Missing struct type entirely.
+        assert_eq!(fw.try_field_offset("Nonexistent_S", "flat"), None);
+    }
+
+    /// `resolve_field_type` yields the correct leaf type for each path shape.
+    #[test]
+    fn resolve_field_type_paths() {
+        let fw = layout_fw();
+
+        match fw.field_type("outer_S", "flat") {
+            TypeInfo::Base { signed, byte_size, .. } => {
+                assert!(*signed);
+                assert_eq!(*byte_size, 4);
+            }
+            other => panic!("flat should be a signed Base, got {other:?}"),
+        }
+
+        match fw.field_type("outer_S", "nested.a") {
+            TypeInfo::Base { byte_size, signed, .. } => {
+                assert_eq!(*byte_size, 1);
+                assert!(!*signed);
+            }
+            other => panic!("nested.a should be u8 Base, got {other:?}"),
+        }
+
+        // Array element field type strips the array.
+        match fw.field_type("outer_S", "arr[1].b") {
+            TypeInfo::Base { byte_size, .. } => assert_eq!(*byte_size, 1),
+            other => panic!("arr[1].b should be a Base, got {other:?}"),
+        }
+
+        // Union member type.
+        match fw.field_type("outer_S", "conv.as_f") {
+            TypeInfo::Float { byte_size, .. } => assert_eq!(*byte_size, 4),
+            other => panic!("conv.as_f should be Float, got {other:?}"),
+        }
+
+        // try variants for missing paths.
+        assert!(fw
+            .resolve_field_type(fw.struct_info("outer_S"), "nope")
+            .is_none());
+    }
+
+    // ── Panicking wrappers panic on missing; try_* return None ──
+
+    /// `field_offset` panics when the struct type is missing.
+    #[test]
+    #[should_panic(expected = "not found")]
+    fn field_offset_panics_on_missing_type() {
+        let fw = layout_fw();
+        fw.field_offset("Nonexistent_S", "flat");
+    }
+
+    /// `field_offset` panics when the field path is missing.
+    #[test]
+    #[should_panic(expected = "not found")]
+    fn field_offset_panics_on_missing_path() {
+        let fw = layout_fw();
+        fw.field_offset("outer_S", "no_such_field");
+    }
+
+    /// `field_type` panics when the struct type is missing.
+    #[test]
+    #[should_panic(expected = "not found")]
+    fn field_type_panics_on_missing_type() {
+        let fw = layout_fw();
+        fw.field_type("Nonexistent_S", "flat");
+    }
+
+    /// `field_type` panics when the field path is missing.
+    #[test]
+    #[should_panic(expected = "not found")]
+    fn field_type_panics_on_missing_path() {
+        let fw = layout_fw();
+        fw.field_type("outer_S", "no_such_field");
+    }
+
+    /// `struct_info` panics on a missing type; `try_struct_info` returns None.
+    #[test]
+    #[should_panic(expected = "not found")]
+    fn struct_info_panics_on_missing() {
+        let fw = layout_fw();
+        fw.struct_info("Nonexistent_S");
+    }
+
+    /// `enum_value` panics on a missing variant.
+    #[test]
+    #[should_panic(expected = "not found")]
+    fn enum_value_panics_on_missing() {
+        let fw = sample_fw();
+        fw.enum_value("HAL_GPIO_NOPE");
+    }
+
+    /// `enum_variants` panics on a missing enum type.
+    #[test]
+    #[should_panic(expected = "not found")]
+    fn enum_variants_panics_on_missing() {
+        let fw = sample_fw();
+        fw.enum_variants("Nonexistent_E");
+    }
+
+    /// `channel_count` panics when the enum type is missing.
+    #[test]
+    #[should_panic(expected = "not found")]
+    fn channel_count_panics_on_missing_type() {
+        let fw = sample_fw();
+        fw.channel_count("Nonexistent_E");
+    }
+
+    /// `channel_count` panics when the enum exists but has no `_COUNT` variant.
+    #[test]
+    #[should_panic(expected = "_COUNT")]
+    fn channel_count_panics_without_count_variant() {
+        let mut fw = FirmwareInfo::new();
+        fw.enums.insert(
+            "NoCount_E".to_string(),
+            EnumInfo {
+                name: "NoCount_E".to_string(),
+                byte_size: 4,
+                variants: vec![("ONLY".to_string(), 0)],
+            },
+        );
+        fw.channel_count("NoCount_E");
+    }
+
+    // ── Default impls, aliases, error Display ──
+
+    /// `FirmwareInfo::default` and `ParseOptions::default` produce the documented
+    /// defaults.
+    #[test]
+    fn defaults_are_sane() {
+        let fw = FirmwareInfo::default();
+        assert!(fw.enums.is_empty());
+        assert!(fw.structs.is_empty());
+        assert!(fw.variables.is_empty());
+        assert_eq!(fw.count_suffix, "_COUNT");
+
+        let opts = ParseOptions::default();
+        assert_eq!(opts.pointer_size, 8);
+        assert_eq!(opts.count_suffix, "_COUNT");
+    }
+
+    /// `enum_value_usize` is an alias for `enum_channel`.
+    #[test]
+    fn enum_value_usize_alias() {
+        let fw = sample_fw();
+        assert_eq!(fw.enum_value_usize("HAL_GPIO_SERVO_DIR"), fw.enum_channel("HAL_GPIO_SERVO_DIR"));
+        assert_eq!(fw.enum_value_usize("HAL_GPIO_SERVO_DIR"), 1);
+    }
+
+    /// `try_enum_variants` returns the slice for a present type and `None` for
+    /// an absent one.
+    #[test]
+    fn try_enum_variants_present_and_absent() {
+        let fw = sample_fw();
+        assert_eq!(fw.try_enum_variants("HAL_GPIO_channel_E").map(|v| v.len()), Some(3));
+        assert!(fw.try_enum_variants("Nonexistent_E").is_none());
+    }
+
+    /// `MemInspectError` Display renders both variants with a readable message.
+    #[test]
+    fn meminspect_error_display() {
+        let io = MemInspectError::Io(std::io::Error::new(std::io::ErrorKind::NotFound, "boom"));
+        let s = io.to_string();
+        assert!(s.contains("failed to read firmware archive"), "got: {s}");
+        assert!(s.contains("boom"), "got: {s}");
+
+        let arch = MemInspectError::Archive("bad magic".to_string());
+        let s = arch.to_string();
+        assert!(s.contains("failed to parse firmware archive"), "got: {s}");
+        assert!(s.contains("bad magic"), "got: {s}");
+    }
 }

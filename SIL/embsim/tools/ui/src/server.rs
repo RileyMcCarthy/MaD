@@ -108,3 +108,102 @@ async fn ws_handler(
         }),
     }
 }
+
+// ============================================================
+// Tests
+// ============================================================
+
+#[cfg(test)]
+mod tests {
+    //! Drive the axum handlers directly (no socket bind) via `#[tokio::test]`.
+    //! These mutate the global `VIEWS` registry, so they serialize against the
+    //! lib.rs registry tests through the shared `crate::test_lock`.
+    //!
+    //! `ws_handler` / `start` are integration-level (they need a live WebSocket
+    //! peer / a bound port) and are exercised by the Playwright E2E suite, not here.
+
+    use super::{asset_handler, index_handler};
+    use crate::{clear_views, register_view, View};
+    use axum::body;
+    use axum::extract::Path;
+    use axum::http::{header, StatusCode};
+    use axum::response::IntoResponse;
+
+    fn sample_view() -> View {
+        View::new(
+            "trace",
+            "Trace Viewer",
+            "📊",
+            "<div id=\"trace-body\">hello</div>",
+            ".trace { color: red; }",
+            "console.log('trace');",
+            None,
+        )
+        .with_asset("chart.js", b"VENDOR-BYTES", "application/javascript")
+    }
+
+    async fn body_string(resp: axum::response::Response) -> String {
+        let bytes = body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        String::from_utf8(bytes.to_vec()).unwrap()
+    }
+
+    /// `index_handler` renders the shell page including the registered view's
+    /// markup, nav tab, and the embsim doctype/title.
+    #[tokio::test]
+    async fn index_renders_shell_with_registered_view() {
+        let _g = crate::test_lock::guard();
+        clear_views();
+        register_view(sample_view());
+
+        let resp = index_handler().await.into_response();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let html = body_string(resp).await;
+        assert!(html.contains("<!DOCTYPE html>"));
+        assert!(html.contains("<title>embsim</title>"));
+        assert!(html.contains("<div id=\"trace-body\">hello</div>"), "view html injected");
+        assert!(html.contains("data-view=\"trace\""), "nav tab rendered");
+
+        clear_views();
+    }
+
+    /// `asset_handler` returns the registered asset's bytes + content-type.
+    #[tokio::test]
+    async fn asset_handler_serves_registered_asset() {
+        let _g = crate::test_lock::guard();
+        clear_views();
+        register_view(sample_view());
+
+        let resp = asset_handler(Path(("trace".to_string(), "chart.js".to_string())))
+            .await
+            .into_response();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            resp.headers().get(header::CONTENT_TYPE).unwrap(),
+            "application/javascript"
+        );
+        let bytes = body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(&bytes[..], b"VENDOR-BYTES");
+
+        clear_views();
+    }
+
+    /// `asset_handler` 404s for an unknown asset name or unknown view id.
+    #[tokio::test]
+    async fn asset_handler_404_for_unknown() {
+        let _g = crate::test_lock::guard();
+        clear_views();
+        register_view(sample_view());
+
+        let unknown_name = asset_handler(Path(("trace".to_string(), "nope.js".to_string())))
+            .await
+            .into_response();
+        assert_eq!(unknown_name.status(), StatusCode::NOT_FOUND);
+
+        let unknown_view = asset_handler(Path(("ghost".to_string(), "chart.js".to_string())))
+            .await
+            .into_response();
+        assert_eq!(unknown_view.status(), StatusCode::NOT_FOUND);
+
+        clear_views();
+    }
+}

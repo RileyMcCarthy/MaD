@@ -35,6 +35,7 @@ import {
   MSG_WRITE_TEST_RUN,
   MSG_WRITE_MANUAL_MOVE,
   MSG_WRITE_TEST_MOVE,
+  MSG_WRITE_TEST_WAVEFORM,
   MSG_WRITE_SAMPLE_PROFILE_WRITE,
   MSG_WRITE_GAUGE_LENGTH,
   MSG_WRITE_GAUGE_FORCE,
@@ -55,7 +56,8 @@ import {
   sampleProfileFromShared,
   notificationToShared,
   resolveGaugeLengthMm,
-  gcodeLinesToMachineMoveBuffers,
+  gcodeLinesToProgram,
+  type ProgramOp,
   batchMoveBuffers,
   decodeBinarySampleDataToCSV,
   validateAndEncodeMove,
@@ -399,6 +401,32 @@ class DeviceSession {
 
   // ── Test run: upload binary moves, then start ──
 
+  /**
+   * Upload an ordered program: consecutive moves are batched into `test_move`
+   * frames; each waveform is sent as a `test_waveform` frame. Order is preserved
+   * so the firmware appends records to the SD program in sequence.
+   */
+  private async uploadProgram(ops: ProgramOp[]): Promise<void> {
+    let pending: Uint8Array[] = [];
+    const flushMoves = async () => {
+      for (const batch of batchMoveBuffers(pending, BATCH_MOVE_COUNT)) {
+        if (this.aborting) throw new Error('aborted by emergency stop');
+        await this.uploadWithRetry(MSG_WRITE_TEST_MOVE, batch, 3);
+      }
+      pending = [];
+    };
+    for (const op of ops) {
+      if (op.kind === 'move') {
+        pending.push(op.buf);
+      } else {
+        await flushMoves(); // preserve program order before the waveform
+        if (this.aborting) throw new Error('aborted by emergency stop');
+        await this.uploadWithRetry(MSG_WRITE_TEST_WAVEFORM, op.buf, 3);
+      }
+    }
+    await flushMoves();
+  }
+
   async runTest(params: RunTestParams): Promise<RunTestResult> {
     const { gcode, gcodeId, testDataId, gaugeLengthMm } = params;
     const openId = asciiBytes(gcodeId.slice(0, 6), 6);
@@ -415,11 +443,7 @@ class DeviceSession {
           return t !== '' && !t.startsWith(';');
         });
         const gaugeMm = resolveGaugeLengthMm(gaugeLengthMm, this.lastSample);
-        const batches = batchMoveBuffers(gcodeLinesToMachineMoveBuffers(lines, gaugeMm), BATCH_MOVE_COUNT);
-        for (const batch of batches) {
-          if (this.aborting) throw new Error('aborted by emergency stop');
-          await this.uploadWithRetry(MSG_WRITE_TEST_MOVE, batch, 3);
-        }
+        await this.uploadProgram(gcodeLinesToProgram(lines, gaugeMm));
         if (this.aborting) throw new Error('aborted by emergency stop');
 
         // 3. Start the test only after the COMPLETE program (incl. trailing G122)
@@ -456,11 +480,7 @@ class DeviceSession {
       this.aborting = false;
       try {
         const gaugeMm = resolveGaugeLengthMm(undefined, this.lastSample);
-        const batches = batchMoveBuffers(gcodeLinesToMachineMoveBuffers(lines, gaugeMm), BATCH_MOVE_COUNT);
-        for (const batch of batches) {
-          if (this.aborting) throw new Error('aborted by emergency stop');
-          await this.uploadWithRetry(MSG_WRITE_TEST_MOVE, batch, 3);
-        }
+        await this.uploadProgram(gcodeLinesToProgram(lines, gaugeMm));
         return { success: true };
       } catch (err) {
         return { success: false, error: err instanceof Error ? err.message : String(err) };

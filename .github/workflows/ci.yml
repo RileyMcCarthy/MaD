@@ -29,6 +29,7 @@ jobs:
       firmware: ${{ steps.changes.outputs.firmware }}
       hardware: ${{ steps.changes.outputs.hardware }}
       wasm_control: ${{ steps.changes.outputs.wasm_control }}
+      protocol: ${{ steps.changes.outputs.protocol }}
       is_release: ${{ startsWith(github.ref, 'refs/tags/') }}
       is_software_release: ${{ startsWith(github.ref, 'refs/tags/software-v') }}
       is_firmware_release: ${{ startsWith(github.ref, 'refs/tags/firmware-v') }}
@@ -47,6 +48,8 @@ jobs:
               - 'Hardware/**'
             wasm_control:
               - 'Software/MaDWasmControl/**'
+              - 'Protocol/**'
+            protocol:
               - 'Protocol/**'
 
   # Offline gate for the frontend-only Web Serial + WASM control app: Rust unit
@@ -87,6 +90,31 @@ jobs:
           npm run generate:proto
       - name: Verify (typecheck + lint + tests + build)
         run: npm run verify
+
+  # Self-contained ProtoEmb library suite: generator unit tests, cross-language
+  # wire conformance (C == Rust == TS), and the framing + runtime crate tests.
+  protoemb-ci:
+    needs: changes
+    if: needs.changes.outputs.protocol == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Protocol/ProtoEmb
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install TypeScript (cross-language conformance leg)
+        run: npm install -g typescript
+      - name: Install Python test deps (pyyaml, jinja2, pytest)
+        run: make setup
+      - name: Run full ProtoEmb test suite
+        run: make test
 
   build-software:
     needs: changes

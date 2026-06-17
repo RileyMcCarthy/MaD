@@ -1,13 +1,17 @@
 import { describe, it, expect } from 'vitest';
 import {
   parseGcodeToMove,
+  parseGcodeWaveform,
+  validateWaveform,
   gcodeLinesToMachineMoveBuffers,
+  gcodeLinesToProgram,
   validateMove,
   validateAndEncodeMove,
   MoveValidationError,
   MOVE_FIELD_RANGE,
+  WAVEFORM_FIELD_RANGE,
 } from './gcode';
-import { GCode, decodeMove } from '@/protocol/generated/protoemb';
+import { GCode, WaveformShape, decodeMove } from '@/protocol/generated/protoemb';
 
 describe('parseGcodeToMove', () => {
   it('parses linear/absolute/relative/dwell/home/stop', () => {
@@ -79,7 +83,47 @@ describe('gcodeLinesToMachineMoveBuffers', () => {
   });
 
   it('throws when an absolute target + gauge exceeds the encodable range', () => {
-    // 320 + gauge 15 = 335 mm > MOVE_FIELD_RANGE.x.max (~324.287) → must throw, not wrap.
-    expect(() => gcodeLinesToMachineMoveBuffers(['G90', 'G1 X320 F5'], 15)).toThrow(MoveValidationError);
+    // 4000 + gauge 15 = 4015 mm > MOVE_FIELD_RANGE.x.max (~3994.303) → must throw, not wrap.
+    expect(() => gcodeLinesToMachineMoveBuffers(['G90', 'G1 X4000 F5'], 15)).toThrow(MoveValidationError);
+  });
+});
+
+describe('waveform (G123) canned cycle', () => {
+  it('parses G123 params (A/F/C/W) and ignores the trailing comment', () => {
+    expect(parseGcodeWaveform('G123 A5 F2.5 C100 W0 ; sine A=5mm')).toEqual({
+      shape: WaveformShape.SINE,
+      amplitude: 5,
+      frequency: 2.5,
+      cycles: 100,
+    });
+    expect(parseGcodeWaveform('G123 A3 F1 C2 W1')).toEqual({
+      shape: WaveformShape.TRIANGLE,
+      amplitude: 3,
+      frequency: 1,
+      cycles: 2,
+    });
+  });
+
+  it('returns null for non-G123 lines', () => {
+    expect(parseGcodeWaveform('G1 X5 F2')).toBeNull();
+  });
+
+  it('rejects out-of-range waveform params (would bit-wrap)', () => {
+    expect(() => validateWaveform({ shape: 0, amplitude: WAVEFORM_FIELD_RANGE.amplitude.max + 1, frequency: 1, cycles: 1 })).toThrow(MoveValidationError);
+    expect(() => validateWaveform({ shape: 0, amplitude: 5, frequency: WAVEFORM_FIELD_RANGE.frequency.max + 1, cycles: 1 })).toThrow(MoveValidationError);
+    expect(() => validateWaveform({ shape: 0, amplitude: 5, frequency: 1, cycles: WAVEFORM_FIELD_RANGE.cycles.max + 1 })).toThrow(MoveValidationError);
+    expect(() => validateWaveform({ shape: 0, amplitude: 5, frequency: 1, cycles: 0 })).toThrow(MoveValidationError); // min 1
+  });
+
+  it('a G123 in a program becomes a waveform op interleaved with moves (in order)', () => {
+    // G90 is itself uploaded as a move record (sets absolute mode on firmware).
+    const ops = gcodeLinesToProgram(['G90', 'G1 X10 F5', 'G123 A5 F1 C2 W0', 'G1 X0 F5'], 0);
+    expect(ops.map((o) => o.kind)).toEqual(['move', 'move', 'waveform', 'move']);
+    const wf = ops.find((o) => o.kind === 'waveform');
+    expect(wf?.buf.length).toBe(9); // 9-byte WaveformMove
+  });
+
+  it('the move-only buffer helper rejects a waveform program', () => {
+    expect(() => gcodeLinesToMachineMoveBuffers(['G123 A5 F1 C2 W0'], 0)).toThrow(MoveValidationError);
   });
 });

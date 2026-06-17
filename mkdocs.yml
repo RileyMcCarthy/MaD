@@ -1,0 +1,135 @@
+site_name: MaD Tensile Tester
+site_description: >-
+  MaD — a low-cost, open-source uniaxial tensile testing machine. Documentation
+  for operators and developers: setup, usage guides, architecture, and reference.
+site_url: https://rileymccarthy.github.io/MaD/
+site_author: Riley McCarthy
+
+repo_url: https://github.com/RileyMcCarthy/MaD
+repo_name: RileyMcCarthy/MaD
+edit_uri: edit/main/docs/
+
+# Generated docs/screenshots live under docs/; nothing else to ignore.
+docs_dir: docs
+site_dir: site
+
+theme:
+  name: material
+  language: en
+  features:
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.indexes
+    - navigation.top
+    - navigation.footer
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+  palette:
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: teal
+      accent: teal
+      toggle:
+        icon: material/weather-night
+        name: Switch to light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: teal
+      accent: teal
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to dark mode
+  icon:
+    repo: fontawesome/brands/github
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/RileyMcCarthy/MaD
+  # The control app is deployed alongside these docs at /<repo>/app/.
+  app_url: https://rileymccarthy.github.io/MaD/app/
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - footnotes
+  - toc:
+      permalink: true
+      toc_depth: 3
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - getting-started/index.md
+      - For operators: getting-started/operators.md
+      - Requirements & browser support: getting-started/requirements.md
+  - User Guide:
+      - user-guide/index.md
+      - Connecting: user-guide/connecting.md
+      - Live monitoring: user-guide/live-monitoring.md
+      - Manual control: user-guide/manual-control.md
+      - Machine configuration: user-guide/machine-configuration.md
+      - Sample profiles: user-guide/sample-profiles.md
+      - Motion profiles: user-guide/motion-profiles.md
+      - Running a test: user-guide/running-a-test.md
+      - Test history & analysis: user-guide/test-history-and-analysis.md
+      - Settings & data: user-guide/settings-and-data.md
+      - Firmware & diagnostics: user-guide/firmware-and-diagnostics.md
+      - Troubleshooting: user-guide/troubleshooting.md
+  - How It Works:
+      - how-it-works/index.md
+      - System overview: how-it-works/overview.md
+      - The machine: how-it-works/the-machine.md
+      - Firmware: how-it-works/firmware.md
+      - Waveform motion control: how-it-works/waveform-motion-control.md
+      - Communication protocol: how-it-works/protocol.md
+      - The control app: how-it-works/control-app.md
+      - SIL emulator: how-it-works/sil-emulator.md
+      - Hardware: how-it-works/hardware.md
+  - Developer Guide:
+      - dev/index.md
+      - Repository layout: dev/repo-layout.md
+      - Building the firmware: dev/building-firmware.md
+      - Running the app: dev/running-the-app.md
+      - SIL testing: dev/sil-testing.md
+      - Protocol & code generation: dev/protocol-codegen.md
+      - Reusing embsim: dev/reusing-embsim.md
+      - CI/CD & releases: dev/ci-cd-and-releases.md
+      - Contributing: dev/contributing.md
+      - Coding guidelines:
+          - coding-guidelines/README.md
+          - C / Firmware: coding-guidelines/c-firmware.md
+          - Rust / SIL: coding-guidelines/rust.md
+          - Python / generator: coding-guidelines/python.md
+          - TypeScript: coding-guidelines/typescript.md
+          - Protocol YAML: coding-guidelines/protocol-yaml.md
+  - Reference:
+      - reference/index.md
+      - Specifications: reference/specifications.md
+      - Protocol messages: reference/protocol-messages.md
+      - G-code: reference/gcode.md
+      - File formats: reference/file-formats.md
+      - States, faults & restrictions: reference/machine-states.md
+      - Design notes: reference/design-notes.md

@@ -371,3 +371,36 @@ impl Emulator {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `check_count` is `Ok` when the request is at or below the maximum and
+    /// `Err(TooManyChannels{..})` when it exceeds it. Boundary: `max == max`.
+    #[test]
+    fn check_count_boundary_and_overflow() {
+        // Below and exactly at the ceiling are accepted.
+        assert!(check_count("gpio", 0, 64).is_ok());
+        assert!(check_count("gpio", 63, 64).is_ok());
+        assert!(check_count("gpio", 64, 64).is_ok(), "max == max is allowed");
+
+        // One over the ceiling is rejected, with the originating fields intact.
+        let err = check_count("serial", 65, 64).expect_err("65 > 64 must error");
+        match err {
+            EmulatorError::TooManyChannels { peripheral, requested, max } => {
+                assert_eq!(peripheral, "serial");
+                assert_eq!(requested, 65);
+                assert_eq!(max, 64);
+            }
+            other => panic!("expected TooManyChannels, got {other:?}"),
+        }
+    }
+
+    /// A zero maximum still rejects any positive request (degenerate ceiling).
+    #[test]
+    fn check_count_zero_max_rejects_positive() {
+        assert!(check_count("encoder", 0, 0).is_ok());
+        assert!(check_count("encoder", 1, 0).is_err());
+    }
+}

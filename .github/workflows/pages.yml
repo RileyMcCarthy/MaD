@@ -1,9 +1,21 @@
-name: Deploy web app (GitHub Pages)
+name: Deploy docs + app (GitHub Pages)
 
-# Release process: push a tag like `webapp-v1.2.3` to publish that commit to
-# GitHub Pages. `workflow_dispatch` allows a manual deploy of any branch.
+# Publishes a single Pages deployment that serves the documentation site at the
+# repo root and the control app under /app/:
+#   https://<owner>.github.io/<repo>/        → docs (MkDocs Material, from docs/)
+#   https://<owner>.github.io/<repo>/app/    → MaDWasmControl (Vite PWA)
+#
+# Triggers: push to main (docs/app/protocol changes), a manual run, or a
+# `webapp-v*` release tag.
 on:
   push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - 'mkdocs.yml'
+      - 'Software/MaDWasmControl/**'
+      - 'Protocol/**'
+      - '.github/workflows/pages.yml'
     tags:
       - 'webapp-v*'
   workflow_dispatch:
@@ -21,9 +33,6 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: Software/MaDWasmControl
     steps:
       - uses: actions/checkout@v4
 
@@ -44,27 +53,42 @@ jobs:
         with:
           python-version: '3.x'
 
-      - name: Install protocol generator deps (pyyaml, jinja2)
-        run: pip install -r ../../Protocol/ProtoEmb/core/requirements.txt
+      - name: Install Python deps (protocol generator + docs)
+        run: |
+          pip install -r Protocol/ProtoEmb/core/requirements.txt
+          pip install -r docs/requirements.txt
 
-      - name: Install dependencies
+      # ── Build the control app (served under /<repo>/app/) ──
+      - name: Install app dependencies
+        working-directory: Software/MaDWasmControl
         run: npm ci
 
       - name: Build wasm + generated protocol bindings
+        working-directory: Software/MaDWasmControl
         run: |
           npm run build:wasm
           npm run generate:proto
 
-      # Project Pages serve under /<repo>/, so the bundle must use that base.
+      # Project Pages serve under /<repo>/; the app lives under /<repo>/app/.
       # HashRouter means client routing needs no server rewrites.
-      - name: Build PWA (Pages base path)
+      - name: Build the app (Pages base path)
+        working-directory: Software/MaDWasmControl
         run: |
           npx tsc -b
-          npx vite build --base="/${{ github.event.repository.name }}/"
+          npx vite build --base="/${{ github.event.repository.name }}/app/"
+
+      # ── Build the docs (served at /<repo>/) and merge the app under /app ──
+      - name: Build the documentation site
+        run: mkdocs build --strict
+
+      - name: Assemble Pages bundle (docs at root, app at /app)
+        run: |
+          mkdir -p site/app
+          cp -r Software/MaDWasmControl/dist/. site/app/
 
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: Software/MaDWasmControl/dist
+          path: site
 
   deploy:
     needs: build

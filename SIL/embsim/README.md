@@ -127,3 +127,32 @@ cargo run -p embsim-minimal-example   # the firmware-free template
 The firmware archive location can be overridden without editing `build.rs` via
 `EMBSIM_FIRMWARE_LIB_DIR` / `EMBSIM_FIRMWARE_LIB_NAME` (see the `embsim-build`
 crate).
+
+## Testing
+
+Every framework crate carries its own test suite and is testable **without any
+firmware** — run a crate's tests with `-p`:
+
+```bash
+cargo test -p embsim-core           # virtual clock, observers, serial PTY
+cargo test -p embsim-peripherals    # gpio/serial/encoder/pulse_out/timer/lock/system/i2c/fs
+cargo test -p embsim-models         # ADS122U04, limit switch, edge detector
+cargo test -p embsim-runtime        # Emulator builder + full no-firmware run
+cargo test -p embsim-memory-inspect # DWARF parser (compiles a tiny C fixture at test time)
+cargo test -p embsim-trace          # trace recorder + firmware-variable discovery
+cargo test -p embsim-ui             # web shell render + handlers
+cargo test -p embsim-p2             # P2 HAL trampolines + constants
+cargo test -p embsim-build          # firmware-link resolution
+```
+
+Do **not** run a bare `cargo test` at the workspace root — that pulls in the
+MaD-specific `mad-emulator`, which links `libfirmware.a` and so needs the
+firmware built first. The framework crates above link no firmware.
+
+A few conventions the tests follow (see [`peripherals/src/pulse_out.rs`](peripherals/src/pulse_out.rs)
+for the canonical example): peripheral modules keep process-global state, so
+tests that touch a shared global serialize behind a crate-local `TEST_LOCK`
+(with poison recovery) and pin the virtual clock once; assertions check
+monotonicity / bounds / clamping rather than exact wall-clock timing. The
+`embsim-memory-inspect` DWARF test compiles a small C fixture with `cc`/`clang`
++ `ar` and **skips gracefully** when no C toolchain is present.

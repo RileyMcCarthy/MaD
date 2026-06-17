@@ -39,7 +39,9 @@ export default function TestRunner({ onChanged }: TestRunnerProps) {
   const [previewOpen, setPreviewOpen] = useState(false);
 
   const activeTestName = useRef<string | null>(null);
-  const prevRunning = useRef(false);
+  /** Set once we've actually seen the firmware report the test running, so the
+   *  run→idle transition (completion) isn't confused with not-yet-started. */
+  const sawRunning = useRef(false);
   const watchdog = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const clearWatchdog = () => {
@@ -67,19 +69,26 @@ export default function TestRunner({ onChanged }: TestRunnerProps) {
     if (selectedSample) setSampleProfile(selectedSample);
   }, [sampleId, selectedSample, setSampleProfile]);
 
-  // Mark the run completed once firmware finishes (testRunning true → false).
-  // Only while connected — on disconnect machineState resets, which would
-  // otherwise read as a (false) completion.
+  // Mark the run completed once firmware finishes: we must have observed the
+  // test actually running (testRunning true) and then go idle. Tracking "saw
+  // running" rather than a single true→false edge makes this robust to ordering
+  // (the run is registered before runTest() resolves, so a short test that
+  // finishes early is still caught). Only while connected — on disconnect
+  // machineState resets, which would read as a (false) completion; we keep the
+  // run 'running' and let a reconnect resolve it.
   useEffect(() => {
-    if (connected && prevRunning.current && !testRunning && activeTestName.current) {
+    if (!connected || !activeTestName.current) return;
+    if (testRunning) {
+      sawRunning.current = true;
+    } else if (sawRunning.current) {
       const name = activeTestName.current;
       activeTestName.current = null;
+      sawRunning.current = false;
       clearWatchdog();
       void dataStore
         .updateTestRun(name, { status: 'completed', completedAt: new Date().toISOString() })
         .then(onChanged);
     }
-    prevRunning.current = testRunning;
   }, [testRunning, connected, onChanged]);
 
   // Losing the UI link mid-test is a non-event: the machine runs the program
@@ -182,6 +191,13 @@ export default function TestRunner({ onChanged }: TestRunnerProps) {
       await dataStore.createTestRun(entry);
       onChanged();
 
+      // Register the run for completion tracking BEFORE the test starts, so the
+      // firmware testRunning true→false transition is never missed — a short
+      // test can finish before runTest() resolves, which previously left the run
+      // stuck 'running' (machine idle but history still "running").
+      activeTestName.current = testName;
+      sawRunning.current = false;
+
       // Motion is gated by the firmware state machine — a test won't move the
       // gantry unless motion is enabled first. (The desktop app enables it as a
       // separate dashboard step before Run Test.)
@@ -197,10 +213,12 @@ export default function TestRunner({ onChanged }: TestRunnerProps) {
       });
 
       if (!result.success) {
+        activeTestName.current = null;
+        sawRunning.current = false;
+        clearWatchdog();
         await dataStore.updateTestRun(testName, { status: 'error' });
         setMessage(`Test failed: ${result.error ?? 'unknown'}`);
       } else {
-        activeTestName.current = testName;
         setMessage(`Test ${testName} started.`);
         // Stuck-run watchdog: if firmware never reports completion well past
         // the profile's expected duration, tell the user instead of waiting
@@ -218,6 +236,15 @@ export default function TestRunner({ onChanged }: TestRunnerProps) {
       }
       onChanged();
     } catch (err) {
+      // If we'd already registered the run, don't leave it dangling (it would
+      // never complete and could spuriously complete on a later test's edge).
+      const name = activeTestName.current;
+      if (name) {
+        activeTestName.current = null;
+        sawRunning.current = false;
+        clearWatchdog();
+        void dataStore.updateTestRun(name, { status: 'error' }).then(onChanged);
+      }
       setMessage(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);

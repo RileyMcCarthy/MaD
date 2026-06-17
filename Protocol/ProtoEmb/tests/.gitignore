@@ -1,0 +1,4 @@
+# Python + pytest caches produced by running the suite.
+__pycache__/
+*.pyc
+.pytest_cache/

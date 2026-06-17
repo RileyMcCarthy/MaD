@@ -612,3 +612,703 @@ fn walk_type_fields(
 // Internal helpers
 // ============================================================
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use embsim_memory_inspect::{EnumInfo, FieldInfo, StructInfo, VariableInfo};
+    use std::sync::{Mutex as StdMutex, OnceLock};
+
+    /// The recorder STORE is a process-global singleton and several tests also
+    /// touch the global POLL_INTERVAL_US atomic. Serialize every recorder test
+    /// and recover from any panic-induced poisoning, exactly like pulse_out.rs.
+    static TEST_LOCK: StdMutex<()> = StdMutex::new(());
+
+    fn lock_or_recover() -> std::sync::MutexGuard<'static, ()> {
+        TEST_LOCK.lock().unwrap_or_else(|p| {
+            TEST_LOCK.clear_poison();
+            p.into_inner()
+        })
+    }
+
+    /// Reset the global store and ensure the virtual clock is initialized once
+    /// (record/resample read virtual_us). We never assert on the wall clock —
+    /// deterministic timestamp assertions go through record_at instead.
+    fn test_setup() {
+        static CLOCK: OnceLock<()> = OnceLock::new();
+        CLOCK.get_or_init(|| virtual_clock::init(1.0, 180_000_000));
+        clear();
+        // Restore the poll interval to its default so an earlier test that set a
+        // clamp value cannot bleed into a later one.
+        set_poll_interval_us(DEFAULT_POLL_INTERVAL_US);
+    }
+
+    // ── Signal constructors and group constants ──
+
+    #[test]
+    fn signal_new_has_empty_unit() {
+        // Signal::new leaves the unit blank — embsim is unit-agnostic.
+        let s = Signal::new("motor.position", groups::MODEL);
+        assert_eq!(s.name, "motor.position");
+        assert_eq!(s.group, groups::MODEL);
+        assert_eq!(s.unit, "");
+    }
+
+    #[test]
+    fn signal_with_unit_carries_unit() {
+        // with_unit records the supplied unit verbatim.
+        let s = Signal::with_unit("force", groups::PERIPHERAL, "N");
+        assert_eq!(s.name, "force");
+        assert_eq!(s.group, groups::PERIPHERAL);
+        assert_eq!(s.unit, "N");
+    }
+
+    #[test]
+    fn group_constants_have_expected_labels() {
+        // The conventional group labels the wiring/firmware discovery rely on.
+        assert_eq!(groups::MODEL, "Model");
+        assert_eq!(groups::PERIPHERAL, "Peripheral");
+        assert_eq!(groups::FIRMWARE, "Firmware");
+    }
+
+    // ── register / catalog / catalog_version ──
+
+    #[test]
+    fn register_adds_to_catalog_and_bumps_version() {
+        let _g = lock_or_recover();
+        test_setup();
+        let before = catalog_version();
+        register(Signal::new("a", groups::MODEL));
+        assert_eq!(catalog_version(), before + 1);
+        let cat = catalog();
+        assert_eq!(cat.len(), 1);
+        assert_eq!(cat[0].name, "a");
+    }
+
+    #[test]
+    fn reregistering_same_name_does_not_duplicate_or_reorder() {
+        let _g = lock_or_recover();
+        test_setup();
+        register(Signal::new("a", groups::MODEL));
+        register(Signal::new("b", groups::MODEL));
+        // Re-register "a" with a different group — replaces metadata, no dup,
+        // and "a" keeps its original ordering position.
+        register(Signal::with_unit("a", groups::PERIPHERAL, "mm"));
+        let cat = catalog();
+        assert_eq!(cat.len(), 2, "re-registering must not duplicate the entry");
+        assert_eq!(cat[0].name, "a", "ordering is preserved on re-register");
+        assert_eq!(cat[1].name, "b");
+        assert_eq!(cat[0].group, groups::PERIPHERAL, "metadata is updated");
+        assert_eq!(cat[0].unit, "mm");
+    }
+
+    #[test]
+    fn catalog_version_bumps_once_per_new_signal() {
+        let _g = lock_or_recover();
+        test_setup();
+        let v0 = catalog_version();
+        register(Signal::new("a", groups::MODEL));
+        let v1 = catalog_version();
+        // Re-registering an existing name still bumps the version (insert path),
+        // but the catalog length stays the same.
+        register(Signal::new("a", groups::MODEL));
+        let v2 = catalog_version();
+        assert!(v1 > v0 && v2 > v1, "version is monotonic");
+        assert_eq!(catalog().len(), 1);
+    }
+
+    #[test]
+    fn catalog_is_empty_after_clear() {
+        let _g = lock_or_recover();
+        test_setup();
+        register(Signal::new("a", groups::MODEL));
+        assert_eq!(catalog().len(), 1);
+        clear();
+        assert!(catalog().is_empty());
+        assert_eq!(catalog_version(), 0, "clear resets the version too");
+    }
+
+    // ── record vs resample_all vs record_at ──
+
+    #[test]
+    fn record_only_updates_latest_and_does_not_append() {
+        let _g = lock_or_recover();
+        test_setup();
+        register(Signal::new("a", groups::MODEL));
+        record("a", 1.0);
+        record("a", 2.0);
+        // record() never touches the ring, so there is nothing new to read.
+        let (data, _cur) = read_new_samples(&["a".to_string()], &HashMap::new());
+        assert!(data.get("a").is_none(), "record must not append to the ring");
+    }
+
+    #[test]
+    fn record_on_unknown_signal_is_a_no_op() {
+        let _g = lock_or_recover();
+        test_setup();
+        // No signal registered → record silently does nothing (no panic).
+        record("ghost", 9.0);
+        let (data, _cur) = read_new_samples(&["ghost".to_string()], &HashMap::new());
+        assert!(data.is_empty());
+    }
+
+    #[test]
+    fn resample_snapshots_latest_value_into_ring() {
+        let _g = lock_or_recover();
+        test_setup();
+        register(Signal::new("a", groups::MODEL));
+        record("a", 42.0);
+        resample_all();
+        let (data, cursors) = read_new_samples(&["a".to_string()], &HashMap::new());
+        let samples = data.get("a").expect("resample writes a sample");
+        assert_eq!(samples.len(), 1);
+        assert_eq!(samples[0].value, 42.0);
+        assert_eq!(cursors.get("a"), Some(&1));
+    }
+
+    #[test]
+    fn resample_skips_signals_without_latest_value() {
+        let _g = lock_or_recover();
+        test_setup();
+        register(Signal::new("touched", groups::MODEL));
+        register(Signal::new("untouched", groups::MODEL));
+        record("touched", 7.0);
+        resample_all();
+        let subs = vec!["touched".to_string(), "untouched".to_string()];
+        let (data, _cur) = read_new_samples(&subs, &HashMap::new());
+        assert!(data.contains_key("touched"), "touched signal got a sample");
+        assert!(
+            !data.contains_key("untouched"),
+            "a signal that never got record() must be skipped (no leading zero)"
+        );
+    }
+
+    #[test]
+    fn record_at_writes_directly_and_bumps_totals() {
+        let _g = lock_or_recover();
+        test_setup();
+        register(Signal::new("a", groups::MODEL));
+        record_at("a", 100, 1.5);
+        record_at("a", 200, 2.5);
+        let (data, cursors) = read_new_samples(&["a".to_string()], &HashMap::new());
+        let samples = data.get("a").expect("record_at writes directly to the ring");
+        assert_eq!(samples.len(), 2);
+        assert_eq!(samples[0].time_us, 100);
+        assert_eq!(samples[0].value, 1.5);
+        assert_eq!(samples[1].time_us, 200);
+        assert_eq!(samples[1].value, 2.5);
+        assert_eq!(cursors.get("a"), Some(&2), "total_written advanced by 2");
+    }
+
+    #[test]
+    fn record_at_on_unknown_signal_is_a_no_op() {
+        let _g = lock_or_recover();
+        test_setup();
+        // Unknown signal name: nothing is written, no panic.
+        record_at("ghost", 10, 1.0);
+        let (data, _c) = read_new_samples(&["ghost".to_string()], &HashMap::new());
+        assert!(data.is_empty());
+    }
+
+    // ── read_new_samples cursor tracking + eviction math ──
+
+    #[test]
+    fn read_new_samples_cursor_advances_then_returns_nothing_new() {
+        let _g = lock_or_recover();
+        test_setup();
+        register(Signal::new("a", groups::MODEL));
+        record_at("a", 1, 10.0);
+        record_at("a", 2, 20.0);
+        // First read from cursor 0 returns everything and advances the cursor.
+        let (data1, cursors1) = read_new_samples(&["a".to_string()], &HashMap::new());
+        assert_eq!(data1.get("a").unwrap().len(), 2);
+        assert_eq!(cursors1.get("a"), Some(&2));
+        // Second read with the returned cursors yields nothing new.
+        let (data2, cursors2) = read_new_samples(&["a".to_string()], &cursors1);
+        assert!(data2.get("a").is_none(), "no new samples since last cursor");
+        assert_eq!(cursors2.get("a"), Some(&2), "cursor stays put");
+    }
+
+    #[test]
+    fn read_new_samples_returns_only_the_new_ones_after_more_writes() {
+        let _g = lock_or_recover();
+        test_setup();
+        register(Signal::new("a", groups::MODEL));
+        record_at("a", 1, 10.0);
+        let (_d, cursors1) = read_new_samples(&["a".to_string()], &HashMap::new());
+        // Write two more, then read — only the two new samples come back.
+        record_at("a", 2, 20.0);
+        record_at("a", 3, 30.0);
+        let (data2, cursors2) = read_new_samples(&["a".to_string()], &cursors1);
+        let new = data2.get("a").unwrap();
+        assert_eq!(new.len(), 2, "only the samples after the cursor");
+        assert_eq!(new[0].value, 20.0);
+        assert_eq!(new[1].value, 30.0);
+        assert_eq!(cursors2.get("a"), Some(&3));
+    }
+
+    #[test]
+    fn read_new_samples_never_returns_more_than_were_written() {
+        let _g = lock_or_recover();
+        test_setup();
+        register(Signal::new("a", groups::MODEL));
+        // send_count == min(new, available). With a normal (un-evicted) buffer
+        // the count exactly equals what was written, never more, and the cursor
+        // is monotonic across repeated reads.
+        let mut cursors = HashMap::new();
+        let mut total = 0usize;
+        for i in 0..50u64 {
+            record_at("a", i, i as f64);
+            total += 1;
+            let (data, new_cursors) = read_new_samples(&["a".to_string()], &cursors);
+            let got = data.get("a").map(|v| v.len()).unwrap_or(0);
+            assert_eq!(got, 1, "each loop adds exactly one new sample");
+            let cur = *new_cursors.get("a").unwrap();
+            assert_eq!(cur, total, "cursor tracks total_written");
+            assert!(cur >= *cursors.get("a").unwrap_or(&0), "cursor is monotonic");
+            cursors = new_cursors;
+        }
+    }
+
+    #[test]
+    fn read_new_samples_ignores_unsubscribed_and_unknown() {
+        let _g = lock_or_recover();
+        test_setup();
+        register(Signal::new("a", groups::MODEL));
+        record_at("a", 1, 1.0);
+        // Subscribing to an unknown name yields no entry and no cursor.
+        let (data, cursors) = read_new_samples(&["nope".to_string()], &HashMap::new());
+        assert!(data.is_empty());
+        assert!(cursors.get("nope").is_none());
+    }
+
+    // ── poll interval clamp ──
+
+    #[test]
+    fn poll_interval_clamps_below_min() {
+        let _g = lock_or_recover();
+        test_setup();
+        set_poll_interval_us(0);
+        assert_eq!(poll_interval_us(), 1_000, "below 1ms clamps up to 1ms");
+        set_poll_interval_us(500);
+        assert_eq!(poll_interval_us(), 1_000);
+    }
+
+    #[test]
+    fn poll_interval_clamps_above_max() {
+        let _g = lock_or_recover();
+        test_setup();
+        set_poll_interval_us(5_000_000);
+        assert_eq!(poll_interval_us(), 1_000_000, "above 1s clamps down to 1s");
+    }
+
+    #[test]
+    fn poll_interval_passes_through_in_range() {
+        let _g = lock_or_recover();
+        test_setup();
+        set_poll_interval_us(25_000);
+        assert_eq!(poll_interval_us(), 25_000);
+        // Exact boundaries pass through unchanged.
+        set_poll_interval_us(1_000);
+        assert_eq!(poll_interval_us(), 1_000);
+        set_poll_interval_us(1_000_000);
+        assert_eq!(poll_interval_us(), 1_000_000);
+    }
+
+    // ── register_c_variable / c_watches ──
+
+    #[test]
+    fn register_c_variable_builds_dotted_signal_name() {
+        let _g = lock_or_recover();
+        test_setup();
+        register_c_variable("app_control_data", "state", groups::FIRMWARE);
+        let watches = c_watches();
+        assert_eq!(watches.len(), 1);
+        assert_eq!(watches[0].var_name, "app_control_data");
+        assert_eq!(watches[0].field_path, "state");
+        assert_eq!(watches[0].signal_name, "app_control_data.state");
+        // The watch's signal is also registered as an active signal.
+        assert!(catalog().iter().any(|s| s.name == "app_control_data.state"));
+    }
+
+    #[test]
+    fn register_c_variable_empty_field_uses_bare_var_name() {
+        let _g = lock_or_recover();
+        test_setup();
+        register_c_variable("g_counter", "", groups::FIRMWARE);
+        let watches = c_watches();
+        assert_eq!(watches.len(), 1);
+        assert_eq!(watches[0].signal_name, "g_counter", "empty field → bare name");
+        assert_eq!(watches[0].field_path, "");
+    }
+
+    #[test]
+    fn register_c_variable_is_idempotent() {
+        let _g = lock_or_recover();
+        test_setup();
+        register_c_variable("v", "f", groups::FIRMWARE);
+        register_c_variable("v", "f", groups::FIRMWARE);
+        // Re-registering an already-active signal adds no second watch.
+        assert_eq!(c_watches().len(), 1, "duplicate watch is suppressed");
+    }
+
+    // ── deactivate_signal ──
+
+    #[test]
+    fn deactivate_signal_removes_everything_and_returns_true() {
+        let _g = lock_or_recover();
+        test_setup();
+        register_c_variable("v", "f", groups::FIRMWARE);
+        record_at("v.f", 1, 1.0);
+        let before = catalog_version();
+        assert!(deactivate_signal("v.f"), "active signal returns true");
+        assert!(!catalog().iter().any(|s| s.name == "v.f"), "removed from catalog");
+        assert!(c_watches().is_empty(), "watch removed");
+        assert!(catalog_version() > before, "deactivation bumps version");
+        // Data is gone too: re-subscribing returns nothing.
+        let (data, _c) = read_new_samples(&["v.f".to_string()], &HashMap::new());
+        assert!(data.is_empty());
+    }
+
+    #[test]
+    fn deactivate_absent_signal_returns_false() {
+        let _g = lock_or_recover();
+        test_setup();
+        let before = catalog_version();
+        assert!(!deactivate_signal("nope"), "absent signal returns false");
+        assert_eq!(catalog_version(), before, "no version bump for a no-op");
+    }
+
+    // ── firmware discovery: set_firmware_info / walk_type_fields / is_char_type ──
+
+    /// Build a FirmwareInfo by hand whose single public variable is a struct
+    /// covering every leaf kind walk_type_fields must classify:
+    ///   - Base(int)       → INCLUDED, no enum_type
+    ///   - Enum            → INCLUDED, carries enum_type
+    ///   - Float           → INCLUDED
+    ///   - Bitfield        → INCLUDED
+    ///   - char            → EXCLUDED
+    ///   - char[8] array   → EXCLUDED (is_char_type element)
+    ///   - int[4] array    → INCLUDED (numeric, count <= 16)
+    /// Plus a leading-underscore variable that must be skipped entirely.
+    fn sample_fw() -> FirmwareInfo {
+        let mut fw = FirmwareInfo::new();
+
+        // Enum type referenced by the `mode` field.
+        fw.enums.insert(
+            "demo_mode_E".to_string(),
+            EnumInfo {
+                name: "demo_mode_E".to_string(),
+                byte_size: 4,
+                variants: vec![
+                    ("DEMO_OFF".to_string(), 0),
+                    ("DEMO_ON".to_string(), 1),
+                ],
+            },
+        );
+
+        // The struct describing the public variable's type.
+        fw.structs.insert(
+            "demo_data_S".to_string(),
+            StructInfo {
+                name: "demo_data_S".to_string(),
+                byte_size: 64,
+                fields: vec![
+                    FieldInfo {
+                        name: "count".to_string(),
+                        offset: 0,
+                        type_info: TypeInfo::Base {
+                            name: "int".to_string(),
+                            byte_size: 4,
+                            signed: true,
+                        },
+                    },
+                    FieldInfo {
+                        name: "mode".to_string(),
+                        offset: 4,
+                        type_info: TypeInfo::Enum {
+                            type_name: "demo_mode_E".to_string(),
+                            byte_size: 4,
+                        },
+                    },
+                    FieldInfo {
+                        name: "ratio".to_string(),
+                        offset: 8,
+                        type_info: TypeInfo::Float {
+                            name: "float".to_string(),
+                            byte_size: 4,
+                        },
+                    },
+                    FieldInfo {
+                        name: "flag".to_string(),
+                        offset: 12,
+                        type_info: TypeInfo::Bitfield {
+                            bit_offset: 0,
+                            bit_size: 1,
+                            storage_size: 4,
+                            signed: false,
+                        },
+                    },
+                    FieldInfo {
+                        name: "letter".to_string(),
+                        offset: 16,
+                        type_info: TypeInfo::Base {
+                            name: "char".to_string(),
+                            byte_size: 1,
+                            signed: true,
+                        },
+                    },
+                    FieldInfo {
+                        name: "label".to_string(),
+                        offset: 17,
+                        type_info: TypeInfo::Array {
+                            element_type: Box::new(TypeInfo::Base {
+                                name: "char".to_string(),
+                                byte_size: 1,
+                                signed: true,
+                            }),
+                            count: 8,
+                        },
+                    },
+                    FieldInfo {
+                        name: "samples".to_string(),
+                        offset: 28,
+                        type_info: TypeInfo::Array {
+                            element_type: Box::new(TypeInfo::Base {
+                                name: "int".to_string(),
+                                byte_size: 4,
+                                signed: true,
+                            }),
+                            count: 4,
+                        },
+                    },
+                ],
+            },
+        );
+
+        // Public variable of the struct type.
+        fw.variables.insert(
+            "demo_data".to_string(),
+            VariableInfo {
+                name: "demo_data".to_string(),
+                type_info: TypeInfo::Struct {
+                    type_name: "demo_data_S".to_string(),
+                    byte_size: 64,
+                },
+                source_file: None,
+            },
+        );
+
+        // Leading-underscore variable that must be skipped.
+        fw.variables.insert(
+            "_internal".to_string(),
+            VariableInfo {
+                name: "_internal".to_string(),
+                type_info: TypeInfo::Base {
+                    name: "int".to_string(),
+                    byte_size: 4,
+                    signed: true,
+                },
+                source_file: None,
+            },
+        );
+
+        fw
+    }
+
+    #[test]
+    fn is_char_type_matches_only_one_byte_char() {
+        // Private helper: only a 1-byte type whose name contains "char".
+        assert!(is_char_type(&TypeInfo::Base {
+            name: "char".to_string(),
+            byte_size: 1,
+            signed: true,
+        }));
+        assert!(is_char_type(&TypeInfo::Base {
+            name: "unsigned char".to_string(),
+            byte_size: 1,
+            signed: false,
+        }));
+        // A 4-byte int is not a char even though logic is similar.
+        assert!(!is_char_type(&TypeInfo::Base {
+            name: "int".to_string(),
+            byte_size: 4,
+            signed: true,
+        }));
+        // A 2-byte "char16" would not match the 1-byte requirement.
+        assert!(!is_char_type(&TypeInfo::Base {
+            name: "char16_t".to_string(),
+            byte_size: 2,
+            signed: false,
+        }));
+    }
+
+    #[test]
+    fn set_firmware_info_builds_sorted_catalog_with_expected_leaves() {
+        let _g = lock_or_recover();
+        test_setup();
+        set_firmware_info(&sample_fw());
+        let cat = firmware_catalog();
+        let names: Vec<&str> = cat.iter().map(|v| v.signal_name.as_str()).collect();
+
+        // Included scalar/enum/float/bitfield leaves.
+        assert!(names.contains(&"demo_data.count"), "int field included");
+        assert!(names.contains(&"demo_data.mode"), "enum field included");
+        assert!(names.contains(&"demo_data.ratio"), "float field included");
+        assert!(names.contains(&"demo_data.flag"), "bitfield included");
+        // Numeric array (count <= 16) expands to one leaf per element.
+        assert!(names.contains(&"demo_data.samples[0]"));
+        assert!(names.contains(&"demo_data.samples[3]"));
+
+        // Excluded: char scalar and char-array leaves.
+        assert!(!names.contains(&"demo_data.letter"), "char scalar excluded");
+        assert!(
+            !names.iter().any(|n| n.starts_with("demo_data.label")),
+            "char array excluded entirely"
+        );
+        // Excluded: leading-underscore variable.
+        assert!(
+            !names.iter().any(|n| n.starts_with("_internal")),
+            "underscore-prefixed variable skipped"
+        );
+
+        // Catalog is sorted by signal_name.
+        let mut sorted = names.clone();
+        sorted.sort();
+        assert_eq!(names, sorted, "firmware catalog is sorted by signal_name");
+    }
+
+    #[test]
+    fn set_firmware_info_carries_enum_type_on_enum_leaves() {
+        let _g = lock_or_recover();
+        test_setup();
+        set_firmware_info(&sample_fw());
+        let cat = firmware_catalog();
+        let mode = cat
+            .iter()
+            .find(|v| v.signal_name == "demo_data.mode")
+            .expect("mode leaf exists");
+        assert_eq!(mode.enum_type.as_deref(), Some("demo_mode_E"));
+        // A non-enum leaf carries no enum_type.
+        let count = cat
+            .iter()
+            .find(|v| v.signal_name == "demo_data.count")
+            .unwrap();
+        assert!(count.enum_type.is_none());
+    }
+
+    #[test]
+    fn enum_definitions_returns_variants_of_referenced_types() {
+        let _g = lock_or_recover();
+        test_setup();
+        set_firmware_info(&sample_fw());
+        let defs = enum_definitions();
+        let variants = defs.get("demo_mode_E").expect("referenced enum is collected");
+        assert_eq!(
+            variants,
+            &vec![("DEMO_OFF".to_string(), 0), ("DEMO_ON".to_string(), 1)]
+        );
+    }
+
+    #[test]
+    fn set_firmware_info_field_path_is_relative_to_var() {
+        let _g = lock_or_recover();
+        test_setup();
+        set_firmware_info(&sample_fw());
+        let cat = firmware_catalog();
+        let count = cat.iter().find(|v| v.signal_name == "demo_data.count").unwrap();
+        assert_eq!(count.var_name, "demo_data");
+        assert_eq!(count.field_path, "count", "field_path is struct-relative");
+    }
+
+    // ── activate_firmware_signal ──
+
+    #[test]
+    fn activate_firmware_signal_moves_catalog_entry_into_active() {
+        let _g = lock_or_recover();
+        test_setup();
+        set_firmware_info(&sample_fw());
+        assert!(catalog().is_empty(), "discovery does not auto-activate");
+        assert!(activate_firmware_signal("demo_data.count"), "known leaf activates");
+        // Now it's an active signal with a C watch.
+        assert!(catalog().iter().any(|s| s.name == "demo_data.count"));
+        assert!(c_watches().iter().any(|w| w.signal_name == "demo_data.count"));
+    }
+
+    #[test]
+    fn activate_firmware_signal_unknown_returns_false() {
+        let _g = lock_or_recover();
+        test_setup();
+        set_firmware_info(&sample_fw());
+        assert!(!activate_firmware_signal("demo_data.nope"), "unknown leaf → false");
+        assert!(c_watches().is_empty());
+    }
+
+    #[test]
+    fn activate_firmware_signal_idempotent_when_already_active() {
+        let _g = lock_or_recover();
+        test_setup();
+        set_firmware_info(&sample_fw());
+        assert!(activate_firmware_signal("demo_data.mode"));
+        // Second activation short-circuits on the already-active check (true),
+        // and does not add a duplicate watch.
+        assert!(activate_firmware_signal("demo_data.mode"));
+        let n = c_watches()
+            .iter()
+            .filter(|w| w.signal_name == "demo_data.mode")
+            .count();
+        assert_eq!(n, 1, "no duplicate watch on re-activation");
+    }
+
+    // ── clear() resets everything ──
+
+    #[test]
+    fn clear_resets_signals_data_watches_and_firmware_catalog() {
+        let _g = lock_or_recover();
+        test_setup();
+        register(Signal::new("a", groups::MODEL));
+        record_at("a", 1, 1.0);
+        register_c_variable("v", "f", groups::FIRMWARE);
+        set_firmware_info(&sample_fw());
+        // Sanity: things are populated.
+        assert!(!catalog().is_empty());
+        assert!(!c_watches().is_empty());
+        assert!(!firmware_catalog().is_empty());
+        assert!(!enum_definitions().is_empty());
+
+        clear();
+
+        assert!(catalog().is_empty(), "signals cleared");
+        assert!(c_watches().is_empty(), "watches cleared");
+        assert!(firmware_catalog().is_empty(), "firmware catalog cleared");
+        assert!(enum_definitions().is_empty(), "enum defs cleared");
+        assert_eq!(catalog_version(), 0, "version reset");
+        let (data, _c) = read_new_samples(&["a".to_string()], &HashMap::new());
+        assert!(data.is_empty(), "sample data cleared");
+    }
+
+    // ── SignalData / TraceStore defaults (pure construction) ──
+
+    #[test]
+    fn signal_data_new_starts_empty() {
+        // A fresh SignalData has no samples, zero writes, and no latest value.
+        let sd = SignalData::new();
+        assert!(sd.samples.is_empty());
+        assert_eq!(sd.total_written, 0);
+        assert!(sd.latest_value.is_none());
+    }
+
+    #[test]
+    fn trace_store_new_has_default_capacity_and_empty_collections() {
+        // Defaults the public API depends on (100k ring, empty everything).
+        let ts = TraceStore::new();
+        assert_eq!(ts.max_samples, 100_000);
+        assert_eq!(ts.catalog_version, 0);
+        assert!(ts.signals.is_empty());
+        assert!(ts.signal_order.is_empty());
+        assert!(ts.data.is_empty());
+        assert!(ts.c_watches.is_empty());
+        assert!(ts.firmware_catalog.is_empty());
+        assert!(ts.enum_definitions.is_empty());
+    }
+}
+

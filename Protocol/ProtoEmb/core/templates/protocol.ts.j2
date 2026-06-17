@@ -61,7 +61,7 @@ export const NODE = {
 /** {{ enum.get('description', '') }} */
 export enum {{ name }} {
     {% for v in enum._variants %}
-    {{ v.name }} = {{ v.index }},
+    {{ v.name }} = {{ v.value if enum._is_remap else v.index }},
     {% endfor %}
 }
 {% if enum._is_remap %}

@@ -13,3 +13,8 @@ embsim-core = { path = "../../core" }
 embsim-peripherals = { path = "../../peripherals" }
 embsim-runtime = { path = "../../runtime" }
 tracing.workspace = true
+
+[dev-dependencies]
+# Test-only: raw socketpair/fcntl/read/write to drive the serial trampolines
+# against a real file descriptor (set non-blocking so reads never hang).
+libc.workspace = true

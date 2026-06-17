@@ -182,3 +182,175 @@ function switchView(viewId) {{
         view_scripts = view_scripts,
     )
 }
+
+// ============================================================
+// Tests
+// ============================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Build a view with distinctive id/icon/name/css/js so generated markup
+    /// can be asserted unambiguously. `render` only reads the `View` argument,
+    /// so these construct local values and never touch the global registry.
+    fn view(id: &str, name: &str, icon: &str) -> View {
+        View::new(
+            id,
+            name,
+            icon,
+            &format!("<p id=\"body-{id}\">hi</p>"),
+            &format!(".cls-{id} {{ color: red; }}"),
+            &format!("doStuff('{id}');"),
+            None,
+        )
+    }
+
+    /// The rendered page is a complete HTML document with the embsim title.
+    #[test]
+    fn render_is_a_full_html_document() {
+        let html = render(&[view("trace", "Trace Viewer", "📊")]);
+        assert!(html.contains("<!DOCTYPE html>"), "has doctype");
+        assert!(html.contains("<title>embsim</title>"), "has embsim title");
+        assert!(html.trim_end().ends_with("</html>"), "closes html");
+    }
+
+    /// Each view contributes one nav button carrying its id (data-view +
+    /// switchView call), icon, and display name.
+    #[test]
+    fn render_emits_a_nav_button_per_view() {
+        let views = [
+            view("trace", "Trace Viewer", "📊"),
+            view("viz", "Visualizer", "🤖"),
+        ];
+        let html = render(&views);
+        for v in &views {
+            assert!(
+                html.contains(&format!(r#"data-view="{}""#, v.id)),
+                "nav button references id via data-view: {}",
+                v.id
+            );
+            assert!(
+                html.contains(&format!("switchView('{}')", v.id)),
+                "nav button wires switchView for: {}",
+                v.id
+            );
+            assert!(
+                html.contains(&format!("{} {}", v.icon, v.name)),
+                "nav button shows icon and name for: {}",
+                v.id
+            );
+        }
+        // Exactly one nav button per view. `<button class="shell-tab` is the
+        // button markup — distinct from the `.shell-tab` CSS rules and JS
+        // selectors, which appear regardless of view count.
+        assert_eq!(
+            html.matches(r#"<button class="shell-tab"#).count(),
+            views.len(),
+            "one nav button per view",
+        );
+    }
+
+    /// The first view's tab is marked active (`shell-tab active`) and its panel
+    /// is shown with `display:flex`; later panels are hidden with `display:none`.
+    #[test]
+    fn render_activates_only_the_first_view() {
+        let html = render(&[view("first", "First", "1️⃣"), view("second", "Second", "2️⃣")]);
+
+        // First tab is active, with its panel flexed.
+        assert!(
+            html.contains(r#"class="shell-tab active" data-view="first""#),
+            "first tab carries the active class"
+        );
+        assert!(
+            html.contains(r#"id="view-first" style="display:flex"#),
+            "first panel uses display:flex"
+        );
+
+        // Second tab is not active, and its panel is hidden.
+        assert!(
+            html.contains(r#"class="shell-tab" data-view="second""#),
+            "second tab is not active"
+        );
+        assert!(
+            html.contains(r#"id="view-second" style="display:none"#),
+            "second panel uses display:none"
+        );
+    }
+
+    /// Each non-empty view CSS is emitted under its own `/* === View: <id> === */`
+    /// marker.
+    #[test]
+    fn render_scopes_css_under_per_view_marker() {
+        let views = [view("trace", "Trace", "📊"), view("viz", "Viz", "🤖")];
+        let html = render(&views);
+        for v in &views {
+            assert!(
+                html.contains(&format!("/* === View: {} === */", v.id)),
+                "css marker present for: {}",
+                v.id
+            );
+            assert!(
+                html.contains(&format!(".cls-{} {{ color: red; }}", v.id)),
+                "view css body present for: {}",
+                v.id
+            );
+        }
+    }
+
+    /// Each non-empty view JS is wrapped in an IIFE that sets `VIEW_ID` and
+    /// `VIEW_WS_PATH='/ws/<id>'` and embeds the view's script body.
+    #[test]
+    fn render_wraps_js_in_iife_with_view_constants() {
+        let html = render(&[view("trace", "Trace", "📊")]);
+        assert!(html.contains("(function() {"), "JS wrapped in an IIFE open");
+        assert!(html.contains("})();"), "IIFE is invoked");
+        assert!(
+            html.contains("const VIEW_ID = 'trace';"),
+            "VIEW_ID constant set to the view id"
+        );
+        assert!(
+            html.contains("const VIEW_WS_PATH = '/ws/trace';"),
+            "VIEW_WS_PATH points at the per-view ws path"
+        );
+        assert!(html.contains("doStuff('trace');"), "view JS body embedded");
+        assert!(
+            html.contains("// === View: trace ==="),
+            "JS marker comment present"
+        );
+    }
+
+    /// A view with empty CSS/JS contributes no style block marker and no script
+    /// wrapper for that view (the empty-string guards skip it).
+    #[test]
+    fn render_skips_empty_css_and_js() {
+        let v = View::new("bare", "Bare", "⬜", "<p>body</p>", "", "", None);
+        let html = render(&[v]);
+        // Still a valid document with the nav button and panel.
+        assert!(html.contains("<!DOCTYPE html>"));
+        assert!(html.contains(r#"data-view="bare""#));
+        // But no per-view CSS marker or JS IIFE for the empty bodies.
+        assert!(
+            !html.contains("/* === View: bare === */"),
+            "no css marker for empty css"
+        );
+        assert!(
+            !html.contains("const VIEW_ID = 'bare';"),
+            "no JS wrapper for empty js"
+        );
+    }
+
+    /// An empty view slice still renders a valid shell — full document, the
+    /// embsim title bar — with no panels or tabs.
+    #[test]
+    fn render_empty_slice_is_a_valid_empty_shell() {
+        let html = render(&[]);
+        assert!(html.contains("<!DOCTYPE html>"), "valid document");
+        assert!(html.contains("<title>embsim</title>"));
+        assert!(html.contains(r#"⚡ embsim"#), "shell chrome present");
+        // No per-view markup. (Don't test `data-view=` — the static JS selector
+        // `.shell-tab[data-view="..."]` contains that substring regardless.)
+        assert!(!html.contains(r#"<button class="shell-tab"#), "no nav buttons");
+        assert!(!html.contains("class=\"shell-view\""), "no view panels");
+    }
+}

@@ -38,6 +38,58 @@ const newSet = (name: string): MotionSet => ({
   moves: [newMove()],
 });
 
+/**
+ * Numeric input that allows negative / partial entry. A plain controlled
+ * `<input type="number" value={Number(...)}>` blocks the minus sign: while you
+ * type `-`, the browser reports an empty value, `Number('')` is 0, and the
+ * controlled value snaps back to 0. We keep a string draft so intermediate
+ * states (`-`, ``, `1.`) survive, and commit the parsed number as soon as the
+ * text is a valid number.
+ */
+function NumberField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  onChange: (n: number) => void;
+}) {
+  const [draft, setDraft] = useState(String(value));
+  // Resync the draft when the external value changes (e.g. loading a set) and
+  // doesn't already represent the same number the user is editing.
+  useEffect(() => {
+    if (Number(draft) !== value) setDraft(Number.isFinite(value) ? String(value) : '');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
+  const incomplete = (s: string) => s === '' || s === '-' || s === '.' || s === '-.';
+  return (
+    <label className="field">
+      {label}
+      <input
+        type="text"
+        inputMode="decimal"
+        value={draft}
+        onChange={(e) => {
+          const raw = e.target.value;
+          if (!/^-?\d*\.?\d*$/.test(raw)) return; // reject non-numeric keystrokes
+          setDraft(raw);
+          if (!incomplete(raw)) {
+            const n = Number(raw);
+            if (Number.isFinite(n)) onChange(n);
+          }
+        }}
+        onBlur={() => {
+          if (incomplete(draft)) {
+            onChange(0);
+            setDraft('0');
+          }
+        }}
+      />
+    </label>
+  );
+}
+
 export default function Create() {
   const [motionProfile, setMotionProfile] = useState<MotionProfile>({
     name: '',
@@ -177,21 +229,22 @@ export default function Create() {
   const moveParamInputs = (m: Move, si: number, mi: number) => {
     const p = m.moveParameters;
     const field = (label: string, key: Exclude<keyof Move['moveParameters'], 'waveform'>) => (
-      <label className="field" key={key}>
-        {label}
-        <input
-          type="number"
-          value={p[key] ?? 0}
-          onChange={(e) => updateMoveParam(si, mi, key, Number(e.target.value))}
-        />
-      </label>
+      <NumberField
+        key={key}
+        label={label}
+        value={p[key] ?? 0}
+        onChange={(n) => updateMoveParam(si, mi, key, n)}
+      />
     );
     if (m.moveType === 'dwell') return field('Time (ms)', 'time');
     if (m.moveType === 'math') {
-      const fn: WaveformFn = p.waveform === 'triangle' ? 'triangle' : 'sine';
+      // Firmware-native waveform (G123) is SINE-only in v1; the WaveformShape
+      // enum reserves other shapes for a future firmware update. Pin to sine so
+      // the previewed/commanded motion can never silently differ from the shape.
+      const fn: WaveformFn = 'sine';
       const peakV = waveformPeakVelocity(fn, p.amplitude ?? 0, p.frequency ?? 0);
       const durationS = (p.frequency ?? 0) > 0 ? (p.cycles ?? 0) / (p.frequency ?? 1) : 0;
-      const tooFast = peakV > 100; // schema Move.f max (mm/s)
+      const tooFast = peakV > 3000; // schema Move.f max (mm/s)
       return (
         <>
           {m.absoluteOrRelative === 'absolute'
@@ -201,7 +254,6 @@ export default function Create() {
             Waveform
             <select value={fn} onChange={(e) => setWaveformFn(si, mi, e.target.value as WaveformFn)}>
               <option value="sine">Sine</option>
-              <option value="triangle">Triangle</option>
             </select>
           </label>
           {field('Amplitude (mm)', 'amplitude')}
@@ -209,7 +261,7 @@ export default function Create() {
           {field('Cycles', 'cycles')}
           <span className={`muted${tooFast ? ' fault' : ''}`} style={{ alignSelf: 'flex-end' }}>
             ~{peakV.toFixed(1)} mm/s peak · {durationS.toFixed(1)} s
-            {tooFast ? ' · exceeds 100 mm/s limit' : ''}
+            {tooFast ? ' · exceeds 3000 mm/s limit' : ''}
           </span>
         </>
       );

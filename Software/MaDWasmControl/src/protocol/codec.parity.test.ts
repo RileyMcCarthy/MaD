@@ -26,7 +26,8 @@ const GOLD = {
     0, 2, 0, 0, 0, 3, 0, 0, 0,
   ],
   profile: [26, 162, 7, 0, 10, 0, 0, 0, 100, 0, 0, 0, 12, 0, 0, 0, 3, 0, 0, 0],
-  move: [65, 225, 51, 220, 5, 100, 0],
+  move: [65, 225, 51, 224, 46, 0, 100, 0],
+  waveform: [16, 39, 0, 232, 3, 24, 3, 0, 0],
 };
 
 describe('codec golden byte vectors (frozen — guards the wire format)', () => {
@@ -58,12 +59,17 @@ describe('codec golden byte vectors (frozen — guards the wire format)', () => 
   it('Move (current schema, 4-bit g incl. G122)', () => {
     expect(bytes(nu.encodeMove({ g: 1 as nu.GCode, x: 12.5, f: 3.0, p: 100 }))).toEqual(GOLD.move);
   });
+  it('WaveformMove (G123 — shape/amplitude/frequency/cycles)', () => {
+    expect(
+      bytes(nu.encodeWaveformMove({ shape: nu.WaveformShape.SINE, amplitude: 5, frequency: 2, cycles: 100 })),
+    ).toEqual(GOLD.waveform);
+  });
 });
 
 describe('Move: independent bit-packer reference', () => {
   it('matches an independent LSB-first packer for the current layout', () => {
-    // g[0..4) x[4..23) f[23..40) p[40..56), 7 bytes.
-    const ref = new Uint8Array(7);
+    // g[0..4) x[4..26) f[26..48) p[48..64), 8 bytes.
+    const ref = new Uint8Array(8);
     const pack = (bitOff: number, bits: number, value: number) => {
       for (let i = 0; i < bits; i++) {
         if ((value >>> i) & 1) ref[(bitOff + i) >> 3] |= 1 << ((bitOff + i) & 7);
@@ -71,9 +77,9 @@ describe('Move: independent bit-packer reference', () => {
     };
     const v = { g: 1 as nu.GCode, x: 12.5, f: 3.0, p: 100 };
     pack(0, 4, nu.GCODE_VALUE_TO_WIRE[v.g] ?? 0);
-    pack(4, 19, Math.round((v.x - -200) * 1000));
-    pack(23, 17, Math.round(v.f * 1000));
-    pack(40, 16, v.p);
+    pack(4, 22, Math.round((v.x - -200) * 1000));
+    pack(26, 22, Math.round(v.f * 1000));
+    pack(48, 16, v.p);
     expect(bytes(nu.encodeMove(v))).toEqual(bytes(ref));
   });
 });
@@ -85,6 +91,14 @@ describe('round-trip within scale precision', () => {
     expect(out.f).toBeCloseTo(3.0, 3);
     expect(out.p).toBe(100);
     expect(nu.GCODE_VALUE_TO_WIRE[out.g]).toBe(1);
+  });
+  it('WaveformMove', () => {
+    const v = { shape: nu.WaveformShape.TRIANGLE, amplitude: 12.345, frequency: 0.5, cycles: 1000 };
+    const out = nu.decodeWaveformMove(nu.encodeWaveformMove(v));
+    expect(out.shape).toBe(nu.WaveformShape.TRIANGLE);
+    expect(out.amplitude).toBeCloseTo(12.345, 3);
+    expect(out.frequency).toBeCloseTo(0.5, 3);
+    expect(out.cycles).toBe(1000);
   });
   it('Sample', () => {
     const v = { machineForce: 12.345, machinePosition: -50.5, machineSetpoint: 10.0, sampleForce: 3.21, samplePosition: 7.89 };

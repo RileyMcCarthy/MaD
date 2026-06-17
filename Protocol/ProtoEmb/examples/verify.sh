@@ -28,7 +28,8 @@ rustc --edition 2021 --test "$out/rs/thermostat.rs" -o "$out/rs/test_bin"
 "$out/rs/test_bin"
 
 echo "== TypeScript: tsc --noEmit typecheck =="
-tsc_flags=(--noEmit --strict --skipLibCheck --target es2020 --lib es2020,dom)
+# --ignoreDeprecations silences TS7.0's node10 moduleResolution deprecation error.
+tsc_flags=(--noEmit --strict --skipLibCheck --target es2020 --lib es2020,dom --ignoreDeprecations 6.0)
 if command -v tsc >/dev/null 2>&1; then
   tsc "${tsc_flags[@]}" "$out/ts/thermostat.ts"
 else
@@ -49,7 +50,7 @@ rustc --edition 2021 "$out/rs/dump.rs" -o "$out/rs/dump" 2>/dev/null
 
 cp "$here/conformance/dump.ts" "$out/ts/dump.ts"
 tsc_bin() { if command -v tsc >/dev/null 2>&1; then tsc "$@"; else npx --yes -p typescript tsc "$@"; fi; }
-tsc_bin --target es2020 --module commonjs --moduleResolution node --skipLibCheck --outDir "$out/ts/js" "$out/ts/dump.ts"
+tsc_bin --target es2020 --module commonjs --moduleResolution node --skipLibCheck --ignoreDeprecations 6.0 --outDir "$out/ts/js" "$out/ts/dump.ts"
 node "$out/ts/js/dump.js" > "$out/ts.hex"
 
 if diff "$out/c.hex" "$out/rs.hex" >/dev/null && diff "$out/c.hex" "$out/ts.hex" >/dev/null; then

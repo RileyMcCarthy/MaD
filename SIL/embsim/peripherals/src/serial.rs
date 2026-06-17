@@ -294,3 +294,295 @@ pub fn receive_byte(channel: usize) -> Option<u8> {
         _ => None,
     }
 }
+
+// ============================================================
+// Tests
+// ============================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nix::libc;
+
+    /// A connected pair of file descriptors. The first (`a`) is wired into a
+    /// serial channel; the second (`b`) is the "other end of the wire" the test
+    /// reads from / writes to. Both are closed on drop.
+    struct Pair {
+        a: RawFd,
+        b: RawFd,
+    }
+
+    impl Pair {
+        /// Build a connected AF_UNIX stream socket pair. BOTH ends are made
+        /// non-blocking so a read on an empty buffer returns EAGAIN instead of
+        /// hanging — a blocking read here would also stall the crate-wide test
+        /// lock and cascade-hang every other test.
+        fn new() -> Self {
+            let mut fds = [0i32; 2];
+            let rc = unsafe {
+                libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr())
+            };
+            assert_eq!(rc, 0, "socketpair failed");
+            for &fd in &fds {
+                let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+                let rc = unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) };
+                assert_eq!(rc, 0, "fcntl O_NONBLOCK failed");
+            }
+            Pair { a: fds[0], b: fds[1] }
+        }
+
+        /// Write raw bytes to the far end so the channel can read them.
+        fn write_far(&self, data: &[u8]) {
+            let fd = unsafe { BorrowedFd::borrow_raw(self.b) };
+            let mut off = 0;
+            while off < data.len() {
+                off += nix::unistd::write(fd, &data[off..]).expect("write_far");
+            }
+        }
+
+        /// Read up to `n` bytes from the far end (what the channel transmitted).
+        /// Non-blocking: returns an empty vec when nothing is buffered, so a test
+        /// asserting "nothing was sent" can never hang on an empty pipe. (Bytes
+        /// written to an AF_UNIX stream are available to the peer synchronously
+        /// once the writer's `write` returns, so the data cases never race.)
+        fn read_far(&self, n: usize) -> Vec<u8> {
+            let mut buf = vec![0u8; n];
+            match nix::unistd::read(self.b, &mut buf) {
+                Ok(read) => {
+                    buf.truncate(read);
+                    buf
+                }
+                Err(nix::errno::Errno::EAGAIN) => Vec::new(),
+                Err(e) => panic!("read_far: {e}"),
+            }
+        }
+    }
+
+    impl Drop for Pair {
+        fn drop(&mut self) {
+            unsafe {
+                libc::close(self.a);
+                libc::close(self.b);
+            }
+        }
+    }
+
+    /// Take the crate test lock, pin the clock, and reset the serial bank.
+    fn setup(count: usize) {
+        crate::test_support::ensure_clock();
+        init(count);
+    }
+
+    #[test]
+    fn init_at_max_channels_is_allowed() {
+        let _g = crate::test_support::guard();
+        setup(MAX_CHANNELS);
+        // After init, every channel is disconnected (fd -1).
+        assert!(receive_byte(MAX_CHANNELS - 1).is_none());
+    }
+
+    #[test]
+    #[should_panic(expected = "exceeds max")]
+    fn init_above_max_channels_panics() {
+        let _g = crate::test_support::guard();
+        crate::test_support::ensure_clock();
+        init(MAX_CHANNELS + 1);
+    }
+
+    #[test]
+    fn reset_sets_all_fds_to_minus_one_and_clears_pacing() {
+        let _g = crate::test_support::guard();
+        let pair = Pair::new();
+        setup(2);
+        init_channel_fd(0, pair.a);
+        set_baud(0, 9600);
+        reset();
+        // After reset the channel is unknown (count 0) and disconnected, so a
+        // transmit is a no-op and a receive returns None.
+        transmit_data(0, b"x");
+        assert!(receive_byte(0).is_none());
+    }
+
+    #[test]
+    fn init_channel_fd_stores_the_fd_and_enables_io() {
+        let _g = crate::test_support::guard();
+        let pair = Pair::new();
+        setup(1);
+        init_channel_fd(0, pair.a);
+        // With a real fd wired in, a transmit reaches the far end.
+        transmit_data(0, b"hi");
+        assert_eq!(pair.read_far(2), b"hi");
+    }
+
+    #[test]
+    fn transmit_to_unconnected_channel_is_a_no_op() {
+        let _g = crate::test_support::guard();
+        setup(1);
+        // Channel 0 configured but fd still -1: transmit silently discards.
+        transmit_data(0, b"data");
+        // Nothing to assert beyond "did not panic / did not block".
+    }
+
+    #[test]
+    fn transmit_empty_data_is_a_no_op() {
+        let _g = crate::test_support::guard();
+        let pair = Pair::new();
+        setup(1);
+        init_channel_fd(0, pair.a);
+        transmit_data(0, b"");
+        // Far end received nothing.
+        let got = pair.read_far(1);
+        assert!(got.is_empty(), "empty transmit writes nothing");
+    }
+
+    #[test]
+    fn transmit_out_of_range_channel_is_a_no_op() {
+        let _g = crate::test_support::guard();
+        setup(1);
+        // Channel 5 is past the configured count: no panic, nothing sent.
+        transmit_data(5, b"data");
+    }
+
+    #[test]
+    fn transmit_then_read_round_trips_bytes() {
+        let _g = crate::test_support::guard();
+        let pair = Pair::new();
+        setup(1);
+        init_channel_fd(0, pair.a);
+        transmit_data(0, b"hi");
+        assert_eq!(pair.read_far(2), b"hi");
+    }
+
+    #[test]
+    fn receive_byte_returns_available_then_none_when_empty() {
+        let _g = crate::test_support::guard();
+        let pair = Pair::new();
+        setup(1);
+        init_channel_fd(0, pair.a);
+        pair.write_far(&[0x5A]);
+        assert_eq!(receive_byte(0), Some(0x5A));
+        // Non-blocking fd with nothing left → None.
+        assert_eq!(receive_byte(0), None);
+    }
+
+    #[test]
+    fn receive_byte_on_unconnected_or_out_of_range_is_none() {
+        let _g = crate::test_support::guard();
+        setup(1);
+        // Configured but disconnected (fd -1).
+        assert_eq!(receive_byte(0), None);
+        // Out-of-range channel.
+        assert_eq!(receive_byte(9), None);
+    }
+
+    #[test]
+    fn receive_data_timeout_fills_buffer_when_bytes_ready() {
+        let _g = crate::test_support::guard();
+        let pair = Pair::new();
+        setup(1);
+        init_channel_fd(0, pair.a);
+        pair.write_far(b"abcd");
+        let mut buf = [0u8; 4];
+        // All 4 bytes ready → returns true and fills the buffer.
+        assert!(receive_data_timeout(0, &mut buf, 200));
+        assert_eq!(&buf, b"abcd");
+    }
+
+    #[test]
+    fn receive_data_timeout_returns_false_when_short() {
+        let _g = crate::test_support::guard();
+        let pair = Pair::new();
+        setup(1);
+        init_channel_fd(0, pair.a);
+        // Only 2 of 4 requested bytes available, tiny timeout → false.
+        pair.write_far(b"ab");
+        let mut buf = [0u8; 4];
+        assert!(!receive_data_timeout(0, &mut buf, 200));
+        // The bytes that did arrive landed at the front of the buffer.
+        assert_eq!(&buf[..2], b"ab");
+    }
+
+    #[test]
+    fn receive_data_timeout_empty_buf_or_unknown_channel_is_false() {
+        let _g = crate::test_support::guard();
+        let pair = Pair::new();
+        setup(1);
+        init_channel_fd(0, pair.a);
+        // Empty buffer → false immediately.
+        let mut empty: [u8; 0] = [];
+        assert!(!receive_data_timeout(0, &mut empty, 100));
+        // Unknown (out-of-range) channel → false.
+        let mut buf = [0u8; 1];
+        assert!(!receive_data_timeout(9, &mut buf, 100));
+        // Connected-but-disconnected channel (fd -1) → false.
+        init(2); // channel 1 configured but fd -1
+        init_channel_fd(0, pair.a);
+        let mut buf2 = [0u8; 1];
+        assert!(!receive_data_timeout(1, &mut buf2, 100));
+    }
+
+    #[test]
+    fn set_frame_bits_clamps_to_at_least_one() {
+        let _g = crate::test_support::guard();
+        let pair = Pair::new();
+        setup(1);
+        init_channel_fd(0, pair.a);
+        // 0 bits would divide-by-zero in pacing; it clamps to 1. Bytes still flow.
+        set_frame_bits(0);
+        set_baud(0, 1_000_000);
+        transmit_data(0, b"z");
+        assert_eq!(pair.read_far(1), b"z");
+        // Restore the conventional 8N1 framing for subsequent tests.
+        set_frame_bits(10);
+    }
+
+    #[test]
+    fn paced_baud_still_delivers_bytes_correctly() {
+        let _g = crate::test_support::guard();
+        let pair = Pair::new();
+        setup(1);
+        init_channel_fd(0, pair.a);
+        // Enable pacing. We do NOT assert timing — only that the bytes arrive
+        // intact through the paced path. Use a fast baud so any sleep is sub-ms.
+        set_baud(0, 1_000_000);
+        transmit_data(0, b"hi");
+        assert_eq!(pair.read_far(2), b"hi");
+        // Receive path is also paced and must still deliver the byte.
+        pair.write_far(&[0x42]);
+        assert_eq!(receive_byte(0), Some(0x42));
+    }
+
+    #[test]
+    fn set_baud_zero_is_unpaced_and_resets_schedules() {
+        let _g = crate::test_support::guard();
+        let pair = Pair::new();
+        setup(1);
+        init_channel_fd(0, pair.a);
+        // Turn pacing on then back off; either way bytes deliver correctly.
+        set_baud(0, 1_000_000);
+        set_baud(0, 0); // back to unpaced — also resets TX/RX schedules
+        transmit_data(0, b"ok");
+        assert_eq!(pair.read_far(2), b"ok");
+    }
+
+    #[test]
+    fn set_baud_out_of_range_channel_is_a_no_op() {
+        let _g = crate::test_support::guard();
+        setup(1);
+        // Channel index past the array ceiling: silently ignored, no panic.
+        set_baud(MAX_CHANNELS, 9600);
+    }
+
+    #[test]
+    fn start_and_stop_are_no_ops() {
+        let _g = crate::test_support::guard();
+        let pair = Pair::new();
+        setup(1);
+        init_channel_fd(0, pair.a);
+        // No-ops: must not disturb the channel or panic.
+        start(0);
+        stop(0);
+        transmit_data(0, b"x");
+        assert_eq!(pair.read_far(1), b"x");
+    }
+}

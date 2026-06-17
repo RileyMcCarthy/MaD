@@ -12,6 +12,16 @@ MaD is a low-cost open-source uniaxial tensile testing machine. The monorepo has
 - **Protocol** (`Protocol/ProtoEmb/`) — YAML schema (`MaDProtocol.yaml`) → generated C / TypeScript / Rust, plus a Rust **protoemb-bridge** binary used by the desktop app
 - **Hardware** (`Hardware/`) — KiCad PCB designs
 
+## Coding Guidelines
+
+Per-language coding standards (grounded in this codebase, with the exact lint/check rules) live in [`docs/coding-guidelines/`](docs/coding-guidelines/README.md). Read the guide for whatever you're touching before writing code:
+
+- [C / Firmware](docs/coding-guidelines/c-firmware.md) — naming, template/banner layout, MISRA C:2023 + CERT idioms, HAL locking discipline
+- [TypeScript / React / Electron](docs/coding-guidelines/typescript.md) — ESLint (`erb`) + strict `tsconfig`, main/renderer boundary, IPC patterns
+- [Rust / SIL](docs/coding-guidelines/rust.md) — workspace layout, FFI/`unsafe` HAL boundary, error handling
+- [Python (protocol generator)](docs/coding-guidelines/python.md) — `generate.py` conventions, Jinja2 templates
+- [Protocol YAML](docs/coding-guidelines/protocol-yaml.md) — `MaDProtocol.yaml` authoring + the regenerate-all-three-targets workflow
+
 ## Build & Development Commands
 
 ### Firmware (from `Firmware/MaDCore/`)
@@ -37,7 +47,7 @@ npm test          # Jest unit tests
 ```bash
 make setup        # First-time: npm deps
 make firmware     # Firmware static library only
-make protocol     # Regenerate Rust protocol types into embsim/peripherals
+make protocol     # Regenerate Rust protocol types into mad-protocol/src/generated
 make bridge       # Build protoemb-bridge (Protocol/ProtoEmb/runtime)
 make emulator     # firmware + protocol + bridge, then cargo build workspace
 make test         # emulator + Playwright (`npm test`)
@@ -50,7 +60,7 @@ make clean        # Remove build artifacts
 # From repo root:
 python3 ./Protocol/ProtoEmb/core/generate.py --schema ./Protocol/MaDProtocol.yaml --target c  --output ./Firmware/MaDCore/src/Generated --templates ./Protocol/ProtoEmb/core/templates
 python3 ./Protocol/ProtoEmb/core/generate.py --schema ./Protocol/MaDProtocol.yaml --target ts --output ./Software/MaDControl/src/main/generated --templates ./Protocol/ProtoEmb/core/templates
-python3 ./Protocol/ProtoEmb/core/generate.py --schema ./Protocol/MaDProtocol.yaml --target rs --output ./SIL/embsim/peripherals/src/generated --templates ./Protocol/ProtoEmb/core/templates
+python3 ./Protocol/ProtoEmb/core/generate.py --schema ./Protocol/MaDProtocol.yaml --target rs --output ./SIL/mad-protocol/src/generated --templates ./Protocol/ProtoEmb/core/templates
 # Firmware also runs `extra_scripts/generate_protocol.py` via `platformio.ini` pre-hook.
 ```
 
@@ -93,7 +103,8 @@ Rust **Cargo workspace** under `SIL/` (see `SIL/Cargo.toml`):
 
 - **`MaDSim/`** — `mad-emulator` binary: links **`libfirmware.a`** from `pio run -e native_emulator`, calls `mad_begin()`, wires PTY serial, SD path, optional trace HTTP port.
 - **`embsim/core`** — PTY, timing, shared plumbing.
-- **`embsim/peripherals`** — HAL stand-ins (serial, GPIO, pulse trains, encoder, etc.) plus **generated** protocol types under `src/generated/`.
+- **`embsim/peripherals`** — HAL stand-ins (serial, GPIO, pulse trains, encoder, etc.).
+- **`mad-protocol`** — **generated** Rust protocol types under `src/generated/` (do not hand-edit; `make protocol`).
 - **`embsim/platforms/p2`** — FFI / stubs linking firmware into the emulator.
 - **`embsim/models`** — Physics-style models (e.g. gantry, force path, sampling).
 - **`embsim/tools/*`** — trace viewer, memory inspect, UI shell helpers.
@@ -124,4 +135,4 @@ git tag hardware-v1.0.0 && git push --tags   # Hardware release
 - **Native vs P2**: Always exercise `native_emulator` / `native_test`; pointer sizes and timing differ from the Propeller 2.
 - **SIL concurrency**: Treat the emulator as single-instance; Playwright uses `workers: 1` where required.
 - **G-code**: Profiles/tests that must signal completion to firmware should end appropriately (e.g. **`G122`** where the firmware contract requires it).
-- **Generated code**: Do not hand-edit `Firmware/MaDCore/src/Generated/`, `Software/MaDControl/src/main/generated/`, or `SIL/embsim/peripherals/src/generated/` — change `Protocol/MaDProtocol.yaml` (or templates) and regenerate.
+- **Generated code**: Do not hand-edit `Firmware/MaDCore/src/Generated/`, `Software/MaDControl/src/main/generated/`, or `SIL/mad-protocol/src/generated/` — change `Protocol/MaDProtocol.yaml` (or templates) and regenerate.

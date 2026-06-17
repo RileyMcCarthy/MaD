@@ -22,6 +22,7 @@ schema.yaml ──► core/generate.py ──► C  (device firmware codec + run
 | [`framing/`](framing/) | `protoemb-framing` crate — wire frame parser/builder + CRC |
 | [`runtime/`](runtime/) | `protoemb-runtime` crate — serial `Client`, priority queue, NDJSON `StdioBridge`, WASM `WasmClient` |
 | [`examples/`](examples/) | A non-MaD `thermostat` protocol + `verify.sh` (generates & round-trips C/Rust/TS) |
+| [`tests/`](tests/) | Self-contained suite — generator unit tests + cross-language wire conformance (`make test`) |
 | [`docs/`](docs/) | [`wire-format.md`](docs/wire-format.md) — the frame + payload contract |
 
 ## Schema features
@@ -61,6 +62,21 @@ out (e.g. `git subtree`) and published with a one-line change.
 ./examples/verify.sh   # generate the example to C/Rust/TS, compile/typecheck,
                        # round-trip, and assert byte-identical wire across all three
 ```
+
+## Test
+
+`make test` runs the full self-contained suite (see [`tests/`](tests/)):
+
+```bash
+make setup            # one-time: pip install pyyaml, jinja2, pytest
+make test             # generator unit tests + cross-language wire conformance + Rust crates
+make test-generator   # pytest over core/generate.py
+make test-conformance # C == Rust == TS wire conformance (vector-driven)
+make test-rust        # framing + runtime cargo tests
+```
+
+It needs no part of the MaD monorepo, so the library stays testable once split
+out. See [`tests/README.md`](tests/README.md) for layout and how to add vectors.
 
 ## License
 

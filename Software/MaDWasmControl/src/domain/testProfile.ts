@@ -108,16 +108,17 @@ export function generateTestGcode(profile: TestProfile): GeneratedGcode {
             break;
           }
           case 'math': {
-            // Position-vs-time waveform, expanded host-side into G1 segments the
-            // firmware plays back like any linear program (runs unattended from
-            // SD). Centre = absolute target position, or current position (+ any
-            // relative offset). Segment feedrate = Δposition / Δt so each segment
-            // takes the sampled time step, reproducing the waveform's timing.
-            const fn: WaveformFn = move.moveParameters.waveform === 'triangle' ? 'triangle' : 'sine';
+            // Firmware-native waveform: emit ONE G123 canned cycle. The firmware
+            // segments f(t) itself and runs it unattended from SD (no host G1
+            // expansion). The wave oscillates about the *current* position, so we
+            // ramp to the mean first. Centre = absolute target, or current
+            // position (+ any relative offset).
+            // Firmware-native G123 is SINE-only in v1 — pin to sine so a legacy
+            // 'triangle' profile can't be emitted as W1 and silently run as sine.
+            const fn: WaveformFn = 'sine';
             const amplitude = Math.abs(Number(move.moveParameters.amplitude) || 0);
             const frequency = Number(move.moveParameters.frequency) || 0;
             const cycles = Number(move.moveParameters.cycles) || 0;
-            const phaseTurns = (Number(move.moveParameters.phase) || 0) / 360;
             const mean = move.absoluteOrRelative === 'absolute' ? position : startPosition + moveDistance;
 
             if (amplitude > 0 && frequency > 0 && cycles > 0) {
@@ -125,35 +126,30 @@ export function generateTestGcode(profile: TestProfile): GeneratedGcode {
                 gcode.push('G90 ; Set absolute positioning');
                 currentMode = 'absolute';
               }
-              const segments = Math.min(
-                WAVEFORM_MAX_SEGMENTS,
-                Math.max(1, Math.round(cycles * WAVEFORM_SEGMENTS_PER_CYCLE)),
-              );
-              const dt = 1 / (frequency * WAVEFORM_SEGMENTS_PER_CYCLE); // s per segment
-              const sampleAt = (k: number): number =>
-                mean + amplitude * waveformSample(fn, k / WAVEFORM_SEGMENTS_PER_CYCLE + phaseTurns);
-
-              gcode.push(`; Waveform: ${fn} A=${amplitude}mm f=${frequency}Hz x${cycles} cycle(s)`);
-              let prevP = currentPosition;
-              const startP = sampleAt(0);
-              // Ramp in to the waveform's first point if we're not already there.
-              if (Math.abs(startP - currentPosition) > 1e-6) {
+              // Ramp to the mean (the firmware waveform oscillates about it).
+              if (Math.abs(mean - currentPosition) > 1e-6) {
                 const rampV = waveformPeakVelocity(fn, amplitude, frequency) || 1;
-                gcode.push(`G1 X${round3(startP)} F${round3(rampV)}`);
-                distance.push(round3(startP));
-                time.push(currentTime);
-                prevP = startP;
+                gcode.push(`G1 X${round3(mean)} F${round3(rampV)}`);
               }
-              for (let k = 1; k <= segments; k++) {
-                const target = sampleAt(k);
-                const v = dt > 0 ? Math.abs(target - prevP) / dt : 0;
-                if (v > 0) gcode.push(`G1 X${round3(target)} F${round3(v)}`);
-                distance.push(round3(target));
-                time.push(round3(currentTime + k * dt));
-                prevP = target;
+              const shape = 0; // WaveformShape.SINE (firmware v1 is sine-only)
+              gcode.push(
+                `G123 A${round3(amplitude)} F${round3(frequency)} C${Math.round(cycles)} W${shape}` +
+                  ` ; ${fn} A=${amplitude}mm f=${frequency}Hz x${cycles} cycle(s)`,
+              );
+              // Preview chart only: sample f(t) for display (not emitted as motion).
+              const previewSteps = Math.min(
+                WAVEFORM_MAX_SEGMENTS,
+                Math.max(8, Math.round(cycles * WAVEFORM_SEGMENTS_PER_CYCLE)),
+              );
+              const totalSec = cycles / frequency;
+              distance.push(round3(mean));
+              time.push(round3(currentTime));
+              for (let k = 1; k <= previewSteps; k++) {
+                distance.push(round3(mean + amplitude * waveformSample(fn, (k / previewSteps) * cycles)));
+                time.push(round3(currentTime + (k / previewSteps) * totalSec));
               }
-              currentTime += segments * dt;
-              currentPosition = prevP;
+              currentTime += totalSec;
+              currentPosition = mean; // whole cycles end at the mean
             }
             break;
           }

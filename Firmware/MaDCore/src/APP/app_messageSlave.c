@@ -218,6 +218,20 @@ ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWrite_test_move(const ProtoEmb_Mov
     return IO_SDCard_push(IO_SDCARD_CHANNEL_GCODE, &move, sizeof(app_motion_move_t)) ? PROTOEMB_RUNTIME_WRITE_DISPOSITION_ACK : PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK;
 }
 
+ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWrite_test_waveform(const ProtoEmb_WaveformMove_t *in)
+{
+    /* A waveform is one G123 record on the GCODE channel, reusing the move
+     * fields: x = amplitude (µm), p = cycles, f = (shape << 24) | freq-milli-Hz.
+     * Interleaved with test_move records in program order, so the test stays
+     * self-contained on SD and runs unattended. */
+    app_motion_move_t move;
+    move.g = (uint8_t)G123_WAVEFORM;
+    move.x = in->amplitude;
+    move.f = (int32_t)(((uint32_t)in->shape << 24) | ((uint32_t)in->frequency & 0x00FFFFFFU));
+    move.p = in->cycles;
+    return IO_SDCard_push(IO_SDCARD_CHANNEL_GCODE, &move, sizeof(app_motion_move_t)) ? PROTOEMB_RUNTIME_WRITE_DISPOSITION_ACK : PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK;
+}
+
 ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWriteRaw_test_move(const uint8_t *payload,
                                                                  uint16_t payloadSize)
 {

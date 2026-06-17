@@ -79,6 +79,13 @@ enums:
       - { name: ABSOLUTE,     value: 90 }
       - { name: INCREMENTAL,  value: 91 }
       - { name: STOP,         value: 122 }
+      - { name: WAVEFORM,     value: 123 }   # firmware-native waveform (canned cycle)
+
+  WaveformShape:
+    description: "Position-vs-time waveform function (firmware-native G123)"
+    variants:
+      - SINE
+      - TRIANGLE
 
   NotificationType:
     description: "Notification severity levels"
@@ -168,20 +175,47 @@ structs:
         scale: 1000        # struct stores µm; use set/get accessors for mm
         raw_storage: true  # firmware consumes µm directly (1 µm precision)
         min: -200
-        max: 200
+        max: 3000
       - name: f
         type: int32
         unit: mm/s
         scale: 1000        # struct stores µm/s; use set/get accessors for mm/s
         raw_storage: true  # firmware consumes µm/s directly (1 µm/s precision)
         min: 0
-        max: 100
+        max: 3000
       - name: p
         type: uint32
         unit: ms
         scale: 1
         min: 0
         max: 65535
+
+  WaveformMove:
+    encoding: packed
+    description: "Firmware-native waveform (G123): oscillate about the current position"
+    fields:
+      - name: shape
+        type: WaveformShape
+      - name: amplitude
+        type: int32
+        unit: mm
+        scale: 1000        # struct stores µm; firmware consumes µm directly
+        raw_storage: true
+        min: 0
+        max: 3000
+      - name: frequency
+        type: int32
+        unit: Hz
+        scale: 1000        # struct stores mHz; firmware consumes mHz directly
+        raw_storage: true
+        min: 0
+        max: 1000
+      - name: cycles
+        type: uint32
+        unit: count
+        scale: 1
+        min: 1
+        max: 10000000      # supports fatigue-scale cycle counts
 
   # ── Storage struct (packed for faster serial download) ──
 
@@ -258,6 +292,7 @@ structs:
         type: int32
         unit: N
         scale: 1000       # stored as mN
+        raw_storage: true # struct/wire hold mN directly (firmware assigns mN); codec must not re-scale
       - name: homingVelocity
         type: int32
         unit: mm/s
@@ -279,6 +314,7 @@ structs:
         type: uint32
         unit: N
         scale: 1000       # stored as mN
+        raw_storage: true # struct/wire hold mN directly (firmware assigns mN); codec must not re-scale
       - name: maxVelocity
         type: uint32
         unit: mm/s
@@ -394,6 +430,13 @@ messages:
     priority: high
     request: Move
     note: "Empty payload opens gcode channel; packed moves are appended"
+
+  test_waveform:
+    tx_node: ui
+    command_id: 8
+    priority: high
+    request: WaveformMove
+    note: "Appends a G123 waveform record to the open gcode channel (interleave with test_move in program order)"
 
   sample_profile_write:
     tx_node: ui

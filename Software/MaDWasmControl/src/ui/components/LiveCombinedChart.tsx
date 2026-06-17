@@ -3,7 +3,7 @@ import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
 import { useStore } from '@/store/useStore';
 import { getLiveSeries } from '@/store/liveBuffer';
-import { RefLine, refLinesPlugin, stableRange } from './uplotRef';
+import { RefLine, fixedDecimals, refLinesPlugin, stableRange } from './uplotRef';
 
 type Coord = 'machine' | 'sample';
 
@@ -62,15 +62,15 @@ export default function LiveCombinedChart({ active }: { active: boolean }) {
     const series: uPlot.Series[] =
       coord === 'machine'
         ? [
-            { label: 't' },
-            { label: 'Position', scale: 'pos', stroke: '#4ea1ff', width: 1.5, points: { show: false } },
-            { label: 'Setpoint', scale: 'pos', stroke: '#ffb454', width: 1, points: { show: false } },
-            { label: 'Force', scale: 'force', stroke: '#2bd4a7', width: 1.5, points: { show: false } },
+            { label: 't', value: fixedDecimals(2) },
+            { label: 'Position', scale: 'pos', stroke: '#4ea1ff', width: 1.5, points: { show: false }, value: fixedDecimals(3) },
+            { label: 'Setpoint', scale: 'pos', stroke: '#ffb454', width: 1, points: { show: false }, value: fixedDecimals(3) },
+            { label: 'Force', scale: 'force', stroke: '#2bd4a7', width: 1.5, points: { show: false }, value: fixedDecimals(3) },
           ]
         : [
-            { label: 't' },
-            { label: 'Position', scale: 'pos', stroke: '#4ea1ff', width: 1.5, points: { show: false } },
-            { label: 'Force', scale: 'force', stroke: '#2bd4a7', width: 1.5, points: { show: false } },
+            { label: 't', value: fixedDecimals(2) },
+            { label: 'Position', scale: 'pos', stroke: '#4ea1ff', width: 1.5, points: { show: false }, value: fixedDecimals(3) },
+            { label: 'Force', scale: 'force', stroke: '#2bd4a7', width: 1.5, points: { show: false }, value: fixedDecimals(3) },
           ];
 
     const opts: uPlot.Options = {
