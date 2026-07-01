@@ -317,9 +317,11 @@ jobs:
           node-version: 20
           cache: npm
         
-      - name: Ensure Python distutils is available
+      - name: Ensure Python + protocol codegen deps
         run: |
           python3 -m pip install --upgrade pip setuptools --break-system-packages
+          # `npm run generate:proto` runs generate.py, which imports yaml + jinja2.
+          python3 -m pip install --break-system-packages pyyaml jinja2
 
       - name: Install dependencies
         working-directory: Software/MaDControl
