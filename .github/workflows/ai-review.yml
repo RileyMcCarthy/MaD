@@ -55,6 +55,10 @@ jobs:
       models: read
     strategy:
       fail-fast: false
+      # Serialize: the free GitHub Models tier rate-limits concurrent calls, so
+      # running all concerns at once makes most return "unavailable". One at a time
+      # spaces the calls out (job startup ≈ enough gap) so every concern gets reviewed.
+      max-parallel: 1
       matrix:
         include: ${{ fromJSON(needs.detect.outputs.concerns) }}
     steps:
