@@ -24,10 +24,11 @@ Run the gate(s) for the area you touched (see
   it must be green before a PR can merge.
 - **No approvals are required** (0), but a PR is — so even a one-person change goes
   through the gate rather than a direct push.
-- **An advisory AI review** posts one sticky comment on every PR — covering coding-
-  guideline adherence, code reuse / anti-duplication, [docs](#documentation)
-  freshness, test gaps, and expert suggestions, routed by the languages you changed.
-  It never blocks merge — treat it as a senior-reviewer nudge.
+- **GitHub Copilot code review** comments on every PR — covering coding-guideline
+  adherence, code reuse / anti-duplication, [docs](#documentation) freshness, and
+  design/safety suggestions. It reads the guidelines via `.github/copilot-instructions.md`
+  and path-scoped `.github/instructions/*.instructions.md`. It never blocks merge — treat
+  it as a senior-reviewer nudge.
 
 ## Key constraints
 

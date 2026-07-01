@@ -1,8 +1,9 @@
 # CI/CD & releases
 
-GitHub Actions builds, tests, and releases every part of MaD. There are three
-workflows: `ci.yml` (build/test), `pages.yml` (deploy the docs + app), and
-`ai-review.yml` (a comprehensive advisory AI review on every PR).
+GitHub Actions builds, tests, and releases every part of MaD. There are two
+workflows — `ci.yml` (build/test) and `pages.yml` (deploy the docs + app) — plus
+**GitHub Copilot code review** as an advisory AI reviewer on every PR (configured via
+instruction files, not a workflow).
 
 ## CI (`.github/workflows/ci.yml`)
 
@@ -42,34 +43,31 @@ The PR trigger has **no path filter** — every PR runs at least `changes` + `ci
 - Force-pushes and branch deletion are disabled; stale approvals are dismissed on
   new commits.
 
-## Advisory AI review (`.github/workflows/ai-review.yml`)
+## AI code review (GitHub Copilot, advisory)
 
-Every PR also gets a comprehensive **advisory** review from a model (free
-**GitHub Models** — no API key, runs off the built-in `GITHUB_TOKEN` with
-`models: read`). It is **not** a required check and **never blocks merge** — it
-posts **one sticky PR comment** to prompt the author.
+Pull requests are reviewed by **GitHub Copilot code review** — GitHub's native,
+repo-aware reviewer. It's **advisory** (inline comments, not a required check) and
+enforces the judgment concerns the deterministic gates above can't decide (layering,
+HAL locking, wire-compat, reuse, docs freshness).
 
-How it works: a `detect` job maps the changed files to *language concerns*, and a
-matrix `review` job runs **one model call per touched concern** (`c`, `ts`, `rust`,
-`python`, `yaml`, plus a cross-cutting `docs` pass). Each call is fed that
-language's [`docs/coding-guidelines/`](../coding-guidelines/README.md) doc, a
-precomputed **index of existing shared code** (so it can flag duplication / missed
-reuse), and the PR's changed hunks — assembled by
-[`.github/scripts/ai_review_prep.py`](https://github.com/RileyMcCarthy/MaD/blob/main/.github/scripts/ai_review_prep.py).
-The model reviews for: **guideline adherence**, **reuse / anti-duplication**, **docs
-freshness**, **test gaps**, and **expert suggestions** (e.g. HAL locking, layering,
-append-only wire-compat). An `aggregate` job collects every section into the sticky
-comment.
+It reads the project's standards from custom-instruction files, so its context stays in
+sync with the repo:
 
-!!! note "Free-tier limit"
-    The free tier caps each request at ~16K input tokens, so this is a
-    *guideline-and-reuse-aware* reviewer, not a whole-repo agentic expert — it sees
-    the routed guideline + a shared-code index + the diff, not the entire codebase.
-    A deeper reviewer would need an agentic engine (e.g. `claude-code-action`) on a
-    paid/subscription token; the workflow is structured so that engine could be
-    swapped in later. The reviewer runs on same-repo branches only (a fork PR's
-    token can't read Models or comment), and `firmware-misra` aside, nothing here
-    blocks merge.
+- `.github/copilot-instructions.md` — repo-wide review focus.
+- `.github/instructions/*.instructions.md` — **path-scoped** (via an `applyTo:` glob)
+  files that point Copilot at the right
+  [`docs/coding-guidelines/`](../coding-guidelines/README.md) doc for each area
+  (firmware C, TypeScript, Rust, Python, protocol YAML).
+
+The guidelines themselves stay the single source of truth in `docs/coding-guidelines/`;
+the instruction files just *route* Copilot to them (plus a short list of the highest-
+value foci per area). Edit the guideline doc, not a second copy.
+
+!!! note "One-time setup"
+    Enable **Settings → Copilot → Code review** → *automatic review* for the repo (or add
+    a ruleset that requests Copilot's review on PRs). Copilot code review consumes GitHub
+    Copilot AI Credits; on this **public** repo it is exempt from the Actions-minutes
+    surcharge that applies to private repos.
 
 ## Pages deploy (`.github/workflows/pages.yml`)
 
