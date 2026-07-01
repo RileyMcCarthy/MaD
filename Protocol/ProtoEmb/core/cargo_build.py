@@ -22,6 +22,7 @@ from pathlib import Path
 
 
 def main():
+    """Parse CLI args and run the cargo build helper."""
     parser = argparse.ArgumentParser(description="ProtoEmb Cargo build helper")
     parser.add_argument("--schema", required=True, help="Path to protocol YAML schema")
     parser.add_argument("--config", required=False, help="Path to generator config YAML")

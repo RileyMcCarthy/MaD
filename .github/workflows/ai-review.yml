@@ -1,0 +1,144 @@
+name: AI review (advisory)
+
+# Comprehensive, ADVISORY AI reviewer using free GitHub Models (actions/ai-inference,
+# no API key — runs off the built-in GITHUB_TOKEN with `models: read`). It NEVER blocks
+# merge (not a required check). Per changed language it feeds the model that language's
+# coding-guideline doc + a precomputed index of existing shared code + the changed hunks,
+# and asks for: guideline adherence, reuse/anti-duplication, docs freshness, test gaps,
+# and expert suggestions. A cross-cutting "docs" pass checks doc freshness. All findings
+# land in ONE sticky PR comment.
+#
+# Honest limit: the free tier caps each request at ~16K input tokens, so this is a
+# guideline-and-reuse-aware reviewer, not a whole-repo agentic expert. See
+# docs/dev/ci-cd-and-releases.md for the deeper (paid/agentic) upgrade path.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ai-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  # Decide which language "concerns" this PR touches → a matrix for the review job.
+  detect:
+    runs-on: ubuntu-latest
+    # Same-repo branches only: fork PRs get a read-only token (no models/comment access).
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    outputs:
+      concerns: ${{ steps.detect.outputs.concerns }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: detect
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          CONCERNS=$(python3 .github/scripts/ai_review_prep.py --mode detect --base "$BASE" --head "$HEAD")
+          echo "concerns=$CONCERNS" >> "$GITHUB_OUTPUT"
+          echo "Touched concerns: $CONCERNS"
+
+  # One model call per touched language/concern; each writes its section as an artifact.
+  review:
+    needs: detect
+    if: needs.detect.outputs.concerns != '[]' && needs.detect.outputs.concerns != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      models: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.detect.outputs.concerns) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Build prompt for ${{ matrix.concern }}
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          python3 .github/scripts/ai_review_prep.py --mode prep \
+            --concern "${{ matrix.concern }}" --base "$BASE" --head "$HEAD"
+      - name: Ask GitHub Models
+        id: ai
+        continue-on-error: true   # advisory: model/rate-limit errors must not fail the PR
+        uses: actions/ai-inference@v1
+        with:
+          model: openai/gpt-4o-mini
+          max-completion-tokens: 1500
+          system-prompt-file: ai-system.md
+          prompt-file: ai-prompt.md
+      - name: Save section
+        env:
+          TITLE: ${{ matrix.title }}
+          RESPONSE: ${{ steps.ai.outputs.response }}
+        run: |
+          set -euo pipefail
+          {
+            echo "### ${TITLE}"
+            echo
+            if [ -n "${RESPONSE//[$'\t\r\n ']/}" ]; then
+              echo "${RESPONSE}"
+            else
+              echo "_Reviewer unavailable on this run (GitHub Models may be rate-limited)._"
+            fi
+            echo
+          } > "section-${{ matrix.concern }}.md"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ai-review-${{ matrix.concern }}
+          path: section-${{ matrix.concern }}.md
+          retention-days: 7
+
+  # Collect every section into one sticky PR comment.
+  aggregate:
+    needs: review
+    if: always() && needs.review.result != 'skipped' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ai-review-*
+          path: sections
+          merge-multiple: true
+      - name: Assemble + upsert sticky comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          MARKER="<!-- mad-ai-review -->"
+          {
+            echo "$MARKER"
+            echo "## 🤖 AI review · _advisory — never blocks merge_"
+            echo
+            if ls sections/section-*.md >/dev/null 2>&1; then
+              cat sections/section-*.md
+            else
+              echo "_No AI review sections were produced (GitHub Models may be unavailable for this repo). This check is advisory._"
+            fi
+            echo "<sub>Free GitHub Models (\`openai/gpt-4o-mini\`), routed by changed language: coding-guideline adherence, reuse/anti-duplication, docs freshness, test gaps, and suggestions. Re-runs on every push.</sub>"
+          } > body.md
+
+          existing=$(gh api "repos/$REPO/issues/$PR/comments?per_page=100" \
+            --jq "[.[] | select(.body | startswith(\"$MARKER\"))][0].id // empty")
+          if [ -n "$existing" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$existing" -F body=@body.md >/dev/null
+            echo "Updated AI review comment ($existing)."
+          else
+            gh api -X POST "repos/$REPO/issues/$PR/comments" -F body=@body.md >/dev/null
+            echo "Created AI review comment."
+          fi

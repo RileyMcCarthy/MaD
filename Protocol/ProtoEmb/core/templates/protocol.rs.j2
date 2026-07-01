@@ -698,11 +698,19 @@ mod tests {
     {% for name, s in structs.items() %}
     #[test]
     fn test_{{ name | snake_case }}_roundtrip() {
-        let original = {{ name }}::default();
+        #[allow(unused_mut)]
+        let mut original = {{ name }}::default();
+        {%- for f in s.fields %}
+        {%- if f._min is not none and f._min != 0 and not f._is_enum and not f._is_string and not f._is_bool %}
+        // `{{ f.name | snake_case | rust_safe }}` is min-constrained (min={{ f._min | int }}); the Default 0 is below the
+        // packed field's representable range, so seed a valid in-range value.
+        original.{{ f.name | snake_case | rust_safe }} = {% if f._is_float %}{{ f._min }}f32{% else %}{{ f._min | int }}{% endif %};
+        {%- endif %}
+        {%- endfor %}
         let encoded = original.encode();
         assert_eq!(encoded.len(), {{ s._wire_size }});
         let decoded = {{ name }}::decode(&encoded).expect("decode failed");
-        // Verify default roundtrips
+        // Verify a valid in-range instance roundtrips
         {% for f in s.fields %}
         {% if f._is_string %}
         assert_eq!(decoded.{{ f.name | snake_case | rust_safe }}, original.{{ f.name | snake_case | rust_safe }});

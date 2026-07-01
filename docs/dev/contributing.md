@@ -15,6 +15,20 @@ Run the gate(s) for the area you touched (see
 - **Protocol:** regenerate all consumers and run `./examples/verify.sh`.
 - **Anything user-facing:** `mkdocs build --strict` if you changed docs.
 
+## Pull requests
+
+`main` is protected — **you can't push to it directly; open a pull request.**
+
+- **`CI Gate` must pass.** A single required status check aggregates the build,
+  unit, and SIL jobs (see [CI/CD](ci-cd-and-releases.md#ci-githubworkflowsciyml));
+  it must be green before a PR can merge.
+- **No approvals are required** (0), but a PR is — so even a one-person change goes
+  through the gate rather than a direct push.
+- **An advisory AI review** posts one sticky comment on every PR — covering coding-
+  guideline adherence, code reuse / anti-duplication, [docs](#documentation)
+  freshness, test gaps, and expert suggestions, routed by the languages you changed.
+  It never blocks merge — treat it as a senior-reviewer nudge.
+
 ## Key constraints
 
 These are enforced by review (and often by tooling). Breaking them causes subtle,

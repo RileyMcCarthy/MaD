@@ -51,7 +51,8 @@ _SchemaLoader.add_implicit_resolver(
 def load_yaml(path):
     """Load a YAML file with the schema-safe loader."""
     with open(path, "r") as f:
-        return yaml.load(f, Loader=_SchemaLoader)
+        # _SchemaLoader subclasses yaml.SafeLoader (safe); yaml.safe_load can't take a custom Loader.
+        return yaml.load(f, Loader=_SchemaLoader)  # noqa: S506
 
 # ── Library prefix / identity ──
 # Default is "ProtoEmb", but it is configurable so multiple independent
@@ -815,7 +816,6 @@ def generate(data, target, output_dir, template_dir):
     env.filters["camel_case"] = lambda s: "".join(w.capitalize() for w in s.split("_"))
     env.filters["lower_camel"] = lambda s: s[0].lower() + "".join(w.capitalize() for w in s.split("_"))[1:] if s else s
 
-    import re
     def to_snake_case(s):
         """Convert camelCase or PascalCase to snake_case."""
         s1 = re.sub(r'([a-z0-9])([A-Z])', r'\1_\2', s)
@@ -824,7 +824,7 @@ def generate(data, target, output_dir, template_dir):
     env.filters["snake_case"] = to_snake_case
 
     # Rust reserved keyword escaping
-    _RUST_KEYWORDS = {
+    rust_keywords = {
         "as", "break", "const", "continue", "crate", "else", "enum", "extern",
         "false", "fn", "for", "if", "impl", "in", "let", "loop", "match", "mod",
         "move", "mut", "pub", "ref", "return", "self", "Self", "static", "struct",
@@ -832,7 +832,7 @@ def generate(data, target, output_dir, template_dir):
         "async", "await", "dyn", "abstract", "become", "box", "do", "final",
         "macro", "override", "priv", "typeof", "unsized", "virtual", "yield", "try",
     }
-    env.filters["rust_safe"] = lambda s: f"r#{s}" if s in _RUST_KEYWORDS else s
+    env.filters["rust_safe"] = lambda s: f"r#{s}" if s in rust_keywords else s
 
     env.globals["ceil"] = math.ceil
     env.globals["log2"] = math.log2
@@ -858,6 +858,7 @@ def generate(data, target, output_dir, template_dir):
 # ============================================================
 
 def main():
+    """Parse CLI args and run the protocol code generator."""
     parser = argparse.ArgumentParser(description="ProtoEmb Code Generator")
     parser.add_argument("--schema", required=True, help="Path to protocol YAML schema")
     parser.add_argument("--config", required=False, help="Path to generator config YAML")
@@ -865,7 +866,8 @@ def main():
                         help="Library prefix / identity (default: schema `prefix` key, else 'ProtoEmb')")
     parser.add_argument("--target", required=True, choices=["c", "ts", "rs"], help="Target language")
     parser.add_argument("--output", required=True, help="Output directory")
-    parser.add_argument("--templates", default=None, help="Templates directory (default: templates/ next to this script)")
+    parser.add_argument("--templates", default=None,
+                        help="Templates directory (default: templates/ next to this script)")
     args = parser.parse_args()
 
     # Resolve template dir
