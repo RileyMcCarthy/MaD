@@ -490,9 +490,14 @@ jobs:
 
   sil-tests:
     needs: [changes, build-software, build-firmware]
-    # Run SIL tests when either software or firmware changes (not hardware-only, not for releases)
+    # LEGACY Electron Playwright E2E — DISABLED by default and NOT part of CI Gate.
+    # It expects a *runnable* native firmware binary, but the current SIL is the Rust
+    # mad-emulator linking libfirmware.a (covered by the `sil-rust` job). Pending port
+    # to the shipped WASM app (see CLAUDE.md's decommission task). Re-enable by setting
+    # the repo variable RUN_LEGACY_SIL_E2E=true once it's ported.
     if: |
-      always() && 
+      always() &&
+      vars.RUN_LEGACY_SIL_E2E == 'true' &&
       needs.changes.outputs.is_release != 'true' &&
       (needs.changes.outputs.software == 'true' || needs.changes.outputs.firmware == 'true') &&
       needs.build-software.result == 'success' &&
@@ -772,7 +777,6 @@ jobs:
       - build-software
       - build-firmware
       - build-hardware
-      - sil-tests
     if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
