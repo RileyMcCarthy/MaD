@@ -8,7 +8,7 @@ Common issues with the control app and how to resolve them.
 |---|---|
 | **"Unsupported browser" screen** | You're not in a Chromium browser. Use Chrome or Edge on desktop — see [requirements](../getting-started/requirements.md). |
 | **No port in the chooser** | The machine isn't powered or the USB-serial driver isn't installed. Check the cable, power, and (on Windows) the adapter driver. |
-| **Connected but "Not responding"** | The port opened but the firmware isn't talking. Check the [baud rate](connecting.md) (default 230400), confirm the machine is powered through its [power-up sequence](../how-it-works/the-machine.md#power-up-sequence), and that nothing else holds the port. |
+| **Connected but "Not responding"** | The port opened but the firmware isn't talking. Check the [baud rate](connecting.md) (default 2,000,000), confirm the machine is powered through its [power-up sequence](../how-it-works/the-machine.md#power-up-sequence), and that nothing else holds the port. |
 | **Link drops randomly** | Loose USB, power dip, or the machine rebooted. Use **Reconnect**; the app auto-reconnects when the device replugs. |
 
 ## Motion

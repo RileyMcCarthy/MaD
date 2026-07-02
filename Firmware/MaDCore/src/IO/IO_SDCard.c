@@ -6,15 +6,27 @@
  * Includes
  **********************************************************************/
 #include "HAL_lock.h"
+#include "HAL_time.h"
 #include <string.h>
+#include <errno.h>
 #include "IO_Debug.h"
 
 #include "IO_SDCard.h"
 #include "lib_staticQueue.h"
 #include "emulation_helpers.h"
+#ifdef __FLEXC__
+#include <propeller2.h>
+#endif
 /**********************************************************************
  * Constants
  **********************************************************************/
+/* Upper bound on a single channel's binary item size (bytes). Largest configured
+ * item is currently 16 B (app_monitor_sample_t); 64 B leaves headroom for future
+ * channel types. processWrite/processRead use a fixed scratch buffer of this size
+ * rather than a VLA sized from the (runtime-indexed) channel config — flexcc has no
+ * VLA support and they are a MISRA C:2023 Rule 18.8 violation. Both functions
+ * bound-check itemSize against this so an oversized channel fails safe. */
+#define IO_SDCARD_MAX_ITEM_SIZE 64U
 
 /*********************************************************************
  * Macros
@@ -43,6 +55,21 @@ typedef struct
     bool disable;
 } IO_SDCard_channelRequest_S;
 
+/* Random-access read request, serviced ON the LOGGER cog (see IO_SDCard_run). The P2
+ * binds SD smartpin ownership to the cog that set them up, so a caller on another cog
+ * (e.g. file_download on the COMM cog) cannot fopen/fread the SD directly — it fills
+ * this request and waits while the LOGGER cog performs the read. */
+typedef struct
+{
+    volatile bool pending;   /* caller -> LOGGER: a read is requested */
+    char fileName[64];       /* short id; the LOGGER expands it via the channel nameFormat */
+    void *buffer;            /* caller's destination (HUB RAM; valid while it waits) */
+    uint32_t itemIndex;
+    uint32_t itemCount;
+    volatile uint32_t itemsRead;                  /* LOGGER -> caller: result */
+    volatile IO_SDCard_readDirectStatus_E status; /* LOGGER -> caller: result */
+} IO_SDCard_directRead_S;
+
 typedef struct
 {
     IO_SDCard_channelInput_S externalInput;
@@ -56,6 +83,8 @@ typedef struct
     bool eof;
     FILE *file;
     bool lastOpenFailed;
+
+    IO_SDCard_directRead_S directRead;
 
     IO_SDCard_state_E state;
     IO_SDCard_mode_E mode;
@@ -79,6 +108,7 @@ static IO_SDCard_data_S IO_SDCard_data;
 /**********************************************************************
  * Private Function Prototypes
  **********************************************************************/
+static void IO_SDCard_private_processDirectRead(IO_SDCard_channel_E channel);
 
 /**********************************************************************
  * Private Function Definitions
@@ -104,7 +134,7 @@ static IO_SDCard_state_E IO_SDCard_getDesiredState(IO_SDCard_channel_E channel)
         else
         {
             desiredState = IO_SDCARD_STATE_INIT;
-            DEBUG_ERROR("IO_SDCARD: Failed to open file %s, make sure the directory exists\n", IO_SDCARD_INTERNAL_INPUT(channel).fileName);
+            DEBUG_ERROR("IO_SDCARD: Failed to open file %s (errno %d)\n", IO_SDCARD_INTERNAL_INPUT(channel).fileName, errno);
         }
         break;
     case IO_SDCARD_STATE_ACTIVE:
@@ -158,11 +188,15 @@ static bool IO_SDCard_private_lockedPush(IO_SDCard_channel_E channel, void *data
 static void IO_SDCard_private_processWrite(IO_SDCard_channel_E channel)
 {
     // Write all queued items to file as raw binary structs
-    uint8_t itemBuffer[IO_SDCard_config.channelConfig[channel].queueBufferItemSize];
+    const uint32_t itemSize = IO_SDCard_config.channelConfig[channel].queueBufferItemSize;
+    if (itemSize > IO_SDCARD_MAX_ITEM_SIZE)
+    {
+        return; // configured item exceeds scratch buffer — fail safe (cannot happen for configured channels)
+    }
+    uint8_t itemBuffer[IO_SDCARD_MAX_ITEM_SIZE];
     while (IO_SDCard_private_lockedPop(channel, itemBuffer))
     {
-        fwrite(itemBuffer, IO_SDCard_config.channelConfig[channel].queueBufferItemSize, 1,
-               IO_SDCard_data.channelData[channel].file);
+        fwrite(itemBuffer, itemSize, 1, IO_SDCard_data.channelData[channel].file);
     }
     fflush(IO_SDCard_data.channelData[channel].file);
 }
@@ -175,10 +209,15 @@ static void IO_SDCard_private_processRead(IO_SDCard_channel_E channel)
         return;
     }
 
-    uint8_t itemBuffer[IO_SDCard_config.channelConfig[channel].queueBufferItemSize];
+    const uint32_t itemSize = IO_SDCard_config.channelConfig[channel].queueBufferItemSize;
+    if (itemSize > IO_SDCARD_MAX_ITEM_SIZE)
+    {
+        return; // configured item exceeds scratch buffer — fail safe (cannot happen for configured channels)
+    }
+    uint8_t itemBuffer[IO_SDCARD_MAX_ITEM_SIZE];
     while (!lib_staticQueue_isfull(&IO_SDCard_data.channelData[channel].queue))
     {
-        size_t bytesRead = fread(itemBuffer, IO_SDCard_config.channelConfig[channel].queueBufferItemSize,
+        size_t bytesRead = fread(itemBuffer, itemSize,
                                  1, IO_SDCard_data.channelData[channel].file);
         if (bytesRead == 0)
         {
@@ -201,9 +240,10 @@ static void IO_SDCard_private_entryAction(IO_SDCard_channel_E channel)
     case IO_SDCARD_STATE_OPEN:
     {
         IO_SDCard_data.channelData[channel].mode = IO_SDCARD_INTERNAL_INPUT(channel).mode;
+        const char *const fileName = IO_SDCARD_INTERNAL_INPUT(channel).fileName;
         const char *fileMode = (IO_SDCard_data.channelData[channel].mode == IO_SDCARD_MODE_WRITE) ? "wb" : "rb";
-        DEBUG_INFO("IO_SDCARD: Opening file %s (mode: %s)\n", IO_SDCARD_INTERNAL_INPUT(channel).fileName, fileMode);
-        IO_SDCard_data.channelData[channel].file = fopen(IO_SDCARD_INTERNAL_INPUT(channel).fileName, fileMode);
+        DEBUG_INFO("IO_SDCARD: Opening file %s (mode: %s)\n", fileName, fileMode);
+        IO_SDCard_data.channelData[channel].file = fopen(fileName, fileMode);
         IO_SDCard_data.channelData[channel].eof = false;
         break;
     }
@@ -297,6 +337,11 @@ static void IO_SDCard_private_processActive(IO_SDCard_channel_E channel)
  **********************************************************************/
 void IO_SDCard_init(int lock)
 {
+    /* IMPORTANT: dev_cogManager calls cogFunctionInit on the MAIN cog (before it
+     * launches the worker cog), so this runs on the MAIN cog — NOT the LOGGER cog.
+     * Do NOT mount or touch the SD hardware here: the P2 ORs pin DIR + smartpin
+     * ownership per cog, so the cog that sets up the SD SPI smartpins must be the
+     * same one that drives them. The mount is deferred to IO_SDCard_run (LOGGER). */
     IO_SDCard_data.lock = lock;
     for (IO_SDCard_channel_E channel = (IO_SDCard_channel_E)0U; channel < IO_SDCARD_CHANNEL_COUNT; channel++)
     {
@@ -313,8 +358,24 @@ void IO_SDCard_init(int lock)
 
 void IO_SDCard_run(void)
 {
+#ifdef __FLEXC__
+    /* Mount on the FIRST run — i.e. on the LOGGER cog itself, NOT in IO_SDCard_init
+     * (which dev_cogManager runs on the MAIN cog). The cog that sets up the SD SPI
+     * smartpins must also drive them, or the P2 per-cog pin/smartpin ownership
+     * corrupts every transfer (writes fail errno 12 even though the MAIN-cog boot
+     * read + an init-time write looked fine). */
+    static bool sdMounted = false;
+    if (!sdMounted)
+    {
+        sdMounted = true;
+        const int mountResult = mount(SD_CARD_MOUNT_PATH, _vfs_open_sdcard());
+        DEBUG_INFO("IO_SDCARD: LOGGER-cog mount result=%d\n", mountResult);
+        (void)mountResult;
+    }
+#endif
     for (IO_SDCard_channel_E channel = (IO_SDCard_channel_E)0U; channel < IO_SDCARD_CHANNEL_COUNT; channel++)
     {
+        IO_SDCard_private_processDirectRead(channel);
         IO_SDCard_private_stageInputs(channel);
 
         // Process active channel data (read/write)
@@ -450,37 +511,16 @@ uint32_t IO_SDCard_popMultiple(IO_SDCard_channel_E channel, void *buffer, uint32
     return count;
 }
 
-uint32_t IO_SDCard_readDirectEx(IO_SDCard_channel_E channel, const char *fileName,
-                                void *buffer, uint32_t itemIndex, uint32_t itemCount,
-                                IO_SDCard_readDirectStatus_E *outStatus)
+#define IO_SDCARD_DIRECT_READ_TIMEOUT_US 2000000U /* caller's max wait for the LOGGER cog */
+
+/* The actual SD random-access read. MUST run on the LOGGER cog (it drives the SD
+ * smartpins): called from IO_SDCard_private_processDirectRead on FlexC, or directly on
+ * native/SIL where stdio is thread-safe. */
+static uint32_t IO_SDCard_private_doDirectRead(IO_SDCard_channel_E channel, const char *fileName,
+                                               void *buffer, uint32_t itemIndex, uint32_t itemCount,
+                                               IO_SDCard_readDirectStatus_E *outStatus)
 {
     uint32_t itemsRead = 0U;
-    if (outStatus != NULL)
-    {
-        *outStatus = IO_SDCARD_READDIRECT_STATUS_FILE_ERROR;
-    }
-
-    if ((channel >= IO_SDCARD_CHANNEL_COUNT) || (buffer == NULL) || (itemCount == 0U))
-    {
-        return 0U;
-    }
-
-    IO_SDCard_state_E channelState;
-    IO_SDCard_mode_E channelMode;
-    IO_SDCARD_LOCK_REQ_BLOCK();
-    channelState = IO_SDCard_data.channelData[channel].state;
-    channelMode = IO_SDCard_data.channelData[channel].mode;
-    IO_SDCARD_LOCK_REL();
-
-    if ((channelState != IO_SDCARD_STATE_INIT) && (channelMode == IO_SDCARD_MODE_WRITE))
-    {
-        if (outStatus != NULL)
-        {
-            *outStatus = IO_SDCARD_READDIRECT_STATUS_BUSY;
-        }
-        return 0U;
-    }
-
     const uint32_t itemSize = IO_SDCard_config.channelConfig[channel].queueBufferItemSize;
 
     char filePath[255];
@@ -506,7 +546,7 @@ uint32_t IO_SDCard_readDirectEx(IO_SDCard_channel_E channel, const char *fileNam
     }
     else
     {
-        DEBUG_ERROR("IO_SDCard_readDirect: failed to open %s\n", filePath);
+        DEBUG_ERROR("IO_SDCard_readDirect: failed to open %s (errno %d)\n", filePath, errno);
         if (outStatus != NULL)
         {
             *outStatus = IO_SDCARD_READDIRECT_STATUS_FILE_ERROR;
@@ -514,6 +554,94 @@ uint32_t IO_SDCard_readDirectEx(IO_SDCard_channel_E channel, const char *fileNam
     }
 
     return itemsRead;
+}
+
+/* LOGGER cog: service a pending random-access read (set by a caller on another cog via
+ * IO_SDCard_readDirectEx). One request in flight per channel — the caller blocks until
+ * `pending` clears, so the request fields are stable while we read them here. */
+static void IO_SDCard_private_processDirectRead(IO_SDCard_channel_E channel)
+{
+    IO_SDCard_directRead_S *const dr = &IO_SDCard_data.channelData[channel].directRead;
+    if (!dr->pending)
+    {
+        return;
+    }
+    IO_SDCard_readDirectStatus_E status = IO_SDCARD_READDIRECT_STATUS_FILE_ERROR;
+    const uint32_t itemsRead = IO_SDCard_private_doDirectRead(channel, dr->fileName, dr->buffer,
+                                                             dr->itemIndex, dr->itemCount, &status);
+    dr->itemsRead = itemsRead;
+    dr->status = status;
+    dr->pending = false; /* result fields written above; clear last to release the caller */
+}
+
+uint32_t IO_SDCard_readDirectEx(IO_SDCard_channel_E channel, const char *fileName,
+                                void *buffer, uint32_t itemIndex, uint32_t itemCount,
+                                IO_SDCard_readDirectStatus_E *outStatus)
+{
+    if (outStatus != NULL)
+    {
+        *outStatus = IO_SDCARD_READDIRECT_STATUS_FILE_ERROR;
+    }
+
+    if ((channel >= IO_SDCARD_CHANNEL_COUNT) || (buffer == NULL) || (itemCount == 0U) || (fileName == NULL))
+    {
+        return 0U;
+    }
+
+    IO_SDCard_state_E channelState;
+    IO_SDCard_mode_E channelMode;
+    IO_SDCARD_LOCK_REQ_BLOCK();
+    channelState = IO_SDCard_data.channelData[channel].state;
+    channelMode = IO_SDCard_data.channelData[channel].mode;
+    IO_SDCARD_LOCK_REL();
+
+    if ((channelState != IO_SDCARD_STATE_INIT) && (channelMode == IO_SDCARD_MODE_WRITE))
+    {
+        if (outStatus != NULL)
+        {
+            *outStatus = IO_SDCARD_READDIRECT_STATUS_BUSY;
+        }
+        return 0U;
+    }
+
+#ifdef __FLEXC__
+    /* On the P2 the SD smartpins belong to the LOGGER cog, so we cannot fopen/fread the
+     * SD from this (caller's) cog. Hand the read to the LOGGER cog and block until it
+     * finishes (file_download is a one-shot, so a short stall on the caller is fine). */
+    IO_SDCard_directRead_S *const dr = &IO_SDCard_data.channelData[channel].directRead;
+    strncpy(dr->fileName, fileName, sizeof(dr->fileName) - 1U);
+    dr->fileName[sizeof(dr->fileName) - 1U] = '\0';
+    dr->buffer = buffer;
+    dr->itemIndex = itemIndex;
+    dr->itemCount = itemCount;
+    dr->itemsRead = 0U;
+    dr->status = IO_SDCARD_READDIRECT_STATUS_FILE_ERROR;
+    dr->pending = true; /* request fields set above; arm last */
+
+    const uint32_t startUs = (uint32_t)HAL_time_getUs();
+    while (dr->pending)
+    {
+        if (((uint32_t)HAL_time_getUs() - startUs) > IO_SDCARD_DIRECT_READ_TIMEOUT_US)
+        {
+            dr->pending = false;
+            if (outStatus != NULL)
+            {
+                *outStatus = IO_SDCARD_READDIRECT_STATUS_FILE_ERROR;
+            }
+            return 0U;
+        }
+        HAL_time_waitUs(50U);
+    }
+
+    if (outStatus != NULL)
+    {
+        *outStatus = dr->status;
+    }
+    return dr->itemsRead;
+#else
+    /* Native/SIL: stdio is thread-safe, read directly on the caller's thread. */
+    return IO_SDCard_private_doDirectRead(channel, fileName, buffer, itemIndex, itemCount, outStatus);
+#endif
 }
 
 uint32_t IO_SDCard_readDirect(IO_SDCard_channel_E channel, const char *fileName,

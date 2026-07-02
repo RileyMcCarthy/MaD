@@ -16,7 +16,7 @@ Original routes: `/dashboard`, `/connect`, `/create` (test builder), `/view` (ru
 - ✅ Dark theme. ✅ Toast notifications (error/warn/info/success).
 
 ## 2. Connection (`/connect`) — ✅ DONE
-  - ✅ **Selectable baud rate** dropdown (9600…2,000,000; default 230400 per the hardware contract).
+  - ✅ **Selectable baud rate** dropdown (9600…2,000,000; default 2,000,000 per the hardware contract).
   - ✅ **Granted-ports list** via `navigator.serial.getPorts()` + refresh + "Add device…" (`requestPort`).
   - ✅ Connection status / error feedback; disconnect + responding badge.
   - E2E B2/B3 green.

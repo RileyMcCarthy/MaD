@@ -40,15 +40,8 @@ typedef enum
     {{ prefix_upper }}_RUNTIME_STATE_CRC,
 } {{ prefix }}_RuntimeState_E;
 
-typedef bool (*{{ prefix }}_RuntimeSendBytesFn)(const uint8_t *data, uint16_t size, void *user_ctx);
-typedef uint32_t (*{{ prefix }}_RuntimeGetTimeMsFn)(void *user_ctx);
-
 typedef struct
 {
-    {{ prefix }}_RuntimeSendBytesFn sendBytes;
-    {{ prefix }}_RuntimeGetTimeMsFn getTimeMs;
-    void *userCtx;
-
     {{ prefix }}_RuntimeState_E state;
     uint32_t startMs;
     uint8_t frameType;
@@ -61,10 +54,7 @@ typedef struct
 /**
  * Initialize runtime state machine.
  */
-void {{ prefix }}_Runtime_init({{ prefix }}_Runtime_t *runtime,
-                               {{ prefix }}_RuntimeSendBytesFn sendBytes,
-                               {{ prefix }}_RuntimeGetTimeMsFn getTimeMs,
-                               void *userCtx);
+void {{ prefix }}_Runtime_init({{ prefix }}_Runtime_t *runtime);
 
 /**
  * Feed one incoming byte from transport into parser/dispatcher.
@@ -93,7 +83,16 @@ bool {{ prefix }}_Runtime_sendNotificationFromCallback({{ prefix }}_Runtime_t *r
  *   - onRead_*: READ-frame providers (returns true/false)
  *   - onQuery_*: WRITE-frame queries (returns DATA/NACK)
  *   - onWrite_*: WRITE-frame commands (returns ACK/NACK)
+ *
+ * Transport + time are provided the same way (declared here, defined by the
+ * application). They are plain extern functions, NOT registered function
+ * pointers: the P2 FlexC toolchain encodes function pointers as method-table
+ * indices and fails to dispatch them indirectly from inside this runtime, so
+ * every callback uses direct linkage.
  * ============================================================ */
+bool {{ prefix }}_sendBytes(const uint8_t *data, uint16_t size);
+uint32_t {{ prefix }}_getTimeMs(void);
+
 {% for msg in runtime_read_messages %}
 {% set struct_name = msg._response_name %}
 {% if struct_name %}

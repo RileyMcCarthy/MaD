@@ -35,7 +35,7 @@ export interface UiNotification extends Notification {
 export interface ConnectArgs {
   /** A specific already-granted port; if omitted, prompts via requestPort(). */
   port?: SerialPort;
-  /** Baud rate (default 230400, matching the hardware contract). */
+  /** Baud rate (default DEFAULT_BAUD_RATE = 2,000,000, matching the firmware UART). */
   baud?: number;
 }
 

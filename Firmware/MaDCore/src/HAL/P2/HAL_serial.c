@@ -8,11 +8,17 @@
 
 #include "smartpins.h"
 #include "propeller2.h"
+#include "emulation_helpers.h"
 #include <stdlib.h>
 #include <unistd.h>
 /**********************************************************************
  * Constants
  **********************************************************************/
+/* Consecutive empty polls before a burst receive gives up. The inlined poll is
+ * a few instructions, so this comfortably spans one inter-byte gap at 2 Mbaud
+ * (~5 us). */
+#define HAL_SERIAL_RX_IDLE_SPINS (1024U)
+#define HAL_SERIAL_RX_YIELD_MASK (0x3FU)
 
 /*********************************************************************
  * Macros
@@ -224,6 +230,38 @@ bool HAL_serial_recieveByte(HAL_serial_channel_E channel, uint8_t *const byte)
         result = HAL_serial_private_readByte(channel, byte);
     }
     return result;
+}
+
+uint32_t HAL_serial_recieveBytes(HAL_serial_channel_E channel, uint8_t *const buf, uint32_t maxBytes)
+{
+    uint32_t count = 0U;
+    if ((channel < HAL_SERIAL_CHANNEL_COUNT) && (buf != NULL))
+    {
+        uint32_t idle = 0U;
+        while (count < maxBytes)
+        {
+            /* HAL_serial_private_readByte is static inline, so this hot loop is
+             * just the smartpin poll + a store — no per-byte call overhead. */
+            if (HAL_serial_private_readByte(channel, &buf[count]))
+            {
+                count++;
+                idle = 0U;
+            }
+            else
+            {
+                idle++;
+                if (idle >= HAL_SERIAL_RX_IDLE_SPINS)
+                {
+                    break;
+                }
+                if ((idle & HAL_SERIAL_RX_YIELD_MASK) == 0U)
+                {
+                    EMULATION_YIELD_SERIAL();
+                }
+            }
+        }
+    }
+    return count;
 }
 
 /**********************************************************************

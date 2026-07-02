@@ -37,7 +37,7 @@ secure context).
 
 ## Connecting hardware
 
-The machine communicates at **230400 baud** by default. The app lets you choose a
+The machine communicates at **2,000,000 baud** by default. The app lets you choose a
 different baud rate on the [Connect](../user-guide/connecting.md) screen, but the
 default matches the firmware out of the box.
 

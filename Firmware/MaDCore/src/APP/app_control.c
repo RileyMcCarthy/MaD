@@ -24,6 +24,14 @@
  * Constants
  **********************************************************************/
 
+/* ===== BENCH TEST BYPASS (TEMPORARY) =====
+ * 1 = bench testing with the force gauge / stepper / encoder DISCONNECTED.
+ * Forces the hardware-communication + ESD/endstop safety gates clear so motion
+ * can be enabled and a test can run without sensors attached. The stepper is
+ * open-loop (pulse generation), so moves still execute. The COG and WATCHDOG
+ * integrity faults are left ACTIVE. MUST be 0 for any real machine. */
+#define APP_CONTROL_BENCH_TEST_BYPASS 1
+
 /*********************************************************************
  * Macros
  **********************************************************************/
@@ -122,6 +130,17 @@ static app_control_fault_E app_control_private_processFaults(void)
     app_control_data.fault[APP_CONTROL_FAULT_SERVO_COMMUNICATION] = (dev_stepper_isReady(DEV_STEPPER_CHANNEL_MAIN) == false);
     app_control_data.fault[APP_CONTROL_FAULT_FORCE_GAUGE_COMMUNICATION] = (dev_forceGauge_isReady(DEV_FORCEGAUGE_CHANNEL_MAIN) == false);
 
+#if APP_CONTROL_BENCH_TEST_BYPASS
+    /* Sensors/actuators disconnected on the bench: clear the hardware-comm and
+     * ESD gates so motion can be enabled. COG/WATCHDOG above stay real. */
+    app_control_data.fault[APP_CONTROL_FAULT_ESD_POWER] = false;
+    app_control_data.fault[APP_CONTROL_FAULT_ESD_SWITCH] = false;
+    app_control_data.fault[APP_CONTROL_FAULT_ESD_UPPER] = false;
+    app_control_data.fault[APP_CONTROL_FAULT_ESD_LOWER] = false;
+    app_control_data.fault[APP_CONTROL_FAULT_SERVO_COMMUNICATION] = false;
+    app_control_data.fault[APP_CONTROL_FAULT_FORCE_GAUGE_COMMUNICATION] = false;
+#endif
+
     // Select the first fault as the reason
     app_control_fault_E fault = APP_CONTROL_FAULT_NONE;
     for (app_control_fault_E index = (app_control_fault_E)0U; index < APP_CONTROL_FAULT_COUNT; index++)
@@ -186,6 +205,15 @@ static app_control_restriction_E app_control_private_processRestrictions(void)
     app_control_data.restriction[APP_CONTROL_RESTRICTION_UPPER_ENDSTOP] = HAL_GPIO_getActive(HAL_GPIO_ENDSTOP_UPPER);
     app_control_data.restriction[APP_CONTROL_RESTRICTION_LOWER_ENDSTOP] = HAL_GPIO_getActive(HAL_GPIO_ENDSTOP_LOWER);
     app_control_data.restriction[APP_CONTROL_RESTRICTION_DOOR] = HAL_GPIO_getActive(HAL_GPIO_ENDSTOP_DOOR);
+
+#if APP_CONTROL_BENCH_TEST_BYPASS
+    /* Disconnected force gauge reads garbage and the endstop/door GPIOs float;
+     * clear these so the machine stays in MANUAL/TEST instead of RESTRICTED. */
+    app_control_data.restriction[APP_CONTROL_RESTRICTION_MACHINE_TENSION] = false;
+    app_control_data.restriction[APP_CONTROL_RESTRICTION_UPPER_ENDSTOP] = false;
+    app_control_data.restriction[APP_CONTROL_RESTRICTION_LOWER_ENDSTOP] = false;
+    app_control_data.restriction[APP_CONTROL_RESTRICTION_DOOR] = false;
+#endif
 
     // Select the first condition as the reason
     app_control_restriction_E condition = APP_CONTROL_RESTRICTION_NONE;

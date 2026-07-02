@@ -7,9 +7,9 @@
 static uint8_t test_tx_buffer[512];
 static uint16_t test_tx_size = 0;
 
-static bool test_send_bytes(const uint8_t *data, uint16_t size, void *ctx)
+/* Direct-linkage runtime hooks (no function-pointer registration). */
+bool ProtoEmb_sendBytes(const uint8_t *data, uint16_t size)
 {
-    (void)ctx;
     if ((test_tx_size + size) > sizeof(test_tx_buffer))
     {
         return false;
@@ -17,6 +17,11 @@ static bool test_send_bytes(const uint8_t *data, uint16_t size, void *ctx)
     memcpy(&test_tx_buffer[test_tx_size], data, size);
     test_tx_size = (uint16_t)(test_tx_size + size);
     return true;
+}
+
+uint32_t ProtoEmb_getTimeMs(void)
+{
+    return 0U;
 }
 
 void test_protoemb_stored_sample_roundtrip(void)
@@ -57,7 +62,7 @@ void test_protoemb_runtime_send_notification_frame(void)
     notification.type = PROTOEMB_NOTIFICATIONTYPE_INFO;
     strncpy(notification.message, "runtime-test", sizeof(notification.message) - 1U);
 
-    ProtoEmb_Runtime_init(&runtime, test_send_bytes, NULL, NULL);
+    ProtoEmb_Runtime_init(&runtime);
     TEST_ASSERT_TRUE(ProtoEmb_Runtime_sendNotification(&runtime, &notification));
 
     TEST_ASSERT_GREATER_THAN_UINT16(6U, test_tx_size);

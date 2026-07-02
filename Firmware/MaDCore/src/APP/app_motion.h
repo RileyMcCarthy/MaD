@@ -14,6 +14,11 @@
 /**********************************************************************
  * Constants
  **********************************************************************/
+/* Actuator selection. 1 = closed-loop dev_servo (encoder = source of truth);
+ * 0 = legacy open-loop dev_stepper (commanded step count). The MOTOR cog
+ * (dev_cogManager_config.c) inits/runs the matching driver and paces its cog
+ * accordingly, so this single switch swaps the whole motion path. */
+#define APP_MOTION_USE_SERVO 1
 
 /*********************************************************************
  * Macros

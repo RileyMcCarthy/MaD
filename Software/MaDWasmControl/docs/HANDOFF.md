@@ -143,8 +143,9 @@ The runner already records what the viewer needs (gcode, profiles, gaugeLengthMm
 - **Granted-ports list** via `navigator.serial.getPorts()` + an "add new" (`requestPort`).
 - **Device-responding** health: derive from sample/poll activity (e.g. a recent-sample timestamp
   in the store) and show in the status bar ("Responding" vs "Not responding"), distinct from connected.
-- Confirm the correct default **baud** (desktop default was 2,000,000; new app uses 230400 — verify
-  against firmware/SIL and fix if wrong). → confirmed **230400** (hardware contract).
+- Confirm the correct default **baud**. → app default is **2,000,000**, matching the firmware
+  UART (firmware raised from 230400 to 2 Mbaud; reads verified solid to 3M on real hardware).
+  Note: the **SIL** emulator stays on a lower baud via `MAD_SIM_BAUD` (it can't pace 2M in real time).
 
 ### 6. Run-history polish (PARITY §10; tests H2–H5) — ✅
 - Columns for **sample/motion profile names**; **pagination** (page size 10, "load older");

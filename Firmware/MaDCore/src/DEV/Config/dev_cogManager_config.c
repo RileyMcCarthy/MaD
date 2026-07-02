@@ -22,6 +22,7 @@
 #include "IO_positionFeedback.h"
 #include "dev_nvram.h"
 
+#include "dev_servo.h"
 #include "IO_protocol.h"
 #include "IO_fullDuplexSerial.h"
 
@@ -53,16 +54,31 @@ DEV_COGMANAGER_CHANNEL_CREATE_RUN(MONITOR)
     app_monitor_run();
 }
 
-DEV_COGMANAGER_CHANNEL_CREATE_INIT(MOTOR, 2048)
+DEV_COGMANAGER_CHANNEL_CREATE_INIT(MOTOR, 4096)
 {
+#if APP_MOTION_USE_SERVO
+    DEBUG_INFO("%s", "Servo (closed-loop) cog initializing\n");
+    MachineProfile machineProfile;
+    dev_nvram_getChannelData(DEV_NVRAM_CHANNEL_MACHINE_PROFILE, &machineProfile, sizeof(MachineProfile));
+    /* The machine profile stores limits in mm; the servo works in encoder counts.
+     * Convert with encoderStepsPerMM (int64 intermediate = overflow-safe) so the
+     * profile — not a hardcoded constant — governs the velocity/accel ceilings. */
+    const int32_t maxVelocityCounts = (int32_t)((int64_t)machineProfile.maxVelocity * machineProfile.encoderStepsPerMM);
+    const int32_t maxAccelCounts = (int32_t)((int64_t)machineProfile.maxAcceleration * machineProfile.encoderStepsPerMM);
+    dev_servo_init(lock, maxVelocityCounts, maxAccelCounts); /* app_motion enables + commands it via the actuator macros */
+#else
     DEBUG_INFO("%s", "Stepper cog initializing\n");
     dev_stepper_init(lock);
+#endif
 }
 
 DEV_COGMANAGER_CHANNEL_CREATE_RUN(MOTOR)
 {
-    // Run stepper as fast as possible, we we use IO_pulseOut for handle timing
-    dev_stepper_run();
+#if APP_MOTION_USE_SERVO
+    dev_servo_run(); /* fixed-rate control tick (cog paced at 1 kHz, see CONFIG_CREATE) */
+#else
+    dev_stepper_run(); /* free-running; IO_pulseOut handles timing */
+#endif
 }
 
 DEV_COGMANAGER_CHANNEL_CREATE_INIT(COMMUNICATION, 2048)
@@ -79,7 +95,7 @@ DEV_COGMANAGER_CHANNEL_CREATE_RUN(COMMUNICATION)
     app_messageSlave_run();
 }
 
-DEV_COGMANAGER_CHANNEL_CREATE_INIT(CONTROL, 1024)
+DEV_COGMANAGER_CHANNEL_CREATE_INIT(CONTROL, 6144)
 {
     DEBUG_INFO("%s", "Control cog initializing\n");
     app_motion_init(lock);
@@ -96,7 +112,7 @@ DEV_COGMANAGER_CHANNEL_CREATE_RUN(CONTROL)
     app_control_run();
 }
 
-DEV_COGMANAGER_CHANNEL_CREATE_INIT(LOGGER, 1024)
+DEV_COGMANAGER_CHANNEL_CREATE_INIT(LOGGER, 4096)
 {
     DEBUG_INFO("%s", "Logger cog initializing\n");
     IO_SDCard_init(lock);
@@ -107,7 +123,7 @@ DEV_COGMANAGER_CHANNEL_CREATE_RUN(LOGGER)
     IO_SDCard_run();
 }
 
-DEV_COGMANAGER_CHANNEL_CREATE_INIT(FORCEGAUGE, 1024)
+DEV_COGMANAGER_CHANNEL_CREATE_INIT(FORCEGAUGE, 2048)
 {
     DEBUG_INFO("%s", "Force gauge cog initializing\n");
     dev_forceGauge_init(lock);
@@ -133,7 +149,11 @@ DEV_COGMANAGER_CHANNEL_CREATE_RUN(SERIAL)
 const dev_cogManager_config_S dev_cogManager_config = {
     {
         DEV_COGMANAGER_CHANNEL_CONFIG_CREATE(MONITOR, 1000U),
-        DEV_COGMANAGER_CHANNEL_CONFIG_CREATE(MOTOR, 0U),
+#if APP_MOTION_USE_SERVO
+        DEV_COGMANAGER_CHANNEL_CONFIG_CREATE(MOTOR, 1000U), /* servo: fixed 1 kHz control tick */
+#else
+        DEV_COGMANAGER_CHANNEL_CONFIG_CREATE(MOTOR, 0U),    /* stepper: free-run (IO_pulseOut times it) */
+#endif
         DEV_COGMANAGER_CHANNEL_CONFIG_CREATE(COMMUNICATION, 100U),
         DEV_COGMANAGER_CHANNEL_CONFIG_CREATE(CONTROL, 1000U),
         DEV_COGMANAGER_CHANNEL_CONFIG_CREATE(LOGGER, 1000U),

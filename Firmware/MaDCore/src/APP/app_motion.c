@@ -12,7 +12,11 @@
 #include "app_motion.h"
 #include "app_control.h"
 
+#if APP_MOTION_USE_SERVO
+#include "dev_servo.h"
+#else
 #include "dev_stepper.h"
+#endif
 #include "dev_nvram.h"
 
 #include "HAL_GPIO.h"
@@ -43,6 +47,33 @@
     }
 #define APP_MOTION_LOCK_REL() HAL_lock_release(app_motion_data.lock)
 
+/* Actuator abstraction: app_motion speaks these; the build (APP_MOTION_USE_SERVO)
+ * picks the driver. dev_servo closes the loop on the encoder, so getPosition is
+ * the encoder truth and move() honours a feedrate; dev_stepper is open-loop, so
+ * getPosition is the commanded step count. Both speak the same counts (servo and
+ * encoder are 8192 steps/mm) and the same target/feedrate semantics. */
+#if APP_MOTION_USE_SERVO
+#define ACTUATOR_CH DEV_SERVO_CHANNEL_MAIN
+#define actuator_enable(en) dev_servo_enable(ACTUATOR_CH, (en))
+#define actuator_move(target, feedrate) dev_servo_moveTo(ACTUATOR_CH, (target), (feedrate))
+#define actuator_setVelocity(v) dev_servo_setVelocity(ACTUATOR_CH, (v))
+#define actuator_stop() dev_servo_stop(ACTUATOR_CH)
+#define actuator_setPosition(p) dev_servo_setPosition(ACTUATOR_CH, (p))
+#define actuator_getPosition() dev_servo_getPosition(ACTUATOR_CH)
+#define actuator_getTarget() dev_servo_getTarget(ACTUATOR_CH)
+#define actuator_atTarget() dev_servo_atTarget(ACTUATOR_CH)
+#else
+#define ACTUATOR_CH DEV_STEPPER_CHANNEL_MAIN
+#define actuator_enable(en) dev_stepper_enable(ACTUATOR_CH, (en))
+#define actuator_move(target, feedrate) (void)dev_stepper_move(ACTUATOR_CH, (target), (feedrate))
+#define actuator_setVelocity(v) dev_stepper_setVelocity(ACTUATOR_CH, (v))
+#define actuator_stop() dev_stepper_stop(ACTUATOR_CH)
+#define actuator_setPosition(p) dev_stepper_setPosition(ACTUATOR_CH, (p))
+#define actuator_getPosition() dev_stepper_getSteps(ACTUATOR_CH)
+#define actuator_getTarget() dev_stepper_getTarget(ACTUATOR_CH)
+#define actuator_atTarget() dev_stepper_atTarget(ACTUATOR_CH)
+#endif
+
 /* Waveform (G123): the firmware generates the f(t) trajectory itself (no host G1
  * expansion). It streams the analytic instantaneous velocity each motion tick to
  * the stepper's continuous-velocity (NCO) output, so the pulse rate follows the
@@ -72,7 +103,7 @@ typedef struct
     bool limitSpeed;
     int32_t positionSteps;
     bool atTarget;
-    int32_t gaugeSetpointSteps;     /* dev_stepper_getTarget(MAIN)            */
+    int32_t gaugeSetpointSteps;     /* actuator_getTarget() — commanded target */
     bool endstopUpperActive;        /* HAL_GPIO_getActive(ENDSTOP_UPPER)      */
 } app_motion_dataInputs_t;
 
@@ -135,9 +166,9 @@ static void app_motion_private_processInputs(void)
 {
     app_motion_data.inputs.motionEnabled = app_control_motionEnabled();
     app_motion_data.inputs.limitSpeed = app_control_speedLimited();
-    app_motion_data.inputs.positionSteps = dev_stepper_getSteps(DEV_STEPPER_CHANNEL_MAIN);
-    app_motion_data.inputs.atTarget = dev_stepper_atTarget(DEV_STEPPER_CHANNEL_MAIN);
-    app_motion_data.inputs.gaugeSetpointSteps = dev_stepper_getTarget(DEV_STEPPER_CHANNEL_MAIN);
+    app_motion_data.inputs.positionSteps = actuator_getPosition();
+    app_motion_data.inputs.atTarget = actuator_atTarget();
+    app_motion_data.inputs.gaugeSetpointSteps = actuator_getTarget();
     app_motion_data.inputs.endstopUpperActive = HAL_GPIO_getActive(HAL_GPIO_ENDSTOP_UPPER);
 }
 
@@ -159,8 +190,8 @@ static app_motion_state_E app_motion_private_getDesiredState(void)
     if (app_motion_data.inputs.motionEnabled == false)
     {
         lib_staticQueue_empty(&app_motion_data.queue);
-        dev_stepper_stop(DEV_STEPPER_CHANNEL_MAIN);
-        dev_stepper_enable(DEV_STEPPER_CHANNEL_MAIN, false);
+        actuator_stop();
+        actuator_enable(false);
         desiredState = APP_MOTION_DISABLED;
     }
     else
@@ -168,7 +199,7 @@ static app_motion_state_E app_motion_private_getDesiredState(void)
         switch (app_motion_data.state)
         {
         case APP_MOTION_DISABLED:
-            dev_stepper_enable(DEV_STEPPER_CHANNEL_MAIN, true);
+            actuator_enable(true);
             desiredState = APP_MOTION_WAITING;
             break;
         case APP_MOTION_WAITING:
@@ -199,7 +230,7 @@ static bool app_motion_private_homing_run(void)
     {
     case APP_MOTION_HOME_START:
         DEBUG_INFO("%s", "Homing Moving\n");
-        dev_stepper_move(DEV_STEPPER_CHANNEL_MAIN, app_motion_data.inputs.positionSteps - app_motion_data.stepsPerMM * app_motion_data.maxPosition, app_motion_data.homingVelocity * app_motion_data.stepsPerMM);
+        actuator_move(app_motion_data.inputs.positionSteps - app_motion_data.stepsPerMM * app_motion_data.maxPosition, app_motion_data.homingVelocity * app_motion_data.stepsPerMM);
         app_motion_data.homeState = APP_MOTION_HOME_MOVING;
         break;
     case APP_MOTION_HOME_MOVING:
@@ -207,7 +238,7 @@ static bool app_motion_private_homing_run(void)
         {
             DEBUG_INFO("%s", "Homing Endstop\n");
             lib_timer_start(&app_motion_data.endstopTimer);
-            dev_stepper_stop(DEV_STEPPER_CHANNEL_MAIN);
+            actuator_stop();
             app_motion_data.homeState = APP_MOTION_HOME_ENDSTOP;
         }
         else if (app_motion_data.inputs.atTarget)
@@ -228,8 +259,8 @@ static bool app_motion_private_homing_run(void)
             (void)IO_positionFeedback_setValue(
                 IO_POSITION_FEEDBACK_CHANNEL_SERVO_FEEDBACK,
                 LIB_UTILITY_MM_TO_UM(app_motion_data.jawOffset));
-            dev_stepper_setPosition(DEV_STEPPER_CHANNEL_MAIN, jawOffsetSteps);
-            dev_stepper_move(DEV_STEPPER_CHANNEL_MAIN, jawOffsetSteps + homingOffsetSteps, (app_motion_data.homingVelocity * app_motion_data.stepsPerMM));
+            actuator_setPosition(jawOffsetSteps);
+            actuator_move(jawOffsetSteps + homingOffsetSteps, (app_motion_data.homingVelocity * app_motion_data.stepsPerMM));
             app_motion_data.homeState = APP_MOTION_HOME_BACKOFF;
         }
         break;
@@ -274,7 +305,7 @@ static void app_motion_private_moveManager_start(void)
             }
             DEBUG_INFO("G0 command moving to steps %d at %d steps/s\n", steps, feedrate);
             DEBUG_INFO("moving from position (mm) %d to setpoint (mm) %d\n", app_motion_data.inputs.positionSteps / app_motion_data.stepsPerMM, steps / app_motion_data.stepsPerMM);
-            dev_stepper_move(DEV_STEPPER_CHANNEL_MAIN, steps, feedrate);
+            actuator_move(steps, feedrate);
         }
         break;
     case G2_CW_ARC_MOVE:
@@ -367,7 +398,7 @@ static bool app_motion_private_waveform_run(void)
         {
             peakVel = 1U;
         }
-        dev_stepper_move(DEV_STEPPER_CHANNEL_MAIN, app_motion_data.waveformCentreSteps, peakVel);
+        actuator_move(app_motion_data.waveformCentreSteps, peakVel);
         const int32_t settleErr =
             app_motion_data.inputs.positionSteps - app_motion_data.waveformCentreSteps;
         return ((settleErr <= APP_MOTION_WAVEFORM_SETTLE_STEPS) &&
@@ -394,7 +425,7 @@ static bool app_motion_private_waveform_run(void)
     }
     /* Round (not truncate) so sub-step rates near the turning points still move
      * in the correct direction instead of snapping to a momentary halt. */
-    dev_stepper_setVelocity(DEV_STEPPER_CHANNEL_MAIN, (int32_t)roundf(velocity));
+    actuator_setVelocity((int32_t)roundf(velocity));
     return false;
 }
 
@@ -467,7 +498,7 @@ bool app_motion_addMove(const app_motion_move_t *move)
 
 void app_motion_abortAndClear(void)
 {
-    dev_stepper_stop(DEV_STEPPER_CHANNEL_MAIN);
+    actuator_stop();
     lib_staticQueue_empty(&app_motion_data.queue);
     if (app_motion_data.state == APP_MOTION_MOVING)
     {

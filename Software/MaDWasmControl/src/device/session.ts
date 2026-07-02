@@ -21,7 +21,10 @@ import {
 } from './events';
 import { MachineConfiguration, SampleData, SampleProfile } from '@/domain';
 
-export const DEFAULT_BAUD_RATE = 230400;
+// 2 Mbaud: the P2 protocol UART runs at this rate (perfect divisor match — P2
+// 200MHz/100, FT232R 3MHz/1.5). The firmware's lock-free, continuous-poll
+// receive keeps up at this rate; see HAL_serial.c / IO_fullDuplexSerial.c.
+export const DEFAULT_BAUD_RATE = 2000000;
 
 export class DeviceClient {
   private worker!: Worker;

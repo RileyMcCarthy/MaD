@@ -8,7 +8,7 @@ machine. The MaD tester presents itself as a USB-to-serial device.
 ## Connect to a machine
 
 1. Power the machine on and plug it into your computer over USB.
-2. Choose a **baud rate**. The default is **230400**, which matches the firmware
+2. Choose a **baud rate**. The default is **2,000,000**, which matches the firmware
    out of the box — only change this if your firmware is configured differently.
 3. Connect:
     - If you've connected this device before, it appears in the **granted

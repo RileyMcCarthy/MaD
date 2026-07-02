@@ -47,6 +47,9 @@ theme:
   icon:
     repo: fontawesome/brands/github
 
+extra_css:
+  - stylesheets/firmware-modules.css
+
 extra:
   social:
     - icon: fontawesome/brands/github

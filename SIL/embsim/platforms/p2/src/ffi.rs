@@ -95,6 +95,19 @@ pub unsafe extern "C" fn HAL_serial_recieveByte(channel: i32, data: *mut u8) -> 
     }
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn HAL_serial_recieveBytes(
+    channel: i32,
+    buf: *mut u8,
+    max_bytes: u32,
+) -> u32 {
+    if buf.is_null() || max_bytes == 0 || channel < 0 {
+        return 0;
+    }
+    let out = std::slice::from_raw_parts_mut(buf, max_bytes as usize);
+    serial::receive_bytes(channel as usize, out) as u32
+}
+
 // ============================================================
 // Encoder
 // ============================================================

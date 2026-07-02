@@ -29,6 +29,7 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-router-dom": "^7.1.1",
+    "serialport": "^13.0.0",
     "uplot": "^1.6.31",
     "zustand": "^5.0.2"
   },

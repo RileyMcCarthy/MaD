@@ -59,3 +59,6 @@ SIL/sd/profile.bin
 Hardware/DS2Addon/KICAD/jlcpcb/project.db
 Hardware/ForceGauge/ForceGauge-backups/ForceGauge-2025-12-21_214747.zip
 Hardware/DS2Addon/KICAD/jlcpcb/production_files/GERBER-DS2_Addon.zip
+
+# Local scratch notes / Claude memories (not committed)
+notes/

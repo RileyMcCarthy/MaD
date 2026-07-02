@@ -50,15 +50,16 @@ typedef struct
 
 static app_message_slave_data_S app_message_slave_data;
 
-static bool app_message_slave_runtimeSendBytes(const uint8_t *data, uint16_t size, void *user_ctx)
+/* ProtoEmb runtime transport/time hooks — direct linkage (the runtime calls
+ * these by name; FlexC mis-dispatches indirect function pointers from inside
+ * the generated runtime, so no callback registration). */
+bool ProtoEmb_sendBytes(const uint8_t *data, uint16_t size)
 {
-    (void)user_ctx;
     return IO_fullDuplexSerial_send(IO_FULLDUPLEXSERIAL_CHANNEL_MAIN, data, size);
 }
 
-static uint32_t app_message_slave_runtimeGetTimeMs(void *user_ctx)
+uint32_t ProtoEmb_getTimeMs(void)
 {
-    (void)user_ctx;
     return HAL_time_getMs();
 }
 
@@ -350,14 +351,67 @@ ProtoEmb_RuntimeQueryDisposition_E ProtoEmb_onQuery_file_download(const uint8_t 
     return PROTOEMB_RUNTIME_QUERY_DISPOSITION_DATA;
 }
 
+/* Raw write fallbacks. The runtime dispatch only invokes onWriteRaw_* when an
+ * incoming payload is NOT the message's fixed wire size. test_move uses this for
+ * filename-open and batched moves (above); the commands below have no raw/batch
+ * form, so a wrong-size payload is malformed → NACK. These were previously the
+ * generated weak defaults; the runtime no longer emits defaults, so the app must
+ * define every declared handler (a missing one is now a link error, not a silent
+ * NACK). */
+ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWriteRaw_machine_configuration_write(const uint8_t *payload,
+                                                                                   uint16_t payloadSize)
+{
+    (void)payload;
+    (void)payloadSize;
+    return PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK;
+}
+
+ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWriteRaw_manual_move(const uint8_t *payload,
+                                                                   uint16_t payloadSize)
+{
+    (void)payload;
+    (void)payloadSize;
+    return PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK;
+}
+
+ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWriteRaw_sample_profile_write(const uint8_t *payload,
+                                                                           uint16_t payloadSize)
+{
+    (void)payload;
+    (void)payloadSize;
+    return PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK;
+}
+
+ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWriteRaw_test_run(const uint8_t *payload,
+                                                               uint16_t payloadSize)
+{
+    (void)payload;
+    (void)payloadSize;
+    return PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK;
+}
+
+ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWriteRaw_test_waveform(const uint8_t *payload,
+                                                                     uint16_t payloadSize)
+{
+    (void)payload;
+    (void)payloadSize;
+    return PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK;
+}
+
+/* Pull-style notification fill is unused: the firmware pushes notifications
+ * eagerly through app_messageSlave_sendNotification (ProtoEmb_Runtime_sendNotification).
+ * Required to satisfy the runtime's handler contract. */
+bool ProtoEmb_fill_notification(ProtoEmb_Notification_t *out)
+{
+    (void)out;
+    return false;
+}
+
 void app_messageSlave_init(int lock)
 {
     app_message_slave_data.lock = lock;
     dev_nvram_getChannelData(DEV_NVRAM_CHANNEL_MACHINE_PROFILE, &app_message_slave_data.machineProfile, sizeof(MachineProfile));
-    ProtoEmb_Runtime_init(&app_message_slave_data.runtime,
-                          app_message_slave_runtimeSendBytes,
-                          app_message_slave_runtimeGetTimeMs,
-                          NULL);
+    ProtoEmb_Runtime_init(&app_message_slave_data.runtime);
 }
 
 void app_messageSlave_run(void)

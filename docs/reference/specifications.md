@@ -22,7 +22,7 @@ user-modifiable.
 
 ## Interfaces
 
-- **Host link:** USB-to-serial, **230400 baud** by default.
+- **Host link:** USB-to-serial, **2,000,000 baud** by default.
 - **Control app:** any Chromium browser (Web Serial), no installation.
 - **Storage:** SD card on the machine; results mirrored to a folder on the host.
 

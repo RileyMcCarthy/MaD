@@ -25,7 +25,7 @@ see [requirements](requirements.md).
    [power-up sequence](../how-it-works/the-machine.md#power-up-sequence)) and
    connect it to your computer over USB.
 2. In the app, open **Connect** in the sidebar.
-3. Leave the **baud rate** at the default (**230400**) and click **Connect
+3. Leave the **baud rate** at the default (**2,000,000**) and click **Connect
    device**. Your browser shows a serial-port chooser — pick the machine's port.
 
 When connected, the status bar turns green and shows **Connected** with a

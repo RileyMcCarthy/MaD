@@ -271,6 +271,32 @@ pub fn receive_data_timeout(channel: usize, buf: &mut [u8], timeout_us: u64) -> 
     total_read == buf.len()
 }
 
+/// Receive up to `buf.len()` bytes in a single non-blocking read.
+///
+/// Returns the number of bytes read (0 if none were available). Like
+/// [`receive_byte`], a successful read is paced to the configured baud so the
+/// firmware can never consume bytes faster than the wire would deliver them.
+pub fn receive_bytes(channel: usize, buf: &mut [u8]) -> usize {
+    let count = CHANNEL_COUNT.load(Ordering::Relaxed);
+    if buf.is_empty() || channel >= count {
+        return 0;
+    }
+
+    let fd = CHANNEL_FDS[channel].load(Ordering::Relaxed);
+    if fd < 0 {
+        return 0;
+    }
+
+    match nix::unistd::read(fd, buf) {
+        Ok(n) if n > 0 => {
+            // Throttle consumption to virtual baud (no-op when unpaced).
+            pace_rx(channel, n);
+            n
+        }
+        _ => 0,
+    }
+}
+
 /// Receive a single byte (non-blocking).
 /// Returns Some(byte) if a byte was available, None otherwise.
 pub fn receive_byte(channel: usize) -> Option<u8> {
@@ -473,6 +499,54 @@ mod tests {
         assert_eq!(receive_byte(0), None);
         // Out-of-range channel.
         assert_eq!(receive_byte(9), None);
+    }
+
+    #[test]
+    fn receive_bytes_burst_drains_then_zero_when_empty() {
+        let _g = crate::test_support::guard();
+        let pair = Pair::new();
+        setup(1);
+        init_channel_fd(0, pair.a);
+        pair.write_far(b"hello");
+        let mut buf = [0u8; 8];
+        // One call drains all available bytes (the firmware's burst receive).
+        assert_eq!(receive_bytes(0, &mut buf), 5);
+        assert_eq!(&buf[..5], b"hello");
+        // Nothing left → 0.
+        assert_eq!(receive_bytes(0, &mut buf), 0);
+    }
+
+    #[test]
+    fn receive_bytes_clamps_to_buffer_len() {
+        let _g = crate::test_support::guard();
+        let pair = Pair::new();
+        setup(1);
+        init_channel_fd(0, pair.a);
+        pair.write_far(b"abcdef");
+        // Buffer smaller than what's waiting: read at most buf.len() this call.
+        let mut small = [0u8; 4];
+        assert_eq!(receive_bytes(0, &mut small), 4);
+        assert_eq!(&small, b"abcd");
+        // The remainder is still readable on the next call.
+        let mut rest = [0u8; 4];
+        assert_eq!(receive_bytes(0, &mut rest), 2);
+        assert_eq!(&rest[..2], b"ef");
+    }
+
+    #[test]
+    fn receive_bytes_unconnected_out_of_range_or_empty_buf_is_zero() {
+        let _g = crate::test_support::guard();
+        setup(1);
+        // Configured but disconnected (fd -1).
+        let mut buf = [0u8; 4];
+        assert_eq!(receive_bytes(0, &mut buf), 0);
+        // Out-of-range channel.
+        assert_eq!(receive_bytes(9, &mut buf), 0);
+        // Empty output buffer with a connected fd → 0 (and reads nothing).
+        let pair = Pair::new();
+        init_channel_fd(0, pair.a);
+        let mut empty: [u8; 0] = [];
+        assert_eq!(receive_bytes(0, &mut empty), 0);
     }
 
     #[test]

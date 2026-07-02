@@ -64,4 +64,9 @@ dev_nvram_state_t dev_nvram_getState(dev_nvram_channel_t channel);
 bool dev_nvram_nosync_runUntilReady(void);
 void dev_nvram_forceSave(dev_nvram_channel_t channel);
 
+/* Release this (main) cog's DIR on the SD SPI pins after the boot NVRAM load so
+ * the LOGGER cog (IO_SDCard) can drive the SD without a P2 cross-cog pin-OR
+ * conflict (else its writes fail EIO). Call once, before the worker cogs start. */
+void dev_nvram_releaseSDPins(void);
+
 #endif // WATCHDOG_H

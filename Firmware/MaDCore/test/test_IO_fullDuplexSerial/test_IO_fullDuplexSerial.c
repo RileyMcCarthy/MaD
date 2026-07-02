@@ -2,31 +2,28 @@
  * Unit tests for IO_fullDuplexSerial — the buffered full-duplex serial layer
  * sitting on top of the (unbuffered) HAL_serial driver.
  *
- * The module owns per-channel rx/tx ring indices into the buffers held by
- * IO_fullDuplexSerial_channelConfig (the real Config/ translation unit is
- * #included here so the production buffer sizes / wiring are exercised).
+ * The module owns two lock-free SPSC rings per channel (rx + tx) backed by the
+ * buffers in IO_fullDuplexSerial_channelConfig (the real Config/ translation
+ * unit is #included here so the production buffer sizes / wiring are exercised).
  * HAL_serial_* are replaced by controllable test doubles defined below; the
  * module itself is the only code under test.
  *
  * Behaviours pinned down:
  *   - init() starts the HAL serial channel(s) exactly once each.
- *   - send() appends into the tx buffer (accumulating across calls), rejects an
- *     out-of-range channel, and rejects a write that would not fit (strict "<"
- *     boundary => the last usable byte is txBufferSize-1).
- *   - run() flushes pending tx via a single transmitData call carrying the
- *     accumulated bytes from the channel's own txBuffer, then zeroes the index;
- *     with nothing pending it does not transmit.
- *   - run() ingests at most one rx byte per cycle (HAL_serial_recieveByte), and
- *     stops ingesting once the rx buffer is full (the overflow gate).
- *   - receive() copies FIFO-ordered bytes out, left-shifts the remainder, and
- *     decrements the count; a partial read (maxLength < available) leaves the
- *     tail intact; an empty buffer returns false.
+ *   - send() enqueues into the tx ring (accumulating across calls), rejects an
+ *     out-of-range channel, and rejects bytes once the ring is full (a ring of
+ *     N slots holds N-1 bytes).
+ *   - run() flushes all pending tx to the HAL (in FIFO order) then leaves the
+ *     ring empty; with nothing pending it does not transmit.
+ *   - run() burst-drains ALL bytes the HAL offers in a single pass (via
+ *     HAL_serial_recieveBytes), not one-per-cycle, and ingests nothing when the
+ *     HAL has no bytes.
+ *   - receive() copies FIFO-ordered bytes out and decrements the count; a
+ *     partial read leaves the remainder in order; an empty ring returns false.
  *   - available() mirrors the live rx count.
  *
- * The module reads HAL_serial_recieveByte once per run() cycle, so the byte to
- * be ingested is staged *before* the run() that consumes it (input-snapshot
- * cadence). HAL_lock is the native mock from mock_propeller2.c; the module's
- * LOCK spin-macro degrades to a single acquire/release under that mock.
+ * run() pulls rx bytes through HAL_serial_recieveBytes (the batch drain), so the
+ * bytes to be ingested are staged *before* the run() that consumes them.
  */
 
 #include <unity.h>
@@ -55,13 +52,14 @@ extern int _stdio_debug_lock; /* shared in mock_propeller2.c */
 static uint32_t d_startCount;
 static HAL_serial_channel_E d_lastStartChannel;
 
-/* transmitData capture */
+/* transmitData capture: bytes are accumulated in order across calls (run()
+ * flushes the tx ring one byte per HAL call). */
 static uint32_t d_txCallCount;
 static HAL_serial_channel_E d_lastTxChannel;
-static uint32_t d_lastTxLen;
+static uint32_t d_txTotal;
 static uint8_t d_txCapture[DBL_TX_CAP];
 
-/* recieveByte script: a queue of bytes to hand out one-per-call. */
+/* recieveBytes script: a queue of bytes handed out (up to maxBytes) per call. */
 static uint8_t d_rxScript[256];
 static uint32_t d_rxScriptLen;
 static uint32_t d_rxScriptPos;
@@ -73,7 +71,7 @@ static void doubles_reset(void)
 
     d_txCallCount = 0U;
     d_lastTxChannel = HAL_SERIAL_CHANNEL_COUNT;
-    d_lastTxLen = 0U;
+    d_txTotal = 0U;
     memset(d_txCapture, 0, sizeof(d_txCapture));
 
     memset(d_rxScript, 0, sizeof(d_rxScript));
@@ -99,23 +97,32 @@ void HAL_serial_transmitData(HAL_serial_channel_E channel, const uint8_t *const 
 {
     d_txCallCount++;
     d_lastTxChannel = channel;
-    d_lastTxLen = len;
-    if (len <= sizeof(d_txCapture))
+    for (uint32_t i = 0U; i < len; i++)
     {
-        memcpy(d_txCapture, data, len);
+        if (d_txTotal < DBL_TX_CAP)
+        {
+            d_txCapture[d_txTotal++] = data[i];
+        }
     }
+}
+
+uint32_t HAL_serial_recieveBytes(HAL_serial_channel_E channel, uint8_t *const buf, uint32_t maxBytes)
+{
+    (void)channel;
+    uint32_t n = 0U;
+    while ((n < maxBytes) && (d_rxScriptPos < d_rxScriptLen))
+    {
+        buf[n] = d_rxScript[d_rxScriptPos];
+        n++;
+        d_rxScriptPos++;
+    }
+    return n;
 }
 
 bool HAL_serial_recieveByte(HAL_serial_channel_E channel, uint8_t *const data)
 {
-    (void)channel;
-    if (d_rxScriptPos < d_rxScriptLen)
-    {
-        *data = d_rxScript[d_rxScriptPos];
-        d_rxScriptPos++;
-        return true;
-    }
-    return false; /* nothing to receive this cycle */
+    (void)channel; (void)data;
+    return false; /* unused by IO_fullDuplexSerial.c now; stub to satisfy the link */
 }
 
 bool HAL_serial_recieveDataTimeout(HAL_serial_channel_E channel, uint8_t *const data, uint32_t len, uint32_t timeout_us)
@@ -133,11 +140,8 @@ bool HAL_serial_recieveDataTimeout(HAL_serial_channel_E channel, uint8_t *const 
 static void fds_init(void)
 {
     doubles_reset();
+    /* init() re-inits both rings (front=rear=0), so each test starts clean. */
     IO_fullDuplexSerial_init(HAL_lock_create());
-    /* init() does not clear the static per-channel indices, so reset them
-     * directly (the .c's static data is visible in this TU via #include). */
-    IO_fullDuplexSerial_data.channel[CH].rxBufferIndex = 0U;
-    IO_fullDuplexSerial_data.channel[CH].txBufferIndex = 0U;
 }
 
 void setUp(void)
@@ -165,7 +169,7 @@ void test_init_startsEachChannelOnce(void)
  * send                                                                   *
  * ====================================================================== */
 
-void test_send_appendsAndAccumulates(void)
+void test_send_accumulatesThenFlushesInOrder(void)
 {
     fds_init();
 
@@ -173,14 +177,14 @@ void test_send_appendsAndAccumulates(void)
     const uint8_t b[2] = { 'D', 'E' };
 
     TEST_ASSERT_TRUE(IO_fullDuplexSerial_send(CH, a, sizeof(a)));
-    TEST_ASSERT_EQUAL_UINT32(3U, IO_fullDuplexSerial_data.channel[CH].txBufferIndex);
-
     TEST_ASSERT_TRUE(IO_fullDuplexSerial_send(CH, b, sizeof(b)));
-    TEST_ASSERT_EQUAL_UINT32(5U, IO_fullDuplexSerial_data.channel[CH].txBufferIndex);
 
-    /* The bytes landed contiguously in the channel's real tx buffer. */
+    /* The accumulated bytes flush out, in order, on the next run(). */
+    IO_fullDuplexSerial_run();
     const uint8_t expect[5] = { 'A', 'B', 'C', 'D', 'E' };
-    TEST_ASSERT_EQUAL_UINT8_ARRAY(expect, IO_fullDuplexSerial_channelConfig[CH].txBuffer, 5);
+    TEST_ASSERT_EQUAL_UINT32(5U, d_txTotal);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(expect, d_txCapture, 5);
+    TEST_ASSERT_EQUAL_INT(IO_fullDuplexSerial_channelConfig[CH].hardwareSerialChannel, d_lastTxChannel);
 }
 
 void test_send_rejectsOutOfRangeChannel(void)
@@ -188,31 +192,26 @@ void test_send_rejectsOutOfRangeChannel(void)
     fds_init();
     const uint8_t x = 0x5A;
     TEST_ASSERT_FALSE(IO_fullDuplexSerial_send(IO_FULLDUPLEXSERIAL_CHANNEL_COUNT, &x, 1U));
-    /* nothing was buffered */
-    TEST_ASSERT_EQUAL_UINT32(0U, IO_fullDuplexSerial_data.channel[CH].txBufferIndex);
+    /* nothing was buffered: a run() transmits nothing */
+    IO_fullDuplexSerial_run();
+    TEST_ASSERT_EQUAL_UINT32(0U, d_txTotal);
 }
 
-void test_send_rejectsWhenWouldNotFit(void)
+void test_send_rejectsWhenRingFull(void)
 {
     fds_init();
 
+    /* A ring of `size` slots holds size-1 bytes. */
     const uint32_t cap = IO_fullDuplexSerial_channelConfig[CH].txBufferSize;
     static uint8_t big[16384];
     memset(big, 0x7E, sizeof(big));
 
-    /* Accept condition is strict "<": a write of exactly `cap` does NOT fit
-     * (cap < cap is false). This send hits the overflow/DEBUG_ERROR branch. */
-    TEST_ASSERT_FALSE(IO_fullDuplexSerial_send(CH, big, cap));
-    TEST_ASSERT_EQUAL_UINT32(0U, IO_fullDuplexSerial_data.channel[CH].txBufferIndex);
-
     /* The largest write that fits is cap-1. */
     TEST_ASSERT_TRUE(IO_fullDuplexSerial_send(CH, big, cap - 1U));
-    TEST_ASSERT_EQUAL_UINT32(cap - 1U, IO_fullDuplexSerial_data.channel[CH].txBufferIndex);
 
-    /* Now even a single further byte overflows (index+1 == cap, not < cap). */
+    /* Now full: even a single further byte is rejected. */
     const uint8_t one = 0x11;
     TEST_ASSERT_FALSE(IO_fullDuplexSerial_send(CH, &one, 1U));
-    TEST_ASSERT_EQUAL_UINT32(cap - 1U, IO_fullDuplexSerial_data.channel[CH].txBufferIndex);
 }
 
 /* ====================================================================== *
@@ -228,18 +227,16 @@ void test_run_flushesPendingTxThenClears(void)
 
     IO_fullDuplexSerial_run();
 
-    /* One transmit, on the configured hardware channel, with the staged bytes. */
-    TEST_ASSERT_EQUAL_UINT32(1U, d_txCallCount);
-    TEST_ASSERT_EQUAL_INT(IO_fullDuplexSerial_channelConfig[CH].hardwareSerialChannel, d_lastTxChannel);
-    TEST_ASSERT_EQUAL_UINT32(4U, d_lastTxLen);
+    /* All staged bytes were transmitted, in order, on the hardware channel. */
+    TEST_ASSERT_EQUAL_UINT32(4U, d_txTotal);
     TEST_ASSERT_EQUAL_UINT8_ARRAY(payload, d_txCapture, 4);
+    TEST_ASSERT_EQUAL_INT(IO_fullDuplexSerial_channelConfig[CH].hardwareSerialChannel, d_lastTxChannel);
 
-    /* tx index cleared after flush. */
-    TEST_ASSERT_EQUAL_UINT32(0U, IO_fullDuplexSerial_data.channel[CH].txBufferIndex);
-
-    /* A second run with nothing pending does not transmit again. */
+    /* A second run with nothing pending transmits nothing further. */
+    const uint32_t callsAfterFirst = d_txCallCount;
     IO_fullDuplexSerial_run();
-    TEST_ASSERT_EQUAL_UINT32(1U, d_txCallCount);
+    TEST_ASSERT_EQUAL_UINT32(callsAfterFirst, d_txCallCount);
+    TEST_ASSERT_EQUAL_UINT32(4U, d_txTotal);
 }
 
 void test_run_noTransmitWhenTxEmpty(void)
@@ -247,24 +244,21 @@ void test_run_noTransmitWhenTxEmpty(void)
     fds_init();
     IO_fullDuplexSerial_run();
     TEST_ASSERT_EQUAL_UINT32(0U, d_txCallCount);
+    TEST_ASSERT_EQUAL_UINT32(0U, d_txTotal);
 }
 
 /* ====================================================================== *
  * run — receive path                                                     *
  * ====================================================================== */
 
-void test_run_ingestsOneBytePerCycle(void)
+void test_run_burstDrainsAllAvailableInOnePass(void)
 {
     fds_init();
 
     const uint8_t stream[3] = { 'X', 'Y', 'Z' };
     rx_stage(stream, sizeof(stream));
 
-    /* Each run() consumes at most one byte from the HAL. */
-    IO_fullDuplexSerial_run();
-    TEST_ASSERT_EQUAL_UINT32(1U, IO_fullDuplexSerial_available(CH));
-    IO_fullDuplexSerial_run();
-    TEST_ASSERT_EQUAL_UINT32(2U, IO_fullDuplexSerial_available(CH));
+    /* A single run() drains everything the HAL offers (burst), not one byte. */
     IO_fullDuplexSerial_run();
     TEST_ASSERT_EQUAL_UINT32(3U, IO_fullDuplexSerial_available(CH));
 
@@ -276,26 +270,9 @@ void test_run_ingestsOneBytePerCycle(void)
 void test_run_noIngestWhenHalHasNoByte(void)
 {
     fds_init();
-    /* empty script => recieveByte returns false */
+    /* empty script => recieveBytes returns 0 */
     IO_fullDuplexSerial_run();
     TEST_ASSERT_EQUAL_UINT32(0U, IO_fullDuplexSerial_available(CH));
-}
-
-void test_run_stopsIngestingWhenRxFull(void)
-{
-    fds_init();
-
-    /* Drive the index to the full mark directly (filling 8096 bytes one-per-run
-     * would be wasteful); the overflow gate is `rxBufferIndex < rxBufferSize`. */
-    const uint32_t cap = IO_fullDuplexSerial_channelConfig[CH].rxBufferSize;
-    IO_fullDuplexSerial_data.channel[CH].rxBufferIndex = cap;
-
-    const uint8_t stream[2] = { 1, 2 };
-    rx_stage(stream, sizeof(stream));
-
-    IO_fullDuplexSerial_run(); /* full -> overflow branch, no recieveByte */
-    TEST_ASSERT_EQUAL_UINT32(cap, IO_fullDuplexSerial_available(CH));
-    TEST_ASSERT_EQUAL_UINT32(0U, d_rxScriptPos); /* HAL not polled for rx */
 }
 
 /* ====================================================================== *
@@ -316,10 +293,7 @@ void test_receive_drainsAllInFifoOrder(void)
 
     const uint8_t stream[4] = { 'w', 'x', 'y', 'z' };
     rx_stage(stream, sizeof(stream));
-    for (uint32_t i = 0U; i < sizeof(stream); i++)
-    {
-        IO_fullDuplexSerial_run();
-    }
+    IO_fullDuplexSerial_run();
     TEST_ASSERT_EQUAL_UINT32(4U, IO_fullDuplexSerial_available(CH));
 
     uint8_t out[8] = {0};
@@ -331,32 +305,26 @@ void test_receive_drainsAllInFifoOrder(void)
     TEST_ASSERT_FALSE(IO_fullDuplexSerial_receive(CH, out, sizeof(out)));
 }
 
-void test_receive_partialLeavesTailShifted(void)
+void test_receive_partialLeavesRemainderInOrder(void)
 {
     fds_init();
 
     const uint8_t stream[5] = { 10, 20, 30, 40, 50 };
     rx_stage(stream, sizeof(stream));
-    for (uint32_t i = 0U; i < sizeof(stream); i++)
-    {
-        IO_fullDuplexSerial_run();
-    }
+    IO_fullDuplexSerial_run();
     TEST_ASSERT_EQUAL_UINT32(5U, IO_fullDuplexSerial_available(CH));
 
-    /* Read only the first 2 bytes; the remaining 3 must be left-shifted. */
+    /* Read only the first 2 bytes; the remaining 3 stay queued, in order. */
     uint8_t out[2] = {0};
     TEST_ASSERT_TRUE(IO_fullDuplexSerial_receive(CH, out, 2U));
     const uint8_t firstTwo[2] = { 10, 20 };
     TEST_ASSERT_EQUAL_UINT8_ARRAY(firstTwo, out, 2);
     TEST_ASSERT_EQUAL_UINT32(3U, IO_fullDuplexSerial_available(CH));
 
-    /* The buffer head now starts at the shifted tail {30,40,50}. */
-    const uint8_t tail[3] = { 30, 40, 50 };
-    TEST_ASSERT_EQUAL_UINT8_ARRAY(tail, IO_fullDuplexSerial_channelConfig[CH].rxBuffer, 3);
-
     /* Draining the rest yields exactly the tail, in order. */
     uint8_t rest[3] = {0};
     TEST_ASSERT_TRUE(IO_fullDuplexSerial_receive(CH, rest, sizeof(rest)));
+    const uint8_t tail[3] = { 30, 40, 50 };
     TEST_ASSERT_EQUAL_UINT8_ARRAY(tail, rest, 3);
     TEST_ASSERT_EQUAL_UINT32(0U, IO_fullDuplexSerial_available(CH));
 }
@@ -367,7 +335,6 @@ void test_receive_clampsToAvailableWhenMaxLargerThanCount(void)
 
     const uint8_t stream[2] = { 0xA5, 0x3C };
     rx_stage(stream, sizeof(stream));
-    IO_fullDuplexSerial_run();
     IO_fullDuplexSerial_run();
     TEST_ASSERT_EQUAL_UINT32(2U, IO_fullDuplexSerial_available(CH));
 
@@ -390,10 +357,7 @@ void test_roundTrip_runIngestsThenReceiveReturns(void)
 
     const uint8_t msg[6] = { 'H', 'e', 'l', 'l', 'o', '!' };
     rx_stage(msg, sizeof(msg));
-    for (uint32_t i = 0U; i < sizeof(msg); i++)
-    {
-        IO_fullDuplexSerial_run();
-    }
+    IO_fullDuplexSerial_run();
 
     uint8_t out[6] = {0};
     TEST_ASSERT_TRUE(IO_fullDuplexSerial_receive(CH, out, sizeof(out)));
@@ -409,20 +373,19 @@ int main(void)
     UNITY_BEGIN();
     RUN_TEST(test_init_startsEachChannelOnce);
 
-    RUN_TEST(test_send_appendsAndAccumulates);
+    RUN_TEST(test_send_accumulatesThenFlushesInOrder);
     RUN_TEST(test_send_rejectsOutOfRangeChannel);
-    RUN_TEST(test_send_rejectsWhenWouldNotFit);
+    RUN_TEST(test_send_rejectsWhenRingFull);
 
     RUN_TEST(test_run_flushesPendingTxThenClears);
     RUN_TEST(test_run_noTransmitWhenTxEmpty);
 
-    RUN_TEST(test_run_ingestsOneBytePerCycle);
+    RUN_TEST(test_run_burstDrainsAllAvailableInOnePass);
     RUN_TEST(test_run_noIngestWhenHalHasNoByte);
-    RUN_TEST(test_run_stopsIngestingWhenRxFull);
 
     RUN_TEST(test_receive_emptyReturnsFalse);
     RUN_TEST(test_receive_drainsAllInFifoOrder);
-    RUN_TEST(test_receive_partialLeavesTailShifted);
+    RUN_TEST(test_receive_partialLeavesRemainderInOrder);
     RUN_TEST(test_receive_clampsToAvailableWhenMaxLargerThanCount);
 
     RUN_TEST(test_roundTrip_runIngestsThenReceiveReturns);

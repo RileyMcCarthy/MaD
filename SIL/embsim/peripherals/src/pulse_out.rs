@@ -249,6 +249,17 @@ pub fn set_frequency(channel: usize, frequency: u32) {
     s.start_us = now;
 }
 
+/// Current commanded pulse frequency (steps/s) for `channel`. Plant models
+/// integrate this *commanded* velocity (× direction) instead of the running
+/// emitted count, which sidesteps the sub-pulse-per-tick truncation that the
+/// integer emitted total suffers at low rates.
+pub fn frequency(channel: usize) -> u32 {
+    if channel >= CHANNEL_COUNT.load(Ordering::Relaxed) {
+        return 0;
+    }
+    PULSE_STATE.lock().unwrap()[channel].frequency
+}
+
 /// Poll a running pulse sequence. Returns `(emitted_pulses, done)`.
 ///
 /// `emitted` advances monotonically with virtual time at the configured rate

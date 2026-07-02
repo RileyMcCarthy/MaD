@@ -29,7 +29,6 @@
 //!   serial ch1 (MAIN)        ───fd──> PTY (wired by the runtime)
 //! ```
 
-use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Arc;
 
 use embsim_mad_models::sample::{Config as SampleConfig, MaterialProperties, Sample};
@@ -197,34 +196,78 @@ impl Machine for MadMachine {
             embsim_trace::record("stepper.direction_cw", if !v { 1.0 } else { 0.0 });
         });
 
-        // pulse_out is the single integrator. on_start snapshots the baseline; on_progress
-        // applies the running emitted count to the encoder and downstream physics so the
-        // encoder always shows exactly what `HAL_pulseOut_run` reports to firmware.
-        let enc_base = Arc::new(AtomicI32::new(0));
-        let enc_dir = Arc::new(AtomicI32::new(1));
+        // Plant model: the encoder reflects ACTUAL (lagged) carriage motion, not
+        // the raw emitted-pulse count. We integrate the *commanded* velocity
+        // (pulse frequency × direction) through a first-order inertia lag and
+        // accumulate position in floating point. Two payoffs over the old
+        // `base + dir×emitted` coupling: (1) no sub-pulse-per-tick truncation at
+        // low rates, so the loop settles exactly on target; (2) the encoder lags
+        // the command, giving the closed loop real dynamics to tune against.
+        struct ServoPlant {
+            last_us: u64,
+            vel: f64,        // counts/s, actual (lagged) carriage velocity
+            pos: f64,        // counts, actual carriage position (the encoder truth)
+            last_write: i32, // last encoder value the plant wrote (to detect external sets)
+        }
+        // Motor + carriage velocity time constant — the headline plant-fidelity
+        // knob. Larger = more sluggish = the loop must work harder.
+        const SERVO_TAU_S: f64 = 0.020;
+        // Viscous load: a fractional speed loss proportional to velocity (sample
+        // load / friction). The open-loop pulse rate over-delivers vs the true
+        // motion, so the closed loop must push harder to hold rate — this is the
+        // "slip under load" the encoder exists to catch. It vanishes at rest, so
+        // the carriage still settles cleanly (no stiction deadzone).
+        const SERVO_LOAD_LOSS: f64 = 0.15;
+        let plant = Arc::new(std::sync::Mutex::new(ServoPlant {
+            last_us: 0,
+            vel: 0.0,
+            pos: 0.0,
+            last_write: 0,
+        }));
         {
-            let enc_base = Arc::clone(&enc_base);
-            let enc_dir = Arc::clone(&enc_dir);
+            // Re-anchor dt on every (re)start so the first tick after a stop or a
+            // direction-reversal restart doesn't see a huge elapsed interval.
+            let plant = Arc::clone(&plant);
             pulse_out::on_start(servo_pulse_out, move |_pulses, _freq| {
-                enc_base.store(encoder::value(servo_encoder), Ordering::Relaxed);
-                // Firmware convention: SERVO_DIR active=false → CW → increasing step count.
-                let dir = if gpio::get_active(pin_servo_dir) { -1 } else { 1 };
-                enc_dir.store(dir, Ordering::Relaxed);
+                plant.lock().unwrap().last_us = embsim_core::virtual_clock::virtual_us();
             });
         }
         {
             let gantry = gantry_model.clone();
-            let enc_base = Arc::clone(&enc_base);
-            let enc_dir = Arc::clone(&enc_dir);
-            pulse_out::on_progress(servo_pulse_out, move |emitted| {
-                let base = enc_base.load(Ordering::Relaxed);
-                let dir = enc_dir.load(Ordering::Relaxed);
-                let pos_steps = base.wrapping_add(dir.wrapping_mul(emitted as i32));
-                encoder::set(servo_encoder, pos_steps);
+            let plant = Arc::clone(&plant);
+            pulse_out::on_progress(servo_pulse_out, move |_emitted| {
+                let now = embsim_core::virtual_clock::virtual_us();
+                // Firmware convention: SERVO_DIR active=false → CW → increasing count.
+                let dir = if gpio::get_active(pin_servo_dir) { -1.0 } else { 1.0 };
+                let cmd_vel = dir * pulse_out::frequency(servo_pulse_out) as f64;
 
+                let pos_steps;
+                {
+                    let mut p = plant.lock().unwrap();
+                    // The firmware can hard-set the encoder (homing setPosition,
+                    // IO_positionFeedback). Detect that — the encoder no longer
+                    // matches what we last wrote — and adopt it, so the plant
+                    // doesn't clobber the freshly established coordinate frame.
+                    let enc_now = encoder::value(servo_encoder);
+                    if enc_now != p.last_write {
+                        p.pos = enc_now as f64;
+                        p.vel = 0.0;
+                    }
+                    let dt = now.saturating_sub(p.last_us) as f64 / 1_000_000.0;
+                    p.last_us = now;
+                    if dt > 0.0 {
+                        let alpha = (dt / SERVO_TAU_S).min(1.0); // 1st-order velocity lag
+                        p.vel += (cmd_vel - p.vel) * alpha;
+                        let eff_vel = p.vel * (1.0 - SERVO_LOAD_LOSS); // viscous load
+                        p.pos += eff_vel * dt;
+                    }
+                    pos_steps = p.pos.round() as i32;
+                    p.last_write = pos_steps;
+                }
+
+                encoder::set(servo_encoder, pos_steps);
                 let pos_mm = pos_steps as f64 / STEPS_PER_MM;
                 gantry.on_position(pos_mm);
-
                 embsim_trace::record("stepper.position_mm", pos_mm);
                 embsim_trace::record("encoder.position", pos_steps as f64);
             });
