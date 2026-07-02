@@ -420,13 +420,17 @@ jobs:
         run: pio run -e native_emulator --program-arg="-DFIRMWARE_VERSION=\"${{ steps.get_version.outputs.VERSION }}\""
       - name: Copy and rename build artifacts
         run: |
+          set -euxo pipefail
           mkdir -p release-assets
-          # Copy debug version with .bin extension
-          cp Firmware/MaDCore/.pio/build/propeller2_debug/program release-assets/MaD-Firmware-${{ steps.get_version.outputs.VERSION }}-debug.bin
-          # Copy release version with .bin extension
-          cp Firmware/MaDCore/.pio/build/propeller2_release/program release-assets/MaD-Firmware-${{ steps.get_version.outputs.VERSION }}-release.bin
-          # Copy the native SIL library (native_emulator builds libfirmware.a, not a program)
-          cp Firmware/MaDCore/.pio/build/native_emulator/libfirmware.a release-assets/MaD-Firmware-${{ steps.get_version.outputs.VERSION }}-native.a
+          V="${{ steps.get_version.outputs.VERSION }}"
+          echo "=== built artifacts under .pio/build ==="
+          find Firmware/MaDCore/.pio/build -maxdepth 2 -type f \( -name program -o -name libfirmware.a \) -print
+          # Locate outputs via find (flexcc links 'program'; native_emulator archives libfirmware.a),
+          # so a path/naming change doesn't silently break artifact prep.
+          cp "$(find Firmware/MaDCore/.pio/build/propeller2_debug   -name program       | head -1)" "release-assets/MaD-Firmware-$V-debug.bin"
+          cp "$(find Firmware/MaDCore/.pio/build/propeller2_release  -name program       | head -1)" "release-assets/MaD-Firmware-$V-release.bin"
+          cp "$(find Firmware/MaDCore/.pio/build/native_emulator     -name libfirmware.a  | head -1)" "release-assets/MaD-Firmware-$V-native.a"
+          ls -la release-assets/
 
       - name: Set artifact name
         id: artifact
