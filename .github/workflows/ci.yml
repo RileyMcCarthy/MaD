@@ -415,9 +415,9 @@ jobs:
       - name: Build Firmware - Release Version
         working-directory: Firmware/MaDCore
         run: pio run -e propeller2_release --program-arg="-DFIRMWARE_VERSION=\"${{ steps.get_version.outputs.VERSION }}\""
-      - name: Build Firmware - Native Version (for SIL testing)
+      - name: Build Firmware - Native library (for SIL testing)
         working-directory: Firmware/MaDCore
-        run: pio run -e native --program-arg="-DFIRMWARE_VERSION=\"${{ steps.get_version.outputs.VERSION }}\""
+        run: pio run -e native_emulator --program-arg="-DFIRMWARE_VERSION=\"${{ steps.get_version.outputs.VERSION }}\""
       - name: Copy and rename build artifacts
         run: |
           mkdir -p release-assets
@@ -425,8 +425,8 @@ jobs:
           cp Firmware/MaDCore/.pio/build/propeller2_debug/program release-assets/MaD-Firmware-${{ steps.get_version.outputs.VERSION }}-debug.bin
           # Copy release version with .bin extension
           cp Firmware/MaDCore/.pio/build/propeller2_release/program release-assets/MaD-Firmware-${{ steps.get_version.outputs.VERSION }}-release.bin
-          # Copy native version with .bin extension for SIL testing
-          cp Firmware/MaDCore/.pio/build/native/program release-assets/MaD-Firmware-${{ steps.get_version.outputs.VERSION }}-native.bin
+          # Copy the native SIL library (native_emulator builds libfirmware.a, not a program)
+          cp Firmware/MaDCore/.pio/build/native_emulator/libfirmware.a release-assets/MaD-Firmware-${{ steps.get_version.outputs.VERSION }}-native.a
 
       - name: Set artifact name
         id: artifact
