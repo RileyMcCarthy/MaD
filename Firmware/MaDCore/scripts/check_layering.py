@@ -44,11 +44,11 @@ MCU_HEADERS = {
 # only wraps HAL primitives and is intentionally included from every layer.
 ALLOWLIST = {"IO_Debug.h"}
 
-# Layers whose files we do NOT treat as includers: Main is the composition root
-# (it wires everything by design); Generated is machine-emitted.
-SKIP_INCLUDER_LAYERS = {"Main", "Generated"}
-# Headers in these layers are layer-agnostic include targets.
-AGNOSTIC_TARGET_LAYERS = {"Generated"}
+# Files we do NOT treat as includers: Main is the composition root (it wires
+# everything by design). Generated/ files and system/toolchain headers resolve to
+# layer None (not in LAYER_RANK) and are already skipped by the `is None` /
+# not-in-`headers` guards below, so they need no named entry here.
+SKIP_INCLUDER_LAYERS = {"Main"}
 
 _BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
 _LINE_COMMENT = re.compile(r"//[^\n]*")
@@ -108,9 +108,7 @@ def find_violations(src: str):
                 # Project header resolved by basename.
                 tgt_layers = headers.get(base)
                 if not tgt_layers:
-                    continue  # system/libc/unknown header: out of policy scope
-                if tgt_layers & AGNOSTIC_TARGET_LAYERS:
-                    continue
+                    continue  # system / libc / Generated / unknown header: out of policy scope
                 # Worst (highest) candidate layer for this basename.
                 tgt_rank = max(LAYER_RANK[t] for t in tgt_layers)
                 if tgt_rank > inc_rank:
