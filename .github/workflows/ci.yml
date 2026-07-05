@@ -512,7 +512,7 @@ jobs:
           node-version: lts/*
 
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: "*-${{ github.run_number }}"
           path: ./artifacts/
@@ -666,7 +666,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download software artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ${{ needs.build-software.outputs.artifact-name }}
           path: artifacts
@@ -708,7 +708,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download firmware artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ${{ needs.build-firmware.outputs.artifact-name }}
           path: artifacts
@@ -737,7 +737,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download all hardware artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
           pattern: '*-hardware-*'
