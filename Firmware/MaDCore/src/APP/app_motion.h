@@ -17,8 +17,12 @@
 /* Actuator selection. 1 = closed-loop dev_servo (encoder = source of truth);
  * 0 = legacy open-loop dev_stepper (commanded step count). The MOTOR cog
  * (dev_cogManager_config.c) inits/runs the matching driver and paces its cog
- * accordingly, so this single switch swaps the whole motion path. */
+ * accordingly, so this single switch swaps the whole motion path. A build may
+ * predefine it (e.g. the native_test app_motion suite pins 0 to exercise the
+ * actuator-agnostic motion logic against its dev_stepper mocks). */
+#ifndef APP_MOTION_USE_SERVO
 #define APP_MOTION_USE_SERVO 1
+#endif
 
 /*********************************************************************
  * Macros

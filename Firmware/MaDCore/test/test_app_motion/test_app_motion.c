@@ -31,6 +31,11 @@
 #include "HAL_GPIO.h"                 // HAL_GPIO_channel_E, HAL_GPIO_ENDSTOP_UPPER
 #include "IO_positionFeedback.h"      // IO_positionFeedback_channel_E
 
+// Exercise the actuator-agnostic motion state machine against the dev_stepper
+// mocks below. app_motion's actuator abstraction is a 1:1 macro map, so pinning
+// the stepper backend fully covers the logic; the closed-loop dev_servo driver
+// (the production default) is validated by its own suite, not here.
+#define APP_MOTION_USE_SERVO 0
 #include "app_motion.h"
 
 /**********************************************************************

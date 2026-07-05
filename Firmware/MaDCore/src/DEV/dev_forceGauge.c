@@ -14,14 +14,6 @@
 /**********************************************************************
  * Constants
  **********************************************************************/
-/* Bench testing with the force gauge physically DISCONNECTED: skip the FG run
- * loop entirely so the ADS122U04 reads never time out. On a missing FG the 1 s
- * register-read timeout churns the FG state machine every ~1.1 s, which was
- * correlated with a CONTROL-cog scheduling overrun + COG fault on hardware.
- * With this set, getForce()/isReady() return their zero-init defaults (the
- * APP_CONTROL_BENCH_TEST_BYPASS already forces the FG fault off). MUST be 0 for
- * a real machine. */
-#define DEV_FORCEGAUGE_BENCH_DISABLE 1
 
 /*********************************************************************
  * Macros
@@ -208,9 +200,6 @@ void dev_forceGauge_init(int lock)
 
 void dev_forceGauge_run()
 {
-#if DEV_FORCEGAUGE_BENCH_DISABLE
-    return; /* FG disconnected for bench testing — see DEV_FORCEGAUGE_BENCH_DISABLE */
-#endif
     for (dev_forceGauge_channel_E channel = (dev_forceGauge_channel_E)0U; channel < DEV_FORCEGAUGE_CHANNEL_COUNT; channel++)
     {
         dev_forceGauge_state_E desiredState = dev_forceGauge_private_getState(channel);
