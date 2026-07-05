@@ -7,6 +7,7 @@ this script replaces the Program builder with a Library builder that produces
 libfirmware.a from the compiled .o files.
 """
 import os
+
 from SCons.Script import Import
 
 Import("env")

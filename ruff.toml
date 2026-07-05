@@ -1,0 +1,32 @@
+# Ruff config for the ProtoEmb Python generator + PlatformIO SCons hooks.
+# Mirrors docs/coding-guidelines/python.md. Lint-only (no `ruff format` gate —
+# the guide recommends black locally, not as CI). Run from the repo root so the
+# per-file-ignore globs resolve. CI: `ruff check Protocol/ProtoEmb/core Firmware/MaDCore/extra_scripts`.
+target-version = "py39"
+line-length = 120
+
+[lint]
+select = [
+    "E", "W",   # pycodestyle (PEP8)
+    "F",        # pyflakes (unused imports, undefined names)
+    "I",        # isort (import ordering)
+    "N",        # pep8-naming
+    "UP031",    # printf-style %-format -> f-string
+    "UP032",    # str.format() -> f-string
+    "PLC0415",  # import-outside-top-level (e.g. `import re` inside a function)
+    "S506",     # unsafe yaml load (bans yaml.load without SafeLoader)
+    "S101",     # assert used (assert-not-for-validation)
+    "D100",     # missing module docstring
+    "D101",     # missing class docstring
+    "D103",     # missing docstring in public function
+]
+
+[lint.pydocstyle]
+convention = "pep257"
+
+[lint.per-file-ignores]
+# PlatformIO SCons scripts: `env` is injected by SCons via Import("env"),
+# not an undefined name; these modules are imported by SCons, never run directly.
+"Firmware/MaDCore/extra_scripts/*.py" = ["F821"]
+# archive_lib.py: documented %-format exception (matches the SCons-script idiom).
+"Firmware/MaDCore/extra_scripts/archive_lib.py" = ["F821", "UP031"]
