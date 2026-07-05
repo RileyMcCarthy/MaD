@@ -17,6 +17,13 @@
  * ============================================================ */
 #define {{ prefix_upper }}_PROTOCOL_VERSION {{ protocol_version }}
 
+{% if nodes %}
+/* Node IDs (for multi-node / addressed framing; see build_*_frame_from). */
+{% for node in nodes %}
+#define {{ prefix_upper }}_NODE_{{ node | upper_snake }} {{ loop.index0 }}U
+{% endfor %}
+{% endif %}
+
 /* ============================================================
  * Enums
  * ============================================================ */
@@ -26,9 +33,11 @@
 typedef enum
 {
     {% for v in enum._variants %}
-    {{ prefix_upper }}_{{ name | upper_snake }}_{{ v.name }} = {{ v.index }},
+    {{ prefix_upper }}_{{ name | upper_snake }}_{{ v.name }} = {{ v.value if enum._is_remap else v.index }},
     {% endfor %}
-    {{ prefix_upper }}_{{ name | upper_snake }}_COUNT
+    {# Pin _COUNT to the variant count: for a remap enum the constants carry sparse
+       semantic values, so a bare auto-incremented sentinel would be wrong. #}
+    {{ prefix_upper }}_{{ name | upper_snake }}_COUNT = {{ enum._count }}
 } {{ prefix }}_{{ name }}_E;
 
 /** Bits needed on wire: {{ enum._bits }} */
@@ -42,7 +51,8 @@ static const uint8_t {{ prefix_upper }}_{{ name | upper_snake }}_WIRE_TO_VALUE[{
     {% endfor %}
 };
 
-/** Remap: actual value → wire index (sparse, size={{ enum._max_value + 1 }}) */
+{% if enum._remap_style == 'array' %}
+/** Remap: actual value → wire index (dense array, size={{ enum._max_value + 1 }}) */
 static const uint8_t {{ prefix_upper }}_{{ name | upper_snake }}_VALUE_TO_WIRE[{{ enum._max_value + 1 }}] = {
     {% for i in range(enum._max_value + 1) %}
     {% set found = false %}
@@ -54,9 +64,72 @@ static const uint8_t {{ prefix_upper }}_{{ name | upper_snake }}_VALUE_TO_WIRE[{
     {% endfor %}
     {% endfor %}
 };
+{% else %}
+/** Remap: actual value → wire index (sorted table + binary search, for sparse/large enums) */
+typedef struct { uint8_t value; uint8_t wire; } {{ prefix }}_{{ name }}_Remap_t;
+static const {{ prefix }}_{{ name }}_Remap_t {{ prefix_upper }}_{{ name | upper_snake }}_VALUE_WIRE_SORTED[{{ enum._count }}] = {
+    {% for v in enum._sorted_variants %}
+    { {{ v.value }}U, {{ v.index }}U }{{ "," if not loop.last else "" }}  /* {{ v.name }} */
+    {% endfor %}
+};
+static inline uint8_t {{ prefix }}_{{ name }}_valueToWire(uint8_t value)
+{
+    uint32_t lo = 0U;
+    uint32_t hi = {{ enum._count }}U;
+    while (lo < hi)
+    {
+        const uint32_t mid = lo + ((hi - lo) / 2U);
+        if ({{ prefix_upper }}_{{ name | upper_snake }}_VALUE_WIRE_SORTED[mid].value < value)
+        {
+            lo = mid + 1U;
+        }
+        else
+        {
+            hi = mid;
+        }
+    }
+    if ((lo < {{ enum._count }}U) && ({{ prefix_upper }}_{{ name | upper_snake }}_VALUE_WIRE_SORTED[lo].value == value))
+    {
+        return {{ prefix_upper }}_{{ name | upper_snake }}_VALUE_WIRE_SORTED[lo].wire;
+    }
+    return 0U;
+}
+{% endif %}
 {% endif %}
 {% endfor %}
 
+{% if unions %}
+/* ============================================================
+ * Tagged Unions
+ * ============================================================ */
+{% for name, u in unions.items() %}
+
+/** {{ u.get('description', '') }} ({{ u._encoding }}, {{ u._wire_size }} bytes on wire) */
+#define {{ prefix_upper }}_{{ name | upper_snake }}_WIRE_SIZE {{ u._wire_size }}
+
+typedef enum
+{
+    {% for v in u.variants %}
+    {{ prefix_upper }}_{{ name | upper_snake }}_TAG_{{ v.name | upper_snake }} = {{ v._index }},
+    {% endfor %}
+} {{ prefix }}_{{ name }}_Tag_E;
+
+typedef struct
+{
+    {{ prefix }}_{{ name }}_Tag_E tag;
+    union
+    {
+        {% for v in u.variants %}
+        {% if v._is_enum %}{{ prefix }}_{{ v.type }}_E{% elif v._is_bool %}bool{% elif v.type == 'uint8' %}uint8_t{% elif v.type == 'int8' %}int8_t{% elif v.type == 'uint16' %}uint16_t{% elif v.type == 'int16' %}int16_t{% elif v.type == 'uint32' %}uint32_t{% elif v.type == 'int32' %}int32_t{% elif v.type == 'float' %}float{% else %}int32_t{% endif %} {{ v.name }};
+        {% endfor %}
+    } u;
+} {{ prefix }}_{{ name }}_t;
+
+void {{ prefix }}_{{ name }}_encode(uint8_t *buf, const {{ prefix }}_{{ name }}_t *src);
+void {{ prefix }}_{{ name }}_decode(const uint8_t *buf, {{ prefix }}_{{ name }}_t *dst);
+{% endfor %}
+
+{% endif %}
 /* ============================================================
  * Struct Wire Sizes
  * ============================================================ */
@@ -75,26 +148,23 @@ typedef struct
     {% for f in s.fields %}
     {% if f._is_string %}
     char {{ f.name }}[{{ f.max_length }}];
-    {% elif f._is_bool %}
-    bool {{ f.name }};
-    {% elif f._is_enum %}
-    {{ prefix }}_{{ f.type }}_E {{ f.name }};
-    {% elif f.type == 'uint8' %}
-    uint8_t {{ f.name }};
-    {% elif f.type == 'int8' %}
-    int8_t {{ f.name }};
-    {% elif f.type == 'uint16' %}
-    uint16_t {{ f.name }};
-    {% elif f.type == 'int16' %}
-    int16_t {{ f.name }};
-    {% elif f.type == 'uint32' %}
-    uint32_t {{ f.name }};
-    {% elif f.type == 'int32' %}
-    int32_t {{ f.name }};
-    {% elif f.type == 'float' %}
-    float {{ f.name }};
     {% else %}
-    int32_t {{ f.name }};  /* fallback */
+    {% if f._is_struct or f._is_union %}{% set _ct = prefix ~ '_' ~ f.type ~ '_t' %}
+    {% elif f._is_bool %}{% set _ct = 'bool' %}
+    {% elif f._is_enum %}{% set _ct = prefix ~ '_' ~ f.type ~ '_E' %}
+    {% elif f.type == 'uint8' %}{% set _ct = 'uint8_t' %}
+    {% elif f.type == 'int8' %}{% set _ct = 'int8_t' %}
+    {% elif f.type == 'uint16' %}{% set _ct = 'uint16_t' %}
+    {% elif f.type == 'int16' %}{% set _ct = 'int16_t' %}
+    {% elif f.type == 'uint32' %}{% set _ct = 'uint32_t' %}
+    {% elif f.type == 'int32' %}{% set _ct = 'int32_t' %}
+    {% elif f.type == 'float' %}{% set _ct = 'float' %}
+    {% else %}{% set _ct = 'int32_t' %}
+    {% endif %}
+    {{ _ct }} {{ f.name }}{% if f._is_array %}[{{ f._array_len }}]{% endif %};
+    {% endif %}
+    {% if f._is_optional %}
+    bool {{ f.name }}_present;
     {% endif %}
     {% endfor %}
 } {{ prefix }}_{{ name }}_t;

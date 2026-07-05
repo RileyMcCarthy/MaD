@@ -17,7 +17,7 @@ pub struct Pty {
     pub master: OwnedFd,
     /// Slave FD — kept open so the PTY stays alive.
     _slave: OwnedFd,
-    /// Symlink path (e.g., /tmp/tty.rpi_client).
+    /// Symlink path the host connects to (e.g. `/tmp/tty.sim_client`).
     pub symlink_path: String,
 }
 

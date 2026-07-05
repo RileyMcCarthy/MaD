@@ -25,7 +25,7 @@ use tracing::info;
 /// Register the trace viewer as a view in embsim-ui.
 /// Call this before `embsim_ui::start_server()`.
 pub fn register_view() {
-    embsim_ui::register_view(embsim_ui::View::new(
+    let view = embsim_ui::View::new(
         "trace",
         "Trace Viewer",
         "📊",
@@ -33,7 +33,19 @@ pub fn register_view() {
         ui::CSS,
         ui::JS,
         Some(ws_handler),
-    ));
+    )
+    // Vendored so the viewer works offline (no CDN dependency).
+    .with_asset(
+        "chart.umd.min.js",
+        include_bytes!("../static/vendor/chart.umd.min.js"),
+        "application/javascript",
+    )
+    .with_asset(
+        "chartjs-plugin-zoom.min.js",
+        include_bytes!("../static/vendor/chartjs-plugin-zoom.min.js"),
+        "application/javascript",
+    );
+    embsim_ui::register_view(view);
 }
 
 /// WebSocket handler factory — matches the `embsim_ui::WsHandler` signature.
@@ -177,5 +189,49 @@ async fn handle_ws(mut socket: WebSocket) {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex as StdMutex;
+
+    /// `register_view` mutates the process-global embsim-ui registry; serialize
+    /// against it so a parallel test can't observe a half-built registry.
+    static TEST_LOCK: StdMutex<()> = StdMutex::new(());
+
+    fn lock_or_recover() -> std::sync::MutexGuard<'static, ()> {
+        TEST_LOCK.lock().unwrap_or_else(|p| {
+            TEST_LOCK.clear_poison();
+            p.into_inner()
+        })
+    }
+
+    /// register_view() installs a 'trace' view into the embsim-ui registry
+    /// without panicking. The registry's contents are private to embsim-ui, so
+    /// (per the assignment) we can only assert that the call succeeds and that
+    /// re-registering after a clear is also fine.
+    #[test]
+    fn register_view_does_not_panic() {
+        let _g = lock_or_recover();
+        embsim_ui::clear_views();
+        super::register_view();
+        // Re-registering after another clear must also be safe.
+        embsim_ui::clear_views();
+        super::register_view();
+        // Leave the registry clean for any other view-touching test.
+        embsim_ui::clear_views();
+    }
+
+    /// The WebSocket message loop (`handle_ws`) requires a live WebSocket peer
+    /// and is integration-level; it is intentionally not unit-tested here.
+    /// We can at least assert the handler factory matches the registry's
+    /// `WsHandler` fn-pointer signature (a compile-time guarantee), without
+    /// invoking it.
+    #[test]
+    fn ws_handler_factory_matches_registry_signature() {
+        let handler: embsim_ui::WsHandler = super::ws_handler;
+        // Use the binding so it isn't optimized away / flagged unused.
+        assert_eq!(handler as *const () as usize, super::ws_handler as *const () as usize);
     }
 }

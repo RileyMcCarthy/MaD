@@ -1,0 +1,33 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "useDefineForClassFields": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable", "WebWorker"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitOverride": true,
+    // NOTE: noUncheckedIndexedAccess + exactOptionalPropertyTypes were evaluated
+    // and deferred — they surface ~79 errors, most in *generated* code
+    // (src/protocol/generated + the sibling desktop codec) which must not be
+    // hand-edited. Enabling them needs a codegen-template change + regeneration
+    // across projects; tracked as a follow-up rather than a hand-patch here.
+    "types": ["w3c-web-serial", "wicg-file-system-access", "vite/client"],
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"]
+    }
+  },
+  "include": ["src"],
+  "references": [{ "path": "./tsconfig.node.json" }]
+}

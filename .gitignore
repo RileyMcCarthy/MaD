@@ -30,6 +30,9 @@ dist/
 out/
 target/
 
+# Documentation site build output (mkdocs)
+/site/
+
 # Dependencies
 node_modules/
 
@@ -37,7 +40,7 @@ node_modules/
 Firmware/MaDCore/src/Generated/
 Firmware/MaDCore/src/IO/generated/
 Software/MaDControl/src/main/generated/
-SIL/embsim/peripherals/src/generated/
+SIL/mad-protocol/src/generated/
 Protocol/ProtoEmb/core/__pycache__/
 Protocol/ProtoEmb/framing/target/
 Protocol/ProtoEmb/runtime/target/
@@ -56,3 +59,6 @@ SIL/sd/profile.bin
 Hardware/DS2Addon/KICAD/jlcpcb/project.db
 Hardware/ForceGauge/ForceGauge-backups/ForceGauge-2025-12-21_214747.zip
 Hardware/DS2Addon/KICAD/jlcpcb/production_files/GERBER-DS2_Addon.zip
+
+# Local scratch notes / Claude memories (not committed)
+notes/

@@ -14,6 +14,15 @@
 /**********************************************************************
  * Constants
  **********************************************************************/
+/* Actuator selection. 1 = closed-loop dev_servo (encoder = source of truth);
+ * 0 = legacy open-loop dev_stepper (commanded step count). The MOTOR cog
+ * (dev_cogManager_config.c) inits/runs the matching driver and paces its cog
+ * accordingly, so this single switch swaps the whole motion path. A build may
+ * predefine it (e.g. the native_test app_motion suite pins 0 to exercise the
+ * actuator-agnostic motion logic against its dev_stepper mocks). */
+#ifndef APP_MOTION_USE_SERVO
+#define APP_MOTION_USE_SERVO 1
+#endif
 
 /*********************************************************************
  * Macros
@@ -41,6 +50,7 @@ typedef enum
     G90_ABSOLUTE = 90,
     G91_INCREMENTAL = 91,
     G122_STOP = 122,
+    G123_WAVEFORM = 123,
 } app_motion_gcode_E;
 
 typedef enum
@@ -73,6 +83,10 @@ bool app_motion_addMove(const app_motion_move_t *move);
 // Stop the in-flight move (if any) and empty the queue. Used by
 // app_testManagement on test end.
 void app_motion_abortAndClear(void);
+
+// True when there is no queued or in-flight move (state WAITING + empty queue).
+// Used by app_testManagement to drain the motion before completing a test.
+bool app_motion_isIdle(void);
 
 // Getters
 int32_t app_motion_getSetpoint(void);

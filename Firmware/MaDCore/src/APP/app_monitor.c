@@ -82,7 +82,9 @@ Definitions
 #include "app_motion.h"
 #include "app_control.h"
 #include "app_testManagement.h"
+#include "app_notification.h"
 
+#include "dev_cogManager.h"
 #include "dev_nvram.h"
 #include "IO_SDCard.h"
 #include "dev_forceGauge.h"
@@ -155,6 +157,9 @@ typedef struct
     app_monitor_output_S out;
     app_monitor_sampleProfile_S sampleProfile;
     bool sampleProfileLoaded;
+
+    /* Latch so each cog's stack-headroom warning is sent once, not every check. */
+    bool stackWarned[DEV_COGMANAGER_CHANNEL_COUNT];
 } app_monitor_data_t;
 
 /**********************************************************************
@@ -299,6 +304,44 @@ void app_monitor_private_processLogging()
  * Public Function Definitions
  **********************************************************************/
 
+/* Warn (once per cog) when a cog's stack high-water mark crosses this fraction
+ * of its allocation — early notice before the canary-overrun cliff. */
+#define APP_MONITOR_STACK_WARN_PCT (80U)
+#define APP_MONITOR_STACK_CHECK_PERIOD_US (1000000U) /* 1 s; the latch makes rate non-critical */
+
+/* Watch every cog's stack headroom and emit one WARNING notification the first
+ * time a cog crosses the threshold. Runs on the MONITOR cog (low stack use), not
+ * the stressed cog, so issuing the notification can't tip the cog it warns
+ * about. Peaks come from dev_cogManager's sentinel-fill measurement. */
+static void app_monitor_private_checkStacks(void)
+{
+    static uint32_t lastCheckUs = 0U;
+    const uint32_t now = HAL_time_getUs();
+    if ((now - lastCheckUs) < APP_MONITOR_STACK_CHECK_PERIOD_US)
+    {
+        return;
+    }
+    lastCheckUs = now;
+
+    for (dev_cogManager_channel_E channel = (dev_cogManager_channel_E)0U; channel < DEV_COGMANAGER_CHANNEL_COUNT; channel++)
+    {
+        if (app_monitor_data.stackWarned[channel])
+        {
+            continue;
+        }
+        const uint32_t size = dev_cogManager_getStackSize(channel);
+        const uint32_t peak = dev_cogManager_getStackPeak(channel);
+        if ((size != 0U) && ((peak * 100U) >= (size * APP_MONITOR_STACK_WARN_PCT)))
+        {
+            app_monitor_data.stackWarned[channel] = true;
+            app_notification_send(APP_NOTIFICATION_TYPE_WARNING,
+                                  "%s cog stack %u%% (%u/%u B)",
+                                  dev_cogManager_getName(channel),
+                                  (peak * 100U) / size, peak, size);
+        }
+    }
+}
+
 void app_monitor_init(int lock)
 {
     app_monitor_data.lock = lock;
@@ -306,6 +349,10 @@ void app_monitor_init(int lock)
     lib_timer_stop(&app_monitor_data.stopLoggingTail);
     app_monitor_data.loggingState = APP_MONITOR_LOGGING_STATE_IDLE;
     app_monitor_data.sampleProfileLoaded = false;
+    for (uint32_t i = 0U; i < DEV_COGMANAGER_CHANNEL_COUNT; i++)
+    {
+        app_monitor_data.stackWarned[i] = false;
+    }
 }
 
 void app_monitor_run()
@@ -315,6 +362,7 @@ void app_monitor_run()
     app_monitor_private_processSample();
     app_monitor_private_processLogging();
     app_monitor_private_setOutput();
+    app_monitor_private_checkStacks();
 }
 
 void app_monitor_zeroPosition()

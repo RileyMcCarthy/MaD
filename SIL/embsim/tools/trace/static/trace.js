@@ -39,46 +39,56 @@ const enumDefinitions = {};
 let currentTimeUs = 0;
 
 // ============================================================
-// Group management — 3 fixed groups in sidebar
+// Group management — groups are data-driven (any string). KNOWN_GROUPS are
+// shown first (even when empty) for a stable layout; any other group a signal
+// declares gets a section created lazily.
 // ============================================================
-const GROUP_ORDER = ['Model', 'Peripheral', 'Firmware'];
+const KNOWN_GROUPS = ['Model', 'Peripheral', 'Firmware'];
 const groupElements = {};
 
-function initGroups() {
+// Create (once) and return the sidebar section element for a group.
+function ensureGroup(group) {
+  if (groupElements[group]) return groupElements[group];
+
   const container = document.getElementById('signalList');
-  for (const group of GROUP_ORDER) {
-    const div = document.createElement('div');
-    div.className = 'trace-signal-group';
-    div.dataset.group = group;
+  const div = document.createElement('div');
+  div.className = 'trace-signal-group';
+  div.dataset.group = group;
 
-    const header = document.createElement('div');
-    header.className = 'trace-signal-group-header';
+  const header = document.createElement('div');
+  header.className = 'trace-signal-group-header';
 
-    const title = document.createElement('div');
-    title.className = 'trace-signal-group-title';
-    title.textContent = group;
+  const title = document.createElement('div');
+  title.className = 'trace-signal-group-title';
+  title.textContent = group;
 
-    const count = document.createElement('span');
-    count.className = 'trace-signal-group-count';
-    count.dataset.groupCount = group;
+  const count = document.createElement('span');
+  count.className = 'trace-signal-group-count';
+  count.dataset.groupCount = group;
 
-    const addBtn = document.createElement('button');
-    addBtn.className = 'trace-add-signal-btn';
-    addBtn.textContent = '+';
-    addBtn.title = 'Add ' + group + ' signal';
-    addBtn.addEventListener('click', () => openAddModal(group));
+  const addBtn = document.createElement('button');
+  addBtn.className = 'trace-add-signal-btn';
+  addBtn.textContent = '+';
+  addBtn.title = 'Add ' + group + ' signal';
+  addBtn.addEventListener('click', () => openAddModal(group));
 
-    header.appendChild(title);
-    header.appendChild(count);
-    header.appendChild(addBtn);
-    div.appendChild(header);
-    container.appendChild(div);
-    groupElements[group] = div;
-  }
+  header.appendChild(title);
+  header.appendChild(count);
+  header.appendChild(addBtn);
+  div.appendChild(header);
+  container.appendChild(div);
+  groupElements[group] = div;
+  return div;
+}
+
+function initGroups() {
+  // Pre-create the conventional groups for a stable layout; custom groups are
+  // created on demand by ensureGroup() when a signal in them appears.
+  for (const group of KNOWN_GROUPS) ensureGroup(group);
 }
 
 function updateGroupCounts() {
-  for (const group of GROUP_ORDER) {
+  for (const group of Object.keys(groupElements)) {
     const count = Object.values(activeSignals).filter(s => s.group === group).length;
     const el = document.querySelector(`[data-group-count="${group}"]`);
     if (el) el.textContent = count > 0 ? count : '';
@@ -288,7 +298,8 @@ function removeSignal(name) {
 function addSignalToSidebar(name) {
   const meta = activeSignals[name];
   if (!meta) return;
-  const groupEl = groupElements[meta.group];
+  // Lazily create the section for this signal's group (handles custom groups).
+  const groupEl = ensureGroup(meta.group);
   if (!groupEl) return;
 
   const item = document.createElement('div');

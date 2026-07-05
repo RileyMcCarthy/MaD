@@ -8,6 +8,27 @@ use object::{Object, ObjectSymbol};
 use std::path::Path;
 use tracing::{debug, info, warn};
 
+/// Runtime base address of the main executable's lowest mapping, parsed from
+/// `/proc/self/maps` (the load bias of a PIE). Returns `None` if maps cannot be
+/// read or the executable's own mapping is not found.
+#[cfg(target_os = "linux")]
+fn linux_exe_load_base() -> Option<u64> {
+    use std::io::BufRead;
+    let exe = std::fs::read_link("/proc/self/exe").ok()?;
+    let exe = exe.to_str()?;
+    let file = std::fs::File::open("/proc/self/maps").ok()?;
+    // maps is sorted by address, so the first line whose pathname is the exe is
+    // its lowest (base) mapping.
+    for line in std::io::BufReader::new(file).lines().map_while(Result::ok) {
+        let path = line.split_whitespace().nth(5);
+        if path == Some(exe) {
+            let base_hex = line.split('-').next()?;
+            return u64::from_str_radix(base_hex, 16).ok();
+        }
+    }
+    None
+}
+
 /// Resolves symbol addresses from the running binary's Mach-O/ELF symbol table.
 pub struct SymbolResolver {
     /// Map of symbol name → virtual address in the binary
@@ -57,25 +78,34 @@ impl SymbolResolver {
         Ok(Self { symbols, slide })
     }
 
-    /// Compute the ASLR slide by comparing a known symbol's file address
-    /// to its runtime address.
+    /// Compute the load bias ("slide") between a symbol's file (link-time)
+    /// address and its runtime address in the current process image.
     fn compute_slide(
         _symbols: &std::collections::HashMap<String, u64>,
     ) -> u64 {
-        // On macOS, we can use _dyld_get_image_vmaddr_slide(0) to get the
-        // main binary's ASLR slide.
+        // macOS: ask dyld for the main image's ASLR slide directly.
         #[cfg(target_os = "macos")]
         {
             extern "C" {
                 fn _dyld_get_image_vmaddr_slide(image_index: u32) -> isize;
             }
-            let slide = unsafe { _dyld_get_image_vmaddr_slide(0) };
-            slide as u64
+            unsafe { _dyld_get_image_vmaddr_slide(0) as u64 }
         }
 
-        #[cfg(not(target_os = "macos"))]
+        // Linux: the bias of a position-independent executable is the runtime
+        // base of its lowest mapping in /proc/self/maps (PIEs link at vaddr 0,
+        // so file address + base == runtime address). Non-PIE binaries map at
+        // their link address, making the base cancel out to an effective 0
+        // because file addresses already match — for those, symbol addresses
+        // are absolute and adding this base would be wrong, but modern
+        // toolchains default to PIE, which this handles correctly.
+        #[cfg(target_os = "linux")]
         {
-            // On Linux, /proc/self/maps could be used. For now, assume 0.
+            linux_exe_load_base().unwrap_or(0)
+        }
+
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        {
             0
         }
     }
@@ -298,6 +328,36 @@ impl SymbolResolver {
             TypeInfo::Enum { byte_size: 1, .. } => {
                 bytes[0] as f64
             }
+            // IEEE-754 floats must be decoded as floats — reading their bytes
+            // as an integer yields garbage (this was a latent bug).
+            TypeInfo::Float { byte_size: 4, .. } => {
+                f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as f64
+            }
+            TypeInfo::Float { byte_size: 8, .. } => {
+                let mut buf = [0u8; 8];
+                buf.copy_from_slice(&bytes[..8]);
+                f64::from_le_bytes(buf)
+            }
+            // Bitfield: read the underlying storage unit, then shift/mask out the
+            // member's bits. `bit_offset` is relative to the member's byte offset
+            // (normalized when the field was parsed). Sign-extend when signed.
+            TypeInfo::Bitfield { bit_offset, bit_size, storage_size, signed } => {
+                if *bit_size == 0 || *bit_size > 64 {
+                    return None;
+                }
+                let n = (*storage_size).min(8).min(bytes.len());
+                let mut buf = [0u8; 8];
+                buf[..n].copy_from_slice(&bytes[..n]);
+                let raw = u64::from_le_bytes(buf);
+                let mask = if *bit_size == 64 { u64::MAX } else { (1u64 << bit_size) - 1 };
+                let field = (raw >> (bit_offset % 64)) & mask;
+                if *signed && (field >> (bit_size - 1)) & 1 == 1 {
+                    // Sign-extend: set all bits above the field.
+                    ((field | !mask) as i64) as f64
+                } else {
+                    field as f64
+                }
+            }
             _ => {
                 warn!(
                     "Unsupported type for read_field_as_f64: {}.{} ({:?}, {} bytes)",
@@ -376,5 +436,272 @@ impl FromBytes for u64 {
 impl FromBytes for bool {
     fn from_le_bytes(bytes: &[u8]) -> Self {
         bytes[0] != 0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decodes_f32_as_float_not_int() {
+        // 1.5f32 little-endian. Decoding these bytes as an integer would give
+        // 1069547520, not 1.5 — this guards the float-decode bug fix.
+        let bytes = 1.5f32.to_le_bytes();
+        let ti = TypeInfo::Float { name: "float".into(), byte_size: 4 };
+        let v = SymbolResolver::bytes_to_f64(&ti, &bytes, "v", "f").unwrap();
+        assert_eq!(v, 1.5);
+    }
+
+    #[test]
+    fn decodes_f64() {
+        let bytes = (-2.25f64).to_le_bytes();
+        let ti = TypeInfo::Float { name: "double".into(), byte_size: 8 };
+        let v = SymbolResolver::bytes_to_f64(&ti, &bytes, "v", "f").unwrap();
+        assert_eq!(v, -2.25);
+    }
+
+    #[test]
+    fn decodes_unsigned_bitfield() {
+        // Extract bits [4..7) (value 0b101 = 5) from a 1-byte storage unit.
+        let storage = [0b0101_0000u8];
+        let ti = TypeInfo::Bitfield { bit_offset: 4, bit_size: 3, storage_size: 1, signed: false };
+        let v = SymbolResolver::bytes_to_f64(&ti, &storage, "v", "f").unwrap();
+        assert_eq!(v, 5.0);
+    }
+
+    #[test]
+    fn decodes_signed_bitfield_sign_extends() {
+        // 3-bit signed field holding 0b111 = -1.
+        let storage = [0b0000_0111u8];
+        let ti = TypeInfo::Bitfield { bit_offset: 0, bit_size: 3, storage_size: 1, signed: true };
+        let v = SymbolResolver::bytes_to_f64(&ti, &storage, "v", "f").unwrap();
+        assert_eq!(v, -1.0);
+    }
+
+    // A symbol defined in the test binary so SymbolResolver can locate and read
+    // it. `#[no_mangle]` keeps the name stable; on macOS the resolver strips the
+    // leading underscore the linker adds.
+    #[no_mangle]
+    pub static EMBSIM_TEST_SYM: [u8; 4] = [1, 2, 3, 4];
+
+    // ── bytes_to_f64: Base, every size and sign ──
+
+    /// Signed bases of every width decode to their signed value (including
+    /// negatives) as f64.
+    #[test]
+    fn bytes_to_f64_signed_bases() {
+        let cases: &[(usize, i64)] = &[(1, -5), (2, -300), (4, -70_000), (8, -5_000_000_000)];
+        for &(size, val) in cases {
+            let bytes = match size {
+                1 => (val as i8).to_le_bytes().to_vec(),
+                2 => (val as i16).to_le_bytes().to_vec(),
+                4 => (val as i32).to_le_bytes().to_vec(),
+                8 => (val as i64).to_le_bytes().to_vec(),
+                _ => unreachable!(),
+            };
+            let ti = TypeInfo::Base { name: "i".into(), byte_size: size, signed: true };
+            let got = SymbolResolver::bytes_to_f64(&ti, &bytes, "v", "f").unwrap();
+            assert_eq!(got, val as f64, "signed base size {size}");
+        }
+    }
+
+    /// Unsigned bases of every width decode to their unsigned value as f64.
+    #[test]
+    fn bytes_to_f64_unsigned_bases() {
+        let cases: &[(usize, u64)] = &[(1, 200), (2, 60_000), (4, 4_000_000_000), (8, 10_000_000_000)];
+        for &(size, val) in cases {
+            let bytes = match size {
+                1 => (val as u8).to_le_bytes().to_vec(),
+                2 => (val as u16).to_le_bytes().to_vec(),
+                4 => (val as u32).to_le_bytes().to_vec(),
+                8 => (val as u64).to_le_bytes().to_vec(),
+                _ => unreachable!(),
+            };
+            let ti = TypeInfo::Base { name: "u".into(), byte_size: size, signed: false };
+            let got = SymbolResolver::bytes_to_f64(&ti, &bytes, "v", "f").unwrap();
+            assert_eq!(got, val as f64, "unsigned base size {size}");
+        }
+    }
+
+    /// A 1-byte unsigned base decodes a bool's storage (0 or 1) directly.
+    #[test]
+    fn bytes_to_f64_bool_like_u8() {
+        let ti = TypeInfo::Base { name: "bool".into(), byte_size: 1, signed: false };
+        assert_eq!(SymbolResolver::bytes_to_f64(&ti, &[1], "v", "f").unwrap(), 1.0);
+        assert_eq!(SymbolResolver::bytes_to_f64(&ti, &[0], "v", "f").unwrap(), 0.0);
+    }
+
+    // ── bytes_to_f64: Enum sizes ──
+
+    /// Enums of width 1/2/4 decode through their integer storage.
+    #[test]
+    fn bytes_to_f64_enum_sizes() {
+        let e1 = TypeInfo::Enum { type_name: "E".into(), byte_size: 1 };
+        assert_eq!(SymbolResolver::bytes_to_f64(&e1, &[7], "v", "f").unwrap(), 7.0);
+
+        let e2 = TypeInfo::Enum { type_name: "E".into(), byte_size: 2 };
+        assert_eq!(SymbolResolver::bytes_to_f64(&e2, &300i16.to_le_bytes(), "v", "f").unwrap(), 300.0);
+
+        let e4 = TypeInfo::Enum { type_name: "E".into(), byte_size: 4 };
+        assert_eq!(SymbolResolver::bytes_to_f64(&e4, &123_456i32.to_le_bytes(), "v", "f").unwrap(), 123_456.0);
+    }
+
+    // ── bytes_to_f64: unsupported / degenerate ──
+
+    /// Unsupported types (Struct/Union/Pointer/Array/Unknown, and odd Base/Enum
+    /// sizes) return `None` instead of decoding garbage.
+    #[test]
+    fn bytes_to_f64_unsupported_returns_none() {
+        let buf = [0u8; 8];
+        let unsupported = [
+            TypeInfo::Struct { type_name: "S".into(), byte_size: 8 },
+            TypeInfo::Union { type_name: "U".into(), byte_size: 8 },
+            TypeInfo::Pointer { byte_size: 8 },
+            TypeInfo::Unknown { byte_size: 8 },
+            // A Base width the match arms don't cover (3 bytes).
+            TypeInfo::Base { name: "odd".into(), byte_size: 3, signed: false },
+            // An Enum width the match arms don't cover (8 bytes).
+            TypeInfo::Enum { type_name: "E".into(), byte_size: 8 },
+        ];
+        for ti in &unsupported {
+            assert!(
+                SymbolResolver::bytes_to_f64(ti, &buf, "v", "f").is_none(),
+                "expected None for {ti:?}"
+            );
+        }
+    }
+
+    // ── bytes_to_f64: bitfield edge cases ──
+
+    /// A bitfield with `bit_size == 0` or `> 64` returns `None`.
+    #[test]
+    fn bytes_to_f64_bitfield_invalid_width() {
+        let buf = [0xFFu8; 8];
+        let zero = TypeInfo::Bitfield { bit_offset: 0, bit_size: 0, storage_size: 1, signed: false };
+        assert!(SymbolResolver::bytes_to_f64(&zero, &buf, "v", "f").is_none());
+
+        let too_wide = TypeInfo::Bitfield { bit_offset: 0, bit_size: 65, storage_size: 8, signed: false };
+        assert!(SymbolResolver::bytes_to_f64(&too_wide, &buf, "v", "f").is_none());
+    }
+
+    /// A full-width (64-bit) bitfield uses the all-ones mask without overflow.
+    #[test]
+    fn bytes_to_f64_bitfield_full_width() {
+        let buf = 0x00FF_00FF_00FF_00FFu64.to_le_bytes();
+        let ti = TypeInfo::Bitfield { bit_offset: 0, bit_size: 64, storage_size: 8, signed: false };
+        let got = SymbolResolver::bytes_to_f64(&ti, &buf, "v", "f").unwrap();
+        assert_eq!(got, 0x00FF_00FF_00FF_00FFu64 as f64);
+    }
+
+    /// A multi-byte unsigned bitfield extracts the right run of bits.
+    #[test]
+    fn bytes_to_f64_bitfield_multibyte() {
+        // 16-bit storage, extract bits [8..12) of 0xF300 → 0x3 = 3.
+        let buf = 0xF300u16.to_le_bytes();
+        let ti = TypeInfo::Bitfield { bit_offset: 8, bit_size: 4, storage_size: 2, signed: false };
+        let got = SymbolResolver::bytes_to_f64(&ti, &buf, "v", "f").unwrap();
+        assert_eq!(got, 3.0);
+    }
+
+    // ── parse_array_index ──
+
+    /// `parse_array_index` parses a leading `[N]` and the remaining path.
+    #[test]
+    fn parse_array_index_cases() {
+        assert_eq!(SymbolResolver::parse_array_index("[3].field"), Some((3, "field".to_string())));
+        assert_eq!(SymbolResolver::parse_array_index("[0]"), Some((0, String::new())));
+        assert_eq!(SymbolResolver::parse_array_index("[12].a.b"), Some((12, "a.b".to_string())));
+        // No leading bracket → None.
+        assert_eq!(SymbolResolver::parse_array_index("no_bracket"), None);
+        // Non-numeric index → None.
+        assert_eq!(SymbolResolver::parse_array_index("[abc].f"), None);
+        // Unterminated bracket → None.
+        assert_eq!(SymbolResolver::parse_array_index("[3"), None);
+    }
+
+    // ── FromBytes round-trips ──
+
+    /// Every `FromBytes` impl round-trips its little-endian encoding.
+    #[test]
+    fn from_bytes_round_trips() {
+        assert_eq!(<i8 as FromBytes>::from_le_bytes(&(-12i8).to_le_bytes()), -12);
+        assert_eq!(<u8 as FromBytes>::from_le_bytes(&250u8.to_le_bytes()), 250);
+        assert_eq!(<i16 as FromBytes>::from_le_bytes(&(-1234i16).to_le_bytes()), -1234);
+        assert_eq!(<u16 as FromBytes>::from_le_bytes(&60000u16.to_le_bytes()), 60000);
+        assert_eq!(<i32 as FromBytes>::from_le_bytes(&(-100000i32).to_le_bytes()), -100000);
+        assert_eq!(<u32 as FromBytes>::from_le_bytes(&4_000_000_000u32.to_le_bytes()), 4_000_000_000);
+        assert_eq!(<i64 as FromBytes>::from_le_bytes(&(-5_000_000_000i64).to_le_bytes()), -5_000_000_000);
+        assert_eq!(<u64 as FromBytes>::from_le_bytes(&10_000_000_000u64.to_le_bytes()), 10_000_000_000);
+        // bool: any nonzero byte → true, zero → false.
+        assert!(<bool as FromBytes>::from_le_bytes(&[1]));
+        assert!(<bool as FromBytes>::from_le_bytes(&[0xFF]));
+        assert!(!<bool as FromBytes>::from_le_bytes(&[0]));
+    }
+
+    // ── SymbolResolver ──
+
+    /// `from_binary` on a clearly-invalid path yields `Err`.
+    #[test]
+    fn from_binary_invalid_path_errs() {
+        let res = SymbolResolver::from_binary(Path::new("/no/such/binary/embsim_xyz"));
+        assert!(res.is_err(), "missing binary must error");
+    }
+
+    /// `from_binary` on a path that exists but is not an object file yields
+    /// `Err` (the parse branch).
+    #[test]
+    fn from_binary_non_object_errs() {
+        let dir = std::env::temp_dir().join(format!("embsim_notobj_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let junk = dir.join("junk.bin");
+        std::fs::write(&junk, b"not an object file at all").unwrap();
+        let res = SymbolResolver::from_binary(&junk);
+        assert!(res.is_err(), "junk file must fail to parse as an object");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `SymbolResolver::new()` parses the running test binary and reports a
+    /// nonexistent symbol as `None`.
+    #[test]
+    fn new_resolves_self_and_misses_unknown_symbol() {
+        let resolver = SymbolResolver::new().expect("resolver should parse the test binary");
+        assert!(
+            resolver.symbol_address("definitely_not_a_symbol_xyz").is_none(),
+            "an unknown symbol must resolve to None"
+        );
+    }
+
+    /// The resolver finds a symbol defined in this test binary and `read_bytes`
+    /// round-trips its contents. The resolver strips the macOS leading
+    /// underscore, so we look it up by its source name.
+    #[test]
+    fn resolves_and_reads_own_symbol() {
+        // Touch the static so the linker can't strip it.
+        assert_eq!(EMBSIM_TEST_SYM, [1, 2, 3, 4]);
+
+        let resolver = SymbolResolver::new().expect("resolver should parse the test binary");
+
+        // Some platforms/strip configurations may omit local statics from the
+        // symbol table; only assert the read path when the symbol is present.
+        if resolver.symbol_address("EMBSIM_TEST_SYM").is_some() {
+            let bytes = unsafe { resolver.read_bytes("EMBSIM_TEST_SYM", 0, 4) }
+                .expect("read_bytes should succeed for a resolvable symbol");
+            assert_eq!(bytes, vec![1, 2, 3, 4], "read_bytes must round-trip the static's contents");
+
+            // Offset + partial length reads a sub-slice.
+            let tail = unsafe { resolver.read_bytes("EMBSIM_TEST_SYM", 2, 2) }.unwrap();
+            assert_eq!(tail, vec![3, 4]);
+        } else {
+            eprintln!("SKIP: EMBSIM_TEST_SYM not present in symbol table on this platform");
+        }
+    }
+
+    /// `read_bytes` for an unknown symbol returns `None` (no panic).
+    #[test]
+    fn read_bytes_unknown_symbol_is_none() {
+        let resolver = SymbolResolver::new().expect("resolver");
+        let got = unsafe { resolver.read_bytes("definitely_not_a_symbol_xyz", 0, 4) };
+        assert!(got.is_none(), "reading an unknown symbol must be None");
     }
 }

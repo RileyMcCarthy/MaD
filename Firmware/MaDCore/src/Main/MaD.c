@@ -52,6 +52,10 @@ void mad_begin()
   }
 
   mad_startupNVRAM(criticalLock); // start the non-volatile memory system
+  // SD was mounted + read on THIS (main) cog; release its DIR on the SD pins so the
+  // LOGGER cog (IO_SDCard) can drive them — the P2 ORs pin state across all cogs, so
+  // otherwise the LOGGER's SD writes get corrupted (CS stuck high -> EIO).
+  dev_nvram_releaseSDPins();
   watchdog_init(criticalLock);
   dev_cogManager_init(criticalLock);
 

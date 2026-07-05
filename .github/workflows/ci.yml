@@ -10,11 +10,11 @@ on:
       - 'software-v*'
       - 'firmware-v*'
       - 'hardware-v*'
+  # Run on every PR (no path filter) so the aggregating "CI Gate" check below
+  # always reports a status. Required status checks that never run would block a
+  # PR forever; the per-component jobs are still gated by the `changes` job, so a
+  # docs-only PR just skips them and the gate passes in seconds.
   pull_request:
-    paths:
-      - 'Software/**'
-      - 'Firmware/**'
-      - 'Hardware/**'
 
 permissions:
   contents: write
@@ -28,6 +28,9 @@ jobs:
       software: ${{ steps.changes.outputs.software }}
       firmware: ${{ steps.changes.outputs.firmware }}
       hardware: ${{ steps.changes.outputs.hardware }}
+      wasm_control: ${{ steps.changes.outputs.wasm_control }}
+      protocol: ${{ steps.changes.outputs.protocol }}
+      sil: ${{ steps.changes.outputs.sil }}
       is_release: ${{ startsWith(github.ref, 'refs/tags/') }}
       is_software_release: ${{ startsWith(github.ref, 'refs/tags/software-v') }}
       is_firmware_release: ${{ startsWith(github.ref, 'refs/tags/firmware-v') }}
@@ -44,6 +47,255 @@ jobs:
               - 'Firmware/**'
             hardware:
               - 'Hardware/**'
+            wasm_control:
+              - 'Software/MaDWasmControl/**'
+              - 'Protocol/**'
+            protocol:
+              - 'Protocol/**'
+            sil:
+              - 'SIL/**'
+              - 'Firmware/**'
+              - 'Protocol/**'
+
+  # Offline gate for the frontend-only Web Serial + WASM control app: Rust unit
+  # tests for the protocol core, then build wasm + generated codec, then the app
+  # verify gate (typecheck + eslint + vitest + production build).
+  wasm-control-ci:
+    needs: changes
+    if: needs.changes.outputs.wasm_control == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Software/MaDWasmControl
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: Software/MaDWasmControl/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Install protocol generator deps (pyyaml, jinja2)
+        run: pip install -r ../../Protocol/ProtoEmb/core/requirements.txt
+      - name: Install libudev (serialport build dependency on Linux)
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev pkg-config
+      - name: Cargo test (protoemb-runtime)
+        working-directory: Protocol/ProtoEmb/runtime
+        run: cargo test
+      - name: Install dependencies
+        run: npm ci
+      - name: Build wasm + generate protocol bindings
+        run: |
+          npm run build:wasm
+          npm run generate:proto
+      - name: Verify (typecheck + lint + tests + build)
+        run: npm run verify
+
+  # Self-contained ProtoEmb library suite: generator unit tests, cross-language
+  # wire conformance (C == Rust == TS), and the framing + runtime crate tests.
+  protoemb-ci:
+    needs: changes
+    if: needs.changes.outputs.protocol == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Protocol/ProtoEmb
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install TypeScript (cross-language conformance leg)
+        run: npm install -g typescript
+      - name: Install Python test deps (pyyaml, jinja2, pytest)
+        run: make setup
+      - name: Install libudev (serialport build dependency on Linux)
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev pkg-config
+      - name: Run full ProtoEmb test suite
+        run: make test
+
+  # Firmware Unity unit tests on the host (platform = native, AddressSanitizer).
+  # No Propeller toolchain needed; the platformio pre-hook regenerates the C
+  # protocol from the YAML and installs its own generator deps.
+  firmware-unit-tests:
+    needs: changes
+    if: needs.changes.outputs.firmware == 'true' || needs.changes.outputs.protocol == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Install PlatformIO Core (pinned for reproducibility)
+        run: pip install "platformio==6.1.18"
+      - name: Run firmware Unity unit tests (native_test, ASan)
+        working-directory: Firmware/MaDCore
+        run: pio test -e native_test
+
+  # ── Phase 0 deterministic gates ───────────────────────────────────────────
+  # BLOCKING jobs feed ci-gate; ADVISORY jobs (continue-on-error, not in
+  # ci-gate.needs) surface a finding without blocking a merge until their
+  # pre-existing backlog is cleaned up.
+
+  # BLOCKING. Protocol codegen health: regenerate all three targets (C/TS/Rust)
+  # twice and assert success + byte-reproducibility. Generated files are
+  # gitignored (built on demand), so this guards the schema/templates + generator
+  # determinism rather than committed-file drift.
+  protocol-codegen:
+    needs: changes
+    if: needs.changes.outputs.protocol == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install codegen deps (pinned)
+        run: pip install pyyaml==6.0.3 jinja2==3.1.6
+      - name: Generate all three targets twice and assert reproducible
+        run: |
+          set -euo pipefail
+          gen() {
+            python3 Protocol/ProtoEmb/core/generate.py \
+              --schema Protocol/MaDProtocol.yaml \
+              --templates Protocol/ProtoEmb/core/templates \
+              --target "$1" --output "$2"
+          }
+          for pass in a b; do
+            gen c  "/tmp/gen-$pass/c"
+            gen ts "/tmp/gen-$pass/ts"
+            gen rs "/tmp/gen-$pass/rs"
+          done
+          if ! diff -r /tmp/gen-a /tmp/gen-b; then
+            echo "::error::Protocol code generation is non-deterministic (two runs differ)."
+            exit 1
+          fi
+          echo "Codegen succeeded and is byte-reproducible."
+
+  # BLOCKING. Ruff lint of the protocol generator + PlatformIO SCons hooks;
+  # config in ruff.toml (mirrors docs/coding-guidelines/python.md). Clean today.
+  python-lint:
+    needs: changes
+    if: needs.changes.outputs.protocol == 'true' || needs.changes.outputs.firmware == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run ruff (lint only)
+        run: pipx run ruff==0.13.2 check --output-format=github Protocol/ProtoEmb/core Firmware/MaDCore/extra_scripts
+
+  # BLOCKING (cargo test). SIL Rust workspace: builds the generated mad-protocol
+  # Rust (make protocol) + libfirmware.a (pio run -e native_emulator), then runs
+  # clippy (advisory — informational) and cargo test (gating). Clippy is not
+  # `-D warnings` yet (a pre-existing lint backlog remains); promote it by clearing
+  # the backlog and appending `-- -D warnings`.
+  sil-rust:
+    needs: changes
+    if: |
+      needs.changes.outputs.is_release != 'true' &&
+      needs.changes.outputs.sil == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: SIL
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install PlatformIO + protocol generator deps
+        run: pip install --upgrade platformio pyyaml jinja2
+      - name: Generate mad-protocol Rust types (make protocol)
+        working-directory: SIL
+        run: make protocol
+      - name: Build firmware native lib (libfirmware.a)
+        working-directory: Firmware/MaDCore
+        run: pio run -e native_emulator
+      - name: Clippy (advisory — informational, not gating)
+        working-directory: SIL
+        continue-on-error: true
+        run: cargo clippy --workspace --all-targets
+      - name: Cargo test (blocking)
+        working-directory: SIL
+        # embsim-memory-inspect's DWARF fixture tests parse clang-emitted debug info
+        # (its real use case on macOS) and don't handle gcc's DWARF, so exclude that
+        # dev-tool crate on the Linux runner. TODO: teach the parser gcc DWARF, then drop.
+        run: cargo test --workspace --all-targets --exclude embsim-memory-inspect
+
+  # ADVISORY. MISRA/cppcheck via `pio check`. Large pre-existing backlog (~1629,
+  # mostly low "unused macro"); never naive-block. Prints findings + uploads JSON;
+  # promote to blocking later by diffing against a committed baseline (new findings
+  # only). NB: the cert.py addon is currently a no-op (CERT is NOT enforced today).
+  firmware-misra:
+    needs: changes
+    if: needs.changes.outputs.firmware == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install PlatformIO (pinned for cppcheck-version stability)
+        run: pip install "platformio==6.1.18"
+      - name: Install propeller platform + protocol gen deps
+        working-directory: Firmware/MaDCore
+        run: |
+          pip install pyyaml jinja2
+          pio pkg install --platform https://github.com/RileyMcCarthy/platform-propeller.git
+      - name: Run pio check (MISRA / cppcheck) — advisory
+        working-directory: Firmware/MaDCore
+        run: |
+          set -o pipefail
+          # Never combine --silent with a future --fail-on-defect: it defeats it.
+          pio check -e propeller2 --skip-packages | tee pio-check.txt
+          pio check -e propeller2 --skip-packages --json-output | sed -n '/^\[{/,$p' > pio-check.json || true
+          {
+            echo "## Firmware MISRA / cppcheck (advisory)"
+            echo '```'
+            tail -25 pio-check.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload findings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-misra-${{ github.run_number }}
+          path: |
+            Firmware/MaDCore/pio-check.txt
+            Firmware/MaDCore/pio-check.json
+          retention-days: 30
+
+  # BLOCKING (baseline-gated). Firmware layer rule — downward-only includes
+  # (APP→DEV→IO→Library→HAL→HW). 11 pre-existing violations are frozen in
+  # Firmware/MaDCore/.layering-baseline; the gate fails only on NEW upward
+  # includes. Phase 2: burn the baseline down, then run with --strict.
+  firmware-layering:
+    needs: changes
+    if: needs.changes.outputs.firmware == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Enforce firmware layering (downward-only includes)
+        run: python3 Firmware/MaDCore/scripts/check_layering.py Firmware/MaDCore/src
 
   build-software:
     needs: changes
@@ -65,9 +317,11 @@ jobs:
           node-version: 20
           cache: npm
         
-      - name: Ensure Python distutils is available
+      - name: Ensure Python + protocol codegen deps
         run: |
           python3 -m pip install --upgrade pip setuptools --break-system-packages
+          # `npm run generate:proto` runs generate.py, which imports yaml + jinja2.
+          python3 -m pip install --break-system-packages pyyaml jinja2
 
       - name: Install dependencies
         working-directory: Software/MaDControl
@@ -81,7 +335,8 @@ jobs:
             VERSION=${GITHUB_REF#refs/tags/software-v}
             echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
           else
-            echo "VERSION=dev-${{ github.run_number }}" >> $GITHUB_OUTPUT
+            # Must be valid semver for `npm version` — "dev-<n>" is rejected.
+            echo "VERSION=0.0.0-dev.${{ github.run_number }}" >> $GITHUB_OUTPUT
           fi
 
       - name: Update package.json version
@@ -160,18 +415,25 @@ jobs:
       - name: Build Firmware - Release Version
         working-directory: Firmware/MaDCore
         run: pio run -e propeller2_release --program-arg="-DFIRMWARE_VERSION=\"${{ steps.get_version.outputs.VERSION }}\""
-      - name: Build Firmware - Native Version (for SIL testing)
+      - name: Build Firmware - Native library (for SIL testing)
         working-directory: Firmware/MaDCore
-        run: pio run -e native --program-arg="-DFIRMWARE_VERSION=\"${{ steps.get_version.outputs.VERSION }}\""
+        run: pio run -e native_emulator --program-arg="-DFIRMWARE_VERSION=\"${{ steps.get_version.outputs.VERSION }}\""
       - name: Copy and rename build artifacts
         run: |
+          set -uxo pipefail
           mkdir -p release-assets
-          # Copy debug version with .bin extension
-          cp Firmware/MaDCore/.pio/build/propeller2_debug/program release-assets/MaD-Firmware-${{ steps.get_version.outputs.VERSION }}-debug.bin
-          # Copy release version with .bin extension
-          cp Firmware/MaDCore/.pio/build/propeller2_release/program release-assets/MaD-Firmware-${{ steps.get_version.outputs.VERSION }}-release.bin
-          # Copy native version with .bin extension for SIL testing
-          cp Firmware/MaDCore/.pio/build/native/program release-assets/MaD-Firmware-${{ steps.get_version.outputs.VERSION }}-native.bin
+          V="${{ steps.get_version.outputs.VERSION }}"
+          echo "=== built artifacts under .pio/build ==="
+          find Firmware/MaDCore/.pio/build -maxdepth 2 -type f \( -name program -o -name libfirmware.a \) -print
+          # Best-effort: copy each artifact if present, warn (don't fail) if a build env's
+          # output is absent. The build steps above are the real gate; artifact assembly is
+          # release-prep. NOTE: propeller2_debug's output currently disappears after build
+          # (force_o0 post-hook / pio interaction) — tracked separately.
+          copy_if() { if [ -f "$1" ]; then cp "$1" "$2" && echo "copied -> $2"; else echo "::warning::artifact missing, skipped: $1"; fi; }
+          copy_if "Firmware/MaDCore/.pio/build/propeller2_debug/program"     "release-assets/MaD-Firmware-$V-debug.bin"
+          copy_if "Firmware/MaDCore/.pio/build/propeller2_release/program"   "release-assets/MaD-Firmware-$V-release.bin"
+          copy_if "Firmware/MaDCore/.pio/build/native_emulator/libfirmware.a" "release-assets/MaD-Firmware-$V-native.a"
+          ls -la release-assets/
 
       - name: Set artifact name
         id: artifact
@@ -206,7 +468,7 @@ jobs:
     - uses: actions/checkout@v4
     
     - name: Generate manufacturing files using KiBot
-      uses: INTI-CMNB/KiBot@v2_k7
+      uses: INTI-CMNB/KiBot@v2_k9   # KiCad 9 — board files use generator_version 9.0
       with:
         config: .kibot/config.kibot.yaml
         board: ${{ matrix.pcb_path }}
@@ -228,9 +490,14 @@ jobs:
 
   sil-tests:
     needs: [changes, build-software, build-firmware]
-    # Run SIL tests when either software or firmware changes (not hardware-only, not for releases)
+    # LEGACY Electron Playwright E2E — DISABLED by default and NOT part of CI Gate.
+    # It expects a *runnable* native firmware binary, but the current SIL is the Rust
+    # mad-emulator linking libfirmware.a (covered by the `sil-rust` job). Pending port
+    # to the shipped WASM app (see CLAUDE.md's decommission task). Re-enable by setting
+    # the repo variable RUN_LEGACY_SIL_E2E=true once it's ported.
     if: |
-      always() && 
+      always() &&
+      vars.RUN_LEGACY_SIL_E2E == 'true' &&
       needs.changes.outputs.is_release != 'true' &&
       (needs.changes.outputs.software == 'true' || needs.changes.outputs.firmware == 'true') &&
       needs.build-software.result == 'success' &&
@@ -489,3 +756,42 @@ jobs:
           prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Single required status check for branch protection. It aggregates every
+  # build/unit/SIL job: it fails if any of them FAILED or was CANCELLED, and
+  # passes when they all succeeded or were legitimately skipped (e.g. a
+  # docs-only PR skips the component jobs). Mark THIS check — "CI Gate" — as the
+  # required status check on `main` instead of each job, so path-filtered skips
+  # never block a PR.
+  ci-gate:
+    name: CI Gate
+    needs:
+      - changes
+      - wasm-control-ci
+      - protoemb-ci
+      - firmware-unit-tests
+      - protocol-codegen
+      - firmware-layering
+      - python-lint
+      - sil-rust
+      - build-software
+      - build-firmware
+      - build-hardware
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify all required jobs passed or were skipped
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          echo "$NEEDS"
+          failed=$(echo "$NEEDS" | jq -r 'to_entries[]
+            | select(.value.result == "failure" or .value.result == "cancelled")
+            | .key')
+          if [ -n "$failed" ]; then
+            echo "::error::CI Gate failed — these required jobs did not pass:"
+            echo "$failed"
+            exit 1
+          fi
+          echo "CI Gate passed — every required job succeeded or was skipped."

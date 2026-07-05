@@ -1,13 +1,17 @@
 [package]
 name = "embsim-memory-inspect"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
 description = "Firmware memory introspection — parse DWARF debug info from C firmware to extract enums, struct layouts, and read runtime variable state"
+keywords = ["dwarf", "debug-info", "embedded", "introspection"]
+categories = ["development-tools::debugging", "embedded"]
 
 [dependencies]
-object = "0.36"
-gimli = "0.31"
-tracing = "0.1"
+object.workspace = true
+gimli.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }

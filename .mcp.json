@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "kicad": {
+      "type": "stdio",
+      "command": "/opt/homebrew/bin/uvx",
+      "args": [
+        "kicad-mcp-pro==3.9.2",
+        "--transport", "stdio",
+        "--profile", "pcb_only",
+        "--mode", "readonly",
+        "--project-dir", "/Users/rileymccarthy/Documents/MaD/Hardware/DS2Addon/KICAD"
+      ],
+      "env": {
+        "KICAD_MCP_KICAD_CLI": "/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli"
+      }
+    }
+  }
+}

@@ -11,6 +11,10 @@
 #include "dev_nvram.h"
 #include "IO_Debug.h"
 #include "emulation_helpers.h"
+#include "HW_pins.h"
+#ifdef __FLEXC__
+#include "propeller2.h"
+#endif
 /**********************************************************************
  * Constants
  **********************************************************************/
@@ -444,6 +448,25 @@ bool dev_nvram_nosync_runUntilReady()
         }
     }
     return isReady;
+}
+
+void dev_nvram_releaseSDPins(void)
+{
+#ifdef __FLEXC__
+    /* The boot mount + read drove the SD SPI pins (P58-61) from THIS (main) cog.
+     * The P2 ORs pin DIR/OUT across all 8 cogs, so unless we drop our DIR here the
+     * LOGGER cog's later SD writes get OR-corrupted (e.g. CS can't be pulled low)
+     * -> fopen("wb") fails errno 12 (EIO). Hand the SD off to the LOGGER cog: unmount
+     * here (deinit FatFs + free the VFS slot so LOGGER can re-mount) and drop our DIR
+     * on the SD pins. LOGGER (IO_SDCard_init) re-mounts, setting the SPI up on its own
+     * cog. Call once after the boot NVRAM load, before the workers start. (A later
+     * profile save would need to route through the LOGGER cog too.) */
+    umount(SD_CARD_MOUNT_PATH);
+    _dirl(HW_PIN_SD_CS);
+    _dirl(HW_PIN_SD_CLK);
+    _dirl(HW_PIN_SD_MOSI);
+    _dirl(HW_PIN_SD_MISO);
+#endif
 }
 
 /**********************************************************************

@@ -5,39 +5,40 @@
  * Includes
  **********************************************************************/
 #include "IO_fullDuplexSerial.h"
-#include "lib_utility.h"
+#include "lib_staticQueue.h"
 #include <stdlib.h>
-#include <string.h>
-#include "HAL_lock.h"
-#include "IO_Debug.h"
+#include <stdbool.h>
 #include "emulation_helpers.h"
+#include "IO_Debug.h"
 /**********************************************************************
  * Constants
  **********************************************************************/
 
+/* Chunk size for the HAL burst receive. Must hold the largest inbound protocol
+ * frame (machine_configuration_write = 70 bytes) so a full frame is captured in
+ * one tight drain before any byte is enqueued. */
+#define IO_FULLDUPLEXSERIAL_RX_CHUNK (128U)
+
 /*********************************************************************
  * Macros
  **********************************************************************/
-#define IO_FULLDUPLEXSERIAL_LOCK_REQ() HAL_lock_try(IO_fullDuplexSerial_data.lock)
-#define IO_FULLDUPLEXSERIAL_LOCK_REQ_BLOCK()        \
-    while (IO_FULLDUPLEXSERIAL_LOCK_REQ() == false) \
-    {                                     \
-        EMULATION_YIELD_LOCK();           \
-    }
-#define IO_FULLDUPLEXSERIAL_LOCK_REL() HAL_lock_release(IO_fullDuplexSerial_data.lock)
+
 /**********************************************************************
  * Typedefs
  **********************************************************************/
 typedef struct
 {
-    uint32_t rxBufferIndex;
-    uint32_t txBufferIndex;
+    /* Lock-free SPSC rings: the SERIAL cog is the sole producer of rxQueue and
+     * sole consumer of txQueue; the COMMUNICATION cog is the sole consumer of
+     * rxQueue and sole producer of txQueue. No lock is needed (see
+     * lib_staticQueue concurrency contract). */
+    lib_staticQueue_S rxQueue;
+    lib_staticQueue_S txQueue;
 } IO_fullDuplexSerial_channelData_S;
 
 typedef struct
 {
     IO_fullDuplexSerial_channelData_S channel[IO_FULLDUPLEXSERIAL_CHANNEL_COUNT];
-    int32_t lock;
 } IO_fullDuplexSerial_data_S;
 /**********************************************************************
  * External Variables
@@ -61,9 +62,15 @@ static IO_fullDuplexSerial_data_S IO_fullDuplexSerial_data;
 
 void IO_fullDuplexSerial_init(int32_t lock)
 {
-    IO_fullDuplexSerial_data.lock = lock;
+    (void)lock; /* SPSC rings are lock-free; no lock required */
     for (IO_fullDuplexSerial_channel_E channel = 0; channel < IO_FULLDUPLEXSERIAL_CHANNEL_COUNT; channel++)
     {
+        lib_staticQueue_init(&IO_fullDuplexSerial_data.channel[channel].rxQueue,
+                             IO_fullDuplexSerial_channelConfig[channel].rxBuffer,
+                             (int)IO_fullDuplexSerial_channelConfig[channel].rxBufferSize, 1);
+        lib_staticQueue_init(&IO_fullDuplexSerial_data.channel[channel].txQueue,
+                             IO_fullDuplexSerial_channelConfig[channel].txBuffer,
+                             (int)IO_fullDuplexSerial_channelConfig[channel].txBufferSize, 1);
         HAL_serial_start(IO_fullDuplexSerial_channelConfig[channel].hardwareSerialChannel);
     }
 }
@@ -72,24 +79,35 @@ void IO_fullDuplexSerial_run(void)
 {
     for (IO_fullDuplexSerial_channel_E channel = 0; channel < IO_FULLDUPLEXSERIAL_CHANNEL_COUNT; channel++)
     {
-        IO_FULLDUPLEXSERIAL_LOCK_REQ_BLOCK();
-        if (IO_fullDuplexSerial_data.channel[channel].txBufferIndex > 0)
+        const HAL_serial_channel_E hw = IO_fullDuplexSerial_channelConfig[channel].hardwareSerialChannel;
+        lib_staticQueue_S *const rxQueue = &IO_fullDuplexSerial_data.channel[channel].rxQueue;
+        lib_staticQueue_S *const txQueue = &IO_fullDuplexSerial_data.channel[channel].txQueue;
+        static uint8_t rxChunk[IO_FULLDUPLEXSERIAL_RX_CHUNK];
+
+        /* Receive: burst-drain everything currently on the wire into the rx ring.
+         * HAL_serial_recieveBytes spins across inter-byte gaps internally (its
+         * idle budget covers one ~5 us byte time at 2 Mbaud), so a single call
+         * captures a whole frame gaplessly; the do/while handles frames larger
+         * than one chunk. Enqueue happens off that hot path. */
+        uint32_t got;
+        do
         {
-            HAL_serial_transmitData(IO_fullDuplexSerial_channelConfig[channel].hardwareSerialChannel, IO_fullDuplexSerial_channelConfig[channel].txBuffer, IO_fullDuplexSerial_data.channel[channel].txBufferIndex);
-            IO_fullDuplexSerial_data.channel[channel].txBufferIndex = 0;
-        }
-        if (IO_fullDuplexSerial_data.channel[channel].rxBufferIndex < IO_fullDuplexSerial_channelConfig[channel].rxBufferSize)
-        {
-            if (HAL_serial_recieveByte(IO_fullDuplexSerial_channelConfig[channel].hardwareSerialChannel, &IO_fullDuplexSerial_channelConfig[channel].rxBuffer[IO_fullDuplexSerial_data.channel[channel].rxBufferIndex]))
+            got = HAL_serial_recieveBytes(hw, rxChunk, IO_FULLDUPLEXSERIAL_RX_CHUNK);
+            for (uint32_t i = 0U; i < got; i++)
             {
-                IO_fullDuplexSerial_data.channel[channel].rxBufferIndex++;
+                (void)lib_staticQueue_push(rxQueue, &rxChunk[i]);
             }
-        }
-        else
+        } while (got == IO_FULLDUPLEXSERIAL_RX_CHUNK);
+
+        /* Transmit: drain any queued bytes to the UART. */
+        uint8_t txByte;
+        while (lib_staticQueue_pop(txQueue, &txByte))
         {
-            // TODO: Handle overflow
+            HAL_serial_transmitData(hw, &txByte, 1U);
         }
-        IO_FULLDUPLEXSERIAL_LOCK_REL();
+
+        /* No-op on hardware (keeps the poll tight); yields the CPU under native
+         * emulation so the SERIAL cog thread does not busy-spin. */
         EMULATION_YIELD_SERIAL();
     }
 }
@@ -97,21 +115,19 @@ void IO_fullDuplexSerial_run(void)
 bool IO_fullDuplexSerial_send(IO_fullDuplexSerial_channel_E channel, const uint8_t *data, uint32_t length)
 {
     bool result = false;
-    if (channel < IO_FULLDUPLEXSERIAL_CHANNEL_COUNT)
+    if ((channel < IO_FULLDUPLEXSERIAL_CHANNEL_COUNT) && (data != NULL))
     {
-        IO_FULLDUPLEXSERIAL_LOCK_REQ_BLOCK();
-        if ((IO_fullDuplexSerial_data.channel[channel].txBufferIndex + length) < IO_fullDuplexSerial_channelConfig[channel].txBufferSize)
+        lib_staticQueue_S *const txQueue = &IO_fullDuplexSerial_data.channel[channel].txQueue;
+        result = true;
+        for (uint32_t i = 0U; i < length; i++)
         {
-            memcpy(&IO_fullDuplexSerial_channelConfig[channel].txBuffer[IO_fullDuplexSerial_data.channel[channel].txBufferIndex], data, length);
-            IO_fullDuplexSerial_data.channel[channel].txBufferIndex += length;
-            result = true;
+            if (!lib_staticQueue_push(txQueue, (void *)&data[i]))
+            {
+                DEBUG_ERROR("Overflow on channel %d\n", channel);
+                result = false;
+                break;
+            }
         }
-        else
-        {
-            // TODO: Handle overflow
-            DEBUG_ERROR("Overflow on channel %d\n", channel);
-        }
-        IO_FULLDUPLEXSERIAL_LOCK_REL();
     }
     return result;
 }
@@ -119,27 +135,29 @@ bool IO_fullDuplexSerial_send(IO_fullDuplexSerial_channel_E channel, const uint8
 bool IO_fullDuplexSerial_receive(IO_fullDuplexSerial_channel_E channel, uint8_t *data, uint32_t maxLength)
 {
     bool result = false;
-    if (channel < IO_FULLDUPLEXSERIAL_CHANNEL_COUNT)
+    if ((channel < IO_FULLDUPLEXSERIAL_CHANNEL_COUNT) && (data != NULL))
     {
-        IO_FULLDUPLEXSERIAL_LOCK_REQ_BLOCK();
-        if (IO_fullDuplexSerial_data.channel[channel].rxBufferIndex > 0)
+        lib_staticQueue_S *const rxQueue = &IO_fullDuplexSerial_data.channel[channel].rxQueue;
+        for (uint32_t i = 0U; i < maxLength; i++)
         {
-            // copy data from rx buffer then shift buffer to the left
-            const uint32_t length = LIB_UTILITY_MIN(maxLength, IO_fullDuplexSerial_data.channel[channel].rxBufferIndex);
-            memcpy(data, &IO_fullDuplexSerial_channelConfig[channel].rxBuffer[0], length);
-            memmove(&IO_fullDuplexSerial_channelConfig[channel].rxBuffer[0], &IO_fullDuplexSerial_channelConfig[channel].rxBuffer[length], IO_fullDuplexSerial_data.channel[channel].rxBufferIndex - length);
-            IO_fullDuplexSerial_data.channel[channel].rxBufferIndex -= length;
-            //DEBUG_INFO("IO_fullDuplexSerial_receive: %d\n", length);
+            if (!lib_staticQueue_pop(rxQueue, &data[i]))
+            {
+                break;
+            }
             result = true;
         }
-        IO_FULLDUPLEXSERIAL_LOCK_REL();
     }
     return result;
 }
 
 uint32_t IO_fullDuplexSerial_available(IO_fullDuplexSerial_channel_E channel)
 {
-    return IO_fullDuplexSerial_data.channel[channel].rxBufferIndex;
+    uint32_t available = 0U;
+    if (channel < IO_FULLDUPLEXSERIAL_CHANNEL_COUNT)
+    {
+        available = (uint32_t)lib_staticQueue_count(&IO_fullDuplexSerial_data.channel[channel].rxQueue);
+    }
+    return available;
 }
 
 /**********************************************************************

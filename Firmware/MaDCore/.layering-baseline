@@ -1,0 +1,16 @@
+# Frozen pre-existing firmware layer violations (downward-only rule).
+# Format: <relpath-under-src>\t<included-header>. Gate fails on NEW edges only.
+# Burn these down, then run the linter with --strict and delete this file.
+DEV/Config/dev_cogManager_config.c	app_control.h
+DEV/Config/dev_cogManager_config.c	app_gauge.h
+DEV/Config/dev_cogManager_config.c	app_messageSlave.h
+DEV/Config/dev_cogManager_config.c	app_monitor.h
+DEV/Config/dev_cogManager_config.c	app_motion.h
+DEV/Config/dev_cogManager_config.c	app_notification.h
+DEV/Config/dev_cogManager_config.c	app_testManagement.h
+DEV/dev_nvram.c	propeller2.h
+IO/Config/IO_SDCard_config.c	app_monitor.h
+IO/Config/IO_SDCard_config.c	app_motion.h
+IO/IO_SDCard.c	propeller2.h
+IO/IO_gcode.h	app_motion.h
+IO/IO_positionFeedback.c	dev_nvram.h

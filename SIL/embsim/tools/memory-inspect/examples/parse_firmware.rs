@@ -49,21 +49,39 @@ fn main() {
         println!("  {} ({:?}) [{}]", name, v.type_info, v.source_file.as_deref().unwrap_or("?"));
     }
 
-    // Test some specific lookups (all panic if not found)
-    println!("\n=== SPECIFIC LOOKUPS ===");
+    // Demonstrate the lookup API against whatever this firmware actually
+    // contains (no project-specific symbol names hardcoded) using the fallible
+    // `try_*` accessors so a different firmware doesn't panic.
+    println!("\n=== LOOKUP API DEMO ===");
 
-    println!("  HAL_GPIO_SERVO_ENA = {}", fw.enum_channel("HAL_GPIO_SERVO_ENA"));
-    println!("  HAL_GPIO_channel_E count = {}", fw.channel_count("HAL_GPIO_channel_E"));
+    if let Some(enum_name) = enum_names.first() {
+        if let Some((variant, _)) = fw.enums[*enum_name].variants.first() {
+            println!(
+                "  enum value of '{}' = {:?}",
+                variant,
+                fw.try_enum_value(variant)
+            );
+        }
+        println!(
+            "  channel_count('{}') (suffix '{}') = {:?}",
+            enum_name,
+            fw.count_suffix,
+            fw.try_channel_count(enum_name)
+        );
+    } else {
+        println!("  (no enums in this archive)");
+    }
 
-    // Test field_offset
-    println!("  dev_cogManager_data_S.channels[0].state offset = {}",
-        fw.field_offset("dev_cogManager_data_S", "channels[0].state"));
-    println!("  dev_cogManager_data_S.channels[3].state offset = {}",
-        fw.field_offset("dev_cogManager_data_S", "channels[3].state"));
-    println!("  app_control_data_S.state offset = {}",
-        fw.field_offset("app_control_data_S", "state"));
-    println!("  dev_stepper_data_S.channels[0].currentSteps offset = {}",
-        fw.field_offset("dev_stepper_data_S", "channels[0].currentSteps"));
-    println!("  dev_stepper_data_S.lock offset = {}",
-        fw.field_offset("dev_stepper_data_S", "lock"));
+    if let Some(struct_name) = struct_names.first() {
+        if let Some(field) = fw.structs[*struct_name].fields.first() {
+            println!(
+                "  field offset of '{}.{}' = {:?}",
+                struct_name,
+                field.name,
+                fw.try_field_offset(struct_name, &field.name)
+            );
+        }
+    } else {
+        println!("  (no structs in this archive)");
+    }
 }

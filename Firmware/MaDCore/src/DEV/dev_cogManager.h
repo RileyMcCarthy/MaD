@@ -96,6 +96,13 @@ void dev_cogManager_init(int lock);
 void dev_cogManager_run(void);
 
 bool dev_cogManager_isAllRunning(void);
+
+/* Stack high-water diagnostics. `Peak` is the most stack a cog has used since
+ * boot (measured from its sentinel fill); `Size` is its allocation; `Name` is
+ * the channel label. Safe to call from any cog (lock-free, stale-tolerant). */
+uint32_t dev_cogManager_getStackPeak(dev_cogManager_channel_E channel);
+uint32_t dev_cogManager_getStackSize(dev_cogManager_channel_E channel);
+const char *dev_cogManager_getName(dev_cogManager_channel_E channel);
 /**********************************************************************
  * End of File
  **********************************************************************/

@@ -19,16 +19,63 @@ Usage:
 import argparse
 import math
 import os
+import re
 import sys
 from pathlib import Path
 
 import yaml
 from jinja2 import Environment, FileSystemLoader
 
-# ── Fixed prefix — ProtoEmb is the library name, not configurable ──
-PREFIX = "ProtoEmb"
-PREFIX_UPPER = PREFIX.upper()
-PREFIX_LOWER = PREFIX.lower()
+
+# ── YAML loader that only treats `true`/`false` as booleans ──
+# Stock PyYAML (YAML 1.1) also coerces OFF/ON/YES/NO to booleans, which silently
+# mangles enum-variant names like `OFF`. Restrict bool resolution so such names
+# stay strings.
+class _SchemaLoader(yaml.SafeLoader):
+    pass
+
+
+for _ch in list(_SchemaLoader.yaml_implicit_resolvers):
+    _SchemaLoader.yaml_implicit_resolvers[_ch] = [
+        (tag, regexp)
+        for (tag, regexp) in _SchemaLoader.yaml_implicit_resolvers[_ch]
+        if tag != "tag:yaml.org,2002:bool"
+    ]
+_SchemaLoader.add_implicit_resolver(
+    "tag:yaml.org,2002:bool",
+    re.compile(r"^(?:true|True|TRUE|false|False|FALSE)$"),
+    list("tTfF"),
+)
+
+
+def load_yaml(path):
+    """Load a YAML file with the schema-safe loader."""
+    with open(path, "r") as f:
+        # _SchemaLoader subclasses yaml.SafeLoader (safe); yaml.safe_load can't take a custom Loader.
+        return yaml.load(f, Loader=_SchemaLoader)  # noqa: S506
+
+# ── Library prefix / identity ──
+# Default is "ProtoEmb", but it is configurable so multiple independent
+# protocols can be generated into one codebase without symbol/file collisions.
+# Resolution order (highest first): --prefix CLI flag, schema `prefix` (or
+# `library_name`) key, then this default.
+DEFAULT_PREFIX = "ProtoEmb"
+
+
+def resolve_prefix(schema, cli_prefix=None):
+    """Resolve the library prefix from CLI flag, schema, or default."""
+    prefix = (
+        cli_prefix
+        or schema.get("prefix")
+        or schema.get("library_name")
+        or DEFAULT_PREFIX
+    )
+    if not isinstance(prefix, str) or not prefix.isidentifier():
+        raise SystemExit(
+            f"Invalid prefix {prefix!r}: must be a valid identifier "
+            "(letters, digits, underscore; not starting with a digit)"
+        )
+    return prefix
 
 
 # ============================================================
@@ -59,6 +106,11 @@ def compute_field_bits(field, enums):
     if ftype == "string":
         return field.get("max_length", 16) * 8
 
+    # Explicit bit-width override for packed numeric fields.
+    explicit_bits = field.get("bits", None)
+    if explicit_bits is not None:
+        return int(explicit_bits)
+
     # Numeric with min/max
     fmin = field.get("min", None)
     fmax = field.get("max", None)
@@ -82,10 +134,114 @@ def compute_field_bits(field, enums):
         return type_bits.get(ftype, 32)
 
 
-def process_schema(schema):
+def topo_sort_types(structs, unions):
+    """Order structs and unions so a referenced type precedes its users.
+
+    A struct field or union variant may reference another struct/union; this
+    returns `(kind, name)` pairs in dependency order. Raises on a cycle. With no
+    composite references it preserves definition order (structs, then unions).
+    """
+    state = {}  # name -> "visiting" | "done"
+    order = []
+
+    def referenced_types(name):
+        if name in structs:
+            return [f["type"] for f in structs[name]["fields"]]
+        return [v["type"] for v in unions[name]["variants"]]
+
+    def visit(name, stack):
+        st = state.get(name)
+        if st == "done":
+            return
+        if st == "visiting":
+            raise SystemExit(f"Type reference cycle: {' -> '.join(stack + [name])}")
+        state[name] = "visiting"
+        for t in referenced_types(name):
+            if t in structs or t in unions:
+                visit(t, stack + [name])
+        state[name] = "done"
+        order.append(("union" if name in unions else "struct", name))
+
+    for name in list(structs) + list(unions):
+        visit(name, [])
+    return order
+
+
+def enrich_union(udef, name, structs, unions, enums, defaults):
+    """Size a tagged union: a discriminant tag + the largest variant payload.
+
+    Each variant is enriched like a field so the codec leaf-macros can emit it.
+    """
+    udef["_name"] = name
+    encoding = udef.get("encoding", defaults.get("encoding", "packed"))
+    udef["_encoding"] = encoding
+    is_packed = encoding == "packed"
+    udef["_is_packed"] = is_packed
+    udef.setdefault("_needs_pack_helper", False)
+
+    variants = udef["variants"]
+    count = len(variants)
+    udef["_tag_count"] = count
+    tag_bits = max(1, math.ceil(math.log2(count))) if count > 1 else 1
+    udef["_tag_bits"] = tag_bits
+
+    max_bits = 0
+    max_bytes = 0
+    for i, v in enumerate(variants):
+        vt = v["type"]
+        v["_index"] = i
+        v["_is_enum"] = vt in enums
+        v["_is_struct"] = vt in structs
+        v["_is_union"] = vt in unions
+        v["_is_bool"] = vt == "bool"
+        v["_is_string"] = vt == "string"
+        v["_is_float"] = vt == "float"
+        v["_is_numeric"] = not (v["_is_enum"] or v["_is_bool"]
+                                or v["_is_string"] or v["_is_struct"] or v["_is_union"])
+        v["_is_signed"] = vt.startswith("int") and not vt.startswith("uint")
+        v["_scale"] = v.get("scale", 1)
+        v["_has_scale"] = v.get("scale", 1) != 1
+        v["_raw_storage"] = False
+        v["_min"] = v.get("min", None)
+        v["_max"] = v.get("max", None)
+        v["_min_wire"] = int(v["_min"] * v["_scale"]) if v["_min"] is not None else None
+        v["_max_wire"] = int(v["_max"] * v["_scale"]) if v["_max"] is not None else None
+        if is_packed:
+            if v["_is_struct"]:
+                structs[vt]["_needs_pack_helper"] = True
+                vb = structs[vt]["_total_bits"]
+            else:
+                vb = compute_field_bits(v, enums)
+            v["_elem_bits"] = vb
+            max_bits = max(max_bits, vb)
+        else:
+            if v["_is_struct"]:
+                structs[vt]["_needs_pack_helper"] = True
+                vbs = structs[vt]["_wire_size"]
+            elif v["_is_enum"] or v["_is_bool"]:
+                vbs = 1
+            else:
+                vbs = {"int8": 1, "uint8": 1, "int16": 2,
+                       "uint16": 2, "int32": 4, "uint32": 4}.get(vt, 4)
+            v["_elem_byte_size"] = vbs
+            max_bytes = max(max_bytes, vbs)
+
+    if is_packed:
+        udef["_payload_offset"] = tag_bits
+        udef["_total_bits"] = tag_bits + max_bits
+        udef["_wire_size"] = math.ceil((tag_bits + max_bits) / 8)
+    else:
+        udef["_payload_offset"] = 1
+        udef["_wire_size"] = 1 + max_bytes
+
+
+def process_schema(schema, prefix=DEFAULT_PREFIX):
     """Process raw schema YAML into enriched data for templates."""
+    prefix_upper = prefix.upper()
+    prefix_lower = prefix.lower()
     enums = schema.get("enums", {})
     structs = schema.get("structs", {})
+    unions = schema.get("unions", {})
     messages = schema.get("messages", {})
 
     # Enrich enums
@@ -113,49 +269,117 @@ def process_schema(schema):
         enum_def["_variants"] = processed_variants
         enum_def["_count"] = len(processed_variants)
 
-        # For remap enums, compute max actual value for C array sizing
+        # For remap enums, compute max actual value for C array sizing, and
+        # pick a value→wire strategy: a dense lookup array (fast, but O(max_value)
+        # bytes) or a binary search over a sorted table (compact for sparse,
+        # large-valued enums). Auto-selects search when the dense array would
+        # exceed 256 entries; override per-enum with `remap_style: array|search`.
         if is_remap:
-            enum_def["_max_value"] = max(v["value"] for v in processed_variants)
+            max_value = max(v["value"] for v in processed_variants)
+            enum_def["_max_value"] = max_value
+            style = enum_def.get("remap_style", None)
+            if style not in ("array", "search"):
+                # Dense array costs (max_value + 1) bytes. Switch to a sorted
+                # table + binary search when that array is both non-trivial and
+                # mostly empty (sparse), e.g. GCode's 9 values spread over 0..122.
+                dense_size = max_value + 1
+                sparse = dense_size > 32 and (len(processed_variants) * 2) < dense_size
+                style = "search" if sparse else "array"
+            enum_def["_remap_style"] = style
+            enum_def["_sorted_variants"] = sorted(
+                processed_variants, key=lambda v: v["value"]
+            )
 
-    # Enrich structs
+    # Enrich structs. Nested-struct fields need their child sized first, so we
+    # process in dependency (topological) order, then re-key `structs` into that
+    # order so generated typedefs/functions emit children before parents.
     defaults = schema.get("defaults", {})
-    for name, struct_def in structs.items():
+    type_order = topo_sort_types(structs, unions)
+    for _kind, name in type_order:
+        if _kind == "union":
+            enrich_union(unions[name], name, structs, unions, enums, defaults)
+            continue
+        struct_def = structs[name]
         struct_def["_name"] = name
         encoding = struct_def.get("encoding", defaults.get("encoding", "packed"))
         struct_def["_encoding"] = encoding
         is_packed = encoding == "packed"
         struct_def["_is_packed"] = is_packed
+        struct_def.setdefault("_needs_pack_helper", False)
 
         total_bits = 0
+        has_nested = False
         for field in struct_def["fields"]:
             ftype = field["type"]
             field["_is_enum"] = ftype in enums
+            field["_is_struct"] = ftype in structs
+            field["_is_union"] = ftype in unions
             field["_is_bool"] = ftype == "bool"
             field["_is_string"] = ftype == "string"
             field["_is_float"] = ftype == "float"
-            field["_is_numeric"] = not field["_is_enum"] and not field["_is_bool"] and not field["_is_string"]
+            field["_is_numeric"] = not (field["_is_enum"] or field["_is_bool"]
+                                        or field["_is_string"] or field["_is_struct"]
+                                        or field["_is_union"])
             field["_is_signed"] = ftype.startswith("int") and not ftype.startswith("uint")
 
+            if field["_is_struct"] or field["_is_union"]:
+                has_nested = True
+                child = structs[ftype] if field["_is_struct"] else unions[ftype]
+                # A nested struct/union must share the parent's encoding so its
+                # layout composes (bit-packed into bits, byte-aligned into bytes).
+                if child["_is_packed"] != is_packed:
+                    raise SystemExit(
+                        f"Struct {name}.{field['name']}: nested '{ftype}' uses "
+                        f"'{child['_encoding']}' encoding but parent is '{encoding}'"
+                    )
+
+            # Fixed-count arrays: a `count: N` makes the field N consecutive
+            # elements of `type`. The element size is computed as for a scalar
+            # and multiplied by N (preserves the fixed-wire-size model).
+            field["_is_array"] = "count" in field
+            field["_array_len"] = field.get("count", 1)
+            n = field["_array_len"]
+
+            # Optional fields prepend a 1-bit (packed) / 1-byte (aligned) presence
+            # flag before the value; the value is always allocated on the wire so
+            # the fixed-wire-size model holds. The flag sits at `_bit_offset`/
+            # `_byte_offset`; the value at `_value_bit_offset`/`_value_byte_offset`.
+            field["_is_optional"] = bool(field.get("optional", False))
+
             if is_packed:
-                bits = compute_field_bits(field, enums)
-                field["_bits"] = bits
+                if field["_is_struct"] or field["_is_union"]:
+                    child = structs[ftype] if field["_is_struct"] else unions[ftype]
+                    child["_needs_pack_helper"] = True
+                    elem_bits = child["_total_bits"]
+                else:
+                    elem_bits = compute_field_bits(field, enums)
+                flag_bits = 1 if field["_is_optional"] else 0
+                field["_elem_bits"] = elem_bits
+                field["_bits"] = flag_bits + elem_bits * n
                 field["_bit_offset"] = total_bits
-                total_bits += bits
+                field["_value_bit_offset"] = total_bits + flag_bits
+                total_bits += field["_bits"]
             else:
                 # Aligned — use standard C type sizes
-                if field["_is_string"]:
-                    field["_byte_size"] = field.get("max_length", 16)
+                if field["_is_struct"] or field["_is_union"]:
+                    child = structs[ftype] if field["_is_struct"] else unions[ftype]
+                    child["_needs_pack_helper"] = True
+                    elem_bs = child["_wire_size"]
+                elif field["_is_string"]:
+                    elem_bs = field.get("max_length", 16)
                 elif field["_is_enum"]:
-                    field["_byte_size"] = 1
+                    elem_bs = 1
                 elif field["_is_bool"]:
-                    field["_byte_size"] = 1
+                    elem_bs = 1
                 else:
                     type_sizes = {
                         "int8": 1, "uint8": 1,
                         "int16": 2, "uint16": 2,
                         "int32": 4, "uint32": 4,
                     }
-                    field["_byte_size"] = type_sizes.get(ftype, 4)
+                    elem_bs = type_sizes.get(ftype, 4)
+                field["_elem_byte_size"] = elem_bs
+                field["_byte_size"] = (1 if field["_is_optional"] else 0) + elem_bs * n
 
             field["_scale"] = field.get("scale", 1)
             field["_has_scale"] = field.get("scale", 1) != 1
@@ -177,8 +401,15 @@ def process_schema(schema):
             byte_offset = 0
             for field in struct_def["fields"]:
                 field["_byte_offset"] = byte_offset
+                field["_value_byte_offset"] = byte_offset + (1 if field["_is_optional"] else 0)
                 byte_offset += field["_byte_size"]
             struct_def["_wire_size"] = byte_offset
+        struct_def["_has_nested"] = has_nested
+
+    # Re-key structs/unions into dependency order so generated typedefs/functions
+    # emit nested children before the parents that embed them.
+    structs = {n: structs[n] for (k, n) in type_order if k == "struct"}
+    unions = {n: unions[n] for (k, n) in type_order if k == "union"}
 
     # Enrich messages
     read_messages = []
@@ -218,11 +449,15 @@ def process_schema(schema):
         has_request_payload = (request_name is not None) or (request_scalar in ("bool", "raw", "bytes"))
         msg_def["_has_request_payload"] = has_request_payload
 
-        # Auto-calculate wire command frame kind:
+        # Wire command frame kind. An explicit `command_frame: read|write` in the
+        # schema overrides inference; otherwise it is auto-derived:
         # - periodic and plain request/response reads => READ frame
         # - state-changing commands and payload queries => WRITE frame
+        explicit_frame = msg_def.get("command_frame", None)
         if msg_def["_command_id"] is not None:
-            if is_periodic:
+            if explicit_frame in ("read", "write"):
+                command_frame = explicit_frame
+            elif is_periodic:
                 command_frame = "read"
             elif (response_name is not None) and (not has_request_payload):
                 command_frame = "read"
@@ -232,6 +467,14 @@ def process_schema(schema):
             command_frame = None
 
         msg_def["_command_frame"] = command_frame
+        msg_def["_command_frame_explicit"] = explicit_frame is not None
+
+        # Priority is informational metadata (enforced by the host queue, not on
+        # the wire). Normalize + default it so it can be emitted as a constant.
+        priority = msg_def.get("priority", None)
+        if priority is None:
+            priority = "low" if is_periodic else "high"
+        msg_def["_priority"] = priority
 
         # Semantic class (for docs/templates, not wire bytes)
         if is_periodic:
@@ -264,15 +507,22 @@ def process_schema(schema):
     read_messages.sort(key=lambda m: m["_command_id"])
     write_messages.sort(key=lambda m: m["_command_id"])
 
+    # Runtime config (device-side frame assembly). Defaults preserve the
+    # historical hardcoded values so existing protocols regenerate unchanged.
+    runtime_cfg = schema.get("runtime", {}) or {}
+
     return {
         "protocol_version": schema.get("protocol_version", 1),
-        "prefix": PREFIX,
-        "prefix_upper": PREFIX_UPPER,
-        "prefix_lower": PREFIX_LOWER,
+        "prefix": prefix,
+        "prefix_upper": prefix_upper,
+        "prefix_lower": prefix_lower,
         "byte_order": defaults.get("byte_order", "little_endian"),
         "bit_order": defaults.get("bit_order", "lsb_first"),
+        "runtime_max_payload": int(runtime_cfg.get("max_payload", 4096)),
+        "runtime_timeout_ms": int(runtime_cfg.get("frame_timeout_ms", 100)),
         "enums": enums,
         "structs": structs,
+        "unions": unions,
         "messages": messages,
         "runtime_read_messages": read_messages,
         "runtime_write_messages": write_messages,
@@ -284,8 +534,7 @@ def load_generator_config(config_path):
     if not config_path:
         return {}
 
-    with open(config_path, "r") as f:
-        cfg = yaml.safe_load(f) or {}
+    cfg = load_yaml(config_path) or {}
 
     if not isinstance(cfg, dict):
         raise SystemExit("Generator config must be a YAML mapping")
@@ -297,9 +546,58 @@ def load_generator_config(config_path):
 # Validation
 # ============================================================
 
+# Native integer type ranges, used to validate that a field's declared
+# min/max actually fit the storage type (catches e.g. int8 with min -1000).
+TYPE_RANGES = {
+    "int8":  (-128, 127),
+    "uint8": (0, 255),
+    "int16": (-32768, 32767),
+    "uint16": (0, 65535),
+    "int32": (-2147483648, 2147483647),
+    "uint32": (0, 4294967295),
+    "int64": (-9223372036854775808, 9223372036854775807),
+    "uint64": (0, 18446744073709551615),
+}
+
+
+_PRIMITIVE_TYPES = {
+    "bool", "float", "int8", "uint8", "int16", "uint16",
+    "int32", "uint32", "int64", "uint64",
+}
+
+
+def validate_unions(data, errors):
+    """Validate tagged unions: variants reference known, supported types."""
+    enums = data["enums"]
+    structs = data["structs"]
+    unions = data["unions"]
+    for name, udef in unions.items():
+        variants = udef.get("variants", [])
+        if not variants:
+            errors.append(f"Union {name}: must have at least one variant")
+        seen = set()
+        for v in variants:
+            vn = v.get("name")
+            if vn in seen:
+                errors.append(f"Union {name}: duplicate variant name '{vn}'")
+            seen.add(vn)
+            vt = v.get("type")
+            if vt == "string":
+                errors.append(f"Union {name}.{vn}: string variants are not supported")
+            elif vt in unions:
+                errors.append(f"Union {name}.{vn}: nested unions are not supported")
+            elif vt in structs:
+                # Struct variants would force interleaving union/struct emission;
+                # scalar/enum/bool variants keep unions emittable before structs.
+                errors.append(f"Union {name}.{vn}: struct variants are not yet supported")
+            elif not (vt in _PRIMITIVE_TYPES or vt in enums):
+                errors.append(f"Union {name}.{vn}: references unknown type '{vt}'")
+
+
 def validate_schema(data):
     """Validate the processed schema. Raises on error."""
     errors = []
+    validate_unions(data, errors)
     enums = data["enums"]
     structs = data["structs"]
     messages = data["messages"]
@@ -309,6 +607,7 @@ def validate_schema(data):
     allowed_nodes = schema_nodes if schema_nodes else config_nodes
     seen_read_command_ids = {}
     seen_write_command_ids = {}
+    seen_data_command_ids = {}
 
     if allowed_nodes and not isinstance(allowed_nodes, list):
         errors.append("Generator config 'nodes' must be a list of strings")
@@ -335,6 +634,54 @@ def validate_schema(data):
 
             if field["_is_enum"] and field["type"] not in enums:
                 errors.append(f"Struct {name}.{field['name']}: references unknown enum '{field['type']}'")
+
+            # Field min/max must fit the declared storage type.
+            ftype = field["type"]
+            if ftype in TYPE_RANGES:
+                tmin, tmax = TYPE_RANGES[ftype]
+                fmin = field.get("min", None)
+                fmax = field.get("max", None)
+                if fmin is not None and fmin < tmin:
+                    errors.append(
+                        f"Struct {name}.{field['name']}: min {fmin} below {ftype} "
+                        f"minimum {tmin} — widen the type or raise min"
+                    )
+                if fmax is not None and fmax > tmax:
+                    errors.append(
+                        f"Struct {name}.{field['name']}: max {fmax} above {ftype} "
+                        f"maximum {tmax} — widen the type or lower max"
+                    )
+
+            # Fixed-count array constraints.
+            count = field.get("count", None)
+            if count is not None:
+                if not isinstance(count, int) or count < 1:
+                    errors.append(
+                        f"Struct {name}.{field['name']}: count must be a positive integer, got {count!r}"
+                    )
+                if field.get("_is_string"):
+                    errors.append(
+                        f"Struct {name}.{field['name']}: string arrays are not supported"
+                    )
+                if field.get("optional"):
+                    errors.append(
+                        f"Struct {name}.{field['name']}: a field cannot be both optional and an array"
+                    )
+
+            if field.get("optional") and field.get("_is_string"):
+                errors.append(
+                    f"Struct {name}.{field['name']}: optional strings are not supported"
+                )
+
+            # A fractional scale only has a well-defined wire representation on a
+            # float field; on an integer field it would silently truncate.
+            if field["_is_numeric"] and not field["_is_float"]:
+                fscale = field.get("scale", 1)
+                if isinstance(fscale, float) and not fscale.is_integer():
+                    errors.append(
+                        f"Struct {name}.{field['name']}: fractional scale {fscale} "
+                        f"requires a 'float' field type (integer fields need an integer scale)"
+                    )
 
             if struct_def["_is_packed"] and field["_is_numeric"]:
                 fmin = field.get("min", None)
@@ -385,6 +732,18 @@ def validate_schema(data):
         if response is not None and response not in structs:
             errors.append(f"Message {name}.response: references unknown struct '{response}'")
 
+        explicit_frame = msg_def.get("command_frame", None)
+        if explicit_frame is not None and explicit_frame not in ("read", "write"):
+            errors.append(
+                f"Message {name}.command_frame: must be 'read' or 'write', got {explicit_frame!r}"
+            )
+
+        priority = msg_def.get("priority", None)
+        if priority is not None and priority not in ("high", "low"):
+            errors.append(
+                f"Message {name}.priority: must be 'high' or 'low', got {priority!r}"
+            )
+
         command_frame = msg_def.get("_command_frame", None)
         if command_id is not None and command_frame == "read":
             if command_id in seen_read_command_ids:
@@ -404,6 +763,19 @@ def validate_schema(data):
             else:
                 seen_write_command_ids[command_id] = name
 
+        # DATA-producing messages (read responses + write-frame queries) must have
+        # unique command ids so the typed facade can dispatch a DATA frame
+        # unambiguously back to its payload type.
+        if command_id is not None and response is not None:
+            if command_id in seen_data_command_ids:
+                errors.append(
+                    f"Message {name}.command_id: DATA command_id {command_id} collides with "
+                    f"{seen_data_command_ids[command_id]} — both return a payload, so the "
+                    f"typed facade cannot tell their DATA frames apart"
+                )
+            else:
+                seen_data_command_ids[command_id] = name
+
     if errors:
         for e in errors:
             print(f"ERROR: {e}", file=sys.stderr)
@@ -416,16 +788,18 @@ def validate_schema(data):
 # Code Generation
 # ============================================================
 
-TARGET_FILES = {
-    "c":  [
-        ("protocol.h.j2", f"{PREFIX_LOWER}.h"),
-        ("protocol.c.j2", f"{PREFIX_LOWER}.c"),
-        ("protocol_runtime.h.j2", f"{PREFIX_LOWER}_runtime.h"),
-        ("protocol_runtime.c.j2", f"{PREFIX_LOWER}_runtime.c"),
-    ],
-    "ts": [("protocol.ts.j2", f"{PREFIX_LOWER}.ts")],
-    "rs": [("protocol.rs.j2", f"{PREFIX_LOWER}.rs")],
-}
+def target_files(prefix_lower):
+    """Return the (template, output-filename) pairs for each target, named by prefix."""
+    return {
+        "c":  [
+            ("protocol.h.j2", f"{prefix_lower}.h"),
+            ("protocol.c.j2", f"{prefix_lower}.c"),
+            ("protocol_runtime.h.j2", f"{prefix_lower}_runtime.h"),
+            ("protocol_runtime.c.j2", f"{prefix_lower}_runtime.c"),
+        ],
+        "ts": [("protocol.ts.j2", f"{prefix_lower}.ts")],
+        "rs": [("protocol.rs.j2", f"{prefix_lower}.rs")],
+    }
 
 
 def generate(data, target, output_dir, template_dir):
@@ -442,7 +816,6 @@ def generate(data, target, output_dir, template_dir):
     env.filters["camel_case"] = lambda s: "".join(w.capitalize() for w in s.split("_"))
     env.filters["lower_camel"] = lambda s: s[0].lower() + "".join(w.capitalize() for w in s.split("_"))[1:] if s else s
 
-    import re
     def to_snake_case(s):
         """Convert camelCase or PascalCase to snake_case."""
         s1 = re.sub(r'([a-z0-9])([A-Z])', r'\1_\2', s)
@@ -451,7 +824,7 @@ def generate(data, target, output_dir, template_dir):
     env.filters["snake_case"] = to_snake_case
 
     # Rust reserved keyword escaping
-    _RUST_KEYWORDS = {
+    rust_keywords = {
         "as", "break", "const", "continue", "crate", "else", "enum", "extern",
         "false", "fn", "for", "if", "impl", "in", "let", "loop", "match", "mod",
         "move", "mut", "pub", "ref", "return", "self", "Self", "static", "struct",
@@ -459,7 +832,7 @@ def generate(data, target, output_dir, template_dir):
         "async", "await", "dyn", "abstract", "become", "box", "do", "final",
         "macro", "override", "priv", "typeof", "unsized", "virtual", "yield", "try",
     }
-    env.filters["rust_safe"] = lambda s: f"r#{s}" if s in _RUST_KEYWORDS else s
+    env.filters["rust_safe"] = lambda s: f"r#{s}" if s in rust_keywords else s
 
     env.globals["ceil"] = math.ceil
     env.globals["log2"] = math.log2
@@ -467,7 +840,7 @@ def generate(data, target, output_dir, template_dir):
 
     os.makedirs(output_dir, exist_ok=True)
 
-    files = TARGET_FILES.get(target)
+    files = target_files(data["prefix_lower"]).get(target)
     if not files:
         raise ValueError(f"Unknown target: {target}")
 
@@ -485,12 +858,16 @@ def generate(data, target, output_dir, template_dir):
 # ============================================================
 
 def main():
+    """Parse CLI args and run the protocol code generator."""
     parser = argparse.ArgumentParser(description="ProtoEmb Code Generator")
     parser.add_argument("--schema", required=True, help="Path to protocol YAML schema")
     parser.add_argument("--config", required=False, help="Path to generator config YAML")
+    parser.add_argument("--prefix", required=False, default=None,
+                        help="Library prefix / identity (default: schema `prefix` key, else 'ProtoEmb')")
     parser.add_argument("--target", required=True, choices=["c", "ts", "rs"], help="Target language")
     parser.add_argument("--output", required=True, help="Output directory")
-    parser.add_argument("--templates", default=None, help="Templates directory (default: templates/ next to this script)")
+    parser.add_argument("--templates", default=None,
+                        help="Templates directory (default: templates/ next to this script)")
     args = parser.parse_args()
 
     # Resolve template dir
@@ -498,13 +875,15 @@ def main():
     template_dir = args.templates or str(script_dir / "templates")
 
     # Load schema
-    with open(args.schema, "r") as f:
-        schema = yaml.safe_load(f)
+    schema = load_yaml(args.schema)
 
     generator_config = load_generator_config(args.config)
 
+    # Resolve library prefix (CLI > schema > default)
+    prefix = resolve_prefix(schema, args.prefix)
+
     # Process and validate
-    data = process_schema(schema)
+    data = process_schema(schema, prefix)
     data["nodes"] = schema.get("nodes", [])
     data["generator_config"] = generator_config
     validate_schema(data)

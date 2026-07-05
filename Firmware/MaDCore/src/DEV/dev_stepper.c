@@ -39,6 +39,8 @@ typedef struct
 {
     dev_stepper_move_S move;
     bool enabled;
+    bool velocityActive;     /* true → continuous-velocity (NCO) mode */
+    int32_t velocityStepsPerSecond; /* signed rate; sign selects direction */
 } dev_stepper_channelInput_S;
 
 typedef struct
@@ -140,6 +142,10 @@ static dev_stepper_state_E dev_stepper_private_getDesiredState(dev_stepper_chann
         {
             desiredState = DEV_STEPPER_STATE_DISABLED;
         }
+        else if (dev_stepper_data.channels[ch].input.velocityActive)
+        {
+            desiredState = DEV_STEPPER_STATE_VELOCITY;
+        }
         else if (dev_stepper_data.channels[ch].input.move.targetSteps != dev_stepper_data.channels[ch].currentSteps)
         {
             desiredState = DEV_STEPPER_STATE_MOVING;
@@ -154,7 +160,21 @@ static dev_stepper_state_E dev_stepper_private_getDesiredState(dev_stepper_chann
         {
             desiredState = DEV_STEPPER_STATE_DISABLED;
         }
+        else if (dev_stepper_data.channels[ch].input.velocityActive)
+        {
+            desiredState = DEV_STEPPER_STATE_VELOCITY;
+        }
         else if (dev_stepper_data.channels[ch].moveComplete)
+        {
+            desiredState = DEV_STEPPER_STATE_STOPPED;
+        }
+        break;
+    case DEV_STEPPER_STATE_VELOCITY:
+        if (dev_stepper_data.channels[ch].input.enabled == false)
+        {
+            desiredState = DEV_STEPPER_STATE_DISABLED;
+        }
+        else if (dev_stepper_data.channels[ch].input.velocityActive == false)
         {
             desiredState = DEV_STEPPER_STATE_STOPPED;
         }
@@ -176,6 +196,9 @@ static void dev_stepper_private_exitAction(dev_stepper_channel_E ch)
         break;
     case DEV_STEPPER_STATE_MOVING:
         dev_stepper_data.channels[ch].moveComplete = true;
+        HAL_pulseOut_stop(dev_stepper_channelConfig[ch].pulseChannel);
+        break;
+    case DEV_STEPPER_STATE_VELOCITY:
         HAL_pulseOut_stop(dev_stepper_channelConfig[ch].pulseChannel);
         break;
     case DEV_STEPPER_STATE_COUNT:
@@ -211,6 +234,19 @@ static void dev_stepper_private_entryAction(dev_stepper_channel_E ch)
             HAL_pulseOut_start(dev_stepper_channelConfig[ch].pulseChannel, (dev_stepper_data.channels[ch].currentSteps - dev_stepper_data.channels[ch].input.move.targetSteps), dev_stepper_data.channels[ch].currentMove.stepsPerSecond);
         }
         break;
+    case DEV_STEPPER_STATE_VELOCITY:
+    {
+        const int32_t vel = dev_stepper_data.channels[ch].input.velocityStepsPerSecond;
+        const bool cw = (vel >= 0);
+        const uint32_t mag = (uint32_t)(cw ? vel : -vel);
+        dev_stepper_data.channels[ch].moveComplete = false;
+        dev_stepper_data.channels[ch].startSteps = dev_stepper_data.channels[ch].currentSteps;
+        dev_stepper_data.channels[ch].directionCW = cw;
+        /* SERVO_DIR active=false → CW → increasing step count. */
+        HAL_GPIO_setActive(dev_stepper_channelConfig[ch].gpioDirection, !cw);
+        HAL_pulseOut_startVelocity(dev_stepper_channelConfig[ch].pulseChannel, mag);
+        break;
+    }
     case DEV_STEPPER_STATE_COUNT:
     default:
         break;
@@ -236,6 +272,38 @@ static void dev_stepper_private_runAction(dev_stepper_channel_E ch)
             deltaSteps = -deltaSteps;
         }
         dev_stepper_data.channels[ch].currentSteps = dev_stepper_data.channels[ch].startSteps + deltaSteps;
+        dev_stepper_data.channels[ch].output.ready = true;
+    }
+    break;
+    case DEV_STEPPER_STATE_VELOCITY:
+    {
+        /* Integrate the emitted pulse count into position (signed by direction),
+         * then retarget the rate for this tick. On a direction reversal we
+         * re-baseline (emitted resets, fresh direction snapshot) so position
+         * stays continuous through the zero-velocity turning point. */
+        uint32_t emitted = 0U;
+        (void)HAL_pulseOut_run(dev_stepper_channelConfig[ch].pulseChannel, &emitted);
+        int32_t delta = (int32_t)emitted;
+        if (dev_stepper_data.channels[ch].directionCW == false)
+        {
+            delta = -delta;
+        }
+        dev_stepper_data.channels[ch].currentSteps = dev_stepper_data.channels[ch].startSteps + delta;
+
+        const int32_t vel = dev_stepper_data.channels[ch].input.velocityStepsPerSecond;
+        const bool cw = (vel >= 0);
+        const uint32_t mag = (uint32_t)(cw ? vel : -vel);
+        if (cw != dev_stepper_data.channels[ch].directionCW)
+        {
+            dev_stepper_data.channels[ch].directionCW = cw;
+            dev_stepper_data.channels[ch].startSteps = dev_stepper_data.channels[ch].currentSteps;
+            HAL_GPIO_setActive(dev_stepper_channelConfig[ch].gpioDirection, !cw);
+            HAL_pulseOut_startVelocity(dev_stepper_channelConfig[ch].pulseChannel, mag);
+        }
+        else
+        {
+            HAL_pulseOut_setFrequency(dev_stepper_channelConfig[ch].pulseChannel, mag);
+        }
         dev_stepper_data.channels[ch].output.ready = true;
     }
     break;
@@ -284,14 +352,24 @@ bool dev_stepper_move(dev_stepper_channel_E ch, int32_t targetSteps, uint32_t st
     SM_LOCK_REQ_BLOCK();
     dev_stepper_data.channels[ch].stagedInput.move.targetSteps = targetSteps;
     dev_stepper_data.channels[ch].stagedInput.move.stepsPerSecond = stepsPerSecond;
+    dev_stepper_data.channels[ch].stagedInput.velocityActive = false; /* leave velocity mode */
     SM_LOCK_REL();
     return true;
+}
+
+void dev_stepper_setVelocity(dev_stepper_channel_E ch, int32_t signedStepsPerSecond)
+{
+    SM_LOCK_REQ_BLOCK();
+    dev_stepper_data.channels[ch].stagedInput.velocityActive = true;
+    dev_stepper_data.channels[ch].stagedInput.velocityStepsPerSecond = signedStepsPerSecond;
+    SM_LOCK_REL();
 }
 
 void dev_stepper_stop(dev_stepper_channel_E ch)
 {
     SM_LOCK_REQ_BLOCK();
     dev_stepper_data.channels[ch].stagedInput.move.targetSteps = dev_stepper_data.channels[ch].currentSteps;
+    dev_stepper_data.channels[ch].stagedInput.velocityActive = false; /* leave velocity mode */
     dev_stepper_data.channels[ch].request.stop = true;
     SM_LOCK_REL();
 }

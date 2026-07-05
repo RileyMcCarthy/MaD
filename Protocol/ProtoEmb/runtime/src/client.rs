@@ -14,7 +14,14 @@
 //! and `Vec<u8>` payloads. Project-specific decoding happens in the caller.
 
 use std::io;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+// `Instant` needs a monotonic clock. On wasm32 `std::time::Instant` panics, so
+// use `web_time::Instant` (backed by `performance.now()`) there instead.
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
+#[cfg(target_arch = "wasm32")]
+use web_time::Instant;
 
 use protoemb_framing::{self, build_read_frame, build_write_frame, FrameParser, ParsedFrame};
 
@@ -29,18 +36,35 @@ const DEFAULT_TIMEOUT_MS: u64 = 2000;
 const READ_BUF_SIZE: usize = 4096;
 
 /// Events emitted by the client to the caller.
+///
+/// On wasm the enum is serialized to a tagged JS object (`{ event, ... }`)
+/// via `serde-wasm-bindgen`, matching the shape the TypeScript layer expects.
 #[derive(Debug, Clone)]
+#[cfg_attr(target_arch = "wasm32", derive(serde::Serialize))]
+#[cfg_attr(target_arch = "wasm32", serde(tag = "event", rename_all = "lowercase"))]
 pub enum Event {
     /// ACK received for a write command.
     Ack { command: u8 },
     /// NACK received for a command.
     Nack { command: u8 },
     /// DATA response received (command + decoded payload bytes).
-    Data { command: u8, payload: Vec<u8> },
+    Data {
+        command: u8,
+        // serialize as a JS `Uint8Array` (not a boxed `number[]`) on wasm — far
+        // cheaper to marshal at the ~100 Hz sample rate.
+        #[cfg_attr(target_arch = "wasm32", serde(with = "serde_bytes"))]
+        payload: Vec<u8>,
+    },
     /// Unsolicited NOTIFICATION received.
-    Notification { payload: Vec<u8> },
+    Notification {
+        #[cfg_attr(target_arch = "wasm32", serde(with = "serde_bytes"))]
+        payload: Vec<u8>,
+    },
     /// The pending request timed out waiting for a response.
-    Timeout { frame: Vec<u8> },
+    Timeout {
+        #[cfg_attr(target_arch = "wasm32", serde(with = "serde_bytes"))]
+        frame: Vec<u8>,
+    },
     /// Transport error occurred.
     Error { message: String },
 }
@@ -153,21 +177,32 @@ impl Client {
         let mut events = Vec::new();
 
         // ── 1. Read incoming bytes and parse frames ──
+        // Drain everything available this cycle (loop until a short read). A
+        // single fixed read left a backlog if the input arrived faster than the
+        // poll cadence (e.g. a throttled background tab on the wasm transport) —
+        // the deque then grew and bled off slowly. Reads are non-blocking
+        // (Ok(0) on no-data/timeout), so this never stalls the poll.
         let mut buf = [0u8; READ_BUF_SIZE];
-        match self.transport.read(&mut buf) {
-            Ok(n) if n > 0 => {
-                let frames = self.parser.feed_bytes(&buf[..n]);
-                for frame in frames {
-                    let event = self.handle_frame(frame);
-                    events.push(event);
+        loop {
+            match self.transport.read(&mut buf) {
+                Ok(0) => break, // nothing more available
+                Ok(n) => {
+                    let frames = self.parser.feed_bytes(&buf[..n]);
+                    for frame in frames {
+                        let event = self.handle_frame(frame);
+                        events.push(event);
+                    }
+                    if n < buf.len() {
+                        break; // partial fill ⇒ input drained
+                    }
                 }
-            }
-            Ok(_) => {} // No data available (timeout)
-            Err(e) if e.kind() == io::ErrorKind::TimedOut => {}
-            Err(e) => {
-                events.push(Event::Error {
-                    message: format!("Transport read error: {}", e),
-                });
+                Err(e) if e.kind() == io::ErrorKind::TimedOut => break,
+                Err(e) => {
+                    events.push(Event::Error {
+                        message: format!("Transport read error: {}", e),
+                    });
+                    break;
+                }
             }
         }
 
@@ -508,5 +543,27 @@ mod tests {
         let event = client.handle_frame(ParsedFrame::Ack(0x07));
         assert!(matches!(event, Event::Ack { command: 0x07 }));
         assert!(!client.is_pending());
+    }
+
+    #[test]
+    fn test_poll_parses_a_wire_data_frame_into_an_event() {
+        // Contract test: a real on-wire DATA frame fed through the transport must
+        // come out of poll() as Event::Data{command,payload}. This is the path the
+        // WasmClient exposes to JS (feed_bytes → poll), exercised here natively.
+        let payload = vec![0xDE, 0xAD, 0xBE];
+        let crc = protoemb_framing::crc8(&payload);
+        let mut transport = Box::new(MemoryTransport::new());
+        // [SYNC][TYPE=DATA(0x02)][COMMAND][LEN_LO][LEN_HI][DATA...][CRC]
+        transport.push_rx(&[0x55, 0x02, 0x05, payload.len() as u8, 0, 0xDE, 0xAD, 0xBE, crc]);
+        let mut client = Client::new(transport);
+
+        let events = client.poll();
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Event::Data { command: 0x05, payload: p } if *p == vec![0xDE, 0xAD, 0xBE])),
+            "expected a Data event, got {:?}",
+            events
+        );
     }
 }

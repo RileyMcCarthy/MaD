@@ -1,18 +1,21 @@
 #include "lib_staticQueue.h"
-#include "HAL_lock.h"
 #include <string.h>
 #include <stdio.h>
 #include "IO_Debug.h"
 
-bool lib_staticQueue_init(lib_staticQueue_S *queue, void *buf, int max_size, int item_size, int lock)
+/* Unsynchronized by design — locking policy belongs to the owning module.
+ * See the header for the SPSC lock-free contract this file upholds: each
+ * index has exactly one writer, published as a single volatile store after
+ * the slot data is written. */
+
+bool lib_staticQueue_init(lib_staticQueue_S *queue, void *buf, int max_size, int item_size)
 {
     queue->buf = buf;
     queue->max_size = max_size;
     queue->item_size = item_size;
     queue->front = 0;
     queue->rear = 0;
-    queue->lock = lock;
-    return queue->lock != -1;
+    return queue->max_size > 0;
 }
 
 bool lib_staticQueue_push(lib_staticQueue_S *queue, void *data)
@@ -23,36 +26,28 @@ bool lib_staticQueue_push(lib_staticQueue_S *queue, void *data)
         return false;
     }
 
-    while (HAL_lock_try(queue->lock) == false)
-    {
-        // wait for lock
-    }
-
     if (lib_staticQueue_isfull(queue))
     {
         DEBUG_ERROR("%s", "lib_staticQueue_push: data is FULL\n");
-        HAL_lock_release(queue->lock);
         return false;
     }
 
     memcpy((void *)&(queue->buf[queue->rear * queue->item_size]), data, queue->item_size);
-    queue->rear++;
-    if (queue->rear == queue->max_size)
-        queue->rear = 0;
-
-    HAL_lock_release(queue->lock);
+    /* Publish the slot, then advance `rear` in a single store (no transient
+     * out-of-range value) so a lock-free consumer never sees a bad index. */
+    int next = queue->rear + 1;
+    if (next == queue->max_size)
+    {
+        next = 0;
+    }
+    queue->rear = next;
     return true;
 }
 
 bool lib_staticQueue_pop(lib_staticQueue_S *queue, void *data)
 {
-    while (HAL_lock_try(queue->lock) == false)
-    {
-        // wait for lock
-    }
     if (lib_staticQueue_isempty(queue))
     {
-        HAL_lock_release(queue->lock);
         return false;
     }
 
@@ -60,13 +55,12 @@ bool lib_staticQueue_pop(lib_staticQueue_S *queue, void *data)
     {
         memcpy(data, &(queue->buf[queue->item_size * queue->front]), queue->item_size);
     }
-    queue->front++;
-    if (queue->front == queue->max_size)
+    int next = queue->front + 1;
+    if (next == queue->max_size)
     {
-        queue->front = 0;
+        next = 0;
     }
-
-    HAL_lock_release(queue->lock);
+    queue->front = next;
     return true;
 }
 
@@ -85,21 +79,12 @@ bool lib_staticQueue_isfull(lib_staticQueue_S *queue)
 
 void lib_staticQueue_empty(lib_staticQueue_S *queue)
 {
-    while (HAL_lock_try(queue->lock) == 0)
-    {
-        // wait for lock
-    }
     queue->front = 0;
     queue->rear = 0;
-    HAL_lock_release(queue->lock);
 }
 
 int32_t lib_staticQueue_count(lib_staticQueue_S *queue)
 {
-    while (HAL_lock_try(queue->lock) == 0)
-    {
-        // wait for lock
-    }
     int count = 0;
     if (queue->rear >= queue->front)
     {
@@ -109,6 +94,5 @@ int32_t lib_staticQueue_count(lib_staticQueue_S *queue)
     {
         count = queue->max_size - queue->front + queue->rear;
     }
-    HAL_lock_release(queue->lock);
     return count;
 }

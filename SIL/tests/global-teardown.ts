@@ -7,13 +7,17 @@
  */
 
 import { execSync } from 'child_process';
+import path from 'path';
+
+const EMULATOR_BIN = path.join(path.resolve(__dirname, '..'), 'target/debug/mad-emulator');
 
 async function globalTeardown() {
   console.log('\n🧹 Global Teardown: Cleaning up stale processes...\n');
 
-  // Kill any remaining Rust emulator processes (safety net)
+  // Kill any remaining Rust emulator processes (safety net). Match the full
+  // binary path, not the bare substring, so unrelated processes are untouched.
   try {
-    execSync('pkill -f "mad-emulator" 2>/dev/null || true', { stdio: 'ignore' });
+    execSync(`pkill -f "${EMULATOR_BIN}" 2>/dev/null || true`, { stdio: 'ignore' });
   } catch {
     // Ignore errors - processes may already be dead
   }

@@ -44,6 +44,12 @@ void HAL_serial_stop(HAL_serial_channel_E channel);
 bool HAL_serial_recieveDataTimeout(HAL_serial_channel_E channel, uint8_t *const data, uint32_t len, uint32_t timeout_us);
 void HAL_serial_transmitData(HAL_serial_channel_E channel, const uint8_t *const data, const uint32_t len);
 bool HAL_serial_recieveByte(HAL_serial_channel_E channel, uint8_t *const data);
+/* Tight burst receive: drains the UART into `buf` (up to maxBytes) in a single
+ * inlined poll loop, returning once the line has been idle for an inter-byte
+ * window or the buffer is full. Keeps the per-byte hot path (the smartpin read)
+ * free of cross-module call overhead so it can keep up at >=2 Mbaud, where a
+ * byte arrives every ~5 us and the smartpin buffers only the latest one. */
+uint32_t HAL_serial_recieveBytes(HAL_serial_channel_E channel, uint8_t *const buf, uint32_t maxBytes);
 /**********************************************************************
  * End of File
  **********************************************************************/

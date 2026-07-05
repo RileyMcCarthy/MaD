@@ -66,7 +66,10 @@ IO_protocol_data_S IO_protocol_data;
 
 static bool IO_protocol_private_timeout(void)
 {
-    return ((HAL_time_getMs() - IO_PROTOCOL_RECIEVE_TIMEOUT_MS) > IO_protocol_data.recieve.startms);
+    /* Compare the elapsed time, not (now - 100): computing (now - startms) first
+     * keeps the subtraction rollover-safe and avoids an unsigned underflow when
+     * now < 100 ms (which would otherwise report a spurious timeout). */
+    return ((HAL_time_getMs() - IO_protocol_data.recieve.startms) > IO_PROTOCOL_RECIEVE_TIMEOUT_MS);
 }
 
 static bool IO_protocol_private_recieveByte(uint8_t *byte)

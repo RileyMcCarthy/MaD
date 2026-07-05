@@ -1,0 +1,4 @@
+# Test dependencies for the ProtoEmb suite. Includes the generator's own runtime
+# deps so `make setup` is enough to run `make test` from a clean checkout.
+-r ../core/requirements.txt
+pytest>=7

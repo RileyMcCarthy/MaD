@@ -7,6 +7,7 @@ Added to platformio.ini as: extra_scripts = pre:extra_scripts/generate_protocol.
 import os
 import subprocess
 import sys
+
 from SCons.Script import Import
 
 Import("env")

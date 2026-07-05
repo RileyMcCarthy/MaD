@@ -60,11 +60,17 @@ function waitForPort(portPath: string, timeoutMs = 15000): Promise<void> {
 }
 
 /**
- * Kill any existing emulator processes
+ * Kill stale emulator processes left over from a previous run.
+ *
+ * Matches the full binary path (not the bare substring "mad-emulator") so it
+ * cannot collaterally kill unrelated processes whose command line merely
+ * mentions the name (editors, shells, another checkout). The live per-test
+ * emulator is stopped by its tracked PID in the fixture teardown; this is only
+ * a guard against orphans from a crashed prior run.
  */
 function killEmulatorProcesses(): void {
   try {
-    execSync('pkill -f "mad-emulator" 2>/dev/null || true', { stdio: 'ignore' });
+    execSync(`pkill -f "${EMULATOR_BIN}" 2>/dev/null || true`, { stdio: 'ignore' });
   } catch {
     // Ignore
   }

@@ -58,6 +58,138 @@ static int32_t sign_extend(uint32_t value, uint32_t bits)
     return (int32_t)value;
 }
 
+{# ── Per-element leaf macros (used for array elements; off/val are expressions) ── #}
+{% macro c_pack_leaf(f, off, val) -%}
+{% if f._is_struct or f._is_union %}{{ prefix }}_{{ f.type }}_pack(buf, {{ off }}, &{{ val }});
+{%- elif f._is_bool %}pack_bits(buf, {{ off }}, 1, {{ val }} ? 1U : 0U);
+{%- elif f._is_enum %}{% set ed = enums[f.type] %}{% if ed._is_remap and ed._remap_style == 'array' %}pack_bits(buf, {{ off }}, {{ f._elem_bits }}, {{ prefix_upper }}_{{ f.type | upper_snake }}_VALUE_TO_WIRE[{{ val }}]);{% elif ed._is_remap %}pack_bits(buf, {{ off }}, {{ f._elem_bits }}, {{ prefix }}_{{ f.type }}_valueToWire((uint8_t){{ val }}));{% else %}pack_bits(buf, {{ off }}, {{ f._elem_bits }}, (uint32_t){{ val }});{% endif %}
+{%- elif f._raw_storage %}{% if f._min_wire is not none %}pack_bits(buf, {{ off }}, {{ f._elem_bits }}, (uint32_t)({{ val }} - ({{ f._min_wire }})));{% else %}pack_bits(buf, {{ off }}, {{ f._elem_bits }}, (uint32_t){{ val }});{% endif %}
+{%- elif f._is_signed %}{% if f._min is not none %}{% if f._is_float %}pack_bits(buf, {{ off }}, {{ f._elem_bits }}, (uint32_t)(({{ val }} - ({{ f._min }}f)) * {{ f._scale }}f));{% else %}pack_bits(buf, {{ off }}, {{ f._elem_bits }}, (uint32_t)(({{ val }} - ({{ f._min | int }})) * {{ f._scale }}));{% endif %}{% else %}pack_bits(buf, {{ off }}, {{ f._elem_bits }}, (uint32_t)({{ val }} * {{ f._scale }}));{% endif %}
+{%- else %}{% if f._min is not none and f._min != 0 %}pack_bits(buf, {{ off }}, {{ f._elem_bits }}, (uint32_t)(({{ val }} - ({{ f._min | int }})) * {{ f._scale }}));{% else %}pack_bits(buf, {{ off }}, {{ f._elem_bits }}, (uint32_t)({{ val }} * {{ f._scale }}));{% endif %}
+{%- endif %}
+{%- endmacro %}
+{% macro c_unpack_leaf(f, off, lval) -%}
+{% if f._is_struct or f._is_union %}{{ prefix }}_{{ f.type }}_unpack(buf, {{ off }}, &{{ lval }});
+{%- elif f._is_bool %}{{ lval }} = unpack_bits(buf, {{ off }}, 1) != 0;
+{%- elif f._is_enum %}{% if enums[f.type]._is_remap %}{{ lval }} = ({{ prefix }}_{{ f.type }}_E){{ prefix_upper }}_{{ f.type | upper_snake }}_WIRE_TO_VALUE[unpack_bits(buf, {{ off }}, {{ f._elem_bits }})];{% else %}{{ lval }} = ({{ prefix }}_{{ f.type }}_E)unpack_bits(buf, {{ off }}, {{ f._elem_bits }});{% endif %}
+{%- elif f._raw_storage %}{% if f._min_wire is not none %}{{ lval }} = (int32_t)unpack_bits(buf, {{ off }}, {{ f._elem_bits }}) + ({{ f._min_wire }});{% else %}{{ lval }} = (int32_t)unpack_bits(buf, {{ off }}, {{ f._elem_bits }});{% endif %}
+{%- elif f._is_signed %}{% if f._min is not none %}{% if f._is_float %}{{ lval }} = (float)unpack_bits(buf, {{ off }}, {{ f._elem_bits }}) / {{ f._scale }}f + ({{ f._min }}f);{% else %}{{ lval }} = (int32_t)unpack_bits(buf, {{ off }}, {{ f._elem_bits }}) / {{ f._scale }} + ({{ f._min | int }});{% endif %}{% else %}{{ lval }} = sign_extend(unpack_bits(buf, {{ off }}, {{ f._elem_bits }}), {{ f._elem_bits }}) / {{ f._scale }};{% endif %}
+{%- else %}{% if f._min is not none and f._min != 0 %}{{ lval }} = unpack_bits(buf, {{ off }}, {{ f._elem_bits }}) / {{ f._scale }} + ({{ f._min | int }});{% else %}{{ lval }} = unpack_bits(buf, {{ off }}, {{ f._elem_bits }}) / {{ f._scale }};{% endif %}
+{%- endif %}
+{%- endmacro %}
+{# Aligned numeric leaf: a raw_storage field already holds the wire integer, and a
+   scale==1 field needs no transform, so both keep the plain byte copy. A scaled
+   field applies * / scale (matching the TS aligned codec; aligned uses the full
+   native width so the offset-binary `min` is not applied, unlike the packed path). #}
+{% macro c_encode_leaf(f, off, val) -%}
+{% if f._is_struct or f._is_union %}{{ prefix }}_{{ f.type }}_encodeAt(buf, {{ off }}, &{{ val }});
+{%- elif f._is_bool %}buf[{{ off }}] = {{ val }} ? 1U : 0U;
+{%- elif f._is_enum %}buf[{{ off }}] = (uint8_t){{ val }};
+{%- elif f._raw_storage or not f._has_scale %}memcpy(&buf[{{ off }}], &{{ val }}, {{ f._elem_byte_size }});
+{%- else %}{ {{ 'int' if f._is_signed else 'uint' }}{{ f._elem_byte_size * 8 }}_t _w = ({{ 'int' if f._is_signed else 'uint' }}{{ f._elem_byte_size * 8 }}_t)({{ val }} * {{ f._scale }}); memcpy(&buf[{{ off }}], &_w, {{ f._elem_byte_size }}); }
+{%- endif %}
+{%- endmacro %}
+{% macro c_decode_leaf(f, off, lval) -%}
+{% if f._is_struct or f._is_union %}{{ prefix }}_{{ f.type }}_decodeAt(buf, {{ off }}, &{{ lval }});
+{%- elif f._is_bool %}{{ lval }} = buf[{{ off }}] != 0;
+{%- elif f._is_enum %}{{ lval }} = ({{ prefix }}_{{ f.type }}_E)buf[{{ off }}];
+{%- elif f._raw_storage or not f._has_scale %}memcpy(&{{ lval }}, &buf[{{ off }}], {{ f._elem_byte_size }});
+{%- else %}{ {{ 'int' if f._is_signed else 'uint' }}{{ f._elem_byte_size * 8 }}_t _w; memcpy(&_w, &buf[{{ off }}], {{ f._elem_byte_size }}); {{ lval }} = _w / {{ f._scale }}; }
+{%- endif %}
+{%- endmacro %}
+{% if unions %}
+/* ============================================================
+ * Tagged Union Encode / Decode Implementations
+ * ============================================================ */
+{% for name, u in unions.items() %}
+{% if u._is_packed %}
+static void {{ prefix }}_{{ name }}_pack(uint8_t *buf, uint32_t base, const {{ prefix }}_{{ name }}_t *src)
+{
+    pack_bits(buf, base + 0U, {{ u._tag_bits }}, (uint32_t)src->tag);
+    switch (src->tag)
+    {
+    {% for v in u.variants %}
+    case {{ prefix_upper }}_{{ name | upper_snake }}_TAG_{{ v.name | upper_snake }}:
+        {{ c_pack_leaf(v, 'base + ' ~ u._payload_offset ~ 'U', 'src->u.' ~ v.name) }}
+        break;
+    {% endfor %}
+    default:
+        break;
+    }
+}
+
+static void {{ prefix }}_{{ name }}_unpack(const uint8_t *buf, uint32_t base, {{ prefix }}_{{ name }}_t *dst)
+{
+    dst->tag = ({{ prefix }}_{{ name }}_Tag_E)unpack_bits(buf, base + 0U, {{ u._tag_bits }});
+    switch (dst->tag)
+    {
+    {% for v in u.variants %}
+    case {{ prefix_upper }}_{{ name | upper_snake }}_TAG_{{ v.name | upper_snake }}:
+        {{ c_unpack_leaf(v, 'base + ' ~ u._payload_offset ~ 'U', 'dst->u.' ~ v.name) }}
+        break;
+    {% endfor %}
+    default:
+        break;
+    }
+}
+
+void {{ prefix }}_{{ name }}_encode(uint8_t *buf, const {{ prefix }}_{{ name }}_t *src)
+{
+    memset(buf, 0, {{ prefix_upper }}_{{ name | upper_snake }}_WIRE_SIZE);
+    {{ prefix }}_{{ name }}_pack(buf, 0U, src);
+}
+
+void {{ prefix }}_{{ name }}_decode(const uint8_t *buf, {{ prefix }}_{{ name }}_t *dst)
+{
+    memset(dst, 0, sizeof({{ prefix }}_{{ name }}_t));
+    {{ prefix }}_{{ name }}_unpack(buf, 0U, dst);
+}
+{% else %}
+static void {{ prefix }}_{{ name }}_encodeAt(uint8_t *buf, uint32_t base, const {{ prefix }}_{{ name }}_t *src)
+{
+    buf[base + 0U] = (uint8_t)src->tag;
+    switch (src->tag)
+    {
+    {% for v in u.variants %}
+    case {{ prefix_upper }}_{{ name | upper_snake }}_TAG_{{ v.name | upper_snake }}:
+        {{ c_encode_leaf(v, 'base + ' ~ u._payload_offset ~ 'U', 'src->u.' ~ v.name) }}
+        break;
+    {% endfor %}
+    default:
+        break;
+    }
+}
+
+static void {{ prefix }}_{{ name }}_decodeAt(const uint8_t *buf, uint32_t base, {{ prefix }}_{{ name }}_t *dst)
+{
+    dst->tag = ({{ prefix }}_{{ name }}_Tag_E)buf[base + 0U];
+    switch (dst->tag)
+    {
+    {% for v in u.variants %}
+    case {{ prefix_upper }}_{{ name | upper_snake }}_TAG_{{ v.name | upper_snake }}:
+        {{ c_decode_leaf(v, 'base + ' ~ u._payload_offset ~ 'U', 'dst->u.' ~ v.name) }}
+        break;
+    {% endfor %}
+    default:
+        break;
+    }
+}
+
+void {{ prefix }}_{{ name }}_encode(uint8_t *buf, const {{ prefix }}_{{ name }}_t *src)
+{
+    memset(buf, 0, {{ prefix_upper }}_{{ name | upper_snake }}_WIRE_SIZE);
+    {{ prefix }}_{{ name }}_encodeAt(buf, 0U, src);
+}
+
+void {{ prefix }}_{{ name }}_decode(const uint8_t *buf, {{ prefix }}_{{ name }}_t *dst)
+{
+    memset(dst, 0, sizeof({{ prefix }}_{{ name }}_t));
+    {{ prefix }}_{{ name }}_decodeAt(buf, 0U, dst);
+}
+{% endif %}
+{% endfor %}
+
+{% endif %}
 /* ============================================================
  * Struct Encode / Decode Implementations
  * ============================================================ */
@@ -65,17 +197,33 @@ static int32_t sign_extend(uint32_t value, uint32_t bits)
 
 /* ── {{ name }} ({{ s._encoding }}, {{ s._wire_size }} bytes) ── */
 
+{% if not (s._needs_pack_helper or s._has_nested) %}
 void {{ prefix }}_{{ name }}_encode(uint8_t *buf, const {{ prefix }}_{{ name }}_t *src)
 {
     memset(buf, 0, {{ prefix_upper }}_{{ name | upper_snake }}_WIRE_SIZE);
 {% if s._is_packed %}
     {% for f in s.fields %}
-    {% if f._is_bool %}
+    {% if f._is_array %}
+    for (uint32_t i = 0U; i < {{ f._array_len }}U; i++)
+    {
+        {{ c_pack_leaf(f, f._bit_offset ~ ' + (i * ' ~ f._elem_bits ~ 'U)', 'src->' ~ f.name ~ '[i]') }}
+    }
+    {% elif f._is_optional %}
+    pack_bits(buf, {{ f._bit_offset }}, 1, src->{{ f.name }}_present ? 1U : 0U);
+    if (src->{{ f.name }}_present)
+    {
+        {{ c_pack_leaf(f, f._value_bit_offset|string, 'src->' ~ f.name) }}
+    }
+    {% elif f._is_bool %}
     pack_bits(buf, {{ f._bit_offset }}, 1, src->{{ f.name }} ? 1U : 0U);
     {% elif f._is_enum %}
     {% set enum_def = enums[f.type] %}
     {% if enum_def._is_remap %}
+    {% if enum_def._remap_style == 'array' %}
     pack_bits(buf, {{ f._bit_offset }}, {{ f._bits }}, {{ prefix_upper }}_{{ f.type | upper_snake }}_VALUE_TO_WIRE[src->{{ f.name }}]);
+    {% else %}
+    pack_bits(buf, {{ f._bit_offset }}, {{ f._bits }}, {{ prefix }}_{{ f.type }}_valueToWire((uint8_t)src->{{ f.name }}));
+    {% endif %}
     {% else %}
     pack_bits(buf, {{ f._bit_offset }}, {{ f._bits }}, (uint32_t)src->{{ f.name }});
     {% endif %}
@@ -109,7 +257,20 @@ void {{ prefix }}_{{ name }}_encode(uint8_t *buf, const {{ prefix }}_{{ name }}_
     /* Aligned encoding — sequential memcpy */
     uint32_t offset = 0;
     {% for f in s.fields %}
-    {% if f._is_string %}
+    {% if f._is_array %}
+    for (uint32_t i = 0U; i < {{ f._array_len }}U; i++)
+    {
+        {{ c_encode_leaf(f, 'offset + (i * ' ~ f._elem_byte_size ~ 'U)', 'src->' ~ f.name ~ '[i]') }}
+    }
+    offset += {{ f._byte_size }};
+    {% elif f._is_optional %}
+    buf[offset] = src->{{ f.name }}_present ? 1U : 0U;
+    if (src->{{ f.name }}_present)
+    {
+        {{ c_encode_leaf(f, 'offset + 1U', 'src->' ~ f.name) }}
+    }
+    offset += {{ f._byte_size }};
+    {% elif f._is_string %}
     memcpy(&buf[offset], src->{{ f.name }}, {{ f.max_length }});
     offset += {{ f.max_length }};
     {% elif f._is_bool %}
@@ -118,21 +279,136 @@ void {{ prefix }}_{{ name }}_encode(uint8_t *buf, const {{ prefix }}_{{ name }}_
     {% elif f._is_enum %}
     buf[offset] = (uint8_t)src->{{ f.name }};
     offset += 1;
-    {% else %}
+    {% elif f._raw_storage or not f._has_scale %}
     memcpy(&buf[offset], &src->{{ f.name }}, {{ f._byte_size }});
+    offset += {{ f._byte_size }};
+    {% else %}
+    { {{ 'int' if f._is_signed else 'uint' }}{{ f._byte_size * 8 }}_t _w = ({{ 'int' if f._is_signed else 'uint' }}{{ f._byte_size * 8 }}_t)(src->{{ f.name }} * {{ f._scale }}); memcpy(&buf[offset], &_w, {{ f._byte_size }}); }
     offset += {{ f._byte_size }};
     {% endif %}
     {% endfor %}
     (void)offset; /* suppress unused warning */
 {% endif %}
 }
+{% elif s._is_packed %}
+/* Bit-pack {{ name }} at an arbitrary base bit offset (composes when nested). */
+static void {{ prefix }}_{{ name }}_pack(uint8_t *buf, uint32_t base, const {{ prefix }}_{{ name }}_t *src)
+{
+    {% for f in s.fields %}
+    {% if f._is_array %}
+    for (uint32_t i = 0U; i < {{ f._array_len }}U; i++)
+    {
+        {{ c_pack_leaf(f, 'base + ' ~ f._bit_offset ~ 'U + (i * ' ~ f._elem_bits ~ 'U)', 'src->' ~ f.name ~ '[i]') }}
+    }
+    {% elif f._is_optional %}
+    pack_bits(buf, base + {{ f._bit_offset }}U, 1, src->{{ f.name }}_present ? 1U : 0U);
+    if (src->{{ f.name }}_present)
+    {
+        {{ c_pack_leaf(f, 'base + ' ~ f._value_bit_offset ~ 'U', 'src->' ~ f.name) }}
+    }
+    {% elif f._is_struct or f._is_union %}
+    {{ prefix }}_{{ f.type }}_pack(buf, base + {{ f._bit_offset }}U, &src->{{ f.name }});
+    {% elif f._is_bool %}
+    pack_bits(buf, base + {{ f._bit_offset }}U, 1, src->{{ f.name }} ? 1U : 0U);
+    {% elif f._is_enum %}
+    {% set enum_def = enums[f.type] %}
+    {% if enum_def._is_remap %}
+    {% if enum_def._remap_style == 'array' %}
+    pack_bits(buf, base + {{ f._bit_offset }}U, {{ f._bits }}, {{ prefix_upper }}_{{ f.type | upper_snake }}_VALUE_TO_WIRE[src->{{ f.name }}]);
+    {% else %}
+    pack_bits(buf, base + {{ f._bit_offset }}U, {{ f._bits }}, {{ prefix }}_{{ f.type }}_valueToWire((uint8_t)src->{{ f.name }}));
+    {% endif %}
+    {% else %}
+    pack_bits(buf, base + {{ f._bit_offset }}U, {{ f._bits }}, (uint32_t)src->{{ f.name }});
+    {% endif %}
+    {% elif f._raw_storage %}
+    {% if f._min_wire is not none %}
+    pack_bits(buf, base + {{ f._bit_offset }}U, {{ f._bits }}, (uint32_t)(src->{{ f.name }} - ({{ f._min_wire }})));
+    {% else %}
+    pack_bits(buf, base + {{ f._bit_offset }}U, {{ f._bits }}, (uint32_t)src->{{ f.name }});
+    {% endif %}
+    {% elif f._is_signed %}
+    {% if f._min is not none %}
+    {% if f._is_float %}
+    pack_bits(buf, base + {{ f._bit_offset }}U, {{ f._bits }}, (uint32_t)((src->{{ f.name }} - ({{ f._min }}f)) * {{ f._scale }}f));
+    {% else %}
+    pack_bits(buf, base + {{ f._bit_offset }}U, {{ f._bits }}, (uint32_t)((src->{{ f.name }} - ({{ f._min | int }})) * {{ f._scale }}));
+    {% endif %}
+    {% else %}
+    pack_bits(buf, base + {{ f._bit_offset }}U, {{ f._bits }}, (uint32_t)(src->{{ f.name }} * {{ f._scale }}));
+    {% endif %}
+    {% else %}
+    {% if f._min is not none and f._min != 0 %}
+    pack_bits(buf, base + {{ f._bit_offset }}U, {{ f._bits }}, (uint32_t)((src->{{ f.name }} - ({{ f._min | int }})) * {{ f._scale }}));
+    {% else %}
+    pack_bits(buf, base + {{ f._bit_offset }}U, {{ f._bits }}, (uint32_t)(src->{{ f.name }} * {{ f._scale }}));
+    {% endif %}
+    {% endif %}
+    {% endfor %}
+}
 
+void {{ prefix }}_{{ name }}_encode(uint8_t *buf, const {{ prefix }}_{{ name }}_t *src)
+{
+    memset(buf, 0, {{ prefix_upper }}_{{ name | upper_snake }}_WIRE_SIZE);
+    {{ prefix }}_{{ name }}_pack(buf, 0U, src);
+}
+{% else %}
+/* Byte-encode {{ name }} at an arbitrary base byte offset (composes when nested). */
+static void {{ prefix }}_{{ name }}_encodeAt(uint8_t *buf, uint32_t base, const {{ prefix }}_{{ name }}_t *src)
+{
+    {% for f in s.fields %}
+    {% if f._is_array %}
+    for (uint32_t i = 0U; i < {{ f._array_len }}U; i++)
+    {
+        {{ c_encode_leaf(f, 'base + ' ~ f._byte_offset ~ 'U + (i * ' ~ f._elem_byte_size ~ 'U)', 'src->' ~ f.name ~ '[i]') }}
+    }
+    {% elif f._is_optional %}
+    buf[base + {{ f._byte_offset }}U] = src->{{ f.name }}_present ? 1U : 0U;
+    if (src->{{ f.name }}_present)
+    {
+        {{ c_encode_leaf(f, 'base + ' ~ f._value_byte_offset ~ 'U', 'src->' ~ f.name) }}
+    }
+    {% elif f._is_struct or f._is_union %}
+    {{ prefix }}_{{ f.type }}_encodeAt(buf, base + {{ f._byte_offset }}U, &src->{{ f.name }});
+    {% elif f._is_string %}
+    memcpy(&buf[base + {{ f._byte_offset }}U], src->{{ f.name }}, {{ f.max_length }});
+    {% elif f._is_bool %}
+    buf[base + {{ f._byte_offset }}U] = src->{{ f.name }} ? 1U : 0U;
+    {% elif f._is_enum %}
+    buf[base + {{ f._byte_offset }}U] = (uint8_t)src->{{ f.name }};
+    {% elif f._raw_storage or not f._has_scale %}
+    memcpy(&buf[base + {{ f._byte_offset }}U], &src->{{ f.name }}, {{ f._byte_size }});
+    {% else %}
+    { {{ 'int' if f._is_signed else 'uint' }}{{ f._byte_size * 8 }}_t _w = ({{ 'int' if f._is_signed else 'uint' }}{{ f._byte_size * 8 }}_t)(src->{{ f.name }} * {{ f._scale }}); memcpy(&buf[base + {{ f._byte_offset }}U], &_w, {{ f._byte_size }}); }
+    {% endif %}
+    {% endfor %}
+}
+
+void {{ prefix }}_{{ name }}_encode(uint8_t *buf, const {{ prefix }}_{{ name }}_t *src)
+{
+    memset(buf, 0, {{ prefix_upper }}_{{ name | upper_snake }}_WIRE_SIZE);
+    {{ prefix }}_{{ name }}_encodeAt(buf, 0U, src);
+}
+{% endif %}
+
+{% if not (s._needs_pack_helper or s._has_nested) %}
 void {{ prefix }}_{{ name }}_decode(const uint8_t *buf, {{ prefix }}_{{ name }}_t *dst)
 {
     memset(dst, 0, sizeof({{ prefix }}_{{ name }}_t));
 {% if s._is_packed %}
     {% for f in s.fields %}
-    {% if f._is_bool %}
+    {% if f._is_array %}
+    for (uint32_t i = 0U; i < {{ f._array_len }}U; i++)
+    {
+        {{ c_unpack_leaf(f, f._bit_offset ~ ' + (i * ' ~ f._elem_bits ~ 'U)', 'dst->' ~ f.name ~ '[i]') }}
+    }
+    {% elif f._is_optional %}
+    dst->{{ f.name }}_present = unpack_bits(buf, {{ f._bit_offset }}, 1) != 0;
+    if (dst->{{ f.name }}_present)
+    {
+        {{ c_unpack_leaf(f, f._value_bit_offset|string, 'dst->' ~ f.name) }}
+    }
+    {% elif f._is_bool %}
     dst->{{ f.name }} = unpack_bits(buf, {{ f._bit_offset }}, 1) != 0;
     {% elif f._is_enum %}
     {% set enum_def = enums[f.type] %}
@@ -152,14 +428,6 @@ void {{ prefix }}_{{ name }}_decode(const uint8_t *buf, {{ prefix }}_{{ name }}_
     dst->{{ f.name }} = (int32_t)unpack_bits(buf, {{ f._bit_offset }}, {{ f._bits }});
     {% endif %}
     {% elif f._is_signed %}
-    {% if name == 'Move' and (f.name == 'x' or f.name == 'f') %}
-    /* Preserve scaled precision for Move fields (e.g. mm→um, mm/s→um/s). */
-    {% if f._min is not none %}
-    dst->{{ f.name }} = (int32_t)unpack_bits(buf, {{ f._bit_offset }}, {{ f._bits }}) + ({{ f._min_wire }});
-    {% else %}
-    dst->{{ f.name }} = sign_extend(unpack_bits(buf, {{ f._bit_offset }}, {{ f._bits }}), {{ f._bits }});
-    {% endif %}
-    {% else %}
     {% if f._min is not none %}
     /* Offset binary: decode = wire / scale + min */
     {% if f._is_float %}
@@ -169,7 +437,6 @@ void {{ prefix }}_{{ name }}_decode(const uint8_t *buf, {{ prefix }}_{{ name }}_
     {% endif %}
     {% else %}
     dst->{{ f.name }} = sign_extend(unpack_bits(buf, {{ f._bit_offset }}, {{ f._bits }}), {{ f._bits }}) / {{ f._scale }};
-    {% endif %}
     {% endif %}
     {% else %}
     {% if f._min is not none and f._min != 0 %}
@@ -183,7 +450,20 @@ void {{ prefix }}_{{ name }}_decode(const uint8_t *buf, {{ prefix }}_{{ name }}_
     /* Aligned decoding — sequential memcpy */
     uint32_t offset = 0;
     {% for f in s.fields %}
-    {% if f._is_string %}
+    {% if f._is_array %}
+    for (uint32_t i = 0U; i < {{ f._array_len }}U; i++)
+    {
+        {{ c_decode_leaf(f, 'offset + (i * ' ~ f._elem_byte_size ~ 'U)', 'dst->' ~ f.name ~ '[i]') }}
+    }
+    offset += {{ f._byte_size }};
+    {% elif f._is_optional %}
+    dst->{{ f.name }}_present = buf[offset] != 0;
+    if (dst->{{ f.name }}_present)
+    {
+        {{ c_decode_leaf(f, 'offset + 1U', 'dst->' ~ f.name) }}
+    }
+    offset += {{ f._byte_size }};
+    {% elif f._is_string %}
     memcpy(dst->{{ f.name }}, &buf[offset], {{ f.max_length }});
     offset += {{ f.max_length }};
     {% elif f._is_bool %}
@@ -192,12 +472,114 @@ void {{ prefix }}_{{ name }}_decode(const uint8_t *buf, {{ prefix }}_{{ name }}_
     {% elif f._is_enum %}
     dst->{{ f.name }} = ({{ prefix }}_{{ f.type }}_E)buf[offset];
     offset += 1;
-    {% else %}
+    {% elif f._raw_storage or not f._has_scale %}
     memcpy(&dst->{{ f.name }}, &buf[offset], {{ f._byte_size }});
+    offset += {{ f._byte_size }};
+    {% else %}
+    { {{ 'int' if f._is_signed else 'uint' }}{{ f._byte_size * 8 }}_t _w; memcpy(&_w, &buf[offset], {{ f._byte_size }}); dst->{{ f.name }} = _w / {{ f._scale }}; }
     offset += {{ f._byte_size }};
     {% endif %}
     {% endfor %}
     (void)offset;
 {% endif %}
 }
+{% elif s._is_packed %}
+/* Bit-unpack {{ name }} from an arbitrary base bit offset (composes when nested). */
+static void {{ prefix }}_{{ name }}_unpack(const uint8_t *buf, uint32_t base, {{ prefix }}_{{ name }}_t *dst)
+{
+    {% for f in s.fields %}
+    {% if f._is_array %}
+    for (uint32_t i = 0U; i < {{ f._array_len }}U; i++)
+    {
+        {{ c_unpack_leaf(f, 'base + ' ~ f._bit_offset ~ 'U + (i * ' ~ f._elem_bits ~ 'U)', 'dst->' ~ f.name ~ '[i]') }}
+    }
+    {% elif f._is_optional %}
+    dst->{{ f.name }}_present = unpack_bits(buf, base + {{ f._bit_offset }}U, 1) != 0;
+    if (dst->{{ f.name }}_present)
+    {
+        {{ c_unpack_leaf(f, 'base + ' ~ f._value_bit_offset ~ 'U', 'dst->' ~ f.name) }}
+    }
+    {% elif f._is_struct or f._is_union %}
+    {{ prefix }}_{{ f.type }}_unpack(buf, base + {{ f._bit_offset }}U, &dst->{{ f.name }});
+    {% elif f._is_bool %}
+    dst->{{ f.name }} = unpack_bits(buf, base + {{ f._bit_offset }}U, 1) != 0;
+    {% elif f._is_enum %}
+    {% set enum_def = enums[f.type] %}
+    {% if enum_def._is_remap %}
+    {
+        const uint32_t wire_idx = unpack_bits(buf, base + {{ f._bit_offset }}U, {{ f._bits }});
+        dst->{{ f.name }} = ({{ prefix }}_{{ f.type }}_E){{ prefix_upper }}_{{ f.type | upper_snake }}_WIRE_TO_VALUE[wire_idx];
+    }
+    {% else %}
+    dst->{{ f.name }} = ({{ prefix }}_{{ f.type }}_E)unpack_bits(buf, base + {{ f._bit_offset }}U, {{ f._bits }});
+    {% endif %}
+    {% elif f._raw_storage %}
+    {% if f._min_wire is not none %}
+    dst->{{ f.name }} = (int32_t)unpack_bits(buf, base + {{ f._bit_offset }}U, {{ f._bits }}) + ({{ f._min_wire }});
+    {% else %}
+    dst->{{ f.name }} = (int32_t)unpack_bits(buf, base + {{ f._bit_offset }}U, {{ f._bits }});
+    {% endif %}
+    {% elif f._is_signed %}
+    {% if f._min is not none %}
+    {% if f._is_float %}
+    dst->{{ f.name }} = (float)unpack_bits(buf, base + {{ f._bit_offset }}U, {{ f._bits }}) / {{ f._scale }}f + ({{ f._min }}f);
+    {% else %}
+    dst->{{ f.name }} = (int32_t)unpack_bits(buf, base + {{ f._bit_offset }}U, {{ f._bits }}) / {{ f._scale }} + ({{ f._min | int }});
+    {% endif %}
+    {% else %}
+    dst->{{ f.name }} = sign_extend(unpack_bits(buf, base + {{ f._bit_offset }}U, {{ f._bits }}), {{ f._bits }}) / {{ f._scale }};
+    {% endif %}
+    {% else %}
+    {% if f._min is not none and f._min != 0 %}
+    dst->{{ f.name }} = unpack_bits(buf, base + {{ f._bit_offset }}U, {{ f._bits }}) / {{ f._scale }} + ({{ f._min | int }});
+    {% else %}
+    dst->{{ f.name }} = unpack_bits(buf, base + {{ f._bit_offset }}U, {{ f._bits }}) / {{ f._scale }};
+    {% endif %}
+    {% endif %}
+    {% endfor %}
+}
+
+void {{ prefix }}_{{ name }}_decode(const uint8_t *buf, {{ prefix }}_{{ name }}_t *dst)
+{
+    memset(dst, 0, sizeof({{ prefix }}_{{ name }}_t));
+    {{ prefix }}_{{ name }}_unpack(buf, 0U, dst);
+}
+{% else %}
+/* Byte-decode {{ name }} from an arbitrary base byte offset (composes when nested). */
+static void {{ prefix }}_{{ name }}_decodeAt(const uint8_t *buf, uint32_t base, {{ prefix }}_{{ name }}_t *dst)
+{
+    {% for f in s.fields %}
+    {% if f._is_array %}
+    for (uint32_t i = 0U; i < {{ f._array_len }}U; i++)
+    {
+        {{ c_decode_leaf(f, 'base + ' ~ f._byte_offset ~ 'U + (i * ' ~ f._elem_byte_size ~ 'U)', 'dst->' ~ f.name ~ '[i]') }}
+    }
+    {% elif f._is_optional %}
+    dst->{{ f.name }}_present = buf[base + {{ f._byte_offset }}U] != 0;
+    if (dst->{{ f.name }}_present)
+    {
+        {{ c_decode_leaf(f, 'base + ' ~ f._value_byte_offset ~ 'U', 'dst->' ~ f.name) }}
+    }
+    {% elif f._is_struct or f._is_union %}
+    {{ prefix }}_{{ f.type }}_decodeAt(buf, base + {{ f._byte_offset }}U, &dst->{{ f.name }});
+    {% elif f._is_string %}
+    memcpy(dst->{{ f.name }}, &buf[base + {{ f._byte_offset }}U], {{ f.max_length }});
+    {% elif f._is_bool %}
+    dst->{{ f.name }} = buf[base + {{ f._byte_offset }}U] != 0;
+    {% elif f._is_enum %}
+    dst->{{ f.name }} = ({{ prefix }}_{{ f.type }}_E)buf[base + {{ f._byte_offset }}U];
+    {% elif f._raw_storage or not f._has_scale %}
+    memcpy(&dst->{{ f.name }}, &buf[base + {{ f._byte_offset }}U], {{ f._byte_size }});
+    {% else %}
+    { {{ 'int' if f._is_signed else 'uint' }}{{ f._byte_size * 8 }}_t _w; memcpy(&_w, &buf[base + {{ f._byte_offset }}U], {{ f._byte_size }}); dst->{{ f.name }} = _w / {{ f._scale }}; }
+    {% endif %}
+    {% endfor %}
+}
+
+void {{ prefix }}_{{ name }}_decode(const uint8_t *buf, {{ prefix }}_{{ name }}_t *dst)
+{
+    memset(dst, 0, sizeof({{ prefix }}_{{ name }}_t));
+    {{ prefix }}_{{ name }}_decodeAt(buf, 0U, dst);
+}
+{% endif %}
 {% endfor %}

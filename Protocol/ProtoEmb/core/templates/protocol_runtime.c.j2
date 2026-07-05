@@ -7,14 +7,6 @@
 
 #include <string.h>
 
-#ifndef {{ prefix_upper }}_RUNTIME_WEAK
-#if defined(__GNUC__) || defined(__clang__)
-#define {{ prefix_upper }}_RUNTIME_WEAK __attribute__((weak))
-#else
-#define {{ prefix_upper }}_RUNTIME_WEAK
-#endif
-#endif
-
 #define {{ prefix_upper }}_FRAME_SYNC (0x55U)
 #define {{ prefix_upper }}_FRAME_TYPE_READ_OR_NACK (0x00U)
 #define {{ prefix_upper }}_FRAME_TYPE_WRITE_OR_ACK (0x01U)
@@ -54,7 +46,7 @@ static bool {{ prefix }}_Runtime_sendFrame({{ prefix }}_Runtime_t *runtime,
                                            const uint8_t *payload,
                                            uint16_t payloadSize)
 {
-    if ((runtime == NULL) || (runtime->sendBytes == NULL))
+    if (runtime == NULL)
     {
         return false;
     }
@@ -72,7 +64,7 @@ static bool {{ prefix }}_Runtime_sendFrame({{ prefix }}_Runtime_t *runtime,
     if ((frameType == {{ prefix_upper }}_FRAME_TYPE_READ_OR_NACK) || (frameType == {{ prefix_upper }}_FRAME_TYPE_WRITE_OR_ACK))
     {
         const uint8_t frame[3] = { {{ prefix_upper }}_FRAME_SYNC, frameType, command };
-        return runtime->sendBytes(frame, 3U, runtime->userCtx);
+        return {{ prefix }}_sendBytes(frame, 3U);
     }
 
     {
@@ -84,14 +76,14 @@ static bool {{ prefix }}_Runtime_sendFrame({{ prefix }}_Runtime_t *runtime,
             (uint8_t)((payloadSize >> 8U) & 0xFFU),
         };
         const uint8_t crc = {{ prefix }}_Runtime_crc8(payload, payloadSize);
-        bool ok = runtime->sendBytes(header, 5U, runtime->userCtx);
+        bool ok = {{ prefix }}_sendBytes(header, 5U);
         if (ok && (payloadSize > 0U))
         {
-            ok = runtime->sendBytes(payload, payloadSize, runtime->userCtx);
+            ok = {{ prefix }}_sendBytes(payload, payloadSize);
         }
         if (ok)
         {
-            ok = runtime->sendBytes(&crc, 1U, runtime->userCtx);
+            ok = {{ prefix }}_sendBytes(&crc, 1U);
         }
         return ok;
     }
@@ -112,142 +104,11 @@ static bool {{ prefix }}_Runtime_sendData({{ prefix }}_Runtime_t *runtime, uint8
     return {{ prefix }}_Runtime_sendFrame(runtime, {{ prefix_upper }}_FRAME_TYPE_DATA, command, payload, payloadSize);
 }
 
-{% for msg in runtime_read_messages %}
-{% set struct_name = msg._response_name %}
-{% if struct_name %}
-{{ prefix_upper }}_RUNTIME_WEAK bool {{ prefix }}_onRead_{{ msg._name }}({{ prefix }}_{{ struct_name }}_t *out)
-{
-    (void)out;
-    return false;
-}
-{% else %}
-{{ prefix_upper }}_RUNTIME_WEAK bool {{ prefix }}_onRead_{{ msg._name }}(uint8_t *outPayload, uint16_t *outSize)
-{
-    (void)outPayload;
-    if (outSize != NULL)
-    {
-        *outSize = 0U;
-    }
-    return false;
-}
-{% endif %}
-{% endfor %}
-
-{% for msg in runtime_write_messages %}
-{% if msg._request_name %}
-{% if msg._semantic == "query" %}
-{{ prefix_upper }}_RUNTIME_WEAK {{ prefix }}_RuntimeQueryDisposition_E {{ prefix }}_onQuery_{{ msg._name }}(const {{ prefix }}_{{ msg._request_name }}_t *in,
-                                                                                                             uint8_t *outPayload,
-                                                                                                             uint16_t *outSize)
-{
-    (void)in;
-    (void)outPayload;
-    if (outSize != NULL)
-    {
-        *outSize = 0U;
-    }
-    return {{ prefix_upper }}_RUNTIME_QUERY_DISPOSITION_NACK;
-}
-{{ prefix_upper }}_RUNTIME_WEAK {{ prefix }}_RuntimeQueryDisposition_E {{ prefix }}_onQueryRaw_{{ msg._name }}(const uint8_t *payload,
-                                                                                                                uint16_t payloadSize,
-                                                                                                                uint8_t *outPayload,
-                                                                                                                uint16_t *outSize)
-{
-    (void)payload;
-    (void)payloadSize;
-    (void)outPayload;
-    if (outSize != NULL)
-    {
-        *outSize = 0U;
-    }
-    return {{ prefix_upper }}_RUNTIME_QUERY_DISPOSITION_NACK;
-}
-{% else %}
-{{ prefix_upper }}_RUNTIME_WEAK {{ prefix }}_RuntimeWriteDisposition_E {{ prefix }}_onWrite_{{ msg._name }}(const {{ prefix }}_{{ msg._request_name }}_t *in)
-{
-    (void)in;
-    return {{ prefix_upper }}_RUNTIME_WRITE_DISPOSITION_NACK;
-}
-{{ prefix_upper }}_RUNTIME_WEAK {{ prefix }}_RuntimeWriteDisposition_E {{ prefix }}_onWriteRaw_{{ msg._name }}(const uint8_t *payload,
-                                                                                                               uint16_t payloadSize)
-{
-    (void)payload;
-    (void)payloadSize;
-    return {{ prefix_upper }}_RUNTIME_WRITE_DISPOSITION_NACK;
-}
-{% endif %}
-{% elif msg._payload_type == "bool" %}
-{% if msg._semantic == "query" %}
-{{ prefix_upper }}_RUNTIME_WEAK {{ prefix }}_RuntimeQueryDisposition_E {{ prefix }}_onQuery_{{ msg._name }}(bool in,
-                                                                                                             uint8_t *outPayload,
-                                                                                                             uint16_t *outSize)
-{
-    (void)in;
-    (void)outPayload;
-    if (outSize != NULL)
-    {
-        *outSize = 0U;
-    }
-    return {{ prefix_upper }}_RUNTIME_QUERY_DISPOSITION_NACK;
-}
-{% else %}
-{{ prefix_upper }}_RUNTIME_WEAK {{ prefix }}_RuntimeWriteDisposition_E {{ prefix }}_onWrite_{{ msg._name }}(bool in)
-{
-    (void)in;
-    return {{ prefix_upper }}_RUNTIME_WRITE_DISPOSITION_NACK;
-}
-{% endif %}
-{% elif msg._payload_type == "none" %}
-{% if msg._semantic == "query" %}
-{{ prefix_upper }}_RUNTIME_WEAK {{ prefix }}_RuntimeQueryDisposition_E {{ prefix }}_onQuery_{{ msg._name }}(uint8_t *outPayload,
-                                                                                                             uint16_t *outSize)
-{
-    (void)outPayload;
-    if (outSize != NULL)
-    {
-        *outSize = 0U;
-    }
-    return {{ prefix_upper }}_RUNTIME_QUERY_DISPOSITION_NACK;
-}
-{% else %}
-{{ prefix_upper }}_RUNTIME_WEAK {{ prefix }}_RuntimeWriteDisposition_E {{ prefix }}_onWrite_{{ msg._name }}(void)
-{
-    return {{ prefix_upper }}_RUNTIME_WRITE_DISPOSITION_NACK;
-}
-{% endif %}
-{% else %}
-{% if msg._semantic == "query" %}
-{{ prefix_upper }}_RUNTIME_WEAK {{ prefix }}_RuntimeQueryDisposition_E {{ prefix }}_onQuery_{{ msg._name }}(const uint8_t *payload,
-                                                                                                             uint16_t payloadSize,
-                                                                                                             uint8_t *outPayload,
-                                                                                                             uint16_t *outSize)
-{
-    (void)payload;
-    (void)payloadSize;
-    (void)outPayload;
-    if (outSize != NULL)
-    {
-        *outSize = 0U;
-    }
-    return {{ prefix_upper }}_RUNTIME_QUERY_DISPOSITION_NACK;
-}
-{% else %}
-{{ prefix_upper }}_RUNTIME_WEAK {{ prefix }}_RuntimeWriteDisposition_E {{ prefix }}_onWrite_{{ msg._name }}(const uint8_t *payload,
-                                                                                                             uint16_t payloadSize)
-{
-    (void)payload;
-    (void)payloadSize;
-    return {{ prefix_upper }}_RUNTIME_WRITE_DISPOSITION_NACK;
-}
-{% endif %}
-{% endif %}
-{% endfor %}
-
-{{ prefix_upper }}_RUNTIME_WEAK bool {{ prefix }}_fill_notification({{ prefix }}_Notification_t *out)
-{
-    (void)out;
-    return false;
-}
+/* Handler implementations are intentionally NOT generated here. The header
+ * declares every onRead/onWrite/onQuery/fill_notification callback; each consumer (app,
+ * SIL, tests) MUST provide the definitions. No weak defaults — the P2 toolchain
+ * (FlexC) does not resolve weak overrides, and forcing definitions makes an
+ * unhandled protocol message a link error rather than a silent NACK. */
 
 static void {{ prefix }}_Runtime_applyWriteDisposition({{ prefix }}_Runtime_t *runtime,
                                                        uint8_t command,
@@ -428,10 +289,7 @@ static void {{ prefix }}_Runtime_dispatchWrite({{ prefix }}_Runtime_t *runtime,
     }
 }
 
-void {{ prefix }}_Runtime_init({{ prefix }}_Runtime_t *runtime,
-                               {{ prefix }}_RuntimeSendBytesFn sendBytes,
-                               {{ prefix }}_RuntimeGetTimeMsFn getTimeMs,
-                               void *userCtx)
+void {{ prefix }}_Runtime_init({{ prefix }}_Runtime_t *runtime)
 {
     if (runtime == NULL)
     {
@@ -439,14 +297,8 @@ void {{ prefix }}_Runtime_init({{ prefix }}_Runtime_t *runtime,
     }
 
     (void)memset(runtime, 0, sizeof(*runtime));
-    runtime->sendBytes = sendBytes;
-    runtime->getTimeMs = getTimeMs;
-    runtime->userCtx = userCtx;
     runtime->state = {{ prefix_upper }}_RUNTIME_STATE_SYNC;
-    if (runtime->getTimeMs != NULL)
-    {
-        runtime->startMs = runtime->getTimeMs(runtime->userCtx);
-    }
+    runtime->startMs = {{ prefix }}_getTimeMs();
 }
 
 void {{ prefix }}_Runtime_feedByte({{ prefix }}_Runtime_t *runtime, uint8_t byte)
@@ -462,10 +314,7 @@ void {{ prefix }}_Runtime_feedByte({{ prefix }}_Runtime_t *runtime, uint8_t byte
         if (byte == {{ prefix_upper }}_FRAME_SYNC)
         {
             runtime->state = {{ prefix_upper }}_RUNTIME_STATE_TYPE;
-            if (runtime->getTimeMs != NULL)
-            {
-                runtime->startMs = runtime->getTimeMs(runtime->userCtx);
-            }
+            runtime->startMs = {{ prefix }}_getTimeMs();
         }
         break;
 
@@ -555,7 +404,7 @@ void {{ prefix }}_Runtime_feedByte({{ prefix }}_Runtime_t *runtime, uint8_t byte
 
 void {{ prefix }}_Runtime_tick({{ prefix }}_Runtime_t *runtime)
 {
-    if ((runtime == NULL) || (runtime->getTimeMs == NULL))
+    if (runtime == NULL)
     {
         return;
     }
@@ -565,7 +414,7 @@ void {{ prefix }}_Runtime_tick({{ prefix }}_Runtime_t *runtime)
         return;
     }
 
-    const uint32_t now = runtime->getTimeMs(runtime->userCtx);
+    const uint32_t now = {{ prefix }}_getTimeMs();
     if ((now - runtime->startMs) > {{ prefix_upper }}_RUNTIME_TIMEOUT_MS)
     {
         {{ prefix }}_Runtime_reset(runtime);
