@@ -151,6 +151,19 @@ bool dev_nvram_getChannelData(dev_nvram_channel_t channel, void *data, size_t si
     return true;
 }
 
+/* --- dev_servo peer mock (app_motion now drives closed-loop motion via this API).
+ * No-op stubs so the suite links; motion assertions here still exercise the
+ * dev_stepper path (see mocks above). */
+#include "dev_servo.h"
+void dev_servo_enable(dev_servo_channel_E ch, bool enable) { (void)ch; (void)enable; }
+void dev_servo_moveTo(dev_servo_channel_E ch, int32_t targetCounts, int32_t feedrateCountsPerSec) { (void)ch; (void)targetCounts; (void)feedrateCountsPerSec; }
+void dev_servo_setVelocity(dev_servo_channel_E ch, int32_t velCountsPerSec) { (void)ch; (void)velCountsPerSec; }
+void dev_servo_stop(dev_servo_channel_E ch) { (void)ch; }
+void dev_servo_setPosition(dev_servo_channel_E ch, int32_t counts) { (void)ch; (void)counts; }
+int32_t dev_servo_getPosition(dev_servo_channel_E ch) { (void)ch; return 0; }
+int32_t dev_servo_getTarget(dev_servo_channel_E ch) { (void)ch; return 0; }
+bool dev_servo_atTarget(dev_servo_channel_E ch) { (void)ch; return false; }
+
 /**********************************************************************
  * Module under test
  **********************************************************************/

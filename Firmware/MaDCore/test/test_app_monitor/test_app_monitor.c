@@ -127,6 +127,16 @@ bool IO_SDCard_close(IO_SDCard_channel_E channel)
     return true;
 }
 
+/* --- dev_cogManager introspection + app_notification peer mocks (app_monitor now
+ * reports per-cog stack usage and emits notifications). No-op stubs so the suite
+ * links; the existing assertions don't cover the new introspection path. */
+#include "dev_cogManager.h"
+#include "app_notification.h"
+uint32_t dev_cogManager_getStackSize(dev_cogManager_channel_E channel) { (void)channel; return 0; }
+uint32_t dev_cogManager_getStackPeak(dev_cogManager_channel_E channel) { (void)channel; return 0; }
+const char *dev_cogManager_getName(dev_cogManager_channel_E channel) { (void)channel; return ""; }
+void app_notification_send(app_notification_type_E type, const char *format, ...) { (void)type; (void)format; }
+
 /**********************************************************************
  * Module under test (compiled in via #include of the .c)
  **********************************************************************/
