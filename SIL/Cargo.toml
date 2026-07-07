@@ -2,7 +2,7 @@
 members = [
     # Out-of-tree member: the generated Rust protocol codec lives next to the
     # schema it comes from (see Protocol/Cargo.toml's `workspace` back-pointer).
-    "../Protocol",
+    "../Protocol/rust",
     "models",
     "MaDSim",
 ]

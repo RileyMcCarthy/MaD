@@ -43,8 +43,9 @@ MaD/
 ├── Firmware/MaDCore/        Embedded C for the Propeller 2 (APP/DEV/IO/Library/HAL/HW)
 ├── Software/
 │   └── MaDWasmControl/      Browser control app (Web Serial + WASM) — the app you ship
-├── Protocol/                Schema + toolchain + the `protocol` crate (generated Rust codec)
+├── Protocol/                Schema + toolchain + Rust codec crate
 │   ├── MaDProtocol.yaml     Single source-of-truth schema
+│   ├── rust/                The `protocol` crate — generated Rust codec (SIL workspace member)
 │   └── ProtoEmb/            ⎘ submodule → github.com/RileyMcCarthy/protoemb (YAML→C/TS/Rust codegen + runtime)
 ├── SIL/                     Software-in-the-loop test rig (Rust workspace)
 │   ├── embsim/              ⎘ submodule → github.com/RileyMcCarthy/embsim (reusable SIL framework)
@@ -114,7 +115,7 @@ stay in lock-step (the firmware also regenerates its C target on every build):
 # from repo root
 python3 ./Protocol/ProtoEmb/core/generate.py --schema ./Protocol/MaDProtocol.yaml --target c  --output ./Firmware/MaDCore/src/Generated         --templates ./Protocol/ProtoEmb/core/templates
 python3 ./Protocol/ProtoEmb/core/generate.py --schema ./Protocol/MaDProtocol.yaml --target ts --output ./Software/MaDWasmControl/src/protocol/generated --templates ./Protocol/ProtoEmb/core/templates
-python3 ./Protocol/ProtoEmb/core/generate.py --schema ./Protocol/MaDProtocol.yaml --target rs --output ./Protocol/src/generated          --templates ./Protocol/ProtoEmb/core/templates
+python3 ./Protocol/ProtoEmb/core/generate.py --schema ./Protocol/MaDProtocol.yaml --target rs --output ./Protocol/rust/src/generated          --templates ./Protocol/ProtoEmb/core/templates
 ```
 
 ## Documentation

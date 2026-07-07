@@ -8,8 +8,9 @@ MaD/
 │   └── src/  APP · DEV · IO · Library · HAL · HW · Generated · Main
 ├── Software/
 │   └── MaDWasmControl/      Browser control app (Web Serial + WASM) — the app you ship
-├── Protocol/                Also the `protocol` crate (generated Rust codec, src/)
+├── Protocol/
 │   ├── MaDProtocol.yaml     The single source-of-truth schema
+│   ├── rust/                The `protocol` crate — generated Rust codec
 │   └── ProtoEmb/            ⎘ submodule → github.com/RileyMcCarthy/protoemb
 │       ├── core/            generate.py + Jinja templates
 │       ├── framing/         protoemb-framing crate (wire frames + CRC)
@@ -36,7 +37,7 @@ change the YAML (or templates) and regenerate:
 |---|---|---|
 | C | `Firmware/MaDCore/src/Generated/` | Firmware (built via a PlatformIO pre-hook) |
 | TypeScript | `Software/MaDWasmControl/src/protocol/generated/` | The app |
-| Rust | `Protocol/src/generated/` | The SIL emulator |
+| Rust | `Protocol/rust/src/generated/` | The SIL emulator |
 
 The same Rust runtime (`Protocol/ProtoEmb/runtime`) is compiled **two** ways: to a
 native **`protoemb-bridge`** binary, and to **WASM** for the browser app. See

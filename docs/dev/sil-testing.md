@@ -14,7 +14,7 @@ make emulator     # build firmware (.a) + Rust protocol types + bridge, then car
 ```
 
 `make emulator` chains the pieces: `make firmware` (`pio run -e native_emulator`),
-`make protocol` (generate the Rust codec into `Protocol/src/generated`), `make bridge` (build
+`make protocol` (generate the Rust codec into `Protocol/rust/src/generated`), `make bridge` (build
 `protoemb-bridge`), then `cargo build`.
 
 | Target | What it does |
