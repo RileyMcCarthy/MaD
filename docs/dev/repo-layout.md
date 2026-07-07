@@ -10,14 +10,14 @@ MaD/
 │   └── MaDWasmControl/      Browser control app (Web Serial + WASM) — the app you ship
 ├── Protocol/
 │   ├── MaDProtocol.yaml     The single source-of-truth schema
-│   └── ProtoEmb/            Generator + framing/runtime crates + the bridge binary
+│   └── ProtoEmb/            ⎘ submodule → github.com/RileyMcCarthy/protoemb
 │       ├── core/            generate.py + Jinja templates
 │       ├── framing/         protoemb-framing crate (wire frames + CRC)
 │       ├── runtime/         protoemb-runtime crate + protoemb-bridge binary + WASM client
 │       └── docs/            wire-format.md
 ├── SIL/                     Software-in-the-loop test rig (Rust workspace)
-│   ├── embsim/              Reusable SIL framework (core, peripherals, models,
-│   │                        runtime, platforms/p2, build-support, tools, examples)
+│   ├── embsim/              ⎘ submodule → github.com/RileyMcCarthy/embsim
+│   │                        (core, peripherals, models, runtime, p2, tools)
 │   ├── embsim-mad-models/   MaD-specific physics (gantry, sample, strain gauge)
 │   ├── mad-protocol/        Generated Rust protocol types for SIL
 │   ├── MaDSim/              The mad-emulator binary (entry + machine wiring)

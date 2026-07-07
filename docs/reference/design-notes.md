@@ -18,16 +18,16 @@ are linked here rather than duplicated.
 
 ## Protocol
 
-- [**ProtoEmb README**](https://github.com/RileyMcCarthy/MaD/blob/main/Protocol/ProtoEmb/README.md)
+- [**ProtoEmb README**](https://github.com/RileyMcCarthy/protoemb/blob/main/README.md)
   — the protocol toolchain (generator, framing, runtime, examples).
-- [**wire-format.md**](https://github.com/RileyMcCarthy/MaD/blob/main/Protocol/ProtoEmb/docs/wire-format.md)
+- [**wire-format.md**](https://github.com/RileyMcCarthy/protoemb/blob/main/docs/wire-format.md)
   — the canonical frame + payload contract.
 
 ## SIL framework (embsim)
 
-- [**embsim README**](https://github.com/RileyMcCarthy/MaD/blob/main/SIL/embsim/README.md)
+- [**embsim README**](https://github.com/RileyMcCarthy/embsim/blob/main/README.md)
   — the reusable SIL framework and the ~10-line emulator.
-- [**CONTRACT.md**](https://github.com/RileyMcCarthy/MaD/blob/main/SIL/embsim/CONTRACT.md)
+- [**CONTRACT.md**](https://github.com/RileyMcCarthy/embsim/blob/main/CONTRACT.md)
   — the exact symbols and ABI a platform crate must export.
 
 For the curated explanations of these systems, see

@@ -8,6 +8,7 @@ protocol, app — without hardware. All `make` commands run from `SIL/`.
 
 ```bash
 cd SIL
+git submodule update --init --recursive   # first time: embsim + ProtoEmb submodules
 make setup        # first time: npm deps
 make emulator     # build firmware (.a) + Rust protocol types + bridge, then cargo build
 ```

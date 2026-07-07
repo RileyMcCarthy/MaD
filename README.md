@@ -45,9 +45,9 @@ MaD/
 │   └── MaDWasmControl/      Browser control app (Web Serial + WASM) — the app you ship
 ├── Protocol/
 │   ├── MaDProtocol.yaml     Single source-of-truth schema
-│   └── ProtoEmb/            Generator (→ C/TS/Rust) + framing/runtime crates + protoemb-bridge
+│   └── ProtoEmb/            ⎘ submodule → github.com/RileyMcCarthy/protoemb (YAML→C/TS/Rust codegen + runtime)
 ├── SIL/                     Software-in-the-loop test rig (Rust workspace)
-│   ├── embsim/              Reusable SIL framework (core, peripherals, models, runtime, p2, tools)
+│   ├── embsim/              ⎘ submodule → github.com/RileyMcCarthy/embsim (reusable SIL framework)
 │   ├── embsim-mad-models/   MaD physics models (gantry, sample, strain gauge)
 │   ├── mad-protocol/        Generated Rust protocol types for SIL
 │   ├── MaDSim/              The mad-emulator binary (entry + machine wiring)
@@ -58,6 +58,12 @@ MaD/
 
 > A legacy Electron desktop app exists at `Software/MaDControl/`. The browser app
 > has reached full parity and is the documented, deployed application.
+
+> Two components are **git submodules** (they are standalone open-source
+> libraries): [`Protocol/ProtoEmb`](https://github.com/RileyMcCarthy/protoemb)
+> and [`SIL/embsim`](https://github.com/RileyMcCarthy/embsim). Clone with
+> `git clone --recurse-submodules`, or run
+> `git submodule update --init --recursive` in an existing checkout.
 
 ## How it fits together
 

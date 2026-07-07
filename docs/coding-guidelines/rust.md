@@ -1,6 +1,6 @@
 # Rust / SIL Coding Guidelines
 
-This document governs the Rust code in `SIL/` — the `mad-emulator` binary (`MaDSim/`), the reusable **embsim** emulator framework (`embsim/*`), and the MaD-specific consumer crates (`mad-protocol`, `embsim-mad-models`). It reflects the conventions actually used in the workspace as of this writing; follow it to write code that fits in and builds on the first try.
+This document governs the Rust code in `SIL/` — the `mad-emulator` binary (`MaDSim/`), the reusable **embsim** emulator framework (`embsim/*`, a git submodule of [RileyMcCarthy/embsim](https://github.com/RileyMcCarthy/embsim) with its own workspace and CI), and the MaD-specific consumer crates (`mad-protocol`, `embsim-mad-models`). It reflects the conventions actually used in the workspace as of this writing; follow it to write code that fits in and builds on the first try.
 
 > Scope note: this is **not** the firmware (that's C under `Firmware/`, governed by MISRA/CERT) nor the desktop app (TypeScript). This is the host-side Software-in-the-Loop emulator.
 
@@ -13,16 +13,17 @@ The workspace is a Cargo workspace with `resolver = "2"`, `edition = "2021"`, an
 ```toml
 [workspace]
 members = [
-    # Generic, reusable embsim library
-    "embsim/core", "embsim/peripherals", "embsim/platforms/p2", "embsim/models",
-    "embsim/runtime", "embsim/build-support",
-    "embsim/tools/memory-inspect", "embsim/tools/ui", "embsim/tools/trace",
-    "embsim/examples/minimal",
-    # MaD-specific consumer side
-    "mad-protocol", "embsim-mad-models", "MaDSim",
+    "mad-protocol",
+    "embsim-mad-models",
+    "MaDSim",
 ]
+# embsim is a git submodule with its own workspace root; its crates are
+# consumed as path dependencies across the workspace boundary.
+exclude = ["embsim"]
 resolver = "2"
 ```
+
+The embsim submodule has the same shape (workspace root at `SIL/embsim/Cargo.toml` with the generic crates as members); run `cargo test --workspace` *inside* `SIL/embsim/` to test the framework, and in `SIL/` to test the MaD-side crates.
 
 There is a hard architectural split, called out in the Cargo comments and crate docs:
 
@@ -295,17 +296,16 @@ The emulator runs firmware "cogs" as OS threads, so peripheral state is shared a
   (`embsim/models/src/edge.rs:44-57`). Other inline test modules: `peripherals/src/pulse_out.rs`, `tools/memory-inspect/src/{runtime,types}.rs`.
 - **Doctests double as documentation.** Public primitives carry a runnable ` ``` ` example in their `//!`/`///` docs (`event.rs:13-25`). Mark non-runnable examples ` ```rust,ignore ` (`build-support/src/lib.rs:10`, `runtime/src/lib.rs:16`).
 - **End-to-end behavior is covered by Playwright**, not Rust integration tests — they drive the real Electron UI against the running emulator (`SIL/tests/`, run via `make test` → `npm test`). The emulator is single-instance; honor `workers: 1` (see root `CLAUDE.md`).
-- Run Rust tests with `cargo test` from `SIL/` (or scope to a crate with `-p embsim-core`). Note that **CI does not run the SIL `cargo test` suite** (see §10) — so run it locally yourself before sending a PR.
+- Run Rust tests with `cargo test` from `SIL/` (MaD-side crates) or from `SIL/embsim/` (the framework submodule's own workspace). CI runs both: the `sil-rust` job gates `cargo test` on `SIL/`, and the embsim repo's own CI gates the submodule (see §10).
 
 ---
 
 ## 10. Linting & passing checks
 
-> **Important reality check (verified):**
-> - There is **no `rustfmt.toml`, `clippy.toml`, `.cargo/config.toml`, `deny.toml`, or `rust-toolchain` file** anywhere under `SIL/`. Formatting is hand-maintained, not tool-enforced.
-> - **CI does not build, test, lint, or format the `SIL/` Rust workspace at all.** The `sil-tests` job in `.github/workflows/ci.yml` runs a *different*, Python-based emulator (`Firmware/MaDCore/Emulation`, `make run` → `Server.py` + `socat`) driven by a `pio run -e native` firmware **binary**, then runs Playwright. It never invokes `cargo` on `SIL/`. The only `cargo` command in CI is `cargo test` for `Protocol/ProtoEmb/runtime` inside the `wasm-control-ci` job (`ci.yml:79-81`) — unrelated to this workspace.
-> - Consequently **`cargo build` / `cargo test` / `cargo clippy` / `cargo fmt --check` on `SIL/` are developer-side only.** Treat passing them as your own responsibility.
-> - **Running default `cargo fmt` will reformat almost the entire tree.** `cargo fmt --check` currently exits non-zero with ~139 diffs across nearly every file, and no single `max_width` (100/110/120) reproduces the existing style. The code keeps short struct literals and bodies on one line (e.g. `Self { subs: Mutex::new(Vec::new()) }`, `event.rs:37`) and tolerates ~100–110-column lines.
+> **CI reality check:**
+> - The `sil-rust` job in `.github/workflows/ci.yml` builds `libfirmware.a` + `make protocol`, runs `cargo clippy` (advisory — a lint backlog remains) and **`cargo test --workspace --all-targets` (blocking)** on `SIL/`.
+> - The `SIL/embsim` submodule is gated by [its own repo's CI](https://github.com/RileyMcCarthy/embsim): tests + doctests on Linux/macOS, **gating `cargo fmt --check`** (that tree is rustfmt-formatted), advisory clippy, and `cargo doc -D warnings`.
+> - The MaD-side crates (`MaDSim`, `embsim-mad-models`, `mad-protocol`) have **no fmt gate**: there is no `rustfmt.toml` under `SIL/`, and running a blanket `cargo fmt` there still produces a large unrelated diff. Match the existing hand-maintained style (short struct literals and bodies on one line, ~100–110-column lines).
 
 ### What you must do
 1. **Build clean, warning-free:**
@@ -327,7 +327,7 @@ The emulator runs firmware "cogs" as OS threads, so peripheral state is shared a
    ```bash
    cargo clippy --workspace --all-targets
    ```
-   *(Recommended, not enforced — clippy is not in CI, and the SIL workspace is not built in CI at all. New code should still be clippy-clean.)*
+   *(CI runs clippy on `SIL/` as advisory only — the pre-existing backlog isn't cleared yet — but new code should be clippy-clean.)*
 
 ### Lint-suppression policy
 - **Crate-level blanket allows are only for generated code** (`mad-protocol/src/generated/protoemb.rs:6`). Do not add `#![allow(...)]` to hand-written crates.
@@ -337,8 +337,8 @@ The emulator runs firmware "cogs" as OS threads, so peripheral state is shared a
 - **Do** add new third-party deps to `[workspace.dependencies]`, then reference `dep.workspace = true`.
 - **Do** keep `unsafe`/`extern "C"` confined to the platform crate's `ffi.rs`/stubs and guard every channel/pointer.
 - **Do** give every public item a `///` doc, with `# Safety`/`# Panics` where applicable.
-- **Do** run `cargo build`/`cargo test`/`clippy` locally — CI won't do it for the SIL workspace.
+- **Do** run `cargo build`/`cargo test`/`clippy` locally before pushing — the `sil-rust` CI job gates `cargo test` on `SIL/`.
 - **Don't** edit `mad-protocol/src/generated/` — regenerate via `make protocol`.
 - **Don't** introduce `anyhow`/`thiserror`; follow the hand-rolled `enum + Display + Error` pattern.
 - **Don't** run repo-wide `cargo fmt` — format only your additions and match neighbors.
-- **Don't** put MaD-specific logic in `embsim/*` generic crates, or add a dependency edge from `embsim/*` onto the MaD consumer crates.
+- **Don't** put MaD-specific logic in `embsim/*` generic crates, or add a dependency edge from `embsim/*` onto the MaD consumer crates. embsim changes land upstream (github.com/RileyMcCarthy/embsim) first, then the submodule pin is bumped here.

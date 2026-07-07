@@ -6,6 +6,11 @@ on:
       - 'Software/**'
       - 'Firmware/**'
       - 'Hardware/**'
+      # Submodule pin bumps land as gitlink changes at Protocol/ProtoEmb and
+      # SIL/embsim; .gitmodules changes repoint the submodule URLs.
+      - 'Protocol/**'
+      - 'SIL/**'
+      - '.gitmodules'
     tags:
       - 'software-v*'
       - 'firmware-v*'
@@ -50,12 +55,15 @@ jobs:
             wasm_control:
               - 'Software/MaDWasmControl/**'
               - 'Protocol/**'
+              - '.gitmodules'
             protocol:
               - 'Protocol/**'
+              - '.gitmodules'
             sil:
               - 'SIL/**'
               - 'Firmware/**'
               - 'Protocol/**'
+              - '.gitmodules'
 
   # Offline gate for the frontend-only Web Serial + WASM control app: Rust unit
   # tests for the protocol core, then build wasm + generated codec, then the app
@@ -69,6 +77,8 @@ jobs:
         working-directory: Software/MaDWasmControl
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -98,8 +108,12 @@ jobs:
       - name: Verify (typecheck + lint + tests + build)
         run: npm run verify
 
-  # Self-contained ProtoEmb library suite: generator unit tests, cross-language
-  # wire conformance (C == Rust == TS), and the framing + runtime crate tests.
+  # ProtoEmb library suite (generator unit tests, cross-language wire
+  # conformance, framing + runtime crate tests) run against the *pinned
+  # submodule commit*. The suite also runs in the protoemb repo's own CI
+  # (https://github.com/RileyMcCarthy/protoemb); this job gates submodule
+  # bumps — including the real-schema generator test, which only activates
+  # when ../MaDProtocol.yaml is present (i.e. here, not in the standalone CI).
   protoemb-ci:
     needs: changes
     if: needs.changes.outputs.protocol == 'true'
@@ -109,6 +123,8 @@ jobs:
         working-directory: Protocol/ProtoEmb
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - uses: actions/setup-python@v5
         with:
           python-version: '3.x'
@@ -134,6 +150,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - uses: actions/setup-python@v5
         with:
           python-version: '3.x'
@@ -158,6 +176,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -183,16 +203,17 @@ jobs:
           fi
           echo "Codegen succeeded and is byte-reproducible."
 
-  # BLOCKING. Ruff lint of the protocol generator + PlatformIO SCons hooks;
-  # config in ruff.toml (mirrors docs/coding-guidelines/python.md). Clean today.
+  # BLOCKING. Ruff lint of the PlatformIO SCons hooks; config in ruff.toml
+  # (mirrors docs/coding-guidelines/python.md). The ProtoEmb generator is
+  # linted in its own repo's CI.
   python-lint:
     needs: changes
-    if: needs.changes.outputs.protocol == 'true' || needs.changes.outputs.firmware == 'true'
+    if: needs.changes.outputs.firmware == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Run ruff (lint only)
-        run: pipx run ruff==0.13.2 check --output-format=github Protocol/ProtoEmb/core Firmware/MaDCore/extra_scripts
+        run: pipx run ruff==0.13.2 check --output-format=github Firmware/MaDCore/extra_scripts
 
   # BLOCKING (cargo test). SIL Rust workspace: builds the generated mad-protocol
   # Rust (make protocol) + libfirmware.a (pio run -e native_emulator), then runs
@@ -208,6 +229,8 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -231,10 +254,10 @@ jobs:
         run: cargo clippy --workspace --all-targets
       - name: Cargo test (blocking)
         working-directory: SIL
-        # embsim-memory-inspect's DWARF fixture tests parse clang-emitted debug info
-        # (its real use case on macOS) and don't handle gcc's DWARF, so exclude that
-        # dev-tool crate on the Linux runner. TODO: teach the parser gcc DWARF, then drop.
-        run: cargo test --workspace --all-targets --exclude embsim-memory-inspect
+        # The workspace is the MaD-side crates only (mad-protocol,
+        # embsim-mad-models, MaDSim); the embsim submodule's crates are tested
+        # in their own repo's CI.
+        run: cargo test --workspace --all-targets
 
   # ADVISORY. MISRA/cppcheck via `pio check`. Large pre-existing backlog (~1629,
   # mostly low "unused macro"); never naive-block. Prints findings + uploads JSON;
@@ -248,6 +271,8 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -310,6 +335,8 @@ jobs:
     steps:
       - name: Checkout Git repository
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Install Node.js and npm
         uses: actions/setup-node@v4
@@ -392,6 +419,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - uses: actions/setup-python@v4
         with:
           python-version: '3.9'
@@ -507,6 +536,8 @@ jobs:
     
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - uses: actions/setup-node@v4
         with:
           node-version: lts/*

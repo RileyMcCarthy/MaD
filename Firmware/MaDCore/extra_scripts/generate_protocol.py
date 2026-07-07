@@ -21,9 +21,17 @@ generate_script = os.path.join(core_dir, "generate.py")
 template_dir = os.path.join(core_dir, "templates")
 output_dir = os.path.join(firmware_dir, "src", "Generated")
 
-# Skip if schema or generator don't exist
-if not os.path.exists(schema_path) or not os.path.exists(generate_script):
-    print("WARNING: Protocol schema or generator not found, skipping codegen")
+# The generator lives in the Protocol/ProtoEmb git submodule. A schema with no
+# generator means the submodule isn't initialized — fail loudly now instead of
+# letting the build die later on missing src/Generated/ headers.
+if os.path.exists(schema_path) and not os.path.exists(generate_script):
+    print(
+        "ERROR: Protocol/ProtoEmb submodule not initialized "
+        f"(missing {generate_script}). Run: git submodule update --init --recursive"
+    )
+    env.Exit(1)
+elif not os.path.exists(schema_path):
+    print("WARNING: Protocol schema not found, skipping codegen")
 else:
     # Ensure dependencies are installed in PlatformIO's Python
     requirements_path = os.path.join(core_dir, "requirements.txt")

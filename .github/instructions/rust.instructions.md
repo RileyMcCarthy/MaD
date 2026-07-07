@@ -1,5 +1,5 @@
 ---
-applyTo: "SIL/**,Protocol/ProtoEmb/runtime/**"
+applyTo: "SIL/**"
 ---
 
 Rust / SIL. Full conventions: `docs/coding-guidelines/rust.md`.

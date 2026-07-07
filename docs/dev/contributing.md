@@ -15,6 +15,15 @@ Run the gate(s) for the area you touched (see
 - **Protocol:** regenerate all consumers and run `./examples/verify.sh`.
 - **Anything user-facing:** `mkdocs build --strict` if you changed docs.
 
+### Submodule changes go upstream first
+
+`Protocol/ProtoEmb` and `SIL/embsim` are git submodules of standalone repos
+([protoemb](https://github.com/RileyMcCarthy/protoemb),
+[embsim](https://github.com/RileyMcCarthy/embsim)). To change code inside them:
+commit + push in the library repo (its own CI gates it), then bump the pinned
+commit here in a MaD PR. Never open a MaD PR whose gitlink points at a commit
+that isn't pushed upstream.
+
 ## Pull requests
 
 `main` is protected — **you can't push to it directly; open a pull request.**

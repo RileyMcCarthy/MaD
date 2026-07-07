@@ -44,8 +44,8 @@ The dependency graph is acyclic — **no generic crate depends on a project crat
 MaD-specific code lives only in `MaDSim/`, `embsim-mad-models/`, and
 `mad-protocol/`. A new project supplies just a *platform crate* and a *machine*,
 and gets a runnable emulator. See the
-[embsim README](https://github.com/RileyMcCarthy/MaD/blob/main/SIL/embsim/README.md)
-and [CONTRACT.md](https://github.com/RileyMcCarthy/MaD/blob/main/SIL/embsim/CONTRACT.md).
+[embsim README](https://github.com/RileyMcCarthy/embsim/blob/main/README.md)
+and [CONTRACT.md](https://github.com/RileyMcCarthy/embsim/blob/main/CONTRACT.md).
 
 ## The simulation chain
 
