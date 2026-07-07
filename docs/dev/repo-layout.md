@@ -18,7 +18,7 @@ MaD/
 ├── SIL/                     Software-in-the-loop test rig (Rust workspace)
 │   ├── embsim/              ⎘ submodule → github.com/RileyMcCarthy/embsim
 │   │                        (core, peripherals, models, runtime, p2, tools)
-│   ├── embsim-mad-models/   MaD-specific physics (gantry, sample, strain gauge)
+│   ├── models/              MaD-specific physics (gantry, sample, strain gauge)
 │   ├── mad-protocol/        Generated Rust protocol types for SIL
 │   ├── MaDSim/              The mad-emulator binary (entry + machine wiring)
 │   ├── tests/               Playwright E2E specs

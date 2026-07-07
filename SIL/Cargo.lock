@@ -261,15 +261,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "embsim-mad-models"
-version = "0.1.0"
-dependencies = [
- "embsim-core",
- "embsim-models",
- "tracing",
-]
-
-[[package]]
 name = "embsim-memory-inspect"
 version = "0.1.0"
 dependencies = [
@@ -598,7 +589,6 @@ dependencies = [
  "clap",
  "embsim-build",
  "embsim-core",
- "embsim-mad-models",
  "embsim-memory-inspect",
  "embsim-models",
  "embsim-p2",
@@ -606,6 +596,7 @@ dependencies = [
  "embsim-runtime",
  "embsim-trace",
  "embsim-ui",
+ "models",
  "serde_json",
  "tokio",
  "tracing",
@@ -653,6 +644,15 @@ dependencies = [
  "libc",
  "wasi",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "models"
+version = "0.1.0"
+dependencies = [
+ "embsim-core",
+ "embsim-models",
+ "tracing",
 ]
 
 [[package]]

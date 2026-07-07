@@ -255,7 +255,7 @@ jobs:
       - name: Cargo test (blocking)
         working-directory: SIL
         # The workspace is the MaD-side crates only (mad-protocol,
-        # embsim-mad-models, MaDSim); the embsim submodule's crates are tested
+        # models, MaDSim); the embsim submodule's crates are tested
         # in their own repo's CI.
         run: cargo test --workspace --all-targets
 

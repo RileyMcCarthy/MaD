@@ -1,7 +1,7 @@
 [workspace]
 members = [
     "mad-protocol",
-    "embsim-mad-models",
+    "models",
     "MaDSim",
 ]
 # The generic embsim library is a git submodule with its own workspace root

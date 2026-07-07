@@ -58,7 +58,7 @@ hard-to-debug failures:
 - **Native *and* P2** — always exercise both the host (`native_*`) and the real
   `propeller2` builds; pointer sizes and timing differ.
 - **embsim stays generic** — no generic embsim crate may depend on MaD-specific
-  code. MaD specifics live in `MaDSim/`, `embsim-mad-models/`, `mad-protocol/`.
+  code. MaD specifics live in `MaDSim/`, `models/`, `mad-protocol/`.
 - **The app is not a safety device** — never make the UI halt the machine on link
   loss or tab close; the machine is the [safety authority](../how-it-works/the-machine.md#safety-model).
 

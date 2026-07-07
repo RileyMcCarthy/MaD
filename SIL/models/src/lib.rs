@@ -1,4 +1,4 @@
-//! embsim-mad-models — MaD tensile-tester physics models.
+//! models — MaD tensile-tester physics models.
 //!
 //! Project-specific physics for the MaD uniaxial tensile tester, built on the
 //! generic embsim framework. These model the machine-level mechanics that are

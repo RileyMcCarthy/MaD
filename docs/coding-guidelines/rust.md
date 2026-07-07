@@ -1,6 +1,6 @@
 # Rust / SIL Coding Guidelines
 
-This document governs the Rust code in `SIL/` — the `mad-emulator` binary (`MaDSim/`), the reusable **embsim** emulator framework (`embsim/*`, a git submodule of [RileyMcCarthy/embsim](https://github.com/RileyMcCarthy/embsim) with its own workspace and CI), and the MaD-specific consumer crates (`mad-protocol`, `embsim-mad-models`). It reflects the conventions actually used in the workspace as of this writing; follow it to write code that fits in and builds on the first try.
+This document governs the Rust code in `SIL/` — the `mad-emulator` binary (`MaDSim/`), the reusable **embsim** emulator framework (`embsim/*`, a git submodule of [RileyMcCarthy/embsim](https://github.com/RileyMcCarthy/embsim) with its own workspace and CI), and the MaD-specific consumer crates (`mad-protocol`, `models`). It reflects the conventions actually used in the workspace as of this writing; follow it to write code that fits in and builds on the first try.
 
 > Scope note: this is **not** the firmware (that's C under `Firmware/`, governed by MISRA/CERT) nor the desktop app (TypeScript). This is the host-side Software-in-the-Loop emulator.
 
@@ -14,7 +14,7 @@ The workspace is a Cargo workspace with `resolver = "2"`, `edition = "2021"`, an
 [workspace]
 members = [
     "mad-protocol",
-    "embsim-mad-models",
+    "models",
     "MaDSim",
 ]
 # embsim is a git submodule with its own workspace root; its crates are
@@ -28,11 +28,11 @@ The embsim submodule has the same shape (workspace root at `SIL/embsim/Cargo.tom
 There is a hard architectural split, called out in the Cargo comments and crate docs:
 
 - **Generic, reusable `embsim` crates** (`embsim/*`) — know *nothing* about MaD. They simulate a generic MCU: clock, PTY serial, GPIO/encoder/pulse-out peripherals, the `Emulator` builder, DWARF introspection, trace/UI tooling.
-- **MaD-specific consumer crates** — `mad-protocol` (generated wire types), `embsim-mad-models` (gantry/sample/strain-gauge physics), and `MaDSim` (the `mad-emulator` binary that wires it all together).
+- **MaD-specific consumer crates** — `mad-protocol` (generated wire types), `models` (`SIL/models/`, gantry/sample/strain-gauge physics), and `MaDSim` (the `mad-emulator` binary that wires it all together).
 
-**Do** keep MaD concepts (steps/mm, ADC calibration, MaD protocol) out of `embsim/*`. The `mad-protocol` crate header states this explicitly — the protocol codec lives in its own crate "rather than inside a generic embsim crate" (`mad-protocol/src/lib.rs:1-7`). The wiring header calls `MaDSim/src/wiring.rs` "the project-specific seam" where all MaD constants live (`wiring.rs:1-7`). The `embsim-models` / `embsim-mad-models` split mirrors this: reusable device/IC models (e.g. the ADS122U04, `EdgeDetector`) live in `embsim/models`, while project mechanics (gantry/sample/strain gauge) live in `embsim-mad-models` (`embsim/models/src/lib.rs:13-14`, `embsim-mad-models/src/lib.rs:1-12`).
+**Do** keep MaD concepts (steps/mm, ADC calibration, MaD protocol) out of `embsim/*`. The `mad-protocol` crate header states this explicitly — the protocol codec lives in its own crate "rather than inside a generic embsim crate" (`mad-protocol/src/lib.rs:1-7`). The wiring header calls `MaDSim/src/wiring.rs` "the project-specific seam" where all MaD constants live (`wiring.rs:1-7`). The `embsim-models` / `models` split mirrors this: reusable device/IC models (e.g. the ADS122U04, `EdgeDetector`) live in `embsim/models`, while project mechanics (gantry/sample/strain gauge) live in `models` (`embsim/models/src/lib.rs:13-14`, `models/src/lib.rs:1-12`).
 
-**Don't** add a dependency from an `embsim/*` crate onto `mad-protocol` or `embsim-mad-models`. Dependencies flow consumer → framework, never the reverse (verified: no `embsim/*` Cargo.toml lists either MaD crate).
+**Don't** add a dependency from an `embsim/*` crate onto `mad-protocol` or `models`. Dependencies flow consumer → framework, never the reverse (verified: no `embsim/*` Cargo.toml lists either MaD crate).
 
 ### Crate dependency direction
 Verified from the member `Cargo.toml` files. The `embsim-runtime` crate **defines** the `Platform`/`Machine` traits; the platform crate `embsim-p2` *depends on* `embsim-runtime` to implement `Platform` — the arrow points platform → runtime, not the reverse.
@@ -41,7 +41,7 @@ Verified from the member `Cargo.toml` files. The `embsim-runtime` crate **define
 MaDSim (bin) ──► embsim-runtime ──► embsim-peripherals ──► embsim-core
    │          ──► embsim-p2 ──────► embsim-runtime (impls its Platform trait)
    │          ──► embsim-memory-inspect, embsim-trace, embsim-ui (tools)
-   └──► embsim-mad-models ──► embsim-models ──► embsim-core
+   └──► models ──► embsim-models ──► embsim-core
 ```
 
 > `mad-protocol` is a workspace member but **no crate in the workspace depends on it** (not even `MaDSim`). It is a standalone leaf with an empty `[dependencies]` table, built/tested on its own so its generated roundtrip tests stay compiled (`mad-protocol/Cargo.toml`, `mad-protocol/src/lib.rs:3-7`). Don't draw a dependency edge into it that doesn't exist.
@@ -51,7 +51,7 @@ MaDSim (bin) ──► embsim-runtime ──► embsim-peripherals ──► emb
 ## 2. Cargo.toml conventions
 
 - **Inherit shared metadata** from the workspace. Reusable crates use `version.workspace = true`, `edition.workspace = true`, `license.workspace = true`, `repository.workspace = true` (e.g. `embsim/core/Cargo.toml:3-6`).
-- **MaD-specific / non-publishable crates set `publish = false`** and omit `license`/`repository` (see `MaDSim/Cargo.toml:6`, `mad-protocol/Cargo.toml:6`, `embsim-mad-models/Cargo.toml:6`).
+- **MaD-specific / non-publishable crates set `publish = false`** and omit `license`/`repository` (see `MaDSim/Cargo.toml:6`, `mad-protocol/Cargo.toml:6`, `models/Cargo.toml:6`).
 - **All external dep versions live in `[workspace.dependencies]`** (`Cargo.toml:30-42`) and are referenced as `tracing.workspace = true` / `clap.workspace = true`. **Do not** pin a third-party version inline in a member crate — add it to the workspace table to prevent drift.
 - **Intra-workspace deps use `path = "..."`** (e.g. `embsim-core = { path = "../core" }`).
 - Reusable crates fill in `description`, `keywords`, and `categories` (they are packaged as if they could be published — `embsim/core/Cargo.toml:7-9`).
@@ -305,7 +305,7 @@ The emulator runs firmware "cogs" as OS threads, so peripheral state is shared a
 > **CI reality check:**
 > - The `sil-rust` job in `.github/workflows/ci.yml` builds `libfirmware.a` + `make protocol`, runs `cargo clippy` (advisory — a lint backlog remains) and **`cargo test --workspace --all-targets` (blocking)** on `SIL/`.
 > - The `SIL/embsim` submodule is gated by [its own repo's CI](https://github.com/RileyMcCarthy/embsim): tests + doctests on Linux/macOS, **gating `cargo fmt --check`** (that tree is rustfmt-formatted), advisory clippy, and `cargo doc -D warnings`.
-> - The MaD-side crates (`MaDSim`, `embsim-mad-models`, `mad-protocol`) have **no fmt gate**: there is no `rustfmt.toml` under `SIL/`, and running a blanket `cargo fmt` there still produces a large unrelated diff. Match the existing hand-maintained style (short struct literals and bodies on one line, ~100–110-column lines).
+> - The MaD-side crates (`MaDSim`, `models`, `mad-protocol`) have **no fmt gate**: there is no `rustfmt.toml` under `SIL/`, and running a blanket `cargo fmt` there still produces a large unrelated diff. Match the existing hand-maintained style (short struct literals and bodies on one line, ~100–110-column lines).
 
 ### What you must do
 1. **Build clean, warning-free:**

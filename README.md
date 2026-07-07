@@ -48,7 +48,7 @@ MaD/
 │   └── ProtoEmb/            ⎘ submodule → github.com/RileyMcCarthy/protoemb (YAML→C/TS/Rust codegen + runtime)
 ├── SIL/                     Software-in-the-loop test rig (Rust workspace)
 │   ├── embsim/              ⎘ submodule → github.com/RileyMcCarthy/embsim (reusable SIL framework)
-│   ├── embsim-mad-models/   MaD physics models (gantry, sample, strain gauge)
+│   ├── models/              MaD physics models (gantry, sample, strain gauge)
 │   ├── mad-protocol/        Generated Rust protocol types for SIL
 │   ├── MaDSim/              The mad-emulator binary (entry + machine wiring)
 │   └── tests/               Playwright E2E specs
