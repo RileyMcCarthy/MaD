@@ -58,7 +58,7 @@ MaD's own consumer code is the reference implementation, isolated in three crate
 |---|---|
 | `embsim/platforms/p2` (`embsim-p2`) | Propeller 2 HAL trampolines + `Platform` |
 | `models` (`SIL/models/`) | MaD physics: gantry, sample, strain gauge |
-| `mad-protocol` | Generated MaD protocol types |
+| `protocol` (`Protocol/`) | Generated MaD protocol types |
 | `MaDSim` | The `mad-emulator` binary + the MaD `Machine` wiring |
 
 The dependency graph is acyclic — no generic crate depends on a project crate —

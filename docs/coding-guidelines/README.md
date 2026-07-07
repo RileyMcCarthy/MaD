@@ -24,7 +24,7 @@ Three directories are generated from `Protocol/MaDProtocol.yaml` and must **neve
 
 - `Firmware/MaDCore/src/Generated/`
 - `Software/MaDWasmControl/src/protocol/generated/` (shipped app; the legacy Electron app's target was `Software/MaDControl/src/main/generated/`)
-- `SIL/mad-protocol/src/generated/` — the Rust target output (per `SIL/makefile:33`); holds `protoemb.rs`. (Some older docs referred to `SIL/embsim/peripherals/src/generated/`, which does not exist — use the `mad-protocol` path.)
+- `Protocol/src/generated/` — the Rust target output (per `SIL/makefile:33`); holds `protoemb.rs`. (Some older docs referred to `SIL/embsim/peripherals/src/generated/`, which does not exist — use the `Protocol/src/generated/` path.)
 
 To change anything in them, edit the schema (or the Jinja2 templates) and regenerate.
 
@@ -34,7 +34,7 @@ After changing `Protocol/MaDProtocol.yaml` or the templates, regenerate **all th
 ```bash
 python3 ./Protocol/ProtoEmb/core/generate.py --schema ./Protocol/MaDProtocol.yaml --target c  --output ./Firmware/MaDCore/src/Generated         --templates ./Protocol/ProtoEmb/core/templates
 python3 ./Protocol/ProtoEmb/core/generate.py --schema ./Protocol/MaDProtocol.yaml --target ts --output ./Software/MaDWasmControl/src/protocol/generated --templates ./Protocol/ProtoEmb/core/templates
-python3 ./Protocol/ProtoEmb/core/generate.py --schema ./Protocol/MaDProtocol.yaml --target rs --output ./SIL/mad-protocol/src/generated          --templates ./Protocol/ProtoEmb/core/templates
+python3 ./Protocol/ProtoEmb/core/generate.py --schema ./Protocol/MaDProtocol.yaml --target rs --output ./Protocol/src/generated          --templates ./Protocol/ProtoEmb/core/templates
 ```
 
 Firmware also regenerates its C target automatically via the `extra_scripts/generate_protocol.py` PlatformIO pre-build hook. Commit the regenerated code alongside the schema change.

@@ -28,9 +28,9 @@ firmware:
 	cd $(FIRMWARE_DIR) && pio run -e $(PIO_ENV)
 
 # Generate Rust protocol types used by SIL (MaD-specific; kept out of the
-# generic embsim crates — lands in the mad-protocol crate).
+# generic embsim crates — lands in the `protocol` crate at ../Protocol).
 protocol:
-	python3 $(PROTOEMB_GENERATOR) --schema $(PROTOEMB_SCHEMA) --target rs --output ./mad-protocol/src/generated --templates $(PROTOEMB_TEMPLATES)
+	python3 $(PROTOEMB_GENERATOR) --schema $(PROTOEMB_SCHEMA) --target rs --output ../Protocol/src/generated --templates $(PROTOEMB_TEMPLATES)
 
 # Build generic ProtoEmb bridge binary used by MaDControl main process
 bridge:

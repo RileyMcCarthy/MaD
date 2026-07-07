@@ -29,7 +29,7 @@ flowchart TB
     models["<b>embsim-models</b><br/>ADC (ADS122U04) · limit switch · edge detector"]
     core["<b>embsim-core</b> — virtual clock · serial PTY · observers"]
     madmodels["<b>models</b><br/>gantry · sample · strain gauge"]
-    madproto["<b>mad-protocol</b><br/>generated Rust protocol types"]
+    madproto["<b>protocol</b><br/>generated Rust codec (Protocol/)"]
 
     consumer --> platform --> runtime
     runtime --> periph
@@ -42,7 +42,7 @@ flowchart TB
 
 The dependency graph is acyclic — **no generic crate depends on a project crate**.
 MaD-specific code lives only in `MaDSim/`, `models/`, and
-`mad-protocol/`. A new project supplies just a *platform crate* and a *machine*,
+the `protocol` crate (`Protocol/`). A new project supplies just a *platform crate* and a *machine*,
 and gets a runnable emulator. See the
 [embsim README](https://github.com/RileyMcCarthy/embsim/blob/main/README.md)
 and [CONTRACT.md](https://github.com/RileyMcCarthy/embsim/blob/main/CONTRACT.md).

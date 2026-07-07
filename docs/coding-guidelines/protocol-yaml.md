@@ -224,14 +224,14 @@ pub fn build_write_frame_from(source: u8, command: u8, data: &[u8]) -> Vec<u8> {
 ```bash
 python3 ./Protocol/ProtoEmb/core/generate.py --schema ./Protocol/MaDProtocol.yaml --target c  --output ./Firmware/MaDCore/src/Generated        --templates ./Protocol/ProtoEmb/core/templates
 python3 ./Protocol/ProtoEmb/core/generate.py --schema ./Protocol/MaDProtocol.yaml --target ts --output ./Software/MaDWasmControl/src/protocol/generated --templates ./Protocol/ProtoEmb/core/templates
-python3 ./Protocol/ProtoEmb/core/generate.py --schema ./Protocol/MaDProtocol.yaml --target rs --output ./SIL/mad-protocol/src/generated      --templates ./Protocol/ProtoEmb/core/templates
+python3 ./Protocol/ProtoEmb/core/generate.py --schema ./Protocol/MaDProtocol.yaml --target rs --output ./Protocol/src/generated      --templates ./Protocol/ProtoEmb/core/templates
 ```
 
-   - **Rust output path:** the live `SIL/makefile:33` generates into `./mad-protocol/src/generated`, and `SIL/mad-protocol/src/generated/protoemb.rs` is the file that exists on disk. There is **no** `SIL/embsim/peripherals/src/generated/` directory. From `SIL/`, just run `make protocol` (which also runs as part of `make emulator` / `make test`, `SIL/makefile:40,44`).
+   - **Rust output path:** the live `SIL/makefile:33` generates into `./Protocol/src/generated`, and `Protocol/src/generated/protoemb.rs` is the file that exists on disk. There is **no** `SIL/embsim/peripherals/src/generated/` directory. From `SIL/`, just run `make protocol` (which also runs as part of `make emulator` / `make test`, `SIL/makefile:40,44`).
    - **Firmware C is also generated automatically** by the PlatformIO **pre-build hook** `extra_scripts/generate_protocol.py`, wired in via `platformio.ini:2` (`extra_scripts = pre:extra_scripts/generate_protocol.py`). So `pio run`/`pio test` regenerate `src/Generated/` from the YAML on every build (`generate_protocol.py:35-48`). The explicit C command above is still useful for a quick check without a full build.
 
 3. **Generator deps** (one-time): `pip install -r Protocol/ProtoEmb/core/requirements.txt` (pyyaml ≥ 6.0, jinja2 ≥ 3.1 — verified contents). The firmware pre-hook installs these into PlatformIO's Python automatically (`generate_protocol.py:28-33`).
-4. **Update consumers** of the regenerated types: firmware (`Firmware/MaDCore/src/Generated/`), the shipped app (`Software/MaDWasmControl/src/protocol/generated/protoemb.ts`; regenerate via `npm run generate:proto`), and SIL (`SIL/mad-protocol/src/generated/protoemb.rs`). (The legacy Electron app's target was `Software/MaDControl/src/main/generated/protoemb.ts`, used by `BridgeHandler`.)
+4. **Update consumers** of the regenerated types: firmware (`Firmware/MaDCore/src/Generated/`), the shipped app (`Software/MaDWasmControl/src/protocol/generated/protoemb.ts`; regenerate via `npm run generate:proto`), and SIL (`Protocol/src/generated/protoemb.rs`). (The legacy Electron app's target was `Software/MaDControl/src/main/generated/protoemb.ts`, used by `BridgeHandler`.)
 5. **Commit the regenerated files together with the YAML change.** Do not let them drift. (Note: CI does **not** assert generated files are in sync with the YAML — see §11 — so this is on you.)
 
 ---
@@ -242,7 +242,7 @@ Every target carries a **DO NOT EDIT** banner (verified: `Firmware/.../protoemb.
 
 - `Firmware/MaDCore/src/Generated/` (`protoemb.{h,c}`, `protoemb_runtime.{h,c}`)
 - `Software/MaDWasmControl/src/protocol/generated/protoemb.ts` (shipped app; legacy: `Software/MaDControl/src/main/generated/protoemb.ts`)
-- `SIL/mad-protocol/src/generated/protoemb.rs`
+- `Protocol/src/generated/protoemb.rs`
 
 To change behavior, edit the **YAML** or, for structural output changes, the **Jinja templates** in `Protocol/ProtoEmb/core/templates/*.j2` — then regenerate.
 

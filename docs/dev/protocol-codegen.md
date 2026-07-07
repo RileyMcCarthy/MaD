@@ -31,7 +31,7 @@ python3 ./Protocol/ProtoEmb/core/generate.py \
 # Rust → SIL
 python3 ./Protocol/ProtoEmb/core/generate.py \
   --schema ./Protocol/MaDProtocol.yaml --target rs \
-  --output ./SIL/mad-protocol/src/generated \
+  --output ./Protocol/src/generated \
   --templates ./Protocol/ProtoEmb/core/templates
 ```
 
@@ -41,7 +41,7 @@ In practice you rarely run all three by hand — each consumer regenerates its o
 |---|---|---|
 | Firmware | (automatic) PlatformIO pre-hook on every build | `Firmware/MaDCore/src/Generated/` |
 | Web app | `npm run generate:proto` (in `Software/MaDWasmControl`) | `src/protocol/generated/` |
-| SIL | `make protocol` (in `SIL`) | `SIL/mad-protocol/src/generated/` |
+| SIL | `make protocol` (in `SIL`) | `Protocol/src/generated/` |
 
 !!! warning "Generated code is not hand-edited"
     Don't edit anything under a `Generated/` or `generated/` directory. Change the

@@ -215,7 +215,7 @@ jobs:
       - name: Run ruff (lint only)
         run: pipx run ruff==0.13.2 check --output-format=github Firmware/MaDCore/extra_scripts
 
-  # BLOCKING (cargo test). SIL Rust workspace: builds the generated mad-protocol
+  # BLOCKING (cargo test). SIL Rust workspace: builds the generated protocol
   # Rust (make protocol) + libfirmware.a (pio run -e native_emulator), then runs
   # clippy (advisory — informational) and cargo test (gating). Clippy is not
   # `-D warnings` yet (a pre-existing lint backlog remains); promote it by clearing
@@ -242,7 +242,7 @@ jobs:
           python-version: '3.11'
       - name: Install PlatformIO + protocol generator deps
         run: pip install --upgrade platformio pyyaml jinja2
-      - name: Generate mad-protocol Rust types (make protocol)
+      - name: Generate the Rust protocol codec (make protocol)
         working-directory: SIL
         run: make protocol
       - name: Build firmware native lib (libfirmware.a)
@@ -254,8 +254,8 @@ jobs:
         run: cargo clippy --workspace --all-targets
       - name: Cargo test (blocking)
         working-directory: SIL
-        # The workspace is the MaD-side crates only (mad-protocol,
-        # models, MaDSim); the embsim submodule's crates are tested
+        # The workspace is the MaD-side crates only (protocol, models,
+        # MaDSim); the embsim submodule's crates are tested
         # in their own repo's CI.
         run: cargo test --workspace --all-targets
 

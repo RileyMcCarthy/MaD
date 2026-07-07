@@ -8,7 +8,7 @@ MaD/
 │   └── src/  APP · DEV · IO · Library · HAL · HW · Generated · Main
 ├── Software/
 │   └── MaDWasmControl/      Browser control app (Web Serial + WASM) — the app you ship
-├── Protocol/
+├── Protocol/                Also the `protocol` crate (generated Rust codec, src/)
 │   ├── MaDProtocol.yaml     The single source-of-truth schema
 │   └── ProtoEmb/            ⎘ submodule → github.com/RileyMcCarthy/protoemb
 │       ├── core/            generate.py + Jinja templates
@@ -19,7 +19,6 @@ MaD/
 │   ├── embsim/              ⎘ submodule → github.com/RileyMcCarthy/embsim
 │   │                        (core, peripherals, models, runtime, p2, tools)
 │   ├── models/              MaD-specific physics (gantry, sample, strain gauge)
-│   ├── mad-protocol/        Generated Rust protocol types for SIL
 │   ├── MaDSim/              The mad-emulator binary (entry + machine wiring)
 │   ├── tests/               Playwright E2E specs
 │   └── test-fixtures/       Sample/motion profiles used by tests
@@ -37,7 +36,7 @@ change the YAML (or templates) and regenerate:
 |---|---|---|
 | C | `Firmware/MaDCore/src/Generated/` | Firmware (built via a PlatformIO pre-hook) |
 | TypeScript | `Software/MaDWasmControl/src/protocol/generated/` | The app |
-| Rust | `SIL/mad-protocol/src/generated/` | The SIL emulator |
+| Rust | `Protocol/src/generated/` | The SIL emulator |
 
 The same Rust runtime (`Protocol/ProtoEmb/runtime`) is compiled **two** ways: to a
 native **`protoemb-bridge`** binary, and to **WASM** for the browser app. See
@@ -48,7 +47,7 @@ native **`protoemb-bridge`** binary, and to **WASM** for the browser app. See
 - **`Protocol/ProtoEmb/runtime`** — the *generic* host runtime: the serial
   `Client`, priority queue, the NDJSON `protoemb-bridge` binary, and the WASM
   client the app loads. Reusable, not MaD-specific.
-- **`SIL/mad-protocol`** — *generated* MaD message types (structs/enums/codecs) for
+- **`Protocol (the `protocol` crate)`** — *generated* MaD message types (structs/enums/codecs) for
   the Rust/SIL side. It's the Rust equivalent of the generated C and TypeScript
   codecs.
 

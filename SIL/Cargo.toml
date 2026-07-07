@@ -1,6 +1,8 @@
 [workspace]
 members = [
-    "mad-protocol",
+    # Out-of-tree member: the generated Rust protocol codec lives next to the
+    # schema it comes from (see Protocol/Cargo.toml's `workspace` back-pointer).
+    "../Protocol",
     "models",
     "MaDSim",
 ]
