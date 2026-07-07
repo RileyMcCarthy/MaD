@@ -16,9 +16,9 @@ flowchart LR
 ```
 
 The toolchain itself is documented in the
-[ProtoEmb README](https://github.com/RileyMcCarthy/MaD/blob/main/Protocol/ProtoEmb/README.md)
+[ProtoEmb README](https://github.com/RileyMcCarthy/protoemb/blob/main/README.md)
 and the canonical
-[wire-format spec](https://github.com/RileyMcCarthy/MaD/blob/main/Protocol/ProtoEmb/docs/wire-format.md).
+[wire-format spec](https://github.com/RileyMcCarthy/protoemb/blob/main/docs/wire-format.md).
 This page summarises the MaD-specific contract.
 
 ## Frame layer

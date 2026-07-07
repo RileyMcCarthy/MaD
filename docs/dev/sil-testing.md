@@ -8,12 +8,13 @@ protocol, app — without hardware. All `make` commands run from `SIL/`.
 
 ```bash
 cd SIL
+git submodule update --init --recursive   # first time: embsim + ProtoEmb submodules
 make setup        # first time: npm deps
 make emulator     # build firmware (.a) + Rust protocol types + bridge, then cargo build
 ```
 
 `make emulator` chains the pieces: `make firmware` (`pio run -e native_emulator`),
-`make protocol` (generate Rust types into `mad-protocol`), `make bridge` (build
+`make protocol` (generate the Rust codec into `Protocol/rust/src/generated`), `make bridge` (build
 `protoemb-bridge`), then `cargo build`.
 
 | Target | What it does |

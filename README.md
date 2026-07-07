@@ -43,13 +43,13 @@ MaD/
 ├── Firmware/MaDCore/        Embedded C for the Propeller 2 (APP/DEV/IO/Library/HAL/HW)
 ├── Software/
 │   └── MaDWasmControl/      Browser control app (Web Serial + WASM) — the app you ship
-├── Protocol/
+├── Protocol/                Schema + toolchain + Rust codec crate
 │   ├── MaDProtocol.yaml     Single source-of-truth schema
-│   └── ProtoEmb/            Generator (→ C/TS/Rust) + framing/runtime crates + protoemb-bridge
+│   ├── rust/                The `protocol` crate — generated Rust codec (SIL workspace member)
+│   └── ProtoEmb/            ⎘ submodule → github.com/RileyMcCarthy/protoemb (YAML→C/TS/Rust codegen + runtime)
 ├── SIL/                     Software-in-the-loop test rig (Rust workspace)
-│   ├── embsim/              Reusable SIL framework (core, peripherals, models, runtime, p2, tools)
-│   ├── embsim-mad-models/   MaD physics models (gantry, sample, strain gauge)
-│   ├── mad-protocol/        Generated Rust protocol types for SIL
+│   ├── embsim/              ⎘ submodule → github.com/RileyMcCarthy/embsim (reusable SIL framework)
+│   ├── models/              MaD physics models (gantry, sample, strain gauge)
 │   ├── MaDSim/              The mad-emulator binary (entry + machine wiring)
 │   └── tests/               Playwright E2E specs
 ├── Hardware/                KiCad PCB designs (EdgeBoard, DS2Addon)
@@ -58,6 +58,12 @@ MaD/
 
 > A legacy Electron desktop app exists at `Software/MaDControl/`. The browser app
 > has reached full parity and is the documented, deployed application.
+
+> Two components are **git submodules** (they are standalone open-source
+> libraries): [`Protocol/ProtoEmb`](https://github.com/RileyMcCarthy/protoemb)
+> and [`SIL/embsim`](https://github.com/RileyMcCarthy/embsim). Clone with
+> `git clone --recurse-submodules`, or run
+> `git submodule update --init --recursive` in an existing checkout.
 
 ## How it fits together
 
@@ -109,7 +115,7 @@ stay in lock-step (the firmware also regenerates its C target on every build):
 # from repo root
 python3 ./Protocol/ProtoEmb/core/generate.py --schema ./Protocol/MaDProtocol.yaml --target c  --output ./Firmware/MaDCore/src/Generated         --templates ./Protocol/ProtoEmb/core/templates
 python3 ./Protocol/ProtoEmb/core/generate.py --schema ./Protocol/MaDProtocol.yaml --target ts --output ./Software/MaDWasmControl/src/protocol/generated --templates ./Protocol/ProtoEmb/core/templates
-python3 ./Protocol/ProtoEmb/core/generate.py --schema ./Protocol/MaDProtocol.yaml --target rs --output ./SIL/mad-protocol/src/generated          --templates ./Protocol/ProtoEmb/core/templates
+python3 ./Protocol/ProtoEmb/core/generate.py --schema ./Protocol/MaDProtocol.yaml --target rs --output ./Protocol/rust/src/generated          --templates ./Protocol/ProtoEmb/core/templates
 ```
 
 ## Documentation
