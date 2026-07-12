@@ -39,17 +39,14 @@ typedef enum
 
 typedef struct
 {
-    uint32_t zeroForceCount; // raw ADC reading at 0 N
-    /* ADC counts per Newton (signed: sign encodes load-cell polarity). Despite the
-     * misleading `forceGaugeNPerStep` name on the wire / UI side (kept for protocol
-     * back-compat), the stored value is counts-per-N — confirmed by the default
-     * calibration of -658 (an N-per-count value would round to 0 in int32). */
-    int32_t countPerForce;
+    int32_t capacity_mN;     // load cell rated capacity
+    int32_t sensitivity_nVV; // rated output at capacity, excitation-normalized (signed: sign encodes polarity)
+    int32_t zeroBalance_nVV; // bridge signal at zero force (tare)
 } dev_forceGauge_channelNVRAM_S;
 
 typedef struct
 {
-    uint32_t rawADC; // should really be voltage
+    int32_t signal_nVV; // excitation-normalized bridge signal from the ADC
     uint32_t responding;
 } dev_forceGauge_channelInput_S;
 
@@ -139,22 +136,24 @@ static void dev_forceGauge_private_runAction(dev_forceGauge_channel_E channel)
         dev_forceGauge_data.channel[channel].output.ready = false;
         break;
     case DEV_FORCEGAUGE_STATE_RUNNING:
-        dev_forceGauge_data.channel[channel].input.responding = IO_ADS122U04_receiveConversion(dev_forceGauge_channelConfig[channel].adcChannel, &dev_forceGauge_data.channel[channel].input.rawADC, 1000000);
+        dev_forceGauge_data.channel[channel].input.responding = IO_ADS122U04_receiveConversion(dev_forceGauge_channelConfig[channel].adcChannel, &dev_forceGauge_data.channel[channel].input.signal_nVV, 1000000);
         {
-            /* mN = (counts * 1000) / (counts/N).  *1000 is the only unit shift vs the previous
-             * version that returned N — downstream (app_control, sample log) now expects mN.
-             * lib_utility_muldiv64_signed returns 0 when countPerForce == 0. */
-            const int32_t normalizedCount = (int32_t)dev_forceGauge_data.channel[channel].input.rawADC -
-                                            (int32_t)dev_forceGauge_data.channel[channel].nvram.zeroForceCount;
+            /* mN = (signal - zeroBalance)[nV/V] * capacity[mN] / sensitivity[nV/V].
+             * All three constants are intrinsic to the load cell, so this holds
+             * across ADC gain/reference/type changes.
+             * lib_utility_muldiv64_signed returns 0 when sensitivity == 0. */
+            const int32_t normalizedSignal = dev_forceGauge_data.channel[channel].input.signal_nVV -
+                                             dev_forceGauge_data.channel[channel].nvram.zeroBalance_nVV;
             dev_forceGauge_data.channel[channel].output.force = lib_utility_muldiv64_signed(
-                normalizedCount, 1000, dev_forceGauge_data.channel[channel].nvram.countPerForce);
+                normalizedSignal, dev_forceGauge_data.channel[channel].nvram.capacity_mN,
+                dev_forceGauge_data.channel[channel].nvram.sensitivity_nVV);
         }
-        //DEBUG_INFO("Force Gauge %d: %d, %d, %d, %d\n", channel, dev_forceGauge_data.channel[channel].output.force, dev_forceGauge_data.channel[channel].input.rawADC, dev_forceGauge_data.channel[channel].nvram.zeroForceCount, dev_forceGauge_data.channel[channel].nvram.countPerForce);
+        DEBUG_INFO("Force Gauge %d: %d, %d, %d, %d\n", channel, dev_forceGauge_data.channel[channel].output.force, dev_forceGauge_data.channel[channel].input.signal_nVV, dev_forceGauge_data.channel[channel].nvram.zeroBalance_nVV, dev_forceGauge_data.channel[channel].nvram.sensitivity_nVV);
         dev_forceGauge_data.channel[channel].output.index++;
         dev_forceGauge_data.channel[channel].output.ready = true;
         break;
     case DEV_FORCEGAUGE_STATE_ERROR:
-        dev_forceGauge_data.channel[channel].input.responding = IO_ADS122U04_receiveConversion(dev_forceGauge_channelConfig[channel].adcChannel, &dev_forceGauge_data.channel[channel].input.rawADC, 100000); // TODO this is huge, needed for sim but maybe not hardware
+        dev_forceGauge_data.channel[channel].input.responding = IO_ADS122U04_receiveConversion(dev_forceGauge_channelConfig[channel].adcChannel, &dev_forceGauge_data.channel[channel].input.signal_nVV, 100000); // TODO this is huge, needed for sim but maybe not hardware
         dev_forceGauge_data.channel[channel].output.ready = false;
         break;
     default:
@@ -192,8 +191,9 @@ void dev_forceGauge_init(int lock)
     for (dev_forceGauge_channel_E channel = (dev_forceGauge_channel_E)0U; channel < DEV_FORCEGAUGE_CHANNEL_COUNT; channel++)
     {
         dev_forceGauge_data.channel[channel].state = DEV_FORCEGAUGE_STATE_INIT;
-        dev_forceGauge_data.channel[channel].nvram.zeroForceCount = machineProfile.forceGaugeZeroOffset; // @todo make this voltage :)
-        dev_forceGauge_data.channel[channel].nvram.countPerForce = machineProfile.forceGaugeNPerStep;
+        dev_forceGauge_data.channel[channel].nvram.capacity_mN = machineProfile.loadCellCapacity;
+        dev_forceGauge_data.channel[channel].nvram.sensitivity_nVV = machineProfile.loadCellSensitivity;
+        dev_forceGauge_data.channel[channel].nvram.zeroBalance_nVV = machineProfile.loadCellZeroBalance;
     }
     dev_forceGauge_data.lock = lock;
 }

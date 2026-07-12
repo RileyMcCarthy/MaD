@@ -135,21 +135,22 @@ impl Machine for MadMachine {
             lower_threshold_mm: 300.0,
         });
 
+        // Mirrors the default machine profile's intrinsic load-cell model:
+        // capacity 100 N, sensitivity -4.868009 mV/V at capacity, zero balance 0.
+        // Negative because load cell differential output is inverted for tension.
         let strain_g = strain_gauge::StrainGauge::new(strain_gauge::Config {
-            full_scale_force_n: 50.0,
-            // Calibrated to match firmware: forceGaugeNPerStep = -658 ADC counts/N
-            //   counts/N = (mV_per_N * gain * 2^23) / Vref
-            //   -658 = (FULL_SCALE_MV / 50) * 8388608 / 2048
-            //   FULL_SCALE_MV = -658 * 50 * 2048 / 8388608 = -8.0322265625
-            // Negative because load cell differential output is inverted for tension.
-            sensitivity_mv_per_v: -1.60644531250,
-            excitation_v: 5.0,
+            full_scale_force_n: 100.0,
+            sensitivity_mv_per_v: -4.868009,
+            excitation_v: 3.3,
         });
 
+        // Ratiometric like the firmware config: VREF = AVDD = bridge excitation,
+        // PGA gain 128. Firmware recovers signal[nV/V] = counts * 1e9 / (128 * 2^23),
+        // so the excitation cancels and force = signal * capacity / sensitivity.
         let (adc, fg_fd) = ads122u04::Ads122u04::new(ads122u04::Config {
-            vref_mv: 2048.0,
-            gain: 1.0,
-            zero_offset: 16119601,
+            vref_mv: 3300.0,
+            gain: 128.0,
+            zero_offset: 0,
         });
 
         let sample = Sample::new(SampleConfig {

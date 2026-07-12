@@ -1,4 +1,4 @@
-protocol_version: 1
+protocol_version: 2
 
 nodes:
   - ui
@@ -268,13 +268,18 @@ structs:
         type: int32
         unit: steps/mm
         scale: 1
-      - name: forceGaugeNPerStep
+      - name: loadCellCapacity
         type: int32
-        unit: N/step
+        unit: N
+        scale: 1000       # stored as mN
+        raw_storage: true # struct/wire hold mN directly; codec must not re-scale
+      - name: loadCellSensitivity
+        type: int32
+        unit: nV/V        # rated output at capacity, excitation-normalized (datasheet mV/V * 1e6)
         scale: 1
-      - name: forceGaugeZeroOffset
+      - name: loadCellZeroBalance
         type: int32
-        unit: steps
+        unit: nV/V        # bridge signal at zero force (tare), excitation-normalized
         scale: 1
       - name: maxPosition
         type: int32

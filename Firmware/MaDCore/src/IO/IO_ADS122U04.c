@@ -19,12 +19,13 @@
 #define IO_ADS122U04_SYNC 0x55
 #define IO_ADS122U04_CMD_RESET 0x06
 #define IO_ADS122U04_CMD_START 0x08
+#define IO_ADS122U04_CMD_RDATA 0x10
 
 #define IO_ADS122U04_CONFIG0_MUX(mux) LIB_UTILITY_CREATE_MASK(4, 4, mux)
 #define IO_ADS122U04_CONFIG0_GAIN(gain) LIB_UTILITY_CREATE_MASK(3, 1, gain)
 #define IO_ADS122U04_CONFIG0_PGA_BYPASS(bypass) LIB_UTILITY_CREATE_MASK(1, 0, bypass)
 
-#define IO_ADS122U04_CONFIG1_DATA_RATE(rate) LIB_UTILITY_CREATE_MASK(2, 5, rate)
+#define IO_ADS122U04_CONFIG1_DATA_RATE(rate) LIB_UTILITY_CREATE_MASK(3, 5, rate)
 #define IO_ADS122U04_CONFIG1_OPERATING_MODE(om) LIB_UTILITY_CREATE_MASK(1, 4, om)
 #define IO_ADS122U04_CONFIG1_CONVERSION_MODE(cm) LIB_UTILITY_CREATE_MASK(1, 3, cm)
 #define IO_ADS122U04_CONFIG1_VREF(vref) LIB_UTILITY_CREATE_MASK(2, 1, vref)
@@ -215,14 +216,14 @@ static IO_ADS122U04_channelConfig_S IO_ADS122U04_channelConfig[IO_ADS122U04_CHAN
         {
             (
                 IO_ADS122U04_CONFIG0_MUX(IO_ADS122U04_CONFIG0_MUX_AIN0_AIN1) |
-                IO_ADS122U04_CONFIG0_GAIN(IO_ADS122U04_CONFIG0_GAIN_1) |
+                IO_ADS122U04_CONFIG0_GAIN(IO_ADS122U04_CONFIG0_GAIN_128) |
                 IO_ADS122U04_CONFIG0_PGA_BYPASS(IO_ADS122U04_CONFIG0_PGA_BYPASS_OFF)
             ),
             (
                 IO_ADS122U04_CONFIG1_DATA_RATE(IO_ADS122U04_CONFIG1_DATA_RATE_1000SPS) |
                 IO_ADS122U04_CONFIG1_OPERATING_MODE(IO_ADS122U04_CONFIG1_OPERATING_MODE_NORMAL) |
                 IO_ADS122U04_CONFIG1_CONVERSION_MODE(IO_ADS122U04_CONFIG1_CONVERSION_MODE_CONTINUOUS) |
-                IO_ADS122U04_CONFIG1_VREF(IO_ADS122U04_CONFIG1_VREF_INTERNAL) |
+                IO_ADS122U04_CONFIG1_VREF(IO_ADS122U04_CONFIG1_VREF_AVDD_AVSS) |
                 IO_ADS122U04_CONFIG1_TEMP_SENSOR(IO_ADS122U04_CONFIG1_TEMP_SENSOR_OFF)
             ),
             (
@@ -235,7 +236,7 @@ static IO_ADS122U04_channelConfig_S IO_ADS122U04_channelConfig[IO_ADS122U04_CHAN
             (
                 IO_ADS122U04_CONFIG3_IDAC1(IO_ADS122U04_CONFIG3_IDAC_OFF) |
                 IO_ADS122U04_CONFIG3_IDAC2(IO_ADS122U04_CONFIG3_IDAC_OFF) |
-                IO_ADS122U04_CONFIG3_CONVERION_MODE(IO_ADS122U04_CONFIG3_CONVERSION_AUTO)
+                IO_ADS122U04_CONFIG3_CONVERION_MODE(IO_ADS122U04_CONFIG3_CONVERSION_MANUAL)
             ),
             (
                 IO_ADS122U04_CONFIG4_GPIO2_DIR(IO_ADS122U04_CONFIG_GPIO_DIR_INPUT) |
@@ -257,14 +258,14 @@ static IO_ADS122U04_channelConfig_S IO_ADS122U04_channelConfig[IO_ADS122U04_CHAN
         .configRegister = {
             [IO_ADS122U04_CONFIG_REGISTER_0] = (
                 IO_ADS122U04_CONFIG0_MUX(IO_ADS122U04_CONFIG0_MUX_AIN0_AIN1) |
-                IO_ADS122U04_CONFIG0_GAIN(IO_ADS122U04_CONFIG0_GAIN_1) |
+                IO_ADS122U04_CONFIG0_GAIN(IO_ADS122U04_CONFIG0_GAIN_128) |
                 IO_ADS122U04_CONFIG0_PGA_BYPASS(IO_ADS122U04_CONFIG0_PGA_BYPASS_OFF)
             ),
             [IO_ADS122U04_CONFIG_REGISTER_1] = (
                 IO_ADS122U04_CONFIG1_DATA_RATE(IO_ADS122U04_CONFIG1_DATA_RATE_1000SPS) |
                 IO_ADS122U04_CONFIG1_OPERATING_MODE(IO_ADS122U04_CONFIG1_OPERATING_MODE_NORMAL) |
                 IO_ADS122U04_CONFIG1_CONVERSION_MODE(IO_ADS122U04_CONFIG1_CONVERSION_MODE_CONTINUOUS) |
-                IO_ADS122U04_CONFIG1_VREF(IO_ADS122U04_CONFIG1_VREF_INTERNAL) |
+                IO_ADS122U04_CONFIG1_VREF(IO_ADS122U04_CONFIG1_VREF_AVDD_AVSS) |
                 IO_ADS122U04_CONFIG1_TEMP_SENSOR(IO_ADS122U04_CONFIG1_TEMP_SENSOR_OFF)
             ),
             [IO_ADS122U04_CONFIG_REGISTER_2] = (
@@ -277,7 +278,7 @@ static IO_ADS122U04_channelConfig_S IO_ADS122U04_channelConfig[IO_ADS122U04_CHAN
             [IO_ADS122U04_CONFIG_REGISTER_3] = (
                 IO_ADS122U04_CONFIG3_IDAC1(IO_ADS122U04_CONFIG3_IDAC_OFF) |
                 IO_ADS122U04_CONFIG3_IDAC2(IO_ADS122U04_CONFIG3_IDAC_OFF) |
-                IO_ADS122U04_CONFIG3_CONVERION_MODE(IO_ADS122U04_CONFIG3_CONVERSION_AUTO)
+                IO_ADS122U04_CONFIG3_CONVERION_MODE(IO_ADS122U04_CONFIG3_CONVERSION_MANUAL)
             ),
             [IO_ADS122U04_CONFIG_REGISTER_4] = (
                 IO_ADS122U04_CONFIG4_GPIO2_DIR(IO_ADS122U04_CONFIG_GPIO_DIR_INPUT) |
@@ -331,13 +332,17 @@ bool IO_ADS122U04_start(IO_ADS122U04_channel_E channel)
     HAL_time_waitMs(100);
 
 
+
     // write the configuration
     for (IO_ADS122U04_configRegister_E reg = (IO_ADS122U04_configRegister_E)0U; reg < IO_ADS122U04_REGISTER_COUNT; reg++)
     {
         IO_ADS122U04_writeRegister(channel, reg, IO_ADS122U04_channelConfig[channel].configRegister[reg]);
     }
 
-    // read back the configuration
+    // read back the configuration, ignoring live status bits that do not store
+    // what was written: reg2 bit7 is the read-only DRDY flag, and the reg4 DAT
+    // bits [2:0] reflect pin state when the GPIOs are inputs
+    static const uint8_t IO_ADS122U04_verifyMask[IO_ADS122U04_REGISTER_COUNT] = {0xFFU, 0xFFU, 0x7FU, 0xFFU, 0xF8U};
     for (IO_ADS122U04_configRegister_E reg = (IO_ADS122U04_configRegister_E)0U; reg < IO_ADS122U04_REGISTER_COUNT; reg++)
     {
         uint8_t temp = 0U;
@@ -346,7 +351,7 @@ bool IO_ADS122U04_start(IO_ADS122U04_channel_E channel)
             DEBUG_ERROR("ADS122U04 Configuration Error: Register %d timeout\n", reg);
             return false;
         }
-        if (temp != IO_ADS122U04_channelConfig[channel].configRegister[reg])
+        if ((temp & IO_ADS122U04_verifyMask[reg]) != (IO_ADS122U04_channelConfig[channel].configRegister[reg] & IO_ADS122U04_verifyMask[reg]))
         {
             DEBUG_ERROR("ADS122U04 Configuration Error: Register %d, Expected %d, Got %d\n", reg, IO_ADS122U04_channelConfig[channel].configRegister[reg], temp);
             return false;
@@ -365,11 +370,26 @@ void IO_ADS122U04_stop(IO_ADS122U04_channel_E channel)
     HAL_serial_stop(IO_ADS122U04_channelConfig[channel].serialChannel);
 }
 
-bool IO_ADS122U04_receiveConversion(IO_ADS122U04_channel_E channel, uint32_t *conversion, uint32_t timeout_ms)
+bool IO_ADS122U04_receiveConversion(IO_ADS122U04_channel_E channel, int32_t *signal_nVV, uint32_t timeout_ms)
 {
+    /* Manual data read mode (per the datasheet's reference flow): conversions run
+     * continuously in the device, but each result is fetched with an explicit
+     * RDATA command and answered as exactly 3 framed bytes. The request/response
+     * shape makes byte alignment deterministic — the free-running AUTO stream has
+     * no frame markers, so a single missed byte would rotate every later reading. */
     uint8_t bval[3];
+    uint8_t stale;
+    while (HAL_serial_recieveDataTimeout(IO_ADS122U04_channelConfig[channel].serialChannel, &stale, 1, 0) == true)
+    {
+        // drain any bytes left over from a previous timed-out request
+    }
+    IO_ADS122U04_sendCommand(channel, IO_ADS122U04_CMD_RDATA);
     const bool valid = HAL_serial_recieveDataTimeout(IO_ADS122U04_channelConfig[channel].serialChannel, &bval[0], 3, timeout_ms);
-    *conversion = (bval[2] << 16) | (bval[1] << 8) | bval[0];
+    // 24-bit two's complement, LSB first on the wire; sign-extend to 32 bits
+    const int32_t counts = ((int32_t)(((uint32_t)bval[2] << 24) | ((uint32_t)bval[1] << 16) | ((uint32_t)bval[0] << 8))) >> 8;
+    // ratiometric (VREF = excitation): signal[nV/V] = counts * 1e9 / (gain * 2^23)
+    const int32_t gain = 1 << ((IO_ADS122U04_channelConfig[channel].configRegister[IO_ADS122U04_CONFIG_REGISTER_0] >> 1) & 0x7);
+    *signal_nVV = lib_utility_muldiv64_signed(counts, 1000000000, gain << 23);
     return valid;
 }
 

@@ -11,8 +11,9 @@ typedef struct
     char name[DEV_NVRAM_MAX_MACHINE_PROFILE_NAME]; // Name of the machine profile
     int encoderStepsPerMM;                         // Steps per mm of the encoder
     int servoStepsPerMM;                           // Steps per mm of the servo
-    int forceGaugeNPerStep;                        // Force gauge N per step
-    int forceGaugeZeroOffset;                      // Force gauge zero offset
+    int loadCellCapacity;                          // Load cell rated capacity (mN)
+    int loadCellSensitivity;                       // Load cell rated output at capacity (nV/V, signed: sign encodes polarity)
+    int loadCellZeroBalance;                       // Bridge signal at zero force / tare (nV/V)
 
     int maxPosition;     // Maximum position of the machine (mm)
     int maxVelocity;     // Maximum velocity of the machine (mm/s)

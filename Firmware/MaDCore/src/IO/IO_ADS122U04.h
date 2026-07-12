@@ -31,7 +31,12 @@ typedef enum
 
 bool IO_ADS122U04_start(IO_ADS122U04_channel_E channel);
 void IO_ADS122U04_stop(IO_ADS122U04_channel_E channel);
-bool IO_ADS122U04_receiveConversion(IO_ADS122U04_channel_E channel, uint32_t *conversion, uint32_t timeout_ms);
+/* Receives one conversion and returns the input-referred bridge signal in nV/V
+ * (normalized to the excitation rail). The channel is configured ratiometric
+ * (VREF = AVDD = bridge excitation), so gain, resolution, and reference are
+ * fully abstracted from callers — swapping the ADC or its gain changes nothing
+ * upstream. */
+bool IO_ADS122U04_receiveConversion(IO_ADS122U04_channel_E channel, int32_t *signal_nVV, uint32_t timeout_ms);
 
 /**********************************************************************
  * End of File
