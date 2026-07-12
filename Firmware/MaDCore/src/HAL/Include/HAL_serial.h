@@ -32,9 +32,34 @@ typedef enum
     HAL_SERIAL_CHANNEL_COUNT,
 } HAL_serial_channel_E;
 
+typedef enum
+{
+    HAL_SERIAL_TYPE_HARDWARE,
+    HAL_SERIAL_TYPE_BUILTIN,
+    HAL_SERIAL_TYPE_COUNT,
+} HAL_serial_type_E;
+
+typedef struct
+{
+    const HW_pin_E rx;
+    const HW_pin_E tx;
+    const int32_t baud;
+    const HAL_serial_type_E type;
+    bool LSB;
+} HAL_serial_channelConfig_S;
+
 // we can either abstract using channels or have memory live in a passed struct
 // I think using channels is cleaner but we should be mindful of where memory is allocated (should be hub)
 // in conclusion, its fine to use channels across cogs, just make sure 1 channel = 1 cog
+/**********************************************************************
+ * External Variables
+ **********************************************************************/
+
+/* Channel wiring/config table. Lives in HAL/Config (data-only, compiled for
+ * every target) so the SIL emulator can read the same pin/baud truth the
+ * hardware runs — part of the firmware<->emulator contract. */
+extern const HAL_serial_channelConfig_S HAL_serial_channelConfig[HAL_SERIAL_CHANNEL_COUNT];
+
 /**********************************************************************
  * Public Function Definitions
  **********************************************************************/

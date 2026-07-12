@@ -34,28 +34,7 @@
  **********************************************************************/
 static HAL_encoder_channelData_S HAL_encoder_channelData[HAL_ENCODER_CHANNEL_COUNT];
 
-// Hardware configuration for each encoder channel
-#ifdef __FLEXC__
-static const HAL_encoder_config_S HAL_encoder_config[HAL_ENCODER_CHANNEL_COUNT] = {
-    {
-        HW_PIN_SERVO_ENCODER_A,
-        HW_PIN_SERVO_ENCODER_B,
-        0,
-        -1000000,
-        1000000,
-    },
-};
-#else
-static const HAL_encoder_config_S HAL_encoder_config[HAL_ENCODER_CHANNEL_COUNT] = {
-    [HAL_ENCODER_CHANNEL_SERVO] = {
-        .pinA = HW_PIN_SERVO_ENCODER_A,
-        .pinB = HW_PIN_SERVO_ENCODER_B,
-        .preset = 0,
-        .lo = -1000000,
-        .hi = 1000000,
-    },
-};
-#endif
+// channel config table lives in HAL/Config/HAL_encoder_config.c (data-only, all targets)
 
 /**********************************************************************
  * Private Function Prototypes

@@ -28,22 +28,6 @@
  * Typedefs
  **********************************************************************/
 
-typedef enum
-{
-    HAL_SERIAL_TYPE_HARDWARE,
-    HAL_SERIAL_TYPE_BUILTIN,
-    HAL_SERIAL_TYPE_COUNT,
-} HAL_serial_type_E;
-
-typedef struct
-{
-    const HW_pin_E rx;
-    const HW_pin_E tx;
-    const int32_t baud;
-    const HAL_serial_type_E type;
-    bool LSB;
-} HAL_serial_channelConfig_S;
-
 /**********************************************************************
  * External Variables
  **********************************************************************/
@@ -51,15 +35,7 @@ typedef struct
 /**********************************************************************
  * Private Variable Definitions
  **********************************************************************/
-static HAL_serial_channelConfig_S HAL_serial_channelConfig[HAL_SERIAL_CHANNEL_COUNT] = {
-    {HW_PIN_FORCE_GAUGE_RX, HW_PIN_FORCE_GAUGE_TX, 115200, HAL_SERIAL_TYPE_HARDWARE, false}, // FORCE_GAUGE
-#if ENABLE_DEBUG_SERIAL
-    // leave the MAIN_RX and MAIN_TX open for debug serial
-    {HW_PIN_RPI_RX, HW_PIN_RPI_TX, 2000000, HAL_SERIAL_TYPE_HARDWARE, false}, // MAIN
-#else
-    {HW_PIN_MAIN_RX, HW_PIN_MAIN_TX, 2000000, HAL_SERIAL_TYPE_BUILTIN, false}, // MAIN
-#endif
-};
+// channel config table lives in HAL/Config/HAL_serial_config.c (data-only, all targets)
 /**********************************************************************
  * Private Function Prototypes
  **********************************************************************/

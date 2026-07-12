@@ -9,6 +9,8 @@
  * Includes
  **********************************************************************/
 #include <stdbool.h>
+
+#include "HW_pins.h"
 /**********************************************************************
  * Constants
  **********************************************************************/
@@ -35,6 +37,21 @@ typedef enum
     HAL_GPIO_CHARGE_PUMP,
     HAL_GPIO_COUNT,
 } HAL_GPIO_channel_E;
+
+typedef struct
+{
+    const HW_pin_E pin;
+    const bool activeLow;
+} HAL_GPIO_channelConfig_S;
+
+/**********************************************************************
+ * External Variables
+ **********************************************************************/
+
+/* Channel wiring/config table. Lives in HAL/Config (data-only, compiled for
+ * every target) so the SIL emulator can read the same pin truth the hardware
+ * runs — part of the firmware<->emulator contract. */
+extern const HAL_GPIO_channelConfig_S HAL_GPIO_channelConfig[HAL_GPIO_COUNT];
 
 /**********************************************************************
  * Public Function Definitions

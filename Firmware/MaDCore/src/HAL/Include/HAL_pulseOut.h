@@ -26,6 +26,22 @@ typedef enum
     HAL_PULSE_OUT_CHANNEL_SERVO,
     HAL_PULSE_OUT_CHANNEL_COUNT,
 } HAL_pulseOut_channel_E;
+
+typedef struct
+{
+    const uint32_t maxHardwareClockCyclePerStep;
+    const uint8_t pin;
+} HAL_pulseOut_channelConfig_S;
+
+/**********************************************************************
+ * External Variables
+ **********************************************************************/
+
+/* Channel wiring/config table. Lives in HAL/Config (data-only, compiled for
+ * every target) so the SIL emulator can read the same pin truth the hardware
+ * runs — part of the firmware<->emulator contract. */
+extern const HAL_pulseOut_channelConfig_S HAL_pulseOut_channelConfig[HAL_PULSE_OUT_CHANNEL_COUNT];
+
 /**********************************************************************
  * Public Function Definitions
  **********************************************************************/
