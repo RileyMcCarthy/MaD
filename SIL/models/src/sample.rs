@@ -4,6 +4,25 @@
 //! updates in mm via `on_extension()` callback, calculates force in Newtons,
 //! and fires `on_change` so downstream models (strain gauge) get updated.
 //!
+//! # Provenance (physics model — no datasheet)
+//!
+//! Governing equation: 1D linear-elastic uniaxial tension (Hooke's law for
+//! a uniform bar),
+//!
+//! ```text
+//! F[N] = k · δ[mm],   k[N/mm] = E[MPa] · A[mm²] / L0[mm]
+//! ```
+//!
+//! where the axial stiffness `k` is either given directly or derived from
+//! Young's modulus, cross-sectional area, and gauge length. Compression is
+//! clamped to zero force (a tensile sample goes slack, it does not push).
+//! Plasticity/yield, viscoelasticity, necking, and fracture are not modeled
+//! — the model stays linear to any extension.
+//!
+//! Parameter sources: material presets and per-scenario stiffness live in
+//! the system description (`MaDSim/src/wiring.rs`); modulus values are
+//! textbook nominals for the preset materials, not measurements.
+//!
 //! Has no knowledge of MCU peripherals or drivers.
 
 use embsim_core::event::Observers;
