@@ -1,0 +1,88 @@
+# Blocks merge (via required status check) until Copilot has reviewed the current
+# PR head. Unresolved review threads are enforced by the branch ruleset
+# ("Require conversation resolution"), not this workflow.
+name: copilot-review-gate
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  pull_request_review:
+    types: [submitted, dismissed]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: copilot-review-gate-${{ github.event.pull_request.number || github.event.pull_request_review.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  copilot-review-gate:
+    name: copilot-review-gate
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require Copilot review on current head
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            const pull_number =
+              context.payload.pull_request?.number ??
+              context.payload.pull_request_review?.pull_request?.number;
+            if (!pull_number) {
+              core.setFailed('Could not resolve PR number for this event.');
+              return;
+            }
+
+            const pr = await github.rest.pulls.get({ owner, repo, pull_number });
+            if (pr.data.draft) {
+              core.info(`PR #${pull_number} is draft; gate not required.`);
+              return;
+            }
+            const headSha = pr.data.head.sha;
+
+            const isCopilot = (login) => {
+              if (!login) return false;
+              const l = login.toLowerCase();
+              return (
+                l === 'copilot-pull-request-reviewer[bot]' ||
+                l === 'copilot-pull-request-reviewer' ||
+                (l.includes('copilot') && l.includes('reviewer'))
+              );
+            };
+
+            const reviews = await github.paginate(github.rest.pulls.listReviews, {
+              owner,
+              repo,
+              pull_number,
+              per_page: 100,
+            });
+
+            const copilotReviews = reviews.filter((r) => isCopilot(r.user?.login));
+            const onHead = copilotReviews.filter((r) => r.commit_id === headSha);
+
+            if (onHead.length === 0) {
+              const anyNote =
+                copilotReviews.length > 0
+                  ? ` Copilot reviewed earlier commit(s) (${[...new Set(
+                      copilotReviews.map((r) => r.commit_id?.slice(0, 7)).filter(Boolean)
+                    )].join(', ')}), but not current head ${headSha.slice(0, 7)}. Wait for re-review (ruleset: review on push) or re-request Copilot.`
+                  : ' Copilot has not submitted a review yet. Wait for auto-review, or request the Copilot reviewer on the PR.';
+              core.setFailed(
+                `Merge gate: no Copilot code review on head ${headSha.slice(0, 7)}.${anyNote}`
+              );
+              return;
+            }
+
+            core.info(
+              `OK: Copilot review present on head ${headSha.slice(0, 7)} ` +
+                `(${onHead.length} review(s); state(s): ${onHead.map((r) => r.state).join(', ')}).`
+            );
+            core.info(
+              'Unresolved review threads are enforced by the branch ruleset ' +
+                '("Require conversation resolution"), not this check.'
+            );
