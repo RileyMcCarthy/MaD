@@ -178,7 +178,7 @@ typedef struct __attribute__((packed))
 int32_t steps = (int32_t)(((int64_t)moveTargetUm * app_motion_data.stepsPerMM) / 1000LL);
 ```
 
-- Compare booleans explicitly against `false`/`true` rather than relying on implicit truthiness in loop/guard conditions (project style): `if (app_motion_data.inputs.motionEnabled == false)` (`src/APP/app_motion.c:133`), `while (APP_MOTION_LOCK_REQ() == false)` (`src/APP/app_motion.c:39`).
+- Compare booleans explicitly against `false`/`true` rather than relying on implicit truthiness or `!` in loop/guard conditions (project style): `if (app_motion_data.inputs.motionEnabled == false)` (`src/APP/app_motion.c:133`), `while (APP_MOTION_LOCK_REQ() == false)` (`src/APP/app_motion.c:39`). **Do not write `if (!flag)` for booleans in new code** — use `== false` / `== true`. Pointer checks may still use `== NULL` / `!= NULL`.
 - `const`-qualify pointer-to-input parameters and locals that don't change: `bool app_motion_addMove(const app_motion_move_t *move)` (`src/APP/app_motion.h:71`), `const int32_t jawOffsetSteps = ...` (`src/APP/app_motion.c:200`).
 - Make file-private functions and the module state struct `static` (MISRA 8.7/8.8). New private helpers should be `static` even if older files aren't.
 - Always give `switch` a `default:` and handle the `_COUNT` sentinel explicitly where the enum has one, even if it's a no-op (`src/APP/app_motion.c:161`, `:221`):
@@ -189,7 +189,14 @@ default:
     break;
 ```
 
-**Single-exit vs early-return**: the codebase uses **both**. Library/guard code uses early returns for invalid input (`src/Library/lib_staticQueue.c:23`), while state-machine helpers use a single `desiredState`/result variable returned once at the end (`src/APP/app_motion.c:130-167`, `src/DEV/watchdog.c:108-133`). Prefer the single-result pattern for state logic; early-return guards are fine for `NULL`/range checks.
+**Single-exit vs early-return**: the codebase uses **both**, with a clear split:
+
+| Context | Style |
+|---------|--------|
+| State-machine helpers (`getDesiredState`, tick bodies, transition logic) | **Single exit** — assign `desiredState` / result, return once at the end (`src/APP/app_motion.c:130-167`, `src/DEV/watchdog.c:108-133`) |
+| Public API / library boundary guards | **Early return** after `DEBUG_*` for `NULL`, invalid channel, full queue, etc. (`src/Library/lib_staticQueue.c:23`) |
+
+Do **not** ban early returns project-wide; do **not** sprinkle early returns through the middle of a state tick.
 
 **Don't**
 - Don't introduce implicit narrowing or signed/unsigned mixing without a cast (MISRA Rule 10.x). Note `native_emulator` adds `-Wno-sign-compare` (`platformio.ini:84`) — don't rely on that; cppcheck/MISRA still flags it.
@@ -279,7 +286,11 @@ Every cog carries a `watchdog_channel_t` and must be kicked; new channels add a 
 
 ## State-machine module idiom
 
-App/DEV modules follow a strict `init` → `run` shape, where `run` is `processInputs → getDesiredState → processOutputs`. Inputs are **snapshotted into the module's `inputs` struct once per tick** so the rest of the tick sees one consistent view. `src/APP/app_motion.c:48`:
+Stateful `APP/` / `DEV/` / multi-state `IO/` modules follow a strict **`init` → `run`** shape. The tick body is:
+
+`processInputs` → `getDesiredState` → (on change: `exitAction` → `entryAction`) → do-work / `processOutputs`.
+
+Inputs are **snapshotted once per tick** so the rest of the tick sees one consistent view. Do not re-call external getters from transition helpers or output paths. Example snapshot rule, `src/APP/app_motion.c:48`:
 
 ```c
 /* All external state read by this module must be cached here by
@@ -287,15 +298,26 @@ App/DEV modules follow a strict `init` → `run` shape, where `run` is `processI
  * helpers, state-machine handlers, or processOutputs. */
 ```
 
+**Full pattern** (entry/exit on transition) — `src/DEV/watchdog.c`, `src/DEV/dev_nvram.c`, `src/DEV/dev_stepper.c`, `src/IO/IO_SDCard.c`:
+
 ```c
-void app_motion_run(void)
+void module_run(/* channel if multi-instance */)
 {
-    app_motion_private_processInputs();                          // read once, into inputs{}
-    app_motion_data.state = app_motion_private_getDesiredState(); // pure transition
-    app_motion_private_processOutputs();                          // publish under lock
+    module_private_processInputs(ch);                 /* snapshot external state once */
+    state_t desired = module_private_getDesiredState(ch); /* pure-ish transition */
+    if (desired != current)
+    {
+        module_private_exitAction(ch, current);       /* leave old state */
+        current = desired;
+        module_private_entryAction(ch, desired);      /* enter new state */
+    }
+    /* in-state work / processOutputs; publish under module lock as needed */
 }
 ```
-(`src/APP/app_motion.c:334`.) Follow this for new stateful modules: a transition function returns the next state and is otherwise side-effect-light, and outputs are published under the module lock.
+
+**Simpler modules** may omit entry/exit when there are no enter/leave side effects and only need `processInputs` → `getDesiredState` → `processOutputs` (e.g. `src/APP/app_motion.c:334`). Prefer the full entry/exit form for anything with non-trivial state-dependent setup/teardown.
+
+**Public surface:** `module_init` once at startup; `module_run` (or cog-wired equivalent) every period; brief lock → copy → unlock on getters/setters.
 
 ---
 
@@ -323,6 +345,33 @@ DEBUG_INFO("G4 command pausing for %u ms", app_motion_data.currentMove.p);
 
 Levels (all defined in `src/IO/IO_Debug.h`): `DEBUG_WARNING` yellow (`:33`), `DEBUG_INFO` green (`:35`), `DEBUG_ERROR` red (`:37`).
 - **Watchdog**: each cog `watchdog_kick(channel)`s within its loop; `watchdog_isAlive` / `watchdog_isAllAlive` feed `APP_CONTROL_FAULT_WATCHDOG` (`src/APP/app_control.h:38`). Don't add a long-running cog step without keeping the kick cadence under `TIMEOUT_ERROR` (2000 ms, `src/DEV/watchdog.c:19`).
+
+---
+
+## Testing new firmware behaviour
+
+New modules and non-trivial behaviour changes need tests — not only “builds on hardware.”
+
+**Do**
+- Add or extend **Unity** tests under `Firmware/MaDCore/test/` and run `pio test -e native_test` from `Firmware/MaDCore/`.
+- When the module is not already in the `native_test` source filter (`platformio.ini`), **add it** so ASan actually links the code under test.
+- Cover state transitions, fault/restriction paths, invalid inputs, and lock-free/SPSC contracts where relevant.
+- For behaviour that depends on motion, force, NVRAM, or multi-cog timing, add or extend **SIL** coverage (`SIL/`) in addition to unit tests.
+
+**Don't**
+- Ship new APP/DEV state machines or public control-path APIs with zero automated coverage.
+- Rely solely on `pio run -e propeller2` as proof of correctness (pointer size / timing differ on native).
+
+Suggested local loop for a firmware change:
+
+```bash
+# from Firmware/MaDCore/
+pio check
+pio run -e native_emulator
+pio test -e native_test
+# from SIL/ when behaviour crosses the emulator
+make test
+```
 
 ---
 
@@ -425,12 +474,16 @@ Rules (forward-looking — nothing in the repo uses these yet):
 **Do**
 - Copy `template.cx`/`template.ch`; rename the include guard; keep banner sections in order.
 - `module_action` public, `module_private_action` `static`; one `static module_data`.
-- `stdint`/`bool`, explicit casts, `(void)` ignored returns, `default:` on every switch.
+- Stateful modules: `init` / `run` with `processInputs` → `getDesiredState` → `exit`/`entry` on change → outputs.
+- `stdint`/`bool`, explicit `== false`/`== true` (no `!` on bools), explicit casts, `(void)` ignored returns, `default:` on every switch.
+- Single-exit for SM helpers; early-return only at API/library boundaries.
 - Lock briefly around your own data only; document SPSC ownership for queues.
 - Log with `DEBUG_*("%s", ...)`; kick the watchdog in every cog loop.
+- Add Unity (`native_test`) and, when needed, SIL coverage for new behaviour.
 
 **Don't**
 - Don't include MCU/P2 headers above HAL, or call upward across layers (except `IO_Debug.h` for logging).
 - Don't call another module's API while holding your lock (ABBA).
 - Don't hand-edit `src/Generated/` or `src/IO/generated/`.
 - Don't suppress MISRA/CERT findings to pass `pio check` — fix them.
+- Don't ship new stateful control-path code without automated tests.
