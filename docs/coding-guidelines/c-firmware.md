@@ -1,6 +1,6 @@
 # C / Firmware Coding Guidelines (Propeller 2)
 
-This governs all hand-written C under `Firmware/MaDCore/src/` (layers `APP/`, `DEV/`, `IO/`, `Library/`, `HAL/`, `HW/`, `Main/`). It is derived from the actual code and the `pio check` (cppcheck + MISRA C:2023 + CERT) configuration in this repo. It does **not** govern `src/Generated/` or `src/IO/generated/` (see *Generated code*).
+This governs all hand-written C under `Firmware/MaDCore/src/` (layers `APP/`, `DEV/`, `IO/`, `Library/`, `HAL/`, `HW/`, `Main/`). It is derived from the actual code and the `pio check` (cppcheck + MISRA; **medium + high only**) configuration in this repo. It does **not** govern `src/Generated/` or `src/IO/generated/` (see *Generated code*).
 
 ---
 
@@ -11,7 +11,7 @@ This governs all hand-written C under `Firmware/MaDCore/src/` (layers `APP/`, `D
 - Use `<stdint.h>` fixed-width types and `<stdbool.h>` `bool`. No bare `int` for protocol/sized data; explicit casts for narrowing/64-bit math.
 - Only call the layer below you. Never include a low-level MCU/P2 header above `HAL/`.
 - One module owns one `static <module>_data` struct + one HAL lock. Never call another module's API while holding your own lock.
-- Run `pio check` and fix findings — the repo currently has **zero suppressions**; keep it that way.
+- Run `pio check` and fix **medium/high** findings (low is disabled). CI Gate fails on any medium/high defect.
 
 ---
 
@@ -366,7 +366,7 @@ Suggested local loop for a firmware change:
 
 ```bash
 # from Firmware/MaDCore/
-pio check
+pio check -e propeller2 --fail-on-defect=medium --fail-on-defect=high
 pio run -e native_emulator
 pio test -e native_test
 # from SIL/ when behaviour crosses the emulator
@@ -390,22 +390,22 @@ make test
 
 ---
 
-## Linting / passing checks (MISRA C:2023 + CERT)
+## Linting / passing checks (MISRA + cppcheck)
 
 ### Commands
 
 ```bash
 # from Firmware/MaDCore/
-pio check                       # cppcheck + MISRA C:2023 + CERT static analysis
+pio check -e propeller2 --fail-on-defect=medium --fail-on-defect=high
 pio run -e native_emulator      # must also build clean for the SIL emulator (libfirmware.a)
 pio test -e native_test         # Unity unit tests (ASan + stack-protector)
 ```
 
-Always build/test **native** as well as P2 — pointer sizes and timing differ (`native_emulator` builds C99 with `-Wall`, `platformio.ini:80-82`; `native_test` adds `-fsanitize=address -fstack-protector-all`, `platformio.ini:105-106`).
+Always build/test **native** as well as P2 — pointer sizes and timing differ (`native_emulator` builds C99 with `-Wall`; `native_test` adds `-fsanitize=address -fstack-protector-all`).
 
 ### Exactly how `pio check` is configured
 
-From `platformio.ini` (`[env]`, lines 3-12):
+From `platformio.ini` (`[env]`):
 
 ```ini
 check_tool = cppcheck
@@ -415,57 +415,54 @@ check_src_filters =
   +<src/IO/*>
   +<src/Library/*>
   +<src/Main/*>
+check_severity = medium, high
 check_flags =
   cppcheck: --addon=misra.json
-  cppcheck: --addon=cert.py
 ```
 
-- `misra.json` (`Firmware/MaDCore/misra.json`) points cppcheck's MISRA addon at the human-readable rule text:
-
-```json
-{ "script": "addons/misra.py", "args": ["--rule-texts=misra-rules.txt"] }
-```
-
-`misra-rules.txt` (present in the repo, ~24 KB) is MISRA's official **MISRA C:2023** headline file (e.g. `Rule 17.7 Required`). It supplies rule descriptions only; it does not turn rules on/off.
-- `cert.py` enables the CERT C addon. **Note:** `cert.py` is *not* checked into the repo tree — it is expected to ship with the cppcheck install's `addons/`. If it isn't present locally, the CERT portion of `pio check` won't run; MISRA still will.
-- `check_src_filters` scopes analysis to the hand-written layers (`APP/`, `DEV/`, `IO/`, `Library/`, `Main/`) — `HAL/`, `HW/`, `IO/generated/`, and `Generated/` are intentionally **not** MISRA/CERT-checked here, so don't expect those paths to be analyzed.
-- There is **no** `check_severity`/`check_skip_packages`/suppression file set, so cppcheck's defaults apply. Run `pio check` and resolve findings; do not lower severity to pass.
+- **`check_severity = medium, high`** — **low is not reported and not enforced.** Hundreds of low findings were style / cross-TU false positives (unused macros, unused public APIs, unused tags/typedefs, macro paste). They are not a useful gate for this tree.
+- **CI Gate (`firmware-misra`)** runs `pio check -e propeller2 --skip-packages --fail-on-defect=medium --fail-on-defect=high` and **blocks merge** if any medium or high defect remains.
+- `misra.json` points cppcheck's MISRA addon at `misra-rules.txt` (rule descriptions only; does not turn rules on/off).
+- CERT is **not** enforced (no `cert.py` with the bundled cppcheck). To enforce CERT later, vendor an addon and add it to `check_flags`.
+- `check_src_filters` scopes analysis to hand-written layers (`APP/`, `DEV/`, `IO/`, `Library/`, `Main/`) — `HAL/`, `HW/`, `IO/generated/`, and `Generated/` are not in the filter (headers may still appear when included from checked `.c` files).
 
 ### How the code is already MISRA-shaped (do these to pass)
 
-The existing code passes by following these, so new code should too:
+The existing code passes medium/high by following these; new code should too:
 - Fixed-width `stdint`/`bool` types; suffixed literals (`100U`, `1000LL`).
 - Explicit casts for every narrowing/64-bit conversion (`src/APP/app_motion.c:243`).
 - Every `switch` has `default:`; enum `_COUNT` sentinels handled where present (Rule 16.x; `src/APP/app_motion.c:161`).
 - Unused/ignored return values cast to `(void)` (Rule 17.7, `src/APP/app_motion.c:330`).
 - Single `static` definition per file-scope object; internal functions `static` (Rule 8.x) — with the known `watchdog.c` exception you should not copy.
 - No dynamic allocation in steady state; no recursion; bounded static buffers.
+- Divisors checked on the **actual** unsigned magnitude used in the divide (see `lib_utility_muldiv64_signed`).
+- `DEBUG_*` / printf format strings match argument types (`%u` for `uint32_t`, etc.).
 
-> `native_test` (`platformio.ini:107-112`) currently compiles only a subset under ASan: `DEV/watchdog.c`, `DEV/dev_nvram.c`, `DEV/Config/dev_nvram_config.c`, all of `Library/`, and `HAL/Include/`. Other modules don't yet have Unity tests wired here; add to this filter when you add tests.
+> `native_test` currently compiles only a subset under ASan (Library + selected modules). Other modules don't yet have Unity tests wired here; add to this filter when you add tests.
 
 ### Suppression policy
 
-This repo currently contains **zero** suppressions — no inline `cppcheck-suppress` comments and no suppressions file (verified by grep over `src/`). **The default policy is: fix the finding, don't suppress it.**
+**Default: fix medium/high findings; do not suppress them.** Low findings are already filtered out globally via `check_severity` — do not re-enable low just to paper over style.
 
-If a suppression is ever genuinely unavoidable (e.g. a verified false positive), the cppcheck syntax is:
+If a medium/high suppression is ever genuinely unavoidable (verified false positive), prefer a line- or block-scoped comment with a reason:
 
 ```c
-/* cppcheck-suppress misra-c2023-21.6 ; <reason: why this is safe / a false positive> */
+/* cppcheck-suppress misra-c2012-21.6 ; <reason: why this is safe / a false positive> */
 some_line_that_trips_the_rule();
 ```
 
 or block-scoped:
 
 ```c
-// cppcheck-suppress-begin misra-c2023-8.7
+// cppcheck-suppress-begin misra-c2012-8.7
 ...
-// cppcheck-suppress-end misra-c2023-8.7
+// cppcheck-suppress-end misra-c2012-8.7
 ```
 
-Rules (forward-looking — nothing in the repo uses these yet):
+Rules:
 - **Every suppression must carry a one-line justification** and name the exact rule id.
 - Prefer fixing the code or moving the offending construct behind the HAL over suppressing.
-- Do not add project-wide suppressions to `platformio.ini` to make CI green; that hides regressions for everyone.
+- Do not widen `check_severity` or remove `--fail-on-defect` to make CI green.
 
 ---
 
@@ -485,5 +482,5 @@ Rules (forward-looking — nothing in the repo uses these yet):
 - Don't include MCU/P2 headers above HAL, or call upward across layers (except `IO_Debug.h` for logging).
 - Don't call another module's API while holding your lock (ABBA).
 - Don't hand-edit `src/Generated/` or `src/IO/generated/`.
-- Don't suppress MISRA/CERT findings to pass `pio check` — fix them.
+- Don't suppress medium/high MISRA/cppcheck findings to pass `pio check` — fix them. Low is already off.
 - Don't ship new stateful control-path code without automated tests.

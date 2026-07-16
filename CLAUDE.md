@@ -33,7 +33,7 @@ pio run -e propeller2_debug     # Build with debug serial
 pio run -e propeller2 -t upload # Upload to board
 pio run -e native_emulator      # Build libfirmware.a for SIL (no main.c; Rust is entry + HAL)
 pio test -e native_test         # Run Unity unit tests
-pio check                       # MISRA C:2023 + CERT compliance check
+pio check -e propeller2 --fail-on-defect=medium --fail-on-defect=high  # MISRA/cppcheck (low disabled)
 ```
 
 ### Software (from `Software/MaDWasmControl/`) — the shipped app

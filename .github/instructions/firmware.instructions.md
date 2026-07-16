@@ -7,8 +7,8 @@ applyTo: "Firmware/MaDCore/**"
 Authoritative guide: `docs/coding-guidelines/c-firmware.md`.
 Templates: `Firmware/MaDCore/src/template.cx`, `Firmware/MaDCore/src/template.ch`.
 
-CI already gates MISRA/cppcheck, layering lint, and builds. **Do not re-report those.**
-Flag judgment / style issues below, especially on **new modules** and non-trivial logic.
+CI already gates MISRA/cppcheck (**medium + high only**; low is disabled), layering lint, and builds.
+**Do not re-report those.** Flag judgment / style issues below, especially on **new modules** and non-trivial logic.
 
 ## File structure
 

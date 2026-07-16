@@ -162,9 +162,8 @@ jobs:
         run: pio test -e native_test
 
   # ── Phase 0 deterministic gates ───────────────────────────────────────────
-  # BLOCKING jobs feed ci-gate; ADVISORY jobs (continue-on-error, not in
-  # ci-gate.needs) surface a finding without blocking a merge until their
-  # pre-existing backlog is cleaned up.
+  # BLOCKING jobs feed ci-gate. Advisory-only jobs (continue-on-error, not in
+  # ci-gate.needs) may still exist for non-gating lints (e.g. clippy backlog).
 
   # BLOCKING. Protocol codegen health: regenerate all three targets (C/TS/Rust)
   # twice and assert success + byte-reproducibility. Generated files are
@@ -259,16 +258,15 @@ jobs:
         # in their own repo's CI.
         run: cargo test --workspace --all-targets
 
-  # ADVISORY. MISRA/cppcheck via `pio check`. Large pre-existing backlog (~1629,
-  # mostly low "unused macro"); never naive-block. Prints findings + uploads JSON;
-  # promote to blocking later by diffing against a committed baseline (new findings
-  # only). NB: the cert.py addon is currently a no-op (CERT is NOT enforced today).
+  # BLOCKING. MISRA/cppcheck via `pio check`. Low severity is disabled in
+  # platformio.ini (check_severity = medium, high) — style noise only. Medium and
+  # high must be zero; CI fails the job (and thus CI Gate) on any such defect.
+  # CERT is not enforced (no cert.py with bundled cppcheck).
   firmware-misra:
     needs: changes
     if: needs.changes.outputs.firmware == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
         with:
@@ -283,17 +281,21 @@ jobs:
         run: |
           pip install pyyaml jinja2
           pio pkg install --platform https://github.com/RileyMcCarthy/platform-propeller.git
-      - name: Run pio check (MISRA / cppcheck) — advisory
+      - name: Run pio check (MISRA / cppcheck) — medium+high must pass
         working-directory: Firmware/MaDCore
         run: |
           set -o pipefail
-          # Never combine --silent with a future --fail-on-defect: it defeats it.
-          pio check -e propeller2 --skip-packages | tee pio-check.txt
-          pio check -e propeller2 --skip-packages --json-output | sed -n '/^\[{/,$p' > pio-check.json || true
+          # Never combine --silent with --fail-on-defect: silent defeats the fail gate.
+          # check_severity in platformio.ini is medium,high; fail on either.
+          pio check -e propeller2 --skip-packages \
+            --fail-on-defect=medium --fail-on-defect=high \
+            | tee pio-check.txt
+          pio check -e propeller2 --skip-packages --json-output \
+            | sed -n '/^\[{/,$p' > pio-check.json || true
           {
-            echo "## Firmware MISRA / cppcheck (advisory)"
+            echo "## Firmware MISRA / cppcheck (blocking: medium + high)"
             echo '```'
-            tail -25 pio-check.txt
+            tail -40 pio-check.txt
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Upload findings
@@ -803,6 +805,7 @@ jobs:
       - firmware-unit-tests
       - protocol-codegen
       - firmware-layering
+      - firmware-misra
       - python-lint
       - sil-rust
       - build-software

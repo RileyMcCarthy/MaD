@@ -97,7 +97,7 @@ pio run -e propeller2              # build for hardware
 pio run -e propeller2 -t upload   # flash a connected board
 pio run -e native_emulator        # build libfirmware.a for SIL
 pio test -e native_test           # unit tests
-pio check                         # MISRA C:2023 + CERT
+pio check -e propeller2 --fail-on-defect=medium --fail-on-defect=high  # MISRA (medium+high)
 ```
 
 ### Run the full simulation (no hardware)
