@@ -84,6 +84,13 @@ int32_t lib_utility_muldiv64_signed(int32_t a, int32_t b, int32_t c)
     return negative ? -(int32_t)quotient : (int32_t)quotient;
 }
 
+bool lib_utility_elapsed_gt(uint32_t now, uint32_t start, uint32_t period)
+{
+    /* Modular subtraction is well-defined for unsigned types and is the
+     * standard pattern for rollover-safe elapsed-time checks. */
+    return (now - start) > period;
+}
+
 uint8_t lib_utility_CRC8(uint8_t *addr, uint16_t len)
 {
     uint8_t crc = 0U;

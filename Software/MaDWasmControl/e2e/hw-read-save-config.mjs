@@ -21,8 +21,9 @@ const fieldInput = (page, label) =>
 const NUMERIC_LABELS = [
   'Encoder (step/mm)',
   'Servo (step/mm)',
-  'Force Gauge (N/step)',
-  'Force Gauge Zero Offset (steps)',
+  'Load Cell Capacity (N)',
+  'Load Cell Sensitivity (nV/V)',
+  'Load Cell Zero Balance (nV/V)',
   'Position Max (mm)',
   'Velocity Max (mm/s)',
   'Acceleration Max (mm/s^2)',

@@ -60,8 +60,12 @@ export interface MachineConfiguration {
   Name: string;
   'Encoder (step/mm)': number;
   'Servo (step/mm)': number;
-  'Force Gauge (N/step)': number;
-  'Force Gauge Zero Offset (steps)': number;
+  /** Load-cell full-scale capacity (N). */
+  'Load Cell Capacity (N)': number;
+  /** Load-cell sensitivity (nV/V). */
+  'Load Cell Sensitivity (nV/V)': number;
+  /** Load-cell zero balance (nV/V). */
+  'Load Cell Zero Balance (nV/V)': number;
   'Position Max (mm)': number;
   'Velocity Max (mm/s)': number;
   'Acceleration Max (mm/s^2)': number;

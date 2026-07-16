@@ -47,3 +47,32 @@ void test_lib_utility_muldiv64_signed(void)
     TEST_ASSERT_EQUAL_INT32(intMin,
         lib_utility_muldiv64_signed(intMin, 2, 2));
 }
+
+void test_lib_utility_elapsed_gt_boundaries(void)
+{
+    /* Strict greater-than: equal elapsed is NOT expired. */
+    TEST_ASSERT_FALSE(lib_utility_elapsed_gt(100U, 0U, 100U));
+    TEST_ASSERT_TRUE(lib_utility_elapsed_gt(101U, 0U, 100U));
+
+    /* Near-zero now with small period: the BAD form (now - period) > start
+     * would underflow and spuriously report expired when now < period. */
+    TEST_ASSERT_FALSE(lib_utility_elapsed_gt(50U, 0U, 100U));
+    TEST_ASSERT_FALSE(lib_utility_elapsed_gt(99U, 0U, 100U));
+    TEST_ASSERT_TRUE(lib_utility_elapsed_gt(150U, 0U, 100U));
+
+    /* Mid-range elapsed from a non-zero start. */
+    TEST_ASSERT_FALSE(lib_utility_elapsed_gt(1050U, 1000U, 100U));
+    TEST_ASSERT_TRUE(lib_utility_elapsed_gt(1101U, 1000U, 100U));
+}
+
+void test_lib_utility_elapsed_gt_uint32_wrap(void)
+{
+    /* start near UINT32_MAX, now just past wrap — modular (now - start) is small. */
+    const uint32_t start = UINT32_MAX - 10U;
+    TEST_ASSERT_FALSE(lib_utility_elapsed_gt(5U, start, 20U));  /* elapsed = 16 */
+    TEST_ASSERT_TRUE(lib_utility_elapsed_gt(15U, start, 20U));   /* elapsed = 26 */
+
+    /* Full wrap of exactly period is not yet expired (strict >). */
+    TEST_ASSERT_FALSE(lib_utility_elapsed_gt(start + 50U, start, 50U));
+    TEST_ASSERT_TRUE(lib_utility_elapsed_gt(start + 51U, start, 50U));
+}
