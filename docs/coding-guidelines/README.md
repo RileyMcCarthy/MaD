@@ -6,7 +6,7 @@ The deep, language-specific detail lives in the per-language guides. This index 
 
 ## Guides
 
-- [C / Firmware (Propeller 2) — incl. MISRA C:2023 + CERT](c-firmware.md) — Hand-written C under `Firmware/MaDCore/src/`: template/banner layout, layer-prefixed naming, MISRA-friendly idioms, the strict downward layer rule, the non-reentrant HAL try-lock + double-buffer concurrency pattern, cog-manager channels, and exactly how `pio check` (cppcheck + MISRA C:2023 + CERT) is wired with zero suppressions.
+- [C / Firmware (Propeller 2) — MISRA + cppcheck](c-firmware.md) — Hand-written C under `Firmware/MaDCore/src/`: template/banner layout, layer-prefixed naming, MISRA-friendly idioms, the strict downward layer rule, the non-reentrant HAL try-lock + double-buffer concurrency pattern, cog-manager channels, and how `pio check` is wired (medium+high blocking; low disabled).
 - [TypeScript / React](typescript.md) — interface/type/enum conventions, strict `tsconfig`, ESLint, and the generated `protoemb.ts` codec boundary. **Note:** this guide currently documents the **legacy** Electron app (`Software/MaDControl/`); the shipped app, **`Software/MaDWasmControl/`** (frontend-only Web Serial + WASM PWA), follows the same TS/React conventions but with a flat ESLint config and a Web Worker + WASM boundary instead of Electron's main/renderer IPC. (A WASM-app-specific guide is a pending follow-up.)
 - [Rust / SIL (MaDSim + embsim workspace)](rust.md) — The Software-in-the-Loop layer under `SIL/`: the generic-framework vs MaD-consumer split (embsim is now a [standalone repo](https://github.com/RileyMcCarthy/embsim) vendored at `SIL/embsim`), Cargo workspace inheritance, the FFI/`unsafe` HAL boundary, std-only hand-rolled error handling, static/atomics/`Mutex` concurrency, the do-not-edit generated protocol crate, and the CI gates (`sil-rust` runs `cargo test`; embsim's own CI gates the submodule).
 - [Python (build hooks + ProtoEmb generator)](python.md) — The PlatformIO SCons helpers (`Firmware/MaDCore/extra_scripts/`) and the conventions shared with the ProtoEmb code generator (now a [standalone repo](https://github.com/RileyMcCarthy/protoemb) vendored at `Protocol/ProtoEmb`): the dependency-light stack (pyyaml + jinja2), argparse CLI shape, schema-enrichment key convention, the `SystemExit`-vs-`ValueError` error model, the hardened YAML loader (keeps `OFF`/`ON` as strings), and Jinja2 conventions.
@@ -43,7 +43,7 @@ Firmware also regenerates its C target automatically via the `extra_scripts/gene
 Firmware, the desktop app, and the SIL emulator all speak the same wire format (serial, 2,000,000 baud on hardware). The schema-driven codecs are **byte-identical across C, TypeScript, and Rust (C == Rust == TS)** — that equivalence is the contract. Do not patch one language's codec to work around the others; fix the schema and regenerate. G-code motion profiles (`G0`, `G1`, `G4`, `G28`, `G90`, `G91`, `G122`) are streamed line-by-line, and tests/profiles that must signal completion should end with `G122` where the firmware contract requires it.
 
 ### Run the linters and checks before pushing
-Each area has its own gate (see the checklist below). Run the relevant one locally before pushing. The firmware `pio check` (MISRA C:2023 + CERT) currently carries **zero suppressions** — fix findings rather than suppressing them.
+Each area has its own gate (see the checklist below). Run the relevant one locally before pushing. Firmware `pio check` enforces **medium + high** only (low severity is disabled project-wide); fix medium/high rather than suppressing.
 
 ### Native vs P2 testing
 Pointer sizes and timing differ between the Propeller 2 and the host. Always exercise the `native_emulator` / `native_test` builds for firmware changes — passing on one target does not guarantee the other.
@@ -63,7 +63,7 @@ Run the gate for each area you touched:
 
 | Area | Lint / static check | Tests |
 | --- | --- | --- |
-| Firmware (C) | `pio check` (MISRA C:2023 + CERT, from `Firmware/MaDCore/`) | `pio test -e native_test` |
+| Firmware (C) | `pio check -e propeller2 --fail-on-defect=medium --fail-on-defect=high` (from `Firmware/MaDCore/`) | `pio test -e native_test` |
 | Software (TS/React) | `npm run verify` (from `Software/MaDWasmControl/` — tsc + eslint + tests + build) | included in `verify` (`npm test`, Vitest) |
 | SIL (Rust) | `cargo clippy` + `cargo fmt --check` (from `SIL/`) | `make test` (emulator + Playwright) |
 | Protocol / generated code | — | Regenerate all three targets with `generate.py` and commit the output (re-run the schema's conformance/`verify.sh` check) |
