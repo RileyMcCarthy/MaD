@@ -140,3 +140,60 @@ fn calculate_force(extension_mm: f64, config: &Config) -> f64 {
 
     extension_mm * stiffness
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rstest::rstest;
+    use std::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
+    use std::sync::Mutex;
+
+    #[rstest]
+    #[case::zero(0.0, 0.0)]
+    #[case::negative(-1.0, 0.0)]
+    #[case::one_mm(1.0, 2.5)]
+    #[case::ten_mm(10.0, 25.0)]
+    fn linear_stiffness_force(#[case] extension_mm: f64, #[case] expected_n: f64) {
+        let cfg = Config {
+            stiffness_n_per_mm: 2.5,
+            tension_on_decreasing_position: true,
+            material: None,
+        };
+        let got = calculate_force(extension_mm, &cfg);
+        assert!((got - expected_n).abs() < 1e-9, "got {got} expected {expected_n}");
+    }
+
+    #[rstest]
+    fn material_properties_override_stiffness() {
+        // k = E * A / L0 = 100 * 2 / 10 = 20 N/mm
+        let cfg = Config {
+            stiffness_n_per_mm: 999.0, // ignored when material is valid
+            tension_on_decreasing_position: true,
+            material: Some(MaterialProperties {
+                name: "test",
+                youngs_modulus_mpa: 100.0,
+                area_mm2: 2.0,
+                gauge_length_mm: 10.0,
+            }),
+        };
+        assert!((calculate_force(1.0, &cfg) - 20.0).abs() < 1e-9);
+    }
+
+    #[rstest]
+    fn on_extension_notifies_subscribers() {
+        let sample = Sample::new(Config::default());
+        let last = std::sync::Arc::new(Mutex::new(None));
+        let hits = std::sync::Arc::new(AtomicU32::new(0));
+        {
+            let last = std::sync::Arc::clone(&last);
+            let hits = std::sync::Arc::clone(&hits);
+            sample.on_change(move |f| {
+                *last.lock().unwrap() = Some(f);
+                hits.fetch_add(1, AtomicOrdering::Relaxed);
+            });
+        }
+        sample.on_extension(4.0); // 4 * 2.5 = 10 N
+        assert_eq!(hits.load(AtomicOrdering::Relaxed), 1);
+        assert!((last.lock().unwrap().unwrap() - 10.0).abs() < 1e-9);
+    }
+}
