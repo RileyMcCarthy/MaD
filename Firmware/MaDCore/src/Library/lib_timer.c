@@ -6,6 +6,7 @@
  **********************************************************************/
 #include "lib_timer.h"
 #include "HAL_time.h"
+#include "lib_utility.h"
 /**********************************************************************
  * Constants
  **********************************************************************/
@@ -68,8 +69,8 @@ lib_timer_state_E lib_timer_state(lib_timer_S *timer)
     case lib_timer_STATE_OFF:
         break;
     case lib_timer_STATE_RUNNING:
-        // If timer is uint32_t rollover is 49 days...
-        if ((currentms - timer->startms) > timer->periodms)
+        /* uint32 ms wraps ~49 days; lib_utility_elapsed_gt is modular-safe. */
+        if (lib_utility_elapsed_gt(currentms, timer->startms, timer->periodms))
         {
             timer->state = lib_timer_STATE_EXPIRED;
         }

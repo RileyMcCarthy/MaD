@@ -28,8 +28,8 @@ flowchart TB
     periph["<b>embsim-peripherals</b><br/>GPIO · serial · encoder · pulse_out · locks"]
     models["<b>embsim-models</b><br/>ADC (ADS122U04) · limit switch · edge detector"]
     core["<b>embsim-core</b> — virtual clock · serial PTY · observers"]
-    madmodels["<b>embsim-mad-models</b><br/>gantry · sample · strain gauge"]
-    madproto["<b>mad-protocol</b><br/>generated Rust protocol types"]
+    madmodels["<b>models</b><br/>gantry · sample · strain gauge"]
+    madproto["<b>protocol</b><br/>generated Rust codec (Protocol/rust/)"]
 
     consumer --> platform --> runtime
     runtime --> periph
@@ -41,11 +41,11 @@ flowchart TB
 ```
 
 The dependency graph is acyclic — **no generic crate depends on a project crate**.
-MaD-specific code lives only in `MaDSim/`, `embsim-mad-models/`, and
-`mad-protocol/`. A new project supplies just a *platform crate* and a *machine*,
+MaD-specific code lives only in `MaDSim/`, `models/`, and
+the `protocol` crate (`Protocol/rust/`). A new project supplies just a *platform crate* and a *machine*,
 and gets a runnable emulator. See the
-[embsim README](https://github.com/RileyMcCarthy/MaD/blob/main/SIL/embsim/README.md)
-and [CONTRACT.md](https://github.com/RileyMcCarthy/MaD/blob/main/SIL/embsim/CONTRACT.md).
+[embsim README](https://github.com/RileyMcCarthy/embsim/blob/main/README.md)
+and [CONTRACT.md](https://github.com/RileyMcCarthy/embsim/blob/main/CONTRACT.md).
 
 ## The simulation chain
 
@@ -67,7 +67,7 @@ flowchart TB
 
 GPIO/serial/encoder/pulse_out and the ADC and limit-switch component models are
 **generic** (`embsim`); the gantry, sample, and strain-gauge models are
-**MaD-specific** (`embsim-mad-models`).
+**MaD-specific** (`models`, in `SIL/models/`).
 
 !!! tip "Pin assignments come from the firmware itself"
     All GPIO pin numbers, encoder channels, and peripheral indices are resolved at

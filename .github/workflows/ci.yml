@@ -6,6 +6,11 @@ on:
       - 'Software/**'
       - 'Firmware/**'
       - 'Hardware/**'
+      # Submodule pin bumps land as gitlink changes at Protocol/ProtoEmb and
+      # SIL/embsim; .gitmodules changes repoint the submodule URLs.
+      - 'Protocol/**'
+      - 'SIL/**'
+      - '.gitmodules'
     tags:
       - 'software-v*'
       - 'firmware-v*'
@@ -50,12 +55,15 @@ jobs:
             wasm_control:
               - 'Software/MaDWasmControl/**'
               - 'Protocol/**'
+              - '.gitmodules'
             protocol:
               - 'Protocol/**'
+              - '.gitmodules'
             sil:
               - 'SIL/**'
               - 'Firmware/**'
               - 'Protocol/**'
+              - '.gitmodules'
 
   # Offline gate for the frontend-only Web Serial + WASM control app: Rust unit
   # tests for the protocol core, then build wasm + generated codec, then the app
@@ -69,6 +77,8 @@ jobs:
         working-directory: Software/MaDWasmControl
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -97,9 +107,18 @@ jobs:
           npm run generate:proto
       - name: Verify (typecheck + lint + tests + build)
         run: npm run verify
+      - name: Schema ↔ domain mapping lockstep (M12)
+        working-directory: ${{ github.workspace }}
+        run: |
+          pip install pyyaml==6.0.3
+          python3 Protocol/scripts/check_schema_domain_lockstep.py
 
-  # Self-contained ProtoEmb library suite: generator unit tests, cross-language
-  # wire conformance (C == Rust == TS), and the framing + runtime crate tests.
+  # ProtoEmb library suite (generator unit tests, cross-language wire
+  # conformance, framing + runtime crate tests) run against the *pinned
+  # submodule commit*. The suite also runs in the protoemb repo's own CI
+  # (https://github.com/RileyMcCarthy/protoemb); this job gates submodule
+  # bumps — including the real-schema generator test, which only activates
+  # when ../MaDProtocol.yaml is present (i.e. here, not in the standalone CI).
   protoemb-ci:
     needs: changes
     if: needs.changes.outputs.protocol == 'true'
@@ -109,6 +128,8 @@ jobs:
         working-directory: Protocol/ProtoEmb
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - uses: actions/setup-python@v5
         with:
           python-version: '3.x'
@@ -125,6 +146,36 @@ jobs:
       - name: Run full ProtoEmb test suite
         run: make test
 
+  # embsim library suite against the *pinned submodule commit* (mirror of
+  # protoemb-ci). Upstream also runs this on RileyMcCarthy/embsim; re-running
+  # here gates pin bumps and catches unpushed / never-CI'd gitlinks. The MaD
+  # SIL workspace only *compiles* path deps (sil-rust) — this job executes the
+  # framework tests themselves.
+  embsim-ci:
+    needs: changes
+    if: needs.changes.outputs.sil == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: SIL/embsim
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: SIL/embsim
+      - name: Build (all targets)
+        run: cargo build --workspace --all-targets
+      - name: Test
+        run: cargo test --workspace --all-targets
+      - name: Doc tests
+        run: cargo test --workspace --doc
+      - name: Test embsim-trace (web off)
+        run: cargo test -p embsim-trace --no-default-features
+
   # Firmware Unity unit tests on the host (platform = native, AddressSanitizer).
   # No Propeller toolchain needed; the platformio pre-hook regenerates the C
   # protocol from the YAML and installs its own generator deps.
@@ -134,6 +185,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - uses: actions/setup-python@v5
         with:
           python-version: '3.x'
@@ -144,9 +197,8 @@ jobs:
         run: pio test -e native_test
 
   # ── Phase 0 deterministic gates ───────────────────────────────────────────
-  # BLOCKING jobs feed ci-gate; ADVISORY jobs (continue-on-error, not in
-  # ci-gate.needs) surface a finding without blocking a merge until their
-  # pre-existing backlog is cleaned up.
+  # BLOCKING jobs feed ci-gate. Advisory-only jobs (continue-on-error, not in
+  # ci-gate.needs) may still exist for non-gating lints (e.g. clippy backlog).
 
   # BLOCKING. Protocol codegen health: regenerate all three targets (C/TS/Rust)
   # twice and assert success + byte-reproducibility. Generated files are
@@ -158,6 +210,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -182,19 +236,22 @@ jobs:
             exit 1
           fi
           echo "Codegen succeeded and is byte-reproducible."
+      - name: Schema ↔ domain mapping lockstep (M12)
+        run: python3 Protocol/scripts/check_schema_domain_lockstep.py
 
-  # BLOCKING. Ruff lint of the protocol generator + PlatformIO SCons hooks;
-  # config in ruff.toml (mirrors docs/coding-guidelines/python.md). Clean today.
+  # BLOCKING. Ruff lint of the PlatformIO SCons hooks; config in ruff.toml
+  # (mirrors docs/coding-guidelines/python.md). The ProtoEmb generator is
+  # linted in its own repo's CI.
   python-lint:
     needs: changes
-    if: needs.changes.outputs.protocol == 'true' || needs.changes.outputs.firmware == 'true'
+    if: needs.changes.outputs.firmware == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Run ruff (lint only)
-        run: pipx run ruff==0.13.2 check --output-format=github Protocol/ProtoEmb/core Firmware/MaDCore/extra_scripts
+        run: pipx run ruff==0.13.2 check --output-format=github Firmware/MaDCore/extra_scripts
 
-  # BLOCKING (cargo test). SIL Rust workspace: builds the generated mad-protocol
+  # BLOCKING (cargo test). SIL Rust workspace: builds the generated protocol
   # Rust (make protocol) + libfirmware.a (pio run -e native_emulator), then runs
   # clippy (advisory — informational) and cargo test (gating). Clippy is not
   # `-D warnings` yet (a pre-existing lint backlog remains); promote it by clearing
@@ -208,6 +265,8 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -219,7 +278,7 @@ jobs:
           python-version: '3.11'
       - name: Install PlatformIO + protocol generator deps
         run: pip install --upgrade platformio pyyaml jinja2
-      - name: Generate mad-protocol Rust types (make protocol)
+      - name: Generate the Rust protocol codec (make protocol)
         working-directory: SIL
         run: make protocol
       - name: Build firmware native lib (libfirmware.a)
@@ -231,23 +290,24 @@ jobs:
         run: cargo clippy --workspace --all-targets
       - name: Cargo test (blocking)
         working-directory: SIL
-        # embsim-memory-inspect's DWARF fixture tests parse clang-emitted debug info
-        # (its real use case on macOS) and don't handle gcc's DWARF, so exclude that
-        # dev-tool crate on the Linux runner. TODO: teach the parser gcc DWARF, then drop.
-        run: cargo test --workspace --all-targets --exclude embsim-memory-inspect
+        # The workspace is the MaD-side crates only (protocol, models,
+        # MaDSim). The embsim submodule suite is re-run by the sibling
+        # `embsim-ci` job (mirror of protoemb-ci) on the pinned commit.
+        run: cargo test --workspace --all-targets
 
-  # ADVISORY. MISRA/cppcheck via `pio check`. Large pre-existing backlog (~1629,
-  # mostly low "unused macro"); never naive-block. Prints findings + uploads JSON;
-  # promote to blocking later by diffing against a committed baseline (new findings
-  # only). NB: the cert.py addon is currently a no-op (CERT is NOT enforced today).
+  # BLOCKING. MISRA/cppcheck via `pio check`. Low severity is disabled in
+  # platformio.ini (check_severity = medium, high) — style noise only. Medium and
+  # high must be zero; CI fails the job (and thus CI Gate) on any such defect.
+  # CERT is not enforced (no cert.py with bundled cppcheck).
   firmware-misra:
     needs: changes
     if: needs.changes.outputs.firmware == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -258,17 +318,21 @@ jobs:
         run: |
           pip install pyyaml jinja2
           pio pkg install --platform https://github.com/RileyMcCarthy/platform-propeller.git
-      - name: Run pio check (MISRA / cppcheck) — advisory
+      - name: Run pio check (MISRA / cppcheck) — medium+high must pass
         working-directory: Firmware/MaDCore
         run: |
           set -o pipefail
-          # Never combine --silent with a future --fail-on-defect: it defeats it.
-          pio check -e propeller2 --skip-packages | tee pio-check.txt
-          pio check -e propeller2 --skip-packages --json-output | sed -n '/^\[{/,$p' > pio-check.json || true
+          # Never combine --silent with --fail-on-defect: silent defeats the fail gate.
+          # check_severity in platformio.ini is medium,high; fail on either.
+          pio check -e propeller2 --skip-packages \
+            --fail-on-defect=medium --fail-on-defect=high \
+            | tee pio-check.txt
+          pio check -e propeller2 --skip-packages --json-output \
+            | sed -n '/^\[{/,$p' > pio-check.json || true
           {
-            echo "## Firmware MISRA / cppcheck (advisory)"
+            echo "## Firmware MISRA / cppcheck (blocking: medium + high)"
             echo '```'
-            tail -25 pio-check.txt
+            tail -40 pio-check.txt
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Upload findings
@@ -310,6 +374,8 @@ jobs:
     steps:
       - name: Checkout Git repository
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Install Node.js and npm
         uses: actions/setup-node@v4
@@ -392,6 +458,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - uses: actions/setup-python@v4
         with:
           python-version: '3.9'
@@ -507,6 +575,8 @@ jobs:
     
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - uses: actions/setup-node@v4
         with:
           node-version: lts/*
@@ -769,9 +839,11 @@ jobs:
       - changes
       - wasm-control-ci
       - protoemb-ci
+      - embsim-ci
       - firmware-unit-tests
       - protocol-codegen
       - firmware-layering
+      - firmware-misra
       - python-lint
       - sil-rust
       - build-software

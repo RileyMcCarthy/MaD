@@ -11,6 +11,8 @@ extern void test_watchdog(void);
 extern void test_protoemb_stored_sample_roundtrip(void);
 extern void test_protoemb_runtime_send_notification_frame(void);
 extern void test_lib_utility_muldiv64_signed(void);
+extern void test_lib_utility_elapsed_gt_boundaries(void);
+extern void test_lib_utility_elapsed_gt_uint32_wrap(void);
 extern void test_lib_staticQueue(void);
 extern void test_enum_compat_fault_codes(void);
 extern void test_enum_compat_restriction_codes(void);
@@ -62,6 +64,8 @@ void process()
     RUN_TEST(test_protoemb_stored_sample_roundtrip);
     RUN_TEST(test_protoemb_runtime_send_notification_frame);
     RUN_TEST(test_lib_utility_muldiv64_signed);
+    RUN_TEST(test_lib_utility_elapsed_gt_boundaries);
+    RUN_TEST(test_lib_utility_elapsed_gt_uint32_wrap);
     RUN_TEST(test_lib_staticQueue);
     RUN_TEST(test_enum_compat_fault_codes);
     RUN_TEST(test_enum_compat_restriction_codes);

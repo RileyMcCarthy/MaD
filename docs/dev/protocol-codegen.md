@@ -31,7 +31,7 @@ python3 ./Protocol/ProtoEmb/core/generate.py \
 # Rust → SIL
 python3 ./Protocol/ProtoEmb/core/generate.py \
   --schema ./Protocol/MaDProtocol.yaml --target rs \
-  --output ./SIL/mad-protocol/src/generated \
+  --output ./Protocol/rust/src/generated \
   --templates ./Protocol/ProtoEmb/core/templates
 ```
 
@@ -41,7 +41,7 @@ In practice you rarely run all three by hand — each consumer regenerates its o
 |---|---|---|
 | Firmware | (automatic) PlatformIO pre-hook on every build | `Firmware/MaDCore/src/Generated/` |
 | Web app | `npm run generate:proto` (in `Software/MaDWasmControl`) | `src/protocol/generated/` |
-| SIL | `make protocol` (in `SIL`) | `SIL/mad-protocol/src/generated/` |
+| SIL | `make protocol` (in `SIL`) | `Protocol/rust/src/generated/` |
 
 !!! warning "Generated code is not hand-edited"
     Don't edit anything under a `Generated/` or `generated/` directory. Change the
@@ -54,7 +54,7 @@ The schema supports enums (plain or `remap` for sparse values), packed/aligned
 structs with per-field `scale`/`min`/`max`/`bits`, nested structs, fixed arrays,
 optional fields, and tagged unions, plus a message routing table with
 `command_id`, `tx_node`, `period_ms`, and `priority`. The exact semantics are in
-the [wire-format spec](https://github.com/RileyMcCarthy/MaD/blob/main/Protocol/ProtoEmb/docs/wire-format.md);
+the [wire-format spec](https://github.com/RileyMcCarthy/protoemb/blob/main/docs/wire-format.md);
 the MaD message list is in the [protocol reference](../reference/protocol-messages.md).
 
 After editing: regenerate **all** consumers and rebuild, so firmware, app, and SIL

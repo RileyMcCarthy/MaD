@@ -1,0 +1,16 @@
+[package]
+name = "models"
+version.workspace = true
+edition.workspace = true
+description = "MaD tensile-tester physics models (gantry, sample, strain gauge) — built on the embsim framework"
+# Named plainly: everything in this workspace is MaD-specific; the generic
+# device models live in the embsim submodule (embsim-models).
+publish = false
+
+[dependencies]
+embsim-core = { path = "../embsim/core" }
+embsim-models = { path = "../embsim/models" }
+tracing.workspace = true
+
+[dev-dependencies]
+rstest = "0.25"
