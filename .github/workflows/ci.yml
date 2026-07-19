@@ -337,7 +337,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Upload findings
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: firmware-misra-${{ github.run_number }}
           path: |
@@ -441,7 +441,7 @@ jobs:
           ls -la release-artifacts/
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.artifact.outputs.name }}
           path: release-artifacts/
@@ -508,7 +508,7 @@ jobs:
         run: echo "name=MaD-Firmware-${{ github.run_number }}" >> $GITHUB_OUTPUT
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.artifact.outputs.name }}
           path: release-assets/
@@ -547,7 +547,7 @@ jobs:
       run: echo "name=${{ matrix.project }}-hardware-${{ github.run_number }}" >> $GITHUB_OUTPUT
 
     - name: Upload build artifacts
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: ${{ steps.artifact.outputs.name }}
         path: |
@@ -720,7 +720,7 @@ jobs:
           find ./test-artifacts -type f | head -20
 
       - name: Upload test artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: sil-test-results-${{ github.run_number }}
