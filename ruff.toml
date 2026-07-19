@@ -1,7 +1,9 @@
-# Ruff config for the ProtoEmb Python generator + PlatformIO SCons hooks.
-# Mirrors docs/coding-guidelines/python.md. Lint-only (no `ruff format` gate —
-# the guide recommends black locally, not as CI). Run from the repo root so the
-# per-file-ignore globs resolve. CI: `ruff check Protocol/ProtoEmb/core Firmware/MaDCore/extra_scripts`.
+# Ruff config for the PlatformIO SCons hooks (the ProtoEmb generator lives in
+# its own repo — https://github.com/RileyMcCarthy/protoemb — with its own ruff
+# config). Mirrors docs/coding-guidelines/python.md. Lint-only (no `ruff
+# format` gate — the guide recommends black locally, not as CI). Run from the
+# repo root so the per-file-ignore globs resolve.
+# CI: `ruff check Firmware/MaDCore/extra_scripts`.
 target-version = "py39"
 line-length = 120
 

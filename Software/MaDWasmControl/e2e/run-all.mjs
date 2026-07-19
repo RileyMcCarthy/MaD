@@ -13,9 +13,10 @@
  * Covers the parity-critical scenarios of docs/TEST_PLAN.md §4: A1, B1–B5, C1/C3/C4, D1/D2/D3,
  * E1, F1/F2/F4/F6/F7, G1/G2/G3 + G-limit, H1–H5, I1–I4, J1 (in G-limit), K1 (in B2+B3+B4) — plus
  * regressions ported from the desktop SIL suite (NAV, settled-jog, slack→tension, fractional
- * precision, back-to-back runs, TC1/TC4/TC6/TC11/TC14, and WAVE-sine for the waveform/math move
- * that replaced arcs). §4 IDs without a dedicated scenario
- * (C2 tooltips, F3 .sp import, F5 set save/load) are unit/presence-covered.
+ * precision, back-to-back runs, TC1/TC4/TC6/TC11/TC14, TM-busy-restart / TM-manual-gate for
+ * testManagement isBusy lifecycle, and WAVE-sine for the waveform/math move that replaced arcs).
+ * §4 IDs without a dedicated scenario (C2 tooltips, F3 .sp import, F5 set save/load) are
+ * unit/presence-covered.
  */
 
 import { newSilPage, connectToSil, chooseDataFolder, APP_URL } from './fixtures.mjs';
@@ -1142,6 +1143,88 @@ const scenarios = [
         assert(new Set(names.slice(0, 2)).size === 2, `two distinct runs recorded (${names.slice(0, 2).join(', ')})`);
         const completed = await page.locator('tbody .badge.completed').count();
         assert(completed >= 2, `both runs completed (got ${completed})`);
+        assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
+      } finally { await browser.close(); }
+    },
+  },
+  {
+    // Port of SIL testmanagement-lifecycle: mid-flight disable must clear busy
+    // so a fresh test can start and complete (isBusy race class, c081e6c8).
+    id: 'TM-busy-restart',
+    name: 'Mid-flight cancel recycles: fresh test starts and completes after disable-stop',
+    async run() {
+      const { browser, page, errors } = await newSilPage();
+      try {
+        await connectToSil(page);
+        await chooseDataFolder(page);
+        await page.waitForTimeout(2500);
+        await zeroLength(page);
+        await seedProfiles(page, {
+          sample: { serial: 'TM-Restart', maxForce: 500, maxVelocity: 25, maxDisplacement: 100, sampleWidth: 4, sampleThickness: 1.5 },
+          motion: { name: 'Long-TM', moves: [
+            { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 3, distance: 30, time: 0, circularOffset: 0 } },
+          ] },
+        });
+        await selectSeeded(page);
+        await page.getByTestId('run-test').click();
+        await page.locator('.panel', { hasText: 'New Test' }).getByText(/started/i).waitFor({ timeout: 15000 });
+        await page.goto(`${APP_URL}#/live`);
+        await page.getByText('Test: running').waitFor({ timeout: 15000 });
+        await page.getByRole('button', { name: 'Disable motion' }).click();
+        await page.getByText('Test: idle').waitFor({ timeout: 15000 });
+        // Re-enable and start a short second test immediately — stuck busy would block it.
+        await page.getByRole('button', { name: 'Enable motion' }).click();
+        await page.getByText('Motion: enabled').waitFor({ timeout: 8000 });
+        await seedProfiles(page, {
+          sample: { serial: 'TM-Restart2', maxForce: 500, maxVelocity: 25, maxDisplacement: 100, sampleWidth: 4, sampleThickness: 1.5 },
+          motion: { name: 'Short-TM', moves: [
+            { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 10, distance: 5, time: 0, circularOffset: 0 } },
+            { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 10, distance: -5, time: 0, circularOffset: 0 } },
+          ] },
+        });
+        await selectSeeded(page);
+        await page.getByTestId('run-test').click();
+        await page.locator('.panel', { hasText: 'New Test' }).getByText(/started/i).waitFor({ timeout: 15000 });
+        await page.goto(`${APP_URL}#/live`);
+        await page.getByText('Test: running').waitFor({ timeout: 20000 });
+        await page.getByText('Test: idle').waitFor({ timeout: 60000 });
+        assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
+      } finally { await browser.close(); }
+    },
+  },
+  {
+    // UI + firmware busy gate: jog controls disabled while testRunning; re-enabled when idle.
+    id: 'TM-manual-gate',
+    name: 'Manual jog controls gated while a test is running and released once idle',
+    async run() {
+      const { browser, page, errors } = await newSilPage();
+      try {
+        await connectToSil(page);
+        await chooseDataFolder(page);
+        await page.waitForTimeout(2500);
+        await zeroLength(page);
+        // Idle baseline: jog enabled.
+        await page.goto(`${APP_URL}#/live`);
+        await page.getByRole('button', { name: /Home/ }).waitFor({ timeout: 10000 });
+        const enable = page.getByRole('button', { name: 'Enable motion' });
+        if (await enable.count()) await enable.click();
+        await page.getByText('Motion: enabled').waitFor({ timeout: 8000 });
+        const jogUp = page.getByRole('button', { name: '+ Jog up' });
+        assert(await jogUp.isEnabled(), 'jog enabled while idle');
+        await seedProfiles(page, {
+          sample: { serial: 'TM-Gate', maxForce: 500, maxVelocity: 25, maxDisplacement: 100, sampleWidth: 4, sampleThickness: 1.5 },
+          motion: { name: 'Gate-Long', moves: [
+            { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 3, distance: 25, time: 0, circularOffset: 0 } },
+          ] },
+        });
+        await selectSeeded(page);
+        await page.getByTestId('run-test').click();
+        await page.locator('.panel', { hasText: 'New Test' }).getByText(/started/i).waitFor({ timeout: 15000 });
+        await page.goto(`${APP_URL}#/live`);
+        await page.getByText('Test: running').waitFor({ timeout: 15000 });
+        assert(await jogUp.isDisabled(), 'jog disabled while test running');
+        await page.getByText('Test: idle').waitFor({ timeout: 90000 });
+        assert(await jogUp.isEnabled(), 'jog re-enabled once idle');
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
       } finally { await browser.close(); }
     },

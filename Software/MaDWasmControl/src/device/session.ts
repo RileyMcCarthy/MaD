@@ -26,6 +26,20 @@ import { MachineConfiguration, SampleData, SampleProfile } from '@/domain';
 // receive keeps up at this rate; see HAL_serial.c / IO_fullDuplexSerial.c.
 export const DEFAULT_BAUD_RATE = 2000000;
 
+/** Events emitted when a device worker crashes (poisoned WASM / uncaught throw).
+ *  Exported so unit tests lock the contract without spinning a real Worker. */
+export function workerCrashEvents(message: string): DeviceEvent[] {
+  return [
+    { kind: 'error', message: `worker: ${message}` },
+    { kind: 'disconnected', reason: `worker crashed: ${message}` },
+  ];
+}
+
+export type DeviceClientOptions = {
+  /** Inject a Worker factory (tests). Default constructs the real session worker. */
+  workerFactory?: () => Worker;
+};
+
 export class DeviceClient {
   private worker!: Worker;
 
@@ -37,7 +51,18 @@ export class DeviceClient {
 
   private sinkInstalled = false;
 
-  constructor() {
+  private readonly workerFactory: () => Worker;
+
+  /** How many workers this client has constructed (fresh-on-connect / crash recovery). */
+  workerCreateCount = 0;
+
+  constructor(opts: DeviceClientOptions = {}) {
+    this.workerFactory =
+      opts.workerFactory ??
+      (() =>
+        new Worker(new URL('./DeviceSession.worker.ts', import.meta.url), {
+          type: 'module',
+        }));
     this.createWorker();
 
     // The worker sees stream death (unplug, bridge loss) on its own; these
@@ -60,9 +85,8 @@ export class DeviceClient {
    *  pristine WASM instance — so a Rust panic that poisoned a prior instance
    *  cannot carry into the next connection. */
   private createWorker(): void {
-    this.worker = new Worker(new URL('./DeviceSession.worker.ts', import.meta.url), {
-      type: 'module',
-    });
+    this.worker = this.workerFactory();
+    this.workerCreateCount += 1;
     this.remote = Comlink.wrap<DeviceSessionApi>(this.worker);
     this.sinkInstalled = false;
     // A top-level throw / unhandled rejection in the worker that escapes the
@@ -72,11 +96,18 @@ export class DeviceClient {
   }
 
   private onWorkerCrash(message: string): void {
-    this.fanout([
-      { kind: 'error', message: `worker: ${message}` },
-      { kind: 'disconnected', reason: `worker crashed: ${message}` },
-    ]);
+    this.fanout(workerCrashEvents(message));
     void this.releasePort();
+  }
+
+  /** Test/diagnostic: fire the worker crash path as if the Worker emitted onerror. */
+  simulateWorkerCrash(message: string): void {
+    this.onWorkerCrash(message);
+  }
+
+  /** Test/diagnostic: force a fresh worker the same way connect() does. */
+  forceRecreateWorker(): void {
+    this.recreateWorker();
   }
 
   /** Subscribe to decoded device events. Returns an unsubscribe function. */

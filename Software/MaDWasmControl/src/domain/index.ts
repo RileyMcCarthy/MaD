@@ -5,3 +5,4 @@ export * from './sample';
 export * from './testProfile';
 export * from './analysis';
 export * from './exportCsv';
+export * from './stateLabels';

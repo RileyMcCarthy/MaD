@@ -9,6 +9,7 @@
  * mapping. Outputs are observed through the staged getForce/getIndex/isReady.
  */
 #include <unity.h>
+#include <stddef.h>
 #include "../../src/DEV/dev_forceGauge.c"
 
 extern void HAL_lock_mock_reset(void);
@@ -138,6 +139,44 @@ void test_error_retry_exhaustion_reinits_and_stops_adc(void)
     TEST_ASSERT_TRUE(d_startCount >= 2);  /* and re-INIT re-started it */
 }
 
+/* M1 — unit-scale matrix: force_mN = (raw - zero) * 1000 / countPerForce
+ * (lib_utility_muldiv64_signed). Guards silent N↔mN mistakes. */
+typedef struct
+{
+    int32_t zero;
+    int32_t countPerForce;
+    uint32_t rawADC;
+    int32_t expectForce_mN;
+} force_scale_case_t;
+
+void test_force_scale_matrix(void)
+{
+    static const force_scale_case_t cases[] = {
+        /* zero, countPerForce, raw, expect_mN */
+        {0, 100, 0, 0},
+        {0, 100, 500, 5000},          /* 500*1000/100 */
+        {0, 100, 1, 10},              /* 1*1000/100 */
+        {1000, -658, 342, 1000},      /* (-658)*1000/(-658) */
+        {0, 200, 200, 1000},          /* 200*1000/200 */
+        {50, 100, 150, 1000},         /* (100)*1000/100 */
+        {0, 1, 3, 3000},              /* 3*1000/1 */
+    };
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)
+    {
+        const force_scale_case_t *c = &cases[i];
+        init_with(c->zero, c->countPerForce);
+        d_rawADC = c->rawADC;
+        dev_forceGauge_run();
+        TEST_ASSERT_EQUAL_INT32_MESSAGE(
+            c->expectForce_mN,
+            dev_forceGauge_getForce(CH),
+            "M1 force scale matrix cell failed");
+        /* Sanity: mN magnitude for these fixtures stays out of "double-scaled" range */
+        TEST_ASSERT_TRUE(dev_forceGauge_getForce(CH) > -200000);
+        TEST_ASSERT_TRUE(dev_forceGauge_getForce(CH) < 200000);
+    }
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -149,5 +188,6 @@ int main(void)
     RUN_TEST(test_running_to_error_when_not_responding);
     RUN_TEST(test_error_recovers_to_running);
     RUN_TEST(test_error_retry_exhaustion_reinits_and_stops_adc);
+    RUN_TEST(test_force_scale_matrix);
     return UNITY_END();
 }

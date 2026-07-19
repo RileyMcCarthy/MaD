@@ -18,6 +18,7 @@
     "test": "vitest run --config vitest.config.ts",
     "verify": "tsc -b && eslint src && vitest run --config vitest.config.ts && vite build",
     "e2e": "node e2e/run-all.mjs",
+    "e2e:smoke": "node e2e/run-smoke.mjs",
     "sil:bridge": "node tools/sil-ws-bridge.mjs",
     "sil:smoke": "node e2e/sil-smoke.mjs",
     "sil:app": "node e2e/sil-playground.mjs",

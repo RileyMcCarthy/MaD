@@ -15,6 +15,7 @@ on:
       - 'mkdocs.yml'
       - 'Software/MaDWasmControl/**'
       - 'Protocol/**'
+      - '.gitmodules'
       - '.github/workflows/pages.yml'
     tags:
       - 'webapp-v*'
@@ -35,6 +36,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - uses: actions/setup-node@v4
         with:
@@ -86,7 +89,7 @@ jobs:
           mkdir -p site/app
           cp -r Software/MaDWasmControl/dist/. site/app/
 
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: site
 
@@ -98,4 +101,4 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
