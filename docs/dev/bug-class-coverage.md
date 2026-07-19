@@ -29,8 +29,10 @@ they are guarded today. Update it when you add a new class or close a gap.
 | **Packed-field bit wrap** | over-range X/F/P silent wrap | `gcode.test.ts` out-of-range rejects | boundary encode/decode; unknown G-code reject |
 | **Resource / stack / SD bounds** | large JSON stack overflow; SD close-while-INIT | `test_IO_SDCard` guards; NVRAM file path | pop bounds; open-failure paths in testManagement |
 | **UI status / object-as-React-child** | firmware version object render; status stuck on defaults | `faultBadgeLabel` / `restrictionBadgeLabel` always strings; About fw string | `stateLabels` covers every enum ordinal |
-| **Motion precision / tracking** | async stepper drift; fractional mm | SIL settled jog; WASM D2-settled-jog; fractional profile | trajectory + setpoint peak assertions |
-| **Host reliability (worker / storage)** | poisoned WASM; index drop under concurrent write | `session.test.ts` crash fanout + recreate; `DataStore.test.ts` mutex + rebuildIndex | single-in-flight op mutex; fresh worker per connect |
+| **Motion precision / tracking** | async stepper drift; fractional mm | SIL settled jog; WASM D2-settled-jog; fractional profile | **M8** jog matrix; **M10** waveform matrix |
+| **Force model (slack→tension)** | slack-zone zero force | `D3+SR-slack` | **M9** mid-slack / past-slack cells |
+| **Link loss / reconnect** | status stuck; crash on drop | `B5-reconnect` | **M11** idle + mid-test drop |
+| **Host reliability (worker / storage)** | poisoned WASM; index drop under concurrent write | `session.test.ts` crash fanout + recreate; `DataStore.test.ts` mutex + rebuildIndex | **M7** sessionPolicy; single-in-flight op mutex |
 
 ## Shared helpers (prefer these)
 
