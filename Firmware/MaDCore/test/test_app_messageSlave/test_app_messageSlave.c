@@ -257,6 +257,32 @@ void test_onWrite_test_run_busy_ends_then_starts(void)
     TEST_ASSERT_EQUAL_STRING("td0002", d_testName);
 }
 
+/* M5 bridge matrix: start NACK when triggerTestStart fails; END only when busy. */
+void test_m5_onWrite_test_run_start_nack_when_rejected(void)
+{
+    d_isBusy = false;
+    d_busyUntilEnd = false;
+    d_startRet = false; /* firmware rejects the start (e.g. still busy race) */
+    ProtoEmb_TestRun_t in;
+    memset(&in, 0, sizeof(in));
+    memcpy(in.gcodeId, "gc0003", 6);
+    memcpy(in.testDataId, "td0003", 6);
+    TEST_ASSERT_EQUAL_INT(PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK, ProtoEmb_onWrite_test_run(&in));
+    TEST_ASSERT_EQUAL_INT(0, d_endCount);
+    TEST_ASSERT_EQUAL_INT(1, d_startCount);
+}
+
+void test_m5_onWrite_manual_move_nacks_when_busy(void)
+{
+    d_addMoveRet = false; /* addManualMove rejects while busy */
+    ProtoEmb_Move_t in;
+    memset(&in, 0, sizeof(in));
+    in.g = (ProtoEmb_GCode_E)1;
+    in.x = 10;
+    in.f = 5;
+    TEST_ASSERT_EQUAL_INT(PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK, ProtoEmb_onWrite_manual_move(&in));
+}
+
 void test_machine_configuration_round_trips_through_bridge(void)
 {
     ProtoEmb_MachineConfiguration_t in;
@@ -289,6 +315,8 @@ int main(void)
     RUN_TEST(test_onWrite_sample_profile_maps_and_forwards);
     RUN_TEST(test_onWrite_test_run_idle_does_not_end);
     RUN_TEST(test_onWrite_test_run_busy_ends_then_starts);
+    RUN_TEST(test_m5_onWrite_test_run_start_nack_when_rejected);
+    RUN_TEST(test_m5_onWrite_manual_move_nacks_when_busy);
     RUN_TEST(test_machine_configuration_round_trips_through_bridge);
     return UNITY_END();
 }

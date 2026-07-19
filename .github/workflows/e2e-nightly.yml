@@ -1,0 +1,124 @@
+# Nightly / manual WASM e2e against the SIL playground.
+# Not a required PR gate — playground bring-up is still heavy for every PR.
+# Sprint C/D: expand smoke_ids and full suite over time.
+
+name: E2E nightly (WASM + SIL)
+
+on:
+  schedule:
+    # 06:17 UTC daily
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: 'smoke | full'
+        required: true
+        default: 'smoke'
+        type: choice
+        options:
+          - smoke
+          - full
+
+concurrency:
+  group: e2e-nightly-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  wasm-e2e-sil:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    defaults:
+      run:
+        working-directory: Software/MaDWasmControl
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            Software/MaDWasmControl/package-lock.json
+            SIL/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libudev-dev pkg-config
+
+      - name: Install PlatformIO
+        run: pip install -U platformio
+
+      - name: Install protocol generator deps
+        run: pip install -r ../../Protocol/ProtoEmb/core/requirements.txt
+
+      - name: SIL npm deps (Playwright)
+        working-directory: SIL
+        run: npm ci
+
+      - name: Install Chromium for Playwright
+        working-directory: SIL
+        run: npx playwright install --with-deps chromium
+
+      - name: Build SIL emulator (firmware + protocol + cargo)
+        working-directory: SIL
+        run: make emulator
+
+      - name: Install MaDWasmControl deps + wasm + proto
+        run: |
+          npm ci
+          # wasm-pack optional if prebuilt; build when tooling available
+          if command -v wasm-pack >/dev/null 2>&1; then npm run build:wasm; fi
+          npm run generate:proto
+
+      - name: Start playground (emulator PTY)
+        working-directory: SIL
+        run: |
+          nohup make playground > /tmp/mad-playground.log 2>&1 &
+          echo $! > /tmp/mad-playground.pid
+          for i in $(seq 1 60); do
+            if [ -e /tmp/tty.rpi ]; then echo "PTY ready"; break; fi
+            sleep 2
+          done
+          test -e /tmp/tty.rpi
+
+      - name: Start WS bridge + Vite dev server
+        run: |
+          nohup npm run sil:bridge > /tmp/mad-bridge.log 2>&1 &
+          echo $! > /tmp/mad-bridge.pid
+          nohup npm run dev -- --host 127.0.0.1 --port 5174 > /tmp/mad-vite.log 2>&1 &
+          echo $! > /tmp/mad-vite.pid
+          for i in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:5174/ >/dev/null; then echo "Vite ready"; break; fi
+            sleep 2
+          done
+          curl -sf http://127.0.0.1:5174/ >/dev/null
+
+      - name: Run e2e suite
+        env:
+          APP_URL: http://127.0.0.1:5174
+          BRIDGE_URL: ws://127.0.0.1:9999
+        run: |
+          SUITE="${{ github.event.inputs.suite || 'smoke' }}"
+          if [ "$SUITE" = "full" ]; then
+            npm run e2e
+          else
+            npm run e2e:smoke
+          fi
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-logs
+          path: |
+            /tmp/mad-playground.log
+            /tmp/mad-bridge.log
+            /tmp/mad-vite.log

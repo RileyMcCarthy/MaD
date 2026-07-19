@@ -21,9 +21,17 @@
 
 import { newSilPage, connectToSil, chooseDataFolder, APP_URL } from './fixtures.mjs';
 import { createRequire } from 'node:module';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 
 const require = createRequire('/Users/rileymccarthy/Documents/MaD/SIL/');
 const { chromium } = require('playwright');
+
+/** Sprint C parameterized matrices (M8–M11). */
+const MATRIX = JSON.parse(
+  readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'matrix-catalog.json'), 'utf8'),
+);
 
 function assert(cond, msg) {
   if (!cond) throw new Error(msg);
@@ -141,6 +149,35 @@ function assertSineMatch(series, { amplitudeMm, frequencyHz, cycles }, label) {
   for (const v of posMm) {
     if (v > fullMean + 0.3 * amplitudeMm) { if (dir === -1) crossings++; dir = 1; }
     else if (v < fullMean - 0.3 * amplitudeMm) { if (dir === 1) crossings++; dir = -1; }
+  }
+  assert(
+    crossings >= 2 * cycles - 1,
+    `${label}: ≥ ${2 * cycles - 1} midline crossings for ${cycles} cycle(s) (got ${crossings})`,
+  );
+}
+
+/** Peak-to-peak + cycle count for triangle (and other non-sine) waveforms. */
+function assertWaveformExcursion(series, { amplitudeMm, cycles }, label) {
+  assert(series && series.pos.length > 40, `${label}: enough samples (${series?.pos.length})`);
+  const posMm = series.pos.map((p) => p / 1000);
+  const maxP = Math.max(...posMm);
+  const minP = Math.min(...posMm);
+  const excursion = maxP - minP;
+  assert(
+    Math.abs(excursion - 2 * amplitudeMm) < Math.max(2.5, amplitudeMm * 0.45),
+    `${label}: peak-to-peak ≈ 2A=${(2 * amplitudeMm).toFixed(1)}mm (got ${excursion.toFixed(2)})`,
+  );
+  const mean = posMm.reduce((s, v) => s + v, 0) / posMm.length;
+  let crossings = 0;
+  let dir = 0;
+  for (const v of posMm) {
+    if (v > mean + 0.25 * amplitudeMm) {
+      if (dir === -1) crossings += 1;
+      dir = 1;
+    } else if (v < mean - 0.25 * amplitudeMm) {
+      if (dir === 1) crossings += 1;
+      dir = -1;
+    }
   }
   assert(
     crossings >= 2 * cycles - 1,
@@ -780,17 +817,10 @@ const scenarios = [
       } finally { await browser.close(); }
     },
   },
-  // Firmware-native G123 waveform: the host emits ONE test_waveform; the firmware
-  // streams the velocity f'(t)=2πfA·cos to its NCO output. For several distinct
-  // waveforms we assert the RECORDED position actually traces the commanded sine
-  // (least-squares sinusoid fit at the commanded frequency), not just oscillates.
-  ...[
-    { id: 'WAVE-sine', label: 'A=5mm f=1Hz ×2', amplitude: 5, frequency: 1, cycles: 2, distance: 6, maxDisp: 100 },
-    { id: 'WAVE-sine-slow-large', label: 'A=10mm f=0.5Hz ×2', amplitude: 10, frequency: 0.5, cycles: 2, distance: 12, maxDisp: 100 },
-    { id: 'WAVE-sine-fast', label: 'A=3mm f=2Hz ×3', amplitude: 3, frequency: 2, cycles: 3, distance: 5, maxDisp: 100 },
-  ].map((wf) => ({
+  // M10 — firmware-native G123 waveform matrix (sine + triangle from catalog).
+  ...MATRIX.M10_waveform.map((wf) => ({
     id: wf.id,
-    name: `Waveform G123 — recorded position matches the commanded sine (${wf.label})`,
+    name: `M10 waveform G123 — ${wf.shape} (${wf.label})`,
     async run() {
       const { browser, page, errors } = await newSilPage();
       try {
@@ -801,13 +831,17 @@ const scenarios = [
         await seedProfiles(page, {
           sample: { serial: `Wave-${wf.id}`, maxForce: 500, maxVelocity: 60, maxDisplacement: wf.maxDisp, sampleWidth: 4, sampleThickness: 1.5 },
           motion: { name: wf.id, moves: [
-            { moveType: 'math', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 0, distance: wf.distance, time: 0, waveform: 'sine', amplitude: wf.amplitude, frequency: wf.frequency, cycles: wf.cycles } },
+            { moveType: 'math', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 0, distance: wf.distance, time: 0, waveform: wf.shape, amplitude: wf.amplitude, frequency: wf.frequency, cycles: wf.cycles } },
           ] },
         });
         await selectSeeded(page);
         await runAndDownload(page);
         const s = await readDownloadedCsvSeries(page);
-        assertSineMatch(s, { amplitudeMm: wf.amplitude, frequencyHz: wf.frequency, cycles: wf.cycles }, wf.id);
+        if (wf.shape === 'sine') {
+          assertSineMatch(s, { amplitudeMm: wf.amplitude, frequencyHz: wf.frequency, cycles: wf.cycles }, wf.id);
+        } else {
+          assertWaveformExcursion(s, { amplitudeMm: wf.amplitude, cycles: wf.cycles }, wf.id);
+        }
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
       } finally { await browser.close(); }
     },
@@ -935,6 +969,41 @@ const scenarios = [
       } finally { await browser.close(); }
     },
   },
+  // M8 — motion precision jog matrix (parameterized from matrix-catalog.json).
+  ...MATRIX.M8_jog.map((cell) => ({
+    id: cell.id,
+    name: `M8 jog Δ=${cell.mm}mm @ ${cell.speed}mm/s${cell.roundTrip ? ' (round-trip)' : ''}`,
+    async run() {
+      const { browser, page, errors } = await newSilPage();
+      try {
+        await connectToSil(page);
+        await page.goto(`${APP_URL}#/live`);
+        await page.getByRole('button', { name: /Home/ }).waitFor({ timeout: 10000 });
+        const enable = page.getByRole('button', { name: 'Enable motion' });
+        if (await enable.count()) await enable.click();
+        await page.getByText('Motion: enabled').waitFor({ timeout: 8000 });
+        const num = async (label) =>
+          parseFloat(await page.locator('.readout', { hasText: label }).locator('.value').first().innerText());
+        await page.waitForTimeout(800);
+        const start = await num('Machine Position');
+        await page.locator('label.field', { hasText: 'Jog (mm)' }).locator('input').fill(String(cell.mm));
+        await page.locator('label.field', { hasText: 'Speed (mm/s)' }).locator('input').fill(String(cell.speed));
+        await page.getByRole('button', { name: '+ Jog up' }).click();
+        await page.waitForTimeout(cell.settleMs);
+        const up = await num('Machine Position');
+        const upSet = await num('Machine Setpoint');
+        assert(Math.abs(up - start - cell.mm) < cell.epsMm, `jog +${cell.mm}mm (Δ ${(up - start).toFixed(3)})`);
+        assert(Math.abs(up - upSet) < 0.15, `settled onto setpoint (|Δ| ${Math.abs(up - upSet).toFixed(3)})`);
+        if (cell.roundTrip) {
+          await page.getByRole('button', { name: '− Jog down' }).click();
+          await page.waitForTimeout(cell.settleMs);
+          const end = await num('Machine Position');
+          assert(Math.abs(end - start) < cell.epsMm, `round-trip return (Δ ${(end - start).toFixed(3)})`);
+        }
+        assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
+      } finally { await browser.close(); }
+    },
+  })),
   {
     id: 'NAV',
     name: 'Connection survives navigating every page',
@@ -988,6 +1057,66 @@ const scenarios = [
           else await page.waitForTimeout(250);
         }
         assert(ok, 'not responding after reconnect');
+        assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
+      } finally { await browser.close(); }
+    },
+  },
+  // M11 — link-loss moments (catalog-driven; idle + mid-test).
+  {
+    id: 'M11-idle-drop',
+    name: 'M11 idle link drop → reconnect resumes samples',
+    async run() {
+      const { browser, page, errors } = await newSilPage();
+      try {
+        await connectToSil(page);
+        await page.goto(`${APP_URL}#/live`);
+        await page.waitForTimeout(1200);
+        await page.evaluate(() => window.__silDropLink());
+        await page.locator('.dot.disconnected').waitFor({ timeout: 10000 });
+        await page.getByTestId('reconnect').click();
+        await page.locator('.dot.connected').waitFor({ timeout: 10000 });
+        const resp = page.getByTestId('responding');
+        let ok = false;
+        for (let i = 0; i < 40 && !ok; i++) {
+          const t = (await resp.textContent()) || '';
+          if (t.includes('Responding') && !t.includes('Not')) ok = true;
+          else await page.waitForTimeout(250);
+        }
+        assert(ok, 'not responding after idle reconnect');
+        assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
+      } finally { await browser.close(); }
+    },
+  },
+  {
+    id: 'M11-mid-test-drop',
+    name: 'M11 mid-test link drop: UI disconnects without crashing; reconnect restores monitor',
+    async run() {
+      const { browser, page, errors } = await newSilPage();
+      try {
+        await connectToSil(page);
+        await chooseDataFolder(page);
+        await page.waitForTimeout(2000);
+        await zeroLength(page);
+        await seedProfiles(page, {
+          sample: { serial: 'M11-Drop', maxForce: 500, maxVelocity: 25, maxDisplacement: 100, sampleWidth: 4, sampleThickness: 1.5 },
+          motion: { name: 'LongDrop', moves: [
+            { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 2, distance: 40, time: 0, circularOffset: 0 } },
+          ] },
+        });
+        await selectSeeded(page);
+        await page.getByTestId('run-test').click();
+        await page.locator('.panel', { hasText: 'New Test' }).getByText(/started/i).waitFor({ timeout: 15000 });
+        await page.goto(`${APP_URL}#/live`);
+        await page.getByText('Test: running').waitFor({ timeout: 15000 });
+        // Drop link while test is running — UI must not throw; machine keeps going.
+        await page.evaluate(() => window.__silDropLink());
+        await page.locator('.dot.disconnected').waitFor({ timeout: 10000 });
+        // Run status should remain running on host (machine autonomous) or at least not crash.
+        await page.waitForTimeout(500);
+        await page.getByTestId('reconnect').click();
+        await page.locator('.dot.connected').waitFor({ timeout: 15000 });
+        // Eventually idle again (test completes or was aborted by prior state).
+        await page.getByText(/Test: (running|idle)/).waitFor({ timeout: 90000 });
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
       } finally { await browser.close(); }
     },
@@ -1046,29 +1175,67 @@ const scenarios = [
         await page.waitForTimeout(800);
         const zeroedForce = await num('Sample Force');
         assert(Math.abs(zeroedForce) < 1, `zero force → sample force ≈ 0 (got ${zeroedForce})`);
-        // +10mm: inside the 15mm slack zone → force stays ~0.
-        await jog.fill('10');
-        await page.getByRole('button', { name: '+ Jog up' }).click();
-        await page.waitForTimeout(1500);
-        const slackPos = await num('Sample Position');
-        const slackForce = await num('Sample Force');
-        assert(slackPos > 8, `moved into the slack zone (pos ${slackPos})`);
-        assert(Math.abs(slackForce) < 0.15, `slack-zone force ≈ 0 (got ${slackForce})`);
-        // +10mm more (~20mm): beyond slack → tension force > 0.1 N.
-        await page.getByRole('button', { name: '+ Jog up' }).click();
-        await page.waitForTimeout(1500);
-        const tensionPos = await num('Sample Position');
-        const tensionForce = await num('Sample Force');
-        assert(tensionPos > 18, `moved beyond the slack zone (pos ${tensionPos})`);
-        assert(tensionForce > 0.1, `tension force beyond slack (got ${tensionForce})`);
+        // M9 cells: mid-slack force≈0, past-slack force>min.
+        for (const cell of MATRIX.M9_force_slack) {
+          await jog.fill(String(cell.jogMm));
+          // Return near zero between cells when needed.
+          if (cell.jogMm >= 18) {
+            // cumulative: we may already be at ~10 from prior cell — go absolute via extra jog
+            await page.getByRole('button', { name: '+ Jog up' }).click();
+          } else {
+            await page.getByRole('button', { name: '+ Jog up' }).click();
+          }
+          await page.waitForTimeout(1500);
+          const pos = await num('Sample Position');
+          const force = await num('Sample Force');
+          assert(pos > cell.minPosMm, `${cell.id}: pos > ${cell.minPosMm} (got ${pos})`);
+          if (cell.expectForceNearZero) {
+            assert(Math.abs(force) < (cell.forceEpsN ?? 0.15), `${cell.id}: force≈0 (got ${force})`);
+          } else {
+            assert(force > (cell.minForceN ?? 0.1), `${cell.id}: tension force (got ${force})`);
+          }
+        }
         // Return so later scenarios start near zero.
-        await jog.fill('20');
+        await jog.fill('25');
         await page.getByRole('button', { name: '− Jog down' }).click();
         await page.waitForTimeout(2000);
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
       } finally { await browser.close(); }
     },
   },
+  // M9 dedicated cells (also exercised inside D3+SR-slack for the full path).
+  ...MATRIX.M9_force_slack.map((cell) => ({
+    id: cell.id,
+    name: `M9 force model @ +${cell.jogMm}mm sample extension`,
+    async run() {
+      const { browser, page, errors } = await newSilPage();
+      try {
+        await connectToSil(page);
+        await zeroLength(page);
+        const num = async (label) =>
+          parseFloat(await page.locator('.readout', { hasText: label }).locator('.value').first().innerText());
+        await page.getByRole('button', { name: 'Zero force' }).click();
+        await page.waitForTimeout(600);
+        const jog = page.locator('label.field', { hasText: 'Jog (mm)' }).locator('input');
+        // Two jogs of half if past slack so we don't overshoot from boot.
+        const half = cell.jogMm / 2;
+        await jog.fill(String(half));
+        await page.getByRole('button', { name: '+ Jog up' }).click();
+        await page.waitForTimeout(1200);
+        await page.getByRole('button', { name: '+ Jog up' }).click();
+        await page.waitForTimeout(1200);
+        const pos = await num('Sample Position');
+        const force = await num('Sample Force');
+        assert(pos > cell.minPosMm * 0.85, `${cell.id}: pos (got ${pos})`);
+        if (cell.expectForceNearZero) {
+          assert(Math.abs(force) < (cell.forceEpsN ?? 0.15), `${cell.id}: force≈0 (got ${force})`);
+        } else {
+          assert(force > (cell.minForceN ?? 0.1), `${cell.id}: tension (got ${force})`);
+        }
+        assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
+      } finally { await browser.close(); }
+    },
+  })),
   {
     id: 'P1-precision',
     name: 'Fractional setpoint survives wire/decode at sub-mm precision',
