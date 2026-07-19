@@ -1,31 +1,14 @@
 import { useState } from 'react';
 import { useStore } from '@/store/useStore';
-import { FaultedReason, RestrictedReason, NotificationType } from '@/domain';
+import { FaultedReason, NotificationType } from '@/domain';
+import {
+  FAULT_HINTS,
+  RESTRICTION_HINTS,
+  faultBadgeLabel,
+  restrictionBadgeLabel,
+} from '@/domain/stateLabels';
 import LiveCombinedChart from '@/ui/components/LiveCombinedChart';
 import LiveStressStrainChart from '@/ui/components/LiveStressStrainChart';
-
-const FAULT_HINTS: Record<number, string> = {
-  [FaultedReason.NONE]: 'No faults detected.',
-  [FaultedReason.COG]: 'Cogging detected in the machine.',
-  [FaultedReason.WATCHDOG]: 'Watchdog timer triggered.',
-  [FaultedReason.ESD_POWER]: 'ESD power fault detected.',
-  [FaultedReason.ESD_SWITCH]: 'ESD switch fault detected.',
-  [FaultedReason.ESD_UPPER]: 'Upper ESD fault detected.',
-  [FaultedReason.ESD_LOWER]: 'Lower ESD fault detected.',
-  [FaultedReason.SERVO_COMMUNICATION]: 'Servo communication fault detected.',
-  [FaultedReason.FORCE_GAUGE_COMMUNICATION]: 'Force gauge communication fault detected.',
-  [FaultedReason.USER_REQUEST]: 'User requested to disable the machine.',
-};
-
-const RESTRICTION_HINTS: Record<number, string> = {
-  [RestrictedReason.NONE]: 'No restrictions detected.',
-  [RestrictedReason.SAMPLE_LENGTH]: 'Sample length restriction.',
-  [RestrictedReason.SAMPLE_TENSION]: 'Sample tension restriction.',
-  [RestrictedReason.MACHINE_TENSION]: 'Machine tension restriction.',
-  [RestrictedReason.UPPER_ENDSTOP]: 'Upper endstop restriction.',
-  [RestrictedReason.LOWER_ENDSTOP]: 'Lower endstop restriction.',
-  [RestrictedReason.DOOR]: 'Door restriction.',
-};
 
 const READOUT_HINTS: Record<string, string> = {
   'Machine Force': 'Absolute force reading.',
@@ -109,13 +92,13 @@ export default function Live() {
             className={`badge ${state && state.faultedReason !== FaultedReason.NONE ? 'error' : ''}`}
             title={state ? FAULT_HINTS[state.faultedReason] : undefined}
           >
-            Fault: {state ? FaultedReason[state.faultedReason] : '—'}
+            Fault: {state ? faultBadgeLabel(state.faultedReason) : '—'}
           </span>
           <span
             className="badge"
             title={state ? RESTRICTION_HINTS[state.restrictedReason] : undefined}
           >
-            Restriction: {state ? RestrictedReason[state.restrictedReason] : '—'}
+            Restriction: {state ? restrictionBadgeLabel(state.restrictedReason) : '—'}
           </span>
         </div>
       </div>

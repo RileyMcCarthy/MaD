@@ -1,0 +1,13 @@
+# WASM e2e smoke subset for CI (comma-joined by e2e:smoke).
+# Requires: SIL playground + sil:bridge + npm run dev.
+# Expand only when the scenario is stable and < ~90s alone.
+A1
+B1+C1
+D1
+E1
+G1
+G2+G3+H2+I
+TM-busy-restart
+TM-manual-gate
+P1-precision
+BB-back-to-back

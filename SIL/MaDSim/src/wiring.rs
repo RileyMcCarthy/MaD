@@ -31,8 +31,8 @@
 
 use std::sync::Arc;
 
-use embsim_mad_models::sample::{Config as SampleConfig, MaterialProperties, Sample};
-use embsim_mad_models::{gantry, strain_gauge};
+use models::sample::{Config as SampleConfig, MaterialProperties, Sample};
+use models::{gantry, strain_gauge};
 use embsim_memory_inspect::FirmwareInfo;
 use embsim_models::ads122u04;
 use embsim_peripherals::{encoder, gpio, pulse_out, serial};

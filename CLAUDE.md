@@ -8,9 +8,11 @@ MaD is a low-cost open-source uniaxial tensile testing machine. The monorepo has
 
 - **Firmware** (`Firmware/MaDCore/`) — Embedded C for the Parallax Propeller 2
 - **Software** (`Software/MaDWasmControl/`) — the **shipped, deployed** control app: a frontend-only browser PWA (React + Vite, Web Serial + WebAssembly). A legacy Electron app at `Software/MaDControl/` is **frozen** and retained only as the current SIL Playwright E2E driver (see [Software Architecture](#software-madwasmcontrol-architecture)).
-- **SIL** (`SIL/`) — Software-in-the-loop: Rust workspace (`MaDSim` + `embsim`) + Playwright E2E tests
-- **Protocol** (`Protocol/ProtoEmb/`) — YAML schema (`MaDProtocol.yaml`) → generated C / TypeScript / Rust. The shipped app runs the protocol logic as **WebAssembly** (compiled from `Protocol/ProtoEmb/runtime`); the legacy Electron app spoke to a Rust **protoemb-bridge** child process.
+- **SIL** (`SIL/`) — Software-in-the-loop: Rust workspace (`MaDSim`, `models`, and the out-of-tree `protocol` crate at `Protocol/rust/`) + Playwright E2E tests. The reusable emulator framework at `SIL/embsim/` is a **git submodule** → [RileyMcCarthy/embsim](https://github.com/RileyMcCarthy/embsim).
+- **Protocol** (`Protocol/`) — YAML schema (`MaDProtocol.yaml`) → generated C / TypeScript / Rust. The toolchain at `Protocol/ProtoEmb/` is a **git submodule** → [RileyMcCarthy/protoemb](https://github.com/RileyMcCarthy/protoemb). The shipped app runs the protocol logic as **WebAssembly** (compiled from `Protocol/ProtoEmb/runtime`); the legacy Electron app spoke to a Rust **protoemb-bridge** child process.
 - **Hardware** (`Hardware/`) — KiCad PCB designs
+
+Submodules must be initialized before building: `git submodule update --init --recursive` (or clone with `--recurse-submodules`).
 
 ## Coding Guidelines
 
@@ -31,7 +33,7 @@ pio run -e propeller2_debug     # Build with debug serial
 pio run -e propeller2 -t upload # Upload to board
 pio run -e native_emulator      # Build libfirmware.a for SIL (no main.c; Rust is entry + HAL)
 pio test -e native_test         # Run Unity unit tests
-pio check                       # MISRA C:2023 + CERT compliance check
+pio check -e propeller2 --fail-on-defect=medium --fail-on-defect=high  # MISRA/cppcheck (low disabled)
 ```
 
 ### Software (from `Software/MaDWasmControl/`) — the shipped app
@@ -53,7 +55,7 @@ npm run e2e            # node e2e/run-all.mjs — drives the SIL emulator (fakes
 ```bash
 make setup        # First-time: npm deps
 make firmware     # Firmware static library only
-make protocol     # Regenerate Rust protocol types into mad-protocol/src/generated
+make protocol     # Regenerate the Rust codec into ../Protocol/rust/src/generated
 make bridge       # Build protoemb-bridge (Protocol/ProtoEmb/runtime) — used by the legacy Electron app / its E2E
 make emulator     # firmware + protocol + bridge, then cargo build workspace
 make test         # emulator + Playwright (`npm test`)
@@ -66,7 +68,7 @@ make clean        # Remove build artifacts
 # From repo root:
 python3 ./Protocol/ProtoEmb/core/generate.py --schema ./Protocol/MaDProtocol.yaml --target c  --output ./Firmware/MaDCore/src/Generated --templates ./Protocol/ProtoEmb/core/templates
 python3 ./Protocol/ProtoEmb/core/generate.py --schema ./Protocol/MaDProtocol.yaml --target ts --output ./Software/MaDWasmControl/src/protocol/generated --templates ./Protocol/ProtoEmb/core/templates
-python3 ./Protocol/ProtoEmb/core/generate.py --schema ./Protocol/MaDProtocol.yaml --target rs --output ./SIL/mad-protocol/src/generated --templates ./Protocol/ProtoEmb/core/templates
+python3 ./Protocol/ProtoEmb/core/generate.py --schema ./Protocol/MaDProtocol.yaml --target rs --output ./Protocol/rust/src/generated --templates ./Protocol/ProtoEmb/core/templates
 # The shipped app regenerates its TS target via `npm run generate:proto`; the firmware regenerates its C target via the `platformio.ini` pre-hook (`extra_scripts/generate_protocol.py`).
 # (The legacy Electron app's TS target was ./Software/MaDControl/src/main/generated.)
 ```
@@ -112,12 +114,12 @@ Frontend-only browser PWA — **no backend, no Electron**. The browser talks str
 > **Legacy Electron app** (`Software/MaDControl/`, frozen): Electron main process (`src/main/handlers/`: `BridgeHandler.ts` ran the `protoemb-bridge` child process; `DeviceInterface.ts` wired bridge events → renderer) + React renderer (`src/renderer/hooks/useDevice.tsx`) over `ipcRenderer.invoke()`. Retained only as the current SIL Playwright E2E driver until that suite is ported to the WASM app.
 
 ### SIL Emulator Architecture
-Rust **Cargo workspace** under `SIL/` (see `SIL/Cargo.toml`):
+Rust **Cargo workspace** under `SIL/` (see `SIL/Cargo.toml`; members are the MaD-side crates — `MaDSim`, `models`, and `protocol` (an out-of-tree member living at `Protocol/rust/`, next to its schema). The `embsim/*` crates below live in the `SIL/embsim` submodule, which is its own workspace, and are consumed as path deps):
 
 - **`MaDSim/`** — `mad-emulator` binary: links **`libfirmware.a`** from `pio run -e native_emulator`, calls `mad_begin()`, wires PTY serial, SD path, optional trace HTTP port.
 - **`embsim/core`** — PTY, timing, shared plumbing.
 - **`embsim/peripherals`** — HAL stand-ins (serial, GPIO, pulse trains, encoder, etc.).
-- **`mad-protocol`** — **generated** Rust protocol types under `src/generated/` (do not hand-edit; `make protocol`).
+- **`protocol`** (at `Protocol/rust/`, next to the schema) — **generated** Rust codec under `src/generated/` (do not hand-edit; `make protocol`). Imported by nothing; exists so the generated code + roundtrip tests stay compiled in `cargo test`.
 - **`embsim/platforms/p2`** — FFI / stubs linking firmware into the emulator.
 - **`embsim/models`** — Physics-style models (e.g. gantry, force path, sampling).
 - **`embsim/tools/*`** — trace viewer, memory inspect, UI shell helpers.
@@ -149,4 +151,5 @@ git tag software-v1.0.0 && git push --tags   # Legacy: package the Electron desk
 - **Native vs P2**: Always exercise `native_emulator` / `native_test`; pointer sizes and timing differ from the Propeller 2.
 - **SIL concurrency**: Treat the emulator as single-instance; Playwright uses `workers: 1` where required.
 - **G-code**: Profiles/tests that must signal completion to firmware should end appropriately (e.g. **`G122`** where the firmware contract requires it).
-- **Generated code**: Do not hand-edit `Firmware/MaDCore/src/Generated/`, `Software/MaDWasmControl/src/protocol/generated/`, or `SIL/mad-protocol/src/generated/` (nor the legacy `Software/MaDControl/src/main/generated/`) — change `Protocol/MaDProtocol.yaml` (or templates) and regenerate.
+- **Generated code**: Do not hand-edit `Firmware/MaDCore/src/Generated/`, `Software/MaDWasmControl/src/protocol/generated/`, or `Protocol/rust/src/generated/` (nor the legacy `Software/MaDControl/src/main/generated/`) — change `Protocol/MaDProtocol.yaml` (or templates) and regenerate.
+- **Submodules** (`SIL/embsim`, `Protocol/ProtoEmb`): library changes land upstream ([embsim](https://github.com/RileyMcCarthy/embsim), [protoemb](https://github.com/RileyMcCarthy/protoemb)) — commit + push there (their own CI gates them), then bump the pinned commit here in a MaD PR. Don't leave a MaD PR pointing at an unpushed submodule commit. `SIL/Cargo.toml` `exclude`s `embsim` (the submodule is its own Cargo workspace); its crates are consumed as path deps.

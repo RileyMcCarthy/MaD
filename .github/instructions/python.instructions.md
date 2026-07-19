@@ -1,15 +1,17 @@
 ---
-applyTo: "Protocol/ProtoEmb/core/**,Firmware/MaDCore/extra_scripts/**"
+applyTo: "Firmware/MaDCore/extra_scripts/**"
 ---
 
-Python (protocol generator + PlatformIO SCons hooks). Full conventions:
-`docs/coding-guidelines/python.md`. Target Python 3.9.
+Python (PlatformIO SCons hooks; the ProtoEmb generator lives in its own repo —
+github.com/RileyMcCarthy/protoemb — with its own instructions). Full
+conventions: `docs/coding-guidelines/python.md`. Target Python 3.9.
 
 Focus on what ruff can't decide:
-- the generator's error-handling model (accumulate errors, then report; `SystemExit` vs
-  `ValueError` by cause);
-- schema-enrichment conventions (`_`-prefixed computed keys, don't overwrite raw keys);
-- Jinja template hygiene — no logic pushed into templates, use the configured `prefix`
-  (not a hardcoded name), keep the DO-NOT-EDIT banner.
+- SCons hook constraints: `Import("env")` injects `env` (F821 is ignored for
+  these files); a hook must fail the build via `env.Exit(1)` with an actionable
+  message, never a bare traceback or a silent skip of a required step;
+- keep hooks dependency-light (deps are pip-installed into PlatformIO's Python
+  at build time);
+- user-facing errors: `SystemExit("message")`, never bare `exit()` or `assert`.
 
 Don't re-report ruff findings.
