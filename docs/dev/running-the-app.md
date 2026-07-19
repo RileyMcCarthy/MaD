@@ -5,6 +5,9 @@ the protocol core compiled to WebAssembly from Rust.
 
 ## Setup
 
+> Needs the `Protocol/ProtoEmb` submodule (wasm core + codec generation):
+> `git submodule update --init --recursive` after a plain clone.
+
 ```bash
 cd Software/MaDWasmControl
 npm install

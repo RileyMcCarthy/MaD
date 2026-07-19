@@ -40,10 +40,7 @@ node_modules/
 Firmware/MaDCore/src/Generated/
 Firmware/MaDCore/src/IO/generated/
 Software/MaDControl/src/main/generated/
-SIL/mad-protocol/src/generated/
-Protocol/ProtoEmb/core/__pycache__/
-Protocol/ProtoEmb/framing/target/
-Protocol/ProtoEmb/runtime/target/
+Protocol/rust/src/generated/
 
 # SIL generated artifacts
 SIL/sd/gcode/*.bin

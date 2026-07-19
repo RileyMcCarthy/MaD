@@ -94,7 +94,7 @@ static void dev_cogManager_private_wrapper(void *arg)
             {
 #if !defined(__EMULATION__)
                 // emulator doesnt run fast enough to catch this
-                DEBUG_ERROR("Scheduling overrun (%d/%d us) %s\n", duration, maxWaitTime, config->name);
+                DEBUG_ERROR("Scheduling overrun (%u/%u us) %s\n", duration, maxWaitTime, config->name);
 #endif
             }
             else
