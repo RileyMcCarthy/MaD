@@ -40,13 +40,29 @@ bool app_control_triggerMotionDisabled(void) { return d_trigDisRet; }
 
 /* ---- app_testManagement ---- */
 static bool d_isRunning, d_isBusy, d_addMoveRet, d_startRet;
+/* When true, isBusy reports busy until triggerTestEnd has been called once —
+ * models the END-then-wait path of ProtoEmb_onWrite_test_run without spinning. */
+static bool d_busyUntilEnd;
 static app_motion_move_t d_lastManualMove;
 static char d_lastGcodeId[16];
 static int d_endCount;
+static int d_startCount;
 bool app_testManagement_isRunning(void) { return d_isRunning; }
-bool app_testManagement_isBusy(void) { return d_isBusy; }
+bool app_testManagement_isBusy(void)
+{
+    if (d_busyUntilEnd)
+    {
+        return d_endCount == 0;
+    }
+    return d_isBusy;
+}
 bool app_testManagement_triggerTestEnd(void) { d_endCount++; return true; }
-bool app_testManagement_triggerTestStart(const char *id) { strncpy(d_lastGcodeId, id, sizeof(d_lastGcodeId) - 1); return d_startRet; }
+bool app_testManagement_triggerTestStart(const char *id)
+{
+    d_startCount++;
+    strncpy(d_lastGcodeId, id, sizeof(d_lastGcodeId) - 1);
+    return d_startRet;
+}
 bool app_testManagement_addManualMove(const app_motion_move_t *m) { d_lastManualMove = *m; return d_addMoveRet; }
 
 /* ---- app_monitor ---- */
@@ -97,9 +113,11 @@ void setUp(void)
     d_setpoint = 0;
     d_fault = 0; d_restriction = 0; d_motionEnabled = false; d_trigEnRet = d_trigDisRet = false;
     d_isRunning = d_isBusy = d_addMoveRet = d_startRet = false;
+    d_busyUntilEnd = false;
     memset(&d_lastManualMove, 0, sizeof(d_lastManualMove));
     memset(d_lastGcodeId, 0, sizeof(d_lastGcodeId));
     d_endCount = 0;
+    d_startCount = 0;
     memset(&d_getProfile, 0, sizeof(d_getProfile));
     memset(&d_setProfile, 0, sizeof(d_setProfile));
     d_setProfileRet = false; d_setProfileCount = 0;
@@ -205,17 +223,38 @@ void test_onWrite_sample_profile_maps_and_forwards(void)
     TEST_ASSERT_EQUAL_INT(120, d_setProfile.maxDisplacement);
 }
 
-void test_onWrite_test_run_ends_busy_then_starts(void)
+/* Self-cancel regression (c081e6c8): when IDLE, test_run must NOT call
+ * triggerTestEnd — an unconditional END races a fresh START on the next tick. */
+void test_onWrite_test_run_idle_does_not_end(void)
 {
-    d_isBusy = false; /* not busy -> no spin; goes straight to start */
+    d_isBusy = false;
+    d_busyUntilEnd = false;
     d_startRet = true;
     ProtoEmb_TestRun_t in;
     memset(&in, 0, sizeof(in));
     memcpy(in.gcodeId, "gc0001", 6);
     memcpy(in.testDataId, "td0001", 6);
     TEST_ASSERT_EQUAL_INT(PROTOEMB_RUNTIME_WRITE_DISPOSITION_ACK, ProtoEmb_onWrite_test_run(&in));
+    TEST_ASSERT_EQUAL_INT(0, d_endCount);   /* the fix: no END while idle */
+    TEST_ASSERT_EQUAL_INT(1, d_startCount);
     TEST_ASSERT_EQUAL_STRING("gc0001", d_lastGcodeId);
     TEST_ASSERT_EQUAL_STRING("td0001", d_testName);
+}
+
+/* When a session is busy, test_run must request END once, wait until idle, then START. */
+void test_onWrite_test_run_busy_ends_then_starts(void)
+{
+    d_busyUntilEnd = true; /* isBusy true until END is called */
+    d_startRet = true;
+    ProtoEmb_TestRun_t in;
+    memset(&in, 0, sizeof(in));
+    memcpy(in.gcodeId, "gc0002", 6);
+    memcpy(in.testDataId, "td0002", 6);
+    TEST_ASSERT_EQUAL_INT(PROTOEMB_RUNTIME_WRITE_DISPOSITION_ACK, ProtoEmb_onWrite_test_run(&in));
+    TEST_ASSERT_EQUAL_INT(1, d_endCount);
+    TEST_ASSERT_EQUAL_INT(1, d_startCount);
+    TEST_ASSERT_EQUAL_STRING("gc0002", d_lastGcodeId);
+    TEST_ASSERT_EQUAL_STRING("td0002", d_testName);
 }
 
 void test_machine_configuration_round_trips_through_bridge(void)
@@ -248,7 +287,8 @@ int main(void)
     RUN_TEST(test_onWrite_manual_move_fills_and_forwards);
     RUN_TEST(test_onWrite_test_move_pushes_to_sd);
     RUN_TEST(test_onWrite_sample_profile_maps_and_forwards);
-    RUN_TEST(test_onWrite_test_run_ends_busy_then_starts);
+    RUN_TEST(test_onWrite_test_run_idle_does_not_end);
+    RUN_TEST(test_onWrite_test_run_busy_ends_then_starts);
     RUN_TEST(test_machine_configuration_round_trips_through_bridge);
     return UNITY_END();
 }

@@ -90,7 +90,8 @@ and the emulator playground is injected by the harness (`e2e/`), never baked int
 
 `src/wasm/` and `src/protocol/generated/` are git-ignored build artifacts; run
 `build:wasm` and `generate:proto` after cloning (and whenever the protocol schema
-or Rust core changes).
+or Rust core changes). Both need the `Protocol/ProtoEmb` submodule — after a
+plain clone run `git submodule update --init --recursive` first.
 
 ## Deploying (GitHub Pages)
 

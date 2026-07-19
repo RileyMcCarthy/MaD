@@ -2,6 +2,7 @@
 #include "HAL_lock.h"
 #include "HAL_time.h"
 #include "HAL_system.h"
+#include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -9,6 +10,12 @@ static int lockIndex = 0;
 static bool locks[8] = {0};
 
 uint32_t global_timeus;
+
+/* Optional direct millisecond override for uint32 wrap / 49-day timer tests.
+ * When global_timems_force is true, HAL_time_getMs returns global_timems and
+ * ignores global_timeus (us counters cannot represent full ms wrap). */
+bool global_timems_force = false;
+uint32_t global_timems = 0U;
 
 /* Shared across every suite: Library/ objects (compiled into all suites via
  * build_src_filter) reference _stdio_debug_lock through the DEBUG_* macros, so
@@ -21,10 +28,19 @@ void HAL_lock_mock_reset(void)
 {
     lockIndex = 0;
     memset(locks, 0, sizeof(locks));
+    global_timems_force = false;
+    global_timems = 0U;
 }
 
 // HAL time mock implementations
-uint32_t HAL_time_getMs(void) { return global_timeus / 1000; }
+uint32_t HAL_time_getMs(void)
+{
+    if (global_timems_force)
+    {
+        return global_timems;
+    }
+    return global_timeus / 1000U;
+}
 uint32_t HAL_time_getUs(void) { return global_timeus; }
 void HAL_time_waitMs(uint32_t ms) { (void)ms; }
 void HAL_time_waitUs(uint32_t us) { (void)us; }

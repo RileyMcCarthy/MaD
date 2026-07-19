@@ -1,6 +1,6 @@
 # C / Firmware Coding Guidelines (Propeller 2)
 
-This governs all hand-written C under `Firmware/MaDCore/src/` (layers `APP/`, `DEV/`, `IO/`, `Library/`, `HAL/`, `HW/`, `Main/`). It is derived from the actual code and the `pio check` (cppcheck + MISRA C:2023 + CERT) configuration in this repo. It does **not** govern `src/Generated/` or `src/IO/generated/` (see *Generated code*).
+This governs all hand-written C under `Firmware/MaDCore/src/` (layers `APP/`, `DEV/`, `IO/`, `Library/`, `HAL/`, `HW/`, `Main/`). It is derived from the actual code and the `pio check` (cppcheck + MISRA; **medium + high only**) configuration in this repo. It does **not** govern `src/Generated/` or `src/IO/generated/` (see *Generated code*).
 
 ---
 
@@ -11,7 +11,7 @@ This governs all hand-written C under `Firmware/MaDCore/src/` (layers `APP/`, `D
 - Use `<stdint.h>` fixed-width types and `<stdbool.h>` `bool`. No bare `int` for protocol/sized data; explicit casts for narrowing/64-bit math.
 - Only call the layer below you. Never include a low-level MCU/P2 header above `HAL/`.
 - One module owns one `static <module>_data` struct + one HAL lock. Never call another module's API while holding your own lock.
-- Run `pio check` and fix findings — the repo currently has **zero suppressions**; keep it that way.
+- Run `pio check` and fix **medium/high** findings (low is disabled). CI Gate fails on any medium/high defect.
 
 ---
 
@@ -178,7 +178,7 @@ typedef struct __attribute__((packed))
 int32_t steps = (int32_t)(((int64_t)moveTargetUm * app_motion_data.stepsPerMM) / 1000LL);
 ```
 
-- Compare booleans explicitly against `false`/`true` rather than relying on implicit truthiness in loop/guard conditions (project style): `if (app_motion_data.inputs.motionEnabled == false)` (`src/APP/app_motion.c:133`), `while (APP_MOTION_LOCK_REQ() == false)` (`src/APP/app_motion.c:39`).
+- Compare booleans explicitly against `false`/`true` rather than relying on implicit truthiness or `!` in loop/guard conditions (project style): `if (app_motion_data.inputs.motionEnabled == false)` (`src/APP/app_motion.c:133`), `while (APP_MOTION_LOCK_REQ() == false)` (`src/APP/app_motion.c:39`). **Do not write `if (!flag)` for booleans in new code** — use `== false` / `== true`. Pointer checks may still use `== NULL` / `!= NULL`.
 - `const`-qualify pointer-to-input parameters and locals that don't change: `bool app_motion_addMove(const app_motion_move_t *move)` (`src/APP/app_motion.h:71`), `const int32_t jawOffsetSteps = ...` (`src/APP/app_motion.c:200`).
 - Make file-private functions and the module state struct `static` (MISRA 8.7/8.8). New private helpers should be `static` even if older files aren't.
 - Always give `switch` a `default:` and handle the `_COUNT` sentinel explicitly where the enum has one, even if it's a no-op (`src/APP/app_motion.c:161`, `:221`):
@@ -189,7 +189,14 @@ default:
     break;
 ```
 
-**Single-exit vs early-return**: the codebase uses **both**. Library/guard code uses early returns for invalid input (`src/Library/lib_staticQueue.c:23`), while state-machine helpers use a single `desiredState`/result variable returned once at the end (`src/APP/app_motion.c:130-167`, `src/DEV/watchdog.c:108-133`). Prefer the single-result pattern for state logic; early-return guards are fine for `NULL`/range checks.
+**Single-exit vs early-return**: the codebase uses **both**, with a clear split:
+
+| Context | Style |
+|---------|--------|
+| State-machine helpers (`getDesiredState`, tick bodies, transition logic) | **Single exit** — assign `desiredState` / result, return once at the end (`src/APP/app_motion.c:130-167`, `src/DEV/watchdog.c:108-133`) |
+| Public API / library boundary guards | **Early return** after `DEBUG_*` for `NULL`, invalid channel, full queue, etc. (`src/Library/lib_staticQueue.c:23`) |
+
+Do **not** ban early returns project-wide; do **not** sprinkle early returns through the middle of a state tick.
 
 **Don't**
 - Don't introduce implicit narrowing or signed/unsigned mixing without a cast (MISRA Rule 10.x). Note `native_emulator` adds `-Wno-sign-compare` (`platformio.ini:84`) — don't rely on that; cppcheck/MISRA still flags it.
@@ -279,7 +286,11 @@ Every cog carries a `watchdog_channel_t` and must be kicked; new channels add a 
 
 ## State-machine module idiom
 
-App/DEV modules follow a strict `init` → `run` shape, where `run` is `processInputs → getDesiredState → processOutputs`. Inputs are **snapshotted into the module's `inputs` struct once per tick** so the rest of the tick sees one consistent view. `src/APP/app_motion.c:48`:
+Stateful `APP/` / `DEV/` / multi-state `IO/` modules follow a strict **`init` → `run`** shape. The tick body is:
+
+`processInputs` → `getDesiredState` → (on change: `exitAction` → `entryAction`) → do-work / `processOutputs`.
+
+Inputs are **snapshotted once per tick** so the rest of the tick sees one consistent view. Do not re-call external getters from transition helpers or output paths. Example snapshot rule, `src/APP/app_motion.c:48`:
 
 ```c
 /* All external state read by this module must be cached here by
@@ -287,15 +298,26 @@ App/DEV modules follow a strict `init` → `run` shape, where `run` is `processI
  * helpers, state-machine handlers, or processOutputs. */
 ```
 
+**Full pattern** (entry/exit on transition) — `src/DEV/watchdog.c`, `src/DEV/dev_nvram.c`, `src/DEV/dev_stepper.c`, `src/IO/IO_SDCard.c`:
+
 ```c
-void app_motion_run(void)
+void module_run(/* channel if multi-instance */)
 {
-    app_motion_private_processInputs();                          // read once, into inputs{}
-    app_motion_data.state = app_motion_private_getDesiredState(); // pure transition
-    app_motion_private_processOutputs();                          // publish under lock
+    module_private_processInputs(ch);                 /* snapshot external state once */
+    state_t desired = module_private_getDesiredState(ch); /* pure-ish transition */
+    if (desired != current)
+    {
+        module_private_exitAction(ch, current);       /* leave old state */
+        current = desired;
+        module_private_entryAction(ch, desired);      /* enter new state */
+    }
+    /* in-state work / processOutputs; publish under module lock as needed */
 }
 ```
-(`src/APP/app_motion.c:334`.) Follow this for new stateful modules: a transition function returns the next state and is otherwise side-effect-light, and outputs are published under the module lock.
+
+**Simpler modules** may omit entry/exit when there are no enter/leave side effects and only need `processInputs` → `getDesiredState` → `processOutputs` (e.g. `src/APP/app_motion.c:334`). Prefer the full entry/exit form for anything with non-trivial state-dependent setup/teardown.
+
+**Public surface:** `module_init` once at startup; `module_run` (or cog-wired equivalent) every period; brief lock → copy → unlock on getters/setters.
 
 ---
 
@@ -326,6 +348,33 @@ Levels (all defined in `src/IO/IO_Debug.h`): `DEBUG_WARNING` yellow (`:33`), `DE
 
 ---
 
+## Testing new firmware behaviour
+
+New modules and non-trivial behaviour changes need tests — not only “builds on hardware.”
+
+**Do**
+- Add or extend **Unity** tests under `Firmware/MaDCore/test/` and run `pio test -e native_test` from `Firmware/MaDCore/`.
+- When the module is not already in the `native_test` source filter (`platformio.ini`), **add it** so ASan actually links the code under test.
+- Cover state transitions, fault/restriction paths, invalid inputs, and lock-free/SPSC contracts where relevant.
+- For behaviour that depends on motion, force, NVRAM, or multi-cog timing, add or extend **SIL** coverage (`SIL/`) in addition to unit tests.
+
+**Don't**
+- Ship new APP/DEV state machines or public control-path APIs with zero automated coverage.
+- Rely solely on `pio run -e propeller2` as proof of correctness (pointer size / timing differ on native).
+
+Suggested local loop for a firmware change:
+
+```bash
+# from Firmware/MaDCore/
+pio check -e propeller2 --fail-on-defect=medium --fail-on-defect=high
+pio run -e native_emulator
+pio test -e native_test
+# from SIL/ when behaviour crosses the emulator
+make test
+```
+
+---
+
 ## Generated code
 
 `src/Generated/` is produced from `Protocol/MaDProtocol.yaml`. Header banner (`src/Generated/protoemb_runtime.h:1`):
@@ -341,22 +390,22 @@ Levels (all defined in `src/IO/IO_Debug.h`): `DEBUG_WARNING` yellow (`:33`), `DE
 
 ---
 
-## Linting / passing checks (MISRA C:2023 + CERT)
+## Linting / passing checks (MISRA + cppcheck)
 
 ### Commands
 
 ```bash
 # from Firmware/MaDCore/
-pio check                       # cppcheck + MISRA C:2023 + CERT static analysis
+pio check -e propeller2 --fail-on-defect=medium --fail-on-defect=high
 pio run -e native_emulator      # must also build clean for the SIL emulator (libfirmware.a)
 pio test -e native_test         # Unity unit tests (ASan + stack-protector)
 ```
 
-Always build/test **native** as well as P2 — pointer sizes and timing differ (`native_emulator` builds C99 with `-Wall`, `platformio.ini:80-82`; `native_test` adds `-fsanitize=address -fstack-protector-all`, `platformio.ini:105-106`).
+Always build/test **native** as well as P2 — pointer sizes and timing differ (`native_emulator` builds C99 with `-Wall`; `native_test` adds `-fsanitize=address -fstack-protector-all`).
 
 ### Exactly how `pio check` is configured
 
-From `platformio.ini` (`[env]`, lines 3-12):
+From `platformio.ini` (`[env]`):
 
 ```ini
 check_tool = cppcheck
@@ -366,57 +415,54 @@ check_src_filters =
   +<src/IO/*>
   +<src/Library/*>
   +<src/Main/*>
+check_severity = medium, high
 check_flags =
   cppcheck: --addon=misra.json
-  cppcheck: --addon=cert.py
 ```
 
-- `misra.json` (`Firmware/MaDCore/misra.json`) points cppcheck's MISRA addon at the human-readable rule text:
-
-```json
-{ "script": "addons/misra.py", "args": ["--rule-texts=misra-rules.txt"] }
-```
-
-`misra-rules.txt` (present in the repo, ~24 KB) is MISRA's official **MISRA C:2023** headline file (e.g. `Rule 17.7 Required`). It supplies rule descriptions only; it does not turn rules on/off.
-- `cert.py` enables the CERT C addon. **Note:** `cert.py` is *not* checked into the repo tree — it is expected to ship with the cppcheck install's `addons/`. If it isn't present locally, the CERT portion of `pio check` won't run; MISRA still will.
-- `check_src_filters` scopes analysis to the hand-written layers (`APP/`, `DEV/`, `IO/`, `Library/`, `Main/`) — `HAL/`, `HW/`, `IO/generated/`, and `Generated/` are intentionally **not** MISRA/CERT-checked here, so don't expect those paths to be analyzed.
-- There is **no** `check_severity`/`check_skip_packages`/suppression file set, so cppcheck's defaults apply. Run `pio check` and resolve findings; do not lower severity to pass.
+- **`check_severity = medium, high`** — **low is not reported and not enforced.** Hundreds of low findings were style / cross-TU false positives (unused macros, unused public APIs, unused tags/typedefs, macro paste). They are not a useful gate for this tree.
+- **CI Gate (`firmware-misra`)** runs `pio check -e propeller2 --skip-packages --fail-on-defect=medium --fail-on-defect=high` and **blocks merge** if any medium or high defect remains.
+- `misra.json` points cppcheck's MISRA addon at `misra-rules.txt` (rule descriptions only; does not turn rules on/off).
+- CERT is **not** enforced (no `cert.py` with the bundled cppcheck). To enforce CERT later, vendor an addon and add it to `check_flags`.
+- `check_src_filters` scopes analysis to hand-written layers (`APP/`, `DEV/`, `IO/`, `Library/`, `Main/`) — `HAL/`, `HW/`, `IO/generated/`, and `Generated/` are not in the filter (headers may still appear when included from checked `.c` files).
 
 ### How the code is already MISRA-shaped (do these to pass)
 
-The existing code passes by following these, so new code should too:
+The existing code passes medium/high by following these; new code should too:
 - Fixed-width `stdint`/`bool` types; suffixed literals (`100U`, `1000LL`).
 - Explicit casts for every narrowing/64-bit conversion (`src/APP/app_motion.c:243`).
 - Every `switch` has `default:`; enum `_COUNT` sentinels handled where present (Rule 16.x; `src/APP/app_motion.c:161`).
 - Unused/ignored return values cast to `(void)` (Rule 17.7, `src/APP/app_motion.c:330`).
 - Single `static` definition per file-scope object; internal functions `static` (Rule 8.x) — with the known `watchdog.c` exception you should not copy.
 - No dynamic allocation in steady state; no recursion; bounded static buffers.
+- Divisors checked on the **actual** unsigned magnitude used in the divide (see `lib_utility_muldiv64_signed`).
+- `DEBUG_*` / printf format strings match argument types (`%u` for `uint32_t`, etc.).
 
-> `native_test` (`platformio.ini:107-112`) currently compiles only a subset under ASan: `DEV/watchdog.c`, `DEV/dev_nvram.c`, `DEV/Config/dev_nvram_config.c`, all of `Library/`, and `HAL/Include/`. Other modules don't yet have Unity tests wired here; add to this filter when you add tests.
+> `native_test` currently compiles only a subset under ASan (Library + selected modules). Other modules don't yet have Unity tests wired here; add to this filter when you add tests.
 
 ### Suppression policy
 
-This repo currently contains **zero** suppressions — no inline `cppcheck-suppress` comments and no suppressions file (verified by grep over `src/`). **The default policy is: fix the finding, don't suppress it.**
+**Default: fix medium/high findings; do not suppress them.** Low findings are already filtered out globally via `check_severity` — do not re-enable low just to paper over style.
 
-If a suppression is ever genuinely unavoidable (e.g. a verified false positive), the cppcheck syntax is:
+If a medium/high suppression is ever genuinely unavoidable (verified false positive), prefer a line- or block-scoped comment with a reason:
 
 ```c
-/* cppcheck-suppress misra-c2023-21.6 ; <reason: why this is safe / a false positive> */
+/* cppcheck-suppress misra-c2012-21.6 ; <reason: why this is safe / a false positive> */
 some_line_that_trips_the_rule();
 ```
 
 or block-scoped:
 
 ```c
-// cppcheck-suppress-begin misra-c2023-8.7
+// cppcheck-suppress-begin misra-c2012-8.7
 ...
-// cppcheck-suppress-end misra-c2023-8.7
+// cppcheck-suppress-end misra-c2012-8.7
 ```
 
-Rules (forward-looking — nothing in the repo uses these yet):
+Rules:
 - **Every suppression must carry a one-line justification** and name the exact rule id.
 - Prefer fixing the code or moving the offending construct behind the HAL over suppressing.
-- Do not add project-wide suppressions to `platformio.ini` to make CI green; that hides regressions for everyone.
+- Do not widen `check_severity` or remove `--fail-on-defect` to make CI green.
 
 ---
 
@@ -425,12 +471,16 @@ Rules (forward-looking — nothing in the repo uses these yet):
 **Do**
 - Copy `template.cx`/`template.ch`; rename the include guard; keep banner sections in order.
 - `module_action` public, `module_private_action` `static`; one `static module_data`.
-- `stdint`/`bool`, explicit casts, `(void)` ignored returns, `default:` on every switch.
+- Stateful modules: `init` / `run` with `processInputs` → `getDesiredState` → `exit`/`entry` on change → outputs.
+- `stdint`/`bool`, explicit `== false`/`== true` (no `!` on bools), explicit casts, `(void)` ignored returns, `default:` on every switch.
+- Single-exit for SM helpers; early-return only at API/library boundaries.
 - Lock briefly around your own data only; document SPSC ownership for queues.
 - Log with `DEBUG_*("%s", ...)`; kick the watchdog in every cog loop.
+- Add Unity (`native_test`) and, when needed, SIL coverage for new behaviour.
 
 **Don't**
 - Don't include MCU/P2 headers above HAL, or call upward across layers (except `IO_Debug.h` for logging).
 - Don't call another module's API while holding your lock (ABBA).
 - Don't hand-edit `src/Generated/` or `src/IO/generated/`.
-- Don't suppress MISRA/CERT findings to pass `pio check` — fix them.
+- Don't suppress medium/high MISRA/cppcheck findings to pass `pio check` — fix them. Low is already off.
+- Don't ship new stateful control-path code without automated tests.
