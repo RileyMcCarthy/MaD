@@ -50,7 +50,7 @@ function findFrame(buf, cmd, payloadLen) {
   return { payload, crcOk: crc === crc8(payload) };
 }
 
-const KEYS = ['encoderStepsPerMM', 'servoStepsPerMM', 'loadCellCapacity', 'loadCellSensitivity', 'loadCellZeroBalance',
+const KEYS = ['encoderStepsPerMM', 'servoStepsPerMM', 'forceGaugeNPerStep', 'forceGaugeZeroOffset',
   'maxPosition', 'maxVelocity', 'maxAcceleration', 'maxForceTensile_mN', 'homingVelocity', 'homingOffset', 'jawOffset'];
 
 function decodeProfile(p) {

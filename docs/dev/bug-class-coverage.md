@@ -52,12 +52,19 @@ they are guarded today. Update it when you add a new class or close a gap.
 # Firmware unit suites (includes new timeout / isBusy / elapsed helpers)
 cd Firmware/MaDCore && pio test -e native_test
 
-# WASM offline gate (vitest includes DataStore, session, stateLabels)
+# WASM offline gate (vitest includes DataStore, session, stateLabels, M1/M2 matrices)
 cd Software/MaDWasmControl && npm run verify
+
+# Schema ↔ domain lockstep (M12)
+python3 Protocol/scripts/check_schema_domain_lockstep.py
 
 # WASM e2e vs live SIL (includes TM-busy-restart / TM-manual-gate)
 # requires: make playground + npm run sil:bridge + npm run dev
 npm run e2e
-# or subset:
+# smoke subset (see e2e/smoke-ids.txt):
+npm run e2e:smoke
+# or ad-hoc:
 SCENARIOS=TM-busy-restart,TM-manual-gate npm run e2e
 ```
+
+Parameterized matrix roadmap: [bulletproof-test-plan.md](./bulletproof-test-plan.md).

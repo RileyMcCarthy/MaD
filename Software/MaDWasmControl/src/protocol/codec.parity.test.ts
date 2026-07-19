@@ -20,11 +20,11 @@ const GOLD = {
   state: [178, 0],
   sample: [217, 182, 241, 31, 9, 138, 102, 42, 147, 73, 176, 12],
   stored: [217, 182, 241, 31, 9, 72, 60, 0, 0, 138, 102],
-  // 68-byte MachineConfiguration (load-cell capacity/sensitivity/zero-balance).
+  // 64-byte MachineConfiguration (forceGaugeNPerStep + zeroOffset) — MaDProtocol.yaml.
   config: [
     84, 101, 115, 116, 101, 114, 45, 49, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 200, 0, 0, 0, 144, 1,
-    0, 0, 232, 3, 0, 0, 5, 0, 0, 0, 0, 0, 0, 0, 250, 0, 0, 0, 50, 0, 0, 0, 100, 0, 0, 0, 135, 214,
-    18, 0, 5, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0,
+    0, 0, 1, 0, 0, 0, 5, 0, 0, 0, 250, 0, 0, 0, 50, 0, 0, 0, 100, 0, 0, 0, 135, 214, 18, 0, 5, 0, 0,
+    0, 2, 0, 0, 0, 3, 0, 0, 0,
   ],
   profile: [26, 162, 7, 0, 10, 0, 0, 0, 100, 0, 0, 0, 12, 0, 0, 0, 3, 0, 0, 0],
   move: [65, 225, 51, 224, 46, 0, 100, 0],
@@ -54,9 +54,8 @@ describe('codec golden byte vectors (frozen — guards the wire format)', () => 
           name: 'Tester-1',
           encoderStepsPerMM: 200,
           servoStepsPerMM: 400,
-          loadCellCapacity: 1,
-          loadCellSensitivity: 5,
-          loadCellZeroBalance: 0,
+          forceGaugeNPerStep: 1,
+          forceGaugeZeroOffset: 5,
           maxPosition: 250,
           maxVelocity: 50,
           maxAcceleration: 100,
@@ -137,9 +136,8 @@ describe('round-trip within scale precision', () => {
       name: 'Tester-1',
       encoderStepsPerMM: 200,
       servoStepsPerMM: 400,
-      loadCellCapacity: 1,
-      loadCellSensitivity: 5,
-      loadCellZeroBalance: 0,
+      forceGaugeNPerStep: 1,
+      forceGaugeZeroOffset: 5,
       maxPosition: 250,
       maxVelocity: 50,
       maxAcceleration: 100,
@@ -152,7 +150,7 @@ describe('round-trip within scale precision', () => {
     expect(out.name).toBe('Tester-1');
     expect(out.maxForceTensile).toBeCloseTo(1234.567, 3);
     expect(out.maxPosition).toBe(250);
-    expect(out.loadCellCapacity).toBeCloseTo(1, 3);
-    expect(out.loadCellSensitivity).toBe(5);
+    expect(out.forceGaugeNPerStep).toBe(1);
+    expect(out.forceGaugeZeroOffset).toBe(5);
   });
 });
