@@ -12,6 +12,8 @@ Everything you need to build, run, test, and extend MaD.
 -   [:material-puzzle: **Reusing embsim**](reusing-embsim.md) — the SIL framework elsewhere
 -   [:material-rocket-launch: **CI/CD & releases**](ci-cd-and-releases.md) — pipelines and tags
 -   [:material-hand-heart: **Contributing**](contributing.md) — conventions and constraints
+-   [:material-bug-check: **Bug-class coverage**](bug-class-coverage.md) — regression checklist for recurring failure modes
+-   [:material-shield-check: **Bulletproof test plan**](bulletproof-test-plan.md) — matrix roadmap (M1–M12) + sprint status
 
 </div>
 

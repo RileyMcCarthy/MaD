@@ -3,24 +3,39 @@
  *
  * lib_timer.c is compiled globally (build_src_filter +<Library/>), so this suite
  * calls it as a real dependency (no #include) and drives the clock through the
- * mock's `global_timeus` (microseconds; HAL_time_getMs returns it / 1000).
- *
- * Note the mock clock caps ms at ~4.29M (UINT32_MAX us), so the documented
- * 49-day uint32 ms-rollover path is not reachable here; the strict ">" expiry
- * boundary and the state transitions are what these tests pin down.
+ * mock. Ordinary cases use global_timeus (us → ms via /1000). The uint32 ms
+ * wraparound path uses global_timems_force + global_timems so the full 49-day
+ * modular range is reachable (us cannot represent full ms wrap).
  */
 #include <unity.h>
+#include <stdint.h>
+#include <stdbool.h>
 #include "lib_timer.h"
 
 extern uint32_t global_timeus;          /* mock_propeller2.c virtual clock (us) */
+extern bool global_timems_force;
+extern uint32_t global_timems;
 extern void HAL_lock_mock_reset(void);
 
-static void set_ms(uint32_t ms) { global_timeus = ms * 1000U; }
+static void set_ms(uint32_t ms)
+{
+    global_timems_force = false;
+    global_timeus = ms * 1000U;
+}
+
+/** Direct ms clock — required for values beyond UINT32_MAX/1000 us. */
+static void set_ms_direct(uint32_t ms)
+{
+    global_timems_force = true;
+    global_timems = ms;
+}
 
 void setUp(void)
 {
     HAL_lock_mock_reset();
     global_timeus = 0U;
+    global_timems_force = false;
+    global_timems = 0U;
 }
 void tearDown(void) {}
 
@@ -100,6 +115,36 @@ void test_lib_timer_restartReArms(void)
     TEST_ASSERT_TRUE(lib_timer_expired(&t));
 }
 
+/* 49-day uint32 ms wrap: start near MAX, advance past wrap; modular elapsed. */
+void test_lib_timer_expires_across_uint32_ms_wrap(void)
+{
+    lib_timer_S t;
+    lib_timer_init(&t, 100U);
+    set_ms_direct(UINT32_MAX - 20U);
+    lib_timer_start(&t);
+
+    set_ms_direct(30U); /* modular elapsed = 51 — still running */
+    TEST_ASSERT_EQUAL_INT(lib_timer_STATE_RUNNING, lib_timer_state(&t));
+    TEST_ASSERT_FALSE(lib_timer_expired(&t));
+
+    set_ms_direct(90U); /* modular elapsed = 111 > 100 */
+    TEST_ASSERT_TRUE(lib_timer_expired(&t));
+}
+
+void test_lib_timer_near_zero_start_no_spurious_expiry(void)
+{
+    /* Class coverage for the underflow footgun: (now - period) > start with
+     * now=50, period=100, start=0 underflows; (now - start) > period does not. */
+    lib_timer_S t;
+    lib_timer_init(&t, 100U);
+    set_ms_direct(0U);
+    lib_timer_start(&t);
+    set_ms_direct(50U);
+    TEST_ASSERT_FALSE(lib_timer_expired(&t));
+    set_ms_direct(101U);
+    TEST_ASSERT_TRUE(lib_timer_expired(&t));
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -109,5 +154,7 @@ int main(void)
     RUN_TEST(test_lib_timer_expiredIsSticky);
     RUN_TEST(test_lib_timer_stopReturnsToOff);
     RUN_TEST(test_lib_timer_restartReArms);
+    RUN_TEST(test_lib_timer_expires_across_uint32_ms_wrap);
+    RUN_TEST(test_lib_timer_near_zero_start_no_spurious_expiry);
     return UNITY_END();
 }

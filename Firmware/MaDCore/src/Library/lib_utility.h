@@ -6,6 +6,7 @@
 /**********************************************************************
  * Includes
  **********************************************************************/
+#include <stdbool.h>
 #include <stdint.h>
 /**********************************************************************
  * Constants
@@ -66,6 +67,17 @@ uint8_t lib_utility_CRC8(uint8_t *addr, uint16_t len);
  * Returns 0 if c == 0 (no exception is raised).
  */
 int32_t lib_utility_muldiv64_signed(int32_t a, int32_t b, int32_t c);
+
+/**
+ * Rollover-safe elapsed-time comparison for uint32 clocks.
+ *
+ * Returns true when `(now - start) > period`. Prefer this over
+ * `(now - period) > start`, which underflows when `now < period` and can
+ * report a spurious expiry (see IO_protocol receive timeout, 86b657ec).
+ * Unsigned wrap of `now` past UINT32_MAX is handled correctly by the
+ * modular subtraction.
+ */
+bool lib_utility_elapsed_gt(uint32_t now, uint32_t start, uint32_t period);
 /**********************************************************************
  * End of File
  **********************************************************************/

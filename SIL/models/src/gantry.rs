@@ -94,3 +94,52 @@ impl Gantry {
     }
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rstest::rstest;
+    use std::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
+    use std::sync::Mutex;
+
+    fn default_cfg() -> Config {
+        Config {
+            engagement_slack_mm: 1.0,
+            tension_on_decreasing_position: true,
+            upper_threshold_mm: 5.0,
+            lower_threshold_mm: 50.0,
+        }
+    }
+
+    #[rstest]
+    #[case::at_baseline(0.0, 0.0)]
+    #[case::within_slack(0.5, 0.0)]
+    #[case::past_slack(3.0, 2.0)] // travel 3 - slack 1 = 2
+    fn extension_after_slack_on_decreasing(#[case] drop_mm: f64, #[case] expected_ext: f64) {
+        let g = Gantry::new(default_cfg());
+        let last = std::sync::Arc::new(Mutex::new(None));
+        {
+            let last = std::sync::Arc::clone(&last);
+            g.on_extension_change(move |e| *last.lock().unwrap() = Some(e));
+        }
+        g.on_position(100.0); // baseline
+        g.on_position(100.0 - drop_mm);
+        assert!((last.lock().unwrap().unwrap() - expected_ext).abs() < 1e-9);
+    }
+
+    #[rstest]
+    fn upper_limit_fires_once_on_edge() {
+        let g = Gantry::new(default_cfg());
+        let hits = std::sync::Arc::new(AtomicU32::new(0));
+        {
+            let hits = std::sync::Arc::clone(&hits);
+            g.on_upper_change(move |_| {
+                hits.fetch_add(1, AtomicOrdering::Relaxed);
+            });
+        }
+        g.on_position(10.0); // above upper threshold (5)
+        g.on_position(4.0); // cross below upper
+        g.on_position(3.0); // stay below — no new edge
+        assert_eq!(hits.load(AtomicOrdering::Relaxed), 1);
+    }
+}

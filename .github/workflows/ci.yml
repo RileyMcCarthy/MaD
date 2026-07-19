@@ -107,6 +107,11 @@ jobs:
           npm run generate:proto
       - name: Verify (typecheck + lint + tests + build)
         run: npm run verify
+      - name: Schema ↔ domain mapping lockstep (M12)
+        working-directory: ${{ github.workspace }}
+        run: |
+          pip install pyyaml==6.0.3
+          python3 Protocol/scripts/check_schema_domain_lockstep.py
 
   # ProtoEmb library suite (generator unit tests, cross-language wire
   # conformance, framing + runtime crate tests) run against the *pinned
@@ -141,6 +146,36 @@ jobs:
       - name: Run full ProtoEmb test suite
         run: make test
 
+  # embsim library suite against the *pinned submodule commit* (mirror of
+  # protoemb-ci). Upstream also runs this on RileyMcCarthy/embsim; re-running
+  # here gates pin bumps and catches unpushed / never-CI'd gitlinks. The MaD
+  # SIL workspace only *compiles* path deps (sil-rust) — this job executes the
+  # framework tests themselves.
+  embsim-ci:
+    needs: changes
+    if: needs.changes.outputs.sil == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: SIL/embsim
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: SIL/embsim
+      - name: Build (all targets)
+        run: cargo build --workspace --all-targets
+      - name: Test
+        run: cargo test --workspace --all-targets
+      - name: Doc tests
+        run: cargo test --workspace --doc
+      - name: Test embsim-trace (web off)
+        run: cargo test -p embsim-trace --no-default-features
+
   # Firmware Unity unit tests on the host (platform = native, AddressSanitizer).
   # No Propeller toolchain needed; the platformio pre-hook regenerates the C
   # protocol from the YAML and installs its own generator deps.
@@ -162,9 +197,8 @@ jobs:
         run: pio test -e native_test
 
   # ── Phase 0 deterministic gates ───────────────────────────────────────────
-  # BLOCKING jobs feed ci-gate; ADVISORY jobs (continue-on-error, not in
-  # ci-gate.needs) surface a finding without blocking a merge until their
-  # pre-existing backlog is cleaned up.
+  # BLOCKING jobs feed ci-gate. Advisory-only jobs (continue-on-error, not in
+  # ci-gate.needs) may still exist for non-gating lints (e.g. clippy backlog).
 
   # BLOCKING. Protocol codegen health: regenerate all three targets (C/TS/Rust)
   # twice and assert success + byte-reproducibility. Generated files are
@@ -202,6 +236,8 @@ jobs:
             exit 1
           fi
           echo "Codegen succeeded and is byte-reproducible."
+      - name: Schema ↔ domain mapping lockstep (M12)
+        run: python3 Protocol/scripts/check_schema_domain_lockstep.py
 
   # BLOCKING. Ruff lint of the PlatformIO SCons hooks; config in ruff.toml
   # (mirrors docs/coding-guidelines/python.md). The ProtoEmb generator is
@@ -255,20 +291,19 @@ jobs:
       - name: Cargo test (blocking)
         working-directory: SIL
         # The workspace is the MaD-side crates only (protocol, models,
-        # MaDSim); the embsim submodule's crates are tested
-        # in their own repo's CI.
+        # MaDSim). The embsim submodule suite is re-run by the sibling
+        # `embsim-ci` job (mirror of protoemb-ci) on the pinned commit.
         run: cargo test --workspace --all-targets
 
-  # ADVISORY. MISRA/cppcheck via `pio check`. Large pre-existing backlog (~1629,
-  # mostly low "unused macro"); never naive-block. Prints findings + uploads JSON;
-  # promote to blocking later by diffing against a committed baseline (new findings
-  # only). NB: the cert.py addon is currently a no-op (CERT is NOT enforced today).
+  # BLOCKING. MISRA/cppcheck via `pio check`. Low severity is disabled in
+  # platformio.ini (check_severity = medium, high) — style noise only. Medium and
+  # high must be zero; CI fails the job (and thus CI Gate) on any such defect.
+  # CERT is not enforced (no cert.py with bundled cppcheck).
   firmware-misra:
     needs: changes
     if: needs.changes.outputs.firmware == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
         with:
@@ -283,22 +318,26 @@ jobs:
         run: |
           pip install pyyaml jinja2
           pio pkg install --platform https://github.com/RileyMcCarthy/platform-propeller.git
-      - name: Run pio check (MISRA / cppcheck) — advisory
+      - name: Run pio check (MISRA / cppcheck) — medium+high must pass
         working-directory: Firmware/MaDCore
         run: |
           set -o pipefail
-          # Never combine --silent with a future --fail-on-defect: it defeats it.
-          pio check -e propeller2 --skip-packages | tee pio-check.txt
-          pio check -e propeller2 --skip-packages --json-output | sed -n '/^\[{/,$p' > pio-check.json || true
+          # Never combine --silent with --fail-on-defect: silent defeats the fail gate.
+          # check_severity in platformio.ini is medium,high; fail on either.
+          pio check -e propeller2 --skip-packages \
+            --fail-on-defect=medium --fail-on-defect=high \
+            | tee pio-check.txt
+          pio check -e propeller2 --skip-packages --json-output \
+            | sed -n '/^\[{/,$p' > pio-check.json || true
           {
-            echo "## Firmware MISRA / cppcheck (advisory)"
+            echo "## Firmware MISRA / cppcheck (blocking: medium + high)"
             echo '```'
-            tail -25 pio-check.txt
+            tail -40 pio-check.txt
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Upload findings
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: firmware-misra-${{ github.run_number }}
           path: |
@@ -402,7 +441,7 @@ jobs:
           ls -la release-artifacts/
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.artifact.outputs.name }}
           path: release-artifacts/
@@ -469,7 +508,7 @@ jobs:
         run: echo "name=MaD-Firmware-${{ github.run_number }}" >> $GITHUB_OUTPUT
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.artifact.outputs.name }}
           path: release-assets/
@@ -508,7 +547,7 @@ jobs:
       run: echo "name=${{ matrix.project }}-hardware-${{ github.run_number }}" >> $GITHUB_OUTPUT
 
     - name: Upload build artifacts
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: ${{ steps.artifact.outputs.name }}
         path: |
@@ -543,7 +582,7 @@ jobs:
           node-version: lts/*
 
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: "*-${{ github.run_number }}"
           path: ./artifacts/
@@ -681,7 +720,7 @@ jobs:
           find ./test-artifacts -type f | head -20
 
       - name: Upload test artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: sil-test-results-${{ github.run_number }}
@@ -697,7 +736,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download software artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ${{ needs.build-software.outputs.artifact-name }}
           path: artifacts
@@ -715,7 +754,7 @@ jobs:
           find artifacts -type f | head -10
       
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v3
         with:
           name: MaD Control ${{ steps.get_version.outputs.VERSION }}
           tag_name: software-v${{ steps.get_version.outputs.VERSION }}
@@ -739,7 +778,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download firmware artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ${{ needs.build-firmware.outputs.artifact-name }}
           path: artifacts
@@ -750,7 +789,7 @@ jobs:
         run: echo "VERSION=${GITHUB_REF#refs/tags/firmware-v}" >> $GITHUB_OUTPUT
       
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v3
         with:
           name: MaD Firmware ${{ steps.get_version.outputs.VERSION }}
           tag_name: firmware-v${{ steps.get_version.outputs.VERSION }}
@@ -768,7 +807,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download all hardware artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
           pattern: '*-hardware-*'
@@ -778,7 +817,7 @@ jobs:
         run: echo "VERSION=${GITHUB_REF#refs/tags/hardware-v}" >> $GITHUB_OUTPUT
           
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v3
         with:
           name: MaD Hardware ${{ steps.get_version.outputs.VERSION }}
           tag_name: hardware-v${{ steps.get_version.outputs.VERSION }}
@@ -800,9 +839,11 @@ jobs:
       - changes
       - wasm-control-ci
       - protoemb-ci
+      - embsim-ci
       - firmware-unit-tests
       - protocol-codegen
       - firmware-layering
+      - firmware-misra
       - python-lint
       - sil-rust
       - build-software
