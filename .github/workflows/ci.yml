@@ -141,6 +141,36 @@ jobs:
       - name: Run full ProtoEmb test suite
         run: make test
 
+  # embsim library suite against the *pinned submodule commit* (mirror of
+  # protoemb-ci). Upstream also runs this on RileyMcCarthy/embsim; re-running
+  # here gates pin bumps and catches unpushed / never-CI'd gitlinks. The MaD
+  # SIL workspace only *compiles* path deps (sil-rust) — this job executes the
+  # framework tests themselves.
+  embsim-ci:
+    needs: changes
+    if: needs.changes.outputs.sil == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: SIL/embsim
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: SIL/embsim
+      - name: Build (all targets)
+        run: cargo build --workspace --all-targets
+      - name: Test
+        run: cargo test --workspace --all-targets
+      - name: Doc tests
+        run: cargo test --workspace --doc
+      - name: Test embsim-trace (web off)
+        run: cargo test -p embsim-trace --no-default-features
+
   # Firmware Unity unit tests on the host (platform = native, AddressSanitizer).
   # No Propeller toolchain needed; the platformio pre-hook regenerates the C
   # protocol from the YAML and installs its own generator deps.
@@ -254,8 +284,8 @@ jobs:
       - name: Cargo test (blocking)
         working-directory: SIL
         # The workspace is the MaD-side crates only (protocol, models,
-        # MaDSim); the embsim submodule's crates are tested
-        # in their own repo's CI.
+        # MaDSim). The embsim submodule suite is re-run by the sibling
+        # `embsim-ci` job (mirror of protoemb-ci) on the pinned commit.
         run: cargo test --workspace --all-targets
 
   # BLOCKING. MISRA/cppcheck via `pio check`. Low severity is disabled in
@@ -802,6 +832,7 @@ jobs:
       - changes
       - wasm-control-ci
       - protoemb-ci
+      - embsim-ci
       - firmware-unit-tests
       - protocol-codegen
       - firmware-layering
