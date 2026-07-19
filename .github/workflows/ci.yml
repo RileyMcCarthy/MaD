@@ -107,6 +107,11 @@ jobs:
           npm run generate:proto
       - name: Verify (typecheck + lint + tests + build)
         run: npm run verify
+      - name: Schema ↔ domain mapping lockstep (M12)
+        working-directory: ${{ github.workspace }}
+        run: |
+          pip install pyyaml==6.0.3
+          python3 Protocol/scripts/check_schema_domain_lockstep.py
 
   # ProtoEmb library suite (generator unit tests, cross-language wire
   # conformance, framing + runtime crate tests) run against the *pinned
@@ -231,6 +236,8 @@ jobs:
             exit 1
           fi
           echo "Codegen succeeded and is byte-reproducible."
+      - name: Schema ↔ domain mapping lockstep (M12)
+        run: python3 Protocol/scripts/check_schema_domain_lockstep.py
 
   # BLOCKING. Ruff lint of the PlatformIO SCons hooks; config in ruff.toml
   # (mirrors docs/coding-guidelines/python.md). The ProtoEmb generator is
