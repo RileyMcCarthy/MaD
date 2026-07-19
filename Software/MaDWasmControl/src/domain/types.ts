@@ -60,6 +60,7 @@ export interface MachineConfiguration {
   Name: string;
   'Encoder (step/mm)': number;
   'Servo (step/mm)': number;
+  /** Wire field forceGaugeNPerStep (MaDProtocol.yaml) — counts-to-force scale. */
   'Force Gauge (N/step)': number;
   'Force Gauge Zero Offset (steps)': number;
   'Position Max (mm)': number;

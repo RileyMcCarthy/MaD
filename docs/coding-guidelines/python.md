@@ -1,6 +1,6 @@
-# Python Coding Guidelines — ProtoEmb Protocol Code Generator
+# Python Coding Guidelines — Build Hooks (and the ProtoEmb generator)
 
-This document governs the **Python** in `Protocol/ProtoEmb/core/` (the YAML-schema → C/TypeScript/Rust code generator) and the two PlatformIO SCons helper scripts in `Firmware/MaDCore/extra_scripts/`. It is derived from the actual code in those files — follow it to write changes that match the existing style and that the build hooks (PlatformIO pre-build, SIL `Makefile`, Cargo `build.rs`) keep working.
+This document governs the **Python** in `Firmware/MaDCore/extra_scripts/` (the PlatformIO SCons helper scripts). The ProtoEmb code generator (`Protocol/ProtoEmb/core/`) now lives in [its own repo](https://github.com/RileyMcCarthy/protoemb) as a git submodule — the same conventions apply there, and its lint/tests run in that repo's CI. This guide is derived from the actual code — follow it to write changes that match the existing style and that the build hooks (PlatformIO pre-build, SIL `Makefile`, Cargo `build.rs`) keep working.
 
 The Python here is small and dependency-light by design: it parses a YAML protocol schema, enriches it, validates it, and renders Jinja2 templates. Keep it that way.
 
@@ -8,7 +8,7 @@ The Python here is small and dependency-light by design: it parses a YAML protoc
 
 ## TL;DR for contributors
 
-- **Linting/typing:** no first-party lint/format/type config exists in the repo. Match the existing style exactly (see below). Recommended local tools: `ruff` + `black` with defaults. Do not add a CI Python lint gate without team sign-off.
+- **Linting/typing:** `ruff.toml` at the repo root is the lint config, and the CI `python-lint` job gates `ruff check Firmware/MaDCore/extra_scripts` (the protoemb repo lints the generator with its own `ruff.toml`). `black` locally is recommended but not gated.
 - **CI does run the generator** (via PlatformIO's pre-build hook, under **Python 3.9** — see below), so keep the generator working and 3.9-compatible.
 - **Dependencies:** only `pyyaml>=6.0` and `jinja2>=3.1` (`Protocol/ProtoEmb/core/requirements.txt:1`). Do not add new runtime deps.
 - **Entry points:** argparse CLI, `def main():`, and an `if __name__ == "__main__": main()` guard.
@@ -42,7 +42,7 @@ protoemb-gen = "generate:main"
 
 ### How "checks" actually pass
 
-There is **no Python lint/type-check/unit-test step in CI** (no `ruff`/`black`/`flake8`/`mypy`/`pytest`). But the generator itself **is** exercised in CI, indirectly:
+CI lints with `ruff` (`python-lint` job; config in `ruff.toml`); there is no type-check/unit-test step for the SCons hooks. The generator itself **is** exercised in CI, indirectly:
 
 - **PlatformIO pre-build** runs `generate.py` to emit `src/Generated/` before the firmware compiles (`Firmware/MaDCore/extra_scripts/generate_protocol.py:36`). The hook is registered globally in `platformio.ini` (`extra_scripts = pre:extra_scripts/generate_protocol.py` at `platformio.ini:2`), so it runs for **every** environment. A non-zero generator exit fails the firmware build (`env.Exit(1)`, `generate_protocol.py:48`).
 - **In CI, the `build-firmware` job runs `pio run` under Python 3.9** (`.github/workflows/ci.yml:183`–`:185` pin `python-version: '3.9'`), so the generator is genuinely exercised on 3.9 in CI. Treat 3.9 syntax compatibility as a real (if implicit) gate, not just an aspiration.
@@ -339,7 +339,7 @@ Wire-size and bit-width type maps live in Python (`compute_field_bits`, the inli
 
 ## Generated code (do not hand-edit)
 
-The Python's *output* — `Firmware/MaDCore/src/Generated/`, `Software/MaDWasmControl/src/protocol/generated/` (the shipped app; legacy Electron target was `Software/MaDControl/src/main/generated/`), and `SIL/mad-protocol/src/generated/` — is regenerated and **must not be hand-edited** (root `CLAUDE.md`; banner at `protocol.h.j2:2`). (Note: the SIL Rust output goes to `SIL/mad-protocol/src/generated/` per `SIL/Makefile:33`; the `SIL/embsim/peripherals/src/generated/` path some older docs reference does not exist.) To change generated code:
+The Python's *output* — `Firmware/MaDCore/src/Generated/`, `Software/MaDWasmControl/src/protocol/generated/` (the shipped app; legacy Electron target was `Software/MaDControl/src/main/generated/`), and `Protocol/rust/src/generated/` — is regenerated and **must not be hand-edited** (root `CLAUDE.md`; banner at `protocol.h.j2:2`). (Note: the SIL Rust output goes to `Protocol/rust/src/generated/` per `SIL/Makefile:33`; the `SIL/embsim/peripherals/src/generated/` path some older docs reference does not exist.) To change generated code:
 
 1. Edit `Protocol/MaDProtocol.yaml` (schema) and/or a `.j2` template.
 2. Regenerate (see the commands in root `CLAUDE.md`, or `python3 core/generate.py --schema … --target … --output … --templates core/templates`).

@@ -5,6 +5,9 @@ commands run from `Firmware/MaDCore/`.
 
 ## First-time setup
 
+> Needs the `Protocol/ProtoEmb` submodule (protocol codegen pre-hook):
+> `git submodule update --init --recursive` after a plain clone.
+
 1. Install [PlatformIO IDE for VS Code](https://docs.platformio.org/en/latest/integration/ide/vscode.html#installation)
    (or the PlatformIO Core CLI).
 2. Install the custom Propeller platform:

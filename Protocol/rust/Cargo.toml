@@ -1,0 +1,15 @@
+[package]
+name = "protocol"
+version = "0.1.0"
+edition = "2021"
+description = "MaD wire-protocol types (encode/decode) generated from MaDProtocol.yaml"
+publish = false
+# Member of the SIL workspace (the repo's Rust workspace) even though it lives
+# under Protocol/ next to the schema — cargo needs the explicit back-pointer
+# for out-of-tree members. NB: this crate must stay in its own subdirectory
+# (not at Protocol/ root): a manifest that is an ancestor of the ProtoEmb
+# submodule would hijack cargo's workspace discovery for the standalone
+# framing/runtime crates.
+workspace = "../../SIL" 
+
+[dependencies]

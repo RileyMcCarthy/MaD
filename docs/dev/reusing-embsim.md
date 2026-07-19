@@ -1,9 +1,11 @@
 # Reusing embsim
 
-**embsim** is the generic SIL framework that powers MaD's emulator. It was
-extracted from MaD specifically to be reused: the `core`, `peripherals`, `models`,
-`runtime`, and `tools` crates carry **no MaD- or Propeller-2-specific
-assumptions**. This page is a pointer for using it on another project.
+**embsim** is the generic SIL framework that powers MaD's emulator. It lives in
+its own repository — [github.com/RileyMcCarthy/embsim](https://github.com/RileyMcCarthy/embsim)
+— and is vendored here as the `SIL/embsim` git submodule. The `core`,
+`peripherals`, `models`, `runtime`, and `tools` crates carry **no MaD- or
+Propeller-2-specific assumptions**. This page is a pointer for using it on
+another project.
 
 ## What you provide
 
@@ -38,12 +40,15 @@ missing ones at once.
 
 ## Reference material
 
-- [`SIL/embsim/README.md`](https://github.com/RileyMcCarthy/MaD/blob/main/SIL/embsim/README.md)
-  — the framework overview and the ~10-line emulator.
-- [`SIL/embsim/CONTRACT.md`](https://github.com/RileyMcCarthy/MaD/blob/main/SIL/embsim/CONTRACT.md)
+- [`embsim/README.md`](https://github.com/RileyMcCarthy/embsim/blob/main/README.md)
+  — the framework overview, the ~10-line emulator, and how to consume it as a
+  submodule from your own project.
+- [`embsim/CONTRACT.md`](https://github.com/RileyMcCarthy/embsim/blob/main/CONTRACT.md)
   — the exact list of symbols a platform must export and the ABI rules.
-- `SIL/embsim/examples/minimal/` — a complete, firmware-free template:
-  `cargo run -p embsim-minimal-example`.
+- [`embsim/examples/minimal/`](https://github.com/RileyMcCarthy/embsim/tree/main/examples/minimal)
+  — a complete, firmware-free template: `cargo run -p embsim-minimal-example`
+  (run from `SIL/embsim/`, or a standalone embsim clone — the crate lives in the
+  embsim workspace, not MaD's `SIL/` workspace).
 
 ## How MaD uses it
 
@@ -52,8 +57,8 @@ MaD's own consumer code is the reference implementation, isolated in three crate
 | Crate | Role |
 |---|---|
 | `embsim/platforms/p2` (`embsim-p2`) | Propeller 2 HAL trampolines + `Platform` |
-| `embsim-mad-models` | MaD physics: gantry, sample, strain gauge |
-| `mad-protocol` | Generated MaD protocol types |
+| `models` (`SIL/models/`) | MaD physics: gantry, sample, strain gauge |
+| `protocol` (`Protocol/rust/`) | Generated MaD protocol types |
 | `MaDSim` | The `mad-emulator` binary + the MaD `Machine` wiring |
 
 The dependency graph is acyclic — no generic crate depends on a project crate —

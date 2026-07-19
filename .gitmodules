@@ -1,0 +1,6 @@
+[submodule "SIL/embsim"]
+	path = SIL/embsim
+	url = https://github.com/RileyMcCarthy/embsim.git
+[submodule "Protocol/ProtoEmb"]
+	path = Protocol/ProtoEmb
+	url = https://github.com/RileyMcCarthy/protoemb.git

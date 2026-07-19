@@ -17,7 +17,7 @@ embsim-peripherals = { path = "../embsim/peripherals" }
 embsim-p2 = { path = "../embsim/platforms/p2" }
 embsim-runtime = { path = "../embsim/runtime" }
 embsim-models = { path = "../embsim/models" }
-embsim-mad-models = { path = "../embsim-mad-models" }
+models = { path = "../models" }
 embsim-memory-inspect = { path = "../embsim/tools/memory-inspect" }
 embsim-trace = { path = "../embsim/tools/trace", default-features = false }
 embsim-ui = { path = "../embsim/tools/ui", optional = true }

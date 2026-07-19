@@ -15,6 +15,27 @@ through the **ADS122U04** ADC, giving the machine its force measurement.
 - Provides the force-path measurement used for live readouts, limit enforcement,
   and stress calculation.
 
+## Bench testing
+
+Notes for exercising the board on the bench (no gauge, talking straight to a
+P2-EVAL), learned during hardware bring-up:
+
+- **Power the analog domain.** The analog supply is fully isolated from the
+  digital 3V3: **AVDD/AGND normally come from the DS2 gauge via J2**, so a bare
+  board has the ADC's analog side unpowered. For bench tests strap
+  **J2.1 (AVDD) → 3.3 V** and **J2.2 (AGND) → GND**. **Remove the straps before
+  connecting the real gauge** — its supply must not fight the bench rail.
+- **Close the input jumpers.** The A0/A1 signal path is open by default:
+  **R6/R7 are DNP**, so close solder jumpers **JP1/JP2** to route the analog
+  inputs through to the ADC.
+- **Serial wiring.** The firmware (`IO_ADS122U04`) expects the piggy silk
+  **"RX" wired to EVAL P2** and silk **"TX" to EVAL P0**, running at
+  **115200 baud**.
+- **~RESET pull-up (pre-R10 boards).** Boards fabricated before the **R10**
+  10 kΩ pull-up was added float the ADS122U04's ~RESET pin, and the chip will
+  not respond to any UART command. On those boards tie ~RESET to 3.3 V manually
+  (e.g. bridge U1 pins 1-2-3 and feed 3.3 V via the J3 GPIO0 hole).
+
 ## Working with the design
 
 This is a [KiCad](https://www.kicad.org/) project (under `KICAD/`). Open the

@@ -4,7 +4,7 @@ The MaD message map, generated from
 [`Protocol/MaDProtocol.yaml`](https://github.com/RileyMcCarthy/MaD/blob/main/Protocol/MaDProtocol.yaml).
 For the wire framing and encoding rules, see
 [Communication protocol](../how-it-works/protocol.md) and the
-[wire-format spec](https://github.com/RileyMcCarthy/MaD/blob/main/Protocol/ProtoEmb/docs/wire-format.md).
+[wire-format spec](https://github.com/RileyMcCarthy/protoemb/blob/main/docs/wire-format.md).
 
 `protocol_version: 1`. Nodes: `ui`, `madcore`.
 
