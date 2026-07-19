@@ -754,7 +754,7 @@ jobs:
           find artifacts -type f | head -10
       
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v3
         with:
           name: MaD Control ${{ steps.get_version.outputs.VERSION }}
           tag_name: software-v${{ steps.get_version.outputs.VERSION }}
@@ -789,7 +789,7 @@ jobs:
         run: echo "VERSION=${GITHUB_REF#refs/tags/firmware-v}" >> $GITHUB_OUTPUT
       
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v3
         with:
           name: MaD Firmware ${{ steps.get_version.outputs.VERSION }}
           tag_name: firmware-v${{ steps.get_version.outputs.VERSION }}
@@ -817,7 +817,7 @@ jobs:
         run: echo "VERSION=${GITHUB_REF#refs/tags/hardware-v}" >> $GITHUB_OUTPUT
           
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v3
         with:
           name: MaD Hardware ${{ steps.get_version.outputs.VERSION }}
           tag_name: hardware-v${{ steps.get_version.outputs.VERSION }}
