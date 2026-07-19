@@ -21,7 +21,8 @@ they are guarded today. Update it when you add a new class or close a gap.
 
 | Class | Historical incidents | Specific guards | Class guards |
 |-------|----------------------|-----------------|--------------|
-| **Concurrency / lifecycle races** (`isBusy`, pending flags, self-cancel) | `c081e6c8` test_run self-cancel; pending start accepted manual move | `test_app_testManagement_*`; `test_onWrite_test_run_idle_does_not_end` / `_busy_ends_then_starts`; SIL `testmanagement-lifecycle`; WASM e2e `TM-busy-restart`, `TM-manual-gate` | Double-start rejected; manual gated while busy; cancel→restart |
+| **Concurrency / lifecycle races** (`isBusy`, pending flags, self-cancel) | `c081e6c8` test_run self-cancel; pending start accepted manual move | `test_app_testManagement_*`; `test_onWrite_test_run_idle_does_not_end` / `_busy_ends_then_starts`; SIL `testmanagement-lifecycle`; WASM e2e `TM-busy-restart`, `TM-manual-gate` | **M5** phase matrix + restart-after-terminal; messageSlave NACK matrix |
+| **Fault / restriction priority** | first-fault-wins; enable refused while faulted | existing per-fault tests | **M4** each fault alone + enable refuse + adjacent pairs; restriction chain |
 | **Unsigned time / rollover** | `86b657ec` IO_protocol `(now-period)>start` underflow | `test_near_zero_clock_does_not_spurious_timeout`; `test_timeout_survives_uint32_ms_wrap` | `lib_utility_elapsed_gt` + unit tests; `lib_timer` wrap + near-zero tests; protocol/timer use the helper |
 | **Unit scale (×1000 N/mN, mm/µm)** | slope stored as N not mN; SIL 1000× mismatches | SIL `regression-scaling-motion`; WASM `sample.test.ts` | force-gauge mN math units; dashboard unit bounds; codec golden vectors |
 | **Protocol enum / wire drift** | G-code enum-compat OOB hang `6972ec9a`; `FORCE_GAUGE_COMMUNICATION` spelling | `test_enum_compat_*`; `stateLabels.test.ts` proto lockstep | `_Static_assert` + runtime enum equality; badge labels non-empty strings |

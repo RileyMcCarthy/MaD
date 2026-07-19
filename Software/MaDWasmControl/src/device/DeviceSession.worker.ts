@@ -73,6 +73,15 @@ import {
   RunTestParams,
   RunTestResult,
 } from './events';
+import {
+  ABORT_ERROR_MESSAGE,
+  DOWNLOAD_RETRY_DELAY_MS,
+  downloadChunkIsTerminal,
+  shouldInvalidatePartialUpload,
+  shouldRetryDownloadNack,
+  shouldRetryUpload,
+  UPLOAD_DEFAULT_MAX_RETRIES,
+} from './sessionPolicy';
 
 /** Poll cadence (ms). Faster than the sample period so reads/writes drain promptly. */
 const TICK_MS = 4;
@@ -410,8 +419,8 @@ class DeviceSession {
     let pending: Uint8Array[] = [];
     const flushMoves = async () => {
       for (const batch of batchMoveBuffers(pending, BATCH_MOVE_COUNT)) {
-        if (this.aborting) throw new Error('aborted by emergency stop');
-        await this.uploadWithRetry(MSG_WRITE_TEST_MOVE, batch, 3);
+        if (this.aborting) throw new Error(ABORT_ERROR_MESSAGE);
+        await this.uploadWithRetry(MSG_WRITE_TEST_MOVE, batch, UPLOAD_DEFAULT_MAX_RETRIES);
       }
       pending = [];
     };
@@ -420,8 +429,8 @@ class DeviceSession {
         pending.push(op.buf);
       } else {
         await flushMoves(); // preserve program order before the waveform
-        if (this.aborting) throw new Error('aborted by emergency stop');
-        await this.uploadWithRetry(MSG_WRITE_TEST_WAVEFORM, op.buf, 3);
+        if (this.aborting) throw new Error(ABORT_ERROR_MESSAGE);
+        await this.uploadWithRetry(MSG_WRITE_TEST_WAVEFORM, op.buf, UPLOAD_DEFAULT_MAX_RETRIES);
       }
     }
     await flushMoves();
@@ -444,7 +453,7 @@ class DeviceSession {
         });
         const gaugeMm = resolveGaugeLengthMm(gaugeLengthMm, this.lastSample);
         await this.uploadProgram(gcodeLinesToProgram(lines, gaugeMm));
-        if (this.aborting) throw new Error('aborted by emergency stop');
+        if (this.aborting) throw new Error(ABORT_ERROR_MESSAGE);
 
         // 3. Start the test only after the COMPLETE program (incl. trailing G122)
         //    is uploaded. Build the payload via the generated codec, not by hand.
@@ -456,10 +465,12 @@ class DeviceSession {
         // Invalidate any partially-written SD file: re-opening for WRITE truncates
         // it (firmware "wb"), so a half-uploaded program can never later run to EOF
         // and report a false "complete". Best-effort.
-        try {
-          this.client?.write(MSG_WRITE_TEST_MOVE, openId);
-        } catch {
-          /* ignore */
+        if (shouldInvalidatePartialUpload(false)) {
+          try {
+            this.client?.write(MSG_WRITE_TEST_MOVE, openId);
+          } catch {
+            /* ignore */
+          }
         }
         return {
           success: false,
@@ -495,9 +506,6 @@ class DeviceSession {
     onProgress?: (p: FileDownloadProgress) => void,
   ): Promise<DownloadResult> {
     const SAMPLES_PER_REQUEST = 100;
-    const MAX_NOT_READY_RETRIES = 80;
-    const MAX_MID_RETRIES = 20;
-    const NOT_READY_RETRY_DELAY_MS = 100;
 
     return this.runOp(async () => {
     this.aborting = false;
@@ -508,7 +516,7 @@ class DeviceSession {
       let done = false;
 
       while (!done) {
-        if (this.aborting) throw new Error('aborted by emergency stop');
+        if (this.aborting) throw new Error(ABORT_ERROR_MESSAGE);
         const request = new Uint8Array(24);
         request.set(asciiBytes(testName, 16), 0);
         const view = new DataView(request.buffer);
@@ -526,11 +534,10 @@ class DeviceSession {
             // on the first chunk, so a mid-stream BUSY (e.g. the SD card still
             // flushing right after a test) doesn't discard everything already
             // downloaded. The first chunk waits longer (file may not exist yet).
-            const cap = sampleIndex === 0 ? MAX_NOT_READY_RETRIES : MAX_MID_RETRIES;
-            if (notReadyRetries < cap) {
+            if (shouldRetryDownloadNack(notReadyRetries, sampleIndex)) {
               notReadyRetries += 1;
                
-              await delay(NOT_READY_RETRY_DELAY_MS);
+              await delay(DOWNLOAD_RETRY_DELAY_MS);
               continue;
             }
             throw new Error('Test data not ready');
@@ -538,7 +545,18 @@ class DeviceSession {
           chunk = next.chunk;
         }
 
-        if (chunk.length === 0) {
+        if (downloadChunkIsTerminal(chunk.length, SAMPLES_PER_REQUEST, STOREDSAMPLE_WIRE_SIZE)) {
+          if (chunk.length > 0) {
+            chunks.push(chunk);
+            downloadedBytes += chunk.length;
+            sampleIndex += Math.floor(chunk.length / STOREDSAMPLE_WIRE_SIZE);
+            onProgress?.({
+              fileName: testName,
+              bytesDownloaded: downloadedBytes,
+              totalBytes: 0,
+              status: 'downloading',
+            });
+          }
           done = true;
         } else {
           chunks.push(chunk);
@@ -551,7 +569,6 @@ class DeviceSession {
             totalBytes: 0,
             status: 'downloading',
           });
-          if (received < SAMPLES_PER_REQUEST) done = true;
         }
       }
 
@@ -738,14 +755,14 @@ class DeviceSession {
   private async uploadWithRetry(command: number, data: Uint8Array, maxRetries: number): Promise<void> {
     let attempt = 0;
     for (;;) {
-      if (this.aborting) throw new Error('aborted by emergency stop');
+      if (this.aborting) throw new Error(ABORT_ERROR_MESSAGE);
       try {
          
         await this.writeAndAckOrThrow(command, data, 5000);
         return;
       } catch (err) {
         attempt += 1;
-        if (attempt >= maxRetries) throw err;
+        if (!shouldRetryUpload(attempt, maxRetries)) throw err;
          
         await delay(1000);
       }
