@@ -13,8 +13,8 @@ are stable references for PRs. See also [bug-class-coverage.md](./bug-class-cove
 
 | Sprint | Theme | Status |
 |--------|--------|--------|
-| **A** | M1 unit scale · M2 move bounds · M12 schema lockstep · e2e smoke | **in progress** |
-| **B** | M4 faults/restrictions · M5 lifecycle · M7 worker ops | pending |
+| **A** | M1 unit scale · M2 move bounds · M12 schema lockstep · e2e smoke | **done** |
+| **B** | M4 faults/restrictions · M5 lifecycle · M7 worker ops · B4 store events | **done** |
 | **C** | M8–M11 motion/force/waveform/link e2e matrices | pending |
 | **D** | PR template, pairwise tooling, nightly soak | pending |
 
@@ -49,10 +49,34 @@ Out-of-range packed fields never encode (bit-wrap).
 
 ---
 
-## Sprint B–D
+## Sprint B (done)
 
-See prior audit: M4/M5 Unity tables, worker fake streams, motion/force e2e
-grids, link-loss moments, culture.
+### B1 — M4 Fault × restriction tables
+
+- `test_app_control.c`: each fault alone + enable refused; adjacent first-fault-wins;
+  each active restriction alone; priority chain; sample restrictions locked inactive
+  (firmware checks currently commented).
+
+### B2 — M5 Lifecycle matrix
+
+- `test_app_testManagement.c`: start/manual/busy matrix across IDLE / pending /
+  RUNNING / after user-end / motion-abort / sample-limit / open-fail; restart
+  after each terminal reaches RUNNING.
+- `test_app_messageSlave.c`: start NACK when rejected; manual NACK when busy.
+
+### B3 — M7 Worker policy (pure)
+
+- `sessionPolicy.ts` + tests: download NACK budgets, upload retries, partial-upload
+  invalidate, abort detection, `OpMutex`, chunk terminal.
+- Worker wired to policy helpers.
+
+### B4 — Device event reduction
+
+- `deviceEventReduce.ts` + matrix tests for store patches + `isResponding`.
+
+## Sprint C–D
+
+Motion/force/waveform/link e2e matrices; CI e2e smoke; PR template culture.
 
 ## Definition of done
 

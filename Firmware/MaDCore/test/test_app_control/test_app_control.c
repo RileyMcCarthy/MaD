@@ -30,6 +30,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>
 
 #include "HAL_lock.h"
 #include "HAL_GPIO.h"
@@ -146,6 +147,10 @@ static void doubles_reset(void)
 
 static void control_init(void)
 {
+    /* Matrix tests call control_init() many times in one RUN_TEST; reset the
+     * lock pool so we never exhaust the mock's 8-slot table mid-test. */
+    HAL_lock_mock_reset();
+    _stdio_debug_lock = HAL_lock_create();
     doubles_reset();
     /* app_control_data is a single file-static instance and app_control_init()
      * only assigns a few fields — the motionEnabled latch and pending request
@@ -470,6 +475,233 @@ void test_request_motionDisabledAlwaysLatches(void)
 }
 
 /**********************************************************************
+ * M4 — fault × restriction matrices (parameterized tables)
+ **********************************************************************/
+
+/* Trip exactly one fault source, leave all others healthy. */
+static void trip_fault_only(app_control_fault_E fault)
+{
+    doubles_reset();
+    d_cogAllRunning = true;
+    d_watchdogAlive = true;
+    d_stepperReady = true;
+    d_forceGaugeReady = true;
+    memset(d_gpio, 0, sizeof(d_gpio));
+    switch (fault)
+    {
+    case APP_CONTROL_FAULT_COG:
+        d_cogAllRunning = false;
+        break;
+    case APP_CONTROL_FAULT_WATCHDOG:
+        d_watchdogAlive = false;
+        break;
+    case APP_CONTROL_FAULT_ESD_POWER:
+        d_gpio[HAL_GPIO_ESD_POWER] = true;
+        break;
+    case APP_CONTROL_FAULT_ESD_SWITCH:
+        d_gpio[HAL_GPIO_ESD_SWITCH] = true;
+        break;
+    case APP_CONTROL_FAULT_ESD_UPPER:
+        d_gpio[HAL_GPIO_ESD_UPPER] = true;
+        break;
+    case APP_CONTROL_FAULT_ESD_LOWER:
+        d_gpio[HAL_GPIO_ESD_LOWER] = true;
+        break;
+    case APP_CONTROL_FAULT_SERVO_COMMUNICATION:
+        d_stepperReady = false;
+        break;
+    case APP_CONTROL_FAULT_FORCE_GAUGE_COMMUNICATION:
+        d_forceGaugeReady = false;
+        break;
+    case APP_CONTROL_FAULT_NONE:
+    case APP_CONTROL_FAULT_COUNT:
+    default:
+        break;
+    }
+}
+
+/* Every non-NONE fault alone → getFault() == that fault, state DISABLED. */
+void test_m4_each_fault_alone_reported_and_disables(void)
+{
+    static const app_control_fault_E faults[] = {
+        APP_CONTROL_FAULT_COG,
+        APP_CONTROL_FAULT_WATCHDOG,
+        APP_CONTROL_FAULT_ESD_POWER,
+        APP_CONTROL_FAULT_ESD_SWITCH,
+        APP_CONTROL_FAULT_ESD_UPPER,
+        APP_CONTROL_FAULT_ESD_LOWER,
+        APP_CONTROL_FAULT_SERVO_COMMUNICATION,
+        APP_CONTROL_FAULT_FORCE_GAUGE_COMMUNICATION,
+    };
+    for (size_t i = 0; i < sizeof(faults) / sizeof(faults[0]); i++)
+    {
+        control_init();
+        trip_fault_only(faults[i]);
+        app_control_run();
+        TEST_ASSERT_EQUAL_INT(faults[i], app_control_getFault());
+        TEST_ASSERT_EQUAL_INT(APP_CONTROL_STATE_DISABLED, app_control_data.state);
+        TEST_ASSERT_FALSE(app_control_motionEnabled());
+    }
+}
+
+/* Enable is refused while each fault is latched. */
+void test_m4_enable_refused_for_each_fault(void)
+{
+    static const app_control_fault_E faults[] = {
+        APP_CONTROL_FAULT_COG,
+        APP_CONTROL_FAULT_WATCHDOG,
+        APP_CONTROL_FAULT_ESD_POWER,
+        APP_CONTROL_FAULT_ESD_SWITCH,
+        APP_CONTROL_FAULT_ESD_UPPER,
+        APP_CONTROL_FAULT_ESD_LOWER,
+        APP_CONTROL_FAULT_SERVO_COMMUNICATION,
+        APP_CONTROL_FAULT_FORCE_GAUGE_COMMUNICATION,
+    };
+    for (size_t i = 0; i < sizeof(faults) / sizeof(faults[0]); i++)
+    {
+        control_init();
+        trip_fault_only(faults[i]);
+        app_control_run();
+        TEST_ASSERT_FALSE(app_control_triggerMotionEnabled());
+        app_control_run();
+        TEST_ASSERT_FALSE(app_control_motionEnabled());
+        TEST_ASSERT_EQUAL_INT(APP_CONTROL_STATE_DISABLED, app_control_data.state);
+    }
+}
+
+/* First-fault-wins across consecutive enum pairs (i beats i+1). */
+void test_m4_first_fault_wins_adjacent_pairs(void)
+{
+    /* Pair sources that can be co-asserted via independent doubles. */
+    typedef struct
+    {
+        app_control_fault_E lower;
+        app_control_fault_E higher;
+    } pair_t;
+    static const pair_t pairs[] = {
+        {APP_CONTROL_FAULT_COG, APP_CONTROL_FAULT_WATCHDOG},
+        {APP_CONTROL_FAULT_WATCHDOG, APP_CONTROL_FAULT_ESD_POWER},
+        {APP_CONTROL_FAULT_ESD_POWER, APP_CONTROL_FAULT_ESD_SWITCH},
+        {APP_CONTROL_FAULT_ESD_SWITCH, APP_CONTROL_FAULT_ESD_UPPER},
+        {APP_CONTROL_FAULT_ESD_UPPER, APP_CONTROL_FAULT_ESD_LOWER},
+        {APP_CONTROL_FAULT_ESD_LOWER, APP_CONTROL_FAULT_SERVO_COMMUNICATION},
+        {APP_CONTROL_FAULT_SERVO_COMMUNICATION, APP_CONTROL_FAULT_FORCE_GAUGE_COMMUNICATION},
+    };
+    for (size_t i = 0; i < sizeof(pairs) / sizeof(pairs[0]); i++)
+    {
+        control_init();
+        /* Assert both; lower index must win. */
+        trip_fault_only(pairs[i].lower);
+        /* Add the higher fault without clearing the lower. */
+        switch (pairs[i].higher)
+        {
+        case APP_CONTROL_FAULT_WATCHDOG:
+            d_watchdogAlive = false;
+            break;
+        case APP_CONTROL_FAULT_ESD_POWER:
+            d_gpio[HAL_GPIO_ESD_POWER] = true;
+            break;
+        case APP_CONTROL_FAULT_ESD_SWITCH:
+            d_gpio[HAL_GPIO_ESD_SWITCH] = true;
+            break;
+        case APP_CONTROL_FAULT_ESD_UPPER:
+            d_gpio[HAL_GPIO_ESD_UPPER] = true;
+            break;
+        case APP_CONTROL_FAULT_ESD_LOWER:
+            d_gpio[HAL_GPIO_ESD_LOWER] = true;
+            break;
+        case APP_CONTROL_FAULT_SERVO_COMMUNICATION:
+            d_stepperReady = false;
+            break;
+        case APP_CONTROL_FAULT_FORCE_GAUGE_COMMUNICATION:
+            d_forceGaugeReady = false;
+            break;
+        default:
+            break;
+        }
+        app_control_run();
+        TEST_ASSERT_EQUAL_INT(pairs[i].lower, app_control_getFault());
+    }
+}
+
+/* Active (non-commented) restrictions each alone → RESTRICTED when motion on. */
+void test_m4_each_active_restriction_alone(void)
+{
+    /* MACHINE_TENSION */
+    control_init();
+    enableMotion();
+    d_machineForce = 5001;
+    app_control_run();
+    TEST_ASSERT_EQUAL_INT(APP_CONTROL_RESTRICTION_MACHINE_TENSION, app_control_getRestriction());
+    TEST_ASSERT_EQUAL_INT(APP_CONTROL_STATE_RESTRICTED, app_control_data.state);
+    TEST_ASSERT_TRUE(app_control_speedLimited());
+
+    control_init();
+    enableMotion();
+    d_gpio[HAL_GPIO_ENDSTOP_UPPER] = true;
+    app_control_run();
+    TEST_ASSERT_EQUAL_INT(APP_CONTROL_RESTRICTION_UPPER_ENDSTOP, app_control_getRestriction());
+    TEST_ASSERT_EQUAL_INT(APP_CONTROL_STATE_RESTRICTED, app_control_data.state);
+
+    control_init();
+    enableMotion();
+    d_gpio[HAL_GPIO_ENDSTOP_LOWER] = true;
+    app_control_run();
+    TEST_ASSERT_EQUAL_INT(APP_CONTROL_RESTRICTION_LOWER_ENDSTOP, app_control_getRestriction());
+    TEST_ASSERT_EQUAL_INT(APP_CONTROL_STATE_RESTRICTED, app_control_data.state);
+
+    control_init();
+    enableMotion();
+    d_gpio[HAL_GPIO_ENDSTOP_DOOR] = true;
+    app_control_run();
+    TEST_ASSERT_EQUAL_INT(APP_CONTROL_RESTRICTION_DOOR, app_control_getRestriction());
+    TEST_ASSERT_EQUAL_INT(APP_CONTROL_STATE_RESTRICTED, app_control_data.state);
+}
+
+/* Sample length/tension paths are currently compiled out (commented) — pin that
+ * they stay inactive so re-enabling them without tests fails this lock. */
+void test_m4_sample_restrictions_inactive_today(void)
+{
+    control_init();
+    enableMotion();
+    d_testRunning = true;
+    d_machineForce = 0; /* no machine tension */
+    app_control_run();
+    TEST_ASSERT_FALSE(app_control_data.restriction[APP_CONTROL_RESTRICTION_SAMPLE_LENGTH]);
+    TEST_ASSERT_FALSE(app_control_data.restriction[APP_CONTROL_RESTRICTION_SAMPLE_TENSION]);
+    /* Still TEST (no active restriction). */
+    TEST_ASSERT_EQUAL_INT(APP_CONTROL_STATE_TEST, app_control_data.state);
+}
+
+/* Restriction priority chain: MACHINE_TENSION < UPPER < LOWER < DOOR indices. */
+void test_m4_restriction_priority_chain(void)
+{
+    control_init();
+    enableMotion();
+    d_machineForce = 99999; /* idx MACHINE_TENSION */
+    d_gpio[HAL_GPIO_ENDSTOP_UPPER] = true;
+    d_gpio[HAL_GPIO_ENDSTOP_LOWER] = true;
+    d_gpio[HAL_GPIO_ENDSTOP_DOOR] = true;
+    app_control_run();
+    TEST_ASSERT_EQUAL_INT(APP_CONTROL_RESTRICTION_MACHINE_TENSION, app_control_getRestriction());
+
+    control_init();
+    enableMotion();
+    d_gpio[HAL_GPIO_ENDSTOP_UPPER] = true;
+    d_gpio[HAL_GPIO_ENDSTOP_LOWER] = true;
+    d_gpio[HAL_GPIO_ENDSTOP_DOOR] = true;
+    app_control_run();
+    TEST_ASSERT_EQUAL_INT(APP_CONTROL_RESTRICTION_UPPER_ENDSTOP, app_control_getRestriction());
+
+    control_init();
+    enableMotion();
+    d_gpio[HAL_GPIO_ENDSTOP_LOWER] = true;
+    d_gpio[HAL_GPIO_ENDSTOP_DOOR] = true;
+    app_control_run();
+    TEST_ASSERT_EQUAL_INT(APP_CONTROL_RESTRICTION_LOWER_ENDSTOP, app_control_getRestriction());
+}
+
+/**********************************************************************
  * main
  **********************************************************************/
 
@@ -506,6 +738,13 @@ int main(void)
     RUN_TEST(test_request_motionEnabledTakesEffectNextRun);
     RUN_TEST(test_request_motionEnabledRefusedWhileFaulted);
     RUN_TEST(test_request_motionDisabledAlwaysLatches);
+
+    RUN_TEST(test_m4_each_fault_alone_reported_and_disables);
+    RUN_TEST(test_m4_enable_refused_for_each_fault);
+    RUN_TEST(test_m4_first_fault_wins_adjacent_pairs);
+    RUN_TEST(test_m4_each_active_restriction_alone);
+    RUN_TEST(test_m4_sample_restrictions_inactive_today);
+    RUN_TEST(test_m4_restriction_priority_chain);
 
     return UNITY_END();
 }

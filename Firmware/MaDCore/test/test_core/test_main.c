@@ -28,6 +28,8 @@ extern void test_app_testManagement_userEndStopsRun(void);
 extern void test_app_testManagement_motionDisabledAbortsRun(void);
 extern void test_app_testManagement_sampleLimitAbortsRun(void);
 extern void test_app_testManagement_openFailureEndsStart(void);
+extern void test_m5_lifecycle_start_manual_matrix(void);
+extern void test_m5_restart_reaches_running_after_each_terminal(void);
 extern void HAL_lock_mock_reset(void);
 extern int _stdio_debug_lock; /* defined in shared test/mock_propeller2.c */
 extern dev_nvram_config_t dev_nvram_config;
@@ -81,6 +83,8 @@ void process()
     RUN_TEST(test_app_testManagement_motionDisabledAbortsRun);
     RUN_TEST(test_app_testManagement_sampleLimitAbortsRun);
     RUN_TEST(test_app_testManagement_openFailureEndsStart);
+    RUN_TEST(test_m5_lifecycle_start_manual_matrix);
+    RUN_TEST(test_m5_restart_reaches_running_after_each_terminal);
     UNITY_END();
 }
 
