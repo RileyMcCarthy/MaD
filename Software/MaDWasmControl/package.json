@@ -27,7 +27,7 @@
   "dependencies": {
     "comlink": "^4.4.2",
     "idb-keyval": "^6.3.0",
-    "react": "^19.0.0",
+    "react": "^19.2.8",
     "react-dom": "^19.0.0",
     "react-router-dom": "^7.18.1",
     "serialport": "^13.0.0",
