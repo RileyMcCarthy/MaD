@@ -41,7 +41,7 @@ jobs:
       is_firmware_release: ${{ startsWith(github.ref, 'refs/tags/firmware-v') }}
       is_hardware_release: ${{ startsWith(github.ref, 'refs/tags/hardware-v') }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dorny/paths-filter@v4
         id: changes
         with:
@@ -76,7 +76,7 @@ jobs:
       run:
         working-directory: Software/MaDWasmControl
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
       - uses: actions/setup-node@v7
@@ -127,7 +127,7 @@ jobs:
       run:
         working-directory: Protocol/ProtoEmb
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
       - uses: actions/setup-python@v5
@@ -160,7 +160,7 @@ jobs:
       run:
         working-directory: SIL/embsim
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
       - uses: dtolnay/rust-toolchain@stable
@@ -184,7 +184,7 @@ jobs:
     if: needs.changes.outputs.firmware == 'true' || needs.changes.outputs.protocol == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
       - uses: actions/setup-python@v5
@@ -209,7 +209,7 @@ jobs:
     if: needs.changes.outputs.protocol == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
       - uses: actions/setup-python@v5
@@ -247,7 +247,7 @@ jobs:
     if: needs.changes.outputs.firmware == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Run ruff (lint only)
         run: pipx run ruff==0.13.2 check --output-format=github Firmware/MaDCore/extra_scripts
 
@@ -264,7 +264,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
       - uses: dtolnay/rust-toolchain@stable
@@ -305,7 +305,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
       - uses: actions/setup-python@v5
@@ -354,7 +354,7 @@ jobs:
     if: needs.changes.outputs.firmware == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -373,7 +373,7 @@ jobs:
     
     steps:
       - name: Checkout Git repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -457,7 +457,7 @@ jobs:
       artifact-name: ${{ steps.artifact.outputs.name }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
       - uses: actions/setup-python@v4
@@ -533,7 +533,7 @@ jobs:
       artifact-name: ${{ steps.artifact.outputs.name }}
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
     
     - name: Generate manufacturing files using KiBot
       uses: INTI-CMNB/KiBot@v2_k9   # KiCad 9 — board files use generator_version 9.0
@@ -574,7 +574,7 @@ jobs:
     timeout-minutes: 30
     
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
       - uses: actions/setup-node@v7
