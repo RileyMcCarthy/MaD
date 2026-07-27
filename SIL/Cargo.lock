@@ -249,6 +249,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "embsim-board"
+version = "0.1.0"
+dependencies = [
+ "embsim-core",
+ "embsim-peripherals",
+ "libc",
+ "nix",
+ "tracing",
+]
+
+[[package]]
 name = "embsim-build"
 version = "0.1.0"
 
@@ -273,6 +284,7 @@ dependencies = [
 name = "embsim-models"
 version = "0.1.0"
 dependencies = [
+ "embsim-board",
  "embsim-core",
  "libc",
  "nix",
@@ -594,6 +606,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "clap",
+ "embsim-board",
  "embsim-build",
  "embsim-core",
  "embsim-memory-inspect",
