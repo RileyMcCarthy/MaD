@@ -1,4 +1,4 @@
-# MaDWasmControl
+# Control
 
 Frontend-only control app for the MaD tensile tester. **No backend, no Electron** —
 the browser talks straight to the Propeller 2 over the **Web Serial API**, and the

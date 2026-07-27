@@ -4,7 +4,7 @@ MaD is a low-cost open-source uniaxial tensile-testing machine. This monorepo ha
 
 - **Firmware** (`Firmware/MaDCore/`) — Parallax Propeller 2, C, strictly layered
   `APP → DEV → IO → Library → HAL → HW` (each layer calls only *downward*).
-- **Web app** (`Software/MaDWasmControl/`) — the shipped React/Vite + WebAssembly
+- **Web app** (`Software/Control/`) — the shipped React/Vite + WebAssembly
   browser control app (Web Serial + File System Access, Chromium-only). A legacy
   Electron app (`Software/MaDControl/`) is frozen (SIL Playwright driver only).
 - **SIL** (`SIL/`) — a Rust software-in-the-loop emulator that links the firmware.
@@ -48,7 +48,7 @@ or clearly insufficient for the risk:
 | Firmware `APP`/`DEV` logic | Unity (`pio test -e native_test`) and/or SIL scenarios |
 | Motion / control / faults / NVRAM | Unit + SIL; call out edge cases (limits, state transitions) |
 | Protocol schema / codec | Generated targets + roundtrip; never hand-edit `Generated/` |
-| MaDWasmControl domain / protocol mapping | Vitest under `Software/MaDWasmControl` |
+| Control domain / protocol mapping | Vitest under `Software/Control` |
 | UI ↔ device / serial / sample stream | Worker/session tests or e2e notes; fakes only in `e2e/`, never `src/` |
 | SIL emulator / models / FFI | Rust tests; guard null/len on `unsafe` trampolines |
 | Legacy Electron (`MaDControl`) | Only if the PR intentionally touches the frozen E2E driver |

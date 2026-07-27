@@ -13,7 +13,7 @@ flowchart LR
     yaml -->|generate Rust| sil
 
     subgraph host["Computer"]
-        app["MaDWasmControl<br/>(browser app)"]
+        app["Control<br/>(browser app)"]
     end
     subgraph dev["Machine"]
         fw["Firmware<br/>(Propeller 2)"]
@@ -32,7 +32,7 @@ flowchart LR
 | Part | Language | Role |
 |---|---|---|
 | **Firmware** (`Firmware/MaDCore`) | C | Runs on the Propeller 2; controls the motor, reads the force gauge, executes tests from SD, and speaks the protocol. See [Firmware](firmware.md). |
-| **Control app** (`Software/MaDWasmControl`) | TypeScript + Rust→WASM | The browser app operators use. See [The control app](control-app.md). |
+| **Control app** (`Software/Control`) | TypeScript + Rust→WASM | The browser app operators use. See [The control app](control-app.md). |
 | **Protocol** (`Protocol/ProtoEmb`) | Python (generator) + Rust | The schema, the code generator, and the host-side runtime. See [Communication protocol](protocol.md). |
 | **SIL** (`SIL/`) | Rust | Compiles the real firmware and runs it on a host with emulated peripherals, for automated tests. See [SIL emulator](sil-emulator.md). |
 | **Hardware** (`Hardware/`) | KiCad | The controller PCB and force-gauge addon. See [Hardware](hardware.md). |

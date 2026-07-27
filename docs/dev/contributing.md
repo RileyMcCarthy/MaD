@@ -9,7 +9,7 @@ rig.
 Run the gate(s) for the area you touched (see
 [CI/CD](ci-cd-and-releases.md#running-the-gates-locally)). At minimum:
 
-- **App:** `npm run verify` in `Software/MaDWasmControl`.
+- **App:** `npm run verify` in `Software/Control`.
 - **Firmware:** `pio check` + `pio test -e native_test`, and build both
   `native_emulator` and `propeller2`.
 - **Protocol:** regenerate all consumers and run `./examples/verify.sh`.
@@ -52,7 +52,7 @@ hard-to-debug failures:
 - **Generated code is off-limits** — never hand-edit `Generated/`/`generated/`
   directories; change the [schema or templates](protocol-codegen.md) and
   regenerate.
-- **Keep the app pure** — `Software/MaDWasmControl/src/` uses only Web Serial +
+- **Keep the app pure** — `Software/Control/src/` uses only Web Serial +
   File System Access. Test-only fakes (SIL serial, OPFS) live in `e2e/`, never in
   `src/`.
 - **Native *and* P2** — always exercise both the host (`native_*`) and the real

@@ -1,7 +1,7 @@
 # MaDControl — legacy Electron app (frozen)
 
 > **This app is no longer the shipped product.** The control app is now
-> **[`Software/MaDWasmControl/`](../MaDWasmControl/)** — a frontend-only browser PWA
+> **[`Software/Control/`](../Control/)** — a frontend-only browser PWA
 > (Web Serial + WebAssembly) that has reached full parity and is the documented,
 > deployed application: <https://rileymccarthy.github.io/MaD/app/>.
 
@@ -15,7 +15,7 @@ packages it.
 
 ## Do not develop new functionality here
 
-- New UI/feature work goes in **`Software/MaDWasmControl/`**.
+- New UI/feature work goes in **`Software/Control/`**.
 - Touch this package **only** to keep the SIL Playwright E2E suite green while it
   still targets Electron.
 
@@ -25,7 +25,7 @@ Deleting `Software/MaDControl/` is a coupled migration, not a simple removal. Th
 remaining steps:
 
 1. **Port the E2E suite** in `SIL/tests/*.spec.ts` from the Electron `--project=electron`
-   target to the WASM app's harness (`Software/MaDWasmControl/e2e/`), then rewire
+   target to the WASM app's harness (`Software/Control/e2e/`), then rewire
    `SIL/tests/fixtures.ts`, `SIL/tests/global-setup.ts`, `SIL/makefile`, and
    `SIL/package.json` (which `cd`s here to `npm run build`).
 2. **Rewire CI** (`.github/workflows/ci.yml`): drop the Electron packaging from

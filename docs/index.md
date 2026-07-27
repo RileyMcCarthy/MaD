@@ -39,7 +39,7 @@ See the full [specifications](reference/specifications.md).
 ## The control app runs in your browser
 
 There is **nothing to install**. The control app —
-[**MaDWasmControl**](https://rileymccarthy.github.io/MaD/app/) — is a
+[**Control**](https://rileymccarthy.github.io/MaD/app/) — is a
 Progressive Web App that talks straight to the machine over the
 [Web Serial API](getting-started/requirements.md), with all the protocol logic
 compiled to WebAssembly from the same Rust core the firmware tooling uses.
@@ -92,7 +92,7 @@ compiled to WebAssembly from the same Rust core the firmware tooling uses.
 ```mermaid
 flowchart LR
     subgraph Browser["Your browser (Chrome / Edge)"]
-        app["MaDWasmControl<br/>(React + WASM)"]
+        app["Control<br/>(React + WASM)"]
     end
     subgraph Machine["MaD machine"]
         fw["Propeller 2 firmware<br/>(C)"]
@@ -113,7 +113,7 @@ byte-for-byte.
 | Area | Path | What |
 |---|---|---|
 | Firmware | `Firmware/MaDCore/` | Embedded C for the Parallax Propeller 2 |
-| Control app | `Software/MaDWasmControl/` | Browser app (Web Serial + WASM) — the app you launch |
+| Control app | `Software/Control/` | Browser app (Web Serial + WASM) — the app you launch |
 | Protocol | `Protocol/ProtoEmb/` | YAML schema → generated C / TS / Rust + host runtime |
 | SIL | `SIL/` | Rust emulator that runs the real firmware + Playwright tests |
 | Hardware | `Hardware/` | KiCad PCB designs (EdgeBoard, DS2 Addon) |

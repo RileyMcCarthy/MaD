@@ -1,4 +1,4 @@
-# MaDWasmControl — Test Plan (parity with MaDControl)
+# Control — Test Plan (parity with MaDControl)
 
 Goal: a complete, automated test suite that proves the new app reaches **functional
 parity** with the desktop app (see [PARITY.md](./PARITY.md)) and stays there.
@@ -60,7 +60,7 @@ directory (no dialog, real `FileSystemDirectoryHandle`). Also stubs the capabili
 **Preconditions (operator or global-setup starts these):**
 ```bash
 cd SIL && make playground          # emulator on /tmp/tty.rpi
-npm run sil:bridge                 # ws://localhost:9999  (in MaDWasmControl)
+npm run sil:bridge                 # ws://localhost:9999  (in Control)
 npm run dev                        # app on http://localhost:5174
 ```
 The runner (`e2e/run-all.mjs`) asserts the dev server (5174) and bridge (9999) are reachable

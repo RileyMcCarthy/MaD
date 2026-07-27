@@ -97,7 +97,7 @@ monitoring (the operator resolves a missed completion via History if needed).
 - **ESLint flat config** (typescript-eslint + react-hooks), wired into
   `npm run verify`; dead `lint` script fixed; stale disable directives removed.
 - **CI job** `wasm-control-ci` (cargo test → build wasm → generate proto →
-  verify), gated on `Software/MaDWasmControl/**` + `Protocol/**`.
+  verify), gated on `Software/Control/**` + `Protocol/**`.
 - `.nvmrc`, `engines.node>=20`, repo `dependabot.yml` (npm + cargo + actions).
 - `noImplicitOverride` enabled.
 

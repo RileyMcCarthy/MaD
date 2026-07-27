@@ -1,6 +1,6 @@
-# MaDWasmControl — Parity Handoff & Operating Brief
+# Control — Parity Handoff & Operating Brief
 
-You are continuing an autonomous push to bring `Software/MaDWasmControl` (frontend-only
+You are continuing an autonomous push to bring `Software/Control` (frontend-only
 Web Serial + WASM control app) to **full parity** with the desktop app `Software/MaDControl`.
 
 Read alongside: [PARITY.md](./PARITY.md) (feature checklist) and [TEST_PLAN.md](./TEST_PLAN.md)

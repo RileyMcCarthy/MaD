@@ -42,7 +42,7 @@ signals (stepper position, force, GPIO, encoder, …).
 
 The browser can't see the emulator's PTY directly, so a small WS↔PTY bridge
 relays bytes to the app's (faked) Web Serial port. From
-`Software/MaDWasmControl/`, in separate terminals:
+`Software/Control/`, in separate terminals:
 
 ```bash
 # Terminal 1 — emulator (from SIL/)
@@ -68,7 +68,7 @@ Then either:
     at a time.
 
 The test harness and its parity criteria are documented in
-[TEST_PLAN.md](https://github.com/RileyMcCarthy/MaD/blob/main/Software/MaDWasmControl/docs/TEST_PLAN.md).
+[TEST_PLAN.md](https://github.com/RileyMcCarthy/MaD/blob/main/Software/Control/docs/TEST_PLAN.md).
 
 ## Capturing screenshots
 

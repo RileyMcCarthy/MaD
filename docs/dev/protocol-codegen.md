@@ -25,7 +25,7 @@ python3 ./Protocol/ProtoEmb/core/generate.py \
 # TypeScript → web app
 python3 ./Protocol/ProtoEmb/core/generate.py \
   --schema ./Protocol/MaDProtocol.yaml --target ts \
-  --output ./Software/MaDWasmControl/src/protocol/generated \
+  --output ./Software/Control/src/protocol/generated \
   --templates ./Protocol/ProtoEmb/core/templates
 
 # Rust → SIL
@@ -40,7 +40,7 @@ In practice you rarely run all three by hand — each consumer regenerates its o
 | Consumer | Command | Output |
 |---|---|---|
 | Firmware | (automatic) PlatformIO pre-hook on every build | `Firmware/MaDCore/src/Generated/` |
-| Web app | `npm run generate:proto` (in `Software/MaDWasmControl`) | `src/protocol/generated/` |
+| Web app | `npm run generate:proto` (in `Software/Control`) | `src/protocol/generated/` |
 | SIL | `make protocol` (in `SIL`) | `Protocol/rust/src/generated/` |
 
 !!! warning "Generated code is not hand-edited"
