@@ -11,13 +11,20 @@
 //!
 //! Protocol (client → server):
 //!   { "cmd": "subscribe", "signals": ["name1", ...] }
+//!
+//! GPIO is read through the MCU's own [`PeripheralInstance`], not the `gpio::`
+//! free functions: the firmware runs in owned-execution mode on the `P2EVAL`
+//! component's instance (see `system_description.rs`) and these snapshots run
+//! on unbound tokio worker threads, which would resolve to the process-default
+//! instance and report a permanently all-false machine.
 
 use crate::machine_ui;
 use axum::extract::ws::{Message, WebSocket};
-use embsim_peripherals::gpio;
+use embsim_peripherals::instance::PeripheralInstance;
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
 use tracing::info;
 
 /// GPIO channel indices — set once at init from firmware DWARF info.
@@ -35,11 +42,14 @@ struct GpioChannels {
 
 static GPIO_CHANNELS: std::sync::OnceLock<GpioChannels> = std::sync::OnceLock::new();
 static FIRMWARE_INFO: std::sync::OnceLock<embsim_memory_inspect::FirmwareInfo> = std::sync::OnceLock::new();
+/// The MCU instance whose GPIO bank this view reports (see the module docs).
+static MCU: std::sync::OnceLock<Arc<PeripheralInstance>> = std::sync::OnceLock::new();
 
-/// Initialize the machine view with GPIO channel mappings.
-/// Must be called after wiring::init() and before the server starts.
-pub fn init(fw: &embsim_memory_inspect::FirmwareInfo) {
+/// Initialize the machine view with GPIO channel mappings and the peripheral
+/// instance the firmware runs against. Must be called before the server starts.
+pub fn init(fw: &embsim_memory_inspect::FirmwareInfo, mcu: Arc<PeripheralInstance>) {
     FIRMWARE_INFO.get_or_init(|| fw.clone());
+    MCU.get_or_init(|| mcu);
     GPIO_CHANNELS.get_or_init(|| GpioChannels {
         esd_upper: fw.enum_channel("HAL_GPIO_ESD_UPPER"),
         esd_lower: fw.enum_channel("HAL_GPIO_ESD_LOWER"),
@@ -73,16 +83,17 @@ fn ws_handler(socket: WebSocket) -> Pin<Box<dyn Future<Output = ()> + Send>> {
 /// Read current GPIO state as a JSON-friendly snapshot.
 fn gpio_snapshot() -> serde_json::Value {
     let ch = GPIO_CHANNELS.get().expect("machine_view not initialized");
+    let gpio = &MCU.get().expect("machine_view not initialized").gpio;
     serde_json::json!({
-        "esd_upper": gpio::get_active(ch.esd_upper),
-        "esd_lower": gpio::get_active(ch.esd_lower),
-        "esd_switch": gpio::get_active(ch.esd_switch),
-        "esd_power": gpio::get_active(ch.esd_power),
-        "endstop_upper": gpio::get_active(ch.endstop_upper),
-        "endstop_lower": gpio::get_active(ch.endstop_lower),
-        "endstop_door": gpio::get_active(ch.endstop_door),
-        "charge_pump": gpio::get_active(ch.charge_pump),
-        "servo_ready": gpio::get_active(ch.servo_ready),
+        "esd_upper": gpio.get_active(ch.esd_upper),
+        "esd_lower": gpio.get_active(ch.esd_lower),
+        "esd_switch": gpio.get_active(ch.esd_switch),
+        "esd_power": gpio.get_active(ch.esd_power),
+        "endstop_upper": gpio.get_active(ch.endstop_upper),
+        "endstop_lower": gpio.get_active(ch.endstop_lower),
+        "endstop_door": gpio.get_active(ch.endstop_door),
+        "charge_pump": gpio.get_active(ch.charge_pump),
+        "servo_ready": gpio.get_active(ch.servo_ready),
     })
 }
 
