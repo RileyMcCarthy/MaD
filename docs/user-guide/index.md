@@ -1,7 +1,7 @@
 # User Guide
 
 This guide covers every screen of the **MaD control app**
-([MaDWasmControl](https://rileymccarthy.github.io/MaD/app/)), with screenshots
+([Control](https://rileymccarthy.github.io/MaD/app/)), with screenshots
 captured from the live application.
 
 The app is organised as a sidebar of screens:

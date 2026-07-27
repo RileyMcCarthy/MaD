@@ -30,7 +30,7 @@ If you change behavior in a matrix cell, **add or update a test** that would hav
 
 ## Test plan
 
-- [ ] `cd Software/MaDWasmControl && npm test` (or `npm run verify`)
+- [ ] `cd Software/Control && npm test` (or `npm run verify`)
 - [ ] Relevant firmware suite(s): `pio test -e native_test -f …`
 - [ ] Schema lockstep if protocol/domain touched: `python3 Protocol/scripts/check_schema_domain_lockstep.py`
 - [ ] Optional SIL: `npm run e2e:smoke` or full `npm run e2e`

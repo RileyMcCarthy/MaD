@@ -25,8 +25,8 @@ except ImportError:
 
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = ROOT / "Protocol" / "MaDProtocol.yaml"
-MAPPING = ROOT / "Software" / "MaDWasmControl" / "src" / "domain" / "mapping.ts"
-TYPES = ROOT / "Software" / "MaDWasmControl" / "src" / "domain" / "types.ts"
+MAPPING = ROOT / "Software" / "Control" / "src" / "domain" / "mapping.ts"
+TYPES = ROOT / "Software" / "Control" / "src" / "domain" / "types.ts"
 
 
 def machine_configuration_fields(schema_path: Path) -> list[str]:

@@ -76,14 +76,14 @@ GitHub Pages as a single deployment:
 
 ```text
 https://rileymccarthy.github.io/MaD/        → documentation (this site)
-https://rileymccarthy.github.io/MaD/app/    → the control app (MaDWasmControl)
+https://rileymccarthy.github.io/MaD/app/    → the control app (Control)
 ```
 
 The job builds the app with Vite (base path `/<repo>/app/`), builds the docs with
 MkDocs, copies the app into `site/app/`, and uploads the merged `site/` as the
 Pages artifact. It triggers on:
 
-- **push to `main`** (when `docs/**`, `mkdocs.yml`, `Software/MaDWasmControl/**`,
+- **push to `main`** (when `docs/**`, `mkdocs.yml`, `Software/Control/**`,
   or `Protocol/**` change),
 - **`workflow_dispatch`** (manual deploy of any branch), and
 - **`webapp-v*` tags**.
@@ -109,7 +109,7 @@ You can reproduce the most important gates before pushing:
 
 ```bash
 # Web app offline gate
-cd Software/MaDWasmControl && npm run verify
+cd Software/Control && npm run verify
 
 # Full SIL integration
 cd SIL && make test

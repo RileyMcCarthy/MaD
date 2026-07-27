@@ -48,7 +48,7 @@ running SIL; PlatformIO only if you're building firmware.
 === "Run the app against real hardware"
 
     ```bash
-    cd Software/MaDWasmControl
+    cd Software/Control
     npm install
     npm run build:wasm        # compile the Rust protocol core → src/wasm/
     npm run generate:proto    # generate the TS codec from the YAML schema

@@ -29,7 +29,7 @@ jobs:
     timeout-minutes: 120
     defaults:
       run:
-        working-directory: Software/MaDWasmControl
+        working-directory: Software/Control
     steps:
       - uses: actions/checkout@v7
         with:
@@ -40,7 +40,7 @@ jobs:
           node-version: 20
           cache: npm
           cache-dependency-path: |
-            Software/MaDWasmControl/package-lock.json
+            Software/Control/package-lock.json
             SIL/package-lock.json
 
       - uses: dtolnay/rust-toolchain@stable
@@ -71,7 +71,7 @@ jobs:
         working-directory: SIL
         run: make emulator
 
-      - name: Install MaDWasmControl deps + wasm + proto
+      - name: Install Control deps + wasm + proto
         run: |
           npm ci
           # wasm-pack optional if prebuilt; build when tooling available

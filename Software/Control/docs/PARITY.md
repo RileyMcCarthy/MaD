@@ -1,4 +1,4 @@
-# MaDControl → MaDWasmControl feature parity
+# MaDControl → Control feature parity
 
 Full inventory of the original Electron app (`Software/MaDControl`) with the status of
 each feature in the new frontend-only app. Legend: ✅ done · 🟡 partial · ❌ missing.

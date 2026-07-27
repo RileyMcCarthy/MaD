@@ -1,6 +1,6 @@
 # Running the app
 
-The control app is in `Software/MaDWasmControl/` — Vite + React + TypeScript, with
+The control app is in `Software/Control/` — Vite + React + TypeScript, with
 the protocol core compiled to WebAssembly from Rust.
 
 ## Setup
@@ -9,7 +9,7 @@ the protocol core compiled to WebAssembly from Rust.
 > `git submodule update --init --recursive` after a plain clone.
 
 ```bash
-cd Software/MaDWasmControl
+cd Software/Control
 npm install
 npm run build:wasm       # compile the Rust protocol core → src/wasm/
 npm run generate:proto   # generate the TS codec → src/protocol/generated/
@@ -52,7 +52,7 @@ emulator. With the SIL stack running (emulator + bridge + dev server, see
 [SIL testing](sil-testing.md)):
 
 ```bash
-cd Software/MaDWasmControl
+cd Software/Control
 npm run docs:screenshots   # → docs/assets/screenshots/*.png
 ```
 

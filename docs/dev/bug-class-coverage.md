@@ -56,7 +56,7 @@ they are guarded today. Update it when you add a new class or close a gap.
 cd Firmware/MaDCore && pio test -e native_test
 
 # WASM offline gate (vitest includes DataStore, session, stateLabels, M1/M2 matrices)
-cd Software/MaDWasmControl && npm run verify
+cd Software/Control && npm run verify
 
 # Schema ↔ domain lockstep (M12)
 python3 Protocol/scripts/check_schema_domain_lockstep.py

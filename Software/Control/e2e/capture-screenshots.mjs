@@ -1,7 +1,7 @@
 /**
  * Documentation screenshot capture.
  *
- * Drives the *real* MaDWasmControl UI against the live SIL emulator (via the
+ * Drives the *real* Control UI against the live SIL emulator (via the
  * same fake-serial harness the e2e suite uses) and saves a labelled PNG of every
  * screen + key modal into docs/assets/screenshots/. These images are embedded in
  * the docs site (mkdocs) user guide.

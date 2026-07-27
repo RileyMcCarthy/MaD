@@ -128,10 +128,10 @@ Out-of-range packed fields never encode (bit-wrap).
 ## Commands
 
 ```bash
-cd Software/MaDWasmControl && npm run generate:proto && npm test && npm run verify
+cd Software/Control && npm run generate:proto && npm test && npm run verify
 cd Firmware/MaDCore && pio test -e native_test -f test_dev_forceGauge -f test_app_gauge
 python3 Protocol/scripts/check_schema_domain_lockstep.py
-cd Software/MaDWasmControl && npm run e2e:smoke   # needs SIL playground + bridge
+cd Software/Control && npm run e2e:smoke   # needs SIL playground + bridge
 # Full matrix e2e:
 npm run e2e
 # Pairwise helper (import from domain):

@@ -2,7 +2,7 @@ version: 2
 updates:
   # Frontend-only web control app (npm).
   - package-ecosystem: npm
-    directory: /Software/MaDWasmControl
+    directory: /Software/Control
     schedule:
       interval: weekly
     open-pull-requests-limit: 5

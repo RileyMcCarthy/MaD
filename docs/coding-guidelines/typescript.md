@@ -1,12 +1,12 @@
 # TypeScript / React / Electron Style Guide (MaDControl — legacy)
 
 > ⚠️ **This guide documents the legacy Electron app (`Software/MaDControl/`), which is
-> frozen.** The shipped, deployed app is **`Software/MaDWasmControl/`** — a frontend-only
+> frozen.** The shipped, deployed app is **`Software/Control/`** — a frontend-only
 > Web Serial + WASM PWA. It shares the TS/React conventions below (interface/type/enum
 > rules, strict `tsconfig`, the generated `protoemb` codec boundary), but differs in
 > tooling and architecture: a **flat ESLint config** (not `erb`), **Vite** (not webpack),
 > **Zustand + a Web Worker + Comlink** (not Electron main/renderer IPC), and **Vitest**
-> (not Jest). New app work goes in `MaDWasmControl`; a WASM-app-specific guide is a
+> (not Jest). New app work goes in `Control`; a WASM-app-specific guide is a
 > pending follow-up. Treat the Electron-specific sections below as historical.
 
 This guide governs the desktop control app under `Software/MaDControl/` — the Electron main process (`src/main/`), the React renderer (`src/renderer/`), and the shared/util code (`src/shared/`, `src/utils/`). It documents the conventions actually used in this package so a contributor can write idiomatic code and pass the configured checks on the first try.
