@@ -14,8 +14,9 @@
  *   - fault detection + first-fault-wins priority ordering, and the DISABLED
  *     override (a fault forces DISABLED regardless of motionEnabled).
  *   - restriction detection: machine-tension boundary is strictly '>', endstop
- *     / door GPIOs, and first-restriction-wins ordering. Restrictions are only
- *     reflected as RESTRICTED once motion is enabled and there's no fault.
+ *     / door GPIOs, sample force/displacement via app_monitor flags while a
+ *     test is running, and first-restriction-wins ordering. Restrictions are
+ *     only reflected as RESTRICTED once motion is enabled and there's no fault.
  *   - desired-state precedence: fault > !motionEnabled > restriction >
  *     !testRunning(MANUAL) > TEST.
  *   - per-state outputs (motionEnabled / speedLimited).
@@ -59,11 +60,16 @@ extern int _stdio_debug_lock; /* defined in mock_propeller2.c */
 static int32_t d_machineForce; /* app_gauge_getForce(MACHINE) */
 int32_t app_gauge_getForce(app_gauge_coord_E coord)
 {
-    /* Restrictions only ever query the MACHINE frame (the SAMPLE block is
-     * commented out in the module today). */
+    /* Machine tension uses MACHINE frame; sample limits come from app_monitor. */
     TEST_ASSERT_EQUAL_INT(APP_GAUGE_COORD_MACHINE, coord);
     return d_machineForce;
 }
+
+/* --- app_monitor (sample restriction flags) --- */
+static bool d_forceExceeded;
+static bool d_displacementExceeded;
+bool app_monitor_isForceExceeded(void) { return d_forceExceeded; }
+bool app_monitor_isDisplacementExceeded(void) { return d_displacementExceeded; }
 
 /* --- app_testManagement --- */
 static bool d_testRunning; /* app_testManagement_isRunning() */
@@ -129,6 +135,8 @@ static void doubles_reset(void)
 {
     d_machineForce = 0;
     d_testRunning = false;
+    d_forceExceeded = false;
+    d_displacementExceeded = false;
 
     /* No-fault baseline: cogs running, watchdog alive, ESD GPIOs inactive,
      * servo + force gauge ready. */
@@ -658,19 +666,58 @@ void test_m4_each_active_restriction_alone(void)
     TEST_ASSERT_EQUAL_INT(APP_CONTROL_STATE_RESTRICTED, app_control_data.state);
 }
 
-/* Sample length/tension paths are currently compiled out (commented) — pin that
- * they stay inactive so re-enabling them without tests fails this lock. */
-void test_m4_sample_restrictions_inactive_today(void)
+/* Sample restrictions (SAMPLE_LENGTH / SAMPLE_TENSION) active only while a
+ * test is running and app_monitor reports limit exceeded. */
+void test_m4_sample_restrictions_inactive_when_not_running(void)
+{
+    control_init();
+    enableMotion();
+    d_forceExceeded = true;
+    d_displacementExceeded = true;
+    d_testRunning = false;
+    app_control_run();
+    TEST_ASSERT_FALSE(app_control_data.restriction[APP_CONTROL_RESTRICTION_SAMPLE_LENGTH]);
+    TEST_ASSERT_FALSE(app_control_data.restriction[APP_CONTROL_RESTRICTION_SAMPLE_TENSION]);
+    TEST_ASSERT_EQUAL_INT(APP_CONTROL_STATE_MANUAL, app_control_data.state);
+}
+
+void test_m4_sample_tension_restricts_while_test_running(void)
 {
     control_init();
     enableMotion();
     d_testRunning = true;
-    d_machineForce = 0; /* no machine tension */
+    d_machineForce = 0;
+    d_forceExceeded = true;
     app_control_run();
-    TEST_ASSERT_FALSE(app_control_data.restriction[APP_CONTROL_RESTRICTION_SAMPLE_LENGTH]);
-    TEST_ASSERT_FALSE(app_control_data.restriction[APP_CONTROL_RESTRICTION_SAMPLE_TENSION]);
-    /* Still TEST (no active restriction). */
-    TEST_ASSERT_EQUAL_INT(APP_CONTROL_STATE_TEST, app_control_data.state);
+    TEST_ASSERT_TRUE(app_control_data.restriction[APP_CONTROL_RESTRICTION_SAMPLE_TENSION]);
+    TEST_ASSERT_EQUAL_INT(APP_CONTROL_RESTRICTION_SAMPLE_TENSION, app_control_getRestriction());
+    TEST_ASSERT_EQUAL_INT(APP_CONTROL_STATE_RESTRICTED, app_control_data.state);
+    TEST_ASSERT_TRUE(app_control_speedLimited());
+}
+
+void test_m4_sample_length_restricts_while_test_running(void)
+{
+    control_init();
+    enableMotion();
+    d_testRunning = true;
+    d_machineForce = 0;
+    d_displacementExceeded = true;
+    app_control_run();
+    TEST_ASSERT_TRUE(app_control_data.restriction[APP_CONTROL_RESTRICTION_SAMPLE_LENGTH]);
+    /* SAMPLE_LENGTH has lower enum index than SAMPLE_TENSION → wins alone. */
+    TEST_ASSERT_EQUAL_INT(APP_CONTROL_RESTRICTION_SAMPLE_LENGTH, app_control_getRestriction());
+    TEST_ASSERT_EQUAL_INT(APP_CONTROL_STATE_RESTRICTED, app_control_data.state);
+}
+
+void test_m4_sample_length_wins_over_sample_tension(void)
+{
+    control_init();
+    enableMotion();
+    d_testRunning = true;
+    d_forceExceeded = true;
+    d_displacementExceeded = true;
+    app_control_run();
+    TEST_ASSERT_EQUAL_INT(APP_CONTROL_RESTRICTION_SAMPLE_LENGTH, app_control_getRestriction());
 }
 
 /* Restriction priority chain: MACHINE_TENSION < UPPER < LOWER < DOOR indices. */
@@ -743,7 +790,10 @@ int main(void)
     RUN_TEST(test_m4_enable_refused_for_each_fault);
     RUN_TEST(test_m4_first_fault_wins_adjacent_pairs);
     RUN_TEST(test_m4_each_active_restriction_alone);
-    RUN_TEST(test_m4_sample_restrictions_inactive_today);
+    RUN_TEST(test_m4_sample_restrictions_inactive_when_not_running);
+    RUN_TEST(test_m4_sample_tension_restricts_while_test_running);
+    RUN_TEST(test_m4_sample_length_restricts_while_test_running);
+    RUN_TEST(test_m4_sample_length_wins_over_sample_tension);
     RUN_TEST(test_m4_restriction_priority_chain);
 
     return UNITY_END();

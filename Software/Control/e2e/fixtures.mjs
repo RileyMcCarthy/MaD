@@ -20,9 +20,13 @@
  */
 
 import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 
-const require = createRequire('/Users/rileymccarthy/Documents/MaD/SIL/');
-const { chromium } = require('playwright');
+// Resolve Playwright from the SIL workspace (shared install) — portable for CI.
+const silPackageJson = join(dirname(fileURLToPath(import.meta.url)), '../../../SIL/package.json');
+const require = createRequire(silPackageJson);
+export const { chromium } = require('playwright');
 
 export const APP_URL = process.env.APP_URL || 'http://localhost:5174/';
 export const BRIDGE_URL = process.env.BRIDGE_URL || 'ws://localhost:9999';

@@ -15,10 +15,7 @@
  * Playwright/Chromium are reused from the SIL workspace.
  */
 
-import { createRequire } from 'node:module';
-
-const require = createRequire('/Users/rileymccarthy/Documents/MaD/SIL/');
-const { chromium } = require('playwright');
+import { chromium } from './fixtures.mjs';
 
 const APP_URL = process.env.APP_URL || 'http://localhost:5174';
 const BRIDGE_URL = process.env.BRIDGE_URL || 'ws://localhost:9999';
