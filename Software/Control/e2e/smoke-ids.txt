@@ -10,5 +10,11 @@ TM-busy-restart
 TM-manual-gate
 P1-precision
 BB-back-to-back
+M8-jog-1mm-20
 M8-jog-4mm-20
+M8-jog-roundtrip-5
+M9-mid-slack
+WAVE-sine
+WAVE-tri
 M11-idle-drop
+B5-reconnect

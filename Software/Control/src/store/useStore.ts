@@ -19,6 +19,7 @@ import {
   NotificationType,
 } from '@/domain';
 import { pushSample, resetLiveBuffer, seedSamples } from './liveBuffer';
+import { reduceDeviceEvent } from './deviceEventReduce';
 import { record } from '@/diagnostics/recorder';
 import { MSG_SAMPLE_PERIOD_MS } from '@/protocol/generated/protoemb';
 
@@ -280,94 +281,94 @@ export const useStore = create<AppState>((set, getState) => ({
     initialized = true;
     unsubscribe = deviceClient.subscribe((events: DeviceEvent[]) => {
       for (const e of events) {
-        switch (e.kind) {
-          case 'sample':
-            pushSample(e.data);
-            pendingSample = e.data;
-            lastSampleAt = Date.now();
-            break;
-          case 'state':
-            set({ machineState: e.data });
-            break;
-          case 'configuration':
-            set({ config: e.data });
-            break;
-          case 'sampleProfile':
-            set({ sampleProfile: e.data });
-            break;
-          case 'firmwareVersion':
-            set({ firmwareVersion: e.data.version });
-            break;
-          case 'connected':
-            record('info', 'connected');
-            break;
-          case 'error': {
-            record('error', 'device-error', e.message);
-            const now = Date.now();
-            if (now - lastErrorToastAt > 5000) {
-              lastErrorToastAt = now;
-              getState().notify(NotificationType.WARN, `Device error: ${e.message}`);
-            }
-            break;
+        // Pure event→patch reduction (B4); side effects (timers, toasts, record) stay here.
+        const patch = reduceDeviceEvent(e, userDisconnect);
+
+        if (patch.sample) {
+          pushSample(patch.sample);
+          pendingSample = patch.sample;
+          lastSampleAt = Date.now();
+        }
+        if (e.kind === 'state' && patch.machineState !== undefined) {
+          set({ machineState: patch.machineState });
+        }
+        if (patch.config !== undefined) set({ config: patch.config });
+        if (patch.sampleProfile !== undefined) set({ sampleProfile: patch.sampleProfile });
+        if (patch.firmwareVersion !== undefined) set({ firmwareVersion: patch.firmwareVersion });
+
+        if (patch.counters) {
+          for (const c of patch.counters) {
+            if (c === 'connected') record('info', 'connected');
+            else if (c === 'device-error' && e.kind === 'error') record('error', 'device-error', e.message);
+            else if (c === 'timeout') record('warn', 'timeout');
+            else if (c === 'nack' && e.kind === 'ack') record('warn', 'nack', `command ${e.command}`);
           }
-          case 'timeout':
-            record('warn', 'timeout');
-            break;
-          case 'ack':
-            if (!e.success) record('warn', 'nack', `command ${e.command}`);
-            break;
-          case 'notification':
+        }
+
+        if (patch.errorToast) {
+          const now = Date.now();
+          if (now - lastErrorToastAt > 5000) {
+            lastErrorToastAt = now;
+            getState().notify(NotificationType.WARN, patch.errorToast);
+          }
+        }
+
+        if (patch.notification) {
+          set((s) => ({
+            notifications: [
+              ...s.notifications.slice(-49),
+              {
+                Type: patch.notification!.Type as NotificationType,
+                Message: patch.notification!.Message,
+                id: (notificationSeq += 1),
+                t: Date.now(),
+              },
+            ],
+          }));
+        }
+
+        if (patch.disconnect) {
+          const lost = patch.disconnect.unexpected;
+          userDisconnect = false;
+          stopTimers();
+          record(lost ? 'warn' : 'info', 'disconnected', patch.disconnect.reason ?? '');
+          // Flush the freshest sample so the frozen readouts show the true last
+          // reading at the moment of loss (the 250ms mirror could be stale).
+          const flushed = pendingSample;
+          pendingSample = null;
+          set({
+            connection: 'disconnected',
+            machineState: patch.machineState ?? null,
+            responding: false,
+            ...(flushed ? { latestSample: flushed } : {}),
+            ...(lost
+              ? {
+                  error: patch.disconnect.reason
+                    ? `Device disconnected (${patch.disconnect.reason})`
+                    : 'Device disconnected',
+                  canReconnect: lastPort !== null,
+                }
+              : {}),
+          });
+          if (lost) {
             set((s) => ({
               notifications: [
                 ...s.notifications.slice(-49),
-                { ...e.data, id: (notificationSeq += 1), t: Date.now() },
+                {
+                  Type: NotificationType.ERROR,
+                  Message: 'Device disconnected — check the cable, then Reconnect.',
+                  id: (notificationSeq += 1),
+                  t: Date.now(),
+                },
               ],
             }));
-            break;
-          case 'disconnected': {
-            const lost = !userDisconnect;
-            userDisconnect = false;
-            stopTimers();
-            record(lost ? 'warn' : 'info', 'disconnected', e.reason ?? '');
-            // Flush the freshest sample so the frozen readouts show the true last
-            // reading at the moment of loss (the 250ms mirror could be stale).
-            const flushed = pendingSample;
-            pendingSample = null;
-            set({
-              connection: 'disconnected',
-              machineState: null,
-              responding: false,
-              ...(flushed ? { latestSample: flushed } : {}),
-              ...(lost
-                ? {
-                    error: e.reason ? `Device disconnected (${e.reason})` : 'Device disconnected',
-                    canReconnect: lastPort !== null,
-                  }
-                : {}),
-            });
-            if (lost) {
-              set((s) => ({
-                notifications: [
-                  ...s.notifications.slice(-49),
-                  {
-                    Type: NotificationType.ERROR,
-                    Message: 'Device disconnected — check the cable, then Reconnect.',
-                    id: (notificationSeq += 1),
-                    t: Date.now(),
-                  },
-                ],
-              }));
-            }
-            break;
           }
-          case 'portAvailable': {
-            // The device came back (replug) — try to resume automatically.
-            const s = getState();
-            if (s.connection === 'disconnected' && s.canReconnect) void s.reconnect();
-            break;
-          }
-          default:
-            break;
+        }
+
+        if (e.kind === 'portAvailable') {
+          // The device came back (replug) — try to resume automatically.
+          const s = getState();
+          if (s.connection === 'disconnected' && s.canReconnect) void s.reconnect();
         }
       }
     });

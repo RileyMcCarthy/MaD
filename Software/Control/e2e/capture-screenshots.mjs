@@ -19,14 +19,10 @@
  * from the connected emulator.
  */
 
-import { createRequire } from 'node:module';
 import { mkdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
-import { installFakeSerial, installOpfsDataDir, APP_URL, BRIDGE_URL, OPFS_DIR } from './fixtures.mjs';
-
-const require = createRequire('/Users/rileymccarthy/Documents/MaD/SIL/');
-const { chromium } = require('playwright');
+import { installFakeSerial, installOpfsDataDir, APP_URL, BRIDGE_URL, OPFS_DIR, chromium } from './fixtures.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const OUT = process.env.SHOT_DIR || resolve(HERE, '../../../docs/assets/screenshots');

@@ -19,14 +19,10 @@
  * unit/presence-covered.
  */
 
-import { newSilPage, connectToSil, chooseDataFolder, APP_URL } from './fixtures.mjs';
-import { createRequire } from 'node:module';
+import { newSilPage, connectToSil, chooseDataFolder, APP_URL, chromium } from './fixtures.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-
-const require = createRequire('/Users/rileymccarthy/Documents/MaD/SIL/');
-const { chromium } = require('playwright');
 
 /** Sprint C parameterized matrices (M8–M11). */
 const MATRIX = JSON.parse(
