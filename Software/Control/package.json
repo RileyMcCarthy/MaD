@@ -1,5 +1,5 @@
 {
-  "name": "mad-wasm-control",
+  "name": "mad-control",
   "version": "0.1.0",
   "private": true,
   "description": "Frontend-only MaD tensile-tester control app (Web Serial + WebAssembly). Chromium-only.",
