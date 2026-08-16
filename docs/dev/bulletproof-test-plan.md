@@ -54,8 +54,7 @@ Out-of-range packed fields never encode (bit-wrap).
 ### B1 — M4 Fault × restriction tables
 
 - `test_app_control.c`: each fault alone + enable refused; adjacent first-fault-wins;
-  each active restriction alone; priority chain; sample restrictions locked inactive
-  (firmware checks currently commented).
+  each active restriction alone; priority chain; sample restrictions via app_monitor flags.
 
 ### B2 — M5 Lifecycle matrix
 

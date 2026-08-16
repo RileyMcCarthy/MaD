@@ -44,6 +44,9 @@ jobs:
             SIL/package-lock.json
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
       - uses: actions/setup-python@v7
         with:
           python-version: '3.x'
@@ -58,6 +61,9 @@ jobs:
 
       - name: Install protocol generator deps
         run: pip install -r ../../Protocol/ProtoEmb/core/requirements.txt
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
       - name: SIL npm deps (Playwright)
         working-directory: SIL
@@ -74,8 +80,7 @@ jobs:
       - name: Install Control deps + wasm + proto
         run: |
           npm ci
-          # wasm-pack optional if prebuilt; build when tooling available
-          if command -v wasm-pack >/dev/null 2>&1; then npm run build:wasm; fi
+          npm run build:wasm
           npm run generate:proto
 
       - name: Start playground (emulator PTY)
@@ -83,11 +88,15 @@ jobs:
         run: |
           nohup make playground > /tmp/mad-playground.log 2>&1 &
           echo $! > /tmp/mad-playground.pid
-          for i in $(seq 1 60); do
-            if [ -e /tmp/tty.rpi ]; then echo "PTY ready"; break; fi
+          for i in $(seq 1 90); do
+            if [ -e /tmp/tty.rpi ]; then echo "PTY ready after ${i}s"; break; fi
             sleep 2
           done
-          test -e /tmp/tty.rpi
+          if [ ! -e /tmp/tty.rpi ]; then
+            echo "=== playground log ==="
+            cat /tmp/mad-playground.log || true
+            exit 1
+          fi
 
       - name: Start WS bridge + Vite dev server
         run: |
@@ -100,6 +109,18 @@ jobs:
             sleep 2
           done
           curl -sf http://127.0.0.1:5174/ >/dev/null
+          for i in $(seq 1 30); do
+            if (echo >/dev/tcp/127.0.0.1/9999) >/dev/null 2>&1; then
+              echo "Bridge port open"
+              break
+            fi
+            sleep 1
+          done
+          (echo >/dev/tcp/127.0.0.1/9999) >/dev/null 2>&1 || {
+            echo "=== bridge log ==="
+            cat /tmp/mad-bridge.log || true
+            exit 1
+          }
 
       - name: Run e2e suite
         env:

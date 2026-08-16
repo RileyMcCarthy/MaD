@@ -14,11 +14,7 @@
  * system Google Chrome via channel.
  */
 
-import { createRequire } from 'node:module';
-import { installFakeSerial, APP_URL, BRIDGE_URL } from './fixtures.mjs';
-
-const require = createRequire('/Users/rileymccarthy/Documents/MaD/SIL/');
-const { chromium } = require('playwright');
+import { installFakeSerial, APP_URL, BRIDGE_URL, chromium } from './fixtures.mjs';
 
 async function main() {
   const browser = await chromium.launch({ channel: 'chrome', headless: false });

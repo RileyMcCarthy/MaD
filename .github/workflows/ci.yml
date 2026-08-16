@@ -31,6 +31,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       software: ${{ steps.changes.outputs.software }}
+      electron: ${{ steps.changes.outputs.electron }}
       firmware: ${{ steps.changes.outputs.firmware }}
       hardware: ${{ steps.changes.outputs.hardware }}
       wasm_control: ${{ steps.changes.outputs.wasm_control }}
@@ -48,6 +49,8 @@ jobs:
           filters: |
             software:
               - 'Software/**'
+            electron:
+              - 'Software/MaDControl/**'
             firmware:
               - 'Firmware/**'
             hardware:
@@ -363,10 +366,14 @@ jobs:
 
   build-software:
     needs: changes
-    # Build software for SIL testing when software/firmware changes, or always for software releases
+    # Frozen Electron app (MaDControl). Package only when that tree changes, on
+    # software-v tags, or when the optional legacy SIL e2e is explicitly enabled.
+    # Control (WASM) PRs and firmware-only PRs must not wait on electron-builder.
     if: |
       needs.changes.outputs.is_software_release == 'true' ||
-      (needs.changes.outputs.software == 'true' || needs.changes.outputs.firmware == 'true')
+      needs.changes.outputs.electron == 'true' ||
+      (vars.RUN_LEGACY_SIL_E2E == 'true' &&
+        (needs.changes.outputs.software == 'true' || needs.changes.outputs.firmware == 'true'))
     runs-on: macos-latest-large
     outputs:
       artifact-name: ${{ steps.artifact.outputs.name }}
@@ -385,9 +392,10 @@ jobs:
         
       - name: Ensure Python + protocol codegen deps
         run: |
-          python3 -m pip install --upgrade pip setuptools --break-system-packages
-          # `npm run generate:proto` runs generate.py, which imports yaml + jinja2.
-          python3 -m pip install --break-system-packages pyyaml jinja2
+          # macos-latest-large ships a Homebrew Python whose pip has no RECORD
+          # file — `pip install --upgrade pip` then fails uninstall-no-record-file.
+          # Install codegen deps only; do not upgrade the runner pip.
+          python3 -m pip install --break-system-packages --ignore-installed 'setuptools<81' pyyaml jinja2
 
       - name: Install dependencies
         working-directory: Software/MaDControl
