@@ -58,7 +58,8 @@ The firmware enforces a strict downward dependency (`APP → DEV → IO → Libr
 HAL → HW`). Files are prefixed by layer (`app_`, `dev_`, `IO_`, `lib_`). Don't
 include low-level MCU headers above the HAL. See [Firmware](../how-it-works/firmware.md).
 
-!!! note "A legacy desktop app also exists"
-    `Software/MaDControl/` is the original Electron desktop app. The browser app
-    (`Control`) has reached full parity and is the documented, deployed
-    application; this guide does not cover building the Electron app.
+!!! note "`Software/MaDControl/` — the Electron app"
+    `Software/Control/` is the deployed application and what this guide covers.
+    `Software/MaDControl/` is a separate Electron app that drives the SIL
+    Playwright suite and is packaged by the `build-software` CI job. Building it
+    is not covered here.

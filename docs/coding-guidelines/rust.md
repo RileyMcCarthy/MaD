@@ -2,7 +2,7 @@
 
 This document governs the Rust code in `SIL/` — the `mad-emulator` binary (`MaDSim/`), the reusable **embsim** emulator framework (`embsim/*`, a git submodule of [RileyMcCarthy/embsim](https://github.com/RileyMcCarthy/embsim) with its own workspace and CI), and the MaD-specific consumer crates (`protocol` — at `Protocol/rust/` — and `models`). It reflects the conventions actually used in the workspace as of this writing; follow it to write code that fits in and builds on the first try.
 
-> Scope note: this is **not** the firmware (that's C under `Firmware/`, governed by MISRA/CERT) nor the desktop app (TypeScript). This is the host-side Software-in-the-Loop emulator.
+> Scope note: this is **not** the firmware (that's C under `Firmware/`, governed by MISRA/CERT) nor the control apps (TypeScript). This is the host-side Software-in-the-Loop emulator.
 
 ---
 
@@ -297,7 +297,7 @@ The emulator runs firmware "cogs" as OS threads, so peripheral state is shared a
   ```
   (`embsim/models/src/edge.rs:44-57`). Other inline test modules: `peripherals/src/pulse_out.rs`, `tools/memory-inspect/src/{runtime,types}.rs`.
 - **Doctests double as documentation.** Public primitives carry a runnable ` ``` ` example in their `//!`/`///` docs (`event.rs:13-25`). Mark non-runnable examples ` ```rust,ignore ` (`build-support/src/lib.rs:10`, `runtime/src/lib.rs:16`).
-- **End-to-end behavior is covered by Playwright**, not Rust integration tests — they drive the real Electron UI against the running emulator (`SIL/tests/`, run via `make test` → `npm test`). The emulator is single-instance; honor `workers: 1` (see root `CLAUDE.md`).
+- **End-to-end behavior is covered by Playwright**, not Rust integration tests — they drive the Electron UI against the running emulator (`SIL/tests/`, run via `make test` → `npm test`). The emulator is single-instance; honor `workers: 1` (see root `CLAUDE.md`).
 - Run Rust tests with `cargo test` from `SIL/` (MaD-side crates) or from `SIL/embsim/` (the framework submodule's own workspace). CI runs both: the `sil-rust` job gates `cargo test` on `SIL/`, and the embsim repo's own CI gates the submodule (see §10).
 
 ---

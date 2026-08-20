@@ -10,7 +10,10 @@ import { FaultedReason, RestrictedReason } from './types';
 
 export const FAULT_HINTS: Record<FaultedReason, string> = {
   [FaultedReason.NONE]: 'No faults detected.',
-  [FaultedReason.COG]: 'Cogging detected in the machine.',
+  // "COG" is a Propeller 2 processor core, NOT motor cogging. The fault is raised
+  // by app_control.c when dev_cogManager_isAllRunning() goes false — i.e. a core
+  // stopped. Do not reword this toward the motor sense.
+  [FaultedReason.COG]: 'A processor core in the machine controller stopped running. Reboot the machine.',
   [FaultedReason.WATCHDOG]: 'Watchdog timer triggered.',
   [FaultedReason.ESD_POWER]: 'ESD power fault detected.',
   [FaultedReason.ESD_SWITCH]: 'ESD switch fault detected.',

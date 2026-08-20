@@ -15,6 +15,8 @@ Everything you need to build, run, test, and extend MaD.
 -   [:material-bug-check: **Bug-class coverage**](bug-class-coverage.md) — regression checklist for recurring failure modes
 -   [:material-shield-check: **Bulletproof test plan**](bulletproof-test-plan.md) — matrix roadmap (M1–M12) + sprint status
 -   [:material-chip: **Backend certification**](backend-certification.md) — stepper CI-certified vs servo
+-   [:material-table: **Protocol messages**](protocol-messages.md) — the wire message map
+-   [:material-code-tags: **G-code**](gcode.md) — the dialect the firmware plays back
 
 </div>
 
@@ -70,3 +72,27 @@ running SIL; PlatformIO only if you're building firmware.
     pio run -e propeller2          # build
     pio run -e propeller2 -t upload  # flash
     ```
+
+## Deep dives
+
+Design records kept alongside the code rather than duplicated here.
+
+**Control app** —
+[PARITY.md](https://github.com/RileyMcCarthy/MaD/blob/main/Software/Control/docs/PARITY.md)
+(per-screen feature inventory),
+[TEST_PLAN.md](https://github.com/RileyMcCarthy/MaD/blob/main/Software/Control/docs/TEST_PLAN.md)
+(Rust unit, vitest, and live-SIL E2E layers), and
+[HARDENING.md](https://github.com/RileyMcCarthy/MaD/blob/main/Software/Control/docs/HARDENING.md)
+(safety model, failure recovery, data integrity, performance).
+
+**Protocol** —
+[ProtoEmb README](https://github.com/RileyMcCarthy/protoemb/blob/main/README.md)
+(generator, framing, runtime) and
+[wire-format.md](https://github.com/RileyMcCarthy/protoemb/blob/main/docs/wire-format.md)
+(the canonical frame + payload contract).
+
+**SIL framework** —
+[embsim README](https://github.com/RileyMcCarthy/embsim/blob/main/README.md)
+(the reusable framework and the ~10-line emulator) and
+[CONTRACT.md](https://github.com/RileyMcCarthy/embsim/blob/main/CONTRACT.md)
+(the symbols and ABI a platform crate must export).

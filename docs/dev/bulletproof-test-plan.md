@@ -91,7 +91,7 @@ Out-of-range packed fields never encode (bit-wrap).
 
 ### C4 — M11 link loss
 
-- `M11-idle-drop`, `M11-mid-test-drop` (+ legacy `B5-reconnect`)
+- `M11-idle-drop`, `M11-mid-test-drop`, `B5-reconnect`
 
 ### C5 — Nightly e2e
 

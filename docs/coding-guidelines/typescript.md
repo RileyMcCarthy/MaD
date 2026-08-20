@@ -1,15 +1,15 @@
-# TypeScript / React / Electron Style Guide (MaDControl — legacy)
+# TypeScript / React / Electron Style Guide (MaDControl)
 
-> ⚠️ **This guide documents the legacy Electron app (`Software/MaDControl/`), which is
-> frozen.** The shipped, deployed app is **`Software/Control/`** — a frontend-only
-> Web Serial + WASM PWA. It shares the TS/React conventions below (interface/type/enum
-> rules, strict `tsconfig`, the generated `protoemb` codec boundary), but differs in
-> tooling and architecture: a **flat ESLint config** (not `erb`), **Vite** (not webpack),
-> **Zustand + a Web Worker + Comlink** (not Electron main/renderer IPC), and **Vitest**
-> (not Jest). New app work goes in `Control`; a WASM-app-specific guide is a
-> pending follow-up. Treat the Electron-specific sections below as historical.
+> **Scope:** this guide covers the Electron app at `Software/MaDControl/`, which
+> drives the SIL Playwright suite and is packaged by the `build-software` CI job.
+> The deployed app is **`Software/Control/`** — a frontend-only Web Serial + WASM
+> PWA, and where new app work goes. `Control` shares the TS/React conventions
+> below (interface/type/enum rules, strict `tsconfig`, the generated `protoemb`
+> codec boundary) but uses a **flat ESLint config**, **Vite**, **Zustand + a Web
+> Worker + Comlink**, and **Vitest**. A `Control`-specific guide is a pending
+> follow-up.
 
-This guide governs the desktop control app under `Software/MaDControl/` — the Electron main process (`src/main/`), the React renderer (`src/renderer/`), and the shared/util code (`src/shared/`, `src/utils/`). It documents the conventions actually used in this package so a contributor can write idiomatic code and pass the configured checks on the first try.
+This guide governs the Electron app under `Software/MaDControl/` — the main process (`src/main/`), the React renderer (`src/renderer/`), and the shared/util code (`src/shared/`, `src/utils/`). It documents the conventions actually used in this package so a contributor can write idiomatic code and pass the configured checks on the first try.
 
 The stack: Electron 35 + React 19 + TypeScript 5.8, built with the `electron-react-boilerplate` (ERB) webpack setup, MUI 5 for UI, and a Rust `protoemb-bridge` child process for device I/O.
 

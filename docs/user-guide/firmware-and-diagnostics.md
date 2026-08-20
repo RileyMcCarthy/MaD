@@ -13,10 +13,10 @@ see [Troubleshooting](troubleshooting.md).
 
 ## Diagnostics export
 
-Click **Download diagnostics** to save a JSON bundle containing a flight recorder
-of significant events (connects, errors, timeouts, NACKs) and worker throughput
-counters. It contains **no test data** — it's safe to share when reporting an
-issue.
+Click **Download diagnostics** to save a file recording what the app has been
+doing — connections, errors, timeouts, and rejected commands — plus some
+performance counters. It contains **no test data**, so it's safe to attach when
+reporting a problem.
 
 !!! info "Updating the app"
     When a new version of the app is published, the status bar shows an **Update
@@ -26,7 +26,6 @@ issue.
 ## Flashing firmware
 
 !!! warning "Not available in the browser"
-    Updating the **firmware on the machine** uses the native Propeller `loadp2`
-    bootloader, which cannot run in a browser. Firmware flashing is done with the
-    desktop tooling. Building and flashing firmware is covered in the
+    Updating the **firmware on the machine** needs a desktop tool that a browser
+    can't run, so it isn't something you can do from this app. It's covered in the
     [developer guide](../dev/building-firmware.md).

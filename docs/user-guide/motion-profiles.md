@@ -24,23 +24,22 @@ left). You can add and delete sets and moves freely.
 |---|---|---|
 | **Linear** | position/distance + velocity | A controlled pull or return. *Absolute* uses a target position; *relative* uses a distance from the current position. |
 | **Dwell** | time (ms) | Hold position for a fixed time. |
-| **Waveform** | waveform (sine/triangle), amplitude, frequency, cycles, centre | A position-vs-time oscillation for cyclic / fatigue loading. |
+| **Waveform** | centre, amplitude, frequency, cycles | A smooth sine oscillation about the centre, for cyclic / fatigue loading. |
 
 Each move has an **absolute / relative** selector. For the **Waveform** move, the
-app shows the live **peak velocity** and **duration** and warns if it exceeds the
-velocity limit; it's expanded host-side into many small `G1` segments the firmware
-plays back from its SD card, so it runs unattended with no firmware changes.
+app shows the live **peak velocity** and **duration**, and warns you if it would
+exceed the machine's velocity limit. The machine generates the oscillation
+itself, so long cyclic runs continue unattended.
 
-## Preview the G-code
+## Preview the motion
 
-Click **Preview G-code** to see exactly what will be sent to the machine, plus a
-distance-vs-time chart of the motion:
+Click **Preview G-code** to see a distance-vs-time chart of exactly what the
+machine will do, along with the instructions that will be sent:
 
 ![G-code preview](../assets/screenshots/05-gcode-preview.png)
 
-The generated program uses standard codes (`G90`/`G91` for absolute/relative,
-`G1` for linear moves, `G4` for dwell) and always ends with **`G122`** to signal
-"test complete" to the firmware. See the [G-code reference](../reference/gcode.md).
+This is a good habit before running an unfamiliar profile — the chart makes an
+accidental over-long pull or an inverted direction obvious at a glance.
 
 ## Saving, loading, importing
 
@@ -48,5 +47,4 @@ The generated program uses standard codes (`G90`/`G91` for absolute/relative,
   it then appears in the **Load saved profile…** dropdown.
 - You can also **Save / Load individual Sets**, so a reusable set (e.g. a cyclic
   block) can be shared across profiles.
-- **Import `.mp`** loads a profile from a JSON `.mp` file — see
-  [file formats](../reference/file-formats.md).
+- **Import** loads a profile from a `.mp` file — see [file formats](file-formats.md).

@@ -1,8 +1,8 @@
 # Requirements & browser support
 
-The MaD control app is a **frontend-only Progressive Web App**. It needs no
-backend, no Electron, and no installation — but it does depend on two modern
-browser APIs that are currently only available in Chromium-based browsers.
+The MaD control app runs entirely in your browser — there's nothing to install
+and no server to set up. It does, however, rely on two newer browser features
+that only Chromium-based browsers currently support.
 
 ## Browser support
 

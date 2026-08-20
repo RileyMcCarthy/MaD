@@ -20,7 +20,7 @@ relevant jobs:
 | `python-lint` | firmware changed | **Blocking.** `ruff` over the PlatformIO SCons hooks (`Firmware/MaDCore/extra_scripts`; `ruff.toml`, mirrors the Python guide). The ProtoEmb generator is linted in [its own repo's CI](https://github.com/RileyMcCarthy/protoemb) |
 | `firmware-misra` | firmware changed | **Blocking.** `pio check` (cppcheck + MISRA) with `check_severity = medium, high` — low is not reported. Fails CI Gate on any medium/high defect. CERT is not enforced (no cert.py with bundled cppcheck) |
 | `sil-rust` | SIL / firmware / protocol changed | **Blocking (`cargo test`).** `make protocol` + build `libfirmware.a`, then `cargo clippy` (advisory) + `cargo test` (gating) on the SIL workspace |
-| `build-software` | software/firmware changed, or a software tag | Builds the desktop app for macOS/Windows/Linux |
+| `build-software` | software/firmware changed, or a software tag | Builds the Electron app (`Software/MaDControl/`) for macOS/Windows/Linux |
 | `build-firmware` | firmware/software changed, or a firmware tag | Builds `propeller2_debug`, `propeller2` release, and the native (SIL) binary |
 | `build-hardware` | hardware changed, or a hardware tag | KiBot → Gerbers, BOM, interactive BOM, 3D models for each board |
 | `sil-tests` | software or firmware changed (not a release tag) | Downloads the built artifacts, starts the emulator, and runs the Playwright integration suite |
@@ -97,7 +97,7 @@ Pages artifact. It triggers on:
 Releases are cut by pushing a version tag:
 
 ```bash
-git tag software-v1.0.0 && git push --tags   # desktop app release
+git tag software-v1.0.0 && git push --tags   # Electron app (MaDControl) release
 git tag firmware-v1.0.0 && git push --tags   # firmware binaries release
 git tag hardware-v1.0.0 && git push --tags   # hardware manufacturing files
 git tag webapp-v1.0.0   && git push --tags   # deploy docs + app to Pages

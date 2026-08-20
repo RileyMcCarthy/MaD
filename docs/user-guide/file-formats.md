@@ -1,7 +1,7 @@
 # File formats
 
 The app reads and writes three kinds of file in your
-[data folder](../user-guide/settings-and-data.md): sample profiles (`.sp`), motion
+[data folder](settings-and-data.md): sample profiles (`.sp`), motion
 profiles (`.mp`), and recorded test data (CSV).
 
 ## Sample profile — `.sp`
@@ -28,11 +28,10 @@ JSON describing a material's dimensions and test limits.
 | `sampleThickness` | mm | Cross-section thickness (for stress) |
 | `serial` | — | Sample / material identifier (also the profile's saved name) |
 
-!!! note "`serial` is app-level only"
-    `serial` is a UI/file field used as the profile's name and identifier — it is
-    **not** part of the `SampleProfile` wire struct sent to the firmware (which
-    carries only the five numeric limits). See the
-    [protocol messages](protocol-messages.md).
+!!! note "`serial` stays on your computer"
+    `serial` names and identifies the profile in the app and in your data folder.
+    Only the five numeric limits are sent to the machine, so renaming a profile
+    never changes how a test runs.
 
 ## Motion profile — `.mp`
 
@@ -79,14 +78,15 @@ carries whichever fields apply:
 | `distance` | linear (relative) | Distance to move (mm) |
 | `velocity` | linear | Feed rate (mm/s) |
 | `time` | dwell | Hold time (ms) |
-| `waveform` | math | `sine` or `triangle` |
-| `amplitude`, `frequency`, `cycles`, `centre` | math | Waveform shape |
+| `waveform` | math | `sine` |
+| `amplitude`, `frequency`, `cycles`, `phase` | math | Waveform shape |
 
 `absoluteOrRelative` is `absolute` or `relative` per move.
 
 ## Recorded data — CSV
 
-Downloaded test data is CSV in **firmware-native units**:
+Downloaded test data is CSV. Note the units: the machine records in **finer units**
+than the app displays, so the numbers here are larger than what you see on screen.
 
 ```text
 time_us,force_mN,position_um,setpoint_um
@@ -102,12 +102,12 @@ time_us,force_mN,position_um,setpoint_um
 | `position_um` | µm | Measured position |
 | `setpoint_um` | µm | Commanded position |
 
-The [run viewer](../user-guide/test-history-and-analysis.md) converts these to N
+The [run viewer](test-history-and-analysis.md) converts these to N
 and mm and derives stress/strain. **Export** adds a metadata header (sample/motion
 details) to the CSV.
 
-!!! note "Saved vs. imported files"
-    Inside the data folder the app stores each profile as a small JSON record
-    (with an `id`, `name`, and `createdAt` wrapping the `profile`). The `.sp` /
-    `.mp` **import/export** format is the bare profile object shown above, so files
-    are easy to author by hand and share.
+!!! note "Saved vs. shared files"
+    Inside your data folder, the app wraps each profile in a small record that
+    tracks when it was created. The `.sp` / `.mp` files you **import and export**
+    are just the plain profile shown above — which is what makes them easy to
+    write by hand, email to a colleague, or keep in version control.
