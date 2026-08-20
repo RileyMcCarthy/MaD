@@ -113,8 +113,15 @@ The live URL is `https://<owner>.github.io/<repo>/` (for this repo,
 available via the workflow's **Run workflow** button (`workflow_dispatch`).
 One-time setup: repo **Settings → Pages → Source = GitHub Actions**.
 
+## Firmware flashing
+
+The **Firmware** page programs the Propeller 2 over Web Serial — no native
+`loadp2` needed. It resets the chip with DTR and drives the boot ROM's serial
+loader directly, either into RAM (temporary) or through a flash stub (permanent).
+Requires the Debug/Programming header J1 and an adapter that wires DTR to `RESn`.
+See [docs/FLASHING.md](docs/FLASHING.md) for the protocol, hardware requirements,
+and the CLI harness (`npm run hw:flash`) used to validate it against a board.
+
 ## Not included
 
-- **Firmware flashing** — the native `loadp2` bootloader cannot run in a browser;
-  use the desktop app for firmware updates.
 - Non-Chromium browsers.
