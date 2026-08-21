@@ -59,3 +59,36 @@ export function commandName(command: number): string {
 export function isPeriodicCommand(command: number): boolean {
   return command === MSG_READ_SAMPLE || command === MSG_READ_STATE;
 }
+
+/**
+ * Summarise a G-code program for the log.
+ *
+ * The full program can be thousands of lines, so this keeps what actually
+ * answers "did we upload the right thing": size, a content hash (two runs of
+ * the same profile must produce the same digest — if they don't, the transform
+ * is non-deterministic), and a per-opcode histogram. The histogram makes the
+ * project's classic footgun visible at a glance: a program missing its trailing
+ * `G122` never signals completion to the firmware.
+ */
+export function summariseGcode(lines: readonly string[]): Record<string, unknown> {
+  const opcodes: Record<string, number> = {};
+  let bytes = 0;
+  // FNV-1a: tiny, dependency-free, and only needs to detect difference.
+  let hash = 0x811c9dc5;
+  for (const line of lines) {
+    bytes += line.length + 1;
+    for (let i = 0; i < line.length; i++) {
+      hash ^= line.charCodeAt(i);
+      hash = Math.imul(hash, 0x01000193);
+    }
+    const op = /^\s*([GM]\d+)/i.exec(line)?.[1]?.toUpperCase();
+    if (op !== undefined) opcodes[op] = (opcodes[op] ?? 0) + 1;
+  }
+  return {
+    lines: lines.length,
+    bytes,
+    hash: (hash >>> 0).toString(16).padStart(8, '0'),
+    opcodes,
+    endsWithG122: /^\s*G122\b/i.test(lines[lines.length - 1] ?? ''),
+  };
+}

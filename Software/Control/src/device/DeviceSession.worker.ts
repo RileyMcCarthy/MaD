@@ -15,7 +15,7 @@ import init, { WasmClient } from '@/wasm/protoemb_runtime.js';
 import wasmUrl from '@/wasm/protoemb_runtime_bg.wasm?url';
 import { logger, setLogSink, flushLog, nowMs, type LogBatchSink } from '@/diagnostics/log';
 import { byteRing } from '@/diagnostics/byteRing';
-import { commandName, isPeriodicCommand } from './commandNames';
+import { commandName, isPeriodicCommand, summariseGcode } from './commandNames';
 import {
   decodeSample,
   decodeMachineState,
@@ -256,6 +256,11 @@ class DeviceSession {
    *  command). Periodic sample/state reads are Rust-driven and don't use this. */
   private opChain: Promise<unknown> = Promise.resolve();
 
+  /** Monotonic id for correlating a user action with the frames it produced. */
+  private opSeq = 0;
+
+  private activeOp: { id: number; name: string; command: number | null } | null = null;
+
   private lastSample: SampleData | null = null;
 
   /** Lightweight throughput/error counters for the diagnostics bundle. */
@@ -489,7 +494,7 @@ class DeviceSession {
       this.client?.read(MSG_READ_MACHINE_CONFIGURATION, true, undefined);
       const e = await p;
       return (e as Extract<DeviceEvent, { kind: 'configuration' }>).data;
-    });
+    }, 'readMachineConfiguration');
   }
 
   async readSampleProfile(): Promise<SampleProfile> {
@@ -498,7 +503,7 @@ class DeviceSession {
       this.client?.read(MSG_READ_SAMPLE_PROFILE, true, undefined);
       const e = await p;
       return (e as Extract<DeviceEvent, { kind: 'sampleProfile' }>).data;
-    });
+    }, 'readSampleProfile');
   }
 
   async readFirmwareVersion(): Promise<string> {
@@ -507,14 +512,14 @@ class DeviceSession {
       this.client?.read(MSG_READ_FIRMWARE_VERSION, true, undefined);
       const e = await p;
       return (e as Extract<DeviceEvent, { kind: 'firmwareVersion' }>).data.version;
-    });
+    }, 'readFirmwareVersion');
   }
 
   // ── High-level writes (command → ACK) ──
 
   async writeMachineConfiguration(config: MachineConfiguration): Promise<boolean> {
     const bytes = encodeMachineConfiguration(configFromShared(config));
-    return this.runOp(() => this.writeAndAck(MSG_WRITE_MACHINE_CONFIGURATION_WRITE, bytes, 3000));
+    return this.runOp(() => this.writeAndAck(MSG_WRITE_MACHINE_CONFIGURATION_WRITE, bytes, 3000), 'writeMachineConfiguration');
   }
 
   async writeSampleProfile(profile: SampleProfile): Promise<boolean> {
@@ -527,12 +532,13 @@ class DeviceSession {
       serial: profile.serial ?? '',
     };
     const bytes = encodeSampleProfile(sampleProfileFromShared(firmwareProfile));
-    return this.runOp(() => this.writeAndAck(MSG_WRITE_SAMPLE_PROFILE_WRITE, bytes, 2000));
+    return this.runOp(() => this.writeAndAck(MSG_WRITE_SAMPLE_PROFILE_WRITE, bytes, 2000), 'writeSampleProfile');
   }
 
   async setMotionEnabled(enabled: boolean): Promise<boolean> {
-    return this.runOp(() =>
-      this.writeAndAck(MSG_WRITE_MOTION_ENABLE, new Uint8Array([enabled ? 1 : 0]), 2000),
+    return this.runOp(
+      () => this.writeAndAck(MSG_WRITE_MOTION_ENABLE, new Uint8Array([enabled ? 1 : 0]), 2000),
+      'setMotionEnabled',
     );
   }
 
@@ -556,7 +562,7 @@ class DeviceSession {
         if (!ok) return false;
       }
       return true;
-    });
+    }, 'manualMove');
   }
 
   homeAxis(): void {
@@ -580,23 +586,46 @@ class DeviceSession {
    */
   private async uploadProgram(ops: ProgramOp[]): Promise<void> {
     let pending: Uint8Array[] = [];
+    // Counted rather than logged per batch: a long program is hundreds of
+    // writes, and the useful facts are the totals plus where it stopped.
+    let batches = 0;
+    let waveforms = 0;
+    let bytes = 0;
     const flushMoves = async () => {
       for (const batch of batchMoveBuffers(pending, BATCH_MOVE_COUNT)) {
         if (this.aborting) throw new Error(ABORT_ERROR_MESSAGE);
+        batches += 1;
+        bytes += batch.length;
         await this.uploadWithRetry(MSG_WRITE_TEST_MOVE, batch, UPLOAD_DEFAULT_MAX_RETRIES);
       }
       pending = [];
     };
-    for (const op of ops) {
-      if (op.kind === 'move') {
-        pending.push(op.buf);
-      } else {
-        await flushMoves(); // preserve program order before the waveform
-        if (this.aborting) throw new Error(ABORT_ERROR_MESSAGE);
-        await this.uploadWithRetry(MSG_WRITE_TEST_WAVEFORM, op.buf, UPLOAD_DEFAULT_MAX_RETRIES);
+    try {
+      for (const op of ops) {
+        if (op.kind === 'move') {
+          pending.push(op.buf);
+        } else {
+          await flushMoves(); // preserve program order before the waveform
+          if (this.aborting) throw new Error(ABORT_ERROR_MESSAGE);
+          waveforms += 1;
+          bytes += op.buf.length;
+          await this.uploadWithRetry(MSG_WRITE_TEST_WAVEFORM, op.buf, UPLOAD_DEFAULT_MAX_RETRIES);
+        }
       }
+      await flushMoves();
+      logProto.debug('upload-done', undefined, { ...this.opTag(), batches, waveforms, bytes });
+    } catch (err) {
+      // How far the upload got before failing decides whether the SD file holds
+      // a partial program — the difference between a safe retry and a bad run.
+      logProto.error('upload-aborted', err instanceof Error ? err.message : String(err), {
+        ...this.opTag(),
+        batchesSent: batches,
+        waveformsSent: waveforms,
+        bytesSent: bytes,
+        totalOps: ops.length,
+      });
+      throw err;
     }
-    await flushMoves();
   }
 
   async runTest(params: RunTestParams): Promise<RunTestResult> {
@@ -615,7 +644,20 @@ class DeviceSession {
           return t !== '' && !t.startsWith(';');
         });
         const gaugeMm = resolveGaugeLengthMm(gaugeLengthMm, this.lastSample);
+        // What was actually uploaded, in a form that survives in a bug report:
+        // "the machine did the wrong moves" is answerable from this alone.
+        logProto.info('test-program', gcodeId, {
+          ...this.opTag(),
+          ...summariseGcode(lines),
+          gaugeMm,
+          gaugeSource: gaugeLengthMm === undefined ? 'sample' : 'caller',
+        });
+        const uploadStart = nowMs();
         await this.uploadProgram(gcodeLinesToProgram(lines, gaugeMm));
+        logProto.info('test-uploaded', gcodeId, {
+          ...this.opTag(),
+          durMs: Math.round(nowMs() - uploadStart),
+        });
         if (this.aborting) throw new Error(ABORT_ERROR_MESSAGE);
 
         // 3. Start the test only after the COMPLETE program (incl. trailing G122)
@@ -623,12 +665,23 @@ class DeviceSession {
         const runBuf = encodeTestRun({ gcodeId: gcodeId.slice(0, 6), testDataId: testDataId.slice(0, 6) });
         await this.writeAndAckOrThrow(MSG_WRITE_TEST_RUN, runBuf, 5000);
 
+        logProto.info('test-started', gcodeId, { ...this.opTag(), testDataId });
         return { success: true, gcodeId, testDataId };
       } catch (err) {
         // Invalidate any partially-written SD file: re-opening for WRITE truncates
         // it (firmware "wb"), so a half-uploaded program can never later run to EOF
         // and report a false "complete". Best-effort.
-        if (shouldInvalidatePartialUpload(false)) {
+        const aborted = this.aborting;
+        const invalidated = shouldInvalidatePartialUpload(false);
+        logProto.error('test-failed', err instanceof Error ? err.message : String(err), {
+          ...this.opTag(),
+          gcodeId,
+          aborted,
+          // Whether the partial SD file was truncated decides if a retry is
+          // safe or will run a half-written program.
+          invalidatedPartialUpload: invalidated,
+        });
+        if (invalidated) {
           try {
             this.client?.write(MSG_WRITE_TEST_MOVE, openId);
           } catch {
@@ -642,7 +695,7 @@ class DeviceSession {
           error: err instanceof Error ? err.message : String(err),
         };
       }
-    });
+    }, 'runTest');
   }
 
   async streamGcode(gcode: string): Promise<{ success: boolean; error?: string }> {
@@ -654,12 +707,21 @@ class DeviceSession {
       this.aborting = false;
       try {
         const gaugeMm = resolveGaugeLengthMm(undefined, this.lastSample);
+        logProto.info('stream-program', undefined, {
+          ...this.opTag(),
+          ...summariseGcode(lines),
+          gaugeMm,
+        });
         await this.uploadProgram(gcodeLinesToProgram(lines, gaugeMm));
         return { success: true };
       } catch (err) {
+        logProto.error('stream-failed', err instanceof Error ? err.message : String(err), {
+          ...this.opTag(),
+          aborted: this.aborting,
+        });
         return { success: false, error: err instanceof Error ? err.message : String(err) };
       }
-    });
+    }, 'streamGcode');
   }
 
   // ── Download test data from the SD card → CSV ──
@@ -672,11 +734,15 @@ class DeviceSession {
 
     return this.runOp(async () => {
     this.aborting = false;
+    const downloadStart = nowMs();
+    let requests = 0;
+    let nackRetries = 0;
     try {
       const chunks: Uint8Array[] = [];
       let sampleIndex = 0;
       let downloadedBytes = 0;
       let done = false;
+      logProto.info('download-start', testName, { ...this.opTag() });
 
       while (!done) {
         if (this.aborting) throw new Error(ABORT_ERROR_MESSAGE);
@@ -691,6 +757,7 @@ class DeviceSession {
 
         while (chunk === null) {
            
+          requests += 1;
           const next = await this.requestDownloadChunk(request, 10000);
           if (next.kind === 'nack') {
             // Retry a transient "not ready" / SD-BUSY NACK at ANY point, not only
@@ -699,6 +766,7 @@ class DeviceSession {
             // downloaded. The first chunk waits longer (file may not exist yet).
             if (shouldRetryDownloadNack(notReadyRetries, sampleIndex)) {
               notReadyRetries += 1;
+              nackRetries += 1;
                
               await delay(DOWNLOAD_RETRY_DELAY_MS);
               continue;
@@ -743,13 +811,31 @@ class DeviceSession {
         totalBytes: binary.length,
         status: 'complete',
       });
+      logProto.info('download-done', testName, {
+        ...this.opTag(),
+        bytes: binary.length,
+        csvChars: csv.length,
+        requests,
+        // Retries are the early warning for a flaky SD path: a download that
+        // succeeded after 40 BUSY NACKs is a bug report waiting to happen.
+        nackRetries,
+        durMs: Math.round(nowMs() - downloadStart),
+      });
       return { success: true, csv, sampleBytes: binary.length };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      logProto.error('download-failed', message, {
+        ...this.opTag(),
+        testName,
+        requests,
+        nackRetries,
+        aborted: this.aborting,
+        durMs: Math.round(nowMs() - downloadStart),
+      });
       onProgress?.({ fileName: testName, bytesDownloaded: 0, totalBytes: 0, status: 'error', error: message });
       return { success: false, error: message };
     }
-    });
+    }, 'downloadTestFile');
   }
 
   // ── Internals ──
@@ -767,6 +853,9 @@ class DeviceSession {
       logger('wasm').error('poll-trap', String(err), {
         ...this.stats,
         ...byteRing.stats(),
+        ...this.opTag(),
+        // A trap in the protocol core is almost always the bytes that fed it.
+        tail: byteRing.tailHex(96),
       });
       this.emit([{ kind: 'error', message: `poll: ${String(err)}` }]);
       void this.shutdown(`protocol error: ${String(err)}`);
@@ -845,27 +934,32 @@ class DeviceSession {
 
     switch (ev.event) {
       case 'ack':
-        logProto.info('ack', commandName(command));
+        logProto.info('ack', commandName(command), this.opTag(command));
         break;
       case 'nack':
-        logProto.warn('nack', commandName(command), { command });
+        logProto.warn('nack', commandName(command), { command, ...this.opTag(command) });
         break;
       case 'timeout':
         logProto.warn('timeout', 'no response', {
           command: ev.frame && ev.frame.length > 2 ? commandName(ev.frame[2]) : 'unknown',
           frameBytes: ev.frame?.length ?? 0,
+          ...this.opTag(),
         });
         break;
       case 'error':
         logProto.error('error', ev.message ?? 'unknown error', {
           command: command >= 0 ? commandName(command) : undefined,
+          ...this.opTag(),
+          // The bytes that caused the rejection are the whole story for a
+          // framing/CRC fault, and they are gone from the ring by export time.
+          tail: byteRing.tailHex(64),
         });
         break;
       case 'notification':
         logProto.info('notification', undefined, { bytes: u8(ev.payload).length });
         break;
       case 'data':
-        logProto.info('rx', commandName(command), { bytes: u8(ev.payload).length });
+        logProto.info('rx', commandName(command), { bytes: u8(ev.payload).length, ...this.opTag(command) });
         break;
       default:
         break;
@@ -913,13 +1007,75 @@ class DeviceSession {
   }
 
   /** Serialize an on-demand operation so only one request/response is in flight. */
-  private runOp<T>(fn: () => Promise<T>): Promise<T> {
-    const next = this.opChain.then(fn, fn);
+  private runOp<T>(fn: () => Promise<T>, name?: string): Promise<T> {
+    const wrapped = name === undefined ? fn : this.instrumentOp(fn, name);
+    const next = this.opChain.then(wrapped, wrapped);
     this.opChain = next.then(
       () => undefined,
       () => undefined,
     );
     return next;
+  }
+
+  /**
+   * Wrap a serialized operation so every frame it produces can be traced back
+   * to the user action that caused it.
+   *
+   * `runOp` guarantees a single in-flight operation, so a plain field is a
+   * correct "current op" marker — no async-context plumbing needed. Frames that
+   * arrive while an op is active get its id, which turns a flat frame log into
+   * "jog #7 → tx WRITE_MANUAL_MOVE → nack" instead of leaving the reader to
+   * guess which write a NACK belongs to.
+   *
+   * Poll-driven traffic unrelated to the op can interleave, so `logRawEvent`
+   * only tags frames whose command matches the op's own writes.
+   */
+  private instrumentOp<T>(fn: () => Promise<T>, name: string): () => Promise<T> {
+    return async () => {
+      const id = (this.opSeq += 1);
+      const previous = this.activeOp;
+      const startedAt = nowMs();
+      this.activeOp = { id, name, command: null };
+      logProto.info('op-start', name, { op: id });
+      try {
+        const result = await fn();
+        logProto.info('op-end', name, {
+          op: id,
+          ok: true,
+          durMs: Math.round(nowMs() - startedAt),
+        });
+        return result;
+      } catch (err) {
+        // Ops that resolve with `{ success: false }` are logged by their own
+        // call sites; this path is a genuine throw.
+        logProto.error('op-end', name, {
+          op: id,
+          ok: false,
+          durMs: Math.round(nowMs() - startedAt),
+          reason: err instanceof Error ? err.message : String(err),
+        });
+        throw err;
+      } finally {
+        this.activeOp = previous;
+      }
+    };
+  }
+
+  /**
+   * Record which command the in-flight op is writing, so an inbound ack/nack
+   * for an unrelated command (a late reply, a firmware-initiated frame) does
+   * not get mis-attributed to it.
+   */
+  private claimOpCommand(command: number): void {
+    if (this.activeOp !== null) this.activeOp.command = command;
+  }
+
+  /** `{ op: id }` when an operation is in flight, else empty — spread into log data. */
+  private opTag(command?: number): { op?: number } {
+    const active = this.activeOp;
+    if (active === null) return {};
+    if (command !== undefined && active.command !== null && active.command !== command) return {};
+    return { op: active.id };
   }
 
   private waitFor(
@@ -964,19 +1120,23 @@ class DeviceSession {
   private async writeAndAck(command: number, data: Uint8Array, timeoutMs: number): Promise<boolean> {
     const p = this.waitFor((e) => e.kind === 'ack' && e.command === command, timeoutMs, `ack(${command})`, command);
     const started = nowMs();
-    logProto.info('tx', commandName(command), { bytes: data.length, timeoutMs });
+    this.claimOpCommand(command);
+    logProto.info('tx', commandName(command), { bytes: data.length, timeoutMs, ...this.opTag() });
     this.client?.write(command, data);
     try {
       const e = (await p) as Extract<DeviceEvent, { kind: 'ack' }>;
       // Round-trip time is the cheapest early warning there is: a link that is
       // about to fail usually gets slow before it stops answering.
       logProto.debug('rtt', commandName(command), {
+      ...this.opTag(),
+        ...this.opTag(),
         durMs: Math.round(nowMs() - started),
         success: e.success,
       });
       return e.success;
     } catch (err) {
       logProto.warn('tx-failed', commandName(command), {
+        ...this.opTag(),
         durMs: Math.round(nowMs() - started),
         reason: err instanceof Error ? err.message : String(err),
       });
@@ -987,10 +1147,12 @@ class DeviceSession {
   private async writeAndAckOrThrow(command: number, data: Uint8Array, timeoutMs: number): Promise<void> {
     const p = this.waitFor((e) => e.kind === 'ack' && e.command === command, timeoutMs, `ack(${command})`, command);
     const started = nowMs();
-    logProto.info('tx', commandName(command), { bytes: data.length, timeoutMs });
+    this.claimOpCommand(command);
+    logProto.info('tx', commandName(command), { bytes: data.length, timeoutMs, ...this.opTag() });
     this.client?.write(command, data);
     const e = (await p) as Extract<DeviceEvent, { kind: 'ack' }>;
     logProto.debug('rtt', commandName(command), {
+      ...this.opTag(),
       durMs: Math.round(nowMs() - started),
       success: e.success,
     });
@@ -1009,10 +1171,10 @@ class DeviceSession {
         attempt += 1;
         const reason = err instanceof Error ? err.message : String(err);
         if (!shouldRetryUpload(attempt, maxRetries)) {
-          logProto.error('upload-failed', commandName(command), { attempt, reason });
+          logProto.error('upload-failed', commandName(command), { attempt, reason, ...this.opTag() });
           throw err;
         }
-        logProto.warn('upload-retry', commandName(command), { attempt, maxRetries, reason });
+        logProto.warn('upload-retry', commandName(command), { attempt, maxRetries, reason, ...this.opTag() });
 
         await delay(1000);
       }

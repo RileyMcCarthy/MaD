@@ -1,0 +1,63 @@
+name: Control app bug
+description: Report a problem with the MaD Control web app (opened pre-filled by the app's "Report a bug" button)
+title: "[app] "
+labels: ["bug", "app"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Most fields below are filled in for you by the app.
+
+        **Please attach the `mad-diagnostics-*.json` file the app just downloaded** —
+        drag it into the box at the bottom of this form. It carries the session log
+        (connection events, protocol traffic, errors, timings) and is what makes the
+        problem traceable without reproducing it.
+
+        It contains no sample values and no file contents. You are welcome to open it
+        and check before attaching.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: What went wrong?
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Connect
+        2. Run a test
+        3. Try to jog
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      render: text
+
+  - type: textarea
+    id: counters
+    attributes:
+      label: Error counters
+      render: text
+
+  - type: textarea
+    id: errors
+    attributes:
+      label: Recent errors
+      render: text
+
+  - type: input
+    id: attachment
+    attributes:
+      label: Diagnostics file
+      description: The file the app downloaded. Attach it below.
+
+  - type: textarea
+    id: attachment_drop
+    attributes:
+      label: Attach the diagnostics file here
+      description: Drag and drop the `mad-diagnostics-*.json` file into this box.
