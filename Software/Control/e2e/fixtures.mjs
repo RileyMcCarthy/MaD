@@ -24,9 +24,8 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { mkdir, writeFile } from 'node:fs/promises';
 
-// Resolve Playwright from the SIL workspace (shared install) — portable for CI.
-const silPackageJson = join(dirname(fileURLToPath(import.meta.url)), '../../../SIL/package.json');
-const require = createRequire(silPackageJson);
+// Playwright is a devDependency of this package — resolve it from here.
+const require = createRequire(import.meta.url);
 export const { chromium } = require('playwright');
 
 export const APP_URL = process.env.APP_URL || 'http://localhost:5174/';
