@@ -20,6 +20,8 @@
     "e2e": "node e2e/run-all.mjs",
     "e2e:smoke": "node e2e/run-smoke.mjs",
     "hw:flash": "vite-node tools/hw-p2load.mts --",
+    "goldens": "tools/regen-loadp2-goldens.sh",
+    "goldens:check": "tools/regen-loadp2-goldens.sh --check",
     "sil:bridge": "node tools/sil-ws-bridge.mjs",
     "sil:smoke": "node e2e/sil-smoke.mjs",
     "sil:app": "node e2e/sil-playground.mjs",

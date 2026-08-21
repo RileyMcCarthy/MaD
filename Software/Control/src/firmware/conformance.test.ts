@@ -48,8 +48,21 @@ const CASES: Array<{ name: string; size: number }> = [
   { name: 'exact1024', size: 1024 },
 ];
 
-const golden = (name: string, mode: ProgramMode) =>
-  readFileSync(join(__dirname, 'golden', `${name}.${mode}.hex`), 'utf8').trim();
+/** The raw bytes real loadp2 put on the wire for this case. */
+const golden = (name: string, mode: ProgramMode): Buffer =>
+  readFileSync(join(__dirname, 'golden', `${name}.${mode}.bin`));
+
+/**
+ * Where two streams first disagree, rendered with a little context either side.
+ * A raw 9 KB buffer diff is unreadable; this points at the byte that matters.
+ */
+function describeMismatch(ours: Buffer, theirs: Buffer): string {
+  const at = ours.findIndex((b, i) => theirs[i] !== b);
+  if (at < 0) return `identical for ${Math.min(ours.length, theirs.length)} bytes, then lengths differ`;
+  const from = Math.max(0, at - 24);
+  const show = (b: Buffer) => JSON.stringify(b.subarray(from, at + 24).toString('latin1'));
+  return `first differs at byte ${at}\n  ours  : ${show(ours)}\n  loadp2: ${show(theirs)}`;
+}
 
 describe('loadp2 conformance', () => {
   for (const { name, size } of CASES) {
@@ -57,26 +70,24 @@ describe('loadp2 conformance', () => {
       it(`matches loadp2 byte-for-byte: ${name} (${size} B), ${mode}`, async () => {
         const rom = new CapturingRom();
         await programTransport(rom, testImage(size), { mode });
-        const ours = Buffer.from(rom.sent).toString('hex');
+        const ours = Buffer.from(rom.sent);
         const theirs = golden(name, mode);
 
-        // Compare lengths first: a length mismatch produces a far more legible
-        // failure than a 9 KB hex diff.
-        expect(ours.length / 2).toBe(theirs.length / 2);
-        expect(ours).toBe(theirs);
+        expect(ours.length, describeMismatch(ours, theirs)).toBe(theirs.length);
+        expect(ours.equals(theirs), describeMismatch(ours, theirs)).toBe(true);
       });
     }
   }
 
   it('golden captures start with the ROM autobaud probe', () => {
     // Guards against a regenerated golden that silently lost its prefix.
-    const head = Buffer.from(golden('tiny4', 'ram'), 'hex').toString('latin1');
+    const head = golden('tiny4', 'ram').toString('latin1');
     expect(head.startsWith('> Prop_Chk 0 0 0 0  > Prop_Hex 0 0 0 0')).toBe(true);
   });
 
   it('RAM captures end with a checksum request, flash captures with ~', () => {
-    const ram = Buffer.from(golden('partial300', 'ram'), 'hex').toString('latin1');
-    const flash = Buffer.from(golden('partial300', 'flash'), 'hex').toString('latin1');
+    const ram = golden('partial300', 'ram').toString('latin1');
+    const flash = golden('partial300', 'flash').toString('latin1');
     expect(ram.endsWith('?')).toBe(true);
     expect(flash.endsWith('~')).toBe(true);
   });
