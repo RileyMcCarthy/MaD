@@ -34,8 +34,7 @@ export default function About() {
           </tbody>
         </table>
         <p className="muted" style={{ marginTop: 12 }}>
-          Firmware flashing is not available in the browser (it needs the native
-          <code> loadp2 </code> bootloader). Use the <code>loadp2</code> CLI to update firmware.
+          To update firmware, see the <a href="#/firmware">Firmware</a> page.
         </p>
         <p className="muted">
           Firmware releases:{' '}

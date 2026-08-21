@@ -114,6 +114,15 @@ export function installFakeSerial(bridgeUrl) {
       getInfo() {
         return {};
       },
+      // The SIL bridge is a pure byte pipe with no modem lines. Accept and
+      // record control-line changes so code paths that pulse DTR (the firmware
+      // loader) don't throw here; nothing downstream acts on them.
+      async setSignals(signals) {
+        window.__silSignals = { ...(window.__silSignals ?? {}), ...signals };
+      },
+      async getSignals() {
+        return { dataCarrierDetect: false, clearToSend: false, ringIndicator: false, dataSetReady: false };
+      },
       async close() {
         try {
           ws && ws.close();
@@ -295,4 +304,147 @@ export async function chooseDataFolder(page) {
   await page.goto(`${APP_URL}#/settings`);
   await page.getByRole('button', { name: /Choose folder/i }).click();
   await page.getByText(/Current:/).waitFor({ timeout: 8000 });
+}
+
+/**
+ * Install a `navigator.serial` whose port emulates the Propeller 2 boot ROM's
+ * serial loader, entirely in-page.
+ *
+ * The SIL emulator cannot serve this: it links host-native firmware rather than
+ * emulating the P2 instruction set, so it has no boot ROM, and the WebSocket
+ * bridge carries no modem lines so a DTR pulse would be invisible to it. This
+ * fake is therefore the only way to drive the real flashing UI end to end.
+ *
+ * It deliberately refuses to answer until DTR has been pulsed, so a test fails
+ * if the app ever stops resetting the chip before probing.
+ *
+ * Exposes `window.__bootRom` for assertions: { reset, image, finished, ok }.
+ */
+export function installFakeBootRom() {
+  const CHECKSUM_MAGIC = 0x706f7250;
+  const state = { reset: 0, image: [], finished: false, ok: null, dtr: null };
+  window.__bootRom = state;
+
+  let controller;
+  let buffered = '';
+  let hexMode = false;
+  let sum = 0;
+  let longBuf = [];
+
+  const emit = (s) => {
+    const bytes = Uint8Array.from(s, (c) => c.charCodeAt(0));
+    try {
+      controller?.enqueue(bytes);
+    } catch {
+      /* closed */
+    }
+  };
+
+  function consume(text) {
+    buffered += text;
+    if (!hexMode) {
+      if (buffered.includes('> Prop_Chk 0 0 0 0  ')) {
+        buffered = '';
+        // Only a chip that has just been reset is listening.
+        if (state.reset > 0) emit('\r\nProp_Ver G');
+        return;
+      }
+      const at = buffered.indexOf('> Prop_Hex 0 0 0 0');
+      if (at < 0) return;
+      hexMode = true;
+      buffered = buffered.slice(at + '> Prop_Hex 0 0 0 0'.length);
+    }
+    const tokens = buffered.split(/\s+/);
+    // Keep a trailing partial token for the next write.
+    buffered = /\s$/.test(buffered) ? '' : (tokens.pop() ?? '');
+    for (const tok of tokens) {
+      if (tok === '' || tok === '>') continue;
+      if (tok === '~') {
+        state.finished = true;
+        state.ok = true;
+        hexMode = false;
+        continue;
+      }
+      if (tok === '?') {
+        state.ok = (sum >>> 0) === CHECKSUM_MAGIC;
+        state.finished = true;
+        emit(state.ok ? '.' : '!');
+        hexMode = false;
+        continue;
+      }
+      if (!/^[0-9a-f]{2}$/.test(tok)) continue;
+      longBuf.push(parseInt(tok, 16));
+      if (longBuf.length === 4) {
+        const long =
+          (longBuf[0] | (longBuf[1] << 8) | (longBuf[2] << 16) | (longBuf[3] << 24)) >>> 0;
+        sum = (sum + long) >>> 0;
+        state.image.push(...longBuf);
+        longBuf = [];
+      }
+    }
+  }
+
+  const makePort = () => {
+    let readable;
+    let writable;
+    return {
+      async open() {
+        readable = new ReadableStream({
+          start(c) {
+            controller = c;
+          },
+        });
+        writable = new WritableStream({
+          write(chunk) {
+            consume(String.fromCharCode(...chunk));
+          },
+        });
+      },
+      get readable() {
+        return readable;
+      },
+      get writable() {
+        return writable;
+      },
+      getInfo() {
+        return { usbVendorId: 0x0403, usbProductId: 0x6015 };
+      },
+      async setSignals({ dataTerminalReady }) {
+        // A falling edge on DTR is what actually resets the P2.
+        if (state.dtr === true && dataTerminalReady === false) {
+          state.reset += 1;
+          state.image = [];
+          state.finished = false;
+          state.ok = null;
+          sum = 0;
+          longBuf = [];
+          hexMode = false;
+          buffered = '';
+        }
+        state.dtr = dataTerminalReady;
+      },
+      async close() {
+        try {
+          controller?.close();
+        } catch {
+          /* already closed */
+        }
+      },
+    };
+  };
+
+  const port = makePort();
+  Object.defineProperty(navigator, 'serial', {
+    configurable: true,
+    value: {
+      async requestPort() {
+        return port;
+      },
+      async getPorts() {
+        return [port];
+      },
+      addEventListener() {},
+      removeEventListener() {},
+    },
+  });
 }

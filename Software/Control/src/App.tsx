@@ -61,6 +61,7 @@ const Create = lazy(() => import('./ui/screens/Create'));
 const Runs = lazy(() => import('./ui/screens/Runs'));
 const TestRunViewer = lazy(() => import('./ui/screens/TestRunViewer'));
 const About = lazy(() => import('./ui/screens/About'));
+const Firmware = lazy(() => import('./ui/screens/Firmware'));
 const Settings = lazy(() => import('./ui/screens/Settings'));
 
 function StatusBar() {
@@ -193,7 +194,8 @@ function Shell() {
           <NavLink to="/profiles">Samples</NavLink>
           <NavLink to="/create">Motion Profiles</NavLink>
           <NavLink to="/runs">Test Runs</NavLink>
-          <NavLink to="/about">Firmware</NavLink>
+          <NavLink to="/firmware">Firmware</NavLink>
+          <NavLink to="/about">About</NavLink>
           <NavLink to="/settings">Settings</NavLink>
         </nav>
         <div className="sidebar-footer">Web Serial · WASM</div>
@@ -241,6 +243,7 @@ export default function App() {
             <Route path="/create" element={<Create />} />
             <Route path="/runs" element={<Runs />} />
             <Route path="/view/:testName" element={<TestRunViewer />} />
+            <Route path="/firmware" element={<Firmware />} />
             <Route path="/about" element={<About />} />
             <Route path="/settings" element={<Settings />} />
           </Route>
