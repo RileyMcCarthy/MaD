@@ -11,6 +11,8 @@ extern void test_watchdog(void);
 extern void test_protoemb_stored_sample_roundtrip(void);
 extern void test_protoemb_runtime_send_notification_frame(void);
 extern void test_lib_utility_muldiv64_signed(void);
+extern void test_lib_utility_elapsed_gt_boundaries(void);
+extern void test_lib_utility_elapsed_gt_uint32_wrap(void);
 extern void test_lib_staticQueue(void);
 extern void test_enum_compat_fault_codes(void);
 extern void test_enum_compat_restriction_codes(void);
@@ -26,6 +28,8 @@ extern void test_app_testManagement_userEndStopsRun(void);
 extern void test_app_testManagement_motionDisabledAbortsRun(void);
 extern void test_app_testManagement_sampleLimitAbortsRun(void);
 extern void test_app_testManagement_openFailureEndsStart(void);
+extern void test_m5_lifecycle_start_manual_matrix(void);
+extern void test_m5_restart_reaches_running_after_each_terminal(void);
 extern void HAL_lock_mock_reset(void);
 extern int _stdio_debug_lock; /* defined in shared test/mock_propeller2.c */
 extern dev_nvram_config_t dev_nvram_config;
@@ -62,6 +66,8 @@ void process()
     RUN_TEST(test_protoemb_stored_sample_roundtrip);
     RUN_TEST(test_protoemb_runtime_send_notification_frame);
     RUN_TEST(test_lib_utility_muldiv64_signed);
+    RUN_TEST(test_lib_utility_elapsed_gt_boundaries);
+    RUN_TEST(test_lib_utility_elapsed_gt_uint32_wrap);
     RUN_TEST(test_lib_staticQueue);
     RUN_TEST(test_enum_compat_fault_codes);
     RUN_TEST(test_enum_compat_restriction_codes);
@@ -77,6 +83,8 @@ void process()
     RUN_TEST(test_app_testManagement_motionDisabledAbortsRun);
     RUN_TEST(test_app_testManagement_sampleLimitAbortsRun);
     RUN_TEST(test_app_testManagement_openFailureEndsStart);
+    RUN_TEST(test_m5_lifecycle_start_manual_matrix);
+    RUN_TEST(test_m5_restart_reaches_running_after_each_terminal);
     UNITY_END();
 }
 

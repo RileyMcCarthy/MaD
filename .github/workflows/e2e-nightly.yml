@@ -1,0 +1,145 @@
+# Nightly / manual WASM e2e against the SIL playground.
+# Not a required PR gate — playground bring-up is still heavy for every PR.
+# Sprint C/D: expand smoke_ids and full suite over time.
+
+name: E2E nightly (WASM + SIL)
+
+on:
+  schedule:
+    # 06:17 UTC daily
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: 'smoke | full'
+        required: true
+        default: 'smoke'
+        type: choice
+        options:
+          - smoke
+          - full
+
+concurrency:
+  group: e2e-nightly-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  wasm-e2e-sil:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    defaults:
+      run:
+        working-directory: Software/Control
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            Software/Control/package-lock.json
+            SIL/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.x'
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libudev-dev pkg-config
+
+      - name: Install PlatformIO
+        run: pip install -U platformio
+
+      - name: Install protocol generator deps
+        run: pip install -r ../../Protocol/ProtoEmb/core/requirements.txt
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: SIL npm deps (Playwright)
+        working-directory: SIL
+        run: npm ci
+
+      - name: Install Chromium for Playwright
+        working-directory: SIL
+        run: npx playwright install --with-deps chromium
+
+      - name: Build SIL emulator (firmware + protocol + cargo)
+        working-directory: SIL
+        run: make emulator
+
+      - name: Install Control deps + wasm + proto
+        run: |
+          npm ci
+          npm run build:wasm
+          npm run generate:proto
+
+      - name: Start playground (emulator PTY)
+        working-directory: SIL
+        run: |
+          nohup make playground > /tmp/mad-playground.log 2>&1 &
+          echo $! > /tmp/mad-playground.pid
+          for i in $(seq 1 90); do
+            if [ -e /tmp/tty.rpi ]; then echo "PTY ready after ${i}s"; break; fi
+            sleep 2
+          done
+          if [ ! -e /tmp/tty.rpi ]; then
+            echo "=== playground log ==="
+            cat /tmp/mad-playground.log || true
+            exit 1
+          fi
+
+      - name: Start WS bridge + Vite dev server
+        run: |
+          nohup npm run sil:bridge > /tmp/mad-bridge.log 2>&1 &
+          echo $! > /tmp/mad-bridge.pid
+          nohup npm run dev -- --host 127.0.0.1 --port 5174 > /tmp/mad-vite.log 2>&1 &
+          echo $! > /tmp/mad-vite.pid
+          for i in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:5174/ >/dev/null; then echo "Vite ready"; break; fi
+            sleep 2
+          done
+          curl -sf http://127.0.0.1:5174/ >/dev/null
+          for i in $(seq 1 30); do
+            if (echo >/dev/tcp/127.0.0.1/9999) >/dev/null 2>&1; then
+              echo "Bridge port open"
+              break
+            fi
+            sleep 1
+          done
+          (echo >/dev/tcp/127.0.0.1/9999) >/dev/null 2>&1 || {
+            echo "=== bridge log ==="
+            cat /tmp/mad-bridge.log || true
+            exit 1
+          }
+
+      - name: Run e2e suite
+        env:
+          APP_URL: http://127.0.0.1:5174
+          BRIDGE_URL: ws://127.0.0.1:9999
+        run: |
+          SUITE="${{ github.event.inputs.suite || 'smoke' }}"
+          if [ "$SUITE" = "full" ]; then
+            npm run e2e
+          else
+            npm run e2e:smoke
+          fi
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-logs
+          path: |
+            /tmp/mad-playground.log
+            /tmp/mad-bridge.log
+            /tmp/mad-vite.log

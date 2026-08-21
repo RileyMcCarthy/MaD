@@ -1,0 +1,45 @@
+{
+  "description": "Sprint C parameterized e2e matrices (M8–M11). Consumed by run-all.mjs and unit tests.",
+  "M8_jog": [
+    { "id": "M8-jog-1mm-20", "mm": 1, "speed": 20, "settleMs": 1500, "epsMm": 0.25 },
+    { "id": "M8-jog-4mm-20", "mm": 4, "speed": 20, "settleMs": 2000, "epsMm": 0.2 },
+    { "id": "M8-jog-10mm-10", "mm": 10, "speed": 10, "settleMs": 2500, "epsMm": 0.35 },
+    { "id": "M8-jog-roundtrip-5", "mm": 5, "speed": 15, "settleMs": 2000, "epsMm": 0.3, "roundTrip": true }
+  ],
+  "M9_force_slack": [
+    { "id": "M9-mid-slack", "jogMm": 10, "expectForceNearZero": true, "forceEpsN": 0.15, "minPosMm": 8 },
+    { "id": "M9-past-slack", "jogMm": 20, "expectForceNearZero": false, "minForceN": 0.1, "minPosMm": 18 }
+  ],
+  "M10_waveform": [
+    { "id": "WAVE-sine", "shape": "sine", "label": "A=5mm f=1Hz ×2", "amplitude": 5, "frequency": 1, "cycles": 2, "distance": 6, "maxDisp": 100 },
+    { "id": "WAVE-sine-slow-large", "shape": "sine", "label": "A=10mm f=0.5Hz ×2", "amplitude": 10, "frequency": 0.5, "cycles": 2, "distance": 12, "maxDisp": 100 },
+    { "id": "WAVE-sine-fast", "shape": "sine", "label": "A=3mm f=2Hz ×3", "amplitude": 3, "frequency": 2, "cycles": 3, "distance": 5, "maxDisp": 100 },
+    { "id": "WAVE-tri", "shape": "triangle", "label": "A=4mm f=1Hz ×2 triangle", "amplitude": 4, "frequency": 1, "cycles": 2, "distance": 5, "maxDisp": 100 },
+    { "id": "WAVE-tri-slow", "shape": "triangle", "label": "A=8mm f=0.5Hz ×2 triangle", "amplitude": 8, "frequency": 0.5, "cycles": 2, "distance": 10, "maxDisp": 100 }
+  ],
+  "M11_link_loss": [
+    { "id": "M11-idle-drop", "moment": "idle", "reconnect": true },
+    { "id": "M11-mid-test-drop", "moment": "mid-test", "reconnect": true },
+    { "id": "B5-reconnect", "moment": "idle", "reconnect": true, "legacy": true }
+  ],
+  "smoke_ids": [
+    "A1",
+    "B1+C1",
+    "D1",
+    "E1",
+    "G1",
+    "G2+G3+H2+I",
+    "TM-busy-restart",
+    "TM-manual-gate",
+    "P1-precision",
+    "BB-back-to-back",
+    "M8-jog-1mm-20",
+    "M8-jog-4mm-20",
+    "M8-jog-roundtrip-5",
+    "M9-mid-slack",
+    "WAVE-sine",
+    "WAVE-tri",
+    "M11-idle-drop",
+    "B5-reconnect"
+  ]
+}

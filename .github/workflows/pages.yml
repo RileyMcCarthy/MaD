@@ -3,7 +3,7 @@ name: Deploy docs + app (GitHub Pages)
 # Publishes a single Pages deployment that serves the documentation site at the
 # repo root and the control app under /app/:
 #   https://<owner>.github.io/<repo>/        → docs (MkDocs Material, from docs/)
-#   https://<owner>.github.io/<repo>/app/    → MaDWasmControl (Vite PWA)
+#   https://<owner>.github.io/<repo>/app/    → Control (Vite PWA)
 #
 # Triggers: push to main (docs/app/protocol changes), a manual run, or a
 # `webapp-v*` release tag.
@@ -13,7 +13,7 @@ on:
     paths:
       - 'docs/**'
       - 'mkdocs.yml'
-      - 'Software/MaDWasmControl/**'
+      - 'Software/Control/**'
       - 'Protocol/**'
       - '.gitmodules'
       - '.github/workflows/pages.yml'
@@ -35,15 +35,15 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 20
           cache: npm
-          cache-dependency-path: Software/MaDWasmControl/package-lock.json
+          cache-dependency-path: Software/Control/package-lock.json
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -52,7 +52,7 @@ jobs:
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.x'
 
@@ -63,11 +63,11 @@ jobs:
 
       # ── Build the control app (served under /<repo>/app/) ──
       - name: Install app dependencies
-        working-directory: Software/MaDWasmControl
+        working-directory: Software/Control
         run: npm ci
 
       - name: Build wasm + generated protocol bindings
-        working-directory: Software/MaDWasmControl
+        working-directory: Software/Control
         run: |
           npm run build:wasm
           npm run generate:proto
@@ -75,7 +75,7 @@ jobs:
       # Project Pages serve under /<repo>/; the app lives under /<repo>/app/.
       # HashRouter means client routing needs no server rewrites.
       - name: Build the app (Pages base path)
-        working-directory: Software/MaDWasmControl
+        working-directory: Software/Control
         run: |
           npx tsc -b
           npx vite build --base="/${{ github.event.repository.name }}/app/"
@@ -87,9 +87,9 @@ jobs:
       - name: Assemble Pages bundle (docs at root, app at /app)
         run: |
           mkdir -p site/app
-          cp -r Software/MaDWasmControl/dist/. site/app/
+          cp -r Software/Control/dist/. site/app/
 
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: site
 
@@ -101,4 +101,4 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5

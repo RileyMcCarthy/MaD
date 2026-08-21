@@ -103,3 +103,49 @@ impl StrainGauge {
         (force_n / self.config.full_scale_force_n) * self.config.full_scale_mv()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rstest::rstest;
+    use std::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
+    use std::sync::Mutex;
+
+    fn cfg() -> Config {
+        Config {
+            full_scale_force_n: 1000.0,
+            sensitivity_mv_per_v: 2.0,
+            excitation_v: 5.0, // full scale = 10 mV
+        }
+    }
+
+    #[rstest]
+    #[case::zero(0.0, 0.0)]
+    #[case::half(500.0, 5.0)]
+    #[case::full(1000.0, 10.0)]
+    fn force_to_voltage_linear(#[case] force_n: f64, #[case] expected_mv: f64) {
+        let g = StrainGauge::new(cfg());
+        let last = std::sync::Arc::new(Mutex::new(None));
+        {
+            let last = std::sync::Arc::clone(&last);
+            g.on_change(move |v| *last.lock().unwrap() = Some(v));
+        }
+        g.set_force(force_n);
+        assert!((last.lock().unwrap().unwrap() - expected_mv).abs() < 1e-9);
+    }
+
+    #[rstest]
+    fn set_force_notifies_once_per_call() {
+        let g = StrainGauge::new(cfg());
+        let hits = std::sync::Arc::new(AtomicU32::new(0));
+        {
+            let hits = std::sync::Arc::clone(&hits);
+            g.on_change(move |_| {
+                hits.fetch_add(1, AtomicOrdering::Relaxed);
+            });
+        }
+        g.set_force(1.0);
+        g.set_force(2.0);
+        assert_eq!(hits.load(AtomicOrdering::Relaxed), 2);
+    }
+}

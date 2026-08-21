@@ -11,3 +11,6 @@ publish = false
 embsim-core = { path = "../embsim/core" }
 embsim-models = { path = "../embsim/models" }
 tracing.workspace = true
+
+[dev-dependencies]
+rstest = "0.25"

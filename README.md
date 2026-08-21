@@ -24,7 +24,7 @@ elastomeric and biologic materials.
 
 ## The control app runs in your browser
 
-The control app — **MaDWasmControl** — is a frontend-only Progressive Web App.
+The control app — **Control** — is a frontend-only Progressive Web App.
 There is **nothing to install**: the browser talks straight to the Propeller 2
 over the **Web Serial API**, and the protocol logic runs as **WebAssembly**
 compiled from the same Rust core used by the firmware tooling and the test rig.
@@ -42,7 +42,7 @@ over USB, and run a test. See the
 MaD/
 ├── Firmware/MaDCore/        Embedded C for the Propeller 2 (APP/DEV/IO/Library/HAL/HW)
 ├── Software/
-│   └── MaDWasmControl/      Browser control app (Web Serial + WASM) — the app you ship
+│   └── Control/      Browser control app (Web Serial + WASM) — the app you ship
 ├── Protocol/                Schema + toolchain + Rust codec crate
 │   ├── MaDProtocol.yaml     Single source-of-truth schema
 │   ├── rust/                The `protocol` crate — generated Rust codec (SIL workspace member)
@@ -83,7 +83,7 @@ Open <https://rileymccarthy.github.io/MaD/app/> in Chrome/Edge — no install.
 
 ### Run the app from source
 ```bash
-cd Software/MaDWasmControl
+cd Software/Control
 npm install
 npm run build:wasm        # compile the Rust protocol core → src/wasm/
 npm run generate:proto    # generate the TS codec from the YAML schema
@@ -97,7 +97,7 @@ pio run -e propeller2              # build for hardware
 pio run -e propeller2 -t upload   # flash a connected board
 pio run -e native_emulator        # build libfirmware.a for SIL
 pio test -e native_test           # unit tests
-pio check                         # MISRA C:2023 + CERT
+pio check -e propeller2 --fail-on-defect=medium --fail-on-defect=high  # MISRA (medium+high)
 ```
 
 ### Run the full simulation (no hardware)
@@ -114,7 +114,7 @@ stay in lock-step (the firmware also regenerates its C target on every build):
 ```bash
 # from repo root
 python3 ./Protocol/ProtoEmb/core/generate.py --schema ./Protocol/MaDProtocol.yaml --target c  --output ./Firmware/MaDCore/src/Generated         --templates ./Protocol/ProtoEmb/core/templates
-python3 ./Protocol/ProtoEmb/core/generate.py --schema ./Protocol/MaDProtocol.yaml --target ts --output ./Software/MaDWasmControl/src/protocol/generated --templates ./Protocol/ProtoEmb/core/templates
+python3 ./Protocol/ProtoEmb/core/generate.py --schema ./Protocol/MaDProtocol.yaml --target ts --output ./Software/Control/src/protocol/generated --templates ./Protocol/ProtoEmb/core/templates
 python3 ./Protocol/ProtoEmb/core/generate.py --schema ./Protocol/MaDProtocol.yaml --target rs --output ./Protocol/rust/src/generated          --templates ./Protocol/ProtoEmb/core/templates
 ```
 

@@ -18,7 +18,7 @@ relevant jobs:
 | `protocol-codegen` | protocol changed | **Blocking.** Regenerates all three targets (C/TS/Rust) twice and asserts success + byte-reproducibility (generated files are gitignored, so this guards the schema/templates + generator determinism, not committed-file drift) |
 | `firmware-layering` | firmware changed | **Blocking (baseline-gated).** `scripts/check_layering.py` enforces downward-only includes (APP→DEV→IO→Library→HAL→HW); pre-existing violations are frozen in `.layering-baseline`, so it fails only on **new** upward includes |
 | `python-lint` | firmware changed | **Blocking.** `ruff` over the PlatformIO SCons hooks (`Firmware/MaDCore/extra_scripts`; `ruff.toml`, mirrors the Python guide). The ProtoEmb generator is linted in [its own repo's CI](https://github.com/RileyMcCarthy/protoemb) |
-| `firmware-misra` | firmware changed | *Advisory.* `pio check` (cppcheck MISRA); large pre-existing backlog so it prints/uploads findings without blocking. CERT was a no-op addon and has been removed |
+| `firmware-misra` | firmware changed | **Blocking.** `pio check` (cppcheck + MISRA) with `check_severity = medium, high` — low is not reported. Fails CI Gate on any medium/high defect. CERT is not enforced (no cert.py with bundled cppcheck) |
 | `sil-rust` | SIL / firmware / protocol changed | **Blocking (`cargo test`).** `make protocol` + build `libfirmware.a`, then `cargo clippy` (advisory) + `cargo test` (gating) on the SIL workspace |
 | `build-software` | software/firmware changed, or a software tag | Builds the desktop app for macOS/Windows/Linux |
 | `build-firmware` | firmware/software changed, or a firmware tag | Builds `propeller2_debug`, `propeller2` release, and the native (SIL) binary |
@@ -76,14 +76,14 @@ GitHub Pages as a single deployment:
 
 ```text
 https://rileymccarthy.github.io/MaD/        → documentation (this site)
-https://rileymccarthy.github.io/MaD/app/    → the control app (MaDWasmControl)
+https://rileymccarthy.github.io/MaD/app/    → the control app (Control)
 ```
 
 The job builds the app with Vite (base path `/<repo>/app/`), builds the docs with
 MkDocs, copies the app into `site/app/`, and uploads the merged `site/` as the
 Pages artifact. It triggers on:
 
-- **push to `main`** (when `docs/**`, `mkdocs.yml`, `Software/MaDWasmControl/**`,
+- **push to `main`** (when `docs/**`, `mkdocs.yml`, `Software/Control/**`,
   or `Protocol/**` change),
 - **`workflow_dispatch`** (manual deploy of any branch), and
 - **`webapp-v*` tags**.
@@ -109,13 +109,13 @@ You can reproduce the most important gates before pushing:
 
 ```bash
 # Web app offline gate
-cd Software/MaDWasmControl && npm run verify
+cd Software/Control && npm run verify
 
 # Full SIL integration
 cd SIL && make test
 
 # Firmware static analysis + unit tests + layer rule
-cd Firmware/MaDCore && pio check && pio test -e native_test
+cd Firmware/MaDCore && pio check -e propeller2 --fail-on-defect=medium --fail-on-defect=high && pio test -e native_test
 python3 Firmware/MaDCore/scripts/check_layering.py Firmware/MaDCore/src
 
 # Python SCons-hook lint (from repo root, ruff.toml is auto-discovered;

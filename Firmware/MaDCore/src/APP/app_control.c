@@ -155,39 +155,13 @@ static app_control_restriction_E app_control_private_processRestrictions(void)
 {
     if (app_control_data.testRunning)
     {
-        /*// Check sample profile limits during test execution
-        int32_t currentForce = app_gauge_getForce(APP_GAUGE_COORD_SAMPLE);
-        int32_t currentPosition = app_gauge_getPosition(APP_GAUGE_COORD_SAMPLE);
-
-        // Convert current force from mN to N for comparison
-        float currentForceN = currentForce / 1000.0f;
-
-        // Check force limits
-        if (currentForceN > app_control_data.sampleProfile.maxForce)
-        {
-            app_control_data.restriction[APP_CONTROL_RESTRICTION_SAMPLE_TENSION] = true;
-        }
-        else if (currentForceN < -app_control_data.sampleProfile.maxForce)
-        {
-            app_control_data.restriction[APP_CONTROL_RESTRICTION_SAMPLE_TENSION] = true;
-        }
-        else
-        {
-            app_control_data.restriction[APP_CONTROL_RESTRICTION_SAMPLE_TENSION] = false;
-        }
-
-        // Check position limits (convert from um to mm)
-        float currentPositionMm = currentPosition / 1000.0f;
-        float maxStretch = app_control_data.sampleProfile.length * (app_control_data.sampleProfile.stretchMax / 100.0f);
-
-        if (currentPositionMm > maxStretch)
-        {
-            app_control_data.restriction[APP_CONTROL_RESTRICTION_SAMPLE_LENGTH] = true;
-        }
-        else
-        {
-            app_control_data.restriction[APP_CONTROL_RESTRICTION_SAMPLE_LENGTH] = false;
-        }*/
+        /* Sample limits live on app_monitor (maxForce mN, maxDisplacement mm).
+         * Mirror its exceeded flags into control restrictions so the state
+         * machine can drop into RESTRICTED and limit speed. */
+        app_control_data.restriction[APP_CONTROL_RESTRICTION_SAMPLE_TENSION] =
+            app_monitor_isForceExceeded();
+        app_control_data.restriction[APP_CONTROL_RESTRICTION_SAMPLE_LENGTH] =
+            app_monitor_isDisplacementExceeded();
     }
     else
     {

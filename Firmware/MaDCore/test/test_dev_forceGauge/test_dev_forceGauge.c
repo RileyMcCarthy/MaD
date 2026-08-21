@@ -12,6 +12,7 @@
  * mapping. Outputs are observed through the staged getForce/getIndex/isReady.
  */
 #include <unity.h>
+#include <stdio.h>
 #include "../../src/DEV/dev_forceGauge.c"
 
 extern void HAL_lock_mock_reset(void);
@@ -174,6 +175,49 @@ void test_retry_budget_rearms_after_recovery(void)
     TEST_ASSERT_TRUE(dev_forceGauge_isReady(CH));
 }
 
+
+/* M1 — unit-scale matrix (ported from the counts-per-force era to the intrinsic
+ * load-cell model). Guards silent unit mistakes in
+ *   force_mN = (signal - zeroBalance)[nV/V] * capacity[mN] / sensitivity[nV/V]
+ * — an N<->mN or mV/V<->nV/V slip anywhere here is a 1000x force error, and the
+ * machine's tension limits are enforced on this number. */
+typedef struct
+{
+    int32_t zeroBalance_nVV;
+    int32_t capacity_mN;
+    int32_t sensitivity_nVV;
+    int32_t signal_nVV;
+    int32_t expectForce_mN;
+} force_scale_case_t;
+
+void test_force_scale_matrix(void)
+{
+    /* Reference cell: 100 N (100000 mN) rated at 2 mV/V (2000000 nV/V). */
+    static const force_scale_case_t cases[] = {
+        /* tare, capacity, sensitivity, signal, expect_mN */
+        {0, 100000, 2000000, 0, 0},               /* no signal, no force      */
+        {0, 100000, 2000000, 2000000, 100000},    /* full scale => capacity   */
+        {0, 100000, 2000000, 1000000, 50000},     /* half scale              */
+        {0, 100000, 2000000, -2000000, -100000},  /* compression             */
+        {0, 100000, 2000000, 20000, 1000},        /* 1% of scale => 1 N      */
+        {500000, 100000, 2000000, 500000, 0},     /* tare cancels the offset  */
+        {500000, 100000, 2000000, 2500000, 100000},
+        {0, 100000, -2000000, 2000000, -100000},  /* sign encodes polarity    */
+        {0, 100000, 0, 2000000, 0},               /* zero divisor => 0        */
+    };
+
+    for (unsigned i = 0; i < (sizeof(cases) / sizeof(cases[0])); i++)
+    {
+        const force_scale_case_t *c = &cases[i];
+        init_with(c->zeroBalance_nVV, c->capacity_mN, c->sensitivity_nVV);
+        d_signal_nVV = c->signal_nVV;
+        dev_forceGauge_run();
+        char msg[96];
+        snprintf(msg, sizeof(msg), "case %u: signal=%d", i, c->signal_nVV);
+        TEST_ASSERT_EQUAL_INT32_MESSAGE(c->expectForce_mN, dev_forceGauge_getForce(CH), msg);
+    }
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -186,5 +230,6 @@ int main(void)
     RUN_TEST(test_error_recovers_to_running);
     RUN_TEST(test_error_retry_exhaustion_reinits_and_stops_adc);
     RUN_TEST(test_retry_budget_rearms_after_recovery);
+    RUN_TEST(test_force_scale_matrix);
     return UNITY_END();
 }

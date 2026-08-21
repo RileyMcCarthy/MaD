@@ -7,7 +7,7 @@ how they connect.
 flowchart TB
     user["Operator"] --> app
     subgraph host["Computer (browser)"]
-        app["Control app<br/>MaDWasmControl"]
+        app["Control app<br/>Control"]
     end
     subgraph machine["MaD machine"]
         fw["Firmware<br/>(Propeller 2, C)"]

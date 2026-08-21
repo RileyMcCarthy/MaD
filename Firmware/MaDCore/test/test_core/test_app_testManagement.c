@@ -20,6 +20,8 @@
 
 #include <unity.h>
 #include <string.h>
+#include <stddef.h>
+#include <stdbool.h>
 
 #include "app_testManagement.h"
 #include "app_motion.h"
@@ -28,6 +30,9 @@
 #include "app_notification.h"
 #include "IO_SDCard.h"
 #include "HAL_lock.h"
+
+extern void HAL_lock_mock_reset(void);
+extern int _stdio_debug_lock;
 
 /* ====================================================================== *
  * Test doubles — controllable stand-ins for app_testManagement's deps.   *
@@ -143,6 +148,10 @@ uint32_t IO_SDCard_popMultiple(IO_SDCard_channel_E channel, void *buffer, uint32
 
 static void tm_init(void)
 {
+    /* Matrix tests call tm_init many times per RUN_TEST; reset the mock lock
+     * pool so the 8-slot HAL mock never exhausts mid-test. */
+    HAL_lock_mock_reset();
+    _stdio_debug_lock = HAL_lock_create();
     doubles_reset();
     app_testManagement_init(HAL_lock_create());
 }
@@ -353,4 +362,137 @@ void test_app_testManagement_openFailureEndsStart(void)
 
     app_testManagement_run(); /* ENDING → IDLE */
     TEST_ASSERT_FALSE(app_testManagement_isBusy());
+}
+
+/* ====================================================================== *
+ * M5 — lifecycle matrix: start / end / manual across session phases      *
+ * ====================================================================== */
+
+typedef enum
+{
+    M5_PHASE_IDLE = 0,
+    M5_PHASE_PENDING_START,
+    M5_PHASE_RUNNING,
+    M5_PHASE_AFTER_USER_END,
+    M5_PHASE_AFTER_MOTION_ABORT,
+    M5_PHASE_AFTER_SAMPLE_LIMIT,
+    M5_PHASE_AFTER_OPEN_FAIL,
+} m5_phase_E;
+
+static void m5_enter_phase(m5_phase_E phase)
+{
+    tm_init();
+    switch (phase)
+    {
+    case M5_PHASE_IDLE:
+        break;
+    case M5_PHASE_PENDING_START:
+        TEST_ASSERT_TRUE(app_testManagement_triggerTestStart("pend01"));
+        break;
+    case M5_PHASE_RUNNING:
+        tm_driveToRunning();
+        break;
+    case M5_PHASE_AFTER_USER_END:
+        tm_driveToRunning();
+        TEST_ASSERT_TRUE(app_testManagement_triggerTestEnd());
+        app_testManagement_run(); /* RUNNING → ENDING */
+        app_testManagement_run(); /* ENDING → IDLE */
+        break;
+    case M5_PHASE_AFTER_MOTION_ABORT:
+        tm_driveToRunning();
+        d_motionEnabled = false;
+        app_testManagement_run();
+        app_testManagement_run(); /* ENDING → IDLE */
+        d_motionEnabled = true;
+        break;
+    case M5_PHASE_AFTER_SAMPLE_LIMIT:
+        tm_driveToRunning();
+        d_forceExceeded = true;
+        app_testManagement_run();
+        app_testManagement_run();
+        d_forceExceeded = false;
+        break;
+    case M5_PHASE_AFTER_OPEN_FAIL:
+        TEST_ASSERT_TRUE(app_testManagement_triggerTestStart("nofile"));
+        app_testManagement_run();
+        d_sdLastOpenFailed = true;
+        app_testManagement_run();
+        app_testManagement_run();
+        d_sdLastOpenFailed = false;
+        break;
+    default:
+        break;
+    }
+}
+
+void test_m5_lifecycle_start_manual_matrix(void)
+{
+    /* Columns: phase → expectStartAccepted, expectManualAccepted, expectBusy */
+    typedef struct
+    {
+        m5_phase_E phase;
+        bool startOk;
+        bool manualOk;
+        bool busy;
+    } cell_t;
+
+    static const cell_t cells[] = {
+        {M5_PHASE_IDLE, true, true, false},
+        {M5_PHASE_PENDING_START, false, false, true},
+        {M5_PHASE_RUNNING, false, false, true},
+        {M5_PHASE_AFTER_USER_END, true, true, false},
+        {M5_PHASE_AFTER_MOTION_ABORT, true, true, false},
+        {M5_PHASE_AFTER_SAMPLE_LIMIT, true, true, false},
+        {M5_PHASE_AFTER_OPEN_FAIL, true, true, false},
+    };
+
+    const app_motion_move_t move = { .g = (uint8_t)G0_RAPID_MOVE, .x = 1, .f = 1, .p = 0 };
+
+    for (size_t i = 0; i < sizeof(cells) / sizeof(cells[0]); i++)
+    {
+        const cell_t *c = &cells[i];
+        m5_enter_phase(c->phase);
+
+        TEST_ASSERT_EQUAL_INT(c->busy ? 1 : 0, app_testManagement_isBusy() ? 1 : 0);
+
+        if (c->manualOk)
+        {
+            TEST_ASSERT_TRUE(app_testManagement_addManualMove(&move));
+        }
+        else
+        {
+            TEST_ASSERT_FALSE(app_testManagement_addManualMove(&move));
+        }
+
+        /* Fresh start attempt after the phase is established. */
+        const bool started = app_testManagement_triggerTestStart("mtx001");
+        if (c->startOk)
+        {
+            TEST_ASSERT_TRUE(started);
+            TEST_ASSERT_TRUE(app_testManagement_isBusy());
+        }
+        else
+        {
+            TEST_ASSERT_FALSE(started);
+        }
+    }
+}
+
+/* After any terminal path, a full restart must reach RUNNING. */
+void test_m5_restart_reaches_running_after_each_terminal(void)
+{
+    static const m5_phase_E terminals[] = {
+        M5_PHASE_AFTER_USER_END,
+        M5_PHASE_AFTER_MOTION_ABORT,
+        M5_PHASE_AFTER_SAMPLE_LIMIT,
+        M5_PHASE_AFTER_OPEN_FAIL,
+    };
+    for (size_t i = 0; i < sizeof(terminals) / sizeof(terminals[0]); i++)
+    {
+        m5_enter_phase(terminals[i]);
+        TEST_ASSERT_FALSE(app_testManagement_isBusy());
+        tm_driveToRunning();
+        TEST_ASSERT_TRUE(app_testManagement_isRunning());
+        TEST_ASSERT_TRUE(app_testManagement_isBusy());
+    }
 }
