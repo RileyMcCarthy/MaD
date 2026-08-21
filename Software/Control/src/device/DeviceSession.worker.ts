@@ -13,6 +13,9 @@
 import * as Comlink from 'comlink';
 import init, { WasmClient } from '@/wasm/protoemb_runtime.js';
 import wasmUrl from '@/wasm/protoemb_runtime_bg.wasm?url';
+import { logger, setLogSink, flushLog, nowMs, type LogBatchSink } from '@/diagnostics/log';
+import { byteRing } from '@/diagnostics/byteRing';
+import { commandName, isPeriodicCommand } from './commandNames';
 import {
   decodeSample,
   decodeMachineState,
@@ -119,6 +122,110 @@ function asciiBytes(value: string, length: number): Uint8Array {
   return buf;
 }
 
+const logDev = logger('device');
+const logProto = logger('proto');
+const logPerf = logger('perf');
+
+/** How often the periodic sample/state traffic is summarised into the log. */
+const AGGREGATE_INTERVAL_MS = 1000;
+
+/**
+ * Rolls the ~100 Hz periodic traffic up into one entry per second.
+ *
+ * Logging each sample would evict the entire ring in under a minute and tell
+ * you nothing you couldn't get from a rate. What actually matters when the
+ * stream misbehaves is the shape of it: how many arrived, how fast, and whether
+ * any values were nonsense — a tensile tester reporting NaN or a wild force
+ * spike is the bug, not the frame that carried it.
+ */
+class PeriodicAggregator {
+  private windowStart = 0;
+
+  private samples = 0;
+
+  private states = 0;
+
+  private anomalies = 0;
+
+  private firstAnomaly = '';
+
+  private lastForce = Number.NaN;
+
+  private lastPosition = Number.NaN;
+
+  reset(): void {
+    this.windowStart = nowMs();
+    this.samples = 0;
+    this.states = 0;
+    this.anomalies = 0;
+    this.firstAnomaly = '';
+    this.lastForce = Number.NaN;
+    this.lastPosition = Number.NaN;
+  }
+
+  countState(): void {
+    this.states += 1;
+  }
+
+  /** Tally a sample and sanity-check it. Hot path: arithmetic only, no allocation. */
+  countSample(force: number, position: number): void {
+    this.samples += 1;
+    if (!Number.isFinite(force) || !Number.isFinite(position)) {
+      this.flagAnomaly('non-finite');
+    } else if (Math.abs(force) > 1e6 || Math.abs(position) > 1e6) {
+      this.flagAnomaly('out-of-range');
+    } else if (
+      Number.isFinite(this.lastPosition) &&
+      Math.abs(position - this.lastPosition) > 100
+    ) {
+      // >100 mm between consecutive samples at ~100 Hz is not physically
+      // reachable on this machine — it means dropped or mis-framed data.
+      this.flagAnomaly('position-jump');
+    }
+    this.lastForce = force;
+    this.lastPosition = position;
+  }
+
+  private flagAnomaly(kind: string): void {
+    this.anomalies += 1;
+    if (this.firstAnomaly === '') this.firstAnomaly = kind;
+  }
+
+  /** Emit a summary if the window has elapsed. Called from the poll tick. */
+  maybeFlush(bytesIn: number, bytesOut: number): void {
+    const now = nowMs();
+    const elapsed = now - this.windowStart;
+    if (elapsed < AGGREGATE_INTERVAL_MS) return;
+    if (this.samples > 0 || this.states > 0 || this.anomalies > 0) {
+      const rateHz = Math.round((this.samples / elapsed) * 1000 * 10) / 10;
+      const data = {
+        samples: this.samples,
+        states: this.states,
+        rateHz,
+        bytesIn,
+        bytesOut,
+        force: Number.isFinite(this.lastForce) ? this.lastForce : null,
+        positionMm: Number.isFinite(this.lastPosition) ? this.lastPosition : null,
+      };
+      if (this.anomalies > 0) {
+        logPerf.warn('stream', 'sample stream anomalies', {
+          ...data,
+          anomalies: this.anomalies,
+          firstAnomaly: this.firstAnomaly,
+        });
+      } else {
+        logPerf.debug('stream', undefined, data);
+      }
+    }
+    const carryForce = this.lastForce;
+    const carryPosition = this.lastPosition;
+    this.reset();
+    // Continuity across windows: a jump spanning a window boundary is still a jump.
+    this.lastForce = carryForce;
+    this.lastPosition = carryPosition;
+  }
+}
+
 class DeviceSession {
   private client?: WasmClient;
 
@@ -164,13 +271,29 @@ class DeviceSession {
     lastErrorAt: 0,
   };
 
+  private readonly periodic = new PeriodicAggregator();
+
   /** Register the main-thread event callback (Comlink proxy). */
   setEventSink(sink: DeviceEventSink): void {
     this.sink = sink;
   }
 
+  /**
+   * Register the main-thread log callback (Comlink proxy), mirroring
+   * `setEventSink`. Worker entries batch across this every 250 ms so the merged
+   * timeline on the main thread reads as one sequence — see diagnostics/log.
+   */
+  setLogSink(sink: LogBatchSink): void {
+    setLogSink(sink);
+    logDev.info('worker-ready', 'log sink attached');
+  }
+
   async connect(streams: PortStreams, opts: ConnectOptions = {}): Promise<void> {
+    const wasmStart = nowMs();
     await wasmReady;
+    logDev.info('wasm-init', 'protocol core ready', {
+      initMs: Math.round(nowMs() - wasmStart),
+    });
     this.client = new WasmClient(opts.responseTimeoutMs ?? 2000);
     this.reader = streams.readable.getReader();
     this.writer = streams.writable.getWriter();
@@ -191,6 +314,15 @@ class DeviceSession {
 
     this.client.register_periodic(MSG_READ_SAMPLE, MSG_SAMPLE_PERIOD_MS, SAMPLE_STORAGE_COUNT);
     this.client.register_periodic(MSG_READ_STATE, MSG_STATE_PERIOD_MS, STATE_STORAGE_COUNT);
+
+    byteRing.reset();
+    this.periodic.reset();
+    logDev.info('connect', 'session started', {
+      responseTimeoutMs: opts.responseTimeoutMs ?? 2000,
+      samplePeriodMs: MSG_SAMPLE_PERIOD_MS,
+      statePeriodMs: MSG_STATE_PERIOD_MS,
+      tickMs: TICK_MS,
+    });
 
     void this.pumpRead();
     this.timer = setInterval(() => this.tick(), TICK_MS);
@@ -215,6 +347,10 @@ class DeviceSession {
    */
   async emergencyStop(): Promise<boolean> {
     this.aborting = true;
+    logDev.warn('estop', 'motion disable requested', {
+      waitersAborted: this.waiters.length,
+      connected: this.running,
+    });
     try {
       this.client?.clear_queue();
     } catch {
@@ -237,6 +373,16 @@ class DeviceSession {
     if (this.shuttingDown || (!this.running && !this.client)) return;
     this.shuttingDown = true;
     this.running = false;
+    // An unexpected loss carries a reason; a user-driven disconnect does not.
+    if (reason === undefined) {
+      logDev.info('disconnect', 'session closed', { ...this.stats });
+    } else {
+      logDev.error('link-lost', reason, {
+        ...this.stats,
+        waitersRejected: this.waiters.length,
+        ...byteRing.stats(),
+      });
+    }
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = null;
@@ -289,6 +435,10 @@ class DeviceSession {
     );
     this.shuttingDown = false;
     this.emit([{ kind: 'disconnected', reason }]);
+    // Push the teardown entries across now: if this shutdown is the prelude to a
+    // worker termination, the 250 ms batch timer will never fire again and the
+    // most diagnostic entries of the whole session would be lost with it.
+    flushLog();
   }
 
   /**
@@ -299,9 +449,22 @@ class DeviceSession {
   getDiagnostics(): Record<string, number | string | boolean> {
     return {
       ...this.stats,
+      ...byteRing.stats(),
       uptimeMs: this.stats.connectedAt ? Date.now() - this.stats.connectedAt : 0,
       running: this.running,
     };
+  }
+
+  /**
+   * The raw serial tail, for the bug-report bundle.
+   *
+   * Deliberately pull-based: the bytes stay in the worker (where they cost one
+   * memcpy per chunk) and only cross Comlink when someone actually files a
+   * report. Streaming them continuously would double the traffic for data that
+   * is discarded 99.9% of the time.
+   */
+  getByteTail(): ReturnType<typeof byteRing.snapshot> {
+    return byteRing.snapshot();
   }
 
   getStoredSamples(): SampleData[] {
@@ -601,6 +764,10 @@ class DeviceSession {
       // now poisoned — every later call would throw too. Treat it as fatal: tear
       // down so the UI shows a disconnect + Reconnect (which spins up a fresh
       // worker/instance) instead of spinning a 4 ms error storm forever.
+      logger('wasm').error('poll-trap', String(err), {
+        ...this.stats,
+        ...byteRing.stats(),
+      });
       this.emit([{ kind: 'error', message: `poll: ${String(err)}` }]);
       void this.shutdown(`protocol error: ${String(err)}`);
       return;
@@ -614,8 +781,17 @@ class DeviceSession {
       if (ev.event === 'timeout' && ev.frame && ev.frame.length > 2) {
         this.rejectWaitersForCommand(ev.frame[2], 'response timeout');
       }
+      this.logRawEvent(ev);
       for (const mapped of this.mapEvent(ev)) {
-        if (mapped.kind === 'sample') this.lastSample = mapped.data;
+        if (mapped.kind === 'sample') {
+          this.lastSample = mapped.data;
+          // Tallied here rather than in `logRawEvent` because the sanity check
+          // needs the decoded values, which only exist after `mapEvent`.
+          this.periodic.countSample(
+            mapped.data['Machine Force (N)'],
+            mapped.data['Machine Position (mm)'],
+          );
+        }
         events.push(mapped);
       }
     }
@@ -639,10 +815,61 @@ class DeviceSession {
     const out = this.client.take_outgoing();
     if (out.length > 0) {
       this.stats.bytesOut += out.length;
+      byteRing.push('tx', out);
       this.enqueueWrite(out);
     }
 
+    this.periodic.maybeFlush(this.stats.bytesIn, this.stats.bytesOut);
+
     if (events.length > 0) this.emit(events);
+  }
+
+  /**
+   * Log one raw protocol event.
+   *
+   * Split by rate, not by importance: the ~100 Hz sample/state periodics feed
+   * the aggregator (one summary per second), while everything else — acks,
+   * nacks, timeouts, errors, notifications, and on-demand reads — gets a full
+   * entry, because those are the frames someone will actually be reading when
+   * they debug a protocol fault.
+   */
+  private logRawEvent(ev: RawEvent): void {
+    const command = ev.command ?? -1;
+
+    if (ev.event === 'data' && isPeriodicCommand(command)) {
+      // Samples are tallied by the caller (it has the decoded values); state
+      // frames carry nothing worth sanity-checking, so a count is enough.
+      if (command !== MSG_READ_SAMPLE) this.periodic.countState();
+      return;
+    }
+
+    switch (ev.event) {
+      case 'ack':
+        logProto.info('ack', commandName(command));
+        break;
+      case 'nack':
+        logProto.warn('nack', commandName(command), { command });
+        break;
+      case 'timeout':
+        logProto.warn('timeout', 'no response', {
+          command: ev.frame && ev.frame.length > 2 ? commandName(ev.frame[2]) : 'unknown',
+          frameBytes: ev.frame?.length ?? 0,
+        });
+        break;
+      case 'error':
+        logProto.error('error', ev.message ?? 'unknown error', {
+          command: command >= 0 ? commandName(command) : undefined,
+        });
+        break;
+      case 'notification':
+        logProto.info('notification', undefined, { bytes: u8(ev.payload).length });
+        break;
+      case 'data':
+        logProto.info('rx', commandName(command), { bytes: u8(ev.payload).length });
+        break;
+      default:
+        break;
+    }
   }
 
   private mapEvent(ev: RawEvent): DeviceEvent[] {
@@ -736,19 +963,37 @@ class DeviceSession {
 
   private async writeAndAck(command: number, data: Uint8Array, timeoutMs: number): Promise<boolean> {
     const p = this.waitFor((e) => e.kind === 'ack' && e.command === command, timeoutMs, `ack(${command})`, command);
+    const started = nowMs();
+    logProto.info('tx', commandName(command), { bytes: data.length, timeoutMs });
     this.client?.write(command, data);
     try {
       const e = (await p) as Extract<DeviceEvent, { kind: 'ack' }>;
+      // Round-trip time is the cheapest early warning there is: a link that is
+      // about to fail usually gets slow before it stops answering.
+      logProto.debug('rtt', commandName(command), {
+        durMs: Math.round(nowMs() - started),
+        success: e.success,
+      });
       return e.success;
-    } catch {
+    } catch (err) {
+      logProto.warn('tx-failed', commandName(command), {
+        durMs: Math.round(nowMs() - started),
+        reason: err instanceof Error ? err.message : String(err),
+      });
       return false;
     }
   }
 
   private async writeAndAckOrThrow(command: number, data: Uint8Array, timeoutMs: number): Promise<void> {
     const p = this.waitFor((e) => e.kind === 'ack' && e.command === command, timeoutMs, `ack(${command})`, command);
+    const started = nowMs();
+    logProto.info('tx', commandName(command), { bytes: data.length, timeoutMs });
     this.client?.write(command, data);
     const e = (await p) as Extract<DeviceEvent, { kind: 'ack' }>;
+    logProto.debug('rtt', commandName(command), {
+      durMs: Math.round(nowMs() - started),
+      success: e.success,
+    });
     if (!e.success) throw new Error(`device NACKed command ${command}`);
   }
 
@@ -762,8 +1007,13 @@ class DeviceSession {
         return;
       } catch (err) {
         attempt += 1;
-        if (!shouldRetryUpload(attempt, maxRetries)) throw err;
-         
+        const reason = err instanceof Error ? err.message : String(err);
+        if (!shouldRetryUpload(attempt, maxRetries)) {
+          logProto.error('upload-failed', commandName(command), { attempt, reason });
+          throw err;
+        }
+        logProto.warn('upload-retry', commandName(command), { attempt, maxRetries, reason });
+
         await delay(1000);
       }
     }
@@ -803,11 +1053,13 @@ class DeviceSession {
         }
         if (value && this.client) {
           this.stats.bytesIn += value.length;
+          byteRing.push('rx', value);
           this.client.feed_bytes(value);
         }
       }
     } catch (err) {
       if (this.running) {
+        logDev.error('read-failed', String(err), { bytesIn: this.stats.bytesIn });
         this.emit([{ kind: 'error', message: `read: ${String(err)}` }]);
         void this.shutdown(`read failed: ${String(err)}`);
       }
@@ -824,6 +1076,7 @@ class DeviceSession {
         // down (the old code kept ticking against a dead writer, expecting a
         // response that could never arrive).
         if (this.running) {
+          logDev.error('write-failed', String(err), { bytesOut: this.stats.bytesOut });
           this.emit([{ kind: 'error', message: `write: ${String(err)}` }]);
           void this.shutdown(`write failed: ${String(err)}`);
         }

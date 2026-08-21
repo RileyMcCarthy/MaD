@@ -19,7 +19,14 @@
  * unit/presence-covered.
  */
 
-import { newSilPage, connectToSil, chooseDataFolder, APP_URL, chromium } from './fixtures.mjs';
+import {
+  newSilPage,
+  connectToSil,
+  chooseDataFolder,
+  dumpFailureArtifacts,
+  APP_URL,
+  chromium,
+} from './fixtures.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -1422,6 +1429,10 @@ async function main() {
     } catch (err) {
       console.log('❌');
       failures.push(`${s.id} ${s.name}: ${err.message}`);
+      // Every failure carries the app's merged main+worker log, so a red CI run
+      // is diagnosable without reproducing it locally.
+      // eslint-disable-next-line no-await-in-loop
+      await dumpFailureArtifacts(s.id, err).catch(() => {});
     }
     // Settle: let the bridge fully release the PTY before the next client connects
     // (only one app may hold the serial stream at a time).
