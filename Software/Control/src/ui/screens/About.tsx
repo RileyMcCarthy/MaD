@@ -120,7 +120,7 @@ export default function About() {
           </p>
         )}
         {failed && (
-          <p className="error" style={{ marginTop: 12 }} data-testid="report-error">
+          <p className="fault" style={{ marginTop: 12 }} data-testid="report-error">
             Could not build the report: {failed}
           </p>
         )}
