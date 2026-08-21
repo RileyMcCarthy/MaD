@@ -84,13 +84,22 @@ bool HAL_GPIO_getActive(HAL_GPIO_channel_E channel)
     return d_gpio[channel];
 }
 
-/* --- dev_stepper --- */
-static bool d_stepperReady; /* dev_stepper_isReady(MAIN) */
+/* --- actuator (the MOTOR-cog driver app_control gates on; APP_MOTION_USE_SERVO
+ *     picks which one, exactly as in the module under test) --- */
+static bool d_actuatorReady;
+#if APP_MOTION_USE_SERVO
+bool dev_servo_isReady(dev_servo_channel_E ch)
+{
+    TEST_ASSERT_EQUAL_INT(DEV_SERVO_CHANNEL_MAIN, ch);
+    return d_actuatorReady;
+}
+#else
 bool dev_stepper_isReady(dev_stepper_channel_E ch)
 {
     TEST_ASSERT_EQUAL_INT(DEV_STEPPER_CHANNEL_MAIN, ch);
-    return d_stepperReady;
+    return d_actuatorReady;
 }
+#endif
 
 /* --- dev_forceGauge --- */
 static bool d_forceGaugeReady; /* dev_forceGauge_isReady(MAIN) */
@@ -133,7 +142,7 @@ static void doubles_reset(void)
      * servo + force gauge ready. */
     d_cogAllRunning = true;
     d_watchdogAlive = true;
-    d_stepperReady = true;
+    d_actuatorReady = true;
     d_forceGaugeReady = true;
 
     memset(d_gpio, 0, sizeof(d_gpio));
@@ -232,7 +241,7 @@ void test_run_esdPowerFaultDetected(void)
 void test_run_servoCommunicationFaultWhenNotReady(void)
 {
     control_init();
-    d_stepperReady = false; /* dev_stepper_isReady == false → fault */
+    d_actuatorReady = false; /* the active actuator's isReady == false → fault */
     app_control_run();
     TEST_ASSERT_EQUAL_INT(APP_CONTROL_FAULT_SERVO_COMMUNICATION, app_control_getFault());
 }
