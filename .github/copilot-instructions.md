@@ -5,8 +5,7 @@ MaD is a low-cost open-source uniaxial tensile-testing machine. This monorepo ha
 - **Firmware** (`Firmware/MaDCore/`) — Parallax Propeller 2, C, strictly layered
   `APP → DEV → IO → Library → HAL → HW` (each layer calls only *downward*).
 - **Web app** (`Software/Control/`) — the shipped React/Vite + WebAssembly
-  browser control app (Web Serial + File System Access, Chromium-only). A legacy
-  Electron app (`Software/MaDControl/`) is frozen (SIL Playwright driver only).
+  browser control app (Web Serial + File System Access, Chromium-only).
 - **SIL** (`SIL/`) — a Rust software-in-the-loop emulator that links the firmware.
 - **Protocol** (`Protocol/`) — `MaDProtocol.yaml` → generated C / TS / Rust codec.
 
@@ -51,14 +50,13 @@ or clearly insufficient for the risk:
 | Control domain / protocol mapping | Vitest under `Software/Control` |
 | UI ↔ device / serial / sample stream | Worker/session tests or e2e notes; fakes only in `e2e/`, never `src/` |
 | SIL emulator / models / FFI | Rust tests; guard null/len on `unsafe` trampolines |
-| Legacy Electron (`MaDControl`) | Only if the PR intentionally touches the frozen E2E driver |
 
 ### 3. Suggest additional testing (actionable, optional follow-up)
 When risk is higher than the PR's tests cover, **suggest concrete follow-up tests** the
 author or coding agent can implement later. Be specific:
 
 - What to test (scenario, inputs, expected outcome)
-- Where it should live (Unity path, Vitest file, SIL Playwright, `mad-emulator` scenario)
+- Where it should live (Unity path, Vitest file, `Software/Control/e2e/`, `mad-emulator` scenario)
 - Why it matters (regression class: motion safety, wire compatibility, sample path, etc.)
 
 Phrase these so a human can click **Fix with Copilot** / mention `@copilot` to open a

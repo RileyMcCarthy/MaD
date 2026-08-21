@@ -40,14 +40,17 @@ It shows:
 - **Info cards** — the sample-profile details and run details (motion profile,
   start/complete times, number of data points, gauge length).
 - **Force vs Time** — the recorded force with a **Max Force** reference line.
-- **Position vs Time** — **actual** position vs **setpoint** vs **expected**
-  (reconstructed from the G-code), with a **Max Displacement** reference line.
+- **Position vs Time** — where the jaw **actually** went, what the machine was
+  **commanding**, and what the motion profile **expected**, with a
+  **Max Displacement** reference line. Divergence between the three is the
+  quickest way to spot a slipping grip or a limit being hit.
 - **Stress–strain** — stress (σ = |F| / (width·thickness), MPa) against strain
   (ΔL / gauge length, %), with **Max Stress / Max Strain** limit lines.
 
 ## The data
 
-Results are stored as **CSV** in your [data folder](settings-and-data.md), with
-columns in firmware-native units (`time_us`, `force_mN`, `position_um`,
-`setpoint_um`). The viewer and exports convert to display units. See the
-[file formats reference](../reference/file-formats.md) for the exact layout.
+Results are stored as **CSV** in your [data folder](settings-and-data.md), so you
+can open them in a spreadsheet or analysis tool. The run viewer and the **Export**
+action both show values in the usual units (N and mm); the raw CSV records them in
+finer units, so expect larger numbers if you open the file directly.
+[File formats](file-formats.md) has the exact column layout.

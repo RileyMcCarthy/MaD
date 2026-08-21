@@ -50,14 +50,10 @@ MaD/
 ├── SIL/                     Software-in-the-loop test rig (Rust workspace)
 │   ├── embsim/              ⎘ submodule → github.com/RileyMcCarthy/embsim (reusable SIL framework)
 │   ├── models/              MaD physics models (gantry, sample, strain gauge)
-│   ├── MaDSim/              The mad-emulator binary (entry + machine wiring)
-│   └── tests/               Playwright E2E specs
+│   └── MaDSim/              The mad-emulator binary (entry + machine wiring)
 ├── Hardware/                KiCad PCB designs (EdgeBoard, DS2Addon)
 └── docs/  +  mkdocs.yml     The documentation site
 ```
-
-> A legacy Electron desktop app exists at `Software/MaDControl/`. The browser app
-> has reached full parity and is the documented, deployed application.
 
 > Two components are **git submodules** (they are standalone open-source
 > libraries): [`Protocol/ProtoEmb`](https://github.com/RileyMcCarthy/protoemb)
@@ -103,8 +99,7 @@ pio check -e propeller2 --fail-on-defect=medium --fail-on-defect=high  # MISRA (
 ### Run the full simulation (no hardware)
 ```bash
 cd SIL
-make setup        # first time: npm deps
-make test         # build firmware + emulator, run Playwright
+make test         # build firmware + emulator, run the Rust test suite
 make playground   # run the emulator + trace viewer for manual testing
 ```
 
@@ -141,7 +136,6 @@ deploys the docs + app to GitHub Pages (`.github/workflows/pages.yml`). Releases
 are cut with version tags:
 
 ```bash
-git tag software-v1.0.0 && git push --tags   # desktop app
 git tag firmware-v1.0.0 && git push --tags   # firmware binaries
 git tag hardware-v1.0.0 && git push --tags   # hardware manufacturing files
 git tag webapp-v1.0.0   && git push --tags   # deploy docs + app to Pages

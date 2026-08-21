@@ -20,6 +20,7 @@ import {
   RunTestResult,
 } from './events';
 import { MachineConfiguration, SampleData, SampleProfile } from '@/domain';
+import { logger, ingestWorkerBatch } from '@/diagnostics/log';
 
 // 2 Mbaud: the P2 protocol UART runs at this rate (perfect divisor match — P2
 // 200MHz/100, FT232R 3MHz/1.5). The firmware's lock-free, continuous-poll
@@ -96,6 +97,11 @@ export class DeviceClient {
   }
 
   private onWorkerCrash(message: string): void {
+    // The worker is gone, so its buffered entries died with it — this main-thread
+    // entry is the only record that the crash happened at all.
+    logger('device').error('worker-crash', message, {
+      workerCreateCount: this.workerCreateCount,
+    });
     this.fanout(workerCrashEvents(message));
     void this.releasePort();
   }
@@ -139,6 +145,9 @@ export class DeviceClient {
   private async ensureSink(): Promise<void> {
     if (this.sinkInstalled) return;
     await this.remote.setEventSink(Comlink.proxy(this.fanout));
+    // Fold the worker's log into this thread's ring so a snapshot is one merged
+    // main+worker timeline rather than two halves nobody can interleave.
+    await this.remote.setLogSink(Comlink.proxy(ingestWorkerBatch));
     this.sinkInstalled = true;
   }
 
@@ -165,7 +174,24 @@ export class DeviceClient {
     // WASM instance (a prior crash can't carry over) and no stale stream locks.
     this.recreateWorker();
     await this.ensureSink();
-    await port.open({ baudRate });
+    // USB identity before we open: 2 Mbaud only works because the FT232R's
+    // divisor happens to land exactly on the P2's rate. A user on a different
+    // bridge chip (CH340, CP2102) is a materially different machine, and that is
+    // invisible in a bug report unless it is captured here.
+    const info = port.getInfo?.() ?? {};
+    logger('device').info('port-open', 'opening serial port', {
+      baudRate,
+      usbVendorId: info.usbVendorId ?? null,
+      usbProductId: info.usbProductId ?? null,
+    });
+    try {
+      await port.open({ baudRate });
+    } catch (err) {
+      logger('device').error('port-open-failed', err instanceof Error ? err.message : String(err), {
+        baudRate,
+      });
+      throw err;
+    }
     this.port = port;
 
     const { readable, writable } = port;
@@ -200,6 +226,11 @@ export class DeviceClient {
 
   getStoredSamples(): Promise<SampleData[]> {
     return this.remote.getStoredSamples();
+  }
+
+  /** Raw serial tail from the worker's byte ring, for the bug-report bundle. */
+  getByteTail(): Promise<Awaited<ReturnType<DeviceSessionApi['getByteTail']>>> {
+    return this.remote.getByteTail();
   }
 
   getDiagnostics(): Promise<Record<string, number | string | boolean>> {

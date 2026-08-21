@@ -1,7 +1,7 @@
 # Live monitoring
 
 The **Live** screen is the hub: real-time readouts, machine state, manual
-controls, and live charts, all updating from the ~100 Hz sample stream.
+controls, and live charts, all updating continuously while you're connected.
 
 ![The Live screen](../assets/screenshots/02-live.png)
 
@@ -18,24 +18,21 @@ read):
 | **Sample Force** | Force in sample coordinates (zeroed at the gauge) |
 | **Sample Position** | Extension of the sample relative to its gauge length |
 
-Forces are shown in **N**, positions in **mm**. (On the wire these are
-firmware-native mN and µm; the app converts them — see the
-[unit conventions](../how-it-works/protocol.md#units).)
+Forces are shown in **N**, positions in **mm**.
 
 ## Machine state
 
-The **State** badges summarise what the firmware reports:
+The **State** badges summarise what the machine is doing:
 
 - **Motion** — whether motion is enabled.
-- **Test** — whether a test is running (`idle` / running).
-- **Fault** — a latched fault that requires attention (e.g. `COG`, `WATCHDOG`,
-  `ESD_*`, `SERVO_COMMUNICATION`). Faults generally require a reboot.
-- **Restriction** — a condition currently *limiting* motion (e.g.
-  `UPPER_ENDSTOP`, `DOOR`, `SAMPLE_TENSION`). Restrictions clear on their own
-  when the condition resolves.
+- **Test** — whether a test is running.
+- **Fault** — something needs attention. A fault stops motion and usually needs a
+  machine reboot to clear.
+- **Restriction** — something is currently *limiting* motion, such as an endstop
+  or an open door. Restrictions clear on their own once the cause is resolved.
 
-Hover any fault or restriction badge for an explanation. The full list is in the
-[states, faults & restrictions reference](../reference/machine-states.md).
+Hover any fault or restriction badge for a plain-language explanation of that
+specific code. [States, faults & restrictions](machine-states.md) lists them all.
 
 ## Live charts
 
@@ -49,8 +46,8 @@ A dual-axis, 60-second rolling chart plots **position** (left axis) and **force*
   configuration and the loaded sample profile.
 - **Pause** the sweep to inspect a moment without losing the connection.
 
-When you connect, the chart is **seeded** from the device's on-board sample ring
-buffer, so you immediately see recent history rather than an empty plot.
+When you connect, the chart is pre-filled with the machine's most recent
+readings, so you see recent history straight away rather than an empty plot.
 
 ### Stress–strain
 

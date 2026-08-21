@@ -1,11 +1,10 @@
 # MaD SIL Testing - Makefile
 # 
 # Commands:
-#   make setup      - First-time setup (npm deps)
 #   make firmware   - Build firmware static library
 #   make emulator   - Build Rust emulator (builds firmware if needed)
-#   make test       - Build everything, run Playwright tests
-#   make playground - Build everything, start emulator + app for manual testing
+#   make test       - Build everything, run the Rust test suite
+#   make playground - Build everything, start the emulator for manual testing
 #   make clean      - Remove build artifacts
 
 FIRMWARE_DIR = ../Firmware/MaDCore
@@ -14,14 +13,8 @@ FIRMWARE_LIB = $(FIRMWARE_DIR)/.pio/build/$(PIO_ENV)/libfirmware.a
 PROTOEMB_GENERATOR = ../Protocol/ProtoEmb/core/generate.py
 PROTOEMB_SCHEMA = ../Protocol/MaDProtocol.yaml
 PROTOEMB_TEMPLATES = ../Protocol/ProtoEmb/core/templates
-PROTOEMB_RUNTIME_DIR = ../Protocol/ProtoEmb/runtime
 
-.PHONY: setup firmware protocol bridge emulator test playground clean
-
-# First-time setup
-setup:
-	npm install
-	@echo "✅ Setup complete. Run 'make test' to run tests."
+.PHONY: firmware protocol emulator test playground clean
 
 # Build firmware as static library
 firmware:
@@ -32,17 +25,13 @@ firmware:
 protocol:
 	python3 $(PROTOEMB_GENERATOR) --schema $(PROTOEMB_SCHEMA) --target rs --output ../Protocol/rust/src/generated --templates $(PROTOEMB_TEMPLATES)
 
-# Build generic ProtoEmb bridge binary used by MaDControl main process
-bridge:
-	cd $(PROTOEMB_RUNTIME_DIR) && cargo build --bin protoemb-bridge
-
 # Build Rust emulator (depends on firmware library)
-emulator: firmware protocol bridge
+emulator: firmware protocol
 	cargo build
 
 # Run tests
 test: emulator
-	npm test
+	cargo test
 
 # Start emulator + app for interactive development
 playground: emulator
@@ -50,6 +39,6 @@ playground: emulator
 
 # Clean build artifacts
 clean:
-	rm -rf test-results build
+	rm -rf test-results
 	cargo clean
 	cd $(FIRMWARE_DIR) && pio run -e $(PIO_ENV) -t clean

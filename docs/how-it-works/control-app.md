@@ -1,11 +1,10 @@
 # The control app
 
 [**Control**](https://rileymccarthy.github.io/MaD/app/) is a frontend-only
-control app. There is **no backend and no Electron**: the browser talks straight
-to the Propeller 2 over the **Web Serial API**, and all the protocol logic runs as
-**WebAssembly** compiled from the same Rust core (`Protocol/ProtoEmb/runtime`)
-used by the firmware tooling and the SIL rig. It lives in
-`Software/Control/`.
+control app with **no backend**: the browser talks straight to the Propeller 2
+over the **Web Serial API**, and all the protocol logic runs as **WebAssembly**
+compiled from the same Rust core (`Protocol/ProtoEmb/runtime`) used by the
+firmware tooling and the SIL rig. It lives in `Software/Control/`.
 
 ## Architecture
 

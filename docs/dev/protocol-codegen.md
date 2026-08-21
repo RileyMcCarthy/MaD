@@ -55,17 +55,15 @@ structs with per-field `scale`/`min`/`max`/`bits`, nested structs, fixed arrays,
 optional fields, and tagged unions, plus a message routing table with
 `command_id`, `tx_node`, `period_ms`, and `priority`. The exact semantics are in
 the [wire-format spec](https://github.com/RileyMcCarthy/protoemb/blob/main/docs/wire-format.md);
-the MaD message list is in the [protocol reference](../reference/protocol-messages.md).
+the MaD message list is in the [protocol reference](protocol-messages.md).
 
 After editing: regenerate **all** consumers and rebuild, so firmware, app, and SIL
 stay in lock-step.
 
 ## The host runtime & bridge
 
-The Rust runtime (`Protocol/ProtoEmb/runtime`) is compiled two ways:
+The Rust runtime (`Protocol/ProtoEmb/runtime`) is compiled to WASM:
 
-- a native **`protoemb-bridge`** binary (`cargo build --bin protoemb-bridge`),
-  used by the legacy desktop app over NDJSON stdio, and
 - a **WASM** module (`wasm-pack build … --target web`), loaded by the browser app.
 
 ## Cross-language conformance

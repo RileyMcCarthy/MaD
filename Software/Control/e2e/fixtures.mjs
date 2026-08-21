@@ -22,10 +22,10 @@
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { mkdir, writeFile } from 'node:fs/promises';
 
-// Resolve Playwright from the SIL workspace (shared install) — portable for CI.
-const silPackageJson = join(dirname(fileURLToPath(import.meta.url)), '../../../SIL/package.json');
-const require = createRequire(silPackageJson);
+// Playwright is a devDependency of this package — resolve it from here.
+const require = createRequire(import.meta.url);
 export const { chromium } = require('playwright');
 
 export const APP_URL = process.env.APP_URL || 'http://localhost:5174/';
@@ -181,9 +181,112 @@ export async function newSilPage({ headed = false } = {}) {
   const page = await browser.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
+  // Console output is captured too: a failure that happens before the app boots
+  // (a bad import, a WASM load error) never reaches the in-page logger, so the
+  // console is the only record of it.
+  const consoleLines = [];
+  page.on('console', (m) => {
+    consoleLines.push(`${m.type()}: ${m.text()}`);
+    if (consoleLines.length > 500) consoleLines.shift();
+  });
+  page.__madConsole = consoleLines;
   await page.addInitScript(installFakeSerial, BRIDGE_URL);
   await page.addInitScript(installOpfsDataDir, OPFS_DIR);
+
+  // Scenarios close their browser in a `finally`, which runs BEFORE the runner's
+  // catch — by the time a failure is handled the page is gone. So snapshot the
+  // log on the way out and stash it, letting the runner dump it afterwards
+  // without any change to the ~40 existing scenario bodies.
+  const closeBrowser = browser.close.bind(browser);
+  browser.close = async (...args) => {
+    lastCapture = {
+      url: safeUrl(page),
+      console: consoleLines.slice(),
+      log: await readAppLog(page),
+    };
+    return closeBrowser(...args);
+  };
+
   return { browser, page, errors };
+}
+
+/** Log + console captured from the most recently closed SIL page. */
+let lastCapture = null;
+
+function safeUrl(page) {
+  try {
+    return page.url();
+  } catch {
+    return 'unknown';
+  }
+}
+
+/**
+ * Pull the app's merged main+worker session log out of the page.
+ *
+ * Returns null when the hook is absent — the app never booted, which is itself
+ * the most useful thing the caller can report.
+ */
+export async function readAppLog(page) {
+  try {
+    return await page.evaluate(() => globalThis.__madLog?.snapshot() ?? null);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Annotate the app's timeline with a scenario/step boundary.
+ *
+ * Turns an undifferentiated wall of entries into something readable: the dump
+ * shows `[e2e] B3 start` immediately before the frames that scenario produced.
+ */
+export async function markAppLog(page, label) {
+  try {
+    await page.evaluate((text) => {
+      globalThis.__madLog?.mark?.(text);
+    }, label);
+  } catch {
+    // Marking is best-effort; never fail a test because the hook is missing.
+  }
+}
+
+/**
+ * Write everything known about a failed scenario to e2e/artifacts/<name>.json
+ * and print a short tail to stderr.
+ */
+export async function dumpFailureArtifacts(scenario, err) {
+  const dir = join(dirname(fileURLToPath(import.meta.url)), 'artifacts');
+  await mkdir(dir, { recursive: true });
+  const safe = String(scenario).replace(/[^a-z0-9_-]/gi, '_');
+  const captured = lastCapture ?? { url: 'unknown', console: [], log: null };
+  const log = captured.log;
+  const artifact = {
+    scenario,
+    failedAt: new Date().toISOString(),
+    error: err instanceof Error ? { message: err.message, stack: err.stack } : String(err),
+    url: captured.url,
+    console: captured.console,
+    log,
+  };
+  const file = join(dir, `${safe}.json`);
+  await writeFile(file, JSON.stringify(artifact, null, 2), 'utf8');
+
+  const entries = log?.entries ?? [];
+  const tail = entries.slice(-25);
+  process.stderr.write(`\n── ${scenario}: last ${tail.length} log entries ──\n`);
+  for (const e of tail) {
+    const at = new Date(e.t).toISOString().slice(11, 23);
+    const data = e.data ? ` ${JSON.stringify(e.data)}` : '';
+    process.stderr.write(
+      `  ${at} ${e.level.padEnd(5)} ${e.thread === 'worker' ? 'W' : 'M'} ${e.cat}/${e.tag} ${e.msg ?? ''}${data}\n`,
+    );
+  }
+  if (entries.length === 0) {
+    process.stderr.write('  (no app log — the page may not have booted)\n');
+  }
+  process.stderr.write(`  full artifact: ${file}\n`);
+  return file;
 }
 
 /** Connect the app to SIL via the UI (call after navigating to the app). */

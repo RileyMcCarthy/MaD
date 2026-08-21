@@ -53,8 +53,8 @@ export default function Settings() {
       <div className="panel">
         <h2>Data folder</h2>
         <p className="muted">
-          Profiles, test runs, and CSV data are stored as files in a folder you
-          choose — interchangeable with the desktop app's data directory.
+          Profiles, test runs, and CSV data are stored as plain files in a folder
+          you choose, so you can back them up and move them like any other files.
         </p>
         <div className="row">
           <button className="primary" onClick={choose}>
@@ -82,8 +82,8 @@ export default function Settings() {
         <p className="muted">
           Frontend-only control app. Talks to the Propeller 2 over the Web Serial
           API; the protocol runs as WebAssembly compiled from the same Rust core
-          used by the firmware tooling and SIL. Firmware flashing is not available
-          in the browser — use the desktop app for that.
+          used by the firmware tooling and SIL. Firmware can be flashed from the
+          browser too — see the Firmware page.
         </p>
       </div>
     </div>

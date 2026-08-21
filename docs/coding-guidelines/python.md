@@ -339,7 +339,7 @@ Wire-size and bit-width type maps live in Python (`compute_field_bits`, the inli
 
 ## Generated code (do not hand-edit)
 
-The Python's *output* — `Firmware/MaDCore/src/Generated/`, `Software/Control/src/protocol/generated/` (the shipped app; legacy Electron target was `Software/MaDControl/src/main/generated/`), and `Protocol/rust/src/generated/` — is regenerated and **must not be hand-edited** (root `CLAUDE.md`; banner at `protocol.h.j2:2`). (Note: the SIL Rust output goes to `Protocol/rust/src/generated/` per `SIL/Makefile:33`; the `SIL/embsim/peripherals/src/generated/` path some older docs reference does not exist.) To change generated code:
+The Python's *output* — `Firmware/MaDCore/src/Generated/`, `Software/Control/src/protocol/generated/` (the deployed app), and `Protocol/rust/src/generated/` — is regenerated and **must not be hand-edited** (root `CLAUDE.md`; banner at `protocol.h.j2:2`). (Note: the SIL Rust output goes to `Protocol/rust/src/generated/` per `SIL/Makefile:33`; the `SIL/embsim/peripherals/src/generated/` path some older docs reference does not exist.) To change generated code:
 
 1. Edit `Protocol/MaDProtocol.yaml` (schema) and/or a `.j2` template.
 2. Regenerate (see the commands in root `CLAUDE.md`, or `python3 core/generate.py --schema … --target … --output … --templates core/templates`).

@@ -68,7 +68,7 @@ stateDiagram-v2
 
 All motion is gated through the firmware's `app_control_motionEnabled()` — see the
 [firmware](firmware.md) page and the
-[states, faults & restrictions reference](../reference/machine-states.md).
+[states, faults & restrictions reference](../user-guide/machine-states.md).
 
 ## Safety model
 

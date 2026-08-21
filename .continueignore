@@ -22,7 +22,6 @@ Firmware/MaDCore/src/Generated/
 Firmware/MaDCore/.pio/
 
 # Software generated
-Software/MaDControl/src/main/generated/
 
 # Rust generated protocol
 SIL/embsim/peripherals/src/generated/

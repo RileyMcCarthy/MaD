@@ -1,9 +1,8 @@
 # Machine configuration
 
-The **machine configuration** is the calibration and limits stored in the
-machine's non-volatile memory (NVRAM). It describes *this* machine — its
-mechanics and sensors — and rarely changes. You read and edit it on the
-**Settings** screen.
+The **machine configuration** is the calibration and limits stored on the machine
+itself. It describes *this* machine — its mechanics and sensors — and rarely
+changes. You read and edit it on the **Settings** screen.
 
 ![Settings, including machine configuration](../assets/screenshots/08-settings.png)
 
@@ -11,7 +10,8 @@ mechanics and sensors — and rarely changes. You read and edit it on the
 
 - The configuration loads from the device when you open **Settings** while
   connected.
-- Edit a field, then **Save to device** to write it back to the machine's NVRAM.
+- Edit a field, then **Save to device** to write it back to the machine, where it
+  persists across power cycles.
 - **Reload from device** re-reads the configuration, discarding unsaved edits.
 
 !!! warning "These values calibrate the machine"
@@ -21,25 +21,23 @@ mechanics and sensors — and rarely changes. You read and edit it on the
 
 ## Fields
 
-| Field | Unit | What it sets |
-|---|---|---|
-| `name` | — | A label for this machine profile |
-| `encoderStepsPerMM` | steps/mm | Encoder counts per millimetre of travel |
-| `servoStepsPerMM` | steps/mm | Stepper pulses per millimetre of travel |
-| `forceGaugeNPerStep` | N/step | Force-gauge ADC calibration |
-| `forceGaugeZeroOffset` | steps | Force-gauge zero offset |
-| `maxPosition` | mm | Soft travel limit |
-| `maxVelocity` | mm/s | Maximum commanded velocity |
-| `maxAcceleration` | mm/s² | Maximum commanded acceleration |
-| `maxForceTensile` | N | Machine-protection tensile force limit |
-| `homingVelocity` | mm/s | Speed used when homing |
-| `homingOffset` | mm | Offset applied after homing |
-| `jawOffset` | mm | Distance from the home reference to the jaw |
+These are the fields as they appear on the Settings screen, in order.
 
-These limits are *machine* limits — distinct from the per-test limits you set in
-a [sample profile](sample-profiles.md). Both are enforced; whichever is more
+| Field | What it sets |
+|---|---|
+| **Name** | A label for this machine |
+| **Encoder (step/mm)** | Encoder counts per millimetre of travel |
+| **Servo (step/mm)** | Motor pulses per millimetre of travel |
+| **Force Gauge (N/step)** | How much force one gauge reading step represents |
+| **Force Gauge Zero Offset (steps)** | The gauge's zero point |
+| **Position Max (mm)** | How far the jaw is allowed to travel |
+| **Velocity Max (mm/s)** | Fastest the machine will move |
+| **Acceleration Max (mm/s²)** | How hard the machine is allowed to accelerate |
+| **Tensile Force Max (N)** | Force at which the machine protects itself |
+| **Homing Velocity (mm/s)** | Speed used when homing |
+| **Homing Offset (mm)** | Offset applied after homing |
+| **Jaw Offset (mm)** | Distance from the home reference to the jaw |
+
+These are *machine* limits — distinct from the per-test limits you set in a
+[sample profile](sample-profiles.md). Both are enforced, and whichever is more
 conservative wins.
-
-The configuration is part of the [communication protocol](../how-it-works/protocol.md)
-as the `MachineConfiguration` struct — see the
-[protocol reference](../reference/protocol-messages.md).

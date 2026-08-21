@@ -12,6 +12,7 @@ import CapabilityGate from './ui/CapabilityGate';
 import ErrorBoundary from './ui/ErrorBoundary';
 import { useStore, UiNotification } from './store/useStore';
 import { NotificationType } from './domain';
+import { logger } from './diagnostics/log';
 
 /** Messages that browsers fire as global errors but are benign noise. */
 const IGNORED_ERROR_PATTERNS = [/ResizeObserver loop/i];
@@ -30,6 +31,7 @@ function useGlobalErrorHandlers(): void {
       lastMsg = msg;
       lastAt = now;
        
+      logger('app').error(label, msg, { route: window.location.hash });
       console.error(`[${label}]`, msg);
       useStore.getState().notify(NotificationType.ERROR, `Unexpected error: ${msg}`);
     };
@@ -159,8 +161,29 @@ function Toasts() {
   );
 }
 
+/** Screen-crash reporter shared by both boundaries. */
+function logBoundaryCrash(scope: string) {
+  return (error: Error, info: { componentStack?: string | null }): void => {
+    logger('ui').error('render-crash', error.message, {
+      scope,
+      route: window.location.hash,
+      name: error.name,
+      // First few frames only — enough to place the failing component.
+      componentStack: (info.componentStack ?? '').split('\n').slice(0, 6).join('\n'),
+    });
+  };
+}
+
+const onShellCrash = logBoundaryCrash('screen');
+const onRootCrash = logBoundaryCrash('root');
+
 function Shell() {
   const location = useLocation();
+  // Navigation breadcrumbs: "what was the user doing" is usually answered by
+  // the route trail more directly than by anything else in the log.
+  useEffect(() => {
+    logger('ui').info('route', location.pathname);
+  }, [location.pathname]);
   return (
     <div className="app">
       <aside className="sidebar">
@@ -182,7 +205,11 @@ function Shell() {
         {/* Screen-level boundary: a crashed screen shows a recoverable panel but
             leaves the sidebar, status bar, and global STOP intact. Keyed by route
             so navigating away clears a stuck error. */}
-        <ErrorBoundary key={location.pathname} title="This screen hit an error">
+        <ErrorBoundary
+          key={location.pathname}
+          title="This screen hit an error"
+          onError={onShellCrash}
+        >
           <Suspense fallback={<div className="panel muted">Loading…</div>}>
             <Outlet />
           </Suspense>
@@ -201,7 +228,7 @@ export default function App() {
   }, [init]);
 
   return (
-    <ErrorBoundary full title="MaD Control crashed">
+    <ErrorBoundary full title="MaD Control crashed" onError={onRootCrash}>
       <CapabilityGate>
         <HashRouter>
         <Routes>

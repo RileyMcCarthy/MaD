@@ -66,6 +66,7 @@ markdown_extensions:
   - toc:
       permalink: true
       toc_depth: 3
+  - pymdownx.blocks.caption
   - pymdownx.details
   - pymdownx.highlight:
       anchor_linenums: true
@@ -99,7 +100,9 @@ nav:
       - Running a test: user-guide/running-a-test.md
       - Test history & analysis: user-guide/test-history-and-analysis.md
       - Settings & data: user-guide/settings-and-data.md
+      - File formats: user-guide/file-formats.md
       - Firmware & diagnostics: user-guide/firmware-and-diagnostics.md
+      - States, faults & restrictions: user-guide/machine-states.md
       - Troubleshooting: user-guide/troubleshooting.md
   - How It Works:
       - how-it-works/index.md
@@ -118,6 +121,8 @@ nav:
       - Running the app: dev/running-the-app.md
       - SIL testing: dev/sil-testing.md
       - Protocol & code generation: dev/protocol-codegen.md
+      - Protocol messages: dev/protocol-messages.md
+      - G-code: dev/gcode.md
       - Reusing embsim: dev/reusing-embsim.md
       - CI/CD & releases: dev/ci-cd-and-releases.md
       - Contributing: dev/contributing.md
@@ -126,13 +131,4 @@ nav:
           - C / Firmware: coding-guidelines/c-firmware.md
           - Rust / SIL: coding-guidelines/rust.md
           - Python / generator: coding-guidelines/python.md
-          - TypeScript: coding-guidelines/typescript.md
           - Protocol YAML: coding-guidelines/protocol-yaml.md
-  - Reference:
-      - reference/index.md
-      - Specifications: reference/specifications.md
-      - Protocol messages: reference/protocol-messages.md
-      - G-code: reference/gcode.md
-      - File formats: reference/file-formats.md
-      - States, faults & restrictions: reference/machine-states.md
-      - Design notes: reference/design-notes.md

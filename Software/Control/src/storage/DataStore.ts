@@ -2,7 +2,7 @@
  * Persistent storage over the File System Access API.
  *
  * Mirrors the desktop `dataManager` on-disk layout so files are interchangeable
- * with the Electron app:
+ * with the on-disk layout:
  *   <dataDir>/sampleProfiles/<name>.json
  *   <dataDir>/motionProfiles/<name>.json
  *   <dataDir>/sets/<name>.json
@@ -22,6 +22,11 @@ import {
   TestRunEntry,
   Set as MotionSet,
 } from '@/domain';
+import { logger, nowMs } from '@/diagnostics/log';
+
+// Folder *names* are logged (they identify which data folder the user picked);
+// full paths and file contents never are — a bundle can end up in a public issue.
+const logFs = logger('fs');
 
 const DIR_HANDLE_KEY = 'mad.dataDirHandle';
 const TEST_COUNTER_KEY = 'mad.testCounter';
@@ -61,13 +66,30 @@ export class DataStore {
    *  deadlock waiting on the chain they're already part of. */
   private mutex: Promise<unknown> = Promise.resolve();
 
-  private run<T>(fn: () => Promise<T>): Promise<T> {
+  private run<T>(fn: () => Promise<T>, label?: string): Promise<T> {
+    const started = nowMs();
     const next = this.mutex.then(fn, fn);
     // Keep the chain alive even if this op rejects (callers still see the error).
     this.mutex = next.then(
       () => undefined,
       () => undefined,
     );
+    // Every public op funnels through here, so this one hook covers the whole
+    // surface. Failures matter most: a quota or revoked-permission error is the
+    // usual cause of "my test didn't save", and it is otherwise silent.
+    if (label !== undefined) {
+      void next.then(
+        () => {
+          logFs.debug(label, undefined, { durMs: Math.round(nowMs() - started) });
+        },
+        (err: unknown) => {
+          logFs.error(label, err instanceof Error ? err.message : String(err), {
+            durMs: Math.round(nowMs() - started),
+            name: err instanceof Error ? err.name : undefined,
+          });
+        },
+      );
+    }
     return next;
   }
 
@@ -84,6 +106,7 @@ export class DataStore {
   /** Prompt the user to choose a data directory (needs a user gesture). */
   async chooseDirectory(): Promise<void> {
     const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
+    logFs.info('folder-chosen', undefined, { name: handle.name });
     this.root = handle;
     this.pendingHandle = null;
     await idbSet(DIR_HANDLE_KEY, handle);
@@ -98,21 +121,30 @@ export class DataStore {
    *  transient hiccup can't silently wipe the user's saved choice. */
   async restoreDirectory(): Promise<boolean> {
     const handle = await idbGet<FileSystemDirectoryHandle>(DIR_HANDLE_KEY);
-    if (!handle) return false;
+    if (!handle) {
+      logFs.info('folder-restore', 'no remembered folder');
+      return false;
+    }
     if (!(await verifyPermission(handle, false))) {
       this.pendingHandle = handle; // needs a user gesture to re-grant
+      logFs.warn('folder-restore', 'permission not granted', { name: handle.name });
       return false;
     }
     // A granted handle can still be unreachable (folder moved) — probe it, but
     // keep it pending rather than discarding on a transient failure.
     try {
       await handle.keys().next();
-    } catch {
+    } catch (err) {
       this.pendingHandle = handle;
+      logFs.warn('folder-restore', 'folder unreachable', {
+        name: handle.name,
+        reason: err instanceof Error ? err.message : String(err),
+      });
       return false;
     }
     this.root = handle;
     this.pendingHandle = null;
+    logFs.info('folder-restore', 'restored', { name: handle.name });
     return true;
   }
 
@@ -121,6 +153,7 @@ export class DataStore {
     const handle = this.root ?? this.pendingHandle;
     if (!handle) return false;
     const ok = await verifyPermission(handle, true);
+    logFs.info('folder-permission', ok ? 'granted' : 'denied', { name: handle.name });
     if (ok) {
       this.root = handle;
       this.pendingHandle = null;
@@ -139,11 +172,11 @@ export class DataStore {
   }
 
   async saveSampleProfile(entry: SampleProfileEntry, overwrite = false): Promise<boolean> {
-    return this.run(() => this.saveJsonUnique(SAMPLE_PROFILES_DIR, entry.name, entry, overwrite));
+    return this.run(() => this.saveJsonUnique(SAMPLE_PROFILES_DIR, entry.name, entry, overwrite), 'saveSampleProfile');
   }
 
   async deleteSampleProfile(id: string): Promise<void> {
-    await this.run(() => this.deleteJsonById(SAMPLE_PROFILES_DIR, id));
+    await this.run(() => this.deleteJsonById(SAMPLE_PROFILES_DIR, id), 'deleteSampleProfile');
   }
 
   // ── Motion profiles ──
@@ -153,11 +186,11 @@ export class DataStore {
   }
 
   async saveMotionProfile(entry: MotionProfileEntry, overwrite = false): Promise<boolean> {
-    return this.run(() => this.saveJsonUnique(MOTION_PROFILES_DIR, entry.name, entry, overwrite));
+    return this.run(() => this.saveJsonUnique(MOTION_PROFILES_DIR, entry.name, entry, overwrite), 'saveMotionProfile');
   }
 
   async deleteMotionProfile(id: string): Promise<void> {
-    await this.run(() => this.deleteJsonById(MOTION_PROFILES_DIR, id));
+    await this.run(() => this.deleteJsonById(MOTION_PROFILES_DIR, id), 'deleteMotionProfile');
   }
 
   // ── Sets ──
@@ -167,7 +200,7 @@ export class DataStore {
   }
 
   async saveSet(set: MotionSet, overwrite = false): Promise<boolean> {
-    return this.run(() => this.saveJsonUnique(SETS_DIR, set.name, set, overwrite));
+    return this.run(() => this.saveJsonUnique(SETS_DIR, set.name, set, overwrite), 'saveSet');
   }
 
   // ── Test runs ──
@@ -196,7 +229,7 @@ export class DataStore {
       const next = Math.max(floor, maxExisting) + 1;
       await idbSet(TEST_COUNTER_KEY, next);
       return String(next).padStart(6, '0');
-    });
+    }, 'nextTestName');
   }
 
   async getTestRunIndex(): Promise<TestRunIndexRow[]> {
@@ -205,7 +238,7 @@ export class DataStore {
     const rows = await readJsonFile<TestRunIndexRow[]>(dir, TEST_INDEX_FILE);
     if (rows && rows.length > 0) return rows;
     // Index missing/empty/corrupt: if run files exist on disk, rebuild from them
-    // so runs (e.g. copied from the desktop app, or after a half-written index)
+    // so runs (e.g. copied in by hand, or after a half-written index)
     // never silently vanish from History. Treat index.json as a cache only.
     if (await this.hasAnyRunFiles(dir)) return this.rebuildIndex();
     return rows ?? [];
@@ -225,7 +258,7 @@ export class DataStore {
       rows.sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1)); // newest first
       await writeJsonFile(dir, TEST_INDEX_FILE, rows);
       return rows;
-    });
+    }, 'rebuildIndex');
   }
 
   private async hasAnyRunFiles(dir: FileSystemDirectoryHandle): Promise<boolean> {
@@ -245,7 +278,7 @@ export class DataStore {
       const dir = await this.subdir(TEST_RUNS_DIR);
       await writeJsonFile(dir, `${sanitizeName(entry.testName)}.json`, entry);
       await this.updateIndex((rows) => [indexRow(entry), ...rows.filter((r) => r.id !== entry.id)]);
-    });
+    }, 'createTestRun');
   }
 
   async updateTestRun(testName: string, patch: Partial<TestRunEntry>): Promise<void> {
@@ -256,7 +289,7 @@ export class DataStore {
       const dir = await this.subdir(TEST_RUNS_DIR);
       await writeJsonFile(dir, `${sanitizeName(testName)}.json`, merged);
       await this.updateIndex((rows) => rows.map((r) => (r.id === merged.id ? indexRow(merged) : r)));
-    });
+    }, 'updateTestRun');
   }
 
   async deleteTestRun(testName: string): Promise<void> {
@@ -269,7 +302,7 @@ export class DataStore {
       if (existing) {
         await this.updateIndex((rows) => rows.filter((r) => r.id !== existing.id));
       }
-    });
+    }, 'deleteTestRun');
   }
 
   async saveTestCsv(testName: string, csv: string): Promise<string> {
@@ -278,7 +311,7 @@ export class DataStore {
       const fileName = `${sanitizeName(testName)}.csv`;
       await writeTextFile(dir, fileName, csv);
       return `${TEST_RUNS_DIR}/${fileName}`;
-    });
+    }, 'saveTestCsv');
   }
 
   async readTestCsv(testName: string): Promise<string | null> {

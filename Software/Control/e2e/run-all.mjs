@@ -23,6 +23,7 @@ import {
   newSilPage,
   connectToSil,
   chooseDataFolder,
+  dumpFailureArtifacts,
   installFakeBootRom,
   installOpfsDataDir,
   OPFS_DIR,
@@ -1511,6 +1512,10 @@ async function main() {
     } catch (err) {
       console.log('❌');
       failures.push(`${s.id} ${s.name}: ${err.message}`);
+      // Every failure carries the app's merged main+worker log, so a red CI run
+      // is diagnosable without reproducing it locally.
+      // eslint-disable-next-line no-await-in-loop
+      await dumpFailureArtifacts(s.id, err).catch(() => {});
     }
     // Settle: let the bridge fully release the PTY before the next client connects
     // (only one app may hold the serial stream at a time).

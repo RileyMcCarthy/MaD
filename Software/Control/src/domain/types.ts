@@ -1,7 +1,7 @@
 /**
  * Display-layer domain types.
  *
- * Ported from the desktop app's `SharedInterface.ts` — these are the
+ * These are the
  * human-facing shapes the UI works with, independent of the wire protocol.
  * Conversion to/from the generated protocol structs lives in `mapping.ts`.
  */

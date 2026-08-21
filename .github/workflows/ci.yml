@@ -12,7 +12,6 @@ on:
       - 'SIL/**'
       - '.gitmodules'
     tags:
-      - 'software-v*'
       - 'firmware-v*'
       - 'hardware-v*'
   # Run on every PR (no path filter) so the aggregating "CI Gate" check below
@@ -30,15 +29,12 @@ jobs:
   changes:
     runs-on: ubuntu-latest
     outputs:
-      software: ${{ steps.changes.outputs.software }}
-      electron: ${{ steps.changes.outputs.electron }}
       firmware: ${{ steps.changes.outputs.firmware }}
       hardware: ${{ steps.changes.outputs.hardware }}
       wasm_control: ${{ steps.changes.outputs.wasm_control }}
       protocol: ${{ steps.changes.outputs.protocol }}
       sil: ${{ steps.changes.outputs.sil }}
       is_release: ${{ startsWith(github.ref, 'refs/tags/') }}
-      is_software_release: ${{ startsWith(github.ref, 'refs/tags/software-v') }}
       is_firmware_release: ${{ startsWith(github.ref, 'refs/tags/firmware-v') }}
       is_hardware_release: ${{ startsWith(github.ref, 'refs/tags/hardware-v') }}
     steps:
@@ -47,10 +43,6 @@ jobs:
         id: changes
         with:
           filters: |
-            software:
-              - 'Software/**'
-            electron:
-              - 'Software/MaDControl/**'
             firmware:
               - 'Firmware/**'
             hardware:
@@ -364,102 +356,12 @@ jobs:
       - name: Enforce firmware layering (downward-only includes)
         run: python3 Firmware/MaDCore/scripts/check_layering.py Firmware/MaDCore/src
 
-  build-software:
-    needs: changes
-    # Frozen Electron app (MaDControl). Package only when that tree changes, on
-    # software-v tags, or when the optional legacy SIL e2e is explicitly enabled.
-    # Control (WASM) PRs and firmware-only PRs must not wait on electron-builder.
-    if: |
-      needs.changes.outputs.is_software_release == 'true' ||
-      needs.changes.outputs.electron == 'true' ||
-      (vars.RUN_LEGACY_SIL_E2E == 'true' &&
-        (needs.changes.outputs.software == 'true' || needs.changes.outputs.firmware == 'true'))
-    runs-on: macos-latest-large
-    outputs:
-      artifact-name: ${{ steps.artifact.outputs.name }}
-    
-    steps:
-      - name: Checkout Git repository
-        uses: actions/checkout@v7
-        with:
-          submodules: recursive
-
-      - name: Install Node.js and npm
-        uses: actions/setup-node@v7
-        with:
-          node-version: 20
-          cache: npm
-        
-      - name: Ensure Python + protocol codegen deps
-        run: |
-          # macos-latest-large ships a Homebrew Python whose pip has no RECORD
-          # file — `pip install --upgrade pip` then fails uninstall-no-record-file.
-          # Install codegen deps only; do not upgrade the runner pip.
-          python3 -m pip install --break-system-packages --ignore-installed 'setuptools<81' pyyaml jinja2
-
-      - name: Install dependencies
-        working-directory: Software/MaDControl
-        run: |
-          npm install
-    
-      - name: Set version for build
-        id: get_version
-        run: |
-          if [[ "${{ needs.changes.outputs.is_software_release }}" == "true" ]]; then
-            VERSION=${GITHUB_REF#refs/tags/software-v}
-            echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
-          else
-            # Must be valid semver for `npm version` — "dev-<n>" is rejected.
-            echo "VERSION=0.0.0-dev.${{ github.run_number }}" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Update package.json version
-        working-directory: Software/MaDControl
-        run: |
-          # Update the version in package.json to match our CI version
-          npm version "${{ steps.get_version.outputs.VERSION }}" --no-git-tag-version
-          echo "Updated package.json version to: ${{ steps.get_version.outputs.VERSION }}"
-
-      - name: Build application
-        working-directory: Software/MaDControl
-        run: |
-          npm run build:dll
-          npm run build
-          npm exec electron-builder -- --publish never --win --mac --linux
-
-      - name: Set artifact name
-        id: artifact
-        run: echo "name=MaD-Control-${{ github.run_number }}" >> $GITHUB_OUTPUT
-
-      - name: Prepare flat artifact structure for release
-        run: |
-          mkdir -p release-artifacts
-          # Copy all build files to a flat structure for easier release handling
-          cp Software/MaDControl/release/build/*.dmg release-artifacts/ 2>/dev/null || echo "No DMG files"
-          cp Software/MaDControl/release/build/*.zip release-artifacts/ 2>/dev/null || echo "No ZIP files"  
-          cp Software/MaDControl/release/build/*.exe release-artifacts/ 2>/dev/null || echo "No EXE files"
-          cp Software/MaDControl/release/build/*.AppImage release-artifacts/ 2>/dev/null || echo "No AppImage files"
-          cp Software/MaDControl/release/build/*.deb release-artifacts/ 2>/dev/null || echo "No DEB files"
-          cp Software/MaDControl/release/build/README-macOS.txt release-artifacts/ 2>/dev/null || echo "No README"
-          # Also keep the original structure for SIL tests
-          mkdir -p release-artifacts/app
-          cp -r Software/MaDControl/release/app/* release-artifacts/app/ 2>/dev/null || echo "No app directory"
-          
-          echo "=== Release artifacts prepared ==="
-          ls -la release-artifacts/
-
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v7
-        with:
-          name: ${{ steps.artifact.outputs.name }}
-          path: release-artifacts/
-
   build-firmware:
     needs: changes
-    # Build firmware for SIL testing when software/firmware changes, or always for firmware releases
+    # Build firmware on firmware changes, or always for firmware releases
     if: |
       needs.changes.outputs.is_firmware_release == 'true' ||
-      (needs.changes.outputs.software == 'true' || needs.changes.outputs.firmware == 'true')
+      needs.changes.outputs.firmware == 'true'
     runs-on: macos-latest-large
     outputs:
       artifact-name: ${{ steps.artifact.outputs.name }}
@@ -564,220 +466,6 @@ jobs:
           *_documentation.zip
           *_gerbers.zip
 
-  sil-tests:
-    needs: [changes, build-software, build-firmware]
-    # LEGACY Electron Playwright E2E — DISABLED by default and NOT part of CI Gate.
-    # It expects a *runnable* native firmware binary, but the current SIL is the Rust
-    # mad-emulator linking libfirmware.a (covered by the `sil-rust` job). Pending port
-    # to the shipped WASM app (see CLAUDE.md's decommission task). Re-enable by setting
-    # the repo variable RUN_LEGACY_SIL_E2E=true once it's ported.
-    if: |
-      always() &&
-      vars.RUN_LEGACY_SIL_E2E == 'true' &&
-      needs.changes.outputs.is_release != 'true' &&
-      (needs.changes.outputs.software == 'true' || needs.changes.outputs.firmware == 'true') &&
-      needs.build-software.result == 'success' &&
-      needs.build-firmware.result == 'success'
-    runs-on: macos-latest-large
-    timeout-minutes: 30
-    
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          submodules: recursive
-      - uses: actions/setup-node@v7
-        with:
-          node-version: lts/*
-
-      - name: Download artifacts
-        uses: actions/download-artifact@v8
-        with:
-          pattern: "*-${{ github.run_number }}"
-          path: ./artifacts/
-
-      - name: Prepare test environment
-        run: |
-          # Debug: Check what artifacts were actually downloaded
-          echo "=== Downloaded artifacts structure ==="
-          find ./artifacts -name "*.bin" -o -name "app" -type d | head -10
-          echo "=== Contents of software artifact ==="
-          ls -la "./artifacts/MaD-Control-${{ github.run_number }}/app/"
-          echo "=== Looking for main.js in artifact ==="
-          find "./artifacts/MaD-Control-${{ github.run_number }}/app/" -name "main.js" | head -5
-          
-          # Copy built app from artifacts to repo structure
-          SOFTWARE_ARTIFACT_NAME="MaD-Control-${{ github.run_number }}"
-          ARTIFACT_APP_DIR="./artifacts/$SOFTWARE_ARTIFACT_NAME/app"
-          TARGET_APP_DIR="./Software/MaDControl/release/app"
-          
-          if [ ! -d "$ARTIFACT_APP_DIR" ]; then
-            echo "❌ Expected app directory not found at: $ARTIFACT_APP_DIR"
-            echo "Available artifacts:"
-            ls -la "./artifacts/$SOFTWARE_ARTIFACT_NAME/" || echo "Software artifact directory not found"
-            exit 1
-          fi
-          
-          mkdir -p "$TARGET_APP_DIR"
-          cp -r "$ARTIFACT_APP_DIR"/* "$TARGET_APP_DIR"
-          
-          # Debug: Check what was actually copied
-          echo "=== Copied app structure ==="
-          find "$TARGET_APP_DIR" -name "*.js" | head -10
-          ls -la "$TARGET_APP_DIR/dist/main/" 2>/dev/null || echo "dist/main directory not found"
-          
-          # Copy firmware binary
-          mkdir -p ./firmware/
-          FIRMWARE_ARTIFACT_NAME="MaD-Firmware-${{ github.run_number }}"
-          
-          # Look for the native binary (could have version in name like MaD-Firmware-dev-38-native.bin)
-          FIRMWARE_BIN=$(find "./artifacts/$FIRMWARE_ARTIFACT_NAME/" -name "*-native.bin" | head -1)
-          
-          # Debug: Show what's actually in the firmware artifact
-          echo "=== Firmware artifact contents ==="
-          ls -la "./artifacts/$FIRMWARE_ARTIFACT_NAME/" || echo "Firmware artifact directory not found"
-          if [ -z "$FIRMWARE_BIN" ]; then
-            echo "❌ Native firmware binary not found"
-            echo "Available firmware files:"
-            ls -la "./artifacts/$FIRMWARE_ARTIFACT_NAME/" || echo "Firmware artifact directory not found"
-            exit 1
-          fi
-          
-          cp "$FIRMWARE_BIN" ./firmware/mad-firmware-native.bin
-          chmod +x ./firmware/mad-firmware-native.bin
-          echo "✅ Firmware binary copied successfully"
-
-      - name: Install testing dependencies
-        run: |
-          # Install dependencies in the existing Software/MaDControl directory
-          cd ./Software/MaDControl
-          npm install --no-save @playwright/test electron serialport
-          npx playwright install --with-deps
-          
-          # Return to root for firmware setup
-          cd ../../Firmware/MaDCore/Emulation
-          make venv
-          brew install socat
-
-      - name: Run SIL tests with firmware emulator
-        working-directory: ./Software/MaDControl
-        env:
-          MAD_CONTROL_DIST_PATH: ./release/app/dist/main/main.js
-          ELECTRON_DISABLE_SANDBOX: 1
-        run: |
-          # Start firmware emulator in the same step to prevent process cleanup
-          cd ../../Firmware/MaDCore/Emulation
-          FIRMWARE_PATH="$(pwd)/../../../firmware/mad-firmware-native.bin"
- 
-          # Start firmware emulator in background
-          export MAD_FIRMWARE_EXECUTABLE="$FIRMWARE_PATH"
-          nohup make run > /tmp/firmware-emulator.log 2>&1 &
-          
-          # Wait for firmware to fully start and verify it's working
-          echo "Waiting for firmware emulator to start..."
-          sleep 10
-          
-          # Check if firmware emulator is actually running and responsive
-          echo "=== Firmware emulator status ==="
-          ps aux | grep -v grep | grep -E "(Server.py|socat)" || echo "No firmware processes found"
-          ls -la /tmp/tty.rpi* 2>/dev/null || echo "No virtual serial ports found"
-          
-          # Show recent emulator log
-          echo "=== Recent emulator log ==="
-          tail -30 /tmp/firmware-emulator.log || echo "No emulator log"
-          
-          # Return to root and then to test directory
-          cd ../../../Software/MaDControl
-          
-          # Setup preload script for Electron
-          if [ -f "./release/app/dist/main/preload.js" ]; then
-            mkdir -p "./release/app/.erb/dll"
-            cp "./release/app/dist/main/preload.js" "./release/app/.erb/dll/preload.js"
-          fi
-          
-          # Run the actual tests
-          npx playwright test --project=electron --reporter=github,list
-          TEST_RESULT=$?
-          
-          exit $TEST_RESULT
-
-      - name: Organize test artifacts
-        if: always()
-        run: |
-          # Create a clean artifacts directory
-          mkdir -p ./test-artifacts/screenshots
-          mkdir -p ./test-artifacts/logs
-          
-          # Copy screenshots with clean structure
-          if [ -d "./Software/MaDControl/test-results/screenshots" ]; then
-            cp -r ./Software/MaDControl/test-results/screenshots/* ./test-artifacts/screenshots/ 2>/dev/null || echo "No screenshots found"
-          fi
-          
-          # Copy logs
-          if [ -f "/tmp/firmware-emulator.log" ]; then
-            cp /tmp/firmware-emulator.log ./test-artifacts/logs/firmware-emulator.log
-          fi
-          
-          # Copy any other test results
-          if [ -d "./Software/MaDControl/test-results" ]; then
-            find ./Software/MaDControl/test-results -name "*.xml" -o -name "*.json" -o -name "*.html" | while read file; do
-              cp "$file" ./test-artifacts/logs/ 2>/dev/null || true
-            done
-          fi
-          
-          echo "=== Test artifacts structure ==="
-          find ./test-artifacts -type f | head -20
-
-      - name: Upload test artifacts
-        uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: sil-test-results-${{ github.run_number }}
-          path: ./test-artifacts/
-          retention-days: 30
-
-  # Release jobs - only run when tags are pushed
-  release-software:
-    needs: [changes, build-software]
-    if: |
-      needs.changes.outputs.is_software_release == 'true' &&
-      needs.build-software.result == 'success'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download software artifacts
-        uses: actions/download-artifact@v8
-        with:
-          name: ${{ needs.build-software.outputs.artifact-name }}
-          path: artifacts
-          
-      - name: Get tag version
-        id: get_version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/software-v}" >> $GITHUB_OUTPUT
-
-      - name: Debug artifact structure
-        run: |
-          echo "=== Artifact structure ==="
-          find artifacts -type f -name "*.dmg" -o -name "*.zip" -o -name "*.exe" -o -name "*.AppImage" -o -name "*.deb" -o -name "README-macOS.txt" | head -20
-          echo "=== All files in artifacts ==="
-          ls -la artifacts/ || echo "No artifacts directory"
-          find artifacts -type f | head -10
-      
-      - name: Create Release
-        uses: softprops/action-gh-release@v3
-        with:
-          name: MaD Control ${{ steps.get_version.outputs.VERSION }}
-          tag_name: software-v${{ steps.get_version.outputs.VERSION }}
-          files: |
-            artifacts/*.dmg
-            artifacts/*.zip
-            artifacts/*.exe
-            artifacts/*.AppImage
-            artifacts/*.deb
-            artifacts/README-macOS.txt
-          draft: false
-          prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
   release-firmware:
     needs: [changes, build-firmware]
     if: |
@@ -854,7 +542,6 @@ jobs:
       - firmware-misra
       - python-lint
       - sil-rust
-      - build-software
       - build-firmware
       - build-hardware
     if: ${{ always() }}

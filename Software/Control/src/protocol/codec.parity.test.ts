@@ -2,11 +2,9 @@
  * Codec contract: the generated browser-safe (Uint8Array/DataView) codec must
  * produce exact, stable wire bytes and round-trip values within the wire scale.
  *
- * This used to cross-compare against the desktop app's Node-Buffer codec, but
- * that file is git-ignored/generated — a clean CI checkout couldn't import it,
- * and its Move layout is stale (pre-G122). Instead we freeze GOLDEN byte vectors
- * here (self-contained, CI-safe) so any unintended change to the wire format is
- * caught, and keep an INDEPENDENT bit-packer reference for Move.
+ * We freeze GOLDEN byte vectors here (self-contained, CI-safe) so any unintended
+ * change to the wire format is caught, and keep an INDEPENDENT bit-packer
+ * reference for Move.
  */
 
 import { describe, it, expect } from 'vitest';
