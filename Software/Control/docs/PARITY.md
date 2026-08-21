@@ -145,9 +145,11 @@ charts via `StaticLineChart`/`StaticScatterChart` + `uplotRef` reference lines. 
 - ⚠️ "Open in Finder/Explorer" — not possible in a browser (N/A).
 - ✅ Profiles / sets / test runs / CSV stored as files (interchangeable with desktop).
 
-## 13. Firmware / About (`/about`) — ✅ DONE (flashing N/A)
-- ✅ **Show current firmware version** (`src/ui/screens/About.tsx`, from the store).
-- N/A Flash-from-file — **out of scope** (native `loadp2`, can't run in a browser); noted in the UI.
+## 13. Firmware (`/firmware`) + About (`/about`) — ✅ DONE (flashing needs hardware validation)
+- ✅ **Show current firmware version** (`src/ui/screens/Firmware.tsx`, from the store).
+- ⚠️ **Flash-from-file** — implemented in the browser via the P2 boot ROM's serial
+  loader (`src/firmware/`), replacing the desktop app's `loadp2` subprocess. RAM and
+  flash modes both present; not yet run against a board. See [FLASHING.md](FLASHING.md).
 - ✅ GitHub releases link + About info.
 
 ## 14. Device status / health — ✅ DONE
