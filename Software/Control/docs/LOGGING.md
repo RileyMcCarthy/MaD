@@ -182,6 +182,61 @@ which frames.
 
 `e2e/artifacts/` is gitignored.
 
+## Verifying the logging actually works
+
+The unit tests cover the logging *machinery*. They cannot cover the ~64
+instrumentation call sites, and the entire worker half — protocol frames,
+correlation ids, the byte ring, the worker→main batch transport — only runs
+with a device attached. That is exactly the half a bug report depends on.
+
+```bash
+npm run dev              # in one terminal
+npm run e2e:diagnostics  # in another
+```
+
+`e2e/diagnostics-smoke.mjs` injects a **scripted fake serial port** rather than
+using SIL, so it needs no emulator or bridge and can drive failure modes an
+emulator makes awkward. Two device behaviours:
+
+- **silent** — accepts writes, never replies. Exercises outbound frame logging,
+  op bracketing, correlation ids and the timeout path.
+- **garbage** — streams deterministic non-frame bytes, which is what a wrong
+  baud rate, a noisy cable or a half-flashed board actually looks like.
+
+It asserts what a maintainer needs to be true: worker entries reach the merged
+timeline and it is time-ordered; outbound frames are named and sized; ops are
+bracketed and their frames carry the op id; an unresponsive device produces
+warnings rather than silence; garbage produces an entry carrying a hex byte
+tail; and the exported bundle contains build identity, a non-empty log, RX
+chunks and worker counters.
+
+This check found three real defects that the unit tests and a manual browser
+pass both missed: read requests produced no `tx` entry at all, garbled traffic
+produced no log entry whatsoever, and every read frame was labelled with a
+*write* command name.
+
+### Command ids are direction-scoped
+
+Reads and writes share the id space — `READ_MACHINE_CONFIGURATION` and
+`WRITE_TEST_RUN` are both command `2`, `READ_STATE` and `WRITE_MOTION_ENABLE`
+are both `1`. A single id→name map silently mislabels half the traffic, so
+`commandName(id, dir)` takes the direction the call site knows. Where direction
+genuinely is not knowable — an inbound frame whose id does not match the
+in-flight op — it renders `READ_STATE|WRITE_MOTION_ENABLE(1)`. A confidently
+wrong name is worse in a bug report than a hedged one.
+
+Note that `isPeriodicCommand` is only consulted for `data` events, which is what
+keeps write acks for ids 0 and 1 from being swallowed as periodics.
+
+### Undecodable traffic
+
+The protocol core silently discards bytes that are not valid frames, so a wrong
+baud rate used to produce a stream of received bytes and *no* log entry at all —
+the app simply looked dead. A watchdog now warns (twice, then stops) when a
+2 s window carries bytes but decodes nothing, attaching a hex tail. It compares
+*decoded frames*, not events, so the timeouts a garbled link generates cannot
+placate it.
+
 ## Reporting a bug
 
 `src/diagnostics/report.ts` turns a session into a filed GitHub issue. There is

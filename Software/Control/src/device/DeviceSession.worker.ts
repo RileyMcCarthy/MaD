@@ -15,7 +15,7 @@ import init, { WasmClient } from '@/wasm/protoemb_runtime.js';
 import wasmUrl from '@/wasm/protoemb_runtime_bg.wasm?url';
 import { logger, setLogSink, flushLog, nowMs, type LogBatchSink } from '@/diagnostics/log';
 import { byteRing } from '@/diagnostics/byteRing';
-import { commandName, isPeriodicCommand, summariseGcode } from './commandNames';
+import { commandName, isPeriodicCommand, summariseGcode, type CommandDir } from './commandNames';
 import {
   decodeSample,
   decodeMachineState,
@@ -259,7 +259,22 @@ class DeviceSession {
   /** Monotonic id for correlating a user action with the frames it produced. */
   private opSeq = 0;
 
-  private activeOp: { id: number; name: string; command: number | null } | null = null;
+  /** Undecodable-traffic watchdog: bytes/events seen at the last check. */
+  private gibberishAt = 0;
+
+  private gibberishBytes = 0;
+
+  private gibberishEvents = 0;
+
+  /** Warnings already emitted, so a persistently wrong link warns twice, not forever. */
+  private gibberishWarnings = 0;
+
+  private activeOp: {
+    id: number;
+    name: string;
+    command: number | null;
+    dir: CommandDir | null;
+  } | null = null;
 
   private lastSample: SampleData | null = null;
 
@@ -269,6 +284,7 @@ class DeviceSession {
     bytesIn: 0,
     bytesOut: 0,
     events: 0,
+    decoded: 0,
     errors: 0,
     timeouts: 0,
     nacks: 0,
@@ -310,6 +326,7 @@ class DeviceSession {
       bytesIn: 0,
       bytesOut: 0,
       events: 0,
+      decoded: 0,
       errors: 0,
       timeouts: 0,
       nacks: 0,
@@ -491,7 +508,7 @@ class DeviceSession {
   async readMachineConfiguration(): Promise<MachineConfiguration> {
     return this.runOp(async () => {
       const p = this.waitFor((e) => e.kind === 'configuration', 3000, 'configuration', MSG_READ_MACHINE_CONFIGURATION);
-      this.client?.read(MSG_READ_MACHINE_CONFIGURATION, true, undefined);
+      this.requestRead(MSG_READ_MACHINE_CONFIGURATION);
       const e = await p;
       return (e as Extract<DeviceEvent, { kind: 'configuration' }>).data;
     }, 'readMachineConfiguration');
@@ -500,7 +517,7 @@ class DeviceSession {
   async readSampleProfile(): Promise<SampleProfile> {
     return this.runOp(async () => {
       const p = this.waitFor((e) => e.kind === 'sampleProfile', 3000, 'sampleProfile', MSG_READ_SAMPLE_PROFILE);
-      this.client?.read(MSG_READ_SAMPLE_PROFILE, true, undefined);
+      this.requestRead(MSG_READ_SAMPLE_PROFILE);
       const e = await p;
       return (e as Extract<DeviceEvent, { kind: 'sampleProfile' }>).data;
     }, 'readSampleProfile');
@@ -509,7 +526,7 @@ class DeviceSession {
   async readFirmwareVersion(): Promise<string> {
     return this.runOp(async () => {
       const p = this.waitFor((e) => e.kind === 'firmwareVersion', 3000, 'firmwareVersion', MSG_READ_FIRMWARE_VERSION);
-      this.client?.read(MSG_READ_FIRMWARE_VERSION, true, undefined);
+      this.requestRead(MSG_READ_FIRMWARE_VERSION);
       const e = await p;
       return (e as Extract<DeviceEvent, { kind: 'firmwareVersion' }>).data.version;
     }, 'readFirmwareVersion');
@@ -840,6 +857,49 @@ class DeviceSession {
 
   // ── Internals ──
 
+  /**
+   * Warn when bytes keep arriving but nothing decodes.
+   *
+   * The protocol core silently discards data that is not a valid frame, so a
+   * wrong baud rate, a noisy cable or a half-flashed board produces a stream of
+   * received bytes and *no* log entry whatsoever — the app just looks dead.
+   * That is the single most common "it doesn't work" report, and without this
+   * it is invisible in a bundle.
+   *
+   * Rate-limited to two warnings: enough to prove the condition and carry the
+   * bytes, without flooding a ring that a maintainer still needs to read.
+   */
+  private checkUndecodableTraffic(): void {
+    const GIBBERISH_WINDOW_MS = 2000;
+    const GIBBERISH_MIN_BYTES = 64;
+    const GIBBERISH_MAX_WARNINGS = 2;
+
+    const now = nowMs();
+    if (this.gibberishAt === 0) {
+      this.gibberishAt = now;
+      this.gibberishBytes = this.stats.bytesIn;
+      this.gibberishEvents = this.stats.decoded;
+      return;
+    }
+    if (now - this.gibberishAt < GIBBERISH_WINDOW_MS) return;
+
+    const bytes = this.stats.bytesIn - this.gibberishBytes;
+    const decoded = this.stats.decoded - this.gibberishEvents;
+    this.gibberishAt = now;
+    this.gibberishBytes = this.stats.bytesIn;
+    this.gibberishEvents = this.stats.decoded;
+
+    if (bytes < GIBBERISH_MIN_BYTES || decoded > 0) return;
+    if (this.gibberishWarnings >= GIBBERISH_MAX_WARNINGS) return;
+    this.gibberishWarnings += 1;
+    logProto.error('undecodable', 'receiving bytes that do not decode as frames', {
+      bytes,
+      windowMs: GIBBERISH_WINDOW_MS,
+      // Usually a baud mismatch or a board that is not running MaD firmware.
+      tail: byteRing.tailHex(64),
+    });
+  }
+
   private tick(): void {
     if (!this.client) return;
     let raw: RawEvent[];
@@ -896,8 +956,13 @@ class DeviceSession {
         this.stats.lastErrorAt = Date.now();
       } else if (e.kind === 'timeout') {
         this.stats.timeouts += 1;
-      } else if (e.kind === 'ack' && !e.success) {
-        this.stats.nacks += 1;
+      } else {
+        // Anything that is not an error or a timeout came off the wire as a
+        // valid frame. Counted separately from `events` because the
+        // undecodable-traffic watchdog must not be placated by the very
+        // timeouts that a garbled link produces.
+        this.stats.decoded += 1;
+        if (e.kind === 'ack' && !e.success) this.stats.nacks += 1;
       }
     }
 
@@ -911,6 +976,7 @@ class DeviceSession {
     this.periodic.maybeFlush(this.stats.bytesIn, this.stats.bytesOut);
 
     if (events.length > 0) this.emit(events);
+    this.checkUndecodableTraffic();
   }
 
   /**
@@ -934,21 +1000,24 @@ class DeviceSession {
 
     switch (ev.event) {
       case 'ack':
-        logProto.info('ack', commandName(command), this.opTag(command));
+        logProto.info('ack', commandName(command, 'write'), this.opTag(command));
         break;
       case 'nack':
-        logProto.warn('nack', commandName(command), { command, ...this.opTag(command) });
+        logProto.warn('nack', commandName(command, 'write'), { command, ...this.opTag(command) });
         break;
       case 'timeout':
         logProto.warn('timeout', 'no response', {
-          command: ev.frame && ev.frame.length > 2 ? commandName(ev.frame[2]) : 'unknown',
+          command:
+            ev.frame && ev.frame.length > 2
+              ? commandName(ev.frame[2], this.dirFor(ev.frame[2]))
+              : 'unknown',
           frameBytes: ev.frame?.length ?? 0,
           ...this.opTag(),
         });
         break;
       case 'error':
         logProto.error('error', ev.message ?? 'unknown error', {
-          command: command >= 0 ? commandName(command) : undefined,
+          command: command >= 0 ? commandName(command, this.dirFor(command)) : undefined,
           ...this.opTag(),
           // The bytes that caused the rejection are the whole story for a
           // framing/CRC fault, and they are gone from the ring by export time.
@@ -959,7 +1028,10 @@ class DeviceSession {
         logProto.info('notification', undefined, { bytes: u8(ev.payload).length });
         break;
       case 'data':
-        logProto.info('rx', commandName(command), { bytes: u8(ev.payload).length, ...this.opTag(command) });
+        logProto.info('rx', commandName(command, this.dirFor(command)), {
+          bytes: u8(ev.payload).length,
+          ...this.opTag(command),
+        });
         break;
       default:
         break;
@@ -1035,7 +1107,7 @@ class DeviceSession {
       const id = (this.opSeq += 1);
       const previous = this.activeOp;
       const startedAt = nowMs();
-      this.activeOp = { id, name, command: null };
+      this.activeOp = { id, name, command: null, dir: null };
       logProto.info('op-start', name, { op: id });
       try {
         const result = await fn();
@@ -1066,8 +1138,36 @@ class DeviceSession {
    * for an unrelated command (a late reply, a firmware-initiated frame) does
    * not get mis-attributed to it.
    */
-  private claimOpCommand(command: number): void {
-    if (this.activeOp !== null) this.activeOp.command = command;
+  private claimOpCommand(command: number, dir: CommandDir): void {
+    if (this.activeOp === null) return;
+    this.activeOp.command = command;
+    this.activeOp.dir = dir;
+  }
+
+  /**
+   * Issue a request-style read, logged.
+   *
+   * Reads go out via `client.read()` rather than `writeAndAck`, so before this
+   * they produced no `tx` entry at all — a report showed the response (or the
+   * timeout) with nothing explaining what had been asked for.
+   */
+  private requestRead(command: number): void {
+    this.claimOpCommand(command, 'read');
+    logProto.info('tx', commandName(command, 'read'), { kind: 'read', ...this.opTag() });
+    this.client?.read(command, true, undefined);
+  }
+
+  /**
+   * Best-known direction for an inbound frame's command id.
+   *
+   * Nothing on the wire says which side an id belongs to, so fall back to the
+   * in-flight operation when it matches; otherwise leave it undefined and let
+   * `commandName` render the ambiguity rather than guess.
+   */
+  private dirFor(command: number): CommandDir | undefined {
+    const active = this.activeOp;
+    if (active !== null && active.command === command && active.dir !== null) return active.dir;
+    return undefined;
   }
 
   /** `{ op: id }` when an operation is in flight, else empty — spread into log data. */
@@ -1120,14 +1220,14 @@ class DeviceSession {
   private async writeAndAck(command: number, data: Uint8Array, timeoutMs: number): Promise<boolean> {
     const p = this.waitFor((e) => e.kind === 'ack' && e.command === command, timeoutMs, `ack(${command})`, command);
     const started = nowMs();
-    this.claimOpCommand(command);
-    logProto.info('tx', commandName(command), { bytes: data.length, timeoutMs, ...this.opTag() });
+    this.claimOpCommand(command, 'write');
+    logProto.info('tx', commandName(command, 'write'), { bytes: data.length, timeoutMs, ...this.opTag() });
     this.client?.write(command, data);
     try {
       const e = (await p) as Extract<DeviceEvent, { kind: 'ack' }>;
       // Round-trip time is the cheapest early warning there is: a link that is
       // about to fail usually gets slow before it stops answering.
-      logProto.debug('rtt', commandName(command), {
+      logProto.debug('rtt', commandName(command, 'write'), {
       ...this.opTag(),
         ...this.opTag(),
         durMs: Math.round(nowMs() - started),
@@ -1135,7 +1235,7 @@ class DeviceSession {
       });
       return e.success;
     } catch (err) {
-      logProto.warn('tx-failed', commandName(command), {
+      logProto.warn('tx-failed', commandName(command, 'write'), {
         ...this.opTag(),
         durMs: Math.round(nowMs() - started),
         reason: err instanceof Error ? err.message : String(err),
@@ -1147,11 +1247,11 @@ class DeviceSession {
   private async writeAndAckOrThrow(command: number, data: Uint8Array, timeoutMs: number): Promise<void> {
     const p = this.waitFor((e) => e.kind === 'ack' && e.command === command, timeoutMs, `ack(${command})`, command);
     const started = nowMs();
-    this.claimOpCommand(command);
-    logProto.info('tx', commandName(command), { bytes: data.length, timeoutMs, ...this.opTag() });
+    this.claimOpCommand(command, 'write');
+    logProto.info('tx', commandName(command, 'write'), { bytes: data.length, timeoutMs, ...this.opTag() });
     this.client?.write(command, data);
     const e = (await p) as Extract<DeviceEvent, { kind: 'ack' }>;
-    logProto.debug('rtt', commandName(command), {
+    logProto.debug('rtt', commandName(command, 'write'), {
       ...this.opTag(),
       durMs: Math.round(nowMs() - started),
       success: e.success,
@@ -1171,10 +1271,10 @@ class DeviceSession {
         attempt += 1;
         const reason = err instanceof Error ? err.message : String(err);
         if (!shouldRetryUpload(attempt, maxRetries)) {
-          logProto.error('upload-failed', commandName(command), { attempt, reason, ...this.opTag() });
+          logProto.error('upload-failed', commandName(command, 'write'), { attempt, reason, ...this.opTag() });
           throw err;
         }
-        logProto.warn('upload-retry', commandName(command), { attempt, maxRetries, reason, ...this.opTag() });
+        logProto.warn('upload-retry', commandName(command, 'write'), { attempt, maxRetries, reason, ...this.opTag() });
 
         await delay(1000);
       }

@@ -1,14 +1,43 @@
 import { describe, it, expect } from 'vitest';
 import { commandName, isPeriodicCommand, summariseGcode } from './commandNames';
-import { MSG_READ_SAMPLE, MSG_READ_STATE, MSG_WRITE_TEST_RUN } from '@/protocol/generated/protoemb';
+import {
+  MSG_READ_SAMPLE,
+  MSG_READ_STATE,
+  MSG_WRITE_TEST_RUN,
+  MSG_READ_MACHINE_CONFIGURATION,
+  MSG_WRITE_MOTION_ENABLE,
+} from '@/protocol/generated/protoemb';
 
 describe('commandName', () => {
   it('names a known command and keeps the id visible', () => {
-    expect(commandName(MSG_WRITE_TEST_RUN)).toBe(`WRITE_TEST_RUN(${MSG_WRITE_TEST_RUN})`);
+    expect(commandName(MSG_WRITE_TEST_RUN, 'write')).toBe(`WRITE_TEST_RUN(${MSG_WRITE_TEST_RUN})`);
   });
 
   it('degrades to a readable placeholder for an unmapped id', () => {
-    expect(commandName(9999)).toBe('cmd(9999)');
+    expect(commandName(9999, 'write')).toBe('cmd(9999)');
+  });
+
+  it('resolves ids that exist on BOTH sides by direction', () => {
+    // Reads and writes share the id space, so a single map would mislabel half
+    // the traffic — command 2 is READ_MACHINE_CONFIGURATION *and* WRITE_TEST_RUN.
+    expect(MSG_READ_MACHINE_CONFIGURATION).toBe(MSG_WRITE_TEST_RUN);
+    expect(commandName(MSG_READ_MACHINE_CONFIGURATION, 'read')).toBe('READ_MACHINE_CONFIGURATION(2)');
+    expect(commandName(MSG_WRITE_TEST_RUN, 'write')).toBe('WRITE_TEST_RUN(2)');
+  });
+
+  it('shows the ambiguity rather than guessing when direction is unknown', () => {
+    // A confidently wrong name is worse in a bug report than a hedged one.
+    expect(commandName(MSG_READ_STATE)).toBe('READ_STATE|WRITE_MOTION_ENABLE(1)');
+    expect(MSG_READ_STATE).toBe(MSG_WRITE_MOTION_ENABLE);
+  });
+
+  it('does not hedge an id that exists on only one side', () => {
+    expect(commandName(8)).toBe('WRITE_TEST_WAVEFORM(8)');
+  });
+
+  it('never returns a read name for a write direction', () => {
+    expect(commandName(MSG_READ_SAMPLE, 'write')).toBe('WRITE_MACHINE_CONFIGURATION(0)');
+    expect(commandName(MSG_READ_SAMPLE, 'read')).toBe('READ_SAMPLE(0)');
   });
 });
 

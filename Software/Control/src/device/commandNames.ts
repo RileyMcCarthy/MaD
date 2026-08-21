@@ -28,12 +28,21 @@ import {
   MSG_WRITE_FILE_DOWNLOAD,
 } from '@/protocol/generated/protoemb';
 
-const NAMES = new Map<number, string>([
+/**
+ * Reads and writes share the id space — `READ_MACHINE_CONFIGURATION` and
+ * `WRITE_TEST_RUN` are both command 2 — so a single id→name map silently
+ * mislabels half the traffic. Keep them apart and resolve with the direction
+ * the call site knows.
+ */
+const READ_NAMES = new Map<number, string>([
   [MSG_READ_SAMPLE, 'READ_SAMPLE'],
   [MSG_READ_STATE, 'READ_STATE'],
   [MSG_READ_MACHINE_CONFIGURATION, 'READ_MACHINE_CONFIGURATION'],
   [MSG_READ_FIRMWARE_VERSION, 'READ_FIRMWARE_VERSION'],
   [MSG_READ_SAMPLE_PROFILE, 'READ_SAMPLE_PROFILE'],
+]);
+
+const WRITE_NAMES = new Map<number, string>([
   [MSG_WRITE_MACHINE_CONFIGURATION_WRITE, 'WRITE_MACHINE_CONFIGURATION'],
   [MSG_WRITE_MOTION_ENABLE, 'WRITE_MOTION_ENABLE'],
   [MSG_WRITE_TEST_RUN, 'WRITE_TEST_RUN'],
@@ -46,10 +55,24 @@ const NAMES = new Map<number, string>([
   [MSG_WRITE_FILE_DOWNLOAD, 'WRITE_FILE_DOWNLOAD'],
 ]);
 
-/** `'WRITE_MOTION_ENABLE(21)'`, or `'cmd(99)'` for anything unmapped. */
-export function commandName(command: number): string {
-  const name = NAMES.get(command);
-  return name ? `${name}(${command})` : `cmd(${command})`;
+/** Which side of the protocol a command id should be read against. */
+export type CommandDir = 'read' | 'write';
+
+/**
+ * `'WRITE_MOTION_ENABLE(1)'` when the direction is known.
+ *
+ * Without one, an id that exists on both sides renders as
+ * `'READ_STATE|WRITE_MOTION_ENABLE(1)'` — honest ambiguity, because a
+ * confidently wrong name is worse in a bug report than a hedged one.
+ */
+export function commandName(command: number, dir?: CommandDir): string {
+  const read = READ_NAMES.get(command);
+  const write = WRITE_NAMES.get(command);
+  if (dir === 'read') return read ? `${read}(${command})` : `cmd(${command})`;
+  if (dir === 'write') return write ? `${write}(${command})` : `cmd(${command})`;
+  if (read && write) return `${read}|${write}(${command})`;
+  const only = read ?? write;
+  return only ? `${only}(${command})` : `cmd(${command})`;
 }
 
 /**
