@@ -175,3 +175,31 @@ describe('bundleFileName', () => {
     expect(name).not.toMatch(/[:]/);
   });
 });
+
+describe('buildIssueUrl under pathological input', () => {
+  it('fits the budget even when the summary alone dwarfs it', () => {
+    // A user can paste anything into the summary box; percent-encoding then
+    // expands it further. The link must still be one GitHub will open.
+    const url = buildIssueUrl(
+      buildIssueFields({ summary: 'x'.repeat(200_000) }, bundle(), 'f.json'),
+    );
+    expect(url.length).toBeLessThanOrEqual(ISSUE_URL_MAX);
+  });
+
+  it('fits when every character percent-expands', () => {
+    // Newlines and non-ASCII cost 3 bytes each once encoded — the case a
+    // single raw-length subtraction would undershoot.
+    const url = buildIssueUrl(
+      buildIssueFields({ summary: '\n…'.repeat(20_000) }, bundle(), 'f.json'),
+    );
+    expect(url.length).toBeLessThanOrEqual(ISSUE_URL_MAX);
+  });
+
+  it('still produces a usable issue link after truncation', () => {
+    const url = buildIssueUrl(buildIssueFields({ summary: 'q'.repeat(50_000) }, bundle(), 'f.json'));
+    const parsed = new URL(url);
+    expect(parsed.pathname).toBe('/RileyMcCarthy/MaD/issues/new');
+    expect(parsed.searchParams.get('template')).toBe(ISSUE_TEMPLATE);
+    expect((parsed.searchParams.get('summary') ?? '').length).toBeGreaterThan(0);
+  });
+});

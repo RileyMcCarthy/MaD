@@ -124,11 +124,19 @@ export function buildIssueUrl(fields: Record<string, string>): string {
     url = render(working);
   }
 
-  // Last resort: a truncated summary still beats a URL GitHub refuses to open.
-  if (url.length > ISSUE_URL_MAX && working.summary !== undefined) {
-    const overflow = url.length - ISSUE_URL_MAX;
-    working.summary = `${working.summary.slice(0, Math.max(40, working.summary.length - overflow - 40))}…`;
+  // Last resort: truncate the summary itself. Iterative rather than a single
+  // subtraction, because percent-encoding can expand one character into three —
+  // trimming by the raw overflow would undershoot on a summary full of newlines
+  // or non-ASCII. Halving converges in a handful of passes.
+  const SUMMARY_FLOOR = 40;
+  let guard = 24;
+  while (url.length > ISSUE_URL_MAX && guard > 0) {
+    const current = working.summary ?? '';
+    if (current.length <= SUMMARY_FLOOR) break;
+    const next = Math.max(SUMMARY_FLOOR, Math.floor(current.length / 2));
+    working.summary = current.slice(0, next);
     url = render(working);
+    guard -= 1;
   }
   return url;
 }
