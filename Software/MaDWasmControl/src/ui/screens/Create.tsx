@@ -8,6 +8,7 @@ import {
   TestProfile,
   WaveformFn,
   waveformPeakVelocity,
+  waveformPeakAcceleration,
 } from '@/domain';
 import { dataStore } from '@/storage/DataStore';
 import { useStore } from '@/store/useStore';
@@ -108,6 +109,9 @@ export default function Create() {
 
   // Reactive: re-renders + reloads once the folder is restored at startup.
   const folderReady = useStore((s) => s.dataFolderReady);
+  /* Machine limits, read from the device on connect. Null when offline — the
+   * envelope check below is skipped rather than guessed at. */
+  const machine = useStore((s) => s.config);
 
   const loadSaved = async () => {
     if (!dataStore.connected) return;
@@ -243,8 +247,19 @@ export default function Create() {
       // the previewed/commanded motion can never silently differ from the shape.
       const fn: WaveformFn = 'sine';
       const peakV = waveformPeakVelocity(fn, p.amplitude ?? 0, p.frequency ?? 0);
+      const peakA = waveformPeakAcceleration(fn, p.amplitude ?? 0, p.frequency ?? 0);
       const durationS = (p.frequency ?? 0) > 0 ? (p.cycles ?? 0) / (p.frequency ?? 1) : 0;
       const tooFast = peakV > 3000; // schema Move.f max (mm/s)
+      // The firmware's closed-loop servo enforces the machine profile: a wave
+      // demanding more than the machine is rated for is not rejected, it is
+      // tracked at the limit and comes out attenuated with nothing to show for
+      // it. Flag it here, where the numbers are still editable. Only when the
+      // machine has told us its limits — offline, we cannot know them.
+      const machineMaxV = machine?.['Velocity Max (mm/s)'] ?? 0;
+      const machineMaxA = machine?.['Acceleration Max (mm/s^2)'] ?? 0;
+      const overV = machineMaxV > 0 && peakV > machineMaxV;
+      const overA = machineMaxA > 0 && peakA > machineMaxA;
+      const overEnvelope = overV || overA;
       return (
         <>
           {m.absoluteOrRelative === 'absolute'
@@ -259,9 +274,21 @@ export default function Create() {
           {field('Amplitude (mm)', 'amplitude')}
           {field('Frequency (Hz)', 'frequency')}
           {field('Cycles', 'cycles')}
-          <span className={`muted${tooFast ? ' fault' : ''}`} style={{ alignSelf: 'flex-end' }}>
-            ~{peakV.toFixed(1)} mm/s peak · {durationS.toFixed(1)} s
+          <span
+            className={`muted${tooFast || overEnvelope ? ' fault' : ''}`}
+            style={{ alignSelf: 'flex-end' }}
+            title={
+              overEnvelope
+                ? `This machine is rated ${machineMaxV} mm/s and ${machineMaxA} mm/s². ` +
+                  'The servo enforces those limits, so the gantry would track a clipped, ' +
+                  'lower-amplitude wave rather than the one commanded.'
+                : undefined
+            }
+          >
+            ~{peakV.toFixed(1)} mm/s · {peakA.toFixed(0)} mm/s² peak · {durationS.toFixed(1)} s
             {tooFast ? ' · exceeds 3000 mm/s limit' : ''}
+            {!tooFast && overV ? ` · over machine max ${machineMaxV} mm/s` : ''}
+            {!tooFast && overA ? ` · over machine max ${machineMaxA} mm/s²` : ''}
           </span>
         </>
       );

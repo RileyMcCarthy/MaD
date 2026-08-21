@@ -44,6 +44,29 @@ export function waveformPeakVelocity(fn: WaveformFn, amplitude: number, frequenc
   return k * Math.abs(amplitude) * Math.abs(frequency);
 }
 
+/**
+ * Peak acceleration (mm/s²) a waveform demands — sine: (2πf)²A.
+ *
+ * A triangle's velocity is piecewise constant, so its acceleration is impulsive
+ * at the turning points: unbounded in the ideal, and in practice whatever the
+ * machine's limit is. Report 0 (i.e. "not the binding constraint") rather than
+ * a fabricated finite number — v1 is sine-only anyway.
+ *
+ * This matters because the firmware's closed-loop servo ENFORCES the machine
+ * profile's acceleration limit: a waveform that demands more than the machine
+ * is rated for is not rejected, it is tracked at the limit, and the recorded
+ * motion comes out attenuated without anything looking like an error.
+ */
+export function waveformPeakAcceleration(
+  fn: WaveformFn,
+  amplitude: number,
+  frequency: number,
+): number {
+  if (fn === 'triangle') return 0;
+  const w = 2 * Math.PI * Math.abs(frequency);
+  return w * w * Math.abs(amplitude);
+}
+
 export function generateTestGcode(profile: TestProfile): GeneratedGcode {
   const gcode: string[] = [];
   const distance: number[] = [0];
