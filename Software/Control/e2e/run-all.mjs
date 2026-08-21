@@ -19,7 +19,16 @@
  * unit/presence-covered.
  */
 
-import { newSilPage, connectToSil, chooseDataFolder, APP_URL, chromium } from './fixtures.mjs';
+import {
+  newSilPage,
+  connectToSil,
+  chooseDataFolder,
+  installFakeBootRom,
+  installOpfsDataDir,
+  OPFS_DIR,
+  APP_URL,
+  chromium,
+} from './fixtures.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -1389,6 +1398,86 @@ const scenarios = [
         await page.getByText('Test: idle').waitFor({ timeout: 90000 });
         assert(await jogUp.isEnabled(), 'jog re-enabled once idle');
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
+      } finally { await browser.close(); }
+    },
+  },
+  {
+    id: 'G1',
+    name: 'Firmware: flash a .bin through the boot ROM loader',
+    async run() {
+      // Uses the in-page boot-ROM fake, not SIL: the emulator has no P2 boot
+      // ROM and the WS bridge carries no DTR line. See installFakeBootRom.
+      const browser = await chromium.launch({ channel: 'chrome', headless: true });
+      try {
+        const page = await browser.newPage();
+        const errors = [];
+        page.on('pageerror', (e) => errors.push(e.message));
+        await page.addInitScript(installFakeBootRom);
+        await page.addInitScript(installOpfsDataDir, OPFS_DIR);
+        // The flash confirm() must be accepted for the run to proceed.
+        page.on('dialog', (d) => d.accept());
+
+        await page.goto(`${APP_URL}#/firmware`);
+
+        // A 2000-byte image: spans multiple 128-byte chunks with a partial tail.
+        const SIZE = 2000;
+        await page.getByTestId('firmware-file').setInputFiles({
+          name: 'program.bin',
+          mimeType: 'application/octet-stream',
+          buffer: Buffer.from(Array.from({ length: SIZE }, (_, i) => (i * 7) & 0xff)),
+        });
+
+        await page.getByTestId('flash-firmware').click();
+        await page.getByTestId('flash-status').filter({ hasText: /Wrote .* bytes to flash/ })
+          .waitFor({ timeout: 30000 });
+
+        const rom = await page.evaluate(() => ({
+          reset: window.__bootRom.reset,
+          len: window.__bootRom.image.length,
+          finished: window.__bootRom.finished,
+          head: window.__bootRom.image.slice(0, 4),
+          payload: window.__bootRom.image.slice(496, 496 + 8),
+        }));
+
+        assert(rom.reset >= 1, `expected a DTR reset pulse, saw ${rom.reset}`);
+        assert(rom.finished, 'boot ROM never saw the end-of-download marker');
+        // 496-byte flash stub + the payload.
+        assert(rom.len === 496 + SIZE, `image length ${rom.len}, expected ${496 + SIZE}`);
+        // Payload must follow the stub byte-for-byte.
+        assert(
+          JSON.stringify(rom.payload) === JSON.stringify([0, 7, 14, 21, 28, 35, 42, 49]),
+          `payload after stub was ${JSON.stringify(rom.payload)}`,
+        );
+        assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
+      } finally { await browser.close(); }
+    },
+  },
+  {
+    id: 'G2',
+    name: 'Firmware: a silent boot ROM surfaces a readable error',
+    async run() {
+      const browser = await chromium.launch({ channel: 'chrome', headless: true });
+      try {
+        const page = await browser.newPage();
+        await page.addInitScript(installFakeBootRom);
+        await page.addInitScript(installOpfsDataDir, OPFS_DIR);
+        // Make the ROM deaf: swallow the reset so it never starts answering.
+        await page.addInitScript(() => {
+          window.addEventListener('load', () => {
+            window.__bootRom.reset = -999;
+          });
+        });
+        page.on('dialog', (d) => d.accept());
+
+        await page.goto(`${APP_URL}#/firmware`);
+        await page.getByTestId('firmware-file').setInputFiles({
+          name: 'program.bin',
+          mimeType: 'application/octet-stream',
+          buffer: Buffer.from([1, 2, 3, 4]),
+        });
+        await page.getByTestId('flash-firmware').click();
+        await page.getByTestId('flash-status').filter({ hasText: /No response from the Propeller 2/ })
+          .waitFor({ timeout: 30000 });
       } finally { await browser.close(); }
     },
   },
