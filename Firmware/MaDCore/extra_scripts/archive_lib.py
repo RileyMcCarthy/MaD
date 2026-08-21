@@ -7,6 +7,7 @@ this script replaces the Program builder with a Library builder that produces
 libfirmware.a from the compiled .o files.
 """
 import os
+import subprocess
 
 from SCons.Script import Import
 
@@ -46,7 +47,12 @@ REQUIRED_CONFIG_SYMBOLS = [
 
 
 def verify_config_tables(lib_path):
-    import subprocess
+    """Fail the build if the archive lost the HAL config tables.
+
+    They are only referenced through `extern` declarations, so a linker that
+    drops the translation unit produces an archive that builds and then has no
+    pin/channel wiring at runtime.
+    """
     out = subprocess.run(["nm", lib_path], capture_output=True, text=True).stdout
     missing = [s for s in REQUIRED_CONFIG_SYMBOLS if s not in out]
     if missing:
