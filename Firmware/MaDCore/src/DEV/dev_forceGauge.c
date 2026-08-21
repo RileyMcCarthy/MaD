@@ -104,6 +104,12 @@ static dev_forceGauge_state_E dev_forceGauge_private_getState(dev_forceGauge_cha
     case DEV_FORCEGAUGE_STATE_RUNNING:
         if (dev_forceGauge_data.channel[channel].input.responding == false)
         {
+            /* Fresh error episode: the retry budget below is per-episode, so arm
+             * it here. Without this reset the count only ever grows, and every
+             * hiccup after the first four would tear the ADC down (stop + full
+             * re-init) instead of simply re-reading — turning a one-tick blip
+             * into a multi-second outage that faults the machine. */
+            dev_forceGauge_data.channel[channel].retryCount = 0U;
             desiredState = DEV_FORCEGAUGE_STATE_ERROR;
         }
         break;
