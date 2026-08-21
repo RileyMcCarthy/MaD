@@ -199,7 +199,7 @@ export default function TestRunner({ onChanged }: TestRunnerProps) {
       sawRunning.current = false;
 
       // Motion is gated by the firmware state machine — a test won't move the
-      // gantry unless motion is enabled first. (The desktop app enables it as a
+      // gantry unless motion is enabled first. (It is enabled as a
       // separate dashboard step before Run Test.)
       await deviceClient.setMotionEnabled(true);
 

@@ -122,7 +122,6 @@ Out-of-range packed fields never encode (bit-wrap).
 - [x] Schema field rename without mapping update fails a gate (M12)
 - [x] Bugfix PRs prompted to cite a matrix cell (PR template)
 - [ ] WASM e2e smoke green on nightly (ops: watch `e2e-nightly` workflow)
-- [ ] Electron SIL still green on PR until WASM e2e is a required check
 
 ## Commands
 

@@ -39,7 +39,6 @@ node_modules/
 # Auto-generated protocol code
 Firmware/MaDCore/src/Generated/
 Firmware/MaDCore/src/IO/generated/
-Software/MaDControl/src/main/generated/
 Protocol/rust/src/generated/
 
 # SIL generated artifacts
@@ -51,7 +50,6 @@ SIL/sd/test/index.txt
 .env
 .env.local
 .env.*.local
-Software/MaDControl/sample-runs.json
 SIL/sd/profile.bin
 Hardware/DS2Addon/KICAD/jlcpcb/project.db
 Hardware/ForceGauge/ForceGauge-backups/ForceGauge-2025-12-21_214747.zip

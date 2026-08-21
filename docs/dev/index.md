@@ -7,7 +7,7 @@ Everything you need to build, run, test, and extend MaD.
 -   [:material-folder-outline: **Repository layout**](repo-layout.md) — what lives where
 -   [:material-chip: **Building the firmware**](building-firmware.md) — PlatformIO targets
 -   [:material-web: **Running the app**](running-the-app.md) — Vite + WASM dev loop
--   [:material-test-tube: **SIL testing**](sil-testing.md) — the emulator + Playwright
+-   [:material-test-tube: **SIL testing**](sil-testing.md) — the firmware emulator
 -   [:material-code-braces: **Protocol & codegen**](protocol-codegen.md) — regenerate C/TS/Rust
 -   [:material-puzzle: **Reusing embsim**](reusing-embsim.md) — the SIL framework elsewhere
 -   [:material-rocket-launch: **CI/CD & releases**](ci-cd-and-releases.md) — pipelines and tags
@@ -24,7 +24,7 @@ Everything you need to build, run, test, and extend MaD.
 
 | Tool | Version | For |
 |---|---|---|
-| [Node.js](https://nodejs.org/) | 20+ | The app, the SIL Playwright suite |
+| [Node.js](https://nodejs.org/) | 20+ | The app and its E2E suite |
 | [Rust](https://www.rust-lang.org/) | stable + `wasm32-unknown-unknown` | The protocol core, WASM, the SIL emulator |
 | [`wasm-pack`](https://rustwasm.github.io/wasm-pack/) | latest | Building the app's WASM core |
 | [Python](https://www.python.org/) | 3.8+ | The protocol generator and the docs site |
@@ -61,8 +61,7 @@ running SIL; PlatformIO only if you're building firmware.
 
     ```bash
     cd SIL
-    make setup                # first time: npm deps
-    make test                 # build firmware + emulator, run Playwright
+    make test                 # build firmware + emulator, run cargo test
     ```
 
 === "Build firmware for the board"
@@ -78,10 +77,8 @@ running SIL; PlatformIO only if you're building firmware.
 Design records kept alongside the code rather than duplicated here.
 
 **Control app** —
-[PARITY.md](https://github.com/RileyMcCarthy/MaD/blob/main/Software/Control/docs/PARITY.md)
-(per-screen feature inventory),
 [TEST_PLAN.md](https://github.com/RileyMcCarthy/MaD/blob/main/Software/Control/docs/TEST_PLAN.md)
-(Rust unit, vitest, and live-SIL E2E layers), and
+(Rust unit, vitest, and live-SIL E2E layers) and
 [HARDENING.md](https://github.com/RileyMcCarthy/MaD/blob/main/Software/Control/docs/HARDENING.md)
 (safety model, failure recovery, data integrity, performance).
 

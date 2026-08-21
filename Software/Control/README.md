@@ -1,7 +1,6 @@
 # Control
 
-Frontend-only control app for the MaD tensile tester. **No backend, no Electron** —
-the browser talks straight to the Propeller 2 over the **Web Serial API**, and the
+Frontend-only control app for the MaD tensile tester. The browser talks straight to the Propeller 2 over the **Web Serial API**, and the
 protocol logic runs as **WebAssembly** compiled from the same Rust core
 (`Protocol/ProtoEmb/runtime`) used by the firmware tooling and SIL.
 
@@ -116,5 +115,5 @@ One-time setup: repo **Settings → Pages → Source = GitHub Actions**.
 ## Not included
 
 - **Firmware flashing** — the native `loadp2` bootloader cannot run in a browser;
-  use the desktop app for firmware updates.
+  use the `loadp2` CLI for firmware updates.
 - Non-Chromium browsers.

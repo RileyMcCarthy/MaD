@@ -9,22 +9,20 @@ protocol, app — without hardware. All `make` commands run from `SIL/`.
 ```bash
 cd SIL
 git submodule update --init --recursive   # first time: embsim + ProtoEmb submodules
-make setup        # first time: npm deps
-make emulator     # build firmware (.a) + Rust protocol types + bridge, then cargo build
+make emulator     # build firmware (.a) + Rust protocol types, then cargo build
 ```
 
 `make emulator` chains the pieces: `make firmware` (`pio run -e native_emulator`),
-`make protocol` (generate the Rust codec into `Protocol/rust/src/generated`), `make bridge` (build
-`protoemb-bridge`), then `cargo build`.
+`make protocol` (generate the Rust codec into `Protocol/rust/src/generated`), then
+`cargo build`.
 
 | Target | What it does |
 |---|---|
-| `make setup` | Install npm dependencies (first run) |
 | `make firmware` | Build `libfirmware.a` via PlatformIO |
 | `make protocol` | Regenerate the Rust protocol types for SIL |
-| `make emulator` | Build firmware + protocol + bridge + the Rust workspace |
+| `make emulator` | Build firmware + protocol + the Rust workspace |
 | `make playground` | Run the emulator + trace viewer for manual testing |
-| `make test` | Build everything and run the Playwright suite |
+| `make test` | Build everything and run the Rust test suite (`cargo test`) |
 | `make clean` | Remove build artifacts and `cargo clean` |
 
 ## Manual testing with the playground

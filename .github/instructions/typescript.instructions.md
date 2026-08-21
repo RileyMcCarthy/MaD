@@ -1,11 +1,11 @@
 ---
-applyTo: "Software/Control/src/**,Software/MaDControl/src/**"
+applyTo: "Software/Control/src/**"
 ---
 
-TypeScript / React. Full conventions: `docs/coding-guidelines/typescript.md`.
+TypeScript / React conventions for the control app.
 
-The shipped app (`Software/Control/src`) uses only Web Serial + File System Access
-— no Electron, and test-only fakes live in `e2e/`, never in `src/`. Focus on what `tsc`
+The app (`Software/Control/src`) uses only Web Serial + File System Access, and
+test-only fakes live in `e2e/`, never in `src/`. Focus on what `tsc`
 and ESLint can't decide:
 - `exactOptionalPropertyTypes` / null-vs-undefined semantics the compiler doesn't enforce
   (omit the key, don't assign `undefined`);

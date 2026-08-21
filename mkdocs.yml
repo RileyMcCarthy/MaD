@@ -131,5 +131,4 @@ nav:
           - C / Firmware: coding-guidelines/c-firmware.md
           - Rust / SIL: coding-guidelines/rust.md
           - Python / generator: coding-guidelines/python.md
-          - TypeScript: coding-guidelines/typescript.md
           - Protocol YAML: coding-guidelines/protocol-yaml.md

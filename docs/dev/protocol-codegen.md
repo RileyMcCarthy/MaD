@@ -62,10 +62,8 @@ stay in lock-step.
 
 ## The host runtime & bridge
 
-The Rust runtime (`Protocol/ProtoEmb/runtime`) is compiled two ways:
+The Rust runtime (`Protocol/ProtoEmb/runtime`) is compiled to WASM:
 
-- a native **`protoemb-bridge`** binary (`cargo build --bin protoemb-bridge`),
-  used by the Electron app over NDJSON stdio, and
 - a **WASM** module (`wasm-pack build … --target web`), loaded by the browser app.
 
 ## Cross-language conformance
