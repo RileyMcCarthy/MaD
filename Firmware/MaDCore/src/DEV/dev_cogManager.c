@@ -12,7 +12,6 @@
 #include "HAL_system.h"
 #include "IO_Debug.h"
 #include "lib_utility.h"
-#include "emulation_helpers.h"
 
 #include <string.h>
 /**********************************************************************
@@ -32,7 +31,6 @@
 #define APP_COGMANAGER_LOCK_REQ_BLOCK()        \
     while (APP_COGMANAGER_LOCK_REQ() == false) \
     {                                          \
-        EMULATION_YIELD_LOCK();                \
     }
 #define APP_COGMANAGER_LOCK_REL() HAL_lock_release(dev_cogManager_data.lock)
 

@@ -90,7 +90,6 @@ Definitions
 #include "dev_forceGauge.h"
 #include "IO_positionFeedback.h"
 #include "IO_Debug.h"
-#include "emulation_helpers.h"
 #include "lib_utility.h"
 #include "lib_timer.h"
 
@@ -106,7 +105,7 @@ Definitions
  **********************************************************************/
 
 #define APP_MONITOR_LOCK_REQ() HAL_lock_try(app_monitor_data.lock)
-#define APP_MONITOR_LOCK_REQ_BLOCK() while (APP_MONITOR_LOCK_REQ() == false) EMULATION_YIELD_LOCK();
+#define APP_MONITOR_LOCK_REQ_BLOCK() while (APP_MONITOR_LOCK_REQ() == false) {}
 #define APP_MONITOR_LOCK_REL() HAL_lock_release(app_monitor_data.lock)
 
 /**********************************************************************

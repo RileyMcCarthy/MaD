@@ -78,7 +78,6 @@ DEV/      — Device drivers (stepper, force gauge, cog manager, NVRAM, watchdog
 IO/       — Protocols & peripheral drivers (serial protocol, G-code, ADS122U04)
 Library/  — Small shared utilities (e.g. timer, static queue) — no upward deps
 HAL/      — Hardware abstraction — `HAL/P2/` on device; headers in `HAL/Include/`
-HW/       — Board / MCU helpers (e.g. `HW/P2/` for production builds)
 Generated/— Code-generated protocol encode/decode (from YAML — do not hand-edit)
 ```
 
@@ -130,9 +129,12 @@ Files are prefixed with their layer: `IO_protocol.c`, `dev_stepper.c`, `app_cont
 
 ## CI/CD & Releases
 
-Releases are triggered by pushing version tags:
+Releases are triggered by pushing version tags. **MaD Control** version lives in
+`Software/Control/package.json` — never tag `madcontrol-v*` by hand (and never
+`webapp-v*`; that prefix is retired):
 ```bash
-git tag webapp-v1.0.0   && git push --tags   # Deploy the shipped app + docs to GitHub Pages
+Software/Control/scripts/release.sh patch --no-tag   # bump package.json, then PR
+Software/Control/scripts/release.sh --publish        # tag origin/main as madcontrol-vX.Y.Z
 git tag firmware-v1.0.0 && git push --tags   # Firmware release
 git tag hardware-v1.0.0 && git push --tags   # Hardware release
 ```

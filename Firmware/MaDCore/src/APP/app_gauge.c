@@ -9,7 +9,6 @@
 #include "HAL_lock.h"
 #include "IO_positionFeedback.h"
 #include "dev_forceGauge.h"
-#include "emulation_helpers.h"
 
 /*********************************************************************
  * Macros
@@ -18,7 +17,6 @@
 #define APP_GAUGE_LOCK_REQ_BLOCK()        \
     while (APP_GAUGE_LOCK_REQ() == false) \
     {                                     \
-        EMULATION_YIELD_LOCK();           \
     }
 #define APP_GAUGE_LOCK_REL() HAL_lock_release(app_gauge_data.lock)
 

@@ -24,7 +24,6 @@
 #include "IO_SDCard.h"
 #include "IO_fullDuplexSerial.h"
 
-#include "emulation_helpers.h"
 #include "lib_utility.h"
 #include "protoemb_runtime.h"
 
@@ -37,7 +36,8 @@ static const char *APP_MESSAGE_SLAVE_VERSION = "0.0.0";
 #define APP_MESSAGESLAVE_LOCK_REQ() HAL_lock_try(app_message_slave_data.lock)
 #define APP_MESSAGESLAVE_LOCK_REQ_BLOCK()        \
     while (APP_MESSAGESLAVE_LOCK_REQ() == false) \
-        EMULATION_YIELD_LOCK();
+    {                                            \
+    }
 #define APP_MESSAGESLAVE_LOCK_REL() HAL_lock_release(app_message_slave_data.lock)
 
 typedef struct
@@ -200,7 +200,6 @@ ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWrite_test_run(const ProtoEmb_Test
     }
     while (app_testManagement_isBusy())
     {
-        EMULATION_YIELD_LOCK();
     }
 
     app_monitor_setTestName(testDataId);

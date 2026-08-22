@@ -88,7 +88,7 @@ Header template (`src/template.ch:1`) is the same minus the External Variables /
 
 ### Include ordering (as practiced)
 
-Includes are grouped: HAL first, then C stdlib, then `IO_Debug.h`, a blank line, then this module's own header, sibling-layer headers, and `emulation_helpers.h` last. From `src/IO/IO_SDCard.c:8`:
+Includes are grouped: HAL first, then C stdlib, then `IO_Debug.h`, a blank line, then this module's own header, then sibling-layer headers. From `src/IO/IO_SDCard.c:8`:
 
 ```c
 #include "HAL_lock.h"
@@ -97,7 +97,6 @@ Includes are grouped: HAL first, then C stdlib, then `IO_Debug.h`, a blank line,
 
 #include "IO_SDCard.h"
 #include "lib_staticQueue.h"
-#include "emulation_helpers.h"
 ```
 
 Headers are found via per-layer `-Isrc/...` flags in `platformio.ini` (`build_flags`, lines 24-33), so include by **bare filename** (`"app_control.h"`), never by relative path.
@@ -115,10 +114,9 @@ Headers are found via per-layer `-Isrc/...` flags in `platformio.ini` (`build_fl
 | `IO/` | `IO_` | `IO_SDCard.c`, `IO_protocol.c` |
 | `Library/` | `lib_` | `lib_staticQueue.c`, `lib_timer.c` |
 | `HAL/Include/` | `HAL_` (also `HW_` for board pin headers) | `HAL_lock.h`, `HAL_GPIO.h`, `HW_pins.h` |
-| `HW/{P2,Native}/` | board/emulation glue | `emulation_helpers.h` |
 | Config | as-parent in a `Config/` subfolder | `dev_cogManager_config.c`, `IO_SDCard_config.c` |
 
-> Note: the `HW_` prefix exists, but `HW_pins.h` actually lives in `src/HAL/Include/`, not under `src/HW/`. The `src/HW/P2/` and `src/HW/Native/` folders hold board/emulation glue (e.g. `emulation_helpers.h`) that is not `HW_`-prefixed.
+> Note: the `HW_` prefix exists, but `HW_pins.h` actually lives in `src/HAL/Include/`. Native SIL leaves the HAL undefined (Rust trampolines); P2 HAL lives in `src/HAL/P2/`.
 
 ### Functions: `module_action`, lowerCamel action
 
@@ -213,7 +211,7 @@ Strict downward dependency: `APP → DEV → IO → Library → HAL → HW`. Eac
 - Put per-module configuration (channel tables, buffer sizes, paths) in a `Config/` subfolder file that defines the data the module declares `extern`. Pattern: `src/IO/Config/IO_SDCard_config.c:31` defines buffers via `IO_SDCARD_CHANNEL_DATA_DEFINE(...)`, and `src/IO/IO_SDCard.c:74` consumes it via `extern IO_SDCard_config_S IO_SDCard_config;`.
 
 **Don't**
-- **Never** include a low-level MCU / P2 / `flexcc` framework header from `APP/`, `DEV/`, or `IO/`. The HAL is the only thing that touches `HAL/P2/` or `HW/P2/`. Build filters enforce that `HAL/P2/` + `HW/P2/` compile only in `propeller2` and `HW/Native/` only in native builds (`platformio.ini:48-51`, `:72`).
+- **Never** include a low-level MCU / P2 / `flexcc` framework header from `APP/`, `DEV/`, or `IO/`. The HAL is the only thing that touches `HAL/P2/`. Build filters compile `HAL/P2/` only in `propeller2`; `native_emulator` leaves HAL symbols undefined for the SIL trampolines (`platformio.ini`).
 - Don't call "upward" across layers. The one tolerated exception is logging: `Library/` and lower files may include `IO_Debug.h` for `DEBUG_*` (`src/Library/lib_staticQueue.c:4` includes `IO_Debug.h` plus `<string.h>`/`<stdio.h>`). Don't add other upward calls.
 
 ---
@@ -224,14 +222,14 @@ The P2 has 8 cogs; modules run on different cogs (`src/DEV/Config/dev_cogManager
 
 ### HAL locks are non-reentrant, try-acquire only
 
-`HAL_lock_try` is **non-blocking** and returns `false` if already held (`src/HAL/Include/HAL_lock.h:27`). Each module wraps it in three macros and spins with an emulator yield:
+`HAL_lock_try` is **try-acquire** and returns `false` if already held (`src/HAL/Include/HAL_lock.h:27`). Each module wraps it in three macros and spins:
 
 ```c
 #define APP_MOTION_LOCK_REQ()       HAL_lock_try(app_motion_data.lock)
-#define APP_MOTION_LOCK_REQ_BLOCK() while (APP_MOTION_LOCK_REQ() == false) { EMULATION_YIELD_LOCK(); }
+#define APP_MOTION_LOCK_REQ_BLOCK() while (APP_MOTION_LOCK_REQ() == false) {}
 #define APP_MOTION_LOCK_REL()       HAL_lock_release(app_motion_data.lock)
 ```
-(`src/APP/app_motion.c:37`. Same shape — different macro names — in `src/IO/IO_SDCard.c:22` (`IO_SDCARD_LOCK_*`) and `src/DEV/watchdog.c:23` (`SM_LOCK_*`).) `EMULATION_YIELD_LOCK()` is `usleep(5)` on native and a no-op on P2 (`src/HW/Native/emulation_helpers.h:28`, `src/HW/P2/emulation_helpers.h:20`).
+(`src/APP/app_motion.c`. Same shape — different macro names — in `src/IO/IO_SDCard.c` (`IO_SDCARD_LOCK_*`) and `src/DEV/watchdog.c` (`SM_LOCK_*`).) On P2 this is `LOCKTRY`. Native SIL preempts at the HAL trampoline after a quantum of work, so these spins need no emulator yield macros.
 
 **Do**
 - Hold the lock for the **shortest critical section** — copy a value out under lock, then return it. `src/APP/app_motion.c:367`:

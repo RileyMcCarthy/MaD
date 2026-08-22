@@ -9,7 +9,6 @@
 #include "HAL_lock.h"
 #include "HAL_time.h"
 #include "IO_Debug.h"
-#include "emulation_helpers.h"
 /**********************************************************************
  * Constants
  **********************************************************************/
@@ -54,7 +53,6 @@ static dev_servo_channelConfig_S dev_servo_channelConfig[DEV_SERVO_CHANNEL_COUNT
 #define DEV_SERVO_LOCK_REQ_BLOCK()                     \
     while (HAL_lock_try(dev_servo_data.lock) == false) \
     {                                                  \
-        EMULATION_YIELD_LOCK();                        \
     }
 #define DEV_SERVO_LOCK_REL() (void)HAL_lock_release(dev_servo_data.lock)
 

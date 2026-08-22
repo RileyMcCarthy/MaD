@@ -16,8 +16,6 @@
 
 #include "IO_SDCard.h"
 #include "IO_Debug.h"
-
-#include "emulation_helpers.h"
 /**********************************************************************
  * Constants
  **********************************************************************/
@@ -30,7 +28,6 @@
 #define APP_TESTMANAGEMENT_LOCK_REQ_BLOCK()        \
     while (APP_TESTMANAGEMENT_LOCK_REQ() == false) \
     {                                              \
-        EMULATION_YIELD_LOCK();                    \
     }
 #define APP_TESTMANAGEMENT_LOCK_REL() HAL_lock_release(app_testManagement_data.lock)
 /**********************************************************************
