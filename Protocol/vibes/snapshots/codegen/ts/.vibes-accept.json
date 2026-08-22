@@ -1,0 +1,50 @@
+{
+  "component": "protocol",
+  "producer": "codegen-ts",
+  "receipts": [
+    {
+      "acceptedBy": "--yes",
+      "baseSha": "bfa09dbff17866f5ed808f1b1d8d4937a37cfdf6",
+      "ciJob": "protocol-codegen",
+      "component": "protocol",
+      "counts": {
+        "acceptRatio": 1,
+        "accepted": 1,
+        "added": 1,
+        "changed": 1,
+        "deleted": 0,
+        "skippedEquivalent": 0
+      },
+      "doctorRuns": [
+        "50d7bb38d0eaf09bacdfd52cc842964cc8e7ed4aeefec56b89bc70bdbeb91cc8",
+        "50d7bb38d0eaf09bacdfd52cc842964cc8e7ed4aeefec56b89bc70bdbeb91cc8",
+        "50d7bb38d0eaf09bacdfd52cc842964cc8e7ed4aeefec56b89bc70bdbeb91cc8"
+      ],
+      "entries": [
+        {
+          "file": "protoemb.ts",
+          "previousSha256": null,
+          "sha256": "d3fa98f5c07400477007acc70f3aa5cf6efe85b4c6c7c8a5265ac6bf205050aa",
+          "verdict": "added"
+        }
+      ],
+      "headSha": "2efa4428dd8037e0c64d75c253a94c2528793297",
+      "id": "r95464340048b5243",
+      "mode": "bootstrap",
+      "producer": "codegen-ts",
+      "producerEverCIVerified": false,
+      "producerOutcome": "ok",
+      "producerTrust": "verified",
+      "reason": "First adoption: record baselines for the Control gcode corpus and the three protocol codegen targets. No witnessed source changes in this commit.",
+      "sourceContext": {
+        "changedWitnessPaths": [],
+        "corpusChangedPaths": [],
+        "exercisedWitnessPaths": []
+      },
+      "toolVersion": "0.1.0",
+      "unverifiedProducer": true,
+      "version": 1
+    }
+  ],
+  "schema": "vibes-accept/1"
+}

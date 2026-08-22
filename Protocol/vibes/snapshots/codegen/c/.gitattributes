@@ -1,0 +1,6 @@
+# Written by `vibes accept --bootstrap`.
+# Snapshots are generated. They are reviewed through the Vibes report, never
+# by reading this diff, and they must never be auto-merged.
+* -merge -diff linguist-generated=true
+# The receipt is the exception: it is the statement a reviewer should read.
+.vibes-accept*.json merge diff -linguist-generated

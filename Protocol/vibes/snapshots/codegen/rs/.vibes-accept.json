@@ -1,0 +1,50 @@
+{
+  "component": "protocol",
+  "producer": "codegen-rs",
+  "receipts": [
+    {
+      "acceptedBy": "--yes",
+      "baseSha": "bfa09dbff17866f5ed808f1b1d8d4937a37cfdf6",
+      "ciJob": "protocol-codegen",
+      "component": "protocol",
+      "counts": {
+        "acceptRatio": 1,
+        "accepted": 1,
+        "added": 1,
+        "changed": 1,
+        "deleted": 0,
+        "skippedEquivalent": 0
+      },
+      "doctorRuns": [
+        "26b308f157b5341a320aade8770206a565d690672f984e36de0bee4312d54366",
+        "26b308f157b5341a320aade8770206a565d690672f984e36de0bee4312d54366",
+        "26b308f157b5341a320aade8770206a565d690672f984e36de0bee4312d54366"
+      ],
+      "entries": [
+        {
+          "file": "protoemb.rs",
+          "previousSha256": null,
+          "sha256": "a499cd48fd561e745f70fe3fe16112089fa73297642e074b1276177398b6854a",
+          "verdict": "added"
+        }
+      ],
+      "headSha": "2efa4428dd8037e0c64d75c253a94c2528793297",
+      "id": "rb4d16bf20e4ae7b4",
+      "mode": "bootstrap",
+      "producer": "codegen-rs",
+      "producerEverCIVerified": false,
+      "producerOutcome": "ok",
+      "producerTrust": "verified",
+      "reason": "First adoption: record baselines for the Control gcode corpus and the three protocol codegen targets. No witnessed source changes in this commit.",
+      "sourceContext": {
+        "changedWitnessPaths": [],
+        "corpusChangedPaths": [],
+        "exercisedWitnessPaths": []
+      },
+      "toolVersion": "0.1.0",
+      "unverifiedProducer": true,
+      "version": 1
+    }
+  ],
+  "schema": "vibes-accept/1"
+}

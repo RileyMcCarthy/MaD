@@ -529,6 +529,64 @@ jobs:
   # docs-only PR skips the component jobs). Mark THIS check — "CI Gate" — as the
   # required status check on `main` instead of each job, so path-filtered skips
   # never block a PR.
+  # ── Vibes: behaviour report ────────────────────────────────────────────────
+  # NOT in ci-gate.needs yet, deliberately. This is its first run against real
+  # CI; it reports without blocking until it has proven itself here.
+  #
+  # `fetch-depth: 0` is REQUIRED and is not optional tuning: actions/checkout
+  # clones at depth 1 by default, `origin/main` then does not resolve, and Vibes
+  # refuses to run rather than silently falling back to HEAD — a HEAD fallback
+  # would certify a fully-changed PR as unchanged.
+  vibes:
+    name: Vibes behaviour report
+    runs-on: ubuntu-latest
+    if: ${{ always() }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          submodules: recursive
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.x'
+      - name: Install protocol generator deps
+        run: pip install -r Protocol/ProtoEmb/core/requirements.txt
+
+      - name: Build Vibes
+        working-directory: Vibes
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+
+      - name: Vibes self-test
+        working-directory: Vibes
+        run: npx vitest run
+
+      # The Control producer imports src/protocol/generated/, which is gitignored
+      # and therefore absent from a fresh clone. Without this the producer fails
+      # and the component honestly renders `not-run` — but that is not what we
+      # are trying to measure here.
+      - name: Prepare Control (deps + generated protocol)
+        working-directory: Software/Control
+        run: |
+          npm ci --no-audit --no-fund
+          npm run generate:proto
+
+      - name: Run Vibes
+        run: node Vibes/bin/vibes.mjs run
+
+      - name: Upload report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: vibes-report
+          path: .vibes/report/
+          if-no-files-found: warn
+
   ci-gate:
     name: CI Gate
     needs:

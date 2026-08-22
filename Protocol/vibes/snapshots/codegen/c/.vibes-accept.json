@@ -1,0 +1,68 @@
+{
+  "component": "protocol",
+  "producer": "codegen-c",
+  "receipts": [
+    {
+      "acceptedBy": "--yes",
+      "baseSha": "bfa09dbff17866f5ed808f1b1d8d4937a37cfdf6",
+      "ciJob": "protocol-codegen",
+      "component": "protocol",
+      "counts": {
+        "acceptRatio": 1,
+        "accepted": 4,
+        "added": 4,
+        "changed": 4,
+        "deleted": 0,
+        "skippedEquivalent": 0
+      },
+      "doctorRuns": [
+        "bcc5bf89379b4d4cc69e75c3ed71a961b72e6906f4e452afab6fd062b7af2b18",
+        "bcc5bf89379b4d4cc69e75c3ed71a961b72e6906f4e452afab6fd062b7af2b18",
+        "bcc5bf89379b4d4cc69e75c3ed71a961b72e6906f4e452afab6fd062b7af2b18"
+      ],
+      "entries": [
+        {
+          "file": "protoemb.c",
+          "previousSha256": null,
+          "sha256": "9663d55dcccc1df1692bbb7783b9ba26b38e3dfbc9e2492e27e14929e2805c36",
+          "verdict": "added"
+        },
+        {
+          "file": "protoemb.h",
+          "previousSha256": null,
+          "sha256": "740055bdc69243299a4120bbfd0ebbaad4d855ae282d28d7061a6f651747c6d2",
+          "verdict": "added"
+        },
+        {
+          "file": "protoemb_runtime.c",
+          "previousSha256": null,
+          "sha256": "640f2e7502aae90fb9d97c3969c109b8430fa20e81543ef8d1777463cd3ce788",
+          "verdict": "added"
+        },
+        {
+          "file": "protoemb_runtime.h",
+          "previousSha256": null,
+          "sha256": "54b96a4183279ea03fb530487dc373bd0cf85c1b0d95c17bdeaf9ae0ad50de22",
+          "verdict": "added"
+        }
+      ],
+      "headSha": "2efa4428dd8037e0c64d75c253a94c2528793297",
+      "id": "r0ad08b2c55972889",
+      "mode": "bootstrap",
+      "producer": "codegen-c",
+      "producerEverCIVerified": false,
+      "producerOutcome": "ok",
+      "producerTrust": "verified",
+      "reason": "First adoption: record baselines for the Control gcode corpus and the three protocol codegen targets. No witnessed source changes in this commit.",
+      "sourceContext": {
+        "changedWitnessPaths": [],
+        "corpusChangedPaths": [],
+        "exercisedWitnessPaths": []
+      },
+      "toolVersion": "0.1.0",
+      "unverifiedProducer": true,
+      "version": 1
+    }
+  ],
+  "schema": "vibes-accept/1"
+}
