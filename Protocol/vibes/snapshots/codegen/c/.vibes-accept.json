@@ -62,6 +62,62 @@
       "toolVersion": "0.1.0",
       "unverifiedProducer": true,
       "version": 1
+    },
+    {
+      "acceptedBy": "--yes",
+      "baseSha": "dcb46a62f34d0428be9266581a1fc0c8c5c25152",
+      "ciJob": "protocol-codegen",
+      "component": "protocol",
+      "counts": {
+        "acceptRatio": 1,
+        "accepted": 4,
+        "added": 4,
+        "changed": 4,
+        "deleted": 0,
+        "skippedEquivalent": 0
+      },
+      "entries": [
+        {
+          "file": "protoemb.c",
+          "previousSha256": null,
+          "sha256": "1b684b928d8c282e044f5a14193f287412ffcde025077c1da4430bc4723a7f84",
+          "verdict": "added"
+        },
+        {
+          "file": "protoemb.h",
+          "previousSha256": null,
+          "sha256": "0fab6bfe4571babf88cd04b48350d306accb26e2e2e97642cd434ba8f9b17589",
+          "verdict": "added"
+        },
+        {
+          "file": "protoemb_runtime.c",
+          "previousSha256": null,
+          "sha256": "640f2e7502aae90fb9d97c3969c109b8430fa20e81543ef8d1777463cd3ce788",
+          "verdict": "added"
+        },
+        {
+          "file": "protoemb_runtime.h",
+          "previousSha256": null,
+          "sha256": "54b96a4183279ea03fb530487dc373bd0cf85c1b0d95c17bdeaf9ae0ad50de22",
+          "verdict": "added"
+        }
+      ],
+      "headSha": "6b8e232b88313f6047f887ff8380508301906eac",
+      "id": "rdea1439e07054b5a",
+      "mode": "bulk",
+      "producer": "codegen-c",
+      "producerEverCIVerified": false,
+      "producerOutcome": "ok",
+      "producerTrust": "verified",
+      "reason": "Re-record after rebasing onto main: PR #57 moved MaDProtocol.yaml to protocol_version 2, replacing forceGaugeNPerStep/forceGaugeZeroOffset with loadCellCapacity/loadCellSensitivity/loadCellZeroBalance. The generated C, TS and Rust codecs change with it.",
+      "sourceContext": {
+        "changedWitnessPaths": [],
+        "corpusChangedPaths": [],
+        "exercisedWitnessPaths": []
+      },
+      "toolVersion": "0.1.0",
+      "unverifiedProducer": true,
+      "version": 1
     }
   ],
   "schema": "vibes-accept/1"

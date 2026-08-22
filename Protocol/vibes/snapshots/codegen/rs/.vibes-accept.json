@@ -4,7 +4,7 @@
   "receipts": [
     {
       "acceptedBy": "--yes",
-      "baseSha": "bfa09dbff17866f5ed808f1b1d8d4937a37cfdf6",
+      "baseSha": "dcb46a62f34d0428be9266581a1fc0c8c5c25152",
       "ciJob": "protocol-codegen",
       "component": "protocol",
       "counts": {
@@ -15,27 +15,22 @@
         "deleted": 0,
         "skippedEquivalent": 0
       },
-      "doctorRuns": [
-        "26b308f157b5341a320aade8770206a565d690672f984e36de0bee4312d54366",
-        "26b308f157b5341a320aade8770206a565d690672f984e36de0bee4312d54366",
-        "26b308f157b5341a320aade8770206a565d690672f984e36de0bee4312d54366"
-      ],
       "entries": [
         {
           "file": "protoemb.rs",
           "previousSha256": null,
-          "sha256": "a499cd48fd561e745f70fe3fe16112089fa73297642e074b1276177398b6854a",
+          "sha256": "1a7925bb02a0b91bfe2487d0f922de79ce7bad44ff85c5def5b5cb673b234b6f",
           "verdict": "added"
         }
       ],
-      "headSha": "2efa4428dd8037e0c64d75c253a94c2528793297",
-      "id": "rb4d16bf20e4ae7b4",
-      "mode": "bootstrap",
+      "headSha": "6b8e232b88313f6047f887ff8380508301906eac",
+      "id": "r6b71fd94021e33ef",
+      "mode": "bulk",
       "producer": "codegen-rs",
       "producerEverCIVerified": false,
       "producerOutcome": "ok",
       "producerTrust": "verified",
-      "reason": "First adoption: record baselines for the Control gcode corpus and the three protocol codegen targets. No witnessed source changes in this commit.",
+      "reason": "Re-record after rebasing onto main: PR #57 moved MaDProtocol.yaml to protocol_version 2, replacing forceGaugeNPerStep/forceGaugeZeroOffset with loadCellCapacity/loadCellSensitivity/loadCellZeroBalance. The generated C, TS and Rust codecs change with it.",
       "sourceContext": {
         "changedWitnessPaths": [],
         "corpusChangedPaths": [],
