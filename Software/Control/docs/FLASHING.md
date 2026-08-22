@@ -48,10 +48,13 @@ From `Hardware/EdgeBoard/KiCad/MaD_Edge.kicad_sch`, connector **J1**
 ("Debug/Programming", `Conn_01x04`) carries, in order:
 
 ```
-GND / RESn / P63 / P62
+pin 1: P62    pin 2: P63    pin 3: RESn    pin 4: GND
 ```
 
-That is the standard Parallax Prop Plug pinout, and P62/P63 is also where a
+(Confirmed against the pad-to-net assignments in `MaD_Edge.kicad_pcb`; an earlier
+revision of this document listed the four nets in reverse pin order.)
+
+P62/P63 is also where a
 production firmware build puts the protocol UART (`HAL_serial.c`, with
 `ENABLE_DEBUG_SERIAL` off). So on production hardware **one connection serves
 both control and programming** — the app defaults to reusing the port it is

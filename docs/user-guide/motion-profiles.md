@@ -26,7 +26,9 @@ left). You can add and delete sets and moves freely.
 | **Dwell** | time (ms) | Hold position for a fixed time. |
 | **Waveform** | centre, amplitude, frequency, cycles | A smooth sine oscillation about the centre, for cyclic / fatigue loading. |
 
-Each move has an **absolute / relative** selector. For the **Waveform** move, the
+Each move has an **absolute / relative** selector, which also renames the waveform's centre field: **Centre** is a position when absolute, **Centre offset** a distance from where the machine already is when relative.
+
+For the **Waveform** move, the
 app shows the live **peak velocity** and **duration**, and warns you if it would
 exceed the machine's velocity limit. The machine generates the oscillation
 itself, so long cyclic runs continue unattended.

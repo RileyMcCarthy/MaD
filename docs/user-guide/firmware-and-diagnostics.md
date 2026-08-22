@@ -27,8 +27,8 @@ control. There is nothing to install.
 
 ### What you need
 
-- The **Debug/Programming header (J1)** connected — `GND / RESn / P63 / P62`,
-  the standard Parallax 4-pin pinout.
+- A cable to the board's **Debug/Programming header (J1)** — the 4-pin header
+  fitted to every EdgeBoard, wired pin 1→4 as `P62 / P63 / RESn / GND`.
 - A USB-serial adapter that **drives RESn from DTR**, such as a Parallax Prop
   Plug. The app resets the chip that way to reach its boot ROM.
 
