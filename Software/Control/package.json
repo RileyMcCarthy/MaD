@@ -21,6 +21,7 @@
     "e2e:smoke": "node e2e/run-smoke.mjs",
     "hw:flash": "vite-node tools/hw-p2load.mts --",
     "sil:bridge": "node tools/sil-ws-bridge.mjs",
+    "e2e:diagnostics": "node e2e/diagnostics-smoke.mjs",
     "sil:smoke": "node e2e/sil-smoke.mjs",
     "sil:app": "node e2e/sil-playground.mjs",
     "docs:screenshots": "node e2e/capture-screenshots.mjs"

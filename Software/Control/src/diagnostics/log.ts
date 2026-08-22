@@ -24,7 +24,17 @@
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
-export type LogCat = 'app' | 'device' | 'proto' | 'store' | 'ui' | 'fs' | 'perf' | 'wasm';
+export type LogCat =
+  | 'app'
+  | 'device'
+  | 'proto'
+  | 'store'
+  | 'ui'
+  | 'fs'
+  | 'perf'
+  | 'wasm'
+  /** Firmware flashing over the P2 boot ROM — a different protocol to `proto`. */
+  | 'flash';
 
 export type LogThread = 'main' | 'worker';
 

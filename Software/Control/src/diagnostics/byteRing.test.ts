@@ -208,3 +208,47 @@ describe('ByteRing — reset', () => {
     expect(residentBytes(ring)).toEqual(Uint8Array.of(9, 9, 9));
   });
 });
+
+describe('ByteRing.tailHex', () => {
+  it('returns the most recent bytes, oldest → newest', () => {
+    const ring = new ByteRing(64, 8);
+    ring.push('rx', Uint8Array.from([0x01, 0x02, 0x03, 0xff]));
+    expect(ring.tailHex(4)).toBe('01 02 03 ff');
+  });
+
+  it('caps at the requested count', () => {
+    const ring = new ByteRing(64, 8);
+    ring.push('rx', Uint8Array.from([1, 2, 3, 4, 5, 6]));
+    expect(ring.tailHex(2)).toBe('05 06');
+  });
+
+  it('never returns more than has been written', () => {
+    const ring = new ByteRing(64, 8);
+    ring.push('rx', Uint8Array.from([0xaa]));
+    expect(ring.tailHex(32)).toBe('aa');
+  });
+
+  it('is empty before anything is pushed', () => {
+    expect(new ByteRing(64, 8).tailHex()).toBe('');
+  });
+
+  it('reads across a wrap correctly', () => {
+    // Capacity 4: the last four bytes span the seam in the backing buffer.
+    const ring = new ByteRing(4, 8);
+    ring.push('rx', Uint8Array.from([1, 2, 3]));
+    ring.push('tx', Uint8Array.from([4, 5]));
+    expect(ring.tailHex(4)).toBe('02 03 04 05');
+  });
+
+  it('cannot return more than the ring holds', () => {
+    const ring = new ByteRing(4, 8);
+    ring.push('rx', Uint8Array.from([1, 2, 3, 4, 5, 6]));
+    expect(ring.tailHex(64)).toBe('03 04 05 06');
+  });
+
+  it('zero-pads single-digit bytes so offsets stay readable', () => {
+    const ring = new ByteRing(16, 4);
+    ring.push('rx', Uint8Array.from([0x00, 0x0f, 0x10]));
+    expect(ring.tailHex(3)).toBe('00 0f 10');
+  });
+});

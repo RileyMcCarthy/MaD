@@ -283,13 +283,20 @@ label.field {
 }
 
 input,
-select {
+select,
+textarea {
   font: inherit;
   background: var(--bg);
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 8px 10px;
+}
+
+/* Multi-line fields size vertically only — horizontal drag would break the
+ * surrounding flex layout. */
+textarea {
+  resize: vertical;
 }
 
 /* Drop the native select chrome so the box renders exactly as styled and the
