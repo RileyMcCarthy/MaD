@@ -288,6 +288,10 @@ function fromRawEntry(e: RawDiffEntry, contentUnchanged: boolean): ChangedSource
   };
 }
 
+/** Written by `vibes accept`, never by a producer. */
+const ACCEPT_GITATTRIBUTES = '.gitattributes';
+const ACCEPT_RECEIPT_RE = /^\.vibes-accept(?:-\d+)?\.json$/;
+
 const MANIFEST_RE = /(^|\/)vibes\/vibes\.manifest\.[cm]?js$/;
 const RECEIPT_RE = /(^|\/)\.vibes-accept\.json$/;
 
@@ -390,7 +394,17 @@ export async function categorizeSnapshots(
       continue;
     }
     if (!e.path.startsWith(prefix)) continue;
-    baseline.set(e.path.slice(prefix.length), { oid: e.oid, mode: e.mode });
+    const rel = e.path.slice(prefix.length);
+    // `vibes accept` writes a receipt and a `.gitattributes` beside the
+    // baselines. A producer never emits either, so comparing the baseline
+    // roster against received output reports both as `deleted` on every run —
+    // two false rows at the top of every report, exactly where the real
+    // behaviour diff belongs.
+    //
+    // Only these two. `_vibes-census.json` IS producer output and must stay
+    // compared, or a shrinking corpus becomes invisible.
+    if (!rel.includes('/') && (rel === ACCEPT_GITATTRIBUTES || ACCEPT_RECEIPT_RE.test(rel))) continue;
+    baseline.set(rel, { oid: e.oid, mode: e.mode });
   }
 
   /* baseline content hashes, batched by oid — no path quoting, one process */

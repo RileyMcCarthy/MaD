@@ -332,3 +332,47 @@ describe('categorizeSnapshots', () => {
     expect(r.entries.map((e) => e.file)).toEqual(['a.txt']);
   });
 });
+
+describe("accept's own bookkeeping is not producer output", () => {
+  // Regression: `vibes accept` writes a receipt and a `.gitattributes` beside
+  // the baselines. Neither is ever emitted by a producer, so the baseline
+  // roster reported both as `deleted` on every run — two false rows sitting
+  // directly above the real behaviour diff.
+  test('a committed receipt and .gitattributes are not reported as deleted', async () => {
+    const f = await fixture();
+    await f.write('snaps/a.txt', 'one\n');
+    await f.write('snaps/.gitattributes', '* -merge -diff\n');
+    await f.write('snaps/.vibes-accept.json', '{"receipts":[]}\n');
+    await f.git('add', '-A');
+    const base = await f.commit('baseline');
+
+    const repo = await openRepo({ cwd: f.dir });
+    const cat = await categorizeSnapshots(repo, {
+      base,
+      baselineDir: 'snaps',
+      received: [{ file: 'a.txt', sha256: await sha256File(f.dir, 'snaps/a.txt'), bytes: 4 }],
+    });
+    expect(cat.entries.filter((e) => e.status === 'deleted')).toEqual([]);
+    expect(cat.entries.map((e) => e.file)).toEqual(['a.txt']);
+  });
+
+  test('_vibes-census.json IS producer output and stays compared', async () => {
+    // The census is emitted by the producer. Excluding it would make a
+    // shrinking corpus invisible, which is the opposite of the point.
+    const f = await fixture();
+    await f.write('snaps/_vibes-census.json', '{"cases":["a","b"]}\n');
+    await f.git('add', '-A');
+    const base = await f.commit('baseline');
+
+    const repo = await openRepo({ cwd: f.dir });
+    const cat = await categorizeSnapshots(repo, { base, baselineDir: 'snaps', received: [] });
+    expect(cat.entries.map((e) => `${e.file}:${e.status}`)).toEqual(['_vibes-census.json:deleted']);
+  });
+});
+
+async function sha256File(dir: string, rel: string): Promise<string> {
+  const { createHash } = await import('node:crypto');
+  const { readFile } = await import('node:fs/promises');
+  const { join } = await import('node:path');
+  return createHash('sha256').update(await readFile(join(dir, rel))).digest('hex');
+}
