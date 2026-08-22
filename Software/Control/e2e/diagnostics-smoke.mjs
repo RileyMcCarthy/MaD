@@ -291,6 +291,61 @@ async function main() {
     }
   });
 
+  // ── The bundle leads with a usable verdict ─────────────────────────────────
+  await scenario('the bundle carries an accurate triage summary', async () => {
+    const { browser, page } = await openApp('garbage');
+    try {
+      await page.waitForTimeout(6000);
+      const bundle = await page.evaluate(async () => {
+        const mod = await import('/src/diagnostics/exportBundle.ts');
+        return mod.buildDiagnosticsBundle({ includeSerialTail: false });
+      });
+      const t = bundle.triage;
+      assert(t, 'bundle has no triage summary');
+      assert(typeof t.headline === 'string' && t.headline.length > 0, 'triage has no headline');
+      assert(t.everConnected === true, 'triage says never connected, but the app connected');
+      // A garbled link is the scenario; the summary must actually name it.
+      assert(t.undecodableTraffic === true, 'triage missed the undecodable traffic');
+      assert(
+        t.flags.some((f) => /baud rate, wiring, or firmware/.test(f)),
+        `triage flags lack an actionable hint: ${JSON.stringify(t.flags)}`,
+      );
+      assert(t.firstError, 'triage has no first error despite errors being logged');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  // ── A reload must not destroy the evidence ─────────────────────────────────
+  await scenario('the previous session survives a reload', async () => {
+    const { browser, page } = await openApp('garbage');
+    try {
+      await page.waitForTimeout(5000);
+      const before = await snapshot(page);
+      assert(before.entries.length > 0, 'nothing logged before the reload');
+
+      // The case people actually report: it froze, so they restarted it.
+      await page.reload();
+      await page.goto(`${APP_URL}#/connect`);
+      const connect = page.getByTestId('connect-device');
+      if (await connect.count()) await connect.click().catch(() => {});
+      await page.waitForTimeout(6000);
+
+      const bundle = await page.evaluate(async () => {
+        const mod = await import('/src/diagnostics/exportBundle.ts');
+        return mod.buildDiagnosticsBundle({ includeSerialTail: false });
+      });
+      const prev = bundle.previousSession;
+      assert(prev, 'the pre-reload session was lost — a report after a reload has no evidence');
+      assert(prev.entries.length > 0, 'the persisted previous session is empty');
+      assert(prev.id !== bundle.sessionId, 'previous session id equals the current one');
+      // An unclean end is itself diagnostic, so it must be recorded as such.
+      assert(prev.closed === false, 'a session killed by reload was recorded as cleanly closed');
+    } finally {
+      await browser.close();
+    }
+  });
+
   const passed = results.filter(Boolean).length;
   console.log(`\n${passed}/${results.length} diagnostics checks passed`);
   if (passed !== results.length) process.exit(1);

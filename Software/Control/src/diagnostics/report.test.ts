@@ -6,9 +6,11 @@ import {
   environmentBlock,
   ISSUE_URL_MAX,
   ISSUE_TEMPLATE,
+  shortUserAgent,
 } from './report';
 import type { DiagnosticsBundle } from './exportBundle';
 import type { LogEntry } from './log';
+import { summariseForTriage } from './triage';
 
 function entry(over: Partial<LogEntry> = {}): LogEntry {
   return {
@@ -23,7 +25,10 @@ function entry(over: Partial<LogEntry> = {}): LogEntry {
 }
 
 function bundle(over: Partial<DiagnosticsBundle> = {}): DiagnosticsBundle {
+  const log = over.log ?? { entries: [], counters: {}, dropped: 0, startedAt: 0 };
   return {
+    triage: summariseForTriage(log),
+    sessionId: 's-test',
     generatedAt: '2026-01-01T12:00:00.000Z',
     version: '0.1.0',
     gitSha: 'abc1234',
@@ -201,5 +206,73 @@ describe('buildIssueUrl under pathological input', () => {
     expect(parsed.pathname).toBe('/RileyMcCarthy/MaD/issues/new');
     expect(parsed.searchParams.get('template')).toBe(ISSUE_TEMPLATE);
     expect((parsed.searchParams.get('summary') ?? '').length).toBeGreaterThan(0);
+  });
+});
+
+describe('shortUserAgent', () => {
+  it('reduces a UA string to something a human reads', () => {
+    expect(
+      shortUserAgent(
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36',
+      ),
+    ).toBe('Chrome 130 on Intel Mac OS X 10_15_7');
+  });
+
+  it('names Edge as Edge rather than its Edg token', () => {
+    expect(shortUserAgent('Mozilla/5.0 (Windows NT 10.0) Chrome/130.0 Edg/130.0')).toContain('Edge 130');
+  });
+
+  it('degrades without throwing on an unrecognised UA', () => {
+    expect(shortUserAgent('something else entirely')).toBe('unknown browser');
+  });
+});
+
+describe('issue fields include the computed summary', () => {
+  it('carries a triage block the maintainer can read first', () => {
+    const fields = buildIssueFields({ summary: 'x' }, bundle(), 'f.json');
+    expect(typeof fields.triage).toBe('string');
+    expect(fields.triage.length).toBeGreaterThan(0);
+  });
+
+  it('drops the triage block before the user’s own words', () => {
+    const url = buildIssueUrl(
+      buildIssueFields(
+        { summary: 'the gantry stalls', steps: 'jog to 40' },
+        bundle({
+          log: {
+            entries: Array.from({ length: 5 }, (_, i) =>
+              entry({ level: 'error', tag: `t${i}`, msg: 'q'.repeat(2000) }),
+            ),
+            counters: {},
+            dropped: 0,
+            startedAt: 0,
+          },
+        }),
+        'f.json',
+      ),
+    );
+    const params = new URL(url).searchParams;
+    expect(params.get('summary')).toBe('the gantry stalls');
+    expect(params.get('steps')).toBe('jog to 40');
+  });
+});
+
+describe('shortUserAgent browser precedence', () => {
+  it('does not report Chrome for a Chromium-based browser', () => {
+    // Every Chromium UA contains "Chrome", so precedence is what makes this
+    // correct — a misattributed browser sends a bug hunt the wrong way.
+    expect(shortUserAgent('Mozilla/5.0 (X11) Chrome/130.0 Safari/537.36 OPR/115.0')).toContain('Opera 115');
+  });
+
+  it('reports Chrome for actual Chrome despite the Safari token', () => {
+    expect(
+      shortUserAgent('Mozilla/5.0 (Macintosh) AppleWebKit/537.36 Chrome/130.0 Safari/537.36'),
+    ).toContain('Chrome 130');
+  });
+
+  it('reports Safari for real Safari', () => {
+    expect(
+      shortUserAgent('Mozilla/5.0 (Macintosh) AppleWebKit/605.1 Version/17.4 Safari/605.1.15'),
+    ).toContain('Safari 17');
   });
 });

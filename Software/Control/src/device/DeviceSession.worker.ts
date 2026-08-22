@@ -128,6 +128,18 @@ const logPerf = logger('perf');
 
 /** How often the periodic sample/state traffic is summarised into the log. */
 const AGGREGATE_INTERVAL_MS = 1000;
+/**
+ * How often a *healthy* stream reports in.
+ *
+ * At one entry per second the 5000-entry ring holds only ~83 minutes of
+ * connected time, so a long run silently evicts the connect sequence, the
+ * config and the test program — exactly the context a report needs. A heartbeat
+ * that only says "still fine" does not deserve that budget, so once the rate is
+ * steady it backs off to this. Anything abnormal reports immediately.
+ */
+const AGGREGATE_STEADY_MS = 10_000;
+/** Rate change (as a fraction) that counts as worth reporting early. */
+const AGGREGATE_RATE_DELTA = 0.2;
 
 /**
  * Rolls the ~100 Hz periodic traffic up into one entry per second.
@@ -152,6 +164,37 @@ class PeriodicAggregator {
   private lastForce = Number.NaN;
 
   private lastPosition = Number.NaN;
+
+  /** When a healthy summary last reached the log, and at what rate. */
+  private reportedAt = 0;
+
+  private reportedRate = Number.NaN;
+
+  /**
+   * Report a healthy window only when it is the first one, when the rate has
+   * moved materially, or when the steady-state interval has elapsed. A stream
+   * holding a constant rate is the case that must not consume the ring.
+   */
+  private shouldReport(now: number, rateHz: number): boolean {
+    if (this.reportedAt === 0) return true;
+    if (now - this.reportedAt >= AGGREGATE_STEADY_MS) return true;
+    if (!Number.isFinite(this.reportedRate)) return true;
+    const base = Math.max(this.reportedRate, 1);
+    return Math.abs(rateHz - this.reportedRate) / base >= AGGREGATE_RATE_DELTA;
+  }
+
+  /**
+   * Clear per-session state as well as the window.
+   *
+   * `reset()` runs after every window, so the backoff bookkeeping deliberately
+   * survives it — otherwise a healthy stream would report every second forever.
+   * A new connection is different: its first window should always be recorded.
+   */
+  resetSession(): void {
+    this.reportedAt = 0;
+    this.reportedRate = Number.NaN;
+    this.reset();
+  }
 
   reset(): void {
     this.windowStart = nowMs();
@@ -213,8 +256,12 @@ class PeriodicAggregator {
           anomalies: this.anomalies,
           firstAnomaly: this.firstAnomaly,
         });
-      } else {
+        this.reportedAt = now;
+        this.reportedRate = rateHz;
+      } else if (this.shouldReport(now, rateHz)) {
         logPerf.debug('stream', undefined, data);
+        this.reportedAt = now;
+        this.reportedRate = rateHz;
       }
     }
     const carryForce = this.lastForce;
@@ -339,7 +386,7 @@ class DeviceSession {
     this.client.register_periodic(MSG_READ_STATE, MSG_STATE_PERIOD_MS, STATE_STORAGE_COUNT);
 
     byteRing.reset();
-    this.periodic.reset();
+    this.periodic.resetSession();
     logDev.info('connect', 'session started', {
       responseTimeoutMs: opts.responseTimeoutMs ?? 2000,
       samplePeriodMs: MSG_SAMPLE_PERIOD_MS,

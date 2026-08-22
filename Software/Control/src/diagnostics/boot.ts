@@ -9,6 +9,7 @@
  */
 
 import { logger, nowMs, type LogLevel } from './log';
+import { startLogPersistence, type LogPersistence } from './persist';
 
 const log = logger('app');
 
@@ -17,6 +18,20 @@ declare const __APP_VERSION__: string;
 declare const __GIT_SHA__: string;
 
 let installed = false;
+
+/**
+ * Identifies this page load, so a persisted log can be told apart from the one
+ * that a reload destroyed. Derived from the boot time plus a random suffix —
+ * `crypto.randomUUID` is not available on every target this app runs on.
+ */
+export const SESSION_ID = `s-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e6).toString(36)}`;
+
+let persistence: LogPersistence | null = null;
+
+/** The live persistence handle, for the export path to flush before bundling. */
+export function logPersistence(): LogPersistence | null {
+  return persistence;
+}
 
 /** One line that identifies the environment a report came from. */
 function logBootEnvironment(): void {
@@ -28,6 +43,7 @@ function logBootEnvironment(): void {
     version: typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : 'unknown',
     gitSha: typeof __GIT_SHA__ === 'string' ? __GIT_SHA__ : 'unknown',
     mode: import.meta.env.MODE,
+    sessionId: SESSION_ID,
     userAgent: navigator.userAgent,
     language: navigator.language,
     hardwareConcurrency: nav.hardwareConcurrency ?? null,
@@ -172,4 +188,5 @@ export function installAppDiagnostics(): void {
   trackEnvironmentChanges();
   trackMainThreadHealth();
   trackHeap();
+  persistence = startLogPersistence(SESSION_ID);
 }

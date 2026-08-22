@@ -33,6 +33,13 @@ body:
         3. Try to jog
 
   - type: textarea
+    id: triage
+    attributes:
+      label: Summary
+      description: Computed by the app from the session log.
+      render: text
+
+  - type: textarea
     id: environment
     attributes:
       label: Environment

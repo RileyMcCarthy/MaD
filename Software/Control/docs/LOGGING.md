@@ -51,6 +51,15 @@ entries of the session with it.
 Per-`cat:tag` counters survive eviction, so "how many nacks this session" stays
 accurate over a long run.
 
+**Steady-state backoff.** The sample aggregator originally emitted every second,
+which meant healthy traffic alone evicted the entire ring in ~83 minutes of
+connected time — a long run would lose the connect sequence, the config and the
+test program. A heartbeat that only says "still fine" does not deserve that
+budget, so once the rate is steady it reports every 10 s instead
+(`AGGREGATE_STEADY_MS`). Anything abnormal, or a rate change over 20 %, reports
+immediately. That takes the ring from ~83 minutes to ~14 hours of healthy
+traffic.
+
 ## Runtime verbosity
 
 Console mirroring is controlled by two `localStorage` keys, read at boot and
@@ -81,6 +90,7 @@ defaults unless the main thread pushes a filter across.
 | `ui` | route changes, React render crashes with component stack |
 | `fs` | folder chosen/restored/permission, every DataStore op by name + duration, all failures |
 | `wasm` | protocol-core traps (`poll()` panics) |
+| `flash` | firmware programming: reset, boot-ROM detect attempts and replies, upload deciles, checksum verify, failure phase |
 
 ### Hot-path rules
 
@@ -237,12 +247,58 @@ the app simply looked dead. A watchdog now warns (twice, then stops) when a
 *decoded frames*, not events, so the timeouts a garbled link generates cannot
 placate it.
 
+## Firmware flashing
+
+Programming runs against the P2 **boot ROM**, not the MaD protocol, so none of
+the `proto` instrumentation covers it — and it is the longest, most
+failure-prone serial operation in the app. `program.ts` logs the whole run:
+reset, each detect attempt with what the ROM actually replied, upload start and
+deciles, checksum verification, and on failure **which phase it died in**.
+Reset/detect points at wiring or a busy port, upload at the link, verify at
+dropped bytes.
+
+`p2loader.ts` stays dependency-free — it is shared with `tools/hw-p2load.mts`,
+which drives the identical protocol headlessly — so it emits a typed
+`LoaderEvent` and the orchestrator decides what to log.
+
+## Surviving a reload
+
+`src/diagnostics/persist.ts` mirrors the merged timeline into **IndexedDB** as
+it is produced. Without it the case people most often report — "it froze so I
+restarted it" — destroys the only evidence of what went wrong.
+
+The last **3** sessions are retained, **2000** entries each (the tail, since
+after a crash the last entries are the interesting ones). Writes are buffered
+and flushed every 5 s plus on `visibilitychange`, which is the last reliable
+moment before a tab is discarded. Every IndexedDB call is best-effort: a denied
+quota or private mode degrades to "no persistence", never an error.
+
+A bundle attaches the previous session automatically as `previousSession`. Its
+`closed: false` means that session never shut down cleanly — itself a strong
+signal.
+
+## Triage summary
+
+`src/diagnostics/triage.ts` computes a verdict from the log and puts it at the
+top of every bundle, so a maintainer does not have to read 5000 entries to learn
+whether the link ever worked. It reports the first error *and* the last (the
+first is usually the cause, the last usually a symptom), ranks failure counters,
+and raises actionable flags — never connected, connected but silent, undecodable
+traffic, WASM trap, render crash, failed flash, main-thread stall, truncated
+log. The same text goes into the issue body.
+
 ## Reporting a bug
 
 `src/diagnostics/report.ts` turns a session into a filed GitHub issue. There is
 no backend and nowhere to hide a token, so the flow is two steps with zero
 infrastructure:
 
+0. **Review first.** `buildReportPreview` produces the real bundle and lists
+   what it contains and which identifying details it carries (browser and OS,
+   the adapter's USB id, data-folder names, raw bytes). This becomes a public
+   issue, so a checkbox is not informed consent — the user sees the actual
+   contents. `fileBugReport` then publishes *the reviewed bundle*, not a
+   freshly-built one, so what ships is what was seen.
 1. The bundle downloads locally as `mad-diagnostics-<iso>.json`.
 2. A pre-filled issue opens against `RileyMcCarthy/MaD` using the
    `.github/ISSUE_TEMPLATE/app-bug.yml` form, which the user submits under their
@@ -262,6 +318,21 @@ silently produce a dead link — asserted in tests.
 because that module reaches the device client, which constructs a `Worker` on
 import. Keeping it out of the static graph leaves the URL and field builders
 pure and unit-testable.
+
+## Reading a bundle
+
+```bash
+node tools/view-diagnostics.mjs report.json            # summary + timeline
+node tools/view-diagnostics.mjs report.json --bytes    # annotated hex dump
+node tools/view-diagnostics.mjs report.json --level warn --cat proto,flash
+node tools/view-diagnostics.mjs report.json --previous # the pre-reload session
+```
+
+The bundle is built to be complete, not readable. The viewer renders the triage
+summary, a filterable merged timeline, and — the part that is otherwise
+unusable — a hex dump of the serial window with **inter-chunk timing**, because
+a frame split across two reads with a pause between them looks nothing like one
+that arrived whole.
 
 ## Build identity
 

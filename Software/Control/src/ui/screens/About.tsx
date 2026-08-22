@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useStore } from '@/store/useStore';
-import { fileBugReport } from '@/diagnostics/report';
+import { buildReportPreview, fileBugReport, type ReportPreview } from '@/diagnostics/report';
 
 export default function About() {
   const fw = useStore((s) => s.firmwareVersion);
@@ -11,15 +11,35 @@ export default function About() {
   const [steps, setSteps] = useState('');
   const [includeSerialTail, setIncludeSerialTail] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [preview, setPreview] = useState<ReportPreview | null>(null);
   const [filed, setFiled] = useState<{ fileName: string; issueUrl: string } | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
 
-  const submit = async () => {
+  const input = { summary, steps, includeSerialTail };
+
+  // Two steps on purpose: this ends up in a public issue, so the contents are
+  // shown before anything is written or a tab is opened.
+  const review = async () => {
     setBusy(true);
     setFailed(null);
     try {
-      const result = await fileBugReport({ summary, steps, includeSerialTail });
+      setPreview(await buildReportPreview(input));
+    } catch (err) {
+      setFailed(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submit = async () => {
+    if (!preview) return;
+    setBusy(true);
+    setFailed(null);
+    try {
+      // Pass the reviewed bundle through, so what is published is what was seen.
+      const result = await fileBugReport(input, preview);
       setFiled({ fileName: result.fileName, issueUrl: result.issueUrl });
+      setPreview(null);
     } catch (err) {
       setFailed(err instanceof Error ? err.message : String(err));
     } finally {
@@ -100,13 +120,53 @@ export default function About() {
         <div className="row" style={{ marginTop: 12 }}>
           <button
             className="primary"
-            onClick={() => void submit()}
+            onClick={() => void review()}
             disabled={busy || summary.trim() === ''}
-            data-testid="report-submit"
+            data-testid="report-review"
           >
-            {busy ? 'Preparing…' : 'Report a bug'}
+            {busy && !preview ? 'Preparing…' : 'Review report'}
           </button>
         </div>
+
+        {preview && (
+          <div className="panel card" style={{ marginTop: 12 }} data-testid="report-preview">
+            <h3 style={{ marginTop: 0 }}>What will be sent</h3>
+            <pre className="code-block" style={{ maxHeight: 180 }} data-testid="report-triage">
+              {preview.triageText}
+            </pre>
+            <p className="muted" style={{ marginBottom: 4 }}>Included:</p>
+            <ul className="muted" style={{ marginTop: 0 }}>
+              {preview.contents.map((line) => (
+                <li key={line}>{line}</li>
+              ))}
+            </ul>
+            <p className="muted" style={{ marginBottom: 4 }}>
+              Identifying details — this becomes a public issue:
+            </p>
+            <ul className="muted" style={{ marginTop: 0 }} data-testid="report-disclosures">
+              {preview.disclosures.map((line) => (
+                <li key={line}>{line}</li>
+              ))}
+            </ul>
+            <p className="muted">
+              File size: {(preview.sizeBytes / 1024).toFixed(0)} KB · No sample values, no file
+              contents, no folder paths.
+            </p>
+            <div className="row">
+              <button
+                className="primary"
+                onClick={() => void submit()}
+                disabled={busy}
+                data-testid="report-submit"
+              >
+                {busy ? 'Preparing…' : 'Download and open issue'}
+              </button>
+              <button onClick={() => setPreview(null)} disabled={busy} data-testid="report-cancel">
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
 
         {filed && (
           <p className="muted" style={{ marginTop: 12 }} data-testid="report-filed">
