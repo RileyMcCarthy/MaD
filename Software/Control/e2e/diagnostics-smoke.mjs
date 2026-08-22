@@ -247,8 +247,10 @@ async function main() {
       const first = (await snapshot(page)).entries.filter((e) => e.tag === 'undecodable').length;
       assert(first > 0, 'no undecodable warning in the first session');
 
-      // Session-scoped watchdog state that is not reset on connect would make
-      // every later session silently undiagnosable.
+      // Reconnecting tears down and recreates the worker, so this covers the
+      // whole second-session path: fresh WASM instance, fresh byte ring, fresh
+      // batch transport. A user who unplugs and replugs must not end up with a
+      // silently undiagnosable session.
       await page.evaluate(() => globalThis.__madLog.clear());
       await page.goto(`${APP_URL}#/connect`);
       await page.getByRole('button', { name: /^Disconnect$/ }).click();
