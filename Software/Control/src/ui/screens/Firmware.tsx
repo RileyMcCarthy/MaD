@@ -100,8 +100,8 @@ export default function Firmware() {
         <p className="muted">
           Programs the Propeller 2 directly from the browser over the same USB-serial adapter
           used for control — the loader resets the chip with DTR and talks to its boot ROM.
-          This needs the Debug/Programming header J1 (GND / RESn / P63 / P62) and an adapter
-          that drives RESn from DTR, such as a Parallax Prop Plug. The isolated Raspberry Pi
+          This uses the Debug/Programming header J1 (pin 1 P62, 2 P63, 3 RESn, 4 GND) and
+          needs an adapter that drives RESn from DTR, such as a Parallax Prop Plug. The isolated Raspberry Pi
           link on P53/P55 has no reset line and cannot program the board.
         </p>
 

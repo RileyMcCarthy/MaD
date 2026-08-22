@@ -51,7 +51,7 @@ sampleCount(u32)`) and the device streams `StoredSample` records.
 | `Move` | packed | 8 B | A G-code move (position/velocity/dwell) |
 | `WaveformMove` | packed | 9 B | A `G123` waveform canned cycle (shape, amplitude, frequency, cycles) |
 | `StoredSample` | packed | 11 B | A logged sample data point |
-| `MachineConfiguration` | aligned | 68 B | Calibration & limits (NVRAM) |
+| `MachineConfiguration` | aligned | 64 B | Calibration & limits (NVRAM) |
 | `SampleProfile` | aligned | 20 B | Per-test material limits |
 | `TestRun` | aligned | 14 B | gcodeId + testDataId references |
 | `FirmwareVersion` | aligned | 16 B | Version string |

@@ -38,7 +38,11 @@ export default function About() {
         </p>
         <p className="muted">
           Firmware releases:{' '}
-          <a href="https://github.com/" target="_blank" rel="noreferrer">
+          <a
+            href="https://github.com/RileyMcCarthy/MaD/releases"
+            target="_blank"
+            rel="noreferrer"
+          >
             GitHub
           </a>
         </p>
