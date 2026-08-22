@@ -102,6 +102,24 @@ jobs:
           npm run generate:proto
       - name: Verify (typecheck + lint + tests + build)
         run: npm run verify
+      # The unit tests cover the logging machinery; they cannot cover the
+      # instrumentation call sites, and the worker half (protocol frames,
+      # correlation ids, byte ring, batch transport) only runs with a device
+      # attached. This drives a scripted fake serial port instead, so unlike the
+      # SIL suite it needs no emulator or bridge — just Chrome and the dev
+      # server. Without it, a regression that silently empties a bug report
+      # would ship green.
+      - name: Diagnostics e2e (logging actually captures)
+        run: |
+          nohup npm run dev -- --host 127.0.0.1 --port 5174 > /tmp/mad-vite.log 2>&1 &
+          for i in $(seq 1 60); do
+            curl -sf http://127.0.0.1:5174 >/dev/null 2>&1 && break
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:5174 >/dev/null 2>&1 || {
+            echo "=== vite log ==="; cat /tmp/mad-vite.log || true; exit 1
+          }
+          APP_URL=http://127.0.0.1:5174/ npm run e2e:diagnostics
       - name: Schema ↔ domain mapping lockstep (M12)
         working-directory: ${{ github.workspace }}
         run: |
