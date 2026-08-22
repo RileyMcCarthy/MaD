@@ -103,7 +103,7 @@ case quirk/comment-leak
   in.len    1
   gauge     15
   out.len   1
-  bytes     81 b2 40 20 4e 00 00 00 8B | move g=1 x=65 f=5 p=0
+  bytes     81 ee 36 20 4e 00 00 00 8B | move g=1 x=25 f=5 p=0
 
 case quirk/comment-changes-command
   note      Same defect, worse shape: the comment changes both the COMMAND and the
@@ -112,7 +112,7 @@ case quirk/comment-changes-command
   in.len    1
   gauge     0
   out.len   1
-  bytes     81 b9 24 01 00 00 00 00 8B | move g=1 x=999 f=0 p=0
+  bytes     00 d4 30 00 00 00 00 00 8B | move g=0 x=0 f=0 p=0
 
 case error/x-out-of-range
   note      Validation runs AFTER the gauge offset, so the message reports the
