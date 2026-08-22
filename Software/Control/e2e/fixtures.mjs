@@ -319,10 +319,13 @@ export async function chooseDataFolder(page) {
  * if the app ever stops resetting the chip before probing.
  *
  * Exposes `window.__bootRom` for assertions: { reset, image, finished, ok }.
+ *
+ * `portCount` > 1 presents several indistinguishable adapters, which is how the
+ * app's refusal to guess a programming target gets tested.
  */
-export function installFakeBootRom() {
+export function installFakeBootRom(portCount = 1) {
   const CHECKSUM_MAGIC = 0x706f7250;
-  const state = { reset: 0, image: [], finished: false, ok: null, dtr: null };
+  const state = { reset: 0, image: [], finished: false, ok: null, dtr: null, bytesIn: 0, replies: 0 };
   window.__bootRom = state;
 
   let controller;
@@ -333,6 +336,7 @@ export function installFakeBootRom() {
 
   const emit = (s) => {
     const bytes = Uint8Array.from(s, (c) => c.charCodeAt(0));
+    state.replies += 1;
     try {
       controller?.enqueue(bytes);
     } catch {
@@ -341,6 +345,7 @@ export function installFakeBootRom() {
   };
 
   function consume(text) {
+    state.bytesIn += text.length;
     buffered += text;
     if (!hexMode) {
       if (buffered.includes('> Prop_Chk 0 0 0 0  ')) {
@@ -355,8 +360,15 @@ export function installFakeBootRom() {
       buffered = buffered.slice(at + '> Prop_Hex 0 0 0 0'.length);
     }
     const tokens = buffered.split(/\s+/);
-    // Keep a trailing partial token for the next write.
-    buffered = /\s$/.test(buffered) ? '' : (tokens.pop() ?? '');
+    // Keep a trailing partial token for the next write — unless it is one of
+    // the single-character terminators, which are complete as they stand and
+    // would otherwise sit unprocessed forever (nothing follows them).
+    let partial = /\s$/.test(buffered) ? '' : (tokens.pop() ?? '');
+    if (partial === '~' || partial === '?') {
+      tokens.push(partial);
+      partial = '';
+    }
+    buffered = partial;
     for (const tok of tokens) {
       if (tok === '' || tok === '>') continue;
       if (tok === '~') {
@@ -434,6 +446,9 @@ export function installFakeBootRom() {
   };
 
   const port = makePort();
+  // Extra ports are decoys: same ids, no ROM behind them. Only the first can
+  // actually be programmed, so a test that flashes a decoy would hang.
+  const ports = [port, ...Array.from({ length: Math.max(0, portCount - 1) }, makePort)];
   Object.defineProperty(navigator, 'serial', {
     configurable: true,
     value: {
@@ -441,7 +456,7 @@ export function installFakeBootRom() {
         return port;
       },
       async getPorts() {
-        return [port];
+        return ports;
       },
       addEventListener() {},
       removeEventListener() {},

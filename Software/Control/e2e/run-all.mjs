@@ -1403,7 +1403,7 @@ const scenarios = [
     },
   },
   {
-    id: 'G1',
+    id: 'FW1',
     name: 'Firmware: flash a .bin through the boot ROM loader',
     async run() {
       // Uses the in-page boot-ROM fake, not SIL: the emulator has no P2 boot
@@ -1419,6 +1419,9 @@ const scenarios = [
         page.on('dialog', (d) => d.accept());
 
         await page.goto(`${APP_URL}#/firmware`);
+        // The target must be named before anything is written.
+        await page.getByTestId('flash-target').filter({ hasText: /USB 0403:6015/ })
+          .waitFor({ timeout: 8000 });
 
         // A 2000-byte image: spans multiple 128-byte chunks with a partial tail.
         const SIZE = 2000;
@@ -1454,7 +1457,35 @@ const scenarios = [
     },
   },
   {
-    id: 'G2',
+    id: 'FW3',
+    name: 'Firmware: refuses to guess a target when adapters are ambiguous',
+    async run() {
+      const browser = await chromium.launch({ channel: 'chrome', headless: true });
+      try {
+        const page = await browser.newPage();
+        // Two indistinguishable adapters and no remembered choice.
+        await page.addInitScript(installFakeBootRom, 2);
+        await page.addInitScript(installOpfsDataDir, OPFS_DIR);
+
+        await page.goto(`${APP_URL}#/firmware`);
+        await page.getByTestId('flash-target').filter({ hasText: /choose which one/i })
+          .waitFor({ timeout: 8000 });
+
+        await page.getByTestId('firmware-file').setInputFiles({
+          name: 'program.bin',
+          mimeType: 'application/octet-stream',
+          buffer: Buffer.from([1, 2, 3, 4]),
+        });
+        // A file alone must not be enough to arm the button.
+        assert(
+          await page.getByTestId('flash-firmware').isDisabled(),
+          'flash button was enabled without an unambiguous target',
+        );
+      } finally { await browser.close(); }
+    },
+  },
+  {
+    id: 'FW2',
     name: 'Firmware: a silent boot ROM surfaces a readable error',
     async run() {
       const browser = await chromium.launch({ channel: 'chrome', headless: true });

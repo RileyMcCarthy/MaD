@@ -19,6 +19,15 @@ export class WebSerialTransport implements P2Transport {
   private writer: WritableStreamDefaultWriter<Uint8Array> | null = null;
   /** Bytes read from the stream but not yet consumed by a short read(). */
   private pending = new Uint8Array(0);
+  /**
+   * A `read()` that was issued but whose timeout fired first.
+   *
+   * Racing a read against a timer and walking away loses data: the read stays
+   * pending on the stream, and whatever arrives next resolves that orphan
+   * instead of the caller. Holding it here means the next call races the same
+   * promise and picks the bytes up.
+   */
+  private inflight: Promise<ReadableStreamReadResult<Uint8Array>> | null = null;
 
   private constructor(private readonly port: SerialPort) {}
 
@@ -65,14 +74,26 @@ export class WebSerialTransport implements P2Transport {
   /** One stream read bounded by `timeoutMs`; null on timeout or end-of-stream. */
   private async readChunk(timeoutMs: number): Promise<Uint8Array | null> {
     if (!this.reader || timeoutMs <= 0) return null;
+    // Resume a read left over from a previous timeout rather than starting a
+    // second one, which would queue behind it and strand the first result.
+    this.inflight ??= this.reader.read();
+    const pendingRead = this.inflight;
+
+    const TIMED_OUT = Symbol('timeout');
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const timeout = new Promise<null>((resolve) => {
-      timer = setTimeout(() => resolve(null), timeoutMs);
+    const timeout = new Promise<typeof TIMED_OUT>((resolve) => {
+      timer = setTimeout(() => resolve(TIMED_OUT), timeoutMs);
     });
+
     try {
-      const result = await Promise.race([this.reader.read(), timeout]);
-      if (!result || result.done || !result.value) return null;
+      const result = await Promise.race([pendingRead, timeout]);
+      if (result === TIMED_OUT) return null; // keep this.inflight for next time
+      this.inflight = null;
+      if (result.done || !result.value) return null;
       return result.value;
+    } catch {
+      this.inflight = null;
+      return null;
     } finally {
       clearTimeout(timer);
     }
@@ -105,6 +126,7 @@ export class WebSerialTransport implements P2Transport {
     }
     this.reader = null;
     this.writer = null;
+    this.inflight = null;
     try {
       await this.port.close();
     } catch {
