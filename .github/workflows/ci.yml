@@ -579,6 +579,35 @@ jobs:
       - name: Run Vibes
         run: node Vibes/bin/vibes.mjs run
 
+      # ── TEMPORARY: adoption-PR-only reproducibility check ──────────────────
+      # In this PR the baselines are NEW relative to origin/main, so Vibes
+      # compares them as `added` and never checks them against what CI just
+      # produced. On every later PR the normal comparison covers this. Here it
+      # does not, and this is precisely the run where it matters: the baselines
+      # were recorded on Apple Silicon and this runner is ubuntu x64, and
+      # Math.sin differs by 1 ULP between those architectures on the same Node.
+      # Delete this step once the baselines are on main.
+      - name: Committed baselines reproduce on this platform
+        run: |
+          set -uo pipefail
+          fail=0
+          check() {
+            local recv="$1" base="$2"
+            if [ ! -d "$recv" ]; then echo "::error::no received output at $recv"; fail=1; return; fi
+            if diff -r -q -x '.gitattributes' -x '.vibes-accept.json' "$base" "$recv"; then
+              echo "  reproduced   $base"
+            else
+              echo "::error::$base does NOT reproduce on this platform"
+              diff -r -u -x '.gitattributes' -x '.vibes-accept.json' "$base" "$recv" | head -40
+              fail=1
+            fi
+          }
+          check .vibes/received/control/gcode-corpus  Software/Control/vibes/snapshots/gcode
+          check .vibes/received/protocol/codegen-c    Protocol/vibes/snapshots/codegen/c
+          check .vibes/received/protocol/codegen-rs   Protocol/vibes/snapshots/codegen/rs
+          check .vibes/received/protocol/codegen-ts   Protocol/vibes/snapshots/codegen/ts
+          exit $fail
+
       - name: Upload report
         if: ${{ always() }}
         uses: actions/upload-artifact@v7
