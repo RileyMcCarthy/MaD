@@ -57,3 +57,21 @@ Hardware/DS2Addon/KICAD/jlcpcb/production_files/GERBER-DS2_Addon.zip
 
 # Local scratch notes / Claude memories (not committed)
 notes/
+
+# ── Vibes ──────────────────────────────────────────────────────────────────
+# Runtime state. Producer output lands in .vibes/received/ and is NEVER
+# committed: `vibes accept` is the only thing that writes a committed baseline.
+#
+# The `.vibes/*` form is required, NOT `.vibes/`. A directory-form ignore makes
+# git skip the directory entirely, so a `!` negation inside it can never take
+# effect and policy.lock.json would stay invisible. (Verified 2026-08-21.)
+.vibes/*
+!.vibes/policy.lock.json
+
+# Snapshot baselines ARE committed — they are the product. Re-include them
+# against the repo-wide bare-extension rules above (*.log, *.tmp, *.bak,
+# *.backup), which otherwise reach INTO a snapshot dir and silently hide a
+# produced file, making the report show zero changes forever.
+!**/vibes/snapshots/**
+# Ingest artifacts are per-run and carry timestamps; never snapshot-compare them.
+**/vibes/artifacts/
