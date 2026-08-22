@@ -127,3 +127,30 @@ describe('waveform (G123) canned cycle', () => {
     expect(() => gcodeLinesToMachineMoveBuffers(['G123 A5 F1 C2 W0'], 0)).toThrow(MoveValidationError);
   });
 });
+
+describe('trailing comments are not parameters', () => {
+  // parseGcodeToMove had no comment handling while its sibling
+  // parseGcodeWaveform did, so the two parsers disagreed about the same line.
+  it('ignores a token inside a trailing comment', () => {
+    expect(parseGcodeToMove('G1 X10 F5 ; X50 fast')).toMatchObject({ g: 1, x: 10, f: 5 });
+  });
+
+  it('does not let a comment change the command', () => {
+    // The worst shape of the defect: a rapid to X0 became a linear move to X999.
+    expect(parseGcodeToMove('G0 X0 ; G1 X999')).toMatchObject({ g: 0, x: 0 });
+  });
+
+  it('was already correct without a space after the semicolon', () => {
+    // ";X50" parsed to NaN and was skipped, so only the spaced form ever bit.
+    expect(parseGcodeToMove('G1 X10 F5 ;X50')).toMatchObject({ g: 1, x: 10 });
+  });
+
+  it('leaves the comments generateTestGcode actually emits alone', () => {
+    expect(parseGcodeToMove('G90 ; Set absolute positioning')).toMatchObject({ g: 90, x: 0 });
+    expect(parseGcodeToMove('G122 ; Stop - signal test complete')).toMatchObject({ g: 122 });
+  });
+
+  it('agrees with parseGcodeWaveform, which always had the guard', () => {
+    expect(parseGcodeWaveform('G123 A5 F2 C3 W0 ; A99')).toMatchObject({ amplitude: 5, cycles: 3 });
+  });
+});
