@@ -562,9 +562,13 @@ jobs:
           npm ci --no-audit --no-fund
           npm run build
 
+      # Runs the suite twice: once plain, once with the GitHub Actions
+      # environment variables forced on. resolveBase branches on
+      # GITHUB_EVENT_NAME, so a test that inherits the ambient environment
+      # passes locally and takes a completely different rung here.
       - name: Vibes self-test
         working-directory: Vibes
-        run: npx vitest run
+        run: npm run verify
 
       # The Control producer imports src/protocol/generated/, which is gitignored
       # and therefore absent from a fresh clone. Without this the producer fails

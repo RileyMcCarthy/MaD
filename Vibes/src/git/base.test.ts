@@ -34,7 +34,14 @@ async function linear(): Promise<{
 }
 
 /** Never fetch, never touch the network, in every test. */
+// NOTE: this deliberately does NOT pin `env`. It is spread LAST at most call
+// sites, so an `env` here would clobber the environment a test set for itself.
+// Every call must therefore pass its own `env` — including `env: {}` when it
+// wants none. Inheriting process.env passes locally and fails in CI, where
+// GITHUB_EVENT_NAME is set and resolveBase takes a different rung entirely.
 const OFFLINE = { allowFetch: 'never' as const };
+/** No ambient environment. Use when the test is about git state, not CI context. */
+const NO_ENV = { env: {} as Record<string, string | undefined> };
 
 describe('resolveBase — rung 1, explicit', () => {
   test('an explicit sha wins over everything and is exact', async () => {
@@ -71,7 +78,7 @@ describe('resolveBase — rung 1, explicit', () => {
   test('an explicit base that does not resolve THROWS — never substitutes', async () => {
     const { repo } = await linear();
     await expect(
-      resolveBase({ repo, baseRef: 'origin/main', explicit: 'no-such-ref', ...OFFLINE }),
+      resolveBase({ repo, baseRef: 'origin/main', explicit: 'no-such-ref', ...OFFLINE, ...NO_ENV }),
     ).rejects.toBeInstanceOf(BaseUnresolvableError);
   });
 });
@@ -197,14 +204,14 @@ describe('resolveBase — rung 4, merge-base', () => {
     await f.commit('feature');
 
     const repo = await openRepo({ cwd: f.dir });
-    const r = await resolveBase({ repo, baseRef: 'main', ...OFFLINE });
+    const r = await resolveBase({ repo, baseRef: 'main', ...OFFLINE, ...NO_ENV });
     expect(r).toMatchObject({ sha: forkPoint, source: 'merge-base', confidence: 'exact' });
     expect(r.resolvedRef).toBe('main');
   });
 
   test('an unresolvable base ref throws WITH the fetch-depth remediation', async () => {
     const { repo } = await linear();
-    const err = await resolveBase({ repo, baseRef: 'origin/main', ...OFFLINE }).catch(
+    const err = await resolveBase({ repo, baseRef: 'origin/main', ...OFFLINE, ...NO_ENV }).catch(
       (e: unknown) => e,
     );
     expect(err).toBeInstanceOf(BaseUnresolvableError);
@@ -219,7 +226,7 @@ describe('the sameAsHead hard gate', () => {
     // Push to main: `merge-base main main` is the tip. A zero-diff all-green
     // report about nothing is the failure mode this gate exists for.
     const { repo, head } = await linear();
-    const r = await resolveBase({ repo, baseRef: 'HEAD', explicit: 'HEAD', ...OFFLINE });
+    const r = await resolveBase({ repo, baseRef: 'HEAD', explicit: 'HEAD', ...OFFLINE, ...NO_ENV });
     expect(r.sha).toBe(head);
     expect(r.sameAsHead).toBe(true);
     expect(r.warnings.map((w) => w.code)).toContain('base-same-as-head');

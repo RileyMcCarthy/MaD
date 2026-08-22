@@ -4,13 +4,18 @@
   "private": true,
   "type": "module",
   "description": "Behaviour-snapshot and test reporting. Makes a change reviewable as a report instead of a code diff.",
-  "bin": { "vibes": "./bin/vibes.mjs" },
-  "engines": { "node": ">=20" },
+  "bin": {
+    "vibes": "./bin/vibes.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "build": "tsc -b",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "verify": "tsc --noEmit && vitest run"
+    "verify": "tsc --noEmit && vitest run && npm run test:ci",
+    "test:ci": "GITHUB_EVENT_NAME=pull_request GITHUB_BASE_REF=main GITHUB_REF_TYPE=branch GITHUB_ACTIONS=true CI=true vitest run"
   },
   "dependencies": {
     "diff": "^9.0.0",
