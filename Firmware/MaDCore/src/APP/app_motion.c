@@ -28,7 +28,6 @@
 
 #include "IO_Debug.h"
 #include "IO_positionFeedback.h"
-#include "emulation_helpers.h"
 #include "watchdog.h"
 /**********************************************************************
  * Constants
@@ -43,7 +42,6 @@
 #define APP_MOTION_LOCK_REQ_BLOCK()        \
     while (APP_MOTION_LOCK_REQ() == false) \
     {                                      \
-        EMULATION_YIELD_LOCK();            \
     }
 #define APP_MOTION_LOCK_REL() HAL_lock_release(app_motion_data.lock)
 

@@ -8,7 +8,6 @@
 #include "lib_staticQueue.h"
 #include <stdlib.h>
 #include <stdbool.h>
-#include "emulation_helpers.h"
 #include "IO_Debug.h"
 /**********************************************************************
  * Constants
@@ -105,10 +104,6 @@ void IO_fullDuplexSerial_run(void)
         {
             HAL_serial_transmitData(hw, &txByte, 1U);
         }
-
-        /* No-op on hardware (keeps the poll tight); yields the CPU under native
-         * emulation so the SERIAL cog thread does not busy-spin. */
-        EMULATION_YIELD_SERIAL();
     }
 }
 

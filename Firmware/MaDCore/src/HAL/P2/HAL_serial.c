@@ -8,9 +8,7 @@
 
 #include "smartpins.h"
 #include "propeller2.h"
-#include "emulation_helpers.h"
 #include <stdlib.h>
-#include <unistd.h>
 /**********************************************************************
  * Constants
  **********************************************************************/
@@ -18,7 +16,6 @@
  * a few instructions, so this comfortably spans one inter-byte gap at 2 Mbaud
  * (~5 us). */
 #define HAL_SERIAL_RX_IDLE_SPINS (1024U)
-#define HAL_SERIAL_RX_YIELD_MASK (0x3FU)
 
 /*********************************************************************
  * Macros
@@ -229,10 +226,6 @@ uint32_t HAL_serial_recieveBytes(HAL_serial_channel_E channel, uint8_t *const bu
                 if (idle >= HAL_SERIAL_RX_IDLE_SPINS)
                 {
                     break;
-                }
-                if ((idle & HAL_SERIAL_RX_YIELD_MASK) == 0U)
-                {
-                    EMULATION_YIELD_SERIAL();
                 }
             }
         }

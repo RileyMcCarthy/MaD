@@ -10,7 +10,6 @@
 #include "HAL_lock.h"
 #include "dev_nvram.h"
 #include "IO_Debug.h"
-#include "emulation_helpers.h"
 #include "HW_pins.h"
 #ifdef __FLEXC__
 #include "propeller2.h"
@@ -23,7 +22,7 @@
  * Macros
  **********************************************************************/
 #define SM_LOCK_REQ() HAL_lock_try(dev_nvram_data.lock)
-#define SM_LOCK_REQ_BLOCK() while (SM_LOCK_REQ() == false) EMULATION_YIELD_LOCK();
+#define SM_LOCK_REQ_BLOCK() while (SM_LOCK_REQ() == false) {}
 #define SM_LOCK_REL() HAL_lock_release(dev_nvram_data.lock)
 
 #define DEV_NVRAM_CHANNEL_VALID(channel) (channel >= 0 || channel < DEV_NVRAM_CHANNEL_COUNT)

@@ -11,7 +11,6 @@
 #include <string.h>
 #include "watchdog.h"
 #include "IO_Debug.h"
-#include "emulation_helpers.h"
 /**********************************************************************
  * Constants
  **********************************************************************/
@@ -21,7 +20,7 @@
  * Macros
  **********************************************************************/
 #define SM_LOCK_REQ() HAL_lock_try(watchdog_data.lock)
-#define SM_LOCK_REQ_BLOCK() while (SM_LOCK_REQ() == false) EMULATION_YIELD_LOCK();
+#define SM_LOCK_REQ_BLOCK() while (SM_LOCK_REQ() == false) {}
 #define SM_LOCK_REL() HAL_lock_release(watchdog_data.lock)
 
 #define WATCHDOG_CHANNEL_VALID(channel) (channel >= 0 || channel < WATCHDOG_CHANNEL_COUNT)
