@@ -55,6 +55,9 @@ import type {
   VerdictKind,
 } from '../types.js';
 
+/** Written by `vibes accept`, not by a producer. */
+const GITATTRIBUTES_BASENAME = '.gitattributes';
+
 /** What `vibes accept` writes. */
 export const RECEIPT_BASENAME = '.vibes-accept.json';
 /** What verification reads — the canonical name plus any rotated sibling. */
@@ -163,6 +166,20 @@ export async function collectOutDir(
       else receipts.push(...parsed.receipts);
       continue;
     }
+    // `.gitattributes` at the top of an out dir is written by `vibes accept`
+    // itself, with fixed content, and is not producer output. It can therefore
+    // never appear in a receipt's entries, so scanning it guarantees a
+    // permanent `unreceipted-baseline` error on every adopted corpus — which is
+    // exactly what the first real CI run of this tool reported against itself.
+    // `isBookkeepingFile` already classifies it; this agrees with it.
+    //
+    // KNOWN GAP, stated rather than hidden: this means a hand-edit of that file
+    // is not caught here. It matters — dropping `-merge` would let git
+    // auto-merge two branches' snapshots into a file matching neither, while
+    // still passing review. That belongs in policy drift, not in the receipt
+    // scan, and is not implemented yet.
+    if (rel === GITATTRIBUTES_BASENAME) continue;
+
     // Census and provenance are Vibes bookkeeping, but they are NOT skipped
     // here: their bytes are behaviour the census check reads, and skipping them
     // would make a shrinking corpus invisible to the receipt scan too.

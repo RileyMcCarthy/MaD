@@ -510,3 +510,35 @@ test('the contract Receipt shape is a subset of HonestyReceipt', () => {
   const r: Receipt = receipt();
   expect(r.version).toBe(1);
 });
+
+describe('accept-written .gitattributes is not a snapshot', () => {
+  // Regression: the first real CI run of this tool reported
+  // `unreceipted-baseline` against every adopted corpus, because
+  // `vibes accept --bootstrap` writes a `.gitattributes` beside the baselines
+  // and never lists it in the receipt. Scanning it guaranteed a permanent
+  // error on every correctly-bootstrapped repo.
+  test('collectOutDir skips a top-level .gitattributes', async () => {
+    const f = await fixture();
+    await f.write('snaps/a.txt', 'one\n');
+    await f.write('snaps/.gitattributes', '* -merge -diff linguist-generated=true\n');
+    await f.git('add', '-A');
+    const rev = await f.commit('baseline');
+
+    const repo = await openRepo({ cwd: f.dir });
+    const out = await collectOutDir(repo, rev, 'snaps');
+    expect(out.files.map((x) => x.file)).toEqual(['a.txt']);
+  });
+
+  test('a NESTED .gitattributes is still a snapshot', async () => {
+    // Only the top level is accept's. A producer that genuinely emits
+    // `cases/.gitattributes` is emitting a snapshot and must stay vouched for.
+    const f = await fixture();
+    await f.write('snaps/cases/.gitattributes', 'x\n');
+    await f.git('add', '-A');
+    const rev = await f.commit('baseline');
+
+    const repo = await openRepo({ cwd: f.dir });
+    const out = await collectOutDir(repo, rev, 'snaps');
+    expect(out.files.map((x) => x.file)).toEqual(['cases/.gitattributes']);
+  });
+});
