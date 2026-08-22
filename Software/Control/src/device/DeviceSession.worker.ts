@@ -333,6 +333,13 @@ class DeviceSession {
       lastError: '',
       lastErrorAt: 0,
     };
+    // Must reset alongside `stats`: the watchdog diffs against `stats.bytesIn`,
+    // so a stale baseline from the previous session makes the delta negative
+    // and silently disables undecodable detection for every later connection.
+    this.gibberishAt = 0;
+    this.gibberishBytes = 0;
+    this.gibberishEvents = 0;
+    this.gibberishWarnings = 0;
 
     this.client.register_periodic(MSG_READ_SAMPLE, MSG_SAMPLE_PERIOD_MS, SAMPLE_STORAGE_COUNT);
     this.client.register_periodic(MSG_READ_STATE, MSG_STATE_PERIOD_MS, STATE_STORAGE_COUNT);

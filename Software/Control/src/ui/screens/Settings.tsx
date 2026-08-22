@@ -82,8 +82,8 @@ export default function Settings() {
         <p className="muted">
           Frontend-only control app. Talks to the Propeller 2 over the Web Serial
           API; the protocol runs as WebAssembly compiled from the same Rust core
-          used by the firmware tooling and SIL. Firmware flashing is not available
-          in the browser — use the <code>loadp2</code> CLI for that.
+          used by the firmware tooling and SIL. Firmware can be flashed from the
+          browser too — see the Firmware page.
         </p>
       </div>
     </div>

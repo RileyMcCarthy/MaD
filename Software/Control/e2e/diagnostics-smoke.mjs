@@ -239,6 +239,30 @@ async function main() {
     }
   });
 
+  // ── Detection must survive a reconnect, not just the first session ─────────
+  await scenario('a reconnected session still detects garbage', async () => {
+    const { browser, page } = await openApp('garbage');
+    try {
+      await page.waitForTimeout(8000);
+      const first = (await snapshot(page)).entries.filter((e) => e.tag === 'undecodable').length;
+      assert(first > 0, 'no undecodable warning in the first session');
+
+      // Session-scoped watchdog state that is not reset on connect would make
+      // every later session silently undiagnosable.
+      await page.evaluate(() => globalThis.__madLog.clear());
+      await page.goto(`${APP_URL}#/connect`);
+      await page.getByRole('button', { name: /^Disconnect$/ }).click();
+      await page.getByTestId('connect-device').waitFor({ timeout: 8000 });
+      await page.getByTestId('connect-device').click();
+      await page.waitForTimeout(8000);
+
+      const second = (await snapshot(page)).entries.filter((e) => e.tag === 'undecodable').length;
+      assert(second > 0, 'reconnected session produced no undecodable warning');
+    } finally {
+      await browser.close();
+    }
+  });
+
   // ── The artifact a maintainer actually receives ────────────────────────────
   await scenario('the exported bundle contains the wire bytes', async () => {
     const { browser, page } = await openApp('garbage');
