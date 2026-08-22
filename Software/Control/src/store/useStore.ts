@@ -138,6 +138,35 @@ function logStateTransition(prev: MachineState | null, next: MachineState): void
 }
 
 /**
+ * Field-level diff of two machine configurations, as `field: "old→new"`.
+ *
+ * Only changed scalar fields survive, so a 30-field config that had one value
+ * edited logs one key. Nested values are compared by JSON so a changed
+ * sub-object still shows up rather than silently passing an identity check.
+ */
+function diffConfig(
+  prev: MachineConfiguration | null,
+  next: MachineConfiguration,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (prev === null) return { _initial: 'no previous config' };
+  const keys = new Set([...Object.keys(prev), ...Object.keys(next)]);
+  for (const key of keys) {
+    const a = (prev as unknown as Record<string, unknown>)[key];
+    const b = (next as unknown as Record<string, unknown>)[key];
+    const sameByValue =
+      typeof a === 'object' || typeof b === 'object'
+        ? JSON.stringify(a) === JSON.stringify(b)
+        : a === b;
+    if (sameByValue) continue;
+    const show = (v: unknown): string =>
+      typeof v === 'object' && v !== null ? JSON.stringify(v).slice(0, 60) : String(v);
+    out[key] = `${show(a)}→${show(b)}`;
+  }
+  return out;
+}
+
+/**
  * Log whether a device command actually succeeded.
  *
  * Intent alone is misleading: "user pressed jog" next to silence reads like the
@@ -486,11 +515,24 @@ export const useStore = create<AppState>((set, getState) => ({
 
   reconnect: async () => {
     const s = getState();
-    if (s.connection !== 'disconnected') return;
+    if (s.connection !== 'disconnected') {
+      logStore.debug('reconnect', 'skipped — not disconnected', { connection: s.connection });
+      return;
+    }
     // Re-resolve via getPorts() (a replug yields a fresh SerialPort object; the
     // cached lastPort handle may be stale); fall back to the cached handle.
-    const port = (await findGrantedPortForPref(readSerialPref())) ?? lastPort;
-    if (!port) return;
+    const resolved = await findGrantedPortForPref(readSerialPref());
+    const port = resolved ?? lastPort;
+    if (!port) {
+      // The usual cause of "Reconnect does nothing": the browser dropped the
+      // port grant, so there is nothing to reconnect to without a user gesture.
+      logStore.warn('reconnect', 'no granted port available');
+      return;
+    }
+    logStore.info('reconnect', 'retrying last port', {
+      source: resolved ? 'getPorts' : 'cached handle',
+      baud: lastBaud,
+    });
     await s.connect({ port, baud: lastBaud });
   },
 
@@ -531,7 +573,16 @@ export const useStore = create<AppState>((set, getState) => ({
   },
 
   saveConfig: async (config) => {
+    // Field-level diff, not the whole object: a wrong machine configuration is
+    // a common silent root cause, and "what did they actually change" is the
+    // question a report needs to answer. Values are plain numbers/strings.
+    const changed = diffConfig(getState().config, config);
+    logStore.info('saveConfig', undefined, {
+      changedCount: Object.keys(changed).length,
+      ...changed,
+    });
     const ok = await deviceClient.writeMachineConfiguration(config);
+    logStore.info('saveConfig', ok ? 'accepted' : 'rejected', { ok });
     if (ok) set({ config });
     return ok;
   },

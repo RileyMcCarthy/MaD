@@ -8,6 +8,9 @@
  */
 
 import { logSnapshot, type LogSnapshot } from './log';
+import { summariseForTriage, type TriageSummary } from './triage';
+import { logPersistence, SESSION_ID } from './boot';
+import { readPreviousSession, type PersistedSession } from './persist';
 import { deviceClient } from '@/device/session';
 import { useStore } from '@/store/useStore';
 import type { ByteRingSnapshot } from './byteRing';
@@ -16,6 +19,9 @@ declare const __APP_VERSION__: string;
 declare const __GIT_SHA__: string;
 
 export interface DiagnosticsBundle {
+  /** Read this first — everything below is the evidence behind it. */
+  triage: TriageSummary;
+  sessionId: string;
   generatedAt: string;
   version: string;
   gitSha: string;
@@ -32,9 +38,23 @@ export interface DiagnosticsBundle {
   log: LogSnapshot;
   /** Raw serial tail — omitted unless explicitly requested (see options). */
   serialTail?: ByteRingSnapshot;
+  /**
+   * The previous page load's log, when one was persisted.
+   *
+   * Present after a reload, which is exactly the case the in-memory ring cannot
+   * cover: if the app froze and the user restarted it, the failure is in here
+   * and not in `log`. A `closed: false` on it means that session never shut
+   * down cleanly.
+   */
+  previousSession?: PersistedSession;
 }
 
 export interface BundleOptions {
+  /**
+   * Attach the previous session's persisted log. On by default: a report filed
+   * after a reload is otherwise missing the very failure that caused it.
+   */
+  includePreviousSession?: boolean;
   /**
    * Include the raw RX/TX byte window. Opt-in: it is the most useful artifact
    * for a framing or CRC bug and also the most opaque, so the choice to attach
@@ -47,6 +67,13 @@ export async function buildDiagnosticsBundle(
   opts: BundleOptions = {},
 ): Promise<DiagnosticsBundle> {
   const s = useStore.getState();
+  // Get everything buffered into IndexedDB before snapshotting, so a bundle and
+  // the persisted copy cannot disagree.
+  try {
+    await logPersistence()?.flush();
+  } catch {
+    // Persistence is best-effort and must never block a report.
+  }
   let worker: unknown = null;
   try {
     worker = await deviceClient.getDiagnostics();
@@ -65,7 +92,19 @@ export async function buildDiagnosticsBundle(
     }
   }
 
+  let previousSession: PersistedSession | undefined;
+  if (opts.includePreviousSession !== false) {
+    try {
+      previousSession = (await readPreviousSession(SESSION_ID)) ?? undefined;
+    } catch {
+      previousSession = undefined;
+    }
+  }
+
+  const log = logSnapshot();
   return {
+    triage: summariseForTriage(log),
+    sessionId: SESSION_ID,
     generatedAt: new Date().toISOString(),
     version: typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : 'unknown',
     gitSha: typeof __GIT_SHA__ === 'string' ? __GIT_SHA__ : 'unknown',
@@ -82,8 +121,9 @@ export async function buildDiagnosticsBundle(
       portLabel: s.portLabel,
     },
     worker,
-    log: logSnapshot(),
+    log,
     ...(serialTail ? { serialTail } : {}),
+    ...(previousSession ? { previousSession } : {}),
   };
 }
 

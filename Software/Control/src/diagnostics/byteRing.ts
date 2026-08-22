@@ -197,6 +197,26 @@ export class ByteRing {
     return out;
   }
 
+  /**
+   * Hex of the most recent `n` resident bytes, oldest → newest.
+   *
+   * For attaching to a decode failure: when the protocol core rejects a frame,
+   * the bytes that caused it are the whole story, and by export time they may
+   * be long gone. Small and bounded, so it is safe to inline in a log entry —
+   * unlike `snapshot()`, which materialises the entire window.
+   */
+  tailHex(n = 64): string {
+    const len = Math.min(n, this.written, this.capacity);
+    if (len <= 0) return '';
+    const bytes = this.read(this.written - len, len);
+    let out = '';
+    for (let i = 0; i < len; i++) {
+      out += bytes[i].toString(16).padStart(2, '0');
+      if (i + 1 < len) out += ' ';
+    }
+    return out;
+  }
+
   /** Cheap counters for the bundle header — no allocation of payload data. */
   stats(): {
     chunksPushed: number;

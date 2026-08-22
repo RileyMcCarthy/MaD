@@ -24,6 +24,7 @@ import {
   connectToSil,
   chooseDataFolder,
   dumpFailureArtifacts,
+  setCurrentScenario,
   installFakeBootRom,
   installOpfsDataDir,
   OPFS_DIR,
@@ -1504,6 +1505,7 @@ async function main() {
   const failures = [];
   for (const s of selected) {
     process.stdout.write(`• ${s.id} ${s.name} … `);
+    setCurrentScenario(s.id);
     try {
       // eslint-disable-next-line no-await-in-loop
       await s.run();
