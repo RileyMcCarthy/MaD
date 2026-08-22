@@ -115,8 +115,9 @@ bool ProtoEmb_onRead_machine_configuration(ProtoEmb_MachineConfiguration_t *out)
     (void)memset(out, 0, sizeof(*out));
     out->encoderStepsPerMM = profile.encoderStepsPerMM;
     out->servoStepsPerMM = profile.servoStepsPerMM;
-    out->forceGaugeNPerStep = profile.forceGaugeNPerStep;
-    out->forceGaugeZeroOffset = profile.forceGaugeZeroOffset;
+    out->loadCellCapacity = profile.loadCellCapacity;
+    out->loadCellSensitivity = profile.loadCellSensitivity;
+    out->loadCellZeroBalance = profile.loadCellZeroBalance;
     out->maxPosition = profile.maxPosition;
     out->maxVelocity = profile.maxVelocity;
     out->maxAcceleration = profile.maxAcceleration;
@@ -156,8 +157,9 @@ ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWrite_machine_configuration_write(
     memcpy(newProfile.name, in->name, DEV_NVRAM_MAX_MACHINE_PROFILE_NAME);
     newProfile.encoderStepsPerMM = in->encoderStepsPerMM;
     newProfile.servoStepsPerMM = in->servoStepsPerMM;
-    newProfile.forceGaugeNPerStep = in->forceGaugeNPerStep;
-    newProfile.forceGaugeZeroOffset = in->forceGaugeZeroOffset;
+    newProfile.loadCellCapacity = in->loadCellCapacity;
+    newProfile.loadCellSensitivity = in->loadCellSensitivity;
+    newProfile.loadCellZeroBalance = in->loadCellZeroBalance;
     newProfile.maxPosition = in->maxPosition;
     newProfile.maxVelocity = in->maxVelocity;
     newProfile.maxAcceleration = in->maxAcceleration;

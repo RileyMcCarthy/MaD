@@ -4,6 +4,28 @@
 //! `set_force()` callback, converts to a voltage, and fires `on_change`
 //! so downstream models (e.g., ADC) can read the voltage.
 //!
+//! # Provenance (physics model — no datasheet)
+//!
+//! Governing equation: the standard ratiometric Wheatstone-bridge transfer
+//! function for a load cell,
+//!
+//! ```text
+//! V_out[mV] = (F / F_fullscale) · S[mV/V] · V_excitation[V]
+//! ```
+//!
+//! i.e. the differential output is the rated sensitivity (mV per volt of
+//! excitation) scaled linearly with applied force. Linear-to-full-scale is
+//! the cell's own spec model; creep, temperature drift, and off-axis loading
+//! are not modeled.
+//!
+//! Parameter sources (MaD bench rig): Wishiot 10 kg miniature parallel-beam
+//! load cell (Amazon B0C3QJ8J59) — rated output 1.0 mV/V nominal, ±0.15 mV/V
+//! tolerance per the product listing (no formal datasheet exists; the
+//! per-cell span calibration in the machine profile supersedes the nominal).
+//! The default wiring parameters mirror the machine profile's intrinsic
+//! load-cell constants — see `docs/dev/sil-board-simulation-design.md` and
+//! `MaDSim/src/wiring.rs`.
+//!
 //! All sensitivity parameters are configurable via `Config`.
 //! Has no knowledge of MCU peripherals.
 

@@ -19,11 +19,7 @@
 /**********************************************************************
  * Typedefs
  **********************************************************************/
-typedef struct
-{
-    const uint32_t maxHardwareClockCyclePerStep;
-    const uint8_t pin;
-} HAL_pulseOut_channelConfig_S;
+// HAL_pulseOut_channelConfig_S moved to HAL/Include/HAL_pulseOut.h (table in HAL/Config)
 /**********************************************************************
  * Public Function Definitions
  **********************************************************************/

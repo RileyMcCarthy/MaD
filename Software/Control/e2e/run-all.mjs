@@ -106,10 +106,34 @@ function assertSineMatch(series, { amplitudeMm, frequencyHz, cycles }, label) {
   const posMm = series.pos.map((p) => p / 1000);
   const tS = series.time.map((t) => t / 1e6);
 
-  // Skip the leading ramp-to-centre (a small monotonic fraction) before fitting.
-  const skip = Math.floor(posMm.length * 0.2);
-  const p = posMm.slice(skip);
-  const t = tS.slice(skip);
+  // Fit exactly the WAVEFORM, not the whole record. The record also contains the
+  // leading ramp-to-centre and — after the closing settle move parks the gantry —
+  // a flat tail that lasts until the run is torn down. Neither is the commanded
+  // sine, and the tail's length is teardown timing (0.1–0.4 s observed), so
+  // including it penalises a perfectly tracked wave in proportion to how slow
+  // the shutdown happened to be. That is what made the short 2 Hz case flaky:
+  // R² 0.67–0.70 over the whole record vs 0.99 over the wave itself, on motion
+  // that measured 2.85 mm of the commanded 3 mm at exactly 2 Hz every run.
+  //
+  // The wave's extent is known, not guessed: it runs for cycles/frequency
+  // seconds and ends where the gantry stops moving (whole cycles end on the
+  // centre, so the settle move is negligible). Take that window.
+  const parkedEps = 0.005; // mm between samples; wave motion is ≥10x this, parked is <deadband
+  let lastMoving = posMm.length - 1;
+  while (lastMoving > 0 && Math.abs(posMm[lastMoving] - posMm[lastMoving - 1]) < parkedEps) lastMoving--;
+  const waveDurS = cycles / frequencyHz;
+  const startT = tS[lastMoving] - waveDurS;
+  let first = 0;
+  while (first < lastMoving && tS[first] < startT) first++;
+
+  const p = posMm.slice(first, lastMoving + 1);
+  const t = tS.slice(first, lastMoving + 1);
+  // A run where the gantry never moved collapses this window — it must still be
+  // long enough to hold the commanded cycles, or the fit below is meaningless.
+  assert(
+    p.length > 40 && t[t.length - 1] - t[0] > waveDurS * 0.8,
+    `${label}: recorded a full ${waveDurS.toFixed(2)}s of waveform motion (got ${(t[t.length - 1] - t[0]).toFixed(2)}s over ${p.length} samples)`,
+  );
   const n = p.length;
   const t0 = t[0];
 

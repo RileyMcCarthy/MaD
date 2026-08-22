@@ -27,6 +27,15 @@ typedef struct
 } HAL_encoder_config_S;
 
 /**********************************************************************
+ * External Variables
+ **********************************************************************/
+
+/* Channel wiring/config table. Lives in HAL/Config (data-only, compiled for
+ * every target) so the SIL emulator can read the same pin truth the hardware
+ * runs — part of the firmware<->emulator contract. */
+extern const HAL_encoder_config_S HAL_encoder_config[HAL_ENCODER_CHANNEL_COUNT];
+
+/**********************************************************************
  * Public Function Prototypes
  **********************************************************************/
 void HAL_encoder_start(HAL_encoder_channel_E channel);

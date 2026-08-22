@@ -6,6 +6,27 @@
 //! - converting absolute gantry position to sample extension
 //! - limit switch threshold evaluation
 //!
+//! # Provenance (mechanism model — no datasheet)
+//!
+//! Kinematics: the carriage-to-sample chain is treated as rigid, so sample
+//! extension is signed travel past an engagement dead-band,
+//!
+//! ```text
+//! extension[mm] = max(0, ±(pos − pos_baseline) − slack)
+//! ```
+//!
+//! with the sign chosen by `tension_on_decreasing_position` (the MaD gantry
+//! pulls the sample by moving the carriage up, toward decreasing machine
+//! position). The scalar `engagement_slack_mm` lumps grip take-up and
+//! fixture play; frame compliance, ballscrew backlash/pitch error, and
+//! belt stretch are not modeled. Limit switches are ideal position
+//! comparators at the configured thresholds — see the provenance notes in
+//! `embsim_models::limit_switch` for the switch behavior contract.
+//!
+//! Parameter sources: thresholds and slack come from the system description
+//! (`MaDSim/src/wiring.rs`), mirroring the physical machine's switch
+//! placement and grip setup — they are rig-specific, not part constants.
+//!
 //! Has no knowledge of MCU peripherals.
 
 use embsim_core::event::Observers;

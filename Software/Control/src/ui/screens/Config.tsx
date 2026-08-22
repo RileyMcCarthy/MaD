@@ -5,8 +5,9 @@ import { MachineConfiguration } from '@/domain';
 const NUMERIC_FIELDS: Array<keyof MachineConfiguration> = [
   'Encoder (step/mm)',
   'Servo (step/mm)',
-  'Force Gauge (N/step)',
-  'Force Gauge Zero Offset (steps)',
+  'Load Cell Capacity (N)',
+  'Load Cell Sensitivity (mV/V)',
+  'Load Cell Zero Balance (mV/V)',
   'Position Max (mm)',
   'Velocity Max (mm/s)',
   'Acceleration Max (mm/s^2)',

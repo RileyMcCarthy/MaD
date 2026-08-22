@@ -3,48 +3,80 @@
 //! This is the project-specific seam: it declares the firmware's peripheral
 //! channel counts, names the host serial channel, and wires every peripheral
 //! event to/from the physical models. All MaD-specific constants (steps/mm,
-//! thresholds, ADC calibration) live here in the model `Config` structs.
+//! thresholds, load-cell calibration) live here in the model `Config` structs.
+//!
+//! # Every peripheral touch is instance-routed
+//!
+//! The firmware runs in owned-execution mode on the `P2EVAL`
+//! [`McuComponent`](embsim_board::mcu::McuComponent)'s own
+//! [`PeripheralInstance`] (see `system_description.rs`), so this module never
+//! calls `gpio::` / `encoder::` / `pulse_out::` *free* functions: those route
+//! by thread identity, and the model threads that run these callbacks are not
+//! bound to anything — they would silently drive the process-default
+//! instance, not the MCU's. Every access goes through [`MadMachine::mcu`]
+//! explicitly (`CONTRACT.md`, "Peripheral instances & thread routing").
 //!
 //! Callback chain:
 //! ```text
 //!   pulse_out (single integrator: emitted = freq × elapsed_virtual_time;
 //!              what firmware reads via HAL_pulseOut_run)
 //!     ├── on_start ─────> snapshot encoder base + direction (from SERVO_DIR GPIO)
-//!     └── on_progress ──> encoder::set(base + dir * emitted)   ← matches firmware exactly
+//!     └── on_progress ──> encoder.set(base + dir * emitted)    ← matches firmware exactly
 //!                          ├── gantry::on_position(pos_mm)
 //!                          │     ├── extension_mm ──> sample::on_extension(extension_mm)
 //!                          │     └── upper/lower ──> endstop GPIO
 //!                          └── strain_gauge::set_force(force_n)
-//!                                         └── ads122u04::set_voltage(voltage_mv)
-//!                                                (ads122u04 thread sends ADC data
-//!                                                 over serial at 100Hz)
+//!                                         └── on_change(voltage_mv), see below
 //!
 //!   gpio SERVO_ENA ──on_change──> trace only (informational)
 //!   gpio SERVO_DIR ──on_change──> trace only; direction is sampled at on_start
 //!
-//!   gantry::on_upper_change ──> gpio::set_state(ENDSTOP_UPPER)
-//!   gantry::on_lower_change ──> gpio::set_state(ENDSTOP_LOWER)
+//!   gantry::on_upper_change ──> gpio.set_state(ENDSTOP_UPPER)
+//!   gantry::on_lower_change ──> gpio.set_state(ENDSTOP_LOWER)
 //!
-//!   serial ch0 (FORCE_GAUGE) ───fd──> ads122u04 (socketpair)
-//!   serial ch1 (MAIN)        ───fd──> PTY (wired by the runtime)
+//!   strain_gauge ──on_change(mV)──> BridgeDrive (board engine):
+//!       load-cell Thevenin drives → DS2Addon netlist → Ads122u04Component
+//!       → stream route → P2EVAL FORCE_GAUGE channel
+//!   serial MAIN ───fd──> PTY (wired by the runtime into the MCU's instance)
 //! ```
+//!
+//! The force path is the first slice migrated onto the board engine — see
+//! `system_description.rs`. GPIO, encoder, and pulse-out stay hand-wired
+//! here this slice.
 
 use std::sync::Arc;
 
-use models::sample::{Config as SampleConfig, MaterialProperties, Sample};
-use models::{gantry, strain_gauge};
 use embsim_memory_inspect::FirmwareInfo;
-use embsim_models::ads122u04;
-use embsim_peripherals::{encoder, gpio, pulse_out, serial};
+use embsim_peripherals::instance::PeripheralInstance;
 use embsim_runtime::{Machine, PeripheralCounts};
 use embsim_trace::{self, groups, Signal};
+use models::sample::{Config as SampleConfig, MaterialProperties, Sample};
+use models::{gantry, strain_gauge};
 use tracing::info;
+
+use crate::system_description::BridgeDrive;
 
 /// Steps per mm (must match firmware: 4 microsteps × 2048 steps/rev).
 const STEPS_PER_MM: f64 = (4 * 2048) as f64;
 
 /// The MaD tensile tester machine.
-pub struct MadMachine;
+pub struct MadMachine {
+    /// The peripheral instance the P2's firmware runs against — the target of
+    /// every GPIO/encoder/pulse-out access in this module (see the module
+    /// docs on why free functions are not an option).
+    mcu: Arc<PeripheralInstance>,
+    /// The board-engine load-cell bridge drive: where `strain_gauge`'s output
+    /// voltage enters the force path.
+    bridge: BridgeDrive,
+}
+
+impl MadMachine {
+    /// Machine wired against one MCU's peripheral instance, feeding the given
+    /// board-engine bridge drive.
+    pub fn new(mcu: Arc<PeripheralInstance>, bridge: BridgeDrive) -> Self {
+        Self { mcu, bridge }
+    }
+}
 
 /// Firmware enum variants/types this machine looks up. Listed so the runtime
 /// can report all missing ones at once when porting to changed firmware.
@@ -124,7 +156,9 @@ impl Machine for MadMachine {
 
         let servo_encoder = fw.enum_channel("HAL_ENCODER_CHANNEL_SERVO");
         let servo_pulse_out = fw.enum_channel("HAL_PULSE_OUT_CHANNEL_SERVO");
-        let serial_force_gauge = fw.enum_channel("HAL_SERIAL_CHANNEL_FORCE_GAUGE");
+
+        // Every peripheral access below targets this instance explicitly.
+        let mcu = &self.mcu;
 
         // ── Create model instances with machine-specific configuration ──
 
@@ -135,21 +169,13 @@ impl Machine for MadMachine {
             lower_threshold_mm: 300.0,
         });
 
+        // Mirrors the default machine profile's intrinsic load-cell model:
+        // capacity 100 N, sensitivity -4.868009 mV/V at capacity, zero balance 0.
+        // Negative because load cell differential output is inverted for tension.
         let strain_g = strain_gauge::StrainGauge::new(strain_gauge::Config {
-            full_scale_force_n: 50.0,
-            // Calibrated to match firmware: forceGaugeNPerStep = -658 ADC counts/N
-            //   counts/N = (mV_per_N * gain * 2^23) / Vref
-            //   -658 = (FULL_SCALE_MV / 50) * 8388608 / 2048
-            //   FULL_SCALE_MV = -658 * 50 * 2048 / 8388608 = -8.0322265625
-            // Negative because load cell differential output is inverted for tension.
-            sensitivity_mv_per_v: -1.60644531250,
-            excitation_v: 5.0,
-        });
-
-        let (adc, fg_fd) = ads122u04::Ads122u04::new(ads122u04::Config {
-            vref_mv: 2048.0,
-            gain: 1.0,
-            zero_offset: 16119601,
+            full_scale_force_n: 100.0,
+            sensitivity_mv_per_v: -4.868009,
+            excitation_v: 3.3,
         });
 
         let sample = Sample::new(SampleConfig {
@@ -186,12 +212,12 @@ impl Machine for MadMachine {
 
         // GPIO traces (motor enable + direction are informational here; the actual
         // direction used to advance the encoder is read from this same GPIO inside
-        // the pulse_out::on_start callback, so the two cannot diverge).
-        gpio::on_change(pin_servo_ena, |v| {
+        // the pulse_out on_start callback, so the two cannot diverge).
+        mcu.gpio.on_change(pin_servo_ena, |v| {
             embsim_trace::record("gpio.servo_ena", if v { 1.0 } else { 0.0 });
             embsim_trace::record("stepper.enabled", if v { 1.0 } else { 0.0 });
         });
-        gpio::on_change(pin_servo_dir, |v| {
+        mcu.gpio.on_change(pin_servo_dir, |v| {
             embsim_trace::record("gpio.servo_dir", if v { 1.0 } else { 0.0 });
             embsim_trace::record("stepper.direction_cw", if !v { 1.0 } else { 0.0 });
         });
@@ -228,18 +254,19 @@ impl Machine for MadMachine {
             // Re-anchor dt on every (re)start so the first tick after a stop or a
             // direction-reversal restart doesn't see a huge elapsed interval.
             let plant = Arc::clone(&plant);
-            pulse_out::on_start(servo_pulse_out, move |_pulses, _freq| {
+            mcu.pulse_out.on_start(servo_pulse_out, move |_pulses, _freq| {
                 plant.lock().unwrap().last_us = embsim_core::virtual_clock::virtual_us();
             });
         }
         {
             let gantry = gantry_model.clone();
             let plant = Arc::clone(&plant);
-            pulse_out::on_progress(servo_pulse_out, move |_emitted| {
+            let inst = Arc::clone(mcu);
+            mcu.pulse_out.on_progress(servo_pulse_out, move |_emitted| {
                 let now = embsim_core::virtual_clock::virtual_us();
                 // Firmware convention: SERVO_DIR active=false → CW → increasing count.
-                let dir = if gpio::get_active(pin_servo_dir) { -1.0 } else { 1.0 };
-                let cmd_vel = dir * pulse_out::frequency(servo_pulse_out) as f64;
+                let dir = if inst.gpio.get_active(pin_servo_dir) { -1.0 } else { 1.0 };
+                let cmd_vel = dir * inst.pulse_out.frequency(servo_pulse_out) as f64;
 
                 let pos_steps;
                 {
@@ -248,7 +275,7 @@ impl Machine for MadMachine {
                     // IO_positionFeedback). Detect that — the encoder no longer
                     // matches what we last wrote — and adopt it, so the plant
                     // doesn't clobber the freshly established coordinate frame.
-                    let enc_now = encoder::value(servo_encoder);
+                    let enc_now = inst.encoder.value(servo_encoder);
                     if enc_now != p.last_write {
                         p.pos = enc_now as f64;
                         p.vel = 0.0;
@@ -265,7 +292,7 @@ impl Machine for MadMachine {
                     p.last_write = pos_steps;
                 }
 
-                encoder::set(servo_encoder, pos_steps);
+                inst.encoder.set(servo_encoder, pos_steps);
                 let pos_mm = pos_steps as f64 / STEPS_PER_MM;
                 gantry.on_position(pos_mm);
                 embsim_trace::record("stepper.position_mm", pos_mm);
@@ -290,47 +317,55 @@ impl Machine for MadMachine {
                 embsim_trace::record("sample.force_n", force_n);
             });
         }
+        // strain gauge → the board-engine force path: the plant's output
+        // becomes two live Thevenin drives on the load-cell bench terminals
+        // (1.65 ± v/2000 V through 350 Ω), and the MNA solve + stream route
+        // carry it to the firmware — same sign and magnitude the hand-wired
+        // `set_voltage(v_mv)` had (see system_description::BridgeDrive).
         {
-            let a = adc.clone();
+            let bridge = self.bridge.clone();
             strain_g.on_change(move |voltage_mv| {
-                a.set_voltage(voltage_mv);
+                bridge.set_differential_mv(voltage_mv);
                 embsim_trace::record("strain_gauge.voltage_mv", voltage_mv);
             });
         }
 
         // gantry limit state changes → GPIO
-        gantry_model.on_upper_change(move |triggered| {
-            gpio::set_state(pin_endstop_upper, triggered);
-            embsim_trace::record("limit_switch.upper", if triggered { 1.0 } else { 0.0 });
-        });
-        gantry_model.on_lower_change(move |triggered| {
-            gpio::set_state(pin_endstop_lower, triggered);
-            embsim_trace::record("limit_switch.lower", if triggered { 1.0 } else { 0.0 });
-        });
-
-        // Wire ADS122U04 serial channel
-        serial::init_channel_fd(serial_force_gauge, fg_fd);
+        {
+            let inst = Arc::clone(mcu);
+            gantry_model.on_upper_change(move |triggered| {
+                inst.gpio.set_state(pin_endstop_upper, triggered);
+                embsim_trace::record("limit_switch.upper", if triggered { 1.0 } else { 0.0 });
+            });
+        }
+        {
+            let inst = Arc::clone(mcu);
+            gantry_model.on_lower_change(move |triggered| {
+                inst.gpio.set_state(pin_endstop_lower, triggered);
+                embsim_trace::record("limit_switch.lower", if triggered { 1.0 } else { 0.0 });
+            });
+        }
 
         // ── Set initial GPIO states (safe machine) ──
 
         info!("Setting initial GPIO states (safe machine)");
 
         // ESD safety circuits — all inactive (no fault, machine is safe)
-        gpio::set_state(pin_esd_power, false);
-        gpio::set_state(pin_esd_upper, false);
-        gpio::set_state(pin_esd_lower, false);
-        gpio::set_state(pin_esd_switch, false);
+        mcu.gpio.set_state(pin_esd_power, false);
+        mcu.gpio.set_state(pin_esd_upper, false);
+        mcu.gpio.set_state(pin_esd_lower, false);
+        mcu.gpio.set_state(pin_esd_switch, false);
 
         // Endstops — not triggered
-        gpio::set_state(pin_endstop_upper, false);
-        gpio::set_state(pin_endstop_lower, false);
-        gpio::set_state(pin_endstop_door, false);
+        mcu.gpio.set_state(pin_endstop_upper, false);
+        mcu.gpio.set_state(pin_endstop_lower, false);
+        mcu.gpio.set_state(pin_endstop_door, false);
 
         // Charge pump — inactive
-        gpio::set_state(pin_charge_pump, false);
+        mcu.gpio.set_state(pin_charge_pump, false);
 
         // Servo ready — initially not ready
-        gpio::set_state(pin_servo_rdy, false);
+        mcu.gpio.set_state(pin_servo_rdy, false);
 
         // ── Record initial values for all trace signals ──
         // Model/Peripheral signals only record on-change callbacks, so we need

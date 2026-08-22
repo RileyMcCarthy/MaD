@@ -18,10 +18,10 @@ const GOLD = {
   state: [178, 0],
   sample: [217, 182, 241, 31, 9, 138, 102, 42, 147, 73, 176, 12],
   stored: [217, 182, 241, 31, 9, 72, 60, 0, 0, 138, 102],
-  // 64-byte MachineConfiguration (forceGaugeNPerStep + zeroOffset) — MaDProtocol.yaml.
+  // MachineConfiguration (intrinsic load-cell constants) — MaDProtocol.yaml.
   config: [
     84, 101, 115, 116, 101, 114, 45, 49, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 200, 0, 0, 0, 144, 1,
-    0, 0, 1, 0, 0, 0, 5, 0, 0, 0, 250, 0, 0, 0, 50, 0, 0, 0, 100, 0, 0, 0, 135, 214, 18, 0, 5, 0, 0,
+    0, 0, 160, 134, 1, 0, 64, 66, 15, 0, 5, 0, 0, 0, 250, 0, 0, 0, 50, 0, 0, 0, 100, 0, 0, 0, 135, 214, 18, 0, 5, 0, 0,
     0, 2, 0, 0, 0, 3, 0, 0, 0,
   ],
   profile: [26, 162, 7, 0, 10, 0, 0, 0, 100, 0, 0, 0, 12, 0, 0, 0, 3, 0, 0, 0],
@@ -52,8 +52,9 @@ describe('codec golden byte vectors (frozen — guards the wire format)', () => 
           name: 'Tester-1',
           encoderStepsPerMM: 200,
           servoStepsPerMM: 400,
-          forceGaugeNPerStep: 1,
-          forceGaugeZeroOffset: 5,
+          loadCellCapacity: 100,
+          loadCellSensitivity: 1000000,
+          loadCellZeroBalance: 5,
           maxPosition: 250,
           maxVelocity: 50,
           maxAcceleration: 100,
@@ -134,8 +135,9 @@ describe('round-trip within scale precision', () => {
       name: 'Tester-1',
       encoderStepsPerMM: 200,
       servoStepsPerMM: 400,
-      forceGaugeNPerStep: 1,
-      forceGaugeZeroOffset: 5,
+      loadCellCapacity: 100,
+      loadCellSensitivity: 1000000,
+      loadCellZeroBalance: 5,
       maxPosition: 250,
       maxVelocity: 50,
       maxAcceleration: 100,
@@ -148,7 +150,8 @@ describe('round-trip within scale precision', () => {
     expect(out.name).toBe('Tester-1');
     expect(out.maxForceTensile).toBeCloseTo(1234.567, 3);
     expect(out.maxPosition).toBe(250);
-    expect(out.forceGaugeNPerStep).toBe(1);
-    expect(out.forceGaugeZeroOffset).toBe(5);
+    expect(out.loadCellCapacity).toBeCloseTo(100, 3);
+    expect(out.loadCellSensitivity).toBe(1000000);
+    expect(out.loadCellZeroBalance).toBe(5);
   });
 });

@@ -20,29 +20,11 @@
  * Typedefs
  **********************************************************************/
 
-typedef struct
-{
-    const HW_pin_E pin;
-    const bool activeLow;
-} HAL_GPIO_channelConfig_S;
-
 /**********************************************************************
  * External Variables
  **********************************************************************/
 
-const HAL_GPIO_channelConfig_S HAL_GPIO_channelConfig[HAL_GPIO_COUNT] = {
-    {HW_PIN_SERVO_ENA, false},
-    {HW_PIN_SERVO_DIR, false},
-    {HW_PIN_SERVO_RDY, false},
-    {HW_PIN_ESD_UPPER, true},
-    {HW_PIN_ESD_LOWER, true},
-    {HW_PIN_ESD_SWITCH, true},
-    {HW_PIN_ENDSTOP_UPPER, false},
-    {HW_PIN_ENDSTOP_LOWER, false},
-    {HW_PIN_ENDSTOP_DOOR, false},
-    {HW_PIN_ESD_POWER, false},
-    {HW_PIN_CHARGE_PUMP, false},
-};
+// channel config table lives in HAL/Config/HAL_GPIO_config.c (data-only, all targets)
 
 /**********************************************************************
  * Private Variable Definitions

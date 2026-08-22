@@ -120,6 +120,7 @@ nav:
       - Building the firmware: dev/building-firmware.md
       - Running the app: dev/running-the-app.md
       - SIL testing: dev/sil-testing.md
+      - SIL board simulation (design): dev/sil-board-simulation-design.md
       - Protocol & code generation: dev/protocol-codegen.md
       - Protocol messages: dev/protocol-messages.md
       - G-code: dev/gcode.md

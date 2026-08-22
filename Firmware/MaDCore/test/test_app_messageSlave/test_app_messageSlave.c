@@ -288,7 +288,7 @@ void test_machine_configuration_round_trips_through_bridge(void)
     ProtoEmb_MachineConfiguration_t in;
     memset(&in, 0, sizeof(in));
     in.servoStepsPerMM = 200; in.maxPosition = 150000; in.maxVelocity = 30000;
-    in.forceGaugeNPerStep = -658; strncpy(in.name, "RIG-A", sizeof(in.name) - 1);
+    in.loadCellSensitivity = -2000000; strncpy(in.name, "RIG-A", sizeof(in.name) - 1);
     TEST_ASSERT_EQUAL_INT(PROTOEMB_RUNTIME_WRITE_DISPOSITION_ACK, ProtoEmb_onWrite_machine_configuration_write(&in));
     TEST_ASSERT_EQUAL_INT(1, d_updateCount);   /* persisted to nvram */
     TEST_ASSERT_TRUE(d_notifyCount >= 1);       /* user notified */
@@ -297,7 +297,7 @@ void test_machine_configuration_round_trips_through_bridge(void)
     TEST_ASSERT_TRUE(ProtoEmb_onRead_machine_configuration(&out));
     TEST_ASSERT_EQUAL_INT32(200, out.servoStepsPerMM);
     TEST_ASSERT_EQUAL_INT32(150000, out.maxPosition);
-    TEST_ASSERT_EQUAL_INT32(-658, out.forceGaugeNPerStep);
+    TEST_ASSERT_EQUAL_INT32(-2000000, out.loadCellSensitivity);
     TEST_ASSERT_EQUAL_STRING("RIG-A", out.name);
 }
 
