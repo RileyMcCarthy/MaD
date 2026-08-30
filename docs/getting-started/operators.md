@@ -136,5 +136,5 @@ check whenever you update the app, since the two travel together.
 
 ---
 
-That's the full loop: **connect → profile → run → analyse**. The
-[User Guide](../user-guide/index.md) covers every screen in detail.
+That's the full loop: **connect → check firmware → profile → run → analyse**.
+The [User Guide](../user-guide/index.md) covers every screen in detail.

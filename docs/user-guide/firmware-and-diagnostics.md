@@ -1,10 +1,10 @@
 # Firmware & diagnostics
 
 The **Firmware** screen shows the firmware version reported by the connected
-machine, lets you update that firmware, and exports a diagnostics bundle for
-troubleshooting.
+machine and lets you update it. Diagnostics for troubleshooting live on the
+**About** screen.
 
-![The Firmware / About screen](../assets/screenshots/09-firmware.png)
+![The Firmware screen](../assets/screenshots/09-firmware.png)
 
 ## Firmware version
 
