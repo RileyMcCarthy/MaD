@@ -12,6 +12,8 @@ fn main() {
         // 32 MB of zeros: the card answers, but there is no filesystem on it.
         None => SdCard::blank(32 * 1024 * 1024),
     };
+    let mut card = card;
+    card.trace = Some(Vec::new());
     let mut m = Machine::new(&image, Board::new(card));
     m.strict_hub = false;
     let r = m.step(budget);
@@ -30,4 +32,9 @@ fn main() {
         .map(|c| if c & 0x80 != 0 { format!("ACMD{}", c & 0x3F) } else { format!("CMD{c}") })
         .collect();
     println!("  {}", names.join(" "));
+    if let Some(log) = &m.pins.card.trace {
+        println!("{} byte exchanges; first 32 (mosi -> miso):", log.len());
+        let s: Vec<String> = log.iter().take(32).map(|(a, b)| format!("{a:02X}>{b:02X}")).collect();
+        println!("  {}", s.join(" "));
+    }
 }
