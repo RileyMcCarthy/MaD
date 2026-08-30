@@ -1,0 +1,110 @@
+{
+  "version": "1.0",
+  "project_dir": "/Users/ci/work/repo/Firmware/MaDCore",
+  "duration": 12.5,
+  "testcase_nums": 5,
+  "error_nums": 1,
+  "failure_nums": 1,
+  "skipped_nums": 1,
+  "test_suites": [
+    {
+      "env_name": "native_test",
+      "test_name": "test_gcode",
+      "test_dir": "test/test_gcode",
+      "status": "FAILED",
+      "duration": 3.25,
+      "timestamp": "2026-08-21T09:15:00",
+      "testcase_nums": 4,
+      "error_nums": 1,
+      "failure_nums": 1,
+      "skipped_nums": 1,
+      "test_cases": [
+        {
+          "name": "test_parse_g1",
+          "status": "PASSED",
+          "message": null,
+          "stdout": "test/test_gcode/main.c:42:test_parse_g1\t[PASSED]",
+          "duration": 0,
+          "exception": null,
+          "source": { "file": "test/test_gcode/main.c", "line": 42 }
+        },
+        {
+          "name": "test_parse_g122",
+          "status": "FAILED",
+          "message": "Expected 122 Was 0",
+          "stdout": "test/test_gcode/main.c:57:test_parse_g122\t[FAILED]",
+          "duration": 0,
+          "exception": null,
+          "source": { "file": "test/test_gcode/main.c", "line": 57 }
+        },
+        {
+          "name": "test_parse_crash",
+          "status": "ERRORED",
+          "message": null,
+          "stdout": null,
+          "duration": 0,
+          "exception": "UnitTestSuiteError: Program received signal SIGSEGV",
+          "source": null
+        },
+        {
+          "name": "test_parse_g5",
+          "status": "SKIPPED",
+          "message": "IGNORE",
+          "stdout": "test/test_gcode/main.c:71:test_parse_g5\t[IGNORED]",
+          "duration": 0,
+          "exception": null,
+          "source": { "file": "test/test_gcode/main.c", "line": 71 }
+        }
+      ]
+    },
+    {
+      "env_name": "native_test",
+      "test_name": "test_queue",
+      "test_dir": "test/test_queue",
+      "status": "PASSED",
+      "duration": 1.5,
+      "timestamp": "2026-08-21T09:15:04",
+      "testcase_nums": 1,
+      "error_nums": 0,
+      "failure_nums": 0,
+      "skipped_nums": 0,
+      "test_cases": [
+        {
+          "name": "test_push_pop",
+          "status": "PASSED",
+          "message": null,
+          "stdout": null,
+          "duration": 0.125,
+          "exception": null,
+          "source": { "file": "test/test_queue/main.c", "line": 12 }
+        }
+      ]
+    },
+    {
+      "env_name": "propeller2",
+      "test_name": "test_gcode",
+      "test_dir": "test/test_gcode",
+      "status": "SKIPPED",
+      "duration": 0,
+      "timestamp": null,
+      "testcase_nums": 0,
+      "error_nums": 0,
+      "failure_nums": 0,
+      "skipped_nums": 0,
+      "test_cases": []
+    },
+    {
+      "env_name": "propeller2",
+      "test_name": "test_queue",
+      "test_dir": "test/test_queue",
+      "status": "SKIPPED",
+      "duration": 0,
+      "timestamp": null,
+      "testcase_nums": 0,
+      "error_nums": 0,
+      "failure_nums": 0,
+      "skipped_nums": 0,
+      "test_cases": []
+    }
+  ]
+}
