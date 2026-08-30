@@ -11,13 +11,13 @@ Non-goals (unchanged from [BOARD_ENGINE.md](https://github.com/RileyMcCarthy/emb
 
 ## P0 — Own virtual time
 
-embsim main already has D1: `ClockMode::Stepped` (engine is time authority, `advance_to`) vs free-running scaled wall. Native firmware is still host machine code, so a cog that never waits would stay runnable and freeze stepped time.
+One `virtual_us` counter. The engine (or an idle jump with no time authority) is the only thing that increases it. `--speed` only paces the host after a jump.
 
-- [x] **Stepped `virtual_us` is a counter** the engine sets (`advance_to`). D1.
-- [x] **`wait_virtual_us` / `wait_until` park** in stepped mode. D1.
-- [x] **Emulator preempts at HAL**, not firmware: `HAL_system_startThread` registers the cog as an actor; every HAL trampoline `charge`s one quantum unit; after a 1 ms slice the cog parks. Firmware may free-run (`LOCKTRY`, UART poll). A cog that never hits HAL needs ISS. ([embsim#26](https://github.com/RileyMcCarthy/embsim/pull/26))
+- [x] **`virtual_us` is a counter**, never `Instant`. `advance_to` is the only write.
+- [x] **`wait_until` / `wait_virtual_us` park** until `now` reaches the deadline.
+- [x] **Emulator preempts at HAL** ([embsim#26](https://github.com/RileyMcCarthy/embsim/pull/26)).
+- [x] **One clock:** playground `init(speed>0)` jumps then sleeps; tests `init(0)` jump instantly.
 - [ ] **Tests assert virtual time** (`at t = 100_000 µs, encoder == N`) across MaD e2e — remaining.
-- [ ] **Free-running is still scaled wall** (playground default). Not replacing D1.
 
 Unblocks: firmware without emulator yield macros, and ISS `step_until(t)` later.
 
