@@ -284,3 +284,52 @@ fn boots_to_a_fully_configured_machine() {
         );
     }
 }
+
+/// The full SIL loop: a host request in, a structured protocol response out.
+///
+/// Frames are `[SYNC, frameType, command, ...]` per the generated runtime
+/// (`protoemb_runtime.c`), so asking for the firmware version is
+/// `[0x55, READ, PROTOEMB_MSG_READ_FIRMWARE_VERSION]`. The reply carries the
+/// version string, which is what makes this a round trip rather than an echo.
+#[test]
+fn firmware_answers_a_protocol_request() {
+    let Some(img) = image() else {
+        return;
+    };
+    let mut m = Machine::new(&img, Board::new(SdCard::blank(32 * 1024 * 1024)));
+
+    // Let the machine finish booting before asking it anything.
+    m.step(200_000_000).expect("no trap during boot");
+    let before = m.pins.proto_tx.len();
+
+    const SYNC: u8 = 0x55;
+    const FRAME_READ: u8 = 0x00;
+    const MSG_READ_FIRMWARE_VERSION: u8 = 3;
+    m.pins.send_protocol(&[SYNC, FRAME_READ, MSG_READ_FIRMWARE_VERSION]);
+    m.step(200_000_000).expect("no trap while answering");
+
+    let reply = &m.pins.proto_tx[before..];
+    assert!(
+        !reply.is_empty(),
+        "firmware sent nothing back on the protocol link"
+    );
+
+    let sync = reply
+        .iter()
+        .position(|&b| b == SYNC)
+        .expect("no frame sync in the reply");
+    let frame = &reply[sync..];
+    assert!(frame.len() >= 3, "reply truncated: {frame:02X?}");
+    assert_eq!(
+        frame[2], MSG_READ_FIRMWARE_VERSION,
+        "reply is for the wrong command: {frame:02X?}"
+    );
+
+    // The payload carries the version string, so the response is real data
+    // rather than a bare ack.
+    let text = String::from_utf8_lossy(frame);
+    assert!(
+        text.contains("0.0.0"),
+        "expected a version string in the payload, got {frame:02X?}"
+    );
+}

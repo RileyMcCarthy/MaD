@@ -70,7 +70,6 @@ fn main() {
         };
         // Record only non-sequential transfers: a NOP slide through zeroed cog
         // RAM would otherwise flush the real cause out of the trail.
-        let expected = if pc < 0x400 { pc + 1 } else { pc + 4 };
         if let Err(err) = m.step(1) {
             println!("TRAP: {err}\ntrail (calls/returns then last instructions):");
             for (c, p, w) in trail.iter().rev().take(14).rev() {
@@ -82,12 +81,8 @@ fn main() {
             }
             return;
         }
-        let after = m.cogs[cog].pc;
         // Only calls and returns: a tight FCACHE loop would otherwise flush
         // the call chain out of the trail.
-        let interesting = decode(word)
-            .map(|d| matches!(d.op.mnemonic(), "call" | "ret" | "callpa" | "callpb" | "coginit"))
-            .unwrap_or(false);
         if true {
             trail.push((cog, pc, word));
             if trail.len() > 24 {
