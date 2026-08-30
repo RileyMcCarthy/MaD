@@ -24,7 +24,17 @@
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
-export type LogCat = 'app' | 'device' | 'proto' | 'store' | 'ui' | 'fs' | 'perf' | 'wasm';
+export type LogCat =
+  | 'app'
+  | 'device'
+  | 'proto'
+  | 'store'
+  | 'ui'
+  | 'fs'
+  | 'perf'
+  | 'wasm'
+  /** Firmware flashing over the P2 boot ROM — a different protocol to `proto`. */
+  | 'flash';
 
 export type LogThread = 'main' | 'worker';
 
@@ -324,13 +334,30 @@ function summariseNested(v: object): string {
   }
 }
 
+/**
+ * Credential shapes that must never survive into a log entry.
+ *
+ * The GitHub token the user pastes for one-click filing lives in
+ * `localStorage`, and an error body or a mistaken call site could echo it into
+ * a log that then gets published in a public issue. Scrubbing every string at
+ * the sanitizer — the one choke point every entry passes through — makes that
+ * impossible rather than merely unlikely.
+ */
+const CREDENTIAL_PATTERN =
+  /\b(gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{20,}|Bearer\s+[A-Za-z0-9._~+/-]{20,})/g;
+
+/** Replace anything credential-shaped in `text`. */
+export function redactCredentials(text: string): string {
+  return text.replace(CREDENTIAL_PATTERN, '<redacted-credential>');
+}
+
 function sanitizeString(key: string, value: string): string {
   // Never leak filesystem layout (the bundle can end up in a public issue).
   // URLs are not paths — leave them alone apart from truncation.
   if (!value.includes('://') && (isPathKey(key) || /^(?:[A-Za-z]:)?[\\/].*[\\/]/.test(value))) {
-    return truncate(basename(value));
+    return truncate(redactCredentials(basename(value)));
   }
-  return truncate(value);
+  return truncate(redactCredentials(value));
 }
 
 function sanitizeValue(key: string, value: unknown): unknown | typeof DROP {
@@ -505,7 +532,10 @@ function emit(
     cat,
     tag,
   };
-  if (msg !== undefined && msg !== '') entry.msg = msg;
+  // Redacted here, not only in `sanitize`: a message is a free-form string
+  // that can carry an echoed credential just as easily as a data value, and a
+  // bundle ends up in a public issue.
+  if (msg !== undefined && msg !== '') entry.msg = redactCredentials(msg);
   const clean = sanitize(data);
   if (clean !== undefined) entry.data = clean;
 

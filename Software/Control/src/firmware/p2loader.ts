@@ -41,6 +41,24 @@ export interface P2Transport {
   drain(): Promise<void>;
 }
 
+/**
+ * Progress/diagnostic events emitted during a load.
+ *
+ * A callback rather than a logger import: this module is deliberately
+ * dependency-free so `tools/hw-p2load.mts` can drive the identical protocol
+ * headlessly. The caller decides what (if anything) to do with these.
+ */
+export type LoaderEvent =
+  | { kind: 'reset' }
+  | { kind: 'detect-attempt'; attempt: number; retries: number }
+  | { kind: 'detect-reply'; attempt: number; bytes: number; text: string }
+  | { kind: 'detected'; version: string; attempt: number }
+  | { kind: 'upload-begin'; bytes: number; chunks: number; verifyChecksum: boolean }
+  | { kind: 'upload-progress'; sent: number; total: number }
+  | { kind: 'verify'; ok: boolean; reply: string };
+
+export type LoaderEventSink = (event: LoaderEvent) => void;
+
 export class P2LoaderError extends Error {
   constructor(
     message: string,
@@ -80,19 +98,29 @@ export async function hardwareReset(t: P2Transport): Promise<void> {
  *
  * @returns the single-character ROM version ('G' on shipping silicon).
  */
-export async function detectP2(t: P2Transport, retries = 5): Promise<string> {
+export async function detectP2(
+  t: P2Transport,
+  retries = 5,
+  onEvent?: LoaderEventSink,
+): Promise<string> {
+  onEvent?.({ kind: 'reset' });
   await hardwareReset(t);
   await delay(20); // let the ROM come up before probing
 
   for (let i = 0; i < retries; i++) {
+    onEvent?.({ kind: 'detect-attempt', attempt: i + 1, retries });
     await t.flushInput();
     await t.write(ascii(CHK_COMMAND));
     await t.drain();
     const reply = await t.read(20, 200);
     const text = new TextDecoder('latin1').decode(reply);
+    // What the ROM actually said is the whole diagnosis when it says the wrong
+    // thing — silence means wiring, garbage means baud or a busy port.
+    onEvent?.({ kind: 'detect-reply', attempt: i + 1, bytes: reply.length, text });
     const m = /^\r\nProp_Ver (.)/.exec(text);
     if (m) {
       const version = m[1];
+      onEvent?.({ kind: 'detected', version, attempt: i + 1 });
       // 'B' is the old FPGA image; it speaks a different load protocol.
       if (version === 'B') {
         throw new P2LoaderError(
@@ -136,6 +164,8 @@ export interface LoadOptions {
   verifyChecksum?: boolean;
   /** Called with bytes-sent / total so the UI can show progress. */
   onProgress?: (sent: number, total: number) => void;
+  /** Diagnostic events for the session log; see {@link LoaderEvent}. */
+  onEvent?: LoaderEventSink;
   signal?: AbortSignal;
 }
 
@@ -148,12 +178,18 @@ export interface LoadOptions {
 export async function loadImage(
   t: P2Transport,
   image: Uint8Array,
-  { verifyChecksum = true, onProgress, signal }: LoadOptions = {},
+  { verifyChecksum = true, onProgress, onEvent, signal }: LoadOptions = {},
 ): Promise<void> {
   if (image.byteLength % 4 !== 0) {
     throw new P2LoaderError('Image length must be a multiple of 4 bytes.', 'rejected');
   }
 
+  onEvent?.({
+    kind: 'upload-begin',
+    bytes: image.byteLength,
+    chunks: Math.ceil(image.byteLength / CHUNK_BYTES),
+    verifyChecksum,
+  });
   await t.write(ascii(HEX_COMMAND));
 
   let checksum = 0;
@@ -163,6 +199,7 @@ export async function loadImage(
     if (verifyChecksum) checksum = (checksum + sumLongs(chunk)) >>> 0;
     await t.write(ascii(toHexLine(chunk) + ' > '));
     onProgress?.(off + chunk.byteLength, image.byteLength);
+    onEvent?.({ kind: 'upload-progress', sent: off + chunk.byteLength, total: image.byteLength });
   }
 
   if (!verifyChecksum) {
@@ -181,6 +218,7 @@ export async function loadImage(
   await t.drain();
 
   const reply = new TextDecoder('latin1').decode(await t.read(1, 300));
+  onEvent?.({ kind: 'verify', ok: reply === '.', reply });
   if (reply !== '.') {
     throw new P2LoaderError(
       `The Propeller 2 rejected the image (expected ".", got ${JSON.stringify(reply)}). ` +

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useStore } from '@/store/useStore';
 import { dataStore } from '@/storage/DataStore';
 import Config from './Config';
+import GitHubTokenSettings from '@/ui/components/GitHubTokenSettings';
 
 export default function Settings() {
   // Folder state lives in the store (restored once at startup), so it stays
@@ -76,6 +77,8 @@ export default function Settings() {
       </div>
 
       <Config embedded />
+
+      <GitHubTokenSettings />
 
       <div className="panel">
         <h2>About</h2>

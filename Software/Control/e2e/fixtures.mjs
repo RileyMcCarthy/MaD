@@ -340,9 +340,20 @@ export async function dumpFailureArtifacts(scenario, err) {
   return file;
 }
 
+/**
+ * Name the scenario now running, so every app-side log entry it produces sits
+ * under a visible boundary in the dump.
+ */
+let currentScenario = null;
+export function setCurrentScenario(id) {
+  currentScenario = id;
+}
+
 /** Connect the app to SIL via the UI (call after navigating to the app). */
 export async function connectToSil(page) {
   await page.goto(`${APP_URL}#/connect`);
+  // First point at which the app is loaded and can take a marker.
+  if (currentScenario !== null) await markAppLog(page, `scenario ${currentScenario}`);
   // The primary button (testid connect-device) prompts requestPort() → our fake.
   await page.getByTestId('connect-device').click();
   // Wait until the store reports connected — the status dot gets `.connected`.
