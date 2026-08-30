@@ -14,6 +14,35 @@ import type { P2Transport } from './p2loader';
  */
 export const LOADER_BAUD_RATE = 2_000_000;
 
+/**
+ * Cap on the whole teardown sequence. A half-dead stream (USB unplug mid-flash)
+ * can make cancel()/close() hang indefinitely, and programPort awaits close()
+ * in a `finally` — so a hang there swallows the real error and leaves the UI
+ * stuck on "Programming…" with no way back. The device worker caps the same
+ * sequence for the same reason (see DeviceSession.worker.ts).
+ */
+const TEARDOWN_BUDGET_MS = 1500;
+
+/**
+ * Cap on draining stale input. A board still running firmware streams samples
+ * continuously, so "read until nothing arrives" never terminates against one.
+ */
+const FLUSH_BUDGET_MS = 50;
+
+/** Resolve when `p` settles or after `ms`, whichever is first (never rejects). */
+function withTimeout(p: Promise<unknown>, ms: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    p.then(
+      () => undefined,
+      () => undefined,
+    ),
+    new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, ms);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
 export class WebSerialTransport implements P2Transport {
   private reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
   private writer: WritableStreamDefaultWriter<Uint8Array> | null = null;
@@ -101,9 +130,11 @@ export class WebSerialTransport implements P2Transport {
 
   async flushInput(): Promise<void> {
     this.pending = new Uint8Array(0);
-    // Drain anything already sitting in the stream, but don't wait on silence.
-    while (await this.readChunk(5)) {
-      /* discard */
+    // Drain what is already buffered, but never wait for the line to fall
+    // silent — a board that is still running will talk indefinitely.
+    const deadline = Date.now() + FLUSH_BUDGET_MS;
+    while (Date.now() < deadline) {
+      if (!(await this.readChunk(5))) return;
     }
   }
 
@@ -111,26 +142,46 @@ export class WebSerialTransport implements P2Transport {
     await this.port.setSignals({ dataTerminalReady: asserted });
   }
 
-  /** Release the streams and close the port. Safe to call twice. */
+  /**
+   * Release the streams and close the port. Safe to call twice, and bounded:
+   * it always completes so the caller's error can surface.
+   */
   async close(): Promise<void> {
-    try {
-      await this.reader?.cancel();
-    } catch {
-      /* already gone */
-    }
-    try {
-      this.reader?.releaseLock();
-      this.writer?.releaseLock();
-    } catch {
-      /* already released */
-    }
+    const reader = this.reader;
+    const writer = this.writer;
+    // Drop our references first, so a caller that gives up on a wedged port
+    // cannot then use half-torn-down streams.
     this.reader = null;
     this.writer = null;
     this.inflight = null;
-    try {
-      await this.port.close();
-    } catch {
-      /* already closed */
-    }
+
+    await withTimeout(
+      (async () => {
+        try {
+          // close() flushes what is still queued; cancel/releaseLock would
+          // discard it, which on a flash write means a truncated image.
+          await writer?.close();
+        } catch {
+          /* sink already errored or lock released */
+        }
+        try {
+          await reader?.cancel();
+        } catch {
+          /* already gone */
+        }
+        try {
+          reader?.releaseLock();
+          writer?.releaseLock();
+        } catch {
+          /* already released */
+        }
+        try {
+          await this.port.close();
+        } catch {
+          /* already closed */
+        }
+      })(),
+      TEARDOWN_BUDGET_MS,
+    );
   }
 }

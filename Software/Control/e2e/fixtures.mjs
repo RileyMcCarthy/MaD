@@ -325,7 +325,7 @@ export async function chooseDataFolder(page) {
  */
 export function installFakeBootRom(portCount = 1) {
   const CHECKSUM_MAGIC = 0x706f7250;
-  const state = { reset: 0, image: [], finished: false, ok: null, dtr: null, bytesIn: 0, replies: 0 };
+  const state = { reset: 0, image: [], finished: false, ok: null, dtr: null, bytesIn: 0, replies: 0, checksum: null };
   window.__bootRom = state;
 
   let controller;
@@ -359,16 +359,14 @@ export function installFakeBootRom(portCount = 1) {
       hexMode = true;
       buffered = buffered.slice(at + '> Prop_Hex 0 0 0 0'.length);
     }
+    // The terminators arrive glued to the preceding hex byte (loadImage writes
+    // the checksum longs and then '?' as separate writes, which coalesce into
+    // "a0?"). Separate them before tokenising, or the terminator is retained as
+    // an incomplete token forever and the download never completes.
+    buffered = buffered.replace(/([~?])/g, ' $1 ');
     const tokens = buffered.split(/\s+/);
-    // Keep a trailing partial token for the next write — unless it is one of
-    // the single-character terminators, which are complete as they stand and
-    // would otherwise sit unprocessed forever (nothing follows them).
-    let partial = /\s$/.test(buffered) ? '' : (tokens.pop() ?? '');
-    if (partial === '~' || partial === '?') {
-      tokens.push(partial);
-      partial = '';
-    }
-    buffered = partial;
+    // Keep a trailing partial token for the next write.
+    buffered = /\s$/.test(buffered) ? '' : (tokens.pop() ?? '');
     for (const tok of tokens) {
       if (tok === '' || tok === '>') continue;
       if (tok === '~') {
@@ -380,6 +378,10 @@ export function installFakeBootRom(portCount = 1) {
       if (tok === '?') {
         state.ok = (sum >>> 0) === CHECKSUM_MAGIC;
         state.finished = true;
+        // The final long is the checksum, not part of the image — the real ROM
+        // folds it into the running sum and discards it. Keep `image` meaning
+        // "what would land in hub RAM".
+        state.checksum = state.image.splice(-4, 4);
         emit(state.ok ? '.' : '!');
         hexMode = false;
         continue;
