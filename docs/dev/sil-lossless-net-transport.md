@@ -88,7 +88,28 @@ Against a 10 s baseline for ~1100 s of simulated time:
 So: serial moves onto levels now; the step train stays a rate. That is not a
 compromise on losslessness — both encodings are exact.
 
-## The part that is not obvious
+## The part that was not obvious
+
+**A microsecond cannot hold a bit.** The engine's timebase was microseconds,
+which is exactly one order of magnitude short:
+
+| link | baud | bit period |
+|---|---|---|
+| host protocol | 2,000,000 | **500 ns** |
+| debug console | 230,400 | 4.34 µs |
+| force gauge | 115,200 | 8.68 µs |
+
+Eight 2 Mbaud bits fit inside one microsecond, so a µs timer wheel collapses a
+whole byte to a single instant — a synthesized waveform would be one edge, not
+ten. *Bytes* fit in µs (10 bits at 2 Mbaud is 5 µs), which is why nothing
+noticed until edges were on the table.
+
+This was not in the original list and had to be done first: embsim PR #36 makes
+`virtual_ns` the counter, keeps every microsecond call as an exact wrapper, and
+carries the timer wheel, stream pacer and stepped-advance path in nanoseconds.
+Nothing outside the timebase changed behaviour.
+
+## The other part that is not obvious
 
 **Native mode has no bit timing.** In the native backend the firmware calls
 `HAL_serial_transmitData` and a *byte* appears; there is no shifter, no bit
@@ -107,10 +128,13 @@ mode.
 Each step leaves both backends green.
 
 1. **Land the measurement harness upstream** so the budget above is reproducible
-   and regressions in engine throughput are visible.
+   and regressions in engine throughput are visible. *(embsim #34)*
 2. **UART codec in embsim** — one shared framer/deframer (start, 8 data,
    stop, LSB-first, at a declared bit period). Not per-model; every byte-oriented
-   peripheral uses the same one.
+   peripheral uses the same one. *(embsim #35)*
+   - 2b. **Nanosecond virtual time** — unplanned, and a prerequisite for step 3
+     rather than an improvement to it. See "The part that was not obvious"
+     above. *(embsim #36)*
 3. **MCU component: byte → level synthesis on TX**, level → byte framing on RX,
    behind a flag. Both paths live; the flag exists only so step 4 can land
    without a flag day.
