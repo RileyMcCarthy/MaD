@@ -70,6 +70,8 @@ pub struct Board {
     edges: VecDeque<(u64, bool)>,
     /// Edges processed, for cost accounting.
     pub edge_count: u64,
+    /// Edge-load multiplier for cost measurement (1 = real serial traffic).
+    pub edge_mult: u32,
 }
 
 impl Default for Board {
@@ -97,6 +99,7 @@ impl Board {
             edge_level: false,
             edges: VecDeque::new(),
             edge_count: 0,
+            edge_mult: 1,
         }
     }
 
@@ -111,11 +114,17 @@ impl Board {
         let period = self.pins[pin as usize & 63].bit_period().max(1) as u64;
         let now = self.edge_count * period;
 
-        self.edges.push_back((now, false)); // start bit
-        for i in 0..8u64 {
-            self.edges.push_back((now + (i + 1) * period, byte >> i & 1 != 0));
+        // `edge_mult` stands in for the continuous signals (step train,
+        // quadrature encoder) that a plain boot never exercises: it scales the
+        // in-situ edge load so the cost clears the run-to-run noise floor,
+        // through the real path rather than an isolated benchmark.
+        for _ in 0..self.edge_mult {
+            self.edges.push_back((now, false)); // start bit
+            for i in 0..8u64 {
+                self.edges.push_back((now + (i + 1) * period, byte >> i & 1 != 0));
+            }
+            self.edges.push_back((now + 9 * period, true)); // stop bit
         }
-        self.edges.push_back((now + 9 * period, true)); // stop bit
 
         // Consume: reassemble the byte from the transitions, as a receiving
         // smart pin would.
