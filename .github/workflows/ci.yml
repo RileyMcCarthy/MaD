@@ -11,6 +11,10 @@ on:
       - 'Protocol/**'
       - 'SIL/**'
       - '.gitmodules'
+      # The docs site is built with `mkdocs build --strict` here as well as in
+      # pages.yml, so a broken nav/link fails the PR instead of the deploy.
+      - 'docs/**'
+      - 'mkdocs.yml'
     tags:
       - 'firmware-v*'
       - 'hardware-v*'
@@ -34,6 +38,9 @@ jobs:
       wasm_control: ${{ steps.changes.outputs.wasm_control }}
       protocol: ${{ steps.changes.outputs.protocol }}
       sil: ${{ steps.changes.outputs.sil }}
+      docs: ${{ steps.changes.outputs.docs }}
+      embsim_pin: ${{ steps.changes.outputs.embsim_pin }}
+      protoemb_pin: ${{ steps.changes.outputs.protoemb_pin }}
       is_release: ${{ startsWith(github.ref, 'refs/tags/') }}
       is_firmware_release: ${{ startsWith(github.ref, 'refs/tags/firmware-v') }}
       is_hardware_release: ${{ startsWith(github.ref, 'refs/tags/hardware-v') }}
@@ -58,6 +65,21 @@ jobs:
               - 'SIL/**'
               - 'Firmware/**'
               - 'Protocol/**'
+              - '.gitmodules'
+            docs:
+              - 'docs/**'
+              - 'mkdocs.yml'
+            # Submodule PIN bumps only — the gitlink entry itself, not the
+            # surrounding tree. `sil`/`protocol` above fire on any change under
+            # SIL/ or Protocol/; these two fire only when the recorded commit
+            # moves, which is when the expensive upstream-mirror legs earn their
+            # keep. `.gitmodules` is included because repointing a submodule URL
+            # changes which repository the pin resolves against.
+            embsim_pin:
+              - 'SIL/embsim'
+              - '.gitmodules'
+            protoemb_pin:
+              - 'Protocol/ProtoEmb'
               - '.gitmodules'
 
   # Offline gate for the frontend-only Web Serial + WASM control app: Rust unit
@@ -159,6 +181,213 @@ jobs:
       - name: Run full ProtoEmb test suite
         run: make test
 
+  # BLOCKING, pin-bumps only. Mirror of `embsim-pin-ci` for the other submodule:
+  # `protoemb-ci` above runs `make test` on any Protocol/ change, this runs the
+  # rest of the upstream gate when the recorded commit moves. protoemb is not a
+  # workspace, so the Rust legs are invoked once per crate manifest.
+  protoemb-pin-ci:
+    needs: changes
+    if: needs.changes.outputs.protoemb_pin == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: Protocol/ProtoEmb
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.x'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            Protocol/ProtoEmb/framing
+            Protocol/ProtoEmb/runtime
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - name: Install libudev (serialport build dependency on Linux)
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev pkg-config
+      - name: Install Python deps (generator + pytest)
+        run: make setup
+      - name: Example round-trip (examples/verify.sh)
+        run: make verify
+      - name: Ruff (generator + tests)
+        run: pipx run ruff==0.14.11 check --output-format=github core tests
+      # The runtime crate is what the shipped app compiles to WebAssembly, so
+      # the wasm target is a first-class leg, not an afterthought. `--lib` on the
+      # wasm clippy leg because that is exactly what wasm-pack builds — the
+      # native-only protoemb-bridge bin is cfg'd out of the wasm build.
+      - name: clippy framing (native)
+        run: cargo clippy --manifest-path framing/Cargo.toml --all-targets -- -D warnings
+      - name: clippy runtime (native)
+        run: cargo clippy --manifest-path runtime/Cargo.toml --all-targets -- -D warnings
+      - name: clippy runtime (wasm32)
+        run: cargo clippy --manifest-path runtime/Cargo.toml --target wasm32-unknown-unknown --lib -- -D warnings
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      - name: wasm-pack build (runtime, web target)
+        run: wasm-pack build runtime --target web --release --out-dir /tmp/protoemb-wasm-pkg
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@cargo-deny
+      - name: Supply chain (cargo-deny per crate + pip-audit)
+        run: |
+          set -euo pipefail
+          cargo deny --manifest-path framing/Cargo.toml check
+          cargo deny --manifest-path runtime/Cargo.toml check
+          pipx run pip-audit -r core/requirements.txt
+      # MSRV floor, read from each crate's own manifest (see embsim-pin-ci).
+      - name: Build both crates on their declared MSRV
+        run: |
+          set -euo pipefail
+          for crate in framing runtime; do
+            MSRV=$(sed -nE 's/^rust-version *= *"([^"]+)".*/\1/p' "$crate/Cargo.toml" | head -1)
+            test -n "$MSRV" || { echo "::error::no rust-version in $crate/Cargo.toml"; exit 1; }
+            echo "$crate MSRV = $MSRV"
+            rustup toolchain install "$MSRV" --profile minimal
+            cargo "+$MSRV" build --manifest-path "$crate/Cargo.toml"
+          done
+
+  # BLOCKING. The full Control ↔ SIL e2e suite: the real app in real Chrome,
+  # driving the real emulator over the WS↔PTY bridge. This is the only gate that
+  # exercises the app, the generated codec, the firmware and the machine models
+  # as one system, so it is the only one that can catch an integration break —
+  # which is exactly the class of bug that shipped while this suite ran nightly:
+  # the firmware never created `<mount>/gcode/`, so on a fresh SD root every
+  # uploaded test stored zero moves. Nothing offline could have seen it.
+  #
+  # The suite is serial by contract (one emulator, one PTY, one client at a
+  # time). The nightly workflow still runs it on `main` to catch drift that only
+  # shows over time; this job is what stops a regression from merging.
+  control-e2e-sil:
+    needs: changes
+    if: |
+      needs.changes.outputs.is_release != 'true' &&
+      (needs.changes.outputs.wasm_control == 'true' || needs.changes.outputs.sil == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: Software/Control
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: Software/Control/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: SIL
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.x'
+      - name: Install system deps
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev pkg-config
+      - name: Install PlatformIO
+        run: pip install -U platformio
+      - name: Install protocol generator deps
+        run: pip install -r ../../Protocol/ProtoEmb/core/requirements.txt
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      - name: Build SIL emulator (firmware + protocol + cargo)
+        working-directory: SIL
+        run: make emulator
+      - name: Install Control deps + wasm + proto
+        run: |
+          npm ci
+          npm run build:wasm
+          npm run generate:proto
+      # The suite launches system Chrome (`channel: 'chrome'`), preinstalled on
+      # the runner; this brings in the shared libraries it needs.
+      - name: Install Chromium for Playwright
+        run: npx playwright install --with-deps chromium
+      - name: Start playground (emulator PTY)
+        working-directory: SIL
+        run: |
+          nohup make playground > /tmp/mad-playground.log 2>&1 &
+          for i in $(seq 1 90); do
+            if [ -e /tmp/tty.rpi ]; then echo "PTY ready after ${i}s"; break; fi
+            sleep 2
+          done
+          if [ ! -e /tmp/tty.rpi ]; then
+            echo "=== playground log ==="
+            cat /tmp/mad-playground.log || true
+            exit 1
+          fi
+      - name: Start WS bridge + Vite dev server
+        run: |
+          nohup npm run sil:bridge > /tmp/mad-bridge.log 2>&1 &
+          nohup npm run dev -- --host 127.0.0.1 --port 5174 > /tmp/mad-vite.log 2>&1 &
+          for i in $(seq 1 60); do
+            curl -sf http://127.0.0.1:5174/ >/dev/null && break
+            sleep 2
+          done
+          curl -sf http://127.0.0.1:5174/ >/dev/null || {
+            echo "=== vite log ==="; cat /tmp/mad-vite.log || true; exit 1
+          }
+          for i in $(seq 1 30); do
+            (echo >/dev/tcp/127.0.0.1/9999) >/dev/null 2>&1 && break
+            sleep 1
+          done
+          (echo >/dev/tcp/127.0.0.1/9999) >/dev/null 2>&1 || {
+            echo "=== bridge log ==="; cat /tmp/mad-bridge.log || true; exit 1
+          }
+      - name: Run the full e2e suite
+        env:
+          APP_URL: http://127.0.0.1:5174
+          BRIDGE_URL: ws://127.0.0.1:9999
+        run: npm run e2e
+      # e2e/artifacts holds the per-scenario merged main+worker app log that
+      # dumpFailureArtifacts writes — without it a red run can only be diagnosed
+      # by reproducing it, which for this suite means reproducing CI.
+      # Collect into one directory first: upload-artifact roots the archive at the
+      # least common ancestor of its paths, and mixing /tmp with the workspace
+      # would root it at / and bury everything under a deep prefix.
+      - name: Collect diagnostics
+        if: failure()
+        run: |
+          mkdir -p /tmp/e2e-out
+          cp /tmp/mad-playground.log /tmp/mad-bridge.log /tmp/mad-vite.log /tmp/e2e-out/ 2>/dev/null || true
+          cp -r e2e/artifacts /tmp/e2e-out/scenario-artifacts 2>/dev/null || true
+      - name: Upload logs + failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: control-e2e-sil-${{ github.run_number }}
+          path: /tmp/e2e-out
+          retention-days: 14
+
+  # BLOCKING. The documentation site must build in strict mode (broken nav
+  # entries, dead internal links and config warnings are all errors). pages.yml
+  # builds the same site, but only on a push to `main` — by which point a bad
+  # docs PR has already merged and taken the Pages deploy down with it. This is
+  # the same command, one step earlier, where it can still be fixed.
+  docs-ci:
+    needs: changes
+    if: needs.changes.outputs.docs == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.x'
+      - name: Install the docs toolchain
+        run: pip install -r docs/requirements.txt
+      - name: mkdocs build --strict
+        run: mkdocs build --strict
+
   # embsim library suite against the *pinned submodule commit* (mirror of
   # protoemb-ci). Upstream also runs this on RileyMcCarthy/embsim; re-running
   # here gates pin bumps and catches unpushed / never-CI'd gitlinks. The MaD
@@ -188,6 +417,80 @@ jobs:
         run: cargo test --workspace --doc
       - name: Test embsim-trace (web off)
         run: cargo test -p embsim-trace --no-default-features
+
+  # BLOCKING, pin-bumps only. `embsim-ci` above runs the build/test half of the
+  # upstream suite on every SIL change; this job runs the half that only matters
+  # when the *pin moves* — the determinism goldens, the lint gate, rustdoc, the
+  # MSRV floor and the supply-chain audit. Upstream gates all of these on
+  # RileyMcCarthy/embsim, so a pin that has actually been pushed and CI'd will
+  # sail through; a pin that was never pushed (or was pushed to a branch that
+  # never went green) fails here instead of landing in MaD unverified.
+  # Ubuntu-only: upstream's macOS leg covers the platform axis, this covers the
+  # commit axis.
+  embsim-pin-ci:
+    needs: changes
+    if: needs.changes.outputs.embsim_pin == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: SIL/embsim
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: SIL/embsim
+      - name: rustfmt (gating)
+        run: cargo fmt --all --check
+      - name: clippy (gating)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: cargo doc (deny warnings)
+        run: cargo doc --workspace --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
+      # Determinism: the stepped-clock engine event log — order AND every
+      # virtual timestamp — must match a blessed golden trace. Run the binary as
+      # separate processes so each run re-seeds its HashMaps; that is the class
+      # of nondeterminism in-process repetition cannot reach.
+      - name: N-run identity + goldens, 5x as separate processes
+        run: |
+          set -euo pipefail
+          for run in 1 2 3 4 5; do
+            echo "::group::determinism run $run"
+            cargo test -p embsim-board --test determinism -- --nocapture
+            echo "::endgroup::"
+          done
+      - name: Stepped-clock engine mechanics
+        run: |
+          set -euo pipefail
+          cargo test -p embsim-board --test stepped_clock -- --nocapture
+          cargo test -p embsim-board --test ads122u04_stepped -- --nocapture
+          cargo test -p embsim-board --test pulse_bridge_stepped -- --nocapture
+      # A golden regenerated by a test run makes the comparison above vacuous.
+      # Blessing is a deliberate local act (EMBSIM_BLESS=1), so a dirty fixture
+      # tree here means the goldens rewrote themselves.
+      - name: Goldens are unmodified
+        run: git diff --exit-code -- board/tests/fixtures/traces
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@cargo-deny
+      - name: Supply chain (advisories + licenses + bans + sources)
+        run: cargo deny check
+      # MSRV floor. Read `rust-version` out of the pinned manifest rather than
+      # hardcoding it, so raising the floor upstream doesn't fail here with a
+      # misleading compile error. Build only — MSRV governs compilation.
+      - name: Build the workspace on its declared MSRV
+        run: |
+          set -euo pipefail
+          MSRV=$(sed -nE 's/^rust-version *= *"([^"]+)".*/\1/p' Cargo.toml | head -1)
+          test -n "$MSRV" || { echo "::error::no rust-version in SIL/embsim/Cargo.toml"; exit 1; }
+          echo "embsim MSRV = $MSRV"
+          rustup toolchain install "$MSRV" --profile minimal
+          cargo "+$MSRV" build --workspace
 
   # Firmware Unity unit tests on the host (platform = native, AddressSanitizer).
   # No Propeller toolchain needed; the platformio pre-hook regenerates the C
@@ -264,11 +567,12 @@ jobs:
       - name: Run ruff (lint only)
         run: pipx run ruff==0.13.2 check --output-format=github Firmware/MaDCore/extra_scripts
 
-  # BLOCKING (cargo test). SIL Rust workspace: builds the generated protocol
-  # Rust (make protocol) + libfirmware.a (pio run -e native_emulator), then runs
-  # clippy (advisory — informational) and cargo test (gating). Clippy is not
-  # `-D warnings` yet (a pre-existing lint backlog remains); promote it by clearing
-  # the backlog and appending `-- -D warnings`.
+  # BLOCKING. SIL Rust workspace: builds the generated protocol Rust
+  # (make protocol) + libfirmware.a (pio run -e native_emulator), then runs
+  # rustfmt, clippy and cargo test — all three gating. The lint backlog that
+  # kept clippy advisory has been cleared: the one real finding was fixed, and
+  # the generated codec's template-style lints are allowed at the `mod`
+  # declaration in Protocol/rust/src/lib.rs.
   sil-rust:
     needs: changes
     if: |
@@ -282,7 +586,7 @@ jobs:
           submodules: recursive
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy
+          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: SIL
@@ -297,10 +601,17 @@ jobs:
       - name: Build firmware native lib (libfirmware.a)
         working-directory: Firmware/MaDCore
         run: pio run -e native_emulator
-      - name: Clippy (advisory — informational, not gating)
+      # rustfmt covers the crates this repo authors. The `protocol` crate is
+      # excluded because its body is `#[path]`-included generated code that
+      # `make protocol` rewrites on every build — formatting it would be undone
+      # by the next regeneration, and a gate that cannot be satisfied is worse
+      # than no gate.
+      - name: rustfmt (gating)
         working-directory: SIL
-        continue-on-error: true
-        run: cargo clippy --workspace --all-targets
+        run: cargo fmt -p mad-emulator -p models --check
+      - name: Clippy (gating)
+        working-directory: SIL
+        run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Cargo test (blocking)
         working-directory: SIL
         # The workspace is the MaD-side crates only (protocol, models,
@@ -552,8 +863,12 @@ jobs:
     needs:
       - changes
       - wasm-control-ci
+      - control-e2e-sil
       - protoemb-ci
+      - protoemb-pin-ci
       - embsim-ci
+      - embsim-pin-ci
+      - docs-ci
       - firmware-unit-tests
       - protocol-codegen
       - firmware-layering
