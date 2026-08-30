@@ -22,10 +22,20 @@ Starting MaD
 
 ## Status
 
-Boots, sets `clkfreq`, reaches `_main`, prints its startup banner, and takes the
-SD mount-failure path — ~200M instructions with no traps, at ~50 M inst/s.
-Multi-cog startup is not reached yet: the firmware waits on NVRAM, which needs a
-working SD card (`src/sdcard.rs` is in progress).
+**Boots the real image to a fully-populated machine and answers protocol
+requests.** All eight cogs run, every peripheral has its smart pins configured
+(force gauge 0/2, servo encoder 9, host protocol 53/55, SD SPI 58-61, debug
+console 62/63), and a host request gets a structured reply:
+
+```
+-> 55 00 03                         read firmware version
+<- 55 02 03 10 00 "0.0.0" ... C6 14  sync, data frame, cmd 3, len, payload, CRC
+```
+
+That is the capability SIL tests need. The SD card model completes the CMD0 /
+CMD8 handshake with a correct R7; mounting a real filesystem is not done yet, so
+the firmware currently takes its documented mount-failure path and runs on
+failsafe records.
 
 ## Design
 

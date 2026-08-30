@@ -6,7 +6,13 @@ fn main() {
     let budget: u64 = std::env::args().nth(2).and_then(|s| s.parse().ok()).unwrap_or(400_000_000);
     let image = std::fs::read(&path).expect("read image");
     let mut m = Machine::new(&image, Board::new(SdCard::blank(32 * 1024 * 1024)));
-    let r = m.step(budget);
+    // Let the machine finish booting, then ask for the firmware version:
+    // [SYNC, READ, READ_FIRMWARE_VERSION] per the generated runtime.
+    let r = m.step(budget / 2);
+    let before = m.pins.proto_tx.len();
+    m.pins.send_protocol(&[0x55, 0x00, 0x03]);
+    let r = r.and(m.step(budget / 2));
+    println!("protocol TX before request: {before} bytes");
 
     match r {
         Ok(n) => println!("ran {n} instructions"),
