@@ -4,90 +4,38 @@
   "receipts": [
     {
       "acceptedBy": "--yes",
-      "baseSha": "bfa09dbff17866f5ed808f1b1d8d4937a37cfdf6",
+      "baseSha": "e46217244bc1f403cd3bde8eca81fa849b2d2aa3",
       "ciJob": "wasm-control-ci",
       "component": "control",
       "counts": {
         "acceptRatio": 1,
-        "accepted": 2,
-        "added": 2,
-        "changed": 2,
+        "accepted": 1,
+        "added": 0,
+        "changed": 1,
         "deleted": 0,
-        "skippedEquivalent": 0
-      },
-      "doctorRuns": [
-        "8821e64d097dd542651bc0f2572001934f62953c8c3221f77d746460d111f96b",
-        "8821e64d097dd542651bc0f2572001934f62953c8c3221f77d746460d111f96b",
-        "8821e64d097dd542651bc0f2572001934f62953c8c3221f77d746460d111f96b"
-      ],
-      "entries": [
-        {
-          "file": "_vibes-census.json",
-          "previousSha256": null,
-          "sha256": "3285a6d6872405547ce88343774e96f81ec6fac78cced7fe64288a7b7382a96f",
-          "verdict": "added"
-        },
-        {
-          "file": "program.txt",
-          "previousSha256": null,
-          "sha256": "4db8829dd3d6ffef6d13a302acd015c2d5def7fa7509f7ad15e05ab1a7b7a71c",
-          "verdict": "added"
-        }
-      ],
-      "headSha": "2efa4428dd8037e0c64d75c253a94c2528793297",
-      "id": "rcf8bc58e26e6e0d9",
-      "mode": "bootstrap",
-      "producer": "gcode-corpus",
-      "producerEverCIVerified": false,
-      "producerOutcome": "ok",
-      "producerTrust": "verified",
-      "reason": "First adoption: record baselines for the Control gcode corpus and the three protocol codegen targets. No witnessed source changes in this commit.",
-      "sourceContext": {
-        "changedWitnessPaths": [],
-        "corpusChangedPaths": [],
-        "exercisedWitnessPaths": []
-      },
-      "toolVersion": "0.1.0",
-      "unverifiedProducer": true,
-      "version": 1
-    },
-    {
-      "acceptedBy": "--yes",
-      "baseSha": "dcb46a62f34d0428be9266581a1fc0c8c5c25152",
-      "ciJob": "wasm-control-ci",
-      "component": "control",
-      "counts": {
-        "acceptRatio": 1,
-        "accepted": 2,
-        "added": 2,
-        "changed": 2,
-        "deleted": 0,
-        "skippedEquivalent": 0
+        "skippedEquivalent": 1
       },
       "entries": [
         {
-          "file": "_vibes-census.json",
-          "previousSha256": null,
-          "sha256": "3285a6d6872405547ce88343774e96f81ec6fac78cced7fe64288a7b7382a96f",
-          "verdict": "added"
-        },
-        {
           "file": "program.txt",
-          "previousSha256": null,
-          "sha256": "4db8829dd3d6ffef6d13a302acd015c2d5def7fa7509f7ad15e05ab1a7b7a71c",
-          "verdict": "added"
+          "previousSha256": "4db8829dd3d6ffef6d13a302acd015c2d5def7fa7509f7ad15e05ab1a7b7a71c",
+          "sha256": "3592dc3f07ba51e9bc059f5b957bcfb850bebe2509d3b6214952ba66ee2dd3d5",
+          "verdict": "different"
         }
       ],
-      "headSha": "6b8e232b88313f6047f887ff8380508301906eac",
-      "id": "r952ffc2400f183df",
+      "headSha": "196be9dc491ea4290085bc100b287e9b25824102",
+      "id": "r077f33dc2cb84d65",
       "mode": "bulk",
       "producer": "gcode-corpus",
       "producerEverCIVerified": false,
       "producerOutcome": "ok",
       "producerTrust": "verified",
-      "reason": "Re-record after rebasing onto main: PR #57 moved MaDProtocol.yaml to protocol_version 2, replacing forceGaugeNPerStep/forceGaugeZeroOffset with loadCellCapacity/loadCellSensitivity/loadCellZeroBalance. The generated C, TS and Rust codecs change with it.",
+      "reason": "parseGcodeToMove now stops at a trailing comment, matching parseGcodeWaveform. Two pinned quirk cases move: quirk/comment-leak x=65 -> x=25, quirk/comment-changes-command g=1 x=999 -> g=0 x=0.",
       "sourceContext": {
-        "changedWitnessPaths": [],
+        "changedWitnessPaths": [
+          "Software/Control/src/domain/gcode.test.ts",
+          "Software/Control/src/domain/gcode.ts"
+        ],
         "corpusChangedPaths": [],
         "exercisedWitnessPaths": []
       },
