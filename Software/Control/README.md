@@ -94,23 +94,31 @@ plain clone run `git submodule update --init --recursive` first.
 
 ## Deploying (GitHub Pages)
 
-The app is published to GitHub Pages by the `Deploy web app (GitHub Pages)`
-workflow (`.github/workflows/pages.yml`), which builds the wasm + protocol
-bindings, runs `vite build` with the project base path (`/<repo>/`), and deploys
-`dist/`. HashRouter keeps client routing working without server rewrites; Web
-Serial + File System Access work because Pages is served over HTTPS.
+The app is published to GitHub Pages by `.github/workflows/pages.yml`, which
+builds the wasm + protocol bindings, runs `vite build` with the project base
+path (`/<repo>/app/`), and deploys `dist/` under `/app/`. HashRouter keeps
+client routing working without server rewrites; Web Serial + File System Access
+work because Pages is served over HTTPS.
 
-**Release process — to publish the current code, cut a tag:**
+**MaD Control version is `package.json` `version`.** Do not `git tag` by hand
+(`webapp-v*` is retired). The tag `madcontrol-vX.Y.Z` must match that version
+on the tagged commit — CI rejects a mismatch, which is what used to ship
+`0.1.0` on the About page while the tag said otherwise.
 
 ```bash
-git tag webapp-v1.0.0
-git push origin webapp-v1.0.0     # → builds + deploys to Pages
+# from repo root, after main is up to date
+git checkout -b release/madcontrol origin/main
+Software/Control/scripts/release.sh patch --no-tag    # or minor | major | x.y.z
+git push -u origin HEAD
+# open PR → CI Gate → merge
+Software/Control/scripts/release.sh --publish         # tags origin/main as madcontrol-vX.Y.Z
 ```
 
-The live URL is `https://<owner>.github.io/<repo>/` (for this repo,
-`https://rileymccarthy.github.io/MaD/`). A manual deploy of any branch is also
-available via the workflow's **Run workflow** button (`workflow_dispatch`).
-One-time setup: repo **Settings → Pages → Source = GitHub Actions**.
+That tag deploys Pages and creates a GitHub Release named **MaD Control X.Y.Z**.
+The live app is `https://rileymccarthy.github.io/MaD/app/`. A manual deploy of
+any branch is also available via the workflow's **Run workflow** button
+(`workflow_dispatch`). One-time setup: repo **Settings → Pages → Source =
+GitHub Actions**.
 
 ## Firmware flashing
 

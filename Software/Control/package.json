@@ -1,6 +1,6 @@
 {
   "name": "mad-control",
-  "version": "0.1.0",
+  "version": "0.2.1",
   "private": true,
   "description": "Frontend-only MaD tensile-tester control app (Web Serial + WebAssembly). Chromium-only.",
   "type": "module",
@@ -23,7 +23,8 @@
     "sil:bridge": "node tools/sil-ws-bridge.mjs",
     "sil:smoke": "node e2e/sil-smoke.mjs",
     "sil:app": "node e2e/sil-playground.mjs",
-    "docs:screenshots": "node e2e/capture-screenshots.mjs"
+    "docs:screenshots": "node e2e/capture-screenshots.mjs",
+    "release": "bash scripts/release.sh"
   },
   "dependencies": {
     "comlink": "^4.4.2",

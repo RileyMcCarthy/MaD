@@ -136,9 +136,10 @@ deploys the docs + app to GitHub Pages (`.github/workflows/pages.yml`). Releases
 are cut with version tags:
 
 ```bash
-git tag firmware-v1.0.0 && git push --tags   # firmware binaries
-git tag hardware-v1.0.0 && git push --tags   # hardware manufacturing files
-git tag webapp-v1.0.0   && git push --tags   # deploy docs + app to Pages
+Software/Control/scripts/release.sh patch --no-tag   # bump package.json, then PR
+Software/Control/scripts/release.sh --publish        # tag origin/main as madcontrol-vX.Y.Z
+git tag firmware-v1.0.0 && git push origin firmware-v1.0.0   # firmware binaries
+git tag hardware-v1.0.0 && git push origin hardware-v1.0.0   # hardware manufacturing files
 ```
 
 ## License

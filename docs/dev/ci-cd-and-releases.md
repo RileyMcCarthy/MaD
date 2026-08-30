@@ -23,7 +23,7 @@ relevant jobs:
 | `build-firmware` | firmware changed, or a firmware tag | Builds `propeller2_debug`, `propeller2` release, and the native (SIL) binary |
 | `build-hardware` | hardware changed, or a hardware tag | KiBot → Gerbers, BOM, interactive BOM, 3D models for each board |
 | **`ci-gate`** | **every PR** | **Aggregates all of the above. Fails if any job failed/was cancelled; passes when they succeeded or were legitimately skipped. This is the single required status check (`CI Gate`) on `main`.** |
-| `release-*` | a `*-v*` tag | Publishes a GitHub Release with the built artifacts |
+| `release-*` | a `firmware-v*` / `hardware-v*` tag | Publishes a GitHub Release with the built artifacts. MaD Control releases are cut by `pages.yml` on `madcontrol-v*` tags. |
 
 The PR trigger has **no path filter** — every PR runs at least `changes` + `ci-gate`, so the required `CI Gate` check always reports. A docs-only PR skips every component job and the gate goes green in seconds; requiring the gate (instead of each job individually) is what keeps path-filtered skips from blocking a PR forever.
 
@@ -74,7 +74,7 @@ GitHub Pages as a single deployment:
 
 ```text
 https://rileymccarthy.github.io/MaD/        → documentation (this site)
-https://rileymccarthy.github.io/MaD/app/    → the control app (Control)
+https://rileymccarthy.github.io/MaD/app/    → MaD Control
 ```
 
 The job builds the app with Vite (base path `/<repo>/app/`), builds the docs with
@@ -84,7 +84,13 @@ Pages artifact. It triggers on:
 - **push to `main`** (when `docs/**`, `mkdocs.yml`, `Software/Control/**`,
   or `Protocol/**` change),
 - **`workflow_dispatch`** (manual deploy of any branch), and
-- **`webapp-v*` tags**.
+- **`madcontrol-v*` tags**.
+
+A `madcontrol-v*` tag is rejected unless it matches
+`Software/Control/package.json` `version` on that commit — so the About page,
+bug reports, and GitHub Release cannot drift. After a successful Pages deploy
+the workflow also publishes a **MaD Control** GitHub Release pointing at the
+live app.
 
 !!! note "One-time setup"
     In the repo, set **Settings → Pages → Source = GitHub Actions** so the
@@ -92,12 +98,27 @@ Pages artifact. It triggers on:
 
 ## Releases
 
-Releases are cut by pushing a version tag:
+**MaD Control** (`Software/Control/`) — `package.json` is the source of truth.
+Do not `git tag` by hand (`webapp-v*` is retired). From the repo root:
 
 ```bash
-git tag firmware-v1.0.0 && git push --tags   # firmware binaries release
-git tag hardware-v1.0.0 && git push --tags   # hardware manufacturing files
-git tag webapp-v1.0.0   && git push --tags   # deploy docs + app to Pages
+# Protected main (default): bump on a branch, merge, then tag origin/main
+git checkout -b release/madcontrol origin/main
+Software/Control/scripts/release.sh patch --no-tag    # or minor | major | x.y.z
+git push -u origin HEAD
+# open PR → CI Gate → merge
+Software/Control/scripts/release.sh --publish         # tags madcontrol-vX.Y.Z
+```
+
+That tag deploys Pages and creates a GitHub Release named **MaD Control X.Y.Z**.
+`package.json` is currently **0.2.1** to match the last `webapp-v0.2.1` tag; the
+first `madcontrol-v*` release should be **0.2.2** or **0.3.0** (`patch` / `minor`).
+
+Firmware and hardware are still cut with version tags:
+
+```bash
+git tag firmware-v1.0.0 && git push origin firmware-v1.0.0   # firmware binaries
+git tag hardware-v1.0.0 && git push origin hardware-v1.0.0   # manufacturing files
 ```
 
 ## Running the gates locally
@@ -105,7 +126,7 @@ git tag webapp-v1.0.0   && git push --tags   # deploy docs + app to Pages
 You can reproduce the most important gates before pushing:
 
 ```bash
-# Web app offline gate
+# MaD Control offline gate
 cd Software/Control && npm run verify
 
 # Full SIL integration
