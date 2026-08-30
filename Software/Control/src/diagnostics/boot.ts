@@ -12,10 +12,6 @@ import { logger, type LogLevel } from './log';
 
 const log = logger('app');
 
-/** Build identity, injected by vite.config.ts `define`. */
-declare const __APP_VERSION__: string;
-declare const __GIT_SHA__: string;
-
 let installed = false;
 
 /** One line that identifies the environment a report came from. */

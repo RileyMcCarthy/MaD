@@ -4,6 +4,10 @@
 import type { MadLogHook } from './diagnostics/log';
 
 declare global {
+  /** Semver from Software/Control/package.json, injected by vite.config.ts. */
+  const __APP_VERSION__: string;
+  /** Short git SHA of the build, or `"unknown"` without git metadata. */
+  const __GIT_SHA__: string;
   /**
    * Debug handle onto the session log, attached in dev (and in prod when the
    * user has opted in via the `mad:log` localStorage key) by `diagnostics/log`.

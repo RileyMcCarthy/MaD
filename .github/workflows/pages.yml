@@ -1,12 +1,13 @@
-name: Deploy docs + app (GitHub Pages)
+name: Deploy docs + MaD Control (GitHub Pages)
 
 # Publishes a single Pages deployment that serves the documentation site at the
-# repo root and the control app under /app/:
+# repo root and MaD Control under /app/:
 #   https://<owner>.github.io/<repo>/        → docs (MkDocs Material, from docs/)
-#   https://<owner>.github.io/<repo>/app/    → Control (Vite PWA)
+#   https://<owner>.github.io/<repo>/app/    → MaD Control (Vite PWA)
 #
 # Triggers: push to main (docs/app/protocol changes), a manual run, or a
-# `webapp-v*` release tag.
+# `madcontrol-v*` release tag. Tags must match Software/Control/package.json
+# (enforced below); cut them with Software/Control/scripts/release.sh.
 on:
   push:
     branches: [main]
@@ -18,7 +19,7 @@ on:
       - '.gitmodules'
       - '.github/workflows/pages.yml'
     tags:
-      - 'webapp-v*'
+      - 'madcontrol-v*'
   workflow_dispatch:
 
 permissions:
@@ -45,6 +46,11 @@ jobs:
           cache: npm
           cache-dependency-path: Software/Control/package-lock.json
 
+      # Fail the release rather than ship a build whose About page / bug reports
+      # still say the previous package.json version.
+      - name: Assert madcontrol-v* tag matches package.json
+        run: bash Software/Control/scripts/release.sh --check
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
@@ -61,7 +67,7 @@ jobs:
           pip install -r Protocol/ProtoEmb/core/requirements.txt
           pip install -r docs/requirements.txt
 
-      # ── Build the control app (served under /<repo>/app/) ──
+      # ── Build MaD Control (served under /<repo>/app/) ──
       - name: Install app dependencies
         working-directory: Software/Control
         run: npm ci
@@ -102,3 +108,31 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@v5
+
+  # Named GitHub Release so MaD Control shows up next to firmware/hardware
+  # instead of only as a Pages deploy. Notes-only — the app is the Pages URL.
+  release:
+    name: GitHub Release (MaD Control)
+    if: startsWith(github.ref, 'refs/tags/madcontrol-v')
+    needs: deploy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Get version
+        id: ver
+        run: echo "VERSION=${GITHUB_REF#refs/tags/madcontrol-v}" >> "$GITHUB_OUTPUT"
+      - uses: softprops/action-gh-release@v3
+        with:
+          name: MaD Control ${{ steps.ver.outputs.VERSION }}
+          tag_name: madcontrol-v${{ steps.ver.outputs.VERSION }}
+          generate_release_notes: true
+          body: |
+            MaD Control **${{ steps.ver.outputs.VERSION }}** is live at
+            https://rileymccarthy.github.io/MaD/app/
+
+            Browser app (Chrome/Edge). Nothing to install.
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

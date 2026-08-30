@@ -60,12 +60,31 @@ export default function About() {
       </div>
 
       <div className="panel">
-        <h2>About</h2>
+        <h2>MaD Control</h2>
+        <table>
+          <tbody>
+            <tr>
+              <td>Version</td>
+              <td data-testid="app-version">
+                {typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : 'unknown'}
+                {typeof __GIT_SHA__ === 'string' && __GIT_SHA__ !== 'unknown'
+                  ? ` (${__GIT_SHA__})`
+                  : ''}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <p className="muted" style={{ marginTop: 12 }}>
+          Frontend-only control app. Talks to the Propeller 2 over the Web Serial API; the
+          protocol runs as WebAssembly compiled from the same Rust core used by the firmware
+          tooling and SIL. Data is stored in a folder you choose via the File System Access
+          API. Chromium-only (Chrome / Edge, desktop).
+        </p>
         <p className="muted">
-          MaD Control (web) — a frontend-only control app. Talks to the Propeller 2 over the
-          Web Serial API; the protocol runs as WebAssembly compiled from the same Rust core used
-          by the firmware tooling and SIL. Data is stored in a folder you choose via the File
-          System Access API. Chromium-only (Chrome / Edge, desktop).
+          MaD Control releases:{' '}
+          <a href="https://github.com/RileyMcCarthy/MaD/releases" target="_blank" rel="noreferrer">
+            GitHub
+          </a>
         </p>
       </div>
     </div>

@@ -12,9 +12,6 @@ import { deviceClient } from '@/device/session';
 import { useStore } from '@/store/useStore';
 import type { ByteRingSnapshot } from './byteRing';
 
-declare const __APP_VERSION__: string;
-declare const __GIT_SHA__: string;
-
 export interface DiagnosticsBundle {
   generatedAt: string;
   version: string;
