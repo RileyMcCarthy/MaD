@@ -1799,11 +1799,35 @@ async function main() {
     process.exit(2);
   }
 
+  // Ids address scenarios — in SCENARIOS, in smoke-ids.txt, and in every failure
+  // report — so a duplicate silently runs two different scenarios under one
+  // name. That happened: the firmware-flash scenario shared `G1` with the
+  // run-start one, so a smoke list naming `G1` ran both and the report showed
+  // two lines with the same id.
+  const duplicates = scenarios
+    .map((s) => s.id)
+    .filter((id, i, all) => all.indexOf(id) !== i);
+  if (duplicates.length) {
+    console.error(`✗ duplicate scenario ids: ${[...new Set(duplicates)].join(', ')}`);
+    process.exit(2);
+  }
+
   // SCENARIOS="F1+F2,F7" npm run e2e — run a subset (exact ids, comma-separated).
   const only = process.env.SCENARIOS
     ? new Set(process.env.SCENARIOS.split(',').map((s) => s.trim()))
     : null;
   const selected = only ? scenarios.filter((s) => only.has(s.id)) : scenarios;
+
+  // A misspelled or renamed id would otherwise just shrink the run — the suite
+  // still reports "N/N passed" and nothing says the scenario never ran.
+  if (only) {
+    const known = new Set(scenarios.map((s) => s.id));
+    const unknown = [...only].filter((id) => !known.has(id));
+    if (unknown.length) {
+      console.error(`✗ SCENARIOS names ids that do not exist: ${unknown.join(', ')}`);
+      process.exit(2);
+    }
+  }
 
   let pass = 0;
   const failures = [];

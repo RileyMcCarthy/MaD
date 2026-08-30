@@ -41,6 +41,7 @@
     "WAVE-sine",
     "WAVE-tri",
     "M11-idle-drop",
-    "B5-reconnect"
+    "B5-reconnect",
+    "FW1"
   ]
 }
