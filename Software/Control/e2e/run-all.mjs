@@ -1464,7 +1464,7 @@ const scenarios = [
       try {
         const page = await browser.newPage();
         // Two indistinguishable adapters and no remembered choice.
-        await page.addInitScript(installFakeBootRom, 2);
+        await page.addInitScript(installFakeBootRom, { ports: 2 });
         await page.addInitScript(installOpfsDataDir, OPFS_DIR);
 
         await page.goto(`${APP_URL}#/firmware`);
@@ -1523,6 +1523,153 @@ const scenarios = [
         assert(rom.ok === true, 'ROM did not accept the checksum');
         assert(rom.finished, 'checksum handshake never completed');
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
+      } finally { await browser.close(); }
+    },
+  },
+  {
+    id: 'FW5',
+    name: 'Firmware: declining the confirmation programs nothing',
+    async run() {
+      const browser = await chromium.launch({ channel: 'chrome', headless: true });
+      try {
+        const page = await browser.newPage();
+        await page.addInitScript(installFakeBootRom);
+        await page.addInitScript(installOpfsDataDir, OPFS_DIR);
+        page.on('dialog', (d) => d.dismiss());
+
+        await page.goto(`${APP_URL}#/firmware`);
+        await page.getByTestId('flash-target').filter({ hasText: /USB 0403:6015/ }).waitFor();
+        await page.getByTestId('firmware-file').setInputFiles({
+          name: 'program', mimeType: 'application/octet-stream', buffer: Buffer.from([1, 2, 3, 4]),
+        });
+        await page.getByTestId('flash-firmware').click();
+
+        // Give the click somewhere to go before asserting nothing happened.
+        await page.waitForTimeout(500);
+        const rom = await page.evaluate(() => ({
+          reset: window.__bootRom.reset,
+          bytesIn: window.__bootRom.bytesIn,
+        }));
+        assert(rom.reset === 0, `board was reset despite declining (${rom.reset})`);
+        assert(rom.bytesIn === 0, `bytes were sent despite declining (${rom.bytesIn})`);
+      } finally { await browser.close(); }
+    },
+  },
+  {
+    id: 'FW6',
+    name: 'Firmware: implausible files are rejected before the chip is touched',
+    async run() {
+      const browser = await chromium.launch({ channel: 'chrome', headless: true });
+      try {
+        const page = await browser.newPage();
+        await page.addInitScript(installFakeBootRom);
+        await page.addInitScript(installOpfsDataDir, OPFS_DIR);
+        await page.goto(`${APP_URL}#/firmware`);
+        await page.getByTestId('flash-target').filter({ hasText: /USB/ }).waitFor();
+
+        // Larger than the P2's 512 KiB hub RAM.
+        await page.getByTestId('firmware-file').setInputFiles({
+          name: 'not-firmware.iso', mimeType: 'application/octet-stream',
+          buffer: Buffer.alloc(512 * 1024 + 1),
+        });
+        await page.getByTestId('file-error').filter({ hasText: /hub RAM/i }).waitFor();
+        assert(await page.getByTestId('flash-firmware').isDisabled(), 'oversized file armed the button');
+
+        await page.getByTestId('firmware-file').setInputFiles({
+          name: 'empty.bin', mimeType: 'application/octet-stream', buffer: Buffer.alloc(0),
+        });
+        await page.getByTestId('file-error').filter({ hasText: /empty/i }).waitFor();
+
+        // An extensionless PlatformIO build must be accepted.
+        await page.getByTestId('firmware-file').setInputFiles({
+          name: 'program', mimeType: 'application/octet-stream', buffer: Buffer.alloc(64),
+        });
+        await page.waitForTimeout(200);
+        assert((await page.getByTestId('file-error').count()) === 0, 'valid build was rejected');
+        assert(await page.getByTestId('flash-firmware').isEnabled(), 'valid build did not arm the button');
+      } finally { await browser.close(); }
+    },
+  },
+  {
+    id: 'FW7',
+    name: 'Firmware: every control is locked while programming, and progress shows',
+    async run() {
+      const browser = await chromium.launch({ channel: 'chrome', headless: true });
+      try {
+        const page = await browser.newPage();
+        // Slow the sink so the mid-upload state is observable.
+        await page.addInitScript(installFakeBootRom, { writeDelayMs: 12 });
+        await page.addInitScript(installOpfsDataDir, OPFS_DIR);
+        page.on('dialog', (d) => d.accept());
+
+        await page.goto(`${APP_URL}#/firmware`);
+        await page.getByTestId('flash-target').filter({ hasText: /USB/ }).waitFor();
+        await page.getByTestId('firmware-file').setInputFiles({
+          name: 'program', mimeType: 'application/octet-stream', buffer: Buffer.alloc(4096),
+        });
+        await page.getByTestId('flash-firmware').click();
+
+        await page.getByTestId('flash-status').filter({ hasText: /Uploading… \d+%/ }).waitFor({ timeout: 20000 });
+        for (const id of ['flash-firmware', 'firmware-file', 'choose-flash-port']) {
+          assert(await page.getByTestId(id).isDisabled(), `${id} was still enabled mid-flash`);
+        }
+        await page.getByTestId('flash-status').filter({ hasText: /Wrote .* bytes to flash/ })
+          .waitFor({ timeout: 60000 });
+      } finally { await browser.close(); }
+    },
+  },
+  {
+    id: 'FW8',
+    name: 'Firmware: no granted port, and a getPorts failure, both degrade gracefully',
+    async run() {
+      const browser = await chromium.launch({ channel: 'chrome', headless: true });
+      try {
+        const page = await browser.newPage();
+        const errors = [];
+        page.on('pageerror', (e) => errors.push(e.message));
+
+        await page.addInitScript(installFakeBootRom, { ports: 0 });
+        await page.addInitScript(installOpfsDataDir, OPFS_DIR);
+        await page.goto(`${APP_URL}#/firmware`);
+        await page.getByTestId('flash-target').filter({ hasText: /No serial device yet/i }).waitFor();
+        assert(await page.getByTestId('flash-firmware').isDisabled(), 'armed with no port');
+        await browser.close();
+
+        // A getPorts() that rejects must not break the screen either.
+        const b2 = await chromium.launch({ channel: 'chrome', headless: true });
+        const p2 = await b2.newPage();
+        p2.on('pageerror', (e) => errors.push(e.message));
+        await p2.addInitScript(installFakeBootRom, { getPortsFails: true });
+        await p2.addInitScript(installOpfsDataDir, OPFS_DIR);
+        await p2.goto(`${APP_URL}#/firmware`);
+        await p2.getByTestId('flash-target').filter({ hasText: /No serial device yet/i }).waitFor();
+        await b2.close();
+
+        assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
+      } finally { /* browsers closed above */ }
+    },
+  },
+  {
+    id: 'FW9',
+    name: 'Firmware: an explicit port choice is remembered across reloads',
+    async run() {
+      const browser = await chromium.launch({ channel: 'chrome', headless: true });
+      try {
+        const page = await browser.newPage();
+        await page.addInitScript(installFakeBootRom, { ports: 2 });
+        await page.addInitScript(installOpfsDataDir, OPFS_DIR);
+
+        await page.goto(`${APP_URL}#/firmware`);
+        await page.getByTestId('flash-target').filter({ hasText: /choose which one/i }).waitFor();
+        await page.getByTestId('choose-flash-port').click();
+        await page.getByTestId('flash-target').filter({ hasText: /USB 0403:6015/ }).waitFor();
+
+        const pref = await page.evaluate(() => localStorage.getItem('mad.flashPort'));
+        assert(pref && JSON.parse(pref).vendorId === 0x0403, `preference not stored: ${pref}`);
+
+        // The choice must survive a reload rather than asking again.
+        await page.reload();
+        await page.getByTestId('flash-target').filter({ hasText: /USB 0403:6015/ }).waitFor();
       } finally { await browser.close(); }
     },
   },

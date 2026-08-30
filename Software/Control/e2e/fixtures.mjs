@@ -320,10 +320,16 @@ export async function chooseDataFolder(page) {
  *
  * Exposes `window.__bootRom` for assertions: { reset, image, finished, ok }.
  *
- * `portCount` > 1 presents several indistinguishable adapters, which is how the
- * app's refusal to guess a programming target gets tested.
+ * Options (a bare number is still accepted as `ports`, for brevity):
+ *   ports        how many indistinguishable adapters getPorts() reports. 0
+ *                exercises "nothing granted"; >1 the refusal to guess.
+ *                requestPort() always returns the one real ROM.
+ *   getPortsFails make getPorts() reject, as a permissions policy would.
+ *   writeDelayMs  slow the sink so mid-upload UI states are observable.
  */
-export function installFakeBootRom(portCount = 1) {
+export function installFakeBootRom(options = 1) {
+  const { ports: portCount = 1, getPortsFails = false, writeDelayMs = 0 } =
+    typeof options === 'number' ? { ports: options } : options;
   const CHECKSUM_MAGIC = 0x706f7250;
   const state = { reset: 0, image: [], finished: false, ok: null, dtr: null, bytesIn: 0, replies: 0, checksum: null };
   window.__bootRom = state;
@@ -409,7 +415,8 @@ export function installFakeBootRom(portCount = 1) {
           },
         });
         writable = new WritableStream({
-          write(chunk) {
+          async write(chunk) {
+            if (writeDelayMs) await new Promise((r) => setTimeout(r, writeDelayMs));
             consume(String.fromCharCode(...chunk));
           },
         });
@@ -450,7 +457,10 @@ export function installFakeBootRom(portCount = 1) {
   const port = makePort();
   // Extra ports are decoys: same ids, no ROM behind them. Only the first can
   // actually be programmed, so a test that flashes a decoy would hang.
-  const ports = [port, ...Array.from({ length: Math.max(0, portCount - 1) }, makePort)];
+  // ports: 0 means nothing has been granted yet — requestPort() still hands
+  // back the real ROM, which is what the chooser would do.
+  const ports =
+    portCount === 0 ? [] : [port, ...Array.from({ length: portCount - 1 }, makePort)];
   Object.defineProperty(navigator, 'serial', {
     configurable: true,
     value: {
@@ -458,6 +468,7 @@ export function installFakeBootRom(portCount = 1) {
         return port;
       },
       async getPorts() {
+        if (getPortsFails) throw new DOMException('denied', 'SecurityError');
         return ports;
       },
       addEventListener() {},
