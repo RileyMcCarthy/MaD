@@ -15,6 +15,9 @@
 #include "lib_staticQueue.h"
 #ifdef __FLEXC__
 #include <propeller2.h>
+#include <unistd.h> /* mkdir — FlexC declares it here, not in <sys/stat.h> */
+#else
+#include <sys/stat.h> /* mkdir */
 #endif
 /**********************************************************************
  * Constants
@@ -26,6 +29,11 @@
  * VLA support and they are a MISRA C:2023 Rule 18.8 violation. Both functions
  * bound-check itemSize against this so an oversized channel fails safe. */
 #define IO_SDCARD_MAX_ITEM_SIZE 64U
+
+/* Longest fully-expanded channel path (`<mount>/gcode/<id>.bin` and friends),
+ * including the terminator. Sizes both the per-channel filename buffer and the
+ * scratch buffer the directory walk below uses. */
+#define IO_SDCARD_MAX_PATH_SIZE 255U
 
 /*********************************************************************
  * Macros
@@ -44,7 +52,7 @@
  **********************************************************************/
 typedef struct
 {
-    char fileName[255];
+    char fileName[IO_SDCARD_MAX_PATH_SIZE];
     IO_SDCard_mode_E mode;
 } IO_SDCard_channelInput_S;
 
@@ -229,6 +237,48 @@ static void IO_SDCard_private_processRead(IO_SDCard_channel_E channel)
     }
 }
 
+/* `fopen(path, "wb")` creates the file but never the directories above it, and
+ * every channel path template nests one level under the mount point
+ * (`<mount>/gcode/%s.bin`, `<mount>/test/%s.bin` — see IO_SDCard_config.c). On a
+ * card that has never held a test — a freshly formatted SD, or the emulator's
+ * SD root in a clean checkout — the open therefore fails with ENOENT, the
+ * G-code is silently never stored, and the test that was uploaded runs zero
+ * moves. Provision the path instead: walk it and mkdir each component, so the
+ * first write to a virgin card is the one that creates its layout.
+ *
+ * EEXIST is the overwhelmingly common outcome and is not an error, so the
+ * result is deliberately discarded — a genuine failure (a full or read-only
+ * card) is reported by the fopen that follows, with the errno that describes
+ * what actually went wrong.
+ *
+ * This runs from IO_SDCard_run, i.e. on the LOGGER cog, which is the cog that
+ * mounts and owns the SD bus — the P2 binds smartpin ownership to the cog that
+ * set the pins up, so a mkdir from anywhere else would corrupt the transfer.
+ * On FlexC/FatFs mkdir has been seen to fail while reporting a misleading errno;
+ * discarding the result means a card where it cannot work behaves exactly as it
+ * did before (subdirectories must pre-exist), while the native/emulator path —
+ * where it does work — no longer needs a hand-provisioned SD root. */
+static void IO_SDCard_private_ensureDirectories(const char *filePath)
+{
+    char dirPath[IO_SDCARD_MAX_PATH_SIZE];
+    const size_t length = strlen(filePath);
+    if (length < sizeof(dirPath))
+    {
+        (void)memcpy(dirPath, filePath, length + 1U);
+        /* From 1, not 0: a leading '/' is the filesystem root, which always
+         * exists and whose prefix here would be the empty string. */
+        for (size_t i = 1U; i < length; i++)
+        {
+            if (dirPath[i] == '/')
+            {
+                dirPath[i] = '\0';
+                (void)mkdir(dirPath, 0777);
+                dirPath[i] = '/';
+            }
+        }
+    }
+}
+
 static void IO_SDCard_private_entryAction(IO_SDCard_channel_E channel)
 {
     switch (IO_SDCard_data.channelData[channel].state)
@@ -242,6 +292,10 @@ static void IO_SDCard_private_entryAction(IO_SDCard_channel_E channel)
         const char *const fileName = IO_SDCARD_INTERNAL_INPUT(channel).fileName;
         const char *fileMode = (IO_SDCard_data.channelData[channel].mode == IO_SDCARD_MODE_WRITE) ? "wb" : "rb";
         DEBUG_INFO("IO_SDCARD: Opening file %s (mode: %s)\n", fileName, fileMode);
+        if (IO_SDCard_data.channelData[channel].mode == IO_SDCARD_MODE_WRITE)
+        {
+            IO_SDCard_private_ensureDirectories(fileName);
+        }
         IO_SDCard_data.channelData[channel].file = fopen(fileName, fileMode);
         IO_SDCard_data.channelData[channel].eof = false;
         break;
