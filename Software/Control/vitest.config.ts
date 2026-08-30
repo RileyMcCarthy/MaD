@@ -12,8 +12,12 @@ export default defineConfig({
     environment: 'node',
     include: ['src/**/*.test.ts'],
     coverage: {
+      // v8 here; the e2e run reports istanbul-shaped data from the browser.
+      // The two are NOT merged per-file — see tools/merge-coverage.mjs for why
+      // combining different instrumenters silently invents numbers.
       provider: 'v8',
-      reporter: ['text', 'html'],
+      reporter: ['text', 'json'],
+      reportsDirectory: 'coverage/unit',
       // Scoped to the firmware loader on purpose. This is the one part of the
       // app that can brick a board, and the bug we shipped there lived in the
       // gap between "protocol is 100% covered" and "the adapter that touches

@@ -26,7 +26,58 @@ import { mkdir, writeFile } from 'node:fs/promises';
 
 // Playwright is a devDependency of this package — resolve it from here.
 const require = createRequire(import.meta.url);
-export const { chromium } = require('playwright');
+const playwright = require('playwright');
+
+/**
+ * When MAD_COVERAGE=1 the app is built with istanbul instrumentation (see
+ * vite.config.ts) and every page exposes `window.__coverage__`. Wrapping
+ * `chromium` here means each scenario's coverage is harvested on browser
+ * close, with no change to the scenarios themselves — they all launch through
+ * this export.
+ *
+ * Without the wrapper, e2e runs in a separate browser process and is entirely
+ * invisible to the coverage number, which is why the flashing screen read 0%
+ * while nine scenarios were exercising it.
+ */
+const COVERAGE_DIR = process.env.MAD_COVERAGE_DIR || 'coverage/e2e';
+let coverageSeq = 0;
+
+async function harvest(page) {
+  try {
+    if (page.isClosed()) return;
+    const data = await page.evaluate(() => window.__coverage__ ?? null);
+    if (!data) return;
+    await mkdir(COVERAGE_DIR, { recursive: true });
+    await writeFile(join(COVERAGE_DIR, `e2e-${process.pid}-${coverageSeq++}.json`), JSON.stringify(data));
+  } catch {
+    /* page torn down mid-harvest; a lost sample must never fail a scenario */
+  }
+}
+
+function withCoverage(browserType) {
+  return {
+    ...browserType,
+    async launch(opts) {
+      const browser = await browserType.launch(opts);
+      const pages = new Set();
+      const newPage = browser.newPage.bind(browser);
+      browser.newPage = async (...args) => {
+        const page = await newPage(...args);
+        pages.add(page);
+        return page;
+      };
+      const close = browser.close.bind(browser);
+      browser.close = async (...args) => {
+        for (const page of pages) await harvest(page);
+        return close(...args);
+      };
+      return browser;
+    },
+  };
+}
+
+export const chromium =
+  process.env.MAD_COVERAGE === '1' ? withCoverage(playwright.chromium) : playwright.chromium;
 
 export const APP_URL = process.env.APP_URL || 'http://localhost:5174/';
 export const BRIDGE_URL = process.env.BRIDGE_URL || 'ws://localhost:9999';
