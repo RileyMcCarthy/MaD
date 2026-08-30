@@ -17,6 +17,13 @@ fn main() {
         Err(t) => println!("TRAP: {t}"),
     }
     println!("clkfreq {} | virtual time {} us", m.clkfreq(), m.now_us());
+    let mut pins: Vec<String> = Vec::new();
+    for p in 0..64usize {
+        if m.pins.mode[p] != 0 {
+            pins.push(format!("{p}"));
+        }
+    }
+    println!("configured smart pins: {}", pins.join(", "));
     for (i, c) in m.cogs.iter().enumerate() {
         if c.running || c.clocks > 0 {
             println!("  cog {i}: running={} pc=${:05X}", c.running, c.pc);

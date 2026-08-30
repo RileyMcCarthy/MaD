@@ -9,7 +9,7 @@
 
 use std::path::PathBuf;
 
-use p2core::{Machine, SmartPins};
+use p2core::{Board, Machine, SdCard, SmartPins};
 
 /// `_main` in the hubexec image, cross-checked against `program.p2asm`
 /// (`_main` opens with `mov arg01,#0` / `call #__getiolock_1727`).
@@ -250,4 +250,37 @@ fn cog_manager_starts_the_other_cogs() {
         text.contains("Monitor cog init"),
         "expected the cog manager to announce startup"
     );
+}
+
+
+/// SIL readiness: the firmware boots to a fully-populated machine.
+///
+/// All eight cogs run and every peripheral the machine needs has its smart
+/// pins configured -- the force gauge UART (0/2), the servo encoder (9), the
+/// protocol link to the host (53/55 at 2,000,000 baud), the SD SPI (58-61) and
+/// the debug console (62/63). That is the point at which a host-side test can
+/// start driving the protocol.
+#[test]
+fn boots_to_a_fully_configured_machine() {
+    let Some(img) = image() else {
+        return;
+    };
+    let mut m = Machine::new(&img, Board::new(SdCard::blank(32 * 1024 * 1024)));
+    m.step(400_000_000).expect("no trap");
+
+    let running = m.cogs.iter().filter(|c| c.running).count();
+    assert_eq!(running, 8, "expected all eight cogs running");
+
+    for (pin, what) in [
+        (0u8, "force-gauge RX"),
+        (2, "force-gauge TX"),
+        (53, "protocol RX"),
+        (55, "protocol TX"),
+        (62, "debug TX"),
+    ] {
+        assert!(
+            m.pins.is_configured(pin),
+            "{what} (pin {pin}) was never configured"
+        );
+    }
 }
