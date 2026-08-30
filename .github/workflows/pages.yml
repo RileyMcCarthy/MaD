@@ -5,9 +5,11 @@ name: Deploy docs + MaD Control (GitHub Pages)
 #   https://<owner>.github.io/<repo>/        → docs (MkDocs Material, from docs/)
 #   https://<owner>.github.io/<repo>/app/    → MaD Control (Vite PWA)
 #
-# Triggers: push to main (docs/app/protocol changes), a manual run, or a
-# `madcontrol-v*` release tag. Tags must match Software/Control/package.json
-# (enforced below); cut them with Software/Control/scripts/release.sh.
+# Pages deploys from `main` (and manual workflow_dispatch). The github-pages
+# environment only allows the `main` branch, so `madcontrol-v*` tags cannot
+# deploy Pages — they only assert package.json matches the tag and publish
+# a GitHub Release. Cut tags with Software/Control/scripts/release.sh after
+# the version bump is on main (which already deployed that SHA).
 on:
   push:
     branches: [main]
@@ -27,13 +29,21 @@ permissions:
   pages: write
   id-token: write
 
-# Only one Pages deployment at a time; newer releases supersede in-flight ones.
-concurrency:
-  group: pages
-  cancel-in-progress: true
-
 jobs:
+  # Tag-only: fail if madcontrol-vX.Y.Z != Software/Control/package.json.
+  check:
+    if: startsWith(github.ref, 'refs/tags/madcontrol-v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - name: Assert madcontrol-v* tag matches package.json
+        run: bash Software/Control/scripts/release.sh --check
+
   build:
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -45,11 +55,6 @@ jobs:
           node-version: 20
           cache: npm
           cache-dependency-path: Software/Control/package-lock.json
-
-      # Fail the release rather than ship a build whose About page / bug reports
-      # still say the previous package.json version.
-      - name: Assert madcontrol-v* tag matches package.json
-        run: bash Software/Control/scripts/release.sh --check
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -100,8 +105,12 @@ jobs:
           path: site
 
   deploy:
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     needs: build
     runs-on: ubuntu-latest
+    concurrency:
+      group: pages
+      cancel-in-progress: true
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -109,12 +118,13 @@ jobs:
       - id: deployment
         uses: actions/deploy-pages@v5
 
-  # Named GitHub Release so MaD Control shows up next to firmware/hardware
-  # instead of only as a Pages deploy. Notes-only — the app is the Pages URL.
+  # Named GitHub Release so MaD Control shows up next to firmware/hardware.
+  # Does not deploy Pages (environment blocks tags); the matching main push
+  # already published that SHA.
   release:
     name: GitHub Release (MaD Control)
     if: startsWith(github.ref, 'refs/tags/madcontrol-v')
-    needs: deploy
+    needs: check
     runs-on: ubuntu-latest
     permissions:
       contents: write

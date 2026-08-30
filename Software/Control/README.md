@@ -114,11 +114,12 @@ git push -u origin HEAD
 Software/Control/scripts/release.sh --publish         # tags origin/main as madcontrol-vX.Y.Z
 ```
 
-That tag deploys Pages and creates a GitHub Release named **MaD Control X.Y.Z**.
-The live app is `https://rileymccarthy.github.io/MaD/app/`. A manual deploy of
-any branch is also available via the workflow's **Run workflow** button
-(`workflow_dispatch`). One-time setup: repo **Settings → Pages → Source =
-GitHub Actions**.
+That tag publishes a GitHub Release named **MaD Control X.Y.Z**. Pages already
+deployed from the merge to `main` (the `github-pages` environment only allows
+that branch). The live app is `https://rileymccarthy.github.io/MaD/app/`. A
+manual deploy of any branch is also available via the workflow's **Run
+workflow** button (`workflow_dispatch`). One-time setup: repo **Settings →
+Pages → Source = GitHub Actions**.
 
 ## Firmware flashing
 
