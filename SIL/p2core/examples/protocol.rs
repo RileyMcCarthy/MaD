@@ -21,6 +21,23 @@ fn main() {
     println!("virtual time: {} us", m.now_us());
     println!("cogs running: {}", m.cogs.iter().filter(|c| c.running).count());
 
+    let clk = m.clkfreq();
+    println!("\nsmart pins as the firmware programmed them (clkfreq {clk}):");
+    for pin in 0..64u8 {
+        if !m.pins.is_configured(pin) {
+            continue;
+        }
+        let baud = match m.pins.baud_of(pin, clk) {
+            Some(b) => format!("{b} baud"),
+            None => "-".to_string(),
+        };
+        println!("  pin {pin:2}: {:?}  {baud}", m.pins.mode_of(pin));
+    }
+    let unmodelled = m.pins.unmodelled_modes();
+    if !unmodelled.is_empty() {
+        println!("  UNMODELLED: {unmodelled:02X?}");
+    }
+
     let tx = &m.pins.proto_tx;
     println!("\nprotocol TX: {} bytes", tx.len());
     if !tx.is_empty() {

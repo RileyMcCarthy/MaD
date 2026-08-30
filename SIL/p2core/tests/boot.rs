@@ -9,7 +9,7 @@
 
 use std::path::PathBuf;
 
-use p2core::{Board, Machine, SdCard, SmartPins};
+use p2core::{baud_matches, Board, Machine, PinMode, SdCard, SmartPins};
 
 /// `_main` in the hubexec image, cross-checked against `program.p2asm`
 /// (`_main` opens with `mov arg01,#0` / `call #__getiolock_1727`).
@@ -331,5 +331,57 @@ fn firmware_answers_a_protocol_request() {
     assert!(
         text.contains("0.0.0"),
         "expected a version string in the payload, got {frame:02X?}"
+    );
+}
+
+
+/// The firmware's smart-pin configuration is decoded, not ignored — and the
+/// derived baud rates validate `clkfreq` end to end.
+///
+/// A model that only watches `WYPIN` takes the byte and discards the mode word
+/// and bit period, so a wrong `clkfreq` produces bytes that look perfectly
+/// fine. Deriving the rate from the bit period the firmware computed turns that
+/// into a visible mismatch: at 160 MHz, 2,000,000 baud is exactly 80 clocks,
+/// and 230,400 rounds to 694 clocks giving 230,547.
+#[test]
+fn smart_pin_configuration_is_decoded_and_baud_rates_are_right() {
+    let Some(img) = image() else {
+        return;
+    };
+    let mut m = Machine::new(&img, Board::new(SdCard::blank(32 * 1024 * 1024)));
+    m.step(400_000_000).expect("no trap");
+    let clk = m.clkfreq();
+    assert_eq!(clk, 160_000_000, "clkfreq should be the image's _clkfreq");
+
+    // Async serial links, with the rate derived rather than assumed.
+    for (pin, mode, nominal, what) in [
+        (2u8, PinMode::AsyncTx, 115_200u32, "force gauge TX"),
+        (0, PinMode::AsyncRx, 115_200, "force gauge RX"),
+        (55, PinMode::AsyncTx, 2_000_000, "protocol TX"),
+        (53, PinMode::AsyncRx, 2_000_000, "protocol RX"),
+        (62, PinMode::AsyncTx, 230_400, "debug console TX"),
+        (63, PinMode::AsyncRx, 230_400, "debug console RX"),
+    ] {
+        assert_eq!(m.pins.mode_of(pin), mode, "{what} (pin {pin}) mode");
+        let baud = m
+            .pins
+            .baud_of(pin, clk)
+            .unwrap_or_else(|| panic!("{what} (pin {pin}) has no derived baud"));
+        assert!(
+            baud_matches(baud, nominal, 0.5),
+            "{what} (pin {pin}) derived {baud} baud, expected ~{nominal} --              a mismatch here means the bit period or clkfreq is wrong"
+        );
+    }
+
+    // The non-serial peripherals, identified by the mode the firmware chose.
+    assert_eq!(m.pins.mode_of(9), PinMode::Quadrature, "servo encoder");
+    assert_eq!(m.pins.mode_of(58), PinMode::SyncRx, "SD MISO");
+    assert_eq!(m.pins.mode_of(59), PinMode::SyncTx, "SD MOSI");
+    assert_eq!(m.pins.mode_of(61), PinMode::Pulse, "SD clock");
+
+    let unmodelled = m.pins.unmodelled_modes();
+    assert!(
+        unmodelled.is_empty(),
+        "firmware programmed smart-pin modes this model does not implement: {unmodelled:02X?}"
     );
 }

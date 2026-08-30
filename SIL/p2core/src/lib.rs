@@ -25,12 +25,14 @@ pub mod generated;
 pub mod model;
 pub mod pins;
 pub mod sdcard;
+pub mod smartpin;
 pub mod trap;
 
 pub use generated::decode::{decode, Decoded, Form, Op};
 pub use board::Board;
 pub use model::SmartPins;
 pub use sdcard::SdCard;
+pub use smartpin::{baud_matches, PinMode, SmartPin};
 pub use pins::{NullPins, PinBus};
 pub use trap::Trap;
 
