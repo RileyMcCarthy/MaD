@@ -25,11 +25,11 @@ Unblocks: firmware without emulator yield macros, and ISS `step_until(t)` later.
 
 ## P1 — Runtime hygiene (Renode-shaped, still native)
 
-- [ ] **`Reset()` on every peripheral and MCU instance.** Re-init is a real reset, not “hope globals are clean.”
-- [ ] **Unimplemented HAL / pin / register access logs** (and optionally traps in tests). No silent no-op on new firmware paths.
-- [ ] **Inspect API:** dump GPIO levels, serial FIFO depths, encoder, pulse-out, lock owners, cog/thread run vs park — without the trace web UI.
-- [ ] **UART = byte FIFO + host backend.** PTY/socket is a backend of the UART, not mixed into the CPU/HAL hot path. Baud pacing is virtual-time.
-- [ ] **Host-visible testers** wait on virtual time (UART byte arrived by `t`, LED/GPIO level at `t`) — same idea as Renode Robot testers.
+- [x] **`Reset()` on every peripheral and MCU instance.** `PeripheralInstance::reset()` ([embsim#31](https://github.com/RileyMcCarthy/embsim/pull/31)).
+- [x] **Unimplemented HAL / pin / register access logs** (`embsim_peripherals::access`; P2 trampolines report negative channels).
+- [x] **Inspect API:** `PeripheralInstance::inspect()` — UART FIFO depths, GPIO, encoder, pulse-out count, unimplemented counter (lock owners / cog park still open).
+- [x] **UART = byte FIFO + host backend.** HAL talks to RX/TX FIFOs; PTY/socket is `init_channel_fd` or `write_host_rx` / `take_host_tx`. Baud is virtual-time.
+- [x] **Host-visible testers** wait on virtual time (UART byte arrived by `t`) — `host_tester_byte_is_visible_by_a_virtual_deadline`. GPIO-at-t still open.
 
 ---
 
