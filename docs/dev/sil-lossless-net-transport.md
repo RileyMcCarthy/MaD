@@ -140,7 +140,17 @@ Each step leaves both backends green.
    without a flag day. *(embsim #37 — `McuBuilder::serial_on_levels`)*
 4. **Migrate `ads122u04_component`** off `stream_tx`/`on_byte` onto level pins
    plus the codec. It is the only real consumer, and it already models its own
-   pin facade, so this is where the design gets validated.
+   pin facade, so this is where the design gets validated. *(embsim #38)*
+   - It was. Two engine defects the byte path had been hiding, neither planned:
+     a level did not survive a **series resistor** (the projection took its
+     level from the cluster's *power* source, so a signal-driven cluster read
+     `Pulled(High)` whichever way the driver pointed — every frame arrived as
+     `0xFF` through the DS2Addon's 47 Ω ESD resistors); and virtual time could
+     **outrun a wake that had already been requested**, because a `ScheduleAt`
+     still behind the command drain's batch cap is a deadline the wheel cannot
+     see. The second is the nastier one: the rest of a byte then clocks out at
+     a single instant. Scheduling is now a control plane with its own queue,
+     drained in full; only drives are capped.
 5. **Delete `StreamRole::Producer`/`Consumer`** and the flag. After this, bytes
    cannot cross a net without becoming levels.
 6. **p2core drives levels directly.** The ISS already decodes mode and bit
@@ -161,6 +171,15 @@ Step 6 is a MaD change and rides the pin bump.
   when the driver *set* is unchanged, inlining single-driver nets. Getting that
   to ~50 ns would make per-edge step trains viable. Worth knowing, not worth
   doing until something needs it.
+
+## What this keeps turning up
+
+Each step has cost one unplanned prerequisite, and the pattern is the same
+every time: **the byte path routed around a mechanism, so nobody found out the
+mechanism was wrong.** A microsecond timebase, a level that stops at a
+resistor, a scheduler that can deliver a requested wake late — all fine for
+bytes moving milliseconds apart, all fatal for bits 8.68 µs apart. Budget for
+one more of these in steps 5 and 6.
 
 ## Risks
 
