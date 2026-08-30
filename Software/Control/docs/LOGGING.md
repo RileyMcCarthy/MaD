@@ -327,11 +327,25 @@ backend at all**. What it cannot do is complete an OAuth exchange —
 `github.com/login/oauth/*` sends no CORS headers — so the token comes from the
 user rather than a sign-in flow.
 
-In Settings → GitHub the user pastes a fine-grained PAT with **Issues: Read and
-write** on this repo and **Gists: Read and write**. It is verified against the
-real repository before being stored, because a fine-grained token can
-authenticate perfectly and still have no access here — a failure that would
-otherwise only surface when someone tries to file their first report.
+In Settings → GitHub the user pastes a **classic** PAT with the `public_repo`
+and `gist` scopes (both pre-selected by the link in the panel).
+
+Classic rather than fine-grained, deliberately. A fine-grained token can only be
+scoped to repositories you own or collaborate on, so its `Issues: write` option
+is simply unavailable to anyone else — those instructions would work for the
+maintainer and dead-end for every other user. `public_repo` is **not** limited
+to your own repositories, so one set of instructions serves everybody.
+
+The trade is scope breadth: `public_repo` covers every public repository the
+user can reach, not just this one. That is the cost of uniformity, and the panel
+says so rather than burying it.
+
+Capability is established rather than assumed. Classic tokens state their
+granted scopes in the `x-oauth-scopes` response header, so `verifyToken` reads
+that directly — one request, no guessing. Fine-grained tokens send no such
+header, so they fall back to probing the repository and the gist endpoint.
+Either way a token that cannot file is rejected at connect time instead of at
+report time.
 
 With a token connected, Report a bug uploads the full bundle as a **secret
 gist** and files an issue linking it. That removes the manual drag-and-drop

@@ -116,6 +116,7 @@ describe('GitHubError', () => {
 });
 
 describe('verifyToken', () => {
+  /** No `x-oauth-scopes` header — i.e. a fine-grained token, the probe path. */
   const ok = (body: unknown) =>
     ({ ok: true, status: 200, json: async () => body, headers: new Headers() }) as Response;
   const fail = (status: number, message = 'nope') =>
@@ -197,5 +198,51 @@ describe('verifyToken', () => {
   it('reports a network failure distinctly', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch'); }));
     await expect(verifyToken(FAKE)).rejects.toMatchObject({ code: 'network' });
+  });
+});
+
+describe('verifyToken with a classic token', () => {
+  const okScoped = (body: unknown, scopes: string) =>
+    ({
+      ok: true,
+      status: 200,
+      json: async () => body,
+      headers: new Headers({ 'x-oauth-scopes': scopes }),
+    }) as Response;
+
+  it('trusts the granted scopes instead of probing', async () => {
+    // A classic token states what it can do, so no repo/gist round-trips are
+    // needed — and `public_repo` reaches ANY public repo, not just one you own,
+    // which is what makes a single set of instructions work for every user.
+    const fetchMock = vi.fn(async () => okScoped({ login: 'someone' }, 'public_repo, gist'));
+    vi.stubGlobal('fetch', fetchMock);
+    const check = await verifyToken(FAKE);
+    expect(check).toEqual({ login: 'someone', canFileIssues: true, canCreateGists: true });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('accepts full repo scope as covering public repos', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => okScoped({ login: 'someone' }, 'repo, gist')));
+    expect((await verifyToken(FAKE)).canFileIssues).toBe(true);
+  });
+
+  it('reports a missing gist scope so the user can fix it up front', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => okScoped({ login: 'someone' }, 'public_repo')));
+    const check = await verifyToken(FAKE);
+    expect(check.canFileIssues).toBe(true);
+    expect(check.canCreateGists).toBe(false);
+  });
+
+  it('rejects a token with neither repo scope', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => okScoped({ login: 'someone' }, 'gist, read:user')));
+    const check = await verifyToken(FAKE);
+    expect(check.canFileIssues).toBe(false);
+  });
+
+  it('handles an empty scope header without crashing', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => okScoped({ login: 'someone' }, '')));
+    const check = await verifyToken(FAKE);
+    expect(check.canFileIssues).toBe(false);
+    expect(check.canCreateGists).toBe(false);
   });
 });

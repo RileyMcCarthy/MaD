@@ -11,9 +11,17 @@ import {
   type TokenCheck,
 } from '@/diagnostics/github';
 
-/** New fine-grained token, pre-scoped to this repo with issue write access. */
+/**
+ * New **classic** token with the two scopes filing needs, pre-selected.
+ *
+ * Classic rather than fine-grained deliberately. A fine-grained token can only
+ * be scoped to repositories you own or collaborate on, so its "Issues: write"
+ * option is unavailable to anyone else — the instructions would work for the
+ * maintainer and dead-end for every other user. `public_repo` is not limited to
+ * your own repositories, so this path is identical for everyone.
+ */
 const NEW_TOKEN_URL =
-  'https://github.com/settings/personal-access-tokens/new?name=MaD%20Control%20bug%20reports&description=Lets%20MaD%20Control%20file%20bug%20reports%20on%20your%20behalf';
+  'https://github.com/settings/tokens/new?scopes=public_repo,gist&description=MaD%20Control%20bug%20reports';
 
 /**
  * Optional GitHub connection for one-click bug reports.
@@ -101,14 +109,14 @@ export default function GitHubTokenSettings() {
           <ol className="muted" style={{ marginTop: 0 }}>
             <li>
               <a href={NEW_TOKEN_URL} target="_blank" rel="noreferrer">
-                Create a fine-grained token
+                Create a token
               </a>{' '}
-              with <strong>Issues: Read and write</strong> on{' '}
+              — the <code>public_repo</code> and <code>gist</code> scopes are pre-selected. The
+              first lets it open an issue on{' '}
               <code>
                 {ISSUE_OWNER}/{ISSUE_REPO_NAME}
               </code>
-              , and <strong>Gists: Read and write</strong> under account permissions so the log can
-              be attached.
+              , the second attaches your session log.
             </li>
             <li>Paste it below. It is stored in this browser only and never leaves it except to GitHub.</li>
           </ol>
@@ -117,7 +125,7 @@ export default function GitHubTokenSettings() {
             <input
               type="password"
               value={value}
-              placeholder="github_pat_…"
+              placeholder="ghp_…"
               autoComplete="off"
               spellCheck={false}
               onChange={(e) => setValue(e.target.value)}
@@ -149,9 +157,11 @@ export default function GitHubTokenSettings() {
         </p>
       )}
       <p className="muted" style={{ marginTop: 12 }}>
-        The token is held in this browser&apos;s local storage. Anyone with access to this
-        computer&apos;s browser profile could read it, so scope it to this repository only and
-        revoke it from GitHub if you stop using this machine.
+        The token is held in this browser&apos;s local storage, so anyone with access to this
+        computer&apos;s browser profile could read it — revoke it from GitHub if you stop using
+        this machine. Note that <code>public_repo</code> covers every public repository you can
+        reach, not just this one; that breadth is what makes a single set of instructions work
+        for everybody.
       </p>
     </div>
   );

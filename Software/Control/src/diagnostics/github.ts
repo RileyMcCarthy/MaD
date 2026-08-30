@@ -97,7 +97,11 @@ function classify(status: number): GitHubError['code'] {
   return 'other';
 }
 
-async function request<T>(path: string, token: string, init: RequestInit = {}): Promise<T> {
+async function requestWithHeaders<T>(
+  path: string,
+  token: string,
+  init: RequestInit = {},
+): Promise<{ data: T; headers: Headers }> {
   let res: Response;
   try {
     res = await fetch(`${API}${path}`, {
@@ -132,7 +136,11 @@ async function request<T>(path: string, token: string, init: RequestInit = {}): 
     }
     throw new GitHubError(detail, res.status, code);
   }
-  return (await res.json()) as T;
+  return { data: (await res.json()) as T, headers: res.headers };
+}
+
+async function request<T>(path: string, token: string, init: RequestInit = {}): Promise<T> {
+  return (await requestWithHeaders<T>(path, token, init)).data;
 }
 
 export interface TokenCheck {
@@ -146,38 +154,58 @@ export interface TokenCheck {
 /**
  * Verify a token before storing it.
  *
- * Checked against the real repo rather than just `/user`, because a
- * fine-grained token can authenticate perfectly and still have no access to
- * this repository — a failure that would otherwise only appear when someone
- * tries to file their first report.
+ * Capability is established rather than assumed, so a token that cannot
+ * actually file is rejected here instead of at report time. Classic tokens
+ * state their scopes in a response header; fine-grained ones do not, so those
+ * fall back to probing the repository and the gist endpoint.
  */
 export async function verifyToken(token: string): Promise<TokenCheck> {
-  const user = await request<{ login: string }>('/user', token);
-  let canFileIssues = false;
-  try {
-    const repo = await request<{ permissions?: { push?: boolean; pull?: boolean }; has_issues?: boolean }>(
-      `/repos/${ISSUE_OWNER}/${ISSUE_REPO_NAME}`,
-      token,
-    );
-    // Read access plus issues enabled is enough to open one; `push` is not
-    // required and demanding it would reject perfectly good reporter tokens.
-    canFileIssues = repo.has_issues !== false;
-  } catch (err) {
-    if (err instanceof GitHubError && (err.code === 'not-found' || err.code === 'forbidden')) {
-      canFileIssues = false;
-    } else {
-      throw err;
+  const { data: user, headers } = await requestWithHeaders<{ login: string }>('/user', token);
+
+  // Classic tokens report exactly what they were granted, which beats inferring
+  // capability from probe requests. Fine-grained tokens send nothing here, so
+  // the probes below remain the fallback for them.
+  const header = headers.get('x-oauth-scopes');
+  const scopes =
+    header === null
+      ? null
+      : new Set(
+          header
+            .split(',')
+            .map((x) => x.trim())
+            .filter((x) => x.length > 0),
+        );
+
+  let canFileIssues: boolean;
+  if (scopes !== null) {
+    // `repo` implies `public_repo`; either can open an issue on a public repo.
+    canFileIssues = scopes.has('public_repo') || scopes.has('repo');
+  } else {
+    try {
+      const repo = await request<{ has_issues?: boolean }>(
+        `/repos/${ISSUE_OWNER}/${ISSUE_REPO_NAME}`,
+        token,
+      );
+      canFileIssues = repo.has_issues !== false;
+    } catch (err) {
+      if (err instanceof GitHubError && (err.code === 'not-found' || err.code === 'forbidden')) {
+        canFileIssues = false;
+      } else {
+        throw err;
+      }
     }
   }
 
-  // Gist scope cannot be probed without creating one, so infer from the listing
-  // endpoint — it requires the same scope on classic tokens.
-  let canCreateGists = false;
-  try {
-    await request<unknown[]>('/gists?per_page=1', token);
-    canCreateGists = true;
-  } catch {
-    canCreateGists = false;
+  let canCreateGists: boolean;
+  if (scopes !== null) {
+    canCreateGists = scopes.has('gist');
+  } else {
+    try {
+      await request<unknown[]>('/gists?per_page=1', token);
+      canCreateGists = true;
+    } catch {
+      canCreateGists = false;
+    }
   }
 
   return { login: user.login, canFileIssues, canCreateGists };
