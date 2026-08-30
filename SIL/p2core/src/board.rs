@@ -59,6 +59,17 @@ pub struct Board {
     in_flag: [bool; 64],
     /// Raw WYPIN values seen on the DI pin, for bring-up.
     pub di_log: Vec<u32>,
+    /// Bytes moved per pin, for cost measurement: how much traffic an
+    /// edge-level transport would actually have to carry.
+    pub byte_counts: [u64; 64],
+    /// Carry async-serial bytes as individual bit edges rather than whole
+    /// bytes. Set to measure what bit-level transport actually costs.
+    pub edge_level: bool,
+    /// Edge queue, standing in for the engine's event queue: each entry is
+    /// `(virtual time, level)` for one transition.
+    edges: VecDeque<(u64, bool)>,
+    /// Edges processed, for cost accounting.
+    pub edge_count: u64,
 }
 
 impl Default for Board {
@@ -82,10 +93,44 @@ impl Board {
             rx_queue: VecDeque::new(),
             in_flag: [false; 64],
             di_log: Vec::new(),
+            byte_counts: [0; 64],
+            edge_level: false,
+            edges: VecDeque::new(),
+            edge_count: 0,
         }
     }
 
     /// Queue bytes for the firmware to read on the protocol link.
+    /// Serialise one byte into UART edges and consume them again.
+    ///
+    /// This is the work an edge-level transport does per byte: emit a start
+    /// bit, eight data bits and a stop bit as timed transitions, push each
+    /// through a queue, then reassemble. Measuring it directly beats guessing
+    /// at the cost of "one event per edge".
+    fn carry_as_edges(&mut self, pin: u8, byte: u8) -> u8 {
+        let period = self.pins[pin as usize & 63].bit_period().max(1) as u64;
+        let now = self.edge_count * period;
+
+        self.edges.push_back((now, false)); // start bit
+        for i in 0..8u64 {
+            self.edges.push_back((now + (i + 1) * period, byte >> i & 1 != 0));
+        }
+        self.edges.push_back((now + 9 * period, true)); // stop bit
+
+        // Consume: reassemble the byte from the transitions, as a receiving
+        // smart pin would.
+        let mut out = 0u8;
+        let mut idx = 0u32;
+        while let Some((_t, level)) = self.edges.pop_front() {
+            self.edge_count += 1;
+            if (1..=8).contains(&idx) && level {
+                out |= 1 << (idx - 1);
+            }
+            idx += 1;
+        }
+        out
+    }
+
     pub fn send_protocol(&mut self, bytes: &[u8]) {
         self.proto_rx.extend(bytes.iter().copied());
     }
@@ -199,9 +244,16 @@ impl PinBus for Board {
     }
 
     fn wypin(&mut self, pin: u8, y: u32) {
+        self.byte_counts[pin as usize & 63] += 1;
         match pin {
-            PIN_TX => self.console.push(y as u8),
-            PIN_PROTO_TX => self.proto_tx.push(y as u8),
+            PIN_TX => {
+                let b = if self.edge_level { self.carry_as_edges(pin, y as u8) } else { y as u8 };
+                self.console.push(b);
+            }
+            PIN_PROTO_TX => {
+                let b = if self.edge_level { self.carry_as_edges(pin, y as u8) } else { y as u8 };
+                self.proto_tx.push(b);
+            }
             PIN_DI => {
                 if self.di_log.len() < 64 {
                     self.di_log.push(y);
@@ -229,6 +281,7 @@ impl PinBus for Board {
 
     fn rdpin(&mut self, pin: u8) -> (u32, bool) {
         let p = pin as usize & 63;
+        self.byte_counts[p] += 1;
         self.in_flag[p] = false;
         let v = match pin {
             PIN_DO => {
