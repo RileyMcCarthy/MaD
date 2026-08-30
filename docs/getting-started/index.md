@@ -34,6 +34,9 @@ relies on the Web Serial and File System Access browser APIs. Check the
 1. Open the app: **<https://rileymccarthy.github.io/MaD/app/>** in Chrome or Edge.
 2. Plug the machine into your computer over USB and power it on.
 3. Go to **Connect**, click **Connect device**, and pick the serial port.
-4. Watch live data on the **Live** screen, or build and run a test.
+4. Open **Firmware** and check the version. A board that has never been
+   programmed shows **Connected** but never **Responding** — flash it here
+   first.
+5. Watch live data on the **Live** screen, or build and run a test.
 
 The full, screenshot-led walkthrough is in [For operators](operators.md).

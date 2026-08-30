@@ -125,7 +125,8 @@ Pages → Source = GitHub Actions**.
 
 The **Firmware** page programs the Propeller 2 over Web Serial — no native
 `loadp2` needed. It resets the chip with DTR and drives the boot ROM's serial
-loader directly, either into RAM (temporary) or through a flash stub (permanent).
+loader directly, writing to SPI flash through a 496-byte stub. (RAM loading is
+CLI-only — `npm run hw:flash -- --ram` — since the P2 Edge boots from flash.)
 Requires the Debug/Programming header J1 and an adapter that wires DTR to `RESn`.
 See [docs/FLASHING.md](docs/FLASHING.md) for the protocol, hardware requirements,
 and the CLI harness (`npm run hw:flash`) used to validate it against a board.

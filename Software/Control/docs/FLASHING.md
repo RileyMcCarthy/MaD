@@ -4,21 +4,20 @@ The app can program the Propeller 2 over Web Serial, without `loadp2` or any
 native helper. This document covers how it works, what it needs from the
 hardware, and how to validate it.
 
-## Status
-
-**Prototype — the protocol is exercised by unit tests, but the RAM and flash
-paths have not yet been run against a physical board.** Validate with the CLI
-harness (below) before relying on the UI. See "Open validation" at the end.
-
 ## How it works
 
 Programming the P2 does not require a bespoke flash protocol. Both modes are a
 single download into hub RAM through the boot ROM's serial loader:
 
-| Mode | Image sent | Effect |
-| --- | --- | --- |
-| RAM | the firmware itself | ROM runs it immediately; lost at next reset |
-| Flash | a 496-byte stub, then the firmware | the stub copies the payload into SPI flash and reboots |
+| Mode | Image sent | Effect | Exposed where |
+| --- | --- | --- | --- |
+| Flash | a 496-byte stub, then the firmware | the stub copies the payload into SPI flash and reboots | the app, and `hw:flash --flash` |
+| RAM | the firmware itself | ROM runs it immediately; lost at next reset | `hw:flash --ram` only |
+
+**The app only ever flashes.** The P2 Edge boots from SPI flash, so a RAM load
+would present as a successful update and then revert on the next power cycle —
+a bad thing to offer an operator. RAM loading stays in the CLI, where running a
+build without committing it is exactly what you want during bring-up.
 
 The sequence, ported from `loadp2`'s single-stage path (`-SINGLE`):
 
@@ -67,10 +66,13 @@ Two things this does *not* work over:
 
 A debug firmware build moves the protocol UART to P53/P55, so on a two-adapter
 bench setup the programming port and the control port differ. That is what the
-"Choose a different port for programming" option is for. Web Serial exposes
-only USB vendor/product IDs — there is no serial number or device path — so two
-identical adapters cannot be told apart programmatically. The choice has to be
-the user's.
+**Target** control on the Firmware screen is for.
+
+Web Serial exposes only USB vendor/product IDs — no serial number, no device
+path — so two identical adapters cannot be told apart programmatically. The app
+therefore resolves a target only when the choice is unambiguous (one granted
+port, or a remembered one matching exactly one device) and otherwise asks. It
+never falls back to "the first port", which is how you flash the wrong board.
 
 ## Validating against hardware
 

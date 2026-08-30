@@ -3,7 +3,7 @@ import { useStore } from '@/store/useStore';
 import { deviceClient } from '@/device/session';
 import { estimateSeconds } from '@/firmware/image';
 import { LOADER_BAUD_RATE } from '@/firmware/webSerialTransport';
-import { programPort, type ProgramMode, type ProgramProgress } from '@/firmware/program';
+import { programPort, type ProgramProgress } from '@/firmware/program';
 import {
   describePort,
   rememberFlashPort,
@@ -24,7 +24,6 @@ export default function Firmware() {
   const connect = useStore((s) => s.connect);
   const disconnect = useStore((s) => s.disconnect);
 
-  const [mode, setMode] = useState<ProgramMode>('flash');
   const [file, setFile] = useState<File | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
   const [target, setTarget] = useState<{ port: SerialPort; label: string } | null>(null);
@@ -77,15 +76,11 @@ export default function Firmware() {
 
   const program = async () => {
     if (!file || !target) return;
-    const permanent = mode === 'flash';
     // Name the port in the prompt: a wrong target is the expensive mistake, and
     // this is the last point at which the user can catch it.
     const ok = window.confirm(
-      permanent
-        ? `Write "${file.name}" to the SPI flash of ${target.label}?\n\n` +
-            'This replaces the firmware permanently. Do not disconnect until it finishes.'
-        : `Load "${file.name}" into the RAM of ${target.label}?\n\n` +
-            'It runs until the next reset; flash is untouched.',
+      `Write "${file.name}" to the SPI flash of ${target.label}?\n\n` +
+        'This replaces the firmware permanently. Do not disconnect until it finishes.',
     );
     if (!ok) return;
 
@@ -98,15 +93,16 @@ export default function Firmware() {
 
       const firmware = new Uint8Array(await file.arrayBuffer());
       const result = await programPort(target.port, firmware, {
-        mode,
+        // The P2 Edge boots from SPI flash, so that is the only thing the app
+        // offers. RAM loading stays available to tools/hw-p2load.mts, where
+        // running a build without committing it is a bring-up convenience.
+        mode: 'flash',
         onProgress: (progress) => setStatus({ kind: 'running', progress }),
       });
 
       setStatus({
         kind: 'done',
-        message: permanent
-          ? `Wrote ${result.imageBytes.toLocaleString()} bytes to flash. The board has rebooted into the new firmware.`
-          : `Loaded ${result.imageBytes.toLocaleString()} bytes into RAM. It runs until the next reset.`,
+        message: `Wrote ${result.imageBytes.toLocaleString()} bytes to flash. The board has rebooted into the new firmware.`,
       });
 
       if (wasConnected) {
@@ -151,30 +147,6 @@ export default function Firmware() {
           needs an adapter that drives RESn from DTR, such as a Parallax Prop Plug. The isolated Raspberry Pi
           link on P53/P55 has no reset line and cannot program the board.
         </p>
-
-        <div style={{ marginTop: 12 }}>
-          <label>
-            <input
-              type="radio"
-              name="mode"
-              checked={mode === 'flash'}
-              disabled={busy}
-              onChange={() => setMode('flash')}
-            />{' '}
-            Write to flash — permanent, survives power cycling
-          </label>
-          <br />
-          <label>
-            <input
-              type="radio"
-              name="mode"
-              checked={mode === 'ram'}
-              disabled={busy}
-              onChange={() => setMode('ram')}
-            />{' '}
-            Load into RAM — temporary, good for trying a build
-          </label>
-        </div>
 
         <div style={{ marginTop: 12 }}>
           {/* No `accept` filter: PlatformIO emits an extensionless `program`
@@ -233,7 +205,7 @@ export default function Firmware() {
           data-testid="flash-firmware"
           style={{ marginTop: 12 }}
         >
-          {busy ? 'Programming…' : mode === 'flash' ? 'Write to flash' : 'Load into RAM'}
+          {busy ? 'Programming…' : 'Write to flash'}
         </button>
 
         {status.kind === 'running' && (
