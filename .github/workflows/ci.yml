@@ -547,6 +547,28 @@ jobs:
   # docs-only PR skips the component jobs). Mark THIS check — "CI Gate" — as the
   # required status check on `main` instead of each job, so path-filtered skips
   # never block a PR.
+  # Lists the test cases this PR adds or removes. Test names are the
+  # specification of behaviour, so a diff of them answers "what does this PR
+  # implement" without reading the code. Informational, so deliberately NOT in
+  # ci-gate.needs: a PR that adds no tests is often legitimate.
+  #
+  # fetch-depth: 0 is required - the default shallow clone cannot resolve the
+  # base branch, and the script exits 2 rather than silently reporting nothing.
+  whats-new:
+    name: What this PR specifies
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - name: Test cases added or removed
+        run: node scripts/whats-new-tests.mjs "origin/${{ github.base_ref }}" --markdown
+
   ci-gate:
     name: CI Gate
     needs:
