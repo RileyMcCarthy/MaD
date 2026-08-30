@@ -224,3 +224,30 @@ fn tagged_pointers_are_masked_to_the_hub_map() {
     assert!(!m.strict_hub, "strict_hub must default off: it false-positives on tagged pointers");
     m.step(200_000_000).expect("tagged pointers must not trap");
 }
+
+/// Multi-cog bring-up: the cog manager starts the whole machine.
+///
+/// `REP D,S` repeats D instructions S times. With the operands swapped the
+/// block ran one instruction long, so an FCACHE'd loop executed its trailing
+/// `_ret_` every iteration, popping the call stack until it underflowed and
+/// returned to the address after `call #_main` — ending the program before any
+/// worker cog started.
+#[test]
+fn cog_manager_starts_the_other_cogs() {
+    let Some(img) = image() else {
+        return;
+    };
+    let mut m = Machine::new(&img, SmartPins::default());
+    m.step(400_000_000).expect("no trap");
+
+    let running = m.cogs.iter().filter(|c| c.running).count();
+    assert!(
+        running > 1,
+        "expected the cog manager to start workers; only {running} cog(s) running"
+    );
+    let text = strip_ansi(&m.pins.console());
+    assert!(
+        text.contains("Monitor cog init"),
+        "expected the cog manager to announce startup"
+    );
+}
