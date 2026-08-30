@@ -229,13 +229,35 @@ impl<P: PinBus> Machine<P> {
 
     // ---------------------------------------------------------------- memory
 
+    /// Hub reads and writes are UNALIGNED-capable on the P2.
+    ///
+    /// `sdmm.cc`'s `send_cmd` builds its command frame with
+    /// `*(DWORD*)(buf+1) = __builtin_bswap32(arg)` — a 32-bit store at an odd
+    /// offset. Masking the address to a long boundary silently redirects that
+    /// onto `buf[0..3]` and wipes the `0x40` start token, so every command
+    /// frame leaves with a zero command index.
     fn rd_long(&self, addr: u32) -> u32 {
-        let a = (addr as usize) & (HUB_BYTES - 1) & !3;
-        u32::from_le_bytes([self.hub[a], self.hub[a + 1], self.hub[a + 2], self.hub[a + 3]])
+        let a = addr as usize;
+        u32::from_le_bytes([
+            self.hub_byte(a),
+            self.hub_byte(a + 1),
+            self.hub_byte(a + 2),
+            self.hub_byte(a + 3),
+        ])
     }
     fn wr_long(&mut self, addr: u32, v: u32) {
-        let a = (addr as usize) & (HUB_BYTES - 1) & !3;
-        self.hub[a..a + 4].copy_from_slice(&v.to_le_bytes());
+        for (i, b) in v.to_le_bytes().iter().enumerate() {
+            self.set_hub_byte(addr as usize + i, *b);
+        }
+    }
+
+    #[inline]
+    fn hub_byte(&self, a: usize) -> u8 {
+        self.hub[a & (HUB_BYTES - 1)]
+    }
+    #[inline]
+    fn set_hub_byte(&mut self, a: usize, b: u8) {
+        self.hub[a & (HUB_BYTES - 1)] = b;
     }
     fn rd_byte(&self, addr: u32) -> u32 {
         self.hub[(addr as usize) & (HUB_BYTES - 1)] as u32
@@ -244,12 +266,13 @@ impl<P: PinBus> Machine<P> {
         self.hub[(addr as usize) & (HUB_BYTES - 1)] = v as u8;
     }
     fn rd_word(&self, addr: u32) -> u32 {
-        let a = (addr as usize) & (HUB_BYTES - 1) & !1;
-        u16::from_le_bytes([self.hub[a], self.hub[a + 1]]) as u32
+        let a = addr as usize;
+        u16::from_le_bytes([self.hub_byte(a), self.hub_byte(a + 1)]) as u32
     }
     fn wr_word(&mut self, addr: u32, v: u32) {
-        let a = (addr as usize) & (HUB_BYTES - 1) & !1;
-        self.hub[a..a + 2].copy_from_slice(&(v as u16).to_le_bytes());
+        for (i, b) in (v as u16).to_le_bytes().iter().enumerate() {
+            self.set_hub_byte(addr as usize + i, *b);
+        }
     }
 
     /// Reject a hub address outside the map when `strict_hub` is set.
@@ -948,29 +971,44 @@ impl<P: PinBus> Machine<P> {
                 self.set_reg(cog, ins.d, r);
                 self.wz(cog, ins, r);
             }
-            Getbyte => {
-                let r = (d >> ((s & 3) * 8)) & 0xFF;
+            // GETNIB/GETBYTE/GETWORD take field N of S into D, and N lives
+            // in the instruction, not in an operand: the `ds*get` forms encode
+            // it in the C/Z bits (and, for the 3-bit nibble index, bit 21).
+            // Reading the index from S and the source from D made
+            // `getbyte cmd_lo, cmd, #0` return 1 instead of 0, so `send_cmd`
+            // built every SD frame with command index 1.
+            Getnib => {
+                let n = (((word >> 21) & 1) << 2) | ((ins.c as u32) << 1) | ins.z as u32;
+                let r = (s >> (n * 4)) & 0xF;
                 self.set_reg(cog, ins.d, r);
-                self.wz(cog, ins, r);
+            }
+            Getbyte => {
+                let n = ((ins.c as u32) << 1) | ins.z as u32;
+                let r = (s >> (n * 8)) & 0xFF;
+                self.set_reg(cog, ins.d, r);
             }
             Getword => {
-                let r = (d >> ((s & 1) * 16)) & 0xFFFF;
+                let n = ins.z as u32;
+                let r = (s >> (n * 16)) & 0xFFFF;
                 self.set_reg(cog, ins.d, r);
-                self.wz(cog, ins, r);
             }
-            Getnib => {
-                let r = (d >> ((s & 7) * 4)) & 0xF;
+            // The SET* counterparts write S's low field into field N of D.
+            Setnib => {
+                let n = (((word >> 21) & 1) << 2) | ((ins.c as u32) << 1) | ins.z as u32;
+                let sh = n * 4;
+                let r = (d & !(0xFu32 << sh)) | ((s & 0xF) << sh);
                 self.set_reg(cog, ins.d, r);
-                self.wz(cog, ins, r);
             }
             Setbyte => {
-                let n = (s & 3) * 8;
-                let r = (d & !(0xFFu32 << n)) | ((s & 0xFF) << n);
+                let n = ((ins.c as u32) << 1) | ins.z as u32;
+                let sh = n * 8;
+                let r = (d & !(0xFFu32 << sh)) | ((s & 0xFF) << sh);
                 self.set_reg(cog, ins.d, r);
             }
             Setword => {
-                let n = (s & 1) * 16;
-                let r = (d & !(0xFFFFu32 << n)) | ((s & 0xFFFF) << n);
+                let n = ins.z as u32;
+                let sh = n * 16;
+                let r = (d & !(0xFFFFu32 << sh)) | ((s & 0xFFFF) << sh);
                 self.set_reg(cog, ins.d, r);
             }
             Movbyts => {
@@ -1061,6 +1099,15 @@ impl<P: PinBus> Machine<P> {
                         // A block transfer cannot exceed the register file.
                         let n = count.min(COG_LONGS as u32 - 1);
                         self.check_hub(cog, s)?;
+                        if n == 1
+                            && std::env::var_os("P2CORE_DEBUG_XMIT").is_some()
+                            && (0..8).any(|i| self.rd_byte(s.wrapping_add(i)) == 0x95)
+                        {
+                            let b: Vec<String> = (0..8)
+                                .map(|i| format!("{:02X}", self.rd_byte(s.wrapping_add(i))))
+                                .collect();
+                            eprintln!("[2-long read] src=${s:05X} bytes={}", b.join(" "));
+                        }
                         for k in 0..=n {
                             let v = self.rd_long(s.wrapping_add(k.wrapping_mul(4)));
                             self.set_reg(cog, ins.d.wrapping_add(k as u16), v);

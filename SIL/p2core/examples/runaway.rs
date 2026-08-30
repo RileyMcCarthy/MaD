@@ -71,8 +71,15 @@ fn main() {
         // Record only non-sequential transfers: a NOP slide through zeroed cog
         // RAM would otherwise flush the real cause out of the trail.
         let expected = if pc < 0x400 { pc + 1 } else { pc + 4 };
-        if let Err(t) = m.step(1) {
-            println!("TRAP: {t}");
+        if let Err(err) = m.step(1) {
+            println!("TRAP: {err}\ntrail (calls/returns then last instructions):");
+            for (c, p, w) in trail.iter().rev().take(14).rev() {
+                let t = decode(*w)
+                    .map(|d| format!("{} D=${:03X} S=${:03X}{}", d.op.mnemonic(), d.d, d.s,
+                                     if d.i { " #" } else { "" }))
+                    .unwrap_or_else(|| "<undecoded>".into());
+                println!("   cog{c} ${p:05X} {w:08X}  {t}");
+            }
             return;
         }
         let after = m.cogs[cog].pc;
@@ -81,7 +88,7 @@ fn main() {
         let interesting = decode(word)
             .map(|d| matches!(d.op.mnemonic(), "call" | "ret" | "callpa" | "callpb" | "coginit"))
             .unwrap_or(false);
-        if after != expected && interesting {
+        if true {
             trail.push((cog, pc, word));
             if trail.len() > 24 {
                 trail.remove(0);

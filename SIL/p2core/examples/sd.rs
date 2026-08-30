@@ -32,9 +32,15 @@ fn main() {
         .map(|c| if c & 0x80 != 0 { format!("ACMD{}", c & 0x3F) } else { format!("CMD{c}") })
         .collect();
     println!("  {}", names.join(" "));
+    println!("first 8 WYPIN values on DI (what the driver hands the shifter):");
+    for v in m.pins.di_log.iter().take(8) {
+        println!("  {v:08X}  -> wire bytes {:02X} {:02X} {:02X} {:02X}",
+            (v.reverse_bits() >> 24) as u8, (v.reverse_bits() >> 16) as u8,
+            (v.reverse_bits() >> 8) as u8, v.reverse_bits() as u8);
+    }
     if let Some(log) = &m.pins.card.trace {
         println!("{} byte exchanges; first 32 (mosi -> miso):", log.len());
-        let s: Vec<String> = log.iter().take(32).map(|(a, b)| format!("{a:02X}>{b:02X}")).collect();
+        let s: Vec<String> = log.iter().take(64).map(|(a, b)| format!("{a:02X}>{b:02X}")).collect();
         println!("  {}", s.join(" "));
     }
 }
