@@ -79,18 +79,11 @@ https://rileymccarthy.github.io/MaD/app/    → MaD Control
 
 The job builds the app with Vite (base path `/<repo>/app/`), builds the docs with
 MkDocs, copies the app into `site/app/`, and uploads the merged `site/` as the
-Pages artifact. It triggers on:
-
-- **push to `main`** (when `docs/**`, `mkdocs.yml`, `Software/Control/**`,
-  or `Protocol/**` change),
-- **`workflow_dispatch`** (manual deploy of any branch), and
-- **`madcontrol-v*` tags**.
-
-A `madcontrol-v*` tag is rejected unless it matches
-`Software/Control/package.json` `version` on that commit — so the About page,
-bug reports, and GitHub Release cannot drift. After a successful Pages deploy
-the workflow also publishes a **MaD Control** GitHub Release pointing at the
-live app.
+Pages artifact. **Pages deploys from `main`** (and `workflow_dispatch`). The
+`github-pages` environment only allows that branch, so a `madcontrol-v*` tag
+does **not** deploy Pages — it asserts `package.json` matches the tag and
+publishes a **MaD Control** GitHub Release. The matching merge to `main` already
+deployed that SHA.
 
 !!! note "One-time setup"
     In the repo, set **Settings → Pages → Source = GitHub Actions** so the
@@ -110,9 +103,8 @@ git push -u origin HEAD
 Software/Control/scripts/release.sh --publish         # tags madcontrol-vX.Y.Z
 ```
 
-That tag deploys Pages and creates a GitHub Release named **MaD Control X.Y.Z**.
-`package.json` is currently **0.2.1** to match the last `webapp-v0.2.1` tag; the
-first `madcontrol-v*` release should be **0.2.2** or **0.3.0** (`patch` / `minor`).
+That tag publishes a GitHub Release named **MaD Control X.Y.Z**. Pages already
+deployed from the merge to `main`.
 
 Firmware and hardware are still cut with version tags:
 
