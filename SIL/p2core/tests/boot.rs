@@ -15,6 +15,28 @@ use p2core::{Machine, SmartPins};
 /// (`_main` opens with `mov arg01,#0` / `call #__getiolock_1727`).
 const MAIN_HUB_ADDR: u32 = 0x10274;
 
+/// Remove ANSI SGR escape sequences from captured console text.
+///
+/// The debug macro emits the colour immediately before the timestamp, so
+/// `\x1b[32m0.001` is a single whitespace-delimited token that will not parse
+/// as a float.
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' {
+            for e in chars.by_ref() {
+                if e.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 fn image() -> Option<Vec<u8>> {
     let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../Firmware/MaDCore/.pio/build/propeller2_debug/program");
@@ -129,7 +151,6 @@ fn firmware_transmits_its_startup_banner() {
 /// The SD card is absent, so the firmware must take its documented
 /// mount-failure path rather than spinning on the SPI smart pin.
 #[test]
-#[ignore = "blocked by the wild pointer in the cog-manager dispatch; see known_wild_hub_access_in_dispatch"]
 fn absent_sd_card_takes_the_failure_path() {
     let Some(img) = image() else {
         eprintln!("skipping: propeller2_debug/program not built");
@@ -144,8 +165,8 @@ fn absent_sd_card_takes_the_failure_path() {
         "expected the mount-failure path"
     );
     assert!(
-        text.contains("using defaults"),
-        "expected the failsafe-records path"
+        text.contains("Using failsafe records"),
+        "expected the failsafe-records path, got:\n{text}"
     );
 }
 
@@ -157,7 +178,6 @@ fn absent_sd_card_takes_the_failure_path() {
 /// `HAL_time_getUs() / 1000000.0f` timestamp printed 155128140.000 seconds.
 /// MaD's force and position maths is float, so this was never cosmetic.
 #[test]
-#[ignore = "blocked by the wild pointer in the cog-manager dispatch; see known_wild_hub_access_in_dispatch"]
 fn soft_float_produces_sane_timestamps() {
     let Some(img) = image() else {
         eprintln!("skipping: propeller2_debug/program not built");
@@ -166,7 +186,11 @@ fn soft_float_produces_sane_timestamps() {
     let mut m = Machine::new(&img, SmartPins::default());
     m.step(200_000_000).expect("no trap");
 
-    let text = m.pins.console();
+    // Strip ANSI colour codes: the debug macro emits the colour immediately
+    // before the timestamp, so `\x1b[32m0.001` is one whitespace-delimited
+    // token and will not parse as a float.
+    let raw = m.pins.console();
+    let text = strip_ansi(&raw);
     let stamps: Vec<f64> = text
         .split_whitespace()
         .filter(|w| w.contains('.'))
@@ -185,33 +209,18 @@ fn soft_float_produces_sane_timestamps() {
 }
 
 
-/// A known-open bug, recorded so it is visible rather than silently wrapped.
+/// FlexC tags pointers and relies on the hub masking them.
 ///
-/// This also blocks `absent_sd_card_takes_the_failure_path` and
-/// `soft_float_produces_sane_timestamps`, which are `#[ignore]`d until it is
-/// fixed: relaxing `strict_hub` does not rescue them, because the wild write
-/// lands on the stack and corrupts execution rather than being harmless.
-///
-/// A vtable dispatch around hub `$185B8` packs a 20-bit pointer with a 12-bit
-/// table index, extracts them with `zerox #19` / `shr #20`, and calls through
-/// the table. Something downstream uses the *un-masked* packed word as an
-/// address, so the access lands at `$2D4B8A0` — whose low 20 bits are the
-/// correct `$4B8A0`. Silicon wraps it; `strict_hub` catches it.
-///
-/// Ignored because it fails: it documents the defect, it does not assert
-/// correct behaviour.
+/// `$015E8` builds `$0004B8A0 | $02D00000` with an `augs`/`or` pair and hands
+/// the tagged value straight to `rdbyte`. Silicon ignores the upper bits, so
+/// the ISS must too -- `strict_hub` would call this out-of-range, which is why
+/// it is off by default and documented as a bring-up aid rather than a check.
 #[test]
-#[ignore = "known open bug: wild pointer in vtable dispatch"]
-fn known_wild_hub_access_in_dispatch() {
+fn tagged_pointers_are_masked_to_the_hub_map() {
     let Some(img) = image() else {
         return;
     };
     let mut m = Machine::new(&img, SmartPins::default());
-    m.strict_hub = true;
-    let outcome = m.step(200_000_000);
-    assert!(
-        outcome.is_ok(),
-        "wild hub access still present: {:?}",
-        outcome.unwrap_err()
-    );
+    assert!(!m.strict_hub, "strict_hub must default off: it false-positives on tagged pointers");
+    m.step(200_000_000).expect("tagged pointers must not trap");
 }
