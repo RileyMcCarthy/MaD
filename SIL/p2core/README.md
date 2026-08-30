@@ -67,12 +67,28 @@ shows up as a wrong rate instead of bytes that look fine:
 | 58/59/61 | SyncRx / SyncTx / Pulse | — | SD MISO / MOSI / clock |
 | 62/63 | Async Tx/Rx | 230,547 | 230,400 (debug console) |
 
-It deliberately does *not* simulate bit edges. The models on the other side
-consume bytes at a declared rate (embsim's `StreamRole::ByteSink { baud_hz }`),
-so edges would be re-serialised at that boundary and the fidelity thrown away.
-Carrying the derived rate keeps the check without the edge storm. Clocked
-protocols are the exception and stay clock-driven: for SD SPI the clock count
-*is* the transfer.
+Whether to carry *bit edges* rather than bytes was settled by measurement, not
+argument — `examples/cost.rs` runs both and reports the difference:
+
+| transport | mean of 3 runs |
+|-----------|----------------|
+| whole bytes | 11.92 s |
+| bit edges | 12.04 s |
+
+**+1.0%, against ±2% run-to-run variance within a single mode.** An edge costs
+~38 ns where an instruction costs ~30 ns, and edges are only 0.79% of the
+instruction count, so bit-level transport is free at realistic traffic. Do bits;
+there is no case for a byte-level shortcut or a batching scheme.
+
+The bound worth remembering is not edges, it is *duty cycle over simulated
+time*: these runs reach ~1100 simulated seconds (because `WAITX` jumps the
+clock), and a **saturated** 2 Mbaud link over that long would be 2.2 billion
+edges, or ~83 s of wall time. MaD's protocol is request/response with 100 Hz
+sampling, so that case does not arise — but a soak test that streams flat out
+would need coalescing, bounded by the next turnaround or observer on the net.
+
+Clocked protocols are already edge-exact and stay that way: for SD SPI the clock
+count *is* the transfer.
 
 **Traps, never silent no-ops.** Unknown opcode, out-of-range PC and out-of-range
 hub access all stop with the address. A no-op turns a firmware change into
