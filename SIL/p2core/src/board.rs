@@ -27,6 +27,9 @@ pub const PIN_CS: u8 = 60;
 pub const PIN_CLK: u8 = 61;
 pub const PIN_TX: u8 = 62;
 pub const PIN_RX: u8 = 63;
+/// The MaD protocol link to the host (`HW_PIN_RPI_*`), 2,000,000 baud.
+pub const PIN_PROTO_TX: u8 = 55;
+pub const PIN_PROTO_RX: u8 = 53;
 
 pub struct Board {
     pub card: SdCard,
@@ -34,6 +37,10 @@ pub struct Board {
     pub console: Vec<u8>,
     /// Bytes queued for the firmware to receive on the debug UART.
     pub uart_rx: VecDeque<u8>,
+    /// Bytes the firmware transmitted on the protocol link.
+    pub proto_tx: Vec<u8>,
+    /// Bytes queued for the firmware to receive on the protocol link.
+    pub proto_rx: VecDeque<u8>,
     mode: [u32; 64],
     /// Receive width in bits, from `WXPIN` on the DO pin.
     rx_bits: u32,
@@ -64,6 +71,8 @@ impl Board {
             card,
             console: Vec::new(),
             uart_rx: VecDeque::new(),
+            proto_tx: Vec::new(),
+            proto_rx: VecDeque::new(),
             mode: [0; 64],
             rx_bits: 8,
             tx: VecDeque::new(),
@@ -72,6 +81,16 @@ impl Board {
             in_flag: [false; 64],
             di_log: Vec::new(),
         }
+    }
+
+    /// Queue bytes for the firmware to read on the protocol link.
+    pub fn send_protocol(&mut self, bytes: &[u8]) {
+        self.proto_rx.extend(bytes.iter().copied());
+    }
+
+    /// Whether the firmware has configured this smart pin.
+    pub fn is_configured(&self, pin: u8) -> bool {
+        self.mode[pin as usize & 63] != 0
     }
 
     /// Everything the firmware printed to the debug UART.
@@ -155,6 +174,7 @@ impl PinBus for Board {
     fn wypin(&mut self, pin: u8, y: u32) {
         match pin {
             PIN_TX => self.console.push(y as u8),
+            PIN_PROTO_TX => self.proto_tx.push(y as u8),
             PIN_DI => {
                 if self.di_log.len() < 64 {
                     self.di_log.push(y);
@@ -192,7 +212,10 @@ impl PinBus for Board {
                 }
                 self.rx_queue.pop_front().unwrap_or(0xFFFF_FFFF)
             }
-            PIN_RX => self.uart_rx.pop_front().map(|b| b as u32).unwrap_or(0),
+            // `HAL_serial_recieveByte` takes the byte from bits 31:24, which is
+            // where an async-RX smart pin leaves it.
+            PIN_RX => self.uart_rx.pop_front().map(|b| (b as u32) << 24).unwrap_or(0),
+            PIN_PROTO_RX => self.proto_rx.pop_front().map(|b| (b as u32) << 24).unwrap_or(0),
             _ => 0xFF,
         };
         // C reports BUSY; nothing here ever is.
@@ -200,6 +223,14 @@ impl PinBus for Board {
     }
 
     fn testp(&self, pin: u8) -> bool {
+        // An async RX pin reports "a byte is waiting", not "an operation
+        // finished". Reporting every configured pin as ready would make
+        // `HAL_serial_recieveByte` read an endless stream of zero bytes.
+        match pin {
+            PIN_RX => return !self.uart_rx.is_empty(),
+            PIN_PROTO_RX => return !self.proto_rx.is_empty(),
+            _ => {}
+        }
         let p = pin as usize & 63;
         self.in_flag[p] || self.mode[p] != 0
     }
