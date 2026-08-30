@@ -1,6 +1,6 @@
 {
   "name": "mad-control",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "description": "Frontend-only MaD tensile-tester control app (Web Serial + WebAssembly). Chromium-only.",
   "type": "module",
