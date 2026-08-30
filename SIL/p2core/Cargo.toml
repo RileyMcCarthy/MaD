@@ -1,0 +1,12 @@
+[package]
+name = "p2core"
+description = "Functional Propeller 2 instruction-set simulator (ISS) for SIL"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# Intentionally dependency-free: the CPU takes hub bytes in and emits PinBus
+# calls out, so promoting this crate into embsim as `embsim-p2-iss` is a
+# `git mv` rather than a refactor. Do not add embsim crates here.
+[dependencies]
