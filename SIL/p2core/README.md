@@ -65,9 +65,11 @@ public RTL, that listing is the strongest instruction-level oracle available
 offline. Regenerate the golden with `python3 tools/gen_golden.py` after a
 firmware rebuild (it is gitignored — a build artifact).
 
-The remaining tests are acceptance checks against the real image: boot to
-`_main`, `clkfreq`, the startup banner, the SD failure path, and soft-float
-sanity. They skip when the firmware artifact is absent.
+The remaining tests are acceptance checks against the real image, each pinning a
+milestone: boot to `_main`, `clkfreq`, the startup banner, the SD failure path,
+soft-float sanity, tagged-pointer masking, multi-cog bring-up, a fully
+configured machine, and the protocol round trip. They skip when the firmware
+artifact is absent.
 
 ## Things that cost hours, so they are written down
 
@@ -90,6 +92,22 @@ Each of these produced correct-looking behaviour while being wrong:
 - **`RDPIN ... WC` sets C for BUSY**, not ready. `TESTP` must read a configured
   pin as complete, because drivers `AKPIN` then wait.
 - **`AKPIN` is literally `WRPIN #1,S`.**
+- **`GETBYTE`/`GETNIB`/`GETWORD` take field N *of S*, and N is in the C/Z bits**
+  (plus bit 21 for the 3-bit nibble index) — that is what the `ds*get` form names
+  mean. Taking the source from D and the index from S turned `buf[0] = 0x40|cmd`
+  into command index 1 on every SD frame, and corrupted printf's field handling
+  so every log line arrived padded with runs of spaces.
+- **`REP D,S` repeats D instructions S times** — D is the block LENGTH. Swapped,
+  every REP block ran one instruction long; harmless until an FCACHE'd loop
+  executed its trailing `_ret_` each iteration, popping the call stack until it
+  underflowed and "returned" out of `mad_begin`'s `while (true)`.
+- **Hub access is unaligned-capable.** `send_cmd` stores its argument with
+  `*(DWORD*)(buf+1)`; masking the address to a long boundary redirects it onto
+  `buf[0..3]`.
+- **Hub addresses are masked, and FlexC relies on it** — it builds tagged
+  pointers with an `augs`/`or` pair and lets the hardware ignore the tag. A
+  strict out-of-range check reports those as wild, which is why `strict_hub` is
+  off by default and is a bring-up aid, not a soundness check.
 
 ## Sources
 
