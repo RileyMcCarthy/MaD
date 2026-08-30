@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { decodeBinarySampleDataToCSV, parseTestCSV } from './sample';
+import {
+  decodeBinarySampleDataToCSV,
+  interpolateAtUs,
+  motionStartTimeUs,
+  parseTestCSV,
+} from './sample';
 import { encodeStoredSample, STOREDSAMPLE_WIRE_SIZE } from '@/protocol/generated/protoemb';
 
 describe('decodeBinarySampleDataToCSV', () => {
@@ -33,5 +38,37 @@ describe('parseTestCSV', () => {
   it('skips malformed rows', () => {
     const csv = 'time_us,force_mN,position_um,setpoint_um\nbad,row\n0,0,0,0\n';
     expect(parseTestCSV(csv)).toHaveLength(1);
+  });
+});
+
+describe('interpolateAtUs', () => {
+  const t = [0, 100_000, 200_000];
+  const x = [0, 1000, 2000];
+
+  it('returns the sample on an exact timestamp', () => {
+    expect(interpolateAtUs(t, x, 100_000)).toBe(1000);
+  });
+
+  it('linearly interpolates between samples', () => {
+    expect(interpolateAtUs(t, x, 50_000)).toBe(500);
+    expect(interpolateAtUs(t, x, 150_000)).toBe(1500);
+  });
+
+  it('returns undefined outside the recorded span', () => {
+    expect(interpolateAtUs(t, x, -1)).toBeUndefined();
+    expect(interpolateAtUs(t, x, 200_001)).toBeUndefined();
+    expect(interpolateAtUs([], [], 0)).toBeUndefined();
+  });
+});
+
+describe('motionStartTimeUs', () => {
+  it('returns the first sample that has moved', () => {
+    const t = [1_000_000, 1_010_000, 1_020_000, 1_030_000];
+    const p = [100, 100, 200, 400];
+    expect(motionStartTimeUs(t, p, 80)).toBe(1_020_000);
+  });
+
+  it('returns undefined when the series never moves', () => {
+    expect(motionStartTimeUs([0, 100], [10, 10], 80)).toBeUndefined();
   });
 });

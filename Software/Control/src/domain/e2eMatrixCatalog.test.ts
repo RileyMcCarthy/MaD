@@ -89,6 +89,7 @@ describe('Sprint C e2e matrix catalog', () => {
       'TM-busy-restart',
       'TM-manual-gate',
       'P1-precision',
+      'VT-linear',
       'BB-back-to-back',
       'B5-reconnect',
     ]);
