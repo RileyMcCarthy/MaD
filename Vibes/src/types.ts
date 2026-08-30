@@ -33,6 +33,36 @@ export type Sha = string;
 export const COMPONENT_ID_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
 export const PRODUCER_NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
+/* ─────────────── files `vibes accept` writes, not producers ───────────────
+ * `vibes accept` writes a receipt and a `.gitattributes` beside the committed
+ * baselines. NO producer ever emits either, so every place that compares a
+ * baseline roster against producer output must exclude them — otherwise they
+ * read as snapshots that vanished.
+ *
+ * This lives here, in the shared vocabulary, because getting it wrong was not
+ * hypothetical: the same defect shipped three times in three modules, each
+ * with its own local copy of the rule, and each surfaced only under a
+ * condition the previous one could not reach —
+ *   1. receipt scan          -> `unreceipted-baseline` on every adopted repo
+ *   2. snapshot categorizer  -> two phantom `deleted` rows above every diff
+ *   3. baseline case count   -> `corpus-shrank`, which disqualifies the
+ *                               producer entirely and reports it `not-run`
+ * One predicate, imported everywhere. Do not re-derive it locally.
+ *
+ * `_vibes-census.json` is deliberately NOT here: a producer emits it, and
+ * excluding it would make a shrinking corpus invisible.
+ */
+export const ACCEPT_GITATTRIBUTES = '.gitattributes';
+/** `.vibes-accept.json` plus the numbered variants accept rotates to. */
+export const ACCEPT_RECEIPT_RE = /^\.vibes-accept(?:-\d+)?\.json$/;
+
+/** `rel` is relative to the producer's out dir. Top level only — a producer
+ *  that genuinely emits `cases/.gitattributes` is emitting a snapshot. */
+export function isAcceptWritten(rel: string): boolean {
+  if (rel.includes('/')) return false;
+  return rel === ACCEPT_GITATTRIBUTES || ACCEPT_RECEIPT_RE.test(rel);
+}
+
 /* ══════════════════════ ROOT REGISTRY — /vibes.config.mjs ══════════════════
  * Owns identity, existence, scope, suppression and the dependency graph.
  * These are exactly the fields an agent would reach for to hide a regression,

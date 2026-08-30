@@ -54,9 +54,7 @@ import type {
   Sha,
   VerdictKind,
 } from '../types.js';
-
-/** Written by `vibes accept`, not by a producer. */
-const GITATTRIBUTES_BASENAME = '.gitattributes';
+import { isAcceptWritten } from '../types.js';
 
 /** What `vibes accept` writes. */
 export const RECEIPT_BASENAME = '.vibes-accept.json';
@@ -178,7 +176,7 @@ export async function collectOutDir(
     // auto-merge two branches' snapshots into a file matching neither, while
     // still passing review. That belongs in policy drift, not in the receipt
     // scan, and is not implemented yet.
-    if (rel === GITATTRIBUTES_BASENAME) continue;
+    if (isAcceptWritten(rel)) continue;
 
     // Census and provenance are Vibes bookkeeping, but they are NOT skipped
     // here: their bytes are behaviour the census check reads, and skipping them

@@ -21,6 +21,7 @@
 import { createHash } from 'node:crypto';
 
 import type { RepoPath, Sha } from '../types.js';
+import { isAcceptWritten } from '../types.js';
 import { splitZ } from './exec.js';
 import type { GitRepo } from './repo.js';
 import type { RawDiffEntry } from './rawParse.js';
@@ -288,10 +289,6 @@ function fromRawEntry(e: RawDiffEntry, contentUnchanged: boolean): ChangedSource
   };
 }
 
-/** Written by `vibes accept`, never by a producer. */
-const ACCEPT_GITATTRIBUTES = '.gitattributes';
-const ACCEPT_RECEIPT_RE = /^\.vibes-accept(?:-\d+)?\.json$/;
-
 const MANIFEST_RE = /(^|\/)vibes\/vibes\.manifest\.[cm]?js$/;
 const RECEIPT_RE = /(^|\/)\.vibes-accept\.json$/;
 
@@ -403,7 +400,7 @@ export async function categorizeSnapshots(
     //
     // Only these two. `_vibes-census.json` IS producer output and must stay
     // compared, or a shrinking corpus becomes invisible.
-    if (!rel.includes('/') && (rel === ACCEPT_GITATTRIBUTES || ACCEPT_RECEIPT_RE.test(rel))) continue;
+    if (isAcceptWritten(rel)) continue;
     baseline.set(rel, { oid: e.oid, mode: e.mode });
   }
 

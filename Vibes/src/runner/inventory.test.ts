@@ -270,3 +270,34 @@ describe('baselineCaseCount — the monotonic half of the corpus floor', () => {
     expect(r).toEqual({ count: null, fromCensus: false });
   });
 });
+
+describe("accept's bookkeeping is not a baseline case", () => {
+  // Third and final home of this defect. `vibes accept` writes a receipt and a
+  // `.gitattributes` beside the baselines; counting them inflates the baseline
+  // roster, so every run reports `corpus-shrank`, which DISQUALIFIES the
+  // producer and renders the whole component `not-run`. Strictly worse than the
+  // two earlier symptoms: the report stops claiming anything at all.
+  test('ignores the receipt and .gitattributes', async () => {
+    const f = await repoFixture();
+    await f.write('c/vibes/snapshots/p/a.txt', 'a\n');
+    await f.write('c/vibes/snapshots/p/b.txt', 'b\n');
+    await f.write('c/vibes/snapshots/p/.gitattributes', '* -merge -diff\n');
+    await f.write('c/vibes/snapshots/p/.vibes-accept.json', '{"receipts":[]}');
+    await f.commit('baseline');
+    const repo = await openRepo({ cwd: f.dir });
+
+    const r = await baselineCaseCount(repo, (await repo.revParse('HEAD')) ?? '', 'c/vibes/snapshots/p');
+    expect(r).toEqual({ count: 2, fromCensus: false });
+  });
+
+  test('a nested .gitattributes IS a case — only the top level is accept\'s', async () => {
+    const f = await repoFixture();
+    await f.write('c/vibes/snapshots/p/a.txt', 'a\n');
+    await f.write('c/vibes/snapshots/p/cases/.gitattributes', 'x\n');
+    await f.commit('baseline');
+    const repo = await openRepo({ cwd: f.dir });
+
+    const r = await baselineCaseCount(repo, (await repo.revParse('HEAD')) ?? '', 'c/vibes/snapshots/p');
+    expect(r).toEqual({ count: 2, fromCensus: false });
+  });
+});

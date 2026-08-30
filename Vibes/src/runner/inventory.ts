@@ -18,6 +18,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import { basename, join, posix } from 'node:path';
 
 import type { GitPort, RepoPath, Sha } from '../types.js';
+import { isAcceptWritten } from '../types.js';
 import { looksBinary, sha256 } from '../git/index.js';
 import { CENSUS_FILE, RESERVED_BASENAMES, SELECTION_FILE } from './constants.js';
 
@@ -253,5 +254,19 @@ export async function baselineCaseCount(
        * itself reported by the compare layer, not swallowed here */
     }
   }
-  return { count: paths.filter((p) => !isReserved(p)).length, fromCensus: false };
+  // `isReserved` covers producer bookkeeping (census, provenance, selection).
+  // Accept's own receipt and `.gitattributes` are a different category: the
+  // producer never emits them, so counting them inflates the baseline and
+  // every run reports `corpus-shrank`, which disqualifies the producer and
+  // renders it `not-run`. This is the third module the same rule was needed
+  // in; it now comes from one place.
+  // NOTE the out-dir-relative path, NOT basename(): `isAcceptWritten` is
+  // top-level-only by design, and basename() would strip the nesting and so
+  // wrongly exclude a producer-emitted `cases/.gitattributes`.
+  const prefix = `${outRepo.replace(/\/+$/, '')}/`;
+  const rel = (p: RepoPath): string => (p.startsWith(prefix) ? p.slice(prefix.length) : p);
+  return {
+    count: paths.filter((p) => !isReserved(p) && !isAcceptWritten(rel(p))).length,
+    fromCensus: false,
+  };
 }
