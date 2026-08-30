@@ -35,13 +35,39 @@ When connected, the status bar turns green and shows **Connected** with a
 
 [:octicons-arrow-right-24: More on connecting](../user-guide/connecting.md)
 
-!!! tip "Check the firmware version once you're connected"
-    Open **Firmware** in the sidebar — it shows what the machine is running. If
-    it's older than the current release, you can update it from the app; see
-    [Keeping the firmware up to date](#keeping-the-firmware-up-to-date) at the end
-    of this page. You don't have to do this before your first test.
+## 3. Check the firmware
 
-## 3. Watch live data
+Open **Firmware** in the sidebar. Under **Current firmware** you'll see what the
+machine is running.
+
+- If the version matches the latest release, you're done — go to step 4.
+- If it's older, or the status bar says **Connected** but never **Responding**
+  (a new board that has never been programmed), update it now, before your first
+  test.
+
+To update:
+
+1. Download `MaD-Firmware-<version>-release.bin` from the project's
+   [GitHub releases page](https://github.com/RileyMcCarthy/MaD/releases). The
+   `-debug` build is for bench work — take the **release** one.
+2. Choose the file. The app shows its size and roughly how long the transfer
+   takes.
+3. Check the **Target** port is the machine you mean to program, then click
+   **Write to flash** and confirm.
+
+The status line runs through *Resetting the board…*, *Uploading… n%*, then
+*Finishing…*. The board reboots into the new firmware and the version under
+**Current firmware** updates.
+
+Programming uses the **Debug/Programming header (J1)** and an adapter that
+drives RESn from DTR, such as a Parallax Prop Plug. On production hardware
+that's the same connection you already use for control — if the machine is
+talking to the app, it can be programmed. The isolated Raspberry Pi link has no
+reset line and **cannot** program the board.
+
+[:octicons-arrow-right-24: Full firmware guide](../user-guide/firmware-and-diagnostics.md)
+
+## 4. Watch live data
 
 Open **Live**. You'll see real-time readouts (machine and sample force/position),
 the machine **state** (faults, restrictions, motion, test), manual **controls**,
@@ -56,7 +82,7 @@ force**, and **Zero length** here.
 [:octicons-arrow-right-24: Live monitoring](../user-guide/live-monitoring.md) ·
 [Manual control](../user-guide/manual-control.md)
 
-## 4. Set up a test
+## 5. Set up a test
 
 A test combines two things:
 
@@ -73,7 +99,7 @@ A test combines two things:
     computer. Profiles and results are saved there. You only do this once.
     [:octicons-arrow-right-24: Settings & data](../user-guide/settings-and-data.md)
 
-## 5. Run it
+## 6. Run it
 
 Open **Test Runs**. In the **New Test** card, pick your saved sample and motion
 profiles, optionally **Preview G-code**, then click **Run Test**. The run appears
@@ -89,7 +115,7 @@ finishes:
     monitoring it. The red **STOP** button in the app is a convenience that
     disables motion; it is *not* a substitute for the hardware e-stop.
 
-## 6. Review the results
+## 7. Review the results
 
 Back in **Test Runs**, click **Download data** on a finished run to pull the CSV
 off the machine, then **View** to see the analysis — force vs time, position
@@ -99,44 +125,12 @@ off the machine, then **View** to see the analysis — force vs time, position
 
 ## Keeping the firmware up to date
 
-The machine runs its own firmware, updated separately from the app. You can
-program it from the browser over the same USB connection you already use for
-control — there's no separate tool to install.
+The machine runs its own firmware, updated separately from the app. Updating it
+is the same **Write to flash** operation as [step 3](#3-check-the-firmware).
 
-!!! warning "New capability — try RAM mode first"
-    Browser flashing is newly added and hasn't yet been confirmed against a
-    physical board. Do your first update with the machine on the bench rather than
-    before a run, and start with **Load into RAM** — it's the reversible mode, and
-    a power cycle undoes it.
-
-### Before you start
-
-Flashing needs the **Debug/Programming header (J1)** and an adapter that drives
-RESn from DTR, such as a Parallax Prop Plug — that's how the app resets the chip
-to reach its boot ROM. On production hardware this is the same connection you
-use for control, so if the machine is talking to the app, it can be programmed.
-
-The isolated Raspberry Pi link has no reset line and **cannot** program the board.
-
-### First-time update
-
-1. Open **Firmware** and note the version under **Current firmware**.
-2. Download the latest `MaD-Firmware-<version>-release.bin` from the project's
-   GitHub releases page. (The `-debug` build is for bench work — take the
-   **release** one.)
-3. Select **Load into RAM**, choose the file, and click **Load into RAM**. This
-   runs the new firmware without writing anything permanent.
-4. Reconnect and check the machine behaves as expected.
-5. Once you're satisfied, repeat with **Write to flash** to make it permanent.
-
-### Staying current
-
-Check the version on the **Firmware** screen against the latest release now and
-then — there's no automatic notification for firmware. A good habit is to check
-whenever you update the app, since the two travel together.
-
-Because RAM mode is non-destructive, it's a cheap way to try a new build before
-committing it to flash.
+There's no automatic notification for firmware, so check the version on the
+**Firmware** screen against the latest release now and then. A good habit is to
+check whenever you update the app, since the two travel together.
 
 [:octicons-arrow-right-24: Full firmware & diagnostics guide](../user-guide/firmware-and-diagnostics.md)
 

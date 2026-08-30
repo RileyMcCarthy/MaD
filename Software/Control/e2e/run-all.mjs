@@ -1444,6 +1444,17 @@ const scenarios = [
         page.on('dialog', (d) => d.accept());
 
         await page.goto(`${APP_URL}#/firmware`);
+        // Flash is the only mode the app offers: the P2 Edge boots from SPI
+        // flash, so a RAM load would look like a successful update and then
+        // vanish on the next power cycle. RAM loading lives in the CLI.
+        assert(
+          (await page.getByRole('radio').count()) === 0,
+          'a programming-mode selector reappeared in the UI',
+        );
+        assert(
+          (await page.getByTestId('flash-firmware').textContent())?.includes('Write to flash'),
+          'flash button no longer says what it does',
+        );
         // The target must be named before anything is written.
         await page.getByTestId('flash-target').filter({ hasText: /USB 0403:6015/ })
           .waitFor({ timeout: 8000 });
@@ -1506,48 +1517,6 @@ const scenarios = [
           await page.getByTestId('flash-firmware').isDisabled(),
           'flash button was enabled without an unambiguous target',
         );
-      } finally { await browser.close(); }
-    },
-  },
-  {
-    id: 'FW4',
-    name: 'Firmware: RAM mode completes the ROM checksum handshake',
-    async run() {
-      // Distinct from FW1: RAM mode ends with the ROM verifying a checksum
-      // ("?" -> "."), where flash mode just sends "~". That handshake is the
-      // half of the protocol FW1 never reaches.
-      const browser = await chromium.launch({ channel: 'chrome', headless: true });
-      try {
-        const page = await browser.newPage();
-        const errors = [];
-        page.on('pageerror', (e) => errors.push(e.message));
-        await page.addInitScript(installFakeBootRom, 1);
-        await page.addInitScript(installOpfsDataDir, OPFS_DIR);
-        page.on('dialog', (d) => d.accept());
-
-        await page.goto(`${APP_URL}#/firmware`);
-        await page.getByLabel(/Load into RAM/i).check();
-
-        const SIZE = 512;
-        await page.getByTestId('firmware-file').setInputFiles({
-          name: 'program',            // extensionless, as PlatformIO emits
-          mimeType: 'application/octet-stream',
-          buffer: Buffer.from(Array.from({ length: SIZE }, (_, i) => (i * 7) & 0xff)),
-        });
-        await page.getByTestId('flash-firmware').click();
-        await page.getByTestId('flash-status').filter({ hasText: /Loaded .* bytes into RAM/ })
-          .waitFor({ timeout: 30000 });
-
-        const rom = await page.evaluate(() => ({
-          len: window.__bootRom.image.length,
-          ok: window.__bootRom.ok,
-          finished: window.__bootRom.finished,
-        }));
-        // RAM mode sends the image alone — no 496-byte stub.
-        assert(rom.len === SIZE, `image length ${rom.len}, expected ${SIZE}`);
-        assert(rom.ok === true, 'ROM did not accept the checksum');
-        assert(rom.finished, 'checksum handshake never completed');
-        assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
       } finally { await browser.close(); }
     },
   },
