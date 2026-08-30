@@ -137,7 +137,7 @@ Each step leaves both backends green.
      above. *(embsim #36)*
 3. **MCU component: byte → level synthesis on TX**, level → byte framing on RX,
    behind a flag. Both paths live; the flag exists only so step 4 can land
-   without a flag day.
+   without a flag day. *(embsim #37 — `McuBuilder::serial_on_levels`)*
 4. **Migrate `ads122u04_component`** off `stream_tx`/`on_byte` onto level pins
    plus the codec. It is the only real consumer, and it already models its own
    pin facade, so this is where the design gets validated.
