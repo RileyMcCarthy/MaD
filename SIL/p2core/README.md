@@ -68,24 +68,33 @@ shows up as a wrong rate instead of bytes that look fine:
 | 62/63 | Async Tx/Rx | 230,547 | 230,400 (debug console) |
 
 Whether to carry *bit edges* rather than bytes was settled by measurement, not
-argument — `examples/cost.rs` runs both and reports the difference:
+argument. `examples/cost.rs` runs the firmware both ways and
+`examples/edgebench.rs` measures the edge path at scale; the in-situ cost was
+taken from a linear fit across 3.1M -> 630M edges, which is the only way to get
+it above the run-to-run noise floor:
 
-| transport | mean of 3 runs |
-|-----------|----------------|
-| whole bytes | 11.92 s |
-| bit edges | 12.04 s |
+**1.87 ns per edge**, against ~25 ns per interpreted instruction. Two
+independent methods (in-situ fit, isolated benchmark) agree within 4%.
 
-**+1.0%, against ±2% run-to-run variance within a single mode.** An edge costs
-~38 ns where an instruction costs ~30 ns, and edges are only 0.79% of the
-instruction count, so bit-level transport is free at realistic traffic. Do bits;
-there is no case for a byte-level shortcut or a batching scheme.
+That makes per-edge transport affordable for everything, not just the
+event-sparse links:
 
-The bound worth remembering is not edges, it is *duty cycle over simulated
-time*: these runs reach ~1100 simulated seconds (because `WAITX` jumps the
-clock), and a **saturated** 2 Mbaud link over that long would be 2.2 billion
-edges, or ~83 s of wall time. MaD's protocol is request/response with 100 Hz
-sampling, so that case does not arise — but a soak test that streams flat out
-would need coalescing, bounded by the next turnaround or observer on the net.
+| scenario | edges | added | total | vs base |
+|----------|-------|-------|-------|---------|
+| idle (serial only) | 3.1 M | 0.0 s | 10.0 s | 1.0x |
+| 10k steps/s | 69 M | 0.1 s | 10.1 s | 1.0x |
+| 100k steps/s | 661 M | 1.2 s | 11.2 s | 1.1x |
+| 1M steps/s | 6.6 B | 12.3 s | 22.3 s | 2.2x |
+| 30M steps/s (the firmware's clamp) | 197 B | 369 s | 379 s | 38x |
+
+So bits everywhere, losslessly, costs about 10% at a fast move and stays under
+2.2x at a megastep per second. Only the clamp -- a guard rail, not an operating
+point -- is out of reach.
+
+A rate-and-duration *segment* is still the exactly-lossless representation for a
+periodic signal, and a counter integrating `rate x duration` gets the identical
+answer for far less work. It is worth having, but the measurement says it is an
+optimisation rather than a requirement, so it should not shape the interface.
 
 Clocked protocols are already edge-exact and stay that way: for SD SPI the clock
 count *is* the transfer.
