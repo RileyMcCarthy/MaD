@@ -53,6 +53,27 @@ and Parallax) into `src/generated/decode.rs`: 359 encodings collapse to six
 decode shapes. Regenerate with `python3 tools/gen_decoder.py`; the output is
 committed, matching the repo's generate-then-commit convention.
 
+**Smart-pin configuration is decoded, not ignored.** A model that only watches
+`WYPIN` takes the byte and discards the mode word and bit period — which works,
+and cannot see a wrong `clkfreq`. `src/smartpin.rs` decodes the mode and derives
+the baud rate from the bit period the firmware computed, so misconfiguration
+shows up as a wrong rate instead of bytes that look fine:
+
+| pin | mode | derived | nominal |
+|-----|------|---------|---------|
+| 0/2 | Async Rx/Tx | 115,273 | 115,200 (force gauge) |
+| 9 | Quadrature | — | servo encoder |
+| 53/55 | Async Rx/Tx | 2,000,000 | 2,000,000 (host protocol) |
+| 58/59/61 | SyncRx / SyncTx / Pulse | — | SD MISO / MOSI / clock |
+| 62/63 | Async Tx/Rx | 230,547 | 230,400 (debug console) |
+
+It deliberately does *not* simulate bit edges. The models on the other side
+consume bytes at a declared rate (embsim's `StreamRole::ByteSink { baud_hz }`),
+so edges would be re-serialised at that boundary and the fidelity thrown away.
+Carrying the derived rate keeps the check without the edge storm. Clocked
+protocols are the exception and stay clock-driven: for SD SPI the clock count
+*is* the transfer.
+
 **Traps, never silent no-ops.** Unknown opcode, out-of-range PC and out-of-range
 hub access all stop with the address. A no-op turns a firmware change into
 drifting numbers that look like a tuning problem.
