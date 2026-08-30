@@ -39,6 +39,10 @@ pub struct Board {
     rx_bits: u32,
     /// Bytes the host queued to send, oldest first.
     tx: VecDeque<u8>,
+    /// Byte-times the clock generator still owes. `xmit_mmc` starts the clocks
+    /// for a whole frame and *then* feeds the remaining longwords, so the
+    /// transfer must drain as data arrives rather than complete at the WYPIN.
+    pending: u32,
     /// Words clocked in and not yet read. `rcvr_mmc` issues ONE `wypin` on the
     /// clock pin for a whole multi-longword burst and then `rdpin`s each word
     /// in turn, so a single value would lose all but the last.
@@ -61,6 +65,7 @@ impl Board {
             mode: [0; 64],
             rx_bits: 8,
             tx: VecDeque::new(),
+            pending: 0,
             rx_queue: VecDeque::new(),
             in_flag: [false; 64],
         }
@@ -71,6 +76,29 @@ impl Board {
         String::from_utf8_lossy(&self.console).into_owned()
     }
 
+    /// Exchange as many owed byte-times as there is data queued for.
+    ///
+    /// `fill` supplies bytes once the host's queue runs dry, which is how a
+    /// pure receive works: the host clocks with the line idling high.
+    fn drain(&mut self, fill: bool) {
+        let per_word = (self.rx_bits / 8).max(1) as usize;
+        while self.pending > 0 && (fill || !self.tx.is_empty()) {
+            let mut chunk: u32 = 0;
+            let mut n = 0;
+            while n < per_word && self.pending > 0 {
+                let out = self.tx.pop_front().unwrap_or(0xFF);
+                let got = self.card.xfer(out);
+                chunk = (chunk << 8) | got as u32;
+                self.pending -= 1;
+                n += 1;
+            }
+            // `sdmm.cc` reads every word back with `rdpin` then `rev`, so the
+            // shifter hands over bit-reversed data.
+            self.rx_queue.push_back(chunk.reverse_bits());
+            self.in_flag[PIN_DO as usize] = true;
+        }
+    }
+
     /// Clock `bits` bits through the card, queueing one word per receive unit.
     ///
     /// `sdmm.cc` reads every word back with `rdpin` then `rev`, so the shifter
@@ -78,27 +106,10 @@ impl Board {
     /// passed through `reverse_bits`. (32-bit reads then `movbyts #$1b` to
     /// endian-swap, which needs no help from us.)
     fn clock(&mut self, bits: u32) {
-        let total = ((bits / 8).max(1) as usize).min(4096);
-        let per_word = (self.rx_bits / 8).max(1) as usize;
-        let mut chunk: u32 = 0;
-        let mut n = 0usize;
-        for _ in 0..total {
-            // With nothing queued the line idles high, which is what the host
-            // sends while clocking a response out of the card.
-            let out = self.tx.pop_front().unwrap_or(0xFF);
-            let got = self.card.xfer(out);
-            chunk = (chunk << 8) | got as u32;
-            n += 1;
-            if n == per_word {
-                self.rx_queue.push_back(chunk.reverse_bits());
-                chunk = 0;
-                n = 0;
-            }
-        }
-        if n != 0 {
-            self.rx_queue.push_back(chunk.reverse_bits());
-        }
-        self.in_flag[PIN_DO as usize] = true;
+        self.pending += (bits / 8).max(1).min(4096);
+        // Only exchange what the host has already queued; the rest drains as
+        // `xmit_mmc` feeds it, or fills with idles when a read is attempted.
+        self.drain(false);
     }
 }
 
@@ -142,10 +153,15 @@ impl PinBus for Board {
         match pin {
             PIN_TX => self.console.push(y as u8),
             PIN_DI => {
-                // Queue transmit data MSB-first, matching SPI bit order.
+                // The TX shifter sends LSB-first, which is why `xmit_mmc`
+                // pre-applies `rev` + `movbyts` before WYPIN. Reversing the
+                // whole word here recovers the wire order: a CMD0 frame whose
+                // first long reaches us as $00000002 goes out as 40 00 00 00.
+                let wire = y.reverse_bits();
                 for i in (0..4).rev() {
-                    self.tx.push_back((y >> (i * 8)) as u8);
+                    self.tx.push_back((wire >> (i * 8)) as u8);
                 }
+                self.drain(false);
             }
             PIN_CLK => {
                 // Clocking is the transfer: y counts clock edges, so it moves
@@ -162,7 +178,14 @@ impl PinBus for Board {
         let p = pin as usize & 63;
         self.in_flag[p] = false;
         let v = match pin {
-            PIN_DO => self.rx_queue.pop_front().unwrap_or(0xFFFF_FFFF),
+            PIN_DO => {
+                if self.rx_queue.is_empty() {
+                    // A read with clocks still owed means a pure receive: the
+                    // host is clocking with its line idle.
+                    self.drain(true);
+                }
+                self.rx_queue.pop_front().unwrap_or(0xFFFF_FFFF)
+            }
             PIN_RX => self.uart_rx.pop_front().map(|b| b as u32).unwrap_or(0),
             _ => 0xFF,
         };
