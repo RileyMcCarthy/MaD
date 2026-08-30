@@ -19,6 +19,7 @@
 use std::collections::VecDeque;
 
 use crate::sdcard::SdCard;
+use crate::smartpin::{PinMode, SmartPin};
 use crate::PinBus;
 
 pub const PIN_DO: u8 = 58;
@@ -41,7 +42,8 @@ pub struct Board {
     pub proto_tx: Vec<u8>,
     /// Bytes queued for the firmware to receive on the protocol link.
     pub proto_rx: VecDeque<u8>,
-    mode: [u32; 64],
+    /// Decoded configuration per pin -- mode word and X, not just a flag.
+    pub pins: [SmartPin; 64],
     /// Receive width in bits, from `WXPIN` on the DO pin.
     rx_bits: u32,
     /// Bytes the host queued to send, oldest first.
@@ -73,7 +75,7 @@ impl Board {
             uart_rx: VecDeque::new(),
             proto_tx: Vec::new(),
             proto_rx: VecDeque::new(),
-            mode: [0; 64],
+            pins: [SmartPin::default(); 64],
             rx_bits: 8,
             tx: VecDeque::new(),
             pending: 0,
@@ -90,7 +92,31 @@ impl Board {
 
     /// Whether the firmware has configured this smart pin.
     pub fn is_configured(&self, pin: u8) -> bool {
-        self.mode[pin as usize & 63] != 0
+        self.pins[pin as usize & 63].is_configured()
+    }
+
+    /// The decoded mode the firmware programmed onto a pin.
+    pub fn mode_of(&self, pin: u8) -> PinMode {
+        self.pins[pin as usize & 63].mode()
+    }
+
+    /// The baud rate a serial pin is actually programmed for, derived from the
+    /// bit period the firmware computed and the clock frequency it recorded.
+    pub fn baud_of(&self, pin: u8, clkfreq: u32) -> Option<u32> {
+        self.pins[pin as usize & 63].baud_hz(clkfreq)
+    }
+
+    /// Modes the firmware programmed that this model does not implement.
+    ///
+    /// Surfaced rather than silently ignored: an unmodelled mode means the
+    /// peripheral is not really being simulated.
+    pub fn unmodelled_modes(&self) -> Vec<(u8, u32)> {
+        (0..64u8)
+            .filter_map(|p| match self.pins[p as usize].mode() {
+                PinMode::Unknown(m) => Some((p, m)),
+                _ => None,
+            })
+            .collect()
     }
 
     /// Everything the firmware printed to the debug UART.
@@ -158,11 +184,12 @@ impl PinBus for Board {
             self.rx_queue.clear();
             return;
         }
-        self.mode[p] = cfg;
+        self.pins[p].cfg = cfg;
         self.in_flag[p] = cfg != 0;
     }
 
     fn wxpin(&mut self, pin: u8, x: u32) {
+        self.pins[pin as usize & 63].x = x;
         if pin == PIN_DO {
             // %1IIIII where the low five bits are (bits - 1); bit 5 selects
             // sampling after the rising clock edge.
@@ -232,7 +259,7 @@ impl PinBus for Board {
             _ => {}
         }
         let p = pin as usize & 63;
-        self.in_flag[p] || self.mode[p] != 0
+        self.in_flag[p] || self.pins[p].is_configured()
     }
 
     fn akpin(&mut self, pin: u8) {
