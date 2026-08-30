@@ -26,7 +26,58 @@ import { mkdir, writeFile } from 'node:fs/promises';
 
 // Playwright is a devDependency of this package — resolve it from here.
 const require = createRequire(import.meta.url);
-export const { chromium } = require('playwright');
+const playwright = require('playwright');
+
+/**
+ * When MAD_COVERAGE=1 the app is built with istanbul instrumentation (see
+ * vite.config.ts) and every page exposes `window.__coverage__`. Wrapping
+ * `chromium` here means each scenario's coverage is harvested on browser
+ * close, with no change to the scenarios themselves — they all launch through
+ * this export.
+ *
+ * Without the wrapper, e2e runs in a separate browser process and is entirely
+ * invisible to the coverage number, which is why the flashing screen read 0%
+ * while nine scenarios were exercising it.
+ */
+const COVERAGE_DIR = process.env.MAD_COVERAGE_DIR || 'coverage/e2e';
+let coverageSeq = 0;
+
+async function harvest(page) {
+  try {
+    if (page.isClosed()) return;
+    const data = await page.evaluate(() => window.__coverage__ ?? null);
+    if (!data) return;
+    await mkdir(COVERAGE_DIR, { recursive: true });
+    await writeFile(join(COVERAGE_DIR, `e2e-${process.pid}-${coverageSeq++}.json`), JSON.stringify(data));
+  } catch {
+    /* page torn down mid-harvest; a lost sample must never fail a scenario */
+  }
+}
+
+function withCoverage(browserType) {
+  return {
+    ...browserType,
+    async launch(opts) {
+      const browser = await browserType.launch(opts);
+      const pages = new Set();
+      const newPage = browser.newPage.bind(browser);
+      browser.newPage = async (...args) => {
+        const page = await newPage(...args);
+        pages.add(page);
+        return page;
+      };
+      const close = browser.close.bind(browser);
+      browser.close = async (...args) => {
+        for (const page of pages) await harvest(page);
+        return close(...args);
+      };
+      return browser;
+    },
+  };
+}
+
+export const chromium =
+  process.env.MAD_COVERAGE === '1' ? withCoverage(playwright.chromium) : playwright.chromium;
 
 export const APP_URL = process.env.APP_URL || 'http://localhost:5174/';
 export const BRIDGE_URL = process.env.BRIDGE_URL || 'ws://localhost:9999';
@@ -319,10 +370,19 @@ export async function chooseDataFolder(page) {
  * if the app ever stops resetting the chip before probing.
  *
  * Exposes `window.__bootRom` for assertions: { reset, image, finished, ok }.
+ *
+ * Options (a bare number is still accepted as `ports`, for brevity):
+ *   ports        how many indistinguishable adapters getPorts() reports. 0
+ *                exercises "nothing granted"; >1 the refusal to guess.
+ *                requestPort() always returns the one real ROM.
+ *   getPortsFails make getPorts() reject, as a permissions policy would.
+ *   writeDelayMs  slow the sink so mid-upload UI states are observable.
  */
-export function installFakeBootRom() {
+export function installFakeBootRom(options = 1) {
+  const { ports: portCount = 1, getPortsFails = false, writeDelayMs = 0 } =
+    typeof options === 'number' ? { ports: options } : options;
   const CHECKSUM_MAGIC = 0x706f7250;
-  const state = { reset: 0, image: [], finished: false, ok: null, dtr: null };
+  const state = { reset: 0, image: [], finished: false, ok: null, dtr: null, bytesIn: 0, replies: 0, checksum: null };
   window.__bootRom = state;
 
   let controller;
@@ -333,6 +393,7 @@ export function installFakeBootRom() {
 
   const emit = (s) => {
     const bytes = Uint8Array.from(s, (c) => c.charCodeAt(0));
+    state.replies += 1;
     try {
       controller?.enqueue(bytes);
     } catch {
@@ -341,6 +402,7 @@ export function installFakeBootRom() {
   };
 
   function consume(text) {
+    state.bytesIn += text.length;
     buffered += text;
     if (!hexMode) {
       if (buffered.includes('> Prop_Chk 0 0 0 0  ')) {
@@ -354,6 +416,11 @@ export function installFakeBootRom() {
       hexMode = true;
       buffered = buffered.slice(at + '> Prop_Hex 0 0 0 0'.length);
     }
+    // The terminators arrive glued to the preceding hex byte (loadImage writes
+    // the checksum longs and then '?' as separate writes, which coalesce into
+    // "a0?"). Separate them before tokenising, or the terminator is retained as
+    // an incomplete token forever and the download never completes.
+    buffered = buffered.replace(/([~?])/g, ' $1 ');
     const tokens = buffered.split(/\s+/);
     // Keep a trailing partial token for the next write.
     buffered = /\s$/.test(buffered) ? '' : (tokens.pop() ?? '');
@@ -368,6 +435,10 @@ export function installFakeBootRom() {
       if (tok === '?') {
         state.ok = (sum >>> 0) === CHECKSUM_MAGIC;
         state.finished = true;
+        // The final long is the checksum, not part of the image — the real ROM
+        // folds it into the running sum and discards it. Keep `image` meaning
+        // "what would land in hub RAM".
+        state.checksum = state.image.splice(-4, 4);
         emit(state.ok ? '.' : '!');
         hexMode = false;
         continue;
@@ -395,7 +466,8 @@ export function installFakeBootRom() {
           },
         });
         writable = new WritableStream({
-          write(chunk) {
+          async write(chunk) {
+            if (writeDelayMs) await new Promise((r) => setTimeout(r, writeDelayMs));
             consume(String.fromCharCode(...chunk));
           },
         });
@@ -434,6 +506,12 @@ export function installFakeBootRom() {
   };
 
   const port = makePort();
+  // Extra ports are decoys: same ids, no ROM behind them. Only the first can
+  // actually be programmed, so a test that flashes a decoy would hang.
+  // ports: 0 means nothing has been granted yet — requestPort() still hands
+  // back the real ROM, which is what the chooser would do.
+  const ports =
+    portCount === 0 ? [] : [port, ...Array.from({ length: portCount - 1 }, makePort)];
   Object.defineProperty(navigator, 'serial', {
     configurable: true,
     value: {
@@ -441,7 +519,8 @@ export function installFakeBootRom() {
         return port;
       },
       async getPorts() {
-        return [port];
+        if (getPortsFails) throw new DOMException('denied', 'SecurityError');
+        return ports;
       },
       addEventListener() {},
       removeEventListener() {},
