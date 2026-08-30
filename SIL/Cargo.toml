@@ -4,6 +4,7 @@ members = [
     # schema it comes from (see Protocol/Cargo.toml's `workspace` back-pointer).
     "../Protocol/rust",
     "models",
+    "p2core",
     "MaDSim",
 ]
 # The generic embsim library is a git submodule with its own workspace root
