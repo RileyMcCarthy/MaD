@@ -1,6 +1,12 @@
 import { useState } from 'react';
 import { useStore } from '@/store/useStore';
-import { buildReportPreview, fileBugReport, type ReportPreview } from '@/diagnostics/report';
+import {
+  buildReportPreview,
+  canFileDirectly,
+  fileBugReport,
+  fileBugReportViaApi,
+  type ReportPreview,
+} from '@/diagnostics/report';
 
 export default function About() {
   const fw = useStore((s) => s.firmwareVersion);
@@ -13,7 +19,11 @@ export default function About() {
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState<ReportPreview | null>(null);
   const [filed, setFiled] = useState<{ fileName: string; issueUrl: string } | null>(null);
+  const [posted, setPosted] = useState<{ number: number; htmlUrl: string; gistUrl?: string } | null>(
+    null,
+  );
   const [failed, setFailed] = useState<string | null>(null);
+  const githubConnected = canFileDirectly();
 
   const input = { summary, steps, includeSerialTail };
 
@@ -37,10 +47,17 @@ export default function About() {
     setFailed(null);
     try {
       // Pass the reviewed bundle through, so what is published is what was seen.
-      const result = await fileBugReport(input, preview);
-      setFiled({ fileName: result.fileName, issueUrl: result.issueUrl });
+      if (githubConnected) {
+        const issue = await fileBugReportViaApi(input, preview);
+        setPosted(issue);
+      } else {
+        const result = await fileBugReport(input, preview);
+        setFiled({ fileName: result.fileName, issueUrl: result.issueUrl });
+      }
       setPreview(null);
     } catch (err) {
+      // Falling back would publish without the review the user just gave, so
+      // surface the failure and let them retry or use Settings instead.
       setFailed(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
@@ -85,6 +102,12 @@ export default function About() {
           timings — then opens a pre-filled GitHub issue. Attach the downloaded file to the
           issue so the problem can be traced without reproducing it.
         </p>
+        {!githubConnected && (
+          <p className="muted">
+            Tip: connect GitHub in <a href="#/settings">Settings</a> to file in one click, with the
+            log attached automatically.
+          </p>
+        )}
 
         <label className="field">
           What went wrong?
@@ -163,7 +186,7 @@ export default function About() {
                 disabled={busy}
                 data-testid="report-submit"
               >
-                {busy ? 'Preparing…' : 'Download and open issue'}
+                {busy ? 'Filing…' : githubConnected ? 'File issue on GitHub' : 'Download and open issue'}
               </button>
               <button onClick={() => setPreview(null)} disabled={busy} data-testid="report-cancel">
                 Cancel
@@ -172,6 +195,15 @@ export default function About() {
           </div>
         )}
 
+        {posted && (
+          <p className="muted" style={{ marginTop: 12 }} data-testid="report-posted">
+            Filed as{' '}
+            <a href={posted.htmlUrl} target="_blank" rel="noreferrer">
+              issue #{posted.number}
+            </a>
+            {posted.gistUrl ? ' with the full session log attached.' : ' (log upload failed — the summary was still filed).'}
+          </p>
+        )}
         {filed && (
           <p className="muted" style={{ marginTop: 12 }} data-testid="report-filed">
             Saved <code>{filed.fileName}</code> — attach it to the issue that just opened. If no

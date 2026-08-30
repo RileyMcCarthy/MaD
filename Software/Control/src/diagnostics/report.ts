@@ -13,6 +13,13 @@
 
 import type { BundleOptions, DiagnosticsBundle } from './exportBundle';
 import { formatTriage } from './triage';
+import {
+  createIssue,
+  getToken,
+  hasToken,
+  uploadBundleGist,
+  type FiledIssue,
+} from './github';
 import { logger } from './log';
 
 const log = logger('app');
@@ -257,6 +264,68 @@ function downloadJson(name: string, data: unknown): void {
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
+}
+
+/**
+ * File the report directly, using the user's stored GitHub token.
+ *
+ * This is the path that removes the step where reports die: instead of asking
+ * someone to drag a downloaded file into a form, the full bundle goes up as a
+ * secret gist and the issue links it. Everything happens against
+ * `api.github.com`, which is CORS-enabled, so there is still no backend.
+ *
+ * The gist is attempted first. If it fails (no gist scope on the token), the
+ * issue is still created with the triage summary — a report without the full
+ * log beats no report.
+ */
+export async function fileBugReportViaApi(
+  input: ReportInput,
+  reviewed?: ReportPreview,
+): Promise<FiledIssue> {
+  const token = getToken();
+  if (token === null) throw new Error('No GitHub token is configured.');
+
+  const preview = reviewed ?? (await buildReportPreview(input));
+  const bundle = preview.bundle;
+  const fileName = bundleFileName(new Date());
+
+  let gistUrl: string | undefined;
+  try {
+    gistUrl = await uploadBundleGist(token, fileName, JSON.stringify(bundle, null, 2));
+  } catch (err) {
+    log.warn('bug-report', 'gist upload failed; filing without the attachment', {
+      reason: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  const body = [
+    input.summary,
+    '',
+    '### Steps to reproduce',
+    input.steps?.trim() ? input.steps : '(not provided)',
+    '',
+    '### Summary',
+    '```',
+    formatTriage(bundle.triage),
+    '```',
+    '',
+    '### Environment',
+    '```',
+    environmentBlock(bundle),
+    '```',
+    '',
+    gistUrl
+      ? `### Diagnostics\n[Full session log](${gistUrl}) (secret gist)`
+      : '### Diagnostics\nThe diagnostics upload failed; the summary above is all that was captured.',
+  ].join('\n');
+
+  const issue = await createIssue(token, `[app] ${input.summary.slice(0, 80)}`, body);
+  return { ...issue, gistUrl };
+}
+
+/** Whether the one-click path is available right now. */
+export function canFileDirectly(): boolean {
+  return hasToken();
 }
 
 export interface ReportResult {

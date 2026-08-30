@@ -319,6 +319,46 @@ because that module reaches the device client, which constructs a `Worker` on
 import. Keeping it out of the static graph leaves the URL and field builders
 pure and unit-testable.
 
+## One-click filing (optional GitHub token)
+
+`api.github.com` sends `access-control-allow-origin: *` and accepts an
+`Authorization` header, so a browser can create gists and issues with **no
+backend at all**. What it cannot do is complete an OAuth exchange —
+`github.com/login/oauth/*` sends no CORS headers — so the token comes from the
+user rather than a sign-in flow.
+
+In Settings → GitHub the user pastes a fine-grained PAT with **Issues: Read and
+write** on this repo and **Gists: Read and write**. It is verified against the
+real repository before being stored, because a fine-grained token can
+authenticate perfectly and still have no access here — a failure that would
+otherwise only surface when someone tries to file their first report.
+
+With a token connected, Report a bug uploads the full bundle as a **secret
+gist** and files an issue linking it. That removes the manual drag-and-drop
+attachment, which is the step where reports otherwise get abandoned. Without a
+token the original flow is unchanged: download the bundle, open a pre-filled
+issue, attach it by hand.
+
+If the gist upload fails (no gist scope), the issue is still filed with the
+triage summary — a report without the full log beats no report.
+
+### Keeping the token out of the log
+
+The token is a credential in `localStorage`, and a bundle ends up in a **public**
+issue, so a leak would be published. `redactCredentials` in `log.ts` scrubs
+anything token-shaped (`ghp_*`, `github_pat_*`, `Bearer …`) from **both** the
+`msg` field and every sanitized `data` value — the one choke point every entry
+passes through. `GitHubError` scrubs its own message too, since a GitHub error
+body can echo the request that carried the token.
+
+Tests assert the token cannot reach a snapshot via a message, via data, or via
+the sanitizer directly. Writing them found that `msg` was originally bypassing
+redaction entirely.
+
+The token is never included in a diagnostics bundle and is sent nowhere but
+`api.github.com`. It is stored per-browser; the UI says so, and says to revoke it
+from GitHub when abandoning a machine.
+
 ## Reading a bundle
 
 ```bash
