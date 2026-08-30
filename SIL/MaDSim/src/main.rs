@@ -61,7 +61,10 @@ struct Args {
     no_force_sim: bool,
 
     /// Path to libfirmware.a (for DWARF debug info introspection)
-    #[arg(long, default_value = "../Firmware/MaDCore/.pio/build/native_emulator/libfirmware.a")]
+    #[arg(
+        long,
+        default_value = "../Firmware/MaDCore/.pio/build/native_emulator/libfirmware.a"
+    )]
     firmware_lib: String,
 
     /// Trace viewer HTTP port (0 to disable)
@@ -80,7 +83,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     init_logging(&args.log_level);
 
     info!("MaD Emulator v{}", env!("CARGO_PKG_VERSION"));
-    info!("Speed: {}x  PTY: {}  SD: {}", args.speed, args.pty_path, args.sd_path);
+    info!(
+        "Speed: {}x  PTY: {}  SD: {}",
+        args.speed, args.pty_path, args.sd_path
+    );
 
     // Parse firmware DWARF debug info once; reused for the system description,
     // the UI setup and the emulator.
@@ -194,8 +200,7 @@ fn init_logging(log_level: &str) {
         .with_thread_ids(true)
         .with_thread_names(true)
         .finish();
-    tracing::subscriber::set_global_default(subscriber)
-        .expect("Failed to set tracing subscriber");
+    tracing::subscriber::set_global_default(subscriber).expect("Failed to set tracing subscriber");
 }
 
 /// Optional deterministic baud-rate pacing on the host serial channel.

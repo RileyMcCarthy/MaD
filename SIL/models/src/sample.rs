@@ -101,7 +101,8 @@ impl Sample {
         let force_n = calculate_force(extension_mm, &self.config);
         trace!(
             "sample: extension={:.3}mm → force={:.3}N",
-            extension_mm, force_n
+            extension_mm,
+            force_n
         );
 
         self.on_change.emit(force_n);
@@ -129,7 +130,9 @@ impl Sample {
         };
         trace!(
             "sample(legacy): pos={:.3}mm baseline={:.3}mm ext={:.3}mm",
-            position_mm, baseline, extension_mm
+            position_mm,
+            baseline,
+            extension_mm
         );
         self.on_extension(extension_mm.max(0.0));
     }
@@ -179,7 +182,10 @@ mod tests {
             material: None,
         };
         let got = calculate_force(extension_mm, &cfg);
-        assert!((got - expected_n).abs() < 1e-9, "got {got} expected {expected_n}");
+        assert!(
+            (got - expected_n).abs() < 1e-9,
+            "got {got} expected {expected_n}"
+        );
     }
 
     #[rstest]

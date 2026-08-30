@@ -41,7 +41,8 @@ struct GpioChannels {
 }
 
 static GPIO_CHANNELS: std::sync::OnceLock<GpioChannels> = std::sync::OnceLock::new();
-static FIRMWARE_INFO: std::sync::OnceLock<embsim_memory_inspect::FirmwareInfo> = std::sync::OnceLock::new();
+static FIRMWARE_INFO: std::sync::OnceLock<embsim_memory_inspect::FirmwareInfo> =
+    std::sync::OnceLock::new();
 /// The MCU instance whose GPIO bank this view reports (see the module docs).
 static MCU: std::sync::OnceLock<Arc<PeripheralInstance>> = std::sync::OnceLock::new();
 
@@ -98,7 +99,10 @@ fn gpio_snapshot() -> serde_json::Value {
 }
 
 /// Read firmware state from C variables via memory-inspect.
-fn firmware_state_snapshot(resolver: &embsim_memory_inspect::SymbolResolver, fw: &embsim_memory_inspect::FirmwareInfo) -> serde_json::Value {
+fn firmware_state_snapshot(
+    resolver: &embsim_memory_inspect::SymbolResolver,
+    fw: &embsim_memory_inspect::FirmwareInfo,
+) -> serde_json::Value {
     let read_i32 = |var: &str, field: &str| -> Option<i32> {
         unsafe { resolver.read_field_as_f64(fw, var, field) }.map(|v| v as i32)
     };
@@ -133,10 +137,7 @@ async fn handle_ws(mut socket: WebSocket) {
 
     loop {
         // Non-blocking receive with 100ms timeout (sends updates at ~10Hz)
-        match tokio::time::timeout(
-            std::time::Duration::from_millis(100),
-            socket.recv(),
-        ).await {
+        match tokio::time::timeout(std::time::Duration::from_millis(100), socket.recv()).await {
             Ok(Some(Ok(Message::Close(_)))) | Ok(None) => {
                 info!("Machine visualizer client disconnected");
                 return;
@@ -185,7 +186,7 @@ async fn handle_ws(mut socket: WebSocket) {
         update.insert("gpio".to_string(), gpio_snapshot());
 
         // Firmware state (if resolver available)
-        if let (Some(ref r), Some(ref f)) = (&resolver, &fw) {
+        if let (Some(r), Some(f)) = (&resolver, &fw) {
             update.insert("firmware".to_string(), firmware_state_snapshot(r, f));
         }
 
