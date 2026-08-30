@@ -24,7 +24,6 @@
 #include "IO_SDCard.h"
 #include "IO_fullDuplexSerial.h"
 
-#include "emulation_helpers.h"
 #include "lib_utility.h"
 #include "protoemb_runtime.h"
 
@@ -37,7 +36,8 @@ static const char *APP_MESSAGE_SLAVE_VERSION = "0.0.0";
 #define APP_MESSAGESLAVE_LOCK_REQ() HAL_lock_try(app_message_slave_data.lock)
 #define APP_MESSAGESLAVE_LOCK_REQ_BLOCK()        \
     while (APP_MESSAGESLAVE_LOCK_REQ() == false) \
-        EMULATION_YIELD_LOCK();
+    {                                            \
+    }
 #define APP_MESSAGESLAVE_LOCK_REL() HAL_lock_release(app_message_slave_data.lock)
 
 typedef struct
@@ -115,8 +115,9 @@ bool ProtoEmb_onRead_machine_configuration(ProtoEmb_MachineConfiguration_t *out)
     (void)memset(out, 0, sizeof(*out));
     out->encoderStepsPerMM = profile.encoderStepsPerMM;
     out->servoStepsPerMM = profile.servoStepsPerMM;
-    out->forceGaugeNPerStep = profile.forceGaugeNPerStep;
-    out->forceGaugeZeroOffset = profile.forceGaugeZeroOffset;
+    out->loadCellCapacity = profile.loadCellCapacity;
+    out->loadCellSensitivity = profile.loadCellSensitivity;
+    out->loadCellZeroBalance = profile.loadCellZeroBalance;
     out->maxPosition = profile.maxPosition;
     out->maxVelocity = profile.maxVelocity;
     out->maxAcceleration = profile.maxAcceleration;
@@ -156,8 +157,9 @@ ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWrite_machine_configuration_write(
     memcpy(newProfile.name, in->name, DEV_NVRAM_MAX_MACHINE_PROFILE_NAME);
     newProfile.encoderStepsPerMM = in->encoderStepsPerMM;
     newProfile.servoStepsPerMM = in->servoStepsPerMM;
-    newProfile.forceGaugeNPerStep = in->forceGaugeNPerStep;
-    newProfile.forceGaugeZeroOffset = in->forceGaugeZeroOffset;
+    newProfile.loadCellCapacity = in->loadCellCapacity;
+    newProfile.loadCellSensitivity = in->loadCellSensitivity;
+    newProfile.loadCellZeroBalance = in->loadCellZeroBalance;
     newProfile.maxPosition = in->maxPosition;
     newProfile.maxVelocity = in->maxVelocity;
     newProfile.maxAcceleration = in->maxAcceleration;
@@ -198,7 +200,6 @@ ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWrite_test_run(const ProtoEmb_Test
     }
     while (app_testManagement_isBusy())
     {
-        EMULATION_YIELD_LOCK();
     }
 
     app_monitor_setTestName(testDataId);

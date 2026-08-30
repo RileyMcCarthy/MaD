@@ -1,7 +1,7 @@
 /**
  * Display-layer domain types.
  *
- * Ported from the desktop app's `SharedInterface.ts` — these are the
+ * These are the
  * human-facing shapes the UI works with, independent of the wire protocol.
  * Conversion to/from the generated protocol structs lives in `mapping.ts`.
  */
@@ -60,9 +60,10 @@ export interface MachineConfiguration {
   Name: string;
   'Encoder (step/mm)': number;
   'Servo (step/mm)': number;
-  /** Wire field forceGaugeNPerStep (MaDProtocol.yaml) — counts-to-force scale. */
-  'Force Gauge (N/step)': number;
-  'Force Gauge Zero Offset (steps)': number;
+  /** Wire fields loadCell* (MaDProtocol.yaml) — intrinsic load-cell constants. */
+  'Load Cell Capacity (N)': number;
+  'Load Cell Sensitivity (mV/V)': number;
+  'Load Cell Zero Balance (mV/V)': number;
   'Position Max (mm)': number;
   'Velocity Max (mm/s)': number;
   'Acceleration Max (mm/s^2)': number;

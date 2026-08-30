@@ -1,24 +1,12 @@
-# Build outputs
-build/
-
-# Node modules (local and any under build/*)
-node_modules/
-build/**/node_modules/
-
 # Rust build artifacts
+target/
 emulator/target/
 
 # Emulator/logs
 *.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
 
-# Test results & Playwright artifacts
-test-results/
-playwright-report/
-test-results-*/
-.playwright/
+# Emulator scratch SD card
+sd/
 
 # OS files
 .DS_Store

@@ -1,7 +1,6 @@
 # Control
 
-Frontend-only control app for the MaD tensile tester. **No backend, no Electron** —
-the browser talks straight to the Propeller 2 over the **Web Serial API**, and the
+Frontend-only control app for the MaD tensile tester. The browser talks straight to the Propeller 2 over the **Web Serial API**, and the
 protocol logic runs as **WebAssembly** compiled from the same Rust core
 (`Protocol/ProtoEmb/runtime`) used by the firmware tooling and SIL.
 
@@ -95,26 +94,43 @@ plain clone run `git submodule update --init --recursive` first.
 
 ## Deploying (GitHub Pages)
 
-The app is published to GitHub Pages by the `Deploy web app (GitHub Pages)`
-workflow (`.github/workflows/pages.yml`), which builds the wasm + protocol
-bindings, runs `vite build` with the project base path (`/<repo>/`), and deploys
-`dist/`. HashRouter keeps client routing working without server rewrites; Web
-Serial + File System Access work because Pages is served over HTTPS.
+The app is published to GitHub Pages by `.github/workflows/pages.yml`, which
+builds the wasm + protocol bindings, runs `vite build` with the project base
+path (`/<repo>/app/`), and deploys `dist/` under `/app/`. HashRouter keeps
+client routing working without server rewrites; Web Serial + File System Access
+work because Pages is served over HTTPS.
 
-**Release process — to publish the current code, cut a tag:**
+**MaD Control version is `package.json` `version`.** Do not `git tag` by hand
+(`webapp-v*` is retired). The tag `madcontrol-vX.Y.Z` must match that version
+on the tagged commit — CI rejects a mismatch, which is what used to ship
+`0.1.0` on the About page while the tag said otherwise.
 
 ```bash
-git tag webapp-v1.0.0
-git push origin webapp-v1.0.0     # → builds + deploys to Pages
+# from repo root, after main is up to date
+git checkout -b release/madcontrol origin/main
+Software/Control/scripts/release.sh patch --no-tag    # or minor | major | x.y.z
+git push -u origin HEAD
+# open PR → CI Gate → merge
+Software/Control/scripts/release.sh --publish         # tags origin/main as madcontrol-vX.Y.Z
 ```
 
-The live URL is `https://<owner>.github.io/<repo>/` (for this repo,
-`https://rileymccarthy.github.io/MaD/`). A manual deploy of any branch is also
-available via the workflow's **Run workflow** button (`workflow_dispatch`).
-One-time setup: repo **Settings → Pages → Source = GitHub Actions**.
+That tag publishes a GitHub Release named **MaD Control X.Y.Z**. Pages already
+deployed from the merge to `main` (the `github-pages` environment only allows
+that branch). The live app is `https://rileymccarthy.github.io/MaD/app/`. A
+manual deploy of any branch is also available via the workflow's **Run
+workflow** button (`workflow_dispatch`). One-time setup: repo **Settings →
+Pages → Source = GitHub Actions**.
+
+## Firmware flashing
+
+The **Firmware** page programs the Propeller 2 over Web Serial — no native
+`loadp2` needed. It resets the chip with DTR and drives the boot ROM's serial
+loader directly, writing to SPI flash through a 496-byte stub. (RAM loading is
+CLI-only — `npm run hw:flash -- --ram` — since the P2 Edge boots from flash.)
+Requires the Debug/Programming header J1 and an adapter that wires DTR to `RESn`.
+See [docs/FLASHING.md](docs/FLASHING.md) for the protocol, hardware requirements,
+and the CLI harness (`npm run hw:flash`) used to validate it against a board.
 
 ## Not included
 
-- **Firmware flashing** — the native `loadp2` bootloader cannot run in a browser;
-  use the desktop app for firmware updates.
 - Non-Chromium browsers.

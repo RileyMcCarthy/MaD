@@ -13,7 +13,6 @@
 
 #include "IO_SDCard.h"
 #include "lib_staticQueue.h"
-#include "emulation_helpers.h"
 #ifdef __FLEXC__
 #include <propeller2.h>
 #endif
@@ -32,7 +31,7 @@
  * Macros
  **********************************************************************/
 #define IO_SDCARD_LOCK_REQ() HAL_lock_try(IO_SDCard_data.lock)
-#define IO_SDCARD_LOCK_REQ_BLOCK() while (IO_SDCARD_LOCK_REQ() == false) EMULATION_YIELD_LOCK();
+#define IO_SDCARD_LOCK_REQ_BLOCK() while (IO_SDCARD_LOCK_REQ() == false) {}
 #define IO_SDCARD_LOCK_REL() HAL_lock_release(IO_SDCard_data.lock)
 
 #define IO_SDCARD_LOCKED_INPUT(channel) IO_SDCard_data.channelData[channel].externalInput

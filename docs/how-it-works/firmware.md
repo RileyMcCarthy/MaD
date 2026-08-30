@@ -262,12 +262,11 @@ This separation is enforced by convention and by `pio check` (MISRA C:2023 +
 CERT). APP/DEV/IO never include low-level MCU headers — they go through the HAL —
 and configuration lives in `Config/` subfolders.
 
-!!! note "Generated vs. legacy serial code"
-    The **live** host link is the generated **ProtoEmb** codec, driven by
-    `app_messageSlave` over `IO_fullDuplexSerial`. The hand-rolled `IO_protocol`
-    framer and the `IO_gcode` text parser still live in the IO layer but are not on
-    the runtime path — G-code is compiled to binary records **on the host**, and
-    the firmware replays those records (see [below](#tests-run-from-sd-host-free)).
+!!! note "The host link"
+    The host link is the generated **ProtoEmb** codec, driven by
+    `app_messageSlave` over `IO_fullDuplexSerial`. G-code is compiled to binary
+    records **on the host**, and the firmware replays those records (see
+    [below](#tests-run-from-sd-host-free)).
 
 ## Eight cores, one job each
 
@@ -318,7 +317,7 @@ into "motion is off."
 `app_control` owns the machine state (`DISABLED → RESTRICTED → MANUAL → TEST`)
 and gates all motion through `app_control_motionEnabled()`. See
 [the machine](the-machine.md#the-state-machine) for the diagram and
-[the reference](../reference/machine-states.md) for the full fault/restriction
+[the reference](../user-guide/machine-states.md) for the full fault/restriction
 list.
 
 - **Faults** latch and (generally) require a reboot: cog failure, watchdog

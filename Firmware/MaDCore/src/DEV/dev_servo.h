@@ -95,8 +95,17 @@ int32_t dev_servo_getPosition(dev_servo_channel_E ch); /* encoder — single sou
 int32_t dev_servo_getVelocity(dev_servo_channel_E ch); /* current commanded velocity (counts/s) */
 int32_t dev_servo_getFollowingError(dev_servo_channel_E ch); /* setpoint - encoder (counts) */
 int32_t dev_servo_getTarget(dev_servo_channel_E ch);         /* current position target (counts) */
+/* True only once the control loop has evaluated the CURRENT target and found the
+ * encoder settled on it. Any new command (moveTo/setVelocity/stop/setPosition)
+ * clears it, so a caller that issues a move and polls this can never see the
+ * previous move's "arrived" and retire the new move without moving. */
 bool dev_servo_atTarget(dev_servo_channel_E ch);
 bool dev_servo_isStalled(dev_servo_channel_E ch);
+/* Liveness of the control loop: false until dev_servo_run() has completed a tick,
+ * true from then on (mirrors dev_stepper_isReady). APP gates the machine on this,
+ * so it must reflect "the MOTOR cog is servicing the actuator" only — a mechanical
+ * fault is reported by dev_servo_isStalled, not here. */
+bool dev_servo_isReady(dev_servo_channel_E ch);
 /**********************************************************************
  * End of File
  **********************************************************************/

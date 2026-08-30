@@ -1,12 +1,51 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
+import istanbul from 'vite-plugin-istanbul';
 import { fileURLToPath, URL } from 'node:url';
+import { execSync } from 'node:child_process';
+import { createRequire } from 'node:module';
+
+const { version } = createRequire(import.meta.url)('./package.json') as { version: string };
+
+// Build identity, surfaced in the session log so a bug report names the exact
+// build it came from. A shallow CI checkout or a tarball has no git metadata,
+// so a failure here is expected rather than fatal.
+function gitSha(): string {
+  try {
+    return execSync('git rev-parse --short HEAD', { stdio: ['ignore', 'pipe', 'ignore'] })
+      .toString()
+      .trim();
+  } catch {
+    return 'unknown';
+  }
+}
 
 // Frontend-only MaD control app. No backend: talks to the Propeller 2 over
 // Web Serial and runs the protocol core (compiled from Rust) as WebAssembly.
 export default defineConfig({
+  define: {
+    __APP_VERSION__: JSON.stringify(version),
+    __GIT_SHA__: JSON.stringify(gitSha()),
+  },
   plugins: [
+    // Coverage instrumentation for the e2e suite. The browser then reports what
+    // it executed via window.__coverage__, which e2e/coverage.mjs collects and
+    // merges with the unit run — without this, Playwright's work is invisible
+    // to the coverage number because it happens in another process.
+    //
+    // Opt-in via MAD_COVERAGE=1 so a normal dev server or production build is
+    // never instrumented.
+    ...(process.env.MAD_COVERAGE === '1'
+      ? [
+          istanbul({
+            include: ['src/**/*.ts', 'src/**/*.tsx'],
+            exclude: ['node_modules', 'src/protocol/generated/**', 'src/wasm/**', '**/*.test.*'],
+            extension: ['.ts', '.tsx'],
+            requireEnv: false,
+          }),
+        ]
+      : []),
     react(),
     VitePWA({
       // Prompt, never auto-reload: this app holds a live hardware connection and

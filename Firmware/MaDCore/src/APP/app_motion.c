@@ -28,7 +28,6 @@
 
 #include "IO_Debug.h"
 #include "IO_positionFeedback.h"
-#include "emulation_helpers.h"
 #include "watchdog.h"
 /**********************************************************************
  * Constants
@@ -43,7 +42,6 @@
 #define APP_MOTION_LOCK_REQ_BLOCK()        \
     while (APP_MOTION_LOCK_REQ() == false) \
     {                                      \
-        EMULATION_YIELD_LOCK();            \
     }
 #define APP_MOTION_LOCK_REL() HAL_lock_release(app_motion_data.lock)
 
@@ -79,10 +77,12 @@
  * the stepper's continuous-velocity (NCO) output, so the pulse rate follows the
  * waveform smoothly rather than as discrete stop/start segments. */
 #define APP_MOTION_TWO_PI 6.283185307179586f
-/* The waveform is "settled" (and the move complete) once it is within this many
- * steps of the centre. Exact-equality completion could hang if the servo's
- * reported position never lands exactly on centre (quantisation / settling). */
-#define APP_MOTION_WAVEFORM_SETTLE_STEPS 2
+/* The waveform ends with a settle move back to the centre; completion is the
+ * ACTUATOR's own arrival verdict (actuator_atTarget), not a position tolerance
+ * chosen here. A tolerance in this layer has to be at least as loose as the
+ * parking accuracy the actuator enforces, and it cannot know that: dev_servo
+ * parks anywhere inside its position deadband, so the old ±2-step test could
+ * never be satisfied and the move hung forever, wedging the whole test. */
 /* Defensive clamp on the commanded step rate (steps/s). The host validates peak
  * velocity, but extreme/unvalidated params (high freq × high amplitude × a fine
  * steps/mm) could otherwise overflow the int32/uint32 rate. 30 Msteps/s sits
@@ -138,6 +138,7 @@ typedef struct
     uint64_t waveformDurationUs;     /* cycles / frequency, in microseconds     */
     uint64_t waveformElapsedUs;      /* wrap-safe elapsed time since start      */
     uint32_t waveformLastUs;         /* last HAL_time_getUs() reading           */
+    bool waveformSettling;           /* the closing move to centre was issued   */
 
     app_motion_outputs_t output;
 
@@ -352,6 +353,7 @@ static void app_motion_private_moveManager_start(void)
                 : (((uint64_t)cycles * 1000000000ULL) / (uint64_t)freqMilliHz);
         app_motion_data.waveformElapsedUs = 0U;
         app_motion_data.waveformLastUs = HAL_time_getUs();
+        app_motion_data.waveformSettling = false;
         DEBUG_INFO("G123 waveform: amp=%d steps freq=%u mHz cycles=%u\n",
                    app_motion_data.waveformAmplitudeSteps, freqMilliHz, cycles);
         break;
@@ -384,25 +386,30 @@ static bool app_motion_private_waveform_run(void)
 
     if (app_motion_data.waveformElapsedUs >= app_motion_data.waveformDurationUs)
     {
-        /* Whole cycles end at the centre; a settle move (exits velocity mode)
-         * parks exactly on centre, completing on a small tolerance so a servo
-         * that never lands exactly on centre can't wedge the move. */
-        const float ampAbs = (ampSteps < 0.0f) ? -ampSteps : ampSteps;
-        float peakVelF = APP_MOTION_TWO_PI * freqHz * ampAbs;
-        if (peakVelF > APP_MOTION_WAVEFORM_MAX_STEPS_PER_S)
+        /* Whole cycles end at the centre; a settle move (which exits velocity
+         * mode) parks there. Issue it ONCE, then hand completion to the
+         * actuator — re-commanding every tick would keep resetting the arrival
+         * verdict, and this layer has no business second-guessing how precisely
+         * the actuator can park. */
+        if (app_motion_data.waveformSettling == false)
         {
-            peakVelF = APP_MOTION_WAVEFORM_MAX_STEPS_PER_S; /* clamp (no overflow) */
+            const float ampAbs = (ampSteps < 0.0f) ? -ampSteps : ampSteps;
+            float peakVelF = APP_MOTION_TWO_PI * freqHz * ampAbs;
+            if (peakVelF > APP_MOTION_WAVEFORM_MAX_STEPS_PER_S)
+            {
+                peakVelF = APP_MOTION_WAVEFORM_MAX_STEPS_PER_S; /* clamp (no overflow) */
+            }
+            uint32_t peakVel = (uint32_t)peakVelF;
+            if (peakVel == 0U)
+            {
+                peakVel = 1U;
+            }
+            actuator_move(app_motion_data.waveformCentreSteps, peakVel);
+            app_motion_data.waveformSettling = true;
+            /* inputs.atTarget was snapshotted before this command existed. */
+            return false;
         }
-        uint32_t peakVel = (uint32_t)peakVelF;
-        if (peakVel == 0U)
-        {
-            peakVel = 1U;
-        }
-        actuator_move(app_motion_data.waveformCentreSteps, peakVel);
-        const int32_t settleErr =
-            app_motion_data.inputs.positionSteps - app_motion_data.waveformCentreSteps;
-        return ((settleErr <= APP_MOTION_WAVEFORM_SETTLE_STEPS) &&
-                (settleErr >= -APP_MOTION_WAVEFORM_SETTLE_STEPS));
+        return app_motion_data.inputs.atTarget;
     }
 
     /* Stream the analytic instantaneous velocity of the trajectory:

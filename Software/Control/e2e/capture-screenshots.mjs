@@ -289,12 +289,22 @@ async function main() {
     await shot(page, '08-settings', { height: 1400 });
   });
 
-  // 8. Firmware / About — version + diagnostics export.
+  // 8. Firmware — version, file picker, target, and Write to flash.
+  // Shoots #/firmware, not #/about: the update controls live here, and the
+  // docs page this feeds is about updating firmware.
+  await safe('firmware', async () => {
+    await page.goto(`${APP_URL}#/firmware`);
+    await page.getByTestId('flash-target').waitFor({ timeout: 8000 }).catch(() => {});
+    await page.waitForTimeout(500);
+    await shot(page, '09-firmware', { full: true });
+  });
+
+  // 9. About — build identity + diagnostics export.
   await safe('about', async () => {
     await page.goto(`${APP_URL}#/about`);
     await page.getByTestId('fw-version').waitFor({ timeout: 8000 }).catch(() => {});
     await page.waitForTimeout(500);
-    await shot(page, '09-firmware', { full: true });
+    await shot(page, '10-about', { full: true });
   });
 
   await browser.close();

@@ -46,21 +46,7 @@ typedef struct
 /**********************************************************************
  * Private Variable Definitions
  **********************************************************************/
-#ifdef __FLEXC__
-static const HAL_pulseOut_channelConfig_S HAL_pulseOut_channelConfig[HAL_PULSE_OUT_CHANNEL_COUNT] = {
-    {
-        (65535U * 2U),
-        HW_PIN_SERVO_PUL,
-    }
-};
-#else
-const HAL_pulseOut_channelConfig_S HAL_pulseOut_channelConfig[HAL_PULSE_OUT_CHANNEL_COUNT] = {
-    [HAL_PULSE_OUT_CHANNEL_SERVO] = {
-        .pin = HW_PIN_SERVO_PUL,
-        .maxHardwareClockCyclePerStep = (65535U * 2U)
-    }
-};
-#endif
+// channel config table lives in HAL/Config/HAL_pulseOut_config.c (data-only, all targets)
 static HAL_pulseOut_channelData_S HAL_pulseOut_channelData[HAL_PULSE_OUT_CHANNEL_COUNT];
 /**********************************************************************
  * Private Function Prototypes

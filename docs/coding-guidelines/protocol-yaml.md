@@ -211,7 +211,7 @@ pub fn build_write_frame_from(source: u8, command: u8, data: &[u8]) -> Vec<u8> {
 
 - **Append, don't reorder/insert.** Enum variant indices, struct field order, and union variant order are all wire-significant. Adding a field/variant at the end is the only change that doesn't shift existing offsets.
 - **Widening a packed field changes its byte size.** Raising an enum's variant count past a power-of-two boundary, or widening a numeric `min`/`max`/`scale` range, can grow the packed struct — a breaking wire change.
-- **Bump `protocol_version`** on any breaking change. Note there is currently **no on-wire version handshake** (`wire-format.md:84-87`), so a version bump is a human/coordination signal: firmware, desktop app, and SIL must be regenerated and shipped together.
+- **Bump `protocol_version`** on any breaking change. Note there is currently **no on-wire version handshake** (`wire-format.md:84-87`), so a version bump is a human/coordination signal: firmware, apps, and SIL must be regenerated and shipped together.
 - `runtime:` block (`max_payload`, `frame_timeout_ms`) is supported by the generator (`generate.py:511`, `:520-521`; defaults 4096 / 100 ms) and is what sizes `PROTOEMB_RUNTIME_MAX_PAYLOAD` / `PROTOEMB_RUNTIME_TIMEOUT_MS` in the C runtime. It is **unused by `MaDProtocol.yaml`** today (no `runtime:` block), so the defaults apply; leave it out unless you have a measured need.
 
 ---
@@ -231,7 +231,7 @@ python3 ./Protocol/ProtoEmb/core/generate.py --schema ./Protocol/MaDProtocol.yam
    - **Firmware C is also generated automatically** by the PlatformIO **pre-build hook** `extra_scripts/generate_protocol.py`, wired in via `platformio.ini:2` (`extra_scripts = pre:extra_scripts/generate_protocol.py`). So `pio run`/`pio test` regenerate `src/Generated/` from the YAML on every build (`generate_protocol.py:35-48`). The explicit C command above is still useful for a quick check without a full build.
 
 3. **Generator deps** (one-time): `pip install -r Protocol/ProtoEmb/core/requirements.txt` (pyyaml ≥ 6.0, jinja2 ≥ 3.1 — verified contents). The firmware pre-hook installs these into PlatformIO's Python automatically (`generate_protocol.py:28-33`).
-4. **Update consumers** of the regenerated types: firmware (`Firmware/MaDCore/src/Generated/`), the shipped app (`Software/Control/src/protocol/generated/protoemb.ts`; regenerate via `npm run generate:proto`), and SIL (`Protocol/rust/src/generated/protoemb.rs`). (The legacy Electron app's target was `Software/MaDControl/src/main/generated/protoemb.ts`, used by `BridgeHandler`.)
+4. **Update consumers** of the regenerated types: firmware (`Firmware/MaDCore/src/Generated/`), the shipped app (`Software/Control/src/protocol/generated/protoemb.ts`; regenerate via `npm run generate:proto`), and SIL (`Protocol/rust/src/generated/protoemb.rs`).
 5. **Commit the regenerated files together with the YAML change.** Do not let them drift. (Note: CI does **not** assert generated files are in sync with the YAML — see §11 — so this is on you.)
 
 ---
@@ -241,7 +241,7 @@ python3 ./Protocol/ProtoEmb/core/generate.py --schema ./Protocol/MaDProtocol.yam
 Every target carries a **DO NOT EDIT** banner (verified: `Firmware/.../protoemb.h:3`, `protoemb.ts:3`, `protoemb.rs:1`). Per `CLAUDE.md`, never hand-edit:
 
 - `Firmware/MaDCore/src/Generated/` (`protoemb.{h,c}`, `protoemb_runtime.{h,c}`)
-- `Software/Control/src/protocol/generated/protoemb.ts` (shipped app; legacy: `Software/MaDControl/src/main/generated/protoemb.ts`)
+- `Software/Control/src/protocol/generated/protoemb.ts` (the deployed app)
 - `Protocol/rust/src/generated/protoemb.rs`
 
 To change behavior, edit the **YAML** or, for structural output changes, the **Jinja templates** in `Protocol/ProtoEmb/core/templates/*.j2` — then regenerate.
@@ -270,7 +270,7 @@ Generates the thermostat example to C/Rust/TS, compiles (`cc -std=c11 -Wall -Wex
 
 - **Firmware (C / MISRA + CERT):** generated C is **deliberately excluded from `pio check`** — `check_src_filters` lists `src/APP`, `DEV`, `IO`, `Library`, `Main` and **not** `src/Generated/` (`platformio.ini:4-9`). So MISRA C:2023 / CERT (via cppcheck) do **not** apply to generated protocol code, and you do **not** add suppressions there. Your obligation is that `pio run -e native_emulator` / `pio test -e native_test` **compile** the generated code (it's in `build_src_filter` via `+<Generated/>`, `platformio.ini:22`).
 - **Rust (SIL):** the generated `protoemb.rs` carries `#![allow(dead_code, clippy::identity_op, clippy::excessive_precision)]` (verified at `protoemb.rs:6`), so it passes `clippy` without hand-tuning. Ensure `cargo build` in `SIL/` succeeds after regeneration (`make protocol && cargo build`).
-- **TypeScript (shipped app):** the generated `protoemb.ts` must typecheck under the app's `tsc`/ESLint. After `npm run generate:proto`, run `npm run verify` in `Software/Control/` (tsc + eslint + Vitest + build). (Legacy Electron app: `npm run lint:fix` + `npm test` in `Software/MaDControl/`.)
+- **TypeScript (shipped app):** the generated `protoemb.ts` must typecheck under the app's `tsc`/ESLint. After `npm run generate:proto`, run `npm run verify` in `Software/Control/` (tsc + eslint + Vitest + build).
 
 ### d. Python generator/templates (if you edit them)
 

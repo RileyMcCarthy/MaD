@@ -21,8 +21,9 @@ describe('proto ↔ display mapping', () => {
       name: 'M1',
       encoderStepsPerMM: 200,
       servoStepsPerMM: 400,
-      forceGaugeNPerStep: 1,
-      forceGaugeZeroOffset: 5,
+      loadCellCapacity: 100,
+      loadCellSensitivity: 1000000,
+      loadCellZeroBalance: 5000,
       maxPosition: 250,
       maxVelocity: 50,
       maxAcceleration: 100,
@@ -34,6 +35,8 @@ describe('proto ↔ display mapping', () => {
     const shared = configToShared(proto);
     expect(shared.Name).toBe('M1');
     expect(shared['Tensile Force Max (N)']).toBe(1234.5);
+    expect(shared['Load Cell Sensitivity (mV/V)']).toBe(1);
+    expect(shared['Load Cell Zero Balance (mV/V)']).toBe(0.005);
     expect(configFromShared(shared)).toEqual(proto);
   });
 

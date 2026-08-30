@@ -8,7 +8,7 @@ where you read/write the [machine configuration](machine-configuration.md).
 ## The data folder
 
 The app saves sample profiles, motion profiles, sets, and test results to a
-**folder on your computer** using the browser's File System Access API.
+**folder on your computer** that you choose.
 
 - Click **Choose folder** and pick (or create) a folder. The app remembers it
   across reloads — you grant access once.
@@ -18,15 +18,14 @@ The app saves sample profiles, motion profiles, sets, and test results to a
 
 ### How data is organised
 
-Inside the folder, the app keeps subfolders for `sampleProfiles/`,
-`motionProfiles/`, `sets/`, and `testRuns/` (JSON records plus the CSV for each
-run), and a small `index.json` cache. The layout mirrors the desktop app's, so
-files are interchangeable.
+Inside the folder you'll find separate subfolders for sample profiles, motion
+profiles, sets, and test runs — each test run keeping its record alongside its
+CSV. There's also a small index file the app uses to find things quickly.
 
 !!! tip "Rescan folder"
-    `index.json` is just a **rebuildable cache**. If runs don't show up after
-    switching folders or editing files outside the app, click **Rescan folder** —
-    it regenerates the index from the files on disk.
+    The index is just a cache, and it can be rebuilt at any time. If runs don't
+    show up after switching folders or editing files outside the app, click
+    **Rescan folder** to regenerate it from what's actually on disk.
 
 ### Test naming
 
@@ -44,8 +43,9 @@ overwrite earlier results.
 The lower part of Settings reads and writes the machine's stored calibration and
 limits — covered in [Machine configuration](machine-configuration.md).
 
-## Storage persistence
+## Keeping your data safe
 
-When you choose a folder the app also requests persistent storage so the browser
-won't evict your data. Storage-related errors (a denied grant, a failed save) are
-surfaced as toasts.
+When you choose a folder, the app also asks the browser not to clear its stored
+data. If anything goes wrong saving — access denied, disk full — you'll get a
+notification rather than a silent failure. Your results live in your own folder,
+so they're yours to back up and move like any other files.

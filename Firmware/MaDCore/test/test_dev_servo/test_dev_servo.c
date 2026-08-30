@@ -11,6 +11,10 @@
  *   - setPosition redefines encoder reference + target
  *   - following error reflects setpoint vs encoder
  *   - stall guard latches after stallTicks of commanding without motion
+ *   - liveness (isReady) — what app_control gates the machine on
+ *   - arrival is invalidated by every command that redefines the target,
+ *     including one landing mid-tick, and the approach converges rather
+ *     than hunting (both regressions; see the tests for the failure modes)
  *
  * HAL_encoder / HAL_pulseOut / HAL_GPIO / HAL_time are local doubles.
  * Library is real (linked by native_test). Module is #included after doubles.
@@ -37,9 +41,27 @@ static int d_encoderSetCount;
 static int32_t d_encoderLastSet;
 
 void HAL_encoder_start(HAL_encoder_channel_E ch) { (void)ch; }
+/* Optional one-shot hook fired from inside HAL_encoder_value — which the control
+ * loop reads every tick, right AFTER it has snapshotted the request. That is
+ * exactly the window a command issued by another cog can land in, so it models
+ * the CONTROL cog commanding a move mid-tick on the MOTOR cog. */
+static void (*d_midTickHook)(void);
+
+/* Sub-count-accurate carriage position for tick_with_motion(). Precision
+ * matters — the slow final approach commands rates below one count per tick,
+ * and integer truncation there would stall the carriage short of the deadband
+ * and mask the settling behaviour under test. */
+static double d_carriage;
+
 int32_t HAL_encoder_value(HAL_encoder_channel_E ch)
 {
     (void)ch;
+    if (d_midTickHook != NULL)
+    {
+        void (*hook)(void) = d_midTickHook;
+        d_midTickHook = NULL; /* one-shot */
+        hook();
+    }
     return d_encoderValue;
 }
 void HAL_encoder_set(HAL_encoder_channel_E ch, int32_t v)
@@ -132,6 +154,8 @@ static void doubles_reset(void)
     d_gpioCount = 0U;
     d_gpioChannel = HAL_GPIO_COUNT;
     d_gpioActive = false;
+    d_midTickHook = NULL;
+    d_carriage = 0.0;
     global_timeus = 0U;
 }
 
@@ -159,6 +183,30 @@ static void tick(void)
 {
     global_timeus += 1000U;
     dev_servo_run();
+}
+
+static void tick_with_motion(void)
+{
+    global_timeus += 1000U;
+    dev_servo_run();
+    if (d_startVelocityCount > 0U)
+    {
+        const double dir = d_gpioActive ? -1.0 : 1.0;
+        d_carriage += dir * (double)d_lastSetFrequency * 0.001;
+        d_encoderValue = (int32_t)(d_carriage < 0.0 ? (d_carriage - 0.5) : (d_carriage + 0.5));
+    }
+}
+
+/* Drive the loop until it reports arrival, or give up. Returns ticks consumed. */
+static int settle(int maxTicks)
+{
+    int ticks = 0;
+    while ((ticks < maxTicks) && !dev_servo_atTarget(CH))
+    {
+        tick_with_motion();
+        ticks++;
+    }
+    return ticks;
 }
 
 /**********************************************************************
@@ -330,6 +378,148 @@ void test_dev_servo_disableClearsStallAndParks(void)
     TEST_ASSERT_EQUAL_INT32(0, dev_servo_getVelocity(CH));
 }
 
+
+/**********************************************************************
+ * Liveness — what APP gates the machine on
+ **********************************************************************/
+
+/* The MOTOR cog owns the only call site of dev_servo_run(); until it has ticked
+ * once the driver cannot claim to be servicing the actuator. app_control gates
+ * FAULT_SERVO_COMMUNICATION on this. */
+void test_dev_servo_isReadyFalseUntilFirstTick(void)
+{
+    servo_init();
+    TEST_ASSERT_FALSE(dev_servo_isReady(CH));
+    tick();
+    TEST_ASSERT_TRUE(dev_servo_isReady(CH));
+}
+
+/* Disabled is not dead: the loop is still ticking, so the machine must not read
+ * a communication fault just because motion is off. */
+void test_dev_servo_isReadyTrueWhileDisabledButTicking(void)
+{
+    servo_init();
+    dev_servo_enable(CH, false);
+    tick();
+    TEST_ASSERT_TRUE(dev_servo_isReady(CH));
+}
+
+void test_dev_servo_isReadyRejectsOutOfRangeChannel(void)
+{
+    servo_init();
+    tick();
+    TEST_ASSERT_FALSE(dev_servo_isReady(DEV_SERVO_CHANNEL_COUNT));
+}
+
+/**********************************************************************
+ * atTarget — the flag app_motion retires a move on
+ **********************************************************************/
+
+/* REGRESSION: a new target must invalidate the previous verdict IMMEDIATELY —
+ * before the MOTOR cog has had a chance to tick. app_motion issues the move and
+ * polls atTarget on its very next cycle; if the stale "parked at the last
+ * target" true survives, the move is retired without the gantry moving, the
+ * recording stops early and the profile's path comes up short. */
+void test_dev_servo_newMoveClearsPreviousArrivalBeforeAnyTick(void)
+{
+    servo_init();
+    dev_servo_enable(CH, true);
+    dev_servo_moveTo(CH, 8192, 40960);
+    (void)settle(4000);
+    TEST_ASSERT_TRUE(dev_servo_atTarget(CH)); /* parked on the first target */
+
+    dev_servo_moveTo(CH, 16384, 40960);        /* a second, different target */
+    TEST_ASSERT_FALSE(dev_servo_atTarget(CH)); /* no tick yet => cannot have arrived */
+}
+
+/* Same hazard, narrower window: the command lands INSIDE a tick, after the loop
+ * snapshotted the old target but before it publishes its verdict. The published
+ * verdict must not be attributed to the new target. */
+static void issue_new_move_midtick(void) { dev_servo_moveTo(CH, 16384, 40960); }
+
+void test_dev_servo_commandLandingMidtickIsNotReportedAsArrival(void)
+{
+    servo_init();
+    dev_servo_enable(CH, true);
+    dev_servo_moveTo(CH, 8192, 40960);
+    (void)settle(4000);
+    TEST_ASSERT_TRUE(dev_servo_atTarget(CH));
+
+    /* This tick would otherwise publish atTarget=true for the OLD target. */
+    d_midTickHook = issue_new_move_midtick;
+    tick();
+    TEST_ASSERT_FALSE(dev_servo_atTarget(CH));
+    TEST_ASSERT_EQUAL_INT32(16384, dev_servo_getTarget(CH));
+}
+
+void test_dev_servo_setVelocityClearsArrival(void)
+{
+    servo_init();
+    dev_servo_enable(CH, true);
+    dev_servo_moveTo(CH, 8192, 40960);
+    (void)settle(4000);
+    TEST_ASSERT_TRUE(dev_servo_atTarget(CH));
+
+    dev_servo_setVelocity(CH, 4096);
+    TEST_ASSERT_FALSE(dev_servo_atTarget(CH));
+}
+
+void test_dev_servo_stopClearsArrival(void)
+{
+    servo_init();
+    dev_servo_enable(CH, true);
+    dev_servo_moveTo(CH, 8192, 40960);
+    (void)settle(4000);
+    TEST_ASSERT_TRUE(dev_servo_atTarget(CH));
+
+    dev_servo_stop(CH);
+    TEST_ASSERT_FALSE(dev_servo_atTarget(CH));
+}
+
+/* Homing re-defines the coordinate frame, which moves the target with it, so the
+ * previous verdict no longer describes anything the caller can act on. */
+void test_dev_servo_setPositionClearsArrival(void)
+{
+    servo_init();
+    dev_servo_enable(CH, true);
+    dev_servo_moveTo(CH, 8192, 40960);
+    (void)settle(4000);
+    TEST_ASSERT_TRUE(dev_servo_atTarget(CH));
+
+    dev_servo_setPosition(CH, 0);
+    TEST_ASSERT_FALSE(dev_servo_atTarget(CH));
+    /* With target == position the loop re-confirms arrival on the next tick. */
+    tick();
+    TEST_ASSERT_TRUE(dev_servo_atTarget(CH));
+}
+
+/* REGRESSION: the approach must CONVERGE, not hunt. The braking law
+ * v = sqrt(2*a*d) is singular at the target — for a sub-count remainder it still
+ * demands hundreds of counts/s, so without a one-tick-reach cap the setpoint
+ * steps over the target every tick and oscillates forever. The encoder parks
+ * inside the deadband but the profile never winds down, so atTarget never
+ * latches and the move is retired only if some later tick happens to land in
+ * the window: moves that "sometimes take 3 s and sometimes 15 s". */
+void test_dev_servo_moveSettlesDeterministicallyWithoutHunting(void)
+{
+    servo_init();
+    dev_servo_enable(CH, true);
+    /* Distances that do not divide evenly into a tick's travel, so the final
+     * approach lands mid-tick. */
+    const int32_t targets[] = { 8192, 20000, 20001, 4097 };
+    for (unsigned t = 0; t < (sizeof(targets) / sizeof(targets[0])); t++)
+    {
+        dev_servo_moveTo(CH, targets[t], 40960);
+        const int ticks = settle(4000);
+        TEST_ASSERT_TRUE_MESSAGE(dev_servo_atTarget(CH), "move never reported arrival");
+        TEST_ASSERT_TRUE_MESSAGE(ticks < 4000, "move hunted instead of settling");
+        /* The shaped profile is at rest exactly on the target. */
+        TEST_ASSERT_FLOAT_WITHIN(1.0f, 0.0f, dev_servo_data.channel[CH].setpointVel);
+        TEST_ASSERT_FLOAT_WITHIN(1.0f, (float)targets[t], dev_servo_data.channel[CH].setpointPos);
+        TEST_ASSERT_INT32_WITHIN(dev_servo_channelConfig[CH].positionDeadband, targets[t], d_encoderValue);
+    }
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -345,5 +535,16 @@ int main(void)
     RUN_TEST(test_dev_servo_followingErrorReflectsOffset);
     RUN_TEST(test_dev_servo_stallWhenCommandedWithoutMotion);
     RUN_TEST(test_dev_servo_disableClearsStallAndParks);
+
+    RUN_TEST(test_dev_servo_isReadyFalseUntilFirstTick);
+    RUN_TEST(test_dev_servo_isReadyTrueWhileDisabledButTicking);
+    RUN_TEST(test_dev_servo_isReadyRejectsOutOfRangeChannel);
+
+    RUN_TEST(test_dev_servo_newMoveClearsPreviousArrivalBeforeAnyTick);
+    RUN_TEST(test_dev_servo_commandLandingMidtickIsNotReportedAsArrival);
+    RUN_TEST(test_dev_servo_setVelocityClearsArrival);
+    RUN_TEST(test_dev_servo_stopClearsArrival);
+    RUN_TEST(test_dev_servo_setPositionClearsArrival);
+    RUN_TEST(test_dev_servo_moveSettlesDeterministicallyWithoutHunting);
     return UNITY_END();
 }

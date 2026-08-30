@@ -38,6 +38,6 @@ into **strain** — that's what produces the stress–strain curve in the
 - The list of saved profiles lets you **load** a profile back into the editor or
   **delete** it.
 - **Import `.sp`** loads a profile from a JSON `.sp` file (interchangeable with
-  saved profiles). See the [file formats reference](../reference/file-formats.md).
+  saved profiles). See the [file formats reference](file-formats.md).
 - When connected, you can **Write to device** to push the profile to the
   firmware, or **Read from device** to pull the currently-loaded one.

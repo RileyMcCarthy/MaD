@@ -701,9 +701,15 @@ void test_waveform_streams_cosine_velocity_and_completes(void)
     /* cos reverses sign at the two position peaks per cycle. */
     TEST_ASSERT_TRUE(signChanges >= 2);
 
-    /* Past the duration: a settle move parks at the centre, then complete. */
+    /* Past the duration: the first tick issues the settle move back to centre
+     * and cannot yet claim arrival (the actuator has not seen that target). The
+     * move completes on the actuator's own verdict, exactly like a G0/G1. */
     global_timeus = 1100000U;
     d_steps = 0; /* centre reached */
+    d_atTarget = false;
+    app_motion_run();
+    TEST_ASSERT_FALSE(app_motion_isIdle()); /* settle commanded, not yet arrived */
+    d_atTarget = true;
     app_motion_run();
     TEST_ASSERT_TRUE(app_motion_isIdle());
 }
@@ -768,9 +774,13 @@ static void run_waveform_capture(int32_t ampUm, uint32_t freqMilliHz, uint32_t c
     *outMinV = minV;
     *outSignChanges = signChanges;
 
-    /* Complete: past duration, settle at centre. */
+    /* Complete: past duration, settle move to centre, then the actuator reports
+     * arrival (one tick to command, one to observe — see the note above). */
     global_timeus = durationUs + 200000U;
     d_steps = 0;
+    d_atTarget = false;
+    app_motion_run();
+    d_atTarget = true;
     app_motion_run();
     TEST_ASSERT_TRUE(app_motion_isIdle());
 }

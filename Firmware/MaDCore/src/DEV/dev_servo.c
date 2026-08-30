@@ -9,7 +9,6 @@
 #include "HAL_lock.h"
 #include "HAL_time.h"
 #include "IO_Debug.h"
-#include "emulation_helpers.h"
 /**********************************************************************
  * Constants
  **********************************************************************/
@@ -54,7 +53,6 @@ static dev_servo_channelConfig_S dev_servo_channelConfig[DEV_SERVO_CHANNEL_COUNT
 #define DEV_SERVO_LOCK_REQ_BLOCK()                     \
     while (HAL_lock_try(dev_servo_data.lock) == false) \
     {                                                  \
-        EMULATION_YIELD_LOCK();                        \
     }
 #define DEV_SERVO_LOCK_REL() (void)HAL_lock_release(dev_servo_data.lock)
 
@@ -68,6 +66,11 @@ typedef struct
     int32_t target;    /* counts (POSITION mode) */
     int32_t feedrate;  /* counts/s cruise speed (POSITION mode), 1..maxVelocity */
     int32_t targetVel; /* counts/s (VELOCITY mode) */
+    /* Bumped by every command that changes what "at target" means. dev_servo_run
+     * snapshots it with the request and refuses to publish an atTarget verdict
+     * computed against a target that was superseded mid-tick — see the publish
+     * guard in dev_servo_run and the note on dev_servo_atTarget. */
+    uint32_t seq;
 } dev_servo_request_S;
 
 typedef struct
@@ -77,6 +80,7 @@ typedef struct
     int32_t followingError;
     bool atTarget;
     bool stalled;
+    bool ready; /* the control loop has ticked (see dev_servo_isReady) */
 } dev_servo_output_S;
 
 typedef struct
@@ -191,6 +195,7 @@ void dev_servo_init(int lock, int32_t maxVelocityCounts, int32_t maxAccelCounts)
         d->out.followingError = 0;
         d->out.atTarget = true;
         d->out.stalled = false;
+        d->out.ready = false; /* not ready until the cog has run a control tick */
         d->velActive = false;
         d->lastCw = true;
         dev_servo_private_resync(ch, pos);
@@ -211,6 +216,7 @@ void dev_servo_run(void)
         const int32_t target = d->req.target;
         const int32_t feedrate = d->req.feedrate;
         const int32_t targetVel = d->req.targetVel;
+        const uint32_t seq = d->req.seq;
         DEV_SERVO_LOCK_REL();
 
         const int32_t pos = HAL_encoder_value(cfg->encoderChannel); /* the one source of truth */
@@ -235,8 +241,11 @@ void dev_servo_run(void)
             d->out.position = pos;
             d->out.velocity = 0;
             d->out.followingError = 0;
-            d->out.atTarget = true;
+            /* Disabled => nothing outstanding, but only if no command landed
+             * mid-tick (that command's target has not been evaluated yet). */
+            d->out.atTarget = (d->req.seq == seq);
             d->out.stalled = false;
+            d->out.ready = true; /* disabled but alive — the loop is still ticking */
             DEV_SERVO_LOCK_REL();
             continue;
         }
@@ -254,6 +263,15 @@ void dev_servo_run(void)
             /* Fastest speed from which we can still brake to rest at the target. */
             const float vStop = sqrtf(2.0f * (float)cfg->maxAccel * adist);
             float speed = (cruise < vStop) ? cruise : vStop;
+            /* ...and never faster than "cover what is left in one tick". The
+             * braking law alone is singular at the target: for a sub-count
+             * remainder it still demands hundreds of counts/s, so the setpoint
+             * steps clean over the target, flips sign, and hunts forever — the
+             * profile never winds down, so the move never reports arrival even
+             * with the encoder sitting inside the deadband. Capping by the
+             * one-tick reach lands the setpoint exactly on the target instead. */
+            const float vReach = adist / dt;
+            if (vReach < speed) { speed = vReach; }
             desiredSpVel = (dist >= 0.0f) ? speed : -speed;
 
             if ((dev_servo_private_iabs(target - pos) <= cfg->positionDeadband) &&
@@ -338,8 +356,12 @@ void dev_servo_run(void)
         d->out.position = pos;
         d->out.velocity = (int32_t)d->commandedVel;
         d->out.followingError = (int32_t)error;
-        d->out.atTarget = atTarget;
+        /* Only publish a verdict for the target this tick actually evaluated. A
+         * command that landed after the snapshot above changed the goalposts, so
+         * report "not there yet" and let the next tick judge the new target. */
+        d->out.atTarget = atTarget && (d->req.seq == seq);
         d->out.stalled = stalled;
+        d->out.ready = true;
         DEV_SERVO_LOCK_REL();
     }
 }
@@ -364,6 +386,11 @@ void dev_servo_moveTo(dev_servo_channel_E ch, int32_t targetCounts, int32_t feed
     dev_servo_data.channel[ch].req.mode = DEV_SERVO_MODE_POSITION;
     dev_servo_data.channel[ch].req.target = targetCounts;
     dev_servo_data.channel[ch].req.feedrate = feedrateCountsPerSec;
+    /* A fresh target invalidates the previous verdict: the caller must not see
+     * the "parked at the last target" true and conclude this move is already
+     * done (that would retire every move the instant it is issued). */
+    dev_servo_data.channel[ch].req.seq++;
+    dev_servo_data.channel[ch].out.atTarget = false;
     DEV_SERVO_LOCK_REL();
 }
 
@@ -373,6 +400,10 @@ void dev_servo_setVelocity(dev_servo_channel_E ch, int32_t velCountsPerSec)
     DEV_SERVO_LOCK_REQ_BLOCK();
     dev_servo_data.channel[ch].req.mode = DEV_SERVO_MODE_VELOCITY;
     dev_servo_data.channel[ch].req.targetVel = velCountsPerSec;
+    /* Leaving the position-target regime: the old verdict no longer describes
+     * anything the caller can act on. */
+    dev_servo_data.channel[ch].req.seq++;
+    dev_servo_data.channel[ch].out.atTarget = false;
     DEV_SERVO_LOCK_REL();
 }
 
@@ -383,6 +414,8 @@ void dev_servo_stop(dev_servo_channel_E ch)
     DEV_SERVO_LOCK_REQ_BLOCK();
     dev_servo_data.channel[ch].req.mode = DEV_SERVO_MODE_VELOCITY;
     dev_servo_data.channel[ch].req.targetVel = 0;
+    dev_servo_data.channel[ch].req.seq++;
+    dev_servo_data.channel[ch].out.atTarget = false;
     DEV_SERVO_LOCK_REL();
 }
 
@@ -393,6 +426,9 @@ void dev_servo_setPosition(dev_servo_channel_E ch, int32_t counts)
     DEV_SERVO_LOCK_REQ_BLOCK();
     dev_servo_data.channel[ch].req.target = counts;
     dev_servo_private_resync(ch, counts);
+    /* Re-defining the coordinate frame moves the target with it; re-judge. */
+    dev_servo_data.channel[ch].req.seq++;
+    dev_servo_data.channel[ch].out.atTarget = false;
     DEV_SERVO_LOCK_REL();
 }
 
@@ -448,6 +484,15 @@ bool dev_servo_isStalled(dev_servo_channel_E ch)
     const bool st = dev_servo_data.channel[ch].out.stalled;
     DEV_SERVO_LOCK_REL();
     return st;
+}
+
+bool dev_servo_isReady(dev_servo_channel_E ch)
+{
+    if (ch >= DEV_SERVO_CHANNEL_COUNT) { return false; }
+    DEV_SERVO_LOCK_REQ_BLOCK();
+    const bool ready = dev_servo_data.channel[ch].out.ready;
+    DEV_SERVO_LOCK_REL();
+    return ready;
 }
 /**********************************************************************
  * End of File

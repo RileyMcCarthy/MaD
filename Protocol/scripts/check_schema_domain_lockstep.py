@@ -4,8 +4,9 @@ domain mapping / display layer.
 
 The TS codec is generated at build time (gitignored). The *domain* layer
 (types.ts + mapping.ts) is hand-maintained and must track YAML field names.
-A stale mapping (e.g. loadCell* after schema still has forceGauge*) silently
-breaks config round-trips.
+A stale mapping (domain naming one generation of the force-gauge calibration
+fields while the schema declares the other) silently breaks config
+round-trips.
 
 Usage (repo root):
   python3 Protocol/scripts/check_schema_domain_lockstep.py
@@ -97,23 +98,35 @@ def main() -> int:
         for n in fields:
             print(f"  · {n}")
 
-    # Guard against known stale renames that once shipped (loadCell* vs forceGauge*).
-    stale = ["loadCellCapacity", "loadCellSensitivity", "loadCellZeroBalance"]
-    stale_hits = [s for s in stale if s in mapping_src or s in types_src]
-    if stale_hits:
-        print("FAIL: domain still references retired field names (schema drift):")
-        for s in stale_hits:
-            print(f"  - {s}")
-        errors += 1
+    # Guard against a half-finished rename: the force-gauge calibration fields
+    # have had two generations of naming, and the domain must speak whichever
+    # one the schema currently declares. Derived from the schema rather than
+    # hardcoded to one generation, so this catches drift in EITHER direction and
+    # does not need editing the next time the schema moves.
+    generations = {
+        "counts-per-force": ["forceGaugeNPerStep", "forceGaugeZeroOffset"],
+        "intrinsic load-cell": [
+            "loadCellCapacity",
+            "loadCellSensitivity",
+            "loadCellZeroBalance",
+        ],
+    }
+    live = {g: names for g, names in generations.items() if any(n in fields for n in names)}
+    retired = {g: names for g, names in generations.items() if g not in live}
 
-    # forceGauge fields required while YAML uses them
-    if "forceGaugeNPerStep" in fields:
-        if "forceGaugeNPerStep" not in mapping_src:
-            print("FAIL: forceGaugeNPerStep in schema but not in mapping")
+    for gen, names in retired.items():
+        hits = sorted(n for n in names if n in mapping_src or n in types_src)
+        if hits:
+            print(f"FAIL: domain references the retired {gen} naming (schema drift):")
+            for n in hits:
+                print(f"  - {n}")
             errors += 1
-        if "Force Gauge (N/step)" not in types_src:
-            print("FAIL: types.ts missing display key 'Force Gauge (N/step)'")
-            errors += 1
+
+    for gen, names in live.items():
+        for n in names:
+            if n in fields and n not in mapping_src:
+                print(f"FAIL: {n} is in the schema ({gen}) but not in mapping.ts")
+                errors += 1
 
     return 1 if errors else 0
 

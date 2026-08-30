@@ -1,13 +1,11 @@
-# Control — Test Plan (parity with MaDControl)
+# Control — Test Plan
 
-Goal: a complete, automated test suite that proves the new app reaches **functional
-parity** with the desktop app (see [PARITY.md](./PARITY.md)) and stays there.
-"Test parity" = every scenario below is automated and green.
+Goal: a complete, automated test suite covering every scenario below, kept green.
 
 The app source stays **pure** (Web Serial + File System Access only). All test-only
 abstractions (SIL serial, OPFS data folder) live in the harness — never in `src/`.
 
-> **Status (2026-06-11): test parity exceeded.** All layers green —
+> **Status (2026-06-11): all layers green.** —
 > `cargo test` **28/28** · `vitest` **25/25** (codec/gcode/analysis/sample/mapping/reorder) ·
 > `npm run e2e` **26/26** vs live SIL with zero page errors (run twice back-to-back).
 > Every §4 scenario marked "*(needs … feature)*" below has been **built** — those notes are
@@ -191,6 +189,5 @@ A convenience aggregate: `npm run verify` runs 1–3 (offline); `npm run e2e` ru
 ## 6. Out of scope / N/A in the browser
 - Native firmware flashing (`loadp2`) — desktop/CLI only.
 - "Open data folder in Finder/Explorer".
-- Real on-disk file interop with the desktop app (OPFS verifies behavior, not on-disk layout)
   — verify once manually with a real granted folder.
 - Non-Chromium browsers (gate covers this).

@@ -19,7 +19,18 @@
  * unit/presence-covered.
  */
 
-import { newSilPage, connectToSil, chooseDataFolder, APP_URL, chromium } from './fixtures.mjs';
+import {
+  newSilPage,
+  connectToSil,
+  chooseDataFolder,
+  dumpFailureArtifacts,
+  setCurrentScenario,
+  installFakeBootRom,
+  installOpfsDataDir,
+  OPFS_DIR,
+  APP_URL,
+  chromium,
+} from './fixtures.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -96,10 +107,34 @@ function assertSineMatch(series, { amplitudeMm, frequencyHz, cycles }, label) {
   const posMm = series.pos.map((p) => p / 1000);
   const tS = series.time.map((t) => t / 1e6);
 
-  // Skip the leading ramp-to-centre (a small monotonic fraction) before fitting.
-  const skip = Math.floor(posMm.length * 0.2);
-  const p = posMm.slice(skip);
-  const t = tS.slice(skip);
+  // Fit exactly the WAVEFORM, not the whole record. The record also contains the
+  // leading ramp-to-centre and — after the closing settle move parks the gantry —
+  // a flat tail that lasts until the run is torn down. Neither is the commanded
+  // sine, and the tail's length is teardown timing (0.1–0.4 s observed), so
+  // including it penalises a perfectly tracked wave in proportion to how slow
+  // the shutdown happened to be. That is what made the short 2 Hz case flaky:
+  // R² 0.67–0.70 over the whole record vs 0.99 over the wave itself, on motion
+  // that measured 2.85 mm of the commanded 3 mm at exactly 2 Hz every run.
+  //
+  // The wave's extent is known, not guessed: it runs for cycles/frequency
+  // seconds and ends where the gantry stops moving (whole cycles end on the
+  // centre, so the settle move is negligible). Take that window.
+  const parkedEps = 0.005; // mm between samples; wave motion is ≥10x this, parked is <deadband
+  let lastMoving = posMm.length - 1;
+  while (lastMoving > 0 && Math.abs(posMm[lastMoving] - posMm[lastMoving - 1]) < parkedEps) lastMoving--;
+  const waveDurS = cycles / frequencyHz;
+  const startT = tS[lastMoving] - waveDurS;
+  let first = 0;
+  while (first < lastMoving && tS[first] < startT) first++;
+
+  const p = posMm.slice(first, lastMoving + 1);
+  const t = tS.slice(first, lastMoving + 1);
+  // A run where the gantry never moved collapses this window — it must still be
+  // long enough to hold the commanded cycles, or the fit below is meaningless.
+  assert(
+    p.length > 40 && t[t.length - 1] - t[0] > waveDurS * 0.8,
+    `${label}: recorded a full ${waveDurS.toFixed(2)}s of waveform motion (got ${(t[t.length - 1] - t[0]).toFixed(2)}s over ${p.length} samples)`,
+  );
   const n = p.length;
   const t0 = t[0];
 
@@ -1392,6 +1427,275 @@ const scenarios = [
       } finally { await browser.close(); }
     },
   },
+  {
+    id: 'FW1',
+    name: 'Firmware: flash a .bin through the boot ROM loader',
+    async run() {
+      // Uses the in-page boot-ROM fake, not SIL: the emulator has no P2 boot
+      // ROM and the WS bridge carries no DTR line. See installFakeBootRom.
+      const browser = await chromium.launch({ channel: 'chrome', headless: true });
+      try {
+        const page = await browser.newPage();
+        const errors = [];
+        page.on('pageerror', (e) => errors.push(e.message));
+        await page.addInitScript(installFakeBootRom);
+        await page.addInitScript(installOpfsDataDir, OPFS_DIR);
+        // The flash confirm() must be accepted for the run to proceed.
+        page.on('dialog', (d) => d.accept());
+
+        await page.goto(`${APP_URL}#/firmware`);
+        // Flash is the only mode the app offers: the P2 Edge boots from SPI
+        // flash, so a RAM load would look like a successful update and then
+        // vanish on the next power cycle. RAM loading lives in the CLI.
+        assert(
+          (await page.getByRole('radio').count()) === 0,
+          'a programming-mode selector reappeared in the UI',
+        );
+        assert(
+          (await page.getByTestId('flash-firmware').textContent())?.includes('Write to flash'),
+          'flash button no longer says what it does',
+        );
+        // The target must be named before anything is written.
+        await page.getByTestId('flash-target').filter({ hasText: /USB 0403:6015/ })
+          .waitFor({ timeout: 8000 });
+
+        // A 2000-byte image: spans multiple 128-byte chunks with a partial tail.
+        const SIZE = 2000;
+        await page.getByTestId('firmware-file').setInputFiles({
+          name: 'program.bin',
+          mimeType: 'application/octet-stream',
+          buffer: Buffer.from(Array.from({ length: SIZE }, (_, i) => (i * 7) & 0xff)),
+        });
+
+        await page.getByTestId('flash-firmware').click();
+        await page.getByTestId('flash-status').filter({ hasText: /Wrote .* bytes to flash/ })
+          .waitFor({ timeout: 30000 });
+
+        const rom = await page.evaluate(() => ({
+          reset: window.__bootRom.reset,
+          len: window.__bootRom.image.length,
+          finished: window.__bootRom.finished,
+          head: window.__bootRom.image.slice(0, 4),
+          payload: window.__bootRom.image.slice(496, 496 + 8),
+        }));
+
+        assert(rom.reset >= 1, `expected a DTR reset pulse, saw ${rom.reset}`);
+        assert(rom.finished, 'boot ROM never saw the end-of-download marker');
+        // 496-byte flash stub + the payload.
+        assert(rom.len === 496 + SIZE, `image length ${rom.len}, expected ${496 + SIZE}`);
+        // Payload must follow the stub byte-for-byte.
+        assert(
+          JSON.stringify(rom.payload) === JSON.stringify([0, 7, 14, 21, 28, 35, 42, 49]),
+          `payload after stub was ${JSON.stringify(rom.payload)}`,
+        );
+        assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
+      } finally { await browser.close(); }
+    },
+  },
+  {
+    id: 'FW3',
+    name: 'Firmware: refuses to guess a target when adapters are ambiguous',
+    async run() {
+      const browser = await chromium.launch({ channel: 'chrome', headless: true });
+      try {
+        const page = await browser.newPage();
+        // Two indistinguishable adapters and no remembered choice.
+        await page.addInitScript(installFakeBootRom, { ports: 2 });
+        await page.addInitScript(installOpfsDataDir, OPFS_DIR);
+
+        await page.goto(`${APP_URL}#/firmware`);
+        await page.getByTestId('flash-target').filter({ hasText: /choose which one/i })
+          .waitFor({ timeout: 8000 });
+
+        await page.getByTestId('firmware-file').setInputFiles({
+          name: 'program.bin',
+          mimeType: 'application/octet-stream',
+          buffer: Buffer.from([1, 2, 3, 4]),
+        });
+        // A file alone must not be enough to arm the button.
+        assert(
+          await page.getByTestId('flash-firmware').isDisabled(),
+          'flash button was enabled without an unambiguous target',
+        );
+      } finally { await browser.close(); }
+    },
+  },
+  {
+    id: 'FW5',
+    name: 'Firmware: declining the confirmation programs nothing',
+    async run() {
+      const browser = await chromium.launch({ channel: 'chrome', headless: true });
+      try {
+        const page = await browser.newPage();
+        await page.addInitScript(installFakeBootRom);
+        await page.addInitScript(installOpfsDataDir, OPFS_DIR);
+        page.on('dialog', (d) => d.dismiss());
+
+        await page.goto(`${APP_URL}#/firmware`);
+        await page.getByTestId('flash-target').filter({ hasText: /USB 0403:6015/ }).waitFor();
+        await page.getByTestId('firmware-file').setInputFiles({
+          name: 'program', mimeType: 'application/octet-stream', buffer: Buffer.from([1, 2, 3, 4]),
+        });
+        await page.getByTestId('flash-firmware').click();
+
+        // Give the click somewhere to go before asserting nothing happened.
+        await page.waitForTimeout(500);
+        const rom = await page.evaluate(() => ({
+          reset: window.__bootRom.reset,
+          bytesIn: window.__bootRom.bytesIn,
+        }));
+        assert(rom.reset === 0, `board was reset despite declining (${rom.reset})`);
+        assert(rom.bytesIn === 0, `bytes were sent despite declining (${rom.bytesIn})`);
+      } finally { await browser.close(); }
+    },
+  },
+  {
+    id: 'FW6',
+    name: 'Firmware: implausible files are rejected before the chip is touched',
+    async run() {
+      const browser = await chromium.launch({ channel: 'chrome', headless: true });
+      try {
+        const page = await browser.newPage();
+        await page.addInitScript(installFakeBootRom);
+        await page.addInitScript(installOpfsDataDir, OPFS_DIR);
+        await page.goto(`${APP_URL}#/firmware`);
+        await page.getByTestId('flash-target').filter({ hasText: /USB/ }).waitFor();
+
+        // Larger than the P2's 512 KiB hub RAM.
+        await page.getByTestId('firmware-file').setInputFiles({
+          name: 'not-firmware.iso', mimeType: 'application/octet-stream',
+          buffer: Buffer.alloc(512 * 1024 + 1),
+        });
+        await page.getByTestId('file-error').filter({ hasText: /hub RAM/i }).waitFor();
+        assert(await page.getByTestId('flash-firmware').isDisabled(), 'oversized file armed the button');
+
+        await page.getByTestId('firmware-file').setInputFiles({
+          name: 'empty.bin', mimeType: 'application/octet-stream', buffer: Buffer.alloc(0),
+        });
+        await page.getByTestId('file-error').filter({ hasText: /empty/i }).waitFor();
+
+        // An extensionless PlatformIO build must be accepted.
+        await page.getByTestId('firmware-file').setInputFiles({
+          name: 'program', mimeType: 'application/octet-stream', buffer: Buffer.alloc(64),
+        });
+        await page.waitForTimeout(200);
+        assert((await page.getByTestId('file-error').count()) === 0, 'valid build was rejected');
+        assert(await page.getByTestId('flash-firmware').isEnabled(), 'valid build did not arm the button');
+      } finally { await browser.close(); }
+    },
+  },
+  {
+    id: 'FW7',
+    name: 'Firmware: every control is locked while programming, and progress shows',
+    async run() {
+      const browser = await chromium.launch({ channel: 'chrome', headless: true });
+      try {
+        const page = await browser.newPage();
+        // Slow the sink so the mid-upload state is observable.
+        await page.addInitScript(installFakeBootRom, { writeDelayMs: 12 });
+        await page.addInitScript(installOpfsDataDir, OPFS_DIR);
+        page.on('dialog', (d) => d.accept());
+
+        await page.goto(`${APP_URL}#/firmware`);
+        await page.getByTestId('flash-target').filter({ hasText: /USB/ }).waitFor();
+        await page.getByTestId('firmware-file').setInputFiles({
+          name: 'program', mimeType: 'application/octet-stream', buffer: Buffer.alloc(4096),
+        });
+        await page.getByTestId('flash-firmware').click();
+
+        await page.getByTestId('flash-status').filter({ hasText: /Uploading… \d+%/ }).waitFor({ timeout: 20000 });
+        for (const id of ['flash-firmware', 'firmware-file', 'choose-flash-port']) {
+          assert(await page.getByTestId(id).isDisabled(), `${id} was still enabled mid-flash`);
+        }
+        await page.getByTestId('flash-status').filter({ hasText: /Wrote .* bytes to flash/ })
+          .waitFor({ timeout: 60000 });
+      } finally { await browser.close(); }
+    },
+  },
+  {
+    id: 'FW8',
+    name: 'Firmware: no granted port, and a getPorts failure, both degrade gracefully',
+    async run() {
+      const browser = await chromium.launch({ channel: 'chrome', headless: true });
+      try {
+        const page = await browser.newPage();
+        const errors = [];
+        page.on('pageerror', (e) => errors.push(e.message));
+
+        await page.addInitScript(installFakeBootRom, { ports: 0 });
+        await page.addInitScript(installOpfsDataDir, OPFS_DIR);
+        await page.goto(`${APP_URL}#/firmware`);
+        await page.getByTestId('flash-target').filter({ hasText: /No serial device yet/i }).waitFor();
+        assert(await page.getByTestId('flash-firmware').isDisabled(), 'armed with no port');
+        await browser.close();
+
+        // A getPorts() that rejects must not break the screen either.
+        const b2 = await chromium.launch({ channel: 'chrome', headless: true });
+        const p2 = await b2.newPage();
+        p2.on('pageerror', (e) => errors.push(e.message));
+        await p2.addInitScript(installFakeBootRom, { getPortsFails: true });
+        await p2.addInitScript(installOpfsDataDir, OPFS_DIR);
+        await p2.goto(`${APP_URL}#/firmware`);
+        await p2.getByTestId('flash-target').filter({ hasText: /No serial device yet/i }).waitFor();
+        await b2.close();
+
+        assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
+      } finally { /* browsers closed above */ }
+    },
+  },
+  {
+    id: 'FW9',
+    name: 'Firmware: an explicit port choice is remembered across reloads',
+    async run() {
+      const browser = await chromium.launch({ channel: 'chrome', headless: true });
+      try {
+        const page = await browser.newPage();
+        await page.addInitScript(installFakeBootRom, { ports: 2 });
+        await page.addInitScript(installOpfsDataDir, OPFS_DIR);
+
+        await page.goto(`${APP_URL}#/firmware`);
+        await page.getByTestId('flash-target').filter({ hasText: /choose which one/i }).waitFor();
+        await page.getByTestId('choose-flash-port').click();
+        await page.getByTestId('flash-target').filter({ hasText: /USB 0403:6015/ }).waitFor();
+
+        const pref = await page.evaluate(() => localStorage.getItem('mad.flashPort'));
+        assert(pref && JSON.parse(pref).vendorId === 0x0403, `preference not stored: ${pref}`);
+
+        // The choice must survive a reload rather than asking again.
+        await page.reload();
+        await page.getByTestId('flash-target').filter({ hasText: /USB 0403:6015/ }).waitFor();
+      } finally { await browser.close(); }
+    },
+  },
+  {
+    id: 'FW2',
+    name: 'Firmware: a silent boot ROM surfaces a readable error',
+    async run() {
+      const browser = await chromium.launch({ channel: 'chrome', headless: true });
+      try {
+        const page = await browser.newPage();
+        await page.addInitScript(installFakeBootRom);
+        await page.addInitScript(installOpfsDataDir, OPFS_DIR);
+        // Make the ROM deaf: swallow the reset so it never starts answering.
+        await page.addInitScript(() => {
+          window.addEventListener('load', () => {
+            window.__bootRom.reset = -999;
+          });
+        });
+        page.on('dialog', (d) => d.accept());
+
+        await page.goto(`${APP_URL}#/firmware`);
+        await page.getByTestId('firmware-file').setInputFiles({
+          name: 'program.bin',
+          mimeType: 'application/octet-stream',
+          buffer: Buffer.from([1, 2, 3, 4]),
+        });
+        await page.getByTestId('flash-firmware').click();
+        await page.getByTestId('flash-status').filter({ hasText: /No response from the Propeller 2/ })
+          .waitFor({ timeout: 30000 });
+      } finally { await browser.close(); }
+    },
+  },
 ];
 
 async function main() {
@@ -1414,6 +1718,7 @@ async function main() {
   const failures = [];
   for (const s of selected) {
     process.stdout.write(`• ${s.id} ${s.name} … `);
+    setCurrentScenario(s.id);
     try {
       // eslint-disable-next-line no-await-in-loop
       await s.run();
@@ -1422,6 +1727,10 @@ async function main() {
     } catch (err) {
       console.log('❌');
       failures.push(`${s.id} ${s.name}: ${err.message}`);
+      // Every failure carries the app's merged main+worker log, so a red CI run
+      // is diagnosable without reproducing it locally.
+      // eslint-disable-next-line no-await-in-loop
+      await dumpFailureArtifacts(s.id, err).catch(() => {});
     }
     // Settle: let the bridge fully release the PTY before the next client connects
     // (only one app may hold the serial stream at a time).

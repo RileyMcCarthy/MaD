@@ -13,6 +13,7 @@ web = ["dep:embsim-ui", "dep:axum", "dep:tokio", "dep:serde_json", "embsim-trace
 
 [dependencies]
 embsim-core = { path = "../embsim/core" }
+embsim-board = { path = "../embsim/board" }
 embsim-peripherals = { path = "../embsim/peripherals" }
 embsim-p2 = { path = "../embsim/platforms/p2" }
 embsim-runtime = { path = "../embsim/runtime" }

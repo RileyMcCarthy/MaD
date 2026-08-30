@@ -1,12 +1,15 @@
-name: Deploy docs + app (GitHub Pages)
+name: Deploy docs + MaD Control (GitHub Pages)
 
 # Publishes a single Pages deployment that serves the documentation site at the
-# repo root and the control app under /app/:
+# repo root and MaD Control under /app/:
 #   https://<owner>.github.io/<repo>/        → docs (MkDocs Material, from docs/)
-#   https://<owner>.github.io/<repo>/app/    → Control (Vite PWA)
+#   https://<owner>.github.io/<repo>/app/    → MaD Control (Vite PWA)
 #
-# Triggers: push to main (docs/app/protocol changes), a manual run, or a
-# `webapp-v*` release tag.
+# Pages deploys from `main` (and manual workflow_dispatch). The github-pages
+# environment only allows the `main` branch, so `madcontrol-v*` tags cannot
+# deploy Pages — they only assert package.json matches the tag and publish
+# a GitHub Release. Cut tags with Software/Control/scripts/release.sh after
+# the version bump is on main (which already deployed that SHA).
 on:
   push:
     branches: [main]
@@ -18,7 +21,7 @@ on:
       - '.gitmodules'
       - '.github/workflows/pages.yml'
     tags:
-      - 'webapp-v*'
+      - 'madcontrol-v*'
   workflow_dispatch:
 
 permissions:
@@ -26,13 +29,21 @@ permissions:
   pages: write
   id-token: write
 
-# Only one Pages deployment at a time; newer releases supersede in-flight ones.
-concurrency:
-  group: pages
-  cancel-in-progress: true
-
 jobs:
+  # Tag-only: fail if madcontrol-vX.Y.Z != Software/Control/package.json.
+  check:
+    if: startsWith(github.ref, 'refs/tags/madcontrol-v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - name: Assert madcontrol-v* tag matches package.json
+        run: bash Software/Control/scripts/release.sh --check
+
   build:
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -61,7 +72,7 @@ jobs:
           pip install -r Protocol/ProtoEmb/core/requirements.txt
           pip install -r docs/requirements.txt
 
-      # ── Build the control app (served under /<repo>/app/) ──
+      # ── Build MaD Control (served under /<repo>/app/) ──
       - name: Install app dependencies
         working-directory: Software/Control
         run: npm ci
@@ -94,11 +105,44 @@ jobs:
           path: site
 
   deploy:
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     needs: build
     runs-on: ubuntu-latest
+    concurrency:
+      group: pages
+      cancel-in-progress: true
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
         uses: actions/deploy-pages@v5
+
+  # Named GitHub Release so MaD Control shows up next to firmware/hardware.
+  # Does not deploy Pages (environment blocks tags); the matching main push
+  # already published that SHA.
+  release:
+    name: GitHub Release (MaD Control)
+    if: startsWith(github.ref, 'refs/tags/madcontrol-v')
+    needs: check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Get version
+        id: ver
+        run: echo "VERSION=${GITHUB_REF#refs/tags/madcontrol-v}" >> "$GITHUB_OUTPUT"
+      - uses: softprops/action-gh-release@v3
+        with:
+          name: MaD Control ${{ steps.ver.outputs.VERSION }}
+          tag_name: madcontrol-v${{ steps.ver.outputs.VERSION }}
+          generate_release_notes: true
+          body: |
+            MaD Control **${{ steps.ver.outputs.VERSION }}** is live at
+            https://rileymccarthy.github.io/MaD/app/
+
+            Browser app (Chrome/Edge). Nothing to install.
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

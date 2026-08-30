@@ -47,7 +47,7 @@ C-type sizes); both produce a fixed wire size known at generation time. Fields c
 carry a `scale`, `min`/`max` (offset-binary), explicit bit counts, enums, nested
 structs, fixed arrays, optionals, and tagged unions. The full list of MaD
 messages and struct sizes is in the
-[protocol-messages reference](../reference/protocol-messages.md).
+[protocol-messages reference](../dev/protocol-messages.md).
 
 ## Units
 
@@ -80,7 +80,7 @@ telemetry.
 Motion profiles are compiled to a small **G-code** dialect (`G0`/`G1` moves, `G4`
 dwell, `G28` home, `G90`/`G91` absolute/relative, `G2`/`G3` arcs, and `G122` to
 signal test completion). Profiles are uploaded to the machine's SD card and
-played back by the firmware. See the [G-code reference](../reference/gcode.md).
+played back by the firmware. See the [G-code reference](../dev/gcode.md).
 
 ## One schema, byte-identical everywhere
 

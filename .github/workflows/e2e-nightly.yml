@@ -39,9 +39,7 @@ jobs:
         with:
           node-version: 20
           cache: npm
-          cache-dependency-path: |
-            Software/Control/package-lock.json
-            SIL/package-lock.json
+          cache-dependency-path: Software/Control/package-lock.json
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -65,14 +63,6 @@ jobs:
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
-      - name: SIL npm deps (Playwright)
-        working-directory: SIL
-        run: npm ci
-
-      - name: Install Chromium for Playwright
-        working-directory: SIL
-        run: npx playwright install --with-deps chromium
-
       - name: Build SIL emulator (firmware + protocol + cargo)
         working-directory: SIL
         run: make emulator
@@ -82,6 +72,9 @@ jobs:
           npm ci
           npm run build:wasm
           npm run generate:proto
+
+      - name: Install Chromium for Playwright
+        run: npx playwright install --with-deps chromium
 
       - name: Start playground (emulator PTY)
         working-directory: SIL

@@ -10,3 +10,5 @@ src/wasm/
 
 # Generated protocol types (built via `npm run generate:proto`)
 src/protocol/generated/
+e2e/artifacts/
+coverage/

@@ -3,6 +3,7 @@ import {
   generateTestGcode,
   waveformSample,
   waveformPeakVelocity,
+  waveformPeakAcceleration,
 } from './testProfile';
 import { gcodeLinesToProgram } from './gcode';
 import { decodeWaveformMove, WaveformShape } from '@/protocol/generated/protoemb';
@@ -88,6 +89,24 @@ describe('waveform helpers', () => {
   it('waveformPeakVelocity matches 2πAf (sine) and 4Af (triangle)', () => {
     expect(waveformPeakVelocity('sine', 5, 1)).toBeCloseTo(2 * Math.PI * 5, 6);
     expect(waveformPeakVelocity('triangle', 5, 1)).toBeCloseTo(20, 6);
+  });
+
+  it('waveformPeakAcceleration matches (2πf)²A for a sine', () => {
+    expect(waveformPeakAcceleration('sine', 5, 1)).toBeCloseTo((2 * Math.PI) ** 2 * 5, 6);
+    // Scales with f², which is why a modest frequency bump blows the envelope:
+    // 3mm @ 2Hz needs ~474 mm/s² where 5mm @ 1Hz needs only ~197.
+    expect(waveformPeakAcceleration('sine', 3, 2)).toBeCloseTo(473.74, 2);
+    expect(waveformPeakAcceleration('sine', 10, 0.5)).toBeCloseTo(98.7, 1);
+  });
+
+  it('waveformPeakAcceleration is sign- and zero-safe', () => {
+    expect(waveformPeakAcceleration('sine', -5, -1)).toBeCloseTo((2 * Math.PI) ** 2 * 5, 6);
+    expect(waveformPeakAcceleration('sine', 0, 10)).toBe(0);
+    expect(waveformPeakAcceleration('sine', 10, 0)).toBe(0);
+  });
+
+  it("waveformPeakAcceleration reports 0 for a triangle (impulsive, not the binding limit)", () => {
+    expect(waveformPeakAcceleration('triangle', 5, 1)).toBe(0);
   });
 });
 

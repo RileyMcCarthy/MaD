@@ -9,17 +9,21 @@
 #include "app_monitor.h"
 #include "app_messageSlave.h"
 #include "app_testManagement.h"
+#include "app_motion.h" /* APP_MOTION_USE_SERVO — which actuator the MOTOR cog runs */
 
 #include "dev_nvram.h"
 #include "dev_cogManager.h"
 #include "dev_forceGauge.h"
+#if APP_MOTION_USE_SERVO
+#include "dev_servo.h"
+#else
 #include "dev_stepper.h"
+#endif
 #include "watchdog.h"
 
 #include "HAL_GPIO.h"
 #include "HAL_lock.h"
 #include <string.h>
-#include "emulation_helpers.h"
 /**********************************************************************
  * Constants
  **********************************************************************/
@@ -31,9 +35,18 @@
 #define APP_CONTROL_LOCK_REQ_BLOCK()        \
     while (APP_CONTROL_LOCK_REQ() == false) \
     {                                       \
-        EMULATION_YIELD_LOCK();            \
     }
 #define APP_CONTROL_LOCK_REL() (void)HAL_lock_release(app_control_data.lock)
+
+/* Ask the ACTIVE actuator whether it is alive — the MOTOR cog runs exactly one of
+ * the two drivers (APP_MOTION_USE_SERVO, see dev_cogManager_config.c), so the
+ * other one's run() never executes and its ready flag never gets staged. Mirrors
+ * the actuator abstraction in app_motion.c. */
+#if APP_MOTION_USE_SERVO
+#define actuator_isReady() dev_servo_isReady(DEV_SERVO_CHANNEL_MAIN)
+#else
+#define actuator_isReady() dev_stepper_isReady(DEV_STEPPER_CHANNEL_MAIN)
+#endif
 /**********************************************************************
  * Typedefs
  **********************************************************************/
@@ -119,7 +132,7 @@ static app_control_fault_E app_control_private_processFaults(void)
     app_control_data.fault[APP_CONTROL_FAULT_ESD_SWITCH] = HAL_GPIO_getActive(HAL_GPIO_ESD_SWITCH);
     app_control_data.fault[APP_CONTROL_FAULT_ESD_UPPER] = HAL_GPIO_getActive(HAL_GPIO_ESD_UPPER);
     app_control_data.fault[APP_CONTROL_FAULT_ESD_LOWER] = HAL_GPIO_getActive(HAL_GPIO_ESD_LOWER);
-    app_control_data.fault[APP_CONTROL_FAULT_SERVO_COMMUNICATION] = (dev_stepper_isReady(DEV_STEPPER_CHANNEL_MAIN) == false);
+    app_control_data.fault[APP_CONTROL_FAULT_SERVO_COMMUNICATION] = (actuator_isReady() == false);
     app_control_data.fault[APP_CONTROL_FAULT_FORCE_GAUGE_COMMUNICATION] = (dev_forceGauge_isReady(DEV_FORCEGAUGE_CHANNEL_MAIN) == false);
 
     // Select the first fault as the reason

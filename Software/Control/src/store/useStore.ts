@@ -17,10 +17,12 @@ import {
   SampleProfile,
   Notification,
   NotificationType,
+  FaultedReason,
+  RestrictedReason,
 } from '@/domain';
 import { pushSample, resetLiveBuffer, seedSamples } from './liveBuffer';
 import { reduceDeviceEvent } from './deviceEventReduce';
-import { record } from '@/diagnostics/recorder';
+import { logger } from '@/diagnostics/log';
 import { MSG_SAMPLE_PERIOD_MS } from '@/protocol/generated/protoemb';
 
 // Numeric readout refresh. 4 Hz is the classic instrument-display rate: fast
@@ -98,6 +100,90 @@ interface AppState {
   notifyUpdateAvailable: (apply: () => void) => void;
   /** Apply a pending app update — refused while connected/testing (it reloads). */
   applyUpdate: () => void;
+}
+
+const logStore = logger('store');
+
+/**
+ * Log machine-state changes only.
+ *
+ * State frames arrive at ~10 Hz, so logging each one would bury everything
+ * else; the transitions are what matter. Faults and restriction changes are
+ * called out at warn so they stand out in a report — a run that ended early
+ * almost always has one of these immediately before it.
+ */
+function logStateTransition(prev: MachineState | null, next: MachineState): void {
+  if (
+    prev !== null &&
+    prev.faultedReason === next.faultedReason &&
+    prev.restrictedReason === next.restrictedReason &&
+    prev.testRunning === next.testRunning &&
+    prev.motionEnabled === next.motionEnabled
+  ) {
+    return;
+  }
+  const changed = prev !== null && (prev.faultedReason !== next.faultedReason ||
+    prev.restrictedReason !== next.restrictedReason);
+  const data = {
+    faulted: FaultedReason[next.faultedReason] ?? next.faultedReason,
+    restricted: RestrictedReason[next.restrictedReason] ?? next.restrictedReason,
+    testRunning: next.testRunning,
+    motionEnabled: next.motionEnabled,
+  };
+  if (next.faultedReason !== FaultedReason.NONE || changed) {
+    logStore.warn('machine-state', 'transition', data);
+  } else {
+    logStore.info('machine-state', 'transition', data);
+  }
+}
+
+/**
+ * Field-level diff of two machine configurations, as `field: "old→new"`.
+ *
+ * Only changed scalar fields survive, so a 30-field config that had one value
+ * edited logs one key. Nested values are compared by JSON so a changed
+ * sub-object still shows up rather than silently passing an identity check.
+ */
+function diffConfig(
+  prev: MachineConfiguration | null,
+  next: MachineConfiguration,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (prev === null) return { _initial: 'no previous config' };
+  const keys = new Set([...Object.keys(prev), ...Object.keys(next)]);
+  for (const key of keys) {
+    const a = (prev as unknown as Record<string, unknown>)[key];
+    const b = (next as unknown as Record<string, unknown>)[key];
+    const sameByValue =
+      typeof a === 'object' || typeof b === 'object'
+        ? JSON.stringify(a) === JSON.stringify(b)
+        : a === b;
+    if (sameByValue) continue;
+    const show = (v: unknown): string =>
+      typeof v === 'object' && v !== null ? JSON.stringify(v).slice(0, 60) : String(v);
+    out[key] = `${show(a)}→${show(b)}`;
+  }
+  return out;
+}
+
+/**
+ * Log whether a device command actually succeeded.
+ *
+ * Intent alone is misleading: "user pressed jog" next to silence reads like the
+ * app ignored them, when usually the device NACKed. Pairing every action with
+ * its outcome is what makes the breadcrumb trail trustworthy.
+ */
+function logOutcome(tag: string, p: Promise<boolean>): Promise<boolean> {
+  return p.then(
+    (ok) => {
+      if (!ok) logStore.warn(`${tag}-rejected`, 'device did not accept');
+      return ok;
+    },
+    (err: unknown) => {
+      logStore.error(`${tag}-failed`, err instanceof Error ? err.message : String(err));
+      throw err;
+    },
+  );
 }
 
 let initialized = false;
@@ -290,6 +376,10 @@ export const useStore = create<AppState>((set, getState) => ({
           lastSampleAt = Date.now();
         }
         if (e.kind === 'state' && patch.machineState !== undefined) {
+          // State arrives at ~10 Hz; only transitions are worth an entry.
+          if (patch.machineState !== null) {
+            logStateTransition(getState().machineState ?? null, patch.machineState);
+          }
           set({ machineState: patch.machineState });
         }
         if (patch.config !== undefined) set({ config: patch.config });
@@ -298,10 +388,10 @@ export const useStore = create<AppState>((set, getState) => ({
 
         if (patch.counters) {
           for (const c of patch.counters) {
-            if (c === 'connected') record('info', 'connected');
-            else if (c === 'device-error' && e.kind === 'error') record('error', 'device-error', e.message);
-            else if (c === 'timeout') record('warn', 'timeout');
-            else if (c === 'nack' && e.kind === 'ack') record('warn', 'nack', `command ${e.command}`);
+            if (c === 'connected') logStore.info('connected');
+            else if (c === 'device-error' && e.kind === 'error') logStore.error('device-error', e.message);
+            else if (c === 'timeout') logStore.warn('timeout');
+            else if (c === 'nack' && e.kind === 'ack') logStore.warn('nack', undefined, { command: e.command });
           }
         }
 
@@ -331,7 +421,8 @@ export const useStore = create<AppState>((set, getState) => ({
           const lost = patch.disconnect.unexpected;
           userDisconnect = false;
           stopTimers();
-          record(lost ? 'warn' : 'info', 'disconnected', patch.disconnect.reason ?? '');
+          if (lost) logStore.warn('disconnected', patch.disconnect.reason ?? 'link lost');
+          else logStore.info('disconnected', 'user disconnect');
           // Flush the freshest sample so the frozen readouts show the true last
           // reading at the moment of loss (the 250ms mirror could be stale).
           const flushed = pendingSample;
@@ -394,10 +485,12 @@ export const useStore = create<AppState>((set, getState) => ({
         info.usbVendorId !== undefined
           ? `USB ${info.usbVendorId.toString(16)}:${(info.usbProductId ?? 0).toString(16)}`
           : 'Serial device';
+      logStore.info('connect', 'link established', { baud, label });
       set({ canReconnect: false });
       afterConnect(set, getState, label);
     } catch (err) {
       // A failed (re)connect keeps canReconnect as-is so the user can retry.
+      logStore.error('connect-failed', err instanceof Error ? err.message : String(err));
       set({
         connection: 'disconnected',
         error: err instanceof Error ? err.message : String(err),
@@ -406,6 +499,7 @@ export const useStore = create<AppState>((set, getState) => ({
   },
 
   disconnect: async () => {
+    logStore.info('disconnect', 'user requested');
     stopTimers();
     userDisconnect = true;
     clearSerialPref(); // intentional disconnect ⇒ don't auto-reconnect next session
@@ -421,11 +515,24 @@ export const useStore = create<AppState>((set, getState) => ({
 
   reconnect: async () => {
     const s = getState();
-    if (s.connection !== 'disconnected') return;
+    if (s.connection !== 'disconnected') {
+      logStore.debug('reconnect', 'skipped — not disconnected', { connection: s.connection });
+      return;
+    }
     // Re-resolve via getPorts() (a replug yields a fresh SerialPort object; the
     // cached lastPort handle may be stale); fall back to the cached handle.
-    const port = (await findGrantedPortForPref(readSerialPref())) ?? lastPort;
-    if (!port) return;
+    const resolved = await findGrantedPortForPref(readSerialPref());
+    const port = resolved ?? lastPort;
+    if (!port) {
+      // The usual cause of "Reconnect does nothing": the browser dropped the
+      // port grant, so there is nothing to reconnect to without a user gesture.
+      logStore.warn('reconnect', 'no granted port available');
+      return;
+    }
+    logStore.info('reconnect', 'retrying last port', {
+      source: resolved ? 'getPorts' : 'cached handle',
+      baud: lastBaud,
+    });
     await s.connect({ port, baud: lastBaud });
   },
 
@@ -466,7 +573,16 @@ export const useStore = create<AppState>((set, getState) => ({
   },
 
   saveConfig: async (config) => {
+    // Field-level diff, not the whole object: a wrong machine configuration is
+    // a common silent root cause, and "what did they actually change" is the
+    // question a report needs to answer. Values are plain numbers/strings.
+    const changed = diffConfig(getState().config, config);
+    logStore.info('saveConfig', undefined, {
+      changedCount: Object.keys(changed).length,
+      ...changed,
+    });
     const ok = await deviceClient.writeMachineConfiguration(config);
+    logStore.info('saveConfig', ok ? 'accepted' : 'rejected', { ok });
     if (ok) set({ config });
     return ok;
   },
@@ -488,9 +604,14 @@ export const useStore = create<AppState>((set, getState) => ({
 
   setSampleProfile: (profile) => set({ sampleProfile: profile }),
 
-  setMotionEnabled: (enabled) => deviceClient.setMotionEnabled(enabled),
+  setMotionEnabled: (enabled) => {
+    logStore.info('motion-enable', undefined, { enabled });
+    return logOutcome('motion-enable', deviceClient.setMotionEnabled(enabled));
+  },
   emergencyStop: async () => {
+    logStore.warn('estop', 'user pressed STOP');
     const ok = await deviceClient.emergencyStop().catch(() => false);
+    logStore.warn('estop-result', undefined, { acknowledged: ok });
     set((s) => ({
       notifications: [
         ...s.notifications.slice(-49),
@@ -505,21 +626,39 @@ export const useStore = create<AppState>((set, getState) => ({
       ],
     }));
   },
-  manualMove: (mm, speed) => deviceClient.manualMove(mm, speed),
-  homeAxis: () => deviceClient.homeAxis(),
-  zeroForce: () => deviceClient.zeroForce(),
-  zeroLength: () => deviceClient.zeroLength(),
+  manualMove: (mm, speed) => {
+    logStore.info('jog', undefined, { mm, speed });
+    return logOutcome('jog', deviceClient.manualMove(mm, speed));
+  },
+  homeAxis: () => {
+    logStore.info('home');
+    return deviceClient.homeAxis();
+  },
+  zeroForce: () => {
+    logStore.info('zero-force');
+    return deviceClient.zeroForce();
+  },
+  zeroLength: () => {
+    logStore.info('zero-length');
+    return deviceClient.zeroLength();
+  },
 
   dismissNotification: (id) =>
     set((s) => ({ notifications: s.notifications.filter((n) => n.id !== id) })),
 
-  notify: (type, message) =>
+  notify: (type, message) => {
+    // Everything the user was actually shown, so a report reflects their view
+    // of events and not just the machine's.
+    if (type === NotificationType.ERROR) logStore.error('toast', message);
+    else if (type === NotificationType.WARN) logStore.warn('toast', message);
+    else logStore.info('toast', message);
     set((s) => ({
       notifications: [
         ...s.notifications.slice(-49),
         { Type: type, Message: message, id: (notificationSeq += 1), t: Date.now() },
       ],
-    })),
+    }));
+  },
 
   notifyUpdateAvailable: (apply) => {
     pendingUpdate = apply;

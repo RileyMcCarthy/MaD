@@ -87,5 +87,5 @@ never modified*. See [SIL testing](../dev/sil-testing.md) for how to run it.
 
 The firmware HAL is bound through process-global symbols against a single
 `libfirmware.a`, so there is **exactly one firmware instance per OS process**. To
-run several, run several processes — which is why the Playwright suite uses
+run several, run several processes — which is why the E2E suite uses
 `workers: 1`.
