@@ -171,14 +171,26 @@ pub struct Machine<P: PinBus> {
     pub retired: u64,
     /// Trap on a hub access outside the 512 KB map instead of wrapping.
     ///
-    /// Silicon wraps (hub addresses are 20-bit), but during bring-up a wild
-    /// pointer that aliases onto valid memory corrupts code far from the
-    /// culprit and only surfaces when that code executes.
+    /// **Off by default, and not a soundness check.** Silicon masks hub
+    /// addresses to the 512 KB map, and the firmware relies on it: FlexC builds
+    /// tagged pointers with an `augs`/`or` pair (e.g. `$0004B8A0 | $02D00000`)
+    /// and lets the hardware ignore the tag. Enabling this flags those as
+    /// out-of-range, which is a false positive.
+    ///
+    /// It remains useful during bring-up on code known not to tag pointers,
+    /// where a genuinely wild address would otherwise alias onto live memory
+    /// and corrupt something far from the culprit.
     pub strict_hub: bool,
     /// Optional hub write watchpoint: `(start, len)`.
     pub watch: Option<(u32, u32)>,
     /// Writes that landed in the watched range, oldest first.
     pub watch_hits: Vec<WatchHit>,
+    /// Optional register watchpoint: record every write of any value to this
+    /// cog register. Registers are where corrupted pointers first appear, and
+    /// a hub watchpoint cannot see them.
+    pub reg_watch: Option<u16>,
+    /// Writes seen by [`Self::reg_watch`]: `(pc, value)`.
+    pub reg_hits: Vec<(u32, u32)>,
     /// Log of hardware-stack traffic: `(cog, pc, is_push, value)`.
     pub stack_log: Vec<(u8, u32, bool, u32)>,
     /// Record stack traffic into [`Self::stack_log`].
@@ -213,9 +225,11 @@ impl<P: PinBus> Machine<P> {
             lock_alloc: [false; NUM_LOCKS],
             pins,
             retired: 0,
-            strict_hub: true,
+            strict_hub: false,
             watch: None,
             watch_hits: Vec::new(),
+            reg_watch: None,
+            reg_hits: Vec::new(),
             stack_log: Vec::new(),
             trace_stack: false,
         }
@@ -319,6 +333,10 @@ impl<P: PinBus> Machine<P> {
     }
     fn set_reg(&mut self, cog: usize, a: u16, v: u32) {
         let idx = (a as usize) & 0x1FF;
+        if self.reg_watch == Some(idx as u16) {
+            let pc = self.cogs[cog].pc;
+            self.reg_hits.push((pc, v));
+        }
         self.cogs[cog].regs[idx] = v;
         if (REG_DIRA..=REG_OUTA + 1).contains(&(idx as u16)) {
             self.pins.dir_out_changed(idx as u16, v);
@@ -360,13 +378,9 @@ impl<P: PinBus> Machine<P> {
             0 => 160_000_000,
             f => f,
         } as u64;
-        let clocks = self
-            .cogs
-            .iter()
-            .filter(|c| c.running)
-            .map(|c| c.clocks)
-            .max()
-            .unwrap_or(0);
+        // Max over ALL cogs, not just running ones: time must not go backwards
+        // when a cog stops, and after `cogexit` there may be none running.
+        let clocks = self.cogs.iter().map(|c| c.clocks).max().unwrap_or(0);
         clocks * 1_000_000 / hz
     }
 
