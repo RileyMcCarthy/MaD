@@ -1,6 +1,17 @@
 # Nightly / manual WASM e2e against the SIL playground.
-# Not a required PR gate — playground bring-up is still heavy for every PR.
-# Sprint C/D: expand smoke_ids and full suite over time.
+#
+# `control-e2e-sil` in ci.yml runs the FULL suite on every app/protocol/
+# firmware/SIL change, but it is ADVISORY — it reports and is deliberately not
+# in `ci-gate.needs`, so today nothing about this suite blocks a merge. See the
+# note on that job for why and for the one-line promotion. ci.yml is the source
+# of truth for which jobs gate; do not infer it from here.
+#
+# This workflow keeps running on a schedule for what a per-PR run cannot see:
+# drift on `main` that only appears over time (a flake that needs many runs to
+# surface, an upstream runner-image change, a dependency that moved under a
+# floating version).
+#
+# Use `workflow_dispatch` with suite=smoke for a quick manual check.
 
 name: E2E nightly (WASM + SIL)
 

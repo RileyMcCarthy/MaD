@@ -16,6 +16,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <unistd.h> /* rmdir — tearing down the provisioned-directory fixture */
 
 #include "HAL_lock.h"
 
@@ -50,6 +51,11 @@ static test_item_S gcodeBuffer[TEST_QUEUE_LEN];
 static const char sampleNameFormat[] = "./test/sd/iosd_sample_%s.bin";
 static const char gcodeNameFormat[] = "./test/sd/iosd_gcode_%s.bin";
 
+// A path nested under directories that do NOT exist — the shape the real channel
+// configs use (`<mount>/gcode/%s.bin`) on a card that has never held a test.
+static const char nestedNameFormat[] = "./test/sd/iosd_fresh/gcode/%s.bin";
+static const char nestedFilePath[] = "./test/sd/iosd_fresh/gcode/unit.bin";
+
 // The module declares `extern IO_SDCard_config_S IO_SDCard_config;` — define it here.
 IO_SDCard_config_S IO_SDCard_config = {
     {
@@ -77,6 +83,16 @@ static void removeTempFiles(void)
 {
     remove(sampleFilePath);
     remove(gcodeFilePath);
+}
+
+// Delete the whole provisioned tree so the nested test always starts from "these
+// directories do not exist" — the condition that made the bug invisible on a dev
+// machine (where a previous run had already created them) and fatal in CI.
+static void removeNestedTree(void)
+{
+    remove(nestedFilePath);
+    rmdir("./test/sd/iosd_fresh/gcode");
+    rmdir("./test/sd/iosd_fresh");
 }
 
 // Pump the state machine N times.
@@ -124,12 +140,18 @@ void setUp(void)
     int lock = HAL_lock_create();
     buildPaths();
     removeTempFiles();
+    removeNestedTree();
     IO_SDCard_init(lock); // resets state to INIT, file=NULL, eof=false, queues empty
 }
 
 void tearDown(void)
 {
     removeTempFiles();
+    removeNestedTree();
+    // The nested-path test repoints this channel; restore it here rather than at
+    // the end of that test, so a failed assertion (Unity longjmps out) cannot
+    // leak the override into every test that runs after it.
+    IO_SDCard_config.channelConfig[IO_SDCARD_CHANNEL_GCODE].nameFormat = gcodeNameFormat;
 }
 
 // =====================================================================================
@@ -284,6 +306,49 @@ static void test_write_close_flushes_remaining_queue_on_close(void)
     uint32_t n = readFileItems(gcodeFilePath, readBack, 8);
     TEST_ASSERT_EQUAL_UINT32(2u, n);
     TEST_ASSERT_EQUAL_UINT32(8u, readBack[1].b);
+}
+
+// Regression: `fopen(path, "wb")` creates the file but not the directories above
+// it, so on a card that has never held a test — a freshly formatted SD, or the
+// SIL emulator's SD root in a clean checkout — every WRITE open failed with
+// ENOENT. The G-code for a test was therefore never stored, the run executed
+// zero moves and never completed. It reproduced only on a virgin card, which is
+// why it never showed on a dev machine and failed every CI run.
+static void test_write_open_provisions_missing_directories(void)
+{
+    IO_SDCard_config.channelConfig[IO_SDCARD_CHANNEL_GCODE].nameFormat = nestedNameFormat;
+
+    TEST_ASSERT_TRUE(IO_SDCard_open(IO_SDCARD_CHANNEL_GCODE, TEST_BASE_NAME, IO_SDCARD_MODE_WRITE));
+    runN(2); // INIT->OPEN (provision path, then fopen "wb") -> ACTIVE
+    TEST_ASSERT_FALSE(IO_SDCard_lastOpenFailed(IO_SDCARD_CHANNEL_GCODE));
+    TEST_ASSERT_FALSE(IO_SDCard_isClosed(IO_SDCARD_CHANNEL_GCODE));
+
+    const test_item_S item = {.a = 42u, .b = 43u};
+    TEST_ASSERT_TRUE(IO_SDCard_push(IO_SDCARD_CHANNEL_GCODE, &item, TEST_ITEM_SIZE));
+    TEST_ASSERT_TRUE(IO_SDCard_close(IO_SDCARD_CHANNEL_GCODE));
+    runN(4); // drain queue, then ACTIVE->CLOSE (flush + fclose) -> INIT
+    TEST_ASSERT_TRUE(IO_SDCard_isClosed(IO_SDCARD_CHANNEL_GCODE));
+
+    // The data reached the file, not just the open succeeding.
+    test_item_S readBack[2] = {0};
+    TEST_ASSERT_EQUAL_UINT32(1u, readFileItems(nestedFilePath, readBack, 2));
+    TEST_ASSERT_EQUAL_UINT32(42u, readBack[0].a);
+    TEST_ASSERT_EQUAL_UINT32(43u, readBack[0].b);
+}
+
+// A READ open must NOT conjure directories: a missing file has to keep failing,
+// or `lastOpenFailed` stops meaning anything for the download path.
+static void test_read_open_does_not_provision_directories(void)
+{
+    IO_SDCard_config.channelConfig[IO_SDCARD_CHANNEL_GCODE].nameFormat = nestedNameFormat;
+
+    TEST_ASSERT_TRUE(IO_SDCard_open(IO_SDCARD_CHANNEL_GCODE, TEST_BASE_NAME, IO_SDCARD_MODE_READ));
+    runN(2);
+    TEST_ASSERT_TRUE(IO_SDCard_lastOpenFailed(IO_SDCARD_CHANNEL_GCODE));
+    TEST_ASSERT_TRUE(IO_SDCard_isClosed(IO_SDCARD_CHANNEL_GCODE));
+
+    FILE *const probe = fopen(nestedFilePath, "rb");
+    TEST_ASSERT_NULL(probe);
 }
 
 // =====================================================================================
@@ -478,6 +543,8 @@ int main(void)
 
     RUN_TEST(test_write_session_opens_flushes_and_closes);
     RUN_TEST(test_write_close_flushes_remaining_queue_on_close);
+    RUN_TEST(test_write_open_provisions_missing_directories);
+    RUN_TEST(test_read_open_does_not_provision_directories);
 
     RUN_TEST(test_open_failure_latches_and_clears);
     RUN_TEST(test_open_clears_previous_failure_flag);

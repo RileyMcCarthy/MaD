@@ -93,7 +93,11 @@ impl StrainGauge {
         self.force_un.store(force_un, Ordering::Relaxed);
 
         let voltage_mv = self.force_to_voltage(force_n);
-        trace!("strain_gauge: force={:.3}N voltage={:.4}mV", force_n, voltage_mv);
+        trace!(
+            "strain_gauge: force={:.3}N voltage={:.4}mV",
+            force_n,
+            voltage_mv
+        );
 
         self.on_change.emit(voltage_mv);
     }
