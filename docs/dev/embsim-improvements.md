@@ -17,7 +17,7 @@ One `virtual_us` counter. The engine (or an idle jump with no time authority) is
 - [x] **`wait_until` / `wait_virtual_us` park** until `now` reaches the deadline.
 - [x] **Emulator preempts at HAL** ([embsim#26](https://github.com/RileyMcCarthy/embsim/pull/26)).
 - [x] **One clock:** playground `init(speed>0)` jumps then sleeps; tests `init(0)` jump instantly.
-- [ ] **Tests assert virtual time** (`at t = 100_000 µs, encoder == N`) across MaD e2e — remaining.
+- [x] **Tests assert virtual time** (`at t = 100_000 µs, encoder == N`) — e2e `VT-linear` interpolates the downloaded CSV (`time_us` = `HAL_time_getUs` = SIL `virtual_us`).
 
 Unblocks: firmware without emulator yield macros, and ISS `step_until(t)` later.
 

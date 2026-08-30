@@ -14,7 +14,8 @@
  * E1, F1/F2/F4/F6/F7, G1/G2/G3 + G-limit, H1–H5, I1–I4, J1 (in G-limit), K1 (in B2+B3+B4) — plus
  * regressions ported from the desktop SIL suite (NAV, settled-jog, slack→tension, fractional
  * precision, back-to-back runs, TC1/TC4/TC6/TC11/TC14, TM-busy-restart / TM-manual-gate for
- * testManagement isBusy lifecycle, and WAVE-sine for the waveform/math move that replaced arcs).
+ * testManagement isBusy lifecycle, WAVE-sine for the waveform/math move that replaced arcs,
+ * and VT-linear for virtual-time position/encoder at t0+100_000 µs).
  * §4 IDs without a dedicated scenario (C2 tooltips, F3 .sp import, F5 set save/load) are
  * unit/presence-covered.
  */
@@ -95,6 +96,40 @@ async function readDownloadedCsvSeries(page) {
     return { time, pos };
   });
 }
+
+/** Linear interpolation of `values` at virtual time `tUs`. Same contract as src/domain/sample.ts. */
+function interpolateAtUs(timesUs, values, tUs) {
+  const n = timesUs.length;
+  if (n === 0 || n !== values.length) return undefined;
+  if (tUs < timesUs[0] || tUs > timesUs[n - 1]) return undefined;
+  let lo = 0;
+  let hi = n - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (timesUs[mid] < tUs) lo = mid + 1;
+    else hi = mid;
+  }
+  if (timesUs[lo] === tUs) return values[lo];
+  const i0 = lo - 1;
+  if (i0 < 0) return values[lo];
+  const span = timesUs[lo] - timesUs[i0];
+  if (span === 0) return values[i0];
+  const w = (tUs - timesUs[i0]) / span;
+  return values[i0] + w * (values[lo] - values[i0]);
+}
+
+/** First sample time at which position has moved ≥ `minDeltaUm` from the opening sample. */
+function motionStartTimeUs(timesUs, positionsUm, minDeltaUm = 80) {
+  if (timesUs.length < 2 || timesUs.length !== positionsUm.length) return undefined;
+  const p0 = positionsUm[0];
+  for (let i = 1; i < timesUs.length; i++) {
+    if (Math.abs(positionsUm[i] - p0) >= minDeltaUm) return timesUs[i];
+  }
+  return undefined;
+}
+
+/** SIL plant: 2048-line encoder × 4× quadrature. Position_um in the CSV is this encoder. */
+const SIL_ENCODER_STEPS_PER_MM = 4 * 2048;
 
 // Rigorously assert a recorded position series actually traces the COMMANDED sine
 // waveform — not merely that it oscillates. Checks: peak-to-peak ≈ 2·amplitude;
@@ -976,6 +1011,62 @@ const scenarios = [
     },
   },
   {
+    id: 'VT-linear',
+    name: 'CSV time_us is virtual time: at t0+100_000 µs encoder matches V·Δt',
+    async run() {
+      const { browser, page, errors } = await newSilPage();
+      try {
+        await connectToSil(page);
+        await chooseDataFolder(page);
+        await page.waitForTimeout(2500);
+        const V = 10; // mm/s
+        // ≥2 s so the 1 Hz testRunning poll cannot miss completion (see G-limit).
+        const DIST_MM = 20;
+        await seedProfiles(page, {
+          sample: { serial: 'VT-Sample', maxForce: 500, maxVelocity: 25, maxDisplacement: 100, sampleWidth: 4, sampleThickness: 1.5 },
+          motion: { name: 'VT-Ramp', moves: [
+            { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: V, distance: DIST_MM, time: 0, circularOffset: 0 } },
+          ] },
+        });
+        await selectSeeded(page);
+        await runAndDownload(page);
+        const s = await readDownloadedCsvSeries(page);
+        assert(s && s.time.length > 30, `enough samples (${s?.time.length})`);
+        const t0 = motionStartTimeUs(s.time, s.pos);
+        assert(t0 != null, 'motion start is visible on the virtual clock');
+        const p0 = interpolateAtUs(s.time, s.pos, t0);
+        assert(p0 != null, 'position at motion start');
+
+        const atRelUs = (dtUs) => {
+          const um = interpolateAtUs(s.time, s.pos, t0 + dtUs);
+          assert(um != null, `series covers t0+${dtUs} µs (span ${s.time[0]}..${s.time[s.time.length - 1]})`);
+          return (um - p0) / 1000;
+        };
+
+        // Firmware sample.time is HAL_time_getUs() = SIL virtual_us.
+        const pos100 = atRelUs(100_000);
+        const expect100 = V * 0.1;
+        assert(
+          Math.abs(pos100 - expect100) < 0.7,
+          `at t0+100_000 µs position ≈ ${expect100}mm (got ${pos100.toFixed(3)}mm)`,
+        );
+        const enc100 = pos100 * SIL_ENCODER_STEPS_PER_MM;
+        const expectEnc = expect100 * SIL_ENCODER_STEPS_PER_MM;
+        assert(
+          Math.abs(enc100 - expectEnc) < 0.7 * SIL_ENCODER_STEPS_PER_MM,
+          `at t0+100_000 µs encoder ≈ ${expectEnc.toFixed(0)} steps (got ${enc100.toFixed(0)})`,
+        );
+
+        const pos400 = atRelUs(400_000);
+        assert(
+          Math.abs(pos400 - V * 0.4) < 1.0,
+          `at t0+400_000 µs position ≈ ${V * 0.4}mm (got ${pos400.toFixed(3)}mm)`,
+        );
+        assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
+      } finally { await browser.close(); }
+    },
+  },
+  {
     id: 'TC14-jog',
     name: 'Manual jog moves the gantry the commanded distance',
     async run() {
@@ -1708,11 +1799,35 @@ async function main() {
     process.exit(2);
   }
 
+  // Ids address scenarios — in SCENARIOS, in smoke-ids.txt, and in every failure
+  // report — so a duplicate silently runs two different scenarios under one
+  // name. That happened: the firmware-flash scenario shared `G1` with the
+  // run-start one, so a smoke list naming `G1` ran both and the report showed
+  // two lines with the same id.
+  const duplicates = scenarios
+    .map((s) => s.id)
+    .filter((id, i, all) => all.indexOf(id) !== i);
+  if (duplicates.length) {
+    console.error(`✗ duplicate scenario ids: ${[...new Set(duplicates)].join(', ')}`);
+    process.exit(2);
+  }
+
   // SCENARIOS="F1+F2,F7" npm run e2e — run a subset (exact ids, comma-separated).
   const only = process.env.SCENARIOS
     ? new Set(process.env.SCENARIOS.split(',').map((s) => s.trim()))
     : null;
   const selected = only ? scenarios.filter((s) => only.has(s.id)) : scenarios;
+
+  // A misspelled or renamed id would otherwise just shrink the run — the suite
+  // still reports "N/N passed" and nothing says the scenario never ran.
+  if (only) {
+    const known = new Set(scenarios.map((s) => s.id));
+    const unknown = [...only].filter((id) => !known.has(id));
+    if (unknown.length) {
+      console.error(`✗ SCENARIOS names ids that do not exist: ${unknown.join(', ')}`);
+      process.exit(2);
+    }
+  }
 
   let pass = 0;
   const failures = [];

@@ -7,10 +7,9 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
-const catalogPath = join(
-  dirname(fileURLToPath(import.meta.url)),
-  '../../e2e/matrix-catalog.json',
-);
+const e2eDir = join(dirname(fileURLToPath(import.meta.url)), '../../e2e');
+const catalogPath = join(e2eDir, 'matrix-catalog.json');
+const smokeIdsPath = join(e2eDir, 'smoke-ids.txt');
 
 type Catalog = {
   M8_jog: Array<{ id: string; mm: number; speed: number; settleMs: number; epsMm: number; roundTrip?: boolean }>;
@@ -89,11 +88,29 @@ describe('Sprint C e2e matrix catalog', () => {
       'TM-busy-restart',
       'TM-manual-gate',
       'P1-precision',
+      'VT-linear',
       'BB-back-to-back',
       'B5-reconnect',
+      'FW1',
     ]);
     for (const id of catalog.smoke_ids) {
       expect(known.has(id), `smoke id ${id} not in catalog/legacy set`).toBe(true);
     }
+  });
+
+  // The smoke list lives in two places — smoke-ids.txt (what e2e:smoke actually
+  // runs) and catalog.smoke_ids (what this file checks) — and they were kept in
+  // sync by a comment. They had already drifted: FW1 was in the runnable list
+  // and not the catalog, so the catalog's assertions covered a set nobody ran.
+  it('smoke-ids.txt and catalog.smoke_ids are the same list, in the same order', () => {
+    const fromFile = readFileSync(smokeIdsPath, 'utf8')
+      .split('\n')
+      .map((l) => l.replace(/#.*/, '').trim())
+      .filter(Boolean);
+    expect(fromFile).toEqual(catalog.smoke_ids);
+  });
+
+  it('smoke ids are unique', () => {
+    expect(new Set(catalog.smoke_ids).size).toBe(catalog.smoke_ids.length);
   });
 });

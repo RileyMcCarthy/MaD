@@ -59,3 +59,53 @@ export function parseTestCSV(csv: string): TestDataPoint[] {
   }
   return points;
 }
+
+/**
+ * Linear interpolation of `values` at virtual time `tUs`.
+ *
+ * Firmware sample `time` is `HAL_time_getUs()`, which SIL maps to the
+ * emulator's `virtual_us` counter. Times must be non-decreasing. Out of
+ * range or empty series → `undefined`.
+ */
+export function interpolateAtUs(
+  timesUs: readonly number[],
+  values: readonly number[],
+  tUs: number,
+): number | undefined {
+  const n = timesUs.length;
+  if (n === 0 || n !== values.length) return undefined;
+  if (tUs < timesUs[0] || tUs > timesUs[n - 1]) return undefined;
+  let lo = 0;
+  let hi = n - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (timesUs[mid] < tUs) lo = mid + 1;
+    else hi = mid;
+  }
+  if (timesUs[lo] === tUs) return values[lo];
+  const i0 = lo - 1;
+  if (i0 < 0) return values[lo];
+  const span = timesUs[lo] - timesUs[i0];
+  if (span === 0) return values[i0];
+  const w = (tUs - timesUs[i0]) / span;
+  return values[i0] + w * (values[lo] - values[i0]);
+}
+
+/**
+ * First sample time at which position has moved at least `minDeltaUm`
+ * from the opening sample — the motion-start instant on the virtual clock.
+ */
+export function motionStartTimeUs(
+  timesUs: readonly number[],
+  positionsUm: readonly number[],
+  minDeltaUm = 80,
+): number | undefined {
+  if (timesUs.length < 2 || timesUs.length !== positionsUm.length) {
+    return undefined;
+  }
+  const p0 = positionsUm[0];
+  for (let i = 1; i < timesUs.length; i++) {
+    if (Math.abs(positionsUm[i] - p0) >= minDeltaUm) return timesUs[i];
+  }
+  return undefined;
+}
