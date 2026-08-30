@@ -45,7 +45,7 @@ fn main() {
         println!("\nlast writes to the watched register:");
         let target = std::env::var("P2CORE_REG_VALUE").ok().and_then(|s| u32::from_str_radix(s.trim_start_matches('$'), 16).ok());
         let _ = n;
-        for (pc, v) in m.reg_hits.iter().filter(|(_, v)| target.map_or(true, |t| *v == t)).take(10) {
+        for (pc, v) in m.reg_hits.iter().filter(|(_, v)| target.is_none_or(|t| *v == t)).take(10) {
             println!("  pc=${pc:05X}  <- {v:08X}");
         }
     }

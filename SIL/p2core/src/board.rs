@@ -128,7 +128,7 @@ impl Board {
     /// passed through `reverse_bits`. (32-bit reads then `movbyts #$1b` to
     /// endian-swap, which needs no help from us.)
     fn clock(&mut self, bits: u32) {
-        self.pending += (bits / 8).max(1).min(4096);
+        self.pending += (bits / 8).clamp(1, 4096);
         // Only exchange what the host has already queued; the rest drains as
         // `xmit_mmc` feeds it, or fills with idles when a read is attempted.
         self.drain(false);
