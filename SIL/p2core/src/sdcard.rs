@@ -64,6 +64,8 @@ pub struct SdCard {
     incoming: Vec<u8>,
     /// Count of commands seen, for diagnostics.
     pub commands: Vec<u8>,
+    /// Optional log of `(mosi, miso)` byte exchanges, for bring-up.
+    pub trace: Option<Vec<(u8, u8)>>,
 }
 
 impl SdCard {
@@ -86,6 +88,7 @@ impl SdCard {
             frame: Vec::new(),
             incoming: Vec::new(),
             commands: Vec::new(),
+            trace: None,
         }
     }
 
@@ -95,6 +98,16 @@ impl SdCard {
     /// `$FF` whenever the card has nothing to say, which is also how it signals
     /// "busy" and how the host clocks responses out.
     pub fn xfer(&mut self, mosi: u8) -> u8 {
+        let miso = self.xfer_inner(mosi);
+        if let Some(log) = self.trace.as_mut() {
+            if log.len() < 4096 {
+                log.push((mosi, miso));
+            }
+        }
+        miso
+    }
+
+    fn xfer_inner(&mut self, mosi: u8) -> u8 {
         if !self.selected {
             return 0xFF;
         }
