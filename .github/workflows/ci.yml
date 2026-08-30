@@ -527,8 +527,12 @@ jobs:
         run: pio test -e native_test
 
   # ── Phase 0 deterministic gates ───────────────────────────────────────────
-  # BLOCKING jobs feed ci-gate. Advisory-only jobs (continue-on-error, not in
-  # ci-gate.needs) may still exist for non-gating lints (e.g. clippy backlog).
+  # BLOCKING jobs feed ci-gate. The clippy backlog is cleared, so `sil-rust`
+  # now runs rustfmt and clippy `-D warnings` as gating steps — no
+  # `continue-on-error` remains anywhere in this file. The one advisory job is
+  # `control-e2e-sil`, which is advisory by being absent from `ci-gate.needs`
+  # (it still reports pass/fail honestly) rather than by swallowing its own
+  # failure.
 
   # BLOCKING. Protocol codegen health: regenerate all three targets (C/TS/Rust)
   # twice and assert success + byte-reproducibility. Generated files are
