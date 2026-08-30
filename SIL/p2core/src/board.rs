@@ -48,6 +48,8 @@ pub struct Board {
     /// in turn, so a single value would lose all but the last.
     rx_queue: VecDeque<u32>,
     in_flag: [bool; 64],
+    /// Raw WYPIN values seen on the DI pin, for bring-up.
+    pub di_log: Vec<u32>,
 }
 
 impl Default for Board {
@@ -68,6 +70,7 @@ impl Board {
             pending: 0,
             rx_queue: VecDeque::new(),
             in_flag: [false; 64],
+            di_log: Vec::new(),
         }
     }
 
@@ -153,6 +156,9 @@ impl PinBus for Board {
         match pin {
             PIN_TX => self.console.push(y as u8),
             PIN_DI => {
+                if self.di_log.len() < 64 {
+                    self.di_log.push(y);
+                }
                 // The TX shifter sends LSB-first, which is why `xmit_mmc`
                 // pre-applies `rev` + `movbyts` before WYPIN. Reversing the
                 // whole word here recovers the wire order: a CMD0 frame whose
