@@ -1322,8 +1322,14 @@ impl<P: PinBus> Machine<P> {
                 self.wz(cog, ins, v);
             }
             Rep => {
-                let count = d;
-                let len = s;
+                // REP D,S repeats D instructions S times: D is the block
+                // LENGTH, S the repeat count. Swapping them made the block
+                // one instruction too long, so an FCACHE'd loop ran its
+                // trailing `_ret_` on every iteration -- popping the call
+                // stack each time until it underflowed and returned to the
+                // address after `call #_main`, ending the program.
+                let len = d;
+                let count = s;
                 if count == 0 || len == 0 {
                     self.cogs[cog].rep = None;
                 } else {
