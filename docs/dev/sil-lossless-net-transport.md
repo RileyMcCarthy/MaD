@@ -152,7 +152,19 @@ Each step leaves both backends green.
      a single instant. Scheduling is now a control plane with its own queue,
      drained in full; only drives are capped.
 5. **Delete `StreamRole::Producer`/`Consumer`** and the flag. After this, bytes
-   cannot cross a net without becoming levels.
+   cannot cross a net without becoming levels. *(embsim #39 — ~1500 lines net
+   gone, including the routing pass, the paced queue, `StreamTx`, `on_byte`,
+   `EngineEvent::StreamByte` and `Finding::StreamOverrun`.)*
+   - Both isolator models collapse to plain level repeaters: their UART
+     channels only existed so the engine could derive a route across the
+     barrier.
+   - `Scenario::stream_drop` goes with the route it injected into. **Stated
+     capability loss**: there is no level-era equivalent yet — a contending
+     driver breaks every byte rather than a chosen one. An edge-level fault
+     injector is the honest replacement if the targeted knob is wanted back.
+   - The determinism suite trades its two byte cases for one `serial_levels`
+     golden: 146 records of drives, resolutions, senses and wakes on the
+     8680 ns bit grid, which pins the bit clock itself.
 6. **p2core drives levels directly.** The ISS already decodes mode and bit
    period (`p2core/src/smartpin.rs`), so its async pins emit `Level` drives
    natively rather than handing over bytes — no synthesis needed on this side.
@@ -178,8 +190,11 @@ Each step has cost one unplanned prerequisite, and the pattern is the same
 every time: **the byte path routed around a mechanism, so nobody found out the
 mechanism was wrong.** A microsecond timebase, a level that stops at a
 resistor, a scheduler that can deliver a requested wake late — all fine for
-bytes moving milliseconds apart, all fatal for bits 8.68 µs apart. Budget for
-one more of these in steps 5 and 6.
+bytes moving milliseconds apart, all fatal for bits 8.68 µs apart.
+
+Step 5 broke the streak, and the reason is worth noting: it was a *deletion*.
+Nothing new had to work, so nothing new could be discovered to be broken. Step
+6 puts p2core on the same path, so budget for one more there.
 
 ## Risks
 
