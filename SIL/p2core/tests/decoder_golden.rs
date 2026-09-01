@@ -52,8 +52,12 @@ fn decoder_matches_flexcc_listing() {
     let mut checked = 0usize;
 
     for line in golden.lines() {
-        let Some((addr, want)) = line.split_once(' ') else { continue };
-        let Ok(addr) = u32::from_str_radix(addr, 16) else { continue };
+        let Some((addr, want)) = line.split_once(' ') else {
+            continue;
+        };
+        let Ok(addr) = u32::from_str_radix(addr, 16) else {
+            continue;
+        };
         let a = addr as usize;
         if a + 4 > image.len() {
             continue;
@@ -88,7 +92,10 @@ fn decoder_matches_flexcc_listing() {
     if !mismatch.is_empty() || !undecoded.is_empty() {
         let mut by_kind: BTreeMap<(String, String), (usize, u32)> = BTreeMap::new();
         for (addr, want, got) in &mismatch {
-            by_kind.entry((want.clone(), got.clone())).or_insert((0, *addr)).0 += 1;
+            by_kind
+                .entry((want.clone(), got.clone()))
+                .or_insert((0, *addr))
+                .0 += 1;
         }
         let mut msg = format!(
             "decoder disagrees with flexcc on {} of {checked} instructions ({} undecoded)\n",

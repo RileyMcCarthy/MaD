@@ -6,8 +6,13 @@
 use p2core::{Machine, SmartPins};
 
 fn main() {
-    let path = std::env::args().nth(1).expect("usage: shadow <image> [steps]");
-    let steps: u64 = std::env::args().nth(2).and_then(|s| s.parse().ok()).unwrap_or(60_000_000);
+    let path = std::env::args()
+        .nth(1)
+        .expect("usage: shadow <image> [steps]");
+    let steps: u64 = std::env::args()
+        .nth(2)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(60_000_000);
     let image = std::fs::read(&path).expect("read image");
     let mut m = Machine::new(&image, SmartPins::default());
     m.trace_stack = true;
@@ -51,7 +56,10 @@ fn main() {
     if let Some((i, _, _, _)) = first_bad {
         println!("\ncontext:");
         for (cog, pc, is_push, v) in m.stack_log.iter().skip(i.saturating_sub(12)).take(18) {
-            println!("  cog{cog} ${pc:05X} {} {v:08X}", if *is_push { "PUSH" } else { "POP " });
+            println!(
+                "  cog{cog} ${pc:05X} {} {v:08X}",
+                if *is_push { "PUSH" } else { "POP " }
+            );
         }
     }
 }

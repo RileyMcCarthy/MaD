@@ -6,7 +6,9 @@ use p2core::decode;
 
 fn main() {
     let mut a = std::env::args().skip(1);
-    let path = a.next().expect("usage: disasm <image> <addr|cog:NNN> [count]");
+    let path = a
+        .next()
+        .expect("usage: disasm <image> <addr|cog:NNN> [count]");
     let spec = a.next().expect("addr");
     let count: usize = a.next().and_then(|s| s.parse().ok()).unwrap_or(16);
     let img = std::fs::read(&path).expect("read image");
@@ -16,7 +18,10 @@ fn main() {
             let n = u32::from_str_radix(c.trim_start_matches('$'), 16).expect("cog addr");
             (0x404 + n * 4, Some(n))
         }
-        None => (u32::from_str_radix(spec.trim_start_matches('$'), 16).expect("hub addr"), None),
+        None => (
+            u32::from_str_radix(spec.trim_start_matches('$'), 16).expect("hub addr"),
+            None,
+        ),
     };
     for i in 0..count {
         let o = addr as usize;
@@ -28,9 +33,15 @@ fn main() {
         match decode(w) {
             Some(d) => println!(
                 "{label} {w:08X}  {:9} cond={:2} D=${:03X}{} S=${:03X}{} {}{}{:?}",
-                d.op.mnemonic(), d.cond, d.d, if d.l { "(L)" } else { "   " },
-                d.s, if d.i { "#" } else { " " },
-                if d.c { "wc " } else { "" }, if d.z { "wz " } else { "" }, d.form
+                d.op.mnemonic(),
+                d.cond,
+                d.d,
+                if d.l { "(L)" } else { "   " },
+                d.s,
+                if d.i { "#" } else { " " },
+                if d.c { "wc " } else { "" },
+                if d.z { "wz " } else { "" },
+                d.form
             ),
             None => println!("{label} {w:08X}  <undecoded>"),
         }

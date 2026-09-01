@@ -2,8 +2,13 @@
 use p2core::{Board, Machine, SdCard};
 
 fn main() {
-    let path = std::env::args().nth(1).expect("usage: protocol <image> [budget]");
-    let budget: u64 = std::env::args().nth(2).and_then(|s| s.parse().ok()).unwrap_or(400_000_000);
+    let path = std::env::args()
+        .nth(1)
+        .expect("usage: protocol <image> [budget]");
+    let budget: u64 = std::env::args()
+        .nth(2)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(400_000_000);
     let image = std::fs::read(&path).expect("read image");
     let mut m = Machine::new(&image, Board::new(SdCard::blank(32 * 1024 * 1024)));
     // Let the machine finish booting, then ask for the firmware version:
@@ -19,7 +24,10 @@ fn main() {
         Err(t) => println!("TRAP: {t}"),
     }
     println!("virtual time: {} us", m.now_us());
-    println!("cogs running: {}", m.cogs.iter().filter(|c| c.running).count());
+    println!(
+        "cogs running: {}",
+        m.cogs.iter().filter(|c| c.running).count()
+    );
 
     let clk = m.clkfreq();
     println!("\nsmart pins as the firmware programmed them (clkfreq {clk}):");
@@ -44,11 +52,21 @@ fn main() {
         let n = tx.len().min(48);
         println!(
             "  first {n}: {}",
-            tx[..n].iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(" ")
+            tx[..n]
+                .iter()
+                .map(|b| format!("{b:02X}"))
+                .collect::<Vec<_>>()
+                .join(" ")
         );
         let txt: String = tx[..n]
             .iter()
-            .map(|&b| if (0x20..0x7F).contains(&b) { b as char } else { '.' })
+            .map(|&b| {
+                if (0x20..0x7F).contains(&b) {
+                    b as char
+                } else {
+                    '.'
+                }
+            })
             .collect();
         println!("  as text: \"{txt}\"");
     }

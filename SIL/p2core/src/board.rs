@@ -121,7 +121,8 @@ impl Board {
         for _ in 0..self.edge_mult {
             self.edges.push_back((now, false)); // start bit
             for i in 0..8u64 {
-                self.edges.push_back((now + (i + 1) * period, byte >> i & 1 != 0));
+                self.edges
+                    .push_back((now + (i + 1) * period, byte >> i & 1 != 0));
             }
             self.edges.push_back((now + 9 * period, true)); // stop bit
         }
@@ -256,11 +257,19 @@ impl PinBus for Board {
         self.byte_counts[pin as usize & 63] += 1;
         match pin {
             PIN_TX => {
-                let b = if self.edge_level { self.carry_as_edges(pin, y as u8) } else { y as u8 };
+                let b = if self.edge_level {
+                    self.carry_as_edges(pin, y as u8)
+                } else {
+                    y as u8
+                };
                 self.console.push(b);
             }
             PIN_PROTO_TX => {
-                let b = if self.edge_level { self.carry_as_edges(pin, y as u8) } else { y as u8 };
+                let b = if self.edge_level {
+                    self.carry_as_edges(pin, y as u8)
+                } else {
+                    y as u8
+                };
                 self.proto_tx.push(b);
             }
             PIN_DI => {
@@ -303,8 +312,16 @@ impl PinBus for Board {
             }
             // `HAL_serial_recieveByte` takes the byte from bits 31:24, which is
             // where an async-RX smart pin leaves it.
-            PIN_RX => self.uart_rx.pop_front().map(|b| (b as u32) << 24).unwrap_or(0),
-            PIN_PROTO_RX => self.proto_rx.pop_front().map(|b| (b as u32) << 24).unwrap_or(0),
+            PIN_RX => self
+                .uart_rx
+                .pop_front()
+                .map(|b| (b as u32) << 24)
+                .unwrap_or(0),
+            PIN_PROTO_RX => self
+                .proto_rx
+                .pop_front()
+                .map(|b| (b as u32) << 24)
+                .unwrap_or(0),
             _ => 0xFF,
         };
         // C reports BUSY; nothing here ever is.

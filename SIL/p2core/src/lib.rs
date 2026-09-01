@@ -28,12 +28,12 @@ pub mod sdcard;
 pub mod smartpin;
 pub mod trap;
 
-pub use generated::decode::{decode, Decoded, Form, Op};
 pub use board::Board;
+pub use generated::decode::{decode, Decoded, Form, Op};
 pub use model::SmartPins;
+pub use pins::{NullPins, PinBus};
 pub use sdcard::SdCard;
 pub use smartpin::{baud_matches, PinMode, SmartPin};
-pub use pins::{NullPins, PinBus};
 pub use trap::Trap;
 
 /// Hub RAM size. The C stack starts near `$4B410` and grows *upward*, so the
@@ -496,10 +496,7 @@ impl<P: PinBus> Machine<P> {
         let pc = self.cogs[cog].pc;
         if pc as usize >= HUB_BYTES {
             self.cogs[cog].running = false;
-            return Err(Trap::PcOutOfRange {
-                cog: cog as u8,
-                pc,
-            });
+            return Err(Trap::PcOutOfRange { cog: cog as u8, pc });
         }
         let word = self.fetch(cog, pc);
         let np = Self::next_pc(pc);
@@ -614,14 +611,7 @@ impl<P: PinBus> Machine<P> {
     ///
     /// `elements` is the number of items a `SETQ` block transfer will move: a
     /// PTR expression advances by the *whole* block, not one item.
-    fn ptr_operand(
-        &mut self,
-        cog: usize,
-        ins: &Decoded,
-        s: u32,
-        scale: i32,
-        elements: u32,
-    ) -> u32 {
+    fn ptr_operand(&mut self, cog: usize, ins: &Decoded, s: u32, scale: i32, elements: u32) -> u32 {
         if !ins.i || s & 0x100 == 0 {
             return s;
         }
@@ -888,7 +878,11 @@ impl<P: PinBus> Machine<P> {
                     Sumz => self.cogs[cog].z,
                     _ => !self.cogs[cog].z,
                 };
-                let r = if take { d.wrapping_sub(s) } else { d.wrapping_add(s) };
+                let r = if take {
+                    d.wrapping_sub(s)
+                } else {
+                    d.wrapping_add(s)
+                };
                 self.set_reg(cog, ins.d, r);
                 self.wz(cog, ins, r);
             }
@@ -899,7 +893,11 @@ impl<P: PinBus> Machine<P> {
                     Negz => self.cogs[cog].z,
                     _ => !self.cogs[cog].z,
                 };
-                let r = if take { (s as i32).wrapping_neg() as u32 } else { s };
+                let r = if take {
+                    (s as i32).wrapping_neg() as u32
+                } else {
+                    s
+                };
                 self.set_reg(cog, ins.d, r);
                 self.wz(cog, ins, r);
                 if ins.c {
@@ -946,13 +944,21 @@ impl<P: PinBus> Machine<P> {
                 self.set_reg(cog, ins.d, r);
                 self.wz(cog, ins, r);
                 if ins.c {
-                    let probe = if n == 0 { d as i32 } else { (d as i32) >> (n - 1) };
+                    let probe = if n == 0 {
+                        d as i32
+                    } else {
+                        (d as i32) >> (n - 1)
+                    };
                     self.cogs[cog].c = probe & 1 != 0;
                 }
             }
             Zerox => {
                 let bit = s & 31;
-                let r = if bit == 31 { d } else { d & ((1u32 << (bit + 1)) - 1) };
+                let r = if bit == 31 {
+                    d
+                } else {
+                    d & ((1u32 << (bit + 1)) - 1)
+                };
                 self.set_reg(cog, ins.d, r);
                 self.wz(cog, ins, r);
             }
@@ -978,7 +984,11 @@ impl<P: PinBus> Machine<P> {
             }
             Bmask => {
                 let bit = s & 31;
-                let r = if bit == 31 { u32::MAX } else { (1u32 << (bit + 1)) - 1 };
+                let r = if bit == 31 {
+                    u32::MAX
+                } else {
+                    (1u32 << (bit + 1)) - 1
+                };
                 self.set_reg(cog, ins.d, r);
                 self.wz(cog, ins, r);
             }
@@ -1358,7 +1368,11 @@ impl<P: PinBus> Machine<P> {
                     self.cogs[cog].qy = 0;
                 } else {
                     let q = dividend / s as u64;
-                    self.cogs[cog].qx = if q > u32::MAX as u64 { u32::MAX } else { q as u32 };
+                    self.cogs[cog].qx = if q > u32::MAX as u64 {
+                        u32::MAX
+                    } else {
+                        q as u32
+                    };
                     self.cogs[cog].qy = (dividend % s as u64) as u32;
                 }
             }
@@ -1400,23 +1414,21 @@ impl<P: PinBus> Machine<P> {
             }
 
             // ---- locks
-            Locknew => {
-                match self.lock_alloc.iter().position(|a| !a) {
-                    Some(i) => {
-                        self.lock_alloc[i] = true;
-                        self.set_reg(cog, ins.d, i as u32);
-                        if ins.c {
-                            self.cogs[cog].c = false;
-                        }
-                    }
-                    None => {
-                        self.set_reg(cog, ins.d, 0);
-                        if ins.c {
-                            self.cogs[cog].c = true;
-                        }
+            Locknew => match self.lock_alloc.iter().position(|a| !a) {
+                Some(i) => {
+                    self.lock_alloc[i] = true;
+                    self.set_reg(cog, ins.d, i as u32);
+                    if ins.c {
+                        self.cogs[cog].c = false;
                     }
                 }
-            }
+                None => {
+                    self.set_reg(cog, ins.d, 0);
+                    if ins.c {
+                        self.cogs[cog].c = true;
+                    }
+                }
+            },
             Lockret => {
                 let id = (d & 15) as usize;
                 self.lock_alloc[id] = false;

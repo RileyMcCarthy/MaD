@@ -27,20 +27,36 @@ impl PinBus for Log {
     fn dir_out_changed(&mut self, reg: u16, v: u32) {
         if reg == 0x1FB || reg == 0x1FD {
             // DIRB/OUTB cover pins 32..63, where the SD and serial pins live.
-            self.ops.push(format!("{}B    = {v:08X}", if reg == 0x1FB { "dir" } else { "out" }));
+            self.ops.push(format!(
+                "{}B    = {v:08X}",
+                if reg == 0x1FB { "dir" } else { "out" }
+            ));
         }
     }
 }
 
 fn main() {
-    let path = std::env::args().nth(1).expect("usage: pinlog <image> [skip] [count]");
-    let skip: usize = std::env::args().nth(2).and_then(|s| s.parse().ok()).unwrap_or(0);
-    let count: usize = std::env::args().nth(3).and_then(|s| s.parse().ok()).unwrap_or(40);
+    let path = std::env::args()
+        .nth(1)
+        .expect("usage: pinlog <image> [skip] [count]");
+    let skip: usize = std::env::args()
+        .nth(2)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    let count: usize = std::env::args()
+        .nth(3)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(40);
     let image = std::fs::read(&path).expect("read image");
     let mut m = Machine::new(&image, Log::default());
     m.strict_hub = false;
     let _ = m.step(30_000_000);
-    println!("{} pin ops; showing {}..{}", m.pins.ops.len(), skip, skip + count);
+    println!(
+        "{} pin ops; showing {}..{}",
+        m.pins.ops.len(),
+        skip,
+        skip + count
+    );
     for op in m.pins.ops.iter().skip(skip).take(count) {
         println!("  {op}");
     }

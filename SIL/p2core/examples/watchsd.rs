@@ -5,9 +5,14 @@
 use p2core::{Board, Machine, SdCard};
 
 fn main() {
-    let path = std::env::args().nth(1).expect("usage: watchsd <image> <addr>");
+    let path = std::env::args()
+        .nth(1)
+        .expect("usage: watchsd <image> <addr>");
     let addr = u32::from_str_radix(
-        std::env::args().nth(2).unwrap_or_else(|| "4B914".into()).trim_start_matches('$'),
+        std::env::args()
+            .nth(2)
+            .unwrap_or_else(|| "4B914".into())
+            .trim_start_matches('$'),
         16,
     )
     .unwrap();
@@ -17,7 +22,11 @@ fn main() {
     m.watch_range(addr, 1);
     let _ = m.step(60_000_000);
 
-    println!("{} writes to ${addr:05X} ({} byte-wide):", m.watch_hits.len(), m.watch_hits.iter().filter(|h| h.width == 1).count());
+    println!(
+        "{} writes to ${addr:05X} ({} byte-wide):",
+        m.watch_hits.len(),
+        m.watch_hits.iter().filter(|h| h.width == 1).count()
+    );
     for h in m.watch_hits.iter().filter(|h| h.width == 1).take(24) {
         println!(
             "  pc=${:05X}  value={:08X} (byte {:02X})  width={}",
