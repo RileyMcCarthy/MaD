@@ -165,9 +165,27 @@ Each step leaves both backends green.
    - The determinism suite trades its two byte cases for one `serial_levels`
      golden: 146 records of drives, resolutions, senses and wakes on the
      8680 ns bit grid, which pins the bit clock itself.
-6. **p2core drives levels directly.** The ISS already decodes mode and bit
-   period (`p2core/src/smartpin.rs`), so its async pins emit `Level` drives
-   natively rather than handing over bytes — no synthesis needed on this side.
+6. **p2core drives levels directly.** *(`SIL/p2iss` — a new crate.)* The ISS
+   already decodes mode and bit period (`p2core/src/smartpin.rs`), so its async
+   pins emit `Level` drives natively rather than handing over bytes — no
+   synthesis needed on this side. `protocol_on_levels.rs` asserts the firmware's
+   version reply arrives as decoded frames *and* that the wire clocks at the
+   rate the firmware programmed (2,000,000 baud = 80 clocks at 160 MHz), not
+   one the test supplied.
+   - **The slice is not the cadence.** At a 1 µs guest slice, boot needed 1.5 M
+     wakes; at 100 µs it boots in half a second of wall time. It can be coarse
+     because it only governs how long an *idle* machine waits to notice it has
+     something to say — once a link is clocking, its own bit wakes land on the
+     same handler and step the guest every bit period. Guest and virtual time
+     end up agreeing to the microsecond.
+   - **The receive side must be polled, not just sensed.** A frame whose tail
+     carries no transition closes only on its deadline, and every burst ends
+     that way. Sensing alone dropped the last byte of every request — 2 of 3
+     bytes arriving, which looked like a framing bug and was not.
+   - **The peer's hand-rolled bit clock reintroduced the late-wake bug**
+     `SerialLevelBridge` already fixes. It uses the bridge now; the codec is
+     checked against something it did not produce in embsim's own
+     `serial_levels.rs`, which is the right place for that independence.
 
 Steps 1–5 are embsim changes and land upstream first, then get pinned here.
 Step 6 is a MaD change and rides the pin bump.
@@ -193,8 +211,17 @@ resistor, a scheduler that can deliver a requested wake late — all fine for
 bytes moving milliseconds apart, all fatal for bits 8.68 µs apart.
 
 Step 5 broke the streak, and the reason is worth noting: it was a *deletion*.
-Nothing new had to work, so nothing new could be discovered to be broken. Step
-6 puts p2core on the same path, so budget for one more there.
+Nothing new had to work, so nothing new could be discovered to be broken.
+
+Step 6 resumed it, but the surprises changed character: no engine mechanism was
+wrong this time. All three were *adapter* mistakes — a slice chosen for the
+wrong reason, a poll that was never written, a peer that re-implemented a clock
+someone had already got right. That is what running out of bypasses looks like:
+the remaining bugs are in the code you just wrote, not in the ground beneath it.
+
+**All six steps are done.** What remains is the follow-on scope,
+[`sil-unified-drive.md`](sil-unified-drive.md) — the pulse channel is the last
+thing that still routes around the resolver.
 
 ## Risks
 
