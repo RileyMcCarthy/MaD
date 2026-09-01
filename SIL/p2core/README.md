@@ -47,6 +47,11 @@ approximate and *bit-reproducible* rather than randomly wrong.
 **Dependency-free.** Hub bytes in, [`PinBus`] calls out, `step_until` for time —
 no embsim types. Promoting this into `embsim-p2-iss` should be a `git mv`.
 
+The seam that mounts it on a board lives next door in [`../p2iss`](../p2iss):
+that crate implements `PinBus`, frames the guest's smart-pin traffic onto real
+nets as levels, and slaves guest time to the engine's. It is what keeps this
+crate free of embsim.
+
 **The decoder is generated**, not hand-written. `tools/gen_decoder.py` turns the
 vendored PNut-TS table (`vendor/parseUtils.ts`, MIT, © Iron Sheep Productions
 and Parallax) into `src/generated/decode.rs`: 359 encodings collapse to six
