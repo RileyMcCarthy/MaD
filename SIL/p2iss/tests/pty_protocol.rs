@@ -45,10 +45,13 @@ fn lock_clock() -> MutexGuard<'static, ()> {
     })
 }
 
+fn image_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../Firmware/MaDCore/.pio/build/propeller2_debug/program")
+}
+
 fn firmware_image() -> Option<Vec<u8>> {
-    let path: PathBuf = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../Firmware/MaDCore/.pio/build/propeller2_debug/program");
-    std::fs::read(path).ok()
+    std::fs::read(image_path()).ok()
 }
 
 /// Open the PTY the way host software does, non-blocking so a quiet link does
@@ -77,7 +80,11 @@ fn open_host_end(path: &str) -> std::fs::File {
 #[rstest]
 fn a_host_on_the_pty_gets_an_answer_from_the_iss() {
     let Some(image) = firmware_image() else {
-        eprintln!("skipping: build the firmware with `pio run -e propeller2_debug` first");
+        eprintln!(
+            "\n*** SKIPPED: {} needs the P2 image at\n***   {}\n*** Build it with `make p2image` (or `cd ../Firmware/MaDCore && pio run -e propeller2_debug`).\n*** This test asserted NOTHING.\n",
+            module_path!(),
+            image_path().display()
+        );
         return;
     };
     let _g = lock_clock();

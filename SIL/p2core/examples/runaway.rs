@@ -26,8 +26,15 @@ fn main() {
         println!("{why}; transfer trail:");
         for (c, p, w) in trail.iter().rev().take(20).rev() {
             let t = decode(*w)
-                .map(|d| format!("{} D=${:03X} S=${:03X}{}", d.op.mnemonic(), d.d, d.s,
-                                 if d.i { " #" } else { "" }))
+                .map(|d| {
+                    format!(
+                        "{} D=${:03X} S=${:03X}{}",
+                        d.op.mnemonic(),
+                        d.d,
+                        d.s,
+                        if d.i { " #" } else { "" }
+                    )
+                })
                 .unwrap_or_else(|| "<undecoded>".into());
             println!("   cog{c} ${p:05X} {w:08X}  {t}");
         }
@@ -55,8 +62,15 @@ fn main() {
             println!("PC left valid code at ${pc:05X} (cog {cog}); trail:");
             for (c, p, w) in trail.iter().rev().take(16).rev() {
                 let t = decode(*w)
-                    .map(|d| format!("{} D=${:03X} S=${:03X}{}", d.op.mnemonic(), d.d, d.s,
-                                     if d.i { " #" } else { "" }))
+                    .map(|d| {
+                        format!(
+                            "{} D=${:03X} S=${:03X}{}",
+                            d.op.mnemonic(),
+                            d.d,
+                            d.s,
+                            if d.i { " #" } else { "" }
+                        )
+                    })
                     .unwrap_or_else(|| "<undecoded>".into());
                 println!("   cog{c} ${p:05X} {w:08X}  {t}");
             }
@@ -74,8 +88,15 @@ fn main() {
             println!("TRAP: {err}\ntrail (calls/returns then last instructions):");
             for (c, p, w) in trail.iter().rev().take(14).rev() {
                 let t = decode(*w)
-                    .map(|d| format!("{} D=${:03X} S=${:03X}{}", d.op.mnemonic(), d.d, d.s,
-                                     if d.i { " #" } else { "" }))
+                    .map(|d| {
+                        format!(
+                            "{} D=${:03X} S=${:03X}{}",
+                            d.op.mnemonic(),
+                            d.d,
+                            d.s,
+                            if d.i { " #" } else { "" }
+                        )
+                    })
                     .unwrap_or_else(|| "<undecoded>".into());
                 println!("   cog{c} ${p:05X} {w:08X}  {t}");
             }

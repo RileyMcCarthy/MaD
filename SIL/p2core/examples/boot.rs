@@ -16,9 +16,9 @@ use std::time::Instant;
 use p2core::{Machine, NullPins};
 
 fn main() {
-    let path = std::env::args().nth(1).unwrap_or_else(|| {
-        "../Firmware/MaDCore/.pio/build/propeller2_debug/program".to_string()
-    });
+    let path = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "../Firmware/MaDCore/.pio/build/propeller2_debug/program".to_string());
     let budget: u64 = std::env::args()
         .nth(2)
         .and_then(|s| s.parse().ok())
@@ -62,8 +62,15 @@ fn main() {
         for i in 0..8u32 {
             let w = m.cogs[0].regs[i as usize];
             let d = p2core::decode(w)
-                .map(|d| format!("{:9} D=${:03X} S=${:03X}{}", d.op.mnemonic(), d.d, d.s,
-                                 if d.i { " #" } else { "" }))
+                .map(|d| {
+                    format!(
+                        "{:9} D=${:03X} S=${:03X}{}",
+                        d.op.mnemonic(),
+                        d.d,
+                        d.s,
+                        if d.i { " #" } else { "" }
+                    )
+                })
                 .unwrap_or_else(|| "<undecoded>".into());
             println!("   cog${i:03X} {w:08X}  {d}");
         }

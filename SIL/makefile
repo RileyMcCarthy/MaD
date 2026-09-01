@@ -11,15 +11,29 @@
 FIRMWARE_DIR = ../Firmware/MaDCore
 PIO_ENV = native_emulator
 FIRMWARE_LIB = $(FIRMWARE_DIR)/.pio/build/$(PIO_ENV)/libfirmware.a
+# The real P2 image the instruction-set simulator executes. A different
+# artifact from the static library above: that one is host-compiled firmware
+# with a substituted HAL, this one is what you actually flash.
+P2_ENV = propeller2_debug
+P2_IMAGE = $(FIRMWARE_DIR)/.pio/build/$(P2_ENV)/program
 PROTOEMB_GENERATOR = ../Protocol/ProtoEmb/core/generate.py
 PROTOEMB_SCHEMA = ../Protocol/MaDProtocol.yaml
 PROTOEMB_TEMPLATES = ../Protocol/ProtoEmb/core/templates
 
-.PHONY: firmware protocol emulator test playground e2e-emulator clean
+.PHONY: firmware p2image protocol emulator test playground e2e-emulator clean
 
 # Build firmware as static library
 firmware:
 	cd $(FIRMWARE_DIR) && pio run -e $(PIO_ENV)
+
+# Build the P2 image the ISS runs (`p2core`, `p2iss`).
+#
+# A `make test` dependency on purpose: those crates' tests skip when the image
+# is absent, and PlatformIO drops stale environment directories whenever the
+# sources change — so without this a source edit silently turns the whole ISS
+# suite into no-ops that still report green.
+p2image:
+	cd $(FIRMWARE_DIR) && pio run -e $(P2_ENV)
 
 # Generate Rust protocol types used by SIL (MaD-specific; kept out of the
 # generic embsim crates — lands in the `protocol` crate at ../Protocol).
@@ -31,7 +45,7 @@ emulator: firmware protocol
 	cargo build
 
 # Run tests
-test: emulator
+test: emulator p2image
 	cargo test
 
 # Start the emulator for INTERACTIVE use — a human, or a bot driving the real UI,

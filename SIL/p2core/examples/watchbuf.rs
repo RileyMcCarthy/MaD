@@ -17,7 +17,10 @@ fn main() {
     for h in m.watch_hits.iter().take(24) {
         println!(
             "  pc=${:05X} (after) wrote {:0width$X} to ${:05X}  [w{}]",
-            h.pc, h.value, h.effective, h.width,
+            h.pc,
+            h.value,
+            h.effective,
+            h.width,
             width = (h.width * 2) as usize
         );
     }

@@ -48,7 +48,12 @@ impl fmt::Display for Trap {
             Trap::UndecodedWord { cog, pc, word } => {
                 write!(f, "cog {cog}: no decoding for word {word:08X} at ${pc:05X}")
             }
-            Trap::Unimplemented { cog, pc, word, mnemonic } => write!(
+            Trap::Unimplemented {
+                cog,
+                pc,
+                word,
+                mnemonic,
+            } => write!(
                 f,
                 "cog {cog}: {mnemonic} not implemented (word {word:08X} at ${pc:05X})"
             ),

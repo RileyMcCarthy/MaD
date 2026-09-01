@@ -7,14 +7,25 @@ use std::time::Instant;
 use p2core::{Board, Machine, SdCard};
 
 fn main() {
-    let path = std::env::args().nth(1).expect("usage: cost <image> [budget]");
-    let budget: u64 = std::env::args().nth(2).and_then(|s| s.parse().ok()).unwrap_or(400_000_000);
+    let path = std::env::args()
+        .nth(1)
+        .expect("usage: cost <image> [budget]");
+    let budget: u64 = std::env::args()
+        .nth(2)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(400_000_000);
     let image = std::fs::read(&path).expect("read image");
     let edge = std::env::var_os("P2CORE_EDGE_LEVEL").is_some();
     let mut m = Machine::new(&image, Board::new(SdCard::blank(32 * 1024 * 1024)));
     m.pins.edge_level = edge;
-    m.pins.edge_mult = std::env::var("P2CORE_EDGE_MULT").ok().and_then(|s| s.parse().ok()).unwrap_or(1);
-    println!("transport: {}", if edge { "bit edges" } else { "whole bytes" });
+    m.pins.edge_mult = std::env::var("P2CORE_EDGE_MULT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1);
+    println!(
+        "transport: {}",
+        if edge { "bit edges" } else { "whole bytes" }
+    );
 
     let t0 = Instant::now();
     let _ = m.step(budget);

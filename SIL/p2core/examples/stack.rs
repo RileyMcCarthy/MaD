@@ -34,7 +34,11 @@ fn main() {
         println!(
             "  cog{cog} at ${pc:05X}  {}  {v:08X}{}",
             if *is_push { "PUSH" } else { "POP " },
-            if *v == target { "   <-- the bad address" } else { "" }
+            if *v == target {
+                "   <-- the bad address"
+            } else {
+                ""
+            }
         );
     }
 }
