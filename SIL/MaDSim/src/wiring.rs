@@ -196,17 +196,53 @@ impl Machine for MadMachine {
 
         // ── Register trace signals ──
 
-        embsim_trace::register(Signal::with_unit("stepper.position_mm", groups::MODEL, "mm"));
+        embsim_trace::register(Signal::with_unit(
+            "stepper.position_mm",
+            groups::MODEL,
+            "mm",
+        ));
         embsim_trace::register(Signal::with_unit("stepper.enabled", groups::MODEL, "bool"));
-        embsim_trace::register(Signal::with_unit("stepper.direction_cw", groups::MODEL, "bool"));
-        embsim_trace::register(Signal::with_unit("sample.extension_mm", groups::MODEL, "mm"));
+        embsim_trace::register(Signal::with_unit(
+            "stepper.direction_cw",
+            groups::MODEL,
+            "bool",
+        ));
+        embsim_trace::register(Signal::with_unit(
+            "sample.extension_mm",
+            groups::MODEL,
+            "mm",
+        ));
         embsim_trace::register(Signal::with_unit("sample.force_n", groups::MODEL, "N"));
-        embsim_trace::register(Signal::with_unit("strain_gauge.voltage_mv", groups::MODEL, "mV"));
-        embsim_trace::register(Signal::with_unit("encoder.position", groups::PERIPHERAL, "steps"));
-        embsim_trace::register(Signal::with_unit("limit_switch.upper", groups::MODEL, "bool"));
-        embsim_trace::register(Signal::with_unit("limit_switch.lower", groups::MODEL, "bool"));
-        embsim_trace::register(Signal::with_unit("gpio.servo_ena", groups::PERIPHERAL, "bool"));
-        embsim_trace::register(Signal::with_unit("gpio.servo_dir", groups::PERIPHERAL, "bool"));
+        embsim_trace::register(Signal::with_unit(
+            "strain_gauge.voltage_mv",
+            groups::MODEL,
+            "mV",
+        ));
+        embsim_trace::register(Signal::with_unit(
+            "encoder.position",
+            groups::PERIPHERAL,
+            "steps",
+        ));
+        embsim_trace::register(Signal::with_unit(
+            "limit_switch.upper",
+            groups::MODEL,
+            "bool",
+        ));
+        embsim_trace::register(Signal::with_unit(
+            "limit_switch.lower",
+            groups::MODEL,
+            "bool",
+        ));
+        embsim_trace::register(Signal::with_unit(
+            "gpio.servo_ena",
+            groups::PERIPHERAL,
+            "bool",
+        ));
+        embsim_trace::register(Signal::with_unit(
+            "gpio.servo_dir",
+            groups::PERIPHERAL,
+            "bool",
+        ));
 
         // ── Wire callbacks ──
 
@@ -254,9 +290,10 @@ impl Machine for MadMachine {
             // Re-anchor dt on every (re)start so the first tick after a stop or a
             // direction-reversal restart doesn't see a huge elapsed interval.
             let plant = Arc::clone(&plant);
-            mcu.pulse_out.on_start(servo_pulse_out, move |_pulses, _freq| {
-                plant.lock().unwrap().last_us = embsim_core::virtual_clock::virtual_us();
-            });
+            mcu.pulse_out
+                .on_start(servo_pulse_out, move |_pulses, _freq| {
+                    plant.lock().unwrap().last_us = embsim_core::virtual_clock::virtual_us();
+                });
         }
         {
             let gantry = gantry_model.clone();
@@ -265,7 +302,11 @@ impl Machine for MadMachine {
             mcu.pulse_out.on_progress(servo_pulse_out, move |_emitted| {
                 let now = embsim_core::virtual_clock::virtual_us();
                 // Firmware convention: SERVO_DIR active=false → CW → increasing count.
-                let dir = if inst.gpio.get_active(pin_servo_dir) { -1.0 } else { 1.0 };
+                let dir = if inst.gpio.get_active(pin_servo_dir) {
+                    -1.0
+                } else {
+                    1.0
+                };
                 let cmd_vel = dir * inst.pulse_out.frequency(servo_pulse_out) as f64;
 
                 let pos_steps;

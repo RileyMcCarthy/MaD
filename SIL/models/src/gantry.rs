@@ -106,15 +106,20 @@ impl Gantry {
 
         self.on_extension_change.emit(extension_mm);
 
-        if let Some(upper) = self.upper.update(position_mm < self.config.upper_threshold_mm) {
+        if let Some(upper) = self
+            .upper
+            .update(position_mm < self.config.upper_threshold_mm)
+        {
             self.on_upper_change.emit(upper);
         }
-        if let Some(lower) = self.lower.update(position_mm > self.config.lower_threshold_mm) {
+        if let Some(lower) = self
+            .lower
+            .update(position_mm > self.config.lower_threshold_mm)
+        {
             self.on_lower_change.emit(lower);
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {

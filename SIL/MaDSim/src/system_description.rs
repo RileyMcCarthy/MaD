@@ -288,8 +288,9 @@ pub fn describe(
     // The GPIO table is decoded from the same archive so the facade truth is
     // available, but GPIO channels stay hand-wired in wiring.rs this slice
     // (declaring their pins comes with the GPIO-bridging slice).
-    let gpio_table = hal_tables::read_gpio_table(&values, fw, hal_tables::DEFAULT_GPIO_TABLE_SYMBOL)
-        .expect("HAL GPIO config table decodes from the firmware archive");
+    let gpio_table =
+        hal_tables::read_gpio_table(&values, fw, hal_tables::DEFAULT_GPIO_TABLE_SYMBOL)
+            .expect("HAL GPIO config table decodes from the firmware archive");
 
     let fg_channel = fw.enum_channel("HAL_SERIAL_CHANNEL_FORCE_GAUGE");
     let fg = *serial_table
