@@ -107,10 +107,46 @@ So `Periodic` carries the segment. A drive is allowed to be a rich value — the
 point of unification is that it goes through the resolver, not that it is
 scalar.
 
-`PulseSegment` itself is **not** deleted by this work: it lives in
-`embsim_peripherals::pulse_out` and board only re-exports it
-(`component.rs:29`). The peripheral needs it for its firmware-facing API
-regardless of what the wire does.
+### `PulseSegment` is not a second interface
+
+It survives this work — it lives in `embsim_peripherals::pulse_out` and board
+only re-exports it (`component.rs:29`) — but it is **not** a parallel channel.
+It is `Periodic` minus the two facts a board-agnostic peripheral cannot know:
+
+```
+Periodic { hi: TheveninDrive, lo: TheveninDrive, segment: PulseSegment }
+           └────────── board facts ──────────┘   └── the peripheral's half ──┘
+```
+
+Rail voltage and output impedance are *board* questions (which rail? what series
+resistance? is there a level shifter?). The crate graph is
+`core ← peripherals ← board`, so `TheveninDrive` lives in `board::net` and
+`peripherals` structurally cannot name it. Holding only the half it knows is the
+right split; the alternative — moving `Drive` down into `core` — would make the
+peripheral invent `hi`/`lo` placeholders for the board to overwrite.
+
+The boundary where it survives is **not a net**. It is
+`HAL_pulseOut_start(channel, pulses, frequency)`
+(`Firmware/MaDCore/src/HAL/Include/HAL_pulseOut.h:49`), a real C header the
+firmware compiles against — the shape of the P2's smart-pin registers, not an
+embsim design choice. The serial peripheral is the same story and already
+settled it: the peripheral deals in bytes over an FD, the board frames them.
+
+**And in ISS mode that boundary disappears.** `p2core` executes the real
+`WRPIN`/`WXPIN`/`WYPIN` against a smart pin, so the drive is the primary
+artifact and nothing translates. So the second row below exists only for the
+native backend — the one with no silicon to model.
+
+| boundary | interface | after this scope |
+|---|---|---|
+| node ↔ node | `Drive` | **one**, catch-all |
+| firmware ↔ emulated hardware (native) | the HAL: bytes, frequencies, counts | the firmware's own C API |
+| firmware ↔ hardware (ISS) | — | none; `p2core` drives pins directly |
+
+**Rename it.** `PulseSegment` reads as a separate concept and is not one.
+`PeriodicSchedule`, documented as "the half of a [`Drive::Periodic`] a
+peripheral owns", makes the story legible instead of requiring the explanation
+above. Lands with step 5, alongside the nanosecond change to the same type.
 
 ## What resolution has to learn
 
@@ -279,8 +315,11 @@ Each step leaves the workspace green.
    Decide the isolator's forward-verbatim rule explicitly. Re-measure
    `RELAY_EVENT_CEILING` and raise it with the number.
 4. **Delete the pulse channel** — the table above. `StreamRole` goes.
-5. **`PulseSegment` to nanoseconds.** The last µs island after embsim #36.
-   Deliberately last: mechanical, and would otherwise churn every step above.
+5. **`PulseSegment` to nanoseconds, and rename it `PeriodicSchedule`.** The
+   last µs island after embsim #36, and the last place the split between "a
+   drive" and "the schedule inside one" is illegible. Both touch the same type,
+   so they land together. Deliberately last: mechanical, and would otherwise
+   churn every step above.
 
 ## Risks
 
