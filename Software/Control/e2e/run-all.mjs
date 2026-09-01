@@ -160,6 +160,31 @@ const SIL_ENCODER_STEPS_PER_MM = 4 * 2048;
 // (R² high — a ramp/triangle/wrong-frequency would fail); the fitted amplitude
 // matches; and the number of midline crossings matches the commanded cycles.
 // This is the end-to-end proof that the firmware-native waveform = f(t).
+// Narrow a recorded run down to the COMMANDED WAVEFORM.
+//
+// A waveform run records more than its wave: a leading ramp that travels the
+// move's `distance` to the wave's base, and — after the closing settle parks the
+// gantry — a flat tail lasting until teardown. Neither is the commanded shape,
+// so any statistic taken over the whole record measures the approach as much as
+// the wave. That is not a small effect: for WAVE-tri the ramp is 5 mm against an
+// 8 mm peak-to-peak, and a properly homed gantry therefore reported 14.49 mm of
+// "waveform" — failing the assertion precisely BECAUSE homing had worked, and
+// passing when drift happened to leave it already near the base.
+//
+// The wave's extent is known rather than guessed: it lasts cycles/frequency
+// seconds and ends where the gantry stops moving (whole cycles end on the
+// centre, so the closing settle is negligible). Take that window.
+function waveformWindow(posMm, tS, { cycles, frequencyHz }) {
+  const parkedEps = 0.005; // mm between samples; wave motion is >=10x this
+  let lastMoving = posMm.length - 1;
+  while (lastMoving > 0 && Math.abs(posMm[lastMoving] - posMm[lastMoving - 1]) < parkedEps) lastMoving--;
+  const waveDurS = cycles / frequencyHz;
+  const startT = tS[lastMoving] - waveDurS;
+  let first = 0;
+  while (first < lastMoving && tS[first] < startT) first++;
+  return { p: posMm.slice(first, lastMoving + 1), t: tS.slice(first, lastMoving + 1), waveDurS };
+}
+
 function assertSineMatch(series, { amplitudeMm, frequencyHz, cycles }, label) {
   assert(series && series.pos.length > 40, `${label}: enough samples (${series?.pos.length})`);
   const posMm = series.pos.map((p) => p / 1000);
@@ -177,21 +202,12 @@ function assertSineMatch(series, { amplitudeMm, frequencyHz, cycles }, label) {
   // The wave's extent is known, not guessed: it runs for cycles/frequency
   // seconds and ends where the gantry stops moving (whole cycles end on the
   // centre, so the settle move is negligible). Take that window.
-  const parkedEps = 0.005; // mm between samples; wave motion is ≥10x this, parked is <deadband
-  let lastMoving = posMm.length - 1;
-  while (lastMoving > 0 && Math.abs(posMm[lastMoving] - posMm[lastMoving - 1]) < parkedEps) lastMoving--;
-  const waveDurS = cycles / frequencyHz;
-  const startT = tS[lastMoving] - waveDurS;
-  let first = 0;
-  while (first < lastMoving && tS[first] < startT) first++;
-
-  const p = posMm.slice(first, lastMoving + 1);
-  const t = tS.slice(first, lastMoving + 1);
+  const { p, t, waveDurS } = waveformWindow(posMm, tS, { cycles, frequencyHz });
   // A run where the gantry never moved collapses this window — it must still be
   // long enough to hold the commanded cycles, or the fit below is meaningless.
   assert(
     p.length > 40 && t[t.length - 1] - t[0] > waveDurS * 0.8,
-    `${label}: recorded a full ${waveDurS.toFixed(2)}s of waveform motion (got ${(t[t.length - 1] - t[0]).toFixed(2)}s over ${p.length} samples)`,
+    `${label}: recorded a full ${waveDurS.toFixed(2)}s of waveform motion (got ${(t[t.length - 1] - t[0]).toFixed(2)}s over ${p.length} samples; whole record ${posMm.length} samples spanning ${(tS[tS.length - 1] - tS[0]).toFixed(2)}s)`,
   );
   const n = p.length;
   const t0 = t[0];
@@ -201,7 +217,8 @@ function assertSineMatch(series, { amplitudeMm, frequencyHz, cycles }, label) {
   const excursion = maxP - minP;
   assert(
     Math.abs(excursion - 2 * amplitudeMm) < Math.max(2, amplitudeMm * 0.4),
-    `${label}: peak-to-peak ≈ 2A=${(2 * amplitudeMm).toFixed(1)}mm (got ${excursion.toFixed(2)})`,
+    `${label}: peak-to-peak ≈ 2A=${(2 * amplitudeMm).toFixed(1)}mm (got ${excursion.toFixed(2)}; ` +
+      `window ${p.length} of ${posMm.length} samples, whole record spans ${(tS[tS.length - 1] - tS[0]).toFixed(2)}s)`,
   );
 
   // Least-squares fit  x(t) ≈ a·cos(ω t') + b·sin(ω t')  about the mean, ω=2πf.
@@ -246,15 +263,25 @@ function assertSineMatch(series, { amplitudeMm, frequencyHz, cycles }, label) {
 }
 
 /** Peak-to-peak + cycle count for triangle (and other non-sine) waveforms. */
-function assertWaveformExcursion(series, { amplitudeMm, cycles }, label) {
+function assertWaveformExcursion(series, { amplitudeMm, cycles, frequencyHz }, label) {
   assert(series && series.pos.length > 40, `${label}: enough samples (${series?.pos.length})`);
-  const posMm = series.pos.map((p) => p / 1000);
+  const allPosMm = series.pos.map((v) => v / 1000);
+  const tS = series.time.map((v) => v / 1e6);
+  // Same window as the sine case: measure the wave, not the approach to it.
+  const { p: posMm, t, waveDurS } = waveformWindow(allPosMm, tS, { cycles, frequencyHz });
+  assert(
+    posMm.length > 40 && t[t.length - 1] - t[0] > waveDurS * 0.8,
+    `${label}: recorded a full ${waveDurS.toFixed(2)}s of waveform motion ` +
+      `(got ${(t[t.length - 1] - t[0]).toFixed(2)}s over ${posMm.length} samples)`,
+  );
   const maxP = Math.max(...posMm);
   const minP = Math.min(...posMm);
   const excursion = maxP - minP;
   assert(
     Math.abs(excursion - 2 * amplitudeMm) < Math.max(2.5, amplitudeMm * 0.45),
-    `${label}: peak-to-peak ≈ 2A=${(2 * amplitudeMm).toFixed(1)}mm (got ${excursion.toFixed(2)})`,
+    `${label}: peak-to-peak ≈ 2A=${(2 * amplitudeMm).toFixed(1)}mm (got ${excursion.toFixed(2)}; ` +
+      `min ${minP.toFixed(2)} max ${maxP.toFixed(2)} first ${posMm[0].toFixed(2)} ` +
+      `last ${posMm[posMm.length - 1].toFixed(2)} n=${posMm.length})`,
   );
   const mean = posMm.reduce((s, v) => s + v, 0) / posMm.length;
   let crossings = 0;
@@ -1082,7 +1109,7 @@ const scenarios = [
         if (wf.shape === 'sine') {
           assertSineMatch(s, { amplitudeMm: wf.amplitude, frequencyHz: wf.frequency, cycles: wf.cycles }, wf.id);
         } else {
-          assertWaveformExcursion(s, { amplitudeMm: wf.amplitude, cycles: wf.cycles }, wf.id);
+          assertWaveformExcursion(s, { amplitudeMm: wf.amplitude, cycles: wf.cycles, frequencyHz: wf.frequency }, wf.id);
         }
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
       } finally { await browser.close(); }
