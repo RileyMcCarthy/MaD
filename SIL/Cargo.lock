@@ -650,6 +650,8 @@ dependencies = [
  "embsim-trace",
  "embsim-ui",
  "models",
+ "p2core",
+ "p2iss",
  "serde_json",
  "tokio",
  "tracing",
