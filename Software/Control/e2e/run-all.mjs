@@ -276,7 +276,7 @@ function assertWaveformExcursion(series, { amplitudeMm, cycles }, label) {
 
 // Run the currently-selected profiles and wait for the run to auto-complete + download.
 // Returns the run row locator. Assumes profiles are seeded + selected by the caller.
-async function runAndDownload(page, { completeTimeout = 60000 } = {}) {
+async function runAndDownload(page, { completeTimeout = RUN_WAIT_MS } = {}) {
   const runner = page.locator('.panel', { hasText: 'New Test' });
   await page.getByTestId('run-test').click();
   await runner.getByText(/started/i).waitFor({ timeout: DEVICE_WAIT_MS });
@@ -1451,14 +1451,16 @@ const scenarios = [
         const startPos = await num('Machine Position');
         await page.locator('label.field', { hasText: 'Jog (mm)' }).locator('input').fill('4');
         await page.locator('label.field', { hasText: 'Speed (mm/s)' }).locator('input').fill('20');
+        const upSetWas = await num('Machine Setpoint');
         await page.getByRole('button', { name: '+ Jog up' }).click();
-        await page.waitForTimeout(2000); // 4mm @ 20mm/s + settle
+        await settleMotion(page, { setpointWas: upSetWas });
         const upPos = await num('Machine Position');
         const upSet = await num('Machine Setpoint');
         assert(Math.abs(upPos - startPos - 4) < 0.2, `jog +4mm landed (Δ ${(upPos - startPos).toFixed(3)}mm)`);
         assert(Math.abs(upPos - upSet) < 0.12, `position settles onto setpoint (|Δ| ${Math.abs(upPos - upSet).toFixed(3)}mm)`);
+        const downSetWas = await num('Machine Setpoint');
         await page.getByRole('button', { name: '− Jog down' }).click();
-        await page.waitForTimeout(2000);
+        await settleMotion(page, { setpointWas: downSetWas });
         const endPos = await num('Machine Position');
         const endSet = await num('Machine Setpoint');
         assert(Math.abs(endPos - endSet) < 0.12, `position settles after down-jog (|Δ| ${Math.abs(endPos - endSet).toFixed(3)}mm)`);
