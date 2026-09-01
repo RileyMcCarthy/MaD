@@ -99,6 +99,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         args.speed, args.pty_path, args.sd_path
     );
 
+    if let Some(image) = args.iss.clone() {
+        return run_iss(&args, &image);
+    }
+
     // Parse firmware DWARF debug info once; reused for the system description,
     // the UI setup and the emulator.
     let firmware_lib = PathBuf::from(&args.firmware_lib);
