@@ -47,6 +47,9 @@
 //! the slice tightens exactly when something is on the wire. In the protocol
 //! round trip the guest's clock and the engine's agree to the microsecond.
 
+pub mod host_pty;
+pub use host_pty::HostPty;
+
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
