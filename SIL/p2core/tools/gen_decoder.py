@@ -156,13 +156,17 @@ def emit_table(name: str, size: int, table: dict) -> str:
     live = len([c for c in cells if c != "N"])
     return (
         f"/// {name} lookup, {live} live of {size}.\n"
+        "#[rustfmt::skip]\n"
         f"static {name}: [Option<(Op, Form)>; {size}] = [{','.join(cells)}];\n\n"
     )
 
 
 def emit_op_table(name: str, size: int, table: dict) -> str:
     cells = ["None" if table.get(i) is None else f"Some(Op::{camel(table[i])})" for i in range(size)]
-    return f"static {name}: [Option<Op>; {size}] = [{','.join(cells)}];\n\n"
+    return (
+        "#[rustfmt::skip]\n"
+        f"static {name}: [Option<Op>; {size}] = [{','.join(cells)}];\n\n"
+    )
 
 
 def main() -> int:

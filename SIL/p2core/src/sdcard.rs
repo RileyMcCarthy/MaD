@@ -122,9 +122,7 @@ impl SdCard {
                 self.phase = Phase::Command;
                 0xFF
             }
-            Phase::ReceivingBlock { addr, got } => {
-                self.receive_block_byte(mosi, addr, got)
-            }
+            Phase::ReceivingBlock { addr, got } => self.receive_block_byte(mosi, addr, got),
             Phase::Command => {
                 self.collect_command(mosi);
                 // Anything queued by the command becomes readable next byte.
@@ -155,8 +153,7 @@ impl SdCard {
         if self.incoming.len() >= BLOCK_LEN + 2 {
             let off = addr as usize * BLOCK_LEN;
             if off + BLOCK_LEN <= self.blocks.len() {
-                self.blocks[off..off + BLOCK_LEN]
-                    .copy_from_slice(&self.incoming[..BLOCK_LEN]);
+                self.blocks[off..off + BLOCK_LEN].copy_from_slice(&self.incoming[..BLOCK_LEN]);
             }
             self.incoming.clear();
             self.phase = Phase::Command;

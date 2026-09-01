@@ -15,20 +15,26 @@ fn main() {
         if target != 0 && m.cogs[0].pc == target {
             seen += 1;
             if seen > 3 {
-                println!("at _getus entry #{seen}: clocks={} (hi={} lo={})",
+                println!(
+                    "at _getus entry #{seen}: clocks={} (hi={} lo={})",
                     m.cogs[0].clocks,
                     (m.cogs[0].clocks >> 32) as u32,
-                    m.cogs[0].clocks as u32);
+                    m.cogs[0].clocks as u32
+                );
                 // step through the two getct reads
                 for i in 0..2 {
                     m.step(1).unwrap();
-                    println!("  after getct #{i}: result2=${:08X} _var01=${:08X}",
-                        m.cogs[0].regs[0x14F], m.cogs[0].regs[0x166]);
+                    println!(
+                        "  after getct #{i}: result2=${:08X} _var01=${:08X}",
+                        m.cogs[0].regs[0x14F], m.cogs[0].regs[0x166]
+                    );
                 }
                 return;
             }
         }
-        if m.step(1).is_err() { break; }
+        if m.step(1).is_err() {
+            break;
+        }
     }
     println!("never reached target");
 }

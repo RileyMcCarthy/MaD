@@ -2,8 +2,13 @@
 use p2core::{Machine, SmartPins};
 
 fn main() {
-    let path = std::env::args().nth(1).expect("usage: run <image> [budget]");
-    let budget: u64 = std::env::args().nth(2).and_then(|s| s.parse().ok()).unwrap_or(200_000_000);
+    let path = std::env::args()
+        .nth(1)
+        .expect("usage: run <image> [budget]");
+    let budget: u64 = std::env::args()
+        .nth(2)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(200_000_000);
     let image = std::fs::read(&path).expect("read image");
     let mut m = Machine::new(&image, SmartPins::default());
     if std::env::var_os("P2CORE_LAX_HUB").is_some() {

@@ -50,10 +50,13 @@ fn lock_clock() -> MutexGuard<'static, ()> {
     })
 }
 
+fn image_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../Firmware/MaDCore/.pio/build/propeller2_debug/program")
+}
+
 fn firmware_image() -> Option<Vec<u8>> {
-    let path: PathBuf = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../Firmware/MaDCore/.pio/build/propeller2_debug/program");
-    std::fs::read(path).ok()
+    std::fs::read(image_path()).ok()
 }
 
 fn wait_for(mut pred: impl FnMut() -> bool, timeout: Duration) -> bool {
@@ -195,7 +198,11 @@ impl Component for HostUart {
 #[rstest]
 fn the_iss_answers_the_protocol_over_a_wire() {
     let Some(image) = firmware_image() else {
-        eprintln!("skipping: build the firmware with `pio run -e propeller2_debug` first");
+        eprintln!(
+            "\n*** SKIPPED: {} needs the P2 image at\n***   {}\n*** Build it with `make p2image` (or `cd ../Firmware/MaDCore && pio run -e propeller2_debug`).\n*** This test asserted NOTHING.\n",
+            module_path!(),
+            image_path().display()
+        );
         return;
     };
     let _g = lock_clock();

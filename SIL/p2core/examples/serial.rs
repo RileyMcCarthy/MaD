@@ -17,7 +17,10 @@ struct SerialCapture {
 
 impl Default for SerialCapture {
     fn default() -> Self {
-        Self { mode: [0; 64], out: Vec::new() }
+        Self {
+            mode: [0; 64],
+            out: Vec::new(),
+        }
     }
 }
 
@@ -67,9 +70,22 @@ fn main() {
     for (pin, bytes) in by_pin {
         let text: String = bytes
             .iter()
-            .map(|&b| if (0x20..0x7F).contains(&b) || b == b'\n' { b as char } else { '.' })
+            .map(|&b| {
+                if (0x20..0x7F).contains(&b) || b == b'\n' {
+                    b as char
+                } else {
+                    '.'
+                }
+            })
             .collect();
         println!("--- pin {pin} ({} bytes):\n{text}", bytes.len());
-        println!("    hex: {}", bytes.iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(" "));
+        println!(
+            "    hex: {}",
+            bytes
+                .iter()
+                .map(|b| format!("{b:02X}"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
     }
 }

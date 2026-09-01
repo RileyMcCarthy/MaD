@@ -52,14 +52,17 @@ fn main() {
         let (dv, sv) = match decode(word) {
             Some(d) => (
                 m.cogs[cog].regs[(d.d & 0x1FF) as usize],
-                if d.i { d.s as u32 } else { m.cogs[cog].regs[(d.s & 0x1FF) as usize] },
+                if d.i {
+                    d.s as u32
+                } else {
+                    m.cogs[cog].regs[(d.s & 0x1FF) as usize]
+                },
             ),
             None => (0, 0),
         };
         println!(
             "cog{cog} ${pc:05X} {word:08X}  {text}   D={dv:08X} S={sv:08X} [c={} z={}]",
-            m.cogs[cog].c as u8,
-            m.cogs[cog].z as u8,
+            m.cogs[cog].c as u8, m.cogs[cog].z as u8,
         );
         if let Err(t) = m.step(1) {
             println!("TRAP: {t}");

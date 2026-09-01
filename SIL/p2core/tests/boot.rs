@@ -11,9 +11,19 @@ use std::path::PathBuf;
 
 use p2core::{baud_matches, Board, Machine, PinMode, SdCard, SmartPins};
 
-/// `_main` in the hubexec image, cross-checked against `program.p2asm`
-/// (`_main` opens with `mov arg01,#0` / `call #__getiolock_1727`).
-const MAIN_HUB_ADDR: u32 = 0x10274;
+/// Where hub execution begins: below this the unified PC is cog RAM ($000-$1FF)
+/// or LUT ($200-$3FF).
+const HUB_BASE: u32 = 0x400;
+
+/// Hub address of `_main` in the current `propeller2_debug` image.
+///
+/// A build artifact's address, so it moves whenever the firmware does. When it
+/// does, this test reports the first hub address cog 0 actually reached —
+/// which *is* `_main`, because the FlexC boot trampoline runs entirely in cog
+/// space and `call #_main` is its first jump into hub. Confirm with
+/// `cargo run --release --example disasm -- <image> <addr> 4`: `_main` opens
+/// `mov arg01,#0` / `call` / `mov arg01,result1` / `call`.
+const MAIN_HUB_ADDR: u32 = 0x1041C;
 
 /// Remove ANSI SGR escape sequences from captured console text.
 ///
@@ -52,8 +62,16 @@ fn boot_trampoline_reaches_main() {
     let mut m = Machine::new(&img, SmartPins::default());
 
     let mut reached = false;
+    // The first hub address executed: the trampoline is cog-resident, so this
+    // is the target of its `call #_main` and the answer when the constant has
+    // gone stale.
+    let mut first_hub: Option<u32> = None;
     for _ in 0..2_000 {
-        if m.cogs[0].pc == MAIN_HUB_ADDR {
+        let pc = m.cogs[0].pc;
+        if pc >= HUB_BASE && first_hub.is_none() {
+            first_hub = Some(pc);
+        }
+        if pc == MAIN_HUB_ADDR {
             reached = true;
             break;
         }
@@ -63,8 +81,12 @@ fn boot_trampoline_reaches_main() {
     }
     assert!(
         reached,
-        "cog 0 did not reach _main (${MAIN_HUB_ADDR:05X}); stopped at ${:05X}",
-        m.cogs[0].pc
+        "cog 0 did not reach _main (${MAIN_HUB_ADDR:05X}); stopped at ${:05X}.\n\
+         First hub address executed was {}: if the firmware moved, that is the \
+         new _main — verify with `cargo run --release --example disasm -- \
+         <image> <addr> 4` and update MAIN_HUB_ADDR.",
+        m.cogs[0].pc,
+        first_hub.map_or("none".to_string(), |a| format!("${a:05X}"))
     );
 }
 
@@ -208,7 +230,6 @@ fn soft_float_produces_sane_timestamps() {
     }
 }
 
-
 /// FlexC tags pointers and relies on the hub masking them.
 ///
 /// `$015E8` builds `$0004B8A0 | $02D00000` with an `augs`/`or` pair and hands
@@ -221,7 +242,10 @@ fn tagged_pointers_are_masked_to_the_hub_map() {
         return;
     };
     let mut m = Machine::new(&img, SmartPins::default());
-    assert!(!m.strict_hub, "strict_hub must default off: it false-positives on tagged pointers");
+    assert!(
+        !m.strict_hub,
+        "strict_hub must default off: it false-positives on tagged pointers"
+    );
     m.step(200_000_000).expect("tagged pointers must not trap");
 }
 
@@ -251,7 +275,6 @@ fn cog_manager_starts_the_other_cogs() {
         "expected the cog manager to announce startup"
     );
 }
-
 
 /// SIL readiness: the firmware boots to a fully-populated machine.
 ///
@@ -305,7 +328,8 @@ fn firmware_answers_a_protocol_request() {
     const SYNC: u8 = 0x55;
     const FRAME_READ: u8 = 0x00;
     const MSG_READ_FIRMWARE_VERSION: u8 = 3;
-    m.pins.send_protocol(&[SYNC, FRAME_READ, MSG_READ_FIRMWARE_VERSION]);
+    m.pins
+        .send_protocol(&[SYNC, FRAME_READ, MSG_READ_FIRMWARE_VERSION]);
     m.step(200_000_000).expect("no trap while answering");
 
     let reply = &m.pins.proto_tx[before..];
@@ -333,7 +357,6 @@ fn firmware_answers_a_protocol_request() {
         "expected a version string in the payload, got {frame:02X?}"
     );
 }
-
 
 /// The firmware's smart-pin configuration is decoded, not ignored — and the
 /// derived baud rates validate `clkfreq` end to end.

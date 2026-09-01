@@ -48,7 +48,10 @@ fn main() {
 
     println!("\nprojected cost of running everything per-edge");
     println!("(baseline {BASELINE_S:.1}s wall for {SIM_S:.0}s simulated)\n");
-    println!("{:<30}{:>14}{:>12}{:>12}", "scenario", "edges", "added", "total");
+    println!(
+        "{:<30}{:>14}{:>12}{:>12}",
+        "scenario", "edges", "added", "total"
+    );
     for (name, steps_per_s) in [
         ("idle (serial only)", 0.0),
         ("slow move, 10k steps/s", 10e3),
