@@ -70,6 +70,17 @@ struct Args {
     /// Trace viewer HTTP port (0 to disable)
     #[arg(long, default_value_t = 0)]
     trace_port: u16,
+
+    /// Run the **instruction-set simulator** against a real P2 image instead
+    /// of the host-compiled firmware.
+    ///
+    /// The native backend substitutes the HAL and runs clang-compiled code, so
+    /// it cannot see flexcc codegen bugs, 32-bit pointer assumptions or
+    /// smart-pin misconfiguration. This runs the artifact you actually flash,
+    /// with its serial pins on real nets at the rate the firmware programs
+    /// them. Slower, and this slice bridges the protocol link only.
+    #[arg(long, value_name = "IMAGE")]
+    iss: Option<PathBuf>,
 }
 
 // The firmware's mad_begin() is linked from libfirmware.a
@@ -153,6 +164,80 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("Exiting.");
     Ok(())
+}
+
+/// Run the P2 instruction-set simulator instead of the native firmware.
+///
+/// A different world from the native path, and deliberately so: there is no
+/// `FirmwareInfo`, no peripheral instance and no `Emulator`, because there is
+/// no host-compiled firmware to substitute a HAL for. The image runs on
+/// `p2core`, its protocol pins are on nets, and the host PTY is a component
+/// like any other.
+///
+/// This slice bridges the **protocol link only**. GPIO, the encoder and the
+/// step train still need lifting onto pins before the ISS can drive the whole
+/// machine, so a host can read and write the protocol here but cannot move a
+/// carriage.
+fn run_iss(args: &Args, image_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    use embsim_board::{Harness, System};
+    use p2iss::{HostPty, P2Iss, SerialLink};
+
+    /// The MaD protocol link, as the firmware programs it.
+    const PROTO: SerialLink = SerialLink {
+        tx_pin: 55,
+        rx_pin: 53,
+        nominal_baud: 2_000_000,
+    };
+
+    let image = std::fs::read(image_path)?;
+    info!(
+        "ISS: {} ({} bytes) — protocol on P{}/P{}",
+        image_path.display(),
+        image.len(),
+        PROTO.tx_pin,
+        PROTO.rx_pin
+    );
+
+    embsim_core::virtual_clock::init(args.speed, 160_000_000);
+
+    let iss = P2Iss::new(
+        &image,
+        p2core::SdCard::blank(32 * 1024 * 1024),
+        std::slice::from_ref(&PROTO),
+    );
+    let handle = iss.handle();
+    let host = HostPty::open(&args.pty_path, PROTO.nominal_baud)?;
+    info!("Host can connect to: {}", host.symlink_path());
+
+    let _system = System::new()
+        .component("P2", Box::new(iss))
+        .component("HOST", Box::new(host))
+        .harness(
+            Harness::new()
+                .connect_str("P2.P55", "HOST.RX")?
+                .connect_str("HOST.TX", "P2.P53")?,
+        )
+        .start()?;
+
+    info!("ISS running; main thread parked.");
+    // Report once the firmware has configured its link, so an operator can see
+    // the rate came from the image rather than from this file.
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        if let Some(baud) = handle.derived_baud(PROTO.tx_pin) {
+            info!(
+                "ISS: {} cogs, clkfreq {}, link at {} baud (derived), {:?} bytes",
+                handle.running_cogs(),
+                handle.clkfreq(),
+                baud,
+                handle.byte_counts()
+            );
+            return;
+        }
+    });
+    loop {
+        std::thread::park();
+    }
 }
 
 /// Register the trace viewer + machine visualizer web UI and start the server.
