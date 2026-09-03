@@ -87,10 +87,13 @@ jobs:
       - name: Install Chromium for Playwright
         run: npx playwright install --with-deps chromium
 
-      - name: Start playground (emulator PTY)
+      # Unpaced virtual time — same reasoning as the PR job in ci.yml: an e2e run
+      # has no need of real-time pacing, and pacing makes the result depend on
+      # how fast the runner is.
+      - name: Start the e2e emulator (unpaced virtual time)
         working-directory: SIL
         run: |
-          nohup make playground > /tmp/mad-playground.log 2>&1 &
+          nohup make e2e-emulator > /tmp/mad-playground.log 2>&1 &
           echo $! > /tmp/mad-playground.pid
           for i in $(seq 1 90); do
             if [ -e /tmp/tty.rpi ]; then echo "PTY ready after ${i}s"; break; fi

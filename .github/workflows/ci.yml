@@ -327,10 +327,14 @@ jobs:
       # the runner; this brings in the shared libraries it needs.
       - name: Install Chromium for Playwright
         run: npx playwright install --with-deps chromium
-      - name: Start playground (emulator PTY)
+      # Unpaced virtual time, NOT the real-time playground. The suite does not
+      # need real-time speed, and under --speed 1.0 the emulator must sustain a
+      # real-time factor of 1.0 — which a shared 4-vCPU runner cannot, so the
+      # suite ends up measuring the runner instead of the code.
+      - name: Start the e2e emulator (unpaced virtual time)
         working-directory: SIL
         run: |
-          nohup make playground > /tmp/mad-playground.log 2>&1 &
+          nohup make e2e-emulator > /tmp/mad-playground.log 2>&1 &
           for i in $(seq 1 90); do
             if [ -e /tmp/tty.rpi ]; then echo "PTY ready after ${i}s"; break; fi
             sleep 2
