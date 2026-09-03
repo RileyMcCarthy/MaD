@@ -5,7 +5,7 @@
  * WS bridge) and an OPFS data folder — see fixtures.mjs and docs/TEST_PLAN.md.
  *
  * Preconditions (each in its own terminal):
- *   cd SIL && make playground          # emulator on /tmp/tty.rpi
+ *   cd SIL && make e2e-emulator          # emulator on /tmp/tty.rpi (unpaced virtual time)
  *   npm run sil:bridge                 # ws://localhost:9999
  *   npm run dev                        # app on http://localhost:5174
  * Then: npm run e2e
@@ -116,6 +116,13 @@ async function readDownloadedCsvSeries(page) {
       const t = Number(c[ti]), p = Number(c[pi]);
       if (Number.isFinite(t) && Number.isFinite(p)) { time.push(t); pos.push(p); }
     }
+    // A header-only CSV is a failed recording, and it must LOOK like one.
+    // Returning {time: [], pos: []} here let every truthiness guard pass and
+    // pushed the failure into whichever assertion happened to trip first on
+    // empty arrays — or, worse, into none: Math.max(...[]) is -Infinity, and
+    // G-limit's "stayed under the limit" check is satisfied by -Infinity, so
+    // it reported PASS on CI while the device was returning zero bytes.
+    if (pos.length === 0) return null;
     return { time, pos };
   });
 }
@@ -430,6 +437,59 @@ async function ensureTestIdle(page, { graceMs = 75_000, timeoutMs = 150_000 } = 
   await idle.waitFor({ timeout: Math.max(20_000, deadline - Date.now()) });
 }
 
+// Bring the Live screen to a KNOWN, idle, motion-enabled machine before any
+// manual control is touched.
+//
+// Every step waits on device truth, and the order is the point:
+//
+//   1. State is KNOWN. The Motion badge renders '—' until the first state
+//      frame arrives — unknown is no longer rendered as "disabled"/"idle" —
+//      so this step cannot be satisfied by the app's ignorance. It used to
+//      be: ensureTestIdle synchronised on the placeholder "Test: idle" of a
+//      null state, D2 then jogged a machine that was still executing a 40 mm
+//      move a predecessor left behind, and a 4 mm jog "landed" 37.231 mm away.
+//   2. No test is running (ensureTestIdle stops one if a predecessor leaked
+//      it, and throws if the machine will not go idle).
+//   3. Motion is enabled.
+//   4. The gantry is AT REST — a test going idle does not by itself mean the
+//      axis has finished moving. Rest means still, not "on setpoint": a parked
+//      machine can legitimately hold position away from a stale setpoint.
+// Wait until the axis is simply NOT MOVING. Deliberately not |pos - setpoint|:
+// at rest after boot or homing the machine can legitimately sit away from the
+// last commanded setpoint (observed parked at 8.1 mm against a stale setpoint),
+// and demanding arrival where no move was commanded turned a precondition into
+// a 90 s timeout, nine scenarios over. Arrival-on-setpoint is settleMotion's
+// job, and only meaningful directly after a commanded move.
+async function awaitRest(page, { stillMm = 0.02, stableTicks = 4, pollMs = 250, timeoutMs = DEVICE_WAIT_MS } = {}) {
+  const pos = async () =>
+    parseFloat(await page.locator('.readout', { hasText: 'Machine Position' }).locator('.value').first().innerText());
+  const deadline = Date.now() + timeoutMs;
+  let last = NaN;
+  let stable = 0;
+  while (Date.now() < deadline) {
+    const p = await pos();
+    if (Number.isFinite(p) && Number.isFinite(last) && Math.abs(p - last) <= stillMm) {
+      if (++stable >= stableTicks) return p;
+    } else {
+      stable = 0;
+    }
+    last = p;
+    await page.waitForTimeout(pollMs);
+  }
+  throw new Error(`the axis never came to rest within ${timeoutMs}ms (last position ${last})`);
+}
+
+async function prepareManualControl(page) {
+  await page.goto(`${APP_URL}#/live`);
+  await page.getByRole('button', { name: /Home/ }).waitFor({ timeout: DEVICE_WAIT_MS });
+  await page.getByText(/Motion: (enabled|disabled)/).waitFor({ timeout: DEVICE_WAIT_MS });
+  await ensureTestIdle(page);
+  const enable = page.getByRole('button', { name: 'Enable motion' });
+  if (await enable.count()) await enable.click();
+  await page.getByText('Motion: enabled').waitFor({ timeout: DEVICE_WAIT_MS });
+  await awaitRest(page);
+}
+
 // Return the gantry to absolute machine zero and re-zero the gauge length.
 // The emulator is long-lived and shared by every scenario (and every suite
 // run): without this, machine position — and therefore real sample tension —
@@ -437,12 +497,7 @@ async function ensureTestIdle(page, { graceMs = 75_000, timeoutMs = 150_000 } = 
 // gantry's boot position with 15 mm of physical slack above it
 // (embsim gantry.rs baseline), so machine 0 is the only safe starting point.
 async function zeroLength(page) {
-  await page.goto(`${APP_URL}#/live`);
-  await page.getByRole('button', { name: /Home/ }).waitFor({ timeout: DEVICE_WAIT_MS });
-  await ensureTestIdle(page);
-  const enable = page.getByRole('button', { name: 'Enable motion' });
-  if (await enable.count()) await enable.click();
-  await page.getByText('Motion: enabled').waitFor({ timeout: DEVICE_WAIT_MS });
+  await prepareManualControl(page);
   const pos = async () =>
     parseFloat(await page.locator('.readout', { hasText: 'Machine Position' }).locator('.value').first().innerText());
   let p = NaN;
@@ -488,6 +543,7 @@ async function readDownloadedCsvStats(page) {
     const lines = text.trim().split('\n');
     const pi = lines[0].split(',').indexOf('position_um');
     const pos = lines.slice(1).map((l) => Number(l.split(',')[pi])).filter(Number.isFinite);
+    if (pos.length === 0) return null; // header-only CSV = failed recording — see readDownloadedCsvSeries
     return {
       header: lines[0], rows: pos.length,
       maxUm: Math.max(...pos), minUm: Math.min(...pos), firstUm: pos[0], lastUm: pos[pos.length - 1],
@@ -847,6 +903,11 @@ const scenarios = [
         await page.goto(`${APP_URL}#/live`);
         // Confirm the Live controls are present (i.e. connected).
         await page.getByRole('button', { name: /Home/ }).waitFor({ timeout: DEVICE_WAIT_MS });
+        // Wait for the state to be KNOWN before reading the toggle: while it is
+        // unknown the button says 'Motion …' and is disabled, so counting for
+        // 'Enable motion' too early would skip the click and this scenario
+        // would then wait forever for a transition nobody requested.
+        await page.getByText(/Motion: (enabled|disabled)/).waitFor({ timeout: DEVICE_WAIT_MS });
         const enableBtn = page.getByRole('button', { name: 'Enable motion' });
         if (await enableBtn.count()) await enableBtn.click();
         // State poll should report motion enabled (badge text flips).
@@ -986,7 +1047,7 @@ const scenarios = [
         await row.getByRole('button', { name: /Download data/i }).click();
         await row.locator('.badge.downloaded').waitFor({ timeout: RUN_WAIT_MS });
         const stats = await readDownloadedCsvStats(page);
-        assert(stats, 'a downloaded CSV exists');
+        assert(stats, 'the downloaded CSV contains data — empty means the device recorded nothing, or the download returned zero bytes');
         assert(stats.header === 'time_us,force_mN,position_um,setpoint_um', `CSV header: ${stats.header}`);
         assert(stats.rows > 50, `enough data rows: ${stats.rows}`);
         // Data matches the motion profile: the position excursion equals the commanded peak.
@@ -1039,7 +1100,7 @@ const scenarios = [
         await row.getByRole('button', { name: /Download data/i }).click();
         await row.locator('.badge.downloaded').waitFor({ timeout: RUN_WAIT_MS });
         const stats = await readDownloadedCsvStats(page);
-        assert(stats, 'a downloaded CSV exists');
+        assert(stats, 'the downloaded CSV contains data — empty means the device recorded nothing, or the download returned zero bytes');
         const maxMm = stats.maxUm / 1000;
         assert(maxMm < LIMIT_MM + 3, `position capped near maxDisplacement=${LIMIT_MM}mm, not the commanded 20mm (got ${maxMm.toFixed(1)}mm)`);
         // J1: the firmware's limit-exceeded warning surfaced as a toast.
@@ -1276,12 +1337,7 @@ const scenarios = [
       const { browser, page, errors } = await newSilPage();
       try {
         await connectToSil(page);
-        await page.goto(`${APP_URL}#/live`);
-        await page.getByRole('button', { name: /Home/ }).waitFor({ timeout: DEVICE_WAIT_MS });
-        await ensureTestIdle(page);
-        const enable = page.getByRole('button', { name: 'Enable motion' });
-        if (await enable.count()) await enable.click();
-        await page.getByText('Motion: enabled').waitFor({ timeout: DEVICE_WAIT_MS });
+        await prepareManualControl(page);
         const posValue = () => page.locator('.readout', { hasText: 'Machine Position' }).locator('.value').first().innerText();
         await page.waitForTimeout(1000);
         const before = parseFloat(await posValue());
@@ -1306,12 +1362,7 @@ const scenarios = [
       const { browser, page, errors } = await newSilPage();
       try {
         await connectToSil(page);
-        await page.goto(`${APP_URL}#/live`);
-        await page.getByRole('button', { name: /Home/ }).waitFor({ timeout: DEVICE_WAIT_MS });
-        await ensureTestIdle(page);
-        const enable = page.getByRole('button', { name: 'Enable motion' });
-        if (await enable.count()) await enable.click();
-        await page.getByText('Motion: enabled').waitFor({ timeout: DEVICE_WAIT_MS });
+        await prepareManualControl(page);
         const num = async (label) =>
           parseFloat(await page.locator('.readout', { hasText: label }).locator('.value').first().innerText());
         await page.waitForTimeout(800);
@@ -1466,12 +1517,7 @@ const scenarios = [
       const { browser, page, errors } = await newSilPage();
       try {
         await connectToSil(page);
-        await page.goto(`${APP_URL}#/live`);
-        await page.getByRole('button', { name: /Home/ }).waitFor({ timeout: DEVICE_WAIT_MS });
-        await ensureTestIdle(page);
-        const enable = page.getByRole('button', { name: 'Enable motion' });
-        if (await enable.count()) await enable.click();
-        await page.getByText('Motion: enabled').waitFor({ timeout: DEVICE_WAIT_MS });
+        await prepareManualControl(page);
         const num = async (label) =>
           parseFloat(await page.locator('.readout', { hasText: label }).locator('.value').first().innerText());
         await page.waitForTimeout(1000);
@@ -1716,12 +1762,7 @@ const scenarios = [
         await page.waitForTimeout(2500);
         await zeroLength(page);
         // Idle baseline: jog enabled.
-        await page.goto(`${APP_URL}#/live`);
-        await page.getByRole('button', { name: /Home/ }).waitFor({ timeout: DEVICE_WAIT_MS });
-        await ensureTestIdle(page);
-        const enable = page.getByRole('button', { name: 'Enable motion' });
-        if (await enable.count()) await enable.click();
-        await page.getByText('Motion: enabled').waitFor({ timeout: DEVICE_WAIT_MS });
+        await prepareManualControl(page);
         const jogUp = page.getByRole('button', { name: '+ Jog up' });
         assert(await jogUp.isEnabled(), 'jog enabled while idle');
         await seedProfiles(page, {
@@ -2019,7 +2060,7 @@ async function main() {
     const res = await fetch(APP_URL);
     if (!res.ok) throw new Error(String(res.status));
   } catch {
-    console.error(`✗ App not reachable at ${APP_URL}. Start: npm run dev (and make playground + npm run sil:bridge).`);
+    console.error(`✗ App not reachable at ${APP_URL}. Start: npm run dev (and make e2e-emulator + npm run sil:bridge).`);
     process.exit(2);
   }
 
