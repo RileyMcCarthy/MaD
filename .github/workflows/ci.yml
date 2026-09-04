@@ -877,6 +877,97 @@ jobs:
   # docs-only PR skips the component jobs). Mark THIS check — "CI Gate" — as the
   # required status check on `main` instead of each job, so path-filtered skips
   # never block a PR.
+  # ── Vibes: behaviour report ────────────────────────────────────────────────
+  # NOT in ci-gate.needs yet, deliberately. This is its first run against real
+  # CI; it reports without blocking until it has proven itself here.
+  #
+  # `fetch-depth: 0` is REQUIRED and is not optional tuning: actions/checkout
+  # clones at depth 1 by default, `origin/main` then does not resolve, and Vibes
+  # refuses to run rather than silently falling back to HEAD — a HEAD fallback
+  # would certify a fully-changed PR as unchanged.
+  vibes:
+    name: Vibes behaviour report
+    runs-on: ubuntu-latest
+    if: ${{ always() }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          submodules: recursive
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.x'
+      - name: Install protocol generator deps
+        run: pip install -r Protocol/ProtoEmb/core/requirements.txt
+
+      - name: Build Vibes
+        working-directory: Vibes
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+
+      # Runs the suite twice: once plain, once with the GitHub Actions
+      # environment variables forced on. resolveBase branches on
+      # GITHUB_EVENT_NAME, so a test that inherits the ambient environment
+      # passes locally and takes a completely different rung here.
+      - name: Vibes self-test
+        working-directory: Vibes
+        run: npm run verify
+
+      # The Control producer imports src/protocol/generated/, which is gitignored
+      # and therefore absent from a fresh clone. Without this the producer fails
+      # and the component honestly renders `not-run` — but that is not what we
+      # are trying to measure here.
+      - name: Prepare Control (deps + generated protocol)
+        working-directory: Software/Control
+        run: |
+          npm ci --no-audit --no-fund
+          npm run generate:proto
+
+      - name: Run Vibes
+        run: node Vibes/bin/vibes.mjs run
+
+      # ── TEMPORARY: adoption-PR-only reproducibility check ──────────────────
+      # In this PR the baselines are NEW relative to origin/main, so Vibes
+      # compares them as `added` and never checks them against what CI just
+      # produced. On every later PR the normal comparison covers this. Here it
+      # does not, and this is precisely the run where it matters: the baselines
+      # were recorded on Apple Silicon and this runner is ubuntu x64, and
+      # Math.sin differs by 1 ULP between those architectures on the same Node.
+      # Delete this step once the baselines are on main.
+      - name: Committed baselines reproduce on this platform
+        run: |
+          set -uo pipefail
+          fail=0
+          check() {
+            local recv="$1" base="$2"
+            if [ ! -d "$recv" ]; then echo "::error::no received output at $recv"; fail=1; return; fi
+            if diff -r -q -x '.gitattributes' -x '.vibes-accept.json' "$base" "$recv"; then
+              echo "  reproduced   $base"
+            else
+              echo "::error::$base does NOT reproduce on this platform"
+              diff -r -u -x '.gitattributes' -x '.vibes-accept.json' "$base" "$recv" | head -40
+              fail=1
+            fi
+          }
+          check .vibes/received/control/gcode-corpus  Software/Control/vibes/snapshots/gcode
+          check .vibes/received/protocol/codegen-c    Protocol/vibes/snapshots/codegen/c
+          check .vibes/received/protocol/codegen-rs   Protocol/vibes/snapshots/codegen/rs
+          check .vibes/received/protocol/codegen-ts   Protocol/vibes/snapshots/codegen/ts
+          exit $fail
+
+      - name: Upload report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: vibes-report
+          path: .vibes/report/
+          if-no-files-found: warn
+
   ci-gate:
     name: CI Gate
     needs:
