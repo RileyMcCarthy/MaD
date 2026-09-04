@@ -876,6 +876,47 @@ jobs:
   # docs-only PR skips the component jobs). Mark THIS check — "CI Gate" — as the
   # required status check on `main` instead of each job, so path-filtered skips
   # never block a PR.
+  # The behaviour ledger: what this change adds, and what stopped holding.
+  #
+  # Informational, so deliberately NOT in ci-gate.needs while it beds in. It
+  # exits 1 when a behaviour breaks or is removed, so promoting it later is a
+  # one-line change.
+  #
+  # fetch-depth: 0 is required — the default shallow clone cannot resolve the
+  # base branch, and the ledger diff would then report every behaviour as new.
+  vibes:
+    name: Behaviour ledger
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          submodules: recursive
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.x'
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install PlatformIO
+        run: pip install -U platformio
+      - name: Install protocol generator deps
+        run: pip install -r Protocol/ProtoEmb/core/requirements.txt
+
+      - name: Build Vibes
+        working-directory: Vibes
+        run: npm ci --no-audit --no-fund && npm run build
+
+      - name: Install Control deps
+        working-directory: Software/Control
+        run: npm ci --no-audit --no-fund
+
+      - name: Behaviour report
+        run: node Vibes/bin/vibes.mjs report --base "origin/${{ github.base_ref }}"
+
   ci-gate:
     name: CI Gate
     needs:

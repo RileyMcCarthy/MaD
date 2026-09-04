@@ -1,0 +1,7 @@
+{
+  "v": 1,
+  "name": "control",
+  "lang": "ts",
+  "cmd": "npm run generate:proto >/dev/null && npx vitest run --reporter=json --outputFile=$VIBES_RESULTS",
+  "results": "vitest-json"
+}

@@ -1,0 +1,7 @@
+{
+  "v": 1,
+  "name": "firmware",
+  "lang": "c",
+  "cmd": "pio test -e native_test -f test_core",
+  "results": "unity-stdout"
+}
