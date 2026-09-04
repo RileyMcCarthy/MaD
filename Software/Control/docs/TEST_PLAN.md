@@ -57,7 +57,7 @@ directory (no dialog, real `FileSystemDirectoryHandle`). Also stubs the capabili
 
 **Preconditions (operator or global-setup starts these):**
 ```bash
-cd SIL && make playground          # emulator on /tmp/tty.rpi
+cd SIL && make e2e-emulator        # emulator on /tmp/tty.rpi (unpaced virtual time)
 npm run sil:bridge                 # ws://localhost:9999  (in Control)
 npm run dev                        # app on http://localhost:5174
 ```
