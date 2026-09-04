@@ -19,7 +19,7 @@ relevant jobs:
 | `embsim-pin-ci` | **the `SIL/embsim` gitlink moved** | **Blocking.** The other half of embsim's upstream gate, run against the commit being pinned: determinism goldens (5× as separate processes) + stepped-clock suites + goldens-unmodified, rustfmt, clippy `-D warnings`, `cargo doc` deny-warnings, MSRV read from the pinned manifest, and `cargo deny`. Catches a pin bumped to an unpushed or never-CI'd commit |
 | `protoemb-pin-ci` | **the `Protocol/ProtoEmb` gitlink moved** | **Blocking.** Mirror of the above for the other submodule: `make verify` round-trip, ruff, clippy `-D warnings` (native + `wasm32`), `wasm-pack` build, `cargo deny` per crate + `pip-audit`, MSRV per crate manifest |
 | `docs-ci` | `docs/**` or `mkdocs.yml` changed | **Blocking.** `mkdocs build --strict` — broken nav entries, dead internal links and config warnings are errors. Previously this ran only on a push to `main` via `pages.yml`, so a bad docs PR merged green and took the Pages deploy down |
-| `control-e2e-sil` | app / protocol / firmware / SIL changed | **Advisory — reports but does NOT gate** (deliberately absent from `ci-gate.needs`; it does *not* use `continue-on-error`, so its result stays honest). The full Control ↔ SIL e2e suite: real app in real Chrome against the real emulator over the WS↔PTY bridge. See [below](#the-e2e-suite-advisory) |
+| `control-e2e-sil` | app / protocol / firmware / SIL changed | **Blocking.** The full Control ↔ SIL e2e suite: real app in real Chrome against the real emulator over the WS↔PTY bridge — the only job that exercises the whole stack as one system. Runs the emulator unpaced (`make e2e-emulator`), so the result does not depend on runner speed. See [below](#the-e2e-suite) |
 | `firmware-unit-tests` | firmware or protocol changed | `pio test -e native_test` — the host Unity suite under AddressSanitizer (no Propeller toolchain needed) |
 | `protocol-codegen` | protocol changed | **Blocking.** Regenerates all three targets (C/TS/Rust) twice and asserts success + byte-reproducibility (generated files are gitignored, so this guards the schema/templates + generator determinism, not committed-file drift) |
 | `firmware-layering` | firmware changed | **Blocking (baseline-gated).** `scripts/check_layering.py` enforces downward-only includes (APP→DEV→IO→Library→HAL→HW); pre-existing violations are frozen in `.layering-baseline`, so it fails only on **new** upward includes |
@@ -35,25 +35,32 @@ The PR trigger has **no path filter** — every PR runs at least `changes` + `ci
 
 A docs-only PR now runs `docs-ci` (and nothing else); before that job existed it skipped *every* job, which is how a strict-mode docs break could merge green.
 
-### The e2e suite (advisory)
+### The e2e suite
 
 `control-e2e-sil` runs the full ~50-scenario suite on every app/protocol/firmware/SIL
-PR, and is the only job that exercises the app, the generated codec, the firmware and
-the machine models as one system — the only place an integration break can be caught.
-It has already earned that: it found the missing `<mount>/gcode/` provisioning that
-made every uploaded test store zero moves on a fresh SD card.
+PR — the only job that exercises the app, the generated codec, the firmware and the
+machine models as one system, so the only place an integration break can be caught. It
+has earned that repeatedly: it found the missing `<mount>/gcode/` provisioning (every
+uploaded test stored zero moves on a fresh SD card), a UI that reported a moving
+machine as idle, and a toolchain-specific protocol UB that returned 0-byte downloads
+under GCC.
 
-It **does not gate yet.** The suite's settle windows are wall-clock while the
-emulator's motion is virtual-time, and a 4-vCPU runner also hosting Chrome, Vite, the
-bridge and the emulator does not sustain real time — so moves get sampled mid-flight.
-The discriminator is move *duration*, not distance: the 50 ms and 200 ms jog cells
-pass while the 1 s cell lands at ~55%. Blocking on that would gate merges on host
-speed rather than correctness.
+It **gates** (it is in `ci-gate.needs`): a red e2e run blocks the merge.
 
-**To promote it:** make the waits track virtual-time progress instead of wall time (or
-give the emulator enough CPU to hold real time under CI load), then add
-`control-e2e-sil` back to `ci-gate.needs`. Nothing else is required — the job itself is
-complete, and a red result there is a real finding, not noise.
+It ran advisory only until it deserved to gate. Two things had to be fixed first, and
+both were:
+
+1. **It was paced to real time.** The suite borrowed `make playground` (`--speed 1.0`),
+   which requires the emulator to sustain a real-time factor of 1.0 — impossible on a
+   shared 4-vCPU runner, so the suite measured the runner (~0.25 RTF, 13 failures) and
+   passed on faster dev boxes. It now runs unpaced via `make e2e-emulator` (`--speed
+   0`): virtual time advances by idle jump, decoupled from the wall clock, so the
+   outcome no longer depends on host speed.
+2. **A toolchain-specific UB.** Unsequenced `outSize` in the generated dispatcher
+   (fixed in [protoemb#23](https://github.com/RileyMcCarthy/protoemb/pull/23)) made
+   every `file_download` return a 0-byte frame under GCC while working under Clang.
+
+With both fixed the suite is 49/49 on CI's own toolchain.
 
 `e2e-nightly.yml` runs the same suite on a schedule against `main`, for drift that only
 shows over many runs. `ci.yml` is the source of truth for which jobs gate.
@@ -176,7 +183,7 @@ cd Protocol/ProtoEmb && ./examples/verify.sh
 pip install -r docs/requirements.txt && mkdocs build --strict
 ```
 
-The advisory e2e suite needs the emulator, the WS bridge and the dev server up
+The e2e suite needs the emulator, the WS bridge and the dev server up
 (three terminals), then `cd Software/Control && npm run e2e` — see
 `Software/Control/docs/TEST_PLAN.md`. `npm run e2e:smoke` runs the subset the
 nightly uses.

@@ -7,7 +7,7 @@
  * `port.open()` / stream-transfer path runs completely unchanged.
  *
  * Prereqs (each in its own terminal):
- *   cd SIL && make playground            # emulator on /tmp/tty.rpi
+ *   cd SIL && make e2e-emulator            # emulator on /tmp/tty.rpi (unpaced virtual time)
  *   npm run sil:bridge                   # WS bridge on ws://localhost:9999
  *   npm run dev                          # app on http://localhost:5174
  * Then: node e2e/sil-smoke.mjs

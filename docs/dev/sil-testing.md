@@ -21,7 +21,8 @@ make emulator     # build firmware (.a) + Rust protocol types, then cargo build
 | `make firmware` | Build `libfirmware.a` via PlatformIO |
 | `make protocol` | Regenerate the Rust protocol types for SIL |
 | `make emulator` | Build firmware + protocol + the Rust workspace |
-| `make playground` | Run the emulator + trace viewer for manual testing |
+| `make playground` | Run the emulator + trace viewer for manual testing — **real-time pacing** |
+| `make e2e-emulator` | Run the emulator for the e2e suite — **unpaced virtual time**, so results do not depend on host speed |
 | `make test` | Build everything and run the Rust test suite (`cargo test`) |
 | `make clean` | Remove build artifacts and `cargo clean` |
 

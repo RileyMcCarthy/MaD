@@ -254,28 +254,25 @@ jobs:
             cargo "+$MSRV" build --manifest-path "$crate/Cargo.toml"
           done
 
-  # ADVISORY — reports on every PR, deliberately NOT in ci-gate.needs yet.
+  # BLOCKING (in ci-gate.needs). The full Control ↔ SIL e2e suite: the real app
+  # in real Chrome, driving the real emulator over the WS↔PTY bridge. It is the
+  # only job that exercises the app, the generated codec, the firmware and the
+  # machine models as one system, so it is the only one that can catch an
+  # integration break — the class of bug that shipped while this ran nightly
+  # (the firmware never created `<mount>/gcode/`, so on a fresh SD root every
+  # uploaded test stored zero moves — invisible to every offline gate).
   #
-  # The full Control ↔ SIL e2e suite: the real app in real Chrome, driving the
-  # real emulator over the WS↔PTY bridge. It is the only job that exercises the
-  # app, the generated codec, the firmware and the machine models as one system,
-  # so it is the only one that can catch an integration break — exactly the
-  # class of bug that shipped while this ran nightly: the firmware never created
-  # `<mount>/gcode/`, so on a fresh SD root every uploaded test stored zero
-  # moves. Nothing offline could have seen it; it is fixed in this branch.
-  #
-  # Why it does not gate yet. The suite's settle windows are wall-clock
-  # (`waitForTimeout`) while the emulator's motion is virtual-time, and a
-  # 4-vCPU runner also hosting Chrome, Vite, the bridge and the emulator does
-  # not sustain real time. Moves are then sampled mid-flight: the 10 mm @
-  # 10 mm/s cell lands at ~55% while the 50 ms and 200 ms cells pass, so the
-  # discriminator is move DURATION, not distance. Gating on that today would
-  # gate every PR on host speed rather than on correctness.
-  #
-  # To promote it: make the waits track virtual-time progress instead of wall
-  # time (or give the emulator enough CPU to hold real time under CI load),
-  # then add `control-e2e-sil` back to ci-gate.needs. Nothing else is required —
-  # the job itself is complete, and its failures are real findings, not noise.
+  # It ran advisory for exactly as long as it took to earn the gate. Two things
+  # blocked promotion and both are now fixed:
+  #   1. It was paced to real time (via `make playground`), so its result
+  #      depended on how fast the runner was — 13 failures on CI, green on dev
+  #      boxes. It now runs unpaced (`make e2e-emulator`, --speed 0): virtual
+  #      time advances by idle jump, decoupled from wall clock, so host speed no
+  #      longer changes the outcome.
+  #   2. A toolchain-specific UB in the generated dispatcher (unsequenced
+  #      outSize, RileyMcCarthy/protoemb#23) made every file_download return a
+  #      0-byte frame under GCC. Fixed upstream and pinned in.
+  # With both fixed the suite is 49/49 on CI's own toolchain, so it gates.
   #
   # The suite is serial by contract (one emulator, one PTY, one client at a
   # time). The nightly workflow still runs it on `main` for drift over time.
@@ -327,10 +324,14 @@ jobs:
       # the runner; this brings in the shared libraries it needs.
       - name: Install Chromium for Playwright
         run: npx playwright install --with-deps chromium
-      - name: Start playground (emulator PTY)
+      # Unpaced virtual time, NOT the real-time playground. The suite does not
+      # need real-time speed, and under --speed 1.0 the emulator must sustain a
+      # real-time factor of 1.0 — which a shared 4-vCPU runner cannot, so the
+      # suite ends up measuring the runner instead of the code.
+      - name: Start the e2e emulator (unpaced virtual time)
         working-directory: SIL
         run: |
-          nohup make playground > /tmp/mad-playground.log 2>&1 &
+          nohup make e2e-emulator > /tmp/mad-playground.log 2>&1 &
           for i in $(seq 1 90); do
             if [ -e /tmp/tty.rpi ]; then echo "PTY ready after ${i}s"; break; fi
             sleep 2
@@ -529,10 +530,10 @@ jobs:
   # ── Phase 0 deterministic gates ───────────────────────────────────────────
   # BLOCKING jobs feed ci-gate. The clippy backlog is cleared, so `sil-rust`
   # now runs rustfmt and clippy `-D warnings` as gating steps — no
-  # `continue-on-error` remains anywhere in this file. The one advisory job is
-  # `control-e2e-sil`, which is advisory by being absent from `ci-gate.needs`
-  # (it still reports pass/fail honestly) rather than by swallowing its own
-  # failure.
+  # `continue-on-error` remains anywhere in this file, and every job that runs
+  # (including `control-e2e-sil`, promoted once it went 49/49 on CI) is in
+  # `ci-gate.needs`. Advisory-by-absence is a state a job passes THROUGH on its
+  # way to gating, not a resting place.
 
   # BLOCKING. Protocol codegen health: regenerate all three targets (C/TS/Rust)
   # twice and assert success + byte-reproducibility. Generated files are
@@ -881,8 +882,7 @@ jobs:
     needs:
       - changes
       - wasm-control-ci
-      # control-e2e-sil is intentionally absent — see the ADVISORY note on that
-      # job. Add it here to promote it to blocking; nothing else changes.
+      - control-e2e-sil
       - protoemb-ci
       - protoemb-pin-ci
       - embsim-ci
