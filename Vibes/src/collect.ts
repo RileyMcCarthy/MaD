@@ -47,14 +47,27 @@ const ADAPTERS: Readonly<Record<string, Adapter>> = {
     }
     return out;
   },
-  // Unity prints `file:line:test_name:PASS` or `...:FAIL: message`.
+  /* Unity has TWO output shapes and this must handle both, because which one
+   * you get depends on the harness, not on Unity:
+   *
+   *   bare Unity   file:line:test_name:PASS
+   *   PlatformIO   file:line: test_name\t[PASSED]
+   *
+   * Measured: `pio test -e native_test` emits the second. Matching only the
+   * first silently yields no statuses at all, and every C behaviour then reads
+   * `did-not-report` — a whole language reporting nothing, from a regex. */
   'unity-stdout': (text) => {
     const out = new Map<string, Status>();
+    const norm = (verdict: string): Status =>
+      verdict.startsWith('PASS') ? 'pass' : verdict.startsWith('IGNORE') ? 'skip' : 'fail';
     for (const line of text.split('\n')) {
-      const m = /(?:^|:)(test_\w+):(PASS|FAIL|IGNORE)/.exec(line);
-      if (m?.[1] !== undefined) {
-        out.set(m[1], m[2] === 'PASS' ? 'pass' : m[2] === 'IGNORE' ? 'skip' : 'fail');
+      const pio = /(?:^|:)\s*(test_\w+)\s*\[(PASSED|FAILED|IGNORED)\]/.exec(line);
+      if (pio?.[1] !== undefined && pio[2] !== undefined) {
+        out.set(pio[1], norm(pio[2]));
+        continue;
       }
+      const bare = /(?:^|:)(test_\w+):(PASS|FAIL|IGNORE)/.exec(line);
+      if (bare?.[1] !== undefined && bare[2] !== undefined) out.set(bare[1], norm(bare[2]));
     }
     return out;
   },
