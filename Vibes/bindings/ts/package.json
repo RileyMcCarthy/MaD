@@ -1,0 +1,21 @@
+{
+  "name": "@vibes/behaviour",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Declare a behaviour in a vitest/jest suite and emit it to behaviours.jsonl.",
+  "exports": {
+    ".": {
+      "types": "./index.ts",
+      "default": "./index.ts"
+    }
+  },
+  "files": [
+    "index.ts",
+    "README.md"
+  ],
+  "//": "Ships TypeScript deliberately. This is a test-time-only library and every consumer already runs a TS-aware runner (vitest, jest+ts, tsx); shipping source keeps the binding a single file with no build step to drift.",
+  "peerDependencies": {
+    "vitest": ">=2"
+  }
+}

@@ -57,3 +57,6 @@ Hardware/DS2Addon/KICAD/jlcpcb/production_files/GERBER-DS2_Addon.zip
 
 # Local scratch notes / Claude memories (not committed)
 notes/
+
+# Vibes scratch (the ledger itself IS committed)
+.vibes/
