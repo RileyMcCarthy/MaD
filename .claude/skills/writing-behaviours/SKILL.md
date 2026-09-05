@@ -20,23 +20,29 @@ holding. The reader has never opened the code. Full guide:
    implementation vocabulary is not (op, struct, buffer, enum).
    Acceptance test: read `given` + `then` aloud — if a word needs explaining, change the word.
 
-2. **`then` is a claim about the machine, not the assertion restated.**
+2. **`then` stands alone.** The report prints it as the row headline, often
+   alone. Read it BY ITSELF and check three things:
+   - it names its subject — no `it`/`this`/`they` ("it stays a rapid move…" → "a rapid move to zero with a trailing comment naming a different move is still a rapid move to zero")
+   - it is specific — no `correctly`/`properly`/`as expected`/`whatever`; a bug must make it FALSE
+   - it carries any condition it depends on — "moving to a smaller position produces positive extension" is false by default; say "on a machine whose tensile direction is decreasing position, …"
+
+3. **`then` is a claim about the machine, not the assertion restated.**
    "returns 3" is an assertion. "a five-millimetre travel with two millimetres
    of slack strains the sample by three" is a claim a reviewer can judge.
 
-3. **`id` is stable identity — reword freely, never rename casually.**
+4. **`id` is stable identity — reword freely, never rename casually.**
    `area.claim-in-brief` kebab-case (e.g. `gantry.slack-consumed-before-extension`).
    Same id + new wording renders as *respecified* (good, reviewable).
    New id renders as removed + added (a lie, if it's the same behaviour).
 
-4. **Declare on ENTRY.** In C the macro is the FIRST statement of the test
+5. **Declare on ENTRY.** In C the macro is the FIRST statement of the test
    body; nothing checks this for you, and a crash before it makes the
    behaviour read as deleted. TS/Rust: call `behaviour(...)` first thing.
 
-5. **One behaviour per test**, and never self-report status — pass/fail joins
+6. **One behaviour per test**, and never self-report status — pass/fail joins
    from the runner.
 
-6. **After changing behaviours:** `node Vibes/bin/vibes.mjs collect --write`
+7. **After changing behaviours:** `node Vibes/bin/vibes.mjs collect --write`
    and commit `behaviours.jsonl` alongside the change.
 
 ## Snippets
@@ -47,7 +53,7 @@ import { behaviour } from '@vibes/behaviour';
 behaviour({ id: 'gcode.trailing-comment',
   covers: 'src/domain/gcode.ts#parseGcodeToMove',
   given: 'a move line with a trailing comment containing a coordinate token',
-  then: 'the comment is ignored and the move still targets the position the author wrote',
+  then: 'a trailing comment on a move line does not change the target position the author wrote',
   why: 'fixes a defect where "G1 X10 F5 ; X50 fast" moved to X50',
 }, () => { /* expect(...) */ });
 ```

@@ -12,7 +12,7 @@ behaviour(
     id: 'gcode.dwell-carries-milliseconds',
     covers: 'src/domain/gcode.ts#gcodeLinesToProgram',
     given: 'a pause command with a duration',
-    then: 'exactly one pause is produced, and its duration is kept in milliseconds without conversion',
+    then: 'a pause command produces exactly one pause, with its duration kept in milliseconds without conversion',
     why: 'the firmware sleeps for this literal value; a unit slip here is a real-time bug',
   },
   () => { /* assertions */ },
@@ -58,6 +58,35 @@ Rules, in priority order:
 
 The acceptance test: read `given` + `then` aloud to someone who has never seen
 this repo. **If you have to explain a word, change the word.**
+
+## `then` stands alone
+
+The report prints `then` as the bolded headline of every row — in the "stopped
+holding" list it is often the *only* thing a reviewer reads. So `then` cannot
+lean on `given`. This claim was rejected in review:
+
+> it stays a rapid move to zero, whatever the comment says
+
+"it" has no antecedent on its own line, and "whatever the comment says" is a
+sweep phrase, not a claim. Rewritten to stand alone:
+
+> a rapid move to zero with a trailing comment naming a different move is still a rapid move to zero
+
+Three checks, applied to `then` read **by itself**:
+
+1. **Name the subject.** No `it`, `this`, `they`. The reader has not seen
+   `given` yet.
+2. **State the specific outcome.** No `correctly`, `properly`, `as expected`,
+   `whatever`. A wrong implementation must make the sentence *false* — if a
+   bug could ship and the sentence still read true, it is not a claim.
+3. **Carry the condition it depends on.** If the claim is only true under a
+   configuration or mode, say so in `then`. "moving to a smaller position
+   produces positive extension" is *false* on the default machine; "on a
+   machine whose tensile direction is decreasing position, moving to a smaller
+   position produces positive extension" is true everywhere it is read.
+
+`given` then adds the concrete scene — the exact inputs — rather than carrying
+information `then` needs to be true.
 
 ## Choosing an `id`
 
@@ -105,7 +134,7 @@ void test_lib_utility_muldiv64_signed(void)
     VIBES_BEHAVIOUR_WHY("firmware.muldiv64-signed",
                         "src/Library/lib_utility.c#lib_utility_muldiv64_signed",
                         "a multiply-then-divide whose intermediate exceeds 32 bits",
-                        "the result is exact, and negative inputs give the correctly signed result",
+                        "a multiply-then-divide with an intermediate wider than 32 bits is computed exactly, and the sign is negative for an odd number of negative inputs",
                         "the P2 has no 64-bit divide; a 32-bit intermediate would silently wrap");
     /* assertions */
 }
@@ -118,7 +147,7 @@ behaviour!(Behaviour {
     id: "gantry.slack-consumed-before-extension",
     covers: Some("SIL/models/src/gantry.rs#on_position"),
     given: "travel smaller than the configured engagement slack",
-    then: "extension stays at zero until the slack is taken up",
+    then: "extension stays at zero until travel exceeds the engagement slack",
     why: Some("the sample is not yet loaded, so reporting strain would be wrong"),
 });
 ```

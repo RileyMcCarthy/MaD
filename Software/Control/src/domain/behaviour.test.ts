@@ -8,7 +8,7 @@ describe('gcode', () => {
       id: 'gcode.waveform-ignores-comment',
       covers: 'src/domain/gcode.ts#parseGcodeWaveform',
       given: 'a waveform command with a trailing comment mentioning an amplitude',
-      then: 'the comment is ignored and the authored amplitude survives',
+      then: 'a trailing comment on a waveform command does not change the amplitude the author wrote',
     },
     () => {
       expect(parseGcodeWaveform('G123 A5 F2 C3 W0 ; A99')).toMatchObject({ amplitude: 5 });
@@ -20,7 +20,7 @@ describe('gcode', () => {
       id: 'gcode.comment-lines-emit-nothing',
       covers: 'src/domain/gcode.ts#gcodeLinesToProgram',
       given: 'a program consisting only of comment lines',
-      then: 'no motion is emitted',
+      then: 'a program made only of comment lines produces no motion',
       why: 'a comment that produced a move would be a rapid to an unintended target',
     },
     () => {
@@ -33,7 +33,7 @@ describe('gcode', () => {
       id: 'gcode.gauge-offsets-absolute-moves',
       covers: 'src/domain/gcode.ts#gcodeLinesToProgram',
       given: 'a move to an absolute position, with a non-zero gauge length configured',
-      then: 'the gauge length is added, so a target on the sample becomes a position on the machine',
+      then: 'an absolute move has the gauge length added, so a target on the sample becomes a position on the machine',
     },
     () => {
       expect(gcodeLinesToProgram(['G90', 'G1 X5 F2'], 15)).toHaveLength(2);
@@ -45,7 +45,7 @@ describe('gcode', () => {
       id: 'gcode.relative-moves-are-not-offset',
       covers: 'src/domain/gcode.ts#gcodeLinesToProgram',
       given: 'a move by a relative distance, with a non-zero gauge length configured',
-      then: 'the gauge length is not added, because the move is a distance rather than a destination',
+      then: 'a relative move is not offset by the gauge length, because it is a distance rather than a destination',
     },
     () => {
       expect(gcodeLinesToProgram(['G91', 'G1 X10 F5'], 15)).toHaveLength(2);
@@ -57,7 +57,7 @@ describe('gcode', () => {
       id: 'gcode.dwell-carries-milliseconds',
       covers: 'src/domain/gcode.ts#gcodeLinesToProgram',
       given: 'a pause command with a duration',
-      then: 'exactly one pause is produced, and its duration is kept in milliseconds without conversion',
+      then: 'a pause command produces exactly one pause, with its duration kept in milliseconds without conversion',
     },
     () => {
       expect(gcodeLinesToProgram(['G4 P500'], 0)).toHaveLength(1);

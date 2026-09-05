@@ -47,8 +47,10 @@ Rules of thumb:
   the SYSTEM, not a restatement of the assertion. "returns 3" is an assertion;
   "a five-millimetre travel with two millimetres of slack strains the sample by
   three" is a claim.
-- `given` sets the scene in the same language. Together they should read like
-  one sentence: "given X, then Y."
+- **`then` stands alone.** It is printed as the row headline, often by itself:
+  name the subject (no `it`/`this`), state the specific outcome (no
+  `correctly`/`whatever`), and carry any condition the claim depends on.
+- `given` then adds the concrete scene — the exact inputs.
 - Write `why` when the behaviour exists for a reason the claim alone does not
   carry — a defect it pins, a safety property, a hardware constraint.
 

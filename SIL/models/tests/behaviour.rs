@@ -27,7 +27,7 @@ fn first_position_becomes_the_baseline() {
         id: "gantry.first-position-is-baseline",
         covers: Some("SIL/models/src/gantry.rs#on_position"),
         given: "the very first position report, whatever its absolute value",
-        then: "it becomes the zero of extension rather than producing travel",
+        then: "the first position report becomes the zero of extension, rather than being read as travel",
         why: Some("the machine does not home to 0, so absolute position is not extension"),
     });
 
@@ -42,7 +42,7 @@ fn engagement_slack_is_consumed_before_extension() {
         id: "gantry.slack-consumed-before-extension",
         covers: Some("SIL/models/src/gantry.rs#on_position"),
         given: "travel smaller than the configured engagement slack",
-        then: "extension stays at zero until the slack is taken up",
+        then: "extension stays at zero until travel exceeds the engagement slack",
         why: Some("the sample is not yet loaded, so reporting strain would be wrong"),
     });
 
@@ -59,7 +59,7 @@ fn tension_direction_is_configurable() {
         id: "gantry.tension-direction",
         covers: Some("SIL/models/src/gantry.rs#on_position"),
         given: "a machine whose tensile travel decreases machine position",
-        then: "moving to a smaller position produces positive extension",
+        then: "on a machine whose tensile direction is decreasing position, moving to a smaller position produces positive extension",
         why: Some("the DS2 gantry and the EdgeBoard gantry pull in opposite senses"),
     });
 
