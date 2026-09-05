@@ -7,7 +7,7 @@ describe('gcode', () => {
     {
       id: 'gcode.waveform-ignores-comment',
       covers: 'src/domain/gcode.ts#parseGcodeWaveform',
-      given: 'a G123 line with a trailing comment mentioning an amplitude',
+      given: 'a waveform command with a trailing comment mentioning an amplitude',
       then: 'the comment is ignored and the authored amplitude survives',
     },
     () => {
@@ -32,8 +32,8 @@ describe('gcode', () => {
     {
       id: 'gcode.gauge-offsets-absolute-moves',
       covers: 'src/domain/gcode.ts#gcodeLinesToProgram',
-      given: 'an absolute G1 with a non-zero gauge length',
-      then: 'the gauge is added, converting the sample frame to the machine frame',
+      given: 'a move to an absolute position, with a non-zero gauge length configured',
+      then: 'the gauge length is added, so a target on the sample becomes a position on the machine',
     },
     () => {
       expect(gcodeLinesToProgram(['G90', 'G1 X5 F2'], 15)).toHaveLength(2);
@@ -44,8 +44,8 @@ describe('gcode', () => {
     {
       id: 'gcode.relative-moves-are-not-offset',
       covers: 'src/domain/gcode.ts#gcodeLinesToProgram',
-      given: 'a relative G1 with a non-zero gauge length',
-      then: 'no gauge offset is applied, because the target is a delta',
+      given: 'a move by a relative distance, with a non-zero gauge length configured',
+      then: 'the gauge length is not added, because the move is a distance rather than a destination',
     },
     () => {
       expect(gcodeLinesToProgram(['G91', 'G1 X10 F5'], 15)).toHaveLength(2);
@@ -56,8 +56,8 @@ describe('gcode', () => {
     {
       id: 'gcode.dwell-carries-milliseconds',
       covers: 'src/domain/gcode.ts#gcodeLinesToProgram',
-      given: 'a G4 dwell with a P parameter',
-      then: 'the dwell is emitted as one op carrying the millisecond value',
+      given: 'a pause command with a duration',
+      then: 'exactly one pause is produced, and its duration is kept in milliseconds without conversion',
     },
     () => {
       expect(gcodeLinesToProgram(['G4 P500'], 0)).toHaveLength(1);

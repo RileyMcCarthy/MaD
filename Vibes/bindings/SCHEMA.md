@@ -23,6 +23,38 @@ One JSON object per line, UTF-8, LF. Order is not significant; Vibes sorts.
 | `then`   | yes      | the asserted outcome. A change here is a SPECIFICATION change and is reported loudest. |
 | `why`    | no       | why it matters — a pinned defect, a requirement.                      |
 
+## Writing the claim
+
+The ledger is read by someone who has NOT seen the code — that is its entire
+purpose. A claim that needs the code to decode has already failed:
+
+    then: "the dwell is emitted as exactly one op and P survives in milliseconds"
+
+"op" is an internal type name and "P" is a parameter letter. The reader this
+report exists for knows neither. The same claim, written for them:
+
+    then: "exactly one pause is produced, and its duration is kept in
+           milliseconds without conversion"
+
+Rules of thumb:
+
+- **No internal type names** (op, ProgramOp, struct fields) and **no parameter
+  letters** (P, X, F). Say what the thing IS to the machine or its operator:
+  a pause, a move, a target position, a speed.
+- Domain words the operator genuinely uses are fine — G-code, dwell, gauge
+  length, tensile — implementation words are not.
+- `then` must be a complete sentence a reviewer can judge true or false about
+  the SYSTEM, not a restatement of the assertion. "returns 3" is an assertion;
+  "a five-millimetre travel with two millimetres of slack strains the sample by
+  three" is a claim.
+- `given` sets the scene in the same language. Together they should read like
+  one sentence: "given X, then Y."
+- Write `why` when the behaviour exists for a reason the claim alone does not
+  carry — a defect it pins, a safety property, a hardware constraint.
+
+A quick test: read `given` + `then` aloud to someone who has never opened the
+repo. If you have to explain a word, change the word.
+
 ## Two rules every binding must follow
 
 **1. Emit on ENTRY, never on exit.** A test that fails or crashes must still emit

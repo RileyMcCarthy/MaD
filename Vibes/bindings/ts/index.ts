@@ -29,6 +29,10 @@ export interface Behaviour {
   /** Stable across rewording. This is what makes a reworded test a metadata
    *  change rather than one behaviour deleted and another added. */
   readonly id: string;
+  // Write `given` and `then` for a reader who has NEVER seen the code: no
+  // internal type names, no parameter letters. "exactly one pause is produced,
+  // its duration kept in milliseconds" — not "one op is emitted and P
+  // survives". See ../SCHEMA.md, "Writing the claim".
   /** `path#symbol`, repo-relative. Joins this behaviour to patch coverage. */
   readonly covers?: string;
   readonly given: string;

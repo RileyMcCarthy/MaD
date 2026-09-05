@@ -9,7 +9,7 @@ void test_lib_utility_muldiv64_signed(void)
     VIBES_BEHAVIOUR_WHY("firmware.muldiv64-signed",
                         "src/Library/lib_utility.c#lib_utility_muldiv64_signed",
                         "a multiply-then-divide whose intermediate exceeds 32 bits",
-                        "the result is exact and the sign follows the operand count",
+                        "the result is exact, and negative inputs give the correctly signed result",
                         "the P2 has no 64-bit divide; a 32-bit intermediate would silently wrap");
 
     /* Trivial cases */
@@ -59,8 +59,8 @@ void test_lib_utility_elapsed_gt_boundaries(void)
 {
     VIBES_BEHAVIOUR("firmware.elapsed-gt-boundaries",
                     "src/Library/lib_utility.c#lib_utility_elapsed_gt",
-                    "two tick counts either side of an elapsed threshold",
-                    "the comparison is inclusive of the threshold and excludes below it");
+                    "a timer checked exactly at its deadline, and again one tick before it",
+                    "the deadline itself counts as elapsed; one tick before it does not");
 
     /* Strict greater-than: equal elapsed is NOT expired. */
     TEST_ASSERT_FALSE(lib_utility_elapsed_gt(100U, 0U, 100U));
