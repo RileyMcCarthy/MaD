@@ -31,6 +31,9 @@ function ledgerAt(root: string, ref: string): Behaviour[] {
       cwd: root,
       encoding: 'utf8',
       maxBuffer: 1 << 28,
+      // Absent-at-base is handled below; git's "fatal: path ... not in" line
+      // would otherwise leak into every first-adoption log.
+      stdio: ['ignore', 'pipe', 'ignore'],
     });
     return parseLedger(text).ok;
   } catch {
