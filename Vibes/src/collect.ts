@@ -24,6 +24,12 @@ export interface CollectResult {
   /** Things that stopped this run from being complete. Never silent. */
   readonly problems: readonly string[];
   readonly suitesRun: number;
+  /** Suites that ran but declared NOTHING. The diff must treat their
+   *  previously-ledgered behaviours as unreported, never as removed — the
+   *  bindings' emit-on-entry rule protects a crashing TEST, but a suite that
+   *  fails to START emits nothing at all, and without this the report says
+   *  "this PR deleted N behaviours" about a build failure. */
+  readonly silentSuites: readonly string[];
 }
 
 type Adapter = (text: string) => Map<string, Status>;
@@ -100,6 +106,7 @@ export function findSuites(repoRoot: string): readonly string[] {
 export function collect(repoRoot: string, log: (s: string) => void): CollectResult {
   const problems: string[] = [];
   const behaviours: Behaviour[] = [];
+  const silentSuites: string[] = [];
   const suiteFiles = findSuites(repoRoot);
 
   for (const rel of suiteFiles) {
@@ -162,6 +169,7 @@ export function collect(repoRoot: string, log: (s: string) => void): CollectResu
     }
 
     if (declared.length === 0) {
+      silentSuites.push(suite.name);
       problems.push(
         `${rel}: ran, but declared no behaviours — either nothing uses the binding yet, ` +
           'or the suite did not pick up $VIBES_BEHAVIOURS',
@@ -198,5 +206,5 @@ export function collect(repoRoot: string, log: (s: string) => void): CollectResu
     rmSync(scratch, { recursive: true, force: true });
   }
 
-  return { behaviours, problems, suitesRun: suiteFiles.length };
+  return { behaviours, problems, suitesRun: suiteFiles.length, silentSuites };
 }

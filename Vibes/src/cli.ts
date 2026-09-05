@@ -99,7 +99,7 @@ export async function main(argv: readonly string[]): Promise<number> {
   for (const p of r.problems) log(`vibes: ${p}`);
   if (r.behaviours.length === 0 && r.problems.length > 0) return EXIT.COLLECT;
 
-  const d = diffLedgers(ledgerAt(root, base), r.behaviours);
+  const d = diffLedgers(ledgerAt(root, base), r.behaviours, r.silentSuites);
 
   // Coverage is optional. Absent, the report says so by name rather than
   // rendering 0% — "not measured" and "nothing ran" are different claims.
@@ -127,5 +127,8 @@ export async function main(argv: readonly string[]): Promise<number> {
     log(`vibes: ${LEDGER} is out of date — run \`vibes collect --write\` and commit it`);
   }
 
+  // A suite that failed to report is a collection failure even when every
+  // OTHER suite is green — silence must not be able to hide inside a pass.
+  if (d.unreported.length > 0) return EXIT.COLLECT;
   return hasRegression(d) ? EXIT.REGRESSION : EXIT.OK;
 }

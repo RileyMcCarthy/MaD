@@ -43,6 +43,11 @@ export interface LedgerDiff {
   /** In the current ledger and not passing, regardless of the base. Includes
    *  `did-not-report`, which is NOT a pass and must never be counted as one. */
   readonly notHolding: readonly Behaviour[];
+  /** In the base ledger, absent now, but their whole SUITE declared nothing
+   *  this run. These have no verdict — the suite failed to produce one — and
+   *  rendering them as `removed` would report a build failure as "this PR
+   *  deleted N behaviours", which is the worst misreport available. */
+  readonly unreported: readonly Behaviour[];
 }
 
 const FIELDS = ['given', 'then', 'covers', 'why', 'file'] as const;
@@ -50,6 +55,7 @@ const FIELDS = ['given', 'then', 'covers', 'why', 'file'] as const;
 export function diffLedgers(
   before: readonly Behaviour[],
   after: readonly Behaviour[],
+  silentSuites: readonly string[] = [],
 ): LedgerDiff {
   const b = new Map(before.map((x) => [key(x), x]));
   const a = new Map(after.map((x) => [key(x), x]));
@@ -77,7 +83,14 @@ export function diffLedgers(
     else if (isPassing && fields.length === 0) unchanged += 1;
   }
 
-  for (const [k, prev] of b) if (!a.has(k)) removed.push(prev);
+  const silent = new Set(silentSuites);
+  const unreported: Behaviour[] = [];
+  for (const [k, prev] of b) {
+    if (a.has(k)) continue;
+    // Absence means "removed" only when the suite actually spoke this run.
+    if (silent.has(prev.suite)) unreported.push(prev);
+    else removed.push(prev);
+  }
 
   const notHolding = after.filter((x) => x.status !== 'pass' && x.status !== 'skip');
 
@@ -90,6 +103,7 @@ export function diffLedgers(
     fixed: [...fixed].sort((x, y) => byId(x.after, y.after)),
     unchanged,
     notHolding: notHolding.sort(byId),
+    unreported: unreported.sort(byId),
   };
 }
 

@@ -23,6 +23,10 @@ export interface Coverage {
 }
 
 export function headline(d: LedgerDiff): string {
+  if (d.unreported.length > 0) {
+    const n = d.unreported.length;
+    return `${n} behaviour${n === 1 ? '' : 's'} without a verdict — a suite failed to report.`;
+  }
   if (d.broken.length > 0) {
     const n = d.broken.length;
     return `${n} behaviour${n === 1 ? '' : 's'} stopped holding.`;
@@ -77,6 +81,16 @@ export function renderMarkdown(d: LedgerDiff, cov: Coverage | null): string {
       '',
     );
     for (const s of d.broken) out.push(`- **${s.after.then}**\n  \`${s.after.id}\` · was ${s.before}, now ${s.after.status}`);
+    out.push('');
+  }
+
+  if (d.unreported.length > 0) {
+    out.push('## No verdict — the suite did not report', '');
+    out.push(
+      'These were in the ledger, and this run learned NOTHING about them: their whole suite declared no behaviours, usually a build or startup failure. This is not removal and it is not a pass.',
+      '',
+    );
+    for (const b of d.unreported) out.push(`- **${b.then}**\n  \`${b.id}\` · suite \`${b.suite}\``);
     out.push('');
   }
 
