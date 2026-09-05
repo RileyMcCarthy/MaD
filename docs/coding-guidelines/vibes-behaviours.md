@@ -166,4 +166,6 @@ node Vibes/bin/vibes.mjs collect --write   # regenerate behaviours.jsonl
 ```
 
 and commit the ledger with your change. CI (`Behaviour ledger` job) reports the
-diff on every PR and warns when the committed ledger is stale.
+diff on every PR — as a single comment on the PR, edited in place on each run
+so it always shows the latest verdict, and in the job summary — and warns when
+the committed ledger is stale.
