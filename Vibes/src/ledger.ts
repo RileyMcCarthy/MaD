@@ -26,7 +26,7 @@ export interface Behaviour {
   readonly test: string;
   readonly given: string;
   readonly then: string;
-  /** `path#symbol` the behaviour exercises. Optional; joins to coverage. */
+  /** `path#symbol` the behaviour exercises, so a reader can find the code. Optional. */
   readonly covers?: string;
   /** Why it matters — a pinned defect, a requirement. */
   readonly why?: string;

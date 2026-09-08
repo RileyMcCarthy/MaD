@@ -24,7 +24,7 @@ behaviour(
 | `id` | The behaviour's **stable identity**. Never encodes wording. |
 | `given` | The situation, in operator language. |
 | `then` | The claim — a sentence a reviewer can judge true or false **about the machine**. |
-| `covers` | `path#symbol` the behaviour exercises. Joins to patch coverage. Optional. |
+| `covers` | `path#symbol` the behaviour exercises, so a reader can find the code. Optional. |
 | `why` | The reason it matters when the claim alone doesn't carry it: a pinned defect, a safety property, a hardware constraint. Optional. |
 
 ## Writing the claim

@@ -40,7 +40,7 @@ pub struct Behaviour<'a> {
     /// Stable across rewording — this is what makes a reworded test a metadata
     /// change rather than one behaviour deleted and another added.
     pub id: &'a str,
-    /// `path#symbol`, repo-relative. Joins this behaviour to patch coverage.
+    /// `path#symbol`, repo-relative, so a reader can find the code this claim is about.
     pub covers: Option<&'a str>,
     pub given: &'a str,
     pub then: &'a str,

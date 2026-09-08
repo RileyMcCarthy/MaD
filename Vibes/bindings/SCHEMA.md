@@ -18,7 +18,7 @@ One JSON object per line, UTF-8, LF. Order is not significant; Vibes sorts.
 | `lang`   | yes      | provenance only. Vibes never branches on it.                          |
 | `file`   | yes      | where the test lives, repo-relative.                                  |
 | `test`   | yes      | the runner's own name for this test. THE JOIN KEY for pass/fail — see below. |
-| `covers` | no       | `path#symbol` the behaviour exercises. Joins to patch coverage.        |
+| `covers` | no       | `path#symbol` the behaviour exercises, so a reader can find the code.  |
 | `given`  | yes      | the precondition, in words.                                           |
 | `then`   | yes      | the asserted outcome. A change here is a SPECIFICATION change and is reported loudest. |
 | `why`    | no       | why it matters — a pinned defect, a requirement.                      |

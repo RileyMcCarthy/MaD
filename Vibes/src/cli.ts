@@ -12,7 +12,6 @@ import { join } from 'node:path';
 import { collect } from './collect.js';
 import { diffLedgers, hasRegression } from './diff.js';
 import { parseLedger, serializeLedger, type Behaviour } from './ledger.js';
-import { patchCoverage, type LcovSource } from './coverage.js';
 import { renderMarkdown } from './report.js';
 
 export const LEDGER = 'behaviours.jsonl';
@@ -46,16 +45,6 @@ function flag(argv: readonly string[], name: string): string | undefined {
   if (i === -1) return undefined;
   const v = argv[i + 1];
   return v === undefined || v.startsWith('--') ? '' : v;
-}
-
-/** Test files and generated code are not authored behaviour: counting a test's
- *  own added lines as "unspecified" is noise, and nobody writes the generated
- *  codecs by hand. */
-function interesting(file: string): boolean {
-  if (/\.(test|spec)\.[cm]?tsx?$/.test(file)) return false;
-  if (/(^|\/)(generated|Generated)\//.test(file)) return false;
-  if (/(^|\/)vibes\//.test(file)) return false;
-  return /\.(ts|tsx|c|h|rs)$/.test(file);
 }
 
 export async function main(argv: readonly string[]): Promise<number> {
@@ -103,20 +92,7 @@ export async function main(argv: readonly string[]): Promise<number> {
   if (r.behaviours.length === 0 && r.problems.length > 0) return EXIT.COLLECT;
 
   const d = diffLedgers(ledgerAt(root, base), r.behaviours, r.silentSuites);
-
-  // Coverage is optional. Absent, the report says so by name rather than
-  // rendering 0% — "not measured" and "nothing ran" are different claims.
-  const sources: LcovSource[] = [
-    { path: join(root, 'Software/Control/vibes/artifacts/coverage/lcov.info'), prefix: 'Software/Control/' },
-  ];
-  let cov = null;
-  try {
-    cov = patchCoverage(root, base, sources, interesting);
-  } catch (e) {
-    log(`vibes: coverage unavailable — ${(e as Error).message}`);
-  }
-
-  const md = renderMarkdown(d, cov);
+  const md = renderMarkdown(d);
   process.stdout.write(md);
 
   const summary = process.env['GITHUB_STEP_SUMMARY'];

@@ -60,3 +60,4 @@ notes/
 
 # Vibes scratch (the ledger itself IS committed)
 .vibes/
+*.tsbuildinfo

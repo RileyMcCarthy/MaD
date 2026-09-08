@@ -33,7 +33,7 @@ export interface Behaviour {
   // internal type names, no parameter letters. "exactly one pause is produced,
   // its duration kept in milliseconds" — not "one op is emitted and P
   // survives". See ../SCHEMA.md, "Writing the claim".
-  /** `path#symbol`, repo-relative. Joins this behaviour to patch coverage. */
+  /** `path#symbol`, repo-relative, so a reader can find the code this claim is about. */
   readonly covers?: string;
   readonly given: string;
   readonly then: string;

@@ -10,18 +10,6 @@
 import type { Behaviour } from './ledger.js';
 import type { LedgerDiff, Respecified } from './diff.js';
 
-export interface Coverage {
-  /** Added lines that coverage saw execute. */
-  readonly covered: number;
-  /** Added lines coverage saw and that never ran. */
-  readonly uncovered: number;
-  /** Files with added lines that no coverage report mentions. Named, because
-   *  "not measured" must never render as "covered". */
-  readonly unmeasuredFiles: readonly string[];
-  /** file -> uncovered added line count, worst first. */
-  readonly worst: readonly (readonly [string, number])[];
-}
-
 export function headline(d: LedgerDiff): string {
   if (d.unreported.length > 0) {
     const n = d.unreported.length;
@@ -71,7 +59,7 @@ function respec(r: Respecified): string {
   return lines.join('\n');
 }
 
-export function renderMarkdown(d: LedgerDiff, cov: Coverage | null): string {
+export function renderMarkdown(d: LedgerDiff): string {
   const out: string[] = [`# ${headline(d)}`, ''];
 
   if (d.broken.length > 0) {
@@ -123,38 +111,9 @@ export function renderMarkdown(d: LedgerDiff, cov: Coverage | null): string {
     }
   }
 
-  /* Coverage answers the other half: not "what did you specify" but "what did
-   * you add that nothing specifies". A percentage alone is not actionable; the
-   * files with the most unspecified lines are. */
-  out.push('## Added code nothing specifies', '');
-  if (cov === null) {
-    out.push(
-      '_Coverage was not supplied to this run, so nothing here says whether the added code is exercised. This is not 0%._',
-      '',
-    );
-  } else {
-    const scored = cov.covered + cov.uncovered;
-    if (scored === 0) {
-      out.push('_No added line was instrumented, so there is nothing to score._', '');
-    } else {
-      const pct = ((100 * cov.covered) / scored).toFixed(0);
-      out.push(`${cov.uncovered} of ${scored} added lines that coverage could score never ran (${pct}% covered).`, '');
-      for (const [file, n] of cov.worst.slice(0, 10)) out.push(`- \`${file}\` — ${n} uncovered`);
-      if (cov.worst.length > 0) out.push('');
-    }
-    if (cov.unmeasuredFiles.length > 0) {
-      out.push(
-        `**${cov.unmeasuredFiles.length} changed file(s) no coverage report mentions** — not covered, not uncovered, unmeasured:`,
-        '',
-      );
-      for (const f of cov.unmeasuredFiles.slice(0, 10)) out.push(`- \`${f}\``);
-      out.push('');
-    }
-  }
-
+  // The one line that says "and nothing else moved" — the count a reviewer
+  // checks against the ledger size to know the diff above is the whole story.
   out.push('---', '');
-  out.push(
-    `_${d.unchanged} behaviour(s) unchanged and holding. This report describes what the tests claim; it does not establish that the claims are the right ones._`,
-  );
+  out.push(`_${d.unchanged} behaviour${d.unchanged === 1 ? '' : 's'} unchanged and holding._`);
   return out.join('\n') + '\n';
 }
