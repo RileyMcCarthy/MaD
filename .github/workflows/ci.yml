@@ -877,6 +877,90 @@ jobs:
   # docs-only PR skips the component jobs). Mark THIS check — "CI Gate" — as the
   # required status check on `main` instead of each job, so path-filtered skips
   # never block a PR.
+  # The behaviour ledger: what this change adds, and what stopped holding.
+  #
+  # Informational, so deliberately NOT in ci-gate.needs while it beds in. It
+  # exits 1 when a behaviour breaks or is removed, so promoting it later is a
+  # one-line change.
+  #
+  # fetch-depth: 0 is required — the default shallow clone cannot resolve the
+  # base branch, and the ledger diff would then report every behaviour as new.
+  vibes:
+    name: Behaviour ledger
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    # The default token is read-only; posting the sticky comment needs this.
+    # On a fork PR the token stays read-only regardless, and the post step
+    # warns rather than failing — the job summary still carries the report.
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          submodules: recursive
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.x'
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install PlatformIO
+        run: pip install -U platformio
+      - name: Install protocol generator deps
+        run: pip install -r Protocol/ProtoEmb/core/requirements.txt
+
+      - name: Build Vibes
+        working-directory: Vibes
+        run: npm ci --no-audit --no-fund && npm run build
+
+      - name: Install Control deps
+        working-directory: Software/Control
+        run: npm ci --no-audit --no-fund
+
+      # Capture the verdict instead of failing here: a broken behaviour is
+      # exactly the run whose report must reach the PR, so posting comes first
+      # and the exit code is re-raised at the end.
+      - name: Behaviour report
+        id: report
+        run: |
+          set +e
+          node Vibes/bin/vibes.mjs report --base "origin/${{ github.base_ref }}" > vibes-report.md
+          echo "code=$?" >> "$GITHUB_OUTPUT"
+          cat vibes-report.md
+
+      # One sticky comment per PR, found by the marker and edited in place, so
+      # the PR page always shows the latest verdict and never fills with history.
+      - name: Post the report to the PR
+        if: ${{ always() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          marker='<!-- vibes-ledger -->'
+          # Issue comments cap at 65,536 chars; keep headroom for the marker/footer.
+          body="$(head -c 60000 vibes-report.md)"
+          if [ "$(wc -c < vibes-report.md)" -gt 60000 ]; then
+            body="$body"$'\n\n_Truncated — the full report is in the job summary._'
+          fi
+          body="$marker"$'\n'"$body"
+          existing=$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
+            --jq ".[] | select(.body | startswith(\"$marker\")) | .id" | head -n1)
+          if [ -n "$existing" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$existing" -f body="$body" >/dev/null \
+              && echo "updated comment $existing" || echo "::warning::could not update the PR comment (read-only token on a fork?)"
+          else
+            gh api "repos/$REPO/issues/$PR/comments" -f body="$body" --jq .html_url \
+              || echo "::warning::could not post the PR comment (read-only token on a fork?)"
+          fi
+
+      - name: Propagate the verdict
+        run: exit ${{ steps.report.outputs.code }}
+
   ci-gate:
     name: CI Gate
     needs:

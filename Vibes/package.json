@@ -1,0 +1,24 @@
+{
+  "name": "vibes",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "What behaviour does this change add, and what stopped holding?",
+  "bin": {
+    "vibes": "./bin/vibes.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "verify": "tsc --noEmit && vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.9"
+  }
+}
