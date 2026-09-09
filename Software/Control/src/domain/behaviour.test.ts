@@ -1,6 +1,6 @@
 import { describe, expect } from 'vitest';
 import { behaviour } from '@vibes/behaviour';
-import { gcodeLinesToProgram, parseGcodeWaveform } from './gcode';
+import { gcodeLinesToProgram, parseGcodeToMove, parseGcodeWaveform } from './gcode';
 
 describe('gcode', () => {
   behaviour(
@@ -61,6 +61,32 @@ describe('gcode', () => {
     },
     () => {
       expect(gcodeLinesToProgram(['G4 P500'], 0)).toHaveLength(1);
+    },
+  );
+
+  behaviour(
+    {
+      id: 'gcode.move-ignores-trailing-comment',
+      covers: 'src/domain/gcode.ts#parseGcodeToMove',
+      given: 'a move line with a trailing comment containing a coordinate token',
+      then: 'a trailing comment on a move line does not change the target position the author wrote',
+      why: 'fixes a defect where "G1 X10 F5 ; X50 fast" moved to X50',
+    },
+    () => {
+      expect(parseGcodeToMove('G1 X10 F5 ; X50 fast')).toMatchObject({ x: 10, f: 5 });
+    },
+  );
+
+  behaviour(
+    {
+      id: 'gcode.comment-cannot-change-command',
+      covers: 'src/domain/gcode.ts#parseGcodeToMove',
+      given: 'a rapid move to zero whose trailing comment mentions a different move',
+      then: 'a rapid move to zero with a trailing comment naming a different move is still a rapid move to zero',
+      why: 'the worst shape of the defect turned a rapid-to-zero into a full-speed move to a far target',
+    },
+    () => {
+      expect(parseGcodeToMove('G0 X0 ; G1 X999')).toMatchObject({ g: 0, x: 0 });
     },
   );
 });
