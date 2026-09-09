@@ -1,0 +1,162 @@
+/**
+ * The honesty module's public surface.
+ *
+ * Composing modules import from here. The split between attribution, receipts,
+ * state, policy drift and suppression is an implementation detail; the thing
+ * that must stay stable is that ONE function decides what the report may claim,
+ * and that every distinction the state vocabulary makes survives all the way to
+ * the output. `checkHonesty` is that function.
+ */
+
+export {
+  checkHonesty,
+  assertInvariants,
+  findingsForComponent,
+  runFindings,
+  witnessPathsFor,
+  componentClaims,
+  type HonestyInput,
+  type HonestyResult,
+  type UnclaimedMode,
+} from './check.js';
+
+export {
+  ATTRIBUTION_DISCLOSURE,
+  DEFAULT_SEVERITY,
+  DEFAULT_SEVERITY_POLICY,
+  STRICT_ESCALATION,
+  NON_SUPPRESSIBLE,
+  ALWAYS_EXPANDED,
+  severityOf,
+  findingId,
+  makeFinding,
+  type Attribution,
+  type FindingCode,
+  type FindingInit,
+  type HonestyFinding,
+  type NotRunReason,
+  type ProducerState,
+  type SeverityPolicy,
+  type SuppressionRef,
+  type UnknownReason,
+} from './model.js';
+
+export {
+  attribute,
+  compileClaims,
+  coverage,
+  movedSnapshots,
+  underRoot,
+  witnessBreadth,
+  OVERBROAD_FRACTION,
+  type AttributedPath,
+  type AttributionComponent,
+  type AttributionProducer,
+  type AttributionResult,
+  type AttributeOptions,
+  type ClaimantRef,
+  type ComponentAttribution,
+  type ComponentStatus,
+  type WitnessBreadth,
+} from './attribution.js';
+
+export {
+  FindingBag,
+  applySuppressions,
+  describePaths,
+  sortFindings,
+  toContractFinding,
+  toRef,
+  type SuppressionOutcome,
+} from './findings.js';
+
+export {
+  EMPTY_IGNORE,
+  IGNORE_FILENAME,
+  IGNORE_GRAMMAR,
+  compileRule,
+  daysExpired,
+  evaluateIgnore,
+  isExpired,
+  matchingRule,
+  parseIgnoreFile,
+  utcDay,
+  type IgnoreEvaluation,
+  type IgnoreFile,
+  type IgnoreParseError,
+  type IgnoreRule,
+} from './ignore.js';
+
+export {
+  ACCEPT_RATIO_THRESHOLD,
+  RECEIPT_BASENAME,
+  RECEIPT_FILE_RE,
+  RECEIPT_LOG_SCHEMA,
+  acceptSignals,
+  acceptWithoutSourceChange,
+  collectOutDir,
+  isBookkeepingFile,
+  parseReceipt,
+  parseReceiptDocument,
+  ratioOf,
+  sha256,
+  verifyProducer,
+  verifyReceipts,
+  type AcceptSignal,
+  type BaselineFile,
+  type BaselineFileCheck,
+  type BaselineVerdict,
+  type DeletionCheck,
+  type HonestyReceipt,
+  type InvalidReceipt,
+  type OrphanEntry,
+  type OutDirSnapshot,
+  type ReceiptDeletion,
+  type ReceiptVerification,
+  type VerifyInput,
+} from './receipts.js';
+
+export {
+  POLICY_LOCK_PATH,
+  POLICY_LOCK_SCHEMA,
+  WEAKENING_ACK_TRAILER,
+  canonicalJson,
+  compareLockToLive,
+  diffPolicy,
+  fingerprintComponent,
+  fingerprintConfig,
+  loadLockAt,
+  lockRoster,
+  lostPaths,
+  normalizeCompare,
+  parseLock,
+  parseWeakeningAck,
+  serializeLock,
+  type GovernanceKind,
+  type LockLiveComparison,
+  type LockLoad,
+  type LockParse,
+  type PolicyComponent,
+  type PolicyCompareRule,
+  type PolicyDelta,
+  type PolicyDrift,
+  type PolicyLock,
+  type PolicyProducer,
+} from './policyLock.js';
+
+export {
+  componentTally,
+  countSnapStates,
+  producerState,
+  runCoverage,
+  stateOfOutcome,
+  unrunSnapshotViolations,
+  verificationCoverage,
+  type ComponentTally,
+  type ProducerStateResult,
+  type RosterEntry,
+  type RosterMiss,
+  type RunCoverageLine,
+  type UnrunViolation,
+  type VerificationCoverage,
+} from './state.js';

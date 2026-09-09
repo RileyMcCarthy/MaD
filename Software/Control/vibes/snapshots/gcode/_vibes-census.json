@@ -1,0 +1,23 @@
+{
+  "cases": [
+    "base/canonical @gauge=0",
+    "base/canonical @gauge=15",
+    "base/empty",
+    "base/comments-only",
+    "frame/relative-not-offset",
+    "frame/dwell-not-offset",
+    "waveform/sine",
+    "quirk/comment-leak",
+    "quirk/comment-changes-command",
+    "error/x-out-of-range",
+    "m8/M8-jog-1mm-20",
+    "m8/M8-jog-4mm-20",
+    "m8/M8-jog-10mm-10",
+    "m8/M8-jog-roundtrip-5",
+    "m10/WAVE-sine",
+    "m10/WAVE-sine-slow-large",
+    "m10/WAVE-sine-fast",
+    "m10/WAVE-tri",
+    "m10/WAVE-tri-slow"
+  ]
+}

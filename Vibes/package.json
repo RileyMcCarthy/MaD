@@ -1,0 +1,31 @@
+{
+  "name": "vibes",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Behaviour-snapshot and test reporting. Makes a change reviewable as a report instead of a code diff.",
+  "bin": {
+    "vibes": "./bin/vibes.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "verify": "tsc --noEmit && vitest run && npm run test:ci",
+    "test:ci": "GITHUB_EVENT_NAME=pull_request GITHUB_BASE_REF=main GITHUB_REF_TYPE=branch GITHUB_ACTIONS=true CI=true vitest run"
+  },
+  "dependencies": {
+    "diff": "^9.0.0",
+    "fast-xml-parser": "^5.2.5",
+    "picomatch": "^4.0.4"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/picomatch": "^4.0.2",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.9"
+  }
+}
