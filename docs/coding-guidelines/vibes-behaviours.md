@@ -88,6 +88,39 @@ Three checks, applied to `then` read **by itself**:
 `given` then adds the concrete scene — the exact inputs — rather than carrying
 information `then` needs to be true.
 
+## A spec says what the machine does
+
+Not what it does not do, not what it used to do, and never what a bug once did.
+This claim was rejected in review:
+
+> lost power in the emergency-stop circuit is reported as the power fault, not
+> as a tripped switch
+
+The trailing contrast makes the reader stop and work out which half is true,
+and it quietly implies the other half was once a bug. Neither belongs in a
+specification. The machine has one behaviour, so state it:
+
+> lost power in the emergency-stop circuit is reported as the power fault
+
+Ban these from `then` and `given`: `not as`, `rather than`, `instead of`,
+`no longer`, `used to`, and any mention of a defect, regression, or what
+shipped.
+
+The same rule governs `why`. Researching the commit that introduced a test is
+worth doing — it is often the only place the reason survives — but write down
+the **requirement it taught you**, never the story:
+
+| instead of | write |
+|---|---|
+| fixes a defect where `G1 X10 F5 ; X50` moved to X50 | the target is what the author wrote before the comment; everything after it is annotation |
+| this check sat commented out, so a test could overpull | the operator's configured force limit protects the specimen for the whole of a test |
+| the changeover shipped asking the idle drive, so the machine sat disabled | only the drive actually running reports its readiness, so the controller asks the active one |
+
+One thing that looks like a contrast and is not: a **condition the claim needs
+to be true**. "a supervised loop that stops checking in is reported as a
+watchdog fault, even while every processor core is still running" carries a
+condition, not a comparison. Keep those — rule 2 above requires them.
+
 ## Choosing an `id`
 
 `area.claim-in-brief`, kebab-case: `gcode.trailing-comment`,

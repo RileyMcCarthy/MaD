@@ -231,7 +231,7 @@ void test_run_noFaultWhenAllInputsHealthy(void)
                         "src/APP/app_control.c#app_control_run",
                         "a freshly started controller with nothing tripped, stalled or unresponsive",
                         "a machine with every core running, the watchdog alive and both the drive and the load cell answering reports no fault",
-                        "every other fault test trips an input first, so this is the only one that would catch a ready signal read with its polarity inverted");
+                        "a fault raised when nothing is wrong holds the machine disabled and no test can be started");
     control_init();
     app_control_run();
     TEST_ASSERT_EQUAL_INT(APP_CONTROL_FAULT_NONE, app_control_getFault());
@@ -255,7 +255,7 @@ void test_run_watchdogFaultDetected(void)
     VIBES_BEHAVIOUR_WHY("control.watchdog-stall-fault",
                         "src/APP/app_control.c#app_control_run",
                         "the watchdog reporting that a loop it supervises has stopped checking in",
-                        "a supervised loop that stops checking in is reported as a watchdog fault, even with every processor core still running",
+                        "a supervised loop that stops checking in is reported as a watchdog fault, even while every processor core is still running",
                         "a core counts as running even when the loop on it has wedged, so the check-in is the only thing that catches a stalled loop");
     control_init();
     d_watchdogAlive = false;
@@ -268,8 +268,8 @@ void test_run_esdPowerFaultDetected(void)
     VIBES_BEHAVIOUR_WHY("control.esd-power-loss-faults",
                         "src/APP/app_control.c#app_control_run",
                         "the emergency-stop power line reporting lost power, with everything else healthy",
-                        "lost power in the emergency-stop circuit is reported as the power fault, not as a tripped switch",
-                        "the four emergency-stop reasons send the operator to different places, so the wrong one sends them to the wrong place with the machine still down");
+                        "lost power in the emergency-stop circuit is reported as the power fault",
+                        "each emergency-stop reason sends the operator to a different part of the wiring to clear and reset");
     control_init();
     d_gpio[HAL_GPIO_ESD_POWER] = true;
     app_control_run();
@@ -282,7 +282,7 @@ void test_run_servoCommunicationFaultWhenNotReady(void)
                         "src/APP/app_control.c#app_control_run",
                         "the drive that moves the crosshead no longer reporting that it is ready",
                         "a motor drive that stops reporting itself ready is reported as a drive communication fault",
-                        "the closed-loop changeover shipped asking the idle stepper instead of the active servo, so the machine booted into this fault and sat disabled");
+                        "the machine is built with one of two motor drives, and only the drive actually running reports its readiness, so the controller asks the active one");
     control_init();
     d_actuatorReady = false; /* the active actuator's isReady == false → fault */
     app_control_run();
@@ -294,7 +294,7 @@ void test_run_forceGaugeCommunicationFaultWhenNotReady(void)
     VIBES_BEHAVIOUR_WHY("control.unresponsive-load-cell-is-a-fault",
                         "src/APP/app_control.c#app_control_run",
                         "the load cell no longer reporting that it is ready",
-                        "a load cell that stops answering is reported as a load cell fault, not as a drive fault",
+                        "a load cell that stops answering is reported as a load cell fault",
                         "both the frame and the sample force limits are judged from the load cell, so a gauge gone quiet would leave the crosshead pulling against a stale reading");
     control_init();
     d_forceGaugeReady = false;
@@ -309,7 +309,7 @@ void test_run_firstFaultWinsPriority(void)
     VIBES_BEHAVIOUR("control.first-fault-wins",
                     "src/APP/app_control.c#app_control_run",
                     "a stopped core, a stalled watchdog and an unresponsive load cell together",
-                    "when several faults are active at once, the machine reports the highest-priority one rather than the most recent");
+                    "when several faults are active at once, the machine reports the highest-priority one");
     control_init();
     d_cogAllRunning = false;       /* APP_CONTROL_FAULT_COG (index 1) */
     d_watchdogAlive = false;       /* APP_CONTROL_FAULT_WATCHDOG (index 2) */
@@ -369,7 +369,7 @@ void test_run_firstRestrictionWinsPriority(void)
     VIBES_BEHAVIOUR("control.first-restriction-wins",
                     "src/APP/app_control.c#app_control_run",
                     "the upper endstop reached and the door open together, with motion enabled",
-                    "when several limits are reached at once, the machine reports the highest-priority one rather than the most recent");
+                    "when several limits are reached at once, the machine reports the highest-priority one");
     control_init();
     enableMotion();
     d_gpio[HAL_GPIO_ENDSTOP_UPPER] = true; /* RESTRICTION_UPPER_ENDSTOP */
@@ -420,7 +420,7 @@ void test_run_motionDisabledOutranksRestriction(void)
     VIBES_BEHAVIOUR_WHY("control.motion-off-outranks-restriction",
                         "src/APP/app_control.c#app_control_run",
                         "a just-started machine with no faults, motion never enabled, and the door open",
-                        "with motion never enabled, an open door leaves the machine disabled rather than restricted",
+                        "with motion never enabled, an open door leaves the machine disabled",
                         "the restricted state still lets the crosshead move, so a limit reached must never be what brings the machine out of disabled");
     control_init();
     d_gpio[HAL_GPIO_ENDSTOP_DOOR] = true; /* restriction present */
@@ -461,8 +461,8 @@ void test_run_restrictionOutranksTest(void)
     VIBES_BEHAVIOUR_WHY("control.restriction-outranks-running-test",
                         "src/APP/app_control.c#app_control_run",
                         "a test already running with motion enabled, then the lower endstop reached",
-                        "an endstop reached part-way through a test puts the machine into the restricted state rather than leaving it in the test state",
-                        "the restricted state caps speed, so if a running test outranked the limit the crosshead would keep pulling at full test speed");
+                        "an endstop reached part-way through a test puts the machine into the restricted state",
+                        "a limit reached during a test caps speed straight away, whatever stage the test has got to");
     control_init();
     enableMotion();
     d_testRunning = true;
@@ -495,8 +495,8 @@ void test_outputs_restrictedLimitsSpeed(void)
     VIBES_BEHAVIOUR_WHY("control.restricted-caps-speed",
                         "src/APP/app_control.c#app_control_run",
                         "motion enabled with no fault, then the door reporting open",
-                        "the restricted state caps crosshead speed rather than stopping motion altogether",
-                        "a limit is something the operator still has to drive back off, so cutting motion would strand the crosshead against it");
+                        "the restricted state keeps driving the crosshead, at a capped speed",
+                        "a limit is something the operator still has to drive back off, so motion stays available");
     control_init();
     enableMotion();
     d_gpio[HAL_GPIO_ENDSTOP_DOOR] = true;
@@ -525,7 +525,7 @@ void test_outputs_testEnablesMotionFullSpeed(void)
                         "src/APP/app_control.c#app_control_run",
                         "a healthy machine with motion enabled and a test reported as running",
                         "a running test keeps motion enabled at full speed, not the reduced speed of the restricted state",
-                        "a tensile test is only valid at the programmed rate, so silently capping the speed would distort the measured curve instead of visibly stopping the machine");
+                        "a tensile test is only valid if the crosshead travels at the programmed rate");
     control_init();
     enableMotion();
     d_testRunning = true;
@@ -566,8 +566,8 @@ void test_request_motionEnabledRefusedWhileFaulted(void)
     VIBES_BEHAVIOUR_WHY("control.refused-enable-not-queued",
                         "src/APP/app_control.c#app_control_run",
                         "a stopped core, a request to enable motion made while that fault stands, then the core healthy again",
-                        "a request to enable motion refused because of a fault is discarded rather than queued until the fault clears",
-                        "a request that survived the fault would start the crosshead the instant it cleared, with nobody having asked at that moment");
+                        "a request to enable motion that is refused because of a fault has to be made again once the fault clears",
+                        "the crosshead moves only when an operator asks for it with the machine already healthy");
     control_init();
     d_cogAllRunning = false;
     app_control_run(); /* latch the COG fault into faultedReason */
@@ -711,7 +711,7 @@ void test_m4_first_fault_wins_adjacent_pairs(void)
                         "src/APP/app_control.c#app_control_run",
                         "each neighbouring pair of causes in that order tripped at the same time, in turn",
                         "the fault reported follows one fixed order: a stopped core, then a stalled watchdog, then the emergency-stop inputs, then the drive, then the load cell",
-                        "causes near the front produce the ones behind them, since a dead core also stops the drive answering, so this order makes the reported reason the root cause rather than a symptom");
+                        "causes near the front produce the ones behind them, since a dead core also stops the drive answering, so this order names the root cause");
     /* Pair sources that can be co-asserted via independent doubles. */
     typedef struct
     {
@@ -829,7 +829,7 @@ void test_m4_sample_tension_restricts_while_test_running(void)
                         "src/APP/app_control.c#app_control_run",
                         "a test under way, the sample over its own force limit, and machine force reading near zero",
                         "a sample pulled past its own force limit during a test restricts the machine, even with frame tension far below its maximum",
-                        "this check sat commented out of the state machine, so a running test could pull a specimen past the operator's configured limit with nothing reacting");
+                        "the operator's configured force limit is what protects the specimen for the whole of a test");
     control_init();
     enableMotion();
     d_testRunning = true;
@@ -848,7 +848,7 @@ void test_m4_sample_length_restricts_while_test_running(void)
                         "src/APP/app_control.c#app_control_run",
                         "a test running with motion enabled, the sample past its extension limit, and frame tension low",
                         "a sample stretched past its configured extension limit during a test restricts the machine and is named as the reason",
-                        "this check sat commented out alongside the sample force limit until both were restored");
+                        "the operator's configured extension limit holds for the whole of a test");
     control_init();
     enableMotion();
     d_testRunning = true;
@@ -867,7 +867,7 @@ void test_m4_sample_length_wins_over_sample_tension(void)
                         "src/APP/app_control.c#app_control_run",
                         "a test under way with the sample past both its force and its extension limit at once",
                         "with a sample over both its force and extension limits, the extension limit is reported as the reason for the restriction",
-                        "the two trip together as a specimen yields, so the reason shown to the operator has to be a fixed choice rather than whichever was checked last");
+                        "the two trip together as a specimen yields, so the reason shown to the operator is a fixed choice");
     control_init();
     enableMotion();
     d_testRunning = true;
@@ -884,7 +884,7 @@ void test_m4_restriction_priority_chain(void)
                         "src/APP/app_control.c#app_control_run",
                         "tension above the frame maximum with both endstops and the door open; then tension back in range; then only the lower endstop and the door",
                         "when several limits are reached at once the machine names the highest-ranked one: frame tension, then the upper endstop, then the lower endstop, then the door",
-                        "only one reason is reported at a time, and when the top condition clears the next one down takes over rather than the reason going blank");
+                        "only one reason is reported at a time, and when the top condition clears the next one down takes over");
     control_init();
     enableMotion();
     d_machineForce = 99999; /* idx MACHINE_TENSION */

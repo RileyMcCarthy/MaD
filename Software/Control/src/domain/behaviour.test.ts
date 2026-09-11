@@ -45,7 +45,7 @@ describe('gcode', () => {
       id: 'gcode.relative-moves-are-not-offset',
       covers: 'src/domain/gcode.ts#gcodeLinesToProgram',
       given: 'a move by a relative distance, with a non-zero gauge length configured',
-      then: 'a relative move is not offset by the gauge length, because it is a distance rather than a destination',
+      then: 'a relative move is not offset by the gauge length, because it states a distance to travel',
     },
     () => {
       expect(gcodeLinesToProgram(['G91', 'G1 X10 F5'], 15)).toHaveLength(2);
@@ -70,7 +70,7 @@ describe('gcode', () => {
       covers: 'src/domain/gcode.ts#parseGcodeToMove',
       given: 'a move line with a trailing comment containing a coordinate token',
       then: 'a trailing comment on a move line does not change the target position the author wrote',
-      why: 'fixes a defect where "G1 X10 F5 ; X50 fast" moved to X50',
+      why: 'the target is what the author wrote before the comment; everything after it is annotation',
     },
     () => {
       expect(parseGcodeToMove('G1 X10 F5 ; X50 fast')).toMatchObject({ x: 10, f: 5 });
@@ -83,7 +83,7 @@ describe('gcode', () => {
       covers: 'src/domain/gcode.ts#parseGcodeToMove',
       given: 'a rapid move to zero whose trailing comment mentions a different move',
       then: 'a rapid move to zero with a trailing comment naming a different move is still a rapid move to zero',
-      why: 'the worst shape of the defect turned a rapid-to-zero into a full-speed move to a far target',
+      why: 'a comment must never change where the crosshead goes',
     },
     () => {
       expect(parseGcodeToMove('G0 X0 ; G1 X999')).toMatchObject({ g: 0, x: 0 });
