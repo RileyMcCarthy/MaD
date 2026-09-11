@@ -39,9 +39,16 @@ export function headline(d: LedgerDiff): string {
   return 'No behaviour added, removed or respecified.';
 }
 
+/* Markdown soft-wraps a plain newline inside a list item, so every line of a
+ * row has to end in two spaces or the claim, its scene and its reason render as
+ * one run-on paragraph — which reads as though two separate specs collided. */
+const BR = '  \n';
+
 function one(b: Behaviour): string {
-  const covers = b.covers === undefined ? '' : `  \`${b.covers}\``;
-  return `- **${b.then}**\n  given ${b.given}${covers}${b.why === undefined ? '' : `\n  _${b.why}_`}`;
+  const lines = [`- **${b.then}**`, `  given ${b.given}`];
+  if (b.why !== undefined) lines.push(`  because ${b.why}`);
+  if (b.covers !== undefined) lines.push(`  \`${b.covers}\``);
+  return lines.join(BR);
 }
 
 function respec(r: Respecified): string {
@@ -68,7 +75,7 @@ export function renderMarkdown(d: LedgerDiff): string {
       'These behaviours passed before this change and do not now. The claim did not change; the code did.',
       '',
     );
-    for (const s of d.broken) out.push(`- **${s.after.then}**\n  \`${s.after.id}\` · was ${s.before}, now ${s.after.status}`);
+    for (const s of d.broken) out.push(`- **${s.after.then}**${BR}  \`${s.after.id}\` · was ${s.before}, now ${s.after.status}`);
     out.push('');
   }
 
@@ -78,14 +85,14 @@ export function renderMarkdown(d: LedgerDiff): string {
       'These were in the ledger, and this run learned NOTHING about them: their whole suite declared no behaviours, usually a build or startup failure. This is not removal and it is not a pass.',
       '',
     );
-    for (const b of d.unreported) out.push(`- **${b.then}**\n  \`${b.id}\` · suite \`${b.suite}\``);
+    for (const b of d.unreported) out.push(`- **${b.then}**${BR}  \`${b.id}\` · suite \`${b.suite}\``);
     out.push('');
   }
 
   if (d.removed.length > 0) {
     out.push('## No longer claimed', '');
     out.push('Nothing in the repo asserts these any more.', '');
-    for (const b of d.removed) out.push(`- **${b.then}**\n  \`${b.id}\` · was in \`${b.file}\``);
+    for (const b of d.removed) out.push(`- **${b.then}**${BR}  \`${b.id}\` · was in \`${b.file}\``);
     out.push('');
   }
 
