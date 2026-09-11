@@ -22,7 +22,7 @@ export interface Respecified {
   readonly before: Behaviour;
   readonly after: Behaviour;
   /** Which fields moved. `then` is the meaningful one; the rest are context. */
-  readonly fields: readonly ('given' | 'then' | 'covers' | 'why' | 'file')[];
+  readonly fields: readonly ('given' | 'then' | 'covers' | 'why')[];
 }
 
 export interface StatusChange {
@@ -50,7 +50,10 @@ export interface LedgerDiff {
   readonly unreported: readonly Behaviour[];
 }
 
-const FIELDS = ['given', 'then', 'covers', 'why', 'file'] as const;
+/* What the behaviour CLAIMS. `file` is deliberately absent: a test moving to
+ * another file changes nothing about the machine, and reporting that as a
+ * respecification buries the real claim changes in refactor churn. */
+const FIELDS = ['given', 'then', 'covers', 'why'] as const;
 
 export function diffLedgers(
   before: readonly Behaviour[],

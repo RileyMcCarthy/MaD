@@ -51,20 +51,26 @@ function one(b: Behaviour): string {
   return lines.join(BR);
 }
 
+/* Ordered by what a reviewer needs first. Every changed field shows its old and
+ * new text: naming one without showing the change ("also changed: why") tells
+ * the reader something moved and leaves them no way to see what. */
+const RESPEC_ORDER = ['then', 'given', 'why', 'covers'] as const;
+const RESPEC_LABEL: Record<string, string> = { then: '', given: 'given ', why: 'because ', covers: 'covers ' };
+
 function respec(r: Respecified): string {
   const lines = [`- \`${r.after.id}\``];
-  if (r.fields.includes('then')) {
-    lines.push(`  - was: **${r.before.then}**`);
-    lines.push(`  - now: **${r.after.then}**`);
+  for (const f of RESPEC_ORDER) {
+    if (!r.fields.includes(f)) continue;
+    const label = RESPEC_LABEL[f] ?? `${f} `;
+    const mark = f === 'then' ? '**' : '';
+    const was = r.before[f] ?? '(none)';
+    const now = r.after[f] ?? '(none)';
+    lines.push(`  - ${label}was: ${mark}${was}${mark}`);
+    lines.push(`  - ${label}now: ${mark}${now}${mark}`);
   }
-  if (r.fields.includes('given')) {
-    lines.push(`  - given was: ${r.before.given}`);
-    lines.push(`  - given now: ${r.after.given}`);
-  }
-  const other = r.fields.filter((f) => f !== 'then' && f !== 'given');
-  if (other.length > 0) lines.push(`  - also changed: ${other.join(', ')}`);
   return lines.join('\n');
 }
+
 
 export function renderMarkdown(d: LedgerDiff): string {
   const out: string[] = [`# ${headline(d)}`, ''];
