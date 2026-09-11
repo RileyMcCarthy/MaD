@@ -52,9 +52,11 @@ Rules, in priority order:
    nothing.
 4. **`given` + `then` read as one sentence.** *Given* a pause command with a
    duration, *then* exactly one pause is produced…
-5. **Write `why` for the non-obvious.** A defect it pins ("fixes a defect where
-   `G1 X10 F5 ; X50` moved to X50"), a hardware constraint ("the P2 has no
-   64-bit divide; a 32-bit intermediate would silently wrap").
+5. **Write `why` for the non-obvious.** The requirement the claim does not
+   already carry ("the target is what the author wrote before the comment;
+   everything after it is annotation"), a hardware constraint ("the P2 has no
+   64-bit divide; a 32-bit intermediate would silently wrap"). Never the
+   defect that taught you the requirement.
 
 The acceptance test: read `given` + `then` aloud to someone who has never seen
 this repo. **If you have to explain a word, change the word.**

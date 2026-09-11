@@ -51,26 +51,29 @@ function one(b: Behaviour): string {
   return lines.join(BR);
 }
 
-/* Ordered by what a reviewer needs first. Every changed field shows its old and
- * new text: naming one without showing the change ("also changed: why") tells
- * the reader something moved and leaves them no way to see what. */
+/* Ordered by what a reviewer needs first. The claim is was/now on its own;
+ * everything else nests the two texts under the field name so a reason cannot
+ * render as "because was" — which names the field and hides the sentence. */
 const RESPEC_ORDER = ['then', 'given', 'why', 'covers'] as const;
-const RESPEC_LABEL: Record<string, string> = { then: '', given: 'given ', why: 'because ', covers: 'covers ' };
+const RESPEC_LABEL = { given: 'given', why: 'because', covers: 'covers' } as const;
 
 function respec(r: Respecified): string {
   const lines = [`- \`${r.after.id}\``];
   for (const f of RESPEC_ORDER) {
     if (!r.fields.includes(f)) continue;
-    const label = RESPEC_LABEL[f] ?? `${f} `;
-    const mark = f === 'then' ? '**' : '';
     const was = r.before[f] ?? '(none)';
     const now = r.after[f] ?? '(none)';
-    lines.push(`  - ${label}was: ${mark}${was}${mark}`);
-    lines.push(`  - ${label}now: ${mark}${now}${mark}`);
+    if (f === 'then') {
+      lines.push(`  - was: **${was}**`);
+      lines.push(`  - now: **${now}**`);
+      continue;
+    }
+    lines.push(`  - ${RESPEC_LABEL[f]}:`);
+    lines.push(`    - was: ${was}`);
+    lines.push(`    - now: ${now}`);
   }
   return lines.join('\n');
 }
-
 
 export function renderMarkdown(d: LedgerDiff): string {
   const out: string[] = [`# ${headline(d)}`, ''];

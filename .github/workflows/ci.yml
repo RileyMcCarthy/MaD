@@ -915,7 +915,7 @@ jobs:
 
       - name: Build Vibes
         working-directory: Vibes
-        run: npm ci --no-audit --no-fund && npm run build
+        run: npm ci --no-audit --no-fund && npm test && npm run build
 
       - name: Install Control deps
         working-directory: Software/Control

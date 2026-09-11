@@ -5,9 +5,10 @@
  * a diff of test NAMES cannot:
  *
  *   added     — a behaviour the repo did not claim before
- *   respecified — same id, different `then`. The claim itself changed. This is
- *                 the one a reviewer most needs to see and the one name-diffing
- *                 reports as "one deleted, one added".
+ *   respecified — same id, different `then` or `given`. The claim itself
+ *                 changed. This is the one a reviewer most needs to see and
+ *                 the one name-diffing reports as "one deleted, one added".
+ *                 Rewording `why` or moving `covers` is not this.
  *   removed   — a behaviour the repo no longer claims
  *   broken    — the claim is unchanged but the test no longer holds it
  *
@@ -21,7 +22,8 @@ import { key } from './ledger.js';
 export interface Respecified {
   readonly before: Behaviour;
   readonly after: Behaviour;
-  /** Which fields moved. `then` is the meaningful one; the rest are context. */
+  /** Which fields moved. `then`/`given` put the row here; `why`/`covers` are
+   *  shown with it when they moved too, and never make a row on their own. */
   readonly fields: readonly ('given' | 'then' | 'covers' | 'why')[];
 }
 
@@ -50,10 +52,11 @@ export interface LedgerDiff {
   readonly unreported: readonly Behaviour[];
 }
 
-/* What the behaviour CLAIMS. `file` is deliberately absent: a test moving to
- * another file changes nothing about the machine, and reporting that as a
- * respecification buries the real claim changes in refactor churn. */
+/* Compared so a respecified row can show the whole rewrite. `file` is out: a
+ * test moving files changes nothing about the machine. `why` and `covers` are
+ * out of CLAIM_FIELDS: rewording the reason is not a different claim. */
 const FIELDS = ['given', 'then', 'covers', 'why'] as const;
+const CLAIM_FIELDS = ['then', 'given'] as const;
 
 export function diffLedgers(
   before: readonly Behaviour[],
@@ -77,13 +80,14 @@ export function diffLedgers(
       continue;
     }
     const fields = FIELDS.filter((f) => (prev[f] ?? '') !== (cur[f] ?? ''));
-    if (fields.length > 0) respecified.push({ before: prev, after: cur, fields });
+    const claimChanged = CLAIM_FIELDS.some((f) => fields.includes(f));
+    if (claimChanged) respecified.push({ before: prev, after: cur, fields });
 
     const wasPassing = prev.status === 'pass';
     const isPassing = cur.status === 'pass';
     if (wasPassing && !isPassing) broken.push({ before: prev.status, after: cur });
     else if (!wasPassing && isPassing) fixed.push({ before: prev.status, after: cur });
-    else if (isPassing && fields.length === 0) unchanged += 1;
+    else if (isPassing && !claimChanged) unchanged += 1;
   }
 
   const silent = new Set(silentSuites);

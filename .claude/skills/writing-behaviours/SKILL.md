@@ -68,7 +68,7 @@ behaviour({ id: 'gcode.trailing-comment',
   covers: 'src/domain/gcode.ts#parseGcodeToMove',
   given: 'a move line with a trailing comment containing a coordinate token',
   then: 'a trailing comment on a move line does not change the target position the author wrote',
-  why: 'fixes a defect where "G1 X10 F5 ; X50 fast" moved to X50',
+  why: 'the target is what the author wrote before the comment; everything after it is annotation',
 }, () => { /* expect(...) */ });
 ```
 

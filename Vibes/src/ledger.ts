@@ -28,7 +28,7 @@ export interface Behaviour {
   readonly then: string;
   /** `path#symbol` the behaviour exercises, so a reader can find the code. Optional. */
   readonly covers?: string;
-  /** Why it matters — a pinned defect, a requirement. */
+  /** Why it matters — the requirement the claim does not already carry. */
   readonly why?: string;
   readonly status: Status;
 }
