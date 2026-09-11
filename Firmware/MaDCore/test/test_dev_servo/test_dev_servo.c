@@ -21,6 +21,7 @@
  */
 
 #include <unity.h>
+#include "vibes_behaviour.h"
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -215,6 +216,10 @@ static int settle(int maxTicks)
 
 void test_dev_servo_initialStateDisabledAtTarget(void)
 {
+    VIBES_BEHAVIOUR("servo.starts-disabled-at-encoder",
+                    "src/DEV/dev_servo.c#dev_servo_init",
+                    "a motor drive just after start-up",
+                    "a freshly started motor drive is disabled, arrived at the encoder position, with zero speed and no stall");
     servo_init();
     TEST_ASSERT_TRUE(dev_servo_atTarget(CH));
     TEST_ASSERT_FALSE(dev_servo_isStalled(CH));
@@ -225,6 +230,10 @@ void test_dev_servo_initialStateDisabledAtTarget(void)
 
 void test_dev_servo_disabledParksAndReportsEncoder(void)
 {
+    VIBES_BEHAVIOUR("servo.disabled-parks-at-encoder",
+                    "src/DEV/dev_servo.c#dev_servo_run",
+                    "a disabled motor drive whose encoder has moved since start-up, then one control tick",
+                    "a disabled motor drive parks at the encoder, reports that position as arrived, and leaves the pulse train stopped");
     servo_init();
     d_encoderValue = 1234;
     tick();
@@ -237,6 +246,10 @@ void test_dev_servo_disabledParksAndReportsEncoder(void)
 
 void test_dev_servo_moveToStagesTarget(void)
 {
+    VIBES_BEHAVIOUR("servo.move-stages-target",
+                    "src/DEV/dev_servo.c#dev_servo_moveTo",
+                    "a disabled motor drive commanded to a new position",
+                    "a position command records the new target immediately, while the carriage stays put until the drive is enabled and the loop ticks");
     servo_init();
     dev_servo_moveTo(CH, 5000, 10000);
     TEST_ASSERT_EQUAL_INT32(5000, dev_servo_getTarget(CH));
@@ -246,6 +259,11 @@ void test_dev_servo_moveToStagesTarget(void)
 
 void test_dev_servo_moveToInvalidFeedrateUsesMax(void)
 {
+    VIBES_BEHAVIOUR_WHY("servo.invalid-speed-uses-max",
+                        "src/DEV/dev_servo.c#dev_servo_moveTo",
+                        "a position command with a zero speed, then one above the drive maximum",
+                        "a position command whose speed is zero or above the drive maximum is driven at the motor drive maximum speed",
+                        "every position command still moves; a missing or oversize speed takes the configured maximum");
     servo_init();
     /* 0 and oversize clamp to maxVelocity (100000 from init). */
     dev_servo_moveTo(CH, 100, 0);
@@ -256,6 +274,10 @@ void test_dev_servo_moveToInvalidFeedrateUsesMax(void)
 
 void test_dev_servo_atTargetWhenEncoderSettledOnTarget(void)
 {
+    VIBES_BEHAVIOUR("servo.arrived-when-already-on-target",
+                    "src/DEV/dev_servo.c#dev_servo_run",
+                    "an enabled motor drive commanded to the position the encoder already reads",
+                    "an enabled motor drive already on the commanded position reports arrival and holds still");
     servo_init();
     d_encoderValue = 0;
     dev_servo_enable(CH, true);
@@ -267,6 +289,10 @@ void test_dev_servo_atTargetWhenEncoderSettledOnTarget(void)
 
 void test_dev_servo_positionMoveCommandsVelocity(void)
 {
+    VIBES_BEHAVIOUR("servo.position-move-starts-pulse-train",
+                    "src/DEV/dev_servo.c#dev_servo_run",
+                    "an enabled motor drive commanded to a position away from the encoder",
+                    "a position command away from the encoder starts a pulse train toward the target");
     servo_init();
     d_encoderValue = 0;
     dev_servo_enable(CH, true);
@@ -280,6 +306,10 @@ void test_dev_servo_positionMoveCommandsVelocity(void)
 
 void test_dev_servo_velocityModeCommandsPulseTrain(void)
 {
+    VIBES_BEHAVIOUR("servo.speed-command-starts-pulse-train",
+                    "src/DEV/dev_servo.c#dev_servo_run",
+                    "an enabled motor drive commanded to hold a non-zero speed",
+                    "a speed command starts a pulse train and the motor drive reports a non-zero commanded speed");
     servo_init();
     d_encoderValue = 0;
     dev_servo_enable(CH, true);
@@ -295,6 +325,11 @@ void test_dev_servo_velocityModeCommandsPulseTrain(void)
 
 void test_dev_servo_stopRequestsZeroVelocityTarget(void)
 {
+    VIBES_BEHAVIOUR_WHY("servo.stop-holds-at-rest",
+                        "src/DEV/dev_servo.c#dev_servo_stop",
+                        "an enabled motor drive holding a non-zero speed, then a stop, with the encoder free to follow",
+                        "a stop requests a speed of zero, and commanded speed winds down to rest once the encoder tracks the commanded position",
+                        "stopping is a speed hold at rest, so the carriage decelerates under the same accel limit as any other speed change");
     servo_init();
     d_encoderValue = 0;
     dev_servo_enable(CH, true);
@@ -323,6 +358,10 @@ void test_dev_servo_stopRequestsZeroVelocityTarget(void)
 
 void test_dev_servo_setPositionUpdatesEncoderAndTarget(void)
 {
+    VIBES_BEHAVIOUR("servo.set-position-redefines-origin",
+                    "src/DEV/dev_servo.c#dev_servo_setPosition",
+                    "a motor drive whose origin is set to a new encoder count",
+                    "setting the motor drive origin writes that count to the encoder and to the target");
     servo_init();
     dev_servo_setPosition(CH, 4096);
     TEST_ASSERT_EQUAL_INT32(4096, d_encoderLastSet);
@@ -332,6 +371,10 @@ void test_dev_servo_setPositionUpdatesEncoderAndTarget(void)
 
 void test_dev_servo_followingErrorReflectsOffset(void)
 {
+    VIBES_BEHAVIOUR("servo.encoder-lag-grows-while-frozen",
+                    "src/DEV/dev_servo.c#dev_servo_run",
+                    "an enabled motor drive commanded to a distant position while the encoder stays frozen",
+                    "the gap between the commanded position and the encoder grows while the encoder stays still and the command advances toward the target");
     servo_init();
     d_encoderValue = 0;
     dev_servo_enable(CH, true);
@@ -346,6 +389,11 @@ void test_dev_servo_followingErrorReflectsOffset(void)
 
 void test_dev_servo_stallWhenCommandedWithoutMotion(void)
 {
+    VIBES_BEHAVIOUR_WHY("servo.stall-when-commanded-without-motion",
+                        "src/DEV/dev_servo.c#dev_servo_run",
+                        "an enabled motor drive commanded at high speed while the encoder stays frozen for longer than the stall window",
+                        "commanding motion while the encoder stays still is reported as a stall",
+                        "a jammed carriage is reported as a stall so the controller can stop pulling against the jam");
     servo_init();
     d_encoderValue = 0; /* frozen encoder */
     dev_servo_enable(CH, true);
@@ -361,6 +409,11 @@ void test_dev_servo_stallWhenCommandedWithoutMotion(void)
 
 void test_dev_servo_disableClearsStallAndParks(void)
 {
+    VIBES_BEHAVIOUR_WHY("servo.disable-clears-stall",
+                        "src/DEV/dev_servo.c#dev_servo_run",
+                        "a stalled motor drive that is then disabled",
+                        "disabling a stalled motor drive clears the stall, parks at the encoder, and reports arrival",
+                        "disabling is how an operator recovers from a stall after clearing the jam");
     servo_init();
     d_encoderValue = 0;
     dev_servo_enable(CH, true);
@@ -388,6 +441,11 @@ void test_dev_servo_disableClearsStallAndParks(void)
  * FAULT_SERVO_COMMUNICATION on this. */
 void test_dev_servo_isReadyFalseUntilFirstTick(void)
 {
+    VIBES_BEHAVIOUR_WHY("servo.ready-after-first-tick",
+                        "src/DEV/dev_servo.c#dev_servo_isReady",
+                        "a motor drive just after start-up, then after one control tick",
+                        "a motor drive reports unready until the control loop has ticked once, and ready from then on",
+                        "the controller treats an answering drive as the motor loop running, and a silent drive as a communication fault");
     servo_init();
     TEST_ASSERT_FALSE(dev_servo_isReady(CH));
     tick();
@@ -398,6 +456,11 @@ void test_dev_servo_isReadyFalseUntilFirstTick(void)
  * a communication fault just because motion is off. */
 void test_dev_servo_isReadyTrueWhileDisabledButTicking(void)
 {
+    VIBES_BEHAVIOUR_WHY("servo.ready-while-disabled-and-ticking",
+                        "src/DEV/dev_servo.c#dev_servo_isReady",
+                        "a disabled motor drive whose control loop has ticked",
+                        "a disabled motor drive whose control loop is still ticking reports ready",
+                        "parking the drive still counts as the motor loop answering, so a parked machine stays free of a communication fault");
     servo_init();
     dev_servo_enable(CH, false);
     tick();
@@ -406,6 +469,10 @@ void test_dev_servo_isReadyTrueWhileDisabledButTicking(void)
 
 void test_dev_servo_isReadyRejectsOutOfRangeChannel(void)
 {
+    VIBES_BEHAVIOUR("servo.ready-rejects-unknown-channel",
+                    "src/DEV/dev_servo.c#dev_servo_isReady",
+                    "a readiness check for a motor-drive channel that does not exist",
+                    "a motor-drive channel that does not exist is reported as unready");
     servo_init();
     tick();
     TEST_ASSERT_FALSE(dev_servo_isReady(DEV_SERVO_CHANNEL_COUNT));
@@ -422,6 +489,11 @@ void test_dev_servo_isReadyRejectsOutOfRangeChannel(void)
  * recording stops early and the profile's path comes up short. */
 void test_dev_servo_newMoveClearsPreviousArrivalBeforeAnyTick(void)
 {
+    VIBES_BEHAVIOUR_WHY("servo.new-move-clears-arrival",
+                        "src/DEV/dev_servo.c#dev_servo_moveTo",
+                        "a motor drive parked on a target, then commanded to a different position, before the next control tick",
+                        "a new position target clears the previous arrival immediately, before the control loop ticks",
+                        "the motion controller retires a move on arrival, so a new target is judged unarrived until the control loop has evaluated that target");
     servo_init();
     dev_servo_enable(CH, true);
     dev_servo_moveTo(CH, 8192, 40960);
@@ -439,6 +511,11 @@ static void issue_new_move_midtick(void) { dev_servo_moveTo(CH, 16384, 40960); }
 
 void test_dev_servo_commandLandingMidtickIsNotReportedAsArrival(void)
 {
+    VIBES_BEHAVIOUR_WHY("servo.mid-tick-command-clears-arrival",
+                        "src/DEV/dev_servo.c#dev_servo_run",
+                        "a motor drive parked on a target, with a new position command landing during the next control tick",
+                        "a position command that lands mid-tick keeps arrival clear, and the new target is recorded",
+                        "arrival is published only for the target the loop actually evaluated, so a command that arrives during a tick is judged on the next one");
     servo_init();
     dev_servo_enable(CH, true);
     dev_servo_moveTo(CH, 8192, 40960);
@@ -454,6 +531,11 @@ void test_dev_servo_commandLandingMidtickIsNotReportedAsArrival(void)
 
 void test_dev_servo_setVelocityClearsArrival(void)
 {
+    VIBES_BEHAVIOUR_WHY("servo.speed-command-clears-arrival",
+                        "src/DEV/dev_servo.c#dev_servo_setVelocity",
+                        "a motor drive parked on a position target, then commanded to a non-zero speed",
+                        "a speed command issued after arrival clears that arrival immediately",
+                        "the motion controller retires a move on arrival, so leaving a position target drops that arrival at once");
     servo_init();
     dev_servo_enable(CH, true);
     dev_servo_moveTo(CH, 8192, 40960);
@@ -466,6 +548,11 @@ void test_dev_servo_setVelocityClearsArrival(void)
 
 void test_dev_servo_stopClearsArrival(void)
 {
+    VIBES_BEHAVIOUR_WHY("servo.stop-clears-arrival",
+                        "src/DEV/dev_servo.c#dev_servo_stop",
+                        "a motor drive parked on a position target, then stopped",
+                        "a stop issued after arrival clears that arrival immediately",
+                        "the motion controller retires a move on arrival, so a stop drops that arrival at once");
     servo_init();
     dev_servo_enable(CH, true);
     dev_servo_moveTo(CH, 8192, 40960);
@@ -480,6 +567,11 @@ void test_dev_servo_stopClearsArrival(void)
  * previous verdict no longer describes anything the caller can act on. */
 void test_dev_servo_setPositionClearsArrival(void)
 {
+    VIBES_BEHAVIOUR_WHY("servo.set-position-clears-arrival",
+                        "src/DEV/dev_servo.c#dev_servo_setPosition",
+                        "a motor drive parked on a target, then given a new origin at the current encoder, then one control tick",
+                        "redefining the encoder origin clears the previous arrival immediately, then the next tick reports arrival at that origin",
+                        "homing moves the target with the origin, so arrival is judged again in the new frame");
     servo_init();
     dev_servo_enable(CH, true);
     dev_servo_moveTo(CH, 8192, 40960);
@@ -502,6 +594,11 @@ void test_dev_servo_setPositionClearsArrival(void)
  * the window: moves that "sometimes take 3 s and sometimes 15 s". */
 void test_dev_servo_moveSettlesDeterministicallyWithoutHunting(void)
 {
+    VIBES_BEHAVIOUR_WHY("servo.move-settles-on-target",
+                        "src/DEV/dev_servo.c#dev_servo_run",
+                        "an enabled motor drive commanded to several positions that do not land on a tick boundary",
+                        "a position move arrives with the profile at rest on the target and the encoder inside the settle window, in bounded time",
+                        "the last tick of a move covers only the remaining distance, so the profile lands on the target and arrival is reported in bounded time");
     servo_init();
     dev_servo_enable(CH, true);
     /* Distances that do not divide evenly into a tick's travel, so the final

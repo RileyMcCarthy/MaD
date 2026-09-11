@@ -10,6 +10,7 @@
  * globally-compiled implementation.
  */
 #include <unity.h>
+#include "vibes_behaviour.h"
 #include "../../src/APP/app_notification.c"
 
 extern void HAL_lock_mock_reset(void);
@@ -49,6 +50,10 @@ static void prime_ready(void)
 
 void test_idle_pump_sends_nothing(void)
 {
+    VIBES_BEHAVIOUR("notify.idle-sends-nothing",
+                    "src/APP/app_notification.c#app_notification_run",
+                    "nothing queued to tell the operator",
+                    "with nothing queued, the machine sends no notification");
     prime_ready();
     app_notification_run();
     app_notification_run();
@@ -57,6 +62,10 @@ void test_idle_pump_sends_nothing(void)
 
 void test_send_then_run_forwards_payload(void)
 {
+    VIBES_BEHAVIOUR("notify.warning-arrives-with-filled-in-text",
+                    "src/APP/app_notification.c#app_notification_send",
+                    "a warning queued with a formatted message",
+                    "a warning with a formatted message reaches the operator as a warning, with the numbers filled in");
     prime_ready();
     app_notification_send(APP_NOTIFICATION_TYPE_WARNING, "hello %d", 5);
     app_notification_run(); /* stage from queue -> SENDING -> runAction calls sink */
@@ -67,6 +76,11 @@ void test_send_then_run_forwards_payload(void)
 
 void test_sending_retries_until_complete(void)
 {
+    VIBES_BEHAVIOUR_WHY("notify.keeps-sending-until-taken",
+                        "src/APP/app_notification.c#app_notification_run",
+                        "a notification not yet taken, then taken",
+                        "a notification not yet taken is resent every cycle until taken, and sending stops once taken",
+                        "a toast missed on a busy cycle still has to reach the operator");
     prime_ready();
     d_sendReturn = false; /* sink never completes */
     app_notification_send(APP_NOTIFICATION_TYPE_INFO, "x");
@@ -85,6 +99,10 @@ void test_sending_retries_until_complete(void)
 
 void test_multiple_notifications_drain_in_fifo_order(void)
 {
+    VIBES_BEHAVIOUR("notify.queued-messages-leave-in-order",
+                    "src/APP/app_notification.c#app_notification_run",
+                    "an info queued first, then an error",
+                    "queued notifications are sent in the order raised, first the info, then the error");
     prime_ready();
     app_notification_send(APP_NOTIFICATION_TYPE_INFO, "first");
     app_notification_send(APP_NOTIFICATION_TYPE_ERROR, "second");
@@ -111,6 +129,11 @@ void test_multiple_notifications_drain_in_fifo_order(void)
 
 void test_each_type_maps_to_protocol_enum(void)
 {
+    VIBES_BEHAVIOUR_WHY("notify.each-kind-keeps-its-name",
+                        "src/APP/app_notification.c#app_notification_send",
+                        "each kind of notification raised in turn: message, info, warning, error and success",
+                        "each kind of notification reaches the operator under its own name: message, info, warning, error or success",
+                        "the control app chooses the toast style from the name");
     const app_notification_type_E types[] = {
         APP_NOTIFICATION_TYPE_MESSAGE, APP_NOTIFICATION_TYPE_INFO,
         APP_NOTIFICATION_TYPE_WARNING, APP_NOTIFICATION_TYPE_ERROR,
@@ -133,6 +156,11 @@ void test_each_type_maps_to_protocol_enum(void)
 
 void test_long_message_is_truncated_to_buffer(void)
 {
+    VIBES_BEHAVIOUR_WHY("notify.long-message-is-cut-to-fit",
+                        "src/APP/app_notification.c#app_notification_send",
+                        "a notification whose text is longer than a toast can hold",
+                        "a notification longer than a toast can hold is sent shortened to fit",
+                        "a toast can only hold so much text");
     prime_ready();
     char big[300];
     memset(big, 'A', sizeof(big) - 1);

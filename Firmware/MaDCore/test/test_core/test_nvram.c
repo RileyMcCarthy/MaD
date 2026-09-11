@@ -2,6 +2,7 @@
 #include "HAL_lock.h"
 #include <string.h>
 #include "dev_nvram.h"
+#include "vibes_behaviour.h"
 
 extern dev_nvram_config_t dev_nvram_config;
 extern MachineProfile dev_nvram_machineProfileDefault;
@@ -22,6 +23,11 @@ static const MachineProfile dev_nvram_machineProfileTest1 = {
 
 void test_dev_nvram_loadDefaultMachineProfile(void)
 {
+    VIBES_BEHAVIOUR_WHY("nvram.defaults",
+                        "src/DEV/dev_nvram.c#dev_nvram_run",
+                        "a machine with no stored profile on the SD card",
+                        "with no stored profile on the SD card, the machine uses the default profile named Default, with homing speed 10 and homing offset 5",
+                        "every machine must boot with a usable envelope even before a profile has been saved");
     // Ensure default values are correct
     MachineProfile *defaultProfile = (MachineProfile *)dev_nvram_config.channels[DEV_NVRAM_CHANNEL_MACHINE_PROFILE].dataDefault;
     TEST_ASSERT_EQUAL_CHAR_ARRAY(defaultProfile->name, "Default", strlen("Default"));
@@ -46,6 +52,10 @@ void test_dev_nvram_loadDefaultMachineProfile(void)
 
 void test_dev_nvram_saveMachineProfile(void)
 {
+    VIBES_BEHAVIOUR("nvram.save-machine-profile",
+                    "src/DEV/dev_nvram.c#dev_nvram_updateChannelData",
+                    "a ready default profile that is then updated to a new profile named Test1",
+                    "updating the machine profile writes that profile to the SD card and the next read returns the same profile");
     MachineProfile currentProfile;
 
     TEST_ASSERT_EQUAL_INT(DEV_NVRAM_INIT, dev_nvram_getState(DEV_NVRAM_CHANNEL_MACHINE_PROFILE));
@@ -81,6 +91,10 @@ void test_dev_nvram_saveMachineProfile(void)
 
 void test_dev_nvram_loadMachineProfile(void)
 {
+    VIBES_BEHAVIOUR("nvram.load-machine-profile",
+                    "src/DEV/dev_nvram.c#dev_nvram_run",
+                    "an SD card that already holds a saved machine profile",
+                    "on boot, a saved machine profile on the SD card is the profile the machine uses");
     // create a file with the test profile
     FILE *file = fopen("./test/sd/profile.bin", "w");
     TEST_ASSERT_NOT_NULL(file);

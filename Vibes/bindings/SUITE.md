@@ -17,7 +17,7 @@ One file per runnable suite, committed, living beside the tests it describes.
 | `v`       | yes      | schema version. An unknown version is an error, not a skip. |
 | `name`    | yes      | suite id, unique in the repo. Appears in the report. |
 | `lang`    | yes      | provenance only. Vibes never branches on it. |
-| `cmd`     | yes      | run the tests. Executed with the suite file's directory as cwd. |
+| `cmd`     | yes      | run the tests. Executed with the suite file's directory as cwd. The firmware suite uses `native_test_noasan` because AddressSanitizer on macOS aborts the Unity binary before any test body runs, so the binding would emit nothing and the ledger would look like every C behaviour had been deleted. |
 | `results` | yes      | format of the runner's own output: `vitest-json`, `unity-stdout`, `cargo-stdout`. |
 
 ## Discovery is `git ls-files`, never a filesystem walk

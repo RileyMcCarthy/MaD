@@ -47,6 +47,9 @@ const BR = '  \n';
 function one(b: Behaviour): string {
   const lines = [`- **${b.then}**`, `  given ${b.given}`];
   if (b.why !== undefined) lines.push(`  because ${b.why}`);
+  /* The test is the evidence; the covered symbol is the code. Both belong on
+   * the row so a reviewer can open the test without grepping the ledger. */
+  lines.push(`  \`${b.file}#${b.test}\``);
   if (b.covers !== undefined) lines.push(`  \`${b.covers}\``);
   return lines.join(BR);
 }

@@ -91,6 +91,16 @@ describe('a respecification is a changed claim', () => {
     expect(md).not.toContain('also changed');
   });
 
+  it('points an added row at the test file and the test name', () => {
+    const md = renderMarkdown(
+      diffLedgers(
+        [],
+        [row({ id: 'a', then: 'the machine stays disabled', file: 'test/foo.c' })],
+      ),
+    );
+    expect(md).toContain('`test/foo.c#t`');
+  });
+
   it('lists a changed scene the same way', () => {
     const d = diffLedgers(
       [row({ id: 'a', then: 'the machine stays disabled', given: 'old scene' })],
