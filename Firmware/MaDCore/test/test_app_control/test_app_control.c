@@ -241,7 +241,7 @@ void test_run_cogFaultDetected(void)
 {
     VIBES_BEHAVIOUR_WHY("control.stopped-core-is-a-fault",
                         "src/APP/app_control.c#app_control_run",
-                        "one of the cores no longer reporting that it is running",
+                        "one of the cores stops reporting that it is running",
                         "a processor core that stops running is reported as a core fault",
                         "the motion and monitoring loops run on separate cores; one dying silently would leave the machine moving unsupervised");
     control_init();
@@ -280,7 +280,7 @@ void test_run_servoCommunicationFaultWhenNotReady(void)
 {
     VIBES_BEHAVIOUR_WHY("control.motor-drive-communication-fault",
                         "src/APP/app_control.c#app_control_run",
-                        "the drive that moves the crosshead no longer reporting that it is ready",
+                        "the drive that moves the crosshead stops reporting that it is ready",
                         "a motor drive that stops reporting itself ready is reported as a drive communication fault",
                         "the machine is built with one of two motor drives, and only the drive actually running reports its readiness, so the controller asks the active one");
     control_init();
@@ -293,7 +293,7 @@ void test_run_forceGaugeCommunicationFaultWhenNotReady(void)
 {
     VIBES_BEHAVIOUR_WHY("control.unresponsive-load-cell-is-a-fault",
                         "src/APP/app_control.c#app_control_run",
-                        "the load cell no longer reporting that it is ready",
+                        "the load cell stops reporting that it is ready",
                         "a load cell that stops answering is reported as a load cell fault",
                         "both the frame and the sample force limits are judged from the load cell, so a gauge gone quiet would leave the crosshead pulling against a stale reading");
     control_init();
@@ -512,7 +512,7 @@ void test_outputs_manualEnablesMotionFullSpeed(void)
     VIBES_BEHAVIOUR("control.manual-runs-at-full-speed",
                     "src/APP/app_control.c#app_control_run",
                     "motion enabled on a clean machine with no test running",
-                    "in manual mode the machine permits motion at full speed, not the reduced speed of the restricted state");
+                    "in manual mode the machine permits motion at full speed");
     control_init();
     enableMotion(); /* MANUAL */
     TEST_ASSERT_TRUE(app_control_motionEnabled());
@@ -524,7 +524,7 @@ void test_outputs_testEnablesMotionFullSpeed(void)
     VIBES_BEHAVIOUR_WHY("control.running-test-not-speed-limited",
                         "src/APP/app_control.c#app_control_run",
                         "a healthy machine with motion enabled and a test reported as running",
-                        "a running test keeps motion enabled at full speed, not the reduced speed of the restricted state",
+                        "a running test keeps motion enabled at full speed",
                         "a tensile test is only valid if the crosshead travels at the programmed rate");
     control_init();
     enableMotion();

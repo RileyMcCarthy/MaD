@@ -242,7 +242,7 @@ describe('waveform (G123) canned cycle', () => {
       covers: 'src/domain/gcode.ts#gcodeLinesToMachineMoveBuffers',
       given: 'a program that contains a waveform, offered to the move-only upload path',
       then: 'a program that contains a waveform is refused by the move-only upload path',
-      why: 'a waveform has to go through the ordered waveform upload, not the move batch',
+      why: 'a waveform has to go through the ordered waveform upload',
     },
     () => {
       expect(() => gcodeLinesToMachineMoveBuffers(['G123 A5 F1 C2 W0'], 0)).toThrow(MoveValidationError);
