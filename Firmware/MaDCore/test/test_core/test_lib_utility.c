@@ -79,6 +79,11 @@ void test_lib_utility_elapsed_gt_boundaries(void)
 
 void test_lib_utility_elapsed_gt_uint32_wrap(void)
 {
+    VIBES_BEHAVIOUR_WHY("firmware.elapsed-gt-uint32-wrap",
+                        "src/Library/lib_utility.c#lib_utility_elapsed_gt",
+                        "a period of 20 ticks started 10 ticks before the clock wraps from its maximum, checked 16 ticks and 26 ticks later",
+                        "elapsed time that crosses a clock wrap is measured modularly: 16 ticks is inside a 20-tick period, 26 ticks is past it, and wrapping by exactly the period is still inside",
+                        "the millisecond clock wraps after about 49 days; unsigned wrap-around is how elapsed time is measured");
     /* start near UINT32_MAX, now just past wrap — modular (now - start) is small. */
     const uint32_t start = UINT32_MAX - 10U;
     TEST_ASSERT_FALSE(lib_utility_elapsed_gt(5U, start, 20U));  /* elapsed = 16 */

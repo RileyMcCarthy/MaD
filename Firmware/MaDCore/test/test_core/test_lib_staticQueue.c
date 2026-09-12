@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "lib_staticQueue.h"
+#include "vibes_behaviour.h"
 
 /* Pin the queue's contract: unsynchronized ring buffer, one-writer-per-index
  * publication, capacity max_size − 1 (one slot kept open to distinguish full
@@ -12,6 +13,11 @@
 
 void test_lib_staticQueue(void)
 {
+    VIBES_BEHAVIOUR_WHY("queue.fifo-capacity-wrap-clear",
+                        "src/Library/lib_staticQueue.c#lib_staticQueue_push",
+                        "a four-slot queue filled, emptied, wrapped by interleaved push and pop, discarded, and cleared",
+                        "a four-slot queue holds three items in first-in first-out order, rejects a push when full, keeps count across wrap-around, discards an item popped with no destination, and is empty after a clear",
+                        "one slot stays unused so full and empty stay distinct");
     lib_staticQueue_S queue;
     int32_t buffer[QUEUE_SLOTS];
     int32_t value;

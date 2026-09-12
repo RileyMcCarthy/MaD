@@ -27,7 +27,7 @@ fn first_position_becomes_the_baseline() {
         id: "gantry.first-position-is-baseline",
         covers: Some("SIL/models/src/gantry.rs#on_position"),
         given: "the very first position report, whatever its absolute value",
-        then: "the first position report becomes the zero of extension, rather than being read as travel",
+        then: "the first position report becomes the zero of extension",
         why: Some("the machine does not home to 0, so absolute position is not extension"),
     });
 

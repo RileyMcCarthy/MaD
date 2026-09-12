@@ -30,19 +30,33 @@ holding. The reader has never opened the code. Full guide:
    "returns 3" is an assertion. "a five-millimetre travel with two millimetres
    of slack strains the sample by three" is a claim a reviewer can judge.
 
-4. **`id` is stable identity — reword freely, never rename casually.**
+4. **A spec says what the machine DOES — never what it does not do, used to
+   do, or once did wrong.** A contrast makes the reader stop and work out which
+   half is true, and a bug the claim outlived is not part of the
+   specification.
+   - BAD: `lost power is reported as the power fault, not as a tripped switch`
+   - GOOD: `lost power in the emergency-stop circuit is reported as the power fault`
+   - BAD (`why`): `fixes a defect where "G1 X10 F5 ; X50 fast" moved to X50`
+   - GOOD (`why`): `the target is what the author wrote before the comment; everything after it is annotation`
+   Ban `not as`, `rather than`, `instead of`, `no longer`, `used to`, and any
+   mention of a defect, regression or what shipped. If git history explains the
+   claim, write the REQUIREMENT it taught you, not the story. A condition the
+   claim genuinely needs ("even while every core is still running") is not a
+   contrast — keep it.
+
+5. **`id` is stable identity — reword freely, never rename casually.**
    `area.claim-in-brief` kebab-case (e.g. `gantry.slack-consumed-before-extension`).
    Same id + new wording renders as *respecified* (good, reviewable).
    New id renders as removed + added (a lie, if it's the same behaviour).
 
-5. **Declare on ENTRY.** In C the macro is the FIRST statement of the test
+6. **Declare on ENTRY.** In C the macro is the FIRST statement of the test
    body; nothing checks this for you, and a crash before it makes the
    behaviour read as deleted. TS/Rust: call `behaviour(...)` first thing.
 
-6. **One behaviour per test**, and never self-report status — pass/fail joins
+7. **One behaviour per test**, and never self-report status — pass/fail joins
    from the runner.
 
-7. **After changing behaviours:** `node Vibes/bin/vibes.mjs collect --write`
+8. **After changing behaviours:** `node Vibes/bin/vibes.mjs collect --write`
    and commit `behaviours.jsonl` alongside the change.
 
 ## Snippets
@@ -54,7 +68,7 @@ behaviour({ id: 'gcode.trailing-comment',
   covers: 'src/domain/gcode.ts#parseGcodeToMove',
   given: 'a move line with a trailing comment containing a coordinate token',
   then: 'a trailing comment on a move line does not change the target position the author wrote',
-  why: 'fixes a defect where "G1 X10 F5 ; X50 fast" moved to X50',
+  why: 'the target is what the author wrote before the comment; everything after it is annotation',
 }, () => { /* expect(...) */ });
 ```
 

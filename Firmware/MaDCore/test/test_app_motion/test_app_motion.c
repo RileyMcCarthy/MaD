@@ -20,6 +20,7 @@
 // public API; its private state machine is exercised purely through that API.
 
 #include <unity.h>
+#include "vibes_behaviour.h"
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -266,6 +267,10 @@ void tearDown(void) {}
  * exactly once and lands in WAITING (idle). */
 void test_init_then_enabled_run_enables_stepper_and_waits(void)
 {
+    VIBES_BEHAVIOUR("motion.enable-turns-drive-on-and-waits",
+                    "src/APP/app_motion.c#app_motion_private_getDesiredState",
+                    "motion just initialised, then motion enabled for the first cycle",
+                    "the first enabled motion cycle turns the drive on and leaves the motion planner idle, waiting for a move");
     /* Not idle before the first run: state is DISABLED, not WAITING. */
     TEST_ASSERT_FALSE(app_motion_isIdle());
 
@@ -281,6 +286,11 @@ void test_init_then_enabled_run_enables_stepper_and_waits(void)
  * disables it, and empties the queue (so a queued move is dropped). */
 void test_disable_stops_disables_and_clears_queue(void)
 {
+    VIBES_BEHAVIOUR_WHY("motion.disable-stops-and-drops-queue",
+                        "src/APP/app_motion.c#app_motion_private_getDesiredState",
+                        "motion waiting with a queued move, then motion disabled",
+                        "disabling motion stops the drive, turns the drive off, and drops every queued move so that re-enabling finds the motion planner idle",
+                        "a disabled machine must not finish a leftover move when the operator re-enables motion");
     motion_driveToWaiting();
 
     /* Queue a move that will be discarded by the disable path. */
@@ -305,6 +315,10 @@ void test_disable_stops_disables_and_clears_queue(void)
  * transitions to MOVING; isIdle becomes false. */
 void test_waiting_pops_and_starts_move_then_moving(void)
 {
+    VIBES_BEHAVIOUR("motion.waiting-starts-queued-move",
+                    "src/APP/app_motion.c#app_motion_private_moveManager_start",
+                    "the motion planner idle in absolute mode, with a rapid move of 2 millimetres at 50 millimetres per second queued",
+                    "an idle motion planner starts a queued 2 millimetre rapid move at 50 millimetres per second on the same cycle and is then busy");
     motion_driveToWaiting();
     d_moveCount = 0U; /* ignore any earlier moves */
 
@@ -326,6 +340,10 @@ void test_waiting_pops_and_starts_move_then_moving(void)
  * atTarget; before that it stays MOVING. */
 void test_moving_completes_only_when_at_target(void)
 {
+    VIBES_BEHAVIOUR("motion.move-completes-on-arrival",
+                    "src/APP/app_motion.c#app_motion_private_moveManager_run",
+                    "a linear move in flight, first with the drive still travelling, then with the drive at the target",
+                    "a linear move stays in progress until the drive reports arrival, and becomes idle once the drive has arrived");
     motion_driveToWaiting();
 
     app_motion_move_t mv = make_move((uint8_t)G1_LINEAR_MOVE, 1000, 100, 0);
@@ -351,6 +369,11 @@ void test_moving_completes_only_when_at_target(void)
  * move still "completes" via the MOVING path once atTarget is reported. */
 void test_zero_feedrate_move_issues_no_stepper_move(void)
 {
+    VIBES_BEHAVIOUR_WHY("motion.zero-feedrate-skips-drive-command",
+                        "src/APP/app_motion.c#app_motion_private_moveManager_start",
+                        "a linear move queued with a feedrate of zero",
+                        "a linear move with a feedrate of zero leaves the drive uncommanded, and still completes once the drive reports arrival",
+                        "a feedrate of zero would stall the crosshead if it were sent to the drive");
     motion_driveToWaiting();
     d_moveCount = 0U;
 
@@ -369,6 +392,11 @@ void test_zero_feedrate_move_issues_no_stepper_move(void)
  * position. The snapshot is taken at the top of the run that starts the move. */
 void test_incremental_mode_adds_current_position(void)
 {
+    VIBES_BEHAVIOUR_WHY("motion.incremental-adds-current-position",
+                        "src/APP/app_motion.c#app_motion_private_moveManager_start",
+                        "incremental mode, the crosshead at 15 millimetres, and a 1 millimetre linear move",
+                        "in incremental mode a 1 millimetre move from 15 millimetres commands the drive to 16 millimetres",
+                        "incremental G-code is relative to where the machine is now");
     motion_driveToWaiting();
 
     /* Switch to incremental mode: G91 starts+completes in two runs. */
@@ -394,6 +422,11 @@ void test_incremental_mode_adds_current_position(void)
  * position (defends the absolute branch and G90 toggling incremental back). */
 void test_absolute_mode_ignores_current_position(void)
 {
+    VIBES_BEHAVIOUR_WHY("motion.absolute-uses-programmed-target",
+                        "src/APP/app_motion.c#app_motion_private_moveManager_start",
+                        "absolute mode restored after incremental, the crosshead at an unrelated position, and a rapid move to 1 millimetre",
+                        "in absolute mode a move to 1 millimetre commands the drive to 1 millimetre while the crosshead sits at a different position",
+                        "absolute G-code is machine coordinates");
     motion_driveToWaiting();
 
     /* Go incremental, then back to absolute, draining each in two runs. */
@@ -425,6 +458,10 @@ void test_absolute_mode_ignores_current_position(void)
  * lib_timer real implementation backed by global_timeus). */
 void test_dwell_holds_until_period_elapses(void)
 {
+    VIBES_BEHAVIOUR("motion.dwell-holds-for-period",
+                    "src/APP/app_motion.c#app_motion_private_moveManager_run",
+                    "a 50 millisecond dwell, checked at 40 milliseconds and again at 60 milliseconds",
+                    "a dwell of 50 milliseconds keeps the motion planner busy at 40 milliseconds, and is idle once 60 milliseconds have passed");
     motion_driveToWaiting();
 
     global_timeus = 0U;
@@ -461,6 +498,11 @@ void test_dwell_holds_until_period_elapses(void)
  *   run 8  : COMPLETE-> moveManager_run reports done -> WAITING/idle. */
 void test_homing_full_sequence(void)
 {
+    VIBES_BEHAVIOUR_WHY("motion.homing-endstop-then-backoff",
+                        "src/APP/app_motion.c#app_motion_private_homing_run",
+                        "a home command, the crosshead at 50 millimetres, then the upper endstop, a 1 second pause, and backoff arrival",
+                        "homing approaches the upper endstop, waits 1 second, sets the jaw offset as the coordinate origin, backs off by the homing offset, and is idle when that backoff arrives",
+                        "the upper endstop is the only absolute reference; the jaw offset and homing offset together put the grip lips at a known machine coordinate");
     motion_driveToWaiting();
 
     /* Snapshot position 5000 steps at the run that issues the approach move.
@@ -534,6 +576,11 @@ void test_homing_full_sequence(void)
  * and the G28 move then completes. */
 void test_homing_fails_when_target_reached_without_endstop(void)
 {
+    VIBES_BEHAVIOUR_WHY("motion.homing-completes-if-endstop-missed",
+                        "src/APP/app_motion.c#app_motion_private_homing_run",
+                        "a home command whose approach reaches its target with the upper endstop still open",
+                        "homing that reaches its approach target with the upper endstop still open finishes without setting a coordinate origin or backing off",
+                        "with no endstop there is no origin to write, and finishing lets the motion planner accept the next move");
     motion_driveToWaiting();
 
     d_steps = 0;
@@ -563,6 +610,10 @@ void test_homing_fails_when_target_reached_without_endstop(void)
  * The snapshot of dev_stepper_getTarget is taken at run() time. */
 void test_getSetpoint_scales_target_steps_to_um(void)
 {
+    VIBES_BEHAVIOUR("motion.setpoint-steps-to-micrometres",
+                    "src/APP/app_motion.c#app_motion_private_processOutputs",
+                    "the drive target at 250 steps, then at minus 100 steps, with 100 steps per millimetre",
+                    "a drive target of 250 steps at 100 steps per millimetre is published as 2500 micrometres, and minus 100 steps as minus 1000 micrometres");
     d_target = 250; /* steps; 250*1000/100 = 2500 um */
     d_motionEnabled = true;
     app_motion_run();
@@ -576,6 +627,10 @@ void test_getSetpoint_scales_target_steps_to_um(void)
 /* getPosition converts the snapshotted current step count to um. */
 void test_getPosition_scales_steps_to_um(void)
 {
+    VIBES_BEHAVIOUR("motion.position-steps-to-micrometres",
+                    "src/APP/app_motion.c#app_motion_getPosition",
+                    "the drive at 175 steps with 100 steps per millimetre",
+                    "a drive position of 175 steps at 100 steps per millimetre is published as 1750 micrometres");
     d_steps = 175; /* 175*1000/100 = 1750 um */
     d_motionEnabled = true;
     app_motion_run();
@@ -585,6 +640,11 @@ void test_getPosition_scales_steps_to_um(void)
 /* With stepsPerMM == 0 the conversions guard against divide-by-zero and yield 0. */
 void test_zero_stepsPerMM_yields_zero_setpoint_and_position(void)
 {
+    VIBES_BEHAVIOUR_WHY("motion.zero-steps-per-mm-publishes-zero",
+                        "src/APP/app_motion.c#app_motion_getPosition",
+                        "a machine profile with zero steps per millimetre, and a non-zero drive target and position",
+                        "with zero steps per millimetre, both the published setpoint and the published position are zero",
+                        "converting steps to micrometres divides by steps per millimetre, so a missing value would divide by zero");
     /* Re-init with a profile that has 0 steps/mm. */
     d_machineProfile.servoStepsPerMM = 0;
     motion_init();
@@ -607,6 +667,11 @@ void test_zero_stepsPerMM_yields_zero_setpoint_and_position(void)
  * empty). The push past that capacity is rejected. */
 void test_addMove_queue_is_bounded(void)
 {
+    VIBES_BEHAVIOUR_WHY("motion.move-queue-has-fixed-capacity",
+                        "src/APP/app_motion.c#app_motion_addMove",
+                        "moves pushed until the motion queue is full, then one more",
+                        "the motion queue fills to one less than its slot count, and the next push is refused",
+                        "one slot stays empty so the motion planner can tell a full queue from an empty one");
     app_motion_move_t mv = make_move((uint8_t)G1_LINEAR_MOVE, 1, 1, 0);
     for (int i = 0; i < MOTION_QUEUE_SIZE - 1; i++)
     {
@@ -619,6 +684,11 @@ void test_addMove_queue_is_bounded(void)
  * WAITING so the module becomes idle again. */
 void test_abortAndClear_stops_clears_and_returns_to_waiting(void)
 {
+    VIBES_BEHAVIOUR_WHY("motion.abort-stops-and-idles",
+                        "src/APP/app_motion.c#app_motion_abortAndClear",
+                        "a move in flight and another still queued",
+                        "aborting motion stops the drive, drops every queued move, and leaves the motion planner idle",
+                        "ending a test must stop travel and drop leftover moves");
     motion_driveToWaiting();
 
     app_motion_move_t a = make_move((uint8_t)G1_LINEAR_MOVE, 1000, 100, 0);
@@ -638,6 +708,11 @@ void test_abortAndClear_stops_clears_and_returns_to_waiting(void)
 /* isIdle is false while a move is queued (even before it is popped). */
 void test_isIdle_false_when_move_queued(void)
 {
+    VIBES_BEHAVIOUR_WHY("motion.queued-move-is-busy",
+                        "src/APP/app_motion.c#app_motion_isIdle",
+                        "the motion planner waiting, then one move queued",
+                        "the motion planner is idle with an empty queue, and is busy as soon as a move is queued",
+                        "a test waits for the motion planner to go idle before completing, so a queued move counts as busy");
     motion_driveToWaiting();
     TEST_ASSERT_TRUE(app_motion_isIdle());
 
@@ -656,6 +731,11 @@ void test_isIdle_false_when_move_queued(void)
  * centre). This is the firmware-side proof that we follow the expected f'(t). */
 void test_waveform_streams_cosine_velocity_and_completes(void)
 {
+    VIBES_BEHAVIOUR_WHY("motion.waveform-cosine-velocity-then-settles",
+                        "src/APP/app_motion.c#app_motion_private_waveform_run",
+                        "a waveform of 5 millimetres amplitude at 1 hertz for 1 cycle",
+                        "a waveform streams a cosine velocity that reaches plus and minus 2 pi times frequency times amplitude, reverses twice per cycle, and settles at the centre when the cycles are done",
+                        "the drive follows instantaneous velocity so position integrates to a sine of that amplitude and frequency");
     motion_driveToWaiting();
     d_setVelocityCount = 0U;
 
@@ -717,6 +797,11 @@ void test_waveform_streams_cosine_velocity_and_completes(void)
 /* A degenerate waveform (zero frequency) completes without commanding motion. */
 void test_waveform_zero_frequency_completes_without_motion(void)
 {
+    VIBES_BEHAVIOUR_WHY("motion.waveform-zero-frequency-completes",
+                        "src/APP/app_motion.c#app_motion_private_waveform_run",
+                        "a waveform with amplitude and cycles but a frequency of zero",
+                        "a waveform with a frequency of zero completes without commanding any velocity",
+                        "a frequency of zero has no trajectory to play");
     motion_driveToWaiting();
     d_setVelocityCount = 0U;
 
@@ -790,6 +875,10 @@ static void run_waveform_capture(int32_t ampUm, uint32_t freqMilliHz, uint32_t c
  * combination — proving the firmware follows f'(t) for arbitrary waveforms. */
 void test_waveform_velocity_matches_2piFA_across_params(void)
 {
+    VIBES_BEHAVIOUR("motion.waveform-peak-is-2pi-f-a",
+                    "src/APP/app_motion.c#app_motion_private_waveform_run",
+                    "waveforms of several amplitudes, frequencies and cycle counts",
+                    "for every amplitude, frequency and cycle count, the streamed peak velocity is 2 pi times frequency times amplitude, and direction reverses about twice per cycle");
     struct
     {
         int32_t ampUm;

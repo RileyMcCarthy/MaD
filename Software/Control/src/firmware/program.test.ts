@@ -1,4 +1,5 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect } from 'vitest';
+import { behaviour } from '@vibes/behaviour';
 import { programPort } from './program';
 
 /**
@@ -59,38 +60,81 @@ function romPort(opts: { failOpen?: boolean; silent?: boolean; splitWrites?: boo
 const firmware = Uint8Array.from({ length: 64 }, (_, i) => i);
 
 describe('programPort', () => {
-  it('opens the port, programs, and closes it again', async () => {
-    const { port, log } = romPort();
-    const result = await programPort(port, firmware, { mode: 'ram' });
-    expect(result.romVersion).toBe('G');
-    expect(log).toEqual(['open', 'close']);
-  });
+  behaviour(
+    {
+      id: 'flash.port-opened-and-closed',
+      covers: 'src/firmware/program.ts#programPort',
+      given: 'a successful RAM load through a serial port',
+      then: 'a successful load opens the serial port and closes it when the load finishes',
+    },
+    async () => {
+      const { port, log } = romPort();
+      const result = await programPort(port, firmware, { mode: 'ram' });
+      expect(result.romVersion).toBe('G');
+      expect(log).toEqual(['open', 'close']);
+    },
+  );
 
-  it('closes the port even when programming fails', async () => {
-    // A silent ROM makes detectP2 give up; the port must still be released or
-    // the next attempt fails with "port already open" and the user is stuck.
-    const { port, log } = romPort({ silent: true });
-    await expect(programPort(port, firmware, { mode: 'ram' })).rejects.toMatchObject({
-      code: 'no-response',
-    });
-    expect(log).toEqual(['open', 'close']);
-  });
+  behaviour(
+    {
+      id: 'flash.port-closed-after-failed-load',
+      covers: 'src/firmware/program.ts#programPort',
+      given: 'a RAM load on a serial port whose chip never answers',
+      then: 'a failed load closes the serial port',
+      why: 'a serial port left open after a failed load cannot be opened again',
+    },
+    async () => {
+      // A silent ROM makes detectP2 give up; the port must still be released or
+      // the next attempt fails with "port already open" and the user is stuck.
+      const { port, log } = romPort({ silent: true });
+      await expect(programPort(port, firmware, { mode: 'ram' })).rejects.toMatchObject({
+        code: 'no-response',
+      });
+      expect(log).toEqual(['open', 'close']);
+    },
+  );
 
-  it('does not try to close a port that never opened', async () => {
-    const { port, log } = romPort({ failOpen: true });
-    await expect(programPort(port, firmware, { mode: 'ram' })).rejects.toThrow(/already open/);
-    expect(log).toEqual(['open']);
-  });
+  behaviour(
+    {
+      id: 'flash.port-open-failure-skips-close',
+      covers: 'src/firmware/program.ts#programPort',
+      given: 'a serial port that fails to open because it is already open',
+      then: 'when the serial port fails to open because it is already open, that open error is reported and the port is left without a close',
+      why: 'closing a port that never opened would hide the original open error',
+    },
+    async () => {
+      const { port, log } = romPort({ failOpen: true });
+      await expect(programPort(port, firmware, { mode: 'ram' })).rejects.toThrow(/already open/);
+      expect(log).toEqual(['open']);
+    },
+  );
 
-  it('tolerates a reply split across chunks, as a real UART would', async () => {
-    const { port } = romPort({ splitWrites: true });
-    const result = await programPort(port, firmware, { mode: 'ram' });
-    expect(result.romVersion).toBe('G');
-  });
+  behaviour(
+    {
+      id: 'flash.rom-reply-split-across-chunks',
+      covers: 'src/firmware/program.ts#programPort',
+      given: 'a boot ROM version reply that arrives in two pieces',
+      then: 'a boot ROM version reply split across two serial chunks is recognised',
+      why: 'real serial adapters deliver replies in arbitrary pieces',
+    },
+    async () => {
+      const { port } = romPort({ splitWrites: true });
+      const result = await programPort(port, firmware, { mode: 'ram' });
+      expect(result.romVersion).toBe('G');
+    },
+  );
 
-  it('reports the flash image size including the prepended stub', async () => {
-    const { port } = romPort();
-    const result = await programPort(port, firmware, { mode: 'flash' });
-    expect(result.imageBytes).toBe(496 + firmware.byteLength);
-  });
+  behaviour(
+    {
+      id: 'flash.flash-load-size-includes-stub',
+      covers: 'src/firmware/program.ts#programPort',
+      given: 'a 64-byte firmware file loaded to flash through a serial port',
+      then: 'a flash load reports an image size of 496 bytes plus the firmware file\'s size',
+    },
+    async () => {
+      const { port } = romPort();
+      const result = await programPort(port, firmware, { mode: 'flash' });
+      expect(result.imageBytes).toBe(496 + firmware.byteLength);
+    },
+  );
 });

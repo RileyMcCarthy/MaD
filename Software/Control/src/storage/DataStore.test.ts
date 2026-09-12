@@ -6,7 +6,8 @@
  *
  * Uses an in-memory File System Access fake — never touches real disk.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, expect, vi, beforeEach } from 'vitest';
+import { behaviour } from '@vibes/behaviour';
 
 const idb = new Map<string, unknown>();
 
@@ -168,57 +169,93 @@ describe('DataStore mutex + index integrity', () => {
     }
   });
 
-  it('serializes concurrent createTestRun so both rows survive in the index', async () => {
-    // Fire many creates without awaiting each — mutex must not drop rows.
-    const names = Array.from({ length: 12 }, (_, i) => String(i + 1).padStart(6, '0'));
-    await Promise.all(names.map((n) => store.createTestRun(sampleRun(n))));
+  behaviour(
+    {
+      id: 'storage.concurrent-creates-all-land',
+      covers: 'src/storage/DataStore.ts#createTestRun',
+      given: 'twelve test runs created at the same time',
+      then: 'twelve test runs created together all appear in the history, each with a distinct identity',
+      why: 'overlapping saves must not drop a run from the history',
+    },
+    async () => {
+      // Fire many creates without awaiting each — mutex must not drop rows.
+      const names = Array.from({ length: 12 }, (_, i) => String(i + 1).padStart(6, '0'));
+      await Promise.all(names.map((n) => store.createTestRun(sampleRun(n))));
 
-    const index = await store.getTestRunIndex();
-    expect(index).toHaveLength(12);
-    const ids = new Set(index.map((r) => r.id));
-    expect(ids.size).toBe(12);
-  });
+      const index = await store.getTestRunIndex();
+      expect(index).toHaveLength(12);
+      const ids = new Set(index.map((r) => r.id));
+      expect(ids.size).toBe(12);
+    },
+  );
 
-  it('nextTestName is monotonic across concurrent callers', async () => {
-    const results = await Promise.all(Array.from({ length: 8 }, () => store.nextTestName()));
-    const nums = results.map((s) => parseInt(s, 10)).sort((a, b) => a - b);
-    expect(new Set(nums).size).toBe(8);
-    // Contiguous block of 8 distinct names.
-    expect(nums[nums.length - 1]! - nums[0]!).toBe(7);
-  });
+  behaviour(
+    {
+      id: 'storage.next-test-name-is-monotonic',
+      covers: 'src/storage/DataStore.ts#nextTestName',
+      given: 'eight callers asking for the next test name at the same time',
+      then: 'concurrent requests for the next test name receive eight consecutive names with no duplicates',
+      why: 'two tests started together must not share a name, or one would overwrite the other',
+    },
+    async () => {
+      const results = await Promise.all(Array.from({ length: 8 }, () => store.nextTestName()));
+      const nums = results.map((s) => parseInt(s, 10)).sort((a, b) => a - b);
+      expect(new Set(nums).size).toBe(8);
+      // Contiguous block of 8 distinct names.
+      expect(nums[nums.length - 1]! - nums[0]!).toBe(7);
+    },
+  );
 
-  it('rebuildIndex recovers runs when index.json is missing', async () => {
-    await store.createTestRun(sampleRun('000001'));
-    await store.createTestRun(sampleRun('000002'));
+  behaviour(
+    {
+      id: 'storage.empty-history-rebuilds-from-files',
+      covers: 'src/storage/DataStore.ts#getTestRunIndex',
+      given: 'two saved runs whose history list has been wiped to an empty list',
+      then: 'when the history list is empty, listing the history rebuilds the list from the run files so both runs reappear',
+      why: 'the on-disk run files are the source of truth, so a wiped list must not hide saved tests',
+    },
+    async () => {
+      await store.createTestRun(sampleRun('000001'));
+      await store.createTestRun(sampleRun('000002'));
 
-    // Corrupt/wipe the index by writing an empty list through a parallel path:
-    // delete both by rewriting index only via rebuild after wiping file content.
-    const dir = await (store as unknown as { subdir: (n: string) => Promise<FileSystemDirectoryHandle> }).subdir(
-      'testRuns',
-    );
-    const fh = await dir.getFileHandle('index.json', { create: true });
-    const w = await fh.createWritable();
-    await w.write('[]');
-    await w.close();
+      // Corrupt/wipe the index by writing an empty list through a parallel path:
+      // delete both by rewriting index only via rebuild after wiping file content.
+      const dir = await (store as unknown as { subdir: (n: string) => Promise<FileSystemDirectoryHandle> }).subdir(
+        'testRuns',
+      );
+      const fh = await dir.getFileHandle('index.json', { create: true });
+      const w = await fh.createWritable();
+      await w.write('[]');
+      await w.close();
 
-    // getTestRunIndex should detect files and rebuild.
-    const index = await store.getTestRunIndex();
-    expect(index.length).toBe(2);
-    expect(index.map((r) => r.testName).sort()).toEqual(['000001', '000002']);
-  });
+      // getTestRunIndex should detect files and rebuild.
+      const index = await store.getTestRunIndex();
+      expect(index.length).toBe(2);
+      expect(index.map((r) => r.testName).sort()).toEqual(['000001', '000002']);
+    },
+  );
 
-  it('updateTestRun patches status without losing sibling runs', async () => {
-    await store.createTestRun(sampleRun('000010'));
-    await store.createTestRun(sampleRun('000011'));
-    await store.updateTestRun('000010', { status: 'downloaded' });
+  behaviour(
+    {
+      id: 'storage.update-one-run-keeps-siblings',
+      covers: 'src/storage/DataStore.ts#updateTestRun',
+      given: 'two saved runs, one of which is then marked downloaded',
+      then: 'marking one run downloaded leaves the other run completed, and both remain in the history',
+    },
+    async () => {
+      await store.createTestRun(sampleRun('000010'));
+      await store.createTestRun(sampleRun('000011'));
+      await store.updateTestRun('000010', { status: 'downloaded' });
 
-    const a = await store.getTestRun('000010');
-    const b = await store.getTestRun('000011');
-    expect(a?.status).toBe('downloaded');
-    expect(b?.status).toBe('completed');
+      const a = await store.getTestRun('000010');
+      const b = await store.getTestRun('000011');
+      expect(a?.status).toBe('downloaded');
+      expect(b?.status).toBe('completed');
 
-    const index = await store.getTestRunIndex();
-    expect(index.find((r) => r.testName === '000010')?.status).toBe('downloaded');
-    expect(index).toHaveLength(2);
-  });
+      const index = await store.getTestRunIndex();
+      expect(index.find((r) => r.testName === '000010')?.status).toBe('downloaded');
+      expect(index).toHaveLength(2);
+    },
+  );
 });
+

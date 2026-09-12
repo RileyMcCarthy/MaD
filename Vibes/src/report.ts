@@ -39,23 +39,42 @@ export function headline(d: LedgerDiff): string {
   return 'No behaviour added, removed or respecified.';
 }
 
+/* Markdown soft-wraps a plain newline inside a list item, so every line of a
+ * row has to end in two spaces or the claim, its scene and its reason render as
+ * one run-on paragraph — which reads as though two separate specs collided. */
+const BR = '  \n';
+
 function one(b: Behaviour): string {
-  const covers = b.covers === undefined ? '' : `  \`${b.covers}\``;
-  return `- **${b.then}**\n  given ${b.given}${covers}${b.why === undefined ? '' : `\n  _${b.why}_`}`;
+  const lines = [`- **${b.then}**`, `  given ${b.given}`];
+  if (b.why !== undefined) lines.push(`  because ${b.why}`);
+  /* The test is the evidence; the covered symbol is the code. Both belong on
+   * the row so a reviewer can open the test without grepping the ledger. */
+  lines.push(`  \`${b.file}#${b.test}\``);
+  if (b.covers !== undefined) lines.push(`  \`${b.covers}\``);
+  return lines.join(BR);
 }
+
+/* Ordered by what a reviewer needs first. The claim is was/now on its own;
+ * everything else nests the two texts under the field name so a reason cannot
+ * render as "because was" — which names the field and hides the sentence. */
+const RESPEC_ORDER = ['then', 'given', 'why', 'covers'] as const;
+const RESPEC_LABEL = { given: 'given', why: 'because', covers: 'covers' } as const;
 
 function respec(r: Respecified): string {
   const lines = [`- \`${r.after.id}\``];
-  if (r.fields.includes('then')) {
-    lines.push(`  - was: **${r.before.then}**`);
-    lines.push(`  - now: **${r.after.then}**`);
+  for (const f of RESPEC_ORDER) {
+    if (!r.fields.includes(f)) continue;
+    const was = r.before[f] ?? '(none)';
+    const now = r.after[f] ?? '(none)';
+    if (f === 'then') {
+      lines.push(`  - was: **${was}**`);
+      lines.push(`  - now: **${now}**`);
+      continue;
+    }
+    lines.push(`  - ${RESPEC_LABEL[f]}:`);
+    lines.push(`    - was: ${was}`);
+    lines.push(`    - now: ${now}`);
   }
-  if (r.fields.includes('given')) {
-    lines.push(`  - given was: ${r.before.given}`);
-    lines.push(`  - given now: ${r.after.given}`);
-  }
-  const other = r.fields.filter((f) => f !== 'then' && f !== 'given');
-  if (other.length > 0) lines.push(`  - also changed: ${other.join(', ')}`);
   return lines.join('\n');
 }
 
@@ -68,7 +87,7 @@ export function renderMarkdown(d: LedgerDiff): string {
       'These behaviours passed before this change and do not now. The claim did not change; the code did.',
       '',
     );
-    for (const s of d.broken) out.push(`- **${s.after.then}**\n  \`${s.after.id}\` · was ${s.before}, now ${s.after.status}`);
+    for (const s of d.broken) out.push(`- **${s.after.then}**${BR}  \`${s.after.id}\` · was ${s.before}, now ${s.after.status}`);
     out.push('');
   }
 
@@ -78,14 +97,14 @@ export function renderMarkdown(d: LedgerDiff): string {
       'These were in the ledger, and this run learned NOTHING about them: their whole suite declared no behaviours, usually a build or startup failure. This is not removal and it is not a pass.',
       '',
     );
-    for (const b of d.unreported) out.push(`- **${b.then}**\n  \`${b.id}\` · suite \`${b.suite}\``);
+    for (const b of d.unreported) out.push(`- **${b.then}**${BR}  \`${b.id}\` · suite \`${b.suite}\``);
     out.push('');
   }
 
   if (d.removed.length > 0) {
     out.push('## No longer claimed', '');
     out.push('Nothing in the repo asserts these any more.', '');
-    for (const b of d.removed) out.push(`- **${b.then}**\n  \`${b.id}\` · was in \`${b.file}\``);
+    for (const b of d.removed) out.push(`- **${b.then}**${BR}  \`${b.id}\` · was in \`${b.file}\``);
     out.push('');
   }
 
