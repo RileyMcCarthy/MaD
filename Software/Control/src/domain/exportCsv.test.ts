@@ -35,7 +35,12 @@ describe('buildExportCsv', () => {
       id: 'export.csv-header-names-the-run',
       covers: 'src/domain/exportCsv.ts#buildExportCsv',
       given: 'a downloaded run with sample, motion, and gauge length, plus the raw sample CSV',
-      then: 'an exported CSV starts with comment lines naming the test, status, start, completion, motion profile, sample profile, and gauge length, then the raw sample rows unchanged',
+      expect: {
+        'header-names-the-run':
+          'the exported CSV opens with comment lines naming the test, status, start, completion, motion profile, sample profile and gauge length',
+        'blank-line-before-rows': 'a blank line separates the comments from the sample rows',
+        'rows-unchanged': 'the raw sample rows follow unchanged at the end',
+      },
     },
     () => {
       const out = buildExportCsv(run(), csv);
@@ -55,8 +60,13 @@ describe('buildExportCsv', () => {
     {
       id: 'export.csv-omits-absent-fields',
       covers: 'src/domain/exportCsv.ts#buildExportCsv',
-      given: 'a run with no completion time, no sample profile, and no gauge length',
-      then: 'an exported CSV omits completed, sample-profile, and gauge-length comment lines when those fields are absent, and still ends with the raw sample rows',
+      given: 'a run with no completion time, no motion profile, no sample profile, and no gauge length',
+      expect: {
+        'absent-fields-omitted':
+          'the completion, sample profile and gauge length comment lines are left out',
+        'motion-line-kept': 'the motion profile comment line is still written',
+        'rows-unchanged': 'the raw sample rows still end the export',
+      },
     },
     () => {
       const out = buildExportCsv(

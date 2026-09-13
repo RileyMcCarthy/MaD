@@ -217,7 +217,11 @@ describe('DataStore mutex + index integrity', () => {
       id: 'storage.set-save-refuses-overwrite-until-asked',
       covers: 'src/storage/DataStore.ts#saveSet',
       given: 'a named motion set already saved in the data folder',
-      then: 'saving a motion set of the same name without overwrite keeps the original, and saving with overwrite replaces the stored set including its moves',
+      expect: {
+        'second-save-refused': 'saving that name again without overwrite is refused',
+        'original-kept': 'the one stored set keeps the contents it was saved with',
+        'overwrite-replaces': 'saving with overwrite replaces the stored set, its moves included',
+      },
     },
     async () => {
       const set = {
