@@ -5,6 +5,7 @@
  * Includes
  **********************************************************************/
 #include "app_control.h"
+#include "IO_Debug.h"
 #include "app_gauge.h"
 #include "app_monitor.h"
 #include "app_messageSlave.h"
@@ -20,6 +21,7 @@
 #include "dev_stepper.h"
 #endif
 #include "watchdog.h"
+#include "lib_timer.h"
 
 #include "HAL_GPIO.h"
 #include "HAL_lock.h"
@@ -27,6 +29,29 @@
 /**********************************************************************
  * Constants
  **********************************************************************/
+
+/* How long a communication loss must persist before it is a machine fault.
+ *
+ * The two communication faults are not read from a pin -- they are a device
+ * driver's opinion, formed from a request/response exchange over a UART. A
+ * single missed reply is ordinary on a serial link (a framing slip, a reply
+ * that lands one cycle late), and both drivers already treat it that way:
+ * dev_forceGauge drops into its ERROR state, re-reads, and is back in RUNNING
+ * on the next cycle. Latching a fault on that one cycle disables motion, and
+ * app_testManagement ends a running test the instant motion goes false -- so a
+ * blip that the driver itself recovered from destroys the test, and the fault
+ * clears again before anything polling the machine can see why.
+ *
+ * The window is sized from the driver's own worst case. A read that fails
+ * holds the gauge un-ready for its whole timeout (20 ms), and the ERROR state
+ * then re-reads up to four times at 10 ms each, so a link that comes back
+ * clears within about 60 ms. A link that does not come back never clears, so
+ * a genuinely silent device still faults here -- and now within 100 ms rather
+ * than the second the old 1 s read timeout cost. Every other fault stays instantaneous -- the ESD and endstop inputs
+ * are levels, where one read is authoritative and safety wants no delay, and
+ * the cog/watchdog faults are already latched conditions rather than samples.
+ */
+#define APP_CONTROL_COMMS_FAULT_DEBOUNCE_MS 100U
 
 /*********************************************************************
  * Macros
@@ -84,6 +109,11 @@ typedef struct
     app_control_state_E state;
     app_control_nvram_S nvram;
 
+    /* Armed while a communication loss is in progress; see
+     * APP_CONTROL_COMMS_FAULT_DEBOUNCE_MS. */
+    lib_timer_S servoCommsLoss;
+    lib_timer_S forceGaugeCommsLoss;
+
     int32_t lock;
 } app_control_data_S;
 /**********************************************************************
@@ -99,6 +129,7 @@ static app_control_data_S app_control_data;
  **********************************************************************/
 
 static void app_control_private_processRequests(void);
+static bool app_control_private_sustained(lib_timer_S *timer, bool condition);
 static app_control_fault_E app_control_private_processFaults(void);
 static app_control_restriction_E app_control_private_processRestrictions(void);
 static app_control_state_E app_control_private_getDesiredState(void);
@@ -112,16 +143,41 @@ static void app_control_private_processRequests(void)
     APP_CONTROL_LOCK_REQ_BLOCK();
     if (app_control_data.request.triggerMotionEnabled)
     {
+        DEBUG_INFO("%s", "CONTROL: motion enable requested\n");
         app_control_data.motionEnabled = true;
         app_control_data.request.triggerMotionEnabled = false;
     }
 
     if (app_control_data.request.triggerMotionDisabled)
     {
+        /* Who turned motion off is the first question whenever a test ends
+         * with "motion disabled", and nothing recorded it until now. */
+        DEBUG_INFO("%s", "CONTROL: motion DISABLE requested\n");
         app_control_data.motionEnabled = false;
         app_control_data.request.triggerMotionDisabled = false;
     }
     APP_CONTROL_LOCK_REL();
+}
+
+/* True once `condition` has held continuously for the timer's period. Any
+ * cycle where it is false disarms the timer, so the window measures one
+ * unbroken episode rather than an accumulation of unrelated blips. */
+static bool app_control_private_sustained(lib_timer_S *timer, bool condition)
+{
+    bool sustained = false;
+    if (condition)
+    {
+        if (lib_timer_state(timer) == lib_timer_STATE_OFF)
+        {
+            lib_timer_start(timer);
+        }
+        sustained = lib_timer_expired(timer);
+    }
+    else
+    {
+        lib_timer_stop(timer);
+    }
+    return sustained;
 }
 
 static app_control_fault_E app_control_private_processFaults(void)
@@ -132,8 +188,11 @@ static app_control_fault_E app_control_private_processFaults(void)
     app_control_data.fault[APP_CONTROL_FAULT_ESD_SWITCH] = HAL_GPIO_getActive(HAL_GPIO_ESD_SWITCH);
     app_control_data.fault[APP_CONTROL_FAULT_ESD_UPPER] = HAL_GPIO_getActive(HAL_GPIO_ESD_UPPER);
     app_control_data.fault[APP_CONTROL_FAULT_ESD_LOWER] = HAL_GPIO_getActive(HAL_GPIO_ESD_LOWER);
-    app_control_data.fault[APP_CONTROL_FAULT_SERVO_COMMUNICATION] = (actuator_isReady() == false);
-    app_control_data.fault[APP_CONTROL_FAULT_FORCE_GAUGE_COMMUNICATION] = (dev_forceGauge_isReady(DEV_FORCEGAUGE_CHANNEL_MAIN) == false);
+    app_control_data.fault[APP_CONTROL_FAULT_SERVO_COMMUNICATION] =
+        app_control_private_sustained(&app_control_data.servoCommsLoss, actuator_isReady() == false);
+    app_control_data.fault[APP_CONTROL_FAULT_FORCE_GAUGE_COMMUNICATION] =
+        app_control_private_sustained(&app_control_data.forceGaugeCommsLoss,
+                                      dev_forceGauge_isReady(DEV_FORCEGAUGE_CHANNEL_MAIN) == false);
 
     // Select the first fault as the reason
     app_control_fault_E fault = APP_CONTROL_FAULT_NONE;
@@ -249,6 +308,8 @@ void app_control_init(int lock)
 {
     app_control_data.lock = lock;
     app_control_data.state = APP_CONTROL_STATE_DISABLED;
+    lib_timer_init(&app_control_data.servoCommsLoss, APP_CONTROL_COMMS_FAULT_DEBOUNCE_MS);
+    lib_timer_init(&app_control_data.forceGaugeCommsLoss, APP_CONTROL_COMMS_FAULT_DEBOUNCE_MS);
     MachineProfile machineProfile;
     (void)dev_nvram_getChannelData(DEV_NVRAM_CHANNEL_MACHINE_PROFILE, &machineProfile, sizeof(MachineProfile));
     app_control_data.nvram.maxMachineTension = machineProfile.maxForceTensile;
@@ -258,7 +319,16 @@ void app_control_run(void)
 {
     app_control_private_processRequests();
     app_control_data.testRunning = app_testManagement_isRunning();
+    const app_control_fault_E previousFault = app_control_data.faultedReason;
     app_control_data.faultedReason = app_control_private_processFaults();
+    if (app_control_data.faultedReason != previousFault)
+    {
+        /* A fault is what silently disables motion, and a transient one (a
+         * gauge or servo that misses a reply for one cycle) aborts a running
+         * test with "motion disabled" and then clears before anyone polling
+         * the state can see it. Record the edge. */
+        DEBUG_INFO("CONTROL: fault %d -> %d\n", (int)previousFault, (int)app_control_data.faultedReason);
+    }
     app_control_data.restrictedReason = app_control_private_processRestrictions();
     app_control_data.state = app_control_private_getDesiredState();
     app_control_private_setOutput();

@@ -1072,9 +1072,25 @@ class DeviceSession {
           tail: byteRing.tailHex(64),
         });
         break;
-      case 'notification':
-        logProto.info('notification', undefined, { bytes: u8(ev.payload).length });
+      case 'notification': {
+        // Log what the notification SAYS, not just how long it was. "Test
+        // aborted: motion disabled" is the one line that explains a run that
+        // ended early, and recording only a byte count made that invisible in
+        // every exported session — the abort had to be reconstructed from
+        // firmware serial instead.
+        const payload = u8(ev.payload);
+        let message: string | undefined;
+        let type: string | undefined;
+        try {
+          const shared = notificationToShared(decodeNotification(payload));
+          message = shared.Message;
+          type = shared.Type;
+        } catch {
+          // A malformed notification still deserves its byte count.
+        }
+        logProto.info('notification', message, { bytes: payload.length, type });
         break;
+      }
       case 'data':
         logProto.info('rx', commandName(command, this.dirFor(command)), {
           bytes: u8(ev.payload).length,

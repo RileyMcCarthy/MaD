@@ -1,0 +1,989 @@
+CON
+
+
+' Ray, Peter, this little 'Load new ROM' routine rewrites the built-in
+' ..16KB ROM with what is being assembled into $FC000..$FFFFF. After
+' ..running it, you'll have a new ROM. To update the ROM image again,
+' ..you'll need to power-cycle the FPGA board to get it to reload the
+' ..original image which permits loading the whole 1024KB again.
+
+
+{{ *********************** CHANGELOG **************************
+
+'' RR20180512 v134a     Combine: ROM_Booter v33d, LSD_v133i, SD2_133jx, TAQOZ BOOTROM(7)
+'' CG20180513     c     Update booter
+'' RR20180513     c_001 Use booter's ao baud value for Monitor
+''                  002 Disable interrupts and smart pins on P0 & P1, but don't stop uart
+''            v134d
+''                ef    Cmd_G coginit if addr $FC000, clockmax=200MHz, add nops/waitx to sendrecv
+'' may want to change the SD fail destination???
+PJ20180514 V134e        Implement buffered serial interrupts
+                        ^D from TAQOZ switches to DEBUGGER
+                        Add LF to LMM DEBUGGER (CRLF is standard line ending)
+'' RR20180515 v135b     Add LF in other places; SD cogstop on failure
+''                cd    Add load SD file "R"UN; SDinit to check for pullup
+''                e     use "." in R<filename> as 8.3; add hubset #1 before cogstop
+''                f     if Sd fails, jmp to shut_down in booter, now does cogid/cogstop
+''                      parse R<filename>
+''                g     add Chip's latest booter
+''                h     Chip's latest; rearrange; remove delay1ms in serialinit & taqoz
+
+PBJ180516 v136          Adding in high level SD support, not complete but has virtual SD memory layer.
+                        Can load in full version of Tachyon with SD support using Ray's SD loader
+                        TAQOZ will reboot if four ESCs are entered in sequence (usually I use break detect)
+
+BIG BUG NOTICE!!!       SD fail should not stop cog as application may be on Flash - Check Flash before SD
+
+'' RR20180516 v136c     fix <lf> in _HubRxString; push/pop around pa use in _SDcard_Init; reset at _start_sdcard ???
+'' RR20180517 v136d     move and fname+2 ##$00FFFFFF from _Run_SDfile to search_dir
+''                      use _str_hdg in _HubList (and for TAQOZ)
+''                      remove reset_pins call in _Start_SDcard
+''                e     _str_hdg add _str_dash; delay before calling taqoz
+''                f     _HubList extra space ea 4 bytes
+'' RR20180519 v136m     combine ROM_Booter_base_v32g; if SD fails boot,jmp #try_serial; Peter to add latest TAQOZ
+''                      _str_hdg has dump header
+''                +     tweek for P2ASM compiler; alignl long alignment after _str_hdg; _parsehex skip "_"
+
+                138PBJ  Combine 137PBJ
+                   a    remove delay1ms before monitor calls taqoz; jmp to _Enter_TAQOZ; remove _str_hdg
+
+Need to:        Cmd_G   use hubset ##$1000_0000 for FC000  +delay1ms           (done)
+                        Taqoz to monitor needs to shutdown cogs
+                        Monitor to taqoz calls entry_taqoz and no 1ms delay    (done)
+                        reset_booter ???                                        ????
+                        Command9 needs to respect lmm_bufad not ##_HUBBUF ???
+                        _HUBBUF use ROM (FC000 ???)                            (done)
+                Cmd_X   hex mode monitor/list option                           (done) "X"
+                        remove heading                                         (done)
+                        SD add write sector ???                                        no space!
+                        monitor <cr> to repeat list                            (done)
+                        <esc> on its own???
+'' RR20180520   138b    command8 reply1=05 missing wz
+''                      LL command replaces X                                  (done)
+''                 c    add write_sector, command24, writeblock                 not verified!!
+''                      overflowed ROM so use $FC000 for _HUBBUF
+''                 d    try <cr> to repeat list for next addr
+''                      make G a call instead of a jump
+''                 e    tweeks to SD
+''                      comment out write sd
+''                      cmd_r result "="/"!"for passed/failed
+''                 f    mod _start/load/run_SDcard
+''                      ##hubdata use _hubdata
+'' RR20180524   139     include ROM_Booter_base_138f.spin2  & RR139a (X<fname>)
+''              139C    w Chip pasted code
+''-----------------------------------------------------------------------------
+''              140_a   List uses xxxxx: was xxxxx-
+''                      R<filename> & L<fileanem>, List L[L] --> M[L]
+''                 _e   List xxxxx- does not require L/M
+''                 _f   use decod for PTN_SECCLU (needs TAQOZ 140e !!!)
+''                 _g   add TAQOZ 140F
+''                 _gx  remove unused labels fail etc
+''                 _hx  reorg SD routines
+'' RR20180526   140i    proposed final SD & Monitor
+''                 k    fix SD timeout for dead/missing SD card w pullup. CMD0=10ms@35MHz
+'' RR20180527  v141     proposed final SD & Monitor
+'' PBJ20180527          Added SD and FAT32 routines
+**************************************************************** }}
+'' RR20190215  v33_01a  ROM_Booter_v33_01a.spin - tweek SD Booter
+'' RR20190216        b  force release of SD-DO pin (& tweek to make space)
+'' RR20190217        f  combine _SDcard_Init & _readMBR --> Init/CSD/CID/MBR/VOL/FSI/FAT etc
+'' PBJ
+'' RR20190219        h  remove SD_CS pull-up check for Start_SDcard (ROM booter)
+'                    i  fix timeout bug
+'                    j  use "G" for Prop2 silicon v2 (for Prop_Chk response)
+
+'
+'
+' Load new ROM and wait for next reset
+'
+dat		org
+
+		loc	ptra,#$FC000		'ready to enter new data into rom
+
+.lp		rdbyte	byte_data,ptra++	'get new rom byte
+		setbyte	rom_write,byte_data,#2	'install into command
+		hubset	rom_write		'do rom write command
+		add	rom_write,#1		'inc address in command
+		djnz	byte_count,#.lp		'loop until 16KB loaded into rom
+
+		jmp	#$			'wait for reset
+
+rom_write	long	$30000000		'rom write command
+byte_count	long	$4000			'number of rom bytes
+byte_data	res	1			'byte buffer
+
+
+'****************************************
+'*					*
+'*	Propeller 2 ROM Booter		*
+'*					*
+'*	5/28/2018 - v32i		*
+'*					*
+'****************************************
+
+CON
+'	ver		=	"A"		'Prop123-A9 / BeMicro-A9, 8 cogs, 64 smart pins
+'	ver		=	"B"		'DE2-115
+'	ver		=	"C"		'DE0-Nano / DE0-Nano Bare
+'	ver		=	"D"		'BeMicro-A2
+'	ver		=	"E"		'Prop123-A7
+'	ver		=	"F"		'Prop123-A9 / BeMicro-A9, 16 cogs, 12 smart pins
+	ver		=	"G"		'Prop2 Silicon v2
+
+	rx_pin		=	63		'pin serial receiver
+	tx_pin		=	62		'pin serial transmitter
+	spi_cs		=	61		'pin SPI memory select		(also sd_ck)
+	spi_ck		=	60		'pin SPI memory clock		(also sd_cs)
+	spi_di		=	59		'pin SPI memory data in		(also sd_di)
+	spi_do		=	58		'pin SPI memory data out	(also sd_do)
+	rx_ths		=	1		'pin autobaud time high states
+	rx_tne		=	0		'pin autobaud time negative edges
+
+	cog_spi		=	$000		'cog SPI program start
+	cog_start	=	$100		'cog code start
+	cog_base64	=	$180		'cog base64 start
+
+	lut_buff	=	$000		'lut serial receive buffer
+	lut_btop	=	$00F		'lut serial receive buffer top
+	lut_start	=	$010		'lut code start
+
+	spi_ok		=	0		'bit flags
+	cmd_on		=	1
+	ser_no		=	2
+
+	rc_max		=	30_000_000	'max frequency of RC oscillator
+
+DAT
+'
+'
+'*******************************************
+'*  Cog init - overwritten by SPI program  *
+'*******************************************
+'
+		orgh	$FC000
+		org
+'
+'
+' Seed xoroshiro 128** using delta-sigma ADC bits from calibration mode
+'
+		wrpin	##$00100000,#rx_pin	'put rx pin in adc gio calibration mode
+
+		mov	x,#50			'ready to seed 50 times with 31 bits
+
+.seed		rep	#2,#31			'get 31 bits (31*4 clocks = 124/20 = ~6us)
+		testp	#rx_pin		wc
+		rcl	y,#1
+
+		bith	y,#31			'seed via hubset
+		hubset	y
+
+		djnz	x,#.seed
+
+		wrpin	#0,#rx_pin		'return rx pin to normal mode
+'
+'
+' Move code into position
+'
+		setq	#cog_end-cog_code-1	'move cog code into position
+		rdlong	cog_start,##@cog_code
+
+		setq2	#lut_end-lut_code-1	'move lut code into position
+		rdlong	lut_start,##@lut_code
+'
+'
+' Make 256-byte base64 lookup table
+'
+		setq	#$FF>>2			'reset table in hub
+		wrlong	##$FFFFFFFF,#0
+
+		callpa	#"A",#fill26		'"A".."Z" --> $00..$19
+
+		callpa	#"a",#fill26		'"a".."z" --> $1A..$33
+
+		mov	x,#10			'"0".."9" --> $34..$3D
+		callpa	#"0",#fill
+
+		wrbyte	#$3E,#"+"		'"+" --> $3E
+
+		wrbyte	#$3F,#"/"		'"/" --> $3F
+
+		setq	#$FF>>2			'load table into cog
+		rdlong	cog_base64,#0
+'
+'
+' If pull-up on spi_di then try serial
+'
+		callpa	#spi_di,#check_pullup
+	if_c	jmp	#reset_serial
+'
+'
+' If pull-up on spi_cs then try to load from SPI memory
+'
+		callpa	#spi_cs,#check_pullup
+	if_c	jmp	#try_spi
+'
+'
+' If pull-up on spi_ck (also sd_cs) then try to load from SD card
+'
+		callpa	#spi_ck,#check_pullup
+	if_c	jmp	#try_serial		
+'
+'
+' If no pull-down on spi_di then try serial
+'
+		jmp	#try_serial
+'
+'
+' Try to load from SPI memory
+'
+try_spi		drvh	#spi_cs			'drive spi_cs high
+		drvl	#spi_ck			'drive spi_ck low
+
+		neg	pb,#1			'set command bits to all 1's
+		drvh	#spi_do			'drive spi_do high in case quad/dual mode
+		callpa	#2,#spi_cmd		'send exit-quad command
+		callpa	#8,#spi_cmd		'send exit-quad command
+		callpa	#16,#spi_cmd		'send exit-dual command
+		fltl	#spi_do			'float spi_do
+
+		callpb	#$66,#spi_cmd8		'send reset-enable command
+		callpb	#$99,#spi_cmd8		'send reset command
+		waitx	##rc_max/20_000		'wait 50us
+
+		callpb	#$04,#spi_cmd8		'send write-disable command to clear WEL
+
+.wait		callpb	#$05,#spi_cmd8		'send read-status command
+		call	#spi_in			'get status
+		testbn	x,#1		wz	'if WEL high, no SPI memory (z=0)
+	if_nz	jmp	#.fail
+		testbn	x,#0		wz	'if BUSY high, wait for erase/write to finish
+	if_nz	jmp	#.wait
+
+		mov	pa,#32			'send read-from-start command
+		callpb	#$03,#spi_cmd
+
+		decod	y,#10			'ready to input $400 bytes from SPI
+		wrfast	#0,#0			'ready to write bytes to hub
+.data		call	#spi_in			'get byte
+		wfbyte	x			'store byte into hub
+		djnz	y,#.data		'loop for next byte (y=0 after)
+
+		rdfast	#0,#0			'ready to read longs from hub
+		rep	@.sum,#$100		'ready to read and sum $100 longs
+		rflong	z			'read long
+		add	y,z			'sum long
+.sum
+		cmp	y,csum		wz	'verify checksum, z=1 if okay
+		bitz	flags,#spi_ok		'if program verified, set spi_ok flag
+.fail
+'
+'
+' If SPI failed, check for pull-up on spi_ck (also sd_cs)
+'
+  if_nz		callpa	#spi_ck,#check_pullup	'if no SPI program, check for pull-up on spi_ck (also sd_cs)
+  if_nz_and_c	jmp	#try_serial				'if no SPI program and pull-up on spi_ck, try to load from SD card
+
+		jmp	#try_serial		'try serial
+'
+'
+' Fill table
+'
+fill26		mov	x,#26			'ready to fill "A".."Z"/"a".."z" entries
+
+fill		wrfast	#0,pa			'set table pointer
+
+		rep	@.v,x			'fill entries with ascending values
+		wfbyte	.v
+		add	.v,#1
+
+.v	_ret_	cmp	0,#0			'bottom byte used as a counter
+
+
+		fit	cog_start		'make sure below cog code
+'
+'
+'**************
+'*  Cog code  *
+'**************
+'
+		org	cog_start
+cog_code
+'
+'
+' Try serial if no pull-down on spi_di
+' else, run SPI program if valid or float SPI pins and shut down
+'
+try_serial	testb	flags,#spi_ok	wz	'SPI program?
+
+	if_nz	fltl	#spi_cs			'if no SPI program, float SPI pins
+	if_nz	fltl	#spi_ck
+
+	if_z	setq	#$FF			'if SPI program, move it into cog $000..$0FF
+	if_z	rdlong	0,#0
+
+		drvh	#spi_di			'check pull-down on spi_di, leave floating
+		callpa	#spi_di,#check_pulldn	'c=0 if pull-down
+
+	if_nc	jmp	#serial_done		'if pull-down on spi_di, boot if SPI okay (z=1) or shut down
+
+		jmp	#reset_serial		'else try serial
+'
+'
+' Check pin pull-up
+'
+check_pullup	drvl	pa			'drive pin low
+check_pulldn	waitx	#30*1			'wait >1us
+		fltl	pa			'float pin
+		waitx	#30*5			'wait >5us
+	_ret_	testp	pa		wc	'sample pin
+'
+'
+' SPI long/byte out
+'
+spi_cmd8	mov	pa,#8			'ready to send 8 bits
+
+spi_cmd		drvh	#spi_cs			'cs pin high
+		rol	pb,#24			'msb-justify byte
+		drvl	#spi_cs			'cs pin low
+
+.out		rol	pb,#1		wc	'get bit to send
+		drvc	#spi_di			'drive data-in pin to bit
+		drvh	#spi_ck			'drive clock pin high
+		drvl	#spi_ck			'drive clock pin low
+	_ret_	djnz	pa,#.out		'loop to output bits, return when done
+'
+'
+' SPI byte in
+'
+spi_in		rep	@.in,#8			'ready to input a byte
+		drvh	#spi_ck			'drive clock pin high
+		drvl	#spi_ck			'drive clock pin low
+		testp	#spi_do		wc	'sample data-out pin ('testp' is from before 'drvh')
+		rcl	x,#1			'save data bit
+.in
+		ret
+'
+'
+' Autobaud ISR - detects initial "> "
+'
+'	      falls |--7---|
+'	 $3E --> ..10011111001..10000001001..
+'	        highs |-5--|
+'
+autobaud_isr	rdpin	a0,#rx_tne		'2	get fall-to-fall time	(7x if $3E)
+		rdpin	a1,#rx_ths		'2	get high time		(5x if $3E)
+
+		cmpr	a0,limit	wc	'2	make sure both measurements are within limit
+	if_nc	cmpr	a1,limit	wc	'2
+
+		scas	a0,norm0		'2	if they are within 1/35th of each other, $3E
+	if_nc	cmpr	a1,0		wc	'2
+		scas	a1,norm1		'2
+	if_nc	cmpr	a0,0		wc	'2
+	if_c	reti1				'2/4	if not $3E, exit
+
+		resi1				'4	got $3E, resume on next interrupt
+
+		akpin	#rx_tne			'2	acknowledge pin
+		mul	a0,baud0		'2	compute baud rate
+		setbyte	a0,#7,#0		'2	set word size to 8 bits
+		wxpin	a0,#rx_pin		'2	set receiver baud rate and word size
+		wxpin	a0,#tx_pin		'2	set transmitter baud rate and word size
+		resi1				'4	resume on next interrupt
+
+		dirh	#rx_pin			'2	enable receiver before next start bit
+		wrpin	mtpe,#rx_tne		'2	change rx_tne to measure positive edges
+		setse1	#%110<<6+rx_pin		'2	set se1 to trigger on rx_pin high
+		resi1				'4	resume on next interrupt
+'
+'
+' Receiver ISR - detects maintenance ">" chrs
+'
+'	        rises |--7---|
+'	 $3E --> ..10011111001..
+'
+		rdpin	a1,#rx_tne		'2	get rise-to-rise time	(7x if $3E)
+
+		rdpin	a2,#rx_pin	wc	'2	get received chr
+		shr	a2,#32-8		'2	shift to lsb justify
+		cmp	a2,#">"		wz	'2	autobaud chr?
+	if_nz	wrlut	a2,head			'2	if not, write byte to circular buffer in lut
+	if_nz	incmod	head,#lut_btop		'2	..increment buffer head
+	if_nz	reti1				'2/4	..exit
+
+		mul	a1,baud0		'2	autobaud chr, compute baud rate
+		setbyte	a1,#7,#0		'2	set word size to 8 bits
+		wxpin	a1,#rx_pin		'2	set receiver baud rate and word size
+		wxpin	a1,#tx_pin		'2	set transmitter baud rate and word size
+		reti1				'4	exit
+
+
+limit		long	$58E4				'count limit ($58E4 = 1.3889, keeps SCAS within $7FFF w/norm1)
+norm0		long	$41D4*5/7			'fall-to-fall normalization factor
+norm1		long	$41D4*7/5			'high-time normalization factor ($41D4 = 1.0 + 1/(7*5))
+baud0		long	$1_0000/7			'7x baud computation factor
+'
+'
+' Constants / initialized variables
+'
+timeout_per	long	rc_max/10			'100ms timeout for serial receive
+timeout_cnt	long	600				'60s timeout for serial completion
+
+mtxf		long		%111<<11+%01_11110_0	'asynchronous serial transmit, float on high
+mths		long	%0_110_0_000<<24+%00_10001_0	'time high states on pin[-2] (pin 63 in case of pin 1)
+mtne		long	%1_111_1_111<<24+%00_10011_0	'time neg edges   on pin[-1] (pin 63 in case of pin 0)
+mtpe		long	%0_111_0_111<<24+%00_10011_0	'time pos edges   on pin[-1] (pin 63 in case of pin 0)
+flags		long	0				'bit flags
+
+text_prop	byte	"porP"				'text
+text_chk	byte	"khC_"
+text_clk	byte	"klC_"
+text_hex	byte	"xeH_"
+text_txt	byte	"txT_"
+text_ver	byte	13,10,"Prop_Ver ",ver,13,10,0,0
+text_sta	byte	".",0,0,0
+
+csum		byte	"Prop"				'checksum
+
+hexchrs		long	%00000000_00000000_00000000_00000000
+		long	%00000011_11111111_00000000_00000000		'"0".."9"
+		long	%00000000_00000000_00000000_01111110		'"A".."F"
+		long	%00000000_00000000_00000000_01111110		'"a".."f"
+		long	%00000000_00000000_00000000_00000000
+		long	%00000000_00000000_00000000_00000000
+		long	%00000000_00000000_00000000_00000000
+		long	%00000000_00000000_00000000_00000000
+
+whitechrs	long	%00000000_00000000_00100110_00000000		'cr, lf, tab
+		long	%00100000_00000000_00000000_00000001		'"=", space
+		long	%00000000_00000000_00000000_00000000
+		long	%00000000_00000000_00000000_00000000
+		long	%00000000_00000000_00000000_00000000
+		long	%00000000_00000000_00000000_00000000
+		long	%00000000_00000000_00000000_00000000
+		long	%00000000_00000000_00000000_00000000
+
+cog_end
+'
+'
+' Uninitialized variables
+'
+i		res	1		'universal
+x		res	1
+y		res	1
+z		res	1
+
+checksum	res	1		'checksum
+bytemask	res	1
+
+a0		res	1		'serial autobaud/receiver ISR
+a1		res	1
+a2		res	1
+
+head		res	1		'serial receiver buffer
+tail		res	1
+
+		fit	cog_base64	'make sure below cog_base64
+'
+'
+'**************
+'*  Lut code  *
+'**************
+'
+		org	$200 + lut_start
+lut_code
+'
+'
+' Reset serial autobaud/receiver interrupt
+'
+reset_serial	andn	dira,#%11		'disable timing measurements for autobaud
+
+		setint1	#0			'disable int1
+
+		mov	head,#0			'reset serial buffer pointers
+		mov	tail,#0
+
+		dirl	#rx_pin			'disable receiver
+		wrpin	#%00_11111_0,#rx_pin	'configure rx_pin for asynchronous receive, always input
+
+		wrpin	#%01_11110_0,#tx_pin	'configure tx_pin for asynchronous transmit, always output
+		dirh	#tx_pin			'enable transmitter
+
+		wrpin	mths,#rx_ths		'configure rx_ths for timing high states
+
+		wrpin	mtne,#rx_tne		'configure rx_tne for timing negative edges
+		wxpin	#1,#rx_tne		'report each cycle
+		wypin	#0,#rx_tne		'measure fall to fall
+
+		setse1	#%110<<6+rx_tne		'set se1 to trigger on rx_tne high
+
+		mov	ijmp1,#autobaud_isr	'set int1 jump vector to autobaud ISR
+
+		setint1	#4			'set int1 to trigger on se1 (rx_tne high)
+
+		or	dira,#%11		'enable timing measurements for autobaud
+'
+'
+' Attempt to get serial command
+'
+get_command	getct	x			'reset serial timeout in case SPI program ready
+		addct1	x,timeout_per
+
+		mov	z,#0			'reset string buffer
+
+.byte		call	#get_rx			'get byte
+
+		cmp	x,#$1B		wz	'esc?
+	if_z	jmp	#.byte		
+
+		cmp	x,#$04		wz	'ctrl-d?
+	if_z	jmp	#.byte			
+
+		rolbyte	y,z,#3			'scroll byte into 2-long/8-byte string buffer
+		rolbyte	z,x,#0
+
+		cmp	y,text_prop	wz	'"Prop"?
+	if_nz	jmp	#.byte
+
+		cmp	z,text_txt	wz	'"_Txt"?
+	if_z	jmp	#command_txt
+
+		cmp	z,text_hex	wz	'"_Hex"?
+	if_z	jmp	#command_hex
+
+		cmp	z,text_clk	wz	'"_Clk"?
+	if_z	jmp	#command_clk
+
+		cmp	z,text_chk	wz	'"_Chk"?
+	if_nz	jmp	#.byte
+'
+'
+' Command - check device
+'
+command_chk	call	#match_device		'receive and check INA/INB filter values
+
+		mov	i,#text_ver		'transmit version string
+		call	#transmit
+
+		jmp	#get_command		'get next command
+'
+'
+' Command - clock setup
+'
+command_clk	call	#match_device		'receive and check INA/INB filter values
+
+		call	#get_hex		'get clock setting
+	if_nc	jmp	#get_command		'if not hex, error, wait for another command
+
+		mov	text_sta,#"."		'transmit acknowledgement character
+		call	#transmit_sta
+
+		zerox	x,#24			'clear non-clock bits
+
+		mov	y,x			'switch to partial setting, but in RC fast mode
+		andn	y,#%11
+		hubset	y
+
+		waitx	##rc_max/200		'wait 5ms
+
+		hubset	x			'switch to full setting
+
+		jmp	#reset_serial		'restart serial at new setting, get next command
+'
+'
+' Command - text load
+'
+command_txt	call	#match_device		'receive and check INA/INB filter values
+
+		mov	i,#0			'reset bit counter
+
+.chr		call	#get_rx			'get byte
+
+		altb	x,#whitechrs		'whitespace?
+		testbn	0,x		wz
+	if_nz	jmp	#.chr			'if whitespace, get another byte
+
+		altgb	x,#cog_base64		'lookup base64 value in table
+		getbyte	y
+
+		testbn	y,#7		wz	'if msb set, not base64 chr
+
+if_z		shl	z,#6			'if base64 chr, shift data buffer up 6 bits
+if_z		or	z,y			'..or in new value
+if_z		add	i,#6			'..add 6 into bit counter
+if_z		cmpsub	i,#8		wc	'..if bit counter >= 8, subtract 8, byte ready
+if_z_and_c	mov	x,z			'....get data buffer value
+if_z_and_c	shr	x,i			'....shift down to justify byte
+if_z_and_c	wfbyte	x			'....write byte to hub
+if_z_and_c	movbyts	x,#%%0000		'....replicate byte within long
+if_z_and_c	and	x,bytemask		'....mask current byte position
+if_z_and_c	add	checksum,x		'....add into checksum
+if_z_and_c	rol	bytemask,#8		'....update byte position mask
+if_z		jmp	#.chr			'..loop for next chr
+
+		decmod	tail,#lut_btop		'not base64 chr, repoint to prior chr
+		jmp	#end_of_data		'done
+'
+'
+' Command - hex load
+'
+command_hex	call	#match_device		'receive and check INA/INB filter values
+
+.byte		call	#get_hex		'get hex byte
+	if_c	wfbyte	x			'if hex, write byte to hub
+	if_c	movbyts	x,#%%0000		'..replicate byte within long
+	if_c	and	x,bytemask		'..mask current byte position
+	if_c	add	checksum,x		'..add into checksum
+	if_c	rol	bytemask,#8		'..update byte position mask
+	if_c	jmp	#.byte			'..loop for next byte (followed by end_of_data)
+'
+'
+' End of data for text/hex load - get "~" and launch code
+'
+end_of_data	call	#get_chr		'end of data, check terminus chr
+
+		cmp	x,#"~"		wz	'if "~", run program
+	if_z	jmp	#.run
+
+		cmp	x,#"?"		wz	'if not "?", error, wait for another command
+	if_nz	jmp	#get_command
+
+		xor	checksum,csum	wz	'test checksum
+
+	if_z	mov	text_sta,#"."		'(okay)
+	if_nz	mov	text_sta,#"!"		'(error)
+		call	#transmit_sta		'transmit status character
+
+		tjnz	checksum,#get_command	'if error, wait for another command
+
+.run		call	#reset_pins		'reset smart pins
+
+		coginit	#0,#$00000		'relaunch cog from $00000
+'
+'
+' Get and check INA/INB mask and data values
+'
+match_device	bith	flags,#cmd_on		'command on, enable serial timeout for SPI program
+
+		mov	i,#ina			'check INA first
+
+.pair		call	#get_hex		'get hex mask
+	if_nc	jmp	#get_command		'if not hex, error, wait for another command
+		mov	z,x		wz	'got mask
+	if_nz	wrpin	mtxf,#tx_pin		'if mask non-0, make tx_pin float on high
+		alts	i			'point to INA/INB
+		and	z,ina			'mask INA/INB
+		call	#get_hex		'get hex data
+	if_nc	jmp	#get_command		'if not hex, wait for another command
+		cmp	z,x		wz	'test for match
+	if_nz	jmp	#get_command		'if mismatch, wait for another command
+
+		bitnot	i,#0		wcz	'toggle INA/INB pointer
+	if_nc	jmp	#.pair			'if INA checked, loop to check INB
+
+		mov	checksum,#0		'reset checksum
+		mov	bytemask,#$FF		'reset bytemask
+
+	_ret_	wrfast	#0,#0			'ready to load data bytes into hub
+'
+'
+' Get hex value, c=1 if hex
+'
+get_hex		call	#get_chr		'get chr
+
+		call	#.check			'check for hex
+	if_nc	jmp	#.prior			'if not hex, repoint to chr, c=0
+
+		mov	y,x			'got first hex digit
+
+.digit		call	#.get			'get any additional hex digits
+	if_c	rolnib	y,x,#0
+	if_c	jmp	#.digit
+
+		mov	x,y			'done, set result
+		modcz	_set,0		wc	'c=1 for hex
+.prior	_ret_	decmod	tail,#lut_btop		'repoint to chr, exit
+
+
+.get		call	#get_rx			'get byte
+.check		altb	x,#hexchrs		'check for hex
+		testb	0,x		wc
+	if_nc	ret				'if not hex, c=0
+
+		testbn	x,#6		wz	'hex, "0".."9"?
+	if_nz	add	x,#9			'if not, make $A..$F
+	_ret_	and	x,#$F			'isolate nibble, c=1
+'
+'
+' Get chr after any whitespace
+'
+get_chr		call	#get_rx			'get byte
+
+		altb	x,#whitechrs		'whitespace?
+		testbn	0,x		wz
+
+	if_nz	jmp	#get_chr		'if whitespace, get another byte
+
+		ret
+'
+'
+' Get serial byte
+'
+get_rx_res	getct	x			'reset timer
+		addct1	x,timeout_per
+
+
+get_rx		jct1	#.timeout		'timeout?
+		cmp	head,tail	wz	'byte received?
+	if_z	jmp	#get_rx			'loop until timeout or byte received
+
+		rdlut	x,tail			'get byte from circular buffer in lut
+	_ret_	incmod	tail,#lut_btop		'increment buffer tail
+
+
+.timeout	testb	flags,#spi_ok	wz	'timeout, SPI program?
+		testb	flags,#cmd_on	wc	'command on?
+if_nz_or_c	djnz	timeout_cnt,#get_rx_res	'if no SPI program or command on, try until 60s (serial_done follows)
+'
+'
+' Serial done
+' on entry, z=1 if SPI program
+'
+serial_done	call	#reset_pins		'reset pins
+
+	if_z	jmp	#0			'if SPI program, run it, else shut down
+
+shut_down	cogid	x			'get cogid (in case jumped to from outside)
+		hubset	#1			'set 20KHz oscillator
+		cogstop	x			'shut down cog (floats pins)
+'
+'
+' Transmit message
+'
+transmit_sta	mov	i,#text_sta		'point to status character
+
+transmit	setd	i,#1			'set auto-increment for altgb
+
+		mov	y,a0			'wait 16 bit periods to allow host turn-around time
+		shr	y,#16-4+2		'shr 16 gets clocks/bit, -4 gets 16 bits, +2 gets 4 clocks/djnz
+		djnz	y,#$			'y=0 after (djnz allows interrupts, unlike waitx)
+
+.byte		altgb	y,i			'get next byte of string, increment y
+		getbyte	z
+
+	_ret_	tjnz	z,#.send		'if zero, done
+
+.send		wypin	z,#tx_pin		'send byte
+
+		waitx	#1			'accommodate wypin -> rdpin latency
+
+.wait		rdpin	z,#tx_pin	wc	'wait for transmit done
+	if_c	jmp	#.wait
+
+		jmp	#.byte			'loop for more bytes
+'
+'
+' Reset smart pins
+'
+reset_pins	setint1	#0			'disable int1
+
+		andn	dira,#%11		'reset smart pins (avoids output on mode clears)
+		zerox	dirb,#29		'..but leave spi pins in current state
+
+		wrpin	#0,#rx_ths		'clear rx_ths mode
+		wrpin	#0,#rx_tne		'clear rx_tne mode
+		wrpin	#0,#rx_pin		'clear rx_pin mode
+	_ret_	wrpin	#0,#tx_pin		'clear tx_pin mode
+
+lut_end
+
+
+CON
+'------------------------------------------------------------------------------------------------
+''  _clockmax     = 200_000_000                ' max clock freq
+''  _clockfreq    = 80_000_000
+''  _clockfpga    = 20_000_000
+  _cpufreq      = rc_max
+  _1us          = _cpufreq / 1_000_000       ' 1us
+
+  delay1s       = _cpufreq                   ' 1s  (xtal * pll)
+  delay10ms     = _cpufreq / 100             ' 10ms
+  delay1ms      = _cpufreq / 1_000           ' 1ms
+  delay5us      = (20_000_000 / 100_000 / 2) - 2        ' 5us @20MHz 100KHz (20MHz/100KHz/2-2=98)       ] {{ tweek }}
+
+  _baud         = 115_200
+  _bitper       = (_cpufreq / _baud) << 16 + 7            ' 115200 baud, 8 bits
+  _txmode       = %0000_0000_000_0000000000000_01_11110_0 'async tx mode, output enabled for smart output
+  _rxmode       = %0000_0000_000_0000000000000_00_11111_0 'async rx mode, input  enabled for smart input
+'------------------------------------------------------------------------------------------------
+        sd_ck           =       spi_cs          'pin SD Card clock
+        sd_cs           =       spi_ck          'pin SD Card select
+        sd_di           =       spi_di          'pin SD Card MOSI
+        sd_do           =       spi_do          'pin SD Card MISO
+
+'------------------------------------------------------------------------------------------------
+'    ASCII equates
+'------------------------------------------------------------------------------------------------
+_CLS_     =       $0C     '$00    ' clear screen
+_BS_      =       $08
+_LF_      =       $0A
+_CR_      =       $0D
+_TAQOZ_   =       $1B             ' <esc>   goto TAQOZ
+'------------------------------------------------------------------------------------------------
+
+'------------------------------------------------------------------------------------------------
+'               HUB ADDRESSES
+'------------------------------------------------------------------------------------------------
+  _HUBROM       = $FC000                        ' ROM $FC000
+  _HUBBUF       = $FC000                        ' overwrite Booter
+  _HUBBUFSIZE   = 80                            ' RxString default size for _HUBBUF
+'------------------------------------------------------------------------------------------------
+
+DAT
+''============[ COG VARIABLES - SD BOOT]========================================
+                org     $1C0              ' place the variables in cog $1C0-$1DF
+
+cmdout          res     1                       ' The 8b CMDxx | $40
+cmdpar          res     1                       ' The 32b parameters
+cmdcrc          res     1                       ' The 8b CRC (must be valid for CMD0 & CMD8)
+cmdpar2         res     1                       ' SDV1=$0, SDV2=$40000000
+cmdtype         res     1                       ' reply is R1=1, R3=3, R7=7, else 0
+reply           res     1                       ' R1 reply (moved to replyR1 when R3/R7 32b reply here)
+replyR1         res     1                       ' R1 reply (8b saved when R3/R7 32b reply follows)
+dataout         res     1                       ' 8/32 bit data being shifted out
+bytescnt        res     1                       ' #bytes to send/recv
+bitscnt         res     1                       ' #bits to be shifted in/out
+ctr1            res     1
+timeout         res     1                       ' = starttime + delay
+_AA55           res     1                       ' used to store $AA55 to validate MBR/VOL/FSI
+skiprun         res     1                       ' 1= skip load/run mbr/vol & load/no-run fname
+                                                '\ 1=SDV1, 2=SDV2(byte address), 3=SDHC/SDV2(block address)
+blocksh         res     1                       '/ block shift 0/9 bits
+clustersh       res     1                       ' sectors/cluster SHL 'n' bits
+
+vol_begin       res     1 '$0000_2000           ' Ptn0: first sector of PTN
+fsi_begin       res     1 '$0000_2001           ' Ptn0:       sector of file system info
+fat_begin       res     1 '$0000_3122           ' Ptn0: first sector of FAT table
+dir_begin       res     1' $0000_4000           ' Ptn0: first sector of DATA is DIR table
+dat_begin       res     1 '$0000_4580 $0000_54C0' Ptn0: first sector of file's DATA
+ptn_size        res     1 '$0008_0000           '       file-size 32KB = 64<<9 sectors
+
+_bufad          res     1
+_blocknr        res     1
+_sectors        res     1
+_entries        res     1
+bufad           res     1                       ' ptr sector buffer
+blocknr         res     1                       ' sector#
+fname           res     3                       ' 8+3+1
+_hubdata        res     1
+                fit     $1E0
+
+''============[ COG VARIABLES - MONITOR]========================================
+                org     $1E0              ' place the variables in cog $1E0-$1EF
+''-------[ LMM parameters, etc ]------------------------------------------------
+lmm_x           res     1       ' parameter passed to/from LMM routine (typically a value)
+lmm_f           res     1       ' parameter passed to      LMM routine (function options; returns unchanged)
+lmm_p           res     1       ' parameter passed to/from LMM routine (typically a hub/cog ptr/addr)
+lmm_p2          res     1       ' parameter passed to/from LMM routine (typically a 2nd hub/cog address)
+lmm_c           res     1       ' parameter passed to/from LMM routine (typically a count)
+''-------[ LMM additional workareas ]-------------------------------------------
+lmm_w           res     1       ' workarea (never saved - short term use between calls, except _HubTx)
+lmm_tx          res     1       ' _HubTx
+lmm_hx          res     1       ' _HubHex/_HubString
+lmm_hx2         res     1       ' _HubHex
+lmm_hc          res     1       '   "
+lmm_lx          res     1       ' _HubList
+lmm_lf          res     1       '   "
+lmm_lp          res     1       '   "
+lmm_lp2         res     1       '   "
+lmm_lc          res     1       '   "
+lmm_bufad       res     1       ' _HubRxString
+                fit     $1F0
+''=======[ ^^^^^ End of COG Variables ^^^^^ ]===================================
+
+
+'' +--------------------------------------------------------------------------+
+'' | Cluso's Minimal SD Boot Test for P2  (c)2012-2018 "Cluso99" (Ray Rodrick)|
+'' +--------------------------------------------------------------------------+
+'' RR20180505 v128a    add into ROM_v131b
+
+''============================[ CON ]============================================================
+CON
+
+  _csum    = ("P" + "r"<<8 + "o"<<16 + "p"<<24)  ' "Prop" checksum (reversed)
+  _csum2   = ("P" + "r"<<8 + "o"<<16 + "P"<<24)  ' "ProP" checksum (reversed)
+
+  _fname1a = ("_" + "B"<<8 + "O"<<16 + "O"<<24)  '\\ filename...
+  _fname1b = ("T" + "_"<<8 + "P"<<16 + "2"<<24)  '||   8.3 +$00
+  _fname1c = ("B" + "I"<<8 + "X"<<16 + $00<<24)  '//
+  _fname2c = ("B" + "I"<<8 + "Y"<<16 + $00<<24)  '//
+
+  mbr_begin  = 0                 ' first sector of disk $0000_0000
+
+'------------------------------------------------------------------------------------------------
+'       COG & LUT & HUB ADDRESSES
+'------------------------------------------------------------------------------------------------
+  hubdata       = $0_0000        ' expands up   (512byte sectors)
+  max_size      = (512-16)*1024  ' max file_size(bytes) that can be loaded
+
+  cog_start0    = $000           ' cog code start
+  cog_len       = 512-16         ' cog code length
+  cog_len80     = 512/4          ' 512 bytes (sector)
+
+'------------------------------------------------------------------------------------------------
+' SD Commands & Responses...
+'------------------------------------------------------------------------------------------------
+' Command              Argument        Response/Data    Description
+  CMD0   = 0  +$40   ' 0               R1       -       GO_IDLE_STATE            *Reqs valid CRC
+'  CMD1   = 1  +$40   ' 0               R1       -       SEND_OP_COND
+  ACMD41 = 41 +$40   ' $4000_0000      R1       -       APP_SEND_OP_COND         *Reqs CMD55 first
+  CMD8   = 8  +$40   ' 0               R1+R7    -       SEND_IF_COND             *Reqs valid CRC
+  CMD9   = 9  +$40   ' 0               R1       Y       SEND_CSD
+  CMD10  = 10 +$40   ' 0               R1       Y       SEND_CID
+'  CMD12  = 12 +$40   ' 0               R2       -       STOP_TRANSMISSION
+  CMD16  = 16 +$40   ' BlkLen[31:0]    R1       -       SET_BLOCKLEN
+  CMD17  = 17 +$40   ' Addr[31:0]      R1       Y       READ_SINGLE_BLOCK
+'  CMD18  = 18 +$40   ' Addr[31:0]      R1       Y       READ_MULTIPLE_BLOCK
+'  CMD23  = 23 +$40   ' NoBlks[15:0]    R1       -       SET_BLOCK_COUNT
+'  ACMD23 = 23 +$40   ' NoBlks[22:0]    R1       -       SET_WR_BLOCK_ERASE_COUNT *Reqs CMD55 first
+'  CMD24  = 24 +$40   ' Addr[31:0]      R1       Y*      WRITE_BLOCK
+'  CMD25  = 25 +$40   ' Addr[31:0]      R1       Y*      WRITE_MULTIPLE_BLOCK
+  CMD55  = 55 +$40   ' 0               R1       -       APP_CMD                  *Prefix for ACMD41/ACMD23
+  CMD58  = 58 +$40   ' 0               R1+R3    -       READ_OCR
+
+
+' R1 response:  $FF = busy/wait (0-8 bytes?)
+'               b7: 0 (msb first)
+'               b6: Parameter Error
+'               b5: Address Error
+'               b4: Erase Sequence Error
+'               b3: Command CRC Error
+'               b2: Illegal Command
+'               b1: Erase Reset
+'               b0: In Idle State
+' R1b response: ???
+' R3 response:  R1 + OCR(32b)
+' R7 response:  R1($01) + 32b(b11..b0 = $1AA = SDC V2 2V7-3V6, else reject)
+'
+' DataPacket:   DataToken(1byte) + DataBlock(1-2048bytes) + CRC(2bytes)
+'   DataToken:  $FE = CMD17/18/24 (read'1'block/read'n'blocks/write'1'block)
+'               $FC = CMD25 (write'n'blocks)
+'               $FD = CMD25 StopToken  (Single byte packet without data or CRC)
+' ErrorToken:   Single Byte Reply
+'               b7-b5: 000
+'               b4: Card Locked
+'               b3: Out of Range
+'               b2: Card ECC failed
+'               b1: CC Error
+'               b0: Error
+' DataResponse:
+'               b7-b4: xxx0
+'               $x5: Data Accepted
+'               $xB: Data Rejected - CRC Error
+'               $xD: Data Rejected - Write Error
+
+
+DAT
+''################################################################################################
+''##    SD Card - HUBEXEC code...                                                               ##
+''################################################################################################

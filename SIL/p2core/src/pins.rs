@@ -30,7 +30,14 @@ pub trait PinBus {
 
     /// `DIRA/DIRB/OUTA/OUTB` were written. `reg` is the cog register address so
     /// a model can tell A from B without the CPU interpreting pin semantics.
-    fn dir_out_changed(&mut self, _reg: u16, _value: u32) {}
+    /// A cog wrote `DIRA`/`DIRB`/`OUTA`/`OUTB`.
+    ///
+    /// `cog` matters: these are **per-cog** registers, and the pad sees the OR
+    /// across all eight. A board that mirrors them globally lets one cog's
+    /// write erase another's — which is how a console print on P62 came to
+    /// reset the SD card's transmit shifter mid-block, since both pins live in
+    /// `DIRB`.
+    fn dir_out_changed(&mut self, _cog: usize, _reg: u16, _value: u32) {}
 
     /// `WRPIN` — set a pin's mode word.
     fn wrpin(&mut self, _pin: u8, _cfg: u32) {}
@@ -43,11 +50,35 @@ pub trait PinBus {
         (0, false)
     }
     /// `TESTP` — sample a pin's IN flag without consuming it.
+    /// Whether a peripheral transfer this CPU cannot advance on its own is in
+    /// flight — a smart-pin clock burst with transitions still queued.
+    ///
+    /// A cog spinning on `testp` for such a transfer must keep executing: the
+    /// edges arrive on the peripheral's schedule, and the driver times itself
+    /// out with `_cnt()` deltas, so skipping the cog's clock ahead expires the
+    /// timeout while the transfer has barely moved.
+    fn external_transfer_busy(&self) -> bool {
+        false
+    }
+
     fn testp(&self, _pin: u8) -> bool {
         false
     }
     /// `AKPIN` — acknowledge, clearing a pin's IN flag.
     fn akpin(&mut self, _pin: u8) {}
+
+    /// Whether the CPU should **yield to the outside world** now: it has just
+    /// driven a pin whose net another component may respond to, and it must
+    /// not read that net back until the response has resolved.
+    ///
+    /// The default is never — a self-contained bus (the in-process SD card,
+    /// the bring-up model) resolves its own pins instantly and needs no yield.
+    /// An adapter that lifts pins onto a discrete-event net returns `true`
+    /// once per net-pin drive, and [`crate::Machine::step_until`] stops there
+    /// so the net can settle before the guest looks. Polling clears the flag.
+    fn take_net_yield(&mut self) -> bool {
+        false
+    }
 }
 
 /// A bus where nothing is connected. Enough to boot; hangs any driver that

@@ -24,7 +24,7 @@ impl PinBus for Log {
     fn testp(&self, _pin: u8) -> bool {
         true
     }
-    fn dir_out_changed(&mut self, reg: u16, v: u32) {
+    fn dir_out_changed(&mut self, _cog: usize, reg: u16, v: u32) {
         if reg == 0x1FB || reg == 0x1FD {
             // DIRB/OUTB cover pins 32..63, where the SD and serial pins live.
             self.ops.push(format!(
