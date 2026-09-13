@@ -96,14 +96,17 @@ describe('a respecification is a changed claim', () => {
     expect(md).not.toContain('also changed');
   });
 
-  it('points an added row at the test file and the test name', () => {
+  it('heads a group with its file and names the test in the row', () => {
     const md = renderMarkdown(
       diffLedgers(
         [],
-        [row({ id: 'a', then: 'the machine stays disabled', file: 'test/foo.c' })],
+        [row({ id: 'a', then: 'the machine stays disabled', file: 'test/foo.c', test: 'test_stays_disabled' })],
       ),
     );
-    expect(md).toContain('`test/foo.c#t`');
+    // The path is the heading over the group, so the row does not repeat it.
+    expect(md).toContain('**test/foo.c**');
+    expect(md).toContain('`test_stays_disabled`');
+    expect(md).not.toContain('`test/foo.c#');
   });
 
   it('lists a changed scene the same way', () => {
@@ -126,15 +129,19 @@ describe('a respecification is a changed claim', () => {
       // The TypeScript binding builds this name, so it carries the claim.
       diffLedgers([], [row({ id: 'x.pause', then, file: 'src/a.test.ts', test: `${then} [x.pause]` })], []),
     );
-    expect(md).toContain('`src/a.test.ts`');
+    // The file is the heading over the group; the row carries only the
+    // runner's name for the test, and not when that name is the claim again.
+    expect(md).toContain('**src/a.test.ts**');
     expect(md).not.toContain(`src/a.test.ts#${then}`);
+    expect(md).not.toContain(`\`${then} [x.pause]\``);
   });
 
   it('keeps the test name when it is a symbol rather than the claim', () => {
     const md = renderMarkdown(
       diffLedgers([], [row({ id: 'y.z', then: 'a core that stops is a fault', file: 'test/t.c', test: 'test_core_stops' })], []),
     );
-    expect(md).toContain('`test/t.c#');
+    expect(md).toContain('**test/t.c**');
+    expect(md).toContain('`test_core_stops`');
   });
 
   it('shows no handle for a behaviour removed against a pre-numbering ledger', () => {

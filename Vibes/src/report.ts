@@ -56,7 +56,7 @@ function cite(b: Behaviour): string {
  * Grouping is the point of the shape. Printing the condition again beside each
  * expectation would put back exactly the repetition that splitting them removed.
  */
-function oneTest(group: readonly Behaviour[]): string {
+function oneTest(group: readonly Behaviour[], withFile = true): string {
   const first = group[0];
   if (first === undefined) return '';
   const lines = [`- given ${first.given}`];
@@ -70,7 +70,10 @@ function oneTest(group: readonly Behaviour[]): string {
    * repeats what the row already shows, the file alone is what a reader needs;
    * where it is a real symbol, as in C and Rust, it stays. */
   const echoes = first.test.includes(first.given) || group.some((b) => first.test.includes(b.then));
-  lines.push(`  \`${first.file}${echoes ? '' : `#${first.test}`}\``);
+  // Under a file heading the path is already on screen; only the runner's own
+  // name for the test adds anything, and only when it is a symbol.
+  if (withFile) lines.push(`  \`${first.file}${echoes ? '' : `#${first.test}`}\``);
+  else if (!echoes) lines.push(`  \`${first.test}\``);
   if (first.covers !== undefined) lines.push(`  \`${first.covers}\``);
   return lines.join(BR);
 }
@@ -111,9 +114,33 @@ function respec(r: Respecified): string {
   return lines.join('\n');
 }
 
-export function renderMarkdown(d: LedgerDiff): string {
-  const out: string[] = [`# ${headline(d)}`, ''];
+/** What changed, before any of it is read in detail. */
+function summary(d: LedgerDiff): string[] {
+  const rows: [string, number][] = [
+    ['stopped holding', d.broken.length],
+    ['without a verdict', d.unreported.length],
+    ['no longer claimed', d.removed.length],
+    ['respecified', d.respecified.length],
+    ['new', d.added.length],
+    ['unchanged and holding', d.unchanged],
+  ];
+  const shown = rows.filter(([, n]) => n > 0);
+  if (shown.length === 0) return [];
+  return ['| | |', '|---|--:|', ...shown.map(([k, n]) => `| ${k} | ${String(n)} |`), ''];
+}
 
+export interface RenderOptions {
+  /** Cap on expectations listed under "New behaviour". What is left out is
+   *  said so in the report rather than cut off by whatever posts it — a report
+   *  that stops mid-sentence reads as though the tool broke. */
+  readonly maxNew?: number;
+}
+
+export function renderMarkdown(d: LedgerDiff, opts: RenderOptions = {}): string {
+  const out: string[] = [`# ${headline(d)}`, '', ...summary(d)];
+
+  // Everything that needs a decision comes first and stays open. Only the new
+  // behaviour, which is usually the bulk and is read by browsing, is folded.
   if (d.broken.length > 0) {
     out.push('## Stopped holding', '');
     out.push(
@@ -149,22 +176,45 @@ export function renderMarkdown(d: LedgerDiff): string {
   }
 
   if (d.added.length > 0) {
+    const max = opts.maxNew ?? Number.POSITIVE_INFINITY;
     out.push(`## New behaviour (${d.added.length})`, '');
+
     const bySuite = new Map<string, Behaviour[]>();
     for (const b of d.added) {
       const list = bySuite.get(b.suite) ?? [];
       list.push(b);
       bySuite.set(b.suite, list);
     }
+
+    let listed = 0;
+    let skipped = 0;
     for (const [suite, items] of bySuite) {
-      if (bySuite.size > 1) out.push(`### ${suite}`, '');
-      for (const g of byTest(items)) out.push(oneTest(g));
-      out.push('');
+      const tests = byTest(items);
+      // Folded per suite: a reviewer opens the one they own instead of
+      // scrolling past every other.
+      out.push(`<details><summary><b>${suite}</b> — ${String(items.length)} expectation${items.length === 1 ? '' : 's'} across ${String(tests.length)} test${tests.length === 1 ? '' : 's'}</summary>`, '');
+      let lastFile = '';
+      for (const g of tests) {
+        const first = g[0];
+        if (first === undefined) continue;
+        if (listed + g.length > max) {
+          skipped += g.length;
+          continue;
+        }
+        if (first.file !== lastFile) {
+          out.push(`**${first.file}**`, '');
+          lastFile = first.file;
+        }
+        out.push(oneTest(g, false));
+        listed += g.length;
+      }
+      out.push('', '</details>', '');
+    }
+    if (skipped > 0) {
+      out.push(`_${String(skipped)} further expectation${skipped === 1 ? '' : 's'} are not listed here — the job summary carries the whole report._`, '');
     }
   }
 
-  // The one line that says "and nothing else moved" — the count a reviewer
-  // checks against the ledger size to know the diff above is the whole story.
   out.push('---', '');
   out.push(`_${d.unchanged} behaviour${d.unchanged === 1 ? '' : 's'} unchanged and holding._`);
   return out.join('\n') + '\n';

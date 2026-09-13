@@ -22,6 +22,10 @@ export const COUNTER = 'behaviours.next';
 
 const EXIT = { OK: 0, REGRESSION: 1, USAGE: 2, COLLECT: 3 } as const;
 
+/** Expectations listed under "New behaviour" in the PR comment. Enough to read
+ *  a normal change whole; a bulk import says how much it held back. */
+const COMMENT_MAX_NEW = 120;
+
 function repoRoot(): string {
   return execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim();
 }
@@ -112,11 +116,14 @@ export async function main(argv: readonly string[]): Promise<number> {
 
   const numbered = assignNumbers(committedLedger(root), r.behaviours, highWater(root)).numbered;
   const d = diffLedgers(ledgerAt(root, base), numbered, r.silentSuites);
-  const md = renderMarkdown(d);
-  process.stdout.write(md);
+
+  // Two renderings of the same diff. A PR comment is capped by GitHub at 64 KiB
+  // and a big change blows past that, so the comment lists a readable slice and
+  // says what it left out; the job summary, which has room, carries all of it.
+  process.stdout.write(renderMarkdown(d, { maxNew: COMMENT_MAX_NEW }));
 
   const summary = process.env['GITHUB_STEP_SUMMARY'];
-  if (summary !== undefined && summary !== '') appendFileSync(summary, md);
+  if (summary !== undefined && summary !== '') appendFileSync(summary, renderMarkdown(d));
 
   // The committed ledger drifting from reality makes every future diff wrong,
   // so say so — but do not fail on it, because a PR that adds behaviour will
