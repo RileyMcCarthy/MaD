@@ -134,4 +134,18 @@ describe('a respecification is a changed claim', () => {
     );
     expect(md).toContain('`test/t.c#');
   });
+
+  it('shows no handle for a behaviour removed against a pre-numbering ledger', () => {
+    // main's ledger predates numbering, so its rows carry no num at all.
+    const legacy = { ...row({ id: 'old.claim', then: 'a claim from before numbering' }), num: undefined as unknown as number };
+    const md = renderMarkdown(diffLedgers([legacy], [], []));
+    expect(md).toContain('a claim from before numbering');
+    expect(md).not.toContain('BH-undefined');
+    expect(md).not.toContain('BH-NaN');
+  });
+
+  it('cites a numbered behaviour on its row', () => {
+    const md = renderMarkdown(diffLedgers([], [row({ id: 'x.y', then: 'a claim', num: 42 })], []));
+    expect(md).toContain('BH-42 · given');
+  });
 });

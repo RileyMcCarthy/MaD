@@ -70,9 +70,17 @@ export function serializeLedger(items: readonly Behaviour[]): string {
   return sorted.map((b) => JSON.stringify(b)).join('\n') + (sorted.length > 0 ? '\n' : '');
 }
 
-/** How a behaviour is cited outside the ledger. */
+/**
+ * How a behaviour is cited outside the ledger, or '' for a record written
+ * before numbering existed.
+ *
+ * The base side of a diff is whatever was committed then, so a behaviour
+ * REMOVED against a pre-numbering ledger has no number to show. Rendering
+ * "BH-undefined" beside a real claim would put an obvious defect in front of
+ * every reviewer; showing nothing is honest and reads fine.
+ */
 export function handle(b: Behaviour): string {
-  return `BH-${String(b.num)}`;
+  return typeof b.num === 'number' && Number.isFinite(b.num) && b.num > 0 ? `BH-${String(b.num)}` : '';
 }
 
 /**
