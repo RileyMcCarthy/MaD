@@ -297,17 +297,18 @@ The emulator runs firmware "cogs" as OS threads, so peripheral state is shared a
   ```
   (`embsim/models/src/edge.rs:44-57`). Other inline test modules: `peripherals/src/pulse_out.rs`, `tools/memory-inspect/src/{runtime,types}.rs`.
 - **Doctests double as documentation.** Public primitives carry a runnable ` ``` ` example in their `//!`/`///` docs (`event.rs:13-25`). Mark non-runnable examples ` ```rust,ignore ` (`build-support/src/lib.rs:10`, `runtime/src/lib.rs:16`).
-- **End-to-end behavior is covered by the app's own harness**, not Rust integration tests — `Software/Control/e2e/` drives the shipped app against the running emulator. The emulator is single-instance; don't run two emulator-backed suites at once (see root `CLAUDE.md`).
-- Run Rust tests with `cargo test` from `SIL/` (MaD-side crates) or from `SIL/embsim/` (the framework submodule's own workspace). CI runs both: the `sil-rust` job gates `cargo test` on `SIL/`, and the embsim repo's own CI gates the submodule (see §10).
+- **MaDSim has a Chrome-free PTY smoke** at `MaDSim/tests/pty_protocol.rs`: spawn `mad-emulator` on a unique PTY, send a `firmware_version` READ, expect a DATA frame. That is the cheap “firmware linked and answers” check. Product behaviour still lives in `Software/Control/e2e/`.
+- The playground PTY (`/tmp/tty.rpi`) is single-instance — don't run `make playground` / `make e2e-emulator` / `npm run e2e` at the same time. The PTY smoke uses a temp path and can run beside other `cargo test`s.
+- Run Rust tests with `cargo test` from `SIL/` (MaD-side crates) or from `SIL/embsim/` (the framework submodule's own workspace). CI runs both: the `sil-rust` job gates fmt + clippy `-D warnings` + `cargo test` on `SIL/`; the embsim repo's own CI (mirrored by `embsim-ci` / `embsim-pin-ci`) gates the submodule (see §10).
 
 ---
 
 ## 10. Linting & passing checks
 
 > **CI reality check:**
-> - The `sil-rust` job in `.github/workflows/ci.yml` builds `libfirmware.a` + `make protocol`, runs `cargo clippy` (advisory — a lint backlog remains) and **`cargo test --workspace --all-targets` (blocking)** on `SIL/`.
-> - The `SIL/embsim` submodule is gated by [its own repo's CI](https://github.com/RileyMcCarthy/embsim): tests + doctests on Linux/macOS, **gating `cargo fmt --check`** (that tree is rustfmt-formatted), advisory clippy, and `cargo doc -D warnings`.
-> - The MaD-side crates (`MaDSim`, `models`, `protocol`) have **no fmt gate**: there is no `rustfmt.toml` under `SIL/`, and running a blanket `cargo fmt` there still produces a large unrelated diff. Match the existing hand-maintained style (short struct literals and bodies on one line, ~100–110-column lines).
+> - The `sil-rust` job in `.github/workflows/ci.yml` builds `libfirmware.a` + `make protocol`, then **gates** `cargo fmt -p mad-emulator -p models --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace --all-targets`.
+> - The generated `protocol` crate is **excluded from rustfmt** (`make protocol` rewrites it every build). Clippy allows for template-style lints are scoped to `Protocol/rust/src/lib.rs`, never crate-wide.
+> - The `SIL/embsim` submodule is re-tested here by `embsim-ci` (build/test/doc). Pin bumps also run `embsim-pin-ci`: rustfmt, clippy `-D warnings`, `cargo doc -D warnings`, 5× determinism goldens, cargo-deny, MSRV. Upstream: [RileyMcCarthy/embsim](https://github.com/RileyMcCarthy/embsim).
 
 ### What you must do
 1. **Build clean, warning-free:**
@@ -320,16 +321,16 @@ The emulator runs firmware "cogs" as OS threads, so peripheral state is shared a
    ```bash
    make emulator          # = pio firmware lib + make protocol + cargo build
    ```
-2. **Match the surrounding format by hand.** Mirror the existing file's indentation (4 spaces), brace style (short single-expression bodies on one line), import grouping (`std` first, then external/workspace crates — see `wiring.rs:32-42`, `runtime/src/lib.rs:29-36`), and ~100-col soft wrap. **Do not** run a blanket `cargo fmt` on the repo — it will produce a massive unrelated diff. If you do format, scope it tightly:
+2. **Format the crates CI checks** before pushing:
    ```bash
-   cargo fmt -- src/your_new_file.rs   # format only what you added, then eyeball it
+   cargo fmt -p mad-emulator -p models
+   cargo fmt -p mad-emulator -p models --check
    ```
-   *(Recommended, not yet adopted: the project would benefit from committing a `rustfmt.toml` and gating `cargo fmt --check` in CI. Until that exists, treat the existing nearby code as the format spec.)*
-3. **Run clippy locally before sending a PR** and fix what it flags in code you touched:
+   **Do not** `cargo fmt --all` / `cargo fmt --workspace` — that would rewrite the generated `protocol` crate, which `make protocol` immediately clobbers. Match neighbors for anything those two packages do not cover (4 spaces, ~100-col wrap, `std` imports first).
+3. **Run clippy locally before sending a PR** — it **gates** with `-D warnings`:
    ```bash
-   cargo clippy --workspace --all-targets
+   cargo clippy --workspace --all-targets -- -D warnings
    ```
-   *(CI runs clippy on `SIL/` as advisory only — the pre-existing backlog isn't cleared yet — but new code should be clippy-clean.)*
 
 ### Lint-suppression policy
 - **Crate-level blanket allows are only for generated code** (`Protocol/rust/src/generated/protoemb.rs:6`). Do not add `#![allow(...)]` to hand-written crates.
@@ -339,8 +340,8 @@ The emulator runs firmware "cogs" as OS threads, so peripheral state is shared a
 - **Do** add new third-party deps to `[workspace.dependencies]`, then reference `dep.workspace = true`.
 - **Do** keep `unsafe`/`extern "C"` confined to the platform crate's `ffi.rs`/stubs and guard every channel/pointer.
 - **Do** give every public item a `///` doc, with `# Safety`/`# Panics` where applicable.
-- **Do** run `cargo build`/`cargo test`/`clippy` locally before pushing — the `sil-rust` CI job gates `cargo test` on `SIL/`.
+- **Do** run `cargo fmt -p mad-emulator -p models --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test` locally before pushing — `sil-rust` gates all three.
 - **Don't** edit `Protocol/rust/src/generated/` — regenerate via `make protocol`.
 - **Don't** introduce `anyhow`/`thiserror`; follow the hand-rolled `enum + Display + Error` pattern.
-- **Don't** run repo-wide `cargo fmt` — format only your additions and match neighbors.
+- **Don't** run repo-wide `cargo fmt --all` — it fights generated protocol code. Format `mad-emulator` and `models` only.
 - **Don't** put MaD-specific logic in `embsim/*` generic crates, or add a dependency edge from `embsim/*` onto the MaD consumer crates. embsim changes land upstream (github.com/RileyMcCarthy/embsim) first, then the submodule pin is bumped here.

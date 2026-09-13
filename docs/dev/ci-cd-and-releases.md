@@ -13,7 +13,7 @@ relevant jobs:
 
 | Job | Runs when | What it does |
 |---|---|---|
-| `wasm-control-ci` | app or protocol changed | `cargo test` the runtime, build WASM, generate the protocol, then `npm run verify` (typecheck + lint + tests + build) — fully offline |
+| `wasm-control-ci` | app or protocol changed | Build WASM, generate the protocol, `npm run verify` (typecheck + lint + tests + build), diagnostics e2e, M12 schema↔domain lockstep — fully offline. protoemb-runtime `cargo test` is `protoemb-ci` |
 | `protoemb-ci` | protocol changed | Generator unit tests + cross-language (C == Rust == TS) wire conformance + framing/runtime crate tests |
 | `embsim-ci` | SIL / firmware / protocol changed | Builds and tests the pinned `SIL/embsim` commit (workspace tests, doctests, `embsim-trace` with `web` off) |
 | `embsim-pin-ci` | **the `SIL/embsim` gitlink moved** | **Blocking.** The other half of embsim's upstream gate, run against the commit being pinned: determinism goldens (5× as separate processes) + stepped-clock suites + goldens-unmodified, rustfmt, clippy `-D warnings`, `cargo doc` deny-warnings, MSRV read from the pinned manifest, and `cargo deny`. Catches a pin bumped to an unpushed or never-CI'd commit |

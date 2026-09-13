@@ -121,7 +121,7 @@ Out-of-range packed fields never encode (bit-wrap).
 - [x] Sprint A–D plan items landed
 - [x] Schema field rename without mapping update fails a gate (M12)
 - [x] Bugfix PRs prompted to cite a matrix cell (PR template)
-- [ ] WASM e2e smoke green on nightly (ops: watch `e2e-nightly` workflow)
+- [x] WASM e2e green on CI — full suite gates PRs (`control-e2e-sil`); nightly still runs for drift
 
 ## Commands
 
@@ -129,7 +129,7 @@ Out-of-range packed fields never encode (bit-wrap).
 cd Software/Control && npm run generate:proto && npm test && npm run verify
 cd Firmware/MaDCore && pio test -e native_test -f test_dev_forceGauge -f test_app_gauge
 python3 Protocol/scripts/check_schema_domain_lockstep.py
-cd Software/Control && npm run e2e:smoke   # needs SIL playground + bridge
+cd Software/Control && npm run e2e:smoke   # needs `cd SIL && make e2e-emulator` + bridge
 # Full matrix e2e:
 npm run e2e
 # Pairwise helper (import from domain):

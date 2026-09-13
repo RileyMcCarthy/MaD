@@ -352,7 +352,7 @@ New modules and non-trivial behaviour changes need tests — not only “builds 
 
 **Do**
 - Add or extend **Unity** tests under `Firmware/MaDCore/test/` and run `pio test -e native_test` from `Firmware/MaDCore/`.
-- When the module is not already in the `native_test` source filter (`platformio.ini`), **add it** so ASan actually links the code under test.
+- Add a `test/<suite>/` folder that `#include`s the module (the `native_test` filter only compiles `Library/` globally; everything else is pulled in per-suite so doubles don't collide).
 - Cover state transitions, fault/restriction paths, invalid inputs, and lock-free/SPSC contracts where relevant.
 - For behaviour that depends on motion, force, NVRAM, or multi-cog timing, add or extend **SIL** coverage (`SIL/`) in addition to unit tests.
 
@@ -436,7 +436,7 @@ The existing code passes medium/high by following these; new code should too:
 - Divisors checked on the **actual** unsigned magnitude used in the divide (see `lib_utility_muldiv64_signed`).
 - `DEBUG_*` / printf format strings match argument types (`%u` for `uint32_t`, etc.).
 
-> `native_test` currently compiles only a subset under ASan (Library + selected modules). Other modules don't yet have Unity tests wired here; add to this filter when you add tests.
+> `native_test`'s `build_src_filter` compiles only `Library/` globally. Every other module is `#include`d by its own suite under `test/<suite>/` so peer doubles don't collide. That is intentional, not missing coverage — APP/DEV/IO/Library all have suites. When you add a **new** module, add a suite folder that `#include`s it (and keep `test_ignore = sd`).
 
 ### Suppression policy
 

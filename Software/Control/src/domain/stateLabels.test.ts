@@ -112,4 +112,49 @@ describe('fault / restriction label lockstep', () => {
       );
     },
   );
+
+  // C2: Live.tsx puts these strings on the Fault / Restriction badge `title`.
+  behaviour(
+    {
+      id: 'labels.cog-hint-is-a-stopped-processor-core',
+      covers: 'src/domain/stateLabels.ts#FAULT_HINTS',
+      given: 'a processor-core fault on the machine controller',
+      then: 'a processor-core fault hint says a processor core in the machine controller stopped running',
+      why: 'COG is a Propeller 2 processor core; the live-screen tooltip is what the operator reads',
+    },
+    () => {
+      const hint = FAULT_HINTS[FaultedReason.COG].toLowerCase();
+      expect(hint).toMatch(/processor|core/);
+      expect(hint).not.toMatch(/motor/);
+      expect(hint).not.toMatch(/cogging/);
+    },
+  );
+
+  behaviour(
+    {
+      id: 'labels.tooltip-is-longer-than-the-badge',
+      covers: 'src/domain/stateLabels.ts#FAULT_HINTS',
+      given: 'every fault and restriction the live screen can badge',
+      then: 'every fault and restriction tooltip is longer than the short badge name',
+    },
+    () => {
+      const faults = Object.values(FaultedReason).filter((v): v is number => typeof v === 'number');
+      for (const v of faults) {
+        const badge = faultBadgeLabel(v as FaultedReason);
+        const hint = FAULT_HINTS[v as FaultedReason];
+        expect(hint.length, `FAULT_HINTS[${badge}] is not explanatory`).toBeGreaterThan(badge.length);
+      }
+      const restrictions = Object.values(RestrictedReason).filter(
+        (v): v is number => typeof v === 'number',
+      );
+      for (const v of restrictions) {
+        const badge = restrictionBadgeLabel(v as RestrictedReason);
+        const hint = RESTRICTION_HINTS[v as RestrictedReason];
+        expect(
+          hint.length,
+          `RESTRICTION_HINTS[${badge}] is not explanatory`,
+        ).toBeGreaterThan(badge.length);
+      }
+    },
+  );
 });

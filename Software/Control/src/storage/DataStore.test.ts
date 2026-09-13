@@ -208,6 +208,39 @@ describe('DataStore mutex + index integrity', () => {
 
   behaviour(
     {
+      id: 'storage.set-save-refuses-overwrite-until-asked',
+      covers: 'src/storage/DataStore.ts#saveSet',
+      given: 'a named motion set already saved in the data folder',
+      then: 'saving a motion set of the same name without overwrite keeps the original, and saving with overwrite replaces the stored set including its moves',
+    },
+    async () => {
+      const set = {
+        name: 'Preload',
+        executions: 2,
+        moves: [
+          {
+            moveType: 'linear' as const,
+            absoluteOrRelative: 'relative' as const,
+            moveParameters: { position: 0, velocity: 5, distance: 10, time: 0 },
+          },
+        ],
+      };
+      expect(await store.saveSet(set, false)).toBe(true);
+      expect(await store.saveSet({ ...set, executions: 9 }, false)).toBe(false);
+      let loaded = await store.getSets();
+      expect(loaded).toHaveLength(1);
+      expect(loaded[0]?.executions).toBe(2);
+
+      expect(await store.saveSet({ ...set, executions: 9 }, true)).toBe(true);
+      loaded = await store.getSets();
+      expect(loaded).toHaveLength(1);
+      expect(loaded[0]?.executions).toBe(9);
+      expect(loaded[0]?.moves).toHaveLength(1);
+    },
+  );
+
+  behaviour(
+    {
       id: 'storage.empty-history-rebuilds-from-files',
       covers: 'src/storage/DataStore.ts#getTestRunIndex',
       given: 'two saved runs whose history list has been wiped to an empty list',
