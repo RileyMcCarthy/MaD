@@ -1,0 +1,15 @@
+# Silicon console captured from a P2-EVAL.
+# Source: hwtest/timed.c
+# Captured: 2026-09-13T18:24:25Z
+# Recapture: python3 tools/hw_compare.py --capture --prog <name>
+
+TIMED
+PASS getct_pair 00000002
+PASS waitx_0 00000004
+PASS waitx_1 00000005
+PASS waitx_2 00000006
+PASS waitx_8 0000000c
+PASS waitx_100 00000068
+PASS waitx_1000 000003ec
+PASS waitx_10000 00002714
+RESULT 0 PASS

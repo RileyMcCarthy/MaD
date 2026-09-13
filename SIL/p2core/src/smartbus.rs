@@ -155,8 +155,6 @@ impl SmartBus {
     /// `WYPIN` on a bus pin: load the TX word, or begin a clock burst.
     /// Returns `true` if it was a bus pin.
     pub fn wypin(&mut self, pin: u8, y: u32) -> bool {
-
-
         let p = pin & 63;
         if self.clock == Some(p) {
             // `WYPIN y` on a pulse clock asks for `y` clock **pulses**, and a

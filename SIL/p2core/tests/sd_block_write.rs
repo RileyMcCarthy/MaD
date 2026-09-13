@@ -167,11 +167,7 @@ fn cmd25_takes_blocks_until_the_stop_token() {
         }
         send(&mut card, 0xFF);
         send(&mut card, 0xFF);
-        assert_eq!(
-            send(&mut card, 0xFF) & 0x1F,
-            0x05,
-            "block {b} is accepted"
-        );
+        assert_eq!(send(&mut card, 0xFF) & 0x1F, 0x05, "block {b} is accepted");
         // The busy byte before the card is ready again.
         assert_eq!(send(&mut card, 0xFF), 0xFF);
     }
@@ -182,12 +178,16 @@ fn cmd25_takes_blocks_until_the_stop_token() {
     for b in 0..2usize {
         let at = (20 + b) * BLOCK_LEN;
         assert!(
-            card.blocks[at..at + BLOCK_LEN].iter().all(|&v| v == 0xC0 + b as u8),
+            card.blocks[at..at + BLOCK_LEN]
+                .iter()
+                .all(|&v| v == 0xC0 + b as u8),
             "block {b} landed at its own address"
         );
     }
     assert!(
-        card.blocks[22 * BLOCK_LEN..23 * BLOCK_LEN].iter().all(|&v| v == 0),
+        card.blocks[22 * BLOCK_LEN..23 * BLOCK_LEN]
+            .iter()
+            .all(|&v| v == 0),
         "the stop token ends the run rather than writing a third block"
     );
     assert_eq!(card.commands, vec![25], "payload is not parsed as commands");
@@ -222,9 +222,15 @@ fn a_command_that_never_sends_its_block_does_not_deafen_the_card() {
     }
     send(&mut card, 0xFF);
     send(&mut card, 0xFF);
-    assert_eq!(send(&mut card, 0xFF) & 0x1F, 0x05, "and the block is accepted");
+    assert_eq!(
+        send(&mut card, 0xFF) & 0x1F,
+        0x05,
+        "and the block is accepted"
+    );
     assert!(
-        card.blocks[165 * BLOCK_LEN..166 * BLOCK_LEN].iter().all(|&v| v == 0x5A),
+        card.blocks[165 * BLOCK_LEN..166 * BLOCK_LEN]
+            .iter()
+            .all(|&v| v == 0x5A),
         "the retried write lands"
     );
     assert_eq!(card.commands, vec![24, 24], "no payload parsed as commands");
@@ -241,7 +247,9 @@ fn a_block_written_reads_back_and_the_bus_stays_in_step() {
     command(&mut card, 24, 130);
     assert_eq!(r1(&mut card), 0x00);
     send(&mut card, 0xFE);
-    for &b in &payload { send(&mut card, b); }
+    for &b in &payload {
+        send(&mut card, b);
+    }
     send(&mut card, 0xFF);
     send(&mut card, 0xFF);
     assert_eq!(send(&mut card, 0xFF) & 0x1F, 0x05, "write accepted");
@@ -255,7 +263,9 @@ fn a_block_written_reads_back_and_the_bus_stays_in_step() {
     let mut token = 0xFFu8;
     for _ in 0..8 {
         token = send(&mut card, 0xFF);
-        if token != 0xFF { break; }
+        if token != 0xFF {
+            break;
+        }
     }
     assert_eq!(token, 0xFE, "the read returns a data token");
     let got: Vec<u8> = (0..BLOCK_LEN).map(|_| send(&mut card, 0xFF)).collect();
@@ -274,7 +284,9 @@ fn multi_block_write_then_multi_block_read_round_trips() {
     assert_eq!(r1(&mut card), 0x00);
     for b in 0..3usize {
         send(&mut card, 0xFC);
-        for _ in 0..BLOCK_LEN { send(&mut card, 0xE0 + b as u8); }
+        for _ in 0..BLOCK_LEN {
+            send(&mut card, 0xE0 + b as u8);
+        }
         send(&mut card, 0xFF);
         send(&mut card, 0xFF);
         assert_eq!(send(&mut card, 0xFF) & 0x1F, 0x05, "block {b} accepted");
@@ -291,13 +303,18 @@ fn multi_block_write_then_multi_block_read_round_trips() {
         let mut token = 0xFFu8;
         for _ in 0..8 {
             token = send(&mut card, 0xFF);
-            if token != 0xFF { break; }
+            if token != 0xFF {
+                break;
+            }
         }
         assert_eq!(token, 0xFE, "block {b} token");
         let got: Vec<u8> = (0..BLOCK_LEN).map(|_| send(&mut card, 0xFF)).collect();
         send(&mut card, 0xFF);
         send(&mut card, 0xFF);
-        assert!(got.iter().all(|&v| v == 0xE0 + b as u8), "block {b} reads back");
+        assert!(
+            got.iter().all(|&v| v == 0xE0 + b as u8),
+            "block {b} reads back"
+        );
     }
     command(&mut card, 12, 0);
     assert_eq!(r1(&mut card), 0x00);
