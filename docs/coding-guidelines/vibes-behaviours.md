@@ -121,6 +121,30 @@ an outcome when it is only a label.
 has to carry any condition the scene does not establish. It simply must not
 repeat the scene it was handed.
 
+## State the rule, not the instance
+
+A value the test happens to assert is evidence. The rule that produces it is the
+behaviour. This claim was rejected in review:
+
+> given *an expected curve from 0 to 10 mm over two seconds*
+> then *one second in reads 5 mm*
+
+Five millimetres is right for straight-line interpolation, wrong for a step and
+wrong for a spline, and the claim never says which — so a reader has no way to
+judge it. The rule is what was actually built:
+
+> then *a sample between two points reads the straight-line value between them*
+
+Its sibling in the same test got this right already: "samples outside the span
+hold the start and end positions" names the clamping rule rather than reporting
+that −1 s came back as 0.
+
+A bare value is fine in two cases. When the condition makes the rule
+unambiguous — *a 1 mm extension on a 10 mm gauge* → *strain is 10 percent* —
+and when the value IS the contract, as with a wire format: *the configuration
+encodes to the agreed 68 bytes*. The test there is whether a reader who
+disagrees with the number would know what to go and check.
+
 ## A spec says what the machine does
 
 Not what it does not do, not what it used to do, and never what a bug once did.

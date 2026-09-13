@@ -57,7 +57,7 @@ describe('interpolateExpected', () => {
       given: 'an expected curve from 0 to 10 mm over two seconds, sampled before, during, and after that span',
       expect: {
         'held-outside-span': 'samples outside the span hold the start and end positions',
-        'midpoint-interpolated': 'one second in reads 5 mm',
+        'midpoint-interpolated': 'a sample between two expected points reads the straight-line value between them',
       },
     },
     () => {

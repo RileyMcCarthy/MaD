@@ -56,11 +56,23 @@ removed / stopped holding. The reader has never opened the code. Full guide:
    `assert3`. Rewording the text is a change to that expectation; renaming the
    id is a delete plus an add. Full identity is `suite/id/expect`.
 
-5. **`then` is a claim about the machine, not the assertion restated.**
+5. **State the RULE, not the instance.** A value the test happens to assert is
+   evidence; the rule that produces it is the behaviour. If a reader cannot
+   tell whether the number is right without knowing a rule you did not write
+   down, the expectation says nothing.
+   - BAD:  given *a curve from 0 to 10 mm over two seconds* / then *one second in reads 5 mm*
+   - GOOD: given *a curve from 0 to 10 mm over two seconds* / then *a sample between two points reads the straight-line value between them*
+   The bad one is unjudgeable: 5 mm is right for linear interpolation, wrong for
+   a step or a spline, and the claim never says which.
+   A bare value is fine when the condition makes the rule unambiguous (*a 1 mm
+   extension on a 10 mm gauge* → *strain is 10 percent*) or when the value IS
+   the contract (*encodes to the agreed 68 bytes on the wire*).
+
+6. **`then` is a claim about the machine, not the assertion restated.**
    "returns 3" is an assertion. "a five-millimetre travel with two millimetres
    of slack strains the sample by three" is a claim a reviewer can judge.
 
-6. **A spec says what the machine DOES — never what it does not do, used to
+7. **A spec says what the machine DOES — never what it does not do, used to
    do, or once did wrong.** A contrast makes the reader stop and work out which
    half is true, and a bug the claim outlived is not part of the
    specification.
@@ -74,7 +86,7 @@ removed / stopped holding. The reader has never opened the code. Full guide:
    claim genuinely needs ("even while every core is still running") is not a
    contrast — keep it.
 
-7. **Use the words THIS repo uses.** Operator vocabulary is not the same as
+8. **Use the words THIS repo uses.** Operator vocabulary is not the same as
    industry vocabulary. A tensile machine has a "crosshead" in Instron's
    manuals; this one has a **gantry**, in 36 files. Writing "crosshead" made a
    claim the maintainer had to stop and ask about — the exact failure rule 1
@@ -82,7 +94,7 @@ removed / stopped holding. The reader has never opened the code. Full guide:
    Checkable: `git grep -i "<your word>" -- ':!behaviours.jsonl'`. If the term
    appears nowhere in the code or docs, you imported it — use theirs.
 
-8. **The claim must say what the MACHINE DOES, not what the situation is
+9. **The claim must say what the MACHINE DOES, not what the situation is
    CALLED.** If the outcome only re-labels the trigger, the row is circular and
    a reader learns nothing from it.
    - BAD: given *the drive stops reporting ready* / then *a drive that stops
@@ -96,25 +108,25 @@ removed / stopped holding. The reader has never opened the code. Full guide:
    Test it: cover `given` and read `then`. Then cover `then` and read `given`.
    If each predicts the other, there is no claim.
 
-9. **Cite an expectation as `BH-42`, never renumber by hand.** The collector
+10. **Cite an expectation as `BH-42`, never renumber by hand.** The collector
    assigns the number on first collection and carries it forever; it lives in
    `behaviours.jsonl` and `behaviours.next`. On a merge conflict in either,
    keep the LARGER number — a reused number silently repoints old references.
 
-10. **`id` is stable identity — reword freely, never rename casually.**
+11. **`id` is stable identity — reword freely, never rename casually.**
    `area.claim-in-brief` kebab-case (e.g. `gantry.slack-consumed-before-extension`).
    Same id + new wording renders as *respecified* (good, reviewable).
    New id renders as removed + added (a lie, if it's the same behaviour).
 
-11. **Declare on ENTRY.** In C the macro is the FIRST statement of the test
+12. **Declare on ENTRY.** In C the macro is the FIRST statement of the test
    body; nothing checks this for you, and a crash before it makes the
    behaviour read as deleted. TS/Rust: call `behaviour(...)` first thing.
 
-12. **One test, one condition.** If a test sets up two genuinely different
+13. **One test, one condition.** If a test sets up two genuinely different
    conditions, it is two tests. Never self-report status — pass/fail joins from
    the runner, and every expectation of a test shares that test's verdict.
 
-13. **After changing behaviours:** `node Vibes/bin/vibes.mjs collect --write`
+14. **After changing behaviours:** `node Vibes/bin/vibes.mjs collect --write`
    and commit `behaviours.jsonl` alongside the change.
 
 ## Snippets

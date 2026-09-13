@@ -139,7 +139,7 @@ describe('programPort', () => {
       covers: 'src/firmware/program.ts#programPort',
       given: 'a 64-byte firmware file loaded to flash through a serial port',
       expect: {
-        'size-includes-stub': 'the load reports an image size 496 bytes larger than the firmware file',
+        'size-includes-stub': 'the reported image size includes the 496-byte flash-boot stub ahead of the firmware',
       },
     },
     async () => {

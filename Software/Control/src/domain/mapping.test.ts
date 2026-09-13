@@ -25,7 +25,7 @@ describe('proto ↔ display mapping', () => {
       expect: {
         'name-and-force-limit': 'the operator sees the same name and force limit',
         'load-cell-in-millivolts-per-volt':
-          'sensitivity reads 1 mV/V and zero balance reads 0.005 mV/V',
+          'the load-cell constants are shown in millivolts per volt, converted from the stored nanovolts per volt',
         'round-trip': 'converting back gives the same machine values',
       },
     },
