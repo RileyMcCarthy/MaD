@@ -76,8 +76,10 @@ tools/
 SIL is single-instance: scenarios run serially; close `sil:app` before `npm run e2e`.
 
 Motion waits use `settleMotion` (position vs setpoint). Sample stream and
-calibrate waits use `awaitResponding` / `awaitReadoutNear`. Reconnect retries
-until the PTY is free (`clickReconnect`). Remaining `waitForTimeout`s are poll
+calibrate waits use `awaitResponding` (Responding **and** `fw <version>` in
+the status bar — handshake done, not the first sample) / `awaitReadoutNear`.
+Reconnect retries until the PTY is free (`clickReconnect`). Remaining
+`waitForTimeout`s are poll
 intervals inside those helpers, plus a few UI ticks (chart toggle, form settle).
 
 **Long-lived emulator state:** position accumulates across scenarios. Motion
