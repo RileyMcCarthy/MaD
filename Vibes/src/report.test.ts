@@ -10,15 +10,18 @@ function row(over: {
   why?: string;
   covers?: string;
   file?: string;
+  test?: string;
+  num?: number;
   status?: Behaviour['status'];
 }): Behaviour {
   const b: Behaviour = {
     v: 1,
+    num: over.num ?? 1,
     id: over.id,
     suite: 'control',
     lang: 'ts',
     file: over.file ?? 'src/x.ts',
-    test: 't',
+    test: over.test ?? 't',
     given: over.given ?? 'a situation',
     then: over.then,
     status: over.status ?? 'pass',
@@ -112,5 +115,23 @@ describe('a respecification is a changed claim', () => {
     expect(md).toContain('  - given:');
     expect(md).toContain('    - was: old scene');
     expect(md).toContain('    - now: new scene');
+  });
+
+  it('does not print the claim twice when the test is named after it', () => {
+    // The TypeScript binding names a test `${then} [${id}]`.
+    const then = 'a pause keeps its duration in milliseconds';
+    const md = renderMarkdown(
+      // The TypeScript binding builds this name, so it carries the claim.
+      diffLedgers([], [row({ id: 'x.pause', then, file: 'src/a.test.ts', test: `${then} [x.pause]` })], []),
+    );
+    expect(md).toContain('`src/a.test.ts`');
+    expect(md).not.toContain(`src/a.test.ts#${then}`);
+  });
+
+  it('keeps the test name when it is a symbol rather than the claim', () => {
+    const md = renderMarkdown(
+      diffLedgers([], [row({ id: 'y.z', then: 'a core that stops is a fault', file: 'test/t.c', test: 'test_core_stops' })], []),
+    );
+    expect(md).toContain('`test/t.c#');
   });
 });

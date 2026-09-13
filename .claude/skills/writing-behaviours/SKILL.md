@@ -44,19 +44,24 @@ holding. The reader has never opened the code. Full guide:
    claim genuinely needs ("even while every core is still running") is not a
    contrast — keep it.
 
-5. **`id` is stable identity — reword freely, never rename casually.**
+5. **Cite a behaviour as `BH-42`, never renumber by hand.** The collector
+   assigns the number on first collection and carries it forever; it lives in
+   `behaviours.jsonl` and `behaviours.next`. On a merge conflict in either,
+   keep the LARGER number — a reused number silently repoints old references.
+
+6. **`id` is stable identity — reword freely, never rename casually.**
    `area.claim-in-brief` kebab-case (e.g. `gantry.slack-consumed-before-extension`).
    Same id + new wording renders as *respecified* (good, reviewable).
    New id renders as removed + added (a lie, if it's the same behaviour).
 
-6. **Declare on ENTRY.** In C the macro is the FIRST statement of the test
+7. **Declare on ENTRY.** In C the macro is the FIRST statement of the test
    body; nothing checks this for you, and a crash before it makes the
    behaviour read as deleted. TS/Rust: call `behaviour(...)` first thing.
 
-7. **One behaviour per test**, and never self-report status — pass/fail joins
+8. **One behaviour per test**, and never self-report status — pass/fail joins
    from the runner.
 
-8. **After changing behaviours:** `node Vibes/bin/vibes.mjs collect --write`
+9. **After changing behaviours:** `node Vibes/bin/vibes.mjs collect --write`
    and commit `behaviours.jsonl` alongside the change.
 
 ## Snippets

@@ -15,6 +15,12 @@ export type Status = 'pass' | 'fail' | 'skip' | 'did-not-report';
 
 export interface Behaviour {
   readonly v: 1;
+  /** Short handle for pointing at this behaviour in a review or a commit
+   *  message — BH-42. Assigned on the run that first collects the behaviour,
+   *  then carried forward forever and never reused, so a reference written a
+   *  year ago still resolves to the same claim. NOT the identity: `id` is, and
+   *  a number tells a reader nothing on its own. */
+  readonly num: number;
   /** Stable across rewording. THE identity — a reworded behaviour is a change
    *  to `then`, not one behaviour deleted and another added. */
   readonly id: string;
@@ -62,6 +68,44 @@ export function serializeLedger(items: readonly Behaviour[]): string {
     a.suite !== b.suite ? (a.suite < b.suite ? -1 : 1) : a.id < b.id ? -1 : a.id > b.id ? 1 : 0,
   );
   return sorted.map((b) => JSON.stringify(b)).join('\n') + (sorted.length > 0 ? '\n' : '');
+}
+
+/** How a behaviour is cited outside the ledger. */
+export function handle(b: Behaviour): string {
+  return `BH-${String(b.num)}`;
+}
+
+/**
+ * Carry every number forward, and give anything new the next one that has
+ * never been used.
+ *
+ * `highWater` is what makes a citation trustworthy. Numbering from the highest
+ * number currently in the ledger would hand a deleted behaviour's number to the
+ * next new one, and a review comment pointing at BH-42 would quietly start
+ * meaning a different claim. So the counter only ever goes up, including past
+ * numbers whose behaviours are gone.
+ *
+ * New behaviours are numbered in `suite/id` order so two runs on the same tree
+ * agree on who got which.
+ */
+export function assignNumbers(
+  committed: readonly Behaviour[],
+  collected: readonly Behaviour[],
+  highWater: number,
+): { numbered: Behaviour[]; highWater: number } {
+  const known = new Map<string, number>();
+  for (const b of committed) if (typeof b.num === 'number') known.set(key(b), b.num);
+
+  let next = Math.max(highWater, ...[...known.values()], 0) + 1;
+  const ordered = [...collected].sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0));
+  const numbered = ordered.map((b) => {
+    const existing = known.get(key(b));
+    if (existing !== undefined) return { ...b, num: existing };
+    const n = next;
+    next += 1;
+    return { ...b, num: n };
+  });
+  return { numbered, highWater: next - 1 };
 }
 
 /** Identity is `suite/id`. Two suites may legitimately use the same local id. */

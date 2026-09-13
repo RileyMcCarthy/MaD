@@ -11,10 +11,14 @@ import { existsSync, readFileSync, writeFileSync, appendFileSync } from 'node:fs
 import { join } from 'node:path';
 import { collect } from './collect.js';
 import { diffLedgers, hasRegression } from './diff.js';
-import { parseLedger, serializeLedger, type Behaviour } from './ledger.js';
+import { assignNumbers, parseLedger, serializeLedger, type Behaviour } from './ledger.js';
 import { renderMarkdown } from './report.js';
 
 export const LEDGER = 'behaviours.jsonl';
+/** High-water mark for behaviour numbers. Separate from the ledger because it
+ *  must remember numbers whose behaviours have been deleted — that is the whole
+ *  point of it. On a merge conflict, keep the larger number. */
+export const COUNTER = 'behaviours.next';
 
 const EXIT = { OK: 0, REGRESSION: 1, USAGE: 2, COLLECT: 3 } as const;
 
@@ -38,6 +42,19 @@ function ledgerAt(root: string, ref: string): Behaviour[] {
   } catch {
     return [];
   }
+}
+
+/** The committed ledger as it stands on disk, for carrying numbers forward. */
+function committedLedger(root: string): Behaviour[] {
+  const p = join(root, LEDGER);
+  return existsSync(p) ? parseLedger(readFileSync(p, 'utf8')).ok : [];
+}
+
+function highWater(root: string): number {
+  const p = join(root, COUNTER);
+  if (!existsSync(p)) return 0;
+  const n = Number.parseInt(readFileSync(p, 'utf8').trim(), 10);
+  return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
 function flag(argv: readonly string[], name: string): string | undefined {
@@ -66,10 +83,12 @@ export async function main(argv: readonly string[]): Promise<number> {
     const r = collect(root, log);
     for (const p of r.problems) log(`vibes: ${p}`);
     if (r.behaviours.length === 0 && r.problems.length > 0) return EXIT.COLLECT;
-    const text = serializeLedger(r.behaviours);
+    const assigned = assignNumbers(committedLedger(root), r.behaviours, highWater(root));
+    const text = serializeLedger(assigned.numbered);
     if (argv.includes('--write')) {
       writeFileSync(join(root, LEDGER), text);
-      log(`vibes: wrote ${LEDGER} — ${r.behaviours.length} behaviour(s)`);
+      writeFileSync(join(root, COUNTER), `${String(assigned.highWater)}\n`);
+      log(`vibes: wrote ${LEDGER} — ${r.behaviours.length} behaviour(s), numbers up to BH-${String(assigned.highWater)}`);
     } else {
       process.stdout.write(text);
     }
@@ -91,7 +110,8 @@ export async function main(argv: readonly string[]): Promise<number> {
   for (const p of r.problems) log(`vibes: ${p}`);
   if (r.behaviours.length === 0 && r.problems.length > 0) return EXIT.COLLECT;
 
-  const d = diffLedgers(ledgerAt(root, base), r.behaviours, r.silentSuites);
+  const numbered = assignNumbers(committedLedger(root), r.behaviours, highWater(root)).numbered;
+  const d = diffLedgers(ledgerAt(root, base), numbered, r.silentSuites);
   const md = renderMarkdown(d);
   process.stdout.write(md);
 
@@ -102,7 +122,7 @@ export async function main(argv: readonly string[]): Promise<number> {
   // so say so — but do not fail on it, because a PR that adds behaviour will
   // legitimately differ until the author runs `collect --write`.
   const committed = join(root, LEDGER);
-  if (existsSync(committed) && readFileSync(committed, 'utf8') !== serializeLedger(r.behaviours)) {
+  if (existsSync(committed) && readFileSync(committed, 'utf8') !== serializeLedger(numbered)) {
     log(`vibes: ${LEDGER} is out of date — run \`vibes collect --write\` and commit it`);
   }
 

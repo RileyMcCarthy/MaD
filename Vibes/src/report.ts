@@ -7,7 +7,7 @@
  * reads as "green" to someone skimming, which is how a report stops being read.
  */
 
-import type { Behaviour } from './ledger.js';
+import { handle, type Behaviour } from './ledger.js';
 import type { LedgerDiff, Respecified } from './diff.js';
 
 export function headline(d: LedgerDiff): string {
@@ -45,11 +45,17 @@ export function headline(d: LedgerDiff): string {
 const BR = '  \n';
 
 function one(b: Behaviour): string {
-  const lines = [`- **${b.then}**`, `  given ${b.given}`];
+  const lines = [`- **${b.then}**`, `  ${handle(b)} · given ${b.given}`];
   if (b.why !== undefined) lines.push(`  because ${b.why}`);
   /* The test is the evidence; the covered symbol is the code. Both belong on
-   * the row so a reviewer can open the test without grepping the ledger. */
-  lines.push(`  \`${b.file}#${b.test}\``);
+   * the row so a reviewer can open the test without grepping the ledger.
+   *
+   * The TypeScript binding names its test after the claim, so `#test` there is
+   * the bolded line again inside a code span — the claim printed twice, on more
+   * than half the rows. Where the name only repeats the claim, the file is the
+   * whole of what a reader needs. */
+  const named = !b.test.includes(b.then);
+  lines.push(`  \`${b.file}${named ? `#${b.test}` : ''}\``);
   if (b.covers !== undefined) lines.push(`  \`${b.covers}\``);
   return lines.join(BR);
 }
@@ -61,7 +67,7 @@ const RESPEC_ORDER = ['then', 'given', 'why', 'covers'] as const;
 const RESPEC_LABEL = { given: 'given', why: 'because', covers: 'covers' } as const;
 
 function respec(r: Respecified): string {
-  const lines = [`- \`${r.after.id}\``];
+  const lines = [`- ${handle(r.after)} \`${r.after.id}\``];
   for (const f of RESPEC_ORDER) {
     if (!r.fields.includes(f)) continue;
     const was = r.before[f] ?? '(none)';
@@ -87,7 +93,7 @@ export function renderMarkdown(d: LedgerDiff): string {
       'These behaviours passed before this change and do not now. The claim did not change; the code did.',
       '',
     );
-    for (const s of d.broken) out.push(`- **${s.after.then}**${BR}  \`${s.after.id}\` · was ${s.before}, now ${s.after.status}`);
+    for (const s of d.broken) out.push(`- **${s.after.then}**${BR}  ${handle(s.after)} \`${s.after.id}\` · was ${s.before}, now ${s.after.status}`);
     out.push('');
   }
 
@@ -97,14 +103,14 @@ export function renderMarkdown(d: LedgerDiff): string {
       'These were in the ledger, and this run learned NOTHING about them: their whole suite declared no behaviours, usually a build or startup failure. This is not removal and it is not a pass.',
       '',
     );
-    for (const b of d.unreported) out.push(`- **${b.then}**${BR}  \`${b.id}\` · suite \`${b.suite}\``);
+    for (const b of d.unreported) out.push(`- **${b.then}**${BR}  ${handle(b)} \`${b.id}\` · suite \`${b.suite}\``);
     out.push('');
   }
 
   if (d.removed.length > 0) {
     out.push('## No longer claimed', '');
     out.push('Nothing in the repo asserts these any more.', '');
-    for (const b of d.removed) out.push(`- **${b.then}**${BR}  \`${b.id}\` · was in \`${b.file}\``);
+    for (const b of d.removed) out.push(`- **${b.then}**${BR}  ${handle(b)} \`${b.id}\` · was in \`${b.file}\``);
     out.push('');
   }
 
