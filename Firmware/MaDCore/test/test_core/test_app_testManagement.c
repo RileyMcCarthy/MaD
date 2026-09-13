@@ -174,11 +174,13 @@ static void tm_driveToRunning(void)
 
 void test_app_testManagement_doubleStartRejected(void)
 {
-    VIBES_BEHAVIOUR_WHY("test-run.second-start-refused-while-busy",
-                        "src/APP/app_testManagement.c#app_testManagement_triggerTestStart",
-                        "a start already accepted, then a second start before that test has finished",
-                        "a second start is refused while the first is still waiting to begin, and refused again once that test is running",
-                        "two tests must never run at once; a start already accepted already counts as a session under way");
+    VIBES_TEST("test-run.second-start-refused-while-busy",
+               "src/APP/app_testManagement.c#app_testManagement_triggerTestStart",
+               "a start already accepted, then a second start while the first is still waiting to begin, and another once that test is running");
+    VIBES_EXPECT_WHY("busy-once-accepted",
+                     "the machine counts itself busy as soon as the first start is accepted",
+                     "two tests must never run at once; a start already accepted already counts as a session under way");
+    VIBES_EXPECT("later-starts-refused", "both later starts are refused");
     tm_init();
 
     /* First start is accepted and immediately marks the module busy — even
@@ -198,11 +200,13 @@ void test_app_testManagement_doubleStartRejected(void)
 
 void test_app_testManagement_startNotDroppedWhenMotionLags(void)
 {
-    VIBES_BEHAVIOUR_WHY("test-run.start-waits-for-motion",
-                        "src/APP/app_testManagement.c#app_testManagement_run",
-                        "a start accepted while motion is still off for one cycle, then motion coming on",
-                        "a start accepted while motion is still off stays waiting through that cycle, and the test begins once motion is on",
-                        "motion enable is applied one cycle later than the start request, so the start has to wait");
+    VIBES_TEST("test-run.start-waits-for-motion",
+               "src/APP/app_testManagement.c#app_testManagement_run",
+               "a start accepted while motion is still off for one cycle, then motion coming on");
+    VIBES_EXPECT_WHY("start-still-waiting",
+                     "the start is still waiting at the end of that cycle",
+                     "motion enable is applied one cycle later than the start request, so the start has to wait");
+    VIBES_EXPECT("begins-once-motion-on", "the test begins once motion is on");
     tm_init();
 
     TEST_ASSERT_TRUE(app_testManagement_triggerTestStart("lag001"));
@@ -224,11 +228,13 @@ void test_app_testManagement_startNotDroppedWhenMotionLags(void)
 
 void test_app_testManagement_manualMoveGatedWhileBusy(void)
 {
-    VIBES_BEHAVIOUR_WHY("test-run.jog-refused-while-start-pending",
-                        "src/APP/app_testManagement.c#app_testManagement_addManualMove",
-                        "a jog while idle, then a start, then another jog",
-                        "a jog is accepted while idle, and refused once a test start is waiting to begin",
-                        "a jog must not be mixed into a test that is about to run");
+    VIBES_TEST("test-run.jog-refused-while-start-pending",
+               "src/APP/app_testManagement.c#app_testManagement_addManualMove",
+               "a jog while idle, then a start, then another jog");
+    VIBES_EXPECT("idle-jog-accepted", "the first jog is accepted");
+    VIBES_EXPECT_WHY("later-jog-refused",
+                     "the second jog is refused",
+                     "a jog must not be mixed into a test that is about to run");
     tm_init();
 
     const app_motion_move_t move = { .g = (uint8_t)G0_RAPID_MOVE, .x = 100, .f = 50, .p = 0 };
@@ -243,11 +249,14 @@ void test_app_testManagement_manualMoveGatedWhileBusy(void)
 
 void test_app_testManagement_manualMoveSlotsBounded(void)
 {
-    VIBES_BEHAVIOUR_WHY("test-run.at-most-four-jogs-waiting",
-                        "src/APP/app_testManagement.c#app_testManagement_addManualMove",
-                        "five jogs issued before any has run",
-                        "four jogs can wait to run; a fifth is refused, and the four waiting jogs run on the next cycle",
-                        "jogs wait one cycle to run, so only a handful can be waiting");
+    VIBES_TEST("test-run.at-most-four-jogs-waiting",
+               "src/APP/app_testManagement.c#app_testManagement_addManualMove",
+               "five jogs issued before any has run");
+    VIBES_EXPECT("four-accepted", "the first four are accepted");
+    VIBES_EXPECT_WHY("fifth-refused",
+                     "the fifth is refused",
+                     "jogs wait one cycle to run, so only a handful can be waiting");
+    VIBES_EXPECT("all-four-queued", "the next cycle queues all four for motion");
     tm_init();
 
     const app_motion_move_t move = { .g = (uint8_t)G0_RAPID_MOVE, .x = 1, .f = 1, .p = 0 };
@@ -271,11 +280,14 @@ void test_app_testManagement_manualMoveSlotsBounded(void)
 
 void test_app_testManagement_happyPathLifecycle(void)
 {
-    VIBES_BEHAVIOUR_WHY("test-run.completes-when-program-and-motion-finish",
-                        "src/APP/app_testManagement.c#app_testManagement_run",
-                        "a test started, the program finished, then the crosshead idle",
-                        "a test runs until the program is finished and the crosshead is idle, then reports that the test is complete and becomes idle",
-                        "the crosshead has to finish the last move before the test is called complete");
+    VIBES_TEST("test-run.completes-when-program-and-motion-finish",
+               "src/APP/app_testManagement.c#app_testManagement_run",
+               "a test started, the program finished, then the gantry idle");
+    VIBES_EXPECT_WHY("runs-while-gantry-finishes",
+                     "the test keeps running while the gantry finishes",
+                     "the gantry has to finish the last move before the test is called complete");
+    VIBES_EXPECT("completion-announced", "the machine announces the test complete");
+    VIBES_EXPECT("goes-idle", "the machine goes idle");
     tm_init();
 
     /* Idle initially. */
@@ -306,11 +318,13 @@ void test_app_testManagement_happyPathLifecycle(void)
 
 void test_app_testManagement_g122TerminatesFeed(void)
 {
-    VIBES_BEHAVIOUR_WHY("test-run.g122-ends-the-program",
-                        "src/APP/app_testManagement.c#app_testManagement_run",
-                        "a running test whose program has a linear move followed by G122",
-                        "G122 marks the end of the program, so only the linear move is run, and once the crosshead is idle the test is reported complete",
-                        "G122 is the end-of-program mark the firmware waits on before calling the test complete");
+    VIBES_TEST("test-run.g122-ends-the-program",
+               "src/APP/app_testManagement.c#app_testManagement_run",
+               "a running test whose program has a linear move followed by G122");
+    VIBES_EXPECT("only-linear-move-queued", "only the linear move is queued");
+    VIBES_EXPECT_WHY("complete-once-gantry-idle",
+                     "the test is reported complete once the gantry is idle",
+                     "G122 is the end-of-program mark the firmware waits on before calling the test complete");
     tm_init();
     tm_driveToRunning();
 
@@ -334,11 +348,14 @@ void test_app_testManagement_g122TerminatesFeed(void)
 
 void test_app_testManagement_userEndStopsRun(void)
 {
-    VIBES_BEHAVIOUR_WHY("test-run.operator-stop-is-silent",
-                        "src/APP/app_testManagement.c#app_testManagement_run",
-                        "a running test, then the operator stopping it",
-                        "an operator stop aborts the remaining moves and leaves the machine idle, with no toast",
-                        "the operator already knows they stopped the test");
+    VIBES_TEST("test-run.operator-stop-is-silent",
+               "src/APP/app_testManagement.c#app_testManagement_run",
+               "a running test, then the operator stopping it");
+    VIBES_EXPECT("moves-cleared", "the remaining moves are cleared");
+    VIBES_EXPECT("returns-to-idle", "the machine returns to idle");
+    VIBES_EXPECT_WHY("no-operator-notice",
+                     "no notice is raised for the operator",
+                     "the operator already knows they stopped the test");
     tm_init();
     tm_driveToRunning();
 
@@ -355,11 +372,13 @@ void test_app_testManagement_userEndStopsRun(void)
 
 void test_app_testManagement_motionDisabledAbortsRun(void)
 {
-    VIBES_BEHAVIOUR_WHY("test-run.motion-off-aborts-with-warning",
-                        "src/APP/app_testManagement.c#app_testManagement_run",
-                        "a running test, then motion turned off",
-                        "motion turning off mid-test aborts the remaining moves and warns that the test was aborted",
-                        "the operator needs to know the test stopped because motion was turned off");
+    VIBES_TEST("test-run.motion-off-aborts-with-warning",
+               "src/APP/app_testManagement.c#app_testManagement_run",
+               "a running test, then motion turned off");
+    VIBES_EXPECT("moves-cleared", "the test stops and the remaining moves are cleared");
+    VIBES_EXPECT_WHY("operator-warned",
+                     "the operator is warned that the test was aborted",
+                     "the operator needs to know the test stopped because motion was turned off");
     tm_init();
     tm_driveToRunning();
 
@@ -374,11 +393,13 @@ void test_app_testManagement_motionDisabledAbortsRun(void)
 
 void test_app_testManagement_sampleLimitAbortsRun(void)
 {
-    VIBES_BEHAVIOUR_WHY("test-run.sample-limit-aborts-with-warning",
-                        "src/APP/app_testManagement.c#app_testManagement_run",
-                        "a running test, then the sample past its force limit",
-                        "the sample going past its own limit mid-test aborts the remaining moves and warns that the test was stopped",
-                        "the specimen's configured limit is what stops the test");
+    VIBES_TEST("test-run.sample-limit-aborts-with-warning",
+               "src/APP/app_testManagement.c#app_testManagement_run",
+               "a running test, then the sample past its force limit");
+    VIBES_EXPECT("moves-cleared", "the test stops and the remaining moves are cleared");
+    VIBES_EXPECT_WHY("operator-warned",
+                     "the operator is warned that the test was stopped",
+                     "the specimen's configured limit is what stops the test");
     tm_init();
     tm_driveToRunning();
 
@@ -392,11 +413,14 @@ void test_app_testManagement_sampleLimitAbortsRun(void)
 
 void test_app_testManagement_openFailureEndsStart(void)
 {
-    VIBES_BEHAVIOUR_WHY("test-run.missing-program-fails-start",
-                        "src/APP/app_testManagement.c#app_testManagement_run",
-                        "a start whose motion program cannot be opened",
-                        "a start whose motion program cannot be opened reports an error, aborts, and leaves the machine idle",
-                        "a missing program must not leave the machine looking as if a test is running");
+    VIBES_TEST("test-run.missing-program-fails-start",
+               "src/APP/app_testManagement.c#app_testManagement_run",
+               "a start whose motion program cannot be opened");
+    VIBES_EXPECT("error-raised", "the machine raises an error notice");
+    VIBES_EXPECT("moves-cleared", "the queued moves are cleared");
+    VIBES_EXPECT_WHY("returns-to-idle",
+                     "the machine returns to idle",
+                     "a missing program must not leave the machine looking as if a test is running");
     tm_init();
 
     TEST_ASSERT_TRUE(app_testManagement_triggerTestStart("nofile"));
@@ -478,10 +502,12 @@ static void m5_enter_phase(m5_phase_E phase)
 
 void test_m5_lifecycle_start_manual_matrix(void)
 {
-    VIBES_BEHAVIOUR("test-run.start-and-jog-only-while-idle",
-                    "src/APP/app_testManagement.c#app_testManagement_isBusy",
-                    "idle, a start waiting to begin, a running test, and after every way a test can finish",
-                    "a new start and a jog are accepted while idle, including after every way a test can finish, and refused while a start is waiting to begin or a test is running");
+    VIBES_TEST("test-run.start-and-jog-only-while-idle",
+               "src/APP/app_testManagement.c#app_testManagement_isBusy",
+               "a start and a jog attempted while idle, while a start is waiting to begin, while a test is running, and after every way a test can finish");
+    VIBES_EXPECT("refused-while-busy", "both are refused while a start is waiting to begin or a test is running");
+    VIBES_EXPECT("accepted-otherwise", "both are accepted in every other phase");
+    VIBES_EXPECT("busy-matches-phase", "the machine reports itself busy in exactly those two phases");
     /* Columns: phase → expectStartAccepted, expectManualAccepted, expectBusy */
     typedef struct
     {
@@ -536,11 +562,13 @@ void test_m5_lifecycle_start_manual_matrix(void)
 /* After any terminal path, a full restart must reach RUNNING. */
 void test_m5_restart_reaches_running_after_each_terminal(void)
 {
-    VIBES_BEHAVIOUR_WHY("test-run.restart-reaches-running-after-every-finish",
-                        "src/APP/app_testManagement.c#app_testManagement_run",
-                        "after an operator stop, a motion-off abort, a sample-limit stop, and a failed open, in turn",
-                        "after every way a test can finish, a new start reaches a running test",
-                        "a finished session has to fully return to idle, or the next test would never start");
+    VIBES_TEST("test-run.restart-reaches-running-after-every-finish",
+               "src/APP/app_testManagement.c#app_testManagement_run",
+               "a test finished in turn by an operator stop, a motion-off abort, a sample-limit stop, and a failed open");
+    VIBES_EXPECT_WHY("left-idle",
+                     "the machine is left idle after each",
+                     "a finished session has to fully return to idle, or the next test would never start");
+    VIBES_EXPECT("restart-reaches-running", "a fresh start drives it back to a running test");
     static const m5_phase_E terminals[] = {
         M5_PHASE_AFTER_USER_END,
         M5_PHASE_AFTER_MOTION_ABORT,

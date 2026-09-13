@@ -95,17 +95,41 @@ static void vibes_field(FILE *f, const char *key, const char *value)
 }
 
 /**
- * @brief Append one behaviour record. Called via VIBES_BEHAVIOUR.
- * @param func Unity's name for this test (__func__) — the pass/fail join key.
+ * @brief The test currently being declared. Unity runs one test at a time in
+ *        one process, so a file-static is the whole of the state needed:
+ *        VIBES_TEST stores the condition, each VIBES_EXPECT spends it.
  */
-static void vibes_behaviour_emit(const char *id, const char *covers, const char *given,
-                                 const char *then, const char *why, const char *func,
-                                 const char *file)
+static const char *vibes_cur_id;
+static const char *vibes_cur_covers;
+static const char *vibes_cur_given;
+static const char *vibes_cur_test;
+static const char *vibes_cur_file;
+
+/** @brief Record the test's identity and the condition it sets up. */
+static void vibes_test_begin(const char *id, const char *covers, const char *given,
+                             const char *func, const char *file)
+{
+    vibes_cur_id = id;
+    vibes_cur_covers = covers;
+    vibes_cur_given = given;
+    vibes_cur_test = func;
+    vibes_cur_file = file;
+}
+
+/**
+ * @brief Append one expectation of the current test.
+ * @param expect Short id, unique within the test — the stable half of identity.
+ */
+static void vibes_expect_emit(const char *expect, const char *then, const char *why)
 {
     const char *path = getenv("VIBES_BEHAVIOURS");
     if ((path == NULL) || (path[0] == '\0'))
     {
         return; /* not running under Vibes */
+    }
+    if (vibes_cur_id == NULL)
+    {
+        return; /* VIBES_EXPECT without a VIBES_TEST above it */
     }
 
     /* "a" is O_APPEND: each suite is its own process under pio, and a record
@@ -116,24 +140,31 @@ static void vibes_behaviour_emit(const char *id, const char *covers, const char 
         return; /* reporting problem, not a test failure */
     }
 
-    (void)fputs("{\"v\":1,\"lang\":\"c\"", f);
-    vibes_field(f, "id", id);
-    vibes_field(f, "test", func);
-    vibes_field(f, "file", file);
-    vibes_field(f, "covers", covers);
-    vibes_field(f, "given", given);
+    (void)fputs("{\"v\":2,\"lang\":\"c\"", f);
+    vibes_field(f, "id", vibes_cur_id);
+    vibes_field(f, "expect", expect);
+    vibes_field(f, "test", vibes_cur_test);
+    vibes_field(f, "file", vibes_cur_file);
+    vibes_field(f, "covers", vibes_cur_covers);
+    vibes_field(f, "given", vibes_cur_given);
     vibes_field(f, "then", then);
     vibes_field(f, "why", why);
     (void)fputs("}\n", f);
     (void)fclose(f);
 }
 
-/** Declare a behaviour. MUST be the first statement in the test body. */
-#define VIBES_BEHAVIOUR(id, covers, given, then)                                                   \
-    vibes_behaviour_emit((id), (covers), (given), (then), NULL, __func__, __FILE__)
+/**
+ * Declare the test and the condition it sets up. MUST be the first statement
+ * in the test body — a crash before it leaves every expectation unrecorded,
+ * and the report then reads as though they were deleted.
+ */
+#define VIBES_TEST(id, covers, given)                                                              \
+    vibes_test_begin((id), (covers), (given), __func__, __FILE__)
 
-/** As VIBES_BEHAVIOUR, plus why the behaviour matters (a pinned defect, a requirement). */
-#define VIBES_BEHAVIOUR_WHY(id, covers, given, then, why)                                          \
-    vibes_behaviour_emit((id), (covers), (given), (then), (why), __func__, __FILE__)
+/** One expectation for the condition above. Follows VIBES_TEST. */
+#define VIBES_EXPECT(expect, then) vibes_expect_emit((expect), (then), NULL)
+
+/** As VIBES_EXPECT, plus the standing requirement this expectation serves. */
+#define VIBES_EXPECT_WHY(expect, then, why) vibes_expect_emit((expect), (then), (why))
 
 #endif /* VIBES_BEHAVIOUR_H */

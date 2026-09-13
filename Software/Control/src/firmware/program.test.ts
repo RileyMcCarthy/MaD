@@ -65,7 +65,10 @@ describe('programPort', () => {
       id: 'flash.port-opened-and-closed',
       covers: 'src/firmware/program.ts#programPort',
       given: 'a successful RAM load through a serial port',
-      then: 'a successful load opens the serial port and closes it when the load finishes',
+      expect: {
+        'port-opened-and-closed': 'the port is opened for the load and closed when it finishes',
+        'rom-version-reported': 'the load reports the boot ROM version it found',
+      },
     },
     async () => {
       const { port, log } = romPort();
@@ -80,8 +83,11 @@ describe('programPort', () => {
       id: 'flash.port-closed-after-failed-load',
       covers: 'src/firmware/program.ts#programPort',
       given: 'a RAM load on a serial port whose chip never answers',
-      then: 'a failed load closes the serial port',
-      why: 'a serial port left open after a failed load cannot be opened again',
+      expect: {
+        'no-response-reported': 'the load reports no response from the boot ROM',
+        'port-closed': 'the serial port is closed',
+      },
+      why: { 'port-closed': 'a serial port left open after a failed load cannot be opened again' },
     },
     async () => {
       // A silent ROM makes detectP2 give up; the port must still be released or
@@ -99,8 +105,11 @@ describe('programPort', () => {
       id: 'flash.port-open-failure-skips-close',
       covers: 'src/firmware/program.ts#programPort',
       given: 'a serial port that fails to open because it is already open',
-      then: 'when the serial port fails to open because it is already open, that open error is reported and the port is left without a close',
-      why: 'closing a port that never opened would hide the original open error',
+      expect: {
+        'open-error-reported': 'the open error is reported',
+        'no-close-attempted': 'no close is attempted',
+      },
+      why: { 'no-close-attempted': 'closing a port that never opened would hide the original open error' },
     },
     async () => {
       const { port, log } = romPort({ failOpen: true });
@@ -114,8 +123,8 @@ describe('programPort', () => {
       id: 'flash.rom-reply-split-across-chunks',
       covers: 'src/firmware/program.ts#programPort',
       given: 'a boot ROM version reply that arrives in two pieces',
-      then: 'a boot ROM version reply split across two serial chunks is recognised',
-      why: 'real serial adapters deliver replies in arbitrary pieces',
+      expect: { 'version-reported': 'the load reports the boot ROM version' },
+      why: { 'version-reported': 'real serial adapters deliver replies in arbitrary pieces' },
     },
     async () => {
       const { port } = romPort({ splitWrites: true });
@@ -129,7 +138,9 @@ describe('programPort', () => {
       id: 'flash.flash-load-size-includes-stub',
       covers: 'src/firmware/program.ts#programPort',
       given: 'a 64-byte firmware file loaded to flash through a serial port',
-      then: 'a flash load reports an image size of 496 bytes plus the firmware file\'s size',
+      expect: {
+        'size-includes-stub': 'the reported image size includes the 496-byte flash-boot stub ahead of the firmware',
+      },
     },
     async () => {
       const { port } = romPort();

@@ -31,7 +31,10 @@ describe('summariseForTriage', () => {
       id: 'diag.triage-healthy-session',
       covers: 'src/diagnostics/triage.ts#summariseForTriage',
       given: 'a session log with only a connected event and a stream event',
-      then: 'a healthy session is summarised as having no errors and no warning flags',
+      expect: {
+        'zero-errors': 'triage reports zero errors',
+        'no-flags': 'triage raises no warning flags',
+      },
     },
     () => {
       const t = summariseForTriage(
@@ -48,8 +51,14 @@ describe('summariseForTriage', () => {
       id: 'diag.triage-first-and-last-error',
       covers: 'src/diagnostics/triage.ts#summariseForTriage',
       given: 'a session with a protocol "bad crc" error followed by a device "link-lost" error',
-      then: 'the triage summary reports the first error and the last error separately',
-      why: 'the first error is usually the cause and the last is usually a symptom, so a report showing only one misleads',
+      expect: {
+        'first-error': 'the triage summary reports the first error',
+        'last-error': 'the triage summary reports the last error as a separate entry',
+      },
+      why: {
+        'first-error': 'the first error is usually the cause, so a report showing only the last one misleads',
+        'last-error': 'the last error is usually a symptom, so a report showing only the first one misleads',
+      },
     },
     () => {
       // The first is usually the cause and the last usually a symptom, so a
@@ -70,7 +79,9 @@ describe('summariseForTriage', () => {
       id: 'diag.triage-never-connected',
       covers: 'src/diagnostics/triage.ts#summariseForTriage',
       given: 'a session log with no connected event',
-      then: 'a session that never connected is flagged as never connected to a device',
+      expect: {
+        'never-reached-a-device': 'triage flags the session as never having reached a device',
+      },
     },
     () => {
       const t = summariseForTriage(snap([e()]));
@@ -83,8 +94,11 @@ describe('summariseForTriage', () => {
     {
       id: 'diag.triage-connected-but-silent',
       covers: 'src/diagnostics/triage.ts#summariseForTriage',
-      given: 'a session that connected but received no sample stream',
-      then: 'a session that connected but received no samples is flagged as connected with a silent device',
+      given: 'a session log with a connected event and no sample-stream event',
+      expect: {
+        'silent-device-flag': 'triage raises a silent-device flag',
+        'never-responded': 'triage records that the device never responded',
+      },
     },
     () => {
       const t = summariseForTriage(snap([e({ cat: 'store', tag: 'connected' })]));
@@ -99,7 +113,10 @@ describe('summariseForTriage', () => {
       id: 'diag.triage-undecodable-traffic',
       covers: 'src/diagnostics/triage.ts#summariseForTriage',
       given: 'a session that connected and then logged undecodable protocol traffic',
-      then: 'undecodable serial traffic is flagged with a hint to check baud rate, wiring, or firmware',
+      expect: {
+        'traffic-flagged': 'the summary flags the traffic',
+        'what-to-check': 'the flag names baud rate, wiring, or firmware as what to check',
+      },
     },
     () => {
       const t = summariseForTriage(
@@ -115,8 +132,12 @@ describe('summariseForTriage', () => {
       id: 'diag.triage-truncation-visible',
       covers: 'src/diagnostics/triage.ts#summariseForTriage',
       given: 'a session whose crash log dropped 120 entries',
-      then: 'a truncated crash log is flagged with how many entries were evicted',
-      why: 'a maintainer must know the log is incomplete before treating it as the whole session',
+      expect: {
+        'eviction-flagged': 'the summary raises a flag saying 120 entries were evicted',
+      },
+      why: {
+        'eviction-flagged': 'a maintainer must know the log is incomplete before treating it as the whole session',
+      },
     },
     () => {
       const t = summariseForTriage(snap([e()], { dropped: 120 }));
@@ -129,7 +150,10 @@ describe('summariseForTriage', () => {
       id: 'diag.triage-ranks-failure-counters',
       covers: 'src/diagnostics/triage.ts#summariseForTriage',
       given: 'a session whose counters include 9 timeouts, 2 nacks, and 900 ordinary transmits',
-      then: 'triage ranks failure counters worst-first and omits healthy traffic counts',
+      expect: {
+        'timeouts-first': 'the summary lists the timeouts ahead of the nacks',
+        'transmits-left-out': 'the summary leaves out the transmit count',
+      },
     },
     () => {
       const t = summariseForTriage(
@@ -147,7 +171,9 @@ describe('summariseForTriage', () => {
       id: 'diag.triage-failed-firmware-flash',
       covers: 'src/diagnostics/triage.ts#summariseForTriage',
       given: 'a session log with a firmware-flash failure',
-      then: 'a failed firmware flash is flagged in the triage summary',
+      expect: {
+        'flash-failure-flagged': 'the triage flags include a failed firmware flash',
+      },
     },
     () => {
       const t = summariseForTriage(snap([e({ level: 'error', cat: 'flash', tag: 'failed' })]));
@@ -160,7 +186,9 @@ describe('summariseForTriage', () => {
       id: 'diag.triage-last-sample-rate',
       covers: 'src/diagnostics/triage.ts#summariseForTriage',
       given: 'a session whose last stream event recorded 99.4 Hz',
-      then: 'the triage summary carries the last observed sample rate',
+      expect: {
+        'sample-rate': 'the triage summary reports the session sample rate as 99.4 Hz',
+      },
     },
     () => {
       const t = summariseForTriage(
@@ -175,7 +203,10 @@ describe('summariseForTriage', () => {
       id: 'diag.triage-empty-log',
       covers: 'src/diagnostics/triage.ts#summariseForTriage',
       given: 'an empty session log',
-      then: 'an empty session is summarised as zero entries and zero duration, and rendering it does not throw',
+      expect: {
+        'empty-summary': 'triage reports zero entries and zero duration',
+        'text-renders': 'the readable text renders without error',
+      },
     },
     () => {
       const t = summariseForTriage(snap([]));
@@ -192,7 +223,11 @@ describe('formatTriage', () => {
       id: 'diag.triage-format-leads-with-verdict',
       covers: 'src/diagnostics/triage.ts#formatTriage',
       given: 'a session that connected and then logged undecodable protocol traffic',
-      then: 'the readable triage text leads with the error count and includes the baud-rate hint and the first error',
+      expect: {
+        'leads-with-error-count': 'the readable triage text leads with the error count',
+        'baud-rate-hint': 'the text includes the baud-rate hint',
+        'first-error-named': 'the text names the first error',
+      },
     },
     () => {
       const text = formatTriage(
@@ -214,7 +249,9 @@ describe('formatTriage', () => {
       id: 'diag.triage-format-single-error-once',
       covers: 'src/diagnostics/triage.ts#formatTriage',
       given: 'a session with exactly one error',
-      then: 'a single error is named once in the readable triage text',
+      expect: {
+        'named-once': 'the readable triage text names that error exactly once',
+      },
     },
     () => {
       const text = formatTriage(

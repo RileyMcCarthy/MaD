@@ -6,26 +6,61 @@ That readership is the entire design constraint: **every word of a behaviour is 
 
 ## The shape
 
+A test declares the **condition** it sets up once, then one or more
+**expectations** for that condition:
+
 ```ts
 behaviour(
   {
     id: 'gcode.dwell-carries-milliseconds',
     covers: 'src/domain/gcode.ts#gcodeLinesToProgram',
     given: 'a pause command with a duration',
-    then: 'a pause command produces exactly one pause, with its duration kept in milliseconds without conversion',
-    why: 'the firmware sleeps for this literal value; a unit slip here is a real-time bug',
+    expect: {
+      'one-pause': 'exactly one pause is produced',
+      'milliseconds-kept': 'the duration is kept in milliseconds without conversion',
+    },
+    why: { 'milliseconds-kept': 'the firmware sleeps for this literal value; a unit slip here is a real-time bug' },
   },
   () => { /* assertions */ },
 );
 ```
 
+Each expectation is its own row in the ledger, its own `BH-` number, and its own
+line in the report:
+
+```
+- given a pause command with a duration
+  **exactly one pause is produced** BH-88
+  **the duration is kept in milliseconds without conversion** BH-89
+```
+
 | field | what it is |
 |---|---|
-| `id` | The behaviour's **stable identity**. Never encodes wording. |
-| `given` | The situation, in operator language. |
-| `then` | The claim — a sentence a reviewer can judge true or false **about the machine**. |
-| `covers` | `path#symbol` the behaviour exercises, so a reader can find the code. Optional. |
-| `why` | The reason it matters when the claim alone doesn't carry it: a pinned defect, a safety property, a hardware constraint. Optional. |
+| `id` | The **test's** stable identity. Its expectations hang off it. |
+| `given` | The condition, in operator language. Shared by every expectation. |
+| `expect` | One entry per expectation, keyed by a short id that is stable across rewording. The value is what the machine does. |
+| `covers` | `path#symbol` the test exercises, so a reader can find the code. Optional. |
+| `why` | Keyed by the same expectation ids, for the ones whose claim doesn't carry its own reason. Optional. |
+
+Identity is `suite/id/expect`. Naming each expectation is what lets you reword
+one without its siblings reading as changed — the same reason `id` itself is
+stable. There is no v1: the old single-claim form is gone, and a v1 record is
+rejected rather than read, because accepting one would file every expectation of
+a test under a single identity.
+
+## How many expectations?
+
+Let the test's assertions decide, not the sentence structure.
+
+| the test asserts | expectations |
+|---|---|
+| one thing | one |
+| several genuinely different things | one each |
+| several things that together establish ONE fact (three fields of a decoded record surviving a round trip) | one |
+
+A claim reading "no chunk appears in the capture **and** the chunk count stays
+at zero" is two expectations wearing one sentence. A claim reading "the name,
+travel limit and load-cell constants all come back intact" is one.
 
 ## Writing the claim
 
@@ -61,34 +96,54 @@ Rules, in priority order:
 The acceptance test: read `given` + `then` aloud to someone who has never seen
 this repo. **If you have to explain a word, change the word.**
 
-## `then` stands alone
+## `given` is the condition, `then` is the expectation
 
-The report prints `then` as the bolded headline of every row — in the "stopped
-holding" list it is often the *only* thing a reviewer reads. So `then` cannot
-lean on `given`. This claim was rejected in review:
+Each field does one job. The report prints them together:
 
-> it stays a rapid move to zero, whatever the comment says
+```
+- given one of the cores stops reporting that it is running
+  **the machine reports a core fault**
+  BH-352 · `src/APP/app_control.c#app_control_run`
+```
 
-"it" has no antecedent on its own line, and "whatever the comment says" is a
-sweep phrase, not a claim. Rewritten to stand alone:
+For a long time `then` was printed as the headline on its own, so it had to
+carry its own condition to be readable. Every claim therefore restated its
+scene, and the outcome was whatever was left at the end:
 
-> a rapid move to zero with a trailing comment naming a different move is still a rapid move to zero
+> given *one of the cores stops reporting that it is running*
+> then *a processor core that stops running is reported as a core fault*
 
-Three checks, applied to `then` read **by itself**:
+Thirteen words to say six. Worse, the habit hides claims that say nothing at
+all — once the condition is repeated, "is reported as a core fault" looks like
+an outcome when it is only a label.
 
-1. **Name the subject.** No `it`, `this`, `they`. The reader has not seen
-   `given` yet.
-2. **State the specific outcome.** No `correctly`, `properly`, `as expected`,
-   `whatever`. A wrong implementation must make the sentence *false* — if a
-   bug could ship and the sentence still read true, it is not a claim.
-3. **Carry the condition it depends on.** If the claim is only true under a
-   configuration or mode, say so in `then`. "moving to a smaller position
-   produces positive extension" is *false* on the default machine; "on a
-   machine whose tensile direction is decreasing position, moving to a smaller
-   position produces positive extension" is true everywhere it is read.
+`then` still has to be specific enough that a bug makes it false, and it still
+has to carry any condition the scene does not establish. It simply must not
+repeat the scene it was handed.
 
-`given` then adds the concrete scene — the exact inputs — rather than carrying
-information `then` needs to be true.
+## State the rule, not the instance
+
+A value the test happens to assert is evidence. The rule that produces it is the
+behaviour. This claim was rejected in review:
+
+> given *an expected curve from 0 to 10 mm over two seconds*
+> then *one second in reads 5 mm*
+
+Five millimetres is right for straight-line interpolation, wrong for a step and
+wrong for a spline, and the claim never says which — so a reader has no way to
+judge it. The rule is what was actually built:
+
+> then *a sample between two points reads the straight-line value between them*
+
+Its sibling in the same test got this right already: "samples outside the span
+hold the start and end positions" names the clamping rule rather than reporting
+that −1 s came back as 0.
+
+A bare value is fine in two cases. When the condition makes the rule
+unambiguous — *a 1 mm extension on a 10 mm gauge* → *strain is 10 percent* —
+and when the value IS the contract, as with a wire format: *the configuration
+encodes to the agreed 68 bytes*. The test there is whether a reader who
+disagrees with the number would know what to go and check.
 
 ## A spec says what the machine does
 
@@ -142,15 +197,19 @@ So: **rewording a claim is normal and encouraged — keep the `id`.** Change an
 ## Rules the bindings enforce (and one they can't)
 
 - **Declared on entry, never on exit.** A test that fails or crashes must still
-  record its behaviour; otherwise a crash reads as "this PR deleted a
-  behaviour". The TS binding does this structurally. **In C, the macro must be
-  the first statement in the test body** — that placement is load-bearing and
+  record its expectations; otherwise a crash reads as "this PR deleted a
+  behaviour". The TS binding does this structurally. **In C, `VIBES_TEST` must
+  be the first statement in the test body** — that placement is load-bearing and
   nothing checks it for you.
 - **Status is never self-reported.** Pass/fail is joined from the runner's own
-  output. A behaviour whose test reported nothing shows as `did-not-report`,
-  never as passing.
-- **One behaviour per test.** The join is per test; two declarations in one
-  test share a fate and blur the ledger.
+  output, per test. An expectation whose test reported nothing shows as
+  `did-not-report`, never as passing.
+- **Every expectation of a test shares that test's verdict.** That is a
+  consequence of joining on the test, not a limitation to work around: one test
+  passes or fails as a whole. If two expectations need to fail independently,
+  they belong to two tests.
+- **One condition per test.** Several expectations are expected and encouraged;
+  several *conditions* mean the test is really two tests.
 
 ## Per language
 
@@ -158,37 +217,41 @@ So: **rewording a claim is normal and encouraged — keep the `id`.** Change an
 
 ```ts
 import { behaviour } from '@vibes/behaviour';
-behaviour({ id, covers, given, then, why }, () => { /* expect(...) */ });
+behaviour({ id, covers, given, expect: { 'an-id': '...' }, why: { 'an-id': '...' } },
+          () => { /* expect(...) */ });
 ```
 
-**C** (`vibes_behaviour.h`, header-only; first statement in a Unity test body):
+**C** (`vibes_behaviour.h`, header-only; `VIBES_TEST` first in the test body):
 
 ```c
 void test_lib_utility_muldiv64_signed(void)
 {
-    VIBES_BEHAVIOUR_WHY("firmware.muldiv64-signed",
-                        "src/Library/lib_utility.c#lib_utility_muldiv64_signed",
-                        "a multiply-then-divide whose intermediate exceeds 32 bits",
-                        "a multiply-then-divide with an intermediate wider than 32 bits is computed exactly, and the sign is negative for an odd number of negative inputs",
-                        "the P2 has no 64-bit divide; a 32-bit intermediate would silently wrap");
+    VIBES_TEST("firmware.muldiv64-signed",
+               "src/Library/lib_utility.c#lib_utility_muldiv64_signed",
+               "a multiply-then-divide whose intermediate exceeds 32 bits");
+    VIBES_EXPECT_WHY("exact",
+                     "the result is computed exactly",
+                     "the P2 has no 64-bit divide; a 32-bit intermediate would silently wrap");
+    VIBES_EXPECT("sign", "the sign is negative for an odd number of negative inputs");
     /* assertions */
 }
 ```
 
-**Rust** (`vibes-behaviour`, first statement in the test):
+**Rust** (`vibes-behaviour`, `behaviour!` first in the test):
 
 ```rust
-behaviour!(Behaviour {
+behaviour!(Test {
     id: "gantry.slack-consumed-before-extension",
     covers: Some("SIL/models/src/gantry.rs#on_position"),
     given: "travel smaller than the configured engagement slack",
-    then: "extension stays at zero until travel exceeds the engagement slack",
-    why: Some("the sample is not yet loaded, so reporting strain would be wrong"),
 });
+expect!("no-extension", "extension stays at zero until travel exceeds the slack",
+        "the sample is not yet loaded, so reporting strain would be wrong");
 ```
 
 All three are inert unless `$VIBES_BEHAVIOURS` is set, so suites run normally on
-their own.
+their own, and all three emit on ENTRY: a test that crashes must still have
+recorded its expectations, or the report says they were deleted.
 
 ## Suites and the ledger
 

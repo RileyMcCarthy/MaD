@@ -27,7 +27,7 @@ describe('M2 move matrix: legal G-codes at origin', () => {
       id: 'matrix.legal-commands-at-origin-accepted',
       covers: 'src/domain/gcode.ts#validateMove',
       given: 'every command the machine implements, with target, speed, and pause at zero',
-      then: 'every command the machine implements is accepted when target, speed, and pause are zero',
+      expect: { 'all-accepted': 'each is accepted for sending' },
     },
     () => {
       for (const { g } of LEGAL_G.map((g) => ({ g }))) {
@@ -43,8 +43,8 @@ describe('M2 move matrix: illegal G-codes rejected', () => {
       id: 'matrix.unknown-commands-refused',
       covers: 'src/domain/gcode.ts#validateMove',
       given: 'command numbers the machine does not implement',
-      then: 'a command number the machine does not implement is refused before it is sent',
-      why: 'an unknown command is otherwise packed as a rapid move',
+      expect: { refused: 'the move is refused before it is sent' },
+      why: { refused: 'an unknown command is otherwise packed as a rapid move' },
     },
     () => {
       for (const { g } of ILLEGAL_G.map((g) => ({ g }))) {
@@ -60,8 +60,13 @@ describe('M2 move matrix: X bounds', () => {
       id: 'matrix.move-target-bounds',
       covers: 'src/domain/gcode.ts#validateAndEncodeMove',
       given: 'linear-move targets at the codec bounds, inside them, and past them, including a non-finite value',
-      then: 'a move whose target is at the codec maximum still encodes; one unit past it is refused',
-      why: 'a value past the packed field width wraps to a different position',
+      expect: {
+        'in-range-round-trip': 'targets in range encode and decode back to the same position',
+        'out-of-range-refused': 'the out-of-range and non-finite targets are refused',
+      },
+      why: {
+        'out-of-range-refused': 'a value past the packed field width wraps to a different position',
+      },
     },
     () => {
       for (const { x, ok } of [
@@ -94,7 +99,10 @@ describe('M2 move matrix: F bounds', () => {
       id: 'matrix.move-speed-bounds',
       covers: 'src/domain/gcode.ts#validateMove',
       given: 'linear-move speeds at zero, at the codec maximum, inside the range, and past it, including a negative and a non-number',
-      then: 'a speed at zero or at the codec maximum is accepted, and a speed past the maximum, a negative speed, or a non-number is refused',
+      expect: {
+        'in-range-accepted': 'zero, the maximum, and anything between are accepted',
+        'out-of-range-refused': 'past the maximum, negative, and non-numeric are refused',
+      },
     },
     () => {
       for (const { f, ok } of [
@@ -119,7 +127,10 @@ describe('M2 move matrix: P (dwell) bounds', () => {
       id: 'matrix.pause-duration-bounds',
       covers: 'src/domain/gcode.ts#validateMove',
       given: 'pause durations at zero, one millisecond, the codec maximum, one past the maximum, and a negative duration',
-      then: 'a pause duration of zero, one millisecond, or the codec maximum is accepted, and a duration past the maximum or a negative duration is refused',
+      expect: {
+        'in-range-accepted': 'durations up to the maximum are accepted',
+        'out-of-range-refused': 'the over-range and negative durations are refused',
+      },
     },
     () => {
       for (const { p, ok } of [
@@ -142,8 +153,13 @@ describe('M2 waveform matrix: amplitude / frequency / cycles', () => {
     {
       id: 'matrix.waveform-param-bounds',
       covers: 'src/domain/gcode.ts#validateWaveform',
-      given: 'waveforms at the smallest positive amplitude, at the codec maximum, and past the range, including zero amplitude, zero frequency, and zero cycles',
-      then: 'a waveform with positive amplitude, frequency, and at least one cycle inside the codec range is accepted, and a zero or over-range amplitude, frequency, or cycle count is refused',
+      given: 'waveform amplitude, frequency, and cycles at the smallest positive value, at the codec maximum, past the maximum, and at zero or negative',
+      expect: {
+        'all-three-in-range-accepted':
+          'a waveform with all three values positive and in range is accepted',
+        'any-out-of-range-refused':
+          'a waveform with any of the three at zero, negative, or past the maximum is refused',
+      },
     },
     () => {
       for (const { amplitude, frequency, cycles, ok } of [
@@ -173,7 +189,7 @@ describe('M2 waveform matrix: amplitude / frequency / cycles', () => {
       id: 'matrix.waveform-shapes-accepted',
       covers: 'src/domain/gcode.ts#validateWaveform',
       given: 'a sine waveform and a triangle waveform at nominal amplitude, frequency, and cycles',
-      then: 'a sine waveform and a triangle waveform at nominal amplitude, frequency, and cycles are accepted for sending',
+      expect: { 'both-accepted': 'both are accepted for sending' },
     },
     () => {
       for (const { shape } of [
@@ -192,8 +208,10 @@ describe('M2 gcode line corpus (whitespace / comments / modes)', () => {
     {
       id: 'matrix.gcode-line-parse-whitespace',
       covers: 'src/domain/gcode.ts#parseGcodeToMove',
-      given: 'move, pause, home, and stop lines, including extra whitespace',
-      then: 'a move, pause, home, or stop line parses to the command, target, and speed the author wrote, including extra whitespace',
+      given: 'move, pause, home, and stop lines, with extra whitespace and a trailing comment',
+      expect: {
+        'authored-values-kept': 'each parses to the command, target, and speed the author wrote',
+      },
     },
     () => {
       for (const { line, g, x, f } of [
@@ -218,8 +236,12 @@ describe('M2 gcode line corpus (whitespace / comments / modes)', () => {
       id: 'matrix.arc-keeps-authored-target',
       covers: 'src/domain/gcode.ts#gcodeLinesToMachineMoveBuffers',
       given: 'an absolute arc to 5 mm with 15 mm of gauge length',
-      then: 'an arc to 5 mm is sent as 5 mm when gauge length is 15 mm',
-      why: 'an arc is executed as a pause, so its target is not a machine-frame position',
+      expect: {
+        'target-unchanged': 'the target is sent through unchanged, with no gauge-length offset added',
+      },
+      why: {
+        'target-unchanged': 'an arc is executed as a pause, so its target is not a machine-frame position',
+      },
     },
     () => {
       const bufs = gcodeLinesToMachineMoveBuffers(['G90', 'G2 X5 I1'], 15);

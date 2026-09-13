@@ -65,11 +65,13 @@ _Static_assert(G4_DWELL        == PROTOEMB_GCODE_DWELL,        "gcode mismatch: 
 
 void test_enum_compat_fault_codes(void)
 {
-    VIBES_BEHAVIOUR_WHY("enum.fault-codes",
-                        "src/APP/app_messageSlave.c#ProtoEmb_onRead_state",
-                        "the machine fault codes and the fault codes on the wire",
-                        "the machine fault codes and the fault codes on the wire use the same numbers, from none through a stopped core, stalled watchdog, emergency-stop inputs, drive and load cell",
-                        "the UI shows the machine's own fault number, so those numbers must match");
+    VIBES_TEST("enum.fault-codes",
+               "src/APP/app_messageSlave.c#ProtoEmb_onRead_state",
+               "the machine fault codes and the fault codes on the wire");
+    VIBES_EXPECT_WHY("numbers-match",
+                     "every fault carries the same number on both sides — none, stopped core, stalled watchdog, emergency-stop inputs, drive, and load cell",
+                     "the UI shows the machine's own fault number, so those numbers must match");
+    VIBES_EXPECT("same-count", "both sides list the same number of faults");
     TEST_ASSERT_EQUAL_INT(PROTOEMB_FAULTEDREASON_NONE,                      APP_CONTROL_FAULT_NONE);
     TEST_ASSERT_EQUAL_INT(PROTOEMB_FAULTEDREASON_COG,                       APP_CONTROL_FAULT_COG);
     TEST_ASSERT_EQUAL_INT(PROTOEMB_FAULTEDREASON_WATCHDOG,                  APP_CONTROL_FAULT_WATCHDOG);
@@ -84,11 +86,13 @@ void test_enum_compat_fault_codes(void)
 
 void test_enum_compat_restriction_codes(void)
 {
-    VIBES_BEHAVIOUR_WHY("enum.restriction-codes",
-                        "src/APP/app_messageSlave.c#ProtoEmb_onRead_state",
-                        "the machine restriction codes and the restriction codes on the wire",
-                        "the machine restriction codes and the restriction codes on the wire use the same numbers, from none through sample length, sample tension, machine tension, endstops and the door",
-                        "the UI shows the machine's own restriction number, so those numbers must match");
+    VIBES_TEST("enum.restriction-codes",
+               "src/APP/app_messageSlave.c#ProtoEmb_onRead_state",
+               "the machine restriction codes and the restriction codes on the wire");
+    VIBES_EXPECT_WHY("numbers-match",
+                     "every restriction carries the same number on both sides — none, sample length, sample tension, machine tension, endstops, and the door",
+                     "the UI shows the machine's own restriction number, so those numbers must match");
+    VIBES_EXPECT("same-count", "both sides list the same number of restrictions");
     TEST_ASSERT_EQUAL_INT(PROTOEMB_RESTRICTEDREASON_NONE,            APP_CONTROL_RESTRICTION_NONE);
     TEST_ASSERT_EQUAL_INT(PROTOEMB_RESTRICTEDREASON_SAMPLE_LENGTH,   APP_CONTROL_RESTRICTION_SAMPLE_LENGTH);
     TEST_ASSERT_EQUAL_INT(PROTOEMB_RESTRICTEDREASON_SAMPLE_TENSION,  APP_CONTROL_RESTRICTION_SAMPLE_TENSION);
@@ -101,11 +105,13 @@ void test_enum_compat_restriction_codes(void)
 
 void test_enum_compat_notification_types(void)
 {
-    VIBES_BEHAVIOUR_WHY("enum.notification-types",
-                        "src/APP/app_notification.c#app_notification_send",
-                        "the notification types the machine raises and the types on the wire",
-                        "message, info, warning, error and success use the same numbers on the machine and on the wire",
-                        "the UI styles a notification from that number, so the numbers on the wire must match the severity the machine raised");
+    VIBES_TEST("enum.notification-types",
+               "src/APP/app_notification.c#app_notification_send",
+               "the notification types the machine raises and the types on the wire");
+    VIBES_EXPECT_WHY("numbers-match",
+                     "message, info, warning, error and success each carry the same number on both sides",
+                     "the UI styles a notification from that number, so the numbers on the wire must match the severity the machine raised");
+    VIBES_EXPECT("same-count", "both sides list the same number of notification types");
     TEST_ASSERT_EQUAL_INT(PROTOEMB_NOTIFICATIONTYPE_MESSAGE, APP_NOTIFICATION_TYPE_MESSAGE);
     TEST_ASSERT_EQUAL_INT(PROTOEMB_NOTIFICATIONTYPE_INFO,    APP_NOTIFICATION_TYPE_INFO);
     TEST_ASSERT_EQUAL_INT(PROTOEMB_NOTIFICATIONTYPE_WARNING, APP_NOTIFICATION_TYPE_WARNING);
@@ -116,11 +122,14 @@ void test_enum_compat_notification_types(void)
 
 void test_enum_compat_gcode_proto_path(void)
 {
-    VIBES_BEHAVIOUR_WHY("enum.gcode-numbers",
-                        "src/APP/app_messageSlave.c#app_message_slave_fillMove",
-                        "the G-code numbers the motion loop uses and the numbers on the wire, including home, absolute, incremental and stop",
-                        "rapid, linear, arc, dwell, home, absolute, incremental and stop use the same G-code numbers on the machine and on the wire",
-                        "the motion loop executes the G-code number received, so the number on the wire must be that same command");
+    VIBES_TEST("enum.gcode-numbers",
+               "src/APP/app_messageSlave.c#app_message_slave_fillMove",
+               "the G-code numbers the motion loop uses and the numbers on the wire");
+    VIBES_EXPECT_WHY("numbers-match",
+                     "rapid, linear, arc, dwell, home, absolute, incremental and stop each carry the same number on both sides",
+                     "the motion loop executes the G-code number received, so the number on the wire must be that same command");
+    VIBES_EXPECT("remap-table-complete",
+                 "the table that maps wire numbers back to G-codes has one entry for every G-code");
     /* G0-G4: no remap, enum value == real G-code number */
     TEST_ASSERT_EQUAL_INT(PROTOEMB_GCODE_RAPID_MOVE,  G0_RAPID_MOVE);
     TEST_ASSERT_EQUAL_INT(PROTOEMB_GCODE_LINEAR_MOVE, G1_LINEAR_MOVE);

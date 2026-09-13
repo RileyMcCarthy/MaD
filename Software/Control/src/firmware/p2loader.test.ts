@@ -112,8 +112,13 @@ describe('hardwareReset', () => {
       id: 'flash.reset-pulses-assert-release-assert',
       covers: 'src/firmware/p2loader.ts#hardwareReset',
       given: 'a load that begins by resetting the Propeller 2',
-      then: 'resetting the chip pulses DTR assert, then release, then assert',
-      why: 'adapters couple DTR to the reset pin differently; this sequence resets both an edge-triggered Prop Plug and a level-driven adapter',
+      expect: {
+        'assert-release-assert': 'DTR is driven asserted, released, then asserted again',
+      },
+      why: {
+        'assert-release-assert':
+          'adapters couple DTR to the reset pin differently; this sequence resets both an edge-triggered Prop Plug and a level-driven adapter',
+      },
     },
     async () => {
       const rom = new FakeRom();
@@ -129,7 +134,9 @@ describe('detectP2', () => {
       id: 'flash.detect-reports-rom-version',
       covers: 'src/firmware/p2loader.ts#detectP2',
       given: 'a shipping Propeller 2 answering the autobaud probe as version G',
-      then: 'detecting a shipping Propeller 2 reports the boot ROM version letter the chip sent',
+      expect: {
+        'version-letter': 'detection reports the boot ROM version letter the chip sent',
+      },
     },
     async () => {
       const rom = new FakeRom();
@@ -142,8 +149,13 @@ describe('detectP2', () => {
       id: 'flash.detect-silent-is-no-response',
       covers: 'src/firmware/p2loader.ts#detectP2',
       given: 'a serial port whose chip never answers the autobaud probe',
-      then: 'a serial port whose chip never answers the autobaud probe is reported as no response from the boot ROM',
-      why: 'silence means the adapter is not wired to reset, or something else already holds the serial port',
+      expect: {
+        'no-response': 'detection gives up and reports no response from the boot ROM',
+      },
+      why: {
+        'no-response':
+          'silence means the adapter is not wired to reset, or something else already holds the serial port',
+      },
     },
     async () => {
       const rom = new FakeRom({ respondToChk: false });
@@ -159,8 +171,10 @@ describe('detectP2', () => {
       id: 'flash.detect-fpga-is-unsupported',
       covers: 'src/firmware/p2loader.ts#detectP2',
       given: 'a Propeller 2 FPGA development image answering the autobaud probe',
-      then: 'a Propeller 2 FPGA development image is refused as an unsupported chip',
-      why: 'the FPGA image speaks a different load protocol',
+      expect: {
+        unsupported: 'detection fails and reports the chip as unsupported',
+      },
+      why: { unsupported: 'the FPGA image speaks a different load protocol' },
     },
     async () => {
       const rom = new FakeRom();
@@ -176,7 +190,9 @@ describe('loadImage', () => {
       id: 'flash.load-delivers-every-image-byte',
       covers: 'src/firmware/p2loader.ts#loadImage',
       given: 'a 300-byte image that spans more than one download line and does not fill the last line',
-      then: 'loading a 300-byte image delivers every byte of that image to the chip, in order',
+      expect: {
+        'every-byte-in-order': 'every byte of the image reaches the chip, in order',
+      },
     },
     async () => {
       const rom = new FakeRom();
@@ -193,8 +209,14 @@ describe('loadImage', () => {
       id: 'flash.load-checksum-accepted-by-rom',
       covers: 'src/firmware/p2loader.ts#loadImage',
       given: 'a 128-byte image loaded with checksum verification',
-      then: 'loading an image with checksum verification is accepted by the boot ROM',
-      why: 'the loader sends a complement so the ROM running sum lands on the value it expects',
+      expect: {
+        'sum-accepted':
+          'the boot ROM\'s running sum lands on the value it expects and the load completes',
+      },
+      why: {
+        'sum-accepted':
+          'the loader sends a complement so the ROM running sum lands on the value it expects',
+      },
     },
     async () => {
       const rom = new FakeRom();
@@ -209,8 +231,10 @@ describe('loadImage', () => {
       id: 'flash.load-dropped-bytes-rejected',
       covers: 'src/firmware/p2loader.ts#loadImage',
       given: 'a load during which some image bytes are lost on the serial port',
-      then: 'a load that loses bytes in transit is rejected by the boot ROM',
-      why: 'a truncated image accepted as good would leave the chip unbootable',
+      expect: {
+        rejected: 'the load fails and reports that the chip rejected the image',
+      },
+      why: { rejected: 'a truncated image accepted as good would leave the chip unbootable' },
     },
     async () => {
       const rom = new FakeRom();
@@ -226,8 +250,14 @@ describe('loadImage', () => {
       id: 'flash.load-without-checksum-delivers',
       covers: 'src/firmware/p2loader.ts#loadImage',
       given: 'a 64-byte image loaded with checksum verification turned off, as a flash load does',
-      then: 'a load with checksum verification off delivers the image and ends the download',
-      why: 'the flash-boot stub carries its own header checksum, which the ROM running-sum handshake would disturb',
+      expect: {
+        'every-byte': 'every image byte reaches the chip',
+        'load-completes': 'the load completes',
+      },
+      why: {
+        'load-completes':
+          'the flash-boot stub carries its own header checksum, which the ROM running-sum handshake would disturb',
+      },
     },
     async () => {
       const rom = new FakeRom();
@@ -243,7 +273,10 @@ describe('loadImage', () => {
       id: 'flash.load-progress-finishes-at-image-size',
       covers: 'src/firmware/p2loader.ts#loadImage',
       given: 'a 300-byte image being loaded with progress reported',
-      then: 'load progress reports a non-decreasing byte count that finishes at the image size',
+      expect: {
+        'never-decreases': 'the reported byte count never decreases',
+        'ends-at-image-size': 'the reported byte count ends at the image size',
+      },
     },
     async () => {
       const rom = new FakeRom();
@@ -261,8 +294,10 @@ describe('loadImage', () => {
       id: 'flash.load-rejects-length-not-multiple-of-four',
       covers: 'src/firmware/p2loader.ts#loadImage',
       given: 'an image whose length is not a multiple of four bytes',
-      then: 'loading an image whose length is not a multiple of four bytes is refused',
-      why: 'the boot ROM downloads in 32-bit units',
+      expect: {
+        'refused-before-send': 'the load is refused before any bytes reach the chip',
+      },
+      why: { 'refused-before-send': 'the boot ROM downloads in 32-bit units' },
     },
     async () => {
       const rom = new FakeRom();
@@ -275,7 +310,9 @@ describe('loadImage', () => {
       id: 'flash.load-stops-when-cancelled',
       covers: 'src/firmware/p2loader.ts#loadImage',
       given: 'a load that is cancelled after the first 256 bytes have been sent',
-      then: 'cancelling a load after the first 256 bytes have been sent stops the load',
+      expect: {
+        'load-fails': 'the load fails and the remaining bytes are never sent',
+      },
     },
     async () => {
       const rom = new FakeRom();
@@ -298,8 +335,10 @@ describe('image assembly', () => {
       id: 'flash.ram-image-padded-to-four-bytes',
       covers: 'src/firmware/image.ts#buildRamImage',
       given: 'a firmware file whose length is six bytes, and one whose length is already eight',
-      then: 'a RAM image whose length is not a multiple of four bytes is padded up to the next multiple of four, and an already-aligned image is left at that length',
-      why: 'the boot ROM downloads in 32-bit units',
+      expect: {
+        'eight-byte-image': 'each becomes an eight-byte RAM image',
+      },
+      why: { 'eight-byte-image': 'the boot ROM downloads in 32-bit units' },
     },
     () => {
       expect(buildRamImage(new Uint8Array(6)).byteLength).toBe(8);
@@ -312,7 +351,10 @@ describe('image assembly', () => {
       id: 'flash.empty-firmware-refused',
       covers: 'src/firmware/image.ts#buildRamImage',
       given: 'an empty firmware file',
-      then: 'building a RAM image or a flash image from an empty file is refused',
+      expect: {
+        'ram-refused': 'building a RAM image is refused',
+        'flash-refused': 'building a flash image is refused',
+      },
     },
     () => {
       expect(() => buildRamImage(new Uint8Array(0))).toThrow(/empty/i);
@@ -324,9 +366,13 @@ describe('image assembly', () => {
     {
       id: 'flash.stub-is-496-bytes',
       covers: 'src/firmware/image.ts#flashLoaderStub',
-      given: 'the flash-boot stub that is prepended for a flash load',
-      then: 'the flash-boot stub is 496 bytes',
-      why: 'the stub is vendored in the app so a flash load works with no network',
+      given: 'the flash-boot stub prepended for a flash load',
+      expect: {
+        'stub-size': 'the stub is 496 bytes',
+      },
+      why: {
+        'stub-size': 'the stub is vendored in the app so a flash load works with no network',
+      },
     },
     () => {
       expect(flashLoaderStub().byteLength).toBe(496);
@@ -338,7 +384,10 @@ describe('image assembly', () => {
       id: 'flash.flash-image-is-stub-then-firmware',
       covers: 'src/firmware/image.ts#buildFlashImage',
       given: 'a 64-byte firmware file built as a flash image',
-      then: 'a flash image is the 496-byte flash-boot stub followed by the original firmware bytes',
+      expect: {
+        'stub-then-firmware': 'the image is a 496-byte flash-boot stub followed by the firmware',
+        'firmware-unchanged': 'the firmware bytes are carried through unchanged',
+      },
     },
     () => {
       const fw = Uint8Array.from({ length: 64 }, (_, i) => i + 1);
@@ -353,8 +402,13 @@ describe('image assembly', () => {
       id: 'flash.flash-image-words-sum-to-zero',
       covers: 'src/firmware/image.ts#buildFlashImage',
       given: 'a firmware file built as a flash image',
-      then: 'a flash image is patched so its 32-bit words sum to zero and the header debug flag is cleared',
-      why: 'the boot ROM will only start an image whose loaded words sum to zero',
+      expect: {
+        'words-sum-to-zero': 'the image\'s 32-bit words sum to zero',
+        'debug-flag-cleared': 'the debug flag in the image header is cleared',
+      },
+      why: {
+        'words-sum-to-zero': 'the boot ROM will only start an image whose loaded words sum to zero',
+      },
     },
     () => {
       const fw = Uint8Array.from({ length: 200 }, (_, i) => (i * 13) & 0xff);
@@ -377,8 +431,13 @@ describe('estimateSeconds', () => {
       id: 'flash.estimate-accounts-for-hex-on-the-wire',
       covers: 'src/firmware/image.ts#estimateSeconds',
       given: 'a 100-kilobyte image loaded at two megabaud',
-      then: 'a 100-kilobyte image at two megabaud is estimated to take about one and a half seconds',
-      why: 'each image byte is sent as ASCII hex — three bytes on the wire — over an 8N1 link',
+      expect: {
+        'about-a-second-and-a-half': 'the estimated load time is about one and a half seconds',
+      },
+      why: {
+        'about-a-second-and-a-half':
+          'each image byte is sent as ASCII hex — three bytes on the wire — over an 8N1 link',
+      },
     },
     () => {
       // 100 KiB image ≈ 300 KB on the wire ≈ 3 Mbit ≈ 1.5 s at 2 Mbaud.
@@ -395,7 +454,11 @@ describe('programTransport', () => {
       id: 'flash.ram-load-resets-then-finishes',
       covers: 'src/firmware/program.ts#programTransport',
       given: 'a 512-byte firmware file loaded into RAM',
-      then: 'a RAM load reports the boot ROM version, delivers the firmware bytes, and its progress starts at resetting and ends at done',
+      expect: {
+        'rom-version-reported': 'the boot ROM version is reported',
+        'every-byte-delivered': 'all 512 bytes reach the chip',
+        'progress-reset-to-done': 'progress runs from resetting to done',
+      },
     },
     async () => {
       const rom = new FakeRom();
@@ -418,7 +481,10 @@ describe('programTransport', () => {
       id: 'flash.flash-load-sends-stub-then-firmware',
       covers: 'src/firmware/program.ts#programTransport',
       given: 'a 256-byte firmware file loaded to flash',
-      then: 'a flash load sends the 496-byte flash-boot stub followed by the firmware bytes',
+      expect: {
+        'stub-ahead-of-firmware':
+          'the chip receives the 496-byte flash-boot stub ahead of the firmware bytes',
+      },
     },
     async () => {
       const rom = new FakeRom();

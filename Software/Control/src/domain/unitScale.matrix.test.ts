@@ -35,7 +35,10 @@ describe('M1 unit-scale matrix: pure conversions', () => {
       id: 'units.force-newtons-and-millinewtons',
       covers: 'src/domain/sample.ts#decodeBinarySampleDataToCSV',
       given: 'forces in newtons including zero, 1.5, negatives, and millinewton-scale values',
-      then: 'a force in newtons converts to millinewtons by a factor of one thousand, and converting back recovers the original newtons',
+      expect: {
+        'newtons-to-millinewtons': 'each converts to millinewtons by a factor of one thousand',
+        'round-trip': 'converting back recovers the original force',
+      },
     },
     () => {
       for (const { forceN, forceMn } of [
@@ -60,7 +63,10 @@ describe('M1 unit-scale matrix: pure conversions', () => {
       id: 'units.position-millimetres-and-micrometres',
       covers: 'src/domain/sample.ts#decodeBinarySampleDataToCSV',
       given: 'positions in millimetres including zero, 10.25, negatives, and micrometre-scale values',
-      then: 'a position in millimetres converts to micrometres by a factor of one thousand, and converting back recovers the original millimetres',
+      expect: {
+        'millimetres-to-micrometres': 'each converts to micrometres by a factor of one thousand',
+        'round-trip': 'converting back recovers the original position',
+      },
     },
     () => {
       for (const { mm, um } of [
@@ -83,7 +89,10 @@ describe('M1 unit-scale matrix: pure conversions', () => {
       id: 'units.time-seconds-and-microseconds',
       covers: 'src/domain/sample.ts#parseTestCSV',
       given: 'times in seconds including zero, one, one half, and two and a half',
-      then: 'a time in seconds converts to microseconds by a factor of one million, and converting back recovers the original seconds',
+      expect: {
+        'seconds-to-microseconds': 'each converts to microseconds by a factor of one million',
+        'round-trip': 'converting back recovers the original time',
+      },
     },
     () => {
       for (const { s, us } of [
@@ -102,9 +111,12 @@ describe('M1 unit-scale matrix: pure conversions', () => {
     {
       id: 'units.stored-force-is-newtons',
       covers: 'src/domain/sample.ts#decodeBinarySampleDataToCSV',
-      given: 'a stored sample whose force field is 1.5 newtons',
-      then: 'a stored force of 1.5 newtons is written as 1500 millinewtons in the CSV',
-      why: 'the stored-sample force field is newtons; the CSV force column is millinewtons',
+      given: 'a stored sample recorded with a force of 1.5 newtons',
+      expect: { 'force-column-in-millinewtons': 'the CSV force column reads 1500 millinewtons' },
+      why: {
+        'force-column-in-millinewtons':
+          'the stored-sample force field is newtons; the CSV force column is millinewtons',
+      },
     },
     () => {
       // If someone stores force already in mN into a field documented as N,
@@ -126,7 +138,12 @@ describe('M1 unit-scale matrix: StoredSample → CSV → engineering', () => {
       id: 'units.sample-round-trips-engineering-units',
       covers: 'src/domain/sample.ts#parseTestCSV',
       given: 'stored samples across zero, positive, negative, and millinewton-scale force and position',
-      then: 'a stored sample round-trips through CSV back to the original newtons, millimetres, and seconds',
+      expect: {
+        'fixed-record-size': 'each stored sample encodes to the same fixed number of bytes',
+        'csv-column-units': 'the CSV names its columns in microseconds, millinewtons and micrometres',
+        'round-trip':
+          'each comes back from the CSV as one reading with its original newtons, millimetres and seconds',
+      },
     },
     () => {
       for (const { forceN, posMm, setMm, timeUs } of [

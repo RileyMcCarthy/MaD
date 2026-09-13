@@ -43,7 +43,12 @@ describe('Sprint C e2e matrix catalog', () => {
       id: 'matrix.jog-catalog-cells-are-positive',
       covers: 'e2e/matrix-catalog.json',
       given: 'the jog matrix catalog',
-      then: 'the jog catalog has at least four cells, unique ids, and a positive distance, speed, settle time, and position tolerance on every cell',
+      expect: {
+        'four-or-more-cells': 'at least four cells are listed',
+        'unique-ids': 'every cell id is unique',
+        'positive-cell-values':
+          'each cell carries a positive distance, speed, settle time and position tolerance',
+      },
     },
     () => {
       expect(catalog.M8_jog.length).toBeGreaterThanOrEqual(4);
@@ -63,7 +68,10 @@ describe('Sprint C e2e matrix catalog', () => {
       id: 'matrix.force-catalog-covers-slack',
       covers: 'e2e/matrix-catalog.json',
       given: 'the force-slack matrix catalog',
-      then: 'the force-slack catalog includes a cell that expects force near zero and a cell that expects force above zero',
+      expect: {
+        'near-zero-cell': 'a cell expects force near zero',
+        'loaded-cell': 'a cell expects force above zero',
+      },
     },
     () => {
       expect(catalog.M9_force_slack.some((c) => c.expectForceNearZero)).toBe(true);
@@ -76,7 +84,12 @@ describe('Sprint C e2e matrix catalog', () => {
       id: 'matrix.waveform-catalog-includes-sine-and-triangle',
       covers: 'e2e/matrix-catalog.json',
       given: 'the waveform matrix catalog',
-      then: 'the waveform catalog includes sine and triangle cells, each with positive amplitude, positive frequency, and at least one cycle',
+      expect: {
+        'sine-and-triangle': 'sine and triangle are both covered',
+        'five-or-more-cells': 'at least five cells are listed',
+        'positive-drive-values':
+          'each cell carries a positive amplitude, a positive frequency and at least one cycle',
+      },
     },
     () => {
       const shapes = new Set(catalog.M10_waveform.map((c) => c.shape));
@@ -96,7 +109,10 @@ describe('Sprint C e2e matrix catalog', () => {
       id: 'matrix.link-loss-catalog-covers-idle-and-mid-test',
       covers: 'e2e/matrix-catalog.json',
       given: 'the link-loss matrix catalog',
-      then: 'the link-loss catalog includes a disconnect while idle and a disconnect mid-test',
+      expect: {
+        'idle-disconnect': 'a disconnect while idle is covered',
+        'mid-test-disconnect': 'a disconnect mid-test is covered',
+      },
     },
     () => {
       const moments = new Set(catalog.M11_link_loss.map((c) => c.moment));
@@ -109,8 +125,8 @@ describe('Sprint C e2e matrix catalog', () => {
     {
       id: 'matrix.smoke-ids-are-known-scenarios',
       covers: 'e2e/matrix-catalog.json',
-      given: 'the catalog smoke list and the matrix plus legacy scenario ids',
-      then: 'every smoke id is a known jog, force-slack, waveform, or link-loss cell, or a known legacy scenario',
+      given: 'the catalog smoke list, the matrix cell ids, and the legacy scenario ids',
+      expect: { 'ids-known': 'every id in the smoke list matches one of the known ids' },
     },
     () => {
       const known = new Set<string>([
@@ -148,8 +164,11 @@ describe('Sprint C e2e matrix catalog', () => {
       id: 'matrix.smoke-file-matches-catalog',
       covers: 'e2e/matrix-catalog.json',
       given: 'the runnable smoke-ids file and the catalog smoke list',
-      then: 'the runnable smoke list and the catalog smoke list are the same ids in the same order',
-      why: 'the file is what the smoke run actually executes; the catalog is what this suite checks',
+      expect: { 'same-ids-same-order': 'the two lists hold the same ids in the same order' },
+      why: {
+        'same-ids-same-order':
+          'the file is what the smoke run actually executes; the catalog is what this suite checks',
+      },
     },
     () => {
       const fromFile = readFileSync(smokeIdsPath, 'utf8')
@@ -165,7 +184,7 @@ describe('Sprint C e2e matrix catalog', () => {
       id: 'matrix.smoke-ids-are-unique',
       covers: 'e2e/matrix-catalog.json',
       given: 'the catalog smoke list',
-      then: 'every smoke id appears once',
+      expect: { 'no-duplicates': 'each id appears exactly once' },
     },
     () => {
       expect(new Set(catalog.smoke_ids).size).toBe(catalog.smoke_ids.length);

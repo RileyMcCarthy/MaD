@@ -15,8 +15,11 @@ describe('fault / restriction label lockstep', () => {
       id: 'labels.fault-has-hint-and-badge',
       covers: 'src/domain/stateLabels.ts#faultBadgeLabel',
       given: 'every fault reason the machine can report',
-      then: 'every fault reason has a non-empty hint and a textual badge label',
-      why: 'the badge shown to the operator is the fault name',
+      expect: {
+        'hint-present': 'each has a non-empty hint',
+        'badge-is-text': 'each badge label is text, never a bare number',
+      },
+      why: { 'badge-is-text': 'the badge shown to the operator is the fault name' },
     },
     () => {
       const values = Object.values(FaultedReason).filter((v): v is number => typeof v === 'number');
@@ -38,7 +41,10 @@ describe('fault / restriction label lockstep', () => {
       id: 'labels.restriction-has-hint-and-badge',
       covers: 'src/domain/stateLabels.ts#restrictionBadgeLabel',
       given: 'every restriction reason the machine can report',
-      then: 'every restriction reason has a non-empty hint and a textual badge label',
+      expect: {
+        'hint-present': 'each has a non-empty hint',
+        'badge-present': 'each has a non-empty badge label',
+      },
     },
     () => {
       const values = Object.values(RestrictedReason).filter((v): v is number => typeof v === 'number');
@@ -58,9 +64,14 @@ describe('fault / restriction label lockstep', () => {
     {
       id: 'labels.fault-ordinals-match-wire',
       covers: 'src/domain/stateLabels.ts#FAULT_HINTS',
-      given: 'the domain fault reasons and the machine fault reasons, including force-gauge communication',
-      then: 'domain fault reason numbers match the machine fault reason numbers, and a user-requested disable still has a hint',
-      why: 'user-requested disable exists only in the app, and it still needs a hint',
+      given: 'the app\'s fault reasons and the machine\'s fault reasons, including force-gauge communication',
+      expect: {
+        'ordinals-match': 'each reason has the same number on both sides',
+        'user-request-has-hint': 'a user-requested disable also carries a hint',
+      },
+      why: {
+        'user-request-has-hint': 'user-requested disable exists only in the app, and it still needs a hint',
+      },
     },
     () => {
       expect(FaultedReason.NONE).toBe(ProtoFault.NONE);
@@ -81,8 +92,8 @@ describe('fault / restriction label lockstep', () => {
     {
       id: 'labels.restriction-ordinals-match-wire',
       covers: 'src/domain/types.ts#RestrictedReason',
-      given: 'the domain restriction reasons and the machine restriction reasons',
-      then: 'domain restriction reason numbers match the machine restriction reason numbers',
+      given: 'the app\'s restriction reasons and the machine\'s restriction reasons',
+      expect: { 'ordinals-match': 'each reason has the same number on both sides' },
     },
     () => {
       expect(RestrictedReason.NONE).toBe(ProtoRestriction.NONE);
@@ -100,8 +111,11 @@ describe('fault / restriction label lockstep', () => {
       id: 'labels.force-gauge-fault-spelling',
       covers: 'src/domain/stateLabels.ts#faultBadgeLabel',
       given: 'a force-gauge communication fault',
-      then: 'a force-gauge communication fault is labelled FORCE_GAUGE_COMMUNICATION, and its hint mentions the force gauge',
-      why: 'the badge is the fault name shown to the operator',
+      expect: {
+        'badge-spelling': 'the badge reads FORCE_GAUGE_COMMUNICATION',
+        'hint-names-force-gauge': 'the hint mentions the force gauge',
+      },
+      why: { 'badge-spelling': 'the badge is the fault name shown to the operator' },
     },
     () => {
       expect(faultBadgeLabel(FaultedReason.FORCE_GAUGE_COMMUNICATION)).toBe(
@@ -119,8 +133,14 @@ describe('fault / restriction label lockstep', () => {
       id: 'labels.cog-hint-is-a-stopped-processor-core',
       covers: 'src/domain/stateLabels.ts#FAULT_HINTS',
       given: 'a processor-core fault on the machine controller',
-      then: 'a processor-core fault hint says a processor core in the machine controller stopped running',
-      why: 'COG is a Propeller 2 processor core; the live-screen tooltip is what the operator reads',
+      expect: {
+        'hint-names-a-stopped-core':
+          'the hint says a processor core in the machine controller stopped running',
+      },
+      why: {
+        'hint-names-a-stopped-core':
+          'COG is a Propeller 2 processor core; the live-screen tooltip is what the operator reads',
+      },
     },
     () => {
       const hint = FAULT_HINTS[FaultedReason.COG].toLowerCase();
@@ -135,7 +155,11 @@ describe('fault / restriction label lockstep', () => {
       id: 'labels.tooltip-is-longer-than-the-badge',
       covers: 'src/domain/stateLabels.ts#FAULT_HINTS',
       given: 'every fault and restriction the live screen can badge',
-      then: 'every fault and restriction tooltip is longer than the short badge name',
+      expect: {
+        'fault-tooltip-longer': 'every fault tooltip is longer than its short badge name',
+        'restriction-tooltip-longer':
+          'every restriction tooltip is longer than its short badge name',
+      },
     },
     () => {
       const faults = Object.values(FaultedReason).filter((v): v is number => typeof v === 'number');

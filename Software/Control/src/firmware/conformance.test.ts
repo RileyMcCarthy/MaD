@@ -71,8 +71,10 @@ describe('loadp2 conformance', () => {
       id: 'flash.wire-matches-reference-loader',
       covers: 'src/firmware/program.ts#programTransport',
       given: 'firmware images of 4, 128, 300, and 1024 bytes, each loaded to RAM and to flash',
-      then: 'loading an image puts the same bytes on the serial port as the reference Propeller 2 loader, for both a RAM load and a flash load',
-      why: 'the reference loader is what people actually flash Propeller 2s with',
+      expect: {
+        'byte-for-byte-match': 'every byte put on the serial port matches the reference Propeller 2 loader\'s own stream',
+      },
+      why: { 'byte-for-byte-match': 'the reference loader is what people actually flash Propeller 2s with' },
     },
     async () => {
       for (const { name, size } of CASES) {
@@ -94,8 +96,12 @@ describe('loadp2 conformance', () => {
       id: 'flash.golden-starts-with-autobaud',
       covers: 'src/firmware/program.ts#programTransport',
       given: 'the captured reference-loader stream for a 4-byte RAM load',
-      then: 'a captured reference-loader stream begins with the boot ROM autobaud probe followed by the hex download command',
-      why: 'every load begins with the autobaud probe; a capture without that prefix is not a full load',
+      expect: {
+        'autobaud-then-hex': 'the stream begins with the boot ROM autobaud probe, then the hex download command',
+      },
+      why: {
+        'autobaud-then-hex': 'every load begins with the autobaud probe; a capture without that prefix is not a full load',
+      },
     },
     () => {
       // Guards against a regenerated golden that silently lost its prefix.
@@ -109,8 +115,14 @@ describe('loadp2 conformance', () => {
       id: 'flash.golden-ram-checksum-flash-ends-download',
       covers: 'src/firmware/program.ts#programTransport',
       given: 'captured reference-loader streams for a 300-byte RAM load and a 300-byte flash load',
-      then: 'a RAM load capture ends with a checksum request, and a flash load capture ends the download',
-      why: 'a flash load skips the ROM checksum handshake because the flash-boot stub carries its own header checksum',
+      expect: {
+        'ram-asks-checksum': 'the RAM stream ends by asking for a checksum',
+        'flash-ends-download': 'the flash stream ends the download without asking for a checksum',
+      },
+      why: {
+        'flash-ends-download':
+          'a flash load skips the ROM checksum handshake because the flash-boot stub carries its own header checksum',
+      },
     },
     () => {
       const ram = golden('partial300', 'ram').toString('latin1');

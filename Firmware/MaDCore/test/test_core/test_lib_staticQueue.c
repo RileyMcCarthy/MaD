@@ -13,11 +13,20 @@
 
 void test_lib_staticQueue(void)
 {
-    VIBES_BEHAVIOUR_WHY("queue.fifo-capacity-wrap-clear",
-                        "src/Library/lib_staticQueue.c#lib_staticQueue_push",
-                        "a four-slot queue filled, emptied, wrapped by interleaved push and pop, discarded, and cleared",
-                        "a four-slot queue holds three items in first-in first-out order, rejects a push when full, keeps count across wrap-around, discards an item popped with no destination, and is empty after a clear",
-                        "one slot stays unused so full and empty stay distinct");
+    VIBES_TEST("queue.fifo-capacity-wrap-clear",
+               "src/Library/lib_staticQueue.c#lib_staticQueue_push",
+               "a four-slot queue filled, emptied, wrapped by interleaved push and pop, and cleared");
+    VIBES_EXPECT_WHY("holds-three",
+                     "it holds three items",
+                     "one slot stays unused so full and empty stay distinct");
+    VIBES_EXPECT("push-order",
+                 "it returns them in push order");
+    VIBES_EXPECT("refuses-when-full",
+                 "it refuses a push when full");
+    VIBES_EXPECT("count-through-wrap",
+                 "it keeps counting through the wrap");
+    VIBES_EXPECT("empty-after-clear",
+                 "it is empty after a clear");
     lib_staticQueue_S queue;
     int32_t buffer[QUEUE_SLOTS];
     int32_t value;

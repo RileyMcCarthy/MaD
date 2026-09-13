@@ -36,16 +36,31 @@ use std::io::Write;
 /// test threads cannot interleave a partial line.
 const MAX_FIELD: usize = 512;
 
-pub struct Behaviour<'a> {
-    /// Stable across rewording — this is what makes a reworded test a metadata
-    /// change rather than one behaviour deleted and another added.
+pub struct Test<'a> {
+    /// The test's stable id. Its expectations hang off it.
     pub id: &'a str,
     /// `path#symbol`, repo-relative, so a reader can find the code this claim is about.
     pub covers: Option<&'a str>,
+    /// The condition this test sets up, shared by every expectation.
     pub given: &'a str,
+}
+
+/// One expectation of the current test.
+pub struct Expect<'a> {
+    /// Short id, unique within the test — the stable half of identity.
+    pub expect: &'a str,
     pub then: &'a str,
-    /// Why it matters — a pinned defect, a requirement.
+    /// The standing requirement this expectation serves, when the claim does
+    /// not already carry it.
     pub why: Option<&'a str>,
+}
+
+thread_local! {
+    /// The test being declared on THIS thread. Cargo runs tests in parallel, so
+    /// a global would let one test's expectations be filed under another's
+    /// condition — the kind of mix-up nothing downstream could detect.
+    static CURRENT: std::cell::RefCell<Option<(String, String, String, String)>> =
+        const { std::cell::RefCell::new(None) };
 }
 
 fn escape(out: &mut String, s: &str) {
@@ -86,21 +101,40 @@ fn test_name() -> String {
 }
 
 /// Called via [`behaviour!`], which supplies `file` from the call site.
-pub fn emit_at(b: Behaviour<'_>, file: &str) {
+/// Record the test's identity and the condition it sets up.
+pub fn begin_at(t: Test<'_>, file: &str) {
+    CURRENT.with(|c| {
+        *c.borrow_mut() = Some((
+            t.id.to_owned(),
+            t.covers.unwrap_or_default().to_owned(),
+            t.given.to_owned(),
+            file.to_owned(),
+        ));
+    });
+}
+
+/// Append one expectation of the current test.
+pub fn expect(e: Expect<'_>) {
     let path = match std::env::var("VIBES_BEHAVIOURS") {
         Ok(p) if !p.is_empty() => p,
         _ => return, // not running under Vibes
     };
+    let cur = CURRENT.with(|c| c.borrow().clone());
+    let (id, covers, given, file) = match cur {
+        Some(v) => v,
+        None => return, // expect! without a behaviour! above it
+    };
 
     let mut line = String::with_capacity(256);
-    line.push_str("{\"v\":1,\"lang\":\"rust\"");
-    field(&mut line, "id", b.id);
+    line.push_str("{\"v\":2,\"lang\":\"rust\"");
+    field(&mut line, "id", &id);
+    field(&mut line, "expect", e.expect);
     field(&mut line, "test", &test_name());
-    field(&mut line, "file", file);
-    field(&mut line, "covers", b.covers.unwrap_or_default());
-    field(&mut line, "given", b.given);
-    field(&mut line, "then", b.then);
-    field(&mut line, "why", b.why.unwrap_or_default());
+    field(&mut line, "file", &file);
+    field(&mut line, "covers", &covers);
+    field(&mut line, "given", &given);
+    field(&mut line, "then", e.then);
+    field(&mut line, "why", e.why.unwrap_or_default());
     line.push_str("}\n");
 
     // Append: concurrent test threads each write one short record, and an
@@ -111,10 +145,23 @@ pub fn emit_at(b: Behaviour<'_>, file: &str) {
     }
 }
 
-/// Declare a behaviour. Call it as the first statement in the test body.
+/// Declare the test and its condition. Call it as the FIRST statement in the
+/// test body: a panic before it leaves every expectation unrecorded, and the
+/// report then reads as though they were deleted.
 #[macro_export]
 macro_rules! behaviour {
-    ($b:expr $(,)?) => {
-        $crate::emit_at($b, file!())
+    ($t:expr $(,)?) => {
+        $crate::begin_at($t, file!())
+    };
+}
+
+/// One expectation for the condition above.
+#[macro_export]
+macro_rules! expect {
+    ($expect:expr, $then:expr $(,)?) => {
+        $crate::expect($crate::Expect { expect: $expect, then: $then, why: None })
+    };
+    ($expect:expr, $then:expr, $why:expr $(,)?) => {
+        $crate::expect($crate::Expect { expect: $expect, then: $then, why: Some($why) })
     };
 }

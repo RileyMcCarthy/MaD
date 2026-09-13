@@ -72,10 +72,12 @@ void tearDown(void) {}
 
 void test_first_run_enters_running_and_reads(void)
 {
-    VIBES_BEHAVIOUR("load-cell.first-run-ready",
-                    "src/DEV/dev_forceGauge.c#dev_forceGauge_run",
-                    "a 100000 millinewton load cell rated at 2 millivolts per volt, with a 0.1 millivolt-per-volt bridge signal and no tare",
-                    "a load cell whose converter starts on the first attempt is ready, has taken one reading, and reports 5000 millinewtons");
+    VIBES_TEST("load-cell.first-run-ready",
+               "src/DEV/dev_forceGauge.c#dev_forceGauge_run",
+               "a 100000 millinewton load cell rated at 2 millivolts per volt whose converter starts on the first attempt, reading a 0.1 millivolt-per-volt bridge signal with no tare");
+    VIBES_EXPECT("ready", "the load cell is ready");
+    VIBES_EXPECT("one-reading", "one reading has been taken");
+    VIBES_EXPECT("force-value", "the reported force is 5000 millinewtons");
     d_signal_nVV = 100000; /* 100000 * 100000 / 2000000 = 5000 mN */
     dev_forceGauge_run();
     TEST_ASSERT_TRUE(dev_forceGauge_isReady(CH));
@@ -85,10 +87,11 @@ void test_first_run_enters_running_and_reads(void)
 
 void test_start_failure_stays_init_not_ready(void)
 {
-    VIBES_BEHAVIOUR("load-cell.start-failure-unready",
-                    "src/DEV/dev_forceGauge.c#dev_forceGauge_run",
-                    "a load cell whose analog converter fails to start",
-                    "a load cell whose analog converter fails to start stays unready and has taken no readings");
+    VIBES_TEST("load-cell.start-failure-unready",
+               "src/DEV/dev_forceGauge.c#dev_forceGauge_run",
+               "a load cell whose analog converter fails to start");
+    VIBES_EXPECT("unready", "the load cell reports unready");
+    VIBES_EXPECT("no-readings", "no readings have been taken");
     d_startReturn = false;
     d_signal_nVV = 100000;
     dev_forceGauge_run();
@@ -98,10 +101,10 @@ void test_start_failure_stays_init_not_ready(void)
 
 void test_force_conversion_with_zero_balance_and_polarity(void)
 {
-    VIBES_BEHAVIOUR("load-cell.tare-and-polarity",
-                    "src/DEV/dev_forceGauge.c#dev_forceGauge_run",
-                    "a 100000 millinewton load cell with a 0.05 millivolt-per-volt tare, inverted polarity, and a bridge signal 0.1 millivolts per volt below tare",
-                    "a load cell with a tare and inverted polarity reports 5000 millinewtons of tension after subtracting the tare");
+    VIBES_TEST("load-cell.tare-and-polarity",
+               "src/DEV/dev_forceGauge.c#dev_forceGauge_run",
+               "a 100000 millinewton load cell with a 0.05 millivolt-per-volt tare, inverted polarity, and a bridge signal 0.1 millivolts per volt below tare");
+    VIBES_EXPECT("tension-reading", "the reported force is 5000 millinewtons of tension");
     /* Tare offset is subtracted first; a negative sensitivity flips polarity. */
     init_with(50000, 100000, -2000000);
     d_signal_nVV = -50000; /* normalized = -100000 -> +5000 mN */
@@ -111,11 +114,12 @@ void test_force_conversion_with_zero_balance_and_polarity(void)
 
 void test_zero_sensitivity_yields_zero_force(void)
 {
-    VIBES_BEHAVIOUR_WHY("load-cell.zero-sensitivity-is-zero",
-                        "src/DEV/dev_forceGauge.c#dev_forceGauge_run",
-                        "a load cell whose rated sensitivity is zero, with a non-zero bridge signal",
-                        "a load cell with zero rated sensitivity reports zero force",
-                        "a missing calibration must not invent a force the tension limits would then act on");
+    VIBES_TEST("load-cell.zero-sensitivity-is-zero",
+               "src/DEV/dev_forceGauge.c#dev_forceGauge_run",
+               "a load cell whose rated sensitivity is zero, with a non-zero bridge signal");
+    VIBES_EXPECT_WHY("force-zero",
+                     "the reported force is zero",
+                     "a missing calibration must not invent a force the tension limits would then act on");
     init_with(0, 100000, 0); /* muldiv64_signed returns 0 on a zero divisor */
     d_signal_nVV = 100000;
     dev_forceGauge_run();
@@ -124,10 +128,10 @@ void test_zero_sensitivity_yields_zero_force(void)
 
 void test_index_increments_each_running_cycle(void)
 {
-    VIBES_BEHAVIOUR("load-cell.index-advances",
-                    "src/DEV/dev_forceGauge.c#dev_forceGauge_getIndex",
-                    "three successive readings from a load cell that is answering",
-                    "each successful load-cell reading advances the sample index by one");
+    VIBES_TEST("load-cell.index-advances",
+               "src/DEV/dev_forceGauge.c#dev_forceGauge_getIndex",
+               "three successive readings from a load cell that is answering");
+    VIBES_EXPECT("index-reaches-three", "the sample index reaches three");
     d_signal_nVV = 10;
     dev_forceGauge_run();
     dev_forceGauge_run();
@@ -137,11 +141,12 @@ void test_index_increments_each_running_cycle(void)
 
 void test_running_to_error_when_not_responding(void)
 {
-    VIBES_BEHAVIOUR_WHY("load-cell.unresponsive-unready",
-                        "src/DEV/dev_forceGauge.c#dev_forceGauge_run",
-                        "a load cell that has already taken a reading, then fails to answer",
-                        "a load cell that stops answering is reported unready",
-                        "the controller raises a load-cell fault when the load cell is unready");
+    VIBES_TEST("load-cell.unresponsive-unready",
+               "src/DEV/dev_forceGauge.c#dev_forceGauge_run",
+               "a load cell that has already taken a reading, then fails to answer");
+    VIBES_EXPECT_WHY("unready",
+                     "the load cell is reported unready",
+                     "the controller raises a load-cell fault when the load cell is unready");
     dev_forceGauge_run();              /* -> RUNNING, ready */
     TEST_ASSERT_TRUE(dev_forceGauge_isReady(CH));
     d_responding = false;
@@ -152,10 +157,10 @@ void test_running_to_error_when_not_responding(void)
 
 void test_error_recovers_to_running(void)
 {
-    VIBES_BEHAVIOUR("load-cell.error-recovers",
-                    "src/DEV/dev_forceGauge.c#dev_forceGauge_run",
-                    "a load cell that missed a reading and then answers again",
-                    "a load cell that answers again after a miss is reported ready");
+    VIBES_TEST("load-cell.error-recovers",
+               "src/DEV/dev_forceGauge.c#dev_forceGauge_run",
+               "a load cell that missed readings and then answers again");
+    VIBES_EXPECT("ready-again", "the load cell is reported ready again");
     dev_forceGauge_run();
     d_responding = false;
     dev_forceGauge_run();
@@ -169,11 +174,13 @@ void test_error_recovers_to_running(void)
 
 void test_error_retry_exhaustion_reinits_and_stops_adc(void)
 {
-    VIBES_BEHAVIOUR_WHY("load-cell.retry-exhaustion-restarts",
-                        "src/DEV/dev_forceGauge.c#dev_forceGauge_run",
-                        "a load cell that keeps missing readings past the retry budget",
-                        "a load cell that keeps missing readings past the retry budget is stopped and started again",
-                        "a converter that stays silent is power-cycled so a stuck conversion can be cleared");
+    VIBES_TEST("load-cell.retry-exhaustion-restarts",
+               "src/DEV/dev_forceGauge.c#dev_forceGauge_run",
+               "a load cell that keeps missing readings past the retry budget");
+    VIBES_EXPECT_WHY("converter-stopped",
+                     "the converter is stopped",
+                     "a converter that stays silent is power-cycled so a stuck conversion can be cleared");
+    VIBES_EXPECT("converter-restarted", "the converter is started again");
     dev_forceGauge_run();              /* RUNNING */
     d_responding = false;
     for (int i = 0; i < 8; i++) dev_forceGauge_run(); /* drive ERROR retries past the limit */
@@ -188,11 +195,13 @@ void test_error_retry_exhaustion_reinits_and_stops_adc(void)
  * faulted the machine and aborted any running test. */
 void test_retry_budget_rearms_after_recovery(void)
 {
-    VIBES_BEHAVIOUR_WHY("load-cell.retry-budget-rearms",
-                        "src/DEV/dev_forceGauge.c#dev_forceGauge_run",
-                        "a load cell that already exhausted retries and recovered, then misses a single reading and answers again",
-                        "a load cell that misses one reading after a recovered outage is retried in place and returns to ready without stopping the converter",
-                        "the retry budget is per outage, so a brief miss after recovery does not tear the converter down and abort a test");
+    VIBES_TEST("load-cell.retry-budget-rearms",
+               "src/DEV/dev_forceGauge.c#dev_forceGauge_run",
+               "a load cell that already exhausted retries and recovered, then misses a single reading and answers again");
+    VIBES_EXPECT_WHY("converter-left-running",
+                     "the converter is left running",
+                     "the retry budget is per outage, so a brief miss after recovery does not tear the converter down and abort a test");
+    VIBES_EXPECT("ready-again", "the load cell is ready again");
     dev_forceGauge_run();              /* RUNNING */
 
     /* Episode 1: exhaust the budget so the ADC is torn down and re-inited. */
@@ -233,11 +242,14 @@ typedef struct
 
 void test_force_scale_matrix(void)
 {
-    VIBES_BEHAVIOUR_WHY("load-cell.force-scale",
-                        "src/DEV/dev_forceGauge.c#dev_forceGauge_run",
-                        "load-cell tare, capacity, sensitivity and bridge signal at zero, full scale, half scale, compression, one percent, cancelled tare, inverted polarity and zero sensitivity",
-                        "force in millinewtons is the bridge signal minus tare, times capacity, divided by sensitivity, and a zero sensitivity yields zero force",
-                        "the machine tension limits are enforced on this number; a newton-versus-millinewton or millivolt-versus-nanovolt slip is a thousand-fold force error");
+    VIBES_TEST("load-cell.force-scale",
+               "src/DEV/dev_forceGauge.c#dev_forceGauge_run",
+               "load-cell tare, capacity, sensitivity and bridge signal at zero, full scale, half scale, compression, one percent, cancelled tare, inverted polarity and zero sensitivity");
+    VIBES_EXPECT_WHY("scale-formula",
+                     "reported force in millinewtons is the bridge signal minus the tare, times capacity, divided by sensitivity",
+                     "the machine tension limits are enforced on this number; a newton-versus-millinewton or millivolt-versus-nanovolt slip is a thousand-fold force error");
+    VIBES_EXPECT("zero-sensitivity-zero-force",
+                 "reported force is zero when sensitivity is zero");
     /* Reference cell: 100 N (100000 mN) rated at 2 mV/V (2000000 nV/V). */
     static const force_scale_case_t cases[] = {
         /* tare, capacity, sensitivity, signal, expect_mN */

@@ -26,8 +26,11 @@ describe('sampleProfileNameFromFile', () => {
     {
       id: 'profiles.sp-filename-becomes-the-sample-name',
       covers: 'src/domain/profileFiles.ts#sampleProfileNameFromFile',
-      given: 'a sample-profile file named AL-6061-01.sp',
-      then: 'importing a .sp file uses the filename without the extension as the sample name, even when the extension is uppercase',
+      given: 'a sample-profile file named AL-6061-01, with a lowercase or an uppercase .sp extension',
+      expect: {
+        'stem-is-the-name': 'the sample name is the filename without its extension',
+        'uppercase-extension': 'an uppercase extension is dropped as well',
+      },
     },
     () => {
       expect(sampleProfileNameFromFile('AL-6061-01.sp')).toBe('AL-6061-01');
@@ -40,7 +43,9 @@ describe('sampleProfileNameFromFile', () => {
       id: 'profiles.empty-sp-stem-is-imported',
       covers: 'src/domain/profileFiles.ts#sampleProfileNameFromFile',
       given: 'a sample-profile file whose name is only the .sp extension, or is empty',
-      then: 'a .sp file with no name before the extension is imported as "imported"',
+      expect: {
+        'default-name': 'the sample name is "imported"',
+      },
     },
     () => {
       expect(sampleProfileNameFromFile('.sp')).toBe('imported');
@@ -55,7 +60,10 @@ describe('parseSampleProfileJson (F3)', () => {
       id: 'profiles.sp-json-fills-the-editor',
       covers: 'src/domain/profileFiles.ts#parseSampleProfileJson',
       given: 'a .sp file whose JSON is a bare sample profile from the file-formats spec',
-      then: 'importing a .sp file loads max force, max velocity, max displacement, width, thickness, and serial into the editor',
+      expect: {
+        'fields-loaded':
+          'max force, max velocity, max displacement, width, thickness and serial load into the editor',
+      },
     },
     () => {
       const profile = parseSampleProfileJson(
@@ -84,7 +92,9 @@ describe('parseSampleProfileJson (F3)', () => {
       id: 'profiles.sp-entry-wrapper-uses-inner-profile',
       covers: 'src/domain/profileFiles.ts#parseSampleProfileJson',
       given: 'a .sp file that is a saved folder entry wrapping a profile object',
-      then: 'importing a wrapped sample-profile entry uses the inner profile fields, including its serial',
+      expect: {
+        'inner-fields-used': 'the inner profile fields load, including its serial',
+      },
     },
     () => {
       const profile = parseSampleProfileJson(
@@ -105,7 +115,9 @@ describe('parseSampleProfileJson (F3)', () => {
       id: 'profiles.sp-entry-name-fills-missing-serial',
       covers: 'src/domain/profileFiles.ts#parseSampleProfileJson',
       given: 'a wrapped sample-profile entry whose inner profile has no serial',
-      then: 'importing a wrapped sample-profile entry with no inner serial uses the entry name as the serial',
+      expect: {
+        'entry-name-as-serial': 'the entry name becomes the serial',
+      },
     },
     () => {
       const profile = parseSampleProfileJson(
@@ -123,7 +135,10 @@ describe('parseSampleProfileJson (F3)', () => {
       id: 'profiles.partial-sp-zeros-missing-numbers',
       covers: 'src/domain/profileFiles.ts#parseSampleProfileJson',
       given: 'a .sp file that only names the serial',
-      then: 'a partial .sp file still opens in the editor, with missing numeric limits treated as zero',
+      expect: {
+        'opens-with-serial': 'the profile opens in the editor carrying that serial',
+        'missing-numbers-zero': 'the numeric limits it leaves out come back as zero',
+      },
     },
     () => {
       expect(parseSampleProfileJson('{"serial":"x"}')).toEqual({
@@ -138,7 +153,9 @@ describe('parseSampleProfileJson (F3)', () => {
       id: 'profiles.sp-must-be-a-json-object',
       covers: 'src/domain/profileFiles.ts#parseSampleProfileJson',
       given: 'a .sp file that is not JSON, or is a JSON array or null',
-      then: 'importing a .sp file that is not a JSON object is rejected',
+      expect: {
+        'import-rejected': 'the import is rejected and nothing opens in the editor',
+      },
     },
     () => {
       expect(() => parseSampleProfileJson('not json')).toThrow(/not JSON/);
@@ -154,7 +171,9 @@ describe('parseMotionSetJson + replaceSetAt (F5)', () => {
       id: 'profiles.set-json-round-trips',
       covers: 'src/domain/profileFiles.ts#parseMotionSetJson',
       given: 'the JSON of a saved motion set with a name, repeat count, and moves',
-      then: 'loading a saved motion set restores its name, how many times it runs, and its moves',
+      expect: {
+        'set-restored': 'the name, how many times it runs, and its moves all come back',
+      },
     },
     () => {
       expect(parseMotionSetJson(JSON.stringify(SET))).toEqual(SET);
@@ -166,7 +185,9 @@ describe('parseMotionSetJson + replaceSetAt (F5)', () => {
       id: 'profiles.set-missing-repeats-runs-once',
       covers: 'src/domain/profileFiles.ts#parseMotionSetJson',
       given: 'a motion set JSON with no repeat count, or a repeat count of zero',
-      then: 'a motion set with no repeat count, or a repeat count of zero, runs once',
+      expect: {
+        'runs-once': 'the set runs once',
+      },
     },
     () => {
       const parsed = parseMotionSetJson(JSON.stringify({ name: 'S', moves: [] }));
@@ -182,7 +203,9 @@ describe('parseMotionSetJson + replaceSetAt (F5)', () => {
       id: 'profiles.set-json-requires-name-and-moves',
       covers: 'src/domain/profileFiles.ts#parseMotionSetJson',
       given: 'motion set JSON missing a name, missing a moves list, or not JSON at all',
-      then: 'loading a motion set without a name or without a moves list is rejected',
+      expect: {
+        'load-rejected': 'the load is rejected and no set is filled in',
+      },
     },
     () => {
       expect(() => parseMotionSetJson('{"moves":[]}')).toThrow(/name/);
@@ -196,7 +219,10 @@ describe('parseMotionSetJson + replaceSetAt (F5)', () => {
       id: 'profiles.load-set-replaces-only-the-target',
       covers: 'src/domain/profileFiles.ts#replaceSetAt',
       given: 'a motion profile with two sets, loading a saved set onto the second',
-      then: 'loading a saved set onto one slot of a motion profile replaces only that slot and leaves the others unchanged',
+      expect: {
+        'target-replaced': 'the second slot holds the loaded set',
+        'others-unchanged': 'the other slot keeps the set it already had',
+      },
     },
     () => {
       const other: MotionSet = { name: 'Hold', executions: 1, moves: [] };
@@ -213,7 +239,9 @@ describe('parseMotionSetJson + replaceSetAt (F5)', () => {
       id: 'profiles.load-set-rejects-a-missing-slot',
       covers: 'src/domain/profileFiles.ts#replaceSetAt',
       given: 'a motion profile with one set and a load target past the end, or before the start',
-      then: 'loading a saved set onto a slot that does not exist is rejected',
+      expect: {
+        'load-rejected': 'the load is rejected and the profile keeps its sets',
+      },
     },
     () => {
       expect(() => replaceSetAt([SET], 1, SET)).toThrow(/out of range/);

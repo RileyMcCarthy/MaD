@@ -7,8 +7,12 @@ describe('reorder', () => {
     {
       id: 'ui.list-reorder-moves-an-item',
       covers: 'src/ui/components/SortableList.tsx#reorder',
-      given: 'a four-item list, dragging the first item to the third place and the last item to the first',
-      then: 'dragging the first item to the third place puts the first item third, dragging the last item to the front puts the last item first, and the original list is unchanged',
+      given: 'a four-item list, with the first item dragged to third place and the last item dragged to the front',
+      expect: {
+        'item-at-target': 'the dragged item lands at its target place',
+        'gap-closes': 'the others close the gap',
+        'source-untouched': 'the original list is untouched',
+      },
     },
     () => {
       const src = ['a', 'b', 'c', 'd'];

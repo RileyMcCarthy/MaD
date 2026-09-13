@@ -23,8 +23,15 @@ describe('M7 download NACK retry matrix', () => {
       id: 'session.failed-download-retried-then-given-up',
       covers: 'src/device/sessionPolicy.ts#shouldRetryDownloadNack',
       given: 'a download the machine refuses, at the first chunk and again later in the file',
-      then: 'a download the machine refuses is retried up to a higher limit on the first chunk and a lower limit on later chunks, then given up',
-      why: 'the first chunk waits for the file to appear on the machine; a later chunk that keeps failing is a stuck transfer',
+      expect: {
+        'first-chunk-cap': 'the first chunk gets eighty retries',
+        'later-chunk-cap': 'a later chunk gets twenty retries',
+        'given-up-at-cap': 'the download is given up once the retries reach the cap',
+      },
+      why: {
+        'first-chunk-cap': 'the first chunk waits for the file to appear on the machine',
+        'later-chunk-cap': 'a later chunk that keeps failing is a stuck transfer',
+      },
     },
     () => {
       for (const { sampleIndex, expectCap } of [
@@ -53,8 +60,11 @@ describe('M7 upload retry matrix', () => {
     {
       id: 'session.failed-upload-retried-then-given-up',
       covers: 'src/device/sessionPolicy.ts#shouldRetryUpload',
-      given: 'a program upload that fails, with a retry limit of three',
-      then: 'a failed upload is retried while the attempt count is below the limit, the default limit is three, and the attempt at the limit is given up',
+      given: 'a program upload that keeps failing',
+      expect: {
+        'retried-to-the-limit': 'the upload is retried until the attempts reach the limit, then given up',
+        'limit-defaults-to-three': 'the limit defaults to three attempts',
+      },
     },
     () => {
       expect(UPLOAD_DEFAULT_MAX_RETRIES).toBe(3);
@@ -76,9 +86,14 @@ describe('M7 partial upload invalidation', () => {
     {
       id: 'session.failed-run-invalidates-partial-upload',
       covers: 'src/device/sessionPolicy.ts#shouldInvalidatePartialUpload',
-      given: 'a test run that wrote only part of its program to the machine',
-      then: 'a test run that did not succeed invalidates the half-written program, and a successful run leaves the uploaded program in place',
-      why: 'a half-uploaded program that later ran to the end would look complete',
+      given: 'a test run that wrote only part of its program to the machine, once failing and once succeeding',
+      expect: {
+        'failed-run-discards': 'the failed run discards the half-written program',
+        'successful-run-keeps': 'the successful run leaves the program in place',
+      },
+      why: {
+        'failed-run-discards': 'a half-uploaded program that later ran to the end would look complete',
+      },
     },
     () => {
       for (const { success, invalidate } of [
@@ -96,8 +111,11 @@ describe('M7 abort detection', () => {
     {
       id: 'session.emergency-stop-is-an-abort',
       covers: 'src/device/sessionPolicy.ts#isAbortError',
-      given: 'errors from an emergency stop, and ordinary machine refusals and timeouts',
-      then: 'an emergency-stop abort is recognised as an abort, including a message that starts with aborted, and a machine refusal or a timeout is treated as an ordinary error',
+      given: 'an emergency-stop error, an error whose message begins with aborted, a machine refusal, and a timeout',
+      expect: {
+        'stops-are-aborts': 'the emergency stop and the message beginning with aborted are treated as aborts',
+        'refusal-and-timeout-ordinary': 'the refusal and the timeout are treated as ordinary errors',
+      },
     },
     () => {
       for (const { msg, abort } of [
@@ -119,7 +137,10 @@ describe('M7 download chunk terminal', () => {
       id: 'session.short-download-chunk-ends-the-file',
       covers: 'src/device/sessionPolicy.ts#downloadChunkIsTerminal',
       given: 'download chunks that are empty, full, or shorter than requested',
-      then: 'an empty download chunk or a chunk shorter than the request ends the file, and a full-sized chunk continues the download',
+      expect: {
+        'short-ends-file': 'an empty or short chunk ends the file',
+        'full-continues': 'a full-sized chunk continues the download',
+      },
     },
     () => {
       for (const { len, perReq, terminal } of [
@@ -140,8 +161,11 @@ describe('M7 OpMutex single-in-flight', () => {
       id: 'session.ops-run-one-at-a-time',
       covers: 'src/device/sessionPolicy.ts#OpMutex',
       given: 'two device operations started together, the first one slow',
-      then: 'when two device operations are started together, the second waits until the first has finished before starting',
-      why: 'two in-flight commands would interleave on the serial line',
+      expect: {
+        'second-waits': 'the second operation starts only once the first has finished',
+        'own-results': 'each operation returns its own result',
+      },
+      why: { 'second-waits': 'two in-flight commands would interleave on the serial line' },
     },
     async () => {
       const mutex = new OpMutex();
@@ -169,8 +193,8 @@ describe('M7 OpMutex single-in-flight', () => {
       id: 'session.failed-op-releases-the-queue',
       covers: 'src/device/sessionPolicy.ts#OpMutex',
       given: 'a device operation that fails, then another that succeeds',
-      then: 'after a device operation fails, the next operation still runs',
-      why: 'a failed command must not block every command that follows',
+      expect: { 'next-op-runs': 'the next operation still runs and returns its result' },
+      why: { 'next-op-runs': 'a failed command must not block every command that follows' },
     },
     async () => {
       const mutex = new OpMutex();

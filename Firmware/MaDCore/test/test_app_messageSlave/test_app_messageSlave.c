@@ -135,10 +135,10 @@ void tearDown(void) {}
 
 void test_onRead_state_maps_app_control(void)
 {
-    VIBES_BEHAVIOUR("bridge.state-reports-fault-restriction-test-and-motion",
-                    "src/APP/app_messageSlave.c#ProtoEmb_onRead_state",
-                    "a known fault, a known restriction, a test running, and motion enabled",
-                    "the machine reports its state as the current fault reason, restriction reason, whether a test is running, and whether motion is enabled");
+    VIBES_TEST("bridge.state-reports-fault-restriction-test-and-motion",
+               "src/APP/app_messageSlave.c#ProtoEmb_onRead_state",
+               "a known fault, a known restriction, a test running, and motion enabled");
+    VIBES_EXPECT("all-four-returned", "reading the state back returns all four unchanged");
     d_fault = 3; d_restriction = 2; d_isRunning = true; d_motionEnabled = true;
     ProtoEmb_MachineState_t out;
     TEST_ASSERT_TRUE(ProtoEmb_onRead_state(&out));
@@ -150,11 +150,12 @@ void test_onRead_state_maps_app_control(void)
 
 void test_onRead_firmware_version_default(void)
 {
-    VIBES_BEHAVIOUR_WHY("bridge.unversioned-firmware-reports-zero",
-                        "src/APP/app_messageSlave.c#ProtoEmb_onRead_firmware_version",
-                        "firmware built without a version stamp",
-                        "firmware built without a version stamp reports its version as 0.0.0",
-                        "a build without a stamp still answers, so the control app can tell the machine is there");
+    VIBES_TEST("bridge.unversioned-firmware-reports-zero",
+               "src/APP/app_messageSlave.c#ProtoEmb_onRead_firmware_version",
+               "firmware built without a version stamp");
+    VIBES_EXPECT_WHY("version-zero",
+                     "the machine reports its version as 0.0.0",
+                     "a build without a stamp still answers, so the control app can tell the machine is there");
     ProtoEmb_FirmwareVersion_t out;
     TEST_ASSERT_TRUE(ProtoEmb_onRead_firmware_version(&out));
     TEST_ASSERT_EQUAL_STRING("0.0.0", out.version);
@@ -162,10 +163,11 @@ void test_onRead_firmware_version_default(void)
 
 void test_onRead_sample_profile_maps_monitor(void)
 {
-    VIBES_BEHAVIOUR("bridge.sample-profile-read-matches-loaded",
-                    "src/APP/app_messageSlave.c#ProtoEmb_onRead_sample_profile",
-                    "a sample profile already loaded, with force, displacement and thickness set",
-                    "reading the sample profile returns the loaded force limit, extension limit and specimen thickness");
+    VIBES_TEST("bridge.sample-profile-read-matches-loaded",
+               "src/APP/app_messageSlave.c#ProtoEmb_onRead_sample_profile",
+               "a sample profile loaded into the machine");
+    VIBES_EXPECT("limits-returned",
+                 "reading it back returns the loaded force limit, extension limit and specimen thickness");
     d_getProfile.maxForce = 75; d_getProfile.maxVelocity = 30; d_getProfile.maxDisplacement = 150;
     d_getProfile.sampleWidth = 12; d_getProfile.sampleThickness = 3;
     ProtoEmb_SampleProfile_t out;
@@ -177,11 +179,13 @@ void test_onRead_sample_profile_maps_monitor(void)
 
 void test_onWrite_motion_enable_true_acks_on_trigger(void)
 {
-    VIBES_BEHAVIOUR_WHY("bridge.enable-motion-ack-follows-machine",
-                        "src/APP/app_messageSlave.c#ProtoEmb_onWrite_motion_enable",
-                        "a request to enable motion, first when the machine accepts it, then when the machine refuses",
-                        "a request to enable motion is acknowledged when the machine accepts the request, and refused when the machine turns the request down",
-                        "the control app must not show motion as enabled until the machine has taken the request");
+    VIBES_TEST("bridge.enable-motion-ack-follows-machine",
+               "src/APP/app_messageSlave.c#ProtoEmb_onWrite_motion_enable",
+               "a request to enable motion, first when the machine accepts it, then when the machine refuses");
+    VIBES_EXPECT("ack-when-taken", "the request is acknowledged when the machine takes it");
+    VIBES_EXPECT_WHY("refused-when-declined",
+                     "the request is refused when the machine does not take it",
+                     "the control app must not show motion as enabled until the machine has taken the request");
     d_trigEnRet = true;
     TEST_ASSERT_EQUAL_INT(PROTOEMB_RUNTIME_WRITE_DISPOSITION_ACK, ProtoEmb_onWrite_motion_enable(true));
     d_trigEnRet = false;
@@ -190,21 +194,23 @@ void test_onWrite_motion_enable_true_acks_on_trigger(void)
 
 void test_onWrite_motion_enable_false_uses_disable_trigger(void)
 {
-    VIBES_BEHAVIOUR_WHY("bridge.disable-motion-stops",
-                        "src/APP/app_messageSlave.c#ProtoEmb_onWrite_motion_enable",
-                        "a request to disable motion, with the machine ready to stop",
-                        "a request to disable motion is acknowledged by stopping motion",
-                        "disable is the operator stop, a different request from enable");
+    VIBES_TEST("bridge.disable-motion-stops",
+               "src/APP/app_messageSlave.c#ProtoEmb_onWrite_motion_enable",
+               "a request to disable motion, with the machine ready to stop");
+    VIBES_EXPECT_WHY("stop-acknowledged",
+                     "motion is stopped and the request is acknowledged",
+                     "disable is the operator stop, a different request from enable");
     d_trigDisRet = true;
     TEST_ASSERT_EQUAL_INT(PROTOEMB_RUNTIME_WRITE_DISPOSITION_ACK, ProtoEmb_onWrite_motion_enable(false));
 }
 
 void test_onWrite_gauge_length_and_force(void)
 {
-    VIBES_BEHAVIOUR("bridge.zero-length-and-force-latch-and-ack",
-                    "src/APP/app_messageSlave.c#ProtoEmb_onWrite_gauge_length",
-                    "a request to zero gauge length, then a request to zero force",
-                    "a request to zero gauge length or force latches that origin and is acknowledged");
+    VIBES_TEST("bridge.zero-length-and-force-latch-and-ack",
+               "src/APP/app_messageSlave.c#ProtoEmb_onWrite_gauge_length",
+               "a request to zero gauge length, then a request to zero force");
+    VIBES_EXPECT("zero-points-latched", "each zero point is latched exactly once");
+    VIBES_EXPECT("each-acknowledged", "each request is acknowledged");
     TEST_ASSERT_EQUAL_INT(PROTOEMB_RUNTIME_WRITE_DISPOSITION_ACK, ProtoEmb_onWrite_gauge_length());
     TEST_ASSERT_EQUAL_INT(1, d_setLenCount);
     TEST_ASSERT_EQUAL_INT(PROTOEMB_RUNTIME_WRITE_DISPOSITION_ACK, ProtoEmb_onWrite_gauge_force());
@@ -213,10 +219,12 @@ void test_onWrite_gauge_length_and_force(void)
 
 void test_onWrite_manual_move_fills_and_forwards(void)
 {
-    VIBES_BEHAVIOUR("bridge.jog-carries-target-speed-pause",
-                    "src/APP/app_messageSlave.c#ProtoEmb_onWrite_manual_move",
-                    "a jog with a target, a speed and a pause, first accepted, then turned down",
-                    "a jog is acknowledged and carried through with its target, speed and pause, and a jog the machine turns down is refused");
+    VIBES_TEST("bridge.jog-carries-target-speed-pause",
+               "src/APP/app_messageSlave.c#ProtoEmb_onWrite_manual_move",
+               "a jog with a target, a speed and a pause, first accepted, then turned down");
+    VIBES_EXPECT("values-carried", "the target, speed and pause reach the machine unchanged");
+    VIBES_EXPECT("accepted-acknowledged", "the jog is acknowledged when the machine accepts it");
+    VIBES_EXPECT("turned-down-refused", "the jog is refused when the machine turns it down");
     ProtoEmb_Move_t in;
     memset(&in, 0, sizeof(in));
     in.g = (ProtoEmb_GCode_E)1; in.x = 1234; in.f = 56; in.p = 78;
@@ -233,10 +241,12 @@ void test_onWrite_manual_move_fills_and_forwards(void)
 
 void test_onWrite_test_move_pushes_to_sd(void)
 {
-    VIBES_BEHAVIOUR("bridge.test-move-stored-on-card",
-                    "src/APP/app_messageSlave.c#ProtoEmb_onWrite_test_move",
-                    "a motion-program move, first with the card accepting it, then with the card full",
-                    "a move in the test program is stored on the card and acknowledged, and refused when the card will not take the move");
+    VIBES_TEST("bridge.test-move-stored-on-card",
+               "src/APP/app_messageSlave.c#ProtoEmb_onWrite_test_move",
+               "a motion-program move offered twice, first with room on the card, then with the card full");
+    VIBES_EXPECT("move-stored", "the first move reaches the card with its target unchanged");
+    VIBES_EXPECT("stored-acknowledged", "the stored move is acknowledged");
+    VIBES_EXPECT("full-card-refused", "the move offered to the full card is refused");
     ProtoEmb_Move_t in;
     memset(&in, 0, sizeof(in));
     in.g = (ProtoEmb_GCode_E)1; in.x = 99;
@@ -249,10 +259,11 @@ void test_onWrite_test_move_pushes_to_sd(void)
 
 void test_onWrite_sample_profile_maps_and_forwards(void)
 {
-    VIBES_BEHAVIOUR("bridge.sample-profile-write-loads-limits",
-                    "src/APP/app_messageSlave.c#ProtoEmb_onWrite_sample_profile_write",
-                    "a sample profile written with force and extension limits",
-                    "writing a sample profile loads its force and extension limits onto the machine and is acknowledged");
+    VIBES_TEST("bridge.sample-profile-write-loads-limits",
+               "src/APP/app_messageSlave.c#ProtoEmb_onWrite_sample_profile_write",
+               "a sample profile written with force and extension limits");
+    VIBES_EXPECT("limits-loaded", "the machine loads those limits exactly once");
+    VIBES_EXPECT("write-acknowledged", "the write is acknowledged");
     ProtoEmb_SampleProfile_t in;
     memset(&in, 0, sizeof(in));
     in.maxForce = 80; in.maxVelocity = 25; in.maxDisplacement = 120; in.sampleWidth = 10; in.sampleThickness = 2;
@@ -267,11 +278,14 @@ void test_onWrite_sample_profile_maps_and_forwards(void)
  * triggerTestEnd — an unconditional END races a fresh START on the next tick. */
 void test_onWrite_test_run_idle_does_not_end(void)
 {
-    VIBES_BEHAVIOUR_WHY("bridge.start-test-while-idle-starts-only",
-                        "src/APP/app_messageSlave.c#ProtoEmb_onWrite_test_run",
-                        "a request to start a named test while no test session is under way",
-                        "a request to start a named test while idle starts that test under its program and run names, with no stop of a previous session",
-                        "only a session that is actually under way is stopped before a new test starts");
+    VIBES_TEST("bridge.start-test-while-idle-starts-only",
+               "src/APP/app_messageSlave.c#ProtoEmb_onWrite_test_run",
+               "a request to start a named test while no test session is under way");
+    VIBES_EXPECT_WHY("no-stop",
+                     "no stop is issued",
+                     "only a session that is actually under way is stopped before a new test starts");
+    VIBES_EXPECT("test-started", "the test starts once, under its program and run names");
+    VIBES_EXPECT("request-acknowledged", "the request is acknowledged");
     d_isBusy = false;
     d_busyUntilEnd = false;
     d_startRet = true;
@@ -289,11 +303,14 @@ void test_onWrite_test_run_idle_does_not_end(void)
 /* When a session is busy, test_run must request END once, wait until idle, then START. */
 void test_onWrite_test_run_busy_ends_then_starts(void)
 {
-    VIBES_BEHAVIOUR_WHY("bridge.start-test-while-busy-stops-then-starts",
-                        "src/APP/app_messageSlave.c#ProtoEmb_onWrite_test_run",
-                        "a request to start a named test while a session is still busy",
-                        "a request to start a named test while a session is busy stops that session first, then starts the new one under its program and run names",
-                        "a new test replaces the one already under way, and waits until that one has finished stopping");
+    VIBES_TEST("bridge.start-test-while-busy-stops-then-starts",
+               "src/APP/app_messageSlave.c#ProtoEmb_onWrite_test_run",
+               "a request to start a named test while a session is still busy");
+    VIBES_EXPECT_WHY("session-stopped",
+                     "the busy session is stopped once",
+                     "a new test replaces the one already under way, and waits until that one has finished stopping");
+    VIBES_EXPECT("new-test-started", "the new test then starts under its program and run names");
+    VIBES_EXPECT("request-acknowledged", "the request is acknowledged");
     d_busyUntilEnd = true; /* isBusy true until END is called */
     d_startRet = true;
     ProtoEmb_TestRun_t in;
@@ -310,11 +327,14 @@ void test_onWrite_test_run_busy_ends_then_starts(void)
 /* M5 bridge matrix: start NACK when triggerTestStart fails; END only when busy. */
 void test_m5_onWrite_test_run_start_nack_when_rejected(void)
 {
-    VIBES_BEHAVIOUR_WHY("bridge.start-test-refused-when-machine-rejects",
-                        "src/APP/app_messageSlave.c#ProtoEmb_onWrite_test_run",
-                        "a request to start a test while idle, with the machine turning the start down",
-                        "a start the machine turns down is refused, with no stop requested first",
-                        "the control app has to see the refusal so a test is not shown as running");
+    VIBES_TEST("bridge.start-test-refused-when-machine-rejects",
+               "src/APP/app_messageSlave.c#ProtoEmb_onWrite_test_run",
+               "a request to start a test while idle, with the machine turning the start down");
+    VIBES_EXPECT_WHY("request-refused",
+                     "the request is refused",
+                     "the control app has to see the refusal so a test is not shown as running");
+    VIBES_EXPECT("no-stop", "no stop is issued");
+    VIBES_EXPECT("start-offered-once", "the start is put to the machine once");
     d_isBusy = false;
     d_busyUntilEnd = false;
     d_startRet = false; /* firmware rejects the start (e.g. still busy race) */
@@ -341,11 +361,16 @@ void test_m5_onWrite_manual_move_nacks_when_busy(void)
 
 void test_machine_configuration_round_trips_through_bridge(void)
 {
-    VIBES_BEHAVIOUR_WHY("bridge.machine-config-saved-and-read-back",
-                        "src/APP/app_messageSlave.c#ProtoEmb_onWrite_machine_configuration_write",
-                        "a machine configuration written with steps per millimetre, travel, load-cell sensitivity and a name",
-                        "a written machine configuration is saved, the operator is told the profile was saved, and reading the profile back returns the same steps, travel, sensitivity and name",
-                        "the saved profile is what the next boot will use");
+    VIBES_TEST("bridge.machine-config-saved-and-read-back",
+               "src/APP/app_messageSlave.c#ProtoEmb_onWrite_machine_configuration_write",
+               "a machine configuration written with steps per millimetre, travel, load-cell sensitivity and a name");
+    VIBES_EXPECT_WHY("config-stored",
+                     "the configuration is stored once",
+                     "the saved profile is what the next boot will use");
+    VIBES_EXPECT("operator-notified", "the operator is notified");
+    VIBES_EXPECT("read-back-matches",
+                 "reading the profile back returns the same steps per millimetre, travel, sensitivity and name");
+    VIBES_EXPECT("write-acknowledged", "the write is acknowledged");
     ProtoEmb_MachineConfiguration_t in;
     memset(&in, 0, sizeof(in));
     in.servoStepsPerMM = 200; in.maxPosition = 150000; in.maxVelocity = 30000;

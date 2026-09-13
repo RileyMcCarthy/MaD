@@ -14,8 +14,14 @@ describe('teardown must not lose the tail of an upload', () => {
       id: 'flash.close-delivers-queued-writes',
       covers: 'src/firmware/webSerialTransport.ts#WebSerialTransport.close',
       given: 'three writes still queued when the serial port is closed',
-      then: 'closing the serial port delivers every queued write before the port is released',
-      why: 'a flash load whose last bytes were dropped would leave an unbootable image',
+      expect: {
+        'tail-delivered-in-order':
+          'every queued write reaches the device, in order, before the port is released',
+      },
+      why: {
+        'tail-delivered-in-order':
+          'a flash load whose last bytes were dropped would leave an unbootable image',
+      },
     },
     async () => {
       // The sink accepts bytes slowly, so the last write is still queued when
@@ -58,8 +64,12 @@ describe('teardown must not hang', () => {
       id: 'flash.close-completes-when-port-hangs',
       covers: 'src/firmware/webSerialTransport.ts#WebSerialTransport.close',
       given: 'a serial port whose close never finishes, during a load that already failed',
-      then: 'a load whose serial port never finishes closing completes',
-      why: 'a hung close would leave the operator stuck on Programming with no way back',
+      expect: {
+        'load-finishes': 'the load finishes within a few seconds',
+      },
+      why: {
+        'load-finishes': 'a hung close would leave the operator stuck on Programming with no way back',
+      },
     },
     async () => {
       // A half-dead USB stream can make close() hang. programPort awaits
@@ -87,7 +97,9 @@ describe('teardown must not hang', () => {
       id: 'flash.close-completes-when-reader-hangs',
       covers: 'src/firmware/webSerialTransport.ts#WebSerialTransport.close',
       given: 'a serial-port reader whose cancel never finishes',
-      then: 'closing a serial port whose reader never finishes cancelling completes',
+      expect: {
+        'close-finishes': 'closing the port finishes within a few seconds',
+      },
     },
     async () => {
       const port = {
@@ -113,8 +125,13 @@ describe('flushInput must terminate', () => {
       id: 'flash.flush-completes-on-chatty-port',
       covers: 'src/firmware/webSerialTransport.ts#WebSerialTransport.flushInput',
       given: 'a serial port that keeps delivering bytes because the board is still running firmware',
-      then: 'draining leftover input on a serial port that never goes quiet completes',
-      why: 'a board still running firmware streams samples continuously, so waiting for silence would never finish',
+      expect: {
+        'drain-finishes': 'draining leftover input completes in under three seconds',
+      },
+      why: {
+        'drain-finishes':
+          'a board still running firmware streams samples continuously, so waiting for silence would never finish',
+      },
     },
     async () => {
       // A board still running firmware streams samples continuously. flushInput
@@ -152,9 +169,14 @@ describe('detect must not leak bytes into the load', () => {
     {
       id: 'flash.detect-leftovers-ignored-at-checksum',
       covers: 'src/firmware/program.ts#programPort',
-      given: 'a chip that emits extra bytes after its version reply, then rejects the image checksum',
-      then: 'a checksum rejection is reported even when leftover bytes from detecting the chip included an acknowledgement character',
-      why: 'only the reply to the checksum request counts as the boot ROM\'s acknowledgement',
+      given: 'a chip that emits a stray acknowledgement byte after its version reply, then rejects the image checksum',
+      expect: {
+        'rejection-reported': 'the load fails, reporting that the chip rejected the image',
+      },
+      why: {
+        'rejection-reported':
+          'only the reply to the checksum request counts as the boot ROM\'s acknowledgement',
+      },
     },
     async () => {
       // Real boards emit more than the bare Prop_Ver reply after a reset. Anything
