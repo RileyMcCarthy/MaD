@@ -121,6 +121,11 @@ pub struct Cog {
     pub stack: [u32; 8],
     pub sp: usize,
     pub running: bool,
+    /// `SKIP` pattern still to be applied, LSB first: a 1 cancels the
+    /// instruction at that position. Shifted right once per instruction.
+    skip_pattern: u32,
+    /// How many of the 32 patterned instructions remain.
+    skip_left: u8,
     /// Pending `AUGS`/`AUGD` prefix, consumed by the next instruction.
     aug_s: Option<u32>,
     /// Whether the instruction now executing had an `AUGS` prefix. On silicon
@@ -216,6 +221,8 @@ impl Default for Cog {
         Self {
             fifo_addr: 0,
             instructions: 0,
+            skip_pattern: 0,
+            skip_left: 0,
             poll: PollState::default(),
             regs: [0; COG_LONGS],
             lut: [0; LUT_LONGS],
@@ -846,6 +853,35 @@ impl<P: PinBus> Machine<P> {
         }
         let word = self.fetch(cog, pc);
         let np = Self::next_pc(pc);
+
+        // `SKIP` cancels instructions by pattern, one bit per instruction,
+        // ahead of and independent of the condition field.
+        //
+        // This has to happen BEFORE the decode, not after it: a cancelled slot
+        // is never decoded on silicon, and compilers use exactly that to step
+        // over inline DATA. loadp2's flash stub opens with `SKIP` over its own
+        // header, whose first long is a checksum — a value that depends on the
+        // payload, so decoding it first traps on a different bogus instruction
+        // for every image, and the failure reads as a corrupt loader rather
+        // than a skipped word.
+        //
+        // A cancelled instruction still costs its time (this is `SKIP`, not
+        // `SKIPF`) and still swallows any pending prefix, like a failed
+        // condition.
+        if self.cogs[cog].skip_left > 0 {
+            let cancel = self.cogs[cog].skip_pattern & 1 != 0;
+            self.cogs[cog].skip_pattern >>= 1;
+            self.cogs[cog].skip_left -= 1;
+            if cancel {
+                self.cogs[cog].clocks += CLOCKS_PER_INSTRUCTION;
+                self.retired += 1;
+                self.cogs[cog].pc = np;
+                if let Some(ins) = decode(word) {
+                    self.clear_prefixes(cog, &ins);
+                }
+                return Ok(());
+            }
+        }
 
         let Some(ins) = decode(word) else {
             self.cogs[cog].running = false;
@@ -1803,6 +1839,36 @@ impl<P: PinBus> Machine<P> {
                 if r == u32::MAX {
                     self.cogs[cog].pc = self.rel9_target(ins, s, pc);
                     branched = true;
+                }
+            }
+            // Decrement and jump if NOT full ($FFFFFFFF) — the counted-loop
+            // partner of `Djf`, used by loaders that run a block down to -1.
+            Djnf => {
+                let r = d.wrapping_sub(1);
+                self.set_reg(cog, ins.d, r);
+                if r != u32::MAX {
+                    self.cogs[cog].pc = self.rel9_target(ins, s, pc);
+                    branched = true;
+                }
+            }
+            // Load a 32-instruction cancellation pattern. Compilers emit this
+            // to fold several short alternatives into one straight-line block
+            // and select between them at run time — which is why a stub whose
+            // very first instruction is `SKIP` does nothing recognisable
+            // without it.
+            Skip => {
+                self.cogs[cog].skip_pattern = d;
+                self.cogs[cog].skip_left = 32;
+            }
+            // The hub FIFO's current byte address. `RDFAST`/`WRFAST` set it and
+            // every `RF*`/`WF*` moves it; a loader reads it back to find out
+            // where a streamed block ended.
+            Getptr => {
+                let a = self.cogs[cog].fifo_addr;
+                self.set_reg(cog, ins.d, a);
+                self.wz(cog, ins, a);
+                if ins.c {
+                    self.cogs[cog].c = a >> 31 != 0;
                 }
             }
             Tjz => {
