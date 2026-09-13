@@ -216,6 +216,14 @@ function resampledPathMm(timeUs, posUm, { dtUs = 50_000, minDeltaUm = 500 } = {}
 /** SIL plant: 2048-line encoder × 4× quadrature. Position_um in the CSV is this encoder. */
 const SIL_ENCODER_STEPS_PER_MM = 4 * 2048;
 
+/**
+ * The machine's acceleration limit, mm/s² — `maxAcceleration` in the profile
+ * the emulator boots from (`SIL/sd/profile.bin`). Needed here because it sets
+ * how much of a waveform the machine physically cannot deliver; see
+ * `assertSineMatch`'s centre check.
+ */
+const SIL_MAX_ACCEL_MM_S2 = 600;
+
 // Rigorously assert a recorded position series actually traces the COMMANDED sine
 // waveform — not merely that it oscillates. Checks: peak-to-peak ≈ 2·amplitude;
 // a least-squares sinusoid fit at the commanded frequency explains the motion
@@ -364,10 +372,34 @@ function assertSineMatch(series, { amplitudeMm, frequencyHz, cycles, centreMm },
   // bottom of the stroke into the lower limit switch.
   if (typeof centreMm === 'number') {
     const offset = mean - centreMm;
-    const tol = Math.max(0.5, amplitudeMm * 0.15);
+
+    // The tolerance is a fraction of what the machine physically CANNOT
+    // deliver, not a fraction of the amplitude.
+    //
+    // A position sinusoid starting from rest demands its peak velocity
+    // 2πfA immediately, and no accel-limited machine can produce that. Ramping
+    // to it costs Vpeak²/(2·Amax) of travel, and that deficit is integrated
+    // into the wave's centre. It is set by peak VELOCITY, so scaling the
+    // tolerance with amplitude was wrong in both directions: across this
+    // matrix Vpeak barely moves (31–38 mm/s) while amplitude varies 3.3×. The
+    // old `max(0.5, 0.15·A)` therefore allowed 1.5 mm at A=10 — and the
+    // open-loop sag there measures 0.65–1.03 mm, so the check silently passed
+    // the very bug it was written for on that case.
+    //
+    // Measured on the native bench, 18 recorded runs, as a fraction of this
+    // deficit: anchored 0.02–0.58, anchor disabled 0.75–1.25. Nothing lands
+    // between. 0.65 sits in that gap.
+    //
+    // The floor is measurement noise, for parameters whose deficit is tiny; it
+    // does not bind anywhere in the current matrix.
+    const vPeakMmS = 2 * Math.PI * frequencyHz * amplitudeMm;
+    const rampDeficitMm = (vPeakMmS * vPeakMmS) / (2 * SIL_MAX_ACCEL_MM_S2);
+    const tol = Math.max(0.3, 0.65 * rampDeficitMm);
     assert(
       Math.abs(offset) < tol,
-      `${label}: wave centred on the commanded ${centreMm}mm (sat at ${mean.toFixed(2)}mm, off by ${offset.toFixed(2)}mm, tol ${tol.toFixed(2)})`,
+      `${label}: wave centred on the commanded ${centreMm}mm (sat at ${mean.toFixed(2)}mm, ` +
+        `off by ${offset.toFixed(2)}mm, tol ${tol.toFixed(2)} = 0.65 × the ` +
+        `${rampDeficitMm.toFixed(2)}mm ramp-in deficit at Vpeak=${vPeakMmS.toFixed(1)}mm/s)`,
     );
   }
 }
