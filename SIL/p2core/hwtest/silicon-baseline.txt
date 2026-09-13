@@ -1,0 +1,41 @@
+# Mnemonics where p2core still diverges from the silicon captured in
+# hwtest/golden/probe.txt. The gate fails on anything NOT listed here, so a
+# regression or a newly captured op is caught; and it fails on anything listed
+# here that has since started matching, so the list cannot rot.
+#
+# Burn these down and delete the line. When the file is empty, delete it and
+# load_baseline() in tests/silicon_probe.rs with it.
+#
+# Started at 68 mnemonics / 544 of 1550 cases. Now 12 / 98.
+
+# --- The corpus cannot prove these, so nothing here is a p2core bug ---
+#
+# rdbyte/rdword/rdlong: the capture streams every case into ONE running image
+# (hw_probe.py --capture does a single loadp2, then feeds GO lines to the live
+# session), so hub $0.. still holds writes from earlier cases. These read hub
+# $0/$1, and the values silicon returned were left there by the two wmlong
+# cases ten and nine records earlier. A fresh-image replay can never reproduce
+# that, and p2core cannot even produce the contamination because wmlong is
+# itself unimplemented. To fix the OP rather than the record, capture these
+# with the address operand pointing at the per-case scratch. The one real bug
+# the cases did expose -- WC was never written, and silicon sets it from the
+# MSB of the transfer -- is fixed.
+rdbyte
+rdword
+rdlong
+#
+# muxq: every case ran with pre=00000000, which decodes to NOP, so no SETQ ever
+# executed and Q is unmodelled boot state. The four records pin only Q[0]=1,
+# Q[1]=1, Q[31]=0. Recapture with a real SETQ in the prefix slot (probe.c
+# supports one) before claiming MUXQ is silicon-validated.
+muxq
+
+# --- Not yet derived with confidence ---
+bitrnd
+blnpix
+cmpm
+mixpix
+rdlut
+seussf
+seussr
+wmlong

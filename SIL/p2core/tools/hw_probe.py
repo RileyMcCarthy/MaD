@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import json
 import os
 import platform
 import pty
@@ -150,54 +151,62 @@ def build_cases() -> list[dict]:
             sin=DREG,
         ),
     ]
-    ds = [
-        (0, "ror"),
-        (1, "rol"),
-        (2, "shr"),
-        (3, "shl"),
-        (8, "add"),
-        (12, "sub"),
-        (16, "cmp"),
-        (40, "and"),
-        (41, "andn"),
-        (42, "or"),
-        (43, "xor"),
-        (48, "mov"),
-    ]
-    du = [(49, "not"), (50, "abs"), (51, "neg"), (60, "encod"), (61, "ones")]
-    vals = [
-        (0, 0),
-        (1, 1),
-        (2, 3),
-        (0xFFFFFFFF, 1),
-        (0x80000000, 1),
-        (0x7FFFFFFF, 0xFFFFFFFF),
-    ]
     seen = {c["name"] for c in out}
-    for op7, mn in ds:
-        for i, (d, s) in enumerate(vals):
-            name = f"{mn}_{i}"
-            if name in seen:
-                continue
-            out.append(case(name, s1(op7, DREG, SREG), din=d, sin=s))
-            seen.add(name)
-        name = f"{mn}_wc"
-        if name not in seen:
-            out.append(
-                case(name, s1(op7, DREG, SREG, c=1), din=0x80000000, sin=1)
-            )
-            seen.add(name)
-    for op7, mn in du:
-        for i, (_d, s) in enumerate(vals):
-            name = f"{mn}_{i}"
-            if name in seen:
-                continue
-            out.append(case(name, s1(op7, DREG, SREG, c=1), din=0, sin=s))
-            seen.add(name)
+    keys = {
+        (c["enc"], c["pre"], c["din"], c["sin"], c["flags"], c["hub_in"]) for c in out
+    }
+    for spec in decode_sweep_cases():
+        k = (spec["enc"], spec["pre"], spec["din"], spec["sin"], spec["flags"], spec["hub_in"])
+        if spec["name"] in seen or k in keys:
+            continue
+        out.append(spec)
+        seen.add(spec["name"])
+        keys.add(k)
     return out
 
 
-CASES: list[dict] = build_cases()
+def decode_sweep_cases() -> list[dict]:
+    cmd = [
+        "cargo",
+        "run",
+        "--release",
+        "-q",
+        "-p",
+        "p2core",
+        "--example",
+        "probe_encodings",
+    ]
+    print("+", " ".join(cmd), flush=True)
+    proc = subprocess.run(cmd, cwd=str(CRATE.parent), capture_output=True, text=True)
+    if proc.returncode != 0:
+        sys.stderr.write(proc.stderr)
+        sys.exit("probe_encodings failed")
+    out: list[dict] = []
+    for raw in proc.stdout.splitlines():
+        line = raw.strip()
+        if not line.startswith("{"):
+            continue
+        o = json.loads(line)
+        enc = int(o["enc"], 16)
+        op = o["op"]
+        name = f"swp_{op}_{o['enc']}"
+        if o.get("hub"):
+            out.append(case(name, enc, din=SCRATCH, hub_in=(1, 2, 3, 4)))
+            continue
+        out.append(case(name, enc, din=0x80000000, sin=1))
+        out.append(case(f"{name}_b", enc, din=2, sin=3))
+    return out
+
+
+_CASES: list[dict] | None = None
+
+
+def all_cases() -> list[dict]:
+    global _CASES
+    if _CASES is None:
+        _CASES = build_cases()
+        print(f"probe cases: {len(_CASES)}", flush=True)
+    return _CASES
 
 
 def mailbox_off(image: bytes) -> int:
@@ -612,7 +621,7 @@ def main() -> int:
     args = ap.parse_args()
 
     want = set(args.case)
-    specs = [c for c in CASES if not want or c["name"] in want]
+    specs = [c for c in all_cases() if not want or c["name"] in want]
     if not specs:
         sys.exit(f"no cases match {want}")
 
