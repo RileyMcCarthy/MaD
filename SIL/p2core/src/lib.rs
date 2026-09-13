@@ -21,19 +21,25 @@
 //! out, [`Machine::step_until`] for time.
 
 pub mod board;
+pub mod flash;
 pub mod generated;
 pub mod model;
 pub mod pins;
 pub mod sdcard;
+pub mod smartbus;
 pub mod smartpin;
+pub mod spi;
 pub mod trap;
 
 pub use board::Board;
+pub use flash::SpiFlash;
 pub use generated::decode::{decode, Decoded, Form, Op};
 pub use model::SmartPins;
 pub use pins::{NullPins, PinBus};
 pub use sdcard::SdCard;
+pub use smartbus::SmartBus;
 pub use smartpin::{baud_matches, PinMode, SmartPin};
+pub use spi::SpiShift;
 pub use trap::Trap;
 
 /// Hub RAM size. The C stack starts near `$4B410` and grows *upward*, so the
@@ -100,22 +106,41 @@ pub struct Cog {
     pub pc: u32,
     pub c: bool,
     pub z: bool,
+    /// Instructions this cog has executed (throughput accounting).
+    pub instructions: u64,
+    /// Idle-poll detection — see [`Machine::note_loop_edge`].
+    poll: PollState,
+    /// Hub FIFO pointer, shared by the read and write directions.
+    ///
+    /// The silicon FIFO is a 19-stage prefetch machine; what code depends on
+    /// is only its *addressing*: `WRFAST`/`RDFAST` set a hub byte address and
+    /// each `WF*`/`RF*` moves it by the access size. The boot ROM builds its
+    /// base64 table and loads the application through it.
+    pub fifo_addr: u32,
     /// The 8-level hardware call stack (a ring on silicon too).
     pub stack: [u32; 8],
     pub sp: usize,
     pub running: bool,
     /// Pending `AUGS`/`AUGD` prefix, consumed by the next instruction.
     aug_s: Option<u32>,
+    /// Whether the instruction now executing had an `AUGS` prefix. On silicon
+    /// an augmented S is a full literal: the `PTRA`/`PTRB` expression encoding
+    /// (bit 8 of a bare 9-bit immediate) does NOT apply. Without this flag,
+    /// `rdlong reg, ##addr` for any address with bit 8 set silently turns
+    /// into a pointer-indexed access — the boot ROM's own self-load reads
+    /// from the wrong place and the cog executes its constant pool.
+    aug_s_active: bool,
     aug_d: Option<u32>,
     /// Pending `SETQ`/`SETQ2` value, consumed by the next instruction.
     setq: Option<u32>,
+    /// A pending `SETQ2` — the LUT-destination block prefix.
+    setq2: Option<u32>,
     /// `REP` block: (remaining iterations, first pc, last pc).
     rep: Option<(u32, u32, u32)>,
     /// CORDIC results, filled by QMUL/QDIV/... and read by GETQX/GETQY.
     qx: u32,
     qy: u32,
     /// Hub write-FIFO cursor for `WRFAST`/`WFLONG`.
-    fifo: u32,
     /// `ADDCT1` target for `WAITCT1`.
     ct1: u32,
     /// Pending `ALTD`/`ALTS` field substitution for the next instruction.
@@ -125,9 +150,73 @@ pub struct Cog {
     pub clocks: u64,
 }
 
+/// Per-cog bookkeeping for **idle-poll fast-forward**.
+///
+/// A cog that spins in a short loop — `testp / jmp`, a `locktry` retry, a
+/// `getct` busy-wait — is free on silicon and 95% of an interpreter's budget
+/// here. An iteration of such a loop is *identical* to the last unless
+/// something outside the loop changes, and nothing outside it can change
+/// until another cog runs or the net engine wakes. So once a loop has closed
+/// twice with no side effects and no state carried across the back-edge, the
+/// cog's clock is advanced to the next instant anything can differ (see
+/// [`Machine::fast_forward_poller`]) and the skipped iterations are never
+/// executed. What makes this exact rather than a heuristic:
+///
+/// - **side effects** — any hub/pin/lock/smart-pin write in the iteration
+///   disqualifies it (the PURE set below is a whitelist);
+/// - **loop-carried state** — a register or flag *read before it is written*
+///   in an iteration, having been written in the previous one, means the
+///   iterations differ (`djnz`-bounded polls keep their count; a `getct`
+///   temp does not carry).
+#[derive(Debug, Default, Clone, Copy)]
+struct PollState {
+    /// Where the current candidate loop starts (target of the last back-edge).
+    loop_pc: Option<u32>,
+    /// Pure, non-carrying iterations closed in a row.
+    iters: u32,
+    /// Registers written so far this iteration / during the previous one.
+    written: [u64; 8],
+    written_prev: [u64; 8],
+    flags_written: bool,
+    flags_written_prev: bool,
+    /// Disqualifiers observed this iteration.
+    carried: bool,
+    side_effect: bool,
+    /// This iteration read an *external* input — a pin. Only the peripheral's
+    /// own schedule decides when that changes, and this model cannot see it
+    /// from inside the CPU, so the loop must not be fast-forwarded.
+    external: bool,
+}
+
+impl PollState {
+    #[inline]
+    fn mark_write(&mut self, reg: u16) {
+        let r = usize::from(reg & 0x1FF);
+        self.written[r >> 6] |= 1u64 << (r & 63);
+    }
+    #[inline]
+    fn note_read(&mut self, reg: u16) {
+        let r = usize::from(reg & 0x1FF);
+        let bit = 1u64 << (r & 63);
+        if self.written[r >> 6] & bit == 0 && self.written_prev[r >> 6] & bit != 0 {
+            self.carried = true;
+        }
+    }
+    /// Confirmed idle-polling: two identical, side-effect-free iterations.
+    fn confirmed(&self) -> bool {
+        self.iters >= 2
+    }
+    fn reset(&mut self) {
+        *self = PollState::default();
+    }
+}
+
 impl Default for Cog {
     fn default() -> Self {
         Self {
+            fifo_addr: 0,
+            instructions: 0,
+            poll: PollState::default(),
             regs: [0; COG_LONGS],
             lut: [0; LUT_LONGS],
             pc: 0,
@@ -137,12 +226,13 @@ impl Default for Cog {
             sp: 0,
             running: false,
             aug_s: None,
+            aug_s_active: false,
             aug_d: None,
             setq: None,
+            setq2: None,
             rep: None,
             qx: 0,
             qy: 0,
-            fifo: 0,
             ct1: 0,
             alt_d: None,
             alt_s: None,
@@ -183,6 +273,11 @@ pub struct Machine<P: PinBus> {
     /// where a genuinely wild address would otherwise alias onto live memory
     /// and corrupt something far from the culprit.
     pub strict_hub: bool,
+    /// Upper bound for an idle-poll fast-forward: the current `step_until`
+    /// deadline in clocks (`u64::MAX` when stepping by count).
+    ff_deadline_clocks: u64,
+    /// Idle-poll fast-forward off (`P2CORE_NO_FF`) — for A/B and safety.
+    ff_disabled: bool,
     /// Optional hub write watchpoint: `(start, len)`.
     pub watch: Option<(u32, u32)>,
     /// Writes that landed in the watched range, oldest first.
@@ -207,6 +302,44 @@ impl<P: PinBus> Machine<P> {
     /// image's first four longs are therefore a *cog-resident* trampoline
     /// (`cogid pa` / `augs #2` / `coginit pa, ##$404`) that immediately reloads
     /// cog 0 from the real kernel at `$404`, so the ISS needs no special case.
+    /// Boot the way silicon does: nothing in hub but the ROM.
+    ///
+    /// Real power-on loads the 16 KB boot ROM into the **top** of hub RAM and
+    /// starts COG 0 executing from hub at `$FC000` — which, with 512 KB of
+    /// RAM and wrap-around addressing, is the same bytes at `$7C000`. The
+    /// application arrives later, over a wire: the ROM samples pull-ups on
+    /// P59/P60/P61 to pick serial, SPI flash or SD, loads from there,
+    /// verifies, and launches. [`Machine::new`] skips all of that by
+    /// construction; this constructor exists so the skipped part can be
+    /// executed and tested like everything else.
+    pub fn with_boot_rom(rom: &[u8], pins: P) -> Self {
+        let mut m = Self::new(&[], pins);
+        m.hub.iter_mut().for_each(|b| *b = 0);
+        let top = HUB_BYTES - (16 * 1024);
+        let n = rom.len().min(16 * 1024);
+        m.hub[top..top + n].copy_from_slice(&rom[..n]);
+        for cog in m.cogs.iter_mut() {
+            *cog = Default::default();
+        }
+        // COG 0 boots the way every coginit does: its 512 registers loaded
+        // from the target — here the base of the ROM — and execution from cog
+        // address 0. Getting this wrong is instructive: launched in hub-exec
+        // at `$FC000` instead, the ROM *almost* works, because most of its
+        // preamble is position-independent — right up until the first
+        // `callpa #pin,#check_pullup`, whose 9-bit relative offset is counted
+        // in cog longs. From hub the same encoding lands ~$3B4 bytes ahead
+        // into unrelated code, the pull-up sampling never runs, and the boot
+        // walks into the serial path with garbage timing.
+        for i in 0..COG_LONGS {
+            let a = top + i * 4;
+            m.cogs[0].regs[i] =
+                u32::from_le_bytes([m.hub[a], m.hub[a + 1], m.hub[a + 2], m.hub[a + 3]]);
+        }
+        m.cogs[0].running = true;
+        m.cogs[0].pc = 0;
+        m
+    }
+
     pub fn new(image: &[u8], pins: P) -> Self {
         let mut hub = vec![0u8; HUB_BYTES];
         let n = image.len().min(HUB_BYTES);
@@ -228,6 +361,8 @@ impl<P: PinBus> Machine<P> {
             pins,
             retired: 0,
             strict_hub: false,
+            ff_deadline_clocks: u64::MAX,
+            ff_disabled: std::env::var_os("P2CORE_NO_FF").is_some(),
             watch: None,
             watch_hits: Vec::new(),
             reg_watch: None,
@@ -340,8 +475,138 @@ impl<P: PinBus> Machine<P> {
             self.reg_hits.push((pc, v));
         }
         self.cogs[cog].regs[idx] = v;
+        self.cogs[cog].poll.mark_write(idx as u16);
         if (REG_DIRA..=REG_OUTA + 1).contains(&(idx as u16)) {
-            self.pins.dir_out_changed(idx as u16, v);
+            self.pins.dir_out_changed(cog, idx as u16, v);
+        }
+    }
+
+    /// Ops with no effect outside the cog's own registers and flags: reads,
+    /// arithmetic, control flow, pin *tests*, `locktry` (a failed try changes
+    /// nothing), `waitx` (time only). Everything else is a side effect.
+    fn is_pure(op: Op) -> bool {
+        use Op::*;
+        matches!(
+            op,
+            Rdlong | Rdbyte | Rdword | Rdlut | Testp | Testpn | Getct | Cmp | Cmps | Cmpr | Cmpm
+                | Cmpx | Cmpsx | Test | Testn | Testb | Testbn | Jmp | Jmprel | Tjz | Tjnz | Tjf
+                | Tjnf | Tjs | Tjns | Tjv | Djz | Djnz | Djf | Djnf | Call | Ret | Callpa | Callpb
+                | Mov | Add | Adds | Addx | Addsx | Sub | Subs | Subx | Subsx | Subr | And | Andn
+                | Or | Xor | Not | Neg | Abs | Shl | Shr | Sar | Sal | Rol | Ror | Rcl | Rcr | Zerox
+                | Signx | Encod | Decod | Bith | Bitl | Bitnot | Bitc | Bitnc | Bitz | Bitnz | Getbyte
+                | Setbyte | Getword | Setword | Getnib | Setnib | Rev | Muxc | Muxnc | Muxz | Muxnz
+                | Mul | Muls | Sca | Scas | Ones | Nop | Augs | Augd | Setq | Setq2 | Altd | Alts
+                | Altr | Altb | Alti | Loc | Locktry | Waitx | Cogid | Getqx | Getqy | Qdiv | Qmul
+                | Qfrac | Qsqrt | Qrotate | Qvector | Qlog | Qexp | Rep | Skip | Skipf | Fltl | Flth
+                | Modc | Modz | Modcz | Wrc | Wrnc | Wrz | Wrnz | Rqpin | Pollct1 | Pollct2 | Pollct3
+                | Pollse1 | Pollse2 | Pollse3 | Pollse4 | Jct1 | Jnct1 | Jse1 | Jnse1 | Getptr | Rdfast
+        )
+    }
+
+    /// Ops that observe a pin. Pure — they change nothing — but what they
+    /// read comes from outside the CPU, so a loop containing one is never a
+    /// candidate for fast-forward. See [`PollState::external`].
+    fn reads_pin(op: Op) -> bool {
+        use Op::*;
+        matches!(op, Testp | Testpn | Rdpin | Rqpin)
+    }
+
+    /// Ops that only *write* D (never read its old value).
+    fn is_dest_only(op: Op) -> bool {
+        use Op::*;
+        matches!(
+            op,
+            Mov | Rdlong | Rdbyte | Rdword | Rdlut | Getct | Getqx | Getqy | Rqpin | Rdpin | Neg
+                | Not | Abs | Decod | Encod | Loc | Cogid | Getptr | Ones | Rev | Rflong | Rfbyte
+                | Rfword | Getnib | Getbyte | Getword | Rdfast
+        )
+    }
+
+    fn always_sets_flags(op: Op) -> bool {
+        use Op::*;
+        matches!(op, Cmp | Cmps | Cmpr | Cmpm | Cmpx | Cmpsx | Test | Testn | Testb | Testbn | Testp | Testpn | Locktry)
+    }
+
+    /// After an instruction at `pc`: if it closed a short backward loop, judge
+    /// the iteration and fast-forward a confirmed idle poller.
+    fn note_loop_edge(&mut self, cog: usize, pc: u32) {
+        let new_pc = self.cogs[cog].pc;
+        let step = if pc < HUB_BASE { 1 } else { 4 };
+        let is_back_edge = new_pc <= pc && pc.wrapping_sub(new_pc) <= 64 * step;
+        if !is_back_edge {
+            return;
+        }
+        let p = &mut self.cogs[cog].poll;
+        if p.loop_pc == Some(new_pc) {
+            if !p.side_effect && !p.carried {
+                p.iters = p.iters.saturating_add(1);
+            } else {
+                p.iters = 0;
+            }
+        } else {
+            // A new candidate loop: forget whether the old one read a pin.
+            p.loop_pc = Some(new_pc);
+            p.iters = 0;
+            p.external = false;
+        }
+        p.written_prev = p.written;
+        p.written = [0; 8];
+        p.flags_written_prev = p.flags_written;
+        p.flags_written = false;
+        p.carried = false;
+        p.side_effect = false;
+        let waits_on_pin = p.external;
+        // A pin spin may still be fast-forwarded when nothing is clocking:
+        // the level can then only change on a net wake, which ends the slice
+        // anyway. It must NOT be while a transfer is in flight -- that is the
+        // case where skipping the cog's clock starves the transfer and trips
+        // the driver's own timeout.
+        if p.confirmed()
+            && !self.ff_disabled
+            && !(waits_on_pin && self.pins.external_transfer_busy())
+        {
+            self.fast_forward_poller(cog, waits_on_pin);
+        }
+    }
+
+    /// Advance a confirmed idle poller to the next instant anything it can
+    /// observe might change: the earliest non-polling running cog (which has
+    /// to execute to change hub state or a lock), or — when every running cog
+    /// is polling — the current slice deadline, since only a net wake can
+    /// change a pin level by then. Its skipped iterations were identical.
+    ///
+    /// `waits_on_pin` says the loop read a *pin*, which has a second source:
+    /// the outside world, whose next chance is the slice deadline. Such a wait
+    /// takes whichever of the two bounds comes first, because another cog's
+    /// clock alone does not bound it — see the note at the clamp below.
+    fn fast_forward_poller(&mut self, cog: usize, waits_on_pin: bool) {
+        let mine = self.cogs[cog].clocks;
+        let mut next: Option<u64> = None;
+        for (i, c) in self.cogs.iter().enumerate() {
+            if i != cog && c.running && !c.poll.confirmed() {
+                next = Some(next.map_or(c.clocks, |n: u64| n.min(c.clocks)));
+            }
+        }
+        let mut target = match next {
+            Some(t) => t.saturating_add(1),
+            None => self.ff_deadline_clocks,
+        };
+        // A *pin* is not only changed by another cog — the outside world drives
+        // it too, and the outside world's next chance is the end of this slice.
+        // Another cog's clock is therefore the wrong bound on its own: a peer
+        // parked on a long `WAITX` sits arbitrarily far ahead while still
+        // counting as running, and following it carries this cog past every
+        // instant in between at which a peripheral would have answered. Since
+        // `GETCT` reads the stepped cog's own clock, a driver's receive
+        // timeout then expires having sampled the pin barely at all — which
+        // looks exactly like a peripheral that went quiet. Take whichever
+        // bound comes first. (`ff_deadline_clocks` is `u64::MAX` while
+        // count-stepping, where it correctly means "no bound".)
+        if waits_on_pin {
+            target = target.min(self.ff_deadline_clocks);
+        }
+        if target != u64::MAX && target > mine {
+            self.cogs[cog].clocks = target;
         }
     }
 
@@ -374,16 +639,60 @@ impl<P: PinBus> Machine<P> {
         self.rd_long(0x14)
     }
 
-    /// Virtual microseconds elapsed, derived from the busiest running cog.
+    /// The system counter: what `GETCT` reads.
+    ///
+    /// One counter for the whole chip, **not** per cog. On a P2 the system
+    /// counter is a single free-running register every cog samples, so two
+    /// cogs reading it agree. Returning a cog's own executed-instruction count
+    /// instead makes each cog live in its own timeline: one narrates a log
+    /// line stamped 0.154 s while another is at 1.545 s, a timestamp written
+    /// by one cog reads as the future or the distant past to another, and code
+    /// that diffs two samples decides time ran backwards.
+    ///
+    /// Max over ALL cogs, not just running ones: time must not go backwards
+    /// when a cog stops, and after `cogexit` there may be none running.
+    /// The machine's time: the **frontier** — the clock of the least-advanced
+    /// running cog.
+    ///
+    /// Cogs run concurrently on silicon; here they are interleaved, and the
+    /// interleaving must be by *time*, not by turn. [`Self::step_until`]
+    /// always steps the running cog with the smallest clock, so a cog that
+    /// waits (its clock jumps ahead) is simply not chosen again until the
+    /// others reach it. Taking the *maximum* instead — as this once did —
+    /// let one cog's `waitx`/`waitct1` drag the whole machine's "now" forward
+    /// and freeze every other cog for the length of the wait: a force-gauge
+    /// conversion timeout or an SD `wait_ready` stalled the protocol cog for
+    /// seconds, and the cog manager's `getct` deltas swallowed other cogs'
+    /// jumps and reported phantom scheduling overruns.
+    pub fn system_clocks(&self) -> u64 {
+        self.cogs
+            .iter()
+            .filter(|c| c.running)
+            .map(|c| c.clocks)
+            .min()
+            .or_else(|| self.cogs.iter().map(|c| c.clocks).max())
+            .unwrap_or(0)
+    }
+
+
+    /// The running cog with the smallest clock — the one whose turn it is.
+    fn frontier_cog(&self) -> Option<usize> {
+        let mut best: Option<(usize, u64)> = None;
+        for (i, c) in self.cogs.iter().enumerate() {
+            if c.running && best.is_none_or(|(_, t)| c.clocks < t) {
+                best = Some((i, c.clocks));
+            }
+        }
+        best.map(|(i, _)| i)
+    }
+
+    /// Virtual microseconds elapsed, from the system counter.
     pub fn now_us(&self) -> u64 {
         let hz = match self.clkfreq() {
             0 => 160_000_000,
             f => f,
         } as u64;
-        // Max over ALL cogs, not just running ones: time must not go backwards
-        // when a cog stops, and after `cogexit` there may be none running.
-        let clocks = self.cogs.iter().map(|c| c.clocks).max().unwrap_or(0);
-        clocks * 1_000_000 / hz
+        self.system_clocks() * 1_000_000 / hz
     }
 
     /// Run every running cog until `deadline_us`, or until one traps.
@@ -392,14 +701,42 @@ impl<P: PinBus> Machine<P> {
     /// interleaving is a pure function of the image, which is what makes a run
     /// bit-reproducible.
     pub fn step_until(&mut self, deadline_us: u64) -> Result<(), Trap> {
-        while self.now_us() < deadline_us {
-            if !self.cogs.iter().any(|c| c.running) {
+        let hz = match self.clkfreq() {
+            0 => 160_000_000,
+            f => f,
+        } as u64;
+        let deadline_clocks = deadline_us.saturating_mul(hz) / 1_000_000;
+        self.ff_deadline_clocks = deadline_clocks;
+        // Round-robin over the running cogs, but skip any that have already
+        // reached the deadline — chiefly the idle-poll fast-forwarded ones,
+        // whose clock has jumped to it. Keeping the round-robin *order* and the
+        // per-pass net-yield check (rather than stepping strictly the
+        // least-advanced cog) is what a bit-banged net device depends on: it
+        // needs the driver cog to keep getting turns across a yield, not to be
+        // starved by a peer that is momentarily behind.
+        loop {
+            if self.now_us() >= deadline_us {
                 break;
             }
+            let mut stepped = false;
             for cog in 0..NUM_COGS {
-                if self.cogs[cog].running {
+                // Gate each cog on the *same* microsecond rounding as the
+                // pass-level `now_us()` check, so a cog whose clock lands
+                // exactly on the deadline is "done" both ways. A per-cog gate
+                // in raw clocks rounds differently and can leave the pass
+                // wanting to continue while every cog is individually blocked —
+                // an early return that stalls a single-cog bit-bang boot.
+                let cog_us = self.cogs[cog].clocks.saturating_mul(1_000_000) / hz;
+                if self.cogs[cog].running && cog_us < deadline_us {
                     self.step_one(cog)?;
+                    stepped = true;
+                    if self.pins.take_net_yield() {
+                        return Ok(());
+                    }
                 }
+            }
+            if !stepped {
+                break;
             }
         }
         Ok(())
@@ -407,17 +744,14 @@ impl<P: PinBus> Machine<P> {
 
     /// Execute at most `n` instructions, round-robin. Returns how many ran.
     pub fn step(&mut self, n: u64) -> Result<u64, Trap> {
+        self.ff_deadline_clocks = u64::MAX;
         let mut ran = 0;
         while ran < n {
-            if !self.cogs.iter().any(|c| c.running) {
+            let Some(cog) = self.frontier_cog() else {
                 break;
-            }
-            for cog in 0..NUM_COGS {
-                if self.cogs[cog].running && ran < n {
-                    self.step_one(cog)?;
-                    ran += 1;
-                }
-            }
+            };
+            self.step_one(cog)?;
+            ran += 1;
         }
         Ok(ran)
     }
@@ -492,9 +826,21 @@ impl<P: PinBus> Machine<P> {
         }
     }
 
+    /// WC on logic ops: C is the parity of the result (P2-EVAL andn_wc / ones_*).
+    fn wc_parity(&mut self, cog: usize, ins: &Decoded, result: u32) {
+        if ins.c && !Self::l_at_bit19(ins.form) {
+            self.cogs[cog].c = result.count_ones() & 1 != 0;
+        }
+    }
+
     fn step_one(&mut self, cog: usize) -> Result<(), Trap> {
+        self.cogs[cog].instructions += 1;
         let pc = self.cogs[cog].pc;
-        if pc as usize >= HUB_BYTES {
+        // The PC is 20 bits and hub addressing wraps: `$FC000` executes the
+        // bytes at `$7C000`, which is precisely how the chip runs its boot
+        // ROM — 16 KB copied to the top of RAM, COG 0 launched at `$FC000`.
+        // Only a PC outside the 20-bit space is a trap.
+        if pc >= 1 << 20 {
             self.cogs[cog].running = false;
             return Err(Trap::PcOutOfRange { cog: cog as u8, pc });
         }
@@ -534,10 +880,17 @@ impl<P: PinBus> Machine<P> {
         let s_val = if ins.i {
             let base = ins.s as u32;
             match self.cogs[cog].aug_s.take() {
-                Some(a) => a | base,
-                None => base,
+                Some(a) => {
+                    self.cogs[cog].aug_s_active = true;
+                    a | base
+                }
+                None => {
+                    self.cogs[cog].aug_s_active = false;
+                    base
+                }
             }
         } else {
+            self.cogs[cog].aug_s_active = false;
             self.reg(cog, ins.s)
         };
         let d_val = if Self::d_is_literal(&ins) {
@@ -550,8 +903,42 @@ impl<P: PinBus> Machine<P> {
             self.reg(cog, ins.d)
         };
 
+        // Idle-poll accounting: which registers/flags this instruction READS
+        // before writing them (loop-carried state), and whether it is pure.
+        {
+            let p = &mut self.cogs[cog].poll;
+            if !ins.i {
+                p.note_read(ins.s);
+            }
+            if !Self::d_is_literal(&ins) && !Self::is_dest_only(ins.op) {
+                p.note_read(ins.d);
+            }
+            if ins.cond != 0xF && ins.cond != 0 && !p.flags_written && p.flags_written_prev {
+                p.carried = true;
+            }
+            if !Self::is_pure(ins.op) {
+                p.side_effect = true;
+            }
+            // Reading a pin makes this loop's exit depend on the outside
+            // world. A driver spinning on `testp` for a smart-pin transfer is
+            // waiting on edges that only the peripheral schedule produces, and
+            // it times itself out with `_cnt()` deltas: skip the cog's clock
+            // ahead and the timeout expires while the transfer has barely
+            // moved. That is how the SD driver came to report a read error
+            // without the card ever seeing a write command.
+            // Only the S operand is checked for `INA`/`INB`: an unused D field
+            // is filled with `$1FF`, which is `INB`, so testing D would call
+            // every `jmp #imm` an external read.
+            if Self::reads_pin(ins.op) || (!ins.i && matches!(ins.s & 0x1FF, REG_INA | REG_INB)) {
+                p.external = true;
+            }
+        }
         self.cogs[cog].pc = np;
         let advanced = self.execute(cog, &ins, word, pc, s_val, d_val)?;
+        if ins.c || ins.z || Self::always_sets_flags(ins.op) {
+            self.cogs[cog].poll.flags_written = true;
+        }
+        self.note_loop_edge(cog, pc);
 
         self.clear_prefixes(cog, &ins);
 
@@ -570,8 +957,12 @@ impl<P: PinBus> Machine<P> {
     /// a later instruction — a left-over SETQ eaten by a QDIV turns a 32-bit
     /// divide into a 64-bit one with a garbage high word.
     fn clear_prefixes(&mut self, cog: usize, ins: &Decoded) {
-        if !matches!(ins.op, Op::Setq | Op::Setq2) {
+        // Q survives an intervening AUG prefix: `setq / augs / rdlong ##addr`
+        // is exactly how the boot ROM copies its cog image into place, and
+        // clearing Q at the AUGS reduced that block copy to a single long.
+        if !matches!(ins.op, Op::Setq | Op::Setq2 | Op::Augs | Op::Augd) {
             self.cogs[cog].setq = None;
+            self.cogs[cog].setq2 = None;
         }
         if !matches!(ins.op, Op::Augs) {
             self.cogs[cog].aug_s = None;
@@ -612,7 +1003,8 @@ impl<P: PinBus> Machine<P> {
     /// `elements` is the number of items a `SETQ` block transfer will move: a
     /// PTR expression advances by the *whole* block, not one item.
     fn ptr_operand(&mut self, cog: usize, ins: &Decoded, s: u32, scale: i32, elements: u32) -> u32 {
-        if !ins.i || s & 0x100 == 0 {
+        // An augmented S is a 32-bit literal address, never a PTR expression.
+        if !ins.i || s & 0x100 == 0 || self.cogs[cog].aug_s_active {
             return s;
         }
         let reg = if s & 0x80 != 0 { REG_PTRB } else { REG_PTRA };
@@ -702,6 +1094,12 @@ impl<P: PinBus> Machine<P> {
         fresh.regs[REG_PTRA as usize] = ptra;
         fresh.regs[REG_PTRB as usize] = s;
         fresh.running = true;
+        fresh.poll.reset();
+        // A cog starts *now*: it inherits the starter's clock, so `now_us()`
+        // (the minimum over running cogs) does not collapse to zero the instant
+        // a cog is launched mid-run, and the new cog joins the time frontier
+        // instead of burning a catch-up burst.
+        fresh.clocks = self.cogs[cog].clocks;
         fresh.clocks = self.cogs[cog].clocks;
         self.cogs[target] = fresh;
 
@@ -766,21 +1164,25 @@ impl<P: PinBus> Machine<P> {
                 let r = d & s;
                 self.set_reg(cog, ins.d, r);
                 self.wz(cog, ins, r);
+                self.wc_parity(cog, ins, r);
             }
             Andn => {
                 let r = d & !s;
                 self.set_reg(cog, ins.d, r);
                 self.wz(cog, ins, r);
+                self.wc_parity(cog, ins, r);
             }
             Or => {
                 let r = d | s;
                 self.set_reg(cog, ins.d, r);
                 self.wz(cog, ins, r);
+                self.wc_parity(cog, ins, r);
             }
             Xor => {
                 let r = d ^ s;
                 self.set_reg(cog, ins.d, r);
                 self.wz(cog, ins, r);
+                self.wc_parity(cog, ins, r);
             }
             Test => {
                 let r = d & s;
@@ -938,6 +1340,30 @@ impl<P: PinBus> Machine<P> {
                     self.cogs[cog].c = probe & 1 != 0;
                 }
             }
+            Rcl | Rcr => {
+                // Rotate *carry* through D: the vacated bits fill with copies
+                // of C, and C takes the last bit shifted out. The boot ROM
+                // leans on `RCL x, #1` to assemble bits sampled off a pin —
+                // its RNG seed and its SPI receive both come in this way.
+                let n = s & 31;
+                let c = self.cogs[cog].c;
+                let fill = if c && n > 0 { (1u64 << n) - 1 } else { 0 } as u32;
+                let (r, out) = if ins.op == Rcl {
+                    let r = d.wrapping_shl(n) | fill;
+                    let out = if n == 0 { c } else { (d >> (32 - n)) & 1 != 0 };
+                    (r, out)
+                } else {
+                    let r = d.wrapping_shr(n) | fill.wrapping_shl(32u32.wrapping_sub(n) & 31);
+                    let r = if n == 0 { d } else { r };
+                    let out = if n == 0 { c } else { (d >> (n - 1)) & 1 != 0 };
+                    (r, out)
+                };
+                self.set_reg(cog, ins.d, r);
+                self.wz(cog, ins, r);
+                if ins.c {
+                    self.cogs[cog].c = out;
+                }
+            }
             Sar => {
                 let n = s & 31;
                 let r = ((d as i32) >> n) as u32;
@@ -996,6 +1422,11 @@ impl<P: PinBus> Machine<P> {
                 let r = s.count_ones();
                 self.set_reg(cog, ins.d, r);
                 self.wz(cog, ins, r);
+                // WC: C is the LSB of the count (odd population of S), not
+                // the parity of that 6-bit integer's bits.
+                if ins.c {
+                    self.cogs[cog].c = r & 1 != 0;
+                }
             }
             // GETNIB/GETBYTE/GETWORD take field N of S into D, and N lives
             // in the instruction, not in an operand: the `ds*get` forms encode
@@ -1066,8 +1497,14 @@ impl<P: PinBus> Machine<P> {
                 self.set_reg(cog, ins.d, r);
                 self.wz(cog, ins, r);
             }
-            Muxc => {
-                let m = if self.cogs[cog].c { u32::MAX } else { 0 };
+            Muxc | Muxnc | Muxz | Muxnz => {
+                let bit = match ins.op {
+                    Muxc => self.cogs[cog].c,
+                    Muxnc => !self.cogs[cog].c,
+                    Muxz => self.cogs[cog].z,
+                    _ => !self.cogs[cog].z,
+                };
+                let m = if bit { u32::MAX } else { 0 };
                 let r = (d & !s) | (m & s);
                 self.set_reg(cog, ins.d, r);
                 self.wz(cog, ins, r);
@@ -1075,12 +1512,43 @@ impl<P: PinBus> Machine<P> {
                     self.cogs[cog].c = r.count_ones() & 1 != 0;
                 }
             }
-            Bith | Bitl | Bitnot => {
-                let bit = 1u32 << (s & 31);
+            Bith | Bitl | Bitnot | Bitc | Bitnc | Bitz | Bitnz => {
+                // Not one bit: a SPAN. S[4:0] is the base bit and S[9:5] a
+                // run length minus one, wrapping above 31 — the assembler
+                // spells it `ADDBITS`. flexspin leans on it hard: the method
+                // pointer tag `obj | (index << 20)` compiles to
+                // `BITH obj, #20 ADDBITS 4` when the index is 31, and a
+                // single-bit implementation quietly turns index 31 into
+                // index 1. The visible failure was three layers up: `mount()`
+                // dispatched into the cog manager's task table instead of the
+                // filesystem's `v_init`, and the SD card refused to mount on
+                // an image the card model served perfectly.
+                let base = s & 31;
+                let count = ((s >> 5) & 31) + 1;
+                let mut mask = 0u32;
+                for i in 0..count {
+                    mask |= 1u32 << ((base + i) & 31);
+                }
                 let r = match ins.op {
-                    Bith => d | bit,
-                    Bitl => d & !bit,
-                    _ => d ^ bit,
+                    Bith => d | mask,
+                    Bitl => d & !mask,
+                    Bitnot => d ^ mask,
+                    // Write a flag into the span — `bitz flags,#spi_ok` is
+                    // how the ROM records that the flash checksum verified.
+                    Bitc | Bitnc => {
+                        if self.cogs[cog].c == (ins.op == Bitc) {
+                            d | mask
+                        } else {
+                            d & !mask
+                        }
+                    }
+                    _ => {
+                        if self.cogs[cog].z == (ins.op == Bitz) {
+                            d | mask
+                        } else {
+                            d & !mask
+                        }
+                    }
                 };
                 self.set_reg(cog, ins.d, r);
             }
@@ -1121,6 +1589,17 @@ impl<P: PinBus> Machine<P> {
                 let s = self.ptr_operand(cog, ins, s, scale, elements);
                 self.cogs[cog].clocks += CLOCKS_HUB_ACCESS;
                 if ins.op == Rdlong {
+                    if let Some(count) = self.cogs[cog].setq2.take() {
+                        // Block-fill the LUT.
+                        let n = count.min(LUT_LONGS as u32 - 1);
+                        self.check_hub(cog, s)?;
+                        for k in 0..=n {
+                            let v = self.rd_long(s.wrapping_add(k.wrapping_mul(4)));
+                            let at = (ins.d as usize + k as usize) & (LUT_LONGS - 1);
+                            self.cogs[cog].lut[at] = v;
+                        }
+                        return Ok(false);
+                    }
                     if let Some(count) = self.cogs[cog].setq.take() {
                         // A block transfer cannot exceed the register file.
                         let n = count.min(COG_LONGS as u32 - 1);
@@ -1167,7 +1646,15 @@ impl<P: PinBus> Machine<P> {
                         let n = count.min(COG_LONGS as u32 - 1);
                         self.check_hub(cog, s)?;
                         for k in 0..=n {
-                            let v = self.reg(cog, ins.d.wrapping_add(k as u16));
+                            // `SETQ n` + `WRLONG #imm, addr` is a block *fill*:
+                            // the immediate is written to every long. flexcc
+                            // emits exactly that for `memset(p, 0, len)`
+                            // (`setq #len/4-1` / `wrlong #0, p`), and the
+                            // firmware's zeroed structs prove the silicon
+                            // fills. Copying from cog register 0 upward
+                            // instead sprayed FCACHE contents over every
+                            // memset-initialised struct at boot.
+                            let v = if ins.l { d } else { self.reg(cog, ins.d.wrapping_add(k as u16)) };
                             let a = s.wrapping_add(k.wrapping_mul(4));
                             self.note_write(cog, a, v, 4);
                             self.wr_long(a, v);
@@ -1192,21 +1679,6 @@ impl<P: PinBus> Machine<P> {
                 }
             }
 
-            // ---- hub write FIFO
-            //
-            // `WRFAST`/`WFLONG` appear only inside `builtin_longfill_`. Modelled
-            // as a plain write cursor with no FIFO depth: a partial depth model
-            // would be worse than none, and `RDFAST`/`RF*` are absent and trap.
-            Wrfast => {
-                self.cogs[cog].fifo = s;
-            }
-            Wflong => {
-                let addr = self.cogs[cog].fifo;
-                self.note_write(cog, addr, d, 4);
-                self.wr_long(addr, d);
-                self.cogs[cog].fifo = addr.wrapping_add(4);
-            }
-
             // ---- prefixes
             Augs => {
                 self.cogs[cog].aug_s = Some(ins.imm << 9);
@@ -1214,9 +1686,29 @@ impl<P: PinBus> Machine<P> {
             Augd => {
                 self.cogs[cog].aug_d = Some(ins.imm << 9);
             }
-            Setq | Setq2 => {
+            Setq => {
                 // The operand is D; S holds the sub-opcode selector ($28).
                 self.cogs[cog].setq = Some(d);
+            }
+            Setq2 => {
+                // Same prefix shape, different destination: a SETQ2 block
+                // read fills LUT RAM, not the register file. Folding the two
+                // together let the boot ROM's LUT load overwrite cog
+                // registers $010.. — the very code it had just copied there.
+                self.cogs[cog].setq2 = Some(d);
+            }
+
+            Setd | Sets => {
+                // Self-modifying cog code: patch the D or S field of the
+                // instruction held in register D. The ROM builds its pin-test
+                // and table-fill loops this way.
+                let cur = self.reg(cog, ins.d);
+                let r = if ins.op == Setd {
+                    (cur & !(0x1FF << 9)) | ((s & 0x1FF) << 9)
+                } else {
+                    (cur & !0x1FF) | (s & 0x1FF)
+                };
+                self.set_reg(cog, ins.d, r);
             }
 
             // ---- field substitution
@@ -1423,10 +1915,10 @@ impl<P: PinBus> Machine<P> {
                     }
                 }
                 None => {
-                    self.set_reg(cog, ins.d, 0);
-                    if ins.c {
-                        self.cogs[cog].c = true;
-                    }
+                    // P2-EVAL `_locknew` after 16 allocations writes 15 into D
+                    // (the last valid id), not 0 and not "leave D unchanged"
+                    // (the extra dest is a different register, starts at 0).
+                    self.set_reg(cog, ins.d, (NUM_LOCKS - 1) as u32);
                 }
             },
             Lockret => {
@@ -1462,6 +1954,8 @@ impl<P: PinBus> Machine<P> {
                 // WC selects the HIGH half of the 64-bit cycle counter.
                 // `__system___getus` reads `getct x wc` then `getct y` to
                 // assemble a 64-bit time.
+                // The cog being stepped IS the frontier, so its own clock is
+                // the machine's time — and every cog reads a consistent one.
                 let ct = self.cogs[cog].clocks;
                 let v = if ins.c { (ct >> 32) as u32 } else { ct as u32 };
                 self.set_reg(cog, ins.d, v);
@@ -1471,6 +1965,7 @@ impl<P: PinBus> Machine<P> {
             }
             Waitct1 => {
                 let target = self.cogs[cog].ct1;
+                // Against the same counter `GETCT` reads: the cog's own clock.
                 let now = self.cogs[cog].clocks as u32;
                 let delta = target.wrapping_sub(now);
                 if (delta as i32) > 0 {
@@ -1488,6 +1983,113 @@ impl<P: PinBus> Machine<P> {
                 // reads hub $14 on demand instead.
             }
 
+            // ---- conditional jumps on events
+            //
+            // The two families the boot ROM uses:
+            //   J{n}ct1/2/3 — timer events, which are REAL: `addct1` sets a
+            //     deadline and the serial timeout loops `jct1` on it. Modelled
+            //     against the same counter GETCT reads.
+            //   everything else (SE1-4, INT, ATN, PAT, FBW, XMT/XFI/XRO/XRL,
+            //     QMT) — event sources nothing in this model raises. The
+            //     "jump if event" form never jumps; the "jump if not" form
+            //     always does.
+            Jct1 | Jct2 | Jct3 => {
+                let now = self.system_clocks() as u32;
+                let passed = (now.wrapping_sub(self.cogs[cog].ct1) as i32) >= 0;
+                if passed {
+                    self.cogs[cog].pc = self.rel9_target(ins, s, pc);
+                    branched = true;
+                }
+            }
+            Jnct1 | Jnct2 | Jnct3 => {
+                let now = self.system_clocks() as u32;
+                let passed = (now.wrapping_sub(self.cogs[cog].ct1) as i32) >= 0;
+                if !passed {
+                    self.cogs[cog].pc = self.rel9_target(ins, s, pc);
+                    branched = true;
+                }
+            }
+            Jint | Jse1 | Jse2 | Jse3 | Jse4 | Jpat | Jfbw | Jxmt | Jxfi | Jxro | Jxrl | Jatn
+            | Jqmt => {
+                // No such event ever fires here; never jump. (JQMT is the one
+                // to watch: it means "CORDIC result waiting", and the boot ROM
+                // does not use the CORDIC, so idle is correct.)
+            }
+            Jnint | Jnse1 | Jnse2 | Jnse3 | Jnse4 | Jnpat | Jnfbw | Jnxmt | Jnxfi | Jnxro
+            | Jnxrl | Jnatn | Jnqmt => {
+                self.cogs[cog].pc = self.rel9_target(ins, s, pc);
+                branched = true;
+            }
+
+            // ---- selectable events
+            Setse1 | Setse2 | Setse3 | Setse4 => {
+                // Configure an event source. This model does not raise the
+                // events, so configuration is inert; the consumers below
+                // report "never happened", which is the correct answer when
+                // nothing on the bus has fired one.
+            }
+            Pollse1 | Pollse2 | Pollse3 | Pollse4 => {
+                // Poll-and-clear: no event pending, so C/Z report not-set.
+                if ins.c {
+                    self.cogs[cog].c = false;
+                }
+                if ins.z {
+                    self.cogs[cog].z = false;
+                }
+            }
+
+            // ---- interrupts
+            Setint1 | Setint2 | Setint3 => {
+                // Accepted and inert. Nothing in this model raises an
+                // interrupt, so arming one changes nothing — the boot ROM's
+                // autobaud ISR simply never fires, exactly as it never fires
+                // on hardware when no host is wired to the serial pins.
+            }
+
+            // ---- hub FIFO
+            Wrfast | Rdfast => {
+                // D is the block-wrap count (0 = unlimited); the ROM and the
+                // loaders only ever pass 0, so only the start address matters.
+                self.cogs[cog].fifo_addr = s;
+            }
+            Wfbyte => {
+                let a = self.cogs[cog].fifo_addr;
+                self.wr_byte(a, d);
+                self.cogs[cog].fifo_addr = a.wrapping_add(1);
+            }
+            Wfword => {
+                let a = self.cogs[cog].fifo_addr;
+                self.wr_byte(a, d & 0xFF);
+                self.wr_byte(a.wrapping_add(1), (d >> 8) & 0xFF);
+                self.cogs[cog].fifo_addr = a.wrapping_add(2);
+            }
+            Wflong => {
+                let a = self.cogs[cog].fifo_addr;
+                self.note_write(cog, a, d, 4);
+                self.wr_long(a, d);
+                self.cogs[cog].fifo_addr = a.wrapping_add(4);
+            }
+            Rfbyte | Rfword | Rflong => {
+                let a = self.cogs[cog].fifo_addr;
+                let (v, step) = match ins.op {
+                    Rfbyte => (self.rd_byte(a), 1),
+                    Rfword => (self.rd_byte(a) | (self.rd_byte(a.wrapping_add(1)) << 8), 2),
+                    _ => (self.rd_long(a), 4),
+                };
+                self.cogs[cog].fifo_addr = a.wrapping_add(step);
+                self.set_reg(cog, ins.d, v);
+                self.wz(cog, ins, v);
+                if ins.c {
+                    // C takes the top bit of the value at its size.
+                    let top = match ins.op {
+                        Rfbyte => 7,
+                        Rfword => 15,
+                        _ => 31,
+                    };
+                    self.cogs[cog].c = (v >> top) & 1 != 0;
+                }
+            }
+
             // ---- pins
             Wrpin => self.pins.wrpin((s & 63) as u8, d),
             Wxpin => self.pins.wxpin((s & 63) as u8, d),
@@ -1499,7 +2101,12 @@ impl<P: PinBus> Machine<P> {
                     self.cogs[cog].c = busy;
                 }
             }
-            Akpin => self.pins.akpin((s & 63) as u8),
+            Akpin => {
+                if std::env::var("P2ISS_SPI_DEBUG").is_ok() {
+                    eprintln!("[cog] AKPIN pin={}", s & 63);
+                }
+                self.pins.akpin((s & 63) as u8)
+            }
             Testp => {
                 let v = self.pins.testp((d & 63) as u8);
                 if ins.c {
@@ -1509,7 +2116,8 @@ impl<P: PinBus> Machine<P> {
                     self.cogs[cog].z = v;
                 }
             }
-            Dirl | Dirh | Drvl | Drvh | Fltl | Flth | Outl | Outh => {
+            Dirl | Dirh | Drvl | Drvh | Fltl | Flth | Outl | Outh | Drvc | Drvnc | Drvz | Drvnz
+            | Drvnot => {
                 let pin = (d & 63) as u8;
                 let bit = 1u32 << (pin & 31);
                 let (dreg, oreg) = if pin < 32 {
@@ -1538,10 +2146,46 @@ impl<P: PinBus> Machine<P> {
                         out |= bit;
                     }
                     Outl => out &= !bit,
-                    _ => out |= bit,
+                    Outh => out |= bit,
+                    // Drive to a flag: the ROM's `spi_cmd` shifts the command
+                    // bit into C and `drvc`s it onto the data line.
+                    Drvc | Drvnc => {
+                        let level = self.cogs[cog].c == (ins.op == Drvc);
+                        dir |= bit;
+                        if level {
+                            out |= bit;
+                        } else {
+                            out &= !bit;
+                        }
+                    }
+                    Drvz | Drvnz => {
+                        let level = self.cogs[cog].z == (ins.op == Drvz);
+                        dir |= bit;
+                        if level {
+                            out |= bit;
+                        } else {
+                            out &= !bit;
+                        }
+                    }
+                    _ => {
+                        // DRVNOT: toggle.
+                        dir |= bit;
+                        out ^= bit;
+                    }
                 }
-                self.set_reg(cog, dreg, dir);
-                self.set_reg(cog, oreg, out);
+                // One instruction, one pin change. Each `set_reg` on a
+                // `DIR`/`OUT` register publishes to the pins, so writing them
+                // in a fixed order makes `DRVH`/`DRVL` glitch: the pin is
+                // briefly driven with the *previous* level. Commit the edge
+                // that releases the pad first and the one that drives it last,
+                // so the intermediate state is never a wrong drive.
+                if dir & bit != 0 {
+                    self.set_reg(cog, oreg, out);
+                    self.set_reg(cog, dreg, dir);
+                } else {
+                    self.set_reg(cog, dreg, dir);
+                    self.set_reg(cog, oreg, out);
+                }
             }
 
             _ => {

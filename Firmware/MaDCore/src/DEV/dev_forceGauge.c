@@ -14,6 +14,33 @@
  * Constants
  **********************************************************************/
 
+/* How long a healthy read may take before the link counts as down.
+ *
+ * RDATA is answered immediately with three framed bytes, so at 115'200 baud a
+ * working device replies in about 350 us; this is the "the ADC has gone quiet"
+ * threshold, not a normal wait, and 20 ms is already ~57x the expected time.
+ *
+ * It used to be a full second, which was worse in both directions. `ready` is
+ * only set after a read *returns*, so a read that is going to fail holds the
+ * gauge un-ready for the whole window: a blip the driver recovered from in
+ * 32 ms still looked like a second of silence to app_control, which faulted
+ * the machine and killed the running test. And a genuinely dead ADC went
+ * unreported for that same second, during which the machine kept moving on a
+ * stale force reading. Detecting in 20 ms fixes both. */
+#define DEV_FORCEGAUGE_READ_TIMEOUT_US (20000U)
+
+/* How long each ERROR-state retry may take.
+ *
+ * This is deliberately much shorter than the healthy-read timeout. A retry
+ * either gets its reply straight away or the link is still down, so waiting
+ * longer buys nothing and costs recovery latency directly: at the old 100 ms
+ * a transient that cleared on the third attempt held the gauge un-ready for
+ * 201 ms, long enough for app_control to declare a communication fault, drop
+ * the machine to DISABLED, and abort a running test. Four retries at this
+ * value stay inside that fault window, so a link that comes back is invisible
+ * to the machine while one that stays down still faults. */
+#define DEV_FORCEGAUGE_RETRY_TIMEOUT_US (10000U)
+
 /*********************************************************************
  * Macros
  **********************************************************************/
@@ -140,7 +167,7 @@ static void dev_forceGauge_private_runAction(dev_forceGauge_channel_E channel)
         dev_forceGauge_data.channel[channel].output.ready = false;
         break;
     case DEV_FORCEGAUGE_STATE_RUNNING:
-        dev_forceGauge_data.channel[channel].input.responding = IO_ADS122U04_receiveConversion(dev_forceGauge_channelConfig[channel].adcChannel, &dev_forceGauge_data.channel[channel].input.signal_nVV, 1000000);
+        dev_forceGauge_data.channel[channel].input.responding = IO_ADS122U04_receiveConversion(dev_forceGauge_channelConfig[channel].adcChannel, &dev_forceGauge_data.channel[channel].input.signal_nVV, DEV_FORCEGAUGE_READ_TIMEOUT_US);
         {
             /* mN = (signal - zeroBalance)[nV/V] * capacity[mN] / sensitivity[nV/V].
              * All three constants are intrinsic to the load cell, so this holds
@@ -152,12 +179,22 @@ static void dev_forceGauge_private_runAction(dev_forceGauge_channel_E channel)
                 normalizedSignal, dev_forceGauge_data.channel[channel].nvram.capacity_mN,
                 dev_forceGauge_data.channel[channel].nvram.sensitivity_nVV);
         }
+#ifdef DEV_FORCEGAUGE_TRACE_SAMPLES
+        /* Per-sample tracing, off by default. This runs on a free-running cog,
+         * so the line lands at roughly the ADC's sample rate, and every DEBUG_*
+         * serializes on the single global stdio lock that every other cog also
+         * prints through. Measured on the ISS it was 99.7% of all firmware
+         * debug output: enough to saturate the debug link, drop unrelated log
+         * lines, and dominate the simulator's cost. The sample stream the
+         * product actually consumes goes out over the protocol, not here.
+         * Define this to get it back while bringing up a load cell. */
         DEBUG_INFO("Force Gauge %d: %d, %d, %d, %d\n", channel, dev_forceGauge_data.channel[channel].output.force, dev_forceGauge_data.channel[channel].input.signal_nVV, dev_forceGauge_data.channel[channel].nvram.zeroBalance_nVV, dev_forceGauge_data.channel[channel].nvram.sensitivity_nVV);
+#endif
         dev_forceGauge_data.channel[channel].output.index++;
         dev_forceGauge_data.channel[channel].output.ready = true;
         break;
     case DEV_FORCEGAUGE_STATE_ERROR:
-        dev_forceGauge_data.channel[channel].input.responding = IO_ADS122U04_receiveConversion(dev_forceGauge_channelConfig[channel].adcChannel, &dev_forceGauge_data.channel[channel].input.signal_nVV, 100000); // TODO this is huge, needed for sim but maybe not hardware
+        dev_forceGauge_data.channel[channel].input.responding = IO_ADS122U04_receiveConversion(dev_forceGauge_channelConfig[channel].adcChannel, &dev_forceGauge_data.channel[channel].input.signal_nVV, DEV_FORCEGAUGE_RETRY_TIMEOUT_US);
         dev_forceGauge_data.channel[channel].output.ready = false;
         break;
     default:

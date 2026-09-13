@@ -103,7 +103,7 @@ impl PinBus for SmartPins {
         self.out[1]
     }
 
-    fn dir_out_changed(&mut self, reg: u16, value: u32) {
+    fn dir_out_changed(&mut self, _cog: usize, reg: u16, value: u32) {
         // $1FA/$1FB are DIRA/DIRB, $1FC/$1FD are OUTA/OUTB.
         match reg {
             0x1FA => self.dir[0] = value,

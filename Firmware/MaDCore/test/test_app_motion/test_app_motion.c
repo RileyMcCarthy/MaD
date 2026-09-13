@@ -693,6 +693,14 @@ void test_waveform_streams_cosine_velocity_and_completes(void)
             prevV = v;
             havePrev = true;
         }
+        /* Integrate the commanded rate into the encoder double, so the carriage
+         * is a carriage and not a fixture bolted at zero. The waveform anchors
+         * its streamed rate to the trajectory's own position, so a stationary
+         * encoder makes the position error grow without bound and the
+         * correction term swamps the thing this test measures: the analytic
+         * rate itself. A plain forward-Euler integral is enough -- this test is
+         * about the commanded waveform, not about servo dynamics. */
+        d_steps += (int32_t)(((int64_t)d_lastSetVelocity * 5000LL) / 1000000LL);
     }
 
     /* Velocity reaches ±peak (2πfA) — proves amplitude × frequency. */
@@ -769,6 +777,9 @@ static void run_waveform_capture(int32_t ampUm, uint32_t freqMilliHz, uint32_t c
             prevV = v;
             havePrev = true;
         }
+        /* Same reason as the fixed-step capture above: the carriage has to move,
+         * or the waveform's position anchor sees a runaway error. */
+        d_steps += (int32_t)(((int64_t)d_lastSetVelocity * (int64_t)step) / 1000000LL);
     }
     *outMaxV = maxV;
     *outMinV = minV;
@@ -788,6 +799,134 @@ static void run_waveform_capture(int32_t ampUm, uint32_t freqMilliHz, uint32_t c
 /* Sweep several waveforms: the streamed peak velocity must equal 2π·f·A and the
  * direction must reverse ~twice per cycle, for every amplitude/frequency/cycle
  * combination — proving the firmware follows f'(t) for arbitrary waveforms. */
+/* A waveform must END when its commanded cycles are done.
+ *
+ * The duration used to be computed as
+ *     ((uint64_t)cycles * 1000000000ULL) / (uint64_t)freqMilliHz
+ * which FlexC miscompiles on the P2: the low word is right and the HIGH word is
+ * garbage, so the value came out ~3.6e16 microseconds. `elapsed >= duration`
+ * was then never true, the wave never stopped, the closing move was never
+ * issued, and the test hung forever. Clang computes it correctly, so every unit
+ * test and the whole native bench passed while the real machine hung.
+ *
+ * This test cannot catch the miscompilation itself -- it runs under clang. What
+ * it pins is that the duration is derived with 32-bit arithmetic that no longer
+ * depends on 64-bit multiply/divide at all, and that the move completes at the
+ * commanded time rather than running on. */
+void test_waveform_ends_after_its_commanded_cycles(void)
+{
+    motion_driveToWaiting();
+    d_setVelocityCount = 0U;
+    d_steps = 0;
+    global_timeus = 0U;
+
+    const uint32_t cycles = 2U;
+    const uint32_t fMilli = 1000U;              /* 1 Hz -> 2 s of waveform */
+    const uint32_t expectedDurationUs = 2000000U;
+
+    app_motion_move_t wf = make_move((uint8_t)G123_WAVEFORM, 5000, (int32_t)fMilli, cycles);
+    TEST_ASSERT_TRUE(app_motion_addMove(&wf));
+    app_motion_run();
+
+    /* Well before the end it must still be streaming, not settling. */
+    for (uint32_t t = 0U; t < (expectedDurationUs - 100000U); t += 1000U)
+    {
+        global_timeus = t;
+        app_motion_run();
+        d_steps += (int32_t)(((int64_t)d_lastSetVelocity * 1000LL) / 1000000LL);
+    }
+    TEST_ASSERT_FALSE_MESSAGE(app_motion_isIdle(),
+                              "the waveform ended before its commanded cycles were done");
+
+    /* Past the duration it must settle and then complete on arrival. A wave
+     * whose duration overflowed would simply keep streaming here forever. */
+    d_atTarget = true;
+    for (uint32_t t = expectedDurationUs; t < (expectedDurationUs + 50000U); t += 1000U)
+    {
+        global_timeus = t;
+        app_motion_run();
+        if (app_motion_isIdle()) { break; }
+    }
+    TEST_ASSERT_TRUE_MESSAGE(app_motion_isIdle(),
+                             "the waveform did not finish after its commanded cycles");
+}
+
+/* A waveform must oscillate about the centre it was given, even when the drive
+ * cannot deliver the rate it is asked for instantly.
+ *
+ * This is the defect this test exists for. A position sinusoid started from its
+ * mean demands v(0) = 2*pi*f*A from rest, which no accel-limited machine can
+ * produce. Streaming the analytic rate alone, the travel lost while the drive
+ * ramps in -- Vpeak^2/(2*accel) -- is never recovered, so the ENTIRE
+ * oscillation sits that far below the commanded centre for its whole duration.
+ * On the bench that was 0.82 mm, enough to drive the bottom of a 5 mm stroke
+ * through machine zero and into the lower limit switch, where the closing move
+ * could never arrive and the test hung.
+ *
+ * The plant below is deliberately accel-limited, so the ramp-in deficit is real
+ * and large: peak 3141 steps/s against 50000 steps/s^2 loses ~99 steps, a fifth
+ * of the 500-step amplitude. The assertion is on the MIDPOINT of the envelope
+ * over a late cycle, which is exactly the quantity a DC offset moves and the
+ * quantity a mean-centred sine fit cannot see. */
+void test_waveform_holds_its_centre_against_an_accel_limited_plant(void)
+{
+    motion_driveToWaiting();
+    d_setVelocityCount = 0U;
+    d_steps = 0;
+    global_timeus = 0U;
+
+    const int32_t ampUm = 5000;      /* 5 mm -> 500 steps at stepsPerMM = 100 */
+    const uint32_t fMilli = 1000U;   /* 1 Hz */
+    const uint32_t cycles = 3U;
+    const int32_t ampSteps = 500;
+    const int32_t centreSteps = 0;   /* the carriage starts at zero */
+
+    app_motion_move_t wf = make_move((uint8_t)G123_WAVEFORM, ampUm, (int32_t)fMilli, cycles);
+    TEST_ASSERT_TRUE(app_motion_addMove(&wf));
+    app_motion_run(); /* WAITING -> MOVING */
+
+    /* Accel-limited plant: the commanded rate is approached, not adopted. */
+    const uint32_t tickUs = 1000U;
+    const int32_t maxAccelStepsPerS2 = 50000;
+    const int32_t maxDv = (int32_t)(((int64_t)maxAccelStepsPerS2 * (int64_t)tickUs) / 1000000LL);
+    int32_t plantVel = 0;
+
+    const uint32_t durationUs = (cycles * 1000000U) / (fMilli / 1000U == 0U ? 1U : (fMilli / 1000U));
+    const uint32_t lastCycleFromUs = durationUs - 1000000U; /* the final 1 Hz cycle */
+    int32_t lateMin = INT32_MAX;
+    int32_t lateMax = INT32_MIN;
+
+    for (uint32_t t = 0U; t < durationUs; t += tickUs)
+    {
+        global_timeus = t;
+        app_motion_run();
+
+        int32_t dv = d_lastSetVelocity - plantVel;
+        if (dv > maxDv) { dv = maxDv; }
+        if (dv < -maxDv) { dv = -maxDv; }
+        plantVel += dv;
+        d_steps += (int32_t)(((int64_t)plantVel * (int64_t)tickUs) / 1000000LL);
+
+        if (t >= lastCycleFromUs)
+        {
+            if (d_steps < lateMin) { lateMin = d_steps; }
+            if (d_steps > lateMax) { lateMax = d_steps; }
+        }
+    }
+
+    /* The envelope must still be centred where it was told to be. Without the
+     * position anchor the midpoint sits a full ramp-in deficit low. */
+    const int32_t midpoint = (lateMin + lateMax) / 2;
+    const int32_t tol = ampSteps / 8; /* 12.5% of amplitude */
+    TEST_ASSERT_INT_WITHIN_MESSAGE(
+        tol, centreSteps, midpoint,
+        "the waveform drifted off the centre it was commanded about");
+
+    /* And it must still be a waveform, not a creep: near-full peak-to-peak. */
+    TEST_ASSERT_TRUE_MESSAGE((lateMax - lateMin) > ((2 * ampSteps) / 2),
+                             "the envelope collapsed instead of oscillating");
+}
+
 void test_waveform_velocity_matches_2piFA_across_params(void)
 {
     struct
@@ -850,6 +989,8 @@ int main(void)
     RUN_TEST(test_waveform_streams_cosine_velocity_and_completes);
     RUN_TEST(test_waveform_zero_frequency_completes_without_motion);
     RUN_TEST(test_waveform_velocity_matches_2piFA_across_params);
+    RUN_TEST(test_waveform_holds_its_centre_against_an_accel_limited_plant);
+    RUN_TEST(test_waveform_ends_after_its_commanded_cycles);
 
     return UNITY_END();
 }

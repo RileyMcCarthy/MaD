@@ -12,8 +12,9 @@
 //! [`SerialLevelBridge`], so the host's traffic crosses the same wire the
 //! firmware's does, at the same rate, and can be broken the same ways.
 
+use std::collections::VecDeque;
 use std::os::fd::{AsRawFd, BorrowedFd, RawFd};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
@@ -28,6 +29,17 @@ const PUMP_POLL_TIMEOUT_MS: i32 = 10;
 /// Read chunk for draining host bytes.
 const PUMP_READ_CHUNK: usize = 256;
 
+/// Write chunk for pushing guest bytes at the host.
+const PUMP_WRITE_CHUNK: usize = 4096;
+
+/// How many outbound bytes to hold when the host is not reading fast enough.
+///
+/// Generous, because the cost of being wrong is asymmetric: a delayed byte is
+/// invisible to a protocol with its own timeouts, while a *dropped* byte
+/// silently corrupts the frame it was part of and every framing decision after
+/// it. Only a host that has genuinely stopped reading reaches this.
+const OUTBOUND_MAX: usize = 1 << 20;
+
 /// A serial link whose far end is a PTY the host can open.
 pub struct HostPty {
     pins: [PinDecl; 2],
@@ -38,6 +50,10 @@ pub struct HostPty {
     bridge: Arc<Mutex<Option<Arc<SerialLevelBridge>>>>,
     shutdown: Arc<AtomicBool>,
     pump: Option<JoinHandle<()>>,
+    /// Guest bytes the PTY has not accepted yet. See [`deliver`].
+    outbound: Arc<Mutex<VecDeque<u8>>>,
+    /// Bytes discarded because the host stopped reading entirely.
+    dropped: Arc<AtomicU64>,
 }
 
 impl std::fmt::Debug for HostPty {
@@ -76,6 +92,8 @@ impl HostPty {
             framing: UartFraming::new_8n1(baud_hz),
             pty: Pty::new(symlink_path)?,
             bridge: Arc::new(Mutex::new(None)),
+            outbound: Arc::new(Mutex::new(VecDeque::new())),
+            dropped: Arc::new(AtomicU64::new(0)),
             shutdown: Arc::new(AtomicBool::new(false)),
             pump: None,
         })
@@ -109,20 +127,22 @@ impl Component for HostPty {
         // Net → host: whatever the wire spells goes out the PTY.
         {
             let (bridge, shutdown) = (Arc::clone(&bridge), Arc::clone(&self.shutdown));
+            let (outbound, dropped) = (Arc::clone(&self.outbound), Arc::clone(&self.dropped));
             io.on_sense("RX", move |state| {
                 if shutdown.load(Ordering::Relaxed) {
                     return;
                 }
-                deliver(master, bridge.receive_sense(state));
+                deliver(master, &outbound, &dropped, bridge.receive_sense(state));
             })?;
         }
         {
             let (bridge, shutdown) = (Arc::clone(&bridge), Arc::clone(&self.shutdown));
+            let (outbound, dropped) = (Arc::clone(&self.outbound), Arc::clone(&self.dropped));
             io.on_wake_ns(move |now_ns| {
                 if shutdown.load(Ordering::Relaxed) {
                     return;
                 }
-                deliver(master, bridge.service(now_ns));
+                deliver(master, &outbound, &dropped, bridge.service(now_ns));
             });
         }
 
@@ -132,7 +152,10 @@ impl Component for HostPty {
         let shutdown = Arc::clone(&self.shutdown);
         let thread = std::thread::Builder::new()
             .name("host-pty-pump".to_string())
-            .spawn(move || pump_loop(master, &bridge, &shutdown))
+            .spawn({
+                let (outbound, dropped) = (Arc::clone(&self.outbound), Arc::clone(&self.dropped));
+                move || pump_loop(master, &bridge, &shutdown, &outbound, &dropped)
+            })
             .map_err(|e| AttachError::Failed {
                 message: format!("host PTY: cannot spawn pump thread: {e}"),
             })?;
@@ -152,35 +175,92 @@ impl Drop for HostPty {
 
 /// Hand deframed bytes to the host.
 ///
-/// Runs on the engine thread, so the write must never block: the master is
-/// non-blocking and a full buffer drops the byte with a trace, which is what a
-/// host that has stopped reading looks like to a UART.
-fn deliver(master: RawFd, frames: Vec<Result<u8, FramingError>>) {
+/// Runs on the engine thread, so this must never block. It must not *drop*
+/// either: a PTY master holds only a few kilobytes, and a firmware streaming
+/// samples fills it routinely — not because the host has stopped reading, but
+/// because it has not read *this millisecond*. Dropping there does not look
+/// like a slow host to the protocol above; it looks like a corrupt frame, and
+/// then like every subsequent framing decision being wrong.
+///
+/// So bytes queue, and the pump thread drains what the PTY would not take.
+fn deliver(
+    master: RawFd,
+    outbound: &Mutex<VecDeque<u8>>,
+    dropped: &AtomicU64,
+    frames: Vec<Result<u8, FramingError>>,
+) {
+    let mut queue = outbound.lock().expect("outbound queue never poisoned");
     for frame in frames {
-        let byte = match frame {
-            Ok(byte) => byte,
+        match frame {
+            Ok(byte) => queue.push_back(byte),
             Err(error) => {
-                tracing::debug!(?error, "host PTY: frame dropped (bad framing on the wire)");
-                continue;
+                tracing::debug!(?error, "host PTY: frame dropped (bad framing on the wire)")
             }
-        };
+        }
+    }
+    drain_outbound(master, &mut queue, dropped);
+}
+
+/// Write as much of the queue as the PTY will accept, and keep the rest.
+///
+/// Returns having written nothing if the master is full; that is the normal
+/// case under load, not an error.
+fn drain_outbound(master: RawFd, queue: &mut VecDeque<u8>, dropped: &AtomicU64) {
+    while !queue.is_empty() {
+        let take = queue.len().min(PUMP_WRITE_CHUNK);
+        let chunk: Vec<u8> = queue.iter().take(take).copied().collect();
         // SAFETY: the master descriptor is owned by the `HostPty` that
         // installed this callback, and the engine is joined before the
         // component drops (`SystemHandle`'s documented order).
         let fd = unsafe { BorrowedFd::borrow_raw(master) };
-        if let Err(e) = nix::unistd::write(fd, &[byte]) {
-            tracing::trace!(error = %e, "host PTY: byte dropped (host not reading)");
+        match nix::unistd::write(fd, &chunk) {
+            Ok(0) => break,
+            Ok(written) => {
+                queue.drain(..written);
+            }
+            // The PTY is full; the pump retries. EWOULDBLOCK is the same
+            // errno as EAGAIN on every platform this builds for.
+            Err(nix::errno::Errno::EAGAIN) => break,
+            Err(e) => {
+                tracing::debug!(error = %e, "host PTY: write failed");
+                break;
+            }
         }
+    }
+    // Only a host that has truly stopped reading gets here. Counted, not
+    // logged, so a test can assert it is zero.
+    if queue.len() > OUTBOUND_MAX {
+        let excess = queue.len() - OUTBOUND_MAX;
+        queue.drain(..excess);
+        dropped.fetch_add(excess as u64, Ordering::Relaxed);
     }
 }
 
 /// Read whatever the host wrote and frame it onto the wire.
-fn pump_loop(master: RawFd, bridge: &SerialLevelBridge, shutdown: &AtomicBool) {
+fn pump_loop(
+    master: RawFd,
+    bridge: &SerialLevelBridge,
+    shutdown: &AtomicBool,
+    outbound: &Mutex<VecDeque<u8>>,
+    dropped: &AtomicU64,
+) {
     let mut buf = [0u8; PUMP_READ_CHUNK];
     while !shutdown.load(Ordering::Relaxed) {
+        // Anything the engine could not hand over goes now. `POLLOUT` only
+        // when there is something waiting, so an idle link still blocks in
+        // `poll` rather than spinning.
+        let pending = {
+            let mut queue = outbound.lock().expect("outbound queue never poisoned");
+            drain_outbound(master, &mut queue, dropped);
+            !queue.is_empty()
+        };
         let mut pollfd = libc::pollfd {
             fd: master,
-            events: libc::POLLIN,
+            events: if pending {
+                libc::POLLIN | libc::POLLOUT
+            } else {
+                libc::POLLIN
+            },
             revents: 0,
         };
         // SAFETY: `pollfd` is a valid, exclusively borrowed array of one.

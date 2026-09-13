@@ -82,11 +82,25 @@ pub struct SmartPin {
     pub cfg: u32,
     /// Last `WXPIN` parameter.
     pub x: u32,
+    /// The last mode word that was not a clear, retained after one.
+    ///
+    /// A driver may configure a pin and later hand it back: `sdmm.cc`'s
+    /// `disk_deinitialize` does `_pinclear` on all five SD pins. "What is this
+    /// pin now" and "what did the firmware ever program here" are then
+    /// different questions, and for checking that a peripheral was driven the
+    /// second is the one worth asking — it does not change its answer when an
+    /// unrelated layer above the driver decides to tear the pins down.
+    pub programmed_cfg: u32,
 }
 
 impl SmartPin {
     pub fn mode(&self) -> PinMode {
         PinMode::from_cfg(self.cfg)
+    }
+
+    /// The mode this pin was last *configured* with, surviving a later clear.
+    pub fn programmed_mode(&self) -> PinMode {
+        PinMode::from_cfg(self.programmed_cfg)
     }
 
     /// Whether the firmware enabled the output driver.

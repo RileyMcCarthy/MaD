@@ -281,6 +281,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "embsim-cpu-oracle"
+version = "0.1.0"
+
+[[package]]
 name = "embsim-memory-inspect"
 version = "0.1.0"
 dependencies = [
@@ -317,6 +321,17 @@ dependencies = [
  "embsim-core",
  "nix",
  "parking_lot",
+ "tracing",
+]
+
+[[package]]
+name = "embsim-qemu"
+version = "0.1.0"
+dependencies = [
+ "embsim-board",
+ "embsim-core",
+ "libc",
+ "serde_json",
  "tracing",
 ]
 
@@ -646,9 +661,11 @@ dependencies = [
  "embsim-models",
  "embsim-p2",
  "embsim-peripherals",
+ "embsim-qemu",
  "embsim-runtime",
  "embsim-trace",
  "embsim-ui",
+ "libc",
  "models",
  "p2core",
  "p2iss",
@@ -754,6 +771,9 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 [[package]]
 name = "p2core"
 version = "0.1.0"
+dependencies = [
+ "embsim-cpu-oracle",
+]
 
 [[package]]
 name = "p2iss"

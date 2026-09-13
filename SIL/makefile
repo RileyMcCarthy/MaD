@@ -5,6 +5,7 @@
 #   make emulator   - Build Rust emulator (builds firmware if needed)
 #   make test       - Build everything, run the Rust test suite
 #   make playground - Build everything, start the emulator for manual testing
+#   make playground-iss - Same, but running the real P2 image on the ISS
 #   make clean      - Remove build artifacts
 
 FIRMWARE_DIR = ../Firmware/MaDCore
@@ -19,7 +20,7 @@ PROTOEMB_GENERATOR = ../Protocol/ProtoEmb/core/generate.py
 PROTOEMB_SCHEMA = ../Protocol/MaDProtocol.yaml
 PROTOEMB_TEMPLATES = ../Protocol/ProtoEmb/core/templates
 
-.PHONY: firmware p2image protocol emulator test playground clean
+.PHONY: firmware p2image protocol emulator test playground playground-iss vm-image playground-cosim bootrom clean
 
 # Build firmware as static library
 firmware:
@@ -50,6 +51,37 @@ test: emulator p2image
 # Start emulator + app for interactive development
 playground: emulator
 	cargo run --bin mad-emulator -- --sd-path ./sd --pty-path /tmp/tty.rpi --log-level info --trace-port 3000
+
+# The same playground, but running the real P2 image on the ISS instead of the
+# native firmware library. Same PTY, so every host-side tool and the browser
+# e2e suite attach exactly as they do to the native emulator.
+# `--release` is not optional here. The ISS interprets every instruction, so a
+# debug build runs the guest far slower than real time and the app's 2 s
+# protocol timeout expires before the firmware can answer. Measured on this
+# machine: 0.64x real time in release.
+# The boot ROM and the stage-1 flash loader the ISS boots through.
+FLEXSPIN = $(HOME)/.platformio/packages/toolchain-flexcc/bin/macos-amd64/flexspin
+bootrom:
+	$(FLEXSPIN) -2 -o /tmp/rom_full.bin p2iss/rom/rom_booter_v33k.spin2
+	python3 -c "open('p2iss/rom/rom_booter_v33k.bin','wb').write(open('/tmp/rom_full.bin','rb').read()[0xFC000:])"
+	$(FLEXSPIN) -2 -o p2iss/rom/stage1.bin p2iss/rom/stage1.spin2
+
+playground-iss: p2image
+	cargo run --release --bin mad-emulator -- --iss $(P2_IMAGE) --sd-path ./sd --pty-path /tmp/tty.rpi --log-level info
+
+# The computer node: the host is a QEMU guest running Chrome, metered by the
+# board's clock (embsim-qemu). Build its image once (~10 min, cached outside the
+# repo), then run the ISS with it; the e2e attaches over CDP:
+#   make vm-image
+#   make playground-cosim            # prints the DevTools URL (port 9222)
+#   cd ../Software/Control && npm run dev -- --host      # the guest fetches the app from 10.0.2.2:5174
+#   cd ../Software/Control && CDP_URL=http://127.0.0.1:9222 npm run e2e
+VM_IMAGE ?= $(HOME)/.cache/embsim/qemu/chrome-debian13-$(shell uname -m | sed 's/arm64/aarch64/').qcow2
+vm-image:
+	embsim/qemu/guest/chrome/build.sh
+
+playground-cosim: p2image
+	cargo run --release --bin mad-emulator -- --iss $(P2_IMAGE) --computer $(VM_IMAGE) --devtools-port 9222 --sd-path ./sd --pty-path /tmp/tty.rpi --log-level info
 
 # Clean build artifacts
 clean:
