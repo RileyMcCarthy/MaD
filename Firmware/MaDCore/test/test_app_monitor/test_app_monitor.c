@@ -12,6 +12,7 @@
 // All peer dependencies below are local test doubles controllable via static globals.
 
 #include <unity.h>
+#include "vibes_behaviour.h"
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -207,6 +208,15 @@ static void enterRunning(uint32_t startTimeUs)
 /* sample fields are derived from the snapshot minus gauge offsets / start time. */
 void test_sample_derivation_subtracts_offsets_and_starttime(void)
 {
+    VIBES_TEST("monitor.sample-frame-subtracts-gauge-zeros",
+               "src/APP/app_monitor.c#app_monitor_private_processSample",
+               "machine force, position and setpoint with a non-zero gauge force and gauge length, and no test running");
+    VIBES_EXPECT_WHY("force-zero-removed",
+                     "the gauge force is subtracted from sample force",
+                     "a tensile test is judged in sample coordinates, so force subtracts the gauge zero");
+    VIBES_EXPECT_WHY("length-zero-removed",
+                     "the gauge length is subtracted from sample position and target",
+                     "a tensile test is judged in sample coordinates, so extension subtracts the gauge zero");
     dbl_force_machine = 5000;
     dbl_position_machine = 12000;
     dbl_setpoint = 15000;
@@ -230,6 +240,12 @@ void test_sample_derivation_subtracts_offsets_and_starttime(void)
 /* When a test starts the startTime latches input.time, so subsequent sample.time is relative. */
 void test_sample_time_is_relative_to_test_start(void)
 {
+    VIBES_TEST("monitor.sample-time-from-test-start",
+               "src/APP/app_monitor.c#app_monitor_private_processSample",
+               "a test that started at a known clock time, then a later reading");
+    VIBES_EXPECT_WHY("elapsed-since-start",
+                     "a sample timestamp is the elapsed microseconds since the test started",
+                     "sample timestamps share a common origin at test start so overlays and CSV align");
     /* Tick 1: start a test at t = 1_000_000 us -> startTime latches there. */
     enterRunning(1000000U);
     TEST_ASSERT_EQUAL_UINT32(1000000U, app_monitor_data.startTime);
@@ -243,6 +259,12 @@ void test_sample_time_is_relative_to_test_start(void)
 /* Outputs mirror the raw (machine-frame) input force/position, not the sample frame. */
 void test_setOutput_publishes_raw_machine_force_and_position(void)
 {
+    VIBES_TEST("monitor.live-outputs-are-machine-frame",
+               "src/APP/app_monitor.c#app_monitor_private_setOutput",
+               "a machine force and position with a non-zero gauge-force zero and gauge length");
+    VIBES_EXPECT_WHY("machine-frame-published",
+                     "the force and position published to the rest of the machine equal the machine readings",
+                     "frame-level tension and travel limits are judged in machine coordinates");
     dbl_force_machine = 8888;
     dbl_position_machine = -4321;
     dbl_gaugeForce_mN = 1000;  /* should NOT affect out.force */
@@ -260,6 +282,13 @@ void test_setOutput_publishes_raw_machine_force_and_position(void)
 
 void test_zeroPosition_request_calls_setValue_zero_once(void)
 {
+    VIBES_TEST("monitor.zero-position-sets-feedback-once",
+               "src/APP/app_monitor.c#app_monitor_zeroPosition",
+               "the operator zeroes the machine position");
+    VIBES_EXPECT("encoder-zeroed", "the position-feedback encoder is set to zero on the next cycle");
+    VIBES_EXPECT_WHY("written-once",
+                     "no further write reaches the encoder on later cycles",
+                     "the encoder origin is written once; repeating it every cycle would keep resetting the coordinate the drive follows");
     app_monitor_zeroPosition();
 
     /* Request is latched, not acted on until run(). */
@@ -277,6 +306,10 @@ void test_zeroPosition_request_calls_setValue_zero_once(void)
 
 void test_setPosition_request_passes_value_through(void)
 {
+    VIBES_TEST("monitor.set-position-passes-through",
+               "src/APP/app_monitor.c#app_monitor_setPosition",
+               "a requested machine position of -1234567 micrometres");
+    VIBES_EXPECT("value-written", "the next monitor cycle writes that exact value to the position-feedback encoder");
     app_monitor_setPosition(-1234567);
     app_monitor_run();
     TEST_ASSERT_EQUAL_INT(1, dbl_setValue_calls);
@@ -286,6 +319,13 @@ void test_setPosition_request_passes_value_through(void)
 
 void test_setSampleProfile_loads_on_run_and_is_readable(void)
 {
+    VIBES_TEST("monitor.sample-profile-loads-on-cycle",
+               "src/APP/app_monitor.c#app_monitor_setSampleProfile",
+               "a sample profile with force, displacement, width and thickness, submitted before a monitor cycle");
+    VIBES_EXPECT_WHY("loaded-after-cycle",
+                     "the profile counts as loaded only once that cycle has run",
+                     "sample-limit checks run only after the specimen profile has been taken up on a cycle");
+    VIBES_EXPECT("values-read-back", "its four values read back unchanged");
     TEST_ASSERT_FALSE(app_monitor_isSampleProfileLoaded());
 
     app_monitor_sampleProfile_S p = {
@@ -314,11 +354,19 @@ void test_setSampleProfile_loads_on_run_and_is_readable(void)
 
 void test_setSampleProfile_null_returns_false(void)
 {
+    VIBES_TEST("monitor.sample-profile-null-refused",
+               "src/APP/app_monitor.c#app_monitor_setSampleProfile",
+               "a request to load a sample profile with no profile supplied");
+    VIBES_EXPECT("refused", "the request is refused");
     TEST_ASSERT_FALSE(app_monitor_setSampleProfile(NULL));
 }
 
 void test_getSampleProfile_null_is_safe_noop(void)
 {
+    VIBES_TEST("monitor.get-sample-profile-null-is-safe",
+               "src/APP/app_monitor.c#app_monitor_getSampleProfile",
+               "a request to read the sample profile into no destination");
+    VIBES_EXPECT("ignored", "the request is ignored and the monitor keeps running");
     /* Should simply return without dereferencing. */
     app_monitor_getSampleProfile(NULL);
     TEST_PASS();
@@ -330,6 +378,10 @@ void test_getSampleProfile_null_is_safe_noop(void)
 
 void test_setTestName_getTestName_roundtrip(void)
 {
+    VIBES_TEST("monitor.test-name-roundtrip",
+               "src/APP/app_monitor.c#app_monitor_setTestName",
+               "a test name of sample42");
+    VIBES_EXPECT("reads-back", "the test name reads back as sample42");
     app_monitor_setTestName("sample42");
     char out[32];
     memset(out, 'X', sizeof(out));
@@ -339,6 +391,12 @@ void test_setTestName_getTestName_roundtrip(void)
 
 void test_getTestName_truncates_to_buffer_size(void)
 {
+    VIBES_TEST("monitor.test-name-read-fits-caller",
+               "src/APP/app_monitor.c#app_monitor_getTestName",
+               "a stored eight-character test name read into a three-character buffer");
+    VIBES_EXPECT_WHY("first-three-characters",
+                     "the name comes back as its first three characters",
+                     "the caller supplies the buffer; the copy has to fit that buffer");
     app_monitor_setTestName("abcdefgh");
     char out[4]; /* only 3 chars + NUL fit */
     app_monitor_getTestName(out, sizeof(out));
@@ -348,6 +406,12 @@ void test_getTestName_truncates_to_buffer_size(void)
 
 void test_setTestName_truncates_to_internal_buffer(void)
 {
+    VIBES_TEST("monitor.test-name-store-fits-internal",
+               "src/APP/app_monitor.c#app_monitor_setTestName",
+               "a test name longer than the firmware can store");
+    VIBES_EXPECT_WHY("trimmed-to-fit",
+                     "the name is stored trimmed to the longest length that fits",
+                     "the stored name shares a fixed-size slot with the sample-profile name");
     /* Internal buffer is DEV_NVRAM_MAX_SAMPLE_PROFILE_NAME (45) incl NUL. */
     char longName[80];
     memset(longName, 'A', sizeof(longName));
@@ -367,6 +431,11 @@ void test_setTestName_truncates_to_internal_buffer(void)
 
 void test_logging_idle_stays_idle_when_no_test(void)
 {
+    VIBES_TEST("monitor.logging-idle-without-test",
+               "src/APP/app_monitor.c#app_monitor_private_processLogging",
+               "no test running");
+    VIBES_EXPECT("no-file-opened", "no sample file is opened");
+    VIBES_EXPECT("stays-idle", "logging stays idle");
     dbl_testRunning = false;
     app_monitor_run();
     TEST_ASSERT_EQUAL_INT(APP_MONITOR_LOGGING_STATE_IDLE, app_monitor_data.loggingState);
@@ -375,6 +444,15 @@ void test_logging_idle_stays_idle_when_no_test(void)
 
 void test_logging_idle_to_running_opens_sample_channel_write(void)
 {
+    VIBES_TEST("monitor.logging-opens-on-test-start",
+               "src/APP/app_monitor.c#app_monitor_private_processLogging",
+               "a test starting with a test name already set");
+    VIBES_EXPECT_WHY("file-opened-for-writing",
+                     "the sample-data file is opened for writing under that name",
+                     "the card file is named for the test");
+    VIBES_EXPECT_WHY("start-time-latched",
+                     "the start time is taken from the current clock",
+                     "later sample times are measured from this start time");
     app_monitor_setTestName("mytest");
     dbl_open_returns = true;
     dbl_testRunning = true;
@@ -393,6 +471,13 @@ void test_logging_idle_to_running_opens_sample_channel_write(void)
 
 void test_logging_idle_stays_idle_when_open_fails(void)
 {
+    VIBES_TEST("monitor.logging-retries-failed-open",
+               "src/APP/app_monitor.c#app_monitor_private_processLogging",
+               "a test starting when the sample-data file cannot be opened");
+    VIBES_EXPECT("stays-idle", "logging stays idle");
+    VIBES_EXPECT_WHY("open-retried",
+                     "the next cycle attempts the open again",
+                     "the sample file may not exist on the first try, so logging retries on the next cycle");
     app_monitor_setTestName("mytest");
     dbl_open_returns = false; /* header missing -> open fails */
     dbl_testRunning = true;
@@ -410,6 +495,15 @@ void test_logging_idle_stays_idle_when_open_fails(void)
 
 void test_logging_running_pushes_only_on_index_update(void)
 {
+    VIBES_TEST("monitor.logging-writes-on-new-force-index",
+               "src/APP/app_monitor.c#app_monitor_private_processLogging",
+               "logging already running, first with the same load-cell reading, then with a new reading");
+    VIBES_EXPECT_WHY("repeat-writes-nothing",
+                     "the repeated reading writes nothing",
+                     "the load cell is the sampling clock");
+    VIBES_EXPECT_WHY("new-reading-writes-row",
+                     "the new reading writes exactly one row to the card",
+                     "a row is one new load-cell reading");
     enterRunning(0U);
     int pushesAfterEntry = dbl_push_calls;
 
@@ -428,6 +522,11 @@ void test_logging_running_pushes_only_on_index_update(void)
 
 void test_logging_running_pushes_current_sample_contents(void)
 {
+    VIBES_TEST("monitor.logging-writes-sample-frame-row",
+               "src/APP/app_monitor.c#app_monitor_private_processLogging",
+               "logging running, with a new load-cell reading and known force, position, target and time");
+    VIBES_EXPECT("row-in-sample-frame",
+                 "the row written to the card is force, position, target and elapsed time in sample coordinates");
     enterRunning(0U);
 
     /* Set up a fresh sample, advance the index so it's logged. */
@@ -451,6 +550,13 @@ void test_logging_running_pushes_current_sample_contents(void)
 
 void test_logging_running_to_stopping_starts_tail_timer(void)
 {
+    VIBES_TEST("monitor.logging-tail-starts-on-test-end",
+               "src/APP/app_monitor.c#app_monitor_private_processLogging",
+               "logging running when the test ends");
+    VIBES_EXPECT_WHY("file-stays-open",
+                     "the sample file stays open",
+                     "in-flight samples after the test ends still need a file to land in");
+    VIBES_EXPECT("tail-starts", "a 100 millisecond keep-logging period starts");
     enterRunning(0U);
 
     dbl_testRunning = false; /* test ended */
@@ -464,6 +570,16 @@ void test_logging_running_to_stopping_starts_tail_timer(void)
 
 void test_logging_stopping_flushes_then_closes_after_tail(void)
 {
+    VIBES_TEST("monitor.logging-tail-flushes-then-closes",
+               "src/APP/app_monitor.c#app_monitor_private_processLogging",
+               "logging after the test has ended, with a late sample before 100 milliseconds, then time past 100 milliseconds");
+    VIBES_EXPECT_WHY("late-sample-written",
+                     "the late sample is still written to the card",
+                     "the keep-logging period is long enough for in-flight readings");
+    VIBES_EXPECT_WHY("file-closed",
+                     "the sample file is closed",
+                     "the next test opens a new file");
+    VIBES_EXPECT("back-to-idle", "logging returns to idle");
     enterRunning(0U);
 
     /* End the test at t=0 -> enter STOPPING, tail timer started (100ms). */
@@ -492,6 +608,11 @@ void test_logging_stopping_flushes_then_closes_after_tail(void)
 
 void test_logging_full_cycle_can_restart(void)
 {
+    VIBES_TEST("monitor.logging-restarts-after-close",
+               "src/APP/app_monitor.c#app_monitor_private_processLogging",
+               "a finished logging cycle back at idle, then a second test starting");
+    VIBES_EXPECT("new-file-opened", "a new sample file is opened");
+    VIBES_EXPECT("new-start-time", "a new start time is recorded");
     /* Run a complete IDLE->RUNNING->STOPPING->IDLE, then start a second test. */
     enterRunning(0U);
     dbl_testRunning = false;
@@ -517,6 +638,12 @@ void test_logging_full_cycle_can_restart(void)
 
 void test_no_profile_means_no_limits_exceeded(void)
 {
+    VIBES_TEST("monitor.no-profile-no-sample-limits",
+               "src/APP/app_monitor.c#app_monitor_private_setOutput",
+               "a large machine force and displacement with no sample profile loaded");
+    VIBES_EXPECT_WHY("all-within-limits",
+                     "force, velocity and displacement are all reported as within limits",
+                     "sample limits come from the specimen the operator configured; with none loaded there is no specimen limit to enforce");
     /* Big force/displacement but no profile loaded -> all flags false. */
     dbl_force_machine = 1000000;
     dbl_position_machine = 1000000;
@@ -528,6 +655,13 @@ void test_no_profile_means_no_limits_exceeded(void)
 
 void test_force_limit_boundary_and_exceed(void)
 {
+    VIBES_TEST("monitor.force-limit-strict-greater",
+               "src/APP/app_monitor.c#app_monitor_private_setOutput",
+               "a loaded sample profile whose maximum force is 10000 millinewtons, read at the limit, then one millinewton past it in tension and in compression");
+    VIBES_EXPECT("at-limit-within", "the reading at the limit is reported as within limits");
+    VIBES_EXPECT_WHY("past-limit-exceeds",
+                     "both readings past the limit are reported as exceeding force",
+                     "the operator-configured force limit protects the specimen for the whole of a test");
     app_monitor_sampleProfile_S p = {0};
     p.maxForce = 10000;        /* mN */
     p.maxDisplacement = 100000;/* mm (huge, won't trigger) */
@@ -553,6 +687,13 @@ void test_force_limit_boundary_and_exceed(void)
 
 void test_displacement_limit_uses_mm_to_um_conversion(void)
 {
+    VIBES_TEST("monitor.displacement-limit-mm-as-um",
+               "src/APP/app_monitor.c#app_monitor_private_setOutput",
+               "a loaded sample profile whose maximum displacement is 2 millimetres, with sample travel at 2 millimetres, then 2.001 millimetres in each direction");
+    VIBES_EXPECT("at-limit-within", "the reading at 2 millimetres is reported as within limits");
+    VIBES_EXPECT_WHY("past-limit-exceeds",
+                     "both readings past 2 millimetres are reported as exceeding displacement",
+                     "the profile stores displacement in millimetres and the sample is measured in micrometres, so the comparison converts millimetres first");
     app_monitor_sampleProfile_S p = {0};
     p.maxForce = 0xFFFFFFFFU; /* never trips force */
     p.maxDisplacement = 2;    /* 2 mm == 2000 um */
@@ -579,6 +720,12 @@ void test_displacement_limit_uses_mm_to_um_conversion(void)
 
 void test_velocity_exceeded_always_false_even_with_profile(void)
 {
+    VIBES_TEST("monitor.velocity-limit-never-trips",
+               "src/APP/app_monitor.c#app_monitor_private_setOutput",
+               "a loaded sample profile with a tiny maximum velocity");
+    VIBES_EXPECT_WHY("velocity-within-limits",
+                     "sample velocity is reported as within limits",
+                     "velocity is not in the sample row, so there is no value to compare against the profile maximum");
     app_monitor_sampleProfile_S p = {0};
     p.maxVelocity = 1; /* tiny */
     app_monitor_setSampleProfile(&p);
@@ -591,6 +738,13 @@ void test_velocity_exceeded_always_false_even_with_profile(void)
 
 void test_force_flag_clears_when_back_under_limit(void)
 {
+    VIBES_TEST("monitor.force-exceeded-clears-under-limit",
+               "src/APP/app_monitor.c#app_monitor_private_setOutput",
+               "sample force above the configured maximum, then force back under the limit");
+    VIBES_EXPECT("exceeded-raised", "the machine reports force exceeded on the first reading");
+    VIBES_EXPECT_WHY("exceeded-cleared",
+                     "the machine clears force exceeded on the second reading",
+                     "the exceeded flag is live with the reading, so motion can resume once the specimen is under the limit");
     app_monitor_sampleProfile_S p = {0};
     p.maxForce = 1000;
     p.maxDisplacement = 0xFFFFFFFFU;
@@ -612,6 +766,12 @@ void test_force_flag_clears_when_back_under_limit(void)
 
 void test_init_sets_idle_and_no_profile(void)
 {
+    VIBES_TEST("monitor.init-idle-unloaded",
+               "src/APP/app_monitor.c#app_monitor_init",
+               "the monitor starting up");
+    VIBES_EXPECT("logging-idle", "logging starts idle");
+    VIBES_EXPECT("no-profile", "no sample profile is loaded");
+    VIBES_EXPECT("no-tail", "no keep-logging period is running");
     /* setUp already called app_monitor_init. */
     TEST_ASSERT_EQUAL_INT(APP_MONITOR_LOGGING_STATE_IDLE, app_monitor_data.loggingState);
     TEST_ASSERT_FALSE(app_monitor_isSampleProfileLoaded());

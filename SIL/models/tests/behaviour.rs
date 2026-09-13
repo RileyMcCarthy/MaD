@@ -1,0 +1,83 @@
+//! Behaviours of the gantry model, declared for the Vibes ledger.
+//!
+//! These are ordinary `#[test]` functions; `behaviour!` only records what the
+//! test claims so a reviewer can read it without opening the code.
+
+use std::sync::{Arc, Mutex};
+
+use models::gantry::{Config, Gantry};
+use vibes_behaviour::{behaviour, expect, Test};
+
+fn gantry(slack_mm: f64, tension_on_decreasing: bool) -> (Arc<Gantry>, Arc<Mutex<Vec<f64>>>) {
+    let g = Gantry::new(Config {
+        engagement_slack_mm: slack_mm,
+        tension_on_decreasing_position: tension_on_decreasing,
+        upper_threshold_mm: -1000.0,
+        lower_threshold_mm: 1000.0,
+    });
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::clone(&seen);
+    g.on_extension_change(move |mm| sink.lock().unwrap().push(mm));
+    (g, seen)
+}
+
+#[test]
+fn first_position_becomes_the_baseline() {
+    behaviour!(Test {
+        id: "gantry.first-position-is-baseline",
+        covers: Some("SIL/models/src/gantry.rs#on_position"),
+        given: "the very first position report, whatever its absolute value",
+    });
+    expect!(
+        "extension-zero",
+        "extension is reported as zero",
+        "the machine does not home to 0, so absolute position is not extension"
+    );
+
+    let (g, seen) = gantry(0.0, false);
+    g.on_position(37.5);
+    assert_eq!(seen.lock().unwrap().as_slice(), &[0.0]);
+}
+
+#[test]
+fn engagement_slack_is_consumed_before_extension() {
+    behaviour!(Test {
+        id: "gantry.slack-consumed-before-extension",
+        covers: Some("SIL/models/src/gantry.rs#on_position"),
+        given: "travel smaller than the configured engagement slack",
+    });
+    expect!(
+        "no-extension-inside-slack",
+        "extension reads zero",
+        "the sample is not yet loaded, so reporting strain would be wrong"
+    );
+    expect!(
+        "extension-past-slack",
+        "past the slack extension reads travel minus the slack"
+    );
+
+    let (g, seen) = gantry(2.0, false);
+    g.on_position(0.0);
+    g.on_position(1.0); // inside the slack
+    g.on_position(5.0); // 5mm travel, 2mm slack -> 3mm extension
+    assert_eq!(seen.lock().unwrap().as_slice(), &[0.0, 0.0, 3.0]);
+}
+
+#[test]
+fn tension_direction_is_configurable() {
+    behaviour!(Test {
+        id: "gantry.tension-direction",
+        covers: Some("SIL/models/src/gantry.rs#on_position"),
+        given: "a machine whose tensile travel moves to a smaller position",
+    });
+    expect!(
+        "positive-extension",
+        "extension is positive and equals the distance travelled",
+        "the DS2 gantry and the EdgeBoard gantry pull in opposite senses"
+    );
+
+    let (g, seen) = gantry(0.0, true);
+    g.on_position(10.0);
+    g.on_position(4.0); // decreasing == tensile
+    assert_eq!(seen.lock().unwrap().as_slice(), &[0.0, 6.0]);
+}

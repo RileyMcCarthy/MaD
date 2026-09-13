@@ -10,6 +10,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include "vibes_behaviour.h"
 #include "../../src/IO/IO_protocol.c"
 
 extern void HAL_lock_mock_reset(void);
@@ -73,6 +74,10 @@ static IO_protocol_incommingType_E drive(int calls, IO_protocol_readType_E *rt,
 
 void test_read_request_returns_read_type(void)
 {
+    VIBES_TEST("protocol.read-delivers-command",
+               "src/IO/IO_protocol.c#IO_protocol_recieveRequest",
+               "a framed read asking for the machine configuration");
+    VIBES_EXPECT("read-delivered", "the receiver delivers it as a read of the machine configuration");
     uint8_t msg[] = { 0x55, IO_PROTOCOL_INCOMMING_TYPE_READ, IO_PROTOCOL_READ_TYPE_MACHINE_CONFIGURATION };
     load_rx(msg, sizeof(msg));
     IO_protocol_readType_E rt = 0; IO_protocol_writeType_E wt = 0; uint8_t data[16]; uint32_t size = 0;
@@ -82,6 +87,11 @@ void test_read_request_returns_read_type(void)
 
 void test_write_request_with_payload(void)
 {
+    VIBES_TEST("protocol.write-delivers-payload",
+               "src/IO/IO_protocol.c#IO_protocol_recieveRequest",
+               "a framed write starting a test, carrying two data bytes and a matching checksum");
+    VIBES_EXPECT("start-test-delivered", "the receiver delivers the start-test command");
+    VIBES_EXPECT("payload-intact", "both data bytes arrive intact, with the length reported as two");
     uint8_t payload[2] = { 0xAA, 0xBB };
     uint8_t crc = lib_utility_CRC8(payload, 2);
     uint8_t msg[] = { 0x55, IO_PROTOCOL_INCOMMING_TYPE_WRITE, IO_PROTOCOL_WRITE_TYPE_TEST_RUN, 2, 0, 0xAA, 0xBB, crc };
@@ -96,6 +106,11 @@ void test_write_request_with_payload(void)
 
 void test_write_zero_length_skips_data(void)
 {
+    VIBES_TEST("protocol.zero-length-write",
+               "src/IO/IO_protocol.c#IO_protocol_recieveRequest",
+               "a framed write enabling motion with no data bytes");
+    VIBES_EXPECT("enable-motion-delivered", "the receiver delivers an enable-motion write");
+    VIBES_EXPECT("length-zero", "the delivered length is zero");
     uint8_t dummy = 0;
     uint8_t crc = lib_utility_CRC8(&dummy, 0); /* CRC over zero bytes */
     uint8_t msg[] = { 0x55, IO_PROTOCOL_INCOMMING_TYPE_WRITE, IO_PROTOCOL_WRITE_TYPE_MOTION_ENABLE, 0, 0, crc };
@@ -108,6 +123,13 @@ void test_write_zero_length_skips_data(void)
 
 void test_crc_mismatch_is_rejected(void)
 {
+    VIBES_TEST("protocol.bad-checksum-discarded",
+               "src/IO/IO_protocol.c#IO_protocol_recieveRequest",
+               "a framed write whose checksum does not match its data");
+    VIBES_EXPECT_WHY("write-discarded",
+                     "the write is discarded",
+                     "a corrupted write must not be acted on");
+    VIBES_EXPECT("back-to-waiting", "the receiver goes back to waiting for a new frame");
     uint8_t payload[2] = { 0xAA, 0xBB };
     uint8_t badCrc = (uint8_t)(lib_utility_CRC8(payload, 2) ^ 0xFF);
     uint8_t msg[] = { 0x55, IO_PROTOCOL_INCOMMING_TYPE_WRITE, IO_PROTOCOL_WRITE_TYPE_TEST_RUN, 2, 0, 0xAA, 0xBB, badCrc };
@@ -119,6 +141,11 @@ void test_crc_mismatch_is_rejected(void)
 
 void test_non_sync_leading_bytes_are_skipped(void)
 {
+    VIBES_TEST("protocol.leading-noise-skipped",
+               "src/IO/IO_protocol.c#IO_protocol_recieveRequest",
+               "noise bytes ahead of a framed read asking for machine state");
+    VIBES_EXPECT("state-read-delivered",
+                 "the leading bytes are skipped and the read of machine state is delivered");
     uint8_t msg[] = { 0x99, 0x12, 0x55, IO_PROTOCOL_INCOMMING_TYPE_READ, IO_PROTOCOL_READ_TYPE_STATE };
     load_rx(msg, sizeof(msg));
     IO_protocol_readType_E rt = 0; IO_protocol_writeType_E wt = 0; uint8_t data[16]; uint32_t size = 0;
@@ -128,6 +155,13 @@ void test_non_sync_leading_bytes_are_skipped(void)
 
 void test_length_is_clamped_to_maxSize(void)
 {
+    VIBES_TEST("protocol.write-length-clamped",
+               "src/IO/IO_protocol.c#IO_protocol_recieveRequest",
+               "a framed write that claims more data than the receiver can hold");
+    VIBES_EXPECT_WHY("write-delivered",
+                     "the write is still delivered",
+                     "a write longer than the receiver can hold must still be taken, using only what fits");
+    VIBES_EXPECT("clamped-to-what-fits", "it carries only the bytes that fit, first to last");
     uint8_t payload[4] = { 1, 2, 3, 4 };
     uint8_t crc = lib_utility_CRC8(payload, 4);
     /* claims length 1000 but maxSize is 4 -> dataLength clamps to 4 */
@@ -143,6 +177,12 @@ void test_length_is_clamped_to_maxSize(void)
 
 void test_timeout_resets_to_sync(void)
 {
+    VIBES_TEST("protocol.incomplete-frame-times-out",
+               "src/IO/IO_protocol.c#IO_protocol_recieveRequest",
+               "a frame that stops after the start byte, then 200 milliseconds of silence");
+    VIBES_EXPECT_WHY("partial-frame-dropped",
+                     "the receiver drops the partial frame and goes back to waiting for a new start byte",
+                     "an incomplete frame must not hold the receiver forever");
     uint8_t msg[] = { 0x55 }; /* sync only, then the stream goes quiet */
     load_rx(msg, sizeof(msg));
     IO_protocol_readType_E rt = 0; IO_protocol_writeType_E wt = 0; uint8_t data[16]; uint32_t size = 0;
@@ -159,6 +199,13 @@ void test_timeout_resets_to_sync(void)
  * yields (50 - 0) > 100 → false (keep waiting). */
 void test_near_zero_clock_does_not_spurious_timeout(void)
 {
+    VIBES_TEST("protocol.timeout-is-elapsed-time",
+               "src/IO/IO_protocol.c#IO_protocol_recieveRequest",
+               "a frame waiting for its next byte 50 milliseconds after a clock that has just started");
+    VIBES_EXPECT_WHY("keeps-waiting",
+                     "the receiver keeps waiting for the rest of the frame",
+                     "the receive timeout is 100 milliseconds of elapsed time, so a clock that has not yet reached 100 milliseconds must still wait");
+    VIBES_EXPECT("write-completes", "a write that follows is delivered whole");
     uint8_t msg[] = { 0x55 }; /* SYNC only — leave the machine waiting for TYPE */
     load_rx(msg, sizeof(msg));
     global_timeus = 0;
@@ -183,6 +230,13 @@ void test_near_zero_clock_does_not_spurious_timeout(void)
 
 void test_timeout_survives_uint32_ms_wrap(void)
 {
+    VIBES_TEST("protocol.timeout-survives-clock-wrap",
+               "src/IO/IO_protocol.c#IO_protocol_recieveRequest",
+               "a frame that has only the start byte, with the millisecond clock wrapping from near its maximum while the next byte is still missing");
+    VIBES_EXPECT_WHY("waits-through-wrap",
+                     "the receiver keeps waiting at 50 milliseconds of silence",
+                     "the millisecond clock wraps; elapsed silence must still be counted through the wrap");
+    VIBES_EXPECT("drops-past-timeout", "the frame is dropped once the silence passes 100 milliseconds");
     uint8_t msg[] = { 0x55 };
     load_rx(msg, sizeof(msg));
     global_timems_force = true;
@@ -205,6 +259,11 @@ void test_timeout_survives_uint32_ms_wrap(void)
 
 void test_respondACK_frames_correctly(void)
 {
+    VIBES_TEST("protocol.ack-echoes-command",
+               "src/IO/IO_protocol.c#IO_protocol_respondACK",
+               "a start-test write is acknowledged");
+    VIBES_EXPECT("ack-frame",
+                 "three bytes go out: a start byte, an acknowledgement, and the start-test command");
     TEST_ASSERT_TRUE(IO_protocol_respondACK(IO_PROTOCOL_WRITE_TYPE_TEST_RUN));
     TEST_ASSERT_EQUAL_UINT32(3, d_txLen);
     TEST_ASSERT_EQUAL_HEX8(0x55, d_tx[0]);
@@ -214,6 +273,11 @@ void test_respondACK_frames_correctly(void)
 
 void test_respondNACK_frames_correctly(void)
 {
+    VIBES_TEST("protocol.nack-echoes-command",
+               "src/IO/IO_protocol.c#IO_protocol_respondNACK",
+               "a negative acknowledgement of a manual-move write");
+    VIBES_EXPECT("nack-frame",
+                 "the reply is a start byte, a negative acknowledgement, and the manual-move command echoed back");
     TEST_ASSERT_TRUE(IO_protocol_respondNACK(IO_PROTOCOL_WRITE_TYPE_MANUAL_MOVE));
     TEST_ASSERT_EQUAL_HEX8(0x55, d_tx[0]);
     TEST_ASSERT_EQUAL_HEX8(IO_PROTOCOL_OUTGOING_TYPE_NACK, d_tx[1]);
@@ -222,6 +286,12 @@ void test_respondNACK_frames_correctly(void)
 
 void test_respondData_frames_header_payload_crc(void)
 {
+    VIBES_TEST("protocol.data-reply-carries-payload",
+               "src/IO/IO_protocol.c#IO_protocol_respondData",
+               "a reply to a state read carrying three data bytes");
+    VIBES_EXPECT("frame-layout",
+                 "the frame carries a start byte, a data reply, the state-read command, the length, then the data bytes");
+    VIBES_EXPECT("checksum-tail", "a checksum of the data bytes closes the frame");
     uint8_t payload[3] = { 0x10, 0x20, 0x30 };
     TEST_ASSERT_TRUE(IO_protocol_respondData(IO_PROTOCOL_READ_TYPE_STATE, payload, 3));
     /* header(5) + payload(3) + crc(1) = 9 */
@@ -237,6 +307,15 @@ void test_respondData_frames_header_payload_crc(void)
 
 void test_sendNotification_frames_with_zero_command(void)
 {
+    VIBES_TEST("protocol.notification-command-is-zero",
+               "src/IO/IO_protocol.c#IO_protocol_sendNotification",
+               "an unsolicited notification carrying two data bytes");
+    VIBES_EXPECT_WHY("command-zero",
+                     "the command number is zero",
+                     "notifications are not a reply to a command, so the command number is zero");
+    VIBES_EXPECT("frame-layout",
+                 "the frame opens with a start byte and a notification, then the length and the two data bytes");
+    VIBES_EXPECT("checksum-tail", "a checksum of the data bytes closes the frame");
     uint8_t payload[2] = { 0xDE, 0xAD };
     TEST_ASSERT_TRUE(IO_protocol_sendNotification(payload, 2));
     TEST_ASSERT_EQUAL_HEX8(0x55, d_tx[0]);

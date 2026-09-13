@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
 import {
-  SampleProfile,
+  EMPTY_SAMPLE_PROFILE,
   MotionProfile,
   MotionProfileEntry,
   Move,
   Set as MotionSet,
   TestProfile,
   WaveformFn,
+  replaceSetAt,
   waveformPeakVelocity,
   waveformPeakAcceleration,
 } from '@/domain';
@@ -18,15 +19,6 @@ import GcodePreview from '@/ui/components/GcodePreview';
 
 /* The G-code generator/preview only reads sets; sample limits are applied at
  * run time by the Test Runner (sample profiles live on the Samples page). */
-const EMPTY_SAMPLE: SampleProfile = {
-  maxForce: 0,
-  maxVelocity: 0,
-  maxDisplacement: 0,
-  sampleWidth: 0,
-  sampleThickness: 0,
-  serial: '',
-};
-
 const newMove = (): Move => ({
   moveType: 'linear',
   absoluteOrRelative: 'absolute',
@@ -226,7 +218,7 @@ export default function Create() {
 
   const applyLoadedSet = (set: MotionSet) => {
     if (loadSetTarget === null) return;
-    updateSets(sets.map((s, idx) => (idx === loadSetTarget ? set : s)));
+    updateSets(replaceSetAt(sets, loadSetTarget, set));
     setLoadSetTarget(null);
   };
 
@@ -305,7 +297,7 @@ export default function Create() {
     );
   };
 
-  const testProfile: TestProfile = { ...motionProfile, sets, sampleProfile: EMPTY_SAMPLE };
+  const testProfile: TestProfile = { ...motionProfile, sets, sampleProfile: EMPTY_SAMPLE_PROFILE };
 
   return (
     <div>

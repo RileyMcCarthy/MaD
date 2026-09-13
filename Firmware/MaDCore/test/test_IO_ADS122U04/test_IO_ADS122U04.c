@@ -6,6 +6,7 @@
  * written so the happy path verifies; faults are injected via flags.
  */
 #include <unity.h>
+#include "vibes_behaviour.h"
 #include <string.h>
 #include "../../src/IO/IO_ADS122U04.c"
 
@@ -116,6 +117,13 @@ void tearDown(void) {}
 
 void test_start_success_resets_configures_and_starts(void)
 {
+    VIBES_TEST("ads122.start-resets-and-starts",
+               "src/IO/IO_ADS122U04.c#IO_ADS122U04_start",
+               "a start of the load-cell ADC");
+    VIBES_EXPECT("start-succeeds", "the start succeeds");
+    VIBES_EXPECT("link-opened", "the serial link to the converter is opened");
+    VIBES_EXPECT("converter-reset", "the converter is reset");
+    VIBES_EXPECT("conversion-begun", "the converter is told to begin converting once configured");
     TEST_ASSERT_TRUE(IO_ADS122U04_start(CH));
     TEST_ASSERT_EQUAL_INT(1, d_startCount); /* serial channel opened */
     TEST_ASSERT_TRUE(d_sawReset);           /* RESET command issued */
@@ -124,6 +132,11 @@ void test_start_success_resets_configures_and_starts(void)
 
 void test_start_writes_then_reads_back_all_five_registers(void)
 {
+    VIBES_TEST("ads122.start-writes-and-verifies-config",
+               "src/IO/IO_ADS122U04.c#IO_ADS122U04_start",
+               "a start of the load-cell ADC whose configuration read-back matches what was written");
+    VIBES_EXPECT("start-succeeds", "the start succeeds");
+    VIBES_EXPECT("config-written", "the configuration is written to the converter");
     /* The echo read-back equals what was written, so verification passes; also
      * confirm every register slot was actually written (non-fixed marker). */
     TEST_ASSERT_TRUE(IO_ADS122U04_start(CH));
@@ -133,6 +146,11 @@ void test_start_writes_then_reads_back_all_five_registers(void)
 
 void test_start_fails_on_register_read_timeout(void)
 {
+    VIBES_TEST("ads122.start-fails-on-read-timeout",
+               "src/IO/IO_ADS122U04.c#IO_ADS122U04_start",
+               "a start of the load-cell ADC whose configuration read-back never arrives");
+    VIBES_EXPECT("start-fails", "the start fails");
+    VIBES_EXPECT("never-converts", "the converter is never told to begin converting");
     d_readOk = false; /* read-back times out */
     TEST_ASSERT_FALSE(IO_ADS122U04_start(CH));
     TEST_ASSERT_FALSE(d_sawStart); /* never reaches START */
@@ -140,6 +158,11 @@ void test_start_fails_on_register_read_timeout(void)
 
 void test_start_fails_on_config_mismatch(void)
 {
+    VIBES_TEST("ads122.start-fails-on-config-mismatch",
+               "src/IO/IO_ADS122U04.c#IO_ADS122U04_start",
+               "a start of the load-cell ADC that reads back a different configuration than was written");
+    VIBES_EXPECT("start-fails", "the start fails");
+    VIBES_EXPECT("never-converts", "the converter is never told to begin converting");
     d_corruptReadback = true; /* device reports a different value than written */
     TEST_ASSERT_FALSE(IO_ADS122U04_start(CH));
     TEST_ASSERT_FALSE(d_sawStart);
@@ -147,6 +170,10 @@ void test_start_fails_on_config_mismatch(void)
 
 void test_stop_stops_serial(void)
 {
+    VIBES_TEST("ads122.stop-closes-serial",
+               "src/IO/IO_ADS122U04.c#IO_ADS122U04_stop",
+               "a stop of the load-cell ADC");
+    VIBES_EXPECT("link-closed", "the machine closes the serial link to the load cell");
     IO_ADS122U04_stop(CH);
     TEST_ASSERT_EQUAL_INT(1, d_stopCount);
 }
@@ -161,6 +188,11 @@ static int32_t expected_nVV(int32_t counts)
 
 void test_receiveConversion_assembles_24bit_word_lsb_first(void)
 {
+    VIBES_TEST("ads122.conversion-lsb-first",
+               "src/IO/IO_ADS122U04.c#IO_ADS122U04_receiveConversion",
+               "a load-cell ADC conversion arriving as three bytes");
+    VIBES_EXPECT("lsb-first",
+                 "the first byte to arrive is the least significant of the count behind the reported signal");
     d_convBytes[0] = 0x01; /* LSB on the wire */
     d_convBytes[1] = 0x02;
     d_convBytes[2] = 0x03; /* MSB */
@@ -174,6 +206,12 @@ void test_receiveConversion_assembles_24bit_word_lsb_first(void)
  * tare point would come back as a huge positive force. */
 void test_receiveConversion_sign_extends_negative_counts(void)
 {
+    VIBES_TEST("ads122.conversion-sign-extends",
+               "src/IO/IO_ADS122U04.c#IO_ADS122U04_receiveConversion",
+               "a load-cell ADC conversion of all-ones, and of the most negative count the converter can produce");
+    VIBES_EXPECT_WHY("reported-negative",
+                     "both are reported as negative signals",
+                     "a reading below the tare point is a negative count and has to remain negative in the reported force");
     d_convBytes[0] = 0xFF;
     d_convBytes[1] = 0xFF;
     d_convBytes[2] = 0xFF; /* 0xFFFFFF = -1 */
@@ -189,6 +227,10 @@ void test_receiveConversion_sign_extends_negative_counts(void)
 
 void test_receiveConversion_reports_timeout(void)
 {
+    VIBES_TEST("ads122.conversion-timeout",
+               "src/IO/IO_ADS122U04.c#IO_ADS122U04_receiveConversion",
+               "a load-cell ADC conversion that never arrives");
+    VIBES_EXPECT("reading-failed", "the machine reports the reading as failed");
     d_convOk = false;
     int32_t signal_nVV = 0;
     TEST_ASSERT_FALSE(IO_ADS122U04_receiveConversion(CH, &signal_nVV, 1000));
@@ -199,6 +241,13 @@ void test_receiveConversion_reports_timeout(void)
  * assembled from stale bytes and every later reading is rotated. */
 void test_receiveConversion_drains_stale_bytes_before_requesting(void)
 {
+    VIBES_TEST("ads122.conversion-drains-stale-bytes",
+               "src/IO/IO_ADS122U04.c#IO_ADS122U04_receiveConversion",
+               "leftover bytes sitting on the load-cell ADC serial link from a previous request, then a new conversion");
+    VIBES_EXPECT_WHY("flushed-before-request",
+                     "the leftovers are flushed before the read request goes out",
+                     "a conversion is three framed bytes; leftovers from a previous timed-out request would rotate every later reading");
+    VIBES_EXPECT("signal-from-new-conversion", "the reported signal comes from the new conversion");
     d_staleBytes = 5;
     d_convBytes[0] = 0x10; d_convBytes[1] = 0x20; d_convBytes[2] = 0x30;
     d_convOk = true;

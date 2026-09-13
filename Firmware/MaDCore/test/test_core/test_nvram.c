@@ -2,6 +2,7 @@
 #include "HAL_lock.h"
 #include <string.h>
 #include "dev_nvram.h"
+#include "vibes_behaviour.h"
 
 extern dev_nvram_config_t dev_nvram_config;
 extern MachineProfile dev_nvram_machineProfileDefault;
@@ -22,6 +23,14 @@ static const MachineProfile dev_nvram_machineProfileTest1 = {
 
 void test_dev_nvram_loadDefaultMachineProfile(void)
 {
+    VIBES_TEST("nvram.defaults",
+               "src/DEV/dev_nvram.c#dev_nvram_run",
+               "a machine with no stored profile on the SD card");
+    VIBES_EXPECT_WHY("boots-on-default",
+                     "the machine boots on the default profile",
+                     "every machine must boot with a usable envelope even before a profile has been saved");
+    VIBES_EXPECT("default-values",
+                 "that profile is named Default, with homing speed 10 and homing offset 5");
     // Ensure default values are correct
     MachineProfile *defaultProfile = (MachineProfile *)dev_nvram_config.channels[DEV_NVRAM_CHANNEL_MACHINE_PROFILE].dataDefault;
     TEST_ASSERT_EQUAL_CHAR_ARRAY(defaultProfile->name, "Default", strlen("Default"));
@@ -46,6 +55,13 @@ void test_dev_nvram_loadDefaultMachineProfile(void)
 
 void test_dev_nvram_saveMachineProfile(void)
 {
+    VIBES_TEST("nvram.save-machine-profile",
+               "src/DEV/dev_nvram.c#dev_nvram_updateChannelData",
+               "a machine on the default profile, then updated to a new profile named Test1");
+    VIBES_EXPECT("read-back-unchanged",
+                 "the machine reads the new profile back unchanged");
+    VIBES_EXPECT("written-to-card",
+                 "the new profile is written to the SD card");
     MachineProfile currentProfile;
 
     TEST_ASSERT_EQUAL_INT(DEV_NVRAM_INIT, dev_nvram_getState(DEV_NVRAM_CHANNEL_MACHINE_PROFILE));
@@ -81,6 +97,11 @@ void test_dev_nvram_saveMachineProfile(void)
 
 void test_dev_nvram_loadMachineProfile(void)
 {
+    VIBES_TEST("nvram.load-machine-profile",
+               "src/DEV/dev_nvram.c#dev_nvram_run",
+               "an SD card that already holds a saved machine profile");
+    VIBES_EXPECT("boot-loads-saved",
+                 "on boot the machine loads that profile and runs on it");
     // create a file with the test profile
     FILE *file = fopen("./test/sd/profile.bin", "w");
     TEST_ASSERT_NOT_NULL(file);

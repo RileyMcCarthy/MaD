@@ -43,6 +43,16 @@ export default function Live() {
   const zeroForce = useStore((s) => s.zeroForce);
   const zeroLength = useStore((s) => s.zeroLength);
   const testRunning = useStore((s) => Boolean(s.machineState?.testRunning));
+  // No state frame yet (fresh connect, or a reconnect reset it to null) means
+  // the machine's condition is UNKNOWN — which must never be collapsed into a
+  // safe-sounding default. `Boolean(state?.testRunning)` reads unknown as "no
+  // test running" and enabled every manual control while the gantry could be
+  // mid-move; the badges likewise rendered unknown as "idle"/"disabled". The
+  // Fault and Restriction badges below already render '—' for exactly this
+  // case — Motion and Test now follow the same rule, and the controls stay
+  // locked until the machine has actually said what it is doing.
+  const stateKnown = state !== null;
+  const manualBlocked = !stateKnown || testRunning;
   const notify = useStore((s) => s.notify);
 
   const [jogMm, setJogMm] = useState(1);
@@ -85,9 +95,9 @@ export default function Live() {
         <h2>State</h2>
         <div className="row">
           <span className="badge">
-            Motion: {state?.motionEnabled ? 'enabled' : 'disabled'}
+            Motion: {stateKnown ? (state.motionEnabled ? 'enabled' : 'disabled') : '—'}
           </span>
-          <span className="badge">Test: {state?.testRunning ? 'running' : 'idle'}</span>
+          <span className="badge">Test: {stateKnown ? (state.testRunning ? 'running' : 'idle') : '—'}</span>
           <span
             className={`badge ${state && state.faultedReason !== FaultedReason.NONE ? 'error' : ''}`}
             title={state ? FAULT_HINTS[state.faultedReason] : undefined}
@@ -106,13 +116,16 @@ export default function Live() {
       <div className="panel">
         <h2>Controls</h2>
         <div className="row">
-          {/* Motion enable/disable stays available during a test — disabling is a stop. */}
-          <button onClick={() => setMotionEnabled(!state?.motionEnabled)}>
-            {state?.motionEnabled ? 'Disable motion' : 'Enable motion'}
+          {/* Motion enable/disable stays available during a test — disabling is a
+              stop. It is NOT available while the state is unknown: enabling
+              motion on a machine we have not heard from is a guess, and
+              `!state?.motionEnabled` would have sent enable=true on null. */}
+          <button onClick={() => setMotionEnabled(!state?.motionEnabled)} disabled={!stateKnown}>
+            {!stateKnown ? 'Motion …' : state.motionEnabled ? 'Disable motion' : 'Enable motion'}
           </button>
-          <button onClick={() => homeAxis()} disabled={testRunning}>Home (G28)</button>
-          <button onClick={() => zeroForce()} disabled={testRunning}>Zero force</button>
-          <button onClick={() => zeroLength()} disabled={testRunning}>Zero length</button>
+          <button onClick={() => homeAxis()} disabled={manualBlocked}>Home (G28)</button>
+          <button onClick={() => zeroForce()} disabled={manualBlocked}>Zero force</button>
+          <button onClick={() => zeroLength()} disabled={manualBlocked}>Zero length</button>
         </div>
         <div className="row" style={{ marginTop: 12 }}>
           <label className="field">
@@ -121,7 +134,7 @@ export default function Live() {
               type="number"
               step="0.1"
               value={jogMm}
-              disabled={testRunning}
+              disabled={manualBlocked}
               onChange={(e) => setJogMm(Number(e.target.value))}
             />
           </label>
@@ -131,13 +144,18 @@ export default function Live() {
               type="number"
               step="0.1"
               value={jogSpeed}
-              disabled={testRunning}
+              disabled={manualBlocked}
               onChange={(e) => setJogSpeed(Number(e.target.value))}
             />
           </label>
-          <button onClick={() => void jog(-Math.abs(jogMm))} disabled={testRunning}>− Jog down</button>
-          <button onClick={() => void jog(Math.abs(jogMm))} disabled={testRunning}>+ Jog up</button>
+          <button onClick={() => void jog(-Math.abs(jogMm))} disabled={manualBlocked}>− Jog down</button>
+          <button onClick={() => void jog(Math.abs(jogMm))} disabled={manualBlocked}>+ Jog up</button>
         </div>
+        {!stateKnown && (
+          <p className="muted" style={{ marginTop: 8 }}>
+            Waiting for the machine to report its state — controls unlock when it does.
+          </p>
+        )}
         {testRunning && (
           <p className="muted" style={{ marginTop: 8 }}>
             Manual controls are disabled while a test is running. Use STOP (top bar) to halt.

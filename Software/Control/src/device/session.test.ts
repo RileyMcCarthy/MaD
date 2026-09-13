@@ -6,7 +6,8 @@
  * The module constructs a singleton DeviceClient on import, so Worker must be
  * stubbed before the dynamic import.
  */
-import { describe, it, expect, vi, beforeAll } from 'vitest';
+import { describe, expect, vi, beforeAll } from 'vitest';
+import { behaviour } from '@vibes/behaviour';
 import type { DeviceEvent } from './events';
 
 class FakeWorker {
@@ -59,48 +60,98 @@ beforeAll(async () => {
 });
 
 describe('workerCrashEvents', () => {
-  it('emits error + disconnected with reason (strings, never objects)', () => {
-    const events = workerCrashEvents('wasm panic');
-    expect(events).toEqual([
-      { kind: 'error', message: 'worker: wasm panic' },
-      { kind: 'disconnected', reason: 'worker crashed: wasm panic' },
-    ]);
-    for (const e of events) {
-      if (e.kind === 'error') expect(typeof e.message).toBe('string');
-      if (e.kind === 'disconnected') expect(typeof e.reason).toBe('string');
-    }
-  });
+  behaviour(
+    {
+      id: 'session.worker-crash-events-are-text',
+      covers: 'src/device/session.ts#workerCrashEvents',
+      given: 'the device worker crashing with a panic message',
+      expect: {
+        'error-then-disconnect': 'an error carrying the crash text and a disconnect naming it as the reason follow',
+        'plain-text': 'both carry the crash text as plain text',
+      },
+      why: {
+        'error-then-disconnect':
+          'the UI must show the crash as a disconnect so the operator can reconnect with a fresh session',
+      },
+    },
+    () => {
+      const events = workerCrashEvents('wasm panic');
+      expect(events).toEqual([
+        { kind: 'error', message: 'worker: wasm panic' },
+        { kind: 'disconnected', reason: 'worker crashed: wasm panic' },
+      ]);
+      for (const e of events) {
+        if (e.kind === 'error') expect(typeof e.message).toBe('string');
+        if (e.kind === 'disconnected') expect(typeof e.reason).toBe('string');
+      }
+    },
+  );
 });
 
 describe('DeviceClient worker recovery', () => {
-  it('constructs an initial worker', () => {
-    const client = new DeviceClient({ workerFactory: () => new FakeWorker() as unknown as Worker });
-    expect(client.workerCreateCount).toBe(1);
-  });
-
-  it('simulateWorkerCrash fans out error + disconnected to subscribers', () => {
-    const client = new DeviceClient({ workerFactory: () => new FakeWorker() as unknown as Worker });
-    const seen: DeviceEvent[][] = [];
-    client.subscribe((batch) => seen.push(batch));
-    client.simulateWorkerCrash('trap');
-    expect(seen).toHaveLength(1);
-    expect(seen[0]).toEqual(workerCrashEvents('trap'));
-    expect(client.isConnected()).toBe(false);
-  });
-
-  it('forceRecreateWorker builds a fresh worker (connect recovery class)', () => {
-    const workers: FakeWorker[] = [];
-    const client = new DeviceClient({
-      workerFactory: () => {
-        const w = new FakeWorker();
-        workers.push(w);
-        return w as unknown as Worker;
+  behaviour(
+    {
+      id: 'session.client-starts-with-one-worker',
+      covers: 'src/device/session.ts#DeviceClient',
+      given: 'a new device client',
+      expect: {
+        'one-worker': 'exactly one worker is created',
       },
-    });
-    expect(client.workerCreateCount).toBe(1);
-    client.forceRecreateWorker();
-    expect(client.workerCreateCount).toBe(2);
-    expect(workers[0].terminated).toBe(true);
-    expect(workers[1].terminated).toBe(false);
-  });
+    },
+    () => {
+      const client = new DeviceClient({ workerFactory: () => new FakeWorker() as unknown as Worker });
+      expect(client.workerCreateCount).toBe(1);
+    },
+  );
+
+  behaviour(
+    {
+      id: 'session.worker-crash-reaches-subscribers',
+      covers: 'src/device/session.ts#DeviceClient',
+      given: 'a subscriber listening to a device client whose worker then crashes',
+      expect: {
+        'one-batch': 'the subscriber gets one batch carrying the crash error and the disconnect',
+        'client-disconnected': 'the client reports itself disconnected',
+      },
+    },
+    () => {
+      const client = new DeviceClient({ workerFactory: () => new FakeWorker() as unknown as Worker });
+      const seen: DeviceEvent[][] = [];
+      client.subscribe((batch) => seen.push(batch));
+      client.simulateWorkerCrash('trap');
+      expect(seen).toHaveLength(1);
+      expect(seen[0]).toEqual(workerCrashEvents('trap'));
+      expect(client.isConnected()).toBe(false);
+    },
+  );
+
+  behaviour(
+    {
+      id: 'session.recreate-worker-is-fresh',
+      covers: 'src/device/session.ts#DeviceClient',
+      given: 'a device client whose worker is then recreated',
+      expect: {
+        'previous-shut-down': 'the previous worker is shut down',
+        'fresh-worker-running': 'a second worker starts and stays running',
+      },
+      why: {
+        'fresh-worker-running': 'a panic that poisons the protocol engine must not carry into the next connection',
+      },
+    },
+    () => {
+      const workers: FakeWorker[] = [];
+      const client = new DeviceClient({
+        workerFactory: () => {
+          const w = new FakeWorker();
+          workers.push(w);
+          return w as unknown as Worker;
+        },
+      });
+      expect(client.workerCreateCount).toBe(1);
+      client.forceRecreateWorker();
+      expect(client.workerCreateCount).toBe(2);
+      expect(workers[0].terminated).toBe(true);
+      expect(workers[1].terminated).toBe(false);
+    },
+  );
 });

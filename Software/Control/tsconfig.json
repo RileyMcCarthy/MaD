@@ -25,7 +25,14 @@
     "types": ["w3c-web-serial", "wicg-file-system-access", "vite/client"],
     "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"]
+      "@/*": ["src/*"],
+      // @vibes/behaviour is a `file:` dependency, so npm symlinks it and TS
+      // resolves its imports from the LINK TARGET (../../Vibes/bindings/ts),
+      // walking up from there and never reaching this project's node_modules.
+      // vitest is its peer dependency and is installed right here, so say so
+      // explicitly. Without this the app typechecks only when Vibes/node_modules
+      // happens to exist, which is true locally and false in CI.
+      "vitest": ["./node_modules/vitest"]
     }
   },
   "include": ["src"],

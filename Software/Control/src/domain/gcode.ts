@@ -186,6 +186,11 @@ export function parseGcodeToMove(line: string): ProtoMove | null {
   for (const token of tokens) {
     if (token.length === 0) continue;
     const code = token[0].toUpperCase();
+    // Stop at a trailing comment. Without this, a token inside the comment is
+    // parsed as a parameter: `G1 X10 F5 ; X50 fast` moved to X50, and
+    // `G0 X0 ; G1 X999` changed both the command and the target. Matches
+    // parseGcodeWaveform, which has always had this guard.
+    if (code === ';') break;
     const value = parseFloat(token.substring(1));
     if (Number.isNaN(value)) continue;
 

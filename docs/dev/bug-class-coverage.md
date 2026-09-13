@@ -62,7 +62,7 @@ cd Software/Control && npm run verify
 python3 Protocol/scripts/check_schema_domain_lockstep.py
 
 # WASM e2e vs live SIL (includes TM-busy-restart / TM-manual-gate)
-# requires: make playground + npm run sil:bridge + npm run dev
+# requires: make e2e-emulator + npm run sil:bridge + npm run dev
 npm run e2e
 # smoke subset (see e2e/smoke-ids.txt):
 npm run e2e:smoke

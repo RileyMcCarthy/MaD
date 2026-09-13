@@ -1,0 +1,10 @@
+[package]
+name = "vibes-behaviour"
+version = "0.1.0"
+edition = "2021"
+description = "Declare a behaviour from a Rust test and emit it to behaviours.jsonl."
+publish = false
+
+# No dependencies, deliberately. This is linked into a test binary; a ledger
+# helper is not worth a serde tree, and hand-rolling the escape is ~20 lines.
+[dependencies]

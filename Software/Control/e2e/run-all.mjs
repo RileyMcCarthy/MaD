@@ -1,14 +1,31 @@
 /**
  * E2E parity suite runner.
  *
- * Drives the real app in system Chrome against the live SIL emulator (via the
- * WS bridge) and an OPFS data folder — see fixtures.mjs and docs/TEST_PLAN.md.
+ * Drives the real app against the live SIL emulator and an OPFS data folder —
+ * see fixtures.mjs and docs/TEST_PLAN.md.
  *
- * Preconditions (each in its own terminal):
- *   cd SIL && make playground          # emulator on /tmp/tty.rpi
+ * There are exactly TWO valid configurations, and each pairs a firmware backend
+ * with a way of providing serial. Do not mix them: the cross pairings either
+ * cannot start (native + QEMU is refused by the emulator) or silently measure
+ * the host rather than the machine (the ISS behind the bridge).
+ *
+ * (a) NATIVE + BRIDGE — host Chrome, fake serial over the WS bridge:
+ *   cd SIL && make e2e-emulator        # emulator on /tmp/tty.rpi (unpaced virtual time)
  *   npm run sil:bridge                 # ws://localhost:9999
  *   npm run dev                        # app on http://localhost:5174
- * Then: npm run e2e
+ *   npm run e2e
+ *
+ * (b) ISS + COMPUTER NODE — the shipped P2 image interpreted instruction by
+ * instruction, and Chrome inside a QEMU guest the board's clock meters, talking
+ * real Web Serial to the emulated FTDI. The browser cannot outrun the board,
+ * because the board decides when the browser's vCPU runs at all:
+ *   cd SIL && make playground-cosim    # prints the DevTools URL (port 9222)
+ *   npm run dev -- --host              # the guest fetches from 10.0.2.2:5174
+ *   CDP_URL=http://127.0.0.1:9222 npm run e2e
+ *
+ * In (b) every budget here is multiplied by E2E_TIMEOUT_SCALE (10 by default)
+ * and the three link-drop scenarios are skipped — they need the fake serial's
+ * `__silDropLink`, and a real port has nothing to reach in and sever.
  *
  * Covers the parity-critical scenarios of docs/TEST_PLAN.md §4: A1, B1–B5, C1/C3/C4, D1/D2/D3,
  * E1, F1/F2/F4/F6/F7, G1/G2/G3 + G-limit, H1–H5, I1–I4, J1 (in G-limit), K1 (in B2+B3+B4) — plus
@@ -23,19 +40,19 @@
 import {
   newSilPage,
   connectToSil,
+  recoverMachine,
   chooseDataFolder,
   dumpFailureArtifacts,
-  recoverMachine,
   setCurrentScenario,
   installFakeBootRom,
   installOpfsDataDir,
   OPFS_DIR,
   APP_URL,
-  chromium,
-  CDP_URL,
   APP_URL_HOST,
+  CDP_URL,
   T,
   boardGrantedPort,
+  chromium,
 } from './fixtures.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -45,6 +62,35 @@ import { dirname, join } from 'node:path';
 const MATRIX = JSON.parse(
   readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'matrix-catalog.json'), 'utf8'),
 );
+
+// Budget for any wait that depends on the DEVICE making progress.
+//
+// Generous on purpose. The emulator simulates at a FRACTION of real time — its
+// free-running pacing sleeps a wall microsecond per virtual microsecond, so the
+// real-time factor is bounded above by 1.0 and lands nearer 0.25 on a CI runner
+// that is also hosting Chrome, Vite and the bridge. Every protocol round trip
+// and every millimetre of motion therefore costs several times its nominal wall
+// duration, and an 8-second budget that is ample on a dev box is not on CI.
+//
+// A healthy run never spends this: these bound a hang, they do not pace a
+// passing test. No wait in this suite is used to prove something is ABSENT, so
+// raising the ceiling cannot weaken an assertion — it only stops a slow host
+// from being reported as a broken one.
+//
+// On the ISS the multiplier is not a slow host but the execution model: the
+// board interprets every P2 instruction, and the browser is inside a VM the
+// board's clock meters, so a simulated second costs far more than a second of
+// wall time. `T()` carries that factor (E2E_TIMEOUT_SCALE, 10x under CDP) so
+// both SIL configurations share one set of budgets instead of two.
+const DEVICE_WAIT_MS = T(60_000);
+
+// Budget for a whole TEST PROGRAM: upload, execute every move, complete, and
+// come to rest — or for pulling the recorded data back off the device. The
+// longest profiles here are several seconds of SIMULATED motion, and the same
+// pacing that makes DEVICE_WAIT_MS generous applies to all of it at once, so
+// this is minutes of wall time on a slow host. Same reasoning: it bounds a
+// hang, it never paces a passing run.
+const RUN_WAIT_MS = T(180_000);
 
 function assert(cond, msg) {
   if (!cond) throw new Error(msg);
@@ -98,6 +144,13 @@ async function readDownloadedCsvSeries(page) {
       const t = Number(c[ti]), p = Number(c[pi]);
       if (Number.isFinite(t) && Number.isFinite(p)) { time.push(t); pos.push(p); }
     }
+    // A header-only CSV is a failed recording, and it must LOOK like one.
+    // Returning {time: [], pos: []} here let every truthiness guard pass and
+    // pushed the failure into whichever assertion happened to trip first on
+    // empty arrays — or, worse, into none: Math.max(...[]) is -Infinity, and
+    // G-limit's "stayed under the limit" check is satisfied by -Infinity, so
+    // it reported PASS on CI while the device was returning zero bytes.
+    if (pos.length === 0) return null;
     return { time, pos };
   });
 }
@@ -123,14 +176,41 @@ function interpolateAtUs(timesUs, values, tUs) {
   return values[i0] + w * (values[lo] - values[i0]);
 }
 
-/** First sample time at which position has moved ≥ `minDeltaUm` from the opening sample. */
-function motionStartTimeUs(timesUs, positionsUm, minDeltaUm = 80) {
+/** First sample time at which position has moved ≥ `minDeltaUm` from the opening sample.
+ *
+ * Default 500 µm, not an encoder LSB: logging starts when `testRunning` goes
+ * true, which is before the axis moves, and a parked gantry still twitches.
+ * 80 µm treated that twitch as t0, so VT-linear's t0+400 ms landed 200 ms into
+ * a move that had not started yet (2.2 mm of a commanded 4 mm). */
+function motionStartTimeUs(timesUs, positionsUm, minDeltaUm = 500) {
   if (timesUs.length < 2 || timesUs.length !== positionsUm.length) return undefined;
   const p0 = positionsUm[0];
   for (let i = 1; i < timesUs.length; i++) {
     if (Math.abs(positionsUm[i] - p0) >= minDeltaUm) return timesUs[i];
   }
   return undefined;
+}
+
+/** Path length ignoring high-frequency hunting and the leading rest prefix.
+ *
+ * Raw Σ|Δ| at 100 Hz counts encoder jitter as travel: a 42 mm multi-set move
+ * reported 86 mm of "path" on a loaded CI runner. Resampling onto a 50 ms
+ * virtual grid keeps the commanded reversals and drops the jitter. */
+function resampledPathMm(timeUs, posUm, { dtUs = 50_000, minDeltaUm = 500 } = {}) {
+  if (!timeUs.length || timeUs.length !== posUm.length) return 0;
+  const tStart = motionStartTimeUs(timeUs, posUm, minDeltaUm) ?? timeUs[0];
+  let lastMoving = timeUs.length - 1;
+  while (lastMoving > 0 && Math.abs(posUm[lastMoving] - posUm[lastMoving - 1]) < 50) lastMoving -= 1;
+  const tEnd = timeUs[lastMoving];
+  let path = 0;
+  let lastP = interpolateAtUs(timeUs, posUm, tStart);
+  for (let t = tStart + dtUs; t <= tEnd && lastP != null; t += dtUs) {
+    const p = interpolateAtUs(timeUs, posUm, t);
+    if (p == null) break;
+    path += Math.abs(p - lastP) / 1000;
+    lastP = p;
+  }
+  return path;
 }
 
 /** SIL plant: 2048-line encoder × 4× quadrature. Position_um in the CSV is this encoder. */
@@ -142,6 +222,63 @@ const SIL_ENCODER_STEPS_PER_MM = 4 * 2048;
 // (R² high — a ramp/triangle/wrong-frequency would fail); the fitted amplitude
 // matches; and the number of midline crossings matches the commanded cycles.
 // This is the end-to-end proof that the firmware-native waveform = f(t).
+// Narrow a recorded run down to the COMMANDED WAVEFORM.
+//
+// A waveform run records more than its wave: a leading ramp that travels the
+// move's `distance` to the wave's base, and — after the closing settle parks the
+// gantry — a flat tail lasting until teardown. Neither is the commanded shape,
+// so any statistic taken over the whole record measures the approach as much as
+// the wave. That is not a small effect: for WAVE-tri the ramp is 5 mm against an
+// 8 mm peak-to-peak, and a properly homed gantry therefore reported 14.49 mm of
+// "waveform" — failing the assertion precisely BECAUSE homing had worked, and
+// passing when drift happened to leave it already near the base.
+//
+// The wave's extent is known rather than guessed: it lasts cycles/frequency
+// seconds and ends where the gantry stops moving (whole cycles end on the
+// centre, so the closing settle is negligible). Take that window.
+function waveformWindow(posMm, tS, { cycles, frequencyHz }) {
+  // 0.05 mm, not 0.005: a parked gantry still jitters more than 5 µm between
+  // sparse CI samples (a proto timeout drops the 100 Hz stream to a few Hz),
+  // and the walk-back then treats the teardown tail as "moving". Wave motion
+  // is still tens of times this.
+  const parkedEps = 0.05;
+  const waveDurS = cycles / frequencyHz;
+  const wholeExc = Math.max(...posMm) - Math.min(...posMm);
+  const exc = (a, b) => {
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (let i = a; i <= b; i++) {
+      if (posMm[i] < lo) lo = posMm[i];
+      if (posMm[i] > hi) hi = posMm[i];
+    }
+    return hi - lo;
+  };
+  const firstAt = (lastMoving) => {
+    const startT = tS[lastMoving] - waveDurS;
+    let first = 0;
+    while (first < lastMoving && tS[first] < startT) first += 1;
+    return first;
+  };
+
+  let lastMoving = posMm.length - 1;
+  while (lastMoving > 0 && Math.abs(posMm[lastMoving] - posMm[lastMoving - 1]) < parkedEps) {
+    lastMoving -= 1;
+  }
+  // Sparse-sample tails can fail the consecutive-eps test and leave lastMoving
+  // on the park (WAVE-tri: 0.75 mm p2p at the centre for 2 s). Keep pulling
+  // back until the window holds a real fraction of the record's excursion.
+  const minExc = Math.max(0.5, 0.25 * wholeExc);
+  while (lastMoving > 1) {
+    if (exc(firstAt(lastMoving), lastMoving) >= minExc) break;
+    lastMoving -= 1;
+    while (lastMoving > 0 && Math.abs(posMm[lastMoving] - posMm[lastMoving - 1]) < parkedEps) {
+      lastMoving -= 1;
+    }
+  }
+  const first = firstAt(lastMoving);
+  return { p: posMm.slice(first, lastMoving + 1), t: tS.slice(first, lastMoving + 1), waveDurS };
+}
+
 function assertSineMatch(series, { amplitudeMm, frequencyHz, cycles, centreMm }, label) {
   assert(series && series.pos.length > 40, `${label}: enough samples (${series?.pos.length})`);
   const posMm = series.pos.map((p) => p / 1000);
@@ -159,21 +296,12 @@ function assertSineMatch(series, { amplitudeMm, frequencyHz, cycles, centreMm },
   // The wave's extent is known, not guessed: it runs for cycles/frequency
   // seconds and ends where the gantry stops moving (whole cycles end on the
   // centre, so the settle move is negligible). Take that window.
-  const parkedEps = 0.005; // mm between samples; wave motion is ≥10x this, parked is <deadband
-  let lastMoving = posMm.length - 1;
-  while (lastMoving > 0 && Math.abs(posMm[lastMoving] - posMm[lastMoving - 1]) < parkedEps) lastMoving--;
-  const waveDurS = cycles / frequencyHz;
-  const startT = tS[lastMoving] - waveDurS;
-  let first = 0;
-  while (first < lastMoving && tS[first] < startT) first++;
-
-  const p = posMm.slice(first, lastMoving + 1);
-  const t = tS.slice(first, lastMoving + 1);
+  const { p, t, waveDurS } = waveformWindow(posMm, tS, { cycles, frequencyHz });
   // A run where the gantry never moved collapses this window — it must still be
   // long enough to hold the commanded cycles, or the fit below is meaningless.
   assert(
     p.length > 40 && t[t.length - 1] - t[0] > waveDurS * 0.8,
-    `${label}: recorded a full ${waveDurS.toFixed(2)}s of waveform motion (got ${(t[t.length - 1] - t[0]).toFixed(2)}s over ${p.length} samples)`,
+    `${label}: recorded a full ${waveDurS.toFixed(2)}s of waveform motion (got ${(t[t.length - 1] - t[0]).toFixed(2)}s over ${p.length} samples; whole record ${posMm.length} samples spanning ${(tS[tS.length - 1] - tS[0]).toFixed(2)}s)`,
   );
   const n = p.length;
   const t0 = t[0];
@@ -183,28 +311,13 @@ function assertSineMatch(series, { amplitudeMm, frequencyHz, cycles, centreMm },
   const excursion = maxP - minP;
   assert(
     Math.abs(excursion - 2 * amplitudeMm) < Math.max(2, amplitudeMm * 0.4),
-    `${label}: peak-to-peak ≈ 2A=${(2 * amplitudeMm).toFixed(1)}mm (got ${excursion.toFixed(2)})`,
+    `${label}: peak-to-peak ≈ 2A=${(2 * amplitudeMm).toFixed(1)}mm (got ${excursion.toFixed(2)}; ` +
+      `window ${p.length} of ${posMm.length} samples, whole record spans ${(tS[tS.length - 1] - tS[0]).toFixed(2)}s)`,
   );
 
   // Least-squares fit  x(t) ≈ a·cos(ω t') + b·sin(ω t')  about the mean, ω=2πf.
   const w = 2 * Math.PI * frequencyHz;
   const mean = p.reduce((s, v) => s + v, 0) / n;
-
-  // Where the wave actually sat, not just what shape it was. Everything below
-  // this line is mean-centred by construction — the fit subtracts `mean`, the
-  // peak-to-peak is a difference, and the crossing count is about the series'
-  // own midline — so a waveform displaced bodily off the centre it was
-  // commanded about scores a perfect R² and passes every other check here.
-  // That is exactly how a 0.82 mm systematic offset rode along unnoticed until
-  // it pushed the bottom of the stroke into the lower limit switch.
-  if (typeof centreMm === 'number') {
-    const offset = mean - centreMm;
-    const tol = Math.max(0.5, amplitudeMm * 0.15);
-    assert(
-      Math.abs(offset) < tol,
-      `${label}: wave centred on the commanded ${centreMm}mm (sat at ${mean.toFixed(2)}mm, off by ${offset.toFixed(2)}mm, tol ${tol.toFixed(2)})`,
-    );
-  }
   let Scc = 0, Sss = 0, Scs = 0, Sxc = 0, Sxs = 0, SStot = 0;
   for (let i = 0; i < n; i++) {
     const c = Math.cos(w * (t[i] - t0));
@@ -241,18 +354,44 @@ function assertSineMatch(series, { amplitudeMm, frequencyHz, cycles, centreMm },
     crossings >= 2 * cycles - 1,
     `${label}: ≥ ${2 * cycles - 1} midline crossings for ${cycles} cycle(s) (got ${crossings})`,
   );
+
+  // Where the wave actually sat, not just what shape it was. Every check above
+  // this line is mean-centred by construction — the fit subtracts `mean`, the
+  // peak-to-peak is a difference, and the crossing count is about the series'
+  // own midline — so a waveform displaced bodily off the centre it was
+  // commanded about scores a perfect R² and passes all of them. That is exactly
+  // how a 0.82 mm systematic sag rode along unnoticed until it pushed the
+  // bottom of the stroke into the lower limit switch.
+  if (typeof centreMm === 'number') {
+    const offset = mean - centreMm;
+    const tol = Math.max(0.5, amplitudeMm * 0.15);
+    assert(
+      Math.abs(offset) < tol,
+      `${label}: wave centred on the commanded ${centreMm}mm (sat at ${mean.toFixed(2)}mm, off by ${offset.toFixed(2)}mm, tol ${tol.toFixed(2)})`,
+    );
+  }
 }
 
 /** Peak-to-peak + cycle count for triangle (and other non-sine) waveforms. */
-function assertWaveformExcursion(series, { amplitudeMm, cycles }, label) {
+function assertWaveformExcursion(series, { amplitudeMm, cycles, frequencyHz }, label) {
   assert(series && series.pos.length > 40, `${label}: enough samples (${series?.pos.length})`);
-  const posMm = series.pos.map((p) => p / 1000);
+  const allPosMm = series.pos.map((v) => v / 1000);
+  const tS = series.time.map((v) => v / 1e6);
+  // Same window as the sine case: measure the wave, not the approach to it.
+  const { p: posMm, t, waveDurS } = waveformWindow(allPosMm, tS, { cycles, frequencyHz });
+  assert(
+    posMm.length > 40 && t[t.length - 1] - t[0] > waveDurS * 0.8,
+    `${label}: recorded a full ${waveDurS.toFixed(2)}s of waveform motion ` +
+      `(got ${(t[t.length - 1] - t[0]).toFixed(2)}s over ${posMm.length} samples)`,
+  );
   const maxP = Math.max(...posMm);
   const minP = Math.min(...posMm);
   const excursion = maxP - minP;
   assert(
     Math.abs(excursion - 2 * amplitudeMm) < Math.max(2.5, amplitudeMm * 0.45),
-    `${label}: peak-to-peak ≈ 2A=${(2 * amplitudeMm).toFixed(1)}mm (got ${excursion.toFixed(2)})`,
+    `${label}: peak-to-peak ≈ 2A=${(2 * amplitudeMm).toFixed(1)}mm (got ${excursion.toFixed(2)}; ` +
+      `min ${minP.toFixed(2)} max ${maxP.toFixed(2)} first ${posMm[0].toFixed(2)} ` +
+      `last ${posMm[posMm.length - 1].toFixed(2)} n=${posMm.length})`,
   );
   const mean = posMm.reduce((s, v) => s + v, 0) / posMm.length;
   let crossings = 0;
@@ -274,24 +413,19 @@ function assertWaveformExcursion(series, { amplitudeMm, cycles }, label) {
 
 // Run the currently-selected profiles and wait for the run to auto-complete + download.
 // Returns the run row locator. Assumes profiles are seeded + selected by the caller.
-// `completeTimeout` is a budget for the RUN, which happens on the simulated
-// clock — so it is scaled at the wait below like every other budget here.
-// Unscaled it gave a co-simulated run 60 s of wall time to finish what takes
-// minutes at 0.02x-0.16x, and every scenario built on this helper failed
-// waiting for a completion badge that was still minutes away.
-async function runAndDownload(page, { completeTimeout = 60000 } = {}) {
+async function runAndDownload(page, { completeTimeout = RUN_WAIT_MS } = {}) {
   const runner = page.locator('.panel', { hasText: 'New Test' });
   await page.getByTestId('run-test').click();
-  await runner.getByText(/started/i).waitFor({ timeout: T(15000) });
+  await runner.getByText(/started/i).waitFor({ timeout: DEVICE_WAIT_MS });
   const row = page.locator('tbody tr').first();
   // A run the firmware abandons never gets a completed badge, so waiting for
-  // one burns the whole scaled budget — ten minutes per incident — and then
-  // reports "timeout" instead of the reason. The firmware does say why, as a
-  // warning notification the app surfaces as a toast, so race the badge
-  // against that and fail immediately with the board's own words.
+  // one burns the whole budget and then reports "timeout" instead of the
+  // reason. The firmware does say why, as a warning notification the app
+  // surfaces as a toast — race the badge against it and fail immediately with
+  // the board's own words.
   const abortToast = page.locator('.toast').getByText(/Test aborted/i).first();
-  const completed = row.locator('.badge.completed').waitFor({ timeout: T(completeTimeout) });
-  const abortReason = abortToast.waitFor({ timeout: T(completeTimeout) }).then(
+  const completed = row.locator('.badge.completed').waitFor({ timeout: completeTimeout });
+  const abortReason = abortToast.waitFor({ timeout: completeTimeout }).then(
     async () => `the firmware ended the run early: ${((await abortToast.textContent()) ?? '').trim()}`,
     // No abort inside the budget: let the completion wait decide the outcome.
     () => null,
@@ -300,8 +434,244 @@ async function runAndDownload(page, { completeTimeout = 60000 } = {}) {
   if (early) throw new Error(early);
   await completed;
   await row.getByRole('button', { name: /Download data/i }).click();
-  await row.locator('.badge.downloaded').waitFor({ timeout: T(40000) });
+  await row.locator('.badge.downloaded').waitFor({ timeout: RUN_WAIT_MS });
   return row;
+}
+
+// Wait until the gantry has actually stopped on its commanded setpoint.
+//
+// The suite's fixed `waitForTimeout` settles assumed the emulator simulates at
+// real time. It does not, and cannot: in free-running mode `apply_pace` sleeps
+// one wall microsecond per virtual microsecond, so the real-time factor is
+// bounded ABOVE by 1.0 and every bit of simulation overhead drags it under.
+// Measured 0.70 on an idle 8-core Mac and 0.25 on a 4-vCPU CI runner sharing a
+// box with Chrome, Vite, the bridge and the emulator. A 2500 ms sleep therefore
+// buys ~625 ms of motion there, and a one-second move gets sampled mid-flight —
+// which is exactly the M8 10 mm @ 10 mm/s cell landing at ~5.5 of 10 mm while
+// the 50 ms and 200 ms cells pass.
+//
+// Waiting on the machine's own report instead is independent of how fast the
+// host simulates, so the same assertion holds on any hardware. `setpointWas`
+// makes the wait honest: without it, a poll that lands before the jog command
+// registers sees position == setpoint (both at rest) and returns "settled"
+// immediately, which is the very bug this replaces.
+async function settleMotion(page, opts = {}) {
+  // Required, not defaulted. Omitting it is the one way to misuse this helper —
+  // phase 1 is skipped, and phase 2 can then return on the very first poll
+  // because the machine is momentarily at rest ON its setpoint from the
+  // PREVIOUS move, before the new command has registered. The wait silently
+  // becomes a no-op and the scenario reads a stale position. Pass `null`
+  // explicitly when the move is already known to be in flight.
+  if (!Object.prototype.hasOwnProperty.call(opts, 'setpointWas')) {
+    throw new Error('settleMotion: pass setpointWas (the setpoint read BEFORE the command), or null');
+  }
+  const {
+    setpointWas,          // setpoint before the command, so we can see it register
+    tolMm = 0.12,         // |position - setpoint| that counts as arrived
+    stillMm = 0.01,       // per-poll movement that counts as stopped
+    stableTicks = 3,      // consecutive arrived+still polls required
+    pollMs = 120,
+    timeoutMs = T(90_000), // generous: bounds a hang, never paces a healthy move
+  } = opts;
+  const num = async (label) =>
+    parseFloat(await page.locator('.readout', { hasText: label }).locator('.value').first().innerText());
+
+  const deadline = Date.now() + timeoutMs;
+  // Phase 1 — let the command land. Advisory: some moves legitimately leave the
+  // setpoint unchanged, so a timeout here just falls through to phase 2.
+  if (setpointWas !== null) {
+    const cmdDeadline = Math.min(deadline, Date.now() + 20_000);
+    while (Date.now() < cmdDeadline) {
+      const set = await num('Machine Setpoint');
+      if (Number.isFinite(set) && Math.abs(set - setpointWas) > tolMm) break;
+      await page.waitForTimeout(pollMs);
+    }
+  }
+
+  // Phase 2 — converge onto the setpoint and hold there.
+  let stable = 0;
+  let last = NaN;
+  let pos = NaN;
+  let set = NaN;
+  while (Date.now() < deadline) {
+    pos = await num('Machine Position');
+    set = await num('Machine Setpoint');
+    const arrived = Number.isFinite(pos) && Number.isFinite(set) && Math.abs(pos - set) <= tolMm;
+    const still = Number.isFinite(last) && Math.abs(pos - last) <= stillMm;
+    if (arrived && still) {
+      if (++stable >= stableTicks) return pos;
+    } else {
+      stable = 0;
+    }
+    last = pos;
+    await page.waitForTimeout(pollMs);
+  }
+  throw new Error(
+    `motion never settled within ${timeoutMs}ms (position ${pos}, setpoint ${set}) — ` +
+    'the gantry is still moving or never reached its target',
+  );
+}
+
+// Make sure no test is still running before driving the manual controls.
+//
+// The suite is serial and shares ONE long-lived emulator, so a scenario can
+// inherit a test that an earlier one left running — and the app deliberately
+// gates the manual jog controls while a test runs (the contract TM-manual-gate
+// asserts). The jog inputs are then disabled, and `locator.fill` sits there
+// until its 30 s timeout with a message about the input, which says nothing
+// about the real cause.
+//
+// Whether that bites is pure timing: at real time the predecessor's run has
+// finished by the time the next scenario connects; at the ~0.25x the emulator
+// actually manages on a CI runner it has not. Waiting on the machine's state
+// makes the scenario independent of both the host speed and what ran before.
+//
+// Call after navigating to /live and before enabling motion — stopping a run
+// disables motion, which the callers' own "Enable motion" step then restores.
+async function ensureTestIdle(page, { graceMs = T(75_000), timeoutMs = T(150_000) } = {}) {
+  const idle = page.getByText('Test: idle');
+  const deadline = Date.now() + timeoutMs;
+  // A run that is genuinely finishing should be allowed to finish on its own.
+  // The grace has to be generous in WALL time: the longest move any scenario
+  // commands is 40 mm at 2 mm/s — 20 s of simulated time, which is ~57 s of
+  // wall time at the ~0.25-0.35x the emulator manages under CI load.
+  try {
+    await idle.waitFor({ timeout: Math.min(graceMs, timeoutMs) });
+    return;
+  } catch {
+    /* still running — stop it below */
+  }
+  // Disabling motion ends the run; TC6-disable-stops covers that contract.
+  const disable = page.getByRole('button', { name: 'Disable motion' });
+  if (await disable.count()) {
+    await disable.click();
+  }
+  // Outside the `if` on purpose. An earlier revision only waited when the
+  // button happened to be present, so when it was not this returned having done
+  // nothing at all — the caller then drove gated controls and failed 30 s later
+  // with a locator timeout naming an input, which says nothing about the cause.
+  // Either the machine reaches idle or this throws saying so.
+  await idle.waitFor({ timeout: Math.max(20_000, deadline - Date.now()) });
+}
+
+// Bring the Live screen to a KNOWN, idle, motion-enabled machine before any
+// manual control is touched.
+//
+// Every step waits on device truth, and the order is the point:
+//
+//   1. State is KNOWN. The Motion badge renders '—' until the first state
+//      frame arrives — unknown is no longer rendered as "disabled"/"idle" —
+//      so this step cannot be satisfied by the app's ignorance. It used to
+//      be: ensureTestIdle synchronised on the placeholder "Test: idle" of a
+//      null state, D2 then jogged a machine that was still executing a 40 mm
+//      move a predecessor left behind, and a 4 mm jog "landed" 37.231 mm away.
+//   2. No test is running (ensureTestIdle stops one if a predecessor leaked
+//      it, and throws if the machine will not go idle).
+//   3. Motion is enabled.
+//   4. The gantry is AT REST — a test going idle does not by itself mean the
+//      axis has finished moving. Rest means still, not "on setpoint": a parked
+//      machine can legitimately hold position away from a stale setpoint.
+// Wait until the axis is simply NOT MOVING. Deliberately not |pos - setpoint|:
+// at rest after boot or homing the machine can legitimately sit away from the
+// last commanded setpoint (observed parked at 8.1 mm against a stale setpoint),
+// and demanding arrival where no move was commanded turned a precondition into
+// a 90 s timeout, nine scenarios over. Arrival-on-setpoint is settleMotion's
+// job, and only meaningful directly after a commanded move.
+async function awaitRest(page, { stillMm = 0.02, stableTicks = 4, pollMs = 250, timeoutMs = DEVICE_WAIT_MS } = {}) {
+  const pos = async () =>
+    parseFloat(await page.locator('.readout', { hasText: 'Machine Position' }).locator('.value').first().innerText());
+  const deadline = Date.now() + timeoutMs;
+  let last = NaN;
+  let stable = 0;
+  while (Date.now() < deadline) {
+    const p = await pos();
+    if (Number.isFinite(p) && Number.isFinite(last) && Math.abs(p - last) <= stillMm) {
+      if (++stable >= stableTicks) return p;
+    } else {
+      stable = 0;
+    }
+    last = p;
+    await page.waitForTimeout(pollMs);
+  }
+  throw new Error(`the axis never came to rest within ${timeoutMs}ms (last position ${last})`);
+}
+
+/** Status-bar `Responding` plus a firmware version: the session is up.
+ *
+ * One sample lights `Responding` for two seconds, so the badge alone is not
+ * "the opening reads have finished". Starting a test while config / profile /
+ * firmware-version still own the wire is the CI failure mode behind WAVE / TC11
+ * / VT-linear: `proto/timeout`, then a CSV whose first second is idle.
+ * `fw <version>` in the status bar is that handshake completing. */
+async function awaitResponding(page, { timeoutMs = DEVICE_WAIT_MS } = {}) {
+  const resp = page.getByTestId('responding');
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const t = (await resp.textContent()) || '';
+    if (t.includes('Responding') && !t.includes('Not')) break;
+    await page.waitForTimeout(150);
+  }
+  const left = deadline - Date.now();
+  if (left <= 0) throw new Error('device never started responding (no sample stream)');
+  try {
+    await page.locator('.statusbar').getByText(/fw /).waitFor({ timeout: left });
+  } catch {
+    throw new Error('device responded but the opening handshake never published a firmware version');
+  }
+}
+
+async function readoutNum(page, label) {
+  return parseFloat(
+    await page.locator('.readout', { hasText: label }).locator('.value').first().innerText(),
+  );
+}
+
+async function awaitReadoutNear(page, label, target, { eps = 1, timeoutMs = DEVICE_WAIT_MS } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  let last = NaN;
+  while (Date.now() < deadline) {
+    last = await readoutNum(page, label);
+    if (Number.isFinite(last) && Math.abs(last - target) <= eps) return last;
+    await page.waitForTimeout(120);
+  }
+  throw new Error(`${label} never reached ${target}±${eps} (last ${last})`);
+}
+
+/**
+ * Reconnect after `__silDropLink()`. The bridge can still hold the PTY for a
+ * beat of wall time; retry the click until `.dot.connected` lands rather than
+ * sleeping a guessed 1.2 s.
+ */
+async function clickReconnect(page, { timeoutMs = DEVICE_WAIT_MS } = {}) {
+  const btn = page.getByTestId('reconnect');
+  await btn.waitFor({ timeout: timeoutMs });
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await page.locator('.dot.connected').count()) return;
+    try {
+      await btn.click({ timeout: T(2000) });
+    } catch {
+      /* button not ready, or a previous click already started the session */
+    }
+    try {
+      await page.locator('.dot.connected').waitFor({ timeout: T(2000) });
+      return;
+    } catch {
+      /* PTY still held — retry */
+    }
+  }
+  throw new Error('reconnect never restored .dot.connected');
+}
+
+async function prepareManualControl(page) {
+  await page.goto(`${APP_URL}#/live`);
+  await page.getByRole('button', { name: /Home/ }).waitFor({ timeout: DEVICE_WAIT_MS });
+  await page.getByText(/Motion: (enabled|disabled)/).waitFor({ timeout: DEVICE_WAIT_MS });
+  await ensureTestIdle(page);
+  const enable = page.getByRole('button', { name: 'Enable motion' });
+  if (await enable.count()) await enable.click();
+  await page.getByText('Motion: enabled').waitFor({ timeout: DEVICE_WAIT_MS });
+  await awaitRest(page);
 }
 
 // Return the gantry to absolute machine zero and re-zero the gauge length.
@@ -311,33 +681,30 @@ async function runAndDownload(page, { completeTimeout = 60000 } = {}) {
 // gantry's boot position with 15 mm of physical slack above it
 // (embsim gantry.rs baseline), so machine 0 is the only safe starting point.
 async function zeroLength(page) {
-  await page.goto(`${APP_URL}#/live`);
-  await page.getByRole('button', { name: /Home/ }).waitFor({ timeout: T(10000) });
-  const enable = page.getByRole('button', { name: 'Enable motion' });
-  if (await enable.count()) await enable.click();
-  await page.getByText('Motion: enabled').waitFor({ timeout: T(8000) });
+  await prepareManualControl(page);
   const pos = async () =>
     parseFloat(await page.locator('.readout', { hasText: 'Machine Position' }).locator('.value').first().innerText());
   let p = NaN;
   for (let i = 0; i < 40 && !Number.isFinite(p); i++) {
     p = await pos();
-    if (!Number.isFinite(p)) await page.waitForTimeout(T(250));
+    if (!Number.isFinite(p)) await page.waitForTimeout(250);
   }
   await page.locator('label.field', { hasText: 'Speed (mm/s)' }).locator('input').fill('20');
   const jog = page.locator('label.field', { hasText: 'Jog (mm)' }).locator('input');
   for (let i = 0; i < 4 && Number.isFinite(p) && Math.abs(p) > 0.5; i++) {
     await jog.fill(Math.abs(p).toFixed(2));
+    const setWas = parseFloat(
+      await page.locator('.readout', { hasText: 'Machine Setpoint' }).locator('.value').first().innerText(),
+    );
     await page.getByRole('button', { name: p > 0 ? '− Jog down' : '+ Jog up' }).click();
-    // Scaled: this is the carriage's own travel time, and the carriage runs
-    // on the simulated clock. Unscaled, the helper gave up with the gantry
-    // still metres from zero on a slow clock, and every scenario that starts
-    // from machine zero then failed on a position it never had a chance to
-    // reach (24.9 mm, -38.2 mm).
-    await page.waitForTimeout(T(Math.min(15000, (Math.abs(p) / 20) * 1000 + 1500)));
+    await settleMotion(page, { setpointWas: Number.isFinite(setWas) ? setWas : null });
     p = await pos();
   }
+  if (!Number.isFinite(p) || Math.abs(p) > 0.5) {
+    throw new Error(`zeroLength: gantry never reached machine 0 (got ${p})`);
+  }
   await page.getByRole('button', { name: 'Zero length' }).click();
-  await page.waitForTimeout(T(800));
+  await awaitReadoutNear(page, 'Sample Position', 0, { eps: 1 });
   return p;
 }
 
@@ -363,6 +730,7 @@ async function readDownloadedCsvStats(page) {
     const lines = text.trim().split('\n');
     const pi = lines[0].split(',').indexOf('position_um');
     const pos = lines.slice(1).map((l) => Number(l.split(',')[pi])).filter(Number.isFinite);
+    if (pos.length === 0) return null; // header-only CSV = failed recording — see readDownloadedCsvSeries
     return {
       header: lines[0], rows: pos.length,
       maxUm: Math.max(...pos), minUm: Math.min(...pos), firstUm: pos[0], lastUm: pos[pos.length - 1],
@@ -393,7 +761,7 @@ const scenarios = [
           }
         });
         await page.goto(APP_URL_HOST);
-        await page.getByRole('heading', { name: /Unsupported browser/i }).waitFor({ timeout: T(8000) });
+        await page.getByRole('heading', { name: /Unsupported browser/i }).waitFor({ timeout: DEVICE_WAIT_MS });
       } finally {
         await browser.close();
       }
@@ -407,14 +775,9 @@ const scenarios = [
       try {
         await connectToSil(page);
         await page.goto(`${APP_URL}#/live`);
-        const force = page.locator('.readout', { hasText: 'Machine Force' }).locator('.value');
-        let populated = false;
-        for (let i = 0; i < 40 && !populated; i++) {
-          const t = (await force.textContent())?.trim() || '';
-          if (/^-?\d/.test(t)) populated = true;
-          else await page.waitForTimeout(T(250));
-        }
-        assert(populated, 'live readout never populated');
+        await awaitResponding(page);
+        const forceText = (await page.locator('.readout', { hasText: 'Machine Force' }).locator('.value').textContent())?.trim() || '';
+        assert(/^-?\d/.test(forceText), `live readout never populated (got ${forceText})`);
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
       } finally {
         await browser.close();
@@ -451,12 +814,12 @@ const scenarios = [
         await fieldInput(page, 'Max Force (N)').fill('500');
         await fieldInput(page, 'Sample name').fill('E2E-Sample');
         await page.getByRole('button', { name: 'Save to folder' }).click();
-        await page.getByText(/Saved to data folder/i).waitFor({ timeout: T(8000) });
+        await page.getByText(/Saved to data folder/i).waitFor({ timeout: DEVICE_WAIT_MS });
         await page
           .locator('.panel', { hasText: 'Saved profiles' })
           .getByText('E2E-Sample')
           .first()
-          .waitFor({ timeout: T(5000) });
+          .waitFor({ timeout: DEVICE_WAIT_MS });
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
       } finally {
         await browser.close();
@@ -473,22 +836,15 @@ const scenarios = [
         // B2: baud selector present and selectable.
         const baud = page.locator('label.field', { hasText: 'Baud rate' }).locator('select');
         await baud.selectOption('115200');
-        // B3: getPorts() lists the granted device(s) → list + Connect shown.
-        await page.getByTestId('connect-granted').first().waitFor({ timeout: T(5000) });
-        // Connect via the board's granted port at the chosen baud.
+        // B3: the fake getPorts() returns one granted device → list + Connect shown.
+        await page.getByTestId('connect-granted').first().waitFor({ timeout: DEVICE_WAIT_MS });
+        // Connect via the granted port at the chosen baud.
         await boardGrantedPort(page).click();
-        await page.locator('.dot.connected').waitFor({ timeout: T(10000) });
+        await page.locator('.dot.connected').waitFor({ timeout: DEVICE_WAIT_MS });
         // B4: responding indicator turns to "Responding" once samples flow.
-        const resp = page.getByTestId('responding');
-        let ok = false;
-        for (let i = 0; i < 40 && !ok; i++) {
-          if (((await resp.textContent()) || '').includes('Responding') &&
-              !((await resp.textContent()) || '').includes('Not')) ok = true;
-          else await page.waitForTimeout(T(250));
-        }
-        assert(ok, 'responding indicator never turned to Responding');
+        await awaitResponding(page);
         // K1: the firmware version appears in the status bar once read.
-        await page.locator('.statusbar').getByText(/fw /).waitFor({ timeout: T(10000) });
+        await page.locator('.statusbar').getByText(/fw /).waitFor({ timeout: DEVICE_WAIT_MS });
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
       } finally {
         await browser.close();
@@ -504,16 +860,16 @@ const scenarios = [
         await connectToSil(page);
         await page.goto(`${APP_URL}#/live`);
         const combined = page.locator('[data-testid="live-combined-chart"]');
-        await combined.locator('canvas').first().waitFor({ timeout: T(10000) });
+        await combined.locator('canvas').first().waitFor({ timeout: DEVICE_WAIT_MS });
         // Coordinate toggle: switch to Sample and back; chart must survive.
         await combined.getByRole('button', { name: 'Sample' }).click();
-        await page.waitForTimeout(T(300));
-        await combined.locator('canvas').first().waitFor({ timeout: T(5000) });
+        await page.waitForTimeout(300);
+        await combined.locator('canvas').first().waitFor({ timeout: DEVICE_WAIT_MS });
         await combined.getByRole('button', { name: 'Machine' }).click();
         await page
           .locator('[data-testid="live-stress-strain"] canvas')
           .first()
-          .waitFor({ timeout: T(8000) });
+          .waitFor({ timeout: DEVICE_WAIT_MS });
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
       } finally {
         await browser.close();
@@ -574,10 +930,10 @@ const scenarios = [
         );
 
         await page.goto(`${APP_URL}#/view/E2EVIEW`);
-        await page.getByRole('heading', { name: 'E2EVIEW' }).waitFor({ timeout: T(8000) });
+        await page.getByRole('heading', { name: 'E2EVIEW' }).waitFor({ timeout: DEVICE_WAIT_MS });
         for (const id of ['chart-force', 'chart-position', 'chart-stress-strain']) {
           // eslint-disable-next-line no-await-in-loop
-          await page.locator(`[data-testid="${id}"] canvas`).first().waitFor({ timeout: T(8000) });
+          await page.locator(`[data-testid="${id}"] canvas`).first().waitFor({ timeout: DEVICE_WAIT_MS });
         }
         const canvases = await page.locator('canvas').count();
         assert(canvases >= 3, `expected >=3 chart canvases, got ${canvases}`);
@@ -632,13 +988,13 @@ const scenarios = [
 
         await page.goto(`${APP_URL}#/runs`);
         // H1: profile-name columns
-        await page.getByText('Smp-RUN01').first().waitFor({ timeout: T(8000) });
-        await page.getByText('Mot-E2EEXP').first().waitFor({ timeout: T(5000) });
+        await page.getByText('Smp-RUN01').first().waitFor({ timeout: DEVICE_WAIT_MS });
+        await page.getByText('Mot-E2EEXP').first().waitFor({ timeout: DEVICE_WAIT_MS });
         // H3: pagination (12 rows > page size 10)
-        await page.getByRole('button', { name: /Load older runs/ }).waitFor({ timeout: T(5000) });
+        await page.getByRole('button', { name: /Load older runs/ }).waitFor({ timeout: DEVICE_WAIT_MS });
         // H5: export triggers a CSV download
         const [download] = await Promise.all([
-          page.waitForEvent('download', { timeout: T(8000) }),
+          page.waitForEvent('download', { timeout: DEVICE_WAIT_MS }),
           page.getByRole('button', { name: 'Export' }).first().click(),
         ]);
         assert(download.suggestedFilename().includes('_export.csv'), `bad export filename: ${download.suggestedFilename()}`);
@@ -646,7 +1002,7 @@ const scenarios = [
         const row = page.locator('tr', { hasText: 'RUN01' });
         await row.getByRole('button', { name: 'Delete' }).click();
         await page.getByTestId('confirm-delete').click();
-        await page.getByText('RUN01').first().waitFor({ state: 'detached', timeout: T(8000) });
+        await page.getByText('RUN01').first().waitFor({ state: 'detached', timeout: DEVICE_WAIT_MS });
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
       } finally {
         await browser.close();
@@ -664,14 +1020,47 @@ const scenarios = [
         // Trigger a fresh read (deterministic), then wait for the field.
         await page.getByRole('button', { name: 'Reload from device' }).click().catch(() => {});
         const field = page.locator('label.field', { hasText: 'Jaw Offset (mm)' }).locator('input');
-        await field.waitFor({ timeout: T(10000) });
+        await field.waitFor({ timeout: DEVICE_WAIT_MS });
         const target = '13'; // jaw offset is integer-scaled on the wire — use a whole number
+        // Wait for the form to stop repainting before typing. The Reload click
+        // above starts an async device read, and if its response lands AFTER the
+        // fill it repaints the form and silently discards the edit — the save
+        // then goes out with changedCount 0 and this scenario asserts a
+        // round-trip against a value nobody ever wrote. Whether the response
+        // wins that race is pure timing, which is why it only shows on a slow
+        // host (the emulator manages ~0.25x real time on a CI runner).
+        const settledValue = async (loc, { ticks = 3, pollMs = 200, timeoutMs = T(20000) } = {}) => {
+          const deadline = Date.now() + timeoutMs;
+          let last = null;
+          let n = 0;
+          while (Date.now() < deadline) {
+            const v = await loc.inputValue();
+            if (v === last) {
+              if (++n >= ticks) return v;
+            } else {
+              n = 0;
+            }
+            last = v;
+            await page.waitForTimeout(pollMs);
+          }
+          return last;
+        };
+        await settledValue(field);
         await field.fill(target);
+        // And confirm the edit actually stuck — a late repaint would have wiped
+        // it, and saving an unchanged form proves nothing.
+        for (let i = 0; i < 5 && (await field.inputValue()) !== target; i++) {
+          await page.waitForTimeout(200);
+          await field.fill(target);
+        }
+        assert(
+          (await field.inputValue()) === target,
+          'the jaw offset edit did not stick before saving — the form was repainted mid-edit',
+        );
         await page.getByRole('button', { name: 'Save to device' }).click();
-        await page.getByText(/Saved to device/i).waitFor({ timeout: T(8000) });
+        await page.getByText(/Saved to device/i).waitFor({ timeout: DEVICE_WAIT_MS });
         await page.getByRole('button', { name: 'Reload from device' }).click();
-        await page.waitForTimeout(T(500));
-        const val = await field.inputValue();
+        const val = await settledValue(field);
         assert(Number(val) === Number(target), `jaw offset did not round-trip: got ${val}`);
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
       } finally {
@@ -688,13 +1077,18 @@ const scenarios = [
         await connectToSil(page);
         await page.goto(`${APP_URL}#/live`);
         // Confirm the Live controls are present (i.e. connected).
-        await page.getByRole('button', { name: /Home/ }).waitFor({ timeout: T(10000) });
+        await page.getByRole('button', { name: /Home/ }).waitFor({ timeout: DEVICE_WAIT_MS });
+        // Wait for the state to be KNOWN before reading the toggle: while it is
+        // unknown the button says 'Motion …' and is disabled, so counting for
+        // 'Enable motion' too early would skip the click and this scenario
+        // would then wait forever for a transition nobody requested.
+        await page.getByText(/Motion: (enabled|disabled)/).waitFor({ timeout: DEVICE_WAIT_MS });
         const enableBtn = page.getByRole('button', { name: 'Enable motion' });
         if (await enableBtn.count()) await enableBtn.click();
         // State poll should report motion enabled (badge text flips).
         await page
           .getByText('Motion: enabled')
-          .waitFor({ timeout: T(8000) })
+          .waitFor({ timeout: DEVICE_WAIT_MS })
           .catch(() => {
             throw new Error('motion did not report enabled');
           });
@@ -718,7 +1112,7 @@ const scenarios = [
         await page.locator('.move-row select').first().selectOption('dwell');
         await page.locator('.move-row label.field', { hasText: 'Time (ms)' }).locator('input').fill('1500');
         await page.getByRole('button', { name: 'Save Motion Profile' }).click();
-        await page.getByText(/Motion profile .* saved/i).waitFor({ timeout: T(8000) });
+        await page.getByText(/Motion profile .* saved/i).waitFor({ timeout: DEVICE_WAIT_MS });
         const opts = await motionPanel.locator('select').last().locator('option').allTextContents();
         assert(opts.some((o) => o.includes('E2E-Motion-Build')), 'saved motion profile not listed');
         // preview reflects the dwell + trailing G122
@@ -734,8 +1128,14 @@ const scenarios = [
           mimeType: 'application/json',
           buffer: Buffer.from(mp),
         });
-        await page.waitForTimeout(T(300));
-        const nameVal = await fieldInput(motionPanel, 'Name').first().inputValue();
+        const nameField = fieldInput(motionPanel, 'Name').first();
+        const importDeadline = Date.now() + DEVICE_WAIT_MS;
+        let nameVal = '';
+        while (Date.now() < importDeadline) {
+          nameVal = await nameField.inputValue();
+          if (nameVal === 'Imported-MP') break;
+          await page.waitForTimeout(100);
+        }
         assert(nameVal === 'Imported-MP', `import did not populate name: ${nameVal}`);
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
       } finally {
@@ -789,8 +1189,8 @@ const scenarios = [
         await page.getByTestId('run-test').click();
 
         // The run record is created and the device accepts the test (status running).
-        await page.locator('.panel', { hasText: 'New Test' }).getByText(/started/i).waitFor({ timeout: T(15000) });
-        await page.locator('tbody .badge', { hasText: 'running' }).first().waitFor({ timeout: T(8000) });
+        await page.locator('.panel', { hasText: 'New Test' }).getByText(/started/i).waitFor({ timeout: DEVICE_WAIT_MS });
+        await page.locator('tbody .badge', { hasText: 'running' }).first().waitFor({ timeout: DEVICE_WAIT_MS });
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
       } finally {
         await browser.close();
@@ -805,7 +1205,7 @@ const scenarios = [
       try {
         await connectToSil(page);
         await chooseDataFolder(page);
-        await page.waitForTimeout(T(2500)); // let samples flow (gauge capture)
+        await awaitResponding(page);
         const PEAK_MM = 15;
         await seedProfiles(page, {
           sample: { serial: 'Life-Sample', maxForce: 500, maxVelocity: 25, maxDisplacement: 100, sampleWidth: 4, sampleThickness: 1.5 },
@@ -820,15 +1220,15 @@ const scenarios = [
         await runner.locator('select').nth(0).selectOption({ index: 1 });
         await runner.locator('select').nth(1).selectOption({ index: 1 });
         await page.getByTestId('run-test').click();
-        await runner.getByText(/started/i).waitFor({ timeout: T(15000) });
+        await runner.getByText(/started/i).waitFor({ timeout: DEVICE_WAIT_MS });
         const row = page.locator('tbody tr').first();
         // G3: firmware runs the test and testRunning toggles → run auto-marks completed.
-        await row.locator('.badge.completed').waitFor({ timeout: T(60000) });
+        await row.locator('.badge.completed').waitFor({ timeout: RUN_WAIT_MS });
         // H2: pull the data file from the device → CSV.
         await row.getByRole('button', { name: /Download data/i }).click();
-        await row.locator('.badge.downloaded').waitFor({ timeout: T(40000) });
+        await row.locator('.badge.downloaded').waitFor({ timeout: RUN_WAIT_MS });
         const stats = await readDownloadedCsvStats(page);
-        assert(stats, 'a downloaded CSV exists');
+        assert(stats, 'the downloaded CSV contains data — empty means the device recorded nothing, or the download returned zero bytes');
         assert(stats.header === 'time_us,force_mN,position_um,setpoint_um', `CSV header: ${stats.header}`);
         assert(stats.rows > 50, `enough data rows: ${stats.rows}`);
         // Data matches the motion profile: the position excursion equals the commanded peak.
@@ -838,7 +1238,7 @@ const scenarios = [
         assert(Math.abs(stats.lastUm - stats.firstUm) / 1000 < 3, `returns near start (Δ ${((stats.lastUm - stats.firstUm) / 1000).toFixed(1)}mm)`);
         // I: view the downloaded run → charts render.
         await row.getByRole('button', { name: 'View' }).click();
-        await page.locator('canvas').first().waitFor({ timeout: T(8000) });
+        await page.locator('canvas').first().waitFor({ timeout: DEVICE_WAIT_MS });
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
       } finally {
         await browser.close();
@@ -853,13 +1253,13 @@ const scenarios = [
       try {
         await connectToSil(page);
         await chooseDataFolder(page);
-        await page.waitForTimeout(T(2500));
+        await awaitResponding(page);
         // Zero the gauge length so sample displacement starts at 0 — prior scenarios
         // may leave the gantry past the 8 mm limit, which would trip the limit instantly
         // (sub-1 s test → the 1 s testRunning poll misses it → no completion detected).
         await page.goto(`${APP_URL}#/live`);
         await page.getByRole('button', { name: 'Zero length' }).click();
-        await page.waitForTimeout(T(800));
+        await awaitReadoutNear(page, 'Sample Position', 0, { eps: 1 });
         const LIMIT_MM = 8;
         // Command a 20mm move but cap the sample at 8mm — the firmware should stop
         // the test when sample displacement exceeds maxDisplacement. Use a slow
@@ -875,13 +1275,13 @@ const scenarios = [
         await runner.locator('select').nth(0).selectOption({ index: 1 });
         await runner.locator('select').nth(1).selectOption({ index: 1 });
         await page.getByTestId('run-test').click();
-        await runner.getByText(/started/i).waitFor({ timeout: T(15000) });
+        await runner.getByText(/started/i).waitFor({ timeout: DEVICE_WAIT_MS });
         const row = page.locator('tbody tr').first();
-        await row.locator('.badge.completed').waitFor({ timeout: T(60000) });
+        await row.locator('.badge.completed').waitFor({ timeout: RUN_WAIT_MS });
         await row.getByRole('button', { name: /Download data/i }).click();
-        await row.locator('.badge.downloaded').waitFor({ timeout: T(40000) });
+        await row.locator('.badge.downloaded').waitFor({ timeout: RUN_WAIT_MS });
         const stats = await readDownloadedCsvStats(page);
-        assert(stats, 'a downloaded CSV exists');
+        assert(stats, 'the downloaded CSV contains data — empty means the device recorded nothing, or the download returned zero bytes');
         const maxMm = stats.maxUm / 1000;
         assert(maxMm < LIMIT_MM + 3, `position capped near maxDisplacement=${LIMIT_MM}mm, not the commanded 20mm (got ${maxMm.toFixed(1)}mm)`);
         // J1: the firmware's limit-exceeded warning surfaced as a toast.
@@ -901,7 +1301,7 @@ const scenarios = [
       try {
         await connectToSil(page);
         await chooseDataFolder(page);
-        await page.waitForTimeout(T(2500));
+        await awaitResponding(page);
         await zeroLength(page);
         // Set A: (+8,-8)×2 = 32mm; Set B: (+5,-5)×1 = 10mm → 42mm total commanded path.
         await seedProfiles(page, {
@@ -921,8 +1321,7 @@ const scenarios = [
         await runAndDownload(page);
         const s = await readDownloadedCsvSeries(page);
         assert(s && s.pos.length > 50, `enough data (${s?.pos.length} rows)`);
-        let pathMm = 0;
-        for (let i = 1; i < s.pos.length; i++) pathMm += Math.abs(s.pos[i] - s.pos[i - 1]) / 1000;
+        const pathMm = resampledPathMm(s.time, s.pos);
         assert(pathMm > 35 && pathMm < 50, `total path ~42mm (2 sets + executions); got ${pathMm.toFixed(1)}mm`);
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
       } finally { await browser.close(); }
@@ -937,7 +1336,7 @@ const scenarios = [
       try {
         await connectToSil(page);
         await chooseDataFolder(page);
-        await page.waitForTimeout(T(2500));
+        await awaitResponding(page);
         await zeroLength(page);
         await seedProfiles(page, {
           sample: { serial: `Wave-${wf.id}`, maxForce: 500, maxVelocity: 60, maxDisplacement: wf.maxDisp, sampleWidth: 4, sampleThickness: 1.5 },
@@ -951,7 +1350,7 @@ const scenarios = [
         if (wf.shape === 'sine') {
           assertSineMatch(s, { amplitudeMm: wf.amplitude, frequencyHz: wf.frequency, cycles: wf.cycles, centreMm: wf.distance }, wf.id);
         } else {
-          assertWaveformExcursion(s, { amplitudeMm: wf.amplitude, cycles: wf.cycles }, wf.id);
+          assertWaveformExcursion(s, { amplitudeMm: wf.amplitude, cycles: wf.cycles, frequencyHz: wf.frequency }, wf.id);
         }
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
       } finally { await browser.close(); }
@@ -965,7 +1364,7 @@ const scenarios = [
       try {
         await connectToSil(page);
         await chooseDataFolder(page);
-        await page.waitForTimeout(T(2500));
+        await awaitResponding(page);
         await zeroLength(page);
         // +10@10 (1s) + dwell 2000ms + -10@10 (1s) ≈ 4s total (vs ~2s with no dwell).
         await seedProfiles(page, {
@@ -995,7 +1394,7 @@ const scenarios = [
       try {
         await connectToSil(page);
         await chooseDataFolder(page);
-        await page.waitForTimeout(T(2500));
+        await awaitResponding(page);
         await zeroLength(page);
         // A long, slow move so the test is comfortably running when we disable.
         await seedProfiles(page, {
@@ -1007,13 +1406,13 @@ const scenarios = [
         await selectSeeded(page);
         const runner = page.locator('.panel', { hasText: 'New Test' });
         await page.getByTestId('run-test').click();
-        await runner.getByText(/started/i).waitFor({ timeout: T(15000) });
+        await runner.getByText(/started/i).waitFor({ timeout: DEVICE_WAIT_MS });
         // Observe the firmware actually running, then disable motion.
         await page.goto(`${APP_URL}#/live`);
-        await page.getByText('Test: running').waitFor({ timeout: T(15000) });
+        await page.getByText('Test: running').waitFor({ timeout: DEVICE_WAIT_MS });
         await page.getByRole('button', { name: 'Disable motion' }).click();
         // The firmware aborts the test (END_MOTION_DISABLED) → Test goes idle.
-        await page.getByText('Test: idle').waitFor({ timeout: T(10000) });
+        await page.getByText('Test: idle').waitFor({ timeout: DEVICE_WAIT_MS });
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
       } finally { await browser.close(); }
     },
@@ -1026,7 +1425,7 @@ const scenarios = [
       try {
         await connectToSil(page);
         await chooseDataFolder(page);
-        await page.waitForTimeout(T(2500));
+        await awaitResponding(page);
         await zeroLength(page);
         const V = 5; // mm/s
         await seedProfiles(page, {
@@ -1039,15 +1438,17 @@ const scenarios = [
         await runAndDownload(page);
         const s = await readDownloadedCsvSeries(page);
         assert(s && s.pos.length > 30, 'enough data');
-        const p0 = s.pos[0];
-        // At t≈1s and t≈2s the displacement should be ~V*t (within tolerance).
-        const at = (target) => {
-          let best = 0, bestErr = Infinity;
-          for (let i = 0; i < s.time.length; i++) {
-            const e = Math.abs((s.time[i] - s.time[0]) / 1e6 - target);
-            if (e < bestErr) { bestErr = e; best = (s.pos[i] - p0) / 1000; }
-          }
-          return best;
+        const t0 = motionStartTimeUs(s.time, s.pos);
+        assert(t0 != null, 'motion start is visible on the virtual clock');
+        const p0 = interpolateAtUs(s.time, s.pos, t0);
+        assert(p0 != null, 'position at motion start');
+        // At t0+1s and t0+2s the displacement should be ~V*t (within tolerance).
+        // Clock from motion start, not the first logged sample: logging begins
+        // when testRunning goes true, which is before the axis moves.
+        const at = (targetS) => {
+          const um = interpolateAtUs(s.time, s.pos, t0 + targetS * 1e6);
+          assert(um != null, `series covers t0+${targetS}s`);
+          return (um - p0) / 1000;
         };
         assert(Math.abs(at(1) - V * 1) < 2, `pos@1s ~${V}mm (got ${at(1).toFixed(1)})`);
         assert(Math.abs(at(2) - V * 2) < 2, `pos@2s ~${V * 2}mm (got ${at(2).toFixed(1)})`);
@@ -1063,7 +1464,8 @@ const scenarios = [
       try {
         await connectToSil(page);
         await chooseDataFolder(page);
-        await page.waitForTimeout(T(2500));
+        await awaitResponding(page);
+        await zeroLength(page);
         const V = 10; // mm/s
         // ≥2 s so the 1 Hz testRunning poll cannot miss completion (see G-limit).
         const DIST_MM = 20;
@@ -1118,17 +1520,15 @@ const scenarios = [
       const { browser, page, errors } = await newSilPage();
       try {
         await connectToSil(page);
-        await page.goto(`${APP_URL}#/live`);
-        await page.getByRole('button', { name: /Home/ }).waitFor({ timeout: T(10000) });
-        const enable = page.getByRole('button', { name: 'Enable motion' });
-        if (await enable.count()) await enable.click();
-        await page.getByText('Motion: enabled').waitFor({ timeout: T(8000) });
+        await prepareManualControl(page);
         const posValue = () => page.locator('.readout', { hasText: 'Machine Position' }).locator('.value').first().innerText();
-        await page.waitForTimeout(T(1000));
         const before = parseFloat(await posValue());
         await page.locator('label.field', { hasText: 'Jog (mm)' }).locator('input').fill('5');
+        const setWas = parseFloat(
+          await page.locator('.readout', { hasText: 'Machine Setpoint' }).locator('.value').first().innerText(),
+        );
         await page.getByRole('button', { name: '+ Jog up' }).click();
-        await page.waitForTimeout(T(3000)); // 5mm @ default speed
+        await settleMotion(page, { setpointWas: Number.isFinite(setWas) ? setWas : null });
         const after = parseFloat(await posValue());
         const delta = after - before;
         assert(Math.abs(delta - 5) < 1.5, `jog +5mm moved the gantry ~5mm (Δ ${delta.toFixed(2)}mm)`);
@@ -1144,31 +1544,23 @@ const scenarios = [
       const { browser, page, errors } = await newSilPage();
       try {
         await connectToSil(page);
-        await page.goto(`${APP_URL}#/live`);
-        await page.getByRole('button', { name: /Home/ }).waitFor({ timeout: T(10000) });
-        const enable = page.getByRole('button', { name: 'Enable motion' });
-        if (await enable.count()) await enable.click();
-        await page.getByText('Motion: enabled').waitFor({ timeout: T(8000) });
+        await prepareManualControl(page);
         const num = async (label) =>
           parseFloat(await page.locator('.readout', { hasText: label }).locator('.value').first().innerText());
-        await page.waitForTimeout(T(800));
         const start = await num('Machine Position');
         await page.locator('label.field', { hasText: 'Jog (mm)' }).locator('input').fill(String(cell.mm));
         await page.locator('label.field', { hasText: 'Speed (mm/s)' }).locator('input').fill(String(cell.speed));
+        const setBefore = await num('Machine Setpoint');
         await page.getByRole('button', { name: '+ Jog up' }).click();
-        // `T(...)`: the settle budget is the carriage's travel time plus the
-        // servo's, both on the simulated clock. The sibling TC14 jog scales
-        // its settle; this matrix did not, so on the ISS the position was
-        // read mid-move and the measured delta varied run to run (0.79 mm,
-        // 0.97 mm, 2.17 mm) for a carriage that always reached 4.00 mm.
-        await page.waitForTimeout(T(cell.settleMs));
+        await settleMotion(page, { setpointWas: setBefore });
         const up = await num('Machine Position');
         const upSet = await num('Machine Setpoint');
         assert(Math.abs(up - start - cell.mm) < cell.epsMm, `jog +${cell.mm}mm (Δ ${(up - start).toFixed(3)})`);
         assert(Math.abs(up - upSet) < 0.15, `settled onto setpoint (|Δ| ${Math.abs(up - upSet).toFixed(3)})`);
         if (cell.roundTrip) {
+          const setBeforeDown = await num('Machine Setpoint');
           await page.getByRole('button', { name: '− Jog down' }).click();
-          await page.waitForTimeout(T(cell.settleMs));
+          await settleMotion(page, { setpointWas: setBeforeDown });
           const end = await num('Machine Position');
           assert(Math.abs(end - start) < cell.epsMm, `round-trip return (Δ ${(end - start).toFixed(3)})`);
         }
@@ -1187,17 +1579,9 @@ const scenarios = [
           // eslint-disable-next-line no-await-in-loop
           await page.goto(`${APP_URL}#/${route}`);
           // eslint-disable-next-line no-await-in-loop
-          await page.locator('.dot.connected').waitFor({ timeout: T(5000) });
+          await page.locator('.dot.connected').waitFor({ timeout: DEVICE_WAIT_MS });
         }
-        // Still responding after the tour.
-        const resp = page.getByTestId('responding');
-        let ok = false;
-        for (let i = 0; i < 20 && !ok; i++) {
-          const t = (await resp.textContent()) || '';
-          if (t.includes('Responding') && !t.includes('Not')) ok = true;
-          else await page.waitForTimeout(T(250));
-        }
-        assert(ok, 'not responding after navigation tour');
+        await awaitResponding(page);
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
       } finally { await browser.close(); }
     },
@@ -1210,25 +1594,13 @@ const scenarios = [
       try {
         await connectToSil(page);
         await page.goto(`${APP_URL}#/live`);
-        await page.waitForTimeout(T(1500)); // session fully up, samples flowing
+        await awaitResponding(page);
         // Sever the link (simulates USB unplug / emulator death).
         await page.evaluate(() => window.__silDropLink());
-        await page.locator('.dot.disconnected').waitFor({ timeout: T(10000) });
-        await page.locator('.toast').getByText(/disconnected/i).first().waitFor({ timeout: T(5000) });
-        const reconnectBtn = page.getByTestId('reconnect');
-        await reconnectBtn.waitFor({ timeout: T(5000) });
-        await page.waitForTimeout(T(1200)); // let the bridge release the PTY reader
-        await reconnectBtn.click();
-        await page.locator('.dot.connected').waitFor({ timeout: T(10000) });
-        // Samples flow again → responding.
-        const resp = page.getByTestId('responding');
-        let ok = false;
-        for (let i = 0; i < 40 && !ok; i++) {
-          const t = (await resp.textContent()) || '';
-          if (t.includes('Responding') && !t.includes('Not')) ok = true;
-          else await page.waitForTimeout(T(250));
-        }
-        assert(ok, 'not responding after reconnect');
+        await page.locator('.dot.disconnected').waitFor({ timeout: DEVICE_WAIT_MS });
+        await page.locator('.toast').getByText(/disconnected/i).first().waitFor({ timeout: DEVICE_WAIT_MS });
+        await clickReconnect(page);
+        await awaitResponding(page);
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
       } finally { await browser.close(); }
     },
@@ -1242,19 +1614,11 @@ const scenarios = [
       try {
         await connectToSil(page);
         await page.goto(`${APP_URL}#/live`);
-        await page.waitForTimeout(T(1200));
+        await awaitResponding(page);
         await page.evaluate(() => window.__silDropLink());
-        await page.locator('.dot.disconnected').waitFor({ timeout: T(10000) });
-        await page.getByTestId('reconnect').click();
-        await page.locator('.dot.connected').waitFor({ timeout: T(10000) });
-        const resp = page.getByTestId('responding');
-        let ok = false;
-        for (let i = 0; i < 40 && !ok; i++) {
-          const t = (await resp.textContent()) || '';
-          if (t.includes('Responding') && !t.includes('Not')) ok = true;
-          else await page.waitForTimeout(T(250));
-        }
-        assert(ok, 'not responding after idle reconnect');
+        await page.locator('.dot.disconnected').waitFor({ timeout: DEVICE_WAIT_MS });
+        await clickReconnect(page);
+        await awaitResponding(page);
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
       } finally { await browser.close(); }
     },
@@ -1267,7 +1631,7 @@ const scenarios = [
       try {
         await connectToSil(page);
         await chooseDataFolder(page);
-        await page.waitForTimeout(T(2000));
+        await awaitResponding(page);
         await zeroLength(page);
         await seedProfiles(page, {
           sample: { serial: 'M11-Drop', maxForce: 500, maxVelocity: 25, maxDisplacement: 100, sampleWidth: 4, sampleThickness: 1.5 },
@@ -1277,18 +1641,20 @@ const scenarios = [
         });
         await selectSeeded(page);
         await page.getByTestId('run-test').click();
-        await page.locator('.panel', { hasText: 'New Test' }).getByText(/started/i).waitFor({ timeout: T(15000) });
+        await page.locator('.panel', { hasText: 'New Test' }).getByText(/started/i).waitFor({ timeout: DEVICE_WAIT_MS });
         await page.goto(`${APP_URL}#/live`);
-        await page.getByText('Test: running').waitFor({ timeout: T(15000) });
+        await page.getByText('Test: running').waitFor({ timeout: DEVICE_WAIT_MS });
         // Drop link while test is running — UI must not throw; machine keeps going.
         await page.evaluate(() => window.__silDropLink());
-        await page.locator('.dot.disconnected').waitFor({ timeout: T(10000) });
-        // Run status should remain running on host (machine autonomous) or at least not crash.
-        await page.waitForTimeout(T(500));
-        await page.getByTestId('reconnect').click();
-        await page.locator('.dot.connected').waitFor({ timeout: T(15000) });
+        await page.locator('.dot.disconnected').waitFor({ timeout: DEVICE_WAIT_MS });
+        await clickReconnect(page);
         // Eventually idle again (test completes or was aborted by prior state).
-        await page.getByText(/Test: (running|idle)/).waitFor({ timeout: T(90000) });
+        await page.getByText(/Test: (running|idle)/).waitFor({ timeout: RUN_WAIT_MS });
+        // Do not hand the next scenario a machine that is still mid-test. This
+        // move is 40 mm at 2 mm/s — 20 s of SIMULATED time, which is ~a minute
+        // of wall time on a CI runner — and the manual controls stay gated for
+        // all of it.
+        await ensureTestIdle(page);
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
       } finally { await browser.close(); }
     },
@@ -1300,25 +1666,22 @@ const scenarios = [
       const { browser, page, errors } = await newSilPage();
       try {
         await connectToSil(page);
-        await page.goto(`${APP_URL}#/live`);
-        await page.getByRole('button', { name: /Home/ }).waitFor({ timeout: T(10000) });
-        const enable = page.getByRole('button', { name: 'Enable motion' });
-        if (await enable.count()) await enable.click();
-        await page.getByText('Motion: enabled').waitFor({ timeout: T(8000) });
+        await prepareManualControl(page);
         const num = async (label) =>
           parseFloat(await page.locator('.readout', { hasText: label }).locator('.value').first().innerText());
-        await page.waitForTimeout(T(1000));
         const startPos = await num('Machine Position');
         await page.locator('label.field', { hasText: 'Jog (mm)' }).locator('input').fill('4');
         await page.locator('label.field', { hasText: 'Speed (mm/s)' }).locator('input').fill('20');
+        const upSetWas = await num('Machine Setpoint');
         await page.getByRole('button', { name: '+ Jog up' }).click();
-        await page.waitForTimeout(T(2000)); // 4mm @ 20mm/s + settle
+        await settleMotion(page, { setpointWas: upSetWas });
         const upPos = await num('Machine Position');
         const upSet = await num('Machine Setpoint');
         assert(Math.abs(upPos - startPos - 4) < 0.2, `jog +4mm landed (Δ ${(upPos - startPos).toFixed(3)}mm)`);
         assert(Math.abs(upPos - upSet) < 0.12, `position settles onto setpoint (|Δ| ${Math.abs(upPos - upSet).toFixed(3)}mm)`);
+        const downSetWas = await num('Machine Setpoint');
         await page.getByRole('button', { name: '− Jog down' }).click();
-        await page.waitForTimeout(T(2000));
+        await settleMotion(page, { setpointWas: downSetWas });
         const endPos = await num('Machine Position');
         const endSet = await num('Machine Setpoint');
         assert(Math.abs(endPos - endSet) < 0.12, `position settles after down-jog (|Δ| ${Math.abs(endPos - endSet).toFixed(3)}mm)`);
@@ -1344,20 +1707,21 @@ const scenarios = [
         const zeroedPos = await num('Sample Position');
         assert(Math.abs(zeroedPos) < 1, `zero length → sample position ≈ 0 (got ${zeroedPos})`);
         await page.getByRole('button', { name: 'Zero force' }).click();
-        await page.waitForTimeout(T(800));
+        await awaitReadoutNear(page, 'Sample Force', 0, { eps: 1 });
         const zeroedForce = await num('Sample Force');
         assert(Math.abs(zeroedForce) < 1, `zero force → sample force ≈ 0 (got ${zeroedForce})`);
         // M9 cells: mid-slack force≈0, past-slack force>min.
         for (const cell of MATRIX.M9_force_slack) {
           await jog.fill(String(cell.jogMm));
           // Return near zero between cells when needed.
+          const cellSetWas = await num('Machine Setpoint');
           if (cell.jogMm >= 18) {
             // cumulative: we may already be at ~10 from prior cell — go absolute via extra jog
             await page.getByRole('button', { name: '+ Jog up' }).click();
           } else {
             await page.getByRole('button', { name: '+ Jog up' }).click();
           }
-          await page.waitForTimeout(T(1500));
+          await settleMotion(page, { setpointWas: cellSetWas });
           const pos = await num('Sample Position');
           const force = await num('Sample Force');
           assert(pos > cell.minPosMm, `${cell.id}: pos > ${cell.minPosMm} (got ${pos})`);
@@ -1369,8 +1733,9 @@ const scenarios = [
         }
         // Return so later scenarios start near zero.
         await jog.fill('25');
+        const returnSetWas = await num('Machine Setpoint');
         await page.getByRole('button', { name: '− Jog down' }).click();
-        await page.waitForTimeout(T(2000));
+        await settleMotion(page, { setpointWas: returnSetWas });
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
       } finally { await browser.close(); }
     },
@@ -1387,15 +1752,17 @@ const scenarios = [
         const num = async (label) =>
           parseFloat(await page.locator('.readout', { hasText: label }).locator('.value').first().innerText());
         await page.getByRole('button', { name: 'Zero force' }).click();
-        await page.waitForTimeout(T(600));
+        await awaitReadoutNear(page, 'Sample Force', 0, { eps: 1 });
         const jog = page.locator('label.field', { hasText: 'Jog (mm)' }).locator('input');
         // Two jogs of half if past slack so we don't overshoot from boot.
         const half = cell.jogMm / 2;
         await jog.fill(String(half));
+        const firstSetWas = await num('Machine Setpoint');
         await page.getByRole('button', { name: '+ Jog up' }).click();
-        await page.waitForTimeout(T(1200));
+        await settleMotion(page, { setpointWas: firstSetWas });
+        const secondSetWas = await num('Machine Setpoint');
         await page.getByRole('button', { name: '+ Jog up' }).click();
-        await page.waitForTimeout(T(1200));
+        await settleMotion(page, { setpointWas: secondSetWas });
         const pos = await num('Sample Position');
         const force = await num('Sample Force');
         assert(pos > cell.minPosMm * 0.85, `${cell.id}: pos (got ${pos})`);
@@ -1416,7 +1783,7 @@ const scenarios = [
       try {
         await connectToSil(page);
         await chooseDataFolder(page);
-        await page.waitForTimeout(T(2500));
+        await awaitResponding(page);
         await zeroLength(page);
         const TARGET_MM = 7.503;
         await seedProfiles(page, {
@@ -1461,7 +1828,7 @@ const scenarios = [
       try {
         await connectToSil(page);
         await chooseDataFolder(page);
-        await page.waitForTimeout(T(2500));
+        await awaitResponding(page);
         await zeroLength(page);
         await seedProfiles(page, {
           sample: { serial: 'BB-Sample', maxForce: 500, maxVelocity: 25, maxDisplacement: 100, sampleWidth: 4, sampleThickness: 1.5 },
@@ -1473,11 +1840,11 @@ const scenarios = [
         await selectSeeded(page);
         // Run #1.
         await page.getByTestId('run-test').click();
-        await page.locator('tbody tr').first().locator('.badge.completed').waitFor({ timeout: T(60000) });
+        await page.locator('tbody tr').first().locator('.badge.completed').waitFor({ timeout: RUN_WAIT_MS });
         // Run #2 — same profiles, immediately after (newest run is prepended).
         await page.getByTestId('run-test').click();
-        await page.locator('tbody tr').nth(1).waitFor({ timeout: T(15000) });
-        await page.locator('tbody tr').first().locator('.badge.completed').waitFor({ timeout: T(60000) });
+        await page.locator('tbody tr').nth(1).waitFor({ timeout: DEVICE_WAIT_MS });
+        await page.locator('tbody tr').first().locator('.badge.completed').waitFor({ timeout: RUN_WAIT_MS });
         const names = await page.locator('tbody tr td:first-child').allTextContents();
         assert(new Set(names.slice(0, 2)).size === 2, `two distinct runs recorded (${names.slice(0, 2).join(', ')})`);
         const completed = await page.locator('tbody .badge.completed').count();
@@ -1496,7 +1863,7 @@ const scenarios = [
       try {
         await connectToSil(page);
         await chooseDataFolder(page);
-        await page.waitForTimeout(T(2500));
+        await awaitResponding(page);
         await zeroLength(page);
         await seedProfiles(page, {
           sample: { serial: 'TM-Restart', maxForce: 500, maxVelocity: 25, maxDisplacement: 100, sampleWidth: 4, sampleThickness: 1.5 },
@@ -1506,14 +1873,14 @@ const scenarios = [
         });
         await selectSeeded(page);
         await page.getByTestId('run-test').click();
-        await page.locator('.panel', { hasText: 'New Test' }).getByText(/started/i).waitFor({ timeout: T(15000) });
+        await page.locator('.panel', { hasText: 'New Test' }).getByText(/started/i).waitFor({ timeout: DEVICE_WAIT_MS });
         await page.goto(`${APP_URL}#/live`);
-        await page.getByText('Test: running').waitFor({ timeout: T(15000) });
+        await page.getByText('Test: running').waitFor({ timeout: DEVICE_WAIT_MS });
         await page.getByRole('button', { name: 'Disable motion' }).click();
-        await page.getByText('Test: idle').waitFor({ timeout: T(15000) });
+        await page.getByText('Test: idle').waitFor({ timeout: DEVICE_WAIT_MS });
         // Re-enable and start a short second test immediately — stuck busy would block it.
         await page.getByRole('button', { name: 'Enable motion' }).click();
-        await page.getByText('Motion: enabled').waitFor({ timeout: T(8000) });
+        await page.getByText('Motion: enabled').waitFor({ timeout: DEVICE_WAIT_MS });
         await seedProfiles(page, {
           sample: { serial: 'TM-Restart2', maxForce: 500, maxVelocity: 25, maxDisplacement: 100, sampleWidth: 4, sampleThickness: 1.5 },
           motion: { name: 'Short-TM', moves: [
@@ -1523,10 +1890,10 @@ const scenarios = [
         });
         await selectSeeded(page);
         await page.getByTestId('run-test').click();
-        await page.locator('.panel', { hasText: 'New Test' }).getByText(/started/i).waitFor({ timeout: T(15000) });
+        await page.locator('.panel', { hasText: 'New Test' }).getByText(/started/i).waitFor({ timeout: DEVICE_WAIT_MS });
         await page.goto(`${APP_URL}#/live`);
         await page.getByText('Test: running').waitFor({ timeout: T(20000) });
-        await page.getByText('Test: idle').waitFor({ timeout: T(60000) });
+        await page.getByText('Test: idle').waitFor({ timeout: RUN_WAIT_MS });
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
       } finally { await browser.close(); }
     },
@@ -1540,14 +1907,10 @@ const scenarios = [
       try {
         await connectToSil(page);
         await chooseDataFolder(page);
-        await page.waitForTimeout(T(2500));
+        await awaitResponding(page);
         await zeroLength(page);
         // Idle baseline: jog enabled.
-        await page.goto(`${APP_URL}#/live`);
-        await page.getByRole('button', { name: /Home/ }).waitFor({ timeout: T(10000) });
-        const enable = page.getByRole('button', { name: 'Enable motion' });
-        if (await enable.count()) await enable.click();
-        await page.getByText('Motion: enabled').waitFor({ timeout: T(8000) });
+        await prepareManualControl(page);
         const jogUp = page.getByRole('button', { name: '+ Jog up' });
         assert(await jogUp.isEnabled(), 'jog enabled while idle');
         await seedProfiles(page, {
@@ -1558,11 +1921,11 @@ const scenarios = [
         });
         await selectSeeded(page);
         await page.getByTestId('run-test').click();
-        await page.locator('.panel', { hasText: 'New Test' }).getByText(/started/i).waitFor({ timeout: T(15000) });
+        await page.locator('.panel', { hasText: 'New Test' }).getByText(/started/i).waitFor({ timeout: DEVICE_WAIT_MS });
         await page.goto(`${APP_URL}#/live`);
-        await page.getByText('Test: running').waitFor({ timeout: T(15000) });
+        await page.getByText('Test: running').waitFor({ timeout: DEVICE_WAIT_MS });
         assert(await jogUp.isDisabled(), 'jog disabled while test running');
-        await page.getByText('Test: idle').waitFor({ timeout: T(90000) });
+        await page.getByText('Test: idle').waitFor({ timeout: RUN_WAIT_MS });
         assert(await jogUp.isEnabled(), 'jog re-enabled once idle');
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
       } finally { await browser.close(); }
@@ -1598,7 +1961,7 @@ const scenarios = [
         );
         // The target must be named before anything is written.
         await page.getByTestId('flash-target').filter({ hasText: /USB 0403:6015/ })
-          .waitFor({ timeout: T(8000) });
+          .waitFor({ timeout: DEVICE_WAIT_MS });
 
         // A 2000-byte image: spans multiple 128-byte chunks with a partial tail.
         const SIZE = 2000;
@@ -1646,7 +2009,7 @@ const scenarios = [
 
         await page.goto(`${APP_URL_HOST}#/firmware`);
         await page.getByTestId('flash-target').filter({ hasText: /choose which one/i })
-          .waitFor({ timeout: T(8000) });
+          .waitFor({ timeout: DEVICE_WAIT_MS });
 
         await page.getByTestId('firmware-file').setInputFiles({
           name: 'program.bin',
@@ -1680,7 +2043,7 @@ const scenarios = [
         await page.getByTestId('flash-firmware').click();
 
         // Give the click somewhere to go before asserting nothing happened.
-        await page.waitForTimeout(T(500));
+        await page.waitForTimeout(500);
         const rom = await page.evaluate(() => ({
           reset: window.__bootRom.reset,
           bytesIn: window.__bootRom.bytesIn,
@@ -1719,7 +2082,7 @@ const scenarios = [
         await page.getByTestId('firmware-file').setInputFiles({
           name: 'program', mimeType: 'application/octet-stream', buffer: Buffer.alloc(64),
         });
-        await page.waitForTimeout(T(200));
+        await page.waitForTimeout(200);
         assert((await page.getByTestId('file-error').count()) === 0, 'valid build was rejected');
         assert(await page.getByTestId('flash-firmware').isEnabled(), 'valid build did not arm the button');
       } finally { await browser.close(); }
@@ -1749,7 +2112,7 @@ const scenarios = [
           assert(await page.getByTestId(id).isDisabled(), `${id} was still enabled mid-flash`);
         }
         await page.getByTestId('flash-status').filter({ hasText: /Wrote .* bytes to flash/ })
-          .waitFor({ timeout: T(60000) });
+          .waitFor({ timeout: RUN_WAIT_MS });
       } finally { await browser.close(); }
     },
   },
@@ -1845,7 +2208,13 @@ async function main() {
     const res = await fetch(APP_URL_HOST);
     if (!res.ok) throw new Error(String(res.status));
   } catch {
-    console.error(`✗ App not reachable at ${APP_URL_HOST}. Start: npm run dev (and make playground + npm run sil:bridge).`);
+    console.error(
+      `✗ App not reachable at ${APP_URL_HOST}. Start: ${
+        CDP_URL
+          ? 'npm run dev -- --host (and make playground-cosim)'
+          : 'npm run dev (and make e2e-emulator + npm run sil:bridge)'
+      }.`,
+    );
     process.exit(2);
   }
 
@@ -1881,12 +2250,18 @@ async function main() {
 
   let pass = 0;
   const failures = [];
-  // These drive the fake serial's link-drop hook, which the real Web Serial
-  // in the computer node does not have (yet: the node can unplug the USB).
+  // These three sever the link mid-test to prove the app's reconnect path. They
+  // do it through `window.__silDropLink()`, which the fake serial installs — so
+  // they are meaningful only in the bridge configuration. In computer-node mode
+  // the browser holds a real Web Serial port to the board's emulated FTDI and
+  // there is nothing to reach in and drop; skip them rather than assert on a
+  // hook that is not there.
   const HOST_ONLY = new Set(['B5-reconnect', 'M11-idle-drop', 'M11-mid-test-drop']);
+  let skipped = 0;
   for (const s of selected) {
     if (CDP_URL && HOST_ONLY.has(s.id)) {
       console.log(`  ~ ${s.id}: skipped in computer-node mode (needs the fake serial's __silDropLink)`);
+      skipped += 1;
       continue;
     }
     process.stdout.write(`• ${s.id} ${s.name} … `);
@@ -1903,20 +2278,20 @@ async function main() {
       // is diagnosable without reproducing it locally.
       // eslint-disable-next-line no-await-in-loop
       await dumpFailureArtifacts(s.id, err).catch(() => {});
-      // Leave the machine idle for the next scenario. Without this a single
-      // hung run cascades: the firmware keeps reporting testRunning, the app
-      // keeps the jog and speed controls gated, and every later scenario fails
-      // on a disabled field rather than on anything it was testing.
+      // Leave the machine idle for the next scenario. Without this one hung run
+      // cascades: the firmware keeps reporting testRunning, the app keeps the
+      // jog and speed controls gated, and every later scenario fails on a
+      // disabled field rather than on whatever it was testing.
       // eslint-disable-next-line no-await-in-loop
-      await recoverMachine();
+      await recoverMachine().catch(() => {});
     }
-    // Settle: let the bridge fully release the PTY before the next client connects
-    // (only one app may hold the serial stream at a time).
+    // Settle: let the previous client fully release the serial before the next
+    // connects (only one app may hold the stream at a time).
     // eslint-disable-next-line no-await-in-loop
     await new Promise((r) => setTimeout(r, T(800)));
   }
 
-  console.log(`\n${pass}/${selected.length} scenarios passed${only ? ' (filtered)' : ''}`);
+  console.log(`\n${pass}/${selected.length - skipped} scenarios passed${skipped ? `, ${skipped} skipped` : ''}${only ? ' (filtered)' : ''}`);
   if (failures.length) {
     console.log('\nFailures:');
     for (const f of failures) console.log(`  - ${f}`);

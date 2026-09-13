@@ -1,7 +1,8 @@
 /**
  * Sprint D — pairwise combinatorial coverage.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, expect } from 'vitest';
+import { behaviour } from '@vibes/behaviour';
 import { pairwiseCases, pairwisePairCount, fullProductSize, type Factor } from './pairwise';
 
 function coversAllPairs(factors: Factor[], cases: Record<string, string>[]): boolean {
@@ -34,36 +35,79 @@ describe('pairwise coverage', () => {
     { name: 'cycles', levels: ['1', '2', '3'] },
   ];
 
-  it('covers all pairs with far fewer cases than full product', () => {
-    const cases = pairwiseCases(factors);
-    const full = fullProductSize(factors);
-    const pairs = pairwisePairCount(factors);
-    expect(full).toBe(2 * 3 * 3 * 3); // 54
-    expect(pairs).toBeGreaterThan(20);
-    expect(cases.length).toBeLessThan(full);
-    expect(cases.length).toBeGreaterThanOrEqual(Math.max(...factors.map((f) => f.levels.length)));
-    expect(coversAllPairs(factors, cases)).toBe(true);
-  });
+  behaviour(
+    {
+      id: 'matrix.pairwise-covers-all-pairs',
+      covers: 'src/domain/pairwise.ts#pairwiseCases',
+      given: 'four factors whose full product is 54 combinations',
+      expect: {
+        'all-pairs-covered': 'every pair of levels appears',
+        'fewer-than-full-product': 'fewer cases are produced than the full product',
+        'at-least-one-per-level': 'there are at least as many cases as the widest factor has levels',
+      },
+    },
+    () => {
+      const cases = pairwiseCases(factors);
+      const full = fullProductSize(factors);
+      const pairs = pairwisePairCount(factors);
+      expect(full).toBe(2 * 3 * 3 * 3); // 54
+      expect(pairs).toBeGreaterThan(20);
+      expect(cases.length).toBeLessThan(full);
+      expect(cases.length).toBeGreaterThanOrEqual(Math.max(...factors.map((f) => f.levels.length)));
+      expect(coversAllPairs(factors, cases)).toBe(true);
+    },
+  );
 
-  it('is deterministic', () => {
-    const a = pairwiseCases(factors);
-    const b = pairwiseCases(factors);
-    expect(a).toEqual(b);
-  });
+  behaviour(
+    {
+      id: 'matrix.pairwise-is-deterministic',
+      covers: 'src/domain/pairwise.ts#pairwiseCases',
+      given: 'the same factor set generated twice',
+      expect: {
+        'same-cases-same-order': 'both runs produce the same cases in the same order',
+      },
+    },
+    () => {
+      const a = pairwiseCases(factors);
+      const b = pairwiseCases(factors);
+      expect(a).toEqual(b);
+    },
+  );
 
-  it('handles a single factor', () => {
-    const one: Factor[] = [{ name: 'g', levels: ['0', '1', '122'] }];
-    expect(pairwiseCases(one)).toEqual([{ g: '0' }, { g: '1' }, { g: '122' }]);
-  });
+  behaviour(
+    {
+      id: 'matrix.pairwise-single-factor',
+      covers: 'src/domain/pairwise.ts#pairwiseCases',
+      given: 'a single factor with three levels',
+      expect: {
+        'one-case-per-level': 'there is one case per level, in the order the levels were written',
+      },
+    },
+    () => {
+      const one: Factor[] = [{ name: 'g', levels: ['0', '1', '122'] }];
+      expect(pairwiseCases(one)).toEqual([{ g: '0' }, { g: '1' }, { g: '122' }]);
+    },
+  );
 
-  it('two-factor product is exact pairs', () => {
-    const two: Factor[] = [
-      { name: 'a', levels: ['x', 'y'] },
-      { name: 'b', levels: ['1', '2', '3'] },
-    ];
-    const cases = pairwiseCases(two);
-    expect(coversAllPairs(two, cases)).toBe(true);
-    // 2×3 = 6 pairs for (a,b); may use ≤6 cases
-    expect(cases.length).toBeLessThanOrEqual(6);
-  });
+  behaviour(
+    {
+      id: 'matrix.pairwise-two-factors',
+      covers: 'src/domain/pairwise.ts#pairwiseCases',
+      given: 'two factors with two and three levels',
+      expect: {
+        'all-pairs-covered': 'every pair of levels appears',
+        'at-most-six-cases': 'no more than six cases are produced',
+      },
+    },
+    () => {
+      const two: Factor[] = [
+        { name: 'a', levels: ['x', 'y'] },
+        { name: 'b', levels: ['1', '2', '3'] },
+      ];
+      const cases = pairwiseCases(two);
+      expect(coversAllPairs(two, cases)).toBe(true);
+      // 2×3 = 6 pairs for (a,b); may use ≤6 cases
+      expect(cases.length).toBeLessThanOrEqual(6);
+    },
+  );
 });

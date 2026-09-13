@@ -1,6 +1,12 @@
 import { useEffect, useState } from 'react';
 import { useStore } from '@/store/useStore';
-import { SampleProfile, SampleProfileEntry } from '@/domain';
+import {
+  SampleProfile,
+  SampleProfileEntry,
+  EMPTY_SAMPLE_PROFILE,
+  parseSampleProfileJson,
+  sampleProfileNameFromFile,
+} from '@/domain';
 import { dataStore } from '@/storage/DataStore';
 
 const FIELDS: Array<{ key: keyof SampleProfile; label: string }> = [
@@ -11,15 +17,6 @@ const FIELDS: Array<{ key: keyof SampleProfile; label: string }> = [
   { key: 'sampleThickness', label: 'Sample Thickness (mm)' },
 ];
 
-const EMPTY: SampleProfile = {
-  maxForce: 0,
-  maxVelocity: 0,
-  maxDisplacement: 0,
-  sampleWidth: 0,
-  sampleThickness: 0,
-  serial: '',
-};
-
 export default function Profiles() {
   const connected = useStore((s) => s.connection === 'connected');
   const deviceProfile = useStore((s) => s.sampleProfile);
@@ -27,7 +24,7 @@ export default function Profiles() {
   const saveSampleProfile = useStore((s) => s.saveSampleProfile);
   const folderReady = useStore((s) => s.dataFolderReady);
 
-  const [draft, setDraft] = useState<SampleProfile>(EMPTY);
+  const [draft, setDraft] = useState<SampleProfile>(EMPTY_SAMPLE_PROFILE);
   const [saved, setSaved] = useState<SampleProfileEntry[]>([]);
   const [name, setName] = useState('');
   const [message, setMessage] = useState<string | null>(null);
@@ -53,16 +50,16 @@ export default function Profiles() {
     e.target.value = '';
     if (!file) return;
     try {
-      const profile = JSON.parse(await file.text()) as SampleProfile;
-      const importedName = file.name.replace(/\.sp$/i, '') || 'imported';
-      setDraft({ ...EMPTY, ...profile });
+      const profile = parseSampleProfileJson(await file.text());
+      const importedName = sampleProfileNameFromFile(file.name);
+      setDraft(profile);
       setName(importedName);
       if (dataStore.connected) {
         const entry: SampleProfileEntry = {
           id: crypto.randomUUID(),
           name: importedName,
           createdAt: new Date().toISOString(),
-          profile: { ...EMPTY, ...profile },
+          profile,
         };
         await dataStore.saveSampleProfile(entry, true);
         await loadSaved();

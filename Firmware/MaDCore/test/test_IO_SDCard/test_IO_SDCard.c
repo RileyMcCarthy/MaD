@@ -12,6 +12,7 @@
 // on this branch.
 
 #include <unity.h>
+#include "vibes_behaviour.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -160,16 +161,29 @@ void tearDown(void)
 
 static void test_open_rejects_out_of_range_channel(void)
 {
+    VIBES_TEST("sd.open-unknown-channel-refused",
+               "src/IO/IO_SDCard.c#IO_SDCard_open",
+               "a request to open an SD channel that does not exist");
+    VIBES_EXPECT("refused", "the request is refused");
     TEST_ASSERT_FALSE(IO_SDCard_open(IO_SDCARD_CHANNEL_COUNT, TEST_BASE_NAME, IO_SDCARD_MODE_WRITE));
 }
 
 static void test_close_rejects_out_of_range_channel(void)
 {
+    VIBES_TEST("sd.close-unknown-channel-refused",
+               "src/IO/IO_SDCard.c#IO_SDCard_close",
+               "a request to close an SD channel that does not exist");
+    VIBES_EXPECT("refused", "the request is refused");
     TEST_ASSERT_FALSE(IO_SDCard_close(IO_SDCARD_CHANNEL_COUNT));
 }
 
 static void test_isClosed_true_after_init_and_false_for_bad_channel(void)
 {
+    VIBES_TEST("sd.closed-after-init",
+               "src/IO/IO_SDCard.c#IO_SDCard_isClosed",
+               "the SD card layer just started, and a query for an unknown channel");
+    VIBES_EXPECT("all-closed", "every SD channel reports closed");
+    VIBES_EXPECT("unknown-not-closed", "the unknown channel reports not closed");
     TEST_ASSERT_TRUE(IO_SDCard_isClosed(IO_SDCARD_CHANNEL_SAMPLE_DATA));
     TEST_ASSERT_TRUE(IO_SDCard_isClosed(IO_SDCARD_CHANNEL_GCODE));
     // Out of range -> returns default false.
@@ -178,6 +192,11 @@ static void test_isClosed_true_after_init_and_false_for_bad_channel(void)
 
 static void test_push_size_mismatch_rejected(void)
 {
+    VIBES_TEST("sd.push-wrong-size-refused",
+               "src/IO/IO_SDCard.c#IO_SDCard_push",
+               "a record whose size does not match the SD channel, then one that does");
+    VIBES_EXPECT("mismatch-refused", "the mismatched record is refused");
+    VIBES_EXPECT("match-accepted", "the matching record is accepted");
     test_item_S item = {.a = 1, .b = 2};
     // Wrong size -> rejected, no enqueue.
     TEST_ASSERT_FALSE(IO_SDCard_push(IO_SDCARD_CHANNEL_SAMPLE_DATA, &item, TEST_ITEM_SIZE - 1u));
@@ -193,6 +212,11 @@ static void test_push_size_mismatch_rejected(void)
 
 static void test_push_pop_roundtrip(void)
 {
+    VIBES_TEST("sd.push-pop-roundtrip",
+               "src/IO/IO_SDCard.c#IO_SDCard_pop",
+               "a record given to an SD channel, then taken back, then another take");
+    VIBES_EXPECT("record-unchanged", "the record comes back unchanged");
+    VIBES_EXPECT("second-take-refused", "the second take is refused");
     test_item_S in = {.a = 42, .b = 99};
     TEST_ASSERT_TRUE(IO_SDCard_push(IO_SDCARD_CHANNEL_SAMPLE_DATA, &in, TEST_ITEM_SIZE));
 
@@ -209,6 +233,10 @@ static void test_push_pop_roundtrip(void)
 
 static void test_push_until_full_boundary(void)
 {
+    VIBES_TEST("sd.push-refused-when-full",
+               "src/IO/IO_SDCard.c#IO_SDCard_push",
+               "an SD channel filled to its usable capacity, then one more record");
+    VIBES_EXPECT("further-record-refused", "the further record is refused");
     // Circular buffer of TEST_QUEUE_LEN slots holds TEST_QUEUE_LEN-1 usable items.
     uint32_t usable = TEST_QUEUE_LEN - 1u;
     for (uint32_t i = 0; i < usable; i++)
@@ -223,6 +251,12 @@ static void test_push_until_full_boundary(void)
 
 static void test_popMultiple_counts_and_guards(void)
 {
+    VIBES_TEST("sd.pop-multiple-clamps-to-available",
+               "src/IO/IO_SDCard.c#IO_SDCard_popMultiple",
+               "three records waiting on an SD channel, and a request for more than three");
+    VIBES_EXPECT("clamped-to-waiting", "only the three records are returned");
+    VIBES_EXPECT("in-order", "the records come back in the order they were given");
+    VIBES_EXPECT("channel-emptied", "the channel is left empty");
     uint32_t usable = TEST_QUEUE_LEN - 1u; // 3
     for (uint32_t i = 0; i < usable; i++)
     {
@@ -253,6 +287,12 @@ static void test_popMultiple_counts_and_guards(void)
 
 static void test_write_session_opens_flushes_and_closes(void)
 {
+    VIBES_TEST("sd.write-session-lands-and-closes",
+               "src/IO/IO_SDCard.c#IO_SDCard_run",
+               "an SD write session opened, three records pushed, then a close");
+    VIBES_EXPECT("session-open", "the channel reports open with no failed open remembered");
+    VIBES_EXPECT("records-land", "the records land on the card in the order pushed");
+    VIBES_EXPECT("reports-closed", "the channel then reports closed");
     TEST_ASSERT_TRUE(IO_SDCard_open(IO_SDCARD_CHANNEL_SAMPLE_DATA, TEST_BASE_NAME, IO_SDCARD_MODE_WRITE));
 
     // run #1: stage enable, INIT->OPEN entry fopen("wb"); run #2: OPEN->ACTIVE.
@@ -283,6 +323,13 @@ static void test_write_session_opens_flushes_and_closes(void)
 
 static void test_write_close_flushes_remaining_queue_on_close(void)
 {
+    VIBES_TEST("sd.close-flushes-remaining-records",
+               "src/IO/IO_SDCard.c#IO_SDCard_run",
+               "records waiting for an SD write, and a close requested before those records have been written");
+    VIBES_EXPECT_WHY("waiting-records-written",
+                     "the waiting records are written to the card before the file is shut",
+                     "a test's last samples and G-code would otherwise be lost when the session ends");
+    VIBES_EXPECT("reports-closed", "the channel then reports closed");
     TEST_ASSERT_TRUE(IO_SDCard_open(IO_SDCARD_CHANNEL_GCODE, TEST_BASE_NAME, IO_SDCARD_MODE_WRITE));
     runN(2); // INIT->OPEN->ACTIVE
 
@@ -316,6 +363,13 @@ static void test_write_close_flushes_remaining_queue_on_close(void)
 // why it never showed on a dev machine and failed every CI run.
 static void test_write_open_provisions_missing_directories(void)
 {
+    VIBES_TEST("sd.write-creates-missing-directories",
+               "src/IO/IO_SDCard.c#IO_SDCard_private_ensureDirectories",
+               "a write to an SD path whose directories do not yet exist");
+    VIBES_EXPECT_WHY("directories-created",
+                     "the directories are created and the write session opens",
+                     "the first write on a freshly formatted card must create the card layout or the G-code for a test is never stored");
+    VIBES_EXPECT("records-land", "the records land in the file");
     IO_SDCard_config.channelConfig[IO_SDCARD_CHANNEL_GCODE].nameFormat = nestedNameFormat;
 
     TEST_ASSERT_TRUE(IO_SDCard_open(IO_SDCARD_CHANNEL_GCODE, TEST_BASE_NAME, IO_SDCARD_MODE_WRITE));
@@ -340,6 +394,14 @@ static void test_write_open_provisions_missing_directories(void)
 // or `lastOpenFailed` stops meaning anything for the download path.
 static void test_read_open_does_not_provision_directories(void)
 {
+    VIBES_TEST("sd.read-leaves-missing-path-failed",
+               "src/IO/IO_SDCard.c#IO_SDCard_private_entryAction",
+               "a read of an SD path whose directories do not exist");
+    VIBES_EXPECT_WHY("open-fails",
+                     "the open fails",
+                     "a missing file on the download path must stay missing so a failed open is visible");
+    VIBES_EXPECT("reports-closed", "the channel reports closed");
+    VIBES_EXPECT("path-left-uncreated", "the directories are left uncreated");
     IO_SDCard_config.channelConfig[IO_SDCARD_CHANNEL_GCODE].nameFormat = nestedNameFormat;
 
     TEST_ASSERT_TRUE(IO_SDCard_open(IO_SDCARD_CHANNEL_GCODE, TEST_BASE_NAME, IO_SDCARD_MODE_READ));
@@ -357,6 +419,12 @@ static void test_read_open_does_not_provision_directories(void)
 
 static void test_open_failure_latches_and_clears(void)
 {
+    VIBES_TEST("sd.open-failure-latches",
+               "src/IO/IO_SDCard.c#IO_SDCard_lastOpenFailed",
+               "a read of a file that is not on the SD card, then that remembered failure cleared");
+    VIBES_EXPECT("reports-closed", "the channel reports closed");
+    VIBES_EXPECT("failure-remembered", "the failed open is remembered");
+    VIBES_EXPECT("clear-forgets", "the clear makes it forget");
     // Base name that resolves to a path in a directory that does not exist (READ mode
     // "rb" of a missing file fails). Use READ so fopen returns NULL deterministically.
     TEST_ASSERT_TRUE(IO_SDCard_open(IO_SDCARD_CHANNEL_SAMPLE_DATA, "does_not_exist_xyz", IO_SDCARD_MODE_READ));
@@ -376,6 +444,11 @@ static void test_open_failure_latches_and_clears(void)
 
 static void test_open_clears_previous_failure_flag(void)
 {
+    VIBES_TEST("sd.open-clears-previous-failure",
+               "src/IO/IO_SDCard.c#IO_SDCard_open",
+               "a remembered failed SD open, then a new open requested");
+    VIBES_EXPECT("failure-forgotten",
+                 "the remembered failure is cleared immediately, before the channel is next serviced");
     // First a failing open to latch the flag.
     IO_SDCard_open(IO_SDCARD_CHANNEL_SAMPLE_DATA, "does_not_exist_xyz", IO_SDCARD_MODE_READ);
     runN(2);
@@ -392,6 +465,12 @@ static void test_open_clears_previous_failure_flag(void)
 
 static void test_read_session_fills_queue_and_reports_done(void)
 {
+    VIBES_TEST("sd.read-done-when-file-exhausted",
+               "src/IO/IO_SDCard.c#IO_SDCard_isReadDone",
+               "an SD file of two records, opened for read and read to its end");
+    VIBES_EXPECT("not-done-while-waiting", "the read reports not done while the records still wait");
+    VIBES_EXPECT("records-as-stored", "both records come back unchanged, in file order");
+    VIBES_EXPECT("done-once-taken", "the read reports done after both records are taken");
     // Seed file with 2 items (< usable capacity 3) so EOF is hit in one processRead.
     seedFile(sampleFilePath, 2u);
 
@@ -427,6 +506,11 @@ static void test_read_session_fills_queue_and_reports_done(void)
 
 static void test_readDirect_ok_with_seek_offset(void)
 {
+    VIBES_TEST("sd.direct-read-from-offset",
+               "src/IO/IO_SDCard.c#IO_SDCard_readDirectEx",
+               "an SD file of five records, reading two of them starting at the third");
+    VIBES_EXPECT("records-from-offset", "the third and fourth records come back, in file order");
+    VIBES_EXPECT("reports-success", "the read reports success");
     seedFile(sampleFilePath, 5u); // items 0..4
 
     test_item_S out[3] = {0};
@@ -447,6 +531,11 @@ static void test_readDirect_ok_with_seek_offset(void)
 
 static void test_readDirect_file_error_when_missing(void)
 {
+    VIBES_TEST("sd.direct-read-missing-file",
+               "src/IO/IO_SDCard.c#IO_SDCard_readDirectEx",
+               "a direct read of an SD file that is not on the card");
+    VIBES_EXPECT("no-records", "the read returns no records");
+    VIBES_EXPECT("reports-file-error", "the read reports a file error");
     test_item_S out[1] = {0};
     IO_SDCard_readDirectStatus_E status = IO_SDCARD_READDIRECT_STATUS_OK;
     uint32_t n = IO_SDCard_readDirectEx(IO_SDCARD_CHANNEL_SAMPLE_DATA, "missing_file_zzz", out, 0u, 1u, &status);
@@ -456,6 +545,10 @@ static void test_readDirect_file_error_when_missing(void)
 
 static void test_readDirect_guard_paths(void)
 {
+    VIBES_TEST("sd.direct-read-guards",
+               "src/IO/IO_SDCard.c#IO_SDCard_readDirectEx",
+               "a direct SD read with an unknown channel, no place for the records, or a count of zero");
+    VIBES_EXPECT("no-records", "the read returns no records");
     test_item_S out[1] = {0};
     IO_SDCard_readDirectStatus_E status = IO_SDCARD_READDIRECT_STATUS_OK;
 
@@ -469,6 +562,13 @@ static void test_readDirect_guard_paths(void)
 
 static void test_readDirect_returns_zero_past_eof_but_status_ok(void)
 {
+    VIBES_TEST("sd.direct-read-past-end-is-ok",
+               "src/IO/IO_SDCard.c#IO_SDCard_readDirectEx",
+               "a direct read starting past the last record of an SD file");
+    VIBES_EXPECT("no-records", "the read returns no records");
+    VIBES_EXPECT_WHY("reports-success",
+                     "the read reports success",
+                     "seeking past the last sample is a valid empty range, so paging through a file can end without treating the last page as an error");
     seedFile(sampleFilePath, 2u);
     test_item_S out[2] = {0};
     IO_SDCard_readDirectStatus_E status = (IO_SDCard_readDirectStatus_E)0xFF;
@@ -480,6 +580,13 @@ static void test_readDirect_returns_zero_past_eof_but_status_ok(void)
 
 static void test_readDirect_busy_while_write_active(void)
 {
+    VIBES_TEST("sd.direct-read-busy-during-write",
+               "src/IO/IO_SDCard.c#IO_SDCard_readDirectEx",
+               "an SD channel already open for write, then a direct read of the same channel");
+    VIBES_EXPECT("no-records", "the read returns no records");
+    VIBES_EXPECT_WHY("reports-busy",
+                     "the read reports the channel busy",
+                     "the SD card cannot serve a download of a file that is still being written");
     // Open SAMPLE_DATA in WRITE mode and drive to ACTIVE.
     TEST_ASSERT_TRUE(IO_SDCard_open(IO_SDCARD_CHANNEL_SAMPLE_DATA, TEST_BASE_NAME, IO_SDCARD_MODE_WRITE));
     runN(2); // INIT->OPEN->ACTIVE, mode=WRITE, state != INIT
@@ -502,6 +609,13 @@ static void test_readDirect_busy_while_write_active(void)
 
 static void test_close_while_init_is_noop(void)
 {
+    VIBES_TEST("sd.close-while-idle-is-harmless",
+               "src/IO/IO_SDCard.c#IO_SDCard_close",
+               "a close of an SD channel that is already idle, then a later write session");
+    VIBES_EXPECT("idle-close-accepted", "the close of the idle channel is accepted and leaves it idle");
+    VIBES_EXPECT_WHY("later-write-stored",
+                     "the later write still stores its records on the card",
+                     "a close requested while idle must not shut the next write before any records have been stored");
     // Channel starts INIT. close() should clear disable and succeed without latching.
     TEST_ASSERT_TRUE(IO_SDCard_close(IO_SDCARD_CHANNEL_GCODE));
     // internal/external disable must both be false (guarded path).

@@ -21,8 +21,9 @@ make emulator     # build firmware (.a) + Rust protocol types, then cargo build
 | `make firmware` | Build `libfirmware.a` via PlatformIO |
 | `make protocol` | Regenerate the Rust protocol types for SIL |
 | `make emulator` | Build firmware + protocol + the Rust workspace |
-| `make playground` | Run the emulator + trace viewer for manual testing |
-| `make test` | Build everything and run the Rust test suite (`cargo test`) |
+| `make playground` | Run the emulator + trace viewer for **manual** testing — **real-time pacing** (`--speed 1`). What you see matches the physical machine. |
+| `make e2e-emulator` | Run the emulator for the **e2e suite** — **unpaced virtual time** (`--speed 0`), so results do not depend on host speed. CI uses this. |
+| `make test` | Build firmware + protocol, then `cargo test` (includes the MaDSim PTY protocol smoke — no Chrome) |
 | `make clean` | Remove build artifacts and `cargo clean` |
 
 ## Manual testing with the playground
@@ -44,7 +45,8 @@ relays bytes to the app's (faked) Web Serial port. From
 
 ```bash
 # Terminal 1 — emulator (from SIL/)
-make playground
+make playground          # clicking around: real-time
+# make e2e-emulator      # automated suite: unpaced virtual time (this is what CI runs)
 
 # Terminal 2 — WS bridge on ws://localhost:9999
 npm run sil:bridge
@@ -56,8 +58,14 @@ npm run dev
 Then either:
 
 - **`npm run sil:app`** — opens a Playwright-controlled Chrome wired to the
-  emulator for hands-on testing, or
-- **`npm run e2e`** — runs the full web-app E2E suite against the live emulator.
+  emulator for hands-on testing (pair with `make playground`), or
+- **`npm run e2e`** / **`npm run e2e:smoke`** — the web-app suite against the live
+  emulator. Pair with **`make e2e-emulator`**, not playground: under `--speed 1.0`
+  a loaded CI runner cannot hold real time, and motion assertions sample mid-flight.
+
+The MaDSim crate also has a Chrome-free PTY smoke (`tests/pty_protocol.rs`): boot
+the binary, send a `firmware_version` READ, expect a DATA frame. It runs as part
+of `make test` / `sil-rust` and does not use `/tmp/tty.rpi`.
 
 !!! note "SIL is single-instance"
     There is exactly [one firmware per process](../how-it-works/sil-emulator.md#one-firmware-per-process),

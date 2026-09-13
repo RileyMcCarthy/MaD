@@ -3,6 +3,7 @@
 
 #include "protoemb.h"
 #include "protoemb_runtime.h"
+#include "vibes_behaviour.h"
 
 static uint8_t test_tx_buffer[512];
 static uint16_t test_tx_size = 0;
@@ -26,6 +27,14 @@ uint32_t ProtoEmb_getTimeMs(void)
 
 void test_protoemb_stored_sample_roundtrip(void)
 {
+    VIBES_TEST("protoemb.stored-sample-roundtrip",
+               "src/Generated/protoemb.c#ProtoEmb_StoredSample_encode",
+               "a stored sample with force -12345, position 54321, time 123456 and setpoint 1000");
+    VIBES_EXPECT_WHY("roundtrip-intact",
+                     "encoding it and decoding those bytes again returns the same force, position, time and setpoint",
+                     "a recorded sample is what was measured; a field-order slip would plot the wrong curve");
+    VIBES_EXPECT("wire-size",
+                 "the sample takes eleven bytes on the wire");
     ProtoEmb_StoredSample_t in;
     ProtoEmb_StoredSample_t out;
     uint8_t wire[PROTOEMB_STOREDSAMPLE_WIRE_SIZE];
@@ -51,6 +60,16 @@ void test_protoemb_stored_sample_roundtrip(void)
 
 void test_protoemb_runtime_send_notification_frame(void)
 {
+    VIBES_TEST("protoemb.notification-frame",
+               "src/Generated/protoemb_runtime.c#ProtoEmb_Runtime_sendNotification",
+               "an info notification with the text runtime-test");
+    VIBES_EXPECT_WHY("sync-marker",
+                     "the serial frame begins with the sync marker",
+                     "the UI finds the start of a notification by that marker and type; a wrong header drops the message");
+    VIBES_EXPECT("typed-notification",
+                 "the frame is typed as a notification");
+    VIBES_EXPECT("payload-length",
+                 "the frame carries the payload length");
     ProtoEmb_Runtime_t runtime;
     ProtoEmb_Notification_t notification;
 

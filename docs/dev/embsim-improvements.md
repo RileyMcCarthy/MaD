@@ -90,9 +90,16 @@ Use `propeller2_debug` so MAIN is hardware UART (pins 53/55), not FlexC `_txraw`
 ### MaD consumer
 
 - [ ] `mad-emulator --backend iss --firmware …/propeller2_debug/program`
-- [ ] `make playground-iss` (or `playground-p2bin`) — same PTY `/tmp/tty.rpi` as native.
+- [x] `make playground-iss` — a serial console for a human, on its own PTY
+      (`/tmp/tty.iss`). This bullet originally said "same PTY as native", which
+      was wrong and cost us: sharing `/tmp/tty.rpi` made it a one-word change to
+      put the WS bridge in front of the ISS, and that pairing is worthless. The
+      bridge hands the board's bytes to a browser running at host speed, so
+      every wait in the suite measures the host's mood instead of the machine.
 - [ ] Pin map from `HW_pins.h`, not gcc DWARF.
-- [ ] E2E unchanged except which playground is running. PR CI = native; nightly = ISS smoke IDs.
+- [x] E2E is NOT unchanged. The browser has to be metered by the board's clock,
+      which means running it inside the QEMU guest (`make playground-cosim`,
+      `CDP_URL=…`), not just swapping which playground is up.
 
 ### ISS build slices (each is a running program)
 
@@ -122,4 +129,6 @@ P0 time  →  P1 reset/inspect/UART  →  P2 pin facade
             P5 other-MCU ISS plugin
 ```
 
-MaD default remains `make playground` (native). ISS is `make playground-iss` plus a slower CI job.
+MaD default remains `make playground` / `make e2e-emulator` (native + bridge).
+The ISS e2e configuration is `make playground-cosim` — the ISS plus a QEMU guest
+running Chrome; `make playground-iss` is a console for a human, not an e2e host.

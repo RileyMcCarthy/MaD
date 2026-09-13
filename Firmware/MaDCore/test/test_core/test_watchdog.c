@@ -2,6 +2,7 @@
 #include "HAL_time.h"
 #include <string.h>
 #include "watchdog.h"
+#include "vibes_behaviour.h"
 
 #define TIME_SEC_TO_US(sec) ((sec) * 1000000)
 
@@ -9,6 +10,16 @@ extern uint32_t global_timeus;
 
 void test_watchdog(void)
 {
+    VIBES_TEST("watchdog.check-in-timeout-and-revive",
+               "src/DEV/watchdog.c#watchdog_run",
+               "every supervised loop starts checking in, then three seconds pass with no check-in, then only the monitor loop checks in, then every loop checks in");
+    VIBES_EXPECT_WHY("all-dead-after-silence",
+                     "all the loops are reported dead after the silence",
+                     "a wedged loop still counts as a running core, so the check-in is what catches a stall before the machine keeps moving unsupervised");
+    VIBES_EXPECT("only-monitor-alive",
+                 "only the monitor loop is then reported alive");
+    VIBES_EXPECT("all-alive-again",
+                 "all of them are alive again");
     TEST_ASSERT_TRUE(watchdog_isAllAlive());
     watchdog_run();
     watchdog_run();

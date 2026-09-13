@@ -13,4 +13,5 @@ embsim-models = { path = "../embsim/models" }
 tracing.workspace = true
 
 [dev-dependencies]
+vibes-behaviour = { path = "../../Vibes/bindings/rust" }
 rstest = "0.25"

@@ -11,6 +11,7 @@
  */
 #include <unity.h>
 #include <string.h>
+#include "vibes_behaviour.h"
 #include "../../src/DEV/dev_cogManager.c"
 
 extern void HAL_lock_mock_reset(void);
@@ -45,12 +46,22 @@ void tearDown(void) {}
 
 void test_init_calls_each_channel_init(void)
 {
+    VIBES_TEST("cog.init-runs-each-startup",
+               "src/DEV/dev_cogManager.c#dev_cogManager_init",
+               "the machine starting its processor cores");
+    VIBES_EXPECT("startup-once-per-core", "each processor core's startup runs exactly once");
     dev_cogManager_init(s_lock);
     TEST_ASSERT_EQUAL_INT(DEV_COGMANAGER_CHANNEL_COUNT, d_initCallCount);
 }
 
 void test_not_all_running_until_booted(void)
 {
+    VIBES_TEST("cog.bring-up-not-all-running",
+               "src/DEV/dev_cogManager.c#dev_cogManager_isAllRunning",
+               "the processor cores just after startup, and again after they have been created but not yet launched");
+    VIBES_EXPECT_WHY("not-all-running",
+                     "the machine reports that not every core is running",
+                     "the controller treats every core running as healthy; reporting running during start would hide a hang at boot");
     dev_cogManager_init(s_lock);
     TEST_ASSERT_FALSE(dev_cogManager_isAllRunning()); /* all INITIALIZE */
     dev_cogManager_run();
@@ -59,6 +70,10 @@ void test_not_all_running_until_booted(void)
 
 void test_all_channels_reach_running(void)
 {
+    VIBES_TEST("cog.all-cores-reach-running",
+               "src/DEV/dev_cogManager.c#dev_cogManager_run",
+               "the processor cores after they have been created and launched");
+    VIBES_EXPECT("all-running", "the machine reports that every core is running");
     dev_cogManager_init(s_lock);
     dev_cogManager_run(); /* INITIALIZE -> BOOT */
     dev_cogManager_run(); /* BOOT -> RUNNING */
@@ -67,6 +82,10 @@ void test_all_channels_reach_running(void)
 
 void test_running_stays_running_with_intact_canary(void)
 {
+    VIBES_TEST("cog.intact-stack-stays-running",
+               "src/DEV/dev_cogManager.c#dev_cogManager_run",
+               "every processor core already running, with their stack guards intact, for several more passes");
+    VIBES_EXPECT("stays-running", "the machine keeps reporting that every core is running");
     dev_cogManager_init(s_lock);
     dev_cogManager_run();
     dev_cogManager_run();
@@ -76,6 +95,12 @@ void test_running_stays_running_with_intact_canary(void)
 
 void test_stack_overflow_trips_channel_to_error(void)
 {
+    VIBES_TEST("cog.stack-overflow-trips",
+               "src/DEV/dev_cogManager.c#dev_cogManager_run",
+               "every processor core already running, then the motor core stack overflow guard corrupted");
+    VIBES_EXPECT_WHY("not-all-running",
+                     "the machine reports that not every core is running",
+                     "processor cores share one memory space; a stack that overruns would silently corrupt a neighbour");
     dev_cogManager_init(s_lock);
     dev_cogManager_run();
     dev_cogManager_run();
@@ -88,6 +113,12 @@ void test_stack_overflow_trips_channel_to_error(void)
 
 void test_stack_underflow_trips_channel_to_error(void)
 {
+    VIBES_TEST("cog.stack-underflow-trips",
+               "src/DEV/dev_cogManager.c#dev_cogManager_run",
+               "every processor core already running, then the control core stack underflow guard corrupted");
+    VIBES_EXPECT_WHY("not-all-running",
+                     "the machine reports that not every core is running",
+                     "processor cores share one memory space; a stack that overruns would silently corrupt a neighbour");
     dev_cogManager_init(s_lock);
     dev_cogManager_run();
     dev_cogManager_run();
