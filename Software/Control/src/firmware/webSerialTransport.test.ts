@@ -36,8 +36,14 @@ describe('WebSerialTransport reads', () => {
       id: 'flash.read-after-timeout-still-delivers',
       covers: 'src/firmware/webSerialTransport.ts#WebSerialTransport.read',
       given: 'a boot ROM reply that arrives after the first read has already timed out',
-      then: 'bytes that arrive after a timed-out serial-port read are delivered to the next read',
-      why: 'the boot ROM\'s version reply is often slower than the first read\'s budget; those bytes must be readable',
+      expect: {
+        'timed-out-read-empty': 'the read that gave up comes back with no bytes',
+        'reply-delivered': 'the next read returns the reply in full',
+      },
+      why: {
+        'reply-delivered':
+          'the boot ROM\'s version reply is often slower than the first read\'s budget; those bytes must be readable',
+      },
     },
     async () => {
       // The regression this guards: racing reader.read() against a timer and
@@ -64,8 +70,13 @@ describe('WebSerialTransport reads', () => {
       id: 'flash.flush-then-read-still-delivers',
       covers: 'src/firmware/webSerialTransport.ts#WebSerialTransport.flushInput',
       given: 'draining leftover input times out, then a probe is written and the boot ROM replies',
-      then: 'a boot ROM reply that arrives after a timed-out drain of leftover input is read',
-      why: 'draining leftover input uses a short budget and often times out; the reply to the write that follows must be readable',
+      expect: {
+        'reply-delivered': 'the reply is delivered in full to the read that follows',
+      },
+      why: {
+        'reply-delivered':
+          'draining leftover input uses a short budget and often times out; the reply to the write that follows must be readable',
+      },
     },
     async () => {
       // flushInput() drains with a 5 ms budget and normally times out; that must
@@ -86,7 +97,9 @@ describe('WebSerialTransport reads', () => {
       id: 'flash.read-returns-what-arrived',
       covers: 'src/firmware/webSerialTransport.ts#WebSerialTransport.read',
       given: 'a two-byte reply when twenty bytes were requested',
-      then: 'a serial-port read returns the bytes that arrived without waiting for the requested length',
+      expect: {
+        'returns-what-arrived': 'the read returns the two bytes that arrived without waiting for the rest',
+      },
     },
     async () => {
       const { port } = slowPort('ab', 5);
@@ -102,7 +115,10 @@ describe('WebSerialTransport reads', () => {
       id: 'flash.read-hands-remainder-to-next-call',
       covers: 'src/firmware/webSerialTransport.ts#WebSerialTransport.read',
       given: 'a six-byte reply read first as two bytes then as four',
-      then: 'bytes left over from a short serial-port read are delivered to the next read',
+      expect: {
+        'first-read-takes-what-it-asked-for': 'the first read returns only the two bytes it asked for',
+        'remainder-kept': 'the second read returns the four bytes the first one left behind',
+      },
     },
     async () => {
       const { port } = slowPort('abcdef', 5);
@@ -118,7 +134,9 @@ describe('WebSerialTransport reads', () => {
       id: 'flash.dtr-forwarded-to-serial-port',
       covers: 'src/firmware/webSerialTransport.ts#WebSerialTransport.setDtr',
       given: 'the loader asserting then releasing the serial-port reset line',
-      then: 'asserting and releasing reset is forwarded to the serial port as DTR',
+      expect: {
+        'dtr-raised-then-lowered': 'the serial port sees DTR raised, then lowered',
+      },
     },
     async () => {
       const seen: boolean[] = [];

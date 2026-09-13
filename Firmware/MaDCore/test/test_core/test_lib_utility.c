@@ -6,11 +6,14 @@
 
 void test_lib_utility_muldiv64_signed(void)
 {
-    VIBES_BEHAVIOUR_WHY("firmware.muldiv64-signed",
-                        "src/Library/lib_utility.c#lib_utility_muldiv64_signed",
-                        "a multiply-then-divide whose intermediate exceeds 32 bits",
-                        "a multiply-then-divide with an intermediate wider than 32 bits is computed exactly, and the sign is negative for an odd number of negative inputs",
-                        "the P2 has no 64-bit divide; a 32-bit intermediate would silently wrap");
+    VIBES_TEST("firmware.muldiv64-signed",
+               "src/Library/lib_utility.c#lib_utility_muldiv64_signed",
+               "a multiply-then-divide whose intermediate exceeds 32 bits");
+    VIBES_EXPECT_WHY("exact-result",
+                     "the result is exact",
+                     "the P2 has no 64-bit divide; a 32-bit intermediate would silently wrap");
+    VIBES_EXPECT("sign-from-operands",
+                 "the result is negative when an odd number of the inputs are negative");
 
     /* Trivial cases */
     TEST_ASSERT_EQUAL_INT32(0, lib_utility_muldiv64_signed(0, 100, 5));
@@ -57,10 +60,13 @@ void test_lib_utility_muldiv64_signed(void)
 
 void test_lib_utility_elapsed_gt_boundaries(void)
 {
-    VIBES_BEHAVIOUR("firmware.elapsed-gt-boundaries",
-                    "src/Library/lib_utility.c#lib_utility_elapsed_gt",
-                    "a timer checked exactly at its deadline, and again one tick before it",
-                    "a timer checked exactly at its deadline reports elapsed; checked one tick earlier, it does not");
+    VIBES_TEST("firmware.elapsed-gt-boundaries",
+               "src/Library/lib_utility.c#lib_utility_elapsed_gt",
+               "a timer checked at exactly its period, and again one tick later");
+    VIBES_EXPECT("at-period-not-elapsed",
+                 "the check at exactly the period reports not yet elapsed");
+    VIBES_EXPECT("one-tick-later-elapsed",
+                 "the check one tick later reports elapsed");
 
     /* Strict greater-than: equal elapsed is NOT expired. */
     TEST_ASSERT_FALSE(lib_utility_elapsed_gt(100U, 0U, 100U));
@@ -79,11 +85,14 @@ void test_lib_utility_elapsed_gt_boundaries(void)
 
 void test_lib_utility_elapsed_gt_uint32_wrap(void)
 {
-    VIBES_BEHAVIOUR_WHY("firmware.elapsed-gt-uint32-wrap",
-                        "src/Library/lib_utility.c#lib_utility_elapsed_gt",
-                        "a period of 20 ticks started 10 ticks before the clock wraps from its maximum, checked 16 ticks and 26 ticks later",
-                        "elapsed time that crosses a clock wrap is measured modularly: 16 ticks is inside a 20-tick period, 26 ticks is past it, and wrapping by exactly the period is still inside",
-                        "the millisecond clock wraps after about 49 days; unsigned wrap-around is how elapsed time is measured");
+    VIBES_TEST("firmware.elapsed-gt-uint32-wrap",
+               "src/Library/lib_utility.c#lib_utility_elapsed_gt",
+               "a 20-tick period started 10 ticks before the clock wraps from its maximum, checked 16 and 26 ticks later");
+    VIBES_EXPECT_WHY("not-elapsed-at-16",
+                     "at 16 ticks the period has not elapsed",
+                     "the millisecond clock wraps after about 49 days; unsigned wrap-around is how elapsed time is measured");
+    VIBES_EXPECT("elapsed-at-26",
+                 "at 26 ticks the period has elapsed, the count carrying across the wrap");
     /* start near UINT32_MAX, now just past wrap — modular (now - start) is small. */
     const uint32_t start = UINT32_MAX - 10U;
     TEST_ASSERT_FALSE(lib_utility_elapsed_gt(5U, start, 20U));  /* elapsed = 16 */

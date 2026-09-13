@@ -174,8 +174,11 @@ describe('DataStore mutex + index integrity', () => {
       id: 'storage.concurrent-creates-all-land',
       covers: 'src/storage/DataStore.ts#createTestRun',
       given: 'twelve test runs created at the same time',
-      then: 'twelve test runs created together all appear in the history, each with a distinct identity',
-      why: 'overlapping saves must not drop a run from the history',
+      expect: {
+        'all-twelve-listed': 'all twelve appear in the history',
+        'distinct-identities': 'each of the twelve has a distinct identity',
+      },
+      why: { 'all-twelve-listed': 'overlapping saves must not drop a run from the history' },
     },
     async () => {
       // Fire many creates without awaiting each — mutex must not drop rows.
@@ -194,8 +197,11 @@ describe('DataStore mutex + index integrity', () => {
       id: 'storage.next-test-name-is-monotonic',
       covers: 'src/storage/DataStore.ts#nextTestName',
       given: 'eight callers asking for the next test name at the same time',
-      then: 'concurrent requests for the next test name receive eight consecutive names with no duplicates',
-      why: 'two tests started together must not share a name, or one would overwrite the other',
+      expect: {
+        'names-differ': 'each caller gets a different name',
+        'consecutive-block': 'the eight names form a consecutive block',
+      },
+      why: { 'names-differ': 'two tests started together must not share a name, or one would overwrite the other' },
     },
     async () => {
       const results = await Promise.all(Array.from({ length: 8 }, () => store.nextTestName()));
@@ -244,8 +250,13 @@ describe('DataStore mutex + index integrity', () => {
       id: 'storage.empty-history-rebuilds-from-files',
       covers: 'src/storage/DataStore.ts#getTestRunIndex',
       given: 'two saved runs whose history list has been wiped to an empty list',
-      then: 'when the history list is empty, listing the history rebuilds the list from the run files so both runs reappear',
-      why: 'the on-disk run files are the source of truth, so a wiped list must not hide saved tests',
+      expect: {
+        'rebuilt-from-files': 'listing the history rebuilds it from the run files',
+        'both-runs-named': 'both saved runs reappear under their own names',
+      },
+      why: {
+        'rebuilt-from-files': 'the on-disk run files are the source of truth, so a wiped list must not hide saved tests',
+      },
     },
     async () => {
       await store.createTestRun(sampleRun('000001'));
@@ -273,7 +284,11 @@ describe('DataStore mutex + index integrity', () => {
       id: 'storage.update-one-run-keeps-siblings',
       covers: 'src/storage/DataStore.ts#updateTestRun',
       given: 'two saved runs, one of which is then marked downloaded',
-      then: 'marking one run downloaded leaves the other run completed, and both remain in the history',
+      expect: {
+        'marked-run-downloaded': 'that run reads downloaded, both on its own and in the history',
+        'sibling-stays-completed': 'the other run stays completed',
+        'both-remain-listed': 'both runs remain listed',
+      },
     },
     async () => {
       await store.createTestRun(sampleRun('000010'));

@@ -15,7 +15,9 @@ describe('commandName', () => {
       id: 'session.known-command-named-with-id',
       covers: 'src/device/commandNames.ts#commandName',
       given: 'a write that starts a test run',
-      then: 'a write that starts a test run is logged as WRITE_TEST_RUN with its command number shown',
+      expect: {
+        'name-with-number': 'the log shows the test-run write\'s name together with its command number',
+      },
     },
     () => {
       expect(commandName(MSG_WRITE_TEST_RUN, 'write')).toBe(`WRITE_TEST_RUN(${MSG_WRITE_TEST_RUN})`);
@@ -27,7 +29,9 @@ describe('commandName', () => {
       id: 'session.unknown-command-keeps-the-number',
       covers: 'src/device/commandNames.ts#commandName',
       given: 'a command number the protocol does not define',
-      then: 'an unknown command number is logged with the number still visible',
+      expect: {
+        'number-kept': 'the log entry still shows that number, under a generic command label',
+      },
     },
     () => {
       expect(commandName(9999, 'write')).toBe('cmd(9999)');
@@ -39,8 +43,14 @@ describe('commandName', () => {
       id: 'session.shared-command-named-by-direction',
       covers: 'src/device/commandNames.ts#commandName',
       given: 'a command number that is a configuration read in one direction and a test-run write in the other',
-      then: 'a command number shared by a configuration read and a test-run write is named by the direction of the traffic',
-      why: 'reads and writes share the same numbers, so the direction is what makes the log name true',
+      expect: {
+        'read-name': 'reading that number logs the configuration-read name',
+        'write-name': 'writing that number logs the test-run name',
+      },
+      why: {
+        'read-name': 'reads and writes share the same numbers, so the direction is what makes the log name true',
+        'write-name': 'reads and writes share the same numbers, so the direction is what makes the log name true',
+      },
     },
     () => {
       // Reads and writes share the id space, so a single map would mislabel half
@@ -56,8 +66,12 @@ describe('commandName', () => {
       id: 'session.ambiguous-command-shows-both-names',
       covers: 'src/device/commandNames.ts#commandName',
       given: 'a command number that is both a state read and a motion-enable write, with no direction given',
-      then: 'a command number that is both a state read and a motion-enable write is logged with both names when direction is unknown',
-      why: 'when direction is unknown the log must keep both names so a reader can tell them apart',
+      expect: {
+        'both-names-joined': 'the log shows both names joined, with the command number',
+      },
+      why: {
+        'both-names-joined': 'when direction is unknown the log must keep both names so a reader can tell them apart',
+      },
     },
     () => {
       expect(commandName(MSG_READ_STATE)).toBe('READ_STATE|WRITE_MOTION_ENABLE(1)');
@@ -70,7 +84,9 @@ describe('commandName', () => {
       id: 'session.one-sided-command-single-name',
       covers: 'src/device/commandNames.ts#commandName',
       given: 'a command number used only to write a waveform, with no direction given',
-      then: 'a command number used only to write a waveform is logged under that one name when direction is unknown',
+      expect: {
+        'single-name': 'the log shows just that one waveform-write name with its command number',
+      },
     },
     () => {
       expect(commandName(8)).toBe('WRITE_TEST_WAVEFORM(8)');
@@ -90,8 +106,13 @@ describe('isPeriodicCommand', () => {
       id: 'session.periodic-reads-are-sample-and-state',
       covers: 'src/device/commandNames.ts#isPeriodicCommand',
       given: 'the live-sample read, the machine-state read, and a write that starts a test run',
-      then: 'the live-sample read and the machine-state read are the high-rate commands, and a write that starts a test run is a one-time command',
-      why: 'the live sample and state arrive many times a second, so the log aggregates them',
+      expect: {
+        'reads-high-rate': 'the two reads are treated as high-rate',
+        'write-one-time': 'the write is treated as one-time',
+      },
+      why: {
+        'reads-high-rate': 'the live sample and state arrive many times a second, so the log aggregates them',
+      },
     },
     () => {
       expect(isPeriodicCommand(MSG_READ_SAMPLE)).toBe(true);
@@ -107,7 +128,11 @@ describe('summariseGcode', () => {
       id: 'session.gcode-summary-counts-commands',
       covers: 'src/device/commandNames.ts#summariseGcode',
       given: 'a four-line program of absolute mode, two feed moves, and G122',
-      then: 'a four-line program of absolute mode, two feed moves, and G122 is summarised as four lines, those three command kinds, and ending with G122',
+      expect: {
+        'line-count': 'the summary reports four lines',
+        'opcode-counts': 'the summary counts two feed moves and one of each other command',
+        'ends-with-g122': 'the summary reports the program as ending with G122',
+      },
     },
     () => {
       const s = summariseGcode(['G90', 'G1 X10 F100', 'G1 X0 F100', 'G122']);
@@ -122,8 +147,12 @@ describe('summariseGcode', () => {
       id: 'session.program-without-trailing-g122',
       covers: 'src/device/commandNames.ts#summariseGcode',
       given: 'a program of absolute mode and a feed move with no G122 at the end',
-      then: 'a program of absolute mode and a feed move that does not end with G122 is reported as not ending with G122',
-      why: 'the firmware waits on G122 to know the run is complete',
+      expect: {
+        'missing-g122-flagged': 'the summary flags the program as ending without G122',
+      },
+      why: {
+        'missing-g122-flagged': 'the firmware waits on G122 to know the run is complete',
+      },
     },
     () => {
       expect(summariseGcode(['G90', 'G1 X10 F100']).endsWithG122).toBe(false);
@@ -135,8 +164,15 @@ describe('summariseGcode', () => {
       id: 'session.gcode-hash-is-content',
       covers: 'src/device/commandNames.ts#summariseGcode',
       given: 'two identical one-move programs and a third that differs by one millimetre',
-      then: 'two identical G-code programs share an eight-character content hash, and a program that differs by one millimetre of travel has a different hash',
-      why: 'two uploads of the same profile must fingerprint the same, so a changed program is visible in the log',
+      expect: {
+        'identical-share-hash': 'the identical programs share a hash',
+        'changed-hashes-differently': 'the third program hashes differently',
+        'eight-characters': 'the hash is eight hexadecimal characters',
+      },
+      why: {
+        'identical-share-hash': 'two uploads of the same profile must fingerprint the same',
+        'changed-hashes-differently': 'a changed program must be visible in the log',
+      },
     },
     () => {
       const a = summariseGcode(['G1 X10 F100']);
@@ -153,7 +189,9 @@ describe('summariseGcode', () => {
       id: 'session.gcode-opcodes-ignore-case-and-padding',
       covers: 'src/device/commandNames.ts#summariseGcode',
       given: 'a lowercase feed-move line with leading spaces, followed by an M5',
-      then: 'a lowercase feed-move with leading spaces is counted as G1, and an M5 is counted as M5',
+      expect: {
+        'counted-uppercase-and-trimmed': 'the summary counts one G1 and one M5',
+      },
     },
     () => {
       expect(summariseGcode(['  g1 X1', 'M5']).opcodes).toEqual({ G1: 1, M5: 1 });
@@ -165,7 +203,10 @@ describe('summariseGcode', () => {
       id: 'session.empty-gcode-summarises',
       covers: 'src/device/commandNames.ts#summariseGcode',
       given: 'a program with no lines',
-      then: 'an empty program is summarised as zero lines, no commands, and not ending with G122',
+      expect: {
+        'empty-counts': 'the summary reports zero lines and no counted commands',
+        'no-g122-end': 'the summary marks the program as ending without G122',
+      },
     },
     () => {
       const s = summariseGcode([]);
@@ -180,7 +221,9 @@ describe('summariseGcode', () => {
       id: 'session.gcode-coordinate-only-lines-uncounted',
       covers: 'src/device/commandNames.ts#summariseGcode',
       given: 'a coordinate-only line followed by a feed move',
-      then: 'a line of bare coordinates next to a feed move is omitted from the command counts, and the feed move is counted as G1',
+      expect: {
+        'coordinate-line-uncounted': 'the summary counts one G1 and nothing for the coordinate line',
+      },
     },
     () => {
       expect(summariseGcode(['X10 Y20', 'G1 X1']).opcodes).toEqual({ G1: 1 });

@@ -159,10 +159,10 @@ void tearDown(void) {}
 
 void test_init_startsEachChannelOnce(void)
 {
-    VIBES_BEHAVIOUR("serial.init-starts-each-channel",
-                    "src/IO/IO_fullDuplexSerial.c#IO_fullDuplexSerial_init",
-                    "the serial layer starting up",
-                    "serial start-up opens each configured serial channel once");
+    VIBES_TEST("serial.init-starts-each-channel",
+               "src/IO/IO_fullDuplexSerial.c#IO_fullDuplexSerial_init",
+               "the serial layer starting up");
+    VIBES_EXPECT("each-channel-once", "each configured serial channel is opened exactly once");
     doubles_reset();
     IO_fullDuplexSerial_init(HAL_lock_create());
 
@@ -176,10 +176,10 @@ void test_init_startsEachChannelOnce(void)
 
 void test_send_accumulatesThenFlushesInOrder(void)
 {
-    VIBES_BEHAVIOUR("serial.send-accumulates-then-flushes-in-order",
-                    "src/IO/IO_fullDuplexSerial.c#IO_fullDuplexSerial_send",
-                    "two successive sends of serial bytes, then a serial cycle",
-                    "serial bytes from successive sends leave the wire in the order given");
+    VIBES_TEST("serial.send-accumulates-then-flushes-in-order",
+               "src/IO/IO_fullDuplexSerial.c#IO_fullDuplexSerial_send",
+               "two successive sends of serial bytes, then a serial cycle");
+    VIBES_EXPECT("bytes-in-order", "the bytes leave on the wire in the order they were sent");
     fds_init();
 
     const uint8_t a[3] = { 'A', 'B', 'C' };
@@ -198,10 +198,11 @@ void test_send_accumulatesThenFlushesInOrder(void)
 
 void test_send_rejectsOutOfRangeChannel(void)
 {
-    VIBES_BEHAVIOUR("serial.send-unknown-channel-refused",
-                    "src/IO/IO_fullDuplexSerial.c#IO_fullDuplexSerial_send",
-                    "a send on a serial channel that does not exist",
-                    "a send on an unknown serial channel is refused and puts no bytes on the wire");
+    VIBES_TEST("serial.send-unknown-channel-refused",
+               "src/IO/IO_fullDuplexSerial.c#IO_fullDuplexSerial_send",
+               "a send on a serial channel that does not exist");
+    VIBES_EXPECT("send-refused", "the send is refused");
+    VIBES_EXPECT("nothing-on-wire", "nothing is put on the wire");
     fds_init();
     const uint8_t x = 0x5A;
     TEST_ASSERT_FALSE(IO_fullDuplexSerial_send(IO_FULLDUPLEXSERIAL_CHANNEL_COUNT, &x, 1U));
@@ -212,10 +213,10 @@ void test_send_rejectsOutOfRangeChannel(void)
 
 void test_send_rejectsWhenRingFull(void)
 {
-    VIBES_BEHAVIOUR("serial.send-refused-when-full",
-                    "src/IO/IO_fullDuplexSerial.c#IO_fullDuplexSerial_send",
-                    "the serial output filled to capacity, then one more byte",
-                    "once the serial output is full, a further byte is refused");
+    VIBES_TEST("serial.send-refused-when-full",
+               "src/IO/IO_fullDuplexSerial.c#IO_fullDuplexSerial_send",
+               "the serial output filled to capacity, then one more byte");
+    VIBES_EXPECT("further-byte-refused", "the further byte is refused");
     fds_init();
 
     /* A ring of `size` slots holds size-1 bytes. */
@@ -237,10 +238,11 @@ void test_send_rejectsWhenRingFull(void)
 
 void test_run_flushesPendingTxThenClears(void)
 {
-    VIBES_BEHAVIOUR("serial.run-flushes-then-clears",
-                    "src/IO/IO_fullDuplexSerial.c#IO_fullDuplexSerial_run",
-                    "pending serial bytes, one serial cycle, then a second cycle with nothing new waiting",
-                    "a serial cycle sends every pending byte in order, and a following cycle with nothing new waiting sends nothing further");
+    VIBES_TEST("serial.run-flushes-then-clears",
+               "src/IO/IO_fullDuplexSerial.c#IO_fullDuplexSerial_run",
+               "pending serial bytes, one serial cycle, then a second cycle with nothing new waiting");
+    VIBES_EXPECT("pending-goes-out-in-order", "every pending byte goes out in order");
+    VIBES_EXPECT("second-cycle-silent", "the second cycle puts nothing further on the wire");
     fds_init();
 
     const uint8_t payload[4] = { 0xDE, 0xAD, 0xBE, 0xEF };
@@ -262,10 +264,10 @@ void test_run_flushesPendingTxThenClears(void)
 
 void test_run_noTransmitWhenTxEmpty(void)
 {
-    VIBES_BEHAVIOUR("serial.run-idle-sends-nothing",
-                    "src/IO/IO_fullDuplexSerial.c#IO_fullDuplexSerial_run",
-                    "a serial cycle with no bytes waiting to send",
-                    "a serial cycle with no bytes waiting to send puts nothing on the wire");
+    VIBES_TEST("serial.run-idle-sends-nothing",
+               "src/IO/IO_fullDuplexSerial.c#IO_fullDuplexSerial_run",
+               "a serial cycle with no bytes waiting to send");
+    VIBES_EXPECT("nothing-on-wire", "nothing is put on the wire");
     fds_init();
     IO_fullDuplexSerial_run();
     TEST_ASSERT_EQUAL_UINT32(0U, d_txCallCount);
@@ -278,11 +280,12 @@ void test_run_noTransmitWhenTxEmpty(void)
 
 void test_run_burstDrainsAllAvailableInOnePass(void)
 {
-    VIBES_BEHAVIOUR_WHY("serial.run-takes-all-waiting-bytes",
-                        "src/IO/IO_fullDuplexSerial.c#IO_fullDuplexSerial_run",
-                        "several bytes waiting on the serial wire, then one serial cycle",
-                        "a single serial cycle takes every byte waiting on the wire",
-                        "a protocol frame must be captured in one pass so its bytes stay together");
+    VIBES_TEST("serial.run-takes-all-waiting-bytes",
+               "src/IO/IO_fullDuplexSerial.c#IO_fullDuplexSerial_run",
+               "several bytes waiting on the serial wire, then one serial cycle");
+    VIBES_EXPECT_WHY("all-waiting-bytes-taken",
+                     "every waiting byte becomes available to receive",
+                     "a protocol frame must be captured in one pass so its bytes stay together");
     fds_init();
 
     const uint8_t stream[3] = { 'X', 'Y', 'Z' };
@@ -299,10 +302,10 @@ void test_run_burstDrainsAllAvailableInOnePass(void)
 
 void test_run_noIngestWhenHalHasNoByte(void)
 {
-    VIBES_BEHAVIOUR("serial.run-idle-receives-nothing",
-                    "src/IO/IO_fullDuplexSerial.c#IO_fullDuplexSerial_run",
-                    "a serial cycle with no bytes waiting on the wire",
-                    "a serial cycle with no bytes waiting on the wire makes none available to receive");
+    VIBES_TEST("serial.run-idle-receives-nothing",
+               "src/IO/IO_fullDuplexSerial.c#IO_fullDuplexSerial_run",
+               "a serial cycle with no bytes waiting on the wire");
+    VIBES_EXPECT("nothing-available", "nothing becomes available to receive");
     fds_init();
     /* empty script => recieveBytes returns 0 */
     IO_fullDuplexSerial_run();
@@ -315,10 +318,10 @@ void test_run_noIngestWhenHalHasNoByte(void)
 
 void test_receive_emptyReturnsFalse(void)
 {
-    VIBES_BEHAVIOUR("serial.receive-empty-refused",
-                    "src/IO/IO_fullDuplexSerial.c#IO_fullDuplexSerial_receive",
-                    "a receive with no serial bytes waiting",
-                    "a receive with no serial bytes waiting is refused");
+    VIBES_TEST("serial.receive-empty-refused",
+               "src/IO/IO_fullDuplexSerial.c#IO_fullDuplexSerial_receive",
+               "a receive with no serial bytes waiting");
+    VIBES_EXPECT("receive-refused", "the receive is refused");
     fds_init();
     uint8_t out[8] = {0};
     TEST_ASSERT_FALSE(IO_fullDuplexSerial_receive(CH, out, sizeof(out)));
@@ -327,10 +330,11 @@ void test_receive_emptyReturnsFalse(void)
 
 void test_receive_drainsAllInFifoOrder(void)
 {
-    VIBES_BEHAVIOUR("serial.receive-in-arrival-order",
-                    "src/IO/IO_fullDuplexSerial.c#IO_fullDuplexSerial_receive",
-                    "four serial bytes taken from the wire, then a receive of all of them",
-                    "received serial bytes come back in arrival order, and none remain afterwards");
+    VIBES_TEST("serial.receive-in-arrival-order",
+               "src/IO/IO_fullDuplexSerial.c#IO_fullDuplexSerial_receive",
+               "four serial bytes taken from the wire, then a receive of all of them");
+    VIBES_EXPECT("arrival-order", "the bytes come back in arrival order");
+    VIBES_EXPECT("channel-left-empty", "the channel is left empty");
     fds_init();
 
     const uint8_t stream[4] = { 'w', 'x', 'y', 'z' };
@@ -349,10 +353,12 @@ void test_receive_drainsAllInFifoOrder(void)
 
 void test_receive_partialLeavesRemainderInOrder(void)
 {
-    VIBES_BEHAVIOUR("serial.receive-partial-keeps-remainder",
-                    "src/IO/IO_fullDuplexSerial.c#IO_fullDuplexSerial_receive",
-                    "five serial bytes waiting, a receive of the first two, then a receive of the rest",
-                    "a partial serial receive returns the earliest bytes and leaves the remainder to be received next, still in order");
+    VIBES_TEST("serial.receive-partial-keeps-remainder",
+               "src/IO/IO_fullDuplexSerial.c#IO_fullDuplexSerial_receive",
+               "five serial bytes waiting, a receive of the first two, then a receive of the rest");
+    VIBES_EXPECT("arrival-order-across-receives", "the bytes come back in arrival order across both receives");
+    VIBES_EXPECT("remainder-kept", "the untaken bytes stay waiting");
+    VIBES_EXPECT("none-left-waiting", "none are left waiting at the end");
     fds_init();
 
     const uint8_t stream[5] = { 10, 20, 30, 40, 50 };
@@ -377,10 +383,11 @@ void test_receive_partialLeavesRemainderInOrder(void)
 
 void test_receive_clampsToAvailableWhenMaxLargerThanCount(void)
 {
-    VIBES_BEHAVIOUR("serial.receive-clamps-to-available",
-                    "src/IO/IO_fullDuplexSerial.c#IO_fullDuplexSerial_receive",
-                    "two serial bytes waiting and a receive asking for many more",
-                    "a serial receive asking for more bytes than are waiting returns only the bytes that are waiting");
+    VIBES_TEST("serial.receive-clamps-to-available",
+               "src/IO/IO_fullDuplexSerial.c#IO_fullDuplexSerial_receive",
+               "two serial bytes waiting and a receive asking for many more");
+    VIBES_EXPECT("only-waiting-copied", "only the waiting bytes are copied out");
+    VIBES_EXPECT("rest-untouched", "the rest of the caller's buffer is left untouched");
     fds_init();
 
     const uint8_t stream[2] = { 0xA5, 0x3C };

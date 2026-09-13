@@ -36,7 +36,8 @@ nobody committed is not part of the repo's declared behaviour.
 Vibes sets both before running `cmd`:
 
 - **`VIBES_BEHAVIOURS`** — the bindings append one JSON line per declared
-  behaviour here. See SCHEMA.md.
+  EXPECTATION here; a test with three expectations writes three lines, sharing
+  its id and condition. See SCHEMA.md.
 - **`VIBES_RESULTS`** — where the runner should write its own output, in the
   format `results` names. Vibes reads pass/fail from it and joins on `test`.
 

@@ -23,7 +23,7 @@ describe('describePort', () => {
       id: 'flash.port-label-shows-usb-ids',
       covers: 'src/firmware/portPref.ts#describePort',
       given: 'a serial port whose adapter reports USB vendor 0403 and product 6015',
-      then: 'a serial port with USB vendor 0403 and product 6015 is labelled USB 0403:6015',
+      expect: { 'usb-ids-shown': 'the port is labelled USB 0403:6015' },
     },
     () => {
       expect(describePort(fakePort(...FTDI))).toBe('USB 0403:6015');
@@ -35,7 +35,7 @@ describe('describePort', () => {
       id: 'flash.port-label-without-usb-ids',
       covers: 'src/firmware/portPref.ts#describePort',
       given: 'a serial port whose adapter reports no USB identifiers, listed as the third device',
-      then: 'a serial port without USB identifiers is labelled Serial device 3 when it is the third device listed',
+      expect: { 'device-number-shown': 'the port is labelled Serial device 3' },
     },
     () => {
       expect(describePort(fakePort(), 2)).toBe('Serial device 3');
@@ -49,7 +49,9 @@ describe('resolveFlashPort', () => {
       id: 'flash.port-none-when-ungranted',
       covers: 'src/firmware/portPref.ts#resolveFlashPort',
       given: 'no serial ports have been granted',
-      then: 'when no serial ports have been granted, no flash target is available',
+      expect: {
+        'no-port-offered': 'no port is offered for the load, and the operator is not asked to choose',
+      },
     },
     () => {
       expect(resolveFlashPort([], null)).toEqual({ kind: 'none' });
@@ -61,7 +63,7 @@ describe('resolveFlashPort', () => {
       id: 'flash.port-only-granted-is-used',
       covers: 'src/firmware/portPref.ts#resolveFlashPort',
       given: 'exactly one granted serial port and no remembered choice',
-      then: 'the only granted serial port is used for the load',
+      expect: { 'only-port-used': 'that port is used for the load, with no prompt to choose' },
     },
     () => {
       const port = fakePort(...FTDI);
@@ -78,8 +80,10 @@ describe('resolveFlashPort', () => {
       id: 'flash.port-two-without-preference-asks',
       covers: 'src/firmware/portPref.ts#resolveFlashPort',
       given: 'two granted serial ports and no remembered choice',
-      then: 'when two serial ports are granted and none is remembered, the operator is asked to choose which one to program',
-      why: 'programming is destructive; choosing silently would load the wrong device',
+      expect: { 'operator-asked': 'the operator is asked to pick which port to program' },
+      why: {
+        'operator-asked': 'programming is destructive; choosing silently would load the wrong device',
+      },
     },
     () => {
       const ports = [fakePort(...FTDI), fakePort(...CP210X)];
@@ -92,7 +96,9 @@ describe('resolveFlashPort', () => {
       id: 'flash.port-remembered-ids-selected',
       covers: 'src/firmware/portPref.ts#resolveFlashPort',
       given: 'two granted serial ports, and a remembered choice matching one adapter\'s USB identifiers',
-      then: 'the granted serial port whose USB identifiers match the remembered choice is used for the load',
+      expect: {
+        'remembered-adapter-used': 'that adapter is used for the load, whichever slot it now sits in',
+      },
     },
     () => {
       const ftdi = fakePort(...FTDI);
@@ -111,7 +117,9 @@ describe('resolveFlashPort', () => {
       id: 'flash.port-identical-adapters-use-slot',
       covers: 'src/firmware/portPref.ts#resolveFlashPort',
       given: 'two identical adapters, with the remembered choice pointing at the second one',
-      then: 'when two identical adapters are granted, the load uses the one in the remembered slot',
+      expect: {
+        'remembered-slot-used': 'the second adapter is used for the load, with no prompt to choose',
+      },
     },
     () => {
       const a = fakePort(...FTDI);
@@ -126,7 +134,7 @@ describe('resolveFlashPort', () => {
       id: 'flash.port-missing-slot-asks',
       covers: 'src/firmware/portPref.ts#resolveFlashPort',
       given: 'two identical adapters, with the remembered choice pointing at a slot that is not present',
-      then: 'when the remembered slot is not among the granted identical adapters, the operator is asked to choose which one to program',
+      expect: { 'operator-asked': 'the operator is asked to pick which adapter to program' },
     },
     () => {
       const a = fakePort(...FTDI);
@@ -141,8 +149,8 @@ describe('resolveFlashPort', () => {
     {
       id: 'flash.port-remembered-absent-asks',
       covers: 'src/firmware/portPref.ts#resolveFlashPort',
-      given: 'granted serial ports whose USB identifiers do not match the remembered adapter',
-      then: 'when the remembered adapter is not among the granted serial ports, the operator is asked to choose which one to program',
+      given: 'two granted serial ports, neither matching the remembered adapter\'s USB identifiers',
+      expect: { 'operator-asked': 'the operator is asked to pick which port to program' },
     },
     () => {
       const got = resolveFlashPort([fakePort(...CP210X), fakePort(0x1a86, 0x7523)], {
@@ -159,8 +167,8 @@ describe('resolveFlashPort', () => {
       id: 'flash.port-preference-without-ids-asks',
       covers: 'src/firmware/portPref.ts#resolveFlashPort',
       given: 'two granted serial ports and a remembered choice that has a slot but no USB identifiers',
-      then: 'when the remembered choice has no USB identifiers, the operator is asked to choose which one to program',
-      why: 'a slot index alone is not a stable identity for a serial port',
+      expect: { 'operator-asked': 'the operator is asked to pick which port to program' },
+      why: { 'operator-asked': 'a slot index alone is not a stable identity for a serial port' },
     },
     () => {
       const ports = [fakePort(...FTDI), fakePort(...CP210X)];
@@ -187,7 +195,10 @@ describe('flash port preference storage', () => {
       id: 'flash.port-choice-round-trips',
       covers: 'src/firmware/portPref.ts#rememberFlashPort',
       given: 'a serial port remembered at slot 3',
-      then: 'remembering a serial port stores its USB identifiers and slot, and reading that choice returns them',
+      expect: {
+        'ids-and-slot-returned':
+          'reading the remembered choice returns that adapter\'s USB vendor and product identifiers and slot 3',
+      },
     },
     () => {
       rememberFlashPort(fakePort(...FTDI), 3);
@@ -200,7 +211,7 @@ describe('flash port preference storage', () => {
       id: 'flash.port-choice-forgotten',
       covers: 'src/firmware/portPref.ts#forgetFlashPort',
       given: 'a remembered serial-port choice that the operator then forgets',
-      then: 'forgetting the remembered serial port leaves no stored choice',
+      expect: { 'nothing-remembered': 'reading the remembered choice afterwards returns nothing' },
     },
     () => {
       rememberFlashPort(fakePort(...FTDI), 0);
@@ -214,8 +225,10 @@ describe('flash port preference storage', () => {
       id: 'flash.port-unreadable-choice-is-empty',
       covers: 'src/firmware/portPref.ts#readFlashPortPref',
       given: 'stored serial-port preference data that is not valid JSON',
-      then: 'unreadable stored serial-port preference data is treated as no choice',
-      why: 'a corrupt preference must still let the operator pick a serial port',
+      expect: { 'no-remembered-choice': 'reading it back gives no remembered choice' },
+      why: {
+        'no-remembered-choice': 'a corrupt preference must still let the operator pick a serial port',
+      },
     },
     () => {
       localStorage.setItem('mad.flashPort', '{not json');
@@ -230,7 +243,7 @@ describe('validateFirmwareFile', () => {
       id: 'flash.file-plausible-size-accepted',
       covers: 'src/firmware/portPref.ts#validateFirmwareFile',
       given: 'a 300,000-byte firmware file',
-      then: 'a firmware file of 300,000 bytes is accepted as a plausible image',
+      expect: { 'file-accepted': 'the file is accepted for loading' },
     },
     () => {
       expect(validateFirmwareFile(300_000)).toBeNull();
@@ -242,7 +255,7 @@ describe('validateFirmwareFile', () => {
       id: 'flash.file-empty-refused',
       covers: 'src/firmware/portPref.ts#validateFirmwareFile',
       given: 'an empty firmware file chosen by the operator',
-      then: 'an empty firmware file is refused before the chip is reset',
+      expect: { 'refused-as-empty': 'the file is refused as empty before the chip is reset' },
     },
     () => {
       expect(validateFirmwareFile(0)).toMatch(/empty/i);
@@ -253,9 +266,14 @@ describe('validateFirmwareFile', () => {
     {
       id: 'flash.file-larger-than-chip-memory-refused',
       covers: 'src/firmware/portPref.ts#validateFirmwareFile',
-      given: 'a firmware file larger than the Propeller 2\'s 512 KiB of memory',
-      then: 'a firmware file larger than 512 KiB is refused, and a file of exactly 512 KiB is accepted',
-      why: 'the Propeller 2 has 512 KiB of hub memory; a larger file cannot be loaded',
+      given: 'a firmware file one byte over the Propeller 2\'s 512 KiB of hub RAM, and one of exactly 512 KiB',
+      expect: {
+        'over-limit-refused': 'the oversized file is refused for exceeding hub RAM',
+        'exact-limit-accepted': 'the exactly-sized file is accepted',
+      },
+      why: {
+        'over-limit-refused': 'the Propeller 2 has 512 KiB of hub memory; a larger file cannot be loaded',
+      },
     },
     () => {
       expect(validateFirmwareFile(MAX_IMAGE_BYTES + 1)).toMatch(/hub RAM/i);

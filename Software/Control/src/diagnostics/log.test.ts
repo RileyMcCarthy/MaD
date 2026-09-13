@@ -37,8 +37,11 @@ describe('log ring', () => {
       id: 'diag.log-captures-every-level',
       covers: 'src/diagnostics/log.ts#logger',
       given: 'the console filter is off and debug, info, warn, and error events are logged',
-      then: 'the crash log captures every severity even when the console is quiet',
-      why: 'a bug report must be full-detail even when the console was quiet',
+      expect: {
+        'levels-kept': 'every event is kept, each with its severity',
+        'data-kept': 'each event keeps the data it was logged with',
+      },
+      why: { 'levels-kept': 'a bug report must be full-detail even when the console was quiet' },
     },
     () => {
       const log = logger('proto');
@@ -59,8 +62,15 @@ describe('log ring', () => {
       id: 'diag.log-stamps-thread-seq-wall-clock',
       covers: 'src/diagnostics/log.ts#logger',
       given: 'two events are logged on the main thread',
-      then: 'each crash-log entry is stamped with the main thread, a rising sequence number, and a wall-clock time comparable with the clock',
-      why: 'worker and main-thread clocks must share a wall-clock so a merged timeline can be read',
+      expect: {
+        'thread-stamped': 'each entry is stamped with the thread it came from',
+        'seq-rises': 'the second entry carries the next sequence number after the first',
+        'wall-clock': 'each entry carries a wall-clock time at or after the session start',
+      },
+      why: {
+        'wall-clock':
+          'worker and main-thread clocks must share a wall-clock so a merged timeline can be read',
+      },
     },
     () => {
       const before = nowMs();
@@ -81,8 +91,11 @@ describe('log ring', () => {
     {
       id: 'diag.log-omits-empty-message-and-data',
       covers: 'src/diagnostics/log.ts#logger',
-      given: 'a log event with no message and another with an empty message',
-      then: 'a crash-log entry with no message or data omits those fields entirely',
+      given: 'a log event with no message and no data, and another with an empty message',
+      expect: {
+        'no-message-field': 'neither entry carries a message field',
+        'no-data-field': 'the entry carries no data field',
+      },
     },
     () => {
       logger('app').info('bare');
@@ -99,8 +112,14 @@ describe('log ring', () => {
       id: 'diag.log-bounds-and-counts-drops',
       covers: 'src/diagnostics/log.ts#logSnapshot',
       given: 'more events than the crash log can retain',
-      then: 'the crash log keeps only its capacity of newest events and counts how many older ones were dropped',
-      why: 'a truncated log must say it is truncated so a maintainer does not treat it as the whole session',
+      expect: {
+        'newest-kept': 'the crash log keeps only its capacity, and they are the newest events',
+        'drops-counted': 'it reports how many older events were dropped',
+      },
+      why: {
+        'drops-counted':
+          'a truncated log must say it is truncated so a maintainer does not treat it as the whole session',
+      },
     },
     () => {
       const overflow = 1000;
@@ -119,9 +138,15 @@ describe('log ring', () => {
     {
       id: 'diag.log-counters-outlive-eviction',
       covers: 'src/diagnostics/log.ts#logSnapshot',
-      given: 'matching events are counted, then the crash log is flooded until those events fall out',
-      then: 'per-kind event counters survive after the events themselves have been dropped from the crash log',
-      why: 'how many failures this session had must stay accurate after the log wraps',
+      given: 'events are logged, then the crash log is flooded until those events fall out',
+      expect: {
+        'counted-per-category-and-tag': 'the events are counted separately per category and tag',
+        'counts-survive': 'the counts of those events stay unchanged',
+      },
+      why: {
+        'counts-survive':
+          'how many failures this session had must stay accurate after the log wraps',
+      },
     },
     () => {
       const dev = logger('device');
@@ -148,8 +173,10 @@ describe('log ring', () => {
     {
       id: 'diag.log-subscriber-stops-after-remove',
       covers: 'src/diagnostics/log.ts#subscribeLog',
-      given: 'a live-tail subscriber is attached, one event is logged, then the subscriber is removed',
-      then: 'a crash-log subscriber sees events until it is removed, and nothing after',
+      given: 'a live-tail subscriber is attached, an event is logged, the subscriber is removed, and another event is logged',
+      expect: {
+        'stops-at-removal': 'the subscriber receives the first event and nothing after',
+      },
     },
     () => {
       const seen: string[] = [];
@@ -166,8 +193,11 @@ describe('log ring', () => {
       id: 'diag.log-survives-throwing-subscriber',
       covers: 'src/diagnostics/log.ts#subscribeLog',
       given: 'a live-tail subscriber throws when an event arrives',
-      then: 'a throwing crash-log subscriber does not prevent the event from being logged, and the failure is counted',
-      why: 'a broken live tail must never break logging',
+      expect: {
+        'logging-returns': 'logging returns without throwing',
+        'failure-counted': 'the failure is counted',
+      },
+      why: { 'logging-returns': 'a broken live tail must never break logging' },
     },
     () => {
       const off = subscribeLog(() => {
@@ -184,7 +214,11 @@ describe('log ring', () => {
       id: 'diag.log-clear-keeps-seq-unique',
       covers: 'src/diagnostics/log.ts#clearLog',
       given: 'the crash log is cleared after recording an event, then a new event is logged',
-      then: 'clearing the crash log drops retained events, counters, and drop counts, while new events keep a unique sequence number',
+      expect: {
+        'only-new-event': 'only the new event remains',
+        'counts-restart': 'the counters and the drop count start again from zero',
+        'seq-keeps-rising': 'the sequence number still rises past the cleared event',
+      },
     },
     () => {
       logger('app').info('one');
@@ -212,7 +246,11 @@ describe('console filter', () => {
       id: 'diag.log-filter-wildcard-list-off',
       covers: 'src/diagnostics/log.ts#setLogFilter',
       given: 'the console filter is set to all categories, then a named list, then empty',
-      then: 'the console filter accepts all categories, a named list, or off',
+      expect: {
+        'wildcard-mirrors-all': 'every category mirrors to the console at once',
+        'list-mirrors-listed-only': 'only the listed categories mirror',
+        'empty-mirrors-none': 'nothing mirrors',
+      },
     },
     () => {
       setLogFilter('*', 'debug');
@@ -234,7 +272,10 @@ describe('console filter', () => {
       id: 'diag.log-filter-level-threshold',
       covers: 'src/diagnostics/log.ts#mirrorMatches',
       given: 'the console filter is set to warn and above',
-      then: 'the console filter hides debug and info and shows warn and error',
+      expect: {
+        'below-hidden': 'debug and info stay off the console',
+        'at-and-above-shown': 'warn and error reach the console',
+      },
     },
     () => {
       setLogFilter('*', 'warn');
@@ -250,7 +291,9 @@ describe('console filter', () => {
       id: 'diag.log-filter-keeps-level',
       covers: 'src/diagnostics/log.ts#setLogFilter',
       given: 'the console filter level is warn, then only the category list is changed',
-      then: 'changing the console filter\'s categories leaves the severity threshold in place',
+      expect: {
+        'level-survives': 'the filter reports the new category list with the severity threshold still at warn',
+      },
     },
     () => {
       setLogFilter('*', 'warn');
@@ -264,7 +307,9 @@ describe('console filter', () => {
       id: 'diag.log-filter-separators-only-off',
       covers: 'src/diagnostics/log.ts#setLogFilter',
       given: 'the console filter is set to a string of commas and spaces',
-      then: 'a console filter made only of separators is treated as off',
+      expect: {
+        'nothing-mirrors': 'no events reach the console, not even errors',
+      },
     },
     () => {
       setLogFilter(' , , ', 'debug');
@@ -279,7 +324,11 @@ describe('sanitize', () => {
       id: 'diag.log-sanitize-scalars',
       covers: 'src/diagnostics/log.ts#sanitize',
       given: 'log data containing ordinary values, NaN, Infinity, a bigint, and undefined',
-      then: 'preparing crash-log data for a public issue keeps ordinary values and records NaN, Infinity, bigint, and missing values as text the issue can carry',
+      expect: {
+        'ordinary-unchanged': 'ordinary values pass through unchanged',
+        'unrepresentable-as-text': 'NaN, Infinity and the bigint become text',
+        'missing-becomes-empty': 'the missing value becomes empty',
+      },
     },
     () => {
       expect(sanitize({ a: 1, b: true, c: null })).toEqual({ a: 1, b: true, c: null });
@@ -295,7 +344,10 @@ describe('sanitize', () => {
       id: 'diag.log-sanitize-truncates-strings',
       covers: 'src/diagnostics/log.ts#sanitize',
       given: 'a 500-character string in log data',
-      then: 'a long string in crash-log data is truncated with a marker that says how many characters were dropped',
+      expect: {
+        'cut-short': 'the string is cut short, keeping its opening characters',
+        'drop-count-marked': 'it is marked with the number of characters dropped',
+      },
     },
     () => {
       const s = 'x'.repeat(500);
@@ -310,9 +362,15 @@ describe('sanitize', () => {
     {
       id: 'diag.log-sanitize-redacts-bytes',
       covers: 'src/diagnostics/log.ts#sanitize',
-      given: 'log data containing raw byte buffers of several kinds',
-      then: 'byte payloads in crash-log data are recorded as a length, with none of the bytes themselves',
-      why: 'raw bytes belong in the bounded serial capture, and inlining them would evict the whole crash log',
+      given: 'log data containing a byte array, an array buffer, and a data view',
+      expect: {
+        'byte-count-only': 'each is recorded as its byte count',
+        'bytes-not-kept': 'none of the bytes themselves are kept',
+      },
+      why: {
+        'bytes-not-kept':
+          'raw bytes belong in the bounded serial capture, and inlining them would evict the whole crash log',
+      },
     },
     () => {
       const bytes = new Uint8Array([1, 2, 3, 4]);
@@ -328,7 +386,10 @@ describe('sanitize', () => {
       id: 'diag.log-sanitize-flattens-nested',
       covers: 'src/diagnostics/log.ts#sanitize',
       given: 'log data containing a small nested object, a large nested object, a class instance, an array, a Map, and a Set',
-      then: 'nested objects in crash-log data are summarised as a single string, never walked further',
+      expect: {
+        'single-summary-string': 'each is recorded as a single summary string, never expanded into its contents',
+        'summary-bounded': 'the summary stays short even for a large value',
+      },
     },
     () => {
       const small = sanitize({ o: { a: 1, b: 'two' } })!.o;
@@ -355,8 +416,11 @@ describe('sanitize', () => {
       id: 'diag.log-sanitize-circular',
       covers: 'src/diagnostics/log.ts#sanitize',
       given: 'log data containing an object that refers to itself',
-      then: 'a circular structure in crash-log data is recorded as a type name and does not throw',
-      why: 'logging must not be able to break the code it is observing',
+      expect: {
+        'type-name-only': 'the value is recorded as its type name alone',
+        'no-throw': 'nothing is thrown',
+      },
+      why: { 'no-throw': 'logging must not be able to break the code it is observing' },
     },
     () => {
       const circular: Record<string, unknown> = { self: null };
@@ -369,8 +433,11 @@ describe('sanitize', () => {
     {
       id: 'diag.log-sanitize-errors-bounded',
       covers: 'src/diagnostics/log.ts#sanitize',
-      given: 'an error with a seven-line stack',
-      then: 'an error in crash-log data keeps its name and message, with the stack limited to five lines',
+      given: 'an error with a seven-line stack in log data',
+      expect: {
+        'name-and-message-kept': 'the name and message of the error are kept',
+        'stack-cut-to-five': 'the stack is cut to five lines',
+      },
     },
     () => {
       const err = new TypeError('kaboom');
@@ -387,7 +454,9 @@ describe('sanitize', () => {
       id: 'diag.log-sanitize-drops-functions',
       covers: 'src/diagnostics/log.ts#sanitize',
       given: 'log data containing a function, a symbol, and a number',
-      then: 'functions and symbols in crash-log data are dropped, leaving only storeable values',
+      expect: {
+        'only-number-kept': 'the function and symbol are dropped and only the number is kept',
+      },
     },
     () => {
       const out = sanitize({ fn: () => 0, sym: Symbol('s'), keep: 1 })!;
@@ -400,8 +469,15 @@ describe('sanitize', () => {
       id: 'diag.log-sanitize-paths-to-basename',
       covers: 'src/diagnostics/log.ts#sanitize',
       given: 'log data containing Unix and Windows filesystem paths, a bare filename, a URL, and a directory handle',
-      then: 'filesystem paths in crash-log data are reduced to a basename, while URLs are left intact',
-      why: 'a crash log can end up in a public issue, so home-directory layout must not be published',
+      expect: {
+        'paths-to-last-segment': 'paths are cut to their last segment',
+        'url-kept-whole': 'the URL is kept whole',
+        'handle-identity-only': 'the handle keeps only its kind and name',
+      },
+      why: {
+        'paths-to-last-segment':
+          'a crash log can end up in a public issue, so home-directory layout must not be published',
+      },
     },
     () => {
       expect(sanitize({ path: '/Users/someone/Secret Project/data' })).toEqual({ path: 'data' });
@@ -422,8 +498,14 @@ describe('sanitize', () => {
       id: 'diag.log-sanitize-caps-keys',
       covers: 'src/diagnostics/log.ts#sanitize',
       given: 'log data with fifty keys, and an object whose getter throws',
-      then: 'preparing crash-log data for a public issue keeps a bounded number of keys and records an unreadable field without throwing',
-      why: 'logging must not be able to break the code it is observing',
+      expect: {
+        'keys-capped': 'thirty-two keys survive',
+        'dropped-keys-counted': 'the number of keys dropped is recorded alongside them',
+        'unreadable-field-recorded': 'the unreadable field is recorded as unreadable and nothing is thrown',
+      },
+      why: {
+        'unreadable-field-recorded': 'logging must not be able to break the code it is observing',
+      },
     },
     () => {
       const wide: Record<string, unknown> = {};
@@ -454,7 +536,10 @@ describe('cross-thread merge', () => {
       id: 'diag.log-merges-worker-by-wall-clock',
       covers: 'src/diagnostics/log.ts#ingestWorkerBatch',
       given: 'two main-thread events with a late-arriving worker batch that was produced between them',
-      then: 'worker crash-log events are merged into the same timeline, ordered by wall-clock time',
+      expect: {
+        'interleaved-by-timestamp': 'the late batch is interleaved by timestamp',
+        'time-ordered': 'the log reads in time order across both threads',
+      },
     },
     () => {
       logger('app').info('main-a');
@@ -480,7 +565,9 @@ describe('cross-thread merge', () => {
       id: 'diag.log-labels-ingested-as-worker',
       covers: 'src/diagnostics/log.ts#ingestWorkerBatch',
       given: 'a worker batch whose entries claim to be from the main thread',
-      then: 'worker crash-log events are labelled as worker even when the batch claims otherwise',
+      expect: {
+        'labelled-worker': 'the entries are labelled as coming from the worker',
+      },
     },
     () => {
       ingestWorkerBatch([{ ...workerEntry(1, nowMs(), 'mislabelled'), thread: 'main' }]);
@@ -493,7 +580,9 @@ describe('cross-thread merge', () => {
       id: 'diag.log-counts-ingested-entries',
       covers: 'src/diagnostics/log.ts#ingestWorkerBatch',
       given: 'a worker batch of two nack events',
-      then: 'worker crash-log events increment the same per-kind counters as main-thread events',
+      expect: {
+        'counted-with-main': 'both are counted in the same per-kind tally main-thread events feed',
+      },
     },
     () => {
       ingestWorkerBatch([workerEntry(1, nowMs(), 'nack'), workerEntry(2, nowMs(), 'nack')]);
@@ -506,7 +595,10 @@ describe('cross-thread merge', () => {
       id: 'diag.log-sorts-ties-stably',
       covers: 'src/diagnostics/log.ts#logSnapshot',
       given: 'two worker events with the same timestamp out of sequence, then a main-thread event tied with a worker event',
-      then: 'crash-log events with the same timestamp keep sequence order within a thread and arrival order across threads',
+      expect: {
+        'worker-tie-by-sequence': 'the worker pair comes out in the order the worker logged them',
+        'cross-thread-tie-keeps-arrival': 'the tied main-thread event stays first',
+      },
     },
     () => {
       const t = nowMs();
@@ -542,8 +634,11 @@ describe('worker → main batching', () => {
       id: 'diag.log-flushes-on-interval',
       covers: 'src/diagnostics/log.ts#setLogSink',
       given: 'two events are logged while worker logs are being forwarded to the main thread, then the flush interval elapses',
-      then: 'worker crash-log events wait for the flush interval and leave as one batch',
-      why: 'nothing high-rate should cross from the worker per event',
+      expect: {
+        'nothing-per-event': 'nothing crosses per event',
+        'one-batch-per-interval': 'the events logged since the last flush leave together in one batch',
+      },
+      why: { 'nothing-per-event': 'nothing high-rate should cross from the worker per event' },
     },
     () => {
       const batches: LogEntry[][] = [];
@@ -569,7 +664,10 @@ describe('worker → main batching', () => {
       id: 'diag.log-flushes-at-threshold',
       covers: 'src/diagnostics/log.ts#flushLog',
       given: 'enough events to hit the batch size threshold while worker logs are being forwarded',
-      then: 'worker crash-log events flush as soon as the batch size threshold is hit, and the timer does not send an empty follow-up',
+      expect: {
+        'sent-immediately': 'the whole batch is sent immediately',
+        'no-empty-follow-up': 'the flush timer sends no empty follow-up',
+      },
     },
     () => {
       const batches: LogEntry[][] = [];
@@ -589,8 +687,14 @@ describe('worker → main batching', () => {
       id: 'diag.log-flushes-on-demand',
       covers: 'src/diagnostics/log.ts#flushLog',
       given: 'a buffered worker log event, a demand flush, then another event followed by disconnecting the forwarder',
-      then: 'a demand flush and disconnecting the worker log forwarder both send any buffered crash-log events',
-      why: 'the last events before a crash or disconnect must still reach the merged timeline',
+      expect: {
+        'demand-flush-delivers': 'the demand flush delivers what was buffered',
+        'teardown-delivers': 'disconnecting the forwarder delivers the event buffered after it',
+      },
+      why: {
+        'teardown-delivers':
+          'the last events before a crash or disconnect must still reach the merged timeline',
+      },
     },
     () => {
       const batches: LogEntry[][] = [];
@@ -611,8 +715,12 @@ describe('worker → main batching', () => {
       id: 'diag.log-keeps-logging-when-sink-dead',
       covers: 'src/diagnostics/log.ts#flushLog',
       given: 'the worker log forwarder throws, then an event is logged and flushed',
-      then: 'a dead worker log forwarder is counted as a flush failure and the crash-log event stays in the local crash log',
-      why: 'a released worker connection must not take logging down with it',
+      expect: {
+        'failure-counted': 'the flush failure is counted',
+        'no-throw': 'the flush returns without throwing',
+        'kept-locally': 'the event stays in the local crash log',
+      },
+      why: { 'no-throw': 'a released worker connection must not take logging down with it' },
     },
     () => {
       setLogSink(() => {
@@ -631,7 +739,9 @@ describe('worker → main batching', () => {
       id: 'diag.log-buffers-nothing-without-sink',
       covers: 'src/diagnostics/log.ts#setLogSink',
       given: 'an event is logged with no worker log forwarder, then a forwarder is installed and flushed',
-      then: 'crash-log events recorded with no worker log forwarder are not sent when a forwarder is later installed',
+      expect: {
+        'nothing-delivered': 'the newly installed forwarder is sent nothing',
+      },
     },
     () => {
       setLogSink(null);
@@ -649,8 +759,11 @@ describe('debug hook', () => {
     {
       id: 'diag.log-debug-hook',
       covers: 'src/diagnostics/log.ts#logSnapshot',
-      given: 'the page\'s debug crash-log hook',
-      then: 'a tester can clear and dump the crash log from the page',
+      given: 'the page\'s debug crash-log hook is used to clear the log, then an event is logged',
+      expect: {
+        'hook-present': 'the hook is present on the page',
+        'dump-shows-event': 'the dump it returns shows the newly logged event',
+      },
     },
     () => {
       expect(globalThis.__madLog).toBeDefined();

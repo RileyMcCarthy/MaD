@@ -65,8 +65,14 @@ describe('workerCrashEvents', () => {
       id: 'session.worker-crash-events-are-text',
       covers: 'src/device/session.ts#workerCrashEvents',
       given: 'the device worker crashing with a panic message',
-      then: 'a worker crash is reported as an error whose message is the crash text, and as a disconnect whose reason is that the worker crashed, both as ordinary strings',
-      why: 'the UI must show the crash as a disconnect so the operator can reconnect with a fresh session',
+      expect: {
+        'error-then-disconnect': 'an error carrying the crash text and a disconnect naming it as the reason follow',
+        'plain-text': 'both carry the crash text as plain text',
+      },
+      why: {
+        'error-then-disconnect':
+          'the UI must show the crash as a disconnect so the operator can reconnect with a fresh session',
+      },
     },
     () => {
       const events = workerCrashEvents('wasm panic');
@@ -88,7 +94,9 @@ describe('DeviceClient worker recovery', () => {
       id: 'session.client-starts-with-one-worker',
       covers: 'src/device/session.ts#DeviceClient',
       given: 'a new device client',
-      then: 'a new device client starts with one worker',
+      expect: {
+        'one-worker': 'exactly one worker is created',
+      },
     },
     () => {
       const client = new DeviceClient({ workerFactory: () => new FakeWorker() as unknown as Worker });
@@ -101,7 +109,10 @@ describe('DeviceClient worker recovery', () => {
       id: 'session.worker-crash-reaches-subscribers',
       covers: 'src/device/session.ts#DeviceClient',
       given: 'a subscriber listening to a device client whose worker then crashes',
-      then: 'a worker crash is delivered to subscribers as the crash error and disconnect, and the client is marked disconnected',
+      expect: {
+        'one-batch': 'the subscriber gets one batch carrying the crash error and the disconnect',
+        'client-disconnected': 'the client reports itself disconnected',
+      },
     },
     () => {
       const client = new DeviceClient({ workerFactory: () => new FakeWorker() as unknown as Worker });
@@ -119,8 +130,13 @@ describe('DeviceClient worker recovery', () => {
       id: 'session.recreate-worker-is-fresh',
       covers: 'src/device/session.ts#DeviceClient',
       given: 'a device client whose worker is then recreated',
-      then: 'recreating the worker terminates the previous worker and starts a new worker, so the client has constructed two workers',
-      why: 'a panic that poisons the protocol engine must not carry into the next connection',
+      expect: {
+        'previous-shut-down': 'the previous worker is shut down',
+        'fresh-worker-running': 'a second worker starts and stays running',
+      },
+      why: {
+        'fresh-worker-running': 'a panic that poisons the protocol engine must not carry into the next connection',
+      },
     },
     () => {
       const workers: FakeWorker[] = [];

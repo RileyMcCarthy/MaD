@@ -12,12 +12,14 @@ function row(over: {
   file?: string;
   test?: string;
   num?: number;
+  expect?: string;
   status?: Behaviour['status'];
 }): Behaviour {
   const b: Behaviour = {
-    v: 1,
+    v: 2,
     num: over.num ?? 1,
     id: over.id,
+    expect: over.expect ?? 'holds',
     suite: 'control',
     lang: 'ts',
     file: over.file ?? 'src/x.ts',
@@ -46,7 +48,7 @@ describe('a respecification is a changed claim', () => {
       row({
         id: 'gcode.comment-cannot-change-command',
         then: 'a rapid move to zero with a trailing comment naming a different move is still a rapid move to zero',
-        why: 'a comment must never change where the crosshead goes',
+        why: 'a comment must never change where the gantry goes',
       }),
     ];
     const d = diffLedgers(before, after);
@@ -146,6 +148,6 @@ describe('a respecification is a changed claim', () => {
 
   it('cites a numbered behaviour on its row', () => {
     const md = renderMarkdown(diffLedgers([], [row({ id: 'x.y', then: 'a claim', num: 42 })], []));
-    expect(md).toContain('BH-42 · given');
+    expect(md).toContain('BH-42');
   });
 });

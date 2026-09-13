@@ -8,7 +8,9 @@ describe('gcode', () => {
       id: 'gcode.waveform-ignores-comment',
       covers: 'src/domain/gcode.ts#parseGcodeWaveform',
       given: 'a waveform command with a trailing comment mentioning an amplitude',
-      then: 'a trailing comment on a waveform command does not change the amplitude the author wrote',
+      expect: {
+        'amplitude-before-comment': 'the amplitude parsed is the one written before the comment',
+      },
     },
     () => {
       expect(parseGcodeWaveform('G123 A5 F2 C3 W0 ; A99')).toMatchObject({ amplitude: 5 });
@@ -20,8 +22,8 @@ describe('gcode', () => {
       id: 'gcode.comment-lines-emit-nothing',
       covers: 'src/domain/gcode.ts#gcodeLinesToProgram',
       given: 'a program consisting only of comment lines',
-      then: 'a program made only of comment lines produces no motion',
-      why: 'a comment that produced a move would be a rapid to an unintended target',
+      expect: { 'no-moves': 'no moves are produced' },
+      why: { 'no-moves': 'a comment that produced a move would be a rapid to an unintended target' },
     },
     () => {
       expect(gcodeLinesToProgram(['; a comment', '  ; indented'], 15)).toHaveLength(0);
@@ -33,7 +35,9 @@ describe('gcode', () => {
       id: 'gcode.gauge-offsets-absolute-moves',
       covers: 'src/domain/gcode.ts#gcodeLinesToProgram',
       given: 'a move to an absolute position, with a non-zero gauge length configured',
-      then: 'an absolute move has the gauge length added, so a target on the sample becomes a position on the machine',
+      expect: {
+        'gauge-added': 'the gauge length is added, so a target on the sample becomes a position on the machine',
+      },
     },
     () => {
       expect(gcodeLinesToProgram(['G90', 'G1 X5 F2'], 15)).toHaveLength(2);
@@ -45,7 +49,9 @@ describe('gcode', () => {
       id: 'gcode.relative-moves-are-not-offset',
       covers: 'src/domain/gcode.ts#gcodeLinesToProgram',
       given: 'a move by a relative distance, with a non-zero gauge length configured',
-      then: 'a relative move is not offset by the gauge length, because it states a distance to travel',
+      expect: {
+        'authored-distance-sent': 'the machine is sent the authored distance, with no gauge length added',
+      },
     },
     () => {
       expect(gcodeLinesToProgram(['G91', 'G1 X10 F5'], 15)).toHaveLength(2);
@@ -57,7 +63,11 @@ describe('gcode', () => {
       id: 'gcode.dwell-carries-milliseconds',
       covers: 'src/domain/gcode.ts#gcodeLinesToProgram',
       given: 'a pause command with a duration',
-      then: 'a pause command produces exactly one pause, with its duration kept in milliseconds without conversion',
+      expect: {
+        'one-pause': 'exactly one pause is produced',
+        'milliseconds-kept': 'the duration is kept in milliseconds without conversion',
+      },
+      why: { 'milliseconds-kept': 'the firmware sleeps for this literal value' },
     },
     () => {
       expect(gcodeLinesToProgram(['G4 P500'], 0)).toHaveLength(1);
@@ -69,8 +79,13 @@ describe('gcode', () => {
       id: 'gcode.move-ignores-trailing-comment',
       covers: 'src/domain/gcode.ts#parseGcodeToMove',
       given: 'a move line with a trailing comment containing a coordinate token',
-      then: 'a trailing comment on a move line does not change the target position the author wrote',
-      why: 'the target is what the author wrote before the comment; everything after it is annotation',
+      expect: {
+        'written-target-and-speed': 'the target and speed are the ones written before the comment',
+      },
+      why: {
+        'written-target-and-speed':
+          'the target is what the author wrote before the comment; everything after it is annotation',
+      },
     },
     () => {
       expect(parseGcodeToMove('G1 X10 F5 ; X50 fast')).toMatchObject({ x: 10, f: 5 });
@@ -82,8 +97,11 @@ describe('gcode', () => {
       id: 'gcode.comment-cannot-change-command',
       covers: 'src/domain/gcode.ts#parseGcodeToMove',
       given: 'a rapid move to zero whose trailing comment mentions a different move',
-      then: 'a rapid move to zero with a trailing comment naming a different move is still a rapid move to zero',
-      why: 'a comment must never change where the crosshead goes',
+      expect: {
+        'command-stays-rapid': 'the command stays a rapid',
+        'target-stays-zero': 'the target stays zero',
+      },
+      why: { 'target-stays-zero': 'a comment must never change where the gantry goes' },
     },
     () => {
       expect(parseGcodeToMove('G0 X0 ; G1 X999')).toMatchObject({ g: 0, x: 0 });

@@ -54,8 +54,13 @@ describe('environmentBlock', () => {
       id: 'diag.report-environment-build-identity',
       covers: 'src/diagnostics/report.ts#environmentBlock',
       given: 'a diagnostics bundle with app version 0.1.0, git sha abc1234, and firmware 1.2.3',
-      then: 'the issue-report environment block names the app version, git sha, and firmware version',
-      why: 'the build identity is what decides whether a report is actionable',
+      expect: {
+        'app-version-and-sha': 'the environment block carries the app version with the sha in brackets',
+        'firmware-version': 'the environment block carries the firmware version',
+      },
+      why: {
+        'app-version-and-sha': 'the build identity is what decides whether a report is actionable',
+      },
     },
     () => {
       const text = environmentBlock(bundle());
@@ -69,7 +74,9 @@ describe('environmentBlock', () => {
       id: 'diag.report-environment-unknown-firmware',
       covers: 'src/diagnostics/report.ts#environmentBlock',
       given: 'a diagnostics bundle whose device has no firmware version',
-      then: 'the issue-report environment block says firmware is unknown when none is known',
+      expect: {
+        'firmware-unknown': 'the environment block reports the firmware as unknown',
+      },
     },
     () => {
       const text = environmentBlock(
@@ -86,7 +93,11 @@ describe('buildIssueFields', () => {
       id: 'diag.report-fields-template-and-attachment',
       covers: 'src/diagnostics/report.ts#buildIssueFields',
       given: 'an issue report whose summary is "jog does nothing"',
-      then: 'the issue form targets the app-bug template, names the diagnostics attachment, and puts the reporter\'s summary in the title',
+      expect: {
+        'app-bug-template': 'the issue form targets the app-bug template',
+        'attachment-named': 'the issue form names the diagnostics attachment',
+        'summary-in-title': 'the reporter\'s summary appears in the title',
+      },
     },
     () => {
       const fields = buildIssueFields({ summary: 'jog does nothing' }, bundle(), 'mad-diagnostics-x.json');
@@ -101,7 +112,9 @@ describe('buildIssueFields', () => {
       id: 'diag.report-fields-absent-repro-steps',
       covers: 'src/diagnostics/report.ts#buildIssueFields',
       given: 'an issue report whose reproduction steps are only whitespace',
-      then: 'blank reproduction steps are recorded as not provided',
+      expect: {
+        'steps-not-provided': 'the issue form records the steps as not provided',
+      },
     },
     () => {
       expect(buildIssueFields({ summary: 'x', steps: '   ' }, bundle(), 'f.json').steps).toBe('(not provided)');
@@ -113,7 +126,10 @@ describe('buildIssueFields', () => {
       id: 'diag.report-fields-failure-counters',
       covers: 'src/diagnostics/report.ts#buildIssueFields',
       given: 'a session whose counters include timeouts, nacks, ordinary transmits, and a boot event',
-      then: 'the issue report lists only failure counters, most frequent first, and omits healthy traffic counts',
+      expect: {
+        'failures-only': 'the issue report lists only the failure counts',
+        'highest-first': 'the failure counts are listed highest first',
+      },
     },
     () => {
       const fields = buildIssueFields({ summary: 'x' }, bundle({
@@ -134,7 +150,10 @@ describe('buildIssueFields', () => {
       id: 'diag.report-fields-healthy-session',
       covers: 'src/diagnostics/report.ts#buildIssueFields',
       given: 'a session with no errors, nacks, or timeouts',
-      then: 'the issue report says no errors were recorded when the session was healthy',
+      expect: {
+        'counters-block-clean': 'the counter block states that no errors were recorded',
+        'errors-block-clean': 'the error block states that none were recorded',
+      },
     },
     () => {
       const fields = buildIssueFields({ summary: 'x' }, bundle(), 'f.json');
@@ -148,7 +167,10 @@ describe('buildIssueFields', () => {
       id: 'diag.report-fields-recent-errors',
       covers: 'src/diagnostics/report.ts#buildIssueFields',
       given: 'a session log with an info boot event and an error "bad crc"',
-      then: 'the issue report lists recent errors with their timestamps and omits non-error events',
+      expect: {
+        'error-listed': 'the report\'s error block lists the error with its timestamp',
+        'non-errors-left-out': 'the error block carries no non-error entries',
+      },
     },
     () => {
       const fields = buildIssueFields({ summary: 'x' }, bundle({
@@ -174,7 +196,10 @@ describe('buildIssueUrl', () => {
       id: 'diag.report-url-targets-template',
       covers: 'src/diagnostics/report.ts#buildIssueUrl',
       given: 'issue fields for a "broken" report',
-      then: 'the prefilled issue link opens a new GitHub issue against the MaD repo with the app-bug template',
+      expect: {
+        'new-issue-on-mad': 'the prefilled link opens a new GitHub issue against the MaD repo',
+        'app-bug-template': 'the link carries the app-bug template',
+      },
     },
     () => {
       const url = buildIssueUrl(buildIssueFields({ summary: 'broken' }, bundle(), 'f.json'));
@@ -188,8 +213,13 @@ describe('buildIssueUrl', () => {
       id: 'diag.report-url-stays-under-budget',
       covers: 'src/diagnostics/report.ts#buildIssueUrl',
       given: 'a long summary, long reproduction steps, 50 errors, and 40 failure counters',
-      then: 'a long session still produces an issue link short enough for GitHub to open',
-      why: 'GitHub rejects very long URLs, and a long session must not silently produce a dead link',
+      expect: {
+        'within-url-budget': 'the issue link stays within the maximum length GitHub will open',
+      },
+      why: {
+        'within-url-budget':
+          'GitHub rejects very long URLs, and a long session must not silently produce a dead link',
+      },
     },
     () => {
       // A long session must not produce a link GitHub refuses to open.
@@ -220,8 +250,16 @@ describe('buildIssueUrl', () => {
       id: 'diag.report-url-keeps-user-words',
       covers: 'src/diagnostics/report.ts#buildIssueUrl',
       given: 'a report whose error block alone would overflow the URL budget',
-      then: 'when the issue link is too long, computed log excerpts are shortened first and the summary and steps the reporter typed survive',
-      why: 'the reporter\'s own words are irreplaceable; computed log excerpts can be rebuilt from the attached diagnostics file',
+      expect: {
+        'within-url-budget': 'the issue link stays within the maximum length GitHub will open',
+        'errors-point-at-attachment':
+          'the error block is replaced by a pointer to the attached diagnostics file',
+        'cheaper-blocks-kept': 'the summary, steps, and counters survive intact',
+      },
+      why: {
+        'cheaper-blocks-kept':
+          'the reporter\'s own words are irreplaceable; computed log excerpts can be rebuilt from the attached diagnostics file',
+      },
     },
     () => {
       // Only `errors` is oversized here, so exactly one drop is needed — which is
@@ -257,7 +295,9 @@ describe('buildIssueUrl', () => {
       id: 'diag.report-url-omits-empty-values',
       covers: 'src/diagnostics/report.ts#buildIssueUrl',
       given: 'issue fields whose steps value is empty',
-      then: 'empty issue-form fields are omitted from the prefilled link',
+      expect: {
+        'empty-field-omitted': 'the empty field is left out of the prefilled link entirely',
+      },
     },
     () => {
       expect(buildIssueUrl({ title: 'a', steps: '' })).not.toContain('steps=');
@@ -271,7 +311,10 @@ describe('bundleFileName', () => {
       id: 'diag.report-bundle-filename',
       covers: 'src/diagnostics/report.ts#bundleFileName',
       given: 'a diagnostics bundle saved at 2026-08-20 13:45:12.345 UTC',
-      then: 'the diagnostics file name is timestamped and contains no colons',
+      expect: {
+        'time-to-the-millisecond': 'the file name carries that time to the millisecond',
+        'no-colons': 'the file name contains no colons',
+      },
     },
     () => {
       const name = bundleFileName(new Date(Date.UTC(2026, 7, 20, 13, 45, 12, 345)));
@@ -287,7 +330,10 @@ describe('buildIssueUrl under pathological input', () => {
       id: 'diag.report-url-fits-huge-summary',
       covers: 'src/diagnostics/report.ts#buildIssueUrl',
       given: 'a 200000-character summary pasted into the issue report',
-      then: 'an enormous pasted summary is truncated until the issue link still fits the GitHub URL budget',
+      expect: {
+        'within-url-budget':
+          'the summary is trimmed until the issue link fits the maximum length GitHub will open',
+      },
     },
     () => {
       // A user can paste anything into the summary box; percent-encoding then
@@ -304,8 +350,12 @@ describe('buildIssueUrl under pathological input', () => {
       id: 'diag.report-url-fits-percent-encoding',
       covers: 'src/diagnostics/report.ts#buildIssueUrl',
       given: 'a summary of newlines and ellipses that triple in size once URL-encoded',
-      then: 'a summary whose characters expand when URL-encoded still produces an issue link within the GitHub URL budget',
-      why: 'trimming by raw character count would undershoot on newlines and non-ASCII',
+      expect: {
+        'within-url-budget': 'the encoded issue link stays within the maximum length GitHub will open',
+      },
+      why: {
+        'within-url-budget': 'trimming by raw character count would undershoot on newlines and non-ASCII',
+      },
     },
     () => {
       // Newlines and non-ASCII cost 3 bytes each once encoded — the case a
@@ -322,7 +372,11 @@ describe('buildIssueUrl under pathological input', () => {
       id: 'diag.report-url-usable-after-truncation',
       covers: 'src/diagnostics/report.ts#buildIssueUrl',
       given: 'a 50000-character summary that forces truncation',
-      then: 'after truncation the link still opens a new GitHub issue with the app-bug template and a non-empty summary',
+      expect: {
+        'new-issue-on-mad': 'the link still opens a new GitHub issue against the MaD repo',
+        'app-bug-template': 'the link still carries the app-bug template',
+        'summary-survives': 'the summary in the link is not empty',
+      },
     },
     () => {
       const url = buildIssueUrl(buildIssueFields({ summary: 'q'.repeat(50_000) }, bundle(), 'f.json'));
@@ -340,7 +394,9 @@ describe('shortUserAgent', () => {
       id: 'diag.report-short-ua-chrome-on-mac',
       covers: 'src/diagnostics/report.ts#shortUserAgent',
       given: 'a full Chrome-on-Mac user-agent string',
-      then: 'a Chrome-on-Mac user-agent is reduced to "Chrome 130 on Intel Mac OS X 10_15_7"',
+      expect: {
+        'browser-and-platform': 'the browser line reads "Chrome 130 on Intel Mac OS X 10_15_7"',
+      },
     },
     () => {
       expect(
@@ -356,8 +412,13 @@ describe('shortUserAgent', () => {
       id: 'diag.report-short-ua-names-edge',
       covers: 'src/diagnostics/report.ts#shortUserAgent',
       given: 'a Windows user-agent containing both Chrome and Edg tokens',
-      then: 'an Edge user-agent is named Edge, even though it also contains Chrome',
-      why: 'every Chromium user-agent contains Chrome, so a misnamed browser sends a bug hunt the wrong way',
+      expect: {
+        'edge-named': 'the browser is reported as Edge 130',
+      },
+      why: {
+        'edge-named':
+          'every Chromium user-agent contains Chrome, so a misnamed browser sends a bug hunt the wrong way',
+      },
     },
     () => {
       expect(shortUserAgent('Mozilla/5.0 (Windows NT 10.0) Chrome/130.0 Edg/130.0')).toContain('Edge 130');
@@ -369,7 +430,9 @@ describe('shortUserAgent', () => {
       id: 'diag.report-short-ua-unknown-browser',
       covers: 'src/diagnostics/report.ts#shortUserAgent',
       given: 'a user-agent string that matches no known browser',
-      then: 'an unrecognised user-agent is reported as an unknown browser',
+      expect: {
+        'unknown-browser': 'the browser line reads "unknown browser"',
+      },
     },
     () => {
       expect(shortUserAgent('something else entirely')).toBe('unknown browser');
@@ -383,7 +446,9 @@ describe('issue fields include the computed summary', () => {
       id: 'diag.report-fields-include-triage',
       covers: 'src/diagnostics/report.ts#buildIssueFields',
       given: 'an issue report built from a diagnostics bundle',
-      then: 'the issue form includes a non-empty triage block a maintainer can read first',
+      expect: {
+        'triage-present': 'the issue form carries a non-empty triage summary',
+      },
     },
     () => {
       const fields = buildIssueFields({ summary: 'x' }, bundle(), 'f.json');
@@ -422,8 +487,13 @@ describe('shortUserAgent browser precedence', () => {
       id: 'diag.report-short-ua-names-opera',
       covers: 'src/diagnostics/report.ts#shortUserAgent',
       given: 'an Opera user-agent that also contains Chrome and Safari tokens',
-      then: 'an Opera user-agent is named Opera even though it also contains Chrome',
-      why: 'every Chromium user-agent contains Chrome, so a misnamed browser sends a bug hunt the wrong way',
+      expect: {
+        'opera-named': 'the browser is reported as Opera 115',
+      },
+      why: {
+        'opera-named':
+          'every Chromium user-agent contains Chrome, so a misnamed browser sends a bug hunt the wrong way',
+      },
     },
     () => {
       // Every Chromium UA contains "Chrome", so precedence is what makes this
@@ -437,7 +507,9 @@ describe('shortUserAgent browser precedence', () => {
       id: 'diag.report-short-ua-chrome-despite-safari',
       covers: 'src/diagnostics/report.ts#shortUserAgent',
       given: 'a Chrome user-agent that also contains a Safari token',
-      then: 'a Chrome user-agent is named Chrome even though it also contains Safari',
+      expect: {
+        'chrome-named': 'the browser is reported as Chrome 130',
+      },
     },
     () => {
       expect(
@@ -451,7 +523,9 @@ describe('shortUserAgent browser precedence', () => {
       id: 'diag.report-short-ua-names-safari',
       covers: 'src/diagnostics/report.ts#shortUserAgent',
       given: 'a Safari user-agent with Version/17.4 and no Chrome token',
-      then: 'a real Safari user-agent is named Safari',
+      expect: {
+        'safari-named': 'the browser is reported as Safari 17',
+      },
     },
     () => {
       expect(

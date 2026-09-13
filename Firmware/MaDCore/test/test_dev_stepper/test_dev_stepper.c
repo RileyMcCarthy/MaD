@@ -189,10 +189,12 @@ static void drive_to_moving(int32_t target, uint32_t sps)
 
 void test_dev_stepper_initialStateDisabled(void)
 {
-    VIBES_BEHAVIOUR("stepper.starts-disabled-at-zero",
-                    "src/DEV/dev_stepper.c#dev_stepper_init",
-                    "a stepper just after start-up",
-                    "a freshly started stepper is disabled, at rest at position zero, and reports arrival");
+    VIBES_TEST("stepper.starts-disabled-at-zero",
+               "src/DEV/dev_stepper.c#dev_stepper_init",
+               "a stepper just after start-up");
+    VIBES_EXPECT("disabled", "the stepper is disabled");
+    VIBES_EXPECT("at-zero", "the stepper sits at position zero with target zero");
+    VIBES_EXPECT("reports-arrival", "the stepper reports arrival");
     TEST_ASSERT_EQUAL_INT(DEV_STEPPER_STATE_DISABLED, dev_stepper_getState(CH));
     TEST_ASSERT_EQUAL_INT32(0, dev_stepper_getSteps(CH));
     TEST_ASSERT_EQUAL_INT32(0, dev_stepper_getTarget(CH));
@@ -206,10 +208,11 @@ void test_dev_stepper_initialStateDisabled(void)
 
 void test_dev_stepper_moveRejectsZeroSpeed(void)
 {
-    VIBES_BEHAVIOUR("stepper.move-rejects-zero-speed",
-                    "src/DEV/dev_stepper.c#dev_stepper_move",
-                    "a move commanded at zero steps per second",
-                    "a move at zero steps per second is refused and leaves the target unchanged");
+    VIBES_TEST("stepper.move-rejects-zero-speed",
+               "src/DEV/dev_stepper.c#dev_stepper_move",
+               "a move commanded at zero steps per second");
+    VIBES_EXPECT("command-refused", "the command is refused");
+    VIBES_EXPECT("target-unchanged", "the target is left unchanged");
     /* Zero steps-per-second is invalid and must not stage anything. */
     TEST_ASSERT_FALSE(dev_stepper_move(CH, 1000, 0U));
     TEST_ASSERT_EQUAL_INT32(0, dev_stepper_getTarget(CH));
@@ -217,10 +220,12 @@ void test_dev_stepper_moveRejectsZeroSpeed(void)
 
 void test_dev_stepper_moveStagesTarget(void)
 {
-    VIBES_BEHAVIOUR("stepper.move-stages-target",
-                    "src/DEV/dev_stepper.c#dev_stepper_move",
-                    "a stepper commanded to a new position at a non-zero rate",
-                    "a move records the new target immediately and reports the stepper as still moving");
+    VIBES_TEST("stepper.move-stages-target",
+               "src/DEV/dev_stepper.c#dev_stepper_move",
+               "a stepper commanded to a new position at a non-zero rate");
+    VIBES_EXPECT("command-accepted", "the command is accepted");
+    VIBES_EXPECT("target-recorded", "the new target is recorded at once");
+    VIBES_EXPECT("not-arrived", "the stepper reports it has not arrived");
     TEST_ASSERT_TRUE(dev_stepper_move(CH, 1234, 800U));
     /* getTarget reads the staged target directly (no run() needed). */
     TEST_ASSERT_EQUAL_INT32(1234, dev_stepper_getTarget(CH));
@@ -234,10 +239,12 @@ void test_dev_stepper_moveStagesTarget(void)
 
 void test_dev_stepper_enableEntersStopped(void)
 {
-    VIBES_BEHAVIOUR("stepper.enable-enters-stopped",
-                    "src/DEV/dev_stepper.c#dev_stepper_enable",
-                    "a disabled stepper that is enabled, then one control cycle",
-                    "enabling the stepper takes effect on the next cycle, leaving the stepper stopped with the pulse train idle");
+    VIBES_TEST("stepper.enable-enters-stopped",
+               "src/DEV/dev_stepper.c#dev_stepper_enable",
+               "a disabled stepper that is enabled, then one control cycle");
+    VIBES_EXPECT("disabled-until-cycle", "the stepper stays disabled until that cycle");
+    VIBES_EXPECT("stopped-after-cycle", "the stepper sits stopped afterwards");
+    VIBES_EXPECT("no-pulse-train", "no pulse train is started");
     dev_stepper_enable(CH, true);
     /* Input is staged; not snapshotted until run(). */
     TEST_ASSERT_EQUAL_INT(DEV_STEPPER_STATE_DISABLED, dev_stepper_getState(CH));
@@ -250,10 +257,10 @@ void test_dev_stepper_enableEntersStopped(void)
 
 void test_dev_stepper_disableFromStoppedReturnsToDisabled(void)
 {
-    VIBES_BEHAVIOUR("stepper.disable-from-stopped",
-                    "src/DEV/dev_stepper.c#dev_stepper_enable",
-                    "an enabled stepper sitting stopped, then disabled",
-                    "disabling a stopped stepper returns the stepper to disabled on the next cycle");
+    VIBES_TEST("stepper.disable-from-stopped",
+               "src/DEV/dev_stepper.c#dev_stepper_enable",
+               "an enabled stepper sitting stopped, then disabled");
+    VIBES_EXPECT("disabled-next-cycle", "the stepper is disabled on the next control cycle");
     dev_stepper_enable(CH, true);
     dev_stepper_run();
     TEST_ASSERT_EQUAL_INT(DEV_STEPPER_STATE_STOPPED, dev_stepper_getState(CH));
@@ -265,10 +272,11 @@ void test_dev_stepper_disableFromStoppedReturnsToDisabled(void)
 
 void test_dev_stepper_stoppedAtTargetStaysStopped(void)
 {
-    VIBES_BEHAVIOUR("stepper.stopped-at-target-stays-stopped",
-                    "src/DEV/dev_stepper.c#dev_stepper_run",
-                    "an enabled stepper whose target is already the current position",
-                    "an enabled stepper already on its target stays stopped with the pulse train idle");
+    VIBES_TEST("stepper.stopped-at-target-stays-stopped",
+               "src/DEV/dev_stepper.c#dev_stepper_run",
+               "an enabled stepper whose target is already the current position");
+    VIBES_EXPECT("stays-stopped", "the stepper stays stopped");
+    VIBES_EXPECT("no-pulse-train", "no pulse train is started");
     /* Enabled, but staged target (0) equals current (0): no move requested. */
     dev_stepper_enable(CH, true);
     dev_stepper_run(); /* -> STOPPED */
@@ -283,10 +291,12 @@ void test_dev_stepper_stoppedAtTargetStaysStopped(void)
 
 void test_dev_stepper_movePositiveIsCW(void)
 {
-    VIBES_BEHAVIOUR("stepper.move-positive-is-clockwise",
-                    "src/DEV/dev_stepper.c#dev_stepper_run",
-                    "an enabled stepper commanded from zero to a higher position",
-                    "a move to a higher position starts a clockwise pulse train of the remaining steps at the commanded rate");
+    VIBES_TEST("stepper.move-positive-is-clockwise",
+               "src/DEV/dev_stepper.c#dev_stepper_run",
+               "an enabled stepper commanded from zero to a higher position");
+    VIBES_EXPECT("turns-clockwise", "the stepper turns clockwise");
+    VIBES_EXPECT("remaining-steps", "the pulse train is as long as the remaining steps");
+    VIBES_EXPECT("commanded-rate", "the pulse train runs at the commanded rate");
     drive_to_moving(1000, 500U);
 
     /* Entry action fired exactly once: GPIO dir + pulseOut_start. */
@@ -304,10 +314,12 @@ void test_dev_stepper_movePositiveIsCW(void)
 
 void test_dev_stepper_moveNegativeIsCCW(void)
 {
-    VIBES_BEHAVIOUR("stepper.move-negative-is-counter-clockwise",
-                    "src/DEV/dev_stepper.c#dev_stepper_run",
-                    "an enabled stepper commanded from zero to a lower position",
-                    "a move to a lower position starts a counter-clockwise pulse train of the remaining steps at the commanded rate");
+    VIBES_TEST("stepper.move-negative-is-counter-clockwise",
+               "src/DEV/dev_stepper.c#dev_stepper_run",
+               "an enabled stepper commanded from zero to a lower position");
+    VIBES_EXPECT("turns-counter-clockwise", "the stepper turns counter-clockwise");
+    VIBES_EXPECT("remaining-steps", "the pulse train is as long as the remaining steps");
+    VIBES_EXPECT("commanded-rate", "the pulse train runs at the commanded rate");
     /* Start at a known non-zero position so a negative target is CCW. */
     dev_stepper_setPosition(CH, 0);
     drive_to_moving(-750, 300U);
@@ -323,10 +335,12 @@ void test_dev_stepper_moveNegativeIsCCW(void)
 
 void test_dev_stepper_moveFromNonZeroStart(void)
 {
-    VIBES_BEHAVIOUR("stepper.move-remaining-steps",
-                    "src/DEV/dev_stepper.c#dev_stepper_run",
-                    "an enabled stepper sitting at a non-zero origin, commanded to a higher position",
-                    "a move from a non-zero start starts a pulse train whose length is the distance from the current position to the target");
+    VIBES_TEST("stepper.move-remaining-steps",
+               "src/DEV/dev_stepper.c#dev_stepper_run",
+               "an enabled stepper sitting at a non-zero origin, commanded to a higher position");
+    VIBES_EXPECT("forward", "the stepper starts a forward pulse train");
+    VIBES_EXPECT("remaining-distance",
+                 "the pulse train is exactly as long as the remaining distance to the target");
     /* setPosition request is applied by processRequests at the next run(). */
     dev_stepper_setPosition(CH, 200);
     dev_stepper_enable(CH, true);
@@ -348,10 +362,11 @@ void test_dev_stepper_moveFromNonZeroStart(void)
 
 void test_dev_stepper_movingAccumulatesStepsCW(void)
 {
-    VIBES_BEHAVIOUR("stepper.moving-accumulates-steps-clockwise",
-                    "src/DEV/dev_stepper.c#dev_stepper_run",
-                    "a stepper moving clockwise, with the pulse train reporting pulses emitted so far",
-                    "while the stepper is moving clockwise, reported steps equal the start position plus the pulses emitted so far");
+    VIBES_TEST("stepper.moving-accumulates-steps-clockwise",
+               "src/DEV/dev_stepper.c#dev_stepper_run",
+               "a stepper moving clockwise, with the pulse train reporting pulses emitted so far");
+    VIBES_EXPECT("steps-add-pulses",
+                 "reported steps equal the start position plus the pulses emitted so far");
     drive_to_moving(1000, 500U);
     /* The cycle that entered MOVING also ran runAction once with default
      * (complete=false, delta=0) so currentSteps stayed at startSteps(0). */
@@ -372,10 +387,11 @@ void test_dev_stepper_movingAccumulatesStepsCW(void)
 
 void test_dev_stepper_movingAccumulatesStepsCCW(void)
 {
-    VIBES_BEHAVIOUR("stepper.moving-accumulates-steps-counter-clockwise",
-                    "src/DEV/dev_stepper.c#dev_stepper_run",
-                    "a stepper moving counter-clockwise, with the pulse train reporting pulses emitted so far",
-                    "while the stepper is moving counter-clockwise, reported steps equal the start position minus the pulses emitted so far");
+    VIBES_TEST("stepper.moving-accumulates-steps-counter-clockwise",
+               "src/DEV/dev_stepper.c#dev_stepper_run",
+               "a stepper moving counter-clockwise, with the pulse train reporting pulses emitted so far");
+    VIBES_EXPECT("steps-subtract-pulses",
+                 "reported steps equal the start position minus the pulses emitted so far");
     dev_stepper_setPosition(CH, 0);
     drive_to_moving(-1000, 500U);
 
@@ -388,10 +404,12 @@ void test_dev_stepper_movingAccumulatesStepsCCW(void)
 
 void test_dev_stepper_moveCompletesToStopped(void)
 {
-    VIBES_BEHAVIOUR("stepper.move-completes-to-stopped",
-                    "src/DEV/dev_stepper.c#dev_stepper_run",
-                    "a stepper whose pulse train then reports the move finished",
-                    "when the pulse train finishes, the stepper reports the target position, then on the next cycle stops the train and reports arrival");
+    VIBES_TEST("stepper.move-completes-to-stopped",
+               "src/DEV/dev_stepper.c#dev_stepper_run",
+               "a moving stepper whose pulse train reports the move finished");
+    VIBES_EXPECT("steps-reach-target", "reported steps reach the target that cycle");
+    VIBES_EXPECT("train-stopped", "the next cycle stops the pulse train and leaves the stepper stopped");
+    VIBES_EXPECT("reports-arrival", "the stepper reports arrival");
     drive_to_moving(1000, 500U);
 
     /* Pulse train reports completion with the full delta. */
@@ -417,10 +435,11 @@ void test_dev_stepper_moveCompletesToStopped(void)
 
 void test_dev_stepper_disableDuringMoveStopsTrain(void)
 {
-    VIBES_BEHAVIOUR("stepper.disable-during-move-stops-train",
-                    "src/DEV/dev_stepper.c#dev_stepper_run",
-                    "a stepper in the middle of a move, then disabled",
-                    "disabling the stepper during a move stops the pulse train and leaves the stepper disabled");
+    VIBES_TEST("stepper.disable-during-move-stops-train",
+               "src/DEV/dev_stepper.c#dev_stepper_run",
+               "a stepper in the middle of a move, then disabled");
+    VIBES_EXPECT("train-stopped", "the next cycle stops the pulse train");
+    VIBES_EXPECT("disabled", "the stepper is left disabled");
     drive_to_moving(1000, 500U);
     TEST_ASSERT_EQUAL_UINT32(0U, d_stopCount);
 
@@ -432,10 +451,11 @@ void test_dev_stepper_disableDuringMoveStopsTrain(void)
 
 void test_dev_stepper_stopRequestEndsMove(void)
 {
-    VIBES_BEHAVIOUR("stepper.stop-ends-move",
-                    "src/DEV/dev_stepper.c#dev_stepper_stop",
-                    "a stepper in the middle of a move, then stopped",
-                    "a stop ends the move on the next cycle, stopping the pulse train and leaving the stepper at rest");
+    VIBES_TEST("stepper.stop-ends-move",
+               "src/DEV/dev_stepper.c#dev_stepper_stop",
+               "a stepper in the middle of a move, then stopped");
+    VIBES_EXPECT("train-halted", "the pulse train is halted on the next cycle");
+    VIBES_EXPECT("at-rest", "the stepper sits at rest");
     drive_to_moving(1000, 500U);
 
     /* dev_stepper_stop stages target=current and sets the stop request, which
@@ -452,10 +472,11 @@ void test_dev_stepper_stopRequestEndsMove(void)
 
 void test_dev_stepper_setPositionAppliedOnRun(void)
 {
-    VIBES_BEHAVIOUR("stepper.set-position-applied-on-run",
-                    "src/DEV/dev_stepper.c#dev_stepper_setPosition",
-                    "a stepper whose origin is set to a new count, then one control cycle",
-                    "a new origin is applied to reported steps on the next cycle");
+    VIBES_TEST("stepper.set-position-applied-on-run",
+               "src/DEV/dev_stepper.c#dev_stepper_setPosition",
+               "a stepper whose origin is set to a new count, then one control cycle");
+    VIBES_EXPECT("unchanged-before", "reported steps are unchanged beforehand");
+    VIBES_EXPECT("new-count-after", "reported steps read the new count afterwards");
     dev_stepper_setPosition(CH, 4242);
     /* Request is not applied until the next run() (processRequests). */
     TEST_ASSERT_EQUAL_INT32(0, dev_stepper_getSteps(CH));
@@ -465,10 +486,10 @@ void test_dev_stepper_setPositionAppliedOnRun(void)
 
 void test_dev_stepper_zeroPositionResetsSteps(void)
 {
-    VIBES_BEHAVIOUR("stepper.zero-position-resets-steps",
-                    "src/DEV/dev_stepper.c#dev_stepper_zeroPosition",
-                    "a stepper sitting at a non-zero origin, then zeroed",
-                    "zeroing the stepper origin sets reported steps to zero on the next cycle");
+    VIBES_TEST("stepper.zero-position-resets-steps",
+               "src/DEV/dev_stepper.c#dev_stepper_zeroPosition",
+               "a stepper sitting at a non-zero origin, then zeroed");
+    VIBES_EXPECT("steps-zeroed", "reported steps become zero on the next control cycle");
     dev_stepper_setPosition(CH, 999);
     dev_stepper_run();
     TEST_ASSERT_EQUAL_INT32(999, dev_stepper_getSteps(CH));
@@ -484,11 +505,13 @@ void test_dev_stepper_zeroPositionResetsSteps(void)
 
 void test_dev_stepper_isReadyStagedByRun(void)
 {
-    VIBES_BEHAVIOUR_WHY("stepper.ready-after-first-cycle",
-                        "src/DEV/dev_stepper.c#dev_stepper_isReady",
-                        "a stepper just after start-up, then after one control cycle",
-                        "a stepper reports unready until the first control cycle, and ready from then on even while disabled",
-                        "the controller treats an answering stepper as the motor loop running, and a silent stepper as a communication fault");
+    VIBES_TEST("stepper.ready-after-first-cycle",
+               "src/DEV/dev_stepper.c#dev_stepper_isReady",
+               "a stepper just after start-up, then after one control cycle");
+    VIBES_EXPECT("unready-at-first", "the stepper reports unready at first");
+    VIBES_EXPECT_WHY("ready-after-cycle",
+                     "the stepper reports ready afterwards, even though it is never enabled",
+                     "the controller treats an answering stepper as the motor loop running, and a silent stepper as a communication fault");
     /* Before any run(), the staged output ready flag is its zero-init value. */
     TEST_ASSERT_FALSE(dev_stepper_isReady(CH));
 
@@ -538,11 +561,15 @@ void test_dev_stepper_fullMoveLifecycle(void)
  * continuous), and exits on stop. */
 void test_dev_stepper_velocityModeIntegratesAndReverses(void)
 {
-    VIBES_BEHAVIOUR_WHY("stepper.velocity-integrates-and-reverses",
-                        "src/DEV/dev_stepper.c#dev_stepper_run",
-                        "an enabled stepper commanded to a speed, then reversed, then stopped",
-                        "in speed mode the stepper integrates emitted pulses into position, a reverse restarts the pulse train so position stays continuous, and a stop halts the train",
-                        "a reverse restarts the pulse train from the current position so the reported position stays continuous through the turn");
+    VIBES_TEST("stepper.velocity-integrates-and-reverses",
+               "src/DEV/dev_stepper.c#dev_stepper_run",
+               "an enabled stepper commanded to a speed, then reversed, then stopped");
+    VIBES_EXPECT("position-integrates", "reported position integrates the emitted pulses");
+    VIBES_EXPECT("commanded-speed", "the pulse train runs at each commanded speed");
+    VIBES_EXPECT_WHY("continuous-through-reversal",
+                     "reported position continues without a jump when direction flips",
+                     "a reverse restarts the pulse train from the current position so the reported position stays continuous through the turn");
+    VIBES_EXPECT("ends-halted", "the pulse train ends halted");
     dev_stepper_enable(CH, true);
     dev_stepper_setVelocity(CH, 1000); /* +CW */
     dev_stepper_run();                 /* DISABLED -> STOPPED */

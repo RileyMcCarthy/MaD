@@ -21,7 +21,15 @@ describe('B4 reduceDeviceEvent matrix', () => {
       id: 'live.device-events-patch-the-store',
       covers: 'src/store/deviceEventReduce.ts#reduceDeviceEvent',
       given: 'inbound events for a live sample, machine state, firmware version, device error, timeout, refused command, accepted command, and firmware warning',
-      then: 'a live sample, a motion-enabled state, a firmware version, and a warning are kept, a device error is shown as a toast and counted, a timeout and a refused command are counted, and an accepted command leaves the counters untouched',
+      expect: {
+        'sample-kept': 'the live sample is kept',
+        'state-kept': 'the machine state is kept',
+        'version-kept': 'the firmware version is kept',
+        'warning-kept': 'the firmware warning is kept',
+        'error-toast': 'the device error raises a toast naming it',
+        'failures-counted': 'the error, timeout and refusal each add a count',
+        'accepted-not-counted': 'the accepted command adds no count',
+      },
     },
     () => {
       for (const { e, expect: exp } of [
@@ -86,8 +94,11 @@ describe('B4 reduceDeviceEvent matrix', () => {
       id: 'live.unplug-clears-machine-state',
       covers: 'src/store/deviceEventReduce.ts#reduceDeviceEvent',
       given: 'the machine disconnecting because the cable was unplugged, without the operator having asked',
-      then: 'an unplug clears the machine state and is recorded as an unexpected disconnect',
-      why: 'a lost connection must not keep showing a live machine state',
+      expect: {
+        'state-cleared': 'the live machine state is cleared',
+        'unexpected-disconnect': 'the disconnect is recorded as unexpected, naming the unplug as its reason',
+      },
+      why: { 'state-cleared': 'a lost connection must not keep showing a live machine state' },
     },
     () => {
       const p = reduceDeviceEvent({ kind: 'disconnected', reason: 'unplug' }, false);
@@ -101,7 +112,9 @@ describe('B4 reduceDeviceEvent matrix', () => {
       id: 'live.operator-disconnect-is-expected',
       covers: 'src/store/deviceEventReduce.ts#reduceDeviceEvent',
       given: 'the operator disconnecting from the machine',
-      then: 'an operator-initiated disconnect is recorded as expected',
+      expect: {
+        'expected-disconnect': 'the disconnect is recorded as expected, so no lost-link error is raised',
+      },
     },
     () => {
       const p = reduceDeviceEvent({ kind: 'disconnected' }, true);
@@ -116,8 +129,11 @@ describe('B4 isResponding matrix', () => {
     {
       id: 'live.responding-means-a-recent-sample',
       covers: 'src/store/deviceEventReduce.ts#isResponding',
-      given: 'a two-second silence window, with the last sample at various ages',
-      then: 'the machine is responding only when a sample has arrived, and that sample is less than two seconds old',
+      given: 'a two-second silence window, with the last sample at various ages, including none at all',
+      expect: {
+        'within-window': 'the machine counts as responding only while the last sample is younger than the window',
+        'no-sample-silent': 'the machine never counts as responding without a sample',
+      },
     },
     () => {
       for (const { now, last, ok } of [

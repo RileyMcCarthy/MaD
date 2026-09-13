@@ -14,30 +14,35 @@
 export type Status = 'pass' | 'fail' | 'skip' | 'did-not-report';
 
 export interface Behaviour {
-  readonly v: 1;
-  /** Short handle for pointing at this behaviour in a review or a commit
-   *  message — BH-42. Assigned on the run that first collects the behaviour,
-   *  then carried forward forever and never reused, so a reference written a
-   *  year ago still resolves to the same claim. NOT the identity: `id` is, and
-   *  a number tells a reader nothing on its own. */
+  readonly v: 2;
+  /** Short handle for citing this expectation — BH-42. Assigned on first
+   *  collection, carried forever, never reused. NOT the identity. */
   readonly num: number;
-  /** Stable across rewording. THE identity — a reworded behaviour is a change
-   *  to `then`, not one behaviour deleted and another added. */
+  /** The TEST's stable id. Several expectations share it. */
   readonly id: string;
+  /** This expectation's stable id, unique within the test. Identity is
+   *  `suite/id/expect`, so rewording one expectation is a change to that
+   *  expectation and not a reshuffle of its siblings. */
+  readonly expect: string;
   readonly suite: string;
   readonly lang: string;
   /** Repo-relative, normalised by the collector from three path conventions. */
   readonly file: string;
   /** The runner's own name for the test. Only used to join status. */
   readonly test: string;
+  /** The CONDITION the test sets up. Shared by every expectation of that test. */
   readonly given: string;
+  /** One expectation for that condition, and nothing else. It does NOT restate
+   *  the condition — the report shows both. */
   readonly then: string;
-  /** `path#symbol` the behaviour exercises, so a reader can find the code. Optional. */
+  /** `path#symbol` the behaviour exercises, so a reader can find the code. */
   readonly covers?: string;
-  /** Why it matters — the requirement the claim does not already carry. */
+  /** The standing requirement this expectation serves, when the claim does not
+   *  already carry it. */
   readonly why?: string;
   readonly status: Status;
 }
+
 
 export function parseLedger(text: string): { ok: Behaviour[]; bad: string[] } {
   const ok: Behaviour[] = [];
@@ -46,12 +51,19 @@ export function parseLedger(text: string): { ok: Behaviour[]; bad: string[] } {
     if (line.trim() === '') continue;
     try {
       const b = JSON.parse(line) as Behaviour;
-      if (b.v !== 1) {
-        bad.push(`schema v${String(b.v)} is not supported (expects v1): ${line.slice(0, 80)}`);
+      // v1 had one expectation per test, welded into `then`. It is not read
+      // here: silently treating a v1 record as v2 would give every one of its
+      // expectations the same identity.
+      if (b.v !== 2) {
+        bad.push(`schema v${String(b.v)} is not supported (expects v2): ${line.slice(0, 80)}`);
         continue;
       }
       if (typeof b.id !== 'string' || b.id === '') {
         bad.push(`record has no id: ${line.slice(0, 80)}`);
+        continue;
+      }
+      if (typeof b.expect !== 'string' || b.expect === '') {
+        bad.push(`record has no expect id: ${line.slice(0, 80)}`);
         continue;
       }
       ok.push(b);
@@ -64,9 +76,11 @@ export function parseLedger(text: string): { ok: Behaviour[]; bad: string[] } {
 
 /** Bytewise stable, so two runs on the same tree write identical files. */
 export function serializeLedger(items: readonly Behaviour[]): string {
-  const sorted = [...items].sort((a, b) =>
-    a.suite !== b.suite ? (a.suite < b.suite ? -1 : 1) : a.id < b.id ? -1 : a.id > b.id ? 1 : 0,
-  );
+  const sorted = [...items].sort((a, b) => {
+    if (a.suite !== b.suite) return a.suite < b.suite ? -1 : 1;
+    if (a.id !== b.id) return a.id < b.id ? -1 : 1;
+    return a.expect < b.expect ? -1 : a.expect > b.expect ? 1 : 0;
+  });
   return sorted.map((b) => JSON.stringify(b)).join('\n') + (sorted.length > 0 ? '\n' : '');
 }
 
@@ -116,7 +130,13 @@ export function assignNumbers(
   return { numbered, highWater: next - 1 };
 }
 
-/** Identity is `suite/id`. Two suites may legitimately use the same local id. */
+/** Identity is `suite/id/expect`. Two suites may use the same local test id,
+ *  and one test's expectations are told apart by their own ids. */
 export function key(b: Behaviour): string {
+  return `${b.suite}/${b.id}/${b.expect}`;
+}
+
+/** The test a behaviour belongs to, for grouping expectations in a report. */
+export function testKey(b: Behaviour): string {
   return `${b.suite}/${b.id}`;
 }

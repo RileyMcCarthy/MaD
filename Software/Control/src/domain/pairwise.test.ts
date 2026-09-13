@@ -40,7 +40,11 @@ describe('pairwise coverage', () => {
       id: 'matrix.pairwise-covers-all-pairs',
       covers: 'src/domain/pairwise.ts#pairwiseCases',
       given: 'four factors whose full product is 54 combinations',
-      then: 'a pairwise set covers every pair of factor levels in fewer cases than the full product',
+      expect: {
+        'all-pairs-covered': 'every pair of levels appears',
+        'fewer-than-full-product': 'fewer cases are produced than the full product',
+        'at-least-one-per-level': 'there are at least as many cases as the widest factor has levels',
+      },
     },
     () => {
       const cases = pairwiseCases(factors);
@@ -59,7 +63,9 @@ describe('pairwise coverage', () => {
       id: 'matrix.pairwise-is-deterministic',
       covers: 'src/domain/pairwise.ts#pairwiseCases',
       given: 'the same factor set generated twice',
-      then: 'generating pairwise cases twice from the same factors produces the same cases in the same order',
+      expect: {
+        'same-cases-same-order': 'both runs produce the same cases in the same order',
+      },
     },
     () => {
       const a = pairwiseCases(factors);
@@ -73,7 +79,9 @@ describe('pairwise coverage', () => {
       id: 'matrix.pairwise-single-factor',
       covers: 'src/domain/pairwise.ts#pairwiseCases',
       given: 'a single factor with three levels',
-      then: 'a single factor produces one case per level',
+      expect: {
+        'one-case-per-level': 'there is one case per level, in the order the levels were written',
+      },
     },
     () => {
       const one: Factor[] = [{ name: 'g', levels: ['0', '1', '122'] }];
@@ -86,7 +94,10 @@ describe('pairwise coverage', () => {
       id: 'matrix.pairwise-two-factors',
       covers: 'src/domain/pairwise.ts#pairwiseCases',
       given: 'two factors with two and three levels',
-      then: 'two factors produce a set that covers every pair and uses at most one case per pair',
+      expect: {
+        'all-pairs-covered': 'every pair of levels appears',
+        'at-most-six-cases': 'no more than six cases are produced',
+      },
     },
     () => {
       const two: Factor[] = [

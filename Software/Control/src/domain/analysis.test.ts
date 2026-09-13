@@ -14,7 +14,11 @@ describe('generateExpectedMotion', () => {
       id: 'analysis.expected-motion-from-gcode',
       covers: 'src/domain/analysis.ts#generateExpectedMotion',
       given: 'a program that moves absolutely to 10 mm at 5 mm/s, pauses one second, then moves relatively minus 4 mm at 2 mm/s',
-      then: 'the expected motion ends at 6 mm, time only moves forward, and the total time is the two travel times plus the one-second pause',
+      expect: {
+        'ends-at-six': 'the expected motion ends at 6 mm',
+        'time-moves-forward': 'time only moves forward',
+        'run-takes-five-seconds': 'the whole run takes five seconds',
+      },
     },
     () => {
       const gcode = ['G90', 'G1 X10 F5', 'G4 P1000', 'G91', 'G1 X-4 F2', 'G122'];
@@ -32,7 +36,10 @@ describe('generateExpectedMotion', () => {
       id: 'analysis.expected-motion-starts-at-anchor',
       covers: 'src/domain/analysis.ts#generateExpectedMotion',
       given: 'a relative move of 5 mm starting from 100 mm',
-      then: 'the expected motion of a relative 5 mm move from 100 mm starts at 100 mm and ends at 105 mm',
+      expect: {
+        'starts-at-anchor': 'the expected motion starts at 100 mm',
+        'ends-five-further': 'it ends at 105 mm',
+      },
     },
     () => {
       const { position } = generateExpectedMotion(['G91', 'G1 X5 F5'], 100);
@@ -48,7 +55,10 @@ describe('interpolateExpected', () => {
       id: 'analysis.expected-curve-interpolates-and-clamps',
       covers: 'src/domain/analysis.ts#interpolateExpected',
       given: 'an expected curve from 0 to 10 mm over two seconds, sampled before, during, and after that span',
-      then: 'a sample before the expected curve stays at the start position, a sample after stays at the end position, and a sample in the middle is the linear value between them',
+      expect: {
+        'held-outside-span': 'samples outside the span hold the start and end positions',
+        'midpoint-interpolated': 'one second in reads 5 mm',
+      },
     },
     () => {
       const exp = { time: [0, 2], position: [0, 10] };
@@ -76,7 +86,12 @@ describe('computeStressStrain', () => {
       id: 'analysis.stress-strain-from-force-and-extension',
       covers: 'src/domain/analysis.ts#computeStressStrain',
       given: 'a sample 2 mm by 1 mm, with a 100 N reading after 1 mm of extension on a 10 mm gauge, and limits of 200 N and 5 mm',
-      then: 'stress is 50 megapascals and strain is 10 percent, and the chart limits are 100 megapascals and 50 percent',
+      expect: {
+        'stress-at-point': 'stress is 50 megapascals',
+        'strain-at-point': 'strain is 10 percent',
+        'stress-limit': 'the chart stress limit is 100 megapascals',
+        'strain-limit': 'the chart strain limit is 50 percent',
+      },
     },
     () => {
       const { data, maxStress, maxStrain } = computeStressStrain(points, profile, 10);
@@ -92,8 +107,10 @@ describe('computeStressStrain', () => {
     {
       id: 'analysis.zero-section-has-no-stress-strain',
       covers: 'src/domain/analysis.ts#computeStressStrain',
-      given: 'logged force and position with a sample whose width is zero',
-      then: 'a sample with zero width produces no stress-strain points',
+      given: 'logged force and position for a sample whose width is zero',
+      expect: {
+        'curve-empty': 'the stress-strain curve comes out empty',
+      },
     },
     () => {
       expect(computeStressStrain(points, { ...profile, sampleWidth: 0 }, 10).data).toEqual([]);

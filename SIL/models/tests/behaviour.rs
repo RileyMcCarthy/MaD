@@ -6,7 +6,7 @@
 use std::sync::{Arc, Mutex};
 
 use models::gantry::{Config, Gantry};
-use vibes_behaviour::{behaviour, Behaviour};
+use vibes_behaviour::{behaviour, expect, Test};
 
 fn gantry(slack_mm: f64, tension_on_decreasing: bool) -> (Arc<Gantry>, Arc<Mutex<Vec<f64>>>) {
     let g = Gantry::new(Config {
@@ -23,13 +23,16 @@ fn gantry(slack_mm: f64, tension_on_decreasing: bool) -> (Arc<Gantry>, Arc<Mutex
 
 #[test]
 fn first_position_becomes_the_baseline() {
-    behaviour!(Behaviour {
+    behaviour!(Test {
         id: "gantry.first-position-is-baseline",
         covers: Some("SIL/models/src/gantry.rs#on_position"),
         given: "the very first position report, whatever its absolute value",
-        then: "the first position report becomes the zero of extension",
-        why: Some("the machine does not home to 0, so absolute position is not extension"),
     });
+    expect!(
+        "extension-zero",
+        "extension is reported as zero",
+        "the machine does not home to 0, so absolute position is not extension"
+    );
 
     let (g, seen) = gantry(0.0, false);
     g.on_position(37.5);
@@ -38,13 +41,20 @@ fn first_position_becomes_the_baseline() {
 
 #[test]
 fn engagement_slack_is_consumed_before_extension() {
-    behaviour!(Behaviour {
+    behaviour!(Test {
         id: "gantry.slack-consumed-before-extension",
         covers: Some("SIL/models/src/gantry.rs#on_position"),
         given: "travel smaller than the configured engagement slack",
-        then: "extension stays at zero until travel exceeds the engagement slack",
-        why: Some("the sample is not yet loaded, so reporting strain would be wrong"),
     });
+    expect!(
+        "no-extension-inside-slack",
+        "extension reads zero",
+        "the sample is not yet loaded, so reporting strain would be wrong"
+    );
+    expect!(
+        "extension-past-slack",
+        "past the slack extension reads travel minus the slack"
+    );
 
     let (g, seen) = gantry(2.0, false);
     g.on_position(0.0);
@@ -55,13 +65,16 @@ fn engagement_slack_is_consumed_before_extension() {
 
 #[test]
 fn tension_direction_is_configurable() {
-    behaviour!(Behaviour {
+    behaviour!(Test {
         id: "gantry.tension-direction",
         covers: Some("SIL/models/src/gantry.rs#on_position"),
-        given: "a machine whose tensile travel decreases machine position",
-        then: "on a machine whose tensile direction is decreasing position, moving to a smaller position produces positive extension",
-        why: Some("the DS2 gantry and the EdgeBoard gantry pull in opposite senses"),
+        given: "a machine whose tensile travel moves to a smaller position",
     });
+    expect!(
+        "positive-extension",
+        "extension is positive and equals the distance travelled",
+        "the DS2 gantry and the EdgeBoard gantry pull in opposite senses"
+    );
 
     let (g, seen) = gantry(0.0, true);
     g.on_position(10.0);

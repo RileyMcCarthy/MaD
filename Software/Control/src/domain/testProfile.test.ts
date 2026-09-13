@@ -51,8 +51,13 @@ describe('generateTestGcode', () => {
     {
       id: 'profile.gcode-has-header-moves-and-stop',
       covers: 'src/domain/testProfile.ts#generateTestGcode',
-      given: 'a profile named T1 with an absolute linear move to 5 mm, a 500-millisecond pause, and a relative move of -3 mm, run twice',
-      then: 'generated G-code starts with the profile name, includes absolute and relative mode, the authored moves and pause, and ends with a stop that signals the test is complete',
+      given: 'a profile named T1 with an absolute linear move to 5 mm, a 500-millisecond pause, and a relative move of -3 mm',
+      expect: {
+        'opens-with-name': 'the program opens with the profile name',
+        'both-positioning-modes': 'the program carries both the absolute and the relative positioning mode',
+        'authored-moves-and-pause': 'the authored moves and pause appear with their travel, speed and duration',
+        'ends-with-stop': 'the program ends with the completion stop',
+      },
     },
     () => {
       const { gcode } = generateTestGcode(base);
@@ -72,7 +77,9 @@ describe('generateTestGcode', () => {
       id: 'profile.repeats-moves-per-execution',
       covers: 'src/domain/testProfile.ts#generateTestGcode',
       given: 'a set that is configured to run twice',
-      then: 'a set configured for two executions emits each move twice',
+      expect: {
+        'moves-repeated': 'each move in the set appears twice in the program',
+      },
     },
     () => {
       const { gcode } = generateTestGcode(base);
@@ -86,7 +93,10 @@ describe('generateTestGcode', () => {
       id: 'profile.preview-time-is-monotonic',
       covers: 'src/domain/testProfile.ts#generateTestGcode',
       given: 'a generated profile preview series',
-      then: 'preview time and distance have the same length, and time only moves forward',
+      expect: {
+        'same-point-count': 'time and distance have the same number of points',
+        'time-moves-forward': 'time only moves forward',
+      },
     },
     () => {
       const { time, distance } = generateTestGcode(base);
@@ -104,7 +114,9 @@ describe('waveform helpers', () => {
       id: 'profile.sine-sample-key-points',
       covers: 'src/domain/testProfile.ts#waveformSample',
       given: 'a sine waveform sampled at the start, quarter, three-quarter, and end of a cycle',
-      then: 'a sine is zero at the start and end of a cycle, one at a quarter turn, and minus one at three-quarters',
+      expect: {
+        'key-points': 'the samples read zero, one, minus one, and zero, in that order',
+      },
     },
     () => {
       expect(waveformSample('sine', 0)).toBeCloseTo(0, 6);
@@ -118,7 +130,9 @@ describe('waveform helpers', () => {
       id: 'profile.triangle-sample-key-points',
       covers: 'src/domain/testProfile.ts#waveformSample',
       given: 'a triangle waveform sampled at the start, quarter, half, and three-quarter of a cycle',
-      then: 'a triangle is zero at the start and half of a cycle, one at a quarter turn, and minus one at three-quarters',
+      expect: {
+        'key-points': 'the samples read zero, one, zero, and minus one, in that order',
+      },
     },
     () => {
       expect(waveformSample('triangle', 0)).toBeCloseTo(0, 6);
@@ -132,7 +146,10 @@ describe('waveform helpers', () => {
       id: 'profile.waveform-peak-velocity',
       covers: 'src/domain/testProfile.ts#waveformPeakVelocity',
       given: 'a 5 mm, 1 Hz sine and triangle',
-      then: 'peak velocity is two-pi times amplitude times frequency for a sine, and four times amplitude times frequency for a triangle',
+      expect: {
+        'sine-peak': 'peak velocity for a sine is two-pi times amplitude times frequency',
+        'triangle-peak': 'peak velocity for a triangle is four times amplitude times frequency',
+      },
     },
     () => {
       expect(waveformPeakVelocity('sine', 5, 1)).toBeCloseTo(2 * Math.PI * 5, 6);
@@ -145,7 +162,9 @@ describe('waveform helpers', () => {
       id: 'profile.sine-peak-acceleration',
       covers: 'src/domain/testProfile.ts#waveformPeakAcceleration',
       given: 'sines of 5 mm at 1 Hz, 3 mm at 2 Hz, and 10 mm at 0.5 Hz',
-      then: 'sine peak acceleration is amplitude times four-pi-squared times frequency squared',
+      expect: {
+        'peak-acceleration-formula': 'peak acceleration is amplitude times four-pi-squared times frequency squared',
+      },
     },
     () => {
       expect(waveformPeakAcceleration('sine', 5, 1)).toBeCloseTo((2 * Math.PI) ** 2 * 5, 6);
@@ -161,7 +180,10 @@ describe('waveform helpers', () => {
       id: 'profile.acceleration-uses-absolute-amplitude-and-frequency',
       covers: 'src/domain/testProfile.ts#waveformPeakAcceleration',
       given: 'a sine with negative amplitude and frequency, and sines with zero amplitude or zero frequency',
-      then: 'sine peak acceleration uses the absolute amplitude and frequency, and is zero when either is zero',
+      expect: {
+        'magnitudes-used': 'peak acceleration uses the magnitudes of amplitude and frequency',
+        'zero-when-either-is-zero': 'peak acceleration is zero when either value is zero',
+      },
     },
     () => {
       expect(waveformPeakAcceleration('sine', -5, -1)).toBeCloseTo((2 * Math.PI) ** 2 * 5, 6);
@@ -175,8 +197,12 @@ describe('waveform helpers', () => {
       id: 'profile.triangle-acceleration-is-zero',
       covers: 'src/domain/testProfile.ts#waveformPeakAcceleration',
       given: 'a triangle waveform',
-      then: 'triangle peak acceleration is reported as zero',
-      why: 'a triangle has impulsive acceleration at the turning points, so the planning number is zero',
+      expect: {
+        'reported-zero': 'peak acceleration is reported as zero',
+      },
+      why: {
+        'reported-zero': 'a triangle has impulsive acceleration at the turning points, so the planning number is zero',
+      },
     },
     () => {
       expect(waveformPeakAcceleration('triangle', 5, 1)).toBe(0);
@@ -211,7 +237,13 @@ describe('generateTestGcode — waveform (math) move', () => {
       id: 'profile.waveform-emits-one-canned-cycle',
       covers: 'src/domain/testProfile.ts#generateTestGcode',
       given: 'a relative sine of 5 mm, 1 Hz, two cycles, already centred on the start',
-      then: 'a relative waveform already at its centre emits a single waveform command with the authored amplitude, frequency, and cycle count, a preview that swings plus and minus the amplitude, monotonic time, and a trailing stop',
+      expect: {
+        'one-waveform': 'exactly one waveform command is emitted, carrying the authored amplitude, frequency and cycle count',
+        'no-ramp-in': 'no ramp-in move is emitted',
+        'preview-swings-full-amplitude': 'the preview swings the full amplitude either side of the centre',
+        'preview-time-moves-forward': 'preview time only moves forward',
+        'ends-with-stop': 'the program ends with the completion stop',
+      },
     },
     () => {
       const cycles = 2;
@@ -238,7 +270,9 @@ describe('generateTestGcode — waveform (math) move', () => {
       id: 'profile.zero-cycle-waveform-emits-no-motion',
       covers: 'src/domain/testProfile.ts#generateTestGcode',
       given: 'a sine waveform with zero cycles',
-      then: 'a waveform with zero cycles emits no linear move and no waveform command',
+      expect: {
+        'no-motion': 'the generated program contains no linear move and no waveform command',
+      },
     },
     () => {
       const { gcode } = generateTestGcode(waveformProfile({ waveform: 'sine', amplitude: 5, frequency: 1, cycles: 0 }));
@@ -251,8 +285,10 @@ describe('generateTestGcode — waveform (math) move', () => {
       id: 'profile.waveform-is-sine-only',
       covers: 'src/domain/testProfile.ts#generateTestGcode',
       given: 'a motion profile whose waveform is set to triangle',
-      then: 'a triangle waveform profile is emitted as a sine canned cycle',
-      why: 'firmware v1 runs only sine, so the shape on the wire is sine',
+      expect: {
+        'sine-shape': 'the emitted canned cycle carries the sine shape',
+      },
+      why: { 'sine-shape': 'firmware v1 runs only sine, so the shape on the wire is sine' },
     },
     () => {
       const { gcode } = generateTestGcode(
@@ -269,7 +305,12 @@ describe('generateTestGcode — waveform (math) move', () => {
       id: 'profile.waveform-uploads-as-one-record',
       covers: 'src/domain/testProfile.ts#generateTestGcode',
       given: 'a generated sine of 4 mm, 1 Hz, three cycles, uploaded with 15 mm of gauge length',
-      then: 'a generated sine uploads as a single waveform with sine shape and the authored amplitude, frequency, and cycle count',
+      expect: {
+        'one-waveform': 'the program carries exactly one waveform',
+        'wire-size': 'the waveform takes the agreed 9 bytes on the wire',
+        'sine-shape': 'the waveform carries the sine shape',
+        'authored-values': 'the waveform carries the authored amplitude, frequency, and cycle count',
+      },
     },
     () => {
       const { gcode } = generateTestGcode(

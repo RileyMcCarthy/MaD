@@ -7,7 +7,7 @@
  * reads as "green" to someone skimming, which is how a report stops being read.
  */
 
-import { handle, type Behaviour } from './ledger.js';
+import { handle, testKey, type Behaviour } from './ledger.js';
 import type { LedgerDiff, Respecified } from './diff.js';
 
 export function headline(d: LedgerDiff): string {
@@ -50,21 +50,42 @@ function cite(b: Behaviour): string {
   return h === '' ? '' : `${h} · `;
 }
 
-function one(b: Behaviour): string {
-  const lines = [`- **${b.then}**`, `  ${cite(b)}given ${b.given}`];
-  if (b.why !== undefined) lines.push(`  because ${b.why}`);
-  /* The test is the evidence; the covered symbol is the code. Both belong on
-   * the row so a reviewer can open the test without grepping the ledger.
-   *
-   * The TypeScript binding names its test after the claim, so `#test` there is
-   * the bolded line again inside a code span — the claim printed twice, on more
-   * than half the rows. Where the name only repeats the claim, the file is the
-   * whole of what a reader needs. */
-  const named = !b.test.includes(b.then);
-  lines.push(`  \`${b.file}${named ? `#${b.test}` : ''}\``);
-  if (b.covers !== undefined) lines.push(`  \`${b.covers}\``);
+/**
+ * One test: its condition once, then every expectation that hangs off it.
+ *
+ * Grouping is the point of the shape. Printing the condition again beside each
+ * expectation would put back exactly the repetition that splitting them removed.
+ */
+function oneTest(group: readonly Behaviour[]): string {
+  const first = group[0];
+  if (first === undefined) return '';
+  const lines = [`- given ${first.given}`];
+  for (const b of group) {
+    const h = handle(b);
+    lines.push(`  **${b.then}**${h === '' ? '' : ` ${h}`}`);
+    if (b.why !== undefined) lines.push(`  because ${b.why}`);
+  }
+  /* The TypeScript binding names a test after its CONDITION, so `#test` there
+   * is the `given` line again inside a code span. Where the runner's name only
+   * repeats what the row already shows, the file alone is what a reader needs;
+   * where it is a real symbol, as in C and Rust, it stays. */
+  const echoes = first.test.includes(first.given) || group.some((b) => first.test.includes(b.then));
+  lines.push(`  \`${first.file}${echoes ? '' : `#${first.test}`}\``);
+  if (first.covers !== undefined) lines.push(`  \`${first.covers}\``);
   return lines.join(BR);
 }
+
+/** Expectations, in ledger order, grouped by the test they belong to. */
+function byTest(items: readonly Behaviour[]): Behaviour[][] {
+  const groups = new Map<string, Behaviour[]>();
+  for (const b of items) {
+    const g = groups.get(testKey(b)) ?? [];
+    g.push(b);
+    groups.set(testKey(b), g);
+  }
+  return [...groups.values()];
+}
+
 
 /* Ordered by what a reviewer needs first. The claim is was/now on its own;
  * everything else nests the two texts under the field name so a reason cannot
@@ -137,7 +158,7 @@ export function renderMarkdown(d: LedgerDiff): string {
     }
     for (const [suite, items] of bySuite) {
       if (bySuite.size > 1) out.push(`### ${suite}`, '');
-      for (const b of items) out.push(one(b));
+      for (const g of byTest(items)) out.push(oneTest(g));
       out.push('');
     }
   }

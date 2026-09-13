@@ -14,7 +14,11 @@ describe('decodeBinarySampleDataToCSV', () => {
       id: 'sample.binary-decodes-to-raw-csv',
       covers: 'src/domain/sample.ts#decodeBinarySampleDataToCSV',
       given: 'two stored samples, one at 1.5 N and 10.25 mm, one at -2 N and 11 mm',
-      then: 'stored samples decode to CSV rows in microseconds, millinewtons, and micrometres, with 1.5 N written as 1500 millinewtons and 10.25 mm as 10250 micrometres',
+      expect: {
+        'header-row': 'the CSV opens with a header naming the time, force, position and setpoint columns',
+        'scaled-rows':
+          'each sample decodes to a CSV row in microseconds, millinewtons and micrometres, scaling force and position by a thousand',
+      },
     },
     () => {
       const a = encodeStoredSample({ force: 1.5, position: 10.25, time: 1000, setpoint: 10 });
@@ -39,7 +43,10 @@ describe('parseTestCSV', () => {
       id: 'sample.csv-parses-to-engineering-units',
       covers: 'src/domain/sample.ts#parseTestCSV',
       given: 'a CSV row of 1000000 microseconds, 1500 millinewtons, and 10250 micrometres',
-      then: 'a CSV row in microseconds, millinewtons, and micrometres parses as 1 s, 1.5 N, and 10.25 mm',
+      expect: {
+        'one-reading': 'exactly one reading comes back',
+        'engineering-units': 'the reading is 1 s, 1.5 N, and 10.25 mm',
+      },
     },
     () => {
       const csv = 'time_us,force_mN,position_um,setpoint_um\n1000000,1500,10250,10000\n';
@@ -57,7 +64,7 @@ describe('parseTestCSV', () => {
       id: 'sample.csv-skips-malformed-rows',
       covers: 'src/domain/sample.ts#parseTestCSV',
       given: 'a CSV with a header, a malformed row, and one valid row',
-      then: 'a malformed CSV row is skipped and the valid row is kept',
+      expect: { 'only-valid-row': 'parsing returns only the valid row' },
     },
     () => {
       const csv = 'time_us,force_mN,position_um,setpoint_um\nbad,row\n0,0,0,0\n';
@@ -75,7 +82,7 @@ describe('interpolateAtUs', () => {
       id: 'sample.interpolate-at-recorded-time',
       covers: 'src/domain/sample.ts#interpolateAtUs',
       given: 'a recorded series and a timestamp that matches a sample exactly',
-      then: 'a timestamp that matches a recorded sample returns that sample value',
+      expect: { 'sample-value': 'the interpolated result is that sample\'s own value' },
     },
     () => {
       expect(interpolateAtUs(t, x, 100_000)).toBe(1000);
@@ -87,7 +94,9 @@ describe('interpolateAtUs', () => {
       id: 'sample.interpolate-between-samples',
       covers: 'src/domain/sample.ts#interpolateAtUs',
       given: 'a recorded series and timestamps halfway between samples',
-      then: 'a timestamp halfway between two samples returns the value halfway between them',
+      expect: {
+        'halfway-value': 'the interpolated result is halfway between the two neighbouring sample values',
+      },
     },
     () => {
       expect(interpolateAtUs(t, x, 50_000)).toBe(500);
@@ -100,7 +109,7 @@ describe('interpolateAtUs', () => {
       id: 'sample.interpolate-outside-span',
       covers: 'src/domain/sample.ts#interpolateAtUs',
       given: 'a timestamp before the first sample, after the last, or an empty series',
-      then: 'a timestamp outside the recorded span, or an empty series, has no interpolated value',
+      expect: { 'no-value': 'no interpolated value is produced' },
     },
     () => {
       expect(interpolateAtUs(t, x, -1)).toBeUndefined();
@@ -116,7 +125,10 @@ describe('motionStartTimeUs', () => {
       id: 'sample.motion-starts-at-first-move',
       covers: 'src/domain/sample.ts#motionStartTimeUs',
       given: 'a position series that stays put for two samples then moves well past the threshold',
-      then: 'motion-start time is the first sample that has moved by the threshold from the opening position',
+      expect: {
+        'first-sample-past-threshold':
+          'motion start is reported at the time of the first sample past the threshold',
+      },
     },
     () => {
       const t = [1_000_000, 1_010_000, 1_020_000, 1_030_000];
@@ -130,7 +142,7 @@ describe('motionStartTimeUs', () => {
       id: 'sample.motion-start-when-still',
       covers: 'src/domain/sample.ts#motionStartTimeUs',
       given: 'a position series that never leaves the opening position',
-      then: 'a series that never moves has no motion-start time',
+      expect: { 'no-start-time': 'no motion-start time is reported' },
     },
     () => {
       expect(motionStartTimeUs([0, 100], [10, 10], 80)).toBeUndefined();

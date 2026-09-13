@@ -32,7 +32,10 @@ describe('ByteRing — basic capture', () => {
       id: 'diag.byte-ring-round-trips-chunk',
       covers: 'src/diagnostics/byteRing.ts#ByteRing.snapshot',
       given: 'a received serial chunk of four bytes',
-      then: 'the byte capture shows one received chunk with those four bytes intact',
+      expect: {
+        'one-chunk-received': 'the capture shows a single chunk, marked received',
+        'bytes-intact': 'the chunk comes back with its four bytes intact',
+      },
     },
     () => {
       const ring = new ByteRing(256, 16);
@@ -51,8 +54,14 @@ describe('ByteRing — basic capture', () => {
       id: 'diag.byte-ring-keeps-chunk-boundaries',
       covers: 'src/diagnostics/byteRing.ts#ByteRing.snapshot',
       given: 'three serial chunks in a row: two sent, one received in between',
-      then: 'the byte capture keeps each chunk\'s send-or-receive direction and length, so a frame split across two reads stays visible as two chunks',
-      why: 'a frame that arrived in two reads looks different from one that arrived whole, and that difference is usually the bug',
+      expect: {
+        'order-and-direction': 'the capture lists all three chunks in order, each with its direction',
+        'byte-counts': 'each chunk keeps its own byte count',
+      },
+      why: {
+        'byte-counts':
+          'a frame that arrived in two reads looks different from one that arrived whole, and that difference is usually the bug',
+      },
     },
     () => {
       const ring = new ByteRing(256, 16);
@@ -71,7 +80,10 @@ describe('ByteRing — basic capture', () => {
       id: 'diag.byte-ring-ignores-empty-chunks',
       covers: 'src/diagnostics/byteRing.ts#ByteRing.push',
       given: 'an empty serial chunk is recorded',
-      then: 'an empty serial chunk is dropped and does not count as traffic',
+      expect: {
+        'no-chunk': 'no chunk appears in the capture',
+        'count-unchanged': 'the chunk count stays at zero',
+      },
     },
     () => {
       const ring = new ByteRing(256, 16);
@@ -86,7 +98,10 @@ describe('ByteRing — basic capture', () => {
       id: 'diag.byte-ring-lifetime-byte-totals',
       covers: 'src/diagnostics/byteRing.ts#ByteRing.snapshot',
       given: 'received and sent serial chunks totaling 16 received bytes and 4 sent bytes',
-      then: 'lifetime received and sent byte totals match every byte that was recorded',
+      expect: {
+        'received-total': 'the lifetime total reads 16 bytes received',
+        'sent-total': 'the lifetime total reads 4 bytes sent',
+      },
     },
     () => {
       const ring = new ByteRing(256, 16);
@@ -107,8 +122,13 @@ describe('ByteRing — wrap correctness', () => {
       id: 'diag.byte-ring-reconstructs-after-wrap',
       covers: 'src/diagnostics/byteRing.ts#ByteRing.snapshot',
       given: 'more serial bytes than the capture window can hold, written in three chunks',
-      then: 'after the capture window fills, the most recent bytes are reconstructed in the order they were written',
-      why: 'protocol bugs show up in the raw bytes on the wire, so the window must stay the true sequence after it wraps',
+      expect: {
+        'recent-bytes-in-order': 'the most recent bytes come back in the order they were written',
+      },
+      why: {
+        'recent-bytes-in-order':
+          'protocol bugs show up in the raw bytes on the wire, so the window must stay the true sequence after it wraps',
+      },
     },
     () => {
       // Capacity 16, write 24 bytes in 3 chunks: the first 8 fall off the back.
@@ -127,7 +147,9 @@ describe('ByteRing — wrap correctness', () => {
       id: 'diag.byte-ring-unwraps-straddling-chunk',
       covers: 'src/diagnostics/byteRing.ts#ByteRing.snapshot',
       given: 'a serial chunk whose bytes wrap around the end of the capture window',
-      then: 'a serial chunk that wraps around the end of the capture window comes back as one contiguous sequence in the original order',
+      expect: {
+        'contiguous-run': 'the chunk comes back as one contiguous run in the order it was written',
+      },
     },
     () => {
       const ring = new ByteRing(16, 16);
@@ -146,8 +168,15 @@ describe('ByteRing — wrap correctness', () => {
       id: 'diag.byte-ring-clips-partial-overwrite',
       covers: 'src/diagnostics/byteRing.ts#ByteRing.snapshot',
       given: 'a later serial chunk overwrites the start of an earlier chunk still in the window',
-      then: 'a partially overwritten serial chunk is reported as clipped, with only its remaining tail kept',
-      why: 'a clipped chunk must be marked so leftover bytes are not treated as a complete frame',
+      expect: {
+        'clip-marked': 'the earlier chunk is marked clipped',
+        'tail-kept': 'the earlier chunk keeps only its remaining tail',
+        'later-chunk-whole': 'the later chunk is whole and carries no clip mark',
+      },
+      why: {
+        'clip-marked':
+          'a clipped chunk must be marked so leftover bytes are not treated as a complete frame',
+      },
     },
     () => {
       const ring = new ByteRing(16, 16);
@@ -171,7 +200,10 @@ describe('ByteRing — wrap correctness', () => {
       id: 'diag.byte-ring-drops-overwritten-chunks',
       covers: 'src/diagnostics/byteRing.ts#ByteRing.snapshot',
       given: 'four serial chunks totaling more than the capture window',
-      then: 'fully overwritten serial chunks disappear from the byte capture and are counted as dropped',
+      expect: {
+        'resident-chunks-only': 'the capture shows only the chunks still in the window',
+        'dropped-counted': 'the chunks pushed out are counted as dropped',
+      },
     },
     () => {
       const ring = new ByteRing(16, 32);
@@ -195,7 +227,10 @@ describe('ByteRing — wrap correctness', () => {
       id: 'diag.byte-ring-keeps-oversize-tail',
       covers: 'src/diagnostics/byteRing.ts#ByteRing.push',
       given: 'a single serial chunk larger than the entire capture window',
-      then: 'a serial chunk larger than the capture window keeps only its most recent bytes, while the lifetime total still counts every byte that arrived',
+      expect: {
+        'recent-bytes-kept': 'the window keeps only the chunk\'s most recent bytes',
+        'lifetime-total-complete': 'the lifetime total counts every byte that arrived',
+      },
     },
     () => {
       const ring = new ByteRing(8, 16);
@@ -217,7 +252,10 @@ describe('ByteRing — metadata eviction', () => {
       id: 'diag.byte-ring-evicts-oldest-metadata',
       covers: 'src/diagnostics/byteRing.ts#ByteRing.snapshot',
       given: 'more serial chunks than the capture can remember as separate pieces',
-      then: 'the oldest chunk records are dropped once the capture can remember no more separate pieces, leaving only the most recent chunks',
+      expect: {
+        'recent-chunks-kept': 'the capture keeps the most recent chunks',
+        'older-counted-dropped': 'the older chunks are counted as dropped',
+      },
     },
     () => {
       // Plenty of byte capacity, deliberately few metadata slots.
@@ -237,8 +275,14 @@ describe('ByteRing — metadata eviction', () => {
       id: 'diag.byte-ring-no-stale-bytes',
       covers: 'src/diagnostics/byteRing.ts#ByteRing.snapshot',
       given: 'many tiny serial chunks that overflow the byte window while chunk records remain',
-      then: 'the byte capture only contains bytes still in the window, never bytes whose records outlived the data',
-      why: 'a capture that showed bytes the window has already overwritten would invent traffic that was not on the wire',
+      expect: {
+        'exact-recent-bytes': 'the capture returns exactly the most recent bytes the window still holds',
+        'no-empty-chunks': 'every chunk in the capture still carries bytes',
+      },
+      why: {
+        'exact-recent-bytes':
+          'a capture that showed bytes the window has already overwritten would invent traffic that was not on the wire',
+      },
     },
     () => {
       // The classic failure: metadata surviving longer than the bytes it points at.
@@ -260,8 +304,13 @@ describe('ByteRing — resource ceiling', () => {
       id: 'diag.byte-ring-fixed-footprint',
       covers: 'src/diagnostics/byteRing.ts#ByteRing.footprintBytes',
       given: 'thousands of serial chunks written through a capture window',
-      then: 'the byte capture\'s memory footprint stays fixed and does not grow with traffic',
-      why: 'the capture sits on the serial read path and must not grow as traffic arrives',
+      expect: {
+        'footprint-unchanged': 'the capture\'s memory footprint is unchanged',
+      },
+      why: {
+        'footprint-unchanged':
+          'the capture sits on the serial read path and must not grow as traffic arrives',
+      },
     },
     () => {
       const ring = new ByteRing(1024, 32);
@@ -276,7 +325,10 @@ describe('ByteRing — resource ceiling', () => {
       id: 'diag.byte-ring-default-footprint',
       covers: 'src/diagnostics/byteRing.ts#ByteRing.footprintBytes',
       given: 'a byte capture created with default capacity',
-      then: 'the default byte capture is sized to its documented 64 KiB payload plus 4096 chunk records',
+      expect: {
+        'documented-footprint':
+          'its memory footprint is the documented 64 KiB payload plus 4096 chunk records',
+      },
     },
     () => {
       const ring = new ByteRing();
@@ -290,8 +342,11 @@ describe('ByteRing — resource ceiling', () => {
     {
       id: 'diag.byte-ring-resident-bytes-capped',
       covers: 'src/diagnostics/byteRing.ts#ByteRing.stats',
-      given: 'more serial bytes than the capture window can hold',
-      then: 'the count of bytes still in the window is capped at the capture window\'s capacity',
+      given: 'serial bytes written into a capture window, first fewer than it holds and then more',
+      expect: {
+        'counts-what-fits': 'the reported count of bytes still held matches what was written while it fits',
+        'capped-at-capacity': 'the reported count stops at the window\'s capacity once more arrives',
+      },
     },
     () => {
       const ring = new ByteRing(64, 16);
@@ -308,8 +363,11 @@ describe('ByteRing — reset', () => {
     {
       id: 'diag.byte-ring-reset-clears',
       covers: 'src/diagnostics/byteRing.ts#ByteRing.reset',
-      given: 'a byte capture that already holds serial traffic',
-      then: 'clearing the byte capture drops captured chunks and counters while keeping the same memory footprint',
+      given: 'a byte capture holding serial traffic is cleared',
+      expect: {
+        'nothing-remains': 'no chunks or counts remain',
+        'footprint-unchanged': 'the memory footprint is unchanged',
+      },
     },
     () => {
       const ring = new ByteRing(64, 16);
@@ -330,7 +388,9 @@ describe('ByteRing — reset', () => {
       id: 'diag.byte-ring-captures-after-reset',
       covers: 'src/diagnostics/byteRing.ts#ByteRing.reset',
       given: 'serial traffic is recorded, the capture is reset, then a new chunk is recorded',
-      then: 'after a reset, new serial traffic is captured as the only bytes in the window',
+      expect: {
+        'only-new-bytes': 'the window holds only the new chunk\'s bytes',
+      },
     },
     () => {
       const ring = new ByteRing(64, 16);
@@ -349,8 +409,13 @@ describe('ByteRing.tailHex', () => {
       id: 'diag.byte-ring-tail-hex-order',
       covers: 'src/diagnostics/byteRing.ts#ByteRing.tailHex',
       given: 'four received serial bytes',
-      then: 'the hex tail of the byte capture is the most recent bytes, oldest first',
-      why: 'when a frame fails to decode, the bytes that caused it are the whole story',
+      expect: {
+        'all-four-oldest-first': 'the hex tail lists all four bytes, oldest first',
+      },
+      why: {
+        'all-four-oldest-first':
+          'when a frame fails to decode, the bytes that caused it are the whole story',
+      },
     },
     () => {
       const ring = new ByteRing(64, 8);
@@ -364,7 +429,9 @@ describe('ByteRing.tailHex', () => {
       id: 'diag.byte-ring-tail-hex-caps-count',
       covers: 'src/diagnostics/byteRing.ts#ByteRing.tailHex',
       given: 'six received serial bytes and a request for the last two',
-      then: 'the hex tail is limited to the requested number of most recent bytes',
+      expect: {
+        'last-two-only': 'the hex tail is the last two bytes alone',
+      },
     },
     () => {
       const ring = new ByteRing(64, 8);
@@ -378,7 +445,9 @@ describe('ByteRing.tailHex', () => {
       id: 'diag.byte-ring-tail-hex-within-written',
       covers: 'src/diagnostics/byteRing.ts#ByteRing.tailHex',
       given: 'one received serial byte and a request for 32 bytes of hex',
-      then: 'the hex tail never pads with bytes that were never written',
+      expect: {
+        'single-byte-only': 'the hex tail is that single byte alone',
+      },
     },
     () => {
       const ring = new ByteRing(64, 8);
@@ -392,7 +461,9 @@ describe('ByteRing.tailHex', () => {
       id: 'diag.byte-ring-tail-hex-empty-when-idle',
       covers: 'src/diagnostics/byteRing.ts#ByteRing.tailHex',
       given: 'a byte capture with no serial traffic yet',
-      then: 'the hex tail is empty before any serial traffic is recorded',
+      expect: {
+        'empty-tail': 'the hex tail is empty',
+      },
     },
     () => {
       expect(new ByteRing(64, 8).tailHex()).toBe('');
@@ -404,7 +475,9 @@ describe('ByteRing.tailHex', () => {
       id: 'diag.byte-ring-tail-hex-across-wrap',
       covers: 'src/diagnostics/byteRing.ts#ByteRing.tailHex',
       given: 'serial traffic that has wrapped a four-byte capture window',
-      then: 'the hex tail reads the most recent bytes in order even when they wrap around the capture window',
+      expect: {
+        'bytes-still-held': 'the hex tail reads the four bytes still held, oldest first',
+      },
     },
     () => {
       // Capacity 4: the last four bytes span the seam in the backing buffer.
@@ -419,8 +492,10 @@ describe('ByteRing.tailHex', () => {
     {
       id: 'diag.byte-ring-tail-hex-within-capacity',
       covers: 'src/diagnostics/byteRing.ts#ByteRing.tailHex',
-      given: 'six serial bytes written into a four-byte capture window',
-      then: 'the hex tail never returns more bytes than the capture window still holds',
+      given: 'six serial bytes written into a four-byte capture window, then a request for 64 bytes of hex',
+      expect: {
+        'capped-to-window': 'the hex tail is the four bytes the window still holds, oldest first',
+      },
     },
     () => {
       const ring = new ByteRing(4, 8);
@@ -434,7 +509,9 @@ describe('ByteRing.tailHex', () => {
       id: 'diag.byte-ring-tail-hex-zero-pads',
       covers: 'src/diagnostics/byteRing.ts#ByteRing.tailHex',
       given: 'serial bytes whose hex would be one digit next to a two-digit byte',
-      then: 'each byte in the hex tail is two digits, so columns stay aligned',
+      expect: {
+        'two-digits-each': 'each byte in the hex tail is two digits, so columns stay aligned',
+      },
     },
     () => {
       const ring = new ByteRing(16, 4);

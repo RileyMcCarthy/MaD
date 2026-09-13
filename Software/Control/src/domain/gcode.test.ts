@@ -20,7 +20,12 @@ describe('parseGcodeToMove', () => {
       id: 'gcode.parses-linear-dwell-home-stop',
       covers: 'src/domain/gcode.ts#parseGcodeToMove',
       given: 'a linear move to 10 mm at 5 mm/s, a pause of 2000 milliseconds, a home command, and a stop command',
-      then: 'a linear move, a 2000-millisecond pause, a home, and a stop each parse as that command with the authored target, speed, and duration',
+      expect: {
+        'linear-target-and-speed': 'the linear move parses with the authored target and speed',
+        'pause-duration': 'the pause parses with the authored duration',
+        'home-parsed': 'the home command parses as a home, with no target, speed or duration',
+        'stop-parsed': 'the stop command parses as a stop, with no target, speed or duration',
+      },
     },
     () => {
       expect(parseGcodeToMove('G1 X10 F5')).toEqual({ g: 1, x: 10, f: 5, p: 0 });
@@ -35,8 +40,14 @@ describe('parseGcodeToMove', () => {
       id: 'gcode.arc-parses-target',
       covers: 'src/domain/gcode.ts#parseGcodeToMove',
       given: 'an arc command to 5 mm with a 3 mm centre offset',
-      then: 'an arc to 5 mm with a centre offset parses as an arc to 5 mm',
-      why: 'current firmware has no arc kinematics and executes an arc as a pause, so the centre offset never drives motion',
+      expect: {
+        'arc-target': 'it parses as an arc to 5 mm',
+        'offset-dropped': 'the centre offset is dropped',
+      },
+      why: {
+        'offset-dropped':
+          'current firmware has no arc kinematics and executes an arc as a pause, so the centre offset never drives motion',
+      },
     },
     () => {
       expect(parseGcodeToMove('G2 X5 I3')).toEqual({ g: 2, x: 5, f: 0, p: 0 });
@@ -50,7 +61,9 @@ describe('validateMove', () => {
       id: 'gcode.valid-linear-home-arc-accepted',
       covers: 'src/domain/gcode.ts#validateMove',
       given: 'a linear move, a home command, and an arc, each with fields inside the encodable range',
-      then: 'a linear move, a home, and an arc with fields inside the encodable range are accepted for sending',
+      expect: {
+        'accepted': 'each is accepted for sending',
+      },
     },
     () => {
       expect(() => validateMove({ g: 1 as GCode, x: 10, f: 5, p: 0 })).not.toThrow();
@@ -64,8 +77,10 @@ describe('validateMove', () => {
       id: 'gcode.unknown-command-refused',
       covers: 'src/domain/gcode.ts#validateMove',
       given: 'a command numbered 92, which the machine does not implement',
-      then: 'a command numbered 92 is refused before it is sent',
-      why: 'an unknown command is otherwise packed as a rapid move',
+      expect: {
+        'refused': 'the move is refused before it reaches the machine',
+      },
+      why: { 'refused': 'an unknown command is otherwise packed as a rapid move' },
     },
     () => {
       expect(() => validateMove({ g: 92 as GCode, x: 0, f: 0, p: 0 })).toThrow(MoveValidationError);
@@ -76,9 +91,11 @@ describe('validateMove', () => {
     {
       id: 'gcode.out-of-range-fields-refused',
       covers: 'src/domain/gcode.ts#validateMove',
-      given: 'a move whose target, speed, or pause duration is one unit past the encodable range',
-      then: 'a target, speed, or pause duration one unit past the encodable range is refused before it is sent',
-      why: 'a value past the packed field width wraps to a different physical command',
+      given: 'a move whose target, speed, or pause duration is past the encodable range',
+      expect: {
+        'refused': 'the move is refused before it is sent',
+      },
+      why: { 'refused': 'a value past the packed field width wraps to a different physical command' },
     },
     () => {
       expect(() => validateMove({ g: 1 as GCode, x: MOVE_FIELD_RANGE.x.max + 1, f: 5, p: 0 })).toThrow(
@@ -99,7 +116,9 @@ describe('validateMove', () => {
       id: 'gcode.non-finite-target-refused',
       covers: 'src/domain/gcode.ts#validateMove',
       given: 'a linear move whose target is not a finite number',
-      then: 'a move whose target is not a finite number is refused before it is sent',
+      expect: {
+        'refused': 'the move is refused before anything is sent',
+      },
     },
     () => {
       expect(() => validateMove({ g: 1 as GCode, x: NaN, f: 5, p: 0 })).toThrow(MoveValidationError);
@@ -111,8 +130,11 @@ describe('validateMove', () => {
       id: 'gcode.boundary-target-encodes',
       covers: 'src/domain/gcode.ts#validateAndEncodeMove',
       given: 'a linear move whose target is at the codec maximum, and the same move one millimetre past that maximum',
-      then: 'a move whose target is at the codec maximum still encodes, and one millimetre past that maximum is refused',
-      why: 'a value past the packed field width wraps to a different position',
+      expect: {
+        'max-round-trips': 'the move at the maximum encodes and round-trips back to that target',
+        'past-max-refused': 'the move past the maximum is refused',
+      },
+      why: { 'past-max-refused': 'a value past the packed field width wraps to a different position' },
     },
     () => {
       // At the max boundary the encode→decode round-trips within the field precision.
@@ -133,8 +155,11 @@ describe('gcodeLinesToMachineMoveBuffers', () => {
       id: 'gcode.gauge-offsets-linear-leaves-arc',
       covers: 'src/domain/gcode.ts#gcodeLinesToMachineMoveBuffers',
       given: 'an absolute linear move to 10 mm and an arc to 5 mm, with 15 mm of gauge length',
-      then: 'an absolute linear target of 10 mm is sent as 25 mm when gauge length is 15 mm, and an arc target of 5 mm is sent as 5 mm',
-      why: 'an arc is executed as a pause, so its target is not a machine-frame position',
+      expect: {
+        'linear-offset-by-gauge': 'the linear target is sent as 25 mm',
+        'arc-target-untouched': 'the arc target is sent as 5 mm',
+      },
+      why: { 'arc-target-untouched': 'an arc is executed as a pause, so its target is not a machine-frame position' },
     },
     () => {
       const gauge = 15;
@@ -158,8 +183,12 @@ describe('gcodeLinesToMachineMoveBuffers', () => {
       id: 'gcode.gauge-offset-out-of-range-refused',
       covers: 'src/domain/gcode.ts#gcodeLinesToMachineMoveBuffers',
       given: 'an absolute move to 4000 mm with 15 mm of gauge length, which together exceed the encodable range',
-      then: 'an absolute target plus gauge length that exceeds the encodable range is refused before it is sent',
-      why: 'the packed field would wrap an over-range machine-frame target to a different position',
+      expect: {
+        'upload-refused': 'the whole upload is refused before any move is sent',
+      },
+      why: {
+        'upload-refused': 'the packed field would wrap an over-range machine-frame target to a different position',
+      },
     },
     () => {
       // 4000 + gauge 15 = 4015 mm > MOVE_FIELD_RANGE.x.max (~3994.303) → must throw, not wrap.
@@ -174,7 +203,9 @@ describe('waveform (G123) canned cycle', () => {
       id: 'gcode.waveform-parses-params',
       covers: 'src/domain/gcode.ts#parseGcodeWaveform',
       given: 'a sine waveform with amplitude, frequency, and cycle count, and a triangle waveform with those same kinds of fields',
-      then: 'a waveform command parses to the authored amplitude, frequency, cycle count, and shape',
+      expect: {
+        'params-kept': 'each parses to the authored amplitude, frequency, cycle count, and shape',
+      },
     },
     () => {
       expect(parseGcodeWaveform('G123 A5 F2.5 C100 W0 ; sine A=5mm')).toEqual({
@@ -197,7 +228,9 @@ describe('waveform (G123) canned cycle', () => {
       id: 'gcode.waveform-parse-skips-linear',
       covers: 'src/domain/gcode.ts#parseGcodeWaveform',
       given: 'a linear move line offered to the waveform parser',
-      then: 'a linear move is not read as a waveform',
+      expect: {
+        'no-waveform': 'no waveform is produced',
+      },
     },
     () => {
       expect(parseGcodeWaveform('G1 X5 F2')).toBeNull();
@@ -209,8 +242,10 @@ describe('waveform (G123) canned cycle', () => {
       id: 'gcode.waveform-out-of-range-refused',
       covers: 'src/domain/gcode.ts#validateWaveform',
       given: 'a waveform whose amplitude, frequency, or cycle count is outside the encodable range, or whose cycle count is zero',
-      then: 'a waveform whose amplitude, frequency, or cycle count is outside the encodable range, or whose cycle count is zero, is refused before it is sent',
-      why: 'a value past the packed field width wraps to a different waveform',
+      expect: {
+        'refused': 'the waveform is refused before it is sent',
+      },
+      why: { 'refused': 'a value past the packed field width wraps to a different waveform' },
     },
     () => {
       expect(() => validateWaveform({ shape: 0, amplitude: WAVEFORM_FIELD_RANGE.amplitude.max + 1, frequency: 1, cycles: 1 })).toThrow(MoveValidationError);
@@ -225,7 +260,10 @@ describe('waveform (G123) canned cycle', () => {
       id: 'gcode.waveform-stays-in-program-order',
       covers: 'src/domain/gcode.ts#gcodeLinesToProgram',
       given: 'a program that sets absolute positioning, moves, runs a waveform, and moves again',
-      then: 'a set-absolute command, a linear move, a waveform, and another linear move upload in that order, with the waveform kept as a waveform',
+      expect: {
+        'authored-order': 'all four upload in the authored order',
+        'waveform-kept': 'the waveform uploads as a single waveform record',
+      },
     },
     () => {
       // G90 is itself uploaded as a move record (sets absolute mode on firmware).
@@ -241,8 +279,10 @@ describe('waveform (G123) canned cycle', () => {
       id: 'gcode.move-only-upload-refuses-waveform',
       covers: 'src/domain/gcode.ts#gcodeLinesToMachineMoveBuffers',
       given: 'a program that contains a waveform, offered to the move-only upload path',
-      then: 'a program that contains a waveform is refused by the move-only upload path',
-      why: 'a waveform has to go through the ordered waveform upload',
+      expect: {
+        'upload-refused': 'the whole upload is refused',
+      },
+      why: { 'upload-refused': 'a waveform has to go through the ordered waveform upload' },
     },
     () => {
       expect(() => gcodeLinesToMachineMoveBuffers(['G123 A5 F1 C2 W0'], 0)).toThrow(MoveValidationError);

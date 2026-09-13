@@ -22,7 +22,12 @@ describe('proto ↔ display mapping', () => {
       id: 'mapping.config-round-trips',
       covers: 'src/domain/mapping.ts#configToShared',
       given: 'a machine configuration with a name, load-cell constants, and a tensile force limit of 1234.5 N',
-      then: 'a machine configuration shown to the operator keeps its name and tensile force limit, shows load-cell sensitivity as 1 mV/V and zero balance as 0.005 mV/V, and converts back to the same machine values',
+      expect: {
+        'name-and-force-limit': 'the operator sees the same name and force limit',
+        'load-cell-in-millivolts-per-volt':
+          'sensitivity reads 1 mV/V and zero balance reads 0.005 mV/V',
+        'round-trip': 'converting back gives the same machine values',
+      },
     },
     () => {
       const proto: ProtoConfig = {
@@ -54,7 +59,9 @@ describe('proto ↔ display mapping', () => {
       id: 'mapping.sample-uses-display-names',
       covers: 'src/domain/mapping.ts#sampleToShared',
       given: 'a live sample with machine force of 1 N and sample position of 5 mm',
-      then: 'machine force is shown in newtons and sample position in millimetres, with the live values kept',
+      expect: {
+        'values-carry-through': 'the values carry through unchanged under newton and millimetre labels',
+      },
     },
     () => {
       const s = sampleToShared({
@@ -74,7 +81,9 @@ describe('proto ↔ display mapping', () => {
       id: 'mapping.state-flags-kept',
       covers: 'src/domain/mapping.ts#stateToShared',
       given: 'a machine state that is running a test with motion disabled',
-      then: 'a running test with motion disabled is shown as a running test with motion disabled',
+      expect: {
+        'flags-kept': 'the operator view keeps the test-running and motion-enabled flags unchanged',
+      },
     },
     () => {
       const st = stateToShared({ faultedReason: 2, restrictedReason: 1, testRunning: true, motionEnabled: false } as never);
@@ -88,8 +97,14 @@ describe('proto ↔ display mapping', () => {
       id: 'mapping.sample-profile-round-trips',
       covers: 'src/domain/mapping.ts#sampleProfileToShared',
       given: 'a sample profile with force, velocity, displacement, width, and thickness, and no serial from the machine',
-      then: 'a sample profile shown to the operator has an empty serial, and converting it back keeps the machine fields',
-      why: 'serial is an operator label stored only in the app, so it is empty when the profile comes from the machine',
+      expect: {
+        'serial-empty': 'the operator view carries an empty serial',
+        'round-trip': 'converting back gives the same machine fields',
+      },
+      why: {
+        'serial-empty':
+          'serial is an operator label stored only in the app, so it is empty when the profile comes from the machine',
+      },
     },
     () => {
       const proto: ProtoSampleProfile = {
@@ -110,7 +125,7 @@ describe('proto ↔ display mapping', () => {
       id: 'mapping.notification-severity',
       covers: 'src/domain/mapping.ts#notificationToShared',
       given: 'an error, a warning, and a success notification from the machine',
-      then: 'an error is shown as an error, a warning as a warning, and a success as a success',
+      expect: { 'severity-kept': 'each is shown to the operator at the same severity' },
     },
     () => {
       expect(notificationToShared({ type: ProtoNotificationType.ERROR, message: 'x' }).Type).toBe(NotificationType.ERROR);
