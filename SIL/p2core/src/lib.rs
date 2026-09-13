@@ -25,6 +25,7 @@ pub mod flash;
 pub mod generated;
 pub mod model;
 pub mod pins;
+pub mod probe;
 pub mod sdcard;
 pub mod smartbus;
 pub mod smartpin;
@@ -36,6 +37,10 @@ pub use flash::SpiFlash;
 pub use generated::decode::{decode, Decoded, Form, Op};
 pub use model::SmartPins;
 pub use pins::{NullPins, PinBus};
+pub use probe::{
+    is_probe_safe, op_bucket, probe_encodings, probe_grid_ops, probe_skip_reason, OpBucket,
+    ProbeEncoding,
+};
 pub use sdcard::SdCard;
 pub use smartbus::SmartBus;
 pub use smartpin::{baud_matches, PinMode, SmartPin};
@@ -495,18 +500,142 @@ impl<P: PinBus> Machine<P> {
         use Op::*;
         matches!(
             op,
-            Rdlong | Rdbyte | Rdword | Rdlut | Testp | Testpn | Getct | Cmp | Cmps | Cmpr | Cmpm
-                | Cmpx | Cmpsx | Test | Testn | Testb | Testbn | Jmp | Jmprel | Tjz | Tjnz | Tjf
-                | Tjnf | Tjs | Tjns | Tjv | Djz | Djnz | Djf | Djnf | Call | Ret | Callpa | Callpb
-                | Mov | Add | Adds | Addx | Addsx | Sub | Subs | Subx | Subsx | Subr | And | Andn
-                | Or | Xor | Not | Neg | Abs | Shl | Shr | Sar | Sal | Rol | Ror | Rcl | Rcr | Zerox
-                | Signx | Encod | Decod | Bith | Bitl | Bitnot | Bitc | Bitnc | Bitz | Bitnz | Getbyte
-                | Setbyte | Getword | Setword | Getnib | Setnib | Rev | Muxc | Muxnc | Muxz | Muxnz
-                | Mul | Muls | Sca | Scas | Ones | Nop | Augs | Augd | Setq | Setq2 | Altd | Alts
-                | Altr | Altb | Alti | Loc | Locktry | Waitx | Cogid | Getqx | Getqy | Qdiv | Qmul
-                | Qfrac | Qsqrt | Qrotate | Qvector | Qlog | Qexp | Rep | Skip | Skipf | Fltl | Flth
-                | Modc | Modz | Modcz | Wrc | Wrnc | Wrz | Wrnz | Rqpin | Pollct1 | Pollct2 | Pollct3
-                | Pollse1 | Pollse2 | Pollse3 | Pollse4 | Jct1 | Jnct1 | Jse1 | Jnse1 | Getptr | Rdfast
+            Rdlong
+                | Rdbyte
+                | Rdword
+                | Rdlut
+                | Testp
+                | Testpn
+                | Getct
+                | Cmp
+                | Cmps
+                | Cmpr
+                | Cmpm
+                | Cmpx
+                | Cmpsx
+                | Test
+                | Testn
+                | Testb
+                | Testbn
+                | Jmp
+                | Jmprel
+                | Tjz
+                | Tjnz
+                | Tjf
+                | Tjnf
+                | Tjs
+                | Tjns
+                | Tjv
+                | Djz
+                | Djnz
+                | Djf
+                | Djnf
+                | Call
+                | Ret
+                | Callpa
+                | Callpb
+                | Mov
+                | Add
+                | Adds
+                | Addx
+                | Addsx
+                | Sub
+                | Subs
+                | Subx
+                | Subsx
+                | Subr
+                | And
+                | Andn
+                | Or
+                | Xor
+                | Not
+                | Neg
+                | Abs
+                | Shl
+                | Shr
+                | Sar
+                | Sal
+                | Rol
+                | Ror
+                | Rcl
+                | Rcr
+                | Zerox
+                | Signx
+                | Encod
+                | Decod
+                | Bith
+                | Bitl
+                | Bitnot
+                | Bitc
+                | Bitnc
+                | Bitz
+                | Bitnz
+                | Getbyte
+                | Setbyte
+                | Getword
+                | Setword
+                | Getnib
+                | Setnib
+                | Rev
+                | Muxc
+                | Muxnc
+                | Muxz
+                | Muxnz
+                | Mul
+                | Muls
+                | Sca
+                | Scas
+                | Ones
+                | Nop
+                | Augs
+                | Augd
+                | Setq
+                | Setq2
+                | Altd
+                | Alts
+                | Altr
+                | Altb
+                | Alti
+                | Loc
+                | Locktry
+                | Waitx
+                | Cogid
+                | Getqx
+                | Getqy
+                | Qdiv
+                | Qmul
+                | Qfrac
+                | Qsqrt
+                | Qrotate
+                | Qvector
+                | Qlog
+                | Qexp
+                | Rep
+                | Skip
+                | Skipf
+                | Fltl
+                | Flth
+                | Modc
+                | Modz
+                | Modcz
+                | Wrc
+                | Wrnc
+                | Wrz
+                | Wrnz
+                | Rqpin
+                | Pollct1
+                | Pollct2
+                | Pollct3
+                | Pollse1
+                | Pollse2
+                | Pollse3
+                | Pollse4
+                | Jct1
+                | Jnct1
+                | Jse1
+                | Jnse1
+                | Getptr
+                | Rdfast
         )
     }
 
@@ -523,15 +652,52 @@ impl<P: PinBus> Machine<P> {
         use Op::*;
         matches!(
             op,
-            Mov | Rdlong | Rdbyte | Rdword | Rdlut | Getct | Getqx | Getqy | Rqpin | Rdpin | Neg
-                | Not | Abs | Decod | Encod | Loc | Cogid | Getptr | Ones | Rev | Rflong | Rfbyte
-                | Rfword | Getnib | Getbyte | Getword | Rdfast
+            Mov | Rdlong
+                | Rdbyte
+                | Rdword
+                | Rdlut
+                | Getct
+                | Getqx
+                | Getqy
+                | Rqpin
+                | Rdpin
+                | Neg
+                | Not
+                | Abs
+                | Decod
+                | Encod
+                | Loc
+                | Cogid
+                | Getptr
+                | Ones
+                | Rev
+                | Rflong
+                | Rfbyte
+                | Rfword
+                | Getnib
+                | Getbyte
+                | Getword
+                | Rdfast
         )
     }
 
     fn always_sets_flags(op: Op) -> bool {
         use Op::*;
-        matches!(op, Cmp | Cmps | Cmpr | Cmpm | Cmpx | Cmpsx | Test | Testn | Testb | Testbn | Testp | Testpn | Locktry)
+        matches!(
+            op,
+            Cmp | Cmps
+                | Cmpr
+                | Cmpm
+                | Cmpx
+                | Cmpsx
+                | Test
+                | Testn
+                | Testb
+                | Testbn
+                | Testp
+                | Testpn
+                | Locktry
+        )
     }
 
     /// After an instruction at `pc`: if it closed a short backward loop, judge
@@ -680,7 +846,6 @@ impl<P: PinBus> Machine<P> {
             .or_else(|| self.cogs.iter().map(|c| c.clocks).max())
             .unwrap_or(0)
     }
-
 
     /// The running cog with the smallest clock — the one whose turn it is.
     fn frontier_cog(&self) -> Option<usize> {
@@ -860,10 +1025,9 @@ impl<P: PinBus> Machine<P> {
         // This has to happen BEFORE the decode, not after it: a cancelled slot
         // is never decoded on silicon, and compilers use exactly that to step
         // over inline DATA. loadp2's flash stub opens with `SKIP` over its own
-        // header, whose first long is a checksum — a value that depends on the
-        // payload, so decoding it first traps on a different bogus instruction
-        // for every image, and the failure reads as a corrupt loader rather
-        // than a skipped word.
+        // header — a checksum long and a flag long — and decoding those first
+        // trapped on the checksum, whose value depends on the payload, so the
+        // failure looked like a bad instruction rather than a skipped word.
         //
         // A cancelled instruction still costs its time (this is `SKIP`, not
         // `SKIPF`) and still swallows any pending prefix, like a failed
@@ -1227,9 +1391,36 @@ impl<P: PinBus> Machine<P> {
                     self.cogs[cog].c = r.count_ones() & 1 != 0;
                 }
             }
+            Testn => {
+                let r = d & !s;
+                self.wz(cog, ins, r);
+                if ins.c {
+                    self.cogs[cog].c = r.count_ones() & 1 != 0;
+                }
+            }
 
             // ---- arithmetic
-            Add | Adds => {
+
+            // MUL/MULS are 16x16 -> 32. Silicon: D=$80000000, S=1 gives
+            // d=$00000000 (swp_mul_fa03c1e1, swp_muls_fa13c1e1) -- the upper
+            // half of each operand is discarded, not multiplied, so a full
+            // 32x32 product is wrong. Bit 20 is the MULS selector here, NOT a
+            // WC bit: `ins.c` is set on every MULS encoding, and C is left
+            // alone (all 16 probe cases enter C=0 and leave C=0).
+
+            // Same arm as MUL -- MULS is bit 20 of the same opcode, so both
+            // land here. See the comment on the Mul | Muls arm above: 16x16,
+            // C untouched (ins.c IS the MULS selector), Z = result==0 on WZ.
+            Mul | Muls => {
+                let r = if ins.op == Mul {
+                    (d & 0xFFFF).wrapping_mul(s & 0xFFFF)
+                } else {
+                    i32::from(d as i16).wrapping_mul(i32::from(s as i16)) as u32
+                };
+                self.set_reg(cog, ins.d, r);
+                self.wz(cog, ins, r);
+            }
+            Add => {
                 let (r, carry) = d.overflowing_add(s);
                 self.set_reg(cog, ins.d, r);
                 self.wz(cog, ins, r);
@@ -1237,7 +1428,23 @@ impl<P: PinBus> Machine<P> {
                     self.cogs[cog].c = carry;
                 }
             }
-            Sub | Subs => {
+            // The signed adds and subtracts do NOT report carry/borrow. C is
+            // the CORRECT SIGN of the true result — the sign the answer would
+            // have with infinite precision, which is the result's bit 31 only
+            // while there is no signed overflow. That is what makes ADDS/ADDSX
+            // chain: the top word's C is the sign of the whole multi-long
+            // value. Silicon: $80000000 + 1 = $80000001 with C=1, where an
+            // overflow flag would have said 0 and a carry flag would too.
+            Adds => {
+                let true_sum = i64::from(d as i32) + i64::from(s as i32);
+                let r = d.wrapping_add(s);
+                self.set_reg(cog, ins.d, r);
+                self.wz(cog, ins, r);
+                if ins.c {
+                    self.cogs[cog].c = true_sum < 0;
+                }
+            }
+            Sub => {
                 let (r, borrow) = d.overflowing_sub(s);
                 self.set_reg(cog, ins.d, r);
                 self.wz(cog, ins, r);
@@ -1245,12 +1452,28 @@ impl<P: PinBus> Machine<P> {
                     self.cogs[cog].c = borrow;
                 }
             }
-            Subr => {
-                let r = s.wrapping_sub(d);
+            Subs => {
+                let true_diff = i64::from(d as i32) - i64::from(s as i32);
+                let r = d.wrapping_sub(s);
                 self.set_reg(cog, ins.d, r);
                 self.wz(cog, ins, r);
+                if ins.c {
+                    self.cogs[cog].c = true_diff < 0;
+                }
             }
-            Addx | Addsx => {
+            // Reverse subtract is the UNSIGNED one (it pairs with `Sub`, not
+            // `Subs`), and it does write C: silicon gives 1 - $80000000 a
+            // borrow. This wrote no C at all, so every `subr wc` left the flag
+            // holding whatever the previous instruction put there.
+            Subr => {
+                let (r, borrow) = s.overflowing_sub(d);
+                self.set_reg(cog, ins.d, r);
+                self.wz(cog, ins, r);
+                if ins.c {
+                    self.cogs[cog].c = borrow;
+                }
+            }
+            Addx => {
                 let cin = self.cogs[cog].c as u32;
                 let (t, c1) = d.overflowing_add(s);
                 let (r, c2) = t.overflowing_add(cin);
@@ -1262,7 +1485,21 @@ impl<P: PinBus> Machine<P> {
                     self.cogs[cog].c = c1 || c2;
                 }
             }
-            Subx | Subsx => {
+            // As `Adds`: C is the true sign, not the carry out. Z still ANDs,
+            // so a multi-long compare accumulates across words.
+            Addsx => {
+                let cin = self.cogs[cog].c;
+                let true_sum = i64::from(d as i32) + i64::from(s as i32) + i64::from(cin);
+                let r = d.wrapping_add(s).wrapping_add(u32::from(cin));
+                self.set_reg(cog, ins.d, r);
+                if ins.z {
+                    self.cogs[cog].z = self.cogs[cog].z && r == 0;
+                }
+                if ins.c {
+                    self.cogs[cog].c = true_sum < 0;
+                }
+            }
+            Subx => {
                 let cin = self.cogs[cog].c as u32;
                 let (t, b1) = d.overflowing_sub(s);
                 let (r, b2) = t.overflowing_sub(cin);
@@ -1272,6 +1509,18 @@ impl<P: PinBus> Machine<P> {
                 }
                 if ins.c {
                     self.cogs[cog].c = b1 || b2;
+                }
+            }
+            Subsx => {
+                let cin = self.cogs[cog].c;
+                let true_diff = i64::from(d as i32) - i64::from(s as i32) - i64::from(cin);
+                let r = d.wrapping_sub(s).wrapping_sub(u32::from(cin));
+                self.set_reg(cog, ins.d, r);
+                if ins.z {
+                    self.cogs[cog].z = self.cogs[cog].z && r == 0;
+                }
+                if ins.c {
+                    self.cogs[cog].c = true_diff < 0;
                 }
             }
             Cmp => {
@@ -1309,6 +1558,15 @@ impl<P: PinBus> Machine<P> {
                     self.cogs[cog].c = full < 0;
                 }
             }
+
+            // SUMC/SUMNC/SUMZ/SUMNZ sum S into D, negating S when the named
+            // flag is set: SUMC subtracts on C=1, SUMNC on C=0, SUMZ on Z=1,
+            // SUMNZ on Z=0. They are the SIGNED sums, so -- exactly as with
+            // ADDS/SUBS -- C is the CORRECT SIGN of the true result, never a
+            // carry or a borrow. Silicon: $80000000 + 1 = $80000001 sets C
+            // (an unsigned carry would be 0), and $80000000 - 1 = $7FFFFFFF
+            // sets C too (the result's own bit 31 is 0). This arm wrote no C
+            // at all, so every `sumc wc` left the flag holding the last value.
             Sumc | Sumnc | Sumz | Sumnz => {
                 let take = match ins.op {
                     Sumc => self.cogs[cog].c,
@@ -1316,13 +1574,16 @@ impl<P: PinBus> Machine<P> {
                     Sumz => self.cogs[cog].z,
                     _ => !self.cogs[cog].z,
                 };
-                let r = if take {
-                    d.wrapping_sub(s)
+                let (r, true_result) = if take {
+                    (d.wrapping_sub(s), i64::from(d as i32) - i64::from(s as i32))
                 } else {
-                    d.wrapping_add(s)
+                    (d.wrapping_add(s), i64::from(d as i32) + i64::from(s as i32))
                 };
                 self.set_reg(cog, ins.d, r);
                 self.wz(cog, ins, r);
+                if ins.c {
+                    self.cogs[cog].c = true_result < 0;
+                }
             }
             Negc | Negnc | Negz | Negnz => {
                 let take = match ins.op {
@@ -1348,12 +1609,12 @@ impl<P: PinBus> Machine<P> {
             // soft-float rounding reads. Leaving C untouched here makes every
             // float the firmware formats come out wrong while the integer
             // program behaves perfectly -- the timestamp bug.
-            Shl | Rol => {
+            Shl | Sal | Rol => {
                 let n = s & 31;
-                let r = if ins.op == Shl {
-                    d.wrapping_shl(n)
-                } else {
+                let r = if ins.op == Rol {
                     d.rotate_left(n)
+                } else {
+                    d.wrapping_shl(n)
                 };
                 self.set_reg(cog, ins.d, r);
                 self.wz(cog, ins, r);
@@ -1424,11 +1685,19 @@ impl<P: PinBus> Machine<P> {
                 self.set_reg(cog, ins.d, r);
                 self.wz(cog, ins, r);
             }
+
             Signx => {
                 let sh = 31 - (s & 31);
                 let r = (((d << sh) as i32) >> sh) as u32;
                 self.set_reg(cog, ins.d, r);
                 self.wz(cog, ins, r);
+                // WC reports the sign that got extended, which is the
+                // result's MSB. Silicon: `signx $00000002,#1 wc` (enc
+                // $f777c001) returned $fffffffe with C=1, while the same
+                // encoding on $80000000 returned $00000000 with C=0.
+                if ins.c {
+                    self.cogs[cog].c = r >> 31 != 0;
+                }
             }
             Decod => {
                 let r = 1u32 << (s & 31);
@@ -1498,10 +1767,25 @@ impl<P: PinBus> Machine<P> {
                 let r = (d & !(0xFFu32 << sh)) | ((s & 0xFF) << sh);
                 self.set_reg(cog, ins.d, r);
             }
+
+            // Opcode %1001001 is shared: bit 20 picks GETWORD (1) over
+            // SETWORD (0) and bit 19 is N. Neither writes a flag.
+            // Silicon: enc $f93bc1e1 (bit20=1, N=1) on D=$80000000,
+            // S=$00000001 returned $00000000 -- word 1 of S -- not the
+            // $00010000 a SETWORD would have written.
+            //
+            // The generated S1_REG still routes that slot here: index 295
+            // says Setword where it must say Getword (see notes -- the
+            // real fix is in tools/gen_decoder.py's row-fill). This guard
+            // is correct on its own and stays correct once that lands.
             Setword => {
                 let n = ins.z as u32;
-                let sh = n * 16;
-                let r = (d & !(0xFFFFu32 << sh)) | ((s & 0xFFFF) << sh);
+                let r = if ins.c {
+                    (s >> (n * 16)) & 0xFFFF
+                } else {
+                    let sh = n * 16;
+                    (d & !(0xFFFFu32 << sh)) | ((s & 0xFFFF) << sh)
+                };
                 self.set_reg(cog, ins.d, r);
             }
             Movbyts => {
@@ -1514,24 +1798,74 @@ impl<P: PinBus> Machine<P> {
                 ]);
                 self.set_reg(cog, ins.d, r);
             }
+
             Rev => {
-                let r = d.reverse_bits();
-                self.set_reg(cog, ins.d, r);
+                // Silicon reverses all 32 bits of D: $80000000 -> $00000001
+                // and $00000002 -> $40000000 (enc $fd63c069).
+                //
+                // The L=1 spelling of misc sub-op $069 is NOT rev -- enc
+                // $fd67c069 left D at $80000000, untouched. We land here for
+                // it anyway because decode()'s `S4_MISC[key].or(S4_MISC[s])`
+                // fallback drops the L bit from the key; d_is_literal() then
+                // feeds in the D *field* ($1E0), and we wrote rev($1E0) =
+                // $07800000 straight over the register.
+                if !Self::d_is_literal(ins) {
+                    let r = d.reverse_bits();
+                    self.set_reg(cog, ins.d, r);
+                }
             }
+
+            // FGE clamps D up to S, unsigned. Silicon (P2-EVAL swp_fge_*):
+            // WC reports the comparison that would have replaced D — C = D < S
+            // unsigned — and only when WC is set: the same 2-vs-3 operands
+            // leave C=0 without WC (f303c1e1_b) and set C=1 with it
+            // (f313c1e1_b). The old arm computed the result but never wrote C.
+            Fge => {
+                let r = if d < s { s } else { d };
+                self.set_reg(cog, ins.d, r);
+                self.wz(cog, ins, r);
+                if ins.c {
+                    self.cogs[cog].c = d < s;
+                }
+            }
+
+            // FLE clamps D down to S, unsigned. Silicon (P2-EVAL swp_fle_*):
+            // C is the *opposite* sense from FGE — C = D > S — which
+            // swp_fle_f333c1e1 settles outright: D=80000000, S=1 is D<S false
+            // yet C came back 1. WC-gated; the old arm never wrote C at all.
             Fle => {
                 let r = if d > s { s } else { d };
                 self.set_reg(cog, ins.d, r);
                 self.wz(cog, ins, r);
+                if ins.c {
+                    self.cogs[cog].c = d > s;
+                }
             }
+
+            // FGES is FGE with a signed compare, and silicon says WC follows
+            // suit: swp_fges_f353c1e1 (D=80000000, S=1) returns D=1, C=1 where
+            // the unsigned FGE on the same operands returns D=80000000, C=0.
+            // WC-gated; the old arm wrote the right value but no C.
             Fges => {
                 let r = if (d as i32) < (s as i32) { s } else { d };
                 self.set_reg(cog, ins.d, r);
                 self.wz(cog, ins, r);
+                if ins.c {
+                    self.cogs[cog].c = (d as i32) < (s as i32);
+                }
             }
+
+            // FLES is FLE with a signed compare. Silicon (swp_fles_*): C keeps
+            // FLE's reversed sense, C = D > S signed — f373c1e1 (D=80000000,
+            // S=1) gives C=0 where the unsigned FLE gives C=1, and f377c001_b
+            // (D=2, #1) gives C=1. WC-gated; the old arm never wrote C.
             Fles => {
                 let r = if (d as i32) > (s as i32) { s } else { d };
                 self.set_reg(cog, ins.d, r);
                 self.wz(cog, ins, r);
+                if ins.c {
+                    self.cogs[cog].c = (d as i32) > (s as i32);
+                }
             }
             Muxc | Muxnc | Muxz | Muxnz => {
                 let bit = match ins.op {
@@ -1548,69 +1882,127 @@ impl<P: PinBus> Machine<P> {
                     self.cogs[cog].c = r.count_ones() & 1 != 0;
                 }
             }
+
+            // Same replacement arm as `bitc` — Bith | Bitl | Bitnot | Bitc |
+            // Bitnc | Bitz | Bitnz is one arm at lib.rs:1794. Paste it once.
+
+            // Same replacement arm as `bitc`; the Bitz slot is the OR row of
+            // the [22:21] logic selector.
+
+            // Same replacement arm as `bitc`; the Bitnz slot is TESTBN + OR.
+
+            // Same replacement arm as `bitc`; the Bitnot slot is TESTBN + XOR
+            // (and BITRND, unimplemented here, is the TESTB + XOR twin).
             Bith | Bitl | Bitnot | Bitc | Bitnc | Bitz | Bitnz => {
-                // Not one bit: a SPAN. S[4:0] is the base bit and S[9:5] a
-                // run length minus one, wrapping above 31 — the assembler
-                // spells it `ADDBITS`. flexspin leans on it hard: the method
-                // pointer tag `obj | (index << 20)` compiles to
-                // `BITH obj, #20 ADDBITS 4` when the index is 31, and a
-                // single-bit implementation quietly turns index 31 into
-                // index 1. The visible failure was three layers up: `mount()`
-                // dispatched into the cog manager's task table instead of the
-                // filesystem's `v_init`, and the SD card refused to mount on
-                // an image the card model served perfectly.
                 let base = s & 31;
                 let count = ((s >> 5) & 31) + 1;
                 let mut mask = 0u32;
                 for i in 0..count {
                     mask |= 1u32 << ((base + i) & 31);
                 }
-                let r = match ins.op {
-                    Bith => d | mask,
-                    Bitl => d & !mask,
-                    Bitnot => d ^ mask,
-                    // Write a flag into the span — `bitz flags,#spi_ok` is
-                    // how the ROM records that the flash checksum verified.
-                    Bitc | Bitnc => {
-                        if self.cogs[cog].c == (ins.op == Bitc) {
-                            d | mask
-                        } else {
-                            d & !mask
-                        }
+                let bit = (d >> base) & 1 != 0;
+                if ins.c != ins.z {
+                    // TESTB/TESTBN alias: D untouched. P2-EVAL
+                    // `bitnot_f4ebc1e1` (WZ only, D=80000000) came back
+                    // d=80000000 z=1 and `bitnot_f4efc001_b` (WZ only,
+                    // D=00000002) came back d=00000002 z=0 — a toggle would
+                    // have moved D in opposite directions in those two.
+                    let t = match ins.op {
+                        Bitl | Bitc | Bitz => bit,
+                        _ => !bit,
+                    };
+                    let cur = if ins.c {
+                        self.cogs[cog].c
+                    } else {
+                        self.cogs[cog].z
+                    };
+                    let v = match ins.op {
+                        Bitl | Bith => t,
+                        Bitc | Bitnc => cur && t,
+                        Bitz | Bitnz => cur || t,
+                        _ => cur ^ t,
+                    };
+                    if ins.c {
+                        self.cogs[cog].c = v;
+                    } else {
+                        self.cogs[cog].z = v;
                     }
-                    _ => {
-                        if self.cogs[cog].z == (ins.op == Bitz) {
-                            d | mask
-                        } else {
-                            d & !mask
+                } else {
+                    let r = match ins.op {
+                        Bith => d | mask,
+                        Bitl => d & !mask,
+                        Bitnot => d ^ mask,
+                        Bitc | Bitnc => {
+                            if self.cogs[cog].c == (ins.op == Bitc) {
+                                d | mask
+                            } else {
+                                d & !mask
+                            }
                         }
+                        _ => {
+                            if self.cogs[cog].z == (ins.op == Bitz) {
+                                d | mask
+                            } else {
+                                d & !mask
+                            }
+                        }
+                    };
+                    self.set_reg(cog, ins.d, r);
+                    if ins.c && ins.z {
+                        self.cogs[cog].c = bit;
+                        self.cogs[cog].z = bit;
                     }
-                };
-                self.set_reg(cog, ins.d, r);
-            }
-            Testb | Testbn => {
-                let set = (d >> (s & 31)) & 1 != 0;
-                let v = if ins.op == Testb { set } else { !set };
-                if ins.c {
-                    self.cogs[cog].c = v;
                 }
-                if ins.z {
-                    self.cogs[cog].z = v;
-                }
-            }
-            Wrz => {
-                let v = self.cogs[cog].z as u32;
-                self.set_reg(cog, ins.d, v);
-            }
-            Wrnz => {
-                let v = !self.cogs[cog].z as u32;
-                self.set_reg(cog, ins.d, v);
-            }
-            Wrc => {
-                let v = self.cogs[cog].c as u32;
-                self.set_reg(cog, ins.d, v);
             }
 
+            // Same replacement arm as `testb` — Testb | Testbn is one arm at
+            // lib.rs:1834. Paste it once.
+            Testb | Testbn => {
+                // WCZ on these two opcodes is the BIT write form, not a test.
+                // P2-EVAL `testbn_f43bc1e1` (BITH D,S WCZ, D=80000000) came
+                // back d=80000002 c=0 z=0: the span bit was SET and the flags
+                // carry the prior D[S[4:0]] un-inverted — a TESTBN reading
+                // would have written 1 to both.
+                let base = s & 31;
+                let bit = (d >> base) & 1 != 0;
+                if ins.c && ins.z {
+                    let count = ((s >> 5) & 31) + 1;
+                    let mut mask = 0u32;
+                    for i in 0..count {
+                        mask |= 1u32 << ((base + i) & 31);
+                    }
+                    let r = if ins.op == Testb { d & !mask } else { d | mask };
+                    self.set_reg(cog, ins.d, r);
+                    self.cogs[cog].c = bit;
+                    self.cogs[cog].z = bit;
+                } else {
+                    let v = if ins.op == Testb { bit } else { !bit };
+                    if ins.c {
+                        self.cogs[cog].c = v;
+                    }
+                    if ins.z {
+                        self.cogs[cog].z = v;
+                    }
+                }
+            }
+            // WRC/WRNC/WRZ/WRNZ put the flag (or its complement) into D as 0
+            // or 1 and touch NO flags of their own: with WZ set, silicon left
+            // Z clear on `wrc`'s 0 result, where a Z = (result == 0) would
+            // have set it. Bit 18 is the misc block's L bit, and with D taken
+            // as a literal silicon performs no register write at all -- this
+            // arm wrote D unconditionally and clobbered the register on half
+            // of the encodings the sweep covers.
+            Wrc | Wrnc | Wrz | Wrnz => {
+                let v = match ins.op {
+                    Wrc => self.cogs[cog].c,
+                    Wrnc => !self.cogs[cog].c,
+                    Wrz => self.cogs[cog].z,
+                    _ => !self.cogs[cog].z,
+                };
+                if !Self::d_is_literal(ins) {
+                    self.set_reg(cog, ins.d, v as u32);
+                }
+            }
             // ---- hub memory
             Rdlong | Rdbyte | Rdword => {
                 let scale = match ins.op {
@@ -1640,15 +2032,6 @@ impl<P: PinBus> Machine<P> {
                         // A block transfer cannot exceed the register file.
                         let n = count.min(COG_LONGS as u32 - 1);
                         self.check_hub(cog, s)?;
-                        if n == 1
-                            && std::env::var_os("P2CORE_DEBUG_XMIT").is_some()
-                            && (0..8).any(|i| self.rd_byte(s.wrapping_add(i)) == 0x95)
-                        {
-                            let b: Vec<String> = (0..8)
-                                .map(|i| format!("{:02X}", self.rd_byte(s.wrapping_add(i))))
-                                .collect();
-                            eprintln!("[2-long read] src=${s:05X} bytes={}", b.join(" "));
-                        }
                         for k in 0..=n {
                             let v = self.rd_long(s.wrapping_add(k.wrapping_mul(4)));
                             self.set_reg(cog, ins.d.wrapping_add(k as u16), v);
@@ -1664,6 +2047,19 @@ impl<P: PinBus> Machine<P> {
                 };
                 self.set_reg(cog, ins.d, v);
                 self.wz(cog, ins, v);
+                // WC takes the MSB of the *transfer*, not of the zero-extended
+                // register: silicon read $9C9C with WC and set C
+                // (`swp_rdword_faf3c1e1`), read $489C and cleared it
+                // (`swp_rdword_faf7c001`) -- bit 31 is 0 in both. WZ on its own
+                // leaves C alone (`swp_rdword_faebc1e1`, same $9C9C, C=0).
+                // RDBYTE and RDLONG follow the family rule: every WC case the
+                // corpus has for them reads one value ($9C, bit 7 set) and a
+                // long with bit 31 clear, so neither discriminates on its own.
+                // (The block paths above return first: a SETQ transfer writes
+                // no flags, which no golden case exercises either.)
+                if ins.c {
+                    self.cogs[cog].c = (v >> (scale * 8 - 1)) & 1 != 0;
+                }
             }
             Wrlong | Wrbyte | Wrword => {
                 let scale = match ins.op {
@@ -1690,7 +2086,11 @@ impl<P: PinBus> Machine<P> {
                             // fills. Copying from cog register 0 upward
                             // instead sprayed FCACHE contents over every
                             // memset-initialised struct at boot.
-                            let v = if ins.l { d } else { self.reg(cog, ins.d.wrapping_add(k as u16)) };
+                            let v = if ins.l {
+                                d
+                            } else {
+                                self.reg(cog, ins.d.wrapping_add(k as u16))
+                            };
                             let a = s.wrapping_add(k.wrapping_mul(4));
                             self.note_write(cog, a, v, 4);
                             self.wr_long(a, v);
@@ -1853,7 +2253,7 @@ impl<P: PinBus> Machine<P> {
             }
             // Load a 32-instruction cancellation pattern. Compilers emit this
             // to fold several short alternatives into one straight-line block
-            // and select between them at run time — which is why a stub whose
+            // and select between them at run time -- which is why a stub whose
             // very first instruction is `SKIP` does nothing recognisable
             // without it.
             Skip => {
@@ -2026,8 +2426,47 @@ impl<P: PinBus> Machine<P> {
                 let v = if ins.c { (ct >> 32) as u32 } else { ct as u32 };
                 self.set_reg(cog, ins.d, v);
             }
-            Addct1 => {
-                self.cogs[cog].ct1 = d.wrapping_add(s);
+
+            // Silicon writes D as well as arming the event: enc $fa63c1e1
+            // with D=$00000002,S=$00000003 read back D=$00000005, and
+            // $fa67c001 (S=#1) turned $80000000 into $80000001. Bits 20:19
+            // are the CT1/2/3 selector, not WC/WZ, so no flag is written.
+            // ADDCT2/ADDCT3 show the same D in the goldens and until now
+            // fell through to the Unimplemented trap; they share `ct1`'s
+            // deadline because JCT2/JCT3 already read that one field.
+
+            // ADDCT2/ADDCT3 WRITE D -- they do not merely arm a timer.
+            // Silicon: swp_addct2_fa6bc1e1 $80000000 + reg $1E1 (=1) -> d=80000001,
+            // ..._b 2 + 3 -> d=00000005, swp_addct3_fa77c001_b 2 + #1 -> d=00000003,
+            // with c/z unchanged in all 8 cases. Bits 20:19 are the CT1/CT2/CT3
+            // selector, not WC/WZ -- the decoder already spent them, so ins.z
+            // (ADDCT2) and ins.c (ADDCT3) read as set here and MUST be ignored.
+
+            // Covered by the same arm as ADDCT2 (paste once, not twice):
+            //
+            // ADDCT2/ADDCT3 WRITE D -- they do not merely arm a timer.
+            // Silicon: swp_addct3_fa73c1e1 $80000000 + reg $1E1 (=1) -> d=80000001,
+            // ..._b 2 + 3 -> d=00000005, swp_addct3_fa77c001_b 2 + #1 -> d=00000003,
+            // with c/z unchanged in all 8 cases. Bits 20:19 are the CT1/CT2/CT3
+            // selector, not WC/WZ -- the decoder already spent them, so ins.z
+            // (ADDCT2) and ins.c (ADDCT3) read as set here and MUST be ignored.
+            // ADDCT1/2/3 arm a deadline: D + S goes BOTH into the deadline
+            // register and back into D (silicon: din $80000000 + 1 leaves
+            // d=$80000001). Bits 20:19 select which of CT1/CT2/CT3 is armed
+            // rather than meaning WC/WZ, so these never touch the flags.
+            // Three deadline registers on silicon; only `ct1` is modelled
+            // here, so 2 and 3 alias onto it.
+            // TODO: give `Cog` real `ct2`/`ct3` fields and route each here.
+            //
+            // Addct1 must stay in this arm. It was briefly dropped while
+            // applying silicon-conformance patches, and the firmware stopped
+            // booting instantly -- `addct1` is how every timed loop in the
+            // firmware arms its next wake, so the whole image traps on the
+            // first one.
+            Addct1 | Addct2 | Addct3 => {
+                let v = d.wrapping_add(s);
+                self.set_reg(cog, ins.d, v);
+                self.cogs[cog].ct1 = v;
             }
             Waitct1 => {
                 let target = self.cogs[cog].ct1;
@@ -2254,6 +2693,358 @@ impl<P: PinBus> Machine<P> {
                 }
             }
 
+            // ROLNIB: D = {D[27:0], S.NIBBLE[N]} -- a *shift* left by a nibble,
+            // not a rotate. Silicon turned d=$80000000 s=$00000001 into
+            // $00000001, not $00000009 (swp_rolnib_f883c1e1). N rides in the
+            // instruction exactly as GETNIB's does (bit 21 plus the C/Z bits),
+            // so C/Z are index bits here, not WC/WZ, and no flag is written.
+            Rolnib => {
+                let n = (((word >> 21) & 1) << 2) | ((ins.c as u32) << 1) | ins.z as u32;
+                let r = (d << 4) | ((s >> (n * 4)) & 0xF);
+                self.set_reg(cog, ins.d, r);
+            }
+            // ROLBYTE: D = {D[23:0], S.BYTE[N]}. Shift, not rotate --
+            // d=$80000000 s=$00000001 gave $00000001, not $00000081
+            // (swp_rolbyte_f903c1e1). N is the C/Z pair, as in GETBYTE, so
+            // nothing here writes C or Z.
+            Rolbyte => {
+                let n = ((ins.c as u32) << 1) | ins.z as u32;
+                let r = (d << 8) | ((s >> (n * 8)) & 0xFF);
+                self.set_reg(cog, ins.d, r);
+            }
+            // ROLWORD: D = {D[15:0], S.WORD[N]}, N = the Z bit alone (as
+            // GETWORD). Shift, not rotate: d=$80000000 s=$00000001 gave
+            // $00000001 (swp_rolword_f943c1e1). No flag is written.
+            Rolword => {
+                let n = ins.z as u32;
+                let r = (d << 16) | ((s >> (n * 16)) & 0xFFFF);
+                self.set_reg(cog, ins.d, r);
+            }
+            // RCZR/RCZL shift C and Z into D -- right: {C, Z, D[31:2]},
+            // left: {D[29:0], C, Z} -- and WC/WZ report the bits that fell out
+            // of the OLD D, not a property of the result. Silicon: `rczr d wcz`
+            // with d=$00000002 gave d=0 with C=1 (old D[1]) and Z=0, so WZ here
+            // must NOT go through `wz()` (swp_rczr_fd7bc06a_b); `rczl d wc` with
+            // d=$80000000 gave C=1 (old D[31], swp_rczl_fd73c06b). With L=1
+            // (bit 18, D a literal) the chip wrote nothing at all -- d, C and Z
+            // all came back untouched (swp_rczr_fd67c06a and the other seven
+            // L=1 cases per op).
+
+            // (Same arm as RCZR -- see the `Rczr | Rczl` match arm above; the
+            // RCZL half is `(D << 2) | (C << 1) | Z`, with C = old D[31] and
+            // Z = old D[30], proven by swp_rczl_fd73c06b / fd7bc06b, and the
+            // whole instruction suppressed when bit 18 (L) is set.)
+            Rczr | Rczl => {
+                if !Self::d_is_literal(ins) {
+                    let (c0, z0) = (self.cogs[cog].c, self.cogs[cog].z);
+                    let (r, nc, nz) = match ins.op {
+                        Rczr => (
+                            ((c0 as u32) << 31) | ((z0 as u32) << 30) | (d >> 2),
+                            (d >> 1) & 1 != 0,
+                            d & 1 != 0,
+                        ),
+                        _ => (
+                            (d << 2) | ((c0 as u32) << 1) | z0 as u32,
+                            (d >> 31) & 1 != 0,
+                            (d >> 30) & 1 != 0,
+                        ),
+                    };
+                    self.set_reg(cog, ins.d, r);
+                    if ins.c {
+                        self.cogs[cog].c = nc;
+                    }
+                    if ins.z {
+                        self.cogs[cog].z = nz;
+                    }
+                }
+            }
+            // CMPR is the *reverse* unsigned compare -- it pairs with `Subr`,
+            // not with `Cmp`. Silicon: $80000000 vs #1 gives C=1 where plain
+            // `cmp` gives C=0, and 2 vs S=3 gives C=0 where `cmp` gives C=1,
+            // so C is the borrow of (S - D). D and S are left alone.
+            Cmpr => {
+                let (r, borrow) = s.overflowing_sub(d);
+                self.wz(cog, ins, r);
+                if ins.c {
+                    self.cogs[cog].c = borrow;
+                }
+            }
+            // CMPSUB subtracts only when it fits. Silicon: $80000000 - #1 =
+            // $7FFFFFFF with C=1, while D=2 against S=3 is left at 2 with C=0.
+            // The WC=0 cases show the same D, so the writeback is NOT gated on
+            // WC -- only the flag is.
+            Cmpsub => {
+                let fits = d >= s;
+                let r = if fits { d.wrapping_sub(s) } else { d };
+                self.set_reg(cog, ins.d, r);
+                self.wz(cog, ins, d.wrapping_sub(s));
+                if ins.c {
+                    self.cogs[cog].c = fits;
+                }
+            }
+            // INCMOD counts 0..S and wraps to 0 at S. Every probe case had
+            // D != S, so silicon only shows the plain path -- $80000000 ->
+            // $80000001 and 2 -> 3, both with C=0 -- and the +1 is the same
+            // whatever S is, which rules out D+S. The D == S wrap (D = 0,
+            // C = 1) is documented but NOT covered by the golden set.
+            Incmod => {
+                let wrap = d == s;
+                let r = if wrap { 0 } else { d.wrapping_add(1) };
+                self.set_reg(cog, ins.d, r);
+                self.wz(cog, ins, r);
+                if ins.c {
+                    self.cogs[cog].c = wrap;
+                }
+            }
+            // DECMOD counts S..0 and reloads S at 0. Every probe case had
+            // D != 0, so silicon only shows the plain path -- $80000000 ->
+            // $7FFFFFFF and 2 -> 1, both with C=0 -- and the -1 is the same
+            // whatever S is, which rules out D-S. The D == 0 wrap (D = S,
+            // C = 1) is documented but NOT covered by the golden set.
+            Decmod => {
+                let wrap = d == 0;
+                let r = if wrap { s } else { d.wrapping_sub(1) };
+                self.set_reg(cog, ins.d, r);
+                self.wz(cog, ins, r);
+                if ins.c {
+                    self.cogs[cog].c = wrap;
+                }
+            }
+            // CRCBIT/CRCNIB share opcode %1001110 with DECOD/BMASK: the WC and
+            // WZ bits select the sub-op (00/01/10/11), so neither can write a
+            // flag -- and `self.wz` must NOT be called here, since `ins.z` is 1
+            // for every CRCNIB. C is an input: the bit fed into the CRC.
+            Crcbit => {
+                let feed = self.cogs[cog].c ^ (d & 1 != 0);
+                let mut r = d >> 1;
+                if feed {
+                    r ^= s;
+                }
+                self.set_reg(cog, ins.d, r);
+            }
+            Crcnib => {
+                // Four CRCBIT steps in one instruction, taking the data bit
+                // from the top of Q (MSB first) instead of C. Silicon:
+                // $F9DFC001 with D=2, S=#1 gave $00000001 -- `(D >> 1) ^ S`;
+                // xor-BEFORE-shift would have produced 0, so the shift comes
+                // first. Q was 0 in every probe case ($80000000 -> $08000000 is
+                // four bare shifts), so the Q path is the documented behaviour,
+                // not silicon-derived. NOTE: `setq` is a one-shot prefix here,
+                // so `setq / crcnib / crcnib` sees Q=0 on the second one --
+                // that needs a persistent `q` in `Cog`.
+                let mut r = d;
+                let mut q = self.cogs[cog].setq.unwrap_or(0);
+                for _ in 0..4 {
+                    let feed = (q >> 31 != 0) ^ (r & 1 != 0);
+                    r >>= 1;
+                    if feed {
+                        r ^= s;
+                    }
+                    q = q.rotate_left(1);
+                }
+                self.set_reg(cog, ins.d, r);
+            }
+            // SCA/SCAS do not write D: silicon returned D and S untouched in
+            // all 16 probe cases. Bit 20 is opcode here (SCA vs SCAS), not WC,
+            // so C is never written -- WZ is the only flag. Z is the zero flag
+            // of the UNSHIFTED 16x16 product, not of the scaled result:
+            // `sca $00000002,#3 wz` left Z=0 (fa2bc1e1_b) even though
+            // (2*3)>>16 is 0, while $80000000 -- low word 0 -- gave Z=1
+            // (fa2bc1e1). The scaled value is meant to substitute the NEXT
+            // instruction's S operand; alt_s carries a register address, not a
+            // value, so that half is not modelled, and no probe case can see
+            // it (every product in the corpus is 0).
+
+            // (same arm as SCA -- see the Sca | Scas arm above; SCAS is
+            // selected by bit 20 of the encoding, and only the signed multiply
+            // differs. Silicon: fa3bc1e1 (WZ, D=$80000000 so the low word is 0)
+            // -> z=1, D untouched; fa3bc1e1_b (D=$2, S=$3) -> z=0 even though
+            // the scaled result would be 0, so Z is the unshifted product.)
+            Sca | Scas => {
+                let prod = if ins.op == Sca {
+                    (d & 0xFFFF).wrapping_mul(s & 0xFFFF)
+                } else {
+                    (d as u16 as i16 as i32).wrapping_mul(s as u16 as i16 as i32) as u32
+                };
+                self.wz(cog, ins, prod);
+            }
+            // BITRND shares opcode %0100110 with `TESTB D,{#}S XORC/XORZ`:
+            // silicon picks between them with the C and Z bits, and the
+            // decoder hands both here (TESTB_BY_OP covers only %0100000 and
+            // %0100001). C != Z is the TESTB -- the flag takes flag ^ D[S[4:0]]
+            // and D is NOT written (f4d7c001_b: bit 1 of $00000002 is 1, so
+            // C = 0^1 = 1 and D stayed $00000002). C == Z is the bit write over
+            // the ADDBITS span, and with WCZ both flags take the ORIGINAL base
+            // bit, not the bit just written (f4dfc001_b: $00000002 -> $00000000
+            // with C=Z=1). The written bit is silicon's RND: the eight C == Z
+            // goldens captured real entropy (RND came out 1,0,1,0,0,1,1,0, the
+            // same encoding drawing both), so they can never be replayed -- we
+            // stir the cog's own clock counter, arbitrary but repeatable.
+            Bitrnd => {
+                let base = s & 31;
+                let prior = (d >> base) & 1 != 0;
+                if ins.c != ins.z {
+                    if ins.c {
+                        self.cogs[cog].c ^= prior;
+                    } else {
+                        self.cogs[cog].z ^= prior;
+                    }
+                } else {
+                    let count = ((s >> 5) & 31) + 1;
+                    let mut rnd = self.cogs[cog].clocks ^ 0x2545_F491_4F6C_DD1D;
+                    let mut r = d;
+                    for i in 0..count {
+                        rnd = rnd
+                            .wrapping_mul(0x5851_F42D_4C95_7F2D)
+                            .wrapping_add(0x1405_7B7E_F767_814F);
+                        let m = 1u32 << ((base + i) & 31);
+                        if (rnd >> 33) & 1 != 0 {
+                            r |= m;
+                        } else {
+                            r &= !m;
+                        }
+                    }
+                    self.set_reg(cog, ins.d, r);
+                    if ins.c {
+                        self.cogs[cog].c = prior;
+                    }
+                    if ins.z {
+                        self.cogs[cog].z = prior;
+                    }
+                }
+            }
+            // ADDPIX/MULPIX/BLNPIX/MIXPIX share one opcode: bits 20/19 SELECT
+            // the op, so they are never WC/WZ here -- do not call self.wz().
+            // Silicon: $80000000 + $00000001 -> $80000001, $02 + $03 -> $05,
+            // with C and Z left exactly as they were.
+            Addpix => {
+                let db = d.to_le_bytes();
+                let sb = s.to_le_bytes();
+                let mut out = [0u8; 4];
+                for (i, o) in out.iter_mut().enumerate() {
+                    // Independent byte lanes, saturating at $FF.
+                    *o = ((db[i] as u32) + (sb[i] as u32)).min(0xFF) as u8;
+                }
+                self.set_reg(cog, ins.d, u32::from_le_bytes(out));
+            }
+            // MULPIX: per-byte multiply with $FF = 1.0. The P2-EVAL returns $01
+            // for BOTH $02*$03 and $02*$01, so the product rounds up -- the
+            // textbook (a*b+128)>>8 / div-255 forms return 0 there. "+$FF then
+            // >>8" is also exactly what makes $FF*$FF come back as $FF.
+            // Lanes are independent: $80000000 * $00000001 is 0, not the
+            // 32-bit product. C/Z are opcode bits here, so no flag write.
+            Mulpix => {
+                let db = d.to_le_bytes();
+                let sb = s.to_le_bytes();
+                let mut out = [0u8; 4];
+                for (i, o) in out.iter_mut().enumerate() {
+                    *o = (((db[i] as u32) * (sb[i] as u32) + 0xFF) >> 8) as u8;
+                }
+                self.set_reg(cog, ins.d, u32::from_le_bytes(out));
+            }
+            // RGBSQZ squeezes the 8:8:8 value in D[31:8] into 5:6:5 in D[15:0]
+            // and clears D[31:16]; D[7:0] is discarded ($80000000 -> $00008000,
+            // $00000002 -> 0). This encoding has no WC/WZ form and silicon
+            // agrees: with WZ set, a zero result still leaves Z clear. With the
+            // L bit set (D a literal) silicon writes nothing at all -- the
+            // fd67/fd6f/fd77/fd7f cases return D untouched.
+            Rgbsqz => {
+                if !Self::d_is_literal(ins) {
+                    let r = ((d >> 27) & 0x1F) << 11 | ((d >> 18) & 0x3F) << 5 | ((d >> 11) & 0x1F);
+                    self.set_reg(cog, ins.d, r);
+                }
+            }
+            // RGBEXP expands the 5:6:5 value in D[15:0] into 8:8:8 in D[31:8]
+            // with D[7:0] cleared ($00000002 -> $00001000, i.e. B=%00010 became
+            // $10; $80000000 -> 0 because D[15:0] is empty). Like RGBSQZ it has
+            // no WC/WZ form -- with WZ set, a zero result still leaves Z clear
+            // -- and with the L bit set silicon writes nothing at all.
+            Rgbexp => {
+                if !Self::d_is_literal(ins) {
+                    let (r5, g6, b5) = ((d >> 11) & 0x1F, (d >> 5) & 0x3F, d & 0x1F);
+                    let r = ((r5 << 3 | r5 >> 2) << 24)
+                        | ((g6 << 2 | g6 >> 4) << 16)
+                        | ((b5 << 3 | b5 >> 2) << 8);
+                    self.set_reg(cog, ins.d, r);
+                }
+            }
+            // SPLITB/SPLITW de-interleave D; MERGEB/MERGEW are their inverses.
+            // P2-EVAL: $00000002 -> splitb $00000100, mergeb $00000010,
+            // splitw $00010000, mergew $00000004, and $80000000 is a fixed
+            // point for all four. Bits 20/19 look like WC/WZ but are inert
+            // here: with bit 20 set and a result whose MSB *and* parity are 1
+            // the chip still reported C=0, and the same misc block's
+            // RGBSQZ/RGBEXP report Z=0 on a zero result with bit 19 set.
+            // With L (bit 18) set, D is a literal and nothing is written back.
+            Splitb | Mergeb | Splitw | Mergew => {
+                if !Self::d_is_literal(ins) {
+                    // The bit at MSB-position p lands at MSB-position
+                    // (p % m) * (32 / m) + p / m.
+                    let m: u32 = match ins.op {
+                        Splitb => 4,
+                        Mergeb => 8,
+                        Splitw => 2,
+                        _ => 16,
+                    };
+                    let mut r = 0u32;
+                    for p in 0..32u32 {
+                        if (d >> (31 - p)) & 1 != 0 {
+                            r |= 1 << (31 - ((p % m) * (32 / m) + p / m));
+                        }
+                    }
+                    self.set_reg(cog, ins.d, r);
+                }
+            }
+            // MUXNITS/MUXNIBS merge S into D under a mask built from S itself:
+            // each 2-bit (NITS) or 4-bit (NIBS) field of S that is non-zero
+            // selects S there, the rest keep D. Bits 20/19 are opcode bits
+            // (%1001111 CZ picks MUXNITS/MUXNIBS/MUXQ/MOVBYTS), NOT WC/WZ, so
+            // nothing here may touch the flags -- silicon returned C=0 Z=0 on
+            // every case, and ins.z is set for MUXNIBS by the selector alone.
+            // P2-EVAL: D=$00000002 S=$00000003 -> $00000003, but D=$00000002
+            // S=#1 -> $00000001, which is what rules out a plain OR.
+            Muxnits | Muxnibs => {
+                let w: usize = if ins.op == Muxnits { 2 } else { 4 };
+                let field = (1u32 << w) - 1;
+                let mut mask = 0u32;
+                for i in (0..32usize).step_by(w) {
+                    if (s >> i) & field != 0 {
+                        mask |= field << i;
+                    }
+                }
+                let r = (d & !mask) | (s & mask);
+                self.set_reg(cog, ins.d, r);
+            }
+            // ---- LUT RAM
+            Rdlut => {
+                // Silicon: D = LUT[S[8:0]]. The probe read $1E0 back from LUT
+                // 0 and 1 -- exactly what its own `wrlut #$1E0,#0/#1` cases
+                // (the L=1 encodings) had stored there in an EARLIER capture
+                // session: a cog's LUT survives COGSTOP/COGINIT and reset, and
+                // the sweep runs RDLUT (op $55) before WRLUT (op $61). So the
+                // goldens prove RDLUT reads what WRLUT wrote, but only across
+                // sessions -- a fresh Machine starts with a zeroed LUT.
+                // S is a plain 9-bit LUT address, NOT a PTR expression:
+                // $100..$1FF are real LUT addresses, and the boot ROM's
+                // circular receive buffer (`rdlut x,tail`) uses the register
+                // form.
+                let v = self.cogs[cog].lut[(s as usize) & (LUT_LONGS - 1)];
+                self.set_reg(cog, ins.d, v);
+                self.wz(cog, ins, v);
+                if ins.c {
+                    self.cogs[cog].c = v >> 31 != 0;
+                }
+            }
+            Wrlut => {
+                // Silicon: LUT[S[8:0]] = D and nothing else moves -- d, s, C
+                // and Z all came back unchanged for every encoding. WRLUT's
+                // bit 20 is an opcode selector (WYPIN is the C=0 half of
+                // opcode $61), so no WRLUT encoding can ask for WC; bit 19 is
+                // L, and the L=1 cases stored the literal $1E0 -- which the
+                // RDLUT cases then read back.
+                let at = (s as usize) & (LUT_LONGS - 1);
+                self.cogs[cog].lut[at] = d;
+            }
             _ => {
                 self.cogs[cog].running = false;
                 return Err(Trap::Unimplemented {

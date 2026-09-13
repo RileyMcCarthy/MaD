@@ -62,7 +62,8 @@ fn a_pin_poll_is_not_carried_past_the_slice_by_a_parked_peer() {
     m.cogs[1].clocks = PARKED_AHEAD;
 
     let deadline_us = 1_000u64;
-    m.step_until(deadline_us).expect("the poll loop never traps");
+    m.step_until(deadline_us)
+        .expect("the poll loop never traps");
 
     let deadline_clocks = deadline_us * HZ / 1_000_000;
     assert!(
@@ -86,7 +87,8 @@ fn a_pin_poll_still_fast_forwards_to_the_slice_deadline() {
     m.cogs[1].clocks = PARKED_AHEAD;
 
     let deadline_us = 1_000u64;
-    m.step_until(deadline_us).expect("the poll loop never traps");
+    m.step_until(deadline_us)
+        .expect("the poll loop never traps");
 
     let deadline_clocks = deadline_us * HZ / 1_000_000;
     assert_eq!(

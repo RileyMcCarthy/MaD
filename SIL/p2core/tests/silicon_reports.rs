@@ -64,3 +64,8 @@ fn locks_match_silicon() {
 fn cogs_match_silicon() {
     replay("cogs");
 }
+
+#[test]
+fn timed_match_silicon() {
+    replay("timed");
+}
