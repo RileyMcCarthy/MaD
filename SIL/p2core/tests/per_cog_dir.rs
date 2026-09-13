@@ -89,11 +89,10 @@ fn driving_a_pin_high_never_publishes_a_low_first() {
     // A real unconditional `drvh` out of the firmware image. Its pin comes
     // from a register, so the test just puts the pin number there — no need to
     // hand-assemble an encoding.
-    let img = std::fs::read(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../Firmware/MaDCore/.pio/build/propeller2_debug/program"
-    ))
-    .expect("firmware image");
+    let Some(img) = firmware_image() else {
+        skip_no_image();
+        return;
+    };
     let drvh = (0x400..img.len() - 4)
         .step_by(4)
         .map(|a| u32::from_le_bytes([img[a], img[a + 1], img[a + 2], img[a + 3]]))
@@ -114,7 +113,11 @@ fn driving_a_pin_high_never_publishes_a_low_first() {
     impl PinBus for Spy {
         fn dir_out_changed(&mut self, _cog: usize, reg: u16, value: u32) {
             // Whichever bank this pin lives in.
-            let (dreg, oreg) = if self.pin < 32 { (0x1FA, 0x1FC) } else { (0x1FB, 0x1FD) };
+            let (dreg, oreg) = if self.pin < 32 {
+                (0x1FA, 0x1FC)
+            } else {
+                (0x1FB, 0x1FD)
+            };
             if reg == dreg {
                 self.dir = value;
             } else if reg == oreg {
@@ -133,7 +136,13 @@ fn driving_a_pin_high_never_publishes_a_low_first() {
 
     let pin = PIN as u8;
 
-    let mut m = Machine::new(&[0u8; 4096], Spy { pin, ..Spy::default() });
+    let mut m = Machine::new(
+        &[0u8; 4096],
+        Spy {
+            pin,
+            ..Spy::default()
+        },
+    );
     m.cogs[0].running = true;
     m.cogs[0].regs[usize::from(d_reg)] = PIN;
     m.hub[0x400..0x404].copy_from_slice(&drvh.to_le_bytes());
@@ -149,5 +158,30 @@ fn driving_a_pin_high_never_publishes_a_low_first() {
         m.pins.seen.last(),
         Some(&Some(true)),
         "and it ends up driven high"
+    );
+}
+
+/// The shipped `propeller2_debug` image, if it has been built.
+///
+/// These tests source a real instruction word out of it rather than inventing
+/// an encoding, so a missing image means the test cannot assert what it claims
+/// to. `make test` builds the image (see the `p2image` target), so this is
+/// absent only in a job that does not, e.g. CI's `sil-rust`.
+fn firmware_image() -> Option<Vec<u8>> {
+    std::fs::read(image_path()).ok()
+}
+
+fn image_path() -> std::path::PathBuf {
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../Firmware/MaDCore/.pio/build/propeller2_debug/program")
+}
+
+/// Loud on purpose: a skipped ISS test that reads as one grey line in a green
+/// run is how this suite once reported 54 passed while asserting nothing.
+fn skip_no_image() {
+    eprintln!(
+        "\n*** SKIPPED: {} needs the P2 image at\n***   {}\n*** Build it with `make p2image` (or `cd ../Firmware/MaDCore && pio run -e propeller2_debug`).\n*** This test asserted NOTHING.\n",
+        module_path!(),
+        image_path().display()
     );
 }
