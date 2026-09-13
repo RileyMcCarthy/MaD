@@ -120,7 +120,7 @@ describe('fault / restriction label lockstep', () => {
       covers: 'src/domain/stateLabels.ts#FAULT_HINTS',
       given: 'a processor-core fault on the machine controller',
       then: 'a processor-core fault hint says a processor core in the machine controller stopped running',
-      why: 'the operator must not read this as motor cogging',
+      why: 'COG is a Propeller 2 processor core; the live-screen tooltip is what the operator reads',
     },
     () => {
       const hint = FAULT_HINTS[FaultedReason.COG].toLowerCase();
@@ -135,7 +135,7 @@ describe('fault / restriction label lockstep', () => {
       id: 'labels.tooltip-is-longer-than-the-badge',
       covers: 'src/domain/stateLabels.ts#FAULT_HINTS',
       given: 'every fault and restriction the live screen can badge',
-      then: 'every fault and restriction tooltip is a full-sentence explanation, longer than the short badge name',
+      then: 'every fault and restriction tooltip is longer than the short badge name',
     },
     () => {
       const faults = Object.values(FaultedReason).filter((v): v is number => typeof v === 'number');
