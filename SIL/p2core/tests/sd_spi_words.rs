@@ -513,7 +513,11 @@ fn a_pure_self_loop_is_fast_forwarded_while_a_side_effecting_one_is_not() {
     // `jmp #$` — a one-instruction infinite loop, pure and non-carrying. This
     // is the verified encoding from the ROM-boot payload.
     let jmp_self = 0xFD9F_FFFCu32;
-    assert_eq!(decode(jmp_self).map(|i| i.op), Some(Op::Jmp), "jmp #$ encoding");
+    assert_eq!(
+        decode(jmp_self).map(|i| i.op),
+        Some(Op::Jmp),
+        "jmp #$ encoding"
+    );
 
     let mut m = Machine::new(&[0u8; 4096], NullPins);
     m.cogs[0].running = true;
@@ -523,7 +527,10 @@ fn a_pure_self_loop_is_fast_forwarded_while_a_side_effecting_one_is_not() {
     // instructions, a fast-forwarded poller a handful — but virtual time must
     // still reach the deadline so timers and peers stay consistent.
     m.step_until(10_000).expect("runs");
-    assert!(m.now_us() >= 10_000, "virtual time still reaches the deadline");
+    assert!(
+        m.now_us() >= 10_000,
+        "virtual time still reaches the deadline"
+    );
     assert!(
         m.cogs[0].instructions < 5_000,
         "a pure self-loop must be fast-forwarded; ran {}",
@@ -532,11 +539,10 @@ fn a_pure_self_loop_is_fast_forwarded_while_a_side_effecting_one_is_not() {
 
     // A loop that writes hub memory every iteration is a side effect, so it is
     // never fast-forwarded: `wrlong r0, r1 ; jmp #$-8`, taken from real words.
-    let img = std::fs::read(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../Firmware/MaDCore/.pio/build/propeller2_debug/program"
-    ))
-    .expect("firmware image");
+    let Some(img) = firmware_image() else {
+        skip_no_image();
+        return;
+    };
     let word_at = |a: usize| u32::from_le_bytes([img[a], img[a + 1], img[a + 2], img[a + 3]]);
     let find = |op: Op| -> u32 {
         (0x400..img.len() - 4)
@@ -548,7 +554,11 @@ fn a_pure_self_loop_is_fast_forwarded_while_a_side_effecting_one_is_not() {
     let wrlong = find(Op::Wrlong);
     // jmp #$-8 (back over the wrlong): relative, S = -2 instructions.
     let jmp_back = (find(Op::Jmp) & 0xFFF0_0000) | (1 << 20) | 0x1_FFFE;
-    assert_eq!(decode(jmp_back).map(|i| i.op), Some(Op::Jmp), "jmp back encoding");
+    assert_eq!(
+        decode(jmp_back).map(|i| i.op),
+        Some(Op::Jmp),
+        "jmp back encoding"
+    );
 
     let mut m = Machine::new(&[0u8; 65536], NullPins);
     m.cogs[0].running = true;
@@ -560,5 +570,30 @@ fn a_pure_self_loop_is_fast_forwarded_while_a_side_effecting_one_is_not() {
         m.cogs[0].instructions > 20_000,
         "a hub-writing loop is a side effect and must run every iteration; ran {}",
         m.cogs[0].instructions
+    );
+}
+
+/// The shipped `propeller2_debug` image, if it has been built.
+///
+/// These tests source a real instruction word out of it rather than inventing
+/// an encoding, so a missing image means the test cannot assert what it claims
+/// to. `make test` builds the image (see the `p2image` target), so this is
+/// absent only in a job that does not, e.g. CI's `sil-rust`.
+fn firmware_image() -> Option<Vec<u8>> {
+    std::fs::read(image_path()).ok()
+}
+
+fn image_path() -> std::path::PathBuf {
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../Firmware/MaDCore/.pio/build/propeller2_debug/program")
+}
+
+/// Loud on purpose: a skipped ISS test that reads as one grey line in a green
+/// run is how this suite once reported 54 passed while asserting nothing.
+fn skip_no_image() {
+    eprintln!(
+        "\n*** SKIPPED: {} needs the P2 image at\n***   {}\n*** Build it with `make p2image` (or `cd ../Firmware/MaDCore && pio run -e propeller2_debug`).\n*** This test asserted NOTHING.\n",
+        module_path!(),
+        image_path().display()
     );
 }
