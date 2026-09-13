@@ -264,7 +264,7 @@ Running `generate.py` validates the schema and **fails with a non-zero exit** on
 ./Protocol/ProtoEmb/examples/verify.sh
 ```
 
-Generates the thermostat example to C/Rust/TS, compiles (`cc -std=c11 -Wall -Wextra`), runs the Rust `--test` round-trip, `tsc --noEmit --strict` typechecks, and asserts **byte-identical** hex across all three (`verify.sh:18-60`). This script is **not wired into CI** (see §11e); run it manually whenever you touch a schema feature or a template — it's the regression guard for the C==Rust==TS contract.
+Generates the thermostat example to C/Rust/TS, compiles (`cc -std=c11 -Wall -Wextra`), runs the Rust `--test` round-trip, `tsc --noEmit --strict` typechecks, and asserts **byte-identical** hex across all three (`verify.sh:18-60`). **`protoemb-pin-ci` runs `make verify`** (this script) on a ProtoEmb pin bump. Run it locally whenever you touch a schema feature or a template. Everyday Protocol PRs also run `protoemb-ci` (`make test`) and `protocol-codegen` (C/TS/Rust generated twice, byte-identical).
 
 ### c. Downstream compilation must still pass
 
@@ -278,12 +278,21 @@ The generator targets Python ≥ 3.9 (`core/pyproject.toml`) with only `pyyaml` 
 
 ### e. What CI actually does for `Protocol/**` changes
 
-CI is `.github/workflows/ci.yml`. A **Protocol-only** change triggers exactly one job — `wasm-control-ci` (gated on the `Protocol/**` path filter, `ci.yml:48-50`). That job:
-- runs `cargo test` in `Protocol/ProtoEmb/runtime` (`ci.yml:79-81`),
-- **regenerates** the protocol bindings for the WASM control app (`npm run generate:proto`, `ci.yml:84-87`), then
-- runs `npm run verify` (typecheck + lint + tests + build, `ci.yml:88-89`).
+CI is `.github/workflows/ci.yml`. The `changes` job path filter `protocol:` is `Protocol/**` plus `.gitmodules`. That **also** sets `wasm_control` and `sil` (both include `Protocol/**`), so a Protocol-only PR is **not** a one-job change. It runs:
 
-It does **not** run `verify.sh`, and it does **not** diff the regenerated output against the committed generated files (no in-sync assertion). Note also that the `build-firmware` / `build-software` / `sil-tests` jobs are gated on `Software/**` / `Firmware/**` only (`ci.yml:5-17`, `:94-96`), so a Protocol-only commit does **not** exercise the firmware C codegen or the SIL Playwright suite in CI — run those locally.
+| Job | What |
+|---|---|
+| `wasm-control-ci` | wasm-pack, `npm run generate:proto`, `npm run verify`, diagnostics e2e, schema↔domain lockstep (M12) |
+| `protoemb-ci` | `make test` in ProtoEmb (generator pytest + C/Rust/TS wire conformance + framing/runtime `cargo test`) |
+| `protocol-codegen` | generate C/TS/Rust **twice**, `diff` for byte-reproducibility |
+| `sil-rust` | `make protocol` + `libfirmware.a` + fmt/clippy/`cargo test` |
+| `embsim-ci` | pinned embsim workspace tests |
+| `firmware-unit-tests` | `pio test -e native_test` (regenerates C via the PlatformIO pre-hook) |
+| `control-e2e-sil` | full Control ↔ SIL e2e (unpaced `make e2e-emulator`) — **gates** |
+
+Generated files are **gitignored** (`Firmware/MaDCore/src/Generated/`, `Software/Control/src/protocol/generated/`, `Protocol/rust/src/generated/`). `protocol-codegen` guards generator determinism, not committed-file drift — do not expect a “generated files out of date” diff.
+
+A **ProtoEmb gitlink** move additionally runs `protoemb-pin-ci`: `make verify` (`examples/verify.sh`), ruff, clippy (native + wasm32), wasm-pack, cargo-deny, pip-audit, MSRV.
 
 ---
 
@@ -297,4 +306,4 @@ It does **not** run `verify.sh`, and it does **not** diff the regenerated output
 - [ ] Breaking change → `protocol_version` bumped.
 - [ ] Ran all three `generate.py` commands — each printed "Schema validation passed".
 - [ ] Ran `verify.sh`; firmware builds (`native_emulator`/`native_test`), `cargo build` (SIL), `tsc`/lint (desktop) pass.
-- [ ] Regenerated files committed alongside the YAML (CI won't catch drift); no hand-edits to generated code.
+- [ ] Did **not** hand-edit generated code (it is gitignored; CI regenerates). No need to commit `Generated/` / `generated/` trees.

@@ -5,6 +5,8 @@ import {
   TestProfile,
   TestRunEntry,
   generateTestGcode,
+  parseSampleProfileJson,
+  sampleProfileNameFromFile,
 } from '@/domain';
 import { dataStore } from '@/storage/DataStore';
 import { deviceClient } from '@/device/session';
@@ -111,10 +113,10 @@ export default function TestRunner({ onChanged }: TestRunnerProps) {
     e.target.value = '';
     if (!file || !dataStore.connected) return;
     try {
-      const profile = JSON.parse(await file.text());
+      const profile = parseSampleProfileJson(await file.text());
       const entry: SampleProfileEntry = {
         id: crypto.randomUUID(),
-        name: file.name.replace(/\.sp$/i, '') || 'imported',
+        name: sampleProfileNameFromFile(file.name),
         createdAt: new Date().toISOString(),
         profile,
       };

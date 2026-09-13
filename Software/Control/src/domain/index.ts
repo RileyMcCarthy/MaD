@@ -6,3 +6,4 @@ export * from './testProfile';
 export * from './analysis';
 export * from './exportCsv';
 export * from './stateLabels';
+export * from './profileFiles';

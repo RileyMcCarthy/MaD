@@ -82,9 +82,9 @@ jobs:
               - 'Protocol/ProtoEmb'
               - '.gitmodules'
 
-  # Offline gate for the frontend-only Web Serial + WASM control app: Rust unit
-  # tests for the protocol core, then build wasm + generated codec, then the app
-  # verify gate (typecheck + eslint + vitest + production build).
+  # Offline gate for the frontend-only Web Serial + WASM control app: build
+  # wasm + generated codec, then the app verify gate (typecheck + eslint +
+  # vitest + production build). protoemb-runtime unit tests live in protoemb-ci.
   wasm-control-ci:
     needs: changes
     if: needs.changes.outputs.wasm_control == 'true'
@@ -113,9 +113,9 @@ jobs:
         run: pip install -r ../../Protocol/ProtoEmb/core/requirements.txt
       - name: Install libudev (serialport build dependency on Linux)
         run: sudo apt-get update && sudo apt-get install -y libudev-dev pkg-config
-      - name: Cargo test (protoemb-runtime)
-        working-directory: Protocol/ProtoEmb/runtime
-        run: cargo test
+      # protoemb-runtime `cargo test` lives in `protoemb-ci` (`make test`).
+      # Control-only PRs still compile the crate via wasm-pack below; they do
+      # not change the runtime sources.
       - name: Install dependencies
         run: npm ci
       - name: Build wasm + generate protocol bindings
@@ -571,8 +571,8 @@ jobs:
             exit 1
           fi
           echo "Codegen succeeded and is byte-reproducible."
-      - name: Schema ↔ domain mapping lockstep (M12)
-        run: python3 Protocol/scripts/check_schema_domain_lockstep.py
+      # M12 schema↔domain lockstep lives in `wasm-control-ci` (Protocol/**
+      # already trips that job, and Control-only mapping.ts edits must too).
 
   # BLOCKING. Ruff lint of the PlatformIO SCons hooks; config in ruff.toml
   # (mirrors docs/coding-guidelines/python.md). The ProtoEmb generator is

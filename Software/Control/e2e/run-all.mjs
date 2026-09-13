@@ -479,6 +479,61 @@ async function awaitRest(page, { stillMm = 0.02, stableTicks = 4, pollMs = 250, 
   throw new Error(`the axis never came to rest within ${timeoutMs}ms (last position ${last})`);
 }
 
+/** Status-bar `Responding` means a sample arrived recently — independent of host speed. */
+async function awaitResponding(page, { timeoutMs = DEVICE_WAIT_MS } = {}) {
+  const resp = page.getByTestId('responding');
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const t = (await resp.textContent()) || '';
+    if (t.includes('Responding') && !t.includes('Not')) return;
+    await page.waitForTimeout(150);
+  }
+  throw new Error('device never started responding (no sample stream)');
+}
+
+async function readoutNum(page, label) {
+  return parseFloat(
+    await page.locator('.readout', { hasText: label }).locator('.value').first().innerText(),
+  );
+}
+
+async function awaitReadoutNear(page, label, target, { eps = 1, timeoutMs = DEVICE_WAIT_MS } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  let last = NaN;
+  while (Date.now() < deadline) {
+    last = await readoutNum(page, label);
+    if (Number.isFinite(last) && Math.abs(last - target) <= eps) return last;
+    await page.waitForTimeout(120);
+  }
+  throw new Error(`${label} never reached ${target}±${eps} (last ${last})`);
+}
+
+/**
+ * Reconnect after `__silDropLink()`. The bridge can still hold the PTY for a
+ * beat of wall time; retry the click until `.dot.connected` lands rather than
+ * sleeping a guessed 1.2 s.
+ */
+async function clickReconnect(page, { timeoutMs = DEVICE_WAIT_MS } = {}) {
+  const btn = page.getByTestId('reconnect');
+  await btn.waitFor({ timeout: timeoutMs });
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await page.locator('.dot.connected').count()) return;
+    try {
+      await btn.click({ timeout: 2000 });
+    } catch {
+      /* button not ready, or a previous click already started the session */
+    }
+    try {
+      await page.locator('.dot.connected').waitFor({ timeout: 2000 });
+      return;
+    } catch {
+      /* PTY still held — retry */
+    }
+  }
+  throw new Error('reconnect never restored .dot.connected');
+}
+
 async function prepareManualControl(page) {
   await page.goto(`${APP_URL}#/live`);
   await page.getByRole('button', { name: /Home/ }).waitFor({ timeout: DEVICE_WAIT_MS });
@@ -517,7 +572,7 @@ async function zeroLength(page) {
     p = await pos();
   }
   await page.getByRole('button', { name: 'Zero length' }).click();
-  await page.waitForTimeout(800);
+  await awaitReadoutNear(page, 'Sample Position', 0, { eps: 1 });
   return p;
 }
 
@@ -588,14 +643,9 @@ const scenarios = [
       try {
         await connectToSil(page);
         await page.goto(`${APP_URL}#/live`);
-        const force = page.locator('.readout', { hasText: 'Machine Force' }).locator('.value');
-        let populated = false;
-        for (let i = 0; i < 40 && !populated; i++) {
-          const t = (await force.textContent())?.trim() || '';
-          if (/^-?\d/.test(t)) populated = true;
-          else await page.waitForTimeout(250);
-        }
-        assert(populated, 'live readout never populated');
+        await awaitResponding(page);
+        const forceText = (await page.locator('.readout', { hasText: 'Machine Force' }).locator('.value').textContent())?.trim() || '';
+        assert(/^-?\d/.test(forceText), `live readout never populated (got ${forceText})`);
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
       } finally {
         await browser.close();
@@ -660,14 +710,7 @@ const scenarios = [
         await page.getByTestId('connect-granted').first().click();
         await page.locator('.dot.connected').waitFor({ timeout: DEVICE_WAIT_MS });
         // B4: responding indicator turns to "Responding" once samples flow.
-        const resp = page.getByTestId('responding');
-        let ok = false;
-        for (let i = 0; i < Math.ceil(DEVICE_WAIT_MS / 250) && !ok; i++) {
-          if (((await resp.textContent()) || '').includes('Responding') &&
-              !((await resp.textContent()) || '').includes('Not')) ok = true;
-          else await page.waitForTimeout(250);
-        }
-        assert(ok, 'responding indicator never turned to Responding');
+        await awaitResponding(page);
         // K1: the firmware version appears in the status bar once read.
         await page.locator('.statusbar').getByText(/fw /).waitFor({ timeout: DEVICE_WAIT_MS });
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
@@ -953,8 +996,14 @@ const scenarios = [
           mimeType: 'application/json',
           buffer: Buffer.from(mp),
         });
-        await page.waitForTimeout(300);
-        const nameVal = await fieldInput(motionPanel, 'Name').first().inputValue();
+        const nameField = fieldInput(motionPanel, 'Name').first();
+        const importDeadline = Date.now() + DEVICE_WAIT_MS;
+        let nameVal = '';
+        while (Date.now() < importDeadline) {
+          nameVal = await nameField.inputValue();
+          if (nameVal === 'Imported-MP') break;
+          await page.waitForTimeout(100);
+        }
         assert(nameVal === 'Imported-MP', `import did not populate name: ${nameVal}`);
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
       } finally {
@@ -1024,7 +1073,7 @@ const scenarios = [
       try {
         await connectToSil(page);
         await chooseDataFolder(page);
-        await page.waitForTimeout(2500); // let samples flow (gauge capture)
+        await awaitResponding(page);
         const PEAK_MM = 15;
         await seedProfiles(page, {
           sample: { serial: 'Life-Sample', maxForce: 500, maxVelocity: 25, maxDisplacement: 100, sampleWidth: 4, sampleThickness: 1.5 },
@@ -1072,13 +1121,13 @@ const scenarios = [
       try {
         await connectToSil(page);
         await chooseDataFolder(page);
-        await page.waitForTimeout(2500);
+        await awaitResponding(page);
         // Zero the gauge length so sample displacement starts at 0 — prior scenarios
         // may leave the gantry past the 8 mm limit, which would trip the limit instantly
         // (sub-1 s test → the 1 s testRunning poll misses it → no completion detected).
         await page.goto(`${APP_URL}#/live`);
         await page.getByRole('button', { name: 'Zero length' }).click();
-        await page.waitForTimeout(800);
+        await awaitReadoutNear(page, 'Sample Position', 0, { eps: 1 });
         const LIMIT_MM = 8;
         // Command a 20mm move but cap the sample at 8mm — the firmware should stop
         // the test when sample displacement exceeds maxDisplacement. Use a slow
@@ -1120,7 +1169,7 @@ const scenarios = [
       try {
         await connectToSil(page);
         await chooseDataFolder(page);
-        await page.waitForTimeout(2500);
+        await awaitResponding(page);
         await zeroLength(page);
         // Set A: (+8,-8)×2 = 32mm; Set B: (+5,-5)×1 = 10mm → 42mm total commanded path.
         await seedProfiles(page, {
@@ -1156,7 +1205,7 @@ const scenarios = [
       try {
         await connectToSil(page);
         await chooseDataFolder(page);
-        await page.waitForTimeout(2500);
+        await awaitResponding(page);
         await zeroLength(page);
         await seedProfiles(page, {
           sample: { serial: `Wave-${wf.id}`, maxForce: 500, maxVelocity: 60, maxDisplacement: wf.maxDisp, sampleWidth: 4, sampleThickness: 1.5 },
@@ -1184,7 +1233,7 @@ const scenarios = [
       try {
         await connectToSil(page);
         await chooseDataFolder(page);
-        await page.waitForTimeout(2500);
+        await awaitResponding(page);
         await zeroLength(page);
         // +10@10 (1s) + dwell 2000ms + -10@10 (1s) ≈ 4s total (vs ~2s with no dwell).
         await seedProfiles(page, {
@@ -1214,7 +1263,7 @@ const scenarios = [
       try {
         await connectToSil(page);
         await chooseDataFolder(page);
-        await page.waitForTimeout(2500);
+        await awaitResponding(page);
         await zeroLength(page);
         // A long, slow move so the test is comfortably running when we disable.
         await seedProfiles(page, {
@@ -1245,7 +1294,7 @@ const scenarios = [
       try {
         await connectToSil(page);
         await chooseDataFolder(page);
-        await page.waitForTimeout(2500);
+        await awaitResponding(page);
         await zeroLength(page);
         const V = 5; // mm/s
         await seedProfiles(page, {
@@ -1282,7 +1331,7 @@ const scenarios = [
       try {
         await connectToSil(page);
         await chooseDataFolder(page);
-        await page.waitForTimeout(2500);
+        await awaitResponding(page);
         const V = 10; // mm/s
         // ≥2 s so the 1 Hz testRunning poll cannot miss completion (see G-limit).
         const DIST_MM = 20;
@@ -1339,7 +1388,6 @@ const scenarios = [
         await connectToSil(page);
         await prepareManualControl(page);
         const posValue = () => page.locator('.readout', { hasText: 'Machine Position' }).locator('.value').first().innerText();
-        await page.waitForTimeout(1000);
         const before = parseFloat(await posValue());
         await page.locator('label.field', { hasText: 'Jog (mm)' }).locator('input').fill('5');
         const setWas = parseFloat(
@@ -1365,7 +1413,6 @@ const scenarios = [
         await prepareManualControl(page);
         const num = async (label) =>
           parseFloat(await page.locator('.readout', { hasText: label }).locator('.value').first().innerText());
-        await page.waitForTimeout(800);
         const start = await num('Machine Position');
         await page.locator('label.field', { hasText: 'Jog (mm)' }).locator('input').fill(String(cell.mm));
         await page.locator('label.field', { hasText: 'Speed (mm/s)' }).locator('input').fill(String(cell.speed));
@@ -1400,16 +1447,7 @@ const scenarios = [
           // eslint-disable-next-line no-await-in-loop
           await page.locator('.dot.connected').waitFor({ timeout: DEVICE_WAIT_MS });
         }
-        // Still responding after the tour.
-        const resp = page.getByTestId('responding');
-        let ok = false;
-        const respDeadline = Date.now() + DEVICE_WAIT_MS;
-        while (!ok && Date.now() < respDeadline) {
-          const t = (await resp.textContent()) || '';
-          if (t.includes('Responding') && !t.includes('Not')) ok = true;
-          else await page.waitForTimeout(250);
-        }
-        assert(ok, 'not responding after navigation tour');
+        await awaitResponding(page);
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
       } finally { await browser.close(); }
     },
@@ -1422,25 +1460,13 @@ const scenarios = [
       try {
         await connectToSil(page);
         await page.goto(`${APP_URL}#/live`);
-        await page.waitForTimeout(1500); // session fully up, samples flowing
+        await awaitResponding(page);
         // Sever the link (simulates USB unplug / emulator death).
         await page.evaluate(() => window.__silDropLink());
         await page.locator('.dot.disconnected').waitFor({ timeout: DEVICE_WAIT_MS });
         await page.locator('.toast').getByText(/disconnected/i).first().waitFor({ timeout: DEVICE_WAIT_MS });
-        const reconnectBtn = page.getByTestId('reconnect');
-        await reconnectBtn.waitFor({ timeout: DEVICE_WAIT_MS });
-        await page.waitForTimeout(1200); // let the bridge release the PTY reader
-        await reconnectBtn.click();
-        await page.locator('.dot.connected').waitFor({ timeout: DEVICE_WAIT_MS });
-        // Samples flow again → responding.
-        const resp = page.getByTestId('responding');
-        let ok = false;
-        for (let i = 0; i < Math.ceil(DEVICE_WAIT_MS / 250) && !ok; i++) {
-          const t = (await resp.textContent()) || '';
-          if (t.includes('Responding') && !t.includes('Not')) ok = true;
-          else await page.waitForTimeout(250);
-        }
-        assert(ok, 'not responding after reconnect');
+        await clickReconnect(page);
+        await awaitResponding(page);
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
       } finally { await browser.close(); }
     },
@@ -1454,19 +1480,11 @@ const scenarios = [
       try {
         await connectToSil(page);
         await page.goto(`${APP_URL}#/live`);
-        await page.waitForTimeout(1200);
+        await awaitResponding(page);
         await page.evaluate(() => window.__silDropLink());
         await page.locator('.dot.disconnected').waitFor({ timeout: DEVICE_WAIT_MS });
-        await page.getByTestId('reconnect').click();
-        await page.locator('.dot.connected').waitFor({ timeout: DEVICE_WAIT_MS });
-        const resp = page.getByTestId('responding');
-        let ok = false;
-        for (let i = 0; i < Math.ceil(DEVICE_WAIT_MS / 250) && !ok; i++) {
-          const t = (await resp.textContent()) || '';
-          if (t.includes('Responding') && !t.includes('Not')) ok = true;
-          else await page.waitForTimeout(250);
-        }
-        assert(ok, 'not responding after idle reconnect');
+        await clickReconnect(page);
+        await awaitResponding(page);
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
       } finally { await browser.close(); }
     },
@@ -1479,7 +1497,7 @@ const scenarios = [
       try {
         await connectToSil(page);
         await chooseDataFolder(page);
-        await page.waitForTimeout(2000);
+        await awaitResponding(page);
         await zeroLength(page);
         await seedProfiles(page, {
           sample: { serial: 'M11-Drop', maxForce: 500, maxVelocity: 25, maxDisplacement: 100, sampleWidth: 4, sampleThickness: 1.5 },
@@ -1495,10 +1513,7 @@ const scenarios = [
         // Drop link while test is running — UI must not throw; machine keeps going.
         await page.evaluate(() => window.__silDropLink());
         await page.locator('.dot.disconnected').waitFor({ timeout: DEVICE_WAIT_MS });
-        // Run status should remain running on host (machine autonomous) or at least not crash.
-        await page.waitForTimeout(500);
-        await page.getByTestId('reconnect').click();
-        await page.locator('.dot.connected').waitFor({ timeout: DEVICE_WAIT_MS });
+        await clickReconnect(page);
         // Eventually idle again (test completes or was aborted by prior state).
         await page.getByText(/Test: (running|idle)/).waitFor({ timeout: RUN_WAIT_MS });
         // Do not hand the next scenario a machine that is still mid-test. This
@@ -1520,7 +1535,6 @@ const scenarios = [
         await prepareManualControl(page);
         const num = async (label) =>
           parseFloat(await page.locator('.readout', { hasText: label }).locator('.value').first().innerText());
-        await page.waitForTimeout(1000);
         const startPos = await num('Machine Position');
         await page.locator('label.field', { hasText: 'Jog (mm)' }).locator('input').fill('4');
         await page.locator('label.field', { hasText: 'Speed (mm/s)' }).locator('input').fill('20');
@@ -1559,7 +1573,7 @@ const scenarios = [
         const zeroedPos = await num('Sample Position');
         assert(Math.abs(zeroedPos) < 1, `zero length → sample position ≈ 0 (got ${zeroedPos})`);
         await page.getByRole('button', { name: 'Zero force' }).click();
-        await page.waitForTimeout(800);
+        await awaitReadoutNear(page, 'Sample Force', 0, { eps: 1 });
         const zeroedForce = await num('Sample Force');
         assert(Math.abs(zeroedForce) < 1, `zero force → sample force ≈ 0 (got ${zeroedForce})`);
         // M9 cells: mid-slack force≈0, past-slack force>min.
@@ -1604,7 +1618,7 @@ const scenarios = [
         const num = async (label) =>
           parseFloat(await page.locator('.readout', { hasText: label }).locator('.value').first().innerText());
         await page.getByRole('button', { name: 'Zero force' }).click();
-        await page.waitForTimeout(600);
+        await awaitReadoutNear(page, 'Sample Force', 0, { eps: 1 });
         const jog = page.locator('label.field', { hasText: 'Jog (mm)' }).locator('input');
         // Two jogs of half if past slack so we don't overshoot from boot.
         const half = cell.jogMm / 2;
@@ -1635,7 +1649,7 @@ const scenarios = [
       try {
         await connectToSil(page);
         await chooseDataFolder(page);
-        await page.waitForTimeout(2500);
+        await awaitResponding(page);
         await zeroLength(page);
         const TARGET_MM = 7.503;
         await seedProfiles(page, {
@@ -1680,7 +1694,7 @@ const scenarios = [
       try {
         await connectToSil(page);
         await chooseDataFolder(page);
-        await page.waitForTimeout(2500);
+        await awaitResponding(page);
         await zeroLength(page);
         await seedProfiles(page, {
           sample: { serial: 'BB-Sample', maxForce: 500, maxVelocity: 25, maxDisplacement: 100, sampleWidth: 4, sampleThickness: 1.5 },
@@ -1715,7 +1729,7 @@ const scenarios = [
       try {
         await connectToSil(page);
         await chooseDataFolder(page);
-        await page.waitForTimeout(2500);
+        await awaitResponding(page);
         await zeroLength(page);
         await seedProfiles(page, {
           sample: { serial: 'TM-Restart', maxForce: 500, maxVelocity: 25, maxDisplacement: 100, sampleWidth: 4, sampleThickness: 1.5 },
@@ -1759,7 +1773,7 @@ const scenarios = [
       try {
         await connectToSil(page);
         await chooseDataFolder(page);
-        await page.waitForTimeout(2500);
+        await awaitResponding(page);
         await zeroLength(page);
         // Idle baseline: jog enabled.
         await prepareManualControl(page);
