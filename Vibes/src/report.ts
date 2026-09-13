@@ -59,24 +59,28 @@ function cite(b: Behaviour): string {
 function oneTest(group: readonly Behaviour[], withFile = true): string {
   const first = group[0];
   if (first === undefined) return '';
-  const lines = [`- given ${first.given}`];
+
+  // The condition leads, marked, and each expectation is its own nested bullet.
+  // Running them together as sibling lines left no way to see where one
+  // expectation ended and the next began, or which half was the condition.
+  const lines = [`- **When** ${first.given}`];
   for (const b of group) {
     const h = handle(b);
-    lines.push(`  **${b.then}**${h === '' ? '' : ` ${h}`}`);
-    if (b.why !== undefined) lines.push(`  because ${b.why}`);
+    lines.push(`  - ${b.then}${h === '' ? '' : ` \`${h}\``}`);
+    if (b.why !== undefined) lines.push(`    <sub>${b.why}</sub>`);
   }
-  /* The TypeScript binding names a test after its CONDITION, so `#test` there
-   * is the `given` line again inside a code span. Where the runner's name only
-   * repeats what the row already shows, the file alone is what a reader needs;
-   * where it is a real symbol, as in C and Rust, it stays. */
+
+  // Where the reader is, once, in small type: the test this came from and the
+  // code it covers. Under a file heading the path is already on screen.
   const echoes = first.test.includes(first.given) || group.some((b) => first.test.includes(b.then));
-  // Under a file heading the path is already on screen; only the runner's own
-  // name for the test adds anything, and only when it is a symbol.
-  if (withFile) lines.push(`  \`${first.file}${echoes ? '' : `#${first.test}`}\``);
-  else if (!echoes) lines.push(`  \`${first.test}\``);
-  if (first.covers !== undefined) lines.push(`  \`${first.covers}\``);
-  return lines.join(BR);
+  const where: string[] = [];
+  if (withFile) where.push(`\`${first.file}\``);
+  if (!echoes) where.push(`\`${first.test}\``);
+  if (first.covers !== undefined) where.push(`\`${first.covers}\``);
+  if (where.length > 0) lines.push(`  <sub>${where.join(' · ')}</sub>`);
+  return lines.join('\n');
 }
+
 
 /** Expectations, in ledger order, grouped by the test they belong to. */
 function byTest(items: readonly Behaviour[]): Behaviour[][] {
@@ -147,7 +151,7 @@ export function renderMarkdown(d: LedgerDiff, opts: RenderOptions = {}): string 
       'These behaviours passed before this change and do not now. The claim did not change; the code did.',
       '',
     );
-    for (const s of d.broken) out.push(`- **${s.after.then}**${BR}  ${cite(s.after)}\`${s.after.id}\` · was ${s.before}, now ${s.after.status}`);
+    for (const s of d.broken) out.push(`- **When** ${s.after.given}\n  - ${s.after.then} \`${handle(s.after)}\`\n  <sub>was ${s.before}, now ${s.after.status} · \`${s.after.file}\`</sub>`);
     out.push('');
   }
 
@@ -157,14 +161,14 @@ export function renderMarkdown(d: LedgerDiff, opts: RenderOptions = {}): string 
       'These were in the ledger, and this run learned NOTHING about them: their whole suite declared no behaviours, usually a build or startup failure. This is not removal and it is not a pass.',
       '',
     );
-    for (const b of d.unreported) out.push(`- **${b.then}**${BR}  ${cite(b)}\`${b.id}\` · suite \`${b.suite}\``);
+    for (const b of d.unreported) out.push(`- **When** ${b.given}\n  - ${b.then} \`${handle(b)}\`\n  <sub>suite \`${b.suite}\` · \`${b.file}\`</sub>`);
     out.push('');
   }
 
   if (d.removed.length > 0) {
     out.push('## No longer claimed', '');
     out.push('Nothing in the repo asserts these any more.', '');
-    for (const b of d.removed) out.push(`- **${b.then}**${BR}  ${cite(b)}\`${b.id}\` · was in \`${b.file}\``);
+    for (const b of d.removed) out.push(`- **When** ${b.given}\n  - ${b.then} \`${handle(b)}\`\n  <sub>was in \`${b.file}\`</sub>`);
     out.push('');
   }
 
