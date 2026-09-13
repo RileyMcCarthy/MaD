@@ -116,6 +116,35 @@ public RTL, that listing is the strongest instruction-level oracle available
 offline. Regenerate the golden with `python3 tools/gen_golden.py` after a
 firmware rebuild (it is gitignored — a build artifact).
 
+Against **silicon**, `hwtest/oracle.c` is a FlexC program that prints one
+architectural observation per line (the cases that have already produced
+correct-looking ISS behaviour while being wrong: shift C, ENCOD C, GETBYTE,
+unaligned hub, tagged pointers, SETQ fill length, REP, QMUL/QDIV, an FCACHE
+sum, soft-float). `--capture` RAM-loads it onto a P2-EVAL and writes
+`hwtest/golden/` — the exact binary plus the console. `cargo test -p p2core --test silicon_oracle` then interprets that binary in
+p2core and demands the same report, so a later ISS change is compared against
+hardware without the board.
+
+```
+python3 tools/hw_compare.py --capture    # P2-EVAL; writes hwtest/golden/
+python3 tools/hw_compare.py --iss        # p2core vs committed golden
+cargo test -p p2core --test silicon_oracle
+```
+
+See [`hwtest/README.md`](hwtest/README.md).
+
+A **one-instruction probe** (`hwtest/probe.c`) queries the P2-EVAL over USB
+(`GO` / `DUMP`) and saves `{in, encoding, out}` records. Locks and two-cog
+mailboxes are report programs next to `oracle.c`. Parse/diff is
+`embsim-cpu-oracle`; this crate remains the P2 ISS.
+
+```
+python3 tools/hw_probe.py --capture
+python3 tools/hw_compare.py --capture --prog locks
+python3 tools/hw_compare.py --capture --prog cogs
+cargo test -p p2core --test silicon_probe --test silicon_oracle --test silicon_reports
+```
+
 The remaining tests are acceptance checks against the real image, each pinning a
 milestone: boot to `_main`, `clkfreq`, the startup banner, the SD failure path,
 soft-float sanity, tagged-pointer masking, multi-cog bring-up, a fully

@@ -6,11 +6,19 @@
  **********************************************************************/
 #include <stdlib.h>
 #include <stdio.h>
+#ifdef __FLEXC__
+#include <errno.h>
+#endif
 #include <string.h>
 #include "HAL_lock.h"
 #include "dev_nvram.h"
 #include "IO_Debug.h"
 #include "HW_pins.h"
+#include "IO_SDCard.h"
+
+/* The `%s` of the PROFILE channel's name format — the file stays exactly
+ * where the boot read expects it, `/sd/profile.bin`. */
+#define DEV_NVRAM_PROFILE_FILE_NAME "profile"
 #ifdef __FLEXC__
 #include "propeller2.h"
 #endif
@@ -170,6 +178,9 @@ dev_nvram_state_t dev_nvram_private_getDesiredState(dev_nvram_channel_t channel)
     return desiredState;
 }
 
+/* Defined below; used by the exit actions. */
+static void dev_nvram_private_releaseSDPinsOnly(void);
+
 void dev_nvram_private_exitAction(dev_nvram_channel_t channel)
 {
     switch (dev_nvram_data.channels[channel].state)
@@ -181,13 +192,22 @@ void dev_nvram_private_exitAction(dev_nvram_channel_t channel)
         {
             fclose(dev_nvram_data.channels[channel].file);
         }
+        /* Hand the pins back after every session, not only after the boot
+         * load: a profile save drives the SD from this cog (and does so even
+         * when it fails), and leaving the pins claimed is what pins CS high
+         * for the LOGGER cog. Pins only — never the mount. */
+        dev_nvram_private_releaseSDPinsOnly();
         break;
     case DEV_NVRAM_READY:
         break;
     case DEV_NVRAM_WRITE:
+        /* On the P2 the save ran on the LOGGER cog, so there is no file here
+         * and no pins to hand back. Both are still needed on the native
+         * build, where this cog did open the file itself. */
         if (dev_nvram_data.channels[channel].file != NULL)
         {
             fclose(dev_nvram_data.channels[channel].file);
+            dev_nvram_data.channels[channel].file = NULL;
         }
         break;
     case DEV_NVRAM_ERROR:
@@ -215,7 +235,10 @@ void dev_nvram_private_entryAction(dev_nvram_channel_t channel)
         {
             dev_nvram_data.channels[channel].file = NULL;
             dev_nvram_data.channels[channel].hasError = true;
-            DEBUG_ERROR("failed to mount sd card: %s\n", SD_CARD_MOUNT_PATH);
+            // FlexC errno is non-standard (toolchain errno.h): 4=ENOENT,
+            // 5=EBADF, 6=EACCES, 7=ENOMEM, 11=EMFILE, 12=EIO. EBUSY means the
+            // SD pins were already claimed by an earlier open.
+            DEBUG_ERROR("failed to mount sd card: %s (errno %d)\n", SD_CARD_MOUNT_PATH, errno);
         }
 #elif defined(__EMULATION__)
         // Native/emulation build: just open the file directly (no SD mount needed)
@@ -248,7 +271,39 @@ void dev_nvram_private_entryAction(dev_nvram_channel_t channel)
         // Open file
         break;
     case DEV_NVRAM_WRITE:
+#ifdef __FLEXC__
+        /* Hand the save to the LOGGER cog instead of opening the file here.
+         * The SD is that cog's: it mounted the card and owns the SPI pins, and
+         * the P2 ORs pin DIR/OUT across all 8 cogs, so a save issued from MAIN
+         * drives those same pins and leaves CS high for the rest of the boot
+         * (every later LOGGER open then fails errno 12). open+push+close is
+         * the same sequence the G-code upload uses; the LOGGER cog opens the
+         * file, drains the queue into it and closes it, on its own cog.
+         * Pushing BEFORE the close request matters: the channel only leaves
+         * ACTIVE when the queue is empty, so the data is always in hand
+         * before the close can take effect. */
+        dev_nvram_data.channels[channel].file = NULL;
+        IO_SDCard_clearLastOpenFailed(IO_SDCARD_CHANNEL_PROFILE);
+        bool staged = IO_SDCard_open(IO_SDCARD_CHANNEL_PROFILE, DEV_NVRAM_PROFILE_FILE_NAME,
+                                     IO_SDCARD_MODE_WRITE);
+        if (staged)
+        {
+            staged = IO_SDCard_push(IO_SDCARD_CHANNEL_PROFILE,
+                                    dev_nvram_data.channels[channel].request.data,
+                                    dev_nvram_config.channels[channel].size);
+            /* Close unconditionally once the channel is open — short-circuiting
+             * past this on a failed push would leave the channel open forever
+             * and the next save could never reopen it. */
+            staged = IO_SDCard_close(IO_SDCARD_CHANNEL_PROFILE) && staged;
+        }
+        if (!staged)
+        {
+            DEBUG_ERROR("%s", "profile save: the LOGGER channel refused the request\n");
+            dev_nvram_data.channels[channel].hasError = true;
+        }
+#else
         dev_nvram_data.channels[channel].file = fopen(dev_nvram_data.channels[channel].sd_path, "w");
+#endif
         break;
     case DEV_NVRAM_ERROR:
         break;
@@ -292,6 +347,20 @@ void dev_nvram_private_runAction(dev_nvram_channel_t channel)
     case DEV_NVRAM_READY:
         break;
     case DEV_NVRAM_WRITE:
+#ifdef __FLEXC__
+        /* The LOGGER cog is doing the work; watch its channel. `isClosed`
+         * means the file was opened, the queue drained into it and the file
+         * closed — the save is durable at that point. */
+        if (IO_SDCard_lastOpenFailed(IO_SDCARD_CHANNEL_PROFILE))
+        {
+            DEBUG_ERROR("%s", "profile save: LOGGER could not open the file\n");
+            dev_nvram_data.channels[channel].hasError = true;
+        }
+        else if (IO_SDCard_isClosed(IO_SDCARD_CHANNEL_PROFILE))
+        {
+            dev_nvram_data.channels[channel].dirty = false;
+        }
+#else
         if (dev_nvram_data.channels[channel].file == NULL)
         {
             DEBUG_ERROR("failed to open file to write: %s\n", dev_nvram_data.channels[channel].sd_path);
@@ -311,6 +380,7 @@ void dev_nvram_private_runAction(dev_nvram_channel_t channel)
                 dev_nvram_data.channels[channel].dirty = false;
             }
         }
+#endif
         break;
     case DEV_NVRAM_ERROR:
         break;
@@ -449,6 +519,25 @@ bool dev_nvram_nosync_runUntilReady()
     return isReady;
 }
 
+/* Drop this cog's claim on the SD pins WITHOUT touching the mount.
+ *
+ * The pad state is the OR of DIR and OUT across all 8 cogs, and every SD
+ * sequence — even a failed one, which still runs `disk_initialize` — ends
+ * with `deselect()` driving CS high. Leaving that OUT bit set pins CS high
+ * for every other cog. `_fltl` clears DIR and OUT; unmounting here would
+ * instead tear down the LOGGER cog's volume, which is a different and much
+ * worse bug (its next open then fails EBUSY).
+ */
+static void dev_nvram_private_releaseSDPinsOnly(void)
+{
+#ifdef __FLEXC__
+    _fltl(HW_PIN_SD_CS);
+    _fltl(HW_PIN_SD_CLK);
+    _fltl(HW_PIN_SD_MOSI);
+    _fltl(HW_PIN_SD_MISO);
+#endif
+}
+
 void dev_nvram_releaseSDPins(void)
 {
 #ifdef __FLEXC__
@@ -461,10 +550,16 @@ void dev_nvram_releaseSDPins(void)
      * cog. Call once after the boot NVRAM load, before the workers start. (A later
      * profile save would need to route through the LOGGER cog too.) */
     umount(SD_CARD_MOUNT_PATH);
-    _dirl(HW_PIN_SD_CS);
-    _dirl(HW_PIN_SD_CLK);
-    _dirl(HW_PIN_SD_MOSI);
-    _dirl(HW_PIN_SD_MISO);
+    /* `_fltl`, not `_dirl`: DIR alone is half the hand-off. The OR is over
+     * DIR *and* OUT, and every SD sequence ends in `deselect()` -> CS_H, which
+     * leaves this cog's OUT bit for CS set. Clearing only DIR leaves that bit
+     * in the OR forever, so the LOGGER cog's CS_L can never pull CS low again
+     * and every one of its opens fails errno 12 -- the exact symptom this
+     * function exists to prevent. FLTL clears both. */
+    _fltl(HW_PIN_SD_CS);
+    _fltl(HW_PIN_SD_CLK);
+    _fltl(HW_PIN_SD_MOSI);
+    _fltl(HW_PIN_SD_MISO);
 #endif
 }
 

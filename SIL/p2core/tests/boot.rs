@@ -23,7 +23,7 @@ const HUB_BASE: u32 = 0x400;
 /// space and `call #_main` is its first jump into hub. Confirm with
 /// `cargo run --release --example disasm -- <image> <addr> 4`: `_main` opens
 /// `mov arg01,#0` / `call` / `mov arg01,result1` / `call`.
-const MAIN_HUB_ADDR: u32 = 0x1041C;
+const MAIN_HUB_ADDR: u32 = 0x10B4C;
 
 /// Remove ANSI SGR escape sequences from captured console text.
 ///
@@ -397,10 +397,19 @@ fn smart_pin_configuration_is_decoded_and_baud_rates_are_right() {
     }
 
     // The non-serial peripherals, identified by the mode the firmware chose.
-    assert_eq!(m.pins.mode_of(9), PinMode::Quadrature, "servo encoder");
-    assert_eq!(m.pins.mode_of(58), PinMode::SyncRx, "SD MISO");
-    assert_eq!(m.pins.mode_of(59), PinMode::SyncTx, "SD MOSI");
-    assert_eq!(m.pins.mode_of(61), PinMode::Pulse, "SD clock");
+    assert_eq!(
+        m.pins.programmed_mode_of(9),
+        PinMode::Quadrature,
+        "servo encoder"
+    );
+    // The SD pins are asserted on what the firmware *programmed*, not on what
+    // they hold at the end: once the card initialises, `sdmm.cc` clears all
+    // five pins from `disk_deinitialize` whenever the layer above closes the
+    // handle. Asserting current state here would pass only while SD init was
+    // broken enough never to reach the teardown.
+    assert_eq!(m.pins.programmed_mode_of(58), PinMode::SyncRx, "SD MISO");
+    assert_eq!(m.pins.programmed_mode_of(59), PinMode::SyncTx, "SD MOSI");
+    assert_eq!(m.pins.programmed_mode_of(61), PinMode::Pulse, "SD clock");
 
     let unmodelled = m.pins.unmodelled_modes();
     assert!(
