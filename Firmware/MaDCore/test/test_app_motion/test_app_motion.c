@@ -147,18 +147,26 @@ static int32_t d_lastWaveAmplitude;
 static uint32_t d_lastWaveFreqMicroHz;
 static uint32_t d_lastWaveCycles;
 static dev_servo_wave_E d_lastWaveShape;
+static uint16_t d_lastWaveSkew;
+static uint32_t d_lastWaveDwellHighUs;
+static uint32_t d_lastWaveDwellLowUs;
 static bool d_waveformAccepted = true;
 
-bool dev_servo_startWaveform(dev_servo_channel_E ch, int32_t centreCounts, int32_t amplitudeCounts,
-                             uint32_t freqMicroHz, uint32_t cycles, dev_servo_wave_E shape)
+bool dev_servo_startWaveform(dev_servo_channel_E ch, const dev_servo_waveform_S *waveform)
 {
     TEST_ASSERT_EQUAL_INT(DEV_SERVO_CHANNEL_MAIN, ch);
+    TEST_ASSERT_NOT_NULL(waveform);
+    const int32_t amplitudeCounts = waveform->amplitudeCounts;
+    const uint32_t freqMicroHz = waveform->freqMicroHz;
     d_waveformCount++;
-    d_lastWaveCentre = centreCounts;
+    d_lastWaveCentre = waveform->centreCounts;
     d_lastWaveAmplitude = amplitudeCounts;
     d_lastWaveFreqMicroHz = freqMicroHz;
-    d_lastWaveCycles = cycles;
-    d_lastWaveShape = shape;
+    d_lastWaveCycles = waveform->cycles;
+    d_lastWaveShape = waveform->shape;
+    d_lastWaveSkew = waveform->skewPerMille;
+    d_lastWaveDwellHighUs = waveform->dwellHighUs;
+    d_lastWaveDwellLowUs = waveform->dwellLowUs;
     /* The real driver refuses these outright (see dev_servo_startWaveform).
      * Modelling just that rule keeps the adapter's degenerate-input behaviour
      * honest without reimplementing the whole feasibility envelope here --
@@ -809,6 +817,12 @@ void test_waveform_is_handed_to_the_driver_in_the_drivers_units(void)
     TEST_ASSERT_EQUAL_UINT32(250000U, d_lastWaveFreqMicroHz);
     TEST_ASSERT_EQUAL_UINT32(7U, d_lastWaveCycles);
     TEST_ASSERT_EQUAL_INT(DEV_SERVO_WAVE_TRIANGLE, d_lastWaveShape);
+    /* Dwell and skew are not on the wire yet: the driver must be asked for the
+     * symmetric, hold-free cycle this command has always meant, not for zero
+     * skew (which would be a traverse of no duration). */
+    TEST_ASSERT_EQUAL_UINT16(DEV_SERVO_SKEW_SYMMETRIC, d_lastWaveSkew);
+    TEST_ASSERT_EQUAL_UINT32(0U, d_lastWaveDwellHighUs);
+    TEST_ASSERT_EQUAL_UINT32(0U, d_lastWaveDwellLowUs);
 }
 
 void test_a_sine_shape_bit_selects_a_sine(void)
