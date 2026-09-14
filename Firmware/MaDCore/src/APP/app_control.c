@@ -21,7 +21,6 @@
 #include "dev_stepper.h"
 #endif
 #include "watchdog.h"
-#include "lib_timer.h"
 
 #include "HAL_GPIO.h"
 #include "HAL_lock.h"
@@ -30,28 +29,6 @@
  * Constants
  **********************************************************************/
 
-/* How long a loss of the force gauge must persist before it is a machine fault.
- *
- * This fault is not read from a pin -- it is a device driver's opinion, formed
- * from a request/response exchange over a UART. A
- * single missed reply is ordinary on a serial link (a framing slip, a reply
- * that lands one cycle late), and both drivers already treat it that way:
- * dev_forceGauge drops into its ERROR state, re-reads, and is back in RUNNING
- * on the next cycle. Latching a fault on that one cycle disables motion, and
- * app_testManagement ends a running test the instant motion goes false -- so a
- * blip that the driver itself recovered from destroys the test, and the fault
- * clears again before anything polling the machine can see why.
- *
- * The window is sized from the driver's own worst case. A read that fails
- * holds the gauge un-ready for its whole timeout (20 ms), and the ERROR state
- * then re-reads up to four times at 10 ms each, so a link that comes back
- * clears within about 60 ms. A link that does not come back never clears, so
- * a genuinely silent device still faults here -- and now within 100 ms rather
- * than the second the old 1 s read timeout cost. Every other fault stays instantaneous -- the ESD and endstop inputs
- * are levels, where one read is authoritative and safety wants no delay, and
- * the cog/watchdog faults are already latched conditions rather than samples.
- */
-#define APP_CONTROL_COMMS_FAULT_DEBOUNCE_MS 100U
 
 /*********************************************************************
  * Macros
@@ -100,10 +77,6 @@ typedef struct
     app_control_state_E state;
     app_control_nvram_S nvram;
 
-    /* Armed while the force gauge's link is silent; see
-     * APP_CONTROL_COMMS_FAULT_DEBOUNCE_MS. The servo has no equivalent because
-     * its "communication" fault is a loop-liveness flag, not a link. */
-    lib_timer_S forceGaugeCommsLoss;
 
     int32_t lock;
 } app_control_data_S;
@@ -120,7 +93,6 @@ static app_control_data_S app_control_data;
  **********************************************************************/
 
 static void app_control_private_processRequests(void);
-static bool app_control_private_sustained(lib_timer_S *timer, bool condition);
 static app_control_fault_E app_control_private_processFaults(void);
 static app_control_restriction_E app_control_private_processRestrictions(void);
 static app_control_state_E app_control_private_getDesiredState(void);
@@ -150,26 +122,6 @@ static void app_control_private_processRequests(void)
     APP_CONTROL_LOCK_REL();
 }
 
-/* True once `condition` has held continuously for the timer's period. Any
- * cycle where it is false disarms the timer, so the window measures one
- * unbroken episode rather than an accumulation of unrelated blips. */
-static bool app_control_private_sustained(lib_timer_S *timer, bool condition)
-{
-    bool sustained = false;
-    if (condition)
-    {
-        if (lib_timer_state(timer) == lib_timer_STATE_OFF)
-        {
-            lib_timer_start(timer);
-        }
-        sustained = lib_timer_expired(timer);
-    }
-    else
-    {
-        lib_timer_stop(timer);
-    }
-    return sustained;
-}
 
 static app_control_fault_E app_control_private_processFaults(void)
 {
@@ -197,9 +149,15 @@ static app_control_fault_E app_control_private_processFaults(void)
     const bool motorLoopAlive = dev_stepper_isReady(DEV_STEPPER_CHANNEL_MAIN);
 #endif
     app_control_data.fault[APP_CONTROL_FAULT_SERVO_COMMUNICATION] = (motorLoopAlive == false);
+    /* No window here either. dev_forceGauge now reports ready as ALIVE rather
+     * than "fresh sample this tick": a missed reply keeps it ready while the
+     * driver re-reads, and it goes un-ready only once the driver has spent its
+     * retry budget and torn the ADC down. The debounce this used to carry was
+     * APP guessing at a duration the driver already knew -- 20 ms for the read
+     * plus four 10 ms retries -- so the knowledge now lives where it belongs
+     * and the fault is event-driven instead of timed. */
     app_control_data.fault[APP_CONTROL_FAULT_FORCE_GAUGE_COMMUNICATION] =
-        app_control_private_sustained(&app_control_data.forceGaugeCommsLoss,
-                                      dev_forceGauge_isReady(DEV_FORCEGAUGE_CHANNEL_MAIN) == false);
+        (dev_forceGauge_isReady(DEV_FORCEGAUGE_CHANNEL_MAIN) == false);
 
     // Select the first fault as the reason
     app_control_fault_E fault = APP_CONTROL_FAULT_NONE;
@@ -315,7 +273,6 @@ void app_control_init(int lock)
 {
     app_control_data.lock = lock;
     app_control_data.state = APP_CONTROL_STATE_DISABLED;
-    lib_timer_init(&app_control_data.forceGaugeCommsLoss, APP_CONTROL_COMMS_FAULT_DEBOUNCE_MS);
     MachineProfile machineProfile;
     (void)dev_nvram_getChannelData(DEV_NVRAM_CHANNEL_MACHINE_PROFILE, &machineProfile, sizeof(MachineProfile));
     app_control_data.nvram.maxMachineTension = machineProfile.maxForceTensile;
