@@ -1085,6 +1085,48 @@ void test_tracking_does_not_degrade_along_the_machine(void)
     }
 }
 
+/* The highest frequency the driver will still accept at this amplitude, found
+ * by asking the driver itself rather than by recomputing its rule here. */
+static uint32_t highest_feasible_freq(int32_t amplitude, dev_servo_wave_E shape)
+{
+    uint32_t lo = 1U;          /* 1 uHz: always feasible                 */
+    uint32_t hi = 100000000U;  /* 100 Hz: far past any real capability   */
+    TEST_ASSERT_TRUE(dev_servo_waveformFeasible(CH, amplitude, lo, shape));
+    TEST_ASSERT_FALSE(dev_servo_waveformFeasible(CH, amplitude, hi, shape));
+    while ((hi - lo) > 1U)
+    {
+        const uint32_t mid = lo + ((hi - lo) / 2U);
+        if (dev_servo_waveformFeasible(CH, amplitude, mid, shape)) { lo = mid; }
+        else { hi = mid; }
+    }
+    return lo;
+}
+
+void test_the_one_micron_contract_holds_at_the_feasibility_boundary(void)
+{
+    VIBES_TEST("servo.one-micron-at-the-limit",
+               "src/DEV/dev_servo.c#dev_servo_run",
+               "the most demanding waveform the driver will accept at each of several amplitudes");
+    VIBES_EXPECT_WHY("contract-holds-at-the-limit",
+                     "the fastest accepted waveform still tracks within 0.001 mm",
+                     "a tolerance demonstrated only on comfortable inputs says nothing about the ones a user will actually reach for; the claim that matters is that ACCEPTANCE implies the contract, so the test walks to the exact edge of what the driver permits and checks there");
+
+    static const int32_t amplitudes[] = { 500, 2000, 10000, 40000 };
+    for (unsigned i = 0U; i < (sizeof(amplitudes) / sizeof(amplitudes[0])); i++)
+    {
+        const uint32_t f = highest_feasible_freq(amplitudes[i], DEV_SERVO_WAVE_SINE);
+        const double worst = worst_sine_deviation_at(0, (double)amplitudes[i], f, 2U);
+        char msg[176];
+        (void)snprintf(msg, sizeof(msg),
+                       "amplitude %d counts at its maximum accepted %u uHz (%.3f Hz) deviated "
+                       "%.2f counts (%.4f mm)",
+                       amplitudes[i], f, (double)f / 1e6, worst, worst / COUNTS_PER_MM);
+        TEST_ASSERT_TRUE_MESSAGE(worst <= ONE_MICRON_COUNTS, msg);
+        printf("  limit: A=%6d counts -> %8u uHz (%.3f Hz), worst %.2f counts (%.3f um)\n",
+               amplitudes[i], f, (double)f / 1e6, worst, worst / COUNTS_PER_MM * 1000.0);
+    }
+}
+
 void test_a_triangle_is_a_trapezoidal_rate_not_an_infinite_corner(void)
 {
     VIBES_TEST("servo.triangle-is-feasible",
@@ -1137,5 +1179,6 @@ int main(void)
     RUN_TEST(test_the_machine_reproduces_the_commanded_waveform_to_one_micron);
     RUN_TEST(test_the_phase_accumulator_loses_nothing_over_whole_cycles);
     RUN_TEST(test_tracking_does_not_degrade_along_the_machine);
+    RUN_TEST(test_the_one_micron_contract_holds_at_the_feasibility_boundary);
     return UNITY_END();
 }
