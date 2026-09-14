@@ -200,6 +200,41 @@ describe('gcodeLinesToMachineMoveBuffers', () => {
 describe('waveform (G123) canned cycle', () => {
   behaviour(
     {
+      id: 'gcode.waveform-refuses-what-the-machine-cannot-run',
+      covers: 'src/domain/gcode.ts#validateWaveform',
+      given: 'a waveform with an unknown traverse profile, one whose holds fill the whole cycle, and one with an impossible skew',
+      expect: {
+        'refused-at-authoring': 'each is refused when the program is built, not when it runs',
+      },
+      why: {
+        'refused-at-authoring':
+          'the firmware refuses these too, but a refusal forty minutes into an unattended run costs a specimen; the same rule applied at authoring time costs nothing',
+      },
+    },
+    () => {
+      const ok = { shape: 0, amplitude: 5, frequency: 1, cycles: 10, dwellHigh: 0, dwellLow: 0, skewPerMille: 500 };
+      expect(() => validateWaveform(ok)).not.toThrow();
+
+      // A profile this firmware does not implement must not be run as a sine.
+      expect(() => validateWaveform({ ...ok, shape: 7 })).toThrow(MoveValidationError);
+
+      // 0.6 s + 0.6 s of holds inside a 1 s cycle leaves no time to move.
+      expect(() => validateWaveform({ ...ok, dwellHigh: 0.6, dwellLow: 0.6 })).toThrow(
+        MoveValidationError,
+      );
+      // ...and the same holds inside a 2 s cycle are fine.
+      expect(() =>
+        validateWaveform({ ...ok, frequency: 0.5, dwellHigh: 0.6, dwellLow: 0.6 }),
+      ).not.toThrow();
+
+      // A traverse of zero duration is an infinite rate at either end.
+      expect(() => validateWaveform({ ...ok, skewPerMille: 0 })).toThrow(MoveValidationError);
+      expect(() => validateWaveform({ ...ok, skewPerMille: 1000 })).toThrow(MoveValidationError);
+    },
+  );
+
+  behaviour(
+    {
       id: 'gcode.waveform-parses-params',
       covers: 'src/domain/gcode.ts#parseGcodeWaveform',
       given: 'a sine waveform with amplitude, frequency, and cycle count, and a triangle waveform with those same kinds of fields',
@@ -208,17 +243,36 @@ describe('waveform (G123) canned cycle', () => {
       },
     },
     () => {
+      // Omitted H/L/S default to a hold-free, symmetric cycle -- what G123 has
+      // always meant, so an existing program keeps its meaning exactly.
       expect(parseGcodeWaveform('G123 A5 F2.5 C100 W0 ; sine A=5mm')).toEqual({
         shape: WaveformShape.SINE,
         amplitude: 5,
         frequency: 2.5,
         cycles: 100,
+        dwellHigh: 0,
+        dwellLow: 0,
+        skewPerMille: 500,
       });
       expect(parseGcodeWaveform('G123 A3 F1 C2 W1')).toEqual({
         shape: WaveformShape.TRIANGLE,
         amplitude: 3,
         frequency: 1,
         cycles: 2,
+        dwellHigh: 0,
+        dwellLow: 0,
+        skewPerMille: 500,
+      });
+      // The cycle template: a hold at the upper peak only, and a skewed
+      // traverse. H and L mean the same thing whatever W is.
+      expect(parseGcodeWaveform('G123 A2 F0.5 C10 W1 H1.5 L0.25 S0.8')).toEqual({
+        shape: WaveformShape.TRIANGLE,
+        amplitude: 2,
+        frequency: 0.5,
+        cycles: 10,
+        dwellHigh: 1.5,
+        dwellLow: 0.25,
+        skewPerMille: 800,
       });
     },
   );
@@ -248,10 +302,10 @@ describe('waveform (G123) canned cycle', () => {
       why: { 'refused': 'a value past the packed field width wraps to a different waveform' },
     },
     () => {
-      expect(() => validateWaveform({ shape: 0, amplitude: WAVEFORM_FIELD_RANGE.amplitude.max + 1, frequency: 1, cycles: 1 })).toThrow(MoveValidationError);
-      expect(() => validateWaveform({ shape: 0, amplitude: 5, frequency: WAVEFORM_FIELD_RANGE.frequency.max + 1, cycles: 1 })).toThrow(MoveValidationError);
-      expect(() => validateWaveform({ shape: 0, amplitude: 5, frequency: 1, cycles: WAVEFORM_FIELD_RANGE.cycles.max + 1 })).toThrow(MoveValidationError);
-      expect(() => validateWaveform({ shape: 0, amplitude: 5, frequency: 1, cycles: 0 })).toThrow(MoveValidationError); // min 1
+      expect(() => validateWaveform({ shape: 0, amplitude: WAVEFORM_FIELD_RANGE.amplitude.max + 1, frequency: 1, cycles: 1, dwellHigh: 0, dwellLow: 0, skewPerMille: 500 })).toThrow(MoveValidationError);
+      expect(() => validateWaveform({ shape: 0, amplitude: 5, frequency: WAVEFORM_FIELD_RANGE.frequency.max + 1, cycles: 1, dwellHigh: 0, dwellLow: 0, skewPerMille: 500 })).toThrow(MoveValidationError);
+      expect(() => validateWaveform({ shape: 0, amplitude: 5, frequency: 1, cycles: WAVEFORM_FIELD_RANGE.cycles.max + 1, dwellHigh: 0, dwellLow: 0, skewPerMille: 500 })).toThrow(MoveValidationError);
+      expect(() => validateWaveform({ shape: 0, amplitude: 5, frequency: 1, cycles: 0, dwellHigh: 0, dwellLow: 0, skewPerMille: 500 })).toThrow(MoveValidationError); // min 1
     },
   );
 
@@ -270,7 +324,7 @@ describe('waveform (G123) canned cycle', () => {
       const ops = gcodeLinesToProgram(['G90', 'G1 X10 F5', 'G123 A5 F1 C2 W0', 'G1 X0 F5'], 0);
       expect(ops.map((o) => o.kind)).toEqual(['move', 'move', 'waveform', 'move']);
       const wf = ops.find((o) => o.kind === 'waveform');
-      expect(wf?.buf.length).toBe(9); // 9-byte WaveformMove
+      expect(wf?.buf.length).toBe(18); // 18-byte WaveformMove (was 9 before dwell/skew)
     },
   );
 

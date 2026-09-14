@@ -306,6 +306,15 @@ static bool dev_servo_private_planWaveform(const dev_servo_channelConfig_S *cfg,
     {
         return false;
     }
+    /* A traverse profile this driver does not implement is REFUSED, not
+     * quietly run as a sine. A newer host asking for a shape an older
+     * firmware has never heard of must fail loudly -- silently substituting
+     * one is the failure mode that produces a plausible-looking result from a
+     * test that was never performed. */
+    if ((wf->shape != DEV_SERVO_WAVE_SINE) && (wf->shape != DEV_SERVO_WAVE_TRIANGLE))
+    {
+        return false;
+    }
 
     const float periodS = 1000000.0f / (float)wf->freqMicroHz;
     const float highS = (float)wf->dwellHighUs / 1000000.0f;

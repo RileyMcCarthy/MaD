@@ -95,7 +95,7 @@ export const GCODE_VALUE_TO_WIRE: Record<number, number> = {
     123: 9,  // WAVEFORM
 };
 
-/** Position-vs-time waveform function (firmware-native G123) */
+/** Traverse profile for a G123 waveform -- how the carriage gets from one peak to the other. Named constants for the host; the wire carries a plain uint8 (see WaveformMove.shape). */
 export enum WaveformShape {
     SINE = 0,
     TRIANGLE = 1,
@@ -155,15 +155,22 @@ export interface Move {
     p: number;
 }
 
-/** Firmware-native waveform (G123): oscillate about the current position — 9 bytes on wire */
+/** Firmware-native waveform (G123). One cycle is four segments in phase order: hold at +A, traverse down, hold at -A, traverse up. `shape` names only the TRAVERSE profile, so dwell and skew apply to every shape. — 18 bytes on wire */
 export interface WaveformMove {
-    shape: WaveformShape;
-    /** unit: mm, scale: 1000 (precision: 1/1000) */
+    /** unit:  */
+    shape: number;
+    /** unit: mm, scale: 10000 (precision: 1/10000) */
     amplitude: number;
-    /** unit: Hz, scale: 1000 (precision: 1/1000) */
+    /** unit: Hz, scale: 1000000 (precision: 1/1000000) */
     frequency: number;
     /** unit: count */
     cycles: number;
+    /** unit: s, scale: 1000 (precision: 1/1000) */
+    dwellHigh: number;
+    /** unit: s, scale: 1000 (precision: 1/1000) */
+    dwellLow: number;
+    /** unit: permille */
+    skewPerMille: number;
 }
 
 /** Sample written to SD card binary files — 11 bytes on wire */
@@ -244,7 +251,7 @@ export interface Notification {
 export const MACHINESTATE_WIRE_SIZE = 2;
 export const SAMPLE_WIRE_SIZE = 12;
 export const MOVE_WIRE_SIZE = 8;
-export const WAVEFORMMOVE_WIRE_SIZE = 9;
+export const WAVEFORMMOVE_WIRE_SIZE = 18;
 export const STOREDSAMPLE_WIRE_SIZE = 11;
 export const MACHINECONFIGURATION_WIRE_SIZE = 68;
 export const SAMPLEPROFILE_WIRE_SIZE = 20;
@@ -385,28 +392,34 @@ export function decodeMove(buf: Uint8Array): Move {
 }
 
 /**
- * Encode WaveformMove → 9 bytes.
+ * Encode WaveformMove → 18 bytes.
  * Input values are in unit (see field `unit`); scale is applied to produce wire steps.
  */
 export function encodeWaveformMove(src: WaveformMove): Uint8Array {
-    const buf = new Uint8Array(9);
-    packBits(buf, 0, 1, src.shape);
-    packBits(buf, 1, 22, Math.round((src.amplitude - (0)) * 1000));
-    packBits(buf, 23, 20, Math.round((src.frequency - (0)) * 1000));
-    packBits(buf, 43, 24, Math.round((src.cycles - (1)) * 1));
+    const buf = new Uint8Array(18);
+    packBits(buf, 0, 8, Math.round(src.shape * 1));
+    packBits(buf, 8, 25, Math.round((src.amplitude - (0)) * 10000));
+    packBits(buf, 33, 27, Math.round((src.frequency - (0)) * 1000000));
+    packBits(buf, 60, 24, Math.round((src.cycles - (1)) * 1));
+    packBits(buf, 84, 22, Math.round(src.dwellHigh * 1000));
+    packBits(buf, 106, 22, Math.round(src.dwellLow * 1000));
+    packBits(buf, 128, 10, Math.round((src.skewPerMille - (1)) * 1));
     return buf;
 }
 
 /**
- * Decode 9 bytes → WaveformMove.
+ * Decode 18 bytes → WaveformMove.
  * Output values are in unit (see field `unit`); scale is applied as divisor.
  */
 export function decodeWaveformMove(buf: Uint8Array): WaveformMove {
     return {
-        shape: unpackBits(buf, 0, 1) as WaveformShape,
-        amplitude: unpackBits(buf, 1, 22) / 1000 + (0),
-        frequency: unpackBits(buf, 23, 20) / 1000 + (0),
-        cycles: unpackBits(buf, 43, 24) / 1 + (1),
+        shape: unpackBits(buf, 0, 8) / 1,
+        amplitude: unpackBits(buf, 8, 25) / 10000 + (0),
+        frequency: unpackBits(buf, 33, 27) / 1000000 + (0),
+        cycles: unpackBits(buf, 60, 24) / 1 + (1),
+        dwellHigh: unpackBits(buf, 84, 22) / 1000,
+        dwellLow: unpackBits(buf, 106, 22) / 1000,
+        skewPerMille: unpackBits(buf, 128, 10) / 1 + (1),
     };
 }
 
