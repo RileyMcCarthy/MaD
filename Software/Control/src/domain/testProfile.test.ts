@@ -286,6 +286,38 @@ describe('generateTestGcode — waveform (math) move', () => {
 
   behaviour(
     {
+      id: 'profile.waveform-hold-and-skew-emitted',
+      covers: 'src/domain/testProfile.ts#generateTestGcode',
+      given: 'a waveform profile with a hold at the top only and an 80/20 skew, and a plain one with neither',
+      expect: {
+        'emitted-when-set': 'the canned cycle carries H, L and S when they are set',
+        'absent-when-plain': 'a plain cycle emits the same line it always did',
+      },
+      why: {
+        'absent-when-plain':
+          'omitting the defaults keeps every existing profile emitting byte-identical G-code, so adding the capability cannot change a test someone already ran',
+      },
+    },
+    () => {
+      const held = generateTestGcode(
+        waveformProfile({
+          waveform: 'sine', amplitude: 2, frequency: 0.5, cycles: 4,
+          dwellHigh: 1.5, dwellLow: 0, skew: 0.8,
+        }),
+      ).gcode.find((l) => /^G123 /.test(l));
+      expect(held).toMatch(/\bH1\.5\b/);
+      expect(held).toMatch(/\bS0\.8\b/);
+      expect(held).not.toMatch(/\bL/); // no hold at the bottom was asked for
+
+      const plain = generateTestGcode(
+        waveformProfile({ waveform: 'sine', amplitude: 2, frequency: 0.5, cycles: 4 }),
+      ).gcode.find((l) => /^G123 /.test(l));
+      expect(plain).not.toMatch(/\b[HLS]\d/);
+    },
+  );
+
+  behaviour(
+    {
       id: 'profile.waveform-shape-is-emitted',
       covers: 'src/domain/testProfile.ts#generateTestGcode',
       given: 'a motion profile whose waveform is set to triangle, and one set to sine',

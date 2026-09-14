@@ -166,8 +166,18 @@ export function generateTestGcode(profile: TestProfile): GeneratedGcode {
                 gcode.push(`G1 X${round3(mean)} F${round3(rampV)}`);
               }
               const shape = fn === 'triangle' ? 1 : 0; // WaveformShape
+              // Hold and skew are appended ONLY when they differ from a plain
+              // symmetric cycle, so an existing profile emits the exact line it
+              // always did and its golden G-code does not churn.
+              const dwellHigh = Math.max(0, Number(move.moveParameters.dwellHigh) || 0);
+              const dwellLow = Math.max(0, Number(move.moveParameters.dwellLow) || 0);
+              const skew = Number(move.moveParameters.skew) || 0.5;
+              let extra = '';
+              if (dwellHigh > 0) extra += ` H${round3(dwellHigh)}`;
+              if (dwellLow > 0) extra += ` L${round3(dwellLow)}`;
+              if (Math.abs(skew - 0.5) > 1e-9) extra += ` S${round3(skew)}`;
               gcode.push(
-                `G123 A${round4(amplitude)} F${round6(frequency)} C${Math.round(cycles)} W${shape}` +
+                `G123 A${round4(amplitude)} F${round6(frequency)} C${Math.round(cycles)} W${shape}${extra}` +
                   ` ; ${fn} A=${amplitude}mm f=${frequency}Hz x${cycles} cycle(s)`,
               );
               // Preview chart only: sample f(t) for display (not emitted as motion).
