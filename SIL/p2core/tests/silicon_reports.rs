@@ -69,3 +69,12 @@ fn cogs_match_silicon() {
 fn timed_match_silicon() {
     replay("timed");
 }
+
+/// The smart-pin surface: drive/readback, the step-pulse generator, the async
+/// transmit path, an on-chip TX->RX loopback, and the NCO step train sampled
+/// into a bit pattern. None of this is reachable through the one-instruction
+/// probe, and all of it is where p2core has previously been wrong.
+#[test]
+fn pins_match_silicon() {
+    replay("pins");
+}

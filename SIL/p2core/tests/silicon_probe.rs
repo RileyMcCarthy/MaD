@@ -240,48 +240,30 @@ fn silicon_probe_matches_golden() {
             }
         }
     }
-    // Conformance is a debt being paid down, not a switch. A baseline of
-    // known-divergent mnemonics keeps the gate meaningful today — it fails on a
-    // REGRESSION (an op that used to match and now does not) and on a NEWLY
-    // captured op nobody has looked at — while the remaining gaps burn down.
-    // Same bargain as Firmware/MaDCore/.layering-baseline, for the same reason:
-    // a gate that cannot go green gets switched off, and then it protects
-    // nothing at all.
+    // The gate itself is generic and lives in embsim-cpu-oracle: a burn-down
+    // baseline that fails BOTH on a divergence nobody has looked at and on a
+    // baselined entry that has started matching. An all-or-nothing gate with a
+    // 544-case gap is a gate that never gets committed.
     let divergent: std::collections::BTreeSet<&str> =
         unimplemented.union(&mismatched).copied().collect();
-    let baseline = load_baseline();
-    let regressed: Vec<&str> = divergent.difference(&baseline).copied().collect();
-    let fixed: Vec<&str> = baseline.difference(&divergent).copied().collect();
+    let baseline = embsim_cpu_oracle::Baseline::parse(&baseline_text());
+    let verdict = embsim_cpu_oracle::evaluate(divergent.iter().copied(), &baseline);
 
-    if !regressed.is_empty() {
+    if let Some(why) = verdict.failure(BASELINE_REL) {
         panic!(
-            "p2core vs silicon: {} mnemonic(s) diverge that are NOT in the baseline: {:?}\n\
-             {unmatched}/{} cases differ overall.\n\
-             unimplemented execute: {:?}\nwrong result: {:?}\n{samples}\
-             If this is deliberate, add them to {} with a reason. Recapture: \
-             python3 tools/hw_probe.py --capture\n",
-            regressed.len(),
-            regressed,
+            "{why}\n{unmatched}/{} cases differ overall.\nunimplemented execute: {:?}\n\
+             wrong result: {:?}\n{samples}recapture: python3 tools/hw_probe.py --capture\n",
             cases.len(),
             unimplemented,
-            mismatched,
-            BASELINE_REL
-        );
-    }
-    if !fixed.is_empty() {
-        panic!(
-            "good news, and the baseline is now stale: {:?} match silicon but are still \
-             listed in {}. Remove them — a baseline that outlives the bug stops the gate \
-             noticing when it comes back.\n",
-            fixed, BASELINE_REL
+            mismatched
         );
     }
     if unmatched != 0 {
         eprintln!(
-            "p2core vs silicon: {unmatched}/{} cases differ, all in the baseline \
+            "p2core vs silicon: {unmatched}/{} cases differ, all baselined \
              ({} mnemonics). unimplemented: {:?} wrong result: {:?}",
             cases.len(),
-            divergent.len(),
+            verdict.divergent.len(),
             unimplemented,
             mismatched
         );
@@ -290,17 +272,7 @@ fn silicon_probe_matches_golden() {
 
 const BASELINE_REL: &str = "p2core/hwtest/silicon-baseline.txt";
 
-/// Mnemonics known to diverge from silicon, one per line; `#` comments.
-fn load_baseline() -> std::collections::BTreeSet<&'static str> {
-    let p = crate_path("hwtest/silicon-baseline.txt");
-    let Ok(text) = std::fs::read_to_string(p) else {
-        return Default::default();
-    };
-    // Leaked deliberately: the set is compared against `&'static str` mnemonics
-    // from the decoder, and this runs once in a test process.
-    Box::leak(text.into_boxed_str())
-        .lines()
-        .map(|l| l.split('#').next().unwrap_or("").trim())
-        .filter(|l| !l.is_empty())
-        .collect()
+/// The baseline file's text, or empty when it has been burned down to nothing.
+fn baseline_text() -> String {
+    std::fs::read_to_string(crate_path("hwtest/silicon-baseline.txt")).unwrap_or_default()
 }
