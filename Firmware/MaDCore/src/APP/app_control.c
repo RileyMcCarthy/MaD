@@ -63,15 +63,6 @@
     }
 #define APP_CONTROL_LOCK_REL() (void)HAL_lock_release(app_control_data.lock)
 
-/* Ask the ACTIVE actuator whether it is alive — the MOTOR cog runs exactly one of
- * the two drivers (APP_MOTION_USE_SERVO, see dev_cogManager_config.c), so the
- * other one's run() never executes and its ready flag never gets staged. Mirrors
- * the actuator abstraction in app_motion.c. */
-#if APP_MOTION_USE_SERVO
-#define actuator_isReady() dev_servo_isReady(DEV_SERVO_CHANNEL_MAIN)
-#else
-#define actuator_isReady() dev_stepper_isReady(DEV_STEPPER_CHANNEL_MAIN)
-#endif
 /**********************************************************************
  * Typedefs
  **********************************************************************/
@@ -188,15 +179,24 @@ static app_control_fault_E app_control_private_processFaults(void)
     app_control_data.fault[APP_CONTROL_FAULT_ESD_SWITCH] = HAL_GPIO_getActive(HAL_GPIO_ESD_SWITCH);
     app_control_data.fault[APP_CONTROL_FAULT_ESD_UPPER] = HAL_GPIO_getActive(HAL_GPIO_ESD_UPPER);
     app_control_data.fault[APP_CONTROL_FAULT_ESD_LOWER] = HAL_GPIO_getActive(HAL_GPIO_ESD_LOWER);
-    /* NOT debounced, unlike the force gauge below. Despite its name this is not
-     * a communication fault at all: `actuator_isReady()` resolves to
-     * dev_servo/dev_stepper `out.ready`, which means "the control loop has
-     * ticked" (dev_servo.c: false until the cog has run, true again while the
-     * loop is still ticking even when disabled). There is no UART, no request,
-     * and no reply that can arrive a cycle late -- if this goes false the motor
-     * control loop has stopped, which is a liveness condition and wants the
-     * same instant response as the watchdog above it, not a window. */
-    app_control_data.fault[APP_CONTROL_FAULT_SERVO_COMMUNICATION] = (actuator_isReady() == false);
+    /* The MOTOR cog runs exactly one of the two drivers (APP_MOTION_USE_SERVO,
+     * see dev_cogManager_config.c), so the other one's run() never executes and
+     * its flag never gets staged. Asked directly rather than through a local
+     * `actuator_*` macro: app_motion.c already owns that abstraction, and a
+     * second copy here bought one call site an alias that hid what it reads.
+     *
+     * What it reads is LIVENESS, not communication, whatever the fault is
+     * called: `out.ready` means "the control loop has ticked" (dev_servo.c --
+     * false until the cog has run, set true each tick, and still true while the
+     * servo is disabled, because the loop is what keeps ticking). No UART, no
+     * request, no reply that can land a cycle late. One false reading means the
+     * loop has stopped, so this is instantaneous like the watchdog above it. */
+#if APP_MOTION_USE_SERVO
+    const bool motorLoopAlive = dev_servo_isReady(DEV_SERVO_CHANNEL_MAIN);
+#else
+    const bool motorLoopAlive = dev_stepper_isReady(DEV_STEPPER_CHANNEL_MAIN);
+#endif
+    app_control_data.fault[APP_CONTROL_FAULT_SERVO_COMMUNICATION] = (motorLoopAlive == false);
     app_control_data.fault[APP_CONTROL_FAULT_FORCE_GAUGE_COMMUNICATION] =
         app_control_private_sustained(&app_control_data.forceGaugeCommsLoss,
                                       dev_forceGauge_isReady(DEV_FORCEGAUGE_CHANNEL_MAIN) == false);
