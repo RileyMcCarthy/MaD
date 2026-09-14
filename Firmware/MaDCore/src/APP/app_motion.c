@@ -406,15 +406,30 @@ static void app_motion_private_moveManager_start(void)
         app_motion_data.waveformAmplitudeSteps =
             (int32_t)(((int64_t)amplitudeUm * app_motion_data.stepsPerMM) / 1000LL);
         app_motion_data.waveformFreqMilliHz = freqMilliHz;
-        /* Deliberately 32-bit. This used to be
-         *     ((uint64_t)cycles * 1000000000ULL) / (uint64_t)freqMilliHz
-         * which FlexC miscompiles on the P2: the low word comes out correct and
-         * the HIGH word is garbage. The duration became astronomical, so
-         * `elapsed >= duration` was never true, the wave never ended, the
-         * closing move was never issued, and the test hung forever. It computes
-         * correctly under clang, which is why the native bench never saw it --
-         * and lib_utility_muldiv64_signed already drops to QMUL/QDIV inline
-         * assembly under __FLEXC__ for exactly this reason.
+        /* Deliberately 32-bit, and the reason is narrower than it looks. This
+         * used to be
+         *     duration = (freqMilliHz == 0U) ? 0U
+         *              : (((uint64_t)cycles * 1000000000ULL) / freqMilliHz);
+         * and what FlexC miscompiles is the TERNARY ASSIGNED TO A 64-BIT
+         * DESTINATION -- it stores the low word and never writes the high one,
+         * so the duration came out ~3.6e16 us (1138 years), `elapsed >=
+         * duration` was never true, the wave never ended, the closing move was
+         * never issued and the run hung.
+         *
+         * NOT the 64-bit multiply or divide. Those are fine: FlexC lowers them
+         * to __system___int64_muls / __system___int64_divmodu, which return the
+         * correct 64-bit answer, and the very same expression is right when
+         * written with if/else. The line four above this one multiplies and
+         * divides in int64 and has always worked. (An earlier version of this
+         * comment blamed 64-bit arithmetic generally and cited
+         * lib_utility_muldiv64_signed's __FLEXC__ branch as evidence -- that
+         * branch is about reaching the P2's CORDIC for speed, and is not
+         * evidence of anything being broken. Confirmed with a minimal repro and
+         * the emitted assembly: the false arm moves result1 and never result2.)
+         *
+         * Only the real P2 image is affected; native_emulator and native_test
+         * build with clang and compute it correctly, which is why every unit
+         * test and the native bench stayed green while the machine was wrong.
          *
          * Microseconds per cycle is 1e9/f_mHz, which fits a uint32 for any
          * frequency down to 1 mHz, and the total saturates rather than wraps. */
