@@ -753,13 +753,13 @@ void test_open_loop_waveform_velocity_leaves_a_permanent_position_deficit(void)
  * the cycles. Waiting on the driver's own completion is also the honest
  * assertion -- if `atTarget` never arrives, the test fails on the cap rather
  * than quietly measuring a half-finished run. */
-static double run_oscillate(double amplitudeCounts, uint32_t freqMilliHz,
+static double run_oscillate(double amplitudeCounts, uint32_t freqMicroHz,
                             uint32_t cycles, dev_servo_wave_E shape)
 {
     dev_servo_enable(CH, true);
     TEST_ASSERT_TRUE(dev_servo_startWaveform(CH, 0, (int32_t)amplitudeCounts,
-                                             freqMilliHz, cycles, shape));
-    const double freqHz = (double)freqMilliHz / 1000.0;
+                                             freqMicroHz, cycles, shape));
+    const double freqHz = (double)freqMicroHz / 1000000.0;
     /* The cycles, plus a generous allowance for the two profiled segments. */
     const unsigned cap = (unsigned)((double)cycles / freqHz / 0.001) + 4000U;
     unsigned i = 0U;
@@ -795,7 +795,7 @@ void test_oscillate_returns_to_its_centre_after_whole_cycles(void)
     {
         servo_init();
         dev_servo_setPosition(CH, 0);
-        (void)run_oscillate(10000.0, 1000U, n, DEV_SERVO_WAVE_SINE);
+        (void)run_oscillate(10000.0, 1000000U, n, DEV_SERVO_WAVE_SINE);
         residual[i] = dev_servo_getPosition(CH);
         TEST_ASSERT_INT32_WITHIN_MESSAGE(deadband, 0, residual[i],
                                          "a whole number of cycles must come back to the centre");
@@ -815,7 +815,7 @@ void test_oscillate_counts_whole_cycles_and_stops(void)
 {
     servo_init();
     dev_servo_setPosition(CH, 0);
-    (void)run_oscillate(10000.0, 1000U, 2U, DEV_SERVO_WAVE_SINE);
+    (void)run_oscillate(10000.0, 1000000U, 2U, DEV_SERVO_WAVE_SINE);
     TEST_ASSERT_EQUAL_UINT32(2U, dev_servo_waveformCyclesDone(CH));
     TEST_ASSERT_TRUE(dev_servo_atTarget(CH));
 }
@@ -832,10 +832,10 @@ void test_an_infeasible_waveform_is_rejected_not_approximated(void)
     servo_init();
     /* maxAccel 500000 counts/s^2: omega^2*A at 10 Hz and 10000 counts is
      * ~39.5e6, far past it. */
-    TEST_ASSERT_FALSE(dev_servo_waveformFeasible(CH, 10000, 10000U, DEV_SERVO_WAVE_SINE));
-    TEST_ASSERT_FALSE(dev_servo_startWaveform(CH, 0, 10000, 10000U, 2U, DEV_SERVO_WAVE_SINE));
+    TEST_ASSERT_FALSE(dev_servo_waveformFeasible(CH, 10000, 10000000U, DEV_SERVO_WAVE_SINE));
+    TEST_ASSERT_FALSE(dev_servo_startWaveform(CH, 0, 10000, 10000000U, 2U, DEV_SERVO_WAVE_SINE));
     /* ...and a modest one is accepted. */
-    TEST_ASSERT_TRUE(dev_servo_waveformFeasible(CH, 10000, 1000U, DEV_SERVO_WAVE_SINE));
+    TEST_ASSERT_TRUE(dev_servo_waveformFeasible(CH, 10000, 1000000U, DEV_SERVO_WAVE_SINE));
 }
 
 /* Mean |setpoint velocity| divided by peak, measured over the cycles only.
@@ -846,12 +846,12 @@ void test_an_infeasible_waveform_is_rejected_not_approximated(void)
  * the shape of the rate does. A sinusoid spends most of a half cycle away from
  * its peak (mean/peak = 2/pi ~ 0.64); a trapezoid holds its cruise rate for
  * most of it (~0.80 for this machine). */
-static double run_oscillate_rateFullness(uint32_t freqMilliHz, dev_servo_wave_E shape)
+static double run_oscillate_rateFullness(uint32_t freqMicroHz, dev_servo_wave_E shape)
 {
     servo_init();
     dev_servo_setPosition(CH, 0);
     dev_servo_enable(CH, true);
-    TEST_ASSERT_TRUE(dev_servo_startWaveform(CH, 0, 10000, freqMilliHz, 2U, shape));
+    TEST_ASSERT_TRUE(dev_servo_startWaveform(CH, 0, 10000, freqMicroHz, 2U, shape));
 
     double sum = 0.0;
     double peak = 0.0;
@@ -881,8 +881,8 @@ void test_the_shape_bit_selects_a_genuinely_different_rate_profile(void)
                      "the two shapes produce measurably different rate profiles",
                      "both shapes travel the same 2A per half cycle, so a driver that silently ignored the shape bit would still pass every amplitude, frequency and return-to-centre check — only the fullness of the rate profile can catch it");
 
-    const double sine = run_oscillate_rateFullness(1000U, DEV_SERVO_WAVE_SINE);
-    const double triangle = run_oscillate_rateFullness(1000U, DEV_SERVO_WAVE_TRIANGLE);
+    const double sine = run_oscillate_rateFullness(1000000U, DEV_SERVO_WAVE_SINE);
+    const double triangle = run_oscillate_rateFullness(1000000U, DEV_SERVO_WAVE_TRIANGLE);
 
     /* 2/pi for a sinusoid, by construction rather than by measurement. */
     TEST_ASSERT_FLOAT_WITHIN_MESSAGE(0.02f, 2.0f / 3.14159265f, (float)sine,
@@ -908,16 +908,16 @@ void test_the_shape_bit_selects_a_genuinely_different_rate_profile(void)
  * approach's residual is the error the waveform inherits at t=0, and excluding
  * it would hide exactly the defect that `waveformStartTolerance` exists to
  * prevent. */
-static double worst_sine_deviation_counts(double amplitude, uint32_t freqMilliHz, uint32_t cycles)
+static double worst_sine_deviation_counts(double amplitude, uint32_t freqMicroHz, uint32_t cycles)
 {
     servo_init();
     dev_servo_setPosition(CH, 0);
     dev_servo_enable(CH, true);
-    TEST_ASSERT_TRUE_MESSAGE(dev_servo_startWaveform(CH, 0, (int32_t)amplitude, freqMilliHz,
+    TEST_ASSERT_TRUE_MESSAGE(dev_servo_startWaveform(CH, 0, (int32_t)amplitude, freqMicroHz,
                                                      cycles, DEV_SERVO_WAVE_SINE),
                              "the probe's own waveform must be feasible");
 
-    const double freqHz = (double)freqMilliHz / 1000.0;
+    const double freqHz = (double)freqMicroHz / 1000000.0;
     const unsigned cap = (unsigned)((double)cycles / freqHz / 0.001) + 8000U;
     unsigned runTicks = 0U;
     double worst = 0.0;
@@ -954,24 +954,96 @@ void test_the_machine_reproduces_the_commanded_waveform_to_one_micron(void)
     static const struct
     {
         double amplitude;
-        uint32_t freqMilliHz;
+        uint32_t freqMicroHz;
         uint32_t cycles;
     } cases[] = {
-        { 10000.0, 1000U, 2U },
-        { 5000.0, 1500U, 2U },
-        { 20000.0, 500U, 2U },
-        { 2000.0, 2000U, 3U },
+        { 10000.0, 1000000U, 2U },
+        { 5000.0, 1500000U, 2U },
+        { 20000.0, 500000U, 2U },
+        { 2000.0, 2000000U, 3U },
     };
 
     for (unsigned i = 0U; i < (sizeof(cases) / sizeof(cases[0])); i++)
     {
         const double worst =
-            worst_sine_deviation_counts(cases[i].amplitude, cases[i].freqMilliHz, cases[i].cycles);
+            worst_sine_deviation_counts(cases[i].amplitude, cases[i].freqMicroHz, cases[i].cycles);
         char msg[128];
         (void)snprintf(msg, sizeof(msg),
-                       "amplitude %.0f counts at %u mHz deviated %.2f counts (%.4f mm)",
-                       cases[i].amplitude, cases[i].freqMilliHz, worst, worst / COUNTS_PER_MM);
+                       "amplitude %.0f counts at %u uHz deviated %.2f counts (%.4f mm)",
+                       cases[i].amplitude, cases[i].freqMicroHz, worst, worst / COUNTS_PER_MM);
         TEST_ASSERT_TRUE_MESSAGE(worst <= ONE_MICRON_COUNTS, msg);
+    }
+}
+
+/* Run the cycles and report both how many ticks they took and where the phase
+ * accumulator came to rest. */
+static unsigned run_segment_ticks(uint32_t freqMicroHz, uint32_t cycles, uint32_t *endPhase)
+{
+    servo_init();
+    dev_servo_setPosition(CH, 0);
+    dev_servo_enable(CH, true);
+    TEST_ASSERT_TRUE(dev_servo_startWaveform(CH, 0, 10000, freqMicroHz, cycles,
+                                             DEV_SERVO_WAVE_SINE));
+    unsigned runTicks = 0U;
+    for (unsigned i = 0U; (i < 400000U) && !dev_servo_atTarget(CH); i++)
+    {
+        const bool running =
+            (dev_servo_data.channel[CH].waveSegment == (uint8_t)DEV_SERVO_WAVE_RUN);
+        tick_with_motion();
+        if (running)
+        {
+            runTicks++;
+            if (dev_servo_data.channel[CH].waveSegment != (uint8_t)DEV_SERVO_WAVE_RUN)
+            {
+                *endPhase = dev_servo_data.channel[CH].wavePhase; /* the tick that finished it */
+            }
+        }
+    }
+    return runTicks;
+}
+
+void test_the_phase_accumulator_loses_nothing_over_whole_cycles(void)
+{
+    VIBES_TEST("servo.exact-phase-accumulator",
+               "src/DEV/dev_servo.c#dev_servo_private_phaseStep",
+               "a waveform whose period is a whole number of control ticks");
+    VIBES_EXPECT_WHY("phase-lands-exactly-on-zero",
+                     "the phase accumulator returns to exactly zero after a whole number of cycles",
+                     "computing the step as (uint32)(freqHz*dt*2^32) discards a fraction of a phase unit every tick, always in the same direction, which is invisible over a few seconds and is 1.9 um of position error after an hour — a fatigue run is precisely the case that suffers and precisely the case a short test cannot see");
+    VIBES_EXPECT_WHY("period-exact-to-within-a-tick",
+                     "the cycles occupy the requested duration to better than one control tick",
+                     "a cycle cannot end between ticks, so one tick is the floor; anything worse is the generator's own frequency error rather than sampling");
+
+    /* Frequencies whose period is a whole number of 1 ms ticks, so the ideal
+     * duration is exactly representable and any error is the accumulator's. */
+    static const struct
+    {
+        uint32_t freqMicroHz;
+        uint32_t cycles;
+    } cases[] = {
+        { 1000000U, 2U },  /* 1 Hz     -> 1000 ticks/cycle */
+        { 1000000U, 10U }, /* 1 Hz, longer run              */
+        { 500000U, 3U },   /* 0.5 Hz   -> 2000 ticks/cycle  */
+        { 250000U, 2U },   /* 0.25 Hz  -> 4000 ticks/cycle  */
+        { 800000U, 4U },   /* 0.8 Hz   -> 1250 ticks/cycle  */
+    };
+
+    for (unsigned i = 0U; i < (sizeof(cases) / sizeof(cases[0])); i++)
+    {
+        uint32_t endPhase = 0xFFFFFFFFU;
+        const unsigned got = run_segment_ticks(cases[i].freqMicroHz, cases[i].cycles, &endPhase);
+        const double ideal = (double)cases[i].cycles * 1e9 / (double)cases[i].freqMicroHz;
+
+        char msg[160];
+        (void)snprintf(msg, sizeof(msg),
+                       "%u uHz x %u cycles: phase came to rest at %u, not 0 — the accumulator "
+                       "is losing a fraction of a unit per tick",
+                       cases[i].freqMicroHz, cases[i].cycles, endPhase);
+        TEST_ASSERT_EQUAL_UINT32_MESSAGE(0U, endPhase, msg);
+
+        (void)snprintf(msg, sizeof(msg), "%u uHz x %u cycles took %u ticks, ideal %.3f",
+                       cases[i].freqMicroHz, cases[i].cycles, got, ideal);
+        TEST_ASSERT_TRUE_MESSAGE(fabs((double)got - ideal) < 1.0, msg);
     }
 }
 
@@ -986,7 +1058,7 @@ void test_a_triangle_is_a_trapezoidal_rate_not_an_infinite_corner(void)
 
     servo_init();
     dev_servo_setPosition(CH, 0);
-    (void)run_oscillate(10000.0, 1000U, 2U, DEV_SERVO_WAVE_TRIANGLE);
+    (void)run_oscillate(10000.0, 1000000U, 2U, DEV_SERVO_WAVE_TRIANGLE);
     TEST_ASSERT_INT32_WITHIN_MESSAGE(dev_servo_channelConfig[CH].positionDeadband, 0,
                                      dev_servo_getPosition(CH),
                                      "a whole number of triangle cycles must also return to centre");
@@ -1025,5 +1097,6 @@ int main(void)
     RUN_TEST(test_a_triangle_is_a_trapezoidal_rate_not_an_infinite_corner);
     RUN_TEST(test_the_shape_bit_selects_a_genuinely_different_rate_profile);
     RUN_TEST(test_the_machine_reproduces_the_commanded_waveform_to_one_micron);
+    RUN_TEST(test_the_phase_accumulator_loses_nothing_over_whole_cycles);
     return UNITY_END();
 }
