@@ -188,15 +188,6 @@ static void enableMotion(void)
     TEST_ASSERT_TRUE(app_control_motionEnabled());
 }
 
-/* The two communication faults latch only after APP_CONTROL_COMMS_FAULT_DEBOUNCE_MS
- * of unbroken loss, so one run() no longer reports one. Arm the window with a
- * run, then jump the mock clock past it; the caller's next run() is what
- * latches. Harmless for the instantaneous faults, which latch on every run. */
-static void armCommsDebounce(void)
-{
-    app_control_run();
-    global_timeus += (APP_CONTROL_COMMS_FAULT_DEBOUNCE_MS + 1U) * 1000U;
-}
 
 void setUp(void)
 {
@@ -321,106 +312,50 @@ void test_run_forceGaugeCommunicationFaultWhenNotReady(void)
                      "both the frame and the sample force limits are judged from the load cell, so a gauge gone quiet would leave the gantry pulling against a stale reading");
     control_init();
     d_forceGaugeReady = false;
-    armCommsDebounce();
     app_control_run();
     TEST_ASSERT_EQUAL_INT(APP_CONTROL_FAULT_FORCE_GAUGE_COMMUNICATION, app_control_getFault());
 }
 
-/* A one-cycle gauge dropout must not fault the machine.
+/* Recovery tolerance is the DRIVER's job, not a window here.
  *
- * dev_forceGauge drops to its ERROR state on a single missed ADC frame, re-reads,
- * and is back in RUNNING on the next cycle — a blip the driver recovers from by
- * design. app_control used to latch a fault on that one cycle, which disabled
- * motion, which made app_testManagement end a running test with "motion
- * disabled"; the fault then cleared before the app's next state poll, so the
- * abort had no recorded cause. Motion must survive the blip. */
-void test_run_forceGaugeBlipDoesNotFault(void)
+ * This used to be an APP-layer debounce: a 100 ms window that had to outlast
+ * dev_forceGauge's own worst-case recovery (a 20 ms read plus four 10 ms
+ * retries), which meant app_control had to know a duration the driver already
+ * knew, and guess it right. It now asks a question the driver can answer
+ * exactly -- `ready` means ALIVE, false only once the retry budget is spent --
+ * so this layer is a straight read with no notion of time at all.
+ *
+ * The blip case that shipped broken (one missed ADC frame faulting the machine
+ * and killing a running test) is covered where it belongs, in
+ * test_dev_forceGauge: `a_single_missed_reply_keeps_the_load_cell_ready`. */
+void test_run_forceGaugeReadyNeverFaultsHoweverLongItRuns(void)
 {
     control_init();
     enableMotion();
 
-    d_forceGaugeReady = false; /* one cycle of loss */
-    app_control_run();
-    TEST_ASSERT_EQUAL_INT(APP_CONTROL_FAULT_NONE, app_control_getFault());
-    TEST_ASSERT_TRUE(app_control_motionEnabled());
-
-    d_forceGaugeReady = true; /* recovered, as the driver's retry does */
-    global_timeus += (APP_CONTROL_COMMS_FAULT_DEBOUNCE_MS + 1U) * 1000U;
-    app_control_run();
-    TEST_ASSERT_EQUAL_INT(APP_CONTROL_FAULT_NONE, app_control_getFault());
-    TEST_ASSERT_TRUE(app_control_motionEnabled());
-}
-
-/* The window must outlast the DRIVER's worst-case recovery, not just one tick.
- *
- * This is the case that actually shipped broken. `ready` is only set after a
- * read returns, so a read that is going to fail holds the gauge un-ready for
- * its whole timeout — and the ERROR state then re-reads up to four more times.
- * With a 1 s read timeout that was over a second of un-ready for a link that
- * came back in 32 ms, and app_control faulted long before the recovery, which
- * disabled motion and killed the running test. The numbers below are the
- * driver's own (dev_forceGauge.c): one failed read plus the full retry budget. */
-void test_run_forceGaugeWorstCaseDriverRecoveryDoesNotFault(void)
-{
-    /* DEV_FORCEGAUGE_READ_TIMEOUT_US (20 ms) + 4 retries at
-     * DEV_FORCEGAUGE_RETRY_TIMEOUT_US (10 ms). */
-    const uint32_t driverWorstCaseMs = 20U + (4U * 10U);
-    TEST_ASSERT_TRUE_MESSAGE(
-        driverWorstCaseMs < APP_CONTROL_COMMS_FAULT_DEBOUNCE_MS,
-        "the fault window must outlast the driver's own recovery, or a link "
-        "that comes back still faults the machine");
-
-    control_init();
-    enableMotion();
-
-    d_forceGaugeReady = false;
-    app_control_run();
-    global_timeus += driverWorstCaseMs * 1000U;
-    app_control_run();
-    TEST_ASSERT_EQUAL_INT(APP_CONTROL_FAULT_NONE, app_control_getFault());
-    TEST_ASSERT_TRUE(app_control_motionEnabled());
-
-    /* And once it comes back, the window is disarmed for good. */
     d_forceGaugeReady = true;
-    global_timeus += 1000U;
-    app_control_run();
+    for (unsigned i = 0U; i < 50U; i++)
+    {
+        global_timeus += 10000U; /* time passing must not matter */
+        app_control_run();
+    }
     TEST_ASSERT_EQUAL_INT(APP_CONTROL_FAULT_NONE, app_control_getFault());
     TEST_ASSERT_TRUE(app_control_motionEnabled());
 }
 
-/* ...but a loss that outlasts the window is a real outage and must fault. */
-void test_run_forceGaugeSustainedLossFaults(void)
+/* ...and an un-ready gauge faults on the very first run, with no window to
+ * wait out. The driver has already decided it has given up by the time it says
+ * this, so any delay here is time a machine spends applying force against a
+ * load cell known to be gone. */
+void test_run_forceGaugeUnreadyFaultsImmediately(void)
 {
     control_init();
     enableMotion();
 
     d_forceGaugeReady = false;
-    app_control_run();
-    TEST_ASSERT_EQUAL_INT(APP_CONTROL_FAULT_NONE, app_control_getFault());
-
-    global_timeus += (APP_CONTROL_COMMS_FAULT_DEBOUNCE_MS + 1U) * 1000U;
     app_control_run();
     TEST_ASSERT_EQUAL_INT(APP_CONTROL_FAULT_FORCE_GAUGE_COMMUNICATION, app_control_getFault());
     TEST_ASSERT_FALSE(app_control_motionEnabled());
-}
-
-/* The window measures ONE unbroken episode: a recovery in the middle disarms it,
- * so repeated blips never accumulate into a fault. */
-void test_run_forceGaugeRepeatedBlipsDoNotAccumulate(void)
-{
-    control_init();
-    enableMotion();
-
-    for (int i = 0; i < 5; i++)
-    {
-        d_forceGaugeReady = false;
-        app_control_run();
-        d_forceGaugeReady = true;
-        global_timeus += (APP_CONTROL_COMMS_FAULT_DEBOUNCE_MS + 1U) * 1000U;
-        app_control_run();
-        TEST_ASSERT_EQUAL_INT(APP_CONTROL_FAULT_NONE, app_control_getFault());
-    }
-    TEST_ASSERT_TRUE(app_control_motionEnabled());
 }
 
 /* First-fault-wins: COG precedes WATCHDOG in the enum, so with both tripped the
@@ -820,7 +755,6 @@ void test_m4_each_fault_alone_reported_and_disables(void)
     {
         control_init();
         trip_fault_only(faults[i]);
-        armCommsDebounce();
         app_control_run();
         TEST_ASSERT_EQUAL_INT(faults[i], app_control_getFault());
         TEST_ASSERT_EQUAL_INT(APP_CONTROL_STATE_DISABLED, app_control_data.state);
@@ -850,7 +784,6 @@ void test_m4_enable_refused_for_each_fault(void)
     {
         control_init();
         trip_fault_only(faults[i]);
-        armCommsDebounce();
         app_control_run();
         TEST_ASSERT_FALSE(app_control_triggerMotionEnabled());
         app_control_run();
@@ -915,7 +848,6 @@ void test_m4_first_fault_wins_adjacent_pairs(void)
         default:
             break;
         }
-        armCommsDebounce();
         app_control_run();
         TEST_ASSERT_EQUAL_INT(pairs[i].lower, app_control_getFault());
     }
@@ -1094,10 +1026,8 @@ int main(void)
     RUN_TEST(test_run_esdPowerFaultDetected);
     RUN_TEST(test_run_servoCommunicationFaultWhenNotReady);
     RUN_TEST(test_run_forceGaugeCommunicationFaultWhenNotReady);
-    RUN_TEST(test_run_forceGaugeBlipDoesNotFault);
-    RUN_TEST(test_run_forceGaugeWorstCaseDriverRecoveryDoesNotFault);
-    RUN_TEST(test_run_forceGaugeSustainedLossFaults);
-    RUN_TEST(test_run_forceGaugeRepeatedBlipsDoNotAccumulate);
+    RUN_TEST(test_run_forceGaugeReadyNeverFaultsHoweverLongItRuns);
+    RUN_TEST(test_run_forceGaugeUnreadyFaultsImmediately);
     RUN_TEST(test_run_firstFaultWinsPriority);
 
     RUN_TEST(test_run_machineTensionBoundaryStrictGreater);

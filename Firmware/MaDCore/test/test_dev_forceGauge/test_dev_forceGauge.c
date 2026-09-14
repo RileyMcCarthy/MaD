@@ -139,20 +139,25 @@ void test_index_increments_each_running_cycle(void)
     TEST_ASSERT_EQUAL_UINT32(3, dev_forceGauge_getIndex(CH));
 }
 
-void test_running_to_error_when_not_responding(void)
+void test_a_single_missed_reply_keeps_the_load_cell_ready(void)
 {
-    VIBES_TEST("load-cell.unresponsive-unready",
+    VIBES_TEST("load-cell.one-miss-stays-ready",
                "src/DEV/dev_forceGauge.c#dev_forceGauge_run",
-               "a load cell that has already taken a reading, then fails to answer");
-    VIBES_EXPECT_WHY("unready",
-                     "the load cell is reported unready",
-                     "the controller raises a load-cell fault when the load cell is unready");
+               "a load cell that has already taken a reading, then misses one answer");
+    VIBES_EXPECT_WHY("still-ready",
+                     "the load cell is still reported ready while it re-reads",
+                     "one missed reply on a serial link is ordinary and this driver re-reads on the next tick, so reporting unready would tell the controller the load cell is gone and fault a machine that is applying force");
     dev_forceGauge_run();              /* -> RUNNING, ready */
     TEST_ASSERT_TRUE(dev_forceGauge_isReady(CH));
     d_responding = false;
     dev_forceGauge_run();              /* runAction sets responding=false */
-    dev_forceGauge_run();              /* getState -> ERROR, ready=false */
-    TEST_ASSERT_FALSE(dev_forceGauge_isReady(CH));
+    dev_forceGauge_run();              /* getState -> ERROR, still recovering */
+    TEST_ASSERT_TRUE(dev_forceGauge_isReady(CH));
+    /* `ready` is ALIVE; freshness is the index, which must NOT advance on a
+     * miss, or a stale force would be sampled as a new one. */
+    const uint32_t held = dev_forceGauge_getIndex(CH);
+    dev_forceGauge_run();
+    TEST_ASSERT_EQUAL_UINT32(held, dev_forceGauge_getIndex(CH));
 }
 
 void test_error_recovers_to_running(void)
@@ -160,16 +165,40 @@ void test_error_recovers_to_running(void)
     VIBES_TEST("load-cell.error-recovers",
                "src/DEV/dev_forceGauge.c#dev_forceGauge_run",
                "a load cell that missed readings and then answers again");
-    VIBES_EXPECT("ready-again", "the load cell is reported ready again");
+    VIBES_EXPECT("ready-throughout", "the load cell stays ready across the blip and resumes sampling");
     dev_forceGauge_run();
     d_responding = false;
     dev_forceGauge_run();
-    dev_forceGauge_run();              /* now in ERROR */
-    TEST_ASSERT_FALSE(dev_forceGauge_isReady(CH));
+    dev_forceGauge_run();              /* now in ERROR, recovering */
+    TEST_ASSERT_TRUE(dev_forceGauge_isReady(CH));
     d_responding = true;
     dev_forceGauge_run();              /* ERROR runAction sees responding=true */
-    dev_forceGauge_run();              /* getState ERROR -> RUNNING, ready again */
+    dev_forceGauge_run();              /* getState ERROR -> RUNNING */
     TEST_ASSERT_TRUE(dev_forceGauge_isReady(CH));
+    /* And sampling resumes: the index advances again once readings return. */
+    const uint32_t resumed = dev_forceGauge_getIndex(CH);
+    dev_forceGauge_run();
+    TEST_ASSERT_EQUAL_UINT32(resumed + 1U, dev_forceGauge_getIndex(CH));
+}
+
+void test_a_load_cell_that_never_answers_becomes_unready(void)
+{
+    VIBES_TEST("load-cell.silent-becomes-unready",
+               "src/DEV/dev_forceGauge.c#dev_forceGauge_run",
+               "a load cell that stops answering and never comes back");
+    VIBES_EXPECT_WHY("unready",
+                     "the load cell is eventually reported unready",
+                     "staying ready through a single miss must not mean staying ready forever -- once the driver has spent its retry budget the controller has to hear that the load cell is gone, because motion is gated on it");
+    dev_forceGauge_run();
+    TEST_ASSERT_TRUE(dev_forceGauge_isReady(CH));
+    d_responding = false;
+    /* The read, then the retry budget, then the tear-down to INIT. Generous
+     * enough to cover the transitions without asserting an exact tick count. */
+    for (unsigned i = 0U; i < 12U; i++)
+    {
+        dev_forceGauge_run();
+    }
+    TEST_ASSERT_FALSE(dev_forceGauge_isReady(CH));
 }
 
 void test_error_retry_exhaustion_reinits_and_stops_adc(void)
@@ -284,8 +313,9 @@ int main(void)
     RUN_TEST(test_force_conversion_with_zero_balance_and_polarity);
     RUN_TEST(test_zero_sensitivity_yields_zero_force);
     RUN_TEST(test_index_increments_each_running_cycle);
-    RUN_TEST(test_running_to_error_when_not_responding);
+    RUN_TEST(test_a_single_missed_reply_keeps_the_load_cell_ready);
     RUN_TEST(test_error_recovers_to_running);
+    RUN_TEST(test_a_load_cell_that_never_answers_becomes_unready);
     RUN_TEST(test_error_retry_exhaustion_reinits_and_stops_adc);
     RUN_TEST(test_retry_budget_rearms_after_recovery);
     RUN_TEST(test_force_scale_matrix);
