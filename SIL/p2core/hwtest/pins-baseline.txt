@@ -1,0 +1,48 @@
+# Lines in hwtest/golden/pins.txt where p2core does not yet match silicon.
+#
+# This is the first silicon coverage the smart-pin surface has ever had, and
+# it found that p2core models almost none of its TIMING. That is not a
+# surprise — it is the reason the harness was written — so the divergences are
+# recorded here rather than left to fail, and the gate protects the three
+# lines that DO match plus anything that regresses.
+#
+# Delete a line when it starts matching; the gate fails on a stale entry, so
+# this list cannot quietly become a permanent amnesty.
+
+# --- 1. Pin input is REGISTERED on silicon, instantaneous in p2core.
+# Reading a pin immediately after driving it returns the PREVIOUS level: the
+# chip gives `drvl` then `pinr` a 1, because the low has not reached the input
+# register yet. p2core applies a drive and reads it back in the same breath.
+# This is the shape of bug that made a step train look like levels rather than
+# edges, so it is worth more than its two lines here.
+drive_high
+drive_low
+
+# --- 2. Smart-pin completion is not modelled at all.
+# Every one of these measures clocks from WYPIN until the pin raises IN, and
+# p2core answers with the same ~31 clocks each time — which is the measuring
+# loop's own overhead, i.e. IN was already set. Silicon's answers scale with
+# the configured period: a 4-pulse train at 200 clocks/pulse takes $30D, a
+# 20-pulse train at 1000 takes $4E0D. Until the smart pins carry a completion
+# time, no step-generation timing in the ISS is checked by anything.
+transition_200_4
+transition_1000_20
+#
+# Caveat on the async pair, so nobody reads more into it than it says: on
+# silicon P_ASYNC_TX raises IN when the shift register frees, not when the
+# character has finished on the wire, so $29 is not "a byte took 41 clocks".
+# It is still a real differential — p2core returns a different number — but
+# the name promises more than the measurement delivers. Worth re-cutting
+# against the TX pin's own IN-after-stop-bit when someone implements this.
+async_tx_100
+async_tx_80
+
+# --- 3. The A-input selector is not modelled.
+# The RX pin is configured to take its input from the pin below it, which is
+# how a TX->RX loopback works on one chip with no jumper. p2core never
+# delivers the TX pin's level to the RX pin, so the received byte reads 0
+# where silicon reads a character.
+loopback_took_100
+loopback_took_80
+loopback_byte_100
+loopback_byte_80
