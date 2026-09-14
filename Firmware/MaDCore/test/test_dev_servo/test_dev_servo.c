@@ -72,6 +72,11 @@ void HAL_encoder_set(HAL_encoder_channel_E ch, int32_t v)
     d_encoderSetCount++;
     d_encoderLastSet = v;
     d_encoderValue = v;
+    /* Redefining the encoder frame moves the model's coordinate with it.
+     * Without this the carriage keeps its old value and the very next tick
+     * recomputes d_encoderValue from it, silently undoing the set -- which
+     * made every test at a non-zero position quietly run at the origin. */
+    d_carriage = (double)v;
 }
 
 static uint32_t d_startVelocityCount;
@@ -908,12 +913,12 @@ void test_the_shape_bit_selects_a_genuinely_different_rate_profile(void)
  * approach's residual is the error the waveform inherits at t=0, and excluding
  * it would hide exactly the defect that `waveformStartTolerance` exists to
  * prevent. */
-static double worst_sine_deviation_counts(double amplitude, uint32_t freqMicroHz, uint32_t cycles)
+static double worst_sine_deviation_at(int32_t centre, double amplitude, uint32_t freqMicroHz, uint32_t cycles)
 {
     servo_init();
-    dev_servo_setPosition(CH, 0);
+    dev_servo_setPosition(CH, centre);
     dev_servo_enable(CH, true);
-    TEST_ASSERT_TRUE_MESSAGE(dev_servo_startWaveform(CH, 0, (int32_t)amplitude, freqMicroHz,
+    TEST_ASSERT_TRUE_MESSAGE(dev_servo_startWaveform(CH, centre, (int32_t)amplitude, freqMicroHz,
                                                      cycles, DEV_SERVO_WAVE_SINE),
                              "the probe's own waveform must be feasible");
 
@@ -930,7 +935,7 @@ static double worst_sine_deviation_counts(double amplitude, uint32_t freqMicroHz
         runTicks++;
         const double t = (double)runTicks * 0.001;
         /* Phase 0 is the positive peak, so the trajectory is a cosine. */
-        const double ideal = amplitude * cos(2.0 * 3.14159265358979 * freqHz * t);
+        const double ideal = (double)centre + (amplitude * cos(2.0 * 3.14159265358979 * freqHz * t));
         const double err = fabs((double)d_encoderValue - ideal);
         if (err > worst) { worst = err; }
     }
@@ -965,8 +970,8 @@ void test_the_machine_reproduces_the_commanded_waveform_to_one_micron(void)
 
     for (unsigned i = 0U; i < (sizeof(cases) / sizeof(cases[0])); i++)
     {
-        const double worst =
-            worst_sine_deviation_counts(cases[i].amplitude, cases[i].freqMicroHz, cases[i].cycles);
+        const double worst = worst_sine_deviation_at(0, cases[i].amplitude,
+                                                     cases[i].freqMicroHz, cases[i].cycles);
         char msg[128];
         (void)snprintf(msg, sizeof(msg),
                        "amplitude %.0f counts at %u uHz deviated %.2f counts (%.4f mm)",
@@ -1047,6 +1052,39 @@ void test_the_phase_accumulator_loses_nothing_over_whole_cycles(void)
     }
 }
 
+void test_tracking_does_not_degrade_along_the_machine(void)
+{
+    VIBES_TEST("servo.waveform-tracking-is-position-independent",
+               "src/DEV/dev_servo.c#dev_servo_private_waveExcursion",
+               "the same waveform commanded at five points across the machine's 3000 mm travel");
+    VIBES_EXPECT_WHY("identical-at-every-centre",
+                     "the worst deviation is the same at 3000 mm as it is at the origin",
+                     "a float's ulp is 2 counts at the far end of the travel, so differencing two ABSOLUTE positions to get a velocity would fold a rounding error into a per-tick displacement of only ~63 counts; differencing the excursion instead keeps the arithmetic on small numbers, and the way to prove that is a result with no position term in it at all");
+
+    const int32_t centres[] = { 0, 819200, 8192000, 16384000, 24576000 };
+    double first = -1.0;
+    for (unsigned i = 0U; i < (sizeof(centres) / sizeof(centres[0])); i++)
+    {
+        const double worst = worst_sine_deviation_at(centres[i], 10000.0, 1000000U, 2U);
+        char msg[160];
+        (void)snprintf(msg, sizeof(msg), "at centre %d counts (%.0f mm) the deviation was %.2f counts",
+                       centres[i], (double)centres[i] / 8192.0, worst);
+        TEST_ASSERT_TRUE_MESSAGE(worst <= ONE_MICRON_COUNTS, msg);
+        if (i == 0U)
+        {
+            first = worst;
+        }
+        else
+        {
+            (void)snprintf(msg, sizeof(msg),
+                           "deviation at %.0f mm was %.2f counts but %.2f at the origin — tracking "
+                           "must not depend on where along the machine the test sits",
+                           (double)centres[i] / 8192.0, worst, first);
+            TEST_ASSERT_FLOAT_WITHIN_MESSAGE(0.01f, (float)first, (float)worst, msg);
+        }
+    }
+}
+
 void test_a_triangle_is_a_trapezoidal_rate_not_an_infinite_corner(void)
 {
     VIBES_TEST("servo.triangle-is-feasible",
@@ -1098,5 +1136,6 @@ int main(void)
     RUN_TEST(test_the_shape_bit_selects_a_genuinely_different_rate_profile);
     RUN_TEST(test_the_machine_reproduces_the_commanded_waveform_to_one_micron);
     RUN_TEST(test_the_phase_accumulator_loses_nothing_over_whole_cycles);
+    RUN_TEST(test_tracking_does_not_degrade_along_the_machine);
     return UNITY_END();
 }

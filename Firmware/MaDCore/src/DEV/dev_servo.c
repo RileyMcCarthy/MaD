@@ -277,14 +277,22 @@ static void dev_servo_private_waveDemand(float amplitude, float freqHz, dev_serv
 }
 
 /* Evaluate the oscillator at the current phase, then advance it by one tick. */
-/* Where the waveform is at a given phase. PURE -- no state, no side effects --
- * so the caller can ask for the position at the start and at the end of a tick
- * and difference the two. That is the whole point of evaluating a waveform
- * rather than integrating one. */
-static float dev_servo_private_waveAt(const dev_servo_channelData_S *d, float maxAccel, float phase)
+/* The waveform's EXCURSION FROM ITS CENTRE at a given phase. Pure -- no state,
+ * no side effects -- so the caller can ask for two phases and difference them.
+ * That is the whole point of evaluating a waveform rather than integrating one.
+ *
+ * Excursion, not absolute position, precisely so that the difference is taken
+ * on small numbers. The centre can be 24,576,000 counts out at the far end of
+ * the machine, where a float's ulp is 2 counts; differencing two absolute
+ * positions there would lose those 2 counts into a per-tick displacement of
+ * only ~63, turning a rounding error into +/-2000 counts/s of velocity noise
+ * that grows with how far along the machine the test happens to sit. The
+ * excursion never exceeds the amplitude, so the difference is exact to well
+ * under a count wherever the test runs. */
+static float dev_servo_private_waveExcursion(const dev_servo_channelData_S *d, float maxAccel,
+                                             float phase)
 {
     const float amplitude = (float)d->req.waveAmplitude;
-    const float centre = (float)d->req.waveCentre;
     const float freqHz = (float)d->req.waveFreqMicroHz / 1000000.0f;
 
     if (d->req.waveShape == DEV_SERVO_WAVE_TRIANGLE)
@@ -321,13 +329,13 @@ static float dev_servo_private_waveAt(const dev_servo_channelData_S *d, float ma
             travelled = (0.5f * v * tRamp) + (v * (halfPeriod - (2.0f * tRamp))) +
                         ((v * tDown) - (0.5f * (v / tRamp) * tDown * tDown));
         }
-        return centre + (dir * (travelled - amplitude));
+        return dir * (travelled - amplitude);
     }
 
     /* cos, not sin: phase 0 is the POSITIVE PEAK, where the velocity passes
      * through zero. A sine would put phase 0 at the centre moving at `wA`,
      * which no machine standing at rest can join. */
-    return centre + (amplitude * cosf(DEV_SERVO_TWO_PI * phase));
+    return amplitude * cosf(DEV_SERVO_TWO_PI * phase);
 }
 
 /* How far the phase advances in `elapsedUs`, EXACTLY.
@@ -387,7 +395,8 @@ static void dev_servo_private_oscillate(dev_servo_channelData_S *d, float dt, ui
     const uint32_t next = d->wavePhase + step;
     const float nextPhase = (float)next / DEV_SERVO_PHASE_ONE_CYCLE;
 
-    *pos = dev_servo_private_waveAt(d, maxAccel, phase);
+    const float excursion = dev_servo_private_waveExcursion(d, maxAccel, phase);
+    *pos = (float)d->req.waveCentre + excursion;
 
     /* Command the AVERAGE velocity across the tick, not the instantaneous
      * velocity at its start.
@@ -400,7 +409,7 @@ static void dev_servo_private_oscillate(dev_servo_channelData_S *d, float dt, ui
      * and leaves the proportional term with nothing to do but reject real
      * disturbances. The wave is periodic in phase, so this stays exact across
      * the wrap. */
-    *vel = (dev_servo_private_waveAt(d, maxAccel, nextPhase) - *pos) / dt;
+    *vel = (dev_servo_private_waveExcursion(d, maxAccel, nextPhase) - excursion) / dt;
 
     if (next < d->wavePhase)
     {
