@@ -26,6 +26,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <math.h>
+#include <stdio.h>
 
 #include "HAL_lock.h"
 #include "HAL_GPIO.h"
@@ -650,6 +651,82 @@ void test_dev_servo_moveSettlesDeterministicallyWithoutHunting(void)
     }
 }
 
+/* ---------------------------------------------------------------------------
+ * Why the G123 waveform cannot stream velocity open-loop.
+ *
+ * The question this answers is "is the waveform anchor in app_motion actually
+ * needed, or is it propping up a simulator?" -- so it is deliberately posed
+ * where no simulator can reach: `tick_with_motion` makes the encoder follow
+ * the commanded step rate EXACTLY. A perfect plant, a perfect encoder, no
+ * embsim, no ISS, no QEMU. Whatever drifts here drifts in arithmetic that
+ * lives in dev_servo.c and runs the same on a P2.
+ *
+ * A position sinusoid asks for its peak velocity at t=0. The accel limiter at
+ * dev_servo.c's "trapezoid ramp" cannot deliver a step, so `setpointVel` lags
+ * on the way in -- and `setpointPos`, which is the firmware's OWN integrated
+ * reference, integrates the LIMITED velocity rather than the commanded one.
+ * Velocity mode never compares that reference to anything, so the shortfall is
+ * permanent: Vpeak^2 / (2 * maxAccel).
+ * ------------------------------------------------------------------------- */
+
+/* Stream one open-loop waveform and return where the carriage ended up, in
+ * counts, relative to where it started. A whole number of cycles of a sine
+ * must end where it began. */
+static double stream_open_loop_waveform(double amplitudeCounts, double freqHz, unsigned cycles)
+{
+    const double twoPi = 6.283185307179586;
+    const double omega = twoPi * freqHz;
+    const double dt = 0.001; /* tick() is 1 ms */
+    const unsigned ticks = (unsigned)((double)cycles / freqHz / dt);
+
+    dev_servo_enable(CH, true);
+    for (unsigned i = 0U; i < ticks; i++)
+    {
+        const double t = (double)i * dt;
+        /* Exactly what app_motion streamed before the anchor: the analytic
+         * derivative of the position sinusoid, and nothing else. */
+        const double vel = omega * amplitudeCounts * cos(omega * t);
+        dev_servo_setVelocity(CH, (int32_t)vel);
+        tick_with_motion();
+    }
+    return d_carriage;
+}
+
+void test_open_loop_waveform_velocity_leaves_a_permanent_position_deficit(void)
+{
+    VIBES_TEST("servo.open-loop-waveform-sags",
+               "src/DEV/dev_servo.c#dev_servo_run",
+               "a position sinusoid streamed as velocity alone, with a perfect encoder");
+    VIBES_EXPECT_WHY("ends-below-where-it-started",
+                     "the carriage ends a whole cycle below where it began",
+                     "the accelerometer-limited ramp-in is integrated into the servo's own position reference and velocity mode never compares that reference to anything, so the shortfall is never recovered");
+
+    servo_init();
+    dev_servo_setPosition(CH, 0);
+
+    /* Chosen to sit inside the fixture's envelope (maxVel 100000 counts/s,
+     * maxAccel 500000 counts/s^2) while still demanding a real ramp-in. */
+    const double amplitude = 10000.0; /* counts */
+    const double freq = 1.0;          /* Hz    */
+    const double omega = 6.283185307179586 * freq;
+    const double vPeak = omega * amplitude;
+    const double predictedDeficit = (vPeak * vPeak) / (2.0 * 500000.0);
+
+    const double ended = stream_open_loop_waveform(amplitude, freq, 2U);
+
+    /* Two whole cycles: the ideal trajectory returns to its start exactly. */
+    TEST_ASSERT_TRUE_MESSAGE(ended < -0.5 * predictedDeficit,
+                             "a whole number of cycles must return to the start, and this does not");
+
+    /* And it is the ramp-in deficit, not noise: within 35% of Vpeak^2/(2a). */
+    const double ratio = (-ended) / predictedDeficit;
+    printf("  open-loop waveform: ended %.0f counts below start; "
+           "Vpeak^2/(2a) predicts %.0f (ratio %.2f)\n",
+           -ended, predictedDeficit, ratio);
+    TEST_ASSERT_TRUE_MESSAGE(ratio > 0.65 && ratio < 1.35,
+                             "the shortfall must match the analytic ramp-in deficit");
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -676,5 +753,6 @@ int main(void)
     RUN_TEST(test_dev_servo_stopClearsArrival);
     RUN_TEST(test_dev_servo_setPositionClearsArrival);
     RUN_TEST(test_dev_servo_moveSettlesDeterministicallyWithoutHunting);
+    RUN_TEST(test_open_loop_waveform_velocity_leaves_a_permanent_position_deficit);
     return UNITY_END();
 }
