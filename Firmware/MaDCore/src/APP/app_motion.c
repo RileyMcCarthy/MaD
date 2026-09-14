@@ -108,14 +108,16 @@ typedef struct
     bool limitSpeed;
     int32_t positionSteps;
     bool atTarget;
-    int32_t gaugeSetpointSteps;     /* actuator_getTarget() — commanded target */
+    int32_t gaugeSetpointSteps;   /* where the move ENDS                */
+    int32_t gaugeCommandedSteps;  /* where the trajectory is RIGHT NOW  */     /* actuator_getTarget() — commanded target */
     bool endstopUpperActive;        /* HAL_GPIO_getActive(ENDSTOP_UPPER)      */
 } app_motion_dataInputs_t;
 
 typedef struct
 {
-    int32_t setpoint; // um
-    int32_t position; // um
+    int32_t setpoint;  // nm — where the move ENDS
+    int32_t commanded; // nm — where the trajectory is RIGHT NOW
+    int32_t position;  // nm
 } app_motion_outputs_t;
 
 typedef struct
@@ -170,29 +172,35 @@ static void app_motion_private_processInputs(void)
     app_motion_data.inputs.limitSpeed = app_control_speedLimited();
     app_motion_data.inputs.positionSteps = actuator_getPosition();
     app_motion_data.inputs.atTarget = actuator_atTarget();
+    /* TWO different quantities, and conflating them is why a recorded G1 used
+     * to carry a flat line through the middle of its own ramp.
+     *
+     *  - the TARGET is where the move ENDS. It is what a UI shows as "going
+     *    to", and what a host uses to tell that a command has registered and
+     *    that the axis has arrived.
+     *  - the COMMANDED position is where the trajectory says the machine should
+     *    be RIGHT NOW. It is what a recorded sample must carry, because it is
+     *    what the specimen was actually being asked for at that instant.
+     *
+     * For a G1 ramp the first is constant and the second sweeps; for a waveform
+     * the first is the centre it will finish at and the second traces the wave. */
     app_motion_data.inputs.gaugeSetpointSteps = actuator_getTarget();
-    /* A target is where a move ENDS; during a waveform that is the centre it
-     * will finish at, which is not what the specimen is being asked for at this
-     * instant. Report the driver's own profile position instead, so a recorded
-     * sample carries the trajectory rather than its destination. (Only for a
-     * waveform: making this unconditional would change the recorded setpoint of
-     * every G0/G1 too, which is a separate question about what a sample means.) */
-    if (app_motion_data.currentMove.g == G123_WAVEFORM)
-    {
-        app_motion_data.inputs.gaugeSetpointSteps = actuator_getSetpoint();
-    }
+    app_motion_data.inputs.gaugeCommandedSteps = actuator_getSetpoint();
     app_motion_data.inputs.endstopUpperActive = HAL_GPIO_getActive(HAL_GPIO_ENDSTOP_UPPER);
 }
 
 static void app_motion_private_processOutputs(void)
 {
     int32_t setpoint = 0;
+    int32_t commanded = 0;
     if (app_motion_data.stepsPerMM != 0)
     {
-        setpoint = (int32_t)(((int64_t)app_motion_data.inputs.gaugeSetpointSteps * 1000LL) / app_motion_data.stepsPerMM);
+        setpoint = (int32_t)(((int64_t)app_motion_data.inputs.gaugeSetpointSteps * (int64_t)LIB_UTILITY_NM_PER_MM) / app_motion_data.stepsPerMM);
+        commanded = (int32_t)(((int64_t)app_motion_data.inputs.gaugeCommandedSteps * (int64_t)LIB_UTILITY_NM_PER_MM) / app_motion_data.stepsPerMM);
     }
     APP_MOTION_LOCK_REQ_BLOCK();
     app_motion_data.output.setpoint = setpoint;
+    app_motion_data.output.commanded = commanded;
     APP_MOTION_LOCK_REL();
 }
 
@@ -270,7 +278,7 @@ static bool app_motion_private_homing_run(void)
             const int32_t homingOffsetSteps = app_motion_data.stepsPerMM * app_motion_data.homingOffset;
             (void)IO_positionFeedback_setValue(
                 IO_POSITION_FEEDBACK_CHANNEL_SERVO_FEEDBACK,
-                LIB_UTILITY_MM_TO_UM(app_motion_data.jawOffset));
+                LIB_UTILITY_MM_TO_NM(app_motion_data.jawOffset));
             actuator_setPosition(jawOffsetSteps);
             actuator_move(jawOffsetSteps + homingOffsetSteps, (app_motion_data.homingVelocity * app_motion_data.stepsPerMM));
             app_motion_data.homeState = APP_MOTION_HOME_BACKOFF;
@@ -499,6 +507,14 @@ bool app_motion_isIdle(void)
      * called from app_testManagement's run loop on that same cog. */
     return (state == APP_MOTION_WAITING) &&
            lib_staticQueue_isempty(&app_motion_data.queue);
+}
+
+int32_t app_motion_getCommandedPosition(void)
+{
+    APP_MOTION_LOCK_REQ_BLOCK();
+    const int32_t commanded = app_motion_data.output.commanded;
+    APP_MOTION_LOCK_REL();
+    return commanded;
 }
 
 int32_t app_motion_getSetpoint(void)

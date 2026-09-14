@@ -29,10 +29,10 @@ describe('decodeBinarySampleDataToCSV', () => {
 
       const csv = decodeBinarySampleDataToCSV(buf);
       const lines = csv.trim().split('\n');
-      expect(lines[0]).toBe('time_us,force_mN,position_um,setpoint_um');
-      // row 1: time 1000, force 1.5 N → 1500 mN, position 10.25 mm → 10250 µm
-      expect(lines[1]).toBe('1000,1500,10250,10000');
-      expect(lines[2]).toBe('2000,-2000,11000,11000');
+      expect(lines[0]).toBe('time_us,force_mN,position_nm,setpoint_nm');
+      // row 1: time 1000, force 1.5 N → 1500 mN, position 10.25 mm → 10,250,000 nm
+      expect(lines[1]).toBe('1000,1500,10250000,10000000');
+      expect(lines[2]).toBe('2000,-2000,11000000,11000000');
     },
   );
 });
@@ -42,14 +42,14 @@ describe('parseTestCSV', () => {
     {
       id: 'sample.csv-parses-to-engineering-units',
       covers: 'src/domain/sample.ts#parseTestCSV',
-      given: 'a CSV row of 1000000 microseconds, 1500 millinewtons, and 10250 micrometres',
+      given: 'a CSV row of 1000000 microseconds, 1500 millinewtons, and 10250000 nanometres',
       expect: {
         'one-reading': 'exactly one reading comes back',
         'engineering-units': 'the reading is 1 s, 1.5 N, and 10.25 mm',
       },
     },
     () => {
-      const csv = 'time_us,force_mN,position_um,setpoint_um\n1000000,1500,10250,10000\n';
+      const csv = 'time_us,force_mN,position_nm,setpoint_nm\n1000000,1500,10250000,10000000\n';
       const pts = parseTestCSV(csv);
       expect(pts).toHaveLength(1);
       expect(pts[0].timeS).toBeCloseTo(1, 6);
@@ -67,7 +67,7 @@ describe('parseTestCSV', () => {
       expect: { 'only-valid-row': 'parsing returns only the valid row' },
     },
     () => {
-      const csv = 'time_us,force_mN,position_um,setpoint_um\nbad,row\n0,0,0,0\n';
+      const csv = 'time_us,force_mN,position_nm,setpoint_nm\nbad,row\n0,0,0,0\n';
       expect(parseTestCSV(csv)).toHaveLength(1);
     },
   );

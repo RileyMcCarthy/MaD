@@ -182,7 +182,7 @@ void app_monitor_private_processInputs()
     app_monitor_data.input.updatedIndex = (newIndex != app_monitor_data.input.forceIndex);
     app_monitor_data.input.forceIndex = newIndex;
     app_monitor_data.input.position = app_gauge_getPosition(APP_GAUGE_COORD_MACHINE);
-    app_monitor_data.input.setpoint = app_motion_getSetpoint();
+    app_monitor_data.input.setpoint = app_motion_getCommandedPosition();
     app_monitor_data.input.time = HAL_time_getUs();
     app_monitor_data.input.testRunning = app_testManagement_isRunning();
 }
@@ -210,11 +210,11 @@ void app_monitor_private_processSample()
      * fields in one row come from a single ADC/encoder read. Re-reading app_gauge here
      * would race processInputs and produce rows whose force/position don't match time. */
     const int32_t gaugeForce_mN = app_gauge_getGaugeForce_mN();
-    const int32_t gaugeLength_um = app_gauge_getGaugeLength_um();
+    const int32_t gaugeLength_nm = app_gauge_getGaugeLength_nm();
     app_monitor_data.sample.force = app_monitor_data.input.force - gaugeForce_mN;
-    app_monitor_data.sample.position = app_monitor_data.input.position - gaugeLength_um;
+    app_monitor_data.sample.position = app_monitor_data.input.position - gaugeLength_nm;
     app_monitor_data.sample.time = app_monitor_data.input.time - app_monitor_data.startTime;
-    app_monitor_data.sample.setpoint = app_monitor_data.input.setpoint - gaugeLength_um;
+    app_monitor_data.sample.setpoint = app_monitor_data.input.setpoint - gaugeLength_nm;
 }
 
 void app_monitor_private_setOutput(void)
@@ -234,10 +234,10 @@ void app_monitor_private_setOutput(void)
         // For now, set to false as velocity is not directly available in sample data
         app_monitor_data.out.velocityExceeded = false;
 
-        // Displacement limit check (sample position is um, profile limit is mm)
+        // Displacement limit check (sample position is nm, profile limit is mm)
         uint32_t currentDisplacement = (uint32_t)abs(app_monitor_data.sample.position);
         app_monitor_data.out.displacementExceeded =
-            (currentDisplacement > LIB_UTILITY_MM_TO_UM(app_monitor_data.sampleProfile.maxDisplacement));
+            (currentDisplacement > (uint32_t)LIB_UTILITY_MM_TO_NM(app_monitor_data.sampleProfile.maxDisplacement));
     }
     else
     {

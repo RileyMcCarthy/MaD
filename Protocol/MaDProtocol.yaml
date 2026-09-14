@@ -137,15 +137,15 @@ structs:
       - name: machinePosition
         type: int32
         unit: mm
-        scale: 1000        # struct stores µm; use set/get accessors for mm
-        raw_storage: true
+        scale: 1000000     # struct stores NANOMETRES; one encoder count is 122 nm,
+        raw_storage: true  # so micrometres were coarser than the sensor itself
         min: -200
         max: 200
       - name: machineSetpoint
         type: int32
         unit: mm
-        scale: 1000        # struct stores µm; use set/get accessors for mm
-        raw_storage: true
+        scale: 1000000     # struct stores NANOMETRES; one encoder count is 122 nm,
+        raw_storage: true  # so micrometres were coarser than the sensor itself
         min: -200
         max: 200
       - name: sampleForce
@@ -158,8 +158,8 @@ structs:
       - name: samplePosition
         type: int32
         unit: mm
-        scale: 1000        # struct stores µm; use set/get accessors for mm
-        raw_storage: true
+        scale: 1000000     # struct stores NANOMETRES; one encoder count is 122 nm,
+        raw_storage: true  # so micrometres were coarser than the sensor itself
         min: -200
         max: 200
 
@@ -284,8 +284,8 @@ structs:
       - name: position
         type: int32
         unit: mm
-        scale: 1000        # stored as µm wire steps
-        raw_storage: true
+        scale: 1000000     # struct stores NANOMETRES; one encoder count is 122 nm,
+        raw_storage: true  # so micrometres were coarser than the sensor itself
         min: -200
         max: 200
       - name: time
@@ -297,8 +297,8 @@ structs:
       - name: setpoint
         type: int32
         unit: mm
-        scale: 1000        # stored as µm wire steps
-        raw_storage: true
+        scale: 1000000     # struct stores NANOMETRES; one encoder count is 122 nm,
+        raw_storage: true  # so micrometres were coarser than the sensor itself
         min: -200
         max: 200
 

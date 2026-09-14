@@ -33,8 +33,9 @@ void test_protoemb_stored_sample_roundtrip(void)
     VIBES_EXPECT_WHY("roundtrip-intact",
                      "encoding it and decoding those bytes again returns the same force, position, time and setpoint",
                      "a recorded sample is what was measured; a field-order slip would plot the wrong curve");
-    VIBES_EXPECT("wire-size",
-                 "the sample takes eleven bytes on the wire");
+    VIBES_EXPECT_WHY("wire-size",
+                     "the sample takes fourteen bytes on the wire",
+                     "it grew from eleven when position and setpoint went from micrometres to nanometres; the byte count is the version handshake, so a change here must be deliberate");
     ProtoEmb_StoredSample_t in;
     ProtoEmb_StoredSample_t out;
     uint8_t wire[PROTOEMB_STOREDSAMPLE_WIRE_SIZE];
@@ -51,7 +52,7 @@ void test_protoemb_stored_sample_roundtrip(void)
     ProtoEmb_StoredSample_encode(wire, &in);
     ProtoEmb_StoredSample_decode(wire, &out);
 
-    TEST_ASSERT_EQUAL_UINT32(11U, PROTOEMB_STOREDSAMPLE_WIRE_SIZE);
+    TEST_ASSERT_EQUAL_UINT32(14U, PROTOEMB_STOREDSAMPLE_WIRE_SIZE);
     TEST_ASSERT_EQUAL_INT32(ProtoEmb_StoredSample_getForce_raw(&in), ProtoEmb_StoredSample_getForce_raw(&out));
     TEST_ASSERT_EQUAL_INT32(ProtoEmb_StoredSample_getPosition_raw(&in), ProtoEmb_StoredSample_getPosition_raw(&out));
     TEST_ASSERT_EQUAL_INT32(ProtoEmb_StoredSample_getSetpoint_raw(&in), ProtoEmb_StoredSample_getSetpoint_raw(&out));

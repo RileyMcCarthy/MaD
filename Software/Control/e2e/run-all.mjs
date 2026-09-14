@@ -137,12 +137,24 @@ async function readDownloadedCsvSeries(page) {
     if (!text) return null;
     const lines = text.trim().split('\n');
     const hdr = lines[0].split(',');
-    const ti = hdr.indexOf('time_us'), pi = hdr.indexOf('position_um');
-    const time = [], pos = [];
+    const ti = hdr.indexOf('time_us');
+    const pi = hdr.indexOf('position_nm');
+    const si = hdr.indexOf('setpoint_nm');
+    const time = [], pos = [], setpoint = [];
     for (const l of lines.slice(1)) {
       const c = l.split(',');
       const t = Number(c[ti]), p = Number(c[pi]);
-      if (Number.isFinite(t) && Number.isFinite(p)) { time.push(t); pos.push(p); }
+      const sp = si >= 0 ? Number(c[si]) : NaN;
+      // The CSV is in NANOMETRES; `pos` stays in micrometres so every existing
+      // µm-based threshold and `/1000` to mm keeps working — but FRACTIONAL,
+      // so the sub-micron detail the column now carries is not thrown away
+      // here. Rounding to integer µm at this boundary would undo the whole
+      // point of widening the record.
+      if (Number.isFinite(t) && Number.isFinite(p)) {
+        time.push(t);
+        pos.push(p / 1000);
+        setpoint.push(Number.isFinite(sp) ? sp / 1000 : NaN);
+      }
     }
     // A header-only CSV is a failed recording, and it must LOOK like one.
     // Returning {time: [], pos: []} here let every truthiness guard pass and
@@ -151,7 +163,7 @@ async function readDownloadedCsvSeries(page) {
     // G-limit's "stayed under the limit" check is satisfied by -Infinity, so
     // it reported PASS on CI while the device was returning zero bytes.
     if (pos.length === 0) return null;
-    return { time, pos };
+    return { time, pos, setpoint };
   });
 }
 
