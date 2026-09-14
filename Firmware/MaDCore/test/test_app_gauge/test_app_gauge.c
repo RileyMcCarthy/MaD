@@ -59,7 +59,7 @@ void test_init_zeros_offsets(void)
                "the gauge starting up");
     VIBES_EXPECT("length-zero", "gauge length reads zero");
     VIBES_EXPECT("force-zero", "the force tare reads zero");
-    TEST_ASSERT_EQUAL_INT32(0, app_gauge_getGaugeLength_um());
+    TEST_ASSERT_EQUAL_INT32(0, app_gauge_getGaugeLength_nm());
     TEST_ASSERT_EQUAL_INT32(0, app_gauge_getGaugeForce_mN());
 }
 
@@ -159,7 +159,7 @@ void test_setGaugeLength_latches_current_machine(void)
                  "the current machine position becomes the stored gauge length");
     set_machinePositionUm(7777);
     app_gauge_setGaugeLength();
-    TEST_ASSERT_EQUAL_INT32(7777, app_gauge_getGaugeLength_um());
+    TEST_ASSERT_EQUAL_INT32(7777, app_gauge_getGaugeLength_nm());
 }
 
 void test_setGaugeForce_latches_current_machine(void)
@@ -188,7 +188,7 @@ void test_offsets_independent(void)
     set_machineForceMN(200);
     app_gauge_setGaugeLength();
     app_gauge_setGaugeForce();
-    TEST_ASSERT_EQUAL_INT32(100, app_gauge_getGaugeLength_um());
+    TEST_ASSERT_EQUAL_INT32(100, app_gauge_getGaugeLength_nm());
     TEST_ASSERT_EQUAL_INT32(200, app_gauge_getGaugeForce_mN());
 }
 

@@ -161,7 +161,7 @@ describe('M1 unit-scale matrix: StoredSample → CSV → engineering', () => {
         });
         expect(buf.length).toBe(STOREDSAMPLE_WIRE_SIZE);
         const csv = decodeBinarySampleDataToCSV(buf);
-        expect(csv.startsWith('time_us,force_mN,position_um,setpoint_um')).toBe(true);
+        expect(csv.startsWith('time_us,force_mN,position_nm,setpoint_nm')).toBe(true);
         const pts = parseTestCSV(csv);
         expect(pts).toHaveLength(1);
         expect(pts[0].forceN).toBeCloseTo(forceN, 3);

@@ -180,13 +180,13 @@ bool dev_servo_startWaveform(dev_servo_channel_E ch, const dev_servo_waveform_S 
 
 /* --- IO_positionFeedback output (record last call) --- */
 static uint32_t d_setValueCount;
-static int32_t d_lastSetValueUM;
+static int32_t d_lastSetValueNM;
 
 bool IO_positionFeedback_setValue(IO_positionFeedback_channel_E ch, int32_t positionUM)
 {
     TEST_ASSERT_EQUAL_INT(IO_POSITION_FEEDBACK_CHANNEL_SERVO_FEEDBACK, ch);
     d_setValueCount++;
-    d_lastSetValueUM = positionUM;
+    d_lastSetValueNM = positionUM;
     return true;
 }
 
@@ -233,7 +233,7 @@ static void doubles_reset(void)
     d_lastSetPosition = 0;
 
     d_setValueCount = 0U;
-    d_lastSetValueUM = 0;
+    d_lastSetValueNM = 0;
 
     /* A representative, easy-to-reason-about machine profile.
      * 100 steps/mm keeps step<->um math exact for round numbers. */
@@ -612,7 +612,7 @@ void test_homing_full_sequence(void)
     d_moveCount = 0U;
     app_motion_run();
     TEST_ASSERT_EQUAL_UINT32(1U, d_setValueCount);
-    TEST_ASSERT_EQUAL_INT32(3000, d_lastSetValueUM);
+    TEST_ASSERT_EQUAL_INT32(3000000, d_lastSetValueNM); /* nm */
     TEST_ASSERT_EQUAL_UINT32(1U, d_setPositionCount);
     TEST_ASSERT_EQUAL_INT32(300, d_lastSetPosition);
     TEST_ASSERT_EQUAL_UINT32(1U, d_moveCount);
@@ -676,7 +676,7 @@ void test_homing_fails_when_target_reached_without_endstop(void)
 
 /* getSetpoint mirrors processOutputs: setpoint(um) = target(steps)*1000/stepsPerMM.
  * The snapshot of dev_stepper_getTarget is taken at run() time. */
-void test_getSetpoint_scales_target_steps_to_um(void)
+void test_getSetpoint_scales_target_steps_to_nm(void)
 {
     VIBES_TEST("motion.setpoint-steps-to-micrometres",
                "src/APP/app_motion.c#app_motion_private_processOutputs",
@@ -686,15 +686,15 @@ void test_getSetpoint_scales_target_steps_to_um(void)
     d_target = 250; /* steps; 250*1000/100 = 2500 um */
     d_motionEnabled = true;
     app_motion_run();
-    TEST_ASSERT_EQUAL_INT32(2500, app_motion_getSetpoint());
+    TEST_ASSERT_EQUAL_INT32(2500000, app_motion_getSetpoint()); /* nm */
 
     d_target = -100; /* -100*1000/100 = -1000 um */
     app_motion_run();
-    TEST_ASSERT_EQUAL_INT32(-1000, app_motion_getSetpoint());
+    TEST_ASSERT_EQUAL_INT32(-1000000, app_motion_getSetpoint()); /* nm */
 }
 
 /* getPosition converts the snapshotted current step count to um. */
-void test_getPosition_scales_steps_to_um(void)
+void test_getPosition_scales_steps_to_nm(void)
 {
     VIBES_TEST("motion.position-steps-to-micrometres",
                "src/APP/app_motion.c#app_motion_getPosition",
@@ -930,8 +930,34 @@ void test_the_recorded_setpoint_during_a_waveform_is_the_trajectory(void)
     app_motion_run();
     global_timeus += 1000U;
     app_motion_run();
-    /* stepsPerMM is 100, so 1750 steps is 17500 um. */
-    TEST_ASSERT_EQUAL_INT32(17500, app_motion_getSetpoint());
+    /* stepsPerMM is 100, so 1750 steps is 17.5 mm. */
+    TEST_ASSERT_EQUAL_INT32(17500000, app_motion_getCommandedPosition()); /* nm */
+    /* ...while the TARGET still reports where the move ENDS, which is what a
+     * host uses to see a command register and to tell that the axis arrived. */
+    TEST_ASSERT_EQUAL_INT32(10000000, app_motion_getSetpoint());
+}
+
+void test_a_linear_move_records_its_trajectory_not_its_destination(void)
+{
+    VIBES_TEST("motion.linear-records-its-trajectory",
+               "src/APP/app_motion.c#app_motion_private_processInputs",
+               "a linear move in progress, where the driver's target and its live profile position differ");
+    VIBES_EXPECT_WHY("commanded-is-the-profile",
+                     "the commanded position follows the profile while the target stays at the destination",
+                     "a recorded sample must say what the specimen was being asked for at that instant; recording the destination instead draws a flat line through the middle of the ramp, which is why a 24 um tracking offset sat unnoticed in G0/G1 data");
+
+    motion_driveToWaiting();
+    d_atTarget = false;
+    d_target = 5000;    /* where the move ENDS  */
+    d_setpoint = 1250;  /* where the ramp is NOW */
+    app_motion_move_t mv = make_move((uint8_t)G1_LINEAR_MOVE, 50000, 1000, 0U);
+    TEST_ASSERT_TRUE(app_motion_addMove(&mv));
+    app_motion_run();
+    global_timeus += 1000U;
+    app_motion_run();
+    /* stepsPerMM is 100: 1250 steps = 12.5 mm, 5000 steps = 50 mm. */
+    TEST_ASSERT_EQUAL_INT32(12500000, app_motion_getCommandedPosition());
+    TEST_ASSERT_EQUAL_INT32(50000000, app_motion_getSetpoint());
 }
 
 /* A degenerate waveform (zero frequency) completes without commanding motion. */
@@ -981,8 +1007,8 @@ int main(void)
     RUN_TEST(test_homing_full_sequence);
     RUN_TEST(test_homing_fails_when_target_reached_without_endstop);
 
-    RUN_TEST(test_getSetpoint_scales_target_steps_to_um);
-    RUN_TEST(test_getPosition_scales_steps_to_um);
+    RUN_TEST(test_getSetpoint_scales_target_steps_to_nm);
+    RUN_TEST(test_getPosition_scales_steps_to_nm);
     RUN_TEST(test_zero_stepsPerMM_yields_zero_setpoint_and_position);
 
     RUN_TEST(test_addMove_queue_is_bounded);
@@ -994,6 +1020,7 @@ int main(void)
     RUN_TEST(test_a_refused_waveform_completes_the_move_instead_of_hanging);
     RUN_TEST(test_a_waveform_runs_until_the_driver_reports_arrival);
     RUN_TEST(test_the_recorded_setpoint_during_a_waveform_is_the_trajectory);
+    RUN_TEST(test_a_linear_move_records_its_trajectory_not_its_destination);
     RUN_TEST(test_waveform_zero_frequency_completes_without_motion);
 
     return UNITY_END();

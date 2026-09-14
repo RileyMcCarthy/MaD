@@ -3,7 +3,7 @@ import { behaviour } from '@vibes/behaviour';
 import { buildExportCsv } from './exportCsv';
 import type { TestRunEntry } from './types';
 
-const csv = 'time_us,force_mN,position_um,setpoint_um\n0,0,0,0\n';
+const csv = 'time_us,force_mN,position_nm,setpoint_nm\n0,0,0,0\n';
 
 function run(over: Partial<TestRunEntry> = {}): TestRunEntry {
   return {

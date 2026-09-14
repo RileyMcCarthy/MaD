@@ -110,6 +110,12 @@ bool app_motion_isIdle(void);
 
 // Getters
 int32_t app_motion_getSetpoint(void);
+/* Where the trajectory says the machine should be RIGHT NOW, in nanometres --
+ * as opposed to getSetpoint(), which is where the move ENDS. A recorded sample
+ * carries this one: it is what the specimen was being asked for at that
+ * instant, and comparing it against the measured position is the only way a
+ * tracking error is visible in the data at all. */
+int32_t app_motion_getCommandedPosition(void);
 int32_t app_motion_getPosition(void);
 
 /**********************************************************************
