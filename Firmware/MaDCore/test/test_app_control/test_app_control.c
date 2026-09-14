@@ -298,12 +298,16 @@ void test_run_servoCommunicationFaultWhenNotReady(void)
                "src/APP/app_control.c#app_control_run",
                "the drive that moves the gantry stops reporting that it is ready");
     VIBES_EXPECT_WHY("drive-fault-reported",
-                     "the machine reports a drive communication fault",
+                     "the machine reports a drive communication fault immediately",
                      "the machine is built with one of two motor drives, and only the drive actually running reports its readiness, so the controller asks the active one");
     control_init();
     d_actuatorReady = false; /* the active actuator's isReady == false → fault */
-    armCommsDebounce();
     app_control_run();
+    /* Deliberately no debounce arming, and deliberately the FIRST run: despite
+     * its name this fault is not a link at all. `actuator_isReady()` is the
+     * motor control loop's "I ticked" flag, so one false reading means the loop
+     * has stopped, and waiting 100 ms to say so would leave a machine applying
+     * force with no servo. If someone reintroduces a window here, this fails. */
     TEST_ASSERT_EQUAL_INT(APP_CONTROL_FAULT_SERVO_COMMUNICATION, app_control_getFault());
 }
 

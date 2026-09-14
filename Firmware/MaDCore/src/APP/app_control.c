@@ -30,10 +30,10 @@
  * Constants
  **********************************************************************/
 
-/* How long a communication loss must persist before it is a machine fault.
+/* How long a loss of the force gauge must persist before it is a machine fault.
  *
- * The two communication faults are not read from a pin -- they are a device
- * driver's opinion, formed from a request/response exchange over a UART. A
+ * This fault is not read from a pin -- it is a device driver's opinion, formed
+ * from a request/response exchange over a UART. A
  * single missed reply is ordinary on a serial link (a framing slip, a reply
  * that lands one cycle late), and both drivers already treat it that way:
  * dev_forceGauge drops into its ERROR state, re-reads, and is back in RUNNING
@@ -109,9 +109,9 @@ typedef struct
     app_control_state_E state;
     app_control_nvram_S nvram;
 
-    /* Armed while a communication loss is in progress; see
-     * APP_CONTROL_COMMS_FAULT_DEBOUNCE_MS. */
-    lib_timer_S servoCommsLoss;
+    /* Armed while the force gauge's link is silent; see
+     * APP_CONTROL_COMMS_FAULT_DEBOUNCE_MS. The servo has no equivalent because
+     * its "communication" fault is a loop-liveness flag, not a link. */
     lib_timer_S forceGaugeCommsLoss;
 
     int32_t lock;
@@ -188,8 +188,15 @@ static app_control_fault_E app_control_private_processFaults(void)
     app_control_data.fault[APP_CONTROL_FAULT_ESD_SWITCH] = HAL_GPIO_getActive(HAL_GPIO_ESD_SWITCH);
     app_control_data.fault[APP_CONTROL_FAULT_ESD_UPPER] = HAL_GPIO_getActive(HAL_GPIO_ESD_UPPER);
     app_control_data.fault[APP_CONTROL_FAULT_ESD_LOWER] = HAL_GPIO_getActive(HAL_GPIO_ESD_LOWER);
-    app_control_data.fault[APP_CONTROL_FAULT_SERVO_COMMUNICATION] =
-        app_control_private_sustained(&app_control_data.servoCommsLoss, actuator_isReady() == false);
+    /* NOT debounced, unlike the force gauge below. Despite its name this is not
+     * a communication fault at all: `actuator_isReady()` resolves to
+     * dev_servo/dev_stepper `out.ready`, which means "the control loop has
+     * ticked" (dev_servo.c: false until the cog has run, true again while the
+     * loop is still ticking even when disabled). There is no UART, no request,
+     * and no reply that can arrive a cycle late -- if this goes false the motor
+     * control loop has stopped, which is a liveness condition and wants the
+     * same instant response as the watchdog above it, not a window. */
+    app_control_data.fault[APP_CONTROL_FAULT_SERVO_COMMUNICATION] = (actuator_isReady() == false);
     app_control_data.fault[APP_CONTROL_FAULT_FORCE_GAUGE_COMMUNICATION] =
         app_control_private_sustained(&app_control_data.forceGaugeCommsLoss,
                                       dev_forceGauge_isReady(DEV_FORCEGAUGE_CHANNEL_MAIN) == false);
@@ -308,7 +315,6 @@ void app_control_init(int lock)
 {
     app_control_data.lock = lock;
     app_control_data.state = APP_CONTROL_STATE_DISABLED;
-    lib_timer_init(&app_control_data.servoCommsLoss, APP_CONTROL_COMMS_FAULT_DEBOUNCE_MS);
     lib_timer_init(&app_control_data.forceGaugeCommsLoss, APP_CONTROL_COMMS_FAULT_DEBOUNCE_MS);
     MachineProfile machineProfile;
     (void)dev_nvram_getChannelData(DEV_NVRAM_CHANNEL_MACHINE_PROFILE, &machineProfile, sizeof(MachineProfile));
