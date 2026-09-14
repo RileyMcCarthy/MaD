@@ -182,8 +182,12 @@ static void servo_init(void)
     _stdio_debug_lock = HAL_lock_create();
     doubles_reset();
     memset(&dev_servo_data, 0, sizeof(dev_servo_data));
-    /* maxVelocity/maxAccel > 0 so tests use deterministic profile limits. */
-    dev_servo_init(HAL_lock_create(), 100000 /* counts/s */, 500000 /* counts/s^2 */);
+    /* The SHIPPED machine profile (dev_nvram_config.c): 50 mm/s and
+     * 600 mm/s^2 at 8192 counts/mm. Testing a gentler envelope than the one
+     * that ships understates every error term that scales with acceleration --
+     * and the standing tracking error does exactly that. */
+    dev_servo_init(HAL_lock_create(), 409600 /* counts/s = 50 mm/s */,
+                   4915200 /* counts/s^2 = 600 mm/s^2 */);
 }
 
 void setUp(void)
@@ -288,11 +292,14 @@ void test_dev_servo_moveToInvalidFeedrateUsesMax(void)
                      "each is driven at the drive's configured maximum speed",
                      "every position command still moves; a missing or oversize speed takes the configured maximum");
     servo_init();
-    /* 0 and oversize clamp to maxVelocity (100000 from init). */
+    /* 0 and oversize both clamp to the configured maximum -- read it rather
+     * than restating it, so the fixture's envelope can change without a test
+     * that merely repeats a constant going red. */
+    const int32_t maxVel = dev_servo_channelConfig[CH].maxVelocity;
     dev_servo_moveTo(CH, 100, 0);
-    TEST_ASSERT_EQUAL_INT32(100000, dev_servo_data.channel[CH].req.feedrate);
-    dev_servo_moveTo(CH, 100, 999999);
-    TEST_ASSERT_EQUAL_INT32(100000, dev_servo_data.channel[CH].req.feedrate);
+    TEST_ASSERT_EQUAL_INT32(maxVel, dev_servo_data.channel[CH].req.feedrate);
+    dev_servo_moveTo(CH, 100, maxVel + 1);
+    TEST_ASSERT_EQUAL_INT32(maxVel, dev_servo_data.channel[CH].req.feedrate);
 }
 
 void test_dev_servo_atTargetWhenEncoderSettledOnTarget(void)
@@ -719,13 +726,13 @@ void test_open_loop_waveform_velocity_leaves_a_permanent_position_deficit(void)
     servo_init();
     dev_servo_setPosition(CH, 0);
 
-    /* Chosen to sit inside the fixture's envelope (maxVel 100000 counts/s,
-     * maxAccel 500000 counts/s^2) while still demanding a real ramp-in. */
+    /* Inside the machine's envelope while still demanding a real ramp-in. */
+    const double maxAccel = (double)dev_servo_channelConfig[CH].maxAccel;
     const double amplitude = 10000.0; /* counts */
     const double freq = 1.0;          /* Hz    */
     const double omega = 6.283185307179586 * freq;
     const double vPeak = omega * amplitude;
-    const double predictedDeficit = (vPeak * vPeak) / (2.0 * 500000.0);
+    const double predictedDeficit = (vPeak * vPeak) / (2.0 * maxAccel);
 
     const double ended = stream_open_loop_waveform(amplitude, freq, 2U);
 
