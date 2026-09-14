@@ -22,6 +22,11 @@ export const WAVEFORM_SEGMENTS_PER_CYCLE = 32;
 export const WAVEFORM_MAX_SEGMENTS = 20000;
 
 const round3 = (n: number): number => Math.round(n * 1000) / 1000;
+// A waveform's amplitude and frequency are carried on the wire at 0.1 µm and
+// 1 µHz. Emitting them at round3 would quantise to 1 µm and 1 mHz and throw
+// that away in the text layer, which is the one place nobody would look for it.
+const round4 = (n: number): number => Math.round(n * 10000) / 10000;
+const round6 = (n: number): number => Math.round(n * 1000000) / 1000000;
 
 /**
  * Unit waveform value in [-1, 1] for a phase in *turns* (cycles; the fractional
@@ -29,13 +34,17 @@ const round3 = (n: number): number => Math.round(n * 1000) / 1000;
  * begins smoothly from the centre, and return to 0 after whole cycles.
  */
 export function waveformSample(fn: WaveformFn, turns: number): number {
+  // Phase 0 is the POSITIVE PEAK, matching the firmware's cycle template
+  // (hold at +A, traverse down, hold at -A, traverse up). It has to: a sinusoid
+  // can only be joined or left at rest at a peak, so that is where the driver
+  // starts, and a preview drawn from the centre would show the operator a
+  // trajectory the machine does not run.
   if (fn === 'triangle') {
     const t = turns - Math.floor(turns);
-    if (t < 0.25) return 4 * t; //        0 → +1
-    if (t < 0.75) return 2 - 4 * t; //   +1 → -1
-    return 4 * t - 4; //                 -1 → 0
+    if (t < 0.5) return 1 - 4 * t; //   +1 → -1
+    return 4 * t - 3; //                -1 → +1
   }
-  return Math.sin(2 * Math.PI * turns);
+  return Math.cos(2 * Math.PI * turns);
 }
 
 /** Peak velocity (mm/s) a waveform reaches — sine: 2πAf, triangle: 4Af. */
@@ -136,9 +145,11 @@ export function generateTestGcode(profile: TestProfile): GeneratedGcode {
             // expansion). The wave oscillates about the *current* position, so we
             // ramp to the mean first. Centre = absolute target, or current
             // position (+ any relative offset).
-            // Firmware-native G123 is SINE-only in v1 — pin to sine so a legacy
-            // 'triangle' profile can't be emitted as W1 and silently run as sine.
-            const fn: WaveformFn = 'sine';
+            // The shape now reaches the driver and is honoured there, so emit
+            // what was authored. It was pinned to sine while app_motion masked
+            // the shape bit off and evaluated sinf regardless — emitting W1 then
+            // would have promised a triangle and run a sine.
+            const fn: WaveformFn = move.moveParameters.waveform === 'triangle' ? 'triangle' : 'sine';
             const amplitude = Math.abs(Number(move.moveParameters.amplitude) || 0);
             const frequency = Number(move.moveParameters.frequency) || 0;
             const cycles = Number(move.moveParameters.cycles) || 0;
@@ -154,9 +165,9 @@ export function generateTestGcode(profile: TestProfile): GeneratedGcode {
                 const rampV = waveformPeakVelocity(fn, amplitude, frequency) || 1;
                 gcode.push(`G1 X${round3(mean)} F${round3(rampV)}`);
               }
-              const shape = 0; // WaveformShape.SINE (firmware v1 is sine-only)
+              const shape = fn === 'triangle' ? 1 : 0; // WaveformShape
               gcode.push(
-                `G123 A${round3(amplitude)} F${round3(frequency)} C${Math.round(cycles)} W${shape}` +
+                `G123 A${round4(amplitude)} F${round6(frequency)} C${Math.round(cycles)} W${shape}` +
                   ` ; ${fn} A=${amplitude}mm f=${frequency}Hz x${cycles} cycle(s)`,
               );
               // Preview chart only: sample f(t) for display (not emitted as motion).

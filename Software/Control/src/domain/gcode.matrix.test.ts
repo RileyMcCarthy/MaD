@@ -174,7 +174,8 @@ describe('M2 waveform matrix: amplitude / frequency / cycles', () => {
         { amplitude: 5, frequency: 1, cycles: WAVEFORM_FIELD_RANGE.cycles.max + 1, ok: false },
         { amplitude: -1, frequency: 1, cycles: 1, ok: false },
       ]) {
-        const wf = { shape: WaveformShape.SINE, amplitude, frequency, cycles };
+        const wf = { shape: WaveformShape.SINE, amplitude, frequency, cycles,
+                     dwellHigh: 0, dwellLow: 0, skewPerMille: 500 };
         if (ok) {
           expect(() => validateWaveform(wf)).not.toThrow();
         } else {
@@ -196,7 +197,8 @@ describe('M2 waveform matrix: amplitude / frequency / cycles', () => {
         { shape: WaveformShape.SINE, label: 'sine' },
         { shape: WaveformShape.TRIANGLE, label: 'triangle' },
       ]) {
-        const wf = { shape, amplitude: 3, frequency: 1.5, cycles: 4 };
+        const wf = { shape, amplitude: 3, frequency: 1.5, cycles: 4,
+                     dwellHigh: 0, dwellLow: 0, skewPerMille: 500 };
         expect(() => validateWaveform(wf)).not.toThrow();
       }
     },
