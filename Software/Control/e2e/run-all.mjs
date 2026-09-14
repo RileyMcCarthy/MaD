@@ -37,7 +37,7 @@ import {
   T,
   boardGrantedPort,
 } from './fixtures.mjs';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -136,13 +136,6 @@ function motionStartTimeUs(timesUs, positionsUm, minDeltaUm = 80) {
 /** SIL plant: 2048-line encoder × 4× quadrature. Position_um in the CSV is this encoder. */
 const SIL_ENCODER_STEPS_PER_MM = 4 * 2048;
 
-/**
- * The machine's acceleration limit, mm/s² — `maxAcceleration` in the profile
- * the emulator boots from (`SIL/sd/profile.bin`). Needed here because it sets
- * how much of a waveform the machine physically cannot deliver; see
- * `assertSineMatch`'s centre check.
- */
-const SIL_MAX_ACCEL_MM_S2 = 600;
 
 // Rigorously assert a recorded position series actually traces the COMMANDED sine
 // waveform — not merely that it oscillates. Checks: peak-to-peak ≈ 2·amplitude;
@@ -150,10 +143,92 @@ const SIL_MAX_ACCEL_MM_S2 = 600;
 // (R² high — a ramp/triangle/wrong-frequency would fail); the fitted amplitude
 // matches; and the number of midline crossings matches the commanded cycles.
 // This is the end-to-end proof that the firmware-native waveform = f(t).
+// Narrow a recorded run down to the COMMANDED WAVEFORM.
+//
+// A waveform run records three segments, and only the middle one is the wave.
+// The driver profiles a move to the UPPER PEAK (a sinusoid can only be joined
+// at rest at a peak), runs the whole cycles peak-to-peak, then profiles a move
+// back to the centre. Around those sits the program's own leading G1 to the
+// mean and a flat tail until teardown.
+//
+// None of that is the commanded shape, and it is not a small effect: for
+// WAVE-tri the approach is 5 mm against an 8 mm peak-to-peak, and a properly
+// homed gantry once reported 14.49 mm of "waveform" — failing the assertion
+// precisely BECAUSE homing had worked.
+//
+// E2E_WAVE_DUMP=1 writes the raw recorded series beside the artifacts, so the
+// windowing and the fit can be worked on offline instead of by re-running the
+// suite (a waveform scenario costs about a minute of emulator time).
+function dumpWaveSeries(label, posMm, tS, meta) {
+  if (!process.env.E2E_WAVE_DUMP) return;
+  try {
+    writeFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), 'artifacts', `${label}-series.json`),
+      JSON.stringify({ meta, posMm, tS }),
+    );
+  } catch { /* diagnostics must never fail a run */ }
+}
+
+// The cycles begin at the last sample on the peak BEFORE the first descent.
+//
+// Neither end of the record's peak plateau is where you would guess. The
+// approach parks by creeping the last few microns under proportional control
+// alone, which takes about half a second — and because it ends closer to the
+// peak than the moving cycles ever reach, THE RECORD'S MAXIMUM IS IN THAT
+// CREEP, not at a cycle top. So "first sample at the maximum" lands half a
+// second early (measured: R² 0.49) and "last sample at the maximum" lands at
+// the start of the cycles rather than the end.
+//
+// Walking BACK from the first real descent is immune to both: it finds the
+// moment the carriage left the peak, whatever the plateau before it looked
+// like. From there the wave lasts cycles/frequency by construction. Measured on
+// WAVE-sine: a 2.000s window, R² = 1.0000.
+//
+// (This used to walk back from the last MOVING sample, on the reasoning that
+// whole cycles end on the centre so the closing settle was negligible. That
+// reasoning no longer holds either: the closing move now runs a full amplitude
+// from the peak back to the centre.)
+function waveformWindow(posMm, tS, { cycles, frequencyHz }) {
+  const waveDurS = cycles / frequencyHz;
+
+  let peak = -Infinity;
+  let trough = Infinity;
+  for (const v of posMm) {
+    if (v > peak) peak = v;
+    if (v < trough) trough = v;
+  }
+  // A whisker, not exact equality: the encoder quantises and the creep's last
+  // samples straddle the maximum.
+  const eps = 0.02;
+  // A quarter of the record's own excursion is unambiguously "descending",
+  // whatever the amplitude, and cannot be reached by parked jitter.
+  const wellBelow = peak - 0.25 * (peak - trough);
+
+  let reachedPeak = false;
+  let descent = posMm.length - 1;
+  for (let i = 0; i < posMm.length; i++) {
+    if (!reachedPeak) {
+      if (posMm[i] >= peak - eps) reachedPeak = true;
+    } else if (posMm[i] < wellBelow) {
+      descent = i;
+      break;
+    }
+  }
+
+  let first = descent;
+  while (first > 0 && posMm[first] < peak - eps) first -= 1;
+
+  let last = first;
+  while (last + 1 < tS.length && tS[last + 1] - tS[first] <= waveDurS) last += 1;
+
+  return { p: posMm.slice(first, last + 1), t: tS.slice(first, last + 1), waveDurS };
+}
+
 function assertSineMatch(series, { amplitudeMm, frequencyHz, cycles, centreMm }, label) {
   assert(series && series.pos.length > 40, `${label}: enough samples (${series?.pos.length})`);
   const posMm = series.pos.map((p) => p / 1000);
   const tS = series.time.map((t) => t / 1e6);
+  dumpWaveSeries(label, posMm, tS, { amplitudeMm, frequencyHz, cycles, centreMm });
 
   // Fit exactly the WAVEFORM, not the whole record. The record also contains the
   // leading ramp-to-centre and — after the closing settle move parks the gantry —
@@ -259,41 +334,44 @@ function assertSineMatch(series, { amplitudeMm, frequencyHz, cycles, centreMm },
   if (typeof centreMm === 'number') {
     const offset = mean - centreMm;
 
-    // The tolerance is a fraction of what the machine physically CANNOT
-    // deliver, not a fraction of the amplitude.
+    // The tolerance used to be a fraction of the machine's RAMP-IN DEFICIT:
+    // a position sinusoid started from its own centre demands peak velocity
+    // 2*pi*f*A instantly, no accel-limited machine can produce that, and the
+    // Vpeak^2/(2*Amax) it loses getting there was integrated into the wave's
+    // centre. That is why 0.5-0.8 mm of slop was needed to avoid false alarms.
     //
-    // A position sinusoid starting from rest demands its peak velocity
-    // 2πfA immediately, and no accel-limited machine can produce that. Ramping
-    // to it costs Vpeak²/(2·Amax) of travel, and that deficit is integrated
-    // into the wave's centre. It is set by peak VELOCITY, so scaling the
-    // tolerance with amplitude was wrong in both directions: across this
-    // matrix Vpeak barely moves (31–38 mm/s) while amplitude varies 3.3×. The
-    // old `max(0.5, 0.15·A)` therefore allowed 1.5 mm at A=10 — and the
-    // open-loop sag there measures 0.65–1.03 mm, so the check silently passed
-    // the very bug it was written for on that case.
+    // The driver no longer starts there. It approaches the PEAK, where the
+    // trajectory's own velocity is zero, so there is no deficit to absorb and
+    // nothing systematic left for this to tolerate. Measured across this matrix
+    // with the anchor now landing on the cycles: 12, 14 and 19 um, against the
+    // 535-770 um the old rule allowed.
     //
-    // Measured on the native bench, 18 recorded runs, as a fraction of this
-    // deficit: anchored 0.02–0.58, anchor disabled 0.75–1.25. Nothing lands
-    // between. 0.65 sits in that gap.
-    //
-    // The floor is measurement noise, for parameters whose deficit is tiny; it
-    // does not bind anywhere in the current matrix.
-    const vPeakMmS = 2 * Math.PI * frequencyHz * amplitudeMm;
-    const rampDeficitMm = (vPeakMmS * vPeakMmS) / (2 * SIL_MAX_ACCEL_MM_S2);
-    const tol = Math.max(0.3, 0.65 * rampDeficitMm);
+    // 0.15 mm is about eight times the worst of those — enough headroom for a
+    // sparse CI recording to shift the window mean, and still tight enough that
+    // the 0.82 mm sag this check was originally written to catch could not hide
+    // in it. (It did hide: the old rule allowed 1.5 mm at A=10.)
+    const tol = 0.15;
     assert(
       Math.abs(offset) < tol,
       `${label}: wave centred on the commanded ${centreMm}mm (sat at ${mean.toFixed(2)}mm, ` +
-        `off by ${offset.toFixed(2)}mm, tol ${tol.toFixed(2)} = 0.65 × the ` +
-        `${rampDeficitMm.toFixed(2)}mm ramp-in deficit at Vpeak=${vPeakMmS.toFixed(1)}mm/s)`,
+        `off by ${offset.toFixed(3)}mm, tol ${tol.toFixed(2)}mm)`,
     );
   }
 }
 
 /** Peak-to-peak + cycle count for triangle (and other non-sine) waveforms. */
-function assertWaveformExcursion(series, { amplitudeMm, cycles }, label) {
+function assertWaveformExcursion(series, { amplitudeMm, cycles, frequencyHz }, label) {
   assert(series && series.pos.length > 40, `${label}: enough samples (${series?.pos.length})`);
-  const posMm = series.pos.map((p) => p / 1000);
+  const allPosMm = series.pos.map((v) => v / 1000);
+  const tS = series.time.map((v) => v / 1e6);
+  dumpWaveSeries(label, allPosMm, tS, { amplitudeMm, frequencyHz, cycles });
+  // Same window as the sine case: measure the wave, not the approach to it.
+  const { p: posMm, t, waveDurS } = waveformWindow(allPosMm, tS, { cycles, frequencyHz });
+  assert(
+    posMm.length > 40 && t[t.length - 1] - t[0] > waveDurS * 0.8,
+    `${label}: recorded a full ${waveDurS.toFixed(2)}s of waveform motion ` +
+      `(got ${(t[t.length - 1] - t[0]).toFixed(2)}s over ${posMm.length} samples)`,
+  );
   const maxP = Math.max(...posMm);
   const minP = Math.min(...posMm);
   const excursion = maxP - minP;
@@ -316,6 +394,44 @@ function assertWaveformExcursion(series, { amplitudeMm, cycles }, label) {
   assert(
     crossings >= 2 * cycles - 1,
     `${label}: ≥ ${2 * cycles - 1} midline crossings for ${cycles} cycle(s) (got ${crossings})`,
+  );
+
+  // The traverse is TRIANGULAR, not sinusoidal — proven from the recorded
+  // motion rather than from the bytes that were sent.
+  //
+  // Fit the fundamental and compare its amplitude to the commanded peak. That
+  // ratio is a property of the SHAPE and of nothing else: 8/pi^2 = 0.811 for a
+  // triangle, 1.000 for a sine, 4/pi = 1.273 for a square. Amplitude,
+  // frequency, centre and cycle count are all identical between a sine and a
+  // triangle, so every other assertion in this file passes either way — which
+  // is exactly how the shape bit came to be masked off in app_motion and
+  // ignored for as long as it was, with every test still green.
+  //
+  // Measured here: 0.845 and 0.831. Slightly above the ideal 0.811 because the
+  // deliverable traverse is a TRAPEZOID — its corners are rounded by the
+  // acceleration limit, which moves it a little toward a sine.
+  const w = 2 * Math.PI * frequencyHz;
+  const t0 = t[0];
+  const wMean = posMm.reduce((s2, v) => s2 + v, 0) / posMm.length;
+  let Sc = 0;
+  let Ss = 0;
+  let Scc2 = 0;
+  let Sss2 = 0;
+  for (let i = 0; i < posMm.length; i++) {
+    const c = Math.cos(w * (t[i] - t0));
+    const sn = Math.sin(w * (t[i] - t0));
+    const x = posMm[i] - wMean;
+    Sc += x * c;
+    Ss += x * sn;
+    Scc2 += c * c;
+    Sss2 += sn * sn;
+  }
+  const fundamental = Math.hypot(Sc / Scc2, Ss / Sss2);
+  const ratio = fundamental / amplitudeMm;
+  assert(
+    ratio > 0.7 && ratio < 0.92,
+    `${label}: fundamental/peak = ${ratio.toFixed(3)} — a triangle traverse is 8/pi²=0.811, ` +
+      `a sine would be 1.000, so this says the shape reached the machine`,
   );
 }
 
