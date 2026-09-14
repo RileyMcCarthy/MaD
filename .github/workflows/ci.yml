@@ -913,6 +913,18 @@ jobs:
       - name: Install protocol generator deps
         run: pip install -r Protocol/ProtoEmb/core/requirements.txt
 
+      # The firmware suite has a macOS-only twin, native_test_noasan, because
+      # AddressSanitizer will not initialise on that host. Collecting locally
+      # means pointing the suite at it, and that swap has reached a commit
+      # twice. In CI it silently drops the sanitizer from the run the ledger is
+      # built from, so a behaviour can pass here and fail the sanitized gate.
+      - name: Suites must not name a machine-local environment
+        run: |
+          if git grep -n noasan -- '*vibes.suite.json'; then
+            echo "::error::a committed suite command names the macOS-only environment"
+            exit 1
+          fi
+
       - name: Build Vibes
         working-directory: Vibes
         run: npm ci --no-audit --no-fund && npm test && npm run build
