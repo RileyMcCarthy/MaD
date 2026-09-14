@@ -63,8 +63,7 @@
 #define actuator_getTarget() dev_servo_getTarget(ACTUATOR_CH)
 #define actuator_atTarget() dev_servo_atTarget(ACTUATOR_CH)
 #define actuator_getSetpoint() dev_servo_getSetpoint(ACTUATOR_CH)
-#define actuator_startWaveform(centre, amp, freqUhz, cycles, shape)                                \
-    dev_servo_startWaveform(ACTUATOR_CH, (centre), (amp), (freqUhz), (cycles), (shape))
+#define actuator_startWaveform(wf) dev_servo_startWaveform(ACTUATOR_CH, (wf))
 #define ACTUATOR_HAS_WAVEFORM 1
 #else
 #define ACTUATOR_CH DEV_STEPPER_CHANNEL_MAIN
@@ -363,14 +362,19 @@ static void app_motion_private_moveManager_start(void)
         /* The driver's phase accumulator is exact in microhertz; the wire still
          * speaks millihertz, so this widening is lossless. */
         const uint32_t freqMicroHz = freqMilliHz * 1000U;
-        dev_servo_wave_E shape = DEV_SERVO_WAVE_SINE;
-        if (shapeBits == 1U)
-        {
-            shape = DEV_SERVO_WAVE_TRIANGLE;
-        }
+        dev_servo_waveform_S wf;
+        memset(&wf, 0, sizeof(wf));
+        wf.centreCounts = centreSteps;
+        wf.amplitudeCounts = amplitudeSteps;
+        wf.freqMicroHz = freqMicroHz;
+        wf.cycles = cycles;
+        /* Dwell and skew are not on the wire yet, so ask for the symmetric,
+         * hold-free cycle -- which is exactly the sinusoid or triangle this
+         * command has always meant. */
+        wf.skewPerMille = DEV_SERVO_SKEW_SYMMETRIC;
+        wf.shape = (shapeBits == 1U) ? DEV_SERVO_WAVE_TRIANGLE : DEV_SERVO_WAVE_SINE;
 
-        app_motion_data.waveformRunning =
-            actuator_startWaveform(centreSteps, amplitudeSteps, freqMicroHz, cycles, shape);
+        app_motion_data.waveformRunning = actuator_startWaveform(&wf);
         if (app_motion_data.waveformRunning)
         {
             /* The CENTRE is the number that explains a waveform that runs into
