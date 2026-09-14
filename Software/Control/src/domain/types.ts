@@ -98,6 +98,13 @@ export interface MoveParameters {
   cycles?: number;
   /** Starting phase, degrees. */
   phase?: number;
+  /** Hold at the UPPER peak, seconds. Creep-fatigue holds at peak tension. */
+  dwellHigh?: number;
+  /** Hold at the LOWER peak, seconds. */
+  dwellLow?: number;
+  /** Share of the traversing time spent descending; 0.5 symmetric, 0.8 is
+   *  slow-load / fast-unload. */
+  skew?: number;
 }
 
 export interface Move {

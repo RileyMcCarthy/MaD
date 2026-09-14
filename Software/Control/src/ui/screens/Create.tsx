@@ -273,6 +273,13 @@ export default function Create() {
           {field('Amplitude (mm)', 'amplitude')}
           {field('Frequency (Hz)', 'frequency')}
           {field('Cycles', 'cycles')}
+          {/* Hold is PER PEAK: creep-fatigue holds at peak tension and not in
+              compression, which a single symmetric dwell cannot express. The
+              holds take their time from the traverses, so one cycle still lasts
+              1/frequency whatever they are. */}
+          {field('Hold at top (s)', 'dwellHigh')}
+          {field('Hold at bottom (s)', 'dwellLow')}
+          {field('Skew (0.5 = even)', 'skew')}
           <span
             className={`muted${tooFast || overEnvelope ? ' fault' : ''}`}
             style={{ alignSelf: 'flex-end' }}

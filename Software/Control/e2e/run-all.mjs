@@ -243,6 +243,85 @@ function waveformWindow(posMm, tS, { cycles, frequencyHz }) {
   return { p: posMm.slice(first, last + 1), t: tS.slice(first, last + 1), waveDurS };
 }
 
+/* What the recorded data must show for EVERY move type.
+ *
+ * Three claims, and they are deliberately different in kind:
+ *
+ * 1. RESOLUTION. The chain carries nanometres. A position column that only
+ *    ever lands on multiples of 1000 nm is a micrometre column wearing a
+ *    nanometre label -- which is exactly what it was until the record was
+ *    widened, and the failure is silent.
+ *
+ * 2. THE SETPOINT IS THE TRAJECTORY. It must MOVE during the move. Until
+ *    recently a linear move recorded its destination, so the column was a flat
+ *    line through the middle of its own ramp and `position - setpoint` was
+ *    remaining distance rather than tracking error.
+ *
+ * 3. SETTLED ACCURACY. Once the machine is at rest on a commanded position,
+ *    the two agree to about a micron.
+ *
+ * What is NOT asserted, and why: sub-micron accuracy WHILE MOVING. The SIL
+ * plant applies a 15% viscous load (SERVO_LOAD_LOSS in MaDSim/src/wiring.rs)
+ * and the servo's integral term is disabled, so the loop necessarily carries a
+ * steady-state following error of load x v / Kp -- about 500 um at 31 mm/s,
+ * measured, and predicted to within 15% by that formula. That is a property of
+ * the PLANT and the CONTROLLER, not of the trajectory: the same firmware tracks
+ * to 0.06 um against an ideal plant in test_dev_servo. Asserting sub-micron
+ * here would be asserting that the simulated machine has no friction.
+ */
+function assertRecordedMotion(series, { label, expectMotion = true, settledTolUm = 12 }) {
+  assert(series && series.pos.length > 40, `${label}: enough samples (${series?.pos.length})`);
+  const n = Math.min(series.pos.length, series.setpoint.length);
+  assert(n > 40, `${label}: the setpoint column is populated (${n} rows)`);
+
+  // 1. Resolution: the column must carry detail finer than a micrometre.
+  let subMicron = 0;
+  for (let i = 0; i < n; i++) {
+    const nm = Math.round(series.pos[i] * 1000);
+    if (nm % 1000 !== 0) subMicron += 1;
+  }
+  assert(
+    subMicron > n / 20,
+    `${label}: the position column carries sub-micron detail (only ${subMicron} of ${n} rows ` +
+      `were not whole micrometres — a micrometre-quantised column would give 0)`,
+  );
+
+  // 2. The setpoint is the trajectory, not the destination.
+  //
+  // Counted as DISTINCT VALUES, not as a span. A destination-only setpoint
+  // still jumps from one move to the next, so it spans the whole programme and
+  // a range check passes it happily — while taking only a handful of values in
+  // the entire run. A trajectory sweeps, so it takes hundreds.
+  if (expectMotion) {
+    const distinct = new Set();
+    for (let i = 0; i < n; i++) {
+      if (Number.isFinite(series.setpoint[i])) distinct.add(Math.round(series.setpoint[i]));
+    }
+    assert(
+      distinct.size > 50,
+      `${label}: the recorded setpoint traces the move — it took ${distinct.size} distinct ` +
+        `values over ${n} rows; a destination-only setpoint takes about one per move`,
+    );
+  }
+
+  // 3. Settled: the last samples, where the machine is at rest.
+  let rest = n - 1;
+  let restCount = 0;
+  while (rest > 1 && restCount < 20) {
+    if (Math.abs(series.pos[rest] - series.pos[rest - 1]) > 0.5) break;
+    rest -= 1;
+    restCount += 1;
+  }
+  if (restCount >= 5 && Number.isFinite(series.setpoint[rest])) {
+    const settled = Math.abs(series.pos[rest] - series.setpoint[rest]);
+    assert(
+      settled <= settledTolUm,
+      `${label}: at rest the machine sits on its commanded position ` +
+        `(off by ${settled.toFixed(2)} um, tol ${settledTolUm})`,
+    );
+  }
+}
+
 function assertSineMatch(series, { amplitudeMm, frequencyHz, cycles, centreMm }, label) {
   assert(series && series.pos.length > 40, `${label}: enough samples (${series?.pos.length})`);
   const posMm = series.pos.map((p) => p / 1000);
@@ -543,8 +622,14 @@ async function readDownloadedCsvStats(page) {
     }
     if (!text) return null;
     const lines = text.trim().split('\n');
-    const pi = lines[0].split(',').indexOf('position_um');
-    const pos = lines.slice(1).map((l) => Number(l.split(',')[pi])).filter(Number.isFinite);
+    // The column is NANOMETRES; report micrometres (fractional) so every
+    // downstream /1000-to-mm and µm threshold keeps working unchanged.
+    const pi = lines[0].split(',').indexOf('position_nm');
+    const pos = lines
+      .slice(1)
+      .map((l) => Number(l.split(',')[pi]) / 1000)
+      .filter(Number.isFinite);
+    if (pos.length === 0) return null; // header-only CSV = failed recording — see readDownloadedCsvSeries
     return {
       header: lines[0], rows: pos.length,
       maxUm: Math.max(...pos), minUm: Math.min(...pos), firstUm: pos[0], lastUm: pos[pos.length - 1],
@@ -710,11 +795,11 @@ const scenarios = [
       try {
         // Choose the OPFS folder (sets DataStore.root), then seed a downloaded run.
         await chooseDataFolder(page);
-        const csvRows = ['time_us,force_mN,position_um,setpoint_um'];
+        const csvRows = ['time_us,force_mN,position_nm,setpoint_nm'];
         for (let i = 0; i <= 50; i++) {
           const t = i * 100000; // 0.1 s steps (µs)
           const force = i * 8000; // 0..400 N (mN)
-          const pos = 10000 + i * 40; // 10..12 mm (µm)
+          const pos = 10000000 + i * 40000; // 10..12 mm (nm)
           csvRows.push(`${t},${force},${pos},${pos}`);
         }
         const run = {
@@ -801,7 +886,7 @@ const scenarios = [
           // one downloaded run (export/view), then 11 completed (pagination).
           const exp = mkRun('E2EEXP', 'downloaded');
           await write('E2EEXP.json', JSON.stringify(exp));
-          await write('E2EEXP.csv', 'time_us,force_mN,position_um,setpoint_um\n0,0,0,0\n');
+          await write('E2EEXP.csv', 'time_us,force_mN,position_nm,setpoint_nm\n0,0,0,0\n');
           index.push({ id: exp.id, testName: exp.testName, startedAt: exp.startedAt, status: 'downloaded', sampleProfileName: exp.sampleProfile.serial, motionProfileName: exp.motionProfile.name, dataFilePath: 'testRuns/E2EEXP.csv' });
           for (let i = 1; i <= 11; i++) {
             const name = `RUN${String(i).padStart(2, '0')}`;
@@ -1010,8 +1095,8 @@ const scenarios = [
         await row.getByRole('button', { name: /Download data/i }).click();
         await row.locator('.badge.downloaded').waitFor({ timeout: T(40000) });
         const stats = await readDownloadedCsvStats(page);
-        assert(stats, 'a downloaded CSV exists');
-        assert(stats.header === 'time_us,force_mN,position_um,setpoint_um', `CSV header: ${stats.header}`);
+        assert(stats, 'the downloaded CSV contains data — empty means the device recorded nothing, or the download returned zero bytes');
+        assert(stats.header === 'time_us,force_mN,position_nm,setpoint_nm', `CSV header: ${stats.header}`);
         assert(stats.rows > 50, `enough data rows: ${stats.rows}`);
         // Data matches the motion profile: the position excursion equals the commanded peak.
         const excursionMm = (stats.maxUm - stats.minUm) / 1000;
@@ -1110,6 +1195,78 @@ const scenarios = [
       } finally { await browser.close(); }
     },
   },
+  // M12 — every move type a motion PROFILE can author, checked in the data that
+  // comes back. Note what is NOT here: G0 rapid and G28 homing go through
+  // MSG_WRITE_MANUAL_MOVE (DeviceSession.worker.ts) and can never appear inside
+  // a recorded test, so no downloaded CSV can carry them. "Every move type"
+  // genuinely splits into profile moves, which are recorded, and manual moves,
+  // which are not.
+  ...[
+    {
+      id: 'M12-linear-absolute',
+      label: 'linear, absolute',
+      moves: [{ moveType: 'linear', absoluteOrRelative: 'absolute',
+                moveParameters: { position: 8, velocity: 4, distance: 0, time: 0 } }],
+    },
+    {
+      id: 'M12-linear-relative',
+      label: 'linear, relative',
+      moves: [{ moveType: 'linear', absoluteOrRelative: 'relative',
+                moveParameters: { position: 0, velocity: 3, distance: 6, time: 0 } }],
+    },
+    {
+      id: 'M12-dwell',
+      label: 'linear then dwell then linear',
+      expectMotion: true,
+      moves: [
+        { moveType: 'linear', absoluteOrRelative: 'absolute',
+          moveParameters: { position: 5, velocity: 5, distance: 0, time: 0 } },
+        { moveType: 'dwell', absoluteOrRelative: 'absolute',
+          moveParameters: { position: 0, velocity: 0, distance: 0, time: 400 } },
+        { moveType: 'linear', absoluteOrRelative: 'absolute',
+          moveParameters: { position: 9, velocity: 5, distance: 0, time: 0 } },
+      ],
+    },
+    {
+      id: 'M12-wave-hold',
+      label: 'waveform holding at peak tension only',
+      moves: [{ moveType: 'math', absoluteOrRelative: 'relative',
+                moveParameters: { position: 0, velocity: 0, distance: 6, time: 0,
+                                  waveform: 'sine', amplitude: 4, frequency: 0.5, cycles: 2,
+                                  dwellHigh: 0.6, dwellLow: 0 } }],
+    },
+    {
+      id: 'M12-wave-skew',
+      label: 'waveform loading slower than it unloads',
+      moves: [{ moveType: 'math', absoluteOrRelative: 'relative',
+                moveParameters: { position: 0, velocity: 0, distance: 6, time: 0,
+                                  waveform: 'sine', amplitude: 4, frequency: 0.5, cycles: 2,
+                                  skew: 0.75 } }],
+    },
+  ].map((mv) => ({
+    id: mv.id,
+    name: `M12 recorded motion — ${mv.label}`,
+    async run() {
+      const { browser, page, errors } = await newSilPage();
+      try {
+        await connectToSil(page);
+        await chooseDataFolder(page);
+        await awaitResponding(page);
+        await zeroLength(page);
+        await seedProfiles(page, {
+          sample: { serial: `Rec-${mv.id}`, maxForce: 500, maxVelocity: 60, maxDisplacement: 40,
+                    sampleWidth: 4, sampleThickness: 1.5 },
+          motion: { name: mv.id, moves: mv.moves },
+        });
+        await selectSeeded(page);
+        await runAndDownload(page);
+        const s = await readDownloadedCsvSeries(page);
+        assertRecordedMotion(s, { label: mv.id });
+        assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
+      } finally { await browser.close(); }
+    },
+  })),
+
   // M10 — firmware-native G123 waveform matrix (sine + triangle from catalog).
   ...MATRIX.M10_waveform.map((wf) => ({
     id: wf.id,
@@ -1130,6 +1287,7 @@ const scenarios = [
         await selectSeeded(page);
         await runAndDownload(page);
         const s = await readDownloadedCsvSeries(page);
+        assertRecordedMotion(s, { label: wf.id });
         if (wf.shape === 'sine') {
           assertSineMatch(s, { amplitudeMm: wf.amplitude, frequencyHz: wf.frequency, cycles: wf.cycles, centreMm: wf.distance }, wf.id);
         } else {
@@ -1622,8 +1780,11 @@ const scenarios = [
           }
           if (!text) return null;
           const lines = text.trim().split('\n');
-          const si = lines[0].split(',').indexOf('setpoint_um');
-          const set = lines.slice(1).map((l) => Number(l.split(',')[si])).filter(Number.isFinite);
+          const si = lines[0].split(',').indexOf('setpoint_nm');
+          const set = lines
+            .slice(1)
+            .map((l) => Number(l.split(',')[si]) / 1000)
+            .filter(Number.isFinite);
           return { maxUm: Math.max(...set), firstUm: set[0] };
         });
         assert(sp, 'downloaded CSV with setpoint column');
