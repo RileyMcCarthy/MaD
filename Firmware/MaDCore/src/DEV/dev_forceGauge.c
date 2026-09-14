@@ -191,11 +191,40 @@ static void dev_forceGauge_private_runAction(dev_forceGauge_channel_E channel)
         DEBUG_INFO("Force Gauge %d: %d, %d, %d, %d\n", channel, dev_forceGauge_data.channel[channel].output.force, dev_forceGauge_data.channel[channel].input.signal_nVV, dev_forceGauge_data.channel[channel].nvram.zeroBalance_nVV, dev_forceGauge_data.channel[channel].nvram.sensitivity_nVV);
 #endif
         dev_forceGauge_data.channel[channel].output.index++;
-        dev_forceGauge_data.channel[channel].output.ready = true;
+        /* Latched on SUCCESS, not on being in this state. A read that failed
+         * still lands here (the transition to ERROR happens on the next tick),
+         * and calling that ready would report a link that is not answering as
+         * healthy. */
+        if (dev_forceGauge_data.channel[channel].input.responding)
+        {
+            dev_forceGauge_data.channel[channel].output.ready = true;
+        }
         break;
     case DEV_FORCEGAUGE_STATE_ERROR:
         dev_forceGauge_data.channel[channel].input.responding = IO_ADS122U04_receiveConversion(dev_forceGauge_channelConfig[channel].adcChannel, &dev_forceGauge_data.channel[channel].input.signal_nVV, DEV_FORCEGAUGE_RETRY_TIMEOUT_US);
-        dev_forceGauge_data.channel[channel].output.ready = false;
+        /* Ready is HELD across this state: ERROR is this driver RECOVERING,
+         * not this driver giving up. A missed reply puts us here, the re-read above usually succeeds
+         * on the very next tick, and the retry budget in getState() decides
+         * when to stop trying. Reporting un-ready here said "the load cell is
+         * gone" for a blip the driver was already handling, and `ready`'s only
+         * consumer -- app_control -- turns that into a machine fault that
+         * disables motion and kills the running test.
+         *
+         * `ready` therefore means ALIVE, not "fresh sample this tick".
+         * Freshness is `output.index`, which only advances on a good read and
+         * is what app_monitor gates its sampling on. Giving up lands in INIT,
+         * which sets ready false on that same tick (run() transitions state
+         * before runAction), so a genuinely dead gauge still faults -- after
+         * the 20 ms read and four 10 ms retries, about 60 ms, and by the
+         * driver's own budget rather than a window guessed at in APP.
+         *
+         * The flag is a LATCH -- set by a successful read, cleared only by the
+         * give-up path into INIT -- so a gauge that never answers cannot look
+         * healthy again just because INIT managed to restart the ADC. */
+        if (dev_forceGauge_data.channel[channel].input.responding)
+        {
+            dev_forceGauge_data.channel[channel].output.ready = true;
+        }
         break;
     default:
         break;
