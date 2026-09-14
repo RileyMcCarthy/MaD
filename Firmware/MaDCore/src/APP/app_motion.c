@@ -346,33 +346,22 @@ static void app_motion_private_moveManager_start(void)
     case G123_WAVEFORM:
     {
 #if ACTUATOR_HAS_WAVEFORM
-        /* The move record carries a waveform in a general move's field slots:
-         *   x = amplitude (um), p = cycles,
-         *   f = (shape << 24) | frequency-in-milli-Hz (low 24 bits).
-         * The wave swings about wherever the carriage is right now, which is
+        /* The wave swings about wherever the carriage is right now, which is
          * also the point it is returned to at the end. */
-        const int32_t amplitudeUm = app_motion_data.currentMove.x;
-        const uint32_t fField = (uint32_t)app_motion_data.currentMove.f;
-        const uint32_t freqMilliHz = fField & 0x00FFFFFFU;
-        const uint32_t shapeBits = (fField >> 24) & 0xFFU;
-        const uint32_t cycles = app_motion_data.currentMove.p;
-        const int32_t centreSteps = app_motion_data.inputs.positionSteps;
-        const int32_t amplitudeSteps =
-            (int32_t)(((int64_t)amplitudeUm * app_motion_data.stepsPerMM) / 1000LL);
-        /* The driver's phase accumulator is exact in microhertz; the wire still
-         * speaks millihertz, so this widening is lossless. */
-        const uint32_t freqMicroHz = freqMilliHz * 1000U;
+        const app_motion_waveform_t *const req = &app_motion_data.currentMove.wave;
         dev_servo_waveform_S wf;
         memset(&wf, 0, sizeof(wf));
-        wf.centreCounts = centreSteps;
-        wf.amplitudeCounts = amplitudeSteps;
-        wf.freqMicroHz = freqMicroHz;
-        wf.cycles = cycles;
-        /* Dwell and skew are not on the wire yet, so ask for the symmetric,
-         * hold-free cycle -- which is exactly the sinusoid or triangle this
-         * command has always meant. */
-        wf.skewPerMille = DEV_SERVO_SKEW_SYMMETRIC;
-        wf.shape = (shapeBits == 1U) ? DEV_SERVO_WAVE_TRIANGLE : DEV_SERVO_WAVE_SINE;
+        wf.centreCounts = app_motion_data.inputs.positionSteps;
+        /* 0.1 um units on the wire -> encoder counts. int64 intermediate: at
+         * 3000 mm and 8192 steps/mm this is 2.4e11 before the divide. */
+        wf.amplitudeCounts =
+            (int32_t)(((int64_t)req->amplitudeTenthUm * app_motion_data.stepsPerMM) / 10000LL);
+        wf.freqMicroHz = req->freqMicroHz;
+        wf.cycles = req->cycles;
+        wf.dwellHighUs = req->dwellHighMs * 1000U;
+        wf.dwellLowUs = req->dwellLowMs * 1000U;
+        wf.skewPerMille = req->skewPerMille;
+        wf.shape = (req->shape == 1U) ? DEV_SERVO_WAVE_TRIANGLE : DEV_SERVO_WAVE_SINE;
 
         app_motion_data.waveformRunning = actuator_startWaveform(&wf);
         if (app_motion_data.waveformRunning)
@@ -380,17 +369,22 @@ static void app_motion_private_moveManager_start(void)
             /* The CENTRE is the number that explains a waveform that runs into
              * an endstop: the wave swings +/-amplitude about wherever the
              * carriage happened to be when this move started. */
-            DEBUG_INFO("G123 waveform: centre=%d steps amp=%d steps freq=%u mHz cycles=%u shape=%u\n",
-                       centreSteps, amplitudeSteps, freqMilliHz, cycles, shapeBits);
+            DEBUG_INFO("G123: centre=%d amp=%d steps freq=%u uHz cycles=%u shape=%u "
+                       "dwell=%u/%u ms skew=%u\n",
+                       wf.centreCounts, wf.amplitudeCounts, wf.freqMicroHz, wf.cycles,
+                       (unsigned)req->shape, req->dwellHighMs, req->dwellLowMs,
+                       (unsigned)req->skewPerMille);
         }
         else
         {
             /* Refused, not approximated. The driver rejects a waveform whose
-             * peak velocity or acceleration the machine cannot deliver, because
-             * running a smaller one instead gives a specimen that never saw the
-             * loading the report claims it did. */
-            DEBUG_ERROR("G123 waveform REFUSED: amp=%d steps freq=%u mHz exceeds the machine\n",
-                        amplitudeSteps, freqMilliHz);
+             * peak velocity or acceleration the machine cannot deliver, or
+             * whose holds leave no time to move, because running a smaller one
+             * instead gives a specimen that never saw the loading the report
+             * claims it did. */
+            DEBUG_ERROR("G123 REFUSED: amp=%d steps freq=%u uHz dwell=%u/%u ms skew=%u\n",
+                        wf.amplitudeCounts, wf.freqMicroHz, req->dwellHighMs,
+                        req->dwellLowMs, (unsigned)req->skewPerMille);
         }
 #else
         app_motion_data.waveformRunning = false;

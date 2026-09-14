@@ -267,6 +267,22 @@ static void motion_driveToWaiting(void)
     TEST_ASSERT_TRUE(app_motion_isIdle()); /* WAITING + empty queue */
 }
 
+/* A waveform record. Symmetric and hold-free unless a test says otherwise --
+ * the same cycle G123 has always meant. */
+static app_motion_move_t make_waveform(int32_t amplitudeTenthUm, uint32_t freqMicroHz,
+                                       uint32_t cycles, uint8_t shape)
+{
+    app_motion_move_t m;
+    memset(&m, 0, sizeof(m));
+    m.g = (uint8_t)G123_WAVEFORM;
+    m.wave.amplitudeTenthUm = amplitudeTenthUm;
+    m.wave.freqMicroHz = freqMicroHz;
+    m.wave.cycles = cycles;
+    m.wave.skewPerMille = 500U;
+    m.wave.shape = shape;
+    return m;
+}
+
 static app_motion_move_t make_move(uint8_t g, int32_t x, int32_t f, uint32_t p)
 {
     app_motion_move_t m;
@@ -805,9 +821,11 @@ void test_waveform_is_handed_to_the_driver_in_the_drivers_units(void)
     d_steps = 4321;          /* the wave swings about wherever we are now */
     d_waveformCount = 0U;
 
-    /* 5000 um at 100 steps/mm = 500 steps; 250 mHz -> 250000 uHz; shape 1. */
-    app_motion_move_t wf = make_move((uint8_t)G123_WAVEFORM, 5000,
-                                     (int32_t)((1UL << 24) | 250UL), 7U);
+    /* 50000 tenth-um = 5 mm; at 100 steps/mm that is 500 steps. */
+    app_motion_move_t wf = make_waveform(50000, 250000U, 7U, 1U);
+    wf.wave.dwellHighMs = 250U;
+    wf.wave.dwellLowMs = 40U;
+    wf.wave.skewPerMille = 700U;
     TEST_ASSERT_TRUE(app_motion_addMove(&wf));
     app_motion_run(); /* pop + start */
 
@@ -820,19 +838,23 @@ void test_waveform_is_handed_to_the_driver_in_the_drivers_units(void)
     /* Dwell and skew are not on the wire yet: the driver must be asked for the
      * symmetric, hold-free cycle this command has always meant, not for zero
      * skew (which would be a traverse of no duration). */
-    TEST_ASSERT_EQUAL_UINT16(DEV_SERVO_SKEW_SYMMETRIC, d_lastWaveSkew);
-    TEST_ASSERT_EQUAL_UINT32(0U, d_lastWaveDwellHighUs);
-    TEST_ASSERT_EQUAL_UINT32(0U, d_lastWaveDwellLowUs);
+    /* Milliseconds on the record, microseconds in the driver. */
+    TEST_ASSERT_EQUAL_UINT32(250000U, d_lastWaveDwellHighUs);
+    TEST_ASSERT_EQUAL_UINT32(40000U, d_lastWaveDwellLowUs);
+    TEST_ASSERT_EQUAL_UINT16(700U, d_lastWaveSkew);
 }
 
 void test_a_sine_shape_bit_selects_a_sine(void)
 {
     motion_driveToWaiting();
-    app_motion_move_t wf = make_move((uint8_t)G123_WAVEFORM, 5000, 1000, 2U);
+    app_motion_move_t wf = make_waveform(50000, 1000000U, 2U, 0U);
     TEST_ASSERT_TRUE(app_motion_addMove(&wf));
     app_motion_run();
     TEST_ASSERT_EQUAL_INT(DEV_SERVO_WAVE_SINE, d_lastWaveShape);
     TEST_ASSERT_EQUAL_UINT32(1000000U, d_lastWaveFreqMicroHz);
+    /* A hold-free cycle must ask for the SYMMETRIC split, not zero skew --
+     * zero skew is a traverse of no duration, which the driver refuses. */
+    TEST_ASSERT_EQUAL_UINT16(DEV_SERVO_SKEW_SYMMETRIC, d_lastWaveSkew);
 }
 
 /* A waveform the driver will not run must END the move, not wait forever for a
@@ -851,7 +873,7 @@ void test_a_refused_waveform_completes_the_move_instead_of_hanging(void)
     d_atTarget = false;
     d_setVelocityCount = 0U;
 
-    app_motion_move_t wf = make_move((uint8_t)G123_WAVEFORM, 5000, 1000, 2U);
+    app_motion_move_t wf = make_waveform(50000, 1000000U, 2U, 0U);
     TEST_ASSERT_TRUE(app_motion_addMove(&wf));
     app_motion_run(); /* pop + start -> refused */
     global_timeus = 1000U;
@@ -873,7 +895,7 @@ void test_a_waveform_runs_until_the_driver_reports_arrival(void)
 
     motion_driveToWaiting();
     d_atTarget = false;
-    app_motion_move_t wf = make_move((uint8_t)G123_WAVEFORM, 5000, 1000, 2U);
+    app_motion_move_t wf = make_waveform(50000, 1000000U, 2U, 0U);
     TEST_ASSERT_TRUE(app_motion_addMove(&wf));
     app_motion_run();
     for (unsigned i = 0U; i < 50U; i++)
@@ -903,7 +925,7 @@ void test_the_recorded_setpoint_during_a_waveform_is_the_trajectory(void)
     d_atTarget = false;
     d_target = 1000;    /* where the waveform will END   */
     d_setpoint = 1750;  /* where the trajectory is NOW   */
-    app_motion_move_t wf = make_move((uint8_t)G123_WAVEFORM, 5000, 1000, 2U);
+    app_motion_move_t wf = make_waveform(50000, 1000000U, 2U, 0U);
     TEST_ASSERT_TRUE(app_motion_addMove(&wf));
     app_motion_run();
     global_timeus += 1000U;
@@ -925,7 +947,7 @@ void test_waveform_zero_frequency_completes_without_motion(void)
     motion_driveToWaiting();
     d_setVelocityCount = 0U;
 
-    app_motion_move_t wf = make_move((uint8_t)G123_WAVEFORM, 5000, 0, 1U);
+    app_motion_move_t wf = make_waveform(50000, 0U, 1U, 0U); /* zero frequency */
     TEST_ASSERT_TRUE(app_motion_addMove(&wf));
     app_motion_run(); /* pop + start -> MOVING */
     global_timeus = 1000U;

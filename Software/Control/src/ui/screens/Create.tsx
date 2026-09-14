@@ -234,10 +234,16 @@ export default function Create() {
     );
     if (m.moveType === 'dwell') return field('Time (ms)', 'time');
     if (m.moveType === 'math') {
-      // Firmware-native waveform (G123) is SINE-only in v1; the WaveformShape
-      // enum reserves other shapes for a future firmware update. Pin to sine so
-      // the previewed/commanded motion can never silently differ from the shape.
-      const fn: WaveformFn = 'sine';
+      // The traverse profile now reaches the driver and is honoured there, so
+      // this offers the shapes the firmware actually implements rather than
+      // pinning to sine. It was pinned because app_motion masked the shape bit
+      // off and evaluated sinf regardless, so offering "triangle" would have
+      // promised one and delivered a sine.
+      //
+      // Dwell (H/L) and skew (S) exist in the G-code grammar and in the
+      // firmware, but are not authorable here yet; a hand-written program can
+      // use them.
+      const fn: WaveformFn = p.waveform === 'triangle' ? 'triangle' : 'sine';
       const peakV = waveformPeakVelocity(fn, p.amplitude ?? 0, p.frequency ?? 0);
       const peakA = waveformPeakAcceleration(fn, p.amplitude ?? 0, p.frequency ?? 0);
       const durationS = (p.frequency ?? 0) > 0 ? (p.cycles ?? 0) / (p.frequency ?? 1) : 0;
@@ -261,6 +267,7 @@ export default function Create() {
             Waveform
             <select value={fn} onChange={(e) => setWaveformFn(si, mi, e.target.value as WaveformFn)}>
               <option value="sine">Sine</option>
+              <option value="triangle">Triangle</option>
             </select>
           </label>
           {field('Amplitude (mm)', 'amplitude')}
