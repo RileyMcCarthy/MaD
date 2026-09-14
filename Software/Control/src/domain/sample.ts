@@ -12,11 +12,16 @@ import {
 
 /**
  * Decode a buffer of binary `StoredSample` structs into a CSV string.
- * Columns mirror the firmware sample frame: time_us, force_mN, position_um,
- * setpoint_um (the decoded structs are in UI units, converted back to raw).
+ * Columns mirror the firmware sample frame: time_us, force_mN, position_nm,
+ * setpoint_nm (the decoded structs are in UI units, converted back to raw).
+ *
+ * NANOMETRES, not micrometres. One encoder count is 122 nm, so a micrometre
+ * column could not express what the machine actually measures — it collapsed
+ * 8192 distinguishable states per mm onto 1000, and the servo's own accuracy
+ * (~0.07 um) sat entirely inside one column step.
  */
 export function decodeBinarySampleDataToCSV(data: Uint8Array): string {
-  const lines: string[] = ['time_us,force_mN,position_um,setpoint_um'];
+  const lines: string[] = ['time_us,force_mN,position_nm,setpoint_nm'];
   const numSamples = Math.floor(data.length / STOREDSAMPLE_WIRE_SIZE);
 
   for (let i = 0; i < numSamples; i++) {
@@ -25,9 +30,9 @@ export function decodeBinarySampleDataToCSV(data: Uint8Array): string {
       data.subarray(offset, offset + STOREDSAMPLE_WIRE_SIZE),
     );
     const forceMN = Math.round(sample.force * 1000);
-    const positionUM = Math.round(sample.position * 1000);
-    const setpointUM = Math.round(sample.setpoint * 1000);
-    lines.push(`${sample.time},${forceMN},${positionUM},${setpointUM}`);
+    const positionNM = Math.round(sample.position * 1_000_000);
+    const setpointNM = Math.round(sample.setpoint * 1_000_000);
+    lines.push(`${sample.time},${forceMN},${positionNM},${setpointNM}`);
   }
 
   return `${lines.join('\n')}\n`;
@@ -48,13 +53,13 @@ export function parseTestCSV(csv: string): TestDataPoint[] {
   for (let i = 1; i < rows.length; i++) {
     const row = rows[i].trim();
     if (!row) continue;
-    const [timeUs, forceMn, posUm, setUm] = row.split(',').map(Number);
-    if ([timeUs, forceMn, posUm, setUm].some((n) => Number.isNaN(n))) continue;
+    const [timeUs, forceMn, posNm, setNm] = row.split(',').map(Number);
+    if ([timeUs, forceMn, posNm, setNm].some((n) => Number.isNaN(n))) continue;
     points.push({
       timeS: timeUs / 1_000_000,
       forceN: forceMn / 1000,
-      positionMm: posUm / 1000,
-      setpointMm: setUm / 1000,
+      positionMm: posNm / 1_000_000,
+      setpointMm: setNm / 1_000_000,
     });
   }
   return points;

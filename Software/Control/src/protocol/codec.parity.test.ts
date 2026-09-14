@@ -17,8 +17,8 @@ const bytes = (b: Uint8Array): number[] => Array.from(b);
 // when the schema/template changes (and update docs/PARITY.md).
 const GOLD = {
   state: [178, 0],
-  sample: [217, 182, 241, 31, 9, 138, 102, 42, 147, 73, 176, 12],
-  stored: [217, 182, 241, 31, 9, 72, 60, 0, 0, 138, 102],
+  sample: [217, 182, 129, 193, 164, 35, 64, 44, 66, 166, 50, 25, 148, 9, 25, 3],
+  stored: [217, 182, 129, 193, 164, 35, 32, 241, 0, 0, 64, 44, 66, 6],
   // MachineConfiguration (intrinsic load-cell constants) — MaDProtocol.yaml.
   config: [
     84, 101, 115, 116, 101, 114, 45, 49, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 200, 0, 0, 0, 144, 1,
@@ -56,7 +56,7 @@ describe('codec golden byte vectors (frozen — guards the wire format)', () => 
       covers: 'src/protocol/generated/protoemb.ts#encodeSample',
       given: 'a live sample of 12.345 N machine force, −50.5 mm position, and a 10 mm setpoint',
       expect: {
-        'sample-bytes': 'the sample encodes to the agreed 12 bytes on the wire',
+        'sample-bytes': 'the sample encodes to the agreed 16 bytes on the wire',
       },
       why: { 'sample-bytes': 'the app and the firmware must speak the same live-sample bytes' },
     },
@@ -72,7 +72,7 @@ describe('codec golden byte vectors (frozen — guards the wire format)', () => 
       covers: 'src/protocol/generated/protoemb.ts#encodeStoredSample',
       given: 'a stored sample of 12.345 N at −50.5 mm, 123456 time ticks, and a 10 mm setpoint',
       expect: {
-        'stored-sample-bytes': 'the stored sample encodes to the agreed 11 bytes on the wire',
+        'stored-sample-bytes': 'the stored sample encodes to the agreed 14 bytes on the wire',
       },
       why: { 'stored-sample-bytes': 'the app and the firmware must speak the same stored-sample bytes' },
     },

@@ -15,6 +15,14 @@
 #define LIB_UTILITY_MM_TO_UM(mm) ((mm) * LIB_UTILITY_UM_PER_MM)
 #define LIB_UTILITY_UM_TO_MM(um) ((um) / LIB_UTILITY_UM_PER_MM)
 
+/* Nanometres are the unit of the MEASUREMENT path (position and setpoint), as
+ * distinct from micrometres which remain the unit of COMMANDS (a G1 target, a
+ * feedrate). One encoder count is 122 nm, so a micrometre-quantised reading
+ * collapses 8192 distinguishable states per mm onto 1000 -- coarser than the
+ * sensor, and coarser than the errors worth measuring. */
+#define LIB_UTILITY_NM_PER_MM (1000000L)
+#define LIB_UTILITY_MM_TO_NM(mm) ((int32_t)((mm) * LIB_UTILITY_NM_PER_MM))
+
 #define LIB_UTILITY_US_PER_MS (1000U)
 #define LIB_UTILITY_MS_TO_US(ms) ((ms) * LIB_UTILITY_US_PER_MS)
 #define LIB_UTILITY_MN_TO_N(mN) ((mN) / 1000.0f)

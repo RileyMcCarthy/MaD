@@ -130,17 +130,17 @@ export interface MachineState {
     motionEnabled: boolean;
 }
 
-/** Live sample data sent periodically — 12 bytes on wire */
+/** Live sample data sent periodically — 16 bytes on wire */
 export interface Sample {
     /** unit: N, scale: 1000 (precision: 1/1000) */
     machineForce: number;
-    /** unit: mm, scale: 1000 (precision: 1/1000) */
+    /** unit: mm, scale: 1000000 (precision: 1/1000000) */
     machinePosition: number;
-    /** unit: mm, scale: 1000 (precision: 1/1000) */
+    /** unit: mm, scale: 1000000 (precision: 1/1000000) */
     machineSetpoint: number;
     /** unit: N, scale: 1000 (precision: 1/1000) */
     sampleForce: number;
-    /** unit: mm, scale: 1000 (precision: 1/1000) */
+    /** unit: mm, scale: 1000000 (precision: 1/1000000) */
     samplePosition: number;
 }
 
@@ -173,15 +173,15 @@ export interface WaveformMove {
     skewPerMille: number;
 }
 
-/** Sample written to SD card binary files — 11 bytes on wire */
+/** Sample written to SD card binary files — 14 bytes on wire */
 export interface StoredSample {
     /** unit: N, scale: 1000 (precision: 1/1000) */
     force: number;
-    /** unit: mm, scale: 1000 (precision: 1/1000) */
+    /** unit: mm, scale: 1000000 (precision: 1/1000000) */
     position: number;
     /** unit: us */
     time: number;
-    /** unit: mm, scale: 1000 (precision: 1/1000) */
+    /** unit: mm, scale: 1000000 (precision: 1/1000000) */
     setpoint: number;
 }
 
@@ -249,10 +249,10 @@ export interface Notification {
 // Wire Sizes
 // ============================================================
 export const MACHINESTATE_WIRE_SIZE = 2;
-export const SAMPLE_WIRE_SIZE = 12;
+export const SAMPLE_WIRE_SIZE = 16;
 export const MOVE_WIRE_SIZE = 8;
 export const WAVEFORMMOVE_WIRE_SIZE = 18;
-export const STOREDSAMPLE_WIRE_SIZE = 11;
+export const STOREDSAMPLE_WIRE_SIZE = 14;
 export const MACHINECONFIGURATION_WIRE_SIZE = 68;
 export const SAMPLEPROFILE_WIRE_SIZE = 20;
 export const FIRMWAREVERSION_WIRE_SIZE = 16;
@@ -338,30 +338,30 @@ export function decodeMachineState(buf: Uint8Array): MachineState {
 }
 
 /**
- * Encode Sample → 12 bytes.
+ * Encode Sample → 16 bytes.
  * Input values are in unit (see field `unit`); scale is applied to produce wire steps.
  */
 export function encodeSample(src: Sample): Uint8Array {
-    const buf = new Uint8Array(12);
+    const buf = new Uint8Array(16);
     packBits(buf, 0, 18, Math.round((src.machineForce - (-100)) * 1000));
-    packBits(buf, 18, 19, Math.round((src.machinePosition - (-200)) * 1000));
-    packBits(buf, 37, 19, Math.round((src.machineSetpoint - (-200)) * 1000));
-    packBits(buf, 56, 18, Math.round((src.sampleForce - (-100)) * 1000));
-    packBits(buf, 74, 19, Math.round((src.samplePosition - (-200)) * 1000));
+    packBits(buf, 18, 29, Math.round((src.machinePosition - (-200)) * 1000000));
+    packBits(buf, 47, 29, Math.round((src.machineSetpoint - (-200)) * 1000000));
+    packBits(buf, 76, 18, Math.round((src.sampleForce - (-100)) * 1000));
+    packBits(buf, 94, 29, Math.round((src.samplePosition - (-200)) * 1000000));
     return buf;
 }
 
 /**
- * Decode 12 bytes → Sample.
+ * Decode 16 bytes → Sample.
  * Output values are in unit (see field `unit`); scale is applied as divisor.
  */
 export function decodeSample(buf: Uint8Array): Sample {
     return {
         machineForce: unpackBits(buf, 0, 18) / 1000 + (-100),
-        machinePosition: unpackBits(buf, 18, 19) / 1000 + (-200),
-        machineSetpoint: unpackBits(buf, 37, 19) / 1000 + (-200),
-        sampleForce: unpackBits(buf, 56, 18) / 1000 + (-100),
-        samplePosition: unpackBits(buf, 74, 19) / 1000 + (-200),
+        machinePosition: unpackBits(buf, 18, 29) / 1000000 + (-200),
+        machineSetpoint: unpackBits(buf, 47, 29) / 1000000 + (-200),
+        sampleForce: unpackBits(buf, 76, 18) / 1000 + (-100),
+        samplePosition: unpackBits(buf, 94, 29) / 1000000 + (-200),
     };
 }
 
@@ -424,28 +424,28 @@ export function decodeWaveformMove(buf: Uint8Array): WaveformMove {
 }
 
 /**
- * Encode StoredSample → 11 bytes.
+ * Encode StoredSample → 14 bytes.
  * Input values are in unit (see field `unit`); scale is applied to produce wire steps.
  */
 export function encodeStoredSample(src: StoredSample): Uint8Array {
-    const buf = new Uint8Array(11);
+    const buf = new Uint8Array(14);
     packBits(buf, 0, 18, Math.round((src.force - (-100)) * 1000));
-    packBits(buf, 18, 19, Math.round((src.position - (-200)) * 1000));
-    packBits(buf, 37, 32, Math.round(src.time * 1));
-    packBits(buf, 69, 19, Math.round((src.setpoint - (-200)) * 1000));
+    packBits(buf, 18, 29, Math.round((src.position - (-200)) * 1000000));
+    packBits(buf, 47, 32, Math.round(src.time * 1));
+    packBits(buf, 79, 29, Math.round((src.setpoint - (-200)) * 1000000));
     return buf;
 }
 
 /**
- * Decode 11 bytes → StoredSample.
+ * Decode 14 bytes → StoredSample.
  * Output values are in unit (see field `unit`); scale is applied as divisor.
  */
 export function decodeStoredSample(buf: Uint8Array): StoredSample {
     return {
         force: unpackBits(buf, 0, 18) / 1000 + (-100),
-        position: unpackBits(buf, 18, 19) / 1000 + (-200),
-        time: unpackBits(buf, 37, 32) / 1,
-        setpoint: unpackBits(buf, 69, 19) / 1000 + (-200),
+        position: unpackBits(buf, 18, 29) / 1000000 + (-200),
+        time: unpackBits(buf, 47, 32) / 1,
+        setpoint: unpackBits(buf, 79, 29) / 1000000 + (-200),
     };
 }
 

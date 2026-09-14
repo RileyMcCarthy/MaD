@@ -31,10 +31,11 @@
 typedef struct __attribute__((packed))
 {
     int32_t force;    // mN (sample frame)
-    int32_t position; // um (sample frame)
+    int32_t position; // nm (sample frame)
     uint32_t time;    // us since test start
-    /* Segment target: machine setpoint (um) minus gauge length (sample coords). */
-    int32_t setpoint; // um (sample frame)
+    /* What the trajectory commanded at this instant, minus the gauge length
+     * (sample coords). NOT the move's destination: see app_motion. */
+    int32_t setpoint; // nm (sample frame)
 } app_monitor_sample_t;
 
 typedef enum
