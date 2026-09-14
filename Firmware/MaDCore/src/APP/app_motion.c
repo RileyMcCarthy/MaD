@@ -6,8 +6,10 @@
  **********************************************************************/
 #include <string.h>
 #include <stdlib.h>
-#include "HAL_lock.h"
+/* Not used directly any more, but dropping it changes the header chain into a
+ * FlexC internal error inside libc's ioctl.c. Keep it. */
 #include <math.h>
+#include "HAL_lock.h"
 
 #include "app_motion.h"
 #include "app_control.h"
@@ -60,6 +62,10 @@
 #define actuator_getPosition() dev_servo_getPosition(ACTUATOR_CH)
 #define actuator_getTarget() dev_servo_getTarget(ACTUATOR_CH)
 #define actuator_atTarget() dev_servo_atTarget(ACTUATOR_CH)
+#define actuator_getSetpoint() dev_servo_getSetpoint(ACTUATOR_CH)
+#define actuator_startWaveform(centre, amp, freqUhz, cycles, shape)                                \
+    dev_servo_startWaveform(ACTUATOR_CH, (centre), (amp), (freqUhz), (cycles), (shape))
+#define ACTUATOR_HAS_WAVEFORM 1
 #else
 #define ACTUATOR_CH DEV_STEPPER_CHANNEL_MAIN
 #define actuator_enable(en) dev_stepper_enable(ACTUATOR_CH, (en))
@@ -70,68 +76,24 @@
 #define actuator_getPosition() dev_stepper_getSteps(ACTUATOR_CH)
 #define actuator_getTarget() dev_stepper_getTarget(ACTUATOR_CH)
 #define actuator_atTarget() dev_stepper_atTarget(ACTUATOR_CH)
+/* dev_stepper is open-loop and has no trajectory generator, so it has no
+ * waveform. G123 is refused on that build rather than approximated. */
+#define actuator_getSetpoint() actuator_getTarget()
+#define ACTUATOR_HAS_WAVEFORM 0
 #endif
 
-/* Waveform (G123): the firmware generates the f(t) trajectory itself (no host G1
- * expansion). It streams the analytic instantaneous velocity each motion tick to
- * the stepper's continuous-velocity (NCO) output, so the pulse rate follows the
- * waveform smoothly rather than as discrete stop/start segments. */
-#define APP_MOTION_TWO_PI 6.283185307179586f
-/* The waveform ends with a settle move back to the centre; completion is the
- * ACTUATOR's own arrival verdict (actuator_atTarget), not a position tolerance
- * chosen here. A tolerance in this layer has to be at least as loose as the
- * parking accuracy the actuator enforces, and it cannot know that: dev_servo
- * parks anywhere inside its position deadband, so the old ±2-step test could
- * never be satisfied and the move hung forever, wedging the whole test. */
-/* Defensive clamp on the commanded step rate (steps/s). The host validates peak
- * velocity, but extreme/unvalidated params (high freq × high amplitude × a fine
- * steps/mm) could otherwise overflow the int32/uint32 rate. 30 Msteps/s sits
- * well above any real stepper rate yet far below the 2^31 overflow point. */
-#define APP_MOTION_WAVEFORM_MAX_STEPS_PER_S 30000000.0f
-
-/* Waveform position-correction gain (1/s).
+/* Waveform (G123): the DRIVER generates the trajectory.
  *
- * The streamed analytic rate has no absolute position reference. dev_servo's
- * VELOCITY mode takes only a target RATE, free-integrates its own setpointPos
- * from the accel-limited setpoint velocity, and measures its Kp error against
- * THAT — so the reference itself carries any travel the accel limiter ate, and
- * the loop tracks the wrong thing perfectly. A position sinusoid started from
- * its mean demands v(0) = 2*pi*f*A instantly, which no accel-limited machine
- * can deliver, so the ramp-in loses Vpeak^2/(2*maxAccel) of travel and the
- * whole oscillation sits that far below the centre the operator asked for --
- * 0.82 mm on the reference 5 mm at 1 Hz case, which is enough to drive the
- * bottom of the stroke into the lower limit switch.
+ * This layer used to generate it here and stream an analytic velocity to the
+ * actuator each tick, with an outer position loop bolted on top to claw back
+ * what the accel limiter ate on the way in. All of that existed because a
+ * sinusoid started from its own centre demands v(0) = 2*pi*f*A instantly, which
+ * no accel-limited machine can deliver.
  *
- * Anchoring the stream to the analytic POSITION makes the error decay as
- * e' = -k*e instead of persisting. The ideal sine is an exact solution of the
- * closed loop, so the correction is identically zero while tracking is perfect:
- * this changes how faithfully the commanded trajectory is followed, never the
- * trajectory itself.
- *
- * BOUND: this is the outer loop of a cascade whose inner loop is dev_servo's
- * Kp (kpNum/kpDen = 8). Conventional cascade separation is a factor of four.
- * Lower this if that Kp is ever lowered. */
-#define APP_MOTION_WAVEFORM_POS_GAIN 2.0f
-
-/* The correction may never exceed this fraction of the analytic peak rate, so a
- * dead or glitching encoder degrades to a bounded overspeed rather than a
- * runaway. Normal tracking uses a few percent of it. */
-#define APP_MOTION_WAVEFORM_CORR_FRACTION 0.5f
-
-/* How long the closing move to the centre may take before the waveform gives up.
- *
- * Completion is the actuator's own arrival verdict, and an arrival that never
- * comes used to hang the move -- and with it the whole test -- forever. That has
- * already happened once here (see the note above on the old +/-2-step test), and
- * it happened again when the tracking offset above parked the carriage against
- * the lower limit switch. A move that cannot finish must end and say so, not
- * wedge the machine. */
-#define APP_MOTION_WAVEFORM_SETTLE_TIMEOUT_MS 5000U
-
-/* Ceiling on a waveform's total duration (microseconds). Saturating here keeps
- * the whole calculation in 32-bit -- see the note where it is used -- and an
- * hour is far beyond any cyclic profile this machine runs. */
-#define APP_MOTION_WAVEFORM_MAX_DURATION_US 3600000000UL
+ * dev_servo now runs the waveform as approach-to-peak, whole cycles peak to
+ * peak, return to centre -- every instant of which is inside the acceleration
+ * budget, so there is no lag to correct and nothing for an anchor to do. What
+ * is left here is unit conversion and a completion check. */
 
 /**********************************************************************
  * Typedefs
@@ -175,17 +137,10 @@ typedef struct
     int lock;
     app_motion_home_E homeState;
 
-    /* Waveform (G123) playback state. */
-    int32_t waveformCentreSteps;     /* position the wave oscillates about      */
-    int32_t waveformAmplitudeSteps;  /* peak excursion in steps                 */
-    uint32_t waveformFreqMilliHz;    /* frequency in milli-Hz                   */
-    uint32_t waveformDurationUs;     /* cycles / frequency, in microseconds     */
-    uint32_t waveformElapsedUs;      /* wrap-safe elapsed time since start      */
-    uint32_t waveformLastUs;         /* last HAL_time_getUs() reading           */
-    bool waveformSettling;           /* the closing move to centre was issued   */
-    bool waveformTraced;             /* the one-shot playback trace has fired   */
-    int32_t waveformIdealSteps;      /* the trajectory's own position this tick  */
-    lib_timer_S waveformSettleTimer; /* bounds the closing move's arrival wait   */
+    /* Waveform (G123): whether the driver accepted the one we asked for. The
+     * trajectory, its phase, its cycle count and its completion all live in the
+     * driver now, so there is nothing else for this layer to remember. */
+    bool waveformRunning;
 
     app_motion_outputs_t output;
 
@@ -217,17 +172,15 @@ static void app_motion_private_processInputs(void)
     app_motion_data.inputs.positionSteps = actuator_getPosition();
     app_motion_data.inputs.atTarget = actuator_atTarget();
     app_motion_data.inputs.gaugeSetpointSteps = actuator_getTarget();
-    /* A waveform drives the actuator in VELOCITY mode, where there is no
-     * position target at all -- dev_servo_setVelocity never touches req.target,
-     * so actuator_getTarget() keeps reporting whatever the move BEFORE the
-     * waveform asked for, frozen, for the whole run. Every recorded setpoint
-     * sample was that stale value, which is why a systematic tracking offset
-     * could never be seen in the recorded data. Report what the waveform is
-     * actually commanding. */
-    if ((app_motion_data.currentMove.g == G123_WAVEFORM) &&
-        (app_motion_data.waveformSettling == false))
+    /* A target is where a move ENDS; during a waveform that is the centre it
+     * will finish at, which is not what the specimen is being asked for at this
+     * instant. Report the driver's own profile position instead, so a recorded
+     * sample carries the trajectory rather than its destination. (Only for a
+     * waveform: making this unconditional would change the recorded setpoint of
+     * every G0/G1 too, which is a separate question about what a sample means.) */
+    if (app_motion_data.currentMove.g == G123_WAVEFORM)
     {
-        app_motion_data.inputs.gaugeSetpointSteps = app_motion_data.waveformIdealSteps;
+        app_motion_data.inputs.gaugeSetpointSteps = actuator_getSetpoint();
     }
     app_motion_data.inputs.endstopUpperActive = HAL_GPIO_getActive(HAL_GPIO_ENDSTOP_UPPER);
 }
@@ -393,74 +346,52 @@ static void app_motion_private_moveManager_start(void)
         break;
     case G123_WAVEFORM:
     {
-        /* Reinterpret the move record for a firmware-native waveform:
-         *   x = amplitude (µm), p = cycles,
+#if ACTUATOR_HAS_WAVEFORM
+        /* The move record carries a waveform in a general move's field slots:
+         *   x = amplitude (um), p = cycles,
          *   f = (shape << 24) | frequency-in-milli-Hz (low 24 bits).
-         * The wave oscillates about the position the machine is at right now
-         * (the program ramps to the mean with a preceding G1). */
+         * The wave swings about wherever the carriage is right now, which is
+         * also the point it is returned to at the end. */
         const int32_t amplitudeUm = app_motion_data.currentMove.x;
         const uint32_t fField = (uint32_t)app_motion_data.currentMove.f;
         const uint32_t freqMilliHz = fField & 0x00FFFFFFU;
+        const uint32_t shapeBits = (fField >> 24) & 0xFFU;
         const uint32_t cycles = app_motion_data.currentMove.p;
-        app_motion_data.waveformCentreSteps = app_motion_data.inputs.positionSteps;
-        app_motion_data.waveformAmplitudeSteps =
+        const int32_t centreSteps = app_motion_data.inputs.positionSteps;
+        const int32_t amplitudeSteps =
             (int32_t)(((int64_t)amplitudeUm * app_motion_data.stepsPerMM) / 1000LL);
-        app_motion_data.waveformFreqMilliHz = freqMilliHz;
-        /* Deliberately 32-bit, and the reason is narrower than it looks. This
-         * used to be
-         *     duration = (freqMilliHz == 0U) ? 0U
-         *              : (((uint64_t)cycles * 1000000000ULL) / freqMilliHz);
-         * and what FlexC miscompiles is the TERNARY ASSIGNED TO A 64-BIT
-         * DESTINATION -- it stores the low word and never writes the high one,
-         * so the duration came out ~3.6e16 us (1138 years), `elapsed >=
-         * duration` was never true, the wave never ended, the closing move was
-         * never issued and the run hung.
-         *
-         * NOT the 64-bit multiply or divide. Those are fine: FlexC lowers them
-         * to __system___int64_muls / __system___int64_divmodu, which return the
-         * correct 64-bit answer, and the very same expression is right when
-         * written with if/else. The line four above this one multiplies and
-         * divides in int64 and has always worked. (An earlier version of this
-         * comment blamed 64-bit arithmetic generally and cited
-         * lib_utility_muldiv64_signed's __FLEXC__ branch as evidence -- that
-         * branch is about reaching the P2's CORDIC for speed, and is not
-         * evidence of anything being broken. Confirmed with a minimal repro and
-         * the emitted assembly: the false arm moves result1 and never result2.)
-         *
-         * Only the real P2 image is affected; native_emulator and native_test
-         * build with clang and compute it correctly, which is why every unit
-         * test and the native bench stayed green while the machine was wrong.
-         *
-         * Microseconds per cycle is 1e9/f_mHz, which fits a uint32 for any
-         * frequency down to 1 mHz, and the total saturates rather than wraps. */
-        uint32_t durationUs = 0U;
-        if (freqMilliHz != 0U)
+        /* The driver's phase accumulator is exact in microhertz; the wire still
+         * speaks millihertz, so this widening is lossless. */
+        const uint32_t freqMicroHz = freqMilliHz * 1000U;
+        dev_servo_wave_E shape = DEV_SERVO_WAVE_SINE;
+        if (shapeBits == 1U)
         {
-            const uint32_t usPerCycle = 1000000000UL / freqMilliHz;
-            durationUs = APP_MOTION_WAVEFORM_MAX_DURATION_US;
-            if ((usPerCycle != 0U) &&
-                (cycles <= (APP_MOTION_WAVEFORM_MAX_DURATION_US / usPerCycle)))
-            {
-                durationUs = cycles * usPerCycle;
-            }
+            shape = DEV_SERVO_WAVE_TRIANGLE;
         }
-        app_motion_data.waveformDurationUs = durationUs;
-        app_motion_data.waveformElapsedUs = 0U;
-        app_motion_data.waveformLastUs = HAL_time_getUs();
-        app_motion_data.waveformSettling = false;
-        app_motion_data.waveformTraced = false;
-        app_motion_data.waveformIdealSteps = app_motion_data.waveformCentreSteps;
-        lib_timer_init(&app_motion_data.waveformSettleTimer,
-                       APP_MOTION_WAVEFORM_SETTLE_TIMEOUT_MS);
-        lib_timer_stop(&app_motion_data.waveformSettleTimer);
-        /* The CENTRE is the number that explains a waveform that runs into an
-         * endstop: the wave swings +/-amplitude about wherever the carriage
-         * happened to be when this move started, so a centre that is not where
-         * the preceding approach was supposed to leave it puts the whole
-         * envelope somewhere else. It was the one field not reported. */
-        DEBUG_INFO("G123 waveform: centre=%d steps amp=%d steps freq=%u mHz cycles=%u\n",
-                   app_motion_data.waveformCentreSteps,
-                   app_motion_data.waveformAmplitudeSteps, freqMilliHz, cycles);
+
+        app_motion_data.waveformRunning =
+            actuator_startWaveform(centreSteps, amplitudeSteps, freqMicroHz, cycles, shape);
+        if (app_motion_data.waveformRunning)
+        {
+            /* The CENTRE is the number that explains a waveform that runs into
+             * an endstop: the wave swings +/-amplitude about wherever the
+             * carriage happened to be when this move started. */
+            DEBUG_INFO("G123 waveform: centre=%d steps amp=%d steps freq=%u mHz cycles=%u shape=%u\n",
+                       centreSteps, amplitudeSteps, freqMilliHz, cycles, shapeBits);
+        }
+        else
+        {
+            /* Refused, not approximated. The driver rejects a waveform whose
+             * peak velocity or acceleration the machine cannot deliver, because
+             * running a smaller one instead gives a specimen that never saw the
+             * loading the report claims it did. */
+            DEBUG_ERROR("G123 waveform REFUSED: amp=%d steps freq=%u mHz exceeds the machine\n",
+                        amplitudeSteps, freqMilliHz);
+        }
+#else
+        app_motion_data.waveformRunning = false;
+        DEBUG_ERROR("%s", "G123 waveform needs the servo actuator; refusing\n");
+#endif
         break;
     }
     default:
@@ -468,136 +399,20 @@ static void app_motion_private_moveManager_start(void)
     }
 }
 
-/* Firmware-native waveform playback. Called every motion tick while a G123 is
- * the current move. Streams the analytic instantaneous velocity (2πf·A·cos) to
- * the stepper's continuous-velocity (NCO) output, sampling at the *real* elapsed
- * time so the cycle frequency holds regardless of tick jitter.
+/* A waveform is complete when the DRIVER says so.
  *
- * The rate is ANCHORED to the trajectory's own position each tick. Emitting the
- * ideal rate alone is not enough to realise the ideal trajectory: velocity mode
- * has no absolute reference, so whatever the accel limiter eats ramping in is
- * integrated into the servo's own reference and never recovered. See
- * APP_MOTION_WAVEFORM_POS_GAIN. */
+ * There is nothing to step here. dev_servo owns the phase, counts the cycles,
+ * and runs the closing move back to the centre, so this layer neither knows nor
+ * needs to know how far through the run it is -- and a waveform that was
+ * refused must end the move rather than wait forever for a run that never
+ * started. */
 static bool app_motion_private_waveform_run(void)
 {
-    const uint32_t now = HAL_time_getUs();
-    /* Wrap-safe accumulate: per-tick delta is tiny vs the uint32 µs wrap. */
-    app_motion_data.waveformElapsedUs += (now - app_motion_data.waveformLastUs);
-    app_motion_data.waveformLastUs = now;
-
-    if ((app_motion_data.waveformFreqMilliHz == 0U) ||
-        (app_motion_data.waveformAmplitudeSteps == 0))
+    if (app_motion_data.waveformRunning == false)
     {
-        return true; /* degenerate params — nothing to play */
+        return true;
     }
-
-    const float freqHz = (float)app_motion_data.waveformFreqMilliHz / 1000.0f;
-    const float ampSteps = (float)app_motion_data.waveformAmplitudeSteps;
-
-    if (app_motion_data.waveformElapsedUs >= app_motion_data.waveformDurationUs)
-    {
-        /* Whole cycles end at the centre; a settle move (which exits velocity
-         * mode) parks there. Issue it ONCE, then hand completion to the
-         * actuator — re-commanding every tick would keep resetting the arrival
-         * verdict, and this layer has no business second-guessing how precisely
-         * the actuator can park. */
-        if (app_motion_data.waveformSettling == false)
-        {
-            /* One line, once per waveform: whether the playback ran at all.
-             * A waveform that settles on its first tick commands a move to the
-             * centre it is already sitting on, so the carriage never moves and
-             * the only visible symptom is a test that never finishes. */
-            DEBUG_INFO("G123 settling: elapsed=%u us of %u us\n",
-                       app_motion_data.waveformElapsedUs,
-                       app_motion_data.waveformDurationUs);
-            const float ampAbs = (ampSteps < 0.0f) ? -ampSteps : ampSteps;
-            float peakVelF = APP_MOTION_TWO_PI * freqHz * ampAbs;
-            if (peakVelF > APP_MOTION_WAVEFORM_MAX_STEPS_PER_S)
-            {
-                peakVelF = APP_MOTION_WAVEFORM_MAX_STEPS_PER_S; /* clamp (no overflow) */
-            }
-            uint32_t peakVel = (uint32_t)peakVelF;
-            if (peakVel == 0U)
-            {
-                peakVel = 1U;
-            }
-            actuator_move(app_motion_data.waveformCentreSteps, peakVel);
-            app_motion_data.waveformSettling = true;
-            lib_timer_init(&app_motion_data.waveformSettleTimer,
-                           APP_MOTION_WAVEFORM_SETTLE_TIMEOUT_MS);
-            lib_timer_start(&app_motion_data.waveformSettleTimer);
-            /* inputs.atTarget was snapshotted before this command existed. */
-            return false;
-        }
-        if (app_motion_data.inputs.atTarget)
-        {
-            return true;
-        }
-        if (lib_timer_expired(&app_motion_data.waveformSettleTimer))
-        {
-            /* Give up rather than wedge: an arrival that is not coming (the
-             * carriage is against an endstop, or parked outside the actuator's
-             * deadband) must end the move and be visible, not hang the test. */
-            DEBUG_ERROR("G123 settle did not arrive within %u ms; ending the move\n",
-                        APP_MOTION_WAVEFORM_SETTLE_TIMEOUT_MS);
-            return true;
-        }
-        return false;
-    }
-
-    /* Stream the analytic instantaneous velocity of the trajectory:
-     *   d/dt[ centre + A·sin(2πf t) ] = 2πf·A·cos(2πf t)   (steps/s, signed).
-     * The stepper's NCO output follows the rate continuously (no per-segment
-     * stop/start); position integrates to the sine. The sign of cos flips at the
-     * position peaks, where the rate is ~0, so direction reversals are smooth.
-     * The closed-loop servo realises the commanded trajectory. */
-    const float t = (float)app_motion_data.waveformElapsedUs / 1.0e6f;
-    const float omega = APP_MOTION_TWO_PI * freqHz;
-    const float phase = omega * t;
-
-    /* The position the trajectory asks for right now -- the same function the
-     * rate is the derivative of, and the same one the host previews. */
-    const float idealPos =
-        (float)app_motion_data.waveformCentreSteps + (ampSteps * sinf(phase));
-    app_motion_data.waveformIdealSteps = (int32_t)roundf(idealPos);
-    const float posErr = idealPos - (float)app_motion_data.inputs.positionSteps;
-
-    const float ampAbs = (ampSteps < 0.0f) ? -ampSteps : ampSteps;
-    const float corrLimit = APP_MOTION_WAVEFORM_CORR_FRACTION * omega * ampAbs;
-    float correction = APP_MOTION_WAVEFORM_POS_GAIN * posErr;
-    if (correction > corrLimit)
-    {
-        correction = corrLimit;
-    }
-    else if (correction < -corrLimit)
-    {
-        correction = -corrLimit;
-    }
-    else
-    {
-        /* in band */
-    }
-
-    float velocity = (omega * ampSteps * cosf(phase)) + correction;
-    /* Clamp to the safe rate (prevents int32 overflow on extreme params). */
-    if (velocity > APP_MOTION_WAVEFORM_MAX_STEPS_PER_S)
-    {
-        velocity = APP_MOTION_WAVEFORM_MAX_STEPS_PER_S;
-    }
-    else if (velocity < -APP_MOTION_WAVEFORM_MAX_STEPS_PER_S)
-    {
-        velocity = -APP_MOTION_WAVEFORM_MAX_STEPS_PER_S;
-    }
-    /* Round (not truncate) so sub-step rates near the turning points still move
-     * in the correct direction instead of snapping to a momentary halt. */
-    if (app_motion_data.waveformTraced == false)
-    {
-        app_motion_data.waveformTraced = true;
-        DEBUG_INFO("G123 streaming: first vel=%d steps/s at elapsed=%u us\n",
-                   (int32_t)roundf(velocity), app_motion_data.waveformElapsedUs);
-    }
-    actuator_setVelocity((int32_t)roundf(velocity));
-    return false;
+    return app_motion_data.inputs.atTarget;
 }
 
 static bool app_motion_private_moveManager_run(void)

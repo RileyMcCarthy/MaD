@@ -6,6 +6,7 @@
  * Includes
  **********************************************************************/
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include "lib_utility.h"
@@ -40,6 +41,48 @@
 /**********************************************************************
  * Public Function Definitions
  **********************************************************************/
+
+uint32_t lib_utility_muldivmod64_unsigned(uint32_t a, uint32_t b, uint32_t c,
+                                          uint32_t *remainder)
+{
+    if (remainder == NULL)
+    {
+        return 0U;
+    }
+    if (c == 0U)
+    {
+        *remainder = 0U;
+        return 0U;
+    }
+
+    uint32_t quotient = 0U;
+    uint32_t rem = 0U;
+
+#ifdef __FLEXC__
+    /* Propeller 2: QMUL gives the 64-bit product in QX (low) / QY (high).
+     * SETQ loads the high word of the dividend before QDIV does (QY:QX) / c,
+     * leaving the quotient in QX and the remainder in QY. */
+    uint32_t productLo;
+    uint32_t productHi;
+    __asm {
+        qmul a, b
+        getqx productLo
+        getqy productHi
+        setq productHi
+        qdiv productLo, c
+        getqx quotient
+        getqy rem
+    }
+#else
+    /* Native / SIL: rely on host 64-bit arithmetic. */
+    const uint64_t product = (uint64_t)a * (uint64_t)b;
+    quotient = (uint32_t)(product / (uint64_t)c);
+    rem = (uint32_t)(product % (uint64_t)c);
+#endif
+
+    *remainder = rem;
+    return quotient;
+}
 
 int32_t lib_utility_muldiv64_signed(int32_t a, int32_t b, int32_t c)
 {

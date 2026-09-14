@@ -69,6 +69,27 @@ uint8_t lib_utility_CRC8(uint8_t *addr, uint16_t len);
 int32_t lib_utility_muldiv64_signed(int32_t a, int32_t b, int32_t c);
 
 /**
+ * Unsigned (a * b) / c with a 32x32 -> 64 intermediate, AND its remainder.
+ *
+ * The remainder is the point. A quotient alone throws away a fraction on every
+ * call, and a caller accumulating those calls (a phase accumulator, a rate
+ * integrator) drifts in one direction for as long as it runs. Handing back the
+ * remainder lets the caller carry it into the next call and stay exact for all
+ * time.
+ *
+ * On the Propeller 2 (FlexC) this is the CORDIC: QMUL gives the 64-bit product
+ * in QX/QY, then SETQ+QDIV does the 64/32 divide, leaving the quotient in QX
+ * and the remainder in QY. That path matters for more than speed -- writing
+ * this as plain C `uint64` arithmetic makes FlexC fail the whole build with
+ * "Cannot handle expression yet", so 64-bit intermediates on this target have
+ * to come through here.
+ *
+ * Returns 0 (remainder 0) if c == 0. `remainder` may not be NULL.
+ */
+uint32_t lib_utility_muldivmod64_unsigned(uint32_t a, uint32_t b, uint32_t c,
+                                          uint32_t *remainder);
+
+/**
  * Rollover-safe elapsed-time comparison for uint32 clocks.
  *
  * Returns true when `(now - start) > period`. Prefer this over
