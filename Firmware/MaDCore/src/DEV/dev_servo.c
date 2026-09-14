@@ -460,10 +460,11 @@ static float dev_servo_private_waveExcursion(const dev_servo_channelData_S *d, f
 static uint32_t dev_servo_private_phaseStep(dev_servo_channelData_S *d, uint32_t elapsedUs)
 {
     /* Split so that every intermediate OUTSIDE the 64-bit helper fits in 32
-     * bits, which is not a style preference: writing this as plain `uint64`
-     * arithmetic makes FlexC fail the entire build with "Cannot handle
-     * expression yet", from any file, for any 64-bit operation. The helper
-     * reaches the P2's CORDIC instead (QMUL then SETQ+QDIV).
+     * bits, which is not a style preference: FlexC cannot compile a NAMED
+     * 64-bit local (see lib_utility_muldivmod64_unsigned), and this needs to
+     * carry a remainder between statements. The helper reaches the P2's CORDIC
+     * instead (QMUL then SETQ+QDIV), which is also faster than a software
+     * 64-bit divide would have been.
      *
      *     n = freq * elapsed            = q * 5^12 + r
      *     n * 2^20 / 5^12               = q * 2^20 + (r * 2^20 + carry) / 5^12
