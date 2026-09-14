@@ -152,6 +152,14 @@ int32_t dev_servo_getPosition(dev_servo_channel_E ch); /* encoder — single sou
 int32_t dev_servo_getVelocity(dev_servo_channel_E ch); /* current commanded velocity (counts/s) */
 int32_t dev_servo_getFollowingError(dev_servo_channel_E ch); /* setpoint - encoder (counts) */
 int32_t dev_servo_getTarget(dev_servo_channel_E ch);         /* current position target (counts) */
+/* The trajectory's own commanded position this tick, in counts.
+ *
+ * Distinct from the target: a target is where a move ENDS, whereas this is
+ * where the profile says the machine should be right NOW. For a waveform those
+ * are wholly different -- the target is the centre it will finish at, while
+ * this traces the wave. It is the number a recorded sample should carry as its
+ * setpoint, because it is what the specimen was actually being asked for. */
+int32_t dev_servo_getSetpoint(dev_servo_channel_E ch);
 /* True only once the control loop has evaluated the CURRENT target and found the
  * encoder settled on it. Any new command (moveTo/setVelocity/stop/setPosition)
  * clears it, so a caller that issues a move and polls this can never see the
