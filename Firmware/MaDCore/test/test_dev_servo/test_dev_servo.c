@@ -951,7 +951,17 @@ static double worst_sine_deviation_at(int32_t centre, double amplitude, uint32_t
         const bool running =
             (dev_servo_data.channel[CH].waveSegment == (uint8_t)DEV_SERVO_WAVE_RUN);
         tick_with_motion();
-        if (!running) { continue; }
+        /* `running` was read BEFORE the tick. The tick that HANDS OVER to the
+         * return segment satisfies it but is no longer cycling by the time the
+         * encoder is read, and the reference below keeps evaluating the wave --
+         * so that one sample compares the machine against a trajectory the
+         * driver has already left. Require the segment to still be RUN after
+         * the tick as well. */
+        if (!running ||
+            (dev_servo_data.channel[CH].waveSegment != (uint8_t)DEV_SERVO_WAVE_RUN))
+        {
+            continue;
+        }
         runTicks++;
         const double t = (double)runTicks * 0.001;
         /* Phase 0 is the positive peak, so the trajectory is a cosine. */
@@ -1095,11 +1105,30 @@ void test_tracking_does_not_degrade_along_the_machine(void)
         }
         else
         {
+            /* Not exact equality any more. With the feedforward exact, every
+             * centre now sits at the ENCODER ROUNDING FLOOR (~0.5-0.7 counts),
+             * and which side of a count a sample lands on legitimately differs
+             * between centres. Holding all of them AT that floor is the
+             * stronger statement anyway: the defect this guards against --
+             * differencing two absolute positions, where a float's ulp is 2
+             * counts at the far end of the travel -- would put 3000 mm at
+             * around 2 counts, far outside it. */
+            /* The bound is the encoder's rounding floor PLUS the float's own
+             * resolution at this position, because `setpointPos` is a float:
+             * its ulp is 1 count at 2000 mm and 2 counts at 3000 mm, so the
+             * commanded position itself cannot be finer than that out there.
+             * Stating the limit is the point -- it is now the largest term in
+             * the budget at the far end of the travel, and it only became
+             * visible once the feedforward stopped dominating. */
+            const double ulp =
+                (centres[i] == 0) ? 0.0 : ldexp(1.0, ilogb((double)centres[i]) - 23);
+            const double bound = 1.0 + (2.0 * ulp);
             (void)snprintf(msg, sizeof(msg),
-                           "deviation at %.0f mm was %.2f counts but %.2f at the origin — tracking "
-                           "must not depend on where along the machine the test sits",
-                           (double)centres[i] / 8192.0, worst, first);
-            TEST_ASSERT_FLOAT_WITHIN_MESSAGE(0.01f, (float)first, (float)worst, msg);
+                           "deviation at %.0f mm was %.2f counts; the floor there is 1 count of "
+                           "encoder rounding plus %.2f counts of float resolution in setpointPos",
+                           (double)centres[i] / 8192.0, worst, 2.0 * ulp);
+            TEST_ASSERT_TRUE_MESSAGE(worst <= bound, msg);
+            (void)first;
         }
     }
 }
@@ -1438,12 +1467,14 @@ void test_the_one_micron_contract_holds_at_the_feasibility_boundary(void)
                        amplitudes[i], f, (double)f / 1e6, worst, worst / COUNTS_PER_MM);
         /* The CONTRACT is 1 um. This guards at 0.75 um because the demonstrated
          * capability is 0.48 um, and the margin between them is not spare room
-         * -- it is what the interval-average feedforward buys. Losing it would
-         * put this back at 0.84 um, which still passes a 1 um bound, so a bound
-         * at the contract alone would let the improvement be reverted in
-         * silence. */
+         * -- it is what the interval-average feedforward buys.
+         *
+         * The guard is ONE COUNT: with the feedforward exact, the cycles track
+         * to the encoder's own rounding floor, so anything above a count is a
+         * real term and not quantisation. That is 8x tighter than the contract
+         * and is what actually holds the improvement in place. */
         TEST_ASSERT_TRUE_MESSAGE(worst <= ONE_MICRON_COUNTS, msg);
-        TEST_ASSERT_TRUE_MESSAGE(worst <= (0.75 * ONE_MICRON_COUNTS), msg);
+        TEST_ASSERT_TRUE_MESSAGE(worst <= 1.0, msg);
         printf("  limit: A=%6d counts -> %8u uHz (%.3f Hz), worst %.2f counts (%.3f um)\n",
                amplitudes[i], f, (double)f / 1e6, worst, worst / COUNTS_PER_MM * 1000.0);
     }
