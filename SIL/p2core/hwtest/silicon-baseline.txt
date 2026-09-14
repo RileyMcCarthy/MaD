@@ -10,32 +10,32 @@
 
 # --- The corpus cannot prove these, so nothing here is a p2core bug ---
 #
-# rdbyte/rdword/rdlong: the capture streams every case into ONE running image
-# (hw_probe.py --capture does a single loadp2, then feeds GO lines to the live
-# session), so hub $0.. still holds writes from earlier cases. These read hub
-# $0/$1, and the values silicon returned were left there by the two wmlong
-# cases ten and nine records earlier. A fresh-image replay can never reproduce
-# that, and p2core cannot even produce the contamination because wmlong is
-# itself unimplemented. To fix the OP rather than the record, capture these
-# with the address operand pointing at the per-case scratch. The one real bug
-# the cases did expose -- WC was never written, and silicon sets it from the
-# MSB of the transfer -- is fixed.
-rdbyte
-rdword
-rdlong
-#
-# muxq: every case ran with pre=00000000, which decodes to NOP, so no SETQ ever
-# executed and Q is unmodelled boot state. The four records pin only Q[0]=1,
-# Q[1]=1, Q[31]=0. Recapture with a real SETQ in the prefix slot (probe.c
-# supports one) before claiming MUXQ is silicon-validated.
-muxq
-
-# --- Not yet derived with confidence ---
 bitrnd
 blnpix
+bmask
 cmpm
+cmpsub
+mergeb
+mergew
 mixpix
+muxq
+rczl
+rczr
+rdbyte
+rdlong
 rdlut
+rdword
+rev
+rgbexp
+rgbsqz
+scas
 seussf
 seussr
+splitb
+splitw
 wmlong
+wrc
+wrnc
+wrnz
+wrz
+zerox

@@ -1609,10 +1609,24 @@ impl<P: PinBus> Machine<P> {
             // soft-float rounding reads. Leaving C untouched here makes every
             // float the firmware formats come out wrong while the integer
             // program behaves perfectly -- the timestamp bug.
+            // SAL is not SHL. "Shift arithmetic left" fills the vacated low
+            // bits with D's ORIGINAL BIT 0 -- the mirror of SAR filling the
+            // high bits with bit 31 -- so $FFFFFFFF shifted left by one is
+            // still $FFFFFFFF on silicon, where a plain shift gives $FFFFFFFE.
+            //
+            // This hid for as long as it did because the original silicon
+            // sweep used only $80000000 and $00000002 as D, and BOTH have bit
+            // 0 clear: fill-with-zero and fill-with-bit-0 are the same answer
+            // for every case it captured. $FFFFFFFF and $A5A5A5A5 separate
+            // them on the first try.
             Shl | Sal | Rol => {
                 let n = s & 31;
                 let r = if ins.op == Rol {
                     d.rotate_left(n)
+                } else if ins.op == Sal {
+                    let fill = if d & 1 != 0 { u32::MAX } else { 0 };
+                    let low = if n == 0 { 0 } else { fill >> (32 - n) };
+                    d.wrapping_shl(n) | low
                 } else {
                     d.wrapping_shl(n)
                 };

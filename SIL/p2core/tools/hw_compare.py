@@ -43,6 +43,7 @@ PROGS = {
     "locks": "locks.c",
     "cogs": "cogs.c",
     "timed": "timed.c",
+    "pins": "pins.c",
 }
 
 
