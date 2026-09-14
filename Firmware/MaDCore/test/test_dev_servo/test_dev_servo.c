@@ -76,6 +76,12 @@ void HAL_encoder_set(HAL_encoder_channel_E ch, int32_t v)
 
 static uint32_t d_startVelocityCount;
 static uint32_t d_startVelocityFreq;
+/* What the pulse engine is emitting RIGHT NOW. The call-recorders above say
+ * what the driver asked for; this says what the carriage is actually doing,
+ * and they are not the same thing: `stop` ends the pulse train, and
+ * `startVelocity` (not `setFrequency`) is what carries the rate across a
+ * direction flip, because applyVelocity stops and restarts to re-latch DIR. */
+static uint32_t d_pulseRate;
 static uint32_t d_setFrequencyCount;
 static uint32_t d_lastSetFrequency;
 static uint32_t d_stopCount;
@@ -104,6 +110,7 @@ void HAL_pulseOut_stop(HAL_pulseOut_channel_E channel)
 {
     (void)channel;
     d_stopCount++;
+    d_pulseRate = 0U; /* a stopped train emits nothing -- the carriage rests */
 }
 
 void HAL_pulseOut_startVelocity(HAL_pulseOut_channel_E channel, uint32_t frequency)
@@ -111,6 +118,7 @@ void HAL_pulseOut_startVelocity(HAL_pulseOut_channel_E channel, uint32_t frequen
     (void)channel;
     d_startVelocityCount++;
     d_startVelocityFreq = frequency;
+    d_pulseRate = frequency;
 }
 
 void HAL_pulseOut_setFrequency(HAL_pulseOut_channel_E channel, uint32_t frequency)
@@ -118,6 +126,7 @@ void HAL_pulseOut_setFrequency(HAL_pulseOut_channel_E channel, uint32_t frequenc
     (void)channel;
     d_setFrequencyCount++;
     d_lastSetFrequency = frequency;
+    d_pulseRate = frequency;
 }
 
 static uint32_t d_gpioCount;
@@ -148,6 +157,7 @@ static void doubles_reset(void)
     d_encoderLastSet = 0;
     d_startVelocityCount = 0U;
     d_startVelocityFreq = 0U;
+    d_pulseRate = 0U;
     d_setFrequencyCount = 0U;
     d_lastSetFrequency = 0U;
     d_stopCount = 0U;
@@ -194,7 +204,7 @@ static void tick_with_motion(void)
     if (d_startVelocityCount > 0U)
     {
         const double dir = d_gpioActive ? -1.0 : 1.0;
-        d_carriage += dir * (double)d_lastSetFrequency * 0.001;
+        d_carriage += dir * (double)d_pulseRate * 0.001;
         d_encoderValue = (int32_t)(d_carriage < 0.0 ? (d_carriage - 0.5) : (d_carriage + 0.5));
     }
 }
@@ -727,6 +737,261 @@ void test_open_loop_waveform_velocity_leaves_a_permanent_position_deficit(void)
                              "the shortfall must match the analytic ramp-in deficit");
 }
 
+/* ---------------------------------------------------------------------------
+ * OSCILLATE: the driver owns the trajectory, so the deficit cannot arise.
+ *
+ * The companion to `open_loop_waveform_velocity_leaves_a_permanent_position_
+ * deficit` above. Same perfect plant, same amplitude and frequency -- the only
+ * difference is that the trajectory is EVALUATED from phase here rather than
+ * integrated from a streamed rate, so there is no accumulator to fall behind.
+ * ------------------------------------------------------------------------- */
+
+/* Run a waveform to completion and report where the carriage came to rest.
+ *
+ * Ticking a fixed budget sized from `cycles / frequency` would be wrong: the
+ * driver's waveform is approach + cycles + return, and only the middle part is
+ * the cycles. Waiting on the driver's own completion is also the honest
+ * assertion -- if `atTarget` never arrives, the test fails on the cap rather
+ * than quietly measuring a half-finished run. */
+static double run_oscillate(double amplitudeCounts, uint32_t freqMilliHz,
+                            uint32_t cycles, dev_servo_wave_E shape)
+{
+    dev_servo_enable(CH, true);
+    TEST_ASSERT_TRUE(dev_servo_startWaveform(CH, 0, (int32_t)amplitudeCounts,
+                                             freqMilliHz, cycles, shape));
+    const double freqHz = (double)freqMilliHz / 1000.0;
+    /* The cycles, plus a generous allowance for the two profiled segments. */
+    const unsigned cap = (unsigned)((double)cycles / freqHz / 0.001) + 4000U;
+    unsigned i = 0U;
+    while ((i < cap) && !dev_servo_atTarget(CH))
+    {
+        tick_with_motion();
+        i++;
+    }
+    TEST_ASSERT_TRUE_MESSAGE(dev_servo_atTarget(CH),
+                             "the waveform must report completion, not run forever");
+    return d_carriage;
+}
+
+void test_oscillate_returns_to_its_centre_after_whole_cycles(void)
+{
+    VIBES_TEST("servo.oscillate-no-drift",
+               "src/DEV/dev_servo.c#dev_servo_run",
+               "a waveform run by the driver instead of streamed as velocity");
+    VIBES_EXPECT_WHY("ends-where-it-started",
+                     "the carriage ends a whole number of cycles back at its centre",
+                     "the setpoint is evaluated from phase rather than integrated from a rate, so there is no accumulator that can fall behind and stay behind");
+    VIBES_EXPECT_WHY("residual-does-not-grow-with-cycles",
+                     "running four times as many cycles leaves exactly the same residual as one",
+                     "drift and a settling offset both look like a small error at the end of one run; only running different cycle counts separates them, and an evaluated setpoint must show no per-cycle component at all");
+
+    const int32_t deadband = dev_servo_channelConfig[CH].positionDeadband;
+
+    /* Drift accumulates per cycle; a settling offset does not. Running 1, 2 and
+     * 4 cycles is what tells them apart -- a single run cannot. */
+    int32_t residual[3];
+    unsigned n = 1U;
+    for (unsigned i = 0U; i < 3U; i++)
+    {
+        servo_init();
+        dev_servo_setPosition(CH, 0);
+        (void)run_oscillate(10000.0, 1000U, n, DEV_SERVO_WAVE_SINE);
+        residual[i] = dev_servo_getPosition(CH);
+        TEST_ASSERT_INT32_WITHIN_MESSAGE(deadband, 0, residual[i],
+                                         "a whole number of cycles must come back to the centre");
+        n *= 2U;
+    }
+    TEST_ASSERT_EQUAL_INT32_MESSAGE(residual[0], residual[2],
+                                    "four cycles must leave the same residual as one — any "
+                                    "difference is per-cycle drift, not settling");
+
+    /* The generator's own reference, separate from the plant tracking it: if
+     * the setpoint comes home exactly, the residual above is the loop settling
+     * inside its deadband and not a defect in the trajectory. */
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, dev_servo_data.channel[CH].setpointPos);
+}
+
+void test_oscillate_counts_whole_cycles_and_stops(void)
+{
+    servo_init();
+    dev_servo_setPosition(CH, 0);
+    (void)run_oscillate(10000.0, 1000U, 2U, DEV_SERVO_WAVE_SINE);
+    TEST_ASSERT_EQUAL_UINT32(2U, dev_servo_waveformCyclesDone(CH));
+    TEST_ASSERT_TRUE(dev_servo_atTarget(CH));
+}
+
+void test_an_infeasible_waveform_is_rejected_not_approximated(void)
+{
+    VIBES_TEST("servo.infeasible-waveform-rejected",
+               "src/DEV/dev_servo.c#dev_servo_startWaveform",
+               "a waveform whose peak acceleration exceeds the machine");
+    VIBES_EXPECT_WHY("refused",
+                     "the driver refuses the move instead of running a smaller one",
+                     "running whatever the limiter allows yields a specimen that never saw the loading the report claims, which on a fatigue test is a wrong result rather than a slow one");
+
+    servo_init();
+    /* maxAccel 500000 counts/s^2: omega^2*A at 10 Hz and 10000 counts is
+     * ~39.5e6, far past it. */
+    TEST_ASSERT_FALSE(dev_servo_waveformFeasible(CH, 10000, 10000U, DEV_SERVO_WAVE_SINE));
+    TEST_ASSERT_FALSE(dev_servo_startWaveform(CH, 0, 10000, 10000U, 2U, DEV_SERVO_WAVE_SINE));
+    /* ...and a modest one is accepted. */
+    TEST_ASSERT_TRUE(dev_servo_waveformFeasible(CH, 10000, 1000U, DEV_SERVO_WAVE_SINE));
+}
+
+/* Mean |setpoint velocity| divided by peak, measured over the cycles only.
+ *
+ * This is the number that tells the two shapes apart no matter how either is
+ * implemented. Both cover the same 2A per half cycle, so their MEAN rates are
+ * equal and neither amplitude nor frequency nor the mean discriminates — only
+ * the shape of the rate does. A sinusoid spends most of a half cycle away from
+ * its peak (mean/peak = 2/pi ~ 0.64); a trapezoid holds its cruise rate for
+ * most of it (~0.80 for this machine). */
+static double run_oscillate_rateFullness(uint32_t freqMilliHz, dev_servo_wave_E shape)
+{
+    servo_init();
+    dev_servo_setPosition(CH, 0);
+    dev_servo_enable(CH, true);
+    TEST_ASSERT_TRUE(dev_servo_startWaveform(CH, 0, 10000, freqMilliHz, 2U, shape));
+
+    double sum = 0.0;
+    double peak = 0.0;
+    unsigned samples = 0U;
+    for (unsigned i = 0U; (i < 12000U) && !dev_servo_atTarget(CH); i++)
+    {
+        tick_with_motion();
+        if (dev_servo_data.channel[CH].waveSegment == (uint8_t)DEV_SERVO_WAVE_RUN)
+        {
+            const double v = fabs((double)dev_servo_data.channel[CH].setpointVel);
+            sum += v;
+            if (v > peak) { peak = v; }
+            samples++;
+        }
+    }
+    TEST_ASSERT_TRUE_MESSAGE(samples > 100U, "the run segment must actually have been sampled");
+    TEST_ASSERT_TRUE(peak > 0.0);
+    return (sum / (double)samples) / peak;
+}
+
+void test_the_shape_bit_selects_a_genuinely_different_rate_profile(void)
+{
+    VIBES_TEST("servo.waveform-shape-is-honoured",
+               "src/DEV/dev_servo.c#dev_servo_run",
+               "the same centre, amplitude and frequency requested as SINE and as TRIANGLE");
+    VIBES_EXPECT_WHY("different-rate-profiles",
+                     "the two shapes produce measurably different rate profiles",
+                     "both shapes travel the same 2A per half cycle, so a driver that silently ignored the shape bit would still pass every amplitude, frequency and return-to-centre check — only the fullness of the rate profile can catch it");
+
+    const double sine = run_oscillate_rateFullness(1000U, DEV_SERVO_WAVE_SINE);
+    const double triangle = run_oscillate_rateFullness(1000U, DEV_SERVO_WAVE_TRIANGLE);
+
+    /* 2/pi for a sinusoid, by construction rather than by measurement. */
+    TEST_ASSERT_FLOAT_WITHIN_MESSAGE(0.02f, 2.0f / 3.14159265f, (float)sine,
+                                     "a sine's rate must average 2/pi of its peak");
+    TEST_ASSERT_TRUE_MESSAGE(triangle > (sine + 0.1),
+                             "a triangle must hold its rate closer to the peak than a sine does — "
+                             "if these match, the shape bit is being ignored");
+}
+
+/* 8192 counts per mm on this machine, so one micron is 8.192 counts. */
+#define COUNTS_PER_MM 8192.0
+#define ONE_MICRON_COUNTS (COUNTS_PER_MM / 1000.0)
+
+/* Worst |measured - ideal| over the cycles, in counts.
+ *
+ * The reference is recomputed HERE from the request, as a plain cosine, and is
+ * never read back from the driver: comparing the driver against its own
+ * setpoint would confirm that the tracker follows the generator while leaving
+ * a wrong generator completely invisible. The measurement is the ENCODER --
+ * where the machine actually went -- not the commanded velocity.
+ *
+ * Sampling starts at the first tick of the cycles and includes it. The
+ * approach's residual is the error the waveform inherits at t=0, and excluding
+ * it would hide exactly the defect that `waveformStartTolerance` exists to
+ * prevent. */
+static double worst_sine_deviation_counts(double amplitude, uint32_t freqMilliHz, uint32_t cycles)
+{
+    servo_init();
+    dev_servo_setPosition(CH, 0);
+    dev_servo_enable(CH, true);
+    TEST_ASSERT_TRUE_MESSAGE(dev_servo_startWaveform(CH, 0, (int32_t)amplitude, freqMilliHz,
+                                                     cycles, DEV_SERVO_WAVE_SINE),
+                             "the probe's own waveform must be feasible");
+
+    const double freqHz = (double)freqMilliHz / 1000.0;
+    const unsigned cap = (unsigned)((double)cycles / freqHz / 0.001) + 8000U;
+    unsigned runTicks = 0U;
+    double worst = 0.0;
+    for (unsigned i = 0U; (i < cap) && !dev_servo_atTarget(CH); i++)
+    {
+        const bool running =
+            (dev_servo_data.channel[CH].waveSegment == (uint8_t)DEV_SERVO_WAVE_RUN);
+        tick_with_motion();
+        if (!running) { continue; }
+        runTicks++;
+        const double t = (double)runTicks * 0.001;
+        /* Phase 0 is the positive peak, so the trajectory is a cosine. */
+        const double ideal = amplitude * cos(2.0 * 3.14159265358979 * freqHz * t);
+        const double err = fabs((double)d_encoderValue - ideal);
+        if (err > worst) { worst = err; }
+    }
+    TEST_ASSERT_TRUE_MESSAGE(runTicks > 100U, "the cycles must actually have run");
+    return worst;
+}
+
+void test_the_machine_reproduces_the_commanded_waveform_to_one_micron(void)
+{
+    VIBES_TEST("servo.waveform-tracks-to-one-micron",
+               "src/DEV/dev_servo.c#dev_servo_run",
+               "a feasible sine waveform, measured at the encoder against the requested trajectory");
+    VIBES_EXPECT_WHY("within-one-micron",
+                     "the measured position stays within 0.001 mm of the requested waveform for every tick of every cycle",
+                     "a tensile result is only as good as the trajectory the specimen actually saw, so the claim that has to hold is about measured motion against the REQUEST — not against the driver's own setpoint, which a wrong generator would satisfy perfectly");
+
+    /* A sweep, not a single point: the standing error this guards against
+     * scales with the trajectory's acceleration, so one amplitude and one
+     * frequency could pass while a more demanding pair fails. All four are
+     * inside the machine's velocity and acceleration budget. */
+    static const struct
+    {
+        double amplitude;
+        uint32_t freqMilliHz;
+        uint32_t cycles;
+    } cases[] = {
+        { 10000.0, 1000U, 2U },
+        { 5000.0, 1500U, 2U },
+        { 20000.0, 500U, 2U },
+        { 2000.0, 2000U, 3U },
+    };
+
+    for (unsigned i = 0U; i < (sizeof(cases) / sizeof(cases[0])); i++)
+    {
+        const double worst =
+            worst_sine_deviation_counts(cases[i].amplitude, cases[i].freqMilliHz, cases[i].cycles);
+        char msg[128];
+        (void)snprintf(msg, sizeof(msg),
+                       "amplitude %.0f counts at %u mHz deviated %.2f counts (%.4f mm)",
+                       cases[i].amplitude, cases[i].freqMilliHz, worst, worst / COUNTS_PER_MM);
+        TEST_ASSERT_TRUE_MESSAGE(worst <= ONE_MICRON_COUNTS, msg);
+    }
+}
+
+void test_a_triangle_is_a_trapezoidal_rate_not_an_infinite_corner(void)
+{
+    VIBES_TEST("servo.triangle-is-feasible",
+               "src/DEV/dev_servo.c#dev_servo_run",
+               "a triangle waveform, whose mathematical corners demand infinite acceleration");
+    VIBES_EXPECT_WHY("bounded-rate",
+                     "the driver runs a trapezoidal rate profile whose corners fit the acceleration limit",
+                     "a literal triangle reverses velocity instantaneously, so handing one to the tracker would hand it something no machine can follow");
+
+    servo_init();
+    dev_servo_setPosition(CH, 0);
+    (void)run_oscillate(10000.0, 1000U, 2U, DEV_SERVO_WAVE_TRIANGLE);
+    TEST_ASSERT_INT32_WITHIN_MESSAGE(dev_servo_channelConfig[CH].positionDeadband, 0,
+                                     dev_servo_getPosition(CH),
+                                     "a whole number of triangle cycles must also return to centre");
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -754,5 +1019,11 @@ int main(void)
     RUN_TEST(test_dev_servo_setPositionClearsArrival);
     RUN_TEST(test_dev_servo_moveSettlesDeterministicallyWithoutHunting);
     RUN_TEST(test_open_loop_waveform_velocity_leaves_a_permanent_position_deficit);
+    RUN_TEST(test_oscillate_returns_to_its_centre_after_whole_cycles);
+    RUN_TEST(test_oscillate_counts_whole_cycles_and_stops);
+    RUN_TEST(test_an_infeasible_waveform_is_rejected_not_approximated);
+    RUN_TEST(test_a_triangle_is_a_trapezoidal_rate_not_an_infinite_corner);
+    RUN_TEST(test_the_shape_bit_selects_a_genuinely_different_rate_profile);
+    RUN_TEST(test_the_machine_reproduces_the_commanded_waveform_to_one_micron);
     return UNITY_END();
 }
