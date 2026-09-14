@@ -133,14 +133,14 @@ void dev_servo_setVelocity(dev_servo_channel_E ch, int32_t velCountsPerSec);
 bool dev_servo_startWaveform(dev_servo_channel_E ch,
                              int32_t centreCounts,
                              int32_t amplitudeCounts,
-                             uint32_t freqMilliHz,
+                             uint32_t freqMicroHz,
                              uint32_t cycles,
                              dev_servo_wave_E shape);
 
 /* Whether that request fits the envelope, without starting it. */
 bool dev_servo_waveformFeasible(dev_servo_channel_E ch,
                                 int32_t amplitudeCounts,
-                                uint32_t freqMilliHz,
+                                uint32_t freqMicroHz,
                                 dev_servo_wave_E shape);
 
 /* Whole cycles completed so far; the move is done when this reaches `cycles`. */
