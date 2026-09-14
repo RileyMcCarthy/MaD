@@ -26,7 +26,7 @@
 #include <stdbool.h>
 
 #include "HAL_lock.h"
-#include "dev_stepper.h"              // dev_stepper_channel_E, DEV_STEPPER_CHANNEL_MAIN
+#include "dev_servo.h"                // dev_servo_channel_E, DEV_SERVO_CHANNEL_MAIN
 #include "dev_nvram.h"                // dev_nvram_channel_t, DEV_NVRAM_CHANNEL_MACHINE_PROFILE
 #include "dev_nvram_machineProfile.h" // MachineProfile
 #include "HAL_GPIO.h"                 // HAL_GPIO_channel_E, HAL_GPIO_ENDSTOP_UPPER
@@ -36,7 +36,7 @@
 // mocks below. app_motion's actuator abstraction is a 1:1 macro map, so pinning
 // the stepper backend fully covers the logic; the closed-loop dev_servo driver
 // (the production default) is validated by its own suite, not here.
-#define APP_MOTION_USE_SERVO 0
+#define APP_MOTION_USE_SERVO 1
 #include "app_motion.h"
 
 /**********************************************************************
@@ -57,25 +57,31 @@ static bool d_speedLimited;
 bool app_control_motionEnabled(void) { return d_motionEnabled; }
 bool app_control_speedLimited(void) { return d_speedLimited; }
 
-/* --- dev_stepper inputs --- */
-static int32_t d_steps;       // dev_stepper_getSteps(MAIN)
-static bool d_atTarget;       // dev_stepper_atTarget(MAIN)
-static int32_t d_target;      // dev_stepper_getTarget(MAIN)
+/* --- dev_servo inputs --- */
+static int32_t d_steps;       // dev_servo_getPosition(MAIN)
+static bool d_atTarget;       // dev_servo_atTarget(MAIN)
+static int32_t d_target;      // dev_servo_getTarget(MAIN)
+static int32_t d_setpoint;    // dev_servo_getSetpoint(MAIN)
 
-int32_t dev_stepper_getSteps(dev_stepper_channel_E ch)
+int32_t dev_servo_getPosition(dev_servo_channel_E ch)
 {
-    TEST_ASSERT_EQUAL_INT(DEV_STEPPER_CHANNEL_MAIN, ch);
+    TEST_ASSERT_EQUAL_INT(DEV_SERVO_CHANNEL_MAIN, ch);
     return d_steps;
 }
-bool dev_stepper_atTarget(dev_stepper_channel_E ch)
+bool dev_servo_atTarget(dev_servo_channel_E ch)
 {
-    TEST_ASSERT_EQUAL_INT(DEV_STEPPER_CHANNEL_MAIN, ch);
+    TEST_ASSERT_EQUAL_INT(DEV_SERVO_CHANNEL_MAIN, ch);
     return d_atTarget;
 }
-int32_t dev_stepper_getTarget(dev_stepper_channel_E ch)
+int32_t dev_servo_getTarget(dev_servo_channel_E ch)
 {
-    TEST_ASSERT_EQUAL_INT(DEV_STEPPER_CHANNEL_MAIN, ch);
+    TEST_ASSERT_EQUAL_INT(DEV_SERVO_CHANNEL_MAIN, ch);
     return d_target;
+}
+int32_t dev_servo_getSetpoint(dev_servo_channel_E ch)
+{
+    TEST_ASSERT_EQUAL_INT(DEV_SERVO_CHANNEL_MAIN, ch);
+    return d_setpoint;
 }
 
 /* --- HAL_GPIO inputs --- */
@@ -87,51 +93,81 @@ bool HAL_GPIO_getActive(HAL_GPIO_channel_E channel)
     return d_endstopUpperActive;
 }
 
-/* --- dev_stepper outputs (record the last call + counts) --- */
+/* --- dev_servo outputs (record the last call + counts) --- */
 static uint32_t d_moveCount;
 static int32_t d_lastMoveTarget;
-static uint32_t d_lastMoveStepsPerSecond;
+static int32_t d_lastMoveStepsPerSecond;
 static uint32_t d_stopCount;
 static uint32_t d_enableCount;
 static bool d_lastEnable;
 static uint32_t d_setPositionCount;
 static int32_t d_lastSetPosition;
 
-bool dev_stepper_move(dev_stepper_channel_E ch, int32_t targetSteps, uint32_t stepsPerSecond)
+void dev_servo_moveTo(dev_servo_channel_E ch, int32_t targetCounts, int32_t feedrateCountsPerSec)
 {
-    TEST_ASSERT_EQUAL_INT(DEV_STEPPER_CHANNEL_MAIN, ch);
+    TEST_ASSERT_EQUAL_INT(DEV_SERVO_CHANNEL_MAIN, ch);
     d_moveCount++;
-    d_lastMoveTarget = targetSteps;
-    d_lastMoveStepsPerSecond = stepsPerSecond;
-    return true;
+    d_lastMoveTarget = targetCounts;
+    d_lastMoveStepsPerSecond = feedrateCountsPerSec;
 }
 
-/* --- dev_stepper velocity (NCO) mode (record the last call + count) --- */
+/* --- dev_servo velocity mode (record the last call + count) --- */
 static uint32_t d_setVelocityCount;
 static int32_t d_lastSetVelocity;
 
-void dev_stepper_setVelocity(dev_stepper_channel_E ch, int32_t signedStepsPerSecond)
+void dev_servo_setVelocity(dev_servo_channel_E ch, int32_t velCountsPerSec)
 {
-    TEST_ASSERT_EQUAL_INT(DEV_STEPPER_CHANNEL_MAIN, ch);
+    TEST_ASSERT_EQUAL_INT(DEV_SERVO_CHANNEL_MAIN, ch);
     d_setVelocityCount++;
-    d_lastSetVelocity = signedStepsPerSecond;
+    d_lastSetVelocity = velCountsPerSec;
 }
-void dev_stepper_stop(dev_stepper_channel_E ch)
+void dev_servo_stop(dev_servo_channel_E ch)
 {
-    TEST_ASSERT_EQUAL_INT(DEV_STEPPER_CHANNEL_MAIN, ch);
+    TEST_ASSERT_EQUAL_INT(DEV_SERVO_CHANNEL_MAIN, ch);
     d_stopCount++;
 }
-void dev_stepper_enable(dev_stepper_channel_E ch, bool enabled)
+void dev_servo_enable(dev_servo_channel_E ch, bool enable)
 {
-    TEST_ASSERT_EQUAL_INT(DEV_STEPPER_CHANNEL_MAIN, ch);
+    TEST_ASSERT_EQUAL_INT(DEV_SERVO_CHANNEL_MAIN, ch);
     d_enableCount++;
-    d_lastEnable = enabled;
+    d_lastEnable = enable;
 }
-void dev_stepper_setPosition(dev_stepper_channel_E ch, int32_t positionSteps)
+void dev_servo_setPosition(dev_servo_channel_E ch, int32_t counts)
 {
-    TEST_ASSERT_EQUAL_INT(DEV_STEPPER_CHANNEL_MAIN, ch);
+    TEST_ASSERT_EQUAL_INT(DEV_SERVO_CHANNEL_MAIN, ch);
     d_setPositionCount++;
-    d_lastSetPosition = positionSteps;
+    d_lastSetPosition = counts;
+}
+
+/* --- dev_servo waveform: record exactly what the adapter asked the driver for,
+ * and let a test decide whether the driver accepts it. --- */
+static uint32_t d_waveformCount;
+static int32_t d_lastWaveCentre;
+static int32_t d_lastWaveAmplitude;
+static uint32_t d_lastWaveFreqMicroHz;
+static uint32_t d_lastWaveCycles;
+static dev_servo_wave_E d_lastWaveShape;
+static bool d_waveformAccepted = true;
+
+bool dev_servo_startWaveform(dev_servo_channel_E ch, int32_t centreCounts, int32_t amplitudeCounts,
+                             uint32_t freqMicroHz, uint32_t cycles, dev_servo_wave_E shape)
+{
+    TEST_ASSERT_EQUAL_INT(DEV_SERVO_CHANNEL_MAIN, ch);
+    d_waveformCount++;
+    d_lastWaveCentre = centreCounts;
+    d_lastWaveAmplitude = amplitudeCounts;
+    d_lastWaveFreqMicroHz = freqMicroHz;
+    d_lastWaveCycles = cycles;
+    d_lastWaveShape = shape;
+    /* The real driver refuses these outright (see dev_servo_startWaveform).
+     * Modelling just that rule keeps the adapter's degenerate-input behaviour
+     * honest without reimplementing the whole feasibility envelope here --
+     * `d_waveformAccepted` stands in for an envelope rejection. */
+    if ((amplitudeCounts <= 0) || (freqMicroHz == 0U))
+    {
+        return false;
+    }
+    return d_waveformAccepted;
 }
 
 /* --- IO_positionFeedback output (record last call) --- */
@@ -157,18 +193,6 @@ bool dev_nvram_getChannelData(dev_nvram_channel_t channel, void *data, size_t si
     return true;
 }
 
-/* --- dev_servo peer mock (app_motion now drives closed-loop motion via this API).
- * No-op stubs so the suite links; motion assertions here still exercise the
- * dev_stepper path (see mocks above). */
-#include "dev_servo.h"
-void dev_servo_enable(dev_servo_channel_E ch, bool enable) { (void)ch; (void)enable; }
-void dev_servo_moveTo(dev_servo_channel_E ch, int32_t targetCounts, int32_t feedrateCountsPerSec) { (void)ch; (void)targetCounts; (void)feedrateCountsPerSec; }
-void dev_servo_setVelocity(dev_servo_channel_E ch, int32_t velCountsPerSec) { (void)ch; (void)velCountsPerSec; }
-void dev_servo_stop(dev_servo_channel_E ch) { (void)ch; }
-void dev_servo_setPosition(dev_servo_channel_E ch, int32_t counts) { (void)ch; (void)counts; }
-int32_t dev_servo_getPosition(dev_servo_channel_E ch) { (void)ch; return 0; }
-int32_t dev_servo_getTarget(dev_servo_channel_E ch) { (void)ch; return 0; }
-bool dev_servo_atTarget(dev_servo_channel_E ch) { (void)ch; return false; }
 
 /**********************************************************************
  * Module under test
@@ -756,85 +780,122 @@ void test_isIdle_false_when_move_queued(void)
  * Tests: G123 waveform (firmware-native segmentation)
  **********************************************************************/
 
-/* A G123 waveform streams the analytic velocity 2πf·A·cos(2πf·t): the commanded
- * rate reaches ±peak (=2πfA), reverses sign twice per cycle (at the position
- * peaks), and the move completes after cycles/frequency seconds (settling at the
- * centre). This is the firmware-side proof that we follow the expected f'(t). */
-void test_waveform_streams_cosine_velocity_and_completes(void)
+
+/* The adapter's whole job: translate the move record into a driver request.
+ * Every one of these numbers is a unit conversion that silently produces a
+ * wrong-sized test if it is off. */
+void test_waveform_is_handed_to_the_driver_in_the_drivers_units(void)
 {
-    VIBES_TEST("motion.waveform-cosine-velocity-then-settles",
-               "src/APP/app_motion.c#app_motion_private_waveform_run",
-               "a waveform of 5 millimetres amplitude at 1 hertz for 1 cycle");
-    VIBES_EXPECT_WHY("peak-is-2pi-f-a",
-                     "the streamed velocity peaks at plus and minus 2 pi times frequency times amplitude",
-                     "the drive follows instantaneous velocity so position integrates to a sine of that amplitude and frequency");
-    VIBES_EXPECT("reverses-twice-per-cycle", "the streamed velocity reverses twice per cycle");
-    VIBES_EXPECT("settles-at-centre",
-                 "the gantry settles back at the centre, and the move completes once the drive reports arrival");
+    VIBES_TEST("motion.waveform-handed-to-driver",
+               "src/APP/app_motion.c#app_motion_private_moveManager_start",
+               "a G123 record carrying amplitude in um, frequency in mHz and a shape bit");
+    VIBES_EXPECT_WHY("converted-to-driver-units",
+                     "the driver is asked for the same waveform in counts, microhertz and its own shape enum",
+                     "this layer no longer generates anything, so a unit slip here is the only way the machine can run a waveform that is not the one asked for, and it would look entirely healthy while doing it");
+
     motion_driveToWaiting();
+    d_steps = 4321;          /* the wave swings about wherever we are now */
+    d_waveformCount = 0U;
+
+    /* 5000 um at 100 steps/mm = 500 steps; 250 mHz -> 250000 uHz; shape 1. */
+    app_motion_move_t wf = make_move((uint8_t)G123_WAVEFORM, 5000,
+                                     (int32_t)((1UL << 24) | 250UL), 7U);
+    TEST_ASSERT_TRUE(app_motion_addMove(&wf));
+    app_motion_run(); /* pop + start */
+
+    TEST_ASSERT_EQUAL_UINT32(1U, d_waveformCount);
+    TEST_ASSERT_EQUAL_INT32(4321, d_lastWaveCentre);
+    TEST_ASSERT_EQUAL_INT32(500, d_lastWaveAmplitude);
+    TEST_ASSERT_EQUAL_UINT32(250000U, d_lastWaveFreqMicroHz);
+    TEST_ASSERT_EQUAL_UINT32(7U, d_lastWaveCycles);
+    TEST_ASSERT_EQUAL_INT(DEV_SERVO_WAVE_TRIANGLE, d_lastWaveShape);
+}
+
+void test_a_sine_shape_bit_selects_a_sine(void)
+{
+    motion_driveToWaiting();
+    app_motion_move_t wf = make_move((uint8_t)G123_WAVEFORM, 5000, 1000, 2U);
+    TEST_ASSERT_TRUE(app_motion_addMove(&wf));
+    app_motion_run();
+    TEST_ASSERT_EQUAL_INT(DEV_SERVO_WAVE_SINE, d_lastWaveShape);
+    TEST_ASSERT_EQUAL_UINT32(1000000U, d_lastWaveFreqMicroHz);
+}
+
+/* A waveform the driver will not run must END the move, not wait forever for a
+ * run that never started. */
+void test_a_refused_waveform_completes_the_move_instead_of_hanging(void)
+{
+    VIBES_TEST("motion.refused-waveform-ends-the-move",
+               "src/APP/app_motion.c#app_motion_private_waveform_run",
+               "a waveform the driver refuses because the machine cannot deliver it");
+    VIBES_EXPECT_WHY("move-ends",
+                     "the move completes rather than waiting for a run that never started",
+                     "completion is now the driver's arrival verdict, and a refused waveform never arrives -- so without this the move, the test and the machine all wait forever");
+
+    motion_driveToWaiting();
+    d_waveformAccepted = false;
+    d_atTarget = false;
     d_setVelocityCount = 0U;
 
-    /* amplitude 5mm = 5000um -> 500 steps @100/mm; 1 Hz; 1 cycle -> 1s.
-     * f field = (shape<<24) | freq_milli_Hz = (SINE<<24) | 1000.
-     * Peak velocity = 2π·f·A = 2π·1·500 ≈ 3142 steps/s. */
-    app_motion_move_t wf = make_move((uint8_t)G123_WAVEFORM, 5000, 1000, 1U);
+    app_motion_move_t wf = make_move((uint8_t)G123_WAVEFORM, 5000, 1000, 2U);
     TEST_ASSERT_TRUE(app_motion_addMove(&wf));
+    app_motion_run(); /* pop + start -> refused */
+    global_timeus = 1000U;
+    app_motion_run(); /* moveManager_run -> complete */
+    TEST_ASSERT_TRUE(app_motion_isIdle());
+    TEST_ASSERT_EQUAL_UINT32(0U, d_setVelocityCount);
+    d_waveformAccepted = true;
+}
 
-    app_motion_run(); /* WAITING -> pop + moveManager_start(WAVEFORM) -> MOVING */
-    TEST_ASSERT_FALSE(app_motion_isIdle());
+/* Completion is the driver's verdict, and only the driver's. */
+void test_a_waveform_runs_until_the_driver_reports_arrival(void)
+{
+    VIBES_TEST("motion.waveform-completes-on-driver-arrival",
+               "src/APP/app_motion.c#app_motion_private_waveform_run",
+               "a waveform the driver accepted and has not finished");
+    VIBES_EXPECT_WHY("waits-for-the-driver",
+                     "the move stays in progress until the driver reports arrival",
+                     "the driver alone knows how many cycles have elapsed and whether the closing move to the centre has landed; a duration guessed in this layer is the thing that used to end waveforms early or late");
 
-    const int32_t peakVel = (int32_t)(2.0 * 3.14159265 * 1.0 * 500.0); /* ≈ 3141 */
-    int32_t maxV = INT32_MIN;
-    int32_t minV = INT32_MAX;
-    int signChanges = 0;
-    int32_t prevV = 0;
-    bool havePrev = false;
-
-    /* Drive one cycle (1s) in 5 ms steps; a velocity is streamed every tick. */
-    for (uint32_t t = 0U; t < 1000000U; t += 5000U)
-    {
-        global_timeus = t;
-        const uint32_t before = d_setVelocityCount;
-        app_motion_run();
-        if (d_setVelocityCount > before)
-        {
-            const int32_t v = d_lastSetVelocity;
-            if (v > maxV) { maxV = v; }
-            if (v < minV) { minV = v; }
-            if (havePrev && (((prevV <= 0) && (v > 0)) || ((prevV >= 0) && (v < 0))))
-            {
-                signChanges++;
-            }
-            prevV = v;
-            havePrev = true;
-        }
-        /* Integrate the commanded rate into the encoder double, so the carriage
-         * is a carriage and not a fixture bolted at zero. The waveform anchors
-         * its streamed rate to the trajectory's own position, so a stationary
-         * encoder makes the position error grow without bound and the
-         * correction term swamps the thing this test measures: the analytic
-         * rate itself. A plain forward-Euler integral is enough -- this test is
-         * about the commanded waveform, not about servo dynamics. */
-        d_steps += (int32_t)(((int64_t)d_lastSetVelocity * 5000LL) / 1000000LL);
-    }
-
-    /* Velocity reaches ±peak (2πfA) — proves amplitude × frequency. */
-    TEST_ASSERT_INT_WITHIN(250, peakVel, maxV);
-    TEST_ASSERT_INT_WITHIN(250, -peakVel, minV);
-    /* cos reverses sign at the two position peaks per cycle. */
-    TEST_ASSERT_TRUE(signChanges >= 2);
-
-    /* Past the duration: the first tick issues the settle move back to centre
-     * and cannot yet claim arrival (the actuator has not seen that target). The
-     * move completes on the actuator's own verdict, exactly like a G0/G1. */
-    global_timeus = 1100000U;
-    d_steps = 0; /* centre reached */
+    motion_driveToWaiting();
     d_atTarget = false;
+    app_motion_move_t wf = make_move((uint8_t)G123_WAVEFORM, 5000, 1000, 2U);
+    TEST_ASSERT_TRUE(app_motion_addMove(&wf));
     app_motion_run();
-    TEST_ASSERT_FALSE(app_motion_isIdle()); /* settle commanded, not yet arrived */
+    for (unsigned i = 0U; i < 50U; i++)
+    {
+        global_timeus += 1000U;
+        app_motion_run();
+        TEST_ASSERT_FALSE_MESSAGE(app_motion_isIdle(),
+                                  "the move ended while the driver was still running the waveform");
+    }
     d_atTarget = true;
+    global_timeus += 1000U;
     app_motion_run();
     TEST_ASSERT_TRUE(app_motion_isIdle());
+}
+
+/* What a recorded sample says the machine was asked for. */
+void test_the_recorded_setpoint_during_a_waveform_is_the_trajectory(void)
+{
+    VIBES_TEST("motion.waveform-setpoint-is-the-trajectory",
+               "src/APP/app_motion.c#app_motion_private_processInputs",
+               "a waveform in progress, where the driver's target and its live setpoint differ");
+    VIBES_EXPECT_WHY("reports-the-profile-not-the-destination",
+                     "the published setpoint is the driver's live profile position, not the move's end target",
+                     "a waveform's target is the centre it will finish at, so reporting the target would record a flat line through the middle of an oscillation and make a tracking error impossible to see in the data");
+
+    motion_driveToWaiting();
+    d_atTarget = false;
+    d_target = 1000;    /* where the waveform will END   */
+    d_setpoint = 1750;  /* where the trajectory is NOW   */
+    app_motion_move_t wf = make_move((uint8_t)G123_WAVEFORM, 5000, 1000, 2U);
+    TEST_ASSERT_TRUE(app_motion_addMove(&wf));
+    app_motion_run();
+    global_timeus += 1000U;
+    app_motion_run();
+    /* stepsPerMM is 100, so 1750 steps is 17500 um. */
+    TEST_ASSERT_EQUAL_INT32(17500, app_motion_getSetpoint());
 }
 
 /* A degenerate waveform (zero frequency) completes without commanding motion. */
@@ -859,230 +920,9 @@ void test_waveform_zero_frequency_completes_without_motion(void)
     TEST_ASSERT_EQUAL_UINT32(0U, d_setVelocityCount); /* no velocity commanded */
 }
 
-/* Run one G123 waveform to completion, capturing the streamed velocity extremes
- * and sign reversals. Drives ~200 ticks across the waveform duration. */
-static void run_waveform_capture(int32_t ampUm, uint32_t freqMilliHz, uint32_t cycles,
-                                 int32_t *outMaxV, int32_t *outMinV, int *outSignChanges)
-{
-    motion_driveToWaiting();
-    d_setVelocityCount = 0U;
-    d_steps = 0;
-    global_timeus = 0U;
 
-    app_motion_move_t wf = make_move((uint8_t)G123_WAVEFORM, ampUm, (int32_t)freqMilliHz, cycles);
-    TEST_ASSERT_TRUE(app_motion_addMove(&wf));
-    app_motion_run(); /* WAITING -> MOVING (start) */
 
-    int32_t maxV = INT32_MIN;
-    int32_t minV = INT32_MAX;
-    int signChanges = 0;
-    int32_t prevV = 0;
-    bool havePrev = false;
-    const float freqHz = (float)freqMilliHz / 1000.0f;
-    const uint32_t durationUs = (uint32_t)(((float)cycles / freqHz) * 1.0e6f);
-    uint32_t step = durationUs / 200U;
-    if (step == 0U) { step = 1U; }
-    for (uint32_t t = 0U; t < durationUs; t += step)
-    {
-        global_timeus = t;
-        const uint32_t before = d_setVelocityCount;
-        app_motion_run();
-        if (d_setVelocityCount > before)
-        {
-            const int32_t v = d_lastSetVelocity;
-            if (v > maxV) { maxV = v; }
-            if (v < minV) { minV = v; }
-            if (havePrev && (((prevV <= 0) && (v > 0)) || ((prevV >= 0) && (v < 0))))
-            {
-                signChanges++;
-            }
-            prevV = v;
-            havePrev = true;
-        }
-        /* Same reason as the fixed-step capture above: the carriage has to move,
-         * or the waveform's position anchor sees a runaway error. */
-        d_steps += (int32_t)(((int64_t)d_lastSetVelocity * (int64_t)step) / 1000000LL);
-    }
-    *outMaxV = maxV;
-    *outMinV = minV;
-    *outSignChanges = signChanges;
 
-    /* Complete: past duration, settle move to centre, then the actuator reports
-     * arrival (one tick to command, one to observe — see the note above). */
-    global_timeus = durationUs + 200000U;
-    d_steps = 0;
-    d_atTarget = false;
-    app_motion_run();
-    d_atTarget = true;
-    app_motion_run();
-    TEST_ASSERT_TRUE(app_motion_isIdle());
-}
-
-/* Sweep several waveforms: the streamed peak velocity must equal 2π·f·A and the
- * direction must reverse ~twice per cycle, for every amplitude/frequency/cycle
- * combination — proving the firmware follows f'(t) for arbitrary waveforms. */
-/* A waveform must END when its commanded cycles are done.
- *
- * The duration used to be computed as
- *     ((uint64_t)cycles * 1000000000ULL) / (uint64_t)freqMilliHz
- * which FlexC miscompiles on the P2: the low word is right and the HIGH word is
- * garbage, so the value came out ~3.6e16 microseconds. `elapsed >= duration`
- * was then never true, the wave never stopped, the closing move was never
- * issued, and the test hung forever. Clang computes it correctly, so every unit
- * test and the whole native bench passed while the real machine hung.
- *
- * This test cannot catch the miscompilation itself -- it runs under clang. What
- * it pins is that the duration is derived with 32-bit arithmetic that no longer
- * depends on 64-bit multiply/divide at all, and that the move completes at the
- * commanded time rather than running on. */
-void test_waveform_ends_after_its_commanded_cycles(void)
-{
-    motion_driveToWaiting();
-    d_setVelocityCount = 0U;
-    d_steps = 0;
-    global_timeus = 0U;
-
-    const uint32_t cycles = 2U;
-    const uint32_t fMilli = 1000U;              /* 1 Hz -> 2 s of waveform */
-    const uint32_t expectedDurationUs = 2000000U;
-
-    app_motion_move_t wf = make_move((uint8_t)G123_WAVEFORM, 5000, (int32_t)fMilli, cycles);
-    TEST_ASSERT_TRUE(app_motion_addMove(&wf));
-    app_motion_run();
-
-    /* Well before the end it must still be streaming, not settling. */
-    for (uint32_t t = 0U; t < (expectedDurationUs - 100000U); t += 1000U)
-    {
-        global_timeus = t;
-        app_motion_run();
-        d_steps += (int32_t)(((int64_t)d_lastSetVelocity * 1000LL) / 1000000LL);
-    }
-    TEST_ASSERT_FALSE_MESSAGE(app_motion_isIdle(),
-                              "the waveform ended before its commanded cycles were done");
-
-    /* Past the duration it must settle and then complete on arrival. A wave
-     * whose duration overflowed would simply keep streaming here forever. */
-    d_atTarget = true;
-    for (uint32_t t = expectedDurationUs; t < (expectedDurationUs + 50000U); t += 1000U)
-    {
-        global_timeus = t;
-        app_motion_run();
-        if (app_motion_isIdle()) { break; }
-    }
-    TEST_ASSERT_TRUE_MESSAGE(app_motion_isIdle(),
-                             "the waveform did not finish after its commanded cycles");
-}
-
-/* A waveform must oscillate about the centre it was given, even when the drive
- * cannot deliver the rate it is asked for instantly.
- *
- * This is the defect this test exists for. A position sinusoid started from its
- * mean demands v(0) = 2*pi*f*A from rest, which no accel-limited machine can
- * produce. Streaming the analytic rate alone, the travel lost while the drive
- * ramps in -- Vpeak^2/(2*accel) -- is never recovered, so the ENTIRE
- * oscillation sits that far below the commanded centre for its whole duration.
- * On the bench that was 0.82 mm, enough to drive the bottom of a 5 mm stroke
- * through machine zero and into the lower limit switch, where the closing move
- * could never arrive and the test hung.
- *
- * The plant below is deliberately accel-limited, so the ramp-in deficit is real
- * and large: peak 3141 steps/s against 50000 steps/s^2 loses ~99 steps, a fifth
- * of the 500-step amplitude. The assertion is on the MIDPOINT of the envelope
- * over a late cycle, which is exactly the quantity a DC offset moves and the
- * quantity a mean-centred sine fit cannot see. */
-void test_waveform_holds_its_centre_against_an_accel_limited_plant(void)
-{
-    motion_driveToWaiting();
-    d_setVelocityCount = 0U;
-    d_steps = 0;
-    global_timeus = 0U;
-
-    const int32_t ampUm = 5000;      /* 5 mm -> 500 steps at stepsPerMM = 100 */
-    const uint32_t fMilli = 1000U;   /* 1 Hz */
-    const uint32_t cycles = 3U;
-    const int32_t ampSteps = 500;
-    const int32_t centreSteps = 0;   /* the carriage starts at zero */
-
-    app_motion_move_t wf = make_move((uint8_t)G123_WAVEFORM, ampUm, (int32_t)fMilli, cycles);
-    TEST_ASSERT_TRUE(app_motion_addMove(&wf));
-    app_motion_run(); /* WAITING -> MOVING */
-
-    /* Accel-limited plant: the commanded rate is approached, not adopted. */
-    const uint32_t tickUs = 1000U;
-    const int32_t maxAccelStepsPerS2 = 50000;
-    const int32_t maxDv = (int32_t)(((int64_t)maxAccelStepsPerS2 * (int64_t)tickUs) / 1000000LL);
-    int32_t plantVel = 0;
-
-    const uint32_t durationUs = (cycles * 1000000U) / (fMilli / 1000U == 0U ? 1U : (fMilli / 1000U));
-    const uint32_t lastCycleFromUs = durationUs - 1000000U; /* the final 1 Hz cycle */
-    int32_t lateMin = INT32_MAX;
-    int32_t lateMax = INT32_MIN;
-
-    for (uint32_t t = 0U; t < durationUs; t += tickUs)
-    {
-        global_timeus = t;
-        app_motion_run();
-
-        int32_t dv = d_lastSetVelocity - plantVel;
-        if (dv > maxDv) { dv = maxDv; }
-        if (dv < -maxDv) { dv = -maxDv; }
-        plantVel += dv;
-        d_steps += (int32_t)(((int64_t)plantVel * (int64_t)tickUs) / 1000000LL);
-
-        if (t >= lastCycleFromUs)
-        {
-            if (d_steps < lateMin) { lateMin = d_steps; }
-            if (d_steps > lateMax) { lateMax = d_steps; }
-        }
-    }
-
-    /* The envelope must still be centred where it was told to be. Without the
-     * position anchor the midpoint sits a full ramp-in deficit low. */
-    const int32_t midpoint = (lateMin + lateMax) / 2;
-    const int32_t tol = ampSteps / 8; /* 12.5% of amplitude */
-    TEST_ASSERT_INT_WITHIN_MESSAGE(
-        tol, centreSteps, midpoint,
-        "the waveform drifted off the centre it was commanded about");
-
-    /* And it must still be a waveform, not a creep: near-full peak-to-peak. */
-    TEST_ASSERT_TRUE_MESSAGE((lateMax - lateMin) > ((2 * ampSteps) / 2),
-                             "the envelope collapsed instead of oscillating");
-}
-
-void test_waveform_velocity_matches_2piFA_across_params(void)
-{
-    VIBES_TEST("motion.waveform-peak-is-2pi-f-a",
-               "src/APP/app_motion.c#app_motion_private_waveform_run",
-               "waveforms of several amplitudes, frequencies and cycle counts");
-    VIBES_EXPECT("peak-is-2pi-f-a", "the streamed peak velocity is 2 pi times frequency times amplitude");
-    VIBES_EXPECT("reverses-twice-per-cycle", "direction reverses about twice per cycle");
-    struct
-    {
-        int32_t ampUm;
-        uint32_t fMilli;
-        uint32_t cycles;
-    } cases[] = {
-        {2000U, 2000U, 1U},  /* 2mm @ 2Hz x1  -> 200 steps, peak 2π·2·200 ≈ 2513 */
-        {10000U, 500U, 2U},  /* 10mm @ 0.5Hz x2 -> 1000 steps, peak 2π·0.5·1000 ≈ 3142 */
-        {5000U, 1000U, 3U},  /* 5mm @ 1Hz x3  -> 500 steps, peak 2π·1·500 ≈ 3142 */
-        {1000U, 4000U, 2U},  /* 1mm @ 4Hz x2  -> 100 steps, peak 2π·4·100 ≈ 2513 */
-    };
-    for (size_t i = 0U; i < (sizeof(cases) / sizeof(cases[0])); i++)
-    {
-        int32_t maxV = 0;
-        int32_t minV = 0;
-        int signChanges = 0;
-        run_waveform_capture(cases[i].ampUm, cases[i].fMilli, cases[i].cycles, &maxV, &minV, &signChanges);
-
-        const float fHz = (float)cases[i].fMilli / 1000.0f;
-        const float ampSteps = (float)cases[i].ampUm * 100.0f / 1000.0f; /* stepsPerMM = 100 */
-        const int32_t peak = (int32_t)(2.0f * 3.14159265f * fHz * ampSteps);
-        const int32_t tol = (peak / 8) + 30;
-        TEST_ASSERT_INT_WITHIN(tol, peak, maxV);   /* +peak velocity = 2πfA */
-        TEST_ASSERT_INT_WITHIN(tol, -peak, minV);  /* -peak velocity */
-        TEST_ASSERT_TRUE(signChanges >= (int)(2U * cases[i].cycles) - 1); /* ~2 reversals/cycle */
-    }
-}
 
 /**********************************************************************
  * main
@@ -1113,11 +953,12 @@ int main(void)
     RUN_TEST(test_abortAndClear_stops_clears_and_returns_to_waiting);
     RUN_TEST(test_isIdle_false_when_move_queued);
 
-    RUN_TEST(test_waveform_streams_cosine_velocity_and_completes);
+    RUN_TEST(test_waveform_is_handed_to_the_driver_in_the_drivers_units);
+    RUN_TEST(test_a_sine_shape_bit_selects_a_sine);
+    RUN_TEST(test_a_refused_waveform_completes_the_move_instead_of_hanging);
+    RUN_TEST(test_a_waveform_runs_until_the_driver_reports_arrival);
+    RUN_TEST(test_the_recorded_setpoint_during_a_waveform_is_the_trajectory);
     RUN_TEST(test_waveform_zero_frequency_completes_without_motion);
-    RUN_TEST(test_waveform_velocity_matches_2piFA_across_params);
-    RUN_TEST(test_waveform_holds_its_centre_against_an_accel_limited_plant);
-    RUN_TEST(test_waveform_ends_after_its_commanded_cycles);
 
     return UNITY_END();
 }

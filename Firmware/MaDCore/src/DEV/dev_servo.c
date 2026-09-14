@@ -5,6 +5,7 @@
  * Includes
  **********************************************************************/
 #include <math.h>
+#include "lib_utility.h"
 #include "dev_servo.h"
 #include "HAL_lock.h"
 #include "HAL_time.h"
@@ -359,28 +360,51 @@ static float dev_servo_private_waveExcursion(const dev_servo_channelData_S *d, f
  * Every intermediate is proved below to fit in 64 bits, and no 64-bit ternary
  * appears here -- FlexC miscompiles `dest64 = cond ? A : B`, dropping the high
  * word. Only 64-bit multiply and divide, which it compiles correctly. */
-#define DEV_SERVO_PHASE_NUM 1048576ULL  /* 2^20 */
-#define DEV_SERVO_PHASE_DEN 244140625ULL /* 5^12 */
+#define DEV_SERVO_PHASE_NUM 1048576U  /* 2^20 */
+#define DEV_SERVO_PHASE_DEN 244140625U /* 5^12 */
 
 static uint32_t dev_servo_private_phaseStep(dev_servo_channelData_S *d, uint32_t elapsedUs)
 {
-    /* freqMicroHz <= 1e9 (1 kHz) and elapsedUs <= 100000 (the tick guard's
-     * cap), so n <= 1e14 -- 184000x inside uint64. */
-    const uint64_t n = (uint64_t)d->req.waveFreqMicroHz * (uint64_t)elapsedUs;
-    const uint64_t q = n / DEV_SERVO_PHASE_DEN;  /* <= 409600            */
-    const uint64_t r = n % DEV_SERVO_PHASE_DEN;  /* <  5^12              */
-    /* r * 2^20 < 2.56e14, plus a carry below 5^12: no overflow. */
-    const uint64_t frac = (r * DEV_SERVO_PHASE_NUM) + (uint64_t)d->phaseRemainder;
-    const uint64_t step = (q * DEV_SERVO_PHASE_NUM) + (frac / DEV_SERVO_PHASE_DEN);
-    d->phaseRemainder = (uint32_t)(frac % DEV_SERVO_PHASE_DEN);
-    /* A step of 2^32 or more is more than one whole cycle per tick: the
-     * waveform is aliased and was never sampled. Feasibility rejects those
-     * long before here, so clamp rather than wrap silently. */
-    if (step >= 0x100000000ULL)
+    /* Split so that every intermediate OUTSIDE the 64-bit helper fits in 32
+     * bits, which is not a style preference: writing this as plain `uint64`
+     * arithmetic makes FlexC fail the entire build with "Cannot handle
+     * expression yet", from any file, for any 64-bit operation. The helper
+     * reaches the P2's CORDIC instead (QMUL then SETQ+QDIV).
+     *
+     *     n = freq * elapsed            = q * 5^12 + r
+     *     n * 2^20 / 5^12               = q * 2^20 + (r * 2^20 + carry) / 5^12
+     */
+    uint32_t r = 0U;
+    const uint32_t q = lib_utility_muldivmod64_unsigned(d->req.waveFreqMicroHz, elapsedUs,
+                                                        DEV_SERVO_PHASE_DEN, &r);
+    uint32_t rem = 0U;
+    uint32_t qFrac = lib_utility_muldivmod64_unsigned(r, DEV_SERVO_PHASE_NUM,
+                                                      DEV_SERVO_PHASE_DEN, &rem);
+
+    /* Carry the fraction this tick could not represent into the next one. Both
+     * terms are below 5^12, so the sum cannot overflow and at most one whole
+     * unit is ever carried out. */
+    uint32_t carried = rem + d->phaseRemainder;
+    if (carried >= DEV_SERVO_PHASE_DEN)
+    {
+        carried -= DEV_SERVO_PHASE_DEN;
+        qFrac++;
+    }
+    d->phaseRemainder = carried;
+
+    /* q is WHOLE cycles per tick. More than one is a waveform that was never
+     * sampled at all; feasibility rejects those long before here, so this is a
+     * guard against absurd input rather than a working path. */
+    if (q >= 4096U)
     {
         return 0xFFFFFFFFU;
     }
-    return (uint32_t)step;
+    const uint32_t whole = q * DEV_SERVO_PHASE_NUM;
+    if (qFrac > (0xFFFFFFFFU - whole))
+    {
+        return 0xFFFFFFFFU;
+    }
+    return whole + qFrac;
 }
 
 static void dev_servo_private_oscillate(dev_servo_channelData_S *d, float dt, uint32_t elapsedUs,
@@ -788,6 +812,15 @@ int32_t dev_servo_getPosition(dev_servo_channel_E ch)
     const int32_t pos = dev_servo_data.channel[ch].out.position;
     DEV_SERVO_LOCK_REL();
     return pos;
+}
+
+int32_t dev_servo_getSetpoint(dev_servo_channel_E ch)
+{
+    if (ch >= DEV_SERVO_CHANNEL_COUNT) { return 0; }
+    DEV_SERVO_LOCK_REQ_BLOCK();
+    const float sp = dev_servo_data.channel[ch].setpointPos;
+    DEV_SERVO_LOCK_REL();
+    return (int32_t)((sp < 0.0f) ? (sp - 0.5f) : (sp + 0.5f));
 }
 
 int32_t dev_servo_getVelocity(dev_servo_channel_E ch)
