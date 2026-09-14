@@ -59,11 +59,55 @@ typedef enum
  * deficit permanently (Vpeak^2/2a), which is why OSCILLATE exists rather than
  * the APP layer bolting a second position loop on top. */
 
+/* The TRAVERSE profile -- how the carriage gets from one peak to the other --
+ * and nothing else. Dwell and skew are separate, orthogonal parameters that
+ * apply to every shape, which is what stops this enum having to grow a variant
+ * for every combination ("triangle with a hold", "skewed sine", ...).
+ *
+ * A traverse is a normalised curve s(u), u and s both in [0,1], with ZERO SLOPE
+ * AT BOTH ENDS. That end condition is not decoration: it is what lets a cycle
+ * be joined, left, or interrupted by a dwell at either peak without a velocity
+ * step the machine cannot deliver. */
 typedef enum
 {
-    DEV_SERVO_WAVE_SINE = 0,
-    DEV_SERVO_WAVE_TRIANGLE = 1,
+    DEV_SERVO_WAVE_SINE = 0,     /* s(u) = (1 - cos(pi*u))/2 -- smooth, zero jerk at the ends */
+    DEV_SERVO_WAVE_TRIANGLE = 1, /* constant rate with ramps: a trapezoidal rate profile */
+    /* 2..255 reserved. The wire carries a whole byte so adding one never
+     * shifts a bit offset. */
 } dev_servo_wave_E;
+
+/* One oscillation, described completely.
+ *
+ * A struct rather than eight positional arguments because the call site is
+ * where these get transposed, and `startWaveform(ch, 0, 10000, 1000000, 2, 0,
+ * 0, 500, SINE)` is unreadable in exactly the way that hides a swapped dwell.
+ *
+ * THE CYCLE, in phase order from 0:
+ *
+ *     [ hold at +A ] [ traverse down ] [ hold at -A ] [ traverse up ]
+ *        dwellHighUs                      dwellLowUs
+ *
+ * Phase 0 is the START of the upper hold, which is a velocity zero whether or
+ * not that hold has any duration -- so the approach can always join there.
+ *
+ * `freqMicroHz` is the frequency of the WHOLE cycle including both holds, so
+ * one cycle always takes 1/f whatever the dwells are; the holds take time from
+ * the traverses, not from the period. */
+typedef struct
+{
+    int32_t centreCounts;    /* the mean the wave swings about                       */
+    int32_t amplitudeCounts; /* peak excursion from the centre (not peak-to-peak)     */
+    uint32_t freqMicroHz;    /* whole-cycle frequency, microhertz                     */
+    uint32_t cycles;         /* whole cycles to run                                   */
+    uint32_t dwellHighUs;    /* hold at +A, microseconds (0 = none)                   */
+    uint32_t dwellLowUs;     /* hold at -A, microseconds (0 = none)                   */
+    uint16_t skewPerMille;   /* of the traversing time, the share spent going DOWN;
+                              * 500 is symmetric, 800 is slow-load/fast-unload        */
+    dev_servo_wave_E shape;  /* traverse profile                                      */
+} dev_servo_waveform_S;
+
+/* The symmetric, dwell-free case -- a plain sinusoid or triangle. */
+#define DEV_SERVO_SKEW_SYMMETRIC 500U
 
 /* Per-channel wiring + tuning. All control quantities are in ENCODER COUNTS
  * (counts, counts/s, counts/s^2) so the encoder is the one unit of truth; the
@@ -130,18 +174,15 @@ void dev_servo_setVelocity(dev_servo_channel_E ch, int32_t velCountsPerSec);
  * configured maxVelocity/maxAccel — see dev_servo_waveformFeasible. A caller
  * that ignores that gets a profile it did not ask for, which on a fatigue test
  * is a result that does not match the request. */
-bool dev_servo_startWaveform(dev_servo_channel_E ch,
-                             int32_t centreCounts,
-                             int32_t amplitudeCounts,
-                             uint32_t freqMicroHz,
-                             uint32_t cycles,
-                             dev_servo_wave_E shape);
+bool dev_servo_startWaveform(dev_servo_channel_E ch, const dev_servo_waveform_S *waveform);
 
-/* Whether that request fits the envelope, without starting it. */
-bool dev_servo_waveformFeasible(dev_servo_channel_E ch,
-                                int32_t amplitudeCounts,
-                                uint32_t freqMicroHz,
-                                dev_servo_wave_E shape);
+/* Whether that request fits the envelope, without starting it.
+ *
+ * Checks EACH traverse separately, because skew and dwell make them different
+ * lengths: a cycle can be perfectly achievable in one direction and impossible
+ * in the other, and approving it on an average would run a profile the
+ * specimen never saw. */
+bool dev_servo_waveformFeasible(dev_servo_channel_E ch, const dev_servo_waveform_S *waveform);
 
 /* Whole cycles completed so far; the move is done when this reaches `cycles`. */
 uint32_t dev_servo_waveformCyclesDone(dev_servo_channel_E ch); /* closed-loop velocity hold */

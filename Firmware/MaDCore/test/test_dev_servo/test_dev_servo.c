@@ -176,6 +176,17 @@ static void doubles_reset(void)
     global_timeus = 0U;
 }
 
+/* A symmetric, dwell-free waveform -- the shape most tests want. */
+#define WF(centre, amp, freq, cyc, shp)                                                            \
+    (&(dev_servo_waveform_S){ .centreCounts = (centre),                                            \
+                              .amplitudeCounts = (amp),                                            \
+                              .freqMicroHz = (freq),                                               \
+                              .cycles = (cyc),                                                     \
+                              .dwellHighUs = 0U,                                                   \
+                              .dwellLowUs = 0U,                                                    \
+                              .skewPerMille = DEV_SERVO_SKEW_SYMMETRIC,                            \
+                              .shape = (shp) })
+
 static void servo_init(void)
 {
     HAL_lock_mock_reset();
@@ -769,8 +780,7 @@ static double run_oscillate(double amplitudeCounts, uint32_t freqMicroHz,
                             uint32_t cycles, dev_servo_wave_E shape)
 {
     dev_servo_enable(CH, true);
-    TEST_ASSERT_TRUE(dev_servo_startWaveform(CH, 0, (int32_t)amplitudeCounts,
-                                             freqMicroHz, cycles, shape));
+    TEST_ASSERT_TRUE(dev_servo_startWaveform(CH, WF(0, (int32_t)amplitudeCounts, freqMicroHz, cycles, shape)));
     const double freqHz = (double)freqMicroHz / 1000000.0;
     /* The cycles, plus a generous allowance for the two profiled segments. */
     const unsigned cap = (unsigned)((double)cycles / freqHz / 0.001) + 4000U;
@@ -844,10 +854,10 @@ void test_an_infeasible_waveform_is_rejected_not_approximated(void)
     servo_init();
     /* maxAccel 500000 counts/s^2: omega^2*A at 10 Hz and 10000 counts is
      * ~39.5e6, far past it. */
-    TEST_ASSERT_FALSE(dev_servo_waveformFeasible(CH, 10000, 10000000U, DEV_SERVO_WAVE_SINE));
-    TEST_ASSERT_FALSE(dev_servo_startWaveform(CH, 0, 10000, 10000000U, 2U, DEV_SERVO_WAVE_SINE));
+    TEST_ASSERT_FALSE(dev_servo_waveformFeasible(CH, WF(0, 10000, 10000000U, 1U, DEV_SERVO_WAVE_SINE)));
+    TEST_ASSERT_FALSE(dev_servo_startWaveform(CH, WF(0, 10000, 10000000U, 2U, DEV_SERVO_WAVE_SINE)));
     /* ...and a modest one is accepted. */
-    TEST_ASSERT_TRUE(dev_servo_waveformFeasible(CH, 10000, 1000000U, DEV_SERVO_WAVE_SINE));
+    TEST_ASSERT_TRUE(dev_servo_waveformFeasible(CH, WF(0, 10000, 1000000U, 1U, DEV_SERVO_WAVE_SINE)));
 }
 
 /* Mean |setpoint velocity| divided by peak, measured over the cycles only.
@@ -863,7 +873,7 @@ static double run_oscillate_rateFullness(uint32_t freqMicroHz, dev_servo_wave_E 
     servo_init();
     dev_servo_setPosition(CH, 0);
     dev_servo_enable(CH, true);
-    TEST_ASSERT_TRUE(dev_servo_startWaveform(CH, 0, 10000, freqMicroHz, 2U, shape));
+    TEST_ASSERT_TRUE(dev_servo_startWaveform(CH, WF(0, 10000, freqMicroHz, 2U, shape)));
 
     double sum = 0.0;
     double peak = 0.0;
@@ -925,8 +935,7 @@ static double worst_sine_deviation_at(int32_t centre, double amplitude, uint32_t
     servo_init();
     dev_servo_setPosition(CH, centre);
     dev_servo_enable(CH, true);
-    TEST_ASSERT_TRUE_MESSAGE(dev_servo_startWaveform(CH, centre, (int32_t)amplitude, freqMicroHz,
-                                                     cycles, DEV_SERVO_WAVE_SINE),
+    TEST_ASSERT_TRUE_MESSAGE(dev_servo_startWaveform(CH, WF(centre, (int32_t)amplitude, freqMicroHz, cycles, DEV_SERVO_WAVE_SINE)),
                              "the probe's own waveform must be feasible");
 
     const double freqHz = (double)freqMicroHz / 1000000.0;
@@ -994,8 +1003,7 @@ static unsigned run_segment_ticks(uint32_t freqMicroHz, uint32_t cycles, uint32_
     servo_init();
     dev_servo_setPosition(CH, 0);
     dev_servo_enable(CH, true);
-    TEST_ASSERT_TRUE(dev_servo_startWaveform(CH, 0, 10000, freqMicroHz, cycles,
-                                             DEV_SERVO_WAVE_SINE));
+    TEST_ASSERT_TRUE(dev_servo_startWaveform(CH, WF(0, 10000, freqMicroHz, cycles, DEV_SERVO_WAVE_SINE)));
     unsigned runTicks = 0U;
     for (unsigned i = 0U; (i < 400000U) && !dev_servo_atTarget(CH); i++)
     {
@@ -1098,15 +1106,249 @@ static uint32_t highest_feasible_freq(int32_t amplitude, dev_servo_wave_E shape)
 {
     uint32_t lo = 1U;          /* 1 uHz: always feasible                 */
     uint32_t hi = 100000000U;  /* 100 Hz: far past any real capability   */
-    TEST_ASSERT_TRUE(dev_servo_waveformFeasible(CH, amplitude, lo, shape));
-    TEST_ASSERT_FALSE(dev_servo_waveformFeasible(CH, amplitude, hi, shape));
+    TEST_ASSERT_TRUE(dev_servo_waveformFeasible(CH, WF(0, amplitude, lo, 1U, shape)));
+    TEST_ASSERT_FALSE(dev_servo_waveformFeasible(CH, WF(0, amplitude, hi, 1U, shape)));
     while ((hi - lo) > 1U)
     {
         const uint32_t mid = lo + ((hi - lo) / 2U);
-        if (dev_servo_waveformFeasible(CH, amplitude, mid, shape)) { lo = mid; }
+        if (dev_servo_waveformFeasible(CH, WF(0, amplitude, mid, 1U, shape))) { lo = mid; }
         else { hi = mid; }
     }
     return lo;
+}
+
+/* Run a waveform and report the geometry the driver actually produced:
+ * how long it held each peak, and how the traversing time split.
+ *
+ * The holds are counted from the commanded setpoint, where a hold is exact
+ * equality with the peak; the machine's part is checked separately by
+ * asserting it does not move while the hold is commanded. */
+typedef struct
+{
+    unsigned runTicks;
+    unsigned highTicks;    /* commanded hold at +A            */
+    unsigned lowTicks;     /* commanded hold at -A            */
+    unsigned downTicks;    /* traversing +A -> -A             */
+    unsigned upTicks;      /* traversing -A -> +A             */
+    double driftDuringHold; /* worst encoder movement while held */
+} wave_geometry_S;
+
+static wave_geometry_S measure_geometry(const dev_servo_waveform_S *wf)
+{
+    wave_geometry_S g;
+    memset(&g, 0, sizeof(g));
+    servo_init();
+    dev_servo_setPosition(CH, wf->centreCounts);
+    dev_servo_enable(CH, true);
+    TEST_ASSERT_TRUE_MESSAGE(dev_servo_startWaveform(CH, wf), "the probe's waveform must be feasible");
+
+    const float peak = (float)(wf->centreCounts + wf->amplitudeCounts);
+    const float trough = (float)(wf->centreCounts - wf->amplitudeCounts);
+    int32_t holdStartEnc = 0;
+    bool holding = false;
+    float prevSp = 0.0f;
+    bool havePrev = false;
+
+    for (unsigned i = 0U; (i < 400000U) && !dev_servo_atTarget(CH); i++)
+    {
+        const bool running =
+            (dev_servo_data.channel[CH].waveSegment == (uint8_t)DEV_SERVO_WAVE_RUN);
+        const float sp = dev_servo_data.channel[CH].setpointPos;
+        tick_with_motion();
+        if (!running) { continue; }
+        g.runTicks++;
+
+        const bool atPeak = (sp == peak);
+        const bool atTrough = (sp == trough);
+        if (atPeak) { g.highTicks++; }
+        else if (atTrough) { g.lowTicks++; }
+        else if (havePrev && (sp < prevSp)) { g.downTicks++; }
+        else { g.upTicks++; }
+
+        /* While a hold is commanded the machine must stay put. */
+        if (atPeak || atTrough)
+        {
+            if (!holding) { holdStartEnc = d_encoderValue; holding = true; }
+            const double moved = fabs((double)d_encoderValue - (double)holdStartEnc);
+            if (moved > g.driftDuringHold) { g.driftDuringHold = moved; }
+        }
+        else { holding = false; }
+        prevSp = sp;
+        havePrev = true;
+    }
+    return g;
+}
+
+/* The commanded template, recomputed here in double precision from the
+ * REQUEST. An independent statement of the same specification, so a wrong
+ * segment boundary, an inverted skew or a transcribed formula shows up as a
+ * position error rather than agreeing with itself. */
+static double template_ideal(const dev_servo_waveform_S *wf, double phase)
+{
+    const double A = (double)wf->amplitudeCounts;
+    const double period = 1e6 / (double)wf->freqMicroHz;
+    const double fHigh = ((double)wf->dwellHighUs / 1e6) / period;
+    const double fLow = ((double)wf->dwellLowUs / 1e6) / period;
+    const double fTrav = 1.0 - fHigh - fLow;
+    const double fDown = fTrav * ((double)wf->skewPerMille / 1000.0);
+    const double fUp = fTrav - fDown;
+
+    double p = phase;
+    if (p < fHigh) { return (double)wf->centreCounts + A; }
+    p -= fHigh;
+    if (p < fDown)
+    {
+        const double u = p / fDown;
+        return (double)wf->centreCounts + A - (2.0 * A * 0.5 * (1.0 - cos(M_PI * u)));
+    }
+    p -= fDown;
+    if (p < fLow) { return (double)wf->centreCounts - A; }
+    p -= fLow;
+    double u = p / fUp;
+    if (u > 1.0) { u = 1.0; }
+    return (double)wf->centreCounts - A + (2.0 * A * 0.5 * (1.0 - cos(M_PI * u)));
+}
+
+static double worst_template_deviation(const dev_servo_waveform_S *wf)
+{
+    servo_init();
+    dev_servo_setPosition(CH, wf->centreCounts);
+    dev_servo_enable(CH, true);
+    TEST_ASSERT_TRUE_MESSAGE(dev_servo_startWaveform(CH, wf), "the probe's waveform must be feasible");
+
+    const double freqHz = (double)wf->freqMicroHz / 1e6;
+    unsigned runTicks = 0U;
+    double worst = 0.0;
+    for (unsigned i = 0U; (i < 400000U) && !dev_servo_atTarget(CH); i++)
+    {
+        const bool running =
+            (dev_servo_data.channel[CH].waveSegment == (uint8_t)DEV_SERVO_WAVE_RUN);
+        tick_with_motion();
+        if (!running) { continue; }
+        runTicks++;
+        const double phase = fmod((double)runTicks * 0.001 * freqHz, 1.0);
+        const double err = fabs((double)d_encoderValue - template_ideal(wf, phase));
+        if (err > worst) { worst = err; }
+    }
+    TEST_ASSERT_TRUE(runTicks > 100U);
+    return worst;
+}
+
+void test_dwell_and_skew_still_track_to_one_micron(void)
+{
+    VIBES_TEST("servo.dwell-and-skew-track-to-one-micron",
+               "src/DEV/dev_servo.c#dev_servo_run",
+               "waveforms with a hold at one peak, with a skewed traverse, and with both");
+    VIBES_EXPECT_WHY("contract-survives-the-new-parameters",
+                     "a held or skewed cycle is followed within 0.001 mm just as a plain one is",
+                     "dwell and skew introduce places where the commanded velocity changes abruptly — entering and leaving a hold, and at the junction of two unequal traverses — and those are exactly where a trajectory stops being deliverable");
+
+    dev_servo_waveform_S held = *WF(0, 10000, 500000U, 2U, DEV_SERVO_WAVE_SINE);
+    held.dwellHighUs = 400000U;
+
+    dev_servo_waveform_S skewed = *WF(0, 10000, 500000U, 2U, DEV_SERVO_WAVE_SINE);
+    skewed.skewPerMille = 800U;
+
+    dev_servo_waveform_S both = *WF(0, 8000, 500000U, 2U, DEV_SERVO_WAVE_SINE);
+    both.dwellHighUs = 300000U;
+    both.dwellLowUs = 100000U;
+    both.skewPerMille = 700U;
+
+    const struct { const dev_servo_waveform_S *wf; const char *what; } cases[] = {
+        { &held, "hold at the upper peak" },
+        { &skewed, "80/20 skew" },
+        { &both, "asymmetric holds and skew together" },
+    };
+    for (unsigned i = 0U; i < 3U; i++)
+    {
+        const double worst = worst_template_deviation(cases[i].wf);
+        char msg[160];
+        (void)snprintf(msg, sizeof(msg), "%s deviated %.2f counts (%.4f mm)", cases[i].what,
+                       worst, worst / COUNTS_PER_MM);
+        printf("  %-38s worst %.2f counts (%.3f um)\n", cases[i].what, worst,
+               worst / COUNTS_PER_MM * 1000.0);
+        TEST_ASSERT_TRUE_MESSAGE(worst <= ONE_MICRON_COUNTS, msg);
+    }
+}
+
+void test_a_hold_at_one_peak_only(void)
+{
+    VIBES_TEST("servo.waveform-asymmetric-dwell",
+               "src/DEV/dev_servo.c#dev_servo_private_waveExcursion",
+               "a waveform asked to hold at the upper peak and not at the lower one");
+    VIBES_EXPECT_WHY("holds-only-where-asked",
+                     "the carriage holds at the upper peak for the requested time and does not hold at the lower one",
+                     "creep-fatigue is a hold at peak tension with no hold in compression, so a single symmetric dwell parameter cannot express the test that most needs one");
+    VIBES_EXPECT_WHY("hold-is-stationary",
+                     "the machine does not move while a hold is commanded",
+                     "a hold that drifts is a slow ramp, and the specimen sees a different load history than the report claims");
+    VIBES_EXPECT_WHY("period-is-unchanged",
+                     "the cycle still takes 1/f — the hold takes its time from the traverses, not from the period",
+                     "if dwell extended the period, adding a hold would silently change the frequency of a fatigue test");
+
+    /* 0.5 Hz (2000 ticks/cycle), 0.4 s held at the top, nothing at the bottom. */
+    dev_servo_waveform_S wf = *WF(0, 10000, 500000U, 2U, DEV_SERVO_WAVE_SINE);
+    wf.dwellHighUs = 400000U;
+    const wave_geometry_S g = measure_geometry(&wf);
+
+    /* 2 cycles x 400 ticks of hold. Allow a tick per cycle of edge rounding. */
+    TEST_ASSERT_INT_WITHIN_MESSAGE(4, 800, (int)g.highTicks,
+                                   "the upper hold must last the time it was given");
+    /* Not exactly zero: a traverse ENDS exactly on -A, so a tick can land on
+     * the endpoint and read as a hold. The claim that matters is that the
+     * lower peak is passed through rather than dwelt on. */
+    TEST_ASSERT_TRUE_MESSAGE(g.lowTicks <= 4U,
+                             "no hold was asked for at the lower peak, so it must be passed "
+                             "through, not dwelt on");
+    TEST_ASSERT_TRUE_MESSAGE(g.highTicks > (20U * g.lowTicks),
+                             "the upper peak must be held and the lower one not");
+    TEST_ASSERT_TRUE_MESSAGE(g.driftDuringHold <= 2.0,
+                             "the machine must stand still while a hold is commanded");
+    TEST_ASSERT_INT_WITHIN_MESSAGE(4, 4000, (int)g.runTicks,
+                                   "two cycles at 0.5 Hz must still take two seconds");
+}
+
+void test_skew_splits_the_traverse_time_as_asked(void)
+{
+    VIBES_TEST("servo.waveform-skew",
+               "src/DEV/dev_servo.c#dev_servo_private_planWaveform",
+               "a waveform asked to spend 80% of its traversing time loading and 20% unloading");
+    VIBES_EXPECT_WHY("asymmetric-rate",
+                     "the descending traverse takes four times as long as the ascending one",
+                     "slow-load/fast-unload is an ordinary loading history, and a symmetric cycle cannot express it at any amplitude or frequency");
+
+    dev_servo_waveform_S wf = *WF(0, 10000, 500000U, 2U, DEV_SERVO_WAVE_SINE);
+    wf.skewPerMille = 800U; /* 80% of the traverse spent going down */
+    const wave_geometry_S g = measure_geometry(&wf);
+
+    /* 2 cycles x 2000 ticks: 1600 down, 400 up per cycle. */
+    TEST_ASSERT_INT_WITHIN_MESSAGE(8, 3200, (int)g.downTicks, "the down traverse must take 80%");
+    TEST_ASSERT_INT_WITHIN_MESSAGE(8, 800, (int)g.upTicks, "the up traverse must take 20%");
+}
+
+void test_a_cycle_whose_holds_leave_no_time_to_move_is_refused(void)
+{
+    VIBES_TEST("servo.waveform-overfull-cycle-refused",
+               "src/DEV/dev_servo.c#dev_servo_private_planWaveform",
+               "holds that together ask for more than the whole period");
+    VIBES_EXPECT_WHY("refused",
+                     "the driver refuses the cycle rather than shortening the holds to fit",
+                     "silently trimming a hold gives a specimen a different dwell than the report claims, and dwell is the variable the test exists to study");
+
+    servo_init();
+    /* 1 Hz: one second per cycle, and 0.6 + 0.6 s of holds asked for. */
+    dev_servo_waveform_S wf = *WF(0, 10000, 1000000U, 2U, DEV_SERVO_WAVE_SINE);
+    wf.dwellHighUs = 600000U;
+    wf.dwellLowUs = 600000U;
+    TEST_ASSERT_FALSE(dev_servo_waveformFeasible(CH, &wf));
+    TEST_ASSERT_FALSE(dev_servo_startWaveform(CH, &wf));
+
+    /* And a skew so extreme that the short traverse cannot be delivered, even
+     * though the same cycle is perfectly achievable symmetrically. */
+    dev_servo_waveform_S fast = *WF(0, 40000, 1000000U, 2U, DEV_SERVO_WAVE_SINE);
+    fast.skewPerMille = 990U; /* 1% of the period to cover the whole stroke */
+    TEST_ASSERT_FALSE_MESSAGE(dev_servo_waveformFeasible(CH, &fast),
+                              "a traverse can be impossible in one direction only");
 }
 
 void test_the_one_micron_contract_holds_at_the_feasibility_boundary(void)
@@ -1187,5 +1429,9 @@ int main(void)
     RUN_TEST(test_the_phase_accumulator_loses_nothing_over_whole_cycles);
     RUN_TEST(test_tracking_does_not_degrade_along_the_machine);
     RUN_TEST(test_the_one_micron_contract_holds_at_the_feasibility_boundary);
+    RUN_TEST(test_a_hold_at_one_peak_only);
+    RUN_TEST(test_dwell_and_skew_still_track_to_one_micron);
+    RUN_TEST(test_skew_splits_the_traverse_time_as_asked);
+    RUN_TEST(test_a_cycle_whose_holds_leave_no_time_to_move_is_refused);
     return UNITY_END();
 }
