@@ -673,6 +673,12 @@ void dev_servo_run(void)
             }
         }
 
+        /* What stage 2 feeds forward, and how far the setpoint moves this tick.
+         * The advance is applied AFTER the error is taken, so the loop always
+         * compares the machine against the setpoint at the START of the
+         * interval -- the convention an evaluated trajectory gets for free. */
+        float feedVel = d->setpointVel;
+        float advancePos = 0.0f;
         if (!evaluated)
         {
             /* Accel-limit the setpoint velocity toward the desired (trapezoid ramp). */
@@ -680,8 +686,15 @@ void dev_servo_run(void)
             float dv = desiredSpVel - d->setpointVel;
             if (dv > maxDv) { dv = maxDv; }
             if (dv < -maxDv) { dv = -maxDv; }
-            d->setpointVel += dv;
-            d->setpointPos += d->setpointVel * dt;
+            const float vStart = d->setpointVel;
+            d->setpointVel += dv; /* velocity at the END of the interval */
+            /* Command the interval AVERAGE, which is exactly the displacement
+             * the setpoint makes this tick. Commanding the end velocity instead
+             * drives the machine to the end-of-tick setpoint by the tick's
+             * START, leaving it one tick of travel AHEAD of its own trajectory
+             * -- 5 um at 5 mm/s, 24 um at 25 mm/s. */
+            feedVel = 0.5f * (vStart + d->setpointVel);
+            advancePos = feedVel * dt;
         }
 
         if ((mode == DEV_SERVO_MODE_OSCILLATE) &&
@@ -711,9 +724,13 @@ void dev_servo_run(void)
             iTerm = ki * d->integral;
         }
 
-        float cmdVel = d->setpointVel + (kp * error) + iTerm;
+        float cmdVel = feedVel + (kp * error) + iTerm;
         if (cmdVel > maxVel) { cmdVel = maxVel; }
         if (cmdVel < -maxVel) { cmdVel = -maxVel; }
+
+        /* The error and the command are taken; the setpoint may now move on.
+         * Before the park, so that parking stays the LAST word on it. */
+        d->setpointPos += advancePos;
 
         if (atTarget)
         {

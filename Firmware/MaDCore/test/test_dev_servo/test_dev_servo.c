@@ -395,8 +395,12 @@ void test_dev_servo_stopRequestsZeroVelocityTarget(void)
     /* When the encoder is free to track the setpoint, command winds down to 0. */
     for (int i = 0; i < 100; i++)
     {
-        /* Ideal plant: encoder snaps toward setpoint each tick. */
-        d_encoderValue = (int32_t)dev_servo_data.channel[CH].setpointPos;
+        /* Ideal plant: encoder snaps toward setpoint each tick. ROUND, not
+         * truncate -- a real encoder reports the nearest count, and truncating
+         * leaves up to a count of standing error that Kp turns into a few
+         * counts/s of command that never winds down. */
+        const float sp = dev_servo_data.channel[CH].setpointPos;
+        d_encoderValue = (int32_t)((sp < 0.0f) ? (sp - 0.5f) : (sp + 0.5f));
         tick();
     }
     TEST_ASSERT_EQUAL_INT32(0, dev_servo_getVelocity(CH));
@@ -1271,6 +1275,68 @@ void test_dwell_and_skew_still_track_to_one_micron(void)
     }
 }
 
+void test_a_move_does_not_run_ahead_of_its_own_trajectory(void)
+{
+    VIBES_TEST("servo.position-move-tracks-its-trajectory",
+               "src/DEV/dev_servo.c#dev_servo_run",
+               "a constant-velocity position move at three speeds an order of magnitude apart");
+    VIBES_EXPECT_WHY("within-a-micron",
+                     "the machine stays within 0.001 mm of the position its own profile commands",
+                     "a point-to-point move that arrives at the right place can still have travelled a different path to get there, and on a tensile test the path IS the loading history");
+    VIBES_EXPECT_WHY("offset-does-not-scale-with-speed",
+                     "the offset at 25 mm/s is the same as at 5 mm/s",
+                     "commanding the END-of-interval velocity rather than the interval average puts the machine exactly one control tick of travel ahead of its trajectory — an error invisible at low speed and proportional to it, which is the signature this check exists to catch");
+
+    const int32_t mv = dev_servo_channelConfig[CH].maxVelocity;
+    const int32_t feeds[3] = { mv / 10, mv / 4, mv / 2 };
+    double offset[3];
+
+    for (unsigned k = 0U; k < 3U; k++)
+    {
+        servo_init();
+        dev_servo_setPosition(CH, 0);
+        dev_servo_enable(CH, true);
+        dev_servo_moveTo(CH, 100 * 8192, feeds[k]);
+
+        double sum = 0.0;
+        unsigned n = 0U;
+        double prevV = 0.0;
+        for (unsigned i = 0U; (i < 200000U) && !dev_servo_atTarget(CH); i++)
+        {
+            tick_with_motion();
+            const double sp = (double)dev_servo_data.channel[CH].setpointPos;
+            const double v = fabs((double)dev_servo_data.channel[CH].setpointVel);
+            /* cruising: the profile has stopped changing speed */
+            if ((fabs(v - prevV) < 1.0) && (v > 1.0))
+            {
+                sum += (double)d_encoderValue - sp;
+                n++;
+            }
+            prevV = v;
+        }
+        TEST_ASSERT_TRUE_MESSAGE(n > 50U, "the move must actually reach a cruise");
+        offset[k] = sum / (double)n;
+
+        char msg[160];
+        (void)snprintf(msg, sizeof(msg),
+                       "at %.1f mm/s the machine sat %+.1f counts (%+.2f um) from its own "
+                       "trajectory; one tick of travel here is %.0f counts",
+                       feeds[k] / 8192.0, offset[k], offset[k] / COUNTS_PER_MM * 1000.0,
+                       (double)feeds[k] * 0.001);
+        TEST_ASSERT_TRUE_MESSAGE(fabs(offset[k]) <= ONE_MICRON_COUNTS, msg);
+    }
+
+    /* The discriminating half. A one-tick convention error is proportional to
+     * speed, so it hides at 5 mm/s and only shows at 25 -- an absolute bound
+     * alone would pass the slow case and call it tested. */
+    char msg[176];
+    (void)snprintf(msg, sizeof(msg),
+                   "offset was %+.1f counts at %.1f mm/s but %+.1f at %.1f mm/s — an offset that "
+                   "grows with speed is a control-tick of travel, not noise",
+                   offset[0], feeds[0] / 8192.0, offset[2], feeds[2] / 8192.0);
+    TEST_ASSERT_TRUE_MESSAGE(fabs(offset[2] - offset[0]) < 2.0, msg);
+}
+
 void test_a_hold_at_one_peak_only(void)
 {
     VIBES_TEST("servo.waveform-asymmetric-dwell",
@@ -1370,7 +1436,14 @@ void test_the_one_micron_contract_holds_at_the_feasibility_boundary(void)
                        "amplitude %d counts at its maximum accepted %u uHz (%.3f Hz) deviated "
                        "%.2f counts (%.4f mm)",
                        amplitudes[i], f, (double)f / 1e6, worst, worst / COUNTS_PER_MM);
+        /* The CONTRACT is 1 um. This guards at 0.75 um because the demonstrated
+         * capability is 0.48 um, and the margin between them is not spare room
+         * -- it is what the interval-average feedforward buys. Losing it would
+         * put this back at 0.84 um, which still passes a 1 um bound, so a bound
+         * at the contract alone would let the improvement be reverted in
+         * silence. */
         TEST_ASSERT_TRUE_MESSAGE(worst <= ONE_MICRON_COUNTS, msg);
+        TEST_ASSERT_TRUE_MESSAGE(worst <= (0.75 * ONE_MICRON_COUNTS), msg);
         printf("  limit: A=%6d counts -> %8u uHz (%.3f Hz), worst %.2f counts (%.3f um)\n",
                amplitudes[i], f, (double)f / 1e6, worst, worst / COUNTS_PER_MM * 1000.0);
     }
@@ -1429,6 +1502,7 @@ int main(void)
     RUN_TEST(test_the_phase_accumulator_loses_nothing_over_whole_cycles);
     RUN_TEST(test_tracking_does_not_degrade_along_the_machine);
     RUN_TEST(test_the_one_micron_contract_holds_at_the_feasibility_boundary);
+    RUN_TEST(test_a_move_does_not_run_ahead_of_its_own_trajectory);
     RUN_TEST(test_a_hold_at_one_peak_only);
     RUN_TEST(test_dwell_and_skew_still_track_to_one_micron);
     RUN_TEST(test_skew_splits_the_traverse_time_as_asked);
