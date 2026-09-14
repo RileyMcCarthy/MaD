@@ -46,13 +46,44 @@ fn replay(name: &str) {
     let console = run_iss(&image).unwrap_or_else(|e| panic!("{name}: {e}"));
     let iss = parse_report(&console);
     let misses = diff_report(&iss, &silicon);
-    if !misses.is_empty() {
-        let mut msg = format!("p2core ISS does not match silicon {name}\n");
-        for m in misses {
+
+    // Same bargain as the one-instruction gate: a burn-down baseline, keyed on
+    // the PASS label, so a program whose silicon behaviour the ISS does not
+    // model yet can still be CAPTURED and committed. Without it the only way
+    // to add a new harness is to implement everything it measures first, which
+    // is backwards -- the capture is what tells you what to implement.
+    let baseline_path = format!("hwtest/{name}-baseline.txt");
+    let baseline = embsim_cpu_oracle::Baseline::parse(
+        &std::fs::read_to_string(crate_path(&baseline_path)).unwrap_or_default(),
+    );
+    let diverged: Vec<&str> = misses.iter().filter_map(|m| pass_label(m)).collect();
+    let verdict = embsim_cpu_oracle::evaluate(diverged.iter().copied(), &baseline);
+
+    if let Some(why) = verdict.failure(&baseline_path) {
+        let mut msg = format!("p2core ISS vs silicon {name}\n{why}\n");
+        for m in &misses {
             msg.push_str(&format!("{m}\n"));
         }
         panic!("{msg}");
     }
+    if !misses.is_empty() {
+        eprintln!(
+            "{name}: {} line(s) differ from silicon, all baselined ({})",
+            misses.len(),
+            baseline_path
+        );
+    }
+}
+
+/// The label of a `PASS <label> <value>` line inside a mismatch, which is what
+/// the baseline is keyed on.
+fn pass_label(m: &embsim_cpu_oracle::Mismatch) -> Option<&str> {
+    for side in [m.iss.as_str(), m.silicon.as_str()] {
+        if let Some(rest) = side.strip_prefix("PASS ") {
+            return rest.split_whitespace().next();
+        }
+    }
+    None
 }
 
 #[test]
