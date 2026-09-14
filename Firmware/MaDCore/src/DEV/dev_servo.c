@@ -30,6 +30,8 @@ static const dev_servo_channelConfig_S dev_servo_channelConfigDefault[DEV_SERVO_
         24576,                       /* maxVelocity      — gentle fallback (3 mm/s); machine profile normally overrides (20 mm/s => 163840) */
         245760,                      /* maxAccel         — gentle fallback (30 mm/s^2); machine profile normally overrides (50 mm/s^2 => 409600) */
         16,                          /* positionDeadband — ~2 um */
+        2,                           /* waveformStartTolerance — ~0.25 um, so the first
+                                      *   cycle starts inside the 1 um contract */
         8,                           /* kpNum            — cmd += 8*err; ~just under maxAccel/maxVel~=10 edge */
         1,                           /* kpDen */
         0,                           /* kiNum            — integral OFF (validated Ki~20 nulls load error,
@@ -66,6 +68,13 @@ typedef struct
     int32_t target;    /* counts (POSITION mode) */
     int32_t feedrate;  /* counts/s cruise speed (POSITION mode), 1..maxVelocity */
     int32_t targetVel; /* counts/s (VELOCITY mode) */
+    /* OSCILLATE mode */
+    int32_t waveCentre;    /* counts */
+    int32_t waveAmplitude; /* counts */
+    uint32_t waveFreqMilliHz;
+    uint32_t waveCycles;      /* whole cycles to run, then stop */
+    dev_servo_wave_E waveShape;
+    float waveCruiseVel;      /* counts/s, TRIANGLE only — solved at accept */
     /* Bumped by every command that changes what "at target" means. dev_servo_run
      * snapshots it with the request and refuses to publish an atTarget verdict
      * computed against a target that was superseded mid-tick — see the publish
@@ -97,6 +106,14 @@ typedef struct
     int32_t lastPos;
     uint32_t lastTickUs; /* HAL_time_getUs() at the previous tick (for measured dt) */
     uint32_t stallCounter;
+    /* Oscillator phase as a WRAPPING accumulator: 2^32 counts to the cycle, so
+     * the wrap IS the modulo and a completed cycle is just the carry. No
+     * elapsed-microsecond counter means no 32-bit duration ceiling -- the old
+     * APP-side version capped at 3600 s and silently truncated longer runs --
+     * and no float phase to lose precision over a long fatigue test. */
+    uint32_t wavePhase;
+    uint32_t waveCyclesDone;
+    uint8_t waveSegment; /* dev_servo_waveSegment_E */
     bool velActive; /* a velocity pulse train is currently running */
     bool lastCw;    /* direction of the running train (latched at start) */
 } dev_servo_channelData_S;
@@ -202,6 +219,152 @@ void dev_servo_init(int lock, int32_t maxVelocityCounts, int32_t maxAccelCounts)
     }
 }
 
+/* One cycle of phase, as a wrapping 32-bit accumulator. */
+#define DEV_SERVO_PHASE_ONE_CYCLE 4294967296.0f
+
+/* A waveform is three segments, and only the middle one is a waveform.
+ *
+ * The reason is that a sinusoid's velocity is `wA*cos`, so at its CENTRE the
+ * velocity is maximal: a machine standing at rest at the centre cannot begin
+ * one without an infinite acceleration. The only phases at which a sinusoid
+ * can be joined or left at rest are its PEAKS. So the driver approaches the
+ * peak as an ordinary profiled move, runs whole cycles peak-to-peak, and
+ * returns to the centre as another ordinary move. Every instant of all three
+ * is within the acceleration budget, which is what makes the delivered
+ * trajectory equal to the requested one instead of a lagged copy of it. */
+typedef enum
+{
+    DEV_SERVO_WAVE_APPROACH = 0, /* profiled move from wherever we are to the peak */
+    DEV_SERVO_WAVE_RUN,          /* the cycles themselves, evaluated from phase     */
+    DEV_SERVO_WAVE_RETURN        /* profiled move back to the centre                */
+} dev_servo_waveSegment_E;
+#define DEV_SERVO_TWO_PI 6.283185307179586f
+
+/* Peak rate and peak acceleration a shape demands at amplitude A and frequency f. */
+static void dev_servo_private_waveDemand(float amplitude, float freqHz, dev_servo_wave_E shape,
+                                         float maxAccel, float *peakVel, float *peakAccel)
+{
+    if (shape == DEV_SERVO_WAVE_TRIANGLE)
+    {
+        /* A triangle's corners are a velocity STEP, so a literal one demands
+         * infinite acceleration and no machine can track it. The feasible
+         * realisation of "constant strain rate" is a TRAPEZOIDAL velocity
+         * profile per half cycle: ramp at maxAccel, cruise, ramp down. Solving
+         *     2A = v*(T/2) - v^2/a
+         * for the smaller root gives the cruise rate that still covers 2A in
+         * half a period. The rounding at each peak is v^2/2a wide -- that is
+         * the difference between the requested profile and a deliverable one,
+         * and it is why this is checked rather than silently approximated. */
+        const float halfPeriod = (freqHz > 0.0f) ? (0.5f / freqHz) : 0.0f;
+        const float b = maxAccel * halfPeriod;
+        const float disc = (b * b) - (8.0f * amplitude * maxAccel);
+        if ((disc < 0.0f) || (halfPeriod <= 0.0f))
+        {
+            *peakVel = 0.0f;
+            *peakAccel = maxAccel * 2.0f; /* infeasible: report over-budget */
+            return;
+        }
+        *peakVel = 0.5f * (b - sqrtf(disc));
+        *peakAccel = maxAccel;
+    }
+    else
+    {
+        const float omega = DEV_SERVO_TWO_PI * freqHz;
+        *peakVel = omega * amplitude;
+        *peakAccel = omega * omega * amplitude;
+    }
+}
+
+/* Evaluate the oscillator at the current phase, then advance it by one tick. */
+/* Where the waveform is at a given phase. PURE -- no state, no side effects --
+ * so the caller can ask for the position at the start and at the end of a tick
+ * and difference the two. That is the whole point of evaluating a waveform
+ * rather than integrating one. */
+static float dev_servo_private_waveAt(const dev_servo_channelData_S *d, float maxAccel, float phase)
+{
+    const float amplitude = (float)d->req.waveAmplitude;
+    const float centre = (float)d->req.waveCentre;
+    const float freqHz = (float)d->req.waveFreqMilliHz / 1000.0f;
+
+    if (d->req.waveShape == DEV_SERVO_WAVE_TRIANGLE)
+    {
+        /* Trapezoidal velocity, integrated to position analytically within the
+         * half cycle so position and velocity stay exactly consistent. */
+        const float halfPeriod = (freqHz > 0.0f) ? (0.5f / freqHz) : 0.0f;
+        const float v = d->req.waveCruiseVel;
+        const float tRamp = (v > 0.0f) ? (v / maxAccel) : 0.0f;
+        /* The trapezoid is naturally parameterised from the NEGATIVE peak
+         * (tHalf = 0 is the bottom, at rest). Phase 0 must be the POSITIVE
+         * peak to match the sine, and that is half a cycle later. Both peaks
+         * are velocity zeros, so either would be joinable; picking the same
+         * one as the sine keeps `waveShape` a pure change of path and not a
+         * change of where the run starts. */
+        float rampPhase = phase + 0.5f;
+        if (rampPhase >= 1.0f) { rampPhase -= 1.0f; }
+        const bool rising = (rampPhase < 0.5f);
+        const float tHalf = (rising ? rampPhase : (rampPhase - 0.5f)) * 2.0f * halfPeriod;
+        const float dir = rising ? 1.0f : -1.0f;
+
+        float travelled;
+        if (tHalf < tRamp)
+        {
+            travelled = 0.5f * (v / tRamp) * tHalf * tHalf;
+        }
+        else if (tHalf < (halfPeriod - tRamp))
+        {
+            travelled = (0.5f * v * tRamp) + (v * (tHalf - tRamp));
+        }
+        else
+        {
+            const float tDown = tHalf - (halfPeriod - tRamp);
+            travelled = (0.5f * v * tRamp) + (v * (halfPeriod - (2.0f * tRamp))) +
+                        ((v * tDown) - (0.5f * (v / tRamp) * tDown * tDown));
+        }
+        return centre + (dir * (travelled - amplitude));
+    }
+
+    /* cos, not sin: phase 0 is the POSITIVE PEAK, where the velocity passes
+     * through zero. A sine would put phase 0 at the centre moving at `wA`,
+     * which no machine standing at rest can join. */
+    return centre + (amplitude * cosf(DEV_SERVO_TWO_PI * phase));
+}
+
+static void dev_servo_private_oscillate(dev_servo_channelData_S *d, float dt, float maxAccel,
+                                        float *pos, float *vel)
+{
+    const float freqHz = (float)d->req.waveFreqMilliHz / 1000.0f;
+    const float phase = (float)d->wavePhase / DEV_SERVO_PHASE_ONE_CYCLE; /* [0,1) */
+
+    /* Advance first, so the tick's END phase is known and the velocity below
+     * can be the interval's true average. The wrap IS the cycle boundary --
+     * no modulo, no elapsed counter. */
+    const float perTick = (freqHz * dt) * DEV_SERVO_PHASE_ONE_CYCLE;
+    const uint32_t step = (perTick > 0.0f) ? (uint32_t)perTick : 0U;
+    const uint32_t next = d->wavePhase + step;
+    const float nextPhase = (float)next / DEV_SERVO_PHASE_ONE_CYCLE;
+
+    *pos = dev_servo_private_waveAt(d, maxAccel, phase);
+
+    /* Command the AVERAGE velocity across the tick, not the instantaneous
+     * velocity at its start.
+     *
+     * They differ by `a*dt/2`, and that difference is not noise: it is a bias
+     * of one sign for the whole half cycle, so the position loop has to stand
+     * off by `a*dt/(2*kp)` to generate it -- a standing tracking error of
+     * ~25 counts (3 um) on this machine, present even against a perfect plant.
+     * Differencing the evaluated waveform removes it exactly, for any shape,
+     * and leaves the proportional term with nothing to do but reject real
+     * disturbances. The wave is periodic in phase, so this stays exact across
+     * the wrap. */
+    *vel = (dev_servo_private_waveAt(d, maxAccel, nextPhase) - *pos) / dt;
+
+    if (next < d->wavePhase)
+    {
+        d->waveCyclesDone++;
+    }
+    d->wavePhase = next;
+}
+
 void dev_servo_run(void)
 {
     for (dev_servo_channel_E ch = (dev_servo_channel_E)0; ch < DEV_SERVO_CHANNEL_COUNT; ch++)
@@ -255,11 +418,60 @@ void dev_servo_run(void)
         /* ---- Stage 1: trajectory generator -> (setpointVel, setpointPos) ---- */
         float desiredSpVel = 0.0f;
         bool atTarget = false;
-        if (mode == DEV_SERVO_MODE_POSITION)
+        /* Where the profiler aims, and whether it runs at all. A waveform's
+         * outer segments are ordinary position moves, so they reuse the
+         * profiler rather than duplicating it; only its RUN segment writes the
+         * setpoint directly, and that is the one case the limiter must not
+         * touch (an evaluated setpoint is already within budget by
+         * construction, and re-limiting it would reintroduce the lag). */
+        bool evaluated = false;
+        int32_t profileTarget = target;
+        float profileCruise = (float)feedrate;
+
+        if (mode == DEV_SERVO_MODE_OSCILLATE)
         {
-            const float dist = (float)target - d->setpointPos; /* remaining (setpoint frame) */
+            const int32_t peak = d->req.waveCentre + d->req.waveAmplitude;
+            profileCruise = maxVel;
+            profileTarget =
+                (d->waveSegment == (uint8_t)DEV_SERVO_WAVE_APPROACH) ? peak : d->req.waveCentre;
+
+            if (d->waveSegment == (uint8_t)DEV_SERVO_WAVE_RUN)
+            {
+                /* The setpoint is EVALUATED, never integrated: position comes
+                 * from the phase, so there is no accumulator to drift and the
+                 * ramp-in deficit that velocity mode leaves behind cannot
+                 * arise. */
+                dev_servo_private_oscillate(d, dt, (float)cfg->maxAccel, &d->setpointPos,
+                                            &d->setpointVel);
+                evaluated = true;
+                if (d->waveCyclesDone >= d->req.waveCycles)
+                {
+                    /* Whole cycles done, so the carriage is back at the peak
+                     * with its velocity through zero. Stop evaluating HERE:
+                     * letting the phase run on past the last cycle leaves a
+                     * phantom setpoint walking away from a machine that has
+                     * parked, and the following error it opens up is both
+                     * published and a fault input. */
+                    d->waveSegment = (uint8_t)DEV_SERVO_WAVE_RETURN;
+                    d->setpointPos = (float)peak;
+                    d->setpointVel = 0.0f;
+                    profileTarget = d->req.waveCentre;
+                    evaluated = false;
+                }
+            }
+        }
+
+        if (mode == DEV_SERVO_MODE_VELOCITY)
+        {
+            desiredSpVel = (float)targetVel;
+            if (desiredSpVel > maxVel) { desiredSpVel = maxVel; }
+            if (desiredSpVel < -maxVel) { desiredSpVel = -maxVel; }
+        }
+        else if (!evaluated)
+        {
+            const float dist = (float)profileTarget - d->setpointPos; /* remaining (setpoint frame) */
             const float adist = fabsf(dist);
-            const float cruise = (float)feedrate; /* moveTo clamps to 1..maxVelocity */
+            const float cruise = profileCruise; /* moveTo clamps to 1..maxVelocity */
             /* Fastest speed from which we can still brake to rest at the target. */
             const float vStop = sqrtf(2.0f * (float)cfg->maxAccel * adist);
             float speed = (cruise < vStop) ? cruise : vStop;
@@ -274,26 +486,44 @@ void dev_servo_run(void)
             if (vReach < speed) { speed = vReach; }
             desiredSpVel = (dist >= 0.0f) ? speed : -speed;
 
-            if ((dev_servo_private_iabs(target - pos) <= cfg->positionDeadband) &&
+            /* Arriving to START a waveform is held to a tighter tolerance than
+             * arriving to PARK; see waveformStartTolerance. Until it is met the
+             * park below stays disengaged, so the proportional term keeps
+             * creeping the axis in rather than freezing it one deadband out. */
+            const int32_t arriveWithin =
+                ((mode == DEV_SERVO_MODE_OSCILLATE) &&
+                 (d->waveSegment == (uint8_t)DEV_SERVO_WAVE_APPROACH))
+                    ? cfg->waveformStartTolerance
+                    : cfg->positionDeadband;
+            if ((dev_servo_private_iabs(profileTarget - pos) <= arriveWithin) &&
                 (fabsf(d->setpointVel) < 1.0f))
             {
                 atTarget = true; /* encoder is on target and the profile has wound down */
             }
         }
-        else if (mode == DEV_SERVO_MODE_VELOCITY)
+
+        if (!evaluated)
         {
-            desiredSpVel = (float)targetVel;
-            if (desiredSpVel > maxVel) { desiredSpVel = maxVel; }
-            if (desiredSpVel < -maxVel) { desiredSpVel = -maxVel; }
+            /* Accel-limit the setpoint velocity toward the desired (trapezoid ramp). */
+            const float maxDv = (float)cfg->maxAccel * dt;
+            float dv = desiredSpVel - d->setpointVel;
+            if (dv > maxDv) { dv = maxDv; }
+            if (dv < -maxDv) { dv = -maxDv; }
+            d->setpointVel += dv;
+            d->setpointPos += d->setpointVel * dt;
         }
 
-        /* Accel-limit the setpoint velocity toward the desired (trapezoid ramp). */
-        const float maxDv = (float)cfg->maxAccel * dt;
-        float dv = desiredSpVel - d->setpointVel;
-        if (dv > maxDv) { dv = maxDv; }
-        if (dv < -maxDv) { dv = -maxDv; }
-        d->setpointVel += dv;
-        d->setpointPos += d->setpointVel * dt;
+        if ((mode == DEV_SERVO_MODE_OSCILLATE) &&
+            (d->waveSegment == (uint8_t)DEV_SERVO_WAVE_APPROACH) && atTarget)
+        {
+            /* Standing at the peak at rest: join the sinusoid here, where its
+             * own velocity is zero, so there is no step to absorb. The waveform
+             * is not finished, so this arrival must NOT be reported as one. */
+            d->waveSegment = (uint8_t)DEV_SERVO_WAVE_RUN;
+            d->wavePhase = 0U;
+            d->waveCyclesDone = 0U;
+            atTarget = false;
+        }
 
         /* ---- Stage 2: feedback = feedforward + Kp*err + Ki*∫err ---- */
         const float error = d->setpointPos - (float)pos;
@@ -322,7 +552,7 @@ void dev_servo_run(void)
              * atTarget on the next tick and the loop re-engages. */
             cmdVel = 0.0f;
             d->setpointVel = 0.0f;
-            d->setpointPos = (float)target;
+            d->setpointPos = (float)profileTarget;
             d->integral = 0.0f;
         }
 
@@ -405,6 +635,71 @@ void dev_servo_setVelocity(dev_servo_channel_E ch, int32_t velCountsPerSec)
     dev_servo_data.channel[ch].req.seq++;
     dev_servo_data.channel[ch].out.atTarget = false;
     DEV_SERVO_LOCK_REL();
+}
+
+bool dev_servo_waveformFeasible(dev_servo_channel_E ch, int32_t amplitudeCounts,
+                                uint32_t freqMilliHz, dev_servo_wave_E shape)
+{
+    if (ch >= DEV_SERVO_CHANNEL_COUNT) { return false; }
+    const dev_servo_channelConfig_S *cfg = &dev_servo_channelConfig[ch];
+    if ((amplitudeCounts <= 0) || (freqMilliHz == 0U)) { return false; }
+
+    const float amplitude = (float)amplitudeCounts;
+    const float freqHz = (float)freqMilliHz / 1000.0f;
+    float peakVel = 0.0f;
+    float peakAccel = 0.0f;
+    dev_servo_private_waveDemand(amplitude, freqHz, shape, (float)cfg->maxAccel, &peakVel, &peakAccel);
+
+    /* Rejected rather than approximated. Running an over-aggressive profile at
+     * whatever the limiter allows produces data that does not match the request
+     * -- on a fatigue test, a specimen that never saw the loading it is
+     * reported to have seen. */
+    return (peakVel > 0.0f) && (peakVel <= (float)cfg->maxVelocity) &&
+           (peakAccel <= (float)cfg->maxAccel);
+}
+
+bool dev_servo_startWaveform(dev_servo_channel_E ch, int32_t centreCounts, int32_t amplitudeCounts,
+                             uint32_t freqMilliHz, uint32_t cycles, dev_servo_wave_E shape)
+{
+    if (ch >= DEV_SERVO_CHANNEL_COUNT) { return false; }
+    if (cycles == 0U) { return false; }
+    if (!dev_servo_waveformFeasible(ch, amplitudeCounts, freqMilliHz, shape)) { return false; }
+
+    const dev_servo_channelConfig_S *cfg = &dev_servo_channelConfig[ch];
+    float peakVel = 0.0f;
+    float peakAccel = 0.0f;
+    dev_servo_private_waveDemand((float)amplitudeCounts, (float)freqMilliHz / 1000.0f, shape,
+                                 (float)cfg->maxAccel, &peakVel, &peakAccel);
+
+    DEV_SERVO_LOCK_REQ_BLOCK();
+    dev_servo_data.channel[ch].req.mode = DEV_SERVO_MODE_OSCILLATE;
+    dev_servo_data.channel[ch].req.waveCentre = centreCounts;
+    dev_servo_data.channel[ch].req.waveAmplitude = amplitudeCounts;
+    dev_servo_data.channel[ch].req.waveFreqMilliHz = freqMilliHz;
+    dev_servo_data.channel[ch].req.waveCycles = cycles;
+    dev_servo_data.channel[ch].req.waveShape = shape;
+    dev_servo_data.channel[ch].req.waveCruiseVel = peakVel;
+    /* The driver owns the whole manoeuvre: move to the peak, cycle, come back
+     * to the centre. So the caller does not have to pre-position the machine,
+     * and `atTarget` means the WAVEFORM is done rather than some segment of
+     * it -- one completion concept for the whole command. */
+    dev_servo_data.channel[ch].req.target = centreCounts;
+    dev_servo_data.channel[ch].waveSegment = (uint8_t)DEV_SERVO_WAVE_APPROACH;
+    dev_servo_data.channel[ch].wavePhase = 0U;
+    dev_servo_data.channel[ch].waveCyclesDone = 0U;
+    dev_servo_data.channel[ch].req.seq++;
+    dev_servo_data.channel[ch].out.atTarget = false;
+    DEV_SERVO_LOCK_REL();
+    return true;
+}
+
+uint32_t dev_servo_waveformCyclesDone(dev_servo_channel_E ch)
+{
+    if (ch >= DEV_SERVO_CHANNEL_COUNT) { return 0U; }
+    DEV_SERVO_LOCK_REQ_BLOCK();
+    const uint32_t done = dev_servo_data.channel[ch].waveCyclesDone;
+    DEV_SERVO_LOCK_REL();
+    return done;
 }
 
 void dev_servo_stop(dev_servo_channel_E ch)

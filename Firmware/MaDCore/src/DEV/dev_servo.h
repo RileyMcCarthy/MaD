@@ -42,10 +42,28 @@ typedef enum
 
 typedef enum
 {
-    DEV_SERVO_MODE_IDLE,     /* disabled — no pulses */
-    DEV_SERVO_MODE_POSITION, /* closed-loop to a position target (encoder counts) */
-    DEV_SERVO_MODE_VELOCITY, /* hold a commanded velocity (jog / waveform source) */
+    DEV_SERVO_MODE_IDLE,      /* disabled — no pulses */
+    DEV_SERVO_MODE_POSITION,  /* closed-loop to a position target (encoder counts) */
+    DEV_SERVO_MODE_VELOCITY,  /* hold a commanded rate — jog and homing ONLY */
+    DEV_SERVO_MODE_OSCILLATE, /* track a periodic trajectory about a centre */
 } dev_servo_mode_E;
+
+/* The mode names which GENERATOR fills the setpoint, not a different control
+ * law: stage 2 is always `cmdVel = setpointVel + Kp*err`, i.e. position held by
+ * modulating velocity. That distinction is the whole reason this enum exists.
+ *
+ * VELOCITY integrates a rate into its own position reference, so it has NO
+ * absolute position intent and drifts from any the caller had. That is correct
+ * for a jog or a homing seek, where there is no intended position, and wrong
+ * for anything analytic — a waveform driven through it loses the ramp-in
+ * deficit permanently (Vpeak^2/2a), which is why OSCILLATE exists rather than
+ * the APP layer bolting a second position loop on top. */
+
+typedef enum
+{
+    DEV_SERVO_WAVE_SINE = 0,
+    DEV_SERVO_WAVE_TRIANGLE = 1,
+} dev_servo_wave_E;
 
 /* Per-channel wiring + tuning. All control quantities are in ENCODER COUNTS
  * (counts, counts/s, counts/s^2) so the encoder is the one unit of truth; the
@@ -61,6 +79,17 @@ typedef struct
     int32_t maxVelocity;       /* counts/s — hard safety clamp on commanded velocity */
     int32_t maxAccel;          /* counts/s^2 — trajectory accel/decel limit */
     int32_t positionDeadband;  /* counts — within this of target => settled, park */
+    /* How close the approach move must get before the CYCLES may begin.
+     *
+     * Deliberately tighter than positionDeadband, because the two answer
+     * different questions. The deadband stops a parked axis hunting over an
+     * encoder count or two while it holds station — a tolerance on staying
+     * put. This is a tolerance on STARTING, and whatever it leaves behind is a
+     * position error against the requested waveform from its very first
+     * sample, which no amount of good tracking afterwards can retract. Handing
+     * over at the parking deadband put the first tick of the cycles 16 counts
+     * (2 um) off a trajectory the loop then tracked to 0.1 um. */
+    int32_t waveformStartTolerance; /* counts */
     int32_t kpNum;             /* proportional gain numerator   (cmd += kpNum*err/kpDen) */
     int32_t kpDen;             /* proportional gain denominator */
     int32_t kiNum;             /* integral gain numerator (1/s^2): cmd += kiNum*∫err/kiDen */
@@ -87,7 +116,35 @@ void dev_servo_run(void); /* one control tick; call at a fixed rate from a cog *
 
 void dev_servo_enable(dev_servo_channel_E ch, bool enable);
 void dev_servo_moveTo(dev_servo_channel_E ch, int32_t targetCounts, int32_t feedrateCountsPerSec); /* closed-loop position at feedrate */
-void dev_servo_setVelocity(dev_servo_channel_E ch, int32_t velCountsPerSec); /* closed-loop velocity hold */
+void dev_servo_setVelocity(dev_servo_channel_E ch, int32_t velCountsPerSec);
+
+/* Oscillate about `centreCounts` for `cycles` whole cycles, then stop.
+ *
+ * The driver owns the phase and advances it on its OWN control tick, so the
+ * trajectory is sampled with the same dt that closes the loop. Handing it a
+ * setpoint per tick from another cog instead would cross an unsynchronised
+ * 1 kHz boundary (app_motion runs on CONTROL, this runs on MOTOR) and write
+ * that beat straight into the position reference.
+ *
+ * Returns false and does nothing if the request is not achievable within the
+ * configured maxVelocity/maxAccel — see dev_servo_waveformFeasible. A caller
+ * that ignores that gets a profile it did not ask for, which on a fatigue test
+ * is a result that does not match the request. */
+bool dev_servo_startWaveform(dev_servo_channel_E ch,
+                             int32_t centreCounts,
+                             int32_t amplitudeCounts,
+                             uint32_t freqMilliHz,
+                             uint32_t cycles,
+                             dev_servo_wave_E shape);
+
+/* Whether that request fits the envelope, without starting it. */
+bool dev_servo_waveformFeasible(dev_servo_channel_E ch,
+                                int32_t amplitudeCounts,
+                                uint32_t freqMilliHz,
+                                dev_servo_wave_E shape);
+
+/* Whole cycles completed so far; the move is done when this reaches `cycles`. */
+uint32_t dev_servo_waveformCyclesDone(dev_servo_channel_E ch); /* closed-loop velocity hold */
 void dev_servo_stop(dev_servo_channel_E ch);
 void dev_servo_setPosition(dev_servo_channel_E ch, int32_t counts);        /* homing: define encoder reference */
 
