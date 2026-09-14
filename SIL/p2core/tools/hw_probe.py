@@ -166,6 +166,17 @@ def build_cases() -> list[dict]:
 
 
 def decode_sweep_cases() -> list[dict]:
+    """Cases planned by `probe_encodings`, which gets its vectors from
+    embsim-cpu-oracle.
+
+    The operand and flag vectors used to be a table in this file. They are the
+    one thing that decides whether the corpus can discriminate a correct
+    implementation from a wrong one, and keeping them here meant they were
+    chosen by hand, once, with nothing asserting the properties they exist for.
+    `SAL` passed fifty silicon records while being wrong, because every
+    destination operand in that hand-picked table had bit 0 clear. They now
+    live in the generic crate with tests.
+    """
     cmd = [
         "cargo",
         "run",
@@ -188,13 +199,21 @@ def decode_sweep_cases() -> list[dict]:
             continue
         o = json.loads(line)
         enc = int(o["enc"], 16)
-        op = o["op"]
-        name = f"swp_{op}_{o['enc']}"
+        name = f"swp_{o['name']}"
         if o.get("hub"):
+            # The answer is in hub memory, so there is nothing for the operand
+            # sweep to vary: one case, addressed at the per-case scratch.
             out.append(case(name, enc, din=SCRATCH, hub_in=(1, 2, 3, 4)))
             continue
-        out.append(case(name, enc, din=0x80000000, sin=1))
-        out.append(case(f"{name}_b", enc, din=2, sin=3))
+        out.append(
+            case(
+                name,
+                enc,
+                din=int(o["din"], 16),
+                sin=int(o["sin"], 16),
+                flags=int(o["flags"]),
+            )
+        )
     return out
 
 
@@ -580,7 +599,27 @@ def session_query(master: int, buf: bytearray, spec: dict, mailbox: int) -> dict
     )
     os.write(master, line.encode("ascii"))
     start = len(buf)
-    pty_read_until(master, buf, b"HUB ", time.time() + 6)
+    try:
+        pty_read_until(master, buf, b"HUB ", time.time() + 6)
+    except TimeoutError:
+        # The worker never answered, which means it is WEDGED, not merely slow.
+        # Draining the buffer and carrying on is not enough and is actively
+        # harmful: a wedged worker answers nothing afterwards, so the run
+        # degrades into every-other-case-fails, and any case that does reply is
+        # replying out of stale state. A capture that did this produced 325
+        # skips whose tail was `mergeb` and `splitb` -- ALU ops that cannot
+        # wedge anything -- which is the signature of a dead session rather
+        # than a difficult instruction. The caller reloads the board instead.
+        deadline = time.time() + 0.5
+        while time.time() < deadline:
+            try:
+                chunk = os.read(master, 4096)
+            except (BlockingIOError, OSError):
+                break
+            if not chunk:
+                break
+            buf.extend(chunk)
+        return None
     time.sleep(0.05)
     try:
         while True:
@@ -593,7 +632,14 @@ def session_query(master: int, buf: bytearray, spec: dict, mailbox: int) -> dict
     text = buf[start:].decode("latin1", "replace")
     got = parse_dump(text)
     if got is None:
-        sys.exit(f"no DUMP for {spec['name']}:\n{text}")
+        # One case that does not answer must not cost the whole run. A sweep is
+        # thousands of cases and many minutes of board time; aborting on the
+        # first silent one throws all of it away and, worse, makes the corpus a
+        # function of which operand happened to upset the worker. Report it and
+        # carry on -- the case is simply absent from the goldens, and
+        # `probe_coverage` is what notices a missing op.
+        print(f"  !! no DUMP for {spec['name']}, skipping", flush=True)
+        return None
     return got
 
 
@@ -635,13 +681,33 @@ def main() -> int:
             proc, master, buf = start_hw_session(stub, args.port)
             blocks = []
             try:
+                skipped = []
                 for spec in specs:
                     print(f"=== {spec['name']} silicon ===", flush=True)
                     hw = session_query(master, buf, spec, moff)
+                    if hw is None:
+                        # Reload the board so the next case starts from a known
+                        # worker, and re-ask this one once in case the silence
+                        # was the session rather than the encoding.
+                        print(f"  !! no answer for {spec['name']}; reloading", flush=True)
+                        stop_hw_session(proc, master)
+                        proc, master, buf = start_hw_session(stub, args.port)
+                        hw = session_query(master, buf, spec, moff)
+                        if hw is None:
+                            print(
+                                f"  !! {spec['name']} wedges the worker reproducibly, skipping",
+                                flush=True,
+                            )
+                            skipped.append(spec["name"])
+                            stop_hw_session(proc, master)
+                            proc, master, buf = start_hw_session(stub, args.port)
+                            continue
                     print(
                         f"  d={hw['d']:08x} s={hw['s']:08x} c={hw['c']} z={hw['z']} hub={hw['hub']}"
                     )
                     blocks.append(format_case_block(spec, hw, moff))
+                if skipped:
+                    print(f"\n{len(skipped)} case(s) never answered: {skipped}", flush=True)
             finally:
                 stop_hw_session(proc, master)
             write_golden(blocks, stub)

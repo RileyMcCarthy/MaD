@@ -27,14 +27,50 @@ fn main() {
     }
 }
 
+/// Emit the PLANNED CASES, not just the encodings.
+///
+/// The operand and flag vectors used to live in the Python capture script,
+/// which is the worst place for them: they are the single thing that decides
+/// whether the corpus can tell a correct implementation from a wrong one, and
+/// they were chosen once, by hand, untested. `SAL` passed fifty silicon
+/// records while being plainly wrong because both destination operands had bit
+/// 0 clear. The vectors now come from embsim-cpu-oracle, where they are
+/// documented and have tests asserting the properties they exist for -- bit 0
+/// varies, the sign varies, one pair has disjoint bits, and both branches of
+/// every conditional are reachable.
+///
+/// Hub-observable ops keep their single scratch-addressed case: their answer
+/// is in hub memory, not in D, so the operand sweep has nothing to vary.
 fn dump_jsonl() {
+    use embsim_cpu_oracle::sweep::{plan_cases, Encoding, DEFAULT_FLAG_STATES, DEFAULT_OPERANDS};
+
     for e in probe_encodings() {
-        println!(
-            "{{\"enc\":\"{:08x}\",\"op\":\"{}\",\"hub\":{}}}",
-            e.word,
-            e.op.mnemonic(),
-            if e.hub { "true" } else { "false" }
-        );
+        if e.hub {
+            println!(
+                "{{\"name\":\"{}_{:08x}\",\"enc\":\"{:08x}\",\"op\":\"{}\",\"hub\":true}}",
+                e.op.mnemonic(),
+                e.word,
+                e.word,
+                e.op.mnemonic()
+            );
+            continue;
+        }
+        let enc = [Encoding {
+            word: e.word,
+            mnemonic: e.op.mnemonic(),
+        }];
+        for c in plan_cases(&enc, DEFAULT_OPERANDS, DEFAULT_FLAG_STATES) {
+            println!(
+                "{{\"name\":\"{}\",\"enc\":\"{:08x}\",\"op\":\"{}\",\"hub\":false,\
+                 \"din\":\"{:08x}\",\"sin\":\"{:08x}\",\"flags\":{}}}",
+                c.name,
+                c.encoding,
+                e.op.mnemonic(),
+                c.d,
+                c.s,
+                c.flags
+            );
+        }
     }
 }
 
