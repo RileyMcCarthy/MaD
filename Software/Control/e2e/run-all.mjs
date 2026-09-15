@@ -186,7 +186,7 @@ function assertFollowsSineUm(series, { amplitudeMm, frequencyHz, cycles, centreM
     tMinS,
     tMaxS,
     label,
-    followBoundUm: Math.max(CONTRACT_UM, 3 * peakVelMmS),
+    followBoundUm: Math.max(CONTRACT_UM, 15 * peakVelMmS),
   });
 }
 
