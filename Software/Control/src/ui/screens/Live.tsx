@@ -1,6 +1,13 @@
 import { useState } from 'react';
 import { useStore } from '@/store/useStore';
-import { FaultedReason, NotificationType } from '@/domain';
+import {
+  DEFAULT_JOG_MM,
+  FaultedReason,
+  JOG_INCREMENTS_MM,
+  NotificationType,
+  formatJogIncrementLabel,
+  isSelectedJogIncrement,
+} from '@/domain';
 import {
   FAULT_HINTS,
   RESTRICTION_HINTS,
@@ -55,7 +62,7 @@ export default function Live() {
   const manualBlocked = !stateKnown || testRunning;
   const notify = useStore((s) => s.notify);
 
-  const [jogMm, setJogMm] = useState(1);
+  const [jogMm, setJogMm] = useState<number>(DEFAULT_JOG_MM);
   const [jogSpeed, setJogSpeed] = useState(5);
 
   const jog = async (mm: number) => {
@@ -127,7 +134,7 @@ export default function Live() {
           <button onClick={() => zeroForce()} disabled={manualBlocked}>Zero force</button>
           <button onClick={() => zeroLength()} disabled={manualBlocked}>Zero length</button>
         </div>
-        <div className="row" style={{ marginTop: 12 }}>
+        <div className="row" style={{ marginTop: 12, alignItems: 'flex-end', flexWrap: 'wrap', gap: 12 }}>
           <label className="field">
             Jog (mm)
             <input
@@ -138,6 +145,25 @@ export default function Live() {
               onChange={(e) => setJogMm(Number(e.target.value))}
             />
           </label>
+          <div
+            className="toggle"
+            role="group"
+            aria-label="Jog increment"
+            title="Preset jog distances. 0.1 mm is for gauge length / preload on short samples."
+          >
+            {JOG_INCREMENTS_MM.map((mm) => (
+              <button
+                key={mm}
+                type="button"
+                className={isSelectedJogIncrement(jogMm, mm) ? 'active' : ''}
+                aria-pressed={isSelectedJogIncrement(jogMm, mm)}
+                disabled={manualBlocked}
+                onClick={() => setJogMm(mm)}
+              >
+                {formatJogIncrementLabel(mm)} mm
+              </button>
+            ))}
+          </div>
           <label className="field">
             Speed (mm/s)
             <input
