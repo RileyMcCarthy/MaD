@@ -187,18 +187,44 @@ static void doubles_reset(void)
                               .skewPerMille = DEV_SERVO_SKEW_SYMMETRIC,                            \
                               .shape = (shp) })
 
-static void servo_init(void)
+/* The SHIPPED machine profile (dev_nvram_config.c): 50 mm/s and 600 mm/s^2
+ * at 8192 counts/mm. Testing a gentler envelope than the one that ships
+ * understates every error term that scales with acceleration. */
+#define SHIPPED_MAX_VEL_COUNTS 409600
+#define SHIPPED_MAX_ACCEL_COUNTS 4915200
+#define SERVO_DT_S 0.001
+/* 8192 counts per mm on this machine, so one micron is 8.192 counts. */
+#define COUNTS_PER_MM 8192.0
+#define ONE_MICRON_COUNTS (COUNTS_PER_MM / 1000.0)
+
+static void servo_init_envelope(int32_t maxVelCounts, int32_t maxAccelCounts)
 {
     HAL_lock_mock_reset();
     _stdio_debug_lock = HAL_lock_create();
     doubles_reset();
     memset(&dev_servo_data, 0, sizeof(dev_servo_data));
-    /* The SHIPPED machine profile (dev_nvram_config.c): 50 mm/s and
-     * 600 mm/s^2 at 8192 counts/mm. Testing a gentler envelope than the one
-     * that ships understates every error term that scales with acceleration --
-     * and the standing tracking error does exactly that. */
-    dev_servo_init(HAL_lock_create(), 409600 /* counts/s = 50 mm/s */,
-                   4915200 /* counts/s^2 = 600 mm/s^2 */);
+    dev_servo_init(HAL_lock_create(), maxVelCounts, maxAccelCounts);
+}
+
+static void servo_init(void)
+{
+    servo_init_envelope(SHIPPED_MAX_VEL_COUNTS, SHIPPED_MAX_ACCEL_COUNTS);
+}
+
+static int32_t counts_from_mm(double mm)
+{
+    return (int32_t)((mm * COUNTS_PER_MM) + ((mm < 0.0) ? -0.5 : 0.5));
+}
+
+/* setpointPos is a float: its ulp is 1 count at 2000 mm and 2 counts at
+ * 3000 mm, so the commanded position cannot be finer than that. The 1 um
+ * contract is on top of that floor, matching test_tracking_does_not_degrade. */
+static double one_micron_bound_at(int32_t pos)
+{
+    const double p = fabs((double)pos);
+    if (p < 1.0) { return ONE_MICRON_COUNTS; }
+    const double ulp = ldexp(1.0, ilogb(p) - 23);
+    return ONE_MICRON_COUNTS + (2.0 * ulp);
 }
 
 void setUp(void)
@@ -918,10 +944,6 @@ void test_the_shape_bit_selects_a_genuinely_different_rate_profile(void)
                              "if these match, the shape bit is being ignored");
 }
 
-/* 8192 counts per mm on this machine, so one micron is 8.192 counts. */
-#define COUNTS_PER_MM 8192.0
-#define ONE_MICRON_COUNTS (COUNTS_PER_MM / 1000.0)
-
 /* Worst |measured - ideal| over the cycles, in counts.
  *
  * The reference is recomputed HERE from the request, as a plain cosine, and is
@@ -1212,6 +1234,33 @@ static wave_geometry_S measure_geometry(const dev_servo_waveform_S *wf)
     return g;
 }
 
+/* Share of a peak-to-peak traverse covered at normalised time u in [0,1].
+ * Recomputed from the published formula, not from the driver. */
+static double traverse_share(dev_servo_wave_E shape, double ramp, double u)
+{
+    if (u < 0.0) { u = 0.0; }
+    if (u > 1.0) { u = 1.0; }
+    if (shape == DEV_SERVO_WAVE_TRIANGLE)
+    {
+        if (ramp <= 0.0) { return u; }
+        const double flat = 1.0 - ramp;
+        if (flat <= 0.0) { return u; }
+        if (u < ramp) { return (u * u) / (2.0 * ramp * flat); }
+        if (u <= flat) { return (u - (0.5 * ramp)) / flat; }
+        const double w = 1.0 - u;
+        return 1.0 - ((w * w) / (2.0 * ramp * flat));
+    }
+    return 0.5 * (1.0 - cos(M_PI * u));
+}
+
+static double triangle_ramp_share(double amplitude, double tau, double maxAccel)
+{
+    if ((tau <= 0.0) || (maxAccel <= 0.0) || (amplitude <= 0.0)) { return 0.0; }
+    const double k = (8.0 * amplitude) / (maxAccel * tau * tau);
+    if (k >= 1.0) { return 0.5; }
+    return 0.5 * (1.0 - sqrt(1.0 - k));
+}
+
 /* The commanded template, recomputed here in double precision from the
  * REQUEST. An independent statement of the same specification, so a wrong
  * segment boundary, an inverted skew or a transcribed formula shows up as a
@@ -1225,21 +1274,28 @@ static double template_ideal(const dev_servo_waveform_S *wf, double phase)
     const double fTrav = 1.0 - fHigh - fLow;
     const double fDown = fTrav * ((double)wf->skewPerMille / 1000.0);
     const double fUp = fTrav - fDown;
+    const double maxAccel = (double)dev_servo_channelConfig[CH].maxAccel;
+    const double rDown = (wf->shape == DEV_SERVO_WAVE_TRIANGLE)
+                             ? triangle_ramp_share(A, fDown * period, maxAccel)
+                             : 0.0;
+    const double rUp = (wf->shape == DEV_SERVO_WAVE_TRIANGLE)
+                           ? triangle_ramp_share(A, fUp * period, maxAccel)
+                           : 0.0;
 
     double p = phase;
     if (p < fHigh) { return (double)wf->centreCounts + A; }
     p -= fHigh;
     if (p < fDown)
     {
-        const double u = p / fDown;
-        return (double)wf->centreCounts + A - (2.0 * A * 0.5 * (1.0 - cos(M_PI * u)));
+        const double u = (fDown > 0.0) ? (p / fDown) : 1.0;
+        return (double)wf->centreCounts + A - (2.0 * A * traverse_share(wf->shape, rDown, u));
     }
     p -= fDown;
     if (p < fLow) { return (double)wf->centreCounts - A; }
     p -= fLow;
-    double u = p / fUp;
+    double u = (fUp > 0.0) ? (p / fUp) : 1.0;
     if (u > 1.0) { u = 1.0; }
-    return (double)wf->centreCounts - A + (2.0 * A * 0.5 * (1.0 - cos(M_PI * u)));
+    return (double)wf->centreCounts - A + (2.0 * A * traverse_share(wf->shape, rUp, u));
 }
 
 static double worst_template_deviation(const dev_servo_waveform_S *wf)
@@ -1497,6 +1553,288 @@ void test_a_triangle_is_a_trapezoidal_rate_not_an_infinite_corner(void)
                                      "a whole number of triangle cycles must also return to centre");
 }
 
+/* Two deadbands. The last few counts of a point-to-point move are the park
+ * (the encoder stops correcting inside positionDeadband); that landing is a
+ * different contract. The 1 um claim is about the trajectory WHILE MOVING. */
+#define LANDING_COUNTS 16.0
+
+/* Closed-form trapezoid: travel `dist` (signed) at cruise `v` limited by
+ * acceleration `a`, starting from rest at t=0. Returns displacement from the
+ * start, so the ideal position is start + this. */
+static double trapezoid_travel(double dist, double v, double a, double t)
+{
+    const double D = fabs(dist);
+    const double sign = (dist >= 0.0) ? 1.0 : -1.0;
+    if ((D <= 0.0) || (v <= 0.0) || (a <= 0.0) || (t <= 0.0)) { return 0.0; }
+
+    const double sAcc = (v * v) / (2.0 * a);
+    if ((2.0 * sAcc) >= D)
+    {
+        const double vPeak = sqrt(a * D);
+        const double tAcc = vPeak / a;
+        const double tTotal = 2.0 * tAcc;
+        if (t >= tTotal) { return dist; }
+        if (t <= tAcc) { return sign * 0.5 * a * t * t; }
+        const double td = tTotal - t;
+        return sign * (D - (0.5 * a * td * td));
+    }
+
+    const double tAcc = v / a;
+    const double tCruise = (D - (2.0 * sAcc)) / v;
+    const double tTotal = (2.0 * tAcc) + tCruise;
+    if (t >= tTotal) { return dist; }
+    if (t <= tAcc) { return sign * 0.5 * a * t * t; }
+    if (t <= (tAcc + tCruise)) { return sign * (sAcc + (v * (t - tAcc))); }
+    const double td = tTotal - t;
+    return sign * (D - (0.5 * a * td * td));
+}
+
+typedef struct
+{
+    double vsSetpoint; /* encoder vs the driver's commanded position, whole move */
+    double vsProfile;  /* encoder vs the kinematic trapezoid, accel and cruise */
+    unsigned samples;
+    unsigned profileSamples;
+} pos_dev_S;
+
+static pos_dev_S measure_position_move(int32_t start, int32_t target, int32_t feed,
+                                       int32_t maxVel, int32_t maxAccel)
+{
+    servo_init_envelope(maxVel, maxAccel);
+    dev_servo_setPosition(CH, start);
+    dev_servo_enable(CH, true);
+    dev_servo_moveTo(CH, target, feed);
+
+    pos_dev_S d;
+    memset(&d, 0, sizeof(d));
+    const double dist = (double)target - (double)start;
+    const double cruise = (double)feed;
+    const double accel = (double)maxAccel;
+    /* Distance at which the closed-form trapezoid begins to brake. A move
+     * that never reaches cruise (a triangle) brakes from the midpoint. */
+    const double sAccCruise = (cruise * cruise) / (2.0 * accel);
+    const double sBrake =
+        ((2.0 * sAccCruise) >= fabs(dist)) ? (0.5 * fabs(dist)) : sAccCruise;
+
+    for (unsigned i = 0U; (i < 400000U) && !dev_servo_atTarget(CH); i++)
+    {
+        tick_with_motion();
+        const double t = (double)(i + 1U) * SERVO_DT_S;
+        const double ideal = (double)start + trapezoid_travel(dist, cruise, accel, t);
+        const double sp = (double)dev_servo_data.channel[CH].setpointPos;
+        const double enc = (double)d_encoderValue;
+        const double vel = fabs((double)dev_servo_data.channel[CH].setpointVel);
+
+        /* Park: the encoder is inside the deadband and the profile has wound
+         * down. Landing there is the deadband contract, not the 1 um one. */
+        if ((vel < 1.0) && (fabs((double)target - enc) <= LANDING_COUNTS)) { continue; }
+        if (fabs((double)target - sp) <= LANDING_COUNTS) { continue; }
+
+        const double eSp = fabs(enc - sp);
+        if (eSp > d.vsSetpoint) { d.vsSetpoint = eSp; }
+        d.samples++;
+
+        if (fabs((double)target - ideal) > (sBrake + LANDING_COUNTS))
+        {
+            const double ePr = fabs(enc - ideal);
+            if (ePr > d.vsProfile) { d.vsProfile = ePr; }
+            d.profileSamples++;
+        }
+    }
+    TEST_ASSERT_TRUE_MESSAGE(d.samples > 20U, "the move must actually travel");
+    TEST_ASSERT_TRUE_MESSAGE(d.profileSamples > 10U,
+                             "accel and cruise must actually have been sampled");
+    return d;
+}
+
+static double worst_cycle_on_current_machine(const dev_servo_waveform_S *wf)
+{
+    dev_servo_setPosition(CH, wf->centreCounts);
+    dev_servo_enable(CH, true);
+    TEST_ASSERT_TRUE_MESSAGE(dev_servo_startWaveform(CH, wf),
+                             "the envelope case must be feasible on this machine");
+
+    const double freqHz = (double)wf->freqMicroHz / 1e6;
+    unsigned runTicks = 0U;
+    double worst = 0.0;
+    for (unsigned i = 0U; (i < 400000U) && !dev_servo_atTarget(CH); i++)
+    {
+        const bool running =
+            (dev_servo_data.channel[CH].waveSegment == (uint8_t)DEV_SERVO_WAVE_RUN);
+        tick_with_motion();
+        if (!running ||
+            (dev_servo_data.channel[CH].waveSegment != (uint8_t)DEV_SERVO_WAVE_RUN))
+        {
+            continue;
+        }
+        runTicks++;
+        const double phase = fmod((double)runTicks * SERVO_DT_S * freqHz, 1.0);
+        const double err = fabs((double)d_encoderValue - template_ideal(wf, phase));
+        if (err > worst) { worst = err; }
+    }
+    TEST_ASSERT_TRUE_MESSAGE(runTicks > 100U, "the cycles must actually have run");
+    return worst;
+}
+
+void test_position_moves_track_the_commanded_trapezoid_to_one_micron(void)
+{
+    VIBES_TEST("servo.position-move-one-micron-across-envelope",
+               "src/DEV/dev_servo.c#dev_servo_run",
+               "point-to-point moves at many distances, speeds and accelerations, in both directions, from rest at the origin and far along the gantry");
+    VIBES_EXPECT_WHY("follows-the-setpoint",
+                     "the encoder stays within 0.001 mm of the position the profile commands, on every moving tick",
+                     "the specimen sees the encoder, so the loading history is the profile the loop is actually tracking");
+    VIBES_EXPECT_WHY("matches-the-trapezoid",
+                     "while accelerating and cruising, the encoder stays within 0.001 mm of the trapezoid that distance, speed and acceleration describe",
+                     "a point-to-point move is that trapezoid, and the specimen sees every millimetre of it");
+
+    const struct
+    {
+        const char *what;
+        int32_t start;
+        int32_t target;
+        int32_t feed;
+        int32_t maxVel;
+        int32_t maxAccel;
+    } cases[] = {
+        /* Distance sweep at 10 mm/s, shipped acceleration. */
+        { "0.5 mm at 10 mm/s", 0, counts_from_mm(0.5), counts_from_mm(10),
+          SHIPPED_MAX_VEL_COUNTS, SHIPPED_MAX_ACCEL_COUNTS },
+        { "2 mm at 10 mm/s", 0, counts_from_mm(2), counts_from_mm(10),
+          SHIPPED_MAX_VEL_COUNTS, SHIPPED_MAX_ACCEL_COUNTS },
+        { "10 mm at 10 mm/s", 0, counts_from_mm(10), counts_from_mm(10),
+          SHIPPED_MAX_VEL_COUNTS, SHIPPED_MAX_ACCEL_COUNTS },
+        { "50 mm at 10 mm/s", 0, counts_from_mm(50), counts_from_mm(10),
+          SHIPPED_MAX_VEL_COUNTS, SHIPPED_MAX_ACCEL_COUNTS },
+        { "200 mm at 10 mm/s", 0, counts_from_mm(200), counts_from_mm(10),
+          SHIPPED_MAX_VEL_COUNTS, SHIPPED_MAX_ACCEL_COUNTS },
+        /* Speed sweep at 10 mm, shipped acceleration. */
+        { "10 mm at 1 mm/s", 0, counts_from_mm(10), counts_from_mm(1),
+          SHIPPED_MAX_VEL_COUNTS, SHIPPED_MAX_ACCEL_COUNTS },
+        { "10 mm at 5 mm/s", 0, counts_from_mm(10), counts_from_mm(5),
+          SHIPPED_MAX_VEL_COUNTS, SHIPPED_MAX_ACCEL_COUNTS },
+        { "10 mm at 15 mm/s", 0, counts_from_mm(10), counts_from_mm(15),
+          SHIPPED_MAX_VEL_COUNTS, SHIPPED_MAX_ACCEL_COUNTS },
+        { "10 mm at 40 mm/s", 0, counts_from_mm(10), counts_from_mm(40),
+          SHIPPED_MAX_VEL_COUNTS, SHIPPED_MAX_ACCEL_COUNTS },
+        /* Acceleration sweep at 10 mm / 15 mm/s. */
+        { "10 mm at 150 mm/s^2", 0, counts_from_mm(10), counts_from_mm(15),
+          SHIPPED_MAX_VEL_COUNTS, counts_from_mm(150) },
+        { "10 mm at 300 mm/s^2", 0, counts_from_mm(10), counts_from_mm(15),
+          SHIPPED_MAX_VEL_COUNTS, counts_from_mm(300) },
+        { "10 mm at 600 mm/s^2", 0, counts_from_mm(10), counts_from_mm(15),
+          SHIPPED_MAX_VEL_COUNTS, counts_from_mm(600) },
+        /* Direction, origin, and a triangular (no-cruise) profile. */
+        { "10 mm down at 10 mm/s", 0, counts_from_mm(-10), counts_from_mm(10),
+          SHIPPED_MAX_VEL_COUNTS, SHIPPED_MAX_ACCEL_COUNTS },
+        { "10 mm from 2000 mm", counts_from_mm(2000), counts_from_mm(2010),
+          counts_from_mm(10), SHIPPED_MAX_VEL_COUNTS, SHIPPED_MAX_ACCEL_COUNTS },
+        { "50 mm down from 100 mm", counts_from_mm(100), counts_from_mm(50),
+          counts_from_mm(20), SHIPPED_MAX_VEL_COUNTS, SHIPPED_MAX_ACCEL_COUNTS },
+        { "2 mm triangle at 150 mm/s^2", 0, counts_from_mm(2), counts_from_mm(40),
+          SHIPPED_MAX_VEL_COUNTS, counts_from_mm(150) },
+    };
+
+    for (unsigned i = 0U; i < (sizeof(cases) / sizeof(cases[0])); i++)
+    {
+        const pos_dev_S got = measure_position_move(
+            cases[i].start, cases[i].target, cases[i].feed, cases[i].maxVel, cases[i].maxAccel);
+        const double bound = one_micron_bound_at(cases[i].start);
+        char msg[192];
+        printf("  %-36s vs setpoint %.2f counts (%.3f um)  vs trapezoid %.2f counts (%.3f um)\n",
+               cases[i].what,
+               got.vsSetpoint, got.vsSetpoint / COUNTS_PER_MM * 1000.0,
+               got.vsProfile, got.vsProfile / COUNTS_PER_MM * 1000.0);
+        (void)snprintf(msg, sizeof(msg),
+                       "%s wandered %.2f counts (%.3f um) off the commanded profile "
+                       "(bound %.2f counts)",
+                       cases[i].what, got.vsSetpoint, got.vsSetpoint / COUNTS_PER_MM * 1000.0,
+                       bound);
+        TEST_ASSERT_TRUE_MESSAGE(got.vsSetpoint <= bound, msg);
+        (void)snprintf(msg, sizeof(msg),
+                       "%s sat %.2f counts (%.3f um) off the trapezoid of the request "
+                       "during accel and cruise (bound %.2f counts)",
+                       cases[i].what, got.vsProfile, got.vsProfile / COUNTS_PER_MM * 1000.0,
+                       bound);
+        TEST_ASSERT_TRUE_MESSAGE(got.vsProfile <= bound, msg);
+    }
+}
+
+void test_waveforms_track_the_requested_cycle_to_one_micron_across_the_envelope(void)
+{
+    VIBES_TEST("servo.waveform-one-micron-across-envelope",
+               "src/DEV/dev_servo.c#dev_servo_run",
+               "cyclic waveforms of both traverse shapes, with and without holds and skew, at many amplitudes, frequencies and machine accelerations, including far along the gantry");
+    VIBES_EXPECT_WHY("within-one-micron",
+                     "the encoder stays within 0.001 mm of the requested cycle for every tick of every cycle",
+                     "a tensile result is only as good as the trajectory the specimen actually saw, so the claim that has to hold is about measured motion against the request");
+
+    const struct
+    {
+        const char *what;
+        int32_t centre;
+        int32_t amp;
+        uint32_t freqMicroHz;
+        uint32_t cycles;
+        dev_servo_wave_E shape;
+        uint32_t dwellHighUs;
+        uint32_t dwellLowUs;
+        uint16_t skew;
+        int32_t maxVel;
+        int32_t maxAccel;
+    } cases[] = {
+        { "sine 1.22 mm 1 Hz", 0, 10000, 1000000U, 2U, DEV_SERVO_WAVE_SINE,
+          0U, 0U, DEV_SERVO_SKEW_SYMMETRIC, SHIPPED_MAX_VEL_COUNTS, SHIPPED_MAX_ACCEL_COUNTS },
+        { "sine 0.25 mm 2 Hz", 0, counts_from_mm(0.25), 2000000U, 2U, DEV_SERVO_WAVE_SINE,
+          0U, 0U, DEV_SERVO_SKEW_SYMMETRIC, SHIPPED_MAX_VEL_COUNTS, SHIPPED_MAX_ACCEL_COUNTS },
+        { "sine 5 mm 0.5 Hz", 0, counts_from_mm(5), 500000U, 2U, DEV_SERVO_WAVE_SINE,
+          0U, 0U, DEV_SERVO_SKEW_SYMMETRIC, SHIPPED_MAX_VEL_COUNTS, SHIPPED_MAX_ACCEL_COUNTS },
+        { "sine 2.5 mm 1.5 Hz", 0, counts_from_mm(2.5), 1500000U, 2U, DEV_SERVO_WAVE_SINE,
+          0U, 0U, DEV_SERVO_SKEW_SYMMETRIC, SHIPPED_MAX_VEL_COUNTS, SHIPPED_MAX_ACCEL_COUNTS },
+        { "triangle 1.22 mm 1 Hz", 0, 10000, 1000000U, 2U, DEV_SERVO_WAVE_TRIANGLE,
+          0U, 0U, DEV_SERVO_SKEW_SYMMETRIC, SHIPPED_MAX_VEL_COUNTS, SHIPPED_MAX_ACCEL_COUNTS },
+        { "triangle 5 mm 0.5 Hz", 0, counts_from_mm(5), 500000U, 2U, DEV_SERVO_WAVE_TRIANGLE,
+          0U, 0U, DEV_SERVO_SKEW_SYMMETRIC, SHIPPED_MAX_VEL_COUNTS, SHIPPED_MAX_ACCEL_COUNTS },
+        { "sine hold at peak tension", 0, 10000, 500000U, 2U, DEV_SERVO_WAVE_SINE,
+          400000U, 0U, DEV_SERVO_SKEW_SYMMETRIC, SHIPPED_MAX_VEL_COUNTS, SHIPPED_MAX_ACCEL_COUNTS },
+        { "sine 80/20 skew", 0, 10000, 500000U, 2U, DEV_SERVO_WAVE_SINE,
+          0U, 0U, 800U, SHIPPED_MAX_VEL_COUNTS, SHIPPED_MAX_ACCEL_COUNTS },
+        { "sine holds and skew together", 0, 8000, 500000U, 2U, DEV_SERVO_WAVE_SINE,
+          300000U, 100000U, 700U, SHIPPED_MAX_VEL_COUNTS, SHIPPED_MAX_ACCEL_COUNTS },
+        { "triangle hold and skew", 0, counts_from_mm(1), 500000U, 2U, DEV_SERVO_WAVE_TRIANGLE,
+          200000U, 100000U, 700U, SHIPPED_MAX_VEL_COUNTS, SHIPPED_MAX_ACCEL_COUNTS },
+        { "sine at 500 mm", counts_from_mm(500), 10000, 1000000U, 2U, DEV_SERVO_WAVE_SINE,
+          0U, 0U, DEV_SERVO_SKEW_SYMMETRIC, SHIPPED_MAX_VEL_COUNTS, SHIPPED_MAX_ACCEL_COUNTS },
+        { "sine at 2000 mm", counts_from_mm(2000), 10000, 1000000U, 2U, DEV_SERVO_WAVE_SINE,
+          0U, 0U, DEV_SERVO_SKEW_SYMMETRIC, SHIPPED_MAX_VEL_COUNTS, SHIPPED_MAX_ACCEL_COUNTS },
+        { "sine at 300 mm/s^2", 0, counts_from_mm(2.5), 1000000U, 2U, DEV_SERVO_WAVE_SINE,
+          0U, 0U, DEV_SERVO_SKEW_SYMMETRIC, SHIPPED_MAX_VEL_COUNTS, counts_from_mm(300) },
+        { "sine at 150 mm/s^2", 0, counts_from_mm(1), 1000000U, 2U, DEV_SERVO_WAVE_SINE,
+          0U, 0U, DEV_SERVO_SKEW_SYMMETRIC, SHIPPED_MAX_VEL_COUNTS, counts_from_mm(150) },
+        { "triangle at 300 mm/s^2", 0, counts_from_mm(2), 500000U, 2U, DEV_SERVO_WAVE_TRIANGLE,
+          0U, 0U, DEV_SERVO_SKEW_SYMMETRIC, SHIPPED_MAX_VEL_COUNTS, counts_from_mm(300) },
+    };
+
+    for (unsigned i = 0U; i < (sizeof(cases) / sizeof(cases[0])); i++)
+    {
+        servo_init_envelope(cases[i].maxVel, cases[i].maxAccel);
+        dev_servo_waveform_S wf = *WF(cases[i].centre, cases[i].amp, cases[i].freqMicroHz,
+                                      cases[i].cycles, cases[i].shape);
+        wf.dwellHighUs = cases[i].dwellHighUs;
+        wf.dwellLowUs = cases[i].dwellLowUs;
+        wf.skewPerMille = cases[i].skew;
+
+        const double worst = worst_cycle_on_current_machine(&wf);
+        char msg[192];
+        (void)snprintf(msg, sizeof(msg),
+                       "%s deviated %.2f counts (%.3f um)",
+                       cases[i].what, worst, worst / COUNTS_PER_MM * 1000.0);
+        printf("  %-36s worst %.2f counts (%.3f um)\n", cases[i].what, worst,
+               worst / COUNTS_PER_MM * 1000.0);
+        TEST_ASSERT_TRUE_MESSAGE(worst <= ONE_MICRON_COUNTS, msg);
+    }
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -1538,5 +1876,7 @@ int main(void)
     RUN_TEST(test_dwell_and_skew_still_track_to_one_micron);
     RUN_TEST(test_skew_splits_the_traverse_time_as_asked);
     RUN_TEST(test_a_cycle_whose_holds_leave_no_time_to_move_is_refused);
+    RUN_TEST(test_position_moves_track_the_commanded_trapezoid_to_one_micron);
+    RUN_TEST(test_waveforms_track_the_requested_cycle_to_one_micron_across_the_envelope);
     return UNITY_END();
 }
