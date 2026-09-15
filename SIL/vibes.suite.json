@@ -2,6 +2,6 @@
   "v": 1,
   "name": "sil",
   "lang": "rust",
-  "cmd": "cargo test -p models --test behaviour -- --nocapture",
+  "cmd": "make protocol firmware && cargo test -p models -p mad-emulator -- --nocapture",
   "results": "cargo-stdout"
 }

@@ -18,6 +18,8 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use vibes_behaviour::{behaviour, expect, Test};
+
 const SYNC: u8 = 0x55;
 const TYPE_READ: u8 = 0x00;
 const TYPE_DATA: u8 = 0x02;
@@ -176,6 +178,17 @@ fn find_firmware_version_data(buf: &[u8]) -> bool {
 
 #[test]
 fn firmware_answers_firmware_version_on_the_host_pty() {
+    behaviour!(Test {
+        id: "sil.firmware-answers-on-host-pty",
+        covers: Some("SIL/MaDSim/src/wiring.rs#host_serial_channel"),
+        given: "the emulator is up and a firmware-version read is sent on the host PTY",
+    });
+    expect!(
+        "firmware-version-data",
+        "the firmware answers with a firmware-version data frame",
+        "a linked firmware that never speaks is indistinguishable from a dead machine on the real serial port"
+    );
+
     let mut emu = spawn_emulator();
     wait_for_pty(&mut emu, Duration::from_secs(30));
 
