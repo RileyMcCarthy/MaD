@@ -257,7 +257,10 @@ recorded its expectations, or the report says they were deleted.
 
 A runnable suite is declared by a committed `vibes.suite.json` next to it
 (discovered via `git ls-files` — an uncommitted suite file is invisible, on
-purpose). After adding or changing behaviours:
+purpose). Suite commands mirror what CI already gates for that area: the SIL
+suite runs `models` and `mad-emulator` (after `make protocol firmware`), not a
+single historical `--test` binary, so a behaviour declared in MaDSim is collected
+the same way one in `models` is. After adding or changing behaviours:
 
 ```bash
 node Vibes/bin/vibes.mjs collect --write   # regenerate behaviours.jsonl
