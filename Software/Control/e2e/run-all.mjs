@@ -171,8 +171,18 @@ function motionStartTimeUs(timesUs, positionsUm, minDeltaUm = 500) {
 function resampledPathMm(timeUs, posUm, { dtUs = 50_000, minDeltaUm = 500 } = {}) {
   if (!timeUs.length || timeUs.length !== posUm.length) return 0;
   const tStart = motionStartTimeUs(timeUs, posUm, minDeltaUm) ?? timeUs[0];
+  // Trim the teardown tail by DISPLACEMENT from where the gantry finally came to
+  // rest, not by how far it moved between two neighbouring samples. The old
+  // consecutive-sample test (< 50 µm) meant something different at every sample
+  // density: at the ~600 Hz a healthy emulator records it trims correctly, but at
+  // the ~40 Hz a contended runner records, a parked gantry drifts more than 50 µm
+  // between neighbours, nothing is trimmed, and the integral below accumulates
+  // the whole idle tail as path — 42 mm of commanded travel reported as 62.8 mm.
+  // Distance from the resting position is the same quantity at any density.
+  const restUm = posUm[posUm.length - 1];
   let lastMoving = timeUs.length - 1;
-  while (lastMoving > 0 && Math.abs(posUm[lastMoving] - posUm[lastMoving - 1]) < 50) lastMoving -= 1;
+  while (lastMoving > 0 && Math.abs(posUm[lastMoving] - restUm) < 200) lastMoving -= 1;
+  if (lastMoving < 1) lastMoving = timeUs.length - 1;
   const tEnd = timeUs[lastMoving];
   let path = 0;
   let lastP = interpolateAtUs(timeUs, posUm, tStart);
@@ -206,49 +216,76 @@ const SIL_ENCODER_STEPS_PER_MM = 4 * 2048;
 // passing when drift happened to leave it already near the base.
 //
 // The wave's extent is known rather than guessed: it lasts cycles/frequency
-// seconds and ends where the gantry stops moving (whole cycles end on the
-// centre, so the closing settle is negligible). Take that window.
+// seconds. Which stretch of the record holds it is found by excursion, not by
+// hunting for where the gantry stopped — see waveformWindow.
 function waveformWindow(posMm, tS, { cycles, frequencyHz }) {
-  // 0.05 mm, not 0.005: a parked gantry still jitters more than 5 µm between
-  // sparse CI samples (a proto timeout drops the 100 Hz stream to a few Hz),
-  // and the walk-back then treats the teardown tail as "moving". Wave motion
-  // is still tens of times this.
-  const parkedEps = 0.05;
+  // Pick the waveDurS-wide window containing the most OSCILLATION — the largest
+  // total variation (summed |Δposition|) on a fixed time grid.
+  //
+  // Two earlier rules both failed, in instructive ways:
+  //
+  //  - Walking back from the last sample while neighbours moved less than a
+  //    fixed 0.05 mm. That is a distance between neighbours, so it means
+  //    something different at every sample density. At the ~600 Hz a healthy
+  //    emulator records it reads "parked" correctly; at the ~40 Hz a contended
+  //    CI runner records, a parked gantry drifts more than 0.05 mm between
+  //    neighbours, the walk-back never leaves the teardown tail, and the window
+  //    slides off the wave onto the tail and the approach ramp. That reported
+  //    "peak-to-peak (got 20.16)" for a gantry that had tracked its commanded
+  //    10 mm correctly — a measurement of the ramp, labelled as the wave.
+  //
+  //  - Maximum peak-to-peak. Density-independent, but the wrong quantity: the
+  //    approach ramp travels `distance` in one sweep, and for WAVE-sine-fast
+  //    that 5 mm ramp plus one 3 mm crest out-spans the wave's own 6 mm. The
+  //    window straddled the ramp and the sinusoid fit fell to R²=0.73.
+  //
+  // Total variation separates them by construction rather than by margin: a
+  // wave covers 2A twice per cycle (4·A·cycles = 36 mm for WAVE-sine-fast),
+  // a monotonic ramp covers `distance` exactly once (5 mm), and a parked tail
+  // covers almost nothing. Resampling onto a fixed grid first is what keeps it
+  // density-independent — summing raw |Δ| between samples would count sensor
+  // noise once per sample, which is precisely the density coupling being fixed.
   const waveDurS = cycles / frequencyHz;
-  const wholeExc = Math.max(...posMm) - Math.min(...posMm);
-  const exc = (a, b) => {
-    let lo = Infinity;
-    let hi = -Infinity;
-    for (let i = a; i <= b; i++) {
-      if (posMm[i] < lo) lo = posMm[i];
-      if (posMm[i] > hi) hi = posMm[i];
-    }
-    return hi - lo;
-  };
-  const firstAt = (lastMoving) => {
-    const startT = tS[lastMoving] - waveDurS;
-    let first = 0;
-    while (first < lastMoving && tS[first] < startT) first += 1;
-    return first;
-  };
+  const n = posMm.length;
+  const t0 = tS[0];
+  const tEnd = tS[n - 1];
 
-  let lastMoving = posMm.length - 1;
-  while (lastMoving > 0 && Math.abs(posMm[lastMoving] - posMm[lastMoving - 1]) < parkedEps) {
-    lastMoving -= 1;
+  // Fixed grid, ~100 points per commanded cycle — fine enough to follow the
+  // wave, coarse enough not to chase noise.
+  const dt = waveDurS / (100 * cycles);
+  const grid = [];
+  const gval = [];
+  let j = 0;
+  for (let t = t0; t <= tEnd; t += dt) {
+    while (j + 1 < n && tS[j + 1] < t) j += 1;
+    const k = Math.min(j, n - 2);
+    const span = tS[k + 1] - tS[k];
+    const frac = span > 0 ? (t - tS[k]) / span : 0;
+    grid.push(t);
+    gval.push(posMm[k] + (posMm[k + 1] - posMm[k]) * frac);
   }
-  // Sparse-sample tails can fail the consecutive-eps test and leave lastMoving
-  // on the park (WAVE-tri: 0.75 mm p2p at the centre for 2 s). Keep pulling
-  // back until the window holds a real fraction of the record's excursion.
-  const minExc = Math.max(0.5, 0.25 * wholeExc);
-  while (lastMoving > 1) {
-    if (exc(firstAt(lastMoving), lastMoving) >= minExc) break;
-    lastMoving -= 1;
-    while (lastMoving > 0 && Math.abs(posMm[lastMoving] - posMm[lastMoving - 1]) < parkedEps) {
-      lastMoving -= 1;
-    }
+  // Prefix sums of |Δ| so each candidate window costs O(1).
+  const tv = [0];
+  for (let i = 1; i < gval.length; i++) tv.push(tv[i - 1] + Math.abs(gval[i] - gval[i - 1]));
+
+  const steps = Math.round(waveDurS / dt);
+  let bestStart = 0;
+  let bestTv = -1;
+  for (let i = 0; i + steps < tv.length; i++) {
+    const v = tv[i + steps] - tv[i];
+    if (v > bestTv) { bestTv = v; bestStart = i; }
   }
-  const first = firstAt(lastMoving);
-  return { p: posMm.slice(first, lastMoving + 1), t: tS.slice(first, lastMoving + 1), waveDurS };
+  // Record shorter than the wave itself: hand back everything and let the
+  // caller's duration assertion report it.
+  if (bestTv < 0) return { p: posMm, t: tS, waveDurS };
+
+  const startT = grid[bestStart];
+  const endT = grid[Math.min(bestStart + steps, grid.length - 1)];
+  let a = 0;
+  while (a < n - 1 && tS[a] < startT) a += 1;
+  let b = a;
+  while (b + 1 < n && tS[b + 1] <= endT) b += 1;
+  return { p: posMm.slice(a, b + 1), t: tS.slice(a, b + 1), waveDurS };
 }
 
 function assertSineMatch(series, { amplitudeMm, frequencyHz, cycles }, label) {
@@ -314,11 +351,15 @@ function assertSineMatch(series, { amplitudeMm, frequencyHz, cycles }, label) {
     `${label}: fitted amplitude ≈ ${amplitudeMm}mm (got ${fitAmp.toFixed(2)})`,
   );
 
-  // Midline crossings over the whole series ≈ 2 per cycle (deadband = 0.3A).
-  const fullMean = posMm.reduce((s, v) => s + v, 0) / posMm.length;
+  // Midline crossings over the WAVE WINDOW ≈ 2 per cycle (deadband = 0.3A).
+  // Counting over the whole record made this density-dependent too: a long
+  // parked tail pulls the mean toward the park value, so the wave's own
+  // excursions stop straddling it and the crossings vanish — "≥ 3 midline
+  // crossings (got 1)" on a correctly tracked triangle.
+  const fullMean = p.reduce((s, v) => s + v, 0) / p.length;
   let crossings = 0;
   let dir = 0;
-  for (const v of posMm) {
+  for (const v of p) {
     if (v > fullMean + 0.3 * amplitudeMm) { if (dir === -1) crossings++; dir = 1; }
     else if (v < fullMean - 0.3 * amplitudeMm) { if (dir === 1) crossings++; dir = -1; }
   }
