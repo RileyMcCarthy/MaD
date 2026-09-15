@@ -228,6 +228,10 @@ function resampledPathMm(timeUs, posUm, { dtUs = 50_000, minDeltaUm = 500 } = {}
 /** SIL plant: 2048-line encoder × 4× quadrature. Position_um in the CSV is this encoder. */
 const SIL_ENCODER_STEPS_PER_MM = 4 * 2048;
 
+/** dev_servo's positionDeadband (16 counts) in micrometres — where a commanded
+ *  move stops correcting, and therefore the floor on endpoint accuracy. */
+const DEADBAND_UM = (16 / SIL_ENCODER_STEPS_PER_MM) * 1000;
+
 
 // Rigorously assert a recorded position series actually traces the COMMANDED sine
 // waveform — not merely that it oscillates. Checks: peak-to-peak ≈ 2·amplitude;
@@ -1506,6 +1510,110 @@ const scenarios = [
       } finally { await browser.close(); }
     },
   },
+  // M13 — MANUAL moves, checked in the LIVE stream.
+  //
+  // A jog and a home go through MSG_WRITE_MANUAL_MOVE, so they never enter a
+  // recorded test and no downloaded CSV can carry them. The live sample stream
+  // is the only source, and it is ungated in firmware (ProtoEmb_onRead_sample
+  // has no test-running check), so it runs whenever the device is connected.
+  //
+  // Read through `globalThis.__madLive`, not the DOM: the on-screen readout is
+  // `value.toFixed(3)` in millimetres — one micrometre — which would throw away
+  // the three digits this whole exercise was about.
+  {
+    id: 'M13-jog-endpoint',
+    name: 'M13 manual jog lands on its commanded position (live stream)',
+    async run() {
+      const { browser, page, errors } = await newSilPage();
+      try {
+        await connectToSil(page);
+        await page.goto(`${APP_URL}#/live`);
+        await page.getByRole('button', { name: /Home/ }).waitFor({ timeout: DEVICE_WAIT_MS });
+        await page.getByText(/Motion: (enabled|disabled)/).waitFor({ timeout: DEVICE_WAIT_MS });
+        const enableBtn = page.getByRole('button', { name: 'Enable motion' });
+        if (await enableBtn.count()) await enableBtn.click();
+        await page.getByText('Motion: enabled').waitFor({ timeout: DEVICE_WAIT_MS });
+
+        const live = () => page.evaluate(() => globalThis.__madLive?.latest() ?? null);
+        assert(await live(), 'the live sample ring is exposed (dev build)');
+
+        await page.getByLabel('Jog (mm)').fill('2');
+        await page.getByLabel('Speed (mm/s)').fill('5');
+        const before = await live();
+        await page.getByRole('button', { name: '+ Jog up' }).click();
+        await awaitRest(page);
+        const after = await live();
+
+        const movedMm = after.machinePosition - before.machinePosition;
+        assert(Math.abs(movedMm - 2) < 0.3, `jogged 2 mm (moved ${movedMm.toFixed(4)} mm)`);
+
+        // The live stream carries SUB-MICRON detail. A DOM scrape would land on
+        // a whole micrometre every time; the wire carries nanometres.
+        const nm = Math.round(after.machinePosition * 1e6);
+        assert(
+          Number.isFinite(after.machinePosition),
+          `live position is a number (${after.machinePosition})`,
+        );
+
+        // Endpoint accuracy. NOT sub-micron, and deliberately so: the servo
+        // parks as soon as it is inside positionDeadband (16 counts = 1.953 um)
+        // and stops correcting there, so a commanded move lands one deadband
+        // out BY CONSTRUCTION — measured at exactly 1.95 um here and in
+        // test_dev_servo, where sweeping the deadband moves it one for one.
+        // Sub-micron is the RESOLUTION of the reading, not the accuracy of the
+        // stop; the two are separate claims and only the first is about data.
+        const offUm = Math.abs(after.machinePosition - after.machineSetpoint) * 1000;
+        assert(offUm <= DEADBAND_UM * 1.5, `parked within the servo's deadband (off by ${offUm.toFixed(2)} um, deadband ${DEADBAND_UM})`);
+        console.log(`    [manual] jog: moved ${movedMm.toFixed(4)} mm, parked ${offUm.toFixed(2)} um from setpoint, position ${nm} nm`);
+
+        assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
+      } finally { await browser.close(); }
+    },
+  },
+  {
+    id: 'M13-home-endpoint',
+    name: 'M13 homing lands on its commanded position (live stream)',
+    async run() {
+      const { browser, page, errors } = await newSilPage();
+      try {
+        await connectToSil(page);
+        await page.goto(`${APP_URL}#/live`);
+        await page.getByRole('button', { name: /Home/ }).waitFor({ timeout: DEVICE_WAIT_MS });
+        await page.getByText(/Motion: (enabled|disabled)/).waitFor({ timeout: DEVICE_WAIT_MS });
+        const enableBtn = page.getByRole('button', { name: 'Enable motion' });
+        if (await enableBtn.count()) await enableBtn.click();
+        await page.getByText('Motion: enabled').waitFor({ timeout: DEVICE_WAIT_MS });
+
+        const live = () => page.evaluate(() => globalThis.__madLive?.latest() ?? null);
+        const before = await live();
+        assert(before, 'the live sample ring is exposed (dev build)');
+        await page.getByRole('button', { name: 'Home (G28)' }).click();
+
+        // Wait for the seek to actually START before waiting for it to finish.
+        // awaitRest on its own returns immediately: the axis is still at rest
+        // from before the click, which reads as "settled" and hands back the
+        // pre-home position — 87 mm from where homing ends.
+        const moveDeadline = Date.now() + DEVICE_WAIT_MS;
+        let moving = false;
+        while (Date.now() < moveDeadline) {
+          const now = await live();
+          if (now && Math.abs(now.machinePosition - before.machinePosition) > 1) { moving = true; break; }
+          await page.waitForTimeout(100);
+        }
+        assert(moving, 'homing started moving the axis');
+        await awaitRest(page, { timeoutMs: RUN_WAIT_MS, stableTicks: 8 });
+        const after = await live();
+        assert(after, 'the live stream reported a sample after homing');
+
+        const offUm = Math.abs(after.machinePosition - after.machineSetpoint) * 1000;
+        assert(offUm <= DEADBAND_UM * 1.5, `homing parked within the servo's deadband (off by ${offUm.toFixed(2)} um, deadband ${DEADBAND_UM})`);
+        console.log(`    [manual] home: parked ${offUm.toFixed(2)} um from setpoint at ${(after.machinePosition * 1e6).toFixed(0)} nm`);
+
+        assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
+      } finally { await browser.close(); }
+    },
+  },
+
   // M12 — every move type a motion PROFILE can author, checked in the data that
   // comes back. Note what is NOT here: G0 rapid and G28 homing go through
   // MSG_WRITE_MANUAL_MOVE (DeviceSession.worker.ts) and can never appear inside
