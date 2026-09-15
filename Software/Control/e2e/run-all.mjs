@@ -1658,10 +1658,21 @@ const scenarios = [
           await page.waitForTimeout(100);
         }
         assert(moving, 'homing started moving the axis');
-        await awaitRest(page, { timeoutMs: RUN_WAIT_MS, stableTicks: 8 });
-        const after = await live();
+        // Home's setpoint jumps to machine 0 immediately. Waiting for "still"
+        // returns mid-seek on an unpaced runner — the browser polls slower
+        // than the board, so a 10 mm hop looks like a finished move. Wait
+        // until the gantry is on that setpoint.
+        const settleDeadline = Date.now() + RUN_WAIT_MS;
+        let after = null;
+        while (Date.now() < settleDeadline) {
+          after = await live();
+          if (after && Number.isFinite(after.machinePosition) && Number.isFinite(after.machineSetpoint)
+              && Math.abs(after.machinePosition - after.machineSetpoint) < 0.15) {
+            break;
+          }
+          await page.waitForTimeout(100);
+        }
         assert(after, 'the live stream reported a sample after homing');
-
         const offUm = Math.abs(after.machinePosition - after.machineSetpoint) * 1000;
         assert(offUm <= 150, `homing parked on its setpoint (off by ${offUm.toFixed(2)} um)`);
         console.log(`    [manual] home: parked ${offUm.toFixed(2)} um from setpoint at ${(after.machinePosition * 1e6).toFixed(0)} nm`);
