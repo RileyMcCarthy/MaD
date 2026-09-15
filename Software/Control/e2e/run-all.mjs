@@ -40,8 +40,13 @@ import {
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import {
+  CONTRACT_UM,
+  assertFollowsLinearUm,
+  assertFollowsSineWindowUm,
+} from './motion-accuracy.mjs';
 
-/** Sprint C parameterized matrices (M8–M11). */
+/** Sprint C parameterized matrices (M8–M12). */
 const MATRIX = JSON.parse(
   readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'matrix-catalog.json'), 'utf8'),
 );
@@ -155,10 +160,35 @@ function motionStartTimeUs(timesUs, positionsUm, minDeltaUm = 80) {
 /** SIL plant: 2048-line encoder × 4× quadrature. Position_um in the CSV is this encoder. */
 const SIL_ENCODER_STEPS_PER_MM = 4 * 2048;
 
-/** dev_servo's positionDeadband (16 counts) in micrometres — where a commanded
- *  move stops correcting, and therefore the floor on endpoint accuracy. */
-const DEADBAND_UM = (16 / SIL_ENCODER_STEPS_PER_MM) * 1000;
+/** dev_servo's positionDeadband (8 counts) in micrometres — a commanded
+ *  position is reached inside 1 um. */
+const DEADBAND_UM = (8 / SIL_ENCODER_STEPS_PER_MM) * 1000;
 
+function assertFollowsSineUm(series, { amplitudeMm, frequencyHz, cycles, centreMm }, label) {
+  // Start once the commanded profile has LEFT the peak. The approach parks on
+  // the peak for hundreds of milliseconds, and a cosine fitted through that
+  // plateau lands 180° out. End a tenth of a cycle before the return move.
+  const spMm = series.setpoint.map((p) => p / 1000);
+  const tS = series.time.map((t) => t / 1e6);
+  const peak = Math.max(...spMm.filter(Number.isFinite));
+  const trough = Math.min(...spMm.filter(Number.isFinite));
+  const leftPeak = peak - 0.2 * (peak - trough);
+  let i = 0;
+  while (i < spMm.length && spMm[i] < peak - 0.05) i += 1;
+  while (i < spMm.length && spMm[i] > leftPeak) i += 1;
+  const tMinS = tS[Math.min(i, tS.length - 1)];
+  const tMaxS = tMinS + cycles / frequencyHz - 0.5 / frequencyHz;
+  const peakVelMmS = 2 * Math.PI * frequencyHz * amplitudeMm;
+  assertFollowsSineWindowUm(series, {
+    amplitudeMm,
+    frequencyHz,
+    centreMm,
+    tMinS,
+    tMaxS,
+    label,
+    followBoundUm: Math.max(CONTRACT_UM, 3 * peakVelMmS),
+  });
+}
 
 // Rigorously assert a recorded position series actually traces the COMMANDED sine
 // waveform — not merely that it oscillates. Checks: peak-to-peak ≈ 2·amplitude;
@@ -262,18 +292,15 @@ function waveformWindow(posMm, tS, { cycles, frequencyHz }) {
  *    remaining distance rather than tracking error.
  *
  * 3. SETTLED ACCURACY. Once the machine is at rest on a commanded position,
- *    the two agree to about a micron.
+ *    the two agree to 1 um (the servo parks inside an 8-count deadband).
  *
- * What is NOT asserted, and why: sub-micron accuracy WHILE MOVING. The SIL
- * plant applies a 15% viscous load (SERVO_LOAD_LOSS in MaDSim/src/wiring.rs)
- * and the servo's integral term is disabled, so the loop necessarily carries a
- * steady-state following error of load x v / Kp -- about 500 um at 31 mm/s,
- * measured, and predicted to within 15% by that formula. That is a property of
- * the PLANT and the CONTROLLER, not of the trajectory: the same firmware tracks
- * to 0.06 um against an ideal plant in test_dev_servo. Asserting sub-micron
- * here would be asserting that the simulated machine has no friction.
+ * Shape-follow while moving lives in assertFollowsLinearUm / assertFollowsSineUm:
+ * after a fitted delay the commanded profile matches the request to 1 um.
+ * Encoder-while-moving is not the same claim — the SIL plant is a first-order
+ * lag, so a sine's amplitude droops and accel corners leave a residual a delay
+ * cannot absorb. Linear cruise after that lag has settled is checked there.
  */
-function assertRecordedMotion(series, { label, expectMotion = true, settledTolUm = 12 }) {
+function assertRecordedMotion(series, { label, expectMotion = true, settledTolUm = CONTRACT_UM }) {
   assert(series && series.pos.length > 40, `${label}: enough samples (${series?.pos.length})`);
   const n = Math.min(series.pos.length, series.setpoint.length);
   assert(n > 40, `${label}: the setpoint column is populated (${n} rows)`);
@@ -1244,13 +1271,11 @@ const scenarios = [
           `live position is a number (${after.machinePosition})`,
         );
 
-        // Endpoint accuracy. NOT sub-micron, and deliberately so: the servo
-        // parks as soon as it is inside positionDeadband (16 counts = 1.953 um)
-        // and stops correcting there, so a commanded move lands one deadband
-        // out BY CONSTRUCTION — measured at exactly 1.95 um here and in
-        // test_dev_servo, where sweeping the deadband moves it one for one.
-        // Sub-micron is the RESOLUTION of the reading, not the accuracy of the
-        // stop; the two are separate claims and only the first is about data.
+        // Endpoint accuracy. The servo parks as soon as it is inside
+        // positionDeadband (8 counts = 0.977 um) and stops correcting there,
+        // so a commanded move lands one deadband out BY CONSTRUCTION.
+        // Sub-micron is the RESOLUTION of the reading; 1 um is the accuracy
+        // of the stop. The two are separate claims.
         const offUm = Math.abs(after.machinePosition - after.machineSetpoint) * 1000;
         assert(offUm <= DEADBAND_UM * 1.5, `parked within the servo's deadband (off by ${offUm.toFixed(2)} um, deadband ${DEADBAND_UM})`);
         console.log(`    [manual] jog: moved ${movedMm.toFixed(4)} mm, parked ${offUm.toFixed(2)} um from setpoint, position ${nm} nm`);
@@ -1309,19 +1334,58 @@ const scenarios = [
   // a recorded test, so no downloaded CSV can carry them. "Every move type"
   // genuinely splits into profile moves, which are recorded, and manual moves,
   // which are not.
+  //
+  // Linear cells come from the catalog: each one is delay-aligned to the
+  // trapezoid of the request and held to 1 um (arrival + profile follow).
+  ...MATRIX.M12_linear_um.map((cell) => ({
+    id: cell.id,
+    name: `M12 recorded motion — ${cell.label}`,
+    async run() {
+      const { browser, page, errors } = await newSilPage();
+      try {
+        await connectToSil(page);
+        await chooseDataFolder(page);
+        await awaitResponding(page);
+        await zeroLength(page);
+        if (cell.setupJogMm) {
+          await page.locator('label.field', { hasText: 'Jog (mm)' }).locator('input')
+            .fill(String(Math.abs(cell.setupJogMm)));
+          await page.locator('label.field', { hasText: 'Speed (mm/s)' }).locator('input').fill('20');
+          const setWas = parseFloat(
+            await page.locator('.readout', { hasText: 'Machine Setpoint' }).locator('.value').first().innerText(),
+          );
+          await page.getByRole('button', {
+            name: cell.setupJogMm > 0 ? '+ Jog up' : '− Jog down',
+          }).click();
+          await settleMotion(page, { setpointWas: Number.isFinite(setWas) ? setWas : null });
+        }
+        const maxDisp = cell.maxDisplacement
+          ?? Math.max(40, Math.abs(cell.distanceMm ?? cell.targetMm ?? 0) + Math.abs(cell.setupJogMm ?? 0) + 10);
+        const moves = cell.absolute
+          ? [{ moveType: 'linear', absoluteOrRelative: 'absolute',
+               moveParameters: { position: cell.targetMm, velocity: cell.velocityMmS, distance: 0, time: 0 } }]
+          : [{ moveType: 'linear', absoluteOrRelative: 'relative',
+               moveParameters: { position: 0, velocity: cell.velocityMmS, distance: cell.distanceMm, time: 0 } }];
+        await seedProfiles(page, {
+          sample: { serial: `Rec-${cell.id}`, maxForce: 500, maxVelocity: 60, maxDisplacement: maxDisp,
+                    sampleWidth: 4, sampleThickness: 1.5 },
+          motion: { name: cell.id, moves },
+        });
+        await selectSeeded(page);
+        await runAndDownload(page);
+        const s = await readDownloadedCsvSeries(page);
+        assertRecordedMotion(s, { label: cell.id });
+        assertFollowsLinearUm(s, {
+          velocityMmS: cell.velocityMmS,
+          distanceMm: cell.distanceMm,
+          targetMm: cell.absolute ? cell.targetMm : undefined,
+          label: cell.id,
+        });
+        assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
+      } finally { await browser.close(); }
+    },
+  })),
   ...[
-    {
-      id: 'M12-linear-absolute',
-      label: 'linear, absolute',
-      moves: [{ moveType: 'linear', absoluteOrRelative: 'absolute',
-                moveParameters: { position: 8, velocity: 4, distance: 0, time: 0 } }],
-    },
-    {
-      id: 'M12-linear-relative',
-      label: 'linear, relative',
-      moves: [{ moveType: 'linear', absoluteOrRelative: 'relative',
-                moveParameters: { position: 0, velocity: 3, distance: 6, time: 0 } }],
-    },
     {
       id: 'M12-dwell',
       label: 'linear then dwell then linear',
@@ -1395,9 +1459,12 @@ const scenarios = [
         await selectSeeded(page);
         await runAndDownload(page);
         const s = await readDownloadedCsvSeries(page);
-        assertRecordedMotion(s, { label: wf.id });
+        // Linear arrival is 1 um; a waveform's closing settle is a profiled
+        // return from the peak, and the record's tail is teardown timing.
+        assertRecordedMotion(s, { label: wf.id, settledTolUm: 5 });
         if (wf.shape === 'sine') {
           assertSineMatch(s, { amplitudeMm: wf.amplitude, frequencyHz: wf.frequency, cycles: wf.cycles, centreMm: wf.distance }, wf.id);
+          assertFollowsSineUm(s, { amplitudeMm: wf.amplitude, frequencyHz: wf.frequency, cycles: wf.cycles, centreMm: wf.distance }, wf.id);
         } else {
           assertWaveformExcursion(s, { amplitudeMm: wf.amplitude, cycles: wf.cycles }, wf.id);
         }
