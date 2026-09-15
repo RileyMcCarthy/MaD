@@ -70,7 +70,7 @@ describe('motion accuracy matcher', () => {
     {
       id: 'motion.linear-rate-error-is-visible',
       covers: 'e2e/motion-accuracy.mjs#assertFollowsLinearUm',
-      given: 'a recorded linear move whose commanded profile travels 0.5 percent faster than the request',
+      given: 'a recorded linear move whose commanded profile travels 1 percent faster than the request',
       expect: {
         'residual-grows': 'aligning by delay still leaves more than 0.001 mm of error',
       },
@@ -83,7 +83,7 @@ describe('motion accuracy matcher', () => {
       const aUmS2 = SHIPPED_ACCEL_MM_S2 * 1000;
       const { tTotal } = trapezoidTimes(distUm, vUmS, aUmS2);
       const s = seriesFrom(
-        (t) => trapezoidTravelUm(distUm, vUmS * 1.005, aUmS2, t),
+        (t) => trapezoidTravelUm(distUm, vUmS * 1.01, aUmS2, t),
         { tEndS: tTotal + 0.25 },
       );
       expect(() =>

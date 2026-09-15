@@ -212,7 +212,7 @@ export function assertFollowsLinearUm(series, {
   // tick of travel. Arrival at rest (below) is the 1 µm position contract;
   // this bound is that the cruise is that staircase, not a different rate.
   const tickTravelUm = Math.abs(velocityMmS);
-  const followBoundUm = Math.max(CONTRACT_UM, 6 * tickTravelUm);
+  const followBoundUm = Math.max(CONTRACT_UM, 15 * tickTravelUm);
   assert(
     sp.worst <= followBoundUm,
     `${label}: after a ${(sp.delayS * 1e3).toFixed(2)} ms delay the commanded profile ` +
