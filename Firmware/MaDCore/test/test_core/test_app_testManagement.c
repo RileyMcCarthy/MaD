@@ -10,6 +10,10 @@
  *   - a start request is NOT dropped if motionEnabled lags one cycle — the test
  *     waits and starts once motion is enabled, rather than self-cancelling
  *     (test_startNotDroppedWhenMotionLags).
+ *   - manual moves (jogs) pressed while motion is disabled are rejected at the
+ *     gate and any already-staged slots are discarded on the next CONTROL cycle
+ *     so re-enabling never replays them (test_manualMoveRejectedWhenMotionDisabled,
+ *     test_manualMoveDiscardedWhenMotionDisabled).
  *
  * The module's collaborators (app_motion / app_control / app_monitor /
  * app_notification / IO_SDCard) are replaced by controllable test doubles
@@ -272,6 +276,63 @@ void test_app_testManagement_manualMoveSlotsBounded(void)
     /* The run cycle drains the four staged moves into the motion queue. */
     app_testManagement_run();
     TEST_ASSERT_EQUAL_UINT32(4U, d_addMoveCount);
+}
+
+/* A jog while motion is disabled is rejected immediately (same gate as
+ * triggerTestStart). The host sees NACK; nothing is staged for later. */
+void test_app_testManagement_manualMoveRejectedWhenMotionDisabled(void)
+{
+    VIBES_TEST("test-run.jog-refused-while-motion-disabled",
+               "src/APP/app_testManagement.c#app_testManagement_addManualMove",
+               "a jog while the machine is idle but motion is disabled");
+    VIBES_EXPECT_WHY("jog-refused",
+                     "the jog is refused",
+                     "a jog pressed while motion is off must not sit waiting to fire when the operator re-enables motion");
+    tm_init();
+
+    const app_motion_move_t move = { .g = (uint8_t)G0_RAPID_MOVE, .x = 100, .f = 50, .p = 0 };
+
+    d_motionEnabled = false;
+    TEST_ASSERT_FALSE(app_testManagement_addManualMove(&move));
+
+    /* Re-enable and run: nothing was staged, so the motion queue stays empty. */
+    d_motionEnabled = true;
+    d_addMoveCount = 0U;
+    app_testManagement_run();
+    TEST_ASSERT_EQUAL_UINT32(0U, d_addMoveCount);
+}
+
+/* A jog staged while motion was enabled, then motion disabled before the next
+ * CONTROL cycle, must be discarded — not drained into app_motion — so enabling
+ * later never replays it (issue #2). */
+void test_app_testManagement_manualMoveDiscardedWhenMotionDisabled(void)
+{
+    VIBES_TEST("test-run.staged-jog-dropped-when-motion-disabled",
+               "src/APP/app_testManagement.c#app_testManagement_private_processRequests",
+               "a jog accepted while motion was on, then motion disabled before the next control cycle, then motion re-enabled");
+    VIBES_EXPECT_WHY("jog-not-queued",
+                     "the staged jog is never queued for motion",
+                     "changing motion status must never cause travel from a leftover jog");
+    VIBES_EXPECT("still-empty-after-enable",
+                 "re-enabling motion still leaves the motion queue empty");
+    tm_init();
+
+    const app_motion_move_t move = { .g = (uint8_t)G0_RAPID_MOVE, .x = 100, .f = 50, .p = 0 };
+
+    /* Stage while enabled (simulates COMMUNICATION cog accepting the jog). */
+    d_motionEnabled = true;
+    TEST_ASSERT_TRUE(app_testManagement_addManualMove(&move));
+
+    /* Motion drops before processRequests drains the slot. */
+    d_motionEnabled = false;
+    d_addMoveCount = 0U;
+    app_testManagement_run();
+    TEST_ASSERT_EQUAL_UINT32(0U, d_addMoveCount);
+
+    /* Re-enable: the discarded slot must not be replayed. */
+    d_motionEnabled = true;
+    app_testManagement_run();
+    TEST_ASSERT_EQUAL_UINT32(0U, d_addMoveCount);
 }
 
 /* ====================================================================== *
