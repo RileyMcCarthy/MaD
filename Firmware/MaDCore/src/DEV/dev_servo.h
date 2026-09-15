@@ -122,7 +122,10 @@ typedef struct
     uint32_t loopPeriodUs;     /* nominal control-tick period (must match the cog rate) */
     int32_t maxVelocity;       /* counts/s — hard safety clamp on commanded velocity */
     int32_t maxAccel;          /* counts/s^2 — trajectory accel/decel limit */
-    int32_t positionDeadband;  /* counts — within this of target => settled, park */
+    int32_t positionDeadband;  /* counts — within this of target => settled, park.
+                                * 8 counts = 0.977 um on the shipped 8192 counts/mm
+                                * machine, so a commanded position is reached
+                                * inside 1 um. */
     /* How close the approach move must get before the CYCLES may begin.
      *
      * Deliberately tighter than positionDeadband, because the two answer

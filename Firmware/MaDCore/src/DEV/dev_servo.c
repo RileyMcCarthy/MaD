@@ -30,7 +30,8 @@ static const dev_servo_channelConfig_S dev_servo_channelConfigDefault[DEV_SERVO_
         1000U,                       /* loopPeriodUs     — 1 kHz control tick (match the cog rate) */
         24576,                       /* maxVelocity      — gentle fallback (3 mm/s); machine profile normally overrides (20 mm/s => 163840) */
         245760,                      /* maxAccel         — gentle fallback (30 mm/s^2); machine profile normally overrides (50 mm/s^2 => 409600) */
-        16,                          /* positionDeadband — ~2 um */
+        8,                           /* positionDeadband — 0.977 um; a commanded
+                                      *   position is reached inside the 1 um contract */
         2,                           /* waveformStartTolerance — ~0.25 um, so the first
                                       *   cycle starts inside the 1 um contract */
         8,                           /* kpNum            — cmd += 8*err; ~just under maxAccel/maxVel~=10 edge */
@@ -93,9 +94,18 @@ typedef struct
     dev_servo_request_S req;
     dev_servo_output_S out;
 
-    /* Trajectory generator state (the shaped setpoint the feedback loop tracks). */
-    float setpointPos; /* counts */
-    float setpointVel; /* counts/s — also the velocity feedforward term */
+    /* Trajectory generator state (the shaped setpoint the feedback loop tracks).
+     *
+     * Position is stored as integer counts plus a nanocount remainder so a
+     * long cruise cannot lose a fraction of a count to float. `setpointPos`
+     * is the published view of that pair (error, telemetry); the profiler
+     * advances the integer state, never `setpointPos += v*dt`. FlexC cannot
+     * hold a named 64-bit local, so the 32x32->64 divide goes through
+     * lib_utility_muldivmod64_unsigned. */
+    int32_t setpointCounts;
+    uint32_t setpointNano; /* 0 .. 999999999; 1e9 nanocounts = 1 count */
+    float setpointPos;     /* counts — published view of counts + nano */
+    float setpointVel;     /* counts/s — also the velocity feedforward term */
 
     float integral;     /* ∫err dt (counts·s) */
     float commandedVel; /* counts/s actually applied (for stall + telemetry) */
@@ -178,11 +188,103 @@ static void dev_servo_private_applyVelocity(dev_servo_channel_E ch, float vel)
     }
 }
 
+#define DEV_SERVO_NANOCOUNTS 1000000000U
+
+/* Publish the float view from the integer position. */
+static void dev_servo_private_publishSetpoint(dev_servo_channelData_S *d)
+{
+    d->setpointPos = (float)d->setpointCounts + ((float)d->setpointNano * 1.0e-9f);
+}
+
+/* Snap the trajectory to an integer count (park, resync, handover). */
+static void dev_servo_private_snapSetpoint(dev_servo_channelData_S *d, int32_t counts)
+{
+    d->setpointCounts = counts;
+    d->setpointNano = 0U;
+    d->setpointPos = (float)counts;
+}
+
+/* Load an evaluated (float) position into the integer accumulator.
+ * Used when the waveform writes a position instead of integrating one. */
+static void dev_servo_private_loadSetpoint(dev_servo_channelData_S *d, float pos)
+{
+    int32_t counts = (int32_t)pos; /* toward zero */
+    float frac = pos - (float)counts;
+    if (frac < 0.0f)
+    {
+        counts -= 1;
+        frac += 1.0f;
+    }
+    uint32_t nano = (uint32_t)((frac * 1.0e9f) + 0.5f);
+    if (nano >= DEV_SERVO_NANOCOUNTS)
+    {
+        nano -= DEV_SERVO_NANOCOUNTS;
+        counts += 1;
+    }
+    d->setpointCounts = counts;
+    d->setpointNano = nano;
+    dev_servo_private_publishSetpoint(d);
+}
+
+/* Advance the setpoint by feedVel * elapsedUs / 1e6 counts, exactly.
+ *
+ * milli-counts/s * microseconds / 1e9 = counts. The remainder is nanocounts
+ * and is carried into the next tick, so a 200 mm cruise at 10 mm/s does not
+ * accumulate float error. */
+static void dev_servo_private_advanceSetpoint(dev_servo_channelData_S *d, float feedVel,
+                                             uint32_t elapsedUs)
+{
+    if ((elapsedUs == 0U) || (feedVel == 0.0f))
+    {
+        return;
+    }
+    const bool forward = (feedVel >= 0.0f);
+    const float magF = (forward == true) ? feedVel : -feedVel;
+    const uint32_t milli = (uint32_t)((magF * 1000.0f) + 0.5f);
+    if (milli == 0U)
+    {
+        return;
+    }
+    uint32_t remPart = 0U;
+    const uint32_t counts =
+        lib_utility_muldivmod64_unsigned(milli, elapsedUs, DEV_SERVO_NANOCOUNTS, &remPart);
+    if (forward == true)
+    {
+        uint32_t rem = d->setpointNano + remPart;
+        uint32_t extra = 0U;
+        if (rem >= DEV_SERVO_NANOCOUNTS)
+        {
+            rem -= DEV_SERVO_NANOCOUNTS;
+            extra = 1U;
+        }
+        d->setpointNano = rem;
+        d->setpointCounts += (int32_t)(counts + extra);
+    }
+    else
+    {
+        /* Remainder is a forward fraction of a count; reverse subtracts it,
+         * borrowing a whole count when there isn't enough. Adding it on
+         * reverse made the profiler hunt through the target. */
+        uint32_t extra = 0U;
+        if (d->setpointNano >= remPart)
+        {
+            d->setpointNano -= remPart;
+        }
+        else
+        {
+            d->setpointNano = (d->setpointNano + DEV_SERVO_NANOCOUNTS) - remPart;
+            extra = 1U;
+        }
+        d->setpointCounts -= (int32_t)(counts + extra);
+    }
+    dev_servo_private_publishSetpoint(d);
+}
+
 /* Reset all dynamic state to "holding at the current encoder position". */
 static void dev_servo_private_resync(dev_servo_channel_E ch, int32_t pos)
 {
     dev_servo_channelData_S *const d = &dev_servo_data.channel[ch];
-    d->setpointPos = (float)pos;
+    dev_servo_private_snapSetpoint(d, pos);
     d->setpointVel = 0.0f;
     d->integral = 0.0f;
     d->commandedVel = 0.0f;
@@ -614,6 +716,7 @@ void dev_servo_run(void)
                  * ramp-in deficit that velocity mode leaves behind cannot
                  * arise. */
                 dev_servo_private_oscillate(d, dt, elapsedUs, &d->setpointPos, &d->setpointVel);
+                dev_servo_private_loadSetpoint(d, d->setpointPos);
                 evaluated = true;
                 if (d->waveCyclesDone >= d->req.wave.cycles)
                 {
@@ -624,7 +727,7 @@ void dev_servo_run(void)
                      * parked, and the following error it opens up is both
                      * published and a fault input. */
                     d->waveSegment = (uint8_t)DEV_SERVO_WAVE_RETURN;
-                    d->setpointPos = (float)peak;
+                    dev_servo_private_snapSetpoint(d, peak);
                     d->setpointVel = 0.0f;
                     profileTarget = d->req.wave.centreCounts;
                     evaluated = false;
@@ -640,7 +743,9 @@ void dev_servo_run(void)
         }
         else if (!evaluated)
         {
-            const float dist = (float)profileTarget - d->setpointPos; /* remaining (setpoint frame) */
+            const float posNow =
+                (float)d->setpointCounts + ((float)d->setpointNano * 1.0e-9f);
+            const float dist = (float)profileTarget - posNow; /* remaining (setpoint frame) */
             const float adist = fabsf(dist);
             const float cruise = profileCruise; /* moveTo clamps to 1..maxVelocity */
             /* Fastest speed from which we can still brake to rest at the target. */
@@ -678,8 +783,7 @@ void dev_servo_run(void)
          * compares the machine against the setpoint at the START of the
          * interval -- the convention an evaluated trajectory gets for free. */
         float feedVel = d->setpointVel;
-        float advancePos = 0.0f;
-        if (!evaluated)
+        if (evaluated == false)
         {
             /* Accel-limit the setpoint velocity toward the desired (trapezoid ramp). */
             const float maxDv = (float)cfg->maxAccel * dt;
@@ -694,7 +798,6 @@ void dev_servo_run(void)
              * START, leaving it one tick of travel AHEAD of its own trajectory
              * -- 5 um at 5 mm/s, 24 um at 25 mm/s. */
             feedVel = 0.5f * (vStart + d->setpointVel);
-            advancePos = feedVel * dt;
         }
 
         if ((mode == DEV_SERVO_MODE_OSCILLATE) &&
@@ -730,7 +833,10 @@ void dev_servo_run(void)
 
         /* The error and the command are taken; the setpoint may now move on.
          * Before the park, so that parking stays the LAST word on it. */
-        d->setpointPos += advancePos;
+        if (evaluated == false)
+        {
+            dev_servo_private_advanceSetpoint(d, feedVel, elapsedUs);
+        }
 
         if (atTarget)
         {
@@ -740,7 +846,7 @@ void dev_servo_run(void)
              * atTarget on the next tick and the loop re-engages. */
             cmdVel = 0.0f;
             d->setpointVel = 0.0f;
-            d->setpointPos = (float)profileTarget;
+            dev_servo_private_snapSetpoint(d, profileTarget);
             d->integral = 0.0f;
         }
 
