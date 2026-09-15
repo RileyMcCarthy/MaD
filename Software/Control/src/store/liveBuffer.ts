@@ -83,6 +83,45 @@ export function pushSample(s: SampleData): void {
   if (count < CAPACITY) count += 1;
 }
 
+/** Shape attached to `globalThis.__madLive` (see the bottom of this file). */
+export interface MadLiveHook {
+  latest(): LiveSample | null;
+  count(): number;
+}
+
+/** One live sample in engineering units, at the precision the wire carried. */
+export interface LiveSample {
+  /** Seconds since the buffer was reset. */
+  t: number;
+  machineForce: number;
+  machinePosition: number;
+  machineSetpoint: number;
+  sampleForce: number;
+  samplePosition: number;
+}
+
+/**
+ * The most recent live sample, at FULL precision.
+ *
+ * The on-screen readout rounds to three decimals of a millimetre — one
+ * micrometre — which is the right thing for a person to read and the wrong
+ * thing for a test to measure. The wire carries nanometres, so a harness that
+ * scrapes the DOM throws away three digits before it ever compares anything.
+ * This is the same value the chart plots, unrounded.
+ */
+export function latestLiveSample(): LiveSample | null {
+  if (count === 0) return null;
+  const idx = (writePos - 1 + CAPACITY) % CAPACITY;
+  return {
+    t: RING.t[idx],
+    machineForce: RING.machineForce[idx],
+    machinePosition: RING.machinePosition[idx],
+    machineSetpoint: RING.machineSetpoint[idx],
+    sampleForce: RING.sampleForce[idx],
+    samplePosition: RING.samplePosition[idx],
+  };
+}
+
 export function resetLiveBuffer(): void {
   t0 = performance.now();
   writePos = 0;
@@ -140,4 +179,16 @@ export function getLiveSeries(): LiveSeries {
     samplePosition: OUT.samplePosition,
     length: CAPACITY,
   };
+}
+
+// Debug hook, mirroring `__madLog` in diagnostics/log: the e2e harness reads
+// the live stream at full precision with
+//   `page.evaluate(() => globalThis.__madLive?.latest())`
+// which is the only way to check a MANUAL move — a jog or a home never enters a
+// recorded test, so there is no downloaded CSV to check it against.
+//
+// Dev only. Shipped builds have no reason to expose the ring, and nothing in
+// the app may depend on it being here.
+if (import.meta.env.DEV) {
+  globalThis.__madLive = { latest: latestLiveSample, count: () => count };
 }
