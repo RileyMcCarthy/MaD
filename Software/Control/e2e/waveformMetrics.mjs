@@ -84,7 +84,8 @@ export function resampledPathMm(timeUs, posUm, { dtUs = 50_000, minDeltaUm = 500
 // Rigorously assert a recorded position series actually traces the COMMANDED sine
 // waveform — not merely that it oscillates. Checks: peak-to-peak ≈ 2·amplitude;
 // a least-squares sinusoid fit at the commanded frequency explains the motion
-// (R² high — a ramp/triangle/wrong-frequency would fail); the fitted amplitude
+// (R² high — a ramp/wrong-frequency would fail); a 3rd/1st harmonic ratio gate
+// rejects triangle-like shapes that still clear R²>0.8; the fitted amplitude
 // matches; and the number of midline crossings matches the commanded cycles.
 // This is the end-to-end proof that the firmware-native waveform = f(t).
 // Narrow a recorded run down to the COMMANDED WAVEFORM.
@@ -232,6 +233,29 @@ export function assertSineMatch(series, { amplitudeMm, frequencyHz, cycles }, la
   assert(
     Math.abs(fitAmp - amplitudeMm) < Math.max(1.5, amplitudeMm * 0.3),
     `${label}: fitted amplitude ≈ ${amplitudeMm}mm (got ${fitAmp.toFixed(2)})`,
+  );
+
+  // Shape gate: 3rd/1st harmonic amplitude ratio. A pure sinusoid has ~0; a
+  // triangle's Fourier series has |c3/c1| = 1/9 ≈ 0.111, and R² alone cannot
+  // separate them (triangle-vs-fundamental R² ≈ 0.986 >> 0.8). Threshold 0.06
+  // sits between SIL-noisy sines (≪ 0.05) and triangles (~0.11) with margin —
+  // raising R² would be flaky; this odd-harmonic residual is not.
+  let Scc3 = 0, Sss3 = 0, Scs3 = 0, Sxc3 = 0, Sxs3 = 0;
+  for (let i = 0; i < n; i++) {
+    const c3 = Math.cos(3 * w * (t[i] - t0));
+    const s3 = Math.sin(3 * w * (t[i] - t0));
+    const x = p[i] - mean;
+    Scc3 += c3 * c3; Sss3 += s3 * s3; Scs3 += c3 * s3; Sxc3 += x * c3; Sxs3 += x * s3;
+  }
+  const det3 = Scc3 * Sss3 - Scs3 * Scs3;
+  const a3 = (Sxc3 * Sss3 - Scs3 * Sxs3) / det3;
+  const b3 = (Scc3 * Sxs3 - Scs3 * Sxc3) / det3;
+  const h3Amp = Math.sqrt(a3 * a3 + b3 * b3);
+  const h3ratio = fitAmp > 1e-9 ? h3Amp / fitAmp : 0;
+  assert(
+    h3ratio < 0.06,
+    `${label}: sine shape (3rd/1st harmonic ratio < 0.06; got ${h3ratio.toFixed(3)} — ` +
+      `a triangle at this A/f has ≈0.111; catalog mix-up or wrong waveform)`,
   );
 
   // Midline crossings over the WAVE WINDOW ≈ 2 per cycle (deadband = 0.3A).
