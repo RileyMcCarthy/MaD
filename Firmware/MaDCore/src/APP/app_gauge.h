@@ -30,7 +30,7 @@ int32_t app_gauge_getForce(app_gauge_coord_E coord);
 void app_gauge_setGaugeLength(void);
 void app_gauge_setGaugeForce(void);
 
-int32_t app_gauge_getGaugeLength_um(void);
+int32_t app_gauge_getGaugeLength_nm(void);
 int32_t app_gauge_getGaugeForce_mN(void);
 
 /**********************************************************************

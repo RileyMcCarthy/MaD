@@ -81,7 +81,7 @@ use tracing::info;
 
 /// DS2 Addon netlist — committed simulation artifact (provenance and
 /// regeneration policy in the file's own header comment).
-const DS2_NETLIST: &str = include_str!("../boards/ds2_addon.net");
+pub(crate) const DS2_NETLIST: &str = include_str!("../boards/ds2_addon.net");
 
 // ============================================================
 // Load-cell bridge (bench component with live Thevenin drives)
@@ -91,7 +91,7 @@ const DS2_NETLIST: &str = include_str!("../boards/ds2_addon.net");
 /// therefore the bridge) from the 3.3 V rail. Must match the strain-gauge
 /// model config in `wiring.rs` (`excitation_v: 3.3`) — the ADC runs
 /// ratiometric (VREF = AVDD = excitation), so both sides cancel.
-const BRIDGE_EXCITATION_V: f64 = 3.3;
+pub(crate) const BRIDGE_EXCITATION_V: f64 = 3.3;
 
 /// Common-mode voltage of the bridge output: both signal terminals sit at
 /// half the excitation, ±v/2 differential (standard four-arm Wheatstone
@@ -149,8 +149,8 @@ impl BridgeDrive {
 /// E+/E− need no pins this slice. The transducer-primitive form (bridge
 /// legs contributed to the cluster) is a later engine slice; a two-source
 /// Thevenin equivalent is exact for the ADC's high-Z inputs.
-struct LoadCellBridge {
-    drive: BridgeDrive,
+pub(crate) struct LoadCellBridge {
+    pub(crate) drive: BridgeDrive,
 }
 
 /// S+/S− terminal declarations.

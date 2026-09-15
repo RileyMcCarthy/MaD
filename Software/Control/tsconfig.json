@@ -35,6 +35,6 @@
       "vitest": ["./node_modules/vitest"]
     }
   },
-  "include": ["src"],
+  "include": ["src", "e2e/motion-accuracy.d.ts"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

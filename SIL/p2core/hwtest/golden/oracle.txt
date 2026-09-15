@@ -1,0 +1,40 @@
+# Silicon console captured from a P2-EVAL.
+# Source: hwtest/oracle.c
+# Captured: 2026-09-13T04:51:57Z
+# Recapture: python3 tools/hw_compare.py --capture
+
+P2CORE-HW
+CLKFREQ 160000000
+PASS shl_msb_result 00000000
+PASS shl_msb_c 00000001
+PASS shl_one_result 00000002
+PASS shl_one_c 00000000
+PASS encod_zero_dest 00000000
+PASS encod_zero_c 00000000
+PASS encod_one_dest 00000000
+PASS encod_one_c 00000001
+PASS encod_msb_dest 0000001f
+PASS encod_msb_c 00000001
+PASS getbyte0 00000044
+PASS getbyte1 00000033
+PASS getbyte2 00000022
+PASS getbyte3 00000011
+PASS unaligned_b0 00000000
+PASS unaligned_b1 000000dd
+PASS unaligned_b2 000000cc
+PASS unaligned_b3 000000bb
+PASS unaligned_b4 000000aa
+PASS unaligned_b5 00000000
+PASS tagged_rdlong a5a5a5a5
+PASS setq_fill0 00000000
+PASS setq_fill1 00000000
+PASS setq_fill2 00000000
+PASS setq_fill3 00000004
+PASS rep_add_four 00000004
+PASS qmul_lo 0000000f
+PASS qmul_hi 00000000
+PASS qdiv_quot 55555555
+PASS qdiv_rem 00000001
+PASS fcache_sum_0_99 00001356
+PASS float_1_5_times_2 40400000
+RESULT 0 PASS

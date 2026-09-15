@@ -86,11 +86,11 @@ eight cores it runs on. The ★ edges are the spine this page is really about:
     <title>app_control — The safety state machine (DISABLED → RESTRICTED → MANUAL → TEST). Each tick it folds faults, restrictions and operator requests into one gated output — motionEnabled — that the whole motion chain obeys.</title>
     <g class="fw-card"><rect class="fw-card-bg" x="8" y="289.5" width="232" height="145" rx="8"/><text class="fw-card-title" x="20" y="313.5">app_control</text><text class="fw-card-meta" x="20" y="332.5">CONTROL cog · 1 kHz</text><text class="fw-card-body" x="20" y="348.5">The safety state machine (DISABLED →</text><text class="fw-card-body" x="20" y="362.5">RESTRICTED → MANUAL → TEST). Each tick</text><text class="fw-card-body" x="20" y="376.5">it folds faults, restrictions and</text><text class="fw-card-body" x="20" y="390.5">operator requests into one gated</text><text class="fw-card-body" x="20" y="404.5">output — motionEnabled — that the</text><text class="fw-card-body" x="20" y="418.5">whole motion chain obeys.</text></g>
   </g>
-  <g class="fw-node fw-node--cmd" tabindex="0" role="img" aria-label="app_motion: Pure motion executor. Pops one move off its queue and turns the G-code (G0/G1 linear, G4 dwell, G28 home, G123 sine waveform) into dev_stepper commands. Knows nothing about test sessions.">
+  <g class="fw-node fw-node--cmd" tabindex="0" role="img" aria-label="app_motion: Pure motion executor. Pops one move off its queue and turns the G-code (G0/G1 linear, G4 dwell, G28 home, G123 waveform) into dev_stepper commands. Knows nothing about test sessions.">
     <rect class="fw-node-box" x="240" y="369" width="200" height="46" rx="8"/>
     <text class="fw-node-label" x="340" y="386">app_motion</text><text class="fw-node-sub" x="340" y="403">CONTROL cog · 1 kHz</text>
-    <title>app_motion — Pure motion executor. Pops one move off its queue and turns the G-code (G0/G1 linear, G4 dwell, G28 home, G123 sine waveform) into dev_stepper commands. Knows nothing about test sessions.</title>
-    <g class="fw-card"><rect class="fw-card-bg" x="8" y="319.5" width="232" height="145" rx="8"/><text class="fw-card-title" x="20" y="343.5">app_motion</text><text class="fw-card-meta" x="20" y="362.5">CONTROL cog · 1 kHz</text><text class="fw-card-body" x="20" y="378.5">Pure motion executor. Pops one move</text><text class="fw-card-body" x="20" y="392.5">off its queue and turns the G-code</text><text class="fw-card-body" x="20" y="406.5">(G0/G1 linear, G4 dwell, G28 home,</text><text class="fw-card-body" x="20" y="420.5">G123 sine waveform) into dev_stepper</text><text class="fw-card-body" x="20" y="434.5">commands. Knows nothing about test</text><text class="fw-card-body" x="20" y="448.5">sessions.</text></g>
+    <title>app_motion — Pure motion executor. Pops one move off its queue and turns the G-code (G0/G1 linear, G4 dwell, G28 home, G123 waveform) into dev_stepper commands. Knows nothing about test sessions.</title>
+    <g class="fw-card"><rect class="fw-card-bg" x="8" y="319.5" width="232" height="145" rx="8"/><text class="fw-card-title" x="20" y="343.5">app_motion</text><text class="fw-card-meta" x="20" y="362.5">CONTROL cog · 1 kHz</text><text class="fw-card-body" x="20" y="378.5">Pure motion executor. Pops one move</text><text class="fw-card-body" x="20" y="392.5">off its queue and turns the G-code</text><text class="fw-card-body" x="20" y="406.5">(G0/G1 linear, G4 dwell, G28 home,</text><text class="fw-card-body" x="20" y="420.5">G123 waveform) into dev_stepper</text><text class="fw-card-body" x="20" y="434.5">commands. Knows nothing about test</text><text class="fw-card-body" x="20" y="448.5">sessions.</text></g>
   </g>
   <g class="fw-node fw-node--fb" tabindex="0" role="img" aria-label="app_gauge: Stateless framing layer over the sensors: reports jaw position (µm) and load (mN) in either the machine frame or the zeroed sample frame by subtracting latched offsets.">
     <rect class="fw-node-box" x="760" y="369" width="200" height="46" rx="8"/>
@@ -204,8 +204,9 @@ and then re-checked against the safety state within the same millisecond. All of
 it is gated by `app_control_motionEnabled()`: drop that bit (fault, restriction,
 or a disable request) and the queue is emptied and the stepper stopped.
 
-For how a single `G123` waveform record is turned into a continuous, swept pulse
-train inside `app_motion` and `dev_stepper`, see
+For how a single `G123` waveform record becomes a trajectory that `dev_servo`
+generates and tracks to within a micron — and why the cycles start at a peak
+rather than at the centre — see
 [waveform motion control](waveform-motion-control.md).
 
 ## From the load cell to the chart

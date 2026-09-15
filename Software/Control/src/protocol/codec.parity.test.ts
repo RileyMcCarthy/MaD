@@ -17,8 +17,8 @@ const bytes = (b: Uint8Array): number[] => Array.from(b);
 // when the schema/template changes (and update docs/PARITY.md).
 const GOLD = {
   state: [178, 0],
-  sample: [217, 182, 241, 31, 9, 138, 102, 42, 147, 73, 176, 12],
-  stored: [217, 182, 241, 31, 9, 72, 60, 0, 0, 138, 102],
+  sample: [217, 182, 129, 193, 164, 35, 64, 44, 66, 166, 50, 25, 148, 9, 25, 3],
+  stored: [217, 182, 129, 193, 164, 35, 32, 241, 0, 0, 64, 44, 66, 6],
   // MachineConfiguration (intrinsic load-cell constants) — MaDProtocol.yaml.
   config: [
     84, 101, 115, 116, 101, 114, 45, 49, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 200, 0, 0, 0, 144, 1,
@@ -27,7 +27,10 @@ const GOLD = {
   ],
   profile: [26, 162, 7, 0, 10, 0, 0, 0, 100, 0, 0, 0, 12, 0, 0, 0, 3, 0, 0, 0],
   move: [65, 225, 51, 224, 46, 0, 100, 0],
-  waveform: [16, 39, 0, 232, 3, 24, 3, 0, 0],
+  // Derived by hand from the WaveformMove field table in MaDProtocol.yaml
+  // (offset/width/scale per field), NOT captured from the encoder -- a golden
+  // vector blessed from the thing it guards proves only self-consistency.
+  waveform: [0, 80, 195, 0, 0, 9, 61, 48, 6, 0, 0, 0, 0, 0, 0, 0, 243, 1],
 };
 
 describe('codec golden byte vectors (frozen — guards the wire format)', () => {
@@ -53,7 +56,7 @@ describe('codec golden byte vectors (frozen — guards the wire format)', () => 
       covers: 'src/protocol/generated/protoemb.ts#encodeSample',
       given: 'a live sample of 12.345 N machine force, −50.5 mm position, and a 10 mm setpoint',
       expect: {
-        'sample-bytes': 'the sample encodes to the agreed 12 bytes on the wire',
+        'sample-bytes': 'the sample encodes to the agreed 16 bytes on the wire',
       },
       why: { 'sample-bytes': 'the app and the firmware must speak the same live-sample bytes' },
     },
@@ -69,7 +72,7 @@ describe('codec golden byte vectors (frozen — guards the wire format)', () => 
       covers: 'src/protocol/generated/protoemb.ts#encodeStoredSample',
       given: 'a stored sample of 12.345 N at −50.5 mm, 123456 time ticks, and a 10 mm setpoint',
       expect: {
-        'stored-sample-bytes': 'the stored sample encodes to the agreed 11 bytes on the wire',
+        'stored-sample-bytes': 'the stored sample encodes to the agreed 14 bytes on the wire',
       },
       why: { 'stored-sample-bytes': 'the app and the firmware must speak the same stored-sample bytes' },
     },
@@ -156,7 +159,7 @@ describe('codec golden byte vectors (frozen — guards the wire format)', () => 
     },
     () => {
       expect(
-        bytes(nu.encodeWaveformMove({ shape: nu.WaveformShape.SINE, amplitude: 5, frequency: 2, cycles: 100 })),
+        bytes(nu.encodeWaveformMove({ shape: nu.WaveformShape.SINE, amplitude: 5, frequency: 2, cycles: 100, dwellHigh: 0, dwellLow: 0, skewPerMille: 500 })),
       ).toEqual(GOLD.waveform);
     },
   );
@@ -225,7 +228,7 @@ describe('round-trip within scale precision', () => {
       },
     },
     () => {
-      const v = { shape: nu.WaveformShape.TRIANGLE, amplitude: 12.345, frequency: 0.5, cycles: 1000 };
+      const v = { shape: nu.WaveformShape.TRIANGLE, amplitude: 12.345, frequency: 0.5, cycles: 1000, dwellHigh: 0, dwellLow: 0, skewPerMille: 500 };
       const out = nu.decodeWaveformMove(nu.encodeWaveformMove(v));
       expect(out.shape).toBe(nu.WaveformShape.TRIANGLE);
       expect(out.amplitude).toBeCloseTo(12.345, 3);

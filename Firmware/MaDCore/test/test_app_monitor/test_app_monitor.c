@@ -40,7 +40,7 @@ extern int _stdio_debug_lock; /* shared in mock_propeller2.c */          // app_
 static int32_t dbl_force_machine;     // app_gauge_getForce(MACHINE)
 static int32_t dbl_position_machine;  // app_gauge_getPosition(MACHINE)
 static int32_t dbl_gaugeForce_mN;     // app_gauge_getGaugeForce_mN()
-static int32_t dbl_gaugeLength_um;    // app_gauge_getGaugeLength_um()
+static int32_t dbl_gaugeLength_nm;    // app_gauge_getGaugeLength_nm()
 
 int32_t app_gauge_getForce(app_gauge_coord_E coord)
 {
@@ -53,7 +53,7 @@ int32_t app_gauge_getPosition(app_gauge_coord_E coord)
     return dbl_position_machine;
 }
 int32_t app_gauge_getGaugeForce_mN(void) { return dbl_gaugeForce_mN; }
-int32_t app_gauge_getGaugeLength_um(void) { return dbl_gaugeLength_um; }
+int32_t app_gauge_getGaugeLength_nm(void) { return dbl_gaugeLength_nm; }
 
 /* --- dev_forceGauge --- */
 static uint32_t dbl_forceIndex; // dev_forceGauge_getIndex(MAIN)
@@ -64,8 +64,10 @@ uint32_t dev_forceGauge_getIndex(dev_forceGauge_channel_E channel)
 }
 
 /* --- app_motion --- */
-static int32_t dbl_setpoint; // app_motion_getSetpoint()
+static int32_t dbl_setpoint;  // app_motion_getSetpoint() -- the move's destination
+static int32_t dbl_commanded; // app_motion_getCommandedPosition() -- the trajectory now
 int32_t app_motion_getSetpoint(void) { return dbl_setpoint; }
+int32_t app_motion_getCommandedPosition(void) { return dbl_commanded; }
 
 /* --- app_testManagement --- */
 static bool dbl_testRunning; // app_testManagement_isRunning()
@@ -154,9 +156,9 @@ static void reset_doubles(void)
     dbl_force_machine = 0;
     dbl_position_machine = 0;
     dbl_gaugeForce_mN = 0;
-    dbl_gaugeLength_um = 0;
+    dbl_gaugeLength_nm = 0;
     dbl_forceIndex = 0;
-    dbl_setpoint = 0;
+    dbl_commanded = 0;
     dbl_testRunning = false;
 
     dbl_setValue_calls = 0;
@@ -219,9 +221,9 @@ void test_sample_derivation_subtracts_offsets_and_starttime(void)
                      "a tensile test is judged in sample coordinates, so extension subtracts the gauge zero");
     dbl_force_machine = 5000;
     dbl_position_machine = 12000;
-    dbl_setpoint = 15000;
+    dbl_commanded = 15000;
     dbl_gaugeForce_mN = 1200;
-    dbl_gaugeLength_um = 2000;
+    dbl_gaugeLength_nm = 2000;
     global_timeus = 0; /* startTime stays 0 (no test running) */
     dbl_testRunning = false;
 
@@ -229,9 +231,9 @@ void test_sample_derivation_subtracts_offsets_and_starttime(void)
 
     /* sample.force = force - gaugeForce_mN */
     TEST_ASSERT_EQUAL_INT32(5000 - 1200, app_monitor_data.sample.force);
-    /* sample.position = position - gaugeLength_um */
+    /* sample.position = position - gaugeLength_nm */
     TEST_ASSERT_EQUAL_INT32(12000 - 2000, app_monitor_data.sample.position);
-    /* sample.setpoint = setpoint - gaugeLength_um */
+    /* sample.setpoint = setpoint - gaugeLength_nm */
     TEST_ASSERT_EQUAL_INT32(15000 - 2000, app_monitor_data.sample.setpoint);
     /* startTime is 0 here, so sample.time == input.time */
     TEST_ASSERT_EQUAL_UINT32(0U, app_monitor_data.sample.time);
@@ -268,7 +270,7 @@ void test_setOutput_publishes_raw_machine_force_and_position(void)
     dbl_force_machine = 8888;
     dbl_position_machine = -4321;
     dbl_gaugeForce_mN = 1000;  /* should NOT affect out.force */
-    dbl_gaugeLength_um = 500;  /* should NOT affect out.position */
+    dbl_gaugeLength_nm = 500;  /* should NOT affect out.position */
 
     app_monitor_run();
 
@@ -533,8 +535,8 @@ void test_logging_running_pushes_current_sample_contents(void)
     dbl_force_machine = 9000;
     dbl_gaugeForce_mN = 1000;       /* sample.force = 8000 */
     dbl_position_machine = 6000;
-    dbl_gaugeLength_um = 1000;      /* sample.position = 5000 */
-    dbl_setpoint = 7000;            /* sample.setpoint = 6000 */
+    dbl_gaugeLength_nm = 1000;      /* sample.position = 5000 */
+    dbl_commanded = 7000;            /* sample.setpoint = 6000 */
     global_timeus = 250;           /* sample.time = 250 (startTime 0) */
     dbl_forceIndex = app_monitor_data.input.forceIndex + 1;
 
@@ -685,7 +687,7 @@ void test_force_limit_boundary_and_exceed(void)
     TEST_ASSERT_TRUE(app_monitor_isForceExceeded());
 }
 
-void test_displacement_limit_uses_mm_to_um_conversion(void)
+void test_displacement_limit_uses_mm_to_nm_conversion(void)
 {
     VIBES_TEST("monitor.displacement-limit-mm-as-um",
                "src/APP/app_monitor.c#app_monitor_private_setOutput",
@@ -700,20 +702,20 @@ void test_displacement_limit_uses_mm_to_um_conversion(void)
     app_monitor_setSampleProfile(&p);
     app_monitor_run();
 
-    dbl_gaugeLength_um = 0;
+    dbl_gaugeLength_nm = 0;
 
-    /* Exactly 2000 um == limit -> NOT exceeded (strict >). */
-    dbl_position_machine = 2000;
+    /* Exactly 2 mm == limit -> NOT exceeded (strict >). */
+    dbl_position_machine = 2000000;
     app_monitor_run();
     TEST_ASSERT_FALSE(app_monitor_isDisplacementExceeded());
 
-    /* 2001 um -> exceeded. */
-    dbl_position_machine = 2001;
+    /* One nanometre over -> exceeded. */
+    dbl_position_machine = 2000001;
     app_monitor_run();
     TEST_ASSERT_TRUE(app_monitor_isDisplacementExceeded());
 
     /* Negative displacement of larger magnitude also exceeds (abs is used). */
-    dbl_position_machine = -2001;
+    dbl_position_machine = -2000001;
     app_monitor_run();
     TEST_ASSERT_TRUE(app_monitor_isDisplacementExceeded());
 }
@@ -813,7 +815,7 @@ int main(void)
 
     RUN_TEST(test_no_profile_means_no_limits_exceeded);
     RUN_TEST(test_force_limit_boundary_and_exceed);
-    RUN_TEST(test_displacement_limit_uses_mm_to_um_conversion);
+    RUN_TEST(test_displacement_limit_uses_mm_to_nm_conversion);
     RUN_TEST(test_velocity_exceeded_always_false_even_with_profile);
     RUN_TEST(test_force_flag_clears_when_back_under_limit);
 

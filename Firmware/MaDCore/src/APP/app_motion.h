@@ -63,12 +63,32 @@ typedef enum
     APP_MOTION_HOME_COUNT,
 } app_motion_home_E;
 
+/* A G123 waveform, in the units it arrives in. One cycle is four segments in
+ * phase order: hold at +A, traverse down, hold at -A, traverse up.
+ *
+ * Packed, like the record it sits in: these go to the SD card as raw bytes. */
+typedef struct __attribute__((packed))
+{
+    int32_t amplitudeTenthUm; /* peak excursion from the centre, 0.1 um units  */
+    uint32_t freqMicroHz;     /* WHOLE-cycle frequency, holds included         */
+    uint32_t cycles;
+    uint32_t dwellHighMs;     /* hold at the upper peak                        */
+    uint32_t dwellLowMs;      /* hold at the lower peak                        */
+    uint16_t skewPerMille;    /* share of the traversing time spent descending */
+    uint8_t shape;            /* traverse profile: 0 sine, 1 triangle          */
+} app_motion_waveform_t;
+
 typedef struct __attribute__((packed))
 {
     uint8_t g;  // Gcode command
     int32_t x;  // Position in um
     int32_t f;  // Feedrate in um/s
     uint32_t p; // ms to pause motion
+    /* G123 only. A waveform does not fit a general move's position / feedrate /
+     * pause slots, and smuggling it through them is how the shape bit came to
+     * live in the top byte of the feedrate -- where it was then ignored
+     * entirely, so every triangle ever run was a sine. It gets its own fields. */
+    app_motion_waveform_t wave;
 } app_motion_move_t;
 
 /**********************************************************************
@@ -90,6 +110,12 @@ bool app_motion_isIdle(void);
 
 // Getters
 int32_t app_motion_getSetpoint(void);
+/* Where the trajectory says the machine should be RIGHT NOW, in nanometres --
+ * as opposed to getSetpoint(), which is where the move ENDS. A recorded sample
+ * carries this one: it is what the specimen was being asked for at that
+ * instant, and comparing it against the measured position is the only way a
+ * tracking error is visible in the data at all. */
+int32_t app_motion_getCommandedPosition(void);
 int32_t app_motion_getPosition(void);
 
 /**********************************************************************

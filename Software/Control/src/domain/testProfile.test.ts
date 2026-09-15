@@ -113,16 +113,20 @@ describe('waveform helpers', () => {
     {
       id: 'profile.sine-sample-key-points',
       covers: 'src/domain/testProfile.ts#waveformSample',
-      given: 'a sine waveform sampled at the start, quarter, three-quarter, and end of a cycle',
+      given: 'a sine waveform sampled at the start, quarter, half, and end of a cycle',
       expect: {
-        'key-points': 'the samples read zero, one, minus one, and zero, in that order',
+        'key-points': 'the samples read one, zero, minus one, and one, in that order',
+      },
+      why: {
+        'key-points':
+          'phase zero is the POSITIVE PEAK, matching the firmware, because a sinusoid can only be joined or left at rest at a peak — a preview drawn from the centre would show a trajectory the machine does not run',
       },
     },
     () => {
-      expect(waveformSample('sine', 0)).toBeCloseTo(0, 6);
-      expect(waveformSample('sine', 0.25)).toBeCloseTo(1, 6);
-      expect(waveformSample('sine', 0.75)).toBeCloseTo(-1, 6);
-      expect(waveformSample('sine', 1)).toBeCloseTo(0, 6);
+      expect(waveformSample('sine', 0)).toBeCloseTo(1, 6);
+      expect(waveformSample('sine', 0.25)).toBeCloseTo(0, 6);
+      expect(waveformSample('sine', 0.5)).toBeCloseTo(-1, 6);
+      expect(waveformSample('sine', 1)).toBeCloseTo(1, 6);
     },
   );
   behaviour(
@@ -131,14 +135,14 @@ describe('waveform helpers', () => {
       covers: 'src/domain/testProfile.ts#waveformSample',
       given: 'a triangle waveform sampled at the start, quarter, half, and three-quarter of a cycle',
       expect: {
-        'key-points': 'the samples read zero, one, zero, and minus one, in that order',
+        'key-points': 'the samples read one, zero, minus one, and zero, in that order',
       },
     },
     () => {
-      expect(waveformSample('triangle', 0)).toBeCloseTo(0, 6);
-      expect(waveformSample('triangle', 0.25)).toBeCloseTo(1, 6);
-      expect(waveformSample('triangle', 0.5)).toBeCloseTo(0, 6);
-      expect(waveformSample('triangle', 0.75)).toBeCloseTo(-1, 6);
+      expect(waveformSample('triangle', 0)).toBeCloseTo(1, 6);
+      expect(waveformSample('triangle', 0.25)).toBeCloseTo(0, 6);
+      expect(waveformSample('triangle', 0.5)).toBeCloseTo(-1, 6);
+      expect(waveformSample('triangle', 0.75)).toBeCloseTo(0, 6);
     },
   );
   behaviour(
@@ -282,21 +286,59 @@ describe('generateTestGcode — waveform (math) move', () => {
 
   behaviour(
     {
-      id: 'profile.waveform-is-sine-only',
+      id: 'profile.waveform-hold-and-skew-emitted',
       covers: 'src/domain/testProfile.ts#generateTestGcode',
-      given: 'a motion profile whose waveform is set to triangle',
+      given: 'a waveform profile with a hold at the top only and an 80/20 skew, and a plain one with neither',
       expect: {
-        'sine-shape': 'the emitted canned cycle carries the sine shape',
+        'emitted-when-set': 'the canned cycle carries H, L and S when they are set',
+        'absent-when-plain': 'a plain cycle emits the same line it always did',
       },
-      why: { 'sine-shape': 'firmware v1 runs only sine, so the shape on the wire is sine' },
+      why: {
+        'absent-when-plain':
+          'omitting the defaults keeps every existing profile emitting byte-identical G-code, so adding the capability cannot change a test someone already ran',
+      },
     },
     () => {
-      const { gcode } = generateTestGcode(
+      const held = generateTestGcode(
+        waveformProfile({
+          waveform: 'sine', amplitude: 2, frequency: 0.5, cycles: 4,
+          dwellHigh: 1.5, dwellLow: 0, skew: 0.8,
+        }),
+      ).gcode.find((l) => /^G123 /.test(l));
+      expect(held).toMatch(/\bH1\.5\b/);
+      expect(held).toMatch(/\bS0\.8\b/);
+      expect(held).not.toMatch(/\bL/); // no hold at the bottom was asked for
+
+      const plain = generateTestGcode(
+        waveformProfile({ waveform: 'sine', amplitude: 2, frequency: 0.5, cycles: 4 }),
+      ).gcode.find((l) => /^G123 /.test(l));
+      expect(plain).not.toMatch(/\b[HLS]\d/);
+    },
+  );
+
+  behaviour(
+    {
+      id: 'profile.waveform-shape-is-emitted',
+      covers: 'src/domain/testProfile.ts#generateTestGcode',
+      given: 'a motion profile whose waveform is set to triangle, and one set to sine',
+      expect: {
+        'authored-shape': 'the emitted canned cycle carries the shape that was authored',
+      },
+      why: {
+        'authored-shape':
+          'this was pinned to sine while app_motion masked the shape bit off and ran sinf regardless, so emitting W1 would have promised a triangle and delivered a sine; the driver honours it now, so the promise can be kept',
+      },
+    },
+    () => {
+      const tri = generateTestGcode(
         waveformProfile({ waveform: 'triangle', amplitude: 5, frequency: 1, cycles: 1 }),
-      );
-      const g123 = gcode.find((l) => /^G123 /.test(l));
-      expect(g123).toMatch(/\bW0\b/);
-      expect(g123).not.toMatch(/\bW1\b/);
+      ).gcode.find((l) => /^G123 /.test(l));
+      expect(tri).toMatch(/\bW1\b/);
+
+      const sine = generateTestGcode(
+        waveformProfile({ waveform: 'sine', amplitude: 5, frequency: 1, cycles: 1 }),
+      ).gcode.find((l) => /^G123 /.test(l));
+      expect(sine).toMatch(/\bW0\b/);
     },
   );
 
@@ -320,7 +362,7 @@ describe('generateTestGcode — waveform (math) move', () => {
       const ops = gcodeLinesToProgram(gcode, 15);
       const waveforms = ops.filter((o) => o.kind === 'waveform');
       expect(waveforms.length).toBe(1);
-      expect(waveforms[0].buf.length).toBe(9); // 9-byte WaveformMove wire size
+      expect(waveforms[0].buf.length).toBe(18); // 18-byte WaveformMove (was 9 before dwell/skew) wire size
       const wf = decodeWaveformMove(waveforms[0].buf);
       expect(wf.shape).toBe(WaveformShape.SINE); // v1 is sine-only
       expect(wf.amplitude).toBeCloseTo(4, 3);

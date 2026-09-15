@@ -58,10 +58,17 @@ export const MOVE_FIELD_RANGE = {
 } as const;
 
 /** Encodable ranges of the packed WaveformMove fields (must match encodeWaveformMove). */
+// Mirrors WaveformMove in Protocol/MaDProtocol.yaml. These must be kept in step
+// with it by hand: the generator emits the codec but not the ranges, so a
+// widened field that is not reflected here is caught only when a value wraps on
+// the wire, which looks like a wrong test rather than a bug.
 export const WAVEFORM_FIELD_RANGE = {
-  amplitude: packedFieldRange(22, 0, 1000), // mm    → [0, 4194.303]
-  frequency: packedFieldRange(20, 0, 1000), // Hz    → [0, 1048.575]
-  cycles: packedFieldRange(24, 1, 1), //      count → [1, 16777216]
+  amplitude: packedFieldRange(25, 0, 10000), // mm    → 0.1 µm steps
+  frequency: packedFieldRange(27, 0, 1000000), // Hz  → µHz steps
+  cycles: packedFieldRange(24, 1, 1), //        count
+  dwellHigh: packedFieldRange(22, 0, 1000), //  s     → ms steps
+  dwellLow: packedFieldRange(22, 0, 1000), //   s     → ms steps
+  skewPerMille: packedFieldRange(10, 1, 1), //  per mille of the traverse
 } as const;
 
 function assertFieldInRange(
@@ -103,10 +110,32 @@ export function validateAndEncodeMove(move: ProtoMove): Uint8Array {
 }
 
 /**
- * Parse a `G123` waveform canned-cycle line into a WaveformMove. Params:
- *   A=amplitude(mm)  F=frequency(Hz)  C=cycles  W=shape(0=sine,1=triangle).
+ * Parse a `G123` waveform canned-cycle line into a WaveformMove.
+ *
+ *   G123 A<mm> F<Hz> C<cycles> [W<shape>] [H<s>] [L<s>] [S<skew>]
+ *
+ * One cycle is four segments in phase order:
+ *
+ *     [ hold at +A ] [ traverse down ] [ hold at -A ] [ traverse up ]
+ *          H                                L
+ *
+ *   A  peak excursion from the mean, mm (not peak-to-peak)
+ *   F  frequency of the WHOLE cycle, holds included, Hz
+ *   C  whole cycles
+ *   W  traverse profile: 0 sine (default), 1 triangle
+ *   H  hold at the upper peak, seconds (default 0)
+ *   L  hold at the lower peak, seconds (default 0)
+ *   S  of the traversing time, the share spent descending; 0.5 symmetric
+ *
+ * `W` names only the TRAVERSE — how the carriage gets from one peak to the
+ * other — so H, L and S apply to every shape. That is what stops the shape list
+ * having to grow a variant per combination ("triangle with a hold", "skewed
+ * sine"); it also means `H` means the same thing on every line, rather than
+ * being a polymorphic knob whose meaning depends on W.
+ *
  * Returns null if the line is not a G123. The waveform oscillates about the
- * machine's current position (the program ramps to the mean with a preceding G1).
+ * machine's current position (the program ramps to the mean with a preceding
+ * G1) and is returned there at the end.
  */
 export function parseGcodeWaveform(line: string): ProtoWaveformMove | null {
   const tokens = line.trim().split(/\s+/);
@@ -115,7 +144,10 @@ export function parseGcodeWaveform(line: string): ProtoWaveformMove | null {
   let amplitude = 0; // mm
   let frequency = 0; // Hz
   let cycles = 0; // count
-  let shape: WaveformShape = WaveformShape.SINE;
+  let shape: number = WaveformShape.SINE;
+  let dwellHigh = 0; // s
+  let dwellLow = 0; // s
+  let skewPerMille = 500; // share of the traverse spent descending, per mille
 
   for (const token of tokens) {
     if (token.length === 0) continue;
@@ -134,14 +166,26 @@ export function parseGcodeWaveform(line: string): ProtoWaveformMove | null {
         cycles = Math.round(value);
         break;
       case 'W':
-        shape = value === 1 ? WaveformShape.TRIANGLE : WaveformShape.SINE;
+        shape = Math.round(value);
+        break;
+      case 'H':
+        dwellHigh = value;
+        break;
+      case 'L':
+        dwellLow = value;
+        break;
+      case 'S':
+        // Authored as a RATIO because that is how a person thinks about it
+        // ("80% of the cycle loading"); carried as per mille because the wire
+        // field is integral.
+        skewPerMille = Math.round(value * 1000);
         break;
       default:
         break;
     }
   }
 
-  return { shape, amplitude, frequency, cycles };
+  return { shape, amplitude, frequency, cycles, dwellHigh, dwellLow, skewPerMille };
 }
 
 /** Validate a WaveformMove against the codec's encodable ranges (prevents bit-wrap). */
@@ -156,6 +200,41 @@ export function validateWaveform(wf: ProtoWaveformMove): void {
   assertFieldInRange('amplitude', wf.amplitude, WAVEFORM_FIELD_RANGE.amplitude, 'mm');
   assertFieldInRange('frequency', wf.frequency, WAVEFORM_FIELD_RANGE.frequency, 'Hz');
   assertFieldInRange('cycles', wf.cycles, WAVEFORM_FIELD_RANGE.cycles, 'cycles');
+  assertFieldInRange('dwellHigh', wf.dwellHigh, WAVEFORM_FIELD_RANGE.dwellHigh, 's');
+  assertFieldInRange('dwellLow', wf.dwellLow, WAVEFORM_FIELD_RANGE.dwellLow, 's');
+
+  // An unknown traverse profile is refused rather than run as a sine. Firmware
+  // refuses it too; catching it here means the author finds out at authoring
+  // time instead of after a run that silently performed a different test.
+  if (!(wf.shape in WaveformShape)) {
+    throw new MoveValidationError(
+      `Unknown waveform shape W${wf.shape}. Known: 0 sine, 1 triangle.`,
+    );
+  }
+
+  // Skew is a share of the traversing time, so neither end can be the whole
+  // cycle: a traverse of zero duration is an infinite rate.
+  //
+  // Checked against the SCHEMA bound, not the packed range. packedFieldRange
+  // reports what the bit width can hold (1..1024 here), which is wider than
+  // what the schema permits (1..999) and wider still than what means anything.
+  // A value that fits the field but not the machine must fail here.
+  if (!Number.isInteger(wf.skewPerMille) || wf.skewPerMille < 1 || wf.skewPerMille > 999) {
+    throw new MoveValidationError(
+      `Waveform skew must leave time for both traverses: S between 0.001 and 0.999 ` +
+        `(got ${wf.skewPerMille / 1000}).`,
+    );
+  }
+
+  // The holds take their time from the traverses, so together they cannot
+  // exceed the period — otherwise there is no time left to move at all.
+  const period = 1 / wf.frequency;
+  if (wf.dwellHigh + wf.dwellLow >= period) {
+    throw new MoveValidationError(
+      `Waveform holds (H=${wf.dwellHigh}s + L=${wf.dwellLow}s) leave no time to move ` +
+        `within one ${period.toFixed(4)}s cycle at F=${wf.frequency} Hz.`,
+    );
+  }
 }
 
 /** Validate then encode a WaveformMove. */

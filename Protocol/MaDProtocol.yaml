@@ -82,7 +82,7 @@ enums:
       - { name: WAVEFORM,     value: 123 }   # firmware-native waveform (canned cycle)
 
   WaveformShape:
-    description: "Position-vs-time waveform function (firmware-native G123)"
+    description: "Traverse profile for a G123 waveform -- how the carriage gets from one peak to the other. Named constants for the host; the wire carries a plain uint8 (see WaveformMove.shape)."
     variants:
       - SINE
       - TRIANGLE
@@ -137,15 +137,15 @@ structs:
       - name: machinePosition
         type: int32
         unit: mm
-        scale: 1000        # struct stores µm; use set/get accessors for mm
-        raw_storage: true
+        scale: 1000000     # struct stores NANOMETRES; one encoder count is 122 nm,
+        raw_storage: true  # so micrometres were coarser than the sensor itself
         min: -200
         max: 200
       - name: machineSetpoint
         type: int32
         unit: mm
-        scale: 1000        # struct stores µm; use set/get accessors for mm
-        raw_storage: true
+        scale: 1000000     # struct stores NANOMETRES; one encoder count is 122 nm,
+        raw_storage: true  # so micrometres were coarser than the sensor itself
         min: -200
         max: 200
       - name: sampleForce
@@ -158,8 +158,8 @@ structs:
       - name: samplePosition
         type: int32
         unit: mm
-        scale: 1000        # struct stores µm; use set/get accessors for mm
-        raw_storage: true
+        scale: 1000000     # struct stores NANOMETRES; one encoder count is 122 nm,
+        raw_storage: true  # so micrometres were coarser than the sensor itself
         min: -200
         max: 200
 
@@ -192,30 +192,81 @@ structs:
 
   WaveformMove:
     encoding: packed
-    description: "Firmware-native waveform (G123): oscillate about the current position"
+    # NOTE: keep this description on ONE line. The Rust template emits it as
+    # "/// {{ description }}" and prefixes only the first line, so a folded (">")
+    # description puts a bare line after a doc comment and fails to compile.
+    description: "Firmware-native waveform (G123). One cycle is four segments in phase order: hold at +A, traverse down, hold at -A, traverse up. `shape` names only the TRAVERSE profile, so dwell and skew apply to every shape."
     fields:
+      # The traverse profile: 0 = SINE, 1 = TRIANGLE, 2..255 reserved.
+      #
+      # A plain uint8 rather than the WaveformShape enum, deliberately. The
+      # generator returns an enum's width as ceil(log2(variant_count)) BEFORE it
+      # consults `bits:` (see compute_field_bits), so an enum-typed field cannot
+      # be pinned -- and crossing a power of two would shift every following
+      # field's bit offset while leaving the struct the same size, which is the
+      # one change here that corrupts silently rather than failing. A whole byte
+      # means a new traverse profile can never do that.
       - name: shape
-        type: WaveformShape
+        type: uint8
+        bits: 8
+
       - name: amplitude
         type: int32
         unit: mm
-        scale: 1000        # struct stores µm; firmware consumes µm directly
-        raw_storage: true
+        scale: 10000       # struct stores 0.1 um; one encoder count is 0.122 um,
+        raw_storage: true  # so the wire is no longer the coarsest step in the chain
         min: 0
         max: 3000
+
       - name: frequency
         type: int32
         unit: Hz
-        scale: 1000        # struct stores mHz; firmware consumes mHz directly
-        raw_storage: true
+        scale: 1000000     # struct stores uHz; the driver's phase accumulator is
+        raw_storage: true  # exact in uHz, so nothing is lost after this point
         min: 0
-        max: 1000
+        max: 100           # the machine's own ceiling is ~16 Hz at a usable
+                           # amplitude (accel-bound); 100 is headroom, not a claim
+
       - name: cycles
         type: uint32
         unit: count
         scale: 1
         min: 1
         max: 10000000      # supports fatigue-scale cycle counts
+
+      # Holds take their time FROM THE TRAVERSES, not from the period: one cycle
+      # always lasts 1/frequency whatever the dwells are, so adding a hold never
+      # silently changes a fatigue test's frequency. Per-peak rather than a
+      # single symmetric dwell because creep-fatigue is a hold at peak tension
+      # with NO hold in compression.
+      - name: dwellHigh
+        type: uint32
+        unit: s
+        scale: 1000        # milliseconds -- the control tick is 1 ms
+        raw_storage: true
+        min: 0
+        max: 3600
+
+      - name: dwellLow
+        type: uint32
+        unit: s
+        scale: 1000
+        raw_storage: true
+        min: 0
+        max: 3600
+
+      # Of the traversing time, the share spent going DOWN (+A to -A).
+      # 500 is symmetric; 800 is slow-load / fast-unload.
+      # Named for its unit, and integral, deliberately. Expressed as a ratio
+      # with scale 1000 the bounds become 0.001/0.999, and a fractional min is
+      # not something the generated code handles: it seeds an integer field
+      # from it and the roundtrip wraps. Per mille keeps every bound whole.
+      - name: skewPerMille
+        type: uint16
+        unit: permille
+        scale: 1
+        min: 1
+        max: 999
 
   # ── Storage struct (packed for faster serial download) ──
 
@@ -233,8 +284,8 @@ structs:
       - name: position
         type: int32
         unit: mm
-        scale: 1000        # stored as µm wire steps
-        raw_storage: true
+        scale: 1000000     # struct stores NANOMETRES; one encoder count is 122 nm,
+        raw_storage: true  # so micrometres were coarser than the sensor itself
         min: -200
         max: 200
       - name: time
@@ -246,8 +297,8 @@ structs:
       - name: setpoint
         type: int32
         unit: mm
-        scale: 1000        # stored as µm wire steps
-        raw_storage: true
+        scale: 1000000     # struct stores NANOMETRES; one encoder count is 122 nm,
+        raw_storage: true  # so micrometres were coarser than the sensor itself
         min: -200
         max: 200
 

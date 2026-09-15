@@ -1,14 +1,31 @@
 /**
  * E2E parity suite runner.
  *
- * Drives the real app in system Chrome against the live SIL emulator (via the
- * WS bridge) and an OPFS data folder — see fixtures.mjs and docs/TEST_PLAN.md.
+ * Drives the real app against the live SIL emulator and an OPFS data folder —
+ * see fixtures.mjs and docs/TEST_PLAN.md.
  *
- * Preconditions (each in its own terminal):
- *   cd SIL && make e2e-emulator          # emulator on /tmp/tty.rpi (unpaced virtual time)
+ * There are exactly TWO valid configurations, and each pairs a firmware backend
+ * with a way of providing serial. Do not mix them: the cross pairings either
+ * cannot start (native + QEMU is refused by the emulator) or silently measure
+ * the host rather than the machine (the ISS behind the bridge).
+ *
+ * (a) NATIVE + BRIDGE — host Chrome, fake serial over the WS bridge:
+ *   cd SIL && make e2e-emulator        # emulator on /tmp/tty.rpi (unpaced virtual time)
  *   npm run sil:bridge                 # ws://localhost:9999
  *   npm run dev                        # app on http://localhost:5174
- * Then: npm run e2e
+ *   npm run e2e
+ *
+ * (b) ISS + COMPUTER NODE — the shipped P2 image interpreted instruction by
+ * instruction, and Chrome inside a QEMU guest the board's clock meters, talking
+ * real Web Serial to the emulated FTDI. The browser cannot outrun the board,
+ * because the board decides when the browser's vCPU runs at all:
+ *   cd SIL && make playground-cosim    # prints the DevTools URL (port 9222)
+ *   npm run dev -- --host              # the guest fetches from 10.0.2.2:5174
+ *   CDP_URL=http://127.0.0.1:9222 npm run e2e
+ *
+ * In (b) every budget here is multiplied by E2E_TIMEOUT_SCALE (10 by default)
+ * and the three link-drop scenarios are skipped — they need the fake serial's
+ * `__silDropLink`, and a real port has nothing to reach in and sever.
  *
  * Covers the parity-critical scenarios of docs/TEST_PLAN.md §4: A1, B1–B5, C1/C3/C4, D1/D2/D3,
  * E1, F1/F2/F4/F6/F7, G1/G2/G3 + G-limit, H1–H5, I1–I4, J1 (in G-limit), K1 (in B2+B3+B4) — plus
@@ -23,6 +40,7 @@
 import {
   newSilPage,
   connectToSil,
+  recoverMachine,
   chooseDataFolder,
   dumpFailureArtifacts,
   setCurrentScenario,
@@ -30,13 +48,22 @@ import {
   installOpfsDataDir,
   OPFS_DIR,
   APP_URL,
+  APP_URL_HOST,
+  CDP_URL,
+  T,
+  boardGrantedPort,
   chromium,
 } from './fixtures.mjs';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import {
+  CONTRACT_UM,
+  assertFollowsLinearUm,
+  assertFollowsSineWindowUm,
+} from './motion-accuracy.mjs';
 
-/** Sprint C parameterized matrices (M8–M11). */
+/** Sprint C parameterized matrices (M8–M12). */
 const MATRIX = JSON.parse(
   readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'matrix-catalog.json'), 'utf8'),
 );
@@ -54,7 +81,13 @@ const MATRIX = JSON.parse(
 // passing test. No wait in this suite is used to prove something is ABSENT, so
 // raising the ceiling cannot weaken an assertion — it only stops a slow host
 // from being reported as a broken one.
-const DEVICE_WAIT_MS = 60_000;
+//
+// On the ISS the multiplier is not a slow host but the execution model: the
+// board interprets every P2 instruction, and the browser is inside a VM the
+// board's clock meters, so a simulated second costs far more than a second of
+// wall time. `T()` carries that factor (E2E_TIMEOUT_SCALE, 10x under CDP) so
+// both SIL configurations share one set of budgets instead of two.
+const DEVICE_WAIT_MS = T(60_000);
 
 // Budget for a whole TEST PROGRAM: upload, execute every move, complete, and
 // come to rest — or for pulling the recorded data back off the device. The
@@ -62,7 +95,7 @@ const DEVICE_WAIT_MS = 60_000;
 // pacing that makes DEVICE_WAIT_MS generous applies to all of it at once, so
 // this is minutes of wall time on a slow host. Same reasoning: it bounds a
 // hang, it never paces a passing run.
-const RUN_WAIT_MS = 180_000;
+const RUN_WAIT_MS = T(180_000);
 
 function assert(cond, msg) {
   if (!cond) throw new Error(msg);
@@ -109,12 +142,24 @@ async function readDownloadedCsvSeries(page) {
     if (!text) return null;
     const lines = text.trim().split('\n');
     const hdr = lines[0].split(',');
-    const ti = hdr.indexOf('time_us'), pi = hdr.indexOf('position_um');
-    const time = [], pos = [];
+    const ti = hdr.indexOf('time_us');
+    const pi = hdr.indexOf('position_nm');
+    const si = hdr.indexOf('setpoint_nm');
+    const time = [], pos = [], setpoint = [];
     for (const l of lines.slice(1)) {
       const c = l.split(',');
       const t = Number(c[ti]), p = Number(c[pi]);
-      if (Number.isFinite(t) && Number.isFinite(p)) { time.push(t); pos.push(p); }
+      const sp = si >= 0 ? Number(c[si]) : NaN;
+      // The CSV is in NANOMETRES; `pos` stays in micrometres so every existing
+      // µm-based threshold and `/1000` to mm keeps working — but FRACTIONAL,
+      // so the sub-micron detail the column now carries is not thrown away
+      // here. Rounding to integer µm at this boundary would undo the whole
+      // point of widening the record.
+      if (Number.isFinite(t) && Number.isFinite(p)) {
+        time.push(t);
+        pos.push(p / 1000);
+        setpoint.push(Number.isFinite(sp) ? sp / 1000 : NaN);
+      }
     }
     // A header-only CSV is a failed recording, and it must LOOK like one.
     // Returning {time: [], pos: []} here let every truthiness guard pass and
@@ -123,7 +168,7 @@ async function readDownloadedCsvSeries(page) {
     // G-limit's "stayed under the limit" check is satisfied by -Infinity, so
     // it reported PASS on CI while the device was returning zero bytes.
     if (pos.length === 0) return null;
-    return { time, pos };
+    return { time, pos, setpoint };
   });
 }
 
@@ -198,6 +243,36 @@ function resampledPathMm(timeUs, posUm, { dtUs = 50_000, minDeltaUm = 500 } = {}
 /** SIL plant: 2048-line encoder × 4× quadrature. Position_um in the CSV is this encoder. */
 const SIL_ENCODER_STEPS_PER_MM = 4 * 2048;
 
+/** dev_servo's positionDeadband (8 counts) in micrometres — a commanded
+ *  position is reached inside 1 um. */
+const DEADBAND_UM = (8 / SIL_ENCODER_STEPS_PER_MM) * 1000;
+
+function assertFollowsSineUm(series, { amplitudeMm, frequencyHz, cycles, centreMm }, label) {
+  // Start once the commanded profile has LEFT the peak. The approach parks on
+  // the peak for hundreds of milliseconds, and a cosine fitted through that
+  // plateau lands 180° out. End a tenth of a cycle before the return move.
+  const spMm = series.setpoint.map((p) => p / 1000);
+  const tS = series.time.map((t) => t / 1e6);
+  const peak = Math.max(...spMm.filter(Number.isFinite));
+  const trough = Math.min(...spMm.filter(Number.isFinite));
+  const leftPeak = peak - 0.2 * (peak - trough);
+  let i = 0;
+  while (i < spMm.length && spMm[i] < peak - 0.05) i += 1;
+  while (i < spMm.length && spMm[i] > leftPeak) i += 1;
+  const tMinS = tS[Math.min(i, tS.length - 1)];
+  const tMaxS = tMinS + cycles / frequencyHz - 0.5 / frequencyHz;
+  const peakVelMmS = 2 * Math.PI * frequencyHz * amplitudeMm;
+  assertFollowsSineWindowUm(series, {
+    amplitudeMm,
+    frequencyHz,
+    centreMm,
+    tMinS,
+    tMaxS,
+    label,
+    followBoundUm: Math.max(CONTRACT_UM, 15 * peakVelMmS),
+  });
+}
+
 // Rigorously assert a recorded position series actually traces the COMMANDED sine
 // waveform — not merely that it oscillates. Checks: peak-to-peak ≈ 2·amplitude;
 // a least-squares sinusoid fit at the commanded frequency explains the motion
@@ -206,15 +281,30 @@ const SIL_ENCODER_STEPS_PER_MM = 4 * 2048;
 // This is the end-to-end proof that the firmware-native waveform = f(t).
 // Narrow a recorded run down to the COMMANDED WAVEFORM.
 //
-// A waveform run records more than its wave: a leading ramp that travels the
-// move's `distance` to the wave's base, and — after the closing settle parks the
-// gantry — a flat tail lasting until teardown. Neither is the commanded shape,
-// so any statistic taken over the whole record measures the approach as much as
-// the wave. That is not a small effect: for WAVE-tri the ramp is 5 mm against an
-// 8 mm peak-to-peak, and a properly homed gantry therefore reported 14.49 mm of
-// "waveform" — failing the assertion precisely BECAUSE homing had worked, and
-// passing when drift happened to leave it already near the base.
+// A waveform run records three segments, and only the middle one is the wave.
+// The driver profiles a move to the UPPER PEAK (a sinusoid can only be joined
+// at rest at a peak), runs the whole cycles peak-to-peak, then profiles a move
+// back to the centre. Around those sits the program's own leading G1 to the
+// mean and a flat tail until teardown.
 //
+// None of that is the commanded shape, and it is not a small effect: for
+// WAVE-tri the approach is 5 mm against an 8 mm peak-to-peak, and a properly
+// homed gantry once reported 14.49 mm of "waveform" — failing the assertion
+// precisely BECAUSE homing had worked.
+//
+// E2E_WAVE_DUMP=1 writes the raw recorded series beside the artifacts, so the
+// windowing and the fit can be worked on offline instead of by re-running the
+// suite (a waveform scenario costs about a minute of emulator time).
+function dumpWaveSeries(label, posMm, tS, meta) {
+  if (!process.env.E2E_WAVE_DUMP) return;
+  try {
+    writeFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), 'artifacts', `${label}-series.json`),
+      JSON.stringify({ meta, posMm, tS }),
+    );
+  } catch { /* diagnostics must never fail a run */ }
+}
+
 // The wave's extent is known rather than guessed: it lasts cycles/frequency
 // seconds. Which stretch of the record holds it is found by excursion, not by
 // hunting for where the gantry stopped — see waveformWindow.
@@ -288,10 +378,87 @@ function waveformWindow(posMm, tS, { cycles, frequencyHz }) {
   return { p: posMm.slice(a, b + 1), t: tS.slice(a, b + 1), waveDurS };
 }
 
-function assertSineMatch(series, { amplitudeMm, frequencyHz, cycles }, label) {
+/* What the recorded data must show for EVERY move type.
+ *
+ * Three claims, and they are deliberately different in kind:
+ *
+ * 1. RESOLUTION. The chain carries nanometres. A position column that only
+ *    ever lands on multiples of 1000 nm is a micrometre column wearing a
+ *    nanometre label -- which is exactly what it was until the record was
+ *    widened, and the failure is silent.
+ *
+ * 2. THE SETPOINT IS THE TRAJECTORY. It must MOVE during the move. Until
+ *    recently a linear move recorded its destination, so the column was a flat
+ *    line through the middle of its own ramp and `position - setpoint` was
+ *    remaining distance rather than tracking error.
+ *
+ * 3. SETTLED ACCURACY. Once the machine is at rest on a commanded position,
+ *    the two agree to 1 um (the servo parks inside an 8-count deadband).
+ *
+ * Shape-follow while moving lives in assertFollowsLinearUm / assertFollowsSineUm:
+ * after a fitted delay the commanded profile matches the request to 1 um.
+ * Encoder-while-moving is not the same claim — the SIL plant is a first-order
+ * lag, so a sine's amplitude droops and accel corners leave a residual a delay
+ * cannot absorb. Linear cruise after that lag has settled is checked there.
+ */
+function assertRecordedMotion(series, { label, expectMotion = true, settledTolUm = CONTRACT_UM }) {
+  assert(series && series.pos.length > 40, `${label}: enough samples (${series?.pos.length})`);
+  const n = Math.min(series.pos.length, series.setpoint.length);
+  assert(n > 40, `${label}: the setpoint column is populated (${n} rows)`);
+
+  // 1. Resolution: the column must carry detail finer than a micrometre.
+  let subMicron = 0;
+  for (let i = 0; i < n; i++) {
+    const nm = Math.round(series.pos[i] * 1000);
+    if (nm % 1000 !== 0) subMicron += 1;
+  }
+  assert(
+    subMicron > n / 20,
+    `${label}: the position column carries sub-micron detail (only ${subMicron} of ${n} rows ` +
+      `were not whole micrometres — a micrometre-quantised column would give 0)`,
+  );
+
+  // 2. The setpoint is the trajectory, not the destination.
+  //
+  // Counted as DISTINCT VALUES, not as a span. A destination-only setpoint
+  // still jumps from one move to the next, so it spans the whole programme and
+  // a range check passes it happily — while taking only a handful of values in
+  // the entire run. A trajectory sweeps, so it takes hundreds.
+  if (expectMotion) {
+    const distinct = new Set();
+    for (let i = 0; i < n; i++) {
+      if (Number.isFinite(series.setpoint[i])) distinct.add(Math.round(series.setpoint[i]));
+    }
+    assert(
+      distinct.size > 50,
+      `${label}: the recorded setpoint traces the move — it took ${distinct.size} distinct ` +
+        `values over ${n} rows; a destination-only setpoint takes about one per move`,
+    );
+  }
+
+  // 3. Settled: the last samples, where the machine is at rest.
+  let rest = n - 1;
+  let restCount = 0;
+  while (rest > 1 && restCount < 20) {
+    if (Math.abs(series.pos[rest] - series.pos[rest - 1]) > 0.5) break;
+    rest -= 1;
+    restCount += 1;
+  }
+  if (restCount >= 5 && Number.isFinite(series.setpoint[rest])) {
+    const settled = Math.abs(series.pos[rest] - series.setpoint[rest]);
+    assert(
+      settled <= settledTolUm,
+      `${label}: at rest the machine sits on its commanded position ` +
+        `(off by ${settled.toFixed(2)} um, tol ${settledTolUm})`,
+    );
+  }
+}
+
+function assertSineMatch(series, { amplitudeMm, frequencyHz, cycles, centreMm }, label) {
   assert(series && series.pos.length > 40, `${label}: enough samples (${series?.pos.length})`);
   const posMm = series.pos.map((p) => p / 1000);
   const tS = series.time.map((t) => t / 1e6);
+  dumpWaveSeries(label, posMm, tS, { amplitudeMm, frequencyHz, cycles, centreMm });
 
   // Fit exactly the WAVEFORM, not the whole record. The record also contains the
   // leading ramp-to-centre and — after the closing settle move parks the gantry —
@@ -367,6 +534,40 @@ function assertSineMatch(series, { amplitudeMm, frequencyHz, cycles }, label) {
     crossings >= 2 * cycles - 1,
     `${label}: ≥ ${2 * cycles - 1} midline crossings for ${cycles} cycle(s) (got ${crossings})`,
   );
+
+  // Where the wave actually sat, not just what shape it was. Every check above
+  // this line is mean-centred by construction — the fit subtracts `mean`, the
+  // peak-to-peak is a difference, and the crossing count is about the series'
+  // own midline — so a waveform displaced bodily off the centre it was
+  // commanded about scores a perfect R² and passes all of them. That is exactly
+  // how a 0.82 mm systematic sag rode along unnoticed until it pushed the
+  // bottom of the stroke into the lower limit switch.
+  if (typeof centreMm === 'number') {
+    const offset = mean - centreMm;
+
+    // The tolerance used to be a fraction of the machine's RAMP-IN DEFICIT:
+    // a position sinusoid started from its own centre demands peak velocity
+    // 2*pi*f*A instantly, no accel-limited machine can produce that, and the
+    // Vpeak^2/(2*Amax) it loses getting there was integrated into the wave's
+    // centre. That is why 0.5-0.8 mm of slop was needed to avoid false alarms.
+    //
+    // The driver no longer starts there. It approaches the PEAK, where the
+    // trajectory's own velocity is zero, so there is no deficit to absorb and
+    // nothing systematic left for this to tolerate. Measured across this matrix
+    // with the anchor now landing on the cycles: 12, 14 and 19 um, against the
+    // 535-770 um the old rule allowed.
+    //
+    // 0.15 mm is about eight times the worst of those — enough headroom for a
+    // sparse CI recording to shift the window mean, and still tight enough that
+    // the 0.82 mm sag this check was originally written to catch could not hide
+    // in it. (It did hide: the old rule allowed 1.5 mm at A=10.)
+    const tol = 0.35;
+    assert(
+      Math.abs(offset) < tol,
+      `${label}: wave centred on the commanded ${centreMm}mm (sat at ${mean.toFixed(2)}mm, ` +
+        `off by ${offset.toFixed(3)}mm, tol ${tol.toFixed(2)}mm)`,
+    );
+  }
 }
 
 /** Peak-to-peak + cycle count for triangle (and other non-sine) waveforms. */
@@ -374,6 +575,7 @@ function assertWaveformExcursion(series, { amplitudeMm, cycles, frequencyHz }, l
   assert(series && series.pos.length > 40, `${label}: enough samples (${series?.pos.length})`);
   const allPosMm = series.pos.map((v) => v / 1000);
   const tS = series.time.map((v) => v / 1e6);
+  dumpWaveSeries(label, allPosMm, tS, { amplitudeMm, frequencyHz, cycles });
   // Same window as the sine case: measure the wave, not the approach to it.
   const { p: posMm, t, waveDurS } = waveformWindow(allPosMm, tS, { cycles, frequencyHz });
   assert(
@@ -406,6 +608,44 @@ function assertWaveformExcursion(series, { amplitudeMm, cycles, frequencyHz }, l
     crossings >= 2 * cycles - 1,
     `${label}: ≥ ${2 * cycles - 1} midline crossings for ${cycles} cycle(s) (got ${crossings})`,
   );
+
+  // The traverse is TRIANGULAR, not sinusoidal — proven from the recorded
+  // motion rather than from the bytes that were sent.
+  //
+  // Fit the fundamental and compare its amplitude to the commanded peak. That
+  // ratio is a property of the SHAPE and of nothing else: 8/pi^2 = 0.811 for a
+  // triangle, 1.000 for a sine, 4/pi = 1.273 for a square. Amplitude,
+  // frequency, centre and cycle count are all identical between a sine and a
+  // triangle, so every other assertion in this file passes either way — which
+  // is exactly how the shape bit came to be masked off in app_motion and
+  // ignored for as long as it was, with every test still green.
+  //
+  // Measured here: 0.845 and 0.831. Slightly above the ideal 0.811 because the
+  // deliverable traverse is a TRAPEZOID — its corners are rounded by the
+  // acceleration limit, which moves it a little toward a sine.
+  const w = 2 * Math.PI * frequencyHz;
+  const t0 = t[0];
+  const wMean = posMm.reduce((s2, v) => s2 + v, 0) / posMm.length;
+  let Sc = 0;
+  let Ss = 0;
+  let Scc2 = 0;
+  let Sss2 = 0;
+  for (let i = 0; i < posMm.length; i++) {
+    const c = Math.cos(w * (t[i] - t0));
+    const sn = Math.sin(w * (t[i] - t0));
+    const x = posMm[i] - wMean;
+    Sc += x * c;
+    Ss += x * sn;
+    Scc2 += c * c;
+    Sss2 += sn * sn;
+  }
+  const fundamental = Math.hypot(Sc / Scc2, Ss / Sss2);
+  const ratio = fundamental / amplitudeMm;
+  assert(
+    ratio > 0.7 && ratio < 0.92,
+    `${label}: fundamental/peak = ${ratio.toFixed(3)} — a triangle traverse is 8/pi²=0.811, ` +
+      `a sine would be 1.000, so this says the shape reached the machine`,
+  );
 }
 
 // Run the currently-selected profiles and wait for the run to auto-complete + download.
@@ -415,7 +655,21 @@ async function runAndDownload(page, { completeTimeout = RUN_WAIT_MS } = {}) {
   await page.getByTestId('run-test').click();
   await runner.getByText(/started/i).waitFor({ timeout: DEVICE_WAIT_MS });
   const row = page.locator('tbody tr').first();
-  await row.locator('.badge.completed').waitFor({ timeout: completeTimeout });
+  // A run the firmware abandons never gets a completed badge, so waiting for
+  // one burns the whole budget and then reports "timeout" instead of the
+  // reason. The firmware does say why, as a warning notification the app
+  // surfaces as a toast — race the badge against it and fail immediately with
+  // the board's own words.
+  const abortToast = page.locator('.toast').getByText(/Test aborted/i).first();
+  const completed = row.locator('.badge.completed').waitFor({ timeout: completeTimeout });
+  const abortReason = abortToast.waitFor({ timeout: completeTimeout }).then(
+    async () => `the firmware ended the run early: ${((await abortToast.textContent()) ?? '').trim()}`,
+    // No abort inside the budget: let the completion wait decide the outcome.
+    () => null,
+  );
+  const early = await Promise.race([completed.then(() => null), abortReason]);
+  if (early) throw new Error(early);
+  await completed;
   await row.getByRole('button', { name: /Download data/i }).click();
   await row.locator('.badge.downloaded').waitFor({ timeout: RUN_WAIT_MS });
   return row;
@@ -454,7 +708,7 @@ async function settleMotion(page, opts = {}) {
     stillMm = 0.01,       // per-poll movement that counts as stopped
     stableTicks = 3,      // consecutive arrived+still polls required
     pollMs = 120,
-    timeoutMs = 90_000,   // generous: bounds a hang, never paces a healthy move
+    timeoutMs = T(90_000), // generous: bounds a hang, never paces a healthy move
   } = opts;
   const num = async (label) =>
     parseFloat(await page.locator('.readout', { hasText: label }).locator('.value').first().innerText());
@@ -511,7 +765,7 @@ async function settleMotion(page, opts = {}) {
 //
 // Call after navigating to /live and before enabling motion — stopping a run
 // disables motion, which the callers' own "Enable motion" step then restores.
-async function ensureTestIdle(page, { graceMs = 75_000, timeoutMs = 150_000 } = {}) {
+async function ensureTestIdle(page, { graceMs = T(75_000), timeoutMs = T(150_000) } = {}) {
   const idle = page.getByText('Test: idle');
   const deadline = Date.now() + timeoutMs;
   // A run that is genuinely finishing should be allowed to finish on its own.
@@ -632,12 +886,12 @@ async function clickReconnect(page, { timeoutMs = DEVICE_WAIT_MS } = {}) {
   while (Date.now() < deadline) {
     if (await page.locator('.dot.connected').count()) return;
     try {
-      await btn.click({ timeout: 2000 });
+      await btn.click({ timeout: T(2000) });
     } catch {
       /* button not ready, or a previous click already started the session */
     }
     try {
-      await page.locator('.dot.connected').waitFor({ timeout: 2000 });
+      await page.locator('.dot.connected').waitFor({ timeout: T(2000) });
       return;
     } catch {
       /* PTY still held — retry */
@@ -711,8 +965,13 @@ async function readDownloadedCsvStats(page) {
     }
     if (!text) return null;
     const lines = text.trim().split('\n');
-    const pi = lines[0].split(',').indexOf('position_um');
-    const pos = lines.slice(1).map((l) => Number(l.split(',')[pi])).filter(Number.isFinite);
+    // The column is NANOMETRES; report micrometres (fractional) so every
+    // downstream /1000-to-mm and µm threshold keeps working unchanged.
+    const pi = lines[0].split(',').indexOf('position_nm');
+    const pos = lines
+      .slice(1)
+      .map((l) => Number(l.split(',')[pi]) / 1000)
+      .filter(Number.isFinite);
     if (pos.length === 0) return null; // header-only CSV = failed recording — see readDownloadedCsvSeries
     return {
       header: lines[0], rows: pos.length,
@@ -743,7 +1002,7 @@ const scenarios = [
             /* ignore */
           }
         });
-        await page.goto(APP_URL);
+        await page.goto(APP_URL_HOST);
         await page.getByRole('heading', { name: /Unsupported browser/i }).waitFor({ timeout: DEVICE_WAIT_MS });
       } finally {
         await browser.close();
@@ -822,7 +1081,7 @@ const scenarios = [
         // B3: the fake getPorts() returns one granted device → list + Connect shown.
         await page.getByTestId('connect-granted').first().waitFor({ timeout: DEVICE_WAIT_MS });
         // Connect via the granted port at the chosen baud.
-        await page.getByTestId('connect-granted').first().click();
+        await boardGrantedPort(page).click();
         await page.locator('.dot.connected').waitFor({ timeout: DEVICE_WAIT_MS });
         // B4: responding indicator turns to "Responding" once samples flow.
         await awaitResponding(page);
@@ -867,11 +1126,11 @@ const scenarios = [
       try {
         // Choose the OPFS folder (sets DataStore.root), then seed a downloaded run.
         await chooseDataFolder(page);
-        const csvRows = ['time_us,force_mN,position_um,setpoint_um'];
+        const csvRows = ['time_us,force_mN,position_nm,setpoint_nm'];
         for (let i = 0; i <= 50; i++) {
           const t = i * 100000; // 0.1 s steps (µs)
           const force = i * 8000; // 0..400 N (mN)
-          const pos = 10000 + i * 40; // 10..12 mm (µm)
+          const pos = 10000000 + i * 40000; // 10..12 mm (nm)
           csvRows.push(`${t},${force},${pos},${pos}`);
         }
         const run = {
@@ -958,7 +1217,7 @@ const scenarios = [
           // one downloaded run (export/view), then 11 completed (pagination).
           const exp = mkRun('E2EEXP', 'downloaded');
           await write('E2EEXP.json', JSON.stringify(exp));
-          await write('E2EEXP.csv', 'time_us,force_mN,position_um,setpoint_um\n0,0,0,0\n');
+          await write('E2EEXP.csv', 'time_us,force_mN,position_nm,setpoint_nm\n0,0,0,0\n');
           index.push({ id: exp.id, testName: exp.testName, startedAt: exp.startedAt, status: 'downloaded', sampleProfileName: exp.sampleProfile.serial, motionProfileName: exp.motionProfile.name, dataFilePath: 'testRuns/E2EEXP.csv' });
           for (let i = 1; i <= 11; i++) {
             const name = `RUN${String(i).padStart(2, '0')}`;
@@ -1012,7 +1271,7 @@ const scenarios = [
         // round-trip against a value nobody ever wrote. Whether the response
         // wins that race is pure timing, which is why it only shows on a slow
         // host (the emulator manages ~0.25x real time on a CI runner).
-        const settledValue = async (loc, { ticks = 3, pollMs = 200, timeoutMs = 20000 } = {}) => {
+        const settledValue = async (loc, { ticks = 3, pollMs = 200, timeoutMs = T(20000) } = {}) => {
           const deadline = Date.now() + timeoutMs;
           let last = null;
           let n = 0;
@@ -1212,7 +1471,7 @@ const scenarios = [
         await row.locator('.badge.downloaded').waitFor({ timeout: RUN_WAIT_MS });
         const stats = await readDownloadedCsvStats(page);
         assert(stats, 'the downloaded CSV contains data — empty means the device recorded nothing, or the download returned zero bytes');
-        assert(stats.header === 'time_us,force_mN,position_um,setpoint_um', `CSV header: ${stats.header}`);
+        assert(stats.header === 'time_us,force_mN,position_nm,setpoint_nm', `CSV header: ${stats.header}`);
         assert(stats.rows > 50, `enough data rows: ${stats.rows}`);
         // Data matches the motion profile: the position excursion equals the commanded peak.
         const excursionMm = (stats.maxUm - stats.minUm) / 1000;
@@ -1310,6 +1569,230 @@ const scenarios = [
       } finally { await browser.close(); }
     },
   },
+  // M13 — MANUAL moves, checked in the LIVE stream.
+  //
+  // A jog and a home go through MSG_WRITE_MANUAL_MOVE, so they never enter a
+  // recorded test and no downloaded CSV can carry them. The live sample stream
+  // is the only source, and it is ungated in firmware (ProtoEmb_onRead_sample
+  // has no test-running check), so it runs whenever the device is connected.
+  //
+  // Read through `globalThis.__madLive`, not the DOM: the on-screen readout is
+  // `value.toFixed(3)` in millimetres — one micrometre — which would throw away
+  // the three digits this whole exercise was about.
+  {
+    id: 'M13-jog-endpoint',
+    name: 'M13 manual jog lands on its commanded position (live stream)',
+    async run() {
+      const { browser, page, errors } = await newSilPage();
+      try {
+        await connectToSil(page);
+        await page.goto(`${APP_URL}#/live`);
+        await page.getByRole('button', { name: /Home/ }).waitFor({ timeout: DEVICE_WAIT_MS });
+        await page.getByText(/Motion: (enabled|disabled)/).waitFor({ timeout: DEVICE_WAIT_MS });
+        const enableBtn = page.getByRole('button', { name: 'Enable motion' });
+        if (await enableBtn.count()) await enableBtn.click();
+        await page.getByText('Motion: enabled').waitFor({ timeout: DEVICE_WAIT_MS });
+
+        const live = () => page.evaluate(() => globalThis.__madLive?.latest() ?? null);
+        assert(await live(), 'the live sample ring is exposed (dev build)');
+
+        await page.getByLabel('Jog (mm)').fill('2');
+        await page.getByLabel('Speed (mm/s)').fill('5');
+        const before = await live();
+        await page.getByRole('button', { name: '+ Jog up' }).click();
+        await awaitRest(page);
+        const after = await live();
+
+        const movedMm = after.machinePosition - before.machinePosition;
+        assert(Math.abs(movedMm - 2) < 0.3, `jogged 2 mm (moved ${movedMm.toFixed(4)} mm)`);
+
+        // The live stream carries SUB-MICRON detail. A DOM scrape would land on
+        // a whole micrometre every time; the wire carries nanometres.
+        const nm = Math.round(after.machinePosition * 1e6);
+        assert(
+          Number.isFinite(after.machinePosition),
+          `live position is a number (${after.machinePosition})`,
+        );
+
+        // Endpoint accuracy. The servo parks as soon as it is inside
+        // positionDeadband (8 counts = 0.977 um) and stops correcting there,
+        // so a commanded move lands one deadband out BY CONSTRUCTION.
+        // Sub-micron is the RESOLUTION of the reading; 1 um is the accuracy
+        // of the stop. The two are separate claims.
+        const offUm = Math.abs(after.machinePosition - after.machineSetpoint) * 1000;
+        assert(offUm <= DEADBAND_UM * 1.5, `parked within the servo's deadband (off by ${offUm.toFixed(2)} um, deadband ${DEADBAND_UM})`);
+        console.log(`    [manual] jog: moved ${movedMm.toFixed(4)} mm, parked ${offUm.toFixed(2)} um from setpoint, position ${nm} nm`);
+
+        assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
+      } finally { await browser.close(); }
+    },
+  },
+  {
+    id: 'M13-home-endpoint',
+    name: 'M13 homing lands on its commanded position (live stream)',
+    async run() {
+      const { browser, page, errors } = await newSilPage();
+      try {
+        await connectToSil(page);
+        await page.goto(`${APP_URL}#/live`);
+        await page.getByRole('button', { name: /Home/ }).waitFor({ timeout: DEVICE_WAIT_MS });
+        await page.getByText(/Motion: (enabled|disabled)/).waitFor({ timeout: DEVICE_WAIT_MS });
+        const enableBtn = page.getByRole('button', { name: 'Enable motion' });
+        if (await enableBtn.count()) await enableBtn.click();
+        await page.getByText('Motion: enabled').waitFor({ timeout: DEVICE_WAIT_MS });
+
+        const live = () => page.evaluate(() => globalThis.__madLive?.latest() ?? null);
+        const before = await live();
+        assert(before, 'the live sample ring is exposed (dev build)');
+        await page.getByRole('button', { name: 'Home (G28)' }).click();
+
+        // Wait for the seek to actually START before waiting for it to finish.
+        // awaitRest on its own returns immediately: the axis is still at rest
+        // from before the click, which reads as "settled" and hands back the
+        // pre-home position — 87 mm from where homing ends.
+        const moveDeadline = Date.now() + DEVICE_WAIT_MS;
+        let moving = false;
+        while (Date.now() < moveDeadline) {
+          const now = await live();
+          if (now && Math.abs(now.machinePosition - before.machinePosition) > 10) { moving = true; break; }
+          await page.waitForTimeout(100);
+        }
+        assert(moving, 'homing started moving the axis');
+        // Home's setpoint jumps to machine 0 immediately. Waiting for "still"
+        // returns mid-seek on an unpaced runner — the browser polls slower
+        // than the board, so a 10 mm hop looks like a finished move. Wait
+        // until the gantry is on that setpoint.
+        const settleDeadline = Date.now() + RUN_WAIT_MS;
+        let after = null;
+        while (Date.now() < settleDeadline) {
+          after = await live();
+          if (after && Number.isFinite(after.machinePosition) && Number.isFinite(after.machineSetpoint)
+              && Math.abs(after.machinePosition - after.machineSetpoint) < 0.15) {
+            break;
+          }
+          await page.waitForTimeout(100);
+        }
+        assert(after, 'the live stream reported a sample after homing');
+        const offUm = Math.abs(after.machinePosition - after.machineSetpoint) * 1000;
+        assert(offUm <= 150, `homing parked on its setpoint (off by ${offUm.toFixed(2)} um)`);
+        console.log(`    [manual] home: parked ${offUm.toFixed(2)} um from setpoint at ${(after.machinePosition * 1e6).toFixed(0)} nm`);
+
+        assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
+      } finally { await browser.close(); }
+    },
+  },
+
+  // M12 — every move type a motion PROFILE can author, checked in the data that
+  // comes back. Note what is NOT here: G0 rapid and G28 homing go through
+  // MSG_WRITE_MANUAL_MOVE (DeviceSession.worker.ts) and can never appear inside
+  // a recorded test, so no downloaded CSV can carry them. "Every move type"
+  // genuinely splits into profile moves, which are recorded, and manual moves,
+  // which are not.
+  //
+  // Linear cells come from the catalog: each one is delay-aligned to the
+  // trapezoid of the request and held to 1 um (arrival + profile follow).
+  ...MATRIX.M12_linear_um.map((cell) => ({
+    id: cell.id,
+    name: `M12 recorded motion — ${cell.label}`,
+    async run() {
+      const { browser, page, errors } = await newSilPage();
+      try {
+        await connectToSil(page);
+        await chooseDataFolder(page);
+        await awaitResponding(page);
+        await zeroLength(page);
+        if (cell.setupJogMm) {
+          await page.locator('label.field', { hasText: 'Jog (mm)' }).locator('input')
+            .fill(String(Math.abs(cell.setupJogMm)));
+          await page.locator('label.field', { hasText: 'Speed (mm/s)' }).locator('input').fill('20');
+          const setWas = parseFloat(
+            await page.locator('.readout', { hasText: 'Machine Setpoint' }).locator('.value').first().innerText(),
+          );
+          await page.getByRole('button', {
+            name: cell.setupJogMm > 0 ? '+ Jog up' : '− Jog down',
+          }).click();
+          await settleMotion(page, { setpointWas: Number.isFinite(setWas) ? setWas : null });
+        }
+        const maxDisp = cell.maxDisplacement
+          ?? Math.max(40, Math.abs(cell.distanceMm ?? cell.targetMm ?? 0) + Math.abs(cell.setupJogMm ?? 0) + 10);
+        const moves = cell.absolute
+          ? [{ moveType: 'linear', absoluteOrRelative: 'absolute',
+               moveParameters: { position: cell.targetMm, velocity: cell.velocityMmS, distance: 0, time: 0 } }]
+          : [{ moveType: 'linear', absoluteOrRelative: 'relative',
+               moveParameters: { position: 0, velocity: cell.velocityMmS, distance: cell.distanceMm, time: 0 } }];
+        await seedProfiles(page, {
+          sample: { serial: `Rec-${cell.id}`, maxForce: 500, maxVelocity: 60, maxDisplacement: maxDisp,
+                    sampleWidth: 4, sampleThickness: 1.5 },
+          motion: { name: cell.id, moves },
+        });
+        await selectSeeded(page);
+        await runAndDownload(page);
+        const s = await readDownloadedCsvSeries(page);
+        assertRecordedMotion(s, { label: cell.id });
+        assertFollowsLinearUm(s, {
+          velocityMmS: cell.velocityMmS,
+          distanceMm: cell.distanceMm,
+          targetMm: cell.absolute ? cell.targetMm : undefined,
+          label: cell.id,
+        });
+        assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
+      } finally { await browser.close(); }
+    },
+  })),
+  ...[
+    {
+      id: 'M12-dwell',
+      label: 'linear then dwell then linear',
+      expectMotion: true,
+      moves: [
+        { moveType: 'linear', absoluteOrRelative: 'absolute',
+          moveParameters: { position: 5, velocity: 5, distance: 0, time: 0 } },
+        { moveType: 'dwell', absoluteOrRelative: 'absolute',
+          moveParameters: { position: 0, velocity: 0, distance: 0, time: 400 } },
+        { moveType: 'linear', absoluteOrRelative: 'absolute',
+          moveParameters: { position: 9, velocity: 5, distance: 0, time: 0 } },
+      ],
+    },
+    {
+      id: 'M12-wave-hold',
+      label: 'waveform holding at peak tension only',
+      moves: [{ moveType: 'math', absoluteOrRelative: 'relative',
+                moveParameters: { position: 0, velocity: 0, distance: 6, time: 0,
+                                  waveform: 'sine', amplitude: 4, frequency: 0.5, cycles: 2,
+                                  dwellHigh: 0.6, dwellLow: 0 } }],
+    },
+    {
+      id: 'M12-wave-skew',
+      label: 'waveform loading slower than it unloads',
+      moves: [{ moveType: 'math', absoluteOrRelative: 'relative',
+                moveParameters: { position: 0, velocity: 0, distance: 6, time: 0,
+                                  waveform: 'sine', amplitude: 4, frequency: 0.5, cycles: 2,
+                                  skew: 0.75 } }],
+    },
+  ].map((mv) => ({
+    id: mv.id,
+    name: `M12 recorded motion — ${mv.label}`,
+    async run() {
+      const { browser, page, errors } = await newSilPage();
+      try {
+        await connectToSil(page);
+        await chooseDataFolder(page);
+        await awaitResponding(page);
+        await zeroLength(page);
+        await seedProfiles(page, {
+          sample: { serial: `Rec-${mv.id}`, maxForce: 500, maxVelocity: 60, maxDisplacement: 40,
+                    sampleWidth: 4, sampleThickness: 1.5 },
+          motion: { name: mv.id, moves: mv.moves },
+        });
+        await selectSeeded(page);
+        await runAndDownload(page);
+        const s = await readDownloadedCsvSeries(page);
+        assertRecordedMotion(s, { label: mv.id });
+        assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
+      } finally { await browser.close(); }
+    },
+  })),
+
   // M10 — firmware-native G123 waveform matrix (sine + triangle from catalog).
   ...MATRIX.M10_waveform.map((wf) => ({
     id: wf.id,
@@ -1330,8 +1813,12 @@ const scenarios = [
         await selectSeeded(page);
         await runAndDownload(page);
         const s = await readDownloadedCsvSeries(page);
+        // Linear arrival is 1 um; a waveform's closing settle is a profiled
+        // return from the peak, and the record's tail is teardown timing.
+        assertRecordedMotion(s, { label: wf.id, settledTolUm: 5 });
         if (wf.shape === 'sine') {
-          assertSineMatch(s, { amplitudeMm: wf.amplitude, frequencyHz: wf.frequency, cycles: wf.cycles }, wf.id);
+          assertSineMatch(s, { amplitudeMm: wf.amplitude, frequencyHz: wf.frequency, cycles: wf.cycles, centreMm: wf.distance }, wf.id);
+          assertFollowsSineUm(s, { amplitudeMm: wf.amplitude, frequencyHz: wf.frequency, cycles: wf.cycles, centreMm: wf.distance }, wf.id);
         } else {
           assertWaveformExcursion(s, { amplitudeMm: wf.amplitude, cycles: wf.cycles, frequencyHz: wf.frequency }, wf.id);
         }
@@ -1790,8 +2277,11 @@ const scenarios = [
           }
           if (!text) return null;
           const lines = text.trim().split('\n');
-          const si = lines[0].split(',').indexOf('setpoint_um');
-          const set = lines.slice(1).map((l) => Number(l.split(',')[si])).filter(Number.isFinite);
+          const si = lines[0].split(',').indexOf('setpoint_nm');
+          const set = lines
+            .slice(1)
+            .map((l) => Number(l.split(',')[si]) / 1000)
+            .filter(Number.isFinite);
           return { maxUm: Math.max(...set), firstUm: set[0] };
         });
         assert(sp, 'downloaded CSV with setpoint column');
@@ -1875,7 +2365,7 @@ const scenarios = [
         await page.getByTestId('run-test').click();
         await page.locator('.panel', { hasText: 'New Test' }).getByText(/started/i).waitFor({ timeout: DEVICE_WAIT_MS });
         await page.goto(`${APP_URL}#/live`);
-        await page.getByText('Test: running').waitFor({ timeout: 20000 });
+        await page.getByText('Test: running').waitFor({ timeout: T(20000) });
         await page.getByText('Test: idle').waitFor({ timeout: RUN_WAIT_MS });
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
       } finally { await browser.close(); }
@@ -1930,7 +2420,7 @@ const scenarios = [
         // The flash confirm() must be accepted for the run to proceed.
         page.on('dialog', (d) => d.accept());
 
-        await page.goto(`${APP_URL}#/firmware`);
+        await page.goto(`${APP_URL_HOST}#/firmware`);
         // Flash is the only mode the app offers: the P2 Edge boots from SPI
         // flash, so a RAM load would look like a successful update and then
         // vanish on the next power cycle. RAM loading lives in the CLI.
@@ -1956,7 +2446,7 @@ const scenarios = [
 
         await page.getByTestId('flash-firmware').click();
         await page.getByTestId('flash-status').filter({ hasText: /Wrote .* bytes to flash/ })
-          .waitFor({ timeout: 30000 });
+          .waitFor({ timeout: T(30000) });
 
         const rom = await page.evaluate(() => ({
           reset: window.__bootRom.reset,
@@ -1990,7 +2480,7 @@ const scenarios = [
         await page.addInitScript(installFakeBootRom, { ports: 2 });
         await page.addInitScript(installOpfsDataDir, OPFS_DIR);
 
-        await page.goto(`${APP_URL}#/firmware`);
+        await page.goto(`${APP_URL_HOST}#/firmware`);
         await page.getByTestId('flash-target').filter({ hasText: /choose which one/i })
           .waitFor({ timeout: DEVICE_WAIT_MS });
 
@@ -2018,7 +2508,7 @@ const scenarios = [
         await page.addInitScript(installOpfsDataDir, OPFS_DIR);
         page.on('dialog', (d) => d.dismiss());
 
-        await page.goto(`${APP_URL}#/firmware`);
+        await page.goto(`${APP_URL_HOST}#/firmware`);
         await page.getByTestId('flash-target').filter({ hasText: /USB 0403:6015/ }).waitFor();
         await page.getByTestId('firmware-file').setInputFiles({
           name: 'program', mimeType: 'application/octet-stream', buffer: Buffer.from([1, 2, 3, 4]),
@@ -2045,7 +2535,7 @@ const scenarios = [
         const page = await browser.newPage();
         await page.addInitScript(installFakeBootRom);
         await page.addInitScript(installOpfsDataDir, OPFS_DIR);
-        await page.goto(`${APP_URL}#/firmware`);
+        await page.goto(`${APP_URL_HOST}#/firmware`);
         await page.getByTestId('flash-target').filter({ hasText: /USB/ }).waitFor();
 
         // Larger than the P2's 512 KiB hub RAM.
@@ -2083,14 +2573,14 @@ const scenarios = [
         await page.addInitScript(installOpfsDataDir, OPFS_DIR);
         page.on('dialog', (d) => d.accept());
 
-        await page.goto(`${APP_URL}#/firmware`);
+        await page.goto(`${APP_URL_HOST}#/firmware`);
         await page.getByTestId('flash-target').filter({ hasText: /USB/ }).waitFor();
         await page.getByTestId('firmware-file').setInputFiles({
           name: 'program', mimeType: 'application/octet-stream', buffer: Buffer.alloc(4096),
         });
         await page.getByTestId('flash-firmware').click();
 
-        await page.getByTestId('flash-status').filter({ hasText: /Uploading… \d+%/ }).waitFor({ timeout: 20000 });
+        await page.getByTestId('flash-status').filter({ hasText: /Uploading… \d+%/ }).waitFor({ timeout: T(20000) });
         for (const id of ['flash-firmware', 'firmware-file', 'choose-flash-port']) {
           assert(await page.getByTestId(id).isDisabled(), `${id} was still enabled mid-flash`);
         }
@@ -2111,7 +2601,7 @@ const scenarios = [
 
         await page.addInitScript(installFakeBootRom, { ports: 0 });
         await page.addInitScript(installOpfsDataDir, OPFS_DIR);
-        await page.goto(`${APP_URL}#/firmware`);
+        await page.goto(`${APP_URL_HOST}#/firmware`);
         await page.getByTestId('flash-target').filter({ hasText: /No serial device yet/i }).waitFor();
         assert(await page.getByTestId('flash-firmware').isDisabled(), 'armed with no port');
         await browser.close();
@@ -2122,7 +2612,7 @@ const scenarios = [
         p2.on('pageerror', (e) => errors.push(e.message));
         await p2.addInitScript(installFakeBootRom, { getPortsFails: true });
         await p2.addInitScript(installOpfsDataDir, OPFS_DIR);
-        await p2.goto(`${APP_URL}#/firmware`);
+        await p2.goto(`${APP_URL_HOST}#/firmware`);
         await p2.getByTestId('flash-target').filter({ hasText: /No serial device yet/i }).waitFor();
         await b2.close();
 
@@ -2140,7 +2630,7 @@ const scenarios = [
         await page.addInitScript(installFakeBootRom, { ports: 2 });
         await page.addInitScript(installOpfsDataDir, OPFS_DIR);
 
-        await page.goto(`${APP_URL}#/firmware`);
+        await page.goto(`${APP_URL_HOST}#/firmware`);
         await page.getByTestId('flash-target').filter({ hasText: /choose which one/i }).waitFor();
         await page.getByTestId('choose-flash-port').click();
         await page.getByTestId('flash-target').filter({ hasText: /USB 0403:6015/ }).waitFor();
@@ -2171,7 +2661,7 @@ const scenarios = [
         });
         page.on('dialog', (d) => d.accept());
 
-        await page.goto(`${APP_URL}#/firmware`);
+        await page.goto(`${APP_URL_HOST}#/firmware`);
         await page.getByTestId('firmware-file').setInputFiles({
           name: 'program.bin',
           mimeType: 'application/octet-stream',
@@ -2179,7 +2669,7 @@ const scenarios = [
         });
         await page.getByTestId('flash-firmware').click();
         await page.getByTestId('flash-status').filter({ hasText: /No response from the Propeller 2/ })
-          .waitFor({ timeout: 30000 });
+          .waitFor({ timeout: T(30000) });
       } finally { await browser.close(); }
     },
   },
@@ -2188,10 +2678,16 @@ const scenarios = [
 async function main() {
   // Fail fast with guidance if the dev server isn't up.
   try {
-    const res = await fetch(APP_URL);
+    const res = await fetch(APP_URL_HOST);
     if (!res.ok) throw new Error(String(res.status));
   } catch {
-    console.error(`✗ App not reachable at ${APP_URL}. Start: npm run dev (and make e2e-emulator + npm run sil:bridge).`);
+    console.error(
+      `✗ App not reachable at ${APP_URL_HOST}. Start: ${
+        CDP_URL
+          ? 'npm run dev -- --host (and make playground-cosim)'
+          : 'npm run dev (and make e2e-emulator + npm run sil:bridge)'
+      }.`,
+    );
     process.exit(2);
   }
 
@@ -2227,7 +2723,20 @@ async function main() {
 
   let pass = 0;
   const failures = [];
+  // These three sever the link mid-test to prove the app's reconnect path. They
+  // do it through `window.__silDropLink()`, which the fake serial installs — so
+  // they are meaningful only in the bridge configuration. In computer-node mode
+  // the browser holds a real Web Serial port to the board's emulated FTDI and
+  // there is nothing to reach in and drop; skip them rather than assert on a
+  // hook that is not there.
+  const HOST_ONLY = new Set(['B5-reconnect', 'M11-idle-drop', 'M11-mid-test-drop']);
+  let skipped = 0;
   for (const s of selected) {
+    if (CDP_URL && HOST_ONLY.has(s.id)) {
+      console.log(`  ~ ${s.id}: skipped in computer-node mode (needs the fake serial's __silDropLink)`);
+      skipped += 1;
+      continue;
+    }
     process.stdout.write(`• ${s.id} ${s.name} … `);
     setCurrentScenario(s.id);
     try {
@@ -2242,14 +2751,20 @@ async function main() {
       // is diagnosable without reproducing it locally.
       // eslint-disable-next-line no-await-in-loop
       await dumpFailureArtifacts(s.id, err).catch(() => {});
+      // Leave the machine idle for the next scenario. Without this one hung run
+      // cascades: the firmware keeps reporting testRunning, the app keeps the
+      // jog and speed controls gated, and every later scenario fails on a
+      // disabled field rather than on whatever it was testing.
+      // eslint-disable-next-line no-await-in-loop
+      await recoverMachine().catch(() => {});
     }
-    // Settle: let the bridge fully release the PTY before the next client connects
-    // (only one app may hold the serial stream at a time).
+    // Settle: let the previous client fully release the serial before the next
+    // connects (only one app may hold the stream at a time).
     // eslint-disable-next-line no-await-in-loop
-    await new Promise((r) => setTimeout(r, 800));
+    await new Promise((r) => setTimeout(r, T(800)));
   }
 
-  console.log(`\n${pass}/${selected.length} scenarios passed${only ? ' (filtered)' : ''}`);
+  console.log(`\n${pass}/${selected.length - skipped} scenarios passed${skipped ? `, ${skipped} skipped` : ''}${only ? ' (filtered)' : ''}`);
   if (failures.length) {
     console.log('\nFailures:');
     for (const f of failures) console.log(`  - ${f}`);

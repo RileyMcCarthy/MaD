@@ -1,0 +1,18 @@
+# Silicon console captured from a P2-EVAL.
+# Source: hwtest/pins.c
+# Captured: 2026-09-14T00:24:00Z
+# Recapture: python3 tools/hw_compare.py --capture --prog <name>
+
+PASS drive_high 00000001
+PASS drive_low 00000001
+PASS transition_200_4 0000030d
+PASS transition_1000_20 00004e0d
+PASS async_tx_100 00000029
+PASS async_tx_80 00000029
+PASS loopback_took_100 00000475
+PASS loopback_byte_100 00000029
+PASS loopback_took_80 00000349
+PASS loopback_byte_80 0000002d
+PASS nco_pattern_8 ffffffff
+PASS nco_pattern_16 ffffffff
+RESULT 0 PASS

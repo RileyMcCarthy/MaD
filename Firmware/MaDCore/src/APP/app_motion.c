@@ -6,8 +6,10 @@
  **********************************************************************/
 #include <string.h>
 #include <stdlib.h>
-#include "HAL_lock.h"
+/* Not used directly any more, but dropping it changes the header chain into a
+ * FlexC internal error inside libc's ioctl.c. Keep it. */
 #include <math.h>
+#include "HAL_lock.h"
 
 #include "app_motion.h"
 #include "app_control.h"
@@ -60,6 +62,9 @@
 #define actuator_getPosition() dev_servo_getPosition(ACTUATOR_CH)
 #define actuator_getTarget() dev_servo_getTarget(ACTUATOR_CH)
 #define actuator_atTarget() dev_servo_atTarget(ACTUATOR_CH)
+#define actuator_getSetpoint() dev_servo_getSetpoint(ACTUATOR_CH)
+#define actuator_startWaveform(wf) dev_servo_startWaveform(ACTUATOR_CH, (wf))
+#define ACTUATOR_HAS_WAVEFORM 1
 #else
 #define ACTUATOR_CH DEV_STEPPER_CHANNEL_MAIN
 #define actuator_enable(en) dev_stepper_enable(ACTUATOR_CH, (en))
@@ -70,24 +75,24 @@
 #define actuator_getPosition() dev_stepper_getSteps(ACTUATOR_CH)
 #define actuator_getTarget() dev_stepper_getTarget(ACTUATOR_CH)
 #define actuator_atTarget() dev_stepper_atTarget(ACTUATOR_CH)
+/* dev_stepper is open-loop and has no trajectory generator, so it has no
+ * waveform. G123 is refused on that build rather than approximated. */
+#define actuator_getSetpoint() actuator_getTarget()
+#define ACTUATOR_HAS_WAVEFORM 0
 #endif
 
-/* Waveform (G123): the firmware generates the f(t) trajectory itself (no host G1
- * expansion). It streams the analytic instantaneous velocity each motion tick to
- * the stepper's continuous-velocity (NCO) output, so the pulse rate follows the
- * waveform smoothly rather than as discrete stop/start segments. */
-#define APP_MOTION_TWO_PI 6.283185307179586f
-/* The waveform ends with a settle move back to the centre; completion is the
- * ACTUATOR's own arrival verdict (actuator_atTarget), not a position tolerance
- * chosen here. A tolerance in this layer has to be at least as loose as the
- * parking accuracy the actuator enforces, and it cannot know that: dev_servo
- * parks anywhere inside its position deadband, so the old ±2-step test could
- * never be satisfied and the move hung forever, wedging the whole test. */
-/* Defensive clamp on the commanded step rate (steps/s). The host validates peak
- * velocity, but extreme/unvalidated params (high freq × high amplitude × a fine
- * steps/mm) could otherwise overflow the int32/uint32 rate. 30 Msteps/s sits
- * well above any real stepper rate yet far below the 2^31 overflow point. */
-#define APP_MOTION_WAVEFORM_MAX_STEPS_PER_S 30000000.0f
+/* Waveform (G123): the DRIVER generates the trajectory.
+ *
+ * This layer used to generate it here and stream an analytic velocity to the
+ * actuator each tick, with an outer position loop bolted on top to claw back
+ * what the accel limiter ate on the way in. All of that existed because a
+ * sinusoid started from its own centre demands v(0) = 2*pi*f*A instantly, which
+ * no accel-limited machine can deliver.
+ *
+ * dev_servo now runs the waveform as approach-to-peak, whole cycles peak to
+ * peak, return to centre -- every instant of which is inside the acceleration
+ * budget, so there is no lag to correct and nothing for an anchor to do. What
+ * is left here is unit conversion and a completion check. */
 
 /**********************************************************************
  * Typedefs
@@ -103,14 +108,16 @@ typedef struct
     bool limitSpeed;
     int32_t positionSteps;
     bool atTarget;
-    int32_t gaugeSetpointSteps;     /* actuator_getTarget() — commanded target */
+    int32_t gaugeSetpointSteps;   /* where the move ENDS                */
+    int32_t gaugeCommandedSteps;  /* where the trajectory is RIGHT NOW  */     /* actuator_getTarget() — commanded target */
     bool endstopUpperActive;        /* HAL_GPIO_getActive(ENDSTOP_UPPER)      */
 } app_motion_dataInputs_t;
 
 typedef struct
 {
-    int32_t setpoint; // um
-    int32_t position; // um
+    int32_t setpoint;  // nm — where the move ENDS
+    int32_t commanded; // nm — where the trajectory is RIGHT NOW
+    int32_t position;  // nm
 } app_motion_outputs_t;
 
 typedef struct
@@ -131,14 +138,10 @@ typedef struct
     int lock;
     app_motion_home_E homeState;
 
-    /* Waveform (G123) playback state. */
-    int32_t waveformCentreSteps;     /* position the wave oscillates about      */
-    int32_t waveformAmplitudeSteps;  /* peak excursion in steps                 */
-    uint32_t waveformFreqMilliHz;    /* frequency in milli-Hz                   */
-    uint64_t waveformDurationUs;     /* cycles / frequency, in microseconds     */
-    uint64_t waveformElapsedUs;      /* wrap-safe elapsed time since start      */
-    uint32_t waveformLastUs;         /* last HAL_time_getUs() reading           */
-    bool waveformSettling;           /* the closing move to centre was issued   */
+    /* Waveform (G123): whether the driver accepted the one we asked for. The
+     * trajectory, its phase, its cycle count and its completion all live in the
+     * driver now, so there is nothing else for this layer to remember. */
+    bool waveformRunning;
 
     app_motion_outputs_t output;
 
@@ -169,19 +172,35 @@ static void app_motion_private_processInputs(void)
     app_motion_data.inputs.limitSpeed = app_control_speedLimited();
     app_motion_data.inputs.positionSteps = actuator_getPosition();
     app_motion_data.inputs.atTarget = actuator_atTarget();
+    /* TWO different quantities, and conflating them is why a recorded G1 used
+     * to carry a flat line through the middle of its own ramp.
+     *
+     *  - the TARGET is where the move ENDS. It is what a UI shows as "going
+     *    to", and what a host uses to tell that a command has registered and
+     *    that the axis has arrived.
+     *  - the COMMANDED position is where the trajectory says the machine should
+     *    be RIGHT NOW. It is what a recorded sample must carry, because it is
+     *    what the specimen was actually being asked for at that instant.
+     *
+     * For a G1 ramp the first is constant and the second sweeps; for a waveform
+     * the first is the centre it will finish at and the second traces the wave. */
     app_motion_data.inputs.gaugeSetpointSteps = actuator_getTarget();
+    app_motion_data.inputs.gaugeCommandedSteps = actuator_getSetpoint();
     app_motion_data.inputs.endstopUpperActive = HAL_GPIO_getActive(HAL_GPIO_ENDSTOP_UPPER);
 }
 
 static void app_motion_private_processOutputs(void)
 {
     int32_t setpoint = 0;
+    int32_t commanded = 0;
     if (app_motion_data.stepsPerMM != 0)
     {
-        setpoint = (int32_t)(((int64_t)app_motion_data.inputs.gaugeSetpointSteps * 1000LL) / app_motion_data.stepsPerMM);
+        setpoint = (int32_t)(((int64_t)app_motion_data.inputs.gaugeSetpointSteps * (int64_t)LIB_UTILITY_NM_PER_MM) / app_motion_data.stepsPerMM);
+        commanded = (int32_t)(((int64_t)app_motion_data.inputs.gaugeCommandedSteps * (int64_t)LIB_UTILITY_NM_PER_MM) / app_motion_data.stepsPerMM);
     }
     APP_MOTION_LOCK_REQ_BLOCK();
     app_motion_data.output.setpoint = setpoint;
+    app_motion_data.output.commanded = commanded;
     APP_MOTION_LOCK_REL();
 }
 
@@ -259,7 +278,7 @@ static bool app_motion_private_homing_run(void)
             const int32_t homingOffsetSteps = app_motion_data.stepsPerMM * app_motion_data.homingOffset;
             (void)IO_positionFeedback_setValue(
                 IO_POSITION_FEEDBACK_CHANNEL_SERVO_FEEDBACK,
-                LIB_UTILITY_MM_TO_UM(app_motion_data.jawOffset));
+                LIB_UTILITY_MM_TO_NM(app_motion_data.jawOffset));
             actuator_setPosition(jawOffsetSteps);
             actuator_move(jawOffsetSteps + homingOffsetSteps, (app_motion_data.homingVelocity * app_motion_data.stepsPerMM));
             app_motion_data.homeState = APP_MOTION_HOME_BACKOFF;
@@ -334,28 +353,51 @@ static void app_motion_private_moveManager_start(void)
         break;
     case G123_WAVEFORM:
     {
-        /* Reinterpret the move record for a firmware-native waveform:
-         *   x = amplitude (µm), p = cycles,
-         *   f = (shape << 24) | frequency-in-milli-Hz (low 24 bits).
-         * The wave oscillates about the position the machine is at right now
-         * (the program ramps to the mean with a preceding G1). */
-        const int32_t amplitudeUm = app_motion_data.currentMove.x;
-        const uint32_t fField = (uint32_t)app_motion_data.currentMove.f;
-        const uint32_t freqMilliHz = fField & 0x00FFFFFFU;
-        const uint32_t cycles = app_motion_data.currentMove.p;
-        app_motion_data.waveformCentreSteps = app_motion_data.inputs.positionSteps;
-        app_motion_data.waveformAmplitudeSteps =
-            (int32_t)(((int64_t)amplitudeUm * app_motion_data.stepsPerMM) / 1000LL);
-        app_motion_data.waveformFreqMilliHz = freqMilliHz;
-        app_motion_data.waveformDurationUs =
-            (freqMilliHz == 0U)
-                ? 0U
-                : (((uint64_t)cycles * 1000000000ULL) / (uint64_t)freqMilliHz);
-        app_motion_data.waveformElapsedUs = 0U;
-        app_motion_data.waveformLastUs = HAL_time_getUs();
-        app_motion_data.waveformSettling = false;
-        DEBUG_INFO("G123 waveform: amp=%d steps freq=%u mHz cycles=%u\n",
-                   app_motion_data.waveformAmplitudeSteps, freqMilliHz, cycles);
+#if ACTUATOR_HAS_WAVEFORM
+        /* The wave swings about wherever the carriage is right now, which is
+         * also the point it is returned to at the end. */
+        const app_motion_waveform_t *const req = &app_motion_data.currentMove.wave;
+        dev_servo_waveform_S wf;
+        memset(&wf, 0, sizeof(wf));
+        wf.centreCounts = app_motion_data.inputs.positionSteps;
+        /* 0.1 um units on the wire -> encoder counts. int64 intermediate: at
+         * 3000 mm and 8192 steps/mm this is 2.4e11 before the divide. */
+        wf.amplitudeCounts =
+            (int32_t)(((int64_t)req->amplitudeTenthUm * app_motion_data.stepsPerMM) / 10000LL);
+        wf.freqMicroHz = req->freqMicroHz;
+        wf.cycles = req->cycles;
+        wf.dwellHighUs = req->dwellHighMs * 1000U;
+        wf.dwellLowUs = req->dwellLowMs * 1000U;
+        wf.skewPerMille = req->skewPerMille;
+        wf.shape = (req->shape == 1U) ? DEV_SERVO_WAVE_TRIANGLE : DEV_SERVO_WAVE_SINE;
+
+        app_motion_data.waveformRunning = actuator_startWaveform(&wf);
+        if (app_motion_data.waveformRunning)
+        {
+            /* The CENTRE is the number that explains a waveform that runs into
+             * an endstop: the wave swings +/-amplitude about wherever the
+             * carriage happened to be when this move started. */
+            DEBUG_INFO("G123: centre=%d amp=%d steps freq=%u uHz cycles=%u shape=%u "
+                       "dwell=%u/%u ms skew=%u\n",
+                       wf.centreCounts, wf.amplitudeCounts, wf.freqMicroHz, wf.cycles,
+                       (unsigned)req->shape, req->dwellHighMs, req->dwellLowMs,
+                       (unsigned)req->skewPerMille);
+        }
+        else
+        {
+            /* Refused, not approximated. The driver rejects a waveform whose
+             * peak velocity or acceleration the machine cannot deliver, or
+             * whose holds leave no time to move, because running a smaller one
+             * instead gives a specimen that never saw the loading the report
+             * claims it did. */
+            DEBUG_ERROR("G123 REFUSED: amp=%d steps freq=%u uHz dwell=%u/%u ms skew=%u\n",
+                        wf.amplitudeCounts, wf.freqMicroHz, req->dwellHighMs,
+                        req->dwellLowMs, (unsigned)req->skewPerMille);
+        }
+#else
+        app_motion_data.waveformRunning = false;
+        DEBUG_ERROR("%s", "G123 waveform needs the servo actuator; refusing\n");
+#endif
         break;
     }
     default:
@@ -363,77 +405,20 @@ static void app_motion_private_moveManager_start(void)
     }
 }
 
-/* Firmware-native waveform playback. Called every motion tick while a G123 is
- * the current move. Streams the analytic instantaneous velocity (2πf·A·cos) to
- * the stepper's continuous-velocity (NCO) output, sampling at the *real* elapsed
- * time so the cycle frequency holds regardless of tick jitter. The closed-loop
- * servo realises the commanded trajectory; firmware only emits the ideal rate. */
+/* A waveform is complete when the DRIVER says so.
+ *
+ * There is nothing to step here. dev_servo owns the phase, counts the cycles,
+ * and runs the closing move back to the centre, so this layer neither knows nor
+ * needs to know how far through the run it is -- and a waveform that was
+ * refused must end the move rather than wait forever for a run that never
+ * started. */
 static bool app_motion_private_waveform_run(void)
 {
-    const uint32_t now = HAL_time_getUs();
-    /* Wrap-safe accumulate: per-tick delta is tiny vs the uint32 µs wrap. */
-    app_motion_data.waveformElapsedUs += (uint64_t)(now - app_motion_data.waveformLastUs);
-    app_motion_data.waveformLastUs = now;
-
-    if ((app_motion_data.waveformFreqMilliHz == 0U) ||
-        (app_motion_data.waveformAmplitudeSteps == 0))
+    if (app_motion_data.waveformRunning == false)
     {
-        return true; /* degenerate params — nothing to play */
+        return true;
     }
-
-    const float freqHz = (float)app_motion_data.waveformFreqMilliHz / 1000.0f;
-    const float ampSteps = (float)app_motion_data.waveformAmplitudeSteps;
-
-    if (app_motion_data.waveformElapsedUs >= app_motion_data.waveformDurationUs)
-    {
-        /* Whole cycles end at the centre; a settle move (which exits velocity
-         * mode) parks there. Issue it ONCE, then hand completion to the
-         * actuator — re-commanding every tick would keep resetting the arrival
-         * verdict, and this layer has no business second-guessing how precisely
-         * the actuator can park. */
-        if (app_motion_data.waveformSettling == false)
-        {
-            const float ampAbs = (ampSteps < 0.0f) ? -ampSteps : ampSteps;
-            float peakVelF = APP_MOTION_TWO_PI * freqHz * ampAbs;
-            if (peakVelF > APP_MOTION_WAVEFORM_MAX_STEPS_PER_S)
-            {
-                peakVelF = APP_MOTION_WAVEFORM_MAX_STEPS_PER_S; /* clamp (no overflow) */
-            }
-            uint32_t peakVel = (uint32_t)peakVelF;
-            if (peakVel == 0U)
-            {
-                peakVel = 1U;
-            }
-            actuator_move(app_motion_data.waveformCentreSteps, peakVel);
-            app_motion_data.waveformSettling = true;
-            /* inputs.atTarget was snapshotted before this command existed. */
-            return false;
-        }
-        return app_motion_data.inputs.atTarget;
-    }
-
-    /* Stream the analytic instantaneous velocity of the trajectory:
-     *   d/dt[ centre + A·sin(2πf t) ] = 2πf·A·cos(2πf t)   (steps/s, signed).
-     * The stepper's NCO output follows the rate continuously (no per-segment
-     * stop/start); position integrates to the sine. The sign of cos flips at the
-     * position peaks, where the rate is ~0, so direction reversals are smooth.
-     * The closed-loop servo realises the commanded trajectory. */
-    const float t = (float)app_motion_data.waveformElapsedUs / 1.0e6f;
-    const float phase = APP_MOTION_TWO_PI * freqHz * t;
-    float velocity = APP_MOTION_TWO_PI * freqHz * ampSteps * cosf(phase);
-    /* Clamp to the safe rate (prevents int32 overflow on extreme params). */
-    if (velocity > APP_MOTION_WAVEFORM_MAX_STEPS_PER_S)
-    {
-        velocity = APP_MOTION_WAVEFORM_MAX_STEPS_PER_S;
-    }
-    else if (velocity < -APP_MOTION_WAVEFORM_MAX_STEPS_PER_S)
-    {
-        velocity = -APP_MOTION_WAVEFORM_MAX_STEPS_PER_S;
-    }
-    /* Round (not truncate) so sub-step rates near the turning points still move
-     * in the correct direction instead of snapping to a momentary halt. */
-    actuator_setVelocity((int32_t)roundf(velocity));
-    return false;
+    return app_motion_data.inputs.atTarget;
 }
 
 static bool app_motion_private_moveManager_run(void)
@@ -522,6 +507,14 @@ bool app_motion_isIdle(void)
      * called from app_testManagement's run loop on that same cog. */
     return (state == APP_MOTION_WAITING) &&
            lib_staticQueue_isempty(&app_motion_data.queue);
+}
+
+int32_t app_motion_getCommandedPosition(void)
+{
+    APP_MOTION_LOCK_REQ_BLOCK();
+    const int32_t commanded = app_motion_data.output.commanded;
+    APP_MOTION_LOCK_REL();
+    return commanded;
 }
 
 int32_t app_motion_getSetpoint(void)
