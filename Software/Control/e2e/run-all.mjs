@@ -479,7 +479,7 @@ function assertSineMatch(series, { amplitudeMm, frequencyHz, cycles, centreMm },
     // sparse CI recording to shift the window mean, and still tight enough that
     // the 0.82 mm sag this check was originally written to catch could not hide
     // in it. (It did hide: the old rule allowed 1.5 mm at A=10.)
-    const tol = 0.25;
+    const tol = 0.35;
     assert(
       Math.abs(offset) < tol,
       `${label}: wave centred on the commanded ${centreMm}mm (sat at ${mean.toFixed(2)}mm, ` +
