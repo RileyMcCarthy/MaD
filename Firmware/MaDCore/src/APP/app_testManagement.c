@@ -125,13 +125,21 @@ static void app_testManagement_private_processRequests(void)
 {
     APP_TESTMANAGEMENT_LOCK_REQ_BLOCK();
 
-    /* Drain pending manual moves into the motion queue. The queue is lock-free
-     * (CONTROL-cog-only access), so pushing while holding our lock is safe.
-     * Drained before the test-start request: if both are pending, the manual
-     * move was ACKed first, so it executes first (serial-order semantics). */
-    for (uint32_t i = 0U; i < app_testManagement_data.request.pendingManualMoveCount; i++)
+    /* Drain pending manual moves into the motion queue only while motion is
+     * enabled. The queue is lock-free (CONTROL-cog-only access), so pushing
+     * while holding our lock is safe. Drained before the test-start request:
+     * if both are pending, the manual move was ACKed first, so it executes
+     * first (serial-order semantics).
+     *
+     * When motion is disabled, drop the staged moves instead of enqueueing
+     * them: enabling motion must never replay jogs that were pressed (or
+     * raced into the request slots) while the machine was disabled. */
+    if (app_testManagement_data.inputs.motionEnabled)
     {
-        (void)app_motion_addMove(&app_testManagement_data.request.pendingManualMoves[i]);
+        for (uint32_t i = 0U; i < app_testManagement_data.request.pendingManualMoveCount; i++)
+        {
+            (void)app_motion_addMove(&app_testManagement_data.request.pendingManualMoves[i]);
+        }
     }
     app_testManagement_data.request.pendingManualMoveCount = 0U;
 
@@ -425,13 +433,20 @@ bool app_testManagement_addManualMove(const app_motion_move_t *move)
     {
         return false;
     }
+    /* Same gate as triggerTestStart: a jog pressed while motion is disabled
+     * must not sit in a request slot and fire the moment motion is re-enabled. */
+    if (app_control_motionEnabled() == false)
+    {
+        return false;
+    }
 
     /* Single-writer design: this runs on the COMMUNICATION cog, which must not
      * touch the (lock-free, CONTROL-cog-only) motion queue. Stage the move in a
      * request slot under our lock; processRequests() enqueues it on the next
      * CONTROL cycle. The busy check and the staging are atomic here, so a move
      * can never slip into a test that is starting concurrently. ACK therefore
-     * means "accepted for enqueue", and NACK when busy or slots are full. */
+     * means "accepted for enqueue", and NACK when busy, motion is disabled, or
+     * slots are full. */
     APP_TESTMANAGEMENT_LOCK_REQ_BLOCK();
     const bool isBusy =
         (app_testManagement_data.state != APP_TESTMANAGEMENT_STATE_IDLE) ||

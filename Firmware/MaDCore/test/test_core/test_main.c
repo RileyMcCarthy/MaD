@@ -22,6 +22,8 @@ extern void test_app_testManagement_doubleStartRejected(void);
 extern void test_app_testManagement_startNotDroppedWhenMotionLags(void);
 extern void test_app_testManagement_manualMoveGatedWhileBusy(void);
 extern void test_app_testManagement_manualMoveSlotsBounded(void);
+extern void test_app_testManagement_manualMoveRejectedWhenMotionDisabled(void);
+extern void test_app_testManagement_manualMoveDiscardedWhenMotionDisabled(void);
 extern void test_app_testManagement_happyPathLifecycle(void);
 extern void test_app_testManagement_g122TerminatesFeed(void);
 extern void test_app_testManagement_userEndStopsRun(void);
@@ -77,6 +79,8 @@ void process()
     RUN_TEST(test_app_testManagement_startNotDroppedWhenMotionLags);
     RUN_TEST(test_app_testManagement_manualMoveGatedWhileBusy);
     RUN_TEST(test_app_testManagement_manualMoveSlotsBounded);
+    RUN_TEST(test_app_testManagement_manualMoveRejectedWhenMotionDisabled);
+    RUN_TEST(test_app_testManagement_manualMoveDiscardedWhenMotionDisabled);
     RUN_TEST(test_app_testManagement_happyPathLifecycle);
     RUN_TEST(test_app_testManagement_g122TerminatesFeed);
     RUN_TEST(test_app_testManagement_userEndStopsRun);
