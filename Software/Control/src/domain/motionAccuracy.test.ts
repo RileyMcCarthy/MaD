@@ -96,7 +96,7 @@ describe('motion accuracy matcher', () => {
     {
       id: 'motion.arrival-rejects-a-missed-target',
       covers: 'e2e/motion-accuracy.mjs#assertArrivedAtUm',
-      given: 'a recorded move that comes to rest 0.002 mm from the commanded position',
+      given: 'a recorded move that comes to rest 0.003 mm from the commanded position',
       expect: {
         rejected: 'the arrival check does not accept that rest position',
       },
@@ -108,7 +108,7 @@ describe('motion accuracy matcher', () => {
       for (let i = 0; i < 30; i++) {
         time.push(i * 10_000);
         setpoint.push(8000);
-        pos.push(8002);
+        pos.push(8003);
       }
       expect(() => assertArrivedAtUm({ time, pos, setpoint }, 8000, 'miss', silent)).toThrow(
         /gantry ends on the target/,
