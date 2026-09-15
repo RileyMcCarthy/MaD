@@ -32,6 +32,16 @@ type Catalog = {
     maxDisp: number;
   }>;
   M11_link_loss: Array<{ id: string; moment: string; reconnect: boolean }>;
+  M12_linear_um: Array<{
+    id: string;
+    label: string;
+    velocityMmS: number;
+    distanceMm?: number;
+    targetMm?: number;
+    absolute?: boolean;
+    setupJogMm?: number;
+    maxDisplacement?: number;
+  }>;
   smoke_ids: string[];
 };
 
@@ -118,6 +128,41 @@ describe('Sprint C e2e matrix catalog', () => {
       const moments = new Set(catalog.M11_link_loss.map((c) => c.moment));
       expect(moments.has('idle')).toBe(true);
       expect(moments.has('mid-test')).toBe(true);
+    },
+  );
+
+  behaviour(
+    {
+      id: 'matrix.linear-um-catalog-covers-the-envelope',
+      covers: 'e2e/matrix-catalog.json',
+      given: 'the linear motion-accuracy catalog',
+      expect: {
+        'eight-or-more-cells': 'at least eight cells are listed',
+        'unique-ids': 'every cell id is unique',
+        'absolute-and-relative': 'absolute and relative travels are both covered',
+        'reverse-travel': 'a cell travels in the decreasing-position direction',
+        'several-speeds': 'more than one speed is covered',
+        'several-distances': 'more than one travel is covered',
+        'positive-speed': 'every cell carries a positive speed',
+      },
+    },
+    () => {
+      expect(catalog.M12_linear_um.length).toBeGreaterThanOrEqual(8);
+      const ids = new Set(catalog.M12_linear_um.map((c) => c.id));
+      expect(ids.size).toBe(catalog.M12_linear_um.length);
+      expect(catalog.M12_linear_um.some((c) => c.absolute && c.targetMm)).toBe(true);
+      expect(catalog.M12_linear_um.some((c) => !c.absolute && (c.distanceMm ?? 0) > 0)).toBe(true);
+      expect(catalog.M12_linear_um.some((c) => (c.distanceMm ?? 0) < 0)).toBe(true);
+      const speeds = new Set(catalog.M12_linear_um.map((c) => c.velocityMmS));
+      const travels = new Set(
+        catalog.M12_linear_um.map((c) => Math.abs(c.distanceMm ?? c.targetMm ?? 0)),
+      );
+      expect(speeds.size).toBeGreaterThan(1);
+      expect(travels.size).toBeGreaterThan(1);
+      for (const c of catalog.M12_linear_um) {
+        expect(c.velocityMmS).toBeGreaterThan(0);
+        expect(Math.abs(c.distanceMm ?? c.targetMm ?? 0)).toBeGreaterThan(0);
+      }
     },
   );
 
