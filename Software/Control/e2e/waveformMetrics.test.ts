@@ -69,6 +69,46 @@ function synthWaveSineFast(sampleHz: number, { idleTailS = 0 } = {}): Series {
   return { time, pos };
 }
 
+/** Ideal WAVE-sine-fast geometry but with a triangle wave (same A/f/cycles). */
+function synthWaveTriangleFast(sampleHz: number, { idleTailS = 0 } = {}): Series {
+  const dtUs = Math.round(1e6 / sampleHz);
+  const time: number[] = [];
+  const pos: number[] = [];
+
+  const push = (tUs: number, posUm: number) => {
+    time.push(tUs);
+    pos.push(posUm);
+  };
+
+  for (let t = 0; t < 200_000; t += dtUs) push(t, 0);
+
+  const rampStart = 200_000;
+  const rampDur = 500_000;
+  for (let t = rampStart; t < rampStart + rampDur; t += dtUs) {
+    const frac = (t - rampStart) / rampDur;
+    push(t, WAVE.approachMm * 1000 * frac);
+  }
+
+  const waveStart = rampStart + rampDur;
+  const waveEnd = waveStart + WAVE_DUR_S * 1e6;
+  const centreUm = WAVE.approachMm * 1000;
+  for (let t = waveStart; t <= waveEnd; t += dtUs) {
+    const tau = (t - waveStart) / 1e6;
+    const theta = 2 * Math.PI * WAVE.frequencyHz * tau;
+    // Triangle in phase with sin(θ); peak amplitude = A (Fourier |c3/c1|=1/9).
+    const y = WAVE.amplitudeMm * (2 / Math.PI) * Math.asin(Math.sin(theta));
+    push(t, centreUm + y * 1000);
+  }
+
+  const parkEnd = waveEnd + 100_000 + idleTailS * 1e6;
+  for (let t = waveEnd + dtUs; t <= parkEnd; t += dtUs) {
+    const driftUm = ((t / dtUs) % 3) * 30;
+    push(t, centreUm + driftUm);
+  }
+
+  return { time, pos };
+}
+
 /** Decimate a dense series to ~targetHz (keeps endpoints). */
 function decimate(series: Series, targetHz: number): Series {
   const dtUs = Math.round(1e6 / targetHz);
@@ -297,5 +337,24 @@ describe('assertSineMatch / assertWaveformExcursion negative controls', () => {
     expect(() =>
       assertSineMatch(sparseTail, { ...WAVE, amplitudeMm: WAVE.amplitudeMm }, 'sparse+tail'),
     ).not.toThrow();
+  });
+});
+
+describe('assertSineMatch shape gate (triangle vs sine)', () => {
+  const params = { amplitudeMm: WAVE.amplitudeMm, frequencyHz: WAVE.frequencyHz, cycles: WAVE.cycles };
+
+  it('synthetic triangle at commanded A/f/cycles fails assertSineMatch with a shape message', () => {
+    const tri = synthWaveTriangleFast(600);
+    expect(() => assertSineMatch(tri, params, 'tri')).toThrow(/sine shape|harmonic|triangle/i);
+  });
+
+  it('synthetic triangle still fails at sparse density (not an e2e-only control)', () => {
+    const tri = appendIdleTail(decimate(synthWaveTriangleFast(600), 40), 1.0, 40);
+    expect(() => assertSineMatch(tri, params, 'tri-sparse')).toThrow(/sine shape|harmonic|triangle/i);
+  });
+
+  it('synthetic sine at the same parameters still passes', () => {
+    const sine = synthWaveSineFast(600);
+    expect(() => assertSineMatch(sine, params, 'sine')).not.toThrow();
   });
 });
