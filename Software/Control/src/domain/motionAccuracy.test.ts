@@ -18,10 +18,15 @@ import {
 
 const silent = { log: () => {} };
 
-function seriesFrom(fn, { tEndS, dtS = 0.01, startUm = 0 }) {
-  const time = [];
-  const pos = [];
-  const setpoint = [];
+type Series = { time: number[]; pos: number[]; setpoint: number[] };
+
+function seriesFrom(
+  fn: (t: number) => number,
+  { tEndS, dtS = 0.01, startUm = 0 }: { tEndS: number; dtS?: number; startUm?: number },
+): Series {
+  const time: number[] = [];
+  const pos: number[] = [];
+  const setpoint: number[] = [];
   for (let t = 0; t <= tEndS + 1e-12; t += dtS) {
     const um = startUm + fn(t);
     time.push(Math.round(t * 1e6));
@@ -97,9 +102,9 @@ describe('motion accuracy matcher', () => {
       },
     },
     () => {
-      const time = [];
-      const pos = [];
-      const setpoint = [];
+      const time: number[] = [];
+      const pos: number[] = [];
+      const setpoint: number[] = [];
       for (let i = 0; i < 30; i++) {
         time.push(i * 10_000);
         setpoint.push(8000);
