@@ -865,6 +865,11 @@ void test_oscillate_returns_to_its_centre_after_whole_cycles(void)
 
 void test_oscillate_counts_whole_cycles_and_stops(void)
 {
+    VIBES_TEST("servo.oscillate-counts-cycles-and-stops",
+               "src/DEV/dev_servo.c#dev_servo_run",
+               "a two-cycle waveform run to completion");
+    VIBES_EXPECT("cycles-counted", "the driver reports two cycles completed");
+    VIBES_EXPECT("arrival-reported", "the drive reports arrival");
     servo_init();
     dev_servo_setPosition(CH, 0);
     (void)run_oscillate(10000.0, 1000000U, 2U, DEV_SERVO_WAVE_SINE);
