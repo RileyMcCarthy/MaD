@@ -846,6 +846,13 @@ void test_waveform_is_handed_to_the_driver_in_the_drivers_units(void)
 
 void test_a_sine_shape_bit_selects_a_sine(void)
 {
+    VIBES_TEST("motion.sine-shape-bit-selects-sine",
+               "src/APP/app_motion.c#app_motion_private_moveManager_start",
+               "a waveform whose shape bit asks for a sine");
+    VIBES_EXPECT("sine-asked-of-driver", "the driver is asked for a sine");
+    VIBES_EXPECT_WHY("symmetric-skew",
+                     "a hold-free cycle asks for the symmetric split",
+                     "zero skew is a traverse of no duration, which the driver refuses");
     motion_driveToWaiting();
     app_motion_move_t wf = make_waveform(50000, 1000000U, 2U, 0U);
     TEST_ASSERT_TRUE(app_motion_addMove(&wf));

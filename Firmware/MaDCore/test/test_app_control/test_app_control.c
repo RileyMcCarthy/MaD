@@ -330,6 +330,13 @@ void test_run_forceGaugeCommunicationFaultWhenNotReady(void)
  * test_dev_forceGauge: `a_single_missed_reply_keeps_the_load_cell_ready`. */
 void test_run_forceGaugeReadyNeverFaultsHoweverLongItRuns(void)
 {
+    VIBES_TEST("control.force-gauge-ready-never-faults",
+               "src/APP/app_control.c#app_control_run",
+               "a ready load cell with motion enabled, observed across many control cycles as time passes");
+    VIBES_EXPECT_WHY("no-fault",
+                     "the machine reports no fault",
+                     "readiness is the driver's verdict that the load cell is alive, so this layer has no window of its own that time could outrun");
+    VIBES_EXPECT("motion-stays-enabled", "motion stays enabled");
     control_init();
     enableMotion();
 
@@ -349,6 +356,13 @@ void test_run_forceGaugeReadyNeverFaultsHoweverLongItRuns(void)
  * load cell known to be gone. */
 void test_run_forceGaugeUnreadyFaultsImmediately(void)
 {
+    VIBES_TEST("control.force-gauge-unready-faults-immediately",
+               "src/APP/app_control.c#app_control_run",
+               "a load cell reporting unready, with motion enabled");
+    VIBES_EXPECT_WHY("load-cell-fault-on-first-run",
+                     "the machine faults on the first control update and names the load cell as the reason",
+                     "the driver has already spent its retry budget by the time it reports unready, so any delay here is time spent applying force against a load cell known to be gone");
+    VIBES_EXPECT("motion-disabled", "motion is no longer enabled");
     control_init();
     enableMotion();
 
