@@ -406,6 +406,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          submodules: recursive
       - uses: actions/setup-python@v7
         with:
           python-version: '3.x'
@@ -905,11 +907,11 @@ jobs:
           name: ${{ needs.build-firmware.outputs.artifact-name }}
           path: artifacts
           merge-multiple: true
-          
+
       - name: Get tag version
         id: get_version
         run: echo "VERSION=${GITHUB_REF#refs/tags/firmware-v}" >> $GITHUB_OUTPUT
-      
+
       - name: Create Release
         uses: softprops/action-gh-release@v3
         with:
@@ -933,11 +935,11 @@ jobs:
         with:
           path: artifacts
           pattern: '*-hardware-*'
-          
+
       - name: Get tag version
         id: get_version
         run: echo "VERSION=${GITHUB_REF#refs/tags/hardware-v}" >> $GITHUB_OUTPUT
-          
+
       - name: Create Release
         uses: softprops/action-gh-release@v3
         with:
@@ -1002,6 +1004,31 @@ jobs:
             echo "::error::a committed suite command names the macOS-only environment"
             exit 1
           fi
+
+      # Presence + non-empty cmd used to live in Vibes/src/suites.test.ts. After
+      # Vibes became a submodule (#90) the tool package can no longer see MaD's
+      # consumer suites, so the check moved here beside the noasan guard.
+      - name: Suites must be present and have a non-empty cmd
+        run: |
+          set -euo pipefail
+          mapfile -d '' -t suites < <(git ls-files -z -- '*vibes.suite.json')
+          if [ "${#suites[@]}" -lt 1 ]; then
+            echo "::error::no tracked *vibes.suite.json files found"
+            exit 1
+          fi
+          echo "found ${#suites[@]} suite file(s)"
+          for f in "${suites[@]}"; do
+            if [ ! -f "$f" ]; then
+              echo "::error::$f is tracked but missing on disk"
+              exit 1
+            fi
+            cmd="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print((d.get("cmd") or "").strip())' "$f")"
+            if [ -z "$cmd" ]; then
+              echo "::error::$f has a missing or blank cmd"
+              exit 1
+            fi
+            echo "ok $f"
+          done
 
       - name: Build Vibes
         working-directory: Vibes
