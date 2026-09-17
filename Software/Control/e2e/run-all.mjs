@@ -1600,6 +1600,23 @@ const scenarios = [
         await page.getByLabel('Speed (mm/s)').fill('5');
         const before = await live();
         await page.getByRole('button', { name: '+ Jog up' }).click();
+        // Sample the ring WHILE the carriage moves. One reading at rest proves
+        // nothing: a stream quantised to micrometres still lands off a whole
+        // micrometre 0 times in 1000, but a single nanometre reading lands on
+        // one 1 time in 1000 by luck, so a lone sample cannot tell the two
+        // apart. A run of them can.
+        const nmDuringMove = await page.evaluate(async (durMs) => {
+          const out = [];
+          const t0 = performance.now();
+          while (performance.now() - t0 < durMs) {
+            const s = globalThis.__madLive?.latest();
+            if (s && Number.isFinite(s.machinePosition)) {
+              out.push(Math.round(s.machinePosition * 1e6));
+            }
+            await new Promise((r) => setTimeout(r, 10));
+          }
+          return out;
+        }, 700);
         await awaitRest(page);
         const after = await live();
 
@@ -1607,11 +1624,22 @@ const scenarios = [
         assert(Math.abs(movedMm - 2) < 0.3, `jogged 2 mm (moved ${movedMm.toFixed(4)} mm)`);
 
         // The live stream carries SUB-MICRON detail. A DOM scrape would land on
-        // a whole micrometre every time; the wire carries nanometres.
+        // a whole micrometre every time; the wire carries nanometres. This is
+        // the live twin of the CSV column check in assertRecordedMotion -- the
+        // recorded path would fail 17 scenarios if the wire went back to
+        // micrometres, and until now the live path would have failed none,
+        // though M8, M9, M13, D2 and TC14 all measure accuracy with it.
         const nm = Math.round(after.machinePosition * 1e6);
+        const distinct = new Set(nmDuringMove).size;
         assert(
-          Number.isFinite(after.machinePosition),
-          `live position is a number (${after.machinePosition})`,
+          distinct >= 5,
+          `the live ring advanced during the jog (${distinct} distinct positions in ${nmDuringMove.length} samples)`,
+        );
+        const subMicron = nmDuringMove.filter((v) => v % 1000 !== 0).length;
+        assert(
+          subMicron > nmDuringMove.length / 20,
+          `the live position carries sub-micron detail (only ${subMicron} of ` +
+            `${nmDuringMove.length} samples were off a whole micrometre)`,
         );
 
         // Endpoint accuracy. The servo parks as soon as it is inside
@@ -1658,23 +1686,59 @@ const scenarios = [
           await page.waitForTimeout(100);
         }
         assert(moving, 'homing started moving the axis');
-        // Home's setpoint jumps to machine 0 immediately. Waiting for "still"
-        // returns mid-seek on an unpaced runner — the browser polls slower
-        // than the board, so a 10 mm hop looks like a finished move. Wait
-        // until the gantry is on that setpoint.
+        // Home's setpoint jumps to machine 0 immediately, so "position equals
+        // setpoint" is reached long before the gantry stops -- and an exit
+        // condition of "within X" makes any later assertion of "within X"
+        // vacuous, because the loop can only leave by satisfying it. Waiting
+        // for STILLNESS instead keeps the wait and the claim independent: the
+        // carriage has to stop moving, and only then is asked where it
+        // stopped. It also makes the reported number mean something. The old
+        // loop exited on the first sample inside 150 um and reported whatever
+        // that happened to be (64 um on CI) -- a fact about the poll interval,
+        // not about homing.
+        // Two stages, because neither alone is enough. Stillness on its own
+        // fires DURING homing: HOME_ENDSTOP calls actuator_stop() and dwells
+        // on a timer before backing off, so the carriage genuinely stops on
+        // the endstop with the setpoint still 87 mm away. And convergence on
+        // its own is what made the old check vacuous -- it exited on "within
+        // X" and then asserted "within X".
+        //
+        // So: wait for a LOOSE convergence to get past the endstop dwell,
+        // then wait for stillness, then assert a TIGHT bound. The wait
+        // threshold (0.5 mm) and the claim (~1.5 um) are 340x apart, so the
+        // assertion can fail without the wait having timed out.
         const settleDeadline = Date.now() + RUN_WAIT_MS;
         let after = null;
+        let converged = false;
+        let prevMm = NaN;
+        let stillTicks = 0;
         while (Date.now() < settleDeadline) {
           after = await live();
-          if (after && Number.isFinite(after.machinePosition) && Number.isFinite(after.machineSetpoint)
-              && Math.abs(after.machinePosition - after.machineSetpoint) < 0.15) {
-            break;
+          if (after && Number.isFinite(after.machinePosition) && Number.isFinite(after.machineSetpoint)) {
+            if (!converged && Math.abs(after.machinePosition - after.machineSetpoint) < 0.5) {
+              converged = true;
+            }
+            if (converged) {
+              if (Number.isFinite(prevMm) && Math.abs(after.machinePosition - prevMm) <= 0.001) {
+                if (++stillTicks >= 4) break;
+              } else {
+                stillTicks = 0;
+              }
+              prevMm = after.machinePosition;
+            }
           }
           await page.waitForTimeout(100);
         }
         assert(after, 'the live stream reported a sample after homing');
+        assert(converged, 'homing brought the gantry onto its setpoint');
+        assert(stillTicks >= 4, 'the axis came to rest after homing');
+        // Homing ends with an ordinary profiled backoff move, and app_motion
+        // only leaves HOME_BACKOFF on atTarget -- which is the servo's own
+        // "encoder settled on target", inside positionDeadband. So homing
+        // lands to the same tolerance a jog does; there is no reason for this
+        // bound to be looser than M13-jog-endpoint's.
         const offUm = Math.abs(after.machinePosition - after.machineSetpoint) * 1000;
-        assert(offUm <= 150, `homing parked on its setpoint (off by ${offUm.toFixed(2)} um)`);
+        assert(offUm <= DEADBAND_UM * 1.5, `homing parked within the servo's deadband (off by ${offUm.toFixed(2)} um, deadband ${DEADBAND_UM})`);
         console.log(`    [manual] home: parked ${offUm.toFixed(2)} um from setpoint at ${(after.machinePosition * 1e6).toFixed(0)} nm`);
 
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
