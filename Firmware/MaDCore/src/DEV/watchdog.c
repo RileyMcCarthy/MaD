@@ -23,7 +23,11 @@
 #define SM_LOCK_REQ_BLOCK() while (SM_LOCK_REQ() == false) {}
 #define SM_LOCK_REL() HAL_lock_release(watchdog_data.lock)
 
-#define WATCHDOG_CHANNEL_VALID(channel) (channel >= 0 || channel < WATCHDOG_CHANNEL_COUNT)
+/* && , not || : with `||` this is true for every int (negatives satisfy the
+ * second disjunct, non-negatives the first), so the six call sites below
+ * guarded nothing and an out-of-range channel indexed straight past the end
+ * of the channel array. Parenthesised too -- the macro takes an expression. */
+#define WATCHDOG_CHANNEL_VALID(channel) (((channel) >= 0) && ((channel) < WATCHDOG_CHANNEL_COUNT))
 /**********************************************************************
  * Typedefs
  **********************************************************************/
