@@ -369,30 +369,44 @@ static void app_motion_private_moveManager_start(void)
         wf.dwellHighUs = req->dwellHighMs * 1000U;
         wf.dwellLowUs = req->dwellLowMs * 1000U;
         wf.skewPerMille = req->skewPerMille;
-        wf.shape = (req->shape == 1U) ? DEV_SERVO_WAVE_TRIANGLE : DEV_SERVO_WAVE_SINE;
 
-        app_motion_data.waveformRunning = actuator_startWaveform(&wf);
-        if (app_motion_data.waveformRunning)
+        /* An unrecognised traverse profile is REFUSED, not defaulted. The wire
+         * carries a whole byte and only 0 and 1 are defined, so a newer host
+         * asking this firmware for a profile it has never heard of must fail
+         * loudly: mapping the unknown byte onto a sine would run a specimen
+         * through a loading nobody asked for and file the result under the
+         * shape that was requested. The driver owns the set of profiles that
+         * exist, so it owns the conversion too. */
+        if (!dev_servo_waveShapeFromWire(req->shape, &wf.shape))
         {
-            /* The CENTRE is the number that explains a waveform that runs into
-             * an endstop: the wave swings +/-amplitude about wherever the
-             * carriage happened to be when this move started. */
-            DEBUG_INFO("G123: centre=%d amp=%d steps freq=%u uHz cycles=%u shape=%u "
-                       "dwell=%u/%u ms skew=%u\n",
-                       wf.centreCounts, wf.amplitudeCounts, wf.freqMicroHz, wf.cycles,
-                       (unsigned)req->shape, req->dwellHighMs, req->dwellLowMs,
-                       (unsigned)req->skewPerMille);
+            app_motion_data.waveformRunning = false;
+            DEBUG_ERROR("G123 REFUSED: unknown shape=%u\n", (unsigned)req->shape);
         }
         else
         {
-            /* Refused, not approximated. The driver rejects a waveform whose
-             * peak velocity or acceleration the machine cannot deliver, or
-             * whose holds leave no time to move, because running a smaller one
-             * instead gives a specimen that never saw the loading the report
-             * claims it did. */
-            DEBUG_ERROR("G123 REFUSED: amp=%d steps freq=%u uHz dwell=%u/%u ms skew=%u\n",
-                        wf.amplitudeCounts, wf.freqMicroHz, req->dwellHighMs,
-                        req->dwellLowMs, (unsigned)req->skewPerMille);
+            app_motion_data.waveformRunning = actuator_startWaveform(&wf);
+            if (app_motion_data.waveformRunning)
+            {
+                /* The CENTRE is the number that explains a waveform that runs
+                 * into an endstop: the wave swings +/-amplitude about wherever
+                 * the carriage happened to be when this move started. */
+                DEBUG_INFO("G123: centre=%d amp=%d steps freq=%u uHz cycles=%u shape=%u "
+                           "dwell=%u/%u ms skew=%u\n",
+                           wf.centreCounts, wf.amplitudeCounts, wf.freqMicroHz, wf.cycles,
+                           (unsigned)req->shape, req->dwellHighMs, req->dwellLowMs,
+                           (unsigned)req->skewPerMille);
+            }
+            else
+            {
+                /* Refused, not approximated. The driver rejects a waveform
+                 * whose peak velocity or acceleration the machine cannot
+                 * deliver, or whose holds leave no time to move, because
+                 * running a smaller one instead gives a specimen that never saw
+                 * the loading the report claims it did. */
+                DEBUG_ERROR("G123 REFUSED: amp=%d steps freq=%u uHz dwell=%u/%u ms skew=%u\n",
+                            wf.amplitudeCounts, wf.freqMicroHz, req->dwellHighMs,
+                            req->dwellLowMs, (unsigned)req->skewPerMille);
+            }
         }
 #else
         app_motion_data.waveformRunning = false;

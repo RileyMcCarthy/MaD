@@ -152,6 +152,20 @@ static uint32_t d_lastWaveDwellHighUs;
 static uint32_t d_lastWaveDwellLowUs;
 static bool d_waveformAccepted = true;
 
+/* The driver owns which traverse profiles exist; this suite stubs the driver,
+ * so it mirrors that one rule. The rule itself is pinned against the real
+ * implementation in test_dev_servo (servo.wave-shape-from-wire) -- here it
+ * exists only so app_motion's refusal path has something to refuse against. */
+bool dev_servo_waveShapeFromWire(uint8_t wire, dev_servo_wave_E *shape)
+{
+    if ((shape == NULL) || (wire > (uint8_t)DEV_SERVO_WAVE_TRIANGLE))
+    {
+        return false;
+    }
+    *shape = (wire == (uint8_t)DEV_SERVO_WAVE_TRIANGLE) ? DEV_SERVO_WAVE_TRIANGLE : DEV_SERVO_WAVE_SINE;
+    return true;
+}
+
 bool dev_servo_startWaveform(dev_servo_channel_E ch, const dev_servo_waveform_S *waveform)
 {
     TEST_ASSERT_EQUAL_INT(DEV_SERVO_CHANNEL_MAIN, ch);
@@ -968,6 +982,45 @@ void test_a_linear_move_records_its_trajectory_not_its_destination(void)
 }
 
 /* A degenerate waveform (zero frequency) completes without commanding motion. */
+void test_a_waveform_with_an_unknown_shape_never_reaches_the_driver(void)
+{
+    VIBES_TEST("motion.waveform-unknown-shape-refused",
+               "src/APP/app_motion.c#app_motion_private_waveform_run",
+               "a feasible waveform whose shape byte is one of the reserved values 2..255");
+    VIBES_EXPECT_WHY("driver-never-asked",
+                     "the driver is never asked to start the waveform",
+                     "the adapter must not pick a profile on the host's behalf: laundering a reserved byte into a sine is how a machine runs a loading nobody requested and files it under the shape that was asked for");
+    VIBES_EXPECT_WHY("move-completes",
+                     "the move completes rather than hanging the queue",
+                     "a refused waveform must not strand the test in MOVING forever -- the operator needs the program to end so the refusal is visible");
+
+    motion_driveToWaiting();
+    d_waveformCount = 0U;
+    d_setVelocityCount = 0U;
+
+    /* Amplitude, frequency and cycles are all perfectly runnable; the shape
+     * byte is the only thing wrong, so a failure here cannot be blamed on the
+     * feasibility envelope. */
+    app_motion_move_t wf = make_waveform(50000, 1000000U, 2U, 2U);
+    TEST_ASSERT_TRUE(app_motion_addMove(&wf));
+    app_motion_run(); /* pop + start -> refused before the driver is called */
+    TEST_ASSERT_EQUAL_UINT32(0U, d_waveformCount);
+
+    global_timeus = 1000U;
+    app_motion_run();
+    TEST_ASSERT_TRUE(app_motion_isIdle());
+    TEST_ASSERT_EQUAL_UINT32(0U, d_setVelocityCount);
+
+    /* The same waveform with a shape the driver DOES implement is accepted,
+     * so the refusal is about the byte and not about the rest of the record. */
+    d_waveformCount = 0U;
+    app_motion_move_t ok = make_waveform(50000, 1000000U, 2U, 1U);
+    TEST_ASSERT_TRUE(app_motion_addMove(&ok));
+    app_motion_run();
+    TEST_ASSERT_EQUAL_UINT32(1U, d_waveformCount);
+    TEST_ASSERT_EQUAL_INT(DEV_SERVO_WAVE_TRIANGLE, (int)d_lastWaveShape);
+}
+
 void test_waveform_zero_frequency_completes_without_motion(void)
 {
     VIBES_TEST("motion.waveform-zero-frequency-completes",
@@ -1028,6 +1081,7 @@ int main(void)
     RUN_TEST(test_a_waveform_runs_until_the_driver_reports_arrival);
     RUN_TEST(test_the_recorded_setpoint_during_a_waveform_is_the_trajectory);
     RUN_TEST(test_a_linear_move_records_its_trajectory_not_its_destination);
+    RUN_TEST(test_a_waveform_with_an_unknown_shape_never_reaches_the_driver);
     RUN_TEST(test_waveform_zero_frequency_completes_without_motion);
 
     return UNITY_END();
