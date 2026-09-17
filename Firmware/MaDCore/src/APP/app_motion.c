@@ -13,6 +13,7 @@
 
 #include "app_motion.h"
 #include "app_control.h"
+#include "app_notification.h"
 
 #if APP_MOTION_USE_SERVO
 #include "dev_servo.h"
@@ -129,6 +130,10 @@ typedef struct
     lib_timer_S dwellTimer;
     lib_timer_S endstopTimer;
     int32_t stepsPerMM;
+    /* False when the machine profile could not be read or cannot describe the
+     * machine. Every distance and feedrate this module emits is scaled by
+     * stepsPerMM, so an unusable profile means motion is refused, not guessed. */
+    bool profileValid;
     int32_t maxPosition;
     int32_t homingVelocity;
     int32_t homingOffset;
@@ -475,7 +480,29 @@ void app_motion_init(int lock)
     app_motion_data.lock = lock;
     app_motion_data.absoluteMode = true; // Default absolute cordinates
     MachineProfile machineProfile;
-    dev_nvram_getChannelData(DEV_NVRAM_CHANNEL_MACHINE_PROFILE, &machineProfile, sizeof(MachineProfile));
+    memset(&machineProfile, 0, sizeof(machineProfile));
+    const bool profileRead =
+        dev_nvram_getChannelData(DEV_NVRAM_CHANNEL_MACHINE_PROFILE, &machineProfile, sizeof(MachineProfile));
+    /* stepsPerMM converts every distance and every feedrate this module emits,
+     * so a zero makes each of them zero: `steps = um * 0 / 1000` targets encoder
+     * count 0, and a feedrate of 0 is the invalid value dev_servo answers with
+     * maxVelocity. That pair is a full-speed run to the bottom of the machine
+     * from wherever the carriage is -- the worst thing this module can do --
+     * and it takes only an unprovisioned or short profile.bin to reach. The
+     * same value divides twice in the G0/G1 debug logging, so the debug build
+     * traps on it first.
+     *
+     * A profile that cannot describe the machine is not repaired with a
+     * default: a guessed steps/mm would run every test at the wrong scale and
+     * report it as correct. Motion is refused until a real one is written. */
+    app_motion_data.profileValid = profileRead && (machineProfile.servoStepsPerMM > 0);
+    if (!app_motion_data.profileValid)
+    {
+        DEBUG_ERROR("MOTION: unusable machine profile (read=%d servoStepsPerMM=%d); refusing motion\n",
+                    (int)profileRead, (int)machineProfile.servoStepsPerMM);
+        app_notification_send(APP_NOTIFICATION_TYPE_ERROR, "%s",
+                              "Machine profile is missing or invalid; motion is refused until it is set");
+    }
     app_motion_data.stepsPerMM = machineProfile.servoStepsPerMM;
     app_motion_data.maxPosition = machineProfile.maxPosition;
     app_motion_data.homingVelocity = machineProfile.homingVelocity;
@@ -499,6 +526,13 @@ void app_motion_run(void)
 
 bool app_motion_addMove(const app_motion_move_t *move)
 {
+    if (!app_motion_data.profileValid)
+    {
+        /* Refused at the door rather than at the conversion: a move that never
+         * enters the queue cannot be started, and the caller gets a false it
+         * can report instead of a test that runs at an unknown scale. */
+        return false;
+    }
     return lib_staticQueue_push(&app_motion_data.queue, (void *)move);
 }
 

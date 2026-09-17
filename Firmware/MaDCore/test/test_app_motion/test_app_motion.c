@@ -156,6 +156,17 @@ static bool d_waveformAccepted = true;
  * so it mirrors that one rule. The rule itself is pinned against the real
  * implementation in test_dev_servo (servo.wave-shape-from-wire) -- here it
  * exists only so app_motion's refusal path has something to refuse against. */
+/* --- app_notification (app_motion reports an unusable machine profile) --- */
+#include "app_notification.h"
+static int d_notify_calls;
+static app_notification_type_E d_notify_lastType;
+void app_notification_send(app_notification_type_E type, const char *format, ...)
+{
+    d_notify_calls++;
+    d_notify_lastType = type;
+    (void)format;
+}
+
 bool dev_servo_waveShapeFromWire(uint8_t wire, dev_servo_wave_E *shape)
 {
     if ((shape == NULL) || (wire > (uint8_t)DEV_SERVO_WAVE_TRIANGLE))
@@ -207,8 +218,13 @@ bool IO_positionFeedback_setValue(IO_positionFeedback_channel_E ch, int32_t posi
 /* --- dev_nvram (feeds the MachineProfile consumed by app_motion_init) --- */
 static MachineProfile d_machineProfile;
 
+static bool d_nvramReadSucceeds = true;
 bool dev_nvram_getChannelData(dev_nvram_channel_t channel, void *data, size_t size)
 {
+    if (!d_nvramReadSucceeds)
+    {
+        return false;
+    }
     TEST_ASSERT_EQUAL_INT(DEV_NVRAM_CHANNEL_MACHINE_PROFILE, channel);
     TEST_ASSERT_EQUAL_UINT(sizeof(MachineProfile), size);
     memcpy(data, &d_machineProfile, sizeof(MachineProfile));
@@ -251,6 +267,9 @@ static void doubles_reset(void)
 
     /* A representative, easy-to-reason-about machine profile.
      * 100 steps/mm keeps step<->um math exact for round numbers. */
+    d_nvramReadSucceeds = true;
+    d_notify_calls = 0;
+    d_notify_lastType = APP_NOTIFICATION_TYPE_MESSAGE;
     memset(&d_machineProfile, 0, sizeof(d_machineProfile));
     d_machineProfile.servoStepsPerMM = 100;
     d_machineProfile.maxPosition = 200;     // mm
@@ -743,6 +762,66 @@ void test_zero_stepsPerMM_yields_zero_setpoint_and_position(void)
     TEST_ASSERT_EQUAL_INT32(0, app_motion_getPosition());
 }
 
+void test_an_unusable_machine_profile_refuses_every_move(void)
+{
+    VIBES_TEST("motion.unusable-profile-refuses-moves",
+               "src/APP/app_motion.c#app_motion_addMove",
+               "a machine profile whose steps per millimetre is zero, then a linear move");
+    VIBES_EXPECT_WHY("move-refused",
+                     "the move is refused and never enters the queue",
+                     "every distance and feedrate this module emits is scaled by steps per millimetre, so a zero targets encoder count 0 with a feedrate of 0 -- and a feedrate of 0 is the invalid value the driver answers with its maximum, which makes the pair a full-speed run to the bottom of the machine");
+    VIBES_EXPECT_WHY("operator-told",
+                     "an error notification is raised when the profile is loaded",
+                     "the refusal is otherwise indistinguishable from a machine that simply will not move, and the operator cannot fix a profile nobody told them was missing");
+
+    d_machineProfile.servoStepsPerMM = 0;
+    d_notify_calls = 0;
+    motion_init();
+    TEST_ASSERT_EQUAL_INT(1, d_notify_calls);
+    TEST_ASSERT_EQUAL_INT(APP_NOTIFICATION_TYPE_ERROR, d_notify_lastType);
+
+    motion_driveToWaiting();
+    app_motion_move_t mv = make_move((uint8_t)G1_LINEAR_MOVE, 1000, 5, 0);
+    TEST_ASSERT_FALSE(app_motion_addMove(&mv));
+    /* Refused at the door: the queue is still empty, so running finds nothing
+     * to start and the module stays idle rather than converting the move. */
+    app_motion_run();
+    TEST_ASSERT_TRUE(app_motion_isIdle());
+
+    /* A waveform is refused by the same gate. */
+    app_motion_move_t wf = make_waveform(50000, 1000000U, 2U, 0U);
+    TEST_ASSERT_FALSE(app_motion_addMove(&wf));
+}
+
+void test_a_profile_that_could_not_be_read_refuses_every_move(void)
+{
+    VIBES_TEST("motion.unreadable-profile-refuses-moves",
+               "src/APP/app_motion.c#app_motion_init",
+               "a machine profile whose NVRAM read fails");
+    VIBES_EXPECT_WHY("move-refused",
+                     "the move is refused",
+                     "the read used to be issued and its result discarded, so a failed read left whatever the uninitialised profile struct happened to hold and the machine ran against it");
+
+    d_nvramReadSucceeds = false;
+    motion_init();
+    app_motion_move_t mv = make_move((uint8_t)G1_LINEAR_MOVE, 1000, 5, 0);
+    TEST_ASSERT_FALSE(app_motion_addMove(&mv));
+}
+
+void test_a_usable_profile_still_accepts_moves(void)
+{
+    VIBES_TEST("motion.usable-profile-accepts-moves",
+               "src/APP/app_motion.c#app_motion_addMove",
+               "the ordinary machine profile from setUp, and a linear move");
+    VIBES_EXPECT_WHY("move-accepted",
+                     "the move is accepted and no profile notification is raised",
+                     "the gate must refuse only an unusable profile; a gate that refused everything would pass the two tests above while stopping the machine entirely");
+
+    TEST_ASSERT_EQUAL_INT(0, d_notify_calls);
+    app_motion_move_t mv = make_move((uint8_t)G1_LINEAR_MOVE, 1000, 5, 0);
+    TEST_ASSERT_TRUE(app_motion_addMove(&mv));
+}
+
 /**********************************************************************
  * Tests: queue API (addMove / abortAndClear / isIdle)
  **********************************************************************/
@@ -1071,6 +1150,9 @@ int main(void)
     RUN_TEST(test_getPosition_scales_steps_to_nm);
     RUN_TEST(test_zero_stepsPerMM_yields_zero_setpoint_and_position);
 
+    RUN_TEST(test_an_unusable_machine_profile_refuses_every_move);
+    RUN_TEST(test_a_profile_that_could_not_be_read_refuses_every_move);
+    RUN_TEST(test_a_usable_profile_still_accepts_moves);
     RUN_TEST(test_addMove_queue_is_bounded);
     RUN_TEST(test_abortAndClear_stops_clears_and_returns_to_waiting);
     RUN_TEST(test_isIdle_false_when_move_queued);
