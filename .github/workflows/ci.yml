@@ -6,10 +6,11 @@ on:
       - 'Software/**'
       - 'Firmware/**'
       - 'Hardware/**'
-      # Submodule pin bumps land as gitlink changes at Protocol/ProtoEmb and
-      # SIL/embsim; .gitmodules changes repoint the submodule URLs.
+      # Submodule pin bumps land as gitlink changes at Protocol/ProtoEmb,
+      # SIL/embsim, and Vibes; .gitmodules changes repoint the submodule URLs.
       - 'Protocol/**'
       - 'SIL/**'
+      - 'Vibes'
       - '.gitmodules'
       # The docs site is built with `mkdocs build --strict` here as well as in
       # pages.yml, so a broken nav/link fails the PR instead of the deploy.
@@ -41,6 +42,7 @@ jobs:
       docs: ${{ steps.changes.outputs.docs }}
       embsim_pin: ${{ steps.changes.outputs.embsim_pin }}
       protoemb_pin: ${{ steps.changes.outputs.protoemb_pin }}
+      vibes_pin: ${{ steps.changes.outputs.vibes_pin }}
       is_release: ${{ startsWith(github.ref, 'refs/tags/') }}
       is_firmware_release: ${{ startsWith(github.ref, 'refs/tags/firmware-v') }}
       is_hardware_release: ${{ startsWith(github.ref, 'refs/tags/hardware-v') }}
@@ -52,11 +54,15 @@ jobs:
           filters: |
             firmware:
               - 'Firmware/**'
+              # Top-level Vibes gitlink: C bindings consumers (Unity suites).
+              - 'Vibes'
             hardware:
               - 'Hardware/**'
             wasm_control:
               - 'Software/Control/**'
               - 'Protocol/**'
+              # Top-level Vibes gitlink: TS bindings consumers (Control).
+              - 'Vibes'
               - '.gitmodules'
             protocol:
               - 'Protocol/**'
@@ -65,13 +71,15 @@ jobs:
               - 'SIL/**'
               - 'Firmware/**'
               - 'Protocol/**'
+              # Top-level Vibes gitlink: Rust bindings consumers (SIL).
+              - 'Vibes'
               - '.gitmodules'
             docs:
               - 'docs/**'
               - 'mkdocs.yml'
             # Submodule PIN bumps only — the gitlink entry itself, not the
             # surrounding tree. `sil`/`protocol` above fire on any change under
-            # SIL/ or Protocol/; these two fire only when the recorded commit
+            # SIL/ or Protocol/; these fire only when the recorded commit
             # moves, which is when the expensive upstream-mirror legs earn their
             # keep. `.gitmodules` is included because repointing a submodule URL
             # changes which repository the pin resolves against.
@@ -80,6 +88,9 @@ jobs:
               - '.gitmodules'
             protoemb_pin:
               - 'Protocol/ProtoEmb'
+              - '.gitmodules'
+            vibes_pin:
+              - 'Vibes'
               - '.gitmodules'
 
   # Offline gate for the frontend-only Web Serial + WASM control app: build
@@ -506,6 +517,73 @@ jobs:
           echo "embsim MSRV = $MSRV"
           rustup toolchain install "$MSRV" --profile minimal
           cargo "+$MSRV" build --workspace
+
+  # BLOCKING, pin-bumps only. Mirror of upstream RileyMcCarthy/vibes CI for the
+  # tool + three binding compile probes — without re-running MaD's Behaviour
+  # ledger suites. `vibes` (Behaviour ledger) stays informational and unchanged;
+  # this job covers the commit axis when the Vibes gitlink moves.
+  vibes-pin-ci:
+    needs: changes
+    if: needs.changes.outputs.vibes_pin == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: Vibes
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Tool — install, typecheck, test, build
+        run: |
+          set -euo pipefail
+          npm ci --no-audit --no-fund
+          npx tsc --noEmit
+          npm test
+          npm run build
+      # Bindings ship to C / Rust / TS and are not covered by the tool tests.
+      # Throwaway compile probes match upstream vibes CI intent.
+      - name: Compile the C binding and emit a record
+        run: |
+          set -euo pipefail
+          cat > /tmp/probe.c <<'PROBE'
+          #include <assert.h>
+          #include <stdio.h>
+          #include <string.h>
+          #include "vibes_behaviour.h"
+          int main(void) {
+              VIBES_TEST("probe.header-compiles",
+                         "bindings/c/vibes_behaviour.h",
+                         "the header included in a translation unit of its own");
+              VIBES_EXPECT("emits", "one line is appended for each expectation");
+              VIBES_EXPECT_WHY("why-form", "the reason form also compiles",
+                               "both macros are shipped and both must expand");
+              return 0;
+          }
+          PROBE
+          gcc -Wall -Wextra -Werror -Ibindings/c -o /tmp/probe /tmp/probe.c
+          VIBES_BEHAVIOURS=/tmp/out.jsonl /tmp/probe
+          test "$(wc -l < /tmp/out.jsonl)" = "2"
+          grep -q '"v":2' /tmp/out.jsonl
+          grep -q '"expect":"emits"' /tmp/out.jsonl
+          echo "C binding emits v2 records"
+      - name: Build and lint the Rust binding
+        working-directory: Vibes/bindings/rust
+        run: |
+          set -euo pipefail
+          cargo build --all-targets
+          cargo clippy --all-targets -- -D warnings
+      - name: Typecheck the TypeScript binding
+        run: |
+          set -euo pipefail
+          npx tsc --noEmit --strict --module esnext --moduleResolution bundler \
+            --skipLibCheck bindings/ts/index.ts
 
   # Firmware Unity unit tests on the host (platform = native, AddressSanitizer).
   # No Propeller toolchain needed; the platformio pre-hook regenerates the C
@@ -983,6 +1061,7 @@ jobs:
       - protoemb-pin-ci
       - embsim-ci
       - embsim-pin-ci
+      - vibes-pin-ci
       - docs-ci
       - firmware-unit-tests
       - protocol-codegen
