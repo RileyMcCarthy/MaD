@@ -47,6 +47,7 @@ enums:
       - ESD_LOWER
       - SERVO_COMMUNICATION
       - FORCE_GAUGE_COMMUNICATION
+      - SERVO_STALL
 
   RestrictedReason:
     description: "Motion restriction codes"
