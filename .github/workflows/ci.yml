@@ -678,7 +678,11 @@ jobs:
       needs.changes.outputs.is_release != 'true' &&
       needs.changes.outputs.sil == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # 25 was enough while every ISS test skipped. They now run against the real
+    # P2 image: ~6 minutes locally, dominated by p2core's boot tests
+    # interpreting hundreds of millions of instructions in the dev profile, and
+    # a shared 4-vCPU runner is slower than that.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
         with:
@@ -700,6 +704,22 @@ jobs:
       - name: Build firmware native lib (libfirmware.a)
         working-directory: Firmware/MaDCore
         run: pio run -e native_emulator
+      # The ISS executes the SHIPPED artifact, and the shipped artifact is
+      # compiled by flexcc, not clang. Without this the p2core/p2iss tests that
+      # boot the firmware find no image and skip -- printing a banner and
+      # passing, which is how this suite once reported 54 passed while
+      # asserting nothing. CI is the one place that must never be allowed to do
+      # that, hence MAD_REQUIRE_P2_IMAGE on the test step below.
+      #
+      # Built here rather than reused from `build-firmware`: that job only runs
+      # when `firmware` changed, so on a SIL-only PR its artifact would not
+      # exist, and it runs on a macOS runner at a 10x minute multiplier.
+      - name: Install the Propeller platform (flexcc/flexspin)
+        working-directory: Firmware/MaDCore
+        run: pio pkg install --platform https://github.com/RileyMcCarthy/platform-propeller.git
+      - name: Build the P2 image the ISS interprets
+        working-directory: Firmware/MaDCore
+        run: pio run -e propeller2_debug
       # rustfmt covers the crates this repo authors. The `protocol` crate is
       # excluded because its body is `#[path]`-included generated code that
       # `make protocol` rewrites on every build — formatting it would be undone
@@ -714,8 +734,15 @@ jobs:
       - name: Cargo test (blocking)
         working-directory: SIL
         # The workspace is the MaD-side crates only (protocol, models,
-        # MaDSim). The embsim submodule suite is re-run by the sibling
-        # `embsim-ci` job (mirror of protoemb-ci) on the pinned commit.
+        # MaDSim, p2core, p2iss). The embsim submodule suite is re-run by the
+        # sibling `embsim-ci` job (mirror of protoemb-ci) on the pinned commit.
+        #
+        # MAD_REQUIRE_P2_IMAGE turns "the image is missing, so skip" into a
+        # failure. A developer without a built image still gets skips; a CI job
+        # that lost its image build goes red instead of silently reverting to
+        # asserting nothing about the firmware that ships.
+        env:
+          MAD_REQUIRE_P2_IMAGE: '1'
         run: cargo test --workspace --all-targets
 
   # BLOCKING. MISRA/cppcheck via `pio check`. Low severity is disabled in
