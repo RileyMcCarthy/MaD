@@ -362,6 +362,10 @@ structs:
         type: int32
         unit: mm
         scale: 1
+      - name: restrictedVelocity
+        type: int32
+        unit: mm/s
+        scale: 1
 
   SampleProfile:
     encoding: aligned

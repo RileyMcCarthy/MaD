@@ -77,6 +77,9 @@ export interface MachineConfiguration {
   'Homing Velocity (mm/s)': number;
   'Homing Offset (mm)': number;
   'Jaw Offset (mm)': number;
+  /* Speed ceiling while the machine is RESTRICTED -- on an endstop, with the
+   * door open, or over a tension limit. Zero means no ceiling. */
+  'Restricted Velocity (mm/s)': number;
 }
 
 export interface FirmwareVersion {

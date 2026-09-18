@@ -762,6 +762,91 @@ void test_zero_stepsPerMM_yields_zero_setpoint_and_position(void)
     TEST_ASSERT_EQUAL_INT32(0, app_motion_getPosition());
 }
 
+/* Queue one G1 and run it to the point where the drive is commanded.
+ *
+ * The record's feedrate is MICROMETRES per second, not millimetres: the module
+ * computes `f * stepsPerMM / 1000`, which only yields steps/s if f is um/s.
+ * Spelled out here because the field is named `f` and every G-code reader
+ * expects mm/min or mm/s. */
+static void runOneLinearMove(int32_t xUm, int32_t fUmS)
+{
+    app_motion_move_t mv = make_move((uint8_t)G1_LINEAR_MOVE, xUm, fUmS, 0);
+    TEST_ASSERT_TRUE(app_motion_addMove(&mv));
+    app_motion_run();
+}
+
+void test_a_restricted_machine_moves_at_the_capped_speed(void)
+{
+    VIBES_TEST("motion.restricted-speed-is-capped",
+               "src/APP/app_motion.c#app_motion_private_moveManager_start",
+               "a machine profile with a restricted velocity of 2 millimetres per second, the machine reporting restricted, and a move asking for 40");
+    VIBES_EXPECT_WHY("feedrate-capped",
+                     "the drive is commanded at 2 millimetres per second",
+                     "restricted is entered on an endstop, an open door, or a sample over its tension limit, and the cap the state machine computes for those was read by nothing -- so a carriage sitting on an endstop could be commanded at the machine's full speed");
+
+    d_machineProfile.restrictedVelocity = 2; /* mm/s */
+    motion_init();
+    motion_driveToWaiting();
+
+    d_speedLimited = true;
+    runOneLinearMove(1000, 40000); /* 40 mm/s */
+    TEST_ASSERT_EQUAL_INT32(2 * 100, d_lastMoveStepsPerSecond); /* 2 mm/s * 100 steps/mm */
+}
+
+void test_a_restricted_machine_is_not_sped_up_to_the_cap(void)
+{
+    VIBES_TEST("motion.restricted-cap-is-a-ceiling",
+               "src/APP/app_motion.c#app_motion_private_moveManager_start",
+               "a restricted machine with a cap of 20 millimetres per second, and a move asking for 1");
+    VIBES_EXPECT_WHY("slower-move-untouched",
+                     "the drive is commanded at 1 millimetre per second",
+                     "the cap is a ceiling and not a setting, so a deliberately slow retreat from a limit must stay slow");
+
+    d_machineProfile.restrictedVelocity = 20;
+    motion_init();
+    motion_driveToWaiting();
+
+    d_speedLimited = true;
+    runOneLinearMove(1000, 1000); /* 1 mm/s */
+    TEST_ASSERT_EQUAL_INT32(1 * 100, d_lastMoveStepsPerSecond);
+}
+
+void test_an_unrestricted_machine_moves_at_the_speed_it_was_asked_for(void)
+{
+    VIBES_TEST("motion.unrestricted-speed-is-untouched",
+               "src/APP/app_motion.c#app_motion_private_moveManager_start",
+               "a machine with a restricted velocity configured but not currently restricted, and a move asking for 40 millimetres per second");
+    VIBES_EXPECT_WHY("full-speed",
+                     "the drive is commanded at 40 millimetres per second",
+                     "a cap that applied outside the restricted state would quietly slow every ordinary test, and the resulting strain rate would not be the one the operator set");
+
+    d_machineProfile.restrictedVelocity = 2;
+    motion_init();
+    motion_driveToWaiting();
+
+    d_speedLimited = false;
+    runOneLinearMove(1000, 40000); /* 40 mm/s */
+    TEST_ASSERT_EQUAL_INT32(40 * 100, d_lastMoveStepsPerSecond);
+}
+
+void test_a_profile_without_a_cap_does_not_stop_the_machine(void)
+{
+    VIBES_TEST("motion.zero-cap-disables-the-clamp",
+               "src/APP/app_motion.c#app_motion_private_moveManager_start",
+               "a machine profile whose restricted velocity is zero, the machine reporting restricted, and a move asking for 40 millimetres per second");
+    VIBES_EXPECT_WHY("uncapped",
+                     "the drive is commanded at 40 millimetres per second",
+                     "a profile written before this field existed reads back as zero, and treating that as a cap would pin an existing machine to a standstill the first time it touched an endstop");
+
+    d_machineProfile.restrictedVelocity = 0;
+    motion_init();
+    motion_driveToWaiting();
+
+    d_speedLimited = true;
+    runOneLinearMove(1000, 40000); /* 40 mm/s */
+    TEST_ASSERT_EQUAL_INT32(40 * 100, d_lastMoveStepsPerSecond);
+}
+
 void test_an_unusable_machine_profile_refuses_every_move(void)
 {
     VIBES_TEST("motion.unusable-profile-refuses-moves",
@@ -1150,6 +1235,10 @@ int main(void)
     RUN_TEST(test_getPosition_scales_steps_to_nm);
     RUN_TEST(test_zero_stepsPerMM_yields_zero_setpoint_and_position);
 
+    RUN_TEST(test_a_restricted_machine_moves_at_the_capped_speed);
+    RUN_TEST(test_a_restricted_machine_is_not_sped_up_to_the_cap);
+    RUN_TEST(test_an_unrestricted_machine_moves_at_the_speed_it_was_asked_for);
+    RUN_TEST(test_a_profile_without_a_cap_does_not_stop_the_machine);
     RUN_TEST(test_an_unusable_machine_profile_refuses_every_move);
     RUN_TEST(test_a_profile_that_could_not_be_read_refuses_every_move);
     RUN_TEST(test_a_usable_profile_still_accepts_moves);

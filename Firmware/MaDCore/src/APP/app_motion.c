@@ -134,6 +134,9 @@ typedef struct
      * machine. Every distance and feedrate this module emits is scaled by
      * stepsPerMM, so an unusable profile means motion is refused, not guessed. */
     bool profileValid;
+    /* Speed cap applied while app_control reports the machine RESTRICTED,
+     * in drive steps per second. Zero means no cap. */
+    int32_t restrictedFeedrate;
     int32_t maxPosition;
     int32_t homingVelocity;
     int32_t homingOffset;
@@ -323,7 +326,25 @@ static void app_motion_private_moveManager_start(void)
             /* move.x on SD is machine µm (host converts sample G-code at upload). */
             const int32_t moveTargetUm = app_motion_data.currentMove.x;
             int32_t steps = (int32_t)(((int64_t)moveTargetUm * app_motion_data.stepsPerMM) / 1000LL);
-            const int32_t feedrate = (int32_t)(((int64_t)app_motion_data.currentMove.f * app_motion_data.stepsPerMM) / 1000LL);
+            int32_t feedrate = (int32_t)(((int64_t)app_motion_data.currentMove.f * app_motion_data.stepsPerMM) / 1000LL);
+            /* RESTRICTED is entered on an endstop, an open door, or a sample or
+             * frame over its tension limit -- conditions where the machine may
+             * still be moved, deliberately and slowly, to get out of them. The
+             * state machine has always computed a speed cap for it and nothing
+             * has ever read it, so until now the only difference between
+             * RESTRICTED and MANUAL was the badge in the UI: a carriage sitting
+             * on an endstop could be commanded at the full 50 mm/s.
+             *
+             * Clamped rather than refused, because refusing motion in
+             * RESTRICTED is what would strand a specimen under load with no way
+             * to back off. */
+            if (app_motion_data.inputs.limitSpeed && (app_motion_data.restrictedFeedrate > 0) &&
+                (feedrate > app_motion_data.restrictedFeedrate))
+            {
+                DEBUG_INFO("RESTRICTED: feedrate %d -> %d steps/s\n", feedrate,
+                           app_motion_data.restrictedFeedrate);
+                feedrate = app_motion_data.restrictedFeedrate;
+            }
             if (app_motion_data.absoluteMode == false)
             {
                 steps += app_motion_data.inputs.positionSteps;
@@ -508,6 +529,11 @@ void app_motion_init(int lock)
     app_motion_data.homingVelocity = machineProfile.homingVelocity;
     app_motion_data.homingOffset = machineProfile.homingOffset;
     app_motion_data.jawOffset = machineProfile.jawOffset;
+    /* Precomputed in the drive's own units, because the clamp sits on the
+     * per-move path. Zero (an older profile, or a profile that does not set it)
+     * disables the clamp rather than pinning the machine to a standstill. */
+    app_motion_data.restrictedFeedrate =
+        (int32_t)(((int64_t)machineProfile.restrictedVelocity * machineProfile.servoStepsPerMM));
     /* The move queue needs no locking: it is touched ONLY by the CONTROL cog
      * (app_testManagement pushes — test feed + staged manual moves — and
      * app_motion pops/clears, all from the same run loop). Manual moves from
