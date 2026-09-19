@@ -300,6 +300,44 @@ static IO_ADS122U04_channelConfig_S IO_ADS122U04_channelConfig[IO_ADS122U04_CHAN
 /**********************************************************************
  * Private Function Definitions
  **********************************************************************/
+/* Drop whatever is still sitting in the RX FIFO.
+ *
+ * Every exchange with this device is request/response, and the device answers
+ * only what it was asked. So a byte already in the FIFO when a request goes out
+ * can only be the tail of an exchange that was abandoned — a conversion whose
+ * read timed out, or a readback that returned early on a mismatch. Leaving it
+ * there shifts the NEXT response by one byte, and because the shifted response
+ * fails its check and returns early in turn, the offset is inherited rather
+ * than corrected: once desynchronised the driver never recovers, and the gauge
+ * is declared unresponsive for good.
+ *
+ * `HAL_serial_start`/`stop` do not flush (they are no-ops under emulation), so
+ * the driver cannot lean on the port being clean. Draining before each request
+ * is what makes an exchange self-synchronising. */
+/* Bounded on purpose. A legitimate leftover is small and finite: an abandoned
+ * conversion is three bytes, and a read-back that gave up part way through
+ * leaves at most four unread replies. An endless supply means the device is
+ * streaming — it was left in AUTO conversion mode, say — and against that an
+ * unbounded loop does not drain, it hangs, taking the cog and the machine with
+ * it. Sixteen is far above any honest backlog and still terminates; reaching it
+ * is a fault worth reporting rather than a state worth waiting in. */
+#define IO_ADS122U04_DRAIN_LIMIT 16U
+
+static void IO_ADS122U04_private_drainRx(IO_ADS122U04_channel_E channel)
+{
+    uint8_t stale = 0U;
+    uint32_t dropped = 0U;
+    while ((dropped < IO_ADS122U04_DRAIN_LIMIT) &&
+           (HAL_serial_recieveDataTimeout(IO_ADS122U04_channelConfig[channel].serialChannel, &stale, 1, 0U) == true))
+    {
+        dropped++;
+    }
+    if (dropped >= IO_ADS122U04_DRAIN_LIMIT)
+    {
+        DEBUG_ERROR("ADS122U04 link is streaming: drained %u bytes and more remain\n", (unsigned)dropped);
+    }
+}
+
 static void IO_ADS122U04_writeRegister(IO_ADS122U04_channel_E channel, IO_ADS122U04_configRegister_E registerAddress, uint8_t data)
 {
     const uint8_t package[3] = {IO_ADS122U04_SYNC, 0x40 + (registerAddress << 1), data};
@@ -308,6 +346,7 @@ static void IO_ADS122U04_writeRegister(IO_ADS122U04_channel_E channel, IO_ADS122
 
 static bool IO_ADS122U04_readRegister(IO_ADS122U04_channel_E channel, IO_ADS122U04_configRegister_E registerAddress, uint8_t *data)
 {
+    IO_ADS122U04_private_drainRx(channel);
     const uint8_t package[2] = {IO_ADS122U04_SYNC, 0x20 + (registerAddress << 1)};
     HAL_serial_transmitData(IO_ADS122U04_channelConfig[channel].serialChannel, package, 2);
     return HAL_serial_recieveDataTimeout(IO_ADS122U04_channelConfig[channel].serialChannel, data, 1, IO_ADS122U04_TIMEOUT_US);
@@ -378,11 +417,7 @@ bool IO_ADS122U04_receiveConversion(IO_ADS122U04_channel_E channel, int32_t *sig
      * shape makes byte alignment deterministic — the free-running AUTO stream has
      * no frame markers, so a single missed byte would rotate every later reading. */
     uint8_t bval[3];
-    uint8_t stale;
-    while (HAL_serial_recieveDataTimeout(IO_ADS122U04_channelConfig[channel].serialChannel, &stale, 1, 0) == true)
-    {
-        // drain any bytes left over from a previous timed-out request
-    }
+    IO_ADS122U04_private_drainRx(channel);
     IO_ADS122U04_sendCommand(channel, IO_ADS122U04_CMD_RDATA);
     const bool valid = HAL_serial_recieveDataTimeout(IO_ADS122U04_channelConfig[channel].serialChannel, &bval[0], 3, timeout_ms);
     // 24-bit two's complement, LSB first on the wire; sign-extend to 32 bits
