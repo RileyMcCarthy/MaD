@@ -314,12 +314,27 @@ static IO_ADS122U04_channelConfig_S IO_ADS122U04_channelConfig[IO_ADS122U04_CHAN
  * `HAL_serial_start`/`stop` do not flush (they are no-ops under emulation), so
  * the driver cannot lean on the port being clean. Draining before each request
  * is what makes an exchange self-synchronising. */
+/* Bounded on purpose. A legitimate leftover is small and finite: an abandoned
+ * conversion is three bytes, and a read-back that gave up part way through
+ * leaves at most four unread replies. An endless supply means the device is
+ * streaming — it was left in AUTO conversion mode, say — and against that an
+ * unbounded loop does not drain, it hangs, taking the cog and the machine with
+ * it. Sixteen is far above any honest backlog and still terminates; reaching it
+ * is a fault worth reporting rather than a state worth waiting in. */
+#define IO_ADS122U04_DRAIN_LIMIT 16U
+
 static void IO_ADS122U04_private_drainRx(IO_ADS122U04_channel_E channel)
 {
     uint8_t stale = 0U;
-    while (HAL_serial_recieveDataTimeout(IO_ADS122U04_channelConfig[channel].serialChannel, &stale, 1, 0U) == true)
+    uint32_t dropped = 0U;
+    while ((dropped < IO_ADS122U04_DRAIN_LIMIT) &&
+           (HAL_serial_recieveDataTimeout(IO_ADS122U04_channelConfig[channel].serialChannel, &stale, 1, 0U) == true))
     {
-        /* discard */
+        dropped++;
+    }
+    if (dropped >= IO_ADS122U04_DRAIN_LIMIT)
+    {
+        DEBUG_ERROR("ADS122U04 link is streaming: drained %u bytes and more remain\n", (unsigned)dropped);
     }
 }
 

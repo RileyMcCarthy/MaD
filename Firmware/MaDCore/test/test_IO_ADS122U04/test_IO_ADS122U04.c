@@ -31,6 +31,7 @@ static uint8_t d_convBytes[3];
  * the double MUST model a finite backlog — an "always a byte available" double
  * makes that drain loop spin forever. */
 static int d_staleBytes;
+static bool d_endlessStale;        /* the link never goes quiet (device left streaming) */
 static int d_drainCount;           /* stale bytes actually consumed */
 static int d_drainedBeforeRdata;   /* value of d_drainCount when RDATA was sent */
 static bool d_sawRdata;
@@ -68,9 +69,9 @@ bool HAL_serial_recieveDataTimeout(HAL_serial_channel_E ch, uint8_t *const data,
          * queued comes out BEFORE a reply to a request issued after it. Serving
          * the reply first would make a stale byte harmless, and no test could
          * then express the desynchronisation that leftovers actually cause. */
-        if (d_staleBytes > 0)
+        if (d_endlessStale || (d_staleBytes > 0))
         {
-            d_staleBytes--;
+            if (d_staleBytes > 0) d_staleBytes--;
             d_drainCount++;
             data[0] = 0xAA;
             return true;
@@ -108,6 +109,7 @@ void setUp(void)
     d_sawReset = d_sawStart = false;
     d_convOk = true;
     d_staleBytes = 0;
+    d_endlessStale = false;
     d_drainCount = 0;
     d_drainedBeforeRdata = -1;
     d_sawRdata = false;
@@ -300,6 +302,22 @@ void test_start_recovers_after_a_failed_attempt_left_replies_queued(void)
     TEST_ASSERT_EQUAL_INT(0, d_staleBytes);
 }
 
+/* A device left streaming supplies bytes forever. The drain has to give up and
+ * say so, because the alternative is not a slow start — it is a cog that never
+ * returns, and this one carries the force gauge. */
+void test_drain_gives_up_on_a_link_that_never_goes_quiet(void)
+{
+    VIBES_TEST("ads122.drain-is-bounded",
+               "src/IO/IO_ADS122U04.c#IO_ADS122U04_start",
+               "a load-cell ADC link that never goes quiet, because the converter was left streaming");
+    VIBES_EXPECT_WHY("drain-terminates",
+                     "the driver stops draining instead of waiting for silence that never comes",
+                     "an unbounded drain on a streaming link hangs the force-gauge cog, and with it the machine");
+    d_endlessStale = true;
+    (void)IO_ADS122U04_start(CH); /* must RETURN — pass or fail, but return */
+    TEST_ASSERT_LESS_OR_EQUAL_INT(16 * IO_ADS122U04_REGISTER_COUNT, d_drainCount);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -309,6 +327,7 @@ int main(void)
     RUN_TEST(test_start_fails_on_config_mismatch);
     RUN_TEST(test_start_drains_stale_bytes_before_reading_registers);
     RUN_TEST(test_start_recovers_after_a_failed_attempt_left_replies_queued);
+    RUN_TEST(test_drain_gives_up_on_a_link_that_never_goes_quiet);
     RUN_TEST(test_stop_stops_serial);
     RUN_TEST(test_receiveConversion_assembles_24bit_word_lsb_first);
     RUN_TEST(test_receiveConversion_sign_extends_negative_counts);
