@@ -1,27 +1,41 @@
-# Nightly / manual WASM e2e against the SIL playground.
+# Nightly e2e on the ISS: the shipped FlexC image, and a real browser.
 #
-# `control-e2e-sil` in ci.yml runs the FULL suite on every app/protocol/
-# firmware/SIL change and now GATES (it is in `ci-gate.needs`) — a red e2e run
-# blocks the merge. ci.yml is the source of truth for which jobs gate; do not
-# infer it from here.
+# ONE configuration, deliberately. This workflow used to carry a second job
+# running the native firmware library behind the WS/PTY bridge -- the same
+# thing ci.yml's `control-e2e-sil` gates on every PR. Re-running it here only
+# repeated per-PR coverage a few hours later, so it is gone: what a nightly
+# run is for is the configuration a PR cannot afford, and that is this one.
 #
-# This workflow keeps running on a schedule for what a per-PR run cannot see:
-# drift on `main` that only appears over time (a flake that needs many runs to
-# surface, an upstream runner-image change, a dependency that moved under a
-# floating version).
+# `control-e2e-sil` in ci.yml still runs the FULL suite on every app/protocol/
+# firmware/SIL change and GATES (it is in `ci-gate.needs`). ci.yml is the
+# source of truth for which jobs gate; do not infer it from here. Native
+# coverage is therefore not lost by the removal above -- only its nightly
+# repeat is.
 #
-# Use `workflow_dispatch` with suite=smoke for a quick manual check.
+# Use `workflow_dispatch` with suite=full to run the whole suite instead of
+# the smoke subset.
 #
-# TWO JOBS, one per SIL configuration:
-#   wasm-e2e-sil    (a) native firmware library + host Chrome + fake serial
-#                       over the WS/PTY bridge -- the same thing ci.yml gates
-#                       per PR, re-run here for drift on `main`.
-#   cosim-iss-qemu  (b) the shipped FlexC image on the ISS + Chrome in a QEMU
-#                       guest + real Web Serial. The only configuration that
-#                       executes the artifact that ships. Nightly only for now
-#                       -- see the note on the job.
+# WHAT STILL DOES NOT TOUCH THE BOARD, in this job or any other. Nine
+# scenarios -- A1 and FW1/2/3/5/6/7/8/9 -- call `chromium.launch` directly and
+# drive a HOST Chrome against in-page fakes (installFakeBootRom,
+# installOpfsDataDir). They never reach an emulator of either kind, so they
+# run identically here and under the bridge.
+#
+# FW1's comment gives the reason: "the emulator has no P2 boot ROM and the WS
+# bridge carries no DTR line". Half of that is now stale -- p2iss boots the
+# chip through the real ROM and a flash that is a net component
+# (SIL/p2iss/tests/rom_boot_net.rs). The other half is not: nothing in p2iss,
+# embsim/qemu or embsim/peripherals models DTR, so the guest's emulated FTDI
+# has no way to drive the P2's reset line and a real flash cannot be
+# performed. Moving the FW scenarios onto the ISS means modelling that line,
+# not flipping a flag.
+#
+# Three more -- B5-reconnect, M11-idle-drop, M11-mid-test-drop -- are skipped
+# outright under CDP: they sever the link with the fake serial's
+# `__silDropLink`, and a real port has nothing to reach in and sever. The
+# equivalent here would be a QMP `device_del` on the USB serial device.
 
-name: E2E nightly (WASM + SIL)
+name: E2E nightly (ISS + QEMU)
 
 on:
   schedule:
@@ -43,138 +57,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  wasm-e2e-sil:
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
-    defaults:
-      run:
-        working-directory: Software/Control
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          submodules: recursive
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 20
-          cache: npm
-          cache-dependency-path: Software/Control/package-lock.json
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
-
-      - uses: actions/setup-python@v7
-        with:
-          python-version: '3.x'
-
-      - name: Install system deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libudev-dev pkg-config
-
-      - name: Install PlatformIO
-        run: pip install -U platformio
-
-      - name: Install protocol generator deps
-        run: pip install -r ../../Protocol/ProtoEmb/core/requirements.txt
-
-      - name: Install wasm-pack
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
-
-      - name: Build SIL emulator (firmware + protocol + cargo)
-        working-directory: SIL
-        run: make emulator
-
-      - name: Install Control deps + wasm + proto
-        run: |
-          npm ci
-          npm run build:wasm
-          npm run generate:proto
-
-      - name: Install Chromium for Playwright
-        run: npx playwright install --with-deps chromium
-
-      # Unpaced virtual time — same reasoning as the PR job in ci.yml: an e2e run
-      # has no need of real-time pacing, and pacing makes the result depend on
-      # how fast the runner is.
-      - name: Start the e2e emulator (unpaced virtual time)
-        working-directory: SIL
-        run: |
-          nohup make e2e-emulator > /tmp/mad-playground.log 2>&1 &
-          echo $! > /tmp/mad-playground.pid
-          for i in $(seq 1 90); do
-            if [ -e /tmp/tty.rpi ]; then echo "PTY ready after ${i}s"; break; fi
-            sleep 2
-          done
-          if [ ! -e /tmp/tty.rpi ]; then
-            echo "=== playground log ==="
-            cat /tmp/mad-playground.log || true
-            exit 1
-          fi
-
-      - name: Start WS bridge + Vite dev server
-        run: |
-          nohup npm run sil:bridge > /tmp/mad-bridge.log 2>&1 &
-          echo $! > /tmp/mad-bridge.pid
-          nohup npm run dev -- --host 127.0.0.1 --port 5174 > /tmp/mad-vite.log 2>&1 &
-          echo $! > /tmp/mad-vite.pid
-          for i in $(seq 1 60); do
-            if curl -sf http://127.0.0.1:5174/ >/dev/null; then echo "Vite ready"; break; fi
-            sleep 2
-          done
-          curl -sf http://127.0.0.1:5174/ >/dev/null
-          for i in $(seq 1 30); do
-            if (echo >/dev/tcp/127.0.0.1/9999) >/dev/null 2>&1; then
-              echo "Bridge port open"
-              break
-            fi
-            sleep 1
-          done
-          (echo >/dev/tcp/127.0.0.1/9999) >/dev/null 2>&1 || {
-            echo "=== bridge log ==="
-            cat /tmp/mad-bridge.log || true
-            exit 1
-          }
-
-      - name: Run e2e suite
-        env:
-          APP_URL: http://127.0.0.1:5174
-          BRIDGE_URL: ws://127.0.0.1:9999
-        run: |
-          SUITE="${{ github.event.inputs.suite || 'smoke' }}"
-          if [ "$SUITE" = "full" ]; then
-            npm run e2e
-          else
-            npm run e2e:smoke
-          fi
-
-      - name: Upload logs on failure
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: e2e-logs
-          path: |
-            /tmp/mad-playground.log
-            /tmp/mad-bridge.log
-            /tmp/mad-vite.log
-
-  # ─────────────────────────────────────────────────────────────────────────
-  # SIL configuration (b): the shipped FlexC image on the ISS, and Chrome
-  # inside a QEMU guest whose clock the board meters, talking REAL Web Serial
-  # to the board's emulated FTDI.
-  #
-  # This is the only configuration that executes the artifact that actually
-  # ships. `control-e2e-sil` in ci.yml links libfirmware.a built by clang, so
-  # it cannot see a flexcc codegen defect — and flexcc has a 64-bit ternary
-  # that drops the high word, a named 64-bit local that fails the build, and
-  # no working compile-time assertion of any kind.
-  #
-  # NIGHTLY, NOT PER-PR, and deliberately not a required check yet. Measured
-  # on an M2 the cosim runs ~75 s per scenario against ~18 s on the native
-  # path, so the full suite is over an hour where control-e2e-sil is 19
-  # minutes. It earns the per-PR gate the same way control-e2e-sil did: by
-  # being green on a schedule first. Until then the native job keeps gating.
   cosim-iss-qemu:
     name: E2E on the ISS (FlexC image + QEMU guest)
     runs-on: ubuntu-latest
