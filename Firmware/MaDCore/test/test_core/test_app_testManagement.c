@@ -565,7 +565,7 @@ void test_m5_lifecycle_start_manual_matrix(void)
 {
     VIBES_TEST("test-run.start-and-jog-only-while-idle",
                "src/APP/app_testManagement.c#app_testManagement_isBusy",
-               "a start and a jog attempted while idle, while a start is waiting to begin, while a test is running, and after every way a test can finish");
+               "a start and a jog attempted in every phase a test run passes through");
     VIBES_EXPECT("refused-while-busy", "both are refused while a start is waiting to begin or a test is running");
     VIBES_EXPECT("accepted-otherwise", "both are accepted in every other phase");
     VIBES_EXPECT("busy-matches-phase", "the machine reports itself busy in exactly those two phases");

@@ -113,7 +113,7 @@ describe('B4 reduceDeviceEvent matrix', () => {
       covers: 'src/store/deviceEventReduce.ts#reduceDeviceEvent',
       given: 'the operator disconnecting from the machine',
       expect: {
-        'expected-disconnect': 'the disconnect is recorded as expected, so no lost-link error is raised',
+        'expected-disconnect': 'the disconnect is recorded as an expected one, so no lost-link error is raised',
       },
     },
     () => {

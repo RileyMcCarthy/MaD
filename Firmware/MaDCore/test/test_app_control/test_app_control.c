@@ -362,7 +362,7 @@ void test_run_forceGaugeUnreadyFaultsImmediately(void)
     VIBES_EXPECT_WHY("load-cell-fault-on-first-run",
                      "the machine faults on the first control update and names the load cell as the reason",
                      "the driver has already spent its retry budget by the time it reports unready, so any delay here is time spent applying force against a load cell known to be gone");
-    VIBES_EXPECT("motion-disabled", "motion is no longer enabled");
+    VIBES_EXPECT("motion-disabled", "motion is off");
     control_init();
     enableMotion();
 

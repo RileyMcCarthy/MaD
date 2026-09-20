@@ -395,10 +395,10 @@ void test_getTestName_truncates_to_buffer_size(void)
 {
     VIBES_TEST("monitor.test-name-read-fits-caller",
                "src/APP/app_monitor.c#app_monitor_getTestName",
-               "a stored eight-character test name read into a three-character buffer");
+               "a stored eight-character test name asked for with room for only three characters");
     VIBES_EXPECT_WHY("first-three-characters",
                      "the name comes back as its first three characters",
-                     "the caller supplies the buffer; the copy has to fit that buffer");
+                     "the name is copied into whatever room the request offers, so it has to fit that room");
     app_monitor_setTestName("abcdefgh");
     char out[4]; /* only 3 chars + NUL fit */
     app_monitor_getTestName(out, sizeof(out));

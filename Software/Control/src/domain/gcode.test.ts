@@ -204,7 +204,7 @@ describe('waveform (G123) canned cycle', () => {
       covers: 'src/domain/gcode.ts#validateWaveform',
       given: 'a waveform with an unknown traverse profile, one whose holds fill the whole cycle, and one with an impossible skew',
       expect: {
-        'refused-at-authoring': 'each is refused when the program is built, not when it runs',
+        'refused-at-authoring': 'each is refused when the program is built',
       },
       why: {
         'refused-at-authoring':

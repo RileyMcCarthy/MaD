@@ -387,7 +387,7 @@ void test_receive_clampsToAvailableWhenMaxLargerThanCount(void)
                "src/IO/IO_fullDuplexSerial.c#IO_fullDuplexSerial_receive",
                "two serial bytes waiting and a receive asking for many more");
     VIBES_EXPECT("only-waiting-copied", "only the waiting bytes are copied out");
-    VIBES_EXPECT("rest-untouched", "the rest of the caller's buffer is left untouched");
+    VIBES_EXPECT("rest-untouched", "the rest of the space offered for them is left untouched");
     fds_init();
 
     const uint8_t stream[2] = { 0xA5, 0x3C };

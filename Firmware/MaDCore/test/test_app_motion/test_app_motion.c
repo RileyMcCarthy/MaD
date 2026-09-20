@@ -814,8 +814,8 @@ void test_waveform_is_handed_to_the_driver_in_the_drivers_units(void)
                "src/APP/app_motion.c#app_motion_private_moveManager_start",
                "a G123 record carrying amplitude in um, frequency in mHz and a shape bit");
     VIBES_EXPECT_WHY("converted-to-driver-units",
-                     "the driver is asked for the same waveform in counts, microhertz and its own shape enum",
-                     "this layer no longer generates anything, so a unit slip here is the only way the machine can run a waveform that is not the one asked for, and it would look entirely healthy while doing it");
+                     "the driver is asked for the same waveform in counts, microhertz and its own shape code",
+                     "this layer only hands the waveform on, so a unit slip here is the only way the machine can run a waveform other than the one asked for, and it would look entirely healthy while doing it");
 
     motion_driveToWaiting();
     d_steps = 4321;          /* the wave swings about wherever we are now */
@@ -872,8 +872,8 @@ void test_a_refused_waveform_completes_the_move_instead_of_hanging(void)
                "src/APP/app_motion.c#app_motion_private_waveform_run",
                "a waveform the driver refuses because the machine cannot deliver it");
     VIBES_EXPECT_WHY("move-ends",
-                     "the move completes rather than waiting for a run that never started",
-                     "completion is now the driver's arrival verdict, and a refused waveform never arrives -- so without this the move, the test and the machine all wait forever");
+                     "the move completes at once",
+                     "completion is the driver's arrival verdict and a refused waveform never arrives, so a move that waited for one would wait forever, with the test and the machine behind it");
 
     motion_driveToWaiting();
     d_waveformAccepted = false;
@@ -898,7 +898,7 @@ void test_a_waveform_runs_until_the_driver_reports_arrival(void)
                "a waveform the driver accepted and has not finished");
     VIBES_EXPECT_WHY("waits-for-the-driver",
                      "the move stays in progress until the driver reports arrival",
-                     "the driver alone knows how many cycles have elapsed and whether the closing move to the centre has landed; a duration guessed in this layer is the thing that used to end waveforms early or late");
+                     "the driver alone knows how many cycles have elapsed and whether the closing move to the centre has landed; a duration guessed in this layer ends the waveform early or late");
 
     motion_driveToWaiting();
     d_atTarget = false;
@@ -925,7 +925,7 @@ void test_the_recorded_setpoint_during_a_waveform_is_the_trajectory(void)
                "src/APP/app_motion.c#app_motion_private_processInputs",
                "a waveform in progress, where the driver's target and its live setpoint differ");
     VIBES_EXPECT_WHY("reports-the-profile-not-the-destination",
-                     "the published setpoint is the driver's live profile position, not the move's end target",
+                     "the published setpoint is the driver's live profile position",
                      "a waveform's target is the centre it will finish at, so reporting the target would record a flat line through the middle of an oscillation and make a tracking error impossible to see in the data");
 
     motion_driveToWaiting();

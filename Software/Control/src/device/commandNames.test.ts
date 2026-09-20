@@ -42,7 +42,7 @@ describe('commandName', () => {
     {
       id: 'session.shared-command-named-by-direction',
       covers: 'src/device/commandNames.ts#commandName',
-      given: 'a command number that is a configuration read in one direction and a test-run write in the other',
+      given: 'a command number shared by a configuration read and a test-run write, one in each direction',
       expect: {
         'read-name': 'reading that number logs the configuration-read name',
         'write-name': 'writing that number logs the test-run name',
