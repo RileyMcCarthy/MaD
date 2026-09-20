@@ -677,6 +677,21 @@ async function runAndDownload(page, { completeTimeout = RUN_WAIT_MS } = {}) {
 
 // Wait until the gantry has actually stopped on its commanded setpoint.
 //
+// DEV-only live sample ring (`globalThis.__madLive` from liveBuffer.ts). After
+// connect + motion-enable the first sample can lag a state-poll / store timeout
+// cycle; asserting `latest()` immediately races an empty ring (count===0 → null)
+// even though `__madLive` itself is already installed. Poll until a sample
+// arrives so M13 jog/home do not flake on that race.
+async function waitForLiveSample(page, { timeoutMs = DEVICE_WAIT_MS, pollMs = 100 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const sample = await page.evaluate(() => globalThis.__madLive?.latest() ?? null);
+    if (sample) return sample;
+    await page.waitForTimeout(pollMs);
+  }
+  return null;
+}
+
 // The suite's fixed `waitForTimeout` settles assumed the emulator simulates at
 // real time. It does not, and cannot: in free-running mode `apply_pace` sleeps
 // one wall microsecond per virtual microsecond, so the real-time factor is
@@ -1594,11 +1609,14 @@ const scenarios = [
         await page.getByText('Motion: enabled').waitFor({ timeout: DEVICE_WAIT_MS });
 
         const live = () => page.evaluate(() => globalThis.__madLive?.latest() ?? null);
-        assert(await live(), 'the live sample ring is exposed (dev build)');
+        // Wait for a non-null sample: `__madLive` is set at module load in DEV,
+        // but latest() is null until the first ring write (empty-ring race after
+        // motion-enable / store timeout — see waitForLiveSample).
+        const before = await waitForLiveSample(page);
+        assert(before, 'the live sample ring is exposed (dev build)');
 
         await page.getByLabel('Jog (mm)').fill('2');
         await page.getByLabel('Speed (mm/s)').fill('5');
-        const before = await live();
         // settleMotion, not bare awaitRest: awaitRest returns when the axis is
         // still — if the jog has not started yet, four still polls (~1 s) false-
         // settle on the pre-jog position. M13-home documents the same trap and
@@ -1650,7 +1668,7 @@ const scenarios = [
         await page.getByText('Motion: enabled').waitFor({ timeout: DEVICE_WAIT_MS });
 
         const live = () => page.evaluate(() => globalThis.__madLive?.latest() ?? null);
-        const before = await live();
+        const before = await waitForLiveSample(page);
         assert(before, 'the live sample ring is exposed (dev build)');
         await page.getByRole('button', { name: 'Home (G28)' }).click();
 
