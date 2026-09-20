@@ -115,9 +115,16 @@ carried in the TB flags.
 ### D2 — Cog RAM is memory, not TCG globals
 
 `ALTD`/`ALTS`/`ALTI`/`ALTR` rewrite the *next* instruction's operand addresses
-at runtime, so D and S cannot be resolved at translate time. Cog registers are
-therefore an array in `CPUArchState`, and every ALU op is load/load/op/store
-through a runtime index. This is the main reason we budget ~3x rather than ~6x.
+at runtime, so cog registers are an array in `CPUArchState` rather than TCG
+globals.
+
+> **Corrected by [Spike 1a](../../SIL/spikes/qemu-1a-instruction-cost/RESULTS.md)
+> (2026-09-20).** This section used to claim *every* ALU op pays a runtime
+> index. It does not: `ALTx` is a **prefix**, so the translator sees it and
+> knows which single following instruction is dynamic. Measured on the real
+> firmware, that is **0.0999 %** of instructions; the other **99.9 %** have
+> static D/S resolved at translate time. Measured cost: **0.988 ns static,
+> 2.258 ns dynamic, 0.989 ns weighted** — against a 5.29 ns budget.
 
 Cog RAM is also the instruction memory at `$000–$1FF`. **Spike 0b settled how
 to handle that** (see its findings under Phase 0):
@@ -355,9 +362,21 @@ than on the net) removes the round-trip entirely.
 | [0a-2](../../SIL/spikes/qemu-0a2-entry-cost/RESULTS.md) — slice entry cost | PASSED — 5.29 ns (~18.5 host cycles) per JIT'd instruction |
 | [0d](../../SIL/spikes/qemu-0d-pin-transport/RESULTS.md) — pin transport / parity | PASSED — ~10x `p2core` worst case; 1.37x worst conceivable |
 
-**Parity with the existing ISS is comfortably exceeded**, and 1.0x real time is
-reachable. Phase 1 may start. The first `translate.c` is what converts the
-5.29 ns budget from a projection into a measurement.
+Plus, from Phase 1's first job:
+
+| spike | verdict |
+|---|---|
+| [1a](../../SIL/spikes/qemu-1a-instruction-cost/RESULTS.md) — real P2 instruction cost | **PASSED** — 0.99 ns (~3.5 host cycles), 5.3x inside budget |
+
+**Parity with the existing ISS is exceeded ~10x, and the end-to-end projection
+is now 1.46x (stock) to 1.74x (ablated) real time — every term measured except
+the cog-exec interpreter.**
+
+**The plan's assumptions have inverted.** The cog-exec interpreter is now
+**61 %** of the per-instruction cost; the JIT is 17 % and slice entry 22 %. The
+highest-value remaining work is not the translator — it is measuring and
+tuning a real cog-exec interpreter (47 ns/instruction is currently a stand-in
+taken from `p2core`'s Rust rate; at 20 ns the factor rises to 2.67x).
 
 ### Spike 0a — findings (2026-09-19)
 
