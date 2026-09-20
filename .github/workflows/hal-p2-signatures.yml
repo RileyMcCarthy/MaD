@@ -1,0 +1,28 @@
+name: HAL/P2 signature diff
+
+# Catch HAL/Include ↔ HAL/P2 declaration↔definition mismatches (return type + arity)
+# without flexcc / propeller2 hardware. Complements firmware-layering in ci.yml.
+# See issue #136 / PR that Fixes #136.
+
+on:
+  push:
+    paths:
+      - 'Firmware/MaDCore/src/HAL/**'
+      - 'Firmware/MaDCore/scripts/check_hal_p2_signatures.py'
+      - '.github/workflows/hal-p2-signatures.yml'
+  pull_request:
+    paths:
+      - 'Firmware/MaDCore/src/HAL/**'
+      - 'Firmware/MaDCore/scripts/check_hal_p2_signatures.py'
+      - '.github/workflows/hal-p2-signatures.yml'
+
+jobs:
+  hal-p2-signatures:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: HAL/Include ↔ HAL/P2 signature diff (return type + arity)
+        run: python3 Firmware/MaDCore/scripts/check_hal_p2_signatures.py Firmware/MaDCore/src
