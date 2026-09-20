@@ -58,7 +58,7 @@ built from P2 parts; see the bootloader test below.
 | `p2iss::sdimage::mad_card` | stays in `SIL/MaDSim` | generic `sdimage::build` and `Dir` go upstream |
 | 10 firmware acceptance tests, `decoder_golden.rs`, `tools/gen_golden.py` | stay in MaD under `SIL/MaDSim/tests/` | need the MaD P2 image and its flexcc listing |
 | `p2core/tests/flash_program.rs` | stays in MaD | reads the PWA's `image.ts`; embsim gets the bootloader test below instead |
-| P2-EC32MB module: `p2_ec32mb.net`, its registry, `ec32mb_module.rs` | embsim `mcus/p2/ec32mb/` as **`embsim-p2-ec32mb`** | today a test fixture in `embsim/board/tests/`; see Board ownership |
+| P2-EC32MB module: `p2_ec32mb.net`, its registry, `ec32mb_module.rs` | embsim `mcus/p2/ec32mb/` as **`embsim-p2-ec32mb`**, imported by MaDSim | today a test fixture in `embsim/board/tests/`; see Board ownership |
 | EdgeBoard + DS2: `mad_edge.net`, `ds2_addon.net`, their registry, harnesses, seven test binaries | MaD, new crate `SIL/boards/` | today inside embsim's test suite; see Board ownership |
 | `SIL/MaDSim/src/{main,iss_description}.rs`, `SIL/makefile`, `Software/Control/e2e/run-all.mjs` FW-ISS, four `docs/dev/sil-*.md`, `CLAUDE.md` | edited in the MaD bump PR | imports rename to the new crate names |
 
@@ -121,6 +121,18 @@ both system descriptions, so the DS2 registry exists twice.
 - The design doc's Phase 3 gate, regenerating the netlists from `Hardware/` in
   CI and diff-checking them, becomes a MaD CI step here. The vendor module
   netlist is exempt, as the design doc already says.
+
+**MaD consumes the module as a dependency.** `SIL/MaDSim` takes
+`embsim-p2-ec32mb` as a path dependency through the submodule, the way it
+already takes every other embsim crate, and both system descriptions mount the
+module instead of a bare P2: the native one with `McuComponent` in the slot,
+the ISS one with `P2Iss`. The module plugs into the EdgeBoard through the
+80-finger socket harness from `SIL/boards`, and the EdgeBoard carries the DS2
+add-on and the plant. The bench `P2EVAL` component in `system_description.rs`
+and the bare-ISS pin wiring in `main.rs` retire with that. One module, two
+uses: embsim tests the ISS on it, MaD simulates the machine on it. This is
+option 2 of the design doc's "P2 Edge Module gap", module-as-board, with the
+module owned upstream.
 
 **Generic IC models stay generic.** The RS-422 driver and receiver
 (`AM26LS31`, `AM26LV32`) and the `ISO6731` serial isolator are TI parts with
