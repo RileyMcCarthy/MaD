@@ -738,9 +738,9 @@ describe('worker → main batching', () => {
     {
       id: 'diag.log-buffers-nothing-without-sink',
       covers: 'src/diagnostics/log.ts#setLogSink',
-      given: 'an event is logged while nothing is forwarding worker logs, and a forwarder is attached afterwards',
+      given: 'an event is logged while no forwarder is attached, and a forwarder is attached afterwards',
       expect: {
-        'nothing-delivered': 'the forwarder attached afterwards is sent nothing',
+        'nothing-delivered': 'the forwarder receives only what is logged from the moment it is attached',
       },
     },
     () => {
