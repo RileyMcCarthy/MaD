@@ -739,6 +739,16 @@ jobs:
       - name: Build the P2 image the ISS interprets
         working-directory: Firmware/MaDCore
         run: pio run -e propeller2_debug
+      # On the runner -- and not on a developer machine -- the P2 build above
+      # removes .pio/build/native_emulator/libfirmware.a. The pinned copy keeps
+      # cargo linking, but anything that resolves the ORIGINAL path (the
+      # emulator's --firmware default, a test that spawns it) would still find
+      # nothing, so the copy goes back where it came from.
+      - name: Restore the native lib to its build-tree path
+        working-directory: Firmware/MaDCore
+        run: |
+          mkdir -p .pio/build/native_emulator
+          cp "$EMBSIM_FIRMWARE_LIB_DIR/libfirmware.a" .pio/build/native_emulator/libfirmware.a
       # Decodes every hub instruction in the image just built (29k of them)
       # and writes flexcc's own mnemonic for each, so decoder_golden.rs checks
       # p2core against the compiler rather than against itself. The golden is
@@ -755,6 +765,7 @@ jobs:
         run: |
           fail=0
           for f in "$EMBSIM_FIRMWARE_LIB_DIR/libfirmware.a" \
+                   Firmware/MaDCore/.pio/build/native_emulator/libfirmware.a \
                    Firmware/MaDCore/.pio/build/propeller2_debug/program \
                    SIL/p2core/tests/golden/hub_mnemonics.txt; do
             if [ -s "$f" ]; then echo "ok   $f ($(wc -c < "$f") bytes)"; else echo "::error::missing or empty: $f"; fail=1; fi
