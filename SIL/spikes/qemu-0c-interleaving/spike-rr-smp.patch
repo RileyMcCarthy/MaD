@@ -1,0 +1,83 @@
+diff --git a/accel/tcg/tcg-accel-ops-rr.c b/accel/tcg/tcg-accel-ops-rr.c
+index 6eec5c9..4118c0d 100644
+--- a/accel/tcg/tcg-accel-ops-rr.c
++++ b/accel/tcg/tcg-accel-ops-rr.c
+@@ -24,6 +24,7 @@
+  */
+ 
+ #include "qemu/osdep.h"
++#include <time.h>
+ #include "qemu/lockable.h"
+ #include "system/tcg.h"
+ #include "system/replay.h"
+@@ -214,6 +215,70 @@ static void *rr_cpu_thread_fn(void *arg)
+     /* process any pending work */
+     cpu->exit_request = 1;
+ 
++    /*
++     * SPIKE 0a: what does one synchronous icount slice cost, re-entered
++     * from the thread that owns the CPU?  This is exactly the triple the
++     * normal loop below runs per turn; here it runs N times back to back
++     * with a fixed budget and no timers, and reports ns per slice.
++     */
++    if (getenv("QEMU_SPIKE_SLICE")) {
++        /*
++         * SPIKE 0a/0c: cost of synchronous icount slices, driven round-robin
++         * across EVERY vCPU exactly as the loop below does it. One "round" =
++         * one slice on each running CPU, which is what bounds how finely the
++         * P2's 8 cogs can interleave.
++         */
++        int64_t budget = atoll(getenv("QEMU_SPIKE_SLICE"));
++        int64_t n = getenv("QEMU_SPIKE_N") ? atoll(getenv("QEMU_SPIKE_N")) : 200000;
++        int64_t i, halted = 0, ncpu = 0;
++        struct timespec t0, t1;
++        int64_t ic0, ic1;
++        CPUState *c;
++
++        CPU_FOREACH(c) { ncpu++; }
++        qemu_clock_enable(QEMU_CLOCK_VIRTUAL, true);
++
++        /* warm up: translate the loop on every CPU, clear exit_request */
++        CPU_FOREACH(c) {
++            current_cpu = c;
++            qatomic_set_mb(&rr_current_cpu, c);
++            bql_unlock();
++            icount_prepare_for_run(c, budget);
++            tcg_cpu_exec(c);
++            icount_process_data(c);
++            bql_lock();
++        }
++
++        ic0 = icount_get_raw();
++        clock_gettime(CLOCK_MONOTONIC, &t0);
++        for (i = 0; i < n; i++) {
++            CPU_FOREACH(c) {
++                int r;
++                current_cpu = c;
++                qatomic_set_mb(&rr_current_cpu, c);
++                bql_unlock();
++                icount_prepare_for_run(c, budget);
++                r = tcg_cpu_exec(c);
++                icount_process_data(c);
++                bql_lock();
++                if (r == EXCP_HALTED) { halted++; }
++            }
++        }
++        clock_gettime(CLOCK_MONOTONIC, &t1);
++        ic1 = icount_get_raw();
++        {
++            double ns = ((t1.tv_sec - t0.tv_sec) * 1e9 + (t1.tv_nsec - t0.tv_nsec));
++            int64_t insns = ic1 - ic0;
++            fprintf(stderr,
++                "SPIKE cpus=%lld budget=%lld rounds=%lld ns/round=%.1f insns=%lld "
++                "insns/round=%.2f ns/insn=%.4f halted=%lld\n",
++                (long long)ncpu, (long long)budget, (long long)n, ns / n,
++                (long long)insns, insns / (double)n,
++                insns ? ns / insns : 0.0, (long long)halted);
++        }
++        exit(0);
++    }
++
+     while (1) {
+         /* Only used for icount_enabled() */
+         int64_t cpu_budget = 0;

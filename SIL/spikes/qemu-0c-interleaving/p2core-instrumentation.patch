@@ -1,0 +1,208 @@
+--- /tmp/claude-501/-Users-rileymccarthy-Documents-MaD/754910d4-470a-47f3-9e5c-e5a0317aadc2/scratchpad/p2bench/src/lib.rs.orig	2026-09-19 12:28:37
++++ /tmp/claude-501/-Users-rileymccarthy-Documents-MaD/754910d4-470a-47f3-9e5c-e5a0317aadc2/scratchpad/p2char/src/lib.rs	2026-09-20 10:09:07
+@@ -312,6 +312,47 @@
+     lock_alloc: [bool; NUM_LOCKS],
+     pub pins: P,
+     /// Retired instructions across all cogs, for throughput measurement.
++    /// SPIKE 0b instrumentation: per-cog execution count per cog-RAM address.
++    pub exec_cog: Box<[[u64; COG_LONGS]; NUM_COGS]>,
++    /// per-cog execution count per LUT address.
++    pub exec_lut: Box<[[u64; LUT_LONGS]; NUM_COGS]>,
++    /// per-cog write count per cog-RAM address (every D write).
++    pub wr_cog: Box<[[u64; COG_LONGS]; NUM_COGS]>,
++    /// per-cog write count per LUT address (WRLUT / block writes).
++    pub wr_lut: Box<[[u64; LUT_LONGS]; NUM_COGS]>,
++    /// instructions executed with the PC in hub (hubexec), per cog.
++    pub exec_hub: [u64; NUM_COGS],
++    /// cog-RAM writes that landed on an address ALREADY executed by that cog.
++    pub wr_on_exec_cog: u64,
++    /// LUT writes that landed on an address ALREADY executed by that cog.
++    pub wr_on_exec_lut: u64,
++    /// SPIKE 0b: per-long TB state. 0 = never translated, 1 = translated,
++    /// 2 = invalidated by a write and awaiting re-translation.
++    pub tb_cog: Box<[[u8; COG_LONGS]; NUM_COGS]>,
++    pub tb_lut: Box<[[u8; LUT_LONGS]; NUM_COGS]>,
++    pub tb_hub: Vec<u8>,
++    /// First-time translations, invalidations, and re-translations, by region.
++    /// [cog, lut, hub]
++    /// Region of the previous instruction per cog (0 cog, 1 lut, 2 hub, 255 none).
++    /// SPIKE 0c: instruction index (global retire count) of the last pin DRIVE,
++    /// and the histogram of gaps between consecutive drives (log2 buckets).
++    pub last_drive_at: u64,
++    pub drive_gap_hist: [u64; 16],
++    pub drives: u64,
++    /// Same, but gaps between a drive and the next pin READ by ANY cog --
++    /// the interval in which the outside world must have settled.
++    pub last_any_pin_at: u64,
++    pub pin_reads: u64,
++    /// Per-cog drive counts, and drives while more than one cog is running.
++    pub drives_by_cog: [u64; NUM_COGS],
++    pub last_region: [u8; NUM_COGS],
++    /// Transitions between regions, per cog: how many times the PC crossed.
++    pub region_switch: [u64; NUM_COGS],
++    /// Instructions executed in each region, summed, to derive mean run length.
++    pub region_runs: [u64; 3],
++    pub tb_xlate: [u64; 3],
++    pub tb_inval: [u64; 3],
++    pub tb_rexlate: [u64; 3],
+     pub retired: u64,
+     /// INT1 entries, for serial-boot bring-up.
+     pub int1_entries: u64,
+@@ -413,6 +454,28 @@
+             locks: [None; NUM_LOCKS],
+             lock_alloc: [false; NUM_LOCKS],
+             pins,
++            exec_cog: Box::new([[0; COG_LONGS]; NUM_COGS]),
++            exec_lut: Box::new([[0; LUT_LONGS]; NUM_COGS]),
++            wr_cog: Box::new([[0; COG_LONGS]; NUM_COGS]),
++            wr_lut: Box::new([[0; LUT_LONGS]; NUM_COGS]),
++            exec_hub: [0; NUM_COGS],
++            wr_on_exec_cog: 0,
++            wr_on_exec_lut: 0,
++            tb_cog: Box::new([[0; COG_LONGS]; NUM_COGS]),
++            tb_lut: Box::new([[0; LUT_LONGS]; NUM_COGS]),
++            tb_hub: vec![0u8; HUB_BYTES / 4],
++            last_drive_at: 0,
++            drive_gap_hist: [0; 16],
++            drives: 0,
++            last_any_pin_at: 0,
++            pin_reads: 0,
++            drives_by_cog: [0; NUM_COGS],
++            last_region: [255; NUM_COGS],
++            region_switch: [0; NUM_COGS],
++            region_runs: [0; 3],
++            tb_xlate: [0; 3],
++            tb_inval: [0; 3],
++            tb_rexlate: [0; 3],
+             retired: 0,
+             int1_entries: 0,
+             strict_hub: false,
+@@ -463,7 +526,11 @@
+     }
+     #[inline]
+     fn set_hub_byte(&mut self, a: usize, b: u8) {
+-        self.hub[a & (HUB_BYTES - 1)] = b;
++        let masked = a & (HUB_BYTES - 1);
++        // SPIKE 0b: a hub write kills the TB translated from that long.
++        let i = masked >> 2;
++        if self.tb_hub[i] == 1 { self.tb_inval[2] += 1; self.tb_hub[i] = 2; }
++        self.hub[masked] = b;
+     }
+     fn rd_byte(&self, addr: u32) -> u32 {
+         self.hub[(addr as usize) & (HUB_BYTES - 1)] as u32
+@@ -529,6 +596,13 @@
+             let pc = self.cogs[cog].pc;
+             self.reg_hits.push((pc, v));
+         }
++        // SPIKE 0b: a write into cog RAM. If that address has also been
++        // executed, a QEMU TB translated from it would have to be invalidated.
++        self.wr_cog[cog][idx] += 1;
++        if self.exec_cog[cog][idx] != 0 {
++            self.wr_on_exec_cog += 1;
++        }
++        if self.tb_cog[cog][idx] == 1 { self.tb_inval[0] += 1; self.tb_cog[cog][idx] = 2; }
+         self.cogs[cog].regs[idx] = v;
+         self.cogs[cog].poll.mark_write(idx as u16);
+         if (REG_DIRA..=REG_OUTA + 1).contains(&(idx as u16)) {
+@@ -1067,11 +1141,49 @@
+         let mode = (cfg >> 6) & 7;
+         let ready = mode == 0b110 && self.pins.testp(pin);
+         ready
++    }
++
++    /// SPIKE 0c: expose one-instruction stepping so a harness can impose its
++    /// own cog quantum without touching the scheduler.
++    pub fn step_one_pub(&mut self, cog: usize) -> Result<(), Trap> {
++        self.step_one(cog)
+     }
+ 
+     fn step_one(&mut self, cog: usize) -> Result<(), Trap> {
+         self.cogs[cog].instructions += 1;
+         let pc = self.cogs[cog].pc;
++        // SPIKE 0b: which storage is this instruction fetched from?
++        {
++            let r: u8 = if pc < LUT_BASE { 0 } else if pc < HUB_BASE { 1 } else { 2 };
++            if self.last_region[cog] != r {
++                if self.last_region[cog] != 255 {
++                    self.region_switch[cog] += 1;
++                    self.region_runs[r as usize] += 1;
++                } else {
++                    self.region_runs[r as usize] += 1;
++                }
++                self.last_region[cog] = r;
++            }
++        }
++        if pc < LUT_BASE {
++            let i = pc as usize & (COG_LONGS - 1);
++            self.exec_cog[cog][i] += 1;
++            let st = &mut self.tb_cog[cog][i];
++            if *st == 0 { self.tb_xlate[0] += 1; } else if *st == 2 { self.tb_rexlate[0] += 1; }
++            *st = 1;
++        } else if pc < HUB_BASE {
++            let i = (pc - LUT_BASE) as usize & (LUT_LONGS - 1);
++            self.exec_lut[cog][i] += 1;
++            let st = &mut self.tb_lut[cog][i];
++            if *st == 0 { self.tb_xlate[1] += 1; } else if *st == 2 { self.tb_rexlate[1] += 1; }
++            *st = 1;
++        } else {
++            self.exec_hub[cog] += 1;
++            let i = (pc as usize & (HUB_BYTES - 1)) >> 2;
++            let st = &mut self.tb_hub[i];
++            if *st == 0 { self.tb_xlate[2] += 1; } else if *st == 2 { self.tb_rexlate[2] += 1; }
++            *st = 1;
++        }
+         // INT1 on SE1: the boot ROM's autobaud/receiver. Level-triggered on
+         // the configured pin's IN (a waiting serial byte), blocked while
+         // already in the ISR.
+@@ -1235,6 +1347,31 @@
+         if ins.c || ins.z || Self::always_sets_flags(ins.op) {
+             self.cogs[cog].poll.flags_written = true;
+         }
++        {
++            use Op::*;
++            let drives = matches!(ins.op,
++                Wrpin | Wxpin | Wypin | Akpin
++                | Drvh | Drvl | Drvnot | Drvrnd | Drvz
++                | Outh | Outl | Outnot | Outrnd | Outz
++                | Flth | Fltl | Fltnot | Fltrnd | Fltz
++                | Dirh | Dirl | Dirnot | Dirrnd | Dirz)
++                || (!Self::d_is_literal(&ins)
++                    && matches!(ins.d & 0x1FF, REG_DIRA | 0x1FB | REG_OUTA | 0x1FD));
++            let reads = Self::reads_pin(ins.op)
++                || (!ins.i && matches!(ins.s & 0x1FF, REG_INA | REG_INB));
++            if drives {
++                let gap = self.retired.saturating_sub(self.last_drive_at);
++                let b = (64 - gap.max(1).leading_zeros()).min(15) as usize;
++                self.drive_gap_hist[b] += 1;
++                self.last_drive_at = self.retired;
++                self.drives += 1;
++                self.drives_by_cog[cog] += 1;
++            }
++            if reads {
++                self.pin_reads += 1;
++                self.last_any_pin_at = self.retired;
++            }
++        }
+         self.note_loop_edge(cog, pc);
+ 
+         self.clear_prefixes(cog, &ins);
+@@ -2243,6 +2380,9 @@
+                         for k in 0..=n {
+                             let v = self.rd_long(s.wrapping_add(k.wrapping_mul(4)));
+                             let at = (ins.d as usize + k as usize) & (LUT_LONGS - 1);
++                            self.wr_lut[cog][at] += 1;
++                            if self.exec_lut[cog][at] != 0 { self.wr_on_exec_lut += 1; }
++                            if self.tb_lut[cog][at] == 1 { self.tb_inval[1] += 1; self.tb_lut[cog][at] = 2; }
+                             self.cogs[cog].lut[at] = v;
+                         }
+                         return Ok(false);
+@@ -3339,6 +3479,9 @@
+                 // L, and the L=1 cases stored the literal $1E0 -- which the
+                 // RDLUT cases then read back.
+                 let at = (s as usize) & (LUT_LONGS - 1);
++                self.wr_lut[cog][at] += 1;
++                if self.exec_lut[cog][at] != 0 { self.wr_on_exec_lut += 1; }
++                if self.tb_lut[cog][at] == 1 { self.tb_inval[1] += 1; self.tb_lut[cog][at] = 2; }
+                 self.cogs[cog].lut[at] = d;
+             }
+             _ => {
