@@ -362,21 +362,29 @@ than on the net) removes the round-trip entirely.
 | [0a-2](../../SIL/spikes/qemu-0a2-entry-cost/RESULTS.md) — slice entry cost | PASSED — 5.29 ns (~18.5 host cycles) per JIT'd instruction |
 | [0d](../../SIL/spikes/qemu-0d-pin-transport/RESULTS.md) — pin transport / parity | PASSED — ~10x `p2core` worst case; 1.37x worst conceivable |
 
-Plus, from Phase 1's first job:
+Plus, from Phase 1's first jobs:
 
 | spike | verdict |
 |---|---|
 | [1a](../../SIL/spikes/qemu-1a-instruction-cost/RESULTS.md) — real P2 instruction cost | **PASSED** — 0.99 ns (~3.5 host cycles), 5.3x inside budget |
+| [1b](../../SIL/spikes/qemu-1b-cog-interpreter/RESULTS.md) — cog-exec interpreter | **PASSED** — 0.82 ns/instruction; end-to-end **2.75–4.30x** real time |
 
 **Parity with the existing ISS is exceeded ~10x, and the end-to-end projection
 is now 1.46x (stock) to 1.74x (ablated) real time — every term measured except
 the cog-exec interpreter.**
 
-**The plan's assumptions have inverted.** The cog-exec interpreter is now
-**61 %** of the per-instruction cost; the JIT is 17 % and slice entry 22 %. The
-highest-value remaining work is not the translator — it is measuring and
-tuning a real cog-exec interpreter (47 ns/instruction is currently a stand-in
-taken from `p2core`'s Rust rate; at 20 ns the factor rises to 2.67x).
+**The plan's assumptions have inverted twice.** It assumed the JIT would be the
+hard part; 1a measured it at 0.99 ns and made the interpreter look dominant at
+61 %; 1b then measured the interpreter at 0.82 ns/instruction and it collapsed
+to **2.6 %**. The largest single term is now **slice entry at 55 %** — and
+0a-2 already showed most of that is removable in a library build.
+
+End-to-end, bounded across the whole plausible interpreter range (0.82 ns
+measured probe → 18.5 ns for `p2core`'s full semantics): **2.75x to 4.30x real
+time**. The conclusion no longer depends on which end you believe.
+
+The optimisation target, if one is ever needed, is **how cheaply the Rust host
+re-enters TCG**. Everything else is already small.
 
 ### Spike 0a — findings (2026-09-19)
 
