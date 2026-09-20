@@ -152,6 +152,31 @@ static uint32_t d_lastWaveDwellHighUs;
 static uint32_t d_lastWaveDwellLowUs;
 static bool d_waveformAccepted = true;
 
+/* The driver owns which traverse profiles exist; this suite stubs the driver,
+ * so it mirrors that one rule. The rule itself is pinned against the real
+ * implementation in test_dev_servo (servo.wave-shape-from-wire) -- here it
+ * exists only so app_motion's refusal path has something to refuse against. */
+/* --- app_notification (app_motion reports an unusable machine profile) --- */
+#include "app_notification.h"
+static int d_notify_calls;
+static app_notification_type_E d_notify_lastType;
+void app_notification_send(app_notification_type_E type, const char *format, ...)
+{
+    d_notify_calls++;
+    d_notify_lastType = type;
+    (void)format;
+}
+
+bool dev_servo_waveShapeFromWire(uint8_t wire, dev_servo_wave_E *shape)
+{
+    if ((shape == NULL) || (wire > (uint8_t)DEV_SERVO_WAVE_TRIANGLE))
+    {
+        return false;
+    }
+    *shape = (wire == (uint8_t)DEV_SERVO_WAVE_TRIANGLE) ? DEV_SERVO_WAVE_TRIANGLE : DEV_SERVO_WAVE_SINE;
+    return true;
+}
+
 bool dev_servo_startWaveform(dev_servo_channel_E ch, const dev_servo_waveform_S *waveform)
 {
     TEST_ASSERT_EQUAL_INT(DEV_SERVO_CHANNEL_MAIN, ch);
@@ -193,8 +218,13 @@ bool IO_positionFeedback_setValue(IO_positionFeedback_channel_E ch, int32_t posi
 /* --- dev_nvram (feeds the MachineProfile consumed by app_motion_init) --- */
 static MachineProfile d_machineProfile;
 
+static bool d_nvramReadSucceeds = true;
 bool dev_nvram_getChannelData(dev_nvram_channel_t channel, void *data, size_t size)
 {
+    if (!d_nvramReadSucceeds)
+    {
+        return false;
+    }
     TEST_ASSERT_EQUAL_INT(DEV_NVRAM_CHANNEL_MACHINE_PROFILE, channel);
     TEST_ASSERT_EQUAL_UINT(sizeof(MachineProfile), size);
     memcpy(data, &d_machineProfile, sizeof(MachineProfile));
@@ -237,6 +267,9 @@ static void doubles_reset(void)
 
     /* A representative, easy-to-reason-about machine profile.
      * 100 steps/mm keeps step<->um math exact for round numbers. */
+    d_nvramReadSucceeds = true;
+    d_notify_calls = 0;
+    d_notify_lastType = APP_NOTIFICATION_TYPE_MESSAGE;
     memset(&d_machineProfile, 0, sizeof(d_machineProfile));
     d_machineProfile.servoStepsPerMM = 100;
     d_machineProfile.maxPosition = 200;     // mm
@@ -729,6 +762,151 @@ void test_zero_stepsPerMM_yields_zero_setpoint_and_position(void)
     TEST_ASSERT_EQUAL_INT32(0, app_motion_getPosition());
 }
 
+/* Queue one G1 and run it to the point where the drive is commanded.
+ *
+ * The record's feedrate is MICROMETRES per second, not millimetres: the module
+ * computes `f * stepsPerMM / 1000`, which only yields steps/s if f is um/s.
+ * Spelled out here because the field is named `f` and every G-code reader
+ * expects mm/min or mm/s. */
+static void runOneLinearMove(int32_t xUm, int32_t fUmS)
+{
+    app_motion_move_t mv = make_move((uint8_t)G1_LINEAR_MOVE, xUm, fUmS, 0);
+    TEST_ASSERT_TRUE(app_motion_addMove(&mv));
+    app_motion_run();
+}
+
+void test_a_restricted_machine_moves_at_the_capped_speed(void)
+{
+    VIBES_TEST("motion.restricted-speed-is-capped",
+               "src/APP/app_motion.c#app_motion_private_moveManager_start",
+               "a machine profile with a restricted velocity of 2 millimetres per second, the machine reporting restricted, and a move asking for 40");
+    VIBES_EXPECT_WHY("feedrate-capped",
+                     "the drive is commanded at 2 millimetres per second",
+                     "restricted is entered on an endstop, an open door, or a sample over its tension limit, and the cap the state machine computes for those was read by nothing -- so a carriage sitting on an endstop could be commanded at the machine's full speed");
+
+    d_machineProfile.restrictedVelocity = 2; /* mm/s */
+    motion_init();
+    motion_driveToWaiting();
+
+    d_speedLimited = true;
+    runOneLinearMove(1000, 40000); /* 40 mm/s */
+    TEST_ASSERT_EQUAL_INT32(2 * 100, d_lastMoveStepsPerSecond); /* 2 mm/s * 100 steps/mm */
+}
+
+void test_a_restricted_machine_is_not_sped_up_to_the_cap(void)
+{
+    VIBES_TEST("motion.restricted-cap-is-a-ceiling",
+               "src/APP/app_motion.c#app_motion_private_moveManager_start",
+               "a restricted machine with a cap of 20 millimetres per second, and a move asking for 1");
+    VIBES_EXPECT_WHY("slower-move-untouched",
+                     "the drive is commanded at 1 millimetre per second",
+                     "the cap is a ceiling and not a setting, so a deliberately slow retreat from a limit must stay slow");
+
+    d_machineProfile.restrictedVelocity = 20;
+    motion_init();
+    motion_driveToWaiting();
+
+    d_speedLimited = true;
+    runOneLinearMove(1000, 1000); /* 1 mm/s */
+    TEST_ASSERT_EQUAL_INT32(1 * 100, d_lastMoveStepsPerSecond);
+}
+
+void test_an_unrestricted_machine_moves_at_the_speed_it_was_asked_for(void)
+{
+    VIBES_TEST("motion.unrestricted-speed-is-untouched",
+               "src/APP/app_motion.c#app_motion_private_moveManager_start",
+               "a machine with a restricted velocity configured but not currently restricted, and a move asking for 40 millimetres per second");
+    VIBES_EXPECT_WHY("full-speed",
+                     "the drive is commanded at 40 millimetres per second",
+                     "a cap that applied outside the restricted state would quietly slow every ordinary test, and the resulting strain rate would not be the one the operator set");
+
+    d_machineProfile.restrictedVelocity = 2;
+    motion_init();
+    motion_driveToWaiting();
+
+    d_speedLimited = false;
+    runOneLinearMove(1000, 40000); /* 40 mm/s */
+    TEST_ASSERT_EQUAL_INT32(40 * 100, d_lastMoveStepsPerSecond);
+}
+
+void test_a_profile_without_a_cap_does_not_stop_the_machine(void)
+{
+    VIBES_TEST("motion.zero-cap-disables-the-clamp",
+               "src/APP/app_motion.c#app_motion_private_moveManager_start",
+               "a machine profile whose restricted velocity is zero, the machine reporting restricted, and a move asking for 40 millimetres per second");
+    VIBES_EXPECT_WHY("uncapped",
+                     "the drive is commanded at 40 millimetres per second",
+                     "a profile written before this field existed reads back as zero, and treating that as a cap would pin an existing machine to a standstill the first time it touched an endstop");
+
+    d_machineProfile.restrictedVelocity = 0;
+    motion_init();
+    motion_driveToWaiting();
+
+    d_speedLimited = true;
+    runOneLinearMove(1000, 40000); /* 40 mm/s */
+    TEST_ASSERT_EQUAL_INT32(40 * 100, d_lastMoveStepsPerSecond);
+}
+
+void test_an_unusable_machine_profile_refuses_every_move(void)
+{
+    VIBES_TEST("motion.unusable-profile-refuses-moves",
+               "src/APP/app_motion.c#app_motion_addMove",
+               "a machine profile whose steps per millimetre is zero, then a linear move");
+    VIBES_EXPECT_WHY("move-refused",
+                     "the move is refused and never enters the queue",
+                     "every distance and feedrate this module emits is scaled by steps per millimetre, so a zero targets encoder count 0 with a feedrate of 0 -- and a feedrate of 0 is the invalid value the driver answers with its maximum, which makes the pair a full-speed run to the bottom of the machine");
+    VIBES_EXPECT_WHY("operator-told",
+                     "an error notification is raised when the profile is loaded",
+                     "the refusal is otherwise indistinguishable from a machine that simply will not move, and the operator cannot fix a profile nobody told them was missing");
+
+    d_machineProfile.servoStepsPerMM = 0;
+    d_notify_calls = 0;
+    motion_init();
+    TEST_ASSERT_EQUAL_INT(1, d_notify_calls);
+    TEST_ASSERT_EQUAL_INT(APP_NOTIFICATION_TYPE_ERROR, d_notify_lastType);
+
+    motion_driveToWaiting();
+    app_motion_move_t mv = make_move((uint8_t)G1_LINEAR_MOVE, 1000, 5, 0);
+    TEST_ASSERT_FALSE(app_motion_addMove(&mv));
+    /* Refused at the door: the queue is still empty, so running finds nothing
+     * to start and the module stays idle rather than converting the move. */
+    app_motion_run();
+    TEST_ASSERT_TRUE(app_motion_isIdle());
+
+    /* A waveform is refused by the same gate. */
+    app_motion_move_t wf = make_waveform(50000, 1000000U, 2U, 0U);
+    TEST_ASSERT_FALSE(app_motion_addMove(&wf));
+}
+
+void test_a_profile_that_could_not_be_read_refuses_every_move(void)
+{
+    VIBES_TEST("motion.unreadable-profile-refuses-moves",
+               "src/APP/app_motion.c#app_motion_init",
+               "a machine profile whose NVRAM read fails");
+    VIBES_EXPECT_WHY("move-refused",
+                     "the move is refused",
+                     "the read used to be issued and its result discarded, so a failed read left whatever the uninitialised profile struct happened to hold and the machine ran against it");
+
+    d_nvramReadSucceeds = false;
+    motion_init();
+    app_motion_move_t mv = make_move((uint8_t)G1_LINEAR_MOVE, 1000, 5, 0);
+    TEST_ASSERT_FALSE(app_motion_addMove(&mv));
+}
+
+void test_a_usable_profile_still_accepts_moves(void)
+{
+    VIBES_TEST("motion.usable-profile-accepts-moves",
+               "src/APP/app_motion.c#app_motion_addMove",
+               "the ordinary machine profile from setUp, and a linear move");
+    VIBES_EXPECT_WHY("move-accepted",
+                     "the move is accepted and no profile notification is raised",
+                     "the gate must refuse only an unusable profile; a gate that refused everything would pass the two tests above while stopping the machine entirely");
+
+    TEST_ASSERT_EQUAL_INT(0, d_notify_calls);
+    app_motion_move_t mv = make_move((uint8_t)G1_LINEAR_MOVE, 1000, 5, 0);
+    TEST_ASSERT_TRUE(app_motion_addMove(&mv));
+}
+
 /**********************************************************************
  * Tests: queue API (addMove / abortAndClear / isIdle)
  **********************************************************************/
@@ -968,6 +1146,45 @@ void test_a_linear_move_records_its_trajectory_not_its_destination(void)
 }
 
 /* A degenerate waveform (zero frequency) completes without commanding motion. */
+void test_a_waveform_with_an_unknown_shape_never_reaches_the_driver(void)
+{
+    VIBES_TEST("motion.waveform-unknown-shape-refused",
+               "src/APP/app_motion.c#app_motion_private_waveform_run",
+               "a feasible waveform whose shape byte is one of the reserved values 2..255");
+    VIBES_EXPECT_WHY("driver-never-asked",
+                     "the driver is never asked to start the waveform",
+                     "the adapter must not pick a profile on the host's behalf: laundering a reserved byte into a sine is how a machine runs a loading nobody requested and files it under the shape that was asked for");
+    VIBES_EXPECT_WHY("move-completes",
+                     "the move completes rather than hanging the queue",
+                     "a refused waveform must not strand the test in MOVING forever -- the operator needs the program to end so the refusal is visible");
+
+    motion_driveToWaiting();
+    d_waveformCount = 0U;
+    d_setVelocityCount = 0U;
+
+    /* Amplitude, frequency and cycles are all perfectly runnable; the shape
+     * byte is the only thing wrong, so a failure here cannot be blamed on the
+     * feasibility envelope. */
+    app_motion_move_t wf = make_waveform(50000, 1000000U, 2U, 2U);
+    TEST_ASSERT_TRUE(app_motion_addMove(&wf));
+    app_motion_run(); /* pop + start -> refused before the driver is called */
+    TEST_ASSERT_EQUAL_UINT32(0U, d_waveformCount);
+
+    global_timeus = 1000U;
+    app_motion_run();
+    TEST_ASSERT_TRUE(app_motion_isIdle());
+    TEST_ASSERT_EQUAL_UINT32(0U, d_setVelocityCount);
+
+    /* The same waveform with a shape the driver DOES implement is accepted,
+     * so the refusal is about the byte and not about the rest of the record. */
+    d_waveformCount = 0U;
+    app_motion_move_t ok = make_waveform(50000, 1000000U, 2U, 1U);
+    TEST_ASSERT_TRUE(app_motion_addMove(&ok));
+    app_motion_run();
+    TEST_ASSERT_EQUAL_UINT32(1U, d_waveformCount);
+    TEST_ASSERT_EQUAL_INT(DEV_SERVO_WAVE_TRIANGLE, (int)d_lastWaveShape);
+}
+
 void test_waveform_zero_frequency_completes_without_motion(void)
 {
     VIBES_TEST("motion.waveform-zero-frequency-completes",
@@ -1018,6 +1235,13 @@ int main(void)
     RUN_TEST(test_getPosition_scales_steps_to_nm);
     RUN_TEST(test_zero_stepsPerMM_yields_zero_setpoint_and_position);
 
+    RUN_TEST(test_a_restricted_machine_moves_at_the_capped_speed);
+    RUN_TEST(test_a_restricted_machine_is_not_sped_up_to_the_cap);
+    RUN_TEST(test_an_unrestricted_machine_moves_at_the_speed_it_was_asked_for);
+    RUN_TEST(test_a_profile_without_a_cap_does_not_stop_the_machine);
+    RUN_TEST(test_an_unusable_machine_profile_refuses_every_move);
+    RUN_TEST(test_a_profile_that_could_not_be_read_refuses_every_move);
+    RUN_TEST(test_a_usable_profile_still_accepts_moves);
     RUN_TEST(test_addMove_queue_is_bounded);
     RUN_TEST(test_abortAndClear_stops_clears_and_returns_to_waiting);
     RUN_TEST(test_isIdle_false_when_move_queued);
@@ -1028,6 +1252,7 @@ int main(void)
     RUN_TEST(test_a_waveform_runs_until_the_driver_reports_arrival);
     RUN_TEST(test_the_recorded_setpoint_during_a_waveform_is_the_trajectory);
     RUN_TEST(test_a_linear_move_records_its_trajectory_not_its_destination);
+    RUN_TEST(test_a_waveform_with_an_unknown_shape_never_reaches_the_driver);
     RUN_TEST(test_waveform_zero_frequency_completes_without_motion);
 
     return UNITY_END();

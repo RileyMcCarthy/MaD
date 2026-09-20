@@ -124,7 +124,7 @@ vm-image:
 	embsim/qemu/guest/chrome/build.sh
 
 playground-cosim: p2image
-	cargo run --release --bin mad-emulator -- --iss $(P2_IMAGE) --computer $(VM_IMAGE) --devtools-port 9222 --sd-path ./sd --pty-path /tmp/tty.iss --log-level info
+	cargo run --release --bin mad-emulator -- --iss $(P2_IMAGE) --computer $(VM_IMAGE) --devtools-port 9222 --trace-port 9223 --sd-path ./sd --pty-path /tmp/tty.iss --log-level info
 
 # Clean build artifacts
 clean:
