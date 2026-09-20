@@ -47,6 +47,7 @@ enums:
       - ESD_LOWER
       - SERVO_COMMUNICATION
       - FORCE_GAUGE_COMMUNICATION
+      - SERVO_STALL
 
   RestrictedReason:
     description: "Motion restriction codes"
@@ -360,6 +361,10 @@ structs:
       - name: jawOffset
         type: int32
         unit: mm
+        scale: 1
+      - name: restrictedVelocity
+        type: int32
+        unit: mm/s
         scale: 1
 
   SampleProfile:

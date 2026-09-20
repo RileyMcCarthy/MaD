@@ -125,6 +125,7 @@ bool ProtoEmb_onRead_machine_configuration(ProtoEmb_MachineConfiguration_t *out)
     out->homingVelocity = profile.homingVelocity;
     out->homingOffset = profile.homingOffset;
     out->jawOffset = profile.jawOffset;
+    out->restrictedVelocity = profile.restrictedVelocity;
     memcpy(out->name, profile.name, DEV_NVRAM_MAX_MACHINE_PROFILE_NAME);
     DEBUG_INFO("%s", "responding with machine profile\n");
     return true;
@@ -167,6 +168,7 @@ ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWrite_machine_configuration_write(
     newProfile.homingVelocity = in->homingVelocity;
     newProfile.homingOffset = in->homingOffset;
     newProfile.jawOffset = in->jawOffset;
+    newProfile.restrictedVelocity = in->restrictedVelocity;
 
     dev_nvram_updateChannelData(DEV_NVRAM_CHANNEL_MACHINE_PROFILE, &newProfile, sizeof(MachineProfile));
     app_message_slave_setMachineProfile(&newProfile);
