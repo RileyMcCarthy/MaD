@@ -174,23 +174,47 @@ between the reference interpreter and the TCG frontend, and the largest grind
 in a new target — getting 359 encodings right — is already done and already
 gated by `decoder_golden.rs`.
 
+> **DONE 2026-09-20.** `tools/gen_decoder.py --decodetree` emits
+> `SIL/p2core/generated/insn.decode` (482 patterns across all six encoding
+> shapes plus the five post-table rules `decode()` applies: the all-zero NOP,
+> `LOC`, the `CALLD` register form, `MODCZ`, and the `TESTB`/`TESTP`
+> promotions). `tools/check_decodetree.sh` builds it through QEMU's
+> `decodetree.py`, stubs every `trans_` function, and compares against p2core
+> over every distinct instruction word in the firmware image:
+> **9 652 decodable words, 100 % agreement, 0 differences.**
+
 The *semantics* do not share: every op is written twice, once as Rust that
-executes and once as C that emits code. That is permanent double maintenance,
-and it is accepted deliberately — see [D5](#d5--p2core-becomes-the-oracle-not-dead-code).
+executes and once as C that emits code. Under [D5](#d5--qemu-replaces-the-iss-p2core-is-a-bring-up-oracle-then-it-goes)
+that double maintenance is **temporary** — it ends when p2core is deleted.
 
-### D5 — p2core becomes the oracle, not dead code
+### D5 — QEMU REPLACES the ISS; p2core is a bring-up oracle, then it goes
 
-Do not delete p2core. Its value was never the dispatch loop; it is the
-semantics burned in over months — `ADDS`/`SUBS` C is the true sign, `RDPIN WC`
-means busy, `SETQ`'s L bit sits at 18, the FlexC quirks, the **1550 hardware
-captures** and the 544→98 divergence burn-down. That corpus is what will
-validate the TCG target, instruction by instruction.
+**Decided 2026-09-20 (Riley): embsim has exactly one ISS pipeline, and it is
+QEMU.** There is no dual-backend mode, no `--iss-backend` flag, and no
+long-term second implementation to keep in step. `embsim-p2-qemu` *replaces*
+`P2Iss` at the `Component` seam.
 
-So p2core is promoted from "the ISS" to "the reference model", and the
-differential harness (Phase 2) is the main validation instrument.
+p2core is not deleted on day one, because the thing that validates a new target
+is a known-good second implementation: the semantics burned in over months
+(`ADDS`/`SUBS` C is the true sign, `RDPIN WC` means busy, `SETQ`'s L bit sits at
+18, the FlexC quirks), the **1550 hardware captures** and the 544→98 divergence
+burn-down. So it survives as **bring-up scaffolding**:
 
-This also means **the three local interpreter fixes are worth doing anyway**: a
-2.5x faster oracle makes differential runs 2.5x cheaper, for about a week of work.
+- It is the differential oracle for Phase 2, and nothing else.
+- It is **not** a shipping backend, not wired into `MaDSim`, not selectable.
+- Once the QEMU target passes the `hwtest` goldens and the differential harness
+  over the firmware, **p2core is deleted** and its `hwtest/` corpus plus the
+  oracle adapter are what remain.
+
+Two consequences worth acting on now:
+
+1. The three local interpreter fixes (2.54x) are **no longer worth doing for
+   their own sake** — a retired interpreter does not need to be fast. Do them
+   only if Phase 2's differential runs turn out to be uncomfortably slow.
+2. [`p2core-to-embsim.md`](p2core-to-embsim.md) should be **re-scoped before it
+   is executed**: promoting a soon-to-be-retired interpreter wholesale into
+   embsim is wasted work. What belongs upstream is the `hwtest/` corpus and the
+   `embsim-cpu-oracle` adapter — the validation assets, not the ISS.
 
 ---
 
@@ -519,8 +543,9 @@ so `MaDSim` swaps backends behind one flag and every existing board model,
 net, SD image and serial link keeps working untouched.
 
 - embsim's virtual clock stays the authority; the engine asks for icount slices.
-- `mad-emulator --iss-backend {p2core,qemu}`, defaulting to `p2core` until
-  Phase 4 gates.
+- `embsim-p2-qemu` **replaces** `P2Iss` outright — no backend flag, no dual
+  mode (D5). `MaDSim` constructs the QEMU component where it used to construct
+  `P2Iss`, and `p2core` is no longer reachable from a running emulator.
 
 **Milestone:** `make playground-iss` boots the real firmware on QEMU-P2 and the
 serial protocol round-trips at 2,000,000 baud.

@@ -169,6 +169,155 @@ def emit_op_table(name: str, size: int, table: dict) -> str:
     )
 
 
+
+# ------------------------------------------------------------ QEMU DecodeTree
+# D4 in docs/dev/p2-qemu-target-plan.md: the 359 encodings stay SINGLE-SOURCE.
+# p2core's Rust decoder and the QEMU TCG frontend are generated from the same
+# table below, so the reference interpreter and the target cannot disagree
+# about an encoding -- and getting those encodings right is the largest grind
+# in a new QEMU target.
+#
+# Verified 100% against p2core over all 9,652 decodable distinct instruction
+# words in the firmware image (tools/check_decodetree.sh).
+#
+# Each shape needs its own argset: a field used as a SELECTOR is fixed in the
+# pattern and must NOT also be extracted -- DecodeTree rejects any field that
+# is both, which is what most of the formats below exist to avoid.
+def emit_decodetree(s1, s2, s3, s4, s5, s6, testb_by_op, testp_by_s) -> str:
+    def b(v, n):
+        return format(v, "0" + str(n) + "b")
+    out, emitted = [], set()
+    A = out.append
+
+
+    def uniq(name):
+        n, k = name, 1
+        while n in emitted:
+            k += 1
+            n = "%s_%d" % (name, k)
+        emitted.add(n)
+        return n
+
+
+    A("# @generated from vendor/parseUtils.ts by tools/gen_decoder.py -- DO NOT EDIT.")
+    A("#")
+    A("# Encodings derive from PNut-TS (https://github.com/ironsheep/PNut-TS), MIT,")
+    A("# (c) 2024-2026 Iron Sheep Productions, LLC and Parallax Inc. -- the same")
+    A("# 359-row table p2core's Rust decoder is generated from, so the reference")
+    A("# interpreter and the TCG frontend can never disagree about an encoding.")
+    A("")
+    A("%cond   28:4")
+    A("%cc     20:1")
+    A("%zz     19:1")
+    A("%ii     18:1")
+    A("%dd      9:9")
+    A("%ss      0:9")
+    A("%aug23   0:23")
+    A("%rel20   0:20")
+    A("%rbit    20:1")
+    A("%ww      21:2")
+    A("")
+    A("# Which fields are operands differs per shape: a field used as a SELECTOR is")
+    A("# fixed in the pattern and must not also be extracted.")
+    A("&ds      cond c z i d s      # S1 general: D and S are operands")
+    A("&dsel    cond c z i          # S5: D and S both select")
+    A("&jpoll   cond c z i s        # S6: D selects, S is an operand")
+    A("&misc    cond c z i d        # S4: S selects, D is the operand")
+    A("&aug     cond imm")
+    A("&rel     cond r imm         # the 20-bit branch form carries an R bit at 20")
+    A("&loc     cond ww r imm      # LOC: WW selects PA/PB/PTRA/PTRB")
+    A("")
+    A("@ds     ................................ &ds    cond=%cond c=%cc z=%zz i=%ii d=%dd s=%ss")
+    A("# when a pattern FIXES C/Z, the format must not also extract them")
+    A("@dsf    ................................ &ds    cond=%cond i=%ii d=%dd s=%ss")
+    A("@dsel   ................................ &dsel  cond=%cond c=%cc z=%zz i=%ii")
+    A("@misc   ................................ &misc  cond=%cond c=%cc z=%zz d=%dd")
+    A("# and the same for the misc block when a promotion pattern fixes C/Z")
+    A("@miscf  ................................ &misc  cond=%cond i=%ii d=%dd")
+    A("@jpoll  ................................ &jpoll cond=%cond c=%cc z=%zz i=%ii s=%ss")
+    A("@aug    ................................ &aug   cond=%cond imm=%aug23")
+    A("@rel    ................................ &rel   cond=%cond r=%rbit imm=%rel20")
+    A("@loc    ................................ &loc   cond=%cond ww=%ww r=%rbit imm=%rel20")
+    A("")
+    A("# One overlap group, most-specific first -- the same priority order")
+    A("# p2core's hand-written decode() applies.")
+    A("{")
+    A("  # ---- word 0 is NOP on silicon (else it decodes as ROR under _RET_) -----")
+    A("  nop_zero     00000000000000000000000000000000")
+    A("")
+    A("  # ---- MODCZ/MODC/MODZ share S=$6F with WRNZ; I=1 is the immediate form.")
+    A("  # ---- p2core checks this before the S4 lookup, so it goes first here too.")
+    A("  %-12s .... 1101011 ..1 ......... 001101111 @misc i=1" % uniq("modcz"))
+    A("")
+    A("  # ---- TESTP/TESTPN: a pin-op encoding with C or Z set is a TEST, not a")
+    A("  # ---- write. p2core promotes it after the table; so must we, and first.")
+    for sf in sorted(testp_by_s):
+        for cz in (1, 2, 3):
+            A("  %-12s .... 1101011 %s%s. ......... %s @miscf c=%d z=%d"
+              % (uniq(testp_by_s[sf]), b(cz >> 1, 1), b(cz & 1, 1), b(sf, 9), cz >> 1, cz & 1))
+    A("")
+    A("  # ---- S5: event poll, op $6B with S=$24, selected by D -----------------")
+    for k in sorted(s5):
+        A("  %-12s .... 1101011 ... %s 000100100 @dsel" % (uniq(s5[k][0]), b(k, 9)))
+    A("")
+    A("  # ---- S6: event jmp, op $5E, selected by D -----------------------------")
+    for k in sorted(s6):
+        A("  %-12s .... 1011110 ... %s ......... @jpoll" % (uniq(s6[k][0]), b(k, 9)))
+    A("")
+    A("  # ---- S4: misc block, op $6B, selected by (I<<9)|S ---------------------")
+    for k in sorted(s4):
+        i_bit, sfield = (k >> 9) & 1, k & 0x1FF
+        A("  %-12s .... 1101011 ..%d ......... %s @misc i=%d"
+          % (uniq(s4[k][0]), i_bit, b(sfield, 9), i_bit))
+    A("")
+    A("  # ---- S4 fallback: when the (I<<9)|S key is absent, p2core falls back to")
+    A("  # ---- the S-only entry, which is how HUBSET/SETSE1/SEUSSR decode at I=1.")
+    for k in sorted(s4):
+        if k < 512 and ((1 << 9) | k) not in s4:
+            A("  %-12s .... 1101011 ..1 ......... %s @misc i=1" % (uniq(s4[k][0]), b(k, 9)))
+    A("")
+    A("  # ---- CALLD D,S register form: op $59. flexspin's RETI1/RESI1 use it.")
+    A("  %-12s .... 1011001 ... ......... ......... @ds" % uniq("calld"))
+    A("")
+    A("  # ---- LOC: EEEE 11101WW R aaa... -- WW selects PA/PB/PTRA/PTRB")
+    A("  %-12s .... 11101 .. ..................... @loc" % uniq("loc"))
+    A("")
+    A("  # ---- TESTB/TESTBN: a BITx encoding with C or Z set is a TEST. Same")
+    A("  # ---- post-table promotion, and it must precede the S1 general patterns.")
+    for op in sorted(testb_by_op):
+        for cz in (1, 2, 3):
+            A("  %-12s .... %s %s%s. ......... ......... @dsf c=%d z=%d"
+              % (uniq(testb_by_op[op]), b(op, 7), b(cz >> 1, 1), b(cz & 1, 1), cz >> 1, cz & 1))
+    A("")
+    A("  # ---- S3: AUG, the whole %1111xxx space, key = instr[27:23] ------------")
+    for k in sorted(s3):
+        A("  %-12s .... %s ....................... @aug" % (uniq(s3[k][0]), b(k, 5)))
+    A("")
+    A("  # ---- S2: 20-bit relative/absolute branches ----------------------------")
+    for k in sorted(s2):
+        A("  %-12s .... %s ..................... @rel" % (uniq(s2[k][0]), b(k, 7)))
+    A("")
+    A("  # ---- S1: EEEE ooooooo CZI DDDDDDDDD SSSSSSSSS -------------------------")
+    ops = {}
+    for key, hit in s1.items():
+        ops.setdefault(key >> 2, {})[key & 3] = hit
+    n_s1 = 0
+    for op in sorted(ops):
+        slots = ops[op]
+        names = set(slots.values())
+        if len(slots) == 4 and len(names) == 1:
+            A("  %-12s .... %s ... ......... ......... @ds" % (uniq(next(iter(names))[0]), b(op, 7)))
+            n_s1 += 1
+        else:
+            for cz in sorted(slots):
+                A("  %-12s .... %s %s%s. ......... ......... @dsf c=%d z=%d"
+                  % (uniq(slots[cz][0]), b(op, 7), b(cz >> 1, 1), b(cz & 1, 1), cz >> 1, cz & 1))
+                n_s1 += 1
+    A("}")
+
+    return "\n".join(out) + "\n"
+
+
 def main() -> int:
     if not VENDOR.exists():
         print(f"missing {VENDOR}", file=sys.stderr)
@@ -179,6 +328,16 @@ def main() -> int:
         return 1
 
     s1, s2, s3, s4, s5, s6, testb_by_op, testp_by_s = build_tables(rows)
+
+    if "--decodetree" in sys.argv:
+        dest = Path(sys.argv[sys.argv.index("--decodetree") + 1])
+        dest.write_text(
+            emit_decodetree(s1, s2, s3, s4, s5, s6, testb_by_op, testp_by_s),
+            encoding="utf-8",
+        )
+        print(f"wrote {dest}", file=sys.stderr)
+        return 0
+
     mnemonics = sorted({n for n, _, _, _ in rows} | set(VERIFIED_ALIASES.values()))
     forms = sorted({f for _, _, _, f in rows} | {"operand_alias"})
 
