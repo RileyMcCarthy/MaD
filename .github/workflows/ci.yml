@@ -370,7 +370,13 @@ jobs:
           (echo >/dev/tcp/127.0.0.1/9999) >/dev/null 2>&1 || {
             echo "=== bridge log ==="; cat /tmp/mad-bridge.log || true; exit 1
           }
+      # A STEP timeout, not the job's. When the job's 60-minute ceiling fires it
+      # cancels everything, including the `if: failure()` diagnostics below — so
+      # the runs that most need explaining are exactly the ones that leave no
+      # log. Two wedged runs were lost that way. Capping the step instead lets
+      # it fail and the collection steps still run.
       - name: Run the full e2e suite
+        timeout-minutes: 40
         env:
           APP_URL: http://127.0.0.1:5174
           BRIDGE_URL: ws://127.0.0.1:9999
