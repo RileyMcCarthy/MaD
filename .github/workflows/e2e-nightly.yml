@@ -168,7 +168,7 @@ jobs:
           nohup cargo run --release --bin mad-emulator -- \
             --iss ../Firmware/MaDCore/.pio/build/propeller2_debug/program \
             --computer "$HOME/.cache/embsim/qemu/chrome-debian13-x86_64.qcow2" \
-            --devtools-port 9222 --sd-path ./sd --pty-path /tmp/tty.iss \
+            --devtools-port 9222 --trace-port 9223 --sd-path ./sd --pty-path /tmp/tty.iss \
             --log-level info > /tmp/cosim-board.log 2>&1 &
           echo $! > /tmp/cosim-board.pid
           cd ../Software/Control
@@ -200,6 +200,9 @@ jobs:
         env:
           CDP_URL: http://127.0.0.1:9222
           APP_URL: http://10.0.2.2:5174
+          # The board's control surface: the three link-drop scenarios ask it
+          # to unplug the emulated FTDI, which is a real USB detach.
+          CONTROL_URL: http://127.0.0.1:9223
         run: |
           SUITE="${{ github.event.inputs.suite || 'smoke' }}"
           if [ "$SUITE" = "full" ]; then

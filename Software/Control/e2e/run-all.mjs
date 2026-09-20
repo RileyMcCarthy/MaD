@@ -19,13 +19,16 @@
  * instruction, and Chrome inside a QEMU guest the board's clock meters, talking
  * real Web Serial to the emulated FTDI. The browser cannot outrun the board,
  * because the board decides when the browser's vCPU runs at all:
- *   cd SIL && make playground-cosim    # prints the DevTools URL (port 9222)
+ *   cd SIL && make playground-cosim    # DevTools on 9222, control on 9223
  *   npm run dev -- --host              # the guest fetches from 10.0.2.2:5174
  *   CDP_URL=http://127.0.0.1:9222 npm run e2e
  *
- * In (b) every budget here is multiplied by E2E_TIMEOUT_SCALE (10 by default)
- * and the three link-drop scenarios are skipped — they need the fake serial's
- * `__silDropLink`, and a real port has nothing to reach in and sever.
+ * In (b) every budget here is multiplied by E2E_TIMEOUT_SCALE (10 by default).
+ * The three link-drop scenarios run in both: fixtures' dropLink() uses the
+ * fake serial's `__silDropLink` under the bridge and, in computer-node mode,
+ * asks the board to unplug its emulated FTDI for a few seconds -- a genuine
+ * USB detach the guest kernel and Chrome both see. That needs mad-emulator
+ * started with --trace-port (CONTROL_URL, default http://127.0.0.1:9223).
  *
  * Covers the parity-critical scenarios of docs/TEST_PLAN.md §4: A1, B1–B5, C1/C3/C4, D1/D2/D3,
  * E1, F1/F2/F4/F6/F7, G1/G2/G3 + G-limit, H1–H5, I1–I4, J1 (in G-limit), K1 (in B2+B3+B4) — plus
@@ -49,6 +52,7 @@ import {
   OPFS_DIR,
   APP_URL,
   APP_URL_HOST,
+  dropLink,
   CDP_URL,
   T,
   boardGrantedPort,
@@ -2066,7 +2070,7 @@ const scenarios = [
         await page.goto(`${APP_URL}#/live`);
         await awaitResponding(page);
         // Sever the link (simulates USB unplug / emulator death).
-        await page.evaluate(() => window.__silDropLink());
+        await dropLink(page);
         await page.locator('.dot.disconnected').waitFor({ timeout: DEVICE_WAIT_MS });
         await page.locator('.toast').getByText(/disconnected/i).first().waitFor({ timeout: DEVICE_WAIT_MS });
         await clickReconnect(page);
@@ -2085,7 +2089,7 @@ const scenarios = [
         await connectToSil(page);
         await page.goto(`${APP_URL}#/live`);
         await awaitResponding(page);
-        await page.evaluate(() => window.__silDropLink());
+        await dropLink(page);
         await page.locator('.dot.disconnected').waitFor({ timeout: DEVICE_WAIT_MS });
         await clickReconnect(page);
         await awaitResponding(page);
@@ -2115,7 +2119,7 @@ const scenarios = [
         await page.goto(`${APP_URL}#/live`);
         await page.getByText('Test: running').waitFor({ timeout: DEVICE_WAIT_MS });
         // Drop link while test is running — UI must not throw; machine keeps going.
-        await page.evaluate(() => window.__silDropLink());
+        await dropLink(page);
         await page.locator('.dot.disconnected').waitFor({ timeout: DEVICE_WAIT_MS });
         await clickReconnect(page);
         // Eventually idle again (test completes or was aborted by prior state).
@@ -2723,20 +2727,15 @@ async function main() {
 
   let pass = 0;
   const failures = [];
-  // These three sever the link mid-test to prove the app's reconnect path. They
-  // do it through `window.__silDropLink()`, which the fake serial installs — so
-  // they are meaningful only in the bridge configuration. In computer-node mode
-  // the browser holds a real Web Serial port to the board's emulated FTDI and
-  // there is nothing to reach in and drop; skip them rather than assert on a
-  // hook that is not there.
-  const HOST_ONLY = new Set(['B5-reconnect', 'M11-idle-drop', 'M11-mid-test-drop']);
-  let skipped = 0;
+  // Three scenarios sever the link mid-test to prove the app's reconnect path.
+  // They used to be skipped in computer-node mode -- they did it through
+  // `window.__silDropLink()`, which the fake serial installs, and a real port
+  // has nothing to reach in and sever. They now go through fixtures'
+  // dropLink(), which unplugs the board's emulated FTDI for a few seconds and
+  // plugs it back: a genuine USB detach that the guest kernel and Chrome both
+  // see. Both configurations run all of them, so nothing is skipped here.
+  const skipped = 0;
   for (const s of selected) {
-    if (CDP_URL && HOST_ONLY.has(s.id)) {
-      console.log(`  ~ ${s.id}: skipped in computer-node mode (needs the fake serial's __silDropLink)`);
-      skipped += 1;
-      continue;
-    }
     process.stdout.write(`• ${s.id} ${s.name} … `);
     setCurrentScenario(s.id);
     try {
