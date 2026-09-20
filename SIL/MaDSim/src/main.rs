@@ -245,6 +245,14 @@ fn run_iss(args: &Args, image_path: &std::path::Path) -> Result<(), Box<dyn std:
     };
 
     install_shutdown_signals();
+    // The control surface. `setup_trace_ui` is on the native path only -- it
+    // needs FirmwareInfo and an MCU instance the ISS does not have -- so the
+    // ISS path starts a bare server instead: no trace views, just the actions
+    // registered below. Without this a `--trace-port` on an `--iss` run was
+    // silently accepted and nothing listened, which is how the link-drop
+    // scenarios would have failed with a connection refused rather than an
+    // assertion.
+    start_iss_control_server(args.trace_port)?;
     let image = std::fs::read(image_path)?;
     info!(
         "ISS: {} ({} bytes) — protocol on P{}/P{}",
@@ -305,10 +313,23 @@ fn run_iss(args: &Args, image_path: &std::path::Path) -> Result<(), Box<dyn std:
                 "Computer node: Chrome guest ready, DevTools at {} (frozen until the board runs)",
                 chrome.devtools().url()
             );
-            Box::new(embsim_qemu::QemuNode::new(
-                Box::new(chrome),
-                PROTO.nominal_baud,
-            ))
+            let node = embsim_qemu::QemuNode::new(Box::new(chrome), PROTO.nominal_baud);
+            // Let a test harness pull the cable. The three link-drop scenarios
+            // sever the connection through the fake serial's __silDropLink
+            // under the bridge; a real port has nothing to reach in and sever,
+            // so they were skipped here. Closing the chardev is a genuine USB
+            // detach, which is what these register.
+            //
+            // Only reachable when --trace-port is given, and the calls land
+            // between slices because the pump holds the guest for exactly one.
+            let link = node.link();
+            let unplug = link.clone();
+            embsim_ui::register_action("link/unplug", move || {
+                unplug.unplug().map_err(|e| e.to_string())
+            });
+            let plug = link.clone();
+            embsim_ui::register_action("link/plug", move || plug.plug().map_err(|e| e.to_string()));
+            Box::new(node)
         }
         None => {
             let host = HostPty::open(&args.pty_path, PROTO.nominal_baud)?;
@@ -480,6 +501,30 @@ fn run_iss(args: &Args, image_path: &std::path::Path) -> Result<(), Box<dyn std:
         }
     });
     park_until_shutdown();
+    Ok(())
+}
+
+/// Start the bare HTTP control surface for an ISS run.
+///
+/// The native path's `setup_trace_ui` also registers the trace viewer and the
+/// machine visualizer, both of which want firmware enum info and a live MCU
+/// instance. An ISS run has neither, but it still wants the actions a test
+/// harness POSTs to, so this starts the same server with nothing registered
+/// on it yet.
+#[cfg(feature = "web")]
+fn start_iss_control_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
+    if port == 0 {
+        return Ok(());
+    }
+    embsim_ui::start_server(port)?;
+    Ok(())
+}
+
+#[cfg(not(feature = "web"))]
+fn start_iss_control_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
+    if port != 0 {
+        tracing::warn!("--trace-port {port} ignored: built without the `web` feature");
+    }
     Ok(())
 }
 

@@ -94,6 +94,58 @@ export const CDP_URL = process.env.CDP_URL || '';
 export const APP_URL =
   process.env.APP_URL || (CDP_URL ? 'http://10.0.2.2:5174/' : 'http://localhost:5174/');
 /** Where the runner checks the dev server from the HOST (the guest's URL is not routable here). */
+/// Where the board's control surface lives (mad-emulator --trace-port). Only
+/// used in computer-node mode: under the bridge the link is severed in-page.
+export const CONTROL_URL = process.env.CONTROL_URL || 'http://127.0.0.1:9223';
+
+/// How long the port stays out in computer-node mode. Wall clock, and the
+/// guest only runs when the board grants it a slice, so this is generous.
+export const LINK_OUTAGE_MS = Number(process.env.LINK_OUTAGE_MS || 3000);
+
+/**
+ * Drop the link the app is using, and let it come back.
+ *
+ * Under the bridge this is the fake serial's own hook: it closes the socket
+ * and fires `disconnect`, while `getPorts()` keeps returning the port. So the
+ * CONNECTION dies and the DEVICE stays -- the app can reconnect to the same
+ * port, which is the behaviour the three link-drop scenarios assert.
+ *
+ * In computer-node mode the port is real and there is nothing in the page to
+ * sever. The board closes the chardev backing its emulated FTDI, which QEMU
+ * turns into a USB detach and the guest kernel turns into a removed tty, so
+ * Chrome fires a genuine disconnect. It has to come BACK, though, or the
+ * app's reconnect would find no port at all and the scenario would fail for a
+ * reason it is not testing -- so this is an OUTAGE: unplug, leave it out long
+ * enough for the guest to notice, plug back in.
+ *
+ * The outage is wall-clock, and the guest runs only when the board grants it a
+ * slice, so it is generous by default and tunable for a slow runner.
+ */
+export async function dropLink(page) {
+  if (!CDP_URL) {
+    await page.evaluate(() => window.__silDropLink());
+    return;
+  }
+  await controlAction('link/unplug');
+  await new Promise((r) => setTimeout(r, LINK_OUTAGE_MS));
+  await controlAction('link/plug');
+}
+
+/** Put the cable back, for a scenario that wants the outage to end on its terms. */
+export async function restoreLink() {
+  if (!CDP_URL) return;
+  await controlAction('link/plug');
+}
+
+async function controlAction(name) {
+  const r = await fetch(`${CONTROL_URL}/action/${name}`, { method: 'POST' });
+  if (!r.ok) {
+    throw new Error(
+      `${name} failed (${r.status}): ${await r.text()}. Is mad-emulator running with --trace-port?`,
+    );
+  }
+}
+
 export const APP_URL_HOST = process.env.APP_URL_HOST || (CDP_URL ? 'http://localhost:5174/' : APP_URL);
 export const BRIDGE_URL = process.env.BRIDGE_URL || 'ws://localhost:9999';
 export const TIMEOUT_SCALE = Number(process.env.E2E_TIMEOUT_SCALE || (CDP_URL ? 10 : 1));
