@@ -69,6 +69,19 @@ which means **we own the library patches as well as the target**.
 That is the single biggest under-appreciated cost in this project, and it is
 why Phase 0 exists.
 
+> **Proven by [Spike 1c](../../SIL/spikes/qemu-1c-library-link/RESULTS.md)
+> (2026-09-20).** Upstream QEMU links into a Rust binary and runs TCG from it at
+> **+0.4 %** of `qemu-system`. The initialisation seam is two calls —
+> `qemu_init(argc, argv)` then `bql_unlock(); replay_mutex_unlock();` — because
+> `qemu_init` already builds the machine, creates the CPU and its vCPU thread,
+> and autostarts. Exactly one object defines `main()`, so there are **no symbol
+> collisions** with the Rust runtime. QEMU emits no `libqemu-<target>.a`; the
+> emulator is linked from a raw list of 764 objects, which is scraped from
+> `build.ninja`. And the macOS entitlement is `com.apple.security.hypervisor`
+> — **HVF only**; TCG needs none. The remaining increment is having the host's
+> *own* thread call `cpu_exec` (`rcu_register_thread` + `tcg_register_thread`
+> plus a `create_vcpu_thread` override), not whether linking works.
+
 ---
 
 ## Architecture
@@ -368,6 +381,7 @@ Plus, from Phase 1's first jobs:
 |---|---|
 | [1a](../../SIL/spikes/qemu-1a-instruction-cost/RESULTS.md) — real P2 instruction cost | **PASSED** — 0.99 ns (~3.5 host cycles), 5.3x inside budget |
 | [1b](../../SIL/spikes/qemu-1b-cog-interpreter/RESULTS.md) — cog-exec interpreter | **PASSED** — 0.82 ns/instruction; end-to-end **2.75–4.30x** real time |
+| [1c](../../SIL/spikes/qemu-1c-library-link/RESULTS.md) — QEMU linked into a Rust process | **PASSED** — +0.4 % vs `qemu-system`; the structural claim is proven, not approximated |
 
 **Parity with the existing ISS is exceeded ~10x, and the end-to-end projection
 is now 1.46x (stock) to 1.74x (ablated) real time — every term measured except
