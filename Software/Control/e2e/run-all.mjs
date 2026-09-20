@@ -1599,8 +1599,16 @@ const scenarios = [
         await page.getByLabel('Jog (mm)').fill('2');
         await page.getByLabel('Speed (mm/s)').fill('5');
         const before = await live();
+        // settleMotion, not bare awaitRest: awaitRest returns when the axis is
+        // still — if the jog has not started yet, four still polls (~1 s) false-
+        // settle on the pre-jog position. M13-home documents the same trap and
+        // waits for motion to start first; settleMotion's setpointWas phase is
+        // the equivalent for a commanded jog (same pattern as TC14 / M8).
+        const setWas = parseFloat(
+          await page.locator('.readout', { hasText: 'Machine Setpoint' }).locator('.value').first().innerText(),
+        );
         await page.getByRole('button', { name: '+ Jog up' }).click();
-        await awaitRest(page);
+        await settleMotion(page, { setpointWas: Number.isFinite(setWas) ? setWas : null });
         const after = await live();
 
         const movedMm = after.machinePosition - before.machinePosition;
@@ -2746,6 +2754,12 @@ async function main() {
       pass += 1;
     } catch (err) {
       console.log('❌');
+      // Log the assertion/message immediately — dumpFailureArtifacts and
+      // recoverMachine can take minutes, and a job-timeout cancel skips the
+      // end-of-suite Failures: summary (and artifact upload). Without this,
+      // cancelled runs only show ❌ with no reason in the log.
+      console.error(`  → ${s.id}: ${err && err.message ? err.message : err}`);
+      if (err && err.stack) console.error(err.stack);
       failures.push(`${s.id} ${s.name}: ${err.message}`);
       // Every failure carries the app's merged main+worker log, so a red CI run
       // is diagnosable without reproducing it locally.
