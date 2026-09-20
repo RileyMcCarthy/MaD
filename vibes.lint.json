@@ -1,0 +1,28 @@
+{
+  "note": "Words `vibes lint` flags by default that this repo genuinely uses. Scoped, because each one is real in exactly one place — see Vibes/bindings/CLAIMS.md.",
+  "allow": [
+    {
+      "words": [
+        "public_repo",
+        "github_pat_",
+        "ghp_"
+      ],
+      "in": "src/diagnostics/github",
+      "why": "GitHub's own names for a token's scope and shape. The operator pastes a token and reads these words on GitHub's page; there is no plainer word for them."
+    },
+    {
+      "words": [
+        "stub"
+      ],
+      "in": "src/firmware/",
+      "why": "The flash-boot stub is Parallax's name for the 496-byte block a flash image carries ahead of the firmware. Elsewhere `stub` means a test double, which is machinery and stays flagged."
+    },
+    {
+      "words": [
+        "FORCE_GAUGE_COMMUNICATION"
+      ],
+      "in": "src/domain/stateLabels",
+      "why": "The fault badge shows the fault's wire name verbatim, and this claim quotes what the operator sees. Spelling drift here once broke the badge, which is why the test pins the exact string."
+    }
+  ]
+}

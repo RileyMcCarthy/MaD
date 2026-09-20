@@ -127,7 +127,49 @@ and its wire contract `Vibes/bindings/SCHEMA.md`. Tool changes go upstream first
    conditions, it is two tests. Never self-report status — pass/fail joins from
    the runner, and every expectation of a test shares that test's verdict.
 
-14. **After changing behaviours:** `node Vibes/bin/vibes.mjs collect --write`
+14. **The report supplies the frame — `given` finishes its sentence.** The
+   renderer prints `**When** <given>` and nests the expectations under it, so
+   `given` names a SITUATION and must read as one on the first pass. Each
+   half of this claim passed every rule above; composed, it has no main clause:
+   - BAD: given *a byte left on the load-cell ADC serial link by an abandoned
+     exchange, then a start* — "a byte **left**" garden-paths as a verb, and
+     ", then a start" is a bare noun using the report's own word for the
+     expectation.
+   - GOOD: given *a start of the load-cell ADC with a leftover byte on the link
+     from an abandoned exchange*
+   Name a situation, not a thing. Sequence with `after`, `while`, `that begins
+   with` — a second beat must have something HAPPENING in it (*"gauge length
+   zeroed, then the jaws moved further"* reads; *"…, then a start"* does not).
+   Avoid a participle that is also a past tense right after a noun (`left`,
+   `read`, `set`, `sent`, `held`, `run`): write "a byte **that** an abandoned
+   exchange **left**", or the `-ing` form, or name the thing outright.
+
+15. **An expectation is an OUTCOME, not a step.** If the sentence describes what
+   the code does on its way to the result, it is a `why` at most.
+   - BAD:  `the leftover is flushed before the configuration read-back`
+   - GOOD: `the start completes and the converter is converting`
+   Test it: could an operator, or anyone outside that function, tell whether
+   this held? If the only way to know is to watch the code run, it is not an
+   expectation. Mechanism goes in `why` ("each register read is one request
+   and one reply, so a leftover would shift every reply after it").
+
+16. **Render it and read it — BEFORE collecting.** Rules 14 and 15 were both
+   broken by a claim whose two halves were only ever read as separate strings.
+   Neither command below runs a suite:
+   ```bash
+   node Vibes/bin/vibes.mjs preview --given "<given>" --then "<then>" [--then "<then2>"] [--why "<why>"]
+   node Vibes/bin/vibes.mjs lint --file <test file>      # once collected
+   ```
+   `preview` prints the composed `**When** …` block exactly as the PR will and
+   lints the same text. Read the block aloud; a sentence with no main clause
+   is a rewrite, whatever the lint says. `lint` exits 4 on an error-level
+   finding (names from the code, contrast words, vague claims); warnings
+   (machinery, garden paths) are advice — fix them unless the claim genuinely
+   reads fine. A word this repo genuinely uses that the lint flags goes in
+   `vibes.lint.json`, scoped by path, with a `why`. CI runs `vibes lint` over
+   the whole ledger and blocks on errors.
+
+17. **After changing behaviours:** `node Vibes/bin/vibes.mjs collect --write`
    and commit `behaviours.jsonl` alongside the change.
 
 ## Snippets
