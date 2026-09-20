@@ -83,6 +83,60 @@ export function trapezoidTimes(distUm, vUmS, aUmS2) {
  * the worst residual. Evaluates at the recorded sample times — interpolating
  * a 100 Hz accel parabola onto a finer grid is itself several micrometres.
  */
+/**
+ * Residuals at a fixed delay, in sample order — the shape `fitDelayMaxError`
+ * reduces to a scalar, kept so callers can ask *how* a trace left the ideal
+ * rather than only how far.
+ */
+export function residualsAt(timesUs, measuredUm, idealAtSec, delayS, {
+  tMinS = -Infinity,
+  tMaxS = Infinity,
+} = {}) {
+  const out = [];
+  const nSamp = Math.min(timesUs.length, measuredUm.length);
+  for (let i = 0; i < nSamp; i++) {
+    const t = timesUs[i] / 1e6;
+    if (t < tMinS || t > tMaxS) continue;
+    const m = measuredUm[i];
+    if (!Number.isFinite(m)) continue;
+    const ideal = idealAtSec(t - delayS);
+    if (ideal == null || !Number.isFinite(ideal)) continue;
+    out.push({ t, e: m - ideal });
+  }
+  return out;
+}
+
+/**
+ * Longest run of CONSECUTIVE samples whose residual exceeds `boundUm`.
+ *
+ * This is the discriminator the plain maximum could not draw. A profile that
+ * genuinely left the trapezoid — the trajectory stalled, the rate is wrong —
+ * is off it for a stretch: the recorded staircase flattens while the ideal
+ * keeps climbing, so the residual grows over many consecutive samples. A
+ * sampling artefact is off it once. Both look identical to L∞, which is why a
+ * single jittered sample could fail a trace whose rms sat comfortably inside
+ * budget.
+ */
+export function longestRunOver(residuals, boundUm) {
+  let run = 0;
+  let best = 0;
+  let atT = 0;
+  let peak = 0;
+  for (const r of residuals) {
+    if (Math.abs(r.e) > boundUm) {
+      run += 1;
+      if (run > best) {
+        best = run;
+        atT = r.t;
+        peak = Math.abs(r.e);
+      }
+    } else {
+      run = 0;
+    }
+  }
+  return { run: best, atT, peak };
+}
+
 export function fitDelayMaxError(timesUs, measuredUm, idealAtSec, {
   delayMinS = -0.05,
   delayMaxS = 0.05,
@@ -217,12 +271,44 @@ export function assertFollowsLinearUm(series, {
   // this bound is that the cruise is that staircase, not a different rate.
   const tickTravelUm = Math.abs(velocityMmS);
   const followBoundUm = Math.max(CONTRACT_UM, 15 * tickTravelUm);
+
+  // Assert on a RUN of samples off the trapezoid, not on the single worst one.
+  //
+  // The contract this is checking is "the cruise is that staircase, not a
+  // different rate". Every way of breaking it is sustained: a stalled
+  // trajectory flattens the recorded staircase while the ideal keeps climbing,
+  // a wrong rate diverges and stays diverged. All of them put many consecutive
+  // samples outside the bound.
+  //
+  // A bare maximum cannot tell any of that from one sample landing oddly, and
+  // that is not hypothetical: MONITOR samples the profiler from another cog, so
+  // on a contended runner a single reading lands a few ticks late. Those trips
+  // measured 1.03x-1.63x over the bound with rms sitting at a fifth of it —
+  // the trace was fine and the statistic said otherwise. (The stalls that were
+  // real — a wedged force gauge starving the motion cogs — ran to 2.4x and
+  // beyond, and showed up as runs, which is how they were found.)
+  //
+  // Two consecutive samples are still allowed: one scheduling hiccup can
+  // straddle two sample instants. Three is a departure.
+  const resid = residualsAt(series.time, series.setpoint, (t) => idealAt(t - t0Move), sp.delayS, {
+    tMinS, tMaxS,
+  });
+  const over = longestRunOver(resid, followBoundUm);
   assert(
-    sp.worst <= followBoundUm,
+    over.run < 3,
     `${label}: after a ${(sp.delayS * 1e3).toFixed(2)} ms delay the commanded profile ` +
       `stays within ${followBoundUm.toFixed(1)} um of the trapezoid ` +
       `(one 1 kHz tick of travel is ${tickTravelUm.toFixed(1)} um; ` +
-      `worst ${sp.worst.toFixed(3)} um rms ${sp.rms.toFixed(3)} um at t=${sp.atT.toFixed(3)}s)`,
+      `${over.run} consecutive samples outside it, peaking at ${over.peak.toFixed(3)} um ` +
+      `around t=${over.atT.toFixed(3)}s; worst overall ${sp.worst.toFixed(3)} um rms ${sp.rms.toFixed(3)} um)`,
+  );
+  // A single sample can still be wrong enough to matter. This ceiling is far
+  // above the jitter above and far below the stalls, so it catches a gross
+  // excursion without re-litigating one late reading.
+  assert(
+    sp.worst <= followBoundUm * 4,
+    `${label}: no single sample is wildly off the trapezoid ` +
+      `(worst ${sp.worst.toFixed(3)} um at t=${sp.atT.toFixed(3)}s, ceiling ${(followBoundUm * 4).toFixed(1)} um)`,
   );
 
   const tCruise0 = t0Move + tAcc + PLANT_SETTLE_S;
@@ -284,11 +370,23 @@ export function assertFollowsSineWindowUm(series, {
     `    [follow-sine] ${label}: setpoint ${sp.worst.toFixed(3)} um rms ${sp.rms.toFixed(3)} um ` +
       `@ ${(sp.delayS * 1e3).toFixed(2)} ms, window ${tMinS.toFixed(3)}..${tMaxS.toFixed(3)}s n=${sp.n}`,
   );
+  // Same statistic as the linear case, for the same reason: a waveform that is
+  // not being tracked is off the request for a stretch, while a sample taken a
+  // few ticks late is off it once. See `assertFollowsLinearUm`.
+  const resid = residualsAt(series.time, series.setpoint, idealAt, sp.delayS, { tMinS, tMaxS });
+  const over = longestRunOver(resid, followBoundUm);
   assert(
-    sp.worst <= followBoundUm,
+    over.run < 3,
     `${label}: after a phase delay the commanded waveform stays within ${followBoundUm.toFixed(1)} um of the request ` +
-      `(worst ${sp.worst.toFixed(3)} um rms ${sp.rms.toFixed(3)} um at t=${sp.atT.toFixed(3)}s, ` +
-      `measured ${sp.atM.toFixed(1)} um vs ideal ${sp.atI.toFixed(1)} um, ` +
+      `(${over.run} consecutive samples outside it, peaking at ${over.peak.toFixed(3)} um around ` +
+      `t=${over.atT.toFixed(3)}s; worst overall ${sp.worst.toFixed(3)} um rms ${sp.rms.toFixed(3)} um, ` +
       `window ${tMinS.toFixed(3)}..${tMaxS.toFixed(3)}s)`,
+  );
+  assert(
+    sp.worst <= followBoundUm * 4,
+    `${label}: no single sample is wildly off the requested waveform ` +
+      `(worst ${sp.worst.toFixed(3)} um at t=${sp.atT.toFixed(3)}s, ` +
+      `measured ${sp.atM.toFixed(1)} um vs ideal ${sp.atI.toFixed(1)} um, ` +
+      `ceiling ${(followBoundUm * 4).toFixed(1)} um)`,
   );
 }
