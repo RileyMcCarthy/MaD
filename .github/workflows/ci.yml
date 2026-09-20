@@ -678,7 +678,11 @@ jobs:
       needs.changes.outputs.is_release != 'true' &&
       needs.changes.outputs.sil == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # 25 was enough while every ISS test skipped. They now run against the real
+    # P2 image: ~6 minutes locally, dominated by p2core's boot tests
+    # interpreting hundreds of millions of instructions in the dev profile, and
+    # a shared 4-vCPU runner is slower than that.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
         with:
@@ -697,9 +701,76 @@ jobs:
       - name: Generate the Rust protocol codec (make protocol)
         working-directory: SIL
         run: make protocol
+      # ORDER MATTERS. The first version of this job built the native lib,
+      # THEN installed the Propeller platform, then built the P2 image -- and by
+      # the clippy step libfirmware.a was gone, so every cargo step died in
+      # embsim's build script ("firmware library directory not found"),
+      # misreported as a clippy failure. Locally, with the platform already
+      # installed, the same sequence never loses the lib, so the fresh install
+      # is the difference; PlatformIO's project checksum (which triggers a
+      # full .pio/build clean when it changes) is the likely mechanism but was
+      # not reproduced. Hence: install first, build both envs, and pin the lib
+      # below so the question never matters again.
+      - name: Install the Propeller platform (flexcc/flexspin)
+        working-directory: Firmware/MaDCore
+        run: pio pkg install --platform https://github.com/RileyMcCarthy/platform-propeller.git
       - name: Build firmware native lib (libfirmware.a)
         working-directory: Firmware/MaDCore
         run: pio run -e native_emulator
+      # ...and keep a copy somewhere no later pio invocation can touch. The
+      # build-support crate reads EMBSIM_FIRMWARE_LIB_DIR, so cargo links the
+      # copy; whatever .pio/build does after this point is irrelevant to it.
+      - name: Pin the native lib where pio cannot clean it
+        working-directory: Firmware/MaDCore
+        run: |
+          mkdir -p "$RUNNER_TEMP/mad-native-lib"
+          cp .pio/build/native_emulator/libfirmware.a "$RUNNER_TEMP/mad-native-lib/"
+          echo "EMBSIM_FIRMWARE_LIB_DIR=$RUNNER_TEMP/mad-native-lib" >> "$GITHUB_ENV"
+      # The ISS executes the SHIPPED artifact, and the shipped artifact is
+      # compiled by flexcc, not clang. Without this the p2core/p2iss tests that
+      # boot the firmware find no image and skip -- printing a banner and
+      # passing, which is how this suite once reported 54 passed while
+      # asserting nothing. CI is the one place that must never be allowed to do
+      # that, hence MAD_REQUIRE_P2_IMAGE on the test step below.
+      #
+      # Built here rather than reused from `build-firmware`: that job only runs
+      # when `firmware` changed, so on a SIL-only PR its artifact would not
+      # exist, and it runs on a macOS runner at a 10x minute multiplier.
+      - name: Build the P2 image the ISS interprets
+        working-directory: Firmware/MaDCore
+        run: pio run -e propeller2_debug
+      # On the runner -- and not on a developer machine -- the P2 build above
+      # removes .pio/build/native_emulator/libfirmware.a. The pinned copy keeps
+      # cargo linking, but anything that resolves the ORIGINAL path (the
+      # emulator's --firmware default, a test that spawns it) would still find
+      # nothing, so the copy goes back where it came from.
+      - name: Restore the native lib to its build-tree path
+        working-directory: Firmware/MaDCore
+        run: |
+          mkdir -p .pio/build/native_emulator
+          cp "$EMBSIM_FIRMWARE_LIB_DIR/libfirmware.a" .pio/build/native_emulator/libfirmware.a
+      # Decodes every hub instruction in the image just built (29k of them)
+      # and writes flexcc's own mnemonic for each, so decoder_golden.rs checks
+      # p2core against the compiler rather than against itself. The golden is
+      # gitignored precisely because it is a function of the current firmware;
+      # without this step that test skips even though the image now exists.
+      - name: Generate the decoder golden from the image
+        working-directory: SIL/p2core
+        run: python3 tools/gen_golden.py
+      # Every artifact the cargo steps depend on, checked in one place. A
+      # missing one used to surface three steps later as a build-script panic
+      # inside clippy, which is the wrong place to learn that pio cleaned a
+      # directory.
+      - name: Assert the firmware artifacts exist
+        run: |
+          fail=0
+          for f in "$EMBSIM_FIRMWARE_LIB_DIR/libfirmware.a" \
+                   Firmware/MaDCore/.pio/build/native_emulator/libfirmware.a \
+                   Firmware/MaDCore/.pio/build/propeller2_debug/program \
+                   SIL/p2core/tests/golden/hub_mnemonics.txt; do
+            if [ -s "$f" ]; then echo "ok   $f ($(wc -c < "$f") bytes)"; else echo "::error::missing or empty: $f"; fail=1; fi
+          done
+          exit $fail
       # rustfmt covers the crates this repo authors. The `protocol` crate is
       # excluded because its body is `#[path]`-included generated code that
       # `make protocol` rewrites on every build — formatting it would be undone
@@ -714,8 +785,15 @@ jobs:
       - name: Cargo test (blocking)
         working-directory: SIL
         # The workspace is the MaD-side crates only (protocol, models,
-        # MaDSim). The embsim submodule suite is re-run by the sibling
-        # `embsim-ci` job (mirror of protoemb-ci) on the pinned commit.
+        # MaDSim, p2core, p2iss). The embsim submodule suite is re-run by the
+        # sibling `embsim-ci` job (mirror of protoemb-ci) on the pinned commit.
+        #
+        # MAD_REQUIRE_P2_IMAGE turns "the image is missing, so skip" into a
+        # failure. A developer without a built image still gets skips; a CI job
+        # that lost its image build goes red instead of silently reverting to
+        # asserting nothing about the firmware that ships.
+        env:
+          MAD_REQUIRE_P2_IMAGE: '1'
         run: cargo test --workspace --all-targets
 
   # BLOCKING. MISRA/cppcheck via `pio check`. Low severity is disabled in
