@@ -9,7 +9,9 @@ silicon. This is the promotion step the P4 entry in
 
 Scoped 2026-09-18 against `feat/iss-rom-serial-flash` (uncommitted WIP included)
 and embsim `origin/main` at `21a25d5`. Revised 2026-09-19: embsim receives P2
-ISS items only, and flashing gets its own embsim test.
+ISS items only, and flashing gets its own embsim test. Revised again the same
+day: board ownership, the P2-EC32MB module goes to embsim, MaD's boards come
+home.
 
 **Bottom line:** feasible and mostly mechanical. `p2core` was written dep-free
 for exactly this, and embsim already carries `embsim-cpu-oracle` as the generic
@@ -56,10 +58,90 @@ built from P2 parts; see the bootloader test below.
 | `p2iss::sdimage::mad_card` | stays in `SIL/MaDSim` | generic `sdimage::build` and `Dir` go upstream |
 | 10 firmware acceptance tests, `decoder_golden.rs`, `tools/gen_golden.py` | stay in MaD under `SIL/MaDSim/tests/` | need the MaD P2 image and its flexcc listing |
 | `p2core/tests/flash_program.rs` | stays in MaD | reads the PWA's `image.ts`; embsim gets the bootloader test below instead |
+| P2-EC32MB module: `p2_ec32mb.net`, its registry, `ec32mb_module.rs` | embsim `mcus/p2/ec32mb/` as **`embsim-p2-ec32mb`** | today a test fixture in `embsim/board/tests/`; see Board ownership |
+| EdgeBoard + DS2: `mad_edge.net`, `ds2_addon.net`, their registry, harnesses, seven test binaries | MaD, new crate `SIL/boards/` | today inside embsim's test suite; see Board ownership |
 | `SIL/MaDSim/src/{main,iss_description}.rs`, `SIL/makefile`, `Software/Control/e2e/run-all.mjs` FW-ISS, four `docs/dev/sil-*.md`, `CLAUDE.md` | edited in the MaD bump PR | imports rename to the new crate names |
 
 Optional later: relocate `platforms/p2` to `mcus/p2/hal/` so the MCU library has
-one shape (native HAL trampolines, ISS, ISS-on-nets under one directory).
+one shape: `mcus/p2/{hal, iss, iss-net, ec32mb}` under one directory.
+
+---
+
+## Board ownership
+
+**The rule**, already written in embsim's `BOARD_ENGINE.md`: the engine is
+generic; part registry entries, harness files and plant wiring live in the
+consuming repo. Applied to boards: a **vendor module that carries the MCU** is
+part of simulating that MCU and belongs in embsim. A **board MaD designed** is
+MaD's and belongs in MaD. So the P2-EC32MB module goes to embsim, and the
+EdgeBoard carrier and the DS2 add-on come home.
+
+**Where things are today**, in `embsim/board/tests/`:
+
+| Fixture | Board | Consumed by |
+|---|---|---|
+| `fixtures/p2_ec32mb.net` | Parallax P2-EC32MB Rev B, transcribed from the vendor PDF, CC-BY-SA 4.0 | `ec32mb_module.rs`, `machine_system.rs` |
+| `fixtures/mad_edge.net` | MaD EdgeBoard, `kicad-cli` export, 3 sheets | `edgeboard.rs`, `isolation_bridge.rs`, `rs422_determinism.rs`, `machine_system.rs`, `hierarchical_netlist.rs`, `fixture_smoke.rs` |
+| `fixtures/ds2_addon.net` | MaD DS2 force-gauge add-on | `ds2_live_force_path.rs`, `ds2_regressions.rs`, `machine_system.rs`, `fixture_smoke.rs` |
+
+All three registries, every harness and every scenario fragment sit in one
+1,650-line test module, `machine_parts/mod.rs`, whose own header calls it the
+"transitional home before MaD grows its own registry". The P2 in it,
+`P2EdgeModule`, wraps the native `McuComponent` only; the ISS cannot mount on
+the module today. MaDSim meanwhile registers the ADS122U04 a second time in
+both system descriptions, so the DS2 registry exists twice.
+
+**Target, embsim side: `embsim-p2-ec32mb`.**
+
+- `p2_ec32mb.net` with its provenance header, the module registry (TCXO, 16 MB
+  SPI flash, PSRAM, buck, LDO, brown-out detector, DIP switch, polarity FET,
+  the 2G04 inverter), the `PCB`/`NC_Net` stub refs, and the 80-finger edge as
+  the module's harness surface. `ec32mb_module.rs` moves with it.
+- The module takes **either MCU**: the native `McuComponent` or `P2Iss`. `U100`'s
+  netlist pins are already named `P0`..`P63`, the same names `p2iss::pin_name`
+  gives the ISS, so mounting is a facade over `P2Iss` that declares the supply
+  pins `PowerIn`. When the ISS is mounted, the module's on-board flash stub is
+  replaced by the real `SpiFlash` node on the module's own P58..P61 nets.
+- The Edge-module bootloader test runs **on this module**, not on a bare ISS:
+  the ROM boots the P2 at `U100`, the flash is the module's, the serial
+  loader arrives on the P62/P63 edge fingers. That is what "test the P2 ISS
+  against the module" means in practice.
+
+**Target, MaD side: `SIL/boards/`, a new crate.**
+
+- `mad_edge.net`, `ds2_addon.net` (already duplicated at
+  `SIL/MaDSim/boards/`), the EdgeBoard and DS2 registries and stubs, the
+  harnesses (`module_socket_harness`, `force_gauge_harness`, `machine_harness`,
+  `bench_rails`) and scenario fragments, and the seven test binaries above.
+  MaDSim's two system descriptions consume this crate instead of registering
+  parts themselves.
+- No firmware link, so the tests run without `libfirmware.a`, and
+  `machine_system.rs` can mount the ISS module. MaD's `sil-rust` job runs them
+  as part of `cargo test --workspace`.
+- The design doc's Phase 3 gate, regenerating the netlists from `Hardware/` in
+  CI and diff-checking them, becomes a MaD CI step here. The vendor module
+  netlist is exempt, as the design doc already says.
+
+**Generic IC models stay generic.** The RS-422 driver and receiver
+(`AM26LS31`, `AM26LV32`) and the `ISO6731` serial isolator are TI parts with
+behaviour, currently test-local in `machine_parts`. Promote them into
+`embsim-models` next to the `ISO67xx`, `NSI50010`, `VO2631` and `ADS122U04`
+models that already live there. Only the registry entries that map MaD's BOM
+value strings onto those models go to MaD.
+
+**What embsim loses when the MaD boards leave, and must backfill first:**
+
+- `mad_edge.net` is the only hierarchical, three-sheet fixture. The netlist
+  parser needs a small synthetic hierarchical fixture upstream.
+- `isolation_bridge.rs` is the only test of `embsim_models::isolation`. Those
+  models need unit tests on a hand-built board.
+- `ds2_regressions.rs` holds the Phase 1 findings gate: floating `~RESET`,
+  unsourced AVDD, crossed TX/RX. The engine diagnostics they exercise need
+  synthetic equivalents upstream; the bench-truth versions stay MaD's.
+- `rs422_determinism.rs` follows the RS-422 models: re-express it on a synthetic
+  board when they move to `embsim-models`.
+- `BOARD_ENGINE.md` cites the EdgeBoard and DS2 in nine places and `TESTING.md`
+  in one; re-point them at the module and the synthetic fixtures.
 
 ---
 
@@ -94,11 +176,13 @@ and is written from P2 parts only.
 
 **Parts, all P2:**
 
-- the ISS with the boot ROM and the boot straps on P59/P60/P61 set for the
+- the P2-EC32MB module from `embsim-p2-ec32mb` with the ISS mounted at
+  `U100`, boot ROM in place, and the boot straps on P59/P60/P61 set for the
   flash path, as `rom_boot_net` sets them;
-- the `SpiFlash` model on the net (`flashnode`), initially blank;
-- a host on the programming UART driving bytes as levels onto P63 and reading
-  P62, as `rom_serial_net` does through `HostPty`;
+- the module's own SPI flash as the `SpiFlash` node (`flashnode`) on its
+  P58..P61 nets, initially blank;
+- a host on the programming UART driving bytes as levels onto the P63 edge
+  finger and reading P62, as `rom_serial_net` does through `HostPty`;
 - loadp2's `flash_loader.bin`, vendored from
   [totalspectrum/loadp2](https://github.com/totalspectrum/loadp2) (MIT) or
   assembled from its `.spin2` by the same script that builds the ROM. Never
@@ -218,8 +302,18 @@ Gates checked 2026-09-18 on this branch:
        vendor table + LICENSE, the board rename, the CI step and docs. Dep-free,
        so it can start now.
 4. [ ] **embsim PR B: `embsim-p2-iss-net`** from `p2iss` minus `mad_card` and
-       the firmware tests, plus the bootloader test. Can fold into A.
-5. [ ] **MaD bump PR:** bump the pin, delete `SIL/p2core` and `SIL/p2iss`, drop
+       the firmware tests. Can fold into A.
+5. [ ] **embsim PR C: `embsim-p2-ec32mb`** from the module half of
+       `machine_parts`, `ec32mb_module.rs` and `p2_ec32mb.net`, with the MCU
+       slot taking native or ISS; then the bootloader test on it. Promote the
+       RS-422 and `ISO6731` models into `embsim-models` and add the synthetic
+       fixtures and tests listed under Board ownership.
+6. [ ] **MaD boards PR:** create `SIL/boards/` from the EdgeBoard and DS2 half
+       of `machine_parts`, the two netlists, the harnesses and the seven test
+       binaries, copied from the pinned embsim commit; point both system
+       descriptions at it. Then **embsim PR D** deletes those files upstream,
+       and the next pin bump closes the loop.
+7. [ ] **MaD bump PR:** bump the pin, delete `SIL/p2core` and `SIL/p2iss`, drop
        them from `SIL/Cargo.toml`, re-home the acceptance tests, `flash_program`,
        `decoder_golden`, `gen_golden.py` and `mad_card` into MaDSim, update imports, `makefile`
        (`bootrom`, `ROM_IMAGE`, `playground-iss*`), `docs/dev/sil-*.md`, the
