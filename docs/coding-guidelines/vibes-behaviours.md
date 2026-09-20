@@ -37,9 +37,9 @@ Each expectation is its own row in the ledger, its own `BH-` number, and its own
 line in the report:
 
 ```
-- given a pause command with a duration
-  **exactly one pause is produced** BH-88
-  **the duration is kept in milliseconds without conversion** BH-89
+- **When** a pause command with a duration
+  - exactly one pause is produced `BH-88`
+  - the duration is kept in milliseconds without conversion `BH-89`
 ```
 
 | field | what it is |
@@ -55,6 +55,31 @@ one without its siblings reading as changed — the same reason `id` itself is
 stable. There is no v1: the old single-claim form is gone, and a v1 record is
 rejected rather than read, because accepting one would file every expectation of
 a test under a single identity.
+
+## The capability above the claim
+
+A row is a unit test described politely — *the records land in the file* —
+and a thousand of them grouped by file path read as a thousand mechanisms.
+What a reader wants first is *what is this a part of, and what is it for?*,
+and that is not in any row. So it is declared once, in
+[`vibes.capabilities.md`](../../vibes.capabilities.md) at the repo root: a
+heading per capability ending in the test-id areas it owns, and a paragraph
+written for the operator.
+
+```markdown
+## Test monitoring and data logging `firmware/monitor`
+
+During a test the machine ... writes every new load-cell reading to the SD
+card ... so a crash or power loss part-way through loses nothing already
+measured.
+```
+
+The area is the id up to its first dot, so no annotation changes. The PR
+report leads with which capabilities changed, groups every section under
+those headings in the file's order, and prints each paragraph once;
+`node Vibes/bin/vibes.mjs preview` with no filter is the whole ledger as a
+document. A new id area needs a heading — `vibes lint` refuses one without.
+Prefer an existing area; a capability may own several.
 
 ## How many expectations?
 
@@ -109,9 +134,9 @@ this repo. **If you have to explain a word, change the word.**
 Each field does one job. The report prints them together:
 
 ```
-- given one of the cores stops reporting that it is running
-  **the machine reports a core fault**
-  BH-352 · `src/APP/app_control.c#app_control_run`
+- **When** one of the cores stops reporting that it is running
+  - the machine reports a core fault `BH-352`
+  <sub>`src/APP/app_control.c#app_control_run`</sub>
 ```
 
 For a long time `then` was printed as the headline on its own, so it had to
@@ -128,6 +153,47 @@ an outcome when it is only a label.
 `then` still has to be specific enough that a bug makes it false, and it still
 has to carry any condition the scene does not establish. It simply must not
 repeat the scene it was handed.
+
+## The report supplies the frame — `given` finishes the sentence
+
+The renderer prints `**When** <given>` and nests the expectations under it, so
+`given` is the first half of a sentence somebody else already started. It has
+to name a **situation**, and read as one on the first pass. This reached the
+ledger with every rule above satisfied by each half on its own:
+
+> **When** *a byte left on the load-cell ADC serial link by an abandoned
+> exchange, then a start*
+
+"A byte **left**" garden-paths as a verb — the main clause never arrives — and
+", then a start" is a bare noun using the report's own word for the
+expectation. What it wanted to say:
+
+> **When** *a start of the load-cell ADC with a leftover byte on the link from
+> an abandoned exchange*
+
+Name a situation, not a thing. Sequence with `after`, `while`, `that begins
+with`; a second beat needs something happening in it. Watch a participle that
+is also a past tense right after a noun (`left`, `read`, `set`, `sent`,
+`held`, `run`). The one reliable check is not a rule: **render it and read
+it** — `vibes preview`, below.
+
+## An expectation is an outcome, not a step
+
+The same row failed the other way round: *"the leftover is flushed before the
+configuration read-back"* is a step in the driver's procedure — true, checked,
+and no use to a reader, who learns that something internal happens in some
+order and nothing about what the machine does. Its sibling is the claim:
+
+| | |
+|---|---|
+| BAD | the leftover is flushed before the configuration read-back |
+| GOOD | the start completes and the converter is converting |
+
+Test it: could an operator, or anyone outside that function, tell whether this
+held? If the only way to know is to watch the code run, it is a `why` at most.
+Mechanism is welcome in `why` (*"each register read is one request and one
+reply, so a leftover would shift every reply after it"*); it is not welcome in
+`then`, where it stands in for one.
 
 ## State the rule, not the instance
 
@@ -268,10 +334,19 @@ A runnable suite is declared by a committed `vibes.suite.json` next to it
 purpose). After adding or changing behaviours:
 
 ```bash
-node Vibes/bin/vibes.mjs collect --write   # regenerate behaviours.jsonl
+node Vibes/bin/vibes.mjs preview --given "…" --then "…"   # the composed line, as the PR shows it, then linted
+node Vibes/bin/vibes.mjs collect --write                  # regenerate behaviours.jsonl (runs every suite)
+node Vibes/bin/vibes.mjs lint                             # the decidable half of CLAIMS.md, over the ledger
 ```
 
-and commit the ledger with your change. CI (`Behaviour ledger` job) reports the
+`preview` and `lint` run no suite — use them while writing, not after. `lint`
+exits 4 on an error-level finding (names from the code, contrast words, vague
+claims); warnings (machinery in a claim, a garden-path scene) are advice. A
+word this repo genuinely uses that the defaults flag goes in
+`vibes.lint.json` at the repo root, scoped by path and with a `why`.
+
+Commit the ledger with your change. CI (`Behaviour ledger` job) reports the
 diff on every PR — as a single comment on the PR, edited in place on each run
 so it always shows the latest verdict, and in the job summary — and warns when
-the committed ledger is stale.
+the committed ledger is stale. A second job, `Behaviour wording`, runs
+`vibes lint` over the committed ledger and **blocks** the PR on an error.

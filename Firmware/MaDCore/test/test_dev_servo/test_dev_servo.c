@@ -829,10 +829,10 @@ void test_oscillate_returns_to_its_centre_after_whole_cycles(void)
 {
     VIBES_TEST("servo.oscillate-no-drift",
                "src/DEV/dev_servo.c#dev_servo_run",
-               "a waveform run by the driver instead of streamed as velocity");
+               "a waveform the driver runs from its own phase");
     VIBES_EXPECT_WHY("ends-where-it-started",
                      "the carriage ends a whole number of cycles back at its centre",
-                     "the setpoint is evaluated from phase rather than integrated from a rate, so there is no accumulator that can fall behind and stay behind");
+                     "the setpoint is evaluated from phase, so no accumulator exists that could fall behind and stay behind");
     VIBES_EXPECT_WHY("residual-does-not-grow-with-cycles",
                      "running four times as many cycles leaves exactly the same residual as one",
                      "drift and a settling offset both look like a small error at the end of one run; only running different cycle counts separates them, and an evaluated setpoint must show no per-cycle component at all");
@@ -883,8 +883,8 @@ void test_an_infeasible_waveform_is_rejected_not_approximated(void)
                "src/DEV/dev_servo.c#dev_servo_startWaveform",
                "a waveform whose peak acceleration exceeds the machine");
     VIBES_EXPECT_WHY("refused",
-                     "the driver refuses the move instead of running a smaller one",
-                     "running whatever the limiter allows yields a specimen that never saw the loading the report claims, which on a fatigue test is a wrong result rather than a slow one");
+                     "the driver refuses the move",
+                     "a specimen that never saw the loading the report claims is a wrong fatigue result, so a waveform the machine cannot deliver is refused outright");
 
     servo_init();
     /* maxAccel 500000 counts/s^2: omega^2*A at 10 Hz and 10000 counts is
@@ -1073,7 +1073,7 @@ void test_the_phase_accumulator_loses_nothing_over_whole_cycles(void)
                      "computing the step as (uint32)(freqHz*dt*2^32) discards a fraction of a phase unit every tick, always in the same direction, which is invisible over a few seconds and is 1.9 um of position error after an hour — a fatigue run is precisely the case that suffers and precisely the case a short test cannot see");
     VIBES_EXPECT_WHY("period-exact-to-within-a-tick",
                      "the cycles occupy the requested duration to better than one control tick",
-                     "a cycle cannot end between ticks, so one tick is the floor; anything worse is the generator's own frequency error rather than sampling");
+                     "a cycle cannot end between ticks, so one tick is the floor; a larger error comes from the generator's own frequency accuracy");
 
     /* Frequencies whose period is a whole number of 1 ms ticks, so the ideal
      * duration is exactly representable and any error is the accumulator's. */
@@ -1375,7 +1375,7 @@ void test_a_move_does_not_run_ahead_of_its_own_trajectory(void)
                      "a point-to-point move that arrives at the right place can still have travelled a different path to get there, and on a tensile test the path IS the loading history");
     VIBES_EXPECT_WHY("offset-does-not-scale-with-speed",
                      "the offset at 25 mm/s is the same as at 5 mm/s",
-                     "commanding the END-of-interval velocity rather than the interval average puts the machine exactly one control tick of travel ahead of its trajectory — an error invisible at low speed and proportional to it, which is the signature this check exists to catch");
+                     "the commanded velocity is the interval average; the end-of-interval value would put the machine exactly one control tick of travel ahead of its trajectory — an error invisible at low speed and proportional to it, which is the signature this check exists to catch");
 
     const int32_t mv = dev_servo_channelConfig[CH].maxVelocity;
     const int32_t feeds[3] = { mv / 10, mv / 4, mv / 2 };
@@ -1434,12 +1434,12 @@ void test_a_hold_at_one_peak_only(void)
                "a waveform asked to hold at the upper peak and not at the lower one");
     VIBES_EXPECT_WHY("holds-only-where-asked",
                      "the carriage holds at the upper peak for the requested time and does not hold at the lower one",
-                     "creep-fatigue is a hold at peak tension with no hold in compression, so a single symmetric dwell parameter cannot express the test that most needs one");
+                     "creep-fatigue is a hold at peak tension with no hold in compression, so one symmetric dwell setting cannot express the test that most needs one");
     VIBES_EXPECT_WHY("hold-is-stationary",
                      "the machine does not move while a hold is commanded",
                      "a hold that drifts is a slow ramp, and the specimen sees a different load history than the report claims");
     VIBES_EXPECT_WHY("period-is-unchanged",
-                     "the cycle still takes 1/f — the hold takes its time from the traverses, not from the period",
+                     "the cycle still takes 1/f, with the hold taking its time from the traverses",
                      "if dwell extended the period, adding a hold would silently change the frequency of a fatigue test");
 
     /* 0.5 Hz (2000 ticks/cycle), 0.4 s held at the top, nothing at the bottom. */
@@ -1488,7 +1488,7 @@ void test_a_cycle_whose_holds_leave_no_time_to_move_is_refused(void)
                "src/DEV/dev_servo.c#dev_servo_private_planWaveform",
                "holds that together ask for more than the whole period");
     VIBES_EXPECT_WHY("refused",
-                     "the driver refuses the cycle rather than shortening the holds to fit",
+                     "the driver refuses the cycle",
                      "silently trimming a hold gives a specimen a different dwell than the report claims, and dwell is the variable the test exists to study");
 
     servo_init();

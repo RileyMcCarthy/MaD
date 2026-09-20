@@ -20,21 +20,44 @@ extern void HAL_lock_mock_reset(void);
 /* ---- HAL_serial doubles ---- */
 static int d_startCount, d_stopCount;
 static uint8_t d_writtenReg[IO_ADS122U04_REGISTER_COUNT]; /* last value written per register */
-static int d_pendingReadReg;                              /* register a read was just requested for (-1 = none) */
-static bool d_readOk;                                     /* register read-back succeeds */
-static bool d_corruptReadback;                            /* return a wrong value on read-back */
+static bool d_readOk;                                     /* the device answers a register read at all */
+static bool d_corruptReadback;                            /* ... but with a wrong value */
 static bool d_sawReset, d_sawStart;
 static bool d_convOk;
 static uint8_t d_convBytes[3];
-/* Leftover bytes sitting in the RX FIFO (e.g. a late reply to a request that
- * already timed out). receiveConversion drains these before issuing RDATA, so
- * the double MUST model a finite backlog — an "always a byte available" double
- * makes that drain loop spin forever. */
+/* Replies the device has produced and the driver has not yet read, oldest
+ * first. A real UART delivers in order, so a reply the driver gave up waiting
+ * for is still at the head of the queue when the next exchange starts — that
+ * is the whole mechanism behind a desynchronised gauge, and a double that
+ * answered only the most recent request could never reproduce it. */
+static uint8_t d_replies[16];
+static int d_replyCount;
+/* How many upcoming register replies miss the receive that was waiting for
+ * them. The reply still lands on the link; it just arrives after the driver
+ * stopped listening — a reply in flight at the moment of a timeout. */
+static int d_lateReplies;
+static bool d_replyDeferred;       /* the next receive of a reply times out instead */
+/* Leftover bytes sitting in the RX FIFO from an abandoned exchange. The drain
+ * has to see a FINITE backlog here — an "always a byte available" double is a
+ * different scenario, and d_endlessStale models that one deliberately. */
 static int d_staleBytes;
 static bool d_endlessStale;        /* the link never goes quiet (device left streaming) */
-static int d_drainCount;           /* stale bytes actually consumed */
+static int d_drainCount;           /* bytes consumed by a zero-timeout receive, i.e. drained */
 static int d_drainedBeforeRdata;   /* value of d_drainCount when RDATA was sent */
 static bool d_sawRdata;
+
+static void d_queueReply(uint8_t v)
+{
+    if (d_replyCount < (int)sizeof(d_replies)) d_replies[d_replyCount++] = v;
+}
+
+static uint8_t d_takeReply(void)
+{
+    const uint8_t v = d_replies[0];
+    memmove(&d_replies[0], &d_replies[1], (size_t)(d_replyCount - 1));
+    d_replyCount--;
+    return v;
+}
 
 void HAL_serial_start(HAL_serial_channel_E ch) { (void)ch; d_startCount++; }
 void HAL_serial_stop(HAL_serial_channel_E ch) { (void)ch; d_stopCount++; }
@@ -49,7 +72,18 @@ void HAL_serial_transmitData(HAL_serial_channel_E ch, const uint8_t *const data,
     }
     else if (len == 2 && data[0] == SYNC && (data[1] & 0xE0) == 0x20)
     {
-        d_pendingReadReg = (data[1] - 0x20) >> 1; /* read register command */
+        const int reg = (data[1] - 0x20) >> 1; /* read register command */
+        if (d_readOk && reg >= 0 && reg < IO_ADS122U04_REGISTER_COUNT)
+        {
+            uint8_t v = d_writtenReg[reg];
+            if (d_corruptReadback) v = (uint8_t)(v ^ 0xFF);
+            d_queueReply(v);
+            if (d_lateReplies > 0)
+            {
+                d_lateReplies--;
+                d_replyDeferred = true;
+            }
+        }
     }
     else if (len == 2 && data[0] == SYNC && data[1] == CMD_RESET) d_sawReset = true;
     else if (len == 2 && data[0] == SYNC && data[1] == CMD_START) d_sawStart = true;
@@ -72,18 +106,22 @@ bool HAL_serial_recieveDataTimeout(HAL_serial_channel_E ch, uint8_t *const data,
         if (d_endlessStale || (d_staleBytes > 0))
         {
             if (d_staleBytes > 0) d_staleBytes--;
-            d_drainCount++;
+            if (timeout_us == 0U) d_drainCount++;
             data[0] = 0xAA;
             return true;
         }
-        if (d_pendingReadReg >= 0 && d_pendingReadReg < IO_ADS122U04_REGISTER_COUNT)
+        if (d_replyDeferred)
         {
-            /* Answering a read-register command. */
-            uint8_t v = d_writtenReg[d_pendingReadReg];
-            if (d_corruptReadback) v = (uint8_t)(v ^ 0xFF);
-            data[0] = v;
-            d_pendingReadReg = -1; /* one reply per request */
-            return d_readOk;
+            /* The reply is on its way but not here yet: this receive times
+             * out, and the reply is still queued for whoever reads next. */
+            d_replyDeferred = false;
+            return false;
+        }
+        if (d_replyCount > 0)
+        {
+            data[0] = d_takeReply();
+            if (timeout_us == 0U) d_drainCount++;
+            return true;
         }
         return false;
     }
@@ -103,7 +141,9 @@ void setUp(void)
     _stdio_debug_lock = HAL_lock_create();
     d_startCount = d_stopCount = 0;
     memset(d_writtenReg, 0, sizeof(d_writtenReg));
-    d_pendingReadReg = -1;
+    d_replyCount = 0;
+    d_lateReplies = 0;
+    d_replyDeferred = false;
     d_readOk = true;
     d_corruptReadback = false;
     d_sawReset = d_sawStart = false;
@@ -138,7 +178,7 @@ void test_start_writes_then_reads_back_all_five_registers(void)
 {
     VIBES_TEST("ads122.start-writes-and-verifies-config",
                "src/IO/IO_ADS122U04.c#IO_ADS122U04_start",
-               "a start of the load-cell ADC whose configuration read-back matches what was written");
+               "a start of the load-cell ADC whose converter answers the configuration check with what was written");
     VIBES_EXPECT("start-succeeds", "the start succeeds");
     VIBES_EXPECT("config-written", "the configuration is written to the converter");
     /* The echo read-back equals what was written, so verification passes; also
@@ -152,7 +192,7 @@ void test_start_fails_on_register_read_timeout(void)
 {
     VIBES_TEST("ads122.start-fails-on-read-timeout",
                "src/IO/IO_ADS122U04.c#IO_ADS122U04_start",
-               "a start of the load-cell ADC whose configuration read-back never arrives");
+               "a start of the load-cell ADC whose converter never answers the configuration check");
     VIBES_EXPECT("start-fails", "the start fails");
     VIBES_EXPECT("never-converts", "the converter is never told to begin converting");
     d_readOk = false; /* read-back times out */
@@ -249,7 +289,7 @@ void test_receiveConversion_drains_stale_bytes_before_requesting(void)
                "src/IO/IO_ADS122U04.c#IO_ADS122U04_receiveConversion",
                "leftover bytes sitting on the load-cell ADC serial link from a previous request, then a new conversion");
     VIBES_EXPECT_WHY("flushed-before-request",
-                     "the leftovers are flushed before the read request goes out",
+                     "none of the leftovers is taken for part of the reading",
                      "a conversion is three framed bytes; leftovers from a previous timed-out request would rotate every later reading");
     VIBES_EXPECT("signal-from-new-conversion", "the reported signal comes from the new conversion");
     d_staleBytes = 5;
@@ -271,35 +311,37 @@ void test_start_drains_stale_bytes_before_reading_registers(void)
 {
     VIBES_TEST("ads122.start-drains-stale-bytes",
                "src/IO/IO_ADS122U04.c#IO_ADS122U04_start",
-               "a byte left on the load-cell ADC serial link by an abandoned exchange, then a start");
+               "a start of the load-cell ADC with a leftover byte on the link from an abandoned exchange");
     VIBES_EXPECT_WHY("flushed-before-readback",
-                     "the leftover is flushed before the configuration read-back",
-                     "each register read is one request and one reply, so a leftover shifts every reply after it and the driver reads register N's value as register N+1's");
-    VIBES_EXPECT("start-succeeds", "the start still completes and the converter is running");
+                     "the configuration is verified against the converter's own replies",
+                     "each register read is one request and one reply, so a leftover would shift every reply after it and the driver would take register 0's value for register 1's");
+    VIBES_EXPECT("start-succeeds", "the start completes and the converter is converting");
     d_staleBytes = 1;
     TEST_ASSERT_TRUE(IO_ADS122U04_start(CH));
-    TEST_ASSERT_EQUAL_INT(1, d_drainCount);
+    TEST_ASSERT_EQUAL_INT(1, d_drainCount);  /* the leftover went nowhere near a verify */
     TEST_ASSERT_EQUAL_INT(0, d_staleBytes);
     TEST_ASSERT_TRUE(d_sawStart);
 }
 
-/* A start that fails its verify leaves replies queued. The next attempt has to
- * clear them, or the offset is inherited and the driver never recovers. */
+/* A reply that arrives after the driver stopped waiting for it is not gone —
+ * it is at the head of the queue when the next start begins, and read as the
+ * answer to a different request it would shift every reply after it. The
+ * double models exactly that: the reply lands, one receive too late. */
 void test_start_recovers_after_a_failed_attempt_left_replies_queued(void)
 {
     VIBES_TEST("ads122.start-recovers-from-desync",
                "src/IO/IO_ADS122U04.c#IO_ADS122U04_start",
-               "a start that fails its read-back and leaves unread replies, then a second start");
+               "a start of the load-cell ADC abandoned when a configuration reply is late, then a second start once that reply has arrived");
+    VIBES_EXPECT("first-attempt-fails", "the first start fails");
     VIBES_EXPECT_WHY("second-attempt-succeeds",
                      "the second start succeeds",
-                     "without flushing, the leftovers shift the next read-back too, so a driver that desynchronises once would stay unresponsive for good");
-    d_corruptReadback = true;
+                     "the late reply is still on the link when the second start begins, and taken as the answer to a different request it would shift every reply after it");
+    d_lateReplies = 1;
     TEST_ASSERT_FALSE(IO_ADS122U04_start(CH));
-    /* Whatever that attempt abandoned is still on the wire. */
-    d_corruptReadback = false;
-    d_staleBytes = 3;
+    TEST_ASSERT_EQUAL_INT(1, d_replyCount);  /* the failed attempt genuinely left its reply behind */
     TEST_ASSERT_TRUE(IO_ADS122U04_start(CH));
-    TEST_ASSERT_EQUAL_INT(0, d_staleBytes);
+    TEST_ASSERT_EQUAL_INT(0, d_replyCount);
+    TEST_ASSERT_TRUE(d_sawStart);
 }
 
 /* A device left streaming supplies bytes forever. The drain has to give up and
@@ -311,8 +353,8 @@ void test_drain_gives_up_on_a_link_that_never_goes_quiet(void)
                "src/IO/IO_ADS122U04.c#IO_ADS122U04_start",
                "a load-cell ADC link that never goes quiet, because the converter was left streaming");
     VIBES_EXPECT_WHY("drain-terminates",
-                     "the driver stops draining instead of waiting for silence that never comes",
-                     "an unbounded drain on a streaming link hangs the force-gauge cog, and with it the machine");
+                     "the start gives up in bounded time",
+                     "waiting for silence on a link that streams would hang the force-gauge cog, and with it the machine");
     d_endlessStale = true;
     (void)IO_ADS122U04_start(CH); /* must RETURN — pass or fail, but return */
     TEST_ASSERT_LESS_OR_EQUAL_INT(16 * IO_ADS122U04_REGISTER_COUNT, d_drainCount);

@@ -526,6 +526,32 @@ jobs:
           rustup toolchain install "$MSRV" --profile minimal
           cargo "+$MSRV" build --workspace
 
+  # BLOCKING. The decidable half of Vibes/bindings/CLAIMS.md, run over the
+  # committed ledger: names from the code, contrast words, vague claims,
+  # machinery in a claim. It reads behaviours.jsonl and runs no suite, so it is
+  # cheap enough to gate every PR — and it has to gate, because a wording rule
+  # enforced only by a reviewer's eye is the rule that let "a byte left on the
+  # link ..., then a start" into the ledger. Repo-specific allowances live in
+  # vibes.lint.json, scoped by path.
+  vibes-lint:
+    name: Behaviour wording
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      # Only the Vibes submodule; the others are large and irrelevant here.
+      - name: Fetch Vibes
+        run: git submodule update --init Vibes
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - name: Build Vibes
+        working-directory: Vibes
+        run: npm ci --no-audit --no-fund && npm run build
+      - name: Lint every claim in the ledger
+        run: node Vibes/bin/vibes.mjs lint
+
   # BLOCKING, pin-bumps only. Mirror of upstream RileyMcCarthy/vibes CI for the
   # tool + three binding compile probes — without re-running MaD's Behaviour
   # ledger suites. `vibes` (Behaviour ledger) stays informational and unchanged;
@@ -1095,6 +1121,7 @@ jobs:
       - embsim-ci
       - embsim-pin-ci
       - vibes-pin-ci
+      - vibes-lint
       - docs-ci
       - firmware-unit-tests
       - protocol-codegen

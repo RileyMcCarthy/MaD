@@ -196,9 +196,9 @@ describe('DataStore mutex + index integrity', () => {
     {
       id: 'storage.next-test-name-is-monotonic',
       covers: 'src/storage/DataStore.ts#nextTestName',
-      given: 'eight callers asking for the next test name at the same time',
+      given: 'eight requests for the next test name at the same time',
       expect: {
-        'names-differ': 'each caller gets a different name',
+        'names-differ': 'each request gets a different name',
         'consecutive-block': 'the eight names form a consecutive block',
       },
       why: { 'names-differ': 'two tests started together must not share a name, or one would overwrite the other' },

@@ -326,7 +326,7 @@ describe('generateTestGcode — waveform (math) move', () => {
       },
       why: {
         'authored-shape':
-          'this was pinned to sine while app_motion masked the shape bit off and ran sinf regardless, so emitting W1 would have promised a triangle and delivered a sine; the driver honours it now, so the promise can be kept',
+          'the shape written into the canned cycle is the one the driver runs, so it has to be the one the author chose',
       },
     },
     () => {
