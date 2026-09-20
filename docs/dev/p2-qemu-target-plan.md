@@ -137,7 +137,7 @@ globals.
 > knows which single following instruction is dynamic. Measured on the real
 > firmware, that is **0.0999 %** of instructions; the other **99.9 %** have
 > static D/S resolved at translate time. Measured cost: **0.988 ns static,
-> 2.258 ns dynamic, 0.989 ns weighted** — against a 5.29 ns budget.
+> 2.258 ns dynamic, 0.989 ns weighted** — against a 4.47 ns budget.
 
 Cog RAM is also the instruction memory at `$000–$1FF`. **Spike 0b settled how
 to handle that** (see its findings under Phase 0):
@@ -345,8 +345,8 @@ translation. At ~60 ns entry the conservative row becomes 0.96x.
 **Verdict: proceed.** ~~0.5–0.8x~~ — *superseded*: that projection divided a
 budget=1 slice cost by the quantum, which overstates the operational cost ~2x.
 [Spike 0a-2](../../SIL/spikes/qemu-0a2-entry-cost/RESULTS.md) measured slice
-overhead at the operational point (**2.279 ns/inst stock, 1.216 after
-legitimate ablations**), leaving **5.29 ns ≈ 18.5 host cycles** per JIT'd P2
+overhead at the operational point (**~2.39 ns/inst stock, 1.979 after
+*sound* ablations**), leaving **4.47 ns ≈ 15.7 host cycles** per JIT'd P2
 instruction. That is enough for the `EEEE` test + two runtime-indexed register
 loads + ALU + store + flags + clock add. **1.0x is reachable and the plan's
 justification stands.**
@@ -372,7 +372,7 @@ than on the net) removes the round-trip entirely.
 | [0a](../../SIL/spikes/qemu-0a-unicorn/RESULTS.md) — drive TCG from Rust | PASSED — callback 19–27 ns, exact slices, no thread hop |
 | [0b](../../SIL/spikes/qemu-0b-smc/RESULTS.md) — cog RAM = registers + code | PASSED via the hybrid; Option A dead by 20x |
 | [0c](../../SIL/spikes/qemu-0c-interleaving/RESULTS.md) — interleaving | no kill; firmware tolerates a quantum of 48 |
-| [0a-2](../../SIL/spikes/qemu-0a2-entry-cost/RESULTS.md) — slice entry cost | PASSED — 5.29 ns (~18.5 host cycles) per JIT'd instruction |
+| [0a-2](../../SIL/spikes/qemu-0a2-entry-cost/RESULTS.md) — slice entry cost | PASSED — 4.47 ns (~15.7 host cycles) per JIT'd instruction |
 | [0d](../../SIL/spikes/qemu-0d-pin-transport/RESULTS.md) — pin transport / parity | PASSED — ~10x `p2core` worst case; 1.37x worst conceivable |
 
 Plus, from Phase 1's first jobs:
@@ -394,8 +394,14 @@ to **2.6 %**. The largest single term is now **slice entry at 55 %** — and
 0a-2 already showed most of that is removable in a library build.
 
 End-to-end, bounded across the whole plausible interpreter range (0.82 ns
-measured probe → 18.5 ns for `p2core`'s full semantics): **2.75x to 4.30x real
+measured probe → 18.5 ns for `p2core`'s full semantics): **2.25x to 3.19x real
 time**. The conclusion no longer depends on which end you believe.
+
+> Corrected 2026-09-20: these were first published as 2.75–4.30x, using a
+> slice-entry figure that included an **unsound BQL ablation** (holding the BQL
+> across `tcg_cpu_exec` trips `g_assert(!bql_locked())` on the interrupt path;
+> it only survived because a nop loop takes no interrupts). The sound
+> slice-entry figure is 1.979 ns/inst.
 
 The optimisation target, if one is ever needed, is **how cheaply the Rust host
 re-enters TCG**. Everything else is already small.

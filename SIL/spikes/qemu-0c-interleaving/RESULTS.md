@@ -11,8 +11,10 @@ Phase 0. Artefacts and how to re-run: [`README.md`](README.md).
 > cost by ~2x — at budget 1 every instruction needs its own budget-cut TB and
 > block chaining never engages. Measured directly at the operational point,
 > stock slice overhead is **2.279 ns/inst**, not 4.56, and after legitimate
-> ablations **1.216**. The budget for a JIT'd P2 instruction is therefore
-> **5.29 ns (~18.5 host cycles)**, not 1.70 ns, and **1.0x is reachable**.
+> ablations **1.979** (corrected 2026-09-20 — 0a-2's BQL ablation was unsound).
+> The budget for a JIT'd P2 instruction is therefore **4.47 ns (~15.7 host
+> cycles)**, not 1.70 ns, and **1.0x is reachable** — Spike 1a has since
+> measured the instruction at 0.99 ns.
 > Everything else in this document — the quantum the firmware tolerates, the
 > 8-vCPU result, the fast-forward multiplier — stands.
 

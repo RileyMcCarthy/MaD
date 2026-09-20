@@ -69,7 +69,7 @@ Two consequences:
 Assume the *pessimal* thing: every pin drive is a net edge needing the host
 round-trip. Using 0c's measured gap histogram over the real firmware
 (200 M instructions), `p2core` at 42 ns/inst and a JIT'd P2 instruction at
-4 ns/inst (0a-2 budgeted 5.29):
+4 ns/inst (0a-2's budget is 4.47; Spike 1a later measured 0.99):
 
 ```
   break-even: 1.41 instructions per net edge — QEMU wins above that
@@ -107,7 +107,7 @@ and the realistic case is a 4–10x win. That is the parity question answered.
 | 0a — drive TCG from Rust | PASSED (callback 19–27 ns, exact slices) |
 | 0b — cog RAM = registers + code | PASSED via the hybrid (Option A dead by 20x) |
 | 0c — interleaving | no kill; firmware tolerates quantum 48 |
-| 0a-2 — slice entry cost | PASSED — 5.29 ns (~18.5 host cycles) per JIT'd instruction |
+| 0a-2 — slice entry cost | PASSED — 4.47 ns (~15.7 host cycles) per JIT'd instruction |
 | **0d — pin transport / parity** | **PASSED — ~10x `p2core` worst case, 1.37x worst conceivable** |
 
 Phase 0 is complete and nothing kills the project.
@@ -115,8 +115,9 @@ Phase 0 is complete and nothing kills the project.
 ## Caveats
 
 - The 4 ns/inst JIT figure is a projection, not a measurement — no P2 target
-  exists yet. 0a-2 budgeted 5.29 ns to hit 1.0x, so 4 ns is inside it, but the
-  first real `translate.c` is what settles it.
+  exists yet. 0a-2 budgeted 4.47 ns to hit 1.0x, so 4 ns is inside it — and
+  Spike 1a has since measured a real P2 instruction at **0.99 ns**, which widens
+  the margin considerably and makes this table conservative.
 - The gap histogram is from a boot-dominated window. The sustained-density table
   above exists precisely because a genuinely SD-heavy window was not captured;
   it bounds the answer for any density.

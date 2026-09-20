@@ -5,8 +5,8 @@ Artefacts: [`README.md`](README.md).
 
 **Verdict: the interpreter is not the bottleneck. A real P2 cog interpreter costs
 0.82 ns/instruction measured, and even at `p2core`'s full-semantics rate the
-end-to-end answer stays above 2.7x real time. The term that Spike 1a made the
-dominant cost is, in fact, 2.6 % of it.**
+end-to-end answer stays above 2.2x real time. The term that Spike 1a made the
+dominant cost is, in fact, under 2 % of it.**
 
 Measured 2026-09-20, M2, patched `qemu-system-riscv32` v10.1.0.
 
@@ -64,13 +64,18 @@ quantum, which is exactly the hybrid's shape.
 
 | cog-exec interpreter | ns/inst | M inst/s | real-time factor |
 |---|---|---|---|
-| **0.82 ns** — this probe (lower bound) | 2.19 | 456 | **4.30x** |
-| 3 ns — a plausible real interpreter | 2.35 | 426 | 4.02x |
-| 8 ns — pessimistic | 2.69 | 371 | 3.50x |
-| **18.5 ns** — `p2core` full semantics (upper bound) | 3.43 | 292 | **2.75x** |
-| *(47 ns — 1a's stand-in, for reference)* | *5.42* | *185* | *1.74x* |
+| **0.82 ns** — this probe (lower bound) | 2.96 | 338 | **3.19x** |
+| 3 ns — a plausible real interpreter | 3.11 | 322 | 3.03x |
+| 8 ns — pessimistic | 3.46 | 289 | 2.73x |
+| **18.5 ns** — `p2core` full semantics (upper bound) | 4.19 | 239 | **2.25x** |
+| *(47 ns — 1a's stand-in, for reference)* | *6.18* | *162* | *1.53x* |
 
-**Across the entire range the answer stays above 2.7x real time.** The
+> **Corrected 2026-09-20.** These used 0a-2's slice-entry figure of 1.216
+> ns/inst, which included an **unsound BQL ablation**; the sound figure is
+> **1.979**. Every row moved down by ~0.77 ns/inst. The conclusion —
+> comfortably above 1.0x across the whole range — is unchanged.
+
+**Across the entire range the answer stays above 2.2x real time.** The
 conclusion no longer depends on which end of the bound you believe — which is
 the point of bounding it.
 
@@ -78,16 +83,16 @@ Term breakdown at the measured 0.82 ns (ablated slice):
 
 | term | ns | share |
 |---|---|---|
-| slice entry | 1.22 | 55 % |
-| hubexec JIT | 0.92 | 42 % |
-| **cog-exec interpretation** | **0.06** | **2.6 %** |
+| slice entry | 1.98 | 67 % |
+| hubexec JIT | 0.92 | 31 % |
+| **cog-exec interpretation** | **0.06** | **1.9 %** |
 
 ## The assumptions have now inverted twice
 
 - The plan assumed the **JIT** would be the hard part. 1a measured it at 0.99 ns
   and made the **interpreter** look dominant at 61 %.
-- 1b measures the interpreter and it collapses to 2.6 %. **Slice entry is now
-  the largest single term at 55 %** — and 0a-2 already showed most of it is
+- 1b measures the interpreter and it collapses to 1.9 %. **Slice entry is now
+  the largest single term at 67 %** — and 0a-2 already showed most of it is
   removable in a library build (Apple W^X toggling, TLS, BQL/replay mutexes,
   QEMU's timer scan), with the irreducible part being `cpu_exec` entry itself.
 
