@@ -8,7 +8,8 @@ silicon. This is the promotion step the P4 entry in
 ("Spike may live in MaD `SIL/p2core/` then promote").
 
 Scoped 2026-09-18 against `feat/iss-rom-serial-flash` (uncommitted WIP included)
-and embsim `origin/main` at `21a25d5`.
+and embsim `origin/main` at `21a25d5`. Revised 2026-09-19: embsim receives P2
+ISS items only, and flashing gets its own embsim test.
 
 **Bottom line:** feasible and mostly mechanical. `p2core` was written dep-free
 for exactly this, and embsim already carries `embsim-cpu-oracle` as the generic
@@ -16,8 +17,15 @@ half of the silicon-golden method. The silicon, ROM and pure tests replay from
 committed assets, so they gate embsim CI with no board and no MaD firmware.
 The acceptance tests that need MaD's `propeller2_debug/program` stay in MaD.
 Three things need untangling first: the MaD-specific bits inside the crates,
-the flash-stub fixture the ISS tests borrow from the PWA, and the Vibes path
+the flash test that borrows its stub from the PWA, and the Vibes path
 dependency.
+
+**The rule:** embsim receives **P2 ISS items only**. No MaD tests, no MaD
+software, no MaD firmware image, nothing that reads from `Software/` or
+`Firmware/`. A test written in MaD that exercises only the chip (ROM, flash,
+silicon goldens) is a P2 item and moves. A test that needs MaD's image or the
+PWA stays in MaD, and where embsim needs the same coverage it gets its own test
+built from P2 parts; see the bootloader test below.
 
 ---
 
@@ -26,7 +34,7 @@ dependency.
 | Piece | Size | Notes |
 |---|---|---|
 | `p2core/src` | ~10.5k lines incl. the generated decoder | zero dependencies by design |
-| `p2core/tests` | 15 files, ~3.2k lines | 11 portable, 3 need MaD firmware or its flexcc listing, 1 reads the PWA's vendored loadp2 stub |
+| `p2core/tests` | 15 files, ~3.2k lines | 11 portable, 3 need MaD firmware or its flexcc listing, 1 reads the PWA's vendored loadp2 stub and stays |
 | `p2core/examples` | 30 files | 8 default to the MaD firmware path |
 | `p2core/hwtest` | 5 FlexC/Spin programs, 1.5 MB goldens, 2 baselines, 2 capture tools | replay needs nothing; capture needs flexcc + loadp2 + a P2-EVAL |
 | `p2core/vendor/parseUtils.ts` | 238 KB | PNut-TS encoding table, MIT per README, no in-file header |
@@ -47,6 +55,7 @@ dependency.
 | `SIL/p2iss` | embsim `mcus/p2/iss-net/` as **`embsim-p2-iss-net`** | name is a call to make; it depends on `embsim-board`, so it stays a second crate |
 | `p2iss::sdimage::mad_card` | stays in `SIL/MaDSim` | generic `sdimage::build` and `Dir` go upstream |
 | 10 firmware acceptance tests, `decoder_golden.rs`, `tools/gen_golden.py` | stay in MaD under `SIL/MaDSim/tests/` | need the MaD P2 image and its flexcc listing |
+| `p2core/tests/flash_program.rs` | stays in MaD | reads the PWA's `image.ts`; embsim gets the bootloader test below instead |
 | `SIL/MaDSim/src/{main,iss_description}.rs`, `SIL/makefile`, `Software/Control/e2e/run-all.mjs` FW-ISS, four `docs/dev/sil-*.md`, `CLAUDE.md` | edited in the MaD bump PR | imports rename to the new crate names |
 
 Optional later: relocate `platforms/p2` to `mcus/p2/hal/` so the MCU library has
@@ -60,7 +69,7 @@ one shape (native HAL trampolines, ISS, ISS-on-nets under one directory).
 |---|---|---|---|
 | Silicon goldens only | `op_coverage`, `probe_coverage`, `silicon_oracle`, `silicon_probe`, `silicon_reports` | | **yes** |
 | P2 boot ROM only | `rom_boot_chain`, `rom_serial` | `rom_boot_net`, `rom_serial_net` | **yes** |
-| P2 boot ROM + loadp2's `flash_loader.bin`, read today from `Software/Control/src/firmware/image.ts` | `flash_program` | | **yes**, once the stub is vendored upstream |
+| P2 boot ROM + loadp2's `flash_loader.bin`, read today from `Software/Control/src/firmware/image.ts` | `flash_program` | | no, stays in MaD; superseded upstream by the bootloader test |
 | Nothing | `poll_fast_forward`, `sd_block_write` | | **yes** |
 | MaD `propeller2_debug/program` | `block_fill`, `boot`, `per_cog_dir`, `sd_spi_words` | `level_pins`, `protocol_on_levels`, `pty_protocol`, `sd_mount`, `sd_node` | no, stays in MaD |
 | MaD image **and** its flexcc `.p2asm` listing | `decoder_golden` | | no, stays in MaD |
@@ -70,6 +79,63 @@ one-instruction records from a P2-EVAL, the two baselines record the 98 cases
 in 12 mnemonics that still diverge, and the gate fails on any *unlisted*
 divergence and on any listed one that starts matching. That burn-down list
 becomes embsim's.
+
+---
+
+## The Edge-module bootloader test
+
+embsim has to prove the flashing chain works on the Edge module with no MaD
+software in the loop: the P2 MCU, its boot ROM, the SPI flash on P58–P61, and
+the flashing sequence injected over the serial bus on P62/P63. `flash_program.rs`
+proves half of this today, since the real loadp2 stub runs as machine code and
+programs the flash, but it takes the stub from the PWA and places the image in
+hub by hand, skipping the ROM's serial loader. This test covers the whole chain
+and is written from P2 parts only.
+
+**Parts, all P2:**
+
+- the ISS with the boot ROM and the boot straps on P59/P60/P61 set for the
+  flash path, as `rom_boot_net` sets them;
+- the `SpiFlash` model on the net (`flashnode`), initially blank;
+- a host on the programming UART driving bytes as levels onto P63 and reading
+  P62, as `rom_serial_net` does through `HostPty`;
+- loadp2's `flash_loader.bin`, vendored from
+  [totalspectrum/loadp2](https://github.com/totalspectrum/loadp2) (MIT) or
+  assembled from its `.spin2` by the same script that builds the ROM. Never
+  read from the PWA;
+- a tiny payload built like the `hwtest` programs and committed as a binary,
+  whose only job is to print a marker on P62.
+
+**Sequence injected on the wire.** This is the ROM's own protocol, the one
+loadp2 speaks, not anything of MaD's:
+
+1. reset, then `> Prop_Chk 0 0 0 0  `; expect `\r\nProp_Ver G`;
+2. `> Prop_Hex 0 0 0 0` followed by the hex of the stub then the payload, the
+   header longs patched the way loadp2 patches them so the checksum lands on
+   `"Prop"`, sent in chunks and terminated by `~`;
+3. the ROM launches the download from hub `$0`; the stub erases and programs
+   the flash over P58–P61 and reboots;
+4. the ROM's strap decision now takes the flash path, loads the first
+   kilobyte, verifies `"Prop"`, and launches loadp2's stage-1, which loads the
+   payload.
+
+**Assert:** the flash holds loadp2's stage-1 at `$000` with a valid checksum
+and the payload after it, and after the reboot the payload's marker appears on
+P62.
+
+**Work it implies:** the ROM's hex download path executes on the ISS for the
+first time, since `rom_serial` stops at `Prop_Chk`; loadp2's production stage-1
+uses Fast Read Dual Output, which the flash model does not implement today
+(`$03`, `$02`, `$06`, `$20`, `$D8` and `$C7` are there); the stub itself already
+runs (`SKIP`, `LOC PTRA`, the streamer on a transition pin), per the
+`flash_program` WIP. It lives in `embsim-p2-iss-net`, because "over the serial
+bus" means levels on nets; a core-level twin through `Board::push_rx` is cheap
+once it passes.
+
+The simulator-only `stage1.spin2` and `flashimage.rs` chain (`rom_boot_chain`,
+`rom_boot_net`) stays as a P2 item: it is the fast unit-level boot chain, and
+the bootloader test is the acceptance check with the real stage-1. MaD keeps
+`FW-ISS` in `run-all.mjs` as its own test of the PWA against this ROM.
 
 ---
 
@@ -113,25 +179,23 @@ Gates checked 2026-09-18 on this branch:
 - [ ] **`p2iss::sdimage::mad_card`** builds MaD's FAT layout (profile record and
       two directories). Keep `build`/`Dir` upstream; move `mad_card` and its unit
       test `the_mad_card_has_the_directories_the_firmware_opens_into` to MaDSim.
-- [ ] **`flash_program.rs` reads loadp2's flash stub out of the PWA.** It decodes
-      the base64 in `Software/Control/src/firmware/image.ts` on purpose, so the
-      test exercises the bytes the app ships. embsim cannot reach that file.
-      Vendor `flash_loader.bin` (496 bytes, loadp2, MIT) into the ISS crate and
-      expose it as a `pub const`; keep a MaD test asserting the app's base64
-      decodes to the upstream bytes, which preserves the one-copy intent as a
-      cross-check instead of a shared path.
+- [ ] **`flash_program.rs` stays in MaD.** It decodes the base64 in
+      `Software/Control/src/firmware/image.ts` on purpose, so it exercises the
+      bytes the app ships; that makes it a MaD test. Two cases inside it are pure
+      ISS facts and move upstream as plain tests:
+      `loc_ptra_writes_the_absolute_hub_address` and
+      `skip_cancels_a_slot_without_decoding_it`. The flashing coverage embsim
+      needs comes from the bootloader test above, not from this file.
 - [ ] **ROM assets** move into the ISS crate; `p2iss` and the tests read them
       from there instead of `../p2iss/rom`.
 - [ ] **Vibes.** `flash_program`, `rom_serial` and `rom_serial_net` declare
       behaviours through `vibes-behaviour`, a path dep into MaD's `Vibes`
       submodule that embsim does not have. Eight claims in `behaviours.jsonl`
-      cite them and `SIL/vibes.suite.json` runs them. Recommended: move the tests
-      unannotated, drop the eight claims and the three suite commands. The
-      Prop_Chk handshake is a ROM fact; MaD's `FW-ISS` e2e suite is the MaD-side
-      claim for UI flashing. The four `p2.flash-stub-programs-spi` claims are
-      worded "given the app's flash stub"; their MaD-side successor is the
-      stub-equality test above, which can carry one claim of its own. Alternative:
-      thin annotated wrappers kept in MaD.
+      cite them and `SIL/vibes.suite.json` runs them. `flash_program` stays, so
+      its six claims stay. `rom_serial` and `rom_serial_net` move unannotated;
+      drop their two claims and the two suite commands. The Prop_Chk handshake is
+      a ROM fact, and MaD's `FW-ISS` e2e suite remains the MaD-side claim for UI
+      flashing.
 - [ ] **`tools/gen_golden.py`** defaults to MaD's `program.p2asm`; it stays in
       MaD with `decoder_golden`.
 - [ ] **Examples:** 8 of 30 in `p2core` and 3 of 4 in `p2iss` default to the MaD
@@ -154,10 +218,10 @@ Gates checked 2026-09-18 on this branch:
        vendor table + LICENSE, the board rename, the CI step and docs. Dep-free,
        so it can start now.
 4. [ ] **embsim PR B: `embsim-p2-iss-net`** from `p2iss` minus `mad_card` and
-       the firmware tests. Can fold into A.
+       the firmware tests, plus the bootloader test. Can fold into A.
 5. [ ] **MaD bump PR:** bump the pin, delete `SIL/p2core` and `SIL/p2iss`, drop
-       them from `SIL/Cargo.toml`, re-home the acceptance tests, `decoder_golden`,
-       `gen_golden.py` and `mad_card` into MaDSim, update imports, `makefile`
+       them from `SIL/Cargo.toml`, re-home the acceptance tests, `flash_program`,
+       `decoder_golden`, `gen_golden.py` and `mad_card` into MaDSim, update imports, `makefile`
        (`bootrom`, `ROM_IMAGE`, `playground-iss*`), `docs/dev/sil-*.md`, the
        Vibes suite and ledger, and `CLAUDE.md`. The existing `embsim-ci` job
        then runs the silicon suite on every SIL PR through the pinned commit.
