@@ -169,7 +169,17 @@ and its wire contract `Vibes/bindings/SCHEMA.md`. Tool changes go upstream first
    `vibes.lint.json`, scoped by path, with a `why`. CI runs `vibes lint` over
    the whole ledger and blocks on errors.
 
-17. **After changing behaviours:** `node Vibes/bin/vibes.mjs collect --write`
+17. **Every id area has a capability paragraph in `vibes.capabilities.md`.**
+   The area is the id up to its first dot (`monitor.logging-writes-a-row` →
+   `monitor`); the report groups rows under the capability that owns it and
+   prints its paragraph above them. A NEW area needs a heading there —
+   `## <title> \`<suite>/<area>\`` and a paragraph written for the operator:
+   what the machine does for them, why it matters (what is lost if it fails),
+   and only then the shape of the thing. It is not a summary of the tests.
+   `vibes lint` refuses an area with no heading. Prefer an existing area over
+   a new one; a capability may own several areas.
+
+18. **After changing behaviours:** `node Vibes/bin/vibes.mjs collect --write`
    and commit `behaviours.jsonl` alongside the change.
 
 ## Snippets

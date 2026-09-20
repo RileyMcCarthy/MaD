@@ -56,6 +56,31 @@ stable. There is no v1: the old single-claim form is gone, and a v1 record is
 rejected rather than read, because accepting one would file every expectation of
 a test under a single identity.
 
+## The capability above the claim
+
+A row is a unit test described politely — *the records land in the file* —
+and a thousand of them grouped by file path read as a thousand mechanisms.
+What a reader wants first is *what is this a part of, and what is it for?*,
+and that is not in any row. So it is declared once, in
+[`vibes.capabilities.md`](../../vibes.capabilities.md) at the repo root: a
+heading per capability ending in the test-id areas it owns, and a paragraph
+written for the operator.
+
+```markdown
+## Test monitoring and data logging `firmware/monitor`
+
+During a test the machine ... writes every new load-cell reading to the SD
+card ... so a crash or power loss part-way through loses nothing already
+measured.
+```
+
+The area is the id up to its first dot, so no annotation changes. The PR
+report leads with which capabilities changed, groups every section under
+those headings in the file's order, and prints each paragraph once;
+`node Vibes/bin/vibes.mjs preview` with no filter is the whole ledger as a
+document. A new id area needs a heading — `vibes lint` refuses one without.
+Prefer an existing area; a capability may own several.
+
 ## How many expectations?
 
 Let the test's assertions decide, not the sentence structure.
