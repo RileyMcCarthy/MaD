@@ -6,3 +6,1198 @@ on:
       - 'Software/**'
       - 'Firmware/**'
       - 'Hardware/**'
+      # Submodule pin bumps land as gitlink changes at Protocol/ProtoEmb,
+      # SIL/embsim, and Vibes; .gitmodules changes repoint the submodule URLs.
+      - 'Protocol/**'
+      - 'SIL/**'
+      - 'Vibes'
+      - '.gitmodules'
+      # The docs site is built with `mkdocs build --strict` here as well as in
+      # pages.yml, so a broken nav/link fails the PR instead of the deploy.
+      - 'docs/**'
+      - 'mkdocs.yml'
+    tags:
+      - 'firmware-v*'
+      - 'hardware-v*'
+  # Run on every PR (no path filter) so the aggregating "CI Gate" check below
+  # always reports a status. Required status checks that never run would block a
+  # PR forever; the per-component jobs are still gated by the `changes` job, so a
+  # docs-only PR just skips them and the gate passes in seconds.
+  pull_request:
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  # Determine which components need to be built based on changed files
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      firmware: ${{ steps.changes.outputs.firmware }}
+      hardware: ${{ steps.changes.outputs.hardware }}
+      wasm_control: ${{ steps.changes.outputs.wasm_control }}
+      protocol: ${{ steps.changes.outputs.protocol }}
+      sil: ${{ steps.changes.outputs.sil }}
+      docs: ${{ steps.changes.outputs.docs }}
+      embsim_pin: ${{ steps.changes.outputs.embsim_pin }}
+      protoemb_pin: ${{ steps.changes.outputs.protoemb_pin }}
+      vibes_pin: ${{ steps.changes.outputs.vibes_pin }}
+      is_release: ${{ startsWith(github.ref, 'refs/tags/') }}
+      is_firmware_release: ${{ startsWith(github.ref, 'refs/tags/firmware-v') }}
+      is_hardware_release: ${{ startsWith(github.ref, 'refs/tags/hardware-v') }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dorny/paths-filter@v4
+        id: changes
+        with:
+          filters: |
+            firmware:
+              - 'Firmware/**'
+              # Top-level Vibes gitlink: C bindings consumers (Unity suites).
+              - 'Vibes'
+            hardware:
+              - 'Hardware/**'
+            wasm_control:
+              - 'Software/Control/**'
+              - 'Protocol/**'
+              # Top-level Vibes gitlink: TS bindings consumers (Control).
+              - 'Vibes'
+              - '.gitmodules'
+            protocol:
+              - 'Protocol/**'
+              - '.gitmodules'
+            sil:
+              - 'SIL/**'
+              - 'Firmware/**'
+              - 'Protocol/**'
+              # Top-level Vibes gitlink: Rust bindings consumers (SIL).
+              - 'Vibes'
+              - '.gitmodules'
+            docs:
+              - 'docs/**'
+              - 'mkdocs.yml'
+            # Submodule PIN bumps only â€” the gitlink entry itself, not the
+            # surrounding tree. `sil`/`protocol` above fire on any change under
+            # SIL/ or Protocol/; these fire only when the recorded commit
+            # moves, which is when the expensive upstream-mirror legs earn their
+            # keep. `.gitmodules` is included because repointing a submodule URL
+            # changes which repository the pin resolves against.
+            embsim_pin:
+              - 'SIL/embsim'
+              - '.gitmodules'
+            protoemb_pin:
+              - 'Protocol/ProtoEmb'
+              - '.gitmodules'
+            vibes_pin:
+              - 'Vibes'
+              - '.gitmodules'
+
+  # Offline gate for the frontend-only Web Serial + WASM control app: build
+  # wasm + generated codec, then the app verify gate (typecheck + eslint +
+  # vitest + production build). protoemb-runtime unit tests live in protoemb-ci.
+  wasm-control-ci:
+    needs: changes
+    if: needs.changes.outputs.wasm_control == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Software/Control
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: Software/Control/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.x'
+      - name: Install protocol generator deps (pyyaml, jinja2)
+        run: pip install -r ../../Protocol/ProtoEmb/core/requirements.txt
+      - name: Install libudev (serialport build dependency on Linux)
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev pkg-config
+      # protoemb-runtime `cargo test` lives in `protoemb-ci` (`make test`).
+      # Control-only PRs still compile the crate via wasm-pack below; they do
+      # not change the runtime sources.
+      - name: Install dependencies
+        run: npm ci
+      - name: Build wasm + generate protocol bindings
+        run: |
+          npm run build:wasm
+          npm run generate:proto
+      - name: Verify (typecheck + lint + tests + build)
+        run: npm run verify
+      # The unit tests cover the logging machinery; they cannot cover the
+      # instrumentation call sites, and the worker half (protocol frames,
+      # correlation ids, byte ring, batch transport) only runs with a device
+      # attached. This drives a scripted fake serial port instead, so unlike the
+      # SIL suite it needs no emulator or bridge â€” just Chrome and the dev
+      # server. Without it, a regression that silently empties a bug report
+      # would ship green.
+      - name: Diagnostics e2e (logging actually captures)
+        run: |
+          nohup npm run dev -- --host 127.0.0.1 --port 5174 > /tmp/mad-vite.log 2>&1 &
+          for i in $(seq 1 60); do
+            curl -sf http://127.0.0.1:5174 >/dev/null 2>&1 && break
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:5174 >/dev/null 2>&1 || {
+            echo "=== vite log ==="; cat /tmp/mad-vite.log || true; exit 1
+          }
+          APP_URL=http://127.0.0.1:5174/ npm run e2e:diagnostics
+      - name: Schema â†” domain mapping lockstep (M12)
+        working-directory: ${{ github.workspace }}
+        run: |
+          pip install pyyaml==6.0.3
+          python3 Protocol/scripts/check_schema_domain_lockstep.py
+
+  # ProtoEmb library suite (generator unit tests, cross-language wire
+  # conformance, framing + runtime crate tests) run against the *pinned
+  # submodule commit*. The suite also runs in the protoemb repo's own CI
+  # (https://github.com/RileyMcCarthy/protoemb); this job gates submodule
+  # bumps â€” including the real-schema generator test, which only activates
+  # when ../MaDProtocol.yaml is present (i.e. here, not in the standalone CI).
+  protoemb-ci:
+    needs: changes
+    if: needs.changes.outputs.protocol == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Protocol/ProtoEmb
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.x'
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - name: Install TypeScript (cross-language conformance leg)
+        run: npm install -g typescript
+      - name: Install Python test deps (pyyaml, jinja2, pytest)
+        run: make setup
+      - name: Install libudev (serialport build dependency on Linux)
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev pkg-config
+      - name: Run full ProtoEmb test suite
+        run: make test
+
+  # BLOCKING, pin-bumps only. Mirror of `embsim-pin-ci` for the other submodule:
+  # `protoemb-ci` above runs `make test` on any Protocol/ change, this runs the
+  # rest of the upstream gate when the recorded commit moves. protoemb is not a
+  # workspace, so the Rust legs are invoked once per crate manifest.
+  protoemb-pin-ci:
+    needs: changes
+    if: needs.changes.outputs.protoemb_pin == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: Protocol/ProtoEmb
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.x'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            Protocol/ProtoEmb/framing
+            Protocol/ProtoEmb/runtime
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - name: Install libudev (serialport build dependency on Linux)
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev pkg-config
+      - name: Install Python deps (generator + pytest)
+        run: make setup
+      - name: Example round-trip (examples/verify.sh)
+        run: make verify
+      - name: Ruff (generator + tests)
+        run: pipx run ruff==0.14.11 check --output-format=github core tests
+      # The runtime crate is what the shipped app compiles to WebAssembly, so
+      # the wasm target is a first-class leg, not an afterthought. `--lib` on the
+      # wasm clippy leg because that is exactly what wasm-pack builds â€” the
+      # native-only protoemb-bridge bin is cfg'd out of the wasm build.
+      - name: clippy framing (native)
+        run: cargo clippy --manifest-path framing/Cargo.toml --all-targets -- -D warnings
+      - name: clippy runtime (native)
+        run: cargo clippy --manifest-path runtime/Cargo.toml --all-targets -- -D warnings
+      - name: clippy runtime (wasm32)
+        run: cargo clippy --manifest-path runtime/Cargo.toml --target wasm32-unknown-unknown --lib -- -D warnings
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      - name: wasm-pack build (runtime, web target)
+        run: wasm-pack build runtime --target web --release --out-dir /tmp/protoemb-wasm-pkg
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@cargo-deny
+      - name: Supply chain (cargo-deny per crate + pip-audit)
+        run: |
+          set -euo pipefail
+          cargo deny --manifest-path framing/Cargo.toml check
+          cargo deny --manifest-path runtime/Cargo.toml check
+          pipx run pip-audit -r core/requirements.txt
+      # MSRV floor, read from each crate's own manifest (see embsim-pin-ci).
+      - name: Build both crates on their declared MSRV
+        run: |
+          set -euo pipefail
+          for crate in framing runtime; do
+            MSRV=$(sed -nE 's/^rust-version *= *"([^"]+)".*/\1/p' "$crate/Cargo.toml" | head -1)
+            test -n "$MSRV" || { echo "::error::no rust-version in $crate/Cargo.toml"; exit 1; }
+            echo "$crate MSRV = $MSRV"
+            rustup toolchain install "$MSRV" --profile minimal
+            cargo "+$MSRV" build --manifest-path "$crate/Cargo.toml"
+          done
+
+  # BLOCKING (in ci-gate.needs). The full Control â†” SIL e2e suite: the real app
+  # in real Chrome, driving the real emulator over the WSâ†”PTY bridge. It is the
+  # only job that exercises the app, the generated codec, the firmware and the
+  # machine models as one system, so it is the only one that can catch an
+  # integration break â€” the class of bug that shipped while this ran nightly
+  # (the firmware never created `<mount>/gcode/`, so on a fresh SD root every
+  # uploaded test stored zero moves â€” invisible to every offline gate).
+  #
+  # It ran advisory for exactly as long as it took to earn the gate. Two things
+  # blocked promotion and both are now fixed:
+  #   1. It was paced to real time (via `make playground`), so its result
+  #      depended on how fast the runner was â€” 13 failures on CI, green on dev
+  #      boxes. It now runs unpaced (`make e2e-emulator`, --speed 0): virtual
+  #      time advances by idle jump, decoupled from wall clock, so host speed no
+  #      longer changes the outcome.
+  #   2. A toolchain-specific UB in the generated dispatcher (unsequenced
+  #      outSize, RileyMcCarthy/protoemb#23) made every file_download return a
+  #      0-byte frame under GCC. Fixed upstream and pinned in.
+  # With both fixed the suite is 49/49 on CI's own toolchain, so it gates.
+  #
+  # The suite is serial by contract (one emulator, one PTY, one client at a
+  # time). The nightly workflow still runs it on `main` for drift over time.
+  control-e2e-sil:
+    needs: changes
+    # Also fire on embsim_pin: a pin-only SIL/embsim gitlink move (including a
+    # revert of an emulator fix) must re-run Control e2e against the pinned tip.
+    # embsim-pin-ci still covers the upstream mirror; this pays for integration.
+    if: |
+      needs.changes.outputs.is_release != 'true' &&
+      (needs.changes.outputs.wasm_control == 'true' ||
+       needs.changes.outputs.sil == 'true' ||
+       needs.changes.outputs.embsim_pin == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: Software/Control
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: Software/Control/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: SIL
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.x'
+      - name: Install system deps
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev pkg-config
+      - name: Install PlatformIO
+        run: pip install -U platformio
+      - name: Install protocol generator deps
+        run: pip install -r ../../Protocol/ProtoEmb/core/requirements.txt
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      - name: Build SIL emulator (firmware + protocol + cargo)
+        working-directory: SIL
+        run: make emulator
+      - name: Install Control deps + wasm + proto
+        run: |
+          npm ci
+          npm run build:wasm
+          npm run generate:proto
+      # The suite launches system Chrome (`channel: 'chrome'`), preinstalled on
+      # the runner; this brings in the shared libraries it needs.
+      - name: Install Chromium for Playwright
+        run: npx playwright install --with-deps chromium
+      # Unpaced virtual time, NOT the real-time playground. The suite does not
+      # need real-time speed, and under --speed 1.0 the emulator must sustain a
+      # real-time factor of 1.0 â€” which a shared 4-vCPU runner cannot, so the
+      # suite ends up measuring the runner instead of the code.
+      - name: Start the e2e emulator (unpaced virtual time)
+        working-directory: SIL
+        run: |
+          nohup make e2e-emulator > /tmp/mad-playground.log 2>&1 &
+          for i in $(seq 1 90); do
+            if [ -e /tmp/tty.rpi ]; then echo "PTY ready after ${i}s"; break; fi
+            sleep 2
+          done
+          if [ ! -e /tmp/tty.rpi ]; then
+            echo "=== playground log ==="
+            cat /tmp/mad-playground.log || true
+            exit 1
+          fi
+      - name: Start WS bridge + Vite dev server
+        run: |
+          nohup npm run sil:bridge > /tmp/mad-bridge.log 2>&1 &
+          nohup npm run dev -- --host 127.0.0.1 --port 5174 > /tmp/mad-vite.log 2>&1 &
+          for i in $(seq 1 60); do
+            curl -sf http://127.0.0.1:5174/ >/dev/null && break
+            sleep 2
+          done
+          curl -sf http://127.0.0.1:5174/ >/dev/null || {
+            echo "=== vite log ==="; cat /tmp/mad-vite.log || true; exit 1
+          }
+          for i in $(seq 1 30); do
+            (echo >/dev/tcp/127.0.0.1/9999) >/dev/null 2>&1 && break
+            sleep 1
+          done
+          (echo >/dev/tcp/127.0.0.1/9999) >/dev/null 2>&1 || {
+            echo "=== bridge log ==="; cat /tmp/mad-bridge.log || true; exit 1
+          }
+      - name: Run the full e2e suite
+        env:
+          APP_URL: http://127.0.0.1:5174
+          BRIDGE_URL: ws://127.0.0.1:9999
+        run: npm run e2e
+      # e2e/artifacts holds the per-scenario merged main+worker app log that
+      # dumpFailureArtifacts writes â€” without it a red run can only be diagnosed
+      # by reproducing it, which for this suite means reproducing CI.
+      # Collect into one directory first: upload-artifact roots the archive at the
+      # least common ancestor of its paths, and mixing /tmp with the workspace
+      # would root it at / and bury everything under a deep prefix.
+      - name: Collect diagnostics
+        if: failure()
+        run: |
+          mkdir -p /tmp/e2e-out
+          cp /tmp/mad-playground.log /tmp/mad-bridge.log /tmp/mad-vite.log /tmp/e2e-out/ 2>/dev/null || true
+          cp -r e2e/artifacts /tmp/e2e-out/scenario-artifacts 2>/dev/null || true
+      - name: Upload logs + failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: control-e2e-sil-${{ github.run_number }}
+          path: /tmp/e2e-out
+          retention-days: 14
+
+  # BLOCKING. The documentation site must build in strict mode (broken nav
+  # entries, dead internal links and config warnings are all errors). pages.yml
+  # builds the same site, but only on a push to `main` â€” by which point a bad
+  # docs PR has already merged and taken the Pages deploy down with it. This is
+  # the same command, one step earlier, where it can still be fixed.
+  docs-ci:
+    needs: changes
+    if: needs.changes.outputs.docs == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.x'
+      - name: Install the docs toolchain
+        run: pip install -r docs/requirements.txt
+      - name: mkdocs build --strict
+        run: mkdocs build --strict
+
+  # embsim library suite against the *pinned submodule commit* (mirror of
+  # protoemb-ci). Upstream also runs this on RileyMcCarthy/embsim; re-running
+  # here gates pin bumps and catches unpushed / never-CI'd gitlinks. The MaD
+  # SIL workspace only *compiles* path deps (sil-rust) â€” this job executes the
+  # framework tests themselves.
+  embsim-ci:
+    needs: changes
+    if: needs.changes.outputs.sil == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: SIL/embsim
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: SIL/embsim
+      - name: Build (all targets)
+        run: cargo build --workspace --all-targets
+      - name: Test
+        run: cargo test --workspace --all-targets
+      - name: Doc tests
+        run: cargo test --workspace --doc
+      - name: Test embsim-trace (web off)
+        run: cargo test -p embsim-trace --no-default-features
+
+  # BLOCKING, pin-bumps only. `embsim-ci` above runs the build/test half of the
+  # upstream suite on every SIL change; this job runs the half that only matters
+  # when the *pin moves* â€” the determinism goldens, the lint gate, rustdoc, the
+  # MSRV floor and the supply-chain audit. Upstream gates all of these on
+  # RileyMcCarthy/embsim, so a pin that has actually been pushed and CI'd will
+  # sail through; a pin that was never pushed (or was pushed to a branch that
+  # never went green) fails here instead of landing in MaD unverified.
+  # Ubuntu-only: upstream's macOS leg covers the platform axis, this covers the
+  # commit axis.
+  embsim-pin-ci:
+    needs: changes
+    if: needs.changes.outputs.embsim_pin == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: SIL/embsim
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: SIL/embsim
+      - name: rustfmt (gating)
+        run: cargo fmt --all --check
+      - name: clippy (gating)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: cargo doc (deny warnings)
+        run: cargo doc --workspace --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
+      # Determinism: the stepped-clock engine event log â€” order AND every
+      # virtual timestamp â€” must match a blessed golden trace. Run the binary as
+      # separate processes so each run re-seeds its HashMaps; that is the class
+      # of nondeterminism in-process repetition cannot reach.
+      - name: N-run identity + goldens, 5x as separate processes
+        run: |
+          set -euo pipefail
+          for run in 1 2 3 4 5; do
+            echo "::group::determinism run $run"
+            cargo test -p embsim-board --test determinism -- --nocapture
+            echo "::endgroup::"
+          done
+      - name: Stepped-clock engine mechanics
+        run: |
+          set -euo pipefail
+          cargo test -p embsim-board --test stepped_clock -- --nocapture
+          cargo test -p embsim-board --test ads122u04_stepped -- --nocapture
+          cargo test -p embsim-board --test pulse_bridge_stepped -- --nocapture
+      # A golden regenerated by a test run makes the comparison above vacuous.
+      # Blessing is a deliberate local act (EMBSIM_BLESS=1), so a dirty fixture
+      # tree here means the goldens rewrote themselves.
+      - name: Goldens are unmodified
+        run: git diff --exit-code -- board/tests/fixtures/traces
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@cargo-deny
+      - name: Supply chain (advisories + licenses + bans + sources)
+        run: cargo deny check
+      # MSRV floor. Read `rust-version` out of the pinned manifest rather than
+      # hardcoding it, so raising the floor upstream doesn't fail here with a
+      # misleading compile error. Build only â€” MSRV governs compilation.
+      - name: Build the workspace on its declared MSRV
+        run: |
+          set -euo pipefail
+          MSRV=$(sed -nE 's/^rust-version *= *"([^"]+)".*/\1/p' Cargo.toml | head -1)
+          test -n "$MSRV" || { echo "::error::no rust-version in SIL/embsim/Cargo.toml"; exit 1; }
+          echo "embsim MSRV = $MSRV"
+          rustup toolchain install "$MSRV" --profile minimal
+          cargo "+$MSRV" build --workspace
+
+  # BLOCKING, pin-bumps only. Mirror of upstream RileyMcCarthy/vibes CI for the
+  # tool + three binding compile probes â€” without re-running MaD's Behaviour
+  # ledger suites. `vibes` (Behaviour ledger) stays informational and unchanged;
+  # this job covers the commit axis when the Vibes gitlink moves.
+  vibes-pin-ci:
+    needs: changes
+    if: needs.changes.outputs.vibes_pin == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: Vibes
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Tool â€” install, typecheck, test, build
+        run: |
+          set -euo pipefail
+          npm ci --no-audit --no-fund
+          npx tsc --noEmit
+          npm test
+          npm run build
+      # Bindings ship to C / Rust / TS and are not covered by the tool tests.
+      # Throwaway compile probes match upstream vibes CI intent.
+      - name: Compile the C binding and emit a record
+        run: |
+          set -euo pipefail
+          cat > /tmp/probe.c <<'PROBE'
+          #include <assert.h>
+          #include <stdio.h>
+          #include <string.h>
+          #include "vibes_behaviour.h"
+          int main(void) {
+              VIBES_TEST("probe.header-compiles",
+                         "bindings/c/vibes_behaviour.h",
+                         "the header included in a translation unit of its own");
+              VIBES_EXPECT("emits", "one line is appended for each expectation");
+              VIBES_EXPECT_WHY("why-form", "the reason form also compiles",
+                               "both macros are shipped and both must expand");
+              return 0;
+          }
+          PROBE
+          gcc -Wall -Wextra -Werror -Ibindings/c -o /tmp/probe /tmp/probe.c
+          VIBES_BEHAVIOURS=/tmp/out.jsonl /tmp/probe
+          test "$(wc -l < /tmp/out.jsonl)" = "2"
+          grep -q '"v":2' /tmp/out.jsonl
+          grep -q '"expect":"emits"' /tmp/out.jsonl
+          echo "C binding emits v2 records"
+      - name: Build and lint the Rust binding
+        working-directory: Vibes/bindings/rust
+        run: |
+          set -euo pipefail
+          cargo build --all-targets
+          cargo clippy --all-targets -- -D warnings
+      - name: Typecheck the TypeScript binding
+        run: |
+          set -euo pipefail
+          npx tsc --noEmit --strict --module esnext --moduleResolution bundler \
+            --skipLibCheck bindings/ts/index.ts
+
+  # Firmware Unity unit tests on the host (platform = native, AddressSanitizer).
+  # No Propeller toolchain needed; the platformio pre-hook regenerates the C
+  # protocol from the YAML and installs its own generator deps.
+  firmware-unit-tests:
+    needs: changes
+    if: needs.changes.outputs.firmware == 'true' || needs.changes.outputs.protocol == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.x'
+      - name: Install PlatformIO Core (pinned for reproducibility)
+        run: pip install "platformio==6.1.18"
+      - name: Run firmware Unity unit tests (native_test, ASan)
+        working-directory: Firmware/MaDCore
+        run: pio test -e native_test
+
+  # â”€â”€ Phase 0 deterministic gates â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  # BLOCKING jobs feed ci-gate. The clippy backlog is cleared, so `sil-rust`
+  # now runs rustfmt and clippy `-D warnings` as gating steps â€” no
+  # `continue-on-error` remains anywhere in this file, and every job that runs
+  # (including `control-e2e-sil`, promoted once it went 49/49 on CI) is in
+  # `ci-gate.needs`. Advisory-by-absence is a state a job passes THROUGH on its
+  # way to gating, not a resting place.
+
+  # BLOCKING. Protocol codegen health: regenerate all three targets (C/TS/Rust)
+  # twice and assert success + byte-reproducibility. Generated files are
+  # gitignored (built on demand), so this guards the schema/templates + generator
+  # determinism rather than committed-file drift.
+  protocol-codegen:
+    needs: changes
+    if: needs.changes.outputs.protocol == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Install codegen deps (pinned)
+        run: pip install pyyaml==6.0.3 jinja2==3.1.6
+      - name: Generate all three targets twice and assert reproducible
+        run: |
+          set -euo pipefail
+          gen() {
+            python3 Protocol/ProtoEmb/core/generate.py \
+              --schema Protocol/MaDProtocol.yaml \
+              --templates Protocol/ProtoEmb/core/templates \
+              --target "$1" --output "$2"
+          }
+          for pass in a b; do
+            gen c  "/tmp/gen-$pass/c"
+            gen ts "/tmp/gen-$pass/ts"
+            gen rs "/tmp/gen-$pass/rs"
+          done
+          if ! diff -r /tmp/gen-a /tmp/gen-b; then
+            echo "::error::Protocol code generation is non-deterministic (two runs differ)."
+            exit 1
+          fi
+          echo "Codegen succeeded and is byte-reproducible."
+      # M12 schemaâ†”domain lockstep lives in `wasm-control-ci` (Protocol/**
+      # already trips that job, and Control-only mapping.ts edits must too).
+
+  # BLOCKING. Ruff lint of the PlatformIO SCons hooks; config in ruff.toml
+  # (mirrors docs/coding-guidelines/python.md). The ProtoEmb generator is
+  # linted in its own repo's CI.
+  python-lint:
+    needs: changes
+    if: needs.changes.outputs.firmware == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Run ruff (lint only)
+        run: pipx run ruff==0.13.2 check --output-format=github Firmware/MaDCore/extra_scripts
+
+  # BLOCKING. SIL Rust workspace: builds the generated protocol Rust
+  # (make protocol) + libfirmware.a (pio run -e native_emulator), then runs
+  # rustfmt, clippy and cargo test â€” all three gating. The lint backlog that
+  # kept clippy advisory has been cleared: the one real finding was fixed, and
+  # the generated codec's template-style lints are allowed at the `mod`
+  # declaration in Protocol/rust/src/lib.rs.
+  sil-rust:
+    needs: changes
+    if: |
+      needs.changes.outputs.is_release != 'true' &&
+      needs.changes.outputs.sil == 'true'
+    runs-on: ubuntu-latest
+    # 25 was enough while every ISS test skipped. They now run against the real
+    # P2 image: ~6 minutes locally, dominated by p2core's boot tests
+    # interpreting hundreds of millions of instructions in the dev profile, and
+    # a shared 4-vCPU runner is slower than that.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: SIL
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - name: Install PlatformIO + protocol generator deps
+        run: pip install --upgrade platformio pyyaml jinja2
+      - name: Generate the Rust protocol codec (make protocol)
+        working-directory: SIL
+        run: make protocol
+      # ORDER MATTERS. The first version of this job built the native lib,
+      # THEN installed the Propeller platform, then built the P2 image -- and by
+      # the clippy step libfirmware.a was gone, so every cargo step died in
+      # embsim's build script ("firmware library directory not found"),
+      # misreported as a clippy failure. Locally, with the platform already
+      # installed, the same sequence never loses the lib, so the fresh install
+      # is the difference; PlatformIO's project checksum (which triggers a
+      # full .pio/build clean when it changes) is the likely mechanism but was
+      # not reproduced. Hence: install first, build both envs, and pin the lib
+      # below so the question never matters again.
+      - name: Install the Propeller platform (flexcc/flexspin)
+        working-directory: Firmware/MaDCore
+        run: pio pkg install --platform https://github.com/RileyMcCarthy/platform-propeller.git
+      - name: Build firmware native lib (libfirmware.a)
+        working-directory: Firmware/MaDCore
+        run: pio run -e native_emulator
+      # ...and keep a copy somewhere no later pio invocation can touch. The
+      # build-support crate reads EMBSIM_FIRMWARE_LIB_DIR, so cargo links the
+      # copy; whatever .pio/build does after this point is irrelevant to it.
+      - name: Pin the native lib where pio cannot clean it
+        working-directory: Firmware/MaDCore
+        run: |
+          mkdir -p "$RUNNER_TEMP/mad-native-lib"
+          cp .pio/build/native_emulator/libfirmware.a "$RUNNER_TEMP/mad-native-lib/"
+          echo "EMBSIM_FIRMWARE_LIB_DIR=$RUNNER_TEMP/mad-native-lib" >> "$GITHUB_ENV"
+      # The ISS executes the SHIPPED artifact, and the shipped artifact is
+      # compiled by flexcc, not clang. Without this the p2core/p2iss tests that
+      # boot the firmware find no image and skip -- printing a banner and
+      # passing, which is how this suite once reported 54 passed while
+      # asserting nothing. CI is the one place that must never be allowed to do
+      # that, hence MAD_REQUIRE_P2_IMAGE on the test step below.
+      #
+      # Built here rather than reused from `build-firmware`: that job only runs
+      # when `firmware` changed, so on a SIL-only PR its artifact would not
+      # exist, and it runs on a macOS runner at a 10x minute multiplier.
+      - name: Build the P2 image the ISS interprets
+        working-directory: Firmware/MaDCore
+        run: pio run -e propeller2_debug
+      # On the runner -- and not on a developer machine -- the P2 build above
+      # removes .pio/build/native_emulator/libfirmware.a. The pinned copy keeps
+      # cargo linking, but anything that resolves the ORIGINAL path (the
+      # emulator's --firmware default, a test that spawns it) would still find
+      # nothing, so the copy goes back where it came from.
+      - name: Restore the native lib to its build-tree path
+        working-directory: Firmware/MaDCore
+        run: |
+          mkdir -p .pio/build/native_emulator
+          cp "$EMBSIM_FIRMWARE_LIB_DIR/libfirmware.a" .pio/build/native_emulator/libfirmware.a
+      # Decodes every hub instruction in the image just built (29k of them)
+      # and writes flexcc's own mnemonic for each, so decoder_golden.rs checks
+      # p2core against the compiler rather than against itself. The golden is
+      # gitignored precisely because it is a function of the current firmware;
+      # without this step that test skips even though the image now exists.
+      - name: Generate the decoder golden from the image
+        working-directory: SIL/p2core
+        run: python3 tools/gen_golden.py
+      # Every artifact the cargo steps depend on, checked in one place. A
+      # missing one used to surface three steps later as a build-script panic
+      # inside clippy, which is the wrong place to learn that pio cleaned a
+      # directory.
+      - name: Assert the firmware artifacts exist
+        run: |
+          fail=0
+          for f in "$EMBSIM_FIRMWARE_LIB_DIR/libfirmware.a" \
+                   Firmware/MaDCore/.pio/build/native_emulator/libfirmware.a \
+                   Firmware/MaDCore/.pio/build/propeller2_debug/program \
+                   SIL/p2core/tests/golden/hub_mnemonics.txt; do
+            if [ -s "$f" ]; then echo "ok   $f ($(wc -c < "$f") bytes)"; else echo "::error::missing or empty: $f"; fail=1; fi
+          done
+          exit $fail
+      # rustfmt covers the crates this repo authors. The `protocol` crate is
+      # excluded because its body is `#[path]`-included generated code that
+      # `make protocol` rewrites on every build â€” formatting it would be undone
+      # by the next regeneration, and a gate that cannot be satisfied is worse
+      # than no gate.
+      - name: rustfmt (gating)
+        working-directory: SIL
+        run: cargo fmt -p mad-emulator -p models --check
+      - name: Clippy (gating)
+        working-directory: SIL
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Cargo test (blocking)
+        working-directory: SIL
+        # The workspace is the MaD-side crates only (protocol, models,
+        # MaDSim, p2core, p2iss). The embsim submodule suite is re-run by the
+        # sibling `embsim-ci` job (mirror of protoemb-ci) on the pinned commit.
+        #
+        # MAD_REQUIRE_P2_IMAGE turns "the image is missing, so skip" into a
+        # failure. A developer without a built image still gets skips; a CI job
+        # that lost its image build goes red instead of silently reverting to
+        # asserting nothing about the firmware that ships.
+        env:
+          MAD_REQUIRE_P2_IMAGE: '1'
+        run: cargo test --workspace --all-targets
+
+  # BLOCKING. MISRA/cppcheck via `pio check`. Low severity is disabled in
+  # platformio.ini (check_severity = medium, high) â€” style noise only. Medium and
+  # high must be zero; CI fails the job (and thus CI Gate) on any such defect.
+  # CERT is not enforced (no cert.py with bundled cppcheck).
+  firmware-misra:
+    needs: changes
+    if: needs.changes.outputs.firmware == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - name: Install PlatformIO (pinned for cppcheck-version stability)
+        run: pip install "platformio==6.1.18"
+      - name: Install propeller platform + protocol gen deps
+        working-directory: Firmware/MaDCore
+        run: |
+          pip install pyyaml jinja2
+          pio pkg install --platform https://github.com/RileyMcCarthy/platform-propeller.git
+      - name: Run pio check (MISRA / cppcheck) â€” medium+high must pass
+        working-directory: Firmware/MaDCore
+        run: |
+          set -o pipefail
+          # Never combine --silent with --fail-on-defect: silent defeats the fail gate.
+          # check_severity in platformio.ini is medium,high; fail on either.
+          pio check -e propeller2 --skip-packages \
+            --fail-on-defect=medium --fail-on-defect=high \
+            | tee pio-check.txt
+          pio check -e propeller2 --skip-packages --json-output \
+            | sed -n '/^\[{/,$p' > pio-check.json || true
+          {
+            echo "## Firmware MISRA / cppcheck (blocking: medium + high)"
+            echo '```'
+            tail -40 pio-check.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload findings
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: firmware-misra-${{ github.run_number }}
+          path: |
+            Firmware/MaDCore/pio-check.txt
+            Firmware/MaDCore/pio-check.json
+          retention-days: 30
+
+  # BLOCKING (baseline-gated). Firmware layer rule â€” downward-only includes
+  # (APPâ†’DEVâ†’IOâ†’Libraryâ†’HALâ†’HW). 11 pre-existing violations are frozen in
+  # Firmware/MaDCore/.layering-baseline; the gate fails only on NEW upward
+  # includes. Phase 2: burn the baseline down, then run with --strict.
+  firmware-layering:
+    needs: changes
+    if: needs.changes.outputs.firmware == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Enforce firmware layering (downward-only includes)
+        run: python3 Firmware/MaDCore/scripts/check_layering.py Firmware/MaDCore/src
+      - name: HAL/Include â†” HAL/P2 signature diff (return type + arity)
+        run: python3 Firmware/MaDCore/scripts/check_hal_p2_signatures.py Firmware/MaDCore/src
+
+  build-firmware:
+    needs: changes
+    # Build firmware on firmware changes, or always for firmware releases
+    if: |
+      needs.changes.outputs.is_firmware_release == 'true' ||
+      needs.changes.outputs.firmware == 'true'
+    runs-on: macos-latest-large
+    outputs:
+      artifact-name: ${{ steps.artifact.outputs.name }}
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.9'
+      - name: Install PlatformIO Core
+        run: pip install --upgrade platformio
+      - name: Install propeller platformio platform
+        working-directory: Firmware/MaDCore
+        run: pio pkg install --platform https://github.com/RileyMcCarthy/platform-propeller.git
+      - name: Set version for CI build
+        id: get_version
+        run: |
+          if [[ "${{ needs.changes.outputs.is_firmware_release }}" == "true" ]]; then
+            VERSION=${GITHUB_REF#refs/tags/firmware-v}
+            echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          else
+            echo "VERSION=dev-${{ github.run_number }}" >> $GITHUB_OUTPUT
+          fi
+      - name: Build Firmware - Debug Version
+        working-directory: Firmware/MaDCore
+        run: pio run -e propeller2_debug --program-arg="-DFIRMWARE_VERSION=\"${{ steps.get_version.outputs.VERSION }}\""
+      - name: Build Firmware - Release Version
+        working-directory: Firmware/MaDCore
+        run: pio run -e propeller2_release --program-arg="-DFIRMWARE_VERSION=\"${{ steps.get_version.outputs.VERSION }}\""
+      - name: Build Firmware - Native library (for SIL testing)
+        working-directory: Firmware/MaDCore
+        run: pio run -e native_emulator --program-arg="-DFIRMWARE_VERSION=\"${{ steps.get_version.outputs.VERSION }}\""
+      - name: Copy and rename build artifacts
+        run: |
+          set -uxo pipefail
+          mkdir -p release-assets
+          V="${{ steps.get_version.outputs.VERSION }}"
+          echo "=== built artifacts under .pio/build ==="
+          find Firmware/MaDCore/.pio/build -maxdepth 2 -type f \( -name program -o -name libfirmware.a \) -print
+          # Best-effort: copy each artifact if present, warn (don't fail) if a build env's
+          # output is absent. The build steps above are the real gate; artifact assembly is
+          # release-prep. NOTE: propeller2_debug's output currently disappears after build
+          # (force_o0 post-hook / pio interaction) â€” tracked separately.
+          copy_if() { if [ -f "$1" ]; then cp "$1" "$2" && echo "copied -> $2"; else echo "::warning::artifact missing, skipped: $1"; fi; }
+          copy_if "Firmware/MaDCore/.pio/build/propeller2_debug/program"     "release-assets/MaD-Firmware-$V-debug.bin"
+          copy_if "Firmware/MaDCore/.pio/build/propeller2_release/program"   "release-assets/MaD-Firmware-$V-release.bin"
+          copy_if "Firmware/MaDCore/.pio/build/native_emulator/libfirmware.a" "release-assets/MaD-Firmware-$V-native.a"
+          ls -la release-assets/
+
+      - name: Set artifact name
+        id: artifact
+        run: echo "name=MaD-Firmware-${{ github.run_number }}" >> $GITHUB_OUTPUT
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.artifact.outputs.name }}
+          path: release-assets/
+
+  build-hardware:
+    needs: changes
+    # Build hardware when hardware changes or for hardware releases
+    if: |
+      needs.changes.outputs.is_hardware_release == 'true' ||
+      needs.changes.outputs.hardware == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - project: EdgeBoard
+            pcb_path: Hardware/EdgeBoard/KiCad/MaD_Edge.kicad_pcb
+            sch_path: Hardware/EdgeBoard/KiCad/MaD_Edge.kicad_sch
+          - project: DS2Addon
+            pcb_path: Hardware/DS2Addon/KICAD/DS2_Addon.kicad_pcb
+            sch_path: Hardware/DS2Addon/KICAD/DS2_Addon.kicad_sch
+    outputs:
+      artifact-name: ${{ steps.artifact.outputs.name }}
+
+    steps:
+    - uses: actions/checkout@v7
+    
+    - name: Generate manufacturing files using KiBot
+      uses: INTI-CMNB/KiBot@v2_k9   # KiCad 9 â€” board files use generator_version 9.0
+      with:
+        config: .kibot/config.kibot.yaml
+        board: ${{ matrix.pcb_path }}
+        schema: ${{ matrix.sch_path }}
+
+    - name: Set artifact name
+      id: artifact
+      run: echo "name=${{ matrix.project }}-hardware-${{ github.run_number }}" >> $GITHUB_OUTPUT
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v7
+      with:
+        name: ${{ steps.artifact.outputs.name }}
+        path: |
+          Manufacturing/
+          Documentation/
+          *_documentation.zip
+          *_gerbers.zip
+
+  release-firmware:
+    needs: [changes, build-firmware]
+    if: |
+      needs.changes.outputs.is_firmware_release == 'true' &&
+      needs.build-firmware.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download firmware artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ needs.build-firmware.outputs.artifact-name }}
+          path: artifacts
+          merge-multiple: true
+
+      - name: Get tag version
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/firmware-v}" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v3
+        with:
+          name: MaD Firmware ${{ steps.get_version.outputs.VERSION }}
+          tag_name: firmware-v${{ steps.get_version.outputs.VERSION }}
+          files: artifacts/*.bin
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  release-hardware:
+    needs: [changes, build-hardware]
+    if: |
+      needs.changes.outputs.is_hardware_release == 'true' &&
+      needs.build-hardware.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all hardware artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          pattern: '*-hardware-*'
+
+      - name: Get tag version
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/hardware-v}" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v3
+        with:
+          name: MaD Hardware ${{ steps.get_version.outputs.VERSION }}
+          tag_name: hardware-v${{ steps.get_version.outputs.VERSION }}
+          files: artifacts/**/*
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Single required status check for branch protection. It aggregates every
+  # build/unit/SIL job: it fails if any of them FAILED or was CANCELLED, and
+  # passes when they all succeeded or were legitimately skipped (e.g. a
+  # docs-only PR skips the component jobs). Mark THIS check â€” "CI Gate" â€” as the
+  # required status check on `main` instead of each job, so path-filtered skips
+  # never block a PR.
+  # The behaviour ledger: what this change adds, and what stopped holding.
+  #
+  # Informational, so deliberately NOT in ci-gate.needs while it beds in. It
+  # exits 1 when a behaviour breaks or is removed, so promoting it later is a
+  # one-line change.
+  #
+  # fetch-depth: 0 is required â€” the default shallow clone cannot resolve the
+  # base branch, and the ledger diff would then report every behaviour as new.
+  vibes:
+    name: Behaviour ledger
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    # The default token is read-only; posting the sticky comment needs this.
+    # On a fork PR the token stays read-only regardless, and the post step
+    # warns rather than failing â€” the job summary still carries the report.
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          submodules: recursive
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.x'
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install PlatformIO
+        run: pip install -U platformio
+      - name: Install protocol generator deps
+        run: pip install -r Protocol/ProtoEmb/core/requirements.txt
+
+      # The firmware suite has a macOS-only twin, native_test_noasan, because
+      # AddressSanitizer will not initialise on that host. Collecting locally
+      # means pointing the suite at it, and that swap has reached a commit
+      # twice. In CI it silently drops the sanitizer from the run the ledger is
+      # built from, so a behaviour can pass here and fail the sanitized gate.
+      - name: Suites must not name a machine-local environment
+        run: |
+          if git grep -n noasan -- '*vibes.suite.json'; then
+            echo "::error::a committed suite command names the macOS-only environment"
+            exit 1
+          fi
+
+      # Presence + non-empty cmd used to live in Vibes/src/suites.test.ts. After
+      # Vibes became a submodule (#90) the tool package can no longer see MaD's
+      # consumer suites, so the check moved here beside the noasan guard.
+      - name: Suites must be present and have a non-empty cmd
+        run: |
+          set -euo pipefail
+          mapfile -d '' -t suites < <(git ls-files -z -- '*vibes.suite.json')
+          if [ "${#suites[@]}" -lt 1 ]; then
+            echo "::error::no tracked *vibes.suite.json files found"
+            exit 1
+          fi
+          echo "found ${#suites[@]} suite file(s)"
+          for f in "${suites[@]}"; do
+            if [ ! -f "$f" ]; then
+              echo "::error::$f is tracked but missing on disk"
+              exit 1
+            fi
+            cmd="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print((d.get("cmd") or "").strip())' "$f")"
+            if [ -z "$cmd" ]; then
+              echo "::error::$f has a missing or blank cmd"
+              exit 1
+            fi
+            echo "ok $f"
+          done
+
+      - name: Build Vibes
+        working-directory: Vibes
+        run: npm ci --no-audit --no-fund && npm test && npm run build
+
+      - name: Install Control deps
+        working-directory: Software/Control
+        run: npm ci --no-audit --no-fund
+
+      # Capture the verdict instead of failing here: a broken behaviour is
+      # exactly the run whose report must reach the PR, so posting comes first
+      # and the exit code is re-raised at the end.
+      - name: Behaviour report
+        id: report
+        run: |
+          set +e
+          node Vibes/bin/vibes.mjs report --base "origin/${{ github.base_ref }}" > vibes-report.md
+          echo "code=$?" >> "$GITHUB_OUTPUT"
+          cat vibes-report.md
+
+      # One sticky comment per PR, found by the marker and edited in place, so
+      # the PR page always shows the latest verdict and never fills with history.
+      - name: Post the report to the PR
+        if: ${{ always() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          marker='<!-- vibes-ledger -->'
+          # Issue comments cap at 65,536 chars; keep headroom for the marker/footer.
+          body="$(head -c 60000 vibes-report.md)"
+          if [ "$(wc -c < vibes-report.md)" -gt 60000 ]; then
+            body="$body"$'\n\n_Truncated â€” the full report is in the job summary._'
+          fi
+          body="$marker"$'\n'"$body"
+          existing=$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
+            --jq ".[] | select(.body | startswith(\"$marker\")) | .id" | head -n1)
+          if [ -n "$existing" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$existing" -f body="$body" >/dev/null \
+              && echo "updated comment $existing" || echo "::warning::could not update the PR comment (read-only token on a fork?)"
+          else
+            gh api "repos/$REPO/issues/$PR/comments" -f body="$body" --jq .html_url \
+              || echo "::warning::could not post the PR comment (read-only token on a fork?)"
+          fi
+
+      - name: Propagate the verdict
+        run: exit ${{ steps.report.outputs.code }}
+
+  ci-gate:
+    name: CI Gate
+    needs:
+      - changes
+      - wasm-control-ci
+      - control-e2e-sil
+      - protoemb-ci
+      - protoemb-pin-ci
+      - embsim-ci
+      - embsim-pin-ci
+      - vibes-pin-ci
+      - docs-ci
+      - firmware-unit-tests
+      - protocol-codegen
+      - firmware-layering
+      - firmware-misra
+      - python-lint
+      - sil-rust
+      - build-firmware
+      - build-hardware
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify all required jobs passed or were skipped
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          echo "$NEEDS"
+          failed=$(echo "$NEEDS" | jq -r 'to_entries[]
+            | select(.value.result == "failure" or .value.result == "cancelled")
+            | .key')
+          if [ -n "$failed" ]; then
+            echo "::error::CI Gate failed â€” these required jobs did not pass:"
+            echo "$failed"
+            exit 1
+          fi
+          echo "CI Gate passed â€” every required job succeeded or was skipped."
