@@ -28,7 +28,7 @@ timeout 60 "$QEMU" -M p2 -nographic -monitor none -serial none -display none \
     -accel tcg,one-insn-per-tb=on \
     -device loader,file="$W/prog.bin",addr=0x1000,cpu-num=0 \
     -device loader,addr=0x1000,cpu-num=0 \
-    -d cpu -D /dev/stdout 2>/dev/null | grep '^P2STATE' | head -n "$COUNT" > "$W/qemu.txt"
+    -d cpu -D /dev/stdout 2>/dev/null | grep '^P2STATE cog=0' | head -n "$COUNT" > "$W/qemu.txt"
 
 set -o pipefail
 

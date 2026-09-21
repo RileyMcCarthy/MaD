@@ -10,6 +10,9 @@
 
 #define P2_COG_LONGS 512
 #define P2_STACK_DEPTH 8
+#define P2_NUM_LOCKS 16
+/* Longs a COGINIT load copies from hub into cog RAM ($000..$1F7). */
+#define P2_COGINIT_LOAD_LONGS 0x1F8
 /* Cog RAM's top 16 longs are the special registers. */
 #define P2_REG_PA   0x1F6
 #define P2_REG_PB   0x1F7
@@ -59,6 +62,10 @@ enum {
 #define P2_PFX_ALTD  16
 #define P2_PFX_ALTS  32
 #define P2_PFX_MASK  0x3F
+/* Not prefixes, but the same trick: instruction-stream state in the TB key. */
+#define P2_TB_REP    64
+#define P2_TB_SKIP   128
+#define P2_TB_MASK   (P2_PFX_MASK | P2_TB_REP | P2_TB_SKIP)
 
 /*
  * One QEMU vCPU is one cog (design D1). Cog RAM and LUT are CPU state, NOT
@@ -87,6 +94,22 @@ typedef struct CPUArchState {
     uint32_t alt_d;         /* ALTD/ALTS substituted register index */
     uint32_t alt_s;
     uint32_t prefix;        /* P2_PFX_* -- which of the above are live */
+
+    /*
+     * REP and SKIP are runtime state that changes what the instruction stream
+     * MEANS, so "a REP is running" and "a SKIP pattern is live" are part of the
+     * translation-block key -- see P2_TB_REP / P2_TB_SKIP. The values stay here
+     * because they are computed from registers.
+     */
+    uint32_t rep_left;      /* iterations still to run; 0 = no REP active */
+    uint32_t rep_first;     /* first and last PC of the repeated block */
+    uint32_t rep_last;
+    uint32_t skip_pattern;  /* LSB first: a 1 cancels the instruction */
+    uint32_t skip_left;     /* instructions still covered by the pattern */
+
+    uint32_t qx;            /* CORDIC results, read back by GETQX/GETQY */
+    uint32_t qy;
+    uint32_t ct1;           /* the CT1 deadline ADDCT1 arms and WAITCT1 waits on */
 
     uint32_t cogid;
     bool     running;

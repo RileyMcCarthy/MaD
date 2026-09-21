@@ -30,7 +30,7 @@ fn main() {
 
     for _ in 0..n {
         let c = &m.cogs[0];
-        print!("P2STATE pc={:05X} c={} z={} sp={} clk={}",
+        print!("P2STATE cog=0 pc={:05X} c={} z={} sp={} clk={}",
                c.pc, c.c as u32, c.z as u32, c.sp, c.clocks);
         for i in 0..32 {
             print!(" {:08X}", c.regs[i]);

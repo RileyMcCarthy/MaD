@@ -29,6 +29,8 @@ OPS = {
     "getbyte": 0x47, "cmpr": 0x14, "incmod": 0x38, "decmod": 0x39,
     "negc": 0x34, "negnc": 0x35, "negz": 0x36, "negnz": 0x37, "cmpsub": 0x17,
     "rcl": 0x05, "rcr": 0x04, "bitl": 0x20, "bith": 0x21,
+    "fges": 0x1A, "fles": 0x1B, "subr": 0x16, "andn": 0x29,
+    "bitnot": 0x27, "bitc": 0x22, "bitnc": 0x23, "bitz": 0x24, "bitnz": 0x25,
 }
 
 
@@ -76,6 +78,18 @@ def rel20(op, disp, cond=0xF):
 MEM_LD = {"rdbyte": 0x56, "rdword": 0x57, "rdlong": 0x58}
 S_GETCT, S_REV, S_SETQ, S_SETQ2 = 0x1A, 0x69, 0x28, 0x29
 S_WAITX, S_TESTP = 0x1F, 0x40
+S_WRFLAG = {"wrc": 0x6C, "wrnc": 0x6D, "wrz": 0x6E, "wrnz": 0x6F}
+# CORDIC, locks, cog identity and the CT1 deadline. Bit 19 is D's L bit in the
+# Q block and bits 20:19 are the CT1/CT2/CT3 selector for ADDCT, so none of
+# these C/Z values may be randomised.
+OP_QMUL, OP_QSQRT, OP_QROTATE, OP_ADDCT = 0x68, 0x69, 0x6A, 0x53
+S_GETQX, S_GETQY = 0x18, 0x19
+S_LOCKNEW, S_LOCKRET, S_LOCKTRY, S_LOCKREL = 0x04, 0x05, 0x06, 0x07
+S_COGID, S_COGSTOP, S_HUBSET = 0x01, 0x03, 0x00
+S_SKIP = 0x31
+OP_REP = 0x66      # bit 20 selects REP; bit 19 is D's L bit, not WZ
+S_WAITCT1 = 0x11   # the @dsel poll/wait block: D selects, S is $24
+OP_MOVBYTS = 0x4F   # C and Z are SELECTORS here (both 1), not flag requests
 # The pin instructions. WRPIN/WXPIN/WYPIN take the PIN from S and the VALUE
 # from D -- the opposite way round from most two-operand instructions -- and
 # bit 19 is D's L bit, not WZ.
@@ -240,6 +254,78 @@ def main():
                                i=1))
         return out
 
+    def tail_group():
+        """CORDIC, the lock pool, COGID/COGSTOP/HUBSET and the CT1 deadline.
+
+        The CORDIC result queue is not in the trace, so every Q op is followed
+        by the GETQX/GETQY that makes it visible. Likewise a lock is only
+        observable through a later LOCKTRY's C."""
+        out = []
+        k = rng.randrange(5)
+        if k == 0:                              # QMUL / QDIV (+ a SETQ half)
+            d, sreg = rng.randrange(dmax), rng.randrange(dmax)
+            if rng.randrange(2):                # QDIV, sometimes 64-bit
+                if rng.randrange(2):
+                    out.append(misc(S_SETQ, d=rng.randrange(dmax)))
+                out.append(ins(OP_QMUL, d, sreg, i=rng.randrange(2), c=1, z=0))
+            else:
+                out.append(ins(OP_QMUL, d, sreg, i=rng.randrange(2), c=0, z=0))
+            out.append(misc(S_GETQX, d=rng.randrange(dmax), z=rng.randrange(2)))
+            out.append(misc(S_GETQY, d=rng.randrange(dmax), z=rng.randrange(2)))
+        elif k == 1:                            # QSQRT / QROTATE
+            d = rng.randrange(dmax)
+            if rng.randrange(2):
+                out.append(ins(OP_QSQRT, d, rng.randrange(dmax), i=0, c=1, z=0))
+            else:
+                out.append(ins(OP_QROTATE, d, rng.randrange(dmax), i=0,
+                               c=0, z=0))
+            out.append(misc(S_GETQX, d=rng.randrange(dmax), z=rng.randrange(2)))
+            out.append(misc(S_GETQY, d=rng.randrange(dmax), z=rng.randrange(2)))
+        elif k == 2:                            # the lock pool
+            lock = rng.randrange(16)
+            sel = rng.choice([S_LOCKNEW, S_LOCKRET, S_LOCKTRY, S_LOCKREL])
+            if sel == S_LOCKNEW:
+                out.append(misc(sel, d=rng.randrange(dmax), c=rng.randrange(2)))
+            else:
+                out.append(misc(sel, d=lock, l=1, c=rng.randrange(2)))
+            # ...and make the pool's state visible.
+            out.append(misc(S_LOCKTRY, d=lock, l=1, c=1))
+        elif k == 3:                            # COGID / COGSTOP / HUBSET
+            r = rng.randrange(3)
+            if r == 0:
+                out.append(misc(S_COGID, d=rng.randrange(dmax),
+                                c=rng.randrange(2)))
+            elif r == 1:
+                # Never cog 0: stopping the cog under test ends the trace.
+                out.append(misc(S_COGSTOP, d=1 + rng.randrange(7), l=1))
+            else:
+                out.append(misc(S_HUBSET, d=rng.randrange(512), l=1))
+        else:                                   # ADDCT1/2/3 then WAITCT1
+            cz = rng.randrange(3)               # 00/01/10 pick CT1/CT2/CT3
+            out.append(ins(OP_ADDCT, rng.randrange(dmax), rng.randrange(64),
+                           i=1, c=cz >> 1, z=cz & 1))
+            out.append((0xF << 28) | (MISC << 21) | (S_WAITCT1 << 9) | 0x24)
+        return out
+
+    def rep_skip_group():
+        """REP and SKIP -- runtime state that changes what the instruction
+        stream MEANS. Both are generated over straight-line bodies so the
+        program still provably terminates: REP's count is small and bounded,
+        and SKIP's pattern only ever covers the slots emitted right after it
+        (the remaining bits of the 32 are zero, so later instructions run)."""
+        out = []
+        if rng.randrange(2):
+            n = rng.randrange(1, 4)
+            out.append(ins(OP_REP, n, rng.randrange(2, 5), i=1, c=1, z=1))
+            out += [alu() for _ in range(n)]
+        else:
+            n = rng.randrange(2, 6)
+            r = rng.randrange(dmax)
+            out.append(ins(OPS["mov"], r, rng.randrange(1 << n)))
+            out.append(misc(S_SKIP, d=r))
+            out += [alu() for _ in range(n)]
+        return out
+
     def altx_group():
         """ALTD/ALTS substitute a RUNTIME register index into the next
         instruction, and S[17:9] post-increments the index register."""
@@ -302,7 +388,7 @@ def main():
             prog += pin_group()
             n_pin += 1
         elif a.mem and rng.random() < a.mem:
-            r = rng.randrange(6)
+            r = rng.randrange(8)
             if r == 0:
                 prog += prefix_group()
             elif r == 1:
@@ -313,6 +399,10 @@ def main():
                 prog += block_group()
             elif r == 3:
                 prog += altx_group()
+            elif r == 4:
+                prog += tail_group()
+            elif r == 5:
+                prog += rep_skip_group()
             else:
                 prog += hub_pair()
             n_mem += 1

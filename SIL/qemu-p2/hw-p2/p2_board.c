@@ -10,8 +10,32 @@
 #include "system/address-spaces.h"
 #include "system/system.h"
 #include "target/p2/cpu.h"
+#include "qemu/timer.h"
 
 #define P2_HUB_SIZE (512 * KiB)
+
+/*
+ * The scheduling quantum, in instructions (under -icount shift=0 one
+ * instruction is one nanosecond of virtual time).
+ *
+ * Round-robin TCG only moves to the next vCPU when cpu_exec returns, and its
+ * instruction budget comes from the next QEMU_CLOCK_VIRTUAL deadline -- with
+ * no timer armed that budget is INT32_MAX. A cog parked in a spin loop then
+ * never returns and starves every other cog: COGINIT appears to work, the new
+ * cog runs, and the cog that started it never executes another instruction.
+ * So the machine arms a timer that does nothing except exist.
+ *
+ * 48 is the quantum Spike 0c measured the firmware tolerates.
+ */
+#define P2_QUANTUM_NS 48
+
+static QEMUTimer *p2_quantum;
+
+static void p2_quantum_tick(void *opaque)
+{
+    timer_mod(p2_quantum,
+              qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + P2_QUANTUM_NS);
+}
 
 static void p2_machine_init(MachineState *machine)
 {
@@ -35,6 +59,9 @@ static void p2_machine_init(MachineState *machine)
      */
     memory_region_init_alias(wrap, NULL, "p2.hub.wrap", hub, 0, P2_HUB_SIZE);
     memory_region_add_subregion(get_system_memory(), P2_HUB_SIZE, wrap);
+
+    p2_quantum = timer_new_ns(QEMU_CLOCK_VIRTUAL, p2_quantum_tick, NULL);
+    p2_quantum_tick(NULL);
 
     for (i = 0; i < P2_NUM_COGS; i++) {
         Object *cpu = object_new(TYPE_P2_CPU);

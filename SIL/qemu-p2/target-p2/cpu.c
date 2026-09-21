@@ -42,7 +42,9 @@ static TCGTBCPUState p2_get_tb_cpu_state(CPUState *cs)
     CPUP2State *env = cpu_env(cs);
 
     return (TCGTBCPUState){ .pc = env->pc,
-                            .flags = env->prefix & P2_PFX_MASK,
+                            .flags = (env->prefix & P2_PFX_MASK)
+                                     | (env->rep_left ? P2_TB_REP : 0)
+                                     | (env->skip_left ? P2_TB_SKIP : 0),
                             .cs_base = 0 };
 }
 
@@ -88,8 +90,8 @@ static void p2_cpu_dump_state(CPUState *cs, FILE *f, int flags)
 
     /* One line per state, in the exact shape the differential harness diffs
      * against p2core. Registers 0..31 are what the generated tests target. */
-    qemu_fprintf(f, "P2STATE pc=%05X c=%u z=%u sp=%u clk=%" PRIu64, env->pc,
-                 env->c, env->z, env->sp, env->clocks);
+    qemu_fprintf(f, "P2STATE cog=%u pc=%05X c=%u z=%u sp=%u clk=%" PRIu64,
+                 env->cogid, env->pc, env->c, env->z, env->sp, env->clocks);
     for (i = 0; i < 32; i++) {
         qemu_fprintf(f, " %08X", env->cog[i]);
     }
@@ -123,6 +125,11 @@ static void p2_cpu_reset_hold(Object *obj, ResetType type)
      * halted at the CPU level too, or cpu_exec starts translating them at
      * PC 0 -- which is cog space, and they have no code there yet.
      */
+    env->rep_left = 0;
+    env->skip_left = 0;
+    env->prefix = 0;
+    env->sp = 0;
+    memset(env->stack, 0, sizeof(env->stack));
     env->running = (env->cogid == 0);
     cs->halted = !env->running;
 }
