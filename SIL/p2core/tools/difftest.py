@@ -20,7 +20,17 @@ OPS = {
     "mov": 0x30, "not": 0x31,
     "sar": 0x06, "cmp": 0x10, "cmps": 0x12, "test": 0x3E, "testn": 0x3F,
     "neg": 0x33, "abs": 0x32,
+    "shl": 0x03, "shr": 0x02, "rol": 0x01, "ror": 0x00,
+    "addx": 0x09, "subx": 0x0D, "adds": 0x0A, "subs": 0x0E,
+    "fge": 0x18, "fle": 0x19, "decod": 0x4E, "encod": 0x3C, "ones": 0x3D,
+    "muxc": 0x2C, "muxnc": 0x2D, "muxz": 0x2E, "muxnz": 0x2F,
 }
+
+
+# For SOME opcodes the C/Z bits are VARIANT SELECTORS, not flag-write requests:
+# op $4E is DECOD/BMASK/CRCBIT/CRCNIB chosen by (C,Z). Randomising C/Z there
+# silently asks for a different instruction, so those ops pin them.
+FIXED_CZ = {"decod": (0, 0)}
 
 
 def ins(op, d, s, i=1, cond=0xF, c=0, z=0):
@@ -51,8 +61,9 @@ def main():
         d = rng.randrange(32)
         i = rng.randrange(2)
         s = rng.randrange(512) if i else rng.randrange(32)
-        prog.append(ins(OPS[op], d, s, i=i,
-                        c=rng.randrange(2), z=rng.randrange(2)))
+        cz = FIXED_CZ.get(op)
+        c, z = cz if cz else (rng.randrange(2), rng.randrange(2))
+        prog.append(ins(OPS[op], d, s, i=i, c=c, z=z))
     open(a.out, "wb").write(b"".join(struct.pack("<I", w) for w in prog))
     print("%d instructions (%d seed + %d random) over %s"
           % (len(prog), 32, a.n, ",".join(names)), file=sys.stderr)
