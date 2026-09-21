@@ -84,6 +84,40 @@ def augs_across_branch():
     ]
 
 
+def nop_is_not_ret():
+    """An all-zero word is NOP, and its EEEE field is NOT the _RET_ prefix.
+
+    Reading the condition straight out of bits 31:28 makes word 0 a ROR under
+    %0000, which returns through an empty stack -- so running off the end of a
+    program lands somewhere arbitrary instead of idling through zeros. p2core
+    decodes word 0 with cond 15 explicitly for exactly this reason.
+
+    The program simply runs off its own end into unwritten hub.
+    """
+    return [ins(MOV, 9, 0x77)]
+
+
+def chained_prefixes():
+    """`augs / setq / rdlong` must LOSE the AUGS.
+
+    p2core's clear_prefixes is asymmetric: Q survives any of the four prefix
+    ops, but an AUG survives only its OWN kind. Treating a prefix instruction
+    as simply adding to the pending set keeps the AUGS alive and widens the
+    RDLONG's address by 23 bits.
+    """
+    p = []
+    for k in range(4):
+        p.append(ins(MOV, 4, 0x60 + k))
+        p.append(ins(WRLONG, 4, 0x40 + 4 * k, i=1, c=0, z=0))
+    p += [
+        aug(0, 1),                              # AUGS: would make S $200|s
+        ins(MOV, 0, 3),
+        misc(SETQ_SEL, d=0),                    # ...and this must drop it
+        ins(RDLONG, 8, 0x40, i=1),              # block read at $40, not $240
+    ]
+    return p
+
+
 def cancelled_augs():
     """A SKIP-cancelled AUGS never took effect, so the MOV is not widened.
 
@@ -104,13 +138,16 @@ PROBES = {
     "setq-across-branch": setq_across_branch,
     "augs-across-branch": augs_across_branch,
     "cancelled-augs": cancelled_augs,
+    "chained-prefixes": chained_prefixes,
+    "nop-is-not-ret": nop_is_not_ret,
 }
 
 
 def main():
     name, out = sys.argv[1], sys.argv[2]
     prog = PROBES[name]()
-    prog.append(rel20(JMP, -4))                 # park
+    if name != "nop-is-not-ret":
+        prog.append(rel20(JMP, -4))             # park
     open(out, "wb").write(b"".join(struct.pack("<I", w) for w in prog))
     print(len(prog) + 24)                       # run past the end, into the park
 

@@ -62,6 +62,14 @@ REG_PTRA, REG_PTRB = 0x1F8, 0x1F9
 # self-modifying code, which is a real feature to test but not this test.
 SCRATCH = 256
 LOAD_ADDR = 0x1000     # where difftest.sh and p2state.rs place the program
+COG_IMAGE = 0x2000     # where the cog image sits in hub, before being loaded
+# In cog space the PC steps by ONE per instruction, not four. A 20-bit branch
+# displacement stays a BYTE count either way (p2core divides it by 4 for cog
+# space), but the signed 9-bit *sj forms count INSTRUCTIONS, so they differ.
+COG_CODE = 32          # first cog long of code: keeps registers 0..31 clear of it
+# Cog RAM is 512 longs and the top 16 are the special registers, so an image
+# has to fit below $1F0. Unlike hub space there is no room to grow into.
+COG_IMAGE_MAX = 0x1F0
 
 
 def misc(sel, d=0, l=0, cond=0xF, c=0, z=0):
@@ -72,6 +80,11 @@ def misc(sel, d=0, l=0, cond=0xF, c=0, z=0):
 def rel20(op, disp, cond=0xF):
     """JMP/CALL #rel -- a signed BYTE displacement from the next PC."""
     return (cond << 28) | (op << 21) | (1 << 20) | (disp & 0xFFFFF)
+
+
+def abs20(op, addr, cond=0xF):
+    """JMP/CALL #abs -- R clear, so the 20-bit field is the address itself."""
+    return (cond << 28) | (op << 21) | (addr & 0xFFFFF)
 
 
 # Hub ops. For the WR forms bit 20 selects the size and bit 19 is the L bit,
@@ -131,6 +144,9 @@ def main():
                          " block-transfer or ALTx groups")
     ap.add_argument("--pins", type=float, default=0.0,
                     help="fraction of body slots that become smart-pin groups")
+    ap.add_argument("--cog", action="store_true",
+                    help="run the body in COG space (the interpreter) rather"
+                         " than hub space (the translator)")
     a = ap.parse_args()
 
     names = [o for o in a.ops.split(",") if o]
@@ -139,6 +155,9 @@ def main():
         sys.exit("unknown ops (add their real encoding to OPS): %s" % unknown)
 
     rng = random.Random(a.seed)
+    # rel9 offsets count instructions, and one instruction is one PC step in
+    # cog space and four in hub space.
+    step = 1 if a.cog else 4
     # The reserved registers stay out of the random ALU mix so that loops
     # terminate and addresses stay inside the scratch window.
     dmax = 32
@@ -481,7 +500,8 @@ def main():
                 inner = rng.randrange(1, 4)
                 prog.append(ins(OPS["mov"], LOOP_REG, rng.randrange(2, 6)))
                 prog += [alu() for _ in range(inner)]
-                prog.append(dj(0x5B, 1, LOOP_REG, -(inner + 1)))
+                prog.append(dj(0x5B, 1, LOOP_REG, -(inner + 1) * step // 4
+                              if not a.cog else -(inner + 1)))
             elif k == "tjz":                      # forward, sometimes taken
                 skip = rng.randrange(1, 4)
                 prog.append(dj(0x5C, 2, rng.randrange(dmax), skip))
@@ -491,21 +511,65 @@ def main():
                 prog.append(misc(S_POP, d=rng.randrange(dmax),
                                  z=rng.randrange(2)))
             else:                                 # JMP D, register-indirect
-                # The target is an absolute HUB address, and MOV's immediate
-                # is only 9 bits, so it is built as (addr >> 9) << 9 | low --
-                # which covers any program this harness can generate.
+                # JMP D takes an absolute address. In cog space that is a
+                # small long index and fits one MOV; in hub space it is built
+                # as (addr >> 9) << 9 | low, because MOV's immediate is 9 bits.
                 r = rng.randrange(dmax)
                 base = len(prog)
                 prog += [0, 0, 0]                     # patched below
                 prog.append(misc(S_JMPD, d=r))
                 prog.append(alu())                    # jumped over
-                addr = LOAD_ADDR + 4 * (base + 5)
-                assert addr < (1 << 18), "program outgrew a two-field literal"
-                prog[base] = ins(OPS["mov"], r, addr >> 9)
-                prog[base + 1] = ins(OPS["shl"], r, 9)
-                prog[base + 2] = ins(OPS["or"], r, addr & 511)
+                if a.cog:
+                    addr = COG_CODE + base + 5
+                    prog[base] = ins(OPS["mov"], r, addr)
+                    prog[base + 1] = ins(OPS["mov"], rng.randrange(dmax),
+                                         rng.randrange(512))
+                    prog[base + 2] = ins(OPS["mov"], rng.randrange(dmax),
+                                         rng.randrange(512))
+                else:
+                    addr = LOAD_ADDR + 4 * (base + 5)
+                    assert addr < (1 << 18), "program outgrew two literals"
+                    prog[base] = ins(OPS["mov"], r, addr >> 9)
+                    prog[base + 1] = ins(OPS["shl"], r, 9)
+                    prog[base + 2] = ins(OPS["or"], r, addr & 511)
         else:
             prog.append(alu())
+
+    if a.cog:
+        # Cog RAM is the register file too, so the code starts above the
+        # registers the body writes. Entry is a jump over that window; the
+        # hub-exec preamble below block-loads the whole image and jumps in.
+        # Cog RAM is finite in a way hub RAM is not, so a long body is capped
+        # rather than asserted -- but never silently: what was dropped is
+        # reported, because "green" over a truncated program proves less.
+        room = COG_IMAGE_MAX - COG_CODE - 1
+        if len(prog) > room:
+            print("cog body capped at %d of %d instructions (cog RAM is %d"
+                  " longs)" % (room, len(prog), 512), file=sys.stderr)
+            prog = prog[:room]
+        prog.append(abs20(0x6C, COG_CODE + len(prog)))      # park
+        image = [abs20(0x6C, COG_CODE)] + [0] * (COG_CODE - 1) + prog
+        pre = [
+            ins(OPS["mov"], 1, COG_IMAGE >> 9),
+            ins(OPS["shl"], 1, 9),
+            ins(OPS["mov"], 0, len(image) - 1),
+            misc(S_SETQ, d=0),
+            ins(0x58, 0, 1, i=0),                  # setq + rdlong = block load
+            abs20(0x6C, 0),                        # enter cog space at $000
+        ]
+        blob = bytearray((COG_IMAGE - LOAD_ADDR) + 4 * len(image))
+        for k, w in enumerate(pre):
+            blob[4 * k:4 * k + 4] = struct.pack("<I", w)
+        off = COG_IMAGE - LOAD_ADDR
+        for k, w in enumerate(image):
+            blob[off + 4 * k:off + 4 * k + 4] = struct.pack("<I", w)
+        open(a.out, "wb").write(bytes(blob))
+        print("%d cog instructions (%d seed + %d body; %d control-flow,"
+              " %d hub/prefix, %d smart-pin sites)"
+              % (len(prog), 32, len(prog) - sub - 32, n_cf, n_mem, n_pin),
+              file=sys.stderr)
+        print(len(prog) + len(pre))
+        return
 
     open(a.out, "wb").write(b"".join(struct.pack("<I", w) for w in prog))
     print("%d instructions (%d seed + %d body; %d control-flow, %d hub/prefix,"

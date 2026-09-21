@@ -11,6 +11,7 @@
 #include "system/system.h"
 #include "target/p2/cpu.h"
 #include "qemu/timer.h"
+#include "exec/icount.h"
 
 #define P2_HUB_SIZE (512 * KiB)
 
@@ -26,6 +27,13 @@
  * So the machine arms a timer that does nothing except exist.
  *
  * 48 is the quantum Spike 0c measured the firmware tolerates.
+ *
+ * Only under -icount, where one instruction is one nanosecond of virtual time
+ * and the deadline therefore means what it says. Without icount
+ * QEMU_CLOCK_VIRTUAL runs on host time, a 48 ns period fires continuously, and
+ * the round-robin loop trips its own "instruction counter expired" assertion.
+ * There the accelerator's own wall-clock kick timer does the switching -- less
+ * deterministic, which is why D1 asks for icount in the first place.
  */
 #define P2_QUANTUM_NS 48
 
@@ -60,8 +68,10 @@ static void p2_machine_init(MachineState *machine)
     memory_region_init_alias(wrap, NULL, "p2.hub.wrap", hub, 0, P2_HUB_SIZE);
     memory_region_add_subregion(get_system_memory(), P2_HUB_SIZE, wrap);
 
-    p2_quantum = timer_new_ns(QEMU_CLOCK_VIRTUAL, p2_quantum_tick, NULL);
-    p2_quantum_tick(NULL);
+    if (icount_enabled()) {
+        p2_quantum = timer_new_ns(QEMU_CLOCK_VIRTUAL, p2_quantum_tick, NULL);
+        p2_quantum_tick(NULL);
+    }
 
     for (i = 0; i < P2_NUM_COGS; i++) {
         Object *cpu = object_new(TYPE_P2_CPU);

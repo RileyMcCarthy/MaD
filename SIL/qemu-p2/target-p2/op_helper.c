@@ -188,55 +188,6 @@ G_NORETURN void helper_p2_unimpl(CPUArchState *env, uint32_t pc)
  * interprets a RUN of instructions -- the firmware's measured mean run is 46.2
  * -- never one call per instruction.
  */
-void helper_p2_interp_cog(CPUArchState *env, uint32_t budget)
-{
-    uint32_t n;
-
-    for (n = 0; n < budget; n++) {
-        uint32_t pc = env->pc;
-        uint32_t w, cond, op, d, sf, dv, sv, r;
-
-        if (pc >= P2_HUB_BASE) {
-            return;             /* left cog space: back to translated code */
-        }
-        w = (pc < P2_LUT_BASE) ? env->cog[pc] : env->lut[pc - P2_LUT_BASE];
-
-        cond = w >> 28;
-        op = (w >> 21) & 0x7F;
-        d = (w >> 9) & 0x1FF;
-        sf = w & 0x1FF;
-
-        env->pc = pc + 1;
-        env->clocks += P2_CLOCKS_PER_INSN;
-
-        /* EEEE: bit ((C<<1)|Z) selects execute. %0000 is the _RET_ prefix. */
-        if (cond != 0 && !((cond >> (((env->c & 1) << 1) | (env->z & 1))) & 1)) {
-            continue;
-        }
-
-        sv = (w & (1u << 18)) ? sf : env->cog[sf];
-        dv = env->cog[d];
-
-        switch (op) {
-        /* Opcodes are the real PNut-TS encodings -- see generated/insn.decode. */
-        case 0x08: r = dv + sv; env->c = (r < dv); break;    /* ADD */
-        case 0x0C: r = dv - sv; env->c = (dv < sv); break;   /* SUB */
-        case 0x28: r = dv & sv; break;                       /* AND */
-        case 0x2A: r = dv | sv; break;                       /* OR  */
-        case 0x2B: r = dv ^ sv; break;                       /* XOR */
-        case 0x30: r = sv; break;                            /* MOV */
-        case 0x31: r = ~sv; break;                           /* NOT */
-        default:
-            /* Not yet modelled: stop so bring-up notices rather than drifts. */
-            env->pc = pc;
-            env->clocks -= P2_CLOCKS_PER_INSN;
-            helper_p2_unimpl(env, pc);
-        }
-
-        env->cog[d] = r;
-        env->z = (r == 0);
-    }
-}
 
 /*
  * The hardware stack is a ring: the index is a runtime value, so push and pop
@@ -573,9 +524,12 @@ uint32_t HELPER(p2_skip_take)(CPUP2State *env)
     cancel = env->skip_pattern & 1;
     env->skip_pattern >>= 1;
     env->skip_left--;
-    if (cancel) {
-        env->prefix = 0;
-    }
+    /*
+     * The prefix rule is NOT applied here. p2core clears prefixes on a
+     * cancelled slot only if the word DECODES, and then by the same kind-aware
+     * rule as any instruction -- both of which need the word, which the caller
+     * has and this does not.
+     */
     return cancel;
 }
 

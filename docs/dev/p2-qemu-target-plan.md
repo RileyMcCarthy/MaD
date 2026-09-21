@@ -293,6 +293,32 @@ write that invalidates nothing still pays `page_collection_lock` every time.
    per-instruction blocks alone would miss the bar.
 5. Hub RAM needs no special handling: zero invalidations measured.
 
+> **Built 2026-09-20, and the decision held.** The interpreter is
+> `target/p2/interp.c`. Re-checking Option D with Spike 1a's corrected JIT cost
+> does **not** revive it: its 16.3 ns/inst is *re-translation*, not execution,
+> so correcting the execution term from 6 ns to 1 ns moves Option D to ~2.4x
+> while the hybrid moves to ~11x. The gap widens rather than closes.
+>
+> What the interpreter must not become is a second opinion about the
+> instruction set. Three things hold it to the translator:
+>
+> - the **decoder is shared** — one `insn.decode` feeds two dispatchers
+>   (`decodetree --translate=iexec`), so the two can never disagree about an
+>   encoding, the same way the table itself cannot disagree with p2core;
+> - everything with real machinery behind it — the pin bus, the lock pool,
+>   CORDIC, hub block transfers, the hardware stack, COGINIT, REP, SKIP —
+>   calls the **same helpers** the translator calls;
+> - and `difftest.py --cog` runs generated programs in **cog space**, so the
+>   interpreter is diffed against p2core instruction by instruction exactly as
+>   the translator is. That harness found five mis-transcribed flag rules in
+>   the first pass, including GETBYTE, whose C and Z are the byte *index*
+>   rather than flags.
+>
+> What is genuinely duplicated is the ALU core, and that is the part the
+> harness covers most densely. Over 20 M instructions of the real firmware,
+> cog space executes **40 distinct mnemonics** (`ophist.rs` with
+> `P2CORE_COG_ONLY=1`); all 40 are implemented.
+
 **The open risk, and it is 0c's job.** Every projection uses a riscv32 proxy for
 the per-instruction base. A real P2 instruction is dearer — an `EEEE` test on
 every instruction, runtime-indexed register operands (forced by

@@ -1,6 +1,10 @@
 #!/bin/bash
 # Run the randomised differential test and report the first divergence.
-# usage: difftest.sh <qemu-system-p2> [ops] [n] [seed] [cf] [mem] [pins]
+# usage: difftest.sh <qemu-system-p2> [ops] [n] [seed] [cf] [mem] [pins] [cog]
+#
+# cog=1 runs the generated body in COG space, which is the cog-exec
+# INTERPRETER rather than the hub-exec translator -- a different engine over
+# the same instruction set, held to the same standard.
 set -euo pipefail
 QEMU=${1:?usage: difftest.sh <qemu-system-p2> [ops] [n] [seed]}
 OPS=${2:-add,sub,and,or,xor,mov,not}
@@ -9,10 +13,12 @@ SEED=${4:-1}
 CF=${5:-0}
 MEM=${6:-0}
 PINS=${7:-0}
+COG=${8:-0}
+COGFLAG=""; [ "$COG" = 1 ] && COGFLAG="--cog"
 HERE=$(cd "$(dirname "$0")" && pwd); CRATE=$(dirname "$HERE"); SIL=$(dirname "$CRATE")
 W=$(mktemp -d); trap 'rm -rf "$W"' EXIT
 
-COUNT=$(python3 "$HERE/difftest.py" --ops "$OPS" --n "$N" --seed "$SEED" --cf "$CF" --mem "$MEM" --pins "$PINS" --out "$W/prog.bin")
+COUNT=$(python3 "$HERE/difftest.py" --ops "$OPS" --n "$N" --seed "$SEED" --cf "$CF" --mem "$MEM" --pins "$PINS" $COGFLAG --out "$W/prog.bin")
 cargo build --release --quiet --manifest-path "$SIL/Cargo.toml" -p p2core --example p2state
 # p2core fast-forwards a confirmed idle poller to the next instant anything it
 # can observe might change. That is an interpreter-throughput optimisation, not

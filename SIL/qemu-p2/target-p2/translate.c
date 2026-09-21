@@ -1637,11 +1637,15 @@ GEN_BLOCK_ST(wrlong_2, 1)
         }                                                                     \
         tcg_gen_st_i32(tcg_constant_i32(a->imm << 9), tcg_env,                \
                        offsetof(CPUP2State, FIELD));                          \
-        ctx->prefix |= BIT;                                                   \
-        ctx->is_prefix = true;                                                \
-        /* Q survives an intervening AUG: `setq / augs / rdlong ##addr` is how \
-         * the boot ROM copies its cog image into place. */                   \
+        /* Q survives an intervening AUG -- `setq / augs / rdlong ##addr` is  \
+         * how the boot ROM copies its cog image into place -- but an AUG      \
+         * survives only its OWN kind, so `augs / setq / rdlong` loses the     \
+         * AUGS. ALTD/ALTS survive everything. */                             \
         ctx->prefix_survives = P2_PFX_SETQ | P2_PFX_SETQ2 | (BIT);            \
+        ctx->prefix = (ctx->prefix                                            \
+                       & (ctx->prefix_survives | P2_PFX_ALTD | P2_PFX_ALTS))  \
+                      | (BIT);                                                \
+        ctx->is_prefix = true;                                                \
         return true;                                                          \
     }
 
@@ -1663,9 +1667,11 @@ GEN_AUG(augd, aug_d, P2_PFX_AUGD)
         }                                                                     \
         p2_ld_d(ctx, d, a->d);                                                   \
         tcg_gen_st_i32(d, tcg_env, offsetof(CPUP2State, setq));               \
-        ctx->prefix |= BIT;                                                   \
-        ctx->is_prefix = true;                                                \
         ctx->prefix_survives = P2_PFX_SETQ | P2_PFX_SETQ2;                    \
+        ctx->prefix = (ctx->prefix                                            \
+                       & (ctx->prefix_survives | P2_PFX_ALTD | P2_PFX_ALTS))  \
+                      | (BIT);                                                \
+        ctx->is_prefix = true;                                                \
         return true;                                                          \
     }
 
@@ -1759,7 +1765,7 @@ static bool trans_rev(DisasContext *ctx, arg_misc *a)
         tcg_gen_sari_i32(t, t, 23);                                           \
         tcg_gen_add_i32(t, d, t);                                             \
         p2_st_d(ctx, t, a->d);                                                \
-        ctx->prefix |= BIT;                                                   \
+        ctx->prefix = (ctx->prefix & (P2_PFX_ALTD | P2_PFX_ALTS)) | (BIT);    \
         ctx->is_prefix = true;                                                \
         return true;                                                          \
     }
@@ -2524,6 +2530,15 @@ static void p2_tr_translate_insn(DisasContextBase *dcbase, CPUState *cs)
          */
         gen_helper_p2_interp_cog(tcg_env, tcg_constant_i32(P2_COG_RUN));
         dcbase->pc_next += 4;
+        /*
+         * The helper leaves env->pc wherever the run ended, so this block must
+         * exit explicitly. DISAS_NORETURN alone is not enough: it tells
+         * tb_stop the block already left, and the generated code would then
+         * fall through into QEMU's own exit-request label and report
+         * TB_EXIT_REQUESTED with nothing having requested it -- which asserts
+         * in cpu_loop_exec_tb the moment icount is off.
+         */
+        tcg_gen_exit_tb(NULL, 0);
         dcbase->is_jmp = DISAS_NORETURN;
         return;
     }
@@ -2536,7 +2551,10 @@ static void p2_tr_translate_insn(DisasContextBase *dcbase, CPUState *cs)
     ctx->prefix_survives = 0;
     entry_prefix = ctx->prefix;
     alt = entry_prefix & (P2_PFX_ALTD | P2_PFX_ALTS);
-    cond = (insn >> 28) & 0xF;
+    /* An all-zero word is NOP, and its EEEE field is NOT the _RET_ prefix:
+     * p2core decodes it with cond 15 explicitly, because otherwise it is a ROR
+     * under %0000 and returns through an empty stack. */
+    cond = insn ? (int)((insn >> 28) & 0xF) : 0xF;
 
     /* Capture the EEEE outcome before the body can move C or Z. */
     ctx->retired = tcg_constant_i32(1);
