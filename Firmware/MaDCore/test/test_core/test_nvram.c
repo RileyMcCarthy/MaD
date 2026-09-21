@@ -1,6 +1,7 @@
 #include <unity.h>
 #include "HAL_lock.h"
 #include <string.h>
+#include <stdint.h>
 #include "dev_nvram.h"
 #include "vibes_behaviour.h"
 
@@ -121,4 +122,53 @@ void test_dev_nvram_loadMachineProfile(void)
     TEST_ASSERT_TRUE(dev_nvram_getChannelData(DEV_NVRAM_CHANNEL_MACHINE_PROFILE, &currentProfile, sizeof(MachineProfile)));
     TEST_ASSERT_EQUAL_INT(DEV_NVRAM_READY, dev_nvram_getState(DEV_NVRAM_CHANNEL_MACHINE_PROFILE));
     TEST_ASSERT_EQUAL_MEMORY(&currentProfile, &dev_nvram_machineProfileTest1, sizeof(MachineProfile));
+}
+
+void test_dev_nvram_refusesOutOfRangeChannel(void)
+{
+    VIBES_TEST("nvram.unknown-channel-refused",
+               "src/DEV/dev_nvram.c#dev_nvram_updateChannelData",
+               "a write and a read on a storage channel at the channel count, and on a negative channel index");
+    VIBES_EXPECT_WHY("update-refused",
+                     "each write is refused",
+                     "the channel array is indexed by this value, so only an in-range channel may be written");
+    VIBES_EXPECT("get-refused", "each read is refused");
+    VIBES_EXPECT("profile-unchanged", "the machine still holds its previous profile");
+    VIBES_EXPECT("caller-buffer-untouched", "the caller's read buffer is left untouched");
+
+    MachineProfile currentProfile;
+    MachineProfile sentinel;
+    const dev_nvram_channel_t pastEnd = (dev_nvram_channel_t)DEV_NVRAM_CHANNEL_COUNT;
+    const dev_nvram_channel_t negative = (dev_nvram_channel_t)-1;
+
+    /* Bring the machine profile channel to READY on the default. */
+    TEST_ASSERT_EQUAL_INT(DEV_NVRAM_INIT, dev_nvram_getState(DEV_NVRAM_CHANNEL_MACHINE_PROFILE));
+    dev_nvram_run();
+    dev_nvram_run();
+    TEST_ASSERT_EQUAL_INT(DEV_NVRAM_READY, dev_nvram_getState(DEV_NVRAM_CHANNEL_MACHINE_PROFILE));
+    TEST_ASSERT_TRUE(dev_nvram_getChannelData(DEV_NVRAM_CHANNEL_MACHINE_PROFILE, &currentProfile, sizeof(MachineProfile)));
+    TEST_ASSERT_EQUAL_MEMORY(&currentProfile,
+                             dev_nvram_config.channels[DEV_NVRAM_CHANNEL_MACHINE_PROFILE].dataDefault,
+                             sizeof(MachineProfile));
+
+    /* Out-of-range writes must refuse and leave the in-range channel alone. */
+    TEST_ASSERT_FALSE(dev_nvram_updateChannelData(pastEnd,
+                                                  (void *)&dev_nvram_machineProfileTest1,
+                                                  sizeof(dev_nvram_machineProfileTest1)));
+    TEST_ASSERT_FALSE(dev_nvram_updateChannelData(negative,
+                                                  (void *)&dev_nvram_machineProfileTest1,
+                                                  sizeof(dev_nvram_machineProfileTest1)));
+    TEST_ASSERT_EQUAL_INT(DEV_NVRAM_READY, dev_nvram_getState(DEV_NVRAM_CHANNEL_MACHINE_PROFILE));
+    TEST_ASSERT_TRUE(dev_nvram_getChannelData(DEV_NVRAM_CHANNEL_MACHINE_PROFILE, &currentProfile, sizeof(MachineProfile)));
+    TEST_ASSERT_EQUAL_MEMORY(&currentProfile,
+                             dev_nvram_config.channels[DEV_NVRAM_CHANNEL_MACHINE_PROFILE].dataDefault,
+                             sizeof(MachineProfile));
+
+    /* Out-of-range reads must refuse and not touch the caller's buffer. */
+    memset(&sentinel, 0xA5, sizeof(sentinel));
+    TEST_ASSERT_FALSE(dev_nvram_getChannelData(pastEnd, &sentinel, sizeof(sentinel)));
+    TEST_ASSERT_EACH_EQUAL_UINT8(0xA5, (uint8_t *)&sentinel, sizeof(sentinel));
+    memset(&sentinel, 0x5A, sizeof(sentinel));
+    TEST_ASSERT_FALSE(dev_nvram_getChannelData(negative, &sentinel, sizeof(sentinel)));
+    TEST_ASSERT_EACH_EQUAL_UINT8(0x5A, (uint8_t *)&sentinel, sizeof(sentinel));
 }

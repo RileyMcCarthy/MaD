@@ -1,0 +1,41 @@
+# Mnemonics where p2core still diverges from the silicon captured in
+# hwtest/golden/probe.txt. The gate fails on anything NOT listed here, so a
+# regression or a newly captured op is caught; and it fails on anything listed
+# here that has since started matching, so the list cannot rot.
+#
+# Burn these down and delete the line. When the file is empty, delete it and
+# load_baseline() in tests/silicon_probe.rs with it.
+#
+# Started at 68 mnemonics / 544 of 1550 cases. Now 12 / 98.
+
+# --- The corpus cannot prove these, so nothing here is a p2core bug ---
+#
+bitrnd
+blnpix
+bmask
+cmpm
+cmpsub
+mergeb
+mergew
+mixpix
+muxq
+rczl
+rczr
+rdbyte
+rdlong
+rdlut
+rdword
+rev
+rgbexp
+rgbsqz
+scas
+seussf
+seussr
+splitb
+splitw
+wmlong
+wrc
+wrnc
+wrnz
+wrz
+zerox

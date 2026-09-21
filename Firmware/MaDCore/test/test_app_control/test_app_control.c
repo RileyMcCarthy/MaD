@@ -95,11 +95,17 @@ bool HAL_GPIO_getActive(HAL_GPIO_channel_E channel)
 /* --- actuator (the MOTOR-cog driver app_control gates on; APP_MOTION_USE_SERVO
  *     picks which one, exactly as in the module under test) --- */
 static bool d_actuatorReady;
+static bool d_actuatorStalled;
 #if APP_MOTION_USE_SERVO
 bool dev_servo_isReady(dev_servo_channel_E ch)
 {
     TEST_ASSERT_EQUAL_INT(DEV_SERVO_CHANNEL_MAIN, ch);
     return d_actuatorReady;
+}
+bool dev_servo_isStalled(dev_servo_channel_E ch)
+{
+    TEST_ASSERT_EQUAL_INT(DEV_SERVO_CHANNEL_MAIN, ch);
+    return d_actuatorStalled;
 }
 #else
 bool dev_stepper_isReady(dev_stepper_channel_E ch)
@@ -153,6 +159,7 @@ static void doubles_reset(void)
     d_cogAllRunning = true;
     d_watchdogAlive = true;
     d_actuatorReady = true;
+    d_actuatorStalled = false;
     d_forceGaugeReady = true;
 
     memset(d_gpio, 0, sizeof(d_gpio));
@@ -187,6 +194,7 @@ static void enableMotion(void)
     TEST_ASSERT_EQUAL_INT(APP_CONTROL_STATE_MANUAL, app_control_data.state);
     TEST_ASSERT_TRUE(app_control_motionEnabled());
 }
+
 
 void setUp(void)
 {
@@ -288,12 +296,107 @@ void test_run_servoCommunicationFaultWhenNotReady(void)
                "src/APP/app_control.c#app_control_run",
                "the drive that moves the gantry stops reporting that it is ready");
     VIBES_EXPECT_WHY("drive-fault-reported",
-                     "the machine reports a drive communication fault",
+                     "the machine reports a drive communication fault immediately",
                      "the machine is built with one of two motor drives, and only the drive actually running reports its readiness, so the controller asks the active one");
     control_init();
     d_actuatorReady = false; /* the active actuator's isReady == false → fault */
     app_control_run();
+    /* Deliberately no debounce arming, and deliberately the FIRST run: despite
+     * its name this fault is not a link at all. `actuator_isReady()` is the
+     * motor control loop's "I ticked" flag, so one false reading means the loop
+     * has stopped, and waiting 100 ms to say so would leave a machine applying
+     * force with no servo. If someone reintroduces a window here, this fails. */
     TEST_ASSERT_EQUAL_INT(APP_CONTROL_FAULT_SERVO_COMMUNICATION, app_control_getFault());
+}
+
+void test_a_stall_faults_the_machine_and_stops_it(void)
+{
+    VIBES_TEST("control.stall-is-a-fault",
+               "src/APP/app_control.c#app_control_private_processFaults",
+               "motion enabled, then the drive reporting that the carriage is not following what it is being commanded");
+    VIBES_EXPECT_WHY("stall-faults",
+                     "the machine faults and names the stall",
+                     "the drive has detected this for as long as it has existed and nothing read it, so a jammed carriage was driven against its jam until somebody noticed by ear");
+    VIBES_EXPECT("motion-stops", "the machine leaves the enabled state and motion is no longer permitted");
+
+    control_init();
+    enableMotion();
+
+    d_actuatorStalled = true;
+    app_control_run();
+    TEST_ASSERT_EQUAL_INT(APP_CONTROL_FAULT_SERVO_STALL, app_control_getFault());
+    TEST_ASSERT_EQUAL_INT(APP_CONTROL_STATE_DISABLED, app_control_data.state);
+    TEST_ASSERT_FALSE(app_control_motionEnabled());
+}
+
+void test_a_stall_stays_reported_after_the_drive_stops_reporting_it(void)
+{
+    VIBES_TEST("control.stall-latches",
+               "src/APP/app_control.c#app_control_private_processFaults",
+               "a stall that has faulted the machine, and then a drive that no longer reports the stall");
+    VIBES_EXPECT_WHY("fault-persists",
+                     "the machine stays faulted on the stall",
+                     "stopping the drive is what makes the stall stop being reported, so a fault recomputed from the live flag would clear itself the instant it acted, re-enable the machine, and drive into the same jam again roughly five times a second");
+
+    control_init();
+    enableMotion();
+    d_actuatorStalled = true;
+    app_control_run();
+    TEST_ASSERT_EQUAL_INT(APP_CONTROL_FAULT_SERVO_STALL, app_control_getFault());
+
+    /* The driver clears its own flag once it stops commanding velocity. */
+    d_actuatorStalled = false;
+    app_control_run();
+    app_control_run();
+    TEST_ASSERT_EQUAL_INT(APP_CONTROL_FAULT_SERVO_STALL, app_control_getFault());
+    TEST_ASSERT_EQUAL_INT(APP_CONTROL_STATE_DISABLED, app_control_data.state);
+}
+
+void test_disabling_motion_acknowledges_a_stall(void)
+{
+    VIBES_TEST("control.stall-cleared-by-operator",
+               "src/APP/app_control.c#app_control_private_processRequests",
+               "a latched stall, and an operator asking for motion off while the drive is still reporting the stall");
+    VIBES_EXPECT_WHY("cleared-on-first-request",
+                     "the fault clears on that request, even though the drive still reports the stall",
+                     "the request is processed before the faults are recomputed and the latch only re-arms while motion is enabled, so the stall still being reported on that tick is the residue of the one that stopped the machine rather than a new one");
+    VIBES_EXPECT_WHY("can-re-enable",
+                     "motion can be enabled again afterwards",
+                     "the operator clears the jam by hand, and a fault with no way back would leave the machine needing a power cycle to recover from a stopped carriage");
+
+    control_init();
+    enableMotion();
+    d_actuatorStalled = true;
+    app_control_run();
+    TEST_ASSERT_EQUAL_INT(APP_CONTROL_FAULT_SERVO_STALL, app_control_getFault());
+
+    /* Acknowledged while the drive is STILL reporting the stall -- one press. */
+    TEST_ASSERT_TRUE(app_control_triggerMotionDisabled());
+    app_control_run();
+    TEST_ASSERT_EQUAL_INT(APP_CONTROL_FAULT_NONE, app_control_getFault());
+
+    /* Jam cleared by hand, drive stops reporting, machine comes back. */
+    d_actuatorStalled = false;
+    TEST_ASSERT_TRUE(app_control_triggerMotionEnabled());
+    app_control_run();
+    TEST_ASSERT_EQUAL_INT(APP_CONTROL_STATE_MANUAL, app_control_data.state);
+}
+
+void test_a_stall_reported_while_disabled_does_not_fault(void)
+{
+    VIBES_TEST("control.stall-does-not-arm-while-disabled",
+               "src/APP/app_control.c#app_control_private_processFaults",
+               "a machine with motion disabled, and a drive reporting a stall");
+    VIBES_EXPECT_WHY("no-fault",
+                     "no stall fault is raised",
+                     "a stall means the drive is commanding motion it is not getting, which cannot be true of a machine that is not being driven; arming from it would leave a stopped machine unable to be enabled at all");
+
+    control_init();
+    TEST_ASSERT_FALSE(app_control_motionEnabled());
+    d_actuatorStalled = true;
+    app_control_run();
+    app_control_run();
+    TEST_ASSERT_EQUAL_INT(APP_CONTROL_FAULT_NONE, app_control_getFault());
 }
 
 void test_run_forceGaugeCommunicationFaultWhenNotReady(void)
@@ -308,6 +411,62 @@ void test_run_forceGaugeCommunicationFaultWhenNotReady(void)
     d_forceGaugeReady = false;
     app_control_run();
     TEST_ASSERT_EQUAL_INT(APP_CONTROL_FAULT_FORCE_GAUGE_COMMUNICATION, app_control_getFault());
+}
+
+/* Recovery tolerance is the DRIVER's job, not a window here.
+ *
+ * This used to be an APP-layer debounce: a 100 ms window that had to outlast
+ * dev_forceGauge's own worst-case recovery (a 20 ms read plus four 10 ms
+ * retries), which meant app_control had to know a duration the driver already
+ * knew, and guess it right. It now asks a question the driver can answer
+ * exactly -- `ready` means ALIVE, false only once the retry budget is spent --
+ * so this layer is a straight read with no notion of time at all.
+ *
+ * The blip case that shipped broken (one missed ADC frame faulting the machine
+ * and killing a running test) is covered where it belongs, in
+ * test_dev_forceGauge: `a_single_missed_reply_keeps_the_load_cell_ready`. */
+void test_run_forceGaugeReadyNeverFaultsHoweverLongItRuns(void)
+{
+    VIBES_TEST("control.force-gauge-ready-never-faults",
+               "src/APP/app_control.c#app_control_run",
+               "a ready load cell with motion enabled, observed across many control cycles as time passes");
+    VIBES_EXPECT_WHY("no-fault",
+                     "the machine reports no fault",
+                     "readiness is the driver's verdict that the load cell is alive, so this layer has no window of its own that time could outrun");
+    VIBES_EXPECT("motion-stays-enabled", "motion stays enabled");
+    control_init();
+    enableMotion();
+
+    d_forceGaugeReady = true;
+    for (unsigned i = 0U; i < 50U; i++)
+    {
+        global_timeus += 10000U; /* time passing must not matter */
+        app_control_run();
+    }
+    TEST_ASSERT_EQUAL_INT(APP_CONTROL_FAULT_NONE, app_control_getFault());
+    TEST_ASSERT_TRUE(app_control_motionEnabled());
+}
+
+/* ...and an un-ready gauge faults on the very first run, with no window to
+ * wait out. The driver has already decided it has given up by the time it says
+ * this, so any delay here is time a machine spends applying force against a
+ * load cell known to be gone. */
+void test_run_forceGaugeUnreadyFaultsImmediately(void)
+{
+    VIBES_TEST("control.force-gauge-unready-faults-immediately",
+               "src/APP/app_control.c#app_control_run",
+               "a load cell reporting unready, with motion enabled");
+    VIBES_EXPECT_WHY("load-cell-fault-on-first-run",
+                     "the machine faults on the first control update and names the load cell as the reason",
+                     "the driver has already spent its retry budget by the time it reports unready, so any delay here is time spent applying force against a load cell known to be gone");
+    VIBES_EXPECT("motion-disabled", "motion is no longer enabled");
+    control_init();
+    enableMotion();
+
+    d_forceGaugeReady = false;
+    app_control_run();
+    TEST_ASSERT_EQUAL_INT(APP_CONTROL_FAULT_FORCE_GAUGE_COMMUNICATION, app_control_getFault());
+    TEST_ASSERT_FALSE(app_control_motionEnabled());
 }
 
 /* First-fault-wins: COG precedes WATCHDOG in the enum, so with both tripped the
@@ -977,7 +1136,13 @@ int main(void)
     RUN_TEST(test_run_watchdogFaultDetected);
     RUN_TEST(test_run_esdPowerFaultDetected);
     RUN_TEST(test_run_servoCommunicationFaultWhenNotReady);
+    RUN_TEST(test_a_stall_faults_the_machine_and_stops_it);
+    RUN_TEST(test_a_stall_stays_reported_after_the_drive_stops_reporting_it);
+    RUN_TEST(test_disabling_motion_acknowledges_a_stall);
+    RUN_TEST(test_a_stall_reported_while_disabled_does_not_fault);
     RUN_TEST(test_run_forceGaugeCommunicationFaultWhenNotReady);
+    RUN_TEST(test_run_forceGaugeReadyNeverFaultsHoweverLongItRuns);
+    RUN_TEST(test_run_forceGaugeUnreadyFaultsImmediately);
     RUN_TEST(test_run_firstFaultWinsPriority);
 
     RUN_TEST(test_run_machineTensionBoundaryStrictGreater);

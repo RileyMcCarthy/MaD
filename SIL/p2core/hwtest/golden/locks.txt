@@ -1,0 +1,14 @@
+# Silicon console captured from a P2-EVAL.
+# Source: hwtest/locks.c
+# Captured: 2026-09-13T06:04:02Z
+# Recapture: python3 tools/hw_compare.py --capture --prog <name>
+
+LOCKS
+PASS locknew0 00000000
+PASS locknew15 0000000f
+PASS locknew_exhausted 0000000f
+PASS locktry_first ffffffff
+PASS locktry_again ffffffff
+PASS locknew_after_ret 00000000
+PASS locktry_after ffffffff
+RESULT 0 PASS

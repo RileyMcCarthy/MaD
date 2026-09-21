@@ -5,6 +5,7 @@
  * Includes
  **********************************************************************/
 #include "app_control.h"
+#include "IO_Debug.h"
 #include "app_gauge.h"
 #include "app_monitor.h"
 #include "app_messageSlave.h"
@@ -28,6 +29,7 @@
  * Constants
  **********************************************************************/
 
+
 /*********************************************************************
  * Macros
  **********************************************************************/
@@ -38,15 +40,6 @@
     }
 #define APP_CONTROL_LOCK_REL() (void)HAL_lock_release(app_control_data.lock)
 
-/* Ask the ACTIVE actuator whether it is alive — the MOTOR cog runs exactly one of
- * the two drivers (APP_MOTION_USE_SERVO, see dev_cogManager_config.c), so the
- * other one's run() never executes and its ready flag never gets staged. Mirrors
- * the actuator abstraction in app_motion.c. */
-#if APP_MOTION_USE_SERVO
-#define actuator_isReady() dev_servo_isReady(DEV_SERVO_CHANNEL_MAIN)
-#else
-#define actuator_isReady() dev_stepper_isReady(DEV_STEPPER_CHANNEL_MAIN)
-#endif
 /**********************************************************************
  * Typedefs
  **********************************************************************/
@@ -78,11 +71,15 @@ typedef struct
 
     bool motionEnabled;
     bool testRunning;
+    /* Sticky: a stall stops the machine and stays reported until the operator
+     * disables motion. See processFaults for why it cannot self-clear. */
+    bool stallLatched;
     app_control_fault_E faultedReason;
     app_control_restriction_E restrictedReason;
 
     app_control_state_E state;
     app_control_nvram_S nvram;
+
 
     int32_t lock;
 } app_control_data_S;
@@ -112,17 +109,26 @@ static void app_control_private_processRequests(void)
     APP_CONTROL_LOCK_REQ_BLOCK();
     if (app_control_data.request.triggerMotionEnabled)
     {
+        DEBUG_INFO("%s", "CONTROL: motion enable requested\n");
         app_control_data.motionEnabled = true;
         app_control_data.request.triggerMotionEnabled = false;
     }
 
     if (app_control_data.request.triggerMotionDisabled)
     {
+        /* Who turned motion off is the first question whenever a test ends
+         * with "motion disabled", and nothing recorded it until now. */
+        DEBUG_INFO("%s", "CONTROL: motion DISABLE requested\n");
         app_control_data.motionEnabled = false;
         app_control_data.request.triggerMotionDisabled = false;
+        /* The operator's acknowledgement of a stall. Nothing else clears it --
+         * the jam has to be cleared by hand, and asking for motion off is the
+         * one action that says someone has looked at the machine. */
+        app_control_data.stallLatched = false;
     }
     APP_CONTROL_LOCK_REL();
 }
+
 
 static app_control_fault_E app_control_private_processFaults(void)
 {
@@ -132,8 +138,58 @@ static app_control_fault_E app_control_private_processFaults(void)
     app_control_data.fault[APP_CONTROL_FAULT_ESD_SWITCH] = HAL_GPIO_getActive(HAL_GPIO_ESD_SWITCH);
     app_control_data.fault[APP_CONTROL_FAULT_ESD_UPPER] = HAL_GPIO_getActive(HAL_GPIO_ESD_UPPER);
     app_control_data.fault[APP_CONTROL_FAULT_ESD_LOWER] = HAL_GPIO_getActive(HAL_GPIO_ESD_LOWER);
-    app_control_data.fault[APP_CONTROL_FAULT_SERVO_COMMUNICATION] = (actuator_isReady() == false);
-    app_control_data.fault[APP_CONTROL_FAULT_FORCE_GAUGE_COMMUNICATION] = (dev_forceGauge_isReady(DEV_FORCEGAUGE_CHANNEL_MAIN) == false);
+    /* The MOTOR cog runs exactly one of the two drivers (APP_MOTION_USE_SERVO,
+     * see dev_cogManager_config.c), so the other one's run() never executes and
+     * its flag never gets staged. Asked directly rather than through a local
+     * `actuator_*` macro: app_motion.c already owns that abstraction, and a
+     * second copy here bought one call site an alias that hid what it reads.
+     *
+     * What it reads is LIVENESS, not communication, whatever the fault is
+     * called: `out.ready` means "the control loop has ticked" (dev_servo.c --
+     * false until the cog has run, set true each tick, and still true while the
+     * servo is disabled, because the loop is what keeps ticking). No UART, no
+     * request, no reply that can land a cycle late. One false reading means the
+     * loop has stopped, so this is instantaneous like the watchdog above it. */
+#if APP_MOTION_USE_SERVO
+    const bool motorLoopAlive = dev_servo_isReady(DEV_SERVO_CHANNEL_MAIN);
+#else
+    const bool motorLoopAlive = dev_stepper_isReady(DEV_STEPPER_CHANNEL_MAIN);
+#endif
+    app_control_data.fault[APP_CONTROL_FAULT_SERVO_COMMUNICATION] = (motorLoopAlive == false);
+    /* No window here either. dev_forceGauge now reports ready as ALIVE rather
+     * than "fresh sample this tick": a missed reply keeps it ready while the
+     * driver re-reads, and it goes un-ready only once the driver has spent its
+     * retry budget and torn the ADC down. The debounce this used to carry was
+     * APP guessing at a duration the driver already knew -- 20 ms for the read
+     * plus four 10 ms retries -- so the knowledge now lives where it belongs
+     * and the fault is event-driven instead of timed. */
+    app_control_data.fault[APP_CONTROL_FAULT_FORCE_GAUGE_COMMUNICATION] =
+        (dev_forceGauge_isReady(DEV_FORCEGAUGE_CHANNEL_MAIN) == false);
+
+#if APP_MOTION_USE_SERVO
+    /* A stall is the driver commanding motion the encoder does not follow --
+     * more than stallVelocity asked for, under stallMinMove counts delivered,
+     * for stallTicks consecutive ticks. It is a mechanical fault, so unlike the
+     * liveness faults above it LATCHES until the operator acknowledges it by
+     * disabling motion.
+     *
+     * It has to. Disabling motion is exactly what clears dev_servo's stall
+     * flag -- the driver stops commanding velocity, the counter resets -- so a
+     * fault recomputed from the live flag would disable the machine, watch its
+     * own cause disappear, clear, re-enable and drive into the same jam 200 ms
+     * later, indefinitely.
+     *
+     * Latching only while motion is ENABLED is what makes the acknowledgement
+     * take effect on the first press: processRequests has already cleared both
+     * the latch and motionEnabled by the time this runs, so the stall the
+     * driver is still reporting this tick -- the residue of the one that
+     * stopped the machine -- does not re-arm it. */
+    if (app_control_data.motionEnabled && dev_servo_isStalled(DEV_SERVO_CHANNEL_MAIN))
+    {
+        app_control_data.stallLatched = true;
+    }
+#endif
+    app_control_data.fault[APP_CONTROL_FAULT_SERVO_STALL] = app_control_data.stallLatched;
 
     // Select the first fault as the reason
     app_control_fault_E fault = APP_CONTROL_FAULT_NONE;
@@ -258,7 +314,16 @@ void app_control_run(void)
 {
     app_control_private_processRequests();
     app_control_data.testRunning = app_testManagement_isRunning();
+    const app_control_fault_E previousFault = app_control_data.faultedReason;
     app_control_data.faultedReason = app_control_private_processFaults();
+    if (app_control_data.faultedReason != previousFault)
+    {
+        /* A fault is what silently disables motion, and a transient one (a
+         * gauge or servo that misses a reply for one cycle) aborts a running
+         * test with "motion disabled" and then clears before anyone polling
+         * the state can see it. Record the edge. */
+        DEBUG_INFO("CONTROL: fault %d -> %d\n", (int)previousFault, (int)app_control_data.faultedReason);
+    }
     app_control_data.restrictedReason = app_control_private_processRestrictions();
     app_control_data.state = app_control_private_getDesiredState();
     app_control_private_setOutput();

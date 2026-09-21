@@ -23,6 +23,13 @@
 #define DEV_COGMANAGER_STACK_SENTINEL (0xA5U)
 /* Cadence of the stack high-water report on the debug serial. */
 #define DEV_COGMANAGER_STACK_REPORT_PERIOD_US (5000000U)
+/* Cadence of the scheduling-overrun report on the debug serial. A cog that is
+ * behind is usually behind on every cycle, and every DEBUG_* serializes on the
+ * one global stdio lock that all eight cogs print through — so reporting per
+ * cycle makes the report itself the dominant load and pushes the other cogs
+ * further past their own deadlines. A sustained overrun is just as visible at
+ * 1 Hz, and the suppressed count carries how often it actually fired. */
+#define DEV_COGMANAGER_OVERRUN_REPORT_PERIOD_US (1000000U)
 
 /*********************************************************************
  * Macros
@@ -79,6 +86,12 @@ static void dev_cogManager_private_wrapper(void *arg)
     /* Guard against divide-by-zero for free-running (frequency == 0) channels; the
      * value is only used in the `targetFrequencyHz != 0U` branch below. */
     const uint32_t maxWaitTime = (targetFrequencyHz != 0U) ? (1000000U / targetFrequencyHz) : 0U;
+#if !defined(__EMULATION__)
+    /* Per-cog: this wrapper is the body of one cog, so these need no sharing. */
+    uint32_t lastOverrunReportUs = 0U;
+    uint32_t suppressedOverruns = 0U;
+    bool overrunReported = false;
+#endif
     while (1)
     {
         const uint32_t startTime = HAL_time_getUs();
@@ -92,7 +105,18 @@ static void dev_cogManager_private_wrapper(void *arg)
             {
 #if !defined(__EMULATION__)
                 // emulator doesnt run fast enough to catch this
-                DEBUG_ERROR("Scheduling overrun (%u/%u us) %s\n", duration, maxWaitTime, config->name);
+                if ((overrunReported == false) ||
+                    lib_utility_elapsed_gt(endTime, lastOverrunReportUs, DEV_COGMANAGER_OVERRUN_REPORT_PERIOD_US))
+                {
+                    DEBUG_ERROR("Scheduling overrun (%u/%u us) %s (+%u since last report)\n", duration, maxWaitTime, config->name, suppressedOverruns);
+                    lastOverrunReportUs = endTime;
+                    suppressedOverruns = 0U;
+                    overrunReported = true;
+                }
+                else
+                {
+                    suppressedOverruns++;
+                }
 #endif
             }
             else
@@ -198,12 +222,15 @@ void dev_cogManager_runAction(dev_cogManager_channel_E channel)
         uint8_t crcUpper = lib_utility_CRC8(&dev_cogManager_config.channels[channel].upperCanary[0], DEV_COGMANAGER_STACK_CANARY_SIZE);
         if (crcLower != dev_cogManager_data.channels[channel].crcLower)
         {
-            DEBUG_ERROR("Stack overflow detected on channel %d\n", channel);
+            /* The stack grows UP from stack[0], so the lower canary is below
+             * the base: corrupting it is an underflow (a pop too many), and
+             * running off the top into the upper canary is the overflow. */
+            DEBUG_ERROR("Stack underflow detected on channel %d\n", channel);
             dev_cogManager_data.channels[channel].state = DEV_COGMANAGER_STATE_ERROR;
         }
         else if (crcUpper != dev_cogManager_data.channels[channel].crcUpper)
         {
-            DEBUG_ERROR("Stack underflow detected on channel %d\n", channel);
+            DEBUG_ERROR("Stack overflow detected on channel %d\n", channel);
             dev_cogManager_data.channels[channel].state = DEV_COGMANAGER_STATE_ERROR;
         }
         else

@@ -28,7 +28,12 @@
  * rather than a VLA sized from the (runtime-indexed) channel config — flexcc has no
  * VLA support and they are a MISRA C:2023 Rule 18.8 violation. Both functions
  * bound-check itemSize against this so an oversized channel fails safe. */
-#define IO_SDCARD_MAX_ITEM_SIZE 64U
+/* Must cover the LARGEST configured channel item. `MachineProfile` is 68
+ * bytes (a 20-char name + 12 ints), and `processWrite`/`processRead`
+ * *silently return* when an item exceeds this — a save that goes quiet is a
+ * worse failure than one that errors, so this ceiling and the channel table
+ * have to be changed together. */
+#define IO_SDCARD_MAX_ITEM_SIZE 72U
 
 /* Longest fully-expanded channel path (`<mount>/gcode/<id>.bin` and friends),
  * including the terminator. Sizes both the per-channel filename buffer and the

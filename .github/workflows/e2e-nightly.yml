@@ -1,18 +1,41 @@
-# Nightly / manual WASM e2e against the SIL playground.
+# Nightly e2e on the ISS: the shipped FlexC image, and a real browser.
 #
-# `control-e2e-sil` in ci.yml runs the FULL suite on every app/protocol/
-# firmware/SIL change and now GATES (it is in `ci-gate.needs`) — a red e2e run
-# blocks the merge. ci.yml is the source of truth for which jobs gate; do not
-# infer it from here.
+# ONE configuration, deliberately. This workflow used to carry a second job
+# running the native firmware library behind the WS/PTY bridge -- the same
+# thing ci.yml's `control-e2e-sil` gates on every PR. Re-running it here only
+# repeated per-PR coverage a few hours later, so it is gone: what a nightly
+# run is for is the configuration a PR cannot afford, and that is this one.
 #
-# This workflow keeps running on a schedule for what a per-PR run cannot see:
-# drift on `main` that only appears over time (a flake that needs many runs to
-# surface, an upstream runner-image change, a dependency that moved under a
-# floating version).
+# `control-e2e-sil` in ci.yml still runs the FULL suite on every app/protocol/
+# firmware/SIL change and GATES (it is in `ci-gate.needs`). ci.yml is the
+# source of truth for which jobs gate; do not infer it from here. Native
+# coverage is therefore not lost by the removal above -- only its nightly
+# repeat is.
 #
-# Use `workflow_dispatch` with suite=smoke for a quick manual check.
+# Use `workflow_dispatch` with suite=full to run the whole suite instead of
+# the smoke subset.
+#
+# WHAT STILL DOES NOT TOUCH THE BOARD, in this job or any other. Nine
+# scenarios -- A1 and FW1/2/3/5/6/7/8/9 -- call `chromium.launch` directly and
+# drive a HOST Chrome against in-page fakes (installFakeBootRom,
+# installOpfsDataDir). They never reach an emulator of either kind, so they
+# run identically here and under the bridge.
+#
+# FW1's comment gives the reason: "the emulator has no P2 boot ROM and the WS
+# bridge carries no DTR line". Half of that is now stale -- p2iss boots the
+# chip through the real ROM and a flash that is a net component
+# (SIL/p2iss/tests/rom_boot_net.rs). The other half is not: nothing in p2iss,
+# embsim/qemu or embsim/peripherals models DTR, so the guest's emulated FTDI
+# has no way to drive the P2's reset line and a real flash cannot be
+# performed. Moving the FW scenarios onto the ISS means modelling that line,
+# not flipping a flag.
+#
+# Three more -- B5-reconnect, M11-idle-drop, M11-mid-test-drop -- are skipped
+# outright under CDP: they sever the link with the fake serial's
+# `__silDropLink`, and a real port has nothing to reach in and sever. The
+# equivalent here would be a QMP `device_del` on the USB serial device.
 
-name: E2E nightly (WASM + SIL)
+name: E2E nightly (ISS + QEMU)
 
 on:
   schedule:
@@ -34,9 +57,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  wasm-e2e-sil:
+  cosim-iss-qemu:
+    name: E2E on the ISS (FlexC image + QEMU guest)
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 180
     defaults:
       run:
         working-directory: Software/Control
@@ -50,32 +74,63 @@ jobs:
           node-version: 20
           cache: npm
           cache-dependency-path: Software/Control/package-lock.json
-
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
-
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: SIL
       - uses: actions/setup-python@v7
         with:
           python-version: '3.x'
 
-      - name: Install system deps
+      - name: Install system deps (QEMU x86_64 + qemu-img)
         run: |
           sudo apt-get update
-          sudo apt-get install -y libudev-dev pkg-config
+          sudo apt-get install -y libudev-dev pkg-config qemu-system-x86 qemu-utils
 
-      - name: Install PlatformIO
-        run: pip install -U platformio
+      # embsim picks its accelerator by OPENING /dev/kvm read-write
+      # (embsim/qemu/src/chrome.rs). The node exists on GitHub-hosted Linux
+      # runners but is root:kvm 0660, so without this the guest silently falls
+      # back to TCG and then fails to boot inside the warmup timeout — a
+      # failure that looks like a hang rather than a permissions problem.
+      - name: Make /dev/kvm usable
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+          test -w /dev/kvm || {
+            echo "::error::/dev/kvm is not writable — the guest would run under TCG and time out"
+            exit 1
+          }
 
-      - name: Install protocol generator deps
-        run: pip install -r ../../Protocol/ProtoEmb/core/requirements.txt
+      - name: Install PlatformIO + protocol generator deps
+        run: |
+          pip install -U platformio
+          pip install -r ../../Protocol/ProtoEmb/core/requirements.txt
 
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
-      - name: Build SIL emulator (firmware + protocol + cargo)
+      - name: Install the Propeller platform (flexcc/flexspin)
+        working-directory: Firmware/MaDCore
+        run: pio pkg install --platform https://github.com/RileyMcCarthy/platform-propeller.git
+
+      # Two artifacts, both required: the P2 image is what the ISS interprets,
+      # and libfirmware.a is what MaDSim LINKS — the binary will not build
+      # without it even though --iss never calls into it.
+      - name: Build the P2 image + native lib + protocol
         working-directory: SIL
-        run: make emulator
+        run: make p2image firmware protocol
+
+      # --release is not optional. The ISS interprets every P2 instruction and
+      # a dev-profile build is far too slow to reach the guest's warmup
+      # deadline (see the note on playground-iss in SIL/makefile).
+      - name: Build mad-emulator (release)
+        working-directory: SIL
+        run: cargo build --release --bin mad-emulator
 
       - name: Install Control deps + wasm + proto
         run: |
@@ -83,55 +138,71 @@ jobs:
           npm run build:wasm
           npm run generate:proto
 
+      # A handful of scenarios (A1, the FW* firmware-flash ones) still drive a
+      # HOST Chrome with in-page fakes and never touch the board.
       - name: Install Chromium for Playwright
         run: npx playwright install --with-deps chromium
 
-      # Unpaced virtual time — same reasoning as the PR job in ci.yml: an e2e run
-      # has no need of real-time pacing, and pacing makes the result depend on
-      # how fast the runner is.
-      - name: Start the e2e emulator (unpaced virtual time)
+      # ~2.8 GB and tens of minutes to provision, and it changes only when
+      # build.sh or the guest config does — so it is keyed on their hashes and
+      # rebuilt only on a miss.
+      - name: Restore the Chrome guest image
+        id: guest
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/embsim/qemu/chrome-debian13-x86_64.qcow2
+          key: embsim-guest-x86_64-${{ hashFiles('SIL/embsim/qemu/guest/chrome/**') }}
+
+      - name: Build the Chrome guest image
+        if: steps.guest.outputs.cache-hit != 'true'
+        working-directory: SIL/embsim
+        run: ARCH=x86_64 qemu/guest/chrome/build.sh
+
+      # The board starts the guest and parks; the DevTools port answers only
+      # once the board is slicing the guest's vCPU, and then only during the
+      # guest's duty cycle — so this polls patiently rather than assuming a
+      # fixed boot time.
+      - name: Start the cosim (ISS + QEMU guest) and Vite
         working-directory: SIL
         run: |
-          nohup make e2e-emulator > /tmp/mad-playground.log 2>&1 &
-          echo $! > /tmp/mad-playground.pid
-          for i in $(seq 1 90); do
-            if [ -e /tmp/tty.rpi ]; then echo "PTY ready after ${i}s"; break; fi
-            sleep 2
-          done
-          if [ ! -e /tmp/tty.rpi ]; then
-            echo "=== playground log ==="
-            cat /tmp/mad-playground.log || true
-            exit 1
-          fi
-
-      - name: Start WS bridge + Vite dev server
-        run: |
-          nohup npm run sil:bridge > /tmp/mad-bridge.log 2>&1 &
-          echo $! > /tmp/mad-bridge.pid
-          nohup npm run dev -- --host 127.0.0.1 --port 5174 > /tmp/mad-vite.log 2>&1 &
-          echo $! > /tmp/mad-vite.pid
+          nohup cargo run --release --bin mad-emulator -- \
+            --iss ../Firmware/MaDCore/.pio/build/propeller2_debug/program \
+            --computer "$HOME/.cache/embsim/qemu/chrome-debian13-x86_64.qcow2" \
+            --devtools-port 9222 --trace-port 9223 --sd-path ./sd --pty-path /tmp/tty.iss \
+            --log-level info > /tmp/cosim-board.log 2>&1 &
+          echo $! > /tmp/cosim-board.pid
+          cd ../Software/Control
+          nohup npm run dev -- --host 0.0.0.0 --port 5174 > /tmp/cosim-vite.log 2>&1 &
+          echo $! > /tmp/cosim-vite.pid
           for i in $(seq 1 60); do
-            if curl -sf http://127.0.0.1:5174/ >/dev/null; then echo "Vite ready"; break; fi
+            curl -sf http://127.0.0.1:5174/ >/dev/null && break
             sleep 2
           done
-          curl -sf http://127.0.0.1:5174/ >/dev/null
-          for i in $(seq 1 30); do
-            if (echo >/dev/tcp/127.0.0.1/9999) >/dev/null 2>&1; then
-              echo "Bridge port open"
+          curl -sf http://127.0.0.1:5174/ >/dev/null || {
+            echo "=== vite log ==="; cat /tmp/cosim-vite.log || true; exit 1
+          }
+          for i in $(seq 1 150); do
+            if curl -sf --max-time 10 http://127.0.0.1:9222/json/version >/dev/null 2>&1; then
+              echo "Guest Chrome answered CDP after ~$((i * 4))s"
               break
             fi
-            sleep 1
+            sleep 4
           done
-          (echo >/dev/tcp/127.0.0.1/9999) >/dev/null 2>&1 || {
-            echo "=== bridge log ==="
-            cat /tmp/mad-bridge.log || true
-            exit 1
+          curl -sf --max-time 20 http://127.0.0.1:9222/json/version || {
+            echo "=== board log (tail) ==="; tail -100 /tmp/cosim-board.log || true; exit 1
           }
 
-      - name: Run e2e suite
+      # The guest reaches the host's Vite at 10.0.2.2 over slirp, and the
+      # guest's managed Chromium policy whitelists exactly that origin for
+      # Web Serial — the port number is not negotiable without rebuilding the
+      # guest image.
+      - name: Run the suite against the ISS
         env:
-          APP_URL: http://127.0.0.1:5174
-          BRIDGE_URL: ws://127.0.0.1:9999
+          CDP_URL: http://127.0.0.1:9222
+          APP_URL: http://10.0.2.2:5174
+          # The board's control surface: the three link-drop scenarios ask it
+          # to unplug the emulated FTDI, which is a real USB detach.
+          CONTROL_URL: http://127.0.0.1:9223
         run: |
           SUITE="${{ github.event.inputs.suite || 'smoke' }}"
           if [ "$SUITE" = "full" ]; then
@@ -140,12 +211,17 @@ jobs:
             npm run e2e:smoke
           fi
 
-      - name: Upload logs on failure
-        if: failure()
+      - name: Collect diagnostics
+        if: always()
+        run: |
+          mkdir -p /tmp/cosim-out
+          cp /tmp/cosim-board.log /tmp/cosim-vite.log /tmp/cosim-out/ 2>/dev/null || true
+          cp -r e2e/artifacts /tmp/cosim-out/scenario-artifacts 2>/dev/null || true
+
+      - name: Upload logs + failure artifacts
+        if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: e2e-logs
-          path: |
-            /tmp/mad-playground.log
-            /tmp/mad-bridge.log
-            /tmp/mad-vite.log
+          name: cosim-iss-qemu-${{ github.run_number }}
+          path: /tmp/cosim-out
+          retention-days: 14

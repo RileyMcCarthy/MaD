@@ -31,10 +31,11 @@
 typedef struct __attribute__((packed))
 {
     int32_t force;    // mN (sample frame)
-    int32_t position; // um (sample frame)
+    int32_t position; // nm (sample frame)
     uint32_t time;    // us since test start
-    /* Segment target: machine setpoint (um) minus gauge length (sample coords). */
-    int32_t setpoint; // um (sample frame)
+    /* What the trajectory commanded at this instant, minus the gauge length
+     * (sample coords). NOT the move's destination: see app_motion. */
+    int32_t setpoint; // nm (sample frame)
 } app_monitor_sample_t;
 
 typedef enum
@@ -73,6 +74,14 @@ bool app_monitor_isSampleProfileLoaded(void);
 bool app_monitor_isForceExceeded(void);
 bool app_monitor_isVelocityExceeded(void);
 bool app_monitor_isDisplacementExceeded(void);
+
+/* Samples the SD queue refused during the current (or most recent) recording.
+ *
+ * Non-zero means the recorded file has holes. Nothing in the record itself can
+ * reveal them -- samples carry no index and the timestamps stay monotonic
+ * across a gap -- so this counter is the only way to know the file is
+ * incomplete. Reset when a recording starts. */
+uint32_t app_monitor_getDroppedSamples(void);
 /**********************************************************************
  * End of File
  **********************************************************************/

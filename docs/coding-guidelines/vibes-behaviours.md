@@ -4,6 +4,14 @@ Vibes turns annotated tests into a **behaviour ledger** (`behaviours.jsonl`) and
 
 That readership is the entire design constraint: **every word of a behaviour is written for someone who has never opened the repo.**
 
+Vibes itself lives at [RileyMcCarthy/vibes](https://github.com/RileyMcCarthy/vibes)
+and is a submodule at `Vibes/`. The wire contract is
+[`Vibes/bindings/SCHEMA.md`](https://github.com/RileyMcCarthy/vibes/blob/main/bindings/SCHEMA.md) and the
+claim-writing rules are [`Vibes/bindings/CLAIMS.md`](https://github.com/RileyMcCarthy/vibes/blob/main/bindings/CLAIMS.md).
+What follows is those rules with MaD's own examples, plus how MaD wires the
+suites. **Changes to the tool land upstream first**, then the pinned commit is
+bumped here — the same as `embsim` and `ProtoEmb`.
+
 ## The shape
 
 A test declares the **condition** it sets up once, then one or more

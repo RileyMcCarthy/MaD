@@ -25,7 +25,7 @@
  **********************************************************************/
 typedef struct
 {
-    int32_t gaugeLength_um;
+    int32_t gaugeLength_nm;
     int32_t gaugeForce_mN;
     int lock;
 } app_gauge_data_t;
@@ -38,7 +38,7 @@ static app_gauge_data_t app_gauge_data;
 /**********************************************************************
  * Private Function Definitions
  **********************************************************************/
-static int32_t app_gauge_private_getMachinePositionUm(void)
+static int32_t app_gauge_private_getMachinePositionNm(void)
 {
     return IO_positionFeedback_getValue(IO_POSITION_FEEDBACK_CHANNEL_SERVO_FEEDBACK);
 }
@@ -54,25 +54,25 @@ static int32_t app_gauge_private_getMachineForceMN(void)
 void app_gauge_init(int lock)
 {
     app_gauge_data.lock = lock;
-    app_gauge_data.gaugeLength_um = 0;
+    app_gauge_data.gaugeLength_nm = 0;
     app_gauge_data.gaugeForce_mN = 0;
 }
 
 int32_t app_gauge_getPosition(app_gauge_coord_E coord)
 {
-    const int32_t machine_um = app_gauge_private_getMachinePositionUm();
+    const int32_t machine_nm = app_gauge_private_getMachinePositionNm();
 
     switch (coord)
     {
     case APP_GAUGE_COORD_MACHINE:
-        return machine_um;
+        return machine_nm;
     case APP_GAUGE_COORD_SAMPLE:
     {
-        int32_t gaugeLength_um = 0;
+        int32_t gaugeLength_nm = 0;
         APP_GAUGE_LOCK_REQ_BLOCK();
-        gaugeLength_um = app_gauge_data.gaugeLength_um;
+        gaugeLength_nm = app_gauge_data.gaugeLength_nm;
         APP_GAUGE_LOCK_REL();
-        return machine_um - gaugeLength_um;
+        return machine_nm - gaugeLength_nm;
     }
     case APP_GAUGE_COORD_COUNT:
     default:
@@ -108,10 +108,10 @@ int32_t app_gauge_getForce(app_gauge_coord_E coord)
 
 void app_gauge_setGaugeLength(void)
 {
-    const int32_t machine_um = app_gauge_private_getMachinePositionUm();
+    const int32_t machine_nm = app_gauge_private_getMachinePositionNm();
 
     APP_GAUGE_LOCK_REQ_BLOCK();
-    app_gauge_data.gaugeLength_um = machine_um;
+    app_gauge_data.gaugeLength_nm = machine_nm;
     APP_GAUGE_LOCK_REL();
 }
 
@@ -124,15 +124,15 @@ void app_gauge_setGaugeForce(void)
     APP_GAUGE_LOCK_REL();
 }
 
-int32_t app_gauge_getGaugeLength_um(void)
+int32_t app_gauge_getGaugeLength_nm(void)
 {
-    int32_t gaugeLength_um = 0;
+    int32_t gaugeLength_nm = 0;
 
     APP_GAUGE_LOCK_REQ_BLOCK();
-    gaugeLength_um = app_gauge_data.gaugeLength_um;
+    gaugeLength_nm = app_gauge_data.gaugeLength_nm;
     APP_GAUGE_LOCK_REL();
 
-    return gaugeLength_um;
+    return gaugeLength_nm;
 }
 
 int32_t app_gauge_getGaugeForce_mN(void)

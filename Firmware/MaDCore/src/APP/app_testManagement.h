@@ -51,8 +51,9 @@ bool app_testManagement_isBusy(void);
 bool app_testManagement_triggerTestStart(const char *gcodeId);
 bool app_testManagement_triggerTestEnd(void);
 
-// Manual move gate. Rejects (returns false) while a test is starting,
-// running, or ending. Otherwise forwards to app_motion_addMove.
+// Manual move gate. Rejects (returns false) while motion is disabled, or
+// while a test is starting, running, or ending. Otherwise stages the move for
+// the next CONTROL cycle to enqueue into app_motion.
 bool app_testManagement_addManualMove(const app_motion_move_t *move);
 /**********************************************************************
  * End of File
