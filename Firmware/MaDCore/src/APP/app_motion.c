@@ -13,6 +13,7 @@
 
 #include "app_motion.h"
 #include "app_control.h"
+#include "app_notification.h"
 
 #if APP_MOTION_USE_SERVO
 #include "dev_servo.h"
@@ -129,6 +130,13 @@ typedef struct
     lib_timer_S dwellTimer;
     lib_timer_S endstopTimer;
     int32_t stepsPerMM;
+    /* False when the machine profile could not be read or cannot describe the
+     * machine. Every distance and feedrate this module emits is scaled by
+     * stepsPerMM, so an unusable profile means motion is refused, not guessed. */
+    bool profileValid;
+    /* Speed cap applied while app_control reports the machine RESTRICTED,
+     * in drive steps per second. Zero means no cap. */
+    int32_t restrictedFeedrate;
     int32_t maxPosition;
     int32_t homingVelocity;
     int32_t homingOffset;
@@ -318,7 +326,25 @@ static void app_motion_private_moveManager_start(void)
             /* move.x on SD is machine µm (host converts sample G-code at upload). */
             const int32_t moveTargetUm = app_motion_data.currentMove.x;
             int32_t steps = (int32_t)(((int64_t)moveTargetUm * app_motion_data.stepsPerMM) / 1000LL);
-            const int32_t feedrate = (int32_t)(((int64_t)app_motion_data.currentMove.f * app_motion_data.stepsPerMM) / 1000LL);
+            int32_t feedrate = (int32_t)(((int64_t)app_motion_data.currentMove.f * app_motion_data.stepsPerMM) / 1000LL);
+            /* RESTRICTED is entered on an endstop, an open door, or a sample or
+             * frame over its tension limit -- conditions where the machine may
+             * still be moved, deliberately and slowly, to get out of them. The
+             * state machine has always computed a speed cap for it and nothing
+             * has ever read it, so until now the only difference between
+             * RESTRICTED and MANUAL was the badge in the UI: a carriage sitting
+             * on an endstop could be commanded at the full 50 mm/s.
+             *
+             * Clamped rather than refused, because refusing motion in
+             * RESTRICTED is what would strand a specimen under load with no way
+             * to back off. */
+            if (app_motion_data.inputs.limitSpeed && (app_motion_data.restrictedFeedrate > 0) &&
+                (feedrate > app_motion_data.restrictedFeedrate))
+            {
+                DEBUG_INFO("RESTRICTED: feedrate %d -> %d steps/s\n", feedrate,
+                           app_motion_data.restrictedFeedrate);
+                feedrate = app_motion_data.restrictedFeedrate;
+            }
             if (app_motion_data.absoluteMode == false)
             {
                 steps += app_motion_data.inputs.positionSteps;
@@ -369,30 +395,44 @@ static void app_motion_private_moveManager_start(void)
         wf.dwellHighUs = req->dwellHighMs * 1000U;
         wf.dwellLowUs = req->dwellLowMs * 1000U;
         wf.skewPerMille = req->skewPerMille;
-        wf.shape = (req->shape == 1U) ? DEV_SERVO_WAVE_TRIANGLE : DEV_SERVO_WAVE_SINE;
 
-        app_motion_data.waveformRunning = actuator_startWaveform(&wf);
-        if (app_motion_data.waveformRunning)
+        /* An unrecognised traverse profile is REFUSED, not defaulted. The wire
+         * carries a whole byte and only 0 and 1 are defined, so a newer host
+         * asking this firmware for a profile it has never heard of must fail
+         * loudly: mapping the unknown byte onto a sine would run a specimen
+         * through a loading nobody asked for and file the result under the
+         * shape that was requested. The driver owns the set of profiles that
+         * exist, so it owns the conversion too. */
+        if (!dev_servo_waveShapeFromWire(req->shape, &wf.shape))
         {
-            /* The CENTRE is the number that explains a waveform that runs into
-             * an endstop: the wave swings +/-amplitude about wherever the
-             * carriage happened to be when this move started. */
-            DEBUG_INFO("G123: centre=%d amp=%d steps freq=%u uHz cycles=%u shape=%u "
-                       "dwell=%u/%u ms skew=%u\n",
-                       wf.centreCounts, wf.amplitudeCounts, wf.freqMicroHz, wf.cycles,
-                       (unsigned)req->shape, req->dwellHighMs, req->dwellLowMs,
-                       (unsigned)req->skewPerMille);
+            app_motion_data.waveformRunning = false;
+            DEBUG_ERROR("G123 REFUSED: unknown shape=%u\n", (unsigned)req->shape);
         }
         else
         {
-            /* Refused, not approximated. The driver rejects a waveform whose
-             * peak velocity or acceleration the machine cannot deliver, or
-             * whose holds leave no time to move, because running a smaller one
-             * instead gives a specimen that never saw the loading the report
-             * claims it did. */
-            DEBUG_ERROR("G123 REFUSED: amp=%d steps freq=%u uHz dwell=%u/%u ms skew=%u\n",
-                        wf.amplitudeCounts, wf.freqMicroHz, req->dwellHighMs,
-                        req->dwellLowMs, (unsigned)req->skewPerMille);
+            app_motion_data.waveformRunning = actuator_startWaveform(&wf);
+            if (app_motion_data.waveformRunning)
+            {
+                /* The CENTRE is the number that explains a waveform that runs
+                 * into an endstop: the wave swings +/-amplitude about wherever
+                 * the carriage happened to be when this move started. */
+                DEBUG_INFO("G123: centre=%d amp=%d steps freq=%u uHz cycles=%u shape=%u "
+                           "dwell=%u/%u ms skew=%u\n",
+                           wf.centreCounts, wf.amplitudeCounts, wf.freqMicroHz, wf.cycles,
+                           (unsigned)req->shape, req->dwellHighMs, req->dwellLowMs,
+                           (unsigned)req->skewPerMille);
+            }
+            else
+            {
+                /* Refused, not approximated. The driver rejects a waveform
+                 * whose peak velocity or acceleration the machine cannot
+                 * deliver, or whose holds leave no time to move, because
+                 * running a smaller one instead gives a specimen that never saw
+                 * the loading the report claims it did. */
+                DEBUG_ERROR("G123 REFUSED: amp=%d steps freq=%u uHz dwell=%u/%u ms skew=%u\n",
+                            wf.amplitudeCounts, wf.freqMicroHz, req->dwellHighMs,
+                            req->dwellLowMs, (unsigned)req->skewPerMille);
+            }
         }
 #else
         app_motion_data.waveformRunning = false;
@@ -461,12 +501,39 @@ void app_motion_init(int lock)
     app_motion_data.lock = lock;
     app_motion_data.absoluteMode = true; // Default absolute cordinates
     MachineProfile machineProfile;
-    dev_nvram_getChannelData(DEV_NVRAM_CHANNEL_MACHINE_PROFILE, &machineProfile, sizeof(MachineProfile));
+    memset(&machineProfile, 0, sizeof(machineProfile));
+    const bool profileRead =
+        dev_nvram_getChannelData(DEV_NVRAM_CHANNEL_MACHINE_PROFILE, &machineProfile, sizeof(MachineProfile));
+    /* stepsPerMM converts every distance and every feedrate this module emits,
+     * so a zero makes each of them zero: `steps = um * 0 / 1000` targets encoder
+     * count 0, and a feedrate of 0 is the invalid value dev_servo answers with
+     * maxVelocity. That pair is a full-speed run to the bottom of the machine
+     * from wherever the carriage is -- the worst thing this module can do --
+     * and it takes only an unprovisioned or short profile.bin to reach. The
+     * same value divides twice in the G0/G1 debug logging, so the debug build
+     * traps on it first.
+     *
+     * A profile that cannot describe the machine is not repaired with a
+     * default: a guessed steps/mm would run every test at the wrong scale and
+     * report it as correct. Motion is refused until a real one is written. */
+    app_motion_data.profileValid = profileRead && (machineProfile.servoStepsPerMM > 0);
+    if (!app_motion_data.profileValid)
+    {
+        DEBUG_ERROR("MOTION: unusable machine profile (read=%d servoStepsPerMM=%d); refusing motion\n",
+                    (int)profileRead, (int)machineProfile.servoStepsPerMM);
+        app_notification_send(APP_NOTIFICATION_TYPE_ERROR, "%s",
+                              "Machine profile is missing or invalid; motion is refused until it is set");
+    }
     app_motion_data.stepsPerMM = machineProfile.servoStepsPerMM;
     app_motion_data.maxPosition = machineProfile.maxPosition;
     app_motion_data.homingVelocity = machineProfile.homingVelocity;
     app_motion_data.homingOffset = machineProfile.homingOffset;
     app_motion_data.jawOffset = machineProfile.jawOffset;
+    /* Precomputed in the drive's own units, because the clamp sits on the
+     * per-move path. Zero (an older profile, or a profile that does not set it)
+     * disables the clamp rather than pinning the machine to a standstill. */
+    app_motion_data.restrictedFeedrate =
+        (int32_t)(((int64_t)machineProfile.restrictedVelocity * machineProfile.servoStepsPerMM));
     /* The move queue needs no locking: it is touched ONLY by the CONTROL cog
      * (app_testManagement pushes — test feed + staged manual moves — and
      * app_motion pops/clears, all from the same run loop). Manual moves from
@@ -485,6 +552,13 @@ void app_motion_run(void)
 
 bool app_motion_addMove(const app_motion_move_t *move)
 {
+    if (!app_motion_data.profileValid)
+    {
+        /* Refused at the door rather than at the conversion: a move that never
+         * enters the queue cannot be started, and the caller gets a false it
+         * can report instead of a test that runs at an unknown scale. */
+        return false;
+    }
     return lib_staticQueue_push(&app_motion_data.queue, (void *)move);
 }
 

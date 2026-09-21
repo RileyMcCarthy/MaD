@@ -865,11 +865,53 @@ void test_oscillate_returns_to_its_centre_after_whole_cycles(void)
 
 void test_oscillate_counts_whole_cycles_and_stops(void)
 {
+    VIBES_TEST("servo.oscillate-counts-cycles-and-stops",
+               "src/DEV/dev_servo.c#dev_servo_run",
+               "a two-cycle waveform run to completion");
+    VIBES_EXPECT("cycles-counted", "the driver reports two cycles completed");
+    VIBES_EXPECT("arrival-reported", "the drive reports arrival");
     servo_init();
     dev_servo_setPosition(CH, 0);
     (void)run_oscillate(10000.0, 1000000U, 2U, DEV_SERVO_WAVE_SINE);
     TEST_ASSERT_EQUAL_UINT32(2U, dev_servo_waveformCyclesDone(CH));
     TEST_ASSERT_TRUE(dev_servo_atTarget(CH));
+}
+
+void test_an_unknown_wire_shape_is_refused_not_defaulted(void)
+{
+    VIBES_TEST("servo.wave-shape-from-wire",
+               "src/DEV/dev_servo.c#dev_servo_waveShapeFromWire",
+               "each of the 256 shape bytes the wire can carry, offered to the driver's converter");
+    VIBES_EXPECT_WHY("known-bytes-convert",
+                     "bytes 0 and 1 convert to the sine and triangle profiles and to nothing else",
+                     "the shape byte is what selects the loading a specimen sees, so a converter that returned the wrong profile for a byte it does recognise would run the wrong test silently");
+    VIBES_EXPECT_WHY("unknown-bytes-refused",
+                     "every other byte is refused, and the caller's shape is left untouched",
+                     "a newer host asking an older firmware for a profile it has never heard of must fail loudly: defaulting the unknown byte to a sine files a plausible record under a test that was never performed");
+
+    /* The out-param starts at a value neither branch would naturally produce,
+     * so "left untouched" is distinguishable from "written with a default". */
+    dev_servo_wave_E shape = (dev_servo_wave_E)0xAB;
+
+    TEST_ASSERT_TRUE(dev_servo_waveShapeFromWire(0U, &shape));
+    TEST_ASSERT_EQUAL_INT(DEV_SERVO_WAVE_SINE, shape);
+    TEST_ASSERT_TRUE(dev_servo_waveShapeFromWire(1U, &shape));
+    TEST_ASSERT_EQUAL_INT(DEV_SERVO_WAVE_TRIANGLE, shape);
+
+    /* 2..255 are reserved. Every one of them is a refusal, not a default --
+     * swept rather than sampled, because a converter that special-cased one
+     * reserved byte would pass a spot check. */
+    for (uint32_t wire = 2U; wire <= 255U; wire++)
+    {
+        shape = (dev_servo_wave_E)0xAB;
+        char msg[64];
+        (void)snprintf(msg, sizeof(msg), "wire byte %u must be refused", (unsigned)wire);
+        TEST_ASSERT_FALSE_MESSAGE(dev_servo_waveShapeFromWire((uint8_t)wire, &shape), msg);
+        TEST_ASSERT_EQUAL_INT_MESSAGE(0xAB, (int)shape, msg);
+    }
+
+    /* A null destination is refused rather than dereferenced. */
+    TEST_ASSERT_FALSE(dev_servo_waveShapeFromWire(0U, NULL));
 }
 
 void test_an_infeasible_waveform_is_rejected_not_approximated(void)
@@ -1864,6 +1906,7 @@ int main(void)
     RUN_TEST(test_open_loop_waveform_velocity_leaves_a_permanent_position_deficit);
     RUN_TEST(test_oscillate_returns_to_its_centre_after_whole_cycles);
     RUN_TEST(test_oscillate_counts_whole_cycles_and_stops);
+    RUN_TEST(test_an_unknown_wire_shape_is_refused_not_defaulted);
     RUN_TEST(test_an_infeasible_waveform_is_rejected_not_approximated);
     RUN_TEST(test_a_triangle_is_a_trapezoidal_rate_not_an_infinite_corner);
     RUN_TEST(test_the_shape_bit_selects_a_genuinely_different_rate_profile);

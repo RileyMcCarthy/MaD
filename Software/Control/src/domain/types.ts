@@ -36,6 +36,12 @@ export enum FaultedReason {
   ESD_LOWER,
   SERVO_COMMUNICATION,
   FORCE_GAUGE_COMMUNICATION,
+  SERVO_STALL,
+  /* Domain-only, past the end of the wire enum: the app sets this when the
+   * user disables the machine, and the firmware never sends it. It therefore
+   * has to stay LAST -- a new wire variant takes the next ordinal, and if
+   * USER_REQUEST still held it every stall arriving from the machine would be
+   * displayed as the operator's own button press. */
   USER_REQUEST,
 }
 
@@ -71,6 +77,9 @@ export interface MachineConfiguration {
   'Homing Velocity (mm/s)': number;
   'Homing Offset (mm)': number;
   'Jaw Offset (mm)': number;
+  /* Speed ceiling while the machine is RESTRICTED -- on an endstop, with the
+   * door open, or over a tension limit. Zero means no ceiling. */
+  'Restricted Velocity (mm/s)': number;
 }
 
 export interface FirmwareVersion {

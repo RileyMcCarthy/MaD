@@ -44,6 +44,7 @@ describe('proto ↔ display mapping', () => {
         homingVelocity: 5,
         homingOffset: 2,
         jawOffset: 3,
+        restrictedVelocity: 2,
       };
       const shared = configToShared(proto);
       expect(shared.Name).toBe('M1');

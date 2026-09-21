@@ -152,7 +152,7 @@ void HAL_pulseOut_start(HAL_pulseOut_channel_E ch, uint32_t pulses, uint32_t fre
     HAL_pulseOut_channelData[ch].enabled = true;
 }
 
-bool HAL_pulseOut_startVelocity(HAL_pulseOut_channel_E ch, uint32_t frequency)
+void HAL_pulseOut_startVelocity(HAL_pulseOut_channel_E ch, uint32_t frequency)
 {
     const uint32_t clk = _clockfreq();
     HAL_pulseOut_channelData[ch].clkFreq = clk;
@@ -168,7 +168,6 @@ bool HAL_pulseOut_startVelocity(HAL_pulseOut_channel_E ch, uint32_t frequency)
     const uint32_t ncoWord = (uint32_t)(((uint64_t)frequency << 32) / (uint64_t)clk);
     _pinclear(HAL_pulseOut_channelConfig[ch].pin);
     _pinstart(HAL_pulseOut_channelConfig[ch].pin, P_NCO_FREQ | P_OE, 1U, ncoWord);
-    return true;
 }
 
 void HAL_pulseOut_setFrequency(HAL_pulseOut_channel_E ch, uint32_t frequency)
