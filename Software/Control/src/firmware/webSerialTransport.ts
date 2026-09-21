@@ -30,13 +30,18 @@ const TEARDOWN_BUDGET_MS = 1500;
 const FLUSH_BUDGET_MS = 50;
 
 /** Resolve when `p` settles or after `ms`, whichever is first (never rejects). */
+async function settleIgnore(p: Promise<unknown>): Promise<void> {
+  try {
+    await p;
+  } catch {
+    /* teardown must not reject on an already-dead stream */
+  }
+}
+
 function withTimeout(p: Promise<unknown>, ms: number): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   return Promise.race([
-    p.then(
-      () => undefined,
-      () => undefined,
-    ),
+    settleIgnore(p),
     new Promise<void>((resolve) => {
       timer = setTimeout(resolve, ms);
     }),
