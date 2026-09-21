@@ -1,0 +1,60 @@
+diff --git a/hw/Kconfig b/hw/Kconfig
+index 9e6c789..68e3379 100644
+--- a/hw/Kconfig
++++ b/hw/Kconfig
+@@ -59,6 +59,7 @@ source m68k/Kconfig
+ source microblaze/Kconfig
+ source mips/Kconfig
+ source openrisc/Kconfig
++source p2/Kconfig
+ source ppc/Kconfig
+ source riscv/Kconfig
+ source rx/Kconfig
+diff --git a/hw/meson.build b/hw/meson.build
+index 791ce21..fcf8b21 100644
+--- a/hw/meson.build
++++ b/hw/meson.build
+@@ -57,6 +57,7 @@ subdir('m68k')
+ subdir('microblaze')
+ subdir('mips')
+ subdir('openrisc')
++subdir('p2')
+ subdir('ppc')
+ subdir('remote')
+ subdir('riscv')
+diff --git a/include/system/arch_init.h b/include/system/arch_init.h
+index 51e24c3..8e89d3d 100644
+--- a/include/system/arch_init.h
++++ b/include/system/arch_init.h
+@@ -21,6 +21,7 @@ enum {
+     QEMU_ARCH_RISCV = (1 << 19),
+     QEMU_ARCH_RX = (1 << 20),
+     QEMU_ARCH_AVR = (1 << 21),
++    QEMU_ARCH_P2 = (1 << 22),
+     QEMU_ARCH_HEXAGON = (1 << 22),
+     QEMU_ARCH_LOONGARCH = (1 << 23),
+ };
+diff --git a/target/Kconfig b/target/Kconfig
+index d0c7b59..2c182e1 100644
+--- a/target/Kconfig
++++ b/target/Kconfig
+@@ -8,6 +8,7 @@ source m68k/Kconfig
+ source microblaze/Kconfig
+ source mips/Kconfig
+ source openrisc/Kconfig
++source p2/Kconfig
+ source ppc/Kconfig
+ source riscv/Kconfig
+ source rx/Kconfig
+diff --git a/target/meson.build b/target/meson.build
+index b29598e..fe5bab4 100644
+--- a/target/meson.build
++++ b/target/meson.build
+@@ -9,6 +9,7 @@ subdir('m68k')
+ subdir('microblaze')
+ subdir('mips')
+ subdir('openrisc')
++subdir('p2')
+ subdir('ppc')
+ subdir('riscv')
+ subdir('rx')
