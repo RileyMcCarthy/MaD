@@ -664,3 +664,31 @@ void HELPER(p2_coginit)(CPUP2State *env, uint32_t d, uint32_t s,
         env->c = 0;
     }
 }
+
+/*
+ * BITRND writes silicon's RND across the span. The eight C == Z goldens
+ * captured real entropy (RND came out 1,0,1,0,0,1,1,0, the same encoding
+ * drawing both), so they can never be replayed; p2core stirs the cog's own
+ * clock counter instead -- arbitrary but repeatable, and therefore diffable.
+ * This is that generator, bit for bit.
+ */
+uint32_t HELPER(p2_bitrnd)(CPUP2State *env, uint32_t d, uint32_t s,
+                           uint32_t base)
+{
+    uint32_t count = ((s >> 5) & 31) + 1;
+    uint64_t rnd = env->clocks ^ 0x2545F4914F6CDD1DULL;
+    uint32_t r = d, i;
+
+    for (i = 0; i < count; i++) {
+        uint32_t m;
+
+        rnd = rnd * 0x5851F42D4C957F2DULL + 0x14057B7EF767814FULL;
+        m = 1u << ((base + i) & 31);
+        if ((rnd >> 33) & 1) {
+            r |= m;
+        } else {
+            r &= ~m;
+        }
+    }
+    return r;
+}

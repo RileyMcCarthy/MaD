@@ -50,9 +50,19 @@ typedef struct DisasContext {
      * cancelled before anything else happens -- including before it is
      * decoded. */
     bool skip_active;
+    /*
+     * "Will this instruction retire?", captured BEFORE the body runs, because
+     * the body may change the very flags the EEEE condition is made of. Only
+     * materialised when something downstream needs it: a live REP, or a
+     * pending ALTx (which only a retiring instruction consumes).
+     */
+    TCGv_i32 retired;
     /* Set by a prefix instruction: it passes the pending set on rather than
      * consuming it. */
     bool is_prefix;
+    /* Which AUG/SETQ bits survive this instruction, by p2core's rule: Q
+     * survives any of the four prefixes, aug_s only AUGS, aug_d only AUGD. */
+    uint32_t prefix_survives;
 } DisasContext;
 
 /* ------------------------------------------------------------- operand access
@@ -194,15 +204,14 @@ static void p2_set_flags_sign(TCGv_i32 r, int c, int z)
 
 /* The EEEE field gates every instruction. %1111 is unconditional and %0000 is
  * the _RET_ prefix, which executes and then returns. */
-static TCGLabel *p2_gen_cond(DisasContext *ctx, int cond)
+static void p2_gen_cond_value(TCGv_i32 out, int cond)
 {
     TCGv_i32 c, z, sel;
-    TCGLabel *skip;
 
     if (cond == 0xF || cond == 0) {
-        return NULL;
+        tcg_gen_movi_i32(out, 1);
+        return;
     }
-    skip = gen_new_label();
     c = tcg_temp_new_i32();
     z = tcg_temp_new_i32();
     sel = tcg_temp_new_i32();
@@ -212,8 +221,21 @@ static TCGLabel *p2_gen_cond(DisasContext *ctx, int cond)
     tcg_gen_or_i32(sel, sel, z);
     tcg_gen_movi_i32(c, cond);
     tcg_gen_shr_i32(c, c, sel);
-    tcg_gen_andi_i32(c, c, 1);
-    tcg_gen_brcondi_i32(TCG_COND_EQ, c, 0, skip);
+    tcg_gen_andi_i32(out, c, 1);
+}
+
+static TCGLabel *p2_gen_cond(DisasContext *ctx, int cond)
+{
+    TCGv_i32 t;
+    TCGLabel *skip;
+
+    if (cond == 0xF || cond == 0) {
+        return NULL;
+    }
+    skip = gen_new_label();
+    t = tcg_temp_new_i32();
+    p2_gen_cond_value(t, cond);
+    tcg_gen_brcondi_i32(TCG_COND_EQ, t, 0, skip);
     return skip;
 }
 
@@ -1165,13 +1187,45 @@ static bool trans_nop_zero(DisasContext *ctx, arg_nop_zero *a)
 static void p2_gen_exit(DisasContext *ctx)
 {
     if (ctx->rep_active) {
+        /*
+         * p2core reaches tick_rep only at the very END of a step, which the
+         * EEEE-false path and the SKIP-cancelled path both return before. So a
+         * REP block whose last slot is cancelled runs the instruction AFTER
+         * the block and wraps from there -- one extra instruction and two
+         * extra clocks per iteration. Ticking unconditionally here skipped it.
+         */
+        TCGLabel *no_tick = gen_new_label();
+
+        tcg_gen_brcondi_i32(TCG_COND_EQ, ctx->retired, 0, no_tick);
         gen_helper_p2_tick_rep(tcg_env);
+        gen_set_label(no_tick);
     }
     tcg_gen_exit_tb(NULL, 0);
 }
 
+/*
+ * Pending AUGS/AUGD/SETQ are consumed by every instruction, branches included
+ * -- and a branch leaves the block from inside its own body, so the generic
+ * clear further down would be emitted after the exit and never run. That left
+ * a SETQ live into the next block, which is how the firmware's own
+ * `SETQ / COGINIT` idiom turned the following RDLONG into a block transfer.
+ *
+ * ALTD/ALTS are deliberately not cleared here: p2core consumes those only when
+ * an instruction actually retires, and a branch that is taken has retired.
+ */
+static void p2_gen_consume_prefix(DisasContext *ctx)
+{
+    uint32_t keep = ctx->prefix & (P2_PFX_ALTD | P2_PFX_ALTS);
+
+    if (ctx->prefix & ~(P2_PFX_ALTD | P2_PFX_ALTS)) {
+        tcg_gen_st_i32(tcg_constant_i32(keep), tcg_env,
+                       offsetof(CPUP2State, prefix));
+    }
+}
+
 static void p2_gen_goto(DisasContext *ctx, TCGv_i32 target)
 {
+    p2_gen_consume_prefix(ctx);
     tcg_gen_st_i32(target, tcg_env, offsetof(CPUP2State, pc));
     p2_gen_exit(ctx);
     ctx->branched = true;
@@ -1201,6 +1255,7 @@ static void p2_gen_ret_prefix(DisasContext *ctx, int cond)
         return;
     }
     t = tcg_temp_new_i32();
+    p2_gen_consume_prefix(ctx);
     gen_helper_p2_pop(t, tcg_env);
     tcg_gen_st_i32(t, tcg_env, offsetof(CPUP2State, pc));
     p2_gen_exit(ctx);
@@ -1584,6 +1639,9 @@ GEN_BLOCK_ST(wrlong_2, 1)
                        offsetof(CPUP2State, FIELD));                          \
         ctx->prefix |= BIT;                                                   \
         ctx->is_prefix = true;                                                \
+        /* Q survives an intervening AUG: `setq / augs / rdlong ##addr` is how \
+         * the boot ROM copies its cog image into place. */                   \
+        ctx->prefix_survives = P2_PFX_SETQ | P2_PFX_SETQ2 | (BIT);            \
         return true;                                                          \
     }
 
@@ -1607,6 +1665,7 @@ GEN_AUG(augd, aug_d, P2_PFX_AUGD)
         tcg_gen_st_i32(d, tcg_env, offsetof(CPUP2State, setq));               \
         ctx->prefix |= BIT;                                                   \
         ctx->is_prefix = true;                                                \
+        ctx->prefix_survives = P2_PFX_SETQ | P2_PFX_SETQ2;                    \
         return true;                                                          \
     }
 
@@ -2293,9 +2352,128 @@ static bool trans_coginit(DisasContext *ctx, arg_ds *a)
     gen_helper_p2_coginit(tcg_env, d, sv,
                           tcg_constant_i32(!!(ctx->prefix & P2_PFX_SETQ)),
                           tcg_constant_i32(a->c));
+    p2_gen_consume_prefix(ctx);
     p2_gen_exit(ctx);
     ctx->branched = true;
     p2_end_branch(ctx, skip);
+    return true;
+}
+
+
+/* ---- batch 15: the four p2core implements and this target still refused ---- */
+
+/* GETCT's I=1 encoding reaches the same arm in p2core (the misc decode falls
+ * back to the S-only table entry), and still writes cog register #D. */
+static bool trans_getct_2(DisasContext *ctx, arg_misc *a)
+{
+    return trans_getct(ctx, a);
+}
+
+/*
+ * MODCZ rewrites the flags from a 4+4-bit truth table in D, indexed by the
+ * CURRENT {C,Z}: C = cccc[{C,Z}], Z = zzzz[{C,Z}], with D[7:4] = cccc and
+ * D[3:0] = zzzz. `modcz _set,0 wc` is D=$F0 with WC only, and C becomes 1
+ * whatever the terminating non-hex digit left behind -- so both flags must be
+ * read before either is written.
+ *
+ * D is a literal by construction here (p2core special-cases S=$6F with I=1
+ * ahead of the misc table), widened by any pending AUGD.
+ */
+static bool trans_modcz(DisasContext *ctx, arg_misc *a)
+{
+    TCGv_i32 d = tcg_temp_new_i32(), c = tcg_temp_new_i32();
+    TCGv_i32 z = tcg_temp_new_i32(), idx = tcg_temp_new_i32();
+    TCGv_i32 t = tcg_temp_new_i32();
+    TCGLabel *skip = p2_gen_cond(ctx, a->cond);
+
+    p2_get_d_literal(ctx, d, a->d);
+    tcg_gen_ld_i32(c, tcg_env, offsetof(CPUP2State, c));
+    tcg_gen_ld_i32(z, tcg_env, offsetof(CPUP2State, z));
+    tcg_gen_shli_i32(idx, c, 1);
+    tcg_gen_or_i32(idx, idx, z);
+    if (a->c) {
+        tcg_gen_shri_i32(t, d, 4);
+        tcg_gen_andi_i32(t, t, 0xF);
+        tcg_gen_shr_i32(t, t, idx);
+        tcg_gen_andi_i32(t, t, 1);
+        tcg_gen_st_i32(t, tcg_env, offsetof(CPUP2State, c));
+    }
+    if (a->z) {
+        tcg_gen_andi_i32(t, d, 0xF);
+        tcg_gen_shr_i32(t, t, idx);
+        tcg_gen_andi_i32(t, t, 1);
+        tcg_gen_st_i32(t, tcg_env, offsetof(CPUP2State, z));
+    }
+    p2_end_cond(skip);
+    return true;
+}
+
+/*
+ * POLLSE1-4 are poll-and-clear on an event p2core never raises, so both flags
+ * report not-set. Do NOT copy this shape to POLLCT1-3: the CT deadline IS
+ * modelled and observable, so a POLLCT that always reported not-set would
+ * contradict WAITCT1 -- those stay refused.
+ */
+#define GEN_POLLSE(NAME)                                                      \
+    static bool trans_##NAME(DisasContext *ctx, arg_dsel *a)                  \
+    {                                                                         \
+        TCGLabel *skip = p2_gen_cond(ctx, a->cond);                           \
+        if (a->c) {                                                           \
+            tcg_gen_st_i32(tcg_constant_i32(0), tcg_env,                      \
+                           offsetof(CPUP2State, c));                          \
+        }                                                                     \
+        if (a->z) {                                                           \
+            tcg_gen_st_i32(tcg_constant_i32(0), tcg_env,                      \
+                           offsetof(CPUP2State, z));                          \
+        }                                                                     \
+        p2_end_cond(skip);                                                    \
+        return true;                                                          \
+    }
+
+GEN_POLLSE(pollse1)
+GEN_POLLSE(pollse2)
+GEN_POLLSE(pollse3)
+GEN_POLLSE(pollse4)
+
+/*
+ * BITRND is the TESTB+XOR twin of BITNOT, and the difference is easy to miss:
+ * its C != Z accumulate XORs the UN-inverted D[S[4:0]], where BITNOT XORs the
+ * inverted one. C == Z writes pseudo-random bits across the span and, under
+ * WCZ, reports the ORIGINAL base bit in both flags -- not the bit just
+ * written.
+ */
+static bool trans_bitrnd(DisasContext *ctx, arg_ds *a)
+{
+    TCGv_i32 d = tcg_temp_new_i32(), sv = tcg_temp_new_i32();
+    TCGv_i32 base = tcg_temp_new_i32(), prior = tcg_temp_new_i32();
+    TCGLabel *skip = p2_gen_cond(ctx, a->cond);
+
+    p2_ld_d(ctx, d, a->d);
+    p2_get_s(ctx, sv, a->i, a->s);
+    tcg_gen_andi_i32(base, sv, 31);
+    tcg_gen_shr_i32(prior, d, base);
+    tcg_gen_andi_i32(prior, prior, 1);
+
+    if (a->c != a->z) {
+        int flag = a->c ? offsetof(CPUP2State, c) : offsetof(CPUP2State, z);
+        TCGv_i32 cur = tcg_temp_new_i32();
+
+        tcg_gen_ld_i32(cur, tcg_env, flag);
+        tcg_gen_xor_i32(cur, cur, prior);
+        tcg_gen_st_i32(cur, tcg_env, flag);
+    } else {
+        TCGv_i32 r = tcg_temp_new_i32();
+
+        gen_helper_p2_bitrnd(r, tcg_env, d, sv, base);
+        p2_st_d(ctx, r, a->d);
+        if (a->c) {
+            tcg_gen_st_i32(prior, tcg_env, offsetof(CPUP2State, c));
+        }
+        if (a->z) {
+            tcg_gen_st_i32(prior, tcg_env, offsetof(CPUP2State, z));
+        }
+    }
+    p2_end_cond(skip);
     return true;
 }
 
@@ -2333,7 +2511,9 @@ static void p2_tr_insn_start(DisasContextBase *dcbase, CPUState *cs)
 static void p2_tr_translate_insn(DisasContextBase *dcbase, CPUState *cs)
 {
     DisasContext *ctx = container_of(dcbase, DisasContext, base);
-    uint32_t insn, was_prefixed;
+    uint32_t insn, entry_prefix, alt;
+    int cond;
+    bool decoded;
     TCGLabel *cancelled = NULL;
 
     if (dcbase->pc_next < P2_HUB_BASE) {
@@ -2353,7 +2533,19 @@ static void p2_tr_translate_insn(DisasContextBase *dcbase, CPUState *cs)
     p2_gen_clock();
     ctx->branched = false;
     ctx->is_prefix = false;
-    was_prefixed = ctx->prefix;
+    ctx->prefix_survives = 0;
+    entry_prefix = ctx->prefix;
+    alt = entry_prefix & (P2_PFX_ALTD | P2_PFX_ALTS);
+    cond = (insn >> 28) & 0xF;
+
+    /* Capture the EEEE outcome before the body can move C or Z. */
+    ctx->retired = tcg_constant_i32(1);
+    if (ctx->rep_active || alt || ctx->skip_active) {
+        TCGv_i32 t = tcg_temp_new_i32();
+
+        p2_gen_cond_value(t, cond);
+        ctx->retired = t;
+    }
 
     /*
      * A SKIP pattern cancels whole instruction slots, and a cancelled slot is
@@ -2369,39 +2561,76 @@ static void p2_tr_translate_insn(DisasContextBase *dcbase, CPUState *cs)
         tcg_gen_brcondi_i32(TCG_COND_NE, cancel, 0, cancelled);
     }
 
-    if (!decode_p2(ctx, insn)) {
-        if (cancelled) {
-            /* The not-cancelled path still has to refuse it. */
-            p2_unimpl(ctx);
-            gen_set_label(cancelled);
-            tcg_gen_st_i32(tcg_constant_i32(dcbase->pc_next), tcg_env,
-                           offsetof(CPUP2State, pc));
-            p2_gen_exit(ctx);
-            dcbase->is_jmp = DISAS_NORETURN;
-            return;
-        }
+    decoded = decode_p2(ctx, insn);
+    if (!decoded) {
         p2_unimpl(ctx);
-        return;
+    } else if (!ctx->branched) {
+        /* _RET_ on a non-branching instruction: it ran, now return. */
+        p2_gen_ret_prefix(ctx, cond);
     }
+
     /*
-     * A prefix survives only to the next instruction -- and a CANCELLED
-     * instruction still swallows it, which is why the clear sits here and not
-     * inside the EEEE-gated body. With nothing pending this emits nothing.
+     * Prefix bookkeeping, on the path where this instruction was not
+     * cancelled. AUGS/AUGD/SETQ/SETQ2 are consumed by ANY instruction that
+     * reached this point -- p2core clears them even when EEEE cancelled the
+     * instruction. ALTD/ALTS are different: they are consumed only when the
+     * instruction RETIRES, so they survive a condition-false slot.
      */
-    if (was_prefixed && !ctx->is_prefix) {
+    if (ctx->is_prefix) {
+        if (ctx->prefix != entry_prefix) {
+            tcg_gen_st_i32(tcg_constant_i32(ctx->prefix), tcg_env,
+                           offsetof(CPUP2State, prefix));
+        }
+    } else if (alt) {
+        TCGv_i32 v = tcg_temp_new_i32();
+
+        tcg_gen_movcond_i32(TCG_COND_NE, v, ctx->retired, tcg_constant_i32(0),
+                            tcg_constant_i32(0), tcg_constant_i32(alt));
+        tcg_gen_st_i32(v, tcg_env, offsetof(CPUP2State, prefix));
+        ctx->prefix = 0;
+        /*
+         * Whether the ALTx survived is a RUNTIME answer, and the TB key cannot
+         * hold both. End the block so the next one is keyed from env->prefix.
+         */
+        if (cond != 0xF && cond != 0 && dcbase->is_jmp == DISAS_NEXT) {
+            dcbase->is_jmp = DISAS_TOO_MANY;
+        }
+    } else if (entry_prefix) {
         tcg_gen_st_i32(tcg_constant_i32(0), tcg_env,
                        offsetof(CPUP2State, prefix));
         ctx->prefix = 0;
-    } else if (ctx->prefix != was_prefixed) {
-        tcg_gen_st_i32(tcg_constant_i32(ctx->prefix), tcg_env,
-                       offsetof(CPUP2State, prefix));
     }
 
     if (cancelled) {
-        /* Both paths converge on the same PC, and a cancelled instruction
-         * still cost its time -- p2_gen_clock() ran before the gate. */
+        /*
+         * The cancelled path. It has retired nothing, and p2core clears
+         * prefixes here only if the word DECODES -- by the same rule as any
+         * instruction, so a cancelled SETQ/AUGS keeps its own kind. A word
+         * that does not decode is data and clears nothing at all.
+         */
+        uint32_t keep = entry_prefix;
+
+        if (dcbase->is_jmp != DISAS_NORETURN) {
+            tcg_gen_st_i32(tcg_constant_i32(dcbase->pc_next), tcg_env,
+                           offsetof(CPUP2State, pc));
+            p2_gen_exit(ctx);
+        }
         gen_set_label(cancelled);
+        tcg_gen_movi_i32(ctx->retired, 0);
+        if (decoded) {
+            keep &= P2_PFX_ALTD | P2_PFX_ALTS | ctx->prefix_survives;
+        }
+        if (keep != entry_prefix) {
+            tcg_gen_st_i32(tcg_constant_i32(keep), tcg_env,
+                           offsetof(CPUP2State, prefix));
+        }
+        tcg_gen_st_i32(tcg_constant_i32(dcbase->pc_next), tcg_env,
+                       offsetof(CPUP2State, pc));
+        p2_gen_exit(ctx);
+        dcbase->is_jmp = DISAS_NORETURN;
+        return;
     }
+
     /*
      * A live REP has to be ticked after EVERY instruction, so each one ends
      * its block. That is slow, and it is confined to REP blocks: they are tiny
@@ -2410,10 +2639,6 @@ static void p2_tr_translate_insn(DisasContextBase *dcbase, CPUState *cs)
      */
     if (ctx->rep_active && dcbase->is_jmp == DISAS_NEXT) {
         dcbase->is_jmp = DISAS_TOO_MANY;
-    }
-    /* _RET_ on a non-branching instruction: it ran, now return. */
-    if (!ctx->branched) {
-        p2_gen_ret_prefix(ctx, (insn >> 28) & 0xF);
     }
 }
 

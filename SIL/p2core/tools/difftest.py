@@ -31,6 +31,7 @@ OPS = {
     "rcl": 0x05, "rcr": 0x04, "bitl": 0x20, "bith": 0x21,
     "fges": 0x1A, "fles": 0x1B, "subr": 0x16, "andn": 0x29,
     "bitnot": 0x27, "bitc": 0x22, "bitnc": 0x23, "bitz": 0x24, "bitnz": 0x25,
+    "bitrnd": 0x26,
 }
 
 
@@ -86,7 +87,8 @@ OP_QMUL, OP_QSQRT, OP_QROTATE, OP_ADDCT = 0x68, 0x69, 0x6A, 0x53
 S_GETQX, S_GETQY = 0x18, 0x19
 S_LOCKNEW, S_LOCKRET, S_LOCKTRY, S_LOCKREL = 0x04, 0x05, 0x06, 0x07
 S_COGID, S_COGSTOP, S_HUBSET = 0x01, 0x03, 0x00
-S_SKIP = 0x31
+S_SKIP, S_MODCZ, S_GETCT2 = 0x31, 0x6F, 0x1A
+S_POLLSE = [0x04, 0x05, 0x06, 0x07]   # the @dsel block, selected by D
 OP_REP = 0x66      # bit 20 selects REP; bit 19 is D's L bit, not WZ
 S_WAITCT1 = 0x11   # the @dsel poll/wait block: D selects, S is $24
 OP_MOVBYTS = 0x4F   # C and Z are SELECTORS here (both 1), not flag requests
@@ -144,6 +146,11 @@ def main():
         dmax = ADDR_REG
     elif a.cf:
         dmax = LOOP_REG
+
+    def rcond():
+        """A real EEEE condition. %1111 is unconditional and %0000 is _RET_,
+        which pops the stack -- neither is what these tests want."""
+        return rng.randrange(1, 15)
 
     def alu(cond=0xF):
         op = rng.choice(names)
@@ -295,6 +302,16 @@ def main():
             if r == 0:
                 out.append(misc(S_COGID, d=rng.randrange(dmax),
                                 c=rng.randrange(2)))
+                # MODCZ rewrites both flags from a truth table in D; GETCT's
+                # literal form still writes cog register #D; POLLSE reports
+                # not-set on an event this model never raises.
+                out.append(misc(S_MODCZ, d=rng.randrange(256), l=1,
+                                c=rng.randrange(2), z=rng.randrange(2)))
+                out.append(misc(S_GETCT2, d=rng.randrange(dmax), l=1,
+                                c=rng.randrange(2), z=rng.randrange(2)))
+                out.append((0xF << 28) | (MISC << 21)
+                           | (rng.randrange(2) << 20) | (rng.randrange(2) << 19)
+                           | (rng.choice(S_POLLSE) << 9) | 0x24)
             elif r == 1:
                 # Never cog 0: stopping the cog under test ends the trace.
                 out.append(misc(S_COGSTOP, d=1 + rng.randrange(7), l=1))
@@ -317,13 +334,50 @@ def main():
         if rng.randrange(2):
             n = rng.randrange(1, 4)
             out.append(ins(OP_REP, n, rng.randrange(2, 5), i=1, c=1, z=1))
-            out += [alu() for _ in range(n)]
+            # Some slots conditional: a REP block whose LAST slot is cancelled
+            # does not wrap there -- it runs the instruction after the block and
+            # wraps from that one. Ticking the loop unconditionally missed it.
+            out += [alu(cond=rcond() if rng.randrange(2) else 0xF)
+                    for _ in range(n)]
         else:
             n = rng.randrange(2, 6)
             r = rng.randrange(dmax)
             out.append(ins(OPS["mov"], r, rng.randrange(1 << n)))
             out.append(misc(S_SKIP, d=r))
-            out += [alu() for _ in range(n)]
+            out += [alu(cond=rcond() if rng.randrange(3) == 0 else 0xF)
+                    for _ in range(n)]
+        return out
+
+    def prefix_edge_group():
+        """The places a pending prefix is easy to lose or to keep too long."""
+        out = []
+        k = rng.randrange(3)
+        addr = 4 * rng.randrange(SCRATCH // 8)
+        if k == 0:
+            # A prefix must not survive a BRANCH. The branch leaves the block
+            # from inside its own body, so a clear emitted after the body would
+            # never run -- and a leaked SETQ turns this RDLONG into a block
+            # transfer.
+            out.append(ins(OPS["mov"], rng.randrange(dmax), rng.randrange(8)))
+            out.append(misc(S_SETQ, d=rng.randrange(dmax)))
+            out.append(rel20(0x6C, 0))                 # jmp to the next slot
+            out.append(ins(MEM_LD["rdlong"], rng.randrange(dmax - 4), addr,
+                           i=1))
+        elif k == 1:
+            # ...and neither must an AUGS.
+            out.append(aug(0, rng.randrange(1 << 23)))
+            out.append(rel20(0x6C, 0))
+            out.append(ins(OPS["mov"], rng.randrange(dmax), rng.randrange(512),
+                           i=1))
+        else:
+            # A CANCELLED prefix never took effect, so the instruction after it
+            # must not be widened. Pattern bit 0 = 1 cancels the AUGS.
+            r = rng.randrange(dmax)
+            out.append(ins(OPS["mov"], r, 1))
+            out.append(misc(S_SKIP, d=r))
+            out.append(aug(0, rng.randrange(1 << 23)))
+            out.append(ins(OPS["mov"], rng.randrange(dmax), rng.randrange(512),
+                           i=1))
         return out
 
     def altx_group():
@@ -341,10 +395,16 @@ def main():
         out.append(ins(OPS["or"], sreg, off))
         if rng.randrange(2):                  # ALTD: the next D is substituted
             out.append(ins(OP_ALTD, idx, sreg, i=0, c=0, z=1))
-            out.append(ins(OPS["mov"], 0, rng.randrange(512)))
+            # Sometimes conditional: an ALTx is consumed only by an instruction
+            # that RETIRES, so a condition-false consumer passes it on to the
+            # next one.
+            out.append(ins(OPS["mov"], 0, rng.randrange(512),
+                           cond=rcond() if rng.randrange(3) == 0 else 0xF))
         else:                                 # ALTS: the next S is substituted
             out.append(ins(OP_ALTS, idx, sreg, i=0, c=1, z=0))
-            out.append(ins(OPS["add"], rng.randrange(ADDR_REG), 0, i=1))
+            out.append(ins(OPS["add"], rng.randrange(ADDR_REG), 0, i=1,
+                           cond=rcond() if rng.randrange(3) == 0 else 0xF))
+        out.append(alu())
         return out
 
     def pin_group():
@@ -388,7 +448,7 @@ def main():
             prog += pin_group()
             n_pin += 1
         elif a.mem and rng.random() < a.mem:
-            r = rng.randrange(8)
+            r = rng.randrange(9)
             if r == 0:
                 prog += prefix_group()
             elif r == 1:
@@ -403,6 +463,8 @@ def main():
                 prog += tail_group()
             elif r == 5:
                 prog += rep_skip_group()
+            elif r == 6:
+                prog += prefix_edge_group()
             else:
                 prog += hub_pair()
             n_mem += 1
