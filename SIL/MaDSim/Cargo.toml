@@ -37,3 +37,6 @@ tokio = { workspace = true, optional = true }
 # Firmware itself is pre-built by PlatformIO (pio run -e native_emulator);
 # this just locates & links the resulting static library.
 embsim-build = { path = "../embsim/build-support" }
+
+[dev-dependencies]
+vibes-behaviour = { path = "../../Vibes/bindings/rust" }
