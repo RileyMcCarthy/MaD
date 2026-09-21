@@ -2499,8 +2499,8 @@ const scenarios = [
     id: 'FW1',
     name: 'Firmware: flash a .bin through the boot ROM loader',
     async run() {
-      // Uses the in-page boot-ROM fake, not SIL: the emulator has no P2 boot
-      // ROM and the WS bridge carries no DTR line. See installFakeBootRom.
+      // Uses the in-page boot-ROM fake, not SIL: nothing in p2iss / embsim
+      // models DTR, so a real flash cannot be performed. See installFakeBootRom.
       const browser = await chromium.launch({ channel: 'chrome', headless: true });
       try {
         const page = await browser.newPage();

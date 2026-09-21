@@ -21,19 +21,18 @@
 # installOpfsDataDir). They never reach an emulator of either kind, so they
 # run identically here and under the bridge.
 #
-# FW1's comment gives the reason: "the emulator has no P2 boot ROM and the WS
-# bridge carries no DTR line". Half of that is now stale -- p2iss boots the
-# chip through the real ROM and a flash that is a net component
-# (SIL/p2iss/tests/rom_boot_net.rs). The other half is not: nothing in p2iss,
-# embsim/qemu or embsim/peripherals models DTR, so the guest's emulated FTDI
-# has no way to drive the P2's reset line and a real flash cannot be
-# performed. Moving the FW scenarios onto the ISS means modelling that line,
-# not flipping a flag.
+# FW scenarios stay on the host because nothing in p2iss, embsim/qemu or
+# embsim/peripherals models DTR, so the guest's emulated FTDI has no way to
+# drive the P2's reset line and a real flash cannot be performed. (p2iss
+# already boots through the real ROM -- SIL/p2iss/tests/rom_boot_net.rs --
+# so missing boot ROM is not the blocker.) Moving the FW scenarios onto the
+# ISS means modelling that line, not flipping a flag.
 #
-# Three more -- B5-reconnect, M11-idle-drop, M11-mid-test-drop -- are skipped
-# outright under CDP: they sever the link with the fake serial's
-# `__silDropLink`, and a real port has nothing to reach in and sever. The
-# equivalent here would be a QMP `device_del` on the USB serial device.
+# B5-reconnect, M11-idle-drop, and M11-mid-test-drop used to skip under CDP
+# for want of a way to sever a real port. They now run on the ISS:
+# `dropLink()` posts an outage to CONTROL_URL (`link/unplug` then
+# `link/plug`), and the board closes/reopens the chardev behind the
+# emulated FTDI -- a genuine USB detach/reattach, not a QMP `device_del`.
 
 name: E2E nightly (ISS + QEMU)
 
