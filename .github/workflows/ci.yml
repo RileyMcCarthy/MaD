@@ -77,7 +77,7 @@ jobs:
             docs:
               - 'docs/**'
               - 'mkdocs.yml'
-            # Submodule PIN bumps only â€” the gitlink entry itself, not the
+            # Submodule PIN bumps only — the gitlink entry itself, not the
             # surrounding tree. `sil`/`protocol` above fire on any change under
             # SIL/ or Protocol/; these fire only when the recorded commit
             # moves, which is when the expensive upstream-mirror legs earn their
@@ -139,7 +139,7 @@ jobs:
       # instrumentation call sites, and the worker half (protocol frames,
       # correlation ids, byte ring, batch transport) only runs with a device
       # attached. This drives a scripted fake serial port instead, so unlike the
-      # SIL suite it needs no emulator or bridge â€” just Chrome and the dev
+      # SIL suite it needs no emulator or bridge — just Chrome and the dev
       # server. Without it, a regression that silently empties a bug report
       # would ship green.
       - name: Diagnostics e2e (logging actually captures)
@@ -153,7 +153,7 @@ jobs:
             echo "=== vite log ==="; cat /tmp/mad-vite.log || true; exit 1
           }
           APP_URL=http://127.0.0.1:5174/ npm run e2e:diagnostics
-      - name: Schema â†” domain mapping lockstep (M12)
+      - name: Schema ↔ domain mapping lockstep (M12)
         working-directory: ${{ github.workspace }}
         run: |
           pip install pyyaml==6.0.3
@@ -163,7 +163,7 @@ jobs:
   # conformance, framing + runtime crate tests) run against the *pinned
   # submodule commit*. The suite also runs in the protoemb repo's own CI
   # (https://github.com/RileyMcCarthy/protoemb); this job gates submodule
-  # bumps â€” including the real-schema generator test, which only activates
+  # bumps — including the real-schema generator test, which only activates
   # when ../MaDProtocol.yaml is present (i.e. here, not in the standalone CI).
   protoemb-ci:
     needs: changes
@@ -233,7 +233,7 @@ jobs:
         run: pipx run ruff==0.14.11 check --output-format=github core tests
       # The runtime crate is what the shipped app compiles to WebAssembly, so
       # the wasm target is a first-class leg, not an afterthought. `--lib` on the
-      # wasm clippy leg because that is exactly what wasm-pack builds â€” the
+      # wasm clippy leg because that is exactly what wasm-pack builds — the
       # native-only protoemb-bridge bin is cfg'd out of the wasm build.
       - name: clippy framing (native)
         run: cargo clippy --manifest-path framing/Cargo.toml --all-targets -- -D warnings
@@ -265,18 +265,18 @@ jobs:
             cargo "+$MSRV" build --manifest-path "$crate/Cargo.toml"
           done
 
-  # BLOCKING (in ci-gate.needs). The full Control â†” SIL e2e suite: the real app
-  # in real Chrome, driving the real emulator over the WSâ†”PTY bridge. It is the
+  # BLOCKING (in ci-gate.needs). The full Control ↔ SIL e2e suite: the real app
+  # in real Chrome, driving the real emulator over the WS↔PTY bridge. It is the
   # only job that exercises the app, the generated codec, the firmware and the
   # machine models as one system, so it is the only one that can catch an
-  # integration break â€” the class of bug that shipped while this ran nightly
+  # integration break — the class of bug that shipped while this ran nightly
   # (the firmware never created `<mount>/gcode/`, so on a fresh SD root every
-  # uploaded test stored zero moves â€” invisible to every offline gate).
+  # uploaded test stored zero moves — invisible to every offline gate).
   #
   # It ran advisory for exactly as long as it took to earn the gate. Two things
   # blocked promotion and both are now fixed:
   #   1. It was paced to real time (via `make playground`), so its result
-  #      depended on how fast the runner was â€” 13 failures on CI, green on dev
+  #      depended on how fast the runner was — 13 failures on CI, green on dev
   #      boxes. It now runs unpaced (`make e2e-emulator`, --speed 0): virtual
   #      time advances by idle jump, decoupled from wall clock, so host speed no
   #      longer changes the outcome.
@@ -342,7 +342,7 @@ jobs:
         run: npx playwright install --with-deps chromium
       # Unpaced virtual time, NOT the real-time playground. The suite does not
       # need real-time speed, and under --speed 1.0 the emulator must sustain a
-      # real-time factor of 1.0 â€” which a shared 4-vCPU runner cannot, so the
+      # real-time factor of 1.0 — which a shared 4-vCPU runner cannot, so the
       # suite ends up measuring the runner instead of the code.
       - name: Start the e2e emulator (unpaced virtual time)
         working-directory: SIL
@@ -381,7 +381,7 @@ jobs:
           BRIDGE_URL: ws://127.0.0.1:9999
         run: npm run e2e
       # e2e/artifacts holds the per-scenario merged main+worker app log that
-      # dumpFailureArtifacts writes â€” without it a red run can only be diagnosed
+      # dumpFailureArtifacts writes — without it a red run can only be diagnosed
       # by reproducing it, which for this suite means reproducing CI.
       # Collect into one directory first: upload-artifact roots the archive at the
       # least common ancestor of its paths, and mixing /tmp with the workspace
@@ -402,7 +402,7 @@ jobs:
 
   # BLOCKING. The documentation site must build in strict mode (broken nav
   # entries, dead internal links and config warnings are all errors). pages.yml
-  # builds the same site, but only on a push to `main` â€” by which point a bad
+  # builds the same site, but only on a push to `main` — by which point a bad
   # docs PR has already merged and taken the Pages deploy down with it. This is
   # the same command, one step earlier, where it can still be fixed.
   docs-ci:
@@ -424,7 +424,7 @@ jobs:
   # embsim library suite against the *pinned submodule commit* (mirror of
   # protoemb-ci). Upstream also runs this on RileyMcCarthy/embsim; re-running
   # here gates pin bumps and catches unpushed / never-CI'd gitlinks. The MaD
-  # SIL workspace only *compiles* path deps (sil-rust) â€” this job executes the
+  # SIL workspace only *compiles* path deps (sil-rust) — this job executes the
   # framework tests themselves.
   embsim-ci:
     needs: changes
@@ -453,7 +453,7 @@ jobs:
 
   # BLOCKING, pin-bumps only. `embsim-ci` above runs the build/test half of the
   # upstream suite on every SIL change; this job runs the half that only matters
-  # when the *pin moves* â€” the determinism goldens, the lint gate, rustdoc, the
+  # when the *pin moves* — the determinism goldens, the lint gate, rustdoc, the
   # MSRV floor and the supply-chain audit. Upstream gates all of these on
   # RileyMcCarthy/embsim, so a pin that has actually been pushed and CI'd will
   # sail through; a pin that was never pushed (or was pushed to a branch that
@@ -486,8 +486,8 @@ jobs:
         run: cargo doc --workspace --no-deps
         env:
           RUSTDOCFLAGS: -D warnings
-      # Determinism: the stepped-clock engine event log â€” order AND every
-      # virtual timestamp â€” must match a blessed golden trace. Run the binary as
+      # Determinism: the stepped-clock engine event log — order AND every
+      # virtual timestamp — must match a blessed golden trace. Run the binary as
       # separate processes so each run re-seeds its HashMaps; that is the class
       # of nondeterminism in-process repetition cannot reach.
       - name: N-run identity + goldens, 5x as separate processes
@@ -515,7 +515,7 @@ jobs:
         run: cargo deny check
       # MSRV floor. Read `rust-version` out of the pinned manifest rather than
       # hardcoding it, so raising the floor upstream doesn't fail here with a
-      # misleading compile error. Build only â€” MSRV governs compilation.
+      # misleading compile error. Build only — MSRV governs compilation.
       - name: Build the workspace on its declared MSRV
         run: |
           set -euo pipefail
@@ -526,7 +526,7 @@ jobs:
           cargo "+$MSRV" build --workspace
 
   # BLOCKING, pin-bumps only. Mirror of upstream RileyMcCarthy/vibes CI for the
-  # tool + three binding compile probes â€” without re-running MaD's Behaviour
+  # tool + three binding compile probes — without re-running MaD's Behaviour
   # ledger suites. `vibes` (Behaviour ledger) stays informational and unchanged;
   # this job covers the commit axis when the Vibes gitlink moves.
   vibes-pin-ci:
@@ -547,7 +547,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-      - name: Tool â€” install, typecheck, test, build
+      - name: Tool — install, typecheck, test, build
         run: |
           set -euo pipefail
           npm ci --no-audit --no-fund
@@ -612,9 +612,9 @@ jobs:
         working-directory: Firmware/MaDCore
         run: pio test -e native_test
 
-  # â”€â”€ Phase 0 deterministic gates â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  # ── Phase 0 deterministic gates ───────────────────────────────────────────
   # BLOCKING jobs feed ci-gate. The clippy backlog is cleared, so `sil-rust`
-  # now runs rustfmt and clippy `-D warnings` as gating steps â€” no
+  # now runs rustfmt and clippy `-D warnings` as gating steps — no
   # `continue-on-error` remains anywhere in this file, and every job that runs
   # (including `control-e2e-sil`, promoted once it went 49/49 on CI) is in
   # `ci-gate.needs`. Advisory-by-absence is a state a job passes THROUGH on its
@@ -656,7 +656,7 @@ jobs:
             exit 1
           fi
           echo "Codegen succeeded and is byte-reproducible."
-      # M12 schemaâ†”domain lockstep lives in `wasm-control-ci` (Protocol/**
+      # M12 schema↔domain lockstep lives in `wasm-control-ci` (Protocol/**
       # already trips that job, and Control-only mapping.ts edits must too).
 
   # BLOCKING. Ruff lint of the PlatformIO SCons hooks; config in ruff.toml
@@ -673,7 +673,7 @@ jobs:
 
   # BLOCKING. SIL Rust workspace: builds the generated protocol Rust
   # (make protocol) + libfirmware.a (pio run -e native_emulator), then runs
-  # rustfmt, clippy and cargo test â€” all three gating. The lint backlog that
+  # rustfmt, clippy and cargo test — all three gating. The lint backlog that
   # kept clippy advisory has been cleared: the one real finding was fixed, and
   # the generated codec's template-style lints are allowed at the `mod`
   # declaration in Protocol/rust/src/lib.rs.
@@ -778,7 +778,7 @@ jobs:
           exit $fail
       # rustfmt covers the crates this repo authors. The `protocol` crate is
       # excluded because its body is `#[path]`-included generated code that
-      # `make protocol` rewrites on every build â€” formatting it would be undone
+      # `make protocol` rewrites on every build — formatting it would be undone
       # by the next regeneration, and a gate that cannot be satisfied is worse
       # than no gate.
       - name: rustfmt (gating)
@@ -802,7 +802,7 @@ jobs:
         run: cargo test --workspace --all-targets
 
   # BLOCKING. MISRA/cppcheck via `pio check`. Low severity is disabled in
-  # platformio.ini (check_severity = medium, high) â€” style noise only. Medium and
+  # platformio.ini (check_severity = medium, high) — style noise only. Medium and
   # high must be zero; CI fails the job (and thus CI Gate) on any such defect.
   # CERT is not enforced (no cert.py with bundled cppcheck).
   firmware-misra:
@@ -824,7 +824,7 @@ jobs:
         run: |
           pip install pyyaml jinja2
           pio pkg install --platform https://github.com/RileyMcCarthy/platform-propeller.git
-      - name: Run pio check (MISRA / cppcheck) â€” medium+high must pass
+      - name: Run pio check (MISRA / cppcheck) — medium+high must pass
         working-directory: Firmware/MaDCore
         run: |
           set -o pipefail
@@ -851,8 +851,8 @@ jobs:
             Firmware/MaDCore/pio-check.json
           retention-days: 30
 
-  # BLOCKING (baseline-gated). Firmware layer rule â€” downward-only includes
-  # (APPâ†’DEVâ†’IOâ†’Libraryâ†’HALâ†’HW). 11 pre-existing violations are frozen in
+  # BLOCKING (baseline-gated). Firmware layer rule — downward-only includes
+  # (APP→DEV→IO→Library→HAL→HW). 11 pre-existing violations are frozen in
   # Firmware/MaDCore/.layering-baseline; the gate fails only on NEW upward
   # includes. Phase 2: burn the baseline down, then run with --strict.
   firmware-layering:
@@ -866,7 +866,7 @@ jobs:
           python-version: '3.12'
       - name: Enforce firmware layering (downward-only includes)
         run: python3 Firmware/MaDCore/scripts/check_layering.py Firmware/MaDCore/src
-      - name: HAL/Include â†” HAL/P2 signature diff (return type + arity)
+      - name: HAL/Include ↔ HAL/P2 signature diff (return type + arity)
         run: python3 Firmware/MaDCore/scripts/check_hal_p2_signatures.py Firmware/MaDCore/src
 
   build-firmware:
@@ -919,7 +919,7 @@ jobs:
           # Best-effort: copy each artifact if present, warn (don't fail) if a build env's
           # output is absent. The build steps above are the real gate; artifact assembly is
           # release-prep. NOTE: propeller2_debug's output currently disappears after build
-          # (force_o0 post-hook / pio interaction) â€” tracked separately.
+          # (force_o0 post-hook / pio interaction) — tracked separately.
           copy_if() { if [ -f "$1" ]; then cp "$1" "$2" && echo "copied -> $2"; else echo "::warning::artifact missing, skipped: $1"; fi; }
           copy_if "Firmware/MaDCore/.pio/build/propeller2_debug/program"     "release-assets/MaD-Firmware-$V-debug.bin"
           copy_if "Firmware/MaDCore/.pio/build/propeller2_release/program"   "release-assets/MaD-Firmware-$V-release.bin"
@@ -959,7 +959,7 @@ jobs:
     - uses: actions/checkout@v7
     
     - name: Generate manufacturing files using KiBot
-      uses: INTI-CMNB/KiBot@v2_k9   # KiCad 9 â€” board files use generator_version 9.0
+      uses: INTI-CMNB/KiBot@v2_k9   # KiCad 9 — board files use generator_version 9.0
       with:
         config: .kibot/config.kibot.yaml
         board: ${{ matrix.pcb_path }}
@@ -1039,7 +1039,7 @@ jobs:
   # Single required status check for branch protection. It aggregates every
   # build/unit/SIL job: it fails if any of them FAILED or was CANCELLED, and
   # passes when they all succeeded or were legitimately skipped (e.g. a
-  # docs-only PR skips the component jobs). Mark THIS check â€” "CI Gate" â€” as the
+  # docs-only PR skips the component jobs). Mark THIS check — "CI Gate" — as the
   # required status check on `main` instead of each job, so path-filtered skips
   # never block a PR.
   # The behaviour ledger: what this change adds, and what stopped holding.
@@ -1048,7 +1048,7 @@ jobs:
   # exits 1 when a behaviour breaks or is removed, so promoting it later is a
   # one-line change.
   #
-  # fetch-depth: 0 is required â€” the default shallow clone cannot resolve the
+  # fetch-depth: 0 is required — the default shallow clone cannot resolve the
   # base branch, and the ledger diff would then report every behaviour as new.
   vibes:
     name: Behaviour ledger
@@ -1057,7 +1057,7 @@ jobs:
     timeout-minutes: 25
     # The default token is read-only; posting the sticky comment needs this.
     # On a fork PR the token stays read-only regardless, and the post step
-    # warns rather than failing â€” the job summary still carries the report.
+    # warns rather than failing — the job summary still carries the report.
     permissions:
       contents: read
       pull-requests: write
@@ -1147,7 +1147,7 @@ jobs:
           # Issue comments cap at 65,536 chars; keep headroom for the marker/footer.
           body="$(head -c 60000 vibes-report.md)"
           if [ "$(wc -c < vibes-report.md)" -gt 60000 ]; then
-            body="$body"$'\n\n_Truncated â€” the full report is in the job summary._'
+            body="$body"$'\n\n_Truncated — the full report is in the job summary._'
           fi
           body="$marker"$'\n'"$body"
           existing=$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
@@ -1196,8 +1196,8 @@ jobs:
             | select(.value.result == "failure" or .value.result == "cancelled")
             | .key')
           if [ -n "$failed" ]; then
-            echo "::error::CI Gate failed â€” these required jobs did not pass:"
+            echo "::error::CI Gate failed — these required jobs did not pass:"
             echo "$failed"
             exit 1
           fi
-          echo "CI Gate passed â€” every required job succeeded or was skipped."
+          echo "CI Gate passed — every required job succeeded or was skipped."
