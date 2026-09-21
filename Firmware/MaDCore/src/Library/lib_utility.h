@@ -15,6 +15,14 @@
 #define LIB_UTILITY_MM_TO_UM(mm) ((mm) * LIB_UTILITY_UM_PER_MM)
 #define LIB_UTILITY_UM_TO_MM(um) ((um) / LIB_UTILITY_UM_PER_MM)
 
+/* Nanometres are the unit of the MEASUREMENT path (position and setpoint), as
+ * distinct from micrometres which remain the unit of COMMANDS (a G1 target, a
+ * feedrate). One encoder count is 122 nm, so a micrometre-quantised reading
+ * collapses 8192 distinguishable states per mm onto 1000 -- coarser than the
+ * sensor, and coarser than the errors worth measuring. */
+#define LIB_UTILITY_NM_PER_MM (1000000L)
+#define LIB_UTILITY_MM_TO_NM(mm) ((int32_t)((mm) * LIB_UTILITY_NM_PER_MM))
+
 #define LIB_UTILITY_US_PER_MS (1000U)
 #define LIB_UTILITY_MS_TO_US(ms) ((ms) * LIB_UTILITY_US_PER_MS)
 #define LIB_UTILITY_MN_TO_N(mN) ((mN) / 1000.0f)
@@ -67,6 +75,36 @@ uint8_t lib_utility_CRC8(uint8_t *addr, uint16_t len);
  * Returns 0 if c == 0 (no exception is raised).
  */
 int32_t lib_utility_muldiv64_signed(int32_t a, int32_t b, int32_t c);
+
+/**
+ * Unsigned (a * b) / c with a 32x32 -> 64 intermediate, AND its remainder.
+ *
+ * The remainder is the point. A quotient alone throws away a fraction on every
+ * call, and a caller accumulating those calls (a phase accumulator, a rate
+ * integrator) drifts in one direction for as long as it runs. Handing back the
+ * remainder lets the caller carry it into the next call and stay exact for all
+ * time.
+ *
+ * On the Propeller 2 (FlexC) this is the CORDIC: QMUL gives the 64-bit product
+ * in QX/QY, then SETQ+QDIV does the 64/32 divide, leaving the quotient in QX
+ * and the remainder in QY.
+ *
+ * That path matters for more than speed. FlexC cannot compile a NAMED 64-bit
+ * local: `const uint64_t n = (uint64_t)a * b;` fails the whole build with
+ * "Cannot handle expression yet", reported against a libc file rather than the
+ * offending line, one error per such variable, from any source file. The same
+ * arithmetic written as a single expression with no 64-bit variable compiles
+ * correctly, which is why app_motion's `((int64_t)x * y) / 1000LL` has always
+ * worked. It is the 64-bit DESTINATION that FlexC mishandles -- the same root
+ * as its `dest64 = cond ? A : B` bug, which drops the high word.
+ *
+ * So a 64-bit intermediate that needs to be named, or reused, or carried
+ * between statements, has to come through here.
+ *
+ * Returns 0 (remainder 0) if c == 0. `remainder` may not be NULL.
+ */
+uint32_t lib_utility_muldivmod64_unsigned(uint32_t a, uint32_t b, uint32_t c,
+                                          uint32_t *remainder);
 
 /**
  * Rollover-safe elapsed-time comparison for uint32 clocks.

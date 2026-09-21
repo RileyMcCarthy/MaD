@@ -79,8 +79,78 @@ function withCoverage(browserType) {
 export const chromium =
   process.env.MAD_COVERAGE === '1' ? withCoverage(playwright.chromium) : playwright.chromium;
 
-export const APP_URL = process.env.APP_URL || 'http://localhost:5174/';
+/**
+ * Computer-node mode: `CDP_URL` names the DevTools endpoint of the Chrome
+ * running INSIDE the emulator's QEMU guest (`mad-emulator --iss ... --computer
+ * <image>` prints it). Pages are then opened over CDP in that browser instead
+ * of a host Chrome, the app uses its real Web Serial (the guest's managed
+ * policy grants the board's FTDI without a picker), and the fake serial is
+ * not installed. The guest lives on the board's clock, so every wall-clock
+ * wait in the harness is scaled by `E2E_TIMEOUT_SCALE` (default 10 here).
+ * Serve the app to the guest with `npm run dev -- --host`; it reaches the
+ * host at 10.0.2.2.
+ */
+export const CDP_URL = process.env.CDP_URL || '';
+export const APP_URL =
+  process.env.APP_URL || (CDP_URL ? 'http://10.0.2.2:5174/' : 'http://localhost:5174/');
+/** Where the runner checks the dev server from the HOST (the guest's URL is not routable here). */
+/// Where the board's control surface lives (mad-emulator --trace-port). Only
+/// used in computer-node mode: under the bridge the link is severed in-page.
+export const CONTROL_URL = process.env.CONTROL_URL || 'http://127.0.0.1:9223';
+
+/// How long the port stays out in computer-node mode. Wall clock, and the
+/// guest only runs when the board grants it a slice, so this is generous.
+export const LINK_OUTAGE_MS = Number(process.env.LINK_OUTAGE_MS || 3000);
+
+/**
+ * Drop the link the app is using, and let it come back.
+ *
+ * Under the bridge this is the fake serial's own hook: it closes the socket
+ * and fires `disconnect`, while `getPorts()` keeps returning the port. So the
+ * CONNECTION dies and the DEVICE stays -- the app can reconnect to the same
+ * port, which is the behaviour the three link-drop scenarios assert.
+ *
+ * In computer-node mode the port is real and there is nothing in the page to
+ * sever. The board closes the chardev backing its emulated FTDI, which QEMU
+ * turns into a USB detach and the guest kernel turns into a removed tty, so
+ * Chrome fires a genuine disconnect. It has to come BACK, though, or the
+ * app's reconnect would find no port at all and the scenario would fail for a
+ * reason it is not testing -- so this is an OUTAGE: unplug, leave it out long
+ * enough for the guest to notice, plug back in.
+ *
+ * The outage is wall-clock, and the guest runs only when the board grants it a
+ * slice, so it is generous by default and tunable for a slow runner.
+ */
+export async function dropLink(page) {
+  if (!CDP_URL) {
+    await page.evaluate(() => window.__silDropLink());
+    return;
+  }
+  await controlAction('link/unplug');
+  await new Promise((r) => setTimeout(r, LINK_OUTAGE_MS));
+  await controlAction('link/plug');
+}
+
+/** Put the cable back, for a scenario that wants the outage to end on its terms. */
+export async function restoreLink() {
+  if (!CDP_URL) return;
+  await controlAction('link/plug');
+}
+
+async function controlAction(name) {
+  const r = await fetch(`${CONTROL_URL}/action/${name}`, { method: 'POST' });
+  if (!r.ok) {
+    throw new Error(
+      `${name} failed (${r.status}): ${await r.text()}. Is mad-emulator running with --trace-port?`,
+    );
+  }
+}
+
+export const APP_URL_HOST = process.env.APP_URL_HOST || (CDP_URL ? 'http://localhost:5174/' : APP_URL);
 export const BRIDGE_URL = process.env.BRIDGE_URL || 'ws://localhost:9999';
+export const TIMEOUT_SCALE = Number(process.env.E2E_TIMEOUT_SCALE || (CDP_URL ? 10 : 1));
+/** A wall-clock budget, scaled for a browser that lives on simulated time. */
+export const T = (ms) => Math.round(ms * TIMEOUT_SCALE);
 export const OPFS_DIR = process.env.OPFS_DIR || 'mad-e2e';
 
 /**
@@ -228,8 +298,25 @@ export function installOpfsDataDir(dirName) {
  * Pass { headed: true } to watch it.
  */
 export async function newSilPage({ headed = false } = {}) {
-  const browser = await chromium.launch({ channel: 'chrome', headless: !headed });
-  const page = await browser.newPage();
+  let browser;
+  let page;
+  if (CDP_URL) {
+    // The browser inside the computer node: attach, never launch. Closing
+    // the Browser object later only disconnects; the guest's Chrome lives on.
+    browser = await chromium.connectOverCDP(CDP_URL, { timeout: T(30000) });
+    // A fresh context per scenario. The guest's Chrome outlives every
+    // scenario, and its default profile would carry the app's remembered
+    // port and data folder from one to the next — the app then reconnects
+    // by itself and the harness's clicks land on a screen that is already
+    // moving on. A new context is isolated storage (and is torn down by
+    // browser.close(), page and serial port with it).
+    const context = await browser.newContext();
+    page = await context.newPage();
+    page.setDefaultTimeout(T(30000));
+  } else {
+    browser = await chromium.launch({ channel: 'chrome', headless: !headed });
+    page = await browser.newPage();
+  }
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
   // Console output is captured too: a failure that happens before the app boots
@@ -241,7 +328,9 @@ export async function newSilPage({ headed = false } = {}) {
     if (consoleLines.length > 500) consoleLines.shift();
   });
   page.__madConsole = consoleLines;
-  await page.addInitScript(installFakeSerial, BRIDGE_URL);
+  // Init scripts ride CDP too, so the OPFS picker fake works in the guest;
+  // only the serial fake is host-only — the guest has the real thing.
+  if (!CDP_URL) await page.addInitScript(installFakeSerial, BRIDGE_URL);
   await page.addInitScript(installOpfsDataDir, OPFS_DIR);
 
   // Scenarios close their browser in a `finally`, which runs BEFORE the runner's
@@ -255,6 +344,9 @@ export async function newSilPage({ headed = false } = {}) {
       console: consoleLines.slice(),
       log: await readAppLog(page),
     };
+    // Over CDP, closing the Browser object only disconnects; the page (and
+    // the serial port it holds) must be closed explicitly.
+    if (CDP_URL) await page.close().catch(() => {});
     return closeBrowser(...args);
   };
 
@@ -350,15 +442,76 @@ export function setCurrentScenario(id) {
 }
 
 /** Connect the app to SIL via the UI (call after navigating to the app). */
+/**
+ * The granted port that is the board. On the host the fake grants exactly
+ * one; in the computer node the guest's managed policy grants every port —
+ * its own consoles included — and the board is the emulated FTDI (USB
+ * 0403:6001), whose label is a sibling of the button in its row.
+ */
+export function boardGrantedPort(page) {
+  if (CDP_URL) {
+    return page.locator('.row', { hasText: /403:6001/i }).getByTestId('connect-granted').first();
+  }
+  return page.getByTestId('connect-granted').first();
+}
+
 export async function connectToSil(page) {
   await page.goto(`${APP_URL}#/connect`);
   // First point at which the app is loaded and can take a marker.
   if (currentScenario !== null) await markAppLog(page, `scenario ${currentScenario}`);
-  // The primary button (testid connect-device) prompts requestPort() → our fake.
-  await page.getByTestId('connect-device').click();
+  if (CDP_URL) {
+    // Real Web Serial: the guest's managed policy has already granted every
+    // port, so the Connect screen lists them; pick the board's FTDI (the
+    // emulated FT232, USB 0403:6001) rather than the guest's own consoles.
+    await boardGrantedPort(page).click({ timeout: T(10000) });
+  } else {
+    // The primary button (testid connect-device) prompts requestPort() → our fake.
+    await page.getByTestId('connect-device').click();
+  }
   // Wait until the store reports connected — the status dot gets `.connected`.
   // (Matching on text would falsely hit "Disconnected".)
-  await page.locator('.dot.connected').waitFor({ timeout: 10000 });
+  await page.locator('.dot.connected').waitFor({ timeout: T(10000) });
+}
+
+/**
+ * Put the machine back to idle after a scenario failed.
+ *
+ * The emulator is long-lived, and `newSilPage` isolates only the BROWSER — the
+ * firmware's machine state survives every scenario boundary. So a scenario that
+ * leaves a test running poisons each one after it: the app gates the jog and
+ * speed controls while `testRunning` is true, and the next scenario then fails
+ * filling a disabled field instead of on its own merits. One hung run turned
+ * into five red scenarios, four of them meaningless, which hides how much is
+ * actually broken.
+ *
+ * Disabling motion is the machine's own abort path (app_testManagement ends a
+ * running test the instant motion goes false), and it leaves the machine in the
+ * state scenarios already expect to find it in: every motion scenario enables
+ * motion itself via zeroLength().
+ *
+ * Best effort by construction — a recovery that fails must never mask the real
+ * failure it is recovering from.
+ */
+export async function recoverMachine() {
+  let browser;
+  try {
+    const session = await newSilPage();
+    browser = session.browser;
+    const { page } = session;
+    await connectToSil(page);
+    await page.goto(`${APP_URL}#/live`);
+    // The control is a single toggle whose label follows motionEnabled, so this
+    // locator matches nothing at all when motion is already off.
+    const disable = page.getByRole('button', { name: 'Disable motion' });
+    await disable.waitFor({ state: 'visible', timeout: T(5000) }).catch(() => {});
+    if ((await disable.count()) > 0) {
+      await disable.click().catch(() => {});
+    }
+  } catch {
+    // Swallowed on purpose: see the note above.
+  } finally {
+    await browser?.close().catch(() => {});
+  }
 }
 
 /** Choose the OPFS data folder via Settings. */

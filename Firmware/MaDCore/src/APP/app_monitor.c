@@ -150,6 +150,11 @@ typedef struct
     uint32_t startTime;
     lib_timer_S stopLoggingTail;
     app_monitor_loggingState_E loggingState;
+    /* Samples this run that the SD queue refused. A dropped sample is a hole
+     * in the middle of a recorded test that nothing downstream can see -- the
+     * record has no sample index and its timestamps stay monotonic across the
+     * gap -- so the count has to be kept here and reported. */
+    uint32_t droppedSamples;
     char testName[DEV_NVRAM_MAX_SAMPLE_PROFILE_NAME];
 
     app_monitor_sample_t sample;
@@ -182,7 +187,7 @@ void app_monitor_private_processInputs()
     app_monitor_data.input.updatedIndex = (newIndex != app_monitor_data.input.forceIndex);
     app_monitor_data.input.forceIndex = newIndex;
     app_monitor_data.input.position = app_gauge_getPosition(APP_GAUGE_COORD_MACHINE);
-    app_monitor_data.input.setpoint = app_motion_getSetpoint();
+    app_monitor_data.input.setpoint = app_motion_getCommandedPosition();
     app_monitor_data.input.time = HAL_time_getUs();
     app_monitor_data.input.testRunning = app_testManagement_isRunning();
 }
@@ -210,11 +215,11 @@ void app_monitor_private_processSample()
      * fields in one row come from a single ADC/encoder read. Re-reading app_gauge here
      * would race processInputs and produce rows whose force/position don't match time. */
     const int32_t gaugeForce_mN = app_gauge_getGaugeForce_mN();
-    const int32_t gaugeLength_um = app_gauge_getGaugeLength_um();
+    const int32_t gaugeLength_nm = app_gauge_getGaugeLength_nm();
     app_monitor_data.sample.force = app_monitor_data.input.force - gaugeForce_mN;
-    app_monitor_data.sample.position = app_monitor_data.input.position - gaugeLength_um;
+    app_monitor_data.sample.position = app_monitor_data.input.position - gaugeLength_nm;
     app_monitor_data.sample.time = app_monitor_data.input.time - app_monitor_data.startTime;
-    app_monitor_data.sample.setpoint = app_monitor_data.input.setpoint - gaugeLength_um;
+    app_monitor_data.sample.setpoint = app_monitor_data.input.setpoint - gaugeLength_nm;
 }
 
 void app_monitor_private_setOutput(void)
@@ -234,10 +239,10 @@ void app_monitor_private_setOutput(void)
         // For now, set to false as velocity is not directly available in sample data
         app_monitor_data.out.velocityExceeded = false;
 
-        // Displacement limit check (sample position is um, profile limit is mm)
+        // Displacement limit check (sample position is nm, profile limit is mm)
         uint32_t currentDisplacement = (uint32_t)abs(app_monitor_data.sample.position);
         app_monitor_data.out.displacementExceeded =
-            (currentDisplacement > LIB_UTILITY_MM_TO_UM(app_monitor_data.sampleProfile.maxDisplacement));
+            (currentDisplacement > (uint32_t)LIB_UTILITY_MM_TO_NM(app_monitor_data.sampleProfile.maxDisplacement));
     }
     else
     {
@@ -248,6 +253,40 @@ void app_monitor_private_setOutput(void)
     }
     
     APP_MONITOR_LOCK_REL();
+}
+
+/* Push one sample and account for a refusal.
+ *
+ * IO_SDCard_push returns false when the channel queue is full -- the LOGGER
+ * cog not draining fast enough, a slow card, a card that has errored. Both
+ * call sites used to discard that, so backpressure silently deleted samples
+ * from the middle of a test while the UI showed a normal run.
+ *
+ * The notification is sent on the FIRST drop of a run only. This runs on the
+ * MONITOR cog at 1 kHz, and app_notification_send formats into a queue; one
+ * message per dropped sample would turn a full queue into a second full
+ * queue. The total goes out once more when the file closes. */
+static void app_monitor_private_pushSample(void)
+{
+    const bool queued = IO_SDCard_push(IO_SDCARD_CHANNEL_SAMPLE_DATA, &app_monitor_data.sample,
+                                       sizeof(app_monitor_sample_t));
+    if (!queued)
+    {
+        app_monitor_data.droppedSamples++;
+        if (app_monitor_data.droppedSamples == 1U)
+        {
+            app_notification_send(APP_NOTIFICATION_TYPE_ERROR, "%s",
+                                  "Sample logging is falling behind; samples are being dropped");
+        }
+    }
+}
+
+uint32_t app_monitor_getDroppedSamples(void)
+{
+    APP_MONITOR_LOCK_REQ_BLOCK();
+    const uint32_t dropped = app_monitor_data.droppedSamples;
+    APP_MONITOR_LOCK_REL();
+    return dropped;
 }
 
 void app_monitor_private_processLogging()
@@ -262,6 +301,7 @@ void app_monitor_private_processLogging()
             {
                 app_monitor_data.loggingState = APP_MONITOR_LOGGING_STATE_RUNNING;
                 app_monitor_data.startTime = app_monitor_data.input.time;
+                app_monitor_data.droppedSamples = 0U;
             }
             else
             {
@@ -277,20 +317,28 @@ void app_monitor_private_processLogging()
         }
         else if (app_monitor_data.input.updatedIndex)
         {
-            //DEBUG_ERROR("%s", "Logging sample data\n");
-            IO_SDCard_push(IO_SDCARD_CHANNEL_SAMPLE_DATA, &app_monitor_data.sample, sizeof(app_monitor_sample_t));
+            app_monitor_private_pushSample();
         }
         break;
     case APP_MONITOR_LOGGING_STATE_STOPPING:
         if (app_monitor_data.input.updatedIndex)
         {
-            IO_SDCard_push(IO_SDCARD_CHANNEL_SAMPLE_DATA, &app_monitor_data.sample, sizeof(app_monitor_sample_t));
+            app_monitor_private_pushSample();
         }
 
         if (lib_timer_expired(&app_monitor_data.stopLoggingTail))
         {
             lib_timer_stop(&app_monitor_data.stopLoggingTail);
             IO_SDCard_close(IO_SDCARD_CHANNEL_SAMPLE_DATA);
+            if (app_monitor_data.droppedSamples > 0U)
+            {
+                /* Once, at the end -- the per-drop notice below is also once,
+                 * so a run that loses ten thousand samples sends two messages
+                 * rather than ten thousand from a cog budgeted 1000 us. */
+                app_notification_send(APP_NOTIFICATION_TYPE_ERROR,
+                                      "Recording incomplete: %u samples were dropped",
+                                      (unsigned)app_monitor_data.droppedSamples);
+            }
             app_monitor_data.loggingState = APP_MONITOR_LOGGING_STATE_IDLE;
         }
         break;

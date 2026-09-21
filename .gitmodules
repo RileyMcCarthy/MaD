@@ -4,3 +4,6 @@
 [submodule "Protocol/ProtoEmb"]
 	path = Protocol/ProtoEmb
 	url = https://github.com/RileyMcCarthy/protoemb.git
+[submodule "Vibes"]
+	path = Vibes
+	url = https://github.com/RileyMcCarthy/vibes.git

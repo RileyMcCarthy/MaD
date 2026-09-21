@@ -29,8 +29,9 @@ typedef enum
  * Public Function Definitions
  **********************************************************************/
 void IO_positionFeedback_init(IO_positionFeedback_channel_E ch, int lock, int32_t stepPerUM);
+/* Position in NANOMETRES. One encoder count is 122 nm. */
 int32_t IO_positionFeedback_getValue(IO_positionFeedback_channel_E ch);
-bool IO_positionFeedback_setValue(IO_positionFeedback_channel_E ch, int32_t positionUM);
+bool IO_positionFeedback_setValue(IO_positionFeedback_channel_E ch, int32_t positionNM);
 /**********************************************************************
  * End of File
  **********************************************************************/

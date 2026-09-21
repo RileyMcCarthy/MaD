@@ -82,23 +82,28 @@ void IO_positionFeedback_init(IO_positionFeedback_channel_E ch, int lock, int32_
 
 int32_t IO_positionFeedback_getValue(IO_positionFeedback_channel_E ch)
 {
-    int32_t positionUM = 0;
+    int32_t positionNM = 0;
     if (ch < IO_POSITION_FEEDBACK_CHANNEL_COUNT)
     {
         const int32_t encoderSteps = HAL_encoder_value(IO_positionFeedback_channelData[ch].encoderChannel);
-        positionUM = lib_utility_muldiv64_signed(
-            encoderSteps, 1000, IO_positionFeedback_channelData[ch].stepPerMM);
+        /* NANOMETRES, not micrometres. One encoder count is 122 nm, so reporting
+         * whole micrometres threw away three bits of the sensor before anything
+         * downstream could see them -- and the truncation is toward zero, so it
+         * was a signed bias rather than noise. At 200 mm the intermediate is
+         * 1.6e12, which is why this goes through the 64-bit helper. */
+        positionNM = lib_utility_muldiv64_signed(
+            encoderSteps, LIB_UTILITY_NM_PER_MM, IO_positionFeedback_channelData[ch].stepPerMM);
     }
-    return positionUM;
+    return positionNM;
 }
 
-bool IO_positionFeedback_setValue(IO_positionFeedback_channel_E ch, int32_t positionUM)
+bool IO_positionFeedback_setValue(IO_positionFeedback_channel_E ch, int32_t positionNM)
 {
     bool success = false;
     if (ch < IO_POSITION_FEEDBACK_CHANNEL_COUNT)
     {
         const int32_t encoderSteps = lib_utility_muldiv64_signed(
-            positionUM, IO_positionFeedback_channelData[ch].stepPerMM, 1000);
+            positionNM, IO_positionFeedback_channelData[ch].stepPerMM, LIB_UTILITY_NM_PER_MM);
         HAL_encoder_set(IO_positionFeedback_channelData[ch].encoderChannel, encoderSteps);
         success = true;
     }

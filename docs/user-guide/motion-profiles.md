@@ -24,7 +24,7 @@ left). You can add and delete sets and moves freely.
 |---|---|---|
 | **Linear** | position/distance + velocity | A controlled pull or return. *Absolute* uses a target position; *relative* uses a distance from the current position. |
 | **Dwell** | time (ms) | Hold position for a fixed time. |
-| **Waveform** | centre, amplitude, frequency, cycles | A smooth sine oscillation about the centre, for cyclic / fatigue loading. |
+| **Waveform** | centre, shape, amplitude, frequency, cycles | A repeated oscillation about the centre, for cyclic / fatigue loading. Choose a **sine** or **triangle** traverse. |
 
 Each move has an **absolute / relative** selector, which also renames the waveform's centre field: **Centre** is a position when absolute, **Centre offset** a distance from where the machine already is when relative.
 
@@ -32,6 +32,18 @@ For the **Waveform** move, the
 app shows the live **peak velocity** and **duration**, and warns you if it would
 exceed the machine's velocity limit. The machine generates the oscillation
 itself, so long cyclic runs continue unattended.
+
+The machine moves to the **top** of the stroke before the first cycle and
+returns to the centre after the last one. That is not padding: an oscillation
+can only be started and stopped at a peak, where its own speed is momentarily
+zero, so those two moves are what let the cycles themselves be exactly the shape
+you asked for. The preview shows them.
+
+A waveform the machine cannot physically deliver — too fast for its amplitude,
+say — is **refused** rather than run at a reduced amplitude, so a specimen never
+sees a gentler loading than the report claims. Hand-written G-code can also hold
+at either peak and load faster than it unloads; see
+[Waveform motion control](../how-it-works/waveform-motion-control.md).
 
 ## Preview the motion
 

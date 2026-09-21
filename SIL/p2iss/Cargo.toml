@@ -1,0 +1,18 @@
+[package]
+name = "p2iss"
+description = "The P2 instruction-set simulator as a live embsim board component"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+p2core = { path = "../p2core" }
+embsim-board = { path = "../embsim/board" }
+embsim-core = { path = "../embsim/core" }
+tracing.workspace = true
+nix = { version = "0.31", features = ["term", "fs"] }
+libc = "0.2"
+
+[dev-dependencies]
+rstest.workspace = true

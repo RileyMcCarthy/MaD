@@ -48,3 +48,40 @@ void test_watchdog(void)
 
     TEST_ASSERT_TRUE(watchdog_isAllAlive());
 }
+
+void test_watchdog_toleratesOutOfRangeChannel(void)
+{
+    VIBES_TEST("watchdog.unknown-channel-tolerated",
+               "src/DEV/watchdog.c#watchdog_isAlive",
+               "a check-in and a liveness query on a supervised loop at the channel count, and on a negative channel index");
+    VIBES_EXPECT_WHY("reported-dead",
+                     "each query reports the loop dead",
+                     "the channel array is indexed by this value, so an unknown loop has no liveness to report");
+    VIBES_EXPECT("other-loops-unchanged", "every real loop keeps its previous liveness");
+
+    const watchdog_channel_t pastEnd = (watchdog_channel_t)WATCHDOG_CHANNEL_COUNT;
+    const watchdog_channel_t negative = (watchdog_channel_t)-1;
+
+    /* Establish a known-alive baseline for every real channel. */
+    for (int i = 0; i < WATCHDOG_CHANNEL_COUNT; i++)
+    {
+        watchdog_kick(i);
+    }
+    watchdog_run();
+    TEST_ASSERT_TRUE(watchdog_isAllAlive());
+
+    /* Out-of-range kicks must be ignored; real channels stay alive. */
+    watchdog_kick(pastEnd);
+    watchdog_kick(negative);
+    watchdog_run();
+    TEST_ASSERT_TRUE(watchdog_isAllAlive());
+    for (int i = 0; i < WATCHDOG_CHANNEL_COUNT; i++)
+    {
+        TEST_ASSERT_TRUE(watchdog_isAlive(i));
+    }
+
+    /* Out-of-range liveness queries report dead without touching real channels. */
+    TEST_ASSERT_FALSE(watchdog_isAlive(pastEnd));
+    TEST_ASSERT_FALSE(watchdog_isAlive(negative));
+    TEST_ASSERT_TRUE(watchdog_isAllAlive());
+}

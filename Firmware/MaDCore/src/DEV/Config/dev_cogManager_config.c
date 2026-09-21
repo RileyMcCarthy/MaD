@@ -39,7 +39,14 @@
  * Typedefs
  **********************************************************************/
 
-DEV_COGMANAGER_CHANNEL_CREATE_INIT(MONITOR, 1024U)
+/* 2048, not 1024: MONITOR's deepest path is app_monitor_run -> processLogging
+ * -> IO_SDCard_push -> lib_staticQueue_push -> DEBUG_ERROR -> fprintf ->
+ * __dofmt -> __fmtfloat, which needs 1032 bytes — the float formatting in the
+ * DEBUG_* timestamp is most of it. At 1024 that overruns into the upper canary
+ * the moment a test starts, the channel is marked ERROR, and the resulting
+ * APP_CONTROL_FAULT_COG refuses every later motion-enable request. The debug
+ * build is what carries the prints, but the headroom is cheap in both. */
+DEV_COGMANAGER_CHANNEL_CREATE_INIT(MONITOR, 2048U)
 {
     DEBUG_INFO("%s", "Monitor cog init\n");
     MachineProfile machineProfile;

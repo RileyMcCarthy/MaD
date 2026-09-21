@@ -9,8 +9,9 @@ A test declares the **condition** it sets up once, then one or more
 **expectations** for that condition. Each expectation is its own row in
 `behaviours.jsonl`, its own `BH-` number, and its own line in the PR report.
 PRs are reviewed from the **diff of that ledger** — added / respecified /
-removed / stopped holding. The reader has never opened the code. Full guide:
-`docs/coding-guidelines/vibes-behaviours.md`.
+removed / stopped holding. The reader has never opened the code. Full guide: `docs/coding-guidelines/vibes-behaviours.md`.
+The tool is a submodule at `Vibes/`; its own rules are `Vibes/bindings/CLAIMS.md`
+and its wire contract `Vibes/bindings/SCHEMA.md`. Tool changes go upstream first.
 
 ```
 - given a sample 2 mm by 1 mm, with a 100 N reading after 1 mm of extension

@@ -70,13 +70,20 @@ fn drain_pipe<R: Read + Send + 'static>(pipe: R, sink: Arc<Mutex<String>>) {
 }
 
 fn firmware_lib() -> PathBuf {
-    // CLI default is relative to SIL/ (makefile playground). cargo test runs
-    // with cwd = MaDSim/, so we pin the archive from this crate's manifest.
-    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../Firmware/MaDCore/.pio/build/native_emulator/libfirmware.a");
+    // Same resolution as MaDSim/build.rs via embsim-build: EMBSIM_FIRMWARE_LIB_DIR
+    // wins, else the archive under the firmware's own build tree. CI sets the
+    // variable to a copy it keeps outside .pio/build, because on the runner a
+    // later `pio run` for another env deletes the original -- this test used to
+    // hardcode the original path, so it failed there with "libfirmware.a
+    // missing" while the binary it was about to launch had linked just fine.
+    let p = match std::env::var_os("EMBSIM_FIRMWARE_LIB_DIR") {
+        Some(dir) => PathBuf::from(dir).join("libfirmware.a"),
+        None => PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../Firmware/MaDCore/.pio/build/native_emulator/libfirmware.a"),
+    };
     if !p.is_file() {
         panic!(
-            "libfirmware.a missing at {}\nBuild it first:\n  cd Firmware/MaDCore && pio run -e native_emulator",
+            "libfirmware.a missing at {}\nBuild it first:\n  cd Firmware/MaDCore && pio run -e native_emulator\nor point EMBSIM_FIRMWARE_LIB_DIR at a directory containing it",
             p.display()
         );
     }

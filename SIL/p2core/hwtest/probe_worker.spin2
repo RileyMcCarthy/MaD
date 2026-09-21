@@ -1,0 +1,61 @@
+'' Cog-RAM worker for the one-instruction probe.
+'' PAR/PTRA is the hub mailbox address (see probe.c).
+'' Compiled with `flexspin -2 -c` so the output is just these longs.
+
+con
+  DREG = $1E0
+  SREG = $1E1
+
+dat
+        org     0
+worker
+        mov     ptrb, ptra
+        add     ptra, #8
+        rdlong  encoding, ptra
+        add     ptra, #4
+        rdlong  prefix, ptra
+        add     ptra, #4
+        rdlong  din, ptra
+        add     ptra, #4
+        rdlong  sin, ptra
+        add     ptra, #4
+        rdlong  flags, ptra
+
+        mov     DREG, din
+        mov     SREG, sin
+        testb   flags, #0 wc
+        testb   flags, #1 wz
+
+        mov     preinstr, prefix
+        mov     instr, encoding
+        jmp     #preinstr
+preinstr
+        nop
+instr
+        nop
+        jmp     #after
+after
+        mov     din, DREG
+        mov     sin, SREG
+        mov     flags, #0
+        muxc    flags, #1
+ if_z   or      flags, #2
+
+        mov     ptra, ptrb
+        add     ptra, #48
+        wrlong  din, ptra
+        add     ptra, #4
+        wrlong  sin, ptra
+        add     ptra, #4
+        wrlong  flags, ptra
+        add     ptra, #4
+        wrlong  #1, ptra
+
+        cogid   encoding
+        cogstop encoding
+
+encoding        res 1
+prefix          res 1
+din             res 1
+sin             res 1
+flags           res 1

@@ -51,7 +51,7 @@ void test_init_out_of_range_channel_is_noop(void)
     TEST_ASSERT_EQUAL_INT(0, d_startCount); /* did not start any encoder */
 }
 
-void test_getValue_scales_steps_to_um(void)
+void test_getValue_scales_steps_to_nm(void)
 {
     VIBES_TEST("encoder.get-scales-steps-to-um",
                "src/IO/IO_positionFeedback.c#IO_positionFeedback_getValue",
@@ -60,7 +60,7 @@ void test_getValue_scales_steps_to_um(void)
     VIBES_EXPECT("read-from-servo", "the reading is taken from the servo encoder");
     IO_positionFeedback_init(IO_POSITION_FEEDBACK_CHANNEL_SERVO_FEEDBACK, 0, 200);
     d_encoderValue = 400; /* 400 steps / 200 steps-per-mm = 2 mm = 2000 um */
-    TEST_ASSERT_EQUAL_INT32(2000, IO_positionFeedback_getValue(IO_POSITION_FEEDBACK_CHANNEL_SERVO_FEEDBACK));
+    TEST_ASSERT_EQUAL_INT32(2000000, IO_positionFeedback_getValue(IO_POSITION_FEEDBACK_CHANNEL_SERVO_FEEDBACK));
     TEST_ASSERT_EQUAL_INT(HAL_ENCODER_CHANNEL_SERVO, d_lastValueCh);
 }
 
@@ -72,7 +72,7 @@ void test_getValue_negative_steps(void)
     VIBES_EXPECT("position-in-um", "the position reads minus 2000 micrometres");
     IO_positionFeedback_init(IO_POSITION_FEEDBACK_CHANNEL_SERVO_FEEDBACK, 0, 200);
     d_encoderValue = -400;
-    TEST_ASSERT_EQUAL_INT32(-2000, IO_positionFeedback_getValue(IO_POSITION_FEEDBACK_CHANNEL_SERVO_FEEDBACK));
+    TEST_ASSERT_EQUAL_INT32(-2000000, IO_positionFeedback_getValue(IO_POSITION_FEEDBACK_CHANNEL_SERVO_FEEDBACK));
 }
 
 void test_getValue_zero_stepPerMM_defaults_to_one(void)
@@ -81,11 +81,11 @@ void test_getValue_zero_stepPerMM_defaults_to_one(void)
                "src/IO/IO_positionFeedback.c#IO_positionFeedback_init",
                "a position encoder configured with zero steps per millimetre, reading five steps");
     VIBES_EXPECT_WHY("one-step-per-mm",
-                     "each step counts as one millimetre, so the position reads 5000 micrometres",
+                     "each step counts as one millimetre, so the position reads 5 mm",
                      "the conversion divides by steps per millimetre; a configured zero would stop the encoder from reporting a usable position");
     IO_positionFeedback_init(IO_POSITION_FEEDBACK_CHANNEL_SERVO_FEEDBACK, 0, 0); /* guarded to 1 */
     d_encoderValue = 5;
-    TEST_ASSERT_EQUAL_INT32(5000, IO_positionFeedback_getValue(IO_POSITION_FEEDBACK_CHANNEL_SERVO_FEEDBACK));
+    TEST_ASSERT_EQUAL_INT32(5000000, IO_positionFeedback_getValue(IO_POSITION_FEEDBACK_CHANNEL_SERVO_FEEDBACK));
 }
 
 void test_getValue_out_of_range_returns_zero(void)
@@ -98,7 +98,7 @@ void test_getValue_out_of_range_returns_zero(void)
     TEST_ASSERT_EQUAL_INT32(0, IO_positionFeedback_getValue(IO_POSITION_FEEDBACK_CHANNEL_COUNT));
 }
 
-void test_setValue_scales_um_to_steps_and_sets_encoder(void)
+void test_setValue_scales_nm_to_steps_and_sets_encoder(void)
 {
     VIBES_TEST("encoder.set-scales-um-to-steps",
                "src/IO/IO_positionFeedback.c#IO_positionFeedback_setValue",
@@ -106,8 +106,8 @@ void test_setValue_scales_um_to_steps_and_sets_encoder(void)
     VIBES_EXPECT("accepted", "the request is accepted");
     VIBES_EXPECT("steps-programmed", "the servo encoder is programmed to 600 steps");
     IO_positionFeedback_init(IO_POSITION_FEEDBACK_CHANNEL_SERVO_FEEDBACK, 0, 200);
-    TEST_ASSERT_TRUE(IO_positionFeedback_setValue(IO_POSITION_FEEDBACK_CHANNEL_SERVO_FEEDBACK, 3000));
-    TEST_ASSERT_EQUAL_INT32(600, d_lastSetSteps); /* 3000 um * 200 / 1000 = 600 steps */
+    TEST_ASSERT_TRUE(IO_positionFeedback_setValue(IO_POSITION_FEEDBACK_CHANNEL_SERVO_FEEDBACK, 3000000));
+    TEST_ASSERT_EQUAL_INT32(600, d_lastSetSteps); /* 3,000,000 nm * 200 / 1e6 = 600 steps */
     TEST_ASSERT_EQUAL_INT(HAL_ENCODER_CHANNEL_SERVO, d_lastSetCh);
 }
 
@@ -126,11 +126,15 @@ void test_set_then_get_round_trips(void)
     VIBES_TEST("encoder.set-get-round-trip",
                "src/IO/IO_positionFeedback.c#IO_positionFeedback_getValue",
                "encoder position set to 1234 micrometres, then read back");
-    VIBES_EXPECT("round-trips", "the position reads back as 1234 micrometres");
+    VIBES_EXPECT_WHY("round-trips-to-the-nearest-encoder-count",
+                     "the position reads back within one encoder count of what was set",
+                     "the round trip cannot be exact in general: nanometres are finer than a count, so setting a value the encoder cannot represent must land on the nearest count it can — asserting exact equality would only be asserting that the test picked a representable number");
+    /* 1000 steps/mm here, so one count is 1000 nm. */
     IO_positionFeedback_init(IO_POSITION_FEEDBACK_CHANNEL_SERVO_FEEDBACK, 0, 1000);
-    IO_positionFeedback_setValue(IO_POSITION_FEEDBACK_CHANNEL_SERVO_FEEDBACK, 1234);
+    IO_positionFeedback_setValue(IO_POSITION_FEEDBACK_CHANNEL_SERVO_FEEDBACK, 1234000);
     d_encoderValue = d_lastSetSteps; /* the encoder now reads back what was set */
-    TEST_ASSERT_EQUAL_INT32(1234, IO_positionFeedback_getValue(IO_POSITION_FEEDBACK_CHANNEL_SERVO_FEEDBACK));
+    TEST_ASSERT_INT32_WITHIN(1000, 1234000,
+                             IO_positionFeedback_getValue(IO_POSITION_FEEDBACK_CHANNEL_SERVO_FEEDBACK));
 }
 
 int main(void)
@@ -138,11 +142,11 @@ int main(void)
     UNITY_BEGIN();
     RUN_TEST(test_init_starts_encoder_on_servo_channel);
     RUN_TEST(test_init_out_of_range_channel_is_noop);
-    RUN_TEST(test_getValue_scales_steps_to_um);
+    RUN_TEST(test_getValue_scales_steps_to_nm);
     RUN_TEST(test_getValue_negative_steps);
     RUN_TEST(test_getValue_zero_stepPerMM_defaults_to_one);
     RUN_TEST(test_getValue_out_of_range_returns_zero);
-    RUN_TEST(test_setValue_scales_um_to_steps_and_sets_encoder);
+    RUN_TEST(test_setValue_scales_nm_to_steps_and_sets_encoder);
     RUN_TEST(test_setValue_out_of_range_returns_false);
     RUN_TEST(test_set_then_get_round_trips);
     return UNITY_END();

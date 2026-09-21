@@ -1,0 +1,91 @@
+'' Stage-1 flash loader for the ISS boot chain.
+''
+'' The P2 boot ROM loads the first $400 bytes of SPI flash into hub 0, checks
+'' that their 256 longs sum to "Prop", copies them into cog $000..$0FF and
+'' executes `jmp #0`. This program is those bytes. Its whole job is to fetch
+'' the real application from flash offset $400 into hub 0 and relaunch the
+'' cog on it — the same entry convention the ROM itself just used.
+''
+'' Parallax's production stage-1 (inside loadp2's P2ES_flashloader) does this
+'' with Fast Read Dual Output on registered smart pins. This one bit-bangs
+'' single SPI exactly the way the ROM's own `spi_cmd`/`spi_in` do, because a
+'' boot happens once and fidelity of mechanism beats speed in a simulator.
+''
+'' Flash layout consumed here:
+''   $000..$3FF  this loader (checksum long patched by the image builder)
+''   $400        application length in bytes, little-endian
+''   $404..      application image (a flexcc program: its first $400 bytes
+''               are its own cog bootstrap, entered the same way)
+
+con
+  spi_cs = 61
+  spi_ck = 60
+  spi_di = 59
+  spi_do = 58
+
+dat
+    org 0
+
+entry
+    drvh  #spi_cs        'idle the bus: CS high, clock low
+    drvl  #spi_ck
+
+' read command: $03, address $000400, then stream
+    drvl  #spi_cs
+    mov   pb, ##$03_000400
+    mov   pa, #32
+    call  #spi_out
+
+' first long is the application's byte length
+    call  #spi_in8
+    mov   len, x
+    call  #spi_in8
+    shl   x, #8
+    or    len, x
+    call  #spi_in8
+    shl   x, #16
+    or    len, x
+    call  #spi_in8
+    shl   x, #24
+    or    len, x
+
+' stream the application into hub 0
+    wrfast #0, #0
+.load
+    call  #spi_in8
+    wfbyte x
+    djnz  len, #.load
+
+    drvh  #spi_cs        'deselect
+
+' relaunch this cog on the loaded image, exactly as the ROM launched us
+    setq  #$FF
+    rdlong 0, #0
+    jmp   #0
+
+' ---- SPI primitives, in the ROM's own idiom ----------------------------
+
+' shift out `pa` bits of `pb`, MSB first
+spi_out
+    rol   pb, #1  wc
+    drvc  #spi_di
+    drvh  #spi_ck
+    drvl  #spi_ck
+    djnz  pa, #spi_out
+spi_out_ret
+    ret
+
+' shift in 8 bits to `x`
+spi_in8
+    mov   x, #0
+    rep   @.in, #8
+    drvh  #spi_ck
+    drvl  #spi_ck
+    testp #spi_do  wc
+    rcl   x, #1
+.in
+spi_in8_ret
+    ret
+
+len  long 0
+x    long 0
