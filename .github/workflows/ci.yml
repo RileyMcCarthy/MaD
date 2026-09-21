@@ -1,1 +1,8 @@
-LOAD_FROM_FILE:/workspace/mad-118/ci.yml
+name: CI
+
+on:
+  push:
+    paths:
+      - 'Software/**'
+      - 'Firmware/**'
+      - 'Hardware/**'
