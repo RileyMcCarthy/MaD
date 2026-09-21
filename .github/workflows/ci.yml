@@ -861,6 +861,8 @@ jobs:
           python-version: '3.12'
       - name: Enforce firmware layering (downward-only includes)
         run: python3 Firmware/MaDCore/scripts/check_layering.py Firmware/MaDCore/src
+      - name: HAL/Include ↔ HAL/P2 signature diff (return type + arity)
+        run: python3 Firmware/MaDCore/scripts/check_hal_p2_signatures.py Firmware/MaDCore/src
 
   build-firmware:
     needs: changes
