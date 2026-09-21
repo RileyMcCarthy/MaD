@@ -6,18 +6,24 @@ QEMU=${1:?usage: difftest.sh <qemu-system-p2> [ops] [n] [seed]}
 OPS=${2:-add,sub,and,or,xor,mov,not}
 N=${3:-400}
 SEED=${4:-1}
+CF=${5:-0}
 HERE=$(cd "$(dirname "$0")" && pwd); CRATE=$(dirname "$HERE"); SIL=$(dirname "$CRATE")
 W=$(mktemp -d); trap 'rm -rf "$W"' EXIT
 
-COUNT=$(python3 "$HERE/difftest.py" --ops "$OPS" --n "$N" --seed "$SEED" --out "$W/prog.bin")
+COUNT=$(python3 "$HERE/difftest.py" --ops "$OPS" --n "$N" --seed "$SEED" --cf "$CF" --out "$W/prog.bin")
 cargo build --release --quiet --manifest-path "$SIL/Cargo.toml" -p p2core --example p2state
 "$SIL/target/release/examples/p2state" "$W/prog.bin" "$COUNT" > "$W/ref.txt"
 
+# A program with loops never stops, so `head` closes the pipe under QEMU and
+# it dies of SIGPIPE. That is the expected end of the run, not a failure.
+set +o pipefail
 timeout 60 "$QEMU" -M p2 -nographic -monitor none -serial none -display none \
     -accel tcg,one-insn-per-tb=on \
     -device loader,file="$W/prog.bin",addr=0x1000,cpu-num=0 \
     -device loader,addr=0x1000,cpu-num=0 \
     -d cpu -D /dev/stdout 2>/dev/null | grep '^P2STATE' | head -n "$COUNT" > "$W/qemu.txt"
+
+set -o pipefail
 
 R=$(wc -l < "$W/ref.txt"); Q=$(wc -l < "$W/qemu.txt")
 echo "  reference $R lines | qemu $Q lines | program $COUNT instructions"

@@ -9,6 +9,12 @@
 #include "system/memory.h"
 
 #define P2_COG_LONGS 512
+#define P2_STACK_DEPTH 8
+/* Cog RAM's top 16 longs are the special registers. */
+#define P2_REG_PA   0x1F6
+#define P2_REG_PB   0x1F7
+#define P2_REG_PTRA 0x1F8
+#define P2_REG_PTRB 0x1F9
 #define P2_LUT_LONGS 512
 #define P2_NUM_COGS  8
 
@@ -39,6 +45,12 @@ typedef struct CPUArchState {
     uint32_t c;             /* carry flag, 0 or 1 */
     uint32_t z;             /* zero flag, 0 or 1 */
     uint64_t clocks;        /* this cog's clock, what GETCT reads */
+
+    /* The 8-level hardware call stack. A ring on silicon too: a 9th push
+     * overwrites the oldest entry rather than faulting, and CALL/RET, PUSH/POP
+     * and the _RET_ prefix all share it. */
+    uint32_t stack[P2_STACK_DEPTH];
+    uint32_t sp;
 
     uint32_t cogid;
     bool     running;

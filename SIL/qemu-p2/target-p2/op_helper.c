@@ -129,3 +129,21 @@ void helper_p2_interp_cog(CPUArchState *env, uint32_t budget)
         env->z = (r == 0);
     }
 }
+
+/*
+ * The hardware stack is a ring: the index is a runtime value, so push and pop
+ * are helpers rather than inline TCG. CALL/RET are ~6.5% of the firmware's
+ * instruction stream, and a helper call is ~1-3 ns against the ~53 ns a
+ * translation-block exit costs -- the branch itself already pays that.
+ */
+void HELPER(p2_push)(CPUP2State *env, uint32_t v)
+{
+    env->stack[env->sp & (P2_STACK_DEPTH - 1)] = v;
+    env->sp = (env->sp + 1) & (P2_STACK_DEPTH - 1);
+}
+
+uint32_t HELPER(p2_pop)(CPUP2State *env)
+{
+    env->sp = (env->sp - 1) & (P2_STACK_DEPTH - 1);
+    return env->stack[env->sp];
+}

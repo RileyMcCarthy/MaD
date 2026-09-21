@@ -86,8 +86,8 @@ static void p2_cpu_dump_state(CPUState *cs, FILE *f, int flags)
 
     /* One line per state, in the exact shape the differential harness diffs
      * against p2core. Registers 0..31 are what the generated tests target. */
-    qemu_fprintf(f, "P2STATE pc=%05X c=%u z=%u clk=%" PRIu64, env->pc,
-                 env->c, env->z, env->clocks);
+    qemu_fprintf(f, "P2STATE pc=%05X c=%u z=%u sp=%u clk=%" PRIu64, env->pc,
+                 env->c, env->z, env->sp, env->clocks);
     for (i = 0; i < 32; i++) {
         qemu_fprintf(f, " %08X", env->cog[i]);
     }
