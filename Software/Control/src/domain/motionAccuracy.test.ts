@@ -99,6 +99,43 @@ describe('motion accuracy matcher', () => {
 
   behaviour(
     {
+      id: 'motion.linear-follow-bound-holds-velocity-floor',
+      covers: 'e2e/motion-accuracy.mjs#assertFollowsLinearUm',
+      given:
+        'a short-cruise linear move (2 mm at 5 mm/s) whose travel-fraction alone would tighten below the prior 15 ms velocity floor',
+      expect: {
+        'bound-never-tightens':
+          'the follow bound stays at least at the old velocity floor (75 um), so the cell does not tighten relative to pre-travel-fraction sizing',
+      },
+    },
+    () => {
+      const distanceMm = 2;
+      const velocityMmS = 5;
+      const distUm = distanceMm * 1000;
+      const vUmS = velocityMmS * 1000;
+      const aUmS2 = SHIPPED_ACCEL_MM_S2 * 1000;
+      const { tTotal } = trapezoidTimes(distUm, vUmS, aUmS2);
+      const delayS = 0.008;
+      const lines: string[] = [];
+      const s = seriesFrom(
+        (t) => trapezoidTravelUm(distUm, vUmS, aUmS2, t - delayS),
+        { tEndS: tTotal + 0.25 },
+      );
+      expect(() =>
+        assertFollowsLinearUm(s, {
+          velocityMmS,
+          distanceMm,
+          label: 'short-cruise',
+          log: (line) => lines.push(line),
+        }),
+      ).not.toThrow();
+      // Travel alone is 50 um; the never-tighten floor holds 75.
+      expect(lines.join('\n')).toMatch(/bound 75\.0 um/);
+    },
+  );
+
+  behaviour(
+    {
       id: 'motion.arrival-rejects-a-missed-target',
       covers: 'e2e/motion-accuracy.mjs#assertArrivedAtUm',
       given: 'a recorded move that comes to rest 0.003 mm from the commanded position',
