@@ -74,7 +74,8 @@ def rel20(op, disp, cond=0xF):
 # Hub ops. For the WR forms bit 20 selects the size and bit 19 is the L bit,
 # so C/Z are selectors here and must never be randomised.
 MEM_LD = {"rdbyte": 0x56, "rdword": 0x57, "rdlong": 0x58}
-S_GETCT, S_REV = 0x1A, 0x69
+S_GETCT, S_REV, S_SETQ, S_SETQ2 = 0x1A, 0x69, 0x28, 0x29
+OP_ALTD, OP_ALTS = 0x4C, 0x4C   # bits [20:19] select: 01 = ALTD, 10 = ALTS
 
 
 def aug(d, imm23, cond=0xF):
@@ -188,17 +189,68 @@ def main():
                            c=rng.randrange(2), z=rng.randrange(2)))
         return out
 
+    def block_group():
+        """SETQ + RDLONG/WRLONG: a block transfer, not a single access.
+
+        The destination span has to stay clear of the reserved registers, so
+        the count and base are chosen together."""
+        out = []
+        n = rng.randrange(1, 6)
+        base = rng.randrange(ADDR_REG - n)
+        cnt = ADDR_REG - 1                    # scratch for the count itself
+        addr = 4 * rng.randrange(SCRATCH // 8)
+        out.append(ins(OPS["mov"], cnt, n))
+        if rng.randrange(2):                  # block READ into the registers
+            out.append(misc(S_SETQ, d=cnt))
+            out.append(ins(0x58, base, addr, i=1))
+        else:                                 # block WRITE, copy or fill
+            if rng.randrange(2):
+                out.append(misc(S_SETQ, d=cnt))
+                out.append(ins(0x63, base, addr, i=1, c=0, z=0))   # copy
+            else:
+                out.append(misc(S_SETQ, d=cnt))
+                out.append(ins(0x63, rng.randrange(512), addr, i=1, c=0, z=1))
+            for k in range(min(n + 1, 3)):    # read it back to make it visible
+                out.append(ins(0x58, rng.randrange(ADDR_REG), addr + 4 * k,
+                               i=1))
+        return out
+
+    def altx_group():
+        """ALTD/ALTS substitute a RUNTIME register index into the next
+        instruction, and S[17:9] post-increments the index register."""
+        out = []
+        idx = rng.randrange(ADDR_REG - 2)
+        sreg = idx + 1
+        base = rng.randrange(24)
+        off = rng.randrange(3)
+        inc = rng.choice([0, 1, 0x1FF])       # 0, +1, -1 (9-bit signed)
+        out.append(ins(OPS["mov"], idx, base))
+        out.append(ins(OPS["mov"], sreg, inc))
+        out.append(ins(OPS["shl"], sreg, 9))
+        out.append(ins(OPS["or"], sreg, off))
+        if rng.randrange(2):                  # ALTD: the next D is substituted
+            out.append(ins(OP_ALTD, idx, sreg, i=0, c=0, z=1))
+            out.append(ins(OPS["mov"], 0, rng.randrange(512)))
+        else:                                 # ALTS: the next S is substituted
+            out.append(ins(OP_ALTS, idx, sreg, i=0, c=1, z=0))
+            out.append(ins(OPS["add"], rng.randrange(ADDR_REG), 0, i=1))
+        return out
+
     kinds, n_cf = ["jmpf", "call", "loop", "tjz", "pushpop", "jmpd"], 0
     n_mem = 0
     while len(prog) - sub < a.n:
         if a.mem and rng.random() < a.mem:
-            r = rng.randrange(4)
+            r = rng.randrange(6)
             if r == 0:
                 prog += prefix_group()
             elif r == 1:
                 prog.append(misc(rng.choice([S_GETCT, S_REV]),
                                  d=rng.randrange(dmax),
                                  c=rng.randrange(2), z=rng.randrange(2)))
+            elif r == 2:
+                prog += block_group()
+            elif r == 3:
+                prog += altx_group()
             else:
                 prog += hub_pair()
             n_mem += 1

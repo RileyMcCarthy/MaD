@@ -66,13 +66,47 @@ static void p2_st_cog(TCGv_i32 src, unsigned idx)
 }
 
 /*
+ * D operand. A pending ALTD substitutes a RUNTIME register index for the
+ * encoded one, so these route through a helper -- but only then: Spike 1a
+ * measured post-ALTx instructions at 0.0999% of the firmware's stream, and
+ * every other instruction keeps the static offset the translator folded in.
+ */
+static void p2_ld_d(DisasContext *ctx, TCGv_i32 dst, unsigned d)
+{
+    if (ctx->prefix & P2_PFX_ALTD) {
+        TCGv_i32 idx = tcg_temp_new_i32();
+        tcg_gen_ld_i32(idx, tcg_env, offsetof(CPUP2State, alt_d));
+        gen_helper_p2_cog_rd(dst, tcg_env, idx);
+    } else {
+        p2_ld_cog(dst, d);
+    }
+}
+
+static void p2_st_d(DisasContext *ctx, TCGv_i32 src, unsigned d)
+{
+    if (ctx->prefix & P2_PFX_ALTD) {
+        TCGv_i32 idx = tcg_temp_new_i32();
+        tcg_gen_ld_i32(idx, tcg_env, offsetof(CPUP2State, alt_d));
+        gen_helper_p2_cog_wr(tcg_env, idx, src);
+    } else {
+        p2_st_cog(src, d);
+    }
+}
+
+/*
  * S operand: an immediate when I is set, else a register -- and a pending AUGS
  * widens that immediate from 9 bits to 32. The AUGS case emits a load only
  * because it is in the TB key: with no prefix pending this is still a movi.
  */
 static void p2_get_s(DisasContext *ctx, TCGv_i32 dst, int i, unsigned s)
 {
-    if (!i) {
+    if (ctx->prefix & P2_PFX_ALTS) {
+        /* ALTS always substitutes a REGISTER address, so an originally
+         * immediate S must not stay immediate. */
+        TCGv_i32 idx = tcg_temp_new_i32();
+        tcg_gen_ld_i32(idx, tcg_env, offsetof(CPUP2State, alt_s));
+        gen_helper_p2_cog_rd(dst, tcg_env, idx);
+    } else if (!i) {
         p2_ld_cog(dst, s);
     } else if (ctx->prefix & P2_PFX_AUGS) {
         tcg_gen_ld_i32(dst, tcg_env, offsetof(CPUP2State, aug_s));
@@ -180,10 +214,10 @@ static void p2_gen_clock(void)
         TCGv_i32 d = tcg_temp_new_i32();                                      \
         TCGv_i32 s = tcg_temp_new_i32();                                      \
         TCGLabel *skip = p2_gen_cond(ctx, a->cond);                           \
-        p2_ld_cog(d, a->d);                                                   \
+        p2_ld_d(ctx, d, a->d);                                                   \
         p2_get_s(ctx, s, a->i, a->s);                                              \
         EXPR;                                                                 \
-        p2_st_cog(d, a->d);                                                   \
+        p2_st_d(ctx, d, a->d);                                                   \
         FLAGS(d, a->c, a->z);                                                 \
         p2_end_cond(skip);                                                    \
         return true;                                                          \
@@ -203,7 +237,7 @@ static bool trans_add(DisasContext *ctx, arg_ds *a)
     TCGv_i32 r = tcg_temp_new_i32();
     TCGLabel *skip = p2_gen_cond(ctx, a->cond);
 
-    p2_ld_cog(d, a->d);
+    p2_ld_d(ctx, d, a->d);
     p2_get_s(ctx, s, a->i, a->s);
     tcg_gen_add_i32(r, d, s);
     if (a->c) {
@@ -216,7 +250,7 @@ static bool trans_add(DisasContext *ctx, arg_ds *a)
         tcg_gen_setcondi_i32(TCG_COND_EQ, zf, r, 0);
         tcg_gen_st_i32(zf, tcg_env, offsetof(CPUP2State, z));
     }
-    p2_st_cog(r, a->d);
+    p2_st_d(ctx, r, a->d);
     p2_end_cond(skip);
     return true;
 }
@@ -228,7 +262,7 @@ static bool trans_sub(DisasContext *ctx, arg_ds *a)
     TCGv_i32 r = tcg_temp_new_i32();
     TCGLabel *skip = p2_gen_cond(ctx, a->cond);
 
-    p2_ld_cog(d, a->d);
+    p2_ld_d(ctx, d, a->d);
     p2_get_s(ctx, s, a->i, a->s);
     tcg_gen_sub_i32(r, d, s);
     if (a->c) {
@@ -241,7 +275,7 @@ static bool trans_sub(DisasContext *ctx, arg_ds *a)
         tcg_gen_setcondi_i32(TCG_COND_EQ, zf, r, 0);
         tcg_gen_st_i32(zf, tcg_env, offsetof(CPUP2State, z));
     }
-    p2_st_cog(r, a->d);
+    p2_st_d(ctx, r, a->d);
     p2_end_cond(skip);
     return true;
 }
@@ -258,7 +292,7 @@ static bool trans_sar(DisasContext *ctx, arg_ds *a)
     TCGv_i32 n = tcg_temp_new_i32(), r = tcg_temp_new_i32();
     TCGLabel *skip = p2_gen_cond(ctx, a->cond);
 
-    p2_ld_cog(d, a->d);
+    p2_ld_d(ctx, d, a->d);
     p2_get_s(ctx, sv, a->i, a->s);
     tcg_gen_andi_i32(n, sv, 31);
     tcg_gen_sar_i32(r, d, n);
@@ -272,7 +306,7 @@ static bool trans_sar(DisasContext *ctx, arg_ds *a)
         tcg_gen_andi_i32(probe, probe, 1);
         tcg_gen_st_i32(probe, tcg_env, offsetof(CPUP2State, c));
     }
-    p2_st_cog(r, a->d);
+    p2_st_d(ctx, r, a->d);
     p2_set_z(r, a->z);
     p2_end_cond(skip);
     return true;
@@ -284,7 +318,7 @@ static bool trans_cmp(DisasContext *ctx, arg_ds *a)
     TCGv_i32 d = tcg_temp_new_i32(), sv = tcg_temp_new_i32(), r = tcg_temp_new_i32();
     TCGLabel *skip = p2_gen_cond(ctx, a->cond);
 
-    p2_ld_cog(d, a->d);
+    p2_ld_d(ctx, d, a->d);
     p2_get_s(ctx, sv, a->i, a->s);
     tcg_gen_sub_i32(r, d, sv);
     if (a->c) {
@@ -302,7 +336,7 @@ static bool trans_cmps(DisasContext *ctx, arg_ds *a)
     TCGv_i32 d = tcg_temp_new_i32(), sv = tcg_temp_new_i32(), r = tcg_temp_new_i32();
     TCGLabel *skip = p2_gen_cond(ctx, a->cond);
 
-    p2_ld_cog(d, a->d);
+    p2_ld_d(ctx, d, a->d);
     p2_get_s(ctx, sv, a->i, a->s);
     tcg_gen_sub_i32(r, d, sv);
     if (a->c) {
@@ -321,7 +355,7 @@ static bool trans_cmps(DisasContext *ctx, arg_ds *a)
         TCGv_i32 d = tcg_temp_new_i32(), sv = tcg_temp_new_i32();             \
         TCGv_i32 r = tcg_temp_new_i32();                                      \
         TCGLabel *skip = p2_gen_cond(ctx, a->cond);                           \
-        p2_ld_cog(d, a->d);                                                   \
+        p2_ld_d(ctx, d, a->d);                                                   \
         p2_get_s(ctx, sv, a->i, a->s);                                             \
         EXPR;                                                                 \
         p2_set_flags_parity(r, a->c, a->z);                                   \
@@ -347,7 +381,7 @@ static bool trans_abs(DisasContext *ctx, arg_ds *a)
         tcg_gen_shri_i32(cf, sv, 31);                   /* sign of the INPUT */
         tcg_gen_st_i32(cf, tcg_env, offsetof(CPUP2State, c));
     }
-    p2_st_cog(r, a->d);
+    p2_st_d(ctx, r, a->d);
     p2_set_z(r, a->z);
     p2_end_cond(skip);
     return true;
@@ -382,12 +416,12 @@ static void p2_shift_cout(TCGv_i32 d, TCGv_i32 n, int left)
         TCGv_i32 d = tcg_temp_new_i32(), sv = tcg_temp_new_i32();             \
         TCGv_i32 n = tcg_temp_new_i32(), r = tcg_temp_new_i32();              \
         TCGLabel *skip = p2_gen_cond(ctx, a->cond);                           \
-        p2_ld_cog(d, a->d);                                                   \
+        p2_ld_d(ctx, d, a->d);                                                   \
         p2_get_s(ctx, sv, a->i, a->s);                                             \
         tcg_gen_andi_i32(n, sv, 31);                                          \
         OP(r, d, n);                                                          \
         if (a->c) { p2_shift_cout(d, n, LEFT); }                              \
-        p2_st_cog(r, a->d);                                                   \
+        p2_st_d(ctx, r, a->d);                                                   \
         p2_set_z(r, a->z);                                                    \
         p2_end_cond(skip);                                                    \
         return true;                                                          \
@@ -410,7 +444,7 @@ GEN_SHIFT(ror, tcg_gen_rotr_i32, 0)
         TCGv_i32 c1 = tcg_temp_new_i32(), c2 = tcg_temp_new_i32();            \
         TCGv_i32 t = tcg_temp_new_i32();                                      \
         TCGLabel *skip = p2_gen_cond(ctx, a->cond);                           \
-        p2_ld_cog(d, a->d);                                                   \
+        p2_ld_d(ctx, d, a->d);                                                   \
         p2_get_s(ctx, sv, a->i, a->s);                                             \
         tcg_gen_ld_i32(cin, tcg_env, offsetof(CPUP2State, c));                \
         if (ADD) {                                                            \
@@ -435,7 +469,7 @@ GEN_SHIFT(ror, tcg_gen_rotr_i32, 0)
             tcg_gen_and_i32(zf, zf, old);            /* sticky */             \
             tcg_gen_st_i32(zf, tcg_env, offsetof(CPUP2State, z));             \
         }                                                                     \
-        p2_st_cog(r, a->d);                                                   \
+        p2_st_d(ctx, r, a->d);                                                   \
         p2_end_cond(skip);                                                    \
         return true;                                                          \
     }
@@ -451,7 +485,7 @@ GEN_XCHAIN(subx, 0)
         TCGv_i32 r = tcg_temp_new_i32();                                      \
         TCGv_i64 wd = tcg_temp_new_i64(), ws = tcg_temp_new_i64();            \
         TCGLabel *skip = p2_gen_cond(ctx, a->cond);                           \
-        p2_ld_cog(d, a->d);                                                   \
+        p2_ld_d(ctx, d, a->d);                                                   \
         p2_get_s(ctx, sv, a->i, a->s);                                             \
         if (ADD) { tcg_gen_add_i32(r, d, sv); }                               \
         else     { tcg_gen_sub_i32(r, d, sv); }                               \
@@ -465,7 +499,7 @@ GEN_XCHAIN(subx, 0)
             tcg_gen_extrl_i64_i32(cf, wd);                                    \
             tcg_gen_st_i32(cf, tcg_env, offsetof(CPUP2State, c));             \
         }                                                                     \
-        p2_st_cog(r, a->d);                                                   \
+        p2_st_d(ctx, r, a->d);                                                   \
         p2_set_z(r, a->z);                                                    \
         p2_end_cond(skip);                                                    \
         return true;                                                          \
@@ -481,7 +515,7 @@ GEN_SIGNED(subs, 0)
         TCGv_i32 d = tcg_temp_new_i32(), sv = tcg_temp_new_i32();             \
         TCGv_i32 r = tcg_temp_new_i32();                                      \
         TCGLabel *skip = p2_gen_cond(ctx, a->cond);                           \
-        p2_ld_cog(d, a->d);                                                   \
+        p2_ld_d(ctx, d, a->d);                                                   \
         p2_get_s(ctx, sv, a->i, a->s);                                             \
         tcg_gen_movcond_i32(COND, r, d, sv, sv, d);                           \
         if (a->c) {                                                           \
@@ -489,7 +523,7 @@ GEN_SIGNED(subs, 0)
             tcg_gen_setcond_i32(COND, cf, d, sv);                             \
             tcg_gen_st_i32(cf, tcg_env, offsetof(CPUP2State, c));             \
         }                                                                     \
-        p2_st_cog(r, a->d);                                                   \
+        p2_st_d(ctx, r, a->d);                                                   \
         p2_set_z(r, a->z);                                                    \
         p2_end_cond(skip);                                                    \
         return true;                                                          \
@@ -507,7 +541,7 @@ static bool trans_decod(DisasContext *ctx, arg_ds *a)
     p2_get_s(ctx, sv, a->i, a->s);
     tcg_gen_andi_i32(r, sv, 31);
     tcg_gen_shl_i32(r, tcg_constant_i32(1), r);
-    p2_st_cog(r, a->d);
+    p2_st_d(ctx, r, a->d);
     p2_set_z(r, a->z);
     p2_end_cond(skip);
     return true;
@@ -527,7 +561,7 @@ static bool trans_encod(DisasContext *ctx, arg_ds *a)
         tcg_gen_setcondi_i32(TCG_COND_NE, cf, sv, 0);
         tcg_gen_st_i32(cf, tcg_env, offsetof(CPUP2State, c));
     }
-    p2_st_cog(r, a->d);
+    p2_st_d(ctx, r, a->d);
     p2_set_z(r, a->z);
     p2_end_cond(skip);
     return true;
@@ -540,7 +574,7 @@ static bool trans_ones(DisasContext *ctx, arg_ds *a)
 
     p2_get_s(ctx, sv, a->i, a->s);
     tcg_gen_ctpop_i32(r, sv);
-    p2_st_cog(r, a->d);
+    p2_st_d(ctx, r, a->d);
     /*
      * C is the LOW BIT of the count, not its parity. The count is already a
      * population count, so `r & 1` and `parity(r)` differ for e.g. r = 5.
@@ -562,7 +596,7 @@ static bool trans_ones(DisasContext *ctx, arg_ds *a)
         TCGv_i32 d = tcg_temp_new_i32(), sv = tcg_temp_new_i32();             \
         TCGv_i32 r = tcg_temp_new_i32(), m = tcg_temp_new_i32();              \
         TCGLabel *skip = p2_gen_cond(ctx, a->cond);                           \
-        p2_ld_cog(d, a->d);                                                   \
+        p2_ld_d(ctx, d, a->d);                                                   \
         p2_get_s(ctx, sv, a->i, a->s);                                             \
         tcg_gen_ld_i32(m, tcg_env, offsetof(CPUP2State, FIELD));              \
         if (INVERT) { tcg_gen_xori_i32(m, m, 1); }                            \
@@ -570,7 +604,7 @@ static bool trans_ones(DisasContext *ctx, arg_ds *a)
         tcg_gen_andc_i32(r, d, sv);                                           \
         tcg_gen_and_i32(m, m, sv);                                            \
         tcg_gen_or_i32(r, r, m);                                              \
-        p2_st_cog(r, a->d);                                                   \
+        p2_st_d(ctx, r, a->d);                                                   \
         p2_set_flags_parity(r, a->c, a->z);                                   \
         p2_end_cond(skip);                                                    \
         return true;                                                          \
@@ -592,7 +626,7 @@ static bool trans_zerox(DisasContext *ctx, arg_ds *a)
     TCGv_i32 n = tcg_temp_new_i32(), m = tcg_temp_new_i32(), r = tcg_temp_new_i32();
     TCGLabel *skip = p2_gen_cond(ctx, a->cond);
 
-    p2_ld_cog(d, a->d);
+    p2_ld_d(ctx, d, a->d);
     p2_get_s(ctx, sv, a->i, a->s);
     tcg_gen_andi_i32(n, sv, 31);
     /* mask = (1 << (n+1)) - 1, and all-ones when n == 31 (no shift by 32). */
@@ -602,7 +636,7 @@ static bool trans_zerox(DisasContext *ctx, arg_ds *a)
     tcg_gen_movcond_i32(TCG_COND_EQ, m, n, tcg_constant_i32(31),
                         tcg_constant_i32(-1), m);
     tcg_gen_and_i32(r, d, m);
-    p2_st_cog(r, a->d);
+    p2_st_d(ctx, r, a->d);
     p2_set_z(r, a->z);
     p2_end_cond(skip);
     return true;
@@ -614,7 +648,7 @@ static bool trans_signx(DisasContext *ctx, arg_ds *a)
     TCGv_i32 sh = tcg_temp_new_i32(), r = tcg_temp_new_i32();
     TCGLabel *skip = p2_gen_cond(ctx, a->cond);
 
-    p2_ld_cog(d, a->d);
+    p2_ld_d(ctx, d, a->d);
     p2_get_s(ctx, sv, a->i, a->s);
     tcg_gen_andi_i32(sh, sv, 31);
     tcg_gen_sub_i32(sh, tcg_constant_i32(31), sh);
@@ -625,7 +659,7 @@ static bool trans_signx(DisasContext *ctx, arg_ds *a)
         tcg_gen_shri_i32(cf, r, 31);
         tcg_gen_st_i32(cf, tcg_env, offsetof(CPUP2State, c));
     }
-    p2_st_cog(r, a->d);
+    p2_st_d(ctx, r, a->d);
     p2_set_z(r, a->z);
     p2_end_cond(skip);
     return true;
@@ -643,7 +677,7 @@ static bool trans_signx(DisasContext *ctx, arg_ds *a)
         TCGv_i32 neg = tcg_temp_new_i32(), eff = tcg_temp_new_i32();          \
         TCGv_i64 wd = tcg_temp_new_i64(), ws = tcg_temp_new_i64();            \
         TCGLabel *skip = p2_gen_cond(ctx, a->cond);                           \
-        p2_ld_cog(d, a->d);                                                   \
+        p2_ld_d(ctx, d, a->d);                                                   \
         p2_get_s(ctx, sv, a->i, a->s);                                             \
         tcg_gen_ld_i32(take, tcg_env, offsetof(CPUP2State, FIELD));           \
         if (INVERT) { tcg_gen_xori_i32(take, take, 1); }                      \
@@ -661,7 +695,7 @@ static bool trans_signx(DisasContext *ctx, arg_ds *a)
             tcg_gen_extrl_i64_i32(cf, wd);                                    \
             tcg_gen_st_i32(cf, tcg_env, offsetof(CPUP2State, c));             \
         }                                                                     \
-        p2_st_cog(r, a->d);                                                   \
+        p2_st_d(ctx, r, a->d);                                                   \
         p2_set_z(r, a->z);                                                    \
         p2_end_cond(skip);                                                    \
         return true;                                                          \
@@ -683,7 +717,7 @@ static bool trans_getbyte(DisasContext *ctx, arg_ds *a)
     p2_get_s(ctx, sv, a->i, a->s);
     tcg_gen_shri_i32(r, sv, n * 8);
     tcg_gen_andi_i32(r, r, 0xFF);
-    p2_st_cog(r, a->d);
+    p2_st_d(ctx, r, a->d);
     p2_end_cond(skip);
     return true;
 }
@@ -694,7 +728,7 @@ static bool trans_cmpr(DisasContext *ctx, arg_ds *a)
     TCGv_i32 d = tcg_temp_new_i32(), sv = tcg_temp_new_i32(), r = tcg_temp_new_i32();
     TCGLabel *skip = p2_gen_cond(ctx, a->cond);
 
-    p2_ld_cog(d, a->d);
+    p2_ld_d(ctx, d, a->d);
     p2_get_s(ctx, sv, a->i, a->s);
     tcg_gen_sub_i32(r, sv, d);
     if (a->c) {
@@ -714,7 +748,7 @@ static bool trans_incmod(DisasContext *ctx, arg_ds *a)
     TCGv_i32 r = tcg_temp_new_i32(), inc = tcg_temp_new_i32();
     TCGLabel *skip = p2_gen_cond(ctx, a->cond);
 
-    p2_ld_cog(d, a->d);
+    p2_ld_d(ctx, d, a->d);
     p2_get_s(ctx, sv, a->i, a->s);
     tcg_gen_addi_i32(inc, d, 1);
     tcg_gen_movcond_i32(TCG_COND_EQ, r, d, sv, tcg_constant_i32(0), inc);
@@ -723,7 +757,7 @@ static bool trans_incmod(DisasContext *ctx, arg_ds *a)
         tcg_gen_setcond_i32(TCG_COND_EQ, cf, d, sv);
         tcg_gen_st_i32(cf, tcg_env, offsetof(CPUP2State, c));
     }
-    p2_st_cog(r, a->d);
+    p2_st_d(ctx, r, a->d);
     p2_set_z(r, a->z);
     p2_end_cond(skip);
     return true;
@@ -735,7 +769,7 @@ static bool trans_decmod(DisasContext *ctx, arg_ds *a)
     TCGv_i32 r = tcg_temp_new_i32(), dec = tcg_temp_new_i32();
     TCGLabel *skip = p2_gen_cond(ctx, a->cond);
 
-    p2_ld_cog(d, a->d);
+    p2_ld_d(ctx, d, a->d);
     p2_get_s(ctx, sv, a->i, a->s);
     tcg_gen_subi_i32(dec, d, 1);
     tcg_gen_movcond_i32(TCG_COND_EQ, r, d, tcg_constant_i32(0), sv, dec);
@@ -744,7 +778,7 @@ static bool trans_decmod(DisasContext *ctx, arg_ds *a)
         tcg_gen_setcondi_i32(TCG_COND_EQ, cf, d, 0);
         tcg_gen_st_i32(cf, tcg_env, offsetof(CPUP2State, c));
     }
-    p2_st_cog(r, a->d);
+    p2_st_d(ctx, r, a->d);
     p2_set_z(r, a->z);
     p2_end_cond(skip);
     return true;
@@ -766,7 +800,7 @@ static bool trans_decmod(DisasContext *ctx, arg_ds *a)
         tcg_gen_neg_i32(neg, sv);                                             \
         tcg_gen_movcond_i32(TCG_COND_NE, r, take, tcg_constant_i32(0),        \
                             neg, sv);                                         \
-        p2_st_cog(r, a->d);                                                   \
+        p2_st_d(ctx, r, a->d);                                                   \
         p2_set_flags_sign(r, a->c, a->z);                                     \
         p2_end_cond(skip);                                                    \
         return true;                                                          \
@@ -789,7 +823,7 @@ static bool trans_cmpsub(DisasContext *ctx, arg_ds *a)
     TCGv_i32 fits = tcg_temp_new_i32();
     TCGLabel *skip = p2_gen_cond(ctx, a->cond);
 
-    p2_ld_cog(d, a->d);
+    p2_ld_d(ctx, d, a->d);
     p2_get_s(ctx, sv, a->i, a->s);
     tcg_gen_sub_i32(diff, d, sv);
     tcg_gen_setcond_i32(TCG_COND_GEU, fits, d, sv);
@@ -797,7 +831,7 @@ static bool trans_cmpsub(DisasContext *ctx, arg_ds *a)
     if (a->c) {
         tcg_gen_st_i32(fits, tcg_env, offsetof(CPUP2State, c));
     }
-    p2_st_cog(r, a->d);
+    p2_st_d(ctx, r, a->d);
     p2_set_z(diff, a->z);            /* Z from D - S, not from the result */
     p2_end_cond(skip);
     return true;
@@ -846,7 +880,7 @@ static void p2_span_mask(TCGv_i32 mask, TCGv_i32 sv)
         TCGv_i32 zero = tcg_constant_i32(0);                                  \
         TCGLabel *skip = p2_gen_cond(ctx, a->cond);                           \
                                                                               \
-        p2_ld_cog(d, a->d);                                                   \
+        p2_ld_d(ctx, d, a->d);                                                   \
         p2_get_s(ctx, sv, a->i, a->s);                                             \
         tcg_gen_andi_i32(n, sv, 31);                                          \
         tcg_gen_ld_i32(cf, tcg_env, offsetof(CPUP2State, c));                 \
@@ -869,7 +903,7 @@ static void p2_span_mask(TCGv_i32 mask, TCGv_i32 sv)
         }                                                                     \
         tcg_gen_andi_i32(out, out, 1);                                        \
         tcg_gen_movcond_i32(TCG_COND_EQ, out, n, zero, cf, out);              \
-        p2_st_cog(r, a->d);                                                   \
+        p2_st_d(ctx, r, a->d);                                                   \
         p2_set_z(r, a->z);                                                    \
         if (a->c) {                                                           \
             tcg_gen_st_i32(out, tcg_env, offsetof(CPUP2State, c));            \
@@ -897,7 +931,7 @@ static bool p2_gen_bitspan(DisasContext *ctx, arg_ds *a, bool set)
         return false;
     }
     skip = p2_gen_cond(ctx, a->cond);
-    p2_ld_cog(d, a->d);
+    p2_ld_d(ctx, d, a->d);
     p2_get_s(ctx, sv, a->i, a->s);
     p2_span_mask(mask, sv);
     if (set) {
@@ -905,7 +939,7 @@ static bool p2_gen_bitspan(DisasContext *ctx, arg_ds *a, bool set)
     } else {
         tcg_gen_andc_i32(d, d, mask);
     }
-    p2_st_cog(d, a->d);
+    p2_st_d(ctx, d, a->d);
     p2_end_cond(skip);
     return true;
 }
@@ -934,7 +968,7 @@ static bool p2_gen_testb(DisasContext *ctx, arg_ds *a, bool invert)
     TCGv_i32 base = tcg_temp_new_i32(), bit = tcg_temp_new_i32();
     TCGLabel *skip = p2_gen_cond(ctx, a->cond);
 
-    p2_ld_cog(d, a->d);
+    p2_ld_d(ctx, d, a->d);
     p2_get_s(ctx, sv, a->i, a->s);
     tcg_gen_andi_i32(base, sv, 31);
     tcg_gen_shr_i32(bit, d, base);
@@ -948,7 +982,7 @@ static bool p2_gen_testb(DisasContext *ctx, arg_ds *a, bool invert)
         } else {
             tcg_gen_andc_i32(d, d, mask);
         }
-        p2_st_cog(d, a->d);
+        p2_st_d(ctx, d, a->d);
         tcg_gen_st_i32(bit, tcg_env, offsetof(CPUP2State, c));
         tcg_gen_st_i32(bit, tcg_env, offsetof(CPUP2State, z));
     } else {
@@ -1127,7 +1161,7 @@ static bool trans_push(DisasContext *ctx, arg_misc *a)
     TCGv_i32 d = tcg_temp_new_i32();
     TCGLabel *skip = p2_gen_cond(ctx, a->cond);
 
-    p2_ld_cog(d, a->d);
+    p2_ld_d(ctx, d, a->d);
     gen_helper_p2_push(tcg_env, d);
     p2_end_cond(skip);
     return true;
@@ -1139,7 +1173,7 @@ static bool trans_pop(DisasContext *ctx, arg_misc *a)
     TCGLabel *skip = p2_gen_cond(ctx, a->cond);
 
     gen_helper_p2_pop(t, tcg_env);
-    p2_st_cog(t, a->d);
+    p2_st_d(ctx, t, a->d);
     p2_set_z(t, a->z);
     p2_end_cond(skip);
     return true;
@@ -1167,9 +1201,9 @@ static void p2_rel9_target(DisasContext *ctx, TCGv_i32 dst, arg_ds *a)
         TCGv_i32 d = tcg_temp_new_i32(), t = tcg_temp_new_i32();              \
         TCGLabel *skip = p2_gen_cond(ctx, a->cond);                           \
         TCGLabel *no = gen_new_label();                                       \
-        p2_ld_cog(d, a->d);                                                   \
+        p2_ld_d(ctx, d, a->d);                                                   \
         tcg_gen_subi_i32(d, d, 1);                                            \
-        p2_st_cog(d, a->d);                                                   \
+        p2_st_d(ctx, d, a->d);                                                   \
         tcg_gen_brcondi_i32(SKIPCOND, d, SKIPVAL, no);                        \
         p2_rel9_target(ctx, t, a);                                            \
         p2_gen_goto(ctx, t);                                                  \
@@ -1191,7 +1225,7 @@ GEN_DJX(djnf, TCG_COND_EQ, -1)
         TCGv_i32 d = tcg_temp_new_i32(), t = tcg_temp_new_i32();              \
         TCGLabel *skip = p2_gen_cond(ctx, a->cond);                           \
         TCGLabel *no = gen_new_label();                                       \
-        p2_ld_cog(d, a->d);                                                   \
+        p2_ld_d(ctx, d, a->d);                                                   \
         tcg_gen_brcondi_i32(SKIPCOND, d, 0, no);                              \
         p2_rel9_target(ctx, t, a);                                            \
         p2_gen_goto(ctx, t);                                                  \
@@ -1213,7 +1247,7 @@ GEN_TJX(tjnz, TCG_COND_EQ)
         if (LITERAL) {                                                        \
             tcg_gen_movi_i32(d, a->d);                                        \
         } else {                                                              \
-            p2_ld_cog(d, a->d);                                               \
+            p2_ld_d(ctx, d, a->d);                                               \
         }                                                                     \
         p2_st_cog(d, REG);                                                    \
         gen_helper_p2_push(tcg_env, tcg_constant_i32(ctx->base.pc_next));     \
@@ -1235,7 +1269,7 @@ static bool trans_calld(DisasContext *ctx, arg_ds *a)
     TCGv_i32 t = tcg_temp_new_i32();
     TCGLabel *skip = p2_gen_cond(ctx, a->cond);
 
-    p2_st_cog(tcg_constant_i32(ctx->base.pc_next), a->d);
+    p2_st_d(ctx, tcg_constant_i32(ctx->base.pc_next), a->d);
     p2_get_s(ctx, t, a->i, a->s);
     p2_gen_goto(ctx, t);
     p2_end_branch(ctx, skip);
@@ -1309,7 +1343,7 @@ static void p2_gen_hub_clock(void)
         p2_gen_hub_clock();                                                   \
         tcg_gen_andi_i32(addr, addr, P2_HUB_MASK);                            \
         tcg_gen_qemu_ld_i32(v, addr, 0, MEMOP);                               \
-        p2_st_cog(v, a->d);                                                   \
+        p2_st_d(ctx, v, a->d);                                                   \
         p2_set_z(v, a->z);                                                    \
         if (a->c) {                                                           \
             TCGv_i32 t = tcg_temp_new_i32();                                  \
@@ -1323,7 +1357,27 @@ static void p2_gen_hub_clock(void)
 
 GEN_HUB_LD(rdbyte, MO_UB,   1)
 GEN_HUB_LD(rdword, MO_TEUW, 2)
-GEN_HUB_LD(rdlong, MO_TEUL, 4)
+GEN_HUB_LD(rdlong_one, MO_TEUL, 4)
+
+/*
+ * SETQ (or SETQ2) turns RDLONG into a block transfer, which writes no flags
+ * and whose PTR expression advances by the whole block -- so the count, a
+ * register, has to be known before the address can be formed. The helper does
+ * all of it. With no SETQ pending this is the plain load, unchanged.
+ */
+static bool trans_rdlong(DisasContext *ctx, arg_ds *a)
+{
+    TCGLabel *skip;
+
+    if (!(ctx->prefix & (P2_PFX_SETQ | P2_PFX_SETQ2))) {
+        return trans_rdlong_one(ctx, a);
+    }
+    skip = p2_gen_cond(ctx, a->cond);
+    gen_helper_p2_block_rdlong(tcg_env, tcg_constant_i32(a->s),
+                               tcg_constant_i32(a->i), tcg_constant_i32(a->d));
+    p2_end_cond(skip);
+    return true;
+}
 
 /* WRBYTE/WRWORD/WRLONG write D and touch no flags; bit 19 is the L bit here,
  * not WZ, so the decoder has already split the two D forms into patterns. */
@@ -1335,7 +1389,7 @@ GEN_HUB_LD(rdlong, MO_TEUL, 4)
         if (LITERAL) {                                                        \
             p2_get_d_literal(ctx, v, a->d);                                   \
         } else {                                                              \
-            p2_ld_cog(v, a->d);                                               \
+            p2_ld_d(ctx, v, a->d);                                               \
         }                                                                     \
         p2_hub_addr(ctx, addr, a, SCALE);                                     \
         p2_gen_hub_clock();                                                   \
@@ -1349,8 +1403,26 @@ GEN_HUB_ST(wrbyte,   MO_UB,   1, 0)
 GEN_HUB_ST(wrbyte_2, MO_UB,   1, 1)
 GEN_HUB_ST(wrword,   MO_TEUW, 2, 0)
 GEN_HUB_ST(wrword_2, MO_TEUW, 2, 1)
-GEN_HUB_ST(wrlong,   MO_TEUL, 4, 0)
-GEN_HUB_ST(wrlong_2, MO_TEUL, 4, 1)
+GEN_HUB_ST(wrlong_one,   MO_TEUL, 4, 0)
+GEN_HUB_ST(wrlong_2_one, MO_TEUL, 4, 1)
+
+#define GEN_BLOCK_ST(NAME, LITERAL)                                           \
+    static bool trans_##NAME(DisasContext *ctx, arg_ds *a)                    \
+    {                                                                         \
+        TCGLabel *skip;                                                       \
+        if (!(ctx->prefix & P2_PFX_SETQ)) {                                   \
+            return trans_##NAME##_one(ctx, a);                                \
+        }                                                                     \
+        skip = p2_gen_cond(ctx, a->cond);                                     \
+        gen_helper_p2_block_wrlong(tcg_env, tcg_constant_i32(a->s),           \
+                                   tcg_constant_i32(a->i),                    \
+                                   tcg_constant_i32(((LITERAL) << 16) | a->d)); \
+        p2_end_cond(skip);                                                    \
+        return true;                                                          \
+    }
+
+GEN_BLOCK_ST(wrlong,   0)
+GEN_BLOCK_ST(wrlong_2, 1)
 
 
 /* ---- batch 9: prefixes, GETCT, REV --------------------------------------- */
@@ -1390,7 +1462,7 @@ GEN_AUG(augd, aug_d, P2_PFX_AUGD)
         if (a->cond != 0xF && a->cond != 0) {                                 \
             return false;                                                     \
         }                                                                     \
-        p2_ld_cog(d, a->d);                                                   \
+        p2_ld_d(ctx, d, a->d);                                                   \
         tcg_gen_st_i32(d, tcg_env, offsetof(CPUP2State, setq));               \
         ctx->prefix |= BIT;                                                   \
         ctx->is_prefix = true;                                                \
@@ -1413,7 +1485,7 @@ static bool trans_getct(DisasContext *ctx, arg_misc *a)
         tcg_gen_shri_i64(t, t, 32);
     }
     tcg_gen_extrl_i64_i32(v, t);
-    p2_st_cog(v, a->d);
+    p2_st_d(ctx, v, a->d);
     p2_end_cond(skip);
     return true;
 }
@@ -1424,7 +1496,7 @@ static bool trans_rev(DisasContext *ctx, arg_misc *a)
     TCGv_i32 d = tcg_temp_new_i32();
     TCGLabel *skip = p2_gen_cond(ctx, a->cond);
 
-    p2_ld_cog(d, a->d);
+    p2_ld_d(ctx, d, a->d);
     /* bswap gets the bytes; the bits inside each byte still need reversing. */
     tcg_gen_bswap32_i32(d, d);
     {
@@ -1445,10 +1517,53 @@ static bool trans_rev(DisasContext *ctx, arg_misc *a)
         tcg_gen_shli_i32(d, d, 1);
         tcg_gen_or_i32(d, d, t);
     }
-    p2_st_cog(d, a->d);
+    p2_st_d(ctx, d, a->d);
     p2_end_cond(skip);
     return true;
 }
+
+
+/* ---- batch 10: ALTD/ALTS ------------------------------------------------- */
+
+/*
+ * The S operand of ALTD/ALTS is two fields, not one addend: S[8:0] is the
+ * offset added to D to form the substituted field, and S[17:9] is a SIGNED
+ * increment written back to the D register.
+ *
+ * flexspin's FCACHE depends on that second half. Its `ret_instr_`
+ * (`_ret_ cmp inb,#0` = $0207FE00) is chosen so that as ALTD's S it offsets by
+ * zero and post-decrements PA -- its own source calls it "a return instruction
+ * that also works as an ALTD post-decrement". Without the writeback the
+ * following `setq pa` loads one long too many and overwrites the terminator
+ * ALTD had just placed.
+ */
+#define GEN_ALTX(NAME, FIELD, BIT)                                            \
+    static bool trans_##NAME(DisasContext *ctx, arg_ds *a)                    \
+    {                                                                         \
+        TCGv_i32 d = tcg_temp_new_i32(), sv = tcg_temp_new_i32();             \
+        TCGv_i32 t = tcg_temp_new_i32();                                      \
+        if (a->cond != 0xF && a->cond != 0) {                                 \
+            return false;                                                     \
+        }                                                                     \
+        p2_ld_d(ctx, d, a->d);                                                \
+        p2_get_s(ctx, sv, a->i, a->s);                                        \
+        tcg_gen_add_i32(t, d, sv);                                            \
+        tcg_gen_andi_i32(t, t, 0x1FF);                                        \
+        tcg_gen_st_i32(t, tcg_env, offsetof(CPUP2State, FIELD));              \
+        /* S[17:9], sign-extended, post-increments the D register. */          \
+        tcg_gen_shri_i32(t, sv, 9);                                           \
+        tcg_gen_andi_i32(t, t, 0x1FF);                                        \
+        tcg_gen_shli_i32(t, t, 23);                                           \
+        tcg_gen_sari_i32(t, t, 23);                                           \
+        tcg_gen_add_i32(t, d, t);                                             \
+        p2_st_d(ctx, t, a->d);                                                \
+        ctx->prefix |= BIT;                                                   \
+        ctx->is_prefix = true;                                                \
+        return true;                                                          \
+    }
+
+GEN_ALTX(altd, alt_d, P2_PFX_ALTD)
+GEN_ALTX(alts, alt_s, P2_PFX_ALTS)
 
 /* Everything the skeleton does not model yet stops the CPU rather than
  * silently doing the wrong thing -- bring-up must notice, not drift. */

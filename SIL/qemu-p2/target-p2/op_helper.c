@@ -147,3 +147,90 @@ uint32_t HELPER(p2_pop)(CPUP2State *env)
     env->sp = (env->sp - 1) & (P2_STACK_DEPTH - 1);
     return env->stack[env->sp];
 }
+
+/* Runtime-indexed cog access: only a post-ALTx instruction needs it, which
+ * Spike 1a measured at 0.0999% of the firmware's instruction stream. */
+uint32_t HELPER(p2_cog_rd)(CPUP2State *env, uint32_t idx)
+{
+    return env->cog[idx & (P2_COG_LONGS - 1)];
+}
+
+void HELPER(p2_cog_wr)(CPUP2State *env, uint32_t idx, uint32_t v)
+{
+    env->cog[idx & (P2_COG_LONGS - 1)] = v;
+}
+
+/*
+ * A PTRA/PTRB expression advances by the WHOLE block, not one element, so the
+ * address of a SETQ block transfer cannot be folded at translate time: the
+ * count is a register. The whole address computation therefore happens here,
+ * mirroring p2core's ptr_operand().
+ */
+static uint32_t p2_block_addr(CPUP2State *env, uint32_t sfield, uint32_t i,
+                              uint32_t elements)
+{
+    uint32_t reg, base, modified;
+    int32_t idx;
+
+    if (!i) {
+        return env->cog[sfield & (P2_COG_LONGS - 1)];
+    }
+    if (!(sfield & 0x100) || (env->prefix & P2_PFX_AUGS)) {
+        return (env->prefix & P2_PFX_AUGS) ? (env->aug_s | sfield) : sfield;
+    }
+    reg = (sfield & 0x80) ? P2_REG_PTRB : P2_REG_PTRA;
+    idx = ((((int32_t)(sfield & 0x1F)) << 27) >> 27) * 4 * (int32_t)elements;
+    base = env->cog[reg];
+    modified = base + idx;
+    if (sfield & 0x40) {
+        env->cog[reg] = modified;
+    }
+    return (sfield & 0x20) ? base : modified;   /* bit 5 set = POST-modify */
+}
+
+/*
+ * SETQ + RDLONG is a block read into the register file; SETQ2 + RDLONG fills
+ * LUT RAM instead. Folding the two together let the boot ROM's LUT load
+ * overwrite the cog registers it had just copied into place.
+ */
+void HELPER(p2_block_rdlong)(CPUP2State *env, uint32_t sfield, uint32_t i,
+                             uint32_t d)
+{
+    bool lut = env->prefix & P2_PFX_SETQ2;
+    uint32_t limit = lut ? P2_LUT_LONGS - 1 : P2_COG_LONGS - 1;
+    uint32_t n = env->setq > limit ? limit : env->setq;
+    uint32_t addr, k;
+
+    addr = p2_block_addr(env, sfield, i, n + 1);
+    env->clocks += P2_CLOCKS_HUB_ACCESS;
+    for (k = 0; k <= n; k++) {
+        uint32_t v = cpu_ldl_le_data(env, (addr + k * 4) & P2_HUB_MASK);
+        if (lut) {
+            env->lut[(d + k) & (P2_LUT_LONGS - 1)] = v;
+        } else {
+            env->cog[(d + k) & (P2_COG_LONGS - 1)] = v;
+        }
+    }
+}
+
+/*
+ * SETQ + WRLONG. With D a literal it is a block FILL, not a copy: `setq
+ * #len/4-1` / `wrlong #0,p` is what flexcc emits for memset(), and copying
+ * from cog register 0 upward instead sprayed FCACHE contents over every
+ * memset-initialised struct at boot.
+ */
+void HELPER(p2_block_wrlong)(CPUP2State *env, uint32_t sfield, uint32_t i,
+                             uint32_t dpack)
+{
+    uint32_t n = env->setq > P2_COG_LONGS - 1 ? P2_COG_LONGS - 1 : env->setq;
+    uint32_t d = dpack & 0xFFFF;
+    bool literal = dpack >> 16;
+    uint32_t addr, k;
+
+    addr = p2_block_addr(env, sfield, i, n + 1);
+    env->clocks += P2_CLOCKS_HUB_ACCESS;
+    for (k = 0; k <= n; k++) {
+        uint32_t v = literal ? d : env->cog[(d + k) & (P2_COG_LONGS - 1)];
+        cpu_stl_le_data(env, (addr + k * 4) & P2_HUB_MASK, v);
+    }
+}

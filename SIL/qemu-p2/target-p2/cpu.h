@@ -44,7 +44,9 @@
 #define P2_PFX_AUGD  2
 #define P2_PFX_SETQ  4
 #define P2_PFX_SETQ2 8
-#define P2_PFX_MASK  0xF
+#define P2_PFX_ALTD  16
+#define P2_PFX_ALTS  32
+#define P2_PFX_MASK  0x3F
 
 /*
  * One QEMU vCPU is one cog (design D1). Cog RAM and LUT are CPU state, NOT
@@ -70,6 +72,8 @@ typedef struct CPUArchState {
     uint32_t aug_s;         /* AUGS literal, already shifted to bits 31:9 */
     uint32_t aug_d;
     uint32_t setq;          /* SETQ / SETQ2 operand */
+    uint32_t alt_d;         /* ALTD/ALTS substituted register index */
+    uint32_t alt_s;
     uint32_t prefix;        /* P2_PFX_* -- which of the above are live */
 
     uint32_t cogid;
