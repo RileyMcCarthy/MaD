@@ -15,6 +15,18 @@
 #define P2_REG_PB   0x1F7
 #define P2_REG_PTRA 0x1F8
 #define P2_REG_PTRB 0x1F9
+#define P2_REG_DIRA 0x1FA      /* DIRB is +1, OUTA/OUTB and INA/INB follow */
+#define P2_REG_OUTA 0x1FC
+#define P2_REG_INA  0x1FE
+#define P2_REG_INB  0x1FF
+
+/* The DIR/OUT/FLT/DRV family, which shares one helper. */
+enum {
+    P2_PINOP_DIRL, P2_PINOP_DIRH, P2_PINOP_FLTL, P2_PINOP_FLTH,
+    P2_PINOP_DRVL, P2_PINOP_DRVH, P2_PINOP_OUTL, P2_PINOP_OUTH,
+    P2_PINOP_DRVC, P2_PINOP_DRVNC, P2_PINOP_DRVZ, P2_PINOP_DRVNZ,
+    P2_PINOP_DRVNOT,
+};
 #define P2_LUT_LONGS 512
 #define P2_NUM_COGS  8
 

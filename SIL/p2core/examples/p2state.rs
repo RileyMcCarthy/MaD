@@ -4,7 +4,7 @@
 //! at a time, and prints the same `P2STATE` line `qemu-system-p2` prints from
 //! its dump_state. Diffing the two traces localises a semantic divergence to
 //! the exact instruction that caused it.
-use p2core::{Board, Machine, SdCard};
+use p2core::{Machine, SmartPins};
 
 fn main() {
     let path = std::env::args().nth(1).expect("usage: p2state <program.bin> [n]");
@@ -16,7 +16,11 @@ fn main() {
     let mut hub = vec![0u8; 0x80000];
     hub[0x1000..0x1000 + prog.len()].copy_from_slice(&prog);
 
-    let mut m = Machine::new(&hub, Board::new(SdCard::blank(1024)));
+    // `SmartPins`, not `Board`: the QEMU target mirrors this small bring-up
+    // bus in C (target/p2/pinbus.c) so the two engines can be diffed through
+    // the pin instructions. The real peripherals live on embsim's side of the
+    // PinBus seam and are deliberately not duplicated in the target.
+    let mut m = Machine::new(&hub, SmartPins::default());
     for c in m.cogs.iter_mut() {
         c.running = false;
     }

@@ -55,14 +55,37 @@ typedef struct DisasContext {
  * time is a constant env offset -- one host load -- which is the case for
  * 99.9% of instructions.
  */
+/*
+ * Two of the special registers are not storage.
+ *
+ * INA/INB ($1FE/$1FF) read the pin bus rather than the register file, and
+ * DIRA/DIRB/OUTA/OUTB ($1FA..$1FD) publish to it on every write -- which is
+ * what makes `mov dira, ##mask` drive pins at all. p2core does both in reg()
+ * and set_reg(), so they apply to ANY access, not just to the pin
+ * instructions: `test ina, #1 wz` is how a driver samples a pad.
+ *
+ * The index is a translate-time constant everywhere but the post-ALTx path,
+ * which carries the same two checks in its helper.
+ */
 static void p2_ld_cog(TCGv_i32 dst, unsigned idx)
 {
-    tcg_gen_ld_i32(dst, tcg_env, offsetof(CPUP2State, cog[idx & (P2_COG_LONGS - 1)]));
+    unsigned i = idx & (P2_COG_LONGS - 1);
+
+    if (i == P2_REG_INA || i == P2_REG_INB) {
+        gen_helper_p2_rd_in(dst, tcg_env, tcg_constant_i32(i));
+        return;
+    }
+    tcg_gen_ld_i32(dst, tcg_env, offsetof(CPUP2State, cog[i]));
 }
 
 static void p2_st_cog(TCGv_i32 src, unsigned idx)
 {
-    tcg_gen_st_i32(src, tcg_env, offsetof(CPUP2State, cog[idx & (P2_COG_LONGS - 1)]));
+    unsigned i = idx & (P2_COG_LONGS - 1);
+
+    tcg_gen_st_i32(src, tcg_env, offsetof(CPUP2State, cog[i]));
+    if (i >= P2_REG_DIRA && i <= P2_REG_OUTA + 1) {
+        gen_helper_p2_reg_published(tcg_env, tcg_constant_i32(i), src);
+    }
 }
 
 /*
@@ -687,9 +710,22 @@ static bool trans_signx(DisasContext *ctx, arg_ds *a)
                             neg, sv);                                         \
         tcg_gen_add_i32(r, d, eff);                                           \
         if (a->c) {                                                           \
+            /*                                                                \
+             * C is the sign of the TRUE result, so the widening has to        \
+             * happen before the negation, not after it. Sign-extending the    \
+             * 32-bit `eff` instead gets S = $80000000 wrong: its 32-bit       \
+             * negation is still $80000000, so `d + eff` in 64 bits subtracts  \
+             * where `d - s` adds. (Caught by the differential harness at      \
+             * seed 5 once the smart-pin groups reshuffled the operand mix.)   \
+             */                                                               \
             TCGv_i32 cf = tcg_temp_new_i32();                                 \
+            TCGv_i64 wn = tcg_temp_new_i64(), wt = tcg_temp_new_i64();        \
             tcg_gen_ext_i32_i64(wd, d);                                       \
-            tcg_gen_ext_i32_i64(ws, eff);                                     \
+            tcg_gen_ext_i32_i64(ws, sv);                                      \
+            tcg_gen_neg_i64(wn, ws);                                          \
+            tcg_gen_extu_i32_i64(wt, take);                                   \
+            tcg_gen_movcond_i64(TCG_COND_NE, ws, wt, tcg_constant_i64(0),     \
+                                wn, ws);                                      \
             tcg_gen_add_i64(wd, wd, ws);                                      \
             tcg_gen_setcondi_i64(TCG_COND_LT, wd, wd, 0);                     \
             tcg_gen_extrl_i64_i32(cf, wd);                                    \
@@ -1469,8 +1505,10 @@ GEN_AUG(augd, aug_d, P2_PFX_AUGD)
         return true;                                                          \
     }
 
-GEN_SETQ(setq,  P2_PFX_SETQ)
-GEN_SETQ(setq2, P2_PFX_SETQ2)
+GEN_SETQ(setq,    P2_PFX_SETQ)
+GEN_SETQ(setq_2,  P2_PFX_SETQ)
+GEN_SETQ(setq2,   P2_PFX_SETQ2)
+GEN_SETQ(setq2_2, P2_PFX_SETQ2)
 
 /* GETCT reads this cog's own clock; WC selects the high half, which is how
  * `__system___getus` assembles a 64-bit time from two reads. */
@@ -1564,6 +1602,191 @@ static bool trans_rev(DisasContext *ctx, arg_misc *a)
 
 GEN_ALTX(altd, alt_d, P2_PFX_ALTD)
 GEN_ALTX(alts, alt_s, P2_PFX_ALTS)
+
+
+/* ---- batch 11: smart pins ------------------------------------------------ */
+
+/*
+ * In the misc block bit 18 is the L bit, so it says whether D is a register or
+ * a 9-bit literal -- which AUGD may then widen.
+ */
+static void p2_get_misc_d(DisasContext *ctx, TCGv_i32 dst, arg_misc *a)
+{
+    if (a->i) {
+        p2_get_d_literal(ctx, dst, a->d);
+    } else {
+        p2_ld_d(ctx, dst, a->d);
+    }
+}
+
+/*
+ * WRPIN/WXPIN/WYPIN take the PIN from S and the VALUE from D -- the opposite
+ * way round from most two-operand instructions, and silent if swapped. Bit 19
+ * is D's L bit here, not WZ, so the decoder has already split the two forms
+ * into separate patterns.
+ */
+#define GEN_PINCFG(NAME, HELPER, LITERAL)                                     \
+    static bool trans_##NAME(DisasContext *ctx, arg_ds *a)                    \
+    {                                                                         \
+        TCGv_i32 pin = tcg_temp_new_i32(), v = tcg_temp_new_i32();            \
+        TCGLabel *skip = p2_gen_cond(ctx, a->cond);                           \
+        p2_get_s(ctx, pin, a->i, a->s);                                       \
+        if (LITERAL) {                                                        \
+            p2_get_d_literal(ctx, v, a->d);                                   \
+        } else {                                                              \
+            p2_ld_d(ctx, v, a->d);                                            \
+        }                                                                     \
+        gen_helper_##HELPER(tcg_env, pin, v);                                 \
+        p2_end_cond(skip);                                                    \
+        return true;                                                          \
+    }
+
+GEN_PINCFG(wrpin,   p2_wrpin, 0)
+GEN_PINCFG(wrpin_2, p2_wrpin, 1)
+GEN_PINCFG(wxpin,   p2_wxpin, 0)
+GEN_PINCFG(wxpin_2, p2_wxpin, 1)
+GEN_PINCFG(wypin,   p2_wypin, 0)
+GEN_PINCFG(wypin_2, p2_wypin, 1)
+
+/*
+ * RDPIN/RQPIN read a pin's result into D. Bit 19 selects which of the two this
+ * is and bit 20 is the real WC, so the C write is a pattern constant.
+ *
+ * C means BUSY, not ready: `__system___txraw` spins on `rdpin #62 wc` /
+ * `if_b jmp`, so a C stuck at 1 hangs the guest. The value and the busy bit
+ * come back packed in one 64-bit result because RDPIN consumes the pin's IN
+ * flag and so cannot be called twice.
+ */
+static bool p2_gen_rdpin(DisasContext *ctx, arg_ds *a)
+{
+    TCGv_i32 pin = tcg_temp_new_i32(), v = tcg_temp_new_i32();
+    TCGv_i64 packed = tcg_temp_new_i64();
+    TCGLabel *skip = p2_gen_cond(ctx, a->cond);
+
+    p2_get_s(ctx, pin, a->i, a->s);
+    gen_helper_p2_rdpin(packed, tcg_env, pin);
+    tcg_gen_extrl_i64_i32(v, packed);
+    p2_st_d(ctx, v, a->d);
+    if (a->c) {
+        tcg_gen_shri_i64(packed, packed, 32);
+        tcg_gen_extrl_i64_i32(v, packed);
+        tcg_gen_st_i32(v, tcg_env, offsetof(CPUP2State, c));
+    }
+    p2_end_cond(skip);
+    return true;
+}
+
+#define GEN_RDPIN(NAME)                                                       \
+    static bool trans_##NAME(DisasContext *ctx, arg_ds *a)                    \
+    {                                                                         \
+        return p2_gen_rdpin(ctx, a);                                          \
+    }
+
+GEN_RDPIN(rdpin)
+GEN_RDPIN(rdpin_2)
+GEN_RDPIN(rqpin)
+GEN_RDPIN(rqpin_2)
+
+/*
+ * TESTP samples a pin's IN flag into C and/or Z. The pin comes from D, not S.
+ * C and Z are fixed by the encoding -- indeed a DIRL/DIRH encoding WITH C or Z
+ * set is not a DIRL at all, it is a TESTP, which is why these patterns sit
+ * ahead of the pin-op block in the decoder.
+ */
+static bool p2_gen_testp(DisasContext *ctx, arg_misc *a)
+{
+    TCGv_i32 pin = tcg_temp_new_i32(), v = tcg_temp_new_i32();
+    TCGLabel *skip = p2_gen_cond(ctx, a->cond);
+
+    p2_get_misc_d(ctx, pin, a);
+    gen_helper_p2_testp(v, tcg_env, pin);
+    if (a->c) {
+        tcg_gen_st_i32(v, tcg_env, offsetof(CPUP2State, c));
+    }
+    if (a->z) {
+        tcg_gen_st_i32(v, tcg_env, offsetof(CPUP2State, z));
+    }
+    p2_end_cond(skip);
+    return true;
+}
+
+#define GEN_TESTP(NAME)                                                       \
+    static bool trans_##NAME(DisasContext *ctx, arg_misc *a)                  \
+    {                                                                         \
+        return p2_gen_testp(ctx, a);                                          \
+    }
+
+GEN_TESTP(testp)
+GEN_TESTP(testp_2)
+GEN_TESTP(testp_3)
+
+/*
+ * The DIR/OUT/FLT/DRV family. Which register pair a pin lands in is a runtime
+ * choice, and the two writes must be ordered so the pad is never briefly
+ * driven at the wrong level, so the whole family is one helper. WC/WZ on these
+ * encodings are not flag requests -- on $40/$41 they select TESTP, and
+ * elsewhere p2core leaves the flags alone, so they are ignored here too.
+ */
+#define GEN_PINOP(NAME, OP)                                                   \
+    static bool trans_##NAME(DisasContext *ctx, arg_misc *a)                  \
+    {                                                                         \
+        TCGv_i32 pin = tcg_temp_new_i32();                                    \
+        TCGLabel *skip = p2_gen_cond(ctx, a->cond);                           \
+        p2_get_misc_d(ctx, pin, a);                                           \
+        gen_helper_p2_pinop(tcg_env, pin, tcg_constant_i32(OP));              \
+        p2_end_cond(skip);                                                    \
+        return true;                                                          \
+    }
+
+GEN_PINOP(dirl,     P2_PINOP_DIRL)
+GEN_PINOP(dirl_2,   P2_PINOP_DIRL)
+GEN_PINOP(dirh,     P2_PINOP_DIRH)
+GEN_PINOP(dirh_2,   P2_PINOP_DIRH)
+GEN_PINOP(fltl,     P2_PINOP_FLTL)
+GEN_PINOP(fltl_2,   P2_PINOP_FLTL)
+GEN_PINOP(flth,     P2_PINOP_FLTH)
+GEN_PINOP(flth_2,   P2_PINOP_FLTH)
+GEN_PINOP(drvl,     P2_PINOP_DRVL)
+GEN_PINOP(drvl_2,   P2_PINOP_DRVL)
+GEN_PINOP(drvh,     P2_PINOP_DRVH)
+GEN_PINOP(drvh_2,   P2_PINOP_DRVH)
+GEN_PINOP(outl,     P2_PINOP_OUTL)
+GEN_PINOP(outl_2,   P2_PINOP_OUTL)
+GEN_PINOP(outh,     P2_PINOP_OUTH)
+GEN_PINOP(outh_2,   P2_PINOP_OUTH)
+GEN_PINOP(drvc,     P2_PINOP_DRVC)
+GEN_PINOP(drvc_2,   P2_PINOP_DRVC)
+GEN_PINOP(drvnc,    P2_PINOP_DRVNC)
+GEN_PINOP(drvnc_2,  P2_PINOP_DRVNC)
+GEN_PINOP(drvz,     P2_PINOP_DRVZ)
+GEN_PINOP(drvz_2,   P2_PINOP_DRVZ)
+GEN_PINOP(drvnz,    P2_PINOP_DRVNZ)
+GEN_PINOP(drvnz_2,  P2_PINOP_DRVNZ)
+GEN_PINOP(drvnot,   P2_PINOP_DRVNOT)
+GEN_PINOP(drvnot_2, P2_PINOP_DRVNOT)
+
+/*
+ * WAITX jumps the clock rather than spinning: the cog is not executing during
+ * the wait, which is exactly what an interpreter can model and a
+ * HAL-instrumented native backend cannot.
+ */
+#define GEN_WAITX(NAME)                                                       \
+    static bool trans_##NAME(DisasContext *ctx, arg_misc *a)                  \
+    {                                                                         \
+        TCGv_i32 d = tcg_temp_new_i32();                                      \
+        TCGv_i64 t = tcg_temp_new_i64(), n = tcg_temp_new_i64();              \
+        TCGLabel *skip = p2_gen_cond(ctx, a->cond);                           \
+        p2_get_misc_d(ctx, d, a);                                             \
+        tcg_gen_extu_i32_i64(n, d);                                           \
+        tcg_gen_ld_i64(t, tcg_env, offsetof(CPUP2State, clocks));             \
+        tcg_gen_add_i64(t, t, n);                                             \
+        tcg_gen_st_i64(t, tcg_env, offsetof(CPUP2State, clocks));             \
+        p2_end_cond(skip);                                                    \
+        return true;                                                          \
+    }
+
+GEN_WAITX(waitx)
+GEN_WAITX(waitx_2)
 
 /* Everything the skeleton does not model yet stops the CPU rather than
  * silently doing the wrong thing -- bring-up must notice, not drift. */

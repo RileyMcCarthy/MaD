@@ -9,6 +9,7 @@
 #include "qemu/log.h"
 #include "system/runstate.h"
 #include "hw/core/cpu.h"
+#include "pinbus.h"
 
 /*
  * Pin ops are HELPERS, never MemoryRegions, and must never end a translation
@@ -16,21 +17,127 @@
  * call that does not end the block is ~0 ns; a forced TB exit is 53.5 ns, and
  * the SD driver bit-bangs one every 1-3 instructions.
  *
- * These are the seam where embsim's PinBus will be plugged in; for now they are
- * inert so the target can be brought up without a board.
+ * They forward to whatever P2PinBus is installed (pinbus.h) -- the bring-up
+ * model during development, embsim's engine later. Nothing electrical is
+ * decided here.
  */
-static uint64_t p2_pin_sink;
 
-void helper_p2_wrpin(uint32_t pin, uint32_t cfg) { p2_pin_sink += pin ^ cfg; }
-void helper_p2_wxpin(uint32_t pin, uint32_t x)   { p2_pin_sink += pin ^ x; }
-void helper_p2_wypin(uint32_t pin, uint32_t y)   { p2_pin_sink += pin ^ y; }
-uint32_t helper_p2_rdpin(uint32_t pin)           { return (uint32_t)(p2_pin_sink + pin); }
-uint32_t helper_p2_testp(uint32_t pin)           { return (uint32_t)(p2_pin_sink >> (pin & 31)) & 1; }
-
-void helper_p2_dir_out(CPUArchState *env, uint32_t reg, uint32_t value)
+void HELPER(p2_wrpin)(CPUP2State *env, uint32_t pin, uint32_t cfg)
 {
-    /* DIRA/DIRB/OUTA/OUTB are per-cog; the pad sees the OR across all eight. */
-    p2_pin_sink += (uint64_t)env->cogid << 32 | ((uint64_t)reg << 16) | value;
+    p2_pinbus_ops->wrpin(p2_pinbus_opaque, pin & 63, cfg);
+}
+
+void HELPER(p2_wxpin)(CPUP2State *env, uint32_t pin, uint32_t x)
+{
+    p2_pinbus_ops->wxpin(p2_pinbus_opaque, pin & 63, x);
+}
+
+void HELPER(p2_wypin)(CPUP2State *env, uint32_t pin, uint32_t y)
+{
+    /*
+     * A transition-mode smart pin (%00101, mode & $3F == $0A) turns `WYPIN n`
+     * into n pad toggles driven in lockstep with the streamer -- loadp2 clocks
+     * SPI that way. The bring-up bus never reports that mode, so the path is
+     * unreachable today; it halts rather than silently queueing a byte, because
+     * a wrong answer there looks like a working SD driver that reads garbage.
+     */
+    if ((p2_pinbus_ops->pin_cfg(p2_pinbus_opaque, pin & 63) & 0x3F) == 0x0A) {
+        helper_p2_unimpl(env, env->pc);
+    }
+    p2_pinbus_ops->wypin(p2_pinbus_opaque, pin & 63, y);
+}
+
+/* Packed so one call can both read the value and report BUSY: value in the low
+ * 32 bits, C in bit 32. RDPIN consumes the IN flag, so it cannot be split. */
+uint64_t HELPER(p2_rdpin)(CPUP2State *env, uint32_t pin)
+{
+    bool busy = false;
+    uint32_t v = p2_pinbus_ops->rdpin(p2_pinbus_opaque, pin & 63, &busy);
+
+    return (uint64_t)v | ((uint64_t)busy << 32);
+}
+
+uint32_t HELPER(p2_testp)(CPUP2State *env, uint32_t pin)
+{
+    return p2_pinbus_ops->testp(p2_pinbus_opaque, pin & 63) ? 1 : 0;
+}
+
+/* A DIRA/DIRB/OUTA/OUTB write was committed to the register file. */
+void HELPER(p2_reg_published)(CPUP2State *env, uint32_t reg, uint32_t value)
+{
+    p2_pinbus_ops->dir_out_changed(p2_pinbus_opaque, env->cogid, reg, value);
+}
+
+uint32_t HELPER(p2_rd_in)(CPUP2State *env, uint32_t reg)
+{
+    return reg == P2_REG_INA ? p2_pinbus_ops->ina(p2_pinbus_opaque)
+                             : p2_pinbus_ops->inb(p2_pinbus_opaque);
+}
+
+static void p2_publish(CPUP2State *env, unsigned reg, uint32_t v)
+{
+    env->cog[reg] = v;
+    p2_pinbus_ops->dir_out_changed(p2_pinbus_opaque, env->cogid, reg, v);
+}
+
+/*
+ * DIRL/DIRH/OUTL/OUTH/FLTL/FLTH/DRVL/DRVH/DRVC/DRVNC/DRVZ/DRVNZ/DRVNOT.
+ *
+ * Which pair of registers a pin lands in is a RUNTIME choice (pin < 32 picks
+ * DIRA/OUTA, else DIRB/OUTB), so the whole family is a helper rather than
+ * TCG with a computed register offset -- and by Spike 0d a helper that does
+ * not end the block is what a pin op should be anyway.
+ *
+ * The two writes are not commutative. Each publishes to the bus, so a fixed
+ * order makes DRVH/DRVL glitch: the pin is briefly driven at the PREVIOUS
+ * level. Commit the edge that releases the pad first and the one that drives
+ * it last, so the intermediate state is never a wrong drive.
+ */
+void HELPER(p2_pinop)(CPUP2State *env, uint32_t pinv, uint32_t op)
+{
+    unsigned pin = pinv & 63;
+    uint32_t bit = 1u << (pin & 31);
+    unsigned dreg = pin < 32 ? P2_REG_DIRA : P2_REG_DIRA + 1;
+    unsigned oreg = pin < 32 ? P2_REG_OUTA : P2_REG_OUTA + 1;
+    uint32_t dir = env->cog[dreg], out = env->cog[oreg];
+    bool level;
+
+    switch (op) {
+    case P2_PINOP_DIRL:  dir &= ~bit; break;
+    case P2_PINOP_DIRH:  dir |= bit; break;
+    case P2_PINOP_FLTL:  dir &= ~bit; out &= ~bit; break;
+    case P2_PINOP_FLTH:  dir &= ~bit; out |= bit; break;
+    case P2_PINOP_DRVL:  dir |= bit; out &= ~bit; break;
+    case P2_PINOP_DRVH:  dir |= bit; out |= bit; break;
+    case P2_PINOP_OUTL:  out &= ~bit; break;
+    case P2_PINOP_OUTH:  out |= bit; break;
+    /* Drive to a flag: the ROM's spi_cmd shifts the command bit into C and
+     * DRVCs it onto the data line. */
+    case P2_PINOP_DRVC:
+    case P2_PINOP_DRVNC:
+        level = (env->c != 0) == (op == P2_PINOP_DRVC);
+        dir |= bit;
+        if (level) { out |= bit; } else { out &= ~bit; }
+        break;
+    case P2_PINOP_DRVZ:
+    case P2_PINOP_DRVNZ:
+        level = (env->z != 0) == (op == P2_PINOP_DRVZ);
+        dir |= bit;
+        if (level) { out |= bit; } else { out &= ~bit; }
+        break;
+    default:            /* DRVNOT: toggle */
+        dir |= bit;
+        out ^= bit;
+        break;
+    }
+
+    if (dir & bit) {
+        p2_publish(env, oreg, out);
+        p2_publish(env, dreg, dir);
+    } else {
+        p2_publish(env, dreg, dir);
+        p2_publish(env, oreg, out);
+    }
 }
 
 /*
@@ -152,12 +259,22 @@ uint32_t HELPER(p2_pop)(CPUP2State *env)
  * Spike 1a measured at 0.0999% of the firmware's instruction stream. */
 uint32_t HELPER(p2_cog_rd)(CPUP2State *env, uint32_t idx)
 {
-    return env->cog[idx & (P2_COG_LONGS - 1)];
+    unsigned i = idx & (P2_COG_LONGS - 1);
+
+    if (i == P2_REG_INA || i == P2_REG_INB) {
+        return helper_p2_rd_in(env, i);
+    }
+    return env->cog[i];
 }
 
 void HELPER(p2_cog_wr)(CPUP2State *env, uint32_t idx, uint32_t v)
 {
-    env->cog[idx & (P2_COG_LONGS - 1)] = v;
+    unsigned i = idx & (P2_COG_LONGS - 1);
+
+    env->cog[i] = v;
+    if (i >= P2_REG_DIRA && i <= P2_REG_OUTA + 1) {
+        p2_pinbus_ops->dir_out_changed(p2_pinbus_opaque, env->cogid, i, v);
+    }
 }
 
 /*

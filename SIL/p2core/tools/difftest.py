@@ -75,6 +75,18 @@ def rel20(op, disp, cond=0xF):
 # so C/Z are selectors here and must never be randomised.
 MEM_LD = {"rdbyte": 0x56, "rdword": 0x57, "rdlong": 0x58}
 S_GETCT, S_REV, S_SETQ, S_SETQ2 = 0x1A, 0x69, 0x28, 0x29
+S_WAITX, S_TESTP = 0x1F, 0x40
+# The pin instructions. WRPIN/WXPIN/WYPIN take the PIN from S and the VALUE
+# from D -- the opposite way round from most two-operand instructions -- and
+# bit 19 is D's L bit, not WZ.
+OP_WRPIN, OP_WYPIN, OP_RDPIN = 0x60, 0x61, 0x54
+# The DIR/OUT/FLT/DRV family, by misc sub-op. $40/$41 with C or Z set is not a
+# DIRL/DIRH at all but a TESTP, so those two must be generated with C=Z=0.
+PINOPS = {"dirl": 0x40, "dirh": 0x41, "outl": 0x48, "outh": 0x49,
+          "fltl": 0x50, "flth": 0x51, "drvl": 0x58, "drvh": 0x59,
+          "drvc": 0x5A, "drvnc": 0x5B, "drvz": 0x5C, "drvnz": 0x5D,
+          "drvnot": 0x5F}
+REG_DIRA, REG_INA = 0x1FA, 0x1FE
 OP_ALTD, OP_ALTS = 0x4C, 0x4C   # bits [20:19] select: 01 = ALTD, 10 = ALTS
 
 
@@ -99,7 +111,10 @@ def main():
     ap.add_argument("--cf", type=float, default=0.0,
                     help="fraction of body slots that become control flow")
     ap.add_argument("--mem", type=float, default=0.0,
-                    help="fraction of body slots that become hub accesses")
+                    help="fraction of body slots that become hub, prefix,"
+                         " block-transfer or ALTx groups")
+    ap.add_argument("--pins", type=float, default=0.0,
+                    help="fraction of body slots that become smart-pin groups")
     a = ap.parse_args()
 
     names = [o for o in a.ops.split(",") if o]
@@ -111,7 +126,7 @@ def main():
     # The reserved registers stay out of the random ALU mix so that loops
     # terminate and addresses stay inside the scratch window.
     dmax = 32
-    if a.mem:
+    if a.mem or a.pins:
         dmax = ADDR_REG
     elif a.cf:
         dmax = LOOP_REG
@@ -135,10 +150,20 @@ def main():
         prog.append(rel20(0x6C, 4 * (len(body) + 1)))   # jmp over it
         sub = len(prog)
         prog += body
-    # Seed the register file. MOV's S is a 9-bit immediate, so 0..511 -- enough
-    # to exercise carry/borrow and zero once the ALU ops start combining them.
+    # Seed the register file. MOV's S is a 9-bit immediate, so 0..511 -- which
+    # on its own never reaches a sign boundary, and the operands that break a
+    # 64-bit flag computation all live there. So half the registers are shifted
+    # up afterwards, and two are pinned to $80000000 and $FFFFFFFF: SUMNZ's C
+    # bug survived 14 seeds precisely because $80000000 never turned up as S.
     for r in range(32):
         prog.append(ins(OPS["mov"], r, rng.randrange(512)))
+    for r in range(32):
+        if rng.randrange(2):
+            prog.append(ins(OPS["shl"], r, rng.randrange(32)))
+    lo, hi = rng.sample(range(dmax if (a.mem or a.pins or a.cf) else 32), 2)
+    prog.append(ins(OPS["mov"], lo, 1))
+    prog.append(ins(OPS["shl"], lo, 31))          # $80000000
+    prog.append(ins(OPS["neg"], hi, 1))           # $FFFFFFFF
 
     def hub_pair():
         """A store followed by a load of the same address: a write is only
@@ -236,10 +261,47 @@ def main():
             out.append(ins(OPS["add"], rng.randrange(ADDR_REG), 0, i=1))
         return out
 
+    def pin_group():
+        """Smart pins. The bring-up bus on both sides is deterministic, so any
+        sequence is diffable: WRPIN/WXPIN set per-pin state that TESTP reads
+        back, RDPIN consumes the IN flag, and the drive ops land in
+        DIRA/DIRB/OUTA/OUTB -- which the trace carries."""
+        out = []
+        pin = rng.randrange(64)
+        k = rng.randrange(7)
+        if k == 0:                       # WRPIN #cfg, #pin -- D is a literal
+            out.append(ins(OP_WRPIN, rng.randrange(512), pin, i=1, c=0, z=1))
+        elif k == 1:                     # WXPIN / WYPIN with D a register
+            r = rng.randrange(dmax)
+            op, c = rng.choice([(OP_WRPIN, 1), (OP_WYPIN, 0)])
+            out.append(ins(OPS["mov"], r, rng.randrange(512)))
+            out.append(ins(op, r, pin, i=1, c=c, z=0))
+        elif k == 2:                     # RDPIN / RQPIN (bit 19 picks which)
+            out.append(ins(OP_RDPIN, rng.randrange(dmax), pin, i=1,
+                           c=rng.randrange(2), z=rng.randrange(2)))
+        elif k == 3:                     # TESTP -- the pin comes from D
+            cz = rng.choice([1, 2, 3])
+            out.append(misc(S_TESTP, d=pin, l=1, c=cz >> 1, z=cz & 1))
+        elif k == 4:                     # a pin drive
+            sel = PINOPS[rng.choice(list(PINOPS))]
+            cz = 0 if sel in (0x40, 0x41) else rng.randrange(4)
+            out.append(misc(sel, d=pin, l=1, c=cz >> 1, z=cz & 1))
+        elif k == 5:                     # read INA / INB as an operand
+            out.append(ins(OPS["mov"], rng.randrange(dmax),
+                           REG_INA + rng.randrange(2), i=0))
+        else:                            # publish DIRx/OUTx, then burn clocks
+            out.append(ins(OPS["mov"], REG_DIRA + rng.randrange(4),
+                           rng.randrange(512)))
+            out.append(misc(S_WAITX, d=rng.randrange(64), l=1))
+        return out
+
     kinds, n_cf = ["jmpf", "call", "loop", "tjz", "pushpop", "jmpd"], 0
-    n_mem = 0
+    n_mem = n_pin = 0
     while len(prog) - sub < a.n:
-        if a.mem and rng.random() < a.mem:
+        if a.pins and rng.random() < a.pins:
+            prog += pin_group()
+            n_pin += 1
+        elif a.mem and rng.random() < a.mem:
             r = rng.randrange(6)
             if r == 0:
                 prog += prefix_group()
@@ -278,26 +340,26 @@ def main():
                                  z=rng.randrange(2)))
             else:                                 # JMP D, register-indirect
                 # The target is an absolute HUB address, and MOV's immediate
-                # is only 9 bits, so it is built as (addr >> 4) << 4 | low.
-                # (Once AUGS lands this collapses to `mov r,##addr`.)
+                # is only 9 bits, so it is built as (addr >> 9) << 9 | low --
+                # which covers any program this harness can generate.
                 r = rng.randrange(dmax)
                 base = len(prog)
                 prog += [0, 0, 0]                     # patched below
                 prog.append(misc(S_JMPD, d=r))
                 prog.append(alu())                    # jumped over
                 addr = LOAD_ADDR + 4 * (base + 5)
-                assert addr < 8192, "program outgrew the 9-bit MOV immediate"
-                prog[base] = ins(OPS["mov"], r, addr >> 4)
-                prog[base + 1] = ins(OPS["shl"], r, 4)
-                prog[base + 2] = ins(OPS["add"], r, addr & 15)
+                assert addr < (1 << 18), "program outgrew a two-field literal"
+                prog[base] = ins(OPS["mov"], r, addr >> 9)
+                prog[base + 1] = ins(OPS["shl"], r, 9)
+                prog[base + 2] = ins(OPS["or"], r, addr & 511)
         else:
             prog.append(alu())
 
     open(a.out, "wb").write(b"".join(struct.pack("<I", w) for w in prog))
-    print("%d instructions (%d seed + %d body, %d control-flow + %d hub sites)"
-          " over %s"
-          % (len(prog), 32, len(prog) - sub - 32, n_cf, n_mem, ",".join(names)),
-          file=sys.stderr)
+    print("%d instructions (%d seed + %d body; %d control-flow, %d hub/prefix,"
+          " %d smart-pin sites) over %s"
+          % (len(prog), 32, len(prog) - sub - 32, n_cf, n_mem, n_pin,
+             ",".join(names)), file=sys.stderr)
     print(len(prog))
 
 
