@@ -30,6 +30,21 @@
 
 /* Silicon retires a simple instruction in two clocks. */
 #define P2_CLOCKS_PER_INSN 2
+#define P2_CLOCKS_HUB_ACCESS 9
+#define P2_HUB_MASK 0x7FFFF
+
+/*
+ * Prefix instructions modify only the instruction that immediately follows.
+ * Which prefixes are live is part of the translation-block key, so the
+ * translator can fold them in statically and emit nothing at all on the
+ * overwhelmingly common path where none is pending; the VALUES stay in env
+ * because SETQ's operand is a register.
+ */
+#define P2_PFX_AUGS  1
+#define P2_PFX_AUGD  2
+#define P2_PFX_SETQ  4
+#define P2_PFX_SETQ2 8
+#define P2_PFX_MASK  0xF
 
 /*
  * One QEMU vCPU is one cog (design D1). Cog RAM and LUT are CPU state, NOT
@@ -51,6 +66,11 @@ typedef struct CPUArchState {
      * and the _RET_ prefix all share it. */
     uint32_t stack[P2_STACK_DEPTH];
     uint32_t sp;
+
+    uint32_t aug_s;         /* AUGS literal, already shifted to bits 31:9 */
+    uint32_t aug_d;
+    uint32_t setq;          /* SETQ / SETQ2 operand */
+    uint32_t prefix;        /* P2_PFX_* -- which of the above are live */
 
     uint32_t cogid;
     bool     running;

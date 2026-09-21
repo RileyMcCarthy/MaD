@@ -16,6 +16,7 @@
 static void p2_machine_init(MachineState *machine)
 {
     MemoryRegion *hub = g_new(MemoryRegion, 1);
+    MemoryRegion *wrap = g_new(MemoryRegion, 1);
     int i;
 
     /*
@@ -24,6 +25,16 @@ static void p2_machine_init(MachineState *machine)
      */
     memory_region_init_ram(hub, NULL, "p2.hub", P2_HUB_SIZE, &error_fatal);
     memory_region_add_subregion(get_system_memory(), 0, hub);
+
+    /*
+     * Hub addressing wraps: silicon (and p2core, which assembles each byte
+     * through `addr & (HUB_BYTES - 1)`) lets a RDLONG at $7FFFD read its last
+     * byte from $00000. The translator masks the address to 19 bits, so the
+     * only case left is an access that straddles the top -- an alias of the
+     * whole hub at $80000 makes that wrap exactly, at no cost in memory.
+     */
+    memory_region_init_alias(wrap, NULL, "p2.hub.wrap", hub, 0, P2_HUB_SIZE);
+    memory_region_add_subregion(get_system_memory(), P2_HUB_SIZE, wrap);
 
     for (i = 0; i < P2_NUM_COGS; i++) {
         Object *cpu = object_new(TYPE_P2_CPU);

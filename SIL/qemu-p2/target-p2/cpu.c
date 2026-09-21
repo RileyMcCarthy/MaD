@@ -41,7 +41,9 @@ static TCGTBCPUState p2_get_tb_cpu_state(CPUState *cs)
 {
     CPUP2State *env = cpu_env(cs);
 
-    return (TCGTBCPUState){ .pc = env->pc, .flags = 0, .cs_base = 0 };
+    return (TCGTBCPUState){ .pc = env->pc,
+                            .flags = env->prefix & P2_PFX_MASK,
+                            .cs_base = 0 };
 }
 
 static void p2_cpu_synchronize_from_tb(CPUState *cs, const TranslationBlock *tb)
@@ -89,6 +91,13 @@ static void p2_cpu_dump_state(CPUState *cs, FILE *f, int flags)
     qemu_fprintf(f, "P2STATE pc=%05X c=%u z=%u sp=%u clk=%" PRIu64, env->pc,
                  env->c, env->z, env->sp, env->clocks);
     for (i = 0; i < 32; i++) {
+        qemu_fprintf(f, " %08X", env->cog[i]);
+    }
+    /* PA/PB/PTRA/PTRB and the rest of the special block: CALLPA writes PA and
+     * every PTR expression writes PTRA/PTRB, so without these a whole class of
+     * divergence is invisible to the diff. */
+    qemu_fprintf(f, " |");
+    for (i = 0x1F0; i < 0x200; i++) {
         qemu_fprintf(f, " %08X", env->cog[i]);
     }
     qemu_fprintf(f, "\n");

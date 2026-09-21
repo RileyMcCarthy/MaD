@@ -7,10 +7,11 @@ OPS=${2:-add,sub,and,or,xor,mov,not}
 N=${3:-400}
 SEED=${4:-1}
 CF=${5:-0}
+MEM=${6:-0}
 HERE=$(cd "$(dirname "$0")" && pwd); CRATE=$(dirname "$HERE"); SIL=$(dirname "$CRATE")
 W=$(mktemp -d); trap 'rm -rf "$W"' EXIT
 
-COUNT=$(python3 "$HERE/difftest.py" --ops "$OPS" --n "$N" --seed "$SEED" --cf "$CF" --out "$W/prog.bin")
+COUNT=$(python3 "$HERE/difftest.py" --ops "$OPS" --n "$N" --seed "$SEED" --cf "$CF" --mem "$MEM" --out "$W/prog.bin")
 cargo build --release --quiet --manifest-path "$SIL/Cargo.toml" -p p2core --example p2state
 "$SIL/target/release/examples/p2state" "$W/prog.bin" "$COUNT" > "$W/ref.txt"
 

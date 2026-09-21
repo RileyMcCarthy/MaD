@@ -31,6 +31,13 @@ fn main() {
         for i in 0..32 {
             print!(" {:08X}", c.regs[i]);
         }
+        // PA/PB/PTRA/PTRB and the rest of the special block: CALLPA writes PA
+        // and every PTR expression writes PTRA/PTRB, so without these a whole
+        // class of divergence is invisible to the diff.
+        print!(" |");
+        for i in 0x1F0..0x200 {
+            print!(" {:08X}", c.regs[i]);
+        }
         println!();
         if m.step(1).unwrap_or(0) == 0 {
             break;

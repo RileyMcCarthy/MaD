@@ -52,6 +52,12 @@ def ins(op, d, s, i=1, cond=0xF, c=0, z=0):
 MISC = 0x6B            # the misc block, EEEE 1101011 CZL DDDDDDDDD SSSSSSSSS
 S_PUSH, S_POP, S_JMPD, S_CALLD_ = 0x2A, 0x2B, 0x2C, 0x2D
 LOOP_REG = 31          # reserved: nothing else writes it, so loops terminate
+ADDR_REG = 30          # reserved: holds a hub address the ALU mix cannot ruin
+REG_PTRA, REG_PTRB = 0x1F8, 0x1F9
+# Hub ops target the low 512 bytes, which are zero and, crucially, nowhere near
+# the program at $1000: a stray WRLONG into the instruction stream would be
+# self-modifying code, which is a real feature to test but not this test.
+SCRATCH = 256
 LOAD_ADDR = 0x1000     # where difftest.sh and p2state.rs place the program
 
 
@@ -63,6 +69,18 @@ def misc(sel, d=0, l=0, cond=0xF, c=0, z=0):
 def rel20(op, disp, cond=0xF):
     """JMP/CALL #rel -- a signed BYTE displacement from the next PC."""
     return (cond << 28) | (op << 21) | (1 << 20) | (disp & 0xFFFFF)
+
+
+# Hub ops. For the WR forms bit 20 selects the size and bit 19 is the L bit,
+# so C/Z are selectors here and must never be randomised.
+MEM_LD = {"rdbyte": 0x56, "rdword": 0x57, "rdlong": 0x58}
+S_GETCT, S_REV = 0x1A, 0x69
+
+
+def aug(d, imm23, cond=0xF):
+    """AUGS (d=0) / AUGD (d=1): the top 23 bits of a 32-bit literal."""
+    return (cond << 28) | ((0b11110 | d) << 23) | (imm23 & 0x7FFFFF)
+MEM_ST = {"wrbyte": (0x62, 0, 0), "wrword": (0x62, 1, 0), "wrlong": (0x63, 0, 0)}
 
 
 def dj(op7, cz, d, off, cond=0xF):
@@ -79,6 +97,8 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--cf", type=float, default=0.0,
                     help="fraction of body slots that become control flow")
+    ap.add_argument("--mem", type=float, default=0.0,
+                    help="fraction of body slots that become hub accesses")
     a = ap.parse_args()
 
     names = [o for o in a.ops.split(",") if o]
@@ -87,7 +107,13 @@ def main():
         sys.exit("unknown ops (add their real encoding to OPS): %s" % unknown)
 
     rng = random.Random(a.seed)
-    dmax = LOOP_REG if a.cf else 32   # the loop counter stays untouched
+    # The reserved registers stay out of the random ALU mix so that loops
+    # terminate and addresses stay inside the scratch window.
+    dmax = 32
+    if a.mem:
+        dmax = ADDR_REG
+    elif a.cf:
+        dmax = LOOP_REG
 
     def alu(cond=0xF):
         op = rng.choice(names)
@@ -113,9 +139,70 @@ def main():
     for r in range(32):
         prog.append(ins(OPS["mov"], r, rng.randrange(512)))
 
+    def hub_pair():
+        """A store followed by a load of the same address: a write is only
+        observable in the trace once something reads it back."""
+        out = []
+        addr = rng.randrange(SCRATCH)
+        sname, (sop, sc, sl) = rng.choice(list(MEM_ST.items()))
+        lname = rng.choice(list(MEM_LD))
+        size = {"wrbyte": 1, "wrword": 2, "wrlong": 4}[sname]
+        addr -= addr % size
+        val = rng.randrange(dmax)
+        if rng.randrange(3) == 0:            # PTRA/PTRB expression form
+            ptr = rng.choice([REG_PTRA, REG_PTRB])
+            out.append(ins(OPS["mov"], ptr, SCRATCH // 2))
+            expr = 0x100 | (0x80 if ptr == REG_PTRB else 0) \
+                | (rng.randrange(2) << 6) | (rng.randrange(2) << 5) \
+                | rng.randrange(8)
+            out.append(ins(sop, val, expr, i=1, c=sc, z=sl))
+            out.append(ins(MEM_LD[lname], rng.randrange(dmax), expr, i=1,
+                           c=rng.randrange(2), z=rng.randrange(2)))
+        elif rng.randrange(2):               # immediate address
+            out.append(ins(sop, val, addr, i=1, c=sc, z=sl))
+            out.append(ins(MEM_LD[lname], rng.randrange(dmax), addr, i=1,
+                           c=rng.randrange(2), z=rng.randrange(2)))
+        else:                                # address through a register
+            out.append(ins(OPS["mov"], ADDR_REG, addr))
+            out.append(ins(sop, val, ADDR_REG, i=0, c=sc, z=sl))
+            out.append(ins(MEM_LD[lname], rng.randrange(dmax), ADDR_REG, i=0,
+                           c=rng.randrange(2), z=rng.randrange(2)))
+        return out
+
+    def prefix_group():
+        """AUGS/AUGD widen the NEXT instruction's 9-bit literal to 32 bits."""
+        out = []
+        if rng.randrange(2):
+            hi = rng.randrange(1 << 23)
+            out.append(aug(0, hi))
+            out.append(ins(OPS[rng.choice(["mov", "add", "xor"])],
+                           rng.randrange(dmax), rng.randrange(512), i=1,
+                           c=rng.randrange(2), z=rng.randrange(2)))
+        else:
+            # AUGD reaches the L-form stores: the VALUE is the widened D and
+            # the address stays the ordinary 9-bit S.
+            addr = 4 * rng.randrange(SCRATCH // 4)
+            out.append(aug(1, rng.randrange(1 << 23)))
+            out.append(ins(0x63, rng.randrange(512), addr, i=1, c=0, z=1))
+            out.append(ins(MEM_LD["rdlong"], rng.randrange(dmax), addr, i=1,
+                           c=rng.randrange(2), z=rng.randrange(2)))
+        return out
+
     kinds, n_cf = ["jmpf", "call", "loop", "tjz", "pushpop", "jmpd"], 0
+    n_mem = 0
     while len(prog) - sub < a.n:
-        if a.cf and rng.random() < a.cf:
+        if a.mem and rng.random() < a.mem:
+            r = rng.randrange(4)
+            if r == 0:
+                prog += prefix_group()
+            elif r == 1:
+                prog.append(misc(rng.choice([S_GETCT, S_REV]),
+                                 d=rng.randrange(dmax),
+                                 c=rng.randrange(2), z=rng.randrange(2)))
+            else:
+                prog += hub_pair()
+            n_mem += 1
+        elif a.cf and rng.random() < a.cf:
             k = rng.choice(kinds)
             n_cf += 1
             if k == "jmpf":                       # skip the next 1..3
@@ -155,8 +242,9 @@ def main():
             prog.append(alu())
 
     open(a.out, "wb").write(b"".join(struct.pack("<I", w) for w in prog))
-    print("%d instructions (%d seed + %d body, %d control-flow sites) over %s"
-          % (len(prog), 32, len(prog) - sub - 32, n_cf, ",".join(names)),
+    print("%d instructions (%d seed + %d body, %d control-flow + %d hub sites)"
+          " over %s"
+          % (len(prog), 32, len(prog) - sub - 32, n_cf, n_mem, ",".join(names)),
           file=sys.stderr)
     print(len(prog))
 
