@@ -70,9 +70,9 @@ describe('motion accuracy matcher', () => {
     {
       id: 'motion.linear-rate-error-is-visible',
       covers: 'e2e/motion-accuracy.mjs#assertFollowsLinearUm',
-      given: 'a recorded linear move whose commanded profile travels 1 percent faster than the request',
+      given: 'a recorded linear move whose commanded profile travels 5 percent faster than the request',
       expect: {
-        'residual-grows': 'aligning by delay still leaves more than 0.001 mm of error',
+        'residual-grows': 'aligning by delay still leaves more error than the follow bound allows',
       },
     },
     () => {
@@ -83,7 +83,12 @@ describe('motion accuracy matcher', () => {
       const aUmS2 = SHIPPED_ACCEL_MM_S2 * 1000;
       const { tTotal } = trapezoidTimes(distUm, vUmS, aUmS2);
       const s = seriesFrom(
-        (t) => trapezoidTravelUm(distUm, vUmS * 1.01, aUmS2, t),
+        // 5 percent, not 1. The follow bound is 2.5 percent of travel because a
+        // loaded CI runner puts 205 um of noise on a cell where 1 percent is
+        // only 47 um of signal -- see FOLLOW_TRAVEL_FRACTION. Pinning 1 here
+        // would assert a discrimination the check does not have; 5 percent is
+        // what it does have, uniformly across the catalog.
+        (t) => trapezoidTravelUm(distUm, vUmS * 1.05, aUmS2, t),
         { tEndS: tTotal + 0.25 },
       );
       expect(() =>
