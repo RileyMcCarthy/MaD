@@ -42,10 +42,35 @@ fn equivalent(golden: &str, got: &str) -> bool {
 fn decoder_matches_flexcc_listing() {
     let img = crate_path("../../Firmware/MaDCore/.pio/build/propeller2_debug/program");
     let gold = crate_path("tests/golden/hub_mnemonics.txt");
-    let (Ok(image), Ok(golden)) = (std::fs::read(&img), std::fs::read_to_string(&gold)) else {
+    // See the note on MAD_REQUIRE_P2_IMAGE in the p2iss suites: skipping is
+    // right on a laptop that has not built the image/golden and wrong in a job
+    // whose whole purpose is to execute against them.
+    let image_res = std::fs::read(&img);
+    let golden_res = std::fs::read_to_string(&gold);
+    if image_res.is_err() || golden_res.is_err() {
+        if std::env::var_os("MAD_REQUIRE_P2_IMAGE").is_some() {
+            let mut missing = Vec::new();
+            if image_res.is_err() {
+                missing.push(format!(
+                    "the P2 image is missing at {}. \
+                     Build it with `make p2image` (or `cd Firmware/MaDCore && pio run -e propeller2_debug`)",
+                    img.display()
+                ));
+            }
+            if golden_res.is_err() {
+                missing.push(format!(
+                    "the decoder golden is missing at {}. \
+                     Generate it with `cd SIL/p2core && python3 tools/gen_golden.py`",
+                    gold.display()
+                ));
+            }
+            panic!("MAD_REQUIRE_P2_IMAGE is set but {}", missing.join("; "));
+        }
         eprintln!("skipping: build the firmware and run tools/gen_golden.py");
         return;
-    };
+    }
+    let image = image_res.unwrap();
+    let golden = golden_res.unwrap();
 
     let mut mismatch: Vec<(u32, String, String)> = Vec::new();
     let mut undecoded: Vec<(u32, u32, String)> = Vec::new();
