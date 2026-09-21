@@ -46,6 +46,12 @@ if diff -q "$W/ref.txt" "$W/qemu.txt" >/dev/null; then
 fi
 echo "  DIVERGENCE at:"
 diff "$W/ref.txt" "$W/qemu.txt" | head -6 | cut -c1-140
-LINE=$(diff --unchanged-line-format= --old-line-format='%dn ' --new-line-format= "$W/ref.txt" "$W/qemu.txt" | awk '{print $1; exit}')
+LINE=$(python3 - "$W/ref.txt" "$W/qemu.txt" <<'PYEOF'
+import sys
+a=open(sys.argv[1]).read().splitlines(); b=open(sys.argv[2]).read().splitlines()
+i=next((k for k in range(min(len(a),len(b))) if a[k]!=b[k]), None)
+print(i+1 if i is not None else min(len(a),len(b))+1)
+PYEOF
+)
 echo "  first differing state line: $LINE"
 exit 1

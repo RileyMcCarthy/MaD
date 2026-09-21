@@ -12,6 +12,9 @@
 #include "target/p2/cpu.h"
 #include "qemu/timer.h"
 #include "exec/icount.h"
+#include "system/address-spaces.h"
+#include "hw/loader.h"
+#include "qemu/error-report.h"
 
 #define P2_HUB_SIZE (512 * KiB)
 
@@ -71,6 +74,32 @@ static void p2_machine_init(MachineState *machine)
     if (icount_enabled()) {
         p2_quantum = timer_new_ns(QEMU_CLOCK_VIRTUAL, p2_quantum_tick, NULL);
         p2_quantum_tick(NULL);
+    }
+
+    /*
+     * `-kernel <image>` is the way to run a real P2 image: it goes into hub at
+     * $0 and the first $1F8 longs become cog 0's RAM, which the CPU's reset
+     * does. Loading it HERE, before the CPUs exist, is what makes that
+     * ordering work -- a `-device loader` file is written by a reset handler
+     * registered after the board's, so the cog seed would read zeros.
+     *
+     * The harness keeps using `-device loader` with an explicit entry PC,
+     * which starts a generated program in hub space and needs no cog seed.
+     */
+    if (machine->kernel_filename) {
+        gsize len;
+        char *buf;
+
+        if (!g_file_get_contents(machine->kernel_filename, &buf, &len, NULL)) {
+            error_report("p2: cannot read %s", machine->kernel_filename);
+            exit(1);
+        }
+        if (len > P2_HUB_SIZE) {
+            len = P2_HUB_SIZE;
+        }
+        cpu_physical_memory_write(0, buf, len);
+        g_free(buf);
+        p2_boot_from_hub = true;
     }
 
     for (i = 0; i < P2_NUM_COGS; i++) {

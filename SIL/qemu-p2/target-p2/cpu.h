@@ -13,6 +13,12 @@
 #define P2_NUM_LOCKS 16
 /* Longs a COGINIT load copies from hub into cog RAM ($000..$1F7). */
 #define P2_COGINIT_LOAD_LONGS 0x1F8
+
+/*
+ * Set by the board when it loaded a real image with `-kernel`: cog 0 then
+ * boots the way silicon does, taking its RAM from the first $1F8 hub longs.
+ */
+extern bool p2_boot_from_hub;
 /* Cog RAM's top 16 longs are the special registers. */
 #define P2_REG_PA   0x1F6
 #define P2_REG_PB   0x1F7

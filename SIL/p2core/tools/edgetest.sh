@@ -25,7 +25,11 @@ for probe in $(python3 -c "import sys; sys.path.insert(0,'$HERE'); import edgete
         printf "  %-22s OK (%s states identical)\n" "$probe" "$N"
     else
         printf "  %-22s DIVERGES at state %s\n" "$probe" \
-            "$(diff --unchanged-line-format= --old-line-format='%dn ' --new-line-format= "$W/ref.txt" "$W/q.txt" | awk '{print $1; exit}')"
+            "$(python3 -c "
+import sys
+a=open('$W/ref.txt').read().splitlines(); b=open('$W/q.txt').read().splitlines()
+i=next((k for k in range(min(len(a),len(b))) if a[k]!=b[k]), None)
+print(i+1 if i is not None else 'length')")"
         diff "$W/ref.txt" "$W/q.txt" | head -4 | cut -c1-120
         fail=1
     fi

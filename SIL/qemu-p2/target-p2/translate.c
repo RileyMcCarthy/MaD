@@ -155,10 +155,26 @@ static void p2_get_s(DisasContext *ctx, TCGv_i32 dst, int i, unsigned s)
     }
 }
 
-/* The same for the L-bit forms, whose D field is a literal AUGD widens. */
+/*
+ * The same for the L-bit forms, whose D field is a literal AUGD widens.
+ *
+ * ALTD rewrites the D FIELD, and when D is a LITERAL the substituted
+ * field IS the value -- p2core substitutes into `ins.d` before deciding
+ * whether to read it as a register or take it as a literal. MaDCore's boot
+ * does `altd / setq #0 / wrlong ptra++`, where the literal 0 becomes 2 and the
+ * WRLONG is a three-long block transfer rather than a single write.
+ */
 static void p2_get_d_literal(DisasContext *ctx, TCGv_i32 dst, unsigned d)
 {
-    if (ctx->prefix & P2_PFX_AUGD) {
+    if (ctx->prefix & P2_PFX_ALTD) {
+        tcg_gen_ld_i32(dst, tcg_env, offsetof(CPUP2State, alt_d));
+        if (ctx->prefix & P2_PFX_AUGD) {
+            TCGv_i32 t = tcg_temp_new_i32();
+
+            tcg_gen_ld_i32(t, tcg_env, offsetof(CPUP2State, aug_d));
+            tcg_gen_or_i32(dst, dst, t);
+        }
+    } else if (ctx->prefix & P2_PFX_AUGD) {
         tcg_gen_ld_i32(dst, tcg_env, offsetof(CPUP2State, aug_d));
         tcg_gen_ori_i32(dst, dst, d);
     } else {
@@ -257,6 +273,20 @@ static void p2_gen_clock(void)
 
 /* ------------------------------------------------------------------ decoder */
 #include "decode-insn.c.inc"
+
+/*
+ * In the misc block bit 18 is the L bit, so it says whether D is a register or
+ * a 9-bit literal -- which AUGD may then widen.
+ */
+static void p2_get_misc_d(DisasContext *ctx, TCGv_i32 dst, arg_misc *a)
+{
+    if (a->i) {
+        p2_get_d_literal(ctx, dst, a->d);
+    } else {
+        p2_ld_d(ctx, dst, a->d);
+    }
+}
+
 
 /* An ALU op with the shape: read D, read S, combine, write D, set flags. */
 #define GEN_ALU(NAME, EXPR, FLAGS)                                            \
@@ -1204,21 +1234,21 @@ static void p2_gen_exit(DisasContext *ctx)
 }
 
 /*
- * Pending AUGS/AUGD/SETQ are consumed by every instruction, branches included
- * -- and a branch leaves the block from inside its own body, so the generic
- * clear further down would be emitted after the exit and never run. That left
- * a SETQ live into the next block, which is how the firmware's own
- * `SETQ / COGINIT` idiom turned the following RDLONG into a block transfer.
+ * Every pending prefix is consumed by an instruction that RETIRES -- and a
+ * branch leaves the block from inside its own body, so the generic clear
+ * further down would be emitted after the exit and never run. That left a SETQ
+ * live into the next block, which is how the firmware's own `SETQ / COGINIT`
+ * idiom turned the following RDLONG into a block transfer.
  *
- * ALTD/ALTS are deliberately not cleared here: p2core consumes those only when
- * an instruction actually retires, and a branch that is taken has retired.
+ * ALTD/ALTS go with them: p2core takes those in the operand resolution, which
+ * sits AFTER the condition check, so they are consumed by any instruction that
+ * retires -- a prefix instruction included, which is what makes
+ * `altd / setq / wrlong` substitute into the SETQ and not the WRLONG.
  */
 static void p2_gen_consume_prefix(DisasContext *ctx)
 {
-    uint32_t keep = ctx->prefix & (P2_PFX_ALTD | P2_PFX_ALTS);
-
-    if (ctx->prefix & ~(P2_PFX_ALTD | P2_PFX_ALTS)) {
-        tcg_gen_st_i32(tcg_constant_i32(keep), tcg_env,
+    if (ctx->prefix) {
+        tcg_gen_st_i32(tcg_constant_i32(0), tcg_env,
                        offsetof(CPUP2State, prefix));
     }
 }
@@ -1625,27 +1655,55 @@ GEN_BLOCK_ST(wrlong_2, 1)
 
 /*
  * AUGS/AUGD carry the top 23 bits of a 32-bit literal for the NEXT
- * instruction. A conditional AUG would have to be resolved at run time, which
- * the TB key cannot express -- flexspin never emits one, so it halts rather
- * than silently widening (or not widening) the wrong literal.
+ * instruction, and they CAN be conditional -- MaDCore's own image has an
+ * `if_nc augs` 200k instructions into its boot, which is what disproved the
+ * earlier assumption that flexspin never emits one.
+ *
+ * Whether the prefix ends up pending is then a runtime answer, and the TB key
+ * cannot hold both. So a conditional prefix writes env->prefix itself, on both
+ * paths, and ends the block: the next one is keyed from what actually
+ * happened. Note the not-taken path is not a no-op -- a cancelled instruction
+ * still CONSUMES pending prefixes, by the same kind-aware rule.
  */
+#define GEN_PREFIX_TAIL(BIT, KEEPMASK)                                        \
+    do {                                                                      \
+        uint32_t keep = ctx->prefix & (KEEPMASK);                             \
+        (void)0;                                                              \
+        if (a->cond != 0xF && a->cond != 0) {                                 \
+            ctx->prefix = keep;             /* the epilogue must not store */ \
+            ctx->is_prefix = true;                                            \
+            if (ctx->base.is_jmp == DISAS_NEXT) {                             \
+                ctx->base.is_jmp = DISAS_TOO_MANY;                            \
+            }                                                                 \
+        } else {                                                              \
+            ctx->prefix = keep | (BIT);                                       \
+            ctx->is_prefix = true;                                            \
+        }                                                                     \
+    } while (0)
+
 #define GEN_AUG(NAME, FIELD, BIT)                                             \
     static bool trans_##NAME(DisasContext *ctx, arg_aug *a)                   \
     {                                                                         \
+        uint32_t mask = P2_PFX_SETQ | P2_PFX_SETQ2 | (BIT);                   \
+        uint32_t keep = ctx->prefix & mask;                                   \
+        uint32_t kept_cancelled = ctx->prefix                                 \
+                                  & (mask | P2_PFX_ALTD | P2_PFX_ALTS);       \
+        TCGLabel *skip;                                                       \
+        ctx->prefix_survives = P2_PFX_SETQ | P2_PFX_SETQ2 | (BIT);            \
         if (a->cond != 0xF && a->cond != 0) {                                 \
-            return false;                                                     \
+            /* the not-taken path consumes by the same rule, but keeps ALTx */ \
+            tcg_gen_st_i32(tcg_constant_i32(kept_cancelled), tcg_env,         \
+                           offsetof(CPUP2State, prefix));                     \
         }                                                                     \
+        skip = p2_gen_cond(ctx, a->cond);                                     \
         tcg_gen_st_i32(tcg_constant_i32(a->imm << 9), tcg_env,                \
                        offsetof(CPUP2State, FIELD));                          \
-        /* Q survives an intervening AUG -- `setq / augs / rdlong ##addr` is  \
-         * how the boot ROM copies its cog image into place -- but an AUG      \
-         * survives only its OWN kind, so `augs / setq / rdlong` loses the     \
-         * AUGS. ALTD/ALTS survive everything. */                             \
-        ctx->prefix_survives = P2_PFX_SETQ | P2_PFX_SETQ2 | (BIT);            \
-        ctx->prefix = (ctx->prefix                                            \
-                       & (ctx->prefix_survives | P2_PFX_ALTD | P2_PFX_ALTS))  \
-                      | (BIT);                                                \
-        ctx->is_prefix = true;                                                \
+        if (a->cond != 0xF && a->cond != 0) {                                 \
+            tcg_gen_st_i32(tcg_constant_i32(keep | (BIT)), tcg_env,           \
+                           offsetof(CPUP2State, prefix));                     \
+        }                                                                     \
+        p2_end_cond(skip);                                                    \
+        GEN_PREFIX_TAIL(BIT, mask);                                           \
         return true;                                                          \
     }
 
@@ -1661,17 +1719,26 @@ GEN_AUG(augd, aug_d, P2_PFX_AUGD)
 #define GEN_SETQ(NAME, BIT)                                                   \
     static bool trans_##NAME(DisasContext *ctx, arg_misc *a)                  \
     {                                                                         \
+        uint32_t mask = P2_PFX_SETQ | P2_PFX_SETQ2;                           \
+        uint32_t keep = ctx->prefix & mask;                                   \
+        uint32_t kept_cancelled = ctx->prefix                                 \
+                                  & (mask | P2_PFX_ALTD | P2_PFX_ALTS);       \
         TCGv_i32 d = tcg_temp_new_i32();                                      \
-        if (a->cond != 0xF && a->cond != 0) {                                 \
-            return false;                                                     \
-        }                                                                     \
-        p2_ld_d(ctx, d, a->d);                                                   \
-        tcg_gen_st_i32(d, tcg_env, offsetof(CPUP2State, setq));               \
+        TCGLabel *skip;                                                       \
         ctx->prefix_survives = P2_PFX_SETQ | P2_PFX_SETQ2;                    \
-        ctx->prefix = (ctx->prefix                                            \
-                       & (ctx->prefix_survives | P2_PFX_ALTD | P2_PFX_ALTS))  \
-                      | (BIT);                                                \
-        ctx->is_prefix = true;                                                \
+        if (a->cond != 0xF && a->cond != 0) {                                 \
+            tcg_gen_st_i32(tcg_constant_i32(kept_cancelled), tcg_env,         \
+                           offsetof(CPUP2State, prefix));                     \
+        }                                                                     \
+        skip = p2_gen_cond(ctx, a->cond);                                     \
+        p2_get_misc_d(ctx, d, a);                                             \
+        tcg_gen_st_i32(d, tcg_env, offsetof(CPUP2State, setq));               \
+        if (a->cond != 0xF && a->cond != 0) {                                 \
+            tcg_gen_st_i32(tcg_constant_i32(keep | (BIT)), tcg_env,           \
+                           offsetof(CPUP2State, prefix));                     \
+        }                                                                     \
+        p2_end_cond(skip);                                                    \
+        GEN_PREFIX_TAIL(BIT, mask);                                           \
         return true;                                                          \
     }
 
@@ -1748,25 +1815,36 @@ static bool trans_rev(DisasContext *ctx, arg_misc *a)
 #define GEN_ALTX(NAME, FIELD, BIT)                                            \
     static bool trans_##NAME(DisasContext *ctx, arg_ds *a)                    \
     {                                                                         \
+        uint32_t mask = 0;                                                    \
+        uint32_t keep = ctx->prefix & mask;                                   \
+        uint32_t kept_cancelled = ctx->prefix                                 \
+                                  & (P2_PFX_ALTD | P2_PFX_ALTS);              \
         TCGv_i32 d = tcg_temp_new_i32(), sv = tcg_temp_new_i32();             \
         TCGv_i32 t = tcg_temp_new_i32();                                      \
+        TCGLabel *skip;                                                       \
         if (a->cond != 0xF && a->cond != 0) {                                 \
-            return false;                                                     \
+            tcg_gen_st_i32(tcg_constant_i32(kept_cancelled), tcg_env,         \
+                           offsetof(CPUP2State, prefix));                     \
         }                                                                     \
+        skip = p2_gen_cond(ctx, a->cond);                                     \
         p2_ld_d(ctx, d, a->d);                                                \
         p2_get_s(ctx, sv, a->i, a->s);                                        \
         tcg_gen_add_i32(t, d, sv);                                            \
         tcg_gen_andi_i32(t, t, 0x1FF);                                        \
         tcg_gen_st_i32(t, tcg_env, offsetof(CPUP2State, FIELD));              \
-        /* S[17:9], sign-extended, post-increments the D register. */          \
+        /* S[17:9], sign-extended, post-increments the D register. */         \
         tcg_gen_shri_i32(t, sv, 9);                                           \
         tcg_gen_andi_i32(t, t, 0x1FF);                                        \
         tcg_gen_shli_i32(t, t, 23);                                           \
         tcg_gen_sari_i32(t, t, 23);                                           \
         tcg_gen_add_i32(t, d, t);                                             \
         p2_st_d(ctx, t, a->d);                                                \
-        ctx->prefix = (ctx->prefix & (P2_PFX_ALTD | P2_PFX_ALTS)) | (BIT);    \
-        ctx->is_prefix = true;                                                \
+        if (a->cond != 0xF && a->cond != 0) {                                 \
+            tcg_gen_st_i32(tcg_constant_i32(keep | (BIT)), tcg_env,           \
+                           offsetof(CPUP2State, prefix));                     \
+        }                                                                     \
+        p2_end_cond(skip);                                                    \
+        GEN_PREFIX_TAIL(BIT, mask);                                           \
         return true;                                                          \
     }
 
@@ -1775,19 +1853,6 @@ GEN_ALTX(alts, alt_s, P2_PFX_ALTS)
 
 
 /* ---- batch 11: smart pins ------------------------------------------------ */
-
-/*
- * In the misc block bit 18 is the L bit, so it says whether D is a register or
- * a 9-bit literal -- which AUGD may then widen.
- */
-static void p2_get_misc_d(DisasContext *ctx, TCGv_i32 dst, arg_misc *a)
-{
-    if (a->i) {
-        p2_get_d_literal(ctx, dst, a->d);
-    } else {
-        p2_ld_d(ctx, dst, a->d);
-    }
-}
 
 /*
  * WRPIN/WXPIN/WYPIN take the PIN from S and the VALUE from D -- the opposite

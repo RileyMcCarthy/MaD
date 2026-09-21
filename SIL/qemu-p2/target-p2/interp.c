@@ -101,10 +101,20 @@ static void ip_st_d(DisasContext *ctx, unsigned d, uint32_t v)
     ip_set_reg(ctx, ip_d_index(ctx, d), v);
 }
 
-/* A literal D, widened by a pending AUGD. */
+/*
+ * A literal D, widened by a pending AUGD.
+ *
+ * ALTD rewrites the D FIELD, and when D is a LITERAL the substituted
+ * field IS the value -- p2core substitutes into `ins.d` before deciding
+ * whether to read it as a register or take it as a literal. MaDCore's boot
+ * does `altd / setq #0 / wrlong ptra++`, where the literal 0 becomes 2 and the
+ * WRLONG is a three-long block transfer rather than a single write.
+ */
 static uint32_t ip_d_literal(DisasContext *ctx, unsigned d)
 {
-    return (ctx->prefix & P2_PFX_AUGD) ? (ctx->env->aug_d | d) : d;
+    uint32_t v = ip_d_index(ctx, d);
+
+    return (ctx->prefix & P2_PFX_AUGD) ? (ctx->env->aug_d | v) : v;
 }
 
 /*
@@ -1010,7 +1020,7 @@ IEXEC_HUB_ST(wrlong_2, 4, cpu_stl_le_data, 1)
     {                                                                         \
         ctx->env->FIELD = (uint32_t)a->imm << 9;                              \
         ctx->prefix = (ctx->prefix                                            \
-                       & (P2_PFX_SETQ | P2_PFX_SETQ2 | IP_KEEP_ALT)) | (BIT); \
+                       & (P2_PFX_SETQ | P2_PFX_SETQ2)) | (BIT);               \
         ctx->is_prefix = true;                                                \
         return true;                                                          \
     }
@@ -1024,7 +1034,7 @@ IEXEC_AUG(augd, aug_d, P2_PFX_AUGD)
         ctx->env->setq = (LITERAL) ? ip_d_literal(ctx, a->d)                  \
                                    : ip_ld_d(ctx, a->d);                      \
         ctx->prefix = (ctx->prefix                                            \
-                       & (P2_PFX_SETQ | P2_PFX_SETQ2 | IP_KEEP_ALT)) | (BIT); \
+                       & (P2_PFX_SETQ | P2_PFX_SETQ2)) | (BIT);               \
         ctx->is_prefix = true;                                                \
         return true;                                                          \
     }
@@ -1046,7 +1056,7 @@ IEXEC_SETQ(setq2_2, P2_PFX_SETQ2, 1)
         int32_t inc = (int32_t)((sv >> 9) & 0x1FF) << 23 >> 23;               \
         ctx->env->FIELD = (d + sv) & 0x1FF;                                   \
         ip_st_d(ctx, a->d, d + inc);                                          \
-        ctx->prefix = (ctx->prefix & IP_KEEP_ALT) | (BIT);                    \
+        ctx->prefix = (BIT);                                                  \
         ctx->is_prefix = true;                                                \
         return true;                                                          \
     }
@@ -1434,10 +1444,11 @@ void helper_p2_interp_cog(CPUP2State *env, uint32_t budget)
         env->pc = ctx.next_pc;
 
         if (!ip_cond_true(&ctx, cond)) {
-            /* A cancelled instruction still consumes the pending prefixes --
-             * but NOT a pending ALTx, which only a retiring instruction
-             * consumes. */
-            env->prefix &= P2_PFX_ALTD | P2_PFX_ALTS;
+            /* A cancelled instruction still consumes the pending prefixes,
+             * by the same kind-aware rule as one that ran: a condition-false
+             * AUGS keeps an already-pending aug_s, and ALTx survives either
+             * way. */
+            env->prefix &= ip_cancelled_survivors(w);
             continue;
         }
 

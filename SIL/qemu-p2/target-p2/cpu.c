@@ -16,6 +16,10 @@
 #include "accel/tcg/cpu-ops.h"
 #include "hw/qdev-properties.h"
 #include "hw/core/sysemu-cpu-ops.h"
+#include "system/memory.h"
+#include "exec/cpu-common.h"
+
+bool p2_boot_from_hub;
 
 static void p2_cpu_set_pc(CPUState *cs, vaddr value)
 {
@@ -132,6 +136,22 @@ static void p2_cpu_reset_hold(Object *obj, ResetType type)
     memset(env->stack, 0, sizeof(env->stack));
     env->running = (env->cogid == 0);
     cs->halted = !env->running;
+
+    /*
+     * The P2's boot: the first $1F8 longs of hub become cog 0's RAM and it
+     * runs them in COG space from $000 -- a P2 image is a cog program, not a
+     * hub one. p2core does the same in Machine::new().
+     */
+    if (p2_boot_from_hub && env->cogid == 0) {
+        int i;
+
+        for (i = 0; i < P2_COGINIT_LOAD_LONGS; i++) {
+            uint32_t w;
+
+            cpu_physical_memory_read(i * 4, &w, sizeof(w));
+            env->cog[i] = le32_to_cpu(w);
+        }
+    }
 }
 
 static void p2_cpu_realizefn(DeviceState *dev, Error **errp)
