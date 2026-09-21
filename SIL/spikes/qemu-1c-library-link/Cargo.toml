@@ -1,0 +1,12 @@
+[package]
+name = "qemu-lib-spike"
+version = "0.1.0"
+edition = "2021"
+publish = false
+[workspace]
+
+[build-dependencies]
+cc = "1"
+[[bin]]
+name = "qemu-lib-spike"
+path = "src/main.rs"

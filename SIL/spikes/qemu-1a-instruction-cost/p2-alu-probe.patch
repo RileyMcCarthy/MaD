@@ -1,0 +1,103 @@
+diff --git a/target/riscv/cpu.h b/target/riscv/cpu.h
+index 4a862da..e0af822 100644
+--- a/target/riscv/cpu.h
++++ b/target/riscv/cpu.h
+@@ -216,6 +216,13 @@ typedef struct PMUFixedCtrState {
+ } PMUFixedCtrState;
+ 
+ struct CPUArchState {
++    /* SPIKE 1a: P2-shaped scratch state, so a hijacked instruction can emit
++     * the TCG a real P2 ALU instruction would need and be timed. */
++    uint32_t p2_cog[512];
++    uint32_t p2_c;
++    uint32_t p2_z;
++    uint64_t p2_clocks;
++
+     target_ulong gpr[32];
+     target_ulong gprh[32]; /* 64 top bits of the 128-bit registers */
+ 
+diff --git a/target/riscv/insn_trans/trans_rvi.c.inc b/target/riscv/insn_trans/trans_rvi.c.inc
+index b9c7160..f5a8792 100644
+--- a/target/riscv/insn_trans/trans_rvi.c.inc
++++ b/target/riscv/insn_trans/trans_rvi.c.inc
+@@ -944,8 +944,78 @@ static bool trans_pause(DisasContext *ctx, arg_pause *a)
+ 
+ static bool trans_fence(DisasContext *ctx, arg_fence *a)
+ {
+-    /* FENCE is a full memory barrier. */
+-    tcg_gen_mb(TCG_MO_ALL | TCG_BAR_SC);
++    /*
++     * SPIKE 1a: emit exactly what a P2 ALU instruction needs, so it can be
++     * timed. Shape (see docs/dev/p2-qemu-target-plan.md D2/D3):
++     *   EEEE condition test -> read D -> read S -> ALU -> write D -> C/Z -> clock
++     * QEMU_P2_DYN=1 makes the operands runtime-indexed (the post-ALTx case,
++     * measured at 0.0999% of instructions); otherwise they are constant
++     * offsets, which is the 99.9% case the translator resolves statically.
++     */
++    static int dyn = -1;
++    TCGv_i32 d = tcg_temp_new_i32();
++    TCGv_i32 sv = tcg_temp_new_i32();
++    TCGv_i32 r = tcg_temp_new_i32();
++    TCGv_i32 cf = tcg_temp_new_i32();
++    TCGv_i32 zf = tcg_temp_new_i32();
++    TCGv_i64 clk = tcg_temp_new_i64();
++    TCGLabel *skip = gen_new_label();
++
++    if (dyn < 0) {
++        dyn = getenv("QEMU_P2_DYN") ? 1 : 0;
++    }
++
++    /* --- EEEE: bit ((C<<1)|Z) of the 4-bit condition field selects execute. */
++    tcg_gen_ld_i32(cf, tcg_env, offsetof(CPURISCVState, p2_c));
++    tcg_gen_ld_i32(zf, tcg_env, offsetof(CPURISCVState, p2_z));
++    tcg_gen_shli_i32(cf, cf, 1);
++    tcg_gen_or_i32(cf, cf, zf);
++    /* EEEE = $F (always). $E would select bit ((C<<1)|Z)=0, which is clear at
++     * reset, so the body would be skipped forever and measure nothing. */
++    tcg_gen_movi_i32(r, 0xF);
++    tcg_gen_shr_i32(r, r, cf);
++    tcg_gen_andi_i32(r, r, 1);
++    tcg_gen_brcondi_i32(TCG_COND_EQ, r, 0, skip);
++
++    /* --- operands */
++    if (dyn) {
++        TCGv_ptr pd = tcg_temp_new_ptr();
++        TCGv_ptr ps = tcg_temp_new_ptr();
++        TCGv_i32 di = tcg_temp_new_i32();
++        TCGv_i32 si = tcg_temp_new_i32();
++        tcg_gen_trunc_tl_i32(di, get_gpr(ctx, 5, EXT_NONE));
++        tcg_gen_trunc_tl_i32(si, get_gpr(ctx, 6, EXT_NONE));
++        tcg_gen_andi_i32(di, di, 511);
++        tcg_gen_andi_i32(si, si, 511);
++        tcg_gen_shli_i32(di, di, 2);
++        tcg_gen_shli_i32(si, si, 2);
++        tcg_gen_ext_i32_ptr(pd, di);
++        tcg_gen_ext_i32_ptr(ps, si);
++        tcg_gen_add_ptr(pd, tcg_env, pd);
++        tcg_gen_add_ptr(ps, tcg_env, ps);
++        tcg_gen_ld_i32(d, pd, offsetof(CPURISCVState, p2_cog));
++        tcg_gen_ld_i32(sv, ps, offsetof(CPURISCVState, p2_cog));
++        tcg_gen_add_i32(r, d, sv);
++        tcg_gen_st_i32(r, pd, offsetof(CPURISCVState, p2_cog));
++    } else {
++        tcg_gen_ld_i32(d, tcg_env, offsetof(CPURISCVState, p2_cog[7]));
++        tcg_gen_ld_i32(sv, tcg_env, offsetof(CPURISCVState, p2_cog[9]));
++        tcg_gen_add_i32(r, d, sv);
++        tcg_gen_st_i32(r, tcg_env, offsetof(CPURISCVState, p2_cog[7]));
++    }
++
++    /* --- C = carry out, Z = result is zero */
++    tcg_gen_setcond_i32(TCG_COND_LTU, cf, r, d);
++    tcg_gen_st_i32(cf, tcg_env, offsetof(CPURISCVState, p2_c));
++    tcg_gen_setcondi_i32(TCG_COND_EQ, zf, r, 0);
++    tcg_gen_st_i32(zf, tcg_env, offsetof(CPURISCVState, p2_z));
++
++    gen_set_label(skip);
++
++    /* --- a cancelled instruction still costs its time */
++    tcg_gen_ld_i64(clk, tcg_env, offsetof(CPURISCVState, p2_clocks));
++    tcg_gen_addi_i64(clk, clk, 2);
++    tcg_gen_st_i64(clk, tcg_env, offsetof(CPURISCVState, p2_clocks));
+     return true;
+ }
+ 

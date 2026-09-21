@@ -11,6 +11,7 @@ Everything you need to build, run, test, and extend MaD.
 -   [:material-code-braces: **Protocol & codegen**](protocol-codegen.md) — regenerate C/TS/Rust
 -   [:material-puzzle: **Reusing embsim**](reusing-embsim.md) — the SIL framework elsewhere
 -   [:material-format-list-checks: **embsim improvements**](embsim-improvements.md) — time, hygiene, ISS backlog
+-   [:material-speedometer: **P2 ISS on QEMU**](p2-qemu-target-plan.md) — plan, spikes and kill criteria for a TCG target
 -   [:material-transit-connection-variant: **Lossless net transport**](sil-lossless-net-transport.md) — putting every pin's signal on the net
 -   [:material-sine-wave: **One drive type**](sil-unified-drive.md) — scope for folding the pulse channel into the resolver
 -   [:material-rocket-launch: **CI/CD & releases**](ci-cd-and-releases.md) — pipelines and tags
