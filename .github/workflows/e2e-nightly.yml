@@ -148,7 +148,7 @@ jobs:
       # rebuilt only on a miss.
       - name: Restore the Chrome guest image
         id: guest
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/embsim/qemu/chrome-debian13-x86_64.qcow2
           key: embsim-guest-x86_64-${{ hashFiles('SIL/embsim/qemu/guest/chrome/**') }}
