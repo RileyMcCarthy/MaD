@@ -1,0 +1,15 @@
+[package]
+name = "qemu-0a-unicorn"
+version = "0.1.0"
+edition = "2021"
+description = "Spike 0a: can QEMU's TCG (via Unicorn) be driven synchronously from Rust with pin-op-shaped callbacks and sub-µs slices?"
+publish = false
+
+# Standalone: not a member of the SIL workspace (throwaway spike).
+[workspace]
+
+[dependencies]
+unicorn-engine = "2"
+
+[profile.release]
+debug = 1
