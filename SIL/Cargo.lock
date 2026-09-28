@@ -673,6 +673,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "vibes-behaviour",
 ]
 
 [[package]]
