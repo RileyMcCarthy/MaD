@@ -46,7 +46,11 @@ export default defineConfig({
           }),
         ]
       : []),
-    react(),
+    // Defense-in-depth: never Babel/Refresh a `*.worker.*` file if it is ever
+    // pulled into the client graph. (Vite does not apply root plugins to the
+    // worker environment by default; the DeviceSession worker owns the ~100 Hz
+    // sample drain and must stay off the React transform path.)
+    react({ exclude: /\.worker\.[tj]sx?$/ }),
     VitePWA({
       // Prompt, never auto-reload: this app holds a live hardware connection and
       // may be mid-test. A silent skipWaiting/clientsClaim reload would tear down
@@ -89,5 +93,16 @@ export default defineConfig({
   },
   server: {
     port: 5174,
+    // CI e2e drives `vite dev` under load (Playwright + SIL + bridge). HMR and
+    // file watching are unused by the suite and compete with the DeviceSession
+    // worker for CPU on the shared runner — vite 7 + plugin-react 5 on the
+    // Node-20 workflow pin correlated with 1–6 Hz sample rates and a 60-minute
+    // job timeout. `vite build` ignores server.* so verify/pages stay unchanged.
+    ...(process.env.CI
+      ? {
+          hmr: false,
+          watch: null,
+        }
+      : {}),
   },
 });

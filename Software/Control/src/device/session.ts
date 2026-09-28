@@ -58,12 +58,12 @@ export class DeviceClient {
   workerCreateCount = 0;
 
   constructor(opts: DeviceClientOptions = {}) {
+    // Keep `new URL(..., import.meta.url)` on one line: vite 7.1+ had regressions
+    // detecting multiline Worker URL expressions (asset/worker plugins). Single
+    // line is the durable form under vite 7 + prettier.
     this.workerFactory =
       opts.workerFactory ??
-      (() =>
-        new Worker(new URL('./DeviceSession.worker.ts', import.meta.url), {
-          type: 'module',
-        }));
+      (() => new Worker(new URL('./DeviceSession.worker.ts', import.meta.url), { type: 'module' }));
     this.createWorker();
 
     // The worker sees stream death (unplug, bridge loss) on its own; these

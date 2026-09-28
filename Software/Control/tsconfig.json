@@ -22,7 +22,7 @@
     // (src/protocol/generated + the sibling desktop codec) which must not be
     // hand-edited. Enabling them needs a codegen-template change + regeneration
     // across projects; tracked as a follow-up rather than a hand-patch here.
-    "types": ["w3c-web-serial", "wicg-file-system-access", "vite/client"],
+    "types": ["node", "w3c-web-serial", "wicg-file-system-access", "vite/client"],
     "baseUrl": ".",
     "paths": {
       "@/*": ["src/*"],

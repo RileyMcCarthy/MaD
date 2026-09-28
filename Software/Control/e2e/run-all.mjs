@@ -681,6 +681,21 @@ async function runAndDownload(page, { completeTimeout = RUN_WAIT_MS } = {}) {
 
 // Wait until the gantry has actually stopped on its commanded setpoint.
 //
+// DEV-only live sample ring (`globalThis.__madLive` from liveBuffer.ts). After
+// connect + motion-enable the first sample can lag a state-poll / store timeout
+// cycle; asserting `latest()` immediately races an empty ring (count===0 → null)
+// even though `__madLive` itself is already installed. Poll until a sample
+// arrives so M13 jog/home do not flake on that race.
+async function waitForLiveSample(page, { timeoutMs = DEVICE_WAIT_MS, pollMs = 100 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const sample = await page.evaluate(() => globalThis.__madLive?.latest() ?? null);
+    if (sample) return sample;
+    await page.waitForTimeout(pollMs);
+  }
+  return null;
+}
+
 // The suite's fixed `waitForTimeout` settles assumed the emulator simulates at
 // real time. It does not, and cannot: in free-running mode `apply_pace` sleeps
 // one wall microsecond per virtual microsecond, so the real-time factor is
@@ -1598,11 +1613,22 @@ const scenarios = [
         await page.getByText('Motion: enabled').waitFor({ timeout: DEVICE_WAIT_MS });
 
         const live = () => page.evaluate(() => globalThis.__madLive?.latest() ?? null);
-        assert(await live(), 'the live sample ring is exposed (dev build)');
+        // Wait for a non-null sample: `__madLive` is set at module load in DEV,
+        // but latest() is null until the first ring write (empty-ring race after
+        // motion-enable / store timeout — see waitForLiveSample).
+        const before = await waitForLiveSample(page);
+        assert(before, 'the live sample ring is exposed (dev build)');
 
         await page.getByLabel('Jog (mm)').fill('2');
         await page.getByLabel('Speed (mm/s)').fill('5');
-        const before = await live();
+        // settleMotion, not bare awaitRest: awaitRest returns when the axis is
+        // still — if the jog has not started yet, four still polls (~1 s) false-
+        // settle on the pre-jog position. M13-home documents the same trap and
+        // waits for motion to start first; settleMotion's setpointWas phase is
+        // the equivalent for a commanded jog (same pattern as TC14 / M8).
+        const setWas = parseFloat(
+          await page.locator('.readout', { hasText: 'Machine Setpoint' }).locator('.value').first().innerText(),
+        );
         await page.getByRole('button', { name: '+ Jog up' }).click();
         // Sample the ring WHILE the carriage moves. One reading at rest proves
         // nothing: a stream quantised to micrometres still lands off a whole
@@ -1621,7 +1647,10 @@ const scenarios = [
           }
           return out;
         }, 700);
-        await awaitRest(page);
+        // settleMotion, not bare awaitRest: awaitRest returns when the axis is
+        // still — if the jog has not started yet (or sampling finishes early),
+        // four still polls (~1 s) can false-settle on the pre-jog position.
+        await settleMotion(page, { setpointWas: Number.isFinite(setWas) ? setWas : null });
         const after = await live();
 
         const movedMm = after.machinePosition - before.machinePosition;
@@ -1680,7 +1709,7 @@ const scenarios = [
         await page.getByText('Motion: enabled').waitFor({ timeout: DEVICE_WAIT_MS });
 
         const live = () => page.evaluate(() => globalThis.__madLive?.latest() ?? null);
-        const before = await live();
+        const before = await waitForLiveSample(page);
         assert(before, 'the live sample ring is exposed (dev build)');
         await page.getByRole('button', { name: 'Home (G28)' }).click();
 
@@ -2832,6 +2861,12 @@ async function main() {
       pass += 1;
     } catch (err) {
       console.log('❌');
+      // Log the assertion/message immediately — dumpFailureArtifacts and
+      // recoverMachine can take minutes, and a job-timeout cancel skips the
+      // end-of-suite Failures: summary (and artifact upload). Without this,
+      // cancelled runs only show ❌ with no reason in the log.
+      console.error(`  → ${s.id}: ${err && err.message ? err.message : err}`);
+      if (err && err.stack) console.error(err.stack);
       failures.push(`${s.id} ${s.name}: ${err.message}`);
       // Every failure carries the app's merged main+worker log, so a red CI run
       // is diagnosable without reproducing it locally.
