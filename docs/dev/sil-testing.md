@@ -27,8 +27,6 @@ build it for you.
 | `make playground` | ISS on `/tmp/tty.rpi` for **manual** testing — **real-time pacing** (`--speed 1`), release build. |
 | `make playground-iss` | The same ISS on `/tmp/tty.iss`, so a manual session does not take `/tmp/tty.rpi`. |
 | `make playground-rom` | The ISS booting the mask ROM, the host on the programming UART (`P62`/`P63`) |
-| `make vm-image` | Build the Chrome guest image the computer node boots (once, ~10 min, cached under `~/.cache/embsim`) |
-| `make playground-cosim` | The ISS with the host as a **computer node**: Chrome in a QEMU guest whose clock the board meters. **The e2e configuration.** DevTools on 9222, the control surface on 9223. |
 | `make e2e-emulator` | The ISS behind the WS bridge, unpaced. **Not a valid SIL configuration** (below); no CI job runs it. |
 | `make test` | Build the image + protocol, then `cargo test` (includes the MaDSim PTY protocol smoke — no Chrome) |
 | `make clean` | Remove build artifacts and `cargo clean` |
@@ -48,8 +46,15 @@ This starts the `mad-emulator` binary with a virtual serial port at
 There is one valid SIL configuration for the suite: the P2 image on the ISS,
 and Chrome inside a QEMU guest the board's clock meters, talking real Web
 Serial to the board's emulated FTDI. The browser cannot outrun the board,
-because the board decides when the guest's vCPU runs at all. From `SIL/` and
-`Software/Control/`, in separate terminals:
+because the board decides when the guest's vCPU runs at all.
+
+**At the pinned embsim (0.2.0) there is no such host.** embsim 0.2.0 removed
+the Chrome guest that `mad-emulator --computer` ran (with it the `vm-image` and
+`playground-cosim` targets), and the host kind that replaces it, one the
+board's clock meters, is embsim's to deliver (`SIL/embsim/MIGRATING-MAD.md` §2,
+E4). Until then no run of the board-touching scenarios is a valid
+configuration, and the nightly that ran them (`e2e-nightly.yml`) is off. At
+embsim c5641f6 the run was:
 
 ```bash
 make vm-image                                   # once
@@ -58,8 +63,7 @@ npm run dev -- --host                           # the guest fetches from 10.0.2.
 CDP_URL=http://127.0.0.1:9222 npm run e2e       # or e2e:smoke
 ```
 
-The ISS runs at a few percent of real time, so this is the nightly job
-(`e2e-nightly.yml`), not a per-PR one. Per PR, `control-e2e-boardless` runs the
+Per PR, and on every move of the embsim pin, `control-e2e-boardless` runs the
 scenarios that need no board at all (A1 and the firmware-flash `FW*` ones),
 which launch a host Chrome against in-page fakes.
 

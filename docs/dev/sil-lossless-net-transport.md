@@ -1,5 +1,11 @@
 # Lossless net transport — scope
 
+> **Status (2026-10-07): landed in embsim 0.2.0**, which MaD pins. The byte route
+> (`StreamRole::Producer`/`Consumer`) and the pulse route are gone: a UART byte
+> crosses the net as levels framed at its baud, and a step train is a
+> `Drive::Periodic`. This page is the scope as written; its code citations are of
+> the tree at the time.
+
 **Goal:** nothing bypasses the net. Every pin carries a waveform that is exactly
 lossless for the signal on it, so one interface serves every peripheral we ever
 add, and electrical faults — contention, a floating pin, a missing pull-up —

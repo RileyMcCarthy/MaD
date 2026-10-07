@@ -542,7 +542,9 @@ on this machine, on the emulator's PTY (`make playground-iss` or
 behind the page will time out a live board. That is fine for looking, and
 worthless for asserting.
 
-The e2e suite therefore runs on the computer node (`make playground-cosim`):
-Chrome inside a QEMU guest whose vCPU runs only when the board grants it a
-slice, so the page's timeouts are metered by the board's clock. It is the only
-valid SIL configuration for a test.
+The e2e suite therefore runs on the computer node: Chrome inside a QEMU guest
+whose vCPU runs only when the board grants it a slice, so the page's timeouts
+are metered by the board's clock. It is the only valid SIL configuration for a
+test. At the pinned embsim (0.2.0) it has no host: 0.2.0 removed the Chrome
+guest (`make playground-cosim` with it), and embsim owes the replacement
+(`SIL/embsim/MIGRATING-MAD.md` §2, E4).

@@ -111,12 +111,12 @@ Frontend-only browser PWA — the browser talks straight to the Propeller 2 over
 ### SIL Emulator Architecture
 Rust **Cargo workspace** under `SIL/` (see `SIL/Cargo.toml`; members are the MaD-side crates — `MaDSim`, `models`, and `protocol` (an out-of-tree member living at `Protocol/rust/`, next to its schema). The `embsim/*` crates below live in the `SIL/embsim` submodule, which is its own workspace, and are consumed as path deps):
 
-- **`MaDSim/`** — `mad-emulator` binary: runs the Propeller 2 image on the ISS (`p2iss` / `p2core`), with pins on nets and the host on a PTY, or (`--computer`, `make playground-cosim`) Chrome in a QEMU guest metered by the board's clock — the only valid configuration for the e2e suite.
+- **`MaDSim/`** — `mad-emulator` binary: runs the Propeller 2 image on the ISS (`p2iss` / `p2core`), with pins on nets and the host on a PTY. The only valid configuration for the e2e suite, Chrome in a QEMU guest metered by the board's clock, has no host at the pinned embsim: 0.2.0 removed the Chrome guest, and embsim owes its replacement (`SIL/embsim/MIGRATING-MAD.md` §2, E4).
 - **`embsim/core`** — PTY, timing, shared plumbing.
-- **`embsim/peripherals`** — HAL stand-ins (serial, GPIO, pulse trains, encoder, etc.).
+- **`embsim/board`** — the board engine: nets, netlists, and the one interface between a part and the board (`PinDecl` with its role and thresholds, `Drive`, `Sense`).
 - **`protocol`** (at `Protocol/rust/`, next to the schema) — **generated** Rust codec under `src/generated/` (do not hand-edit; `make protocol`). Imported by nothing; exists so the generated code + roundtrip tests stay compiled in `cargo test`.
-- **`embsim/platforms/p2`** — FFI / stubs linking firmware into the emulator.
-- **`embsim/models`** — Physics-style models (e.g. gantry, force path, sampling).
+- **`embsim/boards`** — the P2-EC32MB module from its vendor netlist, and the P2 package a CPU core sits in.
+- **`embsim/models`** — part and machine models (flash, SD card, ADS122U04, stepper, encoder, switches, rails).
 - **`embsim/tools/*`** — trace viewer, memory inspect, UI shell helpers.
 
 End-to-end coverage lives with the app it exercises: `Software/Control/e2e/` drives the shipped app against this emulator.

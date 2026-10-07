@@ -8,10 +8,13 @@
  * the ISS, and Chrome inside a QEMU guest the board's clock meters, talking
  * real Web Serial to the emulated FTDI (the computer node). The browser cannot
  * outrun the board, because the board decides when the browser's vCPU runs at
- * all:
+ * all. At embsim c5641f6 it ran as
  *   cd SIL && make playground-cosim    # DevTools on 9222, control on 9223
  *   npm run dev -- --host              # the guest fetches from 10.0.2.2:5174
  *   CDP_URL=http://127.0.0.1:9222 npm run e2e
+ * and embsim 0.2.0, the pinned release, removed that guest: until embsim
+ * delivers the host kind that replaces it (MIGRATING-MAD.md section 2, E4)
+ * nothing serves CDP_URL, and only the board-free scenarios below run.
  *
  * Every budget here is multiplied by E2E_TIMEOUT_SCALE (10 by default under
  * CDP). The three link-drop scenarios go through fixtures' dropLink(), which
@@ -2812,7 +2815,7 @@ async function main() {
   } catch {
     console.error(
       `✗ App not reachable at ${APP_URL_HOST}. Start: ${
-        CDP_URL ? 'npm run dev -- --host (and make playground-cosim)' : 'npm run dev'
+        CDP_URL ? 'npm run dev -- --host (and the computer node behind CDP_URL)' : 'npm run dev'
       }.`,
     );
     process.exit(2);

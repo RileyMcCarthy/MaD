@@ -62,7 +62,8 @@ cd Software/Control && npm run verify
 python3 Protocol/scripts/check_schema_domain_lockstep.py
 
 # WASM e2e vs live SIL (includes TM-busy-restart / TM-manual-gate)
-# requires: make playground-cosim + npm run dev -- --host, and CDP_URL below
+# requires the computer node (none at the pinned embsim 0.2.0; embsim's E4)
+# + npm run dev -- --host, and CDP_URL below
 export CDP_URL=http://127.0.0.1:9222
 npm run e2e
 # smoke subset (see e2e/smoke-ids.txt):

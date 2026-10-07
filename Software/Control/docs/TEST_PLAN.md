@@ -7,12 +7,14 @@ abstractions (SIL serial, OPFS data folder) live in the harness — never in `sr
 
 > **Status:** offline `npm run verify` and the board-free e2e scenarios (A1 and the
 > firmware-flash `FW*` ones, no emulator) **gate CI** (`control-e2e-boardless` is in
-> `ci-gate.needs`). The scenarios that touch the board run on the one valid SIL
-> configuration — the P2 image on the ISS with Chrome in a QEMU guest the board's
-> clock meters (`cd SIL && make playground-cosim`, `CDP_URL=http://127.0.0.1:9222`)
-> — nightly, because the ISS runs at a few percent of real time. Do not run the
-> suite against the ISS behind the WS bridge (`make playground`/`make e2e-emulator`):
-> that measures the host, not the machine.
+> `ci-gate.needs`). The scenarios that touch the board run on one valid SIL
+> configuration only — the P2 image on the ISS with Chrome in a QEMU guest the
+> board's clock meters (`CDP_URL=http://127.0.0.1:9222`) — and at the pinned embsim
+> (0.2.0) nothing provides it: 0.2.0 removed the Chrome guest, and embsim owes the
+> host that replaces it (`SIL/embsim/MIGRATING-MAD.md` §2, E4). The nightly that
+> ran them is off until then. Do not run the suite against the ISS behind the WS
+> bridge (`make playground`/`make e2e-emulator`): that measures the host, not the
+> machine.
 
 ---
 
@@ -55,13 +57,15 @@ WS↔PTY bridge, and overrides `showDirectoryPicker` to return an **OPFS**
 directory. Also stubs the capability gate.
 
 **Preconditions** (the computer node; with `CDP_URL` set the fake serial is not
-installed and pages open in the guest's Chrome):
+installed and pages open in the guest's Chrome). At embsim c5641f6 this was:
 ```bash
 cd SIL && make vm-image            # once
 cd SIL && make playground-cosim    # DevTools on 9222, control surface on 9223
 npm run dev -- --host              # the guest fetches from 10.0.2.2:5174
 CDP_URL=http://127.0.0.1:9222 npm run e2e
 ```
+Both make targets went with embsim 0.2.0's removal of the Chrome guest; the
+computer node returns with embsim's E4.
 The runner (`e2e/run-all.mjs`) asserts the dev server (5174) is reachable and resets
 the OPFS test dir between runs. Without `CDP_URL` only the board-free scenarios mean
 anything (`SCENARIOS=A1,FW1,FW2,FW3,FW5,FW6,FW7,FW8,FW9 npm run e2e`, no emulator).

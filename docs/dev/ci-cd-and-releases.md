@@ -40,15 +40,18 @@ A docs-only PR now runs `docs-ci` (and nothing else); before that job existed it
 The e2e suite runs the real app in a real Chrome against the firmware. There is
 one valid configuration for the scenarios that touch the board: the shipped P2
 image on the ISS, and Chrome inside a QEMU guest whose clock the board meters,
-talking real Web Serial to the board's emulated FTDI (`make playground-cosim`).
+talking real Web Serial to the board's emulated FTDI (the computer node).
 The ISS behind the WS↔PTY bridge is not one: the bridge hands the board's bytes
 to a browser running at host speed, so every wait measures the host rather than
 the machine.
 
 The computer node runs at a few percent of real time, which a per-PR gate cannot
-afford, so it is `e2e-nightly.yml`'s job (`cosim-iss-qemu`, the smoke subset by
-default, `suite=full` on dispatch). Per PR, `control-e2e-boardless` **gates** on
-the scenarios that never reach a board.
+afford, so it was `e2e-nightly.yml`'s job (`cosim-iss-qemu`). At the pinned
+embsim (0.2.0) it has no host: 0.2.0 removed the Chrome guest, and the host
+that replaces it is embsim's to deliver (`SIL/embsim/MIGRATING-MAD.md` §2, E4),
+so the nightly is off until then. Per PR, and whenever the `SIL/embsim` pin
+moves (#148), `control-e2e-boardless` **gates** on the scenarios that never
+reach a board; `sil-rust` exercises `mad-emulator` itself against the pin.
 
 Until the native firmware library was removed, `control-e2e-sil` ran the full
 suite per PR against that library behind the bridge, unpaced (`--speed 0`) so the

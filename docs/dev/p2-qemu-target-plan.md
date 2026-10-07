@@ -17,7 +17,7 @@ ahead — see [Relation to the embsim promotion](#relation-to-the-embsim-promoti
 **Crossing 1.0x real time is the prize, and only a JIT gets there.** Below
 1.0x, a browser outside the emulator sees its timeouts fire early, so the e2e
 suite runs its browser inside a QEMU guest the board's clock meters (the
-computer node, `make playground-cosim`). At ≥1.0x a browser's timeouts mean
+computer node; embsim 0.2.0 removed its Chrome guest, and E4 replaces it). At ≥1.0x a browser's timeouts mean
 the same thing they mean on the bench.
 
 ### The arithmetic this rests on

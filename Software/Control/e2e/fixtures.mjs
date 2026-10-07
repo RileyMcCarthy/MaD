@@ -81,8 +81,11 @@ export const chromium =
 
 /**
  * Computer-node mode: `CDP_URL` names the DevTools endpoint of the Chrome
- * running INSIDE the emulator's QEMU guest (`mad-emulator <image> --computer
- * <guest image>` prints it). Pages are then opened over CDP in that browser instead
+ * running INSIDE a QEMU guest the board's clock meters. At embsim c5641f6
+ * that was `mad-emulator <image> --computer <guest image>`; embsim 0.2.0, the
+ * pinned release, removed the guest, and the host kind that replaces it is
+ * embsim's to deliver (MIGRATING-MAD.md section 2, E4), so nothing serves this
+ * mode until then. Pages are then opened over CDP in that browser instead
  * of a host Chrome, the app uses its real Web Serial (the guest's managed
  * policy grants the board's FTDI without a picker), and the fake serial is
  * not installed. The guest lives on the board's clock, so every wall-clock
@@ -93,8 +96,9 @@ export const chromium =
 export const CDP_URL = process.env.CDP_URL || '';
 export const APP_URL =
   process.env.APP_URL || (CDP_URL ? 'http://10.0.2.2:5174/' : 'http://localhost:5174/');
-/// Where the board's control surface lives (mad-emulator --trace-port). Only
-/// used in computer-node mode: under the bridge the link is severed in-page.
+/// Where the board's control surface lives (the computer node's `link/unplug`
+/// and `link/plug` actions). Only used in computer-node mode: under the bridge
+/// the link is severed in-page.
 export const CONTROL_URL = process.env.CONTROL_URL || 'http://127.0.0.1:9223';
 
 /// How long the port stays out in computer-node mode. Wall clock, and the
@@ -140,7 +144,7 @@ async function controlAction(name) {
   const r = await fetch(`${CONTROL_URL}/action/${name}`, { method: 'POST' });
   if (!r.ok) {
     throw new Error(
-      `${name} failed (${r.status}): ${await r.text()}. Is mad-emulator running with --trace-port?`,
+      `${name} failed (${r.status}): ${await r.text()}. Is the board's control surface up at ${CONTROL_URL}?`,
     );
   }
 }
