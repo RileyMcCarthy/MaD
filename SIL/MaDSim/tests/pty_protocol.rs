@@ -2,8 +2,10 @@
 //! on its host PTY.
 //!
 //! This is the layer between `cargo test` of the models crate and the Control
-//! Playwright suite. It catches "firmware linked but never answers" without a
+//! Playwright suite. It catches "the ISS booted but never answers" without a
 //! browser, a bridge, or `/tmp/tty.rpi`.
+//!
+//! Skipped when the P2 image is absent, the same way the `p2iss` suite is.
 //!
 //! Unique PTY/SD paths so this can run next to other cargo tests. Do not point
 //! it at the playground symlink.
@@ -67,25 +69,24 @@ fn drain_pipe<R: Read + Send + 'static>(pipe: R, sink: Arc<Mutex<String>>) {
     });
 }
 
-fn firmware_lib() -> PathBuf {
-    // CLI default is relative to SIL/ (makefile playground). cargo test runs
-    // with cwd = MaDSim/, so we pin the archive from this crate's manifest.
-    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../Firmware/MaDCore/.pio/build/native_emulator/libfirmware.a");
-    if !p.is_file() {
-        panic!(
-            "libfirmware.a missing at {}\nBuild it first:\n  cd Firmware/MaDCore && pio run -e native_emulator",
-            p.display()
-        );
-    }
-    p
+fn image_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../Firmware/MaDCore/.pio/build/propeller2_debug/program")
 }
 
-fn spawn_emulator() -> Emulator {
+fn spawn_emulator() -> Option<Emulator> {
+    let image = image_path();
+    if !image.is_file() {
+        eprintln!(
+            "\n*** SKIPPED: {} needs the P2 image at\n***   {}\n*** Build it with `make p2image` (or `cd Firmware/MaDCore && pio run -e propeller2_debug`).\n*** This test asserted NOTHING.\n",
+            module_path!(),
+            image.display()
+        );
+        return None;
+    }
     let pty = unique("tty");
     let sd = unique("sd");
     fs::create_dir_all(&sd).expect("create temp SD dir");
-    let firmware = firmware_lib();
 
     let exe = env!("CARGO_BIN_EXE_mad-emulator");
     let mut child = Command::new(exe)
@@ -96,12 +97,9 @@ fn spawn_emulator() -> Emulator {
             pty.to_str().expect("pty utf8"),
             "--sd-path",
             sd.to_str().expect("sd utf8"),
-            "--firmware-lib",
-            firmware.to_str().expect("firmware utf8"),
             "--log-level",
             "info",
-            "--trace-port",
-            "0",
+            image.to_str().expect("image utf8"),
         ])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -116,12 +114,12 @@ fn spawn_emulator() -> Emulator {
         drain_pipe(err, Arc::clone(&logs));
     }
 
-    Emulator {
+    Some(Emulator {
         child,
         logs,
         pty,
         sd,
-    }
+    })
 }
 
 fn logs_of(emu: &Emulator) -> String {
@@ -176,7 +174,9 @@ fn find_firmware_version_data(buf: &[u8]) -> bool {
 
 #[test]
 fn firmware_answers_firmware_version_on_the_host_pty() {
-    let mut emu = spawn_emulator();
+    let Some(mut emu) = spawn_emulator() else {
+        return;
+    };
     wait_for_pty(&mut emu, Duration::from_secs(30));
 
     // The symlink can exist a beat before the slave is openable.

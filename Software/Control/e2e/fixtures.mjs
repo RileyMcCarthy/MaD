@@ -79,25 +79,12 @@ function withCoverage(browserType) {
 export const chromium =
   process.env.MAD_COVERAGE === '1' ? withCoverage(playwright.chromium) : playwright.chromium;
 
-/**
- * Computer-node mode: `CDP_URL` names the DevTools endpoint of the Chrome
- * running INSIDE the emulator's QEMU guest (`mad-emulator --iss ... --computer
- * <image>` prints it). Pages are then opened over CDP in that browser instead
- * of a host Chrome, the app uses its real Web Serial (the guest's managed
- * policy grants the board's FTDI without a picker), and the fake serial is
- * not installed. The guest lives on the board's clock, so every wall-clock
- * wait in the harness is scaled by `E2E_TIMEOUT_SCALE` (default 10 here).
- * Serve the app to the guest with `npm run dev -- --host`; it reaches the
- * host at 10.0.2.2.
- */
-export const CDP_URL = process.env.CDP_URL || '';
-export const APP_URL =
-  process.env.APP_URL || (CDP_URL ? 'http://10.0.2.2:5174/' : 'http://localhost:5174/');
-/** Where the runner checks the dev server from the HOST (the guest's URL is not routable here). */
-export const APP_URL_HOST = process.env.APP_URL_HOST || (CDP_URL ? 'http://localhost:5174/' : APP_URL);
+export const APP_URL = process.env.APP_URL || 'http://localhost:5174/';
+/** Where the runner checks the dev server from the host. */
+export const APP_URL_HOST = process.env.APP_URL_HOST || APP_URL;
 export const BRIDGE_URL = process.env.BRIDGE_URL || 'ws://localhost:9999';
-export const TIMEOUT_SCALE = Number(process.env.E2E_TIMEOUT_SCALE || (CDP_URL ? 10 : 1));
-/** A wall-clock budget, scaled for a browser that lives on simulated time. */
+/** Wall-clock budget. `E2E_TIMEOUT_SCALE` stretches it on a slow host. */
+export const TIMEOUT_SCALE = Number(process.env.E2E_TIMEOUT_SCALE || 1);
 export const T = (ms) => Math.round(ms * TIMEOUT_SCALE);
 export const OPFS_DIR = process.env.OPFS_DIR || 'mad-e2e';
 
@@ -246,25 +233,8 @@ export function installOpfsDataDir(dirName) {
  * Pass { headed: true } to watch it.
  */
 export async function newSilPage({ headed = false } = {}) {
-  let browser;
-  let page;
-  if (CDP_URL) {
-    // The browser inside the computer node: attach, never launch. Closing
-    // the Browser object later only disconnects; the guest's Chrome lives on.
-    browser = await chromium.connectOverCDP(CDP_URL, { timeout: T(30000) });
-    // A fresh context per scenario. The guest's Chrome outlives every
-    // scenario, and its default profile would carry the app's remembered
-    // port and data folder from one to the next — the app then reconnects
-    // by itself and the harness's clicks land on a screen that is already
-    // moving on. A new context is isolated storage (and is torn down by
-    // browser.close(), page and serial port with it).
-    const context = await browser.newContext();
-    page = await context.newPage();
-    page.setDefaultTimeout(T(30000));
-  } else {
-    browser = await chromium.launch({ channel: 'chrome', headless: !headed });
-    page = await browser.newPage();
-  }
+  const browser = await chromium.launch({ channel: 'chrome', headless: !headed });
+  const page = await browser.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
   // Console output is captured too: a failure that happens before the app boots
@@ -276,9 +246,7 @@ export async function newSilPage({ headed = false } = {}) {
     if (consoleLines.length > 500) consoleLines.shift();
   });
   page.__madConsole = consoleLines;
-  // Init scripts ride CDP too, so the OPFS picker fake works in the guest;
-  // only the serial fake is host-only — the guest has the real thing.
-  if (!CDP_URL) await page.addInitScript(installFakeSerial, BRIDGE_URL);
+  await page.addInitScript(installFakeSerial, BRIDGE_URL);
   await page.addInitScript(installOpfsDataDir, OPFS_DIR);
 
   // Scenarios close their browser in a `finally`, which runs BEFORE the runner's
@@ -292,9 +260,6 @@ export async function newSilPage({ headed = false } = {}) {
       console: consoleLines.slice(),
       log: await readAppLog(page),
     };
-    // Over CDP, closing the Browser object only disconnects; the page (and
-    // the serial port it holds) must be closed explicitly.
-    if (CDP_URL) await page.close().catch(() => {});
     return closeBrowser(...args);
   };
 
@@ -390,16 +355,8 @@ export function setCurrentScenario(id) {
 }
 
 /** Connect the app to SIL via the UI (call after navigating to the app). */
-/**
- * The granted port that is the board. On the host the fake grants exactly
- * one; in the computer node the guest's managed policy grants every port —
- * its own consoles included — and the board is the emulated FTDI (USB
- * 0403:6001), whose label is a sibling of the button in its row.
- */
+/** The granted port that is the board. The fake grants exactly one. */
 export function boardGrantedPort(page) {
-  if (CDP_URL) {
-    return page.locator('.row', { hasText: /403:6001/i }).getByTestId('connect-granted').first();
-  }
   return page.getByTestId('connect-granted').first();
 }
 
@@ -407,15 +364,8 @@ export async function connectToSil(page) {
   await page.goto(`${APP_URL}#/connect`);
   // First point at which the app is loaded and can take a marker.
   if (currentScenario !== null) await markAppLog(page, `scenario ${currentScenario}`);
-  if (CDP_URL) {
-    // Real Web Serial: the guest's managed policy has already granted every
-    // port, so the Connect screen lists them; pick the board's FTDI (the
-    // emulated FT232, USB 0403:6001) rather than the guest's own consoles.
-    await boardGrantedPort(page).click({ timeout: T(10000) });
-  } else {
-    // The primary button (testid connect-device) prompts requestPort() → our fake.
-    await page.getByTestId('connect-device').click();
-  }
+  // The primary button (testid connect-device) prompts requestPort() → our fake.
+  await page.getByTestId('connect-device').click();
   // Wait until the store reports connected — the status dot gets `.connected`.
   // (Matching on text would falsely hit "Disconnected".)
   await page.locator('.dot.connected').waitFor({ timeout: T(10000) });

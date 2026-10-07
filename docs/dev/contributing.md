@@ -10,8 +10,8 @@ Run the gate(s) for the area you touched (see
 [CI/CD](ci-cd-and-releases.md#running-the-gates-locally)). At minimum:
 
 - **App:** `npm run verify` in `Software/Control`.
-- **Firmware:** `pio check` + `pio test -e native_test`, and build both
-  `native_emulator` and `propeller2`.
+- **Firmware:** `pio check` + `pio test -e native_test`, and build `propeller2`.
+  The SIL emulator runs the `propeller2_debug` image (`make p2image`).
 - **Protocol:** regenerate all consumers and run `./examples/verify.sh`.
 - **Anything user-facing:** `mkdocs build --strict` if you changed docs.
 

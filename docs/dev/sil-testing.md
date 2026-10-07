@@ -1,29 +1,33 @@
 # SIL testing
 
-The [SIL emulator](../how-it-works/sil-emulator.md) runs the **real firmware** on
-your host with emulated peripherals, so you can test the whole stack — firmware,
-protocol, app — without hardware. All `make` commands run from `SIL/`.
+The [SIL emulator](../how-it-works/sil-emulator.md) executes the **Propeller 2
+image** on the instruction-set simulator, with the machine's pins on nets, so
+you can test the whole stack — firmware, protocol, app — without hardware. All
+`make` commands run from `SIL/`.
 
 ## Build the emulator
 
 ```bash
 cd SIL
 git submodule update --init --recursive   # first time: embsim + ProtoEmb submodules
-make emulator     # build firmware (.a) + Rust protocol types, then cargo build
+make emulator     # Rust protocol types, then cargo build
+make p2image      # the propeller2_debug image the emulator executes
 ```
 
-`make emulator` chains the pieces: `make firmware` (`pio run -e native_emulator`),
-`make protocol` (generate the Rust codec into `Protocol/rust/src/generated`), then
-`cargo build`.
+`make emulator` generates the Rust codec into `Protocol/rust/src/generated`
+(`make protocol`) and then `cargo build`. The image is a runtime input, built
+by `make p2image` (`pio run -e propeller2_debug`). `make playground` and
+`make e2e-emulator` build it for you.
 
 | Target | What it does |
 |---|---|
-| `make firmware` | Build `libfirmware.a` via PlatformIO |
+| `make p2image` | Build the P2 image the ISS executes |
 | `make protocol` | Regenerate the Rust protocol types for SIL |
-| `make emulator` | Build firmware + protocol + the Rust workspace |
-| `make playground` | Run the emulator + trace viewer for **manual** testing — **real-time pacing** (`--speed 1`). What you see matches the physical machine. |
-| `make e2e-emulator` | Run the emulator for the **e2e suite** — **unpaced virtual time** (`--speed 0`), so results do not depend on host speed. CI uses this. |
-| `make test` | Build firmware + protocol, then `cargo test` (includes the MaDSim PTY protocol smoke — no Chrome) |
+| `make emulator` | Protocol + the Rust workspace |
+| `make playground` | ISS on `/tmp/tty.rpi` for **manual** testing — **real-time pacing** (`--speed 1`), release build. |
+| `make e2e-emulator` | The same ISS for the **e2e suite** — **unpaced virtual time** (`--speed 0`), so results do not depend on host speed. CI uses this. |
+| `make playground-iss` | The same ISS on `/tmp/tty.iss`, so a manual session does not take the e2e PTY. |
+| `make test` | Build the image + protocol, then `cargo test` (includes the MaDSim PTY protocol smoke — no Chrome) |
 | `make clean` | Remove build artifacts and `cargo clean` |
 
 ## Manual testing with the playground
@@ -34,8 +38,7 @@ make playground
 ```
 
 This starts the `mad-emulator` binary with a virtual serial port at
-`/tmp/tty.rpi` and a **trace viewer** at <http://localhost:3000> showing live
-signals (stepper position, force, GPIO, encoder, …).
+`/tmp/tty.rpi`. The host is a browser outside the emulator.
 
 ## Driving the web app against the emulator
 
@@ -68,7 +71,7 @@ the binary, send a `firmware_version` READ, expect a DATA frame. It runs as part
 of `make test` / `sil-rust` and does not use `/tmp/tty.rpi`.
 
 !!! note "SIL is single-instance"
-    There is exactly [one firmware per process](../how-it-works/sil-emulator.md#one-firmware-per-process),
+    There is exactly [one emulator per process](../how-it-works/sil-emulator.md#one-emulator-per-process),
     so scenarios run serially against one emulator (the moral equivalent of
     `workers: 1`). Close `sil:app` before running `e2e` — only one bridge reader
     at a time.

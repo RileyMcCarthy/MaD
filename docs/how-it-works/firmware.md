@@ -348,10 +348,7 @@ The firmware builds for hardware and for the host-side test rig:
 | PlatformIO environment | Purpose |
 |---|---|
 | `propeller2` | Production hardware build (FlexC) |
-| `propeller2_debug` | Hardware build with debug serial |
-| `native_emulator` | Compiles the firmware as `libfirmware.a` (gcc) for the [SIL emulator](sil-emulator.md) |
-| `native_test` | Unity unit tests (native gcc) |
+| `propeller2_debug` | Hardware build with debug serial. This image is what the [SIL emulator](sil-emulator.md) executes. |
+| `native_test` | Unity unit tests on the host, against a mock HAL |
 
-The `native_emulator` build excludes the `HAL/` and `HW/` layers (the emulator
-supplies its own HAL) and `Main/main.c` (the emulator calls `mad_begin()`
-directly). See [Building the firmware](../dev/building-firmware.md).
+See [Building the firmware](../dev/building-firmware.md).

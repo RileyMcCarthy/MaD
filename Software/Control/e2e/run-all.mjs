@@ -4,28 +4,16 @@
  * Drives the real app against the live SIL emulator and an OPFS data folder —
  * see fixtures.mjs and docs/TEST_PLAN.md.
  *
- * There are exactly TWO valid configurations, and each pairs a firmware backend
- * with a way of providing serial. Do not mix them: the cross pairings either
- * cannot start (native + QEMU is refused by the emulator) or silently measure
- * the host rather than the machine (the ISS behind the bridge).
- *
- * (a) NATIVE + BRIDGE — host Chrome, fake serial over the WS bridge:
+ * The host is Chrome on this machine. The emulator's serial port is the PTY,
+ * and the fake `navigator.serial` talks to it through the WS bridge:
  *   cd SIL && make e2e-emulator        # emulator on /tmp/tty.rpi (unpaced virtual time)
  *   npm run sil:bridge                 # ws://localhost:9999
  *   npm run dev                        # app on http://localhost:5174
  *   npm run e2e
  *
- * (b) ISS + COMPUTER NODE — the shipped P2 image interpreted instruction by
- * instruction, and Chrome inside a QEMU guest the board's clock meters, talking
- * real Web Serial to the emulated FTDI. The browser cannot outrun the board,
- * because the board decides when the browser's vCPU runs at all:
- *   cd SIL && make playground-cosim    # prints the DevTools URL (port 9222)
- *   npm run dev -- --host              # the guest fetches from 10.0.2.2:5174
- *   CDP_URL=http://127.0.0.1:9222 npm run e2e
- *
- * In (b) every budget here is multiplied by E2E_TIMEOUT_SCALE (10 by default)
- * and the three link-drop scenarios are skipped — they need the fake serial's
- * `__silDropLink`, and a real port has nothing to reach in and sever.
+ * FW-ISS is skipped. It drove the mask ROM through a browser inside QEMU,
+ * and that guest is gone. A person flashes from the browser on the PTY
+ * (`make playground-rom`).
  *
  * Covers the parity-critical scenarios of docs/TEST_PLAN.md §4: A1, B1–B5, C1/C3/C4, D1/D2/D3,
  * E1, F1/F2/F4/F6/F7, G1/G2/G3 + G-limit, H1–H5, I1–I4, J1 (in G-limit), K1 (in B2+B3+B4) — plus
@@ -49,7 +37,6 @@ import {
   OPFS_DIR,
   APP_URL,
   APP_URL_HOST,
-  CDP_URL,
   T,
   boardGrantedPort,
   chromium,
@@ -82,11 +69,8 @@ const MATRIX = JSON.parse(
 // raising the ceiling cannot weaken an assertion — it only stops a slow host
 // from being reported as a broken one.
 //
-// On the ISS the multiplier is not a slow host but the execution model: the
-// board interprets every P2 instruction, and the browser is inside a VM the
-// board's clock meters, so a simulated second costs far more than a second of
-// wall time. `T()` carries that factor (E2E_TIMEOUT_SCALE, 10x under CDP) so
-// both SIL configurations share one set of budgets instead of two.
+// `T()` multiplies by E2E_TIMEOUT_SCALE (1 unless the environment sets it) so a
+// slow host can stretch every budget without a second copy of the suite.
 const DEVICE_WAIT_MS = T(60_000);
 
 // Budget for a whole TEST PROGRAM: upload, execute every move, complete, and
@@ -2470,6 +2454,39 @@ const scenarios = [
     },
   },
   {
+    id: 'FW-ISS',
+    name: 'Firmware: UI flash talks to the ISS mask ROM over Web Serial',
+    async run() {
+      // Skipped in main(): the in-sim Chrome guest this scenario drove is gone.
+      // Flashing is a host browser on `make playground-rom`.
+      const { browser, page, errors } = await newSilPage();
+      try {
+        page.on('dialog', (d) => d.accept());
+        await page.goto(`${APP_URL}#/firmware`);
+        await page.getByTestId('flash-target').filter({ hasText: /USB 0403:6015/ })
+          .waitFor({ timeout: DEVICE_WAIT_MS });
+
+        const payload = Buffer.from([
+          0x42, 0xEC, 0x07, 0xF6,
+          0x3E, 0xEC, 0x27, 0xFC,
+          0xFC, 0xFF, 0x9F, 0xFD,
+        ]);
+        await page.getByTestId('firmware-file').setInputFiles({
+          name: 'program.bin',
+          mimeType: 'application/octet-stream',
+          buffer: payload,
+        });
+
+        await page.getByTestId('flash-firmware').click();
+        await page.getByTestId('flash-status').filter({ hasText: /Wrote .* bytes to flash/ })
+          .waitFor({ timeout: T(120000) });
+        assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
+      } finally {
+        await browser.close();
+      }
+    },
+  },
+  {
     id: 'FW3',
     name: 'Firmware: refuses to guess a target when adapters are ambiguous',
     async run() {
@@ -2682,11 +2699,7 @@ async function main() {
     if (!res.ok) throw new Error(String(res.status));
   } catch {
     console.error(
-      `✗ App not reachable at ${APP_URL_HOST}. Start: ${
-        CDP_URL
-          ? 'npm run dev -- --host (and make playground-cosim)'
-          : 'npm run dev (and make e2e-emulator + npm run sil:bridge)'
-      }.`,
+      `✗ App not reachable at ${APP_URL_HOST}. Start: npm run dev (and make e2e-emulator + npm run sil:bridge).`,
     );
     process.exit(2);
   }
@@ -2723,17 +2736,10 @@ async function main() {
 
   let pass = 0;
   const failures = [];
-  // These three sever the link mid-test to prove the app's reconnect path. They
-  // do it through `window.__silDropLink()`, which the fake serial installs — so
-  // they are meaningful only in the bridge configuration. In computer-node mode
-  // the browser holds a real Web Serial port to the board's emulated FTDI and
-  // there is nothing to reach in and drop; skip them rather than assert on a
-  // hook that is not there.
-  const HOST_ONLY = new Set(['B5-reconnect', 'M11-idle-drop', 'M11-mid-test-drop']);
   let skipped = 0;
   for (const s of selected) {
-    if (CDP_URL && HOST_ONLY.has(s.id)) {
-      console.log(`  ~ ${s.id}: skipped in computer-node mode (needs the fake serial's __silDropLink)`);
+    if (s.id === 'FW-ISS') {
+      console.log(`  ~ ${s.id}: skipped (the in-sim Chrome guest is gone; flash from the host browser on make playground-rom)`);
       skipped += 1;
       continue;
     }

@@ -323,9 +323,12 @@ jobs:
         run: pip install -r ../../Protocol/ProtoEmb/core/requirements.txt
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
-      - name: Build SIL emulator (firmware + protocol + cargo)
+      - name: Install propeller platform
+        working-directory: Firmware/MaDCore
+        run: pio pkg install --platform https://github.com/RileyMcCarthy/platform-propeller.git
+      - name: Build the P2 image and the emulator
         working-directory: SIL
-        run: make emulator
+        run: make p2image emulator
       - name: Install Control deps + wasm + proto
         run: |
           npm ci
@@ -343,7 +346,7 @@ jobs:
         working-directory: SIL
         run: |
           nohup make e2e-emulator > /tmp/mad-playground.log 2>&1 &
-          for i in $(seq 1 90); do
+          for i in $(seq 1 240); do
             if [ -e /tmp/tty.rpi ]; then echo "PTY ready after ${i}s"; break; fi
             sleep 2
           done
@@ -665,7 +668,7 @@ jobs:
         run: pipx run ruff==0.13.2 check --output-format=github Firmware/MaDCore/extra_scripts
 
   # BLOCKING. SIL Rust workspace: builds the generated protocol Rust
-  # (make protocol) + libfirmware.a (pio run -e native_emulator), then runs
+  # (make protocol) and the propeller2_debug image the ISS executes, then runs
   # rustfmt, clippy and cargo test — all three gating. The lint backlog that
   # kept clippy advisory has been cleared: the one real finding was fixed, and
   # the generated codec's template-style lints are allowed at the `mod`
@@ -676,7 +679,7 @@ jobs:
       needs.changes.outputs.is_release != 'true' &&
       needs.changes.outputs.sil == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
         with:
@@ -695,9 +698,12 @@ jobs:
       - name: Generate the Rust protocol codec (make protocol)
         working-directory: SIL
         run: make protocol
-      - name: Build firmware native lib (libfirmware.a)
+      - name: Install propeller platform
         working-directory: Firmware/MaDCore
-        run: pio run -e native_emulator
+        run: pio pkg install --platform https://github.com/RileyMcCarthy/platform-propeller.git
+      - name: Build the P2 image the ISS executes
+        working-directory: Firmware/MaDCore
+        run: pio run -e propeller2_debug
       # rustfmt covers the crates this repo authors. The `protocol` crate is
       # excluded because its body is `#[path]`-included generated code that
       # `make protocol` rewrites on every build — formatting it would be undone
@@ -819,16 +825,13 @@ jobs:
       - name: Build Firmware - Release Version
         working-directory: Firmware/MaDCore
         run: pio run -e propeller2_release --program-arg="-DFIRMWARE_VERSION=\"${{ steps.get_version.outputs.VERSION }}\""
-      - name: Build Firmware - Native library (for SIL testing)
-        working-directory: Firmware/MaDCore
-        run: pio run -e native_emulator --program-arg="-DFIRMWARE_VERSION=\"${{ steps.get_version.outputs.VERSION }}\""
       - name: Copy and rename build artifacts
         run: |
           set -uxo pipefail
           mkdir -p release-assets
           V="${{ steps.get_version.outputs.VERSION }}"
           echo "=== built artifacts under .pio/build ==="
-          find Firmware/MaDCore/.pio/build -maxdepth 2 -type f \( -name program -o -name libfirmware.a \) -print
+          find Firmware/MaDCore/.pio/build -maxdepth 2 -type f -name program -print
           # Best-effort: copy each artifact if present, warn (don't fail) if a build env's
           # output is absent. The build steps above are the real gate; artifact assembly is
           # release-prep. NOTE: propeller2_debug's output currently disappears after build
@@ -836,7 +839,6 @@ jobs:
           copy_if() { if [ -f "$1" ]; then cp "$1" "$2" && echo "copied -> $2"; else echo "::warning::artifact missing, skipped: $1"; fi; }
           copy_if "Firmware/MaDCore/.pio/build/propeller2_debug/program"     "release-assets/MaD-Firmware-$V-debug.bin"
           copy_if "Firmware/MaDCore/.pio/build/propeller2_release/program"   "release-assets/MaD-Firmware-$V-release.bin"
-          copy_if "Firmware/MaDCore/.pio/build/native_emulator/libfirmware.a" "release-assets/MaD-Firmware-$V-native.a"
           ls -la release-assets/
 
       - name: Set artifact name

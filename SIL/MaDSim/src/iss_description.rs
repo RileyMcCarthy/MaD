@@ -1,17 +1,9 @@
 //! The MaD board, described for the ISS.
 //!
-//! `system_description.rs` describes the same machine for the *native*
-//! backend, and the two cannot share a description because they speak
-//! different languages: the native one is keyed by HAL channel number and
-//! DWARF symbol, because it substitutes the HAL; this one is keyed by **pin**,
-//! because the ISS executes the firmware's real `WRPIN`/`DIR`/`OUT` and a pin
-//! is all it has.
-//!
-//! That difference is the point. Under the native backend a wrong `activeLow`
-//! in `HAL_GPIO_config.c` is invisible — the substituted HAL applies the
-//! inversion on both sides. Here the firmware applies it and the bench does
-//! not, so the polarity has to be right on the wire or the machine reads its
-//! own ESD lines as tripped.
+//! Keyed by pin, because the ISS executes the firmware's real `WRPIN`/`DIR`/`OUT`
+//! and a pin is all it has. The firmware applies `activeLow` itself and the
+//! bench does not, so the polarity has to be right on the wire or the machine
+//! reads its own ESD lines as tripped.
 
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
@@ -19,7 +11,7 @@ use std::sync::Arc;
 use embsim_board::netlist;
 use embsim_board::{
     AttachError, Board, Component, ComponentNetIo, EndpointRef, Harness, JumperState, Level,
-    PartRegistry, PinDecl, PinKind, Scenario, System, TheveninDrive,
+    PartRegistry, PinDecl, Scenario, System, TheveninDrive,
 };
 use embsim_models::ads122u04;
 use embsim_models::ads122u04_component::Ads122u04Component;
@@ -123,7 +115,7 @@ const PULL_OHMS: f64 = 15_000.0;
 
 /// The bench pull network: one weak resistor per input, to its idle rail.
 ///
-/// Without it every unconnected input floats, `level_of` returns `None`, and
+/// Without it every unconnected input floats, the receiver reads no level, and
 /// the adapter holds whatever it last saw — which at boot is low, i.e. all
 /// three active-low ESD lines reading *asserted*.
 pub struct BenchPulls {
@@ -136,13 +128,7 @@ impl BenchPulls {
         Self {
             pins: pulls
                 .iter()
-                .map(|(pin, _)| PinDecl {
-                    number: p2iss::pin_name(*pin),
-                    name: None,
-                    kind: PinKind::Analog,
-                    stream: None,
-                    drive_impedance: None,
-                })
+                .map(|(pin, _)| PinDecl::analog_source(p2iss::pin_name(*pin)))
                 .collect(),
             pulls: pulls.to_vec(),
         }
@@ -521,13 +507,7 @@ pub struct MisoPullUp {
 impl MisoPullUp {
     pub fn new() -> Self {
         Self {
-            pins: [PinDecl {
-                number: "A",
-                name: None,
-                kind: PinKind::Analog,
-                stream: None,
-                drive_impedance: None,
-            }],
+            pins: [PinDecl::analog_source("A")],
         }
     }
 }

@@ -1,42 +1,19 @@
 //! MaD SIL emulator entry point.
 //!
-//! Boot order matters, and it is not the historical one. The firmware runs
-//! **inside the simulated system**: the `P2EVAL`
-//! [`McuComponent`](embsim_board::mcu::McuComponent) in `system_description`
-//! owns `mad_begin()` and spawns it on a thread bound to its own
-//! [`PeripheralInstance`](embsim_peripherals::instance::PeripheralInstance)
-//! (`BOARD_ENGINE.md`, "The MCU as a component"). So:
-//!
-//! 1. parse args, read the firmware archive (DWARF + HAL config tables);
-//! 2. **describe the system** — this creates the MCU's peripheral instance;
-//! 3. **bind this thread to that instance**, so everything the runtime then
-//!    initializes through peripheral free functions (channel banks, locks,
-//!    threads, the host PTY, the SD mount) lands on the instance the firmware
-//!    will actually run against, not on the process default;
-//! 4. let `Emulator::run` do that init and call `Machine::wire` (models and
-//!    callbacks, all instance-routed);
-//! 5. from the emulator's entry hook — the "hand control to the firmware"
-//!    step — call `System::start`, which attaches every component onto the
-//!    live net engine and *then* spawns the firmware. The main thread has
-//!    nothing left to run and parks.
+//! The firmware under test is the Propeller 2 image, executed by the
+//! instruction-set simulator. Its pins are nets. The host is a PTY a browser
+//! outside the emulator opens. There is no host-compiled firmware and no HAL
+//! stand-in: `mad_begin` is not linked.
 
-#[cfg(feature = "web")]
 mod iss_description;
-mod machine_ui;
-#[cfg(feature = "web")]
-mod machine_view;
 mod system_description;
-mod wiring;
 
 use clap::Parser;
-use embsim_memory_inspect::FirmwareInfo;
-use embsim_peripherals::instance::{self, PeripheralInstance};
-use embsim_runtime::Emulator;
 use models::sample::{Config as SampleConfig, MaterialProperties, Sample};
 use models::{gantry, strain_gauge};
 use std::path::PathBuf;
 use std::sync::Arc;
-use tracing::{info, warn, Level};
+use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 
 /// MaD Tensile Testing Machine — SIL Emulator
@@ -59,52 +36,20 @@ struct Args {
     #[arg(long, default_value = "info")]
     log_level: String,
 
-    /// Disable force gauge simulation (zero force always)
+    /// The P2 image to execute: `propeller2_debug`'s `program`, or a mask ROM
+    /// when `--boot-rom` is set.
+    #[arg(value_name = "IMAGE")]
+    image: PathBuf,
+
+    /// Boot the mask ROM and put the host on the programming UART (P62/P63)
+    /// instead of the protocol link. The ROM's serial strap (P59 pull-up) is
+    /// fitted, so `Prop_Chk` works without a DTR→RESn line.
     #[arg(long)]
-    no_force_sim: bool,
-
-    /// Path to libfirmware.a (for DWARF debug info introspection)
-    #[arg(
-        long,
-        default_value = "../Firmware/MaDCore/.pio/build/native_emulator/libfirmware.a"
-    )]
-    firmware_lib: String,
-
-    /// Trace viewer HTTP port (0 to disable)
-    #[arg(long, default_value_t = 0)]
-    trace_port: u16,
-
-    /// Run the **instruction-set simulator** against a real P2 image instead
-    /// of the host-compiled firmware.
-    ///
-    /// The native backend substitutes the HAL and runs clang-compiled code, so
-    /// it cannot see flexcc codegen bugs, 32-bit pointer assumptions or
-    /// smart-pin misconfiguration. This runs the artifact you actually flash,
-    /// with its serial pins on real nets at the rate the firmware programs
-    /// them. Slower, and this slice bridges the protocol link only.
-    #[arg(long, value_name = "IMAGE")]
-    iss: Option<PathBuf>,
-
-    /// ISS only: put the host on the board as a computer — a QEMU guest
-    /// booted from this image (embsim-qemu's Chrome guest) whose clock is
-    /// metered by the board's, in place of the host PTY. The guest's Chrome
-    /// is reachable at the printed DevTools URL for `connectOverCDP`.
-    #[arg(long, requires = "iss")]
-    computer: Option<PathBuf>,
-
-    /// Host port forwarded to the guest's DevTools (0 = any free port).
-    #[arg(long, default_value_t = 0, requires = "computer")]
-    devtools_port: u16,
-}
-
-// The firmware's mad_begin() is linked from libfirmware.a
-extern "C" {
-    fn mad_begin();
+    boot_rom: bool,
 }
 
 /// Set by SIGTERM/SIGINT; the parked main thread notices and returns, so the
-/// system drops in order — engine joined, components dropped, and a computer
-/// node's QEMU quit with them rather than orphaned holding its ports.
+/// system drops in order — engine joined, components dropped.
 static SHUTDOWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 extern "C" fn on_shutdown_signal(_signal: libc::c_int) {
@@ -139,90 +84,113 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         args.speed, args.pty_path, args.sd_path
     );
 
-    if let Some(image) = args.iss.clone() {
-        return run_iss(&args, &image);
+    let image = args.image.clone();
+    if args.boot_rom {
+        run_iss_rom(&args, &image)
+    } else {
+        run_iss(&args, &image)
+    }
+}
+
+/// Boot the mask ROM with the host on the programming UART (P62/P63).
+///
+/// The host is the PTY. A browser outside the emulator opens it. The ROM's
+/// serial strap is a pull-up on P59, so `Prop_Chk` works without a DTR line.
+fn run_iss_rom(args: &Args, rom_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    use embsim_board::{
+        AttachError, Component, ComponentNetIo, Harness, PinDecl, System, TheveninDrive,
+    };
+    use p2iss::{HostPty, P2Iss, SerialLink};
+
+    const PROG: SerialLink = SerialLink {
+        tx_pin: 62,
+        rx_pin: 63,
+        nominal_baud: 2_000_000,
+    };
+
+    struct Pull {
+        pins: [PinDecl; 1],
+        volts: f64,
+    }
+    impl Pull {
+        fn new(volts: f64) -> Self {
+            Self {
+                pins: [PinDecl::analog_source("A")],
+                volts,
+            }
+        }
+    }
+    impl Component for Pull {
+        fn pins(&self) -> &[PinDecl] {
+            &self.pins
+        }
+        fn attach(&mut self, io: ComponentNetIo) -> Result<(), AttachError> {
+            io.pin("A")?.set_drive(Some(TheveninDrive {
+                volts: self.volts,
+                impedance: 15_000.0,
+            }));
+            Ok(())
+        }
     }
 
-    // Parse firmware DWARF debug info once; reused for the system description,
-    // the UI setup and the emulator.
-    let firmware_lib = PathBuf::from(&args.firmware_lib);
-    let fw = FirmwareInfo::from_archive(&firmware_lib)?;
+    install_shutdown_signals();
+    let rom = std::fs::read(rom_path)?;
+    info!(
+        "ISS ROM: {} ({} bytes) — programming UART on P{}/P{}",
+        rom_path.display(),
+        rom.len(),
+        PROG.tx_pin,
+        PROG.rx_pin
+    );
 
-    // Describe the simulated system. This builds the P2 as a board component
-    // that OWNS the firmware entry, which means it also creates the peripheral
-    // instance the firmware will run against (HAL config tables come from the
-    // same archive). Nothing is live yet — `start()` below does that.
-    let force_path = system_description::describe(&fw, &firmware_lib, || unsafe { mad_begin() });
-    let mcu = Arc::clone(force_path.mcu_instance());
+    embsim_core::virtual_clock::init(args.speed, 20_000_000);
+    let _time_authority = embsim_core::virtual_clock::take_time_authority();
 
-    // Bind THIS thread to the MCU's instance before the runtime initializes
-    // peripherals. `Emulator::run` sizes the channel banks, the lock pool and
-    // the thread registry, mounts the SD path and bridges the host PTY through
-    // peripheral FREE functions, which route to the *calling thread's*
-    // instance. Unbound, all of that would land on the process-default
-    // instance and the firmware — running on the component's own instance —
-    // would boot with no channels, no host serial and no SD card. The guard is
-    // `!Send` and must outlive the init; `run()` never returns, so it lives
-    // for the process.
-    let _mcu_bind = instance::bind_current_thread(Arc::clone(&mcu));
+    let iss = P2Iss::with_boot_rom(&rom, p2core::SdCard::blank(0), &[PROG]).with_level_pins(&[59]);
+    let handle = iss.handle();
 
-    // Register UI views + machine view BEFORE the emulator starts (they only
-    // need firmware enum info and the MCU instance, not initialized
-    // peripherals). No-op without the `web` feature (headless build).
-    let trace_enabled = setup_trace_ui(args.trace_port, &fw, &mcu)?;
+    let host_pty = HostPty::open(&args.pty_path, PROG.nominal_baud)?;
+    info!("Host can connect to: {}", host_pty.symlink_path());
+    let host: Box<dyn embsim_board::Component> = Box::new(host_pty);
 
-    let baud = host_serial_baud_from_env();
+    let harness = Harness::new()
+        .connect_str("P2.P62", "HOST.RX")?
+        .connect_str("HOST.TX", "P2.P63")?
+        .connect_str("P2.P59", "STRAP.A")?;
 
-    Emulator::builder(embsim_p2::P2)
-        .firmware(fw)
-        .machine(Box::new(wiring::MadMachine::new(
-            Arc::clone(&mcu),
-            force_path.bridge(),
-        )))
-        .clock_speed(args.speed)
-        .host_pty(args.pty_path)
-        .sd_path(args.sd_path)
-        .host_serial_baud(baud)
-        .on_wired(move |fw| {
-            if trace_enabled {
-                // Drive the trace: the poller (now owned by embsim-trace) turns
-                // record() calls + activated C variables into the time-series.
-                embsim_trace::spawn_poller(fw);
+    let system = System::new()
+        .component("P2", Box::new(iss))
+        .component("HOST", host)
+        .component("STRAP", Box::new(Pull::new(3.3)));
+    let _system = system.harness(harness).start()?;
+
+    info!("ISS ROM serial running; main thread parked.");
+    std::thread::spawn(move || {
+        let mut echoed = 0usize;
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(5));
+            let (tx, rx) = handle.byte_counts();
+            let console = handle.console();
+            if console.len() > echoed {
+                let fresh = &console[echoed..];
+                eprint!("{fresh}");
+                echoed = console.len();
             }
-        })
-        // "Hand control to the firmware" is now `System::start`: it spawns the
-        // net engine, attaches every component (the ADS122U04 model, the load
-        // cell, and the P2's serial bridges) and only then lets the P2
-        // component spawn `mad_begin()` on its own instance-bound thread.
-        // The main thread has nothing left to do — but it must not return,
-        // because `Emulator::run` drops the host PTY when the entry does.
-        .entry(move || {
-            let _force_path = force_path.start();
-            info!("Firmware running on the P2 component's own thread; main thread parked.");
-            loop {
-                std::thread::park();
-            }
-        })
-        .build()?
-        .run()?;
-
-    info!("Exiting.");
+            info!(
+                "ISS ROM: tx={tx} rx={rx} guest_us={}",
+                handle.guest_now_us()
+            );
+        }
+    });
+    park_until_shutdown();
     Ok(())
 }
 
-/// Run the P2 instruction-set simulator instead of the native firmware.
+/// Run the P2 image on the instruction-set simulator.
 ///
-/// A different world from the native path, and deliberately so: there is no
-/// `FirmwareInfo`, no peripheral instance and no `Emulator`, because there is
-/// no host-compiled firmware to substitute a HAL for. The image runs on
-/// `p2core`, its protocol pins are on nets, and the host PTY is a component
-/// like any other.
-///
-/// Every signal here crosses a net as a voltage: the protocol link as framed
-/// levels, GPIO and the encoder as plain ones. The step train is the exception
-/// still outstanding — a rate belongs on a periodic drive, not on 8192 level
-/// edges per millimetre — so a host can read and write the protocol and see
-/// the machine's inputs, but cannot yet move a carriage.
+/// The image runs on `p2core`. Every signal crosses a net as a voltage: the
+/// protocol link as framed levels, GPIO and the encoder as plain ones, and the
+/// step train as a periodic drive. The host PTY is a component like any other.
 fn run_iss(args: &Args, image_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
     use embsim_board::{Harness, System};
     use p2iss::{HostPty, P2Iss, SerialLink};
@@ -293,29 +261,10 @@ fn run_iss(args: &Args, image_path: &std::path::Path) -> Result<(), Box<dyn std:
         .with_pulse_pins(PULSE_PINS)
         .with_sync_serial();
     let handle = iss.handle();
-    // The host end of the protocol link: a PTY for a human or a bridge, or a
-    // whole computer whose clock the board meters. Same two pins either way.
-    let host: Box<dyn embsim_board::Component> = match &args.computer {
-        Some(image) => {
-            let chrome = embsim_qemu::ChromeGuest::new(image)
-                .devtools_port(args.devtools_port)
-                .spawn()
-                .map_err(|e| format!("computer node: {e}"))?;
-            info!(
-                "Computer node: Chrome guest ready, DevTools at {} (frozen until the board runs)",
-                chrome.devtools().url()
-            );
-            Box::new(embsim_qemu::QemuNode::new(
-                Box::new(chrome),
-                PROTO.nominal_baud,
-            ))
-        }
-        None => {
-            let host = HostPty::open(&args.pty_path, PROTO.nominal_baud)?;
-            info!("Host can connect to: {}", host.symlink_path());
-            Box::new(host)
-        }
-    };
+    // The host end of the protocol link: a PTY for a browser outside the emulator.
+    let host_pty = HostPty::open(&args.pty_path, PROTO.nominal_baud)?;
+    info!("Host can connect to: {}", host_pty.symlink_path());
+    let host: Box<dyn embsim_board::Component> = Box::new(host_pty);
 
     let pulls = BenchPulls::new(IDLE_PULLS);
     let force = BenchForcePath::build();
@@ -342,10 +291,7 @@ fn run_iss(args: &Args, image_path: &std::path::Path) -> Result<(), Box<dyn std:
     //
     // Without this the bridge sits balanced forever, the ADC reads exactly
     // zero however far the carriage travels, and every force assertion fails
-    // while the machine otherwise looks healthy. The native bench builds this
-    // chain in `wiring.rs`; the ISS description took the drive handle and
-    // dropped it on the floor, which is why the ISS could home, move and log
-    // perfectly and still never develop a newton of tension.
+    // while the machine otherwise looks healthy.
     //
     //   carriage position -> gantry extension past the grip slack
     //                     -> sample force (k = E*A/L0)
@@ -403,14 +349,6 @@ fn run_iss(args: &Args, image_path: &std::path::Path) -> Result<(), Box<dyn std:
         .component("HOST", host)
         .component("PULLS", Box::new(pulls));
     let system = sd.mount(machine.mount(force.mount(system)));
-    // A computer node holds virtual time still for a slice plus its QMP round
-    // trips; one slow host moment must delay the board, not break the
-    // engine's actor barrier for the rest of the run.
-    let system = if args.computer.is_some() {
-        system.quiescence_timeout(std::time::Duration::from_secs(30))
-    } else {
-        system
-    };
     let _system = system.harness(harness).start()?;
 
     info!("ISS running; main thread parked.");
@@ -423,10 +361,8 @@ fn run_iss(args: &Args, image_path: &std::path::Path) -> Result<(), Box<dyn std:
         let start = std::time::Instant::now();
         let mut last = (0u64, 0u128);
         // The guest narrates its own boot and faults on its debug UART (P62).
-        // Under the native backend those lines reach the operator's terminal
-        // through the substituted HAL; on the ISS they land in the board's
-        // console buffer, so forward them or the firmware's own explanation of
-        // what it is doing is invisible.
+        // They land in the board's console buffer, so forward them or the
+        // firmware's own explanation of what it is doing is invisible.
         let mut echoed = 0usize;
         loop {
             std::thread::sleep(std::time::Duration::from_secs(5));
@@ -483,35 +419,6 @@ fn run_iss(args: &Args, image_path: &std::path::Path) -> Result<(), Box<dyn std:
     Ok(())
 }
 
-/// Register the trace viewer + machine visualizer web UI and start the server.
-/// Returns whether tracing is enabled. With the `web` feature off this is a
-/// no-op that always returns `false` (headless build).
-#[cfg(feature = "web")]
-fn setup_trace_ui(
-    port: u16,
-    fw: &FirmwareInfo,
-    mcu: &Arc<PeripheralInstance>,
-) -> Result<bool, Box<dyn std::error::Error>> {
-    if port == 0 {
-        return Ok(false);
-    }
-    embsim_trace::register_view();
-    machine_view::register_view();
-    embsim_ui::start_server(port)?;
-    machine_view::init(fw, Arc::clone(mcu));
-    embsim_trace::set_firmware_info(fw);
-    Ok(true)
-}
-
-#[cfg(not(feature = "web"))]
-fn setup_trace_ui(
-    _port: u16,
-    _fw: &FirmwareInfo,
-    _mcu: &Arc<PeripheralInstance>,
-) -> Result<bool, Box<dyn std::error::Error>> {
-    Ok(false)
-}
-
 /// Configure the global tracing subscriber from a log-level string.
 fn init_logging(log_level: &str) {
     let level = match log_level {
@@ -529,24 +436,4 @@ fn init_logging(log_level: &str) {
         .with_thread_names(true)
         .finish();
     tracing::subscriber::set_global_default(subscriber).expect("Failed to set tracing subscriber");
-}
-
-/// Optional deterministic baud-rate pacing on the host serial channel.
-/// Enabled by setting `MAD_SIM_BAUD` to a positive integer (e.g. 230400).
-/// Unset or 0 means instant TX (the default).
-fn host_serial_baud_from_env() -> u32 {
-    match std::env::var("MAD_SIM_BAUD") {
-        Ok(raw) => match raw.trim().parse::<u32>() {
-            Ok(0) => {
-                info!("MAD_SIM_BAUD=0; serial baud pacing disabled");
-                0
-            }
-            Ok(baud) => baud,
-            Err(_) => {
-                warn!("MAD_SIM_BAUD={raw:?} is not a valid u32; pacing disabled");
-                0
-            }
-        },
-        Err(_) => 0,
-    }
 }

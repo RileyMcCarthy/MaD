@@ -73,9 +73,12 @@ jobs:
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
-      - name: Build SIL emulator (firmware + protocol + cargo)
+      - name: Install propeller platform
+        working-directory: Firmware/MaDCore
+        run: pio pkg install --platform https://github.com/RileyMcCarthy/platform-propeller.git
+      - name: Build the P2 image and the emulator
         working-directory: SIL
-        run: make emulator
+        run: make p2image emulator
 
       - name: Install Control deps + wasm + proto
         run: |
@@ -94,7 +97,7 @@ jobs:
         run: |
           nohup make e2e-emulator > /tmp/mad-playground.log 2>&1 &
           echo $! > /tmp/mad-playground.pid
-          for i in $(seq 1 90); do
+          for i in $(seq 1 240); do
             if [ -e /tmp/tty.rpi ]; then echo "PTY ready after ${i}s"; break; fi
             sleep 2
           done

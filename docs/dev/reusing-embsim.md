@@ -1,71 +1,33 @@
 # Reusing embsim
 
-**embsim** is the generic SIL framework that powers MaD's emulator. It lives in
-its own repository — [github.com/RileyMcCarthy/embsim](https://github.com/RileyMcCarthy/embsim)
-— and is vendored here as the `SIL/embsim` git submodule. The `core`,
-`peripherals`, `models`, `runtime`, and `tools` crates carry **no MaD- or
-Propeller-2-specific assumptions**. This page is a pointer for using it on
-another project.
+**embsim** is the board engine behind MaD's emulator. It lives in its own
+repository — [github.com/RileyMcCarthy/embsim](https://github.com/RileyMcCarthy/embsim)
+— and is vendored here as the `SIL/embsim` git submodule. Its crates know
+nothing about MaD's protocol or mechanics. This page is a pointer.
 
 ## What you provide
 
-A new project supplies just two things:
+A board from its netlist, a core in the processor slot, and a host on the PTY.
+The core drives and senses pads. The host is `HostPty`: bytes on `TX`/`RX`
+become levels on the nets. The reference is a P2-EC32MB with the QEMU P2 core,
+shown in the
+[embsim README](https://github.com/RileyMcCarthy/embsim/blob/main/README.md#what-a-new-project-provides).
 
-1. **A platform crate** — `#[no_mangle] extern "C"` HAL trampolines (one per C
-   HAL function your firmware calls, delegating to the generic peripheral) plus a
-   `Platform` impl that supplies MCU constants:
-
-    ```rust
-    impl embsim_runtime::Platform for MyMcu {
-        fn clock_freq_hz(&self) -> u32 { 16_000_000 }
-        fn max_cores(&self)    -> usize { 1 }
-        fn max_locks(&self)    -> usize { 8 }
-    }
-    ```
-
-2. **A `Machine`** — declares peripheral channel counts and wires peripheral
-   events to physical models:
-
-    ```rust
-    impl embsim_runtime::Machine for MyMachine {
-        fn peripheral_counts(&self, fw: &FirmwareInfo) -> PeripheralCounts { /* … */ }
-        fn host_serial_channel(&self, fw: &FirmwareInfo) -> usize { /* … */ }
-        fn wire(&self, fw: &FirmwareInfo) { /* register callbacks, initial states */ }
-    }
-    ```
-
-Then the emulator is about ten lines (load the firmware archive, build, run). The
-runtime owns the init ordering and preflights every required symbol, reporting all
-missing ones at once.
-
-## Reference material
-
-- [`embsim/README.md`](https://github.com/RileyMcCarthy/embsim/blob/main/README.md)
-  — the framework overview, the ~10-line emulator, and how to consume it as a
-  submodule from your own project.
-- [`embsim/CONTRACT.md`](https://github.com/RileyMcCarthy/embsim/blob/main/CONTRACT.md)
-  — the exact list of symbols a platform must export and the ABI rules.
-- [`embsim/examples/minimal/`](https://github.com/RileyMcCarthy/embsim/tree/main/examples/minimal)
-  — a complete, firmware-free template: `cargo run -p embsim-minimal-example`
-  (run from `SIL/embsim/`, or a standalone embsim clone — the crate lives in the
-  embsim workspace, not MaD's `SIL/` workspace).
+MaD's core is the instruction-set simulator in `SIL/p2iss`, seated as a
+component named `P2` whose pins are `P0`..`P63`. The host is the same `HostPty`.
 
 ## How MaD uses it
 
-MaD's own consumer code is the reference implementation, isolated in three crates:
-
 | Crate | Role |
 |---|---|
-| `embsim/platforms/p2` (`embsim-p2`) | Propeller 2 HAL trampolines + `Platform` |
+| `embsim-board`, `embsim-models`, `embsim-core` | Nets, device models, virtual clock, PTY |
+| `p2iss` / `p2core` (`SIL/`) | The P2 image, executed instruction by instruction, as a board component |
 | `models` (`SIL/models/`) | MaD physics: gantry, sample, strain gauge |
-| `protocol` (`Protocol/rust/`) | Generated MaD protocol types |
-| `MaDSim` | The `mad-emulator` binary + the MaD `Machine` wiring |
+| `MaDSim` | The `mad-emulator` binary: ISS, bench, and host PTY |
 
-The dependency graph is acyclic — no generic crate depends on a project crate —
-which is what keeps embsim reusable. See the
-[SIL emulator](../how-it-works/sil-emulator.md) page for the crate diagram.
+The dependency graph is acyclic — no generic crate depends on a project crate.
+See the [SIL emulator](../how-it-works/sil-emulator.md) page for the diagram.
 
-!!! note "One firmware per process"
-    The HAL binds to a single `libfirmware.a` through process-global symbols, so
-    there is exactly one firmware per OS process. Run multiple processes to run
-    multiple instances; don't try to instance-scope the HAL.
+!!! note "One emulator per process"
+    The virtual clock and the host PTY are process-global. Run multiple
+    processes to run multiple instances.
