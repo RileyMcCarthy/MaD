@@ -202,11 +202,11 @@ fn the_real_flash_stub_programs_the_payload_into_spi_flash() {
 
     let commands = &m.pins.flash.commands;
     assert!(
-        commands.iter().any(|&c| c == 0x06),
+        commands.contains(&0x06),
         "the stub must issue write-enable ($06); commands={commands:?} outcome={outcome:?}"
     );
     assert!(
-        commands.iter().any(|&c| c == 0x02),
+        commands.contains(&0x02),
         "the stub must issue page-program ($02); commands={commands:?} outcome={outcome:?}"
     );
     assert!(

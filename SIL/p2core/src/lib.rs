@@ -784,11 +784,10 @@ impl<P: PinBus> Machine<P> {
         // the receiver ISR is what moves `head`. Fast-forwarding that spin
         // burns the 60 s serial timeout in an instant and the ROM shuts down
         // before the host's first `>` arrives.
-        if p.confirmed()
-            && !self.ff_disabled
-            && !(waits_on_pin && self.pins.external_transfer_busy())
-            && !(self.cogs[cog].int1_src != 0 && !self.cogs[cog].in_int1)
-        {
+        let confirmed = p.confirmed();
+        let int1_armed = self.cogs[cog].int1_src != 0 && !self.cogs[cog].in_int1;
+        let transfer_busy = waits_on_pin && self.pins.external_transfer_busy();
+        if confirmed && !self.ff_disabled && !transfer_busy && !int1_armed {
             self.fast_forward_poller(cog, waits_on_pin);
         }
     }
@@ -1065,8 +1064,7 @@ impl<P: PinBus> Machine<P> {
         }
         let pin = (cfg & 63) as u8;
         let mode = (cfg >> 6) & 7;
-        let ready = mode == 0b110 && self.pins.testp(pin);
-        ready
+        mode == 0b110 && self.pins.testp(pin)
     }
 
     fn step_one(&mut self, cog: usize) -> Result<(), Trap> {
