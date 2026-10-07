@@ -20,12 +20,18 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use embsim_board::{
-    digital_drive, jesd8c01_lvcmos_thresholds, AttachError, Component, ComponentNetIo, DeadBand,
-    DigitalReceiver, Level, PinDecl, PinHandle, Thresholds,
+    digital_drive, AttachError, Component, ComponentNetIo, DigitalReceiver, Drive, Level, PinDecl,
+    PinHandle, Thresholds,
 };
+use embsim_models::spi_flash_component::W25Q128JV_INPUT_THRESHOLDS_ANY_VCC;
 use p2core::SpiFlash;
 
-const TH: Thresholds = jesd8c01_lvcmos_thresholds(DeadBand::Unknown);
+/// The inputs read through the part's own pair. [`SpiFlash`] answers `$9F`
+/// as a Winbond W25Q128, so the thresholds are the W25Q128JV's (0.3 / 0.7 ×
+/// `VCC`, Revision F §9.4), made absolute at the corners of its 2.7 V to
+/// 3.6 V supply range — 0.81 V and 2.52 V — because this node declares no
+/// supply pin to scale them against.
+const TH: Thresholds = W25Q128JV_INPUT_THRESHOLDS_ANY_VCC;
 
 const PINS: [PinDecl; 4] = [
     PinDecl::digital_in("CLK", TH),
@@ -88,7 +94,7 @@ impl std::fmt::Debug for FlashNode {
 
 fn drive_miso(wire: &Wire) {
     if let Some(handle) = wire.miso.as_ref() {
-        handle.set_drive(Some(digital_drive(if wire.flash.miso() {
+        handle.drive(Drive::Thevenin(digital_drive(if wire.flash.miso() {
             Level::High
         } else {
             Level::Low

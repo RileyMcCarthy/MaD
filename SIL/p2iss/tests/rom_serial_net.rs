@@ -62,16 +62,20 @@ fn open_host_end(path: &str) -> std::fs::File {
 }
 
 /// Pull-up on P59 (spi_di): the ROM's first strap check jumps to serial.
+///
+/// A static pull, so it is the pin's declared idle drive: the board stamps it
+/// from build and nothing publishes it at attach.
 struct Pull {
     pins: [PinDecl; 1],
-    volts: f64,
 }
 
 impl Pull {
     fn new(volts: f64) -> Self {
         Self {
-            pins: [PinDecl::analog_source("A")],
-            volts,
+            pins: [PinDecl::analog_source("A").with_idle(Some(TheveninDrive {
+                volts,
+                impedance: 15_000.0,
+            }))],
         }
     }
 }
@@ -80,11 +84,7 @@ impl Component for Pull {
     fn pins(&self) -> &[PinDecl] {
         &self.pins
     }
-    fn attach(&mut self, io: ComponentNetIo) -> Result<(), AttachError> {
-        io.pin("A")?.set_drive(Some(TheveninDrive {
-            volts: self.volts,
-            impedance: 15_000.0,
-        }));
+    fn attach(&mut self, _io: ComponentNetIo) -> Result<(), AttachError> {
         Ok(())
     }
 }

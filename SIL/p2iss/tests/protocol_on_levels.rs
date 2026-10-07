@@ -136,6 +136,10 @@ impl Host {
 }
 
 /// Two plain digital pins and a codec — no stream role anywhere.
+///
+/// A bench stand-in for a host's UART that names no part, so its receiver
+/// reads through the JESD8C.01 3.3 V LVCMOS pair: the standard such a host's
+/// 3.3 V input meets, for want of a datasheet of its own.
 struct HostUart {
     pins: [PinDecl; 2],
     framing: UartFraming,

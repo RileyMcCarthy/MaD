@@ -26,14 +26,20 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use embsim_board::{
-    digital_drive, jesd8c01_lvcmos_thresholds, AttachError, Component, ComponentNetIo, DeadBand,
-    DigitalReceiver, Level, PinDecl, PinHandle, Thresholds,
+    digital_drive, AttachError, Component, ComponentNetIo, DigitalReceiver, Drive, Level, PinDecl,
+    PinHandle, Thresholds,
 };
+use embsim_models::sd_card_component::SD_INPUT_THRESHOLDS_ANY_VDD;
 use p2core::SdCard;
 
-/// Pin names on this component's facade.
-const TH: Thresholds = jesd8c01_lvcmos_thresholds(DeadBand::Unknown);
+/// The inputs read through the card's own pair: 0.25 / 0.625 × `VDD` (SD
+/// Physical Layer Specification Version 2.00, §6.6.1, Table 6-2, the 3.3 V
+/// range SPI mode uses), made absolute at the corners of its 2.7 V to 3.6 V
+/// supply range — 0.675 V and 2.25 V — because this node declares no supply
+/// pin to scale them against.
+const TH: Thresholds = SD_INPUT_THRESHOLDS_ANY_VDD;
 
+/// Pin names on this component's facade.
 const PINS: [PinDecl; 4] = [
     PinDecl::digital_in("CLK", TH),
     PinDecl::digital_in("CS", TH),
@@ -105,11 +111,11 @@ fn drive_miso(wire: &Wire) {
         return;
     };
     if !wire.selected {
-        handle.set_drive(None);
+        handle.release();
         return;
     }
     let bit = wire.out_byte >> (7 - wire.out_count.min(7)) & 1 != 0;
-    handle.set_drive(Some(digital_drive(if bit {
+    handle.drive(Drive::Thevenin(digital_drive(if bit {
         Level::High
     } else {
         Level::Low

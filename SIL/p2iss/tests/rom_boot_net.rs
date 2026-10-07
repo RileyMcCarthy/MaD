@@ -57,17 +57,21 @@ fn wait_for(mut pred: impl FnMut() -> bool, timeout: Duration) -> bool {
 }
 
 /// The 15 kΩ boot strap on P61 (spi_cs) telling the ROM the flash is the boot
-/// source, plus the pull-up the released MISO idles to.
+/// source.
+///
+/// A static pull, so it is the pin's declared idle drive: the board stamps it
+/// from build and nothing publishes it at attach.
 struct Pull {
     pins: [PinDecl; 1],
-    volts: f64,
 }
 
 impl Pull {
     fn new(volts: f64) -> Self {
         Self {
-            pins: [PinDecl::analog_source("A")],
-            volts,
+            pins: [PinDecl::analog_source("A").with_idle(Some(TheveninDrive {
+                volts,
+                impedance: 15_000.0,
+            }))],
         }
     }
 }
@@ -76,11 +80,7 @@ impl Component for Pull {
     fn pins(&self) -> &[PinDecl] {
         &self.pins
     }
-    fn attach(&mut self, io: ComponentNetIo) -> Result<(), AttachError> {
-        io.pin("A")?.set_drive(Some(TheveninDrive {
-            volts: self.volts,
-            impedance: 15_000.0,
-        }));
+    fn attach(&mut self, _io: ComponentNetIo) -> Result<(), AttachError> {
         Ok(())
     }
 }
@@ -132,7 +132,9 @@ fn the_rom_boots_from_a_flash_on_the_net() {
                 .unwrap()
                 .connect_str("P2.P58", "FLASH.MISO")
                 .unwrap()
-                // Strap on P61, pull-up on the released MISO (P58).
+                // The flash strap on P61. P59 carries no strap: the ROM tests
+                // it first, and a pull-up there sends it to the serial loader
+                // before it tries the flash.
                 .connect_str("P2.P61", "STRAP.A")
                 .unwrap(),
         )

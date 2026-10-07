@@ -118,6 +118,9 @@ const PULL_OHMS: f64 = 15_000.0;
 /// Without it every unconnected input floats, the receiver reads no level, and
 /// the adapter holds whatever it last saw — which at boot is low, i.e. all
 /// three active-low ESD lines reading *asserted*.
+///
+/// Each pull is its pin's declared idle drive, so the board stamps it from
+/// build and nothing publishes it at attach.
 pub struct BenchPulls {
     pins: Vec<PinDecl>,
     pulls: Vec<(u8, Level)>,
@@ -128,7 +131,15 @@ impl BenchPulls {
         Self {
             pins: pulls
                 .iter()
-                .map(|(pin, _)| PinDecl::analog_source(p2iss::pin_name(*pin)))
+                .map(|(pin, level)| {
+                    PinDecl::analog_source(p2iss::pin_name(*pin)).with_idle(Some(TheveninDrive {
+                        volts: match level {
+                            Level::High => 3.3,
+                            Level::Low => 0.0,
+                        },
+                        impedance: PULL_OHMS,
+                    }))
+                })
                 .collect(),
             pulls: pulls.to_vec(),
         }
@@ -151,17 +162,7 @@ impl Component for BenchPulls {
         &self.pins
     }
 
-    fn attach(&mut self, io: ComponentNetIo) -> Result<(), AttachError> {
-        for (pin, level) in &self.pulls {
-            let handle = io.pin(p2iss::pin_name(*pin))?;
-            handle.set_drive(Some(TheveninDrive {
-                volts: match level {
-                    Level::High => 3.3,
-                    Level::Low => 0.0,
-                },
-                impedance: PULL_OHMS,
-            }));
-        }
+    fn attach(&mut self, _io: ComponentNetIo) -> Result<(), AttachError> {
         Ok(())
     }
 }
@@ -499,7 +500,8 @@ impl BenchSd {
 }
 
 /// The 15 kΩ pull-up `sdmm.cc` asks the receive pin for
-/// (`P_HIGH_15K | P_LOW_15K`), as a bench part on the shared net.
+/// (`P_HIGH_15K | P_LOW_15K`), as a bench part on the shared net: the pin's
+/// declared idle drive, stamped from build.
 pub struct MisoPullUp {
     pins: [PinDecl; 1],
 }
@@ -507,7 +509,10 @@ pub struct MisoPullUp {
 impl MisoPullUp {
     pub fn new() -> Self {
         Self {
-            pins: [PinDecl::analog_source("A")],
+            pins: [PinDecl::analog_source("A").with_idle(Some(TheveninDrive {
+                volts: BRIDGE_EXCITATION_V,
+                impedance: 15_000.0,
+            }))],
         }
     }
 }
@@ -523,11 +528,7 @@ impl Component for MisoPullUp {
         &self.pins
     }
 
-    fn attach(&mut self, io: ComponentNetIo) -> Result<(), AttachError> {
-        io.pin("A")?.set_drive(Some(TheveninDrive {
-            volts: BRIDGE_EXCITATION_V,
-            impedance: 15_000.0,
-        }));
+    fn attach(&mut self, _io: ComponentNetIo) -> Result<(), AttachError> {
         Ok(())
     }
 }

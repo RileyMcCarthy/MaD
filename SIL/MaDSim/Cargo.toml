@@ -9,10 +9,6 @@ publish = false
 embsim-core = { path = "../embsim/core" }
 embsim-board = { path = "../embsim/board" }
 embsim-models = { path = "../embsim/models" }
-# The computer node (`--computer`): Chrome in a QEMU guest the board's clock
-# meters, and the HTTP control surface its link actions are posted to.
-embsim-qemu = { path = "../embsim/qemu" }
-embsim-ui = { path = "../embsim/tools/ui" }
 libc = "0.2"
 models = { path = "../models" }
 p2core = { path = "../p2core" }

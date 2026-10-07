@@ -9,7 +9,9 @@
 
 use std::sync::{Arc, Mutex};
 
-use embsim_board::{AttachError, Component, ComponentNetIo, PinDecl, PinHandle, TheveninDrive};
+use embsim_board::{
+    AttachError, Component, ComponentNetIo, Drive, PinDecl, PinHandle, TheveninDrive,
+};
 
 // ============================================================
 // Committed board netlist
@@ -63,11 +65,11 @@ impl BridgeDrive {
     pub fn set_differential_mv(&self, diff_mv: f64) {
         let half_v = diff_mv / 2_000.0;
         if let Some((sig_p, sig_n)) = &*self.pins.lock().unwrap() {
-            sig_p.set_drive(Some(TheveninDrive {
+            sig_p.drive(Drive::Thevenin(TheveninDrive {
                 volts: BRIDGE_COMMON_MODE_V + half_v,
                 impedance: BRIDGE_SOURCE_OHMS,
             }));
-            sig_n.set_drive(Some(TheveninDrive {
+            sig_n.drive(Drive::Thevenin(TheveninDrive {
                 volts: BRIDGE_COMMON_MODE_V - half_v,
                 impedance: BRIDGE_SOURCE_OHMS,
             }));
@@ -87,7 +89,8 @@ pub(crate) struct LoadCellBridge {
     pub(crate) drive: BridgeDrive,
 }
 
-/// S+/S− terminal declarations.
+/// S+/S− terminal declarations: linear sources, released until
+/// [`BridgeDrive`] publishes the quiescent output at attach.
 const LOAD_CELL_PINS: [PinDecl; 2] = [PinDecl::analog_source("S+"), PinDecl::analog_source("S-")];
 
 impl Component for LoadCellBridge {

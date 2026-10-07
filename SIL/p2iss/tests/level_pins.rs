@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use embsim_board::{
-    digital_drive, AttachError, Component, ComponentNetIo, Harness, Level, PinDecl, System,
+    digital_drive, AttachError, Component, ComponentNetIo, Drive, Harness, Level, PinDecl, System,
 };
 use embsim_core::virtual_clock;
 use p2iss::{P2Iss, SerialLink};
@@ -101,11 +101,13 @@ impl Component for Switch {
         // engine, and this is the cheapest way to let it in without a
         // component-specific command channel.
         io.on_wake_ns(move |_now| {
-            handle.set_drive(Some(digital_drive(if closed.load(Ordering::Relaxed) {
-                Level::High
-            } else {
-                Level::Low
-            })));
+            handle.drive(Drive::Thevenin(digital_drive(
+                if closed.load(Ordering::Relaxed) {
+                    Level::High
+                } else {
+                    Level::Low
+                },
+            )));
         });
         io.schedule_every_ns(50_000);
         Ok(())
@@ -194,10 +196,7 @@ struct Spinner {
 impl Spinner {
     fn new(count: Arc<Mutex<i64>>) -> Self {
         Self {
-            pins: vec![
-                PinDecl::digital_out("A"),
-                PinDecl::digital_out("B"),
-            ],
+            pins: vec![PinDecl::digital_out("A"), PinDecl::digital_out("B")],
             count,
         }
     }
@@ -223,12 +222,12 @@ impl Component for Spinner {
                 2 => (true, true),
                 _ => (false, true),
             };
-            a.set_drive(Some(digital_drive(if la {
+            a.drive(Drive::Thevenin(digital_drive(if la {
                 Level::High
             } else {
                 Level::Low
             })));
-            b.set_drive(Some(digital_drive(if lb {
+            b.drive(Drive::Thevenin(digital_drive(if lb {
                 Level::High
             } else {
                 Level::Low
