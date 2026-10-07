@@ -68,7 +68,7 @@ which means **we own the library patches as well as the target**.
 That is the single biggest under-appreciated cost in this project, and it is
 why Phase 0 exists.
 
-> **Proven by [Spike 1c](../../SIL/spikes/qemu-1c-library-link/RESULTS.md)
+> **Proven by [Spike 1c](https://github.com/RileyMcCarthy/MaD/blob/main/SIL/spikes/qemu-1c-library-link/RESULTS.md)
 > (2026-09-20).** Upstream QEMU links into a Rust binary and runs TCG from it at
 > **+0.4 %** of `qemu-system`. The initialisation seam is two calls —
 > `qemu_init(argc, argv)` then `bql_unlock(); replay_mutex_unlock();` — because
@@ -130,7 +130,7 @@ carried in the TB flags.
 at runtime, so cog registers are an array in `CPUArchState` rather than TCG
 globals.
 
-> **Corrected by [Spike 1a](../../SIL/spikes/qemu-1a-instruction-cost/RESULTS.md)
+> **Corrected by [Spike 1a](https://github.com/RileyMcCarthy/MaD/blob/main/SIL/spikes/qemu-1a-instruction-cost/RESULTS.md)
 > (2026-09-20).** This section used to claim *every* ALU op pays a runtime
 > index. It does not: `ALTx` is a **prefix**, so the translator sees it and
 > knows which single following instruction is dynamic. Measured on the real
@@ -183,7 +183,7 @@ gated by `decoder_golden.rs`.
 > **9 652 decodable words, 100 % agreement, 0 differences.**
 
 The *semantics* do not share: every op is written twice, once as Rust that
-executes and once as C that emits code. Under [D5](#d5--qemu-replaces-the-iss-p2core-is-a-bring-up-oracle-then-it-goes)
+executes and once as C that emits code. Under [D5](#d5-qemu-replaces-the-iss-p2core-is-a-bring-up-oracle-then-it-goes)
 that double maintenance is **temporary** — it ends when p2core is deleted.
 
 ### D5 — QEMU REPLACES the ISS; p2core is a bring-up oracle, then it goes
@@ -245,7 +245,7 @@ Measure the TB invalidation rate and the resulting throughput.
 
 #### Spike 0b — findings (2026-09-20): **PASSED via the hybrid; Option A is dead**
 
-Full results: [`SIL/spikes/qemu-0b-smc/RESULTS.md`](../../SIL/spikes/qemu-0b-smc/RESULTS.md).
+Full results: [`SIL/spikes/qemu-0b-smc/RESULTS.md`](https://github.com/RileyMcCarthy/MaD/blob/main/SIL/spikes/qemu-0b-smc/RESULTS.md).
 
 *What the real firmware does* (instrumented `p2core`, 200 M instructions):
 
@@ -313,7 +313,7 @@ quantum that pin-level SPI actually needs.
 
 #### Spike 0c — findings (2026-09-20): **kill criterion does not fire; ≥1.0x not demonstrated**
 
-Full results: [`SIL/spikes/qemu-0c-interleaving/RESULTS.md`](../../SIL/spikes/qemu-0c-interleaving/RESULTS.md).
+Full results: [`SIL/spikes/qemu-0c-interleaving/RESULTS.md`](https://github.com/RileyMcCarthy/MaD/blob/main/SIL/spikes/qemu-0c-interleaving/RESULTS.md).
 
 **The fear was misdirected.** Pin ops are helpers (rule 1), so an edge reaches
 the peripheral model *inside the instruction*, not at a slice boundary. The
@@ -367,7 +367,7 @@ translation. At ~60 ns entry the conservative row becomes 0.96x.
 
 **Verdict: proceed.** ~~0.5–0.8x~~ — *superseded*: that projection divided a
 budget=1 slice cost by the quantum, which overstates the operational cost ~2x.
-[Spike 0a-2](../../SIL/spikes/qemu-0a2-entry-cost/RESULTS.md) measured slice
+[Spike 0a-2](https://github.com/RileyMcCarthy/MaD/blob/main/SIL/spikes/qemu-0a2-entry-cost/RESULTS.md) measured slice
 overhead at the operational point (**~2.39 ns/inst stock, 1.979 after
 *sound* ablations**), leaving **4.47 ns ≈ 15.7 host cycles** per JIT'd P2
 instruction. That is enough for the `EEEE` test + two runtime-indexed register
@@ -375,7 +375,7 @@ loads + ALU + store + flags + clock add. **1.0x is reachable and the plan's
 justification stands.**
 
 **Residual risk that outranked everything else — now settled by
-[Spike 0d](../../SIL/spikes/qemu-0d-pin-transport/RESULTS.md).** Measured: a
+[Spike 0d](https://github.com/RileyMcCarthy/MaD/blob/main/SIL/spikes/qemu-0d-pin-transport/RESULTS.md).** Measured: a
 helper call that does **not** end the translation block costs ~0 ns, while a
 forced TB exit costs **53.5 ns** — a >50x gap, and the measured justification
 for design rules 1 and 2. The net *cannot* be resolved inside a helper
@@ -392,19 +392,19 @@ than on the net) removes the round-trip entirely.
 
 | spike | verdict |
 |---|---|
-| [0a](../../SIL/spikes/qemu-0a-unicorn/RESULTS.md) — drive TCG from Rust | PASSED — callback 19–27 ns, exact slices, no thread hop |
-| [0b](../../SIL/spikes/qemu-0b-smc/RESULTS.md) — cog RAM = registers + code | PASSED via the hybrid; Option A dead by 20x |
-| [0c](../../SIL/spikes/qemu-0c-interleaving/RESULTS.md) — interleaving | no kill; firmware tolerates a quantum of 48 |
-| [0a-2](../../SIL/spikes/qemu-0a2-entry-cost/RESULTS.md) — slice entry cost | PASSED — 4.47 ns (~15.7 host cycles) per JIT'd instruction |
-| [0d](../../SIL/spikes/qemu-0d-pin-transport/RESULTS.md) — pin transport / parity | PASSED — ~10x `p2core` worst case; 1.37x worst conceivable |
+| [0a](https://github.com/RileyMcCarthy/MaD/blob/main/SIL/spikes/qemu-0a-unicorn/RESULTS.md) — drive TCG from Rust | PASSED — callback 19–27 ns, exact slices, no thread hop |
+| [0b](https://github.com/RileyMcCarthy/MaD/blob/main/SIL/spikes/qemu-0b-smc/RESULTS.md) — cog RAM = registers + code | PASSED via the hybrid; Option A dead by 20x |
+| [0c](https://github.com/RileyMcCarthy/MaD/blob/main/SIL/spikes/qemu-0c-interleaving/RESULTS.md) — interleaving | no kill; firmware tolerates a quantum of 48 |
+| [0a-2](https://github.com/RileyMcCarthy/MaD/blob/main/SIL/spikes/qemu-0a2-entry-cost/RESULTS.md) — slice entry cost | PASSED — 4.47 ns (~15.7 host cycles) per JIT'd instruction |
+| [0d](https://github.com/RileyMcCarthy/MaD/blob/main/SIL/spikes/qemu-0d-pin-transport/RESULTS.md) — pin transport / parity | PASSED — ~10x `p2core` worst case; 1.37x worst conceivable |
 
 Plus, from Phase 1's first jobs:
 
 | spike | verdict |
 |---|---|
-| [1a](../../SIL/spikes/qemu-1a-instruction-cost/RESULTS.md) — real P2 instruction cost | **PASSED** — 0.99 ns (~3.5 host cycles), 5.3x inside budget |
-| [1b](../../SIL/spikes/qemu-1b-cog-interpreter/RESULTS.md) — cog-exec interpreter | **PASSED** — 0.82 ns/instruction; end-to-end **2.75–4.30x** real time |
-| [1c](../../SIL/spikes/qemu-1c-library-link/RESULTS.md) — QEMU linked into a Rust process | **PASSED** — +0.4 % vs `qemu-system`; the structural claim is proven, not approximated |
+| [1a](https://github.com/RileyMcCarthy/MaD/blob/main/SIL/spikes/qemu-1a-instruction-cost/RESULTS.md) — real P2 instruction cost | **PASSED** — 0.99 ns (~3.5 host cycles), 5.3x inside budget |
+| [1b](https://github.com/RileyMcCarthy/MaD/blob/main/SIL/spikes/qemu-1b-cog-interpreter/RESULTS.md) — cog-exec interpreter | **PASSED** — 0.82 ns/instruction; end-to-end **2.75–4.30x** real time |
+| [1c](https://github.com/RileyMcCarthy/MaD/blob/main/SIL/spikes/qemu-1c-library-link/RESULTS.md) — QEMU linked into a Rust process | **PASSED** — +0.4 % vs `qemu-system`; the structural claim is proven, not approximated |
 
 **Parity with the existing ISS is exceeded ~10x, and the end-to-end projection
 is now 1.46x (stock) to 1.74x (ablated) real time — every term measured except
@@ -431,7 +431,7 @@ re-enters TCG**. Everything else is already small.
 
 ### Spike 0a — findings (2026-09-19)
 
-Harness and full numbers: [`SIL/spikes/qemu-0a-unicorn/`](../../SIL/spikes/qemu-0a-unicorn/RESULTS.md).
+Harness and full numbers: [`SIL/spikes/qemu-0a-unicorn/`](https://github.com/RileyMcCarthy/MaD/blob/main/SIL/spikes/qemu-0a-unicorn/RESULTS.md).
 Unicorn 2.1.5 (QEMU 5.0's TCG behind a synchronous API) stood in for "QEMU
 as a library" so both acceptance numbers could be measured with no P2 code.
 riscv32 guest, hand-encoded loop, M2, load average 7 (not a quiet box).
