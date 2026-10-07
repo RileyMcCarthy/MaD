@@ -9,8 +9,9 @@ fn main() {
     let mut seen: BTreeMap<u32, String> = BTreeMap::new();
     // The hub-exec region of a flexspin image: every aligned long is a
     // candidate instruction, which is exactly what decoder_golden.rs checks.
-    for ch in img.chunks_exact(4) {
-        let w = u32::from_le_bytes([ch[0], ch[1], ch[2], ch[3]]);
+    let (longs, _) = img.as_chunks::<4>();
+    for ch in longs {
+        let w = u32::from_le_bytes(*ch);
         seen.entry(w).or_insert_with(|| match decode(w) {
             Some(d) => d.op.mnemonic().to_string(),
             None => "<undecoded>".to_string(),
