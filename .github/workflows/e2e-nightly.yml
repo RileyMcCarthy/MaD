@@ -1,5 +1,15 @@
 # Nightly e2e on the ISS: the shipped FlexC image, and a real browser.
 #
+# OFF AT THE PINNED EMBSIM (0.2.0). This job's host is embsim's Chrome guest
+# (embsim-qemu's ChromeGuest and QemuNode, `mad-emulator --computer`), and
+# embsim 0.2.0 removed it (embsim#83). The host kind that replaces it, one the
+# board's clock meters, is embsim's to deliver (embsim MIGRATING-MAD.md
+# section 2, E4); there is no other valid configuration to run here meanwhile,
+# so the schedule is off and the job is skipped rather than left to fail every
+# night. The steps below are the recipe as it ran at embsim c5641f6 (it had
+# failed every night since 2026-09-20). When E4 lands, the job comes back with
+# its host, and the schedule with it.
+#
 # ONE configuration, deliberately: the only valid SIL pairing. The P2 image is
 # interpreted by the ISS, and Chrome runs inside a QEMU guest whose clock the
 # board meters, talking real Web Serial to the emulated FTDI. The native
@@ -34,9 +44,9 @@
 name: E2E nightly (ISS + QEMU)
 
 on:
-  schedule:
-    # 06:17 UTC daily
-    - cron: '17 6 * * *'
+  # Off until embsim delivers E4 (see the header). It ran at 06:17 UTC daily:
+  #   schedule:
+  #     - cron: '17 6 * * *'
   workflow_dispatch:
     inputs:
       suite:
@@ -55,6 +65,9 @@ concurrency:
 jobs:
   cosim-iss-qemu:
     name: E2E on the ISS (FlexC image + QEMU guest)
+    # Skipped until embsim delivers E4 (see the header): mad-emulator has no
+    # --computer at the pinned embsim, and SIL/embsim/qemu does not exist.
+    if: ${{ false }}
     runs-on: ubuntu-latest
     timeout-minutes: 180
     defaults:
