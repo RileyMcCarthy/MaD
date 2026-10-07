@@ -27,27 +27,15 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
-use embsim_board::{
-    digital_drive, Level, PinHandle, PulseDirection, PulseSegment, PulseTrain, PulseTx,
-};
+use embsim_board::{digital_drive, Drive, Level, PeriodicSchedule, PinHandle, TheveninDrive};
 
 /// A pulse pin driving a net.
 #[derive(Debug)]
 pub struct PulseDriver {
     pin: u8,
     handle: PinHandle,
-    /// The rate channel this pin publishes on, when the net routes one.
-    ///
-    /// A step train is a *rate*, not a level history: driving it edge by edge
-    /// makes every step a wheel deadline, and any service that arrives late
-    /// collapses the edges it missed into one `set_drive` of the final level —
-    /// an even number of them is no change at all, so a consumer that counts
-    /// transitions loses them silently. At 20 mm/s that lost all but ~1.5% of
-    /// the commanded distance. Published as a segment instead, the consumer
-    /// integrates the rate and no step can be dropped.
-    tx: Option<PulseTx>,
     /// The last segment published, for folding its count into the next one.
-    published: Mutex<Option<PulseTrain>>,
+    published: Mutex<Option<PeriodicSchedule>>,
     state: Mutex<TrainState>,
     /// Transitions put on the net. The cost of not having a periodic drive,
     /// counted rather than estimated.
@@ -68,38 +56,28 @@ struct TrainState {
 }
 
 impl PulseDriver {
-    /// Attach the rate channel. Without it the driver falls back to edges.
-    pub fn with_tx(mut self, tx: Option<PulseTx>) -> Self {
-        self.tx = tx;
-        self
-    }
-
     /// Publish a constant-rate segment, folding the outgoing one's count in.
     ///
     /// `freq_hz` of 0 holds the channel (a stopped train).
     fn publish(&self, now_ns: u64, freq_hz: u32, total: Option<u64>) -> bool {
-        let Some(tx) = self.tx.as_ref() else {
-            return false;
-        };
-        let now_us = now_ns / 1_000;
         let mut published = self.published.lock().expect("pulse state never poisoned");
         let emitted = published
             .as_ref()
-            .map_or(0, |previous| previous.emitted_at(now_us));
-        let train = PulseTrain {
-            pulses: PulseSegment {
-                emitted,
-                freq_hz,
-                total,
-                since_us: now_us,
-            },
-            // The drive reads its own DIR pin, so the segment carries no
-            // direction of its own (`TrainDirection::DirPin`).
-            direction: PulseDirection::Forward,
+            .map_or(0, |previous| previous.emitted_at_ns(now_ns));
+        let segment = PeriodicSchedule {
+            emitted,
+            freq_hz,
+            total,
+            since_ns: now_ns,
         };
-        *published = Some(train);
+        *published = Some(segment);
         drop(published);
-        tx.set_train(train);
+        let port = |level: Level| -> TheveninDrive { digital_drive(level) };
+        self.handle.drive(Drive::Periodic {
+            hi: port(Level::High),
+            lo: port(Level::Low),
+            segment,
+        });
         true
     }
 
@@ -107,7 +85,6 @@ impl PulseDriver {
         Self {
             pin,
             handle,
-            tx: None,
             published: Mutex::new(None),
             state: Mutex::new(TrainState::default()),
             emitted: AtomicU64::new(0),
@@ -151,7 +128,7 @@ impl PulseDriver {
             .lock()
             .expect("pulse state never poisoned")
             .as_ref()
-            .map_or(0, |previous| previous.emitted_at(now_ns / 1_000));
+            .map_or(0, |previous| previous.emitted_at_ns(now_ns));
         if self.publish(now_ns, freq_hz, Some(banked.saturating_add(pulses))) {
             let mut state = self.state.lock().expect("pulse state never poisoned");
             *state = TrainState {

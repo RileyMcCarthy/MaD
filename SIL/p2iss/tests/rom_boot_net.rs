@@ -15,7 +15,7 @@ use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use embsim_board::{
-    AttachError, Component, ComponentNetIo, Harness, PinDecl, PinKind, System, TheveninDrive,
+    AttachError, Component, ComponentNetIo, Harness, PinDecl, System, TheveninDrive,
 };
 use embsim_core::virtual_clock;
 use p2iss::flashnode::FlashNode;
@@ -66,13 +66,7 @@ struct Pull {
 impl Pull {
     fn new(volts: f64) -> Self {
         Self {
-            pins: [PinDecl {
-                number: "A",
-                name: None,
-                kind: PinKind::Analog,
-                stream: None,
-                drive_impedance: None,
-            }],
+            pins: [PinDecl::analog_source("A")],
             volts,
         }
     }

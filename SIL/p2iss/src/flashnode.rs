@@ -20,27 +20,19 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use embsim_board::{
-    digital_drive, level_of, AttachError, Component, ComponentNetIo, Level, PinDecl, PinHandle,
-    PinKind,
+    digital_drive, jesd8c01_lvcmos_thresholds, AttachError, Component, ComponentNetIo, DeadBand,
+    DigitalReceiver, Level, PinDecl, PinHandle, Thresholds,
 };
 use p2core::SpiFlash;
 
-const PINS: [PinDecl; 4] = [
-    decl("CLK", PinKind::DigitalIn),
-    decl("CS", PinKind::DigitalIn),
-    decl("MOSI", PinKind::DigitalIn),
-    decl("MISO", PinKind::DigitalOut),
-];
+const TH: Thresholds = jesd8c01_lvcmos_thresholds(DeadBand::Unknown);
 
-const fn decl(number: &'static str, kind: PinKind) -> PinDecl {
-    PinDecl {
-        number,
-        name: None,
-        kind,
-        stream: None,
-        drive_impedance: None,
-    }
-}
+const PINS: [PinDecl; 4] = [
+    PinDecl::digital_in("CLK", TH),
+    PinDecl::digital_in("CS", TH),
+    PinDecl::digital_in("MOSI", TH),
+    PinDecl::digital_out("MISO").with_idle(None),
+];
 
 /// Observable counters, so a test can assert the bus really moved.
 #[derive(Debug, Default)]
@@ -118,8 +110,9 @@ impl Component for FlashNode {
 
         {
             let wire = Arc::clone(&self.wire);
-            io.on_sense("CS", move |state| {
-                if let Some(level) = level_of(state) {
+            let cs = DigitalReceiver::new(io.pin("CS")?);
+            io.on_sense("CS", move |sense| {
+                if let Some(level) = cs.read(&sense) {
                     let mut wire = wire.lock().expect("wire never poisoned");
                     wire.flash.set_selected(level == Level::Low);
                     drive_miso(&wire);
@@ -129,8 +122,9 @@ impl Component for FlashNode {
 
         {
             let wire = Arc::clone(&self.wire);
-            io.on_sense("MOSI", move |state| {
-                if let Some(level) = level_of(state) {
+            let mosi = DigitalReceiver::new(io.pin("MOSI")?);
+            io.on_sense("MOSI", move |sense| {
+                if let Some(level) = mosi.read(&sense) {
                     wire.lock().expect("wire never poisoned").mosi = level == Level::High;
                 }
             })?;
@@ -138,8 +132,9 @@ impl Component for FlashNode {
 
         {
             let (wire, counters) = (Arc::clone(&self.wire), Arc::clone(&self.counters));
-            io.on_sense("CLK", move |state| {
-                let Some(level) = level_of(state) else {
+            let clk = DigitalReceiver::new(io.pin("CLK")?);
+            io.on_sense("CLK", move |sense| {
+                let Some(level) = clk.read(&sense) else {
                     return;
                 };
                 let mut wire = wire.lock().expect("wire never poisoned");

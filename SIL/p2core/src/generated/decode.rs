@@ -901,6 +901,18 @@ pub fn decode(word: u32) -> Option<Decoded> {
             return mk(o, f, word & 0x7F_FFFF);
         }
     }
+    // LOC: EEEE 11101WW R aaaaaaaaaaaaaaaaaaaa. WW selects PA/PB/PTRA/PTRB.
+    // The S1 table only files WW=00 (LOC PA); loadp2's flash stub uses
+    // `loc ptra,#\@app_longs` (WW=10, opcode %1110110), which must not trap.
+    if op >> 2 == 0b1_1101 {
+        return mk(Op::Loc, Form::OperandLoc, word & 0xF_FFFF);
+    }
+    // CALLD D,S (register form): EEEE 1011001 CZI D S.
+    // Flexspin's RETI1/RESI1: `resi1` = CALLD IJMP1, IRET1; `reti1` =
+    // CALLD INB, IRET1. The 20-bit CALLD (#rel) is opcode %11100WW.
+    if op == 0b101_1001 {
+        return mk(Op::Calld, Form::OperandDs, 0);
+    }
     // 20-bit relative/absolute branches.
     if (0b1101100..=0b1101111).contains(&op) {
         if let Some((o, f)) = S2_BRANCH[op] {
@@ -909,6 +921,11 @@ pub fn decode(word: u32) -> Option<Decoded> {
     }
     // The misc opcode: the S field is the sub-opcode selector.
     if op == 0b1101011 {
+        // MODCZ/MODC/MODZ share S=$6F with WRNZ. I=1 is the immediate
+        // cccc/zzzz form (`modcz _set,0 wc`); I=0 is WRNZ.
+        if s == 0x6F && i {
+            return mk(Op::Modcz, Form::OperandL, 0);
+        }
         if s == 0x24 {
             if let Some((o, f)) = S5_POLL[d as usize] {
                 return mk(o, f, 0);

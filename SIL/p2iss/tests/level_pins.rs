@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use embsim_board::{
-    digital_drive, AttachError, Component, ComponentNetIo, Harness, Level, PinDecl, PinKind, System,
+    digital_drive, AttachError, Component, ComponentNetIo, Harness, Level, PinDecl, System,
 };
 use embsim_core::virtual_clock;
 use p2iss::{P2Iss, SerialLink};
@@ -67,13 +67,7 @@ struct Switch {
 impl Switch {
     fn new(closed: Arc<AtomicBool>) -> Self {
         Self {
-            pins: vec![PinDecl {
-                number: "OUT",
-                name: None,
-                kind: PinKind::DigitalOut,
-                stream: None,
-                drive_impedance: None,
-            }],
+            pins: vec![PinDecl::digital_out("OUT")],
             closed,
             io: Arc::new(Mutex::new(None)),
         }
@@ -187,20 +181,8 @@ impl Spinner {
     fn new(count: Arc<Mutex<i64>>) -> Self {
         Self {
             pins: vec![
-                PinDecl {
-                    number: "A",
-                    name: None,
-                    kind: PinKind::DigitalOut,
-                    stream: None,
-                    drive_impedance: None,
-                },
-                PinDecl {
-                    number: "B",
-                    name: None,
-                    kind: PinKind::DigitalOut,
-                    stream: None,
-                    drive_impedance: None,
-                },
+                PinDecl::digital_out("A"),
+                PinDecl::digital_out("B"),
             ],
             count,
         }
