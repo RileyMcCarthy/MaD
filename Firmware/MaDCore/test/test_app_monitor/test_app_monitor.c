@@ -16,6 +16,8 @@
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <stdarg.h>
+#include <stdio.h>
 
 #include "HAL_lock.h"
 #include "app_gauge.h"          // app_gauge_coord_E
@@ -112,6 +114,11 @@ bool IO_SDCard_open(IO_SDCard_channel_E channel, const char *fileName, IO_SDCard
     }
     return dbl_open_returns;
 }
+/* The queue this stands in for refuses when it is full -- the LOGGER cog not
+ * draining, a slow card, a card that errored. Returning an unconditional true
+ * made every backpressure path in app_monitor untestable by construction, so
+ * the drop accounting it now does could not have been written against it. */
+static bool dbl_push_returns = true;
 bool IO_SDCard_push(IO_SDCard_channel_E channel, void *data, uint32_t size)
 {
     dbl_push_calls++;
@@ -121,7 +128,7 @@ bool IO_SDCard_push(IO_SDCard_channel_E channel, void *data, uint32_t size)
     {
         memcpy(&dbl_push_lastSample, data, size);
     }
-    return true;
+    return dbl_push_returns;
 }
 bool IO_SDCard_close(IO_SDCard_channel_E channel)
 {
@@ -138,7 +145,20 @@ bool IO_SDCard_close(IO_SDCard_channel_E channel)
 uint32_t dev_cogManager_getStackSize(dev_cogManager_channel_E channel) { (void)channel; return 0; }
 uint32_t dev_cogManager_getStackPeak(dev_cogManager_channel_E channel) { (void)channel; return 0; }
 const char *dev_cogManager_getName(dev_cogManager_channel_E channel) { (void)channel; return ""; }
-void app_notification_send(app_notification_type_E type, const char *format, ...) { (void)type; (void)format; }
+/* Recorded, not discarded: "how many times did this fire" is the whole claim
+ * for a once-per-run notice on a 1 kHz cog. */
+static int dbl_notify_calls;
+static app_notification_type_E dbl_notify_lastType;
+static char dbl_notify_lastMessage[APP_NOTIFICATION_MAX_MESSAGE_SIZE];
+void app_notification_send(app_notification_type_E type, const char *format, ...)
+{
+    dbl_notify_calls++;
+    dbl_notify_lastType = type;
+    va_list args;
+    va_start(args, format);
+    (void)vsnprintf(dbl_notify_lastMessage, sizeof(dbl_notify_lastMessage), format, args);
+    va_end(args);
+}
 
 /**********************************************************************
  * Module under test (compiled in via #include of the .c)
@@ -172,9 +192,14 @@ static void reset_doubles(void)
     dbl_open_lastMode = IO_SDCARD_MODE_WRITE;
 
     dbl_push_calls = 0;
+    dbl_push_returns = true;
     dbl_push_lastChannel = (IO_SDCard_channel_E)0;
     dbl_push_lastSize = 0;
     memset(&dbl_push_lastSample, 0, sizeof(dbl_push_lastSample));
+
+    dbl_notify_calls = 0;
+    dbl_notify_lastType = APP_NOTIFICATION_TYPE_MESSAGE;
+    dbl_notify_lastMessage[0] = '\0';
 
     dbl_close_calls = 0;
     dbl_close_lastChannel = (IO_SDCard_channel_E)0;
@@ -608,6 +633,141 @@ void test_logging_stopping_flushes_then_closes_after_tail(void)
     TEST_ASSERT_EQUAL_INT(lib_timer_STATE_OFF, app_monitor_data.stopLoggingTail.state);
 }
 
+/* Advance the load cell by one reading, which is what makes app_monitor write. */
+static void oneMoreSample(void)
+{
+    dbl_forceIndex = app_monitor_data.input.forceIndex + 1;
+    app_monitor_run();
+}
+
+void test_a_refused_sample_is_counted_rather_than_forgotten(void)
+{
+    VIBES_TEST("monitor.dropped-sample-is-counted",
+               "src/APP/app_monitor.c#app_monitor_private_pushSample",
+               "logging running, with the SD queue refusing one sample and accepting the next");
+    VIBES_EXPECT_WHY("drop-counted",
+                     "the refused sample is counted and the accepted one is not",
+                     "a refused push is a hole in the middle of a recorded test that nothing downstream can find: the samples carry no index and the timestamps stay monotonic across the gap, so the count kept here is the only evidence the file is incomplete");
+    VIBES_EXPECT_WHY("logging-continues",
+                     "logging stays in the running state",
+                     "backpressure is not a reason to abandon the rest of the test, so the drop is recorded and recording goes on");
+
+    enterRunning(0U);
+    TEST_ASSERT_EQUAL_UINT32(0U, app_monitor_getDroppedSamples());
+
+    dbl_push_returns = false;
+    oneMoreSample();
+    TEST_ASSERT_EQUAL_UINT32(1U, app_monitor_getDroppedSamples());
+    TEST_ASSERT_EQUAL_INT(APP_MONITOR_LOGGING_STATE_RUNNING, app_monitor_data.loggingState);
+
+    dbl_push_returns = true;
+    oneMoreSample();
+    TEST_ASSERT_EQUAL_UINT32(1U, app_monitor_getDroppedSamples());
+}
+
+void test_a_run_of_drops_notifies_once_not_once_per_sample(void)
+{
+    VIBES_TEST("monitor.dropped-samples-notify-once",
+               "src/APP/app_monitor.c#app_monitor_private_pushSample",
+               "logging running with the SD queue refusing fifty consecutive samples");
+    VIBES_EXPECT_WHY("one-notice",
+                     "exactly one notification is raised while the run continues",
+                     "this runs on the MONITOR cog at 1 kHz and the notification path formats into a queue of its own, so one message per dropped sample would answer a full queue by filling a second one");
+    VIBES_EXPECT("all-counted", "all fifty drops are counted");
+
+    enterRunning(0U);
+    dbl_push_returns = false;
+    for (int i = 0; i < 50; i++)
+    {
+        oneMoreSample();
+    }
+    TEST_ASSERT_EQUAL_UINT32(50U, app_monitor_getDroppedSamples());
+    TEST_ASSERT_EQUAL_INT(1, dbl_notify_calls);
+    TEST_ASSERT_EQUAL_INT(APP_NOTIFICATION_TYPE_ERROR, dbl_notify_lastType);
+}
+
+void test_closing_a_recording_reports_how_many_samples_were_lost(void)
+{
+    VIBES_TEST("monitor.dropped-samples-reported-on-close",
+               "src/APP/app_monitor.c#app_monitor_private_processLogging",
+               "a recording that dropped three samples, then ended");
+    VIBES_EXPECT_WHY("total-reported",
+                     "closing the file raises a second notification carrying the number lost",
+                     "the operator needs the total before they analyse the file, and the first notice went out when the count was still one");
+
+    enterRunning(0U);
+    dbl_push_returns = false;
+    oneMoreSample();
+    oneMoreSample();
+    oneMoreSample();
+    TEST_ASSERT_EQUAL_INT(1, dbl_notify_calls); /* still just the opening notice */
+
+    dbl_push_returns = true;
+    dbl_testRunning = false;
+    global_timeus = 0;
+    app_monitor_run(); /* -> STOPPING */
+    global_timeus = 150U * 1000U;
+    app_monitor_run(); /* tail expires -> close */
+
+    TEST_ASSERT_EQUAL_INT(APP_MONITOR_LOGGING_STATE_IDLE, app_monitor_data.loggingState);
+    TEST_ASSERT_EQUAL_INT(2, dbl_notify_calls);
+    TEST_ASSERT_EQUAL_INT(APP_NOTIFICATION_TYPE_ERROR, dbl_notify_lastType);
+    TEST_ASSERT_NOT_NULL(strstr(dbl_notify_lastMessage, "3"));
+}
+
+void test_a_recording_that_lost_nothing_says_nothing(void)
+{
+    VIBES_TEST("monitor.clean-recording-is-silent",
+               "src/APP/app_monitor.c#app_monitor_private_processLogging",
+               "a recording in which the SD queue accepted every sample, then ended");
+    VIBES_EXPECT_WHY("no-notice",
+                     "no notification is raised and the drop count stays at zero",
+                     "a warning that appears on every run is one an operator learns to ignore, which is what would make the real one invisible");
+
+    enterRunning(0U);
+    oneMoreSample();
+    oneMoreSample();
+    dbl_testRunning = false;
+    global_timeus = 0;
+    app_monitor_run();
+    global_timeus = 150U * 1000U;
+    app_monitor_run();
+
+    TEST_ASSERT_EQUAL_INT(APP_MONITOR_LOGGING_STATE_IDLE, app_monitor_data.loggingState);
+    TEST_ASSERT_EQUAL_UINT32(0U, app_monitor_getDroppedSamples());
+    TEST_ASSERT_EQUAL_INT(0, dbl_notify_calls);
+}
+
+void test_a_new_recording_does_not_inherit_the_last_ones_drops(void)
+{
+    VIBES_TEST("monitor.drop-count-resets-per-recording",
+               "src/APP/app_monitor.c#app_monitor_private_processLogging",
+               "a recording that dropped a sample, then a second recording that did not");
+    VIBES_EXPECT_WHY("count-resets",
+                     "the second recording starts its count at zero and raises no notification of its own",
+                     "the count describes one file; carried over, it would condemn a complete recording for the previous one's loss");
+
+    enterRunning(0U);
+    dbl_push_returns = false;
+    oneMoreSample();
+    TEST_ASSERT_EQUAL_UINT32(1U, app_monitor_getDroppedSamples());
+
+    dbl_push_returns = true;
+    dbl_testRunning = false;
+    global_timeus = 0;
+    app_monitor_run();
+    global_timeus = 150U * 1000U;
+    app_monitor_run();
+    TEST_ASSERT_EQUAL_INT(APP_MONITOR_LOGGING_STATE_IDLE, app_monitor_data.loggingState);
+
+    dbl_notify_calls = 0;
+    enterRunning(200U * 1000U);
+    TEST_ASSERT_EQUAL_UINT32(0U, app_monitor_getDroppedSamples());
+    oneMoreSample();
+    TEST_ASSERT_EQUAL_UINT32(0U, app_monitor_getDroppedSamples());
+    TEST_ASSERT_EQUAL_INT(0, dbl_notify_calls);
+}
+
 void test_logging_full_cycle_can_restart(void)
 {
     VIBES_TEST("monitor.logging-restarts-after-close",
@@ -811,6 +971,11 @@ int main(void)
     RUN_TEST(test_logging_running_pushes_current_sample_contents);
     RUN_TEST(test_logging_running_to_stopping_starts_tail_timer);
     RUN_TEST(test_logging_stopping_flushes_then_closes_after_tail);
+    RUN_TEST(test_a_refused_sample_is_counted_rather_than_forgotten);
+    RUN_TEST(test_a_run_of_drops_notifies_once_not_once_per_sample);
+    RUN_TEST(test_closing_a_recording_reports_how_many_samples_were_lost);
+    RUN_TEST(test_a_recording_that_lost_nothing_says_nothing);
+    RUN_TEST(test_a_new_recording_does_not_inherit_the_last_ones_drops);
     RUN_TEST(test_logging_full_cycle_can_restart);
 
     RUN_TEST(test_no_profile_means_no_limits_exceeded);

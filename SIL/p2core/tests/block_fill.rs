@@ -195,8 +195,22 @@ fn firmware_image() -> Option<Vec<u8>> {
 }
 
 fn image_path() -> std::path::PathBuf {
-    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../Firmware/MaDCore/.pio/build/propeller2_debug/program")
+    // A missing image makes every test in this file skip. That is right for a
+    // laptop that has not run `make p2image`, and wrong for CI: a job meant to
+    // exercise the FlexC-compiled firmware would report green while asserting
+    // nothing, which is how this suite once reported 54 passed on an empty run.
+    // MAD_REQUIRE_P2_IMAGE turns the skip into a failure wherever the image is
+    // supposed to exist.
+    let p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../Firmware/MaDCore/.pio/build/propeller2_debug/program");
+    if !p.exists() && std::env::var_os("MAD_REQUIRE_P2_IMAGE").is_some() {
+        panic!(
+            "MAD_REQUIRE_P2_IMAGE is set but the P2 image is missing at {}. \
+             Build it with `make p2image` (or `cd Firmware/MaDCore && pio run -e propeller2_debug`).",
+            p.display()
+        );
+    }
+    p
 }
 
 /// Loud on purpose: a skipped ISS test that reads as one grey line in a green

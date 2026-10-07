@@ -3,9 +3,10 @@
 The **software-in-the-loop (SIL)** system tests the *complete* firmware ↔ UI
 integration with **no physical hardware**. It executes the **Propeller 2 image**
 (`pio run -e propeller2_debug`) on an instruction-set simulator. The machine's
-pins are nets, the host is a PTY, and the physics models sit on those nets.
-The control app connects to the virtual serial port exactly as it would to a
-real board.
+pins are nets, and the physics models sit on those nets. The host is either a
+PTY, for a person looking, or a computer node: Chrome inside a QEMU guest whose
+clock the board meters, for the e2e suite. The control app connects to the
+virtual serial port exactly as it would to a real board.
 
 !!! info "This is not a mock"
     The firmware under test is the image you flash. The ISS executes its

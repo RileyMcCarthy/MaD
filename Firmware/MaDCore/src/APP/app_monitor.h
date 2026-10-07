@@ -74,6 +74,14 @@ bool app_monitor_isSampleProfileLoaded(void);
 bool app_monitor_isForceExceeded(void);
 bool app_monitor_isVelocityExceeded(void);
 bool app_monitor_isDisplacementExceeded(void);
+
+/* Samples the SD queue refused during the current (or most recent) recording.
+ *
+ * Non-zero means the recorded file has holes. Nothing in the record itself can
+ * reveal them -- samples carry no index and the timestamps stay monotonic
+ * across a gap -- so this counter is the only way to know the file is
+ * incomplete. Reset when a recording starts. */
+uint32_t app_monitor_getDroppedSamples(void);
 /**********************************************************************
  * End of File
  **********************************************************************/

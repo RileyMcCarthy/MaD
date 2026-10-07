@@ -295,6 +295,28 @@ static void dev_servo_private_resync(dev_servo_channel_E ch, int32_t pos)
 /**********************************************************************
  * Public Function Definitions
  **********************************************************************/
+bool dev_servo_waveShapeFromWire(uint8_t wire, dev_servo_wave_E *shape)
+{
+    if (shape == NULL)
+    {
+        return false;
+    }
+    bool known = true;
+    switch (wire)
+    {
+    case (uint8_t)DEV_SERVO_WAVE_SINE:
+        *shape = DEV_SERVO_WAVE_SINE;
+        break;
+    case (uint8_t)DEV_SERVO_WAVE_TRIANGLE:
+        *shape = DEV_SERVO_WAVE_TRIANGLE;
+        break;
+    default:
+        known = false;
+        break;
+    }
+    return known;
+}
+
 void dev_servo_init(int lock, int32_t maxVelocityCounts, int32_t maxAccelCounts)
 {
     dev_servo_data.lock = lock;

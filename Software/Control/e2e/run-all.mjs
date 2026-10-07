@@ -4,16 +4,34 @@
  * Drives the real app against the live SIL emulator and an OPFS data folder —
  * see fixtures.mjs and docs/TEST_PLAN.md.
  *
- * The host is Chrome on this machine. The emulator's serial port is the PTY,
- * and the fake `navigator.serial` talks to it through the WS bridge:
- *   cd SIL && make e2e-emulator        # emulator on /tmp/tty.rpi (unpaced virtual time)
- *   npm run sil:bridge                 # ws://localhost:9999
- *   npm run dev                        # app on http://localhost:5174
- *   npm run e2e
+ * ONE configuration touches the board: the shipped P2 image interpreted by
+ * the ISS, and Chrome inside a QEMU guest the board's clock meters, talking
+ * real Web Serial to the emulated FTDI (the computer node). The browser cannot
+ * outrun the board, because the board decides when the browser's vCPU runs at
+ * all:
+ *   cd SIL && make playground-cosim    # DevTools on 9222, control on 9223
+ *   npm run dev -- --host              # the guest fetches from 10.0.2.2:5174
+ *   CDP_URL=http://127.0.0.1:9222 npm run e2e
  *
- * FW-ISS is skipped. It drove the mask ROM through a browser inside QEMU,
- * and that guest is gone. A person flashes from the browser on the PTY
- * (`make playground-rom`).
+ * Every budget here is multiplied by E2E_TIMEOUT_SCALE (10 by default under
+ * CDP). The three link-drop scenarios go through fixtures' dropLink(), which
+ * asks the board to unplug its emulated FTDI for a few seconds -- a genuine
+ * USB detach the guest kernel and Chrome both see. That needs mad-emulator
+ * started with --trace-port (CONTROL_URL, default http://127.0.0.1:9223).
+ *
+ * The native firmware library is gone, and with it the configuration that
+ * paired a host Chrome with the fake serial over the WS bridge. The fake
+ * serial is still here (no CDP_URL) because `make e2e-emulator` still puts the
+ * ISS behind the bridge -- but that pairing measures the host, not the
+ * machine, and is not a valid SIL configuration. Without CDP_URL only the
+ * board-free scenarios mean anything: A1 and FW1/2/3/5/6/7/8/9 launch a host
+ * Chrome against in-page fakes and need no emulator at all, which is what
+ * ci.yml's per-PR `control-e2e-boardless` job runs:
+ *   npm run dev
+ *   SCENARIOS=A1,FW1,FW2,FW3,FW5,FW6,FW7,FW8,FW9 npm run e2e
+ *
+ * FW-ISS is skipped: mad-emulator's ROM boot puts the host on a PTY, not a
+ * computer node. A person flashes from a browser on `make playground-rom`.
  *
  * Covers the parity-critical scenarios of docs/TEST_PLAN.md §4: A1, B1–B5, C1/C3/C4, D1/D2/D3,
  * E1, F1/F2/F4/F6/F7, G1/G2/G3 + G-limit, H1–H5, I1–I4, J1 (in G-limit), K1 (in B2+B3+B4) — plus
@@ -37,6 +55,8 @@ import {
   OPFS_DIR,
   APP_URL,
   APP_URL_HOST,
+  dropLink,
+  CDP_URL,
   T,
   boardGrantedPort,
   chromium,
@@ -69,8 +89,11 @@ const MATRIX = JSON.parse(
 // raising the ceiling cannot weaken an assertion — it only stops a slow host
 // from being reported as a broken one.
 //
-// `T()` multiplies by E2E_TIMEOUT_SCALE (1 unless the environment sets it) so a
-// slow host can stretch every budget without a second copy of the suite.
+// On the ISS the multiplier is not a slow host but the execution model: the
+// board interprets every P2 instruction, and the browser is inside a VM the
+// board's clock meters, so a simulated second costs far more than a second of
+// wall time. `T()` carries that factor (E2E_TIMEOUT_SCALE, 10x under CDP) so
+// both SIL configurations share one set of budgets instead of two.
 const DEVICE_WAIT_MS = T(60_000);
 
 // Budget for a whole TEST PROGRAM: upload, execute every move, complete, and
@@ -1584,6 +1607,23 @@ const scenarios = [
         await page.getByLabel('Speed (mm/s)').fill('5');
         const before = await live();
         await page.getByRole('button', { name: '+ Jog up' }).click();
+        // Sample the ring WHILE the carriage moves. One reading at rest proves
+        // nothing: a stream quantised to micrometres still lands off a whole
+        // micrometre 0 times in 1000, but a single nanometre reading lands on
+        // one 1 time in 1000 by luck, so a lone sample cannot tell the two
+        // apart. A run of them can.
+        const nmDuringMove = await page.evaluate(async (durMs) => {
+          const out = [];
+          const t0 = performance.now();
+          while (performance.now() - t0 < durMs) {
+            const s = globalThis.__madLive?.latest();
+            if (s && Number.isFinite(s.machinePosition)) {
+              out.push(Math.round(s.machinePosition * 1e6));
+            }
+            await new Promise((r) => setTimeout(r, 10));
+          }
+          return out;
+        }, 700);
         await awaitRest(page);
         const after = await live();
 
@@ -1591,11 +1631,28 @@ const scenarios = [
         assert(Math.abs(movedMm - 2) < 0.3, `jogged 2 mm (moved ${movedMm.toFixed(4)} mm)`);
 
         // The live stream carries SUB-MICRON detail. A DOM scrape would land on
-        // a whole micrometre every time; the wire carries nanometres.
+        // a whole micrometre every time; the wire carries nanometres. This is
+        // the live twin of the CSV column check in assertRecordedMotion -- the
+        // recorded path would fail 17 scenarios if the wire went back to
+        // micrometres, and until now the live path would have failed none,
+        // though M8, M9, M13, D2 and TC14 all measure accuracy with it.
         const nm = Math.round(after.machinePosition * 1e6);
+        // Just "it moved". The real claim is the sub-micron one below; this
+        // only guards against asserting resolution on a stream that never
+        // advanced. Five was an arbitrary choice made against the cosim, and
+        // the bridge delivers fewer distinct positions for the same jog (3 in
+        // 70 samples) because its plant and sampling differ -- a number tuned
+        // on one configuration should not fail the other.
+        const distinct = new Set(nmDuringMove).size;
         assert(
-          Number.isFinite(after.machinePosition),
-          `live position is a number (${after.machinePosition})`,
+          distinct >= 2,
+          `the live ring advanced during the jog (${distinct} distinct positions in ${nmDuringMove.length} samples)`,
+        );
+        const subMicron = nmDuringMove.filter((v) => v % 1000 !== 0).length;
+        assert(
+          subMicron > nmDuringMove.length / 20,
+          `the live position carries sub-micron detail (only ${subMicron} of ` +
+            `${nmDuringMove.length} samples were off a whole micrometre)`,
         );
 
         // Endpoint accuracy. The servo parks as soon as it is inside
@@ -1642,23 +1699,76 @@ const scenarios = [
           await page.waitForTimeout(100);
         }
         assert(moving, 'homing started moving the axis');
-        // Home's setpoint jumps to machine 0 immediately. Waiting for "still"
-        // returns mid-seek on an unpaced runner — the browser polls slower
-        // than the board, so a 10 mm hop looks like a finished move. Wait
-        // until the gantry is on that setpoint.
+        // Home's setpoint jumps to machine 0 immediately, so "position equals
+        // setpoint" is reached long before the gantry stops -- and an exit
+        // condition of "within X" makes any later assertion of "within X"
+        // vacuous, because the loop can only leave by satisfying it. Waiting
+        // for STILLNESS instead keeps the wait and the claim independent: the
+        // carriage has to stop moving, and only then is asked where it
+        // stopped. It also makes the reported number mean something. The old
+        // loop exited on the first sample inside 150 um and reported whatever
+        // that happened to be (64 um on CI) -- a fact about the poll interval,
+        // not about homing.
+        // Two stages, because neither alone is enough. Stillness on its own
+        // fires DURING homing: HOME_ENDSTOP calls actuator_stop() and dwells
+        // on a timer before backing off, so the carriage genuinely stops on
+        // the endstop with the setpoint still 87 mm away. And convergence on
+        // its own is what made the old check vacuous -- it exited on "within
+        // X" and then asserted "within X".
+        //
+        // So: wait for a LOOSE convergence to get past the endstop dwell,
+        // then wait for stillness, then assert a TIGHT bound. The wait
+        // threshold (0.5 mm) and the claim (~1.5 um) are 340x apart, so the
+        // assertion can fail without the wait having timed out.
         const settleDeadline = Date.now() + RUN_WAIT_MS;
         let after = null;
+        let converged = false;
+        let prevMm = NaN;
+        let stillTicks = 0;
         while (Date.now() < settleDeadline) {
           after = await live();
-          if (after && Number.isFinite(after.machinePosition) && Number.isFinite(after.machineSetpoint)
-              && Math.abs(after.machinePosition - after.machineSetpoint) < 0.15) {
-            break;
+          if (after && Number.isFinite(after.machinePosition) && Number.isFinite(after.machineSetpoint)) {
+            if (!converged && Math.abs(after.machinePosition - after.machineSetpoint) < 0.5) {
+              converged = true;
+            }
+            if (converged) {
+              if (Number.isFinite(prevMm) && Math.abs(after.machinePosition - prevMm) <= 0.001) {
+                if (++stillTicks >= 4) break;
+              } else {
+                stillTicks = 0;
+              }
+              prevMm = after.machinePosition;
+            }
           }
           await page.waitForTimeout(100);
         }
         assert(after, 'the live stream reported a sample after homing');
+        assert(converged, 'homing brought the gantry onto its setpoint');
+        assert(stillTicks >= 4, 'the axis came to rest after homing');
+        // Homing ends with an ordinary profiled backoff move and app_motion
+        // only leaves HOME_BACKOFF on atTarget -- the servo's own "encoder
+        // settled on target", inside positionDeadband -- so on the ISS it
+        // lands exactly as a jog does: measured 0.98 um, against the same
+        // bound M13-jog-endpoint uses.
+        //
+        // The bridge's plant is a different machine: a 20 ms first-order
+        // velocity lag with a 15 percent viscous loss (SIL/MaDSim/src/
+        // wiring.rs), sampled by DOM polling rather than the live ring. It
+        // settles 201 um out on the same sequence. Both numbers are true of
+        // their own configuration, so the bound is per-configuration -- one
+        // number would have to be false somewhere.
+        //
+        // What is asserted identically in both: the wait is for STILLNESS,
+        // not for the bound. That is what stops this being the tautology it
+        // was, where the loop exited on "within X" and then checked "within
+        // X" and could only fail by timing out.
         const offUm = Math.abs(after.machinePosition - after.machineSetpoint) * 1000;
-        assert(offUm <= 150, `homing parked on its setpoint (off by ${offUm.toFixed(2)} um)`);
+        const homeTolUm = CDP_URL ? DEADBAND_UM * 1.5 : 400;
+        assert(
+          offUm <= homeTolUm,
+          `homing parked on its setpoint (off by ${offUm.toFixed(2)} um, tolerance ${homeTolUm.toFixed(2)} um` +
+            `${CDP_URL ? `, deadband ${DEADBAND_UM}` : ' — bridge plant lag'})`,
+        );
         console.log(`    [manual] home: parked ${offUm.toFixed(2)} um from setpoint at ${(after.machinePosition * 1e6).toFixed(0)} nm`);
 
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
@@ -2050,7 +2160,7 @@ const scenarios = [
         await page.goto(`${APP_URL}#/live`);
         await awaitResponding(page);
         // Sever the link (simulates USB unplug / emulator death).
-        await page.evaluate(() => window.__silDropLink());
+        await dropLink(page);
         await page.locator('.dot.disconnected').waitFor({ timeout: DEVICE_WAIT_MS });
         await page.locator('.toast').getByText(/disconnected/i).first().waitFor({ timeout: DEVICE_WAIT_MS });
         await clickReconnect(page);
@@ -2069,7 +2179,7 @@ const scenarios = [
         await connectToSil(page);
         await page.goto(`${APP_URL}#/live`);
         await awaitResponding(page);
-        await page.evaluate(() => window.__silDropLink());
+        await dropLink(page);
         await page.locator('.dot.disconnected').waitFor({ timeout: DEVICE_WAIT_MS });
         await clickReconnect(page);
         await awaitResponding(page);
@@ -2099,7 +2209,7 @@ const scenarios = [
         await page.goto(`${APP_URL}#/live`);
         await page.getByText('Test: running').waitFor({ timeout: DEVICE_WAIT_MS });
         // Drop link while test is running — UI must not throw; machine keeps going.
-        await page.evaluate(() => window.__silDropLink());
+        await dropLink(page);
         await page.locator('.dot.disconnected').waitFor({ timeout: DEVICE_WAIT_MS });
         await clickReconnect(page);
         // Eventually idle again (test completes or was aborted by prior state).
@@ -2457,8 +2567,10 @@ const scenarios = [
     id: 'FW-ISS',
     name: 'Firmware: UI flash talks to the ISS mask ROM over Web Serial',
     async run() {
-      // Skipped in main(): the in-sim Chrome guest this scenario drove is gone.
-      // Flashing is a host browser on `make playground-rom`.
+      // Skipped in main(): mad-emulator's ROM boot (`--boot-rom`) puts the
+      // host on a PTY, not a computer node, so there is no guest Chrome on the
+      // programming UART for this to drive. Flashing is a person's browser on
+      // `make playground-rom`.
       const { browser, page, errors } = await newSilPage();
       try {
         page.on('dialog', (d) => d.accept());
@@ -2699,7 +2811,9 @@ async function main() {
     if (!res.ok) throw new Error(String(res.status));
   } catch {
     console.error(
-      `✗ App not reachable at ${APP_URL_HOST}. Start: npm run dev (and make e2e-emulator + npm run sil:bridge).`,
+      `✗ App not reachable at ${APP_URL_HOST}. Start: ${
+        CDP_URL ? 'npm run dev -- --host (and make playground-cosim)' : 'npm run dev'
+      }.`,
     );
     process.exit(2);
   }
@@ -2736,10 +2850,17 @@ async function main() {
 
   let pass = 0;
   const failures = [];
+  // Three scenarios sever the link mid-test to prove the app's reconnect path.
+  // They used to be skipped in computer-node mode -- they did it through
+  // `window.__silDropLink()`, which the fake serial installs, and a real port
+  // has nothing to reach in and sever. They now go through fixtures'
+  // dropLink(), which unplugs the board's emulated FTDI for a few seconds and
+  // plugs it back: a genuine USB detach that the guest kernel and Chrome both
+  // see. Both configurations run all of them.
   let skipped = 0;
   for (const s of selected) {
     if (s.id === 'FW-ISS') {
-      console.log(`  ~ ${s.id}: skipped (the in-sim Chrome guest is gone; flash from the host browser on make playground-rom)`);
+      console.log(`  ~ ${s.id}: skipped (the ROM boot has no computer node; flash from a browser on make playground-rom)`);
       skipped += 1;
       continue;
     }

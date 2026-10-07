@@ -265,35 +265,29 @@ jobs:
             cargo "+$MSRV" build --manifest-path "$crate/Cargo.toml"
           done
 
-  # BLOCKING (in ci-gate.needs). The full Control ↔ SIL e2e suite: the real app
-  # in real Chrome, driving the real emulator over the WS↔PTY bridge. It is the
-  # only job that exercises the app, the generated codec, the firmware and the
-  # machine models as one system, so it is the only one that can catch an
-  # integration break — the class of bug that shipped while this ran nightly
-  # (the firmware never created `<mount>/gcode/`, so on a fresh SD root every
-  # uploaded test stored zero moves — invisible to every offline gate).
+  # BLOCKING (in ci-gate.needs). The board-free e2e scenarios, per PR: the real
+  # app in a real host Chrome, with no emulator at all. A1 (the unsupported-
+  # browser screen) and FW1/2/3/5/6/7/8/9 (the firmware-flash UI) drive the app
+  # against in-page fakes (installFakeBootRom, installOpfsDataDir) and never
+  # reach a board, so they mean the same thing here as anywhere.
   #
-  # It ran advisory for exactly as long as it took to earn the gate. Two things
-  # blocked promotion and both are now fixed:
-  #   1. It was paced to real time (via `make playground`), so its result
-  #      depended on how fast the runner was — 13 failures on CI, green on dev
-  #      boxes. It now runs unpaced (`make e2e-emulator`, --speed 0): virtual
-  #      time advances by idle jump, decoupled from wall clock, so host speed no
-  #      longer changes the outcome.
-  #   2. A toolchain-specific UB in the generated dispatcher (unsequenced
-  #      outSize, RileyMcCarthy/protoemb#23) made every file_download return a
-  #      0-byte frame under GCC. Fixed upstream and pinned in.
-  # With both fixed the suite is 49/49 on CI's own toolchain, so it gates.
-  #
-  # The suite is serial by contract (one emulator, one PTY, one client at a
-  # time). The nightly workflow still runs it on `main` for drift over time.
-  control-e2e-sil:
+  # This job used to be `control-e2e-sil`: the FULL suite against the native
+  # firmware library behind the WS<->PTY bridge, unpaced. The native library is
+  # gone -- mad-emulator runs the shipped P2 image on the ISS -- and the ISS
+  # behind the bridge is not a valid SIL configuration: the bridge hands the
+  # board's bytes to a browser running at host speed, so every wait measures
+  # the host, not the machine. The one valid configuration, the ISS with Chrome
+  # in a QEMU guest the board's clock meters, runs at ~0.024x real time, which a
+  # per-PR gate cannot afford (#122 measured three scenarios at 1,534 s); it
+  # runs the scenarios that touch the board in e2e-nightly.yml instead.
+  control-e2e-boardless:
+    name: Control e2e (board-free scenarios)
     needs: changes
     if: |
       needs.changes.outputs.is_release != 'true' &&
-      (needs.changes.outputs.wasm_control == 'true' || needs.changes.outputs.sil == 'true')
+      needs.changes.outputs.wasm_control == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: Software/Control
@@ -309,26 +303,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: SIL
       - uses: actions/setup-python@v7
         with:
           python-version: '3.x'
-      - name: Install system deps
-        run: sudo apt-get update && sudo apt-get install -y libudev-dev pkg-config
-      - name: Install PlatformIO
-        run: pip install -U platformio
       - name: Install protocol generator deps
         run: pip install -r ../../Protocol/ProtoEmb/core/requirements.txt
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
-      - name: Install propeller platform
-        working-directory: Firmware/MaDCore
-        run: pio pkg install --platform https://github.com/RileyMcCarthy/platform-propeller.git
-      - name: Build the P2 image and the emulator
-        working-directory: SIL
-        run: make p2image emulator
       - name: Install Control deps + wasm + proto
         run: |
           npm ci
@@ -338,26 +319,8 @@ jobs:
       # the runner; this brings in the shared libraries it needs.
       - name: Install Chromium for Playwright
         run: npx playwright install --with-deps chromium
-      # Unpaced virtual time, NOT the real-time playground. The suite does not
-      # need real-time speed, and under --speed 1.0 the emulator must sustain a
-      # real-time factor of 1.0 — which a shared 4-vCPU runner cannot, so the
-      # suite ends up measuring the runner instead of the code.
-      - name: Start the e2e emulator (unpaced virtual time)
-        working-directory: SIL
+      - name: Start the Vite dev server
         run: |
-          nohup make e2e-emulator > /tmp/mad-playground.log 2>&1 &
-          for i in $(seq 1 240); do
-            if [ -e /tmp/tty.rpi ]; then echo "PTY ready after ${i}s"; break; fi
-            sleep 2
-          done
-          if [ ! -e /tmp/tty.rpi ]; then
-            echo "=== playground log ==="
-            cat /tmp/mad-playground.log || true
-            exit 1
-          fi
-      - name: Start WS bridge + Vite dev server
-        run: |
-          nohup npm run sil:bridge > /tmp/mad-bridge.log 2>&1 &
           nohup npm run dev -- --host 127.0.0.1 --port 5174 > /tmp/mad-vite.log 2>&1 &
           for i in $(seq 1 60); do
             curl -sf http://127.0.0.1:5174/ >/dev/null && break
@@ -366,35 +329,26 @@ jobs:
           curl -sf http://127.0.0.1:5174/ >/dev/null || {
             echo "=== vite log ==="; cat /tmp/mad-vite.log || true; exit 1
           }
-          for i in $(seq 1 30); do
-            (echo >/dev/tcp/127.0.0.1/9999) >/dev/null 2>&1 && break
-            sleep 1
-          done
-          (echo >/dev/tcp/127.0.0.1/9999) >/dev/null 2>&1 || {
-            echo "=== bridge log ==="; cat /tmp/mad-bridge.log || true; exit 1
-          }
-      - name: Run the full e2e suite
+      - name: Run the board-free scenarios
         env:
           APP_URL: http://127.0.0.1:5174
-          BRIDGE_URL: ws://127.0.0.1:9999
+          SCENARIOS: A1,FW1,FW2,FW3,FW5,FW6,FW7,FW8,FW9
         run: npm run e2e
       # e2e/artifacts holds the per-scenario merged main+worker app log that
-      # dumpFailureArtifacts writes — without it a red run can only be diagnosed
-      # by reproducing it, which for this suite means reproducing CI.
-      # Collect into one directory first: upload-artifact roots the archive at the
-      # least common ancestor of its paths, and mixing /tmp with the workspace
-      # would root it at / and bury everything under a deep prefix.
+      # dumpFailureArtifacts writes. Collect into one directory first:
+      # upload-artifact roots the archive at the least common ancestor of its
+      # paths, and mixing /tmp with the workspace would root it at /.
       - name: Collect diagnostics
         if: failure()
         run: |
           mkdir -p /tmp/e2e-out
-          cp /tmp/mad-playground.log /tmp/mad-bridge.log /tmp/mad-vite.log /tmp/e2e-out/ 2>/dev/null || true
+          cp /tmp/mad-vite.log /tmp/e2e-out/ 2>/dev/null || true
           cp -r e2e/artifacts /tmp/e2e-out/scenario-artifacts 2>/dev/null || true
       - name: Upload logs + failure artifacts
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: control-e2e-sil-${{ github.run_number }}
+          name: control-e2e-boardless-${{ github.run_number }}
           path: /tmp/e2e-out
           retention-days: 14
 
@@ -409,6 +363,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          submodules: recursive
       - uses: actions/setup-python@v7
         with:
           python-version: '3.x'
@@ -612,8 +568,7 @@ jobs:
   # BLOCKING jobs feed ci-gate. The clippy backlog is cleared, so `sil-rust`
   # now runs rustfmt and clippy `-D warnings` as gating steps — no
   # `continue-on-error` remains anywhere in this file, and every job that runs
-  # (including `control-e2e-sil`, promoted once it went 49/49 on CI) is in
-  # `ci-gate.needs`. Advisory-by-absence is a state a job passes THROUGH on its
+  # (including `control-e2e-boardless`) is in `ci-gate.needs`. Advisory-by-absence is a state a job passes THROUGH on its
   # way to gating, not a resting place.
 
   # BLOCKING. Protocol codegen health: regenerate all three targets (C/TS/Rust)
@@ -679,6 +634,10 @@ jobs:
       needs.changes.outputs.is_release != 'true' &&
       needs.changes.outputs.sil == 'true'
     runs-on: ubuntu-latest
+    # 25 was enough while every ISS test skipped. They now run against the real
+    # P2 image: ~6 minutes locally, dominated by p2core's boot tests
+    # interpreting hundreds of millions of instructions in the dev profile, and
+    # a shared 4-vCPU runner is slower than that.
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
@@ -698,12 +657,43 @@ jobs:
       - name: Generate the Rust protocol codec (make protocol)
         working-directory: SIL
         run: make protocol
-      - name: Install propeller platform
+      # Install the platform before the first pio build: a fresh install
+      # changes PlatformIO's project checksum, which cleans .pio/build.
+      - name: Install the Propeller platform (flexcc/flexspin)
         working-directory: Firmware/MaDCore
         run: pio pkg install --platform https://github.com/RileyMcCarthy/platform-propeller.git
-      - name: Build the P2 image the ISS executes
+      # The ISS executes the SHIPPED artifact, and the shipped artifact is
+      # compiled by flexcc, not clang. Without this the p2core/p2iss/MaDSim
+      # tests that boot the firmware find no image and skip -- printing a
+      # banner and passing, which is how this suite once reported 54 passed
+      # while asserting nothing. CI is the one place that must never be allowed
+      # to do that, hence MAD_REQUIRE_P2_IMAGE on the test step below. There is
+      # no native firmware library any more: mad-emulator runs this image too.
+      #
+      # Built here rather than reused from `build-firmware`: that job only runs
+      # when `firmware` changed, so on a SIL-only PR its artifact would not
+      # exist, and it runs on a macOS runner at a 10x minute multiplier.
+      - name: Build the P2 image the ISS interprets
         working-directory: Firmware/MaDCore
         run: pio run -e propeller2_debug
+      # Decodes every hub instruction in the image just built (29k of them)
+      # and writes flexcc's own mnemonic for each, so decoder_golden.rs checks
+      # p2core against the compiler rather than against itself. The golden is
+      # gitignored precisely because it is a function of the current firmware;
+      # without this step that test skips even though the image now exists.
+      - name: Generate the decoder golden from the image
+        working-directory: SIL/p2core
+        run: python3 tools/gen_golden.py
+      # Every artifact the cargo steps depend on, checked in one place, so a
+      # missing one fails here and not three steps later inside clippy.
+      - name: Assert the firmware artifacts exist
+        run: |
+          fail=0
+          for f in Firmware/MaDCore/.pio/build/propeller2_debug/program \
+                   SIL/p2core/tests/golden/hub_mnemonics.txt; do
+            if [ -s "$f" ]; then echo "ok   $f ($(wc -c < "$f") bytes)"; else echo "::error::missing or empty: $f"; fail=1; fi
+          done
+          exit $fail
       # rustfmt covers the crates this repo authors. The `protocol` crate is
       # excluded because its body is `#[path]`-included generated code that
       # `make protocol` rewrites on every build — formatting it would be undone
@@ -718,8 +708,15 @@ jobs:
       - name: Cargo test (blocking)
         working-directory: SIL
         # The workspace is the MaD-side crates only (protocol, models,
-        # MaDSim). The embsim submodule suite is re-run by the sibling
-        # `embsim-ci` job (mirror of protoemb-ci) on the pinned commit.
+        # MaDSim, p2core, p2iss). The embsim submodule suite is re-run by the
+        # sibling `embsim-ci` job (mirror of protoemb-ci) on the pinned commit.
+        #
+        # MAD_REQUIRE_P2_IMAGE turns "the image is missing, so skip" into a
+        # failure. A developer without a built image still gets skips; a CI job
+        # that lost its image build goes red instead of silently reverting to
+        # asserting nothing about the firmware that ships.
+        env:
+          MAD_REQUIRE_P2_IMAGE: '1'
         run: cargo test --workspace --all-targets
 
   # BLOCKING. MISRA/cppcheck via `pio check`. Low severity is disabled in
@@ -787,6 +784,8 @@ jobs:
           python-version: '3.12'
       - name: Enforce firmware layering (downward-only includes)
         run: python3 Firmware/MaDCore/scripts/check_layering.py Firmware/MaDCore/src
+      - name: HAL/Include ↔ HAL/P2 signature diff (return type + arity)
+        run: python3 Firmware/MaDCore/scripts/check_hal_p2_signatures.py Firmware/MaDCore/src
 
   build-firmware:
     needs: changes
@@ -907,11 +906,11 @@ jobs:
           name: ${{ needs.build-firmware.outputs.artifact-name }}
           path: artifacts
           merge-multiple: true
-          
+
       - name: Get tag version
         id: get_version
         run: echo "VERSION=${GITHUB_REF#refs/tags/firmware-v}" >> $GITHUB_OUTPUT
-      
+
       - name: Create Release
         uses: softprops/action-gh-release@v3
         with:
@@ -935,11 +934,11 @@ jobs:
         with:
           path: artifacts
           pattern: '*-hardware-*'
-          
+
       - name: Get tag version
         id: get_version
         run: echo "VERSION=${GITHUB_REF#refs/tags/hardware-v}" >> $GITHUB_OUTPUT
-          
+
       - name: Create Release
         uses: softprops/action-gh-release@v3
         with:
@@ -1005,6 +1004,31 @@ jobs:
             exit 1
           fi
 
+      # Presence + non-empty cmd used to live in Vibes/src/suites.test.ts. After
+      # Vibes became a submodule (#90) the tool package can no longer see MaD's
+      # consumer suites, so the check moved here beside the noasan guard.
+      - name: Suites must be present and have a non-empty cmd
+        run: |
+          set -euo pipefail
+          mapfile -d '' -t suites < <(git ls-files -z -- '*vibes.suite.json')
+          if [ "${#suites[@]}" -lt 1 ]; then
+            echo "::error::no tracked *vibes.suite.json files found"
+            exit 1
+          fi
+          echo "found ${#suites[@]} suite file(s)"
+          for f in "${suites[@]}"; do
+            if [ ! -f "$f" ]; then
+              echo "::error::$f is tracked but missing on disk"
+              exit 1
+            fi
+            cmd="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print((d.get("cmd") or "").strip())' "$f")"
+            if [ -z "$cmd" ]; then
+              echo "::error::$f has a missing or blank cmd"
+              exit 1
+            fi
+            echo "ok $f"
+          done
+
       - name: Build Vibes
         working-directory: Vibes
         run: npm ci --no-audit --no-fund && npm test && npm run build
@@ -1058,7 +1082,7 @@ jobs:
     needs:
       - changes
       - wasm-control-ci
-      - control-e2e-sil
+      - control-e2e-boardless
       - protoemb-ci
       - protoemb-pin-ci
       - embsim-ci

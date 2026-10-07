@@ -60,6 +60,7 @@ export function configToShared(
     'Homing Velocity (mm/s)': config.homingVelocity,
     'Homing Offset (mm)': config.homingOffset,
     'Jaw Offset (mm)': config.jawOffset,
+    'Restricted Velocity (mm/s)': config.restrictedVelocity,
   };
 }
 
@@ -80,6 +81,7 @@ export function configFromShared(
     homingVelocity: config['Homing Velocity (mm/s)'],
     homingOffset: config['Homing Offset (mm)'],
     jawOffset: config['Jaw Offset (mm)'],
+    restrictedVelocity: config['Restricted Velocity (mm/s)'],
   };
 }
 

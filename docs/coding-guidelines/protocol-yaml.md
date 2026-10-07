@@ -288,7 +288,7 @@ CI is `.github/workflows/ci.yml`. The `changes` job path filter `protocol:` is `
 | `sil-rust` | `make protocol` + the `propeller2_debug` image + fmt/clippy/`cargo test` |
 | `embsim-ci` | pinned embsim workspace tests |
 | `firmware-unit-tests` | `pio test -e native_test` (regenerates C via the PlatformIO pre-hook) |
-| `control-e2e-sil` | full Control ↔ SIL e2e (unpaced `make e2e-emulator`) — **gates** |
+| `control-e2e-boardless` | the board-free Control e2e scenarios (the board-touching ones run nightly on the ISS + QEMU computer node) — **gates** |
 
 Generated files are **gitignored** (`Firmware/MaDCore/src/Generated/`, `Software/Control/src/protocol/generated/`, `Protocol/rust/src/generated/`). `protocol-codegen` guards generator determinism, not committed-file drift — do not expect a “generated files out of date” diff.
 

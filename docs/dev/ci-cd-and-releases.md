@@ -19,7 +19,7 @@ relevant jobs:
 | `embsim-pin-ci` | **the `SIL/embsim` gitlink moved** | **Blocking.** The other half of embsim's upstream gate, run against the commit being pinned: determinism goldens (5× as separate processes) + stepped-clock suites + goldens-unmodified, rustfmt, clippy `-D warnings`, `cargo doc` deny-warnings, MSRV read from the pinned manifest, and `cargo deny`. Catches a pin bumped to an unpushed or never-CI'd commit |
 | `protoemb-pin-ci` | **the `Protocol/ProtoEmb` gitlink moved** | **Blocking.** Mirror of the above for the other submodule: `make verify` round-trip, ruff, clippy `-D warnings` (native + `wasm32`), `wasm-pack` build, `cargo deny` per crate + `pip-audit`, MSRV per crate manifest |
 | `docs-ci` | `docs/**` or `mkdocs.yml` changed | **Blocking.** `mkdocs build --strict` — broken nav entries, dead internal links and config warnings are errors. Previously this ran only on a push to `main` via `pages.yml`, so a bad docs PR merged green and took the Pages deploy down |
-| `control-e2e-sil` | app / protocol / firmware / SIL changed | **Blocking.** The full Control ↔ SIL e2e suite: real app in real Chrome against the real emulator over the WS↔PTY bridge — the only job that exercises the whole stack as one system. Runs the emulator unpaced (`make e2e-emulator`), so the result does not depend on runner speed. See [below](#the-e2e-suite) |
+| `control-e2e-boardless` | app or protocol changed | **Blocking.** The e2e scenarios that need no board (A1 and the firmware-flash `FW*` ones): the real app in a real host Chrome against in-page fakes, no emulator. The scenarios that touch the board run nightly on the computer node. See [below](#the-e2e-suite) |
 | `firmware-unit-tests` | firmware or protocol changed | `pio test -e native_test` — the host Unity suite under AddressSanitizer (no Propeller toolchain needed) |
 | `protocol-codegen` | protocol changed | **Blocking.** Regenerates all three targets (C/TS/Rust) twice and asserts success + byte-reproducibility (generated files are gitignored, so this guards the schema/templates + generator determinism, not committed-file drift) |
 | `firmware-layering` | firmware changed | **Blocking (baseline-gated).** `scripts/check_layering.py` enforces downward-only includes (APP→DEV→IO→Library→HAL→HW); pre-existing violations are frozen in `.layering-baseline`, so it fails only on **new** upward includes |
@@ -37,33 +37,28 @@ A docs-only PR now runs `docs-ci` (and nothing else); before that job existed it
 
 ### The e2e suite
 
-`control-e2e-sil` runs the full ~50-scenario suite on every app/protocol/firmware/SIL
-PR — the only job that exercises the app, the generated codec, the firmware and the
-machine models as one system, so the only place an integration break can be caught. It
-has earned that repeatedly: it found the missing `<mount>/gcode/` provisioning (every
-uploaded test stored zero moves on a fresh SD card), a UI that reported a moving
-machine as idle, and a toolchain-specific protocol UB that returned 0-byte downloads
-under GCC.
+The e2e suite runs the real app in a real Chrome against the firmware. There is
+one valid configuration for the scenarios that touch the board: the shipped P2
+image on the ISS, and Chrome inside a QEMU guest whose clock the board meters,
+talking real Web Serial to the board's emulated FTDI (`make playground-cosim`).
+The ISS behind the WS↔PTY bridge is not one: the bridge hands the board's bytes
+to a browser running at host speed, so every wait measures the host rather than
+the machine.
 
-It **gates** (it is in `ci-gate.needs`): a red e2e run blocks the merge.
+The computer node runs at a few percent of real time, which a per-PR gate cannot
+afford, so it is `e2e-nightly.yml`'s job (`cosim-iss-qemu`, the smoke subset by
+default, `suite=full` on dispatch). Per PR, `control-e2e-boardless` **gates** on
+the scenarios that never reach a board.
 
-It ran advisory only until it deserved to gate. Two things had to be fixed first, and
-both were:
+Until the native firmware library was removed, `control-e2e-sil` ran the full
+suite per PR against that library behind the bridge, unpaced (`--speed 0`) so the
+result did not depend on runner speed. It found the missing `<mount>/gcode/`
+provisioning (every uploaded test stored zero moves on a fresh SD card), a UI that
+reported a moving machine as idle, and a toolchain-specific protocol UB
+([protoemb#23](https://github.com/RileyMcCarthy/protoemb/pull/23)) that returned
+0-byte downloads under GCC.
 
-1. **It was paced to real time.** The suite borrowed `make playground` (`--speed 1.0`),
-   which requires the emulator to sustain a real-time factor of 1.0 — impossible on a
-   shared 4-vCPU runner, so the suite measured the runner (~0.25 RTF, 13 failures) and
-   passed on faster dev boxes. It now runs unpaced via `make e2e-emulator` (`--speed
-   0`): virtual time advances by idle jump, decoupled from the wall clock, so the
-   outcome no longer depends on host speed.
-2. **A toolchain-specific UB.** Unsequenced `outSize` in the generated dispatcher
-   (fixed in [protoemb#23](https://github.com/RileyMcCarthy/protoemb/pull/23)) made
-   every `file_download` return a 0-byte frame under GCC while working under Clang.
-
-With both fixed the suite is 49/49 on CI's own toolchain.
-
-`e2e-nightly.yml` runs the same suite on a schedule against `main`, for drift that only
-shows over many runs. `ci.yml` is the source of truth for which jobs gate.
+`ci.yml` is the source of truth for which jobs gate.
 
 ## Branch protection (`main`)
 

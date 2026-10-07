@@ -5,9 +5,11 @@
 #   make emulator      - Build the Rust emulator
 #   make test          - Build the image, run the Rust test suite
 #   make playground    - ISS at real time on /tmp/tty.rpi
-#   make e2e-emulator  - ISS for the e2e suite (unpaced virtual time)
+#   make e2e-emulator  - ISS behind the WS bridge, unpaced (NOT a valid SIL configuration; see below)
 #   make playground-iss - Same ISS on /tmp/tty.iss, so it does not take the e2e PTY
 #   make playground-rom - ISS mask ROM on the programming UART, host on the PTY
+#   make vm-image      - Build the Chrome guest image the computer node boots
+#   make playground-cosim - ISS + Chrome in a QEMU guest on the board's clock (the e2e config)
 #   make clean         - Remove build artifacts
 
 FIRMWARE_DIR = ../Firmware/MaDCore
@@ -18,7 +20,7 @@ PROTOEMB_GENERATOR = ../Protocol/ProtoEmb/core/generate.py
 PROTOEMB_SCHEMA = ../Protocol/MaDProtocol.yaml
 PROTOEMB_TEMPLATES = ../Protocol/ProtoEmb/core/templates
 
-.PHONY: p2image protocol emulator test playground e2e-emulator playground-iss playground-rom bootrom clean
+.PHONY: p2image protocol emulator test playground e2e-emulator playground-iss playground-rom vm-image playground-cosim bootrom clean
 
 # Build the P2 image the ISS runs (`p2core`, `p2iss`, `mad-emulator`).
 #
@@ -52,7 +54,14 @@ test: emulator p2image
 playground: p2image
 	cargo run --release --bin mad-emulator -- $(P2_IMAGE) --sd-path ./sd --pty-path /tmp/tty.rpi --log-level info
 
-# Start the emulator for the E2E SUITE — unpaced virtual time.
+# The ISS behind the WS bridge, unpaced — what the e2e suite ran against when
+# the native backend was removed. It is NOT a valid SIL configuration: the
+# bridge hands the board's bytes to a browser running at host speed, so every
+# wait in the suite measures the host rather than the machine, and the ISS
+# interprets far slower than real time. Only the computer node
+# (`playground-cosim`) meters the browser by the board's clock. No CI job runs
+# this target; it stays until the move onto an embsim project retires it
+# (embsim MIGRATING-MAD.md, step 10). What follows is its original rationale.
 #
 # The suite has no reason to run at real-time speed, and pacing actively harms
 # it. Under --speed 1.0 the emulator must SUSTAIN a real-time factor of 1.0, and
@@ -91,6 +100,22 @@ playground-iss: p2image
 ROM_IMAGE = p2iss/rom/rom_booter_v33k.bin
 playground-rom:
 	cargo run --release --bin mad-emulator -- $(ROM_IMAGE) --boot-rom --pty-path /tmp/tty.iss --log-level info
+
+# The computer node: the host is a QEMU guest running Chrome, metered by the
+# board's clock (embsim-qemu). This is the e2e configuration — the only valid
+# SIL pairing: the browser cannot outrun the board, because the board decides
+# when the browser's vCPU gets to run at all. Build the guest image once
+# (~10 min, cached outside the repo), then:
+#   make vm-image
+#   make playground-cosim            # DevTools on 9222, control on 9223
+#   cd ../Software/Control && npm run dev -- --host   # the guest fetches from 10.0.2.2:5174
+#   cd ../Software/Control && CDP_URL=http://127.0.0.1:9222 npm run e2e
+VM_IMAGE ?= $(HOME)/.cache/embsim/qemu/chrome-debian13-$(shell uname -m | sed 's/arm64/aarch64/').qcow2
+vm-image:
+	embsim/qemu/guest/chrome/build.sh
+
+playground-cosim: p2image
+	cargo run --release --bin mad-emulator -- $(P2_IMAGE) --computer $(VM_IMAGE) --devtools-port 9222 --trace-port 9223 --sd-path ./sd --pty-path /tmp/tty.iss --log-level info
 
 # Clean build artifacts
 clean:

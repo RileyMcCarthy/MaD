@@ -15,15 +15,16 @@ use p2core::{baud_matches, Board, Machine, PinMode, SdCard, SmartPins};
 /// or LUT ($200-$3FF).
 const HUB_BASE: u32 = 0x400;
 
-/// Hub address of `_main` in the current `propeller2_debug` image.
-///
-/// A build artifact's address, so it moves whenever the firmware does. When it
-/// does, this test reports the first hub address cog 0 actually reached —
-/// which *is* `_main`, because the FlexC boot trampoline runs entirely in cog
-/// space and `call #_main` is its first jump into hub. Confirm with
-/// `cargo run --release --example disasm -- <image> <addr> 4`: `_main` opens
-/// `mov arg01,#0` / `call` / `mov arg01,result1` / `call`.
-const MAIN_HUB_ADDR: u32 = 0x10B4C;
+// `_main`'s hub address used to be a constant here (0x10B4C, from one
+// particular local build). It moves whenever the firmware does, so the moment
+// CI builds the image this test failed on every PR that shifted a byte — which
+// is why it could only ever run on a laptop whose constant happened to match.
+//
+// The property is asserted instead of the address. The FlexC boot trampoline
+// is entirely cog-resident and `call #_main` is its first jump into hub, so
+// the FIRST hub address cog 0 executes IS `_main` by construction. Reaching
+// hub code at all is the claim; the specific address is a build artifact and
+// the test reports it rather than requiring it.
 
 /// Remove ANSI SGR escape sequences from captured console text.
 ///
@@ -50,6 +51,16 @@ fn strip_ansi(s: &str) -> String {
 fn image() -> Option<Vec<u8>> {
     let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../Firmware/MaDCore/.pio/build/propeller2_debug/program");
+    // See the note on MAD_REQUIRE_P2_IMAGE in the p2iss suites: skipping is
+    // right on a laptop that has not built the image and wrong in a job whose
+    // whole purpose is to execute the FlexC-compiled firmware.
+    if !p.exists() && std::env::var_os("MAD_REQUIRE_P2_IMAGE").is_some() {
+        panic!(
+            "MAD_REQUIRE_P2_IMAGE is set but the P2 image is missing at {}. \
+             Build it with `make p2image` (or `cd Firmware/MaDCore && pio run -e propeller2_debug`).",
+            p.display()
+        );
+    }
     std::fs::read(p).ok()
 }
 
@@ -61,33 +72,38 @@ fn boot_trampoline_reaches_main() {
     };
     let mut m = Machine::new(&img, SmartPins::default());
 
-    let mut reached = false;
     // The first hub address executed: the trampoline is cog-resident, so this
-    // is the target of its `call #_main` and the answer when the constant has
-    // gone stale.
+    // is the target of its `call #_main`.
     let mut first_hub: Option<u32> = None;
+    let mut stopped_early = false;
     for _ in 0..2_000 {
         let pc = m.cogs[0].pc;
-        if pc >= HUB_BASE && first_hub.is_none() {
+        if pc >= HUB_BASE {
             first_hub = Some(pc);
-        }
-        if pc == MAIN_HUB_ADDR {
-            reached = true;
             break;
         }
         if m.step(1).is_err() {
+            stopped_early = true;
             break;
         }
     }
-    assert!(
-        reached,
-        "cog 0 did not reach _main (${MAIN_HUB_ADDR:05X}); stopped at ${:05X}.\n\
-         First hub address executed was {}: if the firmware moved, that is the \
-         new _main — verify with `cargo run --release --example disasm -- \
-         <image> <addr> 4` and update MAIN_HUB_ADDR.",
-        m.cogs[0].pc,
-        first_hub.map_or("none".to_string(), |a| format!("${a:05X}"))
-    );
+    let Some(main_addr) = first_hub else {
+        panic!(
+            "cog 0 never left cog space for hub code in 2000 steps; stopped at ${:05X}{}.\n\
+             The FlexC boot trampoline is cog-resident and its first jump into hub is \
+             `call #_main`, so never reaching hub means the trampoline did not run — \
+             disassemble with `cargo run --release --example disasm -- <image> 0 32`.",
+            m.cogs[0].pc,
+            if stopped_early {
+                " (stepping errored)"
+            } else {
+                ""
+            }
+        );
+    };
+    // Reported, not asserted: it is a build artifact, and printing it is what
+    // makes a genuine relocation legible without failing the run.
+    eprintln!("boot: cog 0 entered hub at ${main_addr:05X} (_main)");
 }
 
 #[test]

@@ -532,12 +532,17 @@ run. Speed alternates between 0.10-0.11x when idle and 0.00x whenever the SD is
 busy. The remaining work is the throughput programme above, not another
 correctness hunt.
 
-## The host is a browser outside the emulator
+## The host: a computer node, or a browser outside the emulator
 
 The ISS interprets every instruction, so a run's virtual time can fall behind
-the wall clock, and MaD Control's 2 s protocol budget is wall time. The
-in-sim Chrome guest that used to freeze the page to the board's clock has
-been removed. The host is the browser on this machine, on the emulator's PTY
-(`make playground-iss` or `make playground-rom`). While the interpreter keeps
-up with `--speed 1`, those timeouts mean what they mean on the bench. While
-it falls behind, the page will time out a live board.
+the wall clock, and MaD Control's 2 s protocol budget is wall time. A browser
+on this machine, on the emulator's PTY (`make playground-iss` or
+`make playground-rom`), sees that: while the interpreter keeps up with
+`--speed 1` its timeouts mean what they mean on the bench, and while it falls
+behind the page will time out a live board. That is fine for looking, and
+worthless for asserting.
+
+The e2e suite therefore runs on the computer node (`make playground-cosim`):
+Chrome inside a QEMU guest whose vCPU runs only when the board grants it a
+slice, so the page's timeouts are metered by the board's clock. It is the only
+valid SIL configuration for a test.

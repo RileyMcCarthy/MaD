@@ -5,10 +5,14 @@ Goal: a complete, automated test suite covering every scenario below, kept green
 The app source stays **pure** (Web Serial + File System Access only). All test-only
 abstractions (SIL serial, OPFS data folder) live in the harness — never in `src/`.
 
-> **Status:** offline `npm run verify` and the full SIL e2e suite (`npm run e2e`,
-> 49 scenarios) **gate CI** (`control-e2e-sil` is in `ci-gate.needs`). The emulator
-> for e2e is unpaced (`cd SIL && make e2e-emulator`, `--speed 0`); do not use
-> `make playground` for the suite — that path is real-time and measures the host.
+> **Status:** offline `npm run verify` and the board-free e2e scenarios (A1 and the
+> firmware-flash `FW*` ones, no emulator) **gate CI** (`control-e2e-boardless` is in
+> `ci-gate.needs`). The scenarios that touch the board run on the one valid SIL
+> configuration — the P2 image on the ISS with Chrome in a QEMU guest the board's
+> clock meters (`cd SIL && make playground-cosim`, `CDP_URL=http://127.0.0.1:9222`)
+> — nightly, because the ISS runs at a few percent of real time. Do not run the
+> suite against the ISS behind the WS bridge (`make playground`/`make e2e-emulator`):
+> that measures the host, not the machine.
 
 ---
 
@@ -50,15 +54,17 @@ Built on `e2e/fixtures.mjs`: injects a fake `navigator.serial` backed by the
 WS↔PTY bridge, and overrides `showDirectoryPicker` to return an **OPFS**
 directory. Also stubs the capability gate.
 
-**Preconditions:**
+**Preconditions** (the computer node; with `CDP_URL` set the fake serial is not
+installed and pages open in the guest's Chrome):
 ```bash
-cd SIL && make e2e-emulator        # /tmp/tty.rpi, unpaced virtual time
-# (make playground is real-time — for clicking around, not this suite)
-npm run sil:bridge                 # ws://localhost:9999  (in Control)
-npm run dev                        # app on http://localhost:5174
+cd SIL && make vm-image            # once
+cd SIL && make playground-cosim    # DevTools on 9222, control surface on 9223
+npm run dev -- --host              # the guest fetches from 10.0.2.2:5174
+CDP_URL=http://127.0.0.1:9222 npm run e2e
 ```
-The runner (`e2e/run-all.mjs`) asserts the dev server (5174) and bridge (9999) are reachable
-and resets the OPFS test dir between runs.
+The runner (`e2e/run-all.mjs`) asserts the dev server (5174) is reachable and resets
+the OPFS test dir between runs. Without `CDP_URL` only the board-free scenarios mean
+anything (`SCENARIOS=A1,FW1,FW2,FW3,FW5,FW6,FW7,FW8,FW9 npm run e2e`, no emulator).
 
 ```
 e2e/
@@ -179,7 +185,8 @@ On a clean checkout after `npm run build:wasm && npm run generate:proto && npm i
 5. [PARITY.md](./PARITY.md) — every section ✅ (or explicitly marked N/A for the browser).
 
 `npm run verify` runs 1–3 (offline) and **gates** `wasm-control-ci`.
-`npm run e2e` runs 4 (needs SIL) and **gates** `control-e2e-sil`.
+`npm run e2e` runs 4 (needs SIL; nightly on the computer node). Its board-free
+scenarios **gate** `control-e2e-boardless`.
 
 ---
 

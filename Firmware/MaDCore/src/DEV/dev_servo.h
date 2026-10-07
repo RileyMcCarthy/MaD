@@ -76,6 +76,15 @@ typedef enum
      * shifts a bit offset. */
 } dev_servo_wave_E;
 
+/* Convert a wire shape byte into a traverse profile this driver implements.
+ *
+ * Returns false for any byte outside the set above, leaving *shape untouched.
+ * The conversion lives here, next to the enum, so the driver stays the single
+ * place that decides which profiles exist: a caller that maps an unrecognised
+ * byte onto a default of its own turns "this firmware cannot run your test"
+ * into a plausible record of a test that was never performed. */
+bool dev_servo_waveShapeFromWire(uint8_t wire, dev_servo_wave_E *shape);
+
 /* One oscillation, described completely.
  *
  * A struct rather than eight positional arguments because the call site is

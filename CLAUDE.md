@@ -111,7 +111,7 @@ Frontend-only browser PWA — the browser talks straight to the Propeller 2 over
 ### SIL Emulator Architecture
 Rust **Cargo workspace** under `SIL/` (see `SIL/Cargo.toml`; members are the MaD-side crates — `MaDSim`, `models`, and `protocol` (an out-of-tree member living at `Protocol/rust/`, next to its schema). The `embsim/*` crates below live in the `SIL/embsim` submodule, which is its own workspace, and are consumed as path deps):
 
-- **`MaDSim/`** — `mad-emulator` binary: runs the Propeller 2 image on the ISS (`p2iss` / `p2core`), with pins on nets and the host on a PTY.
+- **`MaDSim/`** — `mad-emulator` binary: runs the Propeller 2 image on the ISS (`p2iss` / `p2core`), with pins on nets and the host on a PTY, or (`--computer`, `make playground-cosim`) Chrome in a QEMU guest metered by the board's clock — the only valid configuration for the e2e suite.
 - **`embsim/core`** — PTY, timing, shared plumbing.
 - **`embsim/peripherals`** — HAL stand-ins (serial, GPIO, pulse trains, encoder, etc.).
 - **`protocol`** (at `Protocol/rust/`, next to the schema) — **generated** Rust codec under `src/generated/` (do not hand-edit; `make protocol`). Imported by nothing; exists so the generated code + roundtrip tests stay compiled in `cargo test`.

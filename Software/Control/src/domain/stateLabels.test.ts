@@ -83,8 +83,27 @@ describe('fault / restriction label lockstep', () => {
       expect(FaultedReason.ESD_LOWER).toBe(ProtoFault.ESD_LOWER);
       expect(FaultedReason.SERVO_COMMUNICATION).toBe(ProtoFault.SERVO_COMMUNICATION);
       expect(FaultedReason.FORCE_GAUGE_COMMUNICATION).toBe(ProtoFault.FORCE_GAUGE_COMMUNICATION);
-      // USER_REQUEST is a domain-only extension beyond the wire enum; still has a hint.
+      expect(FaultedReason.SERVO_STALL).toBe(ProtoFault.SERVO_STALL);
+
+      // Structural, not name-by-name: every wire variant must sit at the same
+      // ordinal here, so a variant added to the schema and forgotten here is
+      // caught without anyone remembering to extend the list above.
+      const wireNames = Object.keys(ProtoFault).filter((k) => Number.isNaN(Number(k)));
+      for (const name of wireNames) {
+        expect(
+          (FaultedReason as unknown as Record<string, number>)[name],
+          `wire fault ${name} must exist here at the same ordinal`,
+        ).toBe((ProtoFault as unknown as Record<string, number>)[name]);
+      }
+
+      // USER_REQUEST is domain-only -- the firmware never sends it -- so it
+      // must stay PAST the end of the wire enum. When it sat on the next free
+      // ordinal, adding SERVO_STALL to the schema would have put a real stall
+      // from the machine on the same value, and the UI would have reported a
+      // jammed carriage as the operator's own button press.
+      expect(FaultedReason.USER_REQUEST).toBeGreaterThanOrEqual(wireNames.length);
       expect(FAULT_HINTS[FaultedReason.USER_REQUEST]).toBeTruthy();
+      expect(FAULT_HINTS[FaultedReason.SERVO_STALL]).toBeTruthy();
     },
   );
 

@@ -1,9 +1,11 @@
 //! MaD SIL emulator entry point.
 //!
 //! The firmware under test is the Propeller 2 image, executed by the
-//! instruction-set simulator. Its pins are nets. The host is a PTY a browser
-//! outside the emulator opens. There is no host-compiled firmware and no HAL
-//! stand-in: `mad_begin` is not linked.
+//! instruction-set simulator. Its pins are nets. The host is either a PTY a
+//! person's browser outside the emulator opens, or (`--computer`) a QEMU guest
+//! running Chrome whose clock the board meters: the configuration the e2e
+//! suite runs. There is no host-compiled firmware and no HAL stand-in:
+//! `mad_begin` is not linked.
 
 mod iss_description;
 mod system_description;
@@ -46,6 +48,22 @@ struct Args {
     /// fitted, so `Prop_Chk` works without a DTR→RESn line.
     #[arg(long)]
     boot_rom: bool,
+
+    /// HTTP control surface port (0 to disable). A test harness POSTs to its
+    /// actions; with `--computer` they include `link/unplug` and `link/plug`.
+    #[arg(long, default_value_t = 0)]
+    trace_port: u16,
+
+    /// Put the host on the board as a computer — a QEMU guest booted from
+    /// this image (embsim-qemu's Chrome guest) whose clock is metered by the
+    /// board's, in place of the host PTY. The guest's Chrome is reachable at
+    /// the printed DevTools URL for `connectOverCDP`.
+    #[arg(long, conflicts_with = "boot_rom")]
+    computer: Option<PathBuf>,
+
+    /// Host port forwarded to the guest's DevTools (0 = any free port).
+    #[arg(long, default_value_t = 0, requires = "computer")]
+    devtools_port: u16,
 }
 
 /// Set by SIGTERM/SIGINT; the parked main thread notices and returns, so the
@@ -190,7 +208,8 @@ fn run_iss_rom(args: &Args, rom_path: &std::path::Path) -> Result<(), Box<dyn st
 ///
 /// The image runs on `p2core`. Every signal crosses a net as a voltage: the
 /// protocol link as framed levels, GPIO and the encoder as plain ones, and the
-/// step train as a periodic drive. The host PTY is a component like any other.
+/// step train as a periodic drive. The host — a PTY, or a computer node — is a
+/// component like any other.
 fn run_iss(args: &Args, image_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
     use embsim_board::{Harness, System};
     use p2iss::{HostPty, P2Iss, SerialLink};
@@ -213,6 +232,11 @@ fn run_iss(args: &Args, image_path: &std::path::Path) -> Result<(), Box<dyn std:
     };
 
     install_shutdown_signals();
+    // The control surface: no trace views, just the actions registered below.
+    // Without it a `--trace-port` was silently accepted and nothing listened,
+    // which is how the link-drop scenarios would have failed with a
+    // connection refused rather than an assertion.
+    start_iss_control_server(args.trace_port)?;
     let image = std::fs::read(image_path)?;
     info!(
         "ISS: {} ({} bytes) — protocol on P{}/P{}",
@@ -261,10 +285,41 @@ fn run_iss(args: &Args, image_path: &std::path::Path) -> Result<(), Box<dyn std:
         .with_pulse_pins(PULSE_PINS)
         .with_sync_serial();
     let handle = iss.handle();
-    // The host end of the protocol link: a PTY for a browser outside the emulator.
-    let host_pty = HostPty::open(&args.pty_path, PROTO.nominal_baud)?;
-    info!("Host can connect to: {}", host_pty.symlink_path());
-    let host: Box<dyn embsim_board::Component> = Box::new(host_pty);
+    // The host end of the protocol link: a PTY for a person's browser, or a
+    // whole computer whose clock the board meters. Same two pins either way.
+    let host: Box<dyn embsim_board::Component> = match &args.computer {
+        Some(image) => {
+            let chrome = embsim_qemu::ChromeGuest::new(image)
+                .devtools_port(args.devtools_port)
+                .spawn()
+                .map_err(|e| format!("computer node: {e}"))?;
+            info!(
+                "Computer node: Chrome guest ready, DevTools at {} (frozen until the board runs)",
+                chrome.devtools().url()
+            );
+            let node = embsim_qemu::QemuNode::new(Box::new(chrome), PROTO.nominal_baud);
+            // Let a test harness pull the cable. A real port has nothing in the
+            // page to reach in and sever, so the three link-drop scenarios ask
+            // the board instead: closing the chardev is a genuine USB detach,
+            // which is what these register.
+            //
+            // Only reachable when --trace-port is given, and the calls land
+            // between slices because the pump holds the guest for exactly one.
+            let link = node.link();
+            let unplug = link.clone();
+            embsim_ui::register_action("link/unplug", move || {
+                unplug.unplug().map_err(|e| e.to_string())
+            });
+            let plug = link.clone();
+            embsim_ui::register_action("link/plug", move || plug.plug().map_err(|e| e.to_string()));
+            Box::new(node)
+        }
+        None => {
+            let host = HostPty::open(&args.pty_path, PROTO.nominal_baud)?;
+            info!("Host can connect to: {}", host.symlink_path());
+            Box::new(host)
+        }
+    };
 
     let pulls = BenchPulls::new(IDLE_PULLS);
     let force = BenchForcePath::build();
@@ -349,6 +404,14 @@ fn run_iss(args: &Args, image_path: &std::path::Path) -> Result<(), Box<dyn std:
         .component("HOST", host)
         .component("PULLS", Box::new(pulls));
     let system = sd.mount(machine.mount(force.mount(system)));
+    // A computer node holds virtual time still for a slice plus its QMP round
+    // trips; one slow host moment must delay the board, not break the
+    // engine's actor barrier for the rest of the run.
+    let system = if args.computer.is_some() {
+        system.quiescence_timeout(std::time::Duration::from_secs(30))
+    } else {
+        system
+    };
     let _system = system.harness(harness).start()?;
 
     info!("ISS running; main thread parked.");
@@ -416,6 +479,16 @@ fn run_iss(args: &Args, image_path: &std::path::Path) -> Result<(), Box<dyn std:
         }
     });
     park_until_shutdown();
+    Ok(())
+}
+
+/// Start the bare HTTP control surface for an ISS run: no views, just the
+/// actions a test harness POSTs to (`/action/<name>`).
+fn start_iss_control_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
+    if port == 0 {
+        return Ok(());
+    }
+    embsim_ui::start_server(port)?;
     Ok(())
 }
 

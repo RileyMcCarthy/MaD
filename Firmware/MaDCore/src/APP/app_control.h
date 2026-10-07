@@ -42,6 +42,13 @@ typedef enum
     APP_CONTROL_FAULT_ESD_LOWER,
     APP_CONTROL_FAULT_SERVO_COMMUNICATION,
     APP_CONTROL_FAULT_FORCE_GAUGE_COMMUNICATION,
+    /* The carriage is being driven and is not moving. Unlike every other fault
+     * here this one LATCHES: it is cleared by an explicit motion-disable
+     * request, not by the condition going away. Disabling motion is what makes
+     * the stall stop being reported, so a self-clearing stall fault would
+     * disable the machine, clear itself, re-enable, and drive into the same jam
+     * again every 200 ms. */
+    APP_CONTROL_FAULT_SERVO_STALL,
     APP_CONTROL_FAULT_COUNT,
 } app_control_fault_E;
 

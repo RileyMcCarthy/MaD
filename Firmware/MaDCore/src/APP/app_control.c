@@ -71,6 +71,9 @@ typedef struct
 
     bool motionEnabled;
     bool testRunning;
+    /* Sticky: a stall stops the machine and stays reported until the operator
+     * disables motion. See processFaults for why it cannot self-clear. */
+    bool stallLatched;
     app_control_fault_E faultedReason;
     app_control_restriction_E restrictedReason;
 
@@ -118,6 +121,10 @@ static void app_control_private_processRequests(void)
         DEBUG_INFO("%s", "CONTROL: motion DISABLE requested\n");
         app_control_data.motionEnabled = false;
         app_control_data.request.triggerMotionDisabled = false;
+        /* The operator's acknowledgement of a stall. Nothing else clears it --
+         * the jam has to be cleared by hand, and asking for motion off is the
+         * one action that says someone has looked at the machine. */
+        app_control_data.stallLatched = false;
     }
     APP_CONTROL_LOCK_REL();
 }
@@ -158,6 +165,31 @@ static app_control_fault_E app_control_private_processFaults(void)
      * and the fault is event-driven instead of timed. */
     app_control_data.fault[APP_CONTROL_FAULT_FORCE_GAUGE_COMMUNICATION] =
         (dev_forceGauge_isReady(DEV_FORCEGAUGE_CHANNEL_MAIN) == false);
+
+#if APP_MOTION_USE_SERVO
+    /* A stall is the driver commanding motion the encoder does not follow --
+     * more than stallVelocity asked for, under stallMinMove counts delivered,
+     * for stallTicks consecutive ticks. It is a mechanical fault, so unlike the
+     * liveness faults above it LATCHES until the operator acknowledges it by
+     * disabling motion.
+     *
+     * It has to. Disabling motion is exactly what clears dev_servo's stall
+     * flag -- the driver stops commanding velocity, the counter resets -- so a
+     * fault recomputed from the live flag would disable the machine, watch its
+     * own cause disappear, clear, re-enable and drive into the same jam 200 ms
+     * later, indefinitely.
+     *
+     * Latching only while motion is ENABLED is what makes the acknowledgement
+     * take effect on the first press: processRequests has already cleared both
+     * the latch and motionEnabled by the time this runs, so the stall the
+     * driver is still reporting this tick -- the residue of the one that
+     * stopped the machine -- does not re-arm it. */
+    if (app_control_data.motionEnabled && dev_servo_isStalled(DEV_SERVO_CHANNEL_MAIN))
+    {
+        app_control_data.stallLatched = true;
+    }
+#endif
+    app_control_data.fault[APP_CONTROL_FAULT_SERVO_STALL] = app_control_data.stallLatched;
 
     // Select the first fault as the reason
     app_control_fault_E fault = APP_CONTROL_FAULT_NONE;

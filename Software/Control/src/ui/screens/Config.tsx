@@ -15,6 +15,7 @@ const NUMERIC_FIELDS: Array<keyof MachineConfiguration> = [
   'Homing Velocity (mm/s)',
   'Homing Offset (mm)',
   'Jaw Offset (mm)',
+  'Restricted Velocity (mm/s)',
 ];
 
 /** Machine configuration editor. Rendered as a section inside Settings

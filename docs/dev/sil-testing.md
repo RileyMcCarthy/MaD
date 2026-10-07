@@ -16,8 +16,8 @@ make p2image      # the propeller2_debug image the emulator executes
 
 `make emulator` generates the Rust codec into `Protocol/rust/src/generated`
 (`make protocol`) and then `cargo build`. The image is a runtime input, built
-by `make p2image` (`pio run -e propeller2_debug`). `make playground` and
-`make e2e-emulator` build it for you.
+by `make p2image` (`pio run -e propeller2_debug`). The `playground*` targets
+build it for you.
 
 | Target | What it does |
 |---|---|
@@ -25,8 +25,11 @@ by `make p2image` (`pio run -e propeller2_debug`). `make playground` and
 | `make protocol` | Regenerate the Rust protocol types for SIL |
 | `make emulator` | Protocol + the Rust workspace |
 | `make playground` | ISS on `/tmp/tty.rpi` for **manual** testing — **real-time pacing** (`--speed 1`), release build. |
-| `make e2e-emulator` | The same ISS for the **e2e suite** — **unpaced virtual time** (`--speed 0`), so results do not depend on host speed. CI uses this. |
-| `make playground-iss` | The same ISS on `/tmp/tty.iss`, so a manual session does not take the e2e PTY. |
+| `make playground-iss` | The same ISS on `/tmp/tty.iss`, so a manual session does not take `/tmp/tty.rpi`. |
+| `make playground-rom` | The ISS booting the mask ROM, the host on the programming UART (`P62`/`P63`) |
+| `make vm-image` | Build the Chrome guest image the computer node boots (once, ~10 min, cached under `~/.cache/embsim`) |
+| `make playground-cosim` | The ISS with the host as a **computer node**: Chrome in a QEMU guest whose clock the board meters. **The e2e configuration.** DevTools on 9222, the control surface on 9223. |
+| `make e2e-emulator` | The ISS behind the WS bridge, unpaced. **Not a valid SIL configuration** (below); no CI job runs it. |
 | `make test` | Build the image + protocol, then `cargo test` (includes the MaDSim PTY protocol smoke — no Chrome) |
 | `make clean` | Remove build artifacts and `cargo clean` |
 
@@ -40,7 +43,27 @@ make playground
 This starts the `mad-emulator` binary with a virtual serial port at
 `/tmp/tty.rpi`. The host is a browser outside the emulator.
 
-## Driving the web app against the emulator
+## Running the e2e suite: the computer node
+
+There is one valid SIL configuration for the suite: the P2 image on the ISS,
+and Chrome inside a QEMU guest the board's clock meters, talking real Web
+Serial to the board's emulated FTDI. The browser cannot outrun the board,
+because the board decides when the guest's vCPU runs at all. From `SIL/` and
+`Software/Control/`, in separate terminals:
+
+```bash
+make vm-image                                   # once
+make playground-cosim                           # DevTools on 9222, control on 9223
+npm run dev -- --host                           # the guest fetches from 10.0.2.2:5174
+CDP_URL=http://127.0.0.1:9222 npm run e2e       # or e2e:smoke
+```
+
+The ISS runs at a few percent of real time, so this is the nightly job
+(`e2e-nightly.yml`), not a per-PR one. Per PR, `control-e2e-boardless` runs the
+scenarios that need no board at all (A1 and the firmware-flash `FW*` ones),
+which launch a host Chrome against in-page fakes.
+
+## Clicking around by hand
 
 The browser can't see the emulator's PTY directly, so a small WS↔PTY bridge
 relays bytes to the app's (faked) Web Serial port. From
@@ -48,8 +71,7 @@ relays bytes to the app's (faked) Web Serial port. From
 
 ```bash
 # Terminal 1 — emulator (from SIL/)
-make playground          # clicking around: real-time
-# make e2e-emulator      # automated suite: unpaced virtual time (this is what CI runs)
+make playground          # real-time pacing
 
 # Terminal 2 — WS bridge on ws://localhost:9999
 npm run sil:bridge
@@ -58,13 +80,15 @@ npm run sil:bridge
 npm run dev
 ```
 
-Then either:
+Then **`npm run sil:app`** opens a Playwright-controlled Chrome wired to the
+emulator for hands-on testing.
 
-- **`npm run sil:app`** — opens a Playwright-controlled Chrome wired to the
-  emulator for hands-on testing (pair with `make playground`), or
-- **`npm run e2e`** / **`npm run e2e:smoke`** — the web-app suite against the live
-  emulator. Pair with **`make e2e-emulator`**, not playground: under `--speed 1.0`
-  a loaded CI runner cannot hold real time, and motion assertions sample mid-flight.
+!!! warning "The ISS behind the bridge is not a test configuration"
+    The bridge hands the board's bytes to a browser running at host speed, and
+    the ISS interprets far slower than real time, so every wait the app makes
+    measures the host rather than the machine. Use it to look, not to assert:
+    `make e2e-emulator` (the same pairing, unpaced) is kept only until the move
+    onto an embsim project retires it, and no CI job runs it.
 
 The MaDSim crate also has a Chrome-free PTY smoke (`tests/pty_protocol.rs`): boot
 the binary, send a `firmware_version` READ, expect a DATA frame. It runs as part

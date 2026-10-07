@@ -62,7 +62,8 @@ cd Software/Control && npm run verify
 python3 Protocol/scripts/check_schema_domain_lockstep.py
 
 # WASM e2e vs live SIL (includes TM-busy-restart / TM-manual-gate)
-# requires: make e2e-emulator + npm run sil:bridge + npm run dev
+# requires: make playground-cosim + npm run dev -- --host, and CDP_URL below
+export CDP_URL=http://127.0.0.1:9222
 npm run e2e
 # smoke subset (see e2e/smoke-ids.txt):
 npm run e2e:smoke

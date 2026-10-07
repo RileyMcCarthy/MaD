@@ -14,11 +14,11 @@ ahead — see [Relation to the embsim promotion](#relation-to-the-embsim-promoti
 
 ## Why, in one line
 
-**Crossing 1.0x real time is the prize, and only a JIT gets there.** The
-in-sim Chrome guest this plan kept as a brake on the browser has been
-removed. The host is the browser outside the emulator. While the CPU is
-slower than wall time, that browser's timeouts fire early. At ≥1.0x they
-mean the same thing they mean on the bench.
+**Crossing 1.0x real time is the prize, and only a JIT gets there.** Below
+1.0x, a browser outside the emulator sees its timeouts fire early, so the e2e
+suite runs its browser inside a QEMU guest the board's clock meters (the
+computer node, `make playground-cosim`). At ≥1.0x a browser's timeouts mean
+the same thing they mean on the bench.
 
 ### The arithmetic this rests on
 
@@ -552,9 +552,9 @@ serial protocol round-trips at 2,000,000 baud.
 ### Phase 4 — The payoff
 
 - Re-run `p2iss/examples/iss_speed.rs` unchanged. **Gate: ≥ 1.0x real time.**
-- The in-sim Chrome guest (`QemuNode`) was removed. The host is the browser
-  outside the emulator, on the PTY. `E2E_TIMEOUT_SCALE` remains an optional
-  stretch for a slow host and defaults to 1.
+- The e2e suite's host stays the computer node (`QemuNode`, Chrome in a
+  QEMU guest metered by the board's clock), the only valid SIL pairing; a
+  faster P2 shortens its wall time without changing what it measures.
 
 ### Phase 5 — Maintenance posture
 

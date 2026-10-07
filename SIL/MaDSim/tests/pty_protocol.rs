@@ -70,8 +70,20 @@ fn drain_pipe<R: Read + Send + 'static>(pipe: R, sink: Arc<Mutex<String>>) {
 }
 
 fn image_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../Firmware/MaDCore/.pio/build/propeller2_debug/program")
+    // A missing image makes this test skip. That is right for a laptop that
+    // has not run `make p2image`, and wrong for CI: MAD_REQUIRE_P2_IMAGE turns
+    // the skip into a failure wherever the image is supposed to exist, as it
+    // does for the p2core and p2iss suites.
+    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../Firmware/MaDCore/.pio/build/propeller2_debug/program");
+    if !p.exists() && std::env::var_os("MAD_REQUIRE_P2_IMAGE").is_some() {
+        panic!(
+            "MAD_REQUIRE_P2_IMAGE is set but the P2 image is missing at {}. \
+             Build it with `make p2image` (or `cd Firmware/MaDCore && pio run -e propeller2_debug`).",
+            p.display()
+        );
+    }
+    p
 }
 
 fn spawn_emulator() -> Option<Emulator> {

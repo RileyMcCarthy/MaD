@@ -20,10 +20,19 @@ const GOLD = {
   sample: [217, 182, 129, 193, 164, 35, 64, 44, 66, 166, 50, 25, 148, 9, 25, 3],
   stored: [217, 182, 129, 193, 164, 35, 32, 241, 0, 0, 64, 44, 66, 6],
   // MachineConfiguration (intrinsic load-cell constants) — MaDProtocol.yaml.
+  // 72 bytes: 20 of name, then 13 int32s.
+  //
+  // Grew from 68 when restrictedVelocity was appended. The change is purely
+  // additive -- the final `2, 0, 0, 0` is that field (int32, scale 1, little
+  // endian, derived from the field table rather than captured from the
+  // encoder) and not one earlier byte moved. That is the property worth
+  // checking when this vector changes: an append shifts nothing, so a diff
+  // that touches the middle is a reordering and breaks every machine already
+  // in the field.
   config: [
     84, 101, 115, 116, 101, 114, 45, 49, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 200, 0, 0, 0, 144, 1,
     0, 0, 160, 134, 1, 0, 64, 66, 15, 0, 5, 0, 0, 0, 250, 0, 0, 0, 50, 0, 0, 0, 100, 0, 0, 0, 135, 214, 18, 0, 5, 0, 0,
-    0, 2, 0, 0, 0, 3, 0, 0, 0,
+    0, 2, 0, 0, 0, 3, 0, 0, 0, 2, 0, 0, 0,
   ],
   profile: [26, 162, 7, 0, 10, 0, 0, 0, 100, 0, 0, 0, 12, 0, 0, 0, 3, 0, 0, 0],
   move: [65, 225, 51, 224, 46, 0, 100, 0],
@@ -109,6 +118,7 @@ describe('codec golden byte vectors (frozen — guards the wire format)', () => 
             homingVelocity: 5,
             homingOffset: 2,
             jawOffset: 3,
+            restrictedVelocity: 2,
           }),
         ),
       ).toEqual(GOLD.config);
@@ -297,6 +307,7 @@ describe('round-trip within scale precision', () => {
         homingVelocity: 5,
         homingOffset: 2,
         jawOffset: 3,
+        restrictedVelocity: 2,
       };
       const out = nu.decodeMachineConfiguration(nu.encodeMachineConfiguration(v));
       expect(out.name).toBe('Tester-1');
