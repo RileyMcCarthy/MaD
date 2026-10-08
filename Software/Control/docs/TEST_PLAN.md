@@ -13,8 +13,8 @@ abstractions (SIL serial, OPFS data folder) live in the harness — never in `sr
 > (0.2.0) nothing provides it: 0.2.0 removed the Chrome guest, and embsim owes the
 > host that replaces it (`SIL/embsim/MIGRATING-MAD.md` §2, E4). The nightly that
 > ran them is off until then. Do not run the suite against the ISS behind the WS
-> bridge (`make playground`/`make e2e-emulator`): that measures the host, not the
-> machine.
+> bridge (the bridge's `MAD_PTY` on the playground's `/tmp/tty.iss`; `make
+> e2e-emulator` refuses): that measures the host, not the machine.
 
 ---
 
@@ -189,8 +189,9 @@ On a clean checkout after `npm run build:wasm && npm run generate:proto && npm i
 5. [PARITY.md](./PARITY.md) — every section ✅ (or explicitly marked N/A for the browser).
 
 `npm run verify` runs 1–3 (offline) and **gates** `wasm-control-ci`.
-`npm run e2e` runs 4 (needs SIL; nightly on the computer node). Its board-free
-scenarios **gate** `control-e2e-boardless`.
+`npm run e2e` runs 4 (needs SIL on the computer node, which nothing provides
+until embsim's E4; the nightly that ran it is off). Its board-free scenarios
+**gate** `control-e2e-boardless`.
 
 ---
 

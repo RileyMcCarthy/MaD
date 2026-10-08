@@ -57,7 +57,7 @@ make firmware     # Firmware static library only
 make protocol     # Regenerate the Rust codec into ../Protocol/rust/src/generated
 make emulator     # firmware + protocol, then cargo build workspace
 make test         # emulator + `cargo test`
-make playground   # `cargo run --bin mad-emulator` + SD path ./sd, PTY /tmp/tty.rpi (see makefile for flags)
+make playground   # `cargo run --release --bin mad-emulator <image>` + SD path ./sd, PTY /tmp/tty.iss (see makefile for flags)
 make clean        # Remove build artifacts
 ```
 

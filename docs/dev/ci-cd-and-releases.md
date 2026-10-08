@@ -19,7 +19,7 @@ relevant jobs:
 | `embsim-pin-ci` | **the `SIL/embsim` gitlink moved** | **Blocking.** The other half of embsim's upstream gate, run against the commit being pinned: determinism goldens (5× as separate processes) + stepped-clock suites + goldens-unmodified, rustfmt, clippy `-D warnings`, `cargo doc` deny-warnings, MSRV read from the pinned manifest, and `cargo deny`. Catches a pin bumped to an unpushed or never-CI'd commit |
 | `protoemb-pin-ci` | **the `Protocol/ProtoEmb` gitlink moved** | **Blocking.** Mirror of the above for the other submodule: `make verify` round-trip, ruff, clippy `-D warnings` (native + `wasm32`), `wasm-pack` build, `cargo deny` per crate + `pip-audit`, MSRV per crate manifest |
 | `docs-ci` | `docs/**` or `mkdocs.yml` changed | **Blocking.** `mkdocs build --strict` — broken nav entries, dead internal links and config warnings are errors. Previously this ran only on a push to `main` via `pages.yml`, so a bad docs PR merged green and took the Pages deploy down |
-| `control-e2e-boardless` | app or protocol changed | **Blocking.** The e2e scenarios that need no board (A1 and the firmware-flash `FW*` ones): the real app in a real host Chrome against in-page fakes, no emulator. The scenarios that touch the board run nightly on the computer node. See [below](#the-e2e-suite) |
+| `control-e2e-boardless` | app or protocol changed, or the `SIL/embsim` gitlink moved | **Blocking.** The e2e scenarios that need no board (A1 and the firmware-flash `FW*` ones): the real app in a real host Chrome against in-page fakes, no emulator. The scenarios that touch the board run nowhere until embsim's E4 (the nightly that ran them is off). See [below](#the-e2e-suite) |
 | `firmware-unit-tests` | firmware or protocol changed | `pio test -e native_test` — the host Unity suite under AddressSanitizer (no Propeller toolchain needed) |
 | `protocol-codegen` | protocol changed | **Blocking.** Regenerates all three targets (C/TS/Rust) twice and asserts success + byte-reproducibility (generated files are gitignored, so this guards the schema/templates + generator determinism, not committed-file drift) |
 | `firmware-layering` | firmware changed | **Blocking (baseline-gated).** `scripts/check_layering.py` enforces downward-only includes (APP→DEV→IO→Library→HAL→HW); pre-existing violations are frozen in `.layering-baseline`, so it fails only on **new** upward includes |
@@ -52,6 +52,12 @@ that replaces it is embsim's to deliver (`SIL/embsim/MIGRATING-MAD.md` §2, E4),
 so the nightly is off until then. Per PR, and whenever the `SIL/embsim` pin
 moves (#148), `control-e2e-boardless` **gates** on the scenarios that never
 reach a board; `sil-rust` exercises `mad-emulator` itself against the pin.
+
+That keeps #148's trigger, not its purpose. #148 re-ran the integration e2e,
+the app against the emulator, on every pin move; until E4 no e2e run touches
+the board, on a pin move or anywhere else. A change to `SIL/` alone runs no
+e2e at all: `control-e2e-sil` fired on it, and the board-free job has nothing
+in `SIL/` to test.
 
 Until the native firmware library was removed, `control-e2e-sil` ran the full
 suite per PR against that library behind the bridge, unpaced (`--speed 0`) so the

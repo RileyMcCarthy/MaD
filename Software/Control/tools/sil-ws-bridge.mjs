@@ -7,9 +7,16 @@
  * as readable/writable streams and hands them to the device worker exactly like
  * a real serial port.
  *
- *   Terminal 1:  cd SIL && make playground          # emulator on /tmp/tty.rpi
+ *   Terminal 1:  an emulator on /tmp/tty.rpi (MAD_PTY overrides the path)
  *   Terminal 2:  npm run sil:bridge                  # this relay on ws://localhost:9999
  *   Terminal 3:  npm run dev                         # then click "Connect to SIL"
+ *
+ * Nothing serves /tmp/tty.rpi any more. It was the native firmware library's
+ * path, and that library is gone. The ISS playground is on /tmp/tty.iss on
+ * purpose: the ISS behind this bridge is not a valid SIL configuration, because
+ * the browser runs at host speed and every wait it makes measures the host, not
+ * the machine (SIL/makefile, at `playground`). The valid one, the ISS with
+ * Chrome in a QEMU guest the board's clock meters, does not use this bridge.
  *
  * The PTY slave is already in raw mode (cfmakeraw, no echo/canonical) — see
  * SIL/embsim/core/src/serial_pty.rs — so plain fd read/write passes bytes through.

@@ -283,12 +283,17 @@ jobs:
   # Chrome guest, and the host kind that replaces it is embsim's to deliver
   # (MIGRATING-MAD.md section 2, E4). e2e-nightly.yml waits for it.
   #
-  # A move of the SIL/embsim pin runs this job too (#148): Control e2e re-runs
-  # against the pinned tip whenever the pin moves, a revert of an emulator fix
-  # included. While the only Control e2e that is a valid configuration is the
-  # board-free set, that is what it re-runs; mad-emulator itself is exercised
-  # against the new pin by sil-rust (the ISS suites and MaDSim's protocol
-  # round trip on the host PTY).
+  # A move of the SIL/embsim pin runs this job too, as #148 made
+  # control-e2e-sil do. That keeps #148's trigger, NOT its purpose: #148 re-ran
+  # the integration e2e (the app against the emulator) on every pin move, a
+  # revert of an emulator fix included, and this job re-runs only the
+  # board-free set, which no pin can change. The trigger stays wired so the
+  # board-touching scenarios fire on a pin move again when they come back with
+  # E4. Until then no e2e run touches the board, on a pin move or anywhere;
+  # mad-emulator itself is exercised against the new pin by sil-rust (the ISS
+  # suites and MaDSim's protocol round trip on the host PTY). control-e2e-sil
+  # also fired on any SIL/ change. This job does not: it has nothing in SIL/
+  # to test, so a SIL-only change runs no e2e at all.
   control-e2e-boardless:
     name: Control e2e (board-free scenarios)
     needs: changes

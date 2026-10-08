@@ -24,9 +24,9 @@
  *
  * The native firmware library is gone, and with it the configuration that
  * paired a host Chrome with the fake serial over the WS bridge. The fake
- * serial is still here (no CDP_URL) because `make e2e-emulator` still puts the
- * ISS behind the bridge -- but that pairing measures the host, not the
- * machine, and is not a valid SIL configuration. Without CDP_URL only the
+ * serial is still here (no CDP_URL), but nothing valid serves it: `make
+ * e2e-emulator`, which put the ISS behind the bridge, refuses to run, because
+ * that pairing measures the host, not the machine. Without CDP_URL only the
  * board-free scenarios mean anything: A1 and FW1/2/3/5/6/7/8/9 launch a host
  * Chrome against in-page fakes and need no emulator at all, which is what
  * ci.yml's per-PR `control-e2e-boardless` job runs:

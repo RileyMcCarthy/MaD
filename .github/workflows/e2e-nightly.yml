@@ -138,7 +138,7 @@ jobs:
 
       # --release is not optional. The ISS interprets every P2 instruction and
       # a dev-profile build is far too slow to reach the guest's warmup
-      # deadline (see the note on playground-iss in SIL/makefile).
+      # deadline (see the note on `playground` in SIL/makefile).
       - name: Build mad-emulator (release)
         working-directory: SIL
         run: cargo build --release --bin mad-emulator

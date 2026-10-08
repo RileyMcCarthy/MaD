@@ -68,11 +68,12 @@ Pin numbers are the firmware's, named in `iss_description::pins` from
 
 ## The virtual serial port
 
-The host end is an embsim `HostPty`: a PTY pair symlinked at `/tmp/tty.rpi`,
-framed onto the protocol nets. On real hardware the app uses Web Serial
-directly; against the emulator a small WS↔PTY bridge relays bytes to the
-browser's (faked) serial port — the *app source is never modified*. See
-[SIL testing](../dev/sil-testing.md) for how to run it.
+The host end is an embsim `HostPty`: a PTY pair symlinked at the path
+`--pty-path` names (`/tmp/tty.iss` under `make playground`), framed onto the
+protocol nets. On real hardware the app uses Web Serial directly. The WS↔PTY
+bridge that relayed the PTY to a faked Web Serial port served the native
+firmware library; behind the ISS it is not a valid SIL configuration, because
+the browser runs at host speed. See [SIL testing](../dev/sil-testing.md).
 
 ## One emulator per process
 

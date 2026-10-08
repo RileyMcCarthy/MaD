@@ -100,7 +100,7 @@ pio check -e propeller2 --fail-on-defect=medium --fail-on-defect=high  # MISRA (
 ```bash
 cd SIL
 make test         # build the P2 image + emulator, run the Rust test suite
-make playground   # ISS on /tmp/tty.rpi, real-time, for manual testing
+make playground   # ISS on /tmp/tty.iss, real-time, for manual testing
 ```
 
 ### Regenerate the protocol

@@ -24,10 +24,10 @@ build it for you.
 | `make p2image` | Build the P2 image the ISS executes |
 | `make protocol` | Regenerate the Rust protocol types for SIL |
 | `make emulator` | Protocol + the Rust workspace |
-| `make playground` | ISS on `/tmp/tty.rpi` for **manual** testing — **real-time pacing** (`--speed 1`), release build. |
-| `make playground-iss` | The same ISS on `/tmp/tty.iss`, so a manual session does not take `/tmp/tty.rpi`. |
-| `make playground-rom` | The ISS booting the mask ROM, the host on the programming UART (`P62`/`P63`) |
-| `make e2e-emulator` | The ISS behind the WS bridge, unpaced. **Not a valid SIL configuration** (below); no CI job runs it. |
+| `make playground` | ISS on `/tmp/tty.iss` for **manual** testing — **real-time pacing** (`--speed 1`), release build. Deliberately not `/tmp/tty.rpi`, the bridge's default (below). |
+| `make playground-iss` | The same target, under the name it had beside the native playground. |
+| `make playground-rom` | The ISS booting the mask ROM, the host on the programming UART (`P62`/`P63`), on `/tmp/tty.iss` |
+| `make e2e-emulator` | **Refuses to run**, and says why: it was the ISS behind the WS bridge, which is not a valid SIL configuration (below). |
 | `make test` | Build the image + protocol, then `cargo test` (includes the MaDSim PTY protocol smoke — no Chrome) |
 | `make clean` | Remove build artifacts and `cargo clean` |
 
@@ -39,7 +39,8 @@ make playground
 ```
 
 This starts the `mad-emulator` binary with a virtual serial port at
-`/tmp/tty.rpi`. The host is a browser outside the emulator.
+`/tmp/tty.iss`, at real time, for a person: a serial console on the
+firmware's protocol link.
 
 ## Running the e2e suite: the computer node
 
@@ -69,30 +70,19 @@ which launch a host Chrome against in-page fakes.
 
 ## Clicking around by hand
 
-The browser can't see the emulator's PTY directly, so a small WS↔PTY bridge
-relays bytes to the app's (faked) Web Serial port. From
-`Software/Control/`, in separate terminals:
+The browser cannot open a PTY. The WS↔PTY bridge (`npm run sil:bridge`) relayed
+one to the app's faked Web Serial port, for `npm run sil:app`, and it defaults to
+`/tmp/tty.rpi`: the native firmware library's path. That library is gone, and no
+target serves `/tmp/tty.rpi` any more.
 
-```bash
-# Terminal 1 — emulator (from SIL/)
-make playground          # real-time pacing
-
-# Terminal 2 — WS bridge on ws://localhost:9999
-npm run sil:bridge
-
-# Terminal 3 — the app on http://localhost:5174
-npm run dev
-```
-
-Then **`npm run sil:app`** opens a Playwright-controlled Chrome wired to the
-emulator for hands-on testing.
-
-!!! warning "The ISS behind the bridge is not a test configuration"
-    The bridge hands the board's bytes to a browser running at host speed, and
-    the ISS interprets far slower than real time, so every wait the app makes
-    measures the host rather than the machine. Use it to look, not to assert:
-    `make e2e-emulator` (the same pairing, unpaced) is kept only until the move
-    onto an embsim project retires it, and no CI job runs it.
+!!! warning "The ISS behind the bridge is not a SIL configuration"
+    The playground is on `/tmp/tty.iss` so that pairing the bridge with the ISS
+    takes a deliberate act (the bridge's `MAD_PTY`), not an accident. The pairing
+    hands the board's bytes to a browser running at host speed, and the ISS
+    interprets far slower than real time, so every wait the app makes measures
+    the host rather than the machine. `make e2e-emulator`, which was that pairing
+    unpaced, refuses to run, and no CI job runs it. A browser comes back on the
+    board with the host the board's clock meters (embsim's E4, above).
 
 The MaDSim crate also has a Chrome-free PTY smoke (`tests/pty_protocol.rs`): boot
 the binary, send a `firmware_version` READ, expect a DATA frame. It runs as part
