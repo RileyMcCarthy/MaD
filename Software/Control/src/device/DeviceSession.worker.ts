@@ -85,6 +85,7 @@ import {
   shouldRetryUpload,
   UPLOAD_DEFAULT_MAX_RETRIES,
 } from './sessionPolicy';
+import { boundaryCallback } from './boundaryCallback';
 
 /** Poll cadence (ms). Faster than the sample period so reads/writes drain promptly. */
 const TICK_MS = 4;
@@ -291,7 +292,9 @@ class DeviceSession {
    *  start of each such operation (and on connect). */
   private aborting = false;
 
-  private sink: DeviceEventSink | null = null;
+  /** Delivers events to the main thread. A plain function wrapping the Comlink
+   *  proxy, never the proxy itself — see boundaryCallback. */
+  private sink: ((events: DeviceEvent[]) => Promise<void>) | null = null;
 
   private waiters: Waiter[] = [];
 
@@ -339,13 +342,16 @@ class DeviceSession {
     nacks: 0,
     lastError: '',
     lastErrorAt: 0,
+    eventDeliveryFailures: 0,
   };
 
   private readonly periodic = new PeriodicAggregator();
 
-  /** Register the main-thread event callback (Comlink proxy). */
+  /** Register the main-thread event callback. It arrives as a Comlink proxy
+   *  and is stored wrapped, so no call site can reach the proxy through
+   *  `.call`/`.apply` (see boundaryCallback). */
   setEventSink(sink: DeviceEventSink): void {
-    this.sink = sink;
+    this.sink = boundaryCallback(sink);
   }
 
   /**
@@ -354,7 +360,7 @@ class DeviceSession {
    * timeline on the main thread reads as one sequence — see diagnostics/log.
    */
   setLogSink(sink: LogBatchSink): void {
-    setLogSink(sink);
+    setLogSink(boundaryCallback(sink));
     logDev.info('worker-ready', 'log sink attached');
   }
 
@@ -381,6 +387,7 @@ class DeviceSession {
       nacks: 0,
       lastError: '',
       lastErrorAt: 0,
+      eventDeliveryFailures: 0,
     };
     this.client.register_periodic(MSG_READ_SAMPLE, MSG_SAMPLE_PERIOD_MS, SAMPLE_STORAGE_COUNT);
     this.client.register_periodic(MSG_READ_STATE, MSG_STATE_PERIOD_MS, STATE_STORAGE_COUNT);
@@ -796,6 +803,19 @@ class DeviceSession {
     onProgress?: (p: FileDownloadProgress) => void,
   ): Promise<DownloadResult> {
     const SAMPLES_PER_REQUEST = 100;
+    // Arrives as a Comlink proxy; wrapped so it is only ever called bare (see
+    // boundaryCallback). Progress is advisory, so a failed update is logged once
+    // and the download carries on.
+    const progress = onProgress ? boundaryCallback(onProgress) : null;
+    let progressFailed = false;
+    const report = (p: FileDownloadProgress): void => {
+      if (progress === null) return;
+      progress(p).catch((err: unknown) => {
+        if (progressFailed) return;
+        progressFailed = true;
+        logProto.warn('download-progress-failed', String(err), { testName });
+      });
+    };
 
     return this.runOp(async () => {
     this.aborting = false;
@@ -846,7 +866,7 @@ class DeviceSession {
             chunks.push(chunk);
             downloadedBytes += chunk.length;
             sampleIndex += Math.floor(chunk.length / STOREDSAMPLE_WIRE_SIZE);
-            onProgress?.({
+            report({
               fileName: testName,
               bytesDownloaded: downloadedBytes,
               totalBytes: 0,
@@ -859,7 +879,7 @@ class DeviceSession {
           downloadedBytes += chunk.length;
           const received = Math.floor(chunk.length / STOREDSAMPLE_WIRE_SIZE);
           sampleIndex += received;
-          onProgress?.({
+          report({
             fileName: testName,
             bytesDownloaded: downloadedBytes,
             totalBytes: 0,
@@ -870,7 +890,7 @@ class DeviceSession {
 
       const binary = concatBytes(chunks);
       const csv = decodeBinarySampleDataToCSV(binary);
-      onProgress?.({
+      report({
         fileName: testName,
         bytesDownloaded: binary.length,
         totalBytes: binary.length,
@@ -897,7 +917,7 @@ class DeviceSession {
         aborted: this.aborting,
         durMs: Math.round(nowMs() - downloadStart),
       });
-      onProgress?.({ fileName: testName, bytesDownloaded: 0, totalBytes: 0, status: 'error', error: message });
+      report({ fileName: testName, bytesDownloaded: 0, totalBytes: 0, status: 'error', error: message });
       return { success: false, error: message };
     }
     }, 'downloadTestFile');
@@ -1139,7 +1159,22 @@ class DeviceSession {
   }
 
   private emit(events: DeviceEvent[]): void {
-    this.sink?.(events);
+    const deliver = this.sink;
+    if (deliver === null) return;
+    deliver(events).catch((err: unknown) => this.onEventDeliveryFailed(err));
+  }
+
+  /** The main thread did not receive a batch of events. Counted every time and
+   *  logged once per session: a broken sink fails on every poll tick, and the
+   *  log reaches the main thread over its own channel. */
+  private onEventDeliveryFailed(err: unknown): void {
+    this.stats.eventDeliveryFailures += 1;
+    if (this.stats.eventDeliveryFailures === 1) {
+      logDev.error(
+        'event-delivery-failed',
+        err instanceof Error ? `${err.name}: ${err.message}` : String(err),
+      );
+    }
   }
 
   /** Serialize an on-demand operation so only one request/response is in flight. */
