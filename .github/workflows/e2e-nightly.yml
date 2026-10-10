@@ -22,8 +22,8 @@
 #
 # WHAT STILL DOES NOT TOUCH THE BOARD: A1 and FW1/2/3/5/6/7/8/9 drive a host
 # Chrome against in-page fakes (installFakeBootRom, installOpfsDataDir); they
-# run here and in `control-e2e-boardless` alike. FW-ISS needs the ROM board
-# (`mad-emulator --boot-rom --chrome`), which this job does not start.
+# run here and in `control-e2e-boardless` alike. FW-ISS runs in a step of
+# its own, on the ROM board (`mad-emulator --boot-rom --chrome`, make e2e-rom).
 #
 # Use `workflow_dispatch` with suite=smoke to run e2e/smoke-ids.txt instead.
 
@@ -140,6 +140,20 @@ jobs:
             export SCENARIOS=$(grep -v -e '^#' -e '^[[:space:]]*$' ../Software/Control/e2e/smoke-ids.txt | paste -sd, -)
           fi
           scripts/board-route.sh e2e
+
+      # FW-ISS: the app's flasher against the ISS booting the mask ROM, on
+      # the programming UART (make e2e-rom).
+      - name: Run FW-ISS on the ROM board
+        if: always()
+        working-directory: SIL
+        env:
+          CHROME: /usr/bin/google-chrome
+          BOARD_LOGS: /tmp/e2e-out/rom
+          P2_IMAGE: p2iss/rom/rom_booter_v33k.bin
+          BOARD_ARGS: --boot-rom --usb-product-id 0x6015
+          E2E_BOARD: rom
+          SCENARIOS: FW-ISS
+        run: scripts/board-route.sh e2e
 
       - name: Timings
         if: always()
