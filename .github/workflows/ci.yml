@@ -357,18 +357,22 @@ jobs:
   # on how fast the runner is; host time is printed, never asserted.
   #
   # Advisory because the node stalls now and then: about one page boot in
-  # 15-30, a page's 1 ms grant never expires while the app's worker starts
-  # its WebAssembly core, and the node stops the run after 30 s (PR #155,
-  # "The node's worker-boot stall"). This subset boots the app about 30
-  # times. It joins ci-gate.needs once embsim fixes the stall.
+  # 13 (7 of 92 measured), a page's 1 ms grant never expires while the
+  # app's worker starts its WebAssembly core, and the node stops the run
+  # after 30 s (PR #155, "The node's worker-boot stall"). This subset boots
+  # the app about 15 times, one board per scenario, so a stall costs one
+  # scenario. It joins ci-gate.needs once embsim fixes the stall.
   #
   # A SUBSET, because the board is slow: the ISS runs at a few percent of
   # real time, so a scenario costs 20-60x its board time in host time. The
   # subset is the connect path (B1+C1, B2+B3+B4, NAV), the live screen
   # (C3+C4), the data folder and G-code (F1+F2, F7), a manual enable (D1),
   # a run started and a run carried to download and view (G1, G2+G3+H2+I),
-  # and two link drops on the node's cable (B5-reconnect, M11-idle-drop):
-  # PR #155 gives each one's host and board time. The motion matrices, the
+  # and two link drops on the node's cable (B5-reconnect, M11-idle-drop).
+  # Measured on an M2 (PR #155 has the table): about 20 s of board time and
+  # 7 minutes of host time for all eleven, G2+G3+H2+I's SD-heavy run and
+  # download five of them. A runner at half that speed spends about 15
+  # minutes here after 20 minutes of builds. The motion matrices, the
   # waveforms and the mid-test drop (a 40 mm move at 2 mm/s, 20 s of board
   # time) run nightly (e2e-nightly.yml), on the same route.
   #

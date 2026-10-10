@@ -560,4 +560,5 @@ DevTools URL in its "reached" line; the e2e suite attaches there
 | `make playground`, `playground-iss` | Chrome, a window on the app |
 | `make playground-rom` | Chrome, a window on the app's flasher, on the programming UART (`P62`/`P63`, USB `0403:6015`) |
 | `make e2e-emulator`, `make e2e` | Chrome, headless, DevTools on 9222 |
+| `make e2e-rom` | Chrome, headless, the mask ROM on the programming UART (USB `0403:6015`), for FW-ISS |
 | `make playground-pty` | a PTY at `/tmp/tty.iss`, for a serial console |

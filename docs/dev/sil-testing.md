@@ -30,6 +30,7 @@ targets build it, and the release emulator, for you.
 | `make playground-pty` | The ISS on a PTY at `/tmp/tty.iss`, at real time at most, for a serial console. No browser belongs behind it (below). |
 | `make e2e-emulator` | The ISS with a **headless** Chrome on the board's clock, DevTools on `DEVTOOLS_PORT` (9222), nothing open: attach the e2e suite to it |
 | `make e2e` | The dev server, `e2e-emulator` and the suite against it, then everything stopped (`SCENARIOS=…` selects) |
+| `make e2e-rom` | FW-ISS: the app's flasher in a headless Chrome on the board's clock, against the ISS booting the mask ROM |
 | `make test` | Build the image + protocol, then `cargo test` (includes the MaDSim PTY protocol smoke — no Chrome) |
 | `make clean` | Remove build artifacts and `cargo clean` |
 
@@ -117,7 +118,7 @@ no board (A1 and the firmware-flash `FW*` ones, a host Chrome against in-page
 fakes).
 
 !!! warning "The node's worker-boot stall"
-    About one page boot in 15–30, the page's 1 ms grant never expires while
+    About one page boot in 13 (7 of 92 measured), the page's 1 ms grant never expires while
     the app's device worker starts its WebAssembly core (both clocks frozen,
     about 20 ms into the page's document), and `mad-emulator` stops the run
     after 30 s of host time, saying "a grant stuck". The suite then stops and
