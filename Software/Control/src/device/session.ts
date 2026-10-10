@@ -61,7 +61,7 @@ export class DeviceClient {
     this.workerFactory =
       opts.workerFactory ??
       (() =>
-        new Worker(new URL('./DeviceSession.worker.ts', import.meta.url), {
+        new Worker(new URL('./deviceWorkerEntry.ts', import.meta.url), {
           type: 'module',
         }));
     this.createWorker();
