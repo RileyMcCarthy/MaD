@@ -98,7 +98,9 @@ e2e-emulator: p2image emulator-release
 # The e2e suite on the board route, start to finish: the dev server, the
 # board with a headless Chrome on its clock, the suite attached to that
 # Chrome, then everything stopped. `make e2e SCENARIOS=B1+C1,F7` runs a
-# subset; logs land in target/board-route/.
+# subset; `BOARD_PER_SCENARIO=1` gives each scenario a fresh board (what CI
+# does), so a board that stops costs one scenario; logs land in
+# target/board-route/.
 e2e: p2image emulator-release
 	scripts/board-route.sh e2e
 

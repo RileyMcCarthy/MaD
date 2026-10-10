@@ -2854,6 +2854,14 @@ async function boardAlive() {
 }
 
 async function main() {
+  // `--list`: the ids SCENARIOS selects (all of them without it), in the
+  // suite's order, one a line, FW-ISS left out (it needs the ROM board).
+  // SIL/scripts/board-route.sh runs them one board each from this.
+  if (process.argv.includes('--list')) {
+    const only = process.env.SCENARIOS ? new Set(process.env.SCENARIOS.split(',').map((x) => x.trim())) : null;
+    for (const s of scenarios) if (s.id !== 'FW-ISS' && (!only || only.has(s.id))) console.log(s.id);
+    return;
+  }
   // Fail fast with guidance if the dev server isn't up.
   try {
     const res = await fetch(APP_URL_HOST);
