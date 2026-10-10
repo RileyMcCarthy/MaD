@@ -193,13 +193,11 @@ impl BenchForcePath {
     pub fn build() -> Self {
         let mut registry = PartRegistry::new();
         registry.register("ADS122U04", |_decl| {
-            // Ratiometric, matching the firmware's own config: VREF = AVDD =
-            // the bridge excitation, PGA gain 128, so the excitation cancels.
-            Box::new(Ads122u04Component::new(ads122u04::Config {
-                vref_mv: 1_000.0 * BRIDGE_EXCITATION_V,
-                gain: 128.0,
-                zero_offset: 0,
-            }))
+            // The converter starts as the chip leaves reset and takes its gain
+            // and reference from the register writes the firmware sends over
+            // its own pins (embsim 0.3.0): gain 128 against AVDD, the bridge
+            // excitation, so the excitation cancels as it does on the bench.
+            Box::new(Ads122u04Component::new(ads122u04::Config::default()))
         });
         let ds2 = Board::from_netlist(
             netlist::parse(DS2_NETLIST).expect("committed DS2 Addon netlist parses"),
