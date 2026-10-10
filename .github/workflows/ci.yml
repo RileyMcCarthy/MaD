@@ -269,31 +269,11 @@ jobs:
   # app in a real host Chrome, with no emulator at all. A1 (the unsupported-
   # browser screen) and FW1/2/3/5/6/7/8/9 (the firmware-flash UI) drive the app
   # against in-page fakes (installFakeBootRom, installOpfsDataDir) and never
-  # reach a board, so they mean the same thing here as anywhere.
-  #
-  # This job used to be `control-e2e-sil`: the FULL suite against the native
-  # firmware library behind the WS<->PTY bridge, unpaced. The native library is
-  # gone -- mad-emulator runs the shipped P2 image on the ISS -- and the ISS
-  # behind the bridge is not a valid SIL configuration: the bridge hands the
-  # board's bytes to a browser running at host speed, so every wait measures
-  # the host, not the machine. The one valid configuration, the ISS with Chrome
-  # in a QEMU guest the board's clock meters, runs at ~0.024x real time, which a
-  # per-PR gate cannot afford (#122 measured three scenarios at 1,534 s). At
-  # the pinned embsim (0.2.0) it does not run anywhere: 0.2.0 removed the
-  # Chrome guest, and the host kind that replaces it is embsim's to deliver
-  # (MIGRATING-MAD.md section 2, E4). e2e-nightly.yml waits for it.
+  # reach a board, so they mean the same thing here as anywhere. The
+  # board-touching scenarios run in `control-e2e-board` below.
   #
   # A move of the SIL/embsim pin runs this job too, as #148 made
-  # control-e2e-sil do. That keeps #148's trigger, NOT its purpose: #148 re-ran
-  # the integration e2e (the app against the emulator) on every pin move, a
-  # revert of an emulator fix included, and this job re-runs only the
-  # board-free set, which no pin can change. The trigger stays wired so the
-  # board-touching scenarios fire on a pin move again when they come back with
-  # E4. Until then no e2e run touches the board, on a pin move or anywhere;
-  # mad-emulator itself is exercised against the new pin by sil-rust (the ISS
-  # suites and MaDSim's protocol round trip on the host PTY). control-e2e-sil
-  # also fired on any SIL/ change. This job does not: it has nothing in SIL/
-  # to test, so a SIL-only change runs no e2e at all.
+  # control-e2e-sil do; the board job is the one a pin move can change.
   control-e2e-boardless:
     name: Control e2e (board-free scenarios)
     needs: changes
@@ -364,6 +344,131 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: control-e2e-boardless-${{ github.run_number }}
+          path: /tmp/e2e-out
+          retention-days: 14
+
+  # ADVISORY (not in ci-gate.needs, yet). The board-touching e2e scenarios, per
+  # PR, on the one route a browser belongs on: the shipped P2 image interpreted
+  # by the ISS (mad-emulator), and MaD Control in the runner's own Chrome, every
+  # page and dedicated worker held to the board's clock by embsim's
+  # `chrome-cdp` node (`mad-emulator --chrome`), its Web Serial port the
+  # board's protocol line. The app's timeouts mean in board time what they
+  # say, and every budget in the suite is board time, so nothing here depends
+  # on how fast the runner is; host time is printed, never asserted.
+  #
+  # Advisory because the node stalls now and then: about one page boot in
+  # 15-30, a page's 1 ms grant never expires while the app's worker starts
+  # its WebAssembly core, and the node stops the run after 30 s (PR #155,
+  # "The node's worker-boot stall"). This subset boots the app about 30
+  # times. It joins ci-gate.needs once embsim fixes the stall.
+  #
+  # A SUBSET, because the board is slow: the ISS runs at a few percent of
+  # real time, so a scenario costs 20-60x its board time in host time. The
+  # subset is the connect path (B1+C1, B2+B3+B4, NAV), the live screen
+  # (C3+C4), the data folder and G-code (F1+F2, F7), a manual enable (D1),
+  # a run started and a run carried to download and view (G1, G2+G3+H2+I),
+  # and two link drops on the node's cable (B5-reconnect, M11-idle-drop):
+  # PR #155 gives each one's host and board time. The motion matrices, the
+  # waveforms and the mid-test drop (a 40 mm move at 2 mm/s, 20 s of board
+  # time) run nightly (e2e-nightly.yml), on the same route.
+  #
+  # Fires on the app, the protocol, the firmware or the SIL (the `sil` filter
+  # covers Firmware/ and Protocol/), and on a move of the SIL/embsim pin: the
+  # node is embsim's, so a pin move is exactly what this job exists to check.
+  control-e2e-board:
+    name: Control e2e (the board, ISS + chrome-cdp)
+    needs: changes
+    if: |
+      needs.changes.outputs.is_release != 'true' &&
+      (needs.changes.outputs.wasm_control == 'true' ||
+       needs.changes.outputs.sil == 'true' ||
+       needs.changes.outputs.embsim_pin == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: Software/Control/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: SIL
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - name: Install PlatformIO + protocol generator deps
+        run: pip install --upgrade platformio pyyaml jinja2
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      # Ubuntu 24.04 restricts unprivileged user namespaces, which Chrome's
+      # sandbox uses (embsim's own chrome-cdp job does the same).
+      - name: Let Chrome's sandbox make its namespaces
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+      - name: Which Chrome
+        run: google-chrome --version
+      # Install the platform before the first pio build: a fresh install
+      # changes PlatformIO's project checksum, which cleans .pio/build.
+      - name: Install the Propeller platform (flexcc/flexspin)
+        working-directory: Firmware/MaDCore
+        run: pio pkg install --platform https://github.com/RileyMcCarthy/platform-propeller.git
+      - name: Build the P2 image the ISS interprets
+        working-directory: Firmware/MaDCore
+        run: pio run -e propeller2_debug
+      # --release is not optional: the ISS interprets every P2 instruction.
+      - name: Build mad-emulator (release)
+        working-directory: SIL
+        run: |
+          make protocol
+          cargo build --release --bin mad-emulator
+      - name: Install Control deps + wasm + proto
+        working-directory: Software/Control
+        run: |
+          npm ci
+          npm run build:wasm
+          npm run generate:proto
+      # scripts/board-route.sh starts the dev server, then for each scenario
+      # a fresh board with a headless Chrome on its clock (DevTools on 9222),
+      # waits for the run's "reached" line, runs that scenario attached there,
+      # and stops the board; a board that stops costs one scenario.
+      - name: Run the board subset on the ISS
+        working-directory: SIL
+        env:
+          CHROME: /usr/bin/google-chrome
+          BOARD_LOGS: /tmp/e2e-out
+          BOARD_PER_SCENARIO: '1'
+          E2E_TIMINGS: /tmp/e2e-out/timings.json
+          SCENARIOS: B1+C1,F7,F1+F2,B2+B3+B4,C3+C4,D1,G1,G2+G3+H2+I,NAV,B5-reconnect,M11-idle-drop
+        run: scripts/board-route.sh e2e
+      # Host and board time per scenario, for sizing this subset. Reported,
+      # never asserted.
+      - name: Timings
+        if: always()
+        run: |
+          node -e '
+            const fs = require("fs");
+            let t; try { t = JSON.parse(fs.readFileSync("/tmp/e2e-out/timings.json", "utf8")); } catch { process.exit(0); }
+            const rows = t.timings.map((r) => `| ${r.id} | ${r.verdict} | ${r.hostS.toFixed(1)} | ${r.boardS === null ? "–" : r.boardS.toFixed(3)} |`);
+            const out = ["| scenario | verdict | host s | board s |", "|---|---|---|---|", ...rows].join("\n");
+            console.log(out);
+            if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, out + "\n");
+          '
+      - name: Collect diagnostics
+        if: always()
+        run: |
+          mkdir -p /tmp/e2e-out
+          cp -r Software/Control/e2e/artifacts /tmp/e2e-out/scenario-artifacts 2>/dev/null || true
+      - name: Upload logs + failure artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: control-e2e-board-${{ github.run_number }}
           path: /tmp/e2e-out
           retention-days: 14
 
