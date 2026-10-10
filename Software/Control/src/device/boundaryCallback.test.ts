@@ -3,9 +3,10 @@
  * MessageChannel by the real Comlink, the same way the app wires its event
  * sink (session.ts `setEventSink(Comlink.proxy(fanout))`).
  *
- * The call shape under test is the one the production bundle emits for the
- * worker's `this.sink?.(events)` when esbuild lowers optional chaining:
- * `(n = this.sink) == null || n.call(this, events)`.
+ * The call shape under test is the one a bundler emits for the worker's
+ * `this.sink?.(events)` when it lowers optional chaining:
+ * `(n = this.sink) == null || n.call(this, events)`. DeviceSession.worker.test.ts
+ * checks that the session itself stores the wrapped form.
  */
 import { afterEach, describe, expect } from 'vitest';
 import * as Comlink from 'comlink';
@@ -74,15 +75,14 @@ describe('callbacks handed to the device worker', () => {
   behaviour(
     {
       id: 'worker-boundary.method-call-on-unwrapped-callback',
-      covers: 'node_modules/comlink/dist/esm/comlink.mjs#createProxy',
       given:
-        'a main-thread callback held by the worker as it arrived, invoked as a method call on the worker object the way the production bundle compiles it',
+        'a main-thread callback the worker holds as it arrived, invoked as a method of the worker object',
       expect: {
-        'clone-rejected':
-          'the call is rejected with a data-clone error before any event reaches the main thread',
+        'call-rejected': "the worker's call fails",
+        'nothing-delivered': 'no events reach the main thread',
       },
       why: {
-        'clone-rejected':
+        'call-rejected':
           'the library that carries calls between threads treats every property of a forwarded callback as another remote call, so its call method sends the worker object itself, and that object cannot be copied between threads',
       },
     },
@@ -105,7 +105,7 @@ describe('callbacks handed to the device worker', () => {
       id: 'worker-boundary.wrapped-callback-delivers',
       covers: 'src/device/boundaryCallback.ts#boundaryCallback',
       given:
-        'a main-thread callback wrapped as soon as the worker receives it, invoked as a method call on the worker object the way the production bundle compiles it',
+        'a main-thread callback wrapped as soon as the worker receives it, invoked as a method of the worker object',
       expect: {
         'batch-delivered': 'the main thread receives the batch of events intact and in order',
         'settles-after-delivery': 'the worker side of the call settles only once the main thread has run the callback',

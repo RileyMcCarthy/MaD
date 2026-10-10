@@ -8,9 +8,12 @@
  *
  * The main thread opens the port (user gesture) and transfers its readable/
  * writable streams here, then drives high-level operations over Comlink.
+ *
+ * The worker's entry point is deviceWorkerEntry.ts, which exposes one
+ * DeviceSession. Importing this module neither exposes anything nor loads the
+ * protocol core, so a test can build a session without a worker scope.
  */
 
-import * as Comlink from 'comlink';
 import init, { WasmClient } from '@/wasm/protoemb_runtime.js';
 import wasmUrl from '@/wasm/protoemb_runtime_bg.wasm?url';
 import { logger, setLogSink, flushLog, nowMs, type LogBatchSink } from '@/diagnostics/log';
@@ -93,7 +96,14 @@ const TICK_MS = 4;
 const SAMPLE_STORAGE_COUNT = Math.max(1, Math.ceil(60_000 / MSG_SAMPLE_PERIOD_MS));
 const STATE_STORAGE_COUNT = 10;
 
-const wasmReady = init({ module_or_path: wasmUrl });
+let wasmReady: Promise<unknown> | null = null;
+
+/** Start loading the protocol core (once). The worker entry calls this at
+ *  startup so the module compiles while the port opens; connect awaits it. */
+export function startProtocolCore(): Promise<unknown> {
+  wasmReady ??= init({ module_or_path: wasmUrl });
+  return wasmReady;
+}
 
 interface Waiter {
   match: (e: DeviceEvent) => boolean;
@@ -274,7 +284,7 @@ class PeriodicAggregator {
   }
 }
 
-class DeviceSession {
+export class DeviceSession {
   private client?: WasmClient;
 
   private reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
@@ -366,7 +376,7 @@ class DeviceSession {
 
   async connect(streams: PortStreams, opts: ConnectOptions = {}): Promise<void> {
     const wasmStart = nowMs();
-    await wasmReady;
+    await startProtocolCore();
     logDev.info('wasm-init', 'protocol core ready', {
       initMs: Math.round(nowMs() - wasmStart),
     });
@@ -1483,5 +1493,3 @@ function delay(ms: number): Promise<void> {
 }
 
 export type DeviceSessionApi = DeviceSession;
-
-Comlink.expose(new DeviceSession());
