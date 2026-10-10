@@ -61,9 +61,10 @@ cd Software/Control && npm run verify
 # Schema ↔ domain lockstep (M12)
 python3 Protocol/scripts/check_schema_domain_lockstep.py
 
-# WASM e2e vs live SIL (includes TM-busy-restart / TM-manual-gate)
-# requires the computer node (none at the pinned embsim 0.2.0; embsim's E4)
-# + npm run dev -- --host, and CDP_URL below
+# WASM e2e vs live SIL (includes TM-busy-restart / TM-manual-gate), on the
+# board route: the ISS + the app in Chrome on the board's clock
+# (cd SIL && make e2e does all of it); by hand, with `make e2e-emulator`
+# and `npm run dev` up:
 export CDP_URL=http://127.0.0.1:9222
 npm run e2e
 # smoke subset (see e2e/smoke-ids.txt):

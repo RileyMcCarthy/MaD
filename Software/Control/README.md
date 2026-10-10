@@ -74,18 +74,18 @@ a one-click **diagnostics export** on the Firmware/About page.
 
 ### Real hardware vs. the SIL emulator
 
-The app only ever uses the **real Web Serial API** — the fake serial used by tests
-and the emulator playground is injected by the harness (`e2e/`), never baked into
-`src/`. Two ways to run interactively:
+The app only ever uses the **Web Serial API** — whatever stands behind
+`navigator.serial` for the emulator is the emulator's or the harness's
+(`e2e/`), never baked into `src/`. Two ways to run interactively:
 
 - **`npm run app`** — opens the app in *your own* browser, so `requestPort()` shows
   Chrome's native port chooser and connects to **real hardware** (the genuine Web
   Serial flow, with permissions that persist in your profile).
-- **`npm run sil:app`** — launches a Playwright-controlled Chrome with a *fake*
-  `navigator.serial` wired to the **SIL emulator** (no hardware needed). This is the
-  only way to drive the emulator from the browser — Chrome won't list the emulator's
-  pseudo-terminal in the real chooser, and an automation-controlled Chrome cancels
-  the chooser anyway. See `docs/TEST_PLAN.md` for the full SIL stack.
+- **`make playground`** (in `SIL/`) — the **SIL emulator** with the app in a Chrome
+  window it launches, every page and worker held to the board's clock by embsim's
+  `chrome-cdp`, whose Web Serial port is the board's protocol line (no hardware
+  needed). The app's timeouts then mean board time, however slowly the
+  instruction-set simulator runs. See `docs/TEST_PLAN.md` for the full SIL stack.
 
 `src/wasm/` and `src/protocol/generated/` are git-ignored build artifacts; run
 `build:wasm` and `generate:proto` after cloning (and whenever the protocol schema

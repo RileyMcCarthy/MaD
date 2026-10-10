@@ -7,14 +7,15 @@ abstractions (SIL serial, OPFS data folder) live in the harness — never in `sr
 
 > **Status:** offline `npm run verify` and the board-free e2e scenarios (A1 and the
 > firmware-flash `FW*` ones, no emulator) **gate CI** (`control-e2e-boardless` is in
-> `ci-gate.needs`). The scenarios that touch the board run on one valid SIL
-> configuration only — the P2 image on the ISS with Chrome in a QEMU guest the
-> board's clock meters (`CDP_URL=http://127.0.0.1:9222`) — and at the pinned embsim
-> (0.2.0) nothing provides it: 0.2.0 removed the Chrome guest, and embsim owes the
-> host that replaces it (`SIL/embsim/MIGRATING-MAD.md` §2, E4). The nightly that
-> ran them is off until then. Do not run the suite against the ISS behind the WS
-> bridge (the bridge's `MAD_PTY` on the playground's `/tmp/tty.iss`; `make
-> e2e-emulator` refuses): that measures the host, not the machine.
+> `ci-gate.needs`). A subset of the board scenarios runs per PR in
+> `control-e2e-board`, advisory until embsim fixes the node's occasional stall
+> while the app's worker boots; the nightly runs the whole suite. The scenarios that touch the
+> board run on one SIL configuration only: the P2 image on the ISS with the app in
+> the host's Chrome, every page and worker held to the board's clock by embsim's
+> `chrome-cdp` (`mad-emulator --chrome`; `cd SIL && make e2e`). Do not run the
+> suite against the ISS behind the WS bridge (the bridge's `MAD_PTY` on
+> `make playground-pty`'s `/tmp/tty.iss`): that measures the host, not the
+> machine.
 
 ---
 
@@ -52,27 +53,34 @@ Pure, no DOM/device needed. Current files cover:
 
 ## 3. E2E harness
 
-Built on `e2e/fixtures.mjs`: injects a fake `navigator.serial` backed by the
-WS↔PTY bridge, and overrides `showDirectoryPicker` to return an **OPFS**
-directory. Also stubs the capability gate.
+Built on `e2e/fixtures.mjs`. On the board route (`CDP_URL` set) it attaches to
+the Chrome `mad-emulator --chrome` launched, makes a fresh browser context per
+scenario and its page at about:blank, and installs no serial fake: the node's
+shim is `navigator.serial`, its one port the board's protocol line. It overrides
+`showDirectoryPicker` to return an **OPFS** directory. Every budget is board
+time (`waitFor` timeouts, `waitPageTime`, `pageClock`), clicks go through
+`press()` (visible, enabled, `elementFromPoint` at the centre, then a forced
+click: Playwright's "stable" check waits on animation frames, which barely run on
+virtual time), and the link drops pull the node's cable (`__embsim.link`).
 
-**Preconditions** (the computer node; with `CDP_URL` set the fake serial is not
-installed and pages open in the guest's Chrome). At embsim c5641f6 this was:
+**Preconditions:**
 ```bash
-cd SIL && make vm-image            # once
-cd SIL && make playground-cosim    # DevTools on 9222, control surface on 9223
-npm run dev -- --host              # the guest fetches from 10.0.2.2:5174
+cd SIL && make e2e                 # all of it, then everything stopped (SCENARIOS=… selects)
+# or by hand:
+cd SIL && make e2e-emulator        # wait for its "reached … DevTools at http://127.0.0.1:9222" line
+npm run dev
 CDP_URL=http://127.0.0.1:9222 npm run e2e
 ```
-Both make targets went with embsim 0.2.0's removal of the Chrome guest; the
-computer node returns with embsim's E4.
 The runner (`e2e/run-all.mjs`) asserts the dev server (5174) is reachable and resets
-the OPFS test dir between runs. Without `CDP_URL` only the board-free scenarios mean
-anything (`SCENARIOS=A1,FW1,FW2,FW3,FW5,FW6,FW7,FW8,FW9 npm run e2e`, no emulator).
+the OPFS test dir between runs, and prints each scenario's host and board time
+(`E2E_TIMINGS=<file>` writes them as JSON). Without `CDP_URL` only the board-free
+scenarios run (`SCENARIOS=A1,FW1,FW2,FW3,FW5,FW6,FW7,FW8,FW9 npm run e2e`, no
+emulator); naming a board scenario without it is refused. The WS↔PTY fake serial
+stays for the real-hardware harness (`hw-read-save-config.mjs`).
 
 ```
 e2e/
-  fixtures.mjs            # fake serial (WS↔PTY) + OPFS picker + newSilPage/connectToSil
+  fixtures.mjs            # board mode (CDP_URL) + OPFS picker + newSilPage/connectToSil, press, pageClock
   run-all.mjs             # 49 scenarios, serial, system Chrome
   run-smoke.mjs           # SCENARIOS= from smoke-ids.txt → run-all.mjs
   smoke-ids.txt           # 20-ID CI/nightly subset (must match matrix-catalog.json)
@@ -83,7 +91,7 @@ tools/
   sil-ws-bridge.mjs       # ws://localhost:9999 ↔ /tmp/tty.rpi
 ```
 
-SIL is single-instance: scenarios run serially; close `sil:app` before `npm run e2e`.
+SIL is single-instance: scenarios run serially against one long-lived emulator.
 
 Motion waits use `settleMotion` (position vs setpoint). Sample stream and
 calibrate waits use `awaitResponding` (Responding **and** `fw <version>` in
@@ -189,9 +197,10 @@ On a clean checkout after `npm run build:wasm && npm run generate:proto && npm i
 5. [PARITY.md](./PARITY.md) — every section ✅ (or explicitly marked N/A for the browser).
 
 `npm run verify` runs 1–3 (offline) and **gates** `wasm-control-ci`.
-`npm run e2e` runs 4 (needs SIL on the computer node, which nothing provides
-until embsim's E4; the nightly that ran it is off). Its board-free scenarios
-**gate** `control-e2e-boardless`.
+`npm run e2e` runs 4 (needs the board route: `cd SIL && make e2e`). Its
+board-free scenarios **gate** `control-e2e-boardless`, a subset of its board
+scenarios runs per PR in `control-e2e-board` (advisory for now), and the nightly
+runs all of it.
 
 ---
 

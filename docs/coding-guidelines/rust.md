@@ -223,7 +223,7 @@ A component's `on_sense` callback runs on the engine thread. Anything that callb
   (`embsim/models/src/edge.rs:44-57`). Other inline test modules: `peripherals/src/pulse_out.rs`, `tools/memory-inspect/src/{runtime,types}.rs`.
 - **Doctests double as documentation.** Public primitives carry a runnable ` ``` ` example in their `//!`/`///` docs (`event.rs:13-25`). Mark non-runnable examples ` ```rust,ignore ` (`build-support/src/lib.rs:10`, `runtime/src/lib.rs:16`).
 - **MaDSim has a Chrome-free PTY smoke** at `MaDSim/tests/pty_protocol.rs`: spawn `mad-emulator` on a unique PTY, send a `firmware_version` READ, expect a DATA frame. It skips when the `propeller2_debug` image is absent. Product behaviour still lives in `Software/Control/e2e/`.
-- The playground PTY (`/tmp/tty.iss`) is single-instance — don't run `make playground` and `make playground-rom` at the same time. The PTY smoke uses a temp path and can run beside other `cargo test`s.
+- `mad-emulator` is single-instance — don't run two of `make playground`, `playground-rom`, `playground-pty`, `e2e-emulator` or `e2e` at the same time. The PTY smoke uses a temp path and can run beside other `cargo test`s.
 - Run Rust tests with `cargo test` from `SIL/` (MaD-side crates) or from `SIL/embsim/` (the framework submodule's own workspace). CI runs both: the `sil-rust` job gates fmt + clippy `-D warnings` + `cargo test` on `SIL/`; the embsim repo's own CI (mirrored by `embsim-ci` / `embsim-pin-ci`) gates the submodule (see §10).
 
 ---

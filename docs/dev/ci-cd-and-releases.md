@@ -39,25 +39,26 @@ A docs-only PR now runs `docs-ci` (and nothing else); before that job existed it
 
 The e2e suite runs the real app in a real Chrome against the firmware. There is
 one valid configuration for the scenarios that touch the board: the shipped P2
-image on the ISS, and Chrome inside a QEMU guest whose clock the board meters,
-talking real Web Serial to the board's emulated FTDI (the computer node).
-The ISS behind the WS↔PTY bridge is not one: the bridge hands the board's bytes
-to a browser running at host speed, so every wait measures the host rather than
-the machine.
+image on the ISS, and the runner's Chrome with every page and worker held to
+the board's clock by embsim's `chrome-cdp` node (`mad-emulator --chrome`), its
+Web Serial port the board's protocol line. Every budget in the suite is board
+time, so a result does not depend on how fast the runner is. The ISS behind the
+WS↔PTY bridge is not a configuration: the bridge hands the board's bytes to a
+browser running at host speed, so every wait measures the host rather than the
+machine.
 
-The computer node runs at a few percent of real time, which a per-PR gate cannot
-afford, so it was `e2e-nightly.yml`'s job (`cosim-iss-qemu`). At the pinned
-embsim (0.2.0) it has no host: 0.2.0 removed the Chrome guest, and the host
-that replaces it is embsim's to deliver (`SIL/embsim/MIGRATING-MAD.md` §2, E4),
-so the nightly is off until then. Per PR, and whenever the `SIL/embsim` pin
-moves (#148), `control-e2e-boardless` **gates** on the scenarios that never
-reach a board; `sil-rust` exercises `mad-emulator` itself against the pin.
+The ISS runs at a few percent of real time, so a scenario costs 10–30 times its
+board time in host time:
 
-That keeps #148's trigger, not its purpose. #148 re-ran the integration e2e,
-the app against the emulator, on every pin move; until E4 no e2e run touches
-the board, on a pin move or anywhere else. A change to `SIL/` alone runs no
-e2e at all: `control-e2e-sil` fired on it, and the board-free job has nothing
-in `SIL/` to test.
+| Job | When | What |
+|---|---|---|
+| `control-e2e-board` | per PR: the app, the protocol, the firmware, `SIL/`, or a move of the `SIL/embsim` pin (#148) | **Advisory** for now (not in `ci-gate.needs`): a subset of the board scenarios on the ISS with `chrome-cdp`, sized to about 45 minutes with the builds (its comment names the scenarios and why). It gates once embsim fixes the node's occasional stall while the app's worker boots |
+| `control-e2e-boardless` | per PR: the app, or a pin move | **Gates.** The scenarios that never reach a board (A1 and the `FW*` flasher ones, a host Chrome against in-page fakes) |
+| `e2e-nightly.yml` | 06:17 UTC daily, or by hand | The whole suite on the same route, after the node's Chrome canary (a worker's timer on the board's clock) |
+
+A move of the `SIL/embsim` pin runs the board job as #148 intended: the node
+the suite runs on is embsim's, and `sil-rust` exercises `mad-emulator` itself
+against the pin.
 
 Until the native firmware library was removed, `control-e2e-sil` ran the full
 suite per PR against that library behind the bridge, unpaced (`--speed 0`) so the

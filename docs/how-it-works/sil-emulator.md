@@ -3,10 +3,11 @@
 The **software-in-the-loop (SIL)** system tests the *complete* firmware ↔ UI
 integration with **no physical hardware**. It executes the **Propeller 2 image**
 (`pio run -e propeller2_debug`) on an instruction-set simulator. The machine's
-pins are nets, and the physics models sit on those nets. The host is either a
-PTY, for a person looking, or a computer node: Chrome inside a QEMU guest whose
-clock the board meters, for the e2e suite. The control app connects to the
-virtual serial port exactly as it would to a real board.
+pins are nets, and the physics models sit on those nets. The host on the
+protocol link is the host's Chrome, every page and worker held to the board's
+clock by embsim's `chrome-cdp` node (`mad-emulator --chrome`), for the e2e
+suite and a person alike; or a PTY, for a serial console. The control app
+connects to the virtual serial port exactly as it would to a real board.
 
 !!! info "This is not a mock"
     The firmware under test is the image you flash. The ISS executes its
@@ -68,12 +69,22 @@ Pin numbers are the firmware's, named in `iss_description::pins` from
 
 ## The virtual serial port
 
-The host end is an embsim `HostPty`: a PTY pair symlinked at the path
-`--pty-path` names (`/tmp/tty.iss` under `make playground`), framed onto the
-protocol nets. On real hardware the app uses Web Serial directly. The WS↔PTY
-bridge that relayed the PTY to a faked Web Serial port served the native
-firmware library; behind the ISS it is not a valid SIL configuration, because
-the browser runs at host speed. See [SIL testing](../dev/sil-testing.md).
+The host end sits on the protocol nets (`P53`/`P55`, 2,000,000 baud 8N1), one
+of two components:
+
+- **Chrome on the board's clock** (`--chrome`, `make playground` / `make e2e`):
+  embsim's `chrome-cdp`. Every page's `navigator.serial` is the node's shim,
+  whose one port is this line (USB `0403:6001`), by Chrome's own rules; every
+  page and dedicated worker lives the board's time, a 1 ms quantum at a time
+  over DevTools, so the app's 2 s response timeout is 2 s of the board's time.
+  Its rail pins are wired to the P2's 3.3 V and the bench ground.
+- **A PTY** (`make playground-pty`): an embsim `HostPty`, a PTY pair symlinked
+  at the path `--pty-path` names (`/tmp/tty.iss`), for a serial console. A
+  browser behind it (the WS↔PTY bridge) runs at host speed while the ISS runs
+  at a few percent of real time, so it measures the host, not the machine.
+
+On real hardware the app uses Web Serial directly. See
+[SIL testing](../dev/sil-testing.md).
 
 ## One emulator per process
 

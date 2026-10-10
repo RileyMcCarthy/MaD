@@ -57,7 +57,9 @@ make firmware     # Firmware static library only
 make protocol     # Regenerate the Rust codec into ../Protocol/rust/src/generated
 make emulator     # firmware + protocol, then cargo build workspace
 make test         # emulator + `cargo test`
-make playground   # `cargo run --release --bin mad-emulator <image>` + SD path ./sd, PTY /tmp/tty.iss (see makefile for flags)
+make playground   # the ISS + MaD Control in a Chrome window on the board's clock (mad-emulator --chrome)
+make e2e          # the e2e suite on that route, headless (SCENARIOS=… selects); e2e-emulator for the board alone
+make playground-pty  # the ISS on a PTY at /tmp/tty.iss, for a serial console (no browser behind it)
 make clean        # Remove build artifacts
 ```
 
@@ -111,7 +113,8 @@ Frontend-only browser PWA — the browser talks straight to the Propeller 2 over
 ### SIL Emulator Architecture
 Rust **Cargo workspace** under `SIL/` (see `SIL/Cargo.toml`; members are the MaD-side crates — `MaDSim`, `models`, and `protocol` (an out-of-tree member living at `Protocol/rust/`, next to its schema). The `embsim/*` crates below live in the `SIL/embsim` submodule, which is its own workspace, and are consumed as path deps):
 
-- **`MaDSim/`** — `mad-emulator` binary: runs the Propeller 2 image on the ISS (`p2iss` / `p2core`), with pins on nets and the host on a PTY. The only valid configuration for the e2e suite, Chrome in a QEMU guest metered by the board's clock, has no host at the pinned embsim: 0.2.0 removed the Chrome guest, and embsim owes its replacement (`SIL/embsim/MIGRATING-MAD.md` §2, E4).
+- **`MaDSim/`** — `mad-emulator` binary: runs the Propeller 2 image on the ISS (`p2iss` / `p2core`), with pins on nets. Its host is `--chrome`, the host's Chrome with every page and worker held to the board's clock by embsim's `chrome-cdp` (the one configuration for the e2e suite and the playground; `src/host.rs`), or a PTY for a serial console.
+- **`embsim/cdp`** — `chrome-cdp`: the host's Chrome on a host's serial pins, metered over DevTools, its Web Serial a shim on the line.
 - **`embsim/core`** — PTY, timing, shared plumbing.
 - **`embsim/board`** — the board engine: nets, netlists, and the one interface between a part and the board (`PinDecl` with its role and thresholds, `Drive`, `Sense`).
 - **`protocol`** (at `Protocol/rust/`, next to the schema) — **generated** Rust codec under `src/generated/` (do not hand-edit; `make protocol`). Imported by nothing; exists so the generated code + roundtrip tests stay compiled in `cargo test`.

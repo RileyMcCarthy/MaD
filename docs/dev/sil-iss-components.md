@@ -532,19 +532,32 @@ run. Speed alternates between 0.10-0.11x when idle and 0.00x whenever the SD is
 busy. The remaining work is the throughput programme above, not another
 correctness hunt.
 
-## The host: a computer node, or a browser outside the emulator
+## The host: Chrome on the board's clock, or a PTY
 
-The ISS interprets every instruction, so a run's virtual time can fall behind
-the wall clock, and MaD Control's 2 s protocol budget is wall time. A browser
-on this machine, on the emulator's PTY (`make playground-iss` or
-`make playground-rom`), sees that: while the interpreter keeps up with
-`--speed 1` its timeouts mean what they mean on the bench, and while it falls
-behind the page will time out a live board. That is fine for looking, and
-worthless for asserting.
+The ISS interprets every instruction, so a run's virtual time falls far behind
+the wall clock (a few percent of real time with the app attached, a fraction
+of that while the firmware works its SD card), and MaD Control's 2 s protocol
+budget is counted on the browser's clock. A browser on the host's own clock,
+behind the emulator's PTY, times out a live board: worthless for asserting,
+and misleading for looking.
 
-The e2e suite therefore runs on the computer node: Chrome inside a QEMU guest
-whose vCPU runs only when the board grants it a slice, so the page's timeouts
-are metered by the board's clock. It is the only valid SIL configuration for a
-test. At the pinned embsim (0.2.0) it has no host: 0.2.0 removed the Chrome
-guest (`make playground-cosim` with it), and embsim owes the replacement
-(`SIL/embsim/MIGRATING-MAD.md` §2, E4).
+So the browser runs on the board's clock. `mad-emulator --chrome` puts
+embsim's `chrome-cdp` node where the PTY host sits, on the harness's host pins
+(`HOST.TX` to `P2.P53`, `P2.P55` to `HOST.RX`) with its rail wired
+(`HOST.VIO` on the P2's 3.3 V, `HOST.GND` on the bench ground). The node
+launches the host's Chrome at the board's first slice and holds every page and
+dedicated worker to the board's time over DevTools, a 1 ms quantum at a time;
+every page's `navigator.serial` is its shim, whose one port is this line (USB
+`0403:6001`). It is built through embsim's catalog (`embsim_cdp::catalog`,
+the `chrome-cdp` kind), as a project file names it (`SIL/MaDSim/src/host.rs`),
+and a failure it reports (a grant that sticks, a page that crashes, a Chrome
+that exits) stops the run with a non-zero exit. The run prints Chrome's
+DevTools URL in its "reached" line; the e2e suite attaches there
+([SIL testing](sil-testing.md#the-board-route-the-app-in-chrome-on-the-boards-clock)).
+
+| Target | Host |
+|---|---|
+| `make playground`, `playground-iss` | Chrome, a window on the app |
+| `make playground-rom` | Chrome, a window on the app's flasher, on the programming UART (`P62`/`P63`, USB `0403:6015`) |
+| `make e2e-emulator`, `make e2e` | Chrome, headless, DevTools on 9222 |
+| `make playground-pty` | a PTY at `/tmp/tty.iss`, for a serial console |
