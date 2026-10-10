@@ -13,10 +13,11 @@
  *
  * Nothing serves /tmp/tty.rpi any more. It was the native firmware library's
  * path, and that library is gone. The ISS playground is on /tmp/tty.iss on
- * purpose: the ISS behind this bridge is not a valid SIL configuration, because
- * the browser runs at host speed and every wait it makes measures the host, not
- * the machine (SIL/makefile, at `playground`). The valid one, the ISS with
- * Chrome in a QEMU guest the board's clock meters, does not use this bridge.
+ * purpose (`make playground-pty`): the ISS behind this bridge is not a valid
+ * SIL configuration, because the browser runs at host speed and every wait it
+ * makes measures the host, not the machine (SIL/makefile). The valid one, the
+ * ISS with the app in Chrome on the board's clock (`make playground`, embsim's
+ * chrome-cdp), does not use this bridge.
  *
  * The PTY slave is already in raw mode (cfmakeraw, no echo/canonical) — see
  * SIL/embsim/core/src/serial_pty.rs — so plain fd read/write passes bytes through.

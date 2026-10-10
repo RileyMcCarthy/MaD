@@ -1,19 +1,20 @@
 /**
  * Shared E2E harness helpers.
  *
- * The app knows ONLY Web Serial + the File System Access picker. For tests we
- * inject two browser-API replacements via `page.addInitScript` so the app's
- * normal code paths run unchanged:
+ * The app knows ONLY Web Serial + the File System Access picker, so its
+ * normal code paths run unchanged against:
  *
- *   - `navigator.serial`        → a fake SerialPort backed by the WS↔PTY bridge
- *                                 (tools/sil-ws-bridge.mjs → SIL emulator).
- *   - `showDirectoryPicker()`   → an OPFS directory (real FileSystemDirectoryHandle,
- *                                 no dialog, no permission prompt).
+ *   - `navigator.serial`: on the board route, the shim of the `chrome-cdp`
+ *     node `mad-emulator --chrome` runs (the board's protocol line, in a
+ *     Chrome the board's clock meters; see "Board mode" below). Elsewhere a
+ *     fake SerialPort over a WebSocket bridge (the hardware harness).
+ *   - `showDirectoryPicker()` → an OPFS directory (real FileSystemDirectoryHandle,
+ *     no dialog, no permission prompt), installed by `page.addInitScript`.
  *
- * Playwright/Chromium are reused from the SIL workspace and the system Chrome
- * is launched via channel (no browser download).
+ * Playwright comes from this package; a host Chrome is launched via channel
+ * (no browser download).
  *
- * Usage (plain node script or @playwright/test):
+ * Usage (plain node script):
  *   import { newSilPage, APP_URL } from './fixtures.mjs';
  *   const { browser, page } = await newSilPage();
  *   await page.goto(APP_URL + '#/connect');
@@ -80,82 +81,229 @@ export const chromium =
   process.env.MAD_COVERAGE === '1' ? withCoverage(playwright.chromium) : playwright.chromium;
 
 /**
- * Computer-node mode: `CDP_URL` names the DevTools endpoint of the Chrome
- * running INSIDE a QEMU guest the board's clock meters. At embsim c5641f6
- * that was `mad-emulator <image> --computer <guest image>`; embsim 0.2.0, the
- * pinned release, removed the guest, and the host kind that replaces it is
- * embsim's to deliver (MIGRATING-MAD.md section 2, E4), so nothing serves this
- * mode until then. Pages are then opened over CDP in that browser instead
- * of a host Chrome, the app uses its real Web Serial (the guest's managed
- * policy grants the board's FTDI without a picker), and the fake serial is
- * not installed. The guest lives on the board's clock, so every wall-clock
- * wait in the harness is scaled by `E2E_TIMEOUT_SCALE` (default 10 here).
- * Serve the app to the guest with `npm run dev -- --host`; it reaches the
- * host at 10.0.2.2.
+ * Board mode: `CDP_URL` names the DevTools endpoint of the host's Chrome that
+ * `mad-emulator --chrome` launched (embsim's `chrome-cdp` node; the run
+ * prints "DevTools at http://127.0.0.1:PORT" once Chrome is reached). That
+ * Chrome lives the board's time: every page and dedicated worker is held to
+ * the board's clock over DevTools, a 1 ms quantum at a time, and every
+ * page's `navigator.serial` is the node's shim, whose one port is the
+ * board's protocol line (USB 0403:6001, granted to every origin with
+ * `--granted`). So in this mode:
+ *
+ *   - pages are made in a fresh browser context per scenario, at about:blank,
+ *     then navigated (Chrome holds a page made that way from birth; one made
+ *     with a URL runs before the shim, and the node stops the run);
+ *   - no fake serial is installed: the shim is the port, by Chrome's rules;
+ *   - the cable is the node's: `dropLink()` pulls it, `restoreLink()` puts it
+ *     back (`__embsim.link`, acted on at the node's next slice);
+ *   - every budget is board time. A locator's `waitFor({ timeout })` counts
+ *     the page's clock (see `meterLocatorWaits`), `waitPageTime()` replaces
+ *     `waitForTimeout`, and `pageClock()` replaces `Date.now()` deadlines.
+ *     Playwright's own timeouts run on host time, so they only back stop a
+ *     hang here (`HOST_BACKSTOP_MS`);
+ *   - animation frames barely run on virtual time, so Playwright's
+ *     actionability checks ("stable") stall: `press()` checks the element
+ *     itself and forces the click.
+ *
+ * Without `CDP_URL` only the board-free scenarios mean anything: they launch
+ * a host Chrome against in-page fakes. The fake serial below
+ * (`installFakeSerial`, over a WebSocket bridge) remains for the hardware
+ * harness, `hw-read-save-config.mjs` over `tools/hw-ws-bridge.mjs`, which
+ * runs in real time against a real board.
  */
 export const CDP_URL = process.env.CDP_URL || '';
-export const APP_URL =
-  process.env.APP_URL || (CDP_URL ? 'http://10.0.2.2:5174/' : 'http://localhost:5174/');
-/// Where the board's control surface lives (the computer node's `link/unplug`
-/// and `link/plug` actions). Only used in computer-node mode: under the bridge
-/// the link is severed in-page.
-export const CONTROL_URL = process.env.CONTROL_URL || 'http://127.0.0.1:9223';
-
-/// How long the port stays out in computer-node mode. Wall clock, and the
-/// guest only runs when the board grants it a slice, so this is generous.
-export const LINK_OUTAGE_MS = Number(process.env.LINK_OUTAGE_MS || 3000);
+/** The board-touching route is up: the app runs in the Chrome the board's clock meters. */
+export const BOARD = CDP_URL !== '';
+export const APP_URL = process.env.APP_URL || 'http://localhost:5174/';
+/** Where the runner checks the dev server from: the same host, on either route. */
+export const APP_URL_HOST = process.env.APP_URL_HOST || APP_URL;
+export const BRIDGE_URL = process.env.BRIDGE_URL || 'ws://localhost:9999';
+export const OPFS_DIR = process.env.OPFS_DIR || 'mad-e2e';
 
 /**
- * Drop the link the app is using, and let it come back.
+ * Playwright's own timeouts (navigation, `fill`, `textContent`, a forced
+ * click) are host time. In board mode they bound a hang only: what the suite
+ * waits FOR is counted on the page's clock. A grant that sticks stops the
+ * emulator first (its `chrome-cdp` fails the run after 30 s of host time).
+ */
+export const HOST_BACKSTOP_MS = Number(process.env.E2E_HOST_BACKSTOP_MS || 15 * 60_000);
+
+/** Pages whose clock is the board's (board mode's). */
+const metered = new WeakSet();
+
+const hostSleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * The page's clock: its document (by time origin) and `performance.now()`.
+ * Null while the page is between documents. Every read also books the time
+ * the page has lived (`lifetimes`), which the runner reports per scenario.
+ */
+const lifetimes = new WeakMap();
+async function pageNow(page) {
+  let read;
+  try {
+    read = await page.evaluate(() => ({ doc: performance.timeOrigin, now: performance.now() }));
+  } catch (err) {
+    // A page between two documents answers nothing for a moment; a page
+    // that is gone (closed, crashed, its browser stopped) never will, and a
+    // wait on its clock would never end.
+    if (page.isClosed() || /closed|crash|disconnected/i.test(String(err?.message ?? err))) throw err;
+    return null;
+  }
+  const book = lifetimes.get(page);
+  if (book) book.ms += advance(book, read);
+  return read;
+}
+
+/**
+ * How far the clock moved from `mark`'s reading to `read`, moving `mark`
+ * on. A new document starts its own `performance.now()` at 0, so its whole
+ * age counts (what the old one lived after its last reading is not seen).
+ */
+function advance(mark, read) {
+  let moved = 0;
+  if (mark.doc === undefined) moved = 0;
+  else if (read.doc === mark.doc && read.now >= mark.now) moved = read.now - mark.now;
+  else moved = read.now;
+  mark.doc = read.doc;
+  mark.now = read.now;
+  return moved;
+}
+
+/**
+ * A stopwatch on the page's own clock: the board's in board mode (the node
+ * keeps the page within a quantum of it), the host's for a host Chrome.
+ * Only forward time counts, so a navigation to a new document neither ends
+ * nor stretches a wait.
+ */
+export async function pageClock(page) {
+  const mark = {};
+  let elapsed = 0;
+  const first = await pageNow(page);
+  if (first) advance(mark, first);
+  return {
+    async elapsed() {
+      const read = await pageNow(page);
+      if (read) elapsed += advance(mark, read);
+      return elapsed;
+    },
+  };
+}
+
+/** Board time (page time) the closed pages lived since the last call: the runner's per-scenario figure. */
+let livedSinceTake = 0;
+export function takePageTime() {
+  const ms = livedSinceTake;
+  livedSinceTake = 0;
+  return ms;
+}
+
+/** Wait `ms` of the page's time (`waitForTimeout`, counted on the page's clock). */
+export async function waitPageTime(page, ms) {
+  const clock = await pageClock(page);
+  while ((await clock.elapsed()) < ms) await hostSleep(BOARD ? 25 : 10);
+}
+
+/**
+ * In board mode, make a locator's `waitFor({ timeout })` count its timeout on
+ * the page's clock. Playwright polls on host time; the board runs at a few
+ * percent of real time, and at a fraction of that while the firmware works
+ * its SD card, so a host-time budget measures the host. Every `waitFor` in
+ * the suite keeps its budget, read as board time. Patched once, on the
+ * Locator class; a page outside board mode (A1's and the FW scenarios' host
+ * Chrome) keeps Playwright's own.
+ */
+let locatorWaitsMetered = false;
+function meterLocatorWaits(page) {
+  if (locatorWaitsMetered) return;
+  locatorWaitsMetered = true;
+  const proto = Object.getPrototypeOf(page.locator('html'));
+  const hostWaitFor = proto.waitFor;
+  proto.waitFor = async function waitFor(options = {}) {
+    const owner = this.page();
+    if (!metered.has(owner)) return hostWaitFor.call(this, options);
+    const budget = options.timeout === 0 ? Infinity : (options.timeout ?? 30_000);
+    const clock = await pageClock(owner);
+    for (;;) {
+      try {
+        return await hostWaitFor.call(this, { ...options, timeout: 1000 });
+      } catch (err) {
+        if (!(err instanceof playwright.errors.TimeoutError)) throw err;
+      }
+      if ((await clock.elapsed()) >= budget) {
+        throw new playwright.errors.TimeoutError(
+          `${this} was not ${options.state ?? 'visible'} within ${budget} ms of board time`,
+        );
+      }
+    }
+  };
+}
+
+/**
+ * Click the way the board route allows. Animation frames barely run on
+ * virtual time, so a plain `click()` waits forever for the element to be
+ * "stable"; this checks what that check protects instead: the element is
+ * visible, it is enabled, and it is what the page would hit at its centre
+ * (`elementFromPoint`, so a click cannot land through an overlay). Then it
+ * forces the click. The budget is the page's time, as every wait here.
+ */
+export async function press(locator, { timeout = 15_000 } = {}) {
+  const page = locator.page();
+  await locator.waitFor({ state: 'visible', timeout });
+  const clock = await pageClock(page);
+  let why = '';
+  for (;;) {
+    // eslint-disable-next-line no-await-in-loop
+    const enabled = await locator.isEnabled();
+    // eslint-disable-next-line no-await-in-loop
+    const hit = await locator.evaluate((el) => {
+      el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+      const r = el.getBoundingClientRect();
+      const at = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      return at && (at === el || el.contains(at)) ? '' : (at ? at.outerHTML.slice(0, 120) : 'nothing');
+    });
+    if (enabled && hit === '') break;
+    why = enabled ? `covered by ${hit}` : 'disabled';
+    // eslint-disable-next-line no-await-in-loop
+    if ((await clock.elapsed()) >= timeout) {
+      throw new Error(`press ${locator}: still ${why} after ${timeout} ms of page time`);
+    }
+    // eslint-disable-next-line no-await-in-loop
+    await hostSleep(BOARD ? 25 : 10);
+  }
+  await locator.click({ force: true, timeout: HOST_BACKSTOP_MS });
+}
+
+/**
+ * Drop the link the app is using. The cable stays out until
+ * `restoreLink()` (`clickReconnect` in run-all puts it back first).
  *
- * Under the bridge this is the fake serial's own hook: it closes the socket
- * and fires `disconnect`, while `getPorts()` keeps returning the port. So the
- * CONNECTION dies and the DEVICE stays -- the app can reconnect to the same
- * port, which is the behaviour the three link-drop scenarios assert.
+ * Board mode: the node's own cable. `__embsim.link('unplug')` is acted on at
+ * the node's next slice: the port's streams error with NetworkError ("The
+ * device has been lost."), `disconnect` fires, and `getPorts()` stops
+ * listing it, as an unplugged FTDI does.
  *
- * In computer-node mode the port is real and there is nothing in the page to
- * sever. The board closes the chardev backing its emulated FTDI, which QEMU
- * turns into a USB detach and the guest kernel turns into a removed tty, so
- * Chrome fires a genuine disconnect. It has to come BACK, though, or the
- * app's reconnect would find no port at all and the scenario would fail for a
- * reason it is not testing -- so this is an OUTAGE: unplug, leave it out long
- * enough for the guest to notice, plug back in.
- *
- * The outage is wall-clock, and the guest runs only when the board grants it a
- * slice, so it is generous by default and tunable for a slow runner.
+ * The bridge's fake serial (the hardware harness) closes its socket and
+ * fires `disconnect` while `getPorts()` keeps the port, so the app can
+ * reconnect to the same port with nothing put back.
  */
 export async function dropLink(page) {
-  if (!CDP_URL) {
+  if (!BOARD) {
     await page.evaluate(() => window.__silDropLink());
     return;
   }
-  await controlAction('link/unplug');
-  await new Promise((r) => setTimeout(r, LINK_OUTAGE_MS));
-  await controlAction('link/plug');
+  await page.evaluate(() => globalThis.__embsim.link('unplug'));
 }
 
-/** Put the cable back, for a scenario that wants the outage to end on its terms. */
-export async function restoreLink() {
-  if (!CDP_URL) return;
-  await controlAction('link/plug');
+/**
+ * Put the cable back. Board mode: at the node's next slice the port comes
+ * back as a new `SerialPort` and `connect` fires, which the app answers by
+ * reconnecting to the port whose USB ids it remembers.
+ */
+export async function restoreLink(page) {
+  if (!BOARD) return;
+  await page.evaluate(() => globalThis.__embsim.link('plug'));
 }
-
-async function controlAction(name) {
-  const r = await fetch(`${CONTROL_URL}/action/${name}`, { method: 'POST' });
-  if (!r.ok) {
-    throw new Error(
-      `${name} failed (${r.status}): ${await r.text()}. Is the board's control surface up at ${CONTROL_URL}?`,
-    );
-  }
-}
-
-/** Where the runner checks the dev server from the HOST (the guest's URL is not routable here). */
-export const APP_URL_HOST = process.env.APP_URL_HOST || (CDP_URL ? 'http://localhost:5174/' : APP_URL);
-export const BRIDGE_URL = process.env.BRIDGE_URL || 'ws://localhost:9999';
-export const TIMEOUT_SCALE = Number(process.env.E2E_TIMEOUT_SCALE || (CDP_URL ? 10 : 1));
-/** A wall-clock budget, scaled for a browser that lives on simulated time. */
-export const T = (ms) => Math.round(ms * TIMEOUT_SCALE);
-export const OPFS_DIR = process.env.OPFS_DIR || 'mad-e2e';
 
 /**
  * Init script: fake `navigator.serial` over a WebSocket to the SIL bridge.
@@ -298,28 +446,45 @@ export function installOpfsDataDir(dirName) {
 }
 
 /**
- * Launch system Chrome and return a page with both fakes installed.
- * Pass { headed: true } to watch it.
+ * A page for one scenario, the OPFS data folder installed.
+ *
+ * Board mode: a fresh context in the Chrome the board's clock meters, and a
+ * page made at about:blank (scenarios navigate it). No serial fake: the
+ * node's shim is the page's port. Otherwise a host Chrome with the bridge's
+ * fake serial (the hardware harness). Pass { headed: true } to watch a host
+ * Chrome.
  */
 export async function newSilPage({ headed = false } = {}) {
   let browser;
+  let context;
   let page;
-  if (CDP_URL) {
-    // The browser inside the computer node: attach, never launch. Closing
-    // the Browser object later only disconnects; the guest's Chrome lives on.
-    browser = await chromium.connectOverCDP(CDP_URL, { timeout: T(30000) });
-    // A fresh context per scenario. The guest's Chrome outlives every
-    // scenario, and its default profile would carry the app's remembered
-    // port and data folder from one to the next — the app then reconnects
-    // by itself and the harness's clicks land on a screen that is already
-    // moving on. A new context is isolated storage (and is torn down by
-    // browser.close(), page and serial port with it).
-    const context = await browser.newContext();
+  if (BOARD) {
+    // Attach, never launch: the emulator launched this Chrome, and closing
+    // the Browser object later only disconnects.
+    browser = await chromium.connectOverCDP(CDP_URL, { timeout: HOST_BACKSTOP_MS });
+    // A fresh context per scenario: Chrome outlives every scenario, and a
+    // shared profile would carry the app's remembered port and data folder
+    // from one to the next (the app then reconnects by itself and the
+    // harness's clicks land on a screen that is already moving on). Each
+    // context gets a window of its own, so no scenario's page is a hidden
+    // background tab, which the node meters at a higher host cost.
+    context = await browser.newContext();
+    await context.addInitScript(installOpfsDataDir, OPFS_DIR);
     page = await context.newPage();
-    page.setDefaultTimeout(T(30000));
+    metered.add(page);
+    lifetimes.set(page, { ms: 0 });
+    meterLocatorWaits(page);
+    page.setDefaultTimeout(HOST_BACKSTOP_MS);
+    page.setDefaultNavigationTimeout(HOST_BACKSTOP_MS);
+    // Let the board run a few slices before the scenario starts: the node
+    // releases a port the previous scenario's page held at the slice after
+    // that page went, so this page finds the port free.
+    await waitPageTime(page, 20);
   } else {
     browser = await chromium.launch({ channel: 'chrome', headless: !headed });
     page = await browser.newPage();
+    await page.addInitScript(installFakeSerial, BRIDGE_URL);
+    await page.addInitScript(installOpfsDataDir, OPFS_DIR);
   }
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
@@ -332,10 +497,6 @@ export async function newSilPage({ headed = false } = {}) {
     if (consoleLines.length > 500) consoleLines.shift();
   });
   page.__madConsole = consoleLines;
-  // Init scripts ride CDP too, so the OPFS picker fake works in the guest;
-  // only the serial fake is host-only — the guest has the real thing.
-  if (!CDP_URL) await page.addInitScript(installFakeSerial, BRIDGE_URL);
-  await page.addInitScript(installOpfsDataDir, OPFS_DIR);
 
   // Scenarios close their browser in a `finally`, which runs BEFORE the runner's
   // catch — by the time a failure is handled the page is gone. So snapshot the
@@ -348,9 +509,13 @@ export async function newSilPage({ headed = false } = {}) {
       console: consoleLines.slice(),
       log: await readAppLog(page),
     };
-    // Over CDP, closing the Browser object only disconnects; the page (and
-    // the serial port it holds) must be closed explicitly.
-    if (CDP_URL) await page.close().catch(() => {});
+    // Over CDP, closing the Browser object only disconnects; the context (and
+    // the page and port it holds) must be closed explicitly.
+    if (context) {
+      await pageNow(page);
+      livedSinceTake += lifetimes.get(page)?.ms ?? 0;
+      await context.close().catch(() => {});
+    }
     return closeBrowser(...args);
   };
 
@@ -445,36 +610,35 @@ export function setCurrentScenario(id) {
   currentScenario = id;
 }
 
-/** Connect the app to SIL via the UI (call after navigating to the app). */
 /**
- * The granted port that is the board. On the host the fake grants exactly
- * one; in the computer node the guest's managed policy grants every port —
- * its own consoles included — and the board is the emulated FTDI (USB
- * 0403:6001), whose label is a sibling of the button in its row.
+ * The granted port that is the board. The bridge's fake grants exactly one;
+ * on the board route the node's port is the board's FTDI (USB 0403:6001),
+ * whose label is a sibling of the button in its row.
  */
 export function boardGrantedPort(page) {
-  if (CDP_URL) {
+  if (BOARD) {
     return page.locator('.row', { hasText: /403:6001/i }).getByTestId('connect-granted').first();
   }
   return page.getByTestId('connect-granted').first();
 }
 
+/** Connect the app to the board through the Connect screen. */
 export async function connectToSil(page) {
   await page.goto(`${APP_URL}#/connect`);
   // First point at which the app is loaded and can take a marker.
   if (currentScenario !== null) await markAppLog(page, `scenario ${currentScenario}`);
-  if (CDP_URL) {
-    // Real Web Serial: the guest's managed policy has already granted every
-    // port, so the Connect screen lists them; pick the board's FTDI (the
-    // emulated FT232, USB 0403:6001) rather than the guest's own consoles.
-    await boardGrantedPort(page).click({ timeout: T(10000) });
+  if (BOARD) {
+    // The emulator grants the port to every origin (`--granted`, as Chrome's
+    // SerialAllowUsbDevicesForUrls policy would), so the Connect screen
+    // lists it as granted.
+    await press(boardGrantedPort(page), { timeout: 10_000 });
   } else {
     // The primary button (testid connect-device) prompts requestPort() → our fake.
-    await page.getByTestId('connect-device').click();
+    await press(page.getByTestId('connect-device'));
   }
   // Wait until the store reports connected — the status dot gets `.connected`.
   // (Matching on text would falsely hit "Disconnected".)
-  await page.locator('.dot.connected').waitFor({ timeout: T(10000) });
+  await page.locator('.dot.connected').waitFor({ timeout: 10_000 });
 }
 
 /**
@@ -507,9 +671,9 @@ export async function recoverMachine() {
     // The control is a single toggle whose label follows motionEnabled, so this
     // locator matches nothing at all when motion is already off.
     const disable = page.getByRole('button', { name: 'Disable motion' });
-    await disable.waitFor({ state: 'visible', timeout: T(5000) }).catch(() => {});
+    await disable.waitFor({ state: 'visible', timeout: 5000 }).catch(() => {});
     if ((await disable.count()) > 0) {
-      await disable.click().catch(() => {});
+      await press(disable).catch(() => {});
     }
   } catch {
     // Swallowed on purpose: see the note above.
@@ -521,7 +685,7 @@ export async function recoverMachine() {
 /** Choose the OPFS data folder via Settings. */
 export async function chooseDataFolder(page) {
   await page.goto(`${APP_URL}#/settings`);
-  await page.getByRole('button', { name: /Choose folder/i }).click();
+  await press(page.getByRole('button', { name: /Choose folder/i }));
   await page.getByText(/Current:/).waitFor({ timeout: 8000 });
 }
 
