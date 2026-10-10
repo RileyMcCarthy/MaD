@@ -1,19 +1,26 @@
 # MaD SIL Testing - Makefile
 #
 # Commands:
-#   make p2image       - Build the P2 image the ISS executes
-#   make emulator      - Build the Rust emulator
-#   make test          - Build the image, run the Rust test suite
-#   make playground    - ISS at real time on /tmp/tty.iss, a serial console for a person
+#   make p2image        - Build the P2 image the ISS executes
+#   make emulator       - Build the Rust emulator
+#   make test           - Build the image, run the Rust test suite
+#   make playground     - The ISS with MaD Control in a Chrome window on the board's clock
 #   make playground-iss - The same target, under the name it had beside the native one
-#   make playground-rom - ISS mask ROM on the programming UART, host on /tmp/tty.iss
-#   make e2e-emulator  - Refused: it was the ISS behind the WS bridge (see below)
-#   make clean         - Remove build artifacts
+#   make playground-pty - The ISS on a PTY at /tmp/tty.iss, for a serial console
+#   make playground-rom - The ISS mask ROM, the app's flasher in a Chrome window on the board's clock
+#   make e2e-emulator   - The ISS with a headless Chrome on the board's clock; prints the DevTools URL
+#   make e2e            - All of it, headless, and the e2e suite against it (SCENARIOS selects)
+#   make clean          - Remove build artifacts
 #
-# The e2e configuration, the ISS with Chrome in a QEMU guest the board's clock
-# meters, has no target here: embsim 0.2.0 removed the guest it ran on, and the
-# host kind that replaces it is embsim's to deliver (its MIGRATING-MAD.md §2,
-# E4). Until then no board-touching e2e run is a valid SIL configuration.
+# There is ONE configuration a browser belongs in: the P2 image on the ISS,
+# with the app in the host's Chrome held to the board's clock by embsim's
+# `chrome-cdp` node (`mad-emulator --chrome`, embsim MIGRATING-MAD.md step
+# 1b). Every page and dedicated worker in that Chrome lives the board's time,
+# a 1 ms quantum at a time over DevTools, and its Web Serial port is the
+# node's, on the board's protocol pins. A browser on the host's own clock
+# (behind a PTY, or the WS bridge) measures the host, not the machine: the ISS
+# interprets every instruction at a few percent of real time, and the app's
+# 2 s response timeout would fire at a fraction of that in the board's time.
 
 FIRMWARE_DIR = ../Firmware/MaDCore
 # The P2 image the instruction-set simulator executes: the artifact you flash.
@@ -23,7 +30,11 @@ PROTOEMB_GENERATOR = ../Protocol/ProtoEmb/core/generate.py
 PROTOEMB_SCHEMA = ../Protocol/MaDProtocol.yaml
 PROTOEMB_TEMPLATES = ../Protocol/ProtoEmb/core/templates
 
-.PHONY: p2image protocol emulator test playground e2e-emulator playground-iss playground-rom bootrom clean
+# The release emulator the routes below run: the ISS interprets every
+# instruction, and a debug build is far slower still.
+EMULATOR = ./target/release/mad-emulator
+
+.PHONY: p2image protocol emulator emulator-release test playground playground-iss playground-pty playground-rom e2e-emulator e2e bootrom clean
 
 # Build the P2 image the ISS runs (`p2core`, `p2iss`, `mad-emulator`).
 #
@@ -47,55 +58,49 @@ emulator: protocol
 test: emulator p2image
 	cargo test
 
-# Start the emulator for INTERACTIVE use: a person, or a bot driving the real
-# UI, watching a machine that moves at the speed the real one would. Real-time
-# pacing is the point here: --speed 1.0 (the default) sleeps a wall microsecond
-# per virtual microsecond, so what you see is what the machine does.
-#
-# `--release` is not optional. The ISS interprets every instruction, and a debug
-# build falls behind a host that is counting wall time.
-#
-# The PTY is DELIBERATELY NOT /tmp/tty.rpi. There is exactly one valid SIL
-# configuration, and it pairs the firmware with a way of providing serial:
-#
-#   real P2 image on the ISS  + Chrome in a QEMU guest + real Web Serial
-#
-# The ISS behind the WS bridge looks like it works and is worthless: the bridge
-# hands the board's bytes to a browser running at host speed, so every wait in
-# the suite measures the host's mood rather than the machine, and the ISS
-# interprets far slower than real time. Only a guest the board's clock meters
-# can pace the browser by the board. Sharing /tmp/tty.rpi with `playground`
-# would make that pairing the path of least resistance, because
-# Software/Control/tools/sil-ws-bridge.mjs defaults to exactly that path; a
-# separate path makes reaching for it a deliberate act instead of an accident.
-# (The native firmware library and the bridge were the other valid pairing, on
-# /tmp/tty.rpi. The native library is gone.)
-playground: p2image
-	cargo run --release --bin mad-emulator -- $(P2_IMAGE) --sd-path ./sd --pty-path /tmp/tty.iss --log-level info
+emulator-release: protocol
+	cargo build --release --bin mad-emulator
+
+# MaD Control on the ISS, for a person: a Chrome window on the app, served by
+# its dev server (started here unless one answers on 5174), every page and
+# worker in that Chrome on the board's clock. The page lives the time the
+# board grants it, so the app runs as fast as the board does and no faster:
+# its timeouts mean in board time what they say. Animation frames barely run
+# on virtual time, so the live charts redraw only now and then. Ctrl-C stops
+# the board, Chrome and the dev server.
+playground: p2image emulator-release
+	scripts/board-route.sh playground
 
 # `playground` under the name it had while the native firmware held
 # `playground`. Kept so the name, and embsim's MIGRATING-MAD.md step 11 that
 # cites it, still resolve.
 playground-iss: playground
 
-# Refused, on purpose. This target was the ISS behind the WS bridge on
-# /tmp/tty.rpi, unpaced: what the e2e suite ran against once the native
-# backend was removed. That is the pairing ruled out above, and the same rule
-# answers MIGRATING-MAD.md §6's first question ("the ISS with a host that
-# keeps wall time"): MaD does not keep it, the host the board's clock meters
-# replaces it. So the target stays only as a name that explains itself, until
-# the e2e target gets that host (E4, then MIGRATING-MAD.md step 10). No CI job
-# runs it.
-e2e-emulator:
-	@echo "make e2e-emulator: refused." >&2
-	@echo "It put the ISS behind the WS bridge, and that is not a valid SIL configuration:" >&2
-	@echo "the bridge hands the board's bytes to a browser running at host speed, so the" >&2
-	@echo "suite would measure the host, not the machine. The one valid configuration is" >&2
-	@echo "the ISS with Chrome in a QEMU guest the board's clock meters, which waits on" >&2
-	@echo "embsim's E4 (SIL/embsim/MIGRATING-MAD.md section 2). Until then the board-free" >&2
-	@echo "scenarios run without an emulator, with npm run dev serving the app:" >&2
-	@echo "  cd ../Software/Control && SCENARIOS=A1,FW1,FW2,FW3,FW5,FW6,FW7,FW8,FW9 npm run e2e" >&2
-	@exit 1
+# The ISS on a PTY at /tmp/tty.iss, at real time at most, for a serial
+# console or a program that keeps wall time. No browser belongs behind it
+# (see the top of this file). The path is DELIBERATELY NOT /tmp/tty.rpi,
+# which Software/Control/tools/sil-ws-bridge.mjs opens by default: the ISS
+# behind that bridge is the pairing that measures the host.
+playground-pty: p2image emulator-release
+	$(EMULATOR) $(P2_IMAGE) --sd-path ./sd --pty-path /tmp/tty.iss --log-level info
+
+# The board route for a person, headless: the ISS with Chrome on the board's
+# clock and nothing open, DevTools on DEVTOOLS_PORT. Once the run prints its
+# "reached ... DevTools at http://127.0.0.1:9222" line (Chrome held; a page
+# made before then is not on the board's clock), with the app served
+# (`npm run dev`):
+#   cd ../Software/Control && CDP_URL=http://127.0.0.1:9222 npm run e2e
+# Ctrl-C stops the board and its Chrome.
+DEVTOOLS_PORT ?= 9222
+e2e-emulator: p2image emulator-release
+	$(EMULATOR) $(P2_IMAGE) --sd-path ./sd --chrome --headless --granted --devtools-port $(DEVTOOLS_PORT) --log-level info
+
+# The e2e suite on the board route, start to finish: the dev server, the
+# board with a headless Chrome on its clock, the suite attached to that
+# Chrome, then everything stopped. `make e2e SCENARIOS=B1+C1,F7` runs a
+# subset; logs land in target/board-route/.
+e2e: p2image emulator-release
+	scripts/board-route.sh e2e
 
 # The boot ROM and the stage-1 flash loader the ISS boots through.
 FLEXSPIN = $(HOME)/.platformio/packages/toolchain-flexcc/bin/macos-amd64/flexspin
@@ -104,10 +109,14 @@ bootrom:
 	python3 -c "open('p2iss/rom/rom_booter_v33k.bin','wb').write(open('/tmp/rom_full.bin','rb').read()[0xFC000:])"
 	$(FLEXSPIN) -2 -o p2iss/rom/stage1.bin p2iss/rom/stage1.spin2
 
-# ISS mask ROM on the programming UART (P62/P63). The host browser opens the PTY.
+# The ISS mask ROM on the programming UART (P62/P63), with the app's
+# flasher in a Chrome window on the board's clock: the P2 Edge's own USB
+# serial, an FTDI FT231X (0403:6015). The ROM's serial strap is a pull-up on
+# P59, so `Prop_Chk` answers without a reset pulse: nothing models DTR, and
+# the port's setSignals reaches no pin.
 ROM_IMAGE = p2iss/rom/rom_booter_v33k.bin
-playground-rom:
-	cargo run --release --bin mad-emulator -- $(ROM_IMAGE) --boot-rom --pty-path /tmp/tty.iss --log-level info
+playground-rom: emulator-release
+	P2_IMAGE=$(ROM_IMAGE) BOARD_ARGS="--boot-rom --usb-product-id 0x6015" scripts/board-route.sh playground
 
 # Clean build artifacts
 clean:
