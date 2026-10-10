@@ -10,6 +10,7 @@
 #   make playground-rom - The ISS mask ROM, the app's flasher in a Chrome window on the board's clock
 #   make e2e-emulator   - The ISS with a headless Chrome on the board's clock; prints the DevTools URL
 #   make e2e            - All of it, headless, and the e2e suite against it (SCENARIOS selects)
+#   make e2e-rom        - FW-ISS: the app's flasher against the ISS's mask ROM, headless
 #   make clean          - Remove build artifacts
 #
 # There is ONE configuration a browser belongs in: the P2 image on the ISS,
@@ -34,7 +35,7 @@ PROTOEMB_TEMPLATES = ../Protocol/ProtoEmb/core/templates
 # instruction, and a debug build is far slower still.
 EMULATOR = ./target/release/mad-emulator
 
-.PHONY: p2image protocol emulator emulator-release test playground playground-iss playground-pty playground-rom e2e-emulator e2e bootrom clean
+.PHONY: p2image protocol emulator emulator-release test playground playground-iss playground-pty playground-rom e2e-emulator e2e e2e-rom bootrom clean
 
 # Build the P2 image the ISS runs (`p2core`, `p2iss`, `mad-emulator`).
 #
@@ -119,6 +120,13 @@ bootrom:
 ROM_IMAGE = p2iss/rom/rom_booter_v33k.bin
 playground-rom: emulator-release
 	P2_IMAGE=$(ROM_IMAGE) BOARD_ARGS="--boot-rom --usb-product-id 0x6015" scripts/board-route.sh playground
+
+# FW-ISS on the ROM board: the app's flasher, in a headless Chrome on the
+# board's clock, writing the program into the module's flash through the
+# mask ROM on the programming UART (USB 0403:6015). The e2e suite's other
+# scenarios need the firmware's board (make e2e).
+e2e-rom: emulator-release
+	P2_IMAGE=$(ROM_IMAGE) BOARD_ARGS="--boot-rom --usb-product-id 0x6015" E2E_BOARD=rom SCENARIOS=FW-ISS scripts/board-route.sh e2e
 
 # Clean build artifacts
 clean:

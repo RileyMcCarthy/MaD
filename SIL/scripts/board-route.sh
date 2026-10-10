@@ -51,6 +51,7 @@ done
 # Only what this script started is stopped on the way out.
 vite_pid=''
 board_pid=''
+tail_pid=''
 stop_board() {
   if [ -n "$board_pid" ] && kill -0 "$board_pid" 2>/dev/null; then
     # SIGTERM: the emulator stops the system in order, its chrome-cdp closes
@@ -63,6 +64,7 @@ stop_board() {
 }
 stop() {
   local status=$?
+  if [ -n "$tail_pid" ]; then kill "$tail_pid" 2>/dev/null || true; fi
   stop_board
   if [ -n "$vite_pid" ]; then
     kill -TERM "$vite_pid" 2>/dev/null || true
@@ -128,7 +130,6 @@ if [ "$mode" = playground ]; then
   tail -n +1 -f "$logs/board.log" &
   tail_pid=$!
   wait "$board_pid" || true
-  kill "$tail_pid" 2>/dev/null || true
   board_pid=''
   exit 0
 fi

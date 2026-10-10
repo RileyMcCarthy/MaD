@@ -37,8 +37,9 @@
  * Naming a board scenario without CDP_URL is refused.
  *
  * FW-ISS (the app flashing the ISS's mask ROM) needs the ROM board, not the
- * firmware: `mad-emulator --boot-rom --chrome`, which the suite does not
- * start, so it is skipped here.
+ * firmware's: `mad-emulator --boot-rom --chrome` (`cd SIL && make e2e-rom`,
+ * which sets E2E_BOARD=rom). On that board it is the only scenario that runs;
+ * on the firmware's it is skipped.
  *
  * Covers the parity-critical scenarios of docs/TEST_PLAN.md §4: A1, B1–B5, C1/C3/C4, D1/D2/D3,
  * E1, F1/F2/F4/F6/F7, G1/G2/G3 + G-limit, H1–H5, I1–I4, J1 (in G-limit), K1 (in B2+B3+B4) — plus
@@ -91,6 +92,10 @@ const MATRIX = JSON.parse(
 // against in-page fakes (the capability gate, and the flasher against a fake
 // boot ROM), so they run without an emulator.
 const BOARD_FREE = new Set(['A1', 'FW1', 'FW2', 'FW3', 'FW5', 'FW6', 'FW7', 'FW8', 'FW9']);
+
+// The board is the mask ROM, not the firmware: `mad-emulator --boot-rom
+// --chrome` (make e2e-rom). Only FW-ISS, the app flashing that ROM, runs.
+const ROM_BOARD = process.env.E2E_BOARD === 'rom';
 
 // Budget for any wait that depends on the DEVICE making progress: a protocol
 // round trip, a state change, a handshake, an SD write.
@@ -2601,10 +2606,10 @@ const scenarios = [
     id: 'FW-ISS',
     name: 'Firmware: UI flash talks to the ISS mask ROM over Web Serial',
     async run() {
-      // Skipped in main(): mad-emulator's ROM boot (`--boot-rom`) puts the
-      // host on a PTY, not a computer node, so there is no guest Chrome on the
-      // programming UART for this to drive. Flashing is a person's browser on
-      // `make playground-rom`.
+      // The ROM board only (E2E_BOARD=rom, `make e2e-rom`): the node's port
+      // is the programming UART, as the P2 Edge's FT231X (0403:6015). The
+      // ROM's serial strap is pulled up, so Prop_Chk is answered without the
+      // reset pulse the app sends (no pin carries DTR).
       const { browser, page, errors } = await newSilPage();
       try {
         page.on('dialog', (d) => d.accept());
@@ -2855,11 +2860,13 @@ async function boardAlive() {
 
 async function main() {
   // `--list`: the ids SCENARIOS selects (all of them without it), in the
-  // suite's order, one a line, FW-ISS left out (it needs the ROM board).
-  // SIL/scripts/board-route.sh runs them one board each from this.
+  // suite's order, one a line: FW-ISS only on the ROM board, and left out
+  // otherwise. SIL/scripts/board-route.sh runs them one board each from this.
   if (process.argv.includes('--list')) {
     const only = process.env.SCENARIOS ? new Set(process.env.SCENARIOS.split(',').map((x) => x.trim())) : null;
-    for (const s of scenarios) if (s.id !== 'FW-ISS' && (!only || only.has(s.id))) console.log(s.id);
+    for (const s of scenarios) {
+      if ((s.id === 'FW-ISS') === ROM_BOARD && (!only || only.has(s.id))) console.log(s.id);
+    }
     return;
   }
   // Fail fast with guidance if the dev server isn't up.
@@ -2910,7 +2917,7 @@ async function main() {
   // Named explicitly, that is an error; in a whole-suite run, a skip that
   // says so.
   if (!BOARD && only) {
-    const needBoard = [...only].filter((id) => !BOARD_FREE.has(id) && id !== 'FW-ISS');
+    const needBoard = [...only].filter((id) => !BOARD_FREE.has(id));
     if (needBoard.length) {
       console.error(
         `✗ ${needBoard.join(', ')} touch the board: set CDP_URL to the DevTools URL of ` +
@@ -2925,8 +2932,20 @@ async function main() {
   const timings = [];
   let skipped = 0;
   for (const s of selected) {
-    if (s.id === 'FW-ISS') {
-      console.log(`  ~ ${s.id}: skipped (needs the ROM board, mad-emulator --boot-rom --chrome; the suite runs the firmware's)`);
+    // The ROM board (E2E_BOARD=rom: mad-emulator --boot-rom --chrome, the
+    // mask ROM on the programming UART) runs FW-ISS and nothing else; the
+    // firmware's board runs everything else.
+    if (BOARD && (s.id === 'FW-ISS') !== ROM_BOARD && !BOARD_FREE.has(s.id)) {
+      console.log(
+        `  ~ ${s.id}: skipped (needs the ${ROM_BOARD ? "firmware's" : 'ROM'} board${
+          ROM_BOARD ? '' : ': make e2e-rom'
+        })`,
+      );
+      skipped += 1;
+      continue;
+    }
+    if (!BOARD && s.id === 'FW-ISS') {
+      console.log(`  ~ ${s.id}: skipped (needs the ROM board: make e2e-rom)`);
       skipped += 1;
       continue;
     }
