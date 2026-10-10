@@ -1,15 +1,20 @@
 //! MaD SIL emulator entry point.
 //!
 //! The firmware under test is the Propeller 2 image, executed by the
-//! instruction-set simulator. Its pins are nets. The host is a PTY a browser
-//! outside the emulator opens. There is no host-compiled firmware and no HAL
-//! stand-in: `mad_begin` is not linked.
+//! instruction-set simulator. Its pins are nets. There is no host-compiled
+//! firmware and no HAL stand-in: `mad_begin` is not linked.
 //!
-//! The host as a computer the board's clock meters — Chrome in a QEMU guest,
-//! the e2e configuration — is not here: embsim 0.2.0 removed the guest it ran
-//! on, and the host kind that replaces it is embsim's to deliver
-//! (`MIGRATING-MAD.md` §2, E4).
+//! The host on the serial link is one of two (`host.rs`):
+//!
+//! - `--chrome`: the host's Chrome, every page and worker held to the board's
+//!   clock over DevTools by embsim's `chrome-cdp`, its Web Serial port this
+//!   line. The e2e configuration, and the one a person runs the app on
+//!   (`make playground`).
+//! - otherwise a PTY (`--pty-path`), for a serial console or a program that
+//!   keeps wall time (`make playground-pty`). No browser belongs behind it:
+//!   a browser on the host's clock measures the host, not the machine.
 
+mod host;
 mod iss_description;
 mod system_description;
 
@@ -29,7 +34,7 @@ struct Args {
     #[arg(long, default_value_t = 1.0)]
     speed: f64,
 
-    /// Symlink path for slave PTY
+    /// Symlink path for the host's PTY, when the host is not `--chrome`
     #[arg(long, default_value = "/tmp/tty.rpi_client")]
     pty_path: String,
 
@@ -51,11 +56,20 @@ struct Args {
     /// fitted, so `Prop_Chk` works without a DTR→RESn line.
     #[arg(long)]
     boot_rom: bool,
+
+    /// The host's Chrome on the link instead of the PTY (`host.rs`).
+    #[command(flatten)]
+    chrome: host::ChromeArgs,
 }
 
 /// Set by SIGTERM/SIGINT; the parked main thread notices and returns, so the
-/// system drops in order — engine joined, components dropped.
+/// system drops in order — engine joined, components dropped (a Chrome the
+/// host launched with them).
 static SHUTDOWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Set when the host failed (a grant that stuck, a page that crashed, a Chrome
+/// that went away): the run stops, and `main` exits non-zero.
+static HOST_FAILED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 extern "C" fn on_shutdown_signal(_signal: libc::c_int) {
     SHUTDOWN.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -70,12 +84,22 @@ fn install_shutdown_signals() {
     }
 }
 
-/// Park until a shutdown signal arrives.
-fn park_until_shutdown() {
+/// Park until a shutdown signal arrives, or the host fails; then let the
+/// host's reporter print its summary.
+fn park_until_shutdown(
+    reporter: Option<std::thread::JoinHandle<()>>,
+) -> Result<(), Box<dyn std::error::Error>> {
     while !SHUTDOWN.load(std::sync::atomic::Ordering::SeqCst) {
         std::thread::sleep(std::time::Duration::from_millis(200));
     }
+    if let Some(reporter) = reporter {
+        let _ = reporter.join();
+    }
+    if HOST_FAILED.load(std::sync::atomic::Ordering::SeqCst) {
+        return Err("the host failed; the run stopped (its words are above)".into());
+    }
     info!("shutdown signal received; stopping the system");
+    Ok(())
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -85,8 +109,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("MaD Emulator v{}", env!("CARGO_PKG_VERSION"));
     info!(
-        "Speed: {}x  PTY: {}  SD: {}",
-        args.speed, args.pty_path, args.sd_path
+        "Speed: {}x  Host: {}  SD: {}",
+        args.speed,
+        if args.chrome.chrome {
+            "the host's Chrome (chrome-cdp)".to_string()
+        } else {
+            format!("PTY {}", args.pty_path)
+        },
+        args.sd_path
     );
 
     let image = args.image.clone();
@@ -99,13 +129,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 /// Boot the mask ROM with the host on the programming UART (P62/P63).
 ///
-/// The host is the PTY. A browser outside the emulator opens it. The ROM's
-/// serial strap is a pull-up on P59, so `Prop_Chk` works without a DTR line.
+/// The host is the PTY, or with `--chrome` the host's Chrome, whose page
+/// flashes through its Web Serial port. The ROM's serial strap is a pull-up on
+/// P59, so `Prop_Chk` works without a DTR line (nothing models DTR: the
+/// chrome-cdp's `setSignals` reaches nothing).
 fn run_iss_rom(args: &Args, rom_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
-    use embsim_board::{
-        AttachError, Component, ComponentNetIo, Harness, PinDecl, System, TheveninDrive,
-    };
-    use p2iss::{HostPty, P2Iss, SerialLink};
+    use embsim_board::{AttachError, Component, ComponentNetIo, Harness, PinDecl, TheveninDrive};
+    use p2iss::{P2Iss, SerialLink};
 
     const PROG: SerialLink = SerialLink {
         tx_pin: 62,
@@ -153,20 +183,19 @@ fn run_iss_rom(args: &Args, rom_path: &std::path::Path) -> Result<(), Box<dyn st
     let iss = P2Iss::with_boot_rom(&rom, p2core::SdCard::blank(0), &[PROG]).with_level_pins(&[59]);
     let handle = iss.handle();
 
-    let host_pty = HostPty::open(&args.pty_path, PROG.nominal_baud)?;
-    info!("Host can connect to: {}", host_pty.symlink_path());
-    let host: Box<dyn embsim_board::Component> = Box::new(host_pty);
+    let host = host::Host::open(&args.chrome, &args.pty_path, PROG)?;
+    let harness = host.wire(
+        Harness::new().connect_str("P2.P59", "STRAP.A")?,
+        "P2.P62",
+        "P2.P63",
+    )?;
+    let (system, reporter) = host.into_parts();
 
-    let harness = Harness::new()
-        .connect_str("P2.P62", "HOST.RX")?
-        .connect_str("HOST.TX", "P2.P63")?
-        .connect_str("P2.P59", "STRAP.A")?;
-
-    let system = System::new()
+    let system = system
         .component("P2", Box::new(iss))
-        .component("HOST", host)
         .component("STRAP", Box::new(Pull::new(3.3)));
     let _system = system.harness(harness).start()?;
+    let reporter = reporter.spawn(&SHUTDOWN, &HOST_FAILED);
 
     info!("ISS ROM serial running; main thread parked.");
     std::thread::spawn(move || {
@@ -186,8 +215,7 @@ fn run_iss_rom(args: &Args, rom_path: &std::path::Path) -> Result<(), Box<dyn st
             );
         }
     });
-    park_until_shutdown();
-    Ok(())
+    park_until_shutdown(reporter)
 }
 
 /// Run the P2 image on the instruction-set simulator.
@@ -196,8 +224,8 @@ fn run_iss_rom(args: &Args, rom_path: &std::path::Path) -> Result<(), Box<dyn st
 /// protocol link as framed levels, GPIO and the encoder as plain ones, and the
 /// step train as a periodic drive. The host PTY is a component like any other.
 fn run_iss(args: &Args, image_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
-    use embsim_board::{Harness, System};
-    use p2iss::{HostPty, P2Iss, SerialLink};
+    use embsim_board::Harness;
+    use p2iss::{P2Iss, SerialLink};
 
     /// A 32 MiB card: at 2 KiB clusters that lands mid-window for FAT16,
     /// clear of the cluster counts where the type would be read as FAT12 or
@@ -265,19 +293,19 @@ fn run_iss(args: &Args, image_path: &std::path::Path) -> Result<(), Box<dyn std:
         .with_pulse_pins(PULSE_PINS)
         .with_sync_serial();
     let handle = iss.handle();
-    // The host end of the protocol link: a PTY for a browser outside the emulator.
-    let host_pty = HostPty::open(&args.pty_path, PROTO.nominal_baud)?;
-    info!("Host can connect to: {}", host_pty.symlink_path());
-    let host: Box<dyn embsim_board::Component> = Box::new(host_pty);
+    // The host end of the protocol link: a PTY, or the host's Chrome.
+    let host = host::Host::open(&args.chrome, &args.pty_path, PROTO)?;
 
     let pulls = BenchPulls::new(IDLE_PULLS);
     let force = BenchForcePath::build();
     let machine = BenchMachine::build()?;
     let travel = machine.travel();
 
-    let mut harness = Harness::new()
-        .connect_str("P2.P55", "HOST.RX")?
-        .connect_str("HOST.TX", "P2.P53")?;
+    let mut harness = host.wire(
+        Harness::new(),
+        &format!("P2.{}", p2iss::pin_name(PROTO.tx_pin)),
+        &format!("P2.{}", p2iss::pin_name(PROTO.rx_pin)),
+    )?;
     for (from, to) in pulls.wires() {
         harness = harness.connect_str(&from, &to)?;
     }
@@ -348,12 +376,13 @@ fn run_iss(args: &Args, image_path: &std::path::Path) -> Result<(), Box<dyn std:
             .on_position_change(move |mm| g.on_position(mm));
     }
 
-    let system = System::new()
+    let (system, reporter) = host.into_parts();
+    let system = system
         .component("P2", Box::new(iss))
-        .component("HOST", host)
         .component("PULLS", Box::new(pulls));
     let system = sd.mount(machine.mount(force.mount(system)));
     let _system = system.harness(harness).start()?;
+    let reporter = reporter.spawn(&SHUTDOWN, &HOST_FAILED);
 
     info!("ISS running; main thread parked.");
     // Report periodically, not once. The two numbers that matter while
@@ -419,8 +448,7 @@ fn run_iss(args: &Args, image_path: &std::path::Path) -> Result<(), Box<dyn std:
             );
         }
     });
-    park_until_shutdown();
-    Ok(())
+    park_until_shutdown(reporter)
 }
 
 /// Configure the global tracing subscriber from a log-level string.

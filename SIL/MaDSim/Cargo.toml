@@ -9,6 +9,9 @@ publish = false
 embsim-core = { path = "../embsim/core" }
 embsim-board = { path = "../embsim/board" }
 embsim-models = { path = "../embsim/models" }
+# The host's Chrome on the link, metered by the board's clock (`--chrome`):
+# the `chrome-cdp` kind, built through its catalog.
+embsim-cdp = { path = "../embsim/cdp" }
 libc = "0.2"
 models = { path = "../models" }
 p2core = { path = "../p2core" }
@@ -16,3 +19,6 @@ p2iss = { path = "../p2iss" }
 clap.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+
+[dev-dependencies]
+vibes-behaviour = { path = "../../Vibes/bindings/rust" }
