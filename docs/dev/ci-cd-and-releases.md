@@ -18,8 +18,10 @@ relevant jobs:
 | `embsim-ci` | SIL / firmware / protocol changed | Builds and tests the pinned `SIL/embsim` commit (workspace tests, doctests, `embsim-trace` with `web` off) |
 | `embsim-pin-ci` | **the `SIL/embsim` gitlink moved** | **Blocking.** The other half of embsim's upstream gate, run against the commit being pinned: determinism goldens (5× as separate processes) + stepped-clock suites + goldens-unmodified, rustfmt, clippy `-D warnings`, `cargo doc` deny-warnings, MSRV read from the pinned manifest, and `cargo deny`. Catches a pin bumped to an unpushed or never-CI'd commit |
 | `protoemb-pin-ci` | **the `Protocol/ProtoEmb` gitlink moved** | **Blocking.** Mirror of the above for the other submodule: `make verify` round-trip, ruff, clippy `-D warnings` (native + `wasm32`), `wasm-pack` build, `cargo deny` per crate + `pip-audit`, MSRV per crate manifest |
+| `vibes-pin-ci` | **the `Vibes` gitlink moved** | **Blocking.** Mirror of upstream Vibes CI for the commit being pinned: the tool's install, typecheck, tests and build, plus compile probes of its C, Rust and TypeScript bindings |
 | `docs-ci` | `docs/**` or `mkdocs.yml` changed | **Blocking.** `mkdocs build --strict` — broken nav entries, dead internal links and config warnings are errors. Previously this ran only on a push to `main` via `pages.yml`, so a bad docs PR merged green and took the Pages deploy down |
-| `control-e2e-boardless` | app or protocol changed, or the `SIL/embsim` gitlink moved | **Blocking.** The e2e scenarios that need no board (A1 and the firmware-flash `FW*` ones): the real app in a real host Chrome against in-page fakes, no emulator. The scenarios that touch the board run nowhere until embsim's E4 (the nightly that ran them is off). See [below](#the-e2e-suite) |
+| `control-e2e-boardless` | app or protocol changed, or the `SIL/embsim` gitlink moved | **Blocking.** The e2e scenarios that need no board (A1 and the firmware-flash `FW*` ones): the real app in a real host Chrome against in-page fakes, no emulator. The scenarios that touch the board run in `control-e2e-board` and the nightly. See [below](#the-e2e-suite) |
+| `control-e2e-board` | app, protocol, firmware or SIL changed, or the `SIL/embsim` gitlink moved | **Blocking.** A subset of the board-touching e2e scenarios on the board route: the P2 image on the ISS, and the app in the runner's Chrome held to the board's clock by embsim's `chrome-cdp` node (`mad-emulator --chrome`), one fresh board per scenario (`SIL/scripts/board-route.sh e2e`, `BOARD_PER_SCENARIO=1`). The whole suite runs nightly on the same route (`e2e-nightly.yml`). See [below](#the-e2e-suite) |
 | `firmware-unit-tests` | firmware or protocol changed | `pio test -e native_test` — the host Unity suite under AddressSanitizer (no Propeller toolchain needed) |
 | `protocol-codegen` | protocol changed | **Blocking.** Regenerates all three targets (C/TS/Rust) twice and asserts success + byte-reproducibility (generated files are gitignored, so this guards the schema/templates + generator determinism, not committed-file drift) |
 | `firmware-layering` | firmware changed | **Blocking (baseline-gated).** `scripts/check_layering.py` enforces downward-only includes (APP→DEV→IO→Library→HAL→HW); pre-existing violations are frozen in `.layering-baseline`, so it fails only on **new** upward includes |
@@ -28,7 +30,8 @@ relevant jobs:
 | `sil-rust` | SIL / firmware / protocol changed | **Blocking.** `make protocol` + the `propeller2_debug` image, then `cargo fmt --check`, `cargo clippy -- -D warnings`, and `cargo test` on the SIL workspace — all three gating. rustfmt covers `mad-emulator` + `models`; the generated `protocol` crate is excluded because `make protocol` rewrites it every build. Generated-codec clippy allows are scoped to the `mod protoemb` declaration in `Protocol/rust/src/lib.rs`, never crate-wide |
 | `build-firmware` | firmware changed, or a firmware tag | Builds `propeller2_debug` and `propeller2` release |
 | `build-hardware` | hardware changed, or a hardware tag | KiBot → Gerbers, BOM, interactive BOM, 3D models for each board |
-| **`ci-gate`** | **every PR** | **Aggregates all of the above. Fails if any job failed/was cancelled; passes when they succeeded or were legitimately skipped. This is the single required status check (`CI Gate`) on `main`.** |
+| `vibes` (Behaviour ledger) | every PR | **Informational** (not in `ci-gate.needs`). Diffs the behaviour ledger against the base branch and posts the report as a PR comment; it fails when a behaviour breaks or is removed, but does not block the merge |
+| **`ci-gate`** | **every PR** | **Aggregates all of the above except `vibes`. Fails if any job failed/was cancelled; passes when they succeeded or were legitimately skipped. This is the single required status check (`CI Gate`) on `main`.** |
 | `release-*` | a `firmware-v*` / `hardware-v*` tag | Publishes a GitHub Release with the built artifacts. MaD Control releases are cut by `pages.yml` on `madcontrol-v*` tags. |
 
 The PR trigger has **no path filter** — every PR runs at least `changes` + `ci-gate`, so the required `CI Gate` check always reports. Requiring the gate (instead of each job individually) is what keeps path-filtered skips from blocking a PR forever.
@@ -188,7 +191,18 @@ cd Protocol/ProtoEmb && ./examples/verify.sh
 pip install -r docs/requirements.txt && mkdocs build --strict
 ```
 
-The e2e suite needs the emulator, the WS bridge and the dev server up
-(three terminals), then `cd Software/Control && npm run e2e` — see
-`Software/Control/docs/TEST_PLAN.md`. `npm run e2e:smoke` runs the subset the
-nightly uses.
+The e2e suite runs on the board route (the ISS with the app in Chrome on the
+board's clock; no WS bridge). From `SIL/`, `make e2e` starts the dev server
+and the board, runs the suite and stops everything; `SCENARIOS=…` selects a
+subset, and `BOARD_PER_SCENARIO=1` gives each scenario a fresh board, as CI
+does:
+
+```bash
+cd SIL && make e2e BOARD_PER_SCENARIO=1   # as control-e2e-board and the nightly run it
+cd SIL && make e2e SCENARIOS=B1+C1,F7     # a subset
+```
+
+See [SIL testing](sil-testing.md#running-the-e2e-suite) for the three-terminal
+version and `Software/Control/docs/TEST_PLAN.md` for the scenarios. The
+nightly runs the whole suite; dispatching it by hand with `suite=smoke` runs
+the IDs in `Software/Control/e2e/smoke-ids.txt` instead.
