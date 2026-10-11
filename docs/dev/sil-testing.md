@@ -110,21 +110,17 @@ the click. The link-drop scenarios (B5-reconnect, M11-idle-drop,
 M11-mid-test-drop) pull the node's cable (`__embsim.link('unplug')`) and put it
 back.
 
-**In CI:** `control-e2e-board` runs a subset per PR on the runner's Chrome
-(`ci.yml`; advisory until embsim fixes the node's occasional stall while the
-app's worker boots), the nightly (`e2e-nightly.yml`) the whole suite, after the
-node's Chrome canary. `control-e2e-boardless` gates on the scenarios that need
+**In CI:** `control-e2e-board` gates a subset per PR on the runner's Chrome
+(`ci.yml`), and the nightly (`e2e-nightly.yml`) runs the whole suite after the
+node's Chrome canary. `control-e2e-boardless` gates the scenarios that need
 no board (A1 and the firmware-flash `FW*` ones, a host Chrome against in-page
 fakes).
 
-!!! warning "The node's worker-boot stall"
-    About one page boot in 13 (7 of 92 measured), the page's 1 ms grant never expires while
-    the app's device worker starts its WebAssembly core (both clocks frozen,
-    about 20 ms into the page's document), and `mad-emulator` stops the run
-    after 30 s of host time, saying "a grant stuck". The suite then stops and
-    says the board is gone. It is embsim's to fix; until then
-    `make e2e BOARD_PER_SCENARIO=1` gives each scenario a fresh board (as CI
-    does), so a stall costs one scenario.
+!!! note "One scenario, one board"
+    A fetch that holds a virtual-time budget for 2 s is granted that budget
+    again under `advance`. A grant that still does not end stops the run after
+    `stuck_after`. `make e2e BOARD_PER_SCENARIO=1` gives each scenario a fresh
+    board, as CI does, so that stop costs one scenario.
 
 ## A browser on the host's clock is not a SIL configuration
 

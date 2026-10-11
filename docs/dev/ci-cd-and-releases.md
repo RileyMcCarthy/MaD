@@ -52,7 +52,7 @@ board time in host time:
 
 | Job | When | What |
 |---|---|---|
-| `control-e2e-board` | per PR: the app, the protocol, the firmware, `SIL/`, or a move of the `SIL/embsim` pin (#148) | **Advisory** for now (not in `ci-gate.needs`): a subset of the board scenarios on the ISS with `chrome-cdp`, sized to about 45 minutes with the builds (its comment names the scenarios and why). It gates once embsim fixes the node's occasional stall while the app's worker boots |
+| `control-e2e-board` | per PR: the app, the protocol, the firmware, `SIL/`, or a move of the `SIL/embsim` pin (#148) | **Gates.** A subset of the board scenarios on the ISS with `chrome-cdp` (its comment names the scenarios and the time). A fetch that holds a virtual-time budget is granted that budget again under `advance` |
 | `control-e2e-boardless` | per PR: the app, or a pin move | **Gates.** The scenarios that never reach a board (A1 and the `FW*` flasher ones, a host Chrome against in-page fakes) |
 | `e2e-nightly.yml` | 06:17 UTC daily, or by hand | The whole suite on the same route, after the node's Chrome canary (a worker's timer on the board's clock) |
 
