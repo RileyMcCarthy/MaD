@@ -347,7 +347,7 @@ jobs:
           path: /tmp/e2e-out
           retention-days: 14
 
-  # ADVISORY (not in ci-gate.needs, yet). The board-touching e2e scenarios, per
+  # BLOCKING (in ci-gate.needs). The board-touching e2e scenarios, per
   # PR, on the one route a browser belongs on: the shipped P2 image interpreted
   # by the ISS (mad-emulator), and MaD Control in the runner's own Chrome, every
   # page and dedicated worker held to the board's clock by embsim's
@@ -356,12 +356,11 @@ jobs:
   # say, and every budget in the suite is board time, so nothing here depends
   # on how fast the runner is; host time is printed, never asserted.
   #
-  # Advisory because the node stalls now and then: about one page boot in
-  # 13 (7 of 92 measured), a page's 1 ms grant never expires while the
-  # app's worker starts its WebAssembly core, and the node stops the run
-  # after 30 s (PR #155, "The node's worker-boot stall"). This subset boots
-  # the app about 15 times, one board per scenario, so a stall costs one
-  # scenario. It joins ci-gate.needs once embsim fixes the stall.
+  # A fetch that holds a virtual-time budget for 2 s is granted that budget
+  # again under `advance` (embsim f8781e0). The eleven-scenario subset passed
+  # on that tree (run 38097116906), including D1 and B2+B3+B4. This subset
+  # boots the app about 15 times, one board per scenario, so a grant that
+  # still does not end costs one scenario.
   #
   # A SUBSET, because the board is slow: the ISS runs at a few percent of
   # real time, so a scenario costs 20-60x its board time in host time. The
@@ -1206,6 +1205,7 @@ jobs:
       - changes
       - wasm-control-ci
       - control-e2e-boardless
+      - control-e2e-board
       - protoemb-ci
       - protoemb-pin-ci
       - embsim-ci

@@ -5,11 +5,10 @@ Goal: a complete, automated test suite covering every scenario below, kept green
 The app source stays **pure** (Web Serial + File System Access only). All test-only
 abstractions (SIL serial, OPFS data folder) live in the harness — never in `src/`.
 
-> **Status:** offline `npm run verify` and the board-free e2e scenarios (A1 and the
-> firmware-flash `FW*` ones, no emulator) **gate CI** (`control-e2e-boardless` is in
-> `ci-gate.needs`). A subset of the board scenarios runs per PR in
-> `control-e2e-board`, advisory until embsim fixes the node's occasional stall
-> while the app's worker boots; the nightly runs the whole suite. The scenarios that touch the
+> **Status:** offline `npm run verify`, the board-free e2e scenarios (A1 and the
+> firmware-flash `FW*` ones, no emulator), and a subset of the board scenarios
+> **gate CI** (`control-e2e-boardless` and `control-e2e-board` are in
+> `ci-gate.needs`). The nightly runs the whole suite. The scenarios that touch the
 > board run on one SIL configuration only: the P2 image on the ISS with the app in
 > the host's Chrome, every page and worker held to the board's clock by embsim's
 > `chrome-cdp` (`mad-emulator --chrome`; `cd SIL && make e2e`). Do not run the
@@ -199,8 +198,7 @@ On a clean checkout after `npm run build:wasm && npm run generate:proto && npm i
 `npm run verify` runs 1–3 (offline) and **gates** `wasm-control-ci`.
 `npm run e2e` runs 4 (needs the board route: `cd SIL && make e2e`). Its
 board-free scenarios **gate** `control-e2e-boardless`, a subset of its board
-scenarios runs per PR in `control-e2e-board` (advisory for now), and the nightly
-runs all of it.
+scenarios **gates** `control-e2e-board`, and the nightly runs all of it.
 
 ---
 
