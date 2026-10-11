@@ -14,3 +14,4 @@ repository.workspace = true
 # Test-only: parse/diff silicon goldens. The library stays dep-free.
 [dev-dependencies]
 embsim-cpu-oracle = { path = "../embsim/cpu-oracle" }
+vibes-behaviour = { path = "../../Vibes/bindings/rust" }

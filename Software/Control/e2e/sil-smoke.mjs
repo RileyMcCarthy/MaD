@@ -7,10 +7,19 @@
  * `port.open()` / stream-transfer path runs completely unchanged.
  *
  * Prereqs (each in its own terminal):
- *   cd SIL && make e2e-emulator            # emulator on /tmp/tty.rpi (unpaced virtual time)
+ *   an emulator behind the bridge       # nothing valid serves it: see below
  *   npm run sil:bridge                   # WS bridge on ws://localhost:9999
  *   npm run dev                          # app on http://localhost:5174
  * Then: node e2e/sil-smoke.mjs
+ *
+ * The emulator behind the bridge was the native firmware library on
+ * /tmp/tty.rpi, and that library is gone. `make e2e-emulator`, which put the
+ * ISS there instead, refuses to run: the ISS behind the bridge is not a valid
+ * SIL configuration (the browser runs at host speed, so its waits measure the
+ * host). So this script has no valid backend until it moves onto the host the
+ * board's clock meters, embsim's `chrome-cdp` (`mad-emulator --chrome`), as
+ * the board-touching e2e scenarios have (`cd SIL && make e2e`); the app on the
+ * board, for a person, is `cd SIL && make playground`.
  *
  * Playwright/Chromium are reused from the SIL workspace.
  */

@@ -2,8 +2,10 @@
 //! on its host PTY.
 //!
 //! This is the layer between `cargo test` of the models crate and the Control
-//! Playwright suite. It catches "firmware linked but never answers" without a
+//! Playwright suite. It catches "the ISS booted but never answers" without a
 //! browser, a bridge, or `/tmp/tty.rpi`.
+//!
+//! Skipped when the P2 image is absent, the same way the `p2iss` suite is.
 //!
 //! Unique PTY/SD paths so this can run next to other cargo tests. Do not point
 //! it at the playground symlink.
@@ -67,32 +69,36 @@ fn drain_pipe<R: Read + Send + 'static>(pipe: R, sink: Arc<Mutex<String>>) {
     });
 }
 
-fn firmware_lib() -> PathBuf {
-    // Same resolution as MaDSim/build.rs via embsim-build: EMBSIM_FIRMWARE_LIB_DIR
-    // wins, else the archive under the firmware's own build tree. CI sets the
-    // variable to a copy it keeps outside .pio/build, because on the runner a
-    // later `pio run` for another env deletes the original -- this test used to
-    // hardcode the original path, so it failed there with "libfirmware.a
-    // missing" while the binary it was about to launch had linked just fine.
-    let p = match std::env::var_os("EMBSIM_FIRMWARE_LIB_DIR") {
-        Some(dir) => PathBuf::from(dir).join("libfirmware.a"),
-        None => PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../Firmware/MaDCore/.pio/build/native_emulator/libfirmware.a"),
-    };
-    if !p.is_file() {
+fn image_path() -> PathBuf {
+    // A missing image makes this test skip. That is right for a laptop that
+    // has not run `make p2image`, and wrong for CI: MAD_REQUIRE_P2_IMAGE turns
+    // the skip into a failure wherever the image is supposed to exist, as it
+    // does for the p2core and p2iss suites.
+    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../Firmware/MaDCore/.pio/build/propeller2_debug/program");
+    if !p.exists() && std::env::var_os("MAD_REQUIRE_P2_IMAGE").is_some() {
         panic!(
-            "libfirmware.a missing at {}\nBuild it first:\n  cd Firmware/MaDCore && pio run -e native_emulator\nor point EMBSIM_FIRMWARE_LIB_DIR at a directory containing it",
+            "MAD_REQUIRE_P2_IMAGE is set but the P2 image is missing at {}. \
+             Build it with `make p2image` (or `cd Firmware/MaDCore && pio run -e propeller2_debug`).",
             p.display()
         );
     }
     p
 }
 
-fn spawn_emulator() -> Emulator {
+fn spawn_emulator() -> Option<Emulator> {
+    let image = image_path();
+    if !image.is_file() {
+        eprintln!(
+            "\n*** SKIPPED: {} needs the P2 image at\n***   {}\n*** Build it with `make p2image` (or `cd Firmware/MaDCore && pio run -e propeller2_debug`).\n*** This test asserted NOTHING.\n",
+            module_path!(),
+            image.display()
+        );
+        return None;
+    }
     let pty = unique("tty");
     let sd = unique("sd");
     fs::create_dir_all(&sd).expect("create temp SD dir");
-    let firmware = firmware_lib();
 
     let exe = env!("CARGO_BIN_EXE_mad-emulator");
     let mut child = Command::new(exe)
@@ -103,12 +109,9 @@ fn spawn_emulator() -> Emulator {
             pty.to_str().expect("pty utf8"),
             "--sd-path",
             sd.to_str().expect("sd utf8"),
-            "--firmware-lib",
-            firmware.to_str().expect("firmware utf8"),
             "--log-level",
             "info",
-            "--trace-port",
-            "0",
+            image.to_str().expect("image utf8"),
         ])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -123,12 +126,12 @@ fn spawn_emulator() -> Emulator {
         drain_pipe(err, Arc::clone(&logs));
     }
 
-    Emulator {
+    Some(Emulator {
         child,
         logs,
         pty,
         sd,
-    }
+    })
 }
 
 fn logs_of(emu: &Emulator) -> String {
@@ -183,7 +186,9 @@ fn find_firmware_version_data(buf: &[u8]) -> bool {
 
 #[test]
 fn firmware_answers_firmware_version_on_the_host_pty() {
-    let mut emu = spawn_emulator();
+    let Some(mut emu) = spawn_emulator() else {
+        return;
+    };
     wait_for_pty(&mut emu, Duration::from_secs(30));
 
     // The symlink can exist a beat before the slave is openable.

@@ -63,6 +63,8 @@ pub const NUM_LOCKS: usize = 16;
 const COGINIT_LOAD_LONGS: usize = 0x1F8;
 
 // Cog special registers ($1F0..$1FF).
+const REG_IJMP1: u16 = 0x1F4;
+const REG_IRET1: u16 = 0x1F5;
 const REG_PA: u16 = 0x1F6;
 const REG_PB: u16 = 0x1F7;
 const REG_PTRA: u16 = 0x1F8;
@@ -156,8 +158,40 @@ pub struct Cog {
     /// Pending `ALTD`/`ALTS` field substitution for the next instruction.
     alt_d: Option<u16>,
     alt_s: Option<u16>,
+    /// Pending `ALTGB`/`ALTGN`/`ALTGW` N-field substitution for GET/ROL.
+    alt_n: Option<u8>,
     /// Guest clocks this cog has retired.
     pub clocks: u64,
+    /// This cog's streamer. Silicon has one per cog; the flash stub is the
+    /// first code in this project that uses it.
+    streamer: Streamer,
+    /// `SETINT1` source: 0 = off, 4 = SE1 (the boot ROM's autobaud).
+    pub int1_src: u8,
+    /// `SETSE1` configuration word (`%mmm_pppppp`).
+    pub se1_cfg: u32,
+    /// True while servicing INT1; blocks re-entry until RETI1/RESI1.
+    pub in_int1: bool,
+    /// SCA/SCAS product, consumed as S of the next instruction.
+    sca_s: Option<u32>,
+}
+
+/// Functional streamer: bit count, pin, and a source (immediate / FIFO / pin).
+///
+/// Not the NCO. `SETXFRQ` is accepted and ignored; transfers complete when a
+/// transition smart pin produces the matching clock edges, which is how
+/// loadp2's stub actually moves SPI bits.
+#[derive(Debug, Default, Clone, Copy)]
+struct Streamer {
+    bits_left: u32,
+    pin: u8,
+    /// 2 = immediate out, 4 = FIFO out, 6 = pin in, 0 = idle.
+    kind: u8,
+    /// Immediate data, MSB-aligned so each bit is taken from bit 31.
+    imm: u32,
+    /// Partial byte for FIFO in/out.
+    byte: u8,
+    byte_bits: u8,
+    xfi: bool,
 }
 
 /// Per-cog bookkeeping for **idle-poll fast-forward**.
@@ -248,7 +282,13 @@ impl Default for Cog {
             ct1: 0,
             alt_d: None,
             alt_s: None,
+            alt_n: None,
             clocks: 0,
+            streamer: Streamer::default(),
+            int1_src: 0,
+            se1_cfg: 0,
+            in_int1: false,
+            sca_s: None,
         }
     }
 }
@@ -273,6 +313,8 @@ pub struct Machine<P: PinBus> {
     pub pins: P,
     /// Retired instructions across all cogs, for throughput measurement.
     pub retired: u64,
+    /// INT1 entries, for serial-boot bring-up.
+    pub int1_entries: u64,
     /// Trap on a hub access outside the 512 KB map instead of wrapping.
     ///
     /// **Off by default, and not a soundness check.** Silicon masks hub
@@ -372,6 +414,7 @@ impl<P: PinBus> Machine<P> {
             lock_alloc: [false; NUM_LOCKS],
             pins,
             retired: 0,
+            int1_entries: 0,
             strict_hub: false,
             ff_deadline_clocks: u64::MAX,
             ff_disabled: std::env::var_os("P2CORE_NO_FF").is_some(),
@@ -595,6 +638,7 @@ impl<P: PinBus> Machine<P> {
                 | Alts
                 | Altr
                 | Altb
+                | Altgb
                 | Alti
                 | Loc
                 | Locktry
@@ -734,10 +778,16 @@ impl<P: PinBus> Machine<P> {
         // anyway. It must NOT be while a transfer is in flight -- that is the
         // case where skipping the cog's clock starves the transfer and trips
         // the driver's own timeout.
-        if p.confirmed()
-            && !self.ff_disabled
-            && !(waits_on_pin && self.pins.external_transfer_busy())
-        {
+        //
+        // An armed INT1 is the same class of wait: the boot ROM's get_rx
+        // spins on LUT head/tail, which looks like a pure register loop, but
+        // the receiver ISR is what moves `head`. Fast-forwarding that spin
+        // burns the 60 s serial timeout in an instant and the ROM shuts down
+        // before the host's first `>` arrives.
+        let confirmed = p.confirmed();
+        let int1_armed = self.cogs[cog].int1_src != 0 && !self.cogs[cog].in_int1;
+        let transfer_busy = waits_on_pin && self.pins.external_transfer_busy();
+        if confirmed && !self.ff_disabled && !transfer_busy && !int1_armed {
             self.fast_forward_poller(cog, waits_on_pin);
         }
     }
@@ -1005,9 +1055,42 @@ impl<P: PinBus> Machine<P> {
         }
     }
 
+    /// SE1 "pin IN high" (`SETSE1 #%110<<6+pin`): the boot ROM uses this on
+    /// the autobaud timing pin, then on the UART RX pin.
+    pub fn se1_high(&self, cog: usize) -> bool {
+        let cfg = self.cogs[cog].se1_cfg;
+        if cfg == 0 {
+            return false;
+        }
+        let pin = (cfg & 63) as u8;
+        let mode = (cfg >> 6) & 7;
+        mode == 0b110 && self.pins.testp(pin)
+    }
+
     fn step_one(&mut self, cog: usize) -> Result<(), Trap> {
         self.cogs[cog].instructions += 1;
         let pc = self.cogs[cog].pc;
+        // INT1 on SE1: the boot ROM's autobaud/receiver. Level-triggered on
+        // the configured pin's IN (a waiting serial byte), blocked while
+        // already in the ISR.
+        // ALTx prefixes the very next instruction in this cog. Taking INT1
+        // between them would let the ISR consume the prefix — the ROM's
+        // `altb x,#hexchrs` / `testb 0,x wc` pair would then test the wrong
+        // long and reject a valid Prop_Chk.
+        let alt_pending = self.cogs[cog].alt_d.is_some()
+            || self.cogs[cog].alt_s.is_some()
+            || self.cogs[cog].alt_n.is_some();
+        if !self.cogs[cog].in_int1
+            && self.cogs[cog].int1_src == 4
+            && self.se1_high(cog)
+            && !alt_pending
+        {
+            self.cogs[cog].regs[REG_IRET1 as usize] = pc;
+            self.cogs[cog].pc = self.cogs[cog].regs[REG_IJMP1 as usize];
+            self.cogs[cog].in_int1 = true;
+            self.int1_entries += 1;
+            return Ok(());
+        }
         // The PC is 20 bits and hub addressing wraps: `$FC000` executes the
         // bytes at `$7C000`, which is precisely how the chip runs its boot
         // ROM — 16 KB copied to the top of RAM, COG 0 launched at `$FC000`.
@@ -1067,17 +1150,29 @@ impl<P: PinBus> Machine<P> {
             return Ok(());
         }
 
-        // A pending ALTD/ALTS rewrites this instruction's field before use.
+        // A pending ALTD/ALTS/ALTB/ALTGB rewrites this instruction's fields
+        // before use. ALTx always substitutes a *register* address, so an
+        // original immediate S (`getbyte z` = `getbyte z, #0, #0`) must not
+        // stay immediate after ALTGB fills S with the long that holds the byte.
         let mut ins = ins;
         if let Some(nd) = self.cogs[cog].alt_d.take() {
             ins.d = nd;
         }
         if let Some(ns) = self.cogs[cog].alt_s.take() {
             ins.s = ns;
+            ins.i = false;
+        }
+        if let Some(n) = self.cogs[cog].alt_n.take() {
+            ins.z = n & 1 != 0;
+            ins.c = n & 2 != 0;
         }
 
         // AUGS/AUGD extend the 9-bit fields to 32 bits.
-        let s_val = if ins.i {
+        // SCA/SCAS replace S of the *next* instruction with the 16x16 product.
+        let s_val = if let Some(v) = self.cogs[cog].sca_s.take() {
+            self.cogs[cog].aug_s_active = false;
+            v
+        } else if ins.i {
             let base = ins.s as u32;
             match self.cogs[cog].aug_s.take() {
                 Some(a) => {
@@ -1300,7 +1395,6 @@ impl<P: PinBus> Machine<P> {
         // a cog is launched mid-run, and the new cog joins the time frontier
         // instead of burning a catch-up burst.
         fresh.clocks = self.cogs[cog].clocks;
-        fresh.clocks = self.cogs[cog].clocks;
         self.cogs[target] = fresh;
 
         // C reports FAILURE on the P2 (flexspin emits `if_b neg result1,#1`
@@ -1311,7 +1405,102 @@ impl<P: PinBus> Machine<P> {
         Ok(())
     }
 
-    /// Returns `true` if the instruction set the PC itself.
+    /// Parse an `XINIT`/`XZERO`/`XCONT` mode word and arm this cog's streamer.
+    ///
+    /// Mode layout the stub actually uses (Chip's 1-pin byte streamer):
+    /// bits 31:29 select immediate-out / FIFO-out / pin-in, bits 22:17 are
+    /// the data pin, bits 15:0 are the bit count.
+    fn start_streamer(&mut self, cog: usize, mode: u32, data: u32) {
+        let kind = ((mode >> 29) & 7) as u8;
+        let pin = ((mode >> 17) & 63) as u8;
+        let nbits = mode & 0xFFFF;
+        let mut st = Streamer {
+            bits_left: nbits,
+            pin,
+            kind,
+            imm: 0,
+            byte: 0,
+            byte_bits: 0,
+            xfi: nbits == 0,
+        };
+        if kind == 2 {
+            // Immediate out: little-endian bytes of S, MSB first within each
+            // byte — so `xinit lmode, pa` with PA = $00000020 puts $20 on the
+            // wire first (the SPI opcode), not 24 zero bits.
+            st.imm = data;
+        }
+        self.cogs[cog].streamer = st;
+    }
+
+    /// Take the next streamer output bit, advancing FIFO/immediate state.
+    fn streamer_out_bit(&mut self, cog: usize) -> Option<bool> {
+        let kind = self.cogs[cog].streamer.kind;
+        let bits_left = self.cogs[cog].streamer.bits_left;
+        if bits_left == 0 || (kind != 2 && kind != 4) {
+            return None;
+        }
+        if self.cogs[cog].streamer.byte_bits == 0 {
+            let byte = if kind == 2 {
+                let b = (self.cogs[cog].streamer.imm & 0xFF) as u8;
+                self.cogs[cog].streamer.imm >>= 8;
+                b
+            } else {
+                let a = self.cogs[cog].fifo_addr;
+                let b = self.rd_byte(a) as u8;
+                self.cogs[cog].fifo_addr = a.wrapping_add(1);
+                b
+            };
+            self.cogs[cog].streamer.byte = byte;
+            self.cogs[cog].streamer.byte_bits = 8;
+        }
+        self.cogs[cog].streamer.byte_bits -= 1;
+        let bit = (self.cogs[cog].streamer.byte >> self.cogs[cog].streamer.byte_bits) & 1 != 0;
+        self.cogs[cog].streamer.bits_left -= 1;
+        if self.cogs[cog].streamer.bits_left == 0 {
+            self.cogs[cog].streamer.xfi = true;
+        }
+        Some(bit)
+    }
+
+    /// Sample the streamer input pin into the hub FIFO, MSB first.
+    fn streamer_in_bit(&mut self, cog: usize) {
+        if self.cogs[cog].streamer.kind != 6 || self.cogs[cog].streamer.bits_left == 0 {
+            return;
+        }
+        let pin = self.cogs[cog].streamer.pin;
+        let bit = u8::from(self.pins.pad_level(pin));
+        self.cogs[cog].streamer.byte = (self.cogs[cog].streamer.byte << 1) | bit;
+        self.cogs[cog].streamer.byte_bits += 1;
+        self.cogs[cog].streamer.bits_left -= 1;
+        if self.cogs[cog].streamer.byte_bits == 8 {
+            let a = self.cogs[cog].fifo_addr;
+            self.wr_byte(a, u32::from(self.cogs[cog].streamer.byte));
+            self.cogs[cog].fifo_addr = a.wrapping_add(1);
+            self.cogs[cog].streamer.byte = 0;
+            self.cogs[cog].streamer.byte_bits = 0;
+        }
+        if self.cogs[cog].streamer.bits_left == 0 {
+            self.cogs[cog].streamer.xfi = true;
+        }
+    }
+
+    /// `WYPIN n` on a transition pin: n toggles, streamer bits on the even
+    /// ones (before each rising edge, clock starting low).
+    fn clock_with_streamer(&mut self, cog: usize, clock_pin: u8, toggles: u32) {
+        for i in 0..toggles {
+            if i % 2 == 0 {
+                if let Some(bit) = self.streamer_out_bit(cog) {
+                    let pin = self.cogs[cog].streamer.pin;
+                    self.pins.set_pad(pin, bit);
+                }
+            }
+            self.pins.toggle_pad(clock_pin);
+            if i % 2 == 0 {
+                self.streamer_in_bit(cog);
+            }
+        }
+    }
+
     fn execute(
         &mut self,
         cog: usize,
@@ -2006,6 +2195,20 @@ impl<P: PinBus> Machine<P> {
             // as a literal silicon performs no register write at all -- this
             // arm wrote D unconditionally and clobbered the register on half
             // of the encodings the sweep covers.
+            // C = cccc[{C,Z}], Z = zzzz[{C,Z}]. D[7:4]=cccc, D[3:0]=zzzz.
+            // `modcz _set,0 wc` is D=$F0, WC only: C becomes 1 regardless of
+            // the flags the terminating non-hex digit left behind.
+            Modc | Modz | Modcz => {
+                let idx = ((self.cogs[cog].c as u32) << 1) | self.cogs[cog].z as u32;
+                let cccc = (d >> 4) & 0xF;
+                let zzzz = d & 0xF;
+                if ins.c {
+                    self.cogs[cog].c = (cccc >> idx) & 1 != 0;
+                }
+                if ins.z {
+                    self.cogs[cog].z = (zzzz >> idx) & 1 != 0;
+                }
+            }
             Wrc | Wrnc | Wrz | Wrnz => {
                 let v = match ins.op {
                     Wrc => self.cogs[cog].c,
@@ -2190,6 +2393,33 @@ impl<P: PinBus> Machine<P> {
                     self.set_reg(cog, ins.d, updated);
                 }
             }
+            // ALTB: next D = (S[8:0] + D[13:5]) & $1FF. The following BIT/TESTB
+            // keeps S as the bit index (D[4:0] via S[4:0] of the original
+            // register). The boot ROM's `altb x,#whitechrs` / `testbn 0,x`
+            // walks the 256-bit whitespace table this way.
+            Altb => {
+                let field = (s.wrapping_add((d >> 5) & 0x1FF) & 0x1FF) as u16;
+                self.cogs[cog].alt_d = Some(field);
+                let inc = ((((s >> 9) & 0x1FF) as i32) << 23) >> 23;
+                if inc != 0 && !Self::d_is_literal(ins) {
+                    let updated = (d as i32).wrapping_add(inc) as u32;
+                    self.set_reg(cog, ins.d, updated);
+                }
+            }
+            // ALTGB: next S = (S[8:0] + D[10:2]) & $1FF, next N = D[1:0].
+            // `setd i,#1` plants the auto-increment in i[17:9]; each ALTGB
+            // then walks one byte of the string `i` points at. Transmit of
+            // `Prop_Ver G` is `altgb y,i` / `getbyte z`.
+            Altgb => {
+                let field = (s.wrapping_add((d >> 2) & 0x1FF) & 0x1FF) as u16;
+                self.cogs[cog].alt_s = Some(field);
+                self.cogs[cog].alt_n = Some((d & 3) as u8);
+                let inc = ((((s >> 9) & 0x1FF) as i32) << 23) >> 23;
+                if inc != 0 && !Self::d_is_literal(ins) {
+                    let updated = (d as i32).wrapping_add(inc) as u32;
+                    self.set_reg(cog, ins.d, updated);
+                }
+            }
 
             // ---- control flow
             Jmp => {
@@ -2223,6 +2453,16 @@ impl<P: PinBus> Machine<P> {
                 let ret = Self::next_pc(pc);
                 self.push_ret(cog, ret);
                 self.cogs[cog].pc = self.rel9_target(ins, s, pc);
+                branched = true;
+            }
+            // CALLD D,S: D := next PC, jump to S. Flexspin's `resi1` is
+            // CALLD IJMP1, IRET1 (next interrupt continues after the RESI);
+            // `reti1` is CALLD INB, IRET1 (return and re-enable INT1).
+            Calld => {
+                let ret = Self::next_pc(pc);
+                self.set_reg(cog, ins.d, ret);
+                self.cogs[cog].pc = s;
+                self.cogs[cog].in_int1 = false;
                 branched = true;
             }
             Jmprel => {
@@ -2284,6 +2524,30 @@ impl<P: PinBus> Machine<P> {
                 if ins.c {
                     self.cogs[cog].c = a >> 31 != 0;
                 }
+            }
+            // LOC D,#{\}A — 20-bit address into PA/PB/PTRA/PTRB, selected by
+            // bits 22:21. R (bit 20) is 0 for the absolute `#\` form the stub
+            // uses (`loc ptra,#\@app_longs`); 1 is PC-relative.
+            Loc => {
+                let dest = match (word >> 21) & 3 {
+                    0 => REG_PA,
+                    1 => REG_PB,
+                    2 => REG_PTRA,
+                    _ => REG_PTRB,
+                };
+                let addr = ins.imm & 0xF_FFFF;
+                let v = if (word >> 20) & 1 == 0 {
+                    addr
+                } else {
+                    let disp = ((addr << 12) as i32) >> 12;
+                    let base = Self::next_pc(pc);
+                    if base < HUB_BASE {
+                        (base as i32 + disp / 4) as u32
+                    } else {
+                        (base as i32 + disp) as u32
+                    }
+                };
+                self.set_reg(cog, dest, v);
             }
             Tjz => {
                 if d == 0 {
@@ -2513,7 +2777,7 @@ impl<P: PinBus> Machine<P> {
             //     "jump if event" form never jumps; the "jump if not" form
             //     always does.
             Jct1 | Jct2 | Jct3 => {
-                let now = self.system_clocks() as u32;
+                let now = self.cogs[cog].clocks as u32;
                 let passed = (now.wrapping_sub(self.cogs[cog].ct1) as i32) >= 0;
                 if passed {
                     self.cogs[cog].pc = self.rel9_target(ins, s, pc);
@@ -2521,7 +2785,7 @@ impl<P: PinBus> Machine<P> {
                 }
             }
             Jnct1 | Jnct2 | Jnct3 => {
-                let now = self.system_clocks() as u32;
+                let now = self.cogs[cog].clocks as u32;
                 let passed = (now.wrapping_sub(self.cogs[cog].ct1) as i32) >= 0;
                 if !passed {
                     self.cogs[cog].pc = self.rel9_target(ins, s, pc);
@@ -2541,12 +2805,8 @@ impl<P: PinBus> Machine<P> {
             }
 
             // ---- selectable events
-            Setse1 | Setse2 | Setse3 | Setse4 => {
-                // Configure an event source. This model does not raise the
-                // events, so configuration is inert; the consumers below
-                // report "never happened", which is the correct answer when
-                // nothing on the bus has fired one.
-            }
+            Setse1 => self.cogs[cog].se1_cfg = d,
+            Setse2 | Setse3 | Setse4 => {}
             Pollse1 | Pollse2 | Pollse3 | Pollse4 => {
                 // Poll-and-clear: no event pending, so C/Z report not-set.
                 if ins.c {
@@ -2558,12 +2818,8 @@ impl<P: PinBus> Machine<P> {
             }
 
             // ---- interrupts
-            Setint1 | Setint2 | Setint3 => {
-                // Accepted and inert. Nothing in this model raises an
-                // interrupt, so arming one changes nothing — the boot ROM's
-                // autobaud ISR simply never fires, exactly as it never fires
-                // on hardware when no host is wired to the serial pins.
-            }
+            Setint1 => self.cogs[cog].int1_src = (d & 0xF) as u8,
+            Setint2 | Setint3 => {}
 
             // ---- hub FIFO
             Wrfast | Rdfast => {
@@ -2612,7 +2868,29 @@ impl<P: PinBus> Machine<P> {
             // ---- pins
             Wrpin => self.pins.wrpin((s & 63) as u8, d),
             Wxpin => self.pins.wxpin((s & 63) as u8, d),
-            Wypin => self.pins.wypin((s & 63) as u8, d),
+            Wypin => {
+                let pin = (s & 63) as u8;
+                // Transition smart pin (`%00101`): `WYPIN n` is n pad toggles.
+                // loadp2 clocks SPI this way, in lockstep with the streamer.
+                if self.pins.pin_cfg(pin) & 0x3F == 0x0A {
+                    self.clock_with_streamer(cog, pin, d);
+                } else {
+                    self.pins.wypin(pin, d);
+                }
+            }
+            Setxfrq => {
+                // NCO for the streamer. Functional transfers are clocked by
+                // the transition pin, so the frequency is recorded by being
+                // accepted rather than used.
+            }
+            Xinit | Xzero | Xcont => {
+                self.start_streamer(cog, d, if ins.op == Xzero { 0 } else { s });
+            }
+            Waitxfi => {
+                // The matching `WYPIN` has already produced the edges.
+                self.cogs[cog].streamer.bits_left = 0;
+                self.cogs[cog].streamer.xfi = true;
+            }
             Rdpin | Rqpin => {
                 let (v, busy) = self.pins.rdpin((s & 63) as u8);
                 self.set_reg(cog, ins.d, v);
@@ -2881,6 +3159,8 @@ impl<P: PinBus> Machine<P> {
                     (d as u16 as i16 as i32).wrapping_mul(s as u16 as i16 as i32) as u32
                 };
                 self.wz(cog, ins, prod);
+                // The 32-bit product replaces S of the next instruction.
+                self.cogs[cog].sca_s = Some(prod);
             }
             // BITRND shares opcode %0100110 with `TESTB D,{#}S XORC/XORZ`:
             // silicon picks between them with the C and Z bits, and the

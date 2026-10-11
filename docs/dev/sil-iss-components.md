@@ -532,52 +532,33 @@ run. Speed alternates between 0.10-0.11x when idle and 0.00x whenever the SD is
 busy. The remaining work is the throughput programme above, not another
 correctness hunt.
 
-## The computer node (co-simulation)
+## The host: Chrome on the board's clock, or a PTY
 
-The ISS interprets every instruction, so a run's virtual time falls far
-behind the wall clock (≈0.1× idle, ≈0.002× during SD traffic), and a host
-app that measures its timeouts in wall time — MaD Control's 2 s protocol
-budget — gives up before the firmware has done a few milliseconds of work.
-The answer is not to make the app patient but to put the host on the board:
-`embsim-qemu` runs the app's Chrome inside a QEMU guest (HVF, native speed)
-whose clock only advances while the board's does. The node is a registered
-virtual-clock actor: it parks at every 1 ms slice boundary, the engine
-advances the board that far, the node thaws the guest for the same span of
-wall time, freezes it, and parks again. An in-guest agent answers the
-guest's own `CLOCK_MONOTONIC` once per slice so the books are exact (skew
-stays within a slice or two over any run, no drift). The guest talks to the
-board over an emulated FTDI on the same `HOST.TX`/`HOST.RX` pins the PTY
-used, and the app uses its real Web Serial — the e2e's fake serial is not
-installed in this mode.
+The ISS interprets every instruction, so a run's virtual time falls far behind
+the wall clock (a few percent of real time with the app attached, a fraction
+of that while the firmware works its SD card), and MaD Control's 2 s protocol
+budget is counted on the browser's clock. A browser on the host's own clock,
+behind the emulator's PTY, times out a live board: worthless for asserting,
+and misleading for looking.
 
-Run it: `make vm-image` once, then `make playground-cosim`, serve the app
-with `npm run dev -- --host`, and drive the suite with
-`CDP_URL=http://127.0.0.1:9222 npm run e2e` (Playwright attaches with
-`connectOverCDP`; every wall-clock wait is scaled by `E2E_TIMEOUT_SCALE`,
-default 10, because the guest lives at the board's pace). Scenarios that
-need the fake serial's `__silDropLink` hook (B5, M11) are skipped in this
-mode; the ones that launch their own host Chrome (A1, boot ROM) still do.
+So the browser runs on the board's clock. `mad-emulator --chrome` puts
+embsim's `chrome-cdp` node where the PTY host sits, on the harness's host pins
+(`HOST.TX` to `P2.P53`, `P2.P55` to `HOST.RX`) with its rail wired
+(`HOST.VIO` on the P2's 3.3 V, `HOST.GND` on the bench ground). The node
+launches the host's Chrome at the board's first slice and holds every page and
+dedicated worker to the board's time over DevTools, a 1 ms quantum at a time;
+every page's `navigator.serial` is its shim, whose one port is this line (USB
+`0403:6001`). It is built through embsim's catalog (`embsim_cdp::catalog`,
+the `chrome-cdp` kind), as a project file names it (`SIL/MaDSim/src/host.rs`),
+and a failure it reports (a grant that sticks, a page that crashes, a Chrome
+that exits) stops the run with a non-zero exit. The run prints Chrome's
+DevTools URL in its "reached" line; the e2e suite attaches there
+([SIL testing](sil-testing.md#the-board-route-the-app-in-chrome-on-the-boards-clock)).
 
-What was measured building it, so nobody re-measures it: one freeze/thaw
-costs 0.5 ms of host time; the guest lives the metered window minus a
-constant 0.14 ms with ~3 µs jitter; a zero-length window still lets it live
-~0.3 ms. Under HVF the guest reads the hardware counter directly and QEMU
-only holds an additive offset, so stop/cont is the platform's only time
-primitive — there is no rate scaling short of TCG's `icount`, which is
-refused with hardware virtualisation. Chromium's Web Serial and
-secure-context policies match explicit origins only (`http://10.0.2.2:5174`;
-a bare host or `:*` is ignored), and Chrome's DevTools HTTP endpoint wants
-HTTP/1.1 and may not close the connection. Three more, found by running the
-suite: (1) with Hypervisor.framework's own GIC (QEMU's default on macOS 15+)
-a vCPU that executes `WFI` with no timer pending parks inside `hv_vcpu_run`
-and QEMU's kick does not bring it back, so a QMP `stop` waits in
-`pause_all_vcpus` for an interrupt that never comes — `ChromeGuest` passes
-`-M virt,kernel-irqchip=off` so `WFI` exits to QEMU's own wait (diagnosed
-with `sample <qemu pid>`: `VcpuStateManager::wait_for_interrupt` under
-`Hv::Vcpu::run`); (2) slirp's IPv6 router advertisements land a SLAAC
-address on the guest's NIC minutes after boot and Chrome aborts every load
-in flight with `ERR_NETWORK_CHANGED` — the netdev runs `ipv6=off`; (3) the
-guest's Chrome outlives every scenario, so the harness opens a fresh browser
-context per scenario, or the app remembers its port and data folder from
-the last one and reconnects by itself. Details and the guest image's
-conventions: `SIL/embsim/qemu/` and `SIL/embsim/qemu/guest/chrome/README.md`.
+| Target | Host |
+|---|---|
+| `make playground`, `playground-iss` | Chrome, a window on the app |
+| `make playground-rom` | Chrome, a window on the app's flasher, on the programming UART (`P62`/`P63`, USB `0403:6015`) |
+| `make e2e-emulator`, `make e2e` | Chrome, headless, DevTools on 9222 |
+| `make e2e-rom` | Chrome, headless, the mask ROM on the programming UART (USB `0403:6015`), for FW-ISS |
+| `make playground-pty` | a PTY at `/tmp/tty.iss`, for a serial console |

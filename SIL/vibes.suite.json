@@ -2,6 +2,6 @@
   "v": 1,
   "name": "sil",
   "lang": "rust",
-  "cmd": "cargo test -p models --test behaviour -- --nocapture",
+  "cmd": "cargo test -p models --test behaviour -- --nocapture && cargo test -p p2core --test flash_program -- --nocapture && cargo test -p p2core --test rom_serial -- --nocapture && cargo test -p p2iss --test rom_serial_net -- --nocapture && cargo test -p p2iss --test pulse_schedule -- --nocapture && cargo test -p mad-emulator --bin mad-emulator -- --nocapture",
   "results": "cargo-stdout"
 }

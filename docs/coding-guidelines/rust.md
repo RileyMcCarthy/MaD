@@ -29,22 +29,23 @@ The embsim submodule has the same shape (workspace root at `SIL/embsim/Cargo.tom
 
 There is a hard architectural split, called out in the Cargo comments and crate docs:
 
-- **Generic, reusable `embsim` crates** (`embsim/*`) — know *nothing* about MaD. They simulate a generic MCU: clock, PTY serial, GPIO/encoder/pulse-out peripherals, the `Emulator` builder, DWARF introspection, trace/UI tooling.
-- **MaD-specific consumer crates** — `protocol` (generated wire types, at `Protocol/rust/`), `models` (`SIL/models/`, gantry/sample/strain-gauge physics), and `MaDSim` (the `mad-emulator` binary that wires it all together).
+- **Generic `embsim` crates** (`SIL/embsim`, its own workspace) — a board engine. A part is a node. Pins publish `Drive` and receive `Sense`. Host serial is `HostPty`. The crates know nothing about MaD's protocol or mechanics.
+- **MaD-specific crates** — `protocol` (generated wire types, at `Protocol/rust/`), `models` (`SIL/models/`, gantry/sample/strain-gauge physics), `p2core` / `p2iss` (the instruction-set simulator as a board component), and `MaDSim` (the `mad-emulator` binary that wires the ISS, the bench, and the host PTY).
 
-**Do** keep MaD concepts (steps/mm, ADC calibration, MaD protocol) out of `embsim/*`. The `protocol` crate keeps the codec in its own crate next to the schema, never inside a generic embsim crate (`Protocol/rust/src/lib.rs:1-8`). The wiring header calls `MaDSim/src/wiring.rs` "the project-specific seam" where all MaD constants live (`wiring.rs:1-7`). The `embsim-models` / `models` split mirrors this: reusable device/IC models (e.g. the ADS122U04, `EdgeDetector`) live in `embsim/models`, while project mechanics (gantry/sample/strain gauge) live in `models` (`embsim/models/src/lib.rs:13-14`, `models/src/lib.rs:1-12`).
+**Do** keep MaD concepts (steps/mm, ADC calibration, MaD protocol) out of `embsim/*`. The `protocol` crate keeps the codec in its own crate next to the schema, never inside a generic embsim crate (`Protocol/rust/src/lib.rs:1-8`). The `embsim-models` / `models` split mirrors this: reusable device models (the ADS122U04, the stepper, the end switch) live in `embsim/models`, while project mechanics (gantry/sample/strain gauge) live in `models` (`models/src/lib.rs:1-12`).
 
-**Don't** add a dependency from an `embsim/*` crate onto `protocol` or `models`. Dependencies flow consumer → framework, never the reverse (verified: no `embsim/*` Cargo.toml lists either MaD crate).
+**Don't** add a dependency from an `embsim/*` crate onto `protocol`, `models`, `p2core`, or `p2iss`. Dependencies flow consumer → framework, never the reverse.
 
 ### Crate dependency direction
-Verified from the member `Cargo.toml` files. The `embsim-runtime` crate **defines** the `Platform`/`Machine` traits; the platform crate `embsim-p2` *depends on* `embsim-runtime` to implement `Platform` — the arrow points platform → runtime, not the reverse.
 
 ```
-MaDSim (bin) ──► embsim-runtime ──► embsim-peripherals ──► embsim-core
-   │          ──► embsim-p2 ──────► embsim-runtime (impls its Platform trait)
-   │          ──► embsim-memory-inspect, embsim-trace, embsim-ui (tools)
+MaDSim (bin) ──► p2iss ──► p2core
+   │          ──► embsim-board ──► embsim-core
+   │          ──► embsim-models
    └──► models ──► embsim-models ──► embsim-core
 ```
+
+The emulator executes the `propeller2_debug` image on the ISS. It does not link a host-compiled firmware library.
 
 > `protocol` is a workspace member but **no crate in the workspace depends on it** (not even `MaDSim`). It is a standalone leaf with an empty `[dependencies]` table, built/tested on its own so its generated roundtrip tests stay compiled (`Protocol/rust/Cargo.toml`, `Protocol/rust/src/lib.rs:3-7`). Don't draw a dependency edge into it that doesn't exist.
 
@@ -82,29 +83,26 @@ Every source file opens with a `//!` crate/module doc comment explaining *what i
 (`embsim/core/src/lib.rs:1-6`)
 
 **Conventions:**
-- **`lib.rs` is a thin re-export / module-list hub.** `embsim/core/src/lib.rs` is just `pub mod event; pub mod serial_pty; pub mod virtual_clock;`. Platform crates re-export peripheral modules for convenience: `pub use embsim_peripherals::{encoder, filesystem, gpio, i2c, lock, pulse_out, serial, system, timer};` (`embsim/platforms/p2/src/lib.rs:17`).
-- **Public items get `///` doc comments**, including `# Safety`, `# Panics`, and `# Usage` sections where relevant (see §5, §6). Constants are documented too: `/// Propeller 2 clock frequency (180 MHz).` (`platforms/p2/src/lib.rs:23`).
-- **Banner comments** delimit sections within a module — a fixed `=` rule used consistently:
+- **`lib.rs` is a thin re-export / module-list hub.** `embsim/core/src/lib.rs` is `pub mod event; pub mod serial_pty; pub mod virtual_clock;`. `embsim/board/src/lib.rs` re-exports the drive, sense, and `HostPty` types callers use.
+- **Public items get `///` doc comments**, including `# Safety`, `# Panics`, and `# Usage` sections where relevant (see §5, §6).
+- **Banner comments** delimit sections within a module — a fixed `=` rule:
   ```rust
   // ============================================================
-  // GPIO
+  // Load-cell bridge
   // ============================================================
   ```
-  (`platforms/p2/src/ffi.rs:8-10`). Peripheral modules use the same banners for `Initialization`, `Core API`, `Wiring API`, etc. (`peripherals/src/gpio.rs:26-28, 65-67, 118-120`).
-- **`mod` declarations and `use` blocks go at the top**, `cfg`-gated mods first where applicable (`MaDSim/src/main.rs:1-12` — the two `#[cfg(feature = "web")] mod ...` lines precede the `use` block).
-- Unicode box-drawing (`──`, `├──`, `└──`) is used in doc comments to draw callback/data-flow diagrams (`MaDSim/src/wiring.rs:8-30`). This is idiomatic here — use it for non-trivial wiring.
+  (`MaDSim/src/system_description.rs`).
+- **`mod` declarations and `use` blocks go at the top** (`MaDSim/src/main.rs`).
+- Unicode box-drawing (`──`, `├──`, `└──`) is used in doc comments to draw data-flow diagrams (`p2iss/src/lib.rs`). Use it for a non-trivial seam.
 
 ---
 
 ## 4. Naming, types, derives, traits
 
 - **Standard Rust casing**, applied uniformly: `snake_case` functions/modules/locals, `CamelCase` types/traits, `SCREAMING_SNAKE_CASE` consts/statics.
-  - Consts: `const STEPS_PER_MM: f64 = (4 * 2048) as f64;` (`wiring.rs:45`), `pub const P2_CLOCK_FREQ: u32 = 180_000_000;` (`platforms/p2/src/lib.rs:24`) — note the digit separators.
-  - Statics: `static CHANNEL_COUNT: AtomicUsize` (`peripherals/src/gpio.rs:11`), `static GPIO_STATE: [AtomicBool; MAX_CHANNELS]` (`gpio.rs:14-17`).
-- **FFI functions keep the C name verbatim** — they are *not* renamed to snake_case, because they must match the firmware HAL symbol: `HAL_GPIO_setActive`, `HAL_serial_transmitData` (`platforms/p2/src/ffi.rs`). The firmware also names some functions in their original (mis)spelling — match them exactly, e.g. `HAL_serial_recieveByte` / `HAL_serial_recieveDataTimeout` (`ffi.rs:67,85`). These compile clean; add `#[allow]` only if a lint actually complains.
-- **Zero-sized handle structs** for platforms: `pub struct P2;` with `#[derive(Debug, Clone, Copy, Default)]` (`platforms/p2/src/lib.rs:39-40`). The MaD machine handle is also zero-sized but carries **no derive** — it's a bare `pub struct MadMachine;` (`wiring.rs:48`). Derive only what a type actually needs (see next bullet); don't add derives reflexively.
-- **Derive minimally and explicitly.** Plain data/config structs derive what they need, e.g. `#[derive(Debug, Clone, Default)]` for `PeripheralCounts` (`runtime/src/lib.rs:50`). Generated enums derive `#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]` + `#[repr(u8)]` (`Protocol/rust/src/generated/protoemb.rs:17-18`).
-- **Traits define the consumer seam.** The framework exposes capability via traits the project implements: `Platform` (MCU constants) and `Machine` (project wiring), defined in `embsim/runtime/src/lib.rs:39` and `:69`. Trait methods that have a sane no-op default provide one (`required_symbols` returns `&[]`, `runtime/src/lib.rs:76-78`).
+  - Consts: `pub const SLICE_NS: u64 = 100_000;` (`p2iss/src/lib.rs`) — note the digit separators.
+- **Derive minimally and explicitly.** Generated enums derive `#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]` + `#[repr(u8)]` (`Protocol/rust/src/generated/protoemb.rs`). Derive only what a type uses.
+- **Traits define the consumer seam.** A board part implements `embsim_board::Component` (`pins`, `attach`). The P2 package's core implements `P2Core` (`attach`, `start`, `reset`) when it sits inside `P2Package`. Trait methods that have a sane no-op default provide one.
 - **`impl Default` is written by hand when `new()` is `const`** so a type can back a `static`:
   ```rust
   pub const fn new() -> Self { Self { subs: Mutex::new(Vec::new()) } }
@@ -117,72 +115,15 @@ Every source file opens with a `//!` crate/module doc comment explaining *what i
 
 ---
 
-## 5. FFI & `unsafe`
+## 5. `unsafe`
 
-This is the heart of the SIL layer: the firmware is compiled to `libfirmware.a` and linked in; the platform crate provides the HAL symbols it calls, and the binary calls the firmware entry point.
-
-### `extern "C"` trampolines (firmware → Rust)
-HAL functions are `#[no_mangle] pub unsafe extern "C"` and **delegate immediately** to a safe generic peripheral function. The C side passes `i32` channels; the trampoline **guards the channel and any pointer before touching it**, then narrows to `usize`:
-
-```rust
-#[no_mangle]
-pub unsafe extern "C" fn HAL_serial_transmitData(
-    channel: i32,
-    data: *const u8,
-    len: u32,
-) {
-    if data.is_null() || len == 0 || channel < 0 {
-        return;
-    }
-    let buf = std::slice::from_raw_parts(data, len as usize);
-    serial::transmit_data(channel as usize, buf);
-}
-```
-(`platforms/p2/src/ffi.rs:53-64`)
+The emulator does not link host-compiled firmware and does not provide HAL trampolines. The firmware under test is the P2 image, executed by `p2core`. `unsafe` in the MaD crates is the edge where Rust talks to the OS: the shutdown signal handler in `MaDSim/src/main.rs`, and PTY file descriptors inside embsim's `HostPty`.
 
 **Do:**
-- Keep all `unsafe extern "C"` HAL glue in the platform crate (`embsim/platforms/p2/src/ffi.rs`, `stubs_p2.rs`, `stubs_flexc.rs`). The header of `ffi.rs:1-3` states the rule: "Each function delegates to the generic peripheral implementation in `embsim-peripherals`." Generic crates stay safe and free of `extern "C"`.
-- Reject bad inputs at the boundary (`channel < 0`, null ptr, zero len) and return a safe default — every trampoline in `ffi.rs` does this (scalar-returning ones return `false`/`0`; `HAL_pulseOut_run` returns `true` = "done" on bad input, `ffi.rs:138-139`).
-- Convert raw pointers to slices with `std::slice::from_raw_parts[_mut]` *only after* the null/len guard.
-- Keep the firmware-facing name exact (`_clkset`, `_hubset`, `_reboot` for P2 intrinsics — `stubs_p2.rs:8,12,16`).
+- Keep `unsafe` at that OS edge. A signal handler may only touch async-signal-safe operations (the shutdown handler stores to an atomic) and says so in a `// SAFETY:` comment.
+- Put a `# Safety` section on a public `unsafe fn`, stating the caller's obligation.
 
-**Don't** spread `unsafe` into APP-equivalent logic — the trampoline is the only place the boundary is crossed; everything downstream (`gpio::set_active`, etc.) is safe.
-
-### Calling firmware (Rust → C)
-The entry point is declared and called in the binary:
-```rust
-extern "C" {
-    fn mad_begin();
-}
-// ...
-.entry(|| unsafe { mad_begin() })
-```
-(`MaDSim/src/main.rs:48-49, 77`)
-
-### `# Safety` on public `unsafe fn`
-Public `unsafe` functions that aren't `extern "C"` trampolines carry a `# Safety` doc section stating the caller's obligation:
-```rust
-/// Start a new thread. Returns the thread/core ID (>= 0) or -1 on failure.
-///
-/// # Safety
-/// The function pointer and argument must be valid for the lifetime of the thread.
-pub unsafe fn start_thread(...) -> i32 { ... }
-```
-(`embsim/peripherals/src/system.rs:58-62`). The other files that document `# Safety` are `peripherals/src/filesystem.rs` (`mount`/`umount`, `:20,39`) and `tools/memory-inspect/src/runtime.rs` (`read_bytes`/`read_field`/`read_field_as_f64`, `:123,151,205`) — these are the only three files in the tree that use `# Safety`.
-
-> Note: the HAL `extern "C"` trampolines in `ffi.rs` are `unsafe` but do **not** carry `# Safety` docs — the safety contract is the HAL ABI itself, documented at the module level (`ffi.rs:1-3`). Match that existing pattern: `# Safety` on standalone `unsafe fn` APIs, module-doc justification for the ABI glue.
-
-### Linking the firmware library
-Every emulator binary's `build.rs` defers to `embsim-build`:
-```rust
-fn main() {
-    embsim_build::link_firmware_static(
-        "../../Firmware/MaDCore/.pio/build/native_emulator",
-        "firmware",
-    );
-}
-```
-(`MaDSim/build.rs:14-19`). `link_firmware_static` honors `EMBSIM_FIRMWARE_LIB_DIR` / `EMBSIM_FIRMWARE_LIB_NAME` overrides and emits the `cargo:rustc-link-*` directives (`embsim/build-support/src/lib.rs:42-71`). **Do not** hand-write `cargo:rustc-link-lib` in a member crate — call the helper.
+**Don't** add an `extern "C"` entry point for `mad_begin`, and don't link `libfirmware.a`. A new peripheral is a board component with pins, not a HAL symbol.
 
 ---
 
@@ -229,30 +170,14 @@ impl std::error::Error for EmulatorError {}
 
 ## 7. Concurrency
 
-The emulator runs firmware "cogs" as OS threads, so peripheral state is shared and must be thread-safe by construction.
+A component's `on_sense` callback runs on the engine thread. Anything that callback shares with another thread is `Arc` plus an atomic or a `Mutex`.
 
-- **Module-global peripheral state lives in `static`s** using atomics for hot scalars and `Mutex` for collections:
-  ```rust
-  static CHANNEL_COUNT: AtomicUsize = AtomicUsize::new(0);
-  static GPIO_STATE: [AtomicBool; MAX_CHANNELS] = {
-      const INIT: AtomicBool = AtomicBool::new(false);
-      [INIT; MAX_CHANNELS]
-  };
-  static CALLBACKS: Mutex<Vec<Option<Box<dyn Fn(bool) + Send>>>> = Mutex::new(Vec::new());
-  ```
-  (`peripherals/src/gpio.rs:11-21`). The `Mutex::new(Vec::new())` / `AtomicX::new(..)` / array-of-`const INIT` const-init pattern is required because these are `static`.
-- **Use `Ordering::Relaxed`** for the simple state flags throughout peripherals/models (`gpio.rs`, `models/src/edge.rs:24`). The codebase does not reach for stronger orderings on these single-value cells.
-- **Callbacks are `Box<dyn Fn(T) + Send + 'static>`**; register with `impl Fn(...) + Send + 'static` (`gpio::on_change`, `gpio.rs:133`; `Observers::subscribe`, `event.rs:41`).
-- **Prefer the `Observers<T>` event primitive over a bare callback slot** when more than one sink may listen — its whole reason for existing is that `subscribe` *appends* instead of overwriting, unlike `gpio::on_change` which keeps only one callback per channel (`event.rs:1-11`, `gpio.rs:131-142`). Note its documented contract: the lock is held across observer calls, so **observers must not re-enter the same `Observers`** (`event.rs:64-65`).
-- In the wiring layer, share mutable state across closures via `Arc<Atomic*>` + `Arc::clone`, taking a fresh clone into each `move` closure scope:
-  ```rust
-  let enc_base = Arc::new(AtomicI32::new(0));
-  { let enc_base = Arc::clone(&enc_base); pulse_out::on_start(servo_pulse_out, move |_, _| { enc_base.store(...); }); }
-  ```
-  (`MaDSim/src/wiring.rs:203-214`).
-- **`std::sync::Mutex` is the default** in `embsim-core` and most of `embsim-peripherals` (`event.rs`, `gpio.rs`, `system.rs`). The one deliberate exception is the lock pool: `peripherals/src/lock.rs` uses `parking_lot::Mutex<()>` (`lock.rs:1-6,18-21`), and the `ui`/`trace` tools also use `parking_lot`. `parking_lot` is in `[workspace.dependencies]`; reach for it only where (like `lock.rs`) you need its behavior — otherwise use `std::sync`.
+- **Use `Ordering::Relaxed`** for monotonic counters and flags (`p2iss`'s edge-drop counter, `models/src/edge.rs`). Don't reach for a stronger ordering on a single cell that nothing else synchronizes with.
+- **Callbacks are `impl Fn(...) + Send + 'static`.** `ComponentNetIo::on_sense` and `on_wake_ns` take that shape. `Observers<T>::subscribe` appends (`embsim/core/src/event.rs`). The lock is held across observer calls, so an observer must not re-enter the same `Observers`.
+- Share state into a `move` closure with `Arc::clone` taken before the closure, not by moving the only handle.
+- **`std::sync::Mutex` is the default** (`embsim-core`'s `Observers`, a component's wire state). `parking_lot` stays in the tools that already use it. Reach for it only where that behavior is the point; otherwise use `std::sync`.
 
-> Cross-reference the firmware locking rules in the root `CLAUDE.md` when modeling HAL locks — the emulator mirrors the firmware's cog/lock model (`P2_MAX_COGS = 8`, `P2_MAX_LOCKS = 32`, `platforms/p2/src/lib.rs:27-30`). The `lock.rs` pool is non-recursive on purpose, matching the firmware's non-reentrant HAL locks (`lock.rs:3-4`).
+> HAL locks in the firmware are not reentrant, and a module must not call another module while holding its own lock (root `CLAUDE.md`). A board component follows the same rule: don't call back into the engine in a way that re-enters the callback that is running.
 
 ---
 
@@ -297,8 +222,8 @@ The emulator runs firmware "cogs" as OS threads, so peripheral state is shared a
   ```
   (`embsim/models/src/edge.rs:44-57`). Other inline test modules: `peripherals/src/pulse_out.rs`, `tools/memory-inspect/src/{runtime,types}.rs`.
 - **Doctests double as documentation.** Public primitives carry a runnable ` ``` ` example in their `//!`/`///` docs (`event.rs:13-25`). Mark non-runnable examples ` ```rust,ignore ` (`build-support/src/lib.rs:10`, `runtime/src/lib.rs:16`).
-- **MaDSim has a Chrome-free PTY smoke** at `MaDSim/tests/pty_protocol.rs`: spawn `mad-emulator` on a unique PTY, send a `firmware_version` READ, expect a DATA frame. That is the cheap “firmware linked and answers” check. Product behaviour still lives in `Software/Control/e2e/`.
-- The playground PTY (`/tmp/tty.rpi`) is single-instance — don't run `make playground` / `make e2e-emulator` / `npm run e2e` at the same time. The PTY smoke uses a temp path and can run beside other `cargo test`s.
+- **MaDSim has a Chrome-free PTY smoke** at `MaDSim/tests/pty_protocol.rs`: spawn `mad-emulator` on a unique PTY, send a `firmware_version` READ, expect a DATA frame. It skips when the `propeller2_debug` image is absent. Product behaviour still lives in `Software/Control/e2e/`.
+- `mad-emulator` is single-instance — don't run two of `make playground`, `playground-rom`, `playground-pty`, `e2e-emulator` or `e2e` at the same time. The PTY smoke uses a temp path and can run beside other `cargo test`s.
 - Run Rust tests with `cargo test` from `SIL/` (MaD-side crates) or from `SIL/embsim/` (the framework submodule's own workspace). CI runs both: the `sil-rust` job gates fmt + clippy `-D warnings` + `cargo test` on `SIL/`; the embsim repo's own CI (mirrored by `embsim-ci` / `embsim-pin-ci`) gates the submodule (see §10).
 
 ---
@@ -306,7 +231,7 @@ The emulator runs firmware "cogs" as OS threads, so peripheral state is shared a
 ## 10. Linting & passing checks
 
 > **CI reality check:**
-> - The `sil-rust` job in `.github/workflows/ci.yml` builds `libfirmware.a` + `make protocol`, then **gates** `cargo fmt -p mad-emulator -p models --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace --all-targets`.
+> - The `sil-rust` job in `.github/workflows/ci.yml` builds the `propeller2_debug` image + `make protocol`, then **gates** `cargo fmt -p mad-emulator -p models --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace --all-targets`.
 > - The generated `protocol` crate is **excluded from rustfmt** (`make protocol` rewrites it every build). Clippy allows for template-style lints are scoped to `Protocol/rust/src/lib.rs`, never crate-wide.
 > - The `SIL/embsim` submodule is re-tested here by `embsim-ci` (build/test/doc). Pin bumps also run `embsim-pin-ci`: rustfmt, clippy `-D warnings`, `cargo doc -D warnings`, 5× determinism goldens, cargo-deny, MSRV. Upstream: [RileyMcCarthy/embsim](https://github.com/RileyMcCarthy/embsim).
 
@@ -314,12 +239,12 @@ The emulator runs firmware "cogs" as OS threads, so peripheral state is shared a
 1. **Build clean, warning-free:**
    ```bash
    cd SIL
-   cargo build            # builds the whole workspace (needs libfirmware.a — see below)
-   cargo test             # runs unit + doctests
+   cargo build            # the workspace. The P2 image is a runtime input, not a link input.
+   cargo test             # runs unit + doctests; ISS tests skip when the image is absent
    ```
-   The emulator binary links `libfirmware.a`; build it first or `cargo build` will fail at link time (the `build.rs` panics with an actionable message if the lib is missing):
+   `make test` builds the image first (`pio run -e propeller2_debug`) so those tests actually run:
    ```bash
-   make emulator          # = pio firmware lib + make protocol + cargo build
+   make test              # = make p2image + make protocol + cargo test
    ```
 2. **Format the crates CI checks** before pushing:
    ```bash

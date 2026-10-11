@@ -26,28 +26,26 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use embsim_board::{
-    digital_drive, level_of, AttachError, Component, ComponentNetIo, Level, PinDecl, PinHandle,
-    PinKind,
+    digital_drive, AttachError, Component, ComponentNetIo, DigitalReceiver, Drive, Level, PinDecl,
+    PinHandle, Thresholds,
 };
+use embsim_models::sd_card_component::SD_INPUT_THRESHOLDS_ANY_VDD;
 use p2core::SdCard;
+
+/// The inputs read through the card's own pair: 0.25 / 0.625 × `VDD` (SD
+/// Physical Layer Specification Version 2.00, §6.6.1, Table 6-2, the 3.3 V
+/// range SPI mode uses), made absolute at the corners of its 2.7 V to 3.6 V
+/// supply range — 0.675 V and 2.25 V — because this node declares no supply
+/// pin to scale them against.
+const TH: Thresholds = SD_INPUT_THRESHOLDS_ANY_VDD;
 
 /// Pin names on this component's facade.
 const PINS: [PinDecl; 4] = [
-    decl("CLK", PinKind::DigitalIn),
-    decl("CS", PinKind::DigitalIn),
-    decl("MOSI", PinKind::DigitalIn),
-    decl("MISO", PinKind::DigitalOut),
+    PinDecl::digital_in("CLK", TH),
+    PinDecl::digital_in("CS", TH),
+    PinDecl::digital_in("MOSI", TH),
+    PinDecl::digital_out("MISO").with_idle(None),
 ];
-
-const fn decl(number: &'static str, kind: PinKind) -> PinDecl {
-    PinDecl {
-        number,
-        name: None,
-        kind,
-        stream: None,
-        drive_impedance: None,
-    }
-}
 
 /// A card that answers on the wire.
 pub struct SdCardNode {
@@ -113,11 +111,11 @@ fn drive_miso(wire: &Wire) {
         return;
     };
     if !wire.selected {
-        handle.set_drive(None);
+        handle.release();
         return;
     }
     let bit = wire.out_byte >> (7 - wire.out_count.min(7)) & 1 != 0;
-    handle.set_drive(Some(digital_drive(if bit {
+    handle.drive(Drive::Thevenin(digital_drive(if bit {
         Level::High
     } else {
         Level::Low
@@ -141,8 +139,9 @@ impl Component for SdCardNode {
         // was in a byte — the next selection starts a fresh exchange.
         {
             let (card, wire) = (Arc::clone(&self.card), Arc::clone(&self.wire));
-            io.on_sense("CS", move |state| {
-                let Some(level) = level_of(state) else {
+            let cs = DigitalReceiver::new(io.pin("CS")?);
+            io.on_sense("CS", move |sense| {
+                let Some(level) = cs.read(&sense) else {
                     return;
                 };
                 let selected = level == Level::Low;
@@ -163,8 +162,9 @@ impl Component for SdCardNode {
 
         {
             let wire = Arc::clone(&self.wire);
-            io.on_sense("MOSI", move |state| {
-                if let Some(level) = level_of(state) {
+            let mosi = DigitalReceiver::new(io.pin("MOSI")?);
+            io.on_sense("MOSI", move |sense| {
+                if let Some(level) = mosi.read(&sense) {
                     wire.lock().expect("wire never poisoned").mosi = level == Level::High;
                 }
             })?;
@@ -177,8 +177,9 @@ impl Component for SdCardNode {
                 Arc::clone(&self.wire),
                 Arc::clone(&self.counters),
             );
-            io.on_sense("CLK", move |state| {
-                let Some(level) = level_of(state) else {
+            let clk = DigitalReceiver::new(io.pin("CLK")?);
+            io.on_sense("CLK", move |sense| {
+                let Some(level) = clk.read(&sense) else {
                     return;
                 };
                 let high = level == Level::High;

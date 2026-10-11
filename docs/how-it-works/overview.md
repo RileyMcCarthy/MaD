@@ -19,12 +19,12 @@ flowchart LR
         fw["Firmware<br/>(Propeller 2)"]
     end
     subgraph test["CI / dev laptop"]
-        sil["SIL emulator<br/>(runs the real firmware)"]
+        sil["SIL emulator<br/>(runs the P2 image)"]
     end
 
     app <-->|"Web Serial"| fw
     app <-.->|"Web Serial (fake)"| sil
-    sil -. "links libfirmware.a" .-> fw
+    sil -. "executes the image" .-> fw
 ```
 
 ## The parts
@@ -34,7 +34,7 @@ flowchart LR
 | **Firmware** (`Firmware/MaDCore`) | C | Runs on the Propeller 2; controls the motor, reads the force gauge, executes tests from SD, and speaks the protocol. See [Firmware](firmware.md). |
 | **Control app** (`Software/Control`) | TypeScript + Rust→WASM | The browser app operators use. See [The control app](control-app.md). |
 | **Protocol** (`Protocol/ProtoEmb`) | Python (generator) + Rust | The schema, the code generator, and the host-side runtime. See [Communication protocol](protocol.md). |
-| **SIL** (`SIL/`) | Rust | Compiles the real firmware and runs it on a host with emulated peripherals, for automated tests. See [SIL emulator](sil-emulator.md). |
+| **SIL** (`SIL/`) | Rust | Executes the Propeller 2 image on the instruction-set simulator, with the machine's pins on nets, for automated tests. See [SIL emulator](sil-emulator.md). |
 | **Hardware** (`Hardware/`) | KiCad | The controller PCB and force-gauge addon. See [Hardware](hardware.md). |
 
 ## End-to-end: running a test

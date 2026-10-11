@@ -20,14 +20,6 @@ enum
  *
  * @return int
  */
-#ifdef __EMULATION__
-int main() {
-    setbuf(stdout, NULL);
-    HAL_system_init();
-    mad_begin();
-    return 0;
-}
-#else
 int main()
 {
     HAL_system_init();
@@ -37,4 +29,3 @@ int main()
         ;
     return 0;
 }
-#endif

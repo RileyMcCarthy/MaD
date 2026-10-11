@@ -32,7 +32,7 @@ Per-language coding standards (grounded in this codebase, with the exact lint/ch
 pio run -e propeller2           # Build for hardware
 pio run -e propeller2_debug     # Build with debug serial
 pio run -e propeller2 -t upload # Upload to board
-pio run -e native_emulator      # Build libfirmware.a for SIL (no main.c; Rust is entry + HAL)
+pio run -e propeller2_debug    # P2 image the SIL emulator executes (`make p2image`)
 pio test -e native_test         # Run Unity unit tests
 pio check -e propeller2 --fail-on-defect=medium --fail-on-defect=high  # MISRA/cppcheck (low disabled)
 ```
@@ -57,7 +57,9 @@ make firmware     # Firmware static library only
 make protocol     # Regenerate the Rust codec into ../Protocol/rust/src/generated
 make emulator     # firmware + protocol, then cargo build workspace
 make test         # emulator + `cargo test`
-make playground   # `cargo run --bin mad-emulator` + SD path ./sd, PTY /tmp/tty.rpi (see makefile for flags)
+make playground   # the ISS + MaD Control in a Chrome window on the board's clock (mad-emulator --chrome)
+make e2e          # the e2e suite on that route, headless (SCENARIOS=… selects); e2e-emulator for the board alone
+make playground-pty  # the ISS on a PTY at /tmp/tty.iss, for a serial console (no browser behind it)
 make clean        # Remove build artifacts
 ```
 
@@ -111,12 +113,13 @@ Frontend-only browser PWA — the browser talks straight to the Propeller 2 over
 ### SIL Emulator Architecture
 Rust **Cargo workspace** under `SIL/` (see `SIL/Cargo.toml`; members are the MaD-side crates — `MaDSim`, `models`, and `protocol` (an out-of-tree member living at `Protocol/rust/`, next to its schema). The `embsim/*` crates below live in the `SIL/embsim` submodule, which is its own workspace, and are consumed as path deps):
 
-- **`MaDSim/`** — `mad-emulator` binary: links **`libfirmware.a`** from `pio run -e native_emulator`, calls `mad_begin()`, wires PTY serial, SD path, optional trace HTTP port.
+- **`MaDSim/`** — `mad-emulator` binary: runs the Propeller 2 image on the ISS (`p2iss` / `p2core`), with pins on nets. Its host is `--chrome`, the host's Chrome with every page and worker held to the board's clock by embsim's `chrome-cdp` (the one configuration for the e2e suite and the playground; `src/host.rs`), or a PTY for a serial console.
+- **`embsim/cdp`** — `chrome-cdp`: the host's Chrome on a host's serial pins, metered over DevTools, its Web Serial a shim on the line.
 - **`embsim/core`** — PTY, timing, shared plumbing.
-- **`embsim/peripherals`** — HAL stand-ins (serial, GPIO, pulse trains, encoder, etc.).
+- **`embsim/board`** — the board engine: nets, netlists, and the one interface between a part and the board (`PinDecl` with its role and thresholds, `Drive`, `Sense`).
 - **`protocol`** (at `Protocol/rust/`, next to the schema) — **generated** Rust codec under `src/generated/` (do not hand-edit; `make protocol`). Imported by nothing; exists so the generated code + roundtrip tests stay compiled in `cargo test`.
-- **`embsim/platforms/p2`** — FFI / stubs linking firmware into the emulator.
-- **`embsim/models`** — Physics-style models (e.g. gantry, force path, sampling).
+- **`embsim/boards`** — the P2-EC32MB module from its vendor netlist, and the P2 package a CPU core sits in.
+- **`embsim/models`** — part and machine models (flash, SD card, ADS122U04, stepper, encoder, switches, rails).
 - **`embsim/tools/*`** — trace viewer, memory inspect, UI shell helpers.
 
 End-to-end coverage lives with the app it exercises: `Software/Control/e2e/` drives the shipped app against this emulator.
@@ -145,7 +148,7 @@ git tag hardware-v1.0.0 && git push --tags   # Hardware release
 - **Firmware layer violations**: Do not include or call low-level MCU headers from APP/DEV/IO — go through HAL (and appropriate HW headers only where HAL already depends on them).
 - **Thread safety**: `IO_protocol` and shared protocol/JSON buffers are not casually thread-safe from multiple cogs — use the project locking patterns where applicable.
 - **Locking rules**: `lib_staticQueue` (and Library data structures generally) are unsynchronized — the owning module wraps ops in its own HAL lock when its topology needs one (SPSC use is lock-free by contract). HAL locks are **not reentrant**, and a module must **never call another module's API while holding its own lock** (prevents both self-deadlock and cross-cog ABBA deadlocks).
-- **Native vs P2**: Always exercise `native_emulator` / `native_test`; pointer sizes and timing differ from the Propeller 2.
+- **Native vs P2**: `pio test -e native_test` is the host Unity suite. The emulator runs the `propeller2_debug` image, not a host-compiled firmware library. Pointer sizes still differ; a host unit test does not stand in for a P2 build.
 - **SIL concurrency**: Treat the emulator as single-instance — don't run two emulator-backed suites at once.
 - **G-code**: Profiles/tests that must signal completion to firmware should end appropriately (e.g. **`G122`** where the firmware contract requires it).
 - **Generated code**: Do not hand-edit `Firmware/MaDCore/src/Generated/`, `Software/Control/src/protocol/generated/`, or `Protocol/rust/src/generated/` — change `Protocol/MaDProtocol.yaml` (or templates) and regenerate.

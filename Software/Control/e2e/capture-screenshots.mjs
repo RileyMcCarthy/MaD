@@ -6,11 +6,20 @@
  * screen + key modal into docs/assets/screenshots/. These images are embedded in
  * the docs site (mkdocs) user guide.
  *
- * Prereqs (each in its own terminal), exactly like the e2e suite:
- *   cd SIL && make e2e-emulator        # emulator on /tmp/tty.rpi (unpaced virtual time)
+ * Prereqs (each in its own terminal):
+ *   an emulator behind the bridge   # nothing valid serves it: see below
  *   npm run sil:bridge               # WS bridge on ws://localhost:9999
  *   npm run dev                      # app on http://localhost:5174
  * Then: npm run docs:screenshots
+ *
+ * The emulator behind the bridge was the native firmware library on
+ * /tmp/tty.rpi, and that library is gone. `make e2e-emulator`, which put the
+ * ISS there instead, refuses to run: the ISS behind the bridge is not a valid
+ * SIL configuration (the browser runs at host speed, so its waits measure the
+ * host). So this script has no valid backend until it moves onto the host the
+ * board's clock meters, embsim's `chrome-cdp` (`mad-emulator --chrome`), as
+ * the board-touching e2e scenarios have (`cd SIL && make e2e`); the app on the
+ * board, for a person, is `cd SIL && make playground`.
  *
  * Data-bearing screens (Samples, Motion Profiles, Test Runs, Run Viewer) are
  * populated by seeding realistic profiles + a finished run straight into the
