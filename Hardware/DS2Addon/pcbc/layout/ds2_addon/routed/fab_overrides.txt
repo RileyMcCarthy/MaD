@@ -1,0 +1,7 @@
+# pcbc: the fab's floor for this stackup; KRT must not escalate past it
+via_diameter = 0.5
+via_drill = 0.3
+hole_to_hole = 0.5
+clearance = 0.127
+track_width = 0.127
+board_edge = 0.3

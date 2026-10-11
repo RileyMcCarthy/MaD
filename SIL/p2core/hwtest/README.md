@@ -49,6 +49,10 @@ WAITX on silicon: `getct; waitx N; getct` delta is **N+4** (two GETCTs and
 the WAITX instruction at 2 clocks each, plus N extra). p2core matches that
 exactly. Pin/FIFO/CORDIC/control remain later programs.
 
+**Open:** `LOC`, streamer (`XINIT`/`SETXFRQ`/`WAITXFI`), and transition-pin
+`WYPIN` now run the loadp2 flash stub on the ISS, but have no P2-EVAL golden.
+Capture plan: [#109](https://github.com/RileyMcCarthy/MaD/issues/109).
+
 ## Record format (probe)
 
 ```

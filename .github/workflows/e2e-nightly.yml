@@ -1,74 +1,63 @@
-# Nightly e2e on the ISS: the shipped FlexC image, and a real browser.
+# Nightly e2e on the board: the whole suite, on the route the per-PR
+# `control-e2e-board` job (ci.yml) runs a subset of.
 #
-# ONE configuration, deliberately. This workflow used to carry a second job
-# running the native firmware library behind the WS/PTY bridge -- the same
-# thing ci.yml's `control-e2e-sil` gates on every PR. Re-running it here only
-# repeated per-PR coverage a few hours later, so it is gone: what a nightly
-# run is for is the configuration a PR cannot afford, and that is this one.
+# ONE configuration, deliberately: the only one a browser belongs in. The
+# shipped P2 image (propeller2_debug, compiled by flexcc) is interpreted by
+# the ISS, and MaD Control runs in the runner's own Chrome, every page and
+# dedicated worker held to the board's clock by embsim's `chrome-cdp` node
+# (`mad-emulator --chrome`), its Web Serial port the board's protocol line.
+# Every budget in the suite is board time; host time is printed, never
+# asserted. No image, no VM.
 #
-# `control-e2e-sil` in ci.yml still runs the FULL suite on every app/protocol/
-# firmware/SIL change and GATES (it is in `ci-gate.needs`). ci.yml is the
-# source of truth for which jobs gate; do not infer it from here. Native
-# coverage is therefore not lost by the removal above -- only its nightly
-# repeat is.
+# Not per-PR because a PR cannot afford it: the ISS runs at a few percent of
+# real time, so the whole suite is hours of host time (PR #155 measured it
+# locally). ci.yml is the source of truth for which jobs gate; do not infer
+# it from here.
 #
-# Use `workflow_dispatch` with suite=full to run the whole suite instead of
-# the smoke subset.
+# The node's Chrome canary runs first: embsim-cdp's real-Chrome case in which
+# a dedicated worker's 4 ms timer must tick once every four 1 ms grants. It
+# fails if the runner's Chrome stops honouring virtual time on worker
+# sessions (Chrome's `Emulation` on workers is undocumented), which would put
+# the app's worker, and its 2 s response timeout, back on host time.
 #
-# WHAT STILL DOES NOT TOUCH THE BOARD, in this job or any other. Nine
-# scenarios -- A1 and FW1/2/3/5/6/7/8/9 -- call `chromium.launch` directly and
-# drive a HOST Chrome against in-page fakes (installFakeBootRom,
-# installOpfsDataDir). They never reach an emulator of either kind, so they
-# run identically here and under the bridge.
+# WHAT STILL DOES NOT TOUCH THE BOARD: A1 and FW1/2/3/5/6/7/8/9 drive a host
+# Chrome against in-page fakes (installFakeBootRom, installOpfsDataDir); they
+# run here and in `control-e2e-boardless` alike. FW-ISS runs in a step of
+# its own, on the ROM board (`mad-emulator --boot-rom --chrome`, make e2e-rom).
 #
-# FW1's comment gives the reason: "the emulator has no P2 boot ROM and the WS
-# bridge carries no DTR line". Half of that is now stale -- p2iss boots the
-# chip through the real ROM and a flash that is a net component
-# (SIL/p2iss/tests/rom_boot_net.rs). The other half is not: nothing in p2iss,
-# embsim/qemu or embsim/peripherals models DTR, so the guest's emulated FTDI
-# has no way to drive the P2's reset line and a real flash cannot be
-# performed. Moving the FW scenarios onto the ISS means modelling that line,
-# not flipping a flag.
-#
-# Three more -- B5-reconnect, M11-idle-drop, M11-mid-test-drop -- are skipped
-# outright under CDP: they sever the link with the fake serial's
-# `__silDropLink`, and a real port has nothing to reach in and sever. The
-# equivalent here would be a QMP `device_del` on the USB serial device.
+# Use `workflow_dispatch` with suite=smoke to run e2e/smoke-ids.txt instead.
 
-name: E2E nightly (ISS + QEMU)
+name: E2E nightly (ISS + chrome-cdp)
 
 on:
   schedule:
-    # 06:17 UTC daily
     - cron: '17 6 * * *'
   workflow_dispatch:
     inputs:
       suite:
-        description: 'smoke | full'
+        description: 'full | smoke'
         required: true
-        default: 'smoke'
+        default: 'full'
         type: choice
         options:
-          - smoke
           - full
+          - smoke
 
 concurrency:
   group: e2e-nightly-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  cosim-iss-qemu:
-    name: E2E on the ISS (FlexC image + QEMU guest)
+  board:
+    name: E2E on the ISS (FlexC image + chrome-cdp)
     runs-on: ubuntu-latest
-    timeout-minutes: 180
-    defaults:
-      run:
-        working-directory: Software/Control
+    # GitHub's ceiling for a hosted job. The whole suite was about three hours
+    # of host time locally (PR #155); a runner is slower.
+    timeout-minutes: 360
     steps:
       - uses: actions/checkout@v7
         with:
           submodules: recursive
-
       - uses: actions/setup-node@v7
         with:
           node-version: 20
@@ -79,149 +68,113 @@ jobs:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: SIL
+          workspaces: |
+            SIL
+            SIL/embsim
       - uses: actions/setup-python@v7
         with:
-          python-version: '3.x'
-
-      - name: Install system deps (QEMU x86_64 + qemu-img)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libudev-dev pkg-config qemu-system-x86 qemu-utils
-
-      # embsim picks its accelerator by OPENING /dev/kvm read-write
-      # (embsim/qemu/src/chrome.rs). The node exists on GitHub-hosted Linux
-      # runners but is root:kvm 0660, so without this the guest silently falls
-      # back to TCG and then fails to boot inside the warmup timeout — a
-      # failure that looks like a hang rather than a permissions problem.
-      - name: Make /dev/kvm usable
-        run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
-            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-          ls -l /dev/kvm
-          test -w /dev/kvm || {
-            echo "::error::/dev/kvm is not writable — the guest would run under TCG and time out"
-            exit 1
-          }
-
+          python-version: '3.11'
       - name: Install PlatformIO + protocol generator deps
-        run: |
-          pip install -U platformio
-          pip install -r ../../Protocol/ProtoEmb/core/requirements.txt
-
+        run: pip install --upgrade platformio pyyaml jinja2
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      # Ubuntu 24.04 restricts unprivileged user namespaces, which Chrome's
+      # sandbox uses (embsim's own chrome-cdp job does the same).
+      - name: Let Chrome's sandbox make its namespaces
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+      - name: Which Chrome
+        run: google-chrome --version
 
+      # The node's canary on this runner's Chrome, from the pinned embsim.
+      - name: The node's Chrome canary (a worker on the board's clock)
+        working-directory: SIL/embsim
+        env:
+          CHROME: /usr/bin/google-chrome
+        run: >-
+          cargo test -p embsim-cdp --test real_chrome --
+          --ignored --nocapture --test-threads 1
+          a_workers_four_millisecond_timer_ticks_once_every_four_grants
+
+      # Install the platform before the first pio build: a fresh install
+      # changes PlatformIO's project checksum, which cleans .pio/build.
       - name: Install the Propeller platform (flexcc/flexspin)
         working-directory: Firmware/MaDCore
         run: pio pkg install --platform https://github.com/RileyMcCarthy/platform-propeller.git
-
-      # Two artifacts, both required: the P2 image is what the ISS interprets,
-      # and libfirmware.a is what MaDSim LINKS — the binary will not build
-      # without it even though --iss never calls into it.
-      - name: Build the P2 image + native lib + protocol
-        working-directory: SIL
-        run: make p2image firmware protocol
-
-      # --release is not optional. The ISS interprets every P2 instruction and
-      # a dev-profile build is far too slow to reach the guest's warmup
-      # deadline (see the note on playground-iss in SIL/makefile).
+      - name: Build the P2 image the ISS interprets
+        working-directory: Firmware/MaDCore
+        run: pio run -e propeller2_debug
+      # --release is not optional: the ISS interprets every P2 instruction.
       - name: Build mad-emulator (release)
         working-directory: SIL
-        run: cargo build --release --bin mad-emulator
-
+        run: |
+          make protocol
+          cargo build --release --bin mad-emulator
       - name: Install Control deps + wasm + proto
+        working-directory: Software/Control
         run: |
           npm ci
           npm run build:wasm
           npm run generate:proto
-
-      # A handful of scenarios (A1, the FW* firmware-flash ones) still drive a
-      # HOST Chrome with in-page fakes and never touch the board.
+      # A1 and the FW scenarios launch a host Chrome (`channel: 'chrome'`);
+      # this brings in the shared libraries Playwright's driver needs.
       - name: Install Chromium for Playwright
+        working-directory: Software/Control
         run: npx playwright install --with-deps chromium
 
-      # ~2.8 GB and tens of minutes to provision, and it changes only when
-      # build.sh or the guest config does — so it is keyed on their hashes and
-      # rebuilt only on a miss.
-      - name: Restore the Chrome guest image
-        id: guest
-        uses: actions/cache@v6
-        with:
-          path: ~/.cache/embsim/qemu/chrome-debian13-x86_64.qcow2
-          key: embsim-guest-x86_64-${{ hashFiles('SIL/embsim/qemu/guest/chrome/**') }}
-
-      - name: Build the Chrome guest image
-        if: steps.guest.outputs.cache-hit != 'true'
-        working-directory: SIL/embsim
-        run: ARCH=x86_64 qemu/guest/chrome/build.sh
-
-      # The board starts the guest and parks; the DevTools port answers only
-      # once the board is slicing the guest's vCPU, and then only during the
-      # guest's duty cycle — so this polls patiently rather than assuming a
-      # fixed boot time.
-      - name: Start the cosim (ISS + QEMU guest) and Vite
+      # scripts/board-route.sh starts the dev server, then for each scenario
+      # a fresh board with a headless Chrome on its clock (DevTools on 9222),
+      # waits for the run's "reached" line, runs that scenario attached there,
+      # and stops the board. One board each, so the node's occasional stall
+      # while the app's worker boots (ci.yml, control-e2e-board) costs one
+      # scenario, not the rest of the night.
+      - name: Run the suite on the ISS
         working-directory: SIL
-        run: |
-          nohup cargo run --release --bin mad-emulator -- \
-            --iss ../Firmware/MaDCore/.pio/build/propeller2_debug/program \
-            --computer "$HOME/.cache/embsim/qemu/chrome-debian13-x86_64.qcow2" \
-            --devtools-port 9222 --trace-port 9223 --sd-path ./sd --pty-path /tmp/tty.iss \
-            --log-level info > /tmp/cosim-board.log 2>&1 &
-          echo $! > /tmp/cosim-board.pid
-          cd ../Software/Control
-          nohup npm run dev -- --host 0.0.0.0 --port 5174 > /tmp/cosim-vite.log 2>&1 &
-          echo $! > /tmp/cosim-vite.pid
-          for i in $(seq 1 60); do
-            curl -sf http://127.0.0.1:5174/ >/dev/null && break
-            sleep 2
-          done
-          curl -sf http://127.0.0.1:5174/ >/dev/null || {
-            echo "=== vite log ==="; cat /tmp/cosim-vite.log || true; exit 1
-          }
-          for i in $(seq 1 150); do
-            if curl -sf --max-time 10 http://127.0.0.1:9222/json/version >/dev/null 2>&1; then
-              echo "Guest Chrome answered CDP after ~$((i * 4))s"
-              break
-            fi
-            sleep 4
-          done
-          curl -sf --max-time 20 http://127.0.0.1:9222/json/version || {
-            echo "=== board log (tail) ==="; tail -100 /tmp/cosim-board.log || true; exit 1
-          }
-
-      # The guest reaches the host's Vite at 10.0.2.2 over slirp, and the
-      # guest's managed Chromium policy whitelists exactly that origin for
-      # Web Serial — the port number is not negotiable without rebuilding the
-      # guest image.
-      - name: Run the suite against the ISS
         env:
-          CDP_URL: http://127.0.0.1:9222
-          APP_URL: http://10.0.2.2:5174
-          # The board's control surface: the three link-drop scenarios ask it
-          # to unplug the emulated FTDI, which is a real USB detach.
-          CONTROL_URL: http://127.0.0.1:9223
+          CHROME: /usr/bin/google-chrome
+          BOARD_LOGS: /tmp/e2e-out
+          BOARD_PER_SCENARIO: '1'
+          E2E_TIMINGS: /tmp/e2e-out/timings.json
         run: |
-          SUITE="${{ github.event.inputs.suite || 'smoke' }}"
-          if [ "$SUITE" = "full" ]; then
-            npm run e2e
-          else
-            npm run e2e:smoke
+          SUITE="${{ github.event.inputs.suite || 'full' }}"
+          if [ "$SUITE" = "smoke" ]; then
+            export SCENARIOS=$(grep -v -e '^#' -e '^[[:space:]]*$' ../Software/Control/e2e/smoke-ids.txt | paste -sd, -)
           fi
+          scripts/board-route.sh e2e
 
+      # FW-ISS: the app's flasher against the ISS booting the mask ROM, on
+      # the programming UART (make e2e-rom).
+      - name: Run FW-ISS on the ROM board
+        if: always()
+        working-directory: SIL
+        env:
+          CHROME: /usr/bin/google-chrome
+          BOARD_LOGS: /tmp/e2e-out/rom
+          P2_IMAGE: p2iss/rom/rom_booter_v33k.bin
+          BOARD_ARGS: --boot-rom --usb-product-id 0x6015
+          E2E_BOARD: rom
+          SCENARIOS: FW-ISS
+        run: scripts/board-route.sh e2e
+
+      - name: Timings
+        if: always()
+        run: |
+          node -e '
+            const fs = require("fs");
+            let t; try { t = JSON.parse(fs.readFileSync("/tmp/e2e-out/timings.json", "utf8")); } catch { process.exit(0); }
+            const rows = t.timings.map((r) => `| ${r.id} | ${r.verdict} | ${r.hostS.toFixed(1)} | ${r.boardS === null ? "–" : r.boardS.toFixed(3)} |`);
+            const out = ["| scenario | verdict | host s | board s |", "|---|---|---|---|", ...rows].join("\n");
+            console.log(out);
+            if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, out + "\n");
+          '
       - name: Collect diagnostics
         if: always()
         run: |
-          mkdir -p /tmp/cosim-out
-          cp /tmp/cosim-board.log /tmp/cosim-vite.log /tmp/cosim-out/ 2>/dev/null || true
-          cp -r e2e/artifacts /tmp/cosim-out/scenario-artifacts 2>/dev/null || true
-
+          mkdir -p /tmp/e2e-out
+          cp -r Software/Control/e2e/artifacts /tmp/e2e-out/scenario-artifacts 2>/dev/null || true
       - name: Upload logs + failure artifacts
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: cosim-iss-qemu-${{ github.run_number }}
-          path: /tmp/cosim-out
+          name: e2e-nightly-board-${{ github.run_number }}
+          path: /tmp/e2e-out
           retention-days: 14

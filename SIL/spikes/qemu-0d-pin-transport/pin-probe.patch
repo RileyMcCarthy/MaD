@@ -1,0 +1,56 @@
+diff --git a/target/riscv/helper.h b/target/riscv/helper.h
+index f712b1c..175b6cb 100644
+--- a/target/riscv/helper.h
++++ b/target/riscv/helper.h
+@@ -123,6 +123,8 @@ DEF_HELPER_2(cbo_zero, void, env, tl)
+ 
+ /* Special functions */
+ DEF_HELPER_2(csrr, tl, env, int)
++/* SPIKE: P2 pin-op-shaped probe helper (no TB end) */
++DEF_HELPER_3(p2probe, void, env, tl, tl)
+ DEF_HELPER_3(csrw, void, env, int, tl)
+ DEF_HELPER_4(csrrw, tl, env, int, tl, tl)
+ DEF_HELPER_2(csrr_i128, tl, env, int)
+diff --git a/target/riscv/insn_trans/trans_rvi.c.inc b/target/riscv/insn_trans/trans_rvi.c.inc
+index b9c7160..6fcff96 100644
+--- a/target/riscv/insn_trans/trans_rvi.c.inc
++++ b/target/riscv/insn_trans/trans_rvi.c.inc
+@@ -944,8 +944,16 @@ static bool trans_pause(DisasContext *ctx, arg_pause *a)
+ 
+ static bool trans_fence(DisasContext *ctx, arg_fence *a)
+ {
+-    /* FENCE is a full memory barrier. */
+-    tcg_gen_mb(TCG_MO_ALL | TCG_BAR_SC);
++    /*
++     * SPIKE: hijacked as a pin-op probe -- emits a helper call and does NOT
++     * end the translation block, which is exactly the shape design rule 1/2
++     * proposes for P2 WRPIN/RDPIN/TESTP. The barrier is dropped; nothing in
++     * the probe guests relies on it.
++     */
++    /* t0/t1 stand in for a pin number and a value, so the call marshals two
++     * real register operands the way a WRPIN would. */
++    gen_helper_p2probe(tcg_env, get_gpr(ctx, 5, EXT_NONE),
++                       get_gpr(ctx, 6, EXT_NONE));
+     return true;
+ }
+ 
+diff --git a/target/riscv/op_helper.c b/target/riscv/op_helper.c
+index 110292e..bbf6392 100644
+--- a/target/riscv/op_helper.c
++++ b/target/riscv/op_helper.c
+@@ -718,3 +718,15 @@ target_ulong helper_hyp_hlvx_wu(CPURISCVState *env, target_ulong addr)
+ }
+ 
+ #endif /* !CONFIG_USER_ONLY */
++
++/*
++ * SPIKE: shaped like a P2 pin op reaching the host model. Deliberately
++ * out-of-line and side-effecting so the compiler cannot elide it, but it does
++ * no real work -- this measures the CALL, not the model.
++ */
++uint64_t qemu_p2probe_sink;
++
++void helper_p2probe(CPURISCVState *env, target_ulong pin, target_ulong val)
++{
++    qemu_p2probe_sink += (uint64_t)pin ^ ((uint64_t)val << 1);
++}

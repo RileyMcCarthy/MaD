@@ -23,11 +23,9 @@ commands run from `Firmware/MaDCore/`.
 cd Firmware/MaDCore
 
 pio run -e propeller2              # production hardware build
-pio run -e propeller2_debug       # hardware build with debug serial
+pio run -e propeller2_debug       # debug serial; this image is what the SIL emulator executes
 pio run -e propeller2 -t upload   # flash a connected board
-
-pio run -e native_emulator        # build libfirmware.a for SIL (gcc, native)
-pio test -e native_test           # run Unity unit tests
+pio test -e native_test           # Unity unit tests on the host, against a mock HAL
 pio check                         # MISRA C:2023 + CERT static analysis
 ```
 
@@ -36,13 +34,8 @@ pio check                         # MISRA C:2023 + CERT static analysis
 | Environment | Compiler | Purpose |
 |---|---|---|
 | `propeller2` | FlexC | Production hardware build |
-| `propeller2_debug` | FlexC | Hardware build with `ENABLE_DEBUG_SERIAL=1` |
-| `native_emulator` | gcc | Compiles firmware as `libfirmware.a` for the [SIL emulator](../how-it-works/sil-emulator.md) |
-| `native_test` | gcc | Unity unit tests |
-
-The `native_emulator` build **excludes** the `HAL/` and `HW/` layers (the emulator
-provides its own HAL) and `Main/main.c` (the emulator calls `mad_begin()` from
-`Main/MaD.c` directly). The output `libfirmware.a` is what the Rust emulator links.
+| `propeller2_debug` | FlexC | Hardware build with `ENABLE_DEBUG_SERIAL=1`. This image is what the [SIL emulator](../how-it-works/sil-emulator.md) executes. |
+| `native_test` | gcc | Unity unit tests. `test/mock_propeller2.c` stands in for the HAL; `HAL/P2/` is not compiled. |
 
 ## Code generation runs automatically
 
@@ -52,9 +45,9 @@ the generator by hand for firmware builds — but see
 [Protocol & code generation](protocol-codegen.md) if you change the schema.
 
 !!! warning "Native vs. Propeller 2"
-    Always exercise both `native_emulator`/`native_test` **and** a real
-    `propeller2` build: pointer sizes and timing differ between the host and the
-    P2, and a change that's clean on one can break the other.
+    Run `pio test -e native_test` **and** a real `propeller2` build: pointer
+    sizes and timing differ between the host and the P2, and a change that's
+    clean on one can break the other. The emulator runs the P2 image.
 
 ## Flashing notes
 

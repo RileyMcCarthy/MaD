@@ -1,17 +1,9 @@
 //! The MaD board, described for the ISS.
 //!
-//! `system_description.rs` describes the same machine for the *native*
-//! backend, and the two cannot share a description because they speak
-//! different languages: the native one is keyed by HAL channel number and
-//! DWARF symbol, because it substitutes the HAL; this one is keyed by **pin**,
-//! because the ISS executes the firmware's real `WRPIN`/`DIR`/`OUT` and a pin
-//! is all it has.
-//!
-//! That difference is the point. Under the native backend a wrong `activeLow`
-//! in `HAL_GPIO_config.c` is invisible — the substituted HAL applies the
-//! inversion on both sides. Here the firmware applies it and the bench does
-//! not, so the polarity has to be right on the wire or the machine reads its
-//! own ESD lines as tripped.
+//! Keyed by pin, because the ISS executes the firmware's real `WRPIN`/`DIR`/`OUT`
+//! and a pin is all it has. The firmware applies `activeLow` itself and the
+//! bench does not, so the polarity has to be right on the wire or the machine
+//! reads its own ESD lines as tripped.
 
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
@@ -19,7 +11,7 @@ use std::sync::Arc;
 use embsim_board::netlist;
 use embsim_board::{
     AttachError, Board, Component, ComponentNetIo, EndpointRef, Harness, JumperState, Level,
-    PartRegistry, PinDecl, PinKind, Scenario, System, TheveninDrive,
+    PartRegistry, PinDecl, Scenario, System, TheveninDrive,
 };
 use embsim_models::ads122u04;
 use embsim_models::ads122u04_component::Ads122u04Component;
@@ -123,9 +115,12 @@ const PULL_OHMS: f64 = 15_000.0;
 
 /// The bench pull network: one weak resistor per input, to its idle rail.
 ///
-/// Without it every unconnected input floats, `level_of` returns `None`, and
+/// Without it every unconnected input floats, the receiver reads no level, and
 /// the adapter holds whatever it last saw — which at boot is low, i.e. all
 /// three active-low ESD lines reading *asserted*.
+///
+/// Each pull is its pin's declared idle drive, so the board stamps it from
+/// build and nothing publishes it at attach.
 pub struct BenchPulls {
     pins: Vec<PinDecl>,
     pulls: Vec<(u8, Level)>,
@@ -136,12 +131,14 @@ impl BenchPulls {
         Self {
             pins: pulls
                 .iter()
-                .map(|(pin, _)| PinDecl {
-                    number: p2iss::pin_name(*pin),
-                    name: None,
-                    kind: PinKind::Analog,
-                    stream: None,
-                    drive_impedance: None,
+                .map(|(pin, level)| {
+                    PinDecl::analog_source(p2iss::pin_name(*pin)).with_idle(Some(TheveninDrive {
+                        volts: match level {
+                            Level::High => 3.3,
+                            Level::Low => 0.0,
+                        },
+                        impedance: PULL_OHMS,
+                    }))
                 })
                 .collect(),
             pulls: pulls.to_vec(),
@@ -165,17 +162,7 @@ impl Component for BenchPulls {
         &self.pins
     }
 
-    fn attach(&mut self, io: ComponentNetIo) -> Result<(), AttachError> {
-        for (pin, level) in &self.pulls {
-            let handle = io.pin(p2iss::pin_name(*pin))?;
-            handle.set_drive(Some(TheveninDrive {
-                volts: match level {
-                    Level::High => 3.3,
-                    Level::Low => 0.0,
-                },
-                impedance: PULL_OHMS,
-            }));
-        }
+    fn attach(&mut self, _io: ComponentNetIo) -> Result<(), AttachError> {
         Ok(())
     }
 }
@@ -206,13 +193,11 @@ impl BenchForcePath {
     pub fn build() -> Self {
         let mut registry = PartRegistry::new();
         registry.register("ADS122U04", |_decl| {
-            // Ratiometric, matching the firmware's own config: VREF = AVDD =
-            // the bridge excitation, PGA gain 128, so the excitation cancels.
-            Box::new(Ads122u04Component::new(ads122u04::Config {
-                vref_mv: 1_000.0 * BRIDGE_EXCITATION_V,
-                gain: 128.0,
-                zero_offset: 0,
-            }))
+            // The converter starts as the chip leaves reset and takes its gain
+            // and reference from the register writes the firmware sends over
+            // its own pins (embsim 0.3.0): gain 128 against AVDD, the bridge
+            // excitation, so the excitation cancels as it does on the bench.
+            Box::new(Ads122u04Component::new(ads122u04::Config::default()))
         });
         let ds2 = Board::from_netlist(
             netlist::parse(DS2_NETLIST).expect("committed DS2 Addon netlist parses"),
@@ -513,7 +498,8 @@ impl BenchSd {
 }
 
 /// The 15 kΩ pull-up `sdmm.cc` asks the receive pin for
-/// (`P_HIGH_15K | P_LOW_15K`), as a bench part on the shared net.
+/// (`P_HIGH_15K | P_LOW_15K`), as a bench part on the shared net: the pin's
+/// declared idle drive, stamped from build.
 pub struct MisoPullUp {
     pins: [PinDecl; 1],
 }
@@ -521,13 +507,10 @@ pub struct MisoPullUp {
 impl MisoPullUp {
     pub fn new() -> Self {
         Self {
-            pins: [PinDecl {
-                number: "A",
-                name: None,
-                kind: PinKind::Analog,
-                stream: None,
-                drive_impedance: None,
-            }],
+            pins: [PinDecl::analog_source("A").with_idle(Some(TheveninDrive {
+                volts: BRIDGE_EXCITATION_V,
+                impedance: 15_000.0,
+            }))],
         }
     }
 }
@@ -543,11 +526,7 @@ impl Component for MisoPullUp {
         &self.pins
     }
 
-    fn attach(&mut self, io: ComponentNetIo) -> Result<(), AttachError> {
-        io.pin("A")?.set_drive(Some(TheveninDrive {
-            volts: BRIDGE_EXCITATION_V,
-            impedance: 15_000.0,
-        }));
+    fn attach(&mut self, _io: ComponentNetIo) -> Result<(), AttachError> {
         Ok(())
     }
 }
