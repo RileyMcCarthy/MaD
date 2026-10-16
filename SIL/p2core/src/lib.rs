@@ -2613,7 +2613,14 @@ impl<P: PinBus> Machine<P> {
                 }
             }
             Qsqrt => {
-                self.cogs[cog].qx = (d as f64).sqrt() as u32;
+                // QSQRT D,S roots the 64-bit {S, D}: S is the UPPER long.
+                // FlexC's float sqrtf hands the mantissa over as S
+                // (`_sqrt64(0, m)` is `qsqrt 0, m`) and reads a 1.30 root
+                // back, so a root of D alone returned 0 and every sqrtf
+                // came back as a bare power of two (sqrtf(0.79) = 0.5).
+                // Exact in integers: an f64 cannot hold every 64-bit radicand.
+                let radicand = ((s as u64) << 32) | d as u64;
+                self.cogs[cog].qx = radicand.isqrt() as u32;
             }
             Qrotate => {
                 let theta = (s as f64) * std::f64::consts::TAU / 4_294_967_296.0;
