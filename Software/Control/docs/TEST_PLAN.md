@@ -56,9 +56,13 @@ Built on `e2e/fixtures.mjs`. On the board route (`CDP_URL` set) it attaches to
 the Chrome `mad-emulator --chrome` launched, makes a fresh browser context per
 scenario and its page at about:blank, and installs no serial fake: the node's
 shim is `navigator.serial`, its one port the board's protocol line. It overrides
-`showDirectoryPicker` to return an **OPFS** directory. Every budget is board
-time (`waitFor` timeouts, `waitPageTime`, `pageClock`), clicks go through
-`press()` (visible, enabled, `elementFromPoint` at the centre, then a forced
+`showDirectoryPicker` to return an **OPFS** directory. That context is off the
+record, so Chrome holds its OPFS in memory and deletes its files, keeping the
+directories, once nothing touches them for 9 to 13 minutes of host time.
+`keepOpfsAlive` (fixtures.mjs) walks the folder once a host minute while the
+page lives; on the board M12-linear-10mm-1 takes 10 to 12 host minutes.
+Every budget is board time (`waitFor` timeouts, `waitPageTime`, `pageClock`),
+clicks go through `press()` (visible, enabled, `elementFromPoint` at the centre, then a forced
 click: Playwright's "stable" check waits on animation frames, which barely run on
 virtual time), and the link drops pull the node's cable (`__embsim.link`).
 
