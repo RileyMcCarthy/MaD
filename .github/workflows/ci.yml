@@ -461,8 +461,9 @@ jobs:
           SCENARIOS: B1+C1,F7,F1+F2,B2+B3+B4,C3+C4,D1,G1,G2+G3+H2+I,NAV,B5-reconnect,M11-idle-drop
         run: scripts/board-route.sh e2e
       # The same route with `vite preview` serving the bundle (APP_DIST) in
-      # place of the dev server: connect, samples, machine state, unplug and
-      # replug. It runs whenever the subset ran, passed or failed.
+      # place of the dev server: connect, samples, machine state, unplug, and
+      # replug with the app reconnecting by itself. It runs whenever the
+      # subset ran, passed or failed.
       - name: Run the shipped bundle on the ISS
         if: ${{ !cancelled() && (steps.subset.outcome == 'success' || steps.subset.outcome == 'failure') }}
         working-directory: SIL

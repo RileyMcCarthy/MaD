@@ -2221,8 +2221,10 @@ const scenarios = [
   // Every check below needs the worker's events to reach the page.
   {
     id: 'BUNDLE-live',
-    name: 'The built bundle: connect, live samples and state, unplug and replug',
+    name: 'The built bundle: connect, live samples and state, unplug, replug and reconnect by itself',
     async run() {
+      // The replug below is the board's own cable; only the board route has one.
+      assert(BOARD, 'BUNDLE-live runs on the board route (SIL/scripts/board-route.sh with APP_DIST)');
       const html = await (await fetch(APP_URL_HOST)).text();
       assert(!html.includes('/@vite/client'), `the app at ${APP_URL_HOST} is the dev server, not a built bundle`);
       const { browser, page, errors } = await newSilPage();
@@ -2244,11 +2246,18 @@ const scenarios = [
         assert(/^-?\d/.test(forceText), `live readout never populated (got ${forceText})`);
         // Machine state: the Test badge reads '—' until a state frame arrives.
         await page.getByText(/^Test: (idle|running)$/).waitFor({ timeout: DEVICE_WAIT_MS });
-        // Unplug: the disconnect reaches the screen. Replug: samples resume.
+        // Unplug: the disconnect reaches the screen.
         await dropLink(page);
         await page.locator('.dot.disconnected').waitFor({ timeout: DEVICE_WAIT_MS });
         await page.locator('.toast').getByText(/disconnected/i).first().waitFor({ timeout: DEVICE_WAIT_MS });
-        await clickReconnect(page);
+        // Replug: the app reconnects by itself to the port it remembers, with
+        // nobody pressing Reconnect, and samples resume.
+        await restoreLink(page);
+        try {
+          await page.locator('.dot.connected').waitFor({ timeout: DEVICE_WAIT_MS });
+        } catch {
+          throw new Error(`the app did not reconnect by itself within ${DEVICE_WAIT_MS} ms of board time after the cable came back`);
+        }
         await awaitResponding(page);
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
       } finally { await browser.close(); }
