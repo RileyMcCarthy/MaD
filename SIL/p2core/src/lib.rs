@@ -2613,7 +2613,13 @@ impl<P: PinBus> Machine<P> {
                 }
             }
             Qsqrt => {
-                self.cogs[cog].qx = (d as f64).sqrt() as u32;
+                // QSQRT D,S roots the 64-bit {S,D}: S is the HIGH long and D
+                // the low one, and GETQX returns the floored 32-bit root.
+                // Rooting D alone made `qsqrt #0, mant` -- the exact form
+                // FlexC's `sqrtf` issues -- return 0 for every input, so
+                // every `sqrtf` on the ISS came back a bare power of two and the firmware
+                // refused every triangle waveform (MaD #164).
+                self.cogs[cog].qx = isqrt_u64(((s as u64) << 32) | d as u64);
             }
             Qrotate => {
                 let theta = (s as f64) * std::f64::consts::TAU / 4_294_967_296.0;
@@ -3352,4 +3358,27 @@ impl<P: PinBus> Machine<P> {
 
         Ok(branched)
     }
+}
+
+/// Floored square root of a 64-bit radicand, exactly as silicon's CORDIC
+/// QSQRT hands it to GETQX. Integer bit-by-bit, not `f64::sqrt`: a 64-bit
+/// radicand does not fit an f64 mantissa, so the float route is off by one
+/// near the top of the range.
+pub fn isqrt_u64(n: u64) -> u32 {
+    let mut rem = n;
+    let mut root: u64 = 0;
+    let mut bit: u64 = 1 << 62;
+    while bit > rem {
+        bit >>= 2;
+    }
+    while bit != 0 {
+        if rem >= root + bit {
+            rem -= root + bit;
+            root = (root >> 1) + bit;
+        } else {
+            root >>= 1;
+        }
+        bit >>= 2;
+    }
+    root as u32
 }

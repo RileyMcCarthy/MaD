@@ -1100,6 +1100,70 @@ static unsigned run_segment_ticks(uint32_t freqMicroHz, uint32_t cycles, uint32_
     return runTicks;
 }
 
+/* The E2E catalog's two triangle scenarios, exactly as the nightly sends them:
+ * WAVE-tri (4 mm, 1 Hz, x2) and WAVE-tri-slow (8 mm, 0.5 Hz, x2), at the
+ * shipped machine profile the ISS board boots with. */
+void test_the_catalog_triangles_are_accepted_and_run_their_full_duration(void)
+{
+    VIBES_TEST("servo.catalog-triangles-run-full-duration",
+               "src/DEV/dev_servo.c#dev_servo_startWaveform",
+               "the end-to-end catalog's triangle waveforms (4 mm at 1 Hz and 8 mm at 0.5 Hz, two cycles each) on the shipped machine profile of 50 mm/s and 600 mm/s^2");
+    VIBES_EXPECT_WHY("accepted",
+                     "the machine accepts both triangle waveforms instead of refusing them",
+                     "both need under 17 mm/s of constant rate and well inside the acceleration limit, so refusing them would mean the feasibility check is wrong, and a refused waveform runs no cycles at all");
+    VIBES_EXPECT("ramp-share-sane",
+                 "each traverse spends a real, finite share of its time ramping, more than none and at most half");
+    VIBES_EXPECT_WHY("full-duration",
+                     "the cycles take the full requested time, two seconds and four seconds, to within one control tick",
+                     "the end-to-end run checks that the whole requested waveform was recorded, so cycles that stop early fail it however accurate each sample is");
+
+    static const struct
+    {
+        const char *what;
+        double ampMm;
+        uint32_t freqMicroHz;
+        uint32_t cycles;
+    } cases[] = {
+        { "WAVE-tri", 4.0, 1000000U, 2U },
+        { "WAVE-tri-slow", 8.0, 500000U, 2U },
+    };
+
+    for (unsigned i = 0U; i < (sizeof(cases) / sizeof(cases[0])); i++)
+    {
+        servo_init();
+        dev_servo_setPosition(CH, 0);
+        dev_servo_enable(CH, true);
+        const dev_servo_waveform_S *wf = WF(0, counts_from_mm(cases[i].ampMm), cases[i].freqMicroHz,
+                                            cases[i].cycles, DEV_SERVO_WAVE_TRIANGLE);
+        char msg[192];
+        (void)snprintf(msg, sizeof(msg), "%s was refused on the shipped profile", cases[i].what);
+        TEST_ASSERT_TRUE_MESSAGE(dev_servo_startWaveform(CH, wf), msg);
+
+        const float rDown = dev_servo_data.channel[CH].waveRampDown;
+        const float rUp = dev_servo_data.channel[CH].waveRampUp;
+        (void)snprintf(msg, sizeof(msg), "%s ramp shares down=%g up=%g are outside (0, 0.5]",
+                       cases[i].what, (double)rDown, (double)rUp);
+        TEST_ASSERT_TRUE_MESSAGE((rDown > 0.0f) && (rDown <= 0.5f) && (rUp > 0.0f) && (rUp <= 0.5f),
+                                 msg);
+
+        unsigned runTicks = 0U;
+        for (unsigned t = 0U; (t < 400000U) && !dev_servo_atTarget(CH); t++)
+        {
+            const bool running =
+                (dev_servo_data.channel[CH].waveSegment == (uint8_t)DEV_SERVO_WAVE_RUN);
+            tick_with_motion();
+            if (running) { runTicks++; }
+        }
+        /* cycles / f in milliseconds, one control tick each. */
+        const double idealTicks = (double)cases[i].cycles * 1e9 / (double)cases[i].freqMicroHz;
+        (void)snprintf(msg, sizeof(msg), "%s ran its cycles for %u ticks, wanted %.0f +/- 1",
+                       cases[i].what, runTicks, idealTicks);
+        printf("  %-14s run %u ticks (ideal %.0f), ramp share %.4f/%.4f\n", cases[i].what,
+               runTicks, idealTicks, (double)rDown, (double)rUp);
+        TEST_ASSERT_TRUE_MESSAGE(fabs((double)runTicks - idealTicks) <= 1.0, msg);
+    }
+}
+
 void test_the_phase_accumulator_loses_nothing_over_whole_cycles(void)
 {
     VIBES_TEST("servo.exact-phase-accumulator",
@@ -1912,6 +1976,7 @@ int main(void)
     RUN_TEST(test_the_shape_bit_selects_a_genuinely_different_rate_profile);
     RUN_TEST(test_the_machine_reproduces_the_commanded_waveform_to_one_micron);
     RUN_TEST(test_the_phase_accumulator_loses_nothing_over_whole_cycles);
+    RUN_TEST(test_the_catalog_triangles_are_accepted_and_run_their_full_duration);
     RUN_TEST(test_tracking_does_not_degrade_along_the_machine);
     RUN_TEST(test_the_one_micron_contract_holds_at_the_feasibility_boundary);
     RUN_TEST(test_a_move_does_not_run_ahead_of_its_own_trajectory);
