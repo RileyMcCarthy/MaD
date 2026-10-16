@@ -8,11 +8,24 @@
  * targets older than Chrome 91. The unit suite runs uncompiled source, so the
  * test makes that call itself, on whatever the session stored.
  */
-import { afterEach, expect } from 'vitest';
+import { afterEach, expect, vi } from 'vitest';
 import * as Comlink from 'comlink';
 import { behaviour } from '@vibes/behaviour';
 import { DeviceSession, type DeviceSessionApi } from './DeviceSession.worker';
 import type { DeviceEvent } from './events';
+
+// The worker module imports the protocol core's WebAssembly glue, which exists
+// only after `npm run build:wasm`. The Behaviour ledger job runs this suite
+// without that build, and a file that fails to load reports nothing. This test
+// never connects, so the core is never used: stand-ins keep the file loadable
+// either way, and one that is used by mistake throws.
+vi.mock('@/wasm/protoemb_runtime.js', () => ({
+  default: () => Promise.reject(new Error('the protocol core is not loaded in this test')),
+  WasmClient: function WasmClient() {
+    throw new Error('the protocol core is not loaded in this test');
+  },
+}));
+vi.mock('@/wasm/protoemb_runtime_bg.wasm?url', () => ({ default: 'protoemb_runtime_bg.wasm' }));
 
 /** The session's private field: the callback it calls for every batch. */
 interface HeldSink {
