@@ -31,6 +31,7 @@ targets build it, and the release emulator, for you.
 | `make e2e-emulator` | The ISS with a **headless** Chrome on the board's clock, DevTools on `DEVTOOLS_PORT` (9222), nothing open: attach the e2e suite to it |
 | `make e2e` | The dev server, `e2e-emulator` and the suite against it, then everything stopped (`SCENARIOS=…` selects) |
 | `make e2e-rom` | FW-ISS: the app's flasher in a headless Chrome on the board's clock, against the ISS booting the mask ROM |
+| `make e2e-bundle` | BUNDLE-live: the app as it ships (built as `pages.yml` builds it, served by `vite preview`) in a headless Chrome on the board's clock: connect, samples, machine state, unplug and replug |
 | `make test` | Build the image + protocol, then `cargo test` (includes the MaDSim PTY protocol smoke — no Chrome) |
 | `make clean` | Remove build artifacts and `cargo clean` |
 
@@ -111,8 +112,8 @@ M11-mid-test-drop) pull the node's cable (`__embsim.link('unplug')`) and put it
 back.
 
 **In CI:** `control-e2e-board` gates a subset per PR on the runner's Chrome
-(`ci.yml`), and the nightly (`e2e-nightly.yml`) runs the whole suite after the
-node's Chrome canary. `control-e2e-boardless` gates the scenarios that need
+(`ci.yml`), then BUNDLE-live on the built bundle, and the nightly
+(`e2e-nightly.yml`) runs the whole suite after the node's Chrome canary. `control-e2e-boardless` gates the scenarios that need
 no board (A1 and the firmware-flash `FW*` ones, a host Chrome against in-page
 fakes).
 
