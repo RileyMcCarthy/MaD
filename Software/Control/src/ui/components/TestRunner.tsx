@@ -11,6 +11,7 @@ import {
 import { dataStore } from '@/storage/DataStore';
 import { deviceClient } from '@/device/session';
 import { useStore } from '@/store/useStore';
+import { updateRunRecord } from '@/ui/runRecord';
 import Modal from './Modal';
 import GcodePreview from './GcodePreview';
 
@@ -87,9 +88,11 @@ export default function TestRunner({ onChanged }: TestRunnerProps) {
       activeTestName.current = null;
       sawRunning.current = false;
       clearWatchdog();
-      void dataStore
-        .updateTestRun(name, { status: 'completed', completedAt: new Date().toISOString() })
-        .then(onChanged);
+      void updateRunRecord(
+        name,
+        { status: 'completed', completedAt: new Date().toISOString() },
+        `Test ${name} finished`,
+      ).then(onChanged);
     }
   }, [testRunning, connected, onChanged]);
 
@@ -218,7 +221,7 @@ export default function TestRunner({ onChanged }: TestRunnerProps) {
         activeTestName.current = null;
         sawRunning.current = false;
         clearWatchdog();
-        await dataStore.updateTestRun(testName, { status: 'error' });
+        await updateRunRecord(testName, { status: 'error' }, `Test ${testName} failed`);
         setMessage(`Test failed: ${result.error ?? 'unknown'}`);
       } else {
         setMessage(`Test ${testName} started.`);
@@ -245,7 +248,7 @@ export default function TestRunner({ onChanged }: TestRunnerProps) {
         activeTestName.current = null;
         sawRunning.current = false;
         clearWatchdog();
-        void dataStore.updateTestRun(name, { status: 'error' }).then(onChanged);
+        void updateRunRecord(name, { status: 'error' }, `Test ${name} failed`).then(onChanged);
       }
       setMessage(err instanceof Error ? err.message : String(err));
     } finally {

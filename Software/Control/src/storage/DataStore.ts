@@ -281,14 +281,27 @@ export class DataStore {
     }, 'createTestRun');
   }
 
-  async updateTestRun(testName: string, patch: Partial<TestRunEntry>): Promise<void> {
+  /**
+   * Merge `patch` into a saved run. Resolves `false` (and writes nothing) when
+   * the run's record is gone from the data folder — moved, deleted, or
+   * unreadable — so the caller can tell the operator; the update would
+   * otherwise be lost without a trace.
+   */
+  async updateTestRun(testName: string, patch: Partial<TestRunEntry>): Promise<boolean> {
     return this.run(async () => {
       const existing = await this.getTestRun(testName);
-      if (!existing) return;
+      if (!existing) {
+        logFs.warn('run-record-missing', 'update dropped: no readable record in the data folder', {
+          testName,
+          status: patch.status,
+        });
+        return false;
+      }
       const merged = { ...existing, ...patch };
       const dir = await this.subdir(TEST_RUNS_DIR);
       await writeJsonFile(dir, `${sanitizeName(testName)}.json`, merged);
       await this.updateIndex((rows) => rows.map((r) => (r.id === merged.id ? indexRow(merged) : r)));
+      return true;
     }, 'updateTestRun');
   }
 
