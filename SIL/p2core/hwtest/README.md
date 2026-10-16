@@ -53,6 +53,11 @@ exactly. Pin/FIFO/CORDIC/control remain later programs.
 `WYPIN` now run the loadp2 flash stub on the ISS, but have no P2-EVAL golden.
 Capture plan: [#109](https://github.com/RileyMcCarthy/MaD/issues/109).
 
+**Open:** `QSQRT` has no P2-EVAL golden. p2core returns the floor root of
+the 64-bit `{S, D}` (`tests/cordic_sqrt.rs`), which is what FlexC's `sqrtf`
+expects, but no capture shows silicon rounds down. The capture to add to
+`oracle.c`: one integer `qsqrt` with a non-zero S, and `sqrtf(0.786667f)`.
+
 ## Record format (probe)
 
 ```

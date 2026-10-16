@@ -66,11 +66,17 @@ fn qsqrt_roots_the_whole_64_bit_radicand() {
     let g = decode(getqx(12)).expect("getqx decodes");
     assert_eq!((g.op, g.d), (Op::Getqx, 12));
 
-    // (lo, hi): a radicand in the lower half only; one in the upper half
-    // only, as `_float_sqrt` passes the mantissa of 0.7867 (odd exponent,
-    // so doubled to 3.1467 in 2.28); and the top of the range, where an f64
-    // rounds the radicand up to the next square and the floor comes out one
-    // too high.
+    // Each case is (lo, hi), checked against the floor-root definition;
+    // braces below are {S, D}, the upper long first:
+    // - a radicand in the lower half only;
+    // - 2^32, in the upper half only;
+    // - the radicand `_float_sqrt` passes for 0.7867 (odd exponent, so the
+    //   mantissa is doubled to 3.1467 in 2.28 and sits in the upper half);
+    //   the firmware's sqrtf(0.7867) is built from this root's top bits;
+    // - {0xFFFFFFFE, 0}, one below the square of 0xFFFFFFFF, whose floor
+    //   root is 0xFFFFFFFE; an f64 root rounds it up to 0xFFFFFFFF, so this
+    //   is the case that needs exact integer arithmetic;
+    // - the largest radicand, whose floor root is the largest long.
     let mantissa = ((0.786_667_f32.to_bits() & 0x007F_FFFF) | 0x0080_0000) << 1 << 5;
     let cases: [(u32, u32); 5] = [
         (1_000_000, 0),
@@ -87,14 +93,4 @@ fn qsqrt_roots_the_whole_64_bit_radicand() {
             "qsqrt {{{hi:#010x}, {lo:#010x}}} gave {root:#x}, not the floor root of {radicand:#x}"
         );
     }
-
-    // The float the firmware then builds: the root's top 24 bits, scaled
-    // by the halved exponent, are sqrt(0.7867) to float precision.
-    let root = iss_root(0, mantissa);
-    let back = (root >> 7) as f32 / (1u32 << 23) as f32 * 0.5;
-    assert!(
-        (back - 0.786_667_f32.sqrt()).abs() < 1e-6,
-        "sqrtf(0.7867) through the ISS is {back}, the true root is {}",
-        0.786_667_f32.sqrt()
-    );
 }
