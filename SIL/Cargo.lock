@@ -177,7 +177,7 @@ dependencies = [
 
 [[package]]
 name = "embsim-board"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "embsim-core",
  "libc",
@@ -189,7 +189,7 @@ dependencies = [
 
 [[package]]
 name = "embsim-boards"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "embsim-board",
  "embsim-core",
@@ -200,7 +200,7 @@ dependencies = [
 
 [[package]]
 name = "embsim-cdp"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "embsim-board",
  "embsim-boards",
@@ -214,7 +214,7 @@ dependencies = [
 
 [[package]]
 name = "embsim-core"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "nix",
  "tracing",
@@ -222,11 +222,11 @@ dependencies = [
 
 [[package]]
 name = "embsim-cpu-oracle"
-version = "0.3.0"
+version = "0.4.0"
 
 [[package]]
 name = "embsim-models"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "embsim-board",
  "embsim-core",
