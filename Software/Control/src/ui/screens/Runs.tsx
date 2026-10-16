@@ -5,6 +5,7 @@ import { deviceClient } from '@/device/session';
 import { dataStore, TestRunIndexRow } from '@/storage/DataStore';
 import { buildExportCsv, NotificationType } from '@/domain';
 import TestRunner from '@/ui/components/TestRunner';
+import { updateRunRecord } from '@/ui/runRecord';
 import Modal from '@/ui/components/Modal';
 import { FileDownloadProgress } from '@/device/events';
 
@@ -49,7 +50,11 @@ export default function Runs() {
       // A storage failure here (quota, permission revoked) must not strand the
       // run as "not downloaded" silently — surface it and keep it re-downloadable.
       const path = await dataStore.saveTestCsv(testName, result.csv);
-      await dataStore.updateTestRun(testName, { status: 'downloaded', dataFilePath: path });
+      await updateRunRecord(
+        testName,
+        { status: 'downloaded', dataFilePath: path },
+        `Test ${testName} data was saved to ${path}`,
+      );
       await loadRows();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -77,11 +82,12 @@ export default function Runs() {
   // Manual resolution for runs stuck in "running" (firmware hang, app reload
   // mid-test): the automatic completion edge can no longer be observed.
   const markRun = async (testName: string, status: 'completed' | 'error') => {
-    await dataStore.updateTestRun(
+    await updateRunRecord(
       testName,
       status === 'completed'
         ? { status, completedAt: new Date().toISOString() }
         : { status },
+      `Couldn't mark test ${testName} ${status === 'completed' ? 'done' : 'failed'}`,
     );
     await loadRows();
   };

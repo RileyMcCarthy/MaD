@@ -3,11 +3,13 @@
  *  - mutating ops serialize through the async mutex (no dropped index updates)
  *  - nextTestName is monotonic / folder-scoped
  *  - rebuildIndex recovers from missing/empty index when run files exist
+ *  - updating a run whose record file is gone reports it instead of dropping it
  *
  * Uses an in-memory File System Access fake — never touches real disk.
  */
 import { describe, expect, vi, beforeEach } from 'vitest';
 import { behaviour } from '@vibes/behaviour';
+import { LogEntry, subscribeLog } from '@/diagnostics/log';
 
 const idb = new Map<string, unknown>();
 
@@ -309,5 +311,54 @@ describe('DataStore mutex + index integrity', () => {
       expect(index).toHaveLength(2);
     },
   );
+
+  behaviour(
+    {
+      id: 'storage.update-of-missing-run-reported',
+      covers: 'src/storage/DataStore.ts#updateTestRun',
+      given: 'a running test whose run record is removed from the data folder before it is marked completed',
+      expect: {
+        'reported-missing': 'the completion reports the run record as not found',
+        'folder-unchanged': 'the data folder is left exactly as it was',
+        'warning-logged': 'a warning naming the run is written to the crash log',
+      },
+      why: {
+        'reported-missing':
+          'the operator has to be told, or a finished test is absent from History with nothing saying why',
+        'folder-unchanged': "a record rebuilt from the new status alone would lack the test's profiles and G-code",
+      },
+    },
+    async () => {
+      await store.createTestRun({ ...sampleRun('000020'), status: 'running' });
+      const dir = await (store as unknown as { subdir: (n: string) => Promise<FileSystemDirectoryHandle> }).subdir(
+        'testRuns',
+      );
+      await dir.removeEntry('000020.json');
+      const before = await folderContents(dir);
+
+      const logged: LogEntry[] = [];
+      const unsubscribe = subscribeLog((e) => logged.push(e));
+      const saved = await store.updateTestRun('000020', {
+        status: 'completed',
+        completedAt: new Date(2020, 0, 1, 0, 1).toISOString(),
+      });
+      unsubscribe();
+
+      expect(saved).toBe(false);
+      expect(await folderContents(dir)).toEqual(before);
+      expect(logged).toContainEqual(
+        expect.objectContaining({ level: 'warn', cat: 'fs', data: expect.objectContaining({ testName: '000020' }) }),
+      );
+    },
+  );
 });
+
+/** Every file in a folder, by name, with its text. */
+async function folderContents(dir: FileSystemDirectoryHandle): Promise<Record<string, string>> {
+  const out: Record<string, string> = {};
+  for await (const name of dir.keys()) {
+    out[name] = await (await (await dir.getFileHandle(name)).getFile()).text();
+  }
+  return out;
+}
 
