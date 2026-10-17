@@ -2623,9 +2623,32 @@ impl<P: PinBus> Machine<P> {
                 self.cogs[cog].qx = radicand.isqrt() as u32;
             }
             Qrotate => {
-                let theta = (s as f64) * std::f64::consts::TAU / 4_294_967_296.0;
-                self.cogs[cog].qx = ((d as f64) * theta.cos()) as i32 as u32;
-                self.cogs[cog].qy = ((d as f64) * theta.sin()) as i32 as u32;
+                // QROTATE D,S rotates the point (X, Y) = (D, Q) by the angle
+                // S (a full turn is 2^32), where Q is a preceding SETQ and 0
+                // without one. Both components are signed. Rotating (D, 0)
+                // alone dropped Y, and reading D unsigned turned a negative X
+                // into ~4e9.
+                //
+                // f64 trig truncated toward zero (saturating at the i32
+                // range), as before; silicon's CORDIC rounding is not
+                // verified (no P2-EVAL golden, see hwtest/README.md). On a
+                // quarter turn sin/cos are exact: f64's sin(pi) is 1.2e-16,
+                // not 0, and that residue truncated (1000, 2000) rotated by a
+                // half turn to (-1000, -1999).
+                let y = self.cogs[cog].setq.take().unwrap_or(0) as i32 as f64;
+                let x = d as i32 as f64;
+                let (sin, cos) = if s & 0x3FFF_FFFF == 0 {
+                    match s >> 30 {
+                        0 => (0.0, 1.0),
+                        1 => (1.0, 0.0),
+                        2 => (0.0, -1.0),
+                        _ => (-1.0, 0.0),
+                    }
+                } else {
+                    ((s as f64) * std::f64::consts::TAU / 4_294_967_296.0).sin_cos()
+                };
+                self.cogs[cog].qx = (x * cos - y * sin) as i32 as u32;
+                self.cogs[cog].qy = (x * sin + y * cos) as i32 as u32;
             }
             Getqx => {
                 let v = self.cogs[cog].qx;
