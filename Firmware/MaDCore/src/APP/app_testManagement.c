@@ -41,6 +41,7 @@ typedef enum
     APP_TESTMANAGEMENT_END_COMPLETE,
     APP_TESTMANAGEMENT_END_MOTION_DISABLED,
     APP_TESTMANAGEMENT_END_LIMIT_EXCEEDED,
+    APP_TESTMANAGEMENT_END_WAVEFORM_REFUSED,
 } app_testManagement_endReason_E;
 
 typedef struct
@@ -156,6 +157,9 @@ static void app_testManagement_private_processRequests(void)
         app_testManagement_data.stagedCount = 0U;
         app_testManagement_data.stagedIndex = 0U;
         IO_SDCard_clearLastOpenFailed(IO_SDCARD_CHANNEL_GCODE);
+        /* A refusal from before this test (a manual G123, or the previous
+         * test's) is not this test's. */
+        (void)app_motion_takeWaveformRefused();
         /* The host uploaded the gcode by opening this channel for WRITE; close it
          * now so the write flushes. STARTING then re-opens the same file for READ
          * (sequenced via gcodeReadOpened) before feeding moves. */
@@ -189,6 +193,8 @@ static const char *app_testManagement_private_endReasonName(app_testManagement_e
         return "motion disabled";
     case APP_TESTMANAGEMENT_END_LIMIT_EXCEEDED:
         return "sample limit exceeded";
+    case APP_TESTMANAGEMENT_END_WAVEFORM_REFUSED:
+        return "waveform refused";
     case APP_TESTMANAGEMENT_END_OPEN_FAILED:
         return "gcode open failed";
     case APP_TESTMANAGEMENT_END_USER:
@@ -214,6 +220,11 @@ static void app_testManagement_private_enterEnding(app_testManagement_endReason_
     case APP_TESTMANAGEMENT_END_LIMIT_EXCEEDED:
         app_notification_send(APP_NOTIFICATION_TYPE_WARNING, "%s", "Test stopped: sample limit exceeded");
         break;
+    case APP_TESTMANAGEMENT_END_WAVEFORM_REFUSED:
+        /* The refusal reason is already in the debug log (app_motion); the
+         * operator only needs to know the waveform never ran. */
+        app_notification_send(APP_NOTIFICATION_TYPE_WARNING, "%s", "Test aborted: waveform refused");
+        break;
     case APP_TESTMANAGEMENT_END_OPEN_FAILED:
     case APP_TESTMANAGEMENT_END_USER:
     case APP_TESTMANAGEMENT_END_NONE:
@@ -235,7 +246,11 @@ static void app_testManagement_private_feedMotionQueue(void)
     {
         if (app_motion_isIdle())
         {
-            app_testManagement_private_enterEnding(APP_TESTMANAGEMENT_END_COMPLETE);
+            /* A refused G123 drains exactly like a finished one, so motion
+             * going idle does not mean the program ran. */
+            app_testManagement_private_enterEnding(app_motion_takeWaveformRefused()
+                                                       ? APP_TESTMANAGEMENT_END_WAVEFORM_REFUSED
+                                                       : APP_TESTMANAGEMENT_END_COMPLETE);
         }
         return;
     }

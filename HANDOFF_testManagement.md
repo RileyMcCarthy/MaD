@@ -32,7 +32,7 @@ Two getters:
 - `isRunning()` — true only in RUNNING. Read by `app_control` (state machine), `app_monitor` (logging), `app_messageSlave` (telemetry).
 - `isBusy()` — true in any non-IDLE state. Used to gate manual moves and to wait for a clean state before launching a new test.
 
-End reasons enum drives notifications: COMPLETE → "Test Complete!", MOTION_DISABLED → "Test aborted: motion disabled", OPEN_FAILED → "Failed to open test gcode 'X'", USER → silent (host knows).
+End reasons enum drives notifications: COMPLETE → "Test Complete!", MOTION_DISABLED → "Test aborted: motion disabled", WAVEFORM_REFUSED (motion idle after a G123 that app_motion refused) → WARNING "Test aborted: waveform refused", OPEN_FAILED → "Failed to open test gcode 'X'", USER → silent (host knows).
 
 ## Build status
 
