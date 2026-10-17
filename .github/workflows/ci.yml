@@ -375,6 +375,12 @@ jobs:
   # waveforms and the mid-test drop (a 40 mm move at 2 mm/s, 20 s of board
   # time) run nightly (e2e-nightly.yml), on the same route.
   #
+  # Then BUNDLE-live on one more board: the app as it ships, built as
+  # pages.yml builds it and served by `vite preview`. Every scenario above
+  # runs on the dev server, which compiles for the newest Chrome; the bundle
+  # is compiled for the app's browser floor, and a fault that compiling brings
+  # in shows only there (#156: every device event lost, in production only).
+  #
   # Fires on the app, the protocol, the firmware or the SIL (the `sil` filter
   # covers Firmware/ and Protocol/), and on a move of the SIL/embsim pin: the
   # node is embsim's, so a pin move is exactly what this job exists to check.
@@ -436,11 +442,16 @@ jobs:
           npm ci
           npm run build:wasm
           npm run generate:proto
+      # The bundle BUNDLE-live runs against, built as pages.yml builds it.
+      - name: Build the shipped bundle
+        working-directory: Software/Control
+        run: npx vite build --base="/${{ github.event.repository.name }}/app/" --outDir /tmp/mad-bundle
       # scripts/board-route.sh starts the dev server, then for each scenario
       # a fresh board with a headless Chrome on its clock (DevTools on 9222),
       # waits for the run's "reached" line, runs that scenario attached there,
       # and stops the board; a board that stops costs one scenario.
       - name: Run the board subset on the ISS
+        id: subset
         working-directory: SIL
         env:
           CHROME: /usr/bin/google-chrome
@@ -449,6 +460,22 @@ jobs:
           E2E_TIMINGS: /tmp/e2e-out/timings.json
           SCENARIOS: B1+C1,F7,F1+F2,B2+B3+B4,C3+C4,D1,G1,G2+G3+H2+I,NAV,B5-reconnect,M11-idle-drop
         run: scripts/board-route.sh e2e
+      # The same route with `vite preview` serving the bundle (APP_DIST) in
+      # place of the dev server: connect, samples, machine state, unplug, and
+      # replug with the app reconnecting by itself. It runs whenever the
+      # subset ran, passed or failed.
+      - name: Run the shipped bundle on the ISS
+        if: ${{ !cancelled() && (steps.subset.outcome == 'success' || steps.subset.outcome == 'failure') }}
+        working-directory: SIL
+        env:
+          CHROME: /usr/bin/google-chrome
+          APP_DIST: /tmp/mad-bundle
+          APP_BASE: /${{ github.event.repository.name }}/app/
+          BOARD_LOGS: /tmp/e2e-out/bundle
+          BOARD_PER_SCENARIO: '1'
+          E2E_TIMINGS: /tmp/e2e-out/timings-bundle.json
+          SCENARIOS: BUNDLE-live
+        run: scripts/board-route.sh e2e
       # Host and board time per scenario, for sizing this subset. Reported,
       # never asserted.
       - name: Timings
@@ -456,8 +483,10 @@ jobs:
         run: |
           node -e '
             const fs = require("fs");
-            let t; try { t = JSON.parse(fs.readFileSync("/tmp/e2e-out/timings.json", "utf8")); } catch { process.exit(0); }
-            const rows = t.timings.map((r) => `| ${r.id} | ${r.verdict} | ${r.hostS.toFixed(1)} | ${r.boardS === null ? "–" : r.boardS.toFixed(3)} |`);
+            const read = (p) => { try { return JSON.parse(fs.readFileSync(p, "utf8")).timings; } catch { return []; } };
+            const timings = [...read("/tmp/e2e-out/timings.json"), ...read("/tmp/e2e-out/timings-bundle.json")];
+            if (timings.length === 0) process.exit(0);
+            const rows = timings.map((r) => `| ${r.id} | ${r.verdict} | ${r.hostS.toFixed(1)} | ${r.boardS === null ? "–" : r.boardS.toFixed(3)} |`);
             const out = ["| scenario | verdict | host s | board s |", "|---|---|---|---|", ...rows].join("\n");
             console.log(out);
             if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, out + "\n");

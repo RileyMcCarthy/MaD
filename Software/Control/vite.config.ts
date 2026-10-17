@@ -83,6 +83,17 @@ export default defineConfig({
     format: 'es',
   },
   build: {
+    // The oldest browser that can run this app at all. The protocol core's
+    // WebAssembly uses reference types (an externref table), which Chrome and
+    // Edge ship from 96; Web Serial itself needs 89. Vite's default target
+    // ('modules': chrome87, edge88, ...) is older than either, so esbuild was
+    // rewriting code for browsers that cannot load the app. One of those
+    // rewrites turned the worker's optional call on its Comlink event sink into
+    // `sink.call(this, events)`, which Comlink sends as a remote call named
+    // "call" and fails to clone; device/boundaryCallback.ts guards that
+    // boundary on its own. This target keeps the production bundle close to the
+    // source the dev server runs.
+    target: ['chrome96', 'edge96'],
     // Hidden source maps: emitted for post-mortem debugging of a field issue,
     // but not referenced from the shipped bundle.
     sourcemap: 'hidden',

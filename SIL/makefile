@@ -11,6 +11,7 @@
 #   make e2e-emulator   - The ISS with a headless Chrome on the board's clock; prints the DevTools URL
 #   make e2e            - All of it, headless, and the e2e suite against it (SCENARIOS selects)
 #   make e2e-rom        - FW-ISS: the app's flasher against the ISS's mask ROM, headless
+#   make e2e-bundle     - BUNDLE-live: the built bundle (as pages.yml builds it) on the board, headless
 #   make clean          - Remove build artifacts
 #
 # There is ONE configuration a browser belongs in: the P2 image on the ISS,
@@ -35,7 +36,7 @@ PROTOEMB_TEMPLATES = ../Protocol/ProtoEmb/core/templates
 # instruction, and a debug build is far slower still.
 EMULATOR = ./target/release/mad-emulator
 
-.PHONY: p2image protocol emulator emulator-release test playground playground-iss playground-pty playground-rom e2e-emulator e2e e2e-rom bootrom clean
+.PHONY: p2image protocol emulator emulator-release test playground playground-iss playground-pty playground-rom e2e-emulator e2e e2e-rom e2e-bundle bootrom clean
 
 # Build the P2 image the ISS runs (`p2core`, `p2iss`, `mad-emulator`).
 #
@@ -104,6 +105,16 @@ e2e-emulator: p2image emulator-release
 # target/board-route/.
 e2e: p2image emulator-release
 	scripts/board-route.sh e2e
+
+# BUNDLE-live: the app as it ships. The bundle is built as pages.yml builds it
+# (the Pages base path) and served by `vite preview`, on a headless board. The
+# dev server compiles for the newest Chrome and the bundle for the app's
+# browser floor, so a fault the bundler brings in shows only here.
+BUNDLE_BASE = /MaD/app/
+BUNDLE_DIR = $(abspath target/board-route/bundle)
+e2e-bundle: p2image emulator-release
+	cd ../Software/Control && ./node_modules/.bin/vite build --base=$(BUNDLE_BASE) --outDir $(BUNDLE_DIR) --emptyOutDir
+	APP_DIST=$(BUNDLE_DIR) APP_BASE=$(BUNDLE_BASE) SCENARIOS=BUNDLE-live scripts/board-route.sh e2e
 
 # The boot ROM and the stage-1 flash loader the ISS boots through.
 FLEXSPIN = $(HOME)/.platformio/packages/toolchain-flexcc/bin/macos-amd64/flexspin
