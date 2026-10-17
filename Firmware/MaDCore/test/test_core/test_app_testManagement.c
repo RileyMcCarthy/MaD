@@ -25,6 +25,8 @@
 #include <unity.h>
 #include "vibes_behaviour.h"
 #include <string.h>
+#include <stdarg.h>
+#include <stdio.h>
 #include <stddef.h>
 #include <stdbool.h>
 
@@ -51,6 +53,8 @@ static bool d_forceExceeded;
 static bool d_dispExceeded;
 static bool d_motionIdle;
 static bool d_addMoveReturn;     /* what app_motion_addMove reports (queue accept) */
+static bool d_waveformRefused;   /* app_motion's refused-G123 latch */
+static uint32_t d_takeRefusedCount;
 
 static uint32_t d_addMoveCount;
 static uint32_t d_abortCount;
@@ -59,6 +63,7 @@ static uint32_t d_sdCloseCount;
 static uint32_t d_clearOpenFailedCount;
 static uint32_t d_notifyCount;
 static app_notification_type_E d_lastNotifyType;
+static char d_lastNotifyText[64];
 
 /* popMultiple script: the next refill yields d_popCount moves from d_popBuf. */
 static app_motion_move_t d_popBuf[8];
@@ -77,6 +82,8 @@ static void doubles_reset(void)
     d_dispExceeded = false;
     d_motionIdle = false;
     d_addMoveReturn = true;
+    d_waveformRefused = false;
+    d_takeRefusedCount = 0U;
 
     d_addMoveCount = 0U;
     d_abortCount = 0U;
@@ -85,6 +92,7 @@ static void doubles_reset(void)
     d_clearOpenFailedCount = 0U;
     d_notifyCount = 0U;
     d_lastNotifyType = APP_NOTIFICATION_TYPE_COUNT;
+    d_lastNotifyText[0] = '\0';
 }
 
 /* --- app_control --- */
@@ -103,11 +111,21 @@ bool app_motion_addMove(const app_motion_move_t *move)
 }
 void app_motion_abortAndClear(void) { d_abortCount++; }
 bool app_motion_isIdle(void) { return d_motionIdle; }
+bool app_motion_takeWaveformRefused(void)
+{
+    const bool refused = d_waveformRefused;
+    d_waveformRefused = false;
+    d_takeRefusedCount++;
+    return refused;
+}
 
 /* --- app_notification --- */
 void app_notification_send(app_notification_type_E type, const char *format, ...)
 {
-    (void)format;
+    va_list args;
+    va_start(args, format);
+    (void)vsnprintf(d_lastNotifyText, sizeof(d_lastNotifyText), format, args);
+    va_end(args);
     d_notifyCount++;
     d_lastNotifyType = type;
 }
@@ -405,6 +423,88 @@ void test_app_testManagement_g122TerminatesFeed(void)
     app_testManagement_run(); /* motion idle → COMPLETE */
     TEST_ASSERT_FALSE(app_testManagement_isRunning());
     TEST_ASSERT_EQUAL_INT(APP_NOTIFICATION_TYPE_INFO, d_lastNotifyType);
+}
+
+/* Issue #170: a refused G123 drains like a finished one, so before this the
+ * test ended as INFO "Test Complete!" and the refusal only reached the debug
+ * log -- how WAVE-tri hid for six nights. */
+void test_app_testManagement_refusedWaveformWarnsInsteadOfCompleting(void)
+{
+    VIBES_TEST("test-run.refused-waveform-ends-with-warning",
+               "src/APP/app_testManagement.c#app_testManagement_private_feedMotionQueue",
+               "a running test whose G123 waveform motion refused, then the program finished and the gantry idle");
+    VIBES_EXPECT_WHY("operator-warned",
+                     "the operator is warned that the test was aborted because the waveform was refused",
+                     "an infeasible waveform otherwise looks like a finished test on real hardware, and the refusal reason only reaches the debug log");
+    VIBES_EXPECT("not-announced-complete", "the machine does not announce the test complete");
+    VIBES_EXPECT("goes-idle", "the machine still stops the test and goes idle");
+    tm_init();
+    tm_driveToRunning();
+
+    d_popBuf[0] = (app_motion_move_t){ .g = (uint8_t)G123_WAVEFORM, .x = 0, .f = 0, .p = 0 };
+    d_popBuf[1] = (app_motion_move_t){ .g = (uint8_t)G122_STOP, .x = 0, .f = 0, .p = 0 };
+    d_popCount = 2U;
+    app_testManagement_run(); /* refill staged buffer */
+    app_testManagement_run(); /* feed G123, hit G122 -> all moves fed */
+    TEST_ASSERT_EQUAL_UINT32(1U, d_addMoveCount);
+
+    /* Motion refuses the waveform, the move ends at once and motion idles. */
+    d_waveformRefused = true;
+    d_motionIdle = true;
+    app_testManagement_run();
+    TEST_ASSERT_FALSE(app_testManagement_isRunning());
+    TEST_ASSERT_EQUAL_UINT32(1U, d_abortCount);
+    TEST_ASSERT_EQUAL_UINT32(1U, d_notifyCount);
+    TEST_ASSERT_EQUAL_INT(APP_NOTIFICATION_TYPE_WARNING, d_lastNotifyType);
+    TEST_ASSERT_EQUAL_STRING("Test aborted: waveform refused", d_lastNotifyText);
+
+    app_testManagement_run(); /* ENDING -> IDLE */
+    TEST_ASSERT_FALSE(app_testManagement_isBusy());
+}
+
+void test_app_testManagement_acceptedWaveformStillCompletes(void)
+{
+    VIBES_TEST("test-run.accepted-waveform-completes",
+               "src/APP/app_testManagement.c#app_testManagement_private_feedMotionQueue",
+               "a running test whose G123 waveform motion accepted and ran, then the gantry idle");
+    VIBES_EXPECT("completion-announced", "the machine announces the test complete");
+    tm_init();
+    tm_driveToRunning();
+
+    d_popBuf[0] = (app_motion_move_t){ .g = (uint8_t)G123_WAVEFORM, .x = 0, .f = 0, .p = 0 };
+    d_popBuf[1] = (app_motion_move_t){ .g = (uint8_t)G122_STOP, .x = 0, .f = 0, .p = 0 };
+    d_popCount = 2U;
+    app_testManagement_run();
+    app_testManagement_run();
+
+    d_motionIdle = true;
+    app_testManagement_run();
+    TEST_ASSERT_FALSE(app_testManagement_isRunning());
+    TEST_ASSERT_EQUAL_UINT32(1U, d_notifyCount);
+    TEST_ASSERT_EQUAL_INT(APP_NOTIFICATION_TYPE_INFO, d_lastNotifyType);
+    TEST_ASSERT_EQUAL_STRING("Test Complete!", d_lastNotifyText);
+}
+
+void test_app_testManagement_earlierRefusalDoesNotTaintNextTest(void)
+{
+    VIBES_TEST("test-run.earlier-waveform-refusal-forgotten-at-start",
+               "src/APP/app_testManagement.c#app_testManagement_run",
+               "a G123 refused before the test started (a manual waveform or the previous test's), then a test that runs cleanly");
+    VIBES_EXPECT_WHY("completion-announced",
+                     "the new test is announced complete",
+                     "a refusal belongs to the test that asked for the waveform, not to whichever test ends next");
+    tm_init();
+    d_waveformRefused = true; /* latched before this test */
+    tm_driveToRunning();
+
+    d_sdReadDone = true;
+    d_popCount = 0U;
+    app_testManagement_run(); /* reader done -> all moves fed */
+    d_motionIdle = true;
+    app_testManagement_run();
+    TEST_ASSERT_FALSE(app_testManagement_isRunning());
+    TEST_ASSERT_EQUAL_INT(APP_NOTIFICATION_TYPE_INFO, d_lastNotifyType);
+    TEST_ASSERT_EQUAL_STRING("Test Complete!", d_lastNotifyText);
 }
 
 void test_app_testManagement_userEndStopsRun(void)
