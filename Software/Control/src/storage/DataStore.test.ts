@@ -309,5 +309,31 @@ describe('DataStore mutex + index integrity', () => {
       expect(index).toHaveLength(2);
     },
   );
+  // Issue #171: this used to return silently, which is why a nightly whose run
+  // record had gone missing looked like a 120 s badge timeout.
+  behaviour(
+    {
+      id: 'storage.update-missing-run-reported',
+      covers: 'src/storage/DataStore.ts#updateTestRun',
+      given: 'one saved run, then an update for a run that has no record',
+      expect: {
+        'reports-not-saved': 'the update resolves false, so the caller can tell nothing was saved',
+        'no-record-invented': 'no record is created for the missing run',
+        'history-unchanged': 'the history still lists only the saved run, unchanged',
+        'existing-run-reports-saved': 'an update to the saved run resolves true',
+      },
+    },
+    async () => {
+      await store.createTestRun(sampleRun('000020'));
+
+      await expect(store.updateTestRun('000099', { status: 'completed' })).resolves.toBe(false);
+      expect(await store.getTestRun('000099')).toBeNull();
+      const index = await store.getTestRunIndex();
+      expect(index.map((r) => r.testName)).toEqual(['000020']);
+      expect(index[0]?.status).toBe('completed');
+
+      await expect(store.updateTestRun('000020', { status: 'downloaded' })).resolves.toBe(true);
+    },
+  );
 });
 
