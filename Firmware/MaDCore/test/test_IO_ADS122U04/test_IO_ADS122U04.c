@@ -64,6 +64,17 @@ bool HAL_serial_recieveDataTimeout(HAL_serial_channel_E ch, uint8_t *const data,
     (void)ch; (void)timeout_us;
     if (len == 1)
     {
+        /* FIFO order, and this is the whole point of the double: a byte already
+         * queued comes out BEFORE a reply to a request issued after it. Serving
+         * the reply first would make a stale byte harmless, and no test could
+         * then express the desynchronisation that leftovers actually cause. */
+        if (d_staleBytes > 0)
+        {
+            d_staleBytes--;
+            d_drainCount++;
+            data[0] = 0xAA;
+            return true;
+        }
         if (d_pendingReadReg >= 0 && d_pendingReadReg < IO_ADS122U04_REGISTER_COUNT)
         {
             /* Answering a read-register command. */
@@ -72,15 +83,6 @@ bool HAL_serial_recieveDataTimeout(HAL_serial_channel_E ch, uint8_t *const data,
             data[0] = v;
             d_pendingReadReg = -1; /* one reply per request */
             return d_readOk;
-        }
-        /* Unsolicited single-byte read = the stale-byte drain. Hand back only
-         * what is actually queued, then report the FIFO empty. */
-        if (d_staleBytes > 0)
-        {
-            d_staleBytes--;
-            d_drainCount++;
-            data[0] = 0xAA;
-            return true;
         }
         return false;
     }
@@ -259,6 +261,45 @@ void test_receiveConversion_drains_stale_bytes_before_requesting(void)
     TEST_ASSERT_EQUAL_INT32(expected_nVV(0x302010), signal_nVV);
 }
 
+/* The read-back is five request/response exchanges in a row, so one leftover
+ * byte does not merely corrupt one register — it shifts every reply after it,
+ * and the mismatch returns early leaving the rest queued for the next attempt
+ * to inherit. That is why the gauge, once desynchronised, stayed that way. */
+void test_start_drains_stale_bytes_before_reading_registers(void)
+{
+    VIBES_TEST("ads122.start-drains-stale-bytes",
+               "src/IO/IO_ADS122U04.c#IO_ADS122U04_start",
+               "a byte left on the load-cell ADC serial link by an abandoned exchange, then a start");
+    VIBES_EXPECT_WHY("flushed-before-readback",
+                     "the leftover is flushed before the configuration read-back",
+                     "each register read is one request and one reply, so a leftover shifts every reply after it and the driver reads register N's value as register N+1's");
+    VIBES_EXPECT("start-succeeds", "the start still completes and the converter is running");
+    d_staleBytes = 1;
+    TEST_ASSERT_TRUE(IO_ADS122U04_start(CH));
+    TEST_ASSERT_EQUAL_INT(1, d_drainCount);
+    TEST_ASSERT_EQUAL_INT(0, d_staleBytes);
+    TEST_ASSERT_TRUE(d_sawStart);
+}
+
+/* A start that fails its verify leaves replies queued. The next attempt has to
+ * clear them, or the offset is inherited and the driver never recovers. */
+void test_start_recovers_after_a_failed_attempt_left_replies_queued(void)
+{
+    VIBES_TEST("ads122.start-recovers-from-desync",
+               "src/IO/IO_ADS122U04.c#IO_ADS122U04_start",
+               "a start that fails its read-back and leaves unread replies, then a second start");
+    VIBES_EXPECT_WHY("second-attempt-succeeds",
+                     "the second start succeeds",
+                     "without flushing, the leftovers shift the next read-back too, so a driver that desynchronises once would stay unresponsive for good");
+    d_corruptReadback = true;
+    TEST_ASSERT_FALSE(IO_ADS122U04_start(CH));
+    /* Whatever that attempt abandoned is still on the wire. */
+    d_corruptReadback = false;
+    d_staleBytes = 3;
+    TEST_ASSERT_TRUE(IO_ADS122U04_start(CH));
+    TEST_ASSERT_EQUAL_INT(0, d_staleBytes);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -266,6 +307,8 @@ int main(void)
     RUN_TEST(test_start_writes_then_reads_back_all_five_registers);
     RUN_TEST(test_start_fails_on_register_read_timeout);
     RUN_TEST(test_start_fails_on_config_mismatch);
+    RUN_TEST(test_start_drains_stale_bytes_before_reading_registers);
+    RUN_TEST(test_start_recovers_after_a_failed_attempt_left_replies_queued);
     RUN_TEST(test_stop_stops_serial);
     RUN_TEST(test_receiveConversion_assembles_24bit_word_lsb_first);
     RUN_TEST(test_receiveConversion_sign_extends_negative_counts);
