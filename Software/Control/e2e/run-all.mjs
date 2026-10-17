@@ -672,6 +672,53 @@ function assertWaveformExcursion(series, { amplitudeMm, cycles, frequencyHz }, l
   );
 }
 
+// What the History panel and the data folder say about the newest run, for
+// a completion wait that ran out: a row stuck on "running" over a stored
+// "completed" is the page's view going stale, a stored "running" is the
+// completion never being written, and no row at all is the list itself
+// lost. Read straight from the DOM and the folder, so a missing row cannot
+// stall the description. Diagnostics must never fail a run.
+async function describeNewestRun(page) {
+  try {
+    const seen = await page.evaluate(async (dirName) => {
+      const panel = [...document.querySelectorAll('.panel')].find((p) => /History/.test(p.textContent ?? ''));
+      const history = (panel?.innerText ?? '(no History panel)').replace(/\s+/g, ' ').trim().slice(0, 300);
+      let folder;
+      try {
+        const root = await navigator.storage.getDirectory();
+        const runs = await (await root.getDirectoryHandle(dirName)).getDirectoryHandle('testRuns');
+        const read = async (name) => {
+          try {
+            return await (await (await runs.getFileHandle(name)).getFile()).text();
+          } catch (e) {
+            return `(${e.name})`;
+          }
+        };
+        const status = (text) => {
+          try {
+            const v = JSON.parse(text);
+            return JSON.stringify(Array.isArray(v) ? v.map((r) => [r.testName, r.status]) : [v.testName, v.status]);
+          } catch {
+            return text.slice(0, 80);
+          }
+        };
+        const names = [];
+        for await (const [n] of runs.entries()) names.push(n);
+        const newest = names.filter((n) => /^\d+\.json$/.test(n)).sort().pop();
+        folder = `holds [${names.join(', ')}], index ${status(await read('index.json'))}, ` +
+          `newest run ${newest ? status(await read(newest)) : '(none)'}`;
+      } catch (e) {
+        folder = `could not be read (${e?.name ?? e})`;
+      }
+      return { route: location.hash, rows: document.querySelectorAll('tbody tr').length, history, folder };
+    }, OPFS_DIR);
+    return `at ${seen.route} the History panel has ${seen.rows} row(s) and reads "${seen.history}"; ` +
+      `the data folder ${seen.folder}`;
+  } catch (err) {
+    return `(could not describe the newest run: ${err?.message ?? err})`;
+  }
+}
+
 // Run the currently-selected profiles and wait for the run to auto-complete + download.
 // Returns the run row locator. Assumes profiles are seeded + selected by the caller.
 async function runAndDownload(page, { completeTimeout = RUN_WAIT_MS } = {}) {
@@ -691,7 +738,12 @@ async function runAndDownload(page, { completeTimeout = RUN_WAIT_MS } = {}) {
     // No abort inside the budget: let the completion wait decide the outcome.
     () => null,
   );
-  const early = await Promise.race([completed.then(() => null), abortReason]);
+  let early;
+  try {
+    early = await Promise.race([completed.then(() => null), abortReason]);
+  } catch (err) {
+    throw new Error(`${err.message}; ${await describeNewestRun(page)}`);
+  }
   if (early) throw new Error(early);
   await completed;
   await press(row.getByRole('button', { name: /Download data/i }));

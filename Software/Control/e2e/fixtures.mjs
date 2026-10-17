@@ -446,6 +446,58 @@ export function installOpfsDataDir(dirName) {
 }
 
 /**
+ * Touch the page's OPFS on HOST time, every minute, for as long as the page
+ * lives.
+ *
+ * A board scenario's context is off the record (`browser.newContext()`), so
+ * its OPFS, and with it the data folder `installOpfsDataDir` hands the app,
+ * is held in memory by Chrome. Chrome drops the FILES of that in-memory OPFS
+ * once about ten minutes of host time pass in which nothing touches it, and
+ * keeps the directories. Measured on the board: a file written and left for
+ * 13 host minutes was gone, its directories still there. A run's record sits
+ * untouched from the moment the run starts until it completes, and on the
+ * board 10 s of motion costs 10 to 12 minutes of host time, so the app found
+ * its own run gone and the History empty (M12-linear-10mm-1, 10 mm at
+ * 1 mm/s). Listing the folder within that window keeps every file.
+ *
+ * The period is host time on purpose: the drop counts host time, and a page
+ * timer would count the board's, which can be a hundredth as fast. This
+ * touches the folder and asserts nothing; the app's own data folder is a
+ * folder on disk, not this one.
+ */
+const OPFS_KEEPALIVE_MS = 60_000;
+function keepOpfsAlive(page) {
+  let timer;
+  const touch = () => {
+    if (page.isClosed()) {
+      clearInterval(timer);
+      return;
+    }
+    void page
+      .evaluate(async (dirName) => {
+        const walk = async (dir) => {
+          for await (const [, handle] of dir.entries()) {
+            if (handle.kind === 'directory') await walk(handle);
+            else await handle.getFile();
+          }
+        };
+        const root = await navigator.storage.getDirectory();
+        try {
+          await walk(await root.getDirectoryHandle(dirName));
+        } catch {
+          /* no data folder chosen yet */
+        }
+      }, OPFS_DIR)
+      .catch(() => {
+        /* the page is navigating or gone: the next minute tries again */
+      });
+  };
+  timer = setInterval(touch, OPFS_KEEPALIVE_MS);
+  timer.unref();
+  page.once('close', () => clearInterval(timer));
+}
+
+/**
  * A page for one scenario, the OPFS data folder installed.
  *
  * Board mode: a fresh context in the Chrome the board's clock meters, and a
@@ -471,6 +523,7 @@ export async function newSilPage({ headed = false } = {}) {
     context = await browser.newContext();
     await context.addInitScript(installOpfsDataDir, OPFS_DIR);
     page = await context.newPage();
+    keepOpfsAlive(page);
     metered.add(page);
     lifetimes.set(page, { ms: 0 });
     meterLocatorWaits(page);
