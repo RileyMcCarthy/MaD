@@ -58,6 +58,13 @@ the 64-bit `{S, D}` (`tests/cordic_sqrt.rs`), which is what FlexC's `sqrtf`
 expects, but no capture shows silicon rounds down. The capture to add to
 `oracle.c`: one integer `qsqrt` with a non-zero S, and `sqrtf(0.786667f)`.
 
+**Open:** `QROTATE` with a non-zero `SETQ` has no P2-EVAL golden. p2core
+rotates the signed point `(D, Q)` by S with f64 trig, exact on quarter turns
+and truncated toward zero elsewhere (`tests/cordic_rotate.rs`), but no capture
+shows how silicon's CORDIC rounds (or how it handles a result past the i32
+range). The capture to add to `oracle.c`: `setq y` / `qrotate x, angle` /
+`getqx` / `getqy` for a few signed (x, y) pairs at 0, 90, 180 and 45 degrees.
+
 ## Record format (probe)
 
 ```
