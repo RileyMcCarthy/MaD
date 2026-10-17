@@ -281,14 +281,20 @@ export class DataStore {
     }, 'createTestRun');
   }
 
-  async updateTestRun(testName: string, patch: Partial<TestRunEntry>): Promise<void> {
+  /** Merge `patch` into the run's record. Resolves `false`, writing nothing,
+   *  when the run has no record (its file was moved or deleted), so the caller
+   *  can tell the user the update was not saved. Resolving rather than
+   *  rejecting keeps a missing file apart from a real storage failure, which
+   *  still rejects (and is logged by `run`). */
+  async updateTestRun(testName: string, patch: Partial<TestRunEntry>): Promise<boolean> {
     return this.run(async () => {
       const existing = await this.getTestRun(testName);
-      if (!existing) return;
+      if (!existing) return false;
       const merged = { ...existing, ...patch };
       const dir = await this.subdir(TEST_RUNS_DIR);
       await writeJsonFile(dir, `${sanitizeName(testName)}.json`, merged);
       await this.updateIndex((rows) => rows.map((r) => (r.id === merged.id ? indexRow(merged) : r)));
+      return true;
     }, 'updateTestRun');
   }
 

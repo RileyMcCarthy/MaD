@@ -13,6 +13,7 @@ import { deviceClient } from '@/device/session';
 import { useStore } from '@/store/useStore';
 import Modal from './Modal';
 import GcodePreview from './GcodePreview';
+import { markRunCompleted } from './markRunCompleted';
 
 interface TestRunnerProps {
   /** Called after a run is created/started/completed so the history can refresh. */
@@ -87,9 +88,7 @@ export default function TestRunner({ onChanged }: TestRunnerProps) {
       activeTestName.current = null;
       sawRunning.current = false;
       clearWatchdog();
-      void dataStore
-        .updateTestRun(name, { status: 'completed', completedAt: new Date().toISOString() })
-        .then(onChanged);
+      void markRunCompleted(dataStore, name, useStore.getState().notify).then(onChanged);
     }
   }, [testRunning, connected, onChanged]);
 
