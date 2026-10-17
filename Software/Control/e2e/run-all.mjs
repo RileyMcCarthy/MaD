@@ -97,6 +97,11 @@ const BOARD_FREE = new Set(['A1', 'FW1', 'FW2', 'FW3', 'FW5', 'FW6', 'FW7', 'FW8
 // --chrome` (make e2e-rom). Only FW-ISS, the app flashing that ROM, runs.
 const ROM_BOARD = process.env.E2E_BOARD === 'rom';
 
+// The app is the built bundle (board-route.sh with APP_DIST sets this), not
+// the dev server. BUNDLE-live runs only then; every other scenario runs on
+// either.
+const APP_IS_BUNDLE = process.env.E2E_APP === 'bundle';
+
 // Budget for any wait that depends on the DEVICE making progress: a protocol
 // round trip, a state change, a handshake, an SD write.
 //
@@ -2208,6 +2213,56 @@ const scenarios = [
       } finally { await browser.close(); }
     },
   },
+  // The app as it ships: the bundle `vite build` makes, served by
+  // `vite preview` (board-route.sh with APP_DIST), on the board. The dev
+  // server compiles for the newest Chrome and the bundle for the app's
+  // browser floor, so a fault the bundler brings in shows only here: one
+  // stopped every sample, state and disconnect reaching the screen (#156).
+  // Every check below needs the worker's events to reach the page.
+  {
+    id: 'BUNDLE-live',
+    name: 'The built bundle: connect, live samples and state, unplug, replug and reconnect by itself',
+    async run() {
+      // The replug below is the board's own cable; only the board route has one.
+      assert(BOARD, 'BUNDLE-live runs on the board route (SIL/scripts/board-route.sh with APP_DIST)');
+      const html = await (await fetch(APP_URL_HOST)).text();
+      assert(!html.includes('/@vite/client'), `the app at ${APP_URL_HOST} is the dev server, not a built bundle`);
+      const { browser, page, errors } = await newSilPage();
+      try {
+        // A built bundle keeps its session log to itself unless the user opts
+        // in (`mad:log`); opt in, so a failure here carries that log.
+        await page.context().addInitScript(() => {
+          try {
+            localStorage.setItem('mad:log', '*');
+          } catch {
+            /* no storage: the failure report goes without the app's log */
+          }
+        });
+        await connectToSil(page);
+        await page.goto(`${APP_URL}#/live`);
+        // Samples, and the opening handshake's firmware version.
+        await awaitResponding(page);
+        const forceText = (await page.locator('.readout', { hasText: 'Machine Force' }).locator('.value').textContent())?.trim() || '';
+        assert(/^-?\d/.test(forceText), `live readout never populated (got ${forceText})`);
+        // Machine state: the Test badge reads '—' until a state frame arrives.
+        await page.getByText(/^Test: (idle|running)$/).waitFor({ timeout: DEVICE_WAIT_MS });
+        // Unplug: the disconnect reaches the screen.
+        await dropLink(page);
+        await page.locator('.dot.disconnected').waitFor({ timeout: DEVICE_WAIT_MS });
+        await page.locator('.toast').getByText(/disconnected/i).first().waitFor({ timeout: DEVICE_WAIT_MS });
+        // Replug: the app reconnects by itself to the port it remembers, with
+        // nobody pressing Reconnect, and samples resume.
+        await restoreLink(page);
+        try {
+          await page.locator('.dot.connected').waitFor({ timeout: DEVICE_WAIT_MS });
+        } catch {
+          throw new Error(`the app did not reconnect by itself within ${DEVICE_WAIT_MS} ms of board time after the cable came back`);
+        }
+        await awaitResponding(page);
+        assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
+      } finally { await browser.close(); }
+    },
+  },
   // M11 — link-loss moments (catalog-driven; idle + mid-test).
   {
     id: 'M11-idle-drop',
@@ -2859,13 +2914,26 @@ async function boardAlive() {
 }
 
 async function main() {
+  // BUNDLE-live named without the bundle would be a skip, and a run that
+  // asked for it would pass having checked nothing: refuse.
+  if (!APP_IS_BUNDLE && (process.env.SCENARIOS || '').split(',').some((x) => x.trim() === 'BUNDLE-live')) {
+    console.error('✗ BUNDLE-live needs the built bundle: SIL/scripts/board-route.sh with APP_DIST (see its header).');
+    process.exit(2);
+  }
   // `--list`: the ids SCENARIOS selects (all of them without it), in the
-  // suite's order, one a line: FW-ISS only on the ROM board, and left out
-  // otherwise. SIL/scripts/board-route.sh runs them one board each from this.
+  // suite's order, one a line: FW-ISS only on the ROM board, BUNDLE-live only
+  // on the built bundle, and each left out otherwise.
+  // SIL/scripts/board-route.sh runs them one board each from this.
   if (process.argv.includes('--list')) {
     const only = process.env.SCENARIOS ? new Set(process.env.SCENARIOS.split(',').map((x) => x.trim())) : null;
     for (const s of scenarios) {
-      if ((s.id === 'FW-ISS') === ROM_BOARD && (!only || only.has(s.id))) console.log(s.id);
+      if (
+        (s.id === 'FW-ISS') === ROM_BOARD &&
+        (s.id !== 'BUNDLE-live' || APP_IS_BUNDLE) &&
+        (!only || only.has(s.id))
+      ) {
+        console.log(s.id);
+      }
     }
     return;
   }
@@ -2941,6 +3009,11 @@ async function main() {
           ROM_BOARD ? '' : ': make e2e-rom'
         })`,
       );
+      skipped += 1;
+      continue;
+    }
+    if (s.id === 'BUNDLE-live' && !APP_IS_BUNDLE) {
+      console.log(`  ~ ${s.id}: skipped (needs the built bundle: board-route.sh with APP_DIST)`);
       skipped += 1;
       continue;
     }

@@ -199,6 +199,9 @@ On a clean checkout after `npm run build:wasm && npm run generate:proto && npm i
 `npm run e2e` runs 4 (needs the board route: `cd SIL && make e2e`). Its
 board-free scenarios **gate** `control-e2e-boardless`, a subset of its board
 scenarios **gates** `control-e2e-board`, and the nightly runs all of it.
+BUNDLE-live (connect, samples, machine state, unplug, and replug with the app
+reconnecting by itself) runs only on the built bundle
+(`cd SIL && make e2e-bundle`), and gates `control-e2e-board`.
 
 ---
 

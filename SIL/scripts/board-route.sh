@@ -3,7 +3,8 @@
 # Chrome, every page and worker held to the board's clock by embsim's
 # `chrome-cdp` node (`mad-emulator --chrome`), its Web Serial port the board's
 # protocol line. The app is served by its dev server (Software/Control,
-# `vite`), started here unless one already answers on APP_PORT.
+# `vite`), started here unless one already answers on APP_PORT, or, with
+# APP_DIST, as the built bundle (below).
 #
 #   scripts/board-route.sh playground   a Chrome window on the app; Ctrl-C stops it all
 #   scripts/board-route.sh e2e          headless; runs the e2e suite against it
@@ -16,6 +17,12 @@
 # arguments), E2E_TIMINGS (a JSON file of per-scenario host and board times),
 # and BOARD_PER_SCENARIO=1: a fresh board for each scenario, so a board that
 # stops (the node's worker-boot stall) costs that scenario alone.
+#
+# APP_DIST=DIR serves a built bundle (`vite build --base=APP_BASE --outDir
+# DIR`) with `vite preview` in place of the dev server: the code the app ships
+# as, compiled for its browser floor, where the dev server compiles for the
+# newest. APP_BASE (/) is the base it was built for; APP_PORT defaults to 4173,
+# and must be free. The suite is told (E2E_APP=bundle), which runs BUNDLE-live.
 #
 # The run prints Chrome's DevTools URL in its "reached" line once the node
 # holds Chrome, and only then may a harness attach: a page made before the
@@ -36,8 +43,17 @@ sil=$(cd "$(dirname "$0")/.." && pwd)
 control="$sil/../Software/Control"
 image=${P2_IMAGE:-$sil/../Firmware/MaDCore/.pio/build/propeller2_debug/program}
 emulator=${EMULATOR:-$sil/target/release/mad-emulator}
-app_port=${APP_PORT:-5174}
-app_url="http://127.0.0.1:$app_port/"
+app_dist=''
+if [ -n "${APP_DIST:-}" ]; then
+  [ -f "$APP_DIST/index.html" ] || {
+    echo "board-route: no built bundle at $APP_DIST (vite build --outDir it first)" >&2
+    exit 2
+  }
+  app_dist=$(cd "$APP_DIST" && pwd)
+fi
+app_base=${APP_BASE:-/}
+app_port=${APP_PORT:-$([ -n "$app_dist" ] && echo 4173 || echo 5174)}
+app_url="http://127.0.0.1:$app_port$app_base"
 logs=${BOARD_LOGS:-$sil/target/board-route}
 mkdir -p "$logs"
 
@@ -49,7 +65,7 @@ for need in "$image" "$emulator"; do
 done
 
 # Only what this script started is stopped on the way out.
-vite_pid=''
+server_pid=''
 board_pid=''
 tail_pid=''
 stop_board() {
@@ -66,30 +82,47 @@ stop() {
   local status=$?
   if [ -n "$tail_pid" ]; then kill "$tail_pid" 2>/dev/null || true; fi
   stop_board
-  if [ -n "$vite_pid" ]; then
-    kill -TERM "$vite_pid" 2>/dev/null || true
+  if [ -n "$server_pid" ]; then
+    kill -TERM "$server_pid" 2>/dev/null || true
   fi
   exit "$status"
 }
 trap stop EXIT
 trap 'exit 130' INT TERM
 
-if curl -sf "$app_url" >/dev/null 2>&1; then
-  echo "board-route: the app is already served at $app_url; using it"
-else
-  (cd "$control" && exec ./node_modules/.bin/vite --host 127.0.0.1 --port "$app_port" --strictPort) \
-    >"$logs/vite.log" 2>&1 &
-  vite_pid=$!
+# Serve the app: `vite` (the dev server) or `vite preview` (the bundle in
+# APP_DIST), its log at $logs/$1.log.
+serve() {
+  local name=$1
+  shift
+  (cd "$control" && exec ./node_modules/.bin/vite "$@" --host 127.0.0.1 --port "$app_port" --strictPort) \
+    >"$logs/$name.log" 2>&1 &
+  server_pid=$!
   for _ in $(seq 1 60); do
     curl -sf "$app_url" >/dev/null 2>&1 && break
-    kill -0 "$vite_pid" 2>/dev/null || break
+    kill -0 "$server_pid" 2>/dev/null || break
     sleep 1
   done
   curl -sf "$app_url" >/dev/null 2>&1 || {
-    echo "board-route: the dev server did not come up; its log:" >&2
-    cat "$logs/vite.log" >&2
+    echo "board-route: $name did not come up at $app_url; its log:" >&2
+    cat "$logs/$name.log" >&2
     exit 1
   }
+}
+
+if [ -n "$app_dist" ]; then
+  # Never a server that is already there: it could be the dev server.
+  if curl -sf "$app_url" >/dev/null 2>&1; then
+    echo "board-route: something already answers at $app_url; the bundle needs that port (APP_PORT)" >&2
+    exit 2
+  fi
+  serve preview preview --outDir "$app_dist" --base "$app_base"
+  export E2E_APP=bundle
+  echo "board-route: the built bundle in $app_dist is served at $app_url (log: $logs/preview.log)"
+elif curl -sf "$app_url" >/dev/null 2>&1; then
+  echo "board-route: the app is already served at $app_url; using it"
+else
+  serve vite
   echo "board-route: the app is served at $app_url (log: $logs/vite.log)"
 fi
 
@@ -125,7 +158,7 @@ start_board() {
 
 if [ "$mode" = playground ]; then
   start_board "$logs/board.log"
-  echo "board-route: the app is open in the Chrome window. Ctrl-C stops the board, Chrome and the dev server."
+  echo "board-route: the app is open in the Chrome window. Ctrl-C stops the board, Chrome and the app's server."
   # Follow the board's own words (the guest's console, the link, the host).
   tail -n +1 -f "$logs/board.log" &
   tail_pid=$!

@@ -21,7 +21,7 @@ relevant jobs:
 | `vibes-pin-ci` | **the `Vibes` gitlink moved** | **Blocking.** Mirror of upstream Vibes CI for the commit being pinned: the tool's install, typecheck, tests and build, plus compile probes of its C, Rust and TypeScript bindings |
 | `docs-ci` | `docs/**` or `mkdocs.yml` changed | **Blocking.** `mkdocs build --strict` — broken nav entries, dead internal links and config warnings are errors. Previously this ran only on a push to `main` via `pages.yml`, so a bad docs PR merged green and took the Pages deploy down |
 | `control-e2e-boardless` | app or protocol changed, or the `SIL/embsim` gitlink moved | **Blocking.** The e2e scenarios that need no board (A1 and the firmware-flash `FW*` ones): the real app in a real host Chrome against in-page fakes, no emulator. The scenarios that touch the board run in `control-e2e-board` and the nightly. See [below](#the-e2e-suite) |
-| `control-e2e-board` | app, protocol, firmware or SIL changed, or the `SIL/embsim` gitlink moved | **Blocking.** A subset of the board-touching e2e scenarios on the board route: the P2 image on the ISS, and the app in the runner's Chrome held to the board's clock by embsim's `chrome-cdp` node (`mad-emulator --chrome`), one fresh board per scenario (`SIL/scripts/board-route.sh e2e`, `BOARD_PER_SCENARIO=1`). The whole suite runs nightly on the same route (`e2e-nightly.yml`). See [below](#the-e2e-suite) |
+| `control-e2e-board` | app, protocol, firmware or SIL changed, or the `SIL/embsim` gitlink moved | **Blocking.** A subset of the board-touching e2e scenarios on the board route: the P2 image on the ISS, and the app in the runner's Chrome held to the board's clock by embsim's `chrome-cdp` node (`mad-emulator --chrome`), one fresh board per scenario (`SIL/scripts/board-route.sh e2e`, `BOARD_PER_SCENARIO=1`), then BUNDLE-live on the bundle as `pages.yml` builds it (`APP_DIST`, served by `vite preview`). The whole suite runs nightly on the same route (`e2e-nightly.yml`). See [below](#the-e2e-suite) |
 | `firmware-unit-tests` | firmware or protocol changed | `pio test -e native_test` — the host Unity suite under AddressSanitizer (no Propeller toolchain needed) |
 | `protocol-codegen` | protocol changed | **Blocking.** Regenerates all three targets (C/TS/Rust) twice and asserts success + byte-reproducibility (generated files are gitignored, so this guards the schema/templates + generator determinism, not committed-file drift) |
 | `firmware-layering` | firmware changed | **Blocking (baseline-gated).** `scripts/check_layering.py` enforces downward-only includes (APP→DEV→IO→Library→HAL→HW); pre-existing violations are frozen in `.layering-baseline`, so it fails only on **new** upward includes |
@@ -55,7 +55,7 @@ board time in host time:
 
 | Job | When | What |
 |---|---|---|
-| `control-e2e-board` | per PR: the app, the protocol, the firmware, `SIL/`, or a move of the `SIL/embsim` pin (#148) | **Gates.** A subset of the board scenarios on the ISS with `chrome-cdp` (its comment names the scenarios and the time). A fetch that holds a virtual-time budget is granted that budget again under `advance` |
+| `control-e2e-board` | per PR: the app, the protocol, the firmware, `SIL/`, or a move of the `SIL/embsim` pin (#148) | **Gates.** A subset of the board scenarios on the ISS with `chrome-cdp` (its comment names the scenarios and the time), and BUNDLE-live on the shipped bundle. A fetch that holds a virtual-time budget is granted that budget again under `advance` |
 | `control-e2e-boardless` | per PR: the app, or a pin move | **Gates.** The scenarios that never reach a board (A1 and the `FW*` flasher ones, a host Chrome against in-page fakes) |
 | `e2e-nightly.yml` | 06:17 UTC daily, or by hand | The whole suite on the same route, after the node's Chrome canary (a worker's timer on the board's clock) |
 
@@ -200,7 +200,14 @@ does:
 ```bash
 cd SIL && make e2e BOARD_PER_SCENARIO=1   # as control-e2e-board and the nightly run it
 cd SIL && make e2e SCENARIOS=B1+C1,F7     # a subset
+cd SIL && make e2e-bundle                 # BUNDLE-live on the built bundle
 ```
+
+CI and the nightly run the suite on the dev server, which compiles for the
+newest Chrome. BUNDLE-live runs on the bundle the app ships as (`vite build`, the
+Pages base path, served by `vite preview`; `board-route.sh` with `APP_DIST`),
+which is compiled for the app's browser floor: a fault that compiling brings
+in shows only there.
 
 See [SIL testing](sil-testing.md#running-the-e2e-suite) for the three-terminal
 version and `Software/Control/docs/TEST_PLAN.md` for the scenarios. The
