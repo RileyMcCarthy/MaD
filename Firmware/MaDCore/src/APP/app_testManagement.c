@@ -175,34 +175,9 @@ static void app_testManagement_private_processRequests(void)
     APP_TESTMANAGEMENT_LOCK_REL();
 }
 
-/* Human-readable end reason, for the log. A test that ends for anything but
- * COMPLETE is the single most useful thing to see when a run "does nothing",
- * and until now the reason only ever left the board inside a notification
- * payload — invisible to anyone reading the device's own output. */
-static const char *app_testManagement_private_endReasonName(app_testManagement_endReason_E reason)
-{
-    switch (reason)
-    {
-    case APP_TESTMANAGEMENT_END_COMPLETE:
-        return "complete";
-    case APP_TESTMANAGEMENT_END_MOTION_DISABLED:
-        return "motion disabled";
-    case APP_TESTMANAGEMENT_END_LIMIT_EXCEEDED:
-        return "sample limit exceeded";
-    case APP_TESTMANAGEMENT_END_OPEN_FAILED:
-        return "gcode open failed";
-    case APP_TESTMANAGEMENT_END_USER:
-        return "user stop";
-    case APP_TESTMANAGEMENT_END_NONE:
-    default:
-        return "unspecified";
-    }
-}
-
 static void app_testManagement_private_enterEnding(app_testManagement_endReason_E reason)
 {
     app_testManagement_data.endReason = reason;
-    DEBUG_INFO("TESTMGMT: test ending (%s)\n", app_testManagement_private_endReasonName(reason));
     switch (reason)
     {
     case APP_TESTMANAGEMENT_END_COMPLETE:
