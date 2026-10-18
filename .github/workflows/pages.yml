@@ -85,8 +85,15 @@ jobs:
 
       # Project Pages serve under /<repo>/; the app lives under /<repo>/app/.
       # HashRouter means client routing needs no server rewrites.
+      # The build bundles the latest firmware-v* release for the Firmware
+      # screen (tools/firmwareRelease.ts); a deploy without one would quietly
+      # drop the default image, so that fails the build here.
       - name: Build the app (Pages base path)
         working-directory: Software/Control
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          MAD_FIRMWARE_REPO: ${{ github.repository }}
+          MAD_FIRMWARE_RELEASE_REQUIRED: '1'
         run: |
           npx tsc -b
           npx vite build --base="/${{ github.event.repository.name }}/app/"

@@ -5,6 +5,7 @@ import istanbul from 'vite-plugin-istanbul';
 import { fileURLToPath, URL } from 'node:url';
 import { execSync } from 'node:child_process';
 import { createRequire } from 'node:module';
+import { firmwareRelease } from './tools/firmwareRelease';
 
 const { version } = createRequire(import.meta.url)('./package.json') as { version: string };
 
@@ -47,6 +48,9 @@ export default defineConfig({
         ]
       : []),
     react(),
+    // The latest firmware release, served from this origin so the Firmware
+    // screen can offer it by default (GitHub's asset host has no CORS).
+    firmwareRelease(),
     VitePWA({
       // Prompt, never auto-reload: this app holds a live hardware connection and
       // may be mid-test. A silent skipWaiting/clientsClaim reload would tear down
@@ -66,7 +70,8 @@ export default defineConfig({
       },
       workbox: {
         // The wasm + worker assets must be precached for offline use.
-        globPatterns: ['**/*.{js,css,html,wasm,svg}'],
+        // So is the bundled firmware release, so an offline update still works.
+        globPatterns: ['**/*.{js,css,html,wasm,svg}', 'firmware/latest.{json,bin}'],
         maximumFileSizeToCacheInBytes: 8 * 1024 * 1024,
         // Don't hijack the open page; the new SW waits until we apply it.
         skipWaiting: false,

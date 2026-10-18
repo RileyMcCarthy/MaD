@@ -15,5 +15,5 @@
     "types": ["node"],
     "strict": true
   },
-  "include": ["vite.config.ts"]
+  "include": ["vite.config.ts", "tools/firmwareRelease.ts", "src/firmware/release.ts"]
 }

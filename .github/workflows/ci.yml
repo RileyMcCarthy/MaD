@@ -1050,6 +1050,9 @@ jobs:
       needs.changes.outputs.is_firmware_release == 'true' &&
       needs.build-firmware.result == 'success'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write  # dispatch the Pages deploy below
     steps:
       - name: Download firmware artifacts
         uses: actions/download-artifact@v8
@@ -1072,6 +1075,14 @@ jobs:
           prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # The Pages app bundles the latest firmware release as the Firmware
+      # screen's default image. Pages only deploys from main, so redeploy main
+      # now that a newer release exists.
+      - name: Redeploy MaD Control with the new release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run pages.yml --repo "${{ github.repository }}" --ref main
 
   release-hardware:
     needs: [changes, build-hardware]
