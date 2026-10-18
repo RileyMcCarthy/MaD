@@ -5,7 +5,9 @@
  *
  * Privacy: a field's value is kept only when it is a number, a choice from a
  * list, or a checkbox — the machine settings a reproduction needs. Free text
- * (names, descriptions, the GitHub token) is recorded by length only.
+ * (names, descriptions, the GitHub token) is recorded by length only. A
+ * clicked control is named by its test id or aria label, never by its visible
+ * text, which can be a name the user typed.
  */
 
 import { logger } from './log';
@@ -43,12 +45,24 @@ export function recordableEdit(field: EditedField): Record<string, unknown> {
   return { length: field.value.length };
 }
 
-/** The name a person would use for a control: its test id, aria label, or visible text. */
-function controlName(el: Element): string {
+/**
+ * The name a control is logged under: its `data-testid`, then its
+ * `aria-label` or `title`. Those are written by developers. Visible text is
+ * not: a button in a list of saved profiles or samples, or a file name, shows
+ * what the user typed, and the report becomes a public issue. So a control
+ * named only by its text is logged by its role, the test id of the nearest
+ * container that has one, and the length of the text, never the text itself.
+ */
+export function controlName(el: Element): string {
   const testId = el.getAttribute('data-testid');
+  if (testId) return clip(testId);
   const aria = el.getAttribute('aria-label') ?? el.getAttribute('title');
-  const text = (el as HTMLElement).innerText ?? el.textContent ?? '';
-  return clip(aria ?? (text.trim() || testId || el.tagName.toLowerCase()));
+  if (aria?.trim()) return clip(aria);
+  const role = el.getAttribute('role') ?? (el.tagName === 'A' ? 'link' : el.tagName.toLowerCase());
+  const area = el.parentElement?.closest('[data-testid]')?.getAttribute('data-testid');
+  const text = ((el as HTMLElement).innerText ?? el.textContent ?? '').replace(/\s+/g, ' ').trim();
+  const where = area ? ` in ${clip(area)}` : '';
+  return text ? `${role}${where} (${text.length} characters)` : `${role}${where}`;
 }
 
 /** The label of a form field: its `label.field` text, aria label, name or placeholder. */
