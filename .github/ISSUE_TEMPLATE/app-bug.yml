@@ -33,6 +33,13 @@ body:
         3. Try to jog
 
   - type: textarea
+    id: actions
+    attributes:
+      label: Recent actions
+      description: The pages, clicks and settings leading up to the problem, recorded by the app.
+      render: text
+
+  - type: textarea
     id: triage
     attributes:
       label: Summary

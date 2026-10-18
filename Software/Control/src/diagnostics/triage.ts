@@ -38,7 +38,8 @@ export interface TriageSummary {
 const FAILURE_KEY = /error|nack|timeout|fail|trap|stall|jank|undecodable|abort|refus|reject/i;
 
 function describe(e: LogEntry): { at: number; tag: string; msg: string } {
-  return { at: e.t, tag: `${e.cat}/${e.tag}`, msg: e.msg ?? '' };
+  // First line only: a component stack after it would swamp the summary.
+  return { at: e.t, tag: `${e.cat}/${e.tag}`, msg: (e.msg ?? '').split('\n')[0].trim() };
 }
 
 export function summariseForTriage(log: LogSnapshot): TriageSummary {
