@@ -21,5 +21,5 @@
     "baseUrl": ".",
     "paths": { "vitest": ["./node_modules/vitest"] }
   },
-  "include": ["vite.config.ts", "tools/firmwareRelease.ts", "tools/firmwareRelease.test.ts", "src/firmware/release.ts"]
+  "include": ["vite.config.ts", "tools/firmwareRelease.ts", "tools/firmwareRelease.test.ts", "tools/assemble-pages-app.mts", "tools/assemble-pages-app.test.ts", "src/firmware/release.ts"]
 }

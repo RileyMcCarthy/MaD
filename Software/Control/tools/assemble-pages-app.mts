@@ -21,15 +21,13 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
-import { fetchLatestFirmware } from './firmwareRelease';
+import { fetchLatestFirmware, type Bundled } from './firmwareRelease';
 import { RELEASE_IMAGE_PATH, RELEASE_MANIFEST_PATH } from '../src/firmware/release';
 
-const OUT = resolve(process.env.OUT ?? 'site/app');
 const REPO = process.env.MAD_REPO || 'RileyMcCarthy/MaD';
-const ZIP_DIR = process.env.ZIP_DIR;
 const TAG_PREFIX = 'madcontrol-v';
 
-interface Release {
+export interface Release {
   version: string;
   publishedAt: string | null;
   zip: string;
@@ -38,7 +36,7 @@ interface Release {
 const SEMVER = /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/;
 
 /** Newest first, by version number. */
-function compareVersions(a: string, b: string): number {
+export function compareVersions(a: string, b: string): number {
   const pa = SEMVER.exec(a)?.slice(1, 4).map(Number) ?? [0, 0, 0];
   const pb = SEMVER.exec(b)?.slice(1, 4).map(Number) ?? [0, 0, 0];
   for (let i = 0; i < 3; i++) if (pa[i] !== pb[i]) return pb[i] - pa[i];
@@ -78,7 +76,7 @@ async function releasesFromGithub(work: string): Promise<Release[]> {
   return out;
 }
 
-function releasesFromDir(dir: string): Release[] {
+export function releasesFromDir(dir: string): Release[] {
   return readdirSync(dir)
     .map((name) => /^mad-control-v(.+)\.zip$/.exec(name))
     .filter((m): m is RegExpExecArray => m !== null)
@@ -90,7 +88,7 @@ function releasesFromDir(dir: string): Release[] {
 }
 
 /** The /app/ entry page: straight on to the latest release, same route and query. */
-function redirectPage(latest: string): string {
+export function redirectPage(latest: string): string {
   const target = `v${latest}/`;
   return `<!doctype html>
 <html lang="en">
@@ -114,7 +112,7 @@ function redirectPage(latest: string): string {
  * sw.js at that address replaces it on the next visit; this one removes itself
  * and reloads the pages it controlled, so they reach the versioned site.
  */
-const RETIRE_SW = `self.addEventListener('install', () => self.skipWaiting());
+export const RETIRE_SW = `self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', (event) => {
   event.waitUntil((async () => {
     // Only the old app's caches: Workbox names them after this worker's scope,
@@ -128,42 +126,76 @@ self.addEventListener('activate', (event) => {
 });
 `;
 
-async function main(): Promise<void> {
-  const work = join(tmpdir(), `mad-pages-${process.pid}`);
-  mkdirSync(work, { recursive: true });
-  const releases = ZIP_DIR ? releasesFromDir(resolve(ZIP_DIR)) : await releasesFromGithub(work);
-  if (releases.length === 0) {
-    throw new Error('no MaD Control release carries a mad-control-v*.zip build; refusing to publish an empty app');
-  }
-  releases.sort((a, b) => compareVersions(a.version, b.version));
+export const EMPTY_APP_REFUSAL =
+  'no MaD Control release carries a mad-control-v*.zip build; refusing to publish an empty app';
 
-  rmSync(OUT, { recursive: true, force: true });
-  mkdirSync(OUT, { recursive: true });
-  for (const r of releases) {
-    const dir = join(OUT, `v${r.version}`);
-    mkdirSync(dir, { recursive: true });
-    execFileSync('unzip', ['-q', r.zip, '-d', dir]);
-    console.log(`[assemble] v${r.version} ← ${r.zip}`);
-  }
-
-  const latest = releases[0].version;
-  writeFileSync(
-    join(OUT, 'versions.json'),
-    JSON.stringify({ latest, versions: releases.map((r) => ({ version: r.version, publishedAt: r.publishedAt })) }, null, 2),
-  );
-  writeFileSync(join(OUT, 'index.html'), redirectPage(latest));
-  writeFileSync(join(OUT, 'sw.js'), RETIRE_SW);
-
-  const { manifest, image } = await fetchLatestFirmware(fetch, process.env);
-  mkdirSync(join(OUT, 'firmware'), { recursive: true });
-  writeFileSync(join(OUT, RELEASE_MANIFEST_PATH), JSON.stringify(manifest));
-  writeFileSync(join(OUT, RELEASE_IMAGE_PATH), image);
-  console.log(`[assemble] latest app v${latest}; firmware ${manifest.tag} (${manifest.assetName})`);
-
-  rmSync(work, { recursive: true, force: true });
+/** What one assembly reads from the outside world. The CLI below passes GitHub
+ *  (or ZIP_DIR) and the real firmware lookup; tests pass a temp folder and a stub. */
+export interface AssembleOptions {
+  /** The folder to (re)create as the site's /app/. */
+  out: string;
+  /** The releases to publish; given a scratch folder to download into. */
+  listReleases: (work: string) => Release[] | Promise<Release[]>;
+  /** The firmware release served at /app/firmware/ for every version. */
+  fetchFirmware: () => Promise<Bundled>;
+  log?: (line: string) => void;
 }
 
-main().catch((err: unknown) => {
-  console.error(`[assemble] ${err instanceof Error ? err.message : String(err)}`);
-  process.exit(1);
-});
+/** Builds `out` from the releases. Throws before touching `out` when there is
+ *  no release, so a failed deploy leaves the previous folder in place. */
+export async function assemble(opts: AssembleOptions): Promise<void> {
+  const { out } = opts;
+  const log = opts.log ?? ((line: string) => console.log(line));
+  const work = join(tmpdir(), `mad-pages-${process.pid}-${Date.now()}`);
+  mkdirSync(work, { recursive: true });
+  try {
+    const releases = [...(await opts.listReleases(work))];
+    if (releases.length === 0) throw new Error(EMPTY_APP_REFUSAL);
+    releases.sort((a, b) => compareVersions(a.version, b.version));
+
+    rmSync(out, { recursive: true, force: true });
+    mkdirSync(out, { recursive: true });
+    for (const r of releases) {
+      const dir = join(out, `v${r.version}`);
+      mkdirSync(dir, { recursive: true });
+      execFileSync('unzip', ['-q', r.zip, '-d', dir]);
+      log(`[assemble] v${r.version} ← ${r.zip}`);
+    }
+
+    const latest = releases[0].version;
+    writeFileSync(
+      join(out, 'versions.json'),
+      JSON.stringify({ latest, versions: releases.map((r) => ({ version: r.version, publishedAt: r.publishedAt })) }, null, 2),
+    );
+    writeFileSync(join(out, 'index.html'), redirectPage(latest));
+    writeFileSync(join(out, 'sw.js'), RETIRE_SW);
+
+    const { manifest, image } = await opts.fetchFirmware();
+    mkdirSync(join(out, 'firmware'), { recursive: true });
+    writeFileSync(join(out, RELEASE_MANIFEST_PATH), JSON.stringify(manifest));
+    writeFileSync(join(out, RELEASE_IMAGE_PATH), image);
+    log(`[assemble] latest app v${latest}; firmware ${manifest.tag} (${manifest.assetName})`);
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+}
+
+async function main(): Promise<void> {
+  const zipDir = process.env.ZIP_DIR;
+  await assemble({
+    out: resolve(process.env.OUT ?? 'site/app'),
+    listReleases: (work) => (zipDir ? releasesFromDir(resolve(zipDir)) : releasesFromGithub(work)),
+    fetchFirmware: () => fetchLatestFirmware(fetch, process.env),
+  });
+}
+
+// pages.yml runs this file directly (and redeploys when it changes), so the
+// assembler and its CLI stay in one module. vite-node does not pass the script
+// path in process.argv, so "run unless a test imported it" is told by VITEST,
+// which vitest sets in its workers.
+if (!process.env.VITEST) {
+  main().catch((err: unknown) => {
+    console.error(`[assemble] ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  });
+}
