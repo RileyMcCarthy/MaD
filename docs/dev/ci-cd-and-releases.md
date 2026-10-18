@@ -152,30 +152,6 @@ https://rileymccarthy.github.io/MaD/app/vX.Y.Z/    → one release, exactly as i
 - **Releases from before 0.4.0 carry no build** and are not hosted.
 
 !!! note "One-time setup"
-    Enable **Settings → Copilot → Code review** → *automatic review* for the repo (or add
-    a ruleset that requests Copilot's review on PRs). Copilot code review consumes GitHub
-    Copilot AI Credits; on this **public** repo it is exempt from the Actions-minutes
-    surcharge that applies to private repos.
-
-## Pages deploy (`.github/workflows/pages.yml`)
-
-One workflow publishes **both** this documentation site and the control app to
-GitHub Pages as a single deployment:
-
-```text
-https://rileymccarthy.github.io/MaD/        → documentation (this site)
-https://rileymccarthy.github.io/MaD/app/    → MaD Control
-```
-
-The job builds the app with Vite (base path `/<repo>/app/`), builds the docs with
-MkDocs, copies the app into `site/app/`, and uploads the merged `site/` as the
-Pages artifact. **Pages deploys from `main`** (and `workflow_dispatch`). The
-`github-pages` environment only allows that branch, so a `madcontrol-v*` tag
-does **not** deploy Pages — it asserts `package.json` matches the tag and
-publishes a **MaD Control** GitHub Release. The matching merge to `main` already
-deployed that SHA.
-
-!!! note "One-time setup"
     In the repo, set **Settings → Pages → Source = GitHub Actions** so the
     workflow can publish.
 
