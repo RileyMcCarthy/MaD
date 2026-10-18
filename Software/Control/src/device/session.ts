@@ -165,6 +165,11 @@ export class DeviceClient {
     return this.port !== null;
   }
 
+  /** The port this session has open, if any. */
+  heldPort(): SerialPort | null {
+    return this.port;
+  }
+
   async connect(
     port: SerialPort,
     baudRate = DEFAULT_BAUD_RATE,

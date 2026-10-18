@@ -4,6 +4,8 @@ import { deviceClient } from '@/device/session';
 import { estimateSeconds } from '@/firmware/image';
 import { LOADER_BAUD_RATE } from '@/firmware/webSerialTransport';
 import { programPort, type ProgramProgress } from '@/firmware/program';
+import { closeFlashPort } from '@/firmware/closeFlashPort';
+import { logger } from '@/diagnostics/log';
 import {
   describePort,
   rememberFlashPort,
@@ -125,7 +127,11 @@ export default function Firmware() {
     );
     if (!ok) return;
 
-    const wasConnected = connected;
+    // The main device session is touched only when it is on the port being
+    // flashed (one adapter for both). Flashing over a separate programming
+    // adapter, as on the MadEdge PCBA, leaves the main connection running.
+    const sharesPort = deviceClient.heldPort() === target.port;
+    const resumeSession = sharesPort && connected;
     try {
       // Fetch (and check) the release before touching the board, so a failed
       // download leaves the live session and the flash as they were.
@@ -140,28 +146,37 @@ export default function Firmware() {
       }
 
       setStatus({ kind: 'running', progress: { phase: 'resetting' } });
-      // The chip reboots as part of programming, so any live protocol session is
-      // void — and on a single-port board the worker still holds the streams,
-      // also while it is still connecting or after a lost link.
-      if (wasConnected || deviceClient.isConnected()) await disconnect();
+      // On a shared port the worker holds the streams (also while connecting or
+      // after a lost link), and the chip reboots, so that session has to go.
+      if (sharesPort) await disconnect();
 
-      const result = await programPort(target.port, firmware, {
-        // The P2 Edge boots from SPI flash, so that is the only thing the app
-        // offers. RAM loading stays available to tools/hw-p2load.mts, where
-        // running a build without committing it is a bring-up convenience.
-        mode: 'flash',
-        onProgress: (progress) => setStatus({ kind: 'running', progress }),
-      });
+      let result;
+      try {
+        result = await programPort(target.port, firmware, {
+          // The P2 Edge boots from SPI flash, so that is the only thing the app
+          // offers. RAM loading stays available to tools/hw-p2load.mts, where
+          // running a build without committing it is a bring-up convenience.
+          mode: 'flash',
+          onProgress: (progress) => setStatus({ kind: 'running', progress }),
+        });
+      } finally {
+        // The page opened this port; it must not keep it, whatever happened.
+        if (!(await closeFlashPort(target.port))) {
+          logger('flash').warn('port-left-open', 'the flash port did not close; unplug and replug the adapter', {
+            port: target.label,
+          });
+        }
+      }
 
       setStatus({
         kind: 'done',
         message: `Wrote ${result.imageBytes.toLocaleString()} bytes to flash. The board has rebooted into the new firmware.`,
       });
 
-      if (wasConnected) {
+      if (resumeSession) {
         // Give the firmware a moment to come up before re-opening the port.
         await new Promise((r) => setTimeout(r, 1500));
-        await connect();
+        await connect({ port: target.port });
       }
     } catch (err) {
       setStatus({ kind: 'error', message: err instanceof Error ? err.message : String(err) });
