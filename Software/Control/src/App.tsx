@@ -11,7 +11,8 @@ import {
 import CapabilityGate from './ui/CapabilityGate';
 import DataFolderGate from './ui/DataFolderGate';
 import ErrorBoundary from './ui/ErrorBoundary';
-import { useStore, UiNotification } from './store/useStore';
+import Toast from './ui/Toast';
+import { useStore } from './store/useStore';
 import { NotificationType } from './domain';
 import { logger } from './diagnostics/log';
 
@@ -119,33 +120,6 @@ function StatusBar() {
           ⏹ STOP
         </button>
       )}
-    </div>
-  );
-}
-
-/** Auto-dismissing toast. Errors/warnings linger longer so they stay readable;
- *  clicking dismisses immediately. */
-function Toast({ n, onDismiss }: { n: UiNotification; onDismiss: () => void }) {
-  useEffect(() => {
-    const ms = n.Type === NotificationType.ERROR || n.Type === NotificationType.WARN ? 8000 : 4000;
-    const t = setTimeout(onDismiss, ms);
-    return () => clearTimeout(t);
-  }, [n.id, n.Type, onDismiss]);
-  return (
-    <div
-      className={`toast ${n.Type}`}
-      onClick={onDismiss}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          onDismiss();
-        }
-      }}
-      role="button"
-      tabIndex={0}
-      aria-label={`Dismiss notification: ${n.Message}`}
-    >
-      {n.Message}
     </div>
   );
 }
