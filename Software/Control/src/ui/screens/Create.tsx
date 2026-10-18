@@ -16,6 +16,7 @@ import { useStore } from '@/store/useStore';
 import SortableList, { reorder } from '@/ui/components/SortableList';
 import Modal from '@/ui/components/Modal';
 import GcodePreview from '@/ui/components/GcodePreview';
+import NumberField from '@/ui/components/NumberField';
 
 /* The G-code generator/preview only reads sets; sample limits are applied at
  * run time by the Test Runner (sample profiles live on the Samples page). */
@@ -30,58 +31,6 @@ const newSet = (name: string): MotionSet => ({
   executions: 1,
   moves: [newMove()],
 });
-
-/**
- * Numeric input that allows negative / partial entry. A plain controlled
- * `<input type="number" value={Number(...)}>` blocks the minus sign: while you
- * type `-`, the browser reports an empty value, `Number('')` is 0, and the
- * controlled value snaps back to 0. We keep a string draft so intermediate
- * states (`-`, ``, `1.`) survive, and commit the parsed number as soon as the
- * text is a valid number.
- */
-function NumberField({
-  label,
-  value,
-  onChange,
-}: {
-  label: string;
-  value: number;
-  onChange: (n: number) => void;
-}) {
-  const [draft, setDraft] = useState(String(value));
-  // Resync the draft when the external value changes (e.g. loading a set) and
-  // doesn't already represent the same number the user is editing.
-  useEffect(() => {
-    if (Number(draft) !== value) setDraft(Number.isFinite(value) ? String(value) : '');
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [value]);
-  const incomplete = (s: string) => s === '' || s === '-' || s === '.' || s === '-.';
-  return (
-    <label className="field">
-      {label}
-      <input
-        type="text"
-        inputMode="decimal"
-        value={draft}
-        onChange={(e) => {
-          const raw = e.target.value;
-          if (!/^-?\d*\.?\d*$/.test(raw)) return; // reject non-numeric keystrokes
-          setDraft(raw);
-          if (!incomplete(raw)) {
-            const n = Number(raw);
-            if (Number.isFinite(n)) onChange(n);
-          }
-        }}
-        onBlur={() => {
-          if (incomplete(draft)) {
-            onChange(0);
-            setDraft('0');
-          }
-        }}
-      />
-    </label>
-  );
-}
 
 export default function Create() {
   const [motionProfile, setMotionProfile] = useState<MotionProfile>({
@@ -364,15 +313,13 @@ export default function Create() {
                       Set Name
                       <input value={set.name} onChange={(e) => updateSet(si, { name: e.target.value })} />
                     </label>
-                    <label className="field">
-                      Executions
-                      <input
-                        type="number"
-                        min={1}
-                        value={set.executions}
-                        onChange={(e) => updateSet(si, { executions: Number(e.target.value) })}
-                      />
-                    </label>
+                    <NumberField
+                      label="Executions"
+                      value={set.executions}
+                      min={1}
+                      integer
+                      onChange={(n) => updateSet(si, { executions: n })}
+                    />
                   </div>
                   <button className="danger" onClick={() => updateSets(sets.filter((_, i) => i !== si))}>
                     Delete Set
