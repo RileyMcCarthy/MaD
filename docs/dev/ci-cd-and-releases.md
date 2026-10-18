@@ -115,6 +115,46 @@ value foci per area). Edit the guideline doc, not a second copy.
 
 ## Pages deploy (`.github/workflows/pages.yml`)
 
+One workflow publishes **both** this documentation site and every MaD Control
+release to GitHub Pages as a single deployment:
+
+```text
+https://rileymccarthy.github.io/MaD/               → documentation (this site, from main)
+https://rileymccarthy.github.io/MaD/app/           → redirects to the latest release
+https://rileymccarthy.github.io/MaD/app/vX.Y.Z/    → one release, exactly as it shipped
+```
+
+- **Each release is built once.** Pushing a `madcontrol-vX.Y.Z` tag runs the
+  `release-app` job. It builds the app for its own folder (base path
+  `/<repo>/app/vX.Y.Z/`), attaches the build to the **MaD Control X.Y.Z** GitHub
+  Release as `mad-control-vX.Y.Z.zip`, then asks `main` to redeploy.
+- **Every deploy re-assembles the site.** The `build` job builds the docs from
+  `main`, then `tools/assemble-pages-app.mts` unpacks every release zip into
+  `site/app/vX.Y.Z/` and writes:
+    - `versions.json`, which lists the releases for the app's version picker on
+      **About**;
+    - the `/app/` redirect, which keeps the page part of the URL;
+    - `/app/firmware/`, the latest firmware release, shared by every version so
+      an older app still offers the newest firmware;
+    - an `/app/sw.js` that removes the service worker left by the unversioned
+      app.
+- **Merging to `main` never changes a published app.** It redeploys only when
+  the docs, the assembler or this workflow change.
+- **Pages deploys from `main`.** The `github-pages` environment only accepts that
+  branch, which is why the tag job dispatches a `main` deploy rather than
+  deploying itself.
+- **A firmware release triggers a redeploy too,** so the shared firmware stays
+  current.
+- **Releases from before 0.4.0 carry no build** and are not hosted.
+
+!!! note "One-time setup"
+    Enable **Settings → Copilot → Code review** → *automatic review* for the repo (or add
+    a ruleset that requests Copilot's review on PRs). Copilot code review consumes GitHub
+    Copilot AI Credits; on this **public** repo it is exempt from the Actions-minutes
+    surcharge that applies to private repos.
+
+## Pages deploy (`.github/workflows/pages.yml`)
+
 One workflow publishes **both** this documentation site and the control app to
 GitHub Pages as a single deployment:
 
@@ -149,8 +189,9 @@ git push -u origin HEAD
 Software/Control/scripts/release.sh --publish         # tags madcontrol-vX.Y.Z
 ```
 
-That tag publishes a GitHub Release named **MaD Control X.Y.Z**. Pages already
-deployed from the merge to `main`.
+That tag builds the release, publishes the **MaD Control X.Y.Z** GitHub Release
+with its `mad-control-vX.Y.Z.zip`, and redeploys Pages. `/app/` then opens
+X.Y.Z, and earlier releases stay at their own `/app/vX.Y.Z/` addresses.
 
 Firmware and hardware are still cut with version tags:
 
