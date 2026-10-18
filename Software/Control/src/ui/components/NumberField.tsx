@@ -11,6 +11,27 @@ export function acceptsNumberText(text: string, integer: boolean): boolean {
 }
 
 /**
+ * The number to pass on while the user is still typing, or `undefined` to hold
+ * the text as typed: an unfinished entry, or a number below `min`, is not
+ * passed on until the box loses focus and settles.
+ */
+export function typedNumber(text: string, min?: number): number | undefined {
+  if (isIncompleteNumber(text)) return undefined;
+  const n = Number(text);
+  if (!Number.isFinite(n)) return undefined;
+  return min !== undefined && n < min ? undefined : n;
+}
+
+/**
+ * The number a box settles to when it loses focus: an unfinished entry falls
+ * back to `min` (or 0), and anything below `min` is raised to it.
+ */
+export function settleNumberText(draft: string, min?: number): number {
+  const n = isIncompleteNumber(draft) ? (min ?? 0) : Number(draft);
+  return min !== undefined && n < min ? min : n;
+}
+
+/**
  * Numeric input that lets the user clear it and type a new number.
  *
  * A controlled `<input type="number" value={n}>` fed through `Number(...)`
@@ -60,14 +81,11 @@ export default function NumberField({
           const raw = e.target.value;
           if (!acceptsNumberText(raw, integer)) return;
           setDraft(raw);
-          if (!isIncompleteNumber(raw)) {
-            const n = Number(raw);
-            if (Number.isFinite(n)) onChange(n);
-          }
+          const n = typedNumber(raw, min);
+          if (n !== undefined) onChange(n);
         }}
         onBlur={() => {
-          const n = isIncompleteNumber(draft) ? (min ?? 0) : Number(draft);
-          const settled = min !== undefined && n < min ? min : n;
+          const settled = settleNumberText(draft, min);
           if (settled !== value) onChange(settled);
           setDraft(String(settled));
         }}
