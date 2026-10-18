@@ -6,17 +6,8 @@ import {
   fileBugReportViaApi,
   type ReportPreview,
 } from '@/diagnostics/report';
+import { DOCS, GUIDES, USER_GUIDE_PATH } from '@/ui/docsLinks';
 
-/** The project's documentation site (MkDocs on GitHub Pages). */
-const DOCS = 'https://rileymccarthy.github.io/MaD/';
-
-const GUIDES: { title: string; path: string; what: string }[] = [
-  { title: 'Getting started', path: 'getting-started/operators/', what: 'first-time setup, start to first test' },
-  { title: 'Connecting', path: 'user-guide/connecting/', what: 'adapters, ports and baud rate' },
-  { title: 'Running a test', path: 'user-guide/running-a-test/', what: 'from profiles to results' },
-  { title: 'Settings & data', path: 'user-guide/settings-and-data/', what: 'the data folder and what it holds' },
-  { title: 'Troubleshooting', path: 'user-guide/troubleshooting/', what: 'common problems and fixes' },
-];
 
 export default function About() {
   const [summary, setSummary] = useState('');
@@ -111,7 +102,7 @@ export default function About() {
         </ul>
         <p className="muted" style={{ marginTop: 12 }}>
           Everything else is in the{' '}
-          <a href={`${DOCS}user-guide/`} target="_blank" rel="noreferrer">
+          <a href={`${DOCS}${USER_GUIDE_PATH}`} target="_blank" rel="noreferrer">
             user guide
           </a>
           .
