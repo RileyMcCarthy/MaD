@@ -32,7 +32,7 @@ relevant jobs:
 | `build-hardware` | hardware changed, or a hardware tag | KiBot → Gerbers, BOM, interactive BOM, 3D models for each board |
 | `vibes` (Behaviour ledger) | every PR | **Informational** (not in `ci-gate.needs`). Diffs the behaviour ledger against the base branch and posts the report as a PR comment; it fails when a behaviour breaks or is removed, but does not block the merge |
 | **`ci-gate`** | **every PR** | **Aggregates all of the above except `vibes`. Fails if any job failed/was cancelled; passes when they succeeded or were legitimately skipped. This is the single required status check (`CI Gate`) on `main`.** |
-| `release-*` | a `firmware-v*` / `hardware-v*` tag | Publishes a GitHub Release with the built artifacts. MaD Control releases are cut by `pages.yml` on `madcontrol-v*` tags. |
+| `release-*` | a `firmware-v*` / `hardware-v*` tag | Publishes a GitHub Release with the built artifacts. `release-firmware` then dispatches `pages.yml` on `main`, so `/app/firmware/` serves the new release ([Pages deploy](#pages-deploy-githubworkflowspagesyml)). MaD Control releases are cut by `pages.yml` on `madcontrol-v*` tags. |
 
 The PR trigger has **no path filter** — every PR runs at least `changes` + `ci-gate`, so the required `CI Gate` check always reports. Requiring the gate (instead of each job individually) is what keeps path-filtered skips from blocking a PR forever.
 
@@ -144,7 +144,11 @@ https://rileymccarthy.github.io/MaD/app/vX.Y.Z/    → one release, exactly as i
   branch, which is why the tag job dispatches a `main` deploy rather than
   deploying itself.
 - **A firmware release triggers a redeploy too,** so the shared firmware stays
-  current.
+  current. Once a `firmware-v*` tag has published its release, `ci.yml`'s
+  `release-firmware` job dispatches this workflow on `main`
+  (`gh workflow run pages.yml --ref main`). That run only re-assembles: the
+  existing release zips plus the new firmware in `/app/firmware/`.
+  `release-app` runs only on `madcontrol-v*` tags, so no app is rebuilt.
 - **Releases from before 0.4.0 carry no build** and are not hosted.
 
 !!! note "One-time setup"
