@@ -981,50 +981,45 @@ jobs:
       # argument for the built program, not a build flag, so it never defined the macro and
       # every CI build reported the app_messageSlave.c fallback "0.0.0". PLATFORMIO_BUILD_FLAGS
       # is appended to each env's build_flags (pio parses the \" escapes shell-style).
-      - name: Build Firmware - Debug Version
+      # Two images per release:
+      #  - madEdge: the MadEdge PCBA build (propeller2_debug) — protocol on its
+      #    own port (P53/P55), debug log on the Prop Plug port (P62/P63). This
+      #    is the image MaD Control flashes from "latest release".
+      #  - release: one port (P62/P63) carries the protocol, no debug log.
+      # Each image is copied out right after its build: building the next env
+      # has been seen to remove the previous env's output.
+      - name: Build Firmware - MadEdge Version
         working-directory: Firmware/MaDCore
         env:
           PLATFORMIO_BUILD_FLAGS: '-DFIRMWARE_VERSION=\"${{ steps.get_version.outputs.VERSION }}\"'
         run: pio run -e propeller2_debug
+      - name: Collect the MadEdge image
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          cp Firmware/MaDCore/.pio/build/propeller2_debug/program \
+            "release-assets/MaD-Firmware-${{ steps.get_version.outputs.VERSION }}-madEdge.bin"
       - name: Build Firmware - Release Version
         working-directory: Firmware/MaDCore
         env:
           PLATFORMIO_BUILD_FLAGS: '-DFIRMWARE_VERSION=\"${{ steps.get_version.outputs.VERSION }}\"'
         run: pio run -e propeller2_release
-      - name: Assert the version string is embedded in the firmware
-        working-directory: Firmware/MaDCore
+      - name: Collect the release image
+        run: |
+          set -euo pipefail
+          cp Firmware/MaDCore/.pio/build/propeller2_release/program \
+            "release-assets/MaD-Firmware-${{ steps.get_version.outputs.VERSION }}-release.bin"
+      - name: Assert the version string is embedded in every image
         run: |
           set -euo pipefail
           V="${{ steps.get_version.outputs.VERSION }}"
-          # Release binary is mandatory. The debug output can vanish after its build (see the
-          # artifact step's NOTE), so it is checked only when present.
-          check() {
-            if ! LC_ALL=C grep -aqF -- "$V" "$1"; then
-              echo "::error::'$V' not found in $1 — FIRMWARE_VERSION was not compiled in"
+          for f in release-assets/*.bin; do
+            if ! LC_ALL=C grep -aqF -- "$V" "$f"; then
+              echo "::error::'$V' not found in $f — FIRMWARE_VERSION was not compiled in"
               exit 1
             fi
-            echo "ok: '$V' embedded in $1"
-          }
-          check .pio/build/propeller2_release/program
-          if [ -f .pio/build/propeller2_debug/program ]; then
-            check .pio/build/propeller2_debug/program
-          else
-            echo "::warning::propeller2_debug/program missing; version check skipped for debug"
-          fi
-      - name: Copy and rename build artifacts
-        run: |
-          set -uxo pipefail
-          mkdir -p release-assets
-          V="${{ steps.get_version.outputs.VERSION }}"
-          echo "=== built artifacts under .pio/build ==="
-          find Firmware/MaDCore/.pio/build -maxdepth 2 -type f -name program -print
-          # Best-effort: copy each artifact if present, warn (don't fail) if a build env's
-          # output is absent. The build steps above are the real gate; artifact assembly is
-          # release-prep. NOTE: propeller2_debug's output currently disappears after build
-          # (force_o0 post-hook / pio interaction) — tracked separately.
-          copy_if() { if [ -f "$1" ]; then cp "$1" "$2" && echo "copied -> $2"; else echo "::warning::artifact missing, skipped: $1"; fi; }
-          copy_if "Firmware/MaDCore/.pio/build/propeller2_debug/program"     "release-assets/MaD-Firmware-$V-debug.bin"
-          copy_if "Firmware/MaDCore/.pio/build/propeller2_release/program"   "release-assets/MaD-Firmware-$V-release.bin"
+            echo "ok: '$V' embedded in $f"
+          done
           ls -la release-assets/
 
       - name: Set artifact name

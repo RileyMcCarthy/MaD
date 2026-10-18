@@ -50,15 +50,17 @@ export interface FirmwareReleaseManifest {
 }
 
 /**
- * The image to flash from a release: the `-release.bin` build when there is
- * one (the production image a user's board needs), else its only `.bin`.
- * A release with several unmarked images is ambiguous and offers none.
+ * The image to flash from a release: always the MadEdge build, the one made
+ * for the MadEdge PCBA (`-madEdge.bin`). Releases from before that name carry
+ * the same build as `-debug.bin`. A release without it offers nothing; its
+ * single-port `-release.bin` is flashed as a local file when wanted.
  */
 export function pickFirmwareAsset(release: GithubRelease): GithubAsset | null {
-  const bins = release.assets.filter((a) => a.name.toLowerCase().endsWith('.bin'));
-  const marked = bins.find((a) => /-release\.bin$/i.test(a.name));
-  if (marked) return marked;
-  return bins.length === 1 ? bins[0] : null;
+  return (
+    release.assets.find((a) => /-madEdge\.bin$/i.test(a.name)) ??
+    release.assets.find((a) => /-debug\.bin$/i.test(a.name)) ??
+    null
+  );
 }
 
 /**

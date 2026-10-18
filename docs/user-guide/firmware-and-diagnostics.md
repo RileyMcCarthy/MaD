@@ -45,28 +45,26 @@ instead.
 
 ### Doing the update
 
-1. **Connect to the machine** as usual, and note the version shown under
-   **Current firmware** so you can confirm the change afterwards.
-2. **Get the firmware file.** Releases are published on the project's GitHub
-   releases page as `MaD-Firmware-<version>-release.bin`. There is also a
-   `-debug` build, which moves the protocol link to different pins and is meant
-   for bench work — for normal use, take the **release** file.
-3. On the **Firmware** screen, click **Choose file** and pick the `.bin`. The app
-   shows its size and roughly how long the transfer will take — a few seconds for
-   a typical image.
-4. Check the **Target** shown is the machine you mean to program, then click
+1. **Connect to the machine** as usual. The **Firmware** screen shows the
+   **Installed** version next to the **Latest release**.
+2. **Will flash** is the latest release's MadEdge build
+   (`MaD-Firmware-<version>-madEdge.bin`), fetched by the app — there is nothing
+   to download. Each release also carries a `-release.bin` build that puts the
+   protocol and nothing else on the J1 port; to flash that, or a local build,
+   click **Use a local file…** and pick it.
+3. Check the **Port** shown is the machine you mean to program, then click
    **Write to flash** and confirm the prompt.
-5. The status line walks through *Resetting the board and waking its boot ROM…*,
-   then *Uploading… n%*, then *Finishing…*.
-6. When it completes, confirm the version under **Current firmware** is the one
-   you just installed.
+4. The status line walks through *Resetting the board…*, then *Uploading… n%*,
+   then *Finishing…*.
+5. When it completes, confirm **Installed** shows the version you just
+   flashed.
 
 !!! tip "Bench setups with two adapters"
-    The **Target** line names the port that will be programmed. On production
+    The **Port** line names the port that will be programmed. On production
     hardware there is only one and the app picks it. If several serial devices
     are attached it will refuse to guess and ask you to choose, because the
     browser only sees USB vendor and product IDs — two identical adapters are
-    indistinguishable to it. **Use a different port** lets you set it explicitly,
+    indistinguishable to it. **Change** lets you set it explicitly,
     and the choice is remembered.
 
 ### If it doesn't work

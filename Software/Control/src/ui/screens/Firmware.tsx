@@ -217,7 +217,7 @@ export default function Firmware() {
                   </>
                 ) : manifest ? (
                   <>
-                    <strong>{manifest.version}</strong> <span className="muted">(latest release)</span>
+                    <strong>{manifest.version}</strong> <span className="muted">(MadEdge, latest release)</span>
                   </>
                 ) : (
                   <span className="muted">

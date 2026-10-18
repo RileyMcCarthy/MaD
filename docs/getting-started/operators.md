@@ -37,27 +37,25 @@ When connected, the status bar turns green and shows **Connected** with a
 
 ## 3. Check the firmware
 
-Open **Firmware** in the sidebar. Under **Current firmware** you'll see what the
-machine is running.
+Open **Firmware** in the sidebar. **Installed** is what the machine is running;
+**Latest release** is the newest published firmware.
 
-- If the version matches the latest release, you're done — go to step 4.
+- If they match, you're done — go to step 4.
 - If it's older, or the status bar says **Connected** but never **Responding**
   (a new board that has never been programmed), update it now, before your first
   test.
 
 To update:
 
-1. Download `MaD-Firmware-<version>-release.bin` from the project's
-   [GitHub releases page](https://github.com/RileyMcCarthy/MaD/releases). The
-   `-debug` build is for bench work — take the **release** one.
-2. Choose the file. The app shows its size and roughly how long the transfer
-   takes.
-3. Check the **Target** port is the machine you mean to program, then click
+1. Check **Will flash** shows the latest release. The app picks the MadEdge
+   build (`MaD-Firmware-<version>-madEdge.bin`) of the newest
+   [GitHub release](https://github.com/RileyMcCarthy/MaD/releases) by itself;
+   there is nothing to download.
+2. Check the **Port** is the machine you mean to program, then click
    **Write to flash** and confirm.
 
 The status line runs through *Resetting the board…*, *Uploading… n%*, then
-*Finishing…*. The board reboots into the new firmware and the version under
-**Current firmware** updates.
+*Finishing…*. The board reboots into the new firmware and **Installed** updates.
 
 Programming uses the **Debug/Programming header (J1)** and an adapter that
 drives RESn from DTR, such as a Parallax Prop Plug. On production hardware

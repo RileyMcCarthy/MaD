@@ -16,7 +16,7 @@ const release = (over: Partial<GithubRelease>): GithubRelease => ({
   prerelease: false,
   published_at: '2026-01-01T00:00:00Z',
   html_url: 'https://example.invalid/r',
-  assets: [{ id: 1, name: 'MaD-Firmware-0.1-release.bin', size: 4 }],
+  assets: [{ id: 1, name: 'MaD-Firmware-0.1-madEdge.bin', size: 4 }],
   ...over,
 });
 
@@ -27,7 +27,7 @@ const IMAGE_SHA256 = '9f64a747e1b97f131fabb6b447296c9b6f0201e79fb3c5356e6c77e89b
 const manifest = (over: Partial<FirmwareReleaseManifest> = {}): FirmwareReleaseManifest => ({
   tag: 'firmware-v0.1',
   version: '0.1',
-  assetName: 'MaD-Firmware-0.1-release.bin',
+  assetName: 'MaD-Firmware-0.1-madEdge.bin',
   size: IMAGE.byteLength,
   sha256: IMAGE_SHA256,
   publishedAt: null,
@@ -67,10 +67,30 @@ describe('pickFirmwareRelease', () => {
 
   behaviour(
     {
-      id: 'flash.release-prefers-release-build',
+      id: 'flash.release-picks-madedge-build',
       covers: 'src/firmware/release.ts#pickFirmwareAsset',
-      given: 'a firmware release that carries both a debug image and a release image',
-      expect: { 'release-image': 'the image offered is the one named as the release build' },
+      given: 'a firmware release that carries both a MadEdge image and a single-port release image',
+      expect: { 'madedge-image': 'the image offered is the MadEdge build' },
+    },
+    () => {
+      const picked = pickFirmwareRelease([
+        release({
+          assets: [
+            { id: 1, name: 'MaD-Firmware-0.13-release.bin', size: 8 },
+            { id: 2, name: 'MaD-Firmware-0.13-madEdge.bin', size: 9 },
+          ],
+        }),
+      ]);
+      expect(picked?.asset.name).toBe('MaD-Firmware-0.13-madEdge.bin');
+    },
+  );
+
+  behaviour(
+    {
+      id: 'flash.release-legacy-debug-is-madedge',
+      covers: 'src/firmware/release.ts#pickFirmwareAsset',
+      given: 'a firmware release from before the MadEdge name, carrying a debug image and a release image',
+      expect: { 'debug-image': 'the image offered is the debug build, the MadEdge build under its earlier name' },
     },
     () => {
       const picked = pickFirmwareRelease([
@@ -81,38 +101,32 @@ describe('pickFirmwareRelease', () => {
           ],
         }),
       ]);
-      expect(picked?.asset.name).toBe('MaD-Firmware-0.11-release.bin');
+      expect(picked?.asset.name).toBe('MaD-Firmware-0.11-debug.bin');
     },
   );
 
   behaviour(
     {
-      id: 'flash.release-skips-unclear-images',
+      id: 'flash.release-without-madedge-skipped',
       covers: 'src/firmware/release.ts#pickFirmwareRelease',
-      given:
-        'a newest firmware release with two images, neither named as the release build, and an older release with a single image',
-      expect: {
-        'older-single-image':
-          'the offered release is the older one, since a release whose image cannot be told apart is never guessed at',
-      },
+      given: 'a newest firmware release that carries only a single-port release image, and an older release with a MadEdge image',
+      expect: { 'older-madedge': 'the offered release is the older one, with its MadEdge image' },
     },
     () => {
       const picked = pickFirmwareRelease([
         release({
-          tag_name: 'firmware-v0.2',
-          published_at: '2026-02-01T00:00:00Z',
-          assets: [
-            { id: 1, name: 'a.bin', size: 1 },
-            { id: 2, name: 'b.bin', size: 1 },
-          ],
+          tag_name: 'firmware-v0.12',
+          published_at: '2026-09-08T00:00:00Z',
+          assets: [{ id: 1, name: 'MaD-Firmware-0.12-release.bin', size: 8 }],
         }),
         release({
-          tag_name: 'firmware-v0.1',
-          assets: [{ id: 3, name: 'program', size: 1 }, { id: 4, name: 'only.bin', size: 1 }],
+          tag_name: 'firmware-v0.11',
+          published_at: '2025-06-28T00:00:00Z',
+          assets: [{ id: 2, name: 'MaD-Firmware-0.11-madEdge.bin', size: 9 }],
         }),
       ]);
-      expect(picked?.release.tag_name).toBe('firmware-v0.1');
-      expect(picked?.asset.name).toBe('only.bin');
+      expect(picked?.release.tag_name).toBe('firmware-v0.11');
+      expect(picked?.asset.name).toBe('MaD-Firmware-0.11-madEdge.bin');
     },
   );
 });
@@ -132,11 +146,11 @@ describe('toManifest', () => {
     () => {
       const m = toManifest(
         release({ tag_name: 'firmware-v0.12' }),
-        { id: 9, name: 'MaD-Firmware-0.12-release.bin', size: 291396 },
+        { id: 9, name: 'MaD-Firmware-0.12-madEdge.bin', size: 291396 },
         'ABCDEF',
       );
       expect(m.version).toBe('0.12');
-      expect([m.assetName, m.size]).toEqual(['MaD-Firmware-0.12-release.bin', 291396]);
+      expect([m.assetName, m.size]).toEqual(['MaD-Firmware-0.12-madEdge.bin', 291396]);
       expect(m.sha256).toBe('abcdef');
     },
   );
@@ -230,7 +244,7 @@ describe('fetchReleaseImage', () => {
     async () => {
       vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 404 })));
       await expect(fetchReleaseImage('/', manifest())).rejects.toThrow(
-        /Downloading MaD-Firmware-0\.1-release\.bin failed \(HTTP 404\)/,
+        /Downloading MaD-Firmware-0\.1-madEdge\.bin failed \(HTTP 404\)/,
       );
     },
   );
