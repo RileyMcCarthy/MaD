@@ -470,7 +470,15 @@ export function installFakeSerial(bridgeUrl) {
   });
 }
 
-/** Init script: `showDirectoryPicker` → a fresh OPFS directory. */
+/**
+ * Init script: `showDirectoryPicker` → a fresh OPFS directory.
+ *
+ * The app asks for a data folder before showing anything else
+ * (src/ui/DataFolderGate.tsx). This answers that question the way a user
+ * would, by pressing "Choose data folder" as soon as it appears, so every
+ * scenario starts inside the app with a fresh folder. A scenario that wants a
+ * clean folder midway still calls `chooseDataFolder`.
+ */
 export function installOpfsDataDir(dirName) {
   window.showDirectoryPicker = async () => {
     const root = await navigator.storage.getDirectory();
@@ -481,6 +489,11 @@ export function installOpfsDataDir(dirName) {
     }
     return root.getDirectoryHandle(dirName, { create: true });
   };
+  const answerGate = () => {
+    const button = document.querySelector('[data-testid="data-folder-gate"] [data-testid="choose-data-folder"]');
+    if (button && !button.disabled) button.click();
+  };
+  new MutationObserver(answerGate).observe(document, { childList: true, subtree: true });
 }
 
 /**
@@ -773,11 +786,12 @@ export async function recoverMachine() {
   }
 }
 
-/** Choose the OPFS data folder via Settings. */
+/** Swap in a fresh OPFS data folder via Settings. */
 export async function chooseDataFolder(page) {
   await page.goto(`${APP_URL}#/settings`);
-  await press(page.getByRole('button', { name: /Choose folder/i }));
-  await page.getByText(/Current:/).waitFor({ timeout: 8000 });
+  // The startup gate already opened one, so the button offers a change.
+  await press(page.getByRole('button', { name: /Change folder/i }));
+  await page.getByText(/Data folder set\./).waitFor({ timeout: 8000 });
 }
 
 /**

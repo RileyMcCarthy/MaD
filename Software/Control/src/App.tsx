@@ -9,6 +9,7 @@ import {
   useLocation,
 } from 'react-router-dom';
 import CapabilityGate from './ui/CapabilityGate';
+import DataFolderGate from './ui/DataFolderGate';
 import ErrorBoundary from './ui/ErrorBoundary';
 import { useStore, UiNotification } from './store/useStore';
 import { NotificationType } from './domain';
@@ -230,6 +231,7 @@ export default function App() {
   return (
     <ErrorBoundary full title="MaD Control crashed" onError={onRootCrash}>
       <CapabilityGate>
+        <DataFolderGate>
         <HashRouter>
         <Routes>
           <Route element={<Shell />}>
@@ -249,6 +251,7 @@ export default function App() {
           </Route>
         </Routes>
         </HashRouter>
+        </DataFolderGate>
       </CapabilityGate>
     </ErrorBoundary>
   );

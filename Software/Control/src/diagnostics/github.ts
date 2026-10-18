@@ -11,17 +11,20 @@
  * secret gist and the issue links it, instead of asking someone to drag a file
  * into a form (the step where reports otherwise die).
  *
- * SECURITY: the token is a credential held in `localStorage`. It is never
- * logged, never included in a diagnostics bundle, and never sent anywhere but
+ * SECURITY: the token is a credential saved in the data folder's
+ * `settings.json`, so it travels with the folder. It is never logged, never
+ * included in a diagnostics bundle, and never sent anywhere but
  * `api.github.com` — see `redactToken` and the guards in `log.ts`.
  */
 
 import { logger, redactCredentials } from './log';
+import type { AppSettings } from '@/storage/DataStore';
 
 const log = logger('app');
 
 const API = 'https://api.github.com';
-const TOKEN_KEY = 'mad:githubToken';
+/** Where earlier versions kept the token; read once to move it to the folder. */
+const LEGACY_TOKEN_KEY = 'mad:githubToken';
 
 /** Owner/repo that issues are filed against. */
 export const ISSUE_OWNER = 'RileyMcCarthy';
@@ -45,29 +48,66 @@ export function looksLikeToken(value: string): boolean {
 
 /* ------------------------------------------------------------- token store -- */
 
+/** The data folder's settings, as the token store needs them (DataStore). */
+export interface TokenSettings {
+  readSettings(): Promise<AppSettings>;
+  updateSettings(patch: Partial<AppSettings>): Promise<void>;
+}
+
+/** The open folder's token, held in memory so reads stay synchronous. */
+let token: string | null = null;
+
 export function getToken(): string | null {
+  return token;
+}
+
+function takeLegacyToken(): string | null {
   try {
-    const t = globalThis.localStorage?.getItem(TOKEN_KEY);
-    return t && t.length > 0 ? t : null;
+    const t = globalThis.localStorage?.getItem(LEGACY_TOKEN_KEY)?.trim();
+    return t ? t : null;
   } catch {
     return null;
   }
 }
 
-export function setToken(token: string): void {
+function dropLegacyToken(): void {
   try {
-    globalThis.localStorage?.setItem(TOKEN_KEY, token.trim());
-  } catch {
-    // Private mode / quota. The caller surfaces the failure.
-  }
-}
-
-export function clearToken(): void {
-  try {
-    globalThis.localStorage?.removeItem(TOKEN_KEY);
+    globalThis.localStorage?.removeItem(LEGACY_TOKEN_KEY);
   } catch {
     // Nothing useful to do.
   }
+}
+
+/**
+ * Load the token from a newly opened data folder. A token an earlier version
+ * kept in the browser moves into a folder that has none, and leaves the
+ * browser once it is saved there.
+ */
+export async function loadToken(settings: TokenSettings): Promise<void> {
+  const saved = (await settings.readSettings()).githubToken?.trim();
+  if (saved) {
+    token = saved;
+    return;
+  }
+  token = null;
+  const legacy = takeLegacyToken();
+  if (legacy === null) return;
+  await settings.updateSettings({ githubToken: legacy });
+  token = legacy;
+  dropLegacyToken();
+}
+
+/** Save the token in the open data folder. */
+export async function setToken(value: string, settings: TokenSettings): Promise<void> {
+  const trimmed = value.trim();
+  await settings.updateSettings({ githubToken: trimmed });
+  token = trimmed;
+}
+
+/** Remove the token from the open data folder. */
+export async function clearToken(settings: TokenSettings): Promise<void> {
+  await settings.updateSettings({ githubToken: undefined });
+  token = null;
 }
 
 export function hasToken(): boolean {

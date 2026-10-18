@@ -23,6 +23,7 @@ import {
 import { pushSample, resetLiveBuffer, seedSamples } from './liveBuffer';
 import { reduceDeviceEvent } from './deviceEventReduce';
 import { logger } from '@/diagnostics/log';
+import { loadToken } from '@/diagnostics/github';
 import { MSG_SAMPLE_PERIOD_MS } from '@/protocol/generated/protoemb';
 
 // Numeric readout refresh. 4 Hz is the classic instrument-display rate: fast
@@ -63,6 +64,9 @@ interface AppState {
   dataFolder: string | null;
   dataFolderReady: boolean;
   dataFolderNeedsPermission: boolean;
+  /** The remembered folder has been looked up once; until then the app waits
+   *  rather than asking for a folder it may already have. */
+  dataFolderChecked: boolean;
 
   // actions
   init: () => void;
@@ -345,6 +349,27 @@ function afterConnect(set: SetState, getState: GetState, label: string): void {
   });
 }
 
+/**
+ * Mirror the data folder into the store. The folder's settings (the GitHub
+ * token) load before it is reported ready, so no screen sees an open folder
+ * whose settings are still missing. A settings file that cannot be read is
+ * logged and leaves the folder usable.
+ */
+async function publishDataFolder(set: (partial: Partial<AppState>) => void): Promise<void> {
+  if (dataStore.connected) {
+    try {
+      await loadToken(dataStore);
+    } catch (err) {
+      logStore.warn('settings-load', err instanceof Error ? err.message : String(err));
+    }
+  }
+  set({
+    dataFolder: dataStore.directoryName,
+    dataFolderReady: dataStore.connected,
+    dataFolderNeedsPermission: dataStore.needsPermission,
+  });
+}
+
 export const useStore = create<AppState>((set, getState) => ({
   connection: 'disconnected',
   responding: false,
@@ -360,6 +385,7 @@ export const useStore = create<AppState>((set, getState) => ({
   dataFolder: null,
   dataFolderReady: false,
   dataFolderNeedsPermission: false,
+  dataFolderChecked: false,
   updateReady: false,
 
   init: () => {
@@ -537,30 +563,22 @@ export const useStore = create<AppState>((set, getState) => ({
   },
 
   restoreDataFolder: async () => {
-    const ready = await dataStore.restoreDirectory();
-    set({
-      dataFolder: dataStore.directoryName,
-      dataFolderReady: ready,
-      dataFolderNeedsPermission: dataStore.needsPermission,
-    });
+    try {
+      await dataStore.restoreDirectory();
+      await publishDataFolder(set);
+    } finally {
+      set({ dataFolderChecked: true });
+    }
   },
 
   chooseDataFolder: async () => {
     await dataStore.chooseDirectory();
-    set({
-      dataFolder: dataStore.directoryName,
-      dataFolderReady: dataStore.connected,
-      dataFolderNeedsPermission: dataStore.needsPermission,
-    });
+    await publishDataFolder(set);
   },
 
   grantDataFolder: async () => {
     await dataStore.requestPermission();
-    set({
-      dataFolder: dataStore.directoryName,
-      dataFolderReady: dataStore.connected,
-      dataFolderNeedsPermission: dataStore.needsPermission,
-    });
+    await publishDataFolder(set);
   },
 
   refreshConfig: async () => {
