@@ -19,10 +19,6 @@ const FIELDS: Array<{ key: keyof SampleProfile; label: string }> = [
 ];
 
 export default function Profiles() {
-  const connected = useStore((s) => s.connection === 'connected');
-  const deviceProfile = useStore((s) => s.sampleProfile);
-  const refreshSampleProfile = useStore((s) => s.refreshSampleProfile);
-  const saveSampleProfile = useStore((s) => s.saveSampleProfile);
   const folderReady = useStore((s) => s.dataFolderReady);
 
   const [draft, setDraft] = useState<SampleProfile>(EMPTY_SAMPLE_PROFILE);
@@ -30,21 +26,12 @@ export default function Profiles() {
   const [name, setName] = useState('');
   const [message, setMessage] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (deviceProfile) setDraft(deviceProfile);
-  }, [deviceProfile]);
-
   const loadSaved = async () => {
     if (dataStore.connected) setSaved(await dataStore.getSampleProfiles());
   };
   useEffect(() => {
     void loadSaved();
   }, [folderReady]);
-
-  const writeToDevice = async () => {
-    const ok = await saveSampleProfile(draft);
-    setMessage(ok ? 'Written to device.' : 'Device rejected the profile.');
-  };
 
   const importSp = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -120,13 +107,11 @@ export default function Profiles() {
           </label>
         </div>
         <div className="row" style={{ marginTop: 14 }}>
-          <button onClick={() => refreshSampleProfile()} disabled={!connected}>
-            Read from device
+          {/* No device read/write here: a test writes its sample profile to the
+              machine when it starts, and the limits only apply during a test. */}
+          <button className="primary" onClick={saveToDisk}>
+            Save sample profile
           </button>
-          <button className="primary" onClick={writeToDevice} disabled={!connected}>
-            Write to device
-          </button>
-          <button onClick={saveToDisk}>Save sample profile</button>
           <label className="filebtn">
             Import .sp
             <input type="file" accept=".sp,application/json" hidden onChange={importSp} />

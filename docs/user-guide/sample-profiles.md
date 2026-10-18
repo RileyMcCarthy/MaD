@@ -39,5 +39,5 @@ into **strain** — that's what produces the stress–strain curve in the
   **delete** it.
 - **Import `.sp`** loads a profile from a JSON `.sp` file (interchangeable with
   saved profiles). See the [file formats reference](file-formats.md).
-- When connected, you can **Write to device** to push the profile to the
-  firmware, or **Read from device** to pull the currently-loaded one.
+- There is nothing to send to the machine from here: when you start a test,
+  the app writes the selected sample profile to the machine for that test.
