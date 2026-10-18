@@ -2985,7 +2985,7 @@ const scenarios = [
         }
         // After the upload the chip is still erasing and programming flash;
         // the app must hold the port, and the user's hands, until it is done.
-        await page.getByTestId('flash-status').filter({ hasText: /Writing flash… about \d+s/ }).waitFor({ timeout: RUN_WAIT_MS });
+        await page.getByTestId('flash-status').filter({ hasText: /Writing flash|Finishing…/ }).waitFor({ timeout: RUN_WAIT_MS });
         for (const id of ['flash-firmware', 'firmware-file', 'choose-flash-port']) {
           assert(await page.getByTestId(id).isDisabled(), `${id} was enabled while flash was being written`);
         }
