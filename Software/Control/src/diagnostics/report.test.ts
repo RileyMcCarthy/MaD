@@ -6,6 +6,7 @@ import {
   bundleFileName,
   environmentBlock,
   ISSUE_URL_MAX,
+  recentActions,
   ISSUE_TEMPLATE,
   shortUserAgent,
 } from './report';
@@ -531,6 +532,51 @@ describe('shortUserAgent browser precedence', () => {
       expect(
         shortUserAgent('Mozilla/5.0 (Macintosh) AppleWebKit/605.1 Version/17.4 Safari/605.1.15'),
       ).toContain('Safari 17');
+    },
+  );
+});
+
+describe('recentActions', () => {
+  behaviour(
+    {
+      id: 'diag.report-actions-recipe',
+      covers: 'src/diagnostics/report.ts#recentActions',
+      given:
+        'a session that opened Motion Profiles, set a speed, typed a name, clicked Save and then hit a screen crash',
+      expect: {
+        'steps-in-order': 'the steps read oldest first, each with its time',
+        'settings-shown': 'the number set is shown with its value',
+        'text-hidden': 'the typed name is shown by length only',
+        'error-in-place': 'the crash appears at the point it happened, on one line',
+        'repeat-page-once': 'a page change logged twice in a row is listed once',
+      },
+    },
+    () => {
+      const t = Date.UTC(2026, 0, 1, 12, 0, 0);
+      const text = recentActions(
+        bundle({
+          log: {
+            entries: [
+              entry({ t, cat: 'ui', tag: 'route', msg: '/create' }),
+              entry({ t, cat: 'ui', tag: 'route', msg: '/create' }),
+              entry({ t: t + 1000, cat: 'ui', tag: 'edit', msg: 'Speed (mm/s)', data: { value: '12.5' } }),
+              entry({ t: t + 2000, cat: 'ui', tag: 'edit', msg: 'Name', data: { length: 7 } }),
+              entry({ t: t + 3000, cat: 'ui', tag: 'click', msg: 'Save' }),
+              entry({ t: t + 4000, level: 'error', cat: 'ui', tag: 'render-crash', msg: 'boom\n    at Create' }),
+            ],
+            counters: {},
+            dropped: 0,
+            startedAt: 0,
+          },
+        }),
+      );
+      expect(text.split('\n')).toEqual([
+        '12:00:00 open /create',
+        '12:00:01 set "Speed (mm/s)" to 12.5',
+        '12:00:02 type in "Name" (7 characters, not recorded)',
+        '12:00:03 click "Save"',
+        '12:00:04 ✗ ui/render-crash boom',
+      ]);
     },
   );
 });

@@ -71,8 +71,12 @@ export async function buildReportPreview(input: ReportInput): Promise<ReportPrev
   });
   const json = JSON.stringify(bundle);
 
+  const steps = bundle.log.entries.filter(
+    (e) => e.cat === 'ui' && (e.tag === 'click' || e.tag === 'edit' || e.tag === 'route'),
+  ).length;
   const contents = [
     `${bundle.log.entries.length} log entries (${(bundle.triage.sessionMs / 1000).toFixed(0)}s session)`,
+    `Your last ${Math.min(steps, 30)} steps (pages, clicks, numbers and choices you set; typed text only as a length)`,
     `App version ${bundle.version} (${bundle.gitSha}), firmware ${bundle.device.firmwareVersion ?? 'unknown'}`,
   ];
   if (bundle.serialTail) {
@@ -152,6 +156,11 @@ function summariseCounters(bundle: DiagnosticsBundle): string {
   return interesting.map(([key, n]) => `${key}: ${n}`).join('\n');
 }
 
+/** A message's first line; a component stack or hint after it is in the attached log. */
+function firstLine(msg: string | undefined): string {
+  return (msg ?? '').split('\n')[0].trim();
+}
+
 /** The last few error-level entries — usually the actual story. */
 function recentErrors(bundle: DiagnosticsBundle, limit = 5): string {
   const errors = bundle.log.entries.filter((e) => e.level === 'error').slice(-limit);
@@ -159,9 +168,50 @@ function recentErrors(bundle: DiagnosticsBundle, limit = 5): string {
   return errors
     .map((e) => {
       const at = new Date(e.t).toISOString().slice(11, 23);
-      return `${at} ${e.cat}/${e.tag} ${e.msg ?? ''}`.trim();
+      return `${at} ${e.cat}/${e.tag} ${firstLine(e.msg)}`.trim();
     })
     .join('\n');
+}
+
+/** One logged UI step in words: where the user went, what they clicked or changed. */
+function describeStep(e: DiagnosticsBundle['log']['entries'][number]): string | null {
+  if (e.level === 'error') {
+    // Short here: the full message is under Recent errors and in the log.
+    const msg = firstLine(e.msg);
+    return `✗ ${e.cat}/${e.tag} ${msg.length > 160 ? `${msg.slice(0, 160)}…` : msg}`.trim();
+  }
+  if (e.cat !== 'ui') return null;
+  const d = e.data ?? {};
+  if (e.tag === 'route') return `open ${e.msg ?? ''}`;
+  if (e.tag === 'click') return `click "${e.msg ?? ''}"${d.disabled ? ' (disabled)' : ''}`;
+  if (e.tag === 'edit') {
+    if ('checked' in d) return `${d.checked ? 'tick' : 'untick'} "${e.msg ?? ''}"`;
+    if ('value' in d) return `set "${e.msg ?? ''}" to ${String(d.value)}`;
+    return `type in "${e.msg ?? ''}" (${String(d.length ?? 0)} characters, not recorded)`;
+  }
+  return null;
+}
+
+/**
+ * The user's last steps — pages opened, buttons clicked, fields changed — with
+ * the errors they ran into in between, oldest first. This is the reproduction
+ * recipe a report is otherwise missing.
+ */
+export function recentActions(bundle: DiagnosticsBundle, limit = 30): string {
+  const steps: string[] = [];
+  let previous = '';
+  for (const e of bundle.log.entries) {
+    const step = describeStep(e);
+    // Development builds render twice, logging each page change twice in a row.
+    if (step === null || (step === previous && e.tag === 'route')) continue;
+    previous = step;
+    const at = new Date(e.t).toISOString().slice(11, 19);
+    steps.push(`${at} ${step}`);
+  }
+  if (steps.length === 0) return 'None recorded.';
+  const shown = steps.slice(-limit);
+  const skipped = steps.length - shown.length;
+  return [...(skipped > 0 ? [`(${skipped} earlier steps in the attached log)`] : []), ...shown].join('\n');
 }
 
 /**
@@ -198,6 +248,7 @@ export function buildIssueFields(
     environment: environmentBlock(bundle),
     triage: formatTriage(bundle.triage),
     counters: summariseCounters(bundle),
+    actions: recentActions(bundle),
     errors: recentErrors(bundle),
     attachment: attachmentName,
   };
@@ -213,7 +264,7 @@ export function buildIssueFields(
  */
 export function buildIssueUrl(fields: Record<string, string>): string {
   const base = `https://github.com/${ISSUE_REPO}/issues/new`;
-  const droppable = ['errors', 'counters', 'environment', 'triage', 'steps'];
+  const droppable = ['errors', 'counters', 'environment', 'actions', 'triage', 'steps'];
 
   const render = (f: Record<string, string>): string => {
     const params = new URLSearchParams();
@@ -307,6 +358,16 @@ export async function fileBugReportViaApi(
     '### Summary',
     '```',
     formatTriage(bundle.triage),
+    '```',
+    '',
+    '### Recent actions',
+    '```',
+    recentActions(bundle),
+    '```',
+    '',
+    '### Recent errors',
+    '```',
+    recentErrors(bundle),
     '```',
     '',
     '### Environment',
