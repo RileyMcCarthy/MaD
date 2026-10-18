@@ -129,7 +129,15 @@ export async function fetchReleaseManifest(
     throw new Error('Could not reach the app server for the latest release.');
   }
   if (!res.ok) throw new Error('No firmware release is bundled with this copy of the app.');
-  const body: unknown = await res.json().catch(() => null);
+  // try/catch rather than `.catch(() => null)`: @vitest/coverage-v8 5 counts
+  // that inline callback as a function, and the firmware loader's coverage
+  // gate requires every function to run.
+  let body: unknown = null;
+  try {
+    body = await res.json();
+  } catch {
+    /* not JSON: reported as malformed below */
+  }
   if (!isManifest(body)) throw new Error('The bundled firmware release description is malformed.');
   return body;
 }

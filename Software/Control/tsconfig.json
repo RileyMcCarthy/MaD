@@ -22,7 +22,9 @@
     // (src/protocol/generated + the sibling desktop codec) which must not be
     // hand-edited. Enabling them needs a codegen-template change + regeneration
     // across projects; tracked as a follow-up rather than a hand-patch here.
-    "types": ["w3c-web-serial", "wicg-file-system-access", "vite/client"],
+    // "node": vitest 2 pulled @types/node into the program transitively; vitest 5
+    // does not, and the tests (node:fs, Buffer) and @vibes/behaviour need it.
+    "types": ["node", "w3c-web-serial", "wicg-file-system-access", "vite/client"],
     "baseUrl": ".",
     "paths": {
       "@/*": ["src/*"],
