@@ -85,26 +85,27 @@ force**, and **Zero length** here.
 A test combines two things:
 
 1. A **sample profile** — your material's dimensions and safety limits
-   (max force, max displacement, width, thickness). Create it on the **Samples**
+   (max force, max displacement, width, thickness). Create it on the **Sample profiles**
    screen. [:octicons-arrow-right-24: Sample profiles](../user-guide/sample-profiles.md)
 2. A **motion profile** — what the machine should *do*: a sequence of moves
    (linear pulls, dwells, cyclic waveforms) grouped into repeatable sets. Build it
-   on the **Motion Profiles** screen.
+   on the **Motion profiles** screen.
    [:octicons-arrow-right-24: Motion profiles](../user-guide/motion-profiles.md)
 
-!!! note "Choose a data folder first"
-    On the **Settings** screen, click **Choose folder** and pick a folder on your
-    computer. Profiles and results are saved there. You only do this once.
+!!! note "The data folder"
+    The first time you open the app it asks for a data folder: click
+    **Choose data folder** and pick a folder on your computer. Profiles, results
+    and settings are saved there. You only do this once.
     [:octicons-arrow-right-24: Settings & data](../user-guide/settings-and-data.md)
 
 ## 6. Run it
 
-Open **Test Runs**. In the **New Test** card, pick your saved sample and motion
-profiles, optionally **Preview G-code**, then click **Run Test**. The run appears
+Open **Test runs**. In the **New test** card, pick your saved sample and motion
+profiles, optionally **Preview G-code**, then click **Run test**. The run appears
 in the **History** table and updates to *completed* on its own when the machine
 finishes:
 
-![The Test Runs screen with history](../assets/screenshots/06-test-runs.png)
+![The Test runs screen with history](../assets/screenshots/06-test-runs.png)
 
 !!! warning "The machine is the safety authority"
     MaD runs tests **autonomously from its SD card** and is protected by its own
@@ -115,7 +116,7 @@ finishes:
 
 ## 7. Review the results
 
-Back in **Test Runs**, click **Download data** on a finished run to pull the CSV
+Back in **Test runs**, click **Download data** on a finished run to pull the CSV
 off the machine, then **View** to see the analysis — force vs time, position
 (actual / setpoint / expected), and a stress–strain curve:
 

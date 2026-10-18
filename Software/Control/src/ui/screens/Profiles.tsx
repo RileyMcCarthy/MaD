@@ -11,11 +11,11 @@ import { dataStore } from '@/storage/DataStore';
 import NumberField from '@/ui/components/NumberField';
 
 const FIELDS: Array<{ key: keyof SampleProfile; label: string }> = [
-  { key: 'maxForce', label: 'Max Force (N)' },
-  { key: 'maxVelocity', label: 'Max Velocity (mm/s)' },
-  { key: 'maxDisplacement', label: 'Max Displacement (mm)' },
-  { key: 'sampleWidth', label: 'Sample Width (mm)' },
-  { key: 'sampleThickness', label: 'Sample Thickness (mm)' },
+  { key: 'maxForce', label: 'Max force (N)' },
+  { key: 'maxVelocity', label: 'Max velocity (mm/s)' },
+  { key: 'maxDisplacement', label: 'Max displacement (mm)' },
+  { key: 'sampleWidth', label: 'Sample width (mm)' },
+  { key: 'sampleThickness', label: 'Sample thickness (mm)' },
 ];
 
 export default function Profiles() {
@@ -97,7 +97,7 @@ export default function Profiles() {
 
   return (
     <div>
-      <h1>Sample Profiles</h1>
+      <h1>Sample profiles</h1>
 
       <div className="panel">
         <h2>Editor</h2>
@@ -126,7 +126,7 @@ export default function Profiles() {
           <button className="primary" onClick={writeToDevice} disabled={!connected}>
             Write to device
           </button>
-          <button onClick={saveToDisk}>Save to folder</button>
+          <button onClick={saveToDisk}>Save sample profile</button>
           <label className="filebtn">
             Import .sp
             <input type="file" accept=".sp,application/json" hidden onChange={importSp} />
@@ -136,9 +136,9 @@ export default function Profiles() {
       </div>
 
       <div className="panel">
-        <h2>Saved profiles</h2>
+        <h2>Saved sample profiles</h2>
         {saved.length === 0 ? (
-          <p className="muted">No saved profiles (choose a data folder in Settings).</p>
+          <p className="muted">No saved sample profiles yet.</p>
         ) : (
           <table>
             <thead>

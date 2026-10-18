@@ -10,9 +10,9 @@ changes. You read and edit it on the **Settings** screen.
 
 - The configuration loads from the device when you open **Settings** while
   connected.
-- Edit a field, then **Save to device** to write it back to the machine, where it
+- Edit a field, then **Write to device** to write it back to the machine, where it
   persists across power cycles.
-- **Reload from device** re-reads the configuration, discarding unsaved edits.
+- **Read from device** re-reads the configuration, discarding unsaved edits.
 
 !!! warning "These values calibrate the machine"
     Getting the steps-per-mm or force calibration wrong will make every

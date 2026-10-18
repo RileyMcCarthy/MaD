@@ -59,7 +59,7 @@ export default function Config({ embedded = false }: { embedded?: boolean }) {
       </div>
     ) : (
       <div>
-        <h1>Machine Configuration</h1>
+        <h1>Machine configuration</h1>
         <div className="panel">{panel}</div>
       </div>
     );
@@ -71,9 +71,9 @@ export default function Config({ embedded = false }: { embedded?: boolean }) {
   return wrap(
     <>
       <div className="row" style={{ marginBottom: 14 }}>
-        <button onClick={() => refreshConfig()}>Reload from device</button>
+        <button onClick={() => refreshConfig()}>Read from device</button>
         <button className="primary" onClick={onSave} disabled={!draft || saving}>
-          {saving ? 'Saving…' : 'Save to device'}
+          {saving ? 'Writing…' : 'Write to device'}
         </button>
         {message && <span className="muted">{message}</span>}
       </div>

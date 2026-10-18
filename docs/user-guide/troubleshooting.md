@@ -23,7 +23,7 @@ Common issues with the control app and how to resolve them.
 
 | Symptom | Likely cause & fix |
 |---|---|
-| **Test stops early** | The sample exceeded its **Max Force** or **Max Displacement** — by design. Check the [sample profile](sample-profiles.md) limits. |
+| **Test stops early** | The sample exceeded its **Max force** or **Max displacement** — by design. Check the [sample profile](sample-profiles.md) limits. |
 | **Run stuck in "running"** | The firmware never reported completion (or the link dropped). Use **Mark done / Mark failed** on the history row; data may still be downloadable. |
 | **Can't view a run** | You must **Download data** first; *View* appears once the run is *downloaded*. |
 | **Profiles/runs missing** | The data folder's index may be stale — click **Rescan folder** in [Settings](settings-and-data.md). |
@@ -32,7 +32,7 @@ Common issues with the control app and how to resolve them.
 
 | Symptom | Likely cause & fix |
 |---|---|
-| **App asks to re-grant access** | The browser dropped the permission after a restart. Click **Grant access** in Settings. |
+| **App asks to re-grant access** | The browser dropped the permission after a restart. Click **Allow access** in Settings. |
 | **Saves fail** | Storage may be full or the grant was revoked. Errors appear as toasts; re-choose the folder. |
 
 ## Still stuck?
