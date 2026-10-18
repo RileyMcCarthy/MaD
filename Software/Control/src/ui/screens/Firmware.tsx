@@ -15,6 +15,7 @@ import {
   fetchReleaseManifest,
   type FirmwareReleaseManifest,
 } from '@/firmware/release';
+import { hostingRoot } from '@/hosting';
 
 type Status =
   | { kind: 'idle' }
@@ -57,7 +58,7 @@ export default function Firmware() {
 
   useEffect(() => {
     let live = true;
-    fetchReleaseManifest(import.meta.env.BASE_URL).then(
+    fetchReleaseManifest(hostingRoot(import.meta.env.BASE_URL)).then(
       (m) => live && setRelease({ kind: 'ready', manifest: m }),
       (err: unknown) =>
         live &&
@@ -134,7 +135,7 @@ export default function Firmware() {
         firmware = new Uint8Array(await file.arrayBuffer());
       } else if (manifest) {
         setStatus({ kind: 'downloading', name: manifest.assetName });
-        firmware = await fetchReleaseImage(import.meta.env.BASE_URL, manifest);
+        firmware = await fetchReleaseImage(hostingRoot(import.meta.env.BASE_URL), manifest);
       } else {
         return;
       }
