@@ -337,3 +337,51 @@ describe('DataStore mutex + index integrity', () => {
   );
 });
 
+
+describe('DataStore settings', () => {
+  let store: InstanceType<typeof DataStore>;
+
+  beforeEach(async () => {
+    idb.clear();
+    store = new DataStore();
+    idb.set('mad.dataDirHandle', makeMemoryRoot());
+    await store.restoreDirectory();
+  });
+
+  behaviour(
+    {
+      id: 'storage.settings-merge',
+      covers: 'src/storage/DataStore.ts#updateSettings',
+      given: 'a data folder with a GitHub token saved, then a change that saves one setting and removes another',
+      expect: {
+        'saved-kept': 'a setting the change does not mention is kept',
+        'removed-gone': 'a setting the change removes is gone when the settings are read back',
+      },
+    },
+    async () => {
+      await store.updateSettings({ githubToken: 'ghp_one' });
+      await store.updateSettings({ githubToken: undefined });
+      expect(await store.readSettings()).toEqual({});
+      await store.updateSettings({ githubToken: 'ghp_two' });
+      await store.updateSettings({});
+      expect((await store.readSettings()).githubToken).toBe('ghp_two');
+    },
+  );
+
+  behaviour(
+    {
+      id: 'storage.settings-need-folder',
+      covers: 'src/storage/DataStore.ts#updateSettings',
+      given: 'no data folder is open',
+      expect: {
+        'read-empty': 'reading the settings finds none',
+        'save-refused': 'saving a setting is refused with a message asking for a data folder',
+      },
+    },
+    async () => {
+      const empty = new DataStore();
+      expect(await empty.readSettings()).toEqual({});
+      await expect(empty.updateSettings({ githubToken: 'ghp_x' })).rejects.toThrow(/Choose a data folder/);
+    },
+  );
+});

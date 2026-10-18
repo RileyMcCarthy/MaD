@@ -328,10 +328,16 @@ export function installFakeSerial(bridgeUrl) {
     let ws;
     let readable;
     let writable;
+    let control = null;
+    let helloSeen = null;
     const port = {
-      async open() {
-        ws = new WebSocket(bridgeUrl);
+      async open(options = {}) {
+        // The baud rides on the URL so a bridge with a real port opens at it.
+        const url = new URL(bridgeUrl);
+        if (options.baudRate) url.searchParams.set('baud', String(options.baudRate));
+        ws = new WebSocket(url.href);
         ws.binaryType = 'arraybuffer';
+        control = null;
         await new Promise((resolve, reject) => {
           ws.onopen = resolve;
           ws.onerror = () => reject(new Error('bridge connection failed'));
@@ -352,6 +358,17 @@ export function installFakeSerial(bridgeUrl) {
           },
         });
         socket.onmessage = (e) => {
+          // Text frames are the bridge's control channel, never serial data:
+          // a hello saying it drives modem lines, then one ack per request.
+          if (typeof e.data === 'string') {
+            const msg = JSON.parse(e.data);
+            if (msg.hello) {
+              control = { pending: [] };
+              helloSeen?.();
+            }
+            else if (msg.ack && control) control.pending.shift()?.();
+            return;
+          }
           try {
             controller.enqueue(new Uint8Array(e.data));
           } catch {
@@ -359,6 +376,8 @@ export function installFakeSerial(bridgeUrl) {
           }
         };
         socket.onclose = () => {
+          // Nothing will ack now; release whoever is waiting on a signal change.
+          for (const resolve of control?.pending.splice(0) ?? []) resolve();
           try {
             controller.close();
           } catch {
@@ -366,8 +385,14 @@ export function installFakeSerial(bridgeUrl) {
           }
         };
         writable = new WritableStream({
-          write(chunk) {
-            if (socket.readyState === WebSocket.OPEN) socket.send(chunk);
+          async write(chunk) {
+            if (socket.readyState !== WebSocket.OPEN) return;
+            // A control bridge acks each write once the port has drained it,
+            // which is the backpressure a real port's writable gives: without
+            // it a flash "finishes" while the image is still in flight.
+            const drained = control ? new Promise((resolve) => control.pending.push(resolve)) : null;
+            socket.send(chunk);
+            await drained;
           },
           close() {
             try {
@@ -377,6 +402,14 @@ export function installFakeSerial(bridgeUrl) {
             }
           },
         });
+        // A control-capable bridge says hello at once; a byte pipe says
+        // nothing, so give up waiting after a moment. Writes made before the
+        // hello are not acked, so none happen until this settles.
+        await new Promise((resolve) => {
+          helloSeen = resolve;
+          setTimeout(resolve, 300);
+        });
+        helloSeen = null;
       },
       get readable() {
         return readable;
@@ -387,11 +420,16 @@ export function installFakeSerial(bridgeUrl) {
       getInfo() {
         return {};
       },
-      // The SIL bridge is a pure byte pipe with no modem lines. Accept and
-      // record control-line changes so code paths that pulse DTR (the firmware
-      // loader) don't throw here; nothing downstream acts on them.
+      // A bridge that said hello (tools/hw-ws-bridge.mjs) drives the real
+      // port's modem lines, so the firmware loader's DTR reset reaches the
+      // board; resolves once the bridge has applied the change. A pure byte
+      // pipe gets the change recorded only, so code that pulses DTR still runs.
       async setSignals(signals) {
         window.__silSignals = { ...(window.__silSignals ?? {}), ...signals };
+        if (!control || ws.readyState !== WebSocket.OPEN) return;
+        const applied = new Promise((resolve) => control.pending.push(resolve));
+        ws.send(JSON.stringify({ signals }));
+        await applied;
       },
       async getSignals() {
         return { dataCarrierDetect: false, clearToSend: false, ringIndicator: false, dataSetReady: false };
@@ -432,7 +470,15 @@ export function installFakeSerial(bridgeUrl) {
   });
 }
 
-/** Init script: `showDirectoryPicker` → a fresh OPFS directory. */
+/**
+ * Init script: `showDirectoryPicker` → a fresh OPFS directory.
+ *
+ * The app asks for a data folder before showing anything else
+ * (src/ui/DataFolderGate.tsx). This answers that question the way a user
+ * would, by pressing "Choose data folder" as soon as it appears, so every
+ * scenario starts inside the app with a fresh folder. A scenario that wants a
+ * clean folder midway still calls `chooseDataFolder`.
+ */
 export function installOpfsDataDir(dirName) {
   window.showDirectoryPicker = async () => {
     const root = await navigator.storage.getDirectory();
@@ -443,6 +489,11 @@ export function installOpfsDataDir(dirName) {
     }
     return root.getDirectoryHandle(dirName, { create: true });
   };
+  const answerGate = () => {
+    const button = document.querySelector('[data-testid="data-folder-gate"] [data-testid="choose-data-folder"]');
+    if (button && !button.disabled) button.click();
+  };
+  new MutationObserver(answerGate).observe(document, { childList: true, subtree: true });
 }
 
 /**
@@ -735,11 +786,12 @@ export async function recoverMachine() {
   }
 }
 
-/** Choose the OPFS data folder via Settings. */
+/** Swap in a fresh OPFS data folder via Settings. */
 export async function chooseDataFolder(page) {
   await page.goto(`${APP_URL}#/settings`);
-  await press(page.getByRole('button', { name: /Choose folder/i }));
-  await page.getByText(/Current:/).waitFor({ timeout: 8000 });
+  // The startup gate already opened one, so the button offers a change.
+  await press(page.getByRole('button', { name: /Change folder/i }));
+  await page.getByText(/Data folder set\./).waitFor({ timeout: 8000 });
 }
 
 /**

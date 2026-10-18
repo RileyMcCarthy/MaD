@@ -158,8 +158,8 @@ async function connect(page) {
 }
 
 async function chooseFolder(page) {
+  // The startup gate opened the OPFS folder already (installOpfsDataDir).
   await page.goto(`${APP_URL}#/settings`);
-  await page.getByRole('button', { name: /Choose folder/i }).click();
   await page.getByText(/Current:/).waitFor({ timeout: 10000 });
 }
 
