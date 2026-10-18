@@ -1,6 +1,6 @@
 import { describe, expect } from 'vitest';
 import { behaviour } from '@vibes/behaviour';
-import { acceptsNumberText, isIncompleteNumber } from './NumberField';
+import { acceptsNumberText, isIncompleteNumber, settleNumberText } from './NumberField';
 
 describe('number field typing', () => {
   behaviour(
@@ -45,6 +45,31 @@ describe('number field typing', () => {
     () => {
       expect(acceptsNumberText('12', true)).toBe(true);
       expect(acceptsNumberText('1.', true)).toBe(false);
+    },
+  );
+
+  behaviour(
+    {
+      id: 'ui.number-field-settles-on-blur',
+      covers: 'src/ui/components/NumberField.tsx#settleNumberText',
+      given: 'a number box losing focus, with or without a minimum set',
+      expect: {
+        'unfinished-falls-back': 'an empty box or a lone minus sign settles to the minimum, or to 0 when the box has none',
+        'raised-to-minimum': 'a number below the minimum is raised to the minimum',
+        'complete-kept': 'a complete number at or above the minimum is kept as typed',
+      },
+      why: { 'raised-to-minimum': 'a set must run at least once, so its execution count has a minimum of 1' },
+    },
+    () => {
+      expect(settleNumberText('')).toBe(0);
+      expect(settleNumberText('', 1)).toBe(1);
+      expect(settleNumberText('-')).toBe(0);
+      expect(settleNumberText('-', 1)).toBe(1);
+      expect(settleNumberText('0', 1)).toBe(1);
+      expect(settleNumberText('-4', 1)).toBe(1);
+      expect(settleNumberText('12.5')).toBe(12.5);
+      expect(settleNumberText('-3')).toBe(-3);
+      expect(settleNumberText('3', 1)).toBe(3);
     },
   );
 });
