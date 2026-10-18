@@ -442,7 +442,8 @@ jobs:
           npm ci
           npm run build:wasm
           npm run generate:proto
-      # The bundle BUNDLE-live runs against, built as pages.yml builds it.
+      # The bundle BUNDLE-live runs against: a production build, as pages.yml
+      # builds a release, at the unversioned base the scenario's URLs expect.
       - name: Build the shipped bundle
         working-directory: Software/Control
         run: npx vite build --base="/${{ github.event.repository.name }}/app/" --outDir /tmp/mad-bundle

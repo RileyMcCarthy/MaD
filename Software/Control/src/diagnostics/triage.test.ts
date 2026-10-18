@@ -28,6 +28,26 @@ const snap = (entries: LogEntry[], over: Partial<LogSnapshot> = {}): LogSnapshot
 describe('summariseForTriage', () => {
   behaviour(
     {
+      id: 'diag.triage-error-first-line',
+      covers: 'src/diagnostics/triage.ts#summariseForTriage',
+      given: 'first and last errors whose messages carry a component stack on later lines',
+      expect: { 'first-line-only': 'the triage summary keeps only the first line of each message, trimmed' },
+      why: { 'first-line-only': 'a stack would swamp the summary at the top of the report' },
+    },
+    () => {
+      const t = summariseForTriage(
+        snap([
+          e({ level: 'error', cat: 'ui', tag: 'render-crash', msg: ' boom \n    at Create' }),
+          e({ level: 'error', cat: 'device', tag: 'link-lost', msg: 'gone\nsecond line' }),
+        ]),
+      );
+      expect(t.firstError?.msg).toBe('boom');
+      expect(t.lastError?.msg).toBe('gone');
+    },
+  );
+
+  behaviour(
+    {
       id: 'diag.triage-healthy-session',
       covers: 'src/diagnostics/triage.ts#summariseForTriage',
       given: 'a session log with only a connected event and a stream event',

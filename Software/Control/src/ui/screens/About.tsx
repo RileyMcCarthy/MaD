@@ -8,7 +8,7 @@ import {
   type ReportPreview,
 } from '@/diagnostics/report';
 import { DOCS, GUIDES, USER_GUIDE_PATH } from '@/ui/docsLinks';
-
+import VersionPicker from '@/ui/components/VersionPicker';
 
 export default function About() {
   const [summary, setSummary] = useState('');
@@ -81,6 +81,9 @@ export default function About() {
             </tr>
           </tbody>
         </table>
+        <div style={{ marginTop: 12 }}>
+          <VersionPicker />
+        </div>
         <p className="muted" style={{ marginTop: 12 }}>
           Control app for the MaD tensile tester. Runs in Chrome or Edge on desktop.{' '}
           <a href={`https://github.com/${ISSUE_REPO}`} target="_blank" rel="noreferrer">
