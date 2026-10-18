@@ -970,13 +970,8 @@ jobs:
             VERSION="dev-${{ github.run_number }}"
             echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
           fi
-          # The FirmwareVersion reply is a 16-byte string field (Protocol/MaDProtocol.yaml),
-          # i.e. 15 characters + NUL. The firmware strncpy's into it, so anything longer is
-          # silently truncated on the wire — refuse to build a version the UI can't read back.
-          if (( ${#VERSION} > 15 )); then
-            echo "::error::firmware version '$VERSION' is ${#VERSION} chars; the protocol field holds 15"
-            exit 1
-          fi
+          # Length vs the protocol's FirmwareVersion field is enforced by every pio build
+          # (Firmware/MaDCore/extra_scripts/check_firmware_version.py), not here.
       # FIRMWARE_VERSION must reach the COMPILER. `pio run --program-arg` is a runtime
       # argument for the built program, not a build flag, so it never defined the macro and
       # every CI build reported the app_messageSlave.c fallback "0.0.0". PLATFORMIO_BUILD_FLAGS
