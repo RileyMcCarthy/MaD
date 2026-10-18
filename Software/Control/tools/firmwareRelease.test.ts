@@ -163,7 +163,7 @@ describe('firmwareRelease build', () => {
   behaviour(
     {
       id: 'firmware-release.size-mismatch-refused',
-      covers: 'tools/firmwareRelease.ts#fetchLatest',
+      covers: 'tools/firmwareRelease.ts#fetchLatestFirmware',
       given: 'a release image whose downloaded length differs from the size the release lists',
       expect: {
         'names-both-sizes': 'the image is refused with a message naming the size received and the size the release lists',
@@ -180,7 +180,7 @@ describe('firmwareRelease build', () => {
   behaviour(
     {
       id: 'firmware-release.listing-http-error',
-      covers: 'tools/firmwareRelease.ts#fetchLatest',
+      covers: 'tools/firmwareRelease.ts#fetchLatestFirmware',
       given: "GitHub answers the build's request for the repository's releases with an error status",
       expect: { 'names-status': 'the lookup fails naming the HTTP status' },
     },
@@ -194,7 +194,7 @@ describe('firmwareRelease build', () => {
   behaviour(
     {
       id: 'firmware-release.asset-http-error',
-      covers: 'tools/firmwareRelease.ts#fetchLatest',
+      covers: 'tools/firmwareRelease.ts#fetchLatestFirmware',
       given: 'GitHub answers the download of the chosen release image with an error status',
       expect: { 'names-status': 'the lookup fails naming the image and the HTTP status' },
     },
