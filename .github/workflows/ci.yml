@@ -967,14 +967,50 @@ jobs:
             VERSION=${GITHUB_REF#refs/tags/firmware-v}
             echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
           else
-            echo "VERSION=dev-${{ github.run_number }}" >> $GITHUB_OUTPUT
+            VERSION="dev-${{ github.run_number }}"
+            echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
           fi
+          # The FirmwareVersion reply is a 16-byte string field (Protocol/MaDProtocol.yaml),
+          # i.e. 15 characters + NUL. The firmware strncpy's into it, so anything longer is
+          # silently truncated on the wire — refuse to build a version the UI can't read back.
+          if (( ${#VERSION} > 15 )); then
+            echo "::error::firmware version '$VERSION' is ${#VERSION} chars; the protocol field holds 15"
+            exit 1
+          fi
+      # FIRMWARE_VERSION must reach the COMPILER. `pio run --program-arg` is a runtime
+      # argument for the built program, not a build flag, so it never defined the macro and
+      # every CI build reported the app_messageSlave.c fallback "0.0.0". PLATFORMIO_BUILD_FLAGS
+      # is appended to each env's build_flags (pio parses the \" escapes shell-style).
       - name: Build Firmware - Debug Version
         working-directory: Firmware/MaDCore
-        run: pio run -e propeller2_debug --program-arg="-DFIRMWARE_VERSION=\"${{ steps.get_version.outputs.VERSION }}\""
+        env:
+          PLATFORMIO_BUILD_FLAGS: '-DFIRMWARE_VERSION=\"${{ steps.get_version.outputs.VERSION }}\"'
+        run: pio run -e propeller2_debug
       - name: Build Firmware - Release Version
         working-directory: Firmware/MaDCore
-        run: pio run -e propeller2_release --program-arg="-DFIRMWARE_VERSION=\"${{ steps.get_version.outputs.VERSION }}\""
+        env:
+          PLATFORMIO_BUILD_FLAGS: '-DFIRMWARE_VERSION=\"${{ steps.get_version.outputs.VERSION }}\"'
+        run: pio run -e propeller2_release
+      - name: Assert the version string is embedded in the firmware
+        working-directory: Firmware/MaDCore
+        run: |
+          set -euo pipefail
+          V="${{ steps.get_version.outputs.VERSION }}"
+          # Release binary is mandatory. The debug output can vanish after its build (see the
+          # artifact step's NOTE), so it is checked only when present.
+          check() {
+            if ! LC_ALL=C grep -aqF -- "$V" "$1"; then
+              echo "::error::'$V' not found in $1 — FIRMWARE_VERSION was not compiled in"
+              exit 1
+            fi
+            echo "ok: '$V' embedded in $1"
+          }
+          check .pio/build/propeller2_release/program
+          if [ -f .pio/build/propeller2_debug/program ]; then
+            check .pio/build/propeller2_debug/program
+          else
+            echo "::warning::propeller2_debug/program missing; version check skipped for debug"
+          fi
       - name: Copy and rename build artifacts
         run: |
           set -uxo pipefail
