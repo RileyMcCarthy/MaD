@@ -70,7 +70,7 @@ only — not the safety stop), move-range/G-code validation before any motion
 command (a correctness guard on the wire bytes), React error boundaries +
 automatic recovery from a crashed worker/WASM instance, a deferred PWA update
 flow (no surprise reload mid-session), serialized + rebuildable file-storage, and
-a one-click **diagnostics export** on the Firmware/About page.
+a one-click **diagnostics export** on the About page.
 
 ### Real hardware vs. the SIL emulator
 

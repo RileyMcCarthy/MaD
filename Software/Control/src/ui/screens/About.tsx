@@ -4,6 +4,7 @@ import {
   canFileDirectly,
   fileBugReport,
   fileBugReportViaApi,
+  ISSUE_REPO,
   type ReportPreview,
 } from '@/diagnostics/report';
 import { DOCS, GUIDES, USER_GUIDE_PATH } from '@/ui/docsLinks';
@@ -82,7 +83,7 @@ export default function About() {
         </table>
         <p className="muted" style={{ marginTop: 12 }}>
           Control app for the MaD tensile tester. Runs in Chrome or Edge on desktop.{' '}
-          <a href="https://github.com/RileyMcCarthy/MaD" target="_blank" rel="noreferrer">
+          <a href={`https://github.com/${ISSUE_REPO}`} target="_blank" rel="noreferrer">
             Source on GitHub
           </a>
         </p>
