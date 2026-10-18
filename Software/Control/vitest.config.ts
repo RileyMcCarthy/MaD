@@ -1,11 +1,35 @@
-import { defineConfig } from 'vitest/config';
+import { defineConfig, type Plugin } from 'vitest/config';
 import { fileURLToPath, URL } from 'node:url';
+import { existsSync } from 'node:fs';
+
+const src = fileURLToPath(new URL('./src', import.meta.url));
+
+/**
+ * The protocol core's WebAssembly glue (src/wasm) exists only after
+ * `npm run build:wasm`, and the Behaviour ledger job runs the suite without
+ * it; the tests that reach it stand it in with `vi.mock`. Vitest 2 let such a
+ * mock replace an import that resolved to nothing; Vitest 5 fails the import
+ * first. When the glue has not been built, resolve its two imports to
+ * themselves so the mock can answer them. Once built, nothing changes.
+ */
+function unbuiltWasmGlue(): Plugin {
+  const glue = /(?:^@|[\\/]src)\/wasm\/protoemb_runtime(?:\.js|_bg\.wasm\?url)$/;
+  return {
+    name: 'mad-unbuilt-wasm-glue',
+    enforce: 'pre',
+    resolveId(id) {
+      if (!glue.test(id) || existsSync(`${src}/wasm/protoemb_runtime.js`)) return null;
+      return id.replace(/^.*[\\/]src\//, '@/');
+    },
+  };
+}
 
 // Separate from vite.config.ts so the PWA plugin doesn't run during tests.
 export default defineConfig({
+  plugins: [unbuiltWasmGlue()],
   resolve: {
     alias: {
-      '@': fileURLToPath(new URL('./src', import.meta.url)),
+      '@': src,
     },
   },
   test: {

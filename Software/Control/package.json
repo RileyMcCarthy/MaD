@@ -50,8 +50,8 @@
     "@types/ws": "^8.18.2",
     "@vibes/behaviour": "file:../../Vibes/bindings/ts",
     "@vitejs/plugin-react": "^4.3.4",
-    "@vitest/coverage-istanbul": "^2.1.9",
-    "@vitest/coverage-v8": "^2.1.9",
+    "@vitest/coverage-istanbul": "^5.0.5",
+    "@vitest/coverage-v8": "^5.0.5",
     "eslint": "^9.39.5",
     "eslint-plugin-react-hooks": "^7.1.1",
     "globals": "^17.13.0",
@@ -59,9 +59,10 @@
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.71.2",
     "vite": "^6.4.4",
+    "vite-node": "^3.2.4",
     "vite-plugin-istanbul": "^8.0.0",
     "vite-plugin-pwa": "^0.21.1",
-    "vitest": "^2.1.8",
+    "vitest": "^5.0.5",
     "ws": "^8.22.0"
   }
 }
