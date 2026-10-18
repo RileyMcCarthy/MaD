@@ -1,6 +1,6 @@
 import { describe, expect } from 'vitest';
 import { behaviour } from '@vibes/behaviour';
-import { acceptsNumberText, isIncompleteNumber, settleNumberText } from './NumberField';
+import { acceptsNumberText, isIncompleteNumber, settleNumberText, typedNumber } from './NumberField';
 
 describe('number field typing', () => {
   behaviour(
@@ -70,6 +70,38 @@ describe('number field typing', () => {
       expect(settleNumberText('12.5')).toBe(12.5);
       expect(settleNumberText('-3')).toBe(-3);
       expect(settleNumberText('3', 1)).toBe(3);
+    },
+  );
+
+  behaviour(
+    {
+      id: 'ui.number-field-holds-below-minimum',
+      covers: 'src/ui/components/NumberField.tsx#typedNumber',
+      given: 'a number box with a minimum of 1, such as a set’s execution count, while a value is being typed',
+      expect: {
+        'below-held': 'a minus sign, 0 or a negative number is not passed on as the count until the box settles',
+        'valid-passed': 'a number at or above the minimum is passed on as soon as it is typed',
+      },
+      why: { 'below-held': 'anything that reads the set before the box loses focus, such as the G-code preview, would see an impossible execution count' },
+    },
+    () => {
+      for (const text of ['-', '0', '-2', '']) expect(typedNumber(text, 1)).toBeUndefined();
+      expect(typedNumber('1', 1)).toBe(1);
+      expect(typedNumber('12', 1)).toBe(12);
+    },
+  );
+
+  behaviour(
+    {
+      id: 'ui.number-field-no-minimum-passes-negatives',
+      covers: 'src/ui/components/NumberField.tsx#typedNumber',
+      given: 'a number box with no minimum, such as a jog distance, while a value is being typed',
+      expect: { 'negatives-passed': 'zero, negative and decimal numbers are passed on as soon as they are typed' },
+    },
+    () => {
+      expect(typedNumber('0')).toBe(0);
+      expect(typedNumber('-2.5')).toBe(-2.5);
+      expect(typedNumber('-')).toBeUndefined();
     },
   );
 });
