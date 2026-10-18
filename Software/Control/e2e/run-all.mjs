@@ -2838,7 +2838,7 @@ const scenarios = [
   },
   {
     id: 'FW7',
-    name: 'Firmware: every control is locked while programming, and progress shows',
+    name: 'Firmware: every control is locked while programming and writing flash, and progress shows',
     async run() {
       const browser = await chromium.launch({ channel: 'chrome', headless: true });
       try {
@@ -2859,8 +2859,21 @@ const scenarios = [
         for (const id of ['flash-firmware', 'firmware-file', 'choose-flash-port']) {
           assert(await page.getByTestId(id).isDisabled(), `${id} was still enabled mid-flash`);
         }
+        // After the upload the chip is still erasing and programming flash;
+        // the app must hold the port, and the user's hands, until it is done.
+        await page.getByTestId('flash-status').filter({ hasText: /Writing flash… about \d+s/ }).waitFor({ timeout: RUN_WAIT_MS });
+        for (const id of ['flash-firmware', 'firmware-file', 'choose-flash-port']) {
+          assert(await page.getByTestId(id).isDisabled(), `${id} was enabled while flash was being written`);
+        }
+        assert(
+          await page.evaluate(() => window.__bootRom.closedAt === null),
+          'the port was closed while flash was being written',
+        );
         await page.getByTestId('flash-status').filter({ hasText: /Wrote .* bytes to flash/ })
           .waitFor({ timeout: RUN_WAIT_MS });
+        // 4096 + 496 bytes: the write estimate is at least its fixed second.
+        const held = await page.evaluate(() => window.__bootRom.closedAt - window.__bootRom.finishedAt);
+        assert(held >= 1000, `port closed ${Math.round(held)} ms after the download ended; flash needs longer`);
       } finally { await browser.close(); }
     },
   },
