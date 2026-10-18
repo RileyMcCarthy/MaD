@@ -59,4 +59,33 @@ describe('trackUserActions click names', () => {
       expect(entry.msg).toBe('connect-btn');
     },
   );
+
+  behaviour(
+    {
+      id: 'diag.action-tracks-click-and-edit',
+      covers: 'src/diagnostics/actions.ts#trackUserActions',
+      given: 'tracking on, a click on a tagged button and a speed typed into a field and left',
+      expect: {
+        'click-logged': 'the click is logged as a ui click entry with the control and its test id',
+        'edit-logged': 'leaving the field is logged as a ui edit entry with the field label and its value',
+      },
+    },
+    () => {
+      document.body.innerHTML =
+        '<button data-testid="save-profile">Save</button><label>Speed (mm/s) <input type="number"></label>';
+      const seen: LogEntry[] = [];
+      const stop = subscribeLog((e) => {
+        if (e.cat === 'ui') seen.push(e);
+      });
+      document.querySelector('button')!.click();
+      const input = document.querySelector('input')!;
+      input.value = '12.5';
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      stop();
+      expect(seen.map((e) => [e.tag, e.msg, e.data])).toEqual([
+        ['click', 'save-profile', { control: 'button', testId: 'save-profile' }],
+        ['edit', 'Speed (mm/s)', { value: '12.5' }],
+      ]);
+    },
+  );
 });
