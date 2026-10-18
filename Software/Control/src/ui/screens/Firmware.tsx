@@ -131,7 +131,9 @@ export default function Firmware() {
     // flashed (one adapter for both). Flashing over a separate programming
     // adapter, as on the MadEdge PCBA, leaves the main connection running.
     const sharesPort = deviceClient.heldPort() === target.port;
-    const resumeSession = sharesPort && connected;
+    // Set once the session has handed its port over; it is then always given
+    // back afterwards, whether the flash worked or not.
+    let tookSessionPort = false;
     try {
       // Fetch (and check) the release before touching the board, so a failed
       // download leaves the live session and the flash as they were.
@@ -148,7 +150,10 @@ export default function Firmware() {
       setStatus({ kind: 'running', progress: { phase: 'resetting' } });
       // On a shared port the worker holds the streams (also while connecting or
       // after a lost link), and the chip reboots, so that session has to go.
-      if (sharesPort) await disconnect();
+      if (sharesPort) {
+        await disconnect();
+        tookSessionPort = true;
+      }
 
       let result;
       try {
@@ -172,14 +177,15 @@ export default function Firmware() {
         kind: 'done',
         message: `Wrote ${result.imageBytes.toLocaleString()} bytes to flash. The board has rebooted into the new firmware.`,
       });
-
-      if (resumeSession) {
-        // Give the firmware a moment to come up before re-opening the port.
-        await new Promise((r) => setTimeout(r, 1500));
-        await connect({ port: target.port });
-      }
     } catch (err) {
       setStatus({ kind: 'error', message: err instanceof Error ? err.message : String(err) });
+    }
+
+    if (tookSessionPort) {
+      // Give the firmware a moment to come up, then reconnect to the same port:
+      // no chooser, and the user is never left disconnected by a flash.
+      await new Promise((r) => setTimeout(r, 1500));
+      await connect({ port: target.port });
     }
   };
 
