@@ -9,7 +9,7 @@ describe('number field typing', () => {
       covers: 'src/ui/components/NumberField.tsx#isIncompleteNumber',
       given: 'a number box emptied, or holding only a minus sign or a decimal point',
       expect: {
-        'not-yet-a-number': 'the text is held as typed and no number is taken from it yet',
+        'not-yet-a-number': 'the text is not read as a number yet, unlike a box holding 0',
       },
       why: { 'not-yet-a-number': 'reading an emptied box as 0 makes every new entry start with a 0' },
     },
@@ -30,7 +30,7 @@ describe('number field typing', () => {
       },
     },
     () => {
-      for (const text of ['12', '-3', '1.', '.5', '-0.25', '']) expect(acceptsNumberText(text, false)).toBe(true);
+      for (const text of ['12', '-3', '1.', '.5', '-0.25', '', '-']) expect(acceptsNumberText(text, false)).toBe(true);
       for (const text of ['1a', '1.2.3', '3-', 'e5']) expect(acceptsNumberText(text, false)).toBe(false);
     },
   );
