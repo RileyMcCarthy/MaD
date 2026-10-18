@@ -8,6 +8,7 @@ import {
   sampleProfileNameFromFile,
 } from '@/domain';
 import { dataStore } from '@/storage/DataStore';
+import NumberField from '@/ui/components/NumberField';
 
 const FIELDS: Array<{ key: keyof SampleProfile; label: string }> = [
   { key: 'maxForce', label: 'Max Force (N)' },
@@ -102,14 +103,12 @@ export default function Profiles() {
         <h2>Editor</h2>
         <div className="grid cols-2">
           {FIELDS.map((f) => (
-            <label className="field" key={f.key}>
-              {f.label}
-              <input
-                type="number"
-                value={draft[f.key] as number}
-                onChange={(e) => setDraft({ ...draft, [f.key]: Number(e.target.value) })}
-              />
-            </label>
+            <NumberField
+              key={f.key}
+              label={f.label}
+              value={draft[f.key] as number}
+              onChange={(n) => setDraft((d) => ({ ...d, [f.key]: n }))}
+            />
           ))}
           <label className="field">
             Sample name
