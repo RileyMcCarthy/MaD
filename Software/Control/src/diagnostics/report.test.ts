@@ -581,6 +581,53 @@ describe('recentActions', () => {
       ]);
     },
   );
+
+  behaviour(
+    {
+      id: 'diag.report-actions-capped',
+      covers: 'src/diagnostics/report.ts#recentActions',
+      given: 'a session with 35 clicks',
+      expect: {
+        'newest-thirty': 'only the newest 30 steps are listed, oldest first',
+        'earlier-counted': 'a first line says how many earlier steps are in the attached log',
+      },
+      why: { 'earlier-counted': 'a reader must know the recipe is cut, not that the session began there' },
+    },
+    () => {
+      const t = Date.UTC(2026, 0, 1, 12, 0, 0);
+      const entries = Array.from({ length: 35 }, (_, i) =>
+        entry({ seq: i + 1, t: t + i * 1000, cat: 'ui', tag: 'click', msg: `step-${i}` }),
+      );
+      const lines = recentActions(bundle({ log: { entries, counters: {}, dropped: 0, startedAt: 0 } })).split('\n');
+      expect(lines).toHaveLength(31);
+      expect(lines[0]).toBe('(5 earlier steps in the attached log)');
+      expect(lines[1]).toBe('12:00:05 click "step-5"');
+      expect(lines[30]).toBe('12:00:34 click "step-34"');
+    },
+  );
+});
+
+describe('recent errors in the issue', () => {
+  behaviour(
+    {
+      id: 'diag.report-errors-first-line',
+      covers: 'src/diagnostics/report.ts#buildIssueFields',
+      given: 'an error whose message is followed by a stack trace on later lines',
+      expect: { 'first-line-only': 'the error block shows only the first line of the message, trimmed' },
+      why: { 'first-line-only': 'a stack per error would push the other errors out of the issue' },
+    },
+    () => {
+      const fields = buildIssueFields({ summary: 'x' }, bundle({
+        log: {
+          entries: [entry({ level: 'error', cat: 'ui', tag: 'render-crash', msg: '  boom  \n    at Create\n    at App' })],
+          counters: {},
+          dropped: 0,
+          startedAt: 0,
+        },
+      }), 'f.json');
+      expect(fields.errors).toBe('12:00:00.000 ui/render-crash boom');
+    },
+  );
 });
 
 describe('buildApiIssueBody', () => {

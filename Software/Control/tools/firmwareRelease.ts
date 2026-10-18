@@ -25,7 +25,7 @@ import {
   type GithubRelease,
 } from '../src/firmware/release';
 
-interface Bundled {
+export interface Bundled {
   manifest: FirmwareReleaseManifest;
   image: Buffer;
 }
@@ -43,7 +43,8 @@ function headers(env: Record<string, string | undefined>, accept: string): Recor
   return h;
 }
 
-async function fetchLatest(
+/** The newest firmware release image and its manifest, from GitHub. */
+export async function fetchLatestFirmware(
   fetchFn: typeof fetch,
   env: Record<string, string | undefined>,
 ): Promise<Bundled> {
@@ -75,7 +76,7 @@ export function firmwareRelease(deps: FirmwareReleaseDeps = {}): Plugin {
   const required = env.MAD_FIRMWARE_RELEASE_REQUIRED === '1';
   let cached: Promise<Bundled> | null = null;
   const latest = () => {
-    cached ??= fetchLatest(fetchFn, env);
+    cached ??= fetchLatestFirmware(fetchFn, env);
     // A failure is not cached: the next request (say, once back online) retries.
     cached.catch(() => {
       cached = null;

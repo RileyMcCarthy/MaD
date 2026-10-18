@@ -36,4 +36,27 @@ describe('recordableEdit', () => {
       expect(recordableEdit({ kind: 'text', value: 'ghp_abcdefghijklmnopqrstuvwxyz0123456789' })).toEqual({ length: 40 });
     },
   );
+
+  behaviour(
+    {
+      id: 'diag.action-edit-kind-rules',
+      covers: 'src/diagnostics/actions.ts#recordableEdit',
+      given: 'a number field, a slider, a radio button, a chosen file and a list without option text',
+      expect: {
+        'number-kind-kept': 'a number field or slider keeps its value, even when it does not look like plain digits',
+        'radio-kept': 'a radio button is recorded as picked or not',
+        'file-length-only': 'a chosen file is recorded by the length of its name only',
+        'list-value-fallback': 'a list choice without option text is recorded by its value',
+      },
+      why: { 'file-length-only': 'a file name is something the user wrote' },
+    },
+    () => {
+      expect(recordableEdit({ kind: 'number', value: '1e3' })).toEqual({ value: '1e3' });
+      expect(recordableEdit({ kind: 'range', value: '75' })).toEqual({ value: '75' });
+      expect(recordableEdit({ kind: 'radio', value: 'metric', checked: true })).toEqual({ checked: true });
+      expect(recordableEdit({ kind: 'radio', value: 'metric' })).toEqual({ checked: false });
+      expect(recordableEdit({ kind: 'file', value: 'C:\\fakepath\\run 12.csv' })).toEqual({ length: 22 });
+      expect(recordableEdit({ kind: 'select', value: '115200' })).toEqual({ value: '115200' });
+    },
+  );
 });
