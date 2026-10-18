@@ -141,8 +141,9 @@ export default function Firmware() {
 
       setStatus({ kind: 'running', progress: { phase: 'resetting' } });
       // The chip reboots as part of programming, so any live protocol session is
-      // void — and on a single-port board the worker still holds the streams.
-      if (wasConnected) await disconnect();
+      // void — and on a single-port board the worker still holds the streams,
+      // also while it is still connecting or after a lost link.
+      if (wasConnected || deviceClient.isConnected()) await disconnect();
 
       const result = await programPort(target.port, firmware, {
         // The P2 Edge boots from SPI flash, so that is the only thing the app

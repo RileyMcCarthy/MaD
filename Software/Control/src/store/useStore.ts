@@ -349,6 +349,38 @@ function afterConnect(set: SetState, getState: GetState, label: string): void {
   });
 }
 
+/** Set while a connect runs; see `connect`. */
+let connectInFlight: Promise<void> | null = null;
+
+async function connectOnce(args: ConnectArgs, set: SetState, getState: GetState): Promise<void> {
+  set({ connection: 'connecting', error: null });
+  try {
+    const port = args.port ?? (await deviceClient.requestPort());
+    const baud = args.baud ?? DEFAULT_BAUD_RATE;
+    resetLiveBuffer();
+    userDisconnect = false;
+    await deviceClient.connect(port, baud);
+    lastPort = port;
+    lastBaud = baud;
+    saveSerialPref(port, baud); // remember for next-session auto-reconnect
+    const info = port.getInfo();
+    const label =
+      info.usbVendorId !== undefined
+        ? `USB ${info.usbVendorId.toString(16)}:${(info.usbProductId ?? 0).toString(16)}`
+        : 'Serial device';
+    logStore.info('connect', 'link established', { baud, label });
+    set({ canReconnect: false });
+    afterConnect(set, getState, label);
+  } catch (err) {
+    // A failed (re)connect keeps canReconnect as-is so the user can retry.
+    logStore.error('connect-failed', err instanceof Error ? err.message : String(err));
+    set({
+      connection: 'disconnected',
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
 /**
  * Mirror the data folder into the store. The folder's settings (the GitHub
  * token) load before it is reported ready, so no screen sees an open folder
@@ -496,32 +528,13 @@ export const useStore = create<AppState>((set, getState) => ({
   },
 
   connect: async (args = {}) => {
-    set({ connection: 'connecting', error: null });
-    try {
-      const port = args.port ?? (await deviceClient.requestPort());
-      const baud = args.baud ?? DEFAULT_BAUD_RATE;
-      resetLiveBuffer();
-      userDisconnect = false;
-      await deviceClient.connect(port, baud);
-      lastPort = port;
-      lastBaud = baud;
-      saveSerialPref(port, baud); // remember for next-session auto-reconnect
-      const info = port.getInfo();
-      const label =
-        info.usbVendorId !== undefined
-          ? `USB ${info.usbVendorId.toString(16)}:${(info.usbProductId ?? 0).toString(16)}`
-          : 'Serial device';
-      logStore.info('connect', 'link established', { baud, label });
-      set({ canReconnect: false });
-      afterConnect(set, getState, label);
-    } catch (err) {
-      // A failed (re)connect keeps canReconnect as-is so the user can retry.
-      logStore.error('connect-failed', err instanceof Error ? err.message : String(err));
-      set({
-        connection: 'disconnected',
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
+    // One connect at a time: the startup auto-connect and a click on Connect
+    // would otherwise both open the port, and the second open fails.
+    if (connectInFlight) return connectInFlight;
+    connectInFlight = connectOnce(args, set, getState).finally(() => {
+      connectInFlight = null;
+    });
+    return connectInFlight;
   },
 
   disconnect: async () => {
