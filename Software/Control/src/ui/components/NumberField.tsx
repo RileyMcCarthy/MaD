@@ -11,6 +11,15 @@ export function acceptsNumberText(text: string, integer: boolean): boolean {
 }
 
 /**
+ * The number a box settles to when it loses focus: an unfinished entry falls
+ * back to `min` (or 0), and anything below `min` is raised to it.
+ */
+export function settleNumberText(draft: string, min?: number): number {
+  const n = isIncompleteNumber(draft) ? (min ?? 0) : Number(draft);
+  return min !== undefined && n < min ? min : n;
+}
+
+/**
  * Numeric input that lets the user clear it and type a new number.
  *
  * A controlled `<input type="number" value={n}>` fed through `Number(...)`
@@ -66,8 +75,7 @@ export default function NumberField({
           }
         }}
         onBlur={() => {
-          const n = isIncompleteNumber(draft) ? (min ?? 0) : Number(draft);
-          const settled = min !== undefined && n < min ? min : n;
+          const settled = settleNumberText(draft, min);
           if (settled !== value) onChange(settled);
           setDraft(String(settled));
         }}
