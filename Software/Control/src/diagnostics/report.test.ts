@@ -1,12 +1,14 @@
 import { describe, it, expect } from 'vitest';
 import { behaviour } from '@vibes/behaviour';
 import {
+  buildApiIssueBody,
   buildIssueFields,
   buildIssueUrl,
   bundleFileName,
   environmentBlock,
   ISSUE_URL_MAX,
   recentActions,
+  ISSUE_STACK_LINES,
   ISSUE_TEMPLATE,
   shortUserAgent,
 } from './report';
@@ -577,6 +579,86 @@ describe('recentActions', () => {
         '12:00:03 click "Save"',
         '12:00:04 ✗ ui/render-crash boom',
       ]);
+    },
+  );
+});
+
+describe('buildApiIssueBody', () => {
+  const stack = [
+    'ReferenceError: NumberField is not defined',
+    ...Array.from({ length: 12 }, (_, i) => `    at frame${i} (http://localhost/src/Create.tsx:${i}:1)`),
+  ].join('\n');
+  const crashLog = {
+    entries: [
+      entry({ seq: 1, level: 'error', cat: 'app', tag: 'console', msg: 'ReferenceError: NumberField is not defined', data: { detail: { stack } } }),
+      entry({ seq: 2, level: 'error', cat: 'ui', tag: 'render-crash', msg: 'NumberField is not defined', data: { stack } }),
+    ],
+    counters: { 'ui/render-crash': 1 },
+    dropped: 0,
+    startedAt: 0,
+  };
+
+  behaviour(
+    {
+      id: 'diag.report-api-body-error-stacks',
+      covers: 'src/diagnostics/report.ts#buildApiIssueBody',
+      given: 'a session where one screen crash was logged twice with the same twelve-frame stack',
+      expect: {
+        'errors-listed': 'the issue body lists both error entries',
+        'stack-frames-shown': 'the first entry is followed by the opening frames of its stack, up to the per-error frame limit',
+        'remainder-counted': 'the frames left out are counted',
+        'stack-shown-once': 'each distinct stack is printed once, under the first entry that carries it',
+      },
+    },
+    () => {
+      const body = buildApiIssueBody({ summary: 'crash' }, bundle({ log: crashLog }), 'https://gist/x');
+      const section = body.slice(body.indexOf('### Recent errors'), body.indexOf('### Failure counters'));
+      expect(section).toContain('app/console ReferenceError: NumberField is not defined');
+      expect(section).toContain('ui/render-crash NumberField is not defined');
+      expect(section).toContain('at frame0 ');
+      expect(section).toContain(`at frame${ISSUE_STACK_LINES - 1} `);
+      expect(section).not.toContain(`at frame${ISSUE_STACK_LINES} `);
+      expect(section).toContain(`… ${12 - ISSUE_STACK_LINES} more frames`);
+      expect(section.match(/at frame0 /g)).toHaveLength(1);
+    },
+  );
+
+  behaviour(
+    {
+      id: 'diag.report-api-body-previous-session',
+      covers: 'src/diagnostics/report.ts#buildApiIssueBody',
+      given: 'a report whose previous page load logged three entries, one an error, and never shut down',
+      expect: {
+        'previous-summarised':
+          'the issue body has a previous-session section giving its entry count, error count and that it ended unexpectedly',
+        'gist-contents-named': 'the diagnostics link says the gist holds the previous session as well as this one',
+      },
+    },
+    () => {
+      const previousSession = {
+        id: 's-old',
+        startedAt: 1000,
+        updatedAt: 4000,
+        closed: false,
+        entries: [entry(), entry({ level: 'error' }), entry()],
+      };
+      const body = buildApiIssueBody({ summary: 'x' }, bundle({ previousSession }), 'https://gist/x');
+      expect(body).toContain('### Previous session\n3 entries over 3.0s · 1 error · ended unexpectedly');
+      expect(body).toMatch(/\[Full session log\]\(https:\/\/gist\/x\).*previous session \(3 entries\)/);
+    },
+  );
+
+  behaviour(
+    {
+      id: 'diag.report-api-body-no-previous',
+      covers: 'src/diagnostics/report.ts#buildApiIssueBody',
+      given: 'a report with no earlier page load on record',
+      expect: {
+        'section-omitted': 'the issue body has no previous-session section',
+      },
+    },
+    () => {
+      expect(buildApiIssueBody({ summary: 'x' }, bundle(), 'https://gist/x')).not.toContain('### Previous session');
     },
   );
 });
