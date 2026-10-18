@@ -25,30 +25,39 @@ import {
   type GithubRelease,
 } from '../src/firmware/release';
 
-const REPO = process.env.MAD_FIRMWARE_REPO || 'RileyMcCarthy/MaD';
-
 interface Bundled {
   manifest: FirmwareReleaseManifest;
   image: Buffer;
 }
 
-function headers(accept: string): Record<string, string> {
+/** What the plugin reads from the outside world. Defaults to the real `fetch`
+ *  and `process.env`; tests pass stubs so no network or module reload is needed. */
+export interface FirmwareReleaseDeps {
+  fetch?: typeof fetch;
+  env?: Record<string, string | undefined>;
+}
+
+function headers(env: Record<string, string | undefined>, accept: string): Record<string, string> {
   const h: Record<string, string> = { Accept: accept, 'User-Agent': 'mad-control-build' };
-  if (process.env.GITHUB_TOKEN) h.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
+  if (env.GITHUB_TOKEN) h.Authorization = `Bearer ${env.GITHUB_TOKEN}`;
   return h;
 }
 
-async function fetchLatest(): Promise<Bundled> {
-  const api = `https://api.github.com/repos/${REPO}`;
-  const list = await fetch(`${api}/releases?per_page=100`, {
-    headers: headers('application/vnd.github+json'),
+async function fetchLatest(
+  fetchFn: typeof fetch,
+  env: Record<string, string | undefined>,
+): Promise<Bundled> {
+  const repo = env.MAD_FIRMWARE_REPO || 'RileyMcCarthy/MaD';
+  const api = `https://api.github.com/repos/${repo}`;
+  const list = await fetchFn(`${api}/releases?per_page=100`, {
+    headers: headers(env, 'application/vnd.github+json'),
   });
-  if (!list.ok) throw new Error(`listing releases of ${REPO}: HTTP ${list.status}`);
+  if (!list.ok) throw new Error(`listing releases of ${repo}: HTTP ${list.status}`);
   const picked = pickFirmwareRelease((await list.json()) as GithubRelease[]);
-  if (!picked) throw new Error(`${REPO} has no firmware release with a flashable image`);
+  if (!picked) throw new Error(`${repo} has no firmware release with a flashable image`);
 
-  const asset = await fetch(`${api}/releases/assets/${picked.asset.id}`, {
-    headers: headers('application/octet-stream'),
+  const asset = await fetchFn(`${api}/releases/assets/${picked.asset.id}`, {
+    headers: headers(env, 'application/octet-stream'),
   });
   if (!asset.ok) throw new Error(`downloading ${picked.asset.name}: HTTP ${asset.status}`);
   const image = Buffer.from(await asset.arrayBuffer());
@@ -59,12 +68,14 @@ async function fetchLatest(): Promise<Bundled> {
   return { manifest: toManifest(picked.release, picked.asset, sha256), image };
 }
 
-export function firmwareRelease(): Plugin {
-  const disabled = process.env.MAD_FIRMWARE_RELEASE === 'off';
-  const required = process.env.MAD_FIRMWARE_RELEASE_REQUIRED === '1';
+export function firmwareRelease(deps: FirmwareReleaseDeps = {}): Plugin {
+  const fetchFn = deps.fetch ?? globalThis.fetch;
+  const env = deps.env ?? process.env;
+  const disabled = env.MAD_FIRMWARE_RELEASE === 'off';
+  const required = env.MAD_FIRMWARE_RELEASE_REQUIRED === '1';
   let cached: Promise<Bundled> | null = null;
   const latest = () => {
-    cached ??= fetchLatest();
+    cached ??= fetchLatest(fetchFn, env);
     // A failure is not cached: the next request (say, once back online) retries.
     cached.catch(() => {
       cached = null;
