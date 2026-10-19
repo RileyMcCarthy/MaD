@@ -273,8 +273,9 @@ node Vibes/bin/vibes.mjs collect --write   # regenerate behaviours.jsonl
 
 and commit the ledger with your change. The `BH-n` numbers it assigns are
 provisional until the PR merges: another open PR may take the same ones.
-Settle them after every merge of `main` into your branch, **and whenever the
-`Behaviour numbers settled` check fails**. The command runs no suites and
+Settle them after every merge of `main` into your branch (fetch first, so
+`origin/main` is current), **and whenever the `Behaviour numbers settled`
+check fails**. The command runs no suites and
 prints every number it moves, so you can fix any citation:
 
 ```bash
