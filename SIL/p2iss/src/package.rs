@@ -2,7 +2,7 @@
 //!
 //! [`crate::P2Iss`] is a component on no board, declaring the pins its lists
 //! name. [`P2IssCore`] is the same machine — the same [`p2core::Machine`],
-//! the same [`crate::NetPins`] bus — as an [`embsim_boards::p2::P2Core`], so
+//! the same `NetPins` bus — as an [`embsim_boards::p2::P2Core`], so
 //! it fills a module's processor slot (`U100` on the P2-EC32MB) inside
 //! [`embsim_boards::p2::P2Package`]. The package declares the 86 pins, holds
 //! the core until the chip can run (its START gate), and hands it
@@ -23,7 +23,7 @@
 //! | `P_PULSE` and the sync-serial modes | the synchronous-serial hardware pumped over virtual time ([`p2core::SmartBus`]), so the module's flash and card share `P58`–`P61` as they do on the board |
 //!
 //! A pad whose published drive is strong (under [`WEAK_DRIVE_OHMS`]) reads
-//! its own `OUT`; every other pad reads its net ([`p2core::Board::sensed`],
+//! its own `OUT`; every other pad reads its net (`p2core::Board::sensed`,
 //! the strong-mask rule). Nothing straps a pin from here: the board's
 //! resistors and switches do (`S301` on the P2-EC32MB).
 //!
