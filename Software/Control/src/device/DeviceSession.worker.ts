@@ -637,6 +637,7 @@ export class DeviceSession {
         3000,
         'motorCalibration',
         MSG_READ_MOTOR_CALIBRATION_RESULT,
+        'read',
       );
       this.requestRead(MSG_READ_MOTOR_CALIBRATION_RESULT);
       const e = await p;
