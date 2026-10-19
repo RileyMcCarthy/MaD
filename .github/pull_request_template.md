@@ -2,6 +2,11 @@
 
 <!-- What changed and why (1–3 sentences). -->
 
+<!-- Linked issues: "Fixes #N" for each issue this PR resolves (GitHub closes it on
+merge). "Refs #N" for an issue it only relates to or was prompted by. Plain prose
+like "prompted by #N" closes nothing. -->
+Fixes #
+
 ## Matrices touched (bulletproof plan)
 
 Check every matrix this PR **could** break. If none apply, check N/A.
