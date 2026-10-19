@@ -293,3 +293,119 @@ describe('DeviceClient.disconnect', () => {
     },
   );
 });
+
+/** Longer than releasePort()'s retry window, so a refused close gives up. */
+const PAST_RETRY_WINDOW_MS = 2000;
+
+/** Collect unhandled rejections raised while `run` executes on fake timers. */
+async function unhandledRejectionsDuring(run: () => Promise<void>): Promise<unknown[]> {
+  const seen: unknown[] = [];
+  const onUnhandled = (reason: unknown) => seen.push(reason);
+  process.on('unhandledRejection', onUnhandled);
+  vi.useFakeTimers({ toFake: ['setTimeout', 'Date'] });
+  try {
+    await run();
+    await vi.advanceTimersByTimeAsync(PAST_RETRY_WINDOW_MS);
+  } finally {
+    vi.useRealTimers();
+  }
+  // Node reports an unhandled rejection only after the microtask queue drains.
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setImmediate(resolve));
+  process.off('unhandledRejection', onUnhandled);
+  return seen;
+}
+
+describe('DeviceClient release failures stay contained', () => {
+  behaviour(
+    {
+      id: 'session.worker-crash-close-refused-contained',
+      covers: 'src/device/session.ts#onWorkerCrash',
+      given: 'a worker crash that leaves the serial streams locked, so the browser keeps refusing to close the port',
+      expect: {
+        'no-unhandled-rejection': 'no unhandled rejection is raised',
+        'still-held': 'the session still counts the port as held',
+      },
+      why: {
+        'no-unhandled-rejection':
+          'the app reports every unhandled rejection as a crash, so an escaping close failure would log a second crash on top of the real one',
+      },
+    },
+    async () => {
+      const client = new DeviceClient();
+      const port = fakePort();
+      await client.connect(port as unknown as SerialPort);
+      port.refusals = Number.POSITIVE_INFINITY;
+      const unhandled = await unhandledRejectionsDuring(async () => {
+        client.simulateWorkerCrash('trap');
+      });
+      expect(unhandled).toEqual([]);
+      expect(client.isConnected()).toBe(true);
+      expect(port.isOpen).toBe(true);
+    },
+  );
+
+  behaviour(
+    {
+      id: 'session.failed-handshake-error-kept',
+      covers: 'src/device/session.ts#connect',
+      given: 'a connection whose session fails to start and whose port the browser then refuses to close',
+      expect: {
+        'handshake-error-thrown': 'the connect fails with the handshake error, not the port-release error',
+      },
+      why: {
+        'handshake-error-thrown': 'the handshake error says why the connection failed; the close failure is already in the log',
+      },
+    },
+    async () => {
+      const client = new DeviceClient();
+      const port = fakePort();
+      port.refusals = Number.POSITIVE_INFINITY;
+      remote.connect = async () => {
+        throw new Error('handshake failed');
+      };
+      let attempt: Promise<void> | undefined;
+      try {
+        const unhandled = await unhandledRejectionsDuring(async () => {
+          attempt = client.connect(port as unknown as SerialPort);
+          attempt.catch(() => undefined);
+        });
+        expect(unhandled).toEqual([]);
+        const err = await attempt!.then(
+          () => undefined,
+          (e: unknown) => e,
+        );
+        expect(err).toBeInstanceOf(Error);
+        expect((err as Error).message).toBe('handshake failed');
+        expect((err as Error).name).not.toBe('PortReleaseError');
+      } finally {
+        remote.connect = async () => undefined;
+      }
+    },
+  );
+
+  behaviour(
+    {
+      id: 'session.unplugged-port-counts-released',
+      covers: 'src/device/session.ts#releasePort',
+      given: 'a disconnect after the device was unplugged, so closing the port fails and it has no streams left',
+      expect: {
+        'disconnect-succeeds': 'the disconnect succeeds, with no message about the browser holding the port',
+        'nothing-held': 'the session no longer holds a port',
+      },
+      why: {
+        'disconnect-succeeds': 'an unplugged port has nothing left to release, and telling the operator to close the tab would be wrong',
+      },
+    },
+    async () => {
+      const client = new DeviceClient();
+      const port = fakePort();
+      await client.connect(port as unknown as SerialPort);
+      port.refusals = Number.POSITIVE_INFINITY;
+      port.readable = null;
+      port.writable = null;
+      await expect(client.disconnect()).resolves.toBeUndefined();
+      expect(client.isConnected()).toBe(false);
+    },
+  );
+});
