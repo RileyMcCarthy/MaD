@@ -1,0 +1,101 @@
+# The MaD machine's electronics as MaD's catalog names them: the Edge carrier
+# (mad-edge), the P2-EC32MB module seated in its socket J3, and the DS2
+# force-gauge add-on (mad-ds2) on the carrier's force cable, on the bench
+# supplies a bring-up rig gives the carrier. The boards, mates and supplies
+# of the machine's project (embsim MIGRATING-MAD.md section 4), without the
+# machine and the host; embsim's boards/projects/edge-ec32-ds2.toml is the
+# same system from netlist boards.
+#
+#   cd SIL && $(EMBSIM) check mad-catalog/projects/edge-bench.toml
+#
+# The processor runs nothing yet: `held-in-reset` until mad-catalog has the
+# ISS as a core (MIGRATING-MAD.md step 8).
+
+[catalog]
+crates = [".."]
+runner = "../../mad-runner"
+
+[[board]]
+name = "EDGE"
+kind = "mad-edge"
+
+[[board]]
+name = "EC32"
+kind = "p2-ec32mb"
+
+[[board.model]]
+value = "P2X8C4M64P"
+kind = "p2"
+[board.model.options]
+core = "held-in-reset"
+
+[[board]]
+name = "DS2"
+kind = "mad-ds2"
+
+# ---- The module in its socket, and the force cable ------------------------
+
+# Both netlists number the 80-way card edge by finger, so each finger the
+# module has lands on the socket contact of its number.
+[[mate]]
+a = "EC32.J203"
+b = "EDGE.J3"
+
+# The carrier's six-way J9 to the add-on's five-way J1, crossed: the
+# carrier's IFG_TX (J9.4) reaches the converter's RX on J1.3, and its TX
+# comes back on J1.4 to IFG_RX (J9.2). J9.6, the shield, has no pin on the
+# add-on.
+[[mate]]
+a = "EDGE.J9"
+b = "DS2.J1"
+map = [["1", "1"], ["5", "2"], ["4", "3"], ["2", "4"], ["3", "5"]]
+
+# ---- Supplies ---------------------------------------------------------------
+
+[[wire]]
+from = "BENCH.12V"
+to = "EDGE.J2.1"
+volts = 12.0
+
+[[wire]]
+from = "BENCH.GND"
+to = "EDGE.J2.2"
+volts = 0.0
+
+[[wire]]
+from = "BENCH.SERVO5V"
+to = "EDGE.J21.1"
+volts = 5.0
+
+[[wire]]
+from = "BENCH.SERVOGND"
+to = "EDGE.J21.8"
+volts = 0.0
+
+# The isolated force domain: its 5 V is the carrier's IC4, over the cable;
+# its return, and the add-on's analog supply and return, nothing on either
+# board generates.
+[[wire]]
+from = "BENCH.IFGGND"
+to = "DS2.J1.2"
+volts = 0.0
+
+[[wire]]
+from = "BENCH.VDDA"
+to = "DS2.J2.1"
+volts = 3.3
+
+[[wire]]
+from = "BENCH.AGND"
+to = "DS2.J2.2"
+volts = 0.0
+
+# ---- Scenario ---------------------------------------------------------------
+
+[[jumper]]               # the add-on's A0 and A1 to the converter
+part = "DS2.JP1"
+state = "closed"
+
+[[jumper]]
+part = "DS2.JP2"
+state = "closed"

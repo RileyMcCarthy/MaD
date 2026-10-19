@@ -1,0 +1,46 @@
+# The DS2 force-gauge add-on (mad-ds2) on the bench, as its readme brings it
+# up (Hardware/DS2Addon/readme.md, "Bench testing"): 3.3 V and ground on J1,
+# the digital side; 3.3 V and ground strapped onto J2, the isolated analog
+# side, which the board brings out and does not generate; JP1 and JP2 closed,
+# joining the bridge's A0 and A1 to the converter (R6 and R7 are not fitted).
+#
+#   cd SIL && $(EMBSIM) check mad-catalog/projects/ds2-bench.toml
+#
+# R10 holds the converter's ~RESET at +3V3, so this bench needs no reset
+# strap; the readme's strap is for boards made before R10.
+
+[catalog]
+crates = [".."]
+runner = "../../mad-runner"
+
+[[board]]
+name = "DS2"
+kind = "mad-ds2"
+
+[[wire]]
+from = "BENCH.3V3"
+to = "DS2.J1.1"
+volts = 3.3
+
+[[wire]]
+from = "BENCH.GND"
+to = "DS2.J1.2"
+volts = 0.0
+
+[[wire]]                 # the AVDD strap
+from = "BENCH.VDDA"
+to = "DS2.J2.1"
+volts = 3.3
+
+[[wire]]                 # the AGND strap
+from = "BENCH.AGND"
+to = "DS2.J2.2"
+volts = 0.0
+
+[[jumper]]               # A0 to the converter
+part = "DS2.JP1"
+state = "closed"
+
+[[jumper]]               # A1 to the converter
+part = "DS2.JP2"
+state = "closed"
