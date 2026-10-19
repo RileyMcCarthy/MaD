@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useStore } from '@/store/useStore';
 import { deviceClient } from '@/device/session';
-import { estimateSeconds } from '@/firmware/image';
+import { estimateSeconds, flashWriteMs } from '@/firmware/image';
 import { LOADER_BAUD_RATE } from '@/firmware/webSerialTransport';
 import { programPort, type ProgramProgress } from '@/firmware/program';
 import { closeFlashPort } from '@/firmware/closeFlashPort';
@@ -318,7 +318,7 @@ export default function Firmware() {
         </button>
         {source && !busy && !fileError && (
           <span className="muted" style={{ marginLeft: 12 }}>
-            about {estimateSeconds(source.size, LOADER_BAUD_RATE).toFixed(0)}s
+            about {(estimateSeconds(source.size, LOADER_BAUD_RATE) + flashWriteMs(source.size) / 1000).toFixed(0)}s
           </span>
         )}
 
@@ -333,7 +333,9 @@ export default function Firmware() {
               ? `Uploading… ${pct}%`
               : status.progress.phase === 'resetting'
                 ? 'Resetting the board…'
-                : 'Finishing…'}
+                : status.progress.phase === 'writing'
+                  ? `Writing flash… about ${Math.ceil((status.progress.writeMs ?? 0) / 1000)}s. Do not disconnect or reset the board.`
+                  : 'Finishing…'}
           </p>
         )}
         {status.kind === 'done' && (
