@@ -1144,16 +1144,42 @@ impl<P: PinBus> Machine<P> {
         // between them would let the ISR consume the prefix — the ROM's
         // `altb x,#hexchrs` / `testb 0,x wc` pair would then test the wrong
         // long and reject a valid Prop_Chk.
-        let alt_pending = self.cogs[cog].alt_d.is_some()
-            || self.cogs[cog].alt_s.is_some()
-            || self.cogs[cog].alt_n.is_some();
+        //
+        // Silicon holds the interrupt off the same way after AUGS/AUGD and
+        // SETQ/SETQ2, and for the whole of a REP block. Compiled FlexC code is
+        // dense with both (`##` immediates, `setq`+`wrlong` register bursts),
+        // so an ISR beside it (HAL_serial's RX interrupt) would otherwise
+        // consume a prefix meant for the interrupted instruction.
+        let held_off = {
+            let c = &self.cogs[cog];
+            c.alt_d.is_some()
+                || c.alt_s.is_some()
+                || c.alt_n.is_some()
+                || c.aug_s.is_some()
+                || c.aug_d.is_some()
+                || c.setq.is_some()
+                || c.setq2.is_some()
+                // Only inside the body: `rep` closes once the PC passes its end,
+                // so a block left by a branch must not hold interrupts off.
+                || c.rep.is_some_and(|(_, first, last)| (first..=last).contains(&pc))
+        };
         if !self.cogs[cog].in_int1
             && self.cogs[cog].int1_src == 4
             && self.se1_high(cog)
-            && !alt_pending
+            && !held_off
         {
-            self.cogs[cog].regs[REG_IRET1 as usize] = pc;
-            self.cogs[cog].pc = self.cogs[cog].regs[REG_IJMP1 as usize];
+            // The interrupt branch is CALLD IRET1, IJMP1 WCZ: IRET1 keeps C
+            // and Z in bits 31:30 beside the PC, and RETI1 puts them back.
+            // The vector is a CALLD target like any other: the PC is its low
+            // 20 bits and C/Z load from its top two, which after a RESI1 are
+            // the ISR's own flags at the point it suspended.
+            let (c, z) = (self.cogs[cog].c, self.cogs[cog].z);
+            self.cogs[cog].regs[REG_IRET1 as usize] =
+                (u32::from(c) << 31) | (u32::from(z) << 30) | pc;
+            let vector = self.cogs[cog].regs[REG_IJMP1 as usize];
+            self.cogs[cog].c = vector & (1 << 31) != 0;
+            self.cogs[cog].z = vector & (1 << 30) != 0;
+            self.cogs[cog].pc = vector & 0xF_FFFF;
             self.cogs[cog].in_int1 = true;
             self.int1_entries += 1;
             return Ok(());
@@ -2522,14 +2548,30 @@ impl<P: PinBus> Machine<P> {
                 self.cogs[cog].pc = self.rel9_target(ins, s, pc);
                 branched = true;
             }
-            // CALLD D,S: D := next PC, jump to S. Flexspin's `resi1` is
-            // CALLD IJMP1, IRET1 (next interrupt continues after the RESI);
-            // `reti1` is CALLD INB, IRET1 (return and re-enable INT1).
+            // CALLD D,S {WC/WZ}: D := {C, Z, next PC}, jump to S[19:0]; WC/WZ
+            // take C and Z from S[31]/S[30]. Flexspin's `resi1` is
+            // CALLD IJMP1, IRET1 WCZ (next interrupt continues after the RESI);
+            // `reti1` is CALLD INB, IRET1 WCZ (return and re-enable INT1). Both
+            // restore the flags the interrupt saved in IRET1, and only a CALLD
+            // through IRET1 ends the ISR: any other is an ordinary call.
             Calld => {
                 let ret = Self::next_pc(pc);
-                self.set_reg(cog, ins.d, ret);
-                self.cogs[cog].pc = s;
-                self.cogs[cog].in_int1 = false;
+                let (c, z) = (self.cogs[cog].c, self.cogs[cog].z);
+                self.set_reg(
+                    cog,
+                    ins.d,
+                    (u32::from(c) << 31) | (u32::from(z) << 30) | ret,
+                );
+                if ins.c {
+                    self.cogs[cog].c = s & (1 << 31) != 0;
+                }
+                if ins.z {
+                    self.cogs[cog].z = s & (1 << 30) != 0;
+                }
+                self.cogs[cog].pc = s & 0xF_FFFF;
+                if !ins.i && ins.s == REG_IRET1 {
+                    self.cogs[cog].in_int1 = false;
+                }
                 branched = true;
             }
             Jmprel => {
