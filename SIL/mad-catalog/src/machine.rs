@@ -13,10 +13,10 @@
 //! |---|---|---|
 //! | `DRIVE` | embsim's `StepperMotor`: [`STEPS_PER_MM`], `DIR` low forward, enable active low, no load loss | `STEP`, `DIR`, `ENA`, read against `DRIVE_GND` |
 //! | `READY` | the drive's ready output, held at the level the firmware reads as not ready (below) | `SRDY`, against `DRIVE_GND` |
-//! | `ENCODER` | embsim's `QuadratureEncoder`, as many counts a millimetre as steps, its output stage the `encoder_output` option | `ENC_A+`, `ENC_A-`, `ENC_B+`, `ENC_B-` (`rs422`) or `ENC_A+`, `ENC_B+` (`push-pull`, `npn-open-collector`), against `ENC_GND` |
+//! | `ENCODER` | embsim's `QuadratureEncoder`, as many counts a millimetre as steps, its output stage the `encoder_output` option | `ENC_A+`, `ENC_A-`, `ENC_B+`, `ENC_B-` (`rs422`) or `ENC_A+`, `ENC_B+` (`push-pull`, `npn-open-collector`), with `ENC_GND` their declared return (below) |
 //! | `UPPER`, `LOWER` | embsim's `EndSwitch`, each a normally closed contact that opens past [`TRAVEL_MM`] and below 0 mm | `UPPER_COM`, `UPPER+`; `LOWER_COM`, `LOWER+` |
 //! | `DOOR`, `ESD_U`, `ESD_L`, `ESD_A` | `EndSwitch` contacts no carriage moves: the door's closed, the emergency stops' open | `DOOR_COM`, `DOOR+`, … `ESD_A_COM`, `ESD_A+` |
-//! | `LOAD_CELL` | MaD's load cell: the bridge's outputs behind 350 Ω, centred on the excitation it senses | `E+`, `E-` sensed, `S+`, `S-` driven |
+//! | `LOAD_CELL` | MaD's load cell: the bridge's outputs behind 350 Ω, centred on the excitation it senses and scaled to it, released while either excitation pin reads nothing | `E+`, `E-` sensed, `S+`, `S-` driven |
 //!
 //! The gantry, the sample and the strain gauge (`SIL/models`) have no pins:
 //! they are the link from the drive's shaft to the load cell, run inside the
@@ -66,11 +66,21 @@
 //! as drawn (embsim `board/tests/edgeboard.rs`), so what `P5` reads there is
 //! the board's question, not the machine's.
 //!
+//! # The encoder's return
+//!
+//! `ENC_GND` is the encoder's return as the migration plan names it, the
+//! pin a project file wires to the carrier's `EN_GND` (`J20.5`). The
+//! encoder's pins are declared against it, but each is an output, and a
+//! drive's volts stay in the engine's frame (embsim `NODES.md` §16, the
+//! assembly's `reference`), so nothing yet measures against `ENC_GND`,
+//! the open collector's sink included: it is the wire the plan declares,
+//! with no model behind it.
+//!
 //! # Not modelled
 //!
-//! - **The encoder's supply** (the Taiss's red wire): embsim's encoder has
-//!   no supply pin and draws nothing (its *Not modeled*), and `J20` carries
-//!   no supply, so the machine has none.
+//! - **The encoder's supply** (the Taiss's red wire): `J20` has no supply
+//!   pin, and embsim's encoder declares none (its *Not modeled*), so the
+//!   machine has none.
 //! - **An index channel**: MaD's plant configures none, and the firmware
 //!   reads only A and B (`HAL_encoder_config.c`).
 //! - **Pressing an emergency stop, opening the door**: each holds its rest
@@ -231,11 +241,11 @@ pub(crate) fn kind_info() -> KindInfo {
     KindInfo::new(
         MACHINE,
         "the tensile tester's mechanism as one component: the servo drive's inputs STEP, DIR \
-         and ENA and its ready output SRDY against DRIVE_GND, the encoder against ENC_GND \
-         (options.encoder_output: rs422, the default, npn-open-collector or push-pull), the \
-         end switch, door and emergency-stop loops as contacts (each NAME_COM and NAME+), and \
-         the load cell's bridge (E+, E- sensed; S+, S- driven); options.sample: \
-         sil-linear-reference",
+         and ENA and its ready output SRDY against DRIVE_GND, the encoder with its return \
+         ENC_GND (options.encoder_output: rs422, the default, npn-open-collector or \
+         push-pull), the end switch, door and emergency-stop loops as contacts (each NAME_COM \
+         and NAME+), and the load cell's bridge (E+, E- sensed; S+, S- driven); \
+         options.sample: sil-linear-reference",
     )
 }
 
@@ -680,15 +690,20 @@ impl Report for MachineReport {
 mod tests {
     use super::*;
 
-    /// The sample's stiffness is 5 N over the travel past the slack, so the
-    /// carriage at the upper switch loads it to 5 N (`run_iss`'s reference).
+    /// `run_iss`'s reference: 5 N over the 85 mm of travel past the slack,
+    /// as its material's E·A/L (which the sample model uses when the
+    /// material is valid) and as its plain stiffness alike.
     #[test]
-    fn the_reference_sample_reaches_five_newtons_at_the_travels_end() {
+    fn the_reference_sample_is_five_newtons_over_eighty_five_millimetres() {
         let config = SamplePreset::SilLinearReference.config();
         let material = config.material.expect("the reference names its material");
         let stiffness = material.youngs_modulus_mpa * material.area_mm2 / material.gauge_length_mm;
-        let force = stiffness * (TRAVEL_MM - GANTRY_SLACK_MM);
-        assert!((force - 5.0).abs() < 1e-12, "{force}");
+        assert!((stiffness - 5.0 / 85.0).abs() < 1e-15, "{stiffness}");
+        assert!(
+            (config.stiffness_n_per_mm - 5.0 / 85.0).abs() < 1e-15,
+            "{}",
+            config.stiffness_n_per_mm
+        );
     }
 
     #[test]

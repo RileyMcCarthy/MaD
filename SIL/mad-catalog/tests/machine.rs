@@ -4,7 +4,13 @@
 //! builds one, on a bench that stands in for the Edge carrier's side of
 //! each wire: 0 V on the drive's and the encoder's returns, the drive
 //! enabled, 5 V on each switch loop's supply side (the carrier's `5V_IO`)
-//! and 3.3 V across the load cell's excitation (the add-on's `VDDA`).
+//! and 3.3 V across the load cell's excitation (the add-on's `VDDA`), or
+//! the excitation a case names.
+//!
+//! The plant's figures are written out here, MaD's current plant's
+//! (`SIL/MaDSim/src/iss_description.rs` and `run_iss` in
+//! `SIL/MaDSim/src/main.rs`), and never taken from the kind's own
+//! constants: a wrong figure in the kind fails a case.
 //!
 //! Stepped (embsim `TESTING.md` rule 9): one case at a time under a suite
 //! lock, the clock re-anchored stepped, the system started with time held,
@@ -21,9 +27,6 @@ use embsim_board::{
 use embsim_boards::catalog::CatalogSet;
 use embsim_core::virtual_clock::{self, Actor, ClockMode};
 use embsim_models::machine::stepper_motor::{DEFAULT_OBSERVE_INTERVAL_US, DEFAULT_TAU_S};
-use mad_catalog::machine::{
-    GANTRY_SLACK_MM, GAUGE_FULL_SCALE_N, GAUGE_MV_PER_V, STEPS_PER_MM, TRAVEL_MM,
-};
 use rstest::rstest;
 use vibes_behaviour::{behaviour, expect, Test};
 
@@ -52,15 +55,34 @@ fn set() -> CatalogSet {
 /// carrier's `5V_IO`.
 const LOOP_VOLTS: f64 = 5.0;
 
-/// The load cell's excitation: the DS2 add-on's analog supply, `VDDA`.
+/// The load cell's excitation on the bench: the volts on `E+`, and on `E-`
+/// when it is wired.
+#[derive(Debug, Clone, Copy)]
+struct Excitation {
+    high: f64,
+    low: Option<f64>,
+}
+
+/// The DS2 add-on's analog supply, `VDDA`, and its return: 3.3 V across
+/// the load cell.
 const EXCITATION_VOLTS: f64 = 3.3;
+const VDDA: Excitation = Excitation {
+    high: EXCITATION_VOLTS,
+    low: Some(0.0),
+};
 
 /// The switch loops, each a contact's supply side and its far side.
 const LOOPS: [&str; 6] = ["UPPER", "LOWER", "DOOR", "ESD_U", "ESD_L", "ESD_A"];
 
 /// The machine, named `MACHINE` with `options` (TOML lines), on the bench
-/// (module docs), followed by `rest`: the case's own entries.
+/// (module docs) with the add-on's excitation, followed by `rest`: the
+/// case's own entries.
 fn project(options: &str, rest: &str) -> String {
+    project_on(options, VDDA, rest)
+}
+
+/// [`project`], with `excitation` across the load cell.
+fn project_on(options: &str, excitation: Excitation, rest: &str) -> String {
     let mut text = format!(
         "[[component]]\nname = \"MACHINE\"\nkind = \"mad-machine\"\n[component.options]\n\
          {options}\n"
@@ -81,8 +103,10 @@ fn project(options: &str, rest: &str) -> String {
         let volts = (index == 0).then_some(LOOP_VOLTS);
         wire("BENCH.5V_IO", &format!("MACHINE.{contact}_COM"), volts);
     }
-    wire("BENCH.VDDA", "MACHINE.E+", Some(EXCITATION_VOLTS));
-    wire("BENCH.AGND", "MACHINE.E-", Some(0.0));
+    wire("BENCH.EXC+", "MACHINE.E+", Some(excitation.high));
+    if let Some(low) = excitation.low {
+        wire("BENCH.EXC-", "MACHINE.E-", Some(low));
+    }
     text.push_str(rest);
     text
 }
@@ -192,6 +216,19 @@ fn not(level: Level) -> Level {
 // At rest
 // ============================================================
 
+/// `STEP` and `DIR` held at 0 V: a drive sent no steps.
+const HELD_STILL: &str = r#"
+[[wire]]
+from = "BENCH.STEP"
+to = "MACHINE.STEP"
+volts = 0.0
+
+[[wire]]
+from = "BENCH.DIR"
+to = "MACHINE.DIR"
+volts = 0.0
+"#;
+
 #[rstest]
 fn the_machine_at_rest_holds_each_output_at_its_resting_level() {
     behaviour!(Test {
@@ -233,14 +270,7 @@ fn the_machine_at_rest_holds_each_output_at_its_resting_level() {
         "the encoder's A and B both read low and their complements high: count zero's \
          quadrature state"
     );
-    let rig = Rig::start(
-        &project(
-            "",
-            "\n[[wire]]\nfrom = \"BENCH.STEP\"\nto = \"MACHINE.STEP\"\nvolts = 0.0\n\
-             \n[[wire]]\nfrom = \"BENCH.DIR\"\nto = \"MACHINE.DIR\"\nvolts = 0.0\n",
-        ),
-        |system| system,
-    );
+    let rig = Rig::start(&project("", HELD_STILL), |system| system);
     // Off the drive's observations: a quarter of one.
     virtual_clock::wait_virtual_ns(DEFAULT_OBSERVE_INTERVAL_US * 250);
 
@@ -452,17 +482,27 @@ fn steps_as_edges_sink_and_release_the_open_collectors() {
 // Travel as a rate
 // ============================================================
 
+/// Drive steps, and encoder counts, a millimetre: 4 × 2048 microsteps
+/// (`STEPS_PER_MM` in `iss_description.rs`).
+const STEPS_PER_MM: u64 = 8_192;
+
 /// The train's rate: 81 920 steps a second, 10 mm/s, the test's own. Carried
 /// as a rate, the train costs the engine one publish however long it is.
 const TRAIN_HZ: u32 = 81_920;
 
-/// The steps from the start to the upper end switch: 819 200.
-const TO_THE_LIMIT: u64 = (STEPS_PER_MM * TRAVEL_MM) as u64;
+/// The steps from the start to the upper end switch: 100 mm, the firmware's
+/// travel (`TRAVEL_MM` in `iss_description.rs`), 819 200 steps.
+const TO_THE_LIMIT: u64 = 100 * STEPS_PER_MM;
+
+/// What the bridge reads with the reference sample's 5 N on the load cell:
+/// 5 N of its 100 N full scale at −4.868009 mV/V, times 3.3 V across it
+/// (`run_iss`'s strain gauge), −0.803 mV.
+const AT_THE_LIMIT_MV: f64 = 5.0 / 100.0 * -4.868_009 * 3.3;
 
 /// The virtual time a train of `steps` takes, then twenty of the drive's
-/// time constants for the carriage to come to rest (less than a millionth
-/// of a step left to travel from the 2 048-step lag at 10 mm/s), then a
-/// quarter observation, so the read falls between two observations.
+/// time constants for the carriage to come to rest (a few millionths of a
+/// step left of the 1 638-step lag at 10 mm/s), then a quarter
+/// observation, so the read falls between two observations.
 fn rest_ns(steps: u64) -> u64 {
     steps * 1_000_000_000 / u64::from(TRAIN_HZ)
         + (20.0 * DEFAULT_TAU_S * 1e9) as u64
@@ -500,6 +540,69 @@ impl Component for Train {
     }
 }
 
+/// What the probe on the bridge's outputs was last handed: `S+`, `S-`.
+type Handed = Arc<Mutex<[Option<f64>; 2]>>;
+
+/// An instrument on the bridge's outputs: two ideal analog readers, each
+/// keeping the voltage it was last handed. The engine reports a net a
+/// strong source holds at a valid level by that level, so a voltage is
+/// read through a sense.
+struct BridgeProbe {
+    handed: Handed,
+}
+
+const BRIDGE_PROBE_PINS: [PinDecl; 2] = [PinDecl::analog("S+"), PinDecl::analog("S-")];
+
+impl Component for BridgeProbe {
+    fn pins(&self) -> &[PinDecl] {
+        &BRIDGE_PROBE_PINS
+    }
+
+    fn attach(&mut self, io: ComponentNetIo) -> Result<(), AttachError> {
+        for (index, pin) in ["S+", "S-"].into_iter().enumerate() {
+            let handed = Arc::clone(&self.handed);
+            io.on_sense(pin, move |sense| {
+                handed.lock().expect("never poisoned")[index] = sense.volts;
+            })?;
+        }
+        Ok(())
+    }
+}
+
+/// The machine on `text` with the test's step source on `STEP` and `DIR`,
+/// both resting low (`DIR` low is forward), and the probe on the bridge's
+/// outputs, started and a quarter observation in; the source's `STEP`
+/// port and what the probe is handed.
+fn on_a_train(text: &str) -> (Rig, PinHandle, Handed) {
+    let handles: Arc<Mutex<Vec<PinHandle>>> = Arc::default();
+    let source = Train {
+        pins: [
+            PinDecl::digital_out("STEP").with_idle(Some(LOW)),
+            PinDecl::digital_out("DIR").with_idle(Some(LOW)),
+        ],
+        handles: Arc::clone(&handles),
+    };
+    let handed: Handed = Arc::default();
+    let probe = BridgeProbe {
+        handed: Arc::clone(&handed),
+    };
+    let rig = Rig::start(text, |system| {
+        system
+            .component("TRAIN", Box::new(source))
+            .component("PROBE", Box::new(probe))
+            .harness(
+                Harness::new()
+                    .connect(ep("TRAIN.STEP"), ep("MACHINE.STEP"))
+                    .connect(ep("TRAIN.DIR"), ep("MACHINE.DIR"))
+                    .connect(ep("PROBE.S+"), ep("MACHINE.S+"))
+                    .connect(ep("PROBE.S-"), ep("MACHINE.S-")),
+            )
+    });
+    let step = handles.lock().expect("never poisoned")[0].clone();
+    virtual_clock::wait_virtual_ns(DEFAULT_OBSERVE_INTERVAL_US * 250);
+    (rig, step, handed)
+}
+
 /// Drive `step` with a train of `steps` at [`TRAIN_HZ`] from now.
 fn train(step: &PinHandle, steps: u64) {
     step.drive(Drive::Periodic {
@@ -514,6 +617,16 @@ fn train(step: &PinHandle, steps: u64) {
     });
 }
 
+/// The bridge's two outputs, `S+` and `S-`, in volts, as the probe was last
+/// handed them.
+fn bridge(handed: &Handed) -> (f64, f64) {
+    let [positive, negative] = *handed.lock().expect("never poisoned");
+    (
+        positive.expect("S+ reads a voltage"),
+        negative.expect("S- reads a voltage"),
+    )
+}
+
 #[rstest]
 fn travel_as_a_rate_opens_the_upper_loop_past_one_hundred_millimetres() {
     behaviour!(Test {
@@ -525,7 +638,8 @@ fn travel_as_a_rate_opens_the_upper_loop_past_one_hundred_millimetres() {
     });
     expect!(
         "count-is-the-steps",
-        "at rest the encoder's count is the 819200 steps the train carried",
+        "the drive takes all the train's steps and the encoder counts each: 819200 at 100 \
+         millimetres, 819201 one step past",
         "the encoder counts as many counts a millimetre as the drive steps, 8192"
     );
     expect!(
@@ -549,23 +663,7 @@ fn travel_as_a_rate_opens_the_upper_loop_past_one_hundred_millimetres() {
         "the sample takes load past 15 millimetres of grip slack and reaches 5 newtons at \
          the end of travel"
     );
-    let handles: Arc<Mutex<Vec<PinHandle>>> = Arc::default();
-    let source = Train {
-        pins: [
-            PinDecl::digital_out("STEP").with_idle(Some(LOW)),
-            PinDecl::digital_out("DIR").with_idle(Some(LOW)),
-        ],
-        handles: Arc::clone(&handles),
-    };
-    let rig = Rig::start(&project("", ""), |system| {
-        system.component("TRAIN", Box::new(source)).harness(
-            Harness::new()
-                .connect(ep("TRAIN.STEP"), ep("MACHINE.STEP"))
-                .connect(ep("TRAIN.DIR"), ep("MACHINE.DIR")),
-        )
-    });
-    let step = handles.lock().expect("never poisoned")[0].clone();
-    virtual_clock::wait_virtual_ns(DEFAULT_OBSERVE_INTERVAL_US * 250);
+    let (rig, step, probe) = on_a_train(&project("", ""));
 
     // The travel, read every 100 ms on the way and at rest.
     train(&step, TO_THE_LIMIT);
@@ -580,7 +678,8 @@ fn travel_as_a_rate_opens_the_upper_loop_past_one_hundred_millimetres() {
     }
     let at_the_limit = rig.summary();
     let (upper_at_limit, lower_at_limit) = (rig.state("UPPER+"), rig.state("LOWER+"));
-    let bridge_mv = (rig.volts("S+") - rig.volts("S-")) * 1_000.0;
+    let (positive, negative) = bridge(&probe);
+    let bridge_mv = (positive - negative) * 1_000.0;
 
     train(&step, 1);
     virtual_clock::wait_virtual_ns(rest_ns(1));
@@ -589,36 +688,138 @@ fn travel_as_a_rate_opens_the_upper_loop_past_one_hundred_millimetres() {
     rig.finish();
 
     let driven = NetState::Driven(Level::High);
-    assert!(
-        at_the_limit.contains(&format!("encoder at {TO_THE_LIMIT} counts")),
-        "{at_the_limit}"
-    );
-    assert!(
-        at_the_limit.contains(&format!("{TO_THE_LIMIT} steps commanded")),
-        "{at_the_limit}"
-    );
+    for (summary, steps) in [
+        (&at_the_limit, TO_THE_LIMIT),
+        (&past_the_limit, TO_THE_LIMIT + 1),
+    ] {
+        assert!(
+            summary.contains(&format!("encoder at {steps} counts")),
+            "{summary}"
+        );
+        assert!(
+            summary.contains(&format!("{steps} steps commanded")),
+            "{summary}"
+        );
+    }
     assert!(
         closed_on_the_way.iter().all(|(upper, _)| *upper == driven),
         "{closed_on_the_way:?}"
     );
     assert_eq!(upper_at_limit, driven);
-    assert!(
-        past_the_limit.contains(&format!("encoder at {} counts", TO_THE_LIMIT + 1)),
-        "{past_the_limit}"
-    );
     assert_eq!(upper_past, NetState::Floating);
     assert!(
         closed_on_the_way.iter().all(|(_, lower)| *lower == driven),
         "{closed_on_the_way:?}"
     );
     assert_eq!((lower_at_limit, lower_past), (driven, driven));
-    let newtons = 5.0;
-    let expected_mv = newtons / GAUGE_FULL_SCALE_N * GAUGE_MV_PER_V * EXCITATION_VOLTS;
     assert!(
-        ((bridge_mv - expected_mv) / expected_mv).abs() < 1e-5,
-        "the bridge reads {bridge_mv} mV, the sample's {newtons} N {expected_mv} mV \
-         ({GANTRY_SLACK_MM} mm of slack)"
+        ((bridge_mv - AT_THE_LIMIT_MV) / AT_THE_LIMIT_MV).abs() < 1e-5,
+        "the bridge reads {bridge_mv} mV, 5 N reads {AT_THE_LIMIT_MV} mV"
     );
+}
+
+// ============================================================
+// The load cell
+// ============================================================
+
+/// An excitation off the add-on's: 0.5 V to 5 V, 4.5 V across the load
+/// cell, its midpoint 2.75 V.
+const OFFSET_EXCITATION: Excitation = Excitation {
+    high: 5.0,
+    low: Some(0.5),
+};
+
+/// The steps to the end of the grip slack, 15 mm (`run_iss`'s gantry), and
+/// to 57.5 mm, halfway along the 85 mm past it.
+const TO_THE_SLACK: u64 = 15 * STEPS_PER_MM;
+const TO_HALF_LOAD: u64 = 57 * STEPS_PER_MM + STEPS_PER_MM / 2;
+
+/// What the bridge reads at 57.5 mm on [`OFFSET_EXCITATION`]: the reference
+/// sample's 5 N over the 85 mm past the slack is 2.5 N there, of the load
+/// cell's 100 N full scale at −4.868009 mV/V, times the 4.5 V across it,
+/// −0.548 mV.
+const AT_HALF_LOAD_MV: f64 = 2.5 / 100.0 * -4.868_009 * 4.5;
+
+#[rstest]
+fn the_bridge_follows_its_excitation_and_loads_past_the_grip_slack() {
+    behaviour!(Test {
+        id: "machine.bridge-on-its-excitation",
+        covers: Some("SIL/mad-catalog/src/machine.rs#assemble"),
+        given: "the machine with its load cell excited between 0.5 and 5 volts, its carriage \
+                brought to rest at 15 millimetres and then at 57.5 millimetres",
+    });
+    expect!(
+        "centred",
+        "at each rest the two bridge outputs are centred on the excitation's midpoint, 2.75 \
+         volts",
+        "a bridge's outputs sit either side of the middle of the excitation across it"
+    );
+    expect!(
+        "unloaded-to-the-slack",
+        "at 15 millimetres the two bridge outputs are equal",
+        "the grips take up 15 millimetres of slack before the sample takes load"
+    );
+    expect!(
+        "ratiometric",
+        "at 57.5 millimetres the outputs differ by minus 0.548 millivolts, the sample's 2.5 \
+         newtons scaled to the 4.5 volts across the excitation",
+        "the load cell gives minus 4.868 millivolts a volt at its 100-newton full scale, and \
+         the reference sample takes 5 newtons over the 85 millimetres past the slack"
+    );
+    let (rig, step, probe) = on_a_train(&project_on("", OFFSET_EXCITATION, ""));
+    train(&step, TO_THE_SLACK);
+    virtual_clock::wait_virtual_ns(rest_ns(TO_THE_SLACK));
+    let at_the_slack = bridge(&probe);
+    train(&step, TO_HALF_LOAD - TO_THE_SLACK);
+    virtual_clock::wait_virtual_ns(rest_ns(TO_HALF_LOAD - TO_THE_SLACK));
+    let at_half_load = bridge(&probe);
+    let summary = rig.summary();
+    rig.finish();
+
+    for (positive, negative) in [at_the_slack, at_half_load] {
+        let middle = (positive + negative) / 2.0;
+        assert!(
+            (middle - 2.75).abs() < 1e-9,
+            "S+ {positive} V and S- {negative} V centre on {middle} V ({summary})"
+        );
+    }
+    let (positive, negative) = at_the_slack;
+    assert!(
+        (positive - negative).abs() < 1e-9,
+        "at 15 mm S+ reads {positive} V and S- {negative} V ({summary})"
+    );
+    let (positive, negative) = at_half_load;
+    let bridge_mv = (positive - negative) * 1_000.0;
+    assert!(
+        ((bridge_mv - AT_HALF_LOAD_MV) / AT_HALF_LOAD_MV).abs() < 1e-5,
+        "at 57.5 mm the bridge reads {bridge_mv} mV, 2.5 N at 4.5 V reads {AT_HALF_LOAD_MV} \
+         mV ({summary})"
+    );
+}
+
+#[rstest]
+fn the_bridge_drives_nothing_while_its_excitation_return_is_open() {
+    behaviour!(Test {
+        id: "machine.bridge-unexcited",
+        covers: Some("SIL/mad-catalog/src/machine.rs#assemble"),
+        given: "the machine at rest with 3.3 volts on the load cell's positive excitation \
+                terminal and nothing wired to its negative one",
+    });
+    expect!(
+        "outputs-released",
+        "both bridge outputs are released: nothing drives them",
+        "a bridge with an open excitation has no voltage to centre its outputs on"
+    );
+    let open = Excitation {
+        high: EXCITATION_VOLTS,
+        low: None,
+    };
+    let rig = Rig::start(&project_on("", open, HELD_STILL), |system| system);
+    virtual_clock::wait_virtual_ns(DEFAULT_OBSERVE_INTERVAL_US * 250);
+    let outputs = (rig.state("S+"), rig.state("S-"));
+    rig.finish();
+
+    assert_eq!(outputs, (NetState::Floating, NetState::Floating));
 }
 
 // ============================================================
