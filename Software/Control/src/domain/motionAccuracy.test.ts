@@ -102,10 +102,10 @@ describe('motion accuracy matcher', () => {
       id: 'motion.linear-follow-bound-holds-velocity-floor',
       covers: 'e2e/motion-accuracy.mjs#assertFollowsLinearUm',
       given:
-        'a short-cruise linear move (2 mm at 5 mm/s) whose travel-fraction alone would tighten below the prior 15 ms velocity floor',
+        'a 2 mm linear move at 5 mm/s, where 2.5 percent of travel (50 um) is smaller than 15 ms of cruise velocity (75 um)',
       expect: {
         'bound-never-tightens':
-          'the follow bound stays at least at the old velocity floor (75 um), so the cell does not tighten relative to pre-travel-fraction sizing',
+          'the follow bound is at least 15 ms of cruise velocity (75 um), so sizing on travel never makes a short move\'s bound tighter than sizing on velocity did',
       },
     },
     () => {

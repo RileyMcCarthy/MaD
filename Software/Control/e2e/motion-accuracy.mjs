@@ -49,6 +49,12 @@ const PLANT_SETTLE_S = 0.15;
  * smallest that clears the observed noise on every cell, and it catches a rate
  * error of about 4 percent.
  *
+ * That holds only together with the 15 ms velocity floor in
+ * assertFollowsLinearUm. On M12-linear-2mm-5, 2.5 percent of travel is 50 um
+ * but the floor is 75 um, so the floor is the bound that governs that cell.
+ * Keep the floor: dropping it would tighten that cell below what it was sized
+ * at before this bound moved to travel.
+ *
  * Sized on TRAVEL rather than on velocity, which is what this used to do. A
  * velocity-scaled bound grows with exactly the quantity a rate error perturbs,
  * so its sensitivity ranged from 0.5 to 10 percent across the eight M12 cells;
