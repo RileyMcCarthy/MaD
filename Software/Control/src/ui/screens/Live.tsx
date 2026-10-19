@@ -14,6 +14,7 @@ import {
   faultBadgeLabel,
   restrictionBadgeLabel,
 } from '@/domain/stateLabels';
+import { motionButton } from '@/domain/motionControl';
 import LiveCombinedChart from '@/ui/components/LiveCombinedChart';
 import LiveStressStrainChart from '@/ui/components/LiveStressStrainChart';
 import NumberField from '@/ui/components/NumberField';
@@ -61,6 +62,7 @@ export default function Live() {
   // locked until the machine has actually said what it is doing.
   const stateKnown = state !== null;
   const manualBlocked = !stateKnown || testRunning;
+  const motion = state ? motionButton(state) : null;
   const notify = useStore((s) => s.notify);
 
   const [jogMm, setJogMm] = useState<number>(DEFAULT_JOG_MM);
@@ -128,8 +130,15 @@ export default function Live() {
               stop. It is NOT available while the state is unknown: enabling
               motion on a machine we have not heard from is a guess, and
               `!state?.motionEnabled` would have sent enable=true on null. */}
-          <button onClick={() => setMotionEnabled(!state?.motionEnabled)} disabled={!stateKnown}>
-            {!stateKnown ? 'Motion …' : state.motionEnabled ? 'Disable motion' : 'Enable motion'}
+          {/* While faulted the machine reports motion off but refuses every
+              enable, so the button offers a disable — the only thing that
+              clears a latched stall (see domain/motionControl.ts). */}
+          <button
+            onClick={() => { if (motion) void setMotionEnabled(motion.enable); }}
+            disabled={!motion}
+            title={state && state.faultedReason !== FaultedReason.NONE ? FAULT_HINTS[state.faultedReason] : undefined}
+          >
+            {motion ? motion.label : 'Motion …'}
           </button>
           <button onClick={() => homeAxis()} disabled={manualBlocked}>Home (G28)</button>
           <button onClick={() => zeroForce()} disabled={manualBlocked}>Zero force</button>
@@ -168,6 +177,11 @@ export default function Live() {
         {!stateKnown && (
           <p className="muted" style={{ marginTop: 8 }}>
             Waiting for the machine to report its state — controls unlock when it does.
+          </p>
+        )}
+        {state && state.faultedReason !== FaultedReason.NONE && (
+          <p className="muted" style={{ marginTop: 8 }} data-testid="live-fault-hint">
+            {FAULT_HINTS[state.faultedReason]}
           </p>
         )}
         {testRunning && (
