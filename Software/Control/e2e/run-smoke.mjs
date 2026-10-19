@@ -1,6 +1,7 @@
 /**
  * Run the e2e smoke subset listed in smoke-ids.txt.
- * Same preconditions as `npm run e2e` (playground + bridge + dev server).
+ * Same preconditions as `npm run e2e`: the board route (`CDP_URL`, from
+ * `cd SIL && make e2e-emulator`) and the dev server.
  */
 import fs from 'node:fs';
 import path from 'node:path';

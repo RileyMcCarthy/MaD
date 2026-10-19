@@ -1,0 +1,166 @@
+diff --git a/target/riscv/cpu.h b/target/riscv/cpu.h
+index 4a862da..09e5008 100644
+--- a/target/riscv/cpu.h
++++ b/target/riscv/cpu.h
+@@ -216,6 +216,14 @@ typedef struct PMUFixedCtrState {
+ } PMUFixedCtrState;
+ 
+ struct CPUArchState {
++    /* SPIKE 1a: P2-shaped scratch state, so a hijacked instruction can emit
++     * the TCG a real P2 ALU instruction would need and be timed. */
++    uint32_t p2_cog[512];
++    uint32_t p2_c;
++    uint32_t p2_z;
++    uint64_t p2_clocks;
++    uint32_t p2_pc;
++
+     target_ulong gpr[32];
+     target_ulong gprh[32]; /* 64 top bits of the 128-bit registers */
+ 
+diff --git a/target/riscv/helper.h b/target/riscv/helper.h
+index f712b1c..f5d29a0 100644
+--- a/target/riscv/helper.h
++++ b/target/riscv/helper.h
+@@ -123,6 +123,10 @@ DEF_HELPER_2(cbo_zero, void, env, tl)
+ 
+ /* Special functions */
+ DEF_HELPER_2(csrr, tl, env, int)
++/* SPIKE: P2 pin-op-shaped probe helper (no TB end) */
++DEF_HELPER_3(p2probe, void, env, tl, tl)
++/* SPIKE 1b: cog-exec interpreter run */
++DEF_HELPER_2(p2interp, void, env, tl)
+ DEF_HELPER_3(csrw, void, env, int, tl)
+ DEF_HELPER_4(csrrw, tl, env, int, tl, tl)
+ DEF_HELPER_2(csrr_i128, tl, env, int)
+diff --git a/target/riscv/op_helper.c b/target/riscv/op_helper.c
+index 110292e..525f16b 100644
+--- a/target/riscv/op_helper.c
++++ b/target/riscv/op_helper.c
+@@ -718,3 +718,127 @@ target_ulong helper_hyp_hlvx_wu(CPURISCVState *env, target_ulong addr)
+ }
+ 
+ #endif /* !CONFIG_USER_ONLY */
++
++/*
++ * SPIKE: shaped like a P2 pin op reaching the host model. Deliberately
++ * out-of-line and side-effecting so the compiler cannot elide it, but it does
++ * no real work -- this measures the CALL, not the model.
++ */
++uint64_t qemu_p2probe_sink;
++
++void helper_p2probe(CPURISCVState *env, target_ulong pin, target_ulong val)
++{
++    qemu_p2probe_sink += (uint64_t)pin ^ ((uint64_t)val << 1);
++}
++
++/*
++ * SPIKE 1b: a cog-exec interpreter run, shaped like the hybrid design from
++ * Spike 0b -- one helper call interprets a RUN of cog instructions (measured
++ * mean run: 46.2) rather than one call per instruction.
++ *
++ * Deliberately minimal but honest: fetch from cog RAM, decode the fields,
++ * evaluate the EEEE condition, read D and S (S may be an immediate), dispatch
++ * on the opcode, write D, update C/Z, advance the clock. This is the inner
++ * loop a real P2 cog interpreter must run; it is NOT a full ISA.
++ */
++static void p2_seed_cog(CPURISCVState *env)
++{
++    /* A mix of real ADD/SUB/AND/OR/MOV encodings so the dispatch switch and
++     * its branch predictor see realistic variety rather than one hot case. */
++    static const uint32_t ops[] = {
++        0x08,0x09,0x0A,0x0C,0x0D,0x0E,0x10,0x11,0x18,0x19,0x20,0x21,0x22,0x23,
++        0x24,0x28,0x30,0x31,0x32,0x33,0x38,0x39,0x3A,0x3B,0x40,0x41,0x42,0x43,
++        0x44,0x45,0x46,0x47,0x50,0x52,0x54,0x58,0x59,0x5A,0x60,0x08,0x0C,0x60,
++    };
++    uint32_t i, lcg = 12345;
++    for (i = 0; i < 512; i++) {
++        uint32_t op, d, sfield, imm;
++        lcg = lcg * 1103515245u + 12345u;
++        op = ops[(lcg >> 16) % (sizeof(ops)/sizeof(ops[0]))];
++        d = (lcg >> 5) & 0x1FF;
++        sfield = (lcg >> 13) & 0x1FF;
++        imm = ((lcg >> 23) & 1) << 18;          /* half immediate, half register */
++        env->p2_cog[i] = (0xFu << 28) | (op << 21) | imm | (d << 9) | sfield;
++    }
++}
++
++void helper_p2interp(CPURISCVState *env, target_ulong n)
++{
++    static int seeded;
++    uint32_t pc = env->p2_pc;
++    uint32_t i, count = (uint32_t)n;
++
++    if (!seeded) {
++        p2_seed_cog(env);
++        seeded = 1;
++    }
++
++    for (i = 0; i < count; i++) {
++        uint32_t w = env->p2_cog[pc & 511];
++        uint32_t cond = w >> 28;
++        uint32_t op = (w >> 21) & 0x7F;
++        uint32_t d = (w >> 9) & 0x1FF;
++        uint32_t sf = w & 0x1FF;
++        uint32_t dv, sv, r;
++
++        pc++;
++        env->p2_clocks += 2;
++
++        /* EEEE: bit ((C<<1)|Z) of the condition field selects execute. */
++        if (!((cond >> (((env->p2_c & 1u) << 1) | (env->p2_z & 1u))) & 1u)) {
++            continue;
++        }
++
++        sv = (w & (1u << 18)) ? sf : env->p2_cog[sf];
++        dv = env->p2_cog[d];
++
++        switch (op) {
++        case 0x08: r = dv + sv; env->p2_c = (r < dv); break;        /* ADD    */
++        case 0x09: r = dv + sv + (env->p2_c & 1); break;            /* ADDX   */
++        case 0x0A: r = (uint32_t)((int32_t)dv + (int32_t)sv); break;/* ADDS   */
++        case 0x0C: r = dv - sv; env->p2_c = (dv < sv); break;       /* SUB    */
++        case 0x0D: r = dv - sv - (env->p2_c & 1); break;            /* SUBX   */
++        case 0x0E: r = (uint32_t)((int32_t)dv - (int32_t)sv); break;/* SUBS   */
++        case 0x10: r = dv; env->p2_c = (dv < sv); env->p2_z = (dv == sv); break; /* CMP */
++        case 0x11: r = dv; env->p2_c = ((int32_t)dv < (int32_t)sv); break;       /* CMPS */
++        case 0x18: r = dv < sv ? sv : dv; break;                    /* FGE    */
++        case 0x19: r = dv > sv ? sv : dv; break;                    /* FLE    */
++        case 0x20: r = dv << (sv & 31); break;                      /* SHL    */
++        case 0x21: r = dv >> (sv & 31); break;                      /* SHR    */
++        case 0x22: r = (uint32_t)((int32_t)dv >> (sv & 31)); break; /* SAR    */
++        case 0x23: r = (dv << (sv & 31)) | (dv >> (32 - (sv & 31) )); break; /* ROL */
++        case 0x24: r = (dv >> (sv & 31)) | (dv << (32 - (sv & 31))); break;  /* ROR */
++        case 0x28: r = dv * sv; break;                              /* MUL    */
++        case 0x29: r = sv ? dv / sv : 0; break;                     /* QDIV   */
++        case 0x2A: r = sv ? dv % sv : 0; break;                     /* QFRAC  */
++        case 0x30: r = dv & ~sv; break;                             /* ANDN   */
++        case 0x31: r = ~(dv & sv); break;                           /* NAND   */
++        case 0x32: r = ~(dv | sv); break;                           /* NOR    */
++        case 0x33: r = ~(dv ^ sv); break;                           /* XNOR   */
++        case 0x38: r = dv | (1u << (sv & 31)); break;               /* BITH   */
++        case 0x39: r = dv & ~(1u << (sv & 31)); break;              /* BITL   */
++        case 0x3A: r = dv ^ (1u << (sv & 31)); break;               /* BITNOT */
++        case 0x3B: r = dv; env->p2_c = (dv >> (sv & 31)) & 1; break;/* TESTB  */
++        case 0x40: r = (uint32_t)__builtin_popcount(sv); break;     /* ONES   */
++        case 0x41: r = sv ? (uint32_t)(31 - __builtin_clz(sv)) : 0; break; /* ENCOD */
++        case 0x42: r = 1u << (sv & 31); break;                      /* DECOD  */
++        case 0x43: r = (1u << ((sv & 31) + 1)) - 1; break;          /* BMASK  */
++        case 0x44: r = __builtin_bswap32(sv); break;                /* MOVBYTS*/
++        case 0x45: r = (sv & 0xFFFF) | (dv & 0xFFFF0000u); break;   /* SETWORD*/
++        case 0x46: r = (sv & 0xFF) | (dv & 0xFFFFFF00u); break;     /* SETBYTE*/
++        case 0x47: r = (dv >> ((sv & 3) * 8)) & 0xFF; break;        /* GETBYTE*/
++        case 0x50: r = dv & sv; env->p2_c = 0; break;               /* AND    */
++        case 0x52: r = dv | sv; env->p2_c = 0; break;               /* OR     */
++        case 0x54: r = dv ^ sv; env->p2_c = 0; break;               /* XOR    */
++        case 0x58: r = (uint32_t)(-(int32_t)sv); break;             /* NEG    */
++        case 0x59: r = ~sv; break;                                  /* NOT    */
++        case 0x5A: r = (uint32_t)((int32_t)sv < 0 ? -(int32_t)sv : (int32_t)sv); break; /* ABS */
++        case 0x60: r = sv;      env->p2_c = sv >> 31; break;        /* MOV    */
++        default:   r = dv;      break;
++        }
++
++        env->p2_cog[d] = r;
++        env->p2_z = (r == 0);
++    }
++    env->p2_pc = pc;
++}

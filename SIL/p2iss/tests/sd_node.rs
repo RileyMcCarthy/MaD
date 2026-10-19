@@ -15,7 +15,7 @@ use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use embsim_board::{
-    AttachError, Component, ComponentNetIo, Harness, PinDecl, PinKind, System, TheveninDrive,
+    AttachError, Component, ComponentNetIo, Harness, PinDecl, System, TheveninDrive,
 };
 use embsim_core::virtual_clock;
 use p2iss::sdnode::SdCardNode;
@@ -80,6 +80,8 @@ fn wait_for(mut pred: impl FnMut() -> bool, timeout: Duration) -> bool {
 /// Without it a deselected card leaves MISO floating and `disk_initialize`
 /// cannot tell "no answer" from "a zero bit" — which is the whole reason the
 /// driver asks for `P_HIGH_15K | P_LOW_15K` there.
+///
+/// A static pull, so it is the pin's declared idle drive, stamped from build.
 struct PullUp {
     pins: [PinDecl; 1],
 }
@@ -87,13 +89,10 @@ struct PullUp {
 impl PullUp {
     fn new() -> Self {
         Self {
-            pins: [PinDecl {
-                number: "A",
-                name: None,
-                kind: PinKind::Analog,
-                stream: None,
-                drive_impedance: None,
-            }],
+            pins: [PinDecl::analog_source("A").with_idle(Some(TheveninDrive {
+                volts: 3.3,
+                impedance: 15_000.0,
+            }))],
         }
     }
 }
@@ -103,11 +102,7 @@ impl Component for PullUp {
         &self.pins
     }
 
-    fn attach(&mut self, io: ComponentNetIo) -> Result<(), AttachError> {
-        io.pin("A")?.set_drive(Some(TheveninDrive {
-            volts: 3.3,
-            impedance: 15_000.0,
-        }));
+    fn attach(&mut self, _io: ComponentNetIo) -> Result<(), AttachError> {
         Ok(())
     }
 }

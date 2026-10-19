@@ -91,7 +91,7 @@ npm run app               # opens your browser; connect via Web Serial
 cd Firmware/MaDCore
 pio run -e propeller2              # build for hardware
 pio run -e propeller2 -t upload   # flash a connected board
-pio run -e native_emulator        # build libfirmware.a for SIL
+pio run -e propeller2_debug      # image the SIL emulator executes
 pio test -e native_test           # unit tests
 pio check -e propeller2 --fail-on-defect=medium --fail-on-defect=high  # MISRA (medium+high)
 ```
@@ -99,8 +99,9 @@ pio check -e propeller2 --fail-on-defect=medium --fail-on-defect=high  # MISRA (
 ### Run the full simulation (no hardware)
 ```bash
 cd SIL
-make test         # build firmware + emulator, run the Rust test suite
-make playground   # run the emulator + trace viewer for manual testing
+make test         # build the P2 image + emulator, run the Rust test suite
+make playground   # the ISS + the app in a Chrome window on the board's clock
+make e2e          # the e2e suite on that route (SCENARIOS=… for a subset)
 ```
 
 ### Regenerate the protocol

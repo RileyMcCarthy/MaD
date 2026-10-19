@@ -87,10 +87,29 @@ defaults unless the main thread pushes a filter across.
 | `proto` | every non-periodic frame in and out by command **name**, acks, nacks, timeouts, round-trip durations, upload retries and failures, op start/end, test-run and download lifecycles |
 | `perf` | one aggregate per second for the ~100 Hz sample stream: rate, counts, throughput, last force/position, and anomalies |
 | `store` | user actions with their arguments *and outcomes*, field-level config diffs, machine-state transitions, faults, every toast shown |
-| `ui` | route changes, React render crashes with component stack |
+| `ui` | route changes, every button or link clicked (`click`), every field changed (`edit`, logged when the field is left), React render crashes with component stack |
 | `fs` | folder chosen/restored/permission, every DataStore op by name + duration, all failures |
 | `wasm` | protocol-core traps (`poll()` panics) |
 | `flash` | firmware programming: reset, boot-ROM detect attempts and replies, upload deciles, checksum verify, failure phase |
+
+### What a click or an edit keeps
+
+Bug reports become public issues, so `src/diagnostics/actions.ts` records the
+settings a reproduction needs and nothing the user wrote:
+
+- **Edits.** A number, a choice from a list (by its option text) and a checkbox
+  or radio button keep their value. Any other text — names, descriptions,
+  passwords, the GitHub token, a chosen file — keeps only its length. Free text
+  that is all digits (an optional minus sign and decimal point allowed) counts
+  as a number and is kept, since a number typed into a plain text field is
+  still a setting.
+- **Clicks.** A control is named by its `data-testid`, then its `aria-label` or
+  `title`, all written by developers. Its visible text is never recorded,
+  because a button in a list of saved profiles or samples shows a name the user
+  typed: a control with only text is logged as its role, the test id of the
+  nearest container that has one, and the text's length, e.g.
+  `button in profile-list (21 characters)`. Give a control a `data-testid` to
+  make its clicks readable in a report.
 
 ### Hot-path rules
 
@@ -303,6 +322,12 @@ infrastructure:
 2. A pre-filled issue opens against `RileyMcCarthy/MaD` using the
    `.github/ISSUE_TEMPLATE/app-bug.yml` form, which the user submits under their
    own account with the file attached.
+
+The issue body carries a **Recent actions** block: the user's last 30 steps
+(pages opened, controls clicked, fields changed, with the errors they hit in
+between), oldest first, built by `recentActions` from the `ui` entries under the
+rules above. Older steps are not dropped silently: the block starts with
+`(N earlier steps in the attached log)`, and they are all in the bundle.
 
 The download happens **first**, so a blocked pop-up never loses the report — the
 user still has the file, and the UI shows the issue link as a fallback.

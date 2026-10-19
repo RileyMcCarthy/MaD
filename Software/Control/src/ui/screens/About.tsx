@@ -1,18 +1,16 @@
 import { useState } from 'react';
-import { useStore } from '@/store/useStore';
 import {
   buildReportPreview,
   canFileDirectly,
   fileBugReport,
   fileBugReportViaApi,
+  ISSUE_REPO,
   type ReportPreview,
 } from '@/diagnostics/report';
+import { DOCS, GUIDES, USER_GUIDE_PATH } from '@/ui/docsLinks';
+import VersionPicker from '@/ui/components/VersionPicker';
 
 export default function About() {
-  const fw = useStore((s) => s.firmwareVersion);
-  const connected = useStore((s) => s.connection === 'connected');
-  const responding = useStore((s) => s.responding);
-
   const [summary, setSummary] = useState('');
   const [steps, setSteps] = useState('');
   const [includeSerialTail, setIncludeSerialTail] = useState(true);
@@ -66,32 +64,52 @@ export default function About() {
 
   return (
     <div>
-      <h1>Firmware &amp; About</h1>
+      <h1>About</h1>
 
       <div className="panel">
-        <h2>Firmware</h2>
+        <h2>MaD Control</h2>
         <table>
           <tbody>
             <tr>
-              <td>Current version</td>
-              <td data-testid="fw-version">
-                {connected && responding ? fw ?? 'Unknown' : '— (connect a device)'}
+              <td>Version</td>
+              <td data-testid="app-version">
+                {typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : 'unknown'}
+                {typeof __GIT_SHA__ === 'string' && __GIT_SHA__ !== 'unknown'
+                  ? ` (${__GIT_SHA__})`
+                  : ''}
               </td>
             </tr>
           </tbody>
         </table>
+        <div style={{ marginTop: 12 }}>
+          <VersionPicker />
+        </div>
         <p className="muted" style={{ marginTop: 12 }}>
-          To update firmware, see the <a href="#/firmware">Firmware</a> page.
-        </p>
-        <p className="muted">
-          Firmware releases:{' '}
-          <a
-            href="https://github.com/RileyMcCarthy/MaD/releases"
-            target="_blank"
-            rel="noreferrer"
-          >
-            GitHub
+          Control app for the MaD tensile tester. Runs in Chrome or Edge on desktop.{' '}
+          <a href={`https://github.com/${ISSUE_REPO}`} target="_blank" rel="noreferrer">
+            Source on GitHub
           </a>
+        </p>
+      </div>
+
+      <div className="panel">
+        <h2>Documentation</h2>
+        <ul data-testid="docs-links" style={{ margin: 0, paddingLeft: 18 }}>
+          {GUIDES.map((g) => (
+            <li key={g.path} style={{ marginBottom: 4 }}>
+              <a href={`${DOCS}${g.path}`} target="_blank" rel="noreferrer">
+                {g.title}
+              </a>
+              <span className="muted"> — {g.what}</span>
+            </li>
+          ))}
+        </ul>
+        <p className="muted" style={{ marginTop: 12 }}>
+          Everything else is in the{' '}
+          <a href={`${DOCS}${USER_GUIDE_PATH}`} target="_blank" rel="noreferrer">
+            user guide
+          </a>
+          .
         </p>
       </div>
 
@@ -219,35 +237,6 @@ export default function About() {
             Could not build the report: {failed}
           </p>
         )}
-      </div>
-
-      <div className="panel">
-        <h2>MaD Control</h2>
-        <table>
-          <tbody>
-            <tr>
-              <td>Version</td>
-              <td data-testid="app-version">
-                {typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : 'unknown'}
-                {typeof __GIT_SHA__ === 'string' && __GIT_SHA__ !== 'unknown'
-                  ? ` (${__GIT_SHA__})`
-                  : ''}
-              </td>
-            </tr>
-          </tbody>
-        </table>
-        <p className="muted" style={{ marginTop: 12 }}>
-          Frontend-only control app. Talks to the Propeller 2 over the Web Serial API; the
-          protocol runs as WebAssembly compiled from the same Rust core used by the firmware
-          tooling and SIL. Data is stored in a folder you choose via the File System Access
-          API. Chromium-only (Chrome / Edge, desktop).
-        </p>
-        <p className="muted">
-          MaD Control releases:{' '}
-          <a href="https://github.com/RileyMcCarthy/MaD/releases" target="_blank" rel="noreferrer">
-            GitHub
-          </a>
-        </p>
       </div>
     </div>
   );

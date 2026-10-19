@@ -16,6 +16,7 @@ import {
 } from '@/domain/stateLabels';
 import LiveCombinedChart from '@/ui/components/LiveCombinedChart';
 import LiveStressStrainChart from '@/ui/components/LiveStressStrainChart';
+import NumberField from '@/ui/components/NumberField';
 
 const READOUT_HINTS: Record<string, string> = {
   'Machine Force': 'Absolute force reading.',
@@ -135,16 +136,7 @@ export default function Live() {
           <button onClick={() => zeroLength()} disabled={manualBlocked}>Zero length</button>
         </div>
         <div className="row" style={{ marginTop: 12, alignItems: 'flex-end', flexWrap: 'wrap', gap: 12 }}>
-          <label className="field">
-            Jog (mm)
-            <input
-              type="number"
-              step="0.1"
-              value={jogMm}
-              disabled={manualBlocked}
-              onChange={(e) => setJogMm(Number(e.target.value))}
-            />
-          </label>
+          <NumberField label="Jog (mm)" value={jogMm} disabled={manualBlocked} onChange={setJogMm} />
           <div
             className="toggle"
             role="group"
@@ -164,16 +156,12 @@ export default function Live() {
               </button>
             ))}
           </div>
-          <label className="field">
-            Speed (mm/s)
-            <input
-              type="number"
-              step="0.1"
-              value={jogSpeed}
-              disabled={manualBlocked}
-              onChange={(e) => setJogSpeed(Number(e.target.value))}
-            />
-          </label>
+          <NumberField
+            label="Speed (mm/s)"
+            value={jogSpeed}
+            disabled={manualBlocked}
+            onChange={setJogSpeed}
+          />
           <button onClick={() => void jog(-Math.abs(jogMm))} disabled={manualBlocked}>− Jog down</button>
           <button onClick={() => void jog(Math.abs(jogMm))} disabled={manualBlocked}>+ Jog up</button>
         </div>

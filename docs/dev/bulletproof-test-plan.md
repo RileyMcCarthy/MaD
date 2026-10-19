@@ -129,7 +129,7 @@ Out-of-range packed fields never encode (bit-wrap).
 cd Software/Control && npm run generate:proto && npm test && npm run verify
 cd Firmware/MaDCore && pio test -e native_test -f test_dev_forceGauge -f test_app_gauge
 python3 Protocol/scripts/check_schema_domain_lockstep.py
-cd Software/Control && npm run e2e:smoke   # needs `cd SIL && make e2e-emulator` + bridge
+cd Software/Control && CDP_URL=http://127.0.0.1:9222 npm run e2e:smoke   # needs the board route: `cd SIL && make e2e-emulator` + `npm run dev`
 # Full matrix e2e:
 npm run e2e
 # Pairwise helper (import from domain):

@@ -1,0 +1,51 @@
+--- a/accel/tcg/tcg-accel-ops-rr.c
++++ b/accel/tcg/tcg-accel-ops-rr.c
+@@ -214,6 +214,47 @@ static void *rr_cpu_thread_fn(void *arg)
+     /* process any pending work */
+     cpu->exit_request = 1;
+
++    /*
++     * SPIKE 0a: what does one synchronous icount slice cost, re-entered
++     * from the thread that owns the CPU?  This is exactly the triple the
++     * normal loop below runs per turn; here it runs N times back to back
++     * with a fixed budget and no timers, and reports ns per slice.
++     */
++    if (getenv("QEMU_SPIKE_SLICE")) {
++        int64_t budget = atoll(getenv("QEMU_SPIKE_SLICE"));
++        int64_t n = getenv("QEMU_SPIKE_N") ? atoll(getenv("QEMU_SPIKE_N")) : 200000;
++        int64_t i, halted = 0;
++        struct timespec t0, t1;
++        int64_t ic0, ic1;
++        cpu = first_cpu;
++        current_cpu = cpu;
++        qatomic_set_mb(&rr_current_cpu, cpu);
++        qemu_clock_enable(QEMU_CLOCK_VIRTUAL, true);
++        /* one warm-up slice: translate the loop, clear exit_request */
++        bql_unlock();
++        icount_prepare_for_run(cpu, budget);
++        tcg_cpu_exec(cpu);
++        icount_process_data(cpu);
++        bql_lock();
++        ic0 = icount_get_raw();
++        clock_gettime(CLOCK_MONOTONIC, &t0);
++        for (i = 0; i < n; i++) {
++            int r;
++            bql_unlock();
++            icount_prepare_for_run(cpu, budget);
++            r = tcg_cpu_exec(cpu);
++            icount_process_data(cpu);
++            bql_lock();
++            if (r == EXCP_HALTED) { halted++; }
++        }
++        clock_gettime(CLOCK_MONOTONIC, &t1);
++        ic1 = icount_get_raw();
++        fprintf(stderr, "SPIKE budget=%lld slices=%lld ns/slice=%.1f insns=%lld insns/slice=%.2f halted=%lld\n",
++                (long long)budget, (long long)n,
++                ((t1.tv_sec - t0.tv_sec) * 1e9 + (t1.tv_nsec - t0.tv_nsec)) / (double)n,
++                (long long)(ic1 - ic0), (ic1 - ic0) / (double)n, (long long)halted);
++        exit(0);
++    }
++
+     while (1) {
+         /* Only used for icount_enabled() */
+         int64_t cpu_budget = 0;

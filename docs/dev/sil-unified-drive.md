@@ -1,5 +1,12 @@
 # One drive type — scope
 
+> **Status (2026-10-07): landed in embsim 0.2.0**, which MaD pins. The pulse
+> channel, `StreamRole`, `pulse_tx`/`on_pulse` and the pulse commands are gone; a
+> step train is a `Drive::Periodic`, and `PulseSegment` is `PeriodicSchedule`,
+> anchored at `since_ns` and read with `emitted_at_ns`/`rebased_at_ns`. This page
+> is the scope as written: its field lists, arithmetic and code citations are of
+> the tree at the time, not of 0.2.0.
+
 **Goal:** a component has exactly one way to put a signal on a net. Everything
 that crosses a wire is a `Drive`, resolved by the resolver, and nothing routes
 around it.

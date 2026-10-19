@@ -20,27 +20,25 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use embsim_board::{
-    digital_drive, level_of, AttachError, Component, ComponentNetIo, Level, PinDecl, PinHandle,
-    PinKind,
+    digital_drive, AttachError, Component, ComponentNetIo, DigitalReceiver, Drive, Level, PinDecl,
+    PinHandle, Thresholds,
 };
+use embsim_models::spi_flash_component::W25Q128JV_INPUT_THRESHOLDS_ANY_VCC;
 use p2core::SpiFlash;
 
-const PINS: [PinDecl; 4] = [
-    decl("CLK", PinKind::DigitalIn),
-    decl("CS", PinKind::DigitalIn),
-    decl("MOSI", PinKind::DigitalIn),
-    decl("MISO", PinKind::DigitalOut),
-];
+/// The inputs read through the part's own pair. [`SpiFlash`] answers `$9F`
+/// as a Winbond W25Q128, so the thresholds are the W25Q128JV's (0.3 / 0.7 ×
+/// `VCC`, Revision F §9.4), made absolute at the corners of its 2.7 V to
+/// 3.6 V supply range — 0.81 V and 2.52 V — because this node declares no
+/// supply pin to scale them against.
+const TH: Thresholds = W25Q128JV_INPUT_THRESHOLDS_ANY_VCC;
 
-const fn decl(number: &'static str, kind: PinKind) -> PinDecl {
-    PinDecl {
-        number,
-        name: None,
-        kind,
-        stream: None,
-        drive_impedance: None,
-    }
-}
+const PINS: [PinDecl; 4] = [
+    PinDecl::digital_in("CLK", TH),
+    PinDecl::digital_in("CS", TH),
+    PinDecl::digital_in("MOSI", TH),
+    PinDecl::digital_out("MISO").with_idle(None),
+];
 
 /// Observable counters, so a test can assert the bus really moved.
 #[derive(Debug, Default)]
@@ -96,7 +94,7 @@ impl std::fmt::Debug for FlashNode {
 
 fn drive_miso(wire: &Wire) {
     if let Some(handle) = wire.miso.as_ref() {
-        handle.set_drive(Some(digital_drive(if wire.flash.miso() {
+        handle.drive(Drive::Thevenin(digital_drive(if wire.flash.miso() {
             Level::High
         } else {
             Level::Low
@@ -118,8 +116,9 @@ impl Component for FlashNode {
 
         {
             let wire = Arc::clone(&self.wire);
-            io.on_sense("CS", move |state| {
-                if let Some(level) = level_of(state) {
+            let cs = DigitalReceiver::new(io.pin("CS")?);
+            io.on_sense("CS", move |sense| {
+                if let Some(level) = cs.read(&sense) {
                     let mut wire = wire.lock().expect("wire never poisoned");
                     wire.flash.set_selected(level == Level::Low);
                     drive_miso(&wire);
@@ -129,8 +128,9 @@ impl Component for FlashNode {
 
         {
             let wire = Arc::clone(&self.wire);
-            io.on_sense("MOSI", move |state| {
-                if let Some(level) = level_of(state) {
+            let mosi = DigitalReceiver::new(io.pin("MOSI")?);
+            io.on_sense("MOSI", move |sense| {
+                if let Some(level) = mosi.read(&sense) {
                     wire.lock().expect("wire never poisoned").mosi = level == Level::High;
                 }
             })?;
@@ -138,8 +138,9 @@ impl Component for FlashNode {
 
         {
             let (wire, counters) = (Arc::clone(&self.wire), Arc::clone(&self.counters));
-            io.on_sense("CLK", move |state| {
-                let Some(level) = level_of(state) else {
+            let clk = DigitalReceiver::new(io.pin("CLK")?);
+            io.on_sense("CLK", move |sense| {
+                let Some(level) = clk.read(&sense) else {
                     return;
                 };
                 let mut wire = wire.lock().expect("wire never poisoned");

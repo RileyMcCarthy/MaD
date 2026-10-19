@@ -1,0 +1,8 @@
+DEF_HELPER_2(p2_interp_cog, void, env, i32)
+DEF_HELPER_2(p2_wrpin, void, i32, i32)
+DEF_HELPER_2(p2_wxpin, void, i32, i32)
+DEF_HELPER_2(p2_wypin, void, i32, i32)
+DEF_HELPER_1(p2_rdpin, i32, i32)
+DEF_HELPER_1(p2_testp, i32, i32)
+DEF_HELPER_3(p2_dir_out, void, env, i32, i32)
+DEF_HELPER_FLAGS_2(p2_unimpl, TCG_CALL_NO_RETURN, noreturn, env, i32)

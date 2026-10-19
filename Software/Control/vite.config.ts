@@ -5,6 +5,7 @@ import istanbul from 'vite-plugin-istanbul';
 import { fileURLToPath, URL } from 'node:url';
 import { execSync } from 'node:child_process';
 import { createRequire } from 'node:module';
+import { firmwareRelease } from './tools/firmwareRelease';
 
 const { version } = createRequire(import.meta.url)('./package.json') as { version: string };
 
@@ -47,6 +48,9 @@ export default defineConfig({
         ]
       : []),
     react(),
+    // The latest firmware release, served from this origin so the Firmware
+    // screen can offer it by default (GitHub's asset host has no CORS).
+    firmwareRelease(),
     VitePWA({
       // Prompt, never auto-reload: this app holds a live hardware connection and
       // may be mid-test. A silent skipWaiting/clientsClaim reload would tear down
@@ -66,7 +70,8 @@ export default defineConfig({
       },
       workbox: {
         // The wasm + worker assets must be precached for offline use.
-        globPatterns: ['**/*.{js,css,html,wasm,svg}'],
+        // So is the bundled firmware release, so an offline update still works.
+        globPatterns: ['**/*.{js,css,html,wasm,svg}', 'firmware/latest.{json,bin}'],
         maximumFileSizeToCacheInBytes: 8 * 1024 * 1024,
         // Don't hijack the open page; the new SW waits until we apply it.
         skipWaiting: false,
@@ -83,6 +88,17 @@ export default defineConfig({
     format: 'es',
   },
   build: {
+    // The oldest browser that can run this app at all. The protocol core's
+    // WebAssembly uses reference types (an externref table), which Chrome and
+    // Edge ship from 96; Web Serial itself needs 89. Vite's default target
+    // ('modules': chrome87, edge88, ...) is older than either, so esbuild was
+    // rewriting code for browsers that cannot load the app. One of those
+    // rewrites turned the worker's optional call on its Comlink event sink into
+    // `sink.call(this, events)`, which Comlink sends as a remote call named
+    // "call" and fails to clone; device/boundaryCallback.ts guards that
+    // boundary on its own. This target keeps the production bundle close to the
+    // source the dev server runs.
+    target: ['chrome96', 'edge96'],
     // Hidden source maps: emitted for post-mortem debugging of a field issue,
     // but not referenced from the shipped bundle.
     sourcemap: 'hidden',

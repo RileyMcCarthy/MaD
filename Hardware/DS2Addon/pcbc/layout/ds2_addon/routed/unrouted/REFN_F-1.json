@@ -1,0 +1,971 @@
+{
+ "a": "C1.1",
+ "at_a": [
+  37.75,
+  9.85
+ ],
+ "at_b": [
+  24.78,
+  15.07
+ ],
+ "b": "U1.8",
+ "blockers": [
+  {
+   "hits": 1,
+   "item": "C1.2 [VSS]",
+   "kind": "pad"
+  },
+  {
+   "hits": 1,
+   "item": "C10.2 [VSS]",
+   "kind": "pad"
+  }
+ ],
+ "cost": {
+  "clearance_mm": 0.2,
+  "pitch_mm": 0.4,
+  "via_allowed": false,
+  "via_mm": null,
+  "width_mm": 0.2
+ },
+ "failed_index": 0,
+ "layers": [
+  "F.Cu"
+ ],
+ "net": "REFN_F",
+ "order": 4,
+ "replay": "python -m pcbc.route_native --replay <this file> --board <board.py>",
+ "scene_near": [
+  {
+   "box": [
+    23.3085,
+    8.4645,
+    23.6515,
+    10.1955
+   ],
+   "kind": "pad",
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "AIN0",
+   "owner": "U1.11"
+  },
+  {
+   "box": [
+    23.9585,
+    8.4645,
+    24.3015,
+    10.1955
+   ],
+   "kind": "pad",
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "AIN1",
+   "owner": "U1.10"
+  },
+  {
+   "box": [
+    36.88,
+    11.975,
+    37.88,
+    13.425
+   ],
+   "kind": "pad",
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "AIN2",
+   "owner": "C10.1"
+  },
+  {
+   "box": [
+    38.6225,
+    14.1,
+    40.0725,
+    15.1
+   ],
+   "kind": "pad",
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "AIN2",
+   "owner": "C11.1"
+  },
+  {
+   "box": [
+    38.585,
+    12.0,
+    39.61,
+    13.4
+   ],
+   "kind": "pad",
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "AIN2",
+   "owner": "R8.2"
+  },
+  {
+   "box": [
+    23.9585,
+    14.2045,
+    24.3015,
+    15.9355
+   ],
+   "kind": "pad",
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "AIN2",
+   "owner": "U1.7"
+  },
+  {
+   "box": [
+    38.6225,
+    16.0,
+    40.0725,
+    17.0
+   ],
+   "kind": "pad",
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "AIN3",
+   "owner": "C11.2"
+  },
+  {
+   "box": [
+    23.3085,
+    14.2045,
+    23.6515,
+    15.9355
+   ],
+   "kind": "pad",
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "AIN3",
+   "owner": "U1.6"
+  },
+  {
+   "box": [
+    37.25,
+    9.125,
+    38.25,
+    10.575
+   ],
+   "kind": "pad",
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "REFN_F",
+   "owner": "C1.1"
+  },
+  {
+   "box": [
+    39.155,
+    7.6525,
+    40.605,
+    8.6525
+   ],
+   "kind": "pad",
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "REFN_F",
+   "owner": "C2.1"
+  },
+  {
+   "box": [
+    37.05,
+    7.39,
+    38.45,
+    8.415
+   ],
+   "kind": "pad",
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "REFN_F",
+   "owner": "R1.2"
+  },
+  {
+   "box": [
+    24.6085,
+    14.2045,
+    24.9515,
+    15.9355
+   ],
+   "kind": "pad",
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "REFN_F",
+   "owner": "U1.8"
+  },
+  {
+   "box": [
+    24.6085,
+    8.4645,
+    24.9515,
+    10.1955
+   ],
+   "kind": "pad",
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "REFP_F",
+   "owner": "U1.9"
+  },
+  {
+   "box": [
+    22.6585,
+    8.4645,
+    23.0015,
+    10.1955
+   ],
+   "kind": "pad",
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "VDDA",
+   "owner": "U1.12"
+  },
+  {
+   "box": [
+    35.35,
+    9.125,
+    36.35,
+    10.575
+   ],
+   "kind": "pad",
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "VSS",
+   "owner": "C1.2"
+  },
+  {
+   "box": [
+    34.98,
+    11.975,
+    35.98,
+    13.425
+   ],
+   "kind": "pad",
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "VSS",
+   "owner": "C10.2"
+  },
+  {
+   "box": [
+    22.6585,
+    14.2045,
+    23.0015,
+    15.9355
+   ],
+   "kind": "pad",
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "VSS",
+   "owner": "U1.5"
+  },
+  {
+   "box": [
+    20.0,
+    15.9355,
+    25.0,
+    17.2289
+   ],
+   "kind": "lane",
+   "layers": [
+    "B.Cu",
+    "F.Cu"
+   ],
+   "net": "",
+   "owner": "U1 lane bottom"
+  },
+  {
+   "box": [
+    20.0,
+    7.1711,
+    25.0,
+    8.4645
+   ],
+   "kind": "lane",
+   "layers": [
+    "B.Cu",
+    "F.Cu"
+   ],
+   "net": "",
+   "owner": "U1 lane top"
+  },
+  {
+   "box": [
+    22.705,
+    14.945,
+    22.955,
+    16.475
+   ],
+   "kind": "track",
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "VSS",
+   "owner": "U1.5"
+  },
+  {
+   "box": [
+    22.58,
+    16.1,
+    23.08,
+    16.6
+   ],
+   "kind": "via",
+   "layers": [
+    "B.Cu",
+    "F.Cu"
+   ],
+   "net": "VSS",
+   "owner": "U1.5"
+  },
+  {
+   "box": [
+    22.705,
+    7.925,
+    22.955,
+    9.455
+   ],
+   "kind": "track",
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "VDDA",
+   "owner": "U1.12"
+  },
+  {
+   "box": [
+    22.58,
+    7.8,
+    23.08,
+    8.3
+   ],
+   "kind": "via",
+   "layers": [
+    "B.Cu",
+    "F.Cu"
+   ],
+   "net": "VDDA",
+   "owner": "U1.12"
+  },
+  {
+   "box": [
+    14.3884,
+    10.3956,
+    23.58,
+    10.5956
+   ],
+   "kind": "track",
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "AIN0",
+   "owner": "AIN0"
+  },
+  {
+   "box": [
+    23.38,
+    9.23,
+    23.58,
+    10.5956
+   ],
+   "kind": "track",
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "AIN0",
+   "owner": "AIN0"
+  },
+  {
+   "box": [
+    18.488,
+    10.868,
+    23.006,
+    15.386
+   ],
+   "kind": "track",
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "AIN1",
+   "owner": "AIN1"
+  },
+  {
+   "box": [
+    22.806,
+    10.868,
+    23.7576,
+    11.068
+   ],
+   "kind": "track",
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "AIN1",
+   "owner": "AIN1"
+  },
+  {
+   "box": [
+    23.5576,
+    10.3956,
+    24.23,
+    11.068
+   ],
+   "kind": "track",
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "AIN1",
+   "owner": "AIN1"
+  },
+  {
+   "box": [
+    24.03,
+    9.23,
+    24.23,
+    10.5956
+   ],
+   "kind": "track",
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "AIN1",
+   "owner": "AIN1"
+  },
+  {
+   "box": [
+    37.28,
+    12.6,
+    39.1975,
+    12.8
+   ],
+   "kind": "track",
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "AIN2",
+   "owner": "AIN2"
+  },
+  {
+   "box": [
+    38.9975,
+    14.25,
+    39.4475,
+    14.7
+   ],
+   "kind": "track",
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "AIN2",
+   "owner": "AIN2"
+  },
+  {
+   "box": [
+    38.9975,
+    12.6,
+    39.1975,
+    14.45
+   ],
+   "kind": "track",
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "AIN2",
+   "owner": "AIN2"
+  },
+  {
+   "box": [
+    36.218,
+    12.6,
+    37.48,
+    13.862
+   ],
+   "kind": "track",
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "AIN2",
+   "owner": "AIN2"
+  },
+  {
+   "box": [
+    24.1724,
+    13.662,
+    36.418,
+    13.862
+   ],
+   "kind": "track",
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "AIN2",
+   "owner": "AIN2"
+  },
+  {
+   "box": [
+    24.03,
+    13.662,
+    24.3724,
+    14.0044
+   ],
+   "kind": "track",
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "AIN2",
+   "owner": "AIN2"
+  },
+  {
+   "box": [
+    24.03,
+    13.8044,
+    24.23,
+    15.17
+   ],
+   "kind": "track",
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "AIN2",
+   "owner": "AIN2"
+  },
+  {
+   "box": [
+    39.2475,
+    15.0,
+    40.8475,
+    16.6
+   ],
+   "kind": "track",
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "AIN3",
+   "owner": "AIN3"
+  },
+  {
+   "box": [
+    23.6444,
+    16.4,
+    39.4475,
+    16.6
+   ],
+   "kind": "track",
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "AIN3",
+   "owner": "AIN3"
+  },
+  {
+   "box": [
+    23.38,
+    16.1356,
+    23.8444,
+    16.6
+   ],
+   "kind": "track",
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "AIN3",
+   "owner": "AIN3"
+  },
+  {
+   "box": [
+    23.38,
+    14.97,
+    23.58,
+    16.3356
+   ],
+   "kind": "track",
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "AIN3",
+   "owner": "AIN3"
+  },
+  {
+   "box": [
+    37.65,
+    7.8025,
+    37.85,
+    9.95
+   ],
+   "kind": "track",
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "REFN_F",
+   "owner": "REFN_F"
+  },
+  {
+   "box": [
+    39.53,
+    7.8025,
+    39.98,
+    8.2525
+   ],
+   "kind": "track",
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "REFN_F",
+   "owner": "REFN_F"
+  },
+  {
+   "box": [
+    37.65,
+    7.8025,
+    39.73,
+    8.0025
+   ],
+   "kind": "track",
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "REFN_F",
+   "owner": "REFN_F"
+  },
+  {
+   "box": [
+    24.68,
+    1.506,
+    31.86,
+    8.686
+   ],
+   "kind": "track",
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "REFP_F",
+   "owner": "REFP_F"
+  },
+  {
+   "box": [
+    24.68,
+    8.486,
+    24.88,
+    9.43
+   ],
+   "kind": "track",
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "REFP_F",
+   "owner": "REFP_F"
+  },
+  {
+   "box": [
+    19.225,
+    10.843,
+    24.047,
+    15.665
+   ],
+   "kind": "track",
+   "layers": [
+    "B.Cu"
+   ],
+   "net": "3V3",
+   "owner": "3V3"
+  },
+  {
+   "box": [
+    23.797,
+    7.541,
+    24.047,
+    11.093
+   ],
+   "kind": "track",
+   "layers": [
+    "B.Cu"
+   ],
+   "net": "3V3",
+   "owner": "3V3"
+  },
+  {
+   "box": [
+    23.522,
+    7.266,
+    24.322,
+    8.066
+   ],
+   "kind": "via",
+   "layers": [
+    "B.Cu",
+    "F.Cu"
+   ],
+   "net": "3V3",
+   "owner": "3V3"
+  },
+  {
+   "box": [
+    22.055,
+    16.725,
+    29.585,
+    24.255
+   ],
+   "kind": "track",
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "GND",
+   "owner": "GND"
+  },
+  {
+   "box": [
+    22.705,
+    7.211,
+    22.955,
+    8.175
+   ],
+   "kind": "track",
+   "layers": [
+    "B.Cu"
+   ],
+   "net": "VDDA",
+   "owner": "VDDA"
+  },
+  {
+   "box": [
+    35.355,
+    9.725,
+    35.975,
+    10.345
+   ],
+   "kind": "track",
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "VSS",
+   "owner": "VSS"
+  },
+  {
+   "box": [
+    35.355,
+    10.095,
+    35.605,
+    12.825
+   ],
+   "kind": "track",
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "VSS",
+   "owner": "VSS"
+  },
+  {
+   "box": [
+    35.355,
+    11.605,
+    36.493,
+    12.825
+   ],
+   "kind": "track",
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "VSS",
+   "owner": "VSS"
+  },
+  {
+   "box": [
+    35.968,
+    11.33,
+    36.768,
+    12.13
+   ],
+   "kind": "via",
+   "layers": [
+    "B.Cu",
+    "F.Cu"
+   ],
+   "net": "VSS",
+   "owner": "VSS"
+  },
+  {
+   "box": [
+    36.243,
+    11.605,
+    40.811,
+    16.173
+   ],
+   "kind": "track",
+   "layers": [
+    "B.Cu"
+   ],
+   "net": "VSS",
+   "owner": "VSS"
+  },
+  {
+   "box": [
+    31.635,
+    5.635,
+    35.975,
+    9.975
+   ],
+   "kind": "track",
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "VSS",
+   "owner": "VSS"
+  },
+  {
+   "box": [
+    24.559,
+    7.033,
+    24.809,
+    12.363
+   ],
+   "kind": "track",
+   "layers": [
+    "B.Cu"
+   ],
+   "net": "VSS",
+   "owner": "VSS"
+  },
+  {
+   "box": [
+    23.289,
+    12.113,
+    24.809,
+    13.633
+   ],
+   "kind": "track",
+   "layers": [
+    "B.Cu"
+   ],
+   "net": "VSS",
+   "owner": "VSS"
+  },
+  {
+   "box": [
+    23.014,
+    13.108,
+    23.814,
+    13.908
+   ],
+   "kind": "via",
+   "layers": [
+    "B.Cu",
+    "F.Cu"
+   ],
+   "net": "VSS",
+   "owner": "VSS"
+  },
+  {
+   "box": [
+    22.705,
+    13.383,
+    23.539,
+    14.217
+   ],
+   "kind": "track",
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "VSS",
+   "owner": "VSS"
+  },
+  {
+   "box": [
+    22.705,
+    13.967,
+    22.955,
+    15.195
+   ],
+   "kind": "track",
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "VSS",
+   "owner": "VSS"
+  },
+  {
+   "box": [
+    23.8844,
+    12.575,
+    35.605,
+    12.825
+   ],
+   "kind": "track",
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "VSS",
+   "owner": "VSS"
+  },
+  {
+   "box": [
+    22.705,
+    12.575,
+    24.1344,
+    14.0044
+   ],
+   "kind": "track",
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "VSS",
+   "owner": "VSS"
+  },
+  {
+   "box": [
+    22.705,
+    13.7544,
+    22.955,
+    15.195
+   ],
+   "kind": "track",
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "VSS",
+   "owner": "VSS"
+  },
+  {
+   "box": [
+    34.414,
+    15.714,
+    37.83,
+    19.13
+   ],
+   "kind": "track",
+   "layers": [
+    "B.Cu"
+   ],
+   "net": "GPIO0",
+   "owner": "GPIO0"
+  },
+  {
+   "box": [
+    21.846,
+    15.714,
+    34.574,
+    15.874
+   ],
+   "kind": "track",
+   "layers": [
+    "B.Cu"
+   ],
+   "net": "GPIO0",
+   "owner": "GPIO0"
+  }
+ ]
+}

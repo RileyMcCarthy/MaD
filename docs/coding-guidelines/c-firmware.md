@@ -83,7 +83,7 @@ Header template (`src/template.ch:1`) is the same minus the External Variables /
 - Use Doxygen `@brief/@param/@return` on non-trivial public header functions (`src/IO/IO_SDCard.h:88`, `src/HAL/Include/HAL_lock.h:16`).
 
 **Don't**
-- Don't add new `.cx`/`.hx` files. Those are legacy (`src/DEV/i2cNavKey.cx`, `src/DEV/i2cNavKey.hx`, `src/DEV/Config/dev_nvram_machineProfile.cx`); use `.c`/`.h`.
+- Don't add new `.cx`/`.hx` files. Those are legacy (`src/DEV/Config/dev_nvram_machineProfile.cx`); use `.c`/`.h`.
 - Don't reorder or drop the section banners in `APP/`/`DEV/`/`IO/` modules — they are how reviewers navigate every file.
 
 ### Include ordering (as practiced)
@@ -197,7 +197,7 @@ default:
 Do **not** ban early returns project-wide; do **not** sprinkle early returns through the middle of a state tick.
 
 **Don't**
-- Don't introduce implicit narrowing or signed/unsigned mixing without a cast (MISRA Rule 10.x). Note `native_emulator` adds `-Wno-sign-compare` (`platformio.ini:84`) — don't rely on that; cppcheck/MISRA still flags it.
+- Don't introduce implicit narrowing or signed/unsigned mixing without a cast (MISRA Rule 10.x). cppcheck/MISRA still flags a sign-compare a host compiler happens to ignore.
 - Don't use VLAs, `malloc`/`free` in steady state, or recursion — all buffers are static fixed-size (`app_motion_move_t queueBuffer[MOTION_QUEUE_SIZE];`, `src/APP/app_motion.c:88`).
 
 ---
@@ -211,7 +211,7 @@ Strict downward dependency: `APP → DEV → IO → Library → HAL → HW`. Eac
 - Put per-module configuration (channel tables, buffer sizes, paths) in a `Config/` subfolder file that defines the data the module declares `extern`. Pattern: `src/IO/Config/IO_SDCard_config.c:31` defines buffers via `IO_SDCARD_CHANNEL_DATA_DEFINE(...)`, and `src/IO/IO_SDCard.c:74` consumes it via `extern IO_SDCard_config_S IO_SDCard_config;`.
 
 **Don't**
-- **Never** include a low-level MCU / P2 / `flexcc` framework header from `APP/`, `DEV/`, or `IO/`. The HAL is the only thing that touches `HAL/P2/`. Build filters compile `HAL/P2/` only in `propeller2`; `native_emulator` leaves HAL symbols undefined for the SIL trampolines (`platformio.ini`).
+- **Never** include a low-level MCU / P2 / `flexcc` framework header from `APP/`, `DEV/`, or `IO/`. The HAL is the only thing that touches `HAL/P2/`. The `propeller2` builds compile `HAL/P2/`. `native_test` does not: `test/mock_propeller2.c` provides the HAL symbols the unit tests call (`platformio.ini`).
 - Don't call "upward" across layers. The one tolerated exception is logging: `Library/` and lower files may include `IO_Debug.h` for `DEBUG_*` (`src/Library/lib_staticQueue.c:4` includes `IO_Debug.h` plus `<string.h>`/`<stdio.h>`). Don't add other upward calls.
 
 ---
@@ -365,7 +365,7 @@ Suggested local loop for a firmware change:
 ```bash
 # from Firmware/MaDCore/
 pio check -e propeller2 --fail-on-defect=medium --fail-on-defect=high
-pio run -e native_emulator
+pio run -e propeller2_debug
 pio test -e native_test
 # from SIL/ when behaviour crosses the emulator
 make test
@@ -395,11 +395,11 @@ make test
 ```bash
 # from Firmware/MaDCore/
 pio check -e propeller2 --fail-on-defect=medium --fail-on-defect=high
-pio run -e native_emulator      # must also build clean for the SIL emulator (libfirmware.a)
+pio run -e propeller2_debug    # the image the SIL emulator executes
 pio test -e native_test         # Unity unit tests (ASan + stack-protector)
 ```
 
-Always build/test **native** as well as P2 — pointer sizes and timing differ (`native_emulator` builds C99 with `-Wall`; `native_test` adds `-fsanitize=address -fstack-protector-all`).
+Always run the host unit tests and a P2 build — pointer sizes and timing differ (`native_test` adds `-fsanitize=address -fstack-protector-all`; `propeller2` is the FlexC image).
 
 ### Exactly how `pio check` is configured
 

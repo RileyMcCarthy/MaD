@@ -49,7 +49,12 @@ export default function Runs() {
       // A storage failure here (quota, permission revoked) must not strand the
       // run as "not downloaded" silently — surface it and keep it re-downloadable.
       const path = await dataStore.saveTestCsv(testName, result.csv);
-      await dataStore.updateTestRun(testName, { status: 'downloaded', dataFilePath: path });
+      const saved = await dataStore.updateTestRun(testName, { status: 'downloaded', dataFilePath: path });
+      if (!saved) {
+        useStore
+          .getState()
+          .notify(NotificationType.WARN, `Downloaded ${testName}, but its run record is missing, so it is not marked downloaded.`);
+      }
       await loadRows();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -77,12 +82,15 @@ export default function Runs() {
   // Manual resolution for runs stuck in "running" (firmware hang, app reload
   // mid-test): the automatic completion edge can no longer be observed.
   const markRun = async (testName: string, status: 'completed' | 'error') => {
-    await dataStore.updateTestRun(
+    const saved = await dataStore.updateTestRun(
       testName,
       status === 'completed'
         ? { status, completedAt: new Date().toISOString() }
         : { status },
     );
+    if (!saved) {
+      useStore.getState().notify(NotificationType.WARN, `Could not mark ${testName}: its run record is missing.`);
+    }
     await loadRows();
   };
 
