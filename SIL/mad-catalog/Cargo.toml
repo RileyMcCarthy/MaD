@@ -1,0 +1,18 @@
+# mad-catalog: the kinds this project adds to embsim (PROJECTS.md §10). Started by
+# `embsim new --catalog`; a project names it in its [catalog] crates, and the
+# `embsim` tool builds it into the runner that runs the project.
+[package]
+name = "mad-catalog"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+# The embsim this project builds against: the runner takes embsim from where
+# this crate's embsim-boards comes from, and every catalog crate's embsim
+# dependencies come from there too — one copy of embsim in the runner.
+embsim-board = { path = "../embsim/board" }
+embsim-boards = { path = "../embsim/boards" }
+# The virtual clock: the instant a component starts at, which its wakes
+# count from.
+embsim-core = { path = "../embsim/core" }

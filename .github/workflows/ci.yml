@@ -853,15 +853,16 @@ jobs:
       # than no gate.
       - name: rustfmt (gating)
         working-directory: SIL
-        run: cargo fmt -p mad-emulator -p models --check
+        run: cargo fmt -p mad-emulator -p models -p mad-catalog -p mad-runner --check
       - name: Clippy (gating)
         working-directory: SIL
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Cargo test (blocking)
         working-directory: SIL
         # The workspace is the MaD-side crates only (protocol, models,
-        # MaDSim, p2core, p2iss). The embsim submodule suite is re-run by the
-        # sibling `embsim-ci` job (mirror of protoemb-ci) on the pinned commit.
+        # MaDSim, p2core, p2iss, mad-catalog, mad-runner). The embsim
+        # submodule suite is re-run by the sibling `embsim-ci` job (mirror of
+        # protoemb-ci) on the pinned commit.
         #
         # MAD_REQUIRE_P2_IMAGE turns "the image is missing, so skip" into a
         # failure. A developer without a built image still gets skips; a CI job
