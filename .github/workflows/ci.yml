@@ -1266,6 +1266,28 @@ jobs:
       - name: Propagate the verdict
         run: exit ${{ steps.report.outputs.code }}
 
+  # BLOCKING. A BH number is provisional until it reaches main: two open PRs
+  # take the same ones, and behaviours.jsonl merges without a conflict, so a
+  # PR must settle its numbers against the base before it lands. Runs no suites.
+  vibes-numbers:
+    name: Behaviour numbers settled
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - run: git submodule update --init Vibes
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - name: Build Vibes
+        working-directory: Vibes
+        run: npm ci --no-audit --no-fund && npm run build
+      - name: No BH number collides with the base branch's
+        run: node Vibes/bin/vibes.mjs renumber --base "origin/${{ github.base_ref }}" --check
+
   ci-gate:
     name: CI Gate
     needs:
@@ -1278,6 +1300,7 @@ jobs:
       - embsim-ci
       - embsim-pin-ci
       - vibes-pin-ci
+      - vibes-numbers
       - docs-ci
       - firmware-unit-tests
       - protocol-codegen
