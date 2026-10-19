@@ -4,7 +4,7 @@ A **motion profile** defines what the machine *does* during a test — a sequenc
 of moves, grouped into repeatable **sets**. You build it on the **Motion
 Profiles** screen.
 
-![The Motion Profiles builder](../assets/screenshots/04-motion-profiles.png)
+![The Motion profiles builder](../assets/screenshots/04-motion-profiles.png)
 
 ## Structure
 
@@ -57,7 +57,7 @@ accidental over-long pull or an inverted direction obvious at a glance.
 
 ## Saving, loading, importing
 
-- **Save Motion Profile** stores it in your [data folder](settings-and-data.md);
+- **Save motion profile** stores it in your [data folder](settings-and-data.md);
   it then appears in the **Load saved profile…** dropdown.
 - You can also **Save / Load individual Sets**, so a reusable set (e.g. a cyclic
   block) can be shared across profiles.

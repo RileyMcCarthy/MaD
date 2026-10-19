@@ -101,3 +101,35 @@ export function estimateSeconds(imageBytes: number, baudRate: number): number {
   const framing = Math.ceil(imageBytes / 128) * 3;
   return ((imageBytes * 3 + framing) * 10) / baudRate;
 }
+
+/**
+ * Fixed part of {@link flashWriteMs}: checksum pass, first erase, host buffers.
+ * Sized together with {@link FLASH_WRITE_MS_PER_KIB} so a 0.13-sized image
+ * (~323 KiB) waits about 5.2 s: the only bench-proven wait at that size is
+ * 5 s (loadp2 0.078 flash-boots the 0.13 madEdge image fully after >= 5 s,
+ * #203); the earlier 1 s + 9 ms/KiB gave only ~3.9 s there.
+ */
+const FLASH_WRITE_BASE_MS = 2000;
+/**
+ * Per-KiB part of {@link flashWriteMs}: a little over twice the stub's
+ * measured 4.3 ms/KiB, and with the 2 s base enough to clear the bench-proven
+ * 5 s at ~323 KiB. The full 512 KiB hub then waits ~7.1 s, well under 10 s.
+ */
+const FLASH_WRITE_MS_PER_KIB = 10;
+
+/**
+ * Milliseconds the flash stub may still be writing after the last byte of a
+ * flash image has left the host.
+ *
+ * The stub only starts erasing and programming once the ROM has the whole
+ * image, and nothing on the wire says when it is done. A reset in that window
+ * (DTR, a port re-open, a power cycle) leaves flash holding a partial image that
+ * the boot loader's checksum then refuses, so the board does not boot at all.
+ * The stub's own table (W25Q128 at RCFAST) is ~4.3 ms/KiB; this allows more
+ * than double that for slower RC oscillators and flash parts, plus a fixed two
+ * seconds. The numbers are anchored on the bench: a ~323 KiB 0.13 madEdge image
+ * needed a >= 5 s wait to flash-boot (#203), and this gives it ~5.2 s.
+ */
+export function flashWriteMs(imageBytes: number): number {
+  return Math.ceil(FLASH_WRITE_BASE_MS + (imageBytes / 1024) * FLASH_WRITE_MS_PER_KIB);
+}
