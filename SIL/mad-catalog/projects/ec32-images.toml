@@ -1,0 +1,79 @@
+# The P2-EC32MB module holding the two images MaD's SIL makefile writes, on
+# the supplies a carrier gives its fingers (embsim's
+# boards/projects/ec32-carrier.toml): its flash holding embsim's stage-1 and
+# the propeller2_debug firmware, and the card in its socket J301 a FAT16
+# image of SIL/sd. These are the two image entries of the machine's project
+# (embsim MIGRATING-MAD.md section 4). `embsim check` here shows that the two
+# paths resolve and that the module's flash and card kinds take the files; it
+# reads them without checking what is in them. Their layout comes from the
+# tools that write them: `embsim flash-image` (stage-1, its checksum, the
+# program's length and the program) and p2iss's `sdimage::mad_card`.
+#
+#   cd SIL && make flash-image sd-image
+#   $(EMBSIM) check mad-catalog/projects/ec32-images.toml
+#
+# The processor runs nothing yet: `held-in-reset` until mad-catalog has the
+# ISS as a core (MIGRATING-MAD.md step 8).
+
+[[board]]
+name = "EC32"
+kind = "p2-ec32mb"
+
+[[board.model]]
+value = "P2X8C4M64P"
+kind = "p2"
+[board.model.options]
+core = "held-in-reset"
+
+# Stage-1 and the propeller2_debug program, laid out by `make flash-image`.
+[[board.model]]
+value = "SPI Flash 16MB (128Mb)"
+kind = "w25q128jv"
+[board.model.options]
+pins = "by-function"
+image = "../../build/flash.bin"
+
+# The card in the module's socket J301, written by `make sd-image`.
+[[board.model]]
+value = "MicroSD Socket"
+kind = "sd-card"
+[board.model.options]
+pins = "by-function"
+image = "../../build/sd.img"
+
+[[wire]]
+from = "CARRIER.5V"
+to = "EC32.J203.41"
+volts = 5.0
+
+[[wire]]
+from = "CARRIER.5Vb"
+to = "EC32.J203.42"
+volts = 5.0
+
+[[wire]]
+from = "CARRIER.GND"
+to = "EC32.J203.43"
+volts = 0.0
+
+[[wire]]
+from = "CARRIER.GNDb"
+to = "EC32.J203.44"
+volts = 0.0
+
+[[wire]]
+from = "CARRIER.GNDc"
+to = "EC32.J203.45"
+volts = 0.0
+
+# FLASH: P61 is the flash's chip select.
+[[switch]]
+part = "EC32.S301"
+pole = 1
+state = "closed"
+
+# R303 holds P59 down: the ROM boots the program in flash.
+[[switch]]
+part = "EC32.S301"
+pole = 3
+state = "closed"
