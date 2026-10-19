@@ -95,6 +95,12 @@ const TICK_MS = 4;
 /** ~1 minute of samples retained in the WASM ring buffer. */
 const SAMPLE_STORAGE_COUNT = Math.max(1, Math.ceil(60_000 / MSG_SAMPLE_PERIOD_MS));
 const STATE_STORAGE_COUNT = 10;
+/** How long the sample and state polls wait for a reply (ms). The link carries
+ *  one request at a time, so a poll the firmware never answers stalls every
+ *  update until it is given up: this bounds that gap. Above the slowest reply
+ *  seen on the bench (~133 ms) and the firmware's 100 ms partial-frame reset,
+ *  so the next poll lands on a clean parser. Writes keep the client timeout. */
+const PERIODIC_RESPONSE_TIMEOUT_MS = 250;
 
 let wasmReady: Promise<unknown> | null = null;
 
@@ -399,13 +405,24 @@ export class DeviceSession {
       lastErrorAt: 0,
       eventDeliveryFailures: 0,
     };
-    this.client.register_periodic(MSG_READ_SAMPLE, MSG_SAMPLE_PERIOD_MS, SAMPLE_STORAGE_COUNT);
-    this.client.register_periodic(MSG_READ_STATE, MSG_STATE_PERIOD_MS, STATE_STORAGE_COUNT);
+    this.client.register_periodic_with_timeout(
+      MSG_READ_SAMPLE,
+      MSG_SAMPLE_PERIOD_MS,
+      SAMPLE_STORAGE_COUNT,
+      PERIODIC_RESPONSE_TIMEOUT_MS,
+    );
+    this.client.register_periodic_with_timeout(
+      MSG_READ_STATE,
+      MSG_STATE_PERIOD_MS,
+      STATE_STORAGE_COUNT,
+      PERIODIC_RESPONSE_TIMEOUT_MS,
+    );
 
     byteRing.reset();
     this.periodic.resetSession();
     logDev.info('connect', 'session started', {
       responseTimeoutMs: opts.responseTimeoutMs ?? 2000,
+      periodicResponseTimeoutMs: PERIODIC_RESPONSE_TIMEOUT_MS,
       samplePeriodMs: MSG_SAMPLE_PERIOD_MS,
       statePeriodMs: MSG_STATE_PERIOD_MS,
       tickMs: TICK_MS,
