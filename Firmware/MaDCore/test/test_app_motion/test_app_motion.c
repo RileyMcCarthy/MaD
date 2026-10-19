@@ -55,6 +55,10 @@ static bool d_motionEnabled;
 static bool d_speedLimited;
 
 bool app_control_motionEnabled(void) { return d_motionEnabled; }
+
+/* --- app_motorCalibration (ticked by app_motion; exercised by its own suite) --- */
+void app_motorCalibration_init(int lock) { (void)lock; }
+void app_motorCalibration_run(void) {}
 bool app_control_speedLimited(void) { return d_speedLimited; }
 
 /* --- dev_servo inputs --- */

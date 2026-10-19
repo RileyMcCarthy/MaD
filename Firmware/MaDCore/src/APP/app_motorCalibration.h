@@ -75,7 +75,7 @@ typedef struct
  * Public Function Definitions
  **********************************************************************/
 void app_motorCalibration_init(int lock);
-/* CONTROL cog, after app_motion_run (see the note in the .c). */
+/* CONTROL cog; ticked by app_motion_run after its own work (see the .c). */
 void app_motorCalibration_run(void);
 /* Any cog. False for a malformed request (zero or over-cap pulses/rate, no
  * encoder bound) or while a run is already in progress; otherwise the run is

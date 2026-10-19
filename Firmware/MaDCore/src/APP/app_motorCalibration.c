@@ -155,7 +155,7 @@ void app_motorCalibration_init(int lock)
     lib_timer_init(&app_motorCalibration_data.settleTimer, APP_MOTORCALIBRATION_SETTLE_MS);
 }
 
-/* Runs on the CONTROL cog AFTER app_motion_run. That order is what makes the
+/* Runs on the CONTROL cog at the end of app_motion_run. That order is what makes the
  * busy check sound: a jog staged before the request was accepted has been
  * queued and popped by app_motion this same tick, so app_motion is no longer
  * idle and the run is refused. Anything staged after it is refused at the

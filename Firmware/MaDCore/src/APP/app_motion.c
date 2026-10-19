@@ -13,6 +13,7 @@
 
 #include "app_motion.h"
 #include "app_control.h"
+#include "app_motorCalibration.h"
 #include "app_notification.h"
 
 #if APP_MOTION_USE_SERVO
@@ -549,6 +550,7 @@ void app_motion_init(int lock)
      * this queue. Single-cog access ⇒ within the queue's SPSC contract. */
     (void)lib_staticQueue_init(&app_motion_data.queue, app_motion_data.queueBuffer, MOTION_QUEUE_SIZE, sizeof(app_motion_move_t));
     lib_timer_init(&app_motion_data.endstopTimer, 1000);
+    app_motorCalibration_init(lock);
 }
 
 void app_motion_run(void)
@@ -556,6 +558,9 @@ void app_motion_run(void)
     app_motion_private_processInputs();
     app_motion_data.state = app_motion_private_getDesiredState();
     app_motion_private_processOutputs();
+    /* Ticked from here, after this tick's motion, so its busy check sees any
+     * move popped this tick; see app_motorCalibration_run. */
+    app_motorCalibration_run();
 }
 
 bool app_motion_addMove(const app_motion_move_t *move)

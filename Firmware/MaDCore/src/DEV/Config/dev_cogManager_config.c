@@ -15,7 +15,6 @@
 #include "app_notification.h"
 #include "app_messageSlave.h"
 #include "app_testManagement.h"
-#include "app_motorCalibration.h"
 
 #include "IO_SDCard.h"
 #include "dev_stepper.h"
@@ -109,7 +108,6 @@ DEV_COGMANAGER_CHANNEL_CREATE_INIT(CONTROL, 6144)
     app_motion_init(lock);
     app_testManagement_init(lock);
     app_control_init(lock);
-    app_motorCalibration_init(lock);
 }
 
 DEV_COGMANAGER_CHANNEL_CREATE_RUN(CONTROL)
@@ -118,8 +116,6 @@ DEV_COGMANAGER_CHANNEL_CREATE_RUN(CONTROL)
      * then control evaluates state. */
     app_testManagement_run();
     app_motion_run();
-    /* After app_motion: see app_motorCalibration_run for why the order matters. */
-    app_motorCalibration_run();
     app_control_run();
 }
 
