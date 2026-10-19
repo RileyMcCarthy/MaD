@@ -143,6 +143,13 @@ git tag firmware-v1.0.0 && git push --tags   # Firmware release
 git tag hardware-v1.0.0 && git push --tags   # Hardware release
 ```
 
+**Linking issues.** A PR that resolves a filed issue says `Fixes #N` in its
+description (one line per issue), so merging it closes the issue. This includes
+the in-app bug reports titled `[app] …`. A PR that only relates to an issue, or
+was prompted by one without fixing it, says `Refs #N`. GitHub closes issues only
+on a closing keyword (`Fixes` / `Closes` / `Resolves`), never on prose like
+"prompted by #N". Before opening a PR, check for an open issue it resolves.
+
 ## Key Constraints
 
 - **Firmware layer violations**: Do not include or call low-level MCU headers from APP/DEV/IO — go through HAL (and appropriate HW headers only where HAL already depends on them).
