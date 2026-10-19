@@ -57,6 +57,13 @@ struct Args {
     #[arg(long)]
     boot_rom: bool,
 
+    /// Jam the carriage while this file exists: the drive keeps stepping but
+    /// the carriage, and with it the encoder, stops (a servo stall, as the
+    /// firmware's guard sees one). Removing the file frees it. The e2e suite's
+    /// stall scenario creates and removes it.
+    #[arg(long, value_name = "PATH")]
+    jam_file: Option<PathBuf>,
+
     /// The host's Chrome on the link instead of the PTY (`host.rs`).
     #[command(flatten)]
     chrome: host::ChromeArgs,
@@ -370,10 +377,10 @@ fn run_iss(args: &Args, image_path: &std::path::Path) -> Result<(), Box<dyn std:
     }
     {
         let g = Arc::clone(&gantry_model);
-        machine
-            .motor
-            .shaft()
-            .on_position_change(move |mm| g.on_position(mm));
+        machine.on_carriage_change(move |mm| g.on_position(mm));
+    }
+    if let Some(path) = &args.jam_file {
+        watch_jam_file(path.clone(), machine.coupling());
     }
 
     let (system, reporter) = host.into_parts();
@@ -449,6 +456,27 @@ fn run_iss(args: &Args, image_path: &std::path::Path) -> Result<(), Box<dyn std:
         }
     });
     park_until_shutdown(reporter)
+}
+
+/// Jam the carriage while `path` exists, and free it when it goes.
+///
+/// Polled on the wall clock: the board runs at a few percent of real time, so
+/// 20 ms of wall time is well under a millisecond of the board's. A file left
+/// from an earlier run is removed first, so every run starts free.
+fn watch_jam_file(path: PathBuf, coupling: Arc<iss_description::Coupling>) {
+    let _ = std::fs::remove_file(&path);
+    info!("Jam control: the carriage jams while {} exists", path.display());
+    std::thread::spawn(move || loop {
+        let jammed = path.exists();
+        if jammed != coupling.jammed() {
+            coupling.set_jammed(jammed);
+            info!(
+                "Jam control: carriage {}",
+                if jammed { "JAMMED" } else { "freed" }
+            );
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    });
 }
 
 /// Configure the global tracing subscriber from a log-level string.

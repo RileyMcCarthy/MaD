@@ -91,11 +91,13 @@ playground-pty: p2image emulator-release
 # "reached ... DevTools at http://127.0.0.1:9222" line (Chrome held; a page
 # made before then is not on the board's clock), with the app served
 # (`npm run dev`):
-#   cd ../Software/Control && CDP_URL=http://127.0.0.1:9222 npm run e2e
-# Ctrl-C stops the board and its Chrome.
+#   cd ../Software/Control && CDP_URL=http://127.0.0.1:9222 E2E_JAM_FILE=/tmp/mad-sil.jam npm run e2e
+# Ctrl-C stops the board and its Chrome. The carriage jams while JAM_FILE
+# exists (the SERVO-stall scenario's lever; the suite's E2E_JAM_FILE).
 DEVTOOLS_PORT ?= 9222
+JAM_FILE ?= /tmp/mad-sil.jam
 e2e-emulator: p2image emulator-release
-	$(EMULATOR) $(P2_IMAGE) --sd-path ./sd --chrome --headless --granted --devtools-port $(DEVTOOLS_PORT) --log-level info
+	$(EMULATOR) $(P2_IMAGE) --sd-path ./sd --chrome --headless --granted --devtools-port $(DEVTOOLS_PORT) --jam-file $(JAM_FILE) --log-level info
 
 # The e2e suite on the board route, start to finish: the dev server, the
 # board with a headless Chrome on its clock, the suite attached to that
