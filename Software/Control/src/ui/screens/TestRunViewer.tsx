@@ -62,7 +62,7 @@ export default function TestRunViewer() {
   if (loading) {
     return (
       <div>
-        <h1>Test Run</h1>
+        <h1>Test run</h1>
         <div className="panel muted">Loading…</div>
       </div>
     );
@@ -93,7 +93,7 @@ export default function TestRunViewer() {
       {/* Info cards */}
       <div className="grid cols-2">
         <div className="panel">
-          <h2>Sample Profile</h2>
+          <h2>Sample profile</h2>
           <table>
             <tbody>
               <tr><td>Max Force</td><td>{sp.maxForce} N</td></tr>
@@ -125,7 +125,7 @@ export default function TestRunViewer() {
       ) : (
         <>
           <div className="panel" data-testid="chart-force">
-            <h2>Force vs Time</h2>
+            <h2>Force vs time</h2>
             <StaticLineChart
               xLabel="Time (s)"
               yLabel="Force (N)"
@@ -136,7 +136,7 @@ export default function TestRunViewer() {
           </div>
 
           <div className="panel" data-testid="chart-position">
-            <h2>Position vs Time (Actual / Setpoint / Expected)</h2>
+            <h2>Position vs time (actual / setpoint / expected)</h2>
             <StaticLineChart
               xLabel="Time (s)"
               yLabel="Sample extension (mm)"

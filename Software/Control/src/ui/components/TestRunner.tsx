@@ -201,7 +201,7 @@ export default function TestRunner({ onChanged }: TestRunnerProps) {
 
       // Motion is gated by the firmware state machine — a test won't move the
       // gantry unless motion is enabled first. (It is enabled as a
-      // separate dashboard step before Run Test.)
+      // separate dashboard step before Run test.)
       await deviceClient.setMotionEnabled(true);
 
       // Push the sample profile to firmware, then upload + start the test.
@@ -261,7 +261,7 @@ export default function TestRunner({ onChanged }: TestRunnerProps) {
 
   return (
     <div className="panel">
-      <h2>New Test</h2>
+      <h2>New test</h2>
       {!folderReady && (
         <p className="muted">Choose a data folder in Settings to load profiles.</p>
       )}
@@ -312,7 +312,7 @@ export default function TestRunner({ onChanged }: TestRunnerProps) {
           disabled={runDisabled}
           data-testid="run-test"
         >
-          {testRunning ? 'Test Running…' : busy ? 'Starting…' : 'Run Test'}
+          {testRunning ? 'Test running…' : busy ? 'Starting…' : 'Run test'}
         </button>
         <button onClick={() => setPreviewOpen(true)} disabled={!previewProfile}>
           Preview G-code
