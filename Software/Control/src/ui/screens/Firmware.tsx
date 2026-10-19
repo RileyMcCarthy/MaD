@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useStore } from '@/store/useStore';
 import { deviceClient } from '@/device/session';
-import { estimateSeconds } from '@/firmware/image';
+import { estimateSeconds, flashWriteMs } from '@/firmware/image';
 import { LOADER_BAUD_RATE } from '@/firmware/webSerialTransport';
 import { programPort, type ProgramProgress } from '@/firmware/program';
+import { closeFlashPort } from '@/firmware/closeFlashPort';
+import { logger } from '@/diagnostics/log';
 import {
   describePort,
   rememberFlashPort,
@@ -15,6 +17,7 @@ import {
   fetchReleaseManifest,
   type FirmwareReleaseManifest,
 } from '@/firmware/release';
+import { hostingRoot } from '@/hosting';
 
 type Status =
   | { kind: 'idle' }
@@ -57,7 +60,7 @@ export default function Firmware() {
 
   useEffect(() => {
     let live = true;
-    fetchReleaseManifest(import.meta.env.BASE_URL).then(
+    fetchReleaseManifest(hostingRoot(import.meta.env.BASE_URL)).then(
       (m) => live && setRelease({ kind: 'ready', manifest: m }),
       (err: unknown) =>
         live &&
@@ -125,7 +128,13 @@ export default function Firmware() {
     );
     if (!ok) return;
 
-    const wasConnected = connected;
+    // The main device session is touched only when it is on the port being
+    // flashed (one adapter for both). Flashing over a separate programming
+    // adapter, as on the MadEdge PCBA, leaves the main connection running.
+    const sharesPort = deviceClient.heldPort() === target.port;
+    // Set once the session has handed its port over; it is then always given
+    // back afterwards, whether the flash worked or not.
+    let tookSessionPort = false;
     try {
       // Fetch (and check) the release before touching the board, so a failed
       // download leaves the live session and the flash as they were.
@@ -134,37 +143,50 @@ export default function Firmware() {
         firmware = new Uint8Array(await file.arrayBuffer());
       } else if (manifest) {
         setStatus({ kind: 'downloading', name: manifest.assetName });
-        firmware = await fetchReleaseImage(import.meta.env.BASE_URL, manifest);
+        firmware = await fetchReleaseImage(hostingRoot(import.meta.env.BASE_URL), manifest);
       } else {
         return;
       }
 
       setStatus({ kind: 'running', progress: { phase: 'resetting' } });
-      // The chip reboots as part of programming, so any live protocol session is
-      // void — and on a single-port board the worker still holds the streams,
-      // also while it is still connecting or after a lost link.
-      if (wasConnected || deviceClient.isConnected()) await disconnect();
+      // On a shared port the worker holds the streams (also while connecting or
+      // after a lost link), and the chip reboots, so that session has to go.
+      if (sharesPort) {
+        await disconnect();
+        tookSessionPort = true;
+      }
 
-      const result = await programPort(target.port, firmware, {
-        // The P2 Edge boots from SPI flash, so that is the only thing the app
-        // offers. RAM loading stays available to tools/hw-p2load.mts, where
-        // running a build without committing it is a bring-up convenience.
-        mode: 'flash',
-        onProgress: (progress) => setStatus({ kind: 'running', progress }),
-      });
+      let result;
+      try {
+        result = await programPort(target.port, firmware, {
+          // The P2 Edge boots from SPI flash, so that is the only thing the app
+          // offers. RAM loading stays available to tools/hw-p2load.mts, where
+          // running a build without committing it is a bring-up convenience.
+          mode: 'flash',
+          onProgress: (progress) => setStatus({ kind: 'running', progress }),
+        });
+      } finally {
+        // The page opened this port; it must not keep it, whatever happened.
+        if (!(await closeFlashPort(target.port))) {
+          logger('flash').warn('port-left-open', 'the flash port did not close; unplug and replug the adapter', {
+            port: target.label,
+          });
+        }
+      }
 
       setStatus({
         kind: 'done',
         message: `Wrote ${result.imageBytes.toLocaleString()} bytes to flash. The board has rebooted into the new firmware.`,
       });
-
-      if (wasConnected) {
-        // Give the firmware a moment to come up before re-opening the port.
-        await new Promise((r) => setTimeout(r, 1500));
-        await connect();
-      }
     } catch (err) {
       setStatus({ kind: 'error', message: err instanceof Error ? err.message : String(err) });
+    }
+
+    if (tookSessionPort) {
+      // Give the firmware a moment to come up, then reconnect to the same port:
+      // no chooser, and the user is never left disconnected by a flash.
+      await new Promise((r) => setTimeout(r, 1500));
+      await connect({ port: target.port });
     }
   };
 
@@ -296,7 +318,7 @@ export default function Firmware() {
         </button>
         {source && !busy && !fileError && (
           <span className="muted" style={{ marginLeft: 12 }}>
-            about {estimateSeconds(source.size, LOADER_BAUD_RATE).toFixed(0)}s
+            about {(estimateSeconds(source.size, LOADER_BAUD_RATE) + flashWriteMs(source.size) / 1000).toFixed(0)}s
           </span>
         )}
 
@@ -311,7 +333,9 @@ export default function Firmware() {
               ? `Uploading… ${pct}%`
               : status.progress.phase === 'resetting'
                 ? 'Resetting the board…'
-                : 'Finishing…'}
+                : status.progress.phase === 'writing'
+                  ? `Writing flash… about ${Math.ceil((status.progress.writeMs ?? 0) / 1000)}s. Do not disconnect or reset the board.`
+                  : 'Finishing…'}
           </p>
         )}
         {status.kind === 'done' && (

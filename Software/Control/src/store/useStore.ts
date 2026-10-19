@@ -540,13 +540,21 @@ export const useStore = create<AppState>((set, getState) => ({
     stopTimers();
     userDisconnect = true;
     clearSerialPref(); // intentional disconnect ⇒ don't auto-reconnect next session
-    await deviceClient.disconnect();
+    let error: string | null = null;
+    try {
+      await deviceClient.disconnect();
+    } catch (err) {
+      // The session is over either way; what is left is a port the browser
+      // would not let go of, which the operator must hear about.
+      error = err instanceof Error ? err.message : String(err);
+    }
     set({
       connection: 'disconnected',
       responding: false,
       latestSample: null,
       machineState: null,
       canReconnect: false,
+      ...(error ? { error } : {}),
     });
   },
 

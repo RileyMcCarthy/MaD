@@ -29,14 +29,24 @@ const TEARDOWN_BUDGET_MS = 1500;
  */
 const FLUSH_BUDGET_MS = 50;
 
+/** Resolve when `p` settles, never rejecting: teardown must not throw on an
+ *  already-dead stream. A try/catch rather than `p.then(ok, fail)` because
+ *  @vitest/coverage-v8 5 counts an unused rejection callback as an uncovered
+ *  function, and the firmware loader's coverage gate requires every function
+ *  to run. */
+async function settleIgnore(p: Promise<unknown>): Promise<void> {
+  try {
+    await p;
+  } catch {
+    /* already-dead stream */
+  }
+}
+
 /** Resolve when `p` settles or after `ms`, whichever is first (never rejects). */
 function withTimeout(p: Promise<unknown>, ms: number): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   return Promise.race([
-    p.then(
-      () => undefined,
-      () => undefined,
-    ),
+    settleIgnore(p),
     new Promise<void>((resolve) => {
       timer = setTimeout(resolve, ms);
     }),
