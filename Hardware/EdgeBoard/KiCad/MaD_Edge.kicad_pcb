@@ -61455,7 +61455,7 @@
 				)
 			)
 		)
-		(property "Value" "AM26LV32xD"
+		(property "Value" "AM26LV32IDR"
 			(at 0 5.9 90)
 			(layer "F.Fab")
 			(uuid "36d58e71-645f-409c-a4f3-e9d822faca34")
@@ -61503,7 +61503,7 @@
 				)
 			)
 		)
-		(property "Manufacturer_Part_Number" "AM26LS32CD"
+		(property "Manufacturer_Part_Number" "AM26LV32IDR"
 			(at 0 0 90)
 			(unlocked yes)
 			(layer "F.Fab")

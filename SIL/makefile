@@ -12,6 +12,8 @@
 #   make e2e            - All of it, headless, and the e2e suite against it (SCENARIOS selects)
 #   make e2e-rom        - FW-ISS: the app's flasher against the ISS's mask ROM, headless
 #   make e2e-bundle     - BUNDLE-live: the built bundle (as pages.yml builds it) on the board, headless
+#   make flash-image    - build/flash.bin: stage-1 and the P2 image, the module's boot flash
+#   make sd-image       - build/sd.img: a 32 MiB FAT16 card mirroring ./sd
 #   make clean          - Remove build artifacts
 #
 # There is ONE configuration a browser belongs in: the P2 image on the ISS,
@@ -36,7 +38,19 @@ PROTOEMB_TEMPLATES = ../Protocol/ProtoEmb/core/templates
 # instruction, and a debug build is far slower still.
 EMULATOR = ./target/release/mad-emulator
 
-.PHONY: p2image protocol emulator emulator-release test playground playground-iss playground-pty playground-rom e2e-emulator e2e e2e-rom e2e-bundle bootrom clean
+# The embsim tool, built from the pinned submodule; it builds and runs
+# mad-runner, which holds MaD's kinds (embsim PROJECTS.md §10, "A runner the
+# project owns"). EMBSIM=embsim uses an installed one.
+EMBSIM ?= cargo run --release --quiet --manifest-path embsim/Cargo.toml -p embsim-cli --
+
+# The files a project's module flash and card take (embsim MIGRATING-MAD.md
+# step 4), until embsim's w25q128jv and sd-card kinds lay them out
+# themselves (E5). MaD's root .gitignore keeps build/ out of git.
+BUILD_DIR = build
+FLASH_IMAGE = $(BUILD_DIR)/flash.bin
+SD_IMAGE = $(BUILD_DIR)/sd.img
+
+.PHONY: p2image protocol emulator emulator-release test playground playground-iss playground-pty playground-rom e2e-emulator e2e e2e-rom e2e-bundle flash-image sd-image bootrom clean
 
 # Build the P2 image the ISS runs (`p2core`, `p2iss`, `mad-emulator`).
 #
@@ -91,11 +105,13 @@ playground-pty: p2image emulator-release
 # "reached ... DevTools at http://127.0.0.1:9222" line (Chrome held; a page
 # made before then is not on the board's clock), with the app served
 # (`npm run dev`):
-#   cd ../Software/Control && CDP_URL=http://127.0.0.1:9222 npm run e2e
-# Ctrl-C stops the board and its Chrome.
+#   cd ../Software/Control && CDP_URL=http://127.0.0.1:9222 E2E_JAM_FILE=/tmp/mad-sil.jam npm run e2e
+# Ctrl-C stops the board and its Chrome. The carriage jams while JAM_FILE
+# exists (the SERVO-stall scenario's lever; the suite's E2E_JAM_FILE).
 DEVTOOLS_PORT ?= 9222
+JAM_FILE ?= /tmp/mad-sil.jam
 e2e-emulator: p2image emulator-release
-	$(EMULATOR) $(P2_IMAGE) --sd-path ./sd --chrome --headless --granted --devtools-port $(DEVTOOLS_PORT) --log-level info
+	$(EMULATOR) $(P2_IMAGE) --sd-path ./sd --chrome --headless --granted --devtools-port $(DEVTOOLS_PORT) --jam-file $(JAM_FILE) --log-level info
 
 # The e2e suite on the board route, start to finish: the dev server, the
 # board with a headless Chrome on its clock, the suite attached to that
@@ -115,6 +131,21 @@ BUNDLE_DIR = $(abspath target/board-route/bundle)
 e2e-bundle: p2image emulator-release
 	cd ../Software/Control && ./node_modules/.bin/vite build --base=$(BUNDLE_BASE) --outDir $(BUNDLE_DIR) --emptyOutDir
 	APP_DIST=$(BUNDLE_DIR) APP_BASE=$(BUNDLE_BASE) SCENARIOS=BUNDLE-live scripts/board-route.sh e2e
+
+# The module's boot flash: embsim's stage-1 loader, then the P2 image behind
+# it, as the P2's ROM boots it off the flash (`embsim flash-image`). A
+# project names it in its w25q128jv entry (`image = "build/flash.bin"`).
+flash-image: p2image
+	mkdir -p $(BUILD_DIR)
+	$(EMBSIM) flash-image $(P2_IMAGE) -o $(FLASH_IMAGE)
+
+# The card in the module's socket: 32 MiB of FAT16 holding the directories
+# the firmware writes into, with ./sd mirrored onto it when it is there, the
+# card mad-emulator --sd-path builds. A project names it in its sd-card
+# entry (`image = "build/sd.img"`).
+sd-image:
+	mkdir -p $(BUILD_DIR)
+	cargo run --release --quiet -p p2iss --example dump_card -- $(SD_IMAGE) sd
 
 # The boot ROM and the stage-1 flash loader the ISS boots through.
 FLEXSPIN = $(HOME)/.platformio/packages/toolchain-flexcc/bin/macos-amd64/flexspin
@@ -141,6 +172,6 @@ e2e-rom: emulator-release
 
 # Clean build artifacts
 clean:
-	rm -rf test-results
+	rm -rf test-results $(BUILD_DIR)
 	cargo clean
 	cd $(FIRMWARE_DIR) && pio run -e $(P2_ENV) -t clean

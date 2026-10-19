@@ -1,0 +1,22 @@
+# mad-runner: this project's runner, the embsim command over its catalog crates
+# (PROJECTS.md §10, "A runner the project owns"). The project names it in
+# [catalog] runner; the `embsim` tool builds it with the workspace's Cargo.lock
+# (--locked once there is one) and runs the project through it.
+[package]
+name = "mad-runner"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "mad-runner"
+path = "src/main.rs"
+
+[dependencies]
+# The same embsim as the catalog crates': one copy of embsim in the runner.
+embsim-cli = { path = "../embsim/cli" }
+mad-catalog = { path = "../mad-catalog" }
+
+[dev-dependencies]
+# The test runs the built runner on MaD's bench projects, as `embsim check` does.
+vibes-behaviour = { path = "../../Vibes/bindings/rust" }
