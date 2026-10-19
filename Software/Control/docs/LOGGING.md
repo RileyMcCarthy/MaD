@@ -169,6 +169,13 @@ of the last 64 (or 96) bytes from the byte ring, inline in the entry. For a
 framing or CRC fault those bytes are the whole story, and by export time they
 would long since have been overwritten.
 
+## Crash stacks
+
+Strings under a key ending in `stack` keep up to `SANITIZE_STACK_MAX` (4000)
+characters instead of the usual 200, and `ui/render-crash` records both the JS
+stack and the component stack whole — a trace cut at 200 characters names no
+frame of the failing code.
+
 ## Raw serial tail
 
 `src/diagnostics/byteRing.ts` keeps the last **64 KiB** of RX+TX in a
@@ -373,7 +380,11 @@ Either way a token that cannot file is rejected at connect time instead of at
 report time.
 
 With a token connected, Report a bug uploads the full bundle as a **secret
-gist** and files an issue linking it. That removes the manual drag-and-drop
+gist** and files an issue linking it. That body has no URL budget, so
+`buildApiIssueBody` also gives each recent error up to eight frames of stack (a
+stack shared by several entries — one crash is logged by the console, the
+boundary and the crash reporter — is printed once), plus the failure counters, a
+one-line summary of the previous page load, and what the gist holds. That removes the manual drag-and-drop
 attachment, which is the step where reports otherwise get abandoned. Without a
 token the original flow is unchanged: download the bundle, open a pre-filled
 issue, attach it by hand.

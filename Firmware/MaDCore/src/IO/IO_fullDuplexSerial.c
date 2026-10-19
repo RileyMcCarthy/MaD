@@ -83,11 +83,10 @@ void IO_fullDuplexSerial_run(void)
         lib_staticQueue_S *const txQueue = &IO_fullDuplexSerial_data.channel[channel].txQueue;
         static uint8_t rxChunk[IO_FULLDUPLEXSERIAL_RX_CHUNK];
 
-        /* Receive: burst-drain everything currently on the wire into the rx ring.
-         * HAL_serial_recieveBytes spins across inter-byte gaps internally (its
-         * idle budget covers one ~5 us byte time at 2 Mbaud), so a single call
-         * captures a whole frame gaplessly; the do/while handles frames larger
-         * than one chunk. Enqueue happens off that hot path. */
+        /* Receive: burst-drain everything received so far into the rx ring.
+         * HAL catches each byte by interrupt on this cog, so time spent below
+         * (transmitting, the cogManager wrapper) loses nothing; the do/while
+         * handles bursts larger than one chunk. */
         uint32_t got;
         do
         {

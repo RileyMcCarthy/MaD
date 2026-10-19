@@ -2,7 +2,7 @@
  * Orchestrates a full programming run: open the port, wake the boot ROM, build
  * the right image, stream it, hand the port back.
  */
-import { buildFlashImage, buildRamImage } from './image';
+import { buildFlashImage, buildRamImage, flashWriteMs } from './image';
 import { detectP2, loadImage, type LoaderEvent, type P2Transport } from './p2loader';
 import { LOADER_BAUD_RATE, WebSerialTransport } from './webSerialTransport';
 import { logger, nowMs } from '@/diagnostics/log';
@@ -77,20 +77,26 @@ function makeLoaderLogger(): (event: LoaderEvent) => void {
 
 export type ProgramMode = 'ram' | 'flash';
 
-export type ProgramPhase = 'resetting' | 'uploading' | 'verifying' | 'done';
+export type ProgramPhase = 'resetting' | 'uploading' | 'writing' | 'verifying' | 'done';
 
 export interface ProgramProgress {
   phase: ProgramPhase;
   /** Bytes streamed so far, during 'uploading'. */
   sent?: number;
   total?: number;
+  /** How long the 'writing' phase holds the port, in milliseconds. */
+  writeMs?: number;
 }
 
 export interface ProgramOptions {
   mode: ProgramMode;
   onProgress?: (p: ProgramProgress) => void;
   signal?: AbortSignal;
+  /** Waits out the flash write; tests pass one that does not sleep. */
+  wait?: (ms: number) => Promise<void>;
 }
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 export interface ProgramResult {
   /** ROM version character reported during detection ('G' on shipping silicon). */
@@ -107,7 +113,7 @@ export interface ProgramResult {
 export async function programTransport(
   transport: P2Transport,
   firmware: Uint8Array,
-  { mode, onProgress, signal }: ProgramOptions,
+  { mode, onProgress, signal, wait = sleep }: ProgramOptions,
 ): Promise<ProgramResult> {
   const onEvent = makeLoaderLogger();
   const startedAt = nowMs();
@@ -131,6 +137,19 @@ export async function programTransport(
       onEvent,
       signal,
     });
+
+    if (mode === 'flash') {
+      // The stub erases and programs only after the ROM has the whole image,
+      // and says nothing when it is done. Keep the port (and so DTR) still
+      // until it must be, or the next open resets the chip mid-write and
+      // leaves a partial image that will not boot. Not abortable: stopping
+      // here would cause exactly that.
+      phase = 'writing';
+      const writeMs = flashWriteMs(image.byteLength);
+      onProgress?.({ phase: 'writing', writeMs });
+      log.info('writing', 'waiting for the flash write to finish', { writeMs });
+      await wait(writeMs);
+    }
 
     phase = 'verifying';
     onProgress?.({ phase: 'verifying' });

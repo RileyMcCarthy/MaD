@@ -1,7 +1,7 @@
 import { describe, expect } from 'vitest';
 import { behaviour } from '@vibes/behaviour';
 import { detectP2, loadImage, hardwareReset, P2LoaderError, type P2Transport } from './p2loader';
-import { buildFlashImage, buildRamImage, estimateSeconds, flashLoaderStub } from './image';
+import { buildFlashImage, buildRamImage, estimateSeconds, flashLoaderStub, flashWriteMs } from './image';
 import { programTransport } from './program';
 
 /**
@@ -489,9 +489,47 @@ describe('programTransport', () => {
     async () => {
       const rom = new FakeRom();
       const fw = Uint8Array.from({ length: 256 }, (_, i) => (i * 3) & 0xff);
-      const result = await programTransport(rom, fw, { mode: 'flash' });
+      const result = await programTransport(rom, fw, { mode: 'flash', wait: async () => {} });
       expect(result.imageBytes).toBe(496 + 256);
       expect(rom.imageWithoutChecksum(496 + 256).slice(496)).toEqual(fw);
+    },
+  );
+});
+
+describe('flashWriteMs', () => {
+  behaviour(
+    {
+      id: 'flash.write-wait-covers-stub-programming-time',
+      covers: 'src/firmware/image.ts#flashWriteMs',
+      given: 'flash images from a few kilobytes up to the full 512-kilobyte hub',
+      expect: {
+        'double-the-stub-rate': 'the write wait is at least twice the flash stub\'s published programming time of 4.3 milliseconds per kilobyte, plus one second',
+        'grows-with-size': 'a larger image waits longer',
+        'covers-bench-proven-5s': 'an image the size of the 0.13 release (about 323 kilobytes) or larger waits at least 5 seconds',
+        'bounded-above': 'even the full 512-kilobyte hub waits under 10 seconds',
+      },
+      why: {
+        'double-the-stub-rate':
+          'the stub runs on the chip\'s uncalibrated internal oscillator, and flash parts vary; a wait that ends before the write does leaves an image that will not boot',
+        'covers-bench-proven-5s':
+          'the only bench-proven wait at that size is 5 seconds; a reconnect that resets the chip before the write ends leaves a board that does not boot from flash',
+        'bounded-above':
+          'the user is locked out of the screen for the whole wait, so the margin must not silently grow without bound either',
+      },
+    },
+    () => {
+      let previous = 0;
+      for (const kib of [4, 64, 128, 256, 323, 512]) {
+        const ms = flashWriteMs(kib * 1024);
+        expect(ms).toBeGreaterThanOrEqual(1000 + 2 * 4.3 * kib - 0.5);
+        expect(ms).toBeGreaterThan(previous);
+        previous = ms;
+      }
+      // The 0.13 madEdge image is ~323 KB; the bench needed >= 5 s for it.
+      for (const kib of [300, 323, 400, 512]) {
+        expect(flashWriteMs(kib * 1024)).toBeGreaterThanOrEqual(5000);
+      }
+      expect(flashWriteMs(512 * 1024)).toBeLessThan(10_000);
     },
   );
 });

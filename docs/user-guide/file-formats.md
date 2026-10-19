@@ -103,7 +103,7 @@ time_us,force_mN,position_um,setpoint_um
 | `setpoint_um` | µm | Commanded position |
 
 The [run viewer](test-history-and-analysis.md) converts these to N
-and mm and derives stress/strain. **Export** adds a metadata header (sample/motion
+and mm and derives stress/strain. **Export CSV** adds a metadata header (sample/motion
 details) to the CSV.
 
 !!! note "Saved vs. shared files"

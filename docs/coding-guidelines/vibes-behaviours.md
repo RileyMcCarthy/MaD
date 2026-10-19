@@ -271,7 +271,30 @@ purpose). After adding or changing behaviours:
 node Vibes/bin/vibes.mjs collect --write   # regenerate behaviours.jsonl
 ```
 
-and commit the ledger with your change. CI (`Behaviour ledger` job) reports the
+and commit the ledger with your change. The `BH-n` numbers it assigns are
+provisional until the PR merges: another open PR may take the same ones.
+Settle them after every merge of `main` into your branch (fetch first, so
+`origin/main` is current), **and whenever the `Behaviour numbers settled`
+check fails**. The command runs no suites and
+prints every number it moves, so you can fix any citation:
+
+```bash
+node Vibes/bin/vibes.mjs renumber --base origin/main
+```
+
+Then commit the result. A conflict on `behaviours.next` is only one way numbers
+collide. Do **not** resolve it by keeping the larger side by hand:
+`behaviours.jsonl` usually merges cleanly, so both PRs' rows would end up
+sharing numbers. Collisions can also happen with no conflict at all. Two PRs
+that add the same number of rows from the same base both bump
+`behaviours.next` to the same value, so git merges it silently while their
+rows still share numbers. Only the check catches that case.
+
+The blocking `Behaviour numbers settled` job runs the same command with `--check`.
+A suite that cannot run on your machine (e.g. ASan `native_test` on macOS)
+keeps its committed rows when you collect, instead of losing them.
+
+CI (`Behaviour ledger` job) reports the
 diff on every PR — as a single comment on the PR, edited in place on each run
 so it always shows the latest verdict, and in the job summary — and warns when
 the committed ledger is stale.

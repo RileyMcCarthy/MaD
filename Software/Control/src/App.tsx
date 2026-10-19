@@ -143,8 +143,10 @@ function logBoundaryCrash(scope: string) {
       scope,
       route: window.location.hash,
       name: error.name,
-      // First few frames only — enough to place the failing component.
-      componentStack: (info.componentStack ?? '').split('\n').slice(0, 6).join('\n'),
+      // Whole traces: the JS stack names the failing line, the component stack
+      // the screen it was rendering. Both are what a report gets triaged from.
+      stack: error.stack ?? '',
+      componentStack: info.componentStack ?? '',
     });
   };
 }
@@ -166,9 +168,9 @@ function Shell() {
         <nav className="nav">
           <NavLink to="/connect">Connect</NavLink>
           <NavLink to="/live">Live</NavLink>
-          <NavLink to="/profiles">Samples</NavLink>
-          <NavLink to="/create">Motion Profiles</NavLink>
-          <NavLink to="/runs">Test Runs</NavLink>
+          <NavLink to="/profiles">Sample profiles</NavLink>
+          <NavLink to="/create">Motion profiles</NavLink>
+          <NavLink to="/runs">Test runs</NavLink>
           <NavLink to="/firmware">Firmware</NavLink>
           <NavLink to="/about">About</NavLink>
           <NavLink to="/settings">Settings</NavLink>

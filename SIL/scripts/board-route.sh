@@ -15,7 +15,9 @@
 # DEVTOOLS_PORT (9222; empty for one Chrome picks), BOARD_LOGS (where the
 # board's and the dev server's logs go), BOARD_ARGS (more mad-emulator
 # arguments), E2E_TIMINGS (a JSON file of per-scenario host and board times),
-# and BOARD_PER_SCENARIO=1: a fresh board for each scenario, so a board that
+# E2E_JAM_FILE (the file whose presence jams the board's carriage, passed to
+# mad-emulator as --jam-file and to the suite for SERVO-stall; default
+# $BOARD_LOGS/jam), and BOARD_PER_SCENARIO=1: a fresh board for each scenario, so a board that
 # stops (the node's worker-boot stall) costs that scenario alone.
 #
 # APP_DIST=DIR serves a built bundle (`vite build --base=APP_BASE --outDir
@@ -56,6 +58,8 @@ app_port=${APP_PORT:-$([ -n "$app_dist" ] && echo 4173 || echo 5174)}
 app_url="http://127.0.0.1:$app_port$app_base"
 logs=${BOARD_LOGS:-$sil/target/board-route}
 mkdir -p "$logs"
+# The suite's stall scenario jams the carriage by creating this file.
+export E2E_JAM_FILE=${E2E_JAM_FILE:-$logs/jam}
 
 for need in "$image" "$emulator"; do
   [ -f "$need" ] || {
@@ -133,7 +137,8 @@ cdp_url=''
 start_board() {
   local log=$1
   # shellcheck disable=SC2086 # BOARD_ARGS is a list of arguments
-  local args=("$image" --sd-path "$sil/sd" --chrome --granted --log-level info ${BOARD_ARGS:-})
+  local args=("$image" --sd-path "$sil/sd" --chrome --granted --log-level info
+    --jam-file "$E2E_JAM_FILE" ${BOARD_ARGS:-})
   local devtools_port=${DEVTOOLS_PORT-9222}
   if [ -n "$devtools_port" ]; then args+=(--devtools-port "$devtools_port"); fi
   if [ "$mode" = playground ]; then args+=(--url "$app_url"); else args+=(--headless); fi
