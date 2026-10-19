@@ -19,13 +19,23 @@
 //! | `DIR` clear, or a smart input mode | released |
 //! | `P_ASYNC_TX` with `P_OE` | the line's idle mark until the first byte, then a [`SerialLevelBridge`] framing at the rate the pin's bit period and the guest's clock give |
 //! | `P_ASYNC_RX` | read by a deframer at the rate its bit period and the guest's clock give; `RDPIN` takes its bytes |
-//! | `P_TRANSITION` or `P_NCO_FREQ` with `P_OE` | a step train, one periodic drive per rate change ([`crate::pulse`]) |
-//! | `P_PULSE` and the sync-serial modes | the synchronous-serial hardware pumped over virtual time ([`p2core::SmartBus`]), so the module's flash and card share `P58`–`P61` as they do on the board |
+//! | `P_TRANSITION` or `P_NCO_FREQ` with `P_OE` | a step train, one periodic drive per rate change ([`crate::pulse`]); a `WRPIN` to any other mode banks its count and hands the pad back to the word, so `_pinclear` (`DIRL`, `WRPIN #0`) releases it |
+//! | `P_PULSE` and the sync-serial modes, `DIR` set | the synchronous-serial hardware ([`p2core::SmartBus`]), clocked on the guest's own clock, so the module's flash and card share `P58`–`P61` as they do on the board; with `DIR` clear, or once the word is cleared, released |
 //!
 //! A pad whose published drive is strong (under [`WEAK_DRIVE_OHMS`]) reads
 //! its own `OUT`; every other pad reads its net (`p2core::Board::sensed`,
 //! the strong-mask rule). Nothing straps a pin from here: the board's
 //! resistors and switches do (`S301` on the P2-EC32MB).
+//!
+//! Two known gaps. The pads ignore `P_INVERT_OUTPUT` in a logic-mode word
+//! (`BankSupplies::pad_drive` reads only the drive fields), so the 15 kΩ
+//! pull-up flexspin's `sdmm.cc` sets on the card's data-out pin, `OUT` low
+//! and inverted, presents as a pull-down; the sync-serial clock's own
+//! inversion is the bus model's and is right. And `TESTP` on `P0` or `P1`
+//! reads "a byte is waiting on `P63`" while neither is a receive pin of its
+//! own, which is what the ROM's serial loader measures its autobaud with:
+//! the pins' measurement modes are not modelled, so the serial boot inside
+//! the package rests on that shortcut until they are.
 //!
 //! # The guest's clock
 //!
@@ -40,14 +50,31 @@
 //! stops the guest until one does. Hub `$14`, where a program records the
 //! rate it believes it set, plays no part: the ROM keeps other data there.
 //!
-//! # Time
+//! # Time: the guest leads, and each change waits for its own instant
 //!
-//! As in [`crate::P2Iss`], the engine leads: each wake runs the guest up to
-//! the engine's instant, and a guest that drives a pad yields at once so
-//! the net resolves before it reads anything back. A pad change is stamped
-//! with the wake's instant, which is at or after the guest's own.
+//! A wake runs the guest forward from its own clock, at most [`SLICE_NS`]
+//! past the engine's instant, the cogs in the order of their clocks. The
+//! moment an instruction does something outside the chip — drives or
+//! releases a pad, writes a pin's mode word, hands a byte to a transmit pin,
+//! starts or stops a step train, sets the clock — the pass ends after that
+//! instruction, and what it did waits, as a batch, for the instant the
+//! instruction ran at: the clock count of its cog once it had run, through
+//! the clock map. The wake that lands on that instant carries it out, so
+//! every change is stamped at the guest's own instant and never at a
+//! wake's (embsim `DESIGN.md` rule 3), and arms the next wake at the same
+//! instant, so the engine resolves what the change drove, and delivers any
+//! answer (a flash presenting its next bit), before the guest runs on.
+//! Two wakes a change: the boot's flash clock, an edge every few hundred
+//! nanoseconds, lands each edge on a nanosecond of its own.
+//!
+//! The synchronous-serial clock is the guest's too: its next edge is a
+//! clock count the pass stops at, and the edge is carried out at its
+//! instant like any other change. What the nets present comes the other
+//! way at the instant they resolve, so a guest that runs ahead reads a
+//! change up to one slice late; a guest that drives a pad and reads the
+//! answer back reads it before its next instruction.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -273,8 +300,46 @@ impl GuestClock {
     }
 }
 
+/// Something an instruction did outside the chip, carried out at the
+/// instant it ran at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CoreOp {
+    /// A pad's drive changed (`DIR`, `OUT`, a shifter's first bit): put it
+    /// on its net.
+    Publish,
+    /// A `WRPIN`: the pad plays the role its new mode word gives it.
+    Wrpin { pin: u8, cfg: u32 },
+    /// A `WXPIN` on a receive pin: its deframer's rate.
+    Wxpin { pin: u8 },
+    /// A `WYPIN` that starts or retunes a step train, or hands a byte to a
+    /// transmit pin.
+    Wypin { pin: u8, y: u32 },
+    /// A `WYPIN` that starts a burst on the sync-serial clock pin.
+    BurstStart,
+    /// The clock word a `HUBSET` set, and the clock count it set it at.
+    ClockWord { word: u32, at: u64 },
+    /// The sync-serial clock's next transition.
+    PumpEdge,
+}
+
+/// What one instant holds: the ops of one instruction, or one clock edge.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Batch {
+    at_ns: u64,
+    at_clocks: u64,
+    ops: Vec<CoreOp>,
+}
+
+/// The sync-serial clock running on the guest's clock: the clock count its
+/// next transition falls on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Pump {
+    next_edge_clocks: u64,
+}
+
 /// What a [`P2IssCore`]'s bus keeps of its pads: the handles, what each
-/// was last told, the bank supplies they drive at, and the guest's clock.
+/// was last told, the bank supplies they drive at, the guest's clock, and
+/// the changes waiting for their instants.
 pub(crate) struct CorePads {
     banks: BankSupplies,
     handles: Vec<PinHandle>,
@@ -292,6 +357,19 @@ pub(crate) struct CorePads {
     pub(crate) clock: GuestClock,
     /// Said once: a pad was configured in a current-source drive mode.
     current_source_said: bool,
+    /// What the instruction now running did outside, in order.
+    ops: Vec<CoreOp>,
+    /// Changes waiting for their instants, earliest first. The guest does
+    /// not run while one waits, so nothing it does next can come before it.
+    pending: VecDeque<Batch>,
+    /// The sync-serial clock, while a burst runs.
+    pump: Option<Pump>,
+    /// Pads the guest may have moved since the last publish; a pad whose
+    /// key is unknown is published whatever this says.
+    dirty: u64,
+    /// Every pad may have moved: a `WRPIN` can hand the bus's clock or
+    /// transmit role from one pin to another.
+    dirty_all: bool,
 }
 
 /// A bank whose supply has not been read.
@@ -310,6 +388,11 @@ impl CorePads {
             bank_bits: [NO_SUPPLY; NUM_BANKS],
             clock: GuestClock::new(),
             current_source_said: false,
+            ops: Vec::new(),
+            pending: VecDeque::new(),
+            pump: None,
+            dirty: 0,
+            dirty_all: false,
         }
     }
 
@@ -370,8 +453,8 @@ impl CorePads {
 pub(crate) struct CoreShared {
     /// Receive pins, by the guest's mode word: bit *i* pad *i*.
     rx_mask: AtomicU64,
-    /// Their deframers and the bytes they took off the wire.
-    rx: Mutex<HashMap<u8, CoreRx>>,
+    /// Their deframers and the bytes they took off the wire, in pin order.
+    rx: Mutex<BTreeMap<u8, CoreRx>>,
     /// The crystal the package last delivered on `XI`, in hertz; 0 while
     /// nothing reaches the pin.
     crystal_hz: AtomicU64,
@@ -383,8 +466,9 @@ pub(crate) struct CoreShared {
     reset: Mutex<P2ResetState>,
     /// The START instant, once the package started the core.
     started_at_ns: Mutex<Option<u64>>,
-    /// The instant of the slice wake already on the wheel.
-    next_slice_ns: Mutex<Option<u64>>,
+    /// The instant of the core's own wake already on the wheel: the next
+    /// change's, or where the guest's clock got to.
+    own_wake_ns: Mutex<Option<u64>>,
     /// The guest's clock rate, and the instant it took effect, as of the
     /// last wake: what a handle reads without waiting on the machine.
     clock_hz: AtomicU64,
@@ -395,6 +479,29 @@ impl CoreShared {
     fn crystal(&self) -> Option<u64> {
         let hz = self.crystal_hz.load(Ordering::Relaxed);
         (hz != 0).then_some(hz)
+    }
+
+    /// Arm the core's own wake at `at`, unless it is the one on the wheel:
+    /// one own wake at a time, so a burst of wakes at one instant cannot
+    /// multiply it.
+    fn arm(&self, pads: &P2Pads, at: u64) {
+        {
+            let mut own = self.own_wake_ns.lock().expect("own wake never poisoned");
+            if *own == Some(at) {
+                return;
+            }
+            *own = Some(at);
+        }
+        pads.schedule_at_ns(at);
+    }
+
+    /// The wake at `now` is under way: an own wake at or before it has been
+    /// delivered, and its slot is free.
+    fn consume(&self, now: u64) {
+        let mut own = self.own_wake_ns.lock().expect("own wake never poisoned");
+        if own.is_some_and(|at| at <= now) {
+            *own = None;
+        }
     }
 }
 
@@ -441,15 +548,19 @@ impl CoreRx {
 }
 
 /// The core's wakes, for a handle table that schedules through the
-/// package's [`P2Pads`]: what [`SerialLevelBridge`] and the smart-pin pump
-/// arm their wakes through.
+/// package's [`P2Pads`]: what [`SerialLevelBridge`] arms its bit wakes
+/// through. The core's one wake handler serves them all.
 struct PadWakes(P2Pads);
 
 impl WakeGate for PadWakes {
-    fn on_wake_ns(&self, handler: WakeHandler) {
-        let handler = Mutex::new(handler);
-        self.0
-            .on_wake_ns(move |now| (handler.lock().expect("wake handler never poisoned"))(now));
+    fn on_wake_ns(&self, _handler: WakeHandler) {
+        // `P2Pads` holds one handler, the core's, and every wake armed
+        // through this table lands on it. A second registration would
+        // replace the core's and stop the guest, so it is refused.
+        tracing::error!(
+            "p2iss: a wake handler registered through the core's pad table was refused; the \
+             core's own handler serves every wake armed here"
+        );
     }
 
     fn schedule_at_ns(&self, at_ns: u64) {
@@ -466,8 +577,60 @@ impl WakeGate for PadWakes {
 
 /// The bus, as a core inside the package.
 impl NetPins {
+    /// The level pad `pin` presents by the guest's state, or `None` where
+    /// it drives nothing. An asynchronous transmit pin the guest has
+    /// enabled marks its line from the moment it drives: the smart pin
+    /// idles high, and a receiver needs that mark to find the first start
+    /// bit.
+    fn core_level(&self, pin: u8) -> Option<bool> {
+        let level = self.inner.pad_output(pin);
+        if level.is_some() && self.inner.pins[usize::from(pin & 63)].mode() == PinMode::AsyncTx {
+            return Some(true);
+        }
+        level
+    }
+
+    /// Record something the instruction now running does outside the chip;
+    /// the pass ends after it, and it is carried out at its instant.
+    pub(crate) fn core_op(&mut self, op: CoreOp) {
+        let Some(core) = self.core.as_mut() else {
+            return;
+        };
+        if op == CoreOp::Publish && core.ops.contains(&CoreOp::Publish) {
+            return;
+        }
+        core.ops.push(op);
+        self.net_yield = true;
+    }
+
+    /// After a write that can move the pads in `pins` (`DIR`, `OUT`, a
+    /// shifter's first bit): any of them that would present something new
+    /// is a change.
+    pub(crate) fn core_note_pads(&mut self, pins: u64) {
+        let Some(core) = self.core.as_ref() else {
+            return;
+        };
+        let mut changed = 0u64;
+        let mut left = pins & !core.owned;
+        while left != 0 {
+            let i = left.trailing_zeros() as usize;
+            left &= left - 1;
+            let pin = i as u8;
+            if core.keys[i] != Some((self.core_level(pin), self.inner.pins[i].cfg)) {
+                changed |= 1u64 << i;
+            }
+        }
+        if changed != 0 {
+            if let Some(core) = self.core.as_mut() {
+                core.dirty |= changed;
+            }
+            self.core_op(CoreOp::Publish);
+        }
+    }
+
     /// Put every pad the guest changed on its net, at the strength its mode
-    /// word configured and high at its bank's supply.
+    /// word configured and high at its bank's supply. Called at the instant
+    /// the change was made.
     pub(crate) fn publish_pads(&mut self) {
         if self.shutdown.load(Ordering::Relaxed) {
             return;
@@ -475,26 +638,33 @@ impl NetPins {
         let Some(core) = self.core.as_mut() else {
             return;
         };
+        let mut left = if std::mem::take(&mut core.dirty_all) {
+            u64::MAX
+        } else {
+            let unknown = core
+                .keys
+                .iter()
+                .enumerate()
+                .filter(|(_, key)| key.is_none())
+                .fold(0u64, |mask, (i, _)| mask | (1u64 << i));
+            std::mem::take(&mut core.dirty) | unknown
+        };
+        core.dirty = 0;
+        left &= !core.owned;
         let mut changed = false;
-        for pin in 0..64u8 {
-            let i = usize::from(pin);
-            if core.owned & (1u64 << i) != 0 {
-                continue;
-            }
-            let smart = self.inner.pins[i];
-            let mut level = self.inner.output_level(pin);
-            // An asynchronous transmit pin the guest has enabled marks its
-            // line from the moment it drives: the smart pin idles high, and
-            // a receiver needs that mark to find the first start bit.
-            if level.is_some() && smart.mode() == PinMode::AsyncTx {
-                level = Some(true);
-            }
-            let key = (level, smart.cfg);
+        while left != 0 {
+            let i = left.trailing_zeros() as usize;
+            left &= left - 1;
+            let pin = i as u8;
+            let key = (self.core_level(pin), self.inner.pins[i].cfg);
+            let Some(core) = self.core.as_mut() else {
+                return;
+            };
             if core.keys[i] == Some(key) {
                 continue;
             }
             core.keys[i] = Some(key);
-            let drive = level.and_then(|out| core.drive_of(pin, smart.cfg, out));
+            let drive = key.0.and_then(|out| core.drive_of(pin, key.1, out));
             if core.published[i] == Some(drive) {
                 continue;
             }
@@ -506,11 +676,15 @@ impl NetPins {
             changed = true;
         }
         if changed {
+            self.refresh_strong();
+        }
+    }
+
+    /// Tell the board which pads read their own `OUT`.
+    fn refresh_strong(&mut self) {
+        if let Some(core) = self.core.as_ref() {
             let strong = core.strong_mask();
             self.inner.set_strong_mask(strong);
-            // A pad changed: the guest yields before it reads any net back,
-            // so whatever is on that net can answer first.
-            self.net_yield = true;
         }
     }
 
@@ -529,35 +703,30 @@ impl NetPins {
             core.keys[usize::from(pin & 63)] = None;
             core.published[usize::from(pin & 63)] = None;
         }
-        let strong = core.strong_mask();
-        self.inner.set_strong_mask(strong);
+        self.refresh_strong();
     }
 
-    /// A `WRPIN` on a core's pad: a pin leaving a train or a transmit mode
-    /// goes back to the publish, and a receive pin gets its deframer.
-    pub(crate) fn core_wrpin(&mut self, pin: u8, cfg: u32) {
+    /// A `WRPIN` on a core's pad, at the instant the guest wrote it: a pin
+    /// leaving a train or a transmit mode goes back to the publish, and a
+    /// receive pin gets its deframer.
+    fn core_wrpin(&mut self, pin: u8, cfg: u32) {
         let p = pin & 63;
         let mode = self.inner.pins[usize::from(p)].mode();
-        // A train stopped by `_pinclear` banks its count and keeps its pad
-        // resting at the low phase; any other mode takes the pad back.
-        let train = self
-            .shared
-            .pulse
-            .lock()
-            .expect("pulse map never poisoned")
-            .get(&p)
-            .cloned();
-        if let Some(driver) = train {
-            if !matches!(mode, PinMode::Transition | PinMode::NcoFreq) {
+        // A train ends when its pin takes any other mode: the count it ran
+        // is banked at this instant, and the pad is the mode word's again,
+        // so `_pinclear` (`DIRL`, `WRPIN #0`) releases it and a later `DIR`
+        // and `OUT` drive it as a plain pin.
+        if !matches!(mode, PinMode::Transition | PinMode::NcoFreq) {
+            let train = self
+                .shared
+                .pulse
+                .lock()
+                .expect("pulse map never poisoned")
+                .remove(&p);
+            if let Some(driver) = train {
+                tracing::debug!(pin = p, cfg, "p2iss: a step train's pin left its mode");
                 driver.stop(virtual_clock::virtual_ns());
-                if cfg != 0 {
-                    self.shared
-                        .pulse
-                        .lock()
-                        .expect("pulse map never poisoned")
-                        .remove(&p);
-                    self.set_owned(p, false);
-                }
+                self.set_owned(p, false);
             }
         }
         if mode != PinMode::AsyncTx {
@@ -573,7 +742,20 @@ impl NetPins {
             }
         }
         self.retune_rx(p);
-        self.publish_pads();
+    }
+
+    /// A `WXPIN` on a core's pad: a receive pin's bit period is its rate,
+    /// from the instant the guest wrote it.
+    pub(crate) fn core_wxpin(&mut self, pin: u8) {
+        let p = pin & 63;
+        let receives = self.inner.pins[usize::from(p)].mode() == PinMode::AsyncRx;
+        let had = self
+            .core_shared
+            .as_ref()
+            .is_some_and(|c| c.rx_mask.load(Ordering::Relaxed) & (1u64 << p) != 0);
+        if receives || had {
+            self.core_op(CoreOp::Wxpin { pin: p });
+        }
     }
 
     /// Give a receive pin a deframer at the rate the guest programmed, or
@@ -613,18 +795,127 @@ impl NetPins {
         }
     }
 
-    /// A `WYPIN` on a core's pad that is not a sync-serial pin.
+    /// A `WYPIN` on a core's pad, as the guest executes it: the smart pin
+    /// takes the value at once, and what it does outside waits for the
+    /// instruction's instant.
     pub(crate) fn core_wypin(&mut self, pin: u8, y: u32) {
         let p = pin & 63;
+        if self.inner.smart_clock_pin() == Some(p) {
+            // The clock pin owes `y` more pulses. A burst that is not
+            // already running starts from this instruction's clock.
+            self.inner.wypin(p, y);
+            let idle = self.core.as_ref().is_some_and(|core| core.pump.is_none());
+            if idle && self.inner.smart_clock_busy() {
+                self.core_op(CoreOp::BurstStart);
+            }
+            return;
+        }
+        if self.inner.smart_bus.tx_pin() == Some(p) {
+            // Loading the shifter presents its first bit on the pad.
+            self.inner.wypin(p, y);
+            self.core_note_pads(1u64 << p);
+            return;
+        }
         let smart = self.inner.pins[usize::from(p)];
         match smart.mode() {
             PinMode::Transition | PinMode::NcoFreq if smart.output_enabled() => {
-                self.ensure_train(p);
-                self.start_pulse(p, y);
                 self.inner.wypin(p, y);
+                self.core_op(CoreOp::Wypin { pin: p, y });
             }
-            PinMode::AsyncTx => self.core_transmit(p, y),
+            PinMode::AsyncTx => {
+                if p == DEBUG_TX {
+                    // The console tap: every byte the guest hands its debug
+                    // pin, whatever the wire then makes of it.
+                    self.inner.console.push(y as u8);
+                }
+                self.core_op(CoreOp::Wypin { pin: p, y });
+            }
             _ => self.inner.wypin(p, y),
+        }
+    }
+
+    /// A `WYPIN` on a train or transmit pin, at its instant.
+    fn core_wypin_now(&mut self, pin: u8, y: u32) {
+        let smart = self.inner.pins[usize::from(pin)];
+        match smart.mode() {
+            PinMode::Transition | PinMode::NcoFreq if smart.output_enabled() => {
+                self.ensure_train(pin);
+                self.start_pulse(pin, y);
+            }
+            PinMode::AsyncTx => self.core_transmit(pin, y),
+            _ => {}
+        }
+    }
+
+    /// Carry out one batch's ops at its instant, then put whatever they
+    /// moved on the nets. A clock word is the wake's to apply.
+    fn apply_core_ops(&mut self, ops: &[CoreOp], at_clocks: u64) {
+        for op in ops {
+            match *op {
+                CoreOp::Publish | CoreOp::ClockWord { .. } => {}
+                CoreOp::Wrpin { pin, cfg } => {
+                    self.core_wrpin(pin, cfg);
+                    if let Some(core) = self.core.as_mut() {
+                        core.dirty_all = true;
+                    }
+                }
+                CoreOp::Wxpin { pin } => self.retune_rx(pin),
+                CoreOp::Wypin { pin, y } => self.core_wypin_now(pin, y),
+                CoreOp::BurstStart => self.core_burst_start(at_clocks),
+                CoreOp::PumpEdge => self.core_pump_edge(),
+            }
+        }
+        self.publish_pads();
+    }
+
+    /// Half the sync-serial clock's period, in the guest's clocks: the
+    /// clock pin's `X[15:0]` is its period.
+    fn half_period_clocks(&self) -> Option<u64> {
+        let pin = self.inner.smart_clock_pin()?;
+        let x = self.inner.pins[usize::from(pin & 63)].x;
+        Some((u64::from(x & 0xFFFF).max(2)) / 2)
+    }
+
+    /// A burst starts at clock count `at_clocks`, the `WYPIN`'s: its first
+    /// transition comes half a period later.
+    fn core_burst_start(&mut self, at_clocks: u64) {
+        if !self.inner.smart_clock_busy() {
+            return;
+        }
+        let Some(half) = self.half_period_clocks() else {
+            return;
+        };
+        if let Some(core) = self.core.as_mut() {
+            if core.pump.is_none() {
+                core.pump = Some(Pump {
+                    next_edge_clocks: at_clocks.saturating_add(half),
+                });
+            }
+        }
+    }
+
+    /// One transition of the sync-serial clock, at its instant: the bus
+    /// samples the receive pin's net as it stands, and the next transition
+    /// is half a period on, or the burst is over.
+    fn core_pump_edge(&mut self) {
+        self.inner.advance_smart_clock();
+        let bus = [self.inner.smart_clock_pin(), self.inner.smart_bus.tx_pin()]
+            .into_iter()
+            .flatten()
+            .fold(0u64, |mask, pin| mask | (1u64 << (pin & 63)));
+        let next = if self.inner.smart_clock_busy() {
+            self.half_period_clocks()
+        } else {
+            None
+        };
+        if let Some(core) = self.core.as_mut() {
+            core.dirty |= bus;
+            core.pump = match (core.pump, next) {
+                (Some(pump), Some(half)) => Some(Pump {
+                    next_edge_clocks: pump.next_edge_clocks.saturating_add(half),
+                }),
+                _ => None,
+            };
         }
     }
 
@@ -663,13 +954,9 @@ impl NetPins {
     }
 
     /// One byte on an asynchronous transmit pin: framed at the rate the
-    /// pin's bit period and the guest's clock give, through the pad's ports.
+    /// pin's bit period and the guest's clock give, through the pad's ports,
+    /// from this instant.
     fn core_transmit(&mut self, pin: u8, y: u32) {
-        if pin == DEBUG_TX {
-            // The console tap: every byte the guest hands its debug pin,
-            // whatever the wire then makes of it.
-            self.inner.console.push(y as u8);
-        }
         if self.shutdown.load(Ordering::Relaxed) {
             return;
         }
@@ -749,9 +1036,15 @@ impl NetPins {
         Some((byte.map_or(0, |b| u32::from(b) << 24), false))
     }
 
-    /// `TESTP` on a receive pin: a byte is waiting. The autobaud pins `P0`
-    /// and `P1` read the programming UART's (`P63`) when they are no
-    /// receive pins of their own, as the ROM's `SETSE1` measurement expects.
+    /// `TESTP` on a receive pin: a byte is waiting.
+    ///
+    /// A known gap, kept from [`crate::P2Iss`]: the autobaud pins `P0` and
+    /// `P1`, while they are no receive pins of their own, read "a byte is
+    /// waiting on `P63`", the programming UART. The ROM's serial loader
+    /// measures the host's bit time on them with `SETSE1`; no net and no
+    /// mode word gives this reading, and the measurement modes are not
+    /// modelled, so a serial boot inside the package rests on it until they
+    /// are.
     pub(crate) fn core_testp(&self, pin: u8) -> Option<bool> {
         let core_shared = self.core_shared.as_ref()?;
         let mask = core_shared.rx_mask.load(Ordering::Relaxed);
@@ -802,8 +1095,8 @@ impl P2IssCore {
         let shared = Arc::new(Shared::default());
         let core_shared = Arc::new(CoreShared::default());
         let mut board = Board::new(SdCard::blank(0));
-        // The flash and the card are the board's, on the nets: the bus pumps
-        // the synchronous-serial smart pins over virtual time.
+        // The flash and the card are the board's, on the nets: the bus
+        // clocks the synchronous-serial smart pins on the guest's clock.
         board.enable_smart_bus();
         let mut bus = NetPins::new(board, Vec::new(), Arc::clone(&shared));
         bus.shutdown = Arc::clone(&shutdown);
@@ -839,7 +1132,7 @@ impl Drop for P2IssCore {
 impl P2Core for P2IssCore {
     fn attach(&mut self, pads: P2Pads) -> Result<(), AttachError> {
         // Every pad: its handle, and a handle table over all 64 whose wakes
-        // go through the package, for the bridges and the pump.
+        // go through the package, for the bridges.
         let mut entries = Vec::with_capacity(64);
         let mut handles = Vec::with_capacity(64);
         for pin in 0..64u8 {
@@ -853,6 +1146,9 @@ impl P2Core for P2IssCore {
             let mut machine = self.machine.lock().expect("machine never poisoned");
             machine.pins.io = Some(io);
             machine.pins.core = Some(Box::new(CorePads::new(pads.bank_supplies(), handles)));
+            // Out of reset every pad is released, so none reads its own
+            // `OUT`.
+            machine.pins.refresh_strong();
         }
 
         // Every pad reads its net: the guest may test any of them. A sense
@@ -908,7 +1204,7 @@ impl P2Core for P2IssCore {
                     .crystal_hz
                     .store(hz.unwrap_or(0), Ordering::Relaxed);
                 if core_shared.stalled.load(Ordering::Relaxed) {
-                    arm.schedule_at_ns(virtual_clock::virtual_ns().saturating_add(1));
+                    core_shared.arm(&arm, virtual_clock::virtual_ns().saturating_add(1));
                 }
             });
         }
@@ -933,13 +1229,14 @@ impl P2Core for P2IssCore {
         }
         // The first wake, at once: the package holds it until its START
         // gate opens, so it lands at the START instant.
-        pads.schedule_at_ns(1);
+        self.core_shared.arm(&pads, 1);
         Ok(())
     }
 
     /// The START instant: clock 0 is anchored at the current virtual
-    /// nanosecond, so the guest's first instruction runs at the instant the
-    /// chip could.
+    /// nanosecond, and the package's first wake lands on it, so the guest's
+    /// first instruction runs at that instant and every change it makes is
+    /// stamped from there.
     fn start(&mut self) {
         let now = virtual_clock::virtual_ns();
         if let Some(core) = self
@@ -971,8 +1268,8 @@ impl P2Core for P2IssCore {
     }
 }
 
-/// One wake of the core: run the guest to the engine's instant, then pace
-/// the wire.
+/// One wake of the core: carry out the changes whose instant has come, or
+/// run the guest forward to its next one; then pace the wire.
 fn wake(
     machine: &Mutex<Machine<NetPins>>,
     shared: &Shared,
@@ -984,48 +1281,12 @@ fn wake(
     if shutdown.load(Ordering::Relaxed) || core_shared.held.load(Ordering::Relaxed) {
         return;
     }
+    core_shared.consume(now);
     {
         let mut machine = machine.lock().expect("machine never poisoned");
         drain_edges(&mut machine, shared);
-        let clocks = machine.system_clocks();
-        let crystal = core_shared.crystal();
-        let Some(core) = machine.pins.core.as_mut() else {
-            return;
-        };
-        core.clock.set_crystal(crystal, clocks, now);
-        if core.clock.stalled {
-            // No clock, no instructions; the crystal's arrival re-arms.
-            core_shared.stalled.store(true, Ordering::Relaxed);
-            return;
-        }
-        core_shared.stalled.store(false, Ordering::Relaxed);
-        if core.follow_supplies() {
-            machine.pins.publish_pads();
-        }
-        let horizon = machine
-            .pins
-            .core
-            .as_ref()
-            .map_or(0, |core| core.clock.ns_to_clocks_ceil(now));
-        if let Err(trap) = machine.step_until_clocks(horizon) {
-            tracing::error!(%trap, "p2iss: the guest trapped; it will not run again");
-            *shared.trap.lock().expect("trap slot never poisoned") = Some(trap.to_string());
-            shutdown.store(true, Ordering::Relaxed);
-            return;
-        }
-        let mut retimed = false;
-        if let Some((word, at)) = machine.take_clock_word() {
-            // The package's XI mode follows the word, and answers with the
-            // crystal before this returns.
-            arm.set_clock_mode(word);
-            let crystal = core_shared.crystal();
-            if let Some(core) = machine.pins.core.as_mut() {
-                core.clock.set_word(word, at, crystal, now);
-                core_shared
-                    .stalled
-                    .store(core.clock.stalled, Ordering::Relaxed);
-            }
-            retimed = true;
+        if let Some(next) = advance(&mut machine, shared, core_shared, shutdown, arm, now) {
+            core_shared.arm(arm, next);
         }
         if let Some(core) = machine.pins.core.as_ref() {
             shared.guest_now_ns.store(
@@ -1039,24 +1300,9 @@ fn wake(
                 .clock_set_at_ns
                 .store(core.clock.set_at_ns(), Ordering::Relaxed);
         }
-        let stalled = core_shared.stalled.load(Ordering::Relaxed);
-        let running = machine.cogs.iter().any(|c| c.running);
-        if running && !stalled && (retimed || machine.system_clocks() < horizon) {
-            // Short of the instant: the guest drove a pad (the net resolves
-            // first) or set its clock (the horizon is read again at the new
-            // rate). Go on at this instant.
-            shared.net_yields.fetch_add(1, Ordering::Relaxed);
-            arm.schedule_at_ns(now);
-        }
-        // The synchronous-serial pump: one clock edge if a burst is running,
-        // with the freshest input on the receive pin.
-        drain_edges(&mut machine, shared);
-        if let Some(at) = machine.pins.service_smart_clock(now) {
-            arm.schedule_at_ns(at);
-        }
     }
     // Every live transmit bridge clocks its own next bit and arms its own
-    // next wake.
+    // next wake, in pin order.
     {
         let tx = shared.tx.lock().expect("tx map never poisoned");
         for link in tx.values() {
@@ -1076,15 +1322,186 @@ fn wake(
     for at in deadlines {
         arm.schedule_at_ns(at);
     }
-    // The idle cadence: one slice wake on the wheel at a time.
-    let mut next = core_shared
-        .next_slice_ns
-        .lock()
-        .expect("slice never poisoned");
-    if next.is_none_or(|at| at <= now) {
-        let at = now.saturating_add(SLICE_NS);
-        *next = Some(at);
-        arm.schedule_at_ns(at);
+}
+
+/// The guest's side of a wake at `now`. Returns the instant of the core's
+/// next own wake, if it needs one.
+fn advance(
+    machine: &mut Machine<NetPins>,
+    shared: &Shared,
+    core_shared: &CoreShared,
+    shutdown: &AtomicBool,
+    arm: &P2Pads,
+    now: u64,
+) -> Option<u64> {
+    let clocks = machine.system_clocks();
+    let crystal = core_shared.crystal();
+    let core = machine.pins.core.as_mut()?;
+    core.clock.set_crystal(crystal, clocks, now);
+    if core.follow_supplies() {
+        // A bank's supply moved at this instant. Its pads are republished
+        // now, unless a change of the guest's is waiting: that one has not
+        // happened yet, so the supply's republish goes out with it.
+        match core.pending.front_mut() {
+            Some(batch) => batch.ops.push(CoreOp::Publish),
+            None => machine.pins.publish_pads(),
+        }
+    }
+
+    // The changes whose instant has come, in order.
+    let applied = apply_due(machine, shared, core_shared, arm, now);
+    let frontier = machine.system_clocks();
+    let running = machine.cogs.iter().any(|c| c.running);
+    let core = machine.pins.core.as_mut()?;
+    if let Some(batch) = core.pending.front() {
+        return Some(batch.at_ns);
+    }
+    if applied {
+        // The engine resolves what they drove, and delivers any answer,
+        // before the guest runs on: the next wake, at this same instant.
+        return Some(now);
+    }
+
+    if core.clock.stalled {
+        // No clock, no instructions; the crystal's arrival re-arms.
+        core_shared.stalled.store(true, Ordering::Relaxed);
+        return None;
+    }
+    core_shared.stalled.store(false, Ordering::Relaxed);
+    if !running {
+        return None;
+    }
+    if let Some(pump) = core.pump {
+        if pump.next_edge_clocks <= frontier {
+            // Every cog is past the sync-serial clock's next edge (one
+            // waiting on a long `WAITX`, say): the edge is a change of its
+            // own, at its instant.
+            let due = pump.next_edge_clocks;
+            core.pending.push_back(Batch {
+                at_ns: core.clock.clocks_to_ns(due),
+                at_clocks: due,
+                ops: vec![CoreOp::PumpEdge],
+            });
+            return settle(machine, shared, core_shared, arm, now);
+        }
+    }
+    let guest_ns = core.clock.clocks_to_ns(frontier);
+    if guest_ns > now {
+        // The guest is ahead; it goes on when the engine reaches it.
+        return Some(guest_ns);
+    }
+
+    // THE GUEST LEADS: from its own clock, at most a slice past the engine,
+    // and no further than the sync-serial clock's next edge.
+    let mut horizon = core.clock.ns_to_clocks_ceil(now.saturating_add(SLICE_NS));
+    if let Some(pump) = core.pump {
+        horizon = horizon.min(pump.next_edge_clocks);
+    }
+    machine.pins.net_yield = false;
+    if let Err(trap) = machine.step_until_clocks(horizon) {
+        tracing::error!(%trap, "p2iss: the guest trapped; it will not run again");
+        *shared.trap.lock().expect("trap slot never poisoned") = Some(trap.to_string());
+        shutdown.store(true, Ordering::Relaxed);
+        return None;
+    }
+    let yielded = machine.take_yield_clocks();
+    let word = machine.take_clock_word();
+    let frontier = machine.system_clocks();
+    let core = machine.pins.core.as_mut()?;
+    let mut ops = std::mem::take(&mut core.ops);
+    if let Some((word, at)) = word {
+        ops.push(CoreOp::ClockWord { word, at });
+    }
+    let op_clocks = (!ops.is_empty()).then(|| yielded.unwrap_or(frontier));
+    if let Some(pump) = core.pump {
+        // The clock's edge falls before whatever the pass stopped at.
+        let due = pump.next_edge_clocks;
+        if frontier >= due || op_clocks.is_some_and(|at| at >= due) {
+            core.pending.push_back(Batch {
+                at_ns: core.clock.clocks_to_ns(due),
+                at_clocks: due,
+                ops: vec![CoreOp::PumpEdge],
+            });
+        }
+    }
+    if let Some(at_clocks) = op_clocks {
+        core.pending.push_back(Batch {
+            at_ns: core.clock.clocks_to_ns(at_clocks),
+            at_clocks,
+            ops,
+        });
+    }
+    if core.pending.is_empty() {
+        // The horizon, or every cog waiting past it. Strictly forward, so
+        // the engine never spins on one instant.
+        return Some(core.clock.clocks_to_ns(frontier).max(now.saturating_add(1)));
+    }
+    settle(machine, shared, core_shared, arm, now)
+}
+
+/// The changes just queued: carry out any whose instant is at or before
+/// `now` (only a cog that lagged the one ahead of it makes one), and name
+/// the next own wake: the next change's instant, or this one again so the
+/// engine resolves what was carried out before the guest runs on.
+fn settle(
+    machine: &mut Machine<NetPins>,
+    shared: &Shared,
+    core_shared: &CoreShared,
+    arm: &P2Pads,
+    now: u64,
+) -> Option<u64> {
+    let applied = apply_due(machine, shared, core_shared, arm, now);
+    let core = machine.pins.core.as_mut()?;
+    match core.pending.front() {
+        Some(batch) => Some(batch.at_ns),
+        None if applied => Some(now),
+        None => None,
+    }
+}
+
+/// Carry out every waiting batch whose instant is at or before `now`, in
+/// order. Returns whether any was.
+fn apply_due(
+    machine: &mut Machine<NetPins>,
+    shared: &Shared,
+    core_shared: &CoreShared,
+    arm: &P2Pads,
+    now: u64,
+) -> bool {
+    let mut applied = false;
+    loop {
+        let Some(core) = machine.pins.core.as_mut() else {
+            return applied;
+        };
+        if core.pending.front().is_none_or(|batch| batch.at_ns > now) {
+            return applied;
+        }
+        let Some(batch) = core.pending.pop_front() else {
+            return applied;
+        };
+        if batch.at_ns < now {
+            tracing::trace!(
+                at_ns = batch.at_ns,
+                now,
+                "p2iss: a change carried out after its instant (a cog that lagged)"
+            );
+        }
+        for op in &batch.ops {
+            if let CoreOp::ClockWord { word, at } = *op {
+                // The package's XI mode follows the word, and answers with
+                // the crystal before this returns.
+                arm.set_clock_mode(word);
+                let crystal = core_shared.crystal();
+                core.clock.set_word(word, at, crystal, now);
+                core_shared
+                    .stalled
+                    .store(core.clock.stalled, Ordering::Relaxed);
+            }
+        }
+        machine.pins.apply_core_ops(&batch.ops, batch.at_clocks);
+        // Each batch is one stop of the guest for a change outside.
+        shared.net_yields.fetch_add(1, Ordering::Relaxed);
+        applied = true;
     }
 }
 
@@ -1174,16 +1591,22 @@ mod tests {
             given: "a clock word that selects the PLL with the crystal input and the PLL on, \
                     multiplying by eight with no divider, and a 20 MHz crystal on XI",
         });
-        expect!(
-            "rate",
-            "the chip's clock is 160 MHz, eight times the crystal"
-        );
-        expect!(
-            "rc-with-the-same-settings",
-            "the same word selecting the RC oscillator runs the chip at 20 MHz with no crystal \
-             at all"
-        );
+        expect!("rate", "the chip runs at 160 MHz");
         assert_eq!(clock_hz(PLL_160, Some(20_000_000)), Some(160_000_000));
+    }
+
+    #[test]
+    fn the_rc_oscillator_needs_no_crystal() {
+        behaviour!(Test {
+            id: "p2iss.clock-rc-without-crystal",
+            covers: Some("SIL/p2iss/src/package.rs#clock_hz"),
+            given: "a clock word that selects the fast RC oscillator, its crystal and PLL \
+                    fields set for 160 MHz, while nothing reaches XI",
+        });
+        expect!(
+            "rcfast",
+            "the chip runs at the RC oscillator's nominal 20 MHz"
+        );
         assert_eq!(clock_hz(PLL_160 & !0b11, None), Some(RCFAST_HZ));
     }
 
@@ -1195,10 +1618,7 @@ mod tests {
             given: "a clock word that selects the PLL with the crystal input on, while nothing \
                     reaches XI",
         });
-        expect!(
-            "no-clock",
-            "the chip has no clock, so the guest runs no instructions"
-        );
+        expect!("no-clock", "the chip has no clock");
         assert_eq!(clock_hz(PLL_160, None), None);
     }
 

@@ -12,9 +12,14 @@
 //! the ROM reads as "boot what the flash holds". The flash holds stage-1
 //! and the `propeller2_debug` program, laid out as `make flash-image` will
 //! (`p2iss::flashimage::boot_flash`). Stage-1 streams the program into hub
-//! and relaunches the cog on it; the firmware sets its clock from the
-//! module's 20 MHz TCXO through the PLL, configures `P62` as an asynchronous
-//! transmitter at 230 400 baud, and prints its first line.
+//! and reloads cog `$000`–`$0FF` from it. On silicon its `jmp #0` at `$019`,
+//! already fetched, then runs the program's first long; the ISS executes the
+//! reloaded `$019` instead, the program's own long there, and the firmware
+//! starts all the same because its longs 4 to 255 are zero, a run of
+//! instructions that do nothing (`package_pads.rs` says more). The firmware
+//! sets its clock from the module's 20 MHz TCXO through the PLL, configures
+//! `P62` as an asynchronous transmitter at 230 400 baud, and prints its first
+//! line.
 //!
 //! What is read is what a terminal on the module's debug finger (`J203`
 //! pin 50, `P62/PRG_DBG_TXD`) would read at 230 400 baud: the line comes off
@@ -66,8 +71,10 @@ const FIRMWARE_CLOCK_HZ: u64 = 160_000_000;
 /// the 20 MHz RC oscillator, so the 317 KB program is about 1.4 s of it.
 const BOOT_BUDGET_NS: u64 = 5_000_000_000;
 
-/// Host time without any board time passing that ends the wait: a guest
-/// that stopped, not a slow one, with room for a loaded host.
+/// Host time without any board time passing that ends the run: the engine
+/// or the host stopped, which is no verdict on the board, and the test
+/// fails saying so. Board time is the engine's, which moves from the start,
+/// before the package starts the core.
 const STALL_WALL: Duration = Duration::from_secs(300);
 
 fn ep(endpoint: &str) -> EndpointRef {
@@ -83,9 +90,17 @@ fn rom(name: &str) -> Option<Vec<u8>> {
     .ok()
 }
 
+/// The `propeller2_debug` program: `MAD_P2_IMAGE` names a copy kept out of
+/// `.pio` (the ledger job's, where building another environment can clear
+/// `.pio/build`), else the build's own.
 fn image_path() -> PathBuf {
-    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../Firmware/MaDCore/.pio/build/propeller2_debug/program");
+    let p = std::env::var_os("MAD_P2_IMAGE").map_or_else(
+        || {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../Firmware/MaDCore/.pio/build/propeller2_debug/program")
+        },
+        PathBuf::from,
+    );
     if !p.exists() && std::env::var_os("MAD_REQUIRE_P2_IMAGE").is_some() {
         panic!(
             "MAD_REQUIRE_P2_IMAGE is set but the P2 image is missing at {}. \
@@ -283,22 +298,29 @@ fn the_firmware_boots_off_the_modules_flash_and_prints_its_first_line() {
         .start()
         .expect("the system starts");
 
-    // Wait on board time, not host time: until the line has ended, the
-    // budget of board time is spent, or board time stops moving.
+    // Wait on board time, not host time: until the line has ended or the
+    // budget of board time is spent. A watchdog on host time ends a run
+    // whose board time has stopped moving.
     let wall = Instant::now();
-    let mut last = (0u64, Instant::now());
+    let mut last = (virtual_clock::virtual_ns(), Instant::now());
     loop {
         if first_line(&heard).is_some() || handle.trap().is_some() || handle.stalled() {
             break;
         }
-        let board_ns = handle.guest_now_ns();
+        let board_ns = virtual_clock::virtual_ns();
         if board_ns >= START_NS + BOOT_BUDGET_NS {
             break;
         }
         if board_ns != last.0 {
             last = (board_ns, Instant::now());
         } else if last.1.elapsed() > STALL_WALL {
-            break;
+            panic!(
+                "no board time passed in {STALL_WALL:?} of host time, at board {board_ns} ns \
+                 (guest {} ns, console tap {:?}): the engine or the host stopped, which says \
+                 nothing about the boot",
+                handle.guest_now_ns(),
+                handle.console()
+            );
         }
         std::thread::sleep(Duration::from_millis(5));
     }

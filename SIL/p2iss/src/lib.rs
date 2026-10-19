@@ -57,7 +57,7 @@ pub mod sdnode;
 pub use embsim_board::HostPty;
 pub use package::P2IssCore;
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -169,18 +169,20 @@ struct TxLink {
 /// callbacks, the guest reads out of it through [`PinBus`].
 #[derive(Debug, Default)]
 struct Shared {
-    /// Deframed receive bytes, keyed by pin.
-    rx: HashMap<u8, RxQueue>,
+    /// Deframed receive bytes, keyed by pin. Ordered maps, here and below:
+    /// the wake walks them, and the order it services pins in must not
+    /// depend on a hash (embsim `DESIGN.md` rule 7).
+    rx: BTreeMap<u8, RxQueue>,
     /// Receive deframers, keyed by pin.
     ///
     /// Shared with the wake handler rather than owned by the sense callback:
     /// a frame whose tail carries no transition closes only on its deadline,
     /// so *something* has to poll. Leaving that to the sense callback alone
     /// silently drops the last byte of every burst.
-    rx_decoders: HashMap<u8, Arc<Mutex<UartDecoder>>>,
+    rx_decoders: BTreeMap<u8, Arc<Mutex<UartDecoder>>>,
     /// Live transmit bridges, keyed by pin. Built on first transmit, once the
     /// smart pin has been configured and its baud can be derived.
-    tx: Mutex<HashMap<u8, TxLink>>,
+    tx: Mutex<BTreeMap<u8, TxLink>>,
     /// Bytes the guest has handed to a transmit bridge.
     tx_bytes: AtomicU64,
     /// Bytes a receive pin has deframed off the wire.
@@ -220,7 +222,7 @@ struct Shared {
     edges_dropped: AtomicU64,
     /// Pulse pins driving trains onto nets, keyed by pin. Built at attach,
     /// because a driver needs a facade handle.
-    pulse: Mutex<HashMap<u8, Arc<PulseDriver>>>,
+    pulse: Mutex<BTreeMap<u8, Arc<PulseDriver>>>,
     /// The trap that stopped the guest, if one has.
     trap: Mutex<Option<String>>,
 }
@@ -535,10 +537,22 @@ impl PinBus for NetPins {
     }
 
     fn dir_out_changed(&mut self, cog: usize, reg: u16, value: u32) {
-        self.inner.dir_out_changed(cog, reg, value);
         // Direction and output are the same event as far as a net is
         // concerned: either can turn a pin from high-Z into a driver or back.
-        self.publish();
+        if self.core.is_some() {
+            // Inside the package the change waits for its own instant. Only
+            // the pins the write moved can present something new.
+            let before = self.inner.dir_out_bits();
+            self.inner.dir_out_changed(cog, reg, value);
+            let after = self.inner.dir_out_bits();
+            let moved = (before.0 ^ after.0) | (before.1 ^ after.1);
+            if moved != 0 {
+                self.core_note_pads(moved);
+            }
+        } else {
+            self.inner.dir_out_changed(cog, reg, value);
+            self.publish_levels();
+        }
     }
 
     fn wrpin(&mut self, pin: u8, cfg: u32) {
@@ -557,8 +571,9 @@ impl PinBus for NetPins {
         }
         self.inner.wrpin(pin, cfg);
         if self.core.is_some() {
-            // Inside the package: the pad's role follows its new mode word.
-            self.core_wrpin(pin, cfg);
+            // Inside the package: the pad's role follows its new mode word,
+            // at the instant the guest wrote it.
+            self.core_op(package::CoreOp::Wrpin { pin: pin & 63, cfg });
             return;
         }
         // Configuring a smart pin can change whether the pin drives at all: a
@@ -586,7 +601,7 @@ impl PinBus for NetPins {
         self.inner.wxpin(pin, x);
         if self.core.is_some() {
             // A receive pin's bit period is its rate.
-            self.retune_rx(pin);
+            self.core_wxpin(pin);
         }
     }
 
@@ -601,6 +616,12 @@ impl PinBus for NetPins {
         // force-gauge transmit pins, the pulse train — into the byte-path
         // board the moment the stepper's step pin was configured, and the
         // guest went silent on the wire.
+        if self.core.is_some() {
+            // Inside the package the bus is clocked on the guest's own
+            // clock, and every other WYPIN with an effect outside waits for
+            // the instant the guest wrote it.
+            return self.core_wypin(pin, y);
+        }
         let is_clock = self.inner.smart_clock_pin() == Some(pin & 63);
         if is_clock || self.inner.smart_bus.tx_pin() == Some(pin & 63) {
             let was_clock = is_clock;
@@ -615,9 +636,6 @@ impl PinBus for NetPins {
                 }
             }
             return;
-        }
-        if self.core.is_some() {
-            return self.core_wypin(pin, y);
         }
         if self.pulse_pins.contains(&pin) {
             self.start_pulse(pin, y);
@@ -637,7 +655,7 @@ impl PinBus for NetPins {
         // the guest programmed the pin, so only by now is the rate a decoded
         // fact rather than a declared one.
         let mut tx = self.shared.tx.lock().expect("tx map never poisoned");
-        if let std::collections::hash_map::Entry::Vacant(slot) = tx.entry(pin) {
+        if let std::collections::btree_map::Entry::Vacant(slot) = tx.entry(pin) {
             let (framing, baud_hz) = self.framing_for(pin, link.nominal_baud);
             let Ok(handle) = io.pin(pin_name(pin)) else {
                 tracing::warn!(pin, "p2iss: transmit pin is not on this component's facade");
