@@ -15,8 +15,9 @@ publish = false
 # embsim-cli from the same checkout, and SIL/Cargo.lock locks the rest.
 embsim-board = { path = "../embsim/board" }
 embsim-boards = { path = "../embsim/boards" }
-# The virtual clock: the instant a component starts at, which its wakes
-# count from.
+# The virtual clock. Nothing in src/ uses it yet: the tests hold its stepped
+# clock across a build, as `embsim check` does, and the core and machine
+# kinds of migration step 8 run on it (embsim MIGRATING-MAD.md section 3).
 embsim-core = { path = "../embsim/core" }
 
 [dev-dependencies]

@@ -9,10 +9,13 @@
 ;   exported on: 2026-10-18
 ;   shape      : 32 components, 25 nets, 84 nodes
 ;
-; It replaces SIL/MaDSim/boards/ds2_addon.net, an export of 2026-07-11 copied
-; from embsim's fixture board/tests/fixtures/ds2_addon.net, which had no R10:
-; its ~{RESET} net was U1 pin 3 alone. Apart from R10 and its two nodes, every
-; component, net and node is that file's.
+; It replaces SIL/MaDSim/boards/ds2_addon.net, an export of 2026-07-11 that
+; MaD copied from embsim's fixture board/tests/fixtures/ds2_addon.net before
+; that fixture gained R10, so it had no R10: its ~{RESET} net was U1 pin 3
+; alone. Apart from R10 and its two nodes, every component, net and node is
+; that file's. The fixture has since gained R10 by hand (embsim e95dd4d),
+; with a placeholder tstamp and its pins numbered the other way round from
+; this export: there R10.1 is on +3V3 and R10.2 on ~{RESET}.
 ;
 ; Regeneration
 ;   From Hardware/DS2Addon/KICAD, re-run the command above with KiCad 9's
