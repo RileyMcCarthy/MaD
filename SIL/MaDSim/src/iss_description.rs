@@ -212,7 +212,9 @@ impl BenchForcePath {
 
         // The two bench fixes without which the real boards are silent: the
         // A0/A1 jumpers (R6/R7 are DNP, so the signal path is open as fabbed)
-        // and the ~RESET strap (the stock PCB leaves U1.3 on a one-pin net).
+        // and the ~RESET strap boards made before R10 need (they leave U1.3
+        // on a one-pin net; on the netlist R10 pulls it up, and the strap
+        // ties it to the same rail).
         let scenario = Scenario::default()
             .jumper("DS2Addon.JP1", JumperState::Closed)
             .jumper("DS2Addon.JP2", JumperState::Closed)
