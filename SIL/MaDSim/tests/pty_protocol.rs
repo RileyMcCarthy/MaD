@@ -14,6 +14,7 @@
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
@@ -26,6 +27,11 @@ const TYPE_DATA: u8 = 0x02;
 const CMD_FIRMWARE_VERSION: u8 = 3;
 /// Aligned `FirmwareVersion.version` is a 16-byte string (MaDProtocol.yaml).
 const FIRMWARE_VERSION_LEN: u16 = 16;
+/// Wall time for the round trip, from the PTY opening. The firmware answers
+/// about 60 ms of guest time after it starts (boot, the SD mount, then a tick
+/// of its 100 Hz communication task), and a dev-profile ISS runs at roughly
+/// a thousandth of real time.
+const ROUND_TRIP_BUDGET: Duration = Duration::from_secs(240);
 
 struct Emulator {
     child: Child,
@@ -162,10 +168,14 @@ fn wait_for_pty(emu: &mut Emulator, timeout: Duration) {
     );
 }
 
+/// Non-blocking, so the loop below keeps re-sending and honours its deadline:
+/// a request that lands before the serial task is reading is lost (the
+/// receive pin holds one byte), and a blocking read would then wait forever.
 fn open_slave(path: &Path) -> File {
     OpenOptions::new()
         .read(true)
         .write(true)
+        .custom_flags(libc::O_NONBLOCK)
         .open(path)
         .unwrap_or_else(|e| panic!("open PTY slave {}: {e}", path.display()))
 }
@@ -195,7 +205,12 @@ fn firmware_answers_firmware_version_on_the_host_pty() {
     let mut slave = None;
     let open_deadline = Instant::now() + Duration::from_secs(5);
     while Instant::now() < open_deadline {
-        if let Ok(f) = OpenOptions::new().read(true).write(true).open(&emu.pty) {
+        if let Ok(f) = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(&emu.pty)
+        {
             slave = Some(f);
             break;
         }
@@ -204,7 +219,7 @@ fn firmware_answers_firmware_version_on_the_host_pty() {
     let mut slave = slave.unwrap_or_else(|| open_slave(&emu.pty));
 
     let read_frame = [SYNC, TYPE_READ, CMD_FIRMWARE_VERSION];
-    let deadline = Instant::now() + Duration::from_secs(45);
+    let deadline = Instant::now() + ROUND_TRIP_BUDGET;
     let mut acc = Vec::new();
     let mut buf = [0u8; 256];
     let mut last_tx = Instant::now() - Duration::from_secs(1);
@@ -242,7 +257,7 @@ fn firmware_answers_firmware_version_on_the_host_pty() {
         "no firmware_version DATA frame on {} after {:?}\n\
          captured {} bytes (first 64): {:02x?}\n{}",
         emu.pty.display(),
-        Duration::from_secs(45),
+        ROUND_TRIP_BUDGET,
         acc.len(),
         &acc[..acc.len().min(64)],
         logs_of(&emu)
