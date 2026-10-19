@@ -346,6 +346,20 @@ pub struct Machine<P: PinBus> {
     pub stack_log: Vec<(u8, u32, bool, u32)>,
     /// Record stack traffic into [`Self::stack_log`].
     pub trace_stack: bool,
+    /// End a [`Self::step_until_clocks`] pass at the instruction after a
+    /// `HUBSET` that sets the clock, so the host can retime the guest before
+    /// it runs on at the new rate. Off by default: a host that converts
+    /// clocks to time with hub `$14` ([`Self::step_until`]) has nothing to
+    /// retime.
+    pub yield_on_clock_word: bool,
+    /// The last clock word a `HUBSET` set, and the clock count of the cog
+    /// that set it, until [`Self::take_clock_word`] takes it.
+    clock_word: Option<(u32, u64)>,
+    /// A clock word was set and [`Self::yield_on_clock_word`] asks the pass
+    /// to end.
+    clock_yield: bool,
+    /// The clock count the last [`Self::step_until_clocks`] pass yielded at.
+    yield_clocks: Option<u64>,
 }
 
 impl<P: PinBus> Machine<P> {
@@ -424,7 +438,19 @@ impl<P: PinBus> Machine<P> {
             reg_hits: Vec::new(),
             stack_log: Vec::new(),
             trace_stack: false,
+            yield_on_clock_word: false,
+            clock_word: None,
+            clock_yield: false,
+            yield_clocks: None,
         }
+    }
+
+    /// The clock word the guest last set with `HUBSET` (`%0000_000E_DDDD_DDMM_
+    /// MMMM_MMMM_PPPP_CCSS`, P2X8C4M64P Datasheet, "System Clock", p. 18) and
+    /// the clock count it was set at, once: a second call returns `None`
+    /// until the guest sets one again.
+    pub fn take_clock_word(&mut self) -> Option<(u32, u64)> {
+        self.clock_word.take()
     }
 
     /// Watch a hub range for writes. Hits accumulate in [`Self::watch_hits`].
@@ -952,7 +978,7 @@ impl<P: PinBus> Machine<P> {
                 if self.cogs[cog].running && cog_us < deadline_us {
                     self.step_one(cog)?;
                     stepped = true;
-                    if self.pins.take_net_yield() {
+                    if self.pins.take_net_yield() || std::mem::take(&mut self.clock_yield) {
                         return Ok(());
                     }
                 }
@@ -962,6 +988,47 @@ impl<P: PinBus> Machine<P> {
             }
         }
         Ok(())
+    }
+
+    /// Run every running cog until the system counter reaches
+    /// `deadline_clocks`, or until one traps, yields for a net
+    /// ([`PinBus::take_net_yield`]) or sets the clock
+    /// ([`Self::yield_on_clock_word`]).
+    ///
+    /// [`Self::step_until`] with the deadline in clocks: for a host that
+    /// keeps its own map from clocks to time, as a chip whose clock word and
+    /// crystal set its rate needs, and never reads hub `$14` for it.
+    ///
+    /// The cogs run in time order: each step is the running cog furthest
+    /// behind ([`Self::system_clocks`]), so the instructions that change
+    /// something outside come in the order of the clocks they ran at, and a
+    /// host that stamps each change with its own instant never meets one
+    /// earlier than the last. The pass ends once every running cog has
+    /// reached the deadline. When it ends on a yield, the yielding cog's
+    /// clock after that instruction is the change's instant
+    /// ([`Self::take_yield_clocks`]).
+    pub fn step_until_clocks(&mut self, deadline_clocks: u64) -> Result<(), Trap> {
+        self.ff_deadline_clocks = deadline_clocks;
+        self.yield_clocks = None;
+        while let Some(cog) = self.frontier_cog() {
+            if self.cogs[cog].clocks >= deadline_clocks {
+                break;
+            }
+            self.step_one(cog)?;
+            if self.pins.take_net_yield() || std::mem::take(&mut self.clock_yield) {
+                self.yield_clocks = Some(self.cogs[cog].clocks);
+                return Ok(());
+            }
+        }
+        Ok(())
+    }
+
+    /// The clock count the last [`Self::step_until_clocks`] pass yielded at:
+    /// the yielding cog's clock once the instruction that drove a pad, wrote
+    /// a smart pin or set the clock had run. `None` if the pass did not end
+    /// on a yield; a second call returns `None`.
+    pub fn take_yield_clocks(&mut self) -> Option<u64> {
+        self.yield_clocks.take()
     }
 
     /// Execute at most `n` instructions, round-robin. Returns how many ran.
@@ -1077,16 +1144,42 @@ impl<P: PinBus> Machine<P> {
         // between them would let the ISR consume the prefix — the ROM's
         // `altb x,#hexchrs` / `testb 0,x wc` pair would then test the wrong
         // long and reject a valid Prop_Chk.
-        let alt_pending = self.cogs[cog].alt_d.is_some()
-            || self.cogs[cog].alt_s.is_some()
-            || self.cogs[cog].alt_n.is_some();
+        //
+        // Silicon holds the interrupt off the same way after AUGS/AUGD and
+        // SETQ/SETQ2, and for the whole of a REP block. Compiled FlexC code is
+        // dense with both (`##` immediates, `setq`+`wrlong` register bursts),
+        // so an ISR beside it (HAL_serial's RX interrupt) would otherwise
+        // consume a prefix meant for the interrupted instruction.
+        let held_off = {
+            let c = &self.cogs[cog];
+            c.alt_d.is_some()
+                || c.alt_s.is_some()
+                || c.alt_n.is_some()
+                || c.aug_s.is_some()
+                || c.aug_d.is_some()
+                || c.setq.is_some()
+                || c.setq2.is_some()
+                // Only inside the body: `rep` closes once the PC passes its end,
+                // so a block left by a branch must not hold interrupts off.
+                || c.rep.is_some_and(|(_, first, last)| (first..=last).contains(&pc))
+        };
         if !self.cogs[cog].in_int1
             && self.cogs[cog].int1_src == 4
             && self.se1_high(cog)
-            && !alt_pending
+            && !held_off
         {
-            self.cogs[cog].regs[REG_IRET1 as usize] = pc;
-            self.cogs[cog].pc = self.cogs[cog].regs[REG_IJMP1 as usize];
+            // The interrupt branch is CALLD IRET1, IJMP1 WCZ: IRET1 keeps C
+            // and Z in bits 31:30 beside the PC, and RETI1 puts them back.
+            // The vector is a CALLD target like any other: the PC is its low
+            // 20 bits and C/Z load from its top two, which after a RESI1 are
+            // the ISR's own flags at the point it suspended.
+            let (c, z) = (self.cogs[cog].c, self.cogs[cog].z);
+            self.cogs[cog].regs[REG_IRET1 as usize] =
+                (u32::from(c) << 31) | (u32::from(z) << 30) | pc;
+            let vector = self.cogs[cog].regs[REG_IJMP1 as usize];
+            self.cogs[cog].c = vector & (1 << 31) != 0;
+            self.cogs[cog].z = vector & (1 << 30) != 0;
+            self.cogs[cog].pc = vector & 0xF_FFFF;
             self.cogs[cog].in_int1 = true;
             self.int1_entries += 1;
             return Ok(());
@@ -2455,14 +2548,30 @@ impl<P: PinBus> Machine<P> {
                 self.cogs[cog].pc = self.rel9_target(ins, s, pc);
                 branched = true;
             }
-            // CALLD D,S: D := next PC, jump to S. Flexspin's `resi1` is
-            // CALLD IJMP1, IRET1 (next interrupt continues after the RESI);
-            // `reti1` is CALLD INB, IRET1 (return and re-enable INT1).
+            // CALLD D,S {WC/WZ}: D := {C, Z, next PC}, jump to S[19:0]; WC/WZ
+            // take C and Z from S[31]/S[30]. Flexspin's `resi1` is
+            // CALLD IJMP1, IRET1 WCZ (next interrupt continues after the RESI);
+            // `reti1` is CALLD INB, IRET1 WCZ (return and re-enable INT1). Both
+            // restore the flags the interrupt saved in IRET1, and only a CALLD
+            // through IRET1 ends the ISR: any other is an ordinary call.
             Calld => {
                 let ret = Self::next_pc(pc);
-                self.set_reg(cog, ins.d, ret);
-                self.cogs[cog].pc = s;
-                self.cogs[cog].in_int1 = false;
+                let (c, z) = (self.cogs[cog].c, self.cogs[cog].z);
+                self.set_reg(
+                    cog,
+                    ins.d,
+                    (u32::from(c) << 31) | (u32::from(z) << 30) | ret,
+                );
+                if ins.c {
+                    self.cogs[cog].c = s & (1 << 31) != 0;
+                }
+                if ins.z {
+                    self.cogs[cog].z = s & (1 << 30) != 0;
+                }
+                self.cogs[cog].pc = s & 0xF_FFFF;
+                if !ins.i && ins.s == REG_IRET1 {
+                    self.cogs[cog].in_int1 = false;
+                }
                 branched = true;
             }
             Jmprel => {
@@ -2792,8 +2901,15 @@ impl<P: PinBus> Machine<P> {
                 self.cogs[cog].clocks += d as u64;
             }
             Hubset => {
-                // Clock modes are recorded and the PLL ignored; `clkfreq()`
-                // reads hub $14 on demand instead.
+                // A word whose top nibble is `%0000` sets the clock; the
+                // other forms (reset, write protection, filters, the RNG
+                // seed) are not clock words. Recorded for a host that times
+                // the guest from it; `clkfreq()` still reads hub $14 for one
+                // that does not.
+                if d >> 28 == 0 {
+                    self.clock_word = Some((d, self.cogs[cog].clocks));
+                    self.clock_yield = self.yield_on_clock_word;
+                }
             }
 
             // ---- conditional jumps on events

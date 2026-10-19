@@ -5,8 +5,8 @@
 //! bench does not, so the polarity has to be right on the wire or the machine
 //! reads its own ESD lines as tripped.
 
-use std::sync::atomic::{AtomicI64, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use embsim_board::netlist;
 use embsim_board::{
@@ -212,7 +212,9 @@ impl BenchForcePath {
 
         // The two bench fixes without which the real boards are silent: the
         // A0/A1 jumpers (R6/R7 are DNP, so the signal path is open as fabbed)
-        // and the ~RESET strap (the stock PCB leaves U1.3 on a one-pin net).
+        // and the ~RESET strap boards made before R10 need (they leave U1.3
+        // on a one-pin net; on the netlist R10 pulls it up, and the strap
+        // ties it to the same rail).
         let scenario = Scenario::default()
             .jumper("DS2Addon.JP1", JumperState::Closed)
             .jumper("DS2Addon.JP2", JumperState::Closed)
@@ -300,6 +302,65 @@ pub struct BenchMachine {
     /// silently runs into an endstop looks, from every other vantage point,
     /// exactly like a test that simply never finishes.
     travel: Arc<CarriageTravel>,
+    /// What couples the shaft to the carriage, and whether it is jammed.
+    coupling: Arc<Coupling>,
+    /// Everything else that follows the carriage (the sample's gantry).
+    followers: Followers,
+}
+
+/// Callbacks that follow the carriage position, in millimetres.
+type Followers = Arc<Mutex<Vec<Box<dyn Fn(f64) + Send>>>>;
+
+/// The mechanism between the drive's shaft and the carriage, which can jam.
+///
+/// Free, the carriage follows the shaft step for step. Jammed, the drive still
+/// takes every step it is given and the shaft still turns, but the carriage
+/// stays where it is: the encoder stops counting, the end stops and the sample
+/// see no travel. That is a stall exactly as the firmware's servo guard
+/// defines one -- motion commanded, the encoder not following -- and the only
+/// way the bench can produce it. Freed again, the carriage resumes from where
+/// it stuck, not from where the shaft got to: the travel lost while jammed
+/// stays lost, as a slipped coupling's would.
+#[derive(Debug, Default)]
+pub struct Coupling {
+    jammed: AtomicBool,
+    state: Mutex<CouplingState>,
+}
+
+#[derive(Debug, Default)]
+struct CouplingState {
+    /// The last shaft position seen; `None` before the first.
+    shaft_mm: Option<f64>,
+    carriage_mm: f64,
+}
+
+impl Coupling {
+    /// Jam the carriage (`true`) or free it (`false`).
+    pub fn set_jammed(&self, jammed: bool) {
+        self.jammed.store(jammed, Ordering::SeqCst);
+    }
+
+    pub fn jammed(&self) -> bool {
+        self.jammed.load(Ordering::SeqCst)
+    }
+
+    /// The shaft is at `shaft_mm`: where the carriage now is, or `None` when
+    /// it did not move.
+    fn follow(&self, shaft_mm: f64) -> Option<f64> {
+        let mut state = self.state.lock().unwrap();
+        let moved = match state.shaft_mm.replace(shaft_mm) {
+            None => {
+                state.carriage_mm = shaft_mm;
+                true
+            }
+            Some(_) if self.jammed() => false,
+            Some(previous) => {
+                state.carriage_mm += shaft_mm - previous;
+                true
+            }
+        };
+        moved.then_some(state.carriage_mm)
+    }
 }
 
 /// Min/max carriage travel since the last report, in micrometres.
@@ -384,11 +445,21 @@ impl BenchMachine {
         let lower_actuator = lower.actuator();
         let travel = Arc::new(CarriageTravel::new());
         let travel_in = Arc::clone(&travel);
-        motor.shaft().on_position_change(move |mm| {
+        let coupling = Arc::new(Coupling::default());
+        let coupling_in = Arc::clone(&coupling);
+        let followers: Followers = Arc::default();
+        let followers_in = Arc::clone(&followers);
+        motor.shaft().on_position_change(move |shaft_mm| {
+            let Some(mm) = coupling_in.follow(shaft_mm) else {
+                return;
+            };
             encoder_in.set_position_mm(mm);
             upper_actuator.set_position_mm(mm);
             lower_actuator.set_position_mm(mm);
             travel_in.record(mm);
+            for follower in followers_in.lock().unwrap().iter() {
+                follower(mm);
+            }
         });
 
         Ok(Self {
@@ -397,7 +468,20 @@ impl BenchMachine {
             upper,
             lower,
             travel,
+            coupling,
+            followers,
         })
+    }
+
+    /// The shaft-to-carriage coupling, to jam and free it.
+    pub fn coupling(&self) -> Arc<Coupling> {
+        Arc::clone(&self.coupling)
+    }
+
+    /// Call `follower` with the carriage position, in millimetres, whenever
+    /// the carriage moves.
+    pub fn on_carriage_change(&self, follower: impl Fn(f64) + Send + 'static) {
+        self.followers.lock().unwrap().push(Box::new(follower));
     }
 
     /// Where the carriage has been, for the run's own telemetry.
@@ -528,5 +612,43 @@ impl Component for MisoPullUp {
 
     fn attach(&mut self, _io: ComponentNetIo) -> Result<(), AttachError> {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use vibes_behaviour::{behaviour, expect, Test};
+
+    #[test]
+    fn a_jammed_carriage_holds_while_the_shaft_turns() {
+        behaviour!(Test {
+            id: "emulator.carriage-jam",
+            covers: Some("SIL/MaDSim/src/iss_description.rs#Coupling"),
+            given: "the emulated gantry jammed part way through a move, the drive still \
+                    stepping, then freed",
+        });
+        expect!(
+            "follows-when-free",
+            "a free carriage moves exactly as far as the drive's shaft turns"
+        );
+        expect!(
+            "holds-when-jammed",
+            "a jammed carriage stays where it stuck however far the shaft turns, so the \
+             encoder sees no motion"
+        );
+        expect!(
+            "resumes-from-stuck",
+            "freed, the carriage moves on from where it stuck, and the travel the shaft made \
+             while jammed is lost"
+        );
+        let coupling = Coupling::default();
+        assert_eq!(coupling.follow(2.0), Some(2.0));
+        assert_eq!(coupling.follow(3.5), Some(3.5));
+        coupling.set_jammed(true);
+        assert_eq!(coupling.follow(5.0), None);
+        assert_eq!(coupling.follow(9.0), None);
+        coupling.set_jammed(false);
+        assert_eq!(coupling.follow(10.0), Some(4.5));
     }
 }
