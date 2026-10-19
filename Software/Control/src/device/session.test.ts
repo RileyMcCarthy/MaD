@@ -160,10 +160,15 @@ describe('DeviceClient worker recovery', () => {
   );
 });
 
-/** A port that, like the browser's, refuses to open while it is open. */
-function fakePort() {
+/**
+ * A port that, like the browser's, refuses to open while it is open, and
+ * refuses to close while its streams are locked (here: for the first
+ * `refusals` attempts).
+ */
+function fakePort(refusals = 0) {
   const port = {
     isOpen: false,
+    refusals,
     readable: null as object | null,
     writable: null as object | null,
     getInfo: () => ({}),
@@ -174,6 +179,10 @@ function fakePort() {
       port.writable = {};
     },
     async close() {
+      if (port.refusals > 0) {
+        port.refusals -= 1;
+        throw new TypeError("Failed to execute 'close' on 'SerialPort': Cannot cancel a locked stream");
+      }
       port.isOpen = false;
       port.readable = null;
       port.writable = null;
@@ -224,6 +233,62 @@ describe('DeviceClient.connect', () => {
       expect(port.isOpen).toBe(false);
       remote.connect = async () => undefined;
       await client.connect(port as unknown as SerialPort);
+      expect(port.isOpen).toBe(true);
+    },
+  );
+});
+
+describe('DeviceClient.disconnect', () => {
+  behaviour(
+    {
+      id: 'session.disconnect-retries-locked-port',
+      covers: 'src/device/session.ts#releasePort',
+      given: 'a disconnect whose port the browser refuses to close twice while its streams are still being released',
+      expect: {
+        'port-closed': 'the port is closed in the end, so other programs can open it',
+        'nothing-held': 'the session no longer holds a port',
+      },
+      why: {
+        'port-closed':
+          'the worker lets go of the serial streams a moment after its teardown finishes, and the browser refuses to close a port until it has',
+      },
+    },
+    async () => {
+      const client = new DeviceClient();
+      const port = fakePort();
+      await client.connect(port as unknown as SerialPort);
+      port.refusals = 2;
+      await expect(client.disconnect()).resolves.toBeUndefined();
+      expect(port.isOpen).toBe(false);
+      expect(client.isConnected()).toBe(false);
+    },
+  );
+
+  behaviour(
+    {
+      id: 'session.disconnect-reports-held-port',
+      covers: 'src/device/session.ts#releasePort',
+      given: 'a disconnect whose port the browser keeps refusing to close',
+      expect: {
+        'reported': 'the disconnect fails with a message telling the operator the browser still holds the port and to close the tab',
+        'still-held': 'the session still counts the port as held',
+        'retried-later': 'a later connection to the port closes it first and then opens it again',
+      },
+      why: {
+        'reported': 'a port the browser keeps open cannot be opened by any other program, and closing the tab is the only remedy left',
+      },
+    },
+    async () => {
+      const client = new DeviceClient();
+      const port = fakePort();
+      await client.connect(port as unknown as SerialPort);
+      port.refusals = Number.POSITIVE_INFINITY;
+      await expect(client.disconnect()).rejects.toThrow(/still holding the serial port.*Close this tab/);
+      expect(client.isConnected()).toBe(true);
+      expect(port.isOpen).toBe(true);
+
+      port.refusals = 0;
+      await expect(client.connect(port as unknown as SerialPort)).resolves.toBeUndefined();
       expect(port.isOpen).toBe(true);
     },
   );

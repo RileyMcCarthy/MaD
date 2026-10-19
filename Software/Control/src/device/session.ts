@@ -36,6 +36,21 @@ export function workerCrashEvents(message: string): DeviceEvent[] {
   ];
 }
 
+/** How long a refused port close is retried before it is reported. */
+const PORT_CLOSE_RETRY_MS = 1000;
+const PORT_CLOSE_RETRY_INTERVAL_MS = 50;
+
+/** The browser still holds the serial port after a disconnect. */
+export class PortReleaseError extends Error {
+  constructor(readonly detail: string) {
+    super(
+      'Disconnected, but the browser is still holding the serial port, so other programs ' +
+        'cannot open it. Close this tab to release it.',
+    );
+    this.name = 'PortReleaseError';
+  }
+}
+
 export type DeviceClientOptions = {
   /** Inject a Worker factory (tests). Default constructs the real session worker. */
   workerFactory?: () => Worker;
@@ -126,19 +141,45 @@ export class DeviceClient {
     // On an unexpected loss reported by the worker, drop our port handle so
     // isConnected() is accurate and the OS handle is freed for reconnects.
     if (events.some((e) => e.kind === 'disconnected' && e.reason !== undefined)) {
-      void this.releasePort();
+      // A failure is already logged, and the handle kept so the next connect
+      // or disconnect tries again; nobody is waiting on this to throw to.
+      this.releasePort().catch(() => undefined);
     }
     for (const sink of this.listeners) sink(events);
   };
 
+  /**
+   * Close the port, so the browser hands the OS handle back.
+   *
+   * The browser refuses to close a port while its streams are locked, and the
+   * worker's locks on the transferred streams clear asynchronously after its
+   * teardown, so a refusal is retried for a short while. A port that still
+   * cannot be closed is kept (it IS still held: a later connect or disconnect
+   * retries) and reported, since the only remedy left is closing the tab.
+   */
   private async releasePort(): Promise<void> {
     const port = this.port;
-    this.port = null;
     if (!port) return;
-    try {
-      await port.close();
-    } catch {
-      /* already closed/lost; ignore */
+    const deadline = Date.now() + PORT_CLOSE_RETRY_MS;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await port.close();
+        if (this.port === port) this.port = null;
+        if (attempt > 1) logger('device').info('port-closed', 'serial port closed', { attempt });
+        return;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        // Lost with the device (unplugged): there is nothing left to release.
+        if (!port.readable && !port.writable) {
+          if (this.port === port) this.port = null;
+          return;
+        }
+        if (Date.now() >= deadline) {
+          logger('device').error('port-close-failed', message, { attempt });
+          throw new PortReleaseError(message);
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, PORT_CLOSE_RETRY_INTERVAL_MS));
     }
   }
 
@@ -163,6 +204,11 @@ export class DeviceClient {
 
   isConnected(): boolean {
     return this.port !== null;
+  }
+
+  /** The port this session has open, if any. */
+  heldPort(): SerialPort | null {
+    return this.port;
   }
 
   async connect(
