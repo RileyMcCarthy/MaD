@@ -1433,7 +1433,9 @@ export class DeviceSession {
       'file-download',
       MSG_WRITE_FILE_DOWNLOAD,
     );
-    this.client?.write(MSG_WRITE_FILE_DOWNLOAD, request);
+    // A query, not a plain write: the board answers a download request with
+    // DATA (or NACK), never ACK, and the core only ends a write on ACK/NACK.
+    this.client?.query(MSG_WRITE_FILE_DOWNLOAD, request);
     return p.then((e) =>
       e.kind === 'data'
         ? { kind: 'data' as const, chunk: e.payload }
