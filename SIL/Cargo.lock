@@ -575,6 +575,7 @@ name = "p2iss"
 version = "0.1.0"
 dependencies = [
  "embsim-board",
+ "embsim-boards",
  "embsim-core",
  "embsim-models",
  "libc",
