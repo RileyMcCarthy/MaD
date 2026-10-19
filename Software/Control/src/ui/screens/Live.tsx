@@ -131,7 +131,7 @@ export default function Live() {
           <button onClick={() => setMotionEnabled(!state?.motionEnabled)} disabled={!stateKnown}>
             {!stateKnown ? 'Motion …' : state.motionEnabled ? 'Disable motion' : 'Enable motion'}
           </button>
-          <button onClick={() => homeAxis()} disabled={manualBlocked}>Home (G28)</button>
+          <button onClick={() => homeAxis()} disabled={manualBlocked} title="Homes the axis (G28)">Home</button>
           <button onClick={() => zeroForce()} disabled={manualBlocked}>Zero force</button>
           <button onClick={() => zeroLength()} disabled={manualBlocked}>Zero length</button>
         </div>
