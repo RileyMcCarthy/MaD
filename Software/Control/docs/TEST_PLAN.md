@@ -180,7 +180,10 @@ Ported SIL regressions and matrices, all in `run-all.mjs`: `G-limit`, `TC1-multi
 `TC4-dwell`, `TC6-disable-stops`, `TC11-velocity`, `TC14-jog`, `VT-linear`, `NAV`,
 `P1-precision`, `BB-back-to-back`, `TM-busy-restart`, `TM-manual-gate`, `D2-settled-jog`,
 `D3+SR-slack`, M8 jog cells, M9 slack cells, M10 WAVE-* cells, M11 link-loss cells,
-`FW1`–`FW3` / `FW5`–`FW9` (in-app loader UI; native `loadp2` CLI is still out of scope).
+`FW1`–`FW3` / `FW5`–`FW9` (in-app loader UI; native `loadp2` CLI is still out of scope),
+`SERVO-stall` (a jammed carriage latches `SERVO_STALL` and Live clears it; needs
+`E2E_JAM_FILE`, and it runs nightly only, since it isn't in `e2e/smoke-ids.txt`
+or the per-PR subset).
 
 Smoke subset (`e2e/smoke-ids.txt`, 20 IDs): A1, B1+C1, D1, E1, G1, G2+G3+H2+I,
 TM-busy-restart, TM-manual-gate, P1-precision, VT-linear, BB-back-to-back,
