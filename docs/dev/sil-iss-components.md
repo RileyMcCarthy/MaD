@@ -333,6 +333,20 @@ sync-serial clock's transitions half its period apart from the `WYPIN`, the
 pad released once the pin is cleared. `P2Iss` keeps its `Component` impl and
 pin lists until `mad-emulator` retires (step 11).
 
+`p2iss/tests/ec32mb_sd_mount.rs`, stepped, is the same module with the card
+`make sd-image` writes in `J301`: the firmware's boot-time mount and its
+logging core's mount both succeed, and the card is read at block 0 and then
+at its root directory, block 129. It needs embsim with the W25Q128JV's DO
+released until it has data to shift out (RileyMcCarthy/embsim#141). Before
+that the flash, whose `/CS` is the card's clock `P61` with `S301` FLASH
+closed, drove `P58` high through every low half of the card's mode-3 clock
+at 25 Ω against the card's 265 Ω (`R304`); the smart bus samples MISO on the
+rising edge, so every byte read `$FF`, the card heard only `CMD0`, and the
+mount failed with errno 12. One gap remains on that net: before the card
+has had a command, embsim's card drives MISO whenever `P60`, the flash's
+clock, selects it, so the ROM's and stage-1's flash reads fight it (the
+flash wins, at ten times the strength, and the boot is unaffected).
+
 ### G1 — Debug console is not a node
 *Inside the package (B3) it is: `P62` is an async transmit pad on the
 module's net, and a terminal on `J203.50` reads it.* For `P2Iss`:
