@@ -25,7 +25,9 @@ defaults:
 #
 # Only one message is in-flight at a time. The next message is
 # sent after the firmware responds (ACK/NACK/DATA) or after a
-# 2-second timeout.
+# timeout: 2 seconds for writes and on-demand reads, 250 ms for
+# the periodic polls (MaD Control), so one lost poll costs a
+# short gap in live data rather than a 2-second stall.
 #
 # This ensures that interactive operations (motion commands,
 # gcode streaming, file downloads) are never blocked by
