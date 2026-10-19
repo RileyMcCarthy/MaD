@@ -17,9 +17,9 @@ use embsim_board::{
 // Committed board netlist
 // ============================================================
 
-/// DS2 Addon netlist — committed simulation artifact (provenance and
-/// regeneration policy in the file's own header comment).
-pub(crate) const DS2_NETLIST: &str = include_str!("../boards/ds2_addon.net");
+/// DS2 Addon netlist: the one mad-catalog's `mad-ds2` board kind bundles
+/// (provenance and regeneration in the file's own header comment).
+pub(crate) const DS2_NETLIST: &str = include_str!("../../mad-catalog/netlists/ds2_addon.net");
 
 // ============================================================
 // Load-cell bridge (bench component with live Thevenin drives)
