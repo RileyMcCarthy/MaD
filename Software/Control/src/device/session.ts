@@ -119,11 +119,8 @@ export class DeviceClient {
     logger('device').error('worker-crash', message, {
       workerCreateCount: this.workerCreateCount,
     });
+    // fanout() releases the port for the crash's `disconnected` event.
     this.fanout(workerCrashEvents(message));
-    // Locked streams after a crash are exactly when the close keeps failing;
-    // releasePort() logs that, and an escaping rejection would be reported as a
-    // second crash on top of this one.
-    this.releasePort().catch(() => undefined);
   }
 
   /** Test/diagnostic: fire the worker crash path as if the Worker emitted onerror. */

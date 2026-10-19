@@ -8,6 +8,7 @@
  */
 import { describe, expect, vi, beforeAll } from 'vitest';
 import { behaviour } from '@vibes/behaviour';
+import { subscribeLog } from '@/diagnostics/log';
 import type { DeviceEvent } from './events';
 
 class FakeWorker {
@@ -34,8 +35,17 @@ vi.stubGlobal(
   },
 );
 
+/** The `navigator.serial` `disconnect` handlers, one per DeviceClient. */
+const serialDisconnectHandlers: Array<(event: Event) => void> = [];
+
 Object.defineProperty(globalThis, 'navigator', {
-  value: { serial: { addEventListener: () => undefined } },
+  value: {
+    serial: {
+      addEventListener: (type: string, handler: (event: Event) => void) => {
+        if (type === 'disconnect') serialDisconnectHandlers.push(handler);
+      },
+    },
+  },
   configurable: true,
   writable: true,
 });
@@ -297,6 +307,20 @@ describe('DeviceClient.disconnect', () => {
 /** Longer than releasePort()'s retry window, so a refused close gives up. */
 const PAST_RETRY_WINDOW_MS = 2000;
 
+/** Count the `device:port-close-failed` entries logged while `run` executes. */
+async function closeFailuresLoggedDuring(run: () => Promise<void>): Promise<number> {
+  let count = 0;
+  const stop = subscribeLog((e) => {
+    if (e.cat === 'device' && e.tag === 'port-close-failed') count += 1;
+  });
+  try {
+    await run();
+  } finally {
+    stop();
+  }
+  return count;
+}
+
 /** Collect unhandled rejections raised while `run` executes on fake timers. */
 async function unhandledRejectionsDuring(run: () => Promise<void>): Promise<unknown[]> {
   const seen: unknown[] = [];
@@ -325,10 +349,44 @@ describe('DeviceClient release failures stay contained', () => {
       expect: {
         'no-unhandled-rejection': 'no unhandled rejection is raised',
         'still-held': 'the session still counts the port as held',
+        'close-failure-logged-once': 'the refused close is logged once',
       },
       why: {
         'no-unhandled-rejection':
           'the app reports every unhandled rejection as a crash, so an escaping close failure would log a second crash on top of the real one',
+        'close-failure-logged-once': 'a crash releases the port once, so the log holds one entry per close that failed',
+      },
+    },
+    async () => {
+      const client = new DeviceClient();
+      const port = fakePort();
+      await client.connect(port as unknown as SerialPort);
+      port.refusals = Number.POSITIVE_INFINITY;
+      let unhandled: unknown[] = [];
+      const closeFailures = await closeFailuresLoggedDuring(async () => {
+        unhandled = await unhandledRejectionsDuring(async () => {
+          client.simulateWorkerCrash('trap');
+        });
+      });
+      expect(unhandled).toEqual([]);
+      expect(client.isConnected()).toBe(true);
+      expect(port.isOpen).toBe(true);
+      expect(closeFailures).toBe(1);
+    },
+  );
+
+  behaviour(
+    {
+      id: 'session.serial-disconnect-close-refused-contained',
+      covers: 'src/device/session.ts#DeviceClient',
+      given: 'the browser reporting the session\'s port disconnected while its streams stay locked, so it keeps refusing to close the port',
+      expect: {
+        'no-unhandled-rejection': 'no unhandled rejection is raised',
+        'still-held': 'the session still counts the port as held',
+      },
+      why: {
+        'no-unhandled-rejection':
+          'the app reports every unhandled rejection as a crash, and nothing waits on this close to report the failure to',
       },
     },
     async () => {
@@ -337,7 +395,7 @@ describe('DeviceClient release failures stay contained', () => {
       await client.connect(port as unknown as SerialPort);
       port.refusals = Number.POSITIVE_INFINITY;
       const unhandled = await unhandledRejectionsDuring(async () => {
-        client.simulateWorkerCrash('trap');
+        for (const handler of serialDisconnectHandlers) handler({ target: port } as unknown as Event);
       });
       expect(unhandled).toEqual([]);
       expect(client.isConnected()).toBe(true);
