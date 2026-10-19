@@ -168,9 +168,9 @@ function Shell() {
         <nav className="nav">
           <NavLink to="/connect">Connect</NavLink>
           <NavLink to="/live">Live</NavLink>
-          <NavLink to="/profiles">Samples</NavLink>
-          <NavLink to="/create">Motion Profiles</NavLink>
-          <NavLink to="/runs">Test Runs</NavLink>
+          <NavLink to="/profiles">Sample profiles</NavLink>
+          <NavLink to="/create">Motion profiles</NavLink>
+          <NavLink to="/runs">Test runs</NavLink>
           <NavLink to="/firmware">Firmware</NavLink>
           <NavLink to="/about">About</NavLink>
           <NavLink to="/settings">Settings</NavLink>

@@ -33,7 +33,7 @@ outside the machine's encodable range is blocked before it's sent.
 
 | Button | Action |
 |---|---|
-| **Home (G28)** | Homes the motion axis to its reference. |
+| **Home** | Homes the motion axis to its reference. |
 | **Zero force** | Zeroes the force-gauge reading at the current load — establishes the sample-force origin. |
 | **Zero length** | Zeroes the position/encoder at the current position — establishes the gauge-length origin. |
 
