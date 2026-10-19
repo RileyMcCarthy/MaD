@@ -6,6 +6,7 @@ import {
   bundleFileName,
   environmentBlock,
   ISSUE_URL_MAX,
+  recentActions,
   ISSUE_TEMPLATE,
   shortUserAgent,
 } from './report';
@@ -531,6 +532,98 @@ describe('shortUserAgent browser precedence', () => {
       expect(
         shortUserAgent('Mozilla/5.0 (Macintosh) AppleWebKit/605.1 Version/17.4 Safari/605.1.15'),
       ).toContain('Safari 17');
+    },
+  );
+});
+
+describe('recentActions', () => {
+  behaviour(
+    {
+      id: 'diag.report-actions-recipe',
+      covers: 'src/diagnostics/report.ts#recentActions',
+      given:
+        'a session that opened Motion Profiles, set a speed, typed a name, clicked Save and then hit a screen crash',
+      expect: {
+        'steps-in-order': 'the steps read oldest first, each with its time',
+        'settings-shown': 'the number set is shown with its value',
+        'text-hidden': 'the typed name is shown by length only',
+        'error-in-place': 'the crash appears at the point it happened, on one line',
+        'repeat-page-once': 'a page change logged twice in a row is listed once',
+      },
+    },
+    () => {
+      const t = Date.UTC(2026, 0, 1, 12, 0, 0);
+      const text = recentActions(
+        bundle({
+          log: {
+            entries: [
+              entry({ t, cat: 'ui', tag: 'route', msg: '/create' }),
+              entry({ t, cat: 'ui', tag: 'route', msg: '/create' }),
+              entry({ t: t + 1000, cat: 'ui', tag: 'edit', msg: 'Speed (mm/s)', data: { value: '12.5' } }),
+              entry({ t: t + 2000, cat: 'ui', tag: 'edit', msg: 'Name', data: { length: 7 } }),
+              entry({ t: t + 3000, cat: 'ui', tag: 'click', msg: 'Save' }),
+              entry({ t: t + 4000, level: 'error', cat: 'ui', tag: 'render-crash', msg: 'boom\n    at Create' }),
+            ],
+            counters: {},
+            dropped: 0,
+            startedAt: 0,
+          },
+        }),
+      );
+      expect(text.split('\n')).toEqual([
+        '12:00:00 open /create',
+        '12:00:01 set "Speed (mm/s)" to 12.5',
+        '12:00:02 type in "Name" (7 characters, not recorded)',
+        '12:00:03 click "Save"',
+        '12:00:04 ✗ ui/render-crash boom',
+      ]);
+    },
+  );
+
+  behaviour(
+    {
+      id: 'diag.report-actions-capped',
+      covers: 'src/diagnostics/report.ts#recentActions',
+      given: 'a session with 35 clicks',
+      expect: {
+        'newest-thirty': 'only the newest 30 steps are listed, oldest first',
+        'earlier-counted': 'a first line says how many earlier steps are in the attached log',
+      },
+      why: { 'earlier-counted': 'a reader must know the recipe is cut, not that the session began there' },
+    },
+    () => {
+      const t = Date.UTC(2026, 0, 1, 12, 0, 0);
+      const entries = Array.from({ length: 35 }, (_, i) =>
+        entry({ seq: i + 1, t: t + i * 1000, cat: 'ui', tag: 'click', msg: `step-${i}` }),
+      );
+      const lines = recentActions(bundle({ log: { entries, counters: {}, dropped: 0, startedAt: 0 } })).split('\n');
+      expect(lines).toHaveLength(31);
+      expect(lines[0]).toBe('(5 earlier steps in the attached log)');
+      expect(lines[1]).toBe('12:00:05 click "step-5"');
+      expect(lines[30]).toBe('12:00:34 click "step-34"');
+    },
+  );
+});
+
+describe('recent errors in the issue', () => {
+  behaviour(
+    {
+      id: 'diag.report-errors-first-line',
+      covers: 'src/diagnostics/report.ts#buildIssueFields',
+      given: 'an error whose message is followed by a stack trace on later lines',
+      expect: { 'first-line-only': 'the error block shows only the first line of the message, trimmed' },
+      why: { 'first-line-only': 'a stack per error would push the other errors out of the issue' },
+    },
+    () => {
+      const fields = buildIssueFields({ summary: 'x' }, bundle({
+        log: {
+          entries: [entry({ level: 'error', cat: 'ui', tag: 'render-crash', msg: '  boom  \n    at Create\n    at App' })],
+          counters: {},
+          dropped: 0,
+          startedAt: 0,
+        },
+      }), 'f.json');
+      expect(fields.errors).toBe('12:00:00.000 ui/render-crash boom');
     },
   );
 });

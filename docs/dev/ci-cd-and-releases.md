@@ -32,7 +32,7 @@ relevant jobs:
 | `build-hardware` | hardware changed, or a hardware tag | KiBot → Gerbers, BOM, interactive BOM, 3D models for each board |
 | `vibes` (Behaviour ledger) | every PR | **Informational** (not in `ci-gate.needs`). Diffs the behaviour ledger against the base branch and posts the report as a PR comment; it fails when a behaviour breaks or is removed, but does not block the merge |
 | **`ci-gate`** | **every PR** | **Aggregates all of the above except `vibes`. Fails if any job failed/was cancelled; passes when they succeeded or were legitimately skipped. This is the single required status check (`CI Gate`) on `main`.** |
-| `release-*` | a `firmware-v*` / `hardware-v*` tag | Publishes a GitHub Release with the built artifacts. MaD Control releases are cut by `pages.yml` on `madcontrol-v*` tags. |
+| `release-*` | a `firmware-v*` / `hardware-v*` tag | Publishes a GitHub Release with the built artifacts. `release-firmware` then dispatches `pages.yml` on `main`, so `/app/firmware/` serves the new release ([Pages deploy](#pages-deploy-githubworkflowspagesyml)). MaD Control releases are cut by `pages.yml` on `madcontrol-v*` tags. |
 
 The PR trigger has **no path filter** — every PR runs at least `changes` + `ci-gate`, so the required `CI Gate` check always reports. Requiring the gate (instead of each job individually) is what keeps path-filtered skips from blocking a PR forever.
 
@@ -115,21 +115,41 @@ value foci per area). Edit the guideline doc, not a second copy.
 
 ## Pages deploy (`.github/workflows/pages.yml`)
 
-One workflow publishes **both** this documentation site and the control app to
-GitHub Pages as a single deployment:
+One workflow publishes **both** this documentation site and every MaD Control
+release to GitHub Pages as a single deployment:
 
 ```text
-https://rileymccarthy.github.io/MaD/        → documentation (this site)
-https://rileymccarthy.github.io/MaD/app/    → MaD Control
+https://rileymccarthy.github.io/MaD/               → documentation (this site, from main)
+https://rileymccarthy.github.io/MaD/app/           → redirects to the latest release
+https://rileymccarthy.github.io/MaD/app/vX.Y.Z/    → one release, exactly as it shipped
 ```
 
-The job builds the app with Vite (base path `/<repo>/app/`), builds the docs with
-MkDocs, copies the app into `site/app/`, and uploads the merged `site/` as the
-Pages artifact. **Pages deploys from `main`** (and `workflow_dispatch`). The
-`github-pages` environment only allows that branch, so a `madcontrol-v*` tag
-does **not** deploy Pages — it asserts `package.json` matches the tag and
-publishes a **MaD Control** GitHub Release. The matching merge to `main` already
-deployed that SHA.
+- **Each release is built once.** Pushing a `madcontrol-vX.Y.Z` tag runs the
+  `release-app` job. It builds the app for its own folder (base path
+  `/<repo>/app/vX.Y.Z/`), attaches the build to the **MaD Control X.Y.Z** GitHub
+  Release as `mad-control-vX.Y.Z.zip`, then asks `main` to redeploy.
+- **Every deploy re-assembles the site.** The `build` job builds the docs from
+  `main`, then `tools/assemble-pages-app.mts` unpacks every release zip into
+  `site/app/vX.Y.Z/` and writes:
+    - `versions.json`, which lists the releases for the app's version picker on
+      **About**;
+    - the `/app/` redirect, which keeps the page part of the URL;
+    - `/app/firmware/`, the latest firmware release, shared by every version so
+      an older app still offers the newest firmware;
+    - an `/app/sw.js` that removes the service worker left by the unversioned
+      app.
+- **Merging to `main` never changes a published app.** It redeploys only when
+  the docs, the assembler or this workflow change.
+- **Pages deploys from `main`.** The `github-pages` environment only accepts that
+  branch, which is why the tag job dispatches a `main` deploy rather than
+  deploying itself.
+- **A firmware release triggers a redeploy too,** so the shared firmware stays
+  current. Once a `firmware-v*` tag has published its release, `ci.yml`'s
+  `release-firmware` job dispatches this workflow on `main`
+  (`gh workflow run pages.yml --ref main`). That run only re-assembles: the
+  existing release zips plus the new firmware in `/app/firmware/`.
+  `release-app` runs only on `madcontrol-v*` tags, so no app is rebuilt.
+- **Releases from before 0.4.0 carry no build** and are not hosted.
 
 !!! note "One-time setup"
     In the repo, set **Settings → Pages → Source = GitHub Actions** so the
@@ -149,8 +169,9 @@ git push -u origin HEAD
 Software/Control/scripts/release.sh --publish         # tags madcontrol-vX.Y.Z
 ```
 
-That tag publishes a GitHub Release named **MaD Control X.Y.Z**. Pages already
-deployed from the merge to `main`.
+That tag builds the release, publishes the **MaD Control X.Y.Z** GitHub Release
+with its `mad-control-vX.Y.Z.zip`, and redeploys Pages. `/app/` then opens
+X.Y.Z, and earlier releases stay at their own `/app/vX.Y.Z/` addresses.
 
 Firmware and hardware are still cut with version tags:
 

@@ -101,3 +101,23 @@ export function estimateSeconds(imageBytes: number, baudRate: number): number {
   const framing = Math.ceil(imageBytes / 128) * 3;
   return ((imageBytes * 3 + framing) * 10) / baudRate;
 }
+
+/** Fixed part of {@link flashWriteMs}: checksum pass, first erase, host buffers. */
+const FLASH_WRITE_BASE_MS = 1000;
+/** Per-KiB part of {@link flashWriteMs}, about twice the stub's measured rate. */
+const FLASH_WRITE_MS_PER_KIB = 9;
+
+/**
+ * Milliseconds the flash stub may still be writing after the last byte of a
+ * flash image has left the host.
+ *
+ * The stub only starts erasing and programming once the ROM has the whole
+ * image, and nothing on the wire says when it is done. A reset in that window
+ * (DTR, a port re-open, a power cycle) leaves flash holding a partial image that
+ * the boot loader's checksum then refuses, so the board does not boot at all.
+ * The stub's own table (W25Q128 at RCFAST) is ~4.3 ms/KiB; this allows double
+ * that for slower RC oscillators and flash parts, plus a fixed second.
+ */
+export function flashWriteMs(imageBytes: number): number {
+  return Math.ceil(FLASH_WRITE_BASE_MS + (imageBytes / 1024) * FLASH_WRITE_MS_PER_KIB);
+}

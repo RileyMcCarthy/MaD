@@ -311,7 +311,7 @@ async function main() {
   // 9. About — build identity + diagnostics export.
   await safe('about', async () => {
     await page.goto(`${APP_URL}#/about`);
-    await page.getByTestId('fw-version').waitFor({ timeout: 8000 }).catch(() => {});
+    await page.getByTestId('app-version').waitFor({ timeout: 8000 }).catch(() => {});
     await page.waitForTimeout(500);
     await shot(page, '10-about', { full: true });
   });

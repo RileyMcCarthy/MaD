@@ -478,8 +478,12 @@ export function installFakeSerial(bridgeUrl) {
  * would, by pressing "Choose data folder" as soon as it appears, so every
  * scenario starts inside the app with a fresh folder. A scenario that wants a
  * clean folder midway still calls `chooseDataFolder`.
+ *
+ * Pass `{ dirName, answerGate: false }` instead of the name to leave the gate
+ * up, for a scenario that walks the gate's own branches (A1).
  */
-export function installOpfsDataDir(dirName) {
+export function installOpfsDataDir(arg) {
+  const { dirName, answerGate: autoAnswer = true } = typeof arg === 'string' ? { dirName: arg } : arg;
   window.showDirectoryPicker = async () => {
     const root = await navigator.storage.getDirectory();
     try {
@@ -493,7 +497,7 @@ export function installOpfsDataDir(dirName) {
     const button = document.querySelector('[data-testid="data-folder-gate"] [data-testid="choose-data-folder"]');
     if (button && !button.disabled) button.click();
   };
-  new MutationObserver(answerGate).observe(document, { childList: true, subtree: true });
+  if (autoAnswer) new MutationObserver(answerGate).observe(document, { childList: true, subtree: true });
 }
 
 /**
@@ -819,7 +823,7 @@ export function installFakeBootRom(options = 1) {
   const { ports: portCount = 1, getPortsFails = false, writeDelayMs = 0 } =
     typeof options === 'number' ? { ports: options } : options;
   const CHECKSUM_MAGIC = 0x706f7250;
-  const state = { reset: 0, image: [], finished: false, ok: null, dtr: null, bytesIn: 0, replies: 0, checksum: null };
+  const state = { reset: 0, image: [], finished: false, ok: null, dtr: null, bytesIn: 0, replies: 0, checksum: null, finishedAt: null, closedAt: null };
   window.__bootRom = state;
 
   let controller;
@@ -865,6 +869,8 @@ export function installFakeBootRom(options = 1) {
       if (tok === '' || tok === '>') continue;
       if (tok === '~') {
         state.finished = true;
+        // When the real chip would start erasing and programming flash.
+        state.finishedAt = performance.now();
         state.ok = true;
         hexMode = false;
         continue;
@@ -933,6 +939,7 @@ export function installFakeBootRom(options = 1) {
         state.dtr = dataTerminalReady;
       },
       async close() {
+        state.closedAt = performance.now();
         try {
           controller?.close();
         } catch {

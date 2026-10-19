@@ -1072,11 +1072,132 @@ async function readDownloadedCsvStats(page) {
   });
 }
 
+/**
+ * The data-folder gate (src/ui/DataFolderGate.tsx), every branch other than
+ * the happy path every other scenario takes. Board-free: a host Chrome with
+ * the OPFS picker installed but NOT auto-answering, and in-page stubs for the
+ * picker's failures and the browser's permission prompt.
+ *
+ *  1. picker cancelled (AbortError): no error shown, the gate stays up;
+ *  2. picker throws anything else: its message is shown, the gate stays up;
+ *  3. picker answers: the app renders;
+ *  4. a new page in the same profile finds the remembered folder un-granted:
+ *     the gate offers "Allow access to <folder>"; refused shows "Access to
+ *     <folder> was not granted." and keeps the gate; granted renders the app.
+ */
+async function walkDataFolderGate() {
+  const browser = await chromium.launch({ channel: 'chrome', headless: true });
+  try {
+    // One context for both pages: the remembered folder lives in its IndexedDB.
+    const context = await browser.newContext();
+    const errors = [];
+    await context.addInitScript(installOpfsDataDir, { dirName: OPFS_DIR, answerGate: false });
+
+    const gate = (page) => page.getByTestId('data-folder-gate');
+    const appShell = (page) => page.locator('nav.nav');
+    const choose = (page) => gate(page).getByTestId('choose-data-folder');
+    const gateError = (page) => gate(page).getByTestId('data-folder-error');
+    // The gate disables its buttons while an attempt is in flight; enabled
+    // again means the attempt has settled and its outcome is on screen.
+    const settled = async (button) => {
+      await button.waitFor({ timeout: DEVICE_WAIT_MS });
+      for (let i = 0; i < 100 && (await button.isDisabled()); i += 1) {
+        // eslint-disable-next-line no-await-in-loop
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      assert(await button.isEnabled(), 'the gate never finished its attempt');
+    };
+
+    const page = await context.newPage();
+    page.on('pageerror', (e) => errors.push(e.message));
+    await page.goto(APP_URL_HOST);
+    await choose(page).waitFor({ timeout: DEVICE_WAIT_MS });
+
+    // Swap the picker for one that fails the given way, keeping the real one.
+    const pickerFails = (name, message) =>
+      page.evaluate(([n, m]) => {
+        window.__opfsPicker ??= window.showDirectoryPicker;
+        window.showDirectoryPicker = async () => {
+          throw new DOMException(m, n);
+        };
+      }, [name, message]);
+
+    // 1. Cancelled picker: a change of mind, not a failure.
+    await pickerFails('AbortError', 'The user aborted a request.');
+    await press(choose(page));
+    await settled(choose(page));
+    assert((await gateError(page).count()) === 0, 'a cancelled folder picker showed an error');
+    assert((await appShell(page).count()) === 0, 'the app rendered without a data folder');
+
+    // 2. Any other picker failure is shown as is.
+    const MESSAGE = 'The folder is on a drive that is not connected.';
+    await pickerFails('NotFoundError', MESSAGE);
+    await press(choose(page));
+    await settled(choose(page));
+    const shown = (await gateError(page).textContent())?.trim();
+    assert(shown === MESSAGE, `picker failure showed ${JSON.stringify(shown)}, expected its message`);
+    assert((await appShell(page).count()) === 0, 'the app rendered after the picker failed');
+
+    // 3. The picker answers: the gate lifts and the app renders.
+    await page.evaluate(() => {
+      window.showDirectoryPicker = window.__opfsPicker;
+    });
+    await press(choose(page));
+    await appShell(page).waitFor({ timeout: DEVICE_WAIT_MS });
+    assert((await gate(page).count()) === 0, 'the gate stayed up after a folder was chosen');
+    await page.close();
+
+    // 4. Re-permission. A second page in the same profile restores the
+    // remembered folder, but the browser reports access as needing a prompt
+    // again (as it does after a restart). The prompt's answer is
+    // window.__permissionAnswer, refused until the scenario says otherwise.
+    const again = await context.newPage();
+    again.on('pageerror', (e) => errors.push(e.message));
+    await again.addInitScript(() => {
+      window.__permissionAnswer = 'denied';
+      window.__permissionRequests = 0;
+      FileSystemHandle.prototype.queryPermission = async () => 'prompt';
+      FileSystemHandle.prototype.requestPermission = async () => {
+        window.__permissionRequests += 1;
+        return window.__permissionAnswer;
+      };
+    });
+    await again.goto(APP_URL_HOST);
+    const grant = gate(again).getByTestId('grant-data-folder');
+    await grant.waitFor({ timeout: DEVICE_WAIT_MS });
+    const label = (await grant.textContent())?.trim();
+    assert(label === `Allow access to “${OPFS_DIR}”`, `re-permission button read ${JSON.stringify(label)}`);
+    assert((await appShell(again).count()) === 0, 'the app rendered before access was re-granted');
+
+    await press(grant);
+    await settled(grant);
+    const refused = (await gateError(again).textContent())?.trim();
+    assert(
+      refused === `Access to “${OPFS_DIR}” was not granted.`,
+      `refused permission showed ${JSON.stringify(refused)}`,
+    );
+    assert((await appShell(again).count()) === 0, 'the app rendered after access was refused');
+
+    await again.evaluate(() => {
+      window.__permissionAnswer = 'granted';
+    });
+    await press(grant);
+    await appShell(again).waitFor({ timeout: DEVICE_WAIT_MS });
+    assert((await gate(again).count()) === 0, 'the gate stayed up after access was granted');
+    const asked = await again.evaluate(() => window.__permissionRequests);
+    assert(asked === 2, `expected one permission prompt per press (2), saw ${asked}`);
+
+    assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
+  } finally {
+    await browser.close();
+  }
+}
+
 // ── Scenarios (extend toward TEST_PLAN.md §4) ──
 const scenarios = [
   {
     id: 'A1',
-    name: 'Capability gate blocks non-Chromium-capable contexts',
+    name: 'Startup gates: capability gate blocks non-Chromium contexts; data-folder gate branches',
     async run() {
       // Remove the required APIs so the gate triggers, then load the app.
       const browser = await chromium.launch({ channel: 'chrome', headless: true });
@@ -1099,6 +1220,9 @@ const scenarios = [
       } finally {
         await browser.close();
       }
+      // The data-folder gate sits directly inside the capability gate
+      // (App.tsx): the two are the app's startup gates, so A1 walks both.
+      await walkDataFolderGate();
     },
   },
   {
@@ -2838,7 +2962,7 @@ const scenarios = [
   },
   {
     id: 'FW7',
-    name: 'Firmware: every control is locked while programming, and progress shows',
+    name: 'Firmware: every control is locked while programming and writing flash, and progress shows',
     async run() {
       const browser = await chromium.launch({ channel: 'chrome', headless: true });
       try {
@@ -2859,8 +2983,21 @@ const scenarios = [
         for (const id of ['flash-firmware', 'firmware-file', 'choose-flash-port']) {
           assert(await page.getByTestId(id).isDisabled(), `${id} was still enabled mid-flash`);
         }
+        // After the upload the chip is still erasing and programming flash;
+        // the app must hold the port, and the user's hands, until it is done.
+        await page.getByTestId('flash-status').filter({ hasText: /Writing flash|Finishing…/ }).waitFor({ timeout: RUN_WAIT_MS });
+        for (const id of ['flash-firmware', 'firmware-file', 'choose-flash-port']) {
+          assert(await page.getByTestId(id).isDisabled(), `${id} was enabled while flash was being written`);
+        }
+        assert(
+          await page.evaluate(() => window.__bootRom.closedAt === null),
+          'the port was closed while flash was being written',
+        );
         await page.getByTestId('flash-status').filter({ hasText: /Wrote .* bytes to flash/ })
           .waitFor({ timeout: RUN_WAIT_MS });
+        // 4096 + 496 bytes: the write estimate is at least its fixed second.
+        const held = await page.evaluate(() => window.__bootRom.closedAt - window.__bootRom.finishedAt);
+        assert(held >= 1000, `port closed ${Math.round(held)} ms after the download ended; flash needs longer`);
       } finally { await browser.close(); }
     },
   },
