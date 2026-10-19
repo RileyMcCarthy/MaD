@@ -794,7 +794,7 @@ export async function recoverMachine() {
 export async function chooseDataFolder(page) {
   await page.goto(`${APP_URL}#/settings`);
   // The startup gate already opened one, so the button offers a change.
-  await press(page.getByRole('button', { name: /Change folder/i }));
+  await press(page.getByRole('button', { name: /Change data folder/i }));
   await page.getByText(/Data folder set\./).waitFor({ timeout: 8000 });
 }
 
@@ -823,7 +823,7 @@ export function installFakeBootRom(options = 1) {
   const { ports: portCount = 1, getPortsFails = false, writeDelayMs = 0 } =
     typeof options === 'number' ? { ports: options } : options;
   const CHECKSUM_MAGIC = 0x706f7250;
-  const state = { reset: 0, image: [], finished: false, ok: null, dtr: null, bytesIn: 0, replies: 0, checksum: null };
+  const state = { reset: 0, image: [], finished: false, ok: null, dtr: null, bytesIn: 0, replies: 0, checksum: null, finishedAt: null, closedAt: null };
   window.__bootRom = state;
 
   let controller;
@@ -869,6 +869,8 @@ export function installFakeBootRom(options = 1) {
       if (tok === '' || tok === '>') continue;
       if (tok === '~') {
         state.finished = true;
+        // When the real chip would start erasing and programming flash.
+        state.finishedAt = performance.now();
         state.ok = true;
         hexMode = false;
         continue;
@@ -937,6 +939,7 @@ export function installFakeBootRom(options = 1) {
         state.dtr = dataTerminalReady;
       },
       async close() {
+        state.closedAt = performance.now();
         try {
           controller?.close();
         } catch {

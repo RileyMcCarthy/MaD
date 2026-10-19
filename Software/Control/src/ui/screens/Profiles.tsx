@@ -11,18 +11,14 @@ import { dataStore } from '@/storage/DataStore';
 import NumberField from '@/ui/components/NumberField';
 
 const FIELDS: Array<{ key: keyof SampleProfile; label: string }> = [
-  { key: 'maxForce', label: 'Max Force (N)' },
-  { key: 'maxVelocity', label: 'Max Velocity (mm/s)' },
-  { key: 'maxDisplacement', label: 'Max Displacement (mm)' },
-  { key: 'sampleWidth', label: 'Sample Width (mm)' },
-  { key: 'sampleThickness', label: 'Sample Thickness (mm)' },
+  { key: 'maxForce', label: 'Max force (N)' },
+  { key: 'maxVelocity', label: 'Max velocity (mm/s)' },
+  { key: 'maxDisplacement', label: 'Max displacement (mm)' },
+  { key: 'sampleWidth', label: 'Sample width (mm)' },
+  { key: 'sampleThickness', label: 'Sample thickness (mm)' },
 ];
 
 export default function Profiles() {
-  const connected = useStore((s) => s.connection === 'connected');
-  const deviceProfile = useStore((s) => s.sampleProfile);
-  const refreshSampleProfile = useStore((s) => s.refreshSampleProfile);
-  const saveSampleProfile = useStore((s) => s.saveSampleProfile);
   const folderReady = useStore((s) => s.dataFolderReady);
 
   const [draft, setDraft] = useState<SampleProfile>(EMPTY_SAMPLE_PROFILE);
@@ -30,21 +26,12 @@ export default function Profiles() {
   const [name, setName] = useState('');
   const [message, setMessage] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (deviceProfile) setDraft(deviceProfile);
-  }, [deviceProfile]);
-
   const loadSaved = async () => {
     if (dataStore.connected) setSaved(await dataStore.getSampleProfiles());
   };
   useEffect(() => {
     void loadSaved();
   }, [folderReady]);
-
-  const writeToDevice = async () => {
-    const ok = await saveSampleProfile(draft);
-    setMessage(ok ? 'Written to device.' : 'Device rejected the profile.');
-  };
 
   const importSp = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -97,7 +84,7 @@ export default function Profiles() {
 
   return (
     <div>
-      <h1>Sample Profiles</h1>
+      <h1>Sample profiles</h1>
 
       <div className="panel">
         <h2>Editor</h2>
@@ -120,13 +107,11 @@ export default function Profiles() {
           </label>
         </div>
         <div className="row" style={{ marginTop: 14 }}>
-          <button onClick={() => refreshSampleProfile()} disabled={!connected}>
-            Read from device
+          {/* No device read/write here: a test writes its sample profile to the
+              machine when it starts, and the limits only apply during a test. */}
+          <button className="primary" onClick={saveToDisk}>
+            Save sample profile
           </button>
-          <button className="primary" onClick={writeToDevice} disabled={!connected}>
-            Write to device
-          </button>
-          <button onClick={saveToDisk}>Save to folder</button>
           <label className="filebtn">
             Import .sp
             <input type="file" accept=".sp,application/json" hidden onChange={importSp} />
@@ -136,9 +121,9 @@ export default function Profiles() {
       </div>
 
       <div className="panel">
-        <h2>Saved profiles</h2>
+        <h2>Saved sample profiles</h2>
         {saved.length === 0 ? (
-          <p className="muted">No saved profiles (choose a data folder in Settings).</p>
+          <p className="muted">No saved sample profiles yet.</p>
         ) : (
           <table>
             <thead>

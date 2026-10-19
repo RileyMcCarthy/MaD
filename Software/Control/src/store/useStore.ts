@@ -82,8 +82,6 @@ interface AppState {
   grantDataFolder: () => Promise<void>;
   refreshConfig: () => Promise<void>;
   saveConfig: (config: MachineConfiguration) => Promise<boolean>;
-  refreshSampleProfile: () => Promise<void>;
-  saveSampleProfile: (profile: SampleProfile) => Promise<boolean>;
   /** Set the active sample profile locally (e.g. the one selected for a run) so
    *  the live charts show its limits without a device round-trip. */
   setSampleProfile: (profile: SampleProfile | null) => void;
@@ -542,13 +540,21 @@ export const useStore = create<AppState>((set, getState) => ({
     stopTimers();
     userDisconnect = true;
     clearSerialPref(); // intentional disconnect ⇒ don't auto-reconnect next session
-    await deviceClient.disconnect();
+    let error: string | null = null;
+    try {
+      await deviceClient.disconnect();
+    } catch (err) {
+      // The session is over either way; what is left is a port the browser
+      // would not let go of, which the operator must hear about.
+      error = err instanceof Error ? err.message : String(err);
+    }
     set({
       connection: 'disconnected',
       responding: false,
       latestSample: null,
       machineState: null,
       canReconnect: false,
+      ...(error ? { error } : {}),
     });
   },
 
@@ -615,21 +621,6 @@ export const useStore = create<AppState>((set, getState) => ({
     const ok = await deviceClient.writeMachineConfiguration(config);
     logStore.info('saveConfig', ok ? 'accepted' : 'rejected', { ok });
     if (ok) set({ config });
-    return ok;
-  },
-
-  refreshSampleProfile: async () => {
-    try {
-      const sampleProfile = await deviceClient.readSampleProfile();
-      set({ sampleProfile });
-    } catch (err) {
-      set({ error: err instanceof Error ? err.message : String(err) });
-    }
-  },
-
-  saveSampleProfile: async (profile) => {
-    const ok = await deviceClient.writeSampleProfile(profile);
-    if (ok) await getState().refreshSampleProfile();
     return ok;
   },
 

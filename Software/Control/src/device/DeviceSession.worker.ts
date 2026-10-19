@@ -489,7 +489,11 @@ export class DeviceSession {
       w.reject(new Error(reason ?? 'disconnected'));
     }
     // Best-effort close. A half-dead stream (USB unplug) can make cancel/close
-    // hang, so cap the whole teardown so disconnect always completes.
+    // hang, so cap the whole teardown so disconnect always completes. A step
+    // still running when the cap fires keeps its stream locked, and the main
+    // thread then cannot close the port: name that step so the log says why.
+    let step = 'reader-cancel';
+    let finished = false;
     await withTimeout(
       (async () => {
         try {
@@ -497,29 +501,39 @@ export class DeviceSession {
         } catch {
           /* ignore */
         }
+        step = 'reader-release';
         try {
           reader?.releaseLock();
         } catch {
           /* ignore */
         }
+        step = 'pending-writes';
         try {
           await writeChain;
         } catch {
           /* ignore */
         }
+        step = 'writer-close';
         try {
           await writer?.close();
         } catch {
           /* ignore */
         }
+        step = 'writer-release';
         try {
           writer?.releaseLock();
         } catch {
           /* ignore */
         }
+        finished = true;
       })(),
-      1500,
+      TEARDOWN_BUDGET_MS,
     );
+    if (!finished) {
+      logDev.error('teardown-timeout', `serial teardown did not finish within ${TEARDOWN_BUDGET_MS} ms`, {
+        step,
+      });
+    }
     this.shuttingDown = false;
     this.emit([{ kind: 'disconnected', reason }]);
     // Push the teardown entries across now: if this shutdown is the prelude to a
@@ -1454,6 +1468,9 @@ export class DeviceSession {
       });
   }
 }
+
+/** Cap on closing the serial streams in {@link shutdown}. */
+const TEARDOWN_BUDGET_MS = 1500;
 
 /** Resolve when `p` settles or after `ms`, whichever comes first (never rejects). */
 function withTimeout(p: Promise<unknown>, ms: number): Promise<void> {

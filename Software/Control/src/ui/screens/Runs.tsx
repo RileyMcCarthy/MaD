@@ -98,7 +98,7 @@ export default function Runs() {
 
   return (
     <div>
-      <h1>Test Runs</h1>
+      <h1>Test runs</h1>
 
       <TestRunner onChanged={loadRows} />
 
@@ -133,7 +133,7 @@ export default function Runs() {
         )}
 
         {rows.length === 0 ? (
-          <p className="muted">No runs yet (choose a data folder in Settings, then run a test).</p>
+          <p className="muted">No test runs yet.</p>
         ) : (
           <>
             <table>
@@ -161,7 +161,7 @@ export default function Runs() {
                       {r.status === 'downloaded' ? (
                         <>
                           <button onClick={() => navigate(`/view/${r.testName}`)}>View</button>
-                          <button onClick={() => exportCsv(r.testName)}>Export</button>
+                          <button onClick={() => exportCsv(r.testName)}>Export CSV</button>
                         </>
                       ) : (
                         <>

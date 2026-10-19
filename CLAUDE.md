@@ -10,7 +10,7 @@ MaD is a low-cost open-source uniaxial tensile testing machine. The monorepo has
 - **Software** (`Software/Control/`) — the **shipped, deployed** control app: a frontend-only browser PWA (React + Vite, Web Serial + WebAssembly).
 - **SIL** (`SIL/`) — Software-in-the-loop: a Rust workspace (`MaDSim`, `models`, and the out-of-tree `protocol` crate at `Protocol/rust/`). The reusable emulator framework at `SIL/embsim/` is a **git submodule** → [RileyMcCarthy/embsim](https://github.com/RileyMcCarthy/embsim).
 - **Protocol** (`Protocol/`) — YAML schema (`MaDProtocol.yaml`) → generated C / TypeScript / Rust. The toolchain at `Protocol/ProtoEmb/` is a **git submodule** → [RileyMcCarthy/protoemb](https://github.com/RileyMcCarthy/protoemb). The shipped app runs the protocol logic as **WebAssembly** (compiled from `Protocol/ProtoEmb/runtime`).
-- **Vibes** (`Vibes/`) — the behaviour ledger that reports what each PR's tests claim. A **git submodule** → [RileyMcCarthy/vibes](https://github.com/RileyMcCarthy/vibes). MaD keeps its own `behaviours.jsonl`, `behaviours.next` and the `vibes.suite.json` files; tool changes land upstream first.
+- **Vibes** (`Vibes/`) — the behaviour ledger that reports what each PR's tests claim. A **git submodule** → [RileyMcCarthy/vibes](https://github.com/RileyMcCarthy/vibes). MaD keeps its own `behaviours.jsonl`, `behaviours.next` and the `vibes.suite.json` files; tool changes land upstream first. BH numbers are provisional until merge: on a `behaviours.next` conflict run `node Vibes/bin/vibes.mjs renumber --base origin/main` — never keep the larger side by hand.
 - **Hardware** (`Hardware/`) — KiCad PCB designs
 
 Submodules must be initialized before building: `git submodule update --init --recursive` (or clone with `--recurse-submodules`).
@@ -142,6 +142,13 @@ Software/Control/scripts/release.sh --publish        # tag origin/main as madcon
 git tag firmware-v1.0.0 && git push --tags   # Firmware release
 git tag hardware-v1.0.0 && git push --tags   # Hardware release
 ```
+
+**Linking issues.** A PR that resolves a filed issue says `Fixes #N` in its
+description (one line per issue), so merging it closes the issue. This includes
+the in-app bug reports titled `[app] …`. A PR that only relates to an issue, or
+was prompted by one without fixing it, says `Refs #N`. GitHub closes issues only
+on a closing keyword (`Fixes` / `Closes` / `Resolves`), never on prose like
+"prompted by #N". Before opening a PR, check for an open issue it resolves.
 
 ## Key Constraints
 

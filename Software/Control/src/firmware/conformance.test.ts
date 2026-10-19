@@ -80,7 +80,7 @@ describe('loadp2 conformance', () => {
       for (const { name, size } of CASES) {
         for (const mode of ['ram', 'flash'] as const) {
           const rom = new CapturingRom();
-          await programTransport(rom, testImage(size), { mode });
+          await programTransport(rom, testImage(size), { mode, wait: async () => {} });
           const ours = Buffer.from(rom.sent);
           const theirs = golden(name, mode);
 
