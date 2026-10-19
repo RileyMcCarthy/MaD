@@ -1069,6 +1069,55 @@ void test_a_refused_waveform_completes_the_move_instead_of_hanging(void)
 }
 
 /* Completion is the driver's verdict, and only the driver's. */
+/* Issue #170: app_testManagement asks this latch whether the program's
+ * waveform actually ran, so a refusal must be remembered after the move ends. */
+void test_a_refused_waveform_is_reported_once_to_test_management(void)
+{
+    VIBES_TEST("motion.refused-waveform-reported",
+               "src/APP/app_motion.c#app_motion_takeWaveformRefused",
+               "G123 waveforms refused for being infeasible or for an unknown shape, and one the driver accepted");
+    VIBES_EXPECT_WHY("refusal-reported",
+                     "each refusal is reported after the move has ended",
+                     "test management needs it to end the test with a warning instead of Test Complete!");
+    VIBES_EXPECT("reported-once", "a refusal is reported only once");
+    VIBES_EXPECT("accepted-not-reported", "an accepted waveform reports no refusal");
+
+    motion_driveToWaiting();
+    TEST_ASSERT_FALSE(app_motion_takeWaveformRefused());
+
+    /* Infeasible: the driver refuses it. */
+    d_waveformAccepted = false;
+    app_motion_move_t bad = make_waveform(50000, 1000000U, 2U, 0U);
+    TEST_ASSERT_TRUE(app_motion_addMove(&bad));
+    app_motion_run();
+    global_timeus += 1000U;
+    app_motion_run();
+    TEST_ASSERT_TRUE(app_motion_isIdle());
+    TEST_ASSERT_TRUE(app_motion_takeWaveformRefused());
+    TEST_ASSERT_FALSE(app_motion_takeWaveformRefused());
+    d_waveformAccepted = true;
+
+    /* Unknown shape: refused before the driver is asked. */
+    app_motion_move_t odd = make_waveform(50000, 1000000U, 2U, 7U);
+    TEST_ASSERT_TRUE(app_motion_addMove(&odd));
+    app_motion_run();
+    global_timeus += 1000U;
+    app_motion_run();
+    TEST_ASSERT_TRUE(app_motion_isIdle());
+    TEST_ASSERT_TRUE(app_motion_takeWaveformRefused());
+
+    /* Accepted and run to arrival: nothing to report. */
+    d_atTarget = false;
+    app_motion_move_t ok = make_waveform(50000, 1000000U, 2U, 1U);
+    TEST_ASSERT_TRUE(app_motion_addMove(&ok));
+    app_motion_run();
+    d_atTarget = true;
+    global_timeus += 1000U;
+    app_motion_run();
+    TEST_ASSERT_TRUE(app_motion_isIdle());
+    TEST_ASSERT_FALSE(app_motion_takeWaveformRefused());
+}
+
 void test_a_waveform_runs_until_the_driver_reports_arrival(void)
 {
     VIBES_TEST("motion.waveform-completes-on-driver-arrival",
@@ -1249,6 +1298,7 @@ int main(void)
     RUN_TEST(test_waveform_is_handed_to_the_driver_in_the_drivers_units);
     RUN_TEST(test_a_sine_shape_bit_selects_a_sine);
     RUN_TEST(test_a_refused_waveform_completes_the_move_instead_of_hanging);
+    RUN_TEST(test_a_refused_waveform_is_reported_once_to_test_management);
     RUN_TEST(test_a_waveform_runs_until_the_driver_reports_arrival);
     RUN_TEST(test_the_recorded_setpoint_during_a_waveform_is_the_trajectory);
     RUN_TEST(test_a_linear_move_records_its_trajectory_not_its_destination);

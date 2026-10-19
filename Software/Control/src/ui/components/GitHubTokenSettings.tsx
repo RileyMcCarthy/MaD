@@ -10,6 +10,7 @@ import {
   ISSUE_REPO_NAME,
   type TokenCheck,
 } from '@/diagnostics/github';
+import { dataStore } from '@/storage/DataStore';
 
 /**
  * New **classic** token with the two scopes filing needs, pre-selected.
@@ -52,7 +53,7 @@ export default function GitHubTokenSettings() {
         );
         return;
       }
-      setToken(token);
+      await setToken(token, dataStore);
       setStored(true);
       setCheck(result);
       setValue('');
@@ -69,11 +70,15 @@ export default function GitHubTokenSettings() {
     }
   };
 
-  const disconnect = () => {
-    clearToken();
-    setStored(false);
-    setCheck(null);
-    setError(null);
+  const disconnect = async () => {
+    try {
+      await clearToken(dataStore);
+      setStored(false);
+      setCheck(null);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
   };
 
   return (
@@ -95,7 +100,7 @@ export default function GitHubTokenSettings() {
                 {check.canCreateGists ? '' : ' — no gist access, logs will not be attached'}
               </span>
             ) : (
-              <span className="muted">a token is stored in this browser</span>
+              <span className="muted">a token is saved in the data folder</span>
             )}
           </p>
           <div className="row">
@@ -118,7 +123,10 @@ export default function GitHubTokenSettings() {
               </code>
               , the second attaches your session log.
             </li>
-            <li>Paste it below. It is stored in this browser only and never leaves it except to GitHub.</li>
+            <li>
+              Paste it below. It is saved in the data folder&apos;s <code>settings.json</code> and is
+              never sent anywhere but GitHub.
+            </li>
           </ol>
           <label className="field">
             Personal access token
@@ -157,9 +165,9 @@ export default function GitHubTokenSettings() {
         </p>
       )}
       <p className="muted" style={{ marginTop: 12 }}>
-        The token is held in this browser&apos;s local storage, so anyone with access to this
-        computer&apos;s browser profile could read it — revoke it from GitHub if you stop using
-        this machine. Note that <code>public_repo</code> covers every public repository you can
+        The token is saved as plain text in the data folder, so anyone who can open that folder
+        can read it — and a copy of the folder shared with someone else carries the token too.
+        Revoke it from GitHub if you stop using this folder. Note that <code>public_repo</code> covers every public repository you can
         reach, not just this one; that breadth is what makes a single set of instructions work
         for everybody.
       </p>

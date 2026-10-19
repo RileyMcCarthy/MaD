@@ -13,7 +13,13 @@
     "emitDeclarationOnly": true,
     "outDir": "./node_modules/.tmp/tsnode",
     "types": ["node"],
-    "strict": true
+    "strict": true,
+    // The test imports @vibes/behaviour, a `file:` link that TS resolves from
+    // its target (../../Vibes/bindings/ts); point its vitest peer at this
+    // project's copy, as tsconfig.json does, or CI (no Vibes/node_modules)
+    // cannot find it.
+    "baseUrl": ".",
+    "paths": { "vitest": ["./node_modules/vitest"] }
   },
-  "include": ["vite.config.ts"]
+  "include": ["vite.config.ts", "tools/firmwareRelease.ts", "tools/firmwareRelease.test.ts", "tools/assemble-pages-app.mts", "tools/assemble-pages-app.test.ts", "src/firmware/release.ts"]
 }

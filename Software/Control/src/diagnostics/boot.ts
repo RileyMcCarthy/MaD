@@ -1,15 +1,17 @@
 /**
  * App-level diagnostics wiring, installed once at startup.
  *
- * Three things that are invisible in a bug report unless captured deliberately:
- * what build the user is running, anything the app wrote to the console before
- * anyone thought to look, and whether the tab was in the background when the
+ * Things that are invisible in a bug report unless captured deliberately:
+ * what build the user is running, what they clicked and changed, anything the
+ * app wrote to the console before anyone thought to look, and whether the tab was in the background when the
  * device stream misbehaved (Chrome throttles hidden tabs, which perturbs a
  * ~100 Hz stream and reads exactly like a protocol fault if you can't see it).
  */
 
 import { logger, nowMs, type LogLevel } from './log';
 import { startLogPersistence, type LogPersistence } from './persist';
+import { consoleDetail, formatConsoleArgs } from './consoleFormat';
+import { trackUserActions } from './actions';
 
 const log = logger('app');
 
@@ -67,11 +69,10 @@ function interceptConsole(): void {
     const original = console[level].bind(console);
     console[level] = (...args: unknown[]): void => {
       try {
-        const [first, ...rest] = args;
         log[level](
           'console',
-          typeof first === 'string' ? first : String(first),
-          rest.length > 0 ? { args: rest.length, detail: rest[0] } : undefined,
+          formatConsoleArgs(args),
+          args.length > 1 ? { args: args.length - 1, detail: consoleDetail(args) } : undefined,
         );
       } catch {
         // Logging must never break the console it is wrapping.
@@ -182,6 +183,7 @@ export function installAppDiagnostics(): void {
   interceptConsole();
   logBootEnvironment();
   trackEnvironmentChanges();
+  trackUserActions();
   trackMainThreadHealth();
   trackHeap();
   persistence = startLogPersistence(SESSION_ID);

@@ -9,6 +9,10 @@
  * displacement from the resting position.
  */
 
+import { writeFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+
 function assert(cond, msg) {
   if (!cond) throw new Error(msg);
 }
@@ -81,6 +85,7 @@ export function resampledPathMm(timeUs, posUm, { dtUs = 50_000, minDeltaUm = 500
   return path;
 }
 
+
 // Rigorously assert a recorded position series actually traces the COMMANDED sine
 // waveform — not merely that it oscillates. Checks: peak-to-peak ≈ 2·amplitude;
 // a least-squares sinusoid fit at the commanded frequency explains the motion
@@ -90,15 +95,30 @@ export function resampledPathMm(timeUs, posUm, { dtUs = 50_000, minDeltaUm = 500
 // This is the end-to-end proof that the firmware-native waveform = f(t).
 // Narrow a recorded run down to the COMMANDED WAVEFORM.
 //
-// A waveform run records more than its wave: a leading ramp that travels the
-// move's `distance` to the wave's base, and — after the closing settle parks the
-// gantry — a flat tail lasting until teardown. Neither is the commanded shape,
-// so any statistic taken over the whole record measures the approach as much as
-// the wave. That is not a small effect: for WAVE-tri the ramp is 5 mm against an
-// 8 mm peak-to-peak, and a properly homed gantry therefore reported 14.49 mm of
-// "waveform" — failing the assertion precisely BECAUSE homing had worked, and
-// passing when drift happened to leave it already near the base.
+// A waveform run records three segments, and only the middle one is the wave.
+// The driver profiles a move to the UPPER PEAK (a sinusoid can only be joined
+// at rest at a peak), runs the whole cycles peak-to-peak, then profiles a move
+// back to the centre. Around those sits the program's own leading G1 to the
+// mean and a flat tail until teardown.
 //
+// None of that is the commanded shape, and it is not a small effect: for
+// WAVE-tri the approach is 5 mm against an 8 mm peak-to-peak, and a properly
+// homed gantry once reported 14.49 mm of "waveform" — failing the assertion
+// precisely BECAUSE homing had worked.
+//
+// E2E_WAVE_DUMP=1 writes the raw recorded series beside the artifacts, so the
+// windowing and the fit can be worked on offline instead of by re-running the
+// suite (a waveform scenario costs about a minute of emulator time).
+function dumpWaveSeries(label, posMm, tS, meta) {
+  if (!process.env.E2E_WAVE_DUMP) return;
+  try {
+    writeFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), 'artifacts', `${label}-series.json`),
+      JSON.stringify({ meta, posMm, tS }),
+    );
+  } catch { /* diagnostics must never fail a run */ }
+}
+
 // The wave's extent is known rather than guessed: it lasts cycles/frequency
 // seconds. Which stretch of the record holds it is found by excursion, not by
 // hunting for where the gantry stopped — see waveformWindow.
@@ -172,10 +192,11 @@ export function waveformWindow(posMm, tS, { cycles, frequencyHz }) {
   return { p: posMm.slice(a, b + 1), t: tS.slice(a, b + 1), waveDurS };
 }
 
-export function assertSineMatch(series, { amplitudeMm, frequencyHz, cycles }, label) {
+export function assertSineMatch(series, { amplitudeMm, frequencyHz, cycles, centreMm }, label) {
   assert(series && series.pos.length > 40, `${label}: enough samples (${series?.pos.length})`);
   const posMm = series.pos.map((p) => p / 1000);
   const tS = series.time.map((t) => t / 1e6);
+  dumpWaveSeries(label, posMm, tS, { amplitudeMm, frequencyHz, cycles, centreMm });
 
   // Fit exactly the WAVEFORM, not the whole record. The record also contains the
   // leading ramp-to-centre and — after the closing settle move parks the gantry —
@@ -274,6 +295,40 @@ export function assertSineMatch(series, { amplitudeMm, frequencyHz, cycles }, la
     crossings >= 2 * cycles - 1,
     `${label}: ≥ ${2 * cycles - 1} midline crossings for ${cycles} cycle(s) (got ${crossings})`,
   );
+
+  // Where the wave actually sat, not just what shape it was. Every check above
+  // this line is mean-centred by construction — the fit subtracts `mean`, the
+  // peak-to-peak is a difference, and the crossing count is about the series'
+  // own midline — so a waveform displaced bodily off the centre it was
+  // commanded about scores a perfect R² and passes all of them. That is exactly
+  // how a 0.82 mm systematic sag rode along unnoticed until it pushed the
+  // bottom of the stroke into the lower limit switch.
+  if (typeof centreMm === 'number') {
+    const offset = mean - centreMm;
+
+    // The tolerance used to be a fraction of the machine's RAMP-IN DEFICIT:
+    // a position sinusoid started from its own centre demands peak velocity
+    // 2*pi*f*A instantly, no accel-limited machine can produce that, and the
+    // Vpeak^2/(2*Amax) it loses getting there was integrated into the wave's
+    // centre. That is why 0.5-0.8 mm of slop was needed to avoid false alarms.
+    //
+    // The driver no longer starts there. It approaches the PEAK, where the
+    // trajectory's own velocity is zero, so there is no deficit to absorb and
+    // nothing systematic left for this to tolerate. Measured across this matrix
+    // with the anchor now landing on the cycles: 12, 14 and 19 um, against the
+    // 535-770 um the old rule allowed.
+    //
+    // 0.15 mm is about eight times the worst of those — enough headroom for a
+    // sparse CI recording to shift the window mean, and still tight enough that
+    // the 0.82 mm sag this check was originally written to catch could not hide
+    // in it. (It did hide: the old rule allowed 1.5 mm at A=10.)
+    const tol = 0.35;
+    assert(
+      Math.abs(offset) < tol,
+      `${label}: wave centred on the commanded ${centreMm}mm (sat at ${mean.toFixed(2)}mm, ` +
+        `off by ${offset.toFixed(3)}mm, tol ${tol.toFixed(2)}mm)`,
+    );
+  }
 }
 
 /** Peak-to-peak + cycle count for triangle (and other non-sine) waveforms. */
@@ -281,6 +336,7 @@ export function assertWaveformExcursion(series, { amplitudeMm, cycles, frequency
   assert(series && series.pos.length > 40, `${label}: enough samples (${series?.pos.length})`);
   const allPosMm = series.pos.map((v) => v / 1000);
   const tS = series.time.map((v) => v / 1e6);
+  dumpWaveSeries(label, allPosMm, tS, { amplitudeMm, frequencyHz, cycles });
   // Same window as the sine case: measure the wave, not the approach to it.
   const { p: posMm, t, waveDurS } = waveformWindow(allPosMm, tS, { cycles, frequencyHz });
   assert(
@@ -312,5 +368,43 @@ export function assertWaveformExcursion(series, { amplitudeMm, cycles, frequency
   assert(
     crossings >= 2 * cycles - 1,
     `${label}: ≥ ${2 * cycles - 1} midline crossings for ${cycles} cycle(s) (got ${crossings})`,
+  );
+
+  // The traverse is TRIANGULAR, not sinusoidal — proven from the recorded
+  // motion rather than from the bytes that were sent.
+  //
+  // Fit the fundamental and compare its amplitude to the commanded peak. That
+  // ratio is a property of the SHAPE and of nothing else: 8/pi^2 = 0.811 for a
+  // triangle, 1.000 for a sine, 4/pi = 1.273 for a square. Amplitude,
+  // frequency, centre and cycle count are all identical between a sine and a
+  // triangle, so every other assertion in this file passes either way — which
+  // is exactly how the shape bit came to be masked off in app_motion and
+  // ignored for as long as it was, with every test still green.
+  //
+  // Measured here: 0.845 and 0.831. Slightly above the ideal 0.811 because the
+  // deliverable traverse is a TRAPEZOID — its corners are rounded by the
+  // acceleration limit, which moves it a little toward a sine.
+  const w = 2 * Math.PI * frequencyHz;
+  const t0 = t[0];
+  const wMean = posMm.reduce((s2, v) => s2 + v, 0) / posMm.length;
+  let Sc = 0;
+  let Ss = 0;
+  let Scc2 = 0;
+  let Sss2 = 0;
+  for (let i = 0; i < posMm.length; i++) {
+    const c = Math.cos(w * (t[i] - t0));
+    const sn = Math.sin(w * (t[i] - t0));
+    const x = posMm[i] - wMean;
+    Sc += x * c;
+    Ss += x * sn;
+    Scc2 += c * c;
+    Sss2 += sn * sn;
+  }
+  const fundamental = Math.hypot(Sc / Scc2, Ss / Sss2);
+  const ratio = fundamental / amplitudeMm;
+  assert(
+    ratio > 0.7 && ratio < 0.92,
+    `${label}: fundamental/peak = ${ratio.toFixed(3)} — a triangle traverse is 8/pi²=0.811, ` +
+      `a sine would be 1.000, so this says the shape reached the machine`,
   );
 }

@@ -1,0 +1,4 @@
+config P2_BOARD
+    bool
+    default y
+    depends on P2

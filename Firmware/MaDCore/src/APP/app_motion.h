@@ -108,6 +108,12 @@ void app_motion_abortAndClear(void);
 // Used by app_testManagement to drain the motion before completing a test.
 bool app_motion_isIdle(void);
 
+// True if a G123 waveform was refused (infeasible, unknown shape, or no servo
+// actuator) since the last call; reading it clears the latch. Used by
+// app_testManagement so a test whose waveform never ran does not end as
+// "Test Complete!".
+bool app_motion_takeWaveformRefused(void);
+
 // Getters
 int32_t app_motion_getSetpoint(void);
 /* Where the trajectory says the machine should be RIGHT NOW, in nanometres --

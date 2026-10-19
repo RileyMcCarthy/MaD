@@ -309,5 +309,79 @@ describe('DataStore mutex + index integrity', () => {
       expect(index).toHaveLength(2);
     },
   );
+  // Issue #171: this used to return silently, which is why a nightly whose run
+  // record had gone missing looked like a 120 s badge timeout.
+  behaviour(
+    {
+      id: 'storage.update-missing-run-reported',
+      covers: 'src/storage/DataStore.ts#updateTestRun',
+      given: 'one saved run, then an update for a run that has no record',
+      expect: {
+        'reports-not-saved': 'the update resolves false, so the caller can tell nothing was saved',
+        'no-record-invented': 'no record is created for the missing run',
+        'history-unchanged': 'the history still lists only the saved run, unchanged',
+        'existing-run-reports-saved': 'an update to the saved run resolves true',
+      },
+    },
+    async () => {
+      await store.createTestRun(sampleRun('000020'));
+
+      await expect(store.updateTestRun('000099', { status: 'completed' })).resolves.toBe(false);
+      expect(await store.getTestRun('000099')).toBeNull();
+      const index = await store.getTestRunIndex();
+      expect(index.map((r) => r.testName)).toEqual(['000020']);
+      expect(index[0]?.status).toBe('completed');
+
+      await expect(store.updateTestRun('000020', { status: 'downloaded' })).resolves.toBe(true);
+    },
+  );
 });
 
+
+describe('DataStore settings', () => {
+  let store: InstanceType<typeof DataStore>;
+
+  beforeEach(async () => {
+    idb.clear();
+    store = new DataStore();
+    idb.set('mad.dataDirHandle', makeMemoryRoot());
+    await store.restoreDirectory();
+  });
+
+  behaviour(
+    {
+      id: 'storage.settings-merge',
+      covers: 'src/storage/DataStore.ts#updateSettings',
+      given: 'a data folder with a GitHub token saved, then a change that saves one setting and removes another',
+      expect: {
+        'saved-kept': 'a setting the change does not mention is kept',
+        'removed-gone': 'a setting the change removes is gone when the settings are read back',
+      },
+    },
+    async () => {
+      await store.updateSettings({ githubToken: 'ghp_one' });
+      await store.updateSettings({ githubToken: undefined });
+      expect(await store.readSettings()).toEqual({});
+      await store.updateSettings({ githubToken: 'ghp_two' });
+      await store.updateSettings({});
+      expect((await store.readSettings()).githubToken).toBe('ghp_two');
+    },
+  );
+
+  behaviour(
+    {
+      id: 'storage.settings-need-folder',
+      covers: 'src/storage/DataStore.ts#updateSettings',
+      given: 'no data folder is open',
+      expect: {
+        'read-empty': 'reading the settings finds none',
+        'save-refused': 'saving a setting is refused with a message asking for a data folder',
+      },
+    },
+    async () => {
+      const empty = new DataStore();
+      expect(await empty.readSettings()).toEqual({});
+      await expect(empty.updateSettings({ githubToken: 'ghp_x' })).rejects.toThrow(/Choose a data folder/);
+    },
+  );
+});

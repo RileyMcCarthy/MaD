@@ -61,7 +61,7 @@ export class DeviceClient {
     this.workerFactory =
       opts.workerFactory ??
       (() =>
-        new Worker(new URL('./DeviceSession.worker.ts', import.meta.url), {
+        new Worker(new URL('./deviceWorkerEntry.ts', import.meta.url), {
           type: 'module',
         }));
     this.createWorker();
@@ -170,6 +170,10 @@ export class DeviceClient {
     baudRate = DEFAULT_BAUD_RATE,
     opts: ConnectOptions = {},
   ): Promise<void> {
+    // A port this session still holds (a lost link, a handshake that failed
+    // after the port opened) is closed first: the browser refuses to open a
+    // port twice, and the user would be stuck until a reload.
+    if (this.port !== null) await this.disconnect();
     // Start every connection from a fresh worker so each session gets a clean
     // WASM instance (a prior crash can't carry over) and no stale stream locks.
     this.recreateWorker();
@@ -194,15 +198,21 @@ export class DeviceClient {
     }
     this.port = port;
 
-    const { readable, writable } = port;
-    if (!readable || !writable) {
-      throw new Error('Serial port has no readable/writable stream');
+    try {
+      const { readable, writable } = port;
+      if (!readable || !writable) {
+        throw new Error('Serial port has no readable/writable stream');
+      }
+      // Hand the byte streams to the worker; it owns all I/O from here.
+      await this.remote.connect(
+        Comlink.transfer({ readable, writable }, [readable, writable]),
+        opts,
+      );
+    } catch (err) {
+      // The port is open but no session uses it; close it so a retry can open it.
+      await this.releasePort();
+      throw err;
     }
-    // Hand the byte streams to the worker; it owns all I/O from here.
-    await this.remote.connect(
-      Comlink.transfer({ readable, writable }, [readable, writable]),
-      opts,
-    );
   }
 
   async disconnect(): Promise<void> {

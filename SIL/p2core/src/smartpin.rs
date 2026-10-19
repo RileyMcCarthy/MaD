@@ -8,11 +8,9 @@
 //! to catch, since the native backend never executes a `WRPIN` at all.
 //!
 //! So this decodes the configuration. It does **not** simulate individual bit
-//! edges: the models on the other side consume bytes at a declared rate
-//! (embsim's `StreamRole::ByteSink { baud_hz }`), so edges would be
-//! re-serialised at that boundary and the fidelity thrown away. Carrying the
-//! derived rate keeps the check — a wrong `clkfreq` produces a baud that
-//! disagrees with the peer's — without paying for an edge storm.
+//! edges inside the CPU: the serial bridge on the net frames at the baud this
+//! decode produces, so a wrong `clkfreq` shows up as a rate the peer rejects
+//! without an edge storm inside the pin model.
 //!
 //! Clocked protocols are different and are not handled here: SD SPI is driven
 //! by an explicit clock count (`WYPIN n` on the clock pin *is* the transfer),

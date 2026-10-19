@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useStore } from '@/store/useStore';
 import { MachineConfiguration } from '@/domain';
+import NumberField from '@/ui/components/NumberField';
 
 const NUMERIC_FIELDS: Array<keyof MachineConfiguration> = [
   'Encoder (step/mm)',
@@ -87,14 +88,12 @@ export default function Config({ embedded = false }: { embedded?: boolean }) {
             />
           </label>
           {NUMERIC_FIELDS.map((field) => (
-            <label className="field" key={field}>
-              {field}
-              <input
-                type="number"
-                value={draft[field] as number}
-                onChange={(e) => setDraft({ ...draft, [field]: Number(e.target.value) })}
-              />
-            </label>
+            <NumberField
+              key={field}
+              label={field}
+              value={draft[field] as number}
+              onChange={(n) => setDraft((d) => (d ? { ...d, [field]: n } : d))}
+            />
           ))}
         </div>
       ) : (

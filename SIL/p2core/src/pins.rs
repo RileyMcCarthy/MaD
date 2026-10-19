@@ -45,6 +45,25 @@ pub trait PinBus {
     fn wxpin(&mut self, _pin: u8, _x: u32) {}
     /// `WYPIN` — set a pin's Y parameter (the value/count a mode consumes).
     fn wypin(&mut self, _pin: u8, _y: u32) {}
+    /// Last `WRPIN` mode word, or 0 if the pin was never configured.
+    ///
+    /// The streamer and the transition-clock smart pin need to know which
+    /// pins they own; the CPU asks rather than tracking mode words itself.
+    fn pin_cfg(&self, _pin: u8) -> u32 {
+        0
+    }
+    /// Drive `pin` to `high` as a smart-pin pad (streamer output, clock).
+    ///
+    /// Distinct from a `DIR`/`OUT` write: the streamer and a transition
+    /// smart pin own the pad while they run, and a GPIO write must not have
+    /// to land for the flash to see the bit.
+    fn set_pad(&mut self, _pin: u8, _high: bool) {}
+    /// Invert the pad on `pin`. A transition smart pin's `WYPIN n` is n of these.
+    fn toggle_pad(&mut self, _pin: u8) {}
+    /// The level the pad currently shows.
+    fn pad_level(&self, _pin: u8) -> bool {
+        false
+    }
     /// `RDPIN`/`RQPIN` — read a pin's result; the bool becomes C (busy).
     fn rdpin(&mut self, _pin: u8) -> (u32, bool) {
         (0, false)

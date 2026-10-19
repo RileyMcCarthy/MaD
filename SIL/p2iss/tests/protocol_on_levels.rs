@@ -27,7 +27,8 @@ use rstest::rstest;
 
 use embsim_board::uart::UartFraming;
 use embsim_board::{
-    AttachError, Component, ComponentNetIo, Harness, PinDecl, PinKind, SerialLevelBridge, System,
+    jesd8c01_lvcmos_thresholds, AttachError, Component, ComponentNetIo, DeadBand, Harness, PinDecl,
+    SerialLevelBridge, System,
 };
 use embsim_core::virtual_clock;
 use p2iss::{P2Iss, SerialLink};
@@ -135,6 +136,10 @@ impl Host {
 }
 
 /// Two plain digital pins and a codec — no stream role anywhere.
+///
+/// A bench stand-in for a host's UART that names no part, so its receiver
+/// reads through the JESD8C.01 3.3 V LVCMOS pair: the standard such a host's
+/// 3.3 V input meets, for want of a datasheet of its own.
 struct HostUart {
     pins: [PinDecl; 2],
     framing: UartFraming,
@@ -146,20 +151,8 @@ impl HostUart {
     fn new(framing: UartFraming, state: Host) -> Self {
         Self {
             pins: [
-                PinDecl {
-                    number: "TX",
-                    name: None,
-                    kind: PinKind::DigitalOut,
-                    stream: None,
-                    drive_impedance: None,
-                },
-                PinDecl {
-                    number: "RX",
-                    name: None,
-                    kind: PinKind::DigitalIn,
-                    stream: None,
-                    drive_impedance: None,
-                },
+                PinDecl::digital_out("TX"),
+                PinDecl::digital_in("RX", jesd8c01_lvcmos_thresholds(DeadBand::Unknown)),
             ],
             framing,
             state,
@@ -187,8 +180,9 @@ impl Component for HostUart {
 
         {
             let (state, bridge) = (self.state.clone(), Arc::clone(&bridge));
-            io.on_sense("RX", move |net_state| {
-                let frames = bridge.receive_sense(net_state);
+            let rx = io.pin("RX")?;
+            io.on_sense("RX", move |sense| {
+                let frames = bridge.receive_sense(&rx, &sense);
                 state.lock().frames.extend(frames);
             })?;
         }

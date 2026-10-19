@@ -23,6 +23,7 @@ import {
 import { pushSample, resetLiveBuffer, seedSamples } from './liveBuffer';
 import { reduceDeviceEvent } from './deviceEventReduce';
 import { logger } from '@/diagnostics/log';
+import { loadToken } from '@/diagnostics/github';
 import { MSG_SAMPLE_PERIOD_MS } from '@/protocol/generated/protoemb';
 
 // Numeric readout refresh. 4 Hz is the classic instrument-display rate: fast
@@ -63,6 +64,9 @@ interface AppState {
   dataFolder: string | null;
   dataFolderReady: boolean;
   dataFolderNeedsPermission: boolean;
+  /** The remembered folder has been looked up once; until then the app waits
+   *  rather than asking for a folder it may already have. */
+  dataFolderChecked: boolean;
 
   // actions
   init: () => void;
@@ -345,6 +349,59 @@ function afterConnect(set: SetState, getState: GetState, label: string): void {
   });
 }
 
+/** Set while a connect runs; see `connect`. */
+let connectInFlight: Promise<void> | null = null;
+
+async function connectOnce(args: ConnectArgs, set: SetState, getState: GetState): Promise<void> {
+  set({ connection: 'connecting', error: null });
+  try {
+    const port = args.port ?? (await deviceClient.requestPort());
+    const baud = args.baud ?? DEFAULT_BAUD_RATE;
+    resetLiveBuffer();
+    userDisconnect = false;
+    await deviceClient.connect(port, baud);
+    lastPort = port;
+    lastBaud = baud;
+    saveSerialPref(port, baud); // remember for next-session auto-reconnect
+    const info = port.getInfo();
+    const label =
+      info.usbVendorId !== undefined
+        ? `USB ${info.usbVendorId.toString(16)}:${(info.usbProductId ?? 0).toString(16)}`
+        : 'Serial device';
+    logStore.info('connect', 'link established', { baud, label });
+    set({ canReconnect: false });
+    afterConnect(set, getState, label);
+  } catch (err) {
+    // A failed (re)connect keeps canReconnect as-is so the user can retry.
+    logStore.error('connect-failed', err instanceof Error ? err.message : String(err));
+    set({
+      connection: 'disconnected',
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+/**
+ * Mirror the data folder into the store. The folder's settings (the GitHub
+ * token) load before it is reported ready, so no screen sees an open folder
+ * whose settings are still missing. A settings file that cannot be read is
+ * logged and leaves the folder usable.
+ */
+async function publishDataFolder(set: (partial: Partial<AppState>) => void): Promise<void> {
+  if (dataStore.connected) {
+    try {
+      await loadToken(dataStore);
+    } catch (err) {
+      logStore.warn('settings-load', err instanceof Error ? err.message : String(err));
+    }
+  }
+  set({
+    dataFolder: dataStore.directoryName,
+    dataFolderReady: dataStore.connected,
+    dataFolderNeedsPermission: dataStore.needsPermission,
+  });
+}
+
 export const useStore = create<AppState>((set, getState) => ({
   connection: 'disconnected',
   responding: false,
@@ -360,6 +417,7 @@ export const useStore = create<AppState>((set, getState) => ({
   dataFolder: null,
   dataFolderReady: false,
   dataFolderNeedsPermission: false,
+  dataFolderChecked: false,
   updateReady: false,
 
   init: () => {
@@ -470,32 +528,13 @@ export const useStore = create<AppState>((set, getState) => ({
   },
 
   connect: async (args = {}) => {
-    set({ connection: 'connecting', error: null });
-    try {
-      const port = args.port ?? (await deviceClient.requestPort());
-      const baud = args.baud ?? DEFAULT_BAUD_RATE;
-      resetLiveBuffer();
-      userDisconnect = false;
-      await deviceClient.connect(port, baud);
-      lastPort = port;
-      lastBaud = baud;
-      saveSerialPref(port, baud); // remember for next-session auto-reconnect
-      const info = port.getInfo();
-      const label =
-        info.usbVendorId !== undefined
-          ? `USB ${info.usbVendorId.toString(16)}:${(info.usbProductId ?? 0).toString(16)}`
-          : 'Serial device';
-      logStore.info('connect', 'link established', { baud, label });
-      set({ canReconnect: false });
-      afterConnect(set, getState, label);
-    } catch (err) {
-      // A failed (re)connect keeps canReconnect as-is so the user can retry.
-      logStore.error('connect-failed', err instanceof Error ? err.message : String(err));
-      set({
-        connection: 'disconnected',
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
+    // One connect at a time: the startup auto-connect and a click on Connect
+    // would otherwise both open the port, and the second open fails.
+    if (connectInFlight) return connectInFlight;
+    connectInFlight = connectOnce(args, set, getState).finally(() => {
+      connectInFlight = null;
+    });
+    return connectInFlight;
   },
 
   disconnect: async () => {
@@ -537,30 +576,22 @@ export const useStore = create<AppState>((set, getState) => ({
   },
 
   restoreDataFolder: async () => {
-    const ready = await dataStore.restoreDirectory();
-    set({
-      dataFolder: dataStore.directoryName,
-      dataFolderReady: ready,
-      dataFolderNeedsPermission: dataStore.needsPermission,
-    });
+    try {
+      await dataStore.restoreDirectory();
+      await publishDataFolder(set);
+    } finally {
+      set({ dataFolderChecked: true });
+    }
   },
 
   chooseDataFolder: async () => {
     await dataStore.chooseDirectory();
-    set({
-      dataFolder: dataStore.directoryName,
-      dataFolderReady: dataStore.connected,
-      dataFolderNeedsPermission: dataStore.needsPermission,
-    });
+    await publishDataFolder(set);
   },
 
   grantDataFolder: async () => {
     await dataStore.requestPermission();
-    set({
-      dataFolder: dataStore.directoryName,
-      dataFolderReady: dataStore.connected,
-      dataFolderNeedsPermission: dataStore.needsPermission,
-    });
+    await publishDataFolder(set);
   },
 
   refreshConfig: async () => {
