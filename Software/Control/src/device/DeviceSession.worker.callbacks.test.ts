@@ -21,6 +21,7 @@ vi.mock('@/wasm/protoemb_runtime.js', () => ({
   default: () => Promise.resolve(),
   WasmClient: class {
     register_periodic(): void {}
+    register_periodic_with_timeout(): void {}
     poll(): unknown[] {
       return [];
     }

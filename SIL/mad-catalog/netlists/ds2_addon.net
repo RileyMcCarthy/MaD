@@ -1,18 +1,27 @@
-; DS2 Addon board netlist — committed simulation artifact.
+; DS2 force-gauge add-on netlist: the mad-ds2 board kind (SIL/mad-catalog/src/boards.rs)
 ;
-; Provenance: `kicad-cli sch export netlist` from
-; Hardware/DS2Addon/KICAD/DS2_Addon.kicad_sch (Eeschema 9.0.6 export,
-; 2026-07-11), copied verbatim from the embsim fixture
-; SIL/embsim/board/tests/fixtures/ds2_addon.net.
+; Provenance
+;   source     : MaD repo, Hardware/DS2Addon/KICAD/DS2_Addon.kicad_sch, with R10,
+;                the 10 kΩ pull-up from the ADS122U04's ~RESET to +3V3
+;                ("fix(hardware): add 10k pull-up on ADS122U04 ~RESET", 2e2760fc9)
+;   exported by: kicad-cli sch export netlist -o ds2_addon.net DS2_Addon.kicad_sch
+;                (Eeschema 9.0.6, export version "E")
+;   exported on: 2026-10-18
+;   shape      : 32 components, 25 nets, 84 nodes
 ;
-; Regeneration: boards authored in Hardware/ are regenerated + diff-checked
-; in CI per docs/dev/sil-board-simulation-design.md ("Decisions", item 1);
-; that CI check is Phase 3 and deferred — until it lands, re-export by hand
-; when the schematic changes.
+; It replaces SIL/MaDSim/boards/ds2_addon.net, an export of 2026-07-11 copied
+; from embsim's fixture board/tests/fixtures/ds2_addon.net, which had no R10:
+; its ~{RESET} net was U1 pin 3 alone. Apart from R10 and its two nodes, every
+; component, net and node is that file's.
+;
+; Regeneration
+;   From Hardware/DS2Addon/KICAD, re-run the command above with KiCad 9's
+;   kicad-cli, then put this header back (mad_edge.net beside this file says
+;   why KiCad 9's, and why the export is not byte-stable).
 (export (version "E")
   (design
-    (source "/Users/rileymccarthy/Documents/MaD/Hardware/DS2Addon/KICAD/DS2_Addon.kicad_sch")
-    (date "2026-07-11T22:55:58-0700")
+    (source "/Users/rileymccarthy/Documents/MaD-catalog/Hardware/DS2Addon/KICAD/DS2_Addon.kicad_sch")
+    (date "2026-10-18T19:45:03-0700")
     (tool "Eeschema 9.0.6")
     (sheet (number "1") (name "/") (tstamps "/")
       (title_block
@@ -537,6 +546,23 @@
       (property (name "ki_fp_filters") (value "R_*"))
       (sheetpath (names "/") (tstamps "/"))
       (tstamps "00000000-0000-0000-0000-0000605e3026"))
+    (comp (ref "R10")
+      (value "10k")
+      (footprint "Resistor_SMD:R_0805_2012Metric")
+      (datasheet "~")
+      (fields
+        (field (name "LCSC") "~")
+        (field (name "Footprint") "Resistor_SMD:R_0805_2012Metric")
+        (field (name "Datasheet") "~")
+        (field (name "Description")))
+      (libsource (lib "Device") (part "R_Small") (description "Resistor, small symbol"))
+      (property (name "LCSC") (value "~"))
+      (property (name "Sheetname") (value ""))
+      (property (name "Sheetfile") (value "DS2_Addon.kicad_sch"))
+      (property (name "ki_keywords") (value "R resistor"))
+      (property (name "ki_fp_filters") (value "R_*"))
+      (sheetpath (names "/") (tstamps "/"))
+      (tstamps "95db83e1-a40f-4fba-a903-134361d6d7c0"))
     (comp (ref "U1")
       (value "ADS122U04")
       (footprint "Package_SO:TSSOP-16_4.4x5mm_P0.65mm")
@@ -683,18 +709,19 @@
         (pin (num "2") (name "") (type "passive")))))
   (libraries
     (library (logical "Connector_Generic")
-      (uri "/opt/homebrew/bin/SharedSupport/symbols//Connector_Generic.kicad_sym"))
+      (uri "/Applications/KiCad-9.0.6/KiCad.app/Contents/SharedSupport/symbols//Connector_Generic.kicad_sym"))
     (library (logical "DS2_Addon")
-      (uri "/Users/rileymccarthy/Documents/MaD/Hardware/DS2Addon/KICAD/Librarys/DS2_Addon.lib"))
+      (uri "/Users/rileymccarthy/Documents/MaD-catalog/Hardware/DS2Addon/KICAD/Librarys/DS2_Addon.lib"))
     (library (logical "DS2_Addon-rescue")
-      (uri "/Users/rileymccarthy/Documents/MaD/Hardware/DS2Addon/KICAD/DS2_Addon-rescue.lib"))
+      (uri "/Users/rileymccarthy/Documents/MaD-catalog/Hardware/DS2Addon/KICAD/DS2_Addon-rescue.lib"))
     (library (logical "Device")
-      (uri "/opt/homebrew/bin/SharedSupport/symbols//Device.kicad_sym")))
+      (uri "/Applications/KiCad-9.0.6/KiCad.app/Contents/SharedSupport/symbols//Device.kicad_sym")))
   (nets
     (net (code "1") (name "+3V3") (class "Default")
       (node (ref "C5") (pin "1") (pintype "passive"))
       (node (ref "C6") (pin "1") (pintype "passive"))
       (node (ref "J1") (pin "1") (pinfunction "Pin_1") (pintype "passive"))
+      (node (ref "R10") (pin "2") (pintype "passive"))
       (node (ref "U1") (pin "13") (pinfunction "DVDD") (pintype "input")))
     (net (code "2") (name "A0") (class "Default")
       (node (ref "J2") (pin "3") (pinfunction "Pin_3") (pintype "passive"))
@@ -797,4 +824,5 @@
       (node (ref "J2") (pin "2") (pinfunction "Pin_2") (pintype "passive"))
       (node (ref "U1") (pin "5") (pinfunction "AVSS") (pintype "input")))
     (net (code "25") (name "~{RESET}") (class "Default")
+      (node (ref "R10") (pin "1") (pintype "passive"))
       (node (ref "U1") (pin "3") (pinfunction "~{RESET}") (pintype "input")))))
