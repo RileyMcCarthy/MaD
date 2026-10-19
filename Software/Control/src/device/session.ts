@@ -89,7 +89,9 @@ export class DeviceClient {
         const lost = (event.target ?? (event as Event & { port?: SerialPort }).port) as
           | SerialPort
           | undefined;
-        if (lost && lost === this.port) void this.releasePort();
+        // releasePort() logs a refused close itself; nothing here can act on
+        // the rejection, so it must not escape as an unhandled rejection.
+        if (lost && lost === this.port) this.releasePort().catch(() => undefined);
       });
       serial.addEventListener('connect', () => {
         this.fanout([{ kind: 'portAvailable' }]);
@@ -117,8 +119,8 @@ export class DeviceClient {
     logger('device').error('worker-crash', message, {
       workerCreateCount: this.workerCreateCount,
     });
+    // fanout() releases the port for the crash's `disconnected` event.
     this.fanout(workerCrashEvents(message));
-    void this.releasePort();
   }
 
   /** Test/diagnostic: fire the worker crash path as if the Worker emitted onerror. */
@@ -256,7 +258,9 @@ export class DeviceClient {
       );
     } catch (err) {
       // The port is open but no session uses it; close it so a retry can open it.
-      await this.releasePort();
+      // A refused close is logged by releasePort() and must not replace the
+      // handshake error, which is what the user needs to see.
+      await this.releasePort().catch(() => undefined);
       throw err;
     }
   }
