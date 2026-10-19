@@ -13,6 +13,7 @@ import * as Comlink from 'comlink';
 import { behaviour } from '@vibes/behaviour';
 import { DeviceSession, type DeviceSessionApi } from './DeviceSession.worker';
 import type { DeviceEvent } from './events';
+import { logSnapshot } from '@/diagnostics/log';
 
 // The worker module imports the protocol core's WebAssembly glue, which exists
 // only after `npm run build:wasm`. The Behaviour ledger job runs this suite
@@ -81,5 +82,45 @@ behaviour(
     await held.call(session, BATCH);
 
     expect(seen).toEqual([BATCH]);
+  },
+);
+
+/** The session's private stream handles, set directly so no connect is needed. */
+interface HeldStreams {
+  running: boolean;
+  reader: { cancel(): Promise<void>; releaseLock(): void } | null;
+  writer: { close(): Promise<void>; releaseLock(): void } | null;
+}
+
+behaviour(
+  {
+    id: 'worker-boundary.stalled-teardown-names-step',
+    covers: 'src/device/DeviceSession.worker.ts#DeviceSession.shutdown',
+    given: 'a disconnect whose serial output never finishes closing',
+    expect: {
+      'disconnect-completes': 'the disconnect still completes and reports the session disconnected',
+      'stall-logged': 'the diagnostic log records that the teardown ran out of time while closing the output',
+    },
+    why: {
+      'stall-logged':
+        'a stream still closing keeps the serial port locked, so the browser cannot release it; the log is how a report says which step held it',
+    },
+  },
+  async () => {
+    const session = new DeviceSession();
+    const held = session as unknown as HeldStreams;
+    held.running = true;
+    held.reader = { cancel: async () => undefined, releaseLock: () => undefined };
+    held.writer = { close: () => new Promise<void>(() => undefined), releaseLock: () => undefined };
+    const seen: DeviceEvent[] = [];
+    await session.setEventSink((events: DeviceEvent[]) => {
+      seen.push(...events);
+    });
+
+    await session.disconnect();
+
+    expect(seen).toContainEqual({ kind: 'disconnected', reason: undefined });
+    const stall = logSnapshot().entries.find((e) => e.tag === 'teardown-timeout');
+    expect(stall?.data).toEqual({ step: 'writer-close' });
   },
 );
