@@ -28,6 +28,9 @@
  * port returns as a new SerialPort with `connect`, which the app answers by
  * reconnecting to the port whose USB ids (0403:6001) it remembers.
  *
+ * SERVO-stall jams the board's carriage by creating E2E_JAM_FILE, the file
+ * mad-emulator watches (`--jam-file`); board-route.sh sets both.
+ *
  * Without CDP_URL only the board-free scenarios run: A1 and
  * FW1/2/3/5/6/7/8/9 launch a host Chrome against in-page fakes and need no
  * emulator at all, which is what ci.yml's per-PR `control-e2e-boardless` job
@@ -74,7 +77,7 @@ import {
   restoreLink,
   takePageTime,
 } from './fixtures.mjs';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import {
@@ -2807,6 +2810,57 @@ const scenarios = [
         assert(await jogUp.isEnabled(), 'jog re-enabled once idle');
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
       } finally { await browser.close(); }
+    },
+  },
+  {
+    // A latched servo stall is cleared from the Live screen. The board's
+    // carriage is jammed (mad-emulator --jam-file: while the file exists the
+    // drive keeps stepping but the carriage and its encoder stand still), so
+    // a jog trips dev_servo's stall guard and app_control latches
+    // FAULT_SERVO_STALL. Only a disable request clears that latch, and while
+    // faulted the machine reports motion off — the Live button has to offer
+    // the disable, then the enable once the fault is gone.
+    id: 'SERVO-stall',
+    name: 'A jammed gantry latches SERVO_STALL; Live clears it and re-enables motion',
+    async run() {
+      const jamFile = process.env.E2E_JAM_FILE;
+      if (!jamFile) {
+        throw new Error(
+          'SERVO-stall needs E2E_JAM_FILE, the file mad-emulator was given as --jam-file ' +
+            '(board-route.sh sets both; make e2e-emulator uses /tmp/mad-sil.jam)',
+        );
+      }
+      const free = () => rmSync(jamFile, { force: true });
+      const { browser, page, errors } = await newSilPage();
+      try {
+        await connectToSil(page);
+        await chooseDataFolder(page);
+        await awaitResponding(page);
+        await zeroLength(page);
+        await page.getByText('Fault: NONE').waitFor({ timeout: DEVICE_WAIT_MS });
+
+        writeFileSync(jamFile, '');
+        await page.locator('label.field', { hasText: 'Speed (mm/s)' }).locator('input').fill('5');
+        await page.locator('label.field', { hasText: 'Jog (mm)' }).locator('input').fill('5');
+        await press(page.getByRole('button', { name: '+ Jog up' }));
+        await page.getByText('Fault: SERVO_STALL').waitFor({ timeout: DEVICE_WAIT_MS });
+        await page.getByText('Motion: disabled').waitFor({ timeout: DEVICE_WAIT_MS });
+        assert(
+          !(await page.getByRole('button', { name: 'Enable motion' }).count()),
+          'a stalled machine is offered "Enable motion", which it would refuse',
+        );
+
+        free();
+        await press(page.getByRole('button', { name: 'Clear stall (disable motion)' }));
+        await page.getByText('Fault: NONE').waitFor({ timeout: DEVICE_WAIT_MS });
+        await press(page.getByRole('button', { name: 'Enable motion' }));
+        await page.getByText('Motion: enabled').waitFor({ timeout: DEVICE_WAIT_MS });
+        await page.getByText('Fault: NONE').waitFor({ timeout: DEVICE_WAIT_MS });
+        assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
+      } finally {
+        free();
+        await browser.close();
+      }
     },
   },
   {

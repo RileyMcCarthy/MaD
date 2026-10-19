@@ -505,10 +505,16 @@ describe('flashWriteMs', () => {
       expect: {
         'double-the-stub-rate': 'the write wait is at least twice the flash stub\'s published programming time of 4.3 milliseconds per kilobyte, plus one second',
         'grows-with-size': 'a larger image waits longer',
+        'covers-bench-proven-5s': 'an image the size of the 0.13 release (about 323 kilobytes) or larger waits at least 5 seconds',
+        'bounded-above': 'even the full 512-kilobyte hub waits under 10 seconds',
       },
       why: {
         'double-the-stub-rate':
           'the stub runs on the chip\'s uncalibrated internal oscillator, and flash parts vary; a wait that ends before the write does leaves an image that will not boot',
+        'covers-bench-proven-5s':
+          'the only bench-proven wait at that size is 5 seconds; a reconnect that resets the chip before the write ends leaves a board that does not boot from flash',
+        'bounded-above':
+          'the user is locked out of the screen for the whole wait, so the margin must not silently grow without bound either',
       },
     },
     () => {
@@ -519,6 +525,11 @@ describe('flashWriteMs', () => {
         expect(ms).toBeGreaterThan(previous);
         previous = ms;
       }
+      // The 0.13 madEdge image is ~323 KB; the bench needed >= 5 s for it.
+      for (const kib of [300, 323, 400, 512]) {
+        expect(flashWriteMs(kib * 1024)).toBeGreaterThanOrEqual(5000);
+      }
+      expect(flashWriteMs(512 * 1024)).toBeLessThan(10_000);
     },
   );
 });

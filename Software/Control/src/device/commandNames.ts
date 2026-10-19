@@ -63,6 +63,30 @@ const WRITE_NAMES = new Map<number, string>([
 export type CommandDir = 'read' | 'write';
 
 /**
+ * The type byte of a host→device request, from the framing layer
+ * (Protocol/ProtoEmb/framing): `[0x55] [0x00] [cmd]` is a read,
+ * `[0x55] [0x01] [cmd] [len] [data] [crc]` a write.
+ */
+const REQUEST_TYPE_READ = 0x00;
+const REQUEST_TYPE_WRITE = 0x01;
+
+/**
+ * The command and direction of a request frame, e.g. the one the protocol core
+ * hands back when it gives up waiting for a reply.
+ *
+ * The command id alone is ambiguous (see above); the type byte is what says
+ * whether a lost command-1 frame was a READ_STATE poll or a
+ * WRITE_MOTION_ENABLE. `undefined` for anything too short or of another type.
+ */
+export function requestOf(frame: ArrayLike<number>): { command: number; dir: CommandDir } | undefined {
+  if (frame.length < 3) return undefined;
+  const type = frame[1];
+  if (type === REQUEST_TYPE_READ) return { command: frame[2], dir: 'read' };
+  if (type === REQUEST_TYPE_WRITE) return { command: frame[2], dir: 'write' };
+  return undefined;
+}
+
+/**
  * `'WRITE_MOTION_ENABLE(1)'` when the direction is known.
  *
  * Without one, an id that exists on both sides renders as

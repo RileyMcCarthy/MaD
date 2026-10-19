@@ -18,7 +18,7 @@ import init, { WasmClient } from '@/wasm/protoemb_runtime.js';
 import wasmUrl from '@/wasm/protoemb_runtime_bg.wasm?url';
 import { logger, setLogSink, flushLog, nowMs, type LogBatchSink } from '@/diagnostics/log';
 import { byteRing } from '@/diagnostics/byteRing';
-import { commandName, isPeriodicCommand, summariseGcode, type CommandDir } from './commandNames';
+import { commandName, isPeriodicCommand, requestOf, summariseGcode, type CommandDir } from './commandNames';
 import {
   decodeSample,
   decodeMachineState,
@@ -123,8 +123,12 @@ interface Waiter {
   reject: (err: Error) => void;
   timer: ReturnType<typeof setTimeout>;
   /** Protocol command this waiter expects, so a Rust-side timeout for the same
-   *  command can reject it immediately (JS and Rust timeouts then agree). */
+   *  request can reject it immediately (JS and Rust timeouts then agree). */
   command: number;
+  /** Whether that request was a read or a write. Reads and writes share
+   *  command ids (READ_STATE and WRITE_MOTION_ENABLE are both 1), so the id
+   *  alone would let a lost poll reject an unrelated write's ack waiter. */
+  dir: CommandDir;
 }
 
 /** Raw event shape from `WasmClient.poll()` (serde-tagged). */
@@ -133,7 +137,8 @@ interface RawEvent {
   command?: number;
   payload?: number[] | Uint8Array;
   message?: string;
-  /** Present on `timeout`: the framed bytes that timed out (frame[2] = command). */
+  /** Present on `timeout`: the framed request that timed out
+   *  (frame[1] = read/write type, frame[2] = command). */
   frame?: number[] | Uint8Array;
 }
 
@@ -609,7 +614,7 @@ export class DeviceSession {
 
   async readMachineConfiguration(): Promise<MachineConfiguration> {
     return this.runOp(async () => {
-      const p = this.waitFor((e) => e.kind === 'configuration', 3000, 'configuration', MSG_READ_MACHINE_CONFIGURATION);
+      const p = this.waitFor((e) => e.kind === 'configuration', 3000, 'configuration', MSG_READ_MACHINE_CONFIGURATION, 'read');
       this.requestRead(MSG_READ_MACHINE_CONFIGURATION);
       const e = await p;
       return (e as Extract<DeviceEvent, { kind: 'configuration' }>).data;
@@ -618,7 +623,7 @@ export class DeviceSession {
 
   async readSampleProfile(): Promise<SampleProfile> {
     return this.runOp(async () => {
-      const p = this.waitFor((e) => e.kind === 'sampleProfile', 3000, 'sampleProfile', MSG_READ_SAMPLE_PROFILE);
+      const p = this.waitFor((e) => e.kind === 'sampleProfile', 3000, 'sampleProfile', MSG_READ_SAMPLE_PROFILE, 'read');
       this.requestRead(MSG_READ_SAMPLE_PROFILE);
       const e = await p;
       return (e as Extract<DeviceEvent, { kind: 'sampleProfile' }>).data;
@@ -641,7 +646,7 @@ export class DeviceSession {
 
   async readFirmwareVersion(): Promise<string> {
     return this.runOp(async () => {
-      const p = this.waitFor((e) => e.kind === 'firmwareVersion', 3000, 'firmwareVersion', MSG_READ_FIRMWARE_VERSION);
+      const p = this.waitFor((e) => e.kind === 'firmwareVersion', 3000, 'firmwareVersion', MSG_READ_FIRMWARE_VERSION, 'read');
       this.requestRead(MSG_READ_FIRMWARE_VERSION);
       const e = await p;
       return (e as Extract<DeviceEvent, { kind: 'firmwareVersion' }>).data.version;
@@ -1060,11 +1065,12 @@ export class DeviceSession {
 
     const events: DeviceEvent[] = [];
     for (const ev of raw) {
-      // A Rust-side timeout carries the framed bytes that timed out (frame[2] =
-      // command). Reject the matching JS waiter now so both timeouts agree and a
-      // late response can't resolve a fresh same-command waiter.
-      if (ev.event === 'timeout' && ev.frame && ev.frame.length > 2) {
-        this.rejectWaitersForCommand(ev.frame[2], 'response timeout');
+      // A Rust-side timeout carries the framed request that timed out. Reject
+      // the matching JS waiter now so both timeouts agree and a late response
+      // can't resolve a fresh same-request waiter.
+      if (ev.event === 'timeout' && ev.frame) {
+        const request = requestOf(ev.frame);
+        if (request !== undefined) this.rejectWaitersForRequest(request, 'response timeout');
       }
       this.logRawEvent(ev);
       for (const mapped of this.mapEvent(ev)) {
@@ -1141,16 +1147,17 @@ export class DeviceSession {
       case 'nack':
         logProto.warn('nack', commandName(command, 'write'), { command, ...this.opTag(command) });
         break;
-      case 'timeout':
+      case 'timeout': {
+        // The frame says which request was lost; the in-flight op does not
+        // (a lost READ_STATE poll lands while a WRITE_MOTION_ENABLE is active).
+        const request = ev.frame ? requestOf(ev.frame) : undefined;
         logProto.warn('timeout', 'no response', {
-          command:
-            ev.frame && ev.frame.length > 2
-              ? commandName(ev.frame[2], this.dirFor(ev.frame[2]))
-              : 'unknown',
+          command: request ? commandName(request.command, request.dir) : 'unknown',
           frameBytes: ev.frame?.length ?? 0,
           ...this.opTag(),
         });
         break;
+      }
       case 'error':
         logProto.error('error', ev.message ?? 'unknown error', {
           command: command >= 0 ? commandName(command, this.dirFor(command)) : undefined,
@@ -1352,13 +1359,14 @@ export class DeviceSession {
     timeoutMs: number,
     label: string,
     command: number,
+    dir: CommandDir,
   ): Promise<DeviceEvent> {
     return new Promise<DeviceEvent>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.waiters = this.waiters.filter((w) => w.timer !== timer);
         reject(new Error(`timeout waiting for ${label}`));
       }, timeoutMs);
-      this.waiters.push({ match, resolve, reject, timer, command });
+      this.waiters.push({ match, resolve, reject, timer, command, dir });
     });
   }
 
@@ -1372,13 +1380,15 @@ export class DeviceSession {
     }
   }
 
-  /** Reject waiters whose command just timed out on the Rust side, so the JS and
-   *  Rust timeouts agree and a late response can't resolve a fresh same-command
-   *  waiter. Periodic (sample/state) timeouts carry their own command and so
-   *  never match an on-demand waiter. */
-  private rejectWaitersForCommand(command: number, reason: string): void {
+  /** Reject waiters whose request just timed out on the Rust side, so the JS and
+   *  Rust timeouts agree and a late response can't resolve a fresh same-request
+   *  waiter. Matches direction as well as command: a lost periodic READ_STATE
+   *  (or READ_SAMPLE) poll shares its id with WRITE_MOTION_ENABLE (or
+   *  WRITE_MACHINE_CONFIGURATION) and must leave that write's waiter alone. */
+  private rejectWaitersForRequest(request: { command: number; dir: CommandDir }, reason: string): void {
     for (let i = this.waiters.length - 1; i >= 0; i--) {
-      if (this.waiters[i].command === command) {
+      const { command, dir } = this.waiters[i];
+      if (command === request.command && dir === request.dir) {
         const [w] = this.waiters.splice(i, 1);
         clearTimeout(w.timer);
         w.reject(new Error(reason));
@@ -1387,7 +1397,7 @@ export class DeviceSession {
   }
 
   private async writeAndAck(command: number, data: Uint8Array, timeoutMs: number): Promise<boolean> {
-    const p = this.waitFor((e) => e.kind === 'ack' && e.command === command, timeoutMs, `ack(${command})`, command);
+    const p = this.waitFor((e) => e.kind === 'ack' && e.command === command, timeoutMs, `ack(${command})`, command, 'write');
     const started = nowMs();
     this.claimOpCommand(command, 'write');
     logProto.info('tx', commandName(command, 'write'), { bytes: data.length, timeoutMs, ...this.opTag() });
@@ -1414,7 +1424,7 @@ export class DeviceSession {
   }
 
   private async writeAndAckOrThrow(command: number, data: Uint8Array, timeoutMs: number): Promise<void> {
-    const p = this.waitFor((e) => e.kind === 'ack' && e.command === command, timeoutMs, `ack(${command})`, command);
+    const p = this.waitFor((e) => e.kind === 'ack' && e.command === command, timeoutMs, `ack(${command})`, command, 'write');
     const started = nowMs();
     this.claimOpCommand(command, 'write');
     logProto.info('tx', commandName(command, 'write'), { bytes: data.length, timeoutMs, ...this.opTag() });
@@ -1461,6 +1471,7 @@ export class DeviceSession {
       timeoutMs,
       'file-download',
       MSG_WRITE_FILE_DOWNLOAD,
+      'write',
     );
     this.client?.write(MSG_WRITE_FILE_DOWNLOAD, request);
     return p.then((e) =>
