@@ -358,6 +358,8 @@ pub struct Machine<P: PinBus> {
     /// A clock word was set and [`Self::yield_on_clock_word`] asks the pass
     /// to end.
     clock_yield: bool,
+    /// The clock count the last [`Self::step_until_clocks`] pass yielded at.
+    yield_clocks: Option<u64>,
 }
 
 impl<P: PinBus> Machine<P> {
@@ -439,6 +441,7 @@ impl<P: PinBus> Machine<P> {
             yield_on_clock_word: false,
             clock_word: None,
             clock_yield: false,
+            yield_clocks: None,
         }
     }
 
@@ -994,30 +997,38 @@ impl<P: PinBus> Machine<P> {
     ///
     /// [`Self::step_until`] with the deadline in clocks: for a host that
     /// keeps its own map from clocks to time, as a chip whose clock word and
-    /// crystal set its rate needs, and never reads hub `$14` for it. The
-    /// pass and each cog are gated on the same count, so a cog whose clock
-    /// lands on the deadline is done both ways.
+    /// crystal set its rate needs, and never reads hub `$14` for it.
+    ///
+    /// The cogs run in time order: each step is the running cog furthest
+    /// behind ([`Self::system_clocks`]), so the instructions that change
+    /// something outside come in the order of the clocks they ran at, and a
+    /// host that stamps each change with its own instant never meets one
+    /// earlier than the last. The pass ends once every running cog has
+    /// reached the deadline. When it ends on a yield, the yielding cog's
+    /// clock after that instruction is the change's instant
+    /// ([`Self::take_yield_clocks`]).
     pub fn step_until_clocks(&mut self, deadline_clocks: u64) -> Result<(), Trap> {
         self.ff_deadline_clocks = deadline_clocks;
-        loop {
-            if self.system_clocks() >= deadline_clocks {
+        self.yield_clocks = None;
+        while let Some(cog) = self.frontier_cog() {
+            if self.cogs[cog].clocks >= deadline_clocks {
                 break;
             }
-            let mut stepped = false;
-            for cog in 0..NUM_COGS {
-                if self.cogs[cog].running && self.cogs[cog].clocks < deadline_clocks {
-                    self.step_one(cog)?;
-                    stepped = true;
-                    if self.pins.take_net_yield() || std::mem::take(&mut self.clock_yield) {
-                        return Ok(());
-                    }
-                }
-            }
-            if !stepped {
-                break;
+            self.step_one(cog)?;
+            if self.pins.take_net_yield() || std::mem::take(&mut self.clock_yield) {
+                self.yield_clocks = Some(self.cogs[cog].clocks);
+                return Ok(());
             }
         }
         Ok(())
+    }
+
+    /// The clock count the last [`Self::step_until_clocks`] pass yielded at:
+    /// the yielding cog's clock once the instruction that drove a pad, wrote
+    /// a smart pin or set the clock had run. `None` if the pass did not end
+    /// on a yield; a second call returns `None`.
+    pub fn take_yield_clocks(&mut self) -> Option<u64> {
+        self.yield_clocks.take()
     }
 
     /// Execute at most `n` instructions, round-robin. Returns how many ran.

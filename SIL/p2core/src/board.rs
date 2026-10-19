@@ -435,6 +435,14 @@ impl Board {
         self.quad[a_pin as usize & 63].map_or(0, |q| q.slips)
     }
 
+    /// The pad-facing `DIR` and `OUT`, each the OR across the cogs, as
+    /// 64-bit masks (bit *i* pin *i*): what a host compares across a write
+    /// to learn which pins it moved.
+    pub fn dir_out_bits(&self) -> (u64, u64) {
+        let wide = |w: [u32; 2]| u64::from(w[0]) | (u64::from(w[1]) << 32);
+        (wide(self.dir), wide(self.out))
+    }
+
     /// Whether the guest has `DIR` set on `pin`.
     pub fn dir_of(&self, pin: u8) -> bool {
         let (bank, bit) = bank_bit(pin);
@@ -460,6 +468,34 @@ impl Board {
             }
         }
         let (bank, bit) = bank_bit(pin);
+        (self.drive_mask[bank] & bit != 0).then(|| self.out[bank] & bit != 0)
+    }
+
+    /// What `pin`'s pad drives by the mode word it holds now and its `DIR`,
+    /// or `None` where it drives nothing.
+    ///
+    /// The sync-serial clock or transmit pin presents the bus's level while
+    /// it is in its smart mode with `DIR` set; any other pin, or a bus pin
+    /// whose mode word was cleared, presents its `OUT` where it drives.
+    /// [`Self::output_level`] keys the bus pins on the roles the bus last
+    /// resolved, which survive a `_pinclear` (`DIRL` then `WRPIN #0`), so a
+    /// cleared clock pin there keeps its level; a host that publishes every
+    /// pad from the guest's own mode words reads this instead.
+    pub fn pad_output(&self, pin: u8) -> Option<bool> {
+        let p = pin & 63;
+        if self.use_smart_bus && self.pins[usize::from(p)].mode() != PinMode::Off {
+            let level = if self.smart_bus.clock_pin() == Some(p) {
+                Some(self.smart_bus.clock_level())
+            } else if self.smart_bus.tx_pin() == Some(p) {
+                Some(self.smart_bus.tx_level())
+            } else {
+                None
+            };
+            if let Some(level) = level {
+                return self.dir_of(p).then_some(level);
+            }
+        }
+        let (bank, bit) = bank_bit(p);
         (self.drive_mask[bank] & bit != 0).then(|| self.out[bank] & bit != 0)
     }
 
@@ -875,7 +911,7 @@ mod tests {
         });
         expect!(
             "pull-drives",
-            "the pad set to the pull mode still drives its net high, as a plain pin does"
+            "the pad set to the pull mode drives its net high through the pull"
         );
         expect!(
             "pull-reads-net",
