@@ -32,7 +32,10 @@
 //! once per part the key reaches, and adds its report ([`Report`]):
 //!
 //! - at each look, every console line the guest has ended on its debug pin
-//!   (`P62`) since the last, as it handed the line's bytes to the pin;
+//!   (`P62`) since the last, as it handed the line's bytes to the pin. The
+//!   ISS's asynchronous transmit pin never reads busy, so the guest hands a
+//!   line over at the speed it runs and a look can say it milliseconds
+//!   before its last byte leaves the wire;
 //! - at the end, the cogs running, the rate the guest programmed on each
 //!   asynchronous transmit pin it sent on, the frames that did not deframe
 //!   on its receive pins, the pad edges it dropped, and a console line not

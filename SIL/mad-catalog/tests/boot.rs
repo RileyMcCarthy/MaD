@@ -130,7 +130,7 @@ fn the_simulator_is_a_core_the_p2_package_seats() {
 }
 
 #[test]
-fn a_boot_rom_file_beside_the_project_is_the_cores() {
+fn a_boot_rom_file_beside_the_project_seats() {
     behaviour!(Test {
         id: "catalog.mad-p2iss-rom-file",
         covers: Some("SIL/mad-catalog/src/iss.rs#IssCores::seat"),
@@ -139,7 +139,7 @@ fn a_boot_rom_file_beside_the_project_is_the_cores() {
     });
     expect!(
         "seats",
-        "the module surveys with nothing refused, the ROM read from the project's directory"
+        "the module surveys with every part placed and nothing refused"
     );
     let dir = scratch("rom-file");
     std::fs::write(dir.join("rom.bin"), mad_catalog::iss::BOOT_ROM).expect("rom.bin is writable");
@@ -399,8 +399,10 @@ fn the_firmware_boots_off_the_modules_flash_and_its_core_reports_the_console() {
     );
     expect!(
         "host-received",
-        "the host's port counts at least the first line's 20 bytes received off the wire, with \
-         no framing errors"
+        "the host's serial port passes at least the first line's 20 bytes on to its terminal, \
+         and counts no framing errors",
+        "nothing reads the host's end, so the count stops once the terminal holds all it will \
+         take; the first line always fits"
     );
 
     let image = image_path();
@@ -451,6 +453,11 @@ fn the_firmware_boots_off_the_modules_flash_and_its_core_reports_the_console() {
         said > START_NS,
         "the line is the running firmware's: {said} ns"
     );
+    assert_eq!(
+        core.iter().find(|line| line.starts_with("P62 ")),
+        Some(&first),
+        "\"Starting MaD Board\" is the firmware's first console line: {core:#?}"
+    );
     assert!(
         core.contains(&"the core started at 5.500000 ms"),
         "the package started the core: {core:#?}"
@@ -485,7 +492,7 @@ fn the_firmware_boots_off_the_modules_flash_and_its_core_reports_the_console() {
     let to_host: usize = received.0.parse().expect("a byte count");
     assert!(
         to_host >= "Starting MaD Board\r\n".len(),
-        "the host received {to_host} bytes: {host:#?}"
+        "the host's port passed {to_host} bytes to its terminal: {host:#?}"
     );
     assert_eq!(received.1, "0 framing errors", "{host:#?}");
 }
