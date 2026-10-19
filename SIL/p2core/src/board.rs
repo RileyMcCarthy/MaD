@@ -132,6 +132,12 @@ pub struct Board {
     /// it. [`Board::set_input_level`] is how an adapter hands it over, and it
     /// is the only route by which anything outside can be *read* by the guest.
     in_ext: [u32; 2],
+    /// The pads whose drive, as an adapter last **published** it, is strong:
+    /// under the engine's weak-drive bound, so its own `OUT` wins its net.
+    /// `None` until an adapter that publishes pads with their configured
+    /// strength says ([`Board::set_strong_mask`]); until then every pad that
+    /// drives counts as strong.
+    strong: Option<[u32; 2]>,
 }
 
 impl Default for Board {
@@ -171,6 +177,7 @@ impl Board {
             drive_mask: [0; 2],
             quad: [None; 64],
             in_ext: [0; 2],
+            strong: None,
         }
     }
 
@@ -477,11 +484,23 @@ impl Board {
         }
     }
 
-    /// The pin state one bank actually reads: what the guest drives where
-    /// `DIR` is set, and what the outside presents everywhere else.
+    /// Say which pads drive strongly, bit *i* pad *i*: those whose
+    /// published drive is under the engine's weak-drive bound. An adapter
+    /// that publishes the configured strength calls it after every publish;
+    /// from then on a pad driven through a pull, or released, reads its net.
+    pub fn set_strong_mask(&mut self, mask: u64) {
+        self.strong = Some([mask as u32, (mask >> 32) as u32]);
+    }
+
+    /// The pin state one bank actually reads, by the strong-mask rule: a
+    /// pad whose published drive is strong reads its own `OUT`, and every
+    /// other pad — released, or pulling its net through a weak drive mode —
+    /// reads what the net resolved to. Before an adapter has said which
+    /// pads are strong ([`Board::set_strong_mask`]), every pad that drives
+    /// is.
     fn sensed(&self, bank: usize) -> u32 {
-        let driven = self.drive_mask[bank];
-        (driven & self.out[bank]) | (!driven & self.in_ext[bank])
+        let strong = self.strong.map_or(self.drive_mask[bank], |mask| mask[bank]);
+        (strong & self.out[bank]) | (!strong & self.in_ext[bank])
     }
 }
 
@@ -829,5 +848,56 @@ impl PinBus for Board {
             return;
         }
         self.in_flag[pin as usize & 63] = false;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use vibes_behaviour::{behaviour, expect, Test};
+
+    /// `DIRB`/`OUTB` and a `WRPIN` word, as cog 0 writes them.
+    fn drive_high(board: &mut Board, pin: u8, cfg: u32) {
+        board.wrpin(pin, cfg);
+        let bit = 1u32 << (pin - 32);
+        board.dir_out_changed(0, 0x1FB, board.dir_cog[0][1] | bit);
+        board.dir_out_changed(0, 0x1FD, board.out_cog[0][1] | bit);
+    }
+
+    #[test]
+    fn a_pad_driven_through_a_pull_reads_its_net() {
+        behaviour!(Test {
+            id: "p2core.pad-read-strong-mask",
+            covers: Some("SIL/p2core/src/board.rs#Board::sensed"),
+            given: "two pads driven high whose nets both read low, one through the 15 kΩ pull \
+                    mode and one in the fast mode, each pad's drive strength known as it was put \
+                    on its net",
+        });
+        expect!(
+            "pull-drives",
+            "the pad set to the pull mode still drives its net high, as a plain pin does"
+        );
+        expect!(
+            "pull-reads-net",
+            "the pad driven through the pull reads its net, low"
+        );
+        expect!(
+            "fast-reads-output",
+            "the pad driven fast reads its own output, high"
+        );
+        // %0000_CIO_HHH_LLL with HHH = %010 (15 kΩ) and LLL fast.
+        const PULL_UP_15K: u32 = 0b010 << 11;
+        let (pull, fast) = (40u8, 41u8);
+        let mut board = Board::default();
+        drive_high(&mut board, pull, PULL_UP_15K);
+        drive_high(&mut board, fast, 0);
+        board.set_input_level(pull, false);
+        board.set_input_level(fast, false);
+        // What a host publishing the configured strengths says: only the
+        // fast pad is under the weak-drive bound.
+        board.set_strong_mask(1u64 << fast);
+        assert_eq!(board.output_level(pull), Some(true), "the pull drives");
+        assert!(!board.pad_level(pull), "the pull reads its net");
+        assert!(board.pad_level(fast), "the fast pad reads its OUT");
     }
 }

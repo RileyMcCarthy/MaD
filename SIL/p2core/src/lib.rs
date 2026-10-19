@@ -346,6 +346,18 @@ pub struct Machine<P: PinBus> {
     pub stack_log: Vec<(u8, u32, bool, u32)>,
     /// Record stack traffic into [`Self::stack_log`].
     pub trace_stack: bool,
+    /// End a [`Self::step_until_clocks`] pass at the instruction after a
+    /// `HUBSET` that sets the clock, so the host can retime the guest before
+    /// it runs on at the new rate. Off by default: a host that converts
+    /// clocks to time with hub `$14` ([`Self::step_until`]) has nothing to
+    /// retime.
+    pub yield_on_clock_word: bool,
+    /// The last clock word a `HUBSET` set, and the clock count of the cog
+    /// that set it, until [`Self::take_clock_word`] takes it.
+    clock_word: Option<(u32, u64)>,
+    /// A clock word was set and [`Self::yield_on_clock_word`] asks the pass
+    /// to end.
+    clock_yield: bool,
 }
 
 impl<P: PinBus> Machine<P> {
@@ -424,7 +436,18 @@ impl<P: PinBus> Machine<P> {
             reg_hits: Vec::new(),
             stack_log: Vec::new(),
             trace_stack: false,
+            yield_on_clock_word: false,
+            clock_word: None,
+            clock_yield: false,
         }
+    }
+
+    /// The clock word the guest last set with `HUBSET` (`%0000_000E_DDDD_DDMM_
+    /// MMMM_MMMM_PPPP_CCSS`, P2X8C4M64P Datasheet, "System Clock", p. 18) and
+    /// the clock count it was set at, once: a second call returns `None`
+    /// until the guest sets one again.
+    pub fn take_clock_word(&mut self) -> Option<(u32, u64)> {
+        self.clock_word.take()
     }
 
     /// Watch a hub range for writes. Hits accumulate in [`Self::watch_hits`].
@@ -952,7 +975,40 @@ impl<P: PinBus> Machine<P> {
                 if self.cogs[cog].running && cog_us < deadline_us {
                     self.step_one(cog)?;
                     stepped = true;
-                    if self.pins.take_net_yield() {
+                    if self.pins.take_net_yield() || std::mem::take(&mut self.clock_yield) {
+                        return Ok(());
+                    }
+                }
+            }
+            if !stepped {
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    /// Run every running cog until the system counter reaches
+    /// `deadline_clocks`, or until one traps, yields for a net
+    /// ([`PinBus::take_net_yield`]) or sets the clock
+    /// ([`Self::yield_on_clock_word`]).
+    ///
+    /// [`Self::step_until`] with the deadline in clocks: for a host that
+    /// keeps its own map from clocks to time, as a chip whose clock word and
+    /// crystal set its rate needs, and never reads hub `$14` for it. The
+    /// pass and each cog are gated on the same count, so a cog whose clock
+    /// lands on the deadline is done both ways.
+    pub fn step_until_clocks(&mut self, deadline_clocks: u64) -> Result<(), Trap> {
+        self.ff_deadline_clocks = deadline_clocks;
+        loop {
+            if self.system_clocks() >= deadline_clocks {
+                break;
+            }
+            let mut stepped = false;
+            for cog in 0..NUM_COGS {
+                if self.cogs[cog].running && self.cogs[cog].clocks < deadline_clocks {
+                    self.step_one(cog)?;
+                    stepped = true;
+                    if self.pins.take_net_yield() || std::mem::take(&mut self.clock_yield) {
                         return Ok(());
                     }
                 }
@@ -2792,8 +2848,15 @@ impl<P: PinBus> Machine<P> {
                 self.cogs[cog].clocks += d as u64;
             }
             Hubset => {
-                // Clock modes are recorded and the PLL ignored; `clkfreq()`
-                // reads hub $14 on demand instead.
+                // A word whose top nibble is `%0000` sets the clock; the
+                // other forms (reset, write protection, filters, the RNG
+                // seed) are not clock words. Recorded for a host that times
+                // the guest from it; `clkfreq()` still reads hub $14 for one
+                // that does not.
+                if d >> 28 == 0 {
+                    self.clock_word = Some((d, self.cogs[cog].clocks));
+                    self.clock_yield = self.yield_on_clock_word;
+                }
             }
 
             // ---- conditional jumps on events
