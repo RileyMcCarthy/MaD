@@ -388,6 +388,10 @@ th {
   max-width: 520px;
 }
 
+.gate .row {
+  justify-content: center;
+}
+
 .muted {
   color: var(--muted);
 }

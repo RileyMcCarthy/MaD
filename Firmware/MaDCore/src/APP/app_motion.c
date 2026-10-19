@@ -150,6 +150,11 @@ typedef struct
      * trajectory, its phase, its cycle count and its completion all live in the
      * driver now, so there is nothing else for this layer to remember. */
     bool waveformRunning;
+    /* Latched when a G123 is refused (infeasible, unknown shape, or no servo
+     * actuator) and cleared only by app_motion_takeWaveformRefused(). Without
+     * it a refused waveform drains like a finished one and the test that asked
+     * for it ends as "Test Complete!", with the refusal only in the debug log. */
+    bool waveformRefused;
 
     app_motion_outputs_t output;
 
@@ -406,6 +411,7 @@ static void app_motion_private_moveManager_start(void)
         if (!dev_servo_waveShapeFromWire(req->shape, &wf.shape))
         {
             app_motion_data.waveformRunning = false;
+            app_motion_data.waveformRefused = true;
             DEBUG_ERROR("G123 REFUSED: unknown shape=%u\n", (unsigned)req->shape);
         }
         else
@@ -429,6 +435,7 @@ static void app_motion_private_moveManager_start(void)
                  * deliver, or whose holds leave no time to move, because
                  * running a smaller one instead gives a specimen that never saw
                  * the loading the report claims it did. */
+                app_motion_data.waveformRefused = true;
                 DEBUG_ERROR("G123 REFUSED: amp=%d steps freq=%u uHz dwell=%u/%u ms skew=%u\n",
                             wf.amplitudeCounts, wf.freqMicroHz, req->dwellHighMs,
                             req->dwellLowMs, (unsigned)req->skewPerMille);
@@ -436,6 +443,7 @@ static void app_motion_private_moveManager_start(void)
         }
 #else
         app_motion_data.waveformRunning = false;
+        app_motion_data.waveformRefused = true;
         DEBUG_ERROR("%s", "G123 waveform needs the servo actuator; refusing\n");
 #endif
         break;
@@ -581,6 +589,15 @@ bool app_motion_isIdle(void)
      * called from app_testManagement's run loop on that same cog. */
     return (state == APP_MOTION_WAITING) &&
            lib_staticQueue_isempty(&app_motion_data.queue);
+}
+
+bool app_motion_takeWaveformRefused(void)
+{
+    APP_MOTION_LOCK_REQ_BLOCK();
+    const bool refused = app_motion_data.waveformRefused;
+    app_motion_data.waveformRefused = false;
+    APP_MOTION_LOCK_REL();
+    return refused;
 }
 
 int32_t app_motion_getCommandedPosition(void)

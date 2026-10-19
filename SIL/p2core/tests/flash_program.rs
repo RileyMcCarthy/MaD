@@ -11,42 +11,28 @@
 //! builds the image `buildFlashImage` builds, and boots it the way the ROM does
 //! — cog-exec from hub `$0`. What happens next is interpreted P2 instructions.
 //!
-//! # How far it gets, and why that is the assertion
+//! # What it asserts
 //!
-//! It runs its prologue and stops in `p2core`, twice over:
+//! The stub runs to completion as machine code: `SKIP` over the header, the
+//! hub FIFO checksum pass, `LOC PTRA` onto the loader settings, then the
+//! streamer (`SETXFRQ`/`XINIT`/`WAITXFI`) clocked by a transition smart pin
+//! on the flash CLK. The writable `SpiFlash` underneath (`$06`/`$02`/`$20`/
+//! `$D8`) is the one the ROM already boots from. The test asserts the
+//! payload appears in that flash — the same bytes the PWA assembled.
 //!
-//! 1. An **undecoded opcode `%1110110`** (`$FEC0__E0`), reached immediately
-//!    after the checksum verification succeeds — `$00B` is `if_nz jmp`, so a
-//!    *valid* checksum is precisely what falls through onto it. It is not data.
-//! 2. Past that, the **streamer** (`SETXFRQ`/`XINIT`/`WAITXFI`), which is how
-//!    loadp2 clocks the SPI bus quickly rather than bit-banging it. Stepping
-//!    over (1) shows the stub reaching `DRVH`/`DRVL` on the flash pins and then
-//!    asking for a streamed transfer, ~2000 times.
-//!
-//! Getting as far as it does is not nothing: it exercises `SKIP` over the
-//! stub's inline header, the hub FIFO (`RDFAST`/`RFLONG`/`GETPTR`), `REP`
-//! blocks and the checksum arithmetic, on code this project did not write.
-//! Those were the unknowns, and they work. So the test asserts the stub clears
-//! its prologue and that what stops it is one of the two known gaps — which
-//! pins today's boundary exactly and fails the moment someone moves it.
-//!
-//! When those land, this test should assert the flash CONTENTS instead: the
-//! writable model underneath it (`SpiFlash`, `$06`/`$02`/`$20`/`$D8`/`$9F`) is
-//! already in place and unit-tested, and `m.pins.flash.image_bytes()` is
-//! waiting. `cargo run -p p2core --example stub_gaps` re-measures the gap in one
-//! pass — it steps over each trap and keeps going, so it reports every missing
-//! instruction on the executed path rather than just the first.
+//! `cargo run -p p2core --example stub_gaps` still lists every missing
+//! instruction on the executed path, if a new gap appears.
 //!
 //! # Still out of scope
 //!
 //! The *delivery* of the image over the wire. On hardware the app pulses DTR,
 //! the mask ROM autobauds on `> Prop_Chk`, and the image arrives as ASCII hex.
-//! None of that can run here — p2core leaves `SETSE1`/`SETINT1` inert so the
-//! ROM's autobaud ISR never fires, and no reset line reaches the board. The
-//! image is therefore placed in hub directly, which is the state the ROM would
-//! have left behind. The serial path remains the browser mock's job.
+//! That handshake lives in `rom_serial.rs`. This file is the stub running as
+//! machine code against a writable flash: the image is placed in hub the way
+//! the ROM leaves a finished hex download.
 
-use p2core::{Board, Machine, SdCard, Trap};
+use p2core::{Board, Machine, SdCard};
+use vibes_behaviour::{behaviour, expect, Test};
 
 /// Where the PWA keeps its vendored copy of loadp2's `flash_loader.bin`.
 ///
@@ -138,7 +124,52 @@ fn payload() -> Vec<u8> {
 }
 
 #[test]
-fn the_real_flash_stub_runs_on_the_iss_up_to_the_two_known_gaps() {
+fn loc_ptra_writes_the_absolute_hub_address() {
+    behaviour!(Test {
+        id: "p2.loc-ptra-absolute",
+        covers: Some("SIL/p2core/src/lib.rs#execute"),
+        given: "a LOC PTRA instruction with an absolute hub address",
+    });
+    expect!("ptra-loaded", "PTRA holds that hub address");
+
+    // EEEE=F, WW=10 (PTRA), R=0 (absolute), A=$12345 → $FEC12345.
+    const LOC_PTRA: u32 = 0xFEC1_2345;
+    const PARK: u32 = 0xFD9F_FFFC;
+    const PTRA: usize = 0x1F8;
+
+    let prog: Vec<u8> = [LOC_PTRA, PARK]
+        .iter()
+        .flat_map(|w| w.to_le_bytes())
+        .collect();
+    let mut m = Machine::new(&prog, p2core::NullPins);
+    m.step(8).ok();
+    assert_eq!(
+        m.cogs[0].regs[PTRA], 0x1_2345,
+        "LOC PTRA,#\\$12345 must land the 20-bit address in PTRA"
+    );
+}
+
+#[test]
+fn the_real_flash_stub_programs_the_payload_into_spi_flash() {
+    behaviour!(Test {
+        id: "p2.flash-stub-programs-spi",
+        covers: Some("SIL/p2core/tests/flash_program.rs"),
+        given: "the app's flash stub and a firmware image sitting in hub RAM the way the boot ROM leaves a finished download",
+    });
+    expect!(
+        "write-enable",
+        "the stub issues a write-enable to the SPI flash"
+    );
+    expect!("erase", "the stub erases a flash sector before programming");
+    expect!(
+        "page-program",
+        "the stub programs pages of the firmware into flash"
+    );
+    expect!(
+        "payload-at-loader-offset",
+        "the firmware bytes land at the flash offset the boot loader reads after its own first kilobyte"
+    );
+
     let Some(stub) = flash_loader_stub() else {
         eprintln!(
             "\n*** SKIPPED: {} needs the PWA's vendored loadp2 stub at\n***   {}\n\
@@ -148,7 +179,8 @@ fn the_real_flash_stub_runs_on_the_iss_up_to_the_two_known_gaps() {
         );
         return;
     };
-    let image = build_flash_image(&stub, &payload());
+    let fw = payload();
+    let image = build_flash_image(&stub, &fw);
 
     // An erased device, as it would be before a write.
     let board = Board::new(SdCard::blank(0)).with_flash(vec![0xFF; 1 << 20]);
@@ -156,43 +188,105 @@ fn the_real_flash_stub_runs_on_the_iss_up_to_the_two_known_gaps() {
     // The one piece of post-download state the stub depends on: the boot ROM's
     // hub FIFO pointer sits just past the image it just loaded, and `GETPTR` /
     // `SHR #2` at $003..$006 is how the stub learns its own payload size.
-    // Without it the size reads as zero, the checksum loop runs on the whole
-    // 512 KB of hub, and the stub simply never finishes — which looks like a
-    // hang rather than a missing precondition.
     m.cogs[0].fifo_addr = image.len() as u32;
 
-    let outcome = m.step(5_000_000);
-    let executed = m.cogs[0].instructions;
-
-    // It must clear its prologue — `SKIP` over the header, `GETPTR`/`SHR` to
-    // size the payload, `RDFAST`, and a `REP` checksum pass over every long —
-    // rather than dying in the first handful of instructions. Several hundred
-    // instructions of real loader code, none of which this project wrote.
+    let outcome = m.step(8_000_000);
+    // COGINIT at the end of the stub replaces cog 0, so per-cog instruction
+    // counts reset; the machine's retired count is the one that survives.
     assert!(
-        executed > 500,
-        "the stub must clear its prologue; only {executed} instructions ran, \
-         outcome={outcome:?}"
+        m.retired > 500,
+        "the stub must clear its prologue; only {} instructions ran, \
+         outcome={outcome:?}",
+        m.retired
     );
 
-    // And it must stop at one of the two known gaps, nowhere else.
-    const UNDECODED_OPCODE: u32 = 0b111_0110;
-    match outcome {
-        // The streamer, once the opcode below is decoded.
-        Err(Trap::Unimplemented {
-            mnemonic: "xinit" | "waitxfi" | "setxfrq",
-            ..
-        }) => {}
-        // Opcode %1110110, on the checksum-success path.
-        Err(Trap::UndecodedWord { word, .. }) if (word >> 21) & 0x7F == UNDECODED_OPCODE => {}
-        other => panic!(
-            "the stub now stops somewhere else after {executed} instructions: {other:?}.\n\
-             If both known gaps are closed, this test should now assert the FLASH \
-             CONTENTS instead — the payload must appear verbatim in \
-             m.pins.flash.image_bytes(), which the writable SpiFlash already supports.\n\
-             If this is a NEW gap, `cargo run -p p2core --example stub_gaps` lists every \
-             missing instruction on the executed path in one pass."
-        ),
-    }
+    let commands = &m.pins.flash.commands;
+    assert!(
+        commands.contains(&0x06),
+        "the stub must issue write-enable ($06); commands={commands:?} outcome={outcome:?}"
+    );
+    assert!(
+        commands.contains(&0x02),
+        "the stub must issue page-program ($02); commands={commands:?} outcome={outcome:?}"
+    );
+    assert!(
+        commands.iter().any(|&c| c == 0xD8 || c == 0x20),
+        "the stub must erase before programming ($D8/$20); commands={commands:?} outcome={outcome:?}"
+    );
+
+    let flash = m.pins.flash.image_bytes();
+    let head = &fw[..8];
+    let at = flash.windows(head.len()).position(|w| w == head);
+    // loadp2 writes flash from the in-stub loader at hub $160 (352); the
+    // PWA payload follows the 496-byte stub, so it lands at flash 144.
+    assert_eq!(
+        at,
+        Some(144),
+        "the payload must land where the ROM's stage-1 / loadp2 loader \
+         will read it; writes={:?} erases={:?} commands={commands:?} outcome={outcome:?}",
+        m.pins.flash.writes,
+        m.pins.flash.erases
+    );
+}
+
+/// `mov pa,#"B"` / `wypin pa,#62` / `jmp #$` — encodings from flexspin's listing,
+/// the same three longs `rom_boot_chain` uses.
+fn console_b_payload() -> Vec<u8> {
+    [0xF607EC42u32, 0xFC27EC3E, 0xFD9FFFFC]
+        .iter()
+        .flat_map(|w| w.to_le_bytes())
+        .collect()
+}
+
+fn run_stub_on(firmware: &[u8]) -> Option<Machine<Board>> {
+    let stub = flash_loader_stub()?;
+    let image = build_flash_image(&stub, firmware);
+    let board = Board::new(SdCard::blank(0)).with_flash(vec![0xFF; 1 << 20]);
+    let mut m = Machine::new(&image, board);
+    m.cogs[0].fifo_addr = image.len() as u32;
+    let _ = m.step(8_000_000);
+    Some(m)
+}
+
+#[test]
+fn the_rom_boots_the_image_the_stub_programmed() {
+    behaviour!(Test {
+        id: "p2.rom-boots-stub-programmed-flash",
+        covers: Some("SIL/p2core/tests/flash_program.rs"),
+        given: "SPI flash that the app's flash stub has just programmed, and a reset into the mask ROM with the flash boot strap pulled up",
+    });
+    expect!(
+        "payload-runs",
+        "the programmed payload runs and writes to the debug console"
+    );
+
+    let (Some(rom), Some(programmed)) = (
+        {
+            let p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../p2iss/rom/rom_booter_v33k.bin");
+            std::fs::read(p).ok()
+        },
+        run_stub_on(&console_b_payload()),
+    ) else {
+        eprintln!(
+            "\n*** SKIPPED: needs the loadp2 stub and p2iss/rom/rom_booter_v33k.bin.\n\
+             *** This test asserted NOTHING.\n"
+        );
+        return;
+    };
+
+    let flash = programmed.pins.flash.image_bytes();
+    let board = Board::new(SdCard::blank(0)).with_flash(flash);
+    let mut m = Machine::with_boot_rom(&rom, board);
+    m.pins.set_input_level(61, true);
+    let _ = m.step(8_000_000);
+    let console = String::from_utf8_lossy(&m.pins.console);
+    assert!(
+        console.contains('B'),
+        "the ROM must load the stub's flash image and run the payload; console={console:?} \
+         flash reads={:?}",
+        m.pins.flash.reads
+    );
 }
 
 /// `SKIP` is what lets the stub start at all, and its one subtlety is easy to

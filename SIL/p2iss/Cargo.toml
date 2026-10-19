@@ -10,9 +10,13 @@ repository.workspace = true
 p2core = { path = "../p2core" }
 embsim-board = { path = "../embsim/board" }
 embsim-core = { path = "../embsim/core" }
+# The flash and card nodes read through their parts' own datasheet
+# thresholds, which embsim-models declares beside the parts' models.
+embsim-models = { path = "../embsim/models" }
 tracing.workspace = true
 nix = { version = "0.31", features = ["term", "fs"] }
 libc = "0.2"
 
 [dev-dependencies]
 rstest.workspace = true
+vibes-behaviour = { path = "../../Vibes/bindings/rust" }

@@ -49,12 +49,11 @@
 
 pub mod flashimage;
 pub mod flashnode;
-pub mod host_pty;
 pub mod pulse;
 use crate::pulse::PulseDriver;
 pub mod sdimage;
 pub mod sdnode;
-pub use host_pty::HostPty;
+pub use embsim_board::HostPty;
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -62,8 +61,8 @@ use std::sync::{Arc, Mutex};
 
 use embsim_board::uart::{UartDecoder, UartFraming};
 use embsim_board::{
-    digital_drive, level_of, AttachError, Component, ComponentNetIo, Level, PinDecl, PinHandle,
-    PinKind, SerialLevelBridge, StreamRole,
+    digital_drive, AttachError, Component, ComponentNetIo, DeadBand, DigitalReceiver, Drive, Level,
+    PinDecl, PinHandle, SerialLevelBridge, Thresholds,
 };
 use embsim_core::virtual_clock;
 use p2core::{Board, Machine, PinBus, PinMode, SdCard};
@@ -90,8 +89,36 @@ pub const SLICE_NS: u64 = 100_000;
 /// has stopped being stepped cannot exhaust memory.
 const EDGE_QUEUE_MAX: usize = 1 << 16;
 
+/// How every pad the ISS carries on a net reads its net: the P2's own input
+/// pair, not JESD8C.01's, because the P2's datasheet names one.
+///
+/// `Vih`, Input Logic Threshold, min `Vxxyy` × 0.3, max `Vxxyy` × 0.7
+/// (P2X8C4M64P Datasheet, "System Characteristics" → "DC Characteristics",
+/// p. 47): the threshold lies somewhere in that band, so an input at or below
+/// 0.3 × `Vxxyy` reads low on every part and one at or above 0.7 × `Vxxyy`
+/// high. Made absolute at the 3.3 V the ISS drives its own highs at
+/// ([`embsim_board::net::LOGIC_HIGH_VOLTS`], what [`digital_drive`]
+/// publishes) — **0.99 V / 2.31 V** — because a [`P2Iss`] sits on no board and
+/// declares no bank supply to scale them against. The logic input mode names
+/// no hysteresis (the Schmitt modes are a `WRPIN` choice the declaration does
+/// not see), so between the two the pad reads no level
+/// ([`DeadBand::Unknown`]) and the guest keeps the input bit it has.
+///
+/// The same figures as `embsim_boards::p2::P2_PAD_THRESHOLDS`, which declares
+/// them relative to each pad's `VIO_a_b`; inside the P2 package
+/// (`MIGRATING-MAD.md` step 2) the package's relative declaration replaces
+/// this one.
+pub const P2ISS_PAD: Thresholds = Thresholds::new(
+    0.3 * embsim_board::net::LOGIC_HIGH_VOLTS,
+    0.7 * embsim_board::net::LOGIC_HIGH_VOLTS,
+    0.0,
+    DeadBand::Unknown,
+);
+
 /// Assumed clock frequency before the guest has recorded its own at hub `$14`.
 const NOMINAL_CLKFREQ: u32 = 160_000_000;
+/// RC oscillator the boot ROM runs on until a `HUBSET` writes `clkfreq`.
+const RC_CLKFREQ: u32 = 20_000_000;
 
 /// One asynchronous serial link the firmware drives, by physical pin.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -210,6 +237,9 @@ struct NetPins {
     /// `clkfreq`; the component reads it out after each slice and stores it
     /// here, where [`NetPins::framing_for`] can derive a rate from it.
     clkfreq: u32,
+    /// True when the guest started in the boot ROM (RC oscillator, ~20 MHz)
+    /// rather than a flexcc image that already selected the 160 MHz PLL.
+    rom_boot: bool,
     /// Pins carried on nets as plain levels — see [`P2Iss::with_level_pins`].
     level_pins: Vec<u8>,
     /// Pins that emit pulse trains — see [`P2Iss::with_pulse_pins`].
@@ -254,10 +284,7 @@ impl NetPins {
     /// firmware's `clkfreq` or divisor is wrong — which is the class of bug an
     /// ISS exists to find.
     fn framing_for(&self, pin: u8, nominal: u32) -> (UartFraming, u32) {
-        let clk = match self.clkfreq {
-            0 => NOMINAL_CLKFREQ,
-            f => f,
-        };
+        let clk = self.guest_clk();
         match self.inner.baud_of(pin, clk) {
             Some(derived) if derived > 0 => {
                 if !p2core::baud_matches(derived, nominal, 2.0) {
@@ -279,6 +306,18 @@ impl NetPins {
         self.clkfreq = hz;
     }
 
+    fn guest_clk(&self) -> u32 {
+        // The ROM fills a base64 table at hub $0, so `$14` is not clkfreq
+        // until an application writes it. Stay on the RC oscillator.
+        if self.rom_boot {
+            return RC_CLKFREQ;
+        }
+        match self.clkfreq {
+            0 => NOMINAL_CLKFREQ,
+            f => f,
+        }
+    }
+
     /// Begin (or retune) the train `WYPIN` just asked for.
     ///
     /// The mode and half-period are read back out of the smart pin rather than
@@ -287,10 +326,7 @@ impl NetPins {
     /// wrong divisor moves the carriage at the wrong speed *here*, which is
     /// the class of bug the ISS exists to surface.
     fn start_pulse(&mut self, pin: u8, y: u32) {
-        let clk = match self.clkfreq {
-            0 => NOMINAL_CLKFREQ,
-            f => f,
-        };
+        let clk = self.guest_clk();
         let smart = self.inner.pins[usize::from(pin) & 63];
         let now = virtual_clock::virtual_ns();
         let map = self.shared.pulse.lock().expect("pulse map never poisoned");
@@ -308,11 +344,7 @@ impl NetPins {
                     ?other,
                     "p2iss: WYPIN on a pulse pin in an unexpected mode"
                 );
-                return;
             }
-        }
-        if let (Some(next), Some(io)) = (driver.service(now), self.io.as_ref()) {
-            io.schedule_at_ns(next);
         }
     }
 
@@ -341,10 +373,7 @@ impl NetPins {
             self.armed_edge_ns = None;
             return None;
         }
-        let clk = match self.clkfreq {
-            0 => NOMINAL_CLKFREQ,
-            f => f,
-        };
+        let clk = self.guest_clk();
         let x = self.inner.pins[usize::from(clk_pin) & 63].x;
         let period_ticks = u64::from(x & 0xFFFF).max(2);
         let half_ns = (period_ticks / 2 * 1_000_000_000 / u64::from(clk)).max(1);
@@ -447,9 +476,14 @@ impl NetPins {
             let Some(handle) = self.level_handles[idx].as_ref() else {
                 continue;
             };
-            handle.set_drive(
-                want.map(|high| digital_drive(if high { Level::High } else { Level::Low })),
-            );
+            match want {
+                Some(high) => handle.drive(Drive::Thevenin(digital_drive(if high {
+                    Level::High
+                } else {
+                    Level::Low
+                }))),
+                None => handle.release(),
+            }
             self.published[idx] = Some(want);
             // A net pin's drive changed: the guest must yield before reading
             // any net back, so a component on it can respond first.
@@ -589,6 +623,19 @@ impl PinBus for NetPins {
     }
 
     fn testp(&self, pin: u8) -> bool {
+        // Autobaud timing pins (P0/P1) go IN-high when a programming-UART
+        // byte is waiting: that is the fall-to-fall measurement the ROM's
+        // SETSE1 is looking for. The byte itself lives on P63.
+        if (pin == 0 || pin == 1)
+            && self.links.iter().any(|l| l.rx_pin == 63)
+            && self
+                .shared
+                .rx
+                .get(&63)
+                .is_some_and(|queue| !queue.lock().expect("rx queue never poisoned").is_empty())
+        {
+            return true;
+        }
         if let Some(queue) = self.shared.rx.get(&pin) {
             return !queue.lock().expect("rx queue never poisoned").is_empty();
         }
@@ -613,6 +660,7 @@ impl NetPins {
             io: None,
             shutdown: Arc::new(AtomicBool::new(false)),
             clkfreq: 0,
+            rom_boot: false,
             level_pins: Vec::new(),
             pulse_pins: Vec::new(),
             level_handles: [const { None }; 64],
@@ -733,19 +781,6 @@ impl P2IssHandle {
             .pins
             .inner
             .quadrature_slips(a_pin)
-    }
-
-    /// Transitions a pulse pin has put on its net.
-    ///
-    /// This is the price of carrying a rate as voltages, in the only units
-    /// that matter: engine events. Assert on it when the question is cost.
-    pub fn pulse_edges(&self, pin: u8) -> u64 {
-        self.shared
-            .pulse
-            .lock()
-            .expect("pulse map never poisoned")
-            .get(&pin)
-            .map_or(0, |d| d.emitted())
     }
 
     /// Times the guest yielded for a net pin to resolve.
@@ -903,24 +938,17 @@ impl P2Iss {
                     link.nominal_baud,
                 )))),
             );
-            pins.push(PinDecl {
-                number: pin_name(link.tx_pin),
-                name: None,
-                kind: PinKind::DigitalOut,
-                stream: None,
-                drive_impedance: None,
-            });
-            pins.push(PinDecl {
-                number: pin_name(link.rx_pin),
-                name: None,
-                kind: PinKind::DigitalIn,
-                stream: None,
-                drive_impedance: None,
-            });
+            pins.push(PinDecl::digital_out(pin_name(link.tx_pin)));
+            pins.push(PinDecl::digital_in(pin_name(link.rx_pin), P2ISS_PAD));
         }
         let shared = Arc::new(shared);
         let mut bus = NetPins::new(Board::new(card), links.to_vec(), Arc::clone(&shared));
         bus.shutdown = Arc::clone(&shutdown);
+        // No strap is assumed here: the ROM reads P59 (the serial strap) and
+        // P61 (the flash strap) off whatever the bench puts on their nets, as
+        // the chip does. A ROM boot that wants the programming UART carries
+        // P59 as a level pin and pulls it up.
+        bus.rom_boot = matches!(source, BootSource::Rom(_));
         Self {
             pins,
             links: links.to_vec(),
@@ -938,7 +966,7 @@ impl P2Iss {
 
     /// Carry `pins` on nets as plain levels.
     ///
-    /// These are declared [`PinKind::DigitalBidir`], because the guest decides
+    /// These are bidirectional pads, because the guest decides
     /// direction at runtime with `DIR` and the adapter follows: a pin the
     /// firmware has released drives high-Z and whatever else is on the net —
     /// a pull-up, another component — sets the level it reads back.
@@ -951,13 +979,10 @@ impl P2Iss {
             if self.pins.iter().any(|d| d.number == pin_name(pin)) {
                 continue;
             }
-            self.pins.push(PinDecl {
-                number: pin_name(pin),
-                name: None,
-                kind: PinKind::DigitalBidir,
-                stream: None,
-                drive_impedance: None,
-            });
+            // Released until the guest drives it, as a pad is out of reset,
+            // and reading its net through the P2's own pair meanwhile.
+            self.pins
+                .push(PinDecl::digital_io(pin_name(pin), P2ISS_PAD));
             self.level_pins.push(pin);
             self.sense_pins.push(pin);
         }
@@ -981,45 +1006,30 @@ impl P2Iss {
             if self.pins.iter().any(|d| d.number == pin_name(pin)) {
                 continue;
             }
-            self.pins.push(PinDecl {
-                number: pin_name(pin),
-                name: None,
-                kind: PinKind::DigitalIn,
-                stream: None,
-                drive_impedance: None,
-            });
+            self.pins
+                .push(PinDecl::digital_in(pin_name(pin), P2ISS_PAD));
             self.sense_pins.push(pin);
         }
         self
     }
 
-    /// Carry `pins` on nets as **pulse trains**: timed level transitions.
+    /// Carry `pins` on nets as **pulse trains**: a square wave the pin drives.
     ///
-    /// The step train is the firmware's one continuous, rate-carried output,
-    /// and this is where it becomes a voltage like everything else. Each edge
-    /// is a Thevenin drive the net resolves, so a stepper model on the far end
-    /// counts real transitions rather than being handed a number.
-    ///
-    /// The cost is honest and measurable: see [`P2IssHandle::pulse_edges`]. A
-    /// finite `P_TRANSITION` train costs one event per edge for the length of
-    /// a move; a continuous `P_NCO_FREQ` wave costs one per edge for as long as
-    /// it runs, which is the case a rate-carried drive would collapse.
+    /// The step train is the firmware's one continuous, rate-carried output.
+    /// Each pin publishes a [`Drive::Periodic`] through its own handle — the
+    /// Thevenin port of its high phase, the one of its low phase, and the
+    /// [`embsim_board::PeriodicSchedule`] that alternates them, in
+    /// nanoseconds — once per rate change (a `WYPIN`, a retune, `_pinclear`),
+    /// never per edge. The engine resolves the square wave like any other
+    /// drive, and a stepper model on the far end reads the train off its own
+    /// STEP pin's sense, the schedule folding every pulse already counted.
+    /// See [`pulse`].
     pub fn with_pulse_pins(mut self, pins: &[u8]) -> Self {
         for &pin in pins {
             if self.pins.iter().any(|d| d.number == pin_name(pin)) {
                 continue;
             }
-            self.pins.push(PinDecl {
-                number: pin_name(pin),
-                name: None,
-                kind: PinKind::DigitalOut,
-                // A step train is a rate. Declaring the source role lets the
-                // engine route it to the drive's `PulseSink` as one event per
-                // rate change, instead of one wheel deadline per edge that a
-                // late service silently collapses.
-                stream: Some(StreamRole::PulseSource),
-                drive_impedance: None,
-            });
+            self.pins.push(PinDecl::digital_out(pin_name(pin)));
             self.pulse_pins.push(pin);
         }
         {
@@ -1093,42 +1103,40 @@ impl Component for P2Iss {
         // commits to no rate; it only says what an idle asynchronous line is.
         for link in &self.links {
             io.pin(pin_name(link.tx_pin))?
-                .set_drive(Some(digital_drive(Level::High)));
+                .drive(Drive::Thevenin(digital_drive(Level::High)));
         }
 
-        // Pulse pins: one driver each, holding its facade handle. Built here
-        // rather than on first `WYPIN` because a train's first edge is due one
-        // half-period after the command, and building lazily would spend that
-        // half-period looking the handle up.
+        // Pulse pins: one driver each, holding its facade handle, so a `WYPIN`
+        // publishes its train through the pin the moment the guest issues it.
         {
             let mut map = self.shared.pulse.lock().expect("pulse map never poisoned");
             for &pin in &self.pulse_pins {
                 let handle = io.pin(pin_name(pin))?;
-                // `None` when nothing on the net declared a sink: the engine
-                // routes no train, and the driver falls back to edges.
-                let tx = io.pulse_tx(pin_name(pin)).ok();
-                let driver = Arc::new(PulseDriver::new(pin, handle).with_tx(tx));
+                let driver = Arc::new(PulseDriver::new(pin, handle));
                 driver.idle();
                 map.insert(pin, driver);
             }
         }
 
-        // Level pins: whatever the net resolves becomes the pin's input on
-        // the next slice. `Floating` and `Contention` deliberately hold the
-        // last level rather than inventing one — the same rule
-        // `SerialLevelBridge` follows, for the same reason: an unresolvable
-        // net is not a logic value, and guessing one hides the fault.
+        // Level pins: each sense is projected through the pad's own
+        // thresholds (`P2ISS_PAD`), and the level becomes the pin's input on
+        // the next slice. A sense with no level — a floating or fought net, or
+        // a voltage inside the pad's dead band — deliberately holds the last
+        // level rather than inventing one: the same rule `SerialLevelBridge`
+        // follows, for the same reason: an unresolvable net is not a logic
+        // value, and guessing one hides the fault.
         for &pin in &self.sense_pins {
             let shared = Arc::clone(&self.shared);
             let shutdown = Arc::clone(&self.shutdown);
-            io.on_sense(pin_name(pin), move |state| {
+            let reader = DigitalReceiver::new(io.pin(pin_name(pin))?);
+            io.on_sense(pin_name(pin), move |sense| {
                 if shutdown.load(std::sync::atomic::Ordering::Relaxed) {
                     return;
                 }
-                // `Floating` and `Contention` hold the last level rather
-                // than inventing one, the same rule `SerialLevelBridge`
-                // follows: an unresolvable net is not a logic value.
-                let Some(level) = level_of(state) else {
+                // A sense with no level holds the last one rather than
+                // inventing one, the same rule `SerialLevelBridge` follows:
+                // an unresolvable net is not a logic value.
+                let Some(level) = reader.read(&sense) else {
                     return;
                 };
                 let mut queue = shared.edges.lock().expect("edge queue never poisoned");
@@ -1148,13 +1156,14 @@ impl Component for P2Iss {
             let decoder = Arc::clone(&self.shared.rx_decoders[&link.rx_pin]);
             let shutdown = Arc::clone(&self.shutdown);
             let arm = io.clone();
-            io.on_sense(pin_name(link.rx_pin), move |state| {
+            let reader = DigitalReceiver::new(io.pin(pin_name(link.rx_pin))?);
+            io.on_sense(pin_name(link.rx_pin), move |sense| {
                 if shutdown.load(std::sync::atomic::Ordering::Relaxed) {
                     return;
                 }
-                let now = virtual_clock::virtual_ns();
+                let now = sense.at_ns;
                 let mut rx = decoder.lock().expect("decoder never poisoned");
-                if let Some(level) = embsim_board::level_of(state) {
+                if let Some(level) = reader.read(&sense) {
                     rx.on_level(level, now);
                 }
                 while let Some(frame) = rx.poll(now) {
@@ -1249,23 +1258,6 @@ impl Component for P2Iss {
                         arm.schedule_at_ns(at);
                     }
                 }
-                // Advance every running pulse train and arm the next edge.
-                // Trains are serviced after the guest has stepped, so a
-                // `WYPIN` issued this slice has its first edge scheduled from
-                // the moment it was issued rather than a slice later.
-                {
-                    let map = shared.pulse.lock().expect("pulse map never poisoned");
-                    let mut next: Option<u64> = None;
-                    for driver in map.values() {
-                        if let Some(at) = driver.service(now_ns) {
-                            next = Some(next.map_or(at, |n: u64| n.min(at)));
-                        }
-                    }
-                    if let Some(at) = next {
-                        arm.schedule_at_ns(at);
-                    }
-                }
-
                 // Service every live transmit bridge: each clocks its own next
                 // bit and arms its own next wake.
                 {

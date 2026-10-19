@@ -1,0 +1,147 @@
+diff --git a/accel/tcg/cpu-exec.c b/accel/tcg/cpu-exec.c
+index 713bdb2..638c117 100644
+--- a/accel/tcg/cpu-exec.c
++++ b/accel/tcg/cpu-exec.c
+@@ -434,6 +434,19 @@ cpu_tb_exec(CPUState *cpu, TranslationBlock *itb, int *tb_exit)
+         log_cpu_exec(log_pc(cpu, itb), cpu, itb);
+     }
+ 
++    {   /* SPIKE 0a-2: add K extra W^X toggle PAIRS to measure ns/toggle.
++         * A pair restores the mode, so this cannot break correctness. */
++        static int extra = -1;
++        int q;
++        if (extra < 0) {
++            const char *e = getenv("QEMU_WX_EXTRA");
++            extra = e ? atoi(e) : 0;
++        }
++        for (q = 0; q < extra; q++) {
++            pthread_jit_write_protect_np(false);
++            pthread_jit_write_protect_np(true);
++        }
++    }
+     qemu_thread_jit_execute();
+     ret = tcg_qemu_tb_exec(cpu_env(cpu), tb_ptr);
+     cpu->neg.can_do_io = true;
+diff --git a/accel/tcg/tcg-accel-ops-icount.c b/accel/tcg/tcg-accel-ops-icount.c
+index d0f7b41..4e14e23 100644
+--- a/accel/tcg/tcg-accel-ops-icount.c
++++ b/accel/tcg/tcg-accel-ops-icount.c
+@@ -114,9 +114,17 @@ void icount_prepare_for_run(CPUState *cpu, int64_t cpu_budget)
+     g_assert(cpu->neg.icount_decr.u16.low == 0);
+     g_assert(cpu->icount_extra == 0);
+ 
+-    replay_mutex_lock();
++    {   /* SPIKE 0a-2 ablation: replay mutex (record/replay is off) */
++        static int abl = -1;
++        if (abl < 0) { abl = getenv("QEMU_ABL_REPLAY") ? 1 : 0; }
++        if (!abl) { replay_mutex_lock(); }
++    }
+ 
+-    cpu->icount_budget = MIN(icount_get_limit(), cpu_budget);
++    {   /* SPIKE 0a-2 ablation: icount_get_limit() scans both timer lists */
++        static int abl = -1;
++        if (abl < 0) { abl = getenv("QEMU_ABL_LIMIT") ? 1 : 0; }
++        cpu->icount_budget = abl ? cpu_budget : MIN(icount_get_limit(), cpu_budget);
++    }
+     insns_left = MIN(0xffff, cpu->icount_budget);
+     cpu->neg.icount_decr.u16.low = insns_left;
+     cpu->icount_extra = cpu->icount_budget - insns_left;
+@@ -144,7 +152,11 @@ void icount_process_data(CPUState *cpu)
+ 
+     replay_account_executed_instructions();
+ 
+-    replay_mutex_unlock();
++    {   /* SPIKE 0a-2 ablation: pairs with the lock above */
++        static int abl = -1;
++        if (abl < 0) { abl = getenv("QEMU_ABL_REPLAY") ? 1 : 0; }
++        if (!abl) { replay_mutex_unlock(); }
++    }
+ }
+ 
+ void icount_handle_interrupt(CPUState *cpu, int mask)
+diff --git a/accel/tcg/tcg-accel-ops-rr.c b/accel/tcg/tcg-accel-ops-rr.c
+index 6eec5c9..30be3b2 100644
+--- a/accel/tcg/tcg-accel-ops-rr.c
++++ b/accel/tcg/tcg-accel-ops-rr.c
+@@ -24,6 +24,7 @@
+  */
+ 
+ #include "qemu/osdep.h"
++#include <time.h>
+ #include "qemu/lockable.h"
+ #include "system/tcg.h"
+ #include "system/replay.h"
+@@ -214,6 +215,73 @@ static void *rr_cpu_thread_fn(void *arg)
+     /* process any pending work */
+     cpu->exit_request = 1;
+ 
++    /*
++     * SPIKE 0a: what does one synchronous icount slice cost, re-entered
++     * from the thread that owns the CPU?  This is exactly the triple the
++     * normal loop below runs per turn; here it runs N times back to back
++     * with a fixed budget and no timers, and reports ns per slice.
++     */
++    if (getenv("QEMU_SPIKE_SLICE")) {
++        /*
++         * SPIKE 0a/0c: cost of synchronous icount slices, driven round-robin
++         * across EVERY vCPU exactly as the loop below does it. One "round" =
++         * one slice on each running CPU, which is what bounds how finely the
++         * P2's 8 cogs can interleave.
++         */
++        int64_t budget = atoll(getenv("QEMU_SPIKE_SLICE"));
++        int64_t n = getenv("QEMU_SPIKE_N") ? atoll(getenv("QEMU_SPIKE_N")) : 200000;
++        int64_t i, halted = 0, ncpu = 0;
++        struct timespec t0, t1;
++        int64_t ic0, ic1;
++        CPUState *c;
++
++        CPU_FOREACH(c) { ncpu++; }
++        qemu_clock_enable(QEMU_CLOCK_VIRTUAL, true);
++
++        /* warm up: translate the loop on every CPU, clear exit_request */
++        CPU_FOREACH(c) {
++            current_cpu = c;
++            qatomic_set_mb(&rr_current_cpu, c);
++            bql_unlock();
++            icount_prepare_for_run(c, budget);
++            tcg_cpu_exec(c);
++            icount_process_data(c);
++            bql_lock();
++        }
++
++        int abl_bql = getenv("QEMU_ABL_BQL") ? 1 : 0;
++        if (abl_bql) { bql_unlock(); }   /* held across the whole run instead */
++        ic0 = icount_get_raw();
++        clock_gettime(CLOCK_MONOTONIC, &t0);
++        for (i = 0; i < n; i++) {
++            CPU_FOREACH(c) {
++                int r;
++                current_cpu = c;
++                qatomic_set_mb(&rr_current_cpu, c);
++                if (!abl_bql) { bql_unlock(); }
++                icount_prepare_for_run(c, budget);
++                r = tcg_cpu_exec(c);
++                icount_process_data(c);
++                if (!abl_bql) { bql_lock(); }
++                if (r == EXCP_HALTED) { halted++; }
++            }
++        }
++        if (abl_bql) { bql_lock(); }
++        clock_gettime(CLOCK_MONOTONIC, &t1);
++        ic1 = icount_get_raw();
++        {
++            double ns = ((t1.tv_sec - t0.tv_sec) * 1e9 + (t1.tv_nsec - t0.tv_nsec));
++            int64_t insns = ic1 - ic0;
++            fprintf(stderr,
++                "SPIKE cpus=%lld budget=%lld rounds=%lld ns/round=%.1f insns=%lld "
++                "insns/round=%.2f ns/insn=%.4f halted=%lld\n",
++                (long long)ncpu, (long long)budget, (long long)n, ns / n,
++                (long long)insns, insns / (double)n,
++                insns ? ns / insns : 0.0, (long long)halted);
++        }
++        exit(0);
++    }
++
+     while (1) {
+         /* Only used for icount_enabled() */
+         int64_t cpu_budget = 0;

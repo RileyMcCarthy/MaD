@@ -85,7 +85,6 @@ Protocol/ProtoEmb/
   examples/  docs/
 Firmware/MaDCore/extra_scripts/
     generate_protocol.py   # PlatformIO pre-build SCons hook → C codegen
-    archive_lib.py         # PlatformIO link-step replacement (native_emulator → libfirmware.a)
 ```
 
 (The six template files actually present: `protocol.c.j2`, `protocol.h.j2`, `protocol.ts.j2`, `protocol.rs.j2`, `protocol_runtime.c.j2`, `protocol_runtime.h.j2`.)
@@ -191,7 +190,7 @@ struct_def["_wire_size"] = math.ceil(total_bits / 8)
 
 ## Docstrings & comments
 
-- **Module docstring** at the top of every script: a one-line title, a paragraph of what it does, and a `Usage:` block (`generate.py:1`, `cargo_build.py:1`, `generate_protocol.py:1`, `archive_lib.py:1`).
+- **Module docstring** at the top of every script: a one-line title, a paragraph of what it does, and a `Usage:` block (`generate.py:1`, `cargo_build.py:1`, `generate_protocol.py:1`).
 - **One-line imperative docstring on essentially every function** (PEP 257 style), e.g. `"""Compute bits needed to represent an enum."""` (`generate.py:85`), `"""Resolve the library prefix from CLI flag, schema, or default."""` (`generate.py:65`).
 - **Comments explain *why*, with `# ── … ──` rule-style headers** for conceptual blocks (`generate.py:30`, `:56`). The "OFF/ON" YAML-bool comment (`generate.py:31`–`:33`) is a model: capture the non-obvious rationale, not the obvious mechanics.
 - **Do** keep the leading `#!/usr/bin/env python3` shebang on executable scripts (`generate.py:1`, `cargo_build.py:1`). Note the PlatformIO SCons scripts have **no** shebang — they are imported by SCons, not run directly.
@@ -200,8 +199,7 @@ struct_def["_wire_size"] = math.ceil(total_bits / 8)
 
 ## Strings & formatting
 
-- **f-strings everywhere** for messages and identifiers (`generate.py:74`, `:156`, `:783`). Do not use `%`-formatting in `generate.py`/`cargo_build.py`.
-  - Exception: the **SCons helper `archive_lib.py` uses `%` formatting** (`archive_lib.py:27`–`:31`) to match SCons-script idiom. New SCons code may follow either, but prefer f-strings unless mirroring surrounding code.
+- **f-strings everywhere** for messages and identifiers (`generate.py:74`, `:156`, `:783`). Do not use `%`-formatting in `generate.py`, `cargo_build.py`, or the PlatformIO SCons hooks.
 - **Use `!r` in error messages** to quote/repr user-supplied values so bad input is unambiguous (`generate.py:74`, `:659`, `:737`, `:743`):
 
   ```python
@@ -249,7 +247,7 @@ This is the most important behavioral convention — get it right so build hooks
 - **Create output dirs idempotently** with `os.makedirs(output_dir, exist_ok=True)` before writing (`generate.py:841`, `cargo_build.py:36`).
 - **`pathlib` vs `os.path` — follow the file you are editing:**
   - **`generate.py` mixes both:** `pathlib.Path` for resolving the script-relative templates dir (`generate.py:872`), but `os.path.join` / `os.makedirs` for output paths (`generate.py:841`, `:850`). Both are acceptable here; prefer `pathlib` for new path *construction*.
-  - **The PlatformIO SCons scripts use `os.path` exclusively** (`generate_protocol.py:16`, `archive_lib.py:17`) — stay with `os.path` there to match SCons conventions and `env.subst("$PROJECT_DIR")` usage.
+  - **The PlatformIO SCons scripts use `os.path` exclusively** (`generate_protocol.py:16`) — stay with `os.path` there to match SCons conventions and `env.subst("$PROJECT_DIR")` usage.
 
 ---
 

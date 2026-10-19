@@ -9,6 +9,7 @@
  *   <dataDir>/testRuns/<testName>.json    (metadata)
  *   <dataDir>/testRuns/<testName>.csv     (sample data)
  *   <dataDir>/testRuns/index.json         (lightweight manifest)
+ *   <dataDir>/settings.json               (app settings, e.g. the GitHub token)
  *
  * The chosen directory handle is persisted in IndexedDB so it survives reloads
  * (the browser re-prompts for permission as required). A small settings record
@@ -36,6 +37,18 @@ const MOTION_PROFILES_DIR = 'motionProfiles';
 const SETS_DIR = 'sets';
 const TEST_RUNS_DIR = 'testRuns';
 const TEST_INDEX_FILE = 'index.json';
+const SETTINGS_FILE = 'settings.json';
+
+/**
+ * App settings kept with the data, so they travel with the folder.
+ *
+ * The folder holds a credential once a GitHub token is saved: copying the
+ * folder for someone else copies the token too.
+ */
+export interface AppSettings {
+  /** Token for one-click bug reports (see diagnostics/github.ts). */
+  githubToken?: string;
+}
 
 /** Lightweight test-run manifest row for fast listing. */
 export interface TestRunIndexRow {
@@ -165,6 +178,35 @@ export class DataStore {
     return (this.root ?? this.pendingHandle)?.name ?? null;
   }
 
+  // ── Settings ──
+
+  /** The folder's settings; empty when none are saved or no folder is open. */
+  async readSettings(): Promise<AppSettings> {
+    return this.run(async () => {
+      if (!this.root) return {};
+      return (await readJsonFile<AppSettings>(this.root, SETTINGS_FILE)) ?? {};
+    }, 'readSettings');
+  }
+
+  /**
+   * Merge `patch` into the saved settings; a key set to `undefined` is removed.
+   * Throws when no folder is open, so a setting is never silently dropped.
+   */
+  async updateSettings(patch: Partial<AppSettings>): Promise<void> {
+    await this.run(async () => {
+      const root = this.root;
+      if (!root) throw new Error('Choose a data folder before saving settings.');
+      const merged: Record<string, unknown> = {
+        ...((await readJsonFile<AppSettings>(root, SETTINGS_FILE)) ?? {}),
+      };
+      for (const [key, value] of Object.entries(patch)) {
+        if (value === undefined) delete merged[key];
+        else merged[key] = value;
+      }
+      await writeJsonFile(root, SETTINGS_FILE, merged);
+    }, 'updateSettings');
+  }
+
   // ── Sample profiles ──
 
   async getSampleProfiles(): Promise<SampleProfileEntry[]> {
@@ -281,14 +323,20 @@ export class DataStore {
     }, 'createTestRun');
   }
 
-  async updateTestRun(testName: string, patch: Partial<TestRunEntry>): Promise<void> {
+  /** Merge `patch` into the run's record. Resolves `false`, writing nothing,
+   *  when the run has no record (its file was moved or deleted), so the caller
+   *  can tell the user the update was not saved. Resolving rather than
+   *  rejecting keeps a missing file apart from a real storage failure, which
+   *  still rejects (and is logged by `run`). */
+  async updateTestRun(testName: string, patch: Partial<TestRunEntry>): Promise<boolean> {
     return this.run(async () => {
       const existing = await this.getTestRun(testName);
-      if (!existing) return;
+      if (!existing) return false;
       const merged = { ...existing, ...patch };
       const dir = await this.subdir(TEST_RUNS_DIR);
       await writeJsonFile(dir, `${sanitizeName(testName)}.json`, merged);
       await this.updateIndex((rows) => rows.map((r) => (r.id === merged.id ? indexRow(merged) : r)));
+      return true;
     }, 'updateTestRun');
   }
 

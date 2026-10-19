@@ -6,29 +6,52 @@ import {
   hasToken,
   looksLikeToken,
   redactToken,
+  loadToken,
   setToken,
   verifyToken,
   GitHubError,
+  type TokenSettings,
 } from './github';
+import type { AppSettings } from '@/storage/DataStore';
 import { logger, logSnapshot, clearLog, sanitize } from './log';
 
 const FAKE = 'github_pat_11ABCDEFG0abcdefghijklmnop_qrstuvwxyz0123456789ABCDEFGH';
 
-// The unit environment is Node, which has no localStorage; the app's guarded
-// access returns null there. Provide a minimal one so the store is exercised.
-beforeEach(() => {
-  const store = new Map<string, string>();
+/** An in-memory data folder's settings file. */
+function memorySettings(initial: AppSettings = {}): TokenSettings & { saved: AppSettings } {
+  const box = { saved: { ...initial } };
+  return {
+    get saved() {
+      return box.saved;
+    },
+    readSettings: async () => ({ ...box.saved }),
+    updateSettings: async (patch) => {
+      const next: Record<string, unknown> = { ...box.saved };
+      for (const [k, v] of Object.entries(patch)) {
+        if (v === undefined) delete next[k];
+        else next[k] = v;
+      }
+      box.saved = next as AppSettings;
+    },
+  };
+}
+
+// The unit environment is Node, which has no localStorage; provide a minimal
+// one so the move of a token an earlier version kept there is exercised.
+const browserStore = new Map<string, string>();
+beforeEach(async () => {
+  browserStore.clear();
   vi.stubGlobal('localStorage', {
-    getItem: (k: string) => store.get(k) ?? null,
-    setItem: (k: string, v: string) => void store.set(k, v),
-    removeItem: (k: string) => void store.delete(k),
+    getItem: (k: string) => browserStore.get(k) ?? null,
+    setItem: (k: string, v: string) => void browserStore.set(k, v),
+    removeItem: (k: string) => void browserStore.delete(k),
   });
-  clearToken();
+  await clearToken(memorySettings());
   clearLog();
 });
-afterEach(() => {
+afterEach(async () => {
   vi.restoreAllMocks();
-  clearToken();
+  await clearToken(memorySettings());
 });
 
 describe('token storage', () => {
@@ -40,13 +63,16 @@ describe('token storage', () => {
       expect: {
         'reads-back': 'the same token reads back',
         'reported-present': 'a token is reported as present',
+        'saved-in-folder': "the token is written to the data folder's settings",
       },
     },
-    () => {
+    async () => {
+      const folder = memorySettings();
       expect(hasToken()).toBe(false);
-      setToken(FAKE);
+      await setToken(FAKE, folder);
       expect(getToken()).toBe(FAKE);
       expect(hasToken()).toBe(true);
+      expect(folder.saved.githubToken).toBe(FAKE);
     },
   );
 
@@ -58,8 +84,8 @@ describe('token storage', () => {
       expect: { trimmed: 'the token is stored trimmed' },
       why: { trimmed: 'a paste from GitHub often includes a trailing newline' },
     },
-    () => {
-      setToken(`  ${FAKE}\n`);
+    async () => {
+      await setToken(`  ${FAKE}\n`, memorySettings());
       expect(getToken()).toBe(FAKE);
     },
   );
@@ -72,13 +98,68 @@ describe('token storage', () => {
       expect: {
         'nothing-reads-back': 'no token can be read back',
         'none-present': 'no token is reported as present',
+        'removed-from-folder': "the token is gone from the data folder's settings",
       },
     },
-    () => {
-      setToken(FAKE);
-      clearToken();
+    async () => {
+      const folder = memorySettings();
+      await setToken(FAKE, folder);
+      await clearToken(folder);
       expect(getToken()).toBeNull();
       expect(hasToken()).toBe(false);
+      expect(folder.saved).not.toHaveProperty('githubToken');
+    },
+  );
+
+  behaviour(
+    {
+      id: 'diag.github-token-loads-from-folder',
+      covers: 'src/diagnostics/github.ts#loadToken',
+      given: 'a data folder whose settings hold a GitHub token is opened',
+      expect: { 'reads-back': "the folder's token is the one in use" },
+    },
+    async () => {
+      await loadToken(memorySettings({ githubToken: FAKE }));
+      expect(getToken()).toBe(FAKE);
+    },
+  );
+
+  behaviour(
+    {
+      id: 'diag.github-token-moves-from-browser',
+      covers: 'src/diagnostics/github.ts#loadToken',
+      given:
+        'a browser still holding a token from an earlier version opens a data folder with no token saved',
+      expect: {
+        'saved-in-folder': "the browser's token is written to the folder's settings",
+        'in-use': 'that token is the one in use',
+        'browser-copy-removed': 'the browser no longer holds a copy',
+      },
+      why: {
+        'browser-copy-removed': 'the folder is the single place the token lives, so clearing it there clears it',
+      },
+    },
+    async () => {
+      browserStore.set('mad:githubToken', FAKE);
+      const folder = memorySettings();
+      await loadToken(folder);
+      expect(folder.saved.githubToken).toBe(FAKE);
+      expect(getToken()).toBe(FAKE);
+      expect(browserStore.has('mad:githubToken')).toBe(false);
+    },
+  );
+
+  behaviour(
+    {
+      id: 'diag.github-token-folder-wins',
+      covers: 'src/diagnostics/github.ts#loadToken',
+      given: 'a data folder with its own token is opened in a browser that still holds a different one',
+      expect: { 'folder-token-used': "the folder's token is the one in use" },
+    },
+    async () => {
+      browserStore.set('mad:githubToken', 'ghp_browsercopy0000000000000000000000');
+      await loadToken(memorySettings({ githubToken: FAKE }));
+      expect(getToken()).toBe(FAKE);
     },
   );
 });

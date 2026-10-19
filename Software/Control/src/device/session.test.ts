@@ -40,10 +40,14 @@ Object.defineProperty(globalThis, 'navigator', {
   writable: true,
 });
 
+/** What the worker's connect does; a test swaps it to fail the handshake. */
+const remote = vi.hoisted(() => ({ connect: async (): Promise<void> => undefined }));
+
 vi.mock('comlink', () => ({
   wrap: () => ({
     setEventSink: async () => undefined,
-    connect: async () => undefined,
+    setLogSink: async () => undefined,
+    connect: () => remote.connect(),
     disconnect: async () => undefined,
   }),
   proxy: <T>(v: T) => v,
@@ -152,6 +156,75 @@ describe('DeviceClient worker recovery', () => {
       expect(client.workerCreateCount).toBe(2);
       expect(workers[0].terminated).toBe(true);
       expect(workers[1].terminated).toBe(false);
+    },
+  );
+});
+
+/** A port that, like the browser's, refuses to open while it is open. */
+function fakePort() {
+  const port = {
+    isOpen: false,
+    readable: null as object | null,
+    writable: null as object | null,
+    getInfo: () => ({}),
+    async open() {
+      if (port.isOpen) throw new DOMException('The port is already open.', 'InvalidStateError');
+      port.isOpen = true;
+      port.readable = {};
+      port.writable = {};
+    },
+    async close() {
+      port.isOpen = false;
+      port.readable = null;
+      port.writable = null;
+    },
+  };
+  return port;
+}
+
+describe('DeviceClient.connect', () => {
+  behaviour(
+    {
+      id: 'session.connect-closes-held-port',
+      covers: 'src/device/session.ts#connect',
+      given: 'a session that still holds an open port, connecting to that same port again',
+      expect: {
+        'opens-again': 'the port opens for the new connection',
+        'one-port-held': 'the session holds the port once, open',
+      },
+      why: { 'opens-again': 'the browser refuses to open a port that is already open' },
+    },
+    async () => {
+      const client = new DeviceClient();
+      const port = fakePort();
+      await client.connect(port as unknown as SerialPort);
+      await expect(client.connect(port as unknown as SerialPort)).resolves.toBeUndefined();
+      expect(client.isConnected()).toBe(true);
+      expect(port.isOpen).toBe(true);
+    },
+  );
+
+  behaviour(
+    {
+      id: 'session.failed-handshake-closes-port',
+      covers: 'src/device/session.ts#connect',
+      given: 'a connection whose port opens but whose session fails to start',
+      expect: {
+        'port-closed': 'the port is closed again',
+        'retry-opens': 'a second attempt opens the port',
+      },
+    },
+    async () => {
+      const client = new DeviceClient();
+      const port = fakePort();
+      remote.connect = async () => {
+        throw new Error('handshake failed');
+      };
+      await expect(client.connect(port as unknown as SerialPort)).rejects.toThrow(/handshake failed/);
+      expect(port.isOpen).toBe(false);
+      remote.connect = async () => undefined;
+      await client.connect(port as unknown as SerialPort);
+      expect(port.isOpen).toBe(true);
     },
   );
 });

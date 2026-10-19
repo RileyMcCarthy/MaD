@@ -174,6 +174,16 @@ impl Board {
         }
     }
 
+    /// Queue a byte on the debug/programming UART (P63), as the boot ROM's
+    /// serial loader sees it.
+    pub fn push_rx(&mut self, b: u8) {
+        self.uart_rx.push_back(b);
+    }
+
+    pub fn rx_pending(&self) -> usize {
+        self.uart_rx.len()
+    }
+
     /// Queue bytes for the firmware to read on the protocol link.
     /// Serialise one byte into UART edges and consume them again.
     ///
@@ -518,6 +528,37 @@ fn bank_bit(pin: u8) -> (usize, u32) {
     ((p >= 32) as usize, 1u32 << (p & 31))
 }
 
+impl Board {
+    /// Present the current CS/CLK/MOSI levels to the flash, if one is mounted.
+    fn clock_flash(&mut self) {
+        if !self.flash.present() {
+            return;
+        }
+        let cs_high = self.pin_state(FLASH_CS);
+        self.flash.set_selected(!cs_high);
+        let clk = self.pin_state(FLASH_CLK);
+        let di = self.pin_state(FLASH_DI);
+        self.flash.clock(clk, di);
+        self.set_input_level(FLASH_DO, self.flash.miso());
+    }
+
+    /// Drive a pad from a smart pin (streamer or transition clock), not GPIO.
+    fn drive_pad(&mut self, pin: u8, high: bool) {
+        let (bank, bit) = bank_bit(pin);
+        // Write cog 0's OUT as well as the OR'd pad: a later GPIO write
+        // (chip-select on the same bank) rebuilds `out` from `out_cog`.
+        if high {
+            self.out[bank] |= bit;
+            self.out_cog[0][bank] |= bit;
+        } else {
+            self.out[bank] &= !bit;
+            self.out_cog[0][bank] &= !bit;
+        }
+        self.drive_mask[bank] |= bit;
+        self.clock_flash();
+    }
+}
+
 impl PinBus for Board {
     /// A queued smart-pin clock burst is a transfer the CPU cannot advance by
     /// spinning: the edges come from the board's own pump.
@@ -565,14 +606,7 @@ impl PinBus for Board {
         // a net could resolve — so the flash answers here, on the board's own
         // pins, the moment they change. `output_level` reads what the guest is
         // driving; `pin_state` folds in direction.
-        if self.flash.present() {
-            let cs_high = self.pin_state(FLASH_CS);
-            self.flash.set_selected(!cs_high);
-            let clk = self.pin_state(FLASH_CLK);
-            let di = self.pin_state(FLASH_DI);
-            self.flash.clock(clk, di);
-            self.set_input_level(FLASH_DO, self.flash.miso());
-        }
+        self.clock_flash();
 
         // OUTB bit 28 is pin 60 (CS). SPI selects on CS low.
         if reg == 0x1FD {
@@ -651,6 +685,24 @@ impl PinBus for Board {
         self.in_flag[pin as usize & 63] = true;
     }
 
+    fn pin_cfg(&self, pin: u8) -> u32 {
+        self.pins[pin as usize & 63].cfg
+    }
+
+    fn set_pad(&mut self, pin: u8, high: bool) {
+        self.drive_pad(pin, high);
+    }
+
+    fn toggle_pad(&mut self, pin: u8) {
+        let (bank, bit) = bank_bit(pin);
+        let high = self.out[bank] & bit == 0;
+        self.drive_pad(pin, high);
+    }
+
+    fn pad_level(&self, pin: u8) -> bool {
+        self.pin_state(pin)
+    }
+
     fn wypin(&mut self, pin: u8, y: u32) {
         self.byte_counts[pin as usize & 63] += 1;
         if self.use_smart_bus && self.smart_bus.wypin(pin, y) {
@@ -709,6 +761,13 @@ impl PinBus for Board {
             }
         }
         let v = match pin {
+            // Autobaud timing pins (P0 = time-neg-edges, P1 = time-high).
+            // `>` at 2 Mbaud is 7 bit-times fall-to-fall and 5 high. On the
+            // 20 MHz RC oscillator the ROM starts on, 10 clocks/bit is 2 Mbaud.
+            // `mul baud0` uses `$10000/7` truncated to 9362, so 70 clocks
+            // yields period 9; 71 clocks yields period 10 (20 MHz / 10 = 2 Mbaud).
+            0 => 71,
+            1 => 51,
             PIN_DO => {
                 // A read with clocks still owed means a pure receive: the host
                 // is clocking with its line idle.
@@ -744,7 +803,7 @@ impl PinBus for Board {
         // finished". Reporting every configured pin as ready would make
         // `HAL_serial_recieveByte` read an endless stream of zero bytes.
         match pin {
-            PIN_RX => return !self.uart_rx.is_empty(),
+            PIN_RX | 0 | 1 => return !self.uart_rx.is_empty(),
             PIN_PROTO_RX => return !self.proto_rx.is_empty(),
             _ => {}
         }

@@ -1,0 +1,95 @@
+{
+  "board": {
+    "design_settings": {
+      "defaults": {},
+      "rules": {
+        "min_clearance": 0.127,
+        "min_track_width": 0.127,
+        "min_via_diameter": 0.5,
+        "min_via_annular_width": 0.1,
+        "min_through_hole_diameter": 0.3,
+        "min_hole_clearance": 0.16,
+        "min_hole_to_hole": 0.5,
+        "min_copper_edge_clearance": 0.3
+      },
+      "rule_severities": {
+        "hole_to_hole": "error"
+      }
+    }
+  },
+  "meta": {
+    "filename": "ds2_addon.kicad_pcb",
+    "version": 1
+  },
+  "net_settings": {
+    "classes": [
+      {
+        "name": "Default",
+        "clearance": 0.16,
+        "track_width": 0.16,
+        "via_diameter": 0.5,
+        "via_drill": 0.3
+      },
+      {
+        "name": "Analog",
+        "clearance": 0.2,
+        "track_width": 0.2,
+        "via_diameter": 0.6,
+        "via_drill": 0.3
+      },
+      {
+        "name": "Power",
+        "clearance": 0.2,
+        "track_width": 0.25,
+        "via_diameter": 0.8,
+        "via_drill": 0.4
+      }
+    ],
+    "netclass_patterns": [
+      {
+        "netclass": "Power",
+        "pattern": "3V3"
+      },
+      {
+        "netclass": "Power",
+        "pattern": "GND"
+      },
+      {
+        "netclass": "Power",
+        "pattern": "VDDA"
+      },
+      {
+        "netclass": "Power",
+        "pattern": "VSS"
+      },
+      {
+        "netclass": "Analog",
+        "pattern": "AIN0"
+      },
+      {
+        "netclass": "Analog",
+        "pattern": "AIN1"
+      },
+      {
+        "netclass": "Analog",
+        "pattern": "AIN2"
+      },
+      {
+        "netclass": "Analog",
+        "pattern": "AIN3"
+      },
+      {
+        "netclass": "Analog",
+        "pattern": "REFP_F"
+      },
+      {
+        "netclass": "Analog",
+        "pattern": "REFN_F"
+      }
+    ],
+    "meta": {
+      "version": 0
+    }
+  },
+  "text_variables": {}
+}
