@@ -266,7 +266,76 @@ implementing rather than inferring the decision tree.
 
 Depends on B1: there is nothing to boot *from* until the flash is a device.
 
+### B3 — the ISS as the P2 package's core, booting off the P2-EC32MB's flash — **DONE**
+
+`p2iss::P2IssCore` (`p2iss/src/package.rs`; embsim `MIGRATING-MAD.md` step 2)
+is the same `p2core` machine and the same net bus as `P2Iss`, as an
+`embsim_boards::p2::P2Core`: it fills the P2-EC32MB's processor slot `U100`
+inside embsim's `P2Package`, which holds it until the module's reset has
+released and the datasheet's 3 ms restart delay has run out (5.5 ms from the
+module's fingers), then starts it on the engine thread. It takes all 64 pads
+and reads every one; no pin list says what a pin is:
+
+- a pad drives from the guest's `DIR`, `OUT` and mode word, through
+  `BankSupplies::pad_drive` — high at its bank's supply, at the strength the
+  word's drive field sets (fast, 1.5 k, 15 k, 150 k, float);
+- a `P_ASYNC_TX` pad marks its line from the moment it is enabled and frames
+  bytes at the rate its bit period and the guest's clock give; a
+  `P_ASYNC_RX` pad gets a deframer at its own rate; a `P_TRANSITION` or
+  `P_NCO_FREQ` pad is a step train (`p2iss::pulse`), and a `WRPIN` to any
+  other mode banks its count and hands the pad back to the word, so
+  `_pinclear` releases it and the firmware's software step pulses
+  (`HAL_pulseOut.c`, below about 1.22 kHz) reach the net; the sync-serial
+  pins are the smart bus (G4), clocked on the guest's own clock, so the
+  module's flash and card share `P58`–`P61`, and a bus pin with `DIR` clear
+  or its word cleared is released;
+- a pad whose published drive is strong reads its `OUT`, every other pad its
+  net (`p2core::Board::sensed`, the strong-mask rule);
+- the guest's clock is the one its `HUBSET` word selects (reported to the
+  package, whose `XI` reading depends on it) and the crystal the package reads
+  on `XI` gives: RCFAST from START, then the PLL's 160 MHz from the module's
+  20 MHz TCXO. Hub `$14` plays no part;
+- **the guest leads, and every change waits for its own instant** (embsim
+  `DESIGN.md` rule 3). A wake runs the cogs in clock order, at most one
+  slice past the engine; an instruction that does something outside — a pad,
+  a mode word, a byte for a transmit pin, a train, the clock word — ends the
+  pass, and what it did is carried out by the wake at the instant it ran at
+  (its cog's clock after it, through the clock map), which then wakes again
+  at that instant so the engine resolves the change, and delivers any
+  answer, before the guest's next instruction. The bus clock's edges are
+  clock counts the pass stops at, carried out the same way. Two wakes a
+  change;
+- nothing straps a pin: `S301` does.
+
+Known gaps, written up for embsim and the serial-boot step: the pads ignore
+`P_INVERT_OUTPUT` in a logic-mode word (`BankSupplies::pad_drive` reads only
+the drive fields; QEMU's core has the same gap), so the 15 kΩ pull-up
+flexspin's `sdmm.cc` sets on the card's data-out pin `P58` (`OUT` low,
+inverted) presents as a pull-down; `TESTP` on `P0`/`P1` reads "a byte waits
+on `P63`" for the ROM's autobaud, a shortcut no net or mode word gives; and
+stage-1's relaunch (`setq #$FF` / `rdlong 0, #0` / `jmp #0` at cog `$019`)
+works on the ISS only because the reloaded `$019` happens to be harmless:
+`p2core` executes the reloaded long where silicon runs the `jmp #0` it had
+already fetched.
+
+`p2iss/tests/ec32mb_flash_boot.rs`, stepped, builds the module from its
+vendor netlist, powers it from `J203`'s fingers, closes `S301` positions 2
+(FLASH) and 4 (the `P59` pull-down), and holds that the ROM reads stage-1 at
+0 and stage-1 the 324 512-byte `propeller2_debug` program at `$400`, that the
+core starts at 5.5 ms, and that a terminal at 230 400 baud on `J203.50`
+(`P62/PRG_DBG_TXD`) reads `Starting MaD Board` at 1.254 s of board time, with
+the firmware on 160 MHz from the crystal. `p2iss/tests/package_pads.rs`,
+stepped, boots small programs the same way with a scope on one pad: the
+boot's 18 373 flash clock edges each on a nanosecond of its own, every one on
+a tick of the 20 MHz RC clock from START, 100 ns apart at the closest; a step
+train's pin released by `_pinclear` and then driven as a plain pin; and the
+sync-serial clock's transitions half its period apart from the `WYPIN`, the
+pad released once the pin is cleared. `P2Iss` keeps its `Component` impl and
+pin lists until `mad-emulator` retires (step 11).
+
 ### G1 — Debug console is not a node
+*Inside the package (B3) it is: `P62` is an async transmit pad on the
+module's net, and a terminal on `J203.50` reads it.* For `P2Iss`:
 P62/P63 are still byte-level inside `p2core::Board`. They should be a
 `SerialLink` like the protocol and force-gauge links.
 
@@ -531,6 +600,59 @@ now *correct* but slow enough that the app's 15 s waits expire during a test
 run. Speed alternates between 0.10-0.11x when idle and 0.00x whenever the SD is
 busy. The remaining work is the throughput programme above, not another
 correctness hunt.
+
+### G11 — the boot off the flash, and every pad on a net — **measured**
+
+The two costs embsim's `NODES.md` §13 review item 10 left open (embsim
+`MIGRATING-MAD.md` step 3), measured by `p2iss/examples/iss_speed.rs` with
+`P2IssCore` in the P2-EC32MB's package (B3) against `P2Iss` on no board.
+Every mode runs stepped, so the run's host time is its cost. Release build,
+Apple M2 (8 CPUs) shared with other work, 2026-10-19, two runs each. The host
+was loaded (its load average is printed with each run), which inflates the
+wall figures by up to three times; the CPU figures (user and system, every
+thread) are the comparable ones:
+
+```text
+cd SIL && make p2image && cargo build --release -p p2iss --examples
+./target/release/examples/iss_speed ec32mb 2   # P2IssCore, the module, its flash
+./target/release/examples/iss_speed            # P2Iss, the image in hub RAM, the link's 2 pins on nets
+./target/release/examples/iss_speed levels     # the same with 14 GPIO pins on nets as levels
+```
+
+| Route | Phase | Board time | Host s per board s, wall (CPU) | Load average |
+|---|---|---|---|---|
+| `ec32mb` | boot: START to the firmware's first line | 1.247 s | 32.4 (10.7); 21.1 (10.6) | 28.3; 23.4 |
+| `ec32mb` | running, every pad on a net | 2.0 s | 23.7 (11.0); 19.3 (11.1) | 28.3; 23.4 |
+| bare | running, the link on nets | 2.0 s | 39.5 (10.5); 21.5 (10.1) | 32.3; 27.0 |
+| `levels` | running, the link and 14 pins on nets | 2.0 s | 27.2 (10.4); 11.2 (9.3) | 34.4; 24.8 |
+
+- **The boot off the flash** is 1.247 s of board time from START (5.5 ms
+  after the fingers are powered), all but 0.3 ms of it the ROM and stage-1 on
+  the 20 MHz RC oscillator: stage-1 bit-bangs the 324 512-byte program, about
+  5.2 million pad changes, each a stop of the guest, a wake at the change's
+  own instant and one more after the net has resolved (about 2.5 µs of host
+  CPU each). In the dev profile `cargo test` builds, `ec32mb_flash_boot.rs`
+  took 165 s on CI's runner and 264–596 s here (a host at a load of 20–100),
+  both measured before the stamping below.
+- **What stamping each change at its own instant costs** (embsim
+  `DESIGN.md` rule 3), against the same core stamping changes at the wake's
+  instant, alternating runs on the same host at a load of 23–31: the boot
+  9.3 and 8.9 CPU s per board s before, 10.7 and 10.6 after, about 17 % more;
+  running 10.0 and 9.9 before, 11.0 and 11.1 after, about 11 % more. The
+  second wake per change is most of it; publishing only the pads a write
+  moved took the boot's overhead from 31 % to 17 %.
+- **Every pad on a net** costs about what today's routes cost: 11.0–11.1
+  CPU s per board s against 9.3–10.5, the spread between runs nearly as
+  large as the difference. All 64 pads read their nets; only the pads the
+  guest changes are published.
+- **A fast load** is not called for by these numbers. The boot is a fixed
+  1.25 board s per board, at the same host cost per board second as the
+  firmware running, so it weighs only where boards are started often (the
+  e2e's board per scenario: about 13 s of host CPU each, release). Its host
+  cost is per pad change, so what would shrink it is fewer clock edges — a
+  stage-1 that reads the flash two bits a clock, as Parallax's own loader
+  does with Fast Read Dual Output (`p2iss/rom/stage1.spin2`) — not a faster
+  guest clock, and not a load that skips the chain.
 
 ## The host: Chrome on the board's clock, or a PTY
 
