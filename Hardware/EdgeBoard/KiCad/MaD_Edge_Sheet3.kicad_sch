@@ -15921,7 +15921,7 @@
 				(justify right)
 			)
 		)
-		(property "Value" "AM26LV32xD"
+		(property "Value" "AM26LV32IDR"
 			(at 105.41 130.81 0)
 			(effects
 				(font
@@ -15966,7 +15966,7 @@
 				(hide yes)
 			)
 		)
-		(property "Manufacturer_Part_Number" "AM26LS32CD"
+		(property "Manufacturer_Part_Number" "AM26LV32IDR"
 			(at 110.49 134.62 0)
 			(effects
 				(font

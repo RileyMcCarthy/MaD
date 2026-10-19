@@ -82,15 +82,17 @@ static HAL_serial_data_S HAL_serial_data;
 
 /* INT1 service routine, copied into LUT $200 by
  * HAL_serial_private_armRxInterrupt and run from there. Fires while the RX pin
- * holds a byte; moves it into the hub ring. Self-contained, so it is safe beside
- * compiled code: it touches only its own registers and LUT longs, never PA/PB,
- * PTRx, the hardware stack, the FIFO or the CORDIC. C and Z are saved in IRET1
- * on entry and restored by RETI1 (CALLD INB, IRET1 WCZ). `fit` makes outgrowing
- * the 16 free LUT longs a build error. */
+ * holds a byte; moves it into the hub ring. The event is a level, but silicon
+ * ignores it while the ISR runs and RDPIN has dropped IN by the RETI1, so it
+ * does not re-enter (SIL/p2core/hwtest/events.c). Self-contained, so it is
+ * safe beside compiled code: it touches only its own registers and LUT longs,
+ * never PA/PB, PTRx, the hardware stack, the FIFO or the CORDIC. C and Z are
+ * saved in IRET1 on entry and restored by RETI1 (CALLD INB, IRET1 WCZ). `fit`
+ * makes outgrowing the 16 free LUT longs a build error. */
 __asm {
         org     0x200
 HAL_serial_private_rxIsr
-        testp   HAL_SERIAL_ISR_PIN                      wc  // level event: a re-entry after RDPIN finds nothing
+        testp   HAL_SERIAL_ISR_PIN                      wc  // defensive: silicon only enters with a byte waiting
  if_nc  reti1
         rdpin   HAL_SERIAL_ISR_BYTE, HAL_SERIAL_ISR_PIN     // read and acknowledge: IN drops
         shr     HAL_SERIAL_ISR_BYTE, #24                    // the byte arrives in bits 31:24

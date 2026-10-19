@@ -7,6 +7,11 @@ members = [
     "p2core",
     "p2iss",
     "MaDSim",
+    # MaD's own embsim kinds, and the runner that is the embsim command over
+    # them (embsim PROJECTS.md §10, "A runner the project owns"); a project
+    # file names both in its [catalog].
+    "mad-catalog",
+    "mad-runner",
 ]
 # The generic embsim library is a git submodule with its own workspace root
 # (https://github.com/RileyMcCarthy/embsim). Its crates are consumed as path
