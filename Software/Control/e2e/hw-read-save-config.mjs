@@ -48,11 +48,11 @@ async function readProfile(page) {
   return out;
 }
 
-/** Click "Reload from device" and wait until the Name field has a value,
+/** Click "Read from device" and wait until the Name field has a value,
  *  retrying to ride out the board's reboot-on-connect + SD mount. */
 async function reloadUntilLoaded(page, { tries = 12, gapMs = 1500 } = {}) {
   for (let i = 0; i < tries; i++) {
-    await page.getByRole('button', { name: /Reload from device/i }).click().catch(() => {});
+    await page.getByRole('button', { name: /Read from device/i }).click().catch(() => {});
     try {
       await fieldInput(page, 'Name').waitFor({ state: 'visible', timeout: 1200 });
       const v = await fieldInput(page, 'Name').inputValue();
@@ -108,21 +108,21 @@ const main = async () => {
       await page.waitForTimeout(150);
       const shown = await nameInput.inputValue();
       if (shown !== value) console.log(`[hw]   WARN: input shows "${shown}", expected "${value}"`);
-      await page.getByRole('button', { name: /Save to device/i }).click();
+      await page.getByRole('button', { name: /Write to device/i }).click();
       await page.getByText(/Saved to device\.|Device rejected/i).waitFor({ timeout: 8000 });
       return (await page.getByText(/Saved to device\.|Device rejected/i).textContent())?.trim();
     };
 
-    // readBackViaUI: scribble a sentinel into the field, then Reload from device —
+    // readBackViaUI: scribble a sentinel into the field, then Read from device —
     // a real device read replaces the sentinel, so we can't pass on a stale value.
     const readBackViaUI = async () => {
       await page.waitForTimeout(400);
       await nameInput.fill('__pending__');
-      await page.getByRole('button', { name: /Reload from device/i }).click();
+      await page.getByRole('button', { name: /Read from device/i }).click();
       for (let i = 0; i < 12; i++) {
         await page.waitForTimeout(600);
         if ((await nameInput.inputValue()) !== '__pending__') break;
-        await page.getByRole('button', { name: /Reload from device/i }).click().catch(() => {});
+        await page.getByRole('button', { name: /Read from device/i }).click().catch(() => {});
       }
       return readProfile(page);
     };

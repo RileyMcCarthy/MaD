@@ -59,10 +59,10 @@ export default function Settings() {
         </p>
         <div className="row">
           <button className="primary" onClick={choose}>
-            {dirName ? 'Change folder' : 'Choose folder'}
+            {dirName ? 'Change data folder' : 'Choose data folder'}
           </button>
           {needsPermission && (
-            <button onClick={grant}>Grant access to “{dirName}”</button>
+            <button onClick={grant}>Allow access to “{dirName}”</button>
           )}
           {dirName && !needsPermission && (
             <span className="muted">Current: {dirName}</span>
@@ -79,16 +79,6 @@ export default function Settings() {
       <Config embedded />
 
       <GitHubTokenSettings />
-
-      <div className="panel">
-        <h2>About</h2>
-        <p className="muted">
-          Frontend-only control app. Talks to the Propeller 2 over the Web Serial
-          API; the protocol runs as WebAssembly compiled from the same Rust core
-          used by the firmware tooling and SIL. Firmware can be flashed from the
-          browser too — see the Firmware page.
-        </p>
-      </div>
     </div>
   );
 }
