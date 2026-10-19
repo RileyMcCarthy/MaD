@@ -479,7 +479,10 @@ version = "0.1.0"
 dependencies = [
  "embsim-board",
  "embsim-boards",
+ "embsim-cli",
  "embsim-core",
+ "rstest 0.26.1",
+ "vibes-behaviour",
 ]
 
 [[package]]

@@ -107,7 +107,10 @@ both system descriptions, so the DS2 registry exists twice.
   loader arrives on the P62/P63 edge fingers. That is what "test the P2 ISS
   against the module" means in practice.
 
-**Target, MaD side: `SIL/boards/`, a new crate.**
+**Target, MaD side: `SIL/boards/`, a new crate.** *(It is landing as
+`SIL/mad-catalog`, embsim `MIGRATING-MAD.md` section 3: both netlists are in
+`SIL/mad-catalog/netlists/`, bundled by the board kinds `mad-edge` and
+`mad-ds2`.)*
 
 - `mad_edge.net`, `ds2_addon.net` (already duplicated at
   `SIL/MaDSim/boards/`), the EdgeBoard and DS2 registries and stubs, the

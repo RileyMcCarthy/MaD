@@ -1,18 +1,26 @@
-# mad-catalog: the kinds this project adds to embsim (PROJECTS.md §10). Started by
-# `embsim new --catalog`; a project names it in its [catalog] crates, and the
-# `embsim` tool builds it into the runner that runs the project.
+# mad-catalog: the kinds MaD adds to embsim (embsim PROJECTS.md §10), started
+# by `embsim new --catalog mad-catalog --own-runner`. A project names it in its
+# [catalog] crates, and mad-runner, beside it, is the embsim command over it.
 [package]
 name = "mad-catalog"
-version = "0.1.0"
-edition = "2021"
+description = "MaD's own embsim kinds: the Edge carrier and the DS2 force-gauge add-on as board kinds"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
 publish = false
 
 [dependencies]
-# The embsim this project builds against: the runner takes embsim from where
-# this crate's embsim-boards comes from, and every catalog crate's embsim
-# dependencies come from there too — one copy of embsim in the runner.
+# One copy of embsim: the pinned submodule, by path. The runner takes
+# embsim-cli from the same checkout, and SIL/Cargo.lock locks the rest.
 embsim-board = { path = "../embsim/board" }
 embsim-boards = { path = "../embsim/boards" }
 # The virtual clock: the instant a component starts at, which its wakes
 # count from.
 embsim-core = { path = "../embsim/core" }
+
+[dev-dependencies]
+# The tests run MaD's projects as the runner does, in process.
+embsim-cli = { path = "../embsim/cli" }
+rstest.workspace = true
+vibes-behaviour = { path = "../../Vibes/bindings/rust" }
