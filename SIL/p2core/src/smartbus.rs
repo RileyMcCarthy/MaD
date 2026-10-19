@@ -59,6 +59,15 @@ pub struct SmartBus {
     /// is put on the wire on the leading (falling) edge and held through the
     /// trailing (rising) edge where the device samples it — SPI mode 3.
     tx_out: bool,
+    /// The RX pin's `X[5]`: sample *after* the rising edge is registered
+    /// rather than just before it. `sdmm.cc` sets it on every receive width
+    /// (`7 | 32`, `#31 | 32`, "sample after rising clock").
+    late_sample: bool,
+    /// A rising edge passed with [`Self::late_sample`] set and its bit has
+    /// not been latched yet. It is latched from the RX level as it stands
+    /// once that edge has reached the devices on the bus — see
+    /// [`SmartBus::advance_clock`].
+    sample_owed: bool,
 }
 
 impl SmartBus {
@@ -147,6 +156,7 @@ impl SmartBus {
                 }
                 if self.rx == Some(p) {
                     self.rx = None;
+                    self.sample_owed = false;
                 }
             }
         }
@@ -172,10 +182,19 @@ impl SmartBus {
         }
     }
 
-    /// `WXPIN` on a bus pin: set the RX word width. Returns `true` if handled.
+    /// `WXPIN` on a bus pin: set the RX word width (`X[4:0]`, bits - 1) and
+    /// the sample position (`X[5]`). Returns `true` if handled.
+    ///
+    /// The P2 silicon document, `%11101` synchronous serial receive: "X.[5] = 0
+    /// selects the A input sample just before the B input edge was
+    /// registered ... X.[5] = 1 selects the sample coincident with the B edge
+    /// being registered." A fresh X begins a fresh word, so a late sample
+    /// still owed from the previous width is dropped with it.
     pub fn wxpin(&mut self, pin: u8, x: u32) -> bool {
         if self.rx == Some(pin & 63) {
             self.shift.set_rx_bits((x & 0x1F) + 1);
+            self.late_sample = x & 0x20 != 0;
+            self.sample_owed = false;
             true
         } else {
             false
@@ -184,15 +203,39 @@ impl SmartBus {
 
     /// `RDPIN` on a bus pin: take the assembled RX word. `None` if not a bus
     /// pin (the caller falls through).
+    ///
+    /// A late sample still owed is latched first, from the RX level fed by
+    /// [`Self::set_rx_input`] — the level after the rising edge.
     pub fn rdpin(&mut self, pin: u8) -> Option<u32> {
-        (self.rx == Some(pin & 63)).then(|| self.shift.take_rx().unwrap_or(0))
+        if self.rx != Some(pin & 63) {
+            return None;
+        }
+        self.take_owed_sample();
+        Some(self.shift.take_rx().unwrap_or(0))
+    }
+
+    /// Whether a late sample is owed for the RX pin (diagnostics, tests).
+    pub fn sample_owed(&self) -> bool {
+        self.sample_owed
+    }
+
+    /// Latch the late sample a rising edge left owed, if any.
+    fn take_owed_sample(&mut self) {
+        if self.sample_owed {
+            self.sample_owed = false;
+            self.shift.sample_rx(self.rx_input);
+        }
     }
 
     /// `TESTP` on a bus pin: RX-ready, TX-buffer-empty, or clock-idle.
+    ///
+    /// On the RX pin, a word whose last bit is an owed late sample is ready:
+    /// on silicon that bit is latched a few clocks after the edge whatever
+    /// the guest does, so `IN` is up by the time the guest can look.
     pub fn testp(&self, pin: u8) -> Option<bool> {
         let p = pin & 63;
         if self.rx == Some(p) {
-            Some(self.shift.rx_ready())
+            Some(self.shift.rx_ready() || (self.sample_owed && self.shift.rx_completes_next()))
         } else if self.tx == Some(p) {
             Some(self.shift.tx_buffer_empty())
         } else if self.clock == Some(p) {
@@ -206,6 +249,7 @@ impl SmartBus {
     pub fn akpin(&mut self, pin: u8) -> bool {
         if self.rx == Some(pin & 63) {
             self.shift.clear_rx();
+            self.sample_owed = false;
             true
         } else {
             false
@@ -225,16 +269,36 @@ impl SmartBus {
     /// The edge logic is CPOL = 1 as `sdmm.cc` programs it: the clock leads
     /// with a falling edge on which the TX bit is presented, and samples the
     /// RX input on the trailing rising edge (then advances the shifter).
+    ///
+    /// Where the rising edge samples depends on the RX pin's `X[5]`:
+    ///
+    /// - clear: the level the pin held just before the edge, which is the
+    ///   [`Self::set_rx_input`] level fed for this call;
+    /// - set: the level *after* the edge, once the devices on the bus have
+    ///   seen it. On silicon that is a few system clocks later (the clock
+    ///   pin's `P_SYNC_IO` registration adds one more, the "late-late" point
+    ///   `sdmm.cc` describes), well inside the half period before the next
+    ///   transition. Here the edge only reaches the devices when the adapter
+    ///   publishes it after this call returns, so the bit is left owed and
+    ///   latched from the next level fed: at the start of the next
+    ///   transition (before that transition moves anything), or at the
+    ///   guest's `RDPIN` when the burst ended on this edge.
     pub fn advance_clock(&mut self) -> Option<bool> {
+        self.take_owed_sample();
         if self.pending == 0 {
             return None;
         }
         self.pending -= 1;
         self.clk_high = !self.clk_high;
         if self.clk_high {
-            // Trailing (rising) edge: the device's bit is stable, latch it,
-            // then move the shifter on so the next bit is ready to present.
-            self.shift.sample_rx(self.rx_input);
+            // Trailing (rising) edge: latch the device's bit (now, or once
+            // the edge has reached it), then move the shifter on so the next
+            // bit is ready to present.
+            if self.late_sample {
+                self.sample_owed = true;
+            } else {
+                self.shift.sample_rx(self.rx_input);
+            }
             self.shift.advance_tx();
         } else {
             // Leading (falling) edge: put the shifter's current bit on the
@@ -248,7 +312,147 @@ impl SmartBus {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::board::Board;
+    use crate::pins::PinBus;
     use crate::smartpin::SmartPin;
+    use vibes_behaviour::{behaviour, expect, Test};
+
+    /// The SD bus pins `sdmm.cc` programs on the MaD board.
+    const CLK: u8 = 61;
+    const TX: u8 = 59;
+    const RX: u8 = 58;
+    /// `X[5]` on the RX pin: sample after the rising clock edge.
+    const SAMPLE_LATE: u32 = 32;
+    /// The card's answer to `CMD0` (R1, in idle state).
+    const CARD_BYTE: u8 = 0x01;
+
+    /// A board with the sync-serial bus configured through its own `WRPIN`s
+    /// and `WXPIN`, the way `sdmm.cc`'s `disk_initialize` does: a CPOL = 1
+    /// pulse clock, a sync-TX pin and an 8-bit sync-RX pin.
+    fn sd_board(rx_x: u32) -> Board {
+        let mut board = Board::default();
+        board.enable_smart_bus();
+        board.wrpin(CLK, 0x08 | P_INVERT_OUTPUT);
+        board.wrpin(TX, 0x38);
+        board.wrpin(RX, 0x3A);
+        board.wxpin(RX, rx_x);
+        board
+    }
+
+    /// Clock one byte in, one transition at a time. The RX line reads high
+    /// through each low half of the clock (a second device driving it, as
+    /// embsim's flash did) and the card's next bit, MSB first, once a rising
+    /// edge has passed. Returns `TESTP` on the RX pin after the last edge and
+    /// the word `RDPIN` then reads.
+    fn clock_in(board: &mut Board, card: u8) -> (bool, u32) {
+        board.set_input_level(RX, true);
+        board.wypin(CLK, 8);
+        let mut bit = 0;
+        // Only the transitions the burst owes, as the adapter pumps them: no
+        // further call follows the last edge before the guest reads.
+        while board.smart_clock_busy() {
+            let high = board.advance_smart_clock().expect("a busy clock moves");
+            if high {
+                board.set_input_level(RX, (card >> (7 - bit)) & 1 != 0);
+                bit += 1;
+            } else {
+                board.set_input_level(RX, true);
+            }
+            assert!(bit <= 8, "one byte is eight rising edges");
+        }
+        assert_eq!(bit, 8, "the burst ran its eight pulses");
+        (board.testp(RX), board.rdpin(RX).0)
+    }
+
+    /// The receiver's 8-bit word for wire bits sent MSB first: MSB-justified,
+    /// the first bit on the wire at bit 24 and the last at bit 31.
+    fn word_for(byte_msb_first: u8) -> u32 {
+        u32::from(byte_msb_first.reverse_bits()) << 24
+    }
+
+    #[test]
+    fn the_receiver_samples_after_the_rising_edge_when_asked() {
+        behaviour!(Test {
+            id: "p2core.sync-rx-sample-position",
+            covers: Some("SIL/p2core/src/smartbus.rs#SmartBus::advance_clock"),
+            given: "an SD-card bus set up the way the SD driver sets it up, whose data line reads \
+                    high until each rising clock edge and the card's next bit once that edge has \
+                    passed",
+        });
+        expect!(
+            "late-reads-after-edge",
+            "a receiver set to sample after the rising edge reads the byte the card put on the \
+             line",
+            "the driver asks for this sample position on every read, and the P2 takes it as the \
+             clock edge is registered, after the line has answered the edge"
+        );
+        expect!(
+            "early-reads-before-edge",
+            "a receiver set to sample before the rising edge reads the level the line held just \
+             before each edge, all ones"
+        );
+        expect!(
+            "late-ready-at-last-edge",
+            "a receiver set to sample after the rising edge reports the byte waiting as soon as \
+             the last rising edge has passed"
+        );
+
+        let mut late = sd_board(7 | SAMPLE_LATE);
+        let (ready, word) = clock_in(&mut late, CARD_BYTE);
+        assert_eq!(
+            word,
+            word_for(CARD_BYTE),
+            "late sampling reads the card's byte"
+        );
+        assert!(ready, "the byte is waiting once the last edge has passed");
+
+        let mut early = sd_board(7);
+        let (_, word) = clock_in(&mut early, CARD_BYTE);
+        assert_eq!(
+            word,
+            word_for(0xFF),
+            "early sampling reads the level before each edge"
+        );
+    }
+
+    /// A late sample still owed when the driver rewrites the receive width
+    /// belongs to the old word, not the new one.
+    #[test]
+    fn a_fresh_receive_width_drops_an_owed_late_sample() {
+        behaviour!(Test {
+            id: "p2core.sync-rx-new-width-new-word",
+            covers: Some("SIL/p2core/src/smartbus.rs#SmartBus::wxpin"),
+            given: "an SD-card bus whose receiver samples after the rising edge, with one clock \
+                    pulse just sent and the driver then setting the receive width again",
+        });
+        expect!(
+            "new-word-own-bits",
+            "the next byte read holds only the eight bits clocked after the width was set",
+            "setting the width starts a fresh word on the P2, and the driver relies on it to \
+             line bytes up"
+        );
+        let mut board = sd_board(7 | SAMPLE_LATE);
+        board.set_input_level(RX, true);
+        board.wypin(CLK, 1);
+        while board.smart_clock_busy() {
+            board.advance_smart_clock();
+        }
+        assert!(
+            board.smart_bus.sample_owed(),
+            "the rising edge left its bit owed"
+        );
+        board.wxpin(RX, 7 | SAMPLE_LATE);
+        assert!(
+            !board.smart_bus.sample_owed(),
+            "a fresh width starts a fresh word"
+        );
+        let (_, word) = clock_in(&mut board, CARD_BYTE);
+        assert_eq!(
+            word,
+            word_for(CARD_BYTE),
+            "the new word holds only its own eight bits"
+        );
+    }
 
     /// Configure a triple the way `sdmm.cc` does and confirm the roles resolve
     /// from the mode words, not from hardcoded pin numbers.
