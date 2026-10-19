@@ -20,7 +20,7 @@ import {
   uploadBundleGist,
   type FiledIssue,
 } from './github';
-import { logger } from './log';
+import { logger, type LogEntry } from './log';
 
 const log = logger('app');
 
@@ -161,16 +161,67 @@ function firstLine(msg: string | undefined): string {
   return (msg ?? '').split('\n')[0].trim();
 }
 
-/** The last few error-level entries — usually the actual story. */
-function recentErrors(bundle: DiagnosticsBundle, limit = 5): string {
+/** The first stack an entry carries, wherever its call site put it. */
+function entryStack(e: LogEntry): string | undefined {
+  const d = e.data;
+  if (!d) return undefined;
+  const nested = (v: unknown): unknown =>
+    v !== null && typeof v === 'object' ? (v as { stack?: unknown }).stack : undefined;
+  const candidates = [d.stack, nested(d.detail), nested(d.error), d.componentStack];
+  const found = candidates.find((c): c is string => typeof c === 'string' && c.trim() !== '');
+  return found?.trim();
+}
+
+/**
+ * The last few error-level entries — usually the actual story.
+ *
+ * With `stackLines` each error is followed by that many frames of its stack.
+ * One crash is typically logged three times (the console, the boundary, the
+ * crash entry) with the same trace, so a stack already shown is not repeated.
+ */
+function recentErrors(bundle: DiagnosticsBundle, limit = 5, stackLines = 0): string {
   const errors = bundle.log.entries.filter((e) => e.level === 'error').slice(-limit);
   if (errors.length === 0) return 'None recorded.';
+  const shown = new Set<string>();
   return errors
     .map((e) => {
       const at = new Date(e.t).toISOString().slice(11, 23);
-      return `${at} ${e.cat}/${e.tag} ${firstLine(e.msg)}`.trim();
+      const head = `${at} ${e.cat}/${e.tag} ${firstLine(e.msg)}`.trim();
+      const stack = stackLines > 0 ? entryStack(e) : undefined;
+      if (stack === undefined || shown.has(stack)) return head;
+      shown.add(stack);
+      const frames = stack.split('\n').map((l) => l.trim()).filter((l) => l !== '');
+      // A JS stack opens with "Name: message", which the head already says.
+      if (frames.length > 0 && !frames[0].startsWith('at ')) frames.shift();
+      const kept = frames.slice(0, stackLines).map((l) => `    ${l}`);
+      if (frames.length > stackLines) kept.push(`    … ${frames.length - stackLines} more frames`);
+      return [head, ...kept].join('\n');
     })
     .join('\n');
+}
+
+/** One line on the page load before this one, which a crash or reload would otherwise hide. */
+function previousSessionLine(bundle: DiagnosticsBundle): string | undefined {
+  const prev = bundle.previousSession;
+  if (!prev) return undefined;
+  const errors = prev.entries.filter((e) => e.level === 'error').length;
+  const span = Math.max(0, prev.updatedAt - prev.startedAt) / 1000;
+  return [
+    `${prev.entries.length} entries over ${span.toFixed(1)}s`,
+    `${errors} error${errors === 1 ? '' : 's'}`,
+    prev.closed ? 'closed cleanly' : 'ended unexpectedly (crash, reload or closed tab)',
+  ].join(' · ');
+}
+
+/** What the gist holds, so a reader knows whether opening it will help. */
+function diagnosticsContents(bundle: DiagnosticsBundle): string {
+  const parts = [`${bundle.log.entries.length} log entries`];
+  if (bundle.serialTail) {
+    const t = bundle.serialTail;
+    parts.push(`${t.chunks.length} serial chunks (${t.totalRxBytes} B in, ${t.totalTxBytes} B out)`);
+  }
+  if (bundle.previousSession) parts.push(`previous session (${bundle.previousSession.entries.length} entries)`);
+  return parts.join(', ');
 }
 
 /** One logged UI step in words: where the user went, what they clicked or changed. */
@@ -329,6 +380,61 @@ function downloadJson(name: string, data: unknown): void {
  * issue is still created with the triage summary — a report without the full
  * log beats no report.
  */
+/** Frames shown per error in an API-filed issue body. */
+export const ISSUE_STACK_LINES = 8;
+
+/**
+ * Issue body for the one-click path.
+ *
+ * There is no URL budget here (an issue body allows 65 536 characters), so it
+ * carries what the prefilled form has to leave in the attachment: error stacks,
+ * the failure counters, and what the previous page load looked like. The gist
+ * still holds everything.
+ */
+export function buildApiIssueBody(
+  input: ReportInput,
+  bundle: DiagnosticsBundle,
+  gistUrl: string | undefined,
+): string {
+  const previous = previousSessionLine(bundle);
+  return [
+    input.summary,
+    '',
+    '### Steps to reproduce',
+    input.steps?.trim() ? input.steps : '(not provided)',
+    '',
+    '### Summary',
+    '```',
+    formatTriage(bundle.triage),
+    '```',
+    '',
+    '### Recent actions',
+    '```',
+    recentActions(bundle),
+    '```',
+    '',
+    '### Recent errors',
+    '```',
+    recentErrors(bundle, 5, ISSUE_STACK_LINES),
+    '```',
+    '',
+    '### Failure counters',
+    '```',
+    summariseCounters(bundle),
+    '```',
+    '',
+    '### Environment',
+    '```',
+    environmentBlock(bundle),
+    '```',
+    '',
+    ...(previous ? ['### Previous session', previous, ''] : []),
+    gistUrl
+      ? `### Diagnostics\n[Full session log](${gistUrl}) (secret gist) — ${diagnosticsContents(bundle)}`
+      : '### Diagnostics\nThe diagnostics upload failed; the summary above is all that was captured.',
+  ].join('\n');
+}
+
 export async function fileBugReportViaApi(
   input: ReportInput,
   reviewed?: ReportPreview,
@@ -349,36 +455,7 @@ export async function fileBugReportViaApi(
     });
   }
 
-  const body = [
-    input.summary,
-    '',
-    '### Steps to reproduce',
-    input.steps?.trim() ? input.steps : '(not provided)',
-    '',
-    '### Summary',
-    '```',
-    formatTriage(bundle.triage),
-    '```',
-    '',
-    '### Recent actions',
-    '```',
-    recentActions(bundle),
-    '```',
-    '',
-    '### Recent errors',
-    '```',
-    recentErrors(bundle),
-    '```',
-    '',
-    '### Environment',
-    '```',
-    environmentBlock(bundle),
-    '```',
-    '',
-    gistUrl
-      ? `### Diagnostics\n[Full session log](${gistUrl}) (secret gist)`
-      : '### Diagnostics\nThe diagnostics upload failed; the summary above is all that was captured.',
-  ].join('\n');
+  const body = buildApiIssueBody(input, bundle, gistUrl);
 
   const issue = await createIssue(token, `[app] ${input.summary.slice(0, 80)}`, body);
   return { ...issue, gistUrl };
