@@ -69,6 +69,8 @@ static char d_lastNotifyText[64];
 static app_motion_move_t d_popBuf[8];
 static uint32_t d_popCount;
 
+static bool d_calibrating;
+
 static void doubles_reset(void)
 {
     memset(d_popBuf, 0, sizeof(d_popBuf));
@@ -81,6 +83,7 @@ static void doubles_reset(void)
     d_forceExceeded = false;
     d_dispExceeded = false;
     d_motionIdle = false;
+    d_calibrating = false;
     d_addMoveReturn = true;
     d_waveformRefused = false;
     d_takeRefusedCount = 0U;
@@ -111,6 +114,9 @@ bool app_motion_addMove(const app_motion_move_t *move)
 }
 void app_motion_abortAndClear(void) { d_abortCount++; }
 bool app_motion_isIdle(void) { return d_motionIdle; }
+
+/* --- app_motorCalibration --- */
+bool app_motorCalibration_isActive(void) { return d_calibrating; }
 bool app_motion_takeWaveformRefused(void)
 {
     const bool refused = d_waveformRefused;
@@ -294,6 +300,29 @@ void test_app_testManagement_manualMoveSlotsBounded(void)
     /* The run cycle drains the four staged moves into the motion queue. */
     app_testManagement_run();
     TEST_ASSERT_EQUAL_UINT32(4U, d_addMoveCount);
+}
+
+void test_app_testManagement_calibrationBlocksJogsAndTests(void)
+{
+    VIBES_TEST("test-run.refused-during-motor-calibration",
+               "src/APP/app_testManagement.c#app_testManagement_addManualMove",
+               "a motor calibration is driving the carriage");
+    VIBES_EXPECT_WHY("jog-refused",
+                     "a jog is refused",
+                     "the calibration measures the drive open loop, and any other move would spoil the measurement");
+    VIBES_EXPECT("test-refused", "a test start is refused");
+    VIBES_EXPECT("accepted-afterwards", "both are accepted again once the calibration has ended");
+    tm_init();
+
+    const app_motion_move_t move = { .g = (uint8_t)G0_RAPID_MOVE, .x = 100, .f = 50, .p = 0 };
+    d_calibrating = true;
+    TEST_ASSERT_FALSE(app_testManagement_addManualMove(&move));
+    TEST_ASSERT_FALSE(app_testManagement_triggerTestStart("cal001"));
+
+    d_calibrating = false;
+    TEST_ASSERT_TRUE(app_testManagement_addManualMove(&move));
+    app_testManagement_run();
+    TEST_ASSERT_TRUE(app_testManagement_triggerTestStart("cal001"));
 }
 
 /* A jog while motion is disabled is rejected immediately (same gate as

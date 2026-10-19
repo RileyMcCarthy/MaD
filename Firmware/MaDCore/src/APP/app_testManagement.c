@@ -10,6 +10,7 @@
 
 #include "app_testManagement.h"
 #include "app_motion.h"
+#include "app_motorCalibration.h"
 #include "app_control.h"
 #include "app_monitor.h"
 #include "app_notification.h"
@@ -442,6 +443,12 @@ bool app_testManagement_triggerTestStart(const char *gcodeId)
     {
         return false;
     }
+    /* A motor calibration owns the drive open loop; a test cannot share it.
+     * Asked before taking our lock (never call out while holding it). */
+    if (app_motorCalibration_isActive())
+    {
+        return false;
+    }
     APP_TESTMANAGEMENT_LOCK_REQ_BLOCK();
     const bool isBusy =
         (app_testManagement_data.state != APP_TESTMANAGEMENT_STATE_IDLE) ||
@@ -476,6 +483,12 @@ bool app_testManagement_addManualMove(const app_motion_move_t *move)
     /* Same gate as triggerTestStart: a jog pressed while motion is disabled
      * must not sit in a request slot and fire the moment motion is re-enabled. */
     if (app_control_motionEnabled() == false)
+    {
+        return false;
+    }
+    /* Nor while a motor calibration is driving the carriage open loop: a jog
+     * would take the drive back mid-measurement. */
+    if (app_motorCalibration_isActive())
     {
         return false;
     }

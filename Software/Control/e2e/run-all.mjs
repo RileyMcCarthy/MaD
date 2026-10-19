@@ -1564,6 +1564,47 @@ const scenarios = [
     },
   },
   {
+    // The open-loop drive/encoder check under Settings. The emulated machine's
+    // drive and encoder are both 8192 steps/mm and wired the same way round,
+    // so the report must say the profile matches and show one count per pulse
+    // each way -- which needs the firmware sequencer, the protocol pair and
+    // the panel all to agree on signs and units.
+    id: 'CAL1',
+    name: 'Motor calibration: open-loop check reports a matched drive and encoder',
+    async run() {
+      const { browser, page, errors } = await newSilPage();
+      try {
+        await connectToSil(page);
+        await prepareManualControl(page);
+        await page.goto(`${APP_URL}#/settings`);
+        await page.getByRole('heading', { name: 'Motor calibration' }).waitFor({ timeout: DEVICE_WAIT_MS });
+        const run = page.getByRole('button', { name: 'Run calibration' });
+        await run.waitFor({ timeout: DEVICE_WAIT_MS });
+        // Enabled once the machine profile has been read and motion is on.
+        const clock = await pageClock(page);
+        while (await run.isDisabled()) {
+          assert((await clock.elapsed()) < DEVICE_WAIT_MS, 'Run calibration never became available');
+          await waitPageTime(page, 200);
+        }
+        await press(run);
+        await page
+          .getByText('The encoder counts the way the carriage moves, at the rate the profile expects.')
+          .waitFor({ timeout: DEVICE_WAIT_MS * 4 });
+        const cells = async (direction) =>
+          page.locator('tr', { has: page.getByRole('cell', { name: direction, exact: true }) }).locator('td').allInnerTexts();
+        const fwd = await cells('Forward');
+        const back = await cells('Back');
+        assert(Number(fwd[1]) > 0 && Number(back[1]) < 0, `pulses not signed by direction: ${fwd[1]} / ${back[1]}`);
+        assert(Math.abs(Number(fwd[3]) - 1) < 0.02, `forward counts/pulse ${fwd[3]}, expected ~1`);
+        assert(Math.abs(Number(back[3]) - 1) < 0.02, `back counts/pulse ${back[3]}, expected ~1`);
+        assert((await page.locator('.badge.error').count()) === 0, 'the calibration reported an error');
+        assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
+      } finally {
+        await browser.close();
+      }
+    },
+  },
+  {
     id: 'F4+F6',
     name: 'Create: build motion profile (dwell), save, import .mp',
     async run() {

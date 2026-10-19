@@ -66,6 +66,13 @@ bool app_testManagement_triggerTestStart(const char *id)
 }
 bool app_testManagement_addManualMove(const app_motion_move_t *m) { d_lastManualMove = *m; return d_addMoveRet; }
 
+/* ---- app_motorCalibration ---- */
+static app_motorCalibration_request_S d_calRequest;
+static bool d_calRequestRet;
+static app_motorCalibration_result_S d_calResult;
+bool app_motorCalibration_request(const app_motorCalibration_request_S *r) { d_calRequest = *r; return d_calRequestRet; }
+void app_motorCalibration_getResult(app_motorCalibration_result_S *r) { *r = d_calResult; }
+
 /* ---- app_monitor ---- */
 static app_monitor_sampleProfile_S d_getProfile, d_setProfile;
 static bool d_setProfileRet;
@@ -239,6 +246,48 @@ void test_onWrite_manual_move_fills_and_forwards(void)
     TEST_ASSERT_EQUAL_INT(PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK, ProtoEmb_onWrite_manual_move(&in));
 }
 
+void test_onWrite_motor_calibration_forwards_request(void)
+{
+    VIBES_TEST("bridge.motor-calibration-request",
+               "src/APP/app_messageSlave.c#ProtoEmb_onWrite_motor_calibration",
+               "a motor calibration request with a pulse count, a rate and a travel bound, first accepted, then turned down");
+    VIBES_EXPECT("values-carried", "the pulse count, rate and travel bound reach the machine unchanged");
+    VIBES_EXPECT("accepted-acknowledged", "the request is acknowledged when the machine accepts it");
+    VIBES_EXPECT("turned-down-refused", "the request is refused when the machine turns it down");
+    ProtoEmb_MotorCalibrationRequest_t in;
+    memset(&in, 0, sizeof(in));
+    in.pulses = 6400U; in.frequency = 3200U; in.maxCounts = 7200U;
+    d_calRequestRet = true;
+    TEST_ASSERT_EQUAL_INT(PROTOEMB_RUNTIME_WRITE_DISPOSITION_ACK, ProtoEmb_onWrite_motor_calibration(&in));
+    TEST_ASSERT_EQUAL_UINT32(6400U, d_calRequest.pulses);
+    TEST_ASSERT_EQUAL_UINT32(3200U, d_calRequest.frequency);
+    TEST_ASSERT_EQUAL_UINT32(7200U, d_calRequest.maxCounts);
+
+    d_calRequestRet = false;
+    TEST_ASSERT_EQUAL_INT(PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK, ProtoEmb_onWrite_motor_calibration(&in));
+}
+
+void test_onRead_motor_calibration_result_maps(void)
+{
+    VIBES_TEST("bridge.motor-calibration-result",
+               "src/APP/app_messageSlave.c#ProtoEmb_onRead_motor_calibration_result",
+               "a finished motor calibration on the machine");
+    VIBES_EXPECT("result-carried",
+                 "its outcome and the pulses and encoder change in each direction reach the app unchanged, signs included");
+    d_calResult.state = APP_MOTORCALIBRATION_STATE_DONE;
+    d_calResult.pulsesForward = 6400;
+    d_calResult.countsForward = -2400;
+    d_calResult.pulsesReverse = -6401;
+    d_calResult.countsReverse = 2399;
+    ProtoEmb_MotorCalibrationResult_t out;
+    TEST_ASSERT_TRUE(ProtoEmb_onRead_motor_calibration_result(&out));
+    TEST_ASSERT_EQUAL_INT(PROTOEMB_MOTORCALIBRATIONSTATE_DONE, out.state);
+    TEST_ASSERT_EQUAL_INT32(6400, out.pulsesForward);
+    TEST_ASSERT_EQUAL_INT32(-2400, out.countsForward);
+    TEST_ASSERT_EQUAL_INT32(-6401, out.pulsesReverse);
+    TEST_ASSERT_EQUAL_INT32(2399, out.countsReverse);
+}
+
 void test_onWrite_test_move_pushes_to_sd(void)
 {
     VIBES_TEST("bridge.test-move-stored-on-card",
@@ -393,6 +442,8 @@ int main(void)
     RUN_TEST(test_onRead_state_maps_app_control);
     RUN_TEST(test_onRead_firmware_version_default);
     RUN_TEST(test_onRead_sample_profile_maps_monitor);
+    RUN_TEST(test_onWrite_motor_calibration_forwards_request);
+    RUN_TEST(test_onRead_motor_calibration_result_maps);
     RUN_TEST(test_onWrite_motion_enable_true_acks_on_trigger);
     RUN_TEST(test_onWrite_motion_enable_false_uses_disable_trigger);
     RUN_TEST(test_onWrite_gauge_length_and_force);

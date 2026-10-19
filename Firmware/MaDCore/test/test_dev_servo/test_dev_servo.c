@@ -1877,6 +1877,128 @@ void test_waveforms_track_the_requested_cycle_to_one_micron_across_the_envelope(
     }
 }
 
+/* ---- Open loop (motor calibration) ---- */
+
+void test_dev_servo_openLoopEmitsTheCountThenStops(void)
+{
+    VIBES_TEST("servo.open-loop-counted-pulses",
+               "src/DEV/dev_servo.c#dev_servo_startOpenLoop",
+               "an enabled motor drive asked for 1000 open-loop pulses forward at 500 pulses a second");
+    VIBES_EXPECT("train-at-rate", "a pulse train starts at the requested rate");
+    VIBES_EXPECT("forward-direction", "the direction is the one a move toward increasing encoder counts uses");
+    VIBES_EXPECT("not-done-early", "the run is not reported finished while pulses are still going out");
+    VIBES_EXPECT("stops-at-count", "the train stops once the count is reached, and the run reports finished with the pulses sent");
+    servo_init();
+    dev_servo_enable(CH, true);
+    tick();
+    TEST_ASSERT_TRUE(dev_servo_startOpenLoop(CH, 1000, 500U));
+    d_run_delta = 10U;
+    tick();
+    TEST_ASSERT_EQUAL_UINT32(1U, d_startVelocityCount);
+    TEST_ASSERT_EQUAL_UINT32(500U, d_startVelocityFreq);
+    TEST_ASSERT_FALSE(d_gpioActive);
+    uint32_t emitted = 0U;
+    TEST_ASSERT_FALSE(dev_servo_openLoopDone(CH, &emitted));
+    TEST_ASSERT_EQUAL_UINT32(10U, emitted);
+
+    d_run_delta = 1001U;
+    tick();
+    TEST_ASSERT_EQUAL_UINT32(0U, d_pulseRate);
+    TEST_ASSERT_TRUE(dev_servo_openLoopDone(CH, &emitted));
+    TEST_ASSERT_EQUAL_UINT32(1001U, emitted);
+}
+
+void test_dev_servo_openLoopNegativeRunsReverse(void)
+{
+    VIBES_TEST("servo.open-loop-reverse",
+               "src/DEV/dev_servo.c#dev_servo_startOpenLoop",
+               "an enabled motor drive asked for open-loop pulses with a negative count");
+    VIBES_EXPECT("reverse-direction", "the direction is the one a move toward decreasing encoder counts uses");
+    servo_init();
+    dev_servo_enable(CH, true);
+    TEST_ASSERT_TRUE(dev_servo_startOpenLoop(CH, -1000, 500U));
+    tick();
+    TEST_ASSERT_EQUAL_UINT32(1U, d_startVelocityCount);
+    TEST_ASSERT_TRUE(d_gpioActive);
+}
+
+void test_dev_servo_openLoopIgnoresTheEncoder(void)
+{
+    VIBES_TEST("servo.open-loop-ignores-encoder",
+               "src/DEV/dev_servo.c#dev_servo_run",
+               "open-loop pulses going out for far longer than the stall time while the encoder never moves");
+    VIBES_EXPECT_WHY("no-stall",
+                     "no stall is reported",
+                     "a silent encoder is a result the calibration reports, and must not trip the machine");
+    VIBES_EXPECT("rate-unchanged", "the pulse rate stays at the requested rate, with no correction from the encoder");
+    servo_init();
+    dev_servo_enable(CH, true);
+    TEST_ASSERT_TRUE(dev_servo_startOpenLoop(CH, 100000, 8192U));
+    for (int i = 0; i < 500; i++)
+    {
+        tick();
+    }
+    TEST_ASSERT_FALSE(dev_servo_isStalled(CH));
+    TEST_ASSERT_EQUAL_UINT32(8192U, d_pulseRate);
+    TEST_ASSERT_EQUAL_UINT32(0U, d_setFrequencyCount);
+}
+
+void test_dev_servo_leavingOpenLoopHoldsWhereTheCarriageIs(void)
+{
+    VIBES_TEST("servo.open-loop-hands-back-in-place",
+               "src/DEV/dev_servo.c#dev_servo_stop",
+               "an open-loop run that moved the encoder 5000 counts, followed by a stop");
+    VIBES_EXPECT_WHY("no-pull-back",
+                     "the drive holds where the carriage now is and sends no pulses",
+                     "the closed loop must not drag the carriage back to where the open-loop run began");
+    servo_init();
+    dev_servo_enable(CH, true);
+    tick();
+    TEST_ASSERT_TRUE(dev_servo_startOpenLoop(CH, 5000, 5000U));
+    d_run_delta = 5000U;
+    d_encoderValue = 5000;
+    tick();
+    tick();
+    dev_servo_stop(CH);
+    for (int i = 0; i < 20; i++)
+    {
+        tick();
+    }
+    TEST_ASSERT_EQUAL_INT32(0, dev_servo_getVelocity(CH));
+    TEST_ASSERT_EQUAL_UINT32(0U, d_pulseRate);
+    TEST_ASSERT_EQUAL_INT32(5000, dev_servo_getPosition(CH));
+}
+
+void test_dev_servo_openLoopRejectsEmptyRequests(void)
+{
+    VIBES_TEST("servo.open-loop-empty-refused",
+               "src/DEV/dev_servo.c#dev_servo_startOpenLoop",
+               "open-loop requests for no pulses, or at a rate of zero");
+    VIBES_EXPECT("refused", "both are refused and the drive keeps its current mode");
+    servo_init();
+    TEST_ASSERT_FALSE(dev_servo_startOpenLoop(CH, 0, 500U));
+    TEST_ASSERT_FALSE(dev_servo_startOpenLoop(CH, 100, 0U));
+    TEST_ASSERT_EQUAL_INT(DEV_SERVO_MODE_IDLE, dev_servo_data.channel[CH].req.mode);
+}
+
+void test_dev_servo_openLoopNewRunClearsTheLastVerdict(void)
+{
+    VIBES_TEST("servo.open-loop-fresh-verdict",
+               "src/DEV/dev_servo.c#dev_servo_openLoopDone",
+               "a finished open-loop run, then a second one is asked for");
+    VIBES_EXPECT_WHY("not-done-at-once",
+                     "the second run reads as unfinished straight away, before the drive has ticked",
+                     "the calibration checks for a finish straight after starting a run, and must never take the last run's finish for this one's");
+    servo_init();
+    dev_servo_enable(CH, true);
+    TEST_ASSERT_TRUE(dev_servo_startOpenLoop(CH, 10, 500U));
+    d_run_delta = 10U;
+    tick();
+    TEST_ASSERT_TRUE(dev_servo_openLoopDone(CH, NULL));
+    TEST_ASSERT_TRUE(dev_servo_startOpenLoop(CH, -10, 500U));
+    TEST_ASSERT_FALSE(dev_servo_openLoopDone(CH, NULL));
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -1921,5 +2043,11 @@ int main(void)
     RUN_TEST(test_a_cycle_whose_holds_leave_no_time_to_move_is_refused);
     RUN_TEST(test_position_moves_track_the_commanded_trapezoid_to_one_micron);
     RUN_TEST(test_waveforms_track_the_requested_cycle_to_one_micron_across_the_envelope);
+    RUN_TEST(test_dev_servo_openLoopEmitsTheCountThenStops);
+    RUN_TEST(test_dev_servo_openLoopNegativeRunsReverse);
+    RUN_TEST(test_dev_servo_openLoopIgnoresTheEncoder);
+    RUN_TEST(test_dev_servo_leavingOpenLoopHoldsWhereTheCarriageIs);
+    RUN_TEST(test_dev_servo_openLoopRejectsEmptyRequests);
+    RUN_TEST(test_dev_servo_openLoopNewRunClearsTheLastVerdict);
     return UNITY_END();
 }
