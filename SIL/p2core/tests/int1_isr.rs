@@ -11,10 +11,14 @@
 //! Encodings follow the P2 word layout (PNut-TS table, vendor/parseUtils.ts)
 //! and are checked with `decode()` before they are trusted:
 //! `EEEE 0110000 CZI DDDDDDDDD SSSSSSSSS` MOV, `EEEE 0010000 CZI ...` CMP,
-//! `EEEE 1010100 C1I ...` RDPIN, `EEEE 11110NN NNNN...` AUGS, and `reti1` is
-//! `CALLD INB, IRET1 WCZ`.
+//! `EEEE 1010100 C1I ...` RDPIN, `EEEE 11110NN NNNN...` AUGS, SETSE1/SETINT1
+//! as the `$020`/`$025` S-field members of `EEEE 1101011 00L DDDDDDDDD ...`,
+//! TRGINT1 as D=`$022` of the `$024` group, and `reti1` is
+//! `CALLD INB, IRET1 WCZ`. The interrupt is configured by those instructions,
+//! not by poking the model, because that is what makes a cog's event sensing
+//! run at all.
 
-use p2core::{decode, Machine, Op, PinBus};
+use p2core::{decode, IntState, Machine, Op, PinBus};
 use vibes_behaviour::{behaviour, expect, Test};
 
 /// The pin the interrupt watches.
@@ -44,6 +48,18 @@ fn rdpin(d: u32, s: u32) -> u32 {
 fn augs(n: u32) -> u32 {
     0xFF00_0000 | (n & 0x7F_FFFF)
 }
+/// `setse1 #cfg`.
+fn setse1(cfg: u32) -> u32 {
+    0xFD64_0020 | ((cfg & 0x1FF) << 9)
+}
+/// `setint1 #src`.
+fn setint1(src: u32) -> u32 {
+    0xFD64_0025 | ((src & 0x1FF) << 9)
+}
+/// `trgint1`.
+const TRGINT1: u32 = 0xFD60_4424;
+/// `jmp #$` sits right after the two configuring instructions.
+const SPIN: u32 = MAIN + 8;
 
 fn check_encodings() {
     let m = decode(mov_imm(10, 7)).expect("mov decodes");
@@ -52,6 +68,11 @@ fn check_encodings() {
     assert_eq!((c.op, c.c, c.z), (Op::Cmp, true, true));
     assert_eq!(decode(rdpin(12, 13)).expect("rdpin decodes").op, Op::Rdpin);
     assert_eq!(decode(augs(1)).expect("augs decodes").op, Op::Augs);
+    let se = decode(setse1(0x1B5)).expect("setse1 decodes");
+    assert_eq!((se.op, se.d), (Op::Setse1, 0x1B5));
+    let si = decode(setint1(4)).expect("setint1 decodes");
+    assert_eq!((si.op, si.d), (Op::Setint1, 4));
+    assert_eq!(decode(TRGINT1).expect("trgint1 decodes").op, Op::Trgint1);
     let r = decode(RETI1).expect("reti1 decodes");
     assert_eq!(
         (r.op, r.d, r.s, r.c, r.z),
@@ -80,8 +101,7 @@ impl PinBus for OneRxPin {
     }
 }
 
-/// A cog running `main` from hub with INT1 armed on "RX pin has a byte",
-/// vectored to `isr`.
+/// A cog about to run `main` from hub, with INT1 vectored to `isr`.
 fn machine(main: &[u32], isr: &[u32]) -> Machine<OneRxPin> {
     let mut m = Machine::new(&[0u8; 4096], OneRxPin::default());
     for (base, words) in [(MAIN, main), (ISR, isr)] {
@@ -95,8 +115,6 @@ fn machine(main: &[u32], isr: &[u32]) -> Machine<OneRxPin> {
     cog.pc = MAIN;
     cog.regs[13] = RX_PIN;
     cog.regs[REG_IJMP1] = ISR;
-    cog.se1_cfg = (0b110 << 6) | RX_PIN;
-    cog.int1_src = 4;
     m
 }
 
@@ -120,7 +138,10 @@ fn an_interrupt_hands_back_the_flags_it_found() {
     check_encodings();
 
     // ISR: take the byte, then clobber C and Z (`cmp x, x` sets Z, clears C).
-    let mut m = machine(&[JMP_SELF], &[rdpin(12, 13), cmp_wcz(12, 12), RETI1]);
+    let mut m = machine(
+        &[setse1((0b110 << 6) | RX_PIN), setint1(4), JMP_SELF],
+        &[rdpin(12, 13), cmp_wcz(12, 12), RETI1],
+    );
     m.cogs[0].c = true;
     m.cogs[0].z = false;
     m.pins.waiting = true;
@@ -131,9 +152,9 @@ fn an_interrupt_hands_back_the_flags_it_found() {
         (true, false),
         "flags after the ISR returned"
     );
-    assert_eq!(m.cogs[0].pc, MAIN, "back in the interrupted loop");
-    assert!(!m.cogs[0].in_int1, "the ISR has ended");
-    assert_eq!(m.int1_entries, 1, "interrupts taken for one byte");
+    assert_eq!(m.cogs[0].pc, SPIN, "back in the interrupted loop");
+    assert_eq!(m.cogs[0].int_state[0], IntState::Idle, "the ISR has ended");
+    assert_eq!(m.int_entries[0], 1, "interrupts taken for one byte");
 }
 
 #[test]
@@ -141,7 +162,7 @@ fn an_interrupt_waits_for_the_instruction_a_prefix_belongs_to() {
     behaviour!(Test {
         id: "p2.int1-after-prefix",
         covers: Some("SIL/p2core/src/lib.rs#step_one"),
-        given: "a serial byte arriving between a wide-immediate prefix and the instruction it widens, with an interrupt routine that loads a small constant",
+        given: "an interrupt triggered just before a wide-immediate prefix and the instruction it widens, with an interrupt routine that loads a small constant",
     });
     expect!(
         "prefixed-value-whole",
@@ -154,12 +175,12 @@ fn an_interrupt_waits_for_the_instruction_a_prefix_belongs_to() {
     );
     check_encodings();
 
+    // Silicon branches one instruction after the trigger -- here, right after
+    // the AUGS, unless the prefix holds it off until its MOV has run.
     let mut m = machine(
-        &[augs(0x12345), mov_imm(10, 0x67), JMP_SELF],
-        &[mov_imm(11, 5), rdpin(12, 13), RETI1],
+        &[TRGINT1, augs(0x12345), mov_imm(10, 0x67), JMP_SELF],
+        &[mov_imm(11, 5), RETI1],
     );
-    m.step(1).expect("the prefix runs"); // AUGS is pending now
-    m.pins.waiting = true; // the byte lands before the MOV it modifies
     m.step(12).expect("runs");
 
     assert_eq!(
@@ -168,5 +189,5 @@ fn an_interrupt_waits_for_the_instruction_a_prefix_belongs_to() {
         "the augmented MOV"
     );
     assert_eq!(m.cogs[0].regs[11], 5, "the ISR's MOV");
-    assert_eq!(m.int1_entries, 1, "the byte was still serviced");
+    assert_eq!(m.int_entries[0], 1, "the interrupt was still taken");
 }

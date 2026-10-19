@@ -109,3 +109,12 @@ fn timed_match_silicon() {
 fn pins_match_silicon() {
     replay("pins");
 }
+
+/// Events and interrupts: the 16 event flags (CT, selectable pin/lock/LUT
+/// events, PAT, ATN, QMT, FBW) and how they set and clear, and INT1-3 --
+/// trigger-to-branch latency, what holds a branch off, flag save/restore,
+/// priority and nesting, RESI, WAITINT, level versus edge re-triggering.
+#[test]
+fn events_match_silicon() {
+    replay("events");
+}
