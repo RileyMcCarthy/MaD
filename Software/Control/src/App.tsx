@@ -143,8 +143,10 @@ function logBoundaryCrash(scope: string) {
       scope,
       route: window.location.hash,
       name: error.name,
-      // First few frames only — enough to place the failing component.
-      componentStack: (info.componentStack ?? '').split('\n').slice(0, 6).join('\n'),
+      // Whole traces: the JS stack names the failing line, the component stack
+      // the screen it was rendering. Both are what a report gets triaged from.
+      stack: error.stack ?? '',
+      componentStack: info.componentStack ?? '',
     });
   };
 }
