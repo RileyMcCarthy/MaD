@@ -1,10 +1,10 @@
 # Running a test
 
-You run tests from the **Test Runs** screen. The **New Test** card at the top
+You run tests from the **Test runs** screen. The **New test** card at the top
 combines a sample profile with a motion profile and starts the run; the
 **History** table below tracks every run.
 
-![The Test Runs screen](../assets/screenshots/06-test-runs.png)
+![The Test runs screen](../assets/screenshots/06-test-runs.png)
 
 ## Before you run
 
@@ -14,14 +14,14 @@ You'll want:
 2. A **data folder** chosen ([Settings](settings-and-data.md)) so results can be
    saved.
 3. A **sample profile** ([Samples](sample-profiles.md)) and a **motion profile**
-   ([Motion Profiles](motion-profiles.md)).
+   ([Motion profiles](motion-profiles.md)).
 
 ## Start a run
 
-1. In **New Test**, select a saved **sample** profile and a saved **motion**
+1. In **New test**, select a saved **sample** profile and a saved **motion**
    profile (or **Import** a `.sp` / `.mp` on the spot).
 2. Optionally click **Preview G-code** to review the exact motion.
-3. Click **Run Test**.
+3. Click **Run test**.
 
 When you run, the app:
 
@@ -49,7 +49,7 @@ button reflects the firmware's `testRunning` state, and the run auto-marks
     failed** actions, and a watchdog warns if the firmware never reports
     completion.
 
-If the sample hits its **Max Force** or **Max Displacement**, the firmware stops
+If the sample hits its **Max force** or **Max displacement**, the firmware stops
 the test and raises a warning notification (you'll see a toast).
 
 ## After it finishes

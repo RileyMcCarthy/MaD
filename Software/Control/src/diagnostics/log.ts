@@ -286,6 +286,13 @@ const SANITIZE_NESTED_MAX = 200;
 const SANITIZE_MAX_KEYS = 32;
 /** Stack frames kept on an Error — enough to place it, short enough to store. */
 const SANITIZE_STACK_LINES = 5;
+/**
+ * Longest retained value for a key named like a stack (`stack`,
+ * `componentStack`). A call site that passes one as a string has asked for the
+ * whole trace — a crash report cut at 200 characters names no frame at all.
+ */
+export const SANITIZE_STACK_MAX = 4000;
+const STACK_KEY = /stack$/i;
 
 /** Sentinel: this key is not representable and should be omitted entirely. */
 const DROP = Symbol('drop');
@@ -306,10 +313,8 @@ function basename(p: string): string {
   return parts.length > 0 ? parts[parts.length - 1] : p;
 }
 
-function truncate(s: string): string {
-  return s.length <= SANITIZE_STRING_MAX
-    ? s
-    : `${s.slice(0, SANITIZE_STRING_MAX)}…(+${s.length - SANITIZE_STRING_MAX} chars)`;
+function truncate(s: string, max = SANITIZE_STRING_MAX): string {
+  return s.length <= max ? s : `${s.slice(0, max)}…(+${s.length - max} chars)`;
 }
 
 function describeType(v: object): string {
@@ -357,7 +362,7 @@ function sanitizeString(key: string, value: string): string {
   if (!value.includes('://') && (isPathKey(key) || /^(?:[A-Za-z]:)?[\\/].*[\\/]/.test(value))) {
     return truncate(redactCredentials(basename(value)));
   }
-  return truncate(redactCredentials(value));
+  return truncate(redactCredentials(value), STACK_KEY.test(key) ? SANITIZE_STACK_MAX : SANITIZE_STRING_MAX);
 }
 
 function sanitizeValue(key: string, value: unknown): unknown | typeof DROP {

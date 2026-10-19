@@ -1249,7 +1249,7 @@ const scenarios = [
       const { browser, page, errors } = await newSilPage();
       try {
         await page.goto(`${APP_URL}#/create`);
-        await press(page.getByRole('button', { name: '+ Add Set' }));
+        await press(page.getByRole('button', { name: '+ Add set' }));
         await press(page.getByRole('button', { name: 'Preview G-code' }));
         const code = await page.locator('.code-block').first().textContent();
         assert((code || '').includes('G122'), 'preview missing G122');
@@ -1269,12 +1269,12 @@ const scenarios = [
         await chooseDataFolder(page);
         // Sample profiles are created on the Samples page (Create is motion-only).
         await page.goto(`${APP_URL}#/profiles`);
-        await fieldInput(page, 'Max Force (N)').fill('500');
+        await fieldInput(page, 'Max force (N)').fill('500');
         await fieldInput(page, 'Sample name').fill('E2E-Sample');
-        await press(page.getByRole('button', { name: 'Save to folder' }));
+        await press(page.getByRole('button', { name: 'Save sample profile' }));
         await page.getByText(/Saved to data folder/i).waitFor({ timeout: DEVICE_WAIT_MS });
         await page
-          .locator('.panel', { hasText: 'Saved profiles' })
+          .locator('.panel', { hasText: 'Saved sample profiles' })
           .getByText('E2E-Sample')
           .first()
           .waitFor({ timeout: DEVICE_WAIT_MS });
@@ -1459,7 +1459,7 @@ const scenarios = [
         // H5: export triggers a CSV download
         const [download] = await Promise.all([
           page.waitForEvent('download', { timeout: DEVICE_WAIT_MS }),
-          press(page.getByRole('button', { name: 'Export' }).first()),
+          press(page.getByRole('button', { name: 'Export CSV' }).first()),
         ]);
         assert(download.suggestedFilename().includes('_export.csv'), `bad export filename: ${download.suggestedFilename()}`);
         // H4: delete with confirm
@@ -1483,7 +1483,7 @@ const scenarios = [
         await page.goto(`${APP_URL}#/settings`); // machine config now lives under Settings
         // Trigger a fresh read (deterministic), then wait for the field.
         // Optional: a short budget, so a screen without the button costs little.
-        await press(page.getByRole('button', { name: 'Reload from device' }), { timeout: 2000 }).catch(() => {});
+        await press(page.getByRole('button', { name: 'Read from device' }), { timeout: 2000 }).catch(() => {});
         const field = page.locator('label.field', { hasText: 'Jaw Offset (mm)' }).locator('input');
         await field.waitFor({ timeout: DEVICE_WAIT_MS });
         const target = '13'; // jaw offset is integer-scaled on the wire — use a whole number
@@ -1522,9 +1522,9 @@ const scenarios = [
           (await field.inputValue()) === target,
           'the jaw offset edit did not stick before saving — the form was repainted mid-edit',
         );
-        await press(page.getByRole('button', { name: 'Save to device' }));
+        await press(page.getByRole('button', { name: 'Write to device' }));
         await page.getByText(/Saved to device/i).waitFor({ timeout: DEVICE_WAIT_MS });
-        await press(page.getByRole('button', { name: 'Reload from device' }));
+        await press(page.getByRole('button', { name: 'Read from device' }));
         const val = await settledValue(field);
         assert(Number(val) === Number(target), `jaw offset did not round-trip: got ${val}`);
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
@@ -1576,7 +1576,7 @@ const scenarios = [
         // change the default move to a dwell of 1500 ms
         await page.locator('.move-row select').first().selectOption('dwell');
         await page.locator('.move-row label.field', { hasText: 'Time (ms)' }).locator('input').fill('1500');
-        await press(page.getByRole('button', { name: 'Save Motion Profile' }));
+        await press(page.getByRole('button', { name: 'Save motion profile' }));
         await page.getByText(/Motion profile .* saved/i).waitFor({ timeout: DEVICE_WAIT_MS });
         // The list refreshes from the data folder after the save is reported:
         // a storage read, which completes in a later slice of the page's time.
@@ -1913,7 +1913,7 @@ const scenarios = [
         const live = () => page.evaluate(() => globalThis.__madLive?.latest() ?? null);
         const before = await live();
         assert(before, 'the live sample ring is exposed (dev build)');
-        await press(page.getByRole('button', { name: 'Home (G28)' }));
+        await press(page.getByRole('button', { name: 'Home' }));
 
         // Wait for the seek to actually START before waiting for it to finish.
         // awaitRest on its own returns immediately: the axis is still at rest

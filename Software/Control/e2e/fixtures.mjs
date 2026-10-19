@@ -794,7 +794,7 @@ export async function recoverMachine() {
 export async function chooseDataFolder(page) {
   await page.goto(`${APP_URL}#/settings`);
   // The startup gate already opened one, so the button offers a change.
-  await press(page.getByRole('button', { name: /Change folder/i }));
+  await press(page.getByRole('button', { name: /Change data folder/i }));
   await page.getByText(/Data folder set\./).waitFor({ timeout: 8000 });
 }
 

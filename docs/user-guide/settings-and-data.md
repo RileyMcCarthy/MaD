@@ -10,11 +10,11 @@ where you read/write the [machine configuration](machine-configuration.md).
 The app saves sample profiles, motion profiles, sets, and test results to a
 **folder on your computer** that you choose.
 
-- Click **Choose folder** and pick (or create) a folder. The app remembers it
-  across reloads — you grant access once.
-- The current folder is shown as **Current: …**. Use **Change folder** to switch.
-- If the browser needs you to re-confirm access after a restart, a **Grant
-  access** prompt appears — click it.
+- The app asks for the folder when it opens: click **Choose data folder** and pick
+  (or create) one. The app remembers it across reloads — you grant access once.
+- The current folder is shown as **Current: …**. Use **Change data folder** to switch.
+- If the browser needs you to re-confirm access after a restart, the app asks again
+  when it opens — click **Allow access to “…”**.
 
 ### How data is organised
 

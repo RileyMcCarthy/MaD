@@ -4,6 +4,7 @@ import {
   LOG_CAPACITY,
   LOG_FLUSH_INTERVAL_MS,
   LOG_FLUSH_MAX_ENTRIES,
+  SANITIZE_STACK_MAX,
   SANITIZE_STRING_MAX,
   clearLog,
   flushLog,
@@ -355,6 +356,30 @@ describe('sanitize', () => {
       expect(out.startsWith('x'.repeat(SANITIZE_STRING_MAX))).toBe(true);
       expect(out).toContain(`…(+${500 - SANITIZE_STRING_MAX} chars)`);
       expect(out.length).toBeLessThan(240);
+    },
+  );
+
+  behaviour(
+    {
+      id: 'diag.log-sanitize-keeps-stacks',
+      covers: 'src/diagnostics/log.ts#sanitize',
+      given: 'a 1500-character stack trace and component stack in log data',
+      expect: {
+        'stack-kept-whole': 'a value named as a stack is kept whole, up to the larger stack limit',
+        'stack-limit-bounded': 'a stack beyond that limit is still cut short and marked',
+      },
+      why: {
+        'stack-kept-whole': 'a crash trace cut at the ordinary string limit names no frame of the failing code',
+      },
+    },
+    () => {
+      const trace = 'at frame\n'.repeat(150);
+      const out = sanitize({ stack: trace, componentStack: trace })!;
+      expect(out.stack).toBe(trace);
+      expect(out.componentStack).toBe(trace);
+
+      const huge = 'y'.repeat(SANITIZE_STACK_MAX + 10);
+      expect(sanitize({ stack: huge })!.stack).toContain('…(+10 chars)');
     },
   );
 
