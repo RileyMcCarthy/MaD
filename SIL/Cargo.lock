@@ -435,6 +435,7 @@ dependencies = [
  "embsim-core",
  "embsim-models",
  "models",
+ "p2iss",
  "rstest 0.26.1",
  "vibes-behaviour",
 ]
