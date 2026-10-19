@@ -264,10 +264,10 @@ export default function Create() {
 
   return (
     <div>
-      <h1>Motion Profiles</h1>
+      <h1>Motion profiles</h1>
       <p className="muted">
         Build the motion a test will run. Sample profiles (material limits and dimensions)
-        live on the <strong>Samples</strong> page; the two are combined when you run a test.
+        live on the <strong>Sample profiles</strong> page; the two are combined when you run a test.
       </p>
       {!folderReady && (
         <div className="panel" style={{ borderColor: 'var(--warn)' }}>
@@ -279,7 +279,7 @@ export default function Create() {
 
       {/* Motion profile */}
       <div className="panel">
-        <h2>Motion Profile</h2>
+        <h2>Motion profile</h2>
         <div className="grid cols-2">
           <label className="field">
             Name
@@ -310,7 +310,7 @@ export default function Create() {
                       ⠿
                     </span>
                     <label className="field">
-                      Set Name
+                      Set name
                       <input value={set.name} onChange={(e) => updateSet(si, { name: e.target.value })} />
                     </label>
                     <NumberField
@@ -322,7 +322,7 @@ export default function Create() {
                     />
                   </div>
                   <button className="danger" onClick={() => updateSets(sets.filter((_, i) => i !== si))}>
-                    Delete Set
+                    Delete set
                   </button>
                 </div>
 
@@ -369,9 +369,9 @@ export default function Create() {
                 />
 
                 <div className="row" style={{ marginTop: 8 }}>
-                  <button onClick={() => updateSet(si, { moves: [...set.moves, newMove()] })}>+ Add Move</button>
-                  <button onClick={() => saveSet(si)}>Save Set</button>
-                  <button onClick={() => openLoadSet(si)}>Load Set</button>
+                  <button onClick={() => updateSet(si, { moves: [...set.moves, newMove()] })}>+ Add move</button>
+                  <button onClick={() => saveSet(si)}>Save set</button>
+                  <button onClick={() => openLoadSet(si)}>Load set</button>
                 </div>
               </div>
             )}
@@ -379,7 +379,7 @@ export default function Create() {
         </div>
 
         <div className="row" style={{ marginTop: 12 }}>
-          <button onClick={() => updateSets([...sets, newSet(`Set ${sets.length + 1}`)])}>+ Add Set</button>
+          <button onClick={() => updateSets([...sets, newSet(`Set ${sets.length + 1}`)])}>+ Add set</button>
         </div>
 
         <div className="row" style={{ marginTop: 16 }}>
@@ -405,7 +405,7 @@ export default function Create() {
             </button>
           )}
           <button className="primary" onClick={saveMotionProfile}>
-            Save Motion Profile
+            Save motion profile
           </button>
           <label className="filebtn">
             Import .mp
@@ -420,7 +420,7 @@ export default function Create() {
         <GcodePreview profile={testProfile} />
       </Modal>
 
-      <Modal open={loadSetTarget !== null} title="Load Set" onClose={() => setLoadSetTarget(null)}>
+      <Modal open={loadSetTarget !== null} title="Load set" onClose={() => setLoadSetTarget(null)}>
         {savedSets.length === 0 ? (
           <p className="muted">No saved sets.</p>
         ) : (
