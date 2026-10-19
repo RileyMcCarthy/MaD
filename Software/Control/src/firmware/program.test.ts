@@ -1,6 +1,7 @@
 import { describe, expect } from 'vitest';
 import { behaviour } from '@vibes/behaviour';
-import { programPort } from './program';
+import { programPort, type ProgramPhase } from './program';
+import { flashWriteMs } from './image';
 
 /**
  * A SerialPort that speaks enough of the boot ROM to complete a load, and
@@ -12,6 +13,7 @@ import { programPort } from './program';
  */
 function romPort(opts: { failOpen?: boolean; silent?: boolean; splitWrites?: boolean } = {}) {
   const log: string[] = [];
+  const times = { lastWrite: 0, closed: 0 };
   let controller: ReadableStreamDefaultController<Uint8Array> | undefined;
   let text = '';
 
@@ -25,6 +27,7 @@ function romPort(opts: { failOpen?: boolean; silent?: boolean; splitWrites?: boo
   });
   const writable = new WritableStream<Uint8Array>({
     write(chunk) {
+      times.lastWrite = performance.now();
       text += String.fromCharCode(...chunk);
       if (opts.silent) return;
       if (text.includes('Prop_Chk 0 0 0 0')) {
@@ -50,11 +53,12 @@ function romPort(opts: { failOpen?: boolean; silent?: boolean; splitWrites?: boo
     writable,
     async setSignals() {},
     async close() {
+      times.closed = performance.now();
       log.push('close');
     },
   } as unknown as SerialPort;
 
-  return { port, log };
+  return { port, log, times };
 }
 
 const firmware = Uint8Array.from({ length: 64 }, (_, i) => i);
@@ -144,8 +148,64 @@ describe('programPort', () => {
     },
     async () => {
       const { port } = romPort();
-      const result = await programPort(port, firmware, { mode: 'flash' });
+      const result = await programPort(port, firmware, { mode: 'flash', wait: async () => {} });
       expect(result.imageBytes).toBe(496 + firmware.byteLength);
+    },
+  );
+
+  behaviour(
+    {
+      id: 'flash.port-held-while-flash-writes',
+      covers: 'src/firmware/program.ts#programTransport',
+      given: 'a firmware file loaded to flash through a serial port',
+      expect: {
+        'held-for-write-time': 'after the upload the port stays open for the estimated flash write time of the whole image, and only then closes',
+        'writing-shown': 'progress reports a flash-writing phase, with its duration, between the upload and completion',
+      },
+      why: {
+        'held-for-write-time':
+          'the chip erases and programs flash only after the whole image has arrived; a reset from re-opening the port before then leaves a partial image that does not boot',
+      },
+    },
+    async () => {
+      // The real wait, so the port's close is timed against the last byte sent.
+      const { port, times } = romPort();
+      const phases: ProgramPhase[] = [];
+      let writeMs: number | undefined;
+      await programPort(port, firmware, {
+        mode: 'flash',
+        onProgress: (p) => {
+          if (phases[phases.length - 1] !== p.phase) phases.push(p.phase);
+          if (p.phase === 'writing') writeMs = p.writeMs;
+        },
+      });
+      const expectedMs = flashWriteMs(496 + firmware.byteLength);
+      // Timers may fire a hair early; a millisecond of slack is not a write.
+      expect(times.closed - times.lastWrite).toBeGreaterThanOrEqual(expectedMs - 1);
+      expect(phases).toEqual(['resetting', 'uploading', 'writing', 'verifying', 'done']);
+      expect(writeMs).toBe(expectedMs);
+    },
+  );
+
+  behaviour(
+    {
+      id: 'flash.ram-load-does-not-wait',
+      covers: 'src/firmware/program.ts#programTransport',
+      given: 'a firmware file loaded to RAM through a serial port',
+      expect: { 'no-write-wait': 'the port closes as soon as the upload is verified, with no flash-writing phase' },
+    },
+    async () => {
+      const { port, log } = romPort();
+      const phases: ProgramPhase[] = [];
+      await programPort(port, firmware, {
+        mode: 'ram',
+        onProgress: (p) => phases.push(p.phase),
+        wait: async (ms) => {
+          log.push(`wait ${ms}`);
+        },
+      });
+      expect(log).toEqual(['open', 'close']);
+      expect(phases).not.toContain('writing');
     },
   );
 });
