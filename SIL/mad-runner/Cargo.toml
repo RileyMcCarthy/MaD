@@ -16,3 +16,7 @@ path = "src/main.rs"
 # The same embsim as the catalog crates': one copy of embsim in the runner.
 embsim-cli = { path = "../embsim/cli" }
 mad-catalog = { path = "../mad-catalog" }
+
+[dev-dependencies]
+# The test runs the built runner on MaD's bench projects, as `embsim check` does.
+vibes-behaviour = { path = "../../Vibes/bindings/rust" }

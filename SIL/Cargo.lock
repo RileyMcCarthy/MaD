@@ -509,6 +509,7 @@ version = "0.1.0"
 dependencies = [
  "embsim-cli",
  "mad-catalog",
+ "vibes-behaviour",
 ]
 
 [[package]]

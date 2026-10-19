@@ -112,8 +112,8 @@ both system descriptions, so the DS2 registry exists twice.
 `SIL/mad-catalog/netlists/`, bundled by the board kinds `mad-edge` and
 `mad-ds2`.)*
 
-- `mad_edge.net`, `ds2_addon.net` (already duplicated at
-  `SIL/MaDSim/boards/`), the EdgeBoard and DS2 registries and stubs, the
+- `mad_edge.net`, `ds2_addon.net` (now in `SIL/mad-catalog/netlists/`), the
+  EdgeBoard and DS2 registries and stubs, the
   harnesses (`module_socket_harness`, `force_gauge_harness`, `machine_harness`,
   `bench_rails`) and scenario fragments, and the seven test binaries above.
   MaDSim's two system descriptions consume this crate instead of registering

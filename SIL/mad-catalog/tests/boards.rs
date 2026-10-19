@@ -12,12 +12,10 @@
 //! share the process's one clock, so they run one at a time.
 
 use std::path::PathBuf;
-use std::process::ExitCode;
 use std::sync::{Mutex, MutexGuard};
 
 use embsim_board::{BuiltSystem, Finding, Level, NetState, PinRef, Project};
 use embsim_boards::catalog::CatalogSet;
-use embsim_cli::CatalogCrate;
 use embsim_core::virtual_clock::{self, ClockMode};
 use rstest::rstest;
 use vibes_behaviour::{behaviour, expect, Test};
@@ -230,9 +228,10 @@ fn the_carrier_builds_with_the_module_seated_and_the_add_on_on_its_cable() {
     );
     expect!(
         "receiver-over-range",
-        "the encoder's line receiver U25 is reported once, for its supply at 5 volts above its \
-         recommended 3.6 volts",
-        "the carrier runs its AM26LV32 from 5 volts, inside its 6 volt absolute maximum"
+        "only the encoder's line receiver U25 is reported above its recommended range, once: \
+         its supply at 5 volts, against a 3.6 volt maximum",
+        "the carrier feeds its low-voltage AM26LV32 from its 5 volt rail, inside the part's 6 \
+         volt absolute maximum"
     );
     let (fingers, cable, over_range) = build("edge-bench.toml", |built| {
         let rail = net_at(built, "EDGE", "J3", "41");
@@ -245,12 +244,19 @@ fn the_carrier_builds_with_the_module_seated_and_the_add_on_on_its_cable() {
                 &net_at(built, "DS2", "J1", addon),
             )
         };
-        let over_range: Vec<(String, String)> = built
+        let over_range: Vec<(String, String, f64, f64, Option<f64>)> = built
             .diagnostics()
             .findings()
             .iter()
             .filter_map(|finding| match finding {
-                Finding::PinAboveRecommended { part, pin, .. } => Some((part.clone(), pin.clone())),
+                Finding::PinAboveRecommended {
+                    part,
+                    pin,
+                    volts,
+                    max,
+                    absolute_max,
+                    ..
+                } => Some((part.clone(), pin.clone(), *volts, *max, *absolute_max)),
                 _ => None,
             })
             .collect();
@@ -262,59 +268,10 @@ fn the_carrier_builds_with_the_module_seated_and_the_add_on_on_its_cable() {
     });
     assert_eq!(fingers, (true, [true, true]));
     assert_eq!(cable, (true, true));
-    assert_eq!(
-        over_range,
-        [("EDGE.U25".to_string(), "16".to_string())],
-        "{over_range:?}"
-    );
-}
-
-#[rstest]
-fn the_bench_projects_check_through_mads_runner() {
-    behaviour!(Test {
-        id: "catalog.bench-projects-check",
-        covers: Some("SIL/mad-runner/src/main.rs#main"),
-        given: "the add-on's and the carrier's bench project files, each checked as MaD's \
-                runner checks a project",
-    });
-    expect!(
-        "ds2-checks",
-        "the add-on's project builds, its catalogs those embsim ships and MaD's"
-    );
-    expect!(
-        "edge-checks",
-        "the carrier's project builds, its catalogs those embsim ships and MaD's"
-    );
-    let crates = [CatalogCrate::new(
-        mad_catalog::NAME,
-        env!("CARGO_MANIFEST_DIR"),
-        mad_catalog::register,
-    )];
-    for file in ["ds2-bench.toml", "edge-bench.toml"] {
-        let path = project_file(file);
-        let (mut out, mut err) = (Vec::new(), Vec::new());
-        let code = {
-            let _clock = clock();
-            embsim_cli::run_with_crates(
-                &crates,
-                [
-                    "embsim".into(),
-                    "check".into(),
-                    path.clone().into_os_string(),
-                ],
-                &mut out,
-                &mut err,
-            )
-        };
-        let (out, err) = (String::from_utf8_lossy(&out), String::from_utf8_lossy(&err));
-        assert_eq!(code, ExitCode::SUCCESS, "{file}: {err}\n{out}");
-        assert!(
-            out.contains("catalogs: embsim-boards, embsim-p2-qemu, embsim-cdp, mad-catalog"),
-            "{file}: {out}"
-        );
-        assert!(
-            out.contains(&format!("ok: {} builds", path.display())),
-            "{file}: {out}"
-        );
-    }
+    let [(part, pin, volts, max, absolute_max)] = over_range.as_slice() else {
+        panic!("one pin above its recommended range, found {over_range:?}");
+    };
+    assert_eq!((part.as_str(), pin.as_str()), ("EDGE.U25", "16"));
+    assert!((volts - 5.0).abs() < 1e-6, "U25's supply reads {volts} V");
+    assert_eq!((*max, *absolute_max), (3.6, Some(6.0)));
 }

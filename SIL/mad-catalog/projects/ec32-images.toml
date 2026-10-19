@@ -3,8 +3,11 @@
 # boards/projects/ec32-carrier.toml): its flash holding embsim's stage-1 and
 # the propeller2_debug firmware, and the card in its socket J301 a FAT16
 # image of SIL/sd. These are the two image entries of the machine's project
-# (embsim MIGRATING-MAD.md section 4); this file checks that the images the
-# make targets write are ones the module's kinds take.
+# (embsim MIGRATING-MAD.md section 4). `embsim check` here shows that the two
+# paths resolve and that the module's flash and card kinds take the files; it
+# reads them without checking what is in them. Their layout comes from the
+# tools that write them: `embsim flash-image` (stage-1, its checksum, the
+# program's length and the program) and p2iss's `sdimage::mad_card`.
 #
 #   cd SIL && make flash-image sd-image
 #   $(EMBSIM) check mad-catalog/projects/ec32-images.toml

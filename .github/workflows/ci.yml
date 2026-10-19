@@ -854,9 +854,12 @@ jobs:
       - name: rustfmt (gating)
         working-directory: SIL
         run: cargo fmt -p mad-emulator -p models -p mad-catalog -p mad-runner --check
+      # --locked here and on the test step: `embsim check` builds mad-runner
+      # with SIL/Cargo.lock --locked, so a lock that no longer matches the
+      # manifests fails here, before a project's check meets it.
       - name: Clippy (gating)
         working-directory: SIL
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Cargo test (blocking)
         working-directory: SIL
         # The workspace is the MaD-side crates only (protocol, models,
@@ -870,7 +873,7 @@ jobs:
         # asserting nothing about the firmware that ships.
         env:
           MAD_REQUIRE_P2_IMAGE: '1'
-        run: cargo test --workspace --all-targets
+        run: cargo test --workspace --all-targets --locked
 
   # BLOCKING. MISRA/cppcheck via `pio check`. Low severity is disabled in
   # platformio.ini (check_severity = medium, high) — style noise only. Medium and
