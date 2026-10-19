@@ -305,8 +305,11 @@ pub struct BenchMachine {
     /// What couples the shaft to the carriage, and whether it is jammed.
     coupling: Arc<Coupling>,
     /// Everything else that follows the carriage (the sample's gantry).
-    followers: Arc<Mutex<Vec<Box<dyn Fn(f64) + Send>>>>,
+    followers: Followers,
 }
+
+/// Callbacks that follow the carriage position, in millimetres.
+type Followers = Arc<Mutex<Vec<Box<dyn Fn(f64) + Send>>>>;
 
 /// The mechanism between the drive's shaft and the carriage, which can jam.
 ///
@@ -444,7 +447,7 @@ impl BenchMachine {
         let travel_in = Arc::clone(&travel);
         let coupling = Arc::new(Coupling::default());
         let coupling_in = Arc::clone(&coupling);
-        let followers: Arc<Mutex<Vec<Box<dyn Fn(f64) + Send>>>> = Arc::default();
+        let followers: Followers = Arc::default();
         let followers_in = Arc::clone(&followers);
         motor.shaft().on_position_change(move |shaft_mm| {
             let Some(mm) = coupling_in.follow(shaft_mm) else {

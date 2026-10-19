@@ -465,7 +465,10 @@ fn run_iss(args: &Args, image_path: &std::path::Path) -> Result<(), Box<dyn std:
 /// from an earlier run is removed first, so every run starts free.
 fn watch_jam_file(path: PathBuf, coupling: Arc<iss_description::Coupling>) {
     let _ = std::fs::remove_file(&path);
-    info!("Jam control: the carriage jams while {} exists", path.display());
+    info!(
+        "Jam control: the carriage jams while {} exists",
+        path.display()
+    );
     std::thread::spawn(move || loop {
         let jammed = path.exists();
         if jammed != coupling.jammed() {
