@@ -49,11 +49,13 @@
 
 pub mod flashimage;
 pub mod flashnode;
+pub mod package;
 pub mod pulse;
 use crate::pulse::PulseDriver;
 pub mod sdimage;
 pub mod sdnode;
 pub use embsim_board::HostPty;
+pub use package::P2IssCore;
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -192,6 +194,11 @@ struct Shared {
     rx_framing_errors: AtomicU64,
     /// Times the guest yielded to let a net pin resolve (diagnostics).
     net_yields: AtomicU64,
+    /// The virtual instant the guest's clock had reached at the end of the
+    /// last wake: what a handle reads without waiting on the machine.
+    guest_now_ns: AtomicU64,
+    /// Line feeds the guest has handed its debug pin (`P62`).
+    console_lines: AtomicU64,
 
     /// Net transitions awaiting the guest, oldest first.
     ///
@@ -269,6 +276,13 @@ struct NetPins {
     /// the rest of the burst, and they compound -- a sector read ended with
     /// ~300 callbacks per clock transition.
     armed_edge_ns: Option<u64>,
+    /// The pads inside the P2 package, for a [`P2IssCore`]'s bus: every pad
+    /// on its net, each playing the role its mode word gives it. `None` for
+    /// a [`P2Iss`], whose pin lists say which pins are on nets.
+    core: Option<Box<package::CorePads>>,
+    /// What a [`P2IssCore`]'s wake, senses and handle share; `None` for a
+    /// [`P2Iss`].
+    core_shared: Option<Arc<package::CoreShared>>,
 }
 
 impl NetPins {
@@ -307,6 +321,11 @@ impl NetPins {
     }
 
     fn guest_clk(&self) -> u32 {
+        // Inside the package the clock is the one the guest's clock word and
+        // the crystal on XI give.
+        if let Some(core) = self.core.as_ref() {
+            return u32::try_from(core.clock.hz()).unwrap_or(u32::MAX);
+        }
         // The ROM fills a base64 table at hub $0, so `$14` is not clkfreq
         // until an application writes it. Stay on the RC oscillator.
         if self.rom_boot {
@@ -408,7 +427,7 @@ impl NetPins {
             return self.arm_edge_once(due);
         }
         self.inner.advance_smart_clock();
-        self.publish_levels();
+        self.publish();
         if self.inner.smart_clock_busy() {
             let next = due.saturating_add(half_ns);
             self.next_edge_ns = Some(next);
@@ -440,6 +459,16 @@ impl NetPins {
         }
         self.armed_edge_ns = Some(at);
         Some(at)
+    }
+
+    /// Put what the guest changed on the nets: every pad, inside the
+    /// package; the level pins, for a [`P2Iss`].
+    fn publish(&mut self) {
+        if self.core.is_some() {
+            self.publish_pads();
+        } else {
+            self.publish_levels();
+        }
     }
 
     /// A pin the guest has released drives `None` — high-Z — so a pull-up or
@@ -509,7 +538,7 @@ impl PinBus for NetPins {
         self.inner.dir_out_changed(cog, reg, value);
         // Direction and output are the same event as far as a net is
         // concerned: either can turn a pin from high-Z into a driver or back.
-        self.publish_levels();
+        self.publish();
     }
 
     fn wrpin(&mut self, pin: u8, cfg: u32) {
@@ -527,6 +556,11 @@ impl PinBus for NetPins {
             return;
         }
         self.inner.wrpin(pin, cfg);
+        if self.core.is_some() {
+            // Inside the package: the pad's role follows its new mode word.
+            self.core_wrpin(pin, cfg);
+            return;
+        }
         // Configuring a smart pin can change whether the pin drives at all: a
         // quadrature or async-receive mode has `DIR` set and no `P_OE`, so a
         // pin that drove as plain GPIO a moment ago is now an input. Without
@@ -550,9 +584,16 @@ impl PinBus for NetPins {
 
     fn wxpin(&mut self, pin: u8, x: u32) {
         self.inner.wxpin(pin, x);
+        if self.core.is_some() {
+            // A receive pin's bit period is its rate.
+            self.retune_rx(pin);
+        }
     }
 
     fn wypin(&mut self, pin: u8, y: u32) {
+        if pin & 63 == p2core::board::PIN_TX && y as u8 == b'\n' {
+            self.shared.console_lines.fetch_add(1, Ordering::Relaxed);
+        }
         // A sync-serial pin (clock, TX): the board handles the shift/pending;
         // a clock burst additionally arms the first edge so the pump paces it.
         // Only THIS pin being a bus pin routes here. Testing "does any clock
@@ -574,6 +615,9 @@ impl PinBus for NetPins {
                 }
             }
             return;
+        }
+        if self.core.is_some() {
+            return self.core_wypin(pin, y);
         }
         if self.pulse_pins.contains(&pin) {
             self.start_pulse(pin, y);
@@ -613,6 +657,9 @@ impl PinBus for NetPins {
     }
 
     fn rdpin(&mut self, pin: u8) -> (u32, bool) {
+        if let Some(read) = self.core_rdpin(pin) {
+            return read;
+        }
         if let Some(queue) = self.shared.rx.get(&pin) {
             // `HAL_serial_recieveByte` takes the byte from bits 31:24, where an
             // async-RX smart pin leaves it.
@@ -623,6 +670,9 @@ impl PinBus for NetPins {
     }
 
     fn testp(&self, pin: u8) -> bool {
+        if let Some(waiting) = self.core_testp(pin) {
+            return waiting;
+        }
         // Autobaud timing pins (P0/P1) go IN-high when a programming-UART
         // byte is waiting: that is the fall-to-fall measurement the ROM's
         // SETSE1 is looking for. The byte itself lives on P63.
@@ -668,6 +718,8 @@ impl NetPins {
             net_yield: false,
             next_edge_ns: None,
             armed_edge_ns: None,
+            core: None,
+            core_shared: None,
         }
     }
 }
@@ -691,6 +743,8 @@ enum BootSource<'a> {
 pub struct P2IssHandle {
     shared: Arc<Shared>,
     machine: Arc<Mutex<Machine<NetPins>>>,
+    /// A [`P2IssCore`]'s own state; `None` for a [`P2Iss`].
+    core: Option<Arc<package::CoreShared>>,
 }
 
 impl std::fmt::Debug for P2IssHandle {
@@ -714,12 +768,24 @@ impl P2IssHandle {
             .map(|link| link.baud_hz)
     }
 
-    /// Virtual microseconds of guest time executed so far.
+    /// Virtual microseconds of guest time executed so far. Inside the
+    /// package, the virtual instant the guest's clock has reached, from its
+    /// START instant on.
     pub fn guest_now_us(&self) -> u64 {
-        self.machine
-            .lock()
-            .expect("machine never poisoned")
-            .now_us()
+        self.guest_now_ns() / 1_000
+    }
+
+    /// [`Self::guest_now_us`] in nanoseconds, as of the end of the last
+    /// wake: read without waiting on the machine, which the engine thread
+    /// holds while the guest runs.
+    pub fn guest_now_ns(&self) -> u64 {
+        self.shared.guest_now_ns.load(Ordering::Relaxed)
+    }
+
+    /// Line feeds the guest has handed its debug pin (`P62`), read without
+    /// waiting on the machine.
+    pub fn console_lines(&self) -> u64 {
+        self.shared.console_lines.load(Ordering::Relaxed)
     }
 
     /// The clock frequency the guest recorded, or 0 before boot.
@@ -1071,6 +1137,7 @@ impl P2Iss {
         P2IssHandle {
             shared: Arc::clone(&self.shared),
             machine: Arc::clone(&self.machine),
+            core: None,
         }
     }
 }
@@ -1225,6 +1292,9 @@ impl Component for P2Iss {
                         shutdown.store(true, std::sync::atomic::Ordering::Relaxed);
                         return;
                     }
+                    shared
+                        .guest_now_ns
+                        .store(machine.now_us().saturating_mul(1_000), Ordering::Relaxed);
                     // If the guest yielded short of the deadline, it drove a
                     // net pin and must not run on until the engine has
                     // resolved it. Re-arm at the current instant: the engine
