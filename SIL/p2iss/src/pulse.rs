@@ -34,22 +34,40 @@
 
 use std::sync::Mutex;
 
-use embsim_board::{digital_drive, Drive, Level, PeriodicSchedule, PinHandle};
+use embsim_board::{digital_drive, Drive, Level, PeriodicSchedule, PinHandle, TheveninDrive};
 
 /// A pulse pin driving a net.
 #[derive(Debug)]
 pub struct PulseDriver {
     pin: u8,
     handle: PinHandle,
+    /// The ports of the high and the low phase: the crate's logic levels,
+    /// or the pad's own when its package names them ([`Self::with_ports`]).
+    hi: TheveninDrive,
+    lo: TheveninDrive,
     /// The last segment published, for folding its count into the next one.
     published: Mutex<Option<PeriodicSchedule>>,
 }
 
 impl PulseDriver {
     pub fn new(pin: u8, handle: PinHandle) -> Self {
+        Self::with_ports(
+            pin,
+            handle,
+            digital_drive(Level::High),
+            digital_drive(Level::Low),
+        )
+    }
+
+    /// A pulse pin whose two phases drive through `hi` and `lo`: a pad
+    /// inside the P2 package, high at its bank's supply through the
+    /// strength its mode word configured.
+    pub fn with_ports(pin: u8, handle: PinHandle, hi: TheveninDrive, lo: TheveninDrive) -> Self {
         Self {
             pin,
             handle,
+            hi,
+            lo,
             published: Mutex::new(None),
         }
     }
@@ -75,8 +93,8 @@ impl PulseDriver {
         *published = Some(segment);
         drop(published);
         self.handle.drive(Drive::Periodic {
-            hi: digital_drive(Level::High),
-            lo: digital_drive(Level::Low),
+            hi: self.hi,
+            lo: self.lo,
             segment,
         });
     }
@@ -84,8 +102,7 @@ impl PulseDriver {
     /// Drive the idle level, so the net has a reference before the first
     /// train.
     pub fn idle(&self) {
-        self.handle
-            .drive(Drive::Thevenin(digital_drive(Level::Low)));
+        self.handle.drive(Drive::Thevenin(self.lo));
     }
 
     /// Start a finite train at `now_ns`: `transitions` edges,
