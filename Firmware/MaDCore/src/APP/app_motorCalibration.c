@@ -99,11 +99,12 @@ static void app_motorCalibration_private_processInputs(void)
      * calibration drives the drive directly and cannot honour the cap the way
      * app_motion does, so it refuses to start, and abandons a run, instead. */
     in->restricted = app_control_speedLimited();
-    /* A move app_motion is running, or a test. A jog that was acknowledged but
-     * has not been queued yet (it sits in app_testManagement's request slots
-     * until the next CONTROL tick) is NOT seen here, and does not need to be:
-     * when it is queued, app_motion runs it at the restricted speed and this
-     * reads busy on that tick, so the calibration gives way (ABORTED_JOG). */
+    /* A move app_motion is running, or a test. Only the start of a run is
+     * refused on it (REFUSED_BUSY). Once a run is going, motion being busy is
+     * not a reason to end it: the G91 that Control sends ahead of every jog
+     * makes motion busy for a tick without touching the drive, and the jog's
+     * G0 must still find the calibration active so app_motion caps it. A run
+     * ends on a jog when the jog takes the drive out of open loop (openLoop). */
     in->busy = (app_motion_isIdle() == false) || app_testManagement_isRunning();
     in->position = dev_servo_getPosition(APP_MOTORCALIBRATION_CH);
     in->legDone = dev_servo_openLoopDone(APP_MOTORCALIBRATION_CH, &in->legEmitted);
@@ -142,13 +143,14 @@ static app_motorCalibration_state_E app_motorCalibration_private_checkAbort(uint
     {
         abort = APP_MOTORCALIBRATION_STATE_ABORTED_ENDSTOP;
     }
-    else if (in->busy)
+    else if (in->openLoop == false)
     {
-        /* A jog was queued after the run started, and app_motion is running
-         * it (capped). Usually it has already taken the drive out of open
-         * loop; if it has not (a G90/G91 mode change, or a move with no
-         * feedrate), the drive is still ours and is stopped below. Either way
-         * the leg's measurement is spoiled, so the run ends here. */
+        /* A jog queued after the run started has taken the drive: app_motion
+         * started it while the calibration was active, so at the capped speed.
+         * The leg's measurement is spoiled, so the run ends here, and the
+         * drive is left running the jog (see the stop below). A move that
+         * leaves the drive in open loop (the G90/G91 ahead of a jog, a move
+         * with no feedrate) does not end the run, which stays supervised. */
         abort = APP_MOTORCALIBRATION_STATE_ABORTED_JOG;
     }
     else if (in->restricted)
@@ -189,9 +191,10 @@ void app_motorCalibration_init(int lock)
  * N+1, after a calibration requested in between has already started its
  * forward leg. Jogs are deliberately not refused or dropped for a calibration.
  * While one is active app_motion caps every move at the restricted speed, and
- * on the tick a jog starts this sequencer abandons the run (ABORTED_JOG). It
- * leaves the drive alone if the jog has taken it out of open loop, and stops
- * it otherwise. */
+ * on the tick a jog takes the drive out of open loop this sequencer abandons
+ * the run (ABORTED_JOG) and leaves the drive running the jog. The G91 that
+ * Control sends ahead of a jog's G0 does not end the run, so the G0 is still
+ * capped when it starts. */
 void app_motorCalibration_run(void)
 {
     APP_MOTORCALIBRATION_LOCK_REQ_BLOCK();
@@ -286,14 +289,14 @@ void app_motorCalibration_run(void)
         (next != APP_MOTORCALIBRATION_STATE_REFUSED_BUSY) &&
         (next != APP_MOTORCALIBRATION_STATE_REFUSED_AT_ENDSTOP) &&
         (next != APP_MOTORCALIBRATION_STATE_REFUSED_RESTRICTED) &&
-        ((next != APP_MOTORCALIBRATION_STATE_ABORTED_JOG) || in->openLoop))
+        (next != APP_MOTORCALIBRATION_STATE_ABORTED_JOG))
     {
         /* Back to a closed-loop hold where the carriage now is. dev_servo kept
          * its setpoint on the encoder throughout, so this does not jump. A
          * disabled machine is already stopped by app_motion; stopping again
-         * changes nothing. Not once a jog has taken the drive out of open
-         * loop: the drive is running it, and a stop here would cancel the
-         * operator's move. */
+         * changes nothing. Not on ABORTED_JOG: that only ever means a jog
+         * has taken the drive out of open loop, the drive is running it, and
+         * a stop here would cancel the operator's move. */
         dev_servo_stop(APP_MOTORCALIBRATION_CH);
     }
 

@@ -497,8 +497,8 @@ bool app_testManagement_addManualMove(const app_motion_move_t *move)
     /* A motor calibration does NOT refuse a jog: the operator must always be
      * able to move the carriage. A jog is a G0/G1, sent after the G90/G91 that
      * sets its mode. app_motion caps the jog's speed while the calibration is
-     * active, and the calibration abandons its run (ABORTED_JOG) when the jog
-     * starts. Anything else (Home, a dwell, a waveform) is refused: Home runs
+     * active, and the calibration abandons its run (ABORTED_JOG) when the
+     * jog's G0/G1 takes the drive (the G90/G91 alone does not end it). Anything else (Home, a dwell, a waveform) is refused: Home runs
      * at the homing speed, not the jog cap. */
     if (app_motorCalibration_isActive() && (app_testManagement_private_isJogMove(move) == false))
     {

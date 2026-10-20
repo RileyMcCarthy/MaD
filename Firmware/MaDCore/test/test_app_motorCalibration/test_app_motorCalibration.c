@@ -544,27 +544,46 @@ void test_a_jog_acked_before_the_calibration_starts_takes_the_drive(void)
     TEST_ASSERT_EQUAL_INT(1, d_startCount);
 }
 
-void test_motion_going_busy_without_taking_the_drive_stops_it(void)
+void test_a_jog_mode_change_keeps_the_run_until_the_jog_takes_the_drive(void)
 {
     VIBES_TEST("motorcal.busy-motion-without-the-drive",
                "src/APP/app_motorCalibration.c#app_motorCalibration_run",
-               "part way through a motor calibration, motion starts a move that leaves the drive in open loop, such as the G91 sent ahead of a jog or a jog with no feedrate");
-    VIBES_EXPECT("abandoned", "the calibration is abandoned and says a jog took the drive");
-    VIBES_EXPECT_WHY("drive-stopped",
-                     "the drive stops sending pulses and holds where the carriage is",
-                     "once the run has ended nothing watches the open-loop pulses for overtravel or an end stop");
-    VIBES_EXPECT("no-reverse", "the reverse pulses are never sent");
+               "part way through a motor calibration, Control jogs: motion runs the G91 that leaves the drive in open loop, goes idle, and on a later tick starts the G0 that takes the drive");
+    VIBES_EXPECT_WHY("keeps-running",
+                     "while motion runs the G91 and after it, the calibration carries on its forward leg and still counts as in progress",
+                     "the jog's G0 starts after its G91 has finished, and the jog is capped only while the calibration is in progress");
+    VIBES_EXPECT("abandoned", "on the tick the G0 takes the drive, the calibration is abandoned and says a jog took the drive");
+    VIBES_EXPECT_WHY("jog-not-cancelled",
+                     "the drive is left running the jog",
+                     "the operator asked for that move, and motion started it at the capped speed");
+    VIBES_EXPECT("single-leg", "only the forward pulses are sent");
 
     TEST_ASSERT_TRUE(app_motorCalibration_request(&REQ_1MM));
     for (int i = 0; i < 100; i++) { step(); }
     TEST_ASSERT_EQUAL_INT(APP_MOTORCALIBRATION_STATE_FORWARD, result().state);
 
-    d_motionIdle = false; /* the drive is still in open loop */
+    /* Tick K: motion runs the G91; the drive is still in open loop. */
+    d_motionIdle = false;
+    step();
+    TEST_ASSERT_EQUAL_INT(APP_MOTORCALIBRATION_STATE_FORWARD, result().state);
+    TEST_ASSERT_TRUE(app_motorCalibration_isActive());
+
+    /* Tick K+1: the G91 is done; the G0 is popped on the next tick, and
+     * app_motion reads the calibration as active when it starts it. */
+    d_motionIdle = true;
+    step();
+    TEST_ASSERT_EQUAL_INT(APP_MOTORCALIBRATION_STATE_FORWARD, result().state);
+    TEST_ASSERT_TRUE(app_motorCalibration_isActive());
+    TEST_ASSERT_EQUAL_INT(0, d_stopCount);
+
+    /* Tick K+2: the G0 starts and takes the drive out of open loop. */
+    d_motionIdle = false;
+    d_olRunning = false;
     step();
 
     TEST_ASSERT_EQUAL_INT(APP_MOTORCALIBRATION_STATE_ABORTED_JOG, result().state);
-    TEST_ASSERT_EQUAL_INT(1, d_stopCount);
-    TEST_ASSERT_FALSE(d_olRunning);
+    TEST_ASSERT_FALSE(app_motorCalibration_isActive());
+    TEST_ASSERT_EQUAL_INT(0, d_stopCount);
     TEST_ASSERT_EQUAL_INT(1, d_startCount);
 }
 
@@ -589,6 +608,6 @@ int main(void)
     RUN_TEST(test_an_end_stop_is_named_ahead_of_the_restriction_it_causes);
     RUN_TEST(test_a_restriction_mid_run_abandons_it);
     RUN_TEST(test_a_jog_acked_before_the_calibration_starts_takes_the_drive);
-    RUN_TEST(test_motion_going_busy_without_taking_the_drive_stops_it);
+    RUN_TEST(test_a_jog_mode_change_keeps_the_run_until_the_jog_takes_the_drive);
     return UNITY_END();
 }
