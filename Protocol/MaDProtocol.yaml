@@ -122,6 +122,9 @@ enums:
       - ABORTED_ENDSTOP
       - ABORTED_TIMEOUT          # a leg took over twice its nominal time + 1 s
       - ABORTED_OVERTRAVEL       # the encoder moved further than the request's bound
+      - REFUSED_RESTRICTED       # the machine was speed-restricted (door open, tension limit)
+      - ABORTED_RESTRICTED       # the machine became speed-restricted mid-run
+      - ABORTED_JOG              # a jog took the drive mid-run (the jog runs at the restricted speed)
 
 # ============================================================
 # Structs

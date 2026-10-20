@@ -2,7 +2,7 @@
 //
 // The sequencer drives a fixed number of step pulses each way open loop and
 // reports how far the encoder moved. Its peers are doubles: app_control
-// (motion enable + fault), app_motion / app_testManagement (busy), the end
+// (motion enable, fault, restricted speed), app_motion / app_testManagement (busy), the end
 // stop GPIOs, and dev_servo's open-loop API. The dev_servo double is a small
 // plant: it emits pulses at the requested rate, one control tick per run, and
 // moves an encoder by a configurable number of counts per pulse and sign, so
@@ -36,8 +36,10 @@ static bool d_motionIdle;
 static bool d_testRunning;
 static bool d_endstopUpper;
 static bool d_endstopLower;
+static bool d_restricted;
 
 bool app_control_motionEnabled(void) { return d_motionEnabled; }
+bool app_control_speedLimited(void) { return d_restricted; }
 app_control_fault_E app_control_getFault(void) { return d_fault; }
 bool app_motion_isIdle(void) { return d_motionIdle; }
 bool app_testManagement_isRunning(void) { return d_testRunning; }
@@ -125,6 +127,7 @@ static void healthy_machine(void)
     d_testRunning = false;
     d_endstopUpper = false;
     d_endstopLower = false;
+    d_restricted = false;
     d_countsPerPulse = 1.0;
     d_drivesMotion = true;
     d_encoder = 1000.0;
@@ -452,6 +455,90 @@ void test_pulses_without_movement_still_complete(void)
     TEST_ASSERT_EQUAL_INT32(8192, r.pulsesForward);
 }
 
+void test_a_restricted_machine_refuses_the_calibration(void)
+{
+    VIBES_TEST("motorcal.refused-restricted",
+               "src/APP/app_motorCalibration.c#app_motorCalibration_run",
+               "a motor calibration is requested while the machine is speed-restricted, for example with the door open");
+    VIBES_EXPECT_WHY("refused",
+                     "the calibration is refused and says the machine was restricted",
+                     "the calibration drives at the speed it was asked for, and the restricted-speed cap is what protects someone reaching in through an open door");
+    VIBES_EXPECT("no-pulses", "no pulses are sent");
+
+    d_restricted = true;
+    TEST_ASSERT_TRUE(app_motorCalibration_request(&REQ_1MM));
+    TEST_ASSERT_EQUAL_INT(APP_MOTORCALIBRATION_STATE_REFUSED_RESTRICTED, run_to_end(10).state);
+    TEST_ASSERT_EQUAL_INT(0, d_startCount);
+}
+
+void test_an_end_stop_is_named_ahead_of_the_restriction_it_causes(void)
+{
+    VIBES_TEST("motorcal.endstop-named-before-restriction",
+               "src/APP/app_motorCalibration.c#app_motorCalibration_run",
+               "a motor calibration is requested with the carriage on an end stop, which also restricts the machine's speed");
+    VIBES_EXPECT_WHY("says-endstop",
+                     "the calibration is refused and says an end stop was made, not that the machine was restricted",
+                     "jogging clear of the stop is what the operator has to do, and a bare 'restricted' would not say so");
+
+    d_endstopUpper = true;
+    d_restricted = true;
+    TEST_ASSERT_TRUE(app_motorCalibration_request(&REQ_1MM));
+    TEST_ASSERT_EQUAL_INT(APP_MOTORCALIBRATION_STATE_REFUSED_AT_ENDSTOP, run_to_end(10).state);
+}
+
+void test_a_restriction_mid_run_abandons_it(void)
+{
+    VIBES_TEST("motorcal.aborted-restricted",
+               "src/APP/app_motorCalibration.c#app_motorCalibration_run",
+               "the machine becomes speed-restricted, for example the door is opened, part way through a motor calibration");
+    VIBES_EXPECT("abandoned", "the calibration is abandoned and says the machine became restricted");
+    VIBES_EXPECT("drive-stopped", "the drive stops sending pulses");
+    VIBES_EXPECT("no-reverse", "the reverse pulses are never sent");
+
+    TEST_ASSERT_TRUE(app_motorCalibration_request(&REQ_1MM));
+    for (int i = 0; i < 100; i++) { step(); }
+    d_restricted = true;
+    const app_motorCalibration_result_S r = run_to_end(10);
+
+    TEST_ASSERT_EQUAL_INT(APP_MOTORCALIBRATION_STATE_ABORTED_RESTRICTED, r.state);
+    TEST_ASSERT_FALSE(d_olRunning);
+    TEST_ASSERT_EQUAL_INT(1, d_startCount);
+}
+
+void test_a_jog_acked_before_the_calibration_starts_takes_the_drive(void)
+{
+    VIBES_TEST("motorcal.gives-way-to-an-acked-jog",
+               "src/APP/app_motorCalibration.c#app_motorCalibration_run",
+               "a jog is acknowledged, then a motor calibration is requested before the next control tick queues the jog");
+    VIBES_EXPECT_WHY("starts",
+                     "the calibration starts its forward pulses, because nothing is moving yet",
+                     "an acknowledged jog waits in a request slot until the next tick, so neither motion nor the test runner can see it yet");
+    VIBES_EXPECT_WHY("gives-way-at-once",
+                     "on the tick the jog starts moving, the calibration is abandoned and says a jog took the drive",
+                     "the jog takes the drive out of open loop, so the leg could never finish; waiting would only end seconds later as a misleading timeout");
+    VIBES_EXPECT_WHY("jog-not-cancelled",
+                     "the calibration does not stop the drive, so the jog carries on",
+                     "the operator asked for that move, and it is already capped at the restricted speed");
+    VIBES_EXPECT("no-reverse", "the reverse pulses are never sent");
+
+    /* Tick N: the jog is ACKed into a request slot after the slots were
+     * drained, then the calibration request lands: motion still reads idle. */
+    TEST_ASSERT_TRUE(app_motorCalibration_request(&REQ_1MM));
+    step();
+    TEST_ASSERT_EQUAL_INT(APP_MOTORCALIBRATION_STATE_FORWARD, result().state);
+    TEST_ASSERT_EQUAL_INT(1, d_startCount);
+
+    /* Tick N+1: the jog is queued and app_motion starts it, which takes the
+     * drive out of open loop (the leg will never report done). */
+    d_motionIdle = false;
+    d_olRunning = false;
+    step();
+
+    TEST_ASSERT_EQUAL_INT(APP_MOTORCALIBRATION_STATE_ABORTED_JOG, result().state);
+    TEST_ASSERT_EQUAL_INT(0, d_stopCount);
+    TEST_ASSERT_EQUAL_INT(1, d_startCount);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -469,5 +556,9 @@ int main(void)
     RUN_TEST(test_an_encoder_running_past_its_bound_abandons_the_run);
     RUN_TEST(test_a_leg_that_never_finishes_times_out);
     RUN_TEST(test_pulses_without_movement_still_complete);
+    RUN_TEST(test_a_restricted_machine_refuses_the_calibration);
+    RUN_TEST(test_an_end_stop_is_named_ahead_of_the_restriction_it_causes);
+    RUN_TEST(test_a_restriction_mid_run_abandons_it);
+    RUN_TEST(test_a_jog_acked_before_the_calibration_starts_takes_the_drive);
     return UNITY_END();
 }

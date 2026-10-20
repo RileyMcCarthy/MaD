@@ -53,6 +53,9 @@ typedef enum
     APP_MOTORCALIBRATION_STATE_ABORTED_ENDSTOP,
     APP_MOTORCALIBRATION_STATE_ABORTED_TIMEOUT,
     APP_MOTORCALIBRATION_STATE_ABORTED_OVERTRAVEL,
+    APP_MOTORCALIBRATION_STATE_REFUSED_RESTRICTED,
+    APP_MOTORCALIBRATION_STATE_ABORTED_RESTRICTED,
+    APP_MOTORCALIBRATION_STATE_ABORTED_JOG,
     APP_MOTORCALIBRATION_STATE_COUNT,
 } app_motorCalibration_state_E;
 
@@ -82,8 +85,9 @@ void app_motorCalibration_run(void);
  * staged, the result reads STARTING at once, and the gates are judged on the
  * next CONTROL tick (a refusal is reported in the result). */
 bool app_motorCalibration_request(const app_motorCalibration_request_S *request);
-/* True from an accepted request until the run ends. Other motion sources
- * refuse while this holds. */
+/* True from an accepted request until the run ends. A test start is refused
+ * while this holds. A jog is still accepted: app_motion caps it at the
+ * restricted speed, and the calibration gives way to it (ABORTED_JOG). */
 bool app_motorCalibration_isActive(void);
 void app_motorCalibration_getResult(app_motorCalibration_result_S *result);
 /**********************************************************************

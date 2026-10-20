@@ -26,7 +26,7 @@ abstractions (SIL serial, OPFS data folder) live in the harness — never in `sr
 | MaDSim PTY smoke | `cargo test -p mad-emulator --test pty_protocol` | boot emulator, one `firmware_version` round-trip, no Chrome | `cd SIL && make test` |
 | TS unit | `vitest` (`src/**/*.test.ts`) | domain, codec, device policy, storage, firmware loader, diagnostics | `npm test` |
 | E2E smoke | Playwright | 20 IDs in `e2e/smoke-ids.txt` | `npm run e2e:smoke` |
-| E2E full | Playwright | 49 scenarios in `e2e/run-all.mjs` (parity + matrices M8–M11 + FW*) | `npm run e2e` |
+| E2E full | Playwright | 50 scenarios in `e2e/run-all.mjs` (parity + matrices M8–M11 + FW*) | `npm run e2e` |
 
 `npm run verify` is the offline Control gate (tsc + eslint + vitest + coverage + production build). Coverage thresholds apply only to `src/firmware/**`.
 
@@ -180,7 +180,9 @@ Ported SIL regressions and matrices, all in `run-all.mjs`: `G-limit`, `TC1-multi
 `TC4-dwell`, `TC6-disable-stops`, `TC11-velocity`, `TC14-jog`, `VT-linear`, `NAV`,
 `P1-precision`, `BB-back-to-back`, `TM-busy-restart`, `TM-manual-gate`, `D2-settled-jog`,
 `D3+SR-slack`, M8 jog cells, M9 slack cells, M10 WAVE-* cells, M11 link-loss cells,
-`FW1`–`FW3` / `FW5`–`FW9` (in-app loader UI; native `loadp2` CLI is still out of scope).
+`FW1`–`FW3` / `FW5`–`FW9` (in-app loader UI; native `loadp2` CLI is still out of scope),
+`CAL1` (Settings → Motor calibration: the open-loop check on the SIL's matched 8192/mm
+drive and encoder reports a match, with pulses signed by direction).
 
 Smoke subset (`e2e/smoke-ids.txt`, 20 IDs): A1, B1+C1, D1, E1, G1, G2+G3+H2+I,
 TM-busy-restart, TM-manual-gate, P1-precision, VT-linear, BB-back-to-back,

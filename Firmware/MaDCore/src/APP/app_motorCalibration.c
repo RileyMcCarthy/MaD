@@ -43,6 +43,7 @@ typedef struct
     bool motionEnabled;
     bool faulted;
     bool atEndstop;
+    bool restricted;
     bool busy;
     int32_t position;
     bool legDone;
@@ -92,6 +93,15 @@ static void app_motorCalibration_private_processInputs(void)
      * reason at a time, and a door or tension restriction would hide an end
      * stop behind it. */
     in->atEndstop = HAL_GPIO_getActive(HAL_GPIO_ENDSTOP_UPPER) || HAL_GPIO_getActive(HAL_GPIO_ENDSTOP_LOWER);
+    /* Restricted speed (an open door, a tension limit, an end stop): the
+     * calibration drives the drive directly and cannot honour the cap the way
+     * app_motion does, so it refuses to start, and abandons a run, instead. */
+    in->restricted = app_control_speedLimited();
+    /* A move app_motion is running, or a test. A jog that was acknowledged but
+     * has not been queued yet (it sits in app_testManagement's request slots
+     * until the next CONTROL tick) is NOT seen here, and does not need to be:
+     * when it is queued, app_motion runs it at the restricted speed and this
+     * reads busy on that tick, so the calibration gives way (ABORTED_JOG). */
     in->busy = (app_motion_isIdle() == false) || app_testManagement_isRunning();
     in->position = dev_servo_getPosition(APP_MOTORCALIBRATION_CH);
     in->legDone = dev_servo_openLoopDone(APP_MOTORCALIBRATION_CH, &in->legEmitted);
@@ -129,6 +139,18 @@ static app_motorCalibration_state_E app_motorCalibration_private_checkAbort(uint
     {
         abort = APP_MOTORCALIBRATION_STATE_ABORTED_ENDSTOP;
     }
+    else if (in->busy)
+    {
+        /* A jog was queued after the run started. app_motion has already
+         * started it (at the restricted speed) and taken the drive out of open
+         * loop, so this leg can never finish: say so now rather than as a
+         * timeout seconds later. */
+        abort = APP_MOTORCALIBRATION_STATE_ABORTED_JOG;
+    }
+    else if (in->restricted)
+    {
+        abort = APP_MOTORCALIBRATION_STATE_ABORTED_RESTRICTED;
+    }
     else if (movedAbs > maxCounts)
     {
         abort = APP_MOTORCALIBRATION_STATE_ABORTED_OVERTRAVEL;
@@ -155,11 +177,16 @@ void app_motorCalibration_init(int lock)
     lib_timer_init(&app_motorCalibration_data.settleTimer, APP_MOTORCALIBRATION_SETTLE_MS);
 }
 
-/* Runs on the CONTROL cog at the end of app_motion_run. That order is what makes the
- * busy check sound: a jog staged before the request was accepted has been
- * queued and popped by app_motion this same tick, so app_motion is no longer
- * idle and the run is refused. Anything staged after it is refused at the
- * door by app_motorCalibration_isActive(). */
+/* Runs on the CONTROL cog at the end of app_motion_run, so the busy check sees
+ * any move app_motion popped this tick: a run is refused (REFUSED_BUSY) if one
+ * is already moving. It does not see a jog that was acknowledged but not yet
+ * queued: app_testManagement_run() drains its request slots before
+ * app_motion_run(), so a jog ACKed after that point on tick N is queued on tick
+ * N+1, after a calibration requested in between has already started its
+ * forward leg. Jogs are deliberately not refused or dropped for a calibration.
+ * While one is active app_motion caps every move at the restricted speed, and
+ * on the tick a jog starts this sequencer abandons the run (ABORTED_JOG)
+ * without stopping the drive, which now belongs to the jog. */
 void app_motorCalibration_run(void)
 {
     APP_MOTORCALIBRATION_LOCK_REQ_BLOCK();
@@ -196,7 +223,13 @@ void app_motorCalibration_run(void)
         }
         else if (in->atEndstop)
         {
+            /* Before restricted: an end stop also restricts the machine, and
+             * "jog it clear" is the more useful thing to tell the operator. */
             next = APP_MOTORCALIBRATION_STATE_REFUSED_AT_ENDSTOP;
+        }
+        else if (in->restricted)
+        {
+            next = APP_MOTORCALIBRATION_STATE_REFUSED_RESTRICTED;
         }
         else
         {
@@ -246,12 +279,15 @@ void app_motorCalibration_run(void)
     if ((app_motorCalibration_private_stateIsActive(next) == false) &&
         (next != APP_MOTORCALIBRATION_STATE_REFUSED_MOTION_DISABLED) &&
         (next != APP_MOTORCALIBRATION_STATE_REFUSED_BUSY) &&
-        (next != APP_MOTORCALIBRATION_STATE_REFUSED_AT_ENDSTOP))
+        (next != APP_MOTORCALIBRATION_STATE_REFUSED_AT_ENDSTOP) &&
+        (next != APP_MOTORCALIBRATION_STATE_REFUSED_RESTRICTED) &&
+        (next != APP_MOTORCALIBRATION_STATE_ABORTED_JOG))
     {
         /* Back to a closed-loop hold where the carriage now is. dev_servo kept
          * its setpoint on the encoder throughout, so this does not jump. A
          * disabled machine is already stopped by app_motion; stopping again
-         * changes nothing. */
+         * changes nothing. Not after a jog: the drive is running it, and a stop
+         * here would cancel the operator's move. */
         dev_servo_stop(APP_MOTORCALIBRATION_CH);
     }
 

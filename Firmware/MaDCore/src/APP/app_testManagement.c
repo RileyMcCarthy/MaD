@@ -486,12 +486,10 @@ bool app_testManagement_addManualMove(const app_motion_move_t *move)
     {
         return false;
     }
-    /* Nor while a motor calibration is driving the carriage open loop: a jog
-     * would take the drive back mid-measurement. */
-    if (app_motorCalibration_isActive())
-    {
-        return false;
-    }
+    /* A motor calibration does NOT refuse a jog: the
+     * operator must always be able to move the carriage. app_motion caps the
+     * jog at the restricted speed while the calibration is active, and the
+     * calibration abandons its run (ABORTED_JOG) when the jog starts. */
 
     /* Single-writer design: this runs on the COMMUNICATION cog, which must not
      * touch the (lock-free, CONTROL-cog-only) motion queue. Stage the move in a

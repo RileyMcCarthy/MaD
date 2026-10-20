@@ -25,7 +25,7 @@ extern void test_enum_compat_motor_calibration_states(void);
 extern void test_app_testManagement_startNotDroppedWhenMotionLags(void);
 extern void test_app_testManagement_manualMoveGatedWhileBusy(void);
 extern void test_app_testManagement_manualMoveSlotsBounded(void);
-extern void test_app_testManagement_calibrationBlocksJogsAndTests(void);
+extern void test_app_testManagement_calibrationBlocksTestsButNotJogs(void);
 extern void test_app_testManagement_manualMoveRejectedWhenMotionDisabled(void);
 extern void test_app_testManagement_manualMoveDiscardedWhenMotionDisabled(void);
 extern void test_app_testManagement_happyPathLifecycle(void);
@@ -89,7 +89,7 @@ void process()
     RUN_TEST(test_app_testManagement_startNotDroppedWhenMotionLags);
     RUN_TEST(test_app_testManagement_manualMoveGatedWhileBusy);
     RUN_TEST(test_app_testManagement_manualMoveSlotsBounded);
-    RUN_TEST(test_app_testManagement_calibrationBlocksJogsAndTests);
+    RUN_TEST(test_app_testManagement_calibrationBlocksTestsButNotJogs);
     RUN_TEST(test_app_testManagement_manualMoveRejectedWhenMotionDisabled);
     RUN_TEST(test_app_testManagement_manualMoveDiscardedWhenMotionDisabled);
     RUN_TEST(test_app_testManagement_happyPathLifecycle);

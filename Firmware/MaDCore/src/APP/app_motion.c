@@ -183,7 +183,11 @@ static bool app_motion_private_waveform_run(void);
 static void app_motion_private_processInputs(void)
 {
     app_motion_data.inputs.motionEnabled = app_control_motionEnabled();
-    app_motion_data.inputs.limitSpeed = app_control_speedLimited();
+    /* A jog accepted while a motor calibration is running is capped like one in
+     * RESTRICTED: the operator chose to move a carriage that is being driven
+     * open loop, so it moves slowly. The calibration
+     * gives way to it; see app_motorCalibration_run. */
+    app_motion_data.inputs.limitSpeed = app_control_speedLimited() || app_motorCalibration_isActive();
     app_motion_data.inputs.positionSteps = actuator_getPosition();
     app_motion_data.inputs.atTarget = actuator_atTarget();
     /* TWO different quantities, and conflating them is why a recorded G1 used
@@ -559,7 +563,8 @@ void app_motion_run(void)
     app_motion_data.state = app_motion_private_getDesiredState();
     app_motion_private_processOutputs();
     /* Ticked from here, after this tick's motion, so its busy check sees any
-     * move popped this tick; see app_motorCalibration_run. */
+     * move popped this tick (and gives way to a jog the same tick it starts);
+     * see app_motorCalibration_run. */
     app_motorCalibration_run();
 }
 

@@ -5,6 +5,7 @@ import {
   CALIBRATION_MAX_FREQUENCY,
   CALIBRATION_MAX_PULSES,
   CALIBRATION_POLL_MS,
+  OUTCOME_TEXT,
   assessCalibration,
   calibrationDeadlineMs,
   calibrationResultFromWire,
@@ -250,6 +251,29 @@ describe('motor calibration assessment', () => {
       });
       expect(r.outcome).toBe('aborted-overtravel');
       expect(r.countsForward).toBe(99);
+    },
+  );
+
+  behaviour(
+    {
+      id: 'motorcal.restricted-and-jog-outcomes-from-wire',
+      covers: 'src/domain/motorCalibration.ts#calibrationResultFromWire',
+      given: 'calibration results from the machine refused for restricted speed, abandoned for restricted speed, and abandoned for a jog',
+      expect: {
+        'outcomes-named': 'each reads as its own outcome, never as idle',
+        'operator-told': 'each has a line for the operator naming the restriction or the jog',
+      },
+    },
+    () => {
+      const read = (state: MotorCalibrationState) =>
+        calibrationResultFromWire({ state, pulsesForward: 0, countsForward: 0, pulsesReverse: 0, countsReverse: 0 })
+          .outcome;
+      expect(read(MotorCalibrationState.REFUSED_RESTRICTED)).toBe('refused-restricted');
+      expect(read(MotorCalibrationState.ABORTED_RESTRICTED)).toBe('aborted-restricted');
+      expect(read(MotorCalibrationState.ABORTED_JOG)).toBe('aborted-jog');
+      expect(OUTCOME_TEXT['refused-restricted']).toMatch(/restricted/);
+      expect(OUTCOME_TEXT['aborted-restricted']).toMatch(/restricted/);
+      expect(OUTCOME_TEXT['aborted-jog']).toMatch(/jog/);
     },
   );
 });

@@ -57,7 +57,10 @@ export type CalibrationOutcome =
   | 'aborted-fault'
   | 'aborted-endstop'
   | 'aborted-timeout'
-  | 'aborted-overtravel';
+  | 'aborted-overtravel'
+  | 'refused-restricted'
+  | 'aborted-restricted'
+  | 'aborted-jog';
 
 export interface CalibrationResult {
   outcome: CalibrationOutcome;
@@ -97,6 +100,9 @@ const OUTCOME_BY_STATE: Record<MotorCalibrationState, CalibrationOutcome> = {
   [MotorCalibrationState.ABORTED_ENDSTOP]: 'aborted-endstop',
   [MotorCalibrationState.ABORTED_TIMEOUT]: 'aborted-timeout',
   [MotorCalibrationState.ABORTED_OVERTRAVEL]: 'aborted-overtravel',
+  [MotorCalibrationState.REFUSED_RESTRICTED]: 'refused-restricted',
+  [MotorCalibrationState.ABORTED_RESTRICTED]: 'aborted-restricted',
+  [MotorCalibrationState.ABORTED_JOG]: 'aborted-jog',
 };
 
 export function calibrationResultFromWire(r: ProtoMotorCalibrationResult): CalibrationResult {
@@ -130,6 +136,10 @@ export const OUTCOME_TEXT: Record<CalibrationOutcome, string> = {
   'aborted-timeout': 'Stopped: the drive took far longer than expected to send its pulses.',
   'aborted-overtravel':
     'Stopped: the encoder moved over three times further than the profile expects. The drive is likely set much finer than servo steps/mm says, or encoder steps/mm is far too low.',
+  'refused-restricted':
+    'Refused: the machine is speed-restricted (door open or a tension limit). Clear the restriction first.',
+  'aborted-restricted': 'Stopped: the machine became speed-restricted (door opened or a tension limit).',
+  'aborted-jog': 'Stopped: a jog took the drive. The jog ran at the restricted speed; run the calibration again.',
 };
 
 /** Turn the operator's settings into a request the firmware will accept. */

@@ -302,26 +302,26 @@ void test_app_testManagement_manualMoveSlotsBounded(void)
     TEST_ASSERT_EQUAL_UINT32(4U, d_addMoveCount);
 }
 
-void test_app_testManagement_calibrationBlocksJogsAndTests(void)
+void test_app_testManagement_calibrationBlocksTestsButNotJogs(void)
 {
     VIBES_TEST("test-run.refused-during-motor-calibration",
-               "src/APP/app_testManagement.c#app_testManagement_addManualMove",
+               "src/APP/app_testManagement.c#app_testManagement_triggerTestStart",
                "a motor calibration is driving the carriage");
-    VIBES_EXPECT_WHY("jog-refused",
-                     "a jog is refused",
-                     "the calibration measures the drive open loop, and any other move would spoil the measurement");
     VIBES_EXPECT("test-refused", "a test start is refused");
-    VIBES_EXPECT("accepted-afterwards", "both are accepted again once the calibration has ended");
+    VIBES_EXPECT_WHY("jog-accepted",
+                     "a jog is accepted and handed to motion on the next run cycle",
+                     "the operator must always be able to move the carriage; motion caps the jog at the restricted speed and the calibration gives way to it");
+    VIBES_EXPECT("accepted-afterwards", "a test start is accepted again once the calibration has ended");
     tm_init();
 
     const app_motion_move_t move = { .g = (uint8_t)G0_RAPID_MOVE, .x = 100, .f = 50, .p = 0 };
     d_calibrating = true;
-    TEST_ASSERT_FALSE(app_testManagement_addManualMove(&move));
     TEST_ASSERT_FALSE(app_testManagement_triggerTestStart("cal001"));
-
-    d_calibrating = false;
     TEST_ASSERT_TRUE(app_testManagement_addManualMove(&move));
     app_testManagement_run();
+    TEST_ASSERT_EQUAL_UINT32(1U, d_addMoveCount);
+
+    d_calibrating = false;
     TEST_ASSERT_TRUE(app_testManagement_triggerTestStart("cal001"));
 }
 
