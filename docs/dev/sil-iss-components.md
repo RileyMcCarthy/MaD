@@ -196,9 +196,12 @@ should be re-tested once S1's framing gap closes rather than chased separately.
 
 `p2iss::flashnode::FlashNode` is a first-class component on real nets. It wraps
 `p2core::SpiFlash` (the shared protocol: `$66`/`$99` reset, `$04` write-disable,
-`$05` status→`$00`, `$03` read-data), senses CLK/CS/MOSI and drives MISO. It
-shares the four Edge-module pins with the microSD, distinguished by chip select,
-with **CLK/CS swapped** (flash `CLK=P60`, `CS=P61`).
+`$05` status→`$00`, `$03` read-data), senses CLK/CS/MOSI and drives MISO only
+while the part sends data, status or its ID (`SpiFlash::drives_miso`), releasing
+it otherwise. That is what a microSD on the same four Edge-module pins needs,
+with **CLK/CS swapped** (flash `CLK=P60`, `CS=P61`): the flash's `CS` is the
+card's clock, so every low half of a card clock pulse selects it. No test puts
+a card beside this node yet; `rom_boot_net.rs` has the flash alone.
 
 **It works because the ISS yields at every net-pin event** — the mechanism that
 answers "why can't embsim handle a bit-banged device". See *The yield mechanism*
@@ -332,6 +335,29 @@ train's pin released by `_pinclear` and then driven as a plain pin; and the
 sync-serial clock's transitions half its period apart from the `WYPIN`, the
 pad released once the pin is cleared. `P2Iss` keeps its `Component` impl and
 pin lists until `mad-emulator` retires (step 11).
+
+`p2iss/tests/ec32mb_sd_mount.rs`, stepped, is the same module with the card
+`make sd-image` writes in `J301`: the firmware's boot-time mount and its
+logging core's mount both succeed, and the card is read at block 0 and then
+at its root directory, block 129. It needs embsim with the W25Q128JV's DO
+released until it has data to shift out (RileyMcCarthy/embsim#141). Before
+that the flash, whose `/CS` is the card's clock `P61` with `S301` FLASH
+closed, drove `P58` high through every low half of the card's mode-3 clock
+at 25 Ω against the card's 265 Ω (`R304`), and was deselected on each
+rising edge. The failure took a second departure from silicon, in
+`p2core`: the smart bus latches MISO from the level held just before the
+rising edge, while `sdmm.cc` asks for the sample after it
+(`wxpin #7 | 32`) and `p2core` drops that bit (RileyMcCarthy/MaD#269). So
+every byte read `$FF`, the card heard only `CMD0`, and the mount failed
+with errno 12. Just after each edge `P58` already carried the card's bit
+(measured in #268's review), so a `p2core` that sampled after the edge
+would have read the card even beside the old flash (inferred). The flash's
+fix is needed regardless: the part leaves DO at high impedance until it has
+data to send (W25Q128JV Revision F §8.2.6, Figure 14, p.28). One gap
+remains on that net: before the card has had a command, embsim's card
+drives MISO whenever `P60`, the flash's clock, selects it, so the ROM's and
+stage-1's flash reads fight it (the flash wins, at ten times the strength,
+and the boot is unaffected; RileyMcCarthy/embsim#142).
 
 ### G1 — Debug console is not a node
 *Inside the package (B3) it is: `P62` is an async transmit pad on the

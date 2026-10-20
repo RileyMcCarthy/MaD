@@ -2,9 +2,12 @@
 //!
 //! The flash logic is [`p2core::SpiFlash`] unchanged — the same command set,
 //! the same rising-edge bit presentation the ROM's `drvh`/`drvl`/`testp` loop
-//! reads. This wraps it in the net: it senses CLK/CS/MOSI and drives MISO, so
-//! two devices (this and the microSD) can share the four Edge-module pins and
-//! be told apart by chip select.
+//! reads. This wraps it in the net: it senses CLK/CS/MOSI and drives MISO only
+//! while the part sends data, status or its ID ([`SpiFlash::drives_miso`]),
+//! releasing it otherwise. Released, the line is the net's: on a P2 Edge the
+//! flash's `/CS` is the card's clock, so every low half of a card clock
+//! pulse selects this part, and the card's reply on the shared MISO must
+//! reach the P2.
 //!
 //! # This works because the ISS yields at pin events
 //!
@@ -92,13 +95,20 @@ impl std::fmt::Debug for FlashNode {
     }
 }
 
+/// Publish MISO: the part's bit while it sends one, the line released
+/// otherwise (deselected, or selected while the master shifts the
+/// instruction and any address in).
 fn drive_miso(wire: &Wire) {
     if let Some(handle) = wire.miso.as_ref() {
-        handle.drive(Drive::Thevenin(digital_drive(if wire.flash.miso() {
-            Level::High
+        if wire.flash.drives_miso() {
+            handle.drive(Drive::Thevenin(digital_drive(if wire.flash.miso() {
+                Level::High
+            } else {
+                Level::Low
+            })));
         } else {
-            Level::Low
-        })));
+            handle.release();
+        }
     }
 }
 
