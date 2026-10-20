@@ -959,8 +959,8 @@ fn the_report_says_where_the_carriage_went_and_the_force_on_the_sample() {
     });
     expect!(
         "window-from-the-start",
-        "the first look says the carriage is at 15 millimetres and has been between 0 and 15 \
-         millimetres since the last look",
+        "the first look puts the carriage within a micrometre of 15 millimetres and says it \
+         has been between 0 millimetres and there since the last look",
         "the carriage starts at 0 millimetres"
     );
     expect!(
