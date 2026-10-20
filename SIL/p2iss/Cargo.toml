@@ -13,6 +13,9 @@ embsim-core = { path = "../embsim/core" }
 # The flash and card nodes read through their parts' own datasheet
 # thresholds, which embsim-models declares beside the parts' models.
 embsim-models = { path = "../embsim/models" }
+# The P2 package the ISS sits in as a core (`P2IssCore`): its pads, bank
+# supplies, START gate and crystal.
+embsim-boards = { path = "../embsim/boards" }
 tracing.workspace = true
 nix = { version = "0.31", features = ["term", "fs"] }
 libc = "0.2"
