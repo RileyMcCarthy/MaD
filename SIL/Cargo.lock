@@ -433,6 +433,8 @@ dependencies = [
  "embsim-boards",
  "embsim-cli",
  "embsim-core",
+ "embsim-models",
+ "models",
  "rstest 0.26.1",
  "vibes-behaviour",
 ]
