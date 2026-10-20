@@ -108,13 +108,14 @@ interface.
 The EdgeBoard netlist contains the **socket** (`P2_EDGE_MODULE_SOCKET`), not the
 P2 Edge Module that plugs into it — the module is a separate Parallax product
 (its own PCB: P2 chip, boot flash, LDOs, pull-ups, and on the EC32MB variant,
-HyperRAM). The baseline plan folds the module into the P2 component (chip pin ≡
+PSRAM). The baseline plan folds the module into the P2 component (chip pin ≡
 edge finger, module internals behavioral). That assumption is **known to hide
 real failure classes we have already hit**: the boot-flash/SD bus sharing on
 P58–61 is module-internal wiring (it cost us the silent flash-boot failure in
-bring-up), and the EC32MB variant reserves P40–P57 for HyperRAM — which would
-collide with the RPI serial pins (P53/P55) the debug build uses. Module choice
-is a pin-validity question the simulation should enforce.
+bring-up), and the EC32MB variant keeps P40–P57 for its PSRAM and brings none
+of them to its card edge, so the RPI serial pins (P53/P55) the debug build uses
+have no path to the chip. Module choice is a pin-validity question the
+simulation should enforce.
 
 Parallax publishes the module schematics (PDF for both variants; their EDA
 source is DipTrace, not KiCad). Upgrade path, in increasing fidelity:
@@ -137,13 +138,17 @@ exempt from the CI-regeneration rule, which applies to boards we author in
 `Hardware/`. Re-export only if the machine's module is ever revised.
 
 **The machine uses the EC32MB variant**, and auditing the EdgeBoard netlist
-against its reservation table (P40–P57 = HyperRAM) already produced a real
-finding before any engine exists: the EdgeBoard drives reserved pins — isolator
+against its reservation table (P40–P57 = PSRAM) already produced a real
+finding before any engine exists: the EdgeBoard wires reserved pins — isolator
 IC2's outputs drive P52/P53 and its inputs take P54/P55 (the RPI serial path,
-matching `HW_PIN_RPI_RX/TX` = 53/55), and header J24 fans out P40–P47. This
-works today only because the firmware never initializes the HyperRAM, leaving
-its bus Hi-Z. The phase-3 tier-1 gate is that the reservation table reproduces
-exactly this finding.
+matching `HW_PIN_RPI_RX/TX` = 53/55), and header J24 fans out P40–P47. None of
+these lines reaches the chip: the EC32MB has no card-edge finger for P40–P57
+(fingers 55, 56, 59–67 and 69–77 are no-connects; read: the header of embsim's
+`boards/netlists/p2_ec32mb.net`, transcribed from Parallax's Rev B schematic).
+So a Pi on J4 cannot talk to the firmware, and the debug build's MAIN channel
+on P53/P55 runs on the PSRAM's own pins: the Pi receives nothing (measured,
+`SIL/mad-catalog/tests/mad.rs`). The phase-3 tier-1 gate is that the
+reservation table reproduces exactly this finding.
 
 ### Part classification (no separate "type file")
 

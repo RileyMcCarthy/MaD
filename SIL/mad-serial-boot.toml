@@ -136,9 +136,9 @@ volts = 0.0
 
 # SC_5V, the servo side's 5 V: IC14's isolated side (VCC2), the line driver
 # U24, the line receiver U25, IC16's primary (VCC1) and R25, the ready
-# output's pull-up. Nothing on the carrier makes it; it arrives on J21 with
-# the drive's cable (read: mad_edge.net; embsim board/tests/edgeboard.rs,
-# the domains a bare carrier reports).
+# output's pull-up. Nothing on the carrier makes it (read: mad_edge.net;
+# embsim board/tests/edgeboard.rs, the domains a bare carrier reports), so
+# it comes in on J21; that the drive's cable brings it is inferred.
 [[wire]]
 from = "BENCH.SERVO5V"
 to = "EDGE.J21.1"
@@ -170,8 +170,12 @@ to = "DS2.J1.2"
 volts = 0.0
 
 # The add-on's analog supply AVDD and its return, brought out on J2 and
-# made by neither board (Hardware/DS2Addon/readme.md, "Bench testing"). The
-# load cell's excitation is this supply (the machine's E+ and E-, below).
+# made by neither board. On the machine the DS2 gauge supplies them over J2
+# (read: Hardware/DS2Addon/readme.md, "Bench testing"); mad-machine's load
+# cell senses its excitation and sources nothing (mad-catalog/src/
+# machine.rs), so this bench supply stands in for the gauge's. 3.3 V is the
+# readme's bench-strap level, not a level measured on the gauge. The load
+# cell's excitation is this supply (the machine's E+ and E-, below).
 [[wire]]
 from = "BENCH.VDDA"
 to = "DS2.J2.1"
@@ -191,6 +195,12 @@ to = "EDGE.J4.1"
 volts = 5.0
 
 # RPI_GND, IC2's Pi-side return.
+#
+# All four files power the Pi: the serial-boot files keep it seated on J4
+# while their host, the programming adapter, is on J1, and leave its TX and
+# RX unwired. IC2 gives the carrier's P53 its default high whether or not
+# its Pi side is powered (inferred), so the serial boot runs the same with
+# the Pi there or not.
 [[wire]]
 from = "PI.GND"
 to = "EDGE.J4.6"
@@ -238,6 +248,10 @@ to = "MACHINE.STEP"
 [[wire]]
 from = "EDGE.J21.5"
 to = "MACHINE.DIR"
+
+# No wire on J21.3 or J21.4 (SC_PUL- and SC_DIR-, U24's complementary
+# outputs): the kind reads STEP and DIR single-ended against DRIVE_GND
+# (mad-catalog/src/machine.rs, its DRIVE_GND reference).
 
 # SC_ENA, from JP1's common pad (IC14's OUTC, from P6, with JP1 on pads
 # 1-2: the scenario, below).
@@ -367,6 +381,12 @@ to = "EDGE.J13.2"
 [[wire]]
 from = "EDGE.J13.1"
 to = "EDGE.J5.3"
+
+# Nothing at rest shows the three emergency stops' wires: a stop rests open,
+# an open loop and an unwired one both leave P16-P18 on their pull-ups to
+# VIO_16_23 (R5, R1, R6; read: mad_edge.net), and the kind cannot press a
+# stop (mad-catalog/src/machine.rs, "Not modelled"). No case in
+# mad-catalog/tests/mad.rs checks them.
 
 # The bridge's excitation, sensed: the add-on's AVDD and its return.
 [[wire]]

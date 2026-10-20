@@ -21,7 +21,10 @@
 //!   `P53`/`P55` (`HW_pins.h`): it transmits on `P55` at 2 Mbaud, and the
 //!   host on `J4` receives nothing.
 //! - **The inputs at rest.** The end switches, the door and the emergency
-//!   stops each present the level the firmware reads as inactive.
+//!   stops each present the level the firmware reads as inactive. The
+//!   emergency stops' wires show in nothing at rest: a stop rests open, an
+//!   open loop and an unwired one both leave its input on its pull-up, and
+//!   the machine's kind cannot press a stop.
 //! - **The drive.** `IC14`, the isolator between the processor and the
 //!   drive, has its secondary ground pins on a net of their own (embsim
 //!   `board/tests/edgeboard.rs`; the layout has the same pads on the same
@@ -33,9 +36,11 @@
 //!   carrier's own path to them is `IC14`'s) and the chip held in reset
 //!   from the debug header, the drive turns the encoder, whose pairs reach
 //!   `P9` and `P10` through the line receiver `U25` and the isolator
-//!   `IC16`; with the machine's real NPN open-collector encoder on the `+`
-//!   legs and the ground jumpers closed, `P9` and `P10` stay high and the
-//!   run names `U25`'s pairs (embsim `board/tests/edge_encoder_pairs.rs`).
+//!   `IC16`, `A` on `P9` and `B` on `P10` in the encoder's own phase, each
+//!   pair's `-` leg the opposite of its `+` leg; with the machine's real
+//!   NPN open-collector encoder on the `+` legs and the ground jumpers
+//!   closed, `P9` and `P10` stay high and the run names `U25`'s pairs
+//!   (embsim `board/tests/edge_encoder_pairs.rs`).
 //!   The bench, the probes and the open collector's three changes are the
 //!   cases' own, added to the file as loaded; the file is unchanged.
 //!
@@ -54,7 +59,7 @@ use std::process::ExitCode;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
-use embsim_board::net::DEFAULT_PUSH_PULL_IMPEDANCE;
+use embsim_board::net::{DEFAULT_PUSH_PULL_IMPEDANCE, V_IH, V_IL};
 use embsim_board::{
     jesd8c01_lvcmos_thresholds, AttachError, Component, ComponentNetIo, DeadBand, EndpointRef,
     Finding, Harness, Level, NetState, PinDecl, Project, Report, Reports, ScriptedSource, Step,
@@ -484,9 +489,9 @@ fn the_host_line_and_the_inputs_at_rest() {
     behaviour!(Test {
         id: "mad-project.at-rest",
         covers: Some("SIL/mad.toml"),
-        given: "the machine's project file, its host a serial port on the carrier's Raspberry \
-                Pi connector, run 10 ms past every supply's start-up, then the host sending \
-                sixteen zero bytes",
+        given: "the machine's project file, a serial-port host on the carrier's Raspberry Pi \
+                connector, run 10.1 ms from power-on, past every supply's start-up, then the host \
+                sending sixteen zero bytes",
     });
     expect!(
         "host-reaches-p53",
@@ -513,7 +518,8 @@ fn the_host_line_and_the_inputs_at_rest() {
         "stops-inactive",
         "P16 to P18, the emergency stops' inputs, read high, the level the firmware reads as \
          inactive",
-        "the emergency stops rest open, so no current lights their optocouplers"
+        "the emergency stops rest open, and an open loop lights no optocoupler, so each input \
+         reads high with its stop wired or with none"
     );
     expect!(
         "enable-unreached",
@@ -849,19 +855,35 @@ fn bench_drive(bench: Bench) -> Bench {
         .component("BENCH_STEP", source(steps), "OUT", "MACHINE.STEP")
 }
 
-/// One read of the encoder: its count, then what `P9` and `P10` read.
-type Read = (i64, Option<Level>, Option<Level>);
+/// The encoder connector's four legs, as `J20` carries them to `U25`:
+/// `A+` (`J20.1`, `1A`), `A-` (`J20.2`, `1B`), `B+` (`J20.3`, `2A`) and
+/// `B-` (`J20.4`, `2B`) (read: `netlists/mad_edge.net`).
+const LEGS: [&str; 4] = [
+    "EDGE./MaD_Edge_Sheet3/A+",
+    "EDGE./MaD_Edge_Sheet3/A-",
+    "EDGE./MaD_Edge_Sheet3/B+",
+    "EDGE./MaD_Edge_Sheet3/B-",
+];
+
+/// One read of the encoder: its count, what `P9` and `P10` read, and what
+/// its four legs on `J20` read, in [`LEGS`]' order.
+#[derive(Debug, Clone, Copy)]
+struct Read {
+    count: i64,
+    p9: Option<Level>,
+    p10: Option<Level>,
+    legs: [Option<NetState>; 4],
+}
 
 /// Read the encoder every millisecond through the bench's steps and the
 /// carriage coming to rest: the first read, then each read whose count
 /// differs from the one before it.
 fn walk(rig: &mut Rig) -> Vec<Read> {
-    let read = |rig: &mut Rig| {
-        (
-            rig.encoder_count(),
-            rig.level("EDGE.P9"),
-            rig.level("EDGE.P10"),
-        )
+    let read = |rig: &mut Rig| Read {
+        count: rig.encoder_count(),
+        p9: rig.level("EDGE.P9"),
+        p10: rig.level("EDGE.P10"),
+        legs: LEGS.map(|net| rig.state(net)),
     };
     let mut seen = vec![read(rig)];
     let mut at = SETTLE_NS;
@@ -870,11 +892,46 @@ fn walk(rig: &mut Rig) -> Vec<Read> {
         virtual_clock::wait_virtual_ns(deadline - at);
         at = deadline;
         let now = read(rig);
-        if now.0 != seen.last().expect("one read at least").0 {
+        if now.count != seen.last().expect("one read at least").count {
             seen.push(now);
         }
     }
     seen
+}
+
+/// The encoder's channels `(A, B)` at a count: the Gray sequence with `A`
+/// leading `B` as the count rises, the order embsim's `QuadratureEncoder`
+/// takes by default (`models/src/machine/quadrature_encoder.rs`, its
+/// `phase`) and `mad-machine` keeps. The firmware reads `A` on `P9` and `B`
+/// on `P10` (`HW_PIN_SERVO_ENCODER_A`/`_B`, `HW_pins.h`).
+fn channels(count: i64) -> (Level, Level) {
+    match count.rem_euclid(4) {
+        0 => (Level::Low, Level::Low),
+        1 => (Level::High, Level::Low),
+        2 => (Level::High, Level::High),
+        _ => (Level::Low, Level::High),
+    }
+}
+
+fn opposite(level: Level) -> Level {
+    match level {
+        Level::Low => Level::High,
+        Level::High => Level::Low,
+    }
+}
+
+/// The level a leg reads: driven or pulled, or a solved voltage read
+/// through the engine's own net-level pair, JESD8C.01's 3.3 V LVCMOS
+/// `V_IL`/`V_IH`, as the probes read; `None` for anything else. The
+/// encoder's legs solve to voltages: each leg's drive into the receiver's
+/// inputs.
+fn level_of(state: Option<NetState>) -> Option<Level> {
+    match state {
+        Some(NetState::Driven(level) | NetState::Pulled(level, _)) => Some(level),
+        Some(NetState::Analog(volts)) if volts <= V_IL => Some(Level::Low),
+        Some(NetState::Analog(volts)) if volts >= V_IH => Some(Level::High),
+        _ => None,
+    }
 }
 
 /// The chip stayed in reset the whole walk: the package's summary says the
@@ -934,10 +991,17 @@ fn the_encoders_pairs_reach_p9_and_p10() {
     );
     expect!(
         "quadrature-on-p9-p10",
-        "each count changes exactly one of P9 and P10, and every four counts they return to \
-         the levels they started at",
+        "at every count P9 carries the encoder's A channel and P10 its B channel, so P9 leads \
+         P10 while the drive steps forward",
         "the carrier's line receiver reads each of the encoder's pairs as a valid level and \
-         the isolator after it passes the level to the module"
+         the isolator after it passes the level to the module, neither inverting it"
+    );
+    expect!(
+        "pairs-wired",
+        "at every count each pair's plus leg on the carrier's encoder connector carries its \
+         channel's level and its minus leg the opposite level",
+        "the encoder drives both legs of each pair, and the jumpers that would ground the minus \
+         legs are open"
     );
     expect!(
         "pairs-silent",
@@ -956,27 +1020,24 @@ fn the_encoders_pairs_reach_p9_and_p10() {
         .expect("the file has a HOST");
     let mut rig = Rig::start(project, bench_drive(Bench::default()));
     let read = walk(&mut rig);
-    let counts: Vec<i64> = read.iter().map(|(count, _, _)| *count).collect();
+    let counts: Vec<i64> = read.iter().map(|at| at.count).collect();
     assert_eq!(counts, (0..=8).collect::<Vec<i64>>(), "{read:?}");
     assert_eq!(steps_commanded(&mut rig), 8, "{}", rig.summary("MACHINE"));
     assert_held_in_reset(&mut rig);
-    for (k, pair) in read.windows(2).enumerate() {
-        let ((_, a0, b0), (_, a1, b1)) = (pair[0], pair[1]);
-        for level in [a0, b0, a1, b1] {
-            assert!(
-                level.is_some(),
-                "P9 and P10 read a level at count {k}: {read:?}"
-            );
-        }
-        let changed = u8::from(a0 != a1) + u8::from(b0 != b1);
-        assert_eq!(changed, 1, "count {k} to {}: {read:?}", k + 1);
-    }
-    for (k, (now, later)) in read.iter().zip(&read[4..]).enumerate() {
+    for at in &read {
+        let (a, b) = channels(at.count);
         assert_eq!(
-            (now.1, now.2),
-            (later.1, later.2),
-            "count {k} and count {}: {read:?}",
-            k + 4
+            (at.p9, at.p10),
+            (Some(a), Some(b)),
+            "P9 and P10 at count {}: {read:?}",
+            at.count
+        );
+        assert_eq!(
+            at.legs.map(level_of),
+            [Some(a), Some(opposite(a)), Some(b), Some(opposite(b))],
+            "J20's legs at count {}: {:?}",
+            at.count,
+            at.legs
         );
     }
     let findings = rig.finish();
@@ -1044,15 +1105,16 @@ fn the_machines_open_collector_encoder_sticks_p9_and_p10_high() {
         .expect("the file has a HOST");
     let mut rig = Rig::start(project, bench_drive(Bench::default()));
     let read = walk(&mut rig);
-    let counts: Vec<i64> = read.iter().map(|(count, _, _)| *count).collect();
+    let counts: Vec<i64> = read.iter().map(|at| at.count).collect();
     assert_eq!(counts, (0..=8).collect::<Vec<i64>>(), "{read:?}");
     assert_eq!(steps_commanded(&mut rig), 8, "{}", rig.summary("MACHINE"));
     assert_held_in_reset(&mut rig);
-    for (count, a, b) in &read {
+    for at in &read {
         assert_eq!(
-            (*a, *b),
+            (at.p9, at.p10),
             (Some(Level::High), Some(Level::High)),
-            "at count {count}: {read:?}"
+            "at count {}: {read:?}",
+            at.count
         );
     }
     let findings = rig.finish();
