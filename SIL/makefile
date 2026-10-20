@@ -14,6 +14,7 @@
 #   make e2e-bundle     - BUNDLE-live: the built bundle (as pages.yml builds it) on the board, headless
 #   make flash-image    - build/flash.bin: stage-1 and the P2 image, the module's boot flash
 #   make sd-image       - build/sd.img: a 32 MiB FAT16 card mirroring ./sd
+#   make check          - embsim check on MaD's four project files (mad*.toml)
 #   make clean          - Remove build artifacts
 #
 # There is ONE configuration a browser belongs in: the P2 image on the ISS,
@@ -50,7 +51,7 @@ BUILD_DIR = build
 FLASH_IMAGE = $(BUILD_DIR)/flash.bin
 SD_IMAGE = $(BUILD_DIR)/sd.img
 
-.PHONY: p2image protocol emulator emulator-release test playground playground-iss playground-pty playground-rom e2e-emulator e2e e2e-rom e2e-bundle flash-image sd-image bootrom clean
+.PHONY: p2image protocol emulator emulator-release test playground playground-iss playground-pty playground-rom e2e-emulator e2e e2e-rom e2e-bundle flash-image sd-image check bootrom clean
 
 # Build the P2 image the ISS runs (`p2core`, `p2iss`, `mad-emulator`).
 #
@@ -146,6 +147,19 @@ flash-image: p2image
 sd-image:
 	mkdir -p $(BUILD_DIR)
 	cargo run --release --quiet -p p2iss --example dump_card -- $(SD_IMAGE) sd
+
+# MaD's project files (embsim MIGRATING-MAD.md section 1): the machine as it
+# runs, booting the firmware off the module's flash, and the ROM's serial
+# boot, each with a host-serial and with the host's Chrome (chrome-cdp) on
+# the same pins. `embsim check` builds each: every part placed, every wire
+# on a connector, every option the kinds take; it boots the chip with time
+# held and runs nothing. A chrome-cdp starts no Chrome at check, but check
+# refuses its file on a machine where it finds none. Both boots name the
+# card `make sd-image` writes; the flash boot names `make flash-image`'s.
+PROJECTS = mad.toml mad-serial-boot.toml
+COSIM_PROJECTS = mad-cosim.toml mad-serial-boot-cosim.toml
+check: flash-image sd-image
+	for project in $(PROJECTS) $(COSIM_PROJECTS); do $(EMBSIM) check $$project || exit 1; done
 
 # The boot ROM and the stage-1 flash loader the ISS boots through.
 FLEXSPIN = $(HOME)/.platformio/packages/toolchain-flexcc/bin/macos-amd64/flexspin
