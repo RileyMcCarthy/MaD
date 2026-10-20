@@ -220,6 +220,111 @@ fn the_cores_one_option_is_its_boot_rom() {
 }
 
 // ============================================================
+// A trap: a ROM the simulator cannot run
+// ============================================================
+
+/// The module's supplies from its `J203` fingers, as [`BOOT_PROJECT`]'s
+/// carrier gives them: unpowered, the package holds the core in reset and
+/// it never fetches.
+const MODULE_POWER: &str = r#"
+[[wire]]
+from = "CARRIER.5V"
+to = "EC32.J203.41"
+volts = 5.0
+
+[[wire]]
+from = "CARRIER.5Vb"
+to = "EC32.J203.42"
+volts = 5.0
+
+[[wire]]
+from = "CARRIER.GND"
+to = "EC32.J203.43"
+volts = 0.0
+
+[[wire]]
+from = "CARRIER.GNDb"
+to = "EC32.J203.44"
+volts = 0.0
+
+[[wire]]
+from = "CARRIER.GNDc"
+to = "EC32.J203.45"
+volts = 0.0
+"#;
+
+/// A long `p2core`'s `decode` rejects, so COG 0 traps with
+/// `Trap::UndecodedWord` rather than an unimplemented instruction's trap:
+/// the D-only group (`1101011`) with an `S` it gives no instruction.
+/// Should `decode` come to accept it, the trap text below stops matching.
+const UNDECODABLE: u32 = 0xFD60_007F;
+
+#[test]
+fn a_rom_that_traps_on_its_first_fetch_stops_the_run() {
+    behaviour!(Test {
+        id: "catalog.mad-p2iss-trap",
+        covers: Some("SIL/mad-catalog/src/iss.rs#IssReport"),
+        given: "the module's processor running the simulator, its boot ROM option naming a file \
+                whose first long decodes as no instruction, the project run stepped past the \
+                core's start",
+    });
+    expect!(
+        "run-fails",
+        "the run fails, its error saying the guest trapped and runs no more, naming the word \
+         and where COG 0 fetched it",
+        "a trapped guest runs no further, so nothing after the trap is the firmware's"
+    );
+    expect!(
+        "said-once",
+        "the core's looks say the trap once, at the look that finds it"
+    );
+    expect!(
+        "summary-says",
+        "the core's summary says it stopped by a trap, naming the same word"
+    );
+
+    let dir = scratch("trap");
+    let rom: Vec<u8> = [UNDECODABLE, 0, 0, 0]
+        .iter()
+        .flat_map(|word| word.to_le_bytes())
+        .collect();
+    std::fs::write(dir.join("rom.bin"), rom).expect("rom.bin is writable");
+    let project = dir.join("trap.toml");
+    std::fs::write(&project, module_project("rom = \"rom.bin\"") + MODULE_POWER)
+        .expect("the project is writable");
+
+    let run_ns = START_NS + 1_000_000;
+    let (code, out, err) = {
+        let _clock = clock();
+        embsim(&["run", path(&project), "--for", &format!("{run_ns}ns")])
+    };
+    let _ = writeln!(
+        std::io::stderr(),
+        "embsim run {}:\n{out}{err}",
+        project.display()
+    );
+
+    let trap = format!("cog 0: no decoding for word {UNDECODABLE:08X} at $00000");
+    assert_ne!(code, ExitCode::SUCCESS, "the run fails: {out}{err}");
+    assert!(
+        format!("{out}{err}").contains(&format!("the guest trapped and runs no more: {trap}")),
+        "the run's error names the trap: {out}{err}"
+    );
+
+    let core = lines_of(&out, "EC32.U100");
+    let said = format!("the guest trapped: {trap}");
+    assert_eq!(
+        core.iter().filter(|line| **line == said).count(),
+        1,
+        "the looks say the trap once: {core:#?}"
+    );
+    assert!(
+        core.contains(&format!("stopped by a trap: {trap}").as_str()),
+        "the summary says the trap stopped the guest: {core:#?}"
+    );
+}
+
+// ============================================================
 // The boot: a project of the module, run
 // ============================================================
 
