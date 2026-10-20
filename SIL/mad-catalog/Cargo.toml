@@ -30,4 +30,6 @@ p2iss = { path = "../p2iss" }
 # The tests run MaD's projects as the runner does, in process.
 embsim-cli = { path = "../embsim/cli" }
 rstest.workspace = true
+# tests/projects.rs compares MaD's four project files entry by entry.
+toml = "1.1"
 vibes-behaviour = { path = "../../Vibes/bindings/rust" }

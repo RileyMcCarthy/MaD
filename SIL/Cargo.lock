@@ -437,6 +437,7 @@ dependencies = [
  "models",
  "p2iss",
  "rstest 0.26.1",
+ "toml",
  "vibes-behaviour",
 ]
 
