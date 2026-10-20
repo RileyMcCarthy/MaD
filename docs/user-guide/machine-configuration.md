@@ -90,7 +90,7 @@ the pulses and rate it will send, and the encoder bound at which it gives up
 
 A **refusal** means the calibration never started and no pulses were sent. A
 **stop** means it was abandoned part way. The carriage is then held closed loop
-where it stopped, except after a jog (below).
+where it stopped, except when a jog has taken over the drive (below).
 
 | Message | Why | What to do |
 |---|---|---|
@@ -102,6 +102,6 @@ where it stopped, except after a jog (below).
 | Stopped: the machine faulted | A fault mid-run | Clear the fault, run it again |
 | Stopped: the carriage reached an end stop | An end stop was hit mid-run | Jog clear, shorten the distance |
 | Stopped: the machine became speed-restricted | The door was opened or a tension limit tripped mid-run | Clear the restriction, run it again |
-| Stopped: a jog took the drive | You jogged during the run. Jogs are never refused for a calibration, but while one runs they move at the **restricted speed** (the profile's restricted velocity). The jog carries on and the calibration gives way | Run it again |
+| Stopped: a jog took the drive | You jogged during the run. Jogs are never refused for a calibration, but while one runs they move at the **restricted speed** (the profile's **Restricted Velocity (mm/s)**), or at 2 mm/s if that is 0. The jog carries on and the calibration gives way. **Home** is refused while a calibration runs | Run it again |
 | Stopped: the drive took far longer than expected | The pulses didn't go out in twice their nominal time plus a second | Check the drive |
 | Stopped: the encoder moved over three times further than the profile expects | The drive is set much finer than servo steps/mm says, or encoder steps/mm is far too low | Check both values |

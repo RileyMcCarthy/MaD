@@ -48,6 +48,8 @@ typedef struct
     int32_t position;
     bool legDone;
     uint32_t legEmitted;
+    /* The drive is still in open-loop mode, i.e. no other move has taken it. */
+    bool openLoop;
 } app_motorCalibration_inputs_S;
 
 typedef struct
@@ -105,6 +107,7 @@ static void app_motorCalibration_private_processInputs(void)
     in->busy = (app_motion_isIdle() == false) || app_testManagement_isRunning();
     in->position = dev_servo_getPosition(APP_MOTORCALIBRATION_CH);
     in->legDone = dev_servo_openLoopDone(APP_MOTORCALIBRATION_CH, &in->legEmitted);
+    in->openLoop = dev_servo_isOpenLoop(APP_MOTORCALIBRATION_CH);
 }
 
 static void app_motorCalibration_private_startLeg(int32_t signedPulses, uint32_t frequency)
@@ -141,10 +144,11 @@ static app_motorCalibration_state_E app_motorCalibration_private_checkAbort(uint
     }
     else if (in->busy)
     {
-        /* A jog was queued after the run started. app_motion has already
-         * started it (at the restricted speed) and taken the drive out of open
-         * loop, so this leg can never finish: say so now rather than as a
-         * timeout seconds later. */
+        /* A jog was queued after the run started, and app_motion is running
+         * it (capped). Usually it has already taken the drive out of open
+         * loop; if it has not (a G90/G91 mode change, or a move with no
+         * feedrate), the drive is still ours and is stopped below. Either way
+         * the leg's measurement is spoiled, so the run ends here. */
         abort = APP_MOTORCALIBRATION_STATE_ABORTED_JOG;
     }
     else if (in->restricted)
@@ -185,8 +189,9 @@ void app_motorCalibration_init(int lock)
  * N+1, after a calibration requested in between has already started its
  * forward leg. Jogs are deliberately not refused or dropped for a calibration.
  * While one is active app_motion caps every move at the restricted speed, and
- * on the tick a jog starts this sequencer abandons the run (ABORTED_JOG)
- * without stopping the drive, which now belongs to the jog. */
+ * on the tick a jog starts this sequencer abandons the run (ABORTED_JOG). It
+ * leaves the drive alone if the jog has taken it out of open loop, and stops
+ * it otherwise. */
 void app_motorCalibration_run(void)
 {
     APP_MOTORCALIBRATION_LOCK_REQ_BLOCK();
@@ -281,13 +286,14 @@ void app_motorCalibration_run(void)
         (next != APP_MOTORCALIBRATION_STATE_REFUSED_BUSY) &&
         (next != APP_MOTORCALIBRATION_STATE_REFUSED_AT_ENDSTOP) &&
         (next != APP_MOTORCALIBRATION_STATE_REFUSED_RESTRICTED) &&
-        (next != APP_MOTORCALIBRATION_STATE_ABORTED_JOG))
+        ((next != APP_MOTORCALIBRATION_STATE_ABORTED_JOG) || in->openLoop))
     {
         /* Back to a closed-loop hold where the carriage now is. dev_servo kept
          * its setpoint on the encoder throughout, so this does not jump. A
          * disabled machine is already stopped by app_motion; stopping again
-         * changes nothing. Not after a jog: the drive is running it, and a stop
-         * here would cancel the operator's move. */
+         * changes nothing. Not once a jog has taken the drive out of open
+         * loop: the drive is running it, and a stop here would cancel the
+         * operator's move. */
         dev_servo_stop(APP_MOTORCALIBRATION_CH);
     }
 

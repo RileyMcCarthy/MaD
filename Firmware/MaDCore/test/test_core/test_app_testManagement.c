@@ -310,16 +310,23 @@ void test_app_testManagement_calibrationBlocksTestsButNotJogs(void)
     VIBES_EXPECT("test-refused", "a test start is refused");
     VIBES_EXPECT_WHY("jog-accepted",
                      "a jog is accepted and handed to motion on the next run cycle",
-                     "the operator must always be able to move the carriage; motion caps the jog at the restricted speed and the calibration gives way to it");
+                     "the operator must always be able to move the carriage; motion caps the jog's speed and the calibration gives way to it");
+    VIBES_EXPECT_WHY("home-refused",
+                     "a Home is refused",
+                     "Home runs at the homing speed, and only a jog's speed is capped during a calibration");
     VIBES_EXPECT("accepted-afterwards", "a test start is accepted again once the calibration has ended");
     tm_init();
 
+    const app_motion_move_t relative = { .g = (uint8_t)G91_INCREMENTAL, .x = 0, .f = 0, .p = 0 };
     const app_motion_move_t move = { .g = (uint8_t)G0_RAPID_MOVE, .x = 100, .f = 50, .p = 0 };
+    const app_motion_move_t home = { .g = (uint8_t)G28_HOME, .x = 0, .f = 0, .p = 0 };
     d_calibrating = true;
     TEST_ASSERT_FALSE(app_testManagement_triggerTestStart("cal001"));
+    TEST_ASSERT_FALSE(app_testManagement_addManualMove(&home));
+    TEST_ASSERT_TRUE(app_testManagement_addManualMove(&relative));
     TEST_ASSERT_TRUE(app_testManagement_addManualMove(&move));
     app_testManagement_run();
-    TEST_ASSERT_EQUAL_UINT32(1U, d_addMoveCount);
+    TEST_ASSERT_EQUAL_UINT32(2U, d_addMoveCount);
 
     d_calibrating = false;
     TEST_ASSERT_TRUE(app_testManagement_triggerTestStart("cal001"));

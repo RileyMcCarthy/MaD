@@ -1981,6 +1981,29 @@ void test_dev_servo_openLoopRejectsEmptyRequests(void)
     TEST_ASSERT_EQUAL_INT(DEV_SERVO_MODE_IDLE, dev_servo_data.channel[CH].req.mode);
 }
 
+void test_dev_servo_openLoopModeIsReportedUntilAnotherMoveTakesTheDrive(void)
+{
+    VIBES_TEST("servo.open-loop-mode-reported",
+               "src/DEV/dev_servo.c#dev_servo_isOpenLoop",
+               "an open-loop run that has sent all its pulses, followed by a closed-loop move");
+    VIBES_EXPECT_WHY("open-loop-after-done",
+                     "the drive reads as open loop while its pulses go out and after they are all sent",
+                     "the motor calibration stops the drive itself unless another move has taken it");
+    VIBES_EXPECT("left-on-move", "the drive reads as no longer open loop once the closed-loop move is commanded");
+    servo_init();
+    dev_servo_enable(CH, true);
+    tick();
+    TEST_ASSERT_FALSE(dev_servo_isOpenLoop(CH));
+    TEST_ASSERT_TRUE(dev_servo_startOpenLoop(CH, 1000, 500U));
+    TEST_ASSERT_TRUE(dev_servo_isOpenLoop(CH));
+    d_run_delta = 1001U;
+    tick();
+    TEST_ASSERT_TRUE(dev_servo_openLoopDone(CH, NULL));
+    TEST_ASSERT_TRUE(dev_servo_isOpenLoop(CH));
+    dev_servo_moveTo(CH, 0, 500);
+    TEST_ASSERT_FALSE(dev_servo_isOpenLoop(CH));
+}
+
 void test_dev_servo_openLoopNewRunClearsTheLastVerdict(void)
 {
     VIBES_TEST("servo.open-loop-fresh-verdict",
@@ -2049,5 +2072,6 @@ int main(void)
     RUN_TEST(test_dev_servo_leavingOpenLoopHoldsWhereTheCarriageIs);
     RUN_TEST(test_dev_servo_openLoopRejectsEmptyRequests);
     RUN_TEST(test_dev_servo_openLoopNewRunClearsTheLastVerdict);
+    RUN_TEST(test_dev_servo_openLoopModeIsReportedUntilAnotherMoveTakesTheDrive);
     return UNITY_END();
 }

@@ -215,6 +215,10 @@ bool dev_servo_startOpenLoop(dev_servo_channel_E ch, int32_t signedPulses, uint3
  * have all been emitted; *emitted (may be NULL) receives the count so far.
  * False while running, and false in any other mode. */
 bool dev_servo_openLoopDone(dev_servo_channel_E ch, uint32_t *emitted);
+/* True while the channel is still in open-loop mode: from dev_servo_startOpenLoop
+ * until another mode (stop, moveTo, a velocity jog, homing, a waveform) takes
+ * the drive. Still true once the pulses are all out. */
+bool dev_servo_isOpenLoop(dev_servo_channel_E ch);
 void dev_servo_setPosition(dev_servo_channel_E ch, int32_t counts);        /* homing: define encoder reference */
 
 int32_t dev_servo_getPosition(dev_servo_channel_E ch); /* encoder — single source of truth */

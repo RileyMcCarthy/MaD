@@ -41,6 +41,9 @@
  * Macros
  **********************************************************************/
 #define MOTION_QUEUE_SIZE 100
+/* Speed cap (mm/s) for a jog during a motor calibration when the machine
+ * profile sets no restricted velocity. Slow enough to be a deliberate nudge. */
+#define APP_MOTION_CALIBRATION_JOG_CAP_MM_S 2
 
 #define APP_MOTION_LOCK_REQ() HAL_lock_try(app_motion_data.lock)
 #define APP_MOTION_LOCK_REQ_BLOCK()        \
@@ -108,6 +111,7 @@ typedef struct
 {
     bool motionEnabled;
     bool limitSpeed;
+    bool calibrating;               /* app_motorCalibration_isActive()        */
     int32_t positionSteps;
     bool atTarget;
     int32_t gaugeSetpointSteps;   /* where the move ENDS                */
@@ -187,7 +191,8 @@ static void app_motion_private_processInputs(void)
      * RESTRICTED: the operator chose to move a carriage that is being driven
      * open loop, so it moves slowly. The calibration
      * gives way to it; see app_motorCalibration_run. */
-    app_motion_data.inputs.limitSpeed = app_control_speedLimited() || app_motorCalibration_isActive();
+    app_motion_data.inputs.calibrating = app_motorCalibration_isActive();
+    app_motion_data.inputs.limitSpeed = app_control_speedLimited() || app_motion_data.inputs.calibrating;
     app_motion_data.inputs.positionSteps = actuator_getPosition();
     app_motion_data.inputs.atTarget = actuator_atTarget();
     /* TWO different quantities, and conflating them is why a recorded G1 used
@@ -348,12 +353,18 @@ static void app_motion_private_moveManager_start(void)
              * Clamped rather than refused, because refusing motion in
              * RESTRICTED is what would strand a specimen under load with no way
              * to back off. */
-            if (app_motion_data.inputs.limitSpeed && (app_motion_data.restrictedFeedrate > 0) &&
-                (feedrate > app_motion_data.restrictedFeedrate))
+            int32_t cap = app_motion_data.restrictedFeedrate;
+            /* A profile with no restricted velocity (the factory default, or
+             * one written before the field existed) leaves RESTRICTED uncapped,
+             * but a jog during a motor calibration is always capped. */
+            if (app_motion_data.inputs.calibrating && (cap <= 0))
             {
-                DEBUG_INFO("RESTRICTED: feedrate %d -> %d steps/s\n", feedrate,
-                           app_motion_data.restrictedFeedrate);
-                feedrate = app_motion_data.restrictedFeedrate;
+                cap = APP_MOTION_CALIBRATION_JOG_CAP_MM_S * app_motion_data.stepsPerMM;
+            }
+            if (app_motion_data.inputs.limitSpeed && (cap > 0) && (feedrate > cap))
+            {
+                DEBUG_INFO("RESTRICTED: feedrate %d -> %d steps/s\n", feedrate, cap);
+                feedrate = cap;
             }
             if (app_motion_data.absoluteMode == false)
             {

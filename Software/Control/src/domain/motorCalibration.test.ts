@@ -260,7 +260,7 @@ describe('motor calibration assessment', () => {
       covers: 'src/domain/motorCalibration.ts#calibrationResultFromWire',
       given: 'calibration results from the machine refused for restricted speed, abandoned for restricted speed, and abandoned for a jog',
       expect: {
-        'outcomes-named': 'each reads as its own outcome, never as idle',
+        'outcomes-named': 'each is reported as its own refusal or stop',
         'operator-told': 'each has a line for the operator naming the restriction or the jog',
       },
     },

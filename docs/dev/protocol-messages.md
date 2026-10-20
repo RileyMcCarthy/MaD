@@ -80,8 +80,10 @@ sampleCount(u32)`) and the device streams `StoredSample` records.
   ABORTED_OVERTRAVEL, REFUSED_RESTRICTED, ABORTED_RESTRICTED, ABORTED_JOG`
   (append only: firmware `app_motorCalibration_state_E` uses the same order).
   `REFUSED_RESTRICTED` / `ABORTED_RESTRICTED`: the machine was, or became,
-  speed-restricted. `ABORTED_JOG`: a jog took the drive. Jogs are accepted during
-  a run and capped at the restricted speed
+  speed-restricted. `ABORTED_JOG`: a jog took the drive. Jogs (G0/G1 and the
+  G90/G91 sent with them) are accepted during a run and capped at the restricted
+  speed, or 2 mm/s when the profile's restricted velocity is 0; other manual
+  moves, Home included, are NACKed until the run ends
 - **`NotificationType`**, **`LoggingState`**
 
 See [States, faults & restrictions](../user-guide/machine-states.md) for what each

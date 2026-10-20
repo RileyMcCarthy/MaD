@@ -1148,6 +1148,15 @@ bool dev_servo_openLoopDone(dev_servo_channel_E ch, uint32_t *emitted)
     return done;
 }
 
+bool dev_servo_isOpenLoop(dev_servo_channel_E ch)
+{
+    if (ch >= DEV_SERVO_CHANNEL_COUNT) { return false; }
+    DEV_SERVO_LOCK_REQ_BLOCK();
+    const bool openLoop = (dev_servo_data.channel[ch].req.mode == DEV_SERVO_MODE_OPEN_LOOP);
+    DEV_SERVO_LOCK_REL();
+    return openLoop;
+}
+
 void dev_servo_setPosition(dev_servo_channel_E ch, int32_t counts)
 {
     if (ch >= DEV_SERVO_CHANNEL_COUNT) { return; }

@@ -81,6 +81,11 @@ bool dev_servo_openLoopDone(dev_servo_channel_E ch, uint32_t *emitted)
     if (emitted != NULL) { *emitted = d_olEmitted; }
     return d_olDone;
 }
+bool dev_servo_isOpenLoop(dev_servo_channel_E ch)
+{
+    (void)ch;
+    return d_olRunning;
+}
 void dev_servo_stop(dev_servo_channel_E ch)
 {
     (void)ch;
@@ -477,7 +482,7 @@ void test_an_end_stop_is_named_ahead_of_the_restriction_it_causes(void)
                "src/APP/app_motorCalibration.c#app_motorCalibration_run",
                "a motor calibration is requested with the carriage on an end stop, which also restricts the machine's speed");
     VIBES_EXPECT_WHY("says-endstop",
-                     "the calibration is refused and says an end stop was made, not that the machine was restricted",
+                     "the calibration is refused and says the carriage is on an end stop",
                      "jogging clear of the stop is what the operator has to do, and a bare 'restricted' would not say so");
 
     d_endstopUpper = true;
@@ -509,16 +514,16 @@ void test_a_jog_acked_before_the_calibration_starts_takes_the_drive(void)
 {
     VIBES_TEST("motorcal.gives-way-to-an-acked-jog",
                "src/APP/app_motorCalibration.c#app_motorCalibration_run",
-               "a jog is acknowledged, then a motor calibration is requested before the next control tick queues the jog");
+               "a motor calibration starts while motion is idle, and on a later tick motion starts a move that takes the drive out of open loop, as a jog queued after the request does");
     VIBES_EXPECT_WHY("starts",
                      "the calibration starts its forward pulses, because nothing is moving yet",
                      "an acknowledged jog waits in a request slot until the next tick, so neither motion nor the test runner can see it yet");
     VIBES_EXPECT_WHY("gives-way-at-once",
                      "on the tick the jog starts moving, the calibration is abandoned and says a jog took the drive",
-                     "the jog takes the drive out of open loop, so the leg could never finish; waiting would only end seconds later as a misleading timeout");
+                     "a leg is measured only while the drive is in open loop, so the outcome has to name the jog the tick it takes over");
     VIBES_EXPECT_WHY("jog-not-cancelled",
-                     "the calibration does not stop the drive, so the jog carries on",
-                     "the operator asked for that move, and it is already capped at the restricted speed");
+                     "the drive is left running the jog",
+                     "the operator asked for that move, and motion has already capped its speed");
     VIBES_EXPECT("no-reverse", "the reverse pulses are never sent");
 
     /* Tick N: the jog is ACKed into a request slot after the slots were
@@ -536,6 +541,30 @@ void test_a_jog_acked_before_the_calibration_starts_takes_the_drive(void)
 
     TEST_ASSERT_EQUAL_INT(APP_MOTORCALIBRATION_STATE_ABORTED_JOG, result().state);
     TEST_ASSERT_EQUAL_INT(0, d_stopCount);
+    TEST_ASSERT_EQUAL_INT(1, d_startCount);
+}
+
+void test_motion_going_busy_without_taking_the_drive_stops_it(void)
+{
+    VIBES_TEST("motorcal.busy-motion-without-the-drive",
+               "src/APP/app_motorCalibration.c#app_motorCalibration_run",
+               "part way through a motor calibration, motion starts a move that leaves the drive in open loop, such as the G91 sent ahead of a jog or a jog with no feedrate");
+    VIBES_EXPECT("abandoned", "the calibration is abandoned and says a jog took the drive");
+    VIBES_EXPECT_WHY("drive-stopped",
+                     "the drive stops sending pulses and holds where the carriage is",
+                     "once the run has ended nothing watches the open-loop pulses for overtravel or an end stop");
+    VIBES_EXPECT("no-reverse", "the reverse pulses are never sent");
+
+    TEST_ASSERT_TRUE(app_motorCalibration_request(&REQ_1MM));
+    for (int i = 0; i < 100; i++) { step(); }
+    TEST_ASSERT_EQUAL_INT(APP_MOTORCALIBRATION_STATE_FORWARD, result().state);
+
+    d_motionIdle = false; /* the drive is still in open loop */
+    step();
+
+    TEST_ASSERT_EQUAL_INT(APP_MOTORCALIBRATION_STATE_ABORTED_JOG, result().state);
+    TEST_ASSERT_EQUAL_INT(1, d_stopCount);
+    TEST_ASSERT_FALSE(d_olRunning);
     TEST_ASSERT_EQUAL_INT(1, d_startCount);
 }
 
@@ -560,5 +589,6 @@ int main(void)
     RUN_TEST(test_an_end_stop_is_named_ahead_of_the_restriction_it_causes);
     RUN_TEST(test_a_restriction_mid_run_abandons_it);
     RUN_TEST(test_a_jog_acked_before_the_calibration_starts_takes_the_drive);
+    RUN_TEST(test_motion_going_busy_without_taking_the_drive_stops_it);
     return UNITY_END();
 }

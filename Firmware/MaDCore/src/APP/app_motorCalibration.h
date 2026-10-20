@@ -86,8 +86,9 @@ void app_motorCalibration_run(void);
  * next CONTROL tick (a refusal is reported in the result). */
 bool app_motorCalibration_request(const app_motorCalibration_request_S *request);
 /* True from an accepted request until the run ends. A test start is refused
- * while this holds. A jog is still accepted: app_motion caps it at the
- * restricted speed, and the calibration gives way to it (ABORTED_JOG). */
+ * while this holds, and so is a manual move that is not a jog (Home, a
+ * dwell). A jog is still accepted: app_motion caps its speed, and the
+ * calibration gives way to it (ABORTED_JOG). */
 bool app_motorCalibration_isActive(void);
 void app_motorCalibration_getResult(app_motorCalibration_result_S *result);
 /**********************************************************************

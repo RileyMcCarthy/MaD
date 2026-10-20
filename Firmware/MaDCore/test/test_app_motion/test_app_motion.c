@@ -843,9 +843,28 @@ void test_a_jog_during_a_motor_calibration_moves_at_the_capped_speed(void)
                "a machine profile with a restricted velocity of 2 millimetres per second, a motor calibration running on an otherwise unrestricted machine, and a jog asking for 40");
     VIBES_EXPECT_WHY("feedrate-capped",
                      "the drive is commanded at 2 millimetres per second",
-                     "a jog is never refused or dropped for a calibration, so the operator can always move the carriage, but one that lands on a carriage being driven open loop must not do so at full speed");
+                     "the operator can always jog during a calibration, and a jog that lands on a carriage being driven open loop moves slowly");
 
     d_machineProfile.restrictedVelocity = 2; /* mm/s */
+    motion_init();
+    motion_driveToWaiting();
+
+    d_speedLimited = false;
+    d_calibrating = true;
+    runOneLinearMove(1000, 40000); /* 40 mm/s */
+    TEST_ASSERT_EQUAL_INT32(2 * 100, d_lastMoveStepsPerSecond);
+}
+
+void test_a_jog_during_a_motor_calibration_is_capped_without_a_restricted_velocity(void)
+{
+    VIBES_TEST("motion.calibration-caps-jog-speed-by-default",
+               "src/APP/app_motion.c#app_motion_private_moveManager_start",
+               "a machine profile whose restricted velocity is zero, as on the factory profile, a motor calibration running, and a jog asking for 40 millimetres per second");
+    VIBES_EXPECT_WHY("feedrate-capped",
+                     "the drive is commanded at 2 millimetres per second",
+                     "the jog cap during a calibration holds on every profile, including one that leaves restricted speed uncapped");
+
+    d_machineProfile.restrictedVelocity = 0;
     motion_init();
     motion_driveToWaiting();
 
@@ -1314,6 +1333,7 @@ int main(void)
     RUN_TEST(test_a_restricted_machine_is_not_sped_up_to_the_cap);
     RUN_TEST(test_an_unrestricted_machine_moves_at_the_speed_it_was_asked_for);
     RUN_TEST(test_a_jog_during_a_motor_calibration_moves_at_the_capped_speed);
+    RUN_TEST(test_a_jog_during_a_motor_calibration_is_capped_without_a_restricted_velocity);
     RUN_TEST(test_a_profile_without_a_cap_does_not_stop_the_machine);
     RUN_TEST(test_an_unusable_machine_profile_refuses_every_move);
     RUN_TEST(test_a_profile_that_could_not_be_read_refuses_every_move);
