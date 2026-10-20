@@ -246,6 +246,16 @@ fixes came with them: the 20-bit PC now **wraps** rather than trapping (so
 `PTRA`/`PTRB` expression — without that the ROM's own self-load read from the
 wrong place. Test: `p2core/tests/rom_boot_chain.rs`.
 
+Board time on a ROM boot is the clock the chip runs on (`p2core::Machine::
+time_map`): RCFAST's nominal 20 MHz out of reset, then whatever each `HUBSET`
+clock word selects — RCSLOW, or for the crystal and PLL the rate the program
+recorded at hub `$14` — carried on from the instant of the switch. Hub `$14`
+is the ROM's scratch until a program is loaded, so the ROM's serial window
+(1.8e9 clocks, a minute on the fastest 30 MHz part) lasts 90 s of board time,
+as it would at nominal. Tests: `p2core/tests/rom_time_base.rs`,
+`p2iss/tests/rom_serial_window.rs`. A `P2IssCore` keeps its own map from the
+clock word and the crystal on `XI`.
+
 Reference: `p2iss/rom/rom_booter_v33k.spin2` (trimmed Parallax source; see
 `p2iss/rom/README.md`).
 

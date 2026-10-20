@@ -1527,11 +1527,17 @@ impl P2IssHandle {
         self.core.as_ref()?.crystal()
     }
 
-    /// The rate the guest's clock runs at, by its clock word and the
-    /// crystal, as of the last wake: for a core, once it has run. A
-    /// [`crate::P2Iss`] reports `None` (it times the guest from hub `$14`).
+    /// The rate the guest's clock runs at. For a core, by its clock word and
+    /// the crystal, as of the last wake, once it has run. For a
+    /// [`crate::P2Iss`], its machine's own rate
+    /// ([`p2core::Machine::clock_hz`]): RCFAST from a ROM boot until a clock
+    /// word leaves it.
     pub fn clock_hz(&self) -> Option<u64> {
-        let hz = self.core.as_ref()?.clock_hz.load(Ordering::Relaxed);
+        let Some(core) = self.core.as_ref() else {
+            let machine = self.machine.lock().expect("machine never poisoned");
+            return Some(u64::from(machine.clock_hz()));
+        };
+        let hz = core.clock_hz.load(Ordering::Relaxed);
         (hz != 0).then_some(hz)
     }
 
