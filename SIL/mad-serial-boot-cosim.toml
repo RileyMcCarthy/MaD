@@ -408,6 +408,28 @@ to = "EDGE.J5.3"
 # stop (mad-catalog/src/machine.rs, "Not modelled"). No case in
 # mad-catalog/tests/mad.rs checks them.
 
+# The emergency-stop circuit's power, GPI_3 (J17): P22, through the current
+# regulator IC12 and U8's first channel, with R8's 1 kOhm pull-up to
+# VIO_16_23, the parts and the pattern of the switch loops above (read:
+# mad_edge.net). The firmware reads P22 high as ESD_POWER, the emergency-stop
+# circuit without power, and holds the machine faulted with motion refused
+# while it lasts (read: Firmware/MaDCore/src/HAL/Config/HAL_GPIO_config.c,
+# ESD_POWER active high; src/APP/app_control.c, processFaults; docs/
+# user-guide/machine-states.md), so the loop carries current while that
+# circuit has power. The kind has no emergency-stop circuit (mad-catalog/src/
+# machine.rs), and what the machine has on J17 is not confirmed on the
+# board: the loop is closed from the carrier's 5V_IO to GND_IO, as the
+# switch loops take them, standing for a circuit with its power (inferred).
+# With nothing on J17, P22 rests high on R8 and every state read answers
+# ESD_POWER (measured, mad-catalog/tests/mad.rs).
+[[wire]]
+from = "EDGE.J5.1"
+to = "EDGE.J17.2"
+
+[[wire]]
+from = "EDGE.J17.1"
+to = "EDGE.J5.3"
+
 # The bridge's excitation, sensed: the add-on's AVDD and its return.
 [[wire]]
 from = "MACHINE.E+"

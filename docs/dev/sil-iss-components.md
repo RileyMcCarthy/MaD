@@ -696,9 +696,10 @@ the module keeps `P40`–`P57` for its PSRAMs and has no finger for them
 ([board design](sil-board-simulation-design.md#the-p2-edge-module-gap)).
 
 `mad-catalog/tests/mad.rs` boots the production image in `P2IssCore` off the
-module's flash and sends ProtoEmb READ frames on `J1`: the firmware answers
-the version read and the state read on `P62`, at 2,000,000 baud by the rate
-the core derives. Three things differ from the debug image there:
+module's flash and sends ProtoEmb frames on `J1`: the firmware answers the
+version read and the state read on `P62`, at 2,000,000 baud by the rate the
+core derives, and acknowledges a request to enable motion. Two things differ
+from the debug image there:
 
 - the production image still prints `Starting MaD Board` on `P62`
   (`main.c`) at the FlexC console's default rate (230,400 baud, inferred)
@@ -709,31 +710,47 @@ the core derives. Three things differ from the debug image there:
 - a request that lands before the serial core has armed its receive
   interrupt would go unanswered (inferred), so the case asks again every
   20 ms of board time. In the runs here the first request, sent at 1.226 s
-  of board time, was answered at 1.235 s (measured);
-- every state read from 1.24 s to 1.8 s of board time says the machine is
-  faulted on a processor core, while the core reports all 8 cogs running
-  (measured). Which channel it is, and whether the debug image does the
-  same, is open. The case holds only that motion is off and no test runs,
-  which the fault alone makes true.
+  of board time, was answered at 1.235 s (measured).
 
-The firmware raises the core fault while one of its cog channels has not
-reported itself running (`app_control.c`, `dev_cogManager_isAllRunning`).
-Eight running cogs are the main cog and all seven channels, so every channel
-was launched, and the causes that fit are these (inferred; read:
-`dev_cogManager.c`, `Main/MaD.c`):
+#### The machine's faults on the project files
 
-- the main cog's 100 ms loop stalling after the pass that launched the
-  channels: a channel reports itself running only from the loop's next call
-  of `dev_cogManager_run`, so a stall in `watchdog_run` or `dev_nvram_run`
-  between the two holds the fault;
-- a stack canary mismatch, which puts a running channel in its error state;
-- the CONTROL cog stalling, keeping the reading it took before the channels
-  reported running.
+Read off the ISS's hub RAM (`dev_cogManager`'s channel table and
+`app_control`'s fault flags, at the addresses the build's listing gives)
+every 20 ms of board time, both images in `mad.toml` (measured, 2026-10-21):
 
-A lock the manager could not create fits poorly: that channel stops before
-its cog is started. The core fault is first in the firmware's order, so
-while it stands it also hides a watchdog fault
-(`app_control_private_processFaults`).
+- **A core fault while the channels come up.** The cog manager moves a
+  channel one state per pass of the main cog's 100 ms loop (`Main/MaD.c`):
+  the first pass launches its cog, the second sees the launch and reports
+  the channel running (`dev_cogManager.c`), and the firmware reports a core
+  fault until all seven have (`app_control.c`, `processFaults`). The
+  production image's first state read, at 1.244 s, 65 ms after its boot
+  line, falls in that window and answers the core fault; by 1.308 s every
+  channel is running, its lock allocated (ids 2 to 8) and its stack
+  canaries intact, and the core fault is gone. It is the boot's own
+  window, on both images, and not a fault that stands.
+- **The emergency-stop circuit's power.** With nothing on the carrier's
+  `J17` (`GPI_3`), every read after that window answered `ESD_POWER`, to
+  3.1 s of board time, on both images. `P22` reads `J17`'s loop through
+  `IC12` and `U8` with `R8`'s pull-up to `VIO_16_23` (read:
+  `mad_edge.net`): with no current in the loop it rests high, and the
+  firmware reads `P22` high as the emergency-stop circuit without power
+  (`HAL_GPIO_config.c`, active high), which faults the machine and refuses
+  motion. `mad-emulator` holds `P22` low with a bench pull
+  (`MaDSim/src/iss_description.rs`, `IDLE_PULLS`), which is why motion
+  enables there. The project files close `J17`'s loop from the carrier's
+  `5V_IO` to `GND_IO`, as the switch loops take them, standing for a
+  powered circuit (inferred); with it the machine reads unfaulted from
+  1.314 s and enabling motion is acknowledged (measured). What the machine
+  has on `J17` is not confirmed: with nothing there, the firmware on the
+  machine would fault the same way (inferred from the netlist and the
+  firmware).
+
+The core fault is first in the firmware's order and the reported reason is
+the first fault set, so during the window it also hides the power fault
+(`app_control_private_processFaults`). A case that reads the same command
+twice takes only the answer to its own request: the first answer stays in
+what the host received, and a parser started at an earlier request finds
+it again (`mad.rs`, `HostPort::answer`).
 
 `mad-emulator`, the `p2core`/`p2iss` suites and `mad-catalog/tests/boot.rs`
 keep the debug image: they put the host on the bare chip's `P53`/`P55`, or

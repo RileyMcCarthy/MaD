@@ -76,8 +76,9 @@ MAD_REQUIRE_P2_IMAGE=1 cargo test -p mad-catalog --test mad --test projects
 `mad-catalog/tests/mad.rs` runs `mad.toml` stepped: the inputs at rest; the
 firmware booted off the flash and answering the host over `J1` (its version
 and the machine's state, framed by ProtoEmb's framing crate and decoded with
-the generated Rust codec); and the encoder's pairs with the chip held in
-reset. `tests/projects.rs` holds the four files to one another. The debug
+the generated Rust codec, then the machine reading unfaulted and taking the
+host's request to enable motion); and the encoder's pairs with the chip held
+in reset. `tests/projects.rs` holds the four files to one another. The debug
 image (`make p2image`) stays where a run needs its log on `P62` or its MAIN
 channel on the bare chip's `P53`/`P55`: the board route below (`mad-emulator`,
 until the e2e moves onto `mad-cosim.toml`), the `p2core` and `p2iss` suites,
