@@ -3,7 +3,7 @@
 # [catalog] crates, and mad-runner, beside it, is the embsim command over it.
 [package]
 name = "mad-catalog"
-description = "MaD's own embsim kinds: the Edge carrier and the DS2 force-gauge add-on as board kinds"
+description = "MaD's own embsim kinds: the Edge carrier and the DS2 force-gauge add-on as board kinds, the machine as a bench component, and the ISS as the P2's core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -18,6 +18,13 @@ embsim-boards = { path = "../embsim/boards" }
 # The virtual clock: the instant a component starts at, which its wakes
 # count from.
 embsim-core = { path = "../embsim/core" }
+# The machine's drive, encoder and contacts (mad-machine).
+embsim-models = { path = "../embsim/models" }
+# MaD's own mechanics: the gantry, the sample and the strain gauge.
+models = { path = "../models" }
+# The instruction-set simulator as the P2 package's core (mad-p2iss), and
+# its boot ROM.
+p2iss = { path = "../p2iss" }
 
 [dev-dependencies]
 # The tests run MaD's projects as the runner does, in process.
