@@ -779,13 +779,32 @@ every page's `navigator.serial` is its shim, whose one port is this line (USB
 the `chrome-cdp` kind), as a project file names it (`SIL/MaDSim/src/host.rs`),
 and a failure it reports (a grant that sticks, a page that crashes, a Chrome
 that exits) stops the run with a non-zero exit. The run prints Chrome's
-DevTools URL in its "reached" line; the e2e suite attaches there
+DevTools URL in its "reached" line; a suite attaches there
 ([SIL testing](sil-testing.md#the-board-route-the-app-in-chrome-on-the-boards-clock)).
+The playgrounds keep this route until embsim `MIGRATING-MAD.md` step 11.
+
+The e2e runs on the machine's project instead (step 10): `make e2e-emulator`
+is `embsim run mad-cosim.toml`, whose `HOST` is the same kind on the
+carrier's debug header `J1` (USB `0403:6015`, DevTools on 9222, the port
+granted to every origin), the module booting the production image off its
+flash. Measured on an Apple M2, 2026-10-21, one board per scenario
+(`BOARD_PER_SCENARIO=1`): the per-PR subset, ten scenarios, passed in 506 s of
+host time, boards included, and BUNDLE-live on the bundle in 161 s; the
+firmware's boot off the flash is about 1.2 s of board time at the start of
+each board, and the board then ran at about 0.1x with the app attached. The
+production image's boot line goes out on `P62` at the console's rate,
+which the node's receiver at 2,000,000 baud reads as framing errors (27 in
+a run, measured). The carriage never moves there:
+`IC14` as drawn passes nothing to the drive, the run's summary says
+`0 steps commanded`, and the firmware latches `SERVO_STALL` at the first
+move it commands (measured, G2+G3+H2+I), so the suite skips each scenario
+that moves the carriage, saying why (`run-all.mjs`, `PROJECT_CANNOT`).
 
 | Target | Host |
 |---|---|
-| `make playground`, `playground-iss` | Chrome, a window on the app |
-| `make playground-rom` | Chrome, a window on the app's flasher, on the programming UART (`P62`/`P63`, USB `0403:6015`) |
-| `make e2e-emulator`, `make e2e` | Chrome, headless, DevTools on 9222 |
-| `make e2e-rom` | Chrome, headless, the mask ROM on the programming UART (USB `0403:6015`), for FW-ISS |
-| `make playground-pty` | a PTY at `/tmp/tty.iss`, for a serial console |
+| `make playground`, `playground-iss` | `mad-emulator`: Chrome, a window on the app |
+| `make playground-rom` | `mad-emulator`: Chrome, a window on the app's flasher, on the programming UART (`P62`/`P63`, USB `0403:6015`) |
+| `make e2e-emulator`, `make e2e`, `make e2e-bundle` | `mad-cosim.toml`: Chrome, headless, on `J1` (USB `0403:6015`), DevTools on 9222 |
+| `make e2e-rom` | `mad-emulator`: Chrome, headless, the mask ROM on the programming UART (USB `0403:6015`), for FW-ISS |
+| `make playground-pty` | `mad-emulator`: a PTY at `/tmp/tty.iss`, for a serial console |
+| `embsim run mad.toml --pty PATH` | `mad.toml`: a PTY on `J1` (`mad-catalog/tests/pty_protocol.rs`) |

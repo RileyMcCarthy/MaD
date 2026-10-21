@@ -2,17 +2,25 @@
 # `control-e2e-board` job (ci.yml) runs a subset of.
 #
 # ONE configuration, deliberately: the only one a browser belongs in. The
-# shipped P2 image (propeller2_debug, compiled by flexcc) is interpreted by
-# the ISS, and MaD Control runs in the runner's own Chrome, every page and
-# dedicated worker held to the board's clock by embsim's `chrome-cdp` node
-# (`mad-emulator --chrome`), its Web Serial port the board's protocol line.
-# Every budget in the suite is board time; host time is printed, never
-# asserted. No image, no VM.
+# shipped P2 image is interpreted by the ISS, and MaD Control runs in the
+# runner's own Chrome, every page and dedicated worker held to the board's
+# clock by embsim's `chrome-cdp` node, its Web Serial port the board's
+# protocol line. The board is the machine's project, SIL/mad-cosim.toml,
+# under `embsim run` (`make e2e`; embsim MIGRATING-MAD.md step 10): the
+# production firmware (pio env propeller2) booted off the P2-EC32MB's
+# flash, the node on the Edge carrier's debug header J1. Every budget in
+# the suite is board time; host time is printed, never asserted. No image,
+# no VM.
+#
+# On the project as drawn the carriage never moves (IC14's secondary
+# grounds are on a net of their own; SIL/mad.toml), so the suite skips the
+# scenarios that move it, each saying why (run-all.mjs, PROJECT_CANNOT):
+# the motion matrices, the waveforms, the run lifecycle with moves, the
+# mid-test drop and SERVO-stall.
 #
 # Not per-PR because a PR cannot afford it: the ISS runs at a few percent of
-# real time, so the whole suite is hours of host time (PR #155 measured it
-# locally). ci.yml is the source of truth for which jobs gate; do not infer
-# it from here.
+# real time, so the whole suite is an hour or more of host time. ci.yml is
+# the source of truth for which jobs gate; do not infer it from here.
 #
 # The node's Chrome canary runs first: embsim-cdp's real-Chrome case in which
 # a dedicated worker's 4 ms timer must tick once every four 1 ms grants. It
@@ -23,7 +31,8 @@
 # WHAT STILL DOES NOT TOUCH THE BOARD: A1 and FW1/2/3/5/6/7/8/9 drive a host
 # Chrome against in-page fakes (installFakeBootRom, installOpfsDataDir); they
 # run here and in `control-e2e-boardless` alike. FW-ISS runs in a step of
-# its own, on the ROM board (`mad-emulator --boot-rom --chrome`, make e2e-rom).
+# its own, on mad-emulator's ROM board (`mad-emulator --boot-rom --chrome`,
+# make e2e-rom), which moves onto the project's serial boot at step 11.
 #
 # Use `workflow_dispatch` with suite=smoke to run e2e/smoke-ids.txt instead.
 
@@ -100,11 +109,17 @@ jobs:
       - name: Install the Propeller platform (flexcc/flexspin)
         working-directory: Firmware/MaDCore
         run: pio pkg install --platform https://github.com/RileyMcCarthy/platform-propeller.git
-      - name: Build the P2 image the ISS interprets
-        working-directory: Firmware/MaDCore
-        run: pio run -e propeller2_debug
-      # --release is not optional: the ISS interprets every P2 instruction.
-      - name: Build mad-emulator (release)
+      # The production image, laid out in the module's flash, and the card
+      # (make flash-image sd-image), then `embsim check` on the four project
+      # files, which builds the embsim tool and mad-runner (--release: the
+      # ISS interprets every P2 instruction).
+      - name: The images, the runner and the project files (make check)
+        working-directory: SIL
+        env:
+          CHROME: /usr/bin/google-chrome
+        run: make check
+      # FW-ISS's board: mad-emulator booting the mask ROM (no firmware image).
+      - name: Build mad-emulator (release), for FW-ISS
         working-directory: SIL
         run: |
           make protocol
@@ -121,13 +136,13 @@ jobs:
         working-directory: Software/Control
         run: npx playwright install --with-deps chromium
 
-      # scripts/board-route.sh starts the dev server, then for each scenario
-      # a fresh board with a headless Chrome on its clock (DevTools on 9222),
-      # waits for the run's "reached" line, runs that scenario attached there,
-      # and stops the board. One board each, so the node's occasional stall
-      # while the app's worker boots (ci.yml, control-e2e-board) costs one
-      # scenario, not the rest of the night.
-      - name: Run the suite on the ISS
+      # `make e2e` starts the dev server, then for each scenario a fresh
+      # board (`embsim run mad-cosim.toml`, its headless Chrome's DevTools
+      # on 9222), waits for the run's "reached" line, runs that scenario
+      # attached there, and stops the board. One board each, so the node's
+      # occasional stall while the app's worker boots (ci.yml,
+      # control-e2e-board) costs one scenario, not the rest of the night.
+      - name: Run the suite on the project
         working-directory: SIL
         env:
           CHROME: /usr/bin/google-chrome
@@ -139,16 +154,17 @@ jobs:
           if [ "$SUITE" = "smoke" ]; then
             export SCENARIOS=$(grep -v -e '^#' -e '^[[:space:]]*$' ../Software/Control/e2e/smoke-ids.txt | paste -sd, -)
           fi
-          scripts/board-route.sh e2e
+          make e2e
 
       # FW-ISS: the app's flasher against the ISS booting the mask ROM, on
-      # the programming UART (make e2e-rom).
+      # the programming UART (make e2e-rom), on mad-emulator's board.
       - name: Run FW-ISS on the ROM board
         if: always()
         working-directory: SIL
         env:
           CHROME: /usr/bin/google-chrome
           BOARD_LOGS: /tmp/e2e-out/rom
+          BOARD_ROUTE: emulator
           P2_IMAGE: p2iss/rom/rom_booter_v33k.bin
           BOARD_ARGS: --boot-rom --usb-product-id 0x6015
           E2E_BOARD: rom

@@ -11,7 +11,9 @@ abstractions (SIL serial, OPFS data folder) live in the harness — never in `sr
 > `ci-gate.needs`). The nightly runs the whole suite. The scenarios that touch the
 > board run on one SIL configuration only: the P2 image on the ISS with the app in
 > the host's Chrome, every page and worker held to the board's clock by embsim's
-> `chrome-cdp` (`mad-emulator --chrome`; `cd SIL && make e2e`). Do not run the
+> `chrome-cdp`, on the machine's project (`SIL/mad-cosim.toml`, `cd SIL && make
+> e2e`). The project as drawn cannot move the carriage, so the suite skips the
+> scenarios that move it there, saying why (`PROJECT_CANNOT`). Do not run the
 > suite against the ISS behind the WS bridge (the bridge's `MAD_PTY` on
 > `make playground-pty`'s `/tmp/tty.iss`): that measures the host, not the
 > machine.
@@ -23,7 +25,7 @@ abstractions (SIL serial, OPFS data folder) live in the harness — never in `sr
 | Layer | Tool | Scope | Command |
 |---|---|---|---|
 | Rust unit | `cargo test` | protocol core (framing, queue, storage, client) | `cd Protocol/ProtoEmb/runtime && cargo test` |
-| MaDSim PTY smoke | `cargo test -p mad-emulator --test pty_protocol` | boot emulator, one `firmware_version` round-trip, no Chrome | `cd SIL && make test` |
+| Project PTY round trip | `cargo test -p mad-catalog --test pty_protocol` | `SIL/mad.toml` run live on a PTY, one `firmware_version` round trip, no Chrome | `cd SIL && make test` |
 | TS unit | `vitest` (`src/**/*.test.ts`) | domain, codec, device policy, storage, firmware loader, diagnostics | `npm test` |
 | E2E smoke | Playwright | 20 IDs in `e2e/smoke-ids.txt` | `npm run e2e:smoke` |
 | E2E full | Playwright | 49 scenarios in `e2e/run-all.mjs` (parity + matrices M8–M11 + FW*) | `npm run e2e` |
@@ -53,7 +55,8 @@ Pure, no DOM/device needed. Current files cover:
 ## 3. E2E harness
 
 Built on `e2e/fixtures.mjs`. On the board route (`CDP_URL` set) it attaches to
-the Chrome `mad-emulator --chrome` launched, makes a fresh browser context per
+the Chrome the board's run launched (`embsim run mad-cosim.toml`, `make
+e2e-emulator`), makes a fresh browser context per
 scenario and its page at about:blank, and installs no serial fake: the node's
 shim is `navigator.serial`, its one port the board's protocol line. It overrides
 `showDirectoryPicker` to return an **OPFS** directory. That context is off the

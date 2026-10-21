@@ -9,10 +9,10 @@
 #   make playground-iss - The same target, under the name it had beside the native one
 #   make playground-pty - The ISS on a PTY at /tmp/tty.iss, for a serial console
 #   make playground-rom - The ISS mask ROM, the app's flasher in a Chrome window on the board's clock
-#   make e2e-emulator   - The ISS with a headless Chrome on the board's clock; prints the DevTools URL
-#   make e2e            - All of it, headless, and the e2e suite against it (SCENARIOS selects)
-#   make e2e-rom        - FW-ISS: the app's flasher against the ISS's mask ROM, headless
-#   make e2e-bundle     - BUNDLE-live: the built bundle (as pages.yml builds it) on the board, headless
+#   make e2e-emulator   - mad-cosim.toml under embsim run: the machine, a headless Chrome on J1; prints the DevTools URL
+#   make e2e            - The app served, e2e-emulator's board and the e2e suite against it (SCENARIOS selects)
+#   make e2e-rom        - FW-ISS: the app's flasher against the ISS's mask ROM, headless (mad-emulator)
+#   make e2e-bundle     - BUNDLE-live: the built bundle (as pages.yml builds it) on e2e-emulator's board
 #   make flash-image    - build/flash.bin: stage-1 and the production image, the module's boot flash
 #   make sd-image       - build/sd.img: a 32 MiB FAT16 card mirroring ./sd
 #   make check          - embsim check on MaD's four project files (mad*.toml)
@@ -20,13 +20,16 @@
 #
 # There is ONE configuration a browser belongs in: the P2 image on the ISS,
 # with the app in the host's Chrome held to the board's clock by embsim's
-# `chrome-cdp` node (`mad-emulator --chrome`, embsim MIGRATING-MAD.md step
-# 1b). Every page and dedicated worker in that Chrome lives the board's time,
-# a 1 ms quantum at a time over DevTools, and its Web Serial port is the
-# node's, on the board's protocol pins. A browser on the host's own clock
-# (behind a PTY, or the WS bridge) measures the host, not the machine: the ISS
-# interprets every instruction at a few percent of real time, and the app's
-# 2 s response timeout would fire at a fraction of that in the board's time.
+# `chrome-cdp` node. Every page and dedicated worker in that Chrome lives the
+# board's time, a 1 ms quantum at a time over DevTools, and its Web Serial
+# port is the node's, on the board's protocol pins. The e2e runs it on the
+# machine's project, mad-cosim.toml (embsim MIGRATING-MAD.md step 10), the
+# node on the carrier's debug header J1; the playgrounds run it on
+# mad-emulator (`--chrome`, step 1b) until step 11. A browser on the host's
+# own clock (behind a PTY, or the WS bridge) measures the host, not the
+# machine: the ISS interprets every instruction at a few percent of real
+# time, and the app's 2 s response timeout would fire at a fraction of that
+# in the board's time.
 
 FIRMWARE_DIR = ../Firmware/MaDCore
 # The P2 image mad-emulator and the p2core/p2iss suites execute: the debug
@@ -121,37 +124,48 @@ playground-iss: playground
 playground-pty: p2image emulator-release
 	$(EMULATOR) $(P2_IMAGE) --sd-path ./sd --pty-path /tmp/tty.iss --log-level info
 
-# The board route for a person, headless: the ISS with Chrome on the board's
-# clock and nothing open, DevTools on DEVTOOLS_PORT. Once the run prints its
-# "reached ... DevTools at http://127.0.0.1:9222" line (Chrome held; a page
-# made before then is not on the board's clock), with the app served
-# (`npm run dev`):
-#   cd ../Software/Control && CDP_URL=http://127.0.0.1:9222 E2E_JAM_FILE=/tmp/mad-sil.jam npm run e2e
-# Ctrl-C stops the board and its Chrome. The carriage jams while JAM_FILE
-# exists (the SERVO-stall scenario's lever; the suite's E2E_JAM_FILE).
-DEVTOOLS_PORT ?= 9222
-JAM_FILE ?= /tmp/mad-sil.jam
-e2e-emulator: p2image emulator-release
-	$(EMULATOR) $(P2_IMAGE) --sd-path ./sd --chrome --headless --granted --devtools-port $(DEVTOOLS_PORT) --jam-file $(JAM_FILE) --log-level info
+# The e2e's board (embsim MIGRATING-MAD.md step 10): the machine's project
+# with the host's Chrome on the carrier's debug header J1, mad-cosim.toml,
+# run by the embsim tool. The module boots the production firmware off its
+# flash (flash-image) with its card in its socket (sd-image); the chrome-cdp
+# node launches Chrome headless at the run's first slice, its DevTools on
+# 9222 (the file's devtools_port), its one Web Serial port the line on J1,
+# USB 0403:6015, granted to every origin. The run is unpaced: the page lives
+# only the time the board grants it. It runs until SIGTERM or Ctrl-C, then
+# prints its summary.
+E2E_PROJECT = mad-cosim.toml
+E2E_BOARD = $(EMBSIM) run $(E2E_PROJECT)
 
-# The e2e suite on the board route, start to finish: the dev server, the
-# board with a headless Chrome on its clock, the suite attached to that
+# The e2e's board for a person, headless and nothing open. Once the run
+# prints its "reached ... DevTools at http://127.0.0.1:9222" line (Chrome
+# held; a page made before then is not on the board's clock), with the app
+# served from the host (`npm run dev`, on 5174):
+#   cd ../Software/Control && CDP_URL=http://127.0.0.1:9222 npm run e2e
+# Ctrl-C stops the board and its Chrome.
+e2e-emulator: flash-image sd-image
+	$(E2E_BOARD)
+
+# The e2e suite on e2e-emulator's board, start to finish: the app served (the
+# dev server, started unless one answers on APP_PORT), the project checked
+# (which builds mad-runner), e2e-emulator's board, the suite attached to its
 # Chrome, then everything stopped. `make e2e SCENARIOS=B1+C1,F7` runs a
 # subset; `BOARD_PER_SCENARIO=1` gives each scenario a fresh board (what CI
 # does), so a board that stops costs one scenario; logs land in
 # target/board-route/.
-e2e: p2image emulator-release
-	scripts/board-route.sh e2e
+e2e: flash-image sd-image
+	$(EMBSIM) check $(E2E_PROJECT)
+	EMBSIM="$(EMBSIM)" E2E_PROJECT=$(E2E_PROJECT) scripts/board-route.sh e2e
 
 # BUNDLE-live: the app as it ships. The bundle is built as pages.yml builds it
-# (the Pages base path) and served by `vite preview`, on a headless board. The
-# dev server compiles for the newest Chrome and the bundle for the app's
-# browser floor, so a fault the bundler brings in shows only here.
+# (the Pages base path) and served by `vite preview`, on e2e-emulator's
+# board. The dev server compiles for the newest Chrome and the bundle for the
+# app's browser floor, so a fault the bundler brings in shows only here.
 BUNDLE_BASE = /MaD/app/
 BUNDLE_DIR = $(abspath target/board-route/bundle)
-e2e-bundle: p2image emulator-release
+e2e-bundle: flash-image sd-image
+	$(EMBSIM) check $(E2E_PROJECT)
 	cd ../Software/Control && ./node_modules/.bin/vite build --base=$(BUNDLE_BASE) --outDir $(BUNDLE_DIR) --emptyOutDir
-	APP_DIST=$(BUNDLE_DIR) APP_BASE=$(BUNDLE_BASE) SCENARIOS=BUNDLE-live scripts/board-route.sh e2e
+	APP_DIST=$(BUNDLE_DIR) APP_BASE=$(BUNDLE_BASE) SCENARIOS=BUNDLE-live EMBSIM="$(EMBSIM)" E2E_PROJECT=$(E2E_PROJECT) scripts/board-route.sh e2e
 
 # The module's boot flash: embsim's stage-1 loader, then the production
 # image behind it, as the P2's ROM boots it off the flash (`embsim
@@ -201,10 +215,11 @@ playground-rom: emulator-release
 
 # FW-ISS on the ROM board: the app's flasher, in a headless Chrome on the
 # board's clock, writing the program into the module's flash through the
-# mask ROM on the programming UART (USB 0403:6015). The e2e suite's other
-# scenarios need the firmware's board (make e2e).
+# mask ROM on the programming UART (USB 0403:6015). Still mad-emulator's
+# ROM board (BOARD_ROUTE=emulator), as the playgrounds are; the e2e suite's
+# other scenarios need the firmware's board (make e2e).
 e2e-rom: emulator-release
-	P2_IMAGE=$(ROM_IMAGE) BOARD_ARGS="--boot-rom --usb-product-id 0x6015" E2E_BOARD=rom SCENARIOS=FW-ISS scripts/board-route.sh e2e
+	BOARD_ROUTE=emulator P2_IMAGE=$(ROM_IMAGE) BOARD_ARGS="--boot-rom --usb-product-id 0x6015" E2E_BOARD=rom SCENARIOS=FW-ISS scripts/board-route.sh e2e
 
 # Clean build artifacts
 clean:

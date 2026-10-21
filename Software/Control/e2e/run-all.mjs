@@ -6,14 +6,18 @@
  *
  * ONE configuration touches the board: the shipped P2 image interpreted by
  * the ISS, with the app in the host's Chrome held to the board's clock by
- * embsim's `chrome-cdp` node (`mad-emulator --chrome`). Every page and
- * dedicated worker lives the board's time, a 1 ms quantum at a time over
- * DevTools, and the page's Web Serial port is the node's, on the board's
- * protocol pins. The browser cannot outrun the board, because it lives only
- * the time the board grants it. Locally:
- *   cd SIL && make e2e-emulator          # prints "DevTools at http://127.0.0.1:PORT"
+ * embsim's `chrome-cdp` node. Every page and dedicated worker lives the
+ * board's time, a 1 ms quantum at a time over DevTools, and the page's Web
+ * Serial port is the node's, on the board's protocol pins. The browser
+ * cannot outrun the board, because it lives only the time the board grants
+ * it. The board is the machine's project, SIL/mad-cosim.toml, under `embsim
+ * run` (embsim MIGRATING-MAD.md step 10): the Edge carrier and the P2-EC32MB
+ * module as drawn, the production firmware booted off the module's flash,
+ * and the node on the carrier's debug header J1, where the machine's Prop
+ * Plug sits (USB 0403:6015). Locally:
+ *   cd SIL && make e2e-emulator          # prints "DevTools at http://127.0.0.1:9222"
  *   npm run dev                          # the app, on the host
- *   CDP_URL=http://127.0.0.1:PORT npm run e2e
+ *   CDP_URL=http://127.0.0.1:9222 npm run e2e
  * (`make e2e` in SIL/ does all three and stops what it started.)
  *
  * Every budget on that route is board time: a locator's `waitFor` timeout,
@@ -26,9 +30,15 @@
  * M11-mid-test-drop) pull the node's cable (`__embsim.link`): the port's
  * streams error with NetworkError, `disconnect` fires, and on the plug the
  * port returns as a new SerialPort with `connect`, which the app answers by
- * reconnecting to the port whose USB ids (0403:6001) it remembers.
+ * reconnecting to the port whose USB ids (0403:6015) it remembers.
  *
- * SERVO-stall jams the board's carriage by creating E2E_JAM_FILE, the file
+ * What the project as drawn cannot do, the suite skips there, saying why
+ * (`PROJECT_CANNOT`, below): the carriage never moves, since the isolator
+ * IC14 between the processor and the drive has its secondary grounds on a
+ * net of their own (SIL/mad.toml; mad-catalog/tests/mad.rs), and the
+ * project's machine has no jam. `E2E_BOARD_ROUTE=emulator` attaches the
+ * suite to `mad-emulator --chrome` instead (the playgrounds' board), where
+ * SERVO-stall jams the carriage by creating E2E_JAM_FILE, the file
  * mad-emulator watches (`--jam-file`); board-route.sh sets both.
  *
  * Without CDP_URL only the board-free scenarios run: A1 and
@@ -41,8 +51,8 @@
  *
  * FW-ISS (the app flashing the ISS's mask ROM) needs the ROM board, not the
  * firmware's: `mad-emulator --boot-rom --chrome` (`cd SIL && make e2e-rom`,
- * which sets E2E_BOARD=rom). On that board it is the only scenario that runs;
- * on the firmware's it is skipped.
+ * which sets E2E_BOARD=rom and E2E_BOARD_ROUTE=emulator). On that board it
+ * is the only scenario that runs; on the firmware's it is skipped.
  *
  * Covers the parity-critical scenarios of docs/TEST_PLAN.md §4: A1, B1–B5, C1/C3/C4, D1/D2/D3,
  * E1, F1/F2/F4/F6/F7, G1/G2/G3 + G-limit, H1–H5, I1–I4, J1 (in G-limit), K1 (in B2+B3+B4) — plus
@@ -76,6 +86,7 @@ import {
   waitPageTime,
   restoreLink,
   takePageTime,
+  BOARD_ROUTE,
 } from './fixtures.mjs';
 import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -99,6 +110,43 @@ const BOARD_FREE = new Set(['A1', 'FW1', 'FW2', 'FW3', 'FW5', 'FW6', 'FW7', 'FW8
 // The board is the mask ROM, not the firmware: `mad-emulator --boot-rom
 // --chrome` (make e2e-rom). Only FW-ISS, the app flashing that ROM, runs.
 const ROM_BOARD = process.env.E2E_BOARD === 'rom';
+
+// The scenarios that command the carriage to move: a jog, a home, or a test
+// profile with a linear or waveform move. Each asserts on that motion, or on
+// a test that runs while the carriage follows its setpoint.
+const MOVES = new Set([
+  'G2+G3+H2+I', 'G-limit', 'TC1-multiset', 'M13-jog-endpoint', 'M13-home-endpoint',
+  ...MATRIX.M12_linear_um.map((cell) => cell.id), 'M12-dwell', 'M12-wave-hold', 'M12-wave-skew',
+  ...MATRIX.M10_waveform.map((wf) => wf.id), 'TC4-dwell', 'TC6-disable-stops', 'TC11-velocity',
+  'VT-linear', 'TC14-jog', ...MATRIX.M8_jog.map((cell) => cell.id), 'M11-mid-test-drop',
+  'D2-settled-jog', 'D3+SR-slack', ...MATRIX.M9_force_slack.map((cell) => cell.id),
+  'P1-precision', 'BB-back-to-back', 'TM-busy-restart', 'TM-manual-gate', 'SERVO-stall',
+]);
+
+// What the machine's project as drawn cannot do (BOARD_ROUTE 'project':
+// SIL/mad-cosim.toml), each with why. The suite skips these there, named in
+// SCENARIOS or not, saying so; a run in which every scenario was skipped
+// fails, since it checked nothing. E2E_PROJECT_CANNOT=run runs them anyway,
+// for a change to the board, its file or the kinds that may lift the
+// reason.
+//
+// The carriage: IC14, the isolator between the processor and the drive, has
+// its secondary ground pins (9, 15) on a net of their own with only C26 on
+// it, so nothing it drives reaches the drive's STEP, DIR and ENA (read:
+// Hardware/EdgeBoard/KiCad; SIL/mad.toml; mad-catalog/tests/mad.rs). The
+// run's summary says "0 steps commanded" with the encoder at 0 counts, and
+// the firmware latches SERVO_STALL at the first move it commands
+// (measured, G2+G3+H2+I on mad-cosim.toml). Whether the machine's carrier is
+// bodged there is not known; the file keeps the board as drawn.
+const IC14_WHY =
+  'needs the carriage to move: IC14 as drawn passes nothing to the drive (SIL/mad.toml, "The machine on the carrier\'s connectors")';
+const PROJECT_CANNOT = new Map([...MOVES].map((id) => [id, IC14_WHY]));
+// The project's machine has no jam: a lever a stepped kind cannot take from
+// a file the wall clock polls (mad-catalog/src/machine.rs, "Not modelled").
+PROJECT_CANNOT.set('SERVO-stall', `jams the carriage, which the project's machine cannot (SIL/mad-catalog/src/machine.rs, "Not modelled"), and ${IC14_WHY}`);
+const RUN_CANNOT = process.env.E2E_PROJECT_CANNOT === 'run';
+/** Why `id` cannot run on this board, or '' when it can. */
+const cannot = (id) => (BOARD && BOARD_ROUTE === 'project' && !RUN_CANNOT && PROJECT_CANNOT.get(id)) || '';
 
 // The app is the built bundle (board-route.sh with APP_DIST sets this), not
 // the dev server. BUNDLE-live runs only then; every other scenario runs on
@@ -2786,7 +2834,7 @@ const scenarios = [
       if (!jamFile) {
         throw new Error(
           'SERVO-stall needs E2E_JAM_FILE, the file mad-emulator was given as --jam-file ' +
-            '(board-route.sh sets both; make e2e-emulator uses /tmp/mad-sil.jam)',
+            '(board-route.sh sets both with BOARD_ROUTE=emulator; the project has no jam)',
         );
       }
       const free = () => rmSync(jamFile, { force: true });
@@ -3165,7 +3213,8 @@ async function main() {
   }
   // `--list`: the ids SCENARIOS selects (all of them without it), in the
   // suite's order, one a line: FW-ISS only on the ROM board, BUNDLE-live only
-  // on the built bundle, and each left out otherwise.
+  // on the built bundle, and each left out otherwise. What this board cannot
+  // run is left out too, and said on stderr with why.
   // SIL/scripts/board-route.sh runs them one board each from this.
   if (process.argv.includes('--list')) {
     const only = process.env.SCENARIOS ? new Set(process.env.SCENARIOS.split(',').map((x) => x.trim())) : null;
@@ -3175,7 +3224,8 @@ async function main() {
         (s.id !== 'BUNDLE-live' || APP_IS_BUNDLE) &&
         (!only || only.has(s.id))
       ) {
-        console.log(s.id);
+        if (cannot(s.id)) console.error(`  ~ ${s.id}: skipped (${cannot(s.id)})`);
+        else console.log(s.id);
       }
     }
     return;
@@ -3232,7 +3282,7 @@ async function main() {
     if (needBoard.length) {
       console.error(
         `✗ ${needBoard.join(', ')} touch the board: set CDP_URL to the DevTools URL of ` +
-          '`mad-emulator --chrome` (cd SIL && make e2e-emulator), or run `make e2e` in SIL/.',
+          'the board\'s run (cd SIL && make e2e-emulator), or run `make e2e` in SIL/.',
       );
       process.exit(2);
     }
@@ -3257,6 +3307,11 @@ async function main() {
     }
     if (s.id === 'BUNDLE-live' && !APP_IS_BUNDLE) {
       console.log(`  ~ ${s.id}: skipped (needs the built bundle: board-route.sh with APP_DIST)`);
+      skipped += 1;
+      continue;
+    }
+    if (cannot(s.id)) {
+      console.log(`  ~ ${s.id}: skipped (${cannot(s.id)})`);
       skipped += 1;
       continue;
     }
@@ -3333,6 +3388,10 @@ async function main() {
   }
 
   console.log(`\n${pass}/${selected.length - skipped} scenarios passed${skipped ? `, ${skipped} skipped` : ''}${only ? ' (filtered)' : ''}`);
+  if (selected.length > 0 && skipped === selected.length) {
+    console.log('✗ every scenario selected was skipped: this run checked nothing');
+    process.exit(1);
+  }
   if (failures.length) {
     console.log('\nFailures:');
     for (const f of failures) console.log(`  - ${f}`);

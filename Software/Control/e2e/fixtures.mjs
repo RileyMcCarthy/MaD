@@ -5,9 +5,10 @@
  * normal code paths run unchanged against:
  *
  *   - `navigator.serial`: on the board route, the shim of the `chrome-cdp`
- *     node `mad-emulator --chrome` runs (the board's protocol line, in a
- *     Chrome the board's clock meters; see "Board mode" below). Elsewhere a
- *     fake SerialPort over a WebSocket bridge (the hardware harness).
+ *     node of `embsim run mad-cosim.toml` (the host on the carrier's debug
+ *     header J1, in a Chrome the board's clock meters; see "Board mode"
+ *     below). Elsewhere a fake SerialPort over a WebSocket bridge (the
+ *     hardware harness).
  *   - `showDirectoryPicker()` → an OPFS directory (real FileSystemDirectoryHandle,
  *     no dialog, no permission prompt), installed by `page.addInitScript`.
  *
@@ -82,13 +83,15 @@ export const chromium =
 
 /**
  * Board mode: `CDP_URL` names the DevTools endpoint of the host's Chrome that
- * `mad-emulator --chrome` launched (embsim's `chrome-cdp` node; the run
- * prints "DevTools at http://127.0.0.1:PORT" once Chrome is reached). That
- * Chrome lives the board's time: every page and dedicated worker is held to
- * the board's clock over DevTools, a 1 ms quantum at a time, and every
- * page's `navigator.serial` is the node's shim, whose one port is the
- * board's protocol line (USB 0403:6001, granted to every origin with
- * `--granted`). So in this mode:
+ * the board's run launched: the `chrome-cdp` node of `embsim run
+ * mad-cosim.toml` (`make e2e-emulator`; the run prints "DevTools at
+ * http://127.0.0.1:PORT" once Chrome is reached). That Chrome lives the
+ * board's time: every page and dedicated worker is held to the board's clock
+ * over DevTools, a 1 ms quantum at a time, and every page's
+ * `navigator.serial` is the node's shim, whose one port is the host's line
+ * on the carrier's debug header J1, where the machine's Prop Plug sits (USB
+ * `E2E_PORT_USB`, 0403:6015, granted to every origin: the project's
+ * `granted = true`). So in this mode:
  *
  *   - pages are made in a fresh browser context per scenario, at about:blank,
  *     then navigated (Chrome holds a page made that way from birth; one made
@@ -719,13 +722,44 @@ export function setCurrentScenario(id) {
 }
 
 /**
+ * Which board the suite is attached to (SIL/scripts/board-route.sh sets it):
+ *
+ *   - `project`, the default: the machine's project, `embsim run
+ *     mad-cosim.toml` (`make e2e-emulator`): the carrier and the module as
+ *     drawn, the production firmware off the module's flash, the host on J1;
+ *   - `emulator`: `mad-emulator --chrome`, the debug firmware on the bare
+ *     chip, the host on P53/P55 (the playgrounds, and the ROM board).
+ */
+export const BOARD_ROUTE = process.env.E2E_BOARD_ROUTE || 'project';
+
+/**
+ * The USB ids of the board's port, `VVVV:PPPP` in hex. The project's
+ * `chrome-cdp` names them (SIL/mad-cosim.toml: 0403:6015, an FTDI FT231X,
+ * the chip in the Prop Plug on J1); `mad-emulator --chrome` reports an
+ * FT232R's, 0403:6001, unless `--usb-product-id` says otherwise.
+ */
+export const PORT_USB =
+  process.env.E2E_PORT_USB || (BOARD_ROUTE === 'emulator' ? '0403:6001' : '0403:6015');
+
+/**
+ * `PORT_USB` as the Connect screen labels the port: "USB 403:6015", the ids
+ * in lower-case hex without their leading zeros (Connect.tsx, `portName`).
+ * The row's text runs on into its buttons ("…6015ConnectForget"), so the
+ * id ends where lower-case hex does.
+ */
+const PORT_LABEL = (() => {
+  const [vid, pid] = PORT_USB.split(':').map((hex) => Number.parseInt(hex, 16).toString(16));
+  return new RegExp(`USB 0*${vid}:0*${pid}(?![0-9a-f])`);
+})();
+
+/**
  * The granted port that is the board. The bridge's fake grants exactly one;
- * on the board route the node's port is the board's FTDI (USB 0403:6001),
- * whose label is a sibling of the button in its row.
+ * on the board route the node's port is the one with the board's USB ids
+ * (`PORT_USB`), whose label is a sibling of the button in its row.
  */
 export function boardGrantedPort(page) {
   if (BOARD) {
-    return page.locator('.row', { hasText: /403:6001/i }).getByTestId('connect-granted').first();
+    return page.locator('.row', { hasText: PORT_LABEL }).getByTestId('connect-granted').first();
   }
   return page.getByTestId('connect-granted').first();
 }
