@@ -27,12 +27,14 @@ The **State** badges summarise what the machine is doing:
 - **Motion** — whether motion is enabled.
 - **Test** — whether a test is running.
 - **Fault** — something needs attention. A fault stops motion and usually needs a
-  machine reboot to clear.
+  machine reboot to clear. A servo stall is the exception: it clears when you
+  disable motion (see [Clear a servo stall](manual-control.md#clear-a-servo-stall)).
 - **Restriction** — something is currently *limiting* motion, such as an endstop
   or an open door. Restrictions clear on their own once the cause is resolved.
 
 Hover any fault or restriction badge for a plain-language explanation of that
-specific code. [States, faults & restrictions](machine-states.md) lists them all.
+specific code. While a fault is showing, its explanation also appears under the
+controls. [States, faults & restrictions](machine-states.md) lists them all.
 
 ## Live charts
 
