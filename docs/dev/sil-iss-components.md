@@ -685,9 +685,12 @@ cd SIL && make p2image && cargo build --release -p p2iss --examples
 `SIL/mad.toml` and its three twins put the host on the carrier's debug header
 `J1` (`P62`, `P63`, `GND`), where the machine's Prop Plug sits, and the
 module's flash holds the production build (`pio run -e propeller2`,
-`make flash-image`). Its MAIN channel receives on `P63` and transmits on
-`P62` at 2,000,000 baud (`HW_pins.h`, `HAL_serial_config.c`), with the
-FlexC console's own smart pins (`HAL_SERIAL_TYPE_BUILTIN`). The debug
+`make flash-image`), the route the user decided; which image the machine
+runs is open
+([board design](sil-board-simulation-design.md#the-p2-edge-module-gap)).
+Its MAIN channel receives on `P63` and transmits on `P62` at 2,000,000 baud
+(`HW_pins.h`, `HAL_serial_config.c`), with the FlexC console's own smart
+pins (`HAL_SERIAL_TYPE_BUILTIN`). The debug
 build's MAIN channel, `P53`/`P55`, cannot reach the chip on the P2-EC32MB:
 the module keeps `P40`–`P57` for its PSRAMs and has no finger for them
 ([board design](sil-board-simulation-design.md#the-p2-edge-module-gap)).
@@ -695,7 +698,7 @@ the module keeps `P40`–`P57` for its PSRAMs and has no finger for them
 `mad-catalog/tests/mad.rs` boots the production image in `P2IssCore` off the
 module's flash and sends ProtoEmb READ frames on `J1`: the firmware answers
 the version read and the state read on `P62`, at 2,000,000 baud by the rate
-the core derives. Two things differ from the debug image there:
+the core derives. Three things differ from the debug image there:
 
 - the production image still prints `Starting MaD Board` on `P62`
   (`main.c`) at the FlexC console's default rate (230,400 baud, inferred)
@@ -709,14 +712,35 @@ the core derives. Two things differ from the debug image there:
   of board time, was answered at 1.235 s (measured);
 - every state read from 1.24 s to 1.8 s of board time says the machine is
   faulted on a processor core, while the core reports all 8 cogs running
-  (measured). The firmware raises that fault when one of its cog channels
-  is not running (`app_control.c`, `dev_cogManager_isAllRunning`); which
-  channel, and whether the debug image does the same, is open. The case
-  holds only that motion is off and no test runs.
+  (measured). Which channel it is, and whether the debug image does the
+  same, is open. The case holds only that motion is off and no test runs,
+  which the fault alone makes true.
+
+The firmware raises the core fault while one of its cog channels has not
+reported itself running (`app_control.c`, `dev_cogManager_isAllRunning`).
+Eight running cogs are the main cog and all seven channels, so every channel
+was launched, and the causes that fit are these (inferred; read:
+`dev_cogManager.c`, `Main/MaD.c`):
+
+- the main cog's 100 ms loop stalling after the pass that launched the
+  channels: a channel reports itself running only from the loop's next call
+  of `dev_cogManager_run`, so a stall in `watchdog_run` or `dev_nvram_run`
+  between the two holds the fault;
+- a stack canary mismatch, which puts a running channel in its error state;
+- the CONTROL cog stalling, keeping the reading it took before the channels
+  reported running.
+
+A lock the manager could not create fits poorly: that channel stops before
+its cog is started. The core fault is first in the firmware's order, so
+while it stands it also hides a watchdog fault
+(`app_control_private_processFaults`).
 
 `mad-emulator`, the `p2core`/`p2iss` suites and `mad-catalog/tests/boot.rs`
 keep the debug image: they put the host on the bare chip's `P53`/`P55`, or
-read the log on `P62`.
+read the log on `P62`. `boot.rs`'s console case is `ec32mb_flash_boot.rs`'s
+boot said by a project file. It passes with the production image too
+(measured, 2026-10-21): no request reaches the firmware there, and the
+summary keeps `P62` at the console's rate.
 
 ## The host: Chrome on the board's clock, or a PTY
 

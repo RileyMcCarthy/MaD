@@ -47,10 +47,15 @@ carrier, the P2-EC32MB module in its socket with the ISS as its processor
 the carrier's connectors (embsim `MIGRATING-MAD.md` §1 and §4). Its host is on
 the carrier's **debug header `J1`** (`P62`, `P63` and `GND`; `RESn`, `J1.3`,
 unwired), where the machine's Prop Plug sits, and the module's flash holds the
-**production build** (`pio run -e propeller2`). That build's MAIN channel
-receives on `P63` and transmits on `P62` at 2,000,000 baud (`HW_pins.h`,
-`HAL_serial_config.c`), so the app flashes and drives the machine through the
-one adapter. Nothing sits on the Pi's connector `J4`: its line goes through
+**production build** (`pio run -e propeller2`), as the user decided
+(2026-10-21). That build's MAIN channel receives on `P63` and transmits on
+`P62` at 2,000,000 baud (`HW_pins.h`, `HAL_serial_config.c`), the pins `J1`
+carries; the app flashes over `J1` (`Software/Control/README.md`, "Firmware
+flashing"). **Open:** which image the machine runs. By default the app flashes
+a release's madEdge image, the `propeller2_debug` build, whose protocol is on
+`P53`/`P55` (`Software/Control/src/firmware/release.ts`, `pickFirmwareAsset`);
+the production build is the release's `-release.bin`, flashed only as a local
+file. Nothing sits on the Pi's connector `J4`: its line goes through
 `IC2` to the carrier's `P52`–`P55`, which the EC32MB keeps for its PSRAMs and
 has no finger for, so it cannot reach the chip
 ([board design](sil-board-simulation-design.md#the-p2-edge-module-gap)).

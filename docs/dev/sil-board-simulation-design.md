@@ -150,12 +150,13 @@ on P53/P55 runs on the PSRAM's own pins: a host on J4 received nothing
 (measured on #278's first round, before the route below). The phase-3 tier-1
 gate is that the reservation table reproduces exactly this finding.
 
-**The route, decided (2026-10-21).** The app reaches the firmware over the
-carrier's debug header J1 (P62/P63, RESn on J1.3), with the **production**
-build (pio env `propeller2`), as the machine is flashed and driven through a
-Prop Plug (`Software/Control/README.md`, "Firmware flashing"). That build's
-MAIN channel receives on P63 and transmits on P62 at 2,000,000 baud
-(`HW_pins.h`, `HAL_serial_config.c`), and J1's P62/P63 go straight to the
+**The route, decided (2026-10-21).** The user's decision: the app reaches the
+firmware over the carrier's debug header J1 (P62/P63, RESn on J1.3), with the
+**production** build (pio env `propeller2`), through a Prop Plug. The app
+flashes over J1 (`Software/Control/README.md`, "Firmware flashing", which
+covers flashing only). That build's MAIN channel receives on P63 and
+transmits on P62 at 2,000,000 baud (`HW_pins.h`, `HAL_serial_config.c`),
+and J1's P62/P63 go straight to the
 socket's fingers 50 and 49 (`mad_edge.net`). `SIL/mad.toml` and its three
 twins put the host there, the production image in the module's flash, and
 nothing on J4; `SIL/mad-catalog/tests/mad.rs` holds the protocol round trip
@@ -165,6 +166,20 @@ suites, `mad-catalog/tests/boot.rs`). Two other ways out were not taken: a
 plain P2-EC module in J3 (the socket symbol names it; embsim has no `p2-ec`
 kind or netlist), and moving the debug build's MAIN channel, which needs a
 carrier change too, since J4's RPI_RX/RPI_TX reach only IC2.
+
+**Open: which image the machine runs.** The app as shipped flashes a
+release's madEdge image by default, the `propeller2_debug` build
+(`Software/Control/src/firmware/release.ts`, `pickFirmwareAsset`; the release
+job in `.github/workflows/ci.yml`), whose protocol is on P53/P55, which the
+EC32MB cannot reach (above); the single-port production build is the
+release's `-release.bin`, which the app flashes only as a local file. The
+bench has an FT232R attached, USB `0403:6001`, beside the P2-EVAL's FT231X
+(measured: `ioreg`, 2026-10-21; what the FT232R is wired to is not known);
+`0403:6001` is the id `mad-emulator` gives its host. If the machine runs the
+madEdge image, the route needs revisiting: that image's protocol reaches the
+chip only on a module with fingers for P53/P55, such as the plain P2-EC
+(inferred). If it runs the production image, the app's default asset would
+need changing to match.
 
 **IC14, the servo isolator.** IC14 (ISO6741DWR: STEP, DIR, ENA out to the
 drive, SRDY back) has its secondary ground pins 9 and 15 on an unnamed net

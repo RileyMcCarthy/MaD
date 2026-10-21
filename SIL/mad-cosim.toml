@@ -15,11 +15,18 @@
 #                               its flash erased
 #   mad-serial-boot-cosim.toml  the ROM's serial boot     chrome-cdp on J1
 #
-# J1 is the carrier's debug header, where the machine's Prop Plug sits: the
-# app flashes the firmware through it and drives the machine through it
-# (Software/Control/README.md, "Firmware flashing"). So the firmware is the
+# J1 is the carrier's debug header, where the machine's Prop Plug sits. The
+# route is the user's decision (2026-10-21): the host on J1 and the
 # production build (pio env propeller2), whose MAIN channel, the protocol,
-# is on P62/P63, the pins J1 carries.
+# is on P62/P63, the pins J1 carries. The app flashes the firmware over J1
+# (Software/Control/README.md, "Firmware flashing").
+#
+# Open, for the user: which image the machine runs. By default the app
+# flashes a release's madEdge image, the propeller2_debug build, whose
+# protocol is on P53/P55, pins the P2-EC32MB has no finger for (read:
+# Software/Control/src/firmware/release.ts, pickFirmwareAsset; .github/
+# workflows/ci.yml, the release's two images). The production build is the
+# release's -release.bin, which the app flashes only as a local file.
 #
 #   cd SIL && make flash-image sd-image check
 #
@@ -209,13 +216,12 @@ to = "DS2.J2.2"
 volts = 0.0
 
 # Nothing on J4, the Raspberry Pi's connector: no supply and no wire. The
-# machine is driven through the Prop Plug on J1 (the host, below), and the
-# Pi's line could not reach the firmware on this module: J4's RPI_RX and
-# RPI_TX go only to the isolator IC2, whose carrier side is on P52-P55
-# (read: mad_edge.net), and the P2-EC32MB has no finger for those pins
-# (the module in its socket, above). The production firmware does not use
-# them (HAL_serial_config.c). IC2's Pi side (RPI_5V, RPI_GND) is left
-# unpowered, as it is with no Pi seated.
+# host is on J1 (below), and the Pi's line could not reach the firmware on
+# this module: J4's RPI_RX and RPI_TX go only to the isolator IC2, whose
+# carrier side is on P52-P55 (read: mad_edge.net), and the P2-EC32MB has
+# no finger for those pins (the module in its socket, above). The
+# production firmware does not use them (HAL_serial_config.c). IC2's Pi
+# side (RPI_5V, RPI_GND) is left unpowered, as it is with no Pi seated.
 
 # ---- The host's wires -------------------------------------------------------
 

@@ -753,7 +753,8 @@ fn the_firmware_answers_the_host_on_the_debug_header() {
         "state-answered",
         "the host's read of the machine's state is answered with a data frame that reads as a \
          machine with motion disabled and no test running",
-        "the firmware starts with motion off, and only the operator turns it on"
+        "the firmware starts with motion off, and only the operator turns it on; a fault \
+         holds motion off as well, so this reading also holds on a faulted machine"
     );
     expect!(
         "main-at-2m",
