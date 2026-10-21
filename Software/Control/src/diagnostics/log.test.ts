@@ -476,6 +476,31 @@ describe('sanitize', () => {
 
   behaviour(
     {
+      id: 'diag.log-sanitize-error-redacts-credentials',
+      covers: 'src/diagnostics/log.ts#sanitize',
+      given: 'an error whose message contains a GitHub token, in log data',
+      expect: {
+        'message-redacted': 'the token is replaced by a redaction marker in the kept message',
+        'stack-redacted': 'the token is replaced by a redaction marker in the kept stack',
+      },
+      why: {
+        'stack-redacted': 'error stacks are printed into the public bug report issue',
+      },
+    },
+    () => {
+      const token = `ghp_${'a1B2c3D4e5'.repeat(3)}xyz789`;
+      expect(token).toHaveLength(40);
+      const err = new Error(`GitHub API 401 for token ${token}: Bad credentials`);
+      const out = sanitize({ err })!.err as { name: string; message: string; stack: string };
+      expect(out.message).toBe('GitHub API 401 for token <redacted-credential>: Bad credentials');
+      expect(out.stack).toContain('<redacted-credential>');
+      expect(out.stack).not.toContain('ghp_');
+      expect(JSON.stringify(out)).not.toContain(token);
+    },
+  );
+
+  behaviour(
+    {
       id: 'diag.log-sanitize-drops-functions',
       covers: 'src/diagnostics/log.ts#sanitize',
       given: 'log data containing a function, a symbol, and a number',
