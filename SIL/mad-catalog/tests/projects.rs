@@ -1,8 +1,8 @@
-//! MaD's four project files hold one machine: `SIL/mad.toml` (the firmware
-//! booted off the module's flash, a `host-serial` on the Raspberry Pi's
-//! connector), `mad-cosim.toml` (the same with the host's Chrome),
-//! `mad-serial-boot.toml` (the ROM's serial boot, the flash erased, a
-//! `host-serial` on the carrier's debug header) and
+//! MaD's four project files hold one machine: `SIL/mad.toml` (the production
+//! firmware booted off the module's flash, a `host-serial` on the carrier's
+//! debug header `J1`, where the machine's Prop Plug sits), `mad-cosim.toml`
+//! (the same with the host's Chrome), `mad-serial-boot.toml` (the ROM's
+//! serial boot, the flash erased, the same host) and
 //! `mad-serial-boot-cosim.toml` (that with the host's Chrome). Each file is
 //! complete on its own, so nothing but this test keeps their shared lines
 //! the same: a supply, a wire or a jumper changed in one file and not the
@@ -150,6 +150,12 @@ fn each_cosim_file_is_its_base_with_the_hosts_chrome() {
          does on the board route today"
     );
     expect!(
+        "adapter-ids",
+        "the twin's serial port reports USB vendor 0403 and product 6015, an FTDI FT231X's",
+        "the machine's host is the Prop Plug on the debug header, and the app finds a port \
+         again after a replug by its USB ids"
+    );
+    expect!(
         "entries-but-host",
         "every board, model, component, wire, mate, switch and jumper but the host's entry is \
          the same in both"
@@ -178,6 +184,12 @@ fn each_cosim_file_is_its_base_with_the_hosts_chrome() {
         assert_eq!(
             option(&chrome, "granted").and_then(Value::as_bool),
             Some(true),
+            "{twin_name}"
+        );
+        assert_eq!(
+            ["usb_vendor_id", "usb_product_id"]
+                .map(|id| option(&chrome, id).and_then(Value::as_integer)),
+            [Some(0x0403), Some(0x6015)],
             "{twin_name}"
         );
         assert_eq!(base, twin, "{twin_name} is {base_name} but its host");
@@ -248,7 +260,7 @@ fn s301_closed(file: &mut Table) -> Vec<i64> {
 }
 
 #[test]
-fn the_serial_boot_file_is_the_flash_boot_with_the_roms_boot_and_the_debug_header() {
+fn the_serial_boot_file_is_the_flash_boot_with_the_roms_boot() {
     behaviour!(Test {
         id: "mad-project.serial-boot-twin",
         covers: Some("SIL/mad-serial-boot.toml"),
@@ -274,17 +286,20 @@ fn the_serial_boot_file_is_the_flash_boot_with_the_roms_boot_and_the_debug_heade
     );
     expect!(
         "host-on-debug-header",
-        "the serial boot's host sends to the chip's receive pin P63 and reads its transmit pin \
-         P62, on the carrier's debug header"
+        "both files' host sends to the chip's receive pin P63 and reads its transmit pin P62, \
+         on the carrier's debug header",
+        "the production build's protocol channel and the ROM's serial loader are both on P62 \
+         and P63, so one host on the debug header flashes the firmware and then drives it"
     );
     expect!(
         "host-rail",
-        "the serial boot's host has a 3.3 volt rail of its own and the carrier's ground"
+        "both files' host has a 3.3 volt rail of its own and the carrier's ground"
     );
     expect!(
-        "pi-host",
-        "the flash boot's host is on the Raspberry Pi's connector, on the Pi's 3.3 volts and \
-         ground"
+        "pi-connector-empty",
+        "both files leave the Raspberry Pi's connector J4 empty, no supply and no wire on it",
+        "the Pi's line reaches the carrier's P52 to P55 only, pins the P2-EC32MB module has no \
+         finger for"
     );
     expect!(
         "entries-identical",
@@ -292,14 +307,14 @@ fn the_serial_boot_file_is_the_flash_boot_with_the_roms_boot_and_the_debug_heade
     );
     expect!(
         "text-identical",
-        "the files are word for word the same outside their boards', host's, host wires' and \
-         scenario sections"
+        "the files are word for word the same outside their boards', host's and scenario \
+         sections"
     );
     let (flash_text, serial_text) = (read("mad.toml"), read("mad-serial-boot.toml"));
     same_but(
         ("mad.toml", &flash_text),
         ("mad-serial-boot.toml", &serial_text),
-        &["The boards", "The host", "The host's wires", "Scenario"],
+        &["The boards", "The host", "Scenario"],
     );
     let (mut flash, mut serial) = (
         parse("mad.toml", &flash_text),
@@ -321,29 +336,56 @@ fn the_serial_boot_file_is_the_flash_boot_with_the_roms_boot_and_the_debug_heade
     assert_eq!(s301_closed(&mut flash), [1, 3], "the flash boot's S301");
     assert_eq!(s301_closed(&mut serial), [1, 2], "the serial boot's S301");
 
-    let (pi, debug) = (host_wires(&mut flash), host_wires(&mut serial));
-    assert_eq!(wire_from(&pi, "HOST.TX"), Some(("EDGE.J4.3", None)));
-    assert_eq!(wire_from(&pi, "EDGE.J4.2"), Some(("HOST.RX", None)));
-    assert_eq!(wire_from(&pi, "PI.3V3"), Some(("HOST.VIO", Some(3.3))));
-    assert_eq!(wire_from(&pi, "PI.GND"), Some(("HOST.GND", None)));
-    assert_eq!(pi.len(), 4, "{pi:?}");
-    assert_eq!(wire_from(&debug, "HOST.TX"), Some(("EDGE.J1.2", None)));
-    assert_eq!(wire_from(&debug, "EDGE.J1.1"), Some(("HOST.RX", None)));
-    assert_eq!(
-        wire_from(&debug, "ADAPTER.3V3"),
-        Some(("HOST.VIO", Some(3.3)))
-    );
-    assert_eq!(wire_from(&debug, "HOST.GND"), Some(("EDGE.J1.4", None)));
-    assert_eq!(debug.len(), 4, "{debug:?}");
+    for (name, file) in [("mad.toml", &flash), ("mad-serial-boot.toml", &serial)] {
+        let on_j4: Vec<&Value> = entries(file, "wire")
+            .iter()
+            .filter(|wire| {
+                ["from", "to"]
+                    .iter()
+                    .any(|end| field(wire, end).is_some_and(|end| end.starts_with("EDGE.J4.")))
+            })
+            .collect();
+        assert!(on_j4.is_empty(), "{name} wires J4: {on_j4:?}");
+    }
+    for (name, file) in [
+        ("mad.toml", &mut flash),
+        ("mad-serial-boot.toml", &mut serial),
+    ] {
+        let debug = host_wires(file);
+        assert_eq!(
+            wire_from(&debug, "HOST.TX"),
+            Some(("EDGE.J1.2", None)),
+            "{name}"
+        );
+        assert_eq!(
+            wire_from(&debug, "EDGE.J1.1"),
+            Some(("HOST.RX", None)),
+            "{name}"
+        );
+        assert_eq!(
+            wire_from(&debug, "ADAPTER.3V3"),
+            Some(("HOST.VIO", Some(3.3))),
+            "{name}"
+        );
+        assert_eq!(
+            wire_from(&debug, "HOST.GND"),
+            Some(("EDGE.J1.4", None)),
+            "{name}"
+        );
+        assert_eq!(debug.len(), 4, "{name}: {debug:?}");
+    }
 
-    let (pi_host, debug_host) = (
+    let (flash_host, serial_host) = (
         take_component(&mut flash, "HOST"),
         take_component(&mut serial, "HOST"),
     );
-    assert_eq!(pi_host, debug_host, "both hosts are the same serial port");
+    assert_eq!(
+        flash_host, serial_host,
+        "both hosts are the same serial port"
+    );
     assert_eq!(
         flash, serial,
-        "mad-serial-boot.toml is mad.toml but its boot and its host's place"
+        "mad-serial-boot.toml is mad.toml but its boot"
     );
     for key in ["mate", "jumper", "component"] {
         assert!(!entries(&flash, key).is_empty(), "the files have [[{key}]]");

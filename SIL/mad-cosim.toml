@@ -9,13 +9,17 @@
 # where; mad-catalog/tests/projects.rs holds them to it:
 #
 #   file                        the module boots          the host
-#   mad.toml                    the firmware off flash    host-serial on J4
-#   mad-cosim.toml              the firmware off flash    chrome-cdp on J4
+#   mad.toml                    the firmware off flash    host-serial on J1
+#   mad-cosim.toml              the firmware off flash    chrome-cdp on J1
 #   mad-serial-boot.toml        the ROM's serial boot,    host-serial on J1
 #                               its flash erased
 #   mad-serial-boot-cosim.toml  the ROM's serial boot     chrome-cdp on J1
 #
-# J4 is the Raspberry Pi's connector, J1 the carrier's debug header.
+# J1 is the carrier's debug header, where the machine's Prop Plug sits: the
+# app flashes the firmware through it and drives the machine through it
+# (Software/Control/README.md, "Firmware flashing"). So the firmware is the
+# production build (pio env propeller2), whose MAIN channel, the protocol,
+# is on P62/P63, the pins J1 carries.
 #
 #   cd SIL && make flash-image sd-image check
 #
@@ -48,9 +52,13 @@ kind = "p2"
 [board.model.options]
 core = "mad-p2iss"
 
-# The module's flash, holding embsim's stage-1 and the propeller2_debug
-# program as `make flash-image` lays them out: the ROM boots the firmware
-# off it.
+# The module's flash, holding embsim's stage-1 and the production program
+# (pio env propeller2) as `make flash-image` lays them out: the ROM boots
+# the firmware off it. That build's MAIN channel receives on P63 and
+# transmits on P62 at 2 000 000 baud (Firmware/MaDCore/src/HAL/Include/
+# HW_pins.h, HW_PIN_MAIN_RX/TX; src/HAL/Config/HAL_serial_config.c, the row
+# without ENABLE_DEBUG_SERIAL). The propeller2_debug build's is P53/P55,
+# which the P2-EC32MB keeps for its PSRAMs (below), with its log on P62.
 [[board.model]]
 value = "SPI Flash 16MB (128Mb)"
 kind = "w25q128jv"
@@ -92,15 +100,16 @@ encoder_output = "rs422"
 # The host's Chrome on the serial line (embsim PROJECTS.md section 5,
 # chrome-cdp): every page and dedicated worker held to the board's clock
 # over DevTools, a 1 ms quantum at a time, its Web Serial port this line, on
-# host-serial's four pins. At the firmware's protocol rate, the MAIN
-# channel's 2 000 000 baud (Firmware/MaDCore/src/HAL/Config/
-# HAL_serial_config.c). Nothing starts at `embsim check`; `embsim run`
-# launches Chrome headless at the node's first slice and prints where its
-# DevTools are. The DevTools port is fixed so the e2e's CDP_URL holds; the
-# port is granted to every origin, as the board route grants it today
-# (--granted, SIL/scripts/board-route.sh); and its USB ids are the FT232R's,
-# 0403:6001, the board's port the e2e finds by them (Software/Control/e2e/
-# fixtures.mjs).
+# host-serial's four pins. At the production firmware's protocol rate, the
+# MAIN channel's 2 000 000 baud (the boards, above). Nothing starts at
+# `embsim check`; `embsim run` launches Chrome headless at the node's first
+# slice and prints where its DevTools are. The DevTools port is fixed so
+# the e2e's CDP_URL holds; the port is granted to every origin, as the
+# board route grants it today (--granted, SIL/scripts/board-route.sh). Its
+# USB ids, 0403:6015, are an FTDI FT231X's, the chip in Parallax's USB
+# adapters (inferred; the P2-EVAL's own Parallax FT231X reports them), as
+# the ROM route names them today (`--usb-product-id 0x6015`, SIL/makefile
+# playground-rom and e2e-rom).
 [[component]]
 name = "HOST"
 kind = "chrome-cdp"
@@ -109,7 +118,7 @@ baud = 2000000
 devtools_port = 9222
 granted = true
 usb_vendor_id = 0x0403
-usb_product_id = 0x6001
+usb_product_id = 0x6015
 
 # ---- The module in its socket, and the force cable --------------------------
 
@@ -199,57 +208,48 @@ from = "BENCH.AGND"
 to = "DS2.J2.2"
 volts = 0.0
 
-# RPI_5V: the Pi's 5 V supplies IC2's Pi side (VCC2) on J4.1. IC2's
-# thresholds on that side follow this rail, which a Pi's 3.3 V GPIO does
-# not meet (MIGRATING-MAD.md section 6, "The Pi's TX against IC2").
-[[wire]]
-from = "PI.5V"
-to = "EDGE.J4.1"
-volts = 5.0
-
-# RPI_GND, IC2's Pi-side return.
-#
-# All four files power the Pi: the serial-boot files keep it seated on J4
-# while their host, the programming adapter, is on J1, and leave its TX and
-# RX unwired. IC2 gives the carrier's P53 its default high whether or not
-# its Pi side is powered (inferred), so the serial boot runs the same with
-# the Pi there or not.
-[[wire]]
-from = "PI.GND"
-to = "EDGE.J4.6"
-volts = 0.0
+# Nothing on J4, the Raspberry Pi's connector: no supply and no wire. The
+# machine is driven through the Prop Plug on J1 (the host, below), and the
+# Pi's line could not reach the firmware on this module: J4's RPI_RX and
+# RPI_TX go only to the isolator IC2, whose carrier side is on P52-P55
+# (read: mad_edge.net), and the P2-EC32MB has no finger for those pins
+# (the module in its socket, above). The production firmware does not use
+# them (HAL_serial_config.c). IC2's Pi side (RPI_5V, RPI_GND) is left
+# unpowered, as it is with no Pi seated.
 
 # ---- The host's wires -------------------------------------------------------
 
-# The host on the Pi's connector J4, its line through the isolator IC2.
-# On the P2-EC32MB this line does not reach the chip: IC2 sits on P52-P55,
-# which the module keeps for its PSRAMs and has no finger for (above), so
-# the propeller2_debug firmware's MAIN channel (P53 receive, P55 transmit,
-# Firmware/MaDCore/src/HAL/Include/HW_pins.h) runs on the PSRAM's pins
-# instead (mad-catalog/tests/mad.rs). The conflict is recorded in
-# docs/dev/sil-board-simulation-design.md, "The P2 Edge Module gap".
+# The host on the carrier's debug header J1, the Prop Plug's: J1.1 is P62
+# (the chip's transmit: the firmware's answers, and the ROM's), J1.2 is P63
+# (its receive), J1.4 the carrier's GND. J1.1 and J1.2 go straight to the
+# socket's fingers 50 and 49, and on to the chip's P62 and P63 (read:
+# mad_edge.net, nets P62 and P63; embsim boards/netlists/p2_ec32mb.net).
+# J1.3, RESn, stays unwired: the host kinds have no modem-control pins, so
+# nothing pulses the reset, and neither boot needs it. The flash boot runs
+# from power-up, and the ROM's serial boot answers without a reset, P59's
+# pull-up (R302, the serial boot's scenario) selecting it. The app's
+# flasher resets the chip with DTR (Software/Control/README.md); no case
+# here flashes.
 
-# The host's I/O rail: a Raspberry Pi's GPIO are 3.3 V.
+# The adapter's I/O rail: the chip's P62/P63 bank (VIO_56_63) is 3.3 V.
 [[wire]]
-from = "PI.3V3"
+from = "ADAPTER.3V3"
 to = "HOST.VIO"
 volts = 3.3
 
-# The host's ground, the Pi's.
+# The host's ground, the carrier's, on J1.4.
 [[wire]]
-from = "PI.GND"
-to = "HOST.GND"
+from = "HOST.GND"
+to = "EDGE.J1.4"
 
-# RPI_RX: IC2's input INC, what the Pi sends; IC2's OUTC drives the
-# carrier's P53.
+# P63, the chip's receive pin: what the host sends.
 [[wire]]
 from = "HOST.TX"
-to = "EDGE.J4.3"
+to = "EDGE.J1.2"
 
-# RPI_TX: IC2's output OUTA, what the Pi receives; IC2's INA reads the
-# carrier's P55.
+# P62, the chip's transmit pin: what the host receives.
 [[wire]]
-from = "EDGE.J4.2"
+from = "EDGE.J1.1"
 to = "HOST.RX"
 
 # ---- The machine on the carrier's connectors --------------------------------

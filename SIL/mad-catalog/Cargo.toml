@@ -30,6 +30,12 @@ p2iss = { path = "../p2iss" }
 # The tests run MaD's projects as the runner does, in process.
 embsim-cli = { path = "../embsim/cli" }
 rstest.workspace = true
+# tests/mad.rs speaks the firmware's protocol over the debug header: the
+# frames from ProtoEmb's framing layer (the wire format the firmware's
+# generated runtime speaks), the payloads from MaD's generated Rust codec
+# (`make protocol` writes it).
+protocol = { path = "../../Protocol/rust" }
+protoemb-framing = { path = "../../Protocol/ProtoEmb/framing" }
 # tests/projects.rs compares MaD's four project files entry by entry.
 toml = "1.1"
 vibes-behaviour = { path = "../../Vibes/bindings/rust" }

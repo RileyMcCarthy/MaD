@@ -1,25 +1,24 @@
 //! `SIL/mad.toml`, the machine as it runs, stepped: the Edge carrier, the
 //! P2-EC32MB module in its socket with MaD's instruction-set simulator as
-//! its processor booting off the module's flash, the module's card, the
-//! DS2 add-on on the force cable, the machine on the carrier's connectors
-//! and a `host-serial` on the Raspberry Pi's connector `J4` (embsim
-//! `MIGRATING-MAD.md` step 9). The file is loaded with `Project::load` and
-//! built with the set `mad-runner` runs (`embsim_cli::shipped()` and
-//! `mad_catalog::register`), as embsim's `board/tests/edge_project_live.rs`
-//! builds its file; its paths are made relative to a scratch directory
-//! holding the two images it names, laid out as `make flash-image` and
-//! `make sd-image` lay them out.
+//! its processor booting the production firmware off the module's flash,
+//! the module's card, the DS2 add-on on the force cable, the machine on the
+//! carrier's connectors and a `host-serial` on the carrier's debug header
+//! `J1`, where the machine's Prop Plug sits (embsim `MIGRATING-MAD.md` step
+//! 9). The file is loaded with `Project::load` and built with the set
+//! `mad-runner` runs (`embsim_cli::shipped()` and `mad_catalog::register`),
+//! as embsim's `board/tests/edge_project_live.rs` builds its file; its paths
+//! are made relative to a scratch directory holding the two images it
+//! names, laid out as `make flash-image` and `make sd-image` lay them out.
 //!
 //! What the board as drawn does, held as the plan's checks are (`NODES.md`
 //! §13, review item 1):
 //!
-//! - **The host's line.** A byte from the host crosses the isolator `IC2` to
-//!   the carrier's `P53`, and stops there: the P2-EC32MB has no finger for
-//!   `P40`–`P57`, which it keeps for its PSRAMs (embsim
-//!   `boards/netlists/p2_ec32mb.net`), so the chip's own `P53` and `P55` are
-//!   the PSRAM's pins. The `propeller2_debug` firmware's MAIN channel is
-//!   `P53`/`P55` (`HW_pins.h`): it transmits on `P55` at 2 Mbaud, and the
-//!   host on `J4` receives nothing.
+//! - **The protocol over `J1`.** The production build's MAIN channel is
+//!   `P63`/`P62` (`HW_pins.h`, `HAL_serial_config.c`), which `J1` carries
+//!   straight to the module's fingers. Once the firmware has booted off the
+//!   flash, the host's protocol requests cross `J1` to the chip's own `P63`,
+//!   and the firmware's answers come back on `P62` to the host, framed as
+//!   ProtoEmb frames them and decoded with MaD's generated codec.
 //! - **The inputs at rest.** The end switches, the door and the emergency
 //!   stops each present the level the firmware reads as inactive. The
 //!   emergency stops' wires show in nothing at rest: a stop rests open, an
@@ -31,7 +30,8 @@
 //!   net, `Hardware/EdgeBoard/KiCad/MaD_Edge.kicad_pcb`), so nothing it
 //!   drives reaches the drive's step, direction and enable inputs, and its
 //!   output to `P5` gives its default high whatever the drive's ready
-//!   output says.
+//!   output says. Whether the machine's carrier is bodged there is not
+//!   known; the file keeps the board as drawn.
 //! - **The encoder.** With the drive's inputs driven from the bench (the
 //!   carrier's own path to them is `IC14`'s) and the chip held in reset
 //!   from the debug header, the drive turns the encoder, whose pairs reach
@@ -48,12 +48,12 @@
 //! builds (the converter's protocol thread joins it as an actor), the
 //! system started with time held, the case's thread a registered actor;
 //! every assertion is on virtual time and the board's state. Each case
-//! skips, saying why, when the `propeller2_debug` image is absent (`make
-//! p2image`), as `tests/boot.rs` does; `MAD_REQUIRE_P2_IMAGE` turns the
-//! skip into a failure. The cases take one lock: the clock is the
-//! process's.
+//! skips, saying why, when the production image is absent (`make
+//! p2image-production`), as `tests/boot.rs` does for the debug image;
+//! `MAD_REQUIRE_P2_IMAGE` turns the skip into a failure. The cases take one
+//! lock: the clock is the process's.
 
-use std::io::Write as _;
+use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -71,6 +71,7 @@ use embsim_core::virtual_clock::{self, ClockMode};
 use embsim_models::ads122u04_component::PUMP_POLL_VIRTUAL_US;
 use embsim_models::oscillator::TG2520SMN_START_UP_NS;
 use embsim_models::rail::AP62301_SOFT_START_NS;
+use protoemb_framing::{FrameParser, ParsedFrame};
 use vibes_behaviour::{behaviour, expect, Test};
 
 // ============================================================
@@ -89,17 +90,19 @@ fn sil() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
 }
 
-/// The `propeller2_debug` program: `MAD_P2_IMAGE` names a copy kept out of
-/// `.pio` (the ledger job's), else the build's own.
+/// The production program (pio env `propeller2`), the one `make
+/// flash-image` lays out: `MAD_P2_PRODUCTION_IMAGE` names a copy kept out
+/// of `.pio` (the CI jobs'), else the build's own.
 fn image_path() -> PathBuf {
-    let p = std::env::var_os("MAD_P2_IMAGE").map_or_else(
-        || sil().join("../Firmware/MaDCore/.pio/build/propeller2_debug/program"),
+    let p = std::env::var_os("MAD_P2_PRODUCTION_IMAGE").map_or_else(
+        || sil().join("../Firmware/MaDCore/.pio/build/propeller2/program"),
         PathBuf::from,
     );
     if !p.exists() && std::env::var_os("MAD_REQUIRE_P2_IMAGE").is_some() {
         panic!(
-            "MAD_REQUIRE_P2_IMAGE is set but the P2 image is missing at {}. \
-             Build it with `make p2image` (or `cd Firmware/MaDCore && pio run -e propeller2_debug`).",
+            "MAD_REQUIRE_P2_IMAGE is set but the production P2 image is missing at {}. \
+             Build it with `make p2image-production` (or `cd Firmware/MaDCore && pio run -e \
+             propeller2`).",
             p.display()
         );
     }
@@ -112,16 +115,16 @@ const CARD_BYTES: usize = 32 * 1024 * 1024;
 /// A directory of the case's own under Cargo's scratch directory for
 /// integration tests, holding the two images `mad.toml` names at the paths
 /// it names them by (`build/flash.bin`, `build/sd.img`): the flash laid out
-/// from the `propeller2_debug` program by `embsim flash-image`, the command
-/// `make flash-image` runs, here in process; the card `make sd-image`
-/// writes, `SIL/sd` mirrored onto it when it is there. `None`, having said
-/// why, without the program.
-fn images(case: &str) -> Option<(PathBuf, u64)> {
+/// from the production program by `embsim flash-image`, the command `make
+/// flash-image` runs, here in process; the card `make sd-image` writes,
+/// `SIL/sd` mirrored onto it when it is there. With them, the program's
+/// bytes. `None`, having said why, without the program.
+fn images(case: &str) -> Option<(PathBuf, Vec<u8>)> {
     let image = image_path();
-    let Ok(program) = std::fs::metadata(&image) else {
+    let Ok(program) = std::fs::read(&image) else {
         eprintln!(
-            "\n*** SKIPPED: {}::{case} needs the P2 image at\n***   {}\n*** Build it with `make \
-             p2image`.\n*** This test asserted NOTHING.\n",
+            "\n*** SKIPPED: {}::{case} needs the production P2 image at\n***   {}\n*** Build it \
+             with `make p2image-production`.\n*** This test asserted NOTHING.\n",
             module_path!(),
             image.display()
         );
@@ -156,7 +159,7 @@ fn images(case: &str) -> Option<(PathBuf, u64)> {
     let card = p2iss::sdimage::mad_card(CARD_BYTES, Some(&sil().join("sd")))
         .expect("the card image builds");
     std::fs::write(build.join("sd.img"), card).expect("sd.img is writable");
-    Some((dir, program.len()))
+    Some((dir, program))
 }
 
 /// `mad.toml`'s text.
@@ -354,13 +357,6 @@ impl Rig {
             .filter(move |report| report.subject() == subject)
     }
 
-    /// What every report on `subject` says at a look at `now_ns`.
-    fn look(&mut self, subject: &str, now_ns: u64) -> Vec<String> {
-        self.reports(subject)
-            .flat_map(|report| report.look(now_ns))
-            .collect()
-    }
-
     /// Why a report on `subject` says its subject failed, if one does.
     fn failure(&mut self, subject: &str) -> Option<String> {
         self.reports(subject).find_map(|report| report.failure())
@@ -397,18 +393,6 @@ impl Rig {
         seen.lock()
             .expect("the probe's log is never poisoned")
             .clone()
-    }
-
-    /// The number the host's summary gives before `what`: `N bytes from the
-    /// host`, `N to it`.
-    fn host_count(&mut self, what: &str) -> u64 {
-        let summary = self.summary("HOST");
-        summary
-            .split(", ")
-            .flat_map(|part| part.rsplit(": ").next())
-            .find_map(|part| part.strip_suffix(what))
-            .and_then(|count| count.trim().parse().ok())
-            .unwrap_or_else(|| panic!("the host's summary gives {what:?}: {summary}"))
     }
 
     /// The encoder's count, from the machine's summary.
@@ -467,46 +451,17 @@ fn falls(seen: &[NetState]) -> usize {
 }
 
 // ============================================================
-// At rest: the host's line and the inputs
+// At rest: the inputs
 // ============================================================
 
-/// What the host sends: sixteen zero bytes, each a start bit and eight data
-/// bits low, so each crosses as one fall.
-const HOST_BYTES: [u8; 16] = [0; 16];
-
-/// The step the case hands the engine while the host's bytes cross, and the
-/// most board time it waits for them: they take 80 µs on the wire at 2
-/// Mbaud, from whenever the host's port hands them over.
-const BYTE_WAIT_STEP_NS: u64 = 10_000;
-const BYTE_WAIT_NS: u64 = 20_000_000;
-
-/// How long, in wall time, the case waits for the host's port to take the
-/// bytes it wrote: sized for a hang.
-const HOST_HANG: Duration = Duration::from_secs(120);
-
 #[test]
-fn the_host_line_and_the_inputs_at_rest() {
+fn the_inputs_at_rest() {
     behaviour!(Test {
         id: "mad-project.at-rest",
         covers: Some("SIL/mad.toml"),
-        given: "the machine's project file, a serial-port host on the carrier's Raspberry Pi \
-                connector, run 10.1 ms from power-on, past every supply's start-up, then the host \
-                sending sixteen zero bytes",
+        given: "the machine's project file, its host a serial port on the carrier's debug header, \
+                run 10.1 ms from power-on, past every supply's start-up",
     });
-    expect!(
-        "host-reaches-p53",
-        "the carrier's P53 falls once for each of the host's bytes and rests high once they \
-         have crossed",
-        "the isolator IC2 passes the host's lows as valid lows; its Pi side runs from the Pi's \
-         5 volts, so the host's 3.3 volt high is no valid level there, and IC2 gives its \
-         default high for it"
-    );
-    expect!(
-        "chip-unreached",
-        "the chip's own P53 pin reads no source after the bytes have crossed",
-        "the P2-EC32MB module has no finger for P40 to P57, which it keeps for its memory \
-         chips, so the carrier's P53 ends at the module's socket"
-    );
     expect!(
         "switches-inactive",
         "P19 to P21, the end switches' and the door's inputs, read low, the level the firmware \
@@ -547,12 +502,15 @@ fn the_host_line_and_the_inputs_at_rest() {
     let Some((dir, _)) = images("at-rest") else {
         return;
     };
-    let pty = dir.join("host.pty");
     let mut project = load(&dir);
     project
-        .set_component_option("HOST", "path", pty.to_str().expect("UTF-8"))
+        .set_component_option(
+            "HOST",
+            "path",
+            dir.join("host.pty").to_str().expect("UTF-8"),
+        )
         .expect("the file has a HOST");
-    let mut rig = Rig::start(project, Bench::default().probe("PROBE_P53", "EDGE.J3.61"));
+    let rig = Rig::start(project, Bench::default());
 
     for net in ["EDGE.P19", "EDGE.P20", "EDGE.P21"] {
         assert_eq!(
@@ -584,48 +542,6 @@ fn the_host_line_and_the_inputs_at_rest() {
         "{:?}",
         rig.state("EDGE.P5")
     );
-    assert_eq!(
-        rig.level("EDGE.P53"),
-        Some(Level::High),
-        "the line idles high: {:?}",
-        rig.state("EDGE.P53")
-    );
-    // From the probe's last report before the bytes: the line idling high.
-    let before = rig.seen("PROBE_P53").len() - 1;
-
-    let mut host = std::fs::OpenOptions::new()
-        .write(true)
-        .open(&pty)
-        .expect("the host's PTY opens");
-    host.write_all(&HOST_BYTES).expect("the host writes");
-    host.flush().expect("the host flushes");
-    let wall = Instant::now();
-    let mut waited = 0;
-    loop {
-        let taken = rig.host_count(" bytes from the host");
-        let crossed = falls(&rig.seen("PROBE_P53")[before..]);
-        if taken == HOST_BYTES.len() as u64 && crossed == HOST_BYTES.len() {
-            break;
-        }
-        assert!(
-            waited < BYTE_WAIT_NS && wall.elapsed() < HOST_HANG,
-            "the host's port took {taken} bytes and P53 fell {crossed} times in {waited} ns \
-             of board time: {}",
-            rig.summary("HOST")
-        );
-        virtual_clock::wait_virtual_ns(BYTE_WAIT_STEP_NS);
-        waited += BYTE_WAIT_STEP_NS;
-    }
-    // The last byte's stop bit, and the line idle after it.
-    virtual_clock::wait_virtual_ns(BYTE_WAIT_STEP_NS);
-    assert_eq!(falls(&rig.seen("PROBE_P53")[before..]), HOST_BYTES.len());
-    assert_eq!(
-        rig.level("EDGE.P53"),
-        Some(Level::High),
-        "the line idles high again"
-    );
-    assert_eq!(rig.state("EC32.P2_IO53"), Some(NetState::Floating));
-    assert_eq!(rig.host_count(" framing errors"), 0);
 
     let findings = rig.finish();
     let u25 = findings.iter().filter(|finding| {
@@ -643,7 +559,7 @@ fn the_host_line_and_the_inputs_at_rest() {
 }
 
 // ============================================================
-// The firmware booted: its main channel
+// The firmware booted: the protocol over the debug header
 // ============================================================
 
 /// The START instant: the module's reset releases at 2.5 ms (the AP62301
@@ -654,132 +570,266 @@ const START_NS: u64 = AP62301_SOFT_START_NS + P2_RESTART_DELAY_NS;
 /// the flash at about 3.84 µs a byte (`tests/boot.rs`, measured).
 const STAGE1_NS_PER_BYTE: u64 = 4_000;
 
-/// Board time from the program's first instruction to its serial cores
-/// running and its force gauge started, with room: on this file the first
-/// console line ended at 1261.5 ms, the serial core started at 1290.0 ms
-/// and the force gauge at 1394.4 ms, with a 326 704-byte program
-/// (measured).
-const FIRMWARE_UP_NS: u64 = 150_000_000;
+/// The board time between two of the host's requests while the firmware
+/// has not answered, as the app's own runtime asks again after a timeout.
+/// The host starts asking once stage-1 has streamed the program, before the
+/// firmware's serial core takes the line; a request that lands before then,
+/// or on a receiver still at the console's rate, would go unanswered
+/// (inferred). On this file the first request, at 1.226 s, was answered at
+/// 1.235 s (measured).
+const RETRY_NS: u64 = 20_000_000;
 
-/// The board time between two looks at the core while it boots.
-const BOOT_LOOK_NS: u64 = 50_000_000;
+/// The most board time the host asks for, from its first request: past
+/// the firmware's start-up with room.
+const ANSWER_WAIT_NS: u64 = 600_000_000;
+
+/// The step the case hands the engine while it waits for an answer.
+const ANSWER_STEP_NS: u64 = 1_000_000;
 
 /// The firmware's MAIN channel rate (`HAL_serial_config.c`).
 const MAIN_BAUD: f64 = 2_000_000.0;
 
-#[test]
-fn the_firmware_boots_and_its_main_channel_never_reaches_the_pi() {
-    behaviour!(Test {
-        id: "mad-project.firmware-main-channel",
-        covers: Some("SIL/mad.toml"),
-        given: "the machine's project file, a serial port on the carrier's Raspberry Pi \
-                connector, run until the firmware has booted off the module's flash and \
-                started its serial and force-gauge cores",
-    });
-    expect!(
-        "first-line",
-        "the core's report gives the firmware's first console line, Starting MaD Board"
-    );
-    expect!(
-        "gauge-started",
-        "the firmware reports that it has started the force gauge's converter",
-        "the firmware starts the converter only once every register it wrote reads back as \
-         written, over the force cable and the carrier's isolator"
-    );
-    expect!(
-        "main-transmits",
-        "the firmware transmits on the chip's P55, at 2 000 000 baud within 0.1 percent"
-    );
-    expect!(
-        "pi-hears-nothing",
-        "the Pi's receive line stays high and the host receives no byte",
-        "the chip's P55 is the module's memory chip's pin; the carrier's P55, the isolator's \
-         input for the Pi's receive line, ends at the module's socket"
-    );
-    expect!(
-        "carrier-p55-unsourced",
-        "the carrier's P55 reads no source from power-up on, while the chip's P55 is driven"
-    );
-    let Some((dir, program)) = images("firmware") else {
-        return;
-    };
-    let mut project = load(&dir);
-    project
-        .set_component_option(
-            "HOST",
-            "path",
-            dir.join("host.pty").to_str().expect("UTF-8"),
-        )
-        .expect("the file has a HOST");
-    let mut rig = Rig::start(
-        project,
-        Bench::default()
-            .probe("RPI_TX", "EDGE.J4.2")
-            .probe("P55", "EDGE.J3.59"),
-    );
+/// The host's end of the line: the PTY `host-serial` made, which the case
+/// writes, and a thread of the case's own reads into `received`. That thread
+/// is no actor: it reads what the PTY holds and touches no clock.
+struct HostPort {
+    port: std::fs::File,
+    received: Arc<Mutex<Vec<u8>>>,
+    /// Where `received` ended at each request the case sent, and the
+    /// request.
+    sent: Vec<(usize, Vec<u8>)>,
+}
 
-    let run_ns = START_NS + program * STAGE1_NS_PER_BYTE + FIRMWARE_UP_NS;
-    let mut at = SETTLE_NS;
-    let mut console = Vec::new();
-    while at < run_ns {
-        let step = BOOT_LOOK_NS.min(run_ns - at);
-        virtual_clock::wait_virtual_ns(step);
-        at += step;
-        console.extend(rig.look("EC32.U100", at));
-        if let Some(failure) = rig.failure("EC32.U100") {
-            panic!("the core failed at {at} ns: {failure}\n{console:#?}");
+impl HostPort {
+    fn open(path: &Path) -> Self {
+        let port = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(path)
+            .expect("the host's PTY opens");
+        let mut reader = port.try_clone().expect("the PTY's handle clones");
+        let received = Arc::<Mutex<Vec<u8>>>::default();
+        let sink = Arc::clone(&received);
+        // The read ends, with an error or the end of the file, once the
+        // run's shutdown closes the PTY.
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 512];
+            while let Ok(n @ 1..) = reader.read(&mut buf) {
+                sink.lock()
+                    .expect("the host's buffer is never poisoned")
+                    .extend_from_slice(&buf[..n]);
+            }
+        });
+        Self {
+            port,
+            received,
+            sent: Vec::new(),
         }
     }
-    let _ = writeln!(std::io::stderr(), "EC32.U100 said:\n{console:#?}");
 
-    assert_eq!(
-        console
-            .iter()
-            .find(|line| line.starts_with("P62 "))
-            .map(String::as_str),
-        Some("P62 \"Starting MaD Board\""),
-        "{console:#?}"
+    fn received(&self) -> Vec<u8> {
+        self.received
+            .lock()
+            .expect("the host's buffer is never poisoned")
+            .clone()
+    }
+
+    /// Send a READ request for `command`, as the app's runtime frames it.
+    fn read(&mut self, command: u8) {
+        let request = protoemb_framing::build_read_frame(command);
+        let at = self.received().len();
+        self.port.write_all(&request).expect("the host writes");
+        self.port.flush().expect("the host flushes");
+        self.sent.push((at, request));
+    }
+
+    /// The payload of the first data frame answering `command` in what the
+    /// host received after one of its requests, parsed from each request's
+    /// instant on: the bytes before a request (the firmware's boot line, at
+    /// its console rate) are no frames, and a parser that took them for a
+    /// header could swallow the answer as a payload.
+    fn answer(&self, command: u8) -> Option<Vec<u8>> {
+        let received = self.received();
+        self.sent.iter().find_map(|(at, _)| {
+            FrameParser::new()
+                .feed_bytes(&received[*at..])
+                .into_iter()
+                .find_map(|frame| match frame {
+                    ParsedFrame::Data {
+                        command: answered,
+                        payload,
+                    } if answered == command => Some(payload),
+                    _ => None,
+                })
+        })
+    }
+}
+
+/// The falls `bytes` make on an idle-high line, each framed 8N1: the start
+/// bit low, the data least significant bit first, the stop bit high.
+fn frame_falls(bytes: &[u8]) -> usize {
+    let mut level = true;
+    let mut falls = 0;
+    for byte in bytes {
+        let bits = std::iter::once(false)
+            .chain((0..8).map(|bit| (byte >> bit) & 1 == 1))
+            .chain(std::iter::once(true));
+        for bit in bits {
+            if level && !bit {
+                falls += 1;
+            }
+            level = bit;
+        }
+    }
+    falls
+}
+
+/// Read `command` until the firmware answers: a request, then another every
+/// [`RETRY_NS`], stepping the board [`ANSWER_STEP_NS`] at a time, for at most
+/// [`ANSWER_WAIT_NS`] from `rig`'s instant `at`. The answer's payload, and
+/// the instant it was found.
+fn ask(rig: &mut Rig, host: &mut HostPort, command: u8, mut at: u64) -> (Vec<u8>, u64) {
+    let first = at;
+    let mut next_request = at;
+    loop {
+        if at >= next_request {
+            host.read(command);
+            next_request = at + RETRY_NS;
+        }
+        virtual_clock::wait_virtual_ns(ANSWER_STEP_NS);
+        at += ANSWER_STEP_NS;
+        if let Some(payload) = host.answer(command) {
+            return (payload, at);
+        }
+        if let Some(failure) = rig.failure("EC32.U100") {
+            panic!("the core failed at {at} ns: {failure}");
+        }
+        assert!(
+            at - first < ANSWER_WAIT_NS,
+            "no answer to command {command} after {} requests in {} ns of board time: the \
+             host received {:02X?}; {}; {}",
+            host.sent.len(),
+            at - first,
+            host.received(),
+            rig.summary("HOST"),
+            rig.summary_line("EC32.U100", " cogs running; ")
+        );
+    }
+}
+
+/// Whether `program` holds `text` as a C string: its bytes, then a NUL.
+fn holds_c_string(program: &[u8], text: &str) -> bool {
+    let mut needle = text.as_bytes().to_vec();
+    needle.push(0);
+    program.windows(needle.len()).any(|window| window == needle)
+}
+
+#[test]
+fn the_firmware_answers_the_host_on_the_debug_header() {
+    behaviour!(Test {
+        id: "mad-project.protocol-on-j1",
+        covers: Some("SIL/mad.toml"),
+        given: "the machine's project file, the production firmware in the module's flash and a \
+                serial-port host on the carrier's debug header, run until stage-1 has streamed \
+                the program, then the host reading the firmware's version, again every 20 ms \
+                until it is answered, and then reading the machine's state",
+    });
+    expect!(
+        "version-answered",
+        "the host receives a data frame answering the version read, its check byte intact",
+        "the production build's protocol channel receives on P63 and transmits on P62, which \
+         the debug header carries straight to the module's fingers"
     );
+    expect!(
+        "version-decodes",
+        "the answer reads, by MaD's protocol, as a firmware version that the program carries \
+         as text"
+    );
+    expect!(
+        "requests-reach-p63",
+        "the chip's own P63 falls once for every fall of every request the host sent"
+    );
+    expect!(
+        "state-answered",
+        "the host's read of the machine's state is answered with a data frame that reads as a \
+         machine with motion disabled and no test running",
+        "the firmware starts with motion off, and only the operator turns it on"
+    );
+    expect!(
+        "main-at-2m",
+        "the core's summary gives the rate the firmware programmed on P62, within 0.1 percent \
+         of 2 000 000 baud"
+    );
+    let Some((dir, program)) = images("protocol") else {
+        return;
+    };
+    let pty = dir.join("host.pty");
+    let mut project = load(&dir);
+    project
+        .set_component_option("HOST", "path", pty.to_str().expect("UTF-8"))
+        .expect("the file has a HOST");
+    let mut rig = Rig::start(project, Bench::default().probe("P63", "EC32.J203.49"));
+    let mut host = HostPort::open(&pty);
+
+    // Stage-1 streams the program; the host starts asking after it.
+    let streamed = START_NS + program.len() as u64 * STAGE1_NS_PER_BYTE;
+    virtual_clock::wait_virtual_ns(streamed - SETTLE_NS);
+    let (version, answered_at) = ask(
+        &mut rig,
+        &mut host,
+        protocol::MSG_READ_FIRMWARE_VERSION,
+        streamed,
+    );
+    let tries = host.sent.len();
+    let version = protocol::FirmwareVersion::decode(&version)
+        .unwrap_or_else(|| panic!("the version's payload decodes: {version:02X?}"))
+        .version;
     assert!(
-        console
-            .iter()
-            .any(|line| line.contains("ADS122U04 Started")),
-        "the firmware started its force gauge within {run_ns} ns: {console:#?}"
+        !version.is_empty() && holds_c_string(&program, &version),
+        "the firmware version {version:?} is a string the program holds"
+    );
+
+    let (state, state_at) = ask(&mut rig, &mut host, protocol::MSG_READ_STATE, answered_at);
+    let state = protocol::MachineState::decode(&state)
+        .unwrap_or_else(|| panic!("the state's payload decodes: {state:02X?}"));
+    assert!(
+        !state.motion_enabled && !state.test_running,
+        "a machine just booted: {state:?}"
+    );
+    let core: Vec<String> = rig
+        .reports("EC32.U100")
+        .flat_map(|report| report.summary())
+        .collect();
+    let _ = writeln!(
+        std::io::stderr(),
+        "version {version:?} answered at {answered_at} ns after {tries} requests; state \
+         {state:?} at {state_at} ns; {}; the core's summary: {core:#?}",
+        rig.summary("HOST"),
+    );
+
+    // Every request's last stop bit has crossed.
+    virtual_clock::wait_virtual_ns(ANSWER_STEP_NS);
+    let falls_sent: usize = host
+        .sent
+        .iter()
+        .map(|(_, request)| frame_falls(request))
+        .sum();
+    assert_eq!(
+        falls(&rig.seen("P63")),
+        falls_sent,
+        "the chip's P63 fell once for each fall of the host's {} requests",
+        host.sent.len()
     );
 
     let core = rig.summary_line("EC32.U100", " cogs running; ");
     let baud: f64 = core
-        .split_once("P55 at ")
+        .split_once("P62 at ")
         .and_then(|(_, rest)| rest.split_once(" baud"))
         .and_then(|(baud, _)| baud.parse().ok())
-        .unwrap_or_else(|| panic!("the core transmitted on P55: {core}"));
+        .unwrap_or_else(|| panic!("the core transmitted on P62: {core}"));
     assert!(
         (baud - MAIN_BAUD).abs() / MAIN_BAUD < 0.001,
-        "P55 at {baud} baud: {core}"
-    );
-    assert!(
-        matches!(rig.state("EC32.P2_IO55"), Some(NetState::Driven(_))),
-        "the chip drives its P55: {:?}",
-        rig.state("EC32.P2_IO55")
-    );
-
-    let rpi_tx = rig.seen("RPI_TX");
-    assert!(
-        !rpi_tx.is_empty(),
-        "the probe on the Pi's receive line reported"
-    );
-    assert!(
-        rpi_tx
-            .iter()
-            .all(|state| *state == NetState::Driven(Level::High)),
-        "the Pi's receive line: {rpi_tx:?}"
-    );
-    assert_eq!(rig.host_count(" to it"), 0, "{}", rig.summary("HOST"));
-    let p55 = rig.seen("P55");
-    assert!(!p55.is_empty(), "the probe on the carrier's P55 reported");
-    assert!(
-        p55.iter().all(|state| *state == NetState::Floating),
-        "the carrier's P55: {p55:?}"
+        "P62 at {baud} baud: {core}"
     );
     rig.finish();
 }

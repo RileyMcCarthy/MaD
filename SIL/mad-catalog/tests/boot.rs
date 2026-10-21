@@ -14,6 +14,13 @@
 //! chain under it is `p2iss/tests/ec32mb_flash_boot.rs`'s; this is that boot
 //! said by a project file.
 //!
+//! It keeps the `propeller2_debug` image while `SIL/mad.toml` boots the
+//! production one (`tests/mad.rs`): the subject here is the core kind's
+//! report of the firmware's console on `P62`, which the debug build writes at
+//! 230 400 baud for the whole run. The production build prints its first
+//! line there too, then gives `P62` to its 2 000 000 baud protocol once its
+//! serial core starts, and the core's summary gives that rate.
+//!
 //! Stepped: `run` holds the virtual clock and advances it only while it
 //! waits, so the report is the board's time and state. The boot skips,
 //! saying why, when the `propeller2_debug` image is absent (`make p2image`),

@@ -9,13 +9,17 @@
 # where; mad-catalog/tests/projects.rs holds them to it:
 #
 #   file                        the module boots          the host
-#   mad.toml                    the firmware off flash    host-serial on J4
-#   mad-cosim.toml              the firmware off flash    chrome-cdp on J4
+#   mad.toml                    the firmware off flash    host-serial on J1
+#   mad-cosim.toml              the firmware off flash    chrome-cdp on J1
 #   mad-serial-boot.toml        the ROM's serial boot,    host-serial on J1
 #                               its flash erased
 #   mad-serial-boot-cosim.toml  the ROM's serial boot     chrome-cdp on J1
 #
-# J4 is the Raspberry Pi's connector, J1 the carrier's debug header.
+# J1 is the carrier's debug header, where the machine's Prop Plug sits: the
+# app flashes the firmware through it and drives the machine through it
+# (Software/Control/README.md, "Firmware flashing"). So the firmware is the
+# production build (pio env propeller2), whose MAIN channel, the protocol,
+# is on P62/P63, the pins J1 carries.
 #
 #   cd SIL && make flash-image sd-image check
 #
@@ -49,7 +53,10 @@ kind = "p2"
 core = "mad-p2iss"
 
 # The module's flash, erased: no image. The app's flasher writes the
-# firmware into it through the ROM's serial loader.
+# production firmware (pio env propeller2) into it through the ROM's serial
+# loader; that build's MAIN channel receives on P63 and transmits on P62
+# (Firmware/MaDCore/src/HAL/Include/HW_pins.h, HW_PIN_MAIN_RX/TX), the
+# pins J1 carries.
 [[board.model]]
 value = "SPI Flash 16MB (128Mb)"
 kind = "w25q128jv"
@@ -186,34 +193,28 @@ from = "BENCH.AGND"
 to = "DS2.J2.2"
 volts = 0.0
 
-# RPI_5V: the Pi's 5 V supplies IC2's Pi side (VCC2) on J4.1. IC2's
-# thresholds on that side follow this rail, which a Pi's 3.3 V GPIO does
-# not meet (MIGRATING-MAD.md section 6, "The Pi's TX against IC2").
-[[wire]]
-from = "PI.5V"
-to = "EDGE.J4.1"
-volts = 5.0
-
-# RPI_GND, IC2's Pi-side return.
-#
-# All four files power the Pi: the serial-boot files keep it seated on J4
-# while their host, the programming adapter, is on J1, and leave its TX and
-# RX unwired. IC2 gives the carrier's P53 its default high whether or not
-# its Pi side is powered (inferred), so the serial boot runs the same with
-# the Pi there or not.
-[[wire]]
-from = "PI.GND"
-to = "EDGE.J4.6"
-volts = 0.0
+# Nothing on J4, the Raspberry Pi's connector: no supply and no wire. The
+# machine is driven through the Prop Plug on J1 (the host, below), and the
+# Pi's line could not reach the firmware on this module: J4's RPI_RX and
+# RPI_TX go only to the isolator IC2, whose carrier side is on P52-P55
+# (read: mad_edge.net), and the P2-EC32MB has no finger for those pins
+# (the module in its socket, above). The production firmware does not use
+# them (HAL_serial_config.c). IC2's Pi side (RPI_5V, RPI_GND) is left
+# unpowered, as it is with no Pi seated.
 
 # ---- The host's wires -------------------------------------------------------
 
-# The host on the carrier's debug header J1, the chip's programming UART:
-# J1.1 is P62 (the chip's transmit, the ROM's answer), J1.2 is P63 (its
-# receive), J1.4 the carrier's GND. J1.3, RESn, stays unwired: the host kinds
-# have no modem-control pins, so nothing pulses the reset, and the ROM's
-# serial boot answers without one, P59's pull-up (R302, the scenario,
-# below) selecting it.
+# The host on the carrier's debug header J1, the Prop Plug's: J1.1 is P62
+# (the chip's transmit: the firmware's answers, and the ROM's), J1.2 is P63
+# (its receive), J1.4 the carrier's GND. J1.1 and J1.2 go straight to the
+# socket's fingers 50 and 49, and on to the chip's P62 and P63 (read:
+# mad_edge.net, nets P62 and P63; embsim boards/netlists/p2_ec32mb.net).
+# J1.3, RESn, stays unwired: the host kinds have no modem-control pins, so
+# nothing pulses the reset, and neither boot needs it. The flash boot runs
+# from power-up, and the ROM's serial boot answers without a reset, P59's
+# pull-up (R302, the serial boot's scenario) selecting it. The app's
+# flasher resets the chip with DTR (Software/Control/README.md); no case
+# here flashes.
 
 # The adapter's I/O rail: the chip's P62/P63 bank (VIO_56_63) is 3.3 V.
 [[wire]]

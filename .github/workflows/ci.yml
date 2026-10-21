@@ -825,6 +825,23 @@ jobs:
       # Built here rather than reused from `build-firmware`: that job only runs
       # when `firmware` changed, so on a SIL-only PR its artifact would not
       # exist, and it runs on a macOS runner at a 10x minute multiplier.
+      #
+      # Two images. The production build (propeller2) is the one SIL/mad.toml's
+      # module flash holds: its protocol is on P62/P63, the carrier's debug
+      # header, where the project files' host is (mad-catalog/tests/mad.rs).
+      # It is built first and copied out, because building one env has been
+      # seen to remove another env's output (the release job's note);
+      # MAD_P2_PRODUCTION_IMAGE points the test at the copy. The debug build
+      # (propeller2_debug) is the rest of the suite's.
+      - name: Build the production P2 image the project files boot
+        working-directory: Firmware/MaDCore
+        run: pio run -e propeller2
+      - name: Keep the production image out of .pio
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/p2-production"
+          cp Firmware/MaDCore/.pio/build/propeller2/program "$RUNNER_TEMP/p2-production/program"
+          echo "MAD_P2_PRODUCTION_IMAGE=$RUNNER_TEMP/p2-production/program" >> "$GITHUB_ENV"
       - name: Build the P2 image the ISS interprets
         working-directory: Firmware/MaDCore
         run: pio run -e propeller2_debug
@@ -842,6 +859,7 @@ jobs:
         run: |
           fail=0
           for f in Firmware/MaDCore/.pio/build/propeller2_debug/program \
+                   "$MAD_P2_PRODUCTION_IMAGE" \
                    SIL/p2core/tests/golden/hub_mnemonics.txt; do
             if [ -s "$f" ]; then echo "ok   $f ($(wc -c < "$f") bytes)"; else echo "::error::missing or empty: $f"; fail=1; fi
           done
@@ -1228,14 +1246,26 @@ jobs:
           done
 
       # The sil suite boots the propeller2_debug program off the module's
-      # flash (p2iss/tests/ec32mb_flash_boot.rs). Without the image that test
-      # skips and its behaviours read as holding, so the job builds it, as
-      # sil-rust does, and requires it. The image is copied out of .pio
-      # because the firmware suite's own build, in the report step, can clear
-      # .pio/build; MAD_P2_IMAGE points the test at the copy.
+      # flash (p2iss/tests/ec32mb_flash_boot.rs), and the production program
+      # (propeller2) in SIL/mad.toml (mad-catalog/tests/mad.rs). Without an
+      # image those tests skip and their behaviours read as holding, so the
+      # job builds both, as sil-rust does, and requires them. Each image is
+      # copied out of .pio right after its build, because building another
+      # env, or the firmware suite's own build in the report step, can clear
+      # .pio/build; MAD_P2_IMAGE and MAD_P2_PRODUCTION_IMAGE point the tests
+      # at the copies.
       - name: Install the Propeller platform (flexcc/flexspin)
         working-directory: Firmware/MaDCore
         run: pio pkg install --platform https://github.com/RileyMcCarthy/platform-propeller.git
+      - name: Build the production P2 image the sil suite boots
+        working-directory: Firmware/MaDCore
+        run: pio run -e propeller2
+      - name: Keep the production image out of .pio
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/p2-production"
+          cp Firmware/MaDCore/.pio/build/propeller2/program "$RUNNER_TEMP/p2-production/program"
+          echo "kept $(wc -c < "$RUNNER_TEMP/p2-production/program") bytes"
       - name: Build the P2 image the sil suite boots
         working-directory: Firmware/MaDCore
         run: pio run -e propeller2_debug
@@ -1245,6 +1275,11 @@ jobs:
           mkdir -p "$RUNNER_TEMP/p2"
           cp Firmware/MaDCore/.pio/build/propeller2_debug/program "$RUNNER_TEMP/p2/program"
           echo "kept $(wc -c < "$RUNNER_TEMP/p2/program") bytes"
+      # mad-catalog's tests decode the firmware's answers with the generated
+      # Rust codec (the `protocol` crate), which `make protocol` writes.
+      - name: Generate the Rust protocol codec (make protocol)
+        working-directory: SIL
+        run: make protocol
 
       - name: Build Vibes
         working-directory: Vibes
@@ -1262,6 +1297,7 @@ jobs:
         env:
           MAD_REQUIRE_P2_IMAGE: '1'
           MAD_P2_IMAGE: ${{ runner.temp }}/p2/program
+          MAD_P2_PRODUCTION_IMAGE: ${{ runner.temp }}/p2-production/program
         run: |
           set +e
           node Vibes/bin/vibes.mjs report --base "origin/${{ github.base_ref }}" > vibes-report.md
