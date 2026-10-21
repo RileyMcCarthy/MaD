@@ -35,9 +35,10 @@ FIRMWARE_DIR = ../Firmware/MaDCore
 # module and no carrier, so nothing sits between the host and those pins.
 P2_ENV = propeller2_debug
 P2_IMAGE = $(FIRMWARE_DIR)/.pio/build/$(P2_ENV)/program
-# The production build, the one the machine runs: its MAIN channel on
-# P62/P63, the carrier's debug header J1, where the Prop Plug sits. The
-# project files' module flash holds it (flash-image), and
+# The production build, the project files' route (the user's decision;
+# which image the machine runs is open, SIL/mad.toml's header): its MAIN
+# channel on P62/P63, the carrier's debug header J1, where the Prop Plug
+# sits. The project files' module flash holds it (flash-image), and
 # mad-catalog/tests/mad.rs boots it.
 PRODUCTION_ENV = propeller2
 PRODUCTION_IMAGE = $(FIRMWARE_DIR)/.pio/build/$(PRODUCTION_ENV)/program
@@ -86,9 +87,13 @@ protocol:
 emulator: protocol
 	cargo build
 
-# Run tests
-test: emulator p2image p2image-production
-	cargo test
+# Run tests. The production image is built first and the debug image last,
+# the order CI builds them in (.github/workflows/ci.yml: building one env
+# has been seen to remove another env's output). MAD_REQUIRE_P2_IMAGE turns
+# a test's "the image is missing, so skip" into a failure, so an image lost
+# that way fails the run.
+test: emulator p2image-production p2image
+	MAD_REQUIRE_P2_IMAGE=1 cargo test
 
 emulator-release: protocol
 	cargo build --release --bin mad-emulator
