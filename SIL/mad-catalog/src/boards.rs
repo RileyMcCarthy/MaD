@@ -1,4 +1,8 @@
-//! MaD's two boards as board kinds. Each bundles its KiCad netlist export
+//! MaD's catalog, [`MadCatalog`]: the two boards as board kinds, and the
+//! machine as its one bench component kind (`mad-machine`, built in
+//! [`crate::machine`]).
+//!
+//! Each board kind bundles its KiCad netlist export
 //! and starts from the base registrations embsim's catalogs make
 //! ([`CatalogBoard::from_base`]), with the one entry every project of that
 //! board would otherwise repeat:
@@ -16,7 +20,12 @@
 //! add-on's `JP1` and `JP2`, the carrier's `JP1`–`JP5`, the supplies) stays
 //! in the project file: it is the bench, not the board.
 
-use embsim_board::{netlist, BoardSpec, Catalog, CatalogBoard, KindInfo, ModelSpec, ProjectError};
+use embsim_board::{
+    netlist, BoardSpec, Catalog, CatalogBoard, Component, ComponentRequest, KindInfo, ModelSpec,
+    ProjectError,
+};
+
+use crate::machine;
 
 /// The Edge carrier's board kind.
 pub const EDGE: &str = "mad-edge";
@@ -28,7 +37,7 @@ const MAD_EDGE: &str = include_str!("../netlists/mad_edge.net");
 /// The DS2 add-on's netlist (its provenance is the file's header).
 const DS2_ADDON: &str = include_str!("../netlists/ds2_addon.net");
 
-/// MaD's board kinds.
+/// MaD's kinds: the two boards and the machine.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct MadCatalog;
 
@@ -69,5 +78,20 @@ impl Catalog for MadCatalog {
                 crate::NAME
             ))),
         }
+    }
+
+    fn component_kinds(&self) -> Vec<KindInfo> {
+        vec![machine::kind_info()]
+    }
+
+    fn component(&self, request: ComponentRequest<'_>) -> Result<Box<dyn Component>, ProjectError> {
+        if request.spec.kind == machine::MACHINE {
+            return machine::component(request);
+        }
+        Err(request.error(format!(
+            "{} is not a component kind of {}",
+            request.spec.kind,
+            crate::NAME
+        )))
     }
 }
