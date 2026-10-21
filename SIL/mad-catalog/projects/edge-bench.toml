@@ -8,8 +8,10 @@
 #
 #   cd SIL && $(EMBSIM) check mad-catalog/projects/edge-bench.toml
 #
-# The processor runs nothing yet: `held-in-reset` until mad-catalog has the
-# ISS as a core (MIGRATING-MAD.md step 8).
+# The processor is held in reset (`held-in-reset`): this bench is the
+# boards, their mates and supplies, with no image in the module's flash. The
+# ISS as the core (`mad-p2iss`) boots the firmware in tests/boot.rs, and in
+# the machine's project (MIGRATING-MAD.md step 9).
 
 [catalog]
 crates = [".."]
