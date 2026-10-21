@@ -850,3 +850,167 @@ fn an_output_stage_the_kind_does_not_offer_is_refused() {
     }
     assert!(message.contains("MACHINE"), "{message}");
 }
+
+// ============================================================
+// The push-pull stage
+// ============================================================
+
+#[rstest]
+fn steps_as_edges_drive_the_push_pull_outputs_high_and_low() {
+    behaviour!(Test {
+        id: "machine.steps-as-edges-push-pull",
+        covers: Some("SIL/mad-catalog/src/machine.rs#assemble"),
+        given: "the machine with its encoder's outputs push-pull and nothing else on them, \
+                stepped by four edges with its direction input low and then four with it high",
+    });
+    expect!(
+        "driven-both-ways",
+        "at every read each output is driven, high while its channel is high and low while it \
+         is low, and both levels are seen on each",
+        "a push-pull output sources its high and sinks its low itself, so it needs no pull-up"
+    );
+    expect!(
+        "same-walk",
+        "the outputs walk up four counts and back four, one channel changing at each count"
+    );
+    expect!(
+        "no-complements",
+        "the encoder's outputs are A and B alone: the machine has no complementary encoder pins",
+        "only the line driver has a complement for each channel"
+    );
+    let rig = Rig::start(
+        &project("encoder_output = \"push-pull\"", STEPS_AS_EDGES),
+        |system| system,
+    );
+    let (reads, forward) = walk(&rig, Rig::level, false);
+    let no_complements =
+        ["ENC_A-", "ENC_B-"].map(|pin| rig.system.net_state(&format!("MACHINE.{pin}")).is_none());
+    let summary = rig.summary();
+    rig.finish();
+
+    let at = |count| (quadrature(count), None);
+    assert_eq!(forward, at(4), "after the first four steps");
+    assert_eq!(*reads.last().expect("a read"), at(0), "after the next four");
+    let expected: Vec<Read> = WALK.iter().map(|&count| at(count)).collect();
+    assert_eq!(reads, expected, "{summary}");
+    for level in [Level::High, Level::Low] {
+        assert!(
+            reads.iter().any(|((a, _), _)| *a == level),
+            "ENC_A+ is driven {level:?} at some read: {reads:?}"
+        );
+        assert!(
+            reads.iter().any(|((_, b), _)| *b == level),
+            "ENC_B+ is driven {level:?} at some read: {reads:?}"
+        );
+    }
+    assert_eq!(no_complements, [true, true]);
+    assert!(summary.contains("encoder at 0 counts"), "{summary}");
+}
+
+// ============================================================
+// The report
+// ============================================================
+
+impl Rig {
+    /// What the machine says at a look now, its lines joined.
+    fn look(&mut self) -> String {
+        self.report.look(virtual_clock::virtual_ns()).join("\n")
+    }
+}
+
+/// A look's `carriage` line read back: where the carriage is and the
+/// window it has been in since the last look, `(now, min, max)` in
+/// millimetres.
+fn carriage(look: &str) -> (f64, f64, f64) {
+    let figures = look
+        .strip_prefix("carriage ")
+        .and_then(|rest| rest.strip_suffix(" mm since the last look)"))
+        .and_then(|rest| rest.split_once(" mm ("))
+        .and_then(|(now, window)| {
+            let (min, max) = window.split_once("..")?;
+            Some([now, min, max].map(|figure| figure.parse::<f64>().ok()))
+        });
+    match figures {
+        Some([Some(now), Some(min), Some(max)]) => (now, min, max),
+        _ => panic!("a look says where the carriage is and has been: {look:?}"),
+    }
+}
+
+/// The force the summary says is on the sample, newtons: the figure before
+/// "N on the sample".
+fn on_the_sample(summary: &str) -> f64 {
+    let (before, _) = summary
+        .split_once(" N on the sample")
+        .unwrap_or_else(|| panic!("the summary names the force on the sample: {summary}"));
+    let figure = before.rsplit(' ').next().expect("a figure before the unit");
+    figure
+        .parse()
+        .unwrap_or_else(|_| panic!("{figure:?} is newtons, in {summary}"))
+}
+
+#[rstest]
+fn the_report_says_where_the_carriage_went_and_the_force_on_the_sample() {
+    behaviour!(Test {
+        id: "machine.report-look-and-force",
+        covers: Some("SIL/mad-catalog/src/machine.rs#MachineReport"),
+        given: "the machine's report looked at with the carriage brought to rest at 15 \
+                millimetres, looked at again with it still there, then looked at with it \
+                brought to rest at 57.5 millimetres",
+    });
+    expect!(
+        "window-from-the-start",
+        "the first look puts the carriage within a micrometre of 15 millimetres and says it \
+         has been between 0 millimetres and there since the last look",
+        "the carriage starts at 0 millimetres"
+    );
+    expect!(
+        "still-says-nothing",
+        "a look with the carriage where the last look left it says nothing"
+    );
+    expect!(
+        "window-resets",
+        "the look after the move to 57.5 millimetres says the carriage has been between 15 and \
+         57.5 millimetres since the last look",
+        "each look starts the window again from where the carriage is"
+    );
+    expect!(
+        "unloaded-at-the-slack",
+        "at 15 millimetres the summary says 0 newtons on the sample",
+        "the grips take up 15 millimetres of slack before the sample takes load"
+    );
+    expect!(
+        "force-at-half-load",
+        "at 57.5 millimetres the summary says 2.5 newtons on the sample",
+        "the reference sample takes 5 newtons over the 85 millimetres past the slack"
+    );
+    let (mut rig, step, _probe) = on_a_train(&project("", ""));
+    train(&step, TO_THE_SLACK);
+    virtual_clock::wait_virtual_ns(rest_ns(TO_THE_SLACK));
+    let at_the_slack = rig.look();
+    let at_the_slack_summary = rig.summary();
+    let still = rig.look();
+    train(&step, TO_HALF_LOAD - TO_THE_SLACK);
+    virtual_clock::wait_virtual_ns(rest_ns(TO_HALF_LOAD - TO_THE_SLACK));
+    let at_half_load = rig.look();
+    let at_half_load_summary = rig.summary();
+    rig.finish();
+
+    // The report truncates the carriage to the micrometre, and the carriage
+    // at rest is a hair short of where the steps put it: 15 mm reads 14.999.
+    let near = |mm: f64, at: f64| (mm - at).abs() <= 0.001 + 1e-9;
+    let (now, min, max) = carriage(&at_the_slack);
+    assert!(near(now, 15.0), "{at_the_slack}");
+    assert_eq!((min, max), (0.0, now), "{at_the_slack}");
+    assert_eq!(still, "", "a look with no movement says nothing");
+    let (slack, (now, min, max)) = (now, carriage(&at_half_load));
+    assert!(near(now, 57.5), "{at_half_load}");
+    assert_eq!((min, max), (slack, now), "{at_half_load}");
+    let unloaded = on_the_sample(&at_the_slack_summary);
+    assert!(unloaded.abs() < 1e-6, "{at_the_slack_summary}");
+    let loaded = on_the_sample(&at_half_load_summary);
+    // To the bridge case's tolerance: the carriage at rest is a hair short.
+    assert!(
+        ((loaded - 2.5) / 2.5).abs() < 1e-5,
+        "{at_half_load_summary}"
+    );
+}
