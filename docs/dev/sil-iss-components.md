@@ -788,10 +788,11 @@ is `embsim run mad-cosim.toml`, whose `HOST` is the same kind on the
 carrier's debug header `J1` (USB `0403:6015`, DevTools on 9222, the port
 granted to every origin), the module booting the production image off its
 flash. Measured on an Apple M2, 2026-10-21, one board per scenario
-(`BOARD_PER_SCENARIO=1`): the per-PR subset, ten scenarios, passed in 506 s of
-host time, boards included, and BUNDLE-live on the bundle in 161 s; the
-firmware's boot off the flash is about 1.2 s of board time at the start of
-each board, and the board then ran at about 0.1x with the app attached. The
+(`BOARD_PER_SCENARIO=1`): the 23 scenarios that run there passed in 753 s
+of host time, boards included, the per-PR ten in 512 s, and BUNDLE-live on
+the bundle in 36 s; each board boots the firmware off the flash first,
+about 1.3 s of board time in 24 s of host, and the board then ran at about
+0.1x with the app attached. The
 production image's boot line goes out on `P62` at the console's rate,
 which the node's receiver at 2,000,000 baud reads as framing errors (27 in
 a run, measured). The carriage never moves there:

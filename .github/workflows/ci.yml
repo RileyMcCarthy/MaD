@@ -368,13 +368,15 @@ jobs:
   # (C3+C4), the data folder and G-code (F1+F2, F7), a manual enable (D1), a
   # run started and completed (G1, a dwell), and two link drops on the
   # node's cable (B5-reconnect, M11-idle-drop). Measured on an M2, the ten
-  # took 506 s of host time with their boards, about 26 s of board time
-  # (PR body). The scenarios that move the carriage do not run on the
-  # project as drawn: IC14, the isolator between the processor and the
-  # drive, has its secondary grounds on a net of their own, so nothing
-  # reaches the drive and the firmware latches SERVO_STALL at the first move
-  # (SIL/mad.toml; run-all.mjs, PROJECT_CANNOT). The suite skips them there,
-  # saying why; G2+G3+H2+I left this subset for that reason.
+  # boards ran 23.6 s of board time in 512 s of host time, each first
+  # booting the firmware off the module's flash (about 1.3 s of board time,
+  # 24 s of host), G1's SD-heavy run 208 s of it (PR body). The scenarios
+  # that move the carriage do not run on the project as drawn: IC14, the
+  # isolator between the processor and the drive, has its secondary grounds
+  # on a net of their own, so nothing reaches the drive and the firmware
+  # latches SERVO_STALL at the first move (SIL/mad-catalog/tests/mad.rs;
+  # run-all.mjs, PROJECT_CANNOT). The suite skips them there, saying why;
+  # G2+G3+H2+I left this subset for that reason.
   #
   # Then BUNDLE-live on one more board: the app as it ships, built as
   # pages.yml builds it and served by `vite preview`. Every scenario above

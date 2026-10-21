@@ -281,12 +281,27 @@ if [ -z "$ids" ]; then
   echo "board-route: no scenario to run on this board: the run would check nothing" >&2
   exit 1
 fi
+# The scenarios that need no board (a host Chrome against in-page fakes)
+# run with none: a board would only cost its boot.
+free=" $(cd "$control" && node e2e/run-all.mjs --list --board-free | tr '\n' ' ') "
 count=0
 failed=''
 parts=''
 for id in $ids; do
   count=$((count + 1))
   safe=$(printf '%s' "$id" | tr -c 'A-Za-z0-9_-' '_')
+  case "$free" in
+    *" $id "*)
+      set +e
+      (cd "$control" && APP_URL="$app_url" SCENARIOS="$id" \
+        E2E_TIMINGS="$logs/timings-$safe.json" node e2e/run-all.mjs)
+      status=$?
+      set -e
+      [ "$status" -eq 0 ] || failed="$failed $id"
+      parts="$parts $logs/timings-$safe.json"
+      continue
+      ;;
+  esac
   if ! start_board "$logs/board-$safe.log"; then
     failed="$failed $id(its-board-never-came-up)"
     stop_board
@@ -310,5 +325,5 @@ if [ -n "${E2E_TIMINGS:-}" ]; then
     fs.writeFileSync(out, JSON.stringify({ board: true, perScenarioBoard: true, timings }, null, 2));
   ' "$E2E_TIMINGS" $parts
 fi
-echo "board-route: $count scenarios, one board each; failed:${failed:- none}"
+echo "board-route: $count scenarios, one board each (none for those that need no board); failed:${failed:- none}"
 [ -z "$failed" ]

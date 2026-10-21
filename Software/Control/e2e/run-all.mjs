@@ -35,7 +35,7 @@
  * What the project as drawn cannot do, the suite skips there, saying why
  * (`PROJECT_CANNOT`, below): the carriage never moves, since the isolator
  * IC14 between the processor and the drive has its secondary grounds on a
- * net of their own (SIL/mad.toml; mad-catalog/tests/mad.rs), and the
+ * net of their own (SIL/mad-catalog/tests/mad.rs, "The drive"), and the
  * project's machine has no jam. `E2E_BOARD_ROUTE=emulator` attaches the
  * suite to `mad-emulator --chrome` instead (the playgrounds' board), where
  * SERVO-stall jams the carriage by creating E2E_JAM_FILE, the file
@@ -133,20 +133,23 @@ const MOVES = new Set([
 // The carriage: IC14, the isolator between the processor and the drive, has
 // its secondary ground pins (9, 15) on a net of their own with only C26 on
 // it, so nothing it drives reaches the drive's STEP, DIR and ENA (read:
-// Hardware/EdgeBoard/KiCad; SIL/mad.toml; mad-catalog/tests/mad.rs). The
+// Hardware/EdgeBoard/KiCad; SIL/mad-catalog/tests/mad.rs, "The drive"). The
 // run's summary says "0 steps commanded" with the encoder at 0 counts, and
 // the firmware latches SERVO_STALL at the first move it commands
 // (measured, G2+G3+H2+I on mad-cosim.toml). Whether the machine's carrier is
 // bodged there is not known; the file keeps the board as drawn.
 const IC14_WHY =
-  'needs the carriage to move: IC14 as drawn passes nothing to the drive (SIL/mad.toml, "The machine on the carrier\'s connectors")';
+  'needs the carriage to move: IC14 as drawn passes nothing to the drive (SIL/mad-catalog/tests/mad.rs, "The drive")';
 const PROJECT_CANNOT = new Map([...MOVES].map((id) => [id, IC14_WHY]));
 // The project's machine has no jam: a lever a stepped kind cannot take from
 // a file the wall clock polls (mad-catalog/src/machine.rs, "Not modelled").
 PROJECT_CANNOT.set('SERVO-stall', `jams the carriage, which the project's machine cannot (SIL/mad-catalog/src/machine.rs, "Not modelled"), and ${IC14_WHY}`);
 const RUN_CANNOT = process.env.E2E_PROJECT_CANNOT === 'run';
+// The suite is on the project: attached to its Chrome, or listing for
+// board-route.sh, which names the route before any board is up.
+const ON_PROJECT = BOARD_ROUTE === 'project' && (BOARD || process.env.E2E_BOARD_ROUTE === 'project');
 /** Why `id` cannot run on this board, or '' when it can. */
-const cannot = (id) => (BOARD && BOARD_ROUTE === 'project' && !RUN_CANNOT && PROJECT_CANNOT.get(id)) || '';
+const cannot = (id) => (ON_PROJECT && !RUN_CANNOT && PROJECT_CANNOT.get(id)) || '';
 
 // The app is the built bundle (board-route.sh with APP_DIST sets this), not
 // the dev server. BUNDLE-live runs only then; every other scenario runs on
@@ -3214,18 +3217,22 @@ async function main() {
   // `--list`: the ids SCENARIOS selects (all of them without it), in the
   // suite's order, one a line: FW-ISS only on the ROM board, BUNDLE-live only
   // on the built bundle, and each left out otherwise. What this board cannot
-  // run is left out too, and said on stderr with why.
+  // run is left out too, and said on stderr with why. `--board-free` lists
+  // only the scenarios that need no board.
   // SIL/scripts/board-route.sh runs them one board each from this.
   if (process.argv.includes('--list')) {
     const only = process.env.SCENARIOS ? new Set(process.env.SCENARIOS.split(',').map((x) => x.trim())) : null;
+    const boardFreeOnly = process.argv.includes('--board-free');
     for (const s of scenarios) {
       if (
         (s.id === 'FW-ISS') === ROM_BOARD &&
         (s.id !== 'BUNDLE-live' || APP_IS_BUNDLE) &&
-        (!only || only.has(s.id))
+        (!only || only.has(s.id)) &&
+        (!boardFreeOnly || BOARD_FREE.has(s.id))
       ) {
-        if (cannot(s.id)) console.error(`  ~ ${s.id}: skipped (${cannot(s.id)})`);
-        else console.log(s.id);
+        if (cannot(s.id)) {
+          if (!boardFreeOnly) console.error(`  ~ ${s.id}: skipped (${cannot(s.id)})`);
+        } else console.log(s.id);
       }
     }
     return;

@@ -13,7 +13,7 @@
 # no VM.
 #
 # On the project as drawn the carriage never moves (IC14's secondary
-# grounds are on a net of their own; SIL/mad.toml), so the suite skips the
+# grounds are on a net of their own; SIL/mad-catalog/tests/mad.rs), so the suite skips the
 # scenarios that move it, each saying why (run-all.mjs, PROJECT_CANNOT):
 # the motion matrices, the waveforms, the run lifecycle with moves, the
 # mid-test drop and SERVO-stall.
@@ -60,8 +60,9 @@ jobs:
   board:
     name: E2E on the ISS (FlexC image + chrome-cdp)
     runs-on: ubuntu-latest
-    # GitHub's ceiling for a hosted job. The whole suite was about three hours
-    # of host time locally (PR #155); a runner is slower.
+    # GitHub's ceiling for a hosted job. On the project the runnable 23
+    # scenarios took 753 s of host time on an M2, boards included; a runner
+    # is slower, and the skipped ones come back once the carriage can move.
     timeout-minutes: 360
     steps:
       - uses: actions/checkout@v7

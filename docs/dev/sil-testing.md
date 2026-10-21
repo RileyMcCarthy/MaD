@@ -121,12 +121,14 @@ with MaD Control in the host's Chrome held to the board's clock by embsim's
   harness's host pins (`HOST.TX` to `P2.P53`, `P2.P55` to `HOST.RX`).
 - **What it costs.** The ISS runs at a few percent of real time, so a second
   of the board's time is tens of seconds of the host's. On the project
-  (measured, Apple M2, 2026-10-21): the firmware's boot off the flash is
-  about 1.2 s of board time, after which the board ran at about 0.1x with
-  the app attached, and at a few hundredths of that while the firmware
-  works its card (G1's run, 5.1 s of board time in 203 s); each scenario's
-  board, boot included, took 8 to 45 s of host time but G1's 203 s. The
-  node adds about half a millisecond of host time per 1 ms slice.
+  (measured, Apple M2, 2026-10-21): each board first boots the firmware off
+  the module's flash, about 1.3 s of board time in about 24 s of host time,
+  and `board-route.sh` starts a scenario only once the firmware's boot line
+  is out; the board then ran at about 0.1x with the app attached, and at a
+  few hundredths of that while the firmware works its card (G1, 3.1 s of
+  board time in 184 s). The 23 scenarios that run there took 753 s, boards
+  included; the per-PR ten 512 s. The node adds about half a millisecond of
+  host time per 1 ms slice.
 - **What it does not test.** Chrome's own Web Serial and the OS's serial
   driver are not in the byte path; animation frames, `ResizeObserver` and
   `IntersectionObserver` barely run on virtual time, so the live charts
@@ -134,7 +136,7 @@ with MaD Control in the host's Chrome held to the board's clock by embsim's
 - **What the project as drawn cannot do.** The carriage never moves: `IC14`,
   the isolator between the processor and the drive, has its secondary
   grounds on a net of their own, so nothing reaches the drive's step,
-  direction and enable inputs (`SIL/mad.toml`), the run's summary says
+  direction and enable inputs (`mad-catalog/tests/mad.rs`), the run's summary says
   `0 steps commanded`, and the firmware latches `SERVO_STALL` at the first
   move it commands (measured). The project's machine has no jam either. The
   suite skips each scenario that moves the carriage, and SERVO-stall, on the
