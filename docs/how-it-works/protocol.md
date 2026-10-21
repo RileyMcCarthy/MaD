@@ -64,8 +64,10 @@ units automatically.
 ## Priority model
 
 The UI queues outgoing messages at two priorities, and only one message is
-in-flight at a time (the next is sent after an ACK/NACK/DATA or a 2-second
-timeout):
+in-flight at a time. The next is sent after an ACK/NACK/DATA or a timeout:
+2 seconds for writes and on-demand reads, 250 ms for the periodic sample and
+state polls (MaD Control), so one lost poll costs a ~¼ s gap in live data
+rather than a 2-second stall:
 
 - **HIGH** — commands and config: gcode uploads, reads/writes, motion commands.
   Sent first, FIFO.

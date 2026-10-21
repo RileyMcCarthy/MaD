@@ -29,7 +29,10 @@ stateDiagram-v2
 ## Faults
 
 A fault **stays set until the machine is restarted**, and no motion is permitted
-while one is showing. The badge shows the code in the first column below.
+while one is showing. The exception is a servo stall (`SERVO_STALL`): it clears
+when motion is disabled, with no reboot (see
+[Clear a servo stall](manual-control.md#clear-a-servo-stall)). The badge shows
+the code in the first column below.
 
 | Badge | What it means | What to do |
 |---|---|---|
@@ -42,6 +45,7 @@ while one is showing. The badge shows the code in the first column below.
 | `ESD_LOWER` | Lower emergency-stop tripped | Clear whatever caused the trip, then reboot |
 | `SERVO_COMMUNICATION` | Lost contact with the motor controller | Check the motor wiring, then reboot |
 | `FORCE_GAUGE_COMMUNICATION` | Lost contact with the force gauge | Check the force-gauge cable, then reboot |
+| `SERVO_STALL` | The carriage stopped moving while the drive was still pushing it | Clear the obstruction, click **Clear stall (disable motion)**, then **Enable motion**. No reboot needed |
 
 ## Restrictions
 
