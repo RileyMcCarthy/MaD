@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { behaviour } from '@vibes/behaviour';
-import { commandName, isPeriodicCommand, summariseGcode } from './commandNames';
+import { commandName, isPeriodicCommand, requestOf, summariseGcode } from './commandNames';
 import {
   MSG_READ_SAMPLE,
   MSG_READ_STATE,
@@ -98,6 +98,94 @@ describe('commandName', () => {
     expect(commandName(MSG_READ_SAMPLE, 'write')).toBe('WRITE_MACHINE_CONFIGURATION(0)');
     expect(commandName(MSG_READ_SAMPLE, 'read')).toBe('READ_SAMPLE(0)');
   });
+});
+
+describe('requestOf', () => {
+  // `[0x55] [type] [cmd] ...`: type 0x00 is a read, 0x01 a write (Protocol/ProtoEmb/framing).
+  const SYNC = 0x55;
+
+  behaviour(
+    {
+      id: 'session.timed-out-request-direction-from-frame',
+      covers: 'src/device/commandNames.ts#requestOf',
+      given: 'a state read and a motion-enable write that share command number 1, each handed back as a timed-out request',
+      expect: {
+        'read-recognised': 'the state read is recognised as a read of command 1',
+        'write-recognised': 'the motion-enable write is recognised as a write of command 1',
+      },
+      why: {
+        'read-recognised': 'the command number alone cannot tell a lost state poll from a lost motion-enable write',
+        'write-recognised': 'the command number alone cannot tell a lost state poll from a lost motion-enable write',
+      },
+    },
+    () => {
+      expect(MSG_READ_STATE).toBe(MSG_WRITE_MOTION_ENABLE);
+      expect(requestOf([SYNC, 0x00, MSG_READ_STATE])).toEqual({ command: MSG_READ_STATE, dir: 'read' });
+      expect(requestOf([SYNC, 0x01, MSG_WRITE_MOTION_ENABLE, 1, 1, 0x00])).toEqual({
+        command: MSG_WRITE_MOTION_ENABLE,
+        dir: 'write',
+      });
+    },
+  );
+
+  behaviour(
+    {
+      id: 'session.short-timed-out-frame-unrecognised',
+      covers: 'src/device/commandNames.ts#requestOf',
+      given: 'timed-out requests of zero, one and two bytes, too short to carry a command number',
+      expect: {
+        'no-request': 'none of them is recognised as a request, so no waiting command is failed for them',
+      },
+      why: {
+        'no-request': 'a frame that names no command must leave every waiting command to its own timer',
+      },
+    },
+    () => {
+      for (const frame of [[], [SYNC], [SYNC, 0x00]]) {
+        expect(requestOf(frame)).toBeUndefined();
+        expect(requestOf(Uint8Array.from(frame))).toBeUndefined();
+      }
+    },
+  );
+
+  behaviour(
+    {
+      id: 'session.unknown-type-timed-out-frame-unrecognised',
+      covers: 'src/device/commandNames.ts#requestOf',
+      given: 'timed-out requests for command 1 whose type byte is 0x02, 0x80 or 0xff, outside the read and write types',
+      expect: {
+        'no-request': 'none of them is recognised as a request, so no waiting command is failed for them',
+      },
+      why: {
+        'no-request': 'treating any non-read type as a write would fail a motion-enable write the board may still answer',
+      },
+    },
+    () => {
+      for (const type of [0x02, 0x80, 0xff]) {
+        expect(requestOf([SYNC, type, MSG_WRITE_MOTION_ENABLE, 1, 1, 0x00])).toBeUndefined();
+        expect(requestOf(Uint8Array.of(SYNC, type, MSG_WRITE_MOTION_ENABLE))).toBeUndefined();
+      }
+    },
+  );
+
+  behaviour(
+    {
+      id: 'session.timed-out-frame-from-wasm-bytes',
+      covers: 'src/device/commandNames.ts#requestOf',
+      given: 'the same state read and motion-enable write as a byte array, the form the protocol core hands back on a timeout',
+      expect: {
+        'same-as-plain-list': 'each is recognised with the same command and direction as from a plain list of numbers',
+      },
+    },
+    () => {
+      const read = [SYNC, 0x00, MSG_READ_STATE];
+      const write = [SYNC, 0x01, MSG_WRITE_MOTION_ENABLE, 1, 1, 0x00];
+      expect(requestOf(Uint8Array.from(read))).toEqual({ command: MSG_READ_STATE, dir: 'read' });
+      expect(requestOf(Uint8Array.from(write))).toEqual({ command: MSG_WRITE_MOTION_ENABLE, dir: 'write' });
+      expect(requestOf(Uint8Array.from(read))).toEqual(requestOf(read));
+      expect(requestOf(Uint8Array.from(write))).toEqual(requestOf(write));
+    },
+  );
 });
 
 describe('isPeriodicCommand', () => {
