@@ -91,7 +91,7 @@ or by hand, in three terminals:
 ```bash
 make e2e-emulator                          # wait for "… reached … DevTools at http://127.0.0.1:9222"
 cd ../Software/Control && npm run dev
-CDP_URL=http://127.0.0.1:9222 npm run e2e  # or SCENARIOS=… npm run e2e
+CDP_URL=http://127.0.0.1:9222 E2E_JAM_FILE=/tmp/mad-sil.jam npm run e2e  # or SCENARIOS=… as well
 ```
 
 Wait for the run's **"reached"** line before attaching: a page made before the
@@ -110,6 +110,11 @@ visible, enabled and what `elementFromPoint` finds at its centre, then forces
 the click. The link-drop scenarios (B5-reconnect, M11-idle-drop,
 M11-mid-test-drop) pull the node's cable (`__embsim.link('unplug')`) and put it
 back.
+SERVO-stall jams the carriage by creating `E2E_JAM_FILE`, the file
+`mad-emulator --jam-file` watches: while it exists the drive keeps stepping but
+the carriage and its encoder stand still. `board-route.sh` defaults it to
+`$BOARD_LOGS/jam`, and `make e2e-emulator` uses `/tmp/mad-sil.jam`. Without
+`E2E_JAM_FILE` set, SERVO-stall fails at once.
 
 **In CI:** `control-e2e-board` gates a subset per PR on the runner's Chrome
 (`ci.yml`), then BUNDLE-live on the built bundle, and the nightly
