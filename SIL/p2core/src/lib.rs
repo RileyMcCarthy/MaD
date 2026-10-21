@@ -1145,11 +1145,12 @@ impl<P: PinBus> Machine<P> {
         // `altb x,#hexchrs` / `testb 0,x wc` pair would then test the wrong
         // long and reject a valid Prop_Chk.
         //
-        // Silicon holds the interrupt off the same way after AUGS/AUGD and
-        // SETQ/SETQ2, and for the whole of a REP block. Compiled FlexC code is
-        // dense with both (`##` immediates, `setq`+`wrlong` register bursts),
-        // so an ISR beside it (HAL_serial's RX interrupt) would otherwise
-        // consume a prefix meant for the interrupted instruction.
+        // Silicon holds the interrupt off the same way after AUGS/AUGD,
+        // SETQ/SETQ2 and SCA/SCAS (whose product is the next instruction's
+        // S), and for the whole of a REP block. Compiled FlexC code is dense
+        // with prefixes (`##` immediates, `setq`+`wrlong` register bursts), so
+        // an ISR beside it (HAL_serial's RX interrupt) would otherwise consume
+        // a prefix meant for the interrupted instruction.
         let held_off = {
             let c = &self.cogs[cog];
             c.alt_d.is_some()
@@ -1159,6 +1160,7 @@ impl<P: PinBus> Machine<P> {
                 || c.aug_d.is_some()
                 || c.setq.is_some()
                 || c.setq2.is_some()
+                || c.sca_s.is_some()
                 // Only inside the body: `rep` closes once the PC passes its end,
                 // so a block left by a branch must not hold interrupts off.
                 || c.rep.is_some_and(|(_, first, last)| (first..=last).contains(&pc))
