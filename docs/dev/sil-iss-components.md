@@ -706,7 +706,13 @@ the core derives. Two things differ from the debug image there:
 - a request that lands before the serial core has armed its receive
   interrupt would go unanswered (inferred), so the case asks again every
   20 ms of board time. In the runs here the first request, sent at 1.226 s
-  of board time, was answered at 1.235 s (measured).
+  of board time, was answered at 1.235 s (measured);
+- every state read from 1.24 s to 1.8 s of board time says the machine is
+  faulted on a processor core, while the core reports all 8 cogs running
+  (measured). The firmware raises that fault when one of its cog channels
+  is not running (`app_control.c`, `dev_cogManager_isAllRunning`); which
+  channel, and whether the debug image does the same, is open. The case
+  holds only that motion is off and no test runs.
 
 `mad-emulator`, the `p2core`/`p2iss` suites and `mad-catalog/tests/boot.rs`
 keep the debug image: they put the host on the bare chip's `P53`/`P55`, or
