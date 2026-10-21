@@ -323,8 +323,12 @@ mod tests {
     const RX: u8 = 58;
     /// `X[5]` on the RX pin: sample after the rising clock edge.
     const SAMPLE_LATE: u32 = 32;
-    /// The card's answer to `CMD0` (R1, in idle state).
-    const CARD_BYTE: u8 = 0x01;
+    /// The card's `CMD8` R7 check pattern, which `disk_initialize` gates on.
+    /// Its last wire bit is low, unlike the high level `clock_in` puts on
+    /// the line in every low half, so the final bit only reads right if
+    /// `RDPIN` latches the owed sample from the net after the last rising
+    /// edge rather than the level before it.
+    const CARD_BYTE: u8 = 0xAA;
 
     /// A board with the sync-serial bus configured through its own `WRPIN`s
     /// and `WXPIN`, the way `sdmm.cc`'s `disk_initialize` does: a CPOL = 1
