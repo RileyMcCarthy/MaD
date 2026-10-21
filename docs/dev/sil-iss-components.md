@@ -43,7 +43,7 @@ why the three maps disagreed:
 
 | Component | Transport | Status |
 |---|---|---|
-| Host protocol link (P55/P53) | UART framed on Thevenin levels, rate derived from the guest's own `WXPIN` divisor | **done** |
+| Host protocol link (P55/P53 on `P2Iss`; P62/P63 on the project files) | UART framed on Thevenin levels, rate derived from the guest's own `WXPIN` divisor | **done** |
 | Debug console (P62) | Byte-level inside `p2core::Board`, forwarded to the emulator log | **partial** — not a node |
 | DS2 piggy board (netlist) + ADS122U04 | UART on levels; analog inputs via MNA cluster solve | **done** — see F1 |
 | Load cell bridge | Two Thevenin drives into AIN0/AIN1 | **done** |
@@ -679,6 +679,38 @@ cd SIL && make p2image && cargo build --release -p p2iss --examples
   stage-1 that reads the flash two bits a clock, as Parallax's own loader
   does with Fast Read Dual Output (`p2iss/rom/stage1.spin2`) — not a faster
   guest clock, and not a load that skips the chain.
+
+### The project files: the host on `J1`, the production build in the flash
+
+`SIL/mad.toml` and its three twins put the host on the carrier's debug header
+`J1` (`P62`, `P63`, `GND`), where the machine's Prop Plug sits, and the
+module's flash holds the production build (`pio run -e propeller2`,
+`make flash-image`). Its MAIN channel receives on `P63` and transmits on
+`P62` at 2,000,000 baud (`HW_pins.h`, `HAL_serial_config.c`), with the
+FlexC console's own smart pins (`HAL_SERIAL_TYPE_BUILTIN`). The debug
+build's MAIN channel, `P53`/`P55`, cannot reach the chip on the P2-EC32MB:
+the module keeps `P40`–`P57` for its PSRAMs and has no finger for them
+([board design](sil-board-simulation-design.md#the-p2-edge-module-gap)).
+
+`mad-catalog/tests/mad.rs` boots the production image in `P2IssCore` off the
+module's flash and sends ProtoEmb READ frames on `J1`: the firmware answers
+the version read and the state read on `P62`, at 2,000,000 baud by the rate
+the core derives. Two things differ from the debug image there:
+
+- the production image still prints `Starting MaD Board` on `P62`
+  (`main.c`) at the FlexC console's default rate (230,400 baud, inferred)
+  before its serial core sets the pin to 2,000,000, so a host at the
+  protocol's rate reads that line as framing errors (27 of them, measured),
+  and the core's report keeps `P62`'s bytes as the console: it says the boot
+  line, then the protocol's bytes as text (measured);
+- a request that lands before the serial core has armed its receive
+  interrupt would go unanswered (inferred), so the case asks again every
+  20 ms of board time. In the runs here the first request, sent at 1.226 s
+  of board time, was answered at 1.235 s (measured).
+
+`mad-emulator`, the `p2core`/`p2iss` suites and `mad-catalog/tests/boot.rs`
+keep the debug image: they put the host on the bare chip's `P53`/`P55`, or
+read the log on `P62`.
 
 ## The host: Chrome on the board's clock, or a PTY
 
