@@ -30,6 +30,7 @@ describe('closeFlashPort', () => {
       const p = port(true, true);
       expect(await closeFlashPort(p)).toBe(true);
       expect(p.readable).toBeNull();
+      expect(p.writable).toBeNull();
     },
   );
 
