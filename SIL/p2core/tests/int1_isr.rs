@@ -429,7 +429,13 @@ fn an_interrupt_waits_for_a_repeated_block_to_finish() {
     check_encodings();
 
     let mut m = machine(
-        &[TRGINT1, rep_imm(2, 5), add_imm(20, 1), add_imm(21, 1), JMP_SELF],
+        &[
+            TRGINT1,
+            rep_imm(2, 5),
+            add_imm(20, 1),
+            add_imm(21, 1),
+            JMP_SELF,
+        ],
         &[mov_imm(11, 5), RETI1],
     );
     m.step(2).expect("the trigger, then the repeat starts");
@@ -447,7 +453,10 @@ fn an_interrupt_waits_for_a_repeated_block_to_finish() {
         "at the instruction after the block"
     );
     m.step(1).expect("the interrupt branch");
-    assert_eq!(m.int_entries[0], 1, "the interrupt is taken after the block");
+    assert_eq!(
+        m.int_entries[0], 1,
+        "the interrupt is taken after the block"
+    );
     assert_eq!(
         m.cogs[0].regs[REG_IRET1] & 0xF_FFFF,
         MAIN + 16,
@@ -492,7 +501,10 @@ fn an_interrupt_is_taken_once_a_branch_leaves_a_repeated_block() {
     assert_eq!(m.cogs[0].regs[20], 1, "the block's add ran");
     assert_eq!(m.cogs[0].pc, MAIN, "at the branch target");
     m.step(1).expect("the interrupt branch");
-    assert_eq!(m.int_entries[0], 1, "the interrupt is taken outside the block");
+    assert_eq!(
+        m.int_entries[0], 1,
+        "the interrupt is taken outside the block"
+    );
     assert_eq!(
         m.cogs[0].regs[REG_IRET1] & 0xF_FFFF,
         MAIN,
