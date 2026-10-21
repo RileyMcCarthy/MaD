@@ -389,10 +389,12 @@ function sanitizeValue(key: string, value: unknown): unknown | typeof DROP {
   const obj = value as object;
 
   if (obj instanceof Error) {
+    // An error can echo a credential (a failed API call quoting its token),
+    // and its message and stack reach the public issue body like any string.
     return {
       name: obj.name,
-      message: truncate(obj.message),
-      stack: (obj.stack ?? '').split('\n').slice(0, SANITIZE_STACK_LINES).join('\n'),
+      message: truncate(redactCredentials(obj.message)),
+      stack: redactCredentials((obj.stack ?? '').split('\n').slice(0, SANITIZE_STACK_LINES).join('\n')),
     };
   }
   // Payload bytes are never inlined: they belong in the byte ring, where they
