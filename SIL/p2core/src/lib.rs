@@ -357,7 +357,7 @@ pub struct Machine<P: PinBus> {
     ///
     /// For a guest whose `$14` is not its clock. The boot ROM fills hub
     /// `$00..$FF` with `$FF` for its base64 table, so `$14` reads
-    /// `$FFFF_FFFF`; timed at that rate, the ROM's 60 s serial window
+    /// `$FFFF_FFFF`; timed at that rate, the ROM's serial window (60 s on silicon)
     /// (`600 × rc_max/10` clocks) closes 0.42 s into board time. The ROM runs
     /// on RCFAST, so a host booting it sets this to that rate.
     ///
