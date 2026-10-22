@@ -16,10 +16,11 @@ make p2image      # the propeller2_debug image the emulator executes
 
 `make emulator` generates the Rust codec into `Protocol/rust/src/generated`
 (`make protocol`) and then `cargo build`. The image is a runtime input, built
-by `make p2image` (`pio run -e propeller2_debug`). The `playground*` targets
-build it, and the release emulator, for you; the `e2e`, `e2e-emulator` and
-`e2e-bundle` targets build the production image and lay out the module's flash
-and card (`make flash-image sd-image`), and the embsim tool builds `mad-runner`.
+by `make p2image` (`pio run -e propeller2_debug`). The `playground*` and
+`e2e-motion` targets build it, and the release emulator, for you; the `e2e`,
+`e2e-emulator` and `e2e-bundle` targets build the production image and lay
+out the module's flash and card (`make flash-image sd-image`), and the embsim
+tool builds `mad-runner`.
 
 | Target | What it does |
 |---|---|
@@ -35,6 +36,7 @@ and card (`make flash-image sd-image`), and the embsim tool builds `mad-runner`.
 | `make e2e` | The dev server, `e2e-emulator`'s board and the suite against it, then everything stopped (`SCENARIOS=…` selects) |
 | `make e2e-rom` | FW-ISS: the app's flasher in a headless Chrome on the board's clock, against the ISS booting the mask ROM (`mad-emulator`) |
 | `make e2e-bundle` | BUNDLE-live on `e2e-emulator`'s board: the app as it ships (built as `pages.yml` builds it, served by `vite preview`): connect, samples, machine state, unplug, and replug with the app reconnecting by itself |
+| `make e2e-motion` | What the project as drawn cannot run (the scenarios that move the carriage, and SERVO-stall), on `mad-emulator`'s board, until `IC14` is settled (`SCENARIOS=…` narrows the set) |
 | `make flash-image` | `build/flash.bin`: stage-1 and the production image, the module's boot flash |
 | `make sd-image` | `build/sd.img`: a 32 MiB FAT16 card mirroring `./sd` |
 | `make check` | `embsim check` on the four project files (`mad*.toml`), after `flash-image` and `sd-image` |
@@ -80,10 +82,10 @@ firmware booted off the flash and answering the host over `J1` (its version
 and the machine's state, framed by ProtoEmb's framing crate and decoded with
 the generated Rust codec, then the machine reading unfaulted and taking the
 host's request to enable motion); and the encoder's pairs with the chip held
-in reset. `tests/pty_protocol.rs` runs `mad.toml` live, as `embsim run
-mad.toml --pty PATH` does, and reads the firmware's version on the PTY before
-the run's 2 s of board time end. `tests/projects.rs` holds the four files to
-one another. The debug image (`make p2image`) stays where a run needs its log
+in reset. `tests/pty_protocol.rs` runs `mad.toml` live, the command `embsim
+run mad.toml --pty PATH` hands `mad-runner` run in its own process, and reads
+the firmware's version on the PTY before the run's 2 s of board time end.
+`tests/projects.rs` holds the four files to one another. The debug image (`make p2image`) stays where a run needs its log
 on `P62` or its MAIN channel on the bare chip's `P53`/`P55`: the playgrounds
 (`mad-emulator`), the `p2core` and `p2iss` suites, and
 `mad-catalog/tests/boot.rs`.
@@ -123,12 +125,14 @@ with MaD Control in the host's Chrome held to the board's clock by embsim's
   of the board's time is tens of seconds of the host's. On the project
   (measured, Apple M2, 2026-10-21): each board first boots the firmware off
   the module's flash, about 1.3 s of board time in about 24 s of host time,
-  and `board-route.sh` starts a scenario only once the firmware's boot line
-  is out; the board then ran at about 0.1x with the app attached, and at a
-  few hundredths of that while the firmware works its card (G1, 3.1 s of
-  board time in 184 s). The 23 scenarios that run there took 753 s, boards
-  included; the per-PR ten 512 s. The node adds about half a millisecond of
-  host time per 1 ms slice.
+  and `board-route.sh` starts a scenario once the firmware's boot line is
+  out (a hint for pacing: the scenario's connect is the check, below); the
+  board then ran at about 0.1x with the app attached, and at a few
+  hundredths of that while the firmware works its card (G1, 3.1 s of board
+  time in 184 s). The 23 scenarios the project runs (14 on a board, and 9
+  that need none: A1 and FW1–3, FW5–9) took 753 s, boards included, and
+  BUNDLE-live on the bundle 36 s; the per-PR ten 512 s. The node adds about
+  half a millisecond of host time per 1 ms slice.
 - **What it does not test.** Chrome's own Web Serial and the OS's serial
   driver are not in the byte path; animation frames, `ResizeObserver` and
   `IntersectionObserver` barely run on virtual time, so the live charts
@@ -140,9 +144,13 @@ with MaD Control in the host's Chrome held to the board's clock by embsim's
   `0 steps commanded`, and the firmware latches `SERVO_STALL` at the first
   move it commands (measured). The project's machine has no jam either. The
   suite skips each scenario that moves the carriage, and SERVO-stall, on the
-  project, saying why (`e2e/run-all.mjs`, `PROJECT_CANNOT`);
-  `E2E_PROJECT_CANNOT=run` runs them anyway, for a change that may lift the
-  reason. Whether the machine's carrier is bodged at `IC14` is not known.
+  project, saying why (`e2e/run-all.mjs`, `PROJECT_CANNOT`): 41 of the 55
+  that touch a board. `E2E_PROJECT_CANNOT=run` runs them anyway, for a
+  change that may lift the reason. Whether the machine's carrier is bodged
+  at `IC14` is not known. Until it is settled they run on `mad-emulator`'s
+  board, where the carriage moves: `make e2e-motion` (the set from
+  `node e2e/run-all.mjs --list --cannot`, run with `BOARD_ROUTE=emulator`),
+  per PR G2+G3+H2+I and nightly the whole set.
 
 ### Playground
 
@@ -173,11 +181,26 @@ CDP_URL=http://127.0.0.1:9222 npm run e2e  # or SCENARIOS=… as well
 ```
 
 `make e2e` serves the app with the dev server (on `APP_PORT`, 5174, unless
-something already answers there, which it then uses), and `make e2e-bundle`
-with the production bundle (`vite preview`); BUNDLE-live runs only on the
-bundle. The dev server stays the suite's server because the M13 scenarios
-read the live stream through a hook only a dev build has (`__madLive`), and a
-failure report carries the app's log from a dev build without an opt-in.
+this checkout's dev server already answers there, which it then uses; a
+server another checkout started there is refused, by the working directory
+`lsof` reports for it), and `make e2e-bundle` with the production bundle
+(`vite preview`); BUNDLE-live runs only on the bundle. The dev server stays
+the suite's server because a failure report carries the app's log
+(`__madLog`), which a dev build exposes without an opt-in
+(`src/diagnostics/log.ts`). On `mad-emulator`'s board (`make e2e-motion`) the
+M13 scenarios also read the live stream through `__madLive`, which only a
+dev build has (`src/store/liveBuffer.ts`).
+
+A scenario's connect is done only once the firmware has answered: samples
+arriving and the opening handshake's firmware version in the status bar,
+waited for in page time (`e2e/fixtures.mjs`, `connectToSil`). The status
+dot turns connected as soon as the port opens, before anything is heard from
+the board, so the connect is what makes a silent firmware fail every
+scenario. On the project `board-route.sh` also waits for the firmware's boot
+line before starting a scenario, as pacing only: a page that connected
+while the module was in its ROM and stage-1 would spend its first opening
+read on a board that cannot answer it, the others queued behind it (2252 ms
+of board time until the response timeout, measured on a silent board).
 
 Wait for the run's **"reached"** line before attaching: a page made before the
 node holds Chrome is not on the board's clock. The suite makes a fresh browser
@@ -204,11 +227,14 @@ Without `E2E_JAM_FILE` set, SERVO-stall fails at once.
 
 **In CI:** `control-e2e-board` gates a subset per PR on the project
 (`make check`, then `make e2e`, one board per scenario, on the runner's
-Chrome; `ci.yml`), then BUNDLE-live on the built bundle, and the nightly
+Chrome; `ci.yml`), then BUNDLE-live on the built bundle, then G2+G3+H2+I on
+`mad-emulator` (`make e2e-motion`) until `IC14` is settled. The nightly
 (`e2e-nightly.yml`) runs the whole suite the same way after the node's Chrome
-canary, with FW-ISS on `mad-emulator`'s ROM board. `control-e2e-boardless`
-gates the scenarios that need no board (A1 and the firmware-flash `FW*` ones,
-a host Chrome against in-page fakes).
+canary, then everything the project cannot run on `mad-emulator` (`make
+e2e-motion`), and FW-ISS on `mad-emulator`'s ROM board. FW-ISS is flaky
+there on `main` too: nightly 39381693691 failed it, 39556919751 passed it.
+`control-e2e-boardless` gates the scenarios that need no board (A1 and the
+firmware-flash `FW*` ones, a host Chrome against in-page fakes).
 
 !!! note "One scenario, one board"
     A fetch that holds a virtual-time budget for 2 s is granted that budget
@@ -231,10 +257,15 @@ a host Chrome against in-page fakes).
     real time.
 
 `mad-catalog` has a Chrome-free PTY round trip (`tests/pty_protocol.rs`):
-`mad.toml` run live, as `embsim run mad.toml --pty PATH` runs it, a
-`firmware_version` READ on the PTY once the firmware has printed its boot
-line, and a DATA frame back before the run's 2 s of board time end. It runs
-as part of `make test` / `sil-rust` and does not use `/tmp/tty.rpi`.
+`mad.toml` run live, a `firmware_version` READ on the PTY from the run's
+start and again until answered, and a DATA frame back before the run's 2 s
+of board time end. It runs as part of `make test` / `sil-rust` and does not
+use `/tmp/tty.rpi`. It runs the command `embsim run mad.toml --pty PATH`
+hands `mad-runner` in its own process (`embsim_cli::run`, over the same
+kinds), on a copy of `mad.toml` beside images it lays out itself, so `cargo
+test` needs neither the `embsim` binary nor `make flash-image sd-image`. The
+hand-over from `embsim` to `mad-runner` and the checked-in file with the
+`make` images are exercised by `make check` and `make e2e`.
 
 !!! note "SIL is single-instance"
     There is exactly [one emulator per process](../how-it-works/sil-emulator.md#one-emulator-per-process),

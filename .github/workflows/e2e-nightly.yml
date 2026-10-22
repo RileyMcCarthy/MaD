@@ -13,10 +13,12 @@
 # no VM.
 #
 # On the project as drawn the carriage never moves (IC14's secondary
-# grounds are on a net of their own; SIL/mad-catalog/tests/mad.rs), so the suite skips the
-# scenarios that move it, each saying why (run-all.mjs, PROJECT_CANNOT):
-# the motion matrices, the waveforms, the run lifecycle with moves, the
-# mid-test drop and SERVO-stall.
+# grounds are on a net of their own; SIL/mad-catalog/tests/mad.rs), so the
+# suite skips the scenarios that move it there, each saying why (run-all.mjs,
+# PROJECT_CANNOT): the motion matrices, the waveforms, the run lifecycle
+# with moves, the mid-test drop and SERVO-stall. Until IC14 is settled they
+# run in a step of their own on mad-emulator's board (make e2e-motion), the
+# debug firmware on the bare chip, where the carriage moves.
 #
 # Not per-PR because a PR cannot afford it: the ISS runs at a few percent of
 # real time, so the whole suite is an hour or more of host time. ci.yml is
@@ -60,9 +62,10 @@ jobs:
   board:
     name: E2E on the ISS (FlexC image + chrome-cdp)
     runs-on: ubuntu-latest
-    # GitHub's ceiling for a hosted job. On the project the runnable 23
-    # scenarios took 753 s of host time on an M2, boards included; a runner
-    # is slower, and the skipped ones come back once the carriage can move.
+    # GitHub's ceiling for a hosted job. On the project the 23 it runs (14
+    # on a board, 9 with none) took 753 s of host time on an M2, boards
+    # included. The motion set on mad-emulator is most of the night: the
+    # whole suite there took 3 h 55 min on the runner (run 39556919751).
     timeout-minutes: 360
     steps:
       - uses: actions/checkout@v7
@@ -120,7 +123,8 @@ jobs:
           CHROME: /usr/bin/google-chrome
         run: make check
       # FW-ISS's board: mad-emulator booting the mask ROM (no firmware image).
-      - name: Build mad-emulator (release), for FW-ISS
+      # The motion set's step builds the debug image itself (make e2e-motion).
+      - name: Build mad-emulator (release), for FW-ISS and the motion set
         working-directory: SIL
         run: |
           make protocol
@@ -157,6 +161,26 @@ jobs:
           fi
           make e2e
 
+      # What the project cannot run (run-all.mjs, PROJECT_CANNOT), on
+      # mad-emulator's board until IC14 is settled: `make e2e-motion`
+      # builds the debug image (pio env propeller2_debug) and runs what
+      # `run-all.mjs --list --cannot` names, one board each. On the smoke
+      # suite, the smoke ids among them.
+      - name: Run the motion set on mad-emulator (until IC14 is settled)
+        if: always()
+        working-directory: SIL
+        env:
+          CHROME: /usr/bin/google-chrome
+          BOARD_LOGS: /tmp/e2e-out/motion
+          BOARD_PER_SCENARIO: '1'
+          E2E_TIMINGS: /tmp/e2e-out/timings-motion.json
+        run: |
+          SUITE="${{ github.event.inputs.suite || 'full' }}"
+          if [ "$SUITE" = "smoke" ]; then
+            export SCENARIOS=$(grep -v -e '^#' -e '^[[:space:]]*$' ../Software/Control/e2e/smoke-ids.txt | paste -sd, -)
+          fi
+          make e2e-motion
+
       # FW-ISS: the app's flasher against the ISS booting the mask ROM, on
       # the programming UART (make e2e-rom), on mad-emulator's board.
       - name: Run FW-ISS on the ROM board
@@ -177,8 +201,10 @@ jobs:
         run: |
           node -e '
             const fs = require("fs");
-            let t; try { t = JSON.parse(fs.readFileSync("/tmp/e2e-out/timings.json", "utf8")); } catch { process.exit(0); }
-            const rows = t.timings.map((r) => `| ${r.id} | ${r.verdict} | ${r.hostS.toFixed(1)} | ${r.boardS === null ? "–" : r.boardS.toFixed(3)} |`);
+            const read = (p) => { try { return JSON.parse(fs.readFileSync(p, "utf8")).timings; } catch { return []; } };
+            const timings = [...read("/tmp/e2e-out/timings.json"), ...read("/tmp/e2e-out/timings-motion.json")];
+            if (timings.length === 0) process.exit(0);
+            const rows = timings.map((r) => `| ${r.id} | ${r.verdict} | ${r.hostS.toFixed(1)} | ${r.boardS === null ? "–" : r.boardS.toFixed(3)} |`);
             const out = ["| scenario | verdict | host s | board s |", "|---|---|---|---|", ...rows].join("\n");
             console.log(out);
             if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, out + "\n");

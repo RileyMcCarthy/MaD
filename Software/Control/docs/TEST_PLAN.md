@@ -13,7 +13,8 @@ abstractions (SIL serial, OPFS data folder) live in the harness — never in `sr
 > the host's Chrome, every page and worker held to the board's clock by embsim's
 > `chrome-cdp`, on the machine's project (`SIL/mad-cosim.toml`, `cd SIL && make
 > e2e`). The project as drawn cannot move the carriage, so the suite skips the
-> scenarios that move it there, saying why (`PROJECT_CANNOT`). Do not run the
+> scenarios that move it there, saying why (`PROJECT_CANNOT`), and runs them on
+> `mad-emulator`'s board meanwhile (`cd SIL && make e2e-motion`). Do not run the
 > suite against the ISS behind the WS bridge (the bridge's `MAD_PTY` on
 > `make playground-pty`'s `/tmp/tty.iss`): that measures the host, not the
 > machine.

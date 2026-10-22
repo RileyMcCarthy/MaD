@@ -13,6 +13,7 @@
 #   make e2e            - The app served, e2e-emulator's board and the e2e suite against it (SCENARIOS selects)
 #   make e2e-rom        - FW-ISS: the app's flasher against the ISS's mask ROM, headless (mad-emulator)
 #   make e2e-bundle     - BUNDLE-live: the built bundle (as pages.yml builds it) on e2e-emulator's board
+#   make e2e-motion     - What the project cannot run (the carriage's scenarios), on mad-emulator, until IC14 is settled
 #   make flash-image    - build/flash.bin: stage-1 and the production image, the module's boot flash
 #   make sd-image       - build/sd.img: a 32 MiB FAT16 card mirroring ./sd
 #   make check          - embsim check on MaD's four project files (mad*.toml)
@@ -25,11 +26,12 @@
 # port is the node's, on the board's protocol pins. The e2e runs it on the
 # machine's project, mad-cosim.toml (embsim MIGRATING-MAD.md step 10), the
 # node on the carrier's debug header J1; the playgrounds run it on
-# mad-emulator (`--chrome`, step 1b) until step 11. A browser on the host's
-# own clock (behind a PTY, or the WS bridge) measures the host, not the
-# machine: the ISS interprets every instruction at a few percent of real
-# time, and the app's 2 s response timeout would fire at a fraction of that
-# in the board's time.
+# mad-emulator (`--chrome`, step 1b) until step 11, and so does e2e-motion,
+# what the project as drawn cannot run, until IC14 is settled. A browser on
+# the host's own clock (behind a PTY, or the WS bridge) measures the host,
+# not the machine: the ISS interprets every instruction at a few percent of
+# real time, and the app's 2 s response timeout would fire at a fraction of
+# that in the board's time.
 
 FIRMWARE_DIR = ../Firmware/MaDCore
 # The P2 image mad-emulator and the p2core/p2iss suites execute: the debug
@@ -65,7 +67,7 @@ BUILD_DIR = build
 FLASH_IMAGE = $(BUILD_DIR)/flash.bin
 SD_IMAGE = $(BUILD_DIR)/sd.img
 
-.PHONY: p2image p2image-production protocol emulator emulator-release test playground playground-iss playground-pty playground-rom e2e-emulator e2e e2e-rom e2e-bundle flash-image sd-image check bootrom clean
+.PHONY: p2image p2image-production protocol emulator emulator-release test playground playground-iss playground-pty playground-rom e2e-emulator e2e e2e-rom e2e-bundle e2e-motion flash-image sd-image check bootrom clean
 
 # Build the P2 image the ISS runs (`p2core`, `p2iss`, `mad-emulator`).
 #
@@ -166,6 +168,20 @@ e2e-bundle: flash-image sd-image
 	$(EMBSIM) check $(E2E_PROJECT)
 	cd ../Software/Control && ./node_modules/.bin/vite build --base=$(BUNDLE_BASE) --outDir $(BUNDLE_DIR) --emptyOutDir
 	APP_DIST=$(BUNDLE_DIR) APP_BASE=$(BUNDLE_BASE) SCENARIOS=BUNDLE-live EMBSIM="$(EMBSIM)" E2E_PROJECT=$(E2E_PROJECT) scripts/board-route.sh e2e
+
+# What the project as drawn cannot run, on mad-emulator's board meanwhile
+# (BOARD_ROUTE=emulator: the debug firmware on the bare chip, the host on
+# P53/P55, a jam on --jam-file): the scenarios that move the carriage, which
+# IC14 keeps from the drive on the project, and SERVO-stall, which jams it
+# (run-all.mjs, PROJECT_CANNOT, listed by `--list --cannot`). Until the
+# machine's carrier at IC14 is settled, so the motion coverage stays.
+# `make e2e-motion SCENARIOS=G2+G3+H2+I` narrows the set; naming nothing in
+# it fails.
+e2e-motion: p2image emulator-release
+	@ids=$$(cd ../Software/Control && node e2e/run-all.mjs --list --cannot | paste -sd, -); \
+	if [ -z "$$ids" ]; then echo "e2e-motion: SCENARIOS names nothing the project cannot run" >&2; exit 1; fi; \
+	echo "e2e-motion: $$ids"; \
+	BOARD_ROUTE=emulator SCENARIOS="$$ids" scripts/board-route.sh e2e
 
 # The module's boot flash: embsim's stage-1 loader, then the production
 # image behind it, as the P2's ROM boots it off the flash (`embsim

@@ -16,6 +16,8 @@
 //! Live, not stepped: the run is unpaced and lasts `RUN_FOR` of virtual
 //! time, and the host writes in wall time, so its bytes land at whatever
 //! instant the run has reached (embsim `PROJECTS.md` §5, `host-serial`).
+//! The host asks from the run's start and again until it is answered: what
+//! decides the case is the firmware's answer on the line, not its console.
 //! The test asserts nothing on host time: the answer must arrive before the
 //! run's own end, in board time. Host time only paces the host's requests.
 //! `tests/mad.rs` holds the same line stepped, instant by instant.
@@ -75,11 +77,6 @@ const CARD_BYTES: usize = 32 * 1024 * 1024;
 /// program off the flash (measured, `tests/mad.rs` and `make e2e-emulator`),
 /// and it answers a version read within milliseconds of it.
 const RUN_FOR: &str = "2s";
-
-/// The firmware's boot line, which the production build writes on its
-/// MAIN channel, `P62`, before it serves the protocol there; the run prints
-/// it as the core's console.
-const BOOT_LINE: &str = "Starting MaD Board";
 
 /// How often, in host time, the host repeats its request until it is
 /// answered, and how often it looks: pacing only.
@@ -174,9 +171,10 @@ impl Write for Printed {
 }
 
 /// The payload of the first data frame answering `command` in `received`
-/// from `at` on: the bytes before the host's first request (the boot line)
-/// are no answer, and a parser that took them for a header could swallow
-/// the answer as a payload.
+/// from `at` on: the bytes before a request are no answer to it. The
+/// firmware's boot line, at the console's rate, reads on this line as
+/// noise that a parser could take for a header, swallowing the answer as a
+/// payload; a request sent after it has the noise behind it.
 fn answer(received: &[u8], at: usize, command: u8) -> Option<Vec<u8>> {
     FrameParser::new()
         .feed_bytes(&received[at.min(received.len())..])
@@ -204,8 +202,8 @@ fn the_firmware_answers_its_version_on_the_hosts_pty() {
         covers: Some("SIL/mad.toml"),
         given: "the machine's project file run live for 2 s of board time, the production \
                 firmware in the module's flash, and a program on the host's PTY reading the \
-                firmware's version after its boot line, again every 100 ms of its own time until \
-                answered",
+                firmware's version from the run's start, again every 100 ms of its own time \
+                until answered",
     });
     expect!(
         "version-answered",
@@ -282,15 +280,13 @@ fn the_firmware_answers_its_version_on_the_hosts_pty() {
             }
         });
     }
-    // The host asks once the firmware has started: a request in the boot
-    // ROM's or stage-1's time reaches nothing that answers.
-    while !(printed.text().contains(BOOT_LINE) || run.is_finished()) {
-        std::thread::sleep(POLL);
-    }
+    // The host asks from the start and again until answered: a request in
+    // the boot ROM's or stage-1's time reaches nothing that answers, and a
+    // later one reaches the firmware.
     let request = protoemb_framing::build_read_frame(protocol::MSG_READ_FIRMWARE_VERSION);
     // Where what the host received ended at each request: each request's
-    // answer is parsed from there, so nothing received before it (the boot
-    // line) is taken for a frame.
+    // answer is parsed from there, so nothing received before it is taken
+    // for a frame.
     let mut sent = Vec::new();
     let mut version = None;
     while version.is_none() && !run.is_finished() {

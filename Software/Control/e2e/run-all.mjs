@@ -36,10 +36,12 @@
  * (`PROJECT_CANNOT`, below): the carriage never moves, since the isolator
  * IC14 between the processor and the drive has its secondary grounds on a
  * net of their own (SIL/mad-catalog/tests/mad.rs, "The drive"), and the
- * project's machine has no jam. `E2E_BOARD_ROUTE=emulator` attaches the
- * suite to `mad-emulator --chrome` instead (the playgrounds' board), where
- * SERVO-stall jams the carriage by creating E2E_JAM_FILE, the file
- * mad-emulator watches (`--jam-file`); board-route.sh sets both.
+ * project's machine has no jam. Until IC14 is settled those scenarios run
+ * on `mad-emulator --chrome` (the playgrounds' board): `cd SIL && make
+ * e2e-motion` takes them from `--list --cannot` and runs them with
+ * BOARD_ROUTE=emulator. `E2E_BOARD_ROUTE=emulator` attaches the suite there
+ * by hand, where SERVO-stall jams the carriage by creating E2E_JAM_FILE, the
+ * file mad-emulator watches (`--jam-file`); board-route.sh sets both.
  *
  * Without CDP_URL only the board-free scenarios run: A1 and
  * FW1/2/3/5/6/7/8/9 launch a host Chrome against in-page fakes and need no
@@ -87,6 +89,8 @@ import {
   restoreLink,
   takePageTime,
   BOARD_ROUTE,
+  DEVICE_WAIT_MS,
+  awaitResponding,
 } from './fixtures.mjs';
 import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -136,7 +140,8 @@ const MOVES = new Set([
 // SCENARIOS or not, saying so; a run in which every scenario was skipped
 // fails, since it checked nothing. E2E_PROJECT_CANNOT=run runs them anyway,
 // for a change to the board, its file or the kinds that may lift the
-// reason.
+// reason. `--list --cannot` lists them, and `make e2e-motion` runs them on
+// mad-emulator's board meanwhile, so the motion coverage stays.
 //
 // The carriage: IC14, the isolator between the processor and the drive, has
 // its secondary ground pins (9, 15) on a net of their own with only C26 on
@@ -163,20 +168,6 @@ const cannot = (id) => (ON_PROJECT && !RUN_CANNOT && PROJECT_CANNOT.get(id)) || 
 // the dev server. BUNDLE-live runs only then; every other scenario runs on
 // either.
 const APP_IS_BUNDLE = process.env.E2E_APP === 'bundle';
-
-// Budget for any wait that depends on the DEVICE making progress: a protocol
-// round trip, a state change, a handshake, an SD write.
-//
-// Board time on the board route (the page's clock is the board's), so it is
-// what the machine itself would take, with room: the app's own response
-// timeout is 2 s per frame, and the firmware's slowest single operations
-// (SD writes, a download's first chunk) take a few seconds. No host-speed
-// factor applies: the board running at a few percent of real time, or at a
-// fraction of that while the firmware works its SD card, slows the host's
-// clock, not this one. A healthy run never spends it: it bounds a hang, it
-// does not pace a passing test. No wait in this suite is used to prove
-// something is ABSENT, so the ceiling cannot weaken an assertion.
-const DEVICE_WAIT_MS = 20_000;
 
 // Budget for a whole TEST PROGRAM: upload, execute every move, complete, and
 // come to rest, or pull the recorded data back off the device. The longest
@@ -603,30 +594,6 @@ async function awaitRest(page, { stillMm = 0.02, stableTicks = 4, pollMs = 250, 
     await waitPageTime(page, pollMs);
   }
   throw new Error(`the axis never came to rest within ${timeoutMs}ms (last position ${last})`);
-}
-
-/** Status-bar `Responding` plus a firmware version: the session is up.
- *
- * One sample lights `Responding` for two seconds, so the badge alone is not
- * "the opening reads have finished". Starting a test while config / profile /
- * firmware-version still own the wire is the CI failure mode behind WAVE / TC11
- * / VT-linear: `proto/timeout`, then a CSV whose first second is idle.
- * `fw <version>` in the status bar is that handshake completing. */
-async function awaitResponding(page, { timeoutMs = DEVICE_WAIT_MS } = {}) {
-  const resp = page.getByTestId('responding');
-  const clock = await pageClock(page);
-  while ((await clock.elapsed()) < timeoutMs) {
-    const t = (await resp.textContent()) || '';
-    if (t.includes('Responding') && !t.includes('Not')) break;
-    await waitPageTime(page, 150);
-  }
-  const left = timeoutMs - (await clock.elapsed());
-  if (left <= 0) throw new Error('device never started responding (no sample stream)');
-  try {
-    await page.locator('.statusbar').getByText(/fw /).waitFor({ timeout: left });
-  } catch {
-    throw new Error('device responded but the opening handshake never published a firmware version');
-  }
 }
 
 async function readoutNum(page, label) {
@@ -2859,11 +2826,14 @@ async function main() {
   // suite's order, one a line: FW-ISS only on the ROM board, BUNDLE-live only
   // on the built bundle, and each left out otherwise. What this board cannot
   // run is left out too, and said on stderr with why. `--board-free` lists
-  // only the scenarios that need no board.
+  // only the scenarios that need no board. `--cannot` lists only those the
+  // project cannot run (`PROJECT_CANNOT`), whatever the route: the set
+  // `make e2e-motion` runs on mad-emulator's board.
   // SIL/scripts/board-route.sh runs them one board each from this.
   if (process.argv.includes('--list')) {
     const only = process.env.SCENARIOS ? new Set(process.env.SCENARIOS.split(',').map((x) => x.trim())) : null;
     const boardFreeOnly = process.argv.includes('--board-free');
+    const cannotOnly = process.argv.includes('--cannot');
     for (const s of scenarios) {
       if (
         (s.id === 'FW-ISS') === ROM_BOARD &&
@@ -2871,7 +2841,9 @@ async function main() {
         (!only || only.has(s.id)) &&
         (!boardFreeOnly || BOARD_FREE.has(s.id))
       ) {
-        if (cannot(s.id)) {
+        if (cannotOnly) {
+          if (PROJECT_CANNOT.has(s.id)) console.log(s.id);
+        } else if (cannot(s.id)) {
           if (!boardFreeOnly) console.error(`  ~ ${s.id}: skipped (${cannot(s.id)})`);
         } else console.log(s.id);
       }

@@ -3,8 +3,8 @@
 # Chrome, every page and worker held to the board's clock by embsim's
 # `chrome-cdp` node, its Web Serial port the board's protocol line. The app
 # is served by its dev server (Software/Control, `vite`), started here unless
-# one already answers on APP_PORT, or, with APP_DIST, as the built bundle
-# (below).
+# this checkout's already answers on APP_PORT (a server another checkout
+# started there is refused), or, with APP_DIST, as the built bundle (below).
 #
 #   scripts/board-route.sh playground   a Chrome window on the app; Ctrl-C stops it all
 #   scripts/board-route.sh e2e          headless; runs the e2e suite against it
@@ -19,7 +19,8 @@
 #             firmware booted off the module's flash. The file fixes Chrome's
 #             DevTools port (9222) and grants the port; `make flash-image
 #             sd-image` writes the images it names.
-#   emulator  the playground's default, and the ROM board's (make e2e-rom):
+#   emulator  the playground's default, the ROM board's (make e2e-rom), and
+#             the board of what the project cannot run (make e2e-motion):
 #             `mad-emulator --chrome`, the P2 image P2_IMAGE on the bare chip,
 #             the host on P53/P55 (USB 0403:6001; BOARD_ARGS can change it).
 #
@@ -174,7 +175,20 @@ if [ -n "$app_dist" ]; then
   export E2E_APP=bundle
   echo "board-route: the built bundle in $app_dist is served at $app_url (log: $logs/preview.log)"
 elif curl -sf "$app_url" >/dev/null 2>&1; then
-  echo "board-route: the app is already served at $app_url; using it"
+  # Only this checkout's app: the server listening there must have been
+  # started in this checkout's Software/Control (its working directory, as
+  # lsof reports it), or the suite would test another checkout's app.
+  listener=$(lsof -nP -iTCP:"$app_port" -sTCP:LISTEN -t 2>/dev/null | head -1 || true)
+  served_from=''
+  if [ -n "$listener" ]; then
+    served_from=$(lsof -a -p "$listener" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -1 || true)
+  fi
+  ours=$(cd "$control" && pwd -P)
+  if [ "$served_from" != "$ours" ]; then
+    echo "board-route: something already answers at $app_url, served from ${served_from:-a directory lsof cannot name}, not this checkout's $ours; stop it, or set APP_PORT to a free port" >&2
+    exit 2
+  fi
+  echo "board-route: this checkout's app is already served at $app_url; using it"
 else
   serve vite
   echo "board-route: the app is served at $app_url (log: $logs/vite.log)"
@@ -229,11 +243,19 @@ start_board() {
   fi
   echo "board-route: Chrome is on the board's clock; DevTools at $cdp_url"
   if [ "$route" = project ] && [ "${E2E_BOARD:-}" != rom ]; then
-    # The machine powered and its firmware started, as a person finds it:
-    # the production firmware's first line on P62 (Firmware/MaDCore/src/
-    # Main/main.c), which the run prints as the core's console. Before it
-    # the module is in its ROM and stage-1, about 1.2 s of board time off
-    # the flash, and a page would meet a board with nothing to answer it.
+    # Pacing, not a check: the scenario starts once the firmware is up, as
+    # a person finds the machine powered, and its connect is what checks
+    # that the firmware answers (fixtures.mjs, connectToSil: samples and a
+    # published firmware version, in page time). Off the flash the module
+    # spends about 1.2 s of board time in its ROM and stage-1 (measured), and
+    # a page that connected then would spend its first opening read on a
+    # board with nothing to answer it, the rest queued behind it
+    # (src/device/DeviceSession.worker.ts, runOp): 2252 ms of board time
+    # until the response timeout, measured on a silent board. The hint is the
+    # production firmware's first line on P62 (Firmware/MaDCore/src/Main/
+    # main.c), which the run prints as the core's console. Without it the
+    # scenario starts anyway once the bound passes (300 s of host time, a
+    # hang's bound only), and its connect decides.
     local booted=''
     for _ in $(seq 1 600); do
       if grep -qF 'P62 "Starting MaD Board' "$log"; then
@@ -243,12 +265,15 @@ start_board() {
       kill -0 "$board_pid" 2>/dev/null || break
       sleep 0.5
     done
-    if [ -z "$booted" ]; then
-      echo "board-route: the firmware never printed its boot line; the board's log:" >&2
+    if [ -n "$booted" ]; then
+      echo "board-route: the firmware has printed its boot line"
+    elif kill -0 "$board_pid" 2>/dev/null; then
+      echo "board-route: no boot line from the firmware yet; the scenario's connect decides whether it answers" >&2
+    else
+      echo "board-route: the board's run ended before the firmware printed its boot line; its log:" >&2
       tail -60 "$log" >&2
       return 1
     fi
-    echo "board-route: the firmware has booted off the module's flash"
   fi
 }
 

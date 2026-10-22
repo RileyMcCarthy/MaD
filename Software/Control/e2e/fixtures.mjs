@@ -131,6 +131,22 @@ export const OPFS_DIR = process.env.OPFS_DIR || 'mad-e2e';
  */
 export const HOST_BACKSTOP_MS = Number(process.env.E2E_HOST_BACKSTOP_MS || 15 * 60_000);
 
+/**
+ * Budget for any wait that depends on the DEVICE making progress: a protocol
+ * round trip, a state change, a handshake, an SD write.
+ *
+ * Board time on the board route (the page's clock is the board's), so it is
+ * what the machine itself would take, with room: the app's own response
+ * timeout is 2 s per frame, and the firmware's slowest single operations
+ * (SD writes, a download's first chunk) take a few seconds. No host-speed
+ * factor applies: the board running at a few percent of real time, or at a
+ * fraction of that while the firmware works its SD card, slows the host's
+ * clock, not this one. A healthy run never spends it: it bounds a hang, it
+ * does not pace a passing test. No wait in this suite is used to prove
+ * something is ABSENT, so the ceiling cannot weaken an assertion.
+ */
+export const DEVICE_WAIT_MS = 20_000;
+
 /** Pages whose clock is the board's (board mode's). */
 const metered = new WeakSet();
 
@@ -764,7 +780,40 @@ export function boardGrantedPort(page) {
   return page.getByTestId('connect-granted').first();
 }
 
-/** Connect the app to the board through the Connect screen. */
+/** Status-bar `Responding` plus a firmware version: the session is up.
+ *
+ * One sample lights `Responding` for two seconds, so the badge alone is not
+ * "the opening reads have finished". Starting a test while config / profile /
+ * firmware-version still own the wire is the CI failure mode behind WAVE / TC11
+ * / VT-linear: `proto/timeout`, then a CSV whose first second is idle.
+ * `fw <version>` in the status bar is that handshake completing. */
+export async function awaitResponding(page, { timeoutMs = DEVICE_WAIT_MS } = {}) {
+  const resp = page.getByTestId('responding');
+  const clock = await pageClock(page);
+  while ((await clock.elapsed()) < timeoutMs) {
+    const t = (await resp.textContent()) || '';
+    if (t.includes('Responding') && !t.includes('Not')) break;
+    await waitPageTime(page, 150);
+  }
+  const left = timeoutMs - (await clock.elapsed());
+  if (left <= 0) throw new Error('device never started responding (no sample stream)');
+  try {
+    await page.locator('.statusbar').getByText(/fw /).waitFor({ timeout: left });
+  } catch {
+    throw new Error('device responded but the opening handshake never published a firmware version');
+  }
+}
+
+/**
+ * Connect the app to the board through the Connect screen.
+ *
+ * On the board route the connect is done only once the firmware has
+ * answered: samples arriving and the opening handshake's firmware version
+ * published (`awaitResponding`, in page time). The status dot turns
+ * `.connected` as soon as the port opens (src/store/useStore.ts,
+ * `afterConnect`), with nothing yet heard from the board, so a scenario that
+ * stopped there would pass against a board whose firmware never answered.
+ */
 export async function connectToSil(page) {
   await page.goto(`${APP_URL}#/connect`);
   // First point at which the app is loaded and can take a marker.
@@ -781,6 +830,7 @@ export async function connectToSil(page) {
   // Wait until the store reports connected — the status dot gets `.connected`.
   // (Matching on text would falsely hit "Disconnected".)
   await page.locator('.dot.connected').waitFor({ timeout: 10_000 });
+  if (BOARD) await awaitResponding(page);
 }
 
 /**

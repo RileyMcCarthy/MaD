@@ -34,6 +34,15 @@ they are guarded today. Update it when you add a new class or close a gap.
 | **Link loss / reconnect** | status stuck; crash on drop | `B5-reconnect` | **M11** idle + mid-test drop |
 | **Host reliability (worker / storage)** | poisoned WASM; index drop under concurrent write | `session.test.ts` crash fanout + recreate; `DataStore.test.ts` mutex + rebuildIndex | **M7** sessionPolicy; single-in-flight op mutex |
 
+**Where the WASM e2e guards that move the carriage run.** The e2e runs on the
+machine's project (`SIL/mad-cosim.toml`, `make e2e`), where the carriage
+cannot move while `IC14` is as drawn, so the suite skips there every scenario
+that moves it (`e2e/run-all.mjs`, `PROJECT_CANNOT`): `TM-busy-restart`,
+`TM-manual-gate`, `D2-settled-jog`, `D3+SR-slack`, the M8, M9, M10 and M12
+cells, the M11 mid-test drop and SERVO-stall among them. Until `IC14` is
+settled they run on `mad-emulator`'s board (`cd SIL && make e2e-motion`):
+the nightly runs them all, and each PR runs G2+G3+H2+I.
+
 ## Shared helpers (prefer these)
 
 | Helper | Purpose |
@@ -61,16 +70,16 @@ cd Software/Control && npm run verify
 # Schema ↔ domain lockstep (M12)
 python3 Protocol/scripts/check_schema_domain_lockstep.py
 
-# WASM e2e vs live SIL (includes TM-busy-restart / TM-manual-gate), on the
-# board route: the ISS + the app in Chrome on the board's clock
-# (cd SIL && make e2e does all of it); by hand, with `make e2e-emulator`
-# and `npm run dev` up:
+# WASM e2e vs live SIL, on the board route: the ISS + the app in Chrome on
+# the board's clock (cd SIL && make e2e does all of it, on the project);
+# by hand, with `make e2e-emulator` and `npm run dev` up:
 export CDP_URL=http://127.0.0.1:9222
 npm run e2e
 # smoke subset (see e2e/smoke-ids.txt):
 npm run e2e:smoke
-# or ad-hoc:
-SCENARIOS=TM-busy-restart,TM-manual-gate npm run e2e
+# what moves the carriage (TM-busy-restart / TM-manual-gate and the
+# matrices) runs on mad-emulator's board until IC14 is settled:
+cd SIL && make e2e-motion SCENARIOS=TM-busy-restart,TM-manual-gate
 ```
 
 Parameterized matrix roadmap: [bulletproof-test-plan.md](./bulletproof-test-plan.md).

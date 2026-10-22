@@ -19,7 +19,9 @@ Two systems run it:
   `mad-catalog`'s tests.
 - **`mad-emulator`** (`SIL/MaDSim`): the debug image (`propeller2_debug`) on
   the bare chip, the bench wired by hand, the host on `P53`/`P55`. The
-  playgrounds run here until it retires (embsim `MIGRATING-MAD.md` step 11).
+  playgrounds run here until it retires (embsim `MIGRATING-MAD.md` step 11),
+  and so do the e2e scenarios that move the carriage (`make e2e-motion`),
+  which the project cannot run while its isolator `IC14` is as drawn.
 
 !!! info "This is not a mock"
     The firmware under test is the image you flash. The ISS executes its
