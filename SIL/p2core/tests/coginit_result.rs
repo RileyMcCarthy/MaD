@@ -179,3 +179,30 @@ fn coginit_with_a_literal_d_writes_no_register() {
         "register $10 untouched"
     );
 }
+
+#[test]
+fn coginit_reports_a_named_cog_back_to_a_register_d() {
+    behaviour!(Test {
+        id: "p2.coginit-named-cog-reported",
+        covers: Some("SIL/p2core/src/lib.rs#coginit"),
+        given: "cog 0 asks to start cog 3 by number, passing the request in a register, while every other cog is stopped",
+    });
+    expect!(
+        "named-cog-started",
+        "cog 3 starts and the lower free cogs stay stopped"
+    );
+    expect!(
+        "named-id-in-register",
+        "the register then holds 3, the started cog's number",
+        "the register is written for a named cog the same way as for any free cog"
+    );
+    let mut m = Machine::new(&image(3, false, false), SmartPins::default());
+    m.step(2).expect("mov + coginit run without a trap");
+
+    assert!(m.cogs[3].running, "the named cog starts");
+    assert!(
+        !m.cogs[1].running && !m.cogs[2].running,
+        "a named request does not pick the lowest free cog"
+    );
+    assert_eq!(m.cogs[0].regs[R as usize], 3, "D holds the named cog's id");
+}
