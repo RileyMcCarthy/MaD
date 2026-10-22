@@ -28,8 +28,10 @@ On production hardware the control link and the programming link are the same
 connection, so if you can already talk to the machine, you can already program it.
 
 !!! danger "The isolated Raspberry Pi link cannot program the board"
-    The isolated link on P53/P55 has **no reset line**, so flashing over it will
-    not work no matter what else is correct. Use the J1 header.
+    On the machine's P2-EC32MB module, that link isn't connected to the chip:
+    its pins (P52–P55) go to the module's own memory. Where a bench brings
+    P53/P55 out, the link still has **no reset line**. Either way, flashing over
+    it won't work. Use the J1 header.
 
 ### What flashing does
 
@@ -47,17 +49,21 @@ instead.
 
 1. **Connect to the machine** as usual. The **Firmware** screen shows the
    **Installed** version next to the **Latest release**.
-2. **Will flash** is the latest release's production build
-   (`MaD-Firmware-<version>-release.bin`), fetched by the app — there is nothing
-   to download. It puts the protocol on J1, so the app reaches the new firmware
-   on the port it just programmed. Each release also carries a `-madEdge.bin`
-   build for a bench with a second adapter: it moves the protocol to P53/P55 and
-   puts a debug log on J1. Don't flash it to the machine — its P2-EC32MB module
-   uses P40–P57 for its own memory and doesn't bring them out, so the app could
-   no longer reach the firmware. To flash that build, or a local one, click
+2. **Will flash** shows the latest release. The app writes that release's
+   production build (`MaD-Firmware-<version>-release.bin`), fetched by the app —
+   there is nothing to download. It puts the protocol on J1, so the app reaches
+   the new firmware on the port it just programmed. MaD Control 0.4.2 and
+   earlier label this row "MadEdge" whatever the image is; the prompt in step 3
+   names the real file. Releases from 0.13 on also carry a `-madEdge.bin` build
+   for a bench with a second adapter: it moves the protocol to P53/P55 and puts
+   a debug log on J1. Don't flash it to the machine — its P2-EC32MB module uses
+   P40–P57 for its own memory and doesn't bring them out, so the app could no
+   longer reach the firmware. To flash that build, or a local one, click
    **Use a local file…** and pick it.
 3. Check the **Port** shown is the machine you mean to program, then click
-   **Write to flash** and confirm the prompt.
+   **Write to flash**. The prompt names the file it will write: check it is
+   `MaD-Firmware-<version>-release.bin` (or the local file you picked), then
+   confirm.
 4. The status line walks through *Resetting the board…*, then *Uploading… n%*,
    then *Finishing…*.
 5. When it completes, confirm **Installed** shows the version you just
@@ -74,8 +80,8 @@ instead.
 ### If it doesn't work
 
 - **Nothing happens, or it fails while resetting** — the adapter probably isn't
-  driving RESn from DTR, or you're on the isolated Raspberry Pi link. Check you're
-  on J1 with a Prop Plug or equivalent.
+  driving RESn from DTR, or it isn't on J1. Check you're on J1 with a Prop Plug
+  or equivalent.
 - **It fails partway through the upload** — retry. The board holds the previous
   firmware until a write completes, so a failed attempt leaves it as it was.
   If it keeps failing, power-cycle the machine and try again.
@@ -84,9 +90,10 @@ instead.
 - **Connected, but never Responding, after flashing a `-madEdge.bin`** — that
   build talks on P53/P55, which don't reach the machine's chip. Programming
   doesn't need the firmware, so the machine can still be flashed: on the
-  **Firmware** screen pick the J1 port, check **Will flash** shows the latest
-  release, and **Write to flash**. If the app was connected on J1, it
-  reconnects there afterwards and the machine answers; otherwise connect to J1.
+  **Firmware** screen pick the J1 port, click **Write to flash**, and check the
+  prompt names `MaD-Firmware-<version>-release.bin` before you confirm. If the
+  app was connected on J1, it reconnects there afterwards and the machine
+  answers; otherwise connect to J1.
 
 ## Diagnostics export
 

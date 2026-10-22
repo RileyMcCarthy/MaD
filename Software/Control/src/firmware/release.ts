@@ -52,7 +52,8 @@ export interface FirmwareReleaseManifest {
 /**
  * Whether a release image is the production build (`-release.bin`). That
  * build answers the protocol on P62/P63, the debug header J1 the app talks
- * through, at 2,000,000 baud.
+ * through. From 0.12 on it does so at 2,000,000 baud, the rate the app
+ * reconnects at after a flash; 0.11's ran at 230,400.
  */
 export function isProductionImage(assetName: string): boolean {
   return /-release\.bin$/i.test(assetName);
@@ -81,7 +82,9 @@ export function releaseImageLabel(assetName: string): string {
  * without looking further. Every release from 0.11 on carries a production
  * build, and the release job cannot publish one without it. The ones passed
  * over are firmware-v0.1, whose only image is named `program`, and any
- * release made by hand without one.
+ * release made by hand without one. firmware-v0.11 is offered only if 0.12
+ * and 0.13 are gone; its build runs at 230,400 baud, so the app would not
+ * reach it at the 2,000,000 it reconnects at.
  */
 export function pickFirmwareRelease(
   releases: readonly GithubRelease[],

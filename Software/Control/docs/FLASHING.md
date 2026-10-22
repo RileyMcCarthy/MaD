@@ -66,7 +66,10 @@ screen offers the newest release that has one.
 
 Two things this does *not* work over:
 
-- The **isolated Raspberry Pi link** on P53/P55 — no reset line.
+- The EdgeBoard's **isolated Raspberry Pi link** (J4/IC2, P52–P55). On the
+  machine's P2-EC32MB those pins go to the module's PSRAM and are not on its
+  edge fingers, so the link never reaches the chip. Where a bench brings
+  P53/P55 out, the link has no reset line.
 - Any USB-serial cable that does not drive `RESn` from DTR.
 
 A debug firmware build (`propeller2_debug`, released as `-madEdge.bin`) moves
