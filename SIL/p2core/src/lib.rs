@@ -360,6 +360,10 @@ pub struct Machine<P: PinBus> {
     /// `$FFFF_FFFF`; timed at that rate, the ROM's 60 s serial window
     /// (`600 × rc_max/10` clocks) closes 0.42 s into board time. The ROM runs
     /// on RCFAST, so a host booting it sets this to that rate.
+    ///
+    /// Stopgap: the rate is fixed for the whole run, so a ROM-launched
+    /// program that switches to the PLL with `HUBSET` is still timed at
+    /// RCFAST. PR #277's clock-following time map replaces this field.
     pub timing_hz: Option<u32>,
     /// The last clock word a `HUBSET` set, and the clock count of the cog
     /// that set it, until [`Self::take_clock_word`] takes it.

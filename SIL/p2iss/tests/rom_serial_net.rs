@@ -185,7 +185,7 @@ fn the_roms_serial_window_is_still_open_after_a_second_of_board_time() {
     });
     expect!(
         "still-listening",
-        "the ROM counts its 60-second serial window on its RC oscillator, so its cog is still running the serial loader one second in"
+        "the ROM's cog is still running its serial loader one second into board time, past the 0.42 seconds at which the window used to close"
     );
     expect!(
         "prop-ver",
