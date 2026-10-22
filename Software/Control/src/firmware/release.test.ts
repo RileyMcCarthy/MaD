@@ -69,12 +69,12 @@ describe('pickFirmwareRelease', () => {
 
   behaviour(
     {
-      id: 'flash.release-picks-production-build',
+      id: 'flash.release-picks-madedge-build',
       covers: 'src/firmware/release.ts#pickFirmwareAsset',
       given: 'a firmware release that carries both a MadEdge image and a production image, the MadEdge one listed first',
-      expect: { 'production-image': 'the image offered is the production build' },
+      expect: { 'madedge-image': 'the image offered is the production build' },
       why: {
-        'production-image':
+        'madedge-image':
           "the production build answers the app on the debug header J1; the MadEdge build talks on P53/P55, which the machine's P2-EC32MB module does not bring out",
       },
     },
@@ -88,6 +88,30 @@ describe('pickFirmwareRelease', () => {
         }),
       ]);
       expect(picked?.asset.name).toBe('MaD-Firmware-0.13-release.bin');
+    },
+  );
+
+  behaviour(
+    {
+      id: 'flash.release-legacy-debug-is-madedge',
+      covers: 'src/firmware/release.ts#pickFirmwareAsset',
+      given: 'a firmware release from before the MadEdge name, carrying a debug image and a release image',
+      expect: { 'debug-image': 'the image offered is the release image' },
+      why: {
+        'debug-image':
+          'the debug build puts the protocol on P53/P55, which the machine\'s P2-EC32MB module does not bring out; the release image answers on the debug header J1',
+      },
+    },
+    () => {
+      const offered = pickFirmwareAsset(
+        release({
+          assets: [
+            { id: 1, name: 'MaD-Firmware-0.11-debug.bin', size: 9 },
+            { id: 2, name: 'MaD-Firmware-0.11-release.bin', size: 8 },
+          ],
+        }),
+      );
+      expect(offered?.name).toBe('MaD-Firmware-0.11-release.bin');
     },
   );
 
@@ -117,10 +141,10 @@ describe('pickFirmwareRelease', () => {
 
   behaviour(
     {
-      id: 'flash.release-without-production-skipped',
+      id: 'flash.release-without-madedge-skipped',
       covers: 'src/firmware/release.ts#pickFirmwareRelease',
       given: 'a newest firmware release that carries only a MadEdge image, and an older release with a production image',
-      expect: { 'older-production': 'the offered release is the older one, with its production image' },
+      expect: { 'older-madedge': 'the offered release is the older one, with its production image' },
     },
     () => {
       const picked = pickFirmwareRelease([
