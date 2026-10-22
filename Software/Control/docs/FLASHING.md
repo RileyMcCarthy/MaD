@@ -54,19 +54,28 @@ pin 1: P62    pin 2: P63    pin 3: RESn    pin 4: GND
 revision of this document listed the four nets in reverse pin order.)
 
 P62/P63 is also where a
-production firmware build puts the protocol UART (`HAL_serial.c`, with
-`ENABLE_DEBUG_SERIAL` off). So on production hardware **one connection serves
-both control and programming** — the app defaults to reusing the port it is
-already connected to.
+production firmware build puts the protocol UART, at 2,000,000 baud
+(`HAL/Config/HAL_serial_config.c`, with `ENABLE_DEBUG_SERIAL` off). So on
+production hardware **one connection serves both control and programming** —
+the app defaults to reusing the port it is already connected to, and after a
+flash it reconnects to that port at that rate. That is why the Firmware screen's
+default image is the latest release's production build
+(`MaD-Firmware-<version>-release.bin`; `pickFirmwareAsset` in
+`src/firmware/release.ts`). A release without one offers nothing, and the
+screen offers the newest release that has one.
 
 Two things this does *not* work over:
 
 - The **isolated Raspberry Pi link** on P53/P55 — no reset line.
 - Any USB-serial cable that does not drive `RESn` from DTR.
 
-A debug firmware build moves the protocol UART to P53/P55, so on a two-adapter
-bench setup the programming port and the control port differ. That is what the
-**Target** control on the Firmware screen is for.
+A debug firmware build (`propeller2_debug`, released as `-madEdge.bin`) moves
+the protocol UART to P53/P55 and puts a debug log on P62/P63, so on a
+two-adapter bench setup the programming port and the control port differ. That
+is what the **Port** control on the Firmware screen is for. The machine itself
+cannot run that build: its P2-EC32MB module uses P40–P57 for its PSRAM and does
+not bring them out, so the EdgeBoard's J4/IC2 link on P52–P55 never reaches the
+chip. Flash it as a local file, on a bench only.
 
 Web Serial exposes only USB vendor/product IDs — no serial number, no device
 path — so two identical adapters cannot be told apart programmatically. The app
@@ -94,8 +103,10 @@ MAD_SERIAL=/dev/cu.usbserial-XXXX npm run hw:flash -- --flash ../../Firmware/MaD
 ```
 
 Note the firmware build artifact is named `program` with no extension; CI
-renames it to `MaD-Firmware-<version>-{debug,release}.bin` for release assets.
-The file picker in the UI accepts both.
+renames it to `MaD-Firmware-<version>-release.bin` (`propeller2_release`, the
+same build as `propeller2`) and `MaD-Firmware-<version>-madEdge.bin`
+(`propeller2_debug`) for release assets. Releases before 0.13 named the debug
+build `-debug.bin`. The file picker in the UI accepts all of them.
 
 ## Open validation
 
