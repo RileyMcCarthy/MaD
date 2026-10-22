@@ -352,6 +352,15 @@ pub struct Machine<P: PinBus> {
     /// clocks to time with hub `$14` ([`Self::step_until`]) has nothing to
     /// retime.
     pub yield_on_clock_word: bool,
+    /// The clock rate [`Self::now_us`] and [`Self::step_until`] time the
+    /// guest at, in place of hub `$14`. `None` (the default) reads `$14`.
+    ///
+    /// For a guest whose `$14` is not its clock. The boot ROM fills hub
+    /// `$00..$FF` with `$FF` for its base64 table, so `$14` reads
+    /// `$FFFF_FFFF`; timed at that rate, the ROM's 60 s serial window
+    /// (`600 × rc_max/10` clocks) closes 0.42 s into board time. The ROM runs
+    /// on RCFAST, so a host booting it sets this to that rate.
+    pub timing_hz: Option<u32>,
     /// The last clock word a `HUBSET` set, and the clock count of the cog
     /// that set it, until [`Self::take_clock_word`] takes it.
     clock_word: Option<(u32, u64)>,
@@ -439,6 +448,7 @@ impl<P: PinBus> Machine<P> {
             stack_log: Vec::new(),
             trace_stack: false,
             yield_on_clock_word: false,
+            timing_hz: None,
             clock_word: None,
             clock_yield: false,
             yield_clocks: None,
@@ -934,12 +944,19 @@ impl<P: PinBus> Machine<P> {
         best.map(|(i, _)| i)
     }
 
-    /// Virtual microseconds elapsed, from the system counter.
-    pub fn now_us(&self) -> u64 {
-        let hz = match self.clkfreq() {
+    /// The rate clocks become time at: [`Self::timing_hz`] if set, else hub
+    /// `$14`, else 160 MHz before the guest has recorded one.
+    fn timing_clkfreq(&self) -> u64 {
+        match self.timing_hz.unwrap_or_else(|| self.clkfreq()) {
             0 => 160_000_000,
             f => f,
-        } as u64;
+        }
+        .into()
+    }
+
+    /// Virtual microseconds elapsed, from the system counter.
+    pub fn now_us(&self) -> u64 {
+        let hz = self.timing_clkfreq();
         self.system_clocks() * 1_000_000 / hz
     }
 
@@ -949,10 +966,7 @@ impl<P: PinBus> Machine<P> {
     /// interleaving is a pure function of the image, which is what makes a run
     /// bit-reproducible.
     pub fn step_until(&mut self, deadline_us: u64) -> Result<(), Trap> {
-        let hz = match self.clkfreq() {
-            0 => 160_000_000,
-            f => f,
-        } as u64;
+        let hz = self.timing_clkfreq();
         let deadline_clocks = deadline_us.saturating_mul(hz) / 1_000_000;
         self.ff_deadline_clocks = deadline_clocks;
         // Round-robin over the running cogs, but skip any that have already

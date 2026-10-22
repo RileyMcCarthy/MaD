@@ -175,3 +175,101 @@ fn the_rom_answers_prop_chk_on_the_programming_uart_over_the_net() {
     );
     drop(system);
 }
+
+#[test]
+fn the_roms_serial_window_is_still_open_after_a_second_of_board_time() {
+    behaviour!(Test {
+        id: "p2.rom-serial-net-window-rc-clock",
+        covers: Some("SIL/p2iss/src/lib.rs"),
+        given: "the mask ROM on the ISS with the serial strap pulled up, and no traffic on the programming UART for the first second of board time",
+    });
+    expect!(
+        "still-listening",
+        "the ROM counts its 60-second serial window on its RC oscillator, so its cog is still running the serial loader one second in"
+    );
+    expect!(
+        "prop-ver",
+        "a loader's chip check sent after that second is answered with the ROM's version reply on the programming UART"
+    );
+
+    let Some(rom_bin) = rom() else {
+        eprintln!("\n*** SKIPPED: needs `make bootrom`. Asserted NOTHING.\n");
+        return;
+    };
+
+    let _g = lock_clock();
+    virtual_clock::init(0.0, 20_000_000);
+
+    let pty_path = std::env::temp_dir().join("tty.p2iss-rom-serial-window");
+    let pty_path = pty_path.to_str().expect("temp path is utf-8");
+
+    let iss =
+        P2Iss::with_boot_rom(&rom_bin, p2core::SdCard::blank(0), &[PROG]).with_level_pins(&[59]);
+    let handle = iss.handle();
+    let host = HostPty::open(pty_path, PROG.nominal_baud).expect("the PTY opens");
+
+    let system = System::new()
+        .component("P2", Box::new(iss))
+        .component("HOST", Box::new(host))
+        .component("STRAP", Box::new(Pull::new(3.3)))
+        .harness(
+            Harness::new()
+                .connect_str("P2.P62", "HOST.RX")
+                .unwrap()
+                .connect_str("HOST.TX", "P2.P63")
+                .unwrap()
+                .connect_str("P2.P59", "STRAP.A")
+                .unwrap(),
+        )
+        .start()
+        .expect("the ISS emulator starts");
+
+    // A host that is slow to open the port: one second of board time with
+    // the line idle. The ROM's window is 600 × 100 ms at its 30 MHz ceiling,
+    // so on its RC oscillator it closes a minute or more in.
+    let start = Instant::now();
+    while handle.guest_now_us() < 1_000_000 && start.elapsed() < Duration::from_secs(120) {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        handle.guest_now_us() >= 1_000_000 && handle.running_cogs() == 1,
+        "the ROM must still be listening one second into board time; guest_us={} cogs={} \
+         bytes={:?}",
+        handle.guest_now_us(),
+        handle.running_cogs(),
+        handle.byte_counts()
+    );
+
+    let mut link = open_host_end(pty_path);
+    link.write_all(CHK).expect("the host can write");
+    link.flush().expect("the host can flush");
+
+    let mut seen = Vec::new();
+    let mut buf = [0u8; 256];
+    let start = Instant::now();
+    let found = loop {
+        match link.read(&mut buf) {
+            Ok(0) => {}
+            Ok(n) => seen.extend_from_slice(&buf[..n]),
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(e) => panic!("reading the PTY failed: {e}"),
+        }
+        if String::from_utf8_lossy(&seen).contains("Prop_Ver G") {
+            break true;
+        }
+        if start.elapsed() > Duration::from_secs(30) {
+            break false;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    assert!(
+        found,
+        "the ROM must answer a Prop_Chk sent after a second of board time; got {seen:02X?} ({}) \
+         cogs={} guest_us={} bytes={:?}",
+        String::from_utf8_lossy(&seen),
+        handle.running_cogs(),
+        handle.guest_now_us(),
+        handle.byte_counts()
+    );
+    drop(system);
+}

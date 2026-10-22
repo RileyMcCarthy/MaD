@@ -1042,7 +1042,14 @@ impl P2Iss {
             shared,
             machine: Arc::new(Mutex::new(match source {
                 BootSource::Image(image) => Machine::new(image, bus),
-                BootSource::Rom(rom) => Machine::with_boot_rom(rom, bus),
+                BootSource::Rom(rom) => {
+                    // Timed on the RC oscillator its pins frame serial at
+                    // (`guest_clk`), not on hub `$14`, which the ROM's base64
+                    // table fills with `$FF`.
+                    let mut machine = Machine::with_boot_rom(rom, bus);
+                    machine.timing_hz = Some(RC_CLKFREQ);
+                    machine
+                }
             })),
             shutdown,
         }
