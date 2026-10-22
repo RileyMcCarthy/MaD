@@ -1466,6 +1466,13 @@ impl<P: PinBus> Machine<P> {
         let target = if want_free {
             match (0..NUM_COGS).find(|&i| !self.cogs[i].running) {
                 Some(i) => i,
+                // With WC the caller checks C (FlexC: `if_b neg result1,#1`),
+                // so report the failure there; without it, nothing would
+                // notice, so keep the trap.
+                None if ins.c => {
+                    self.cogs[cog].c = true;
+                    return Ok(());
+                }
                 None => return Err(Trap::NoFreeCog { cog: cog as u8, pc }),
             }
         } else {
@@ -1491,6 +1498,18 @@ impl<P: PinBus> Machine<P> {
         // instead of burning a catch-up burst.
         fresh.clocks = self.cogs[cog].clocks;
         self.cogs[target] = fresh;
+
+        // A cog that restarted itself has no caller left to report to: its
+        // registers are the freshly loaded image now.
+        if target == cog {
+            return Ok(());
+        }
+
+        // A register D receives the id of the cog that was started. FlexC
+        // reads it back from that register as `_coginit`'s result.
+        if !Self::d_is_literal(ins) {
+            self.set_reg(cog, ins.d, target as u32);
+        }
 
         // C reports FAILURE on the P2 (flexspin emits `if_b neg result1,#1`
         // after COGINIT WC) -- note spinsim disagrees.
