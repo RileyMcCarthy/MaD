@@ -124,7 +124,8 @@ describe('flashWithSession', () => {
         'port-closed': 'the flash port is still closed after the flash',
       },
       why: {
-        'session-untouched': 'on the MadEdge PCBA the programming adapter is separate, and a running session there must keep running',
+        'session-untouched':
+          'on a bench that runs the MadEdge build, the protocol has its own adapter on P53/P55, and a running session there must keep running',
       },
     },
     async () => {

@@ -17,7 +17,7 @@ const RELEASE: GithubRelease = {
   prerelease: false,
   published_at: '2026-09-08T00:00:00Z',
   html_url: 'https://example.invalid/r',
-  assets: [{ id: 7, name: 'MaD-Firmware-0.12-madEdge.bin', size: IMAGE.byteLength }],
+  assets: [{ id: 7, name: 'MaD-Firmware-0.12-release.bin', size: IMAGE.byteLength }],
 };
 
 type Route = () => Response | Promise<Response>;
@@ -201,7 +201,7 @@ describe('firmwareRelease build', () => {
     async () => {
       const p = plugin(github({ asset: () => new Response('gone', { status: 404 }) }));
       const r = await bundle(p);
-      expect(r.warnings.join('\n')).toMatch(/downloading MaD-Firmware-0\.12-madEdge\.bin: HTTP 404/);
+      expect(r.warnings.join('\n')).toMatch(/downloading MaD-Firmware-0\.12-release\.bin: HTTP 404/);
     },
   );
 
