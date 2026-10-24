@@ -182,7 +182,10 @@ Ported SIL regressions and matrices, all in `run-all.mjs`: `G-limit`, `TC1-multi
 `D3+SR-slack`, M8 jog cells, M9 slack cells, M10 WAVE-* cells, M11 link-loss cells,
 `FW1`–`FW3` / `FW5`–`FW9` (in-app loader UI; native `loadp2` CLI is still out of scope),
 `CAL1` (Settings → Motor calibration: the open-loop check on the SIL's matched 8192/mm
-drive and encoder reports a match, with pulses signed by direction).
+drive and encoder reports a match, with pulses signed by direction),
+`SERVO-stall` (a jammed carriage latches `SERVO_STALL` and Live clears it; needs
+`E2E_JAM_FILE`, and it runs nightly only, since it isn't in `e2e/smoke-ids.txt`
+or the per-PR subset).
 
 Smoke subset (`e2e/smoke-ids.txt`, 20 IDs): A1, B1+C1, D1, E1, G1, G2+G3+H2+I,
 TM-busy-restart, TM-manual-gate, P1-precision, VT-linear, BB-back-to-back,

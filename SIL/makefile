@@ -1,7 +1,8 @@
 # MaD SIL Testing - Makefile
 #
 # Commands:
-#   make p2image        - Build the P2 image the ISS executes
+#   make p2image        - Build the P2 image the ISS executes (propeller2_debug)
+#   make p2image-production - Build the production P2 image (propeller2), the one flash-image lays out
 #   make emulator       - Build the Rust emulator
 #   make test           - Build the image, run the Rust test suite
 #   make playground     - The ISS with MaD Control in a Chrome window on the board's clock
@@ -12,8 +13,9 @@
 #   make e2e            - All of it, headless, and the e2e suite against it (SCENARIOS selects)
 #   make e2e-rom        - FW-ISS: the app's flasher against the ISS's mask ROM, headless
 #   make e2e-bundle     - BUNDLE-live: the built bundle (as pages.yml builds it) on the board, headless
-#   make flash-image    - build/flash.bin: stage-1 and the P2 image, the module's boot flash
+#   make flash-image    - build/flash.bin: stage-1 and the production image, the module's boot flash
 #   make sd-image       - build/sd.img: a 32 MiB FAT16 card mirroring ./sd
+#   make check          - embsim check on MaD's four project files (mad*.toml)
 #   make clean          - Remove build artifacts
 #
 # There is ONE configuration a browser belongs in: the P2 image on the ISS,
@@ -27,9 +29,19 @@
 # 2 s response timeout would fire at a fraction of that in the board's time.
 
 FIRMWARE_DIR = ../Firmware/MaDCore
-# The P2 image the instruction-set simulator executes: the artifact you flash.
+# The P2 image mad-emulator and the p2core/p2iss suites execute: the debug
+# build, its MAIN channel on P53/P55 and its log on P62. Those routes put
+# the host straight on the chip's P53/P55 and read the log: the chip on no
+# module and no carrier, so nothing sits between the host and those pins.
 P2_ENV = propeller2_debug
 P2_IMAGE = $(FIRMWARE_DIR)/.pio/build/$(P2_ENV)/program
+# The production build, the project files' route (the user's decision;
+# which image the machine runs is open, SIL/mad.toml's header): its MAIN
+# channel on P62/P63, the carrier's debug header J1, where the Prop Plug
+# sits. The project files' module flash holds it (flash-image), and
+# mad-catalog/tests/mad.rs boots it.
+PRODUCTION_ENV = propeller2
+PRODUCTION_IMAGE = $(FIRMWARE_DIR)/.pio/build/$(PRODUCTION_ENV)/program
 PROTOEMB_GENERATOR = ../Protocol/ProtoEmb/core/generate.py
 PROTOEMB_SCHEMA = ../Protocol/MaDProtocol.yaml
 PROTOEMB_TEMPLATES = ../Protocol/ProtoEmb/core/templates
@@ -50,7 +62,7 @@ BUILD_DIR = build
 FLASH_IMAGE = $(BUILD_DIR)/flash.bin
 SD_IMAGE = $(BUILD_DIR)/sd.img
 
-.PHONY: p2image protocol emulator emulator-release test playground playground-iss playground-pty playground-rom e2e-emulator e2e e2e-rom e2e-bundle flash-image sd-image bootrom clean
+.PHONY: p2image p2image-production protocol emulator emulator-release test playground playground-iss playground-pty playground-rom e2e-emulator e2e e2e-rom e2e-bundle flash-image sd-image check bootrom clean
 
 # Build the P2 image the ISS runs (`p2core`, `p2iss`, `mad-emulator`).
 #
@@ -61,6 +73,11 @@ SD_IMAGE = $(BUILD_DIR)/sd.img
 p2image:
 	cd $(FIRMWARE_DIR) && pio run -e $(P2_ENV)
 
+# Build the production image the project files' flash holds, a `make test`
+# dependency for the same reason: mad-catalog/tests/mad.rs skips without it.
+p2image-production:
+	cd $(FIRMWARE_DIR) && pio run -e $(PRODUCTION_ENV)
+
 # Generate Rust protocol types used by SIL (MaD-specific; kept out of the
 # generic embsim crates — lands in the `protocol` crate at ../Protocol).
 protocol:
@@ -70,9 +87,13 @@ protocol:
 emulator: protocol
 	cargo build
 
-# Run tests
-test: emulator p2image
-	cargo test
+# Run tests. The production image is built first and the debug image last,
+# the order CI builds them in (.github/workflows/ci.yml: building one env
+# has been seen to remove another env's output). MAD_REQUIRE_P2_IMAGE turns
+# a test's "the image is missing, so skip" into a failure, so an image lost
+# that way fails the run.
+test: emulator p2image-production p2image
+	MAD_REQUIRE_P2_IMAGE=1 cargo test
 
 emulator-release: protocol
 	cargo build --release --bin mad-emulator
@@ -132,12 +153,14 @@ e2e-bundle: p2image emulator-release
 	cd ../Software/Control && ./node_modules/.bin/vite build --base=$(BUNDLE_BASE) --outDir $(BUNDLE_DIR) --emptyOutDir
 	APP_DIST=$(BUNDLE_DIR) APP_BASE=$(BUNDLE_BASE) SCENARIOS=BUNDLE-live scripts/board-route.sh e2e
 
-# The module's boot flash: embsim's stage-1 loader, then the P2 image behind
-# it, as the P2's ROM boots it off the flash (`embsim flash-image`). A
-# project names it in its w25q128jv entry (`image = "build/flash.bin"`).
-flash-image: p2image
+# The module's boot flash: embsim's stage-1 loader, then the production
+# image behind it, as the P2's ROM boots it off the flash (`embsim
+# flash-image`). A project names it in its w25q128jv entry (`image =
+# "build/flash.bin"`). The production image, because the project files'
+# host is on J1 (P62/P63), where that build's MAIN channel is.
+flash-image: p2image-production
 	mkdir -p $(BUILD_DIR)
-	$(EMBSIM) flash-image $(P2_IMAGE) -o $(FLASH_IMAGE)
+	$(EMBSIM) flash-image $(PRODUCTION_IMAGE) -o $(FLASH_IMAGE)
 
 # The card in the module's socket: 32 MiB of FAT16 holding the directories
 # the firmware writes into, with ./sd mirrored onto it when it is there, the
@@ -146,6 +169,19 @@ flash-image: p2image
 sd-image:
 	mkdir -p $(BUILD_DIR)
 	cargo run --release --quiet -p p2iss --example dump_card -- $(SD_IMAGE) sd
+
+# MaD's project files (embsim MIGRATING-MAD.md section 1): the machine as it
+# runs, booting the firmware off the module's flash, and the ROM's serial
+# boot, each with a host-serial and with the host's Chrome (chrome-cdp) on
+# the same pins. `embsim check` builds each: every part placed, every wire
+# on a connector, every option the kinds take; it boots the chip with time
+# held and runs nothing. A chrome-cdp starts no Chrome at check, but check
+# refuses its file on a machine where it finds none. Both boots name the
+# card `make sd-image` writes; the flash boot names `make flash-image`'s.
+PROJECTS = mad.toml mad-serial-boot.toml
+COSIM_PROJECTS = mad-cosim.toml mad-serial-boot-cosim.toml
+check: flash-image sd-image
+	for project in $(PROJECTS) $(COSIM_PROJECTS); do $(EMBSIM) check $$project || exit 1; done
 
 # The boot ROM and the stage-1 flash loader the ISS boots through.
 FLEXSPIN = $(HOME)/.platformio/packages/toolchain-flexcc/bin/macos-amd64/flexspin
@@ -175,3 +211,4 @@ clean:
 	rm -rf test-results $(BUILD_DIR)
 	cargo clean
 	cd $(FIRMWARE_DIR) && pio run -e $(P2_ENV) -t clean
+	cd $(FIRMWARE_DIR) && pio run -e $(PRODUCTION_ENV) -t clean

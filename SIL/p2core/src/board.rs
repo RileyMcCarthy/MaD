@@ -811,6 +811,12 @@ impl PinBus for Board {
         self.byte_counts[p] += 1;
         self.in_flag[p] = false;
         if self.use_smart_bus {
+            // A late sample the last rising edge left owed is latched from
+            // the RX net as it stands now, after that edge.
+            if self.smart_bus.rx_pin() == Some(pin & 63) {
+                let level = self.input_level(pin & 63);
+                self.smart_bus.set_rx_input(level);
+            }
             if let Some(word) = self.smart_bus.rdpin(pin) {
                 return (word, false);
             }
