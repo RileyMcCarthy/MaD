@@ -248,17 +248,28 @@ fn the_iss_answers_the_protocol_over_a_wire() {
         iss_handle.running_cogs()
     );
 
-    // [SYNC, READ, READ_FIRMWARE_VERSION] — the generated runtime's request.
-    host.send(&[0x55, 0x00, 0x03]);
-
     // The reply's header: SYNC, a data frame, and the command it answers.
     // Not asserted as a prefix of the stream — the firmware transmits before
     // the request too, and this test is about the wire, not the protocol.
     const REPLY: [u8; 3] = [0x55, 0x02, 0x03];
-    let arrived = wait_for(
-        || host.received().windows(REPLY.len()).any(|w| w == REPLY),
-        Duration::from_secs(60),
-    );
+    // [SYNC, READ, READ_FIRMWARE_VERSION] — the generated runtime's request,
+    // repeated until it is answered, as the app repeats it. The transmit pin
+    // comes up during init, before the serial task is reading, and a receive
+    // pin holds a single byte: a request that lands in that window is lost,
+    // on silicon as here.
+    let start = Instant::now();
+    let arrived = loop {
+        host.send(&[0x55, 0x00, 0x03]);
+        if wait_for(
+            || host.received().windows(REPLY.len()).any(|w| w == REPLY),
+            Duration::from_secs(2),
+        ) {
+            break true;
+        }
+        if start.elapsed() > Duration::from_secs(60) {
+            break false;
+        }
+    };
     let frames = host.frames();
     assert!(
         arrived,
