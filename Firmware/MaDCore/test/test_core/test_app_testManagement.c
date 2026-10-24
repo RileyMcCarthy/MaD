@@ -69,6 +69,8 @@ static char d_lastNotifyText[64];
 static app_motion_move_t d_popBuf[8];
 static uint32_t d_popCount;
 
+static bool d_calibrating;
+
 static void doubles_reset(void)
 {
     memset(d_popBuf, 0, sizeof(d_popBuf));
@@ -81,6 +83,7 @@ static void doubles_reset(void)
     d_forceExceeded = false;
     d_dispExceeded = false;
     d_motionIdle = false;
+    d_calibrating = false;
     d_addMoveReturn = true;
     d_waveformRefused = false;
     d_takeRefusedCount = 0U;
@@ -111,6 +114,9 @@ bool app_motion_addMove(const app_motion_move_t *move)
 }
 void app_motion_abortAndClear(void) { d_abortCount++; }
 bool app_motion_isIdle(void) { return d_motionIdle; }
+
+/* --- app_motorCalibration --- */
+bool app_motorCalibration_isActive(void) { return d_calibrating; }
 bool app_motion_takeWaveformRefused(void)
 {
     const bool refused = d_waveformRefused;
@@ -294,6 +300,36 @@ void test_app_testManagement_manualMoveSlotsBounded(void)
     /* The run cycle drains the four staged moves into the motion queue. */
     app_testManagement_run();
     TEST_ASSERT_EQUAL_UINT32(4U, d_addMoveCount);
+}
+
+void test_app_testManagement_calibrationBlocksTestsButNotJogs(void)
+{
+    VIBES_TEST("test-run.refused-during-motor-calibration",
+               "src/APP/app_testManagement.c#app_testManagement_triggerTestStart",
+               "a motor calibration is driving the carriage");
+    VIBES_EXPECT("test-refused", "a test start is refused");
+    VIBES_EXPECT_WHY("jog-accepted",
+                     "a jog is accepted and handed to motion on the next run cycle",
+                     "the operator must always be able to move the carriage; motion caps the jog's speed and the calibration gives way to it");
+    VIBES_EXPECT_WHY("home-refused",
+                     "a Home is refused",
+                     "Home runs at the homing speed, and only a jog's speed is capped during a calibration");
+    VIBES_EXPECT("accepted-afterwards", "a test start is accepted again once the calibration has ended");
+    tm_init();
+
+    const app_motion_move_t relative = { .g = (uint8_t)G91_INCREMENTAL, .x = 0, .f = 0, .p = 0 };
+    const app_motion_move_t move = { .g = (uint8_t)G0_RAPID_MOVE, .x = 100, .f = 50, .p = 0 };
+    const app_motion_move_t home = { .g = (uint8_t)G28_HOME, .x = 0, .f = 0, .p = 0 };
+    d_calibrating = true;
+    TEST_ASSERT_FALSE(app_testManagement_triggerTestStart("cal001"));
+    TEST_ASSERT_FALSE(app_testManagement_addManualMove(&home));
+    TEST_ASSERT_TRUE(app_testManagement_addManualMove(&relative));
+    TEST_ASSERT_TRUE(app_testManagement_addManualMove(&move));
+    app_testManagement_run();
+    TEST_ASSERT_EQUAL_UINT32(2U, d_addMoveCount);
+
+    d_calibrating = false;
+    TEST_ASSERT_TRUE(app_testManagement_triggerTestStart("cal001"));
 }
 
 /* A jog while motion is disabled is rejected immediately (same gate as

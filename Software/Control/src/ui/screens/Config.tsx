@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useStore } from '@/store/useStore';
 import { MachineConfiguration } from '@/domain';
 import NumberField from '@/ui/components/NumberField';
+import MotorCalibrationPanel from '@/ui/components/MotorCalibrationPanel';
 
 const NUMERIC_FIELDS: Array<keyof MachineConfiguration> = [
   'Encoder (step/mm)',
@@ -79,23 +80,31 @@ export default function Config({ embedded = false }: { embedded?: boolean }) {
       </div>
 
       {draft ? (
-        <div className="grid cols-2">
-          <label className="field">
-            Name
-            <input
-              value={draft.Name}
-              onChange={(e) => setDraft({ ...draft, Name: e.target.value })}
-            />
-          </label>
-          {NUMERIC_FIELDS.map((field) => (
-            <NumberField
-              key={field}
-              label={field}
-              value={draft[field] as number}
-              onChange={(n) => setDraft((d) => (d ? { ...d, [field]: n } : d))}
-            />
-          ))}
-        </div>
+        <>
+          <div className="grid cols-2">
+            <label className="field">
+              Name
+              <input
+                value={draft.Name}
+                onChange={(e) => setDraft({ ...draft, Name: e.target.value })}
+              />
+            </label>
+            {NUMERIC_FIELDS.map((field) => (
+              <NumberField
+                key={field}
+                label={field}
+                value={draft[field] as number}
+                onChange={(n) => setDraft((d) => (d ? { ...d, [field]: n } : d))}
+              />
+            ))}
+          </div>
+          <MotorCalibrationPanel
+            profile={{
+              encoderStepsPerMM: draft['Encoder (step/mm)'],
+              servoStepsPerMM: draft['Servo (step/mm)'],
+            }}
+          />
+        </>
       ) : (
         <p className="muted">Reading configuration…</p>
       )}

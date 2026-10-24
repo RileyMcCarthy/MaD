@@ -10,6 +10,7 @@
 
 #include "app_testManagement.h"
 #include "app_motion.h"
+#include "app_motorCalibration.h"
 #include "app_control.h"
 #include "app_monitor.h"
 #include "app_notification.h"
@@ -106,6 +107,7 @@ static void app_testManagement_private_runState(void);
 static void app_testManagement_private_processOutputs(void);
 static void app_testManagement_private_enterEnding(app_testManagement_endReason_E reason);
 static void app_testManagement_private_feedMotionQueue(void);
+static bool app_testManagement_private_isJogMove(const app_motion_move_t *move);
 /**********************************************************************
  * Private Functions
  **********************************************************************/
@@ -382,6 +384,13 @@ static void app_testManagement_private_runState(void)
     }
 }
 
+/* A move a jog is made of: a G0/G1, or the G90/G91 that sets its mode. */
+static bool app_testManagement_private_isJogMove(const app_motion_move_t *move)
+{
+    return (move->g == (uint8_t)G0_RAPID_MOVE) || (move->g == (uint8_t)G1_LINEAR_MOVE) ||
+           (move->g == (uint8_t)G90_ABSOLUTE) || (move->g == (uint8_t)G91_INCREMENTAL);
+}
+
 static void app_testManagement_private_processOutputs(void)
 {
     APP_TESTMANAGEMENT_LOCK_REQ_BLOCK();
@@ -442,6 +451,12 @@ bool app_testManagement_triggerTestStart(const char *gcodeId)
     {
         return false;
     }
+    /* A motor calibration owns the drive open loop; a test cannot share it.
+     * Asked before taking our lock (never call out while holding it). */
+    if (app_motorCalibration_isActive())
+    {
+        return false;
+    }
     APP_TESTMANAGEMENT_LOCK_REQ_BLOCK();
     const bool isBusy =
         (app_testManagement_data.state != APP_TESTMANAGEMENT_STATE_IDLE) ||
@@ -476,6 +491,16 @@ bool app_testManagement_addManualMove(const app_motion_move_t *move)
     /* Same gate as triggerTestStart: a jog pressed while motion is disabled
      * must not sit in a request slot and fire the moment motion is re-enabled. */
     if (app_control_motionEnabled() == false)
+    {
+        return false;
+    }
+    /* A motor calibration does NOT refuse a jog: the operator must always be
+     * able to move the carriage. A jog is a G0/G1, sent after the G90/G91 that
+     * sets its mode. app_motion caps the jog's speed while the calibration is
+     * active, and the calibration abandons its run (ABORTED_JOG) when the
+     * jog's G0/G1 takes the drive (the G90/G91 alone does not end it). Anything else (Home, a dwell, a waveform) is refused: Home runs
+     * at the homing speed, not the jog cap. */
+    if (app_motorCalibration_isActive() && (app_testManagement_private_isJogMove(move) == false))
     {
         return false;
     }

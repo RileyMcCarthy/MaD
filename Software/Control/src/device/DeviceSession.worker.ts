@@ -26,7 +26,10 @@ import {
   decodeSampleProfile,
   decodeFirmwareVersion,
   decodeNotification,
+  decodeMotorCalibrationResult,
   encodeMachineConfiguration,
+  encodeMotorCalibrationRequest,
+  type MotorCalibrationRequest,
   encodeSampleProfile,
   encodeTestRun,
   GCode,
@@ -36,6 +39,7 @@ import {
   MSG_READ_MACHINE_CONFIGURATION,
   MSG_READ_FIRMWARE_VERSION,
   MSG_READ_SAMPLE_PROFILE,
+  MSG_READ_MOTOR_CALIBRATION_RESULT,
   MSG_WRITE_MACHINE_CONFIGURATION_WRITE,
   MSG_WRITE_MOTION_ENABLE,
   MSG_WRITE_TEST_RUN,
@@ -46,6 +50,7 @@ import {
   MSG_WRITE_GAUGE_LENGTH,
   MSG_WRITE_GAUGE_FORCE,
   MSG_WRITE_FILE_DOWNLOAD,
+  MSG_WRITE_MOTOR_CALIBRATION,
   MSG_SAMPLE_PERIOD_MS,
   MSG_STATE_PERIOD_MS,
   STOREDSAMPLE_WIRE_SIZE,
@@ -69,6 +74,7 @@ import {
   validateAndEncodeMove,
   BATCH_MOVE_COUNT,
 } from '@/domain';
+import { calibrationResultFromWire, type CalibrationResult } from '@/domain/motorCalibration';
 import {
   ConnectOptions,
   DeviceEvent,
@@ -624,6 +630,21 @@ export class DeviceSession {
     }, 'readSampleProfile');
   }
 
+  async readMotorCalibrationResult(): Promise<CalibrationResult> {
+    return this.runOp(async () => {
+      const p = this.waitFor(
+        (e) => e.kind === 'motorCalibration',
+        3000,
+        'motorCalibration',
+        MSG_READ_MOTOR_CALIBRATION_RESULT,
+        'read',
+      );
+      this.requestRead(MSG_READ_MOTOR_CALIBRATION_RESULT);
+      const e = await p;
+      return (e as Extract<DeviceEvent, { kind: 'motorCalibration' }>).data;
+    }, 'readMotorCalibrationResult');
+  }
+
   async readFirmwareVersion(): Promise<string> {
     return this.runOp(async () => {
       const p = this.waitFor((e) => e.kind === 'firmwareVersion', 3000, 'firmwareVersion', MSG_READ_FIRMWARE_VERSION, 'read');
@@ -638,6 +659,13 @@ export class DeviceSession {
   async writeMachineConfiguration(config: MachineConfiguration): Promise<boolean> {
     const bytes = encodeMachineConfiguration(configFromShared(config));
     return this.runOp(() => this.writeAndAck(MSG_WRITE_MACHINE_CONFIGURATION_WRITE, bytes, 3000), 'writeMachineConfiguration');
+  }
+
+  /** ACK means staged; the machine judges whether it may move and reports
+   *  that in readMotorCalibrationResult. */
+  async startMotorCalibration(request: MotorCalibrationRequest): Promise<boolean> {
+    const bytes = encodeMotorCalibrationRequest(request);
+    return this.runOp(() => this.writeAndAck(MSG_WRITE_MOTOR_CALIBRATION, bytes, 2000), 'startMotorCalibration');
   }
 
   async writeSampleProfile(profile: SampleProfile): Promise<boolean> {
@@ -1201,6 +1229,8 @@ export class DeviceSession {
         return [{ kind: 'firmwareVersion', data: decodeFirmwareVersion(payload) }];
       case MSG_READ_SAMPLE_PROFILE:
         return [{ kind: 'sampleProfile', data: sampleProfileToShared(decodeSampleProfile(payload)) }];
+      case MSG_READ_MOTOR_CALIBRATION_RESULT:
+        return [{ kind: 'motorCalibration', data: calibrationResultFromWire(decodeMotorCalibrationResult(payload)) }];
       default:
         return [{ kind: 'data', command, payload }];
     }

@@ -20,6 +20,8 @@ import {
   RunTestResult,
 } from './events';
 import { MachineConfiguration, SampleData, SampleProfile } from '@/domain';
+import type { CalibrationResult } from '@/domain/motorCalibration';
+import type { MotorCalibrationRequest } from '@/protocol/generated/protoemb';
 import { logger, ingestWorkerBatch } from '@/diagnostics/log';
 
 // 2 Mbaud: the P2 protocol UART runs at this rate (perfect divisor match — P2
@@ -311,6 +313,14 @@ export class DeviceClient {
 
   writeSampleProfile(profile: SampleProfile): Promise<boolean> {
     return this.remote.writeSampleProfile(profile);
+  }
+
+  startMotorCalibration(request: MotorCalibrationRequest): Promise<boolean> {
+    return this.remote.startMotorCalibration(request);
+  }
+
+  readMotorCalibrationResult(): Promise<CalibrationResult> {
+    return this.remote.readMotorCalibrationResult();
   }
 
   readFirmwareVersion(): Promise<string> {
