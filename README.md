@@ -101,7 +101,7 @@ pio check -e propeller2 --fail-on-defect=medium --fail-on-defect=high  # MISRA (
 cd SIL
 make test         # build the P2 image + emulator, run the Rust test suite
 make playground   # the ISS + the app in a Chrome window on the board's clock
-make e2e          # the e2e suite on that route (SCENARIOS=… for a subset)
+make e2e          # the e2e suite on the machine's project, mad-cosim.toml (SCENARIOS=… for a subset)
 ```
 
 ### Regenerate the protocol
