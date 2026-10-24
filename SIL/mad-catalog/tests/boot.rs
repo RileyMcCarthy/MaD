@@ -14,6 +14,17 @@
 //! chain under it is `p2iss/tests/ec32mb_flash_boot.rs`'s; this is that boot
 //! said by a project file.
 //!
+//! It keeps the `propeller2_debug` image while `SIL/mad.toml` boots the
+//! production one (`tests/mad.rs`): it is `ec32mb_flash_boot.rs`'s boot, which
+//! runs that image, said by a project file, and the debug build writes its
+//! log on `P62` for the whole run. The console case passes with the
+//! production image too (measured, 2026-10-21, `MAD_P2_IMAGE` naming it): its
+//! first line at 1179.4 ms, and the summary's `P62` at 230 547 baud, one cog
+//! running at the run's end. No host sends a request here, and the
+//! production build sends on `P62` at 2 000 000 baud only when it answers
+//! one (inferred: `tests/mad.rs`'s summary gives that rate once the firmware
+//! has answered).
+//!
 //! Stepped: `run` holds the virtual clock and advances it only while it
 //! waits, so the report is the board's time and state. The boot skips,
 //! saying why, when the `propeller2_debug` image is absent (`make p2image`),

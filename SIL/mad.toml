@@ -1,0 +1,491 @@
+# The MaD tensile tester: the Edge carrier (mad-edge), the P2-EC32MB module
+# seated in its socket J3 with MaD's instruction-set simulator as its
+# processor (mad-p2iss), the module's card in its socket J301, the DS2
+# force-gauge add-on (mad-ds2) on the force cable, the machine (mad-machine)
+# on the carrier's connectors, and a host on a serial line (embsim
+# MIGRATING-MAD.md sections 1 and 4).
+#
+# Four files share every line but how the module boots and which host sits
+# where; mad-catalog/tests/projects.rs holds them to it:
+#
+#   file                        the module boots          the host
+#   mad.toml                    the firmware off flash    host-serial on J1
+#   mad-cosim.toml              the firmware off flash    chrome-cdp on J1
+#   mad-serial-boot.toml        the ROM's serial boot,    host-serial on J1
+#                               its flash erased
+#   mad-serial-boot-cosim.toml  the ROM's serial boot     chrome-cdp on J1
+#
+# J1 is the carrier's debug header, where the machine's Prop Plug sits. The
+# route is the user's decision (2026-10-21): the host on J1 and the
+# production build (pio env propeller2), whose MAIN channel, the protocol,
+# is on P62/P63, the pins J1 carries. The app flashes the firmware over J1
+# (Software/Control/README.md, "Firmware flashing").
+#
+# Open, for the user: which image the machine runs. By default the app
+# flashes a release's madEdge image, the propeller2_debug build, whose
+# protocol is on P53/P55, pins the P2-EC32MB has no finger for (read:
+# Software/Control/src/firmware/release.ts, pickFirmwareAsset; .github/
+# workflows/ci.yml, the release's two images). The production build is the
+# release's -release.bin, which the app flashes only as a local file.
+#
+#   cd SIL && make flash-image sd-image check
+#
+# Every supply, strap, jumper and wire is an entry of its own with its
+# reason. Net names are the netlists' (mad-catalog/netlists/); "read" marks
+# what was read off a netlist or a file, "inferred" what follows from one.
+
+requires-embsim = "0.4"
+
+[catalog]
+crates = ["mad-catalog"]
+runner = "mad-runner"
+
+# ---- The boards -------------------------------------------------------------
+
+[[board]]
+name = "EDGE"
+kind = "mad-edge"
+
+[[board]]
+name = "EC32"
+kind = "p2-ec32mb"
+
+# The processor: MaD's instruction-set simulator in the P2's package. Its
+# ROM boots whatever the board gives it, as S301 sets the boot (the
+# scenario, below).
+[[board.model]]
+value = "P2X8C4M64P"
+kind = "p2"
+[board.model.options]
+core = "mad-p2iss"
+
+# The module's flash, holding embsim's stage-1 and the production program
+# (pio env propeller2) as `make flash-image` lays them out: the ROM boots
+# the firmware off it. That build's MAIN channel receives on P63 and
+# transmits on P62 at 2 000 000 baud (Firmware/MaDCore/src/HAL/Include/
+# HW_pins.h, HW_PIN_MAIN_RX/TX; src/HAL/Config/HAL_serial_config.c, the row
+# without ENABLE_DEBUG_SERIAL). The propeller2_debug build's is P53/P55,
+# which the P2-EC32MB keeps for its PSRAMs (below), with its log on P62.
+[[board.model]]
+value = "SPI Flash 16MB (128Mb)"
+kind = "w25q128jv"
+[board.model.options]
+pins = "by-function"
+image = "build/flash.bin"
+
+# The card in the module's socket J301: the 32 MiB FAT16 card `make sd-image`
+# writes, ./sd mirrored onto it when it is there.
+[[board.model]]
+value = "MicroSD Socket"
+kind = "sd-card"
+[board.model.options]
+pins = "by-function"
+image = "build/sd.img"
+
+[[board]]
+name = "DS2"
+kind = "mad-ds2"
+
+# ---- The machine ------------------------------------------------------------
+
+# The servo drive and its ready output, the encoder, the end switches, the
+# door and the emergency stops, the gantry, the sample and the load cell:
+# one plant (SIL/mad-catalog/src/machine.rs). The loops take the carrier's
+# 5V_IO, so the kind has no loop supply of its own.
+[[component]]
+name = "MACHINE"
+kind = "mad-machine"
+[component.options]
+sample = "sil-linear-reference"
+# rs422, the default: each channel a pair, what J20 and U25 are designed
+# for. npn-open-collector is the machine's real encoder (a Taiss 600 P/R),
+# which this carrier cannot read; mad-catalog/tests/mad.rs runs that case.
+encoder_output = "rs422"
+
+# ---- The host ---------------------------------------------------------------
+
+# The host's end of the serial line, a PTY whose bytes are levels on the
+# wire, at the production firmware's protocol rate: the MAIN channel's
+# 2 000 000 baud (the boards, above). The PTY is .embsim/HOST.pty beside
+# this file; `embsim run --pty PATH` moves it.
+[[component]]
+name = "HOST"
+kind = "host-serial"
+[component.options]
+baud = 2000000
+
+# ---- The module in its socket, and the force cable --------------------------
+
+# Both netlists number the 80-way card edge by finger, so each finger the
+# module has lands on the socket contact of its number. The module has no
+# finger behind contacts 55, 56, 59-67 and 69-77 (P40-P57, V40, V48): it
+# keeps those pins for its PSRAMs (read: embsim boards/netlists/
+# p2_ec32mb.net, its header's no-connects).
+[[mate]]
+a = "EC32.J203"
+b = "EDGE.J3"
+
+# The carrier's six-way J9 to the add-on's five-way J1, crossed: the
+# carrier's IFG_TX (J9.4) reaches the converter's RX on J1.3, and its TX
+# comes back on J1.4 to IFG_RX (J9.2). J9.6, the shield, has no pin on the
+# add-on.
+[[mate]]
+a = "EDGE.J9"
+b = "DS2.J1"
+map = [["1", "1"], ["5", "2"], ["4", "3"], ["2", "4"], ["3", "5"]]
+
+# ---- Supplies ---------------------------------------------------------------
+
+# The machine's 12 V on the carrier's input J2. The carrier makes +5V and
+# +3.3V from it (two XL1509 bucks behind the polarity FET U3), and the
+# module takes its 5 V from +5V through the socket's 5V fingers.
+[[wire]]
+from = "BENCH.12V"
+to = "EDGE.J2.1"
+volts = 12.0
+
+# Its return. No ground is implicit (embsim DESIGN.md rule 6).
+[[wire]]
+from = "BENCH.GND"
+to = "EDGE.J2.2"
+volts = 0.0
+
+# SC_5V, the servo side's 5 V: IC14's isolated side (VCC2), the line driver
+# U24, the line receiver U25, IC16's primary (VCC1) and R25, the ready
+# output's pull-up. Nothing on the carrier makes it (read: mad_edge.net;
+# embsim board/tests/edgeboard.rs, the domains a bare carrier reports), so
+# it comes in on J21; that the drive's cable brings it is inferred.
+[[wire]]
+from = "BENCH.SERVO5V"
+to = "EDGE.J21.1"
+volts = 5.0
+
+# EN_GND, the servo side's return, on J21.8 (J21.9, J20.5 and the B pads of
+# JP2-JP5 are the same net).
+[[wire]]
+from = "BENCH.SERVOGND"
+to = "EDGE.J21.8"
+volts = 0.0
+
+# GND_IO, the isolated I/O domain's return: IC3, the isolated DC/DC that
+# makes 5V_IO, measures its output against it, and nothing on the carrier
+# ties it to a voltage, so without this 5V_IO stays down and the switch
+# loops have no supply (embsim board/tests/edgeboard.rs, the isolated
+# returns a harness ties down). J10.2 is a GND_IO pin, as J5.3-J8.3 are.
+[[wire]]
+from = "BENCH.IOGND"
+to = "EDGE.J10.2"
+volts = 0.0
+
+# IFG_GND, the isolated force domain's return, the same case: IC4 makes
+# IFG_5V, which reaches the add-on over the cable as its +3V3 net, against
+# a return nothing on either board ties down.
+[[wire]]
+from = "BENCH.IFGGND"
+to = "DS2.J1.2"
+volts = 0.0
+
+# The add-on's analog supply AVDD and its return, brought out on J2 and
+# made by neither board. On the machine the DS2 gauge supplies them over J2
+# (read: Hardware/DS2Addon/readme.md, "Bench testing"); mad-machine's load
+# cell senses its excitation and sources nothing (mad-catalog/src/
+# machine.rs), so this bench supply stands in for the gauge's. 3.3 V is the
+# readme's bench-strap level, not a level measured on the gauge. The load
+# cell's excitation is this supply (the machine's E+ and E-, below).
+[[wire]]
+from = "BENCH.VDDA"
+to = "DS2.J2.1"
+volts = 3.3
+
+[[wire]]
+from = "BENCH.AGND"
+to = "DS2.J2.2"
+volts = 0.0
+
+# Nothing on J4, the Raspberry Pi's connector: no supply and no wire. The
+# host is on J1 (below), and the Pi's line could not reach the firmware on
+# this module: J4's RPI_RX and RPI_TX go only to the isolator IC2, whose
+# carrier side is on P52-P55 (read: mad_edge.net), and the P2-EC32MB has
+# no finger for those pins (the module in its socket, above). The
+# production firmware does not use them (HAL_serial_config.c). IC2's Pi
+# side (RPI_5V, RPI_GND) is left unpowered, as it is with no Pi seated.
+
+# ---- The host's wires -------------------------------------------------------
+
+# The host on the carrier's debug header J1, the Prop Plug's: J1.1 is P62
+# (the chip's transmit: the firmware's answers, and the ROM's), J1.2 is P63
+# (its receive), J1.4 the carrier's GND. J1.1 and J1.2 go straight to the
+# socket's fingers 50 and 49, and on to the chip's P62 and P63 (read:
+# mad_edge.net, nets P62 and P63; embsim boards/netlists/p2_ec32mb.net).
+# J1.3, RESn, stays unwired: the host kinds have no modem-control pins, so
+# nothing pulses the reset, and neither boot needs it. The flash boot runs
+# from power-up, and the ROM's serial boot answers without a reset, P59's
+# pull-up (R302, the serial boot's scenario) selecting it. The app's
+# flasher resets the chip with DTR (Software/Control/README.md); no case
+# here flashes.
+
+# The adapter's I/O rail: the chip's P62/P63 bank (VIO_56_63) is 3.3 V.
+[[wire]]
+from = "ADAPTER.3V3"
+to = "HOST.VIO"
+volts = 3.3
+
+# The host's ground, the carrier's, on J1.4.
+[[wire]]
+from = "HOST.GND"
+to = "EDGE.J1.4"
+
+# P63, the chip's receive pin: what the host sends.
+[[wire]]
+from = "HOST.TX"
+to = "EDGE.J1.2"
+
+# P62, the chip's transmit pin: what the host receives.
+[[wire]]
+from = "EDGE.J1.1"
+to = "HOST.RX"
+
+# ---- The machine on the carrier's connectors --------------------------------
+
+# SC_PUL+, the step pair's + leg from the line driver U24 (IC14's OUTA, from
+# P8).
+[[wire]]
+from = "EDGE.J21.2"
+to = "MACHINE.STEP"
+
+# SC_DIR+, from U24 (IC14's OUTB, from P7).
+[[wire]]
+from = "EDGE.J21.5"
+to = "MACHINE.DIR"
+
+# No wire on J21.3 or J21.4 (SC_PUL- and SC_DIR-, U24's complementary
+# outputs): the kind reads STEP and DIR single-ended against DRIVE_GND
+# (mad-catalog/src/machine.rs, its DRIVE_GND reference).
+
+# SC_ENA, from JP1's common pad (IC14's OUTC, from P6, with JP1 on pads
+# 1-2: the scenario, below).
+[[wire]]
+from = "EDGE.J21.7"
+to = "MACHINE.ENA"
+
+# SC_SRDY: R25's pull-up to SC_5V, and IC14's input IND, which reaches P5.
+[[wire]]
+from = "MACHINE.SRDY"
+to = "EDGE.J21.6"
+
+# EN_GND, the return the drive reads its inputs against.
+[[wire]]
+from = "EDGE.J21.9"
+to = "MACHINE.DRIVE_GND"
+
+# A+, A-, B+ and B-: the encoder's pairs into the line receiver U25, whose
+# 1Y and 2Y reach P9 and P10 through the isolator IC16.
+[[wire]]
+from = "MACHINE.ENC_A+"
+to = "EDGE.J20.1"
+
+[[wire]]
+from = "MACHINE.ENC_A-"
+to = "EDGE.J20.2"
+
+[[wire]]
+from = "MACHINE.ENC_B+"
+to = "EDGE.J20.3"
+
+[[wire]]
+from = "MACHINE.ENC_B-"
+to = "EDGE.J20.4"
+
+# EN_GND, the encoder's declared return.
+[[wire]]
+from = "MACHINE.ENC_GND"
+to = "EDGE.J20.5"
+
+# No wire on ZI+ and ZI- (J20.9, J20.10), U25's third pair: the machine's
+# encoder has no index. An open pair rests at U25's own input bias, its
+# fail-safe high. J20.7 and J20.8 (Z+, Z-) are U25's enables G and ~G, set
+# by JP4 (the scenario, below).
+
+# The switch loops. Each loop's pin 2 is its + (the current regulator's
+# anode), pin 1 its - (the opto LED's cathode); the carrier powers no loop.
+# Each contact's COM takes the carrier's 5V_IO (IC3's isolated output, on
+# J5.1-J8.1) and each loop's - returns to GND_IO (J5.3-J8.3), carrier pin
+# to carrier pin; J5's two pins stand for the nets. The loops follow the
+# nets, not the silkscreen (read: mad_edge.net).
+
+# The upper end switch, IEND_U (J16): P19, through IC9 and U6.
+[[wire]]
+from = "EDGE.J5.1"
+to = "MACHINE.UPPER_COM"
+
+[[wire]]
+from = "MACHINE.UPPER+"
+to = "EDGE.J16.2"
+
+[[wire]]
+from = "EDGE.J16.1"
+to = "EDGE.J5.3"
+
+# The lower end switch, IEND_L (J15): P20.
+[[wire]]
+from = "EDGE.J5.1"
+to = "MACHINE.LOWER_COM"
+
+[[wire]]
+from = "MACHINE.LOWER+"
+to = "EDGE.J15.2"
+
+[[wire]]
+from = "EDGE.J15.1"
+to = "EDGE.J5.3"
+
+# The door, IDOOR (J14): P21.
+[[wire]]
+from = "EDGE.J5.1"
+to = "MACHINE.DOOR_COM"
+
+[[wire]]
+from = "MACHINE.DOOR+"
+to = "EDGE.J14.2"
+
+[[wire]]
+from = "EDGE.J14.1"
+to = "EDGE.J5.3"
+
+# The upper emergency stop, IESD_U (J11): P16.
+[[wire]]
+from = "EDGE.J5.1"
+to = "MACHINE.ESD_U_COM"
+
+[[wire]]
+from = "MACHINE.ESD_U+"
+to = "EDGE.J11.2"
+
+[[wire]]
+from = "EDGE.J11.1"
+to = "EDGE.J5.3"
+
+# The lower emergency stop, IESD_L (J12): P17.
+[[wire]]
+from = "EDGE.J5.1"
+to = "MACHINE.ESD_L_COM"
+
+[[wire]]
+from = "MACHINE.ESD_L+"
+to = "EDGE.J12.2"
+
+[[wire]]
+from = "EDGE.J12.1"
+to = "EDGE.J5.3"
+
+# The emergency-stop switch, IESD_A (J13): P18.
+[[wire]]
+from = "EDGE.J5.1"
+to = "MACHINE.ESD_A_COM"
+
+[[wire]]
+from = "MACHINE.ESD_A+"
+to = "EDGE.J13.2"
+
+[[wire]]
+from = "EDGE.J13.1"
+to = "EDGE.J5.3"
+
+# Nothing at rest shows the three emergency stops' wires: a stop rests open,
+# an open loop and an unwired one both leave P16-P18 on their pull-ups to
+# VIO_16_23 (R5, R1, R6; read: mad_edge.net), and the kind cannot press a
+# stop (mad-catalog/src/machine.rs, "Not modelled"). No case in
+# mad-catalog/tests/mad.rs checks them.
+
+# The emergency-stop circuit's power, GPI_3 (J17): P22, through the current
+# regulator IC12 and U8's first channel, with R8's 1 kOhm pull-up to
+# VIO_16_23, the parts and the pattern of the switch loops above (read:
+# mad_edge.net). The firmware reads P22 high as ESD_POWER, the emergency-stop
+# circuit without power, and holds the machine faulted with motion refused
+# while it lasts (read: Firmware/MaDCore/src/HAL/Config/HAL_GPIO_config.c,
+# ESD_POWER active high; src/APP/app_control.c, processFaults; docs/
+# user-guide/machine-states.md), so the loop carries current while that
+# circuit has power. The kind has no emergency-stop circuit (mad-catalog/src/
+# machine.rs), and what the machine has on J17 is not confirmed on the
+# board: the loop is closed from the carrier's 5V_IO to GND_IO, as the
+# switch loops take them, standing for a circuit with its power (inferred).
+# With nothing on J17, P22 rests high on R8 and every state read answers
+# ESD_POWER (measured, mad-catalog/tests/mad.rs).
+[[wire]]
+from = "EDGE.J5.1"
+to = "EDGE.J17.2"
+
+[[wire]]
+from = "EDGE.J17.1"
+to = "EDGE.J5.3"
+
+# The bridge's excitation, sensed: the add-on's AVDD and its return.
+[[wire]]
+from = "MACHINE.E+"
+to = "DS2.J2.1"
+
+[[wire]]
+from = "MACHINE.E-"
+to = "DS2.J2.2"
+
+# The bridge's outputs: A0 and A1, to the converter's AIN0 and AIN1 through
+# the add-on's JP1 and JP2.
+[[wire]]
+from = "MACHINE.S+"
+to = "DS2.J2.3"
+
+[[wire]]
+from = "MACHINE.S-"
+to = "DS2.J2.4"
+
+# ---- Scenario ---------------------------------------------------------------
+
+# S301 position 2, FLASH: P61 reaches the flash's chip select.
+[[switch]]
+part = "EC32.S301"
+pole = 1
+state = "closed"
+
+# S301 position 4: R303 holds P59 down, so the ROM boots the program in
+# flash. Position 3, R302's pull-up, stays open.
+[[switch]]
+part = "EC32.S301"
+pole = 3
+state = "closed"
+
+# JP1, TTL-SINK, on pads 1-2 (A-C): SC_ENA from IC14's TTL output OUTC.
+# Pads 2-3 (B-C) put SC_ENA on Q1's open collector instead, which OUTC
+# switches through R24. Pads 1-2 is the default this file takes; which pads
+# the machine's carrier has closed is not confirmed on the board. To flip
+# it, change this entry's pole to 1.
+[[switch]]
+part = "EDGE.JP1"
+pole = 0
+state = "closed"
+
+# JP2, JP3 and JP5 (A_GND, B_GND, ZI_GND) stay open: they ground A-, B- and
+# ZI- for a single-ended encoder, and the machine's encoder drives both legs
+# of each pair (encoder_output = "rs422").
+
+# JP4, Z_GND: Z-, U25's active-low enable ~G, to EN_GND, so the receiver's
+# outputs are enabled with nothing on Z+ (its G).
+[[jumper]]
+part = "EDGE.JP4"
+state = "closed"
+
+# The add-on's JP1 and JP2: the bridge's A0 and A1 to the converter's AIN0
+# and AIN1 (R6 and R7, the alternative, are not fitted).
+[[jumper]]
+part = "DS2.JP1"
+state = "closed"
+
+[[jumper]]
+part = "DS2.JP2"
+state = "closed"
+
+# No strap on the converter's ~RESET: the add-on's netlist has R10, the
+# 10 kOhm pull-up from U1's ~RESET (pin 3) to +3V3, which reads it high
+# with no strap. A board made before R10 floats ~RESET
+# (Hardware/DS2Addon/readme.md) and takes a bodge wire to +3V3 (U1's DVDD,
+# pin 13):
+#   [[pin_short]] a = "DS2.U1.3", b = "DS2.U1.13"
