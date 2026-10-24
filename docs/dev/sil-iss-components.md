@@ -43,7 +43,7 @@ why the three maps disagreed:
 
 | Component | Transport | Status |
 |---|---|---|
-| Host protocol link (P55/P53) | UART framed on Thevenin levels, rate derived from the guest's own `WXPIN` divisor | **done** |
+| Host protocol link (P55/P53 on `P2Iss`; P62/P63 on the project files) | UART framed on Thevenin levels, rate derived from the guest's own `WXPIN` divisor | **done** |
 | Debug console (P62) | Byte-level inside `p2core::Board`, forwarded to the emulator log | **partial** — not a node |
 | DS2 piggy board (netlist) + ADS122U04 | UART on levels; analog inputs via MNA cluster solve | **done** — see F1 |
 | Load cell bridge | Two Thevenin drives into AIN0/AIN1 | **done** |
@@ -196,9 +196,12 @@ should be re-tested once S1's framing gap closes rather than chased separately.
 
 `p2iss::flashnode::FlashNode` is a first-class component on real nets. It wraps
 `p2core::SpiFlash` (the shared protocol: `$66`/`$99` reset, `$04` write-disable,
-`$05` status→`$00`, `$03` read-data), senses CLK/CS/MOSI and drives MISO. It
-shares the four Edge-module pins with the microSD, distinguished by chip select,
-with **CLK/CS swapped** (flash `CLK=P60`, `CS=P61`).
+`$05` status→`$00`, `$03` read-data), senses CLK/CS/MOSI and drives MISO only
+while the part sends data, status or its ID (`SpiFlash::drives_miso`), releasing
+it otherwise. That is what a microSD on the same four Edge-module pins needs,
+with **CLK/CS swapped** (flash `CLK=P60`, `CS=P61`): the flash's `CS` is the
+card's clock, so every low half of a card clock pulse selects it. No test puts
+a card beside this node yet; `rom_boot_net.rs` has the flash alone.
 
 **It works because the ISS yields at every net-pin event** — the mechanism that
 answers "why can't embsim handle a bit-banged device". See *The yield mechanism*
@@ -342,6 +345,29 @@ train's pin released by `_pinclear` and then driven as a plain pin; and the
 sync-serial clock's transitions half its period apart from the `WYPIN`, the
 pad released once the pin is cleared. `P2Iss` keeps its `Component` impl and
 pin lists until `mad-emulator` retires (step 11).
+
+`p2iss/tests/ec32mb_sd_mount.rs`, stepped, is the same module with the card
+`make sd-image` writes in `J301`: the firmware's boot-time mount and its
+logging core's mount both succeed, and the card is read at block 0 and then
+at its root directory, block 129. It needs embsim with the W25Q128JV's DO
+released until it has data to shift out (RileyMcCarthy/embsim#141). Before
+that the flash, whose `/CS` is the card's clock `P61` with `S301` FLASH
+closed, drove `P58` high through every low half of the card's mode-3 clock
+at 25 Ω against the card's 265 Ω (`R304`), and was deselected on each
+rising edge. The failure took a second departure from silicon, in
+`p2core`: the smart bus latches MISO from the level held just before the
+rising edge, while `sdmm.cc` asks for the sample after it
+(`wxpin #7 | 32`) and `p2core` drops that bit (RileyMcCarthy/MaD#269). So
+every byte read `$FF`, the card heard only `CMD0`, and the mount failed
+with errno 12. Just after each edge `P58` already carried the card's bit
+(measured in #268's review), so a `p2core` that sampled after the edge
+would have read the card even beside the old flash (inferred). The flash's
+fix is needed regardless: the part leaves DO at high impedance until it has
+data to send (W25Q128JV Revision F §8.2.6, Figure 14, p.28). One gap
+remains on that net: before the card has had a command, embsim's card
+drives MISO whenever `P60`, the flash's clock, selects it, so the ROM's and
+stage-1's flash reads fight it (the flash wins, at ten times the strength,
+and the boot is unaffected; RileyMcCarthy/embsim#142).
 
 ### G1 — Debug console is not a node
 *Inside the package (B3) it is: `P62` is an async transmit pad on the
@@ -663,6 +689,85 @@ cd SIL && make p2image && cargo build --release -p p2iss --examples
   stage-1 that reads the flash two bits a clock, as Parallax's own loader
   does with Fast Read Dual Output (`p2iss/rom/stage1.spin2`) — not a faster
   guest clock, and not a load that skips the chain.
+
+### The project files: the host on `J1`, the production build in the flash
+
+`SIL/mad.toml` and its three twins put the host on the carrier's debug header
+`J1` (`P62`, `P63`, `GND`), where the machine's Prop Plug sits, and the
+module's flash holds the production build (`pio run -e propeller2`,
+`make flash-image`), the route the user decided; which image the machine
+runs is open
+([board design](sil-board-simulation-design.md#the-p2-edge-module-gap)).
+Its MAIN channel receives on `P63` and transmits on `P62` at 2,000,000 baud
+(`HW_pins.h`, `HAL_serial_config.c`), with the FlexC console's own smart
+pins (`HAL_SERIAL_TYPE_BUILTIN`). The debug
+build's MAIN channel, `P53`/`P55`, cannot reach the chip on the P2-EC32MB:
+the module keeps `P40`–`P57` for its PSRAMs and has no finger for them
+([board design](sil-board-simulation-design.md#the-p2-edge-module-gap)).
+
+`mad-catalog/tests/mad.rs` boots the production image in `P2IssCore` off the
+module's flash and sends ProtoEmb frames on `J1`: the firmware answers the
+version read and the state read on `P62`, at 2,000,000 baud by the rate the
+core derives, and acknowledges a request to enable motion. Two things differ
+from the debug image there:
+
+- the production image still prints `Starting MaD Board` on `P62`
+  (`main.c`) at the FlexC console's default rate (230,400 baud, inferred)
+  before its serial core sets the pin to 2,000,000, so a host at the
+  protocol's rate reads that line as framing errors (27 of them, measured),
+  and the core's report keeps `P62`'s bytes as the console: it says the boot
+  line, then the protocol's bytes as text (measured);
+- a request that lands before the serial core has armed its receive
+  interrupt would go unanswered (inferred), so the case asks again every
+  20 ms of board time. In the runs here the first request, sent at 1.226 s
+  of board time, was answered at 1.235 s (measured).
+
+#### The machine's faults on the project files
+
+Read off the ISS's hub RAM (`dev_cogManager`'s channel table and
+`app_control`'s fault flags, at the addresses the build's listing gives)
+every 20 ms of board time, both images in `mad.toml` (measured, 2026-10-21):
+
+- **A core fault while the channels come up.** The cog manager moves a
+  channel one state per pass of the main cog's 100 ms loop (`Main/MaD.c`):
+  the first pass launches its cog, the second sees the launch and reports
+  the channel running (`dev_cogManager.c`), and the firmware reports a core
+  fault until all seven have (`app_control.c`, `processFaults`). The
+  production image's first state read, at 1.244 s, 65 ms after its boot
+  line, falls in that window and answers the core fault; by 1.308 s every
+  channel is running, its lock allocated (ids 2 to 8) and its stack
+  canaries intact, and the core fault is gone. It is the boot's own
+  window, on both images, and not a fault that stands.
+- **The emergency-stop circuit's power.** With nothing on the carrier's
+  `J17` (`GPI_3`), every read after that window answered `ESD_POWER`, to
+  3.1 s of board time, on both images. `P22` reads `J17`'s loop through
+  `IC12` and `U8` with `R8`'s pull-up to `VIO_16_23` (read:
+  `mad_edge.net`): with no current in the loop it rests high, and the
+  firmware reads `P22` high as the emergency-stop circuit without power
+  (`HAL_GPIO_config.c`, active high), which faults the machine and refuses
+  motion. `mad-emulator` holds `P22` low with a bench pull
+  (`MaDSim/src/iss_description.rs`, `IDLE_PULLS`), which is why motion
+  enables there. The project files close `J17`'s loop from the carrier's
+  `5V_IO` to `GND_IO`, as the switch loops take them, standing for a
+  powered circuit (inferred); with it the machine reads unfaulted from
+  1.314 s and enabling motion is acknowledged (measured). What the machine
+  has on `J17` is not confirmed: with nothing there, the firmware on the
+  machine would fault the same way (inferred from the netlist and the
+  firmware).
+
+The core fault is first in the firmware's order and the reported reason is
+the first fault set, so during the window it also hides the power fault
+(`app_control_private_processFaults`). A case that reads the same command
+twice takes only the answer to its own request: the first answer stays in
+what the host received, and a parser started at an earlier request finds
+it again (`mad.rs`, `HostPort::answer`).
+
+`mad-emulator`, the `p2core`/`p2iss` suites and `mad-catalog/tests/boot.rs`
+keep the debug image: they put the host on the bare chip's `P53`/`P55`, or
+read the log on `P62`. `boot.rs`'s console case is `ec32mb_flash_boot.rs`'s
+boot said by a project file. It passes with the production image too
+(measured, 2026-10-21): no request reaches the firmware there, and the
+summary keeps `P62` at the console's rate.
 
 ## The host: Chrome on the board's clock, or a PTY
 

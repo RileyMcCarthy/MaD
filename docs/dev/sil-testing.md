@@ -21,7 +21,8 @@ targets build it, and the release emulator, for you.
 
 | Target | What it does |
 |---|---|
-| `make p2image` | Build the P2 image the ISS executes |
+| `make p2image` | Build the debug P2 image the ISS executes on the board route (`pio run -e propeller2_debug`) |
+| `make p2image-production` | Build the production image (`pio run -e propeller2`), the one the project files' flash holds |
 | `make protocol` | Regenerate the Rust protocol types for SIL |
 | `make emulator` | Protocol + the Rust workspace |
 | `make playground` | The ISS with MaD Control in a **Chrome window on the board's clock** (`mad-emulator --chrome`), the app served by its dev server (started for you). For a person. |
@@ -32,8 +33,56 @@ targets build it, and the release emulator, for you.
 | `make e2e` | The dev server, `e2e-emulator` and the suite against it, then everything stopped (`SCENARIOS=…` selects) |
 | `make e2e-rom` | FW-ISS: the app's flasher in a headless Chrome on the board's clock, against the ISS booting the mask ROM |
 | `make e2e-bundle` | BUNDLE-live: the app as it ships (built as `pages.yml` builds it, served by `vite preview`) in a headless Chrome on the board's clock: connect, samples, machine state, unplug, and replug with the app reconnecting by itself |
-| `make test` | Build the image + protocol, then `cargo test` (includes the MaDSim PTY protocol smoke — no Chrome) |
+| `make flash-image` | `build/flash.bin`: stage-1 and the production image, the module's boot flash |
+| `make sd-image` | `build/sd.img`: a 32 MiB FAT16 card mirroring `./sd` |
+| `make check` | `embsim check` on the four project files (`mad*.toml`), after `flash-image` and `sd-image` |
+| `make test` | Build both images + protocol, then `cargo test` (includes the MaDSim PTY protocol smoke — no Chrome) |
 | `make clean` | Remove build artifacts and `cargo clean` |
+
+## The machine's project files
+
+`SIL/mad.toml` is the machine as it runs, as an embsim project: the Edge
+carrier, the P2-EC32MB module in its socket with the ISS as its processor
+(`mad-p2iss`), the module's flash and card, the DS2 add-on and the machine on
+the carrier's connectors (embsim `MIGRATING-MAD.md` §1 and §4). Its host is on
+the carrier's **debug header `J1`** (`P62`, `P63` and `GND`; `RESn`, `J1.3`,
+unwired), where the machine's Prop Plug sits, and the module's flash holds the
+**production build** (`pio run -e propeller2`), as the user decided
+(2026-10-21). That build's MAIN channel receives on `P63` and transmits on
+`P62` at 2,000,000 baud (`HW_pins.h`, `HAL_serial_config.c`), the pins `J1`
+carries; the app flashes over `J1` (`Software/Control/README.md`, "Firmware
+flashing"). **Open:** which image the machine runs. By default the app flashes
+a release's madEdge image, the `propeller2_debug` build, whose protocol is on
+`P53`/`P55` (`Software/Control/src/firmware/release.ts`, `pickFirmwareAsset`);
+the production build is the release's `-release.bin`, flashed only as a local
+file. Nothing sits on the Pi's connector `J4`: its line goes through
+`IC2` to the carrier's `P52`–`P55`, which the EC32MB keeps for its PSRAMs and
+has no finger for, so it cannot reach the chip
+([board design](sil-board-simulation-design.md#the-p2-edge-module-gap)).
+
+| File | The module boots | The host |
+|---|---|---|
+| `mad.toml` | the production firmware, off the flash | `host-serial` on `J1` |
+| `mad-cosim.toml` | the same | `chrome-cdp` on `J1`, USB `0403:6015` |
+| `mad-serial-boot.toml` | the ROM's serial boot, the flash erased | `host-serial` on `J1` |
+| `mad-serial-boot-cosim.toml` | the same | `chrome-cdp` on `J1`, USB `0403:6015` |
+
+```bash
+cd SIL
+make flash-image sd-image check    # the production image, both images laid out, all four files checked
+MAD_REQUIRE_P2_IMAGE=1 cargo test -p mad-catalog --test mad --test projects
+```
+
+`mad-catalog/tests/mad.rs` runs `mad.toml` stepped: the inputs at rest; the
+firmware booted off the flash and answering the host over `J1` (its version
+and the machine's state, framed by ProtoEmb's framing crate and decoded with
+the generated Rust codec, then the machine reading unfaulted and taking the
+host's request to enable motion); and the encoder's pairs with the chip held
+in reset. `tests/projects.rs` holds the four files to one another. The debug
+image (`make p2image`) stays where a run needs its log on `P62` or its MAIN
+channel on the bare chip's `P53`/`P55`: the board route below (`mad-emulator`,
+until the e2e moves onto `mad-cosim.toml`), the `p2core` and `p2iss` suites,
+and `mad-catalog/tests/boot.rs`.
 
 ## The board route: the app in Chrome on the board's clock
 
@@ -91,7 +140,7 @@ or by hand, in three terminals:
 ```bash
 make e2e-emulator                          # wait for "… reached … DevTools at http://127.0.0.1:9222"
 cd ../Software/Control && npm run dev
-CDP_URL=http://127.0.0.1:9222 npm run e2e  # or SCENARIOS=… npm run e2e
+CDP_URL=http://127.0.0.1:9222 E2E_JAM_FILE=/tmp/mad-sil.jam npm run e2e  # or SCENARIOS=… as well
 ```
 
 Wait for the run's **"reached"** line before attaching: a page made before the
@@ -110,6 +159,11 @@ visible, enabled and what `elementFromPoint` finds at its centre, then forces
 the click. The link-drop scenarios (B5-reconnect, M11-idle-drop,
 M11-mid-test-drop) pull the node's cable (`__embsim.link('unplug')`) and put it
 back.
+SERVO-stall jams the carriage by creating `E2E_JAM_FILE`, the file
+`mad-emulator --jam-file` watches: while it exists the drive keeps stepping but
+the carriage and its encoder stand still. `board-route.sh` defaults it to
+`$BOARD_LOGS/jam`, and `make e2e-emulator` uses `/tmp/mad-sil.jam`. Without
+`E2E_JAM_FILE` set, SERVO-stall fails at once.
 
 **In CI:** `control-e2e-board` gates a subset per PR on the runner's Chrome
 (`ci.yml`), then BUNDLE-live on the built bundle, and the nightly
