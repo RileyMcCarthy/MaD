@@ -144,9 +144,17 @@ impl PinBus for SmartPins {
     }
 
     fn testp(&self, pin: u8) -> bool {
+        let p = pin as usize & 63;
+        if self.mode[p] == 0 {
+            // A plain pin's IN is its pad, and nothing outside this bank
+            // drives one: it reads the cog's own drive. (Silicon registers
+            // the input, so it reads the drive a few clocks late -- see
+            // hwtest/pins-baseline.txt -- which this model does not.)
+            let bit = 1u32 << (p % 32);
+            return self.dir[p / 32] & self.out[p / 32] & bit != 0;
+        }
         // A configured pin always reads "operation complete" -- see the module
         // note on AKPIN-then-wait.
-        let p = pin as usize & 63;
         self.in_flag[p] || self.mode[p] != 0
     }
 
