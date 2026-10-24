@@ -436,7 +436,10 @@ dependencies = [
  "embsim-models",
  "models",
  "p2iss",
+ "protocol",
+ "protoemb-framing",
  "rstest 0.26.1",
+ "toml",
  "vibes-behaviour",
 ]
 
@@ -573,6 +576,10 @@ dependencies = [
 
 [[package]]
 name = "protocol"
+version = "0.1.0"
+
+[[package]]
+name = "protoemb-framing"
 version = "0.1.0"
 
 [[package]]
