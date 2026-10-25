@@ -11,7 +11,7 @@
 #   make playground-rom - The ISS mask ROM, the app's flasher in a Chrome window on the board's clock
 #   make e2e-emulator   - mad-cosim.toml under embsim run: the machine, a headless Chrome on J1; prints the DevTools URL
 #   make e2e            - The app served, e2e-emulator's board and the e2e suite against it (SCENARIOS selects)
-#   make e2e-rom        - FW-ISS: the app's flasher against the ISS's mask ROM, headless (mad-emulator)
+#   make e2e-rom        - FW-ISS: the app's flasher against the ISS's mask ROM, on mad-serial-boot-cosim.toml
 #   make e2e-bundle     - BUNDLE-live: the built bundle (as pages.yml builds it) on e2e-emulator's board
 #   make e2e-motion     - What the project cannot run (the carriage's scenarios), on mad-emulator, until IC14 is settled
 #   make flash-image    - build/flash.bin: stage-1 and the production image, the module's boot flash
@@ -25,7 +25,8 @@
 # board's time, a 1 ms quantum at a time over DevTools, and its Web Serial
 # port is the node's, on the board's protocol pins. The e2e runs it on the
 # machine's project, mad-cosim.toml (embsim MIGRATING-MAD.md step 10), the
-# node on the carrier's debug header J1; the playgrounds run it on
+# node on the carrier's debug header J1, and FW-ISS on the project's serial
+# boot, mad-serial-boot-cosim.toml; the playgrounds run it on
 # mad-emulator (`--chrome`, step 1b) until step 11, and so does e2e-motion,
 # what the project as drawn cannot run, until IC14 is settled. A browser on
 # the host's own clock (behind a PTY, or the WS bridge) measures the host,
@@ -231,11 +232,18 @@ playground-rom: emulator-release
 
 # FW-ISS on the ROM board: the app's flasher, in a headless Chrome on the
 # board's clock, writing the program into the module's flash through the
-# mask ROM on the programming UART (USB 0403:6015). Still mad-emulator's
-# ROM board (BOARD_ROUTE=emulator), as the playgrounds are; the e2e suite's
-# other scenarios need the firmware's board (make e2e).
-e2e-rom: emulator-release
-	BOARD_ROUTE=emulator P2_IMAGE=$(ROM_IMAGE) BOARD_ARGS="--boot-rom --usb-product-id 0x6015" E2E_BOARD=rom SCENARIOS=FW-ISS scripts/board-route.sh e2e
+# mask ROM on the programming UART. The board is the machine's project with
+# the ROM's serial boot, mad-serial-boot-cosim.toml (S301 position 3, the
+# flash erased), the node on J1 (USB 0403:6015). Nothing pulses RESn: the
+# node has no DTR, and J1.3 is unwired in the file. The ROM listens from
+# the START instant for 90 s of board time (600 timeouts of 3 000 000
+# clocks on its 20 MHz RC oscillator), and the probe arrives within a
+# second of it (measured, 0.54 s). The e2e suite's other scenarios need the
+# firmware's board (make e2e).
+ROM_PROJECT = mad-serial-boot-cosim.toml
+e2e-rom: sd-image
+	$(EMBSIM) check $(ROM_PROJECT)
+	EMBSIM="$(EMBSIM)" E2E_PROJECT=$(ROM_PROJECT) E2E_BOARD=rom SCENARIOS=FW-ISS scripts/board-route.sh e2e
 
 # Clean build artifacts
 clean:

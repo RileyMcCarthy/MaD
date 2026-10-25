@@ -34,7 +34,7 @@ tool builds `mad-runner`.
 | `make playground-pty` | The ISS on a PTY at `/tmp/tty.iss`, at real time at most, for a serial console. No browser belongs behind it (below). |
 | `make e2e-emulator` | The machine's project with the host's Chrome on `J1`, `mad-cosim.toml`, under `embsim run`: a **headless** Chrome on the board's clock, DevTools on 9222, nothing open, until Ctrl-C; attach the e2e suite to it |
 | `make e2e` | The dev server, `e2e-emulator`'s board and the suite against it, then everything stopped (`SCENARIOS=…` selects) |
-| `make e2e-rom` | FW-ISS: the app's flasher in a headless Chrome on the board's clock, against the ISS booting the mask ROM (`mad-emulator`) |
+| `make e2e-rom` | FW-ISS: the app's flasher in a headless Chrome on the board's clock, against the ISS booting the mask ROM on the project's serial boot (`mad-serial-boot-cosim.toml`) |
 | `make e2e-bundle` | BUNDLE-live on `e2e-emulator`'s board: the app as it ships (built as `pages.yml` builds it, served by `vite preview`): connect, samples, machine state, unplug, and replug with the app reconnecting by itself |
 | `make e2e-motion` | What the project as drawn cannot run (the scenarios that move the carriage, and SERVO-stall), on `mad-emulator`'s board, until `IC14` is settled (`SCENARIOS=…` narrows the set) |
 | `make flash-image` | `build/flash.bin`: stage-1 and the production image, the module's boot flash |
@@ -231,8 +231,8 @@ Chrome; `ci.yml`), then BUNDLE-live on the built bundle, then G2+G3+H2+I on
 `mad-emulator` (`make e2e-motion`) until `IC14` is settled. The nightly
 (`e2e-nightly.yml`) runs the whole suite the same way after the node's Chrome
 canary, then everything the project cannot run on `mad-emulator` (`make
-e2e-motion`), and FW-ISS on `mad-emulator`'s ROM board. FW-ISS is flaky
-there on `main` too: nightly 39381693691 failed it, 39556919751 passed it.
+e2e-motion`), and FW-ISS on the project's serial boot (`make e2e-rom`,
+`mad-serial-boot-cosim.toml`).
 `control-e2e-boardless` gates the scenarios that need no board (A1 and the
 firmware-flash `FW*` ones, a host Chrome against in-page fakes).
 

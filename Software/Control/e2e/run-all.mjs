@@ -52,9 +52,10 @@
  * Naming a board scenario without CDP_URL is refused.
  *
  * FW-ISS (the app flashing the ISS's mask ROM) needs the ROM board, not the
- * firmware's: `mad-emulator --boot-rom --chrome` (`cd SIL && make e2e-rom`,
- * which sets E2E_BOARD=rom and E2E_BOARD_ROUTE=emulator). On that board it
- * is the only scenario that runs; on the firmware's it is skipped.
+ * firmware's: the project's serial boot, SIL/mad-serial-boot-cosim.toml
+ * (`cd SIL && make e2e-rom`, which sets E2E_BOARD=rom and
+ * E2E_BOARD_ROUTE=project). On that board it is the only scenario that
+ * runs; on the firmware's it is skipped.
  *
  * Covers the parity-critical scenarios of docs/TEST_PLAN.md §4: A1, B1–B5, C1/C3/C4, D1/D2/D3,
  * E1, F1/F2/F4/F6/F7, G1/G2/G3 + G-limit, H1–H5, I1–I4, J1 (in G-limit), K1 (in B2+B3+B4) — plus
@@ -119,8 +120,9 @@ const MATRIX = JSON.parse(
 // boot ROM), so they run without an emulator.
 const BOARD_FREE = new Set(['A1', 'FW1', 'FW2', 'FW3', 'FW5', 'FW6', 'FW7', 'FW8', 'FW9']);
 
-// The board is the mask ROM, not the firmware: `mad-emulator --boot-rom
-// --chrome` (make e2e-rom). Only FW-ISS, the app flashing that ROM, runs.
+// The board is the mask ROM, not the firmware: the project's serial boot,
+// mad-serial-boot-cosim.toml (make e2e-rom). Only FW-ISS, the app flashing
+// that ROM, runs.
 const ROM_BOARD = process.env.E2E_BOARD === 'rom';
 
 // The scenarios that command the carriage to move: a jog, a home, or a test
@@ -2551,9 +2553,10 @@ const scenarios = [
     name: 'Firmware: UI flash talks to the ISS mask ROM over Web Serial',
     async run() {
       // The ROM board only (E2E_BOARD=rom, `make e2e-rom`): the node's port
-      // is the programming UART, as the P2 Edge's FT231X (0403:6015). The
-      // ROM's serial strap is pulled up, so Prop_Chk is answered without the
-      // reset pulse the app sends (no pin carries DTR).
+      // is the programming UART on J1, as a Parallax FT231X (0403:6015). The
+      // ROM's serial strap is pulled up (S301 position 3), so Prop_Chk is
+      // answered without the reset pulse the app sends (no pin carries DTR):
+      // the ROM listens for 90 s of board time from the chip's start.
       const { browser, page, errors } = await newSilPage();
       try {
         page.on('dialog', (d) => d.accept());

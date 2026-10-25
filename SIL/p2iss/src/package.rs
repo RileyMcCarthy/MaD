@@ -74,7 +74,7 @@
 //! change up to one slice late; a guest that drives a pad and reads the
 //! answer back reads it before its next instruction.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{btree_map, BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -476,6 +476,20 @@ pub(crate) struct CoreShared {
 }
 
 impl CoreShared {
+    /// Hand the guest every received byte due at `now`.
+    fn hand_over(&self, now: u64) {
+        let mut rx = self.rx.lock().expect("rx map never poisoned");
+        for rx in rx.values_mut() {
+            rx.hand_over(now);
+        }
+    }
+
+    /// The next instant a receive pin hands the guest a byte.
+    fn next_handover_ns(&self) -> Option<u64> {
+        let rx = self.rx.lock().expect("rx map never poisoned");
+        rx.values().filter_map(|rx| rx.next_handover_ns).min()
+    }
+
     fn crystal(&self) -> Option<u64> {
         let hz = self.crystal_hz.load(Ordering::Relaxed);
         (hz != 0).then_some(hz)
@@ -507,23 +521,118 @@ impl CoreShared {
 
 /// One receive pin: its deframer at the rate the guest programmed, and the
 /// bytes it has taken off the wire that the guest has not read.
+///
+/// The bytes reach the guest no faster than the line carries them, on the
+/// guest's clock. The guest runs up to a slice ahead of the engine, so the
+/// bytes a slice of the wire carried come off the deframer together, in its
+/// past: each is handed over a frame after the one before it, from where
+/// the guest's clock stands, and the guest runs no further than the next
+/// handover (see `advance`). Silicon's receive pin holds one byte, raises
+/// `IN` once a frame and takes the next a frame later; the boot ROM's
+/// receive interrupt moves each byte into a 16-byte ring its loop drains,
+/// and a slice's twenty at 2 000 000 baud, handed over at once, overran it.
+///
+/// A pin whose mode word makes it a receive pin before the guest has given
+/// it a bit period has no deframer yet: its line's transitions are held, at
+/// their instants, and the deframer the guest's bit period gives it takes
+/// them first. The boot ROM's serial loader is that pin: it sets `P63`
+/// receiving and learns the rate from the host's own first byte, which is
+/// on the wire before the rate is written (see [`NetPins::core_testp`]).
+///
+/// Silicon receives less: the ROM raises `P63`'s `DIR`, enabling the
+/// receiver, only once it has measured the host's `>` on `P0`/`P1`, so the
+/// bytes before that never arrive. Held here, they reach the queue, where
+/// the ROM's receive interrupt drops each `>` and its command parser
+/// scrolls past the rest (`rom_booter_v33k.spin2`, the receiver ISR and
+/// `get_command`). A receive pin here ignores `DIR` at any time.
 #[derive(Debug)]
 pub(crate) struct CoreRx {
-    decoder: UartDecoder,
+    /// `None` until the guest gives the pin a bit period.
+    decoder: Option<UartDecoder>,
     baud: u32,
+    /// A frame's time on the line at `baud`; 0 with no deframer.
+    frame_ns: u64,
+    /// The bytes handed over: `RDPIN` takes the oldest, `TESTP` sees it.
     queue: VecDeque<u8>,
+    /// The bytes off the wire not yet handed over, oldest first.
+    arrived: VecDeque<u8>,
+    /// When the oldest of them is handed over.
+    next_handover_ns: Option<u64>,
+    /// When the last byte was handed over.
+    last_handover_ns: Option<u64>,
+    /// The line's transitions while the pin has no deframer, oldest first.
+    held: VecDeque<(Level, u64)>,
     /// The frame deadline already on the wheel.
     armed_ns: Option<u64>,
+    /// The handover already on the wheel.
+    handover_armed_ns: Option<u64>,
 }
 
 impl CoreRx {
-    /// Close every frame due at `now_ns`, counting what it took.
+    /// A receive pin with no bit period yet: its line held.
+    fn holding() -> Self {
+        Self {
+            decoder: None,
+            baud: 0,
+            frame_ns: 0,
+            queue: VecDeque::new(),
+            arrived: VecDeque::new(),
+            next_handover_ns: None,
+            last_handover_ns: None,
+            held: VecDeque::new(),
+            armed_ns: None,
+            handover_armed_ns: None,
+        }
+    }
+
+    /// A receive pin deframing at `baud`, after the transitions held for it.
+    fn deframing(baud: u32, held: VecDeque<(Level, u64)>) -> Self {
+        let framing = UartFraming::new_8n1(baud);
+        let mut decoder = UartDecoder::new(framing);
+        for &(level, at) in &held {
+            decoder.on_level(level, at);
+        }
+        Self {
+            decoder: Some(decoder),
+            baud,
+            frame_ns: framing.frame_ns(),
+            ..Self::holding()
+        }
+    }
+
+    /// The line moved at `now`: into the deframer, or held for one.
+    fn on_level(&mut self, level: Level, now: u64, shared: &Shared) {
+        match self.decoder.as_mut() {
+            Some(decoder) => decoder.on_level(level, now),
+            None if self.held.len() >= EDGE_QUEUE_MAX => {
+                shared.edges_dropped.fetch_add(1, Ordering::Relaxed);
+            }
+            None => self.held.push_back((level, now)),
+        }
+    }
+
+    /// Whether the line has moved while the pin had no deframer.
+    fn line_moved(&self) -> bool {
+        !self.held.is_empty()
+    }
+
+    /// Close every frame due at `now_ns`, counting what it took, and give
+    /// the first byte waiting its handover: from the guest's clock, and a
+    /// frame after the last.
     fn poll(&mut self, now_ns: u64, shared: &Shared) {
-        while let Some(frame) = self.decoder.poll(now_ns) {
+        let Some(decoder) = self.decoder.as_mut() else {
+            return;
+        };
+        while let Some(frame) = decoder.poll(now_ns) {
             match frame {
                 Ok(byte) => {
                     shared.rx_bytes.fetch_add(1, Ordering::Relaxed);
-                    self.queue.push_back(byte);
+                    self.arrived.push_back(byte);
+                    if self.next_handover_ns.is_none() {
+                        let guest_ns = shared.guest_now_ns.load(Ordering::Relaxed);
+                        let paced = self.last_handover_ns.map_or(0, |at| at + self.frame_ns);
+                        self.next_handover_ns = Some(now_ns.max(guest_ns).max(paced));
+                    }
                 }
                 Err(error) => {
                     shared.rx_framing_errors.fetch_add(1, Ordering::Relaxed);
@@ -536,14 +645,37 @@ impl CoreRx {
         }
     }
 
-    /// The frame deadline to arm, unless it is the one already armed.
-    fn deadline_to_arm(&mut self) -> Option<u64> {
-        let at = self.decoder.frame_deadline_ns()?;
-        if self.armed_ns == Some(at) {
-            return None;
+    /// Hand the guest every byte whose handover is at or before `now_ns`,
+    /// each a frame after the one before.
+    fn hand_over(&mut self, now_ns: u64) {
+        while let Some(at) = self.next_handover_ns.filter(|&at| at <= now_ns) {
+            let Some(byte) = self.arrived.pop_front() else {
+                self.next_handover_ns = None;
+                break;
+            };
+            self.queue.push_back(byte);
+            self.last_handover_ns = Some(at);
+            self.next_handover_ns = (!self.arrived.is_empty()).then_some(at + self.frame_ns);
         }
-        self.armed_ns = Some(at);
-        Some(at)
+    }
+
+    /// The frame deadline and the handover to arm, but those already armed.
+    fn wakes_to_arm(&mut self) -> [Option<u64>; 2] {
+        let deadline = self
+            .decoder
+            .as_ref()
+            .and_then(UartDecoder::frame_deadline_ns)
+            .filter(|&at| self.armed_ns != Some(at));
+        if deadline.is_some() {
+            self.armed_ns = deadline;
+        }
+        let handover = self
+            .next_handover_ns
+            .filter(|&at| self.handover_armed_ns != Some(at));
+        if handover.is_some() {
+            self.handover_armed_ns = handover;
+        }
+        [deadline, handover]
     }
 }
 
@@ -776,20 +908,20 @@ impl NetPins {
         }
         let clk = self.guest_clk();
         let Some(baud) = smart.baud_hz(clk).filter(|&b| b > 0) else {
+            // No bit period yet: the line is held until there is one.
+            if let btree_map::Entry::Vacant(slot) = rx.entry(p) {
+                slot.insert(CoreRx::holding());
+                core_shared.rx_mask.fetch_or(bit, Ordering::Relaxed);
+            }
             return;
         };
         match rx.get_mut(&p) {
-            Some(existing) if existing.baud == baud => {}
-            _ => {
-                rx.insert(
-                    p,
-                    CoreRx {
-                        decoder: UartDecoder::new(UartFraming::new_8n1(baud)),
-                        baud,
-                        queue: VecDeque::new(),
-                        armed_ns: None,
-                    },
-                );
+            Some(existing) if existing.decoder.is_some() && existing.baud == baud => {}
+            existing => {
+                let held = existing.map(|rx| std::mem::take(&mut rx.held));
+                let mut fresh = CoreRx::deframing(baud, held.unwrap_or_default());
+                fresh.poll(virtual_clock::virtual_ns(), &self.shared);
+                rx.insert(p, fresh);
                 core_shared.rx_mask.fetch_or(bit, Ordering::Relaxed);
             }
         }
@@ -1039,28 +1171,28 @@ impl NetPins {
     /// `TESTP` on a receive pin: a byte is waiting.
     ///
     /// A known gap, kept from [`crate::P2Iss`]: the autobaud pins `P0` and
-    /// `P1`, while they are no receive pins of their own, read "a byte is
-    /// waiting on `P63`", the programming UART. The ROM's serial loader
-    /// measures the host's bit time on them with `SETSE1`; no net and no
-    /// mode word gives this reading, and the measurement modes are not
-    /// modelled, so a serial boot inside the package rests on it until they
-    /// are.
+    /// `P1`, while they are no receive pins of their own, read high once the
+    /// programming UART, `P63`, has carried anything since it became a
+    /// receive pin: a byte waiting, or, before the guest has given `P63` a
+    /// bit period, its line moving (held for its deframer, [`CoreRx`]). The
+    /// ROM's serial loader measures the host's bit time on them with
+    /// `SETSE1` and learns its rate from that; no net and no mode word gives
+    /// this reading, and the measurement modes are not modelled (`RDPIN` on
+    /// either reads `p2core::Board`'s fixed 2 000 000 baud measurement), so a
+    /// serial boot inside the package rests on it until they are.
     pub(crate) fn core_testp(&self, pin: u8) -> Option<bool> {
         let core_shared = self.core_shared.as_ref()?;
         let mask = core_shared.rx_mask.load(Ordering::Relaxed);
-        let waiting = |p: u8| {
-            core_shared
-                .rx
-                .lock()
-                .expect("rx map never poisoned")
-                .get(&p)
-                .is_some_and(|rx| !rx.queue.is_empty())
-        };
+        let rx = core_shared.rx.lock().expect("rx map never poisoned");
+        let waiting = |p: u8| rx.get(&p).is_some_and(|rx| !rx.queue.is_empty());
         let p = pin & 63;
         if mask & (1u64 << p) != 0 {
             return Some(waiting(p));
         }
-        if (p == 0 || p == 1) && mask & (1u64 << 63) != 0 && waiting(63) {
+        if (p == 0 || p == 1)
+            && mask & (1u64 << 63) != 0
+            && (waiting(63) || rx.get(&63).is_some_and(CoreRx::line_moved))
+        {
             return Some(true);
         }
         None
@@ -1179,16 +1311,16 @@ impl P2Core for P2IssCore {
                     return;
                 }
                 let now = virtual_clock::virtual_ns();
-                let deadline = {
+                let wakes = {
                     let mut rx = core_shared.rx.lock().expect("rx map never poisoned");
                     let Some(rx) = rx.get_mut(&pin) else {
                         return;
                     };
-                    rx.decoder.on_level(level, now);
+                    rx.on_level(level, now, &shared);
                     rx.poll(now, &shared);
-                    rx.deadline_to_arm()
+                    rx.wakes_to_arm()
                 };
-                if let Some(at) = deadline {
+                for at in wakes.into_iter().flatten() {
                     arm.schedule_at_ns(at);
                 }
             })?;
@@ -1282,6 +1414,8 @@ fn wake(
         return;
     }
     core_shared.consume(now);
+    // The bytes due now, before the guest runs on.
+    core_shared.hand_over(now);
     {
         let mut machine = machine.lock().expect("machine never poisoned");
         drain_edges(&mut machine, shared);
@@ -1309,17 +1443,19 @@ fn wake(
             let _ = link.bridge.service(now);
         }
     }
-    // Close any receive frame whose tail carried no transition.
-    let deadlines: Vec<u64> = {
+    // Close any receive frame whose tail carried no transition, and arm the
+    // next frame deadlines and handovers.
+    let wakes: Vec<u64> = {
         let mut rx = core_shared.rx.lock().expect("rx map never poisoned");
         rx.values_mut()
-            .filter_map(|rx| {
+            .flat_map(|rx| {
                 rx.poll(now, shared);
-                rx.deadline_to_arm()
+                rx.wakes_to_arm()
             })
+            .flatten()
             .collect()
     };
-    for at in deadlines {
+    for at in wakes {
         arm.schedule_at_ns(at);
     }
 }
@@ -1392,10 +1528,15 @@ fn advance(
     }
 
     // THE GUEST LEADS: from its own clock, at most a slice past the engine,
-    // and no further than the sync-serial clock's next edge.
+    // no further than the sync-serial clock's next edge, and no further than
+    // a receive pin's next handover, so it reads each byte a frame after the
+    // last (see [`CoreRx`]).
     let mut horizon = core.clock.ns_to_clocks_ceil(now.saturating_add(SLICE_NS));
     if let Some(pump) = core.pump {
         horizon = horizon.min(pump.next_edge_clocks);
+    }
+    if let Some(at) = core_shared.next_handover_ns() {
+        horizon = horizon.min(core.clock.ns_to_clocks_ceil(at));
     }
     machine.pins.net_yield = false;
     if let Err(trap) = machine.step_until_clocks(horizon) {
@@ -1577,6 +1718,7 @@ impl P2IssHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use embsim_board::uart::UartEncoder;
     use vibes_behaviour::{behaviour, expect, Test};
 
     /// flexspin's 160 MHz word for a 20 MHz crystal: `%CC` = `%10`, the PLL
@@ -1667,5 +1809,88 @@ mod tests {
         assert_eq!(clock.clocks_to_ns(200_000), 15_500_000);
         assert_eq!(clock.clocks_to_ns(200_160), 15_501_000);
         assert_eq!(clock.ns_to_clocks_ceil(15_501_000), 200_160);
+    }
+
+    /// The bytes a receive pin has handed over by `at`, oldest first.
+    fn handed_over(rx: &mut CoreRx, at: u64) -> Vec<u8> {
+        rx.hand_over(at);
+        rx.queue.iter().copied().collect()
+    }
+
+    #[test]
+    fn a_burst_off_the_wire_reaches_the_guest_a_frame_apart() {
+        behaviour!(Test {
+            id: "p2iss.rx-handover-paced",
+            covers: Some("SIL/p2iss/src/package.rs#CoreRx"),
+            given: "a receive pin at 2 000 000 baud taking three bytes off the line back to back \
+                    while the chip's clock runs 40 µs ahead of the board's",
+        });
+        expect!(
+            "first-at-chip",
+            "the chip can read the first byte from its own instant, not before"
+        );
+        expect!(
+            "frame-apart",
+            "it can read each of the others 5 µs after the one before, a byte's time on the line",
+            "the boot ROM's receive interrupt moves each byte into a 16-byte ring, which its \
+             loop keeps up with only at the line's own rate"
+        );
+        let shared = Shared::default();
+        let framing = UartFraming::new_8n1(2_000_000);
+        let mut rx = CoreRx::deframing(2_000_000, VecDeque::new());
+        let mut at = 1_000_000;
+        for byte in *b"Pro" {
+            for (level, hold_ns) in UartEncoder::new(framing).encode(byte) {
+                rx.on_level(level, at, &shared);
+                at += hold_ns;
+            }
+        }
+        // The line is done at 1.015 ms; the chip has run to 1.055 ms.
+        assert_eq!(at, 1_015_000);
+        shared.guest_now_ns.store(1_055_000, Ordering::Relaxed);
+        rx.poll(at + framing.frame_ns(), &shared);
+        assert_eq!(rx.arrived.len(), 3, "every byte deframes");
+
+        assert_eq!(handed_over(&mut rx, 1_054_999), b"");
+        assert_eq!(handed_over(&mut rx, 1_055_000), b"P");
+        assert_eq!(handed_over(&mut rx, 1_059_999), b"P");
+        assert_eq!(handed_over(&mut rx, 1_060_000), b"Pr");
+        assert_eq!(handed_over(&mut rx, 1_065_000), b"Pro");
+        assert_eq!(rx.next_handover_ns, None, "nothing is left to hand over");
+    }
+
+    #[test]
+    fn a_line_that_moves_before_the_rate_is_written_is_deframed_once_it_is() {
+        behaviour!(Test {
+            id: "p2iss.rx-held-until-rate",
+            covers: Some("SIL/p2iss/src/package.rs#CoreRx"),
+            given: "a pin set to receive before its rate is written, while a byte crosses its \
+                    line, then given 2 000 000 baud",
+        });
+        expect!(
+            "nothing-before-rate",
+            "until the rate is written the chip reads no byte, and sees that the line has moved"
+        );
+        expect!(
+            "byte-after-rate",
+            "once it is written the chip reads the byte that crossed before",
+            "the boot ROM sets its receive pin's rate from the host's first byte, which is on \
+             the line before the rate is"
+        );
+        let shared = Shared::default();
+        let framing = UartFraming::new_8n1(2_000_000);
+        let mut rx = CoreRx::holding();
+        let mut at = 1_000_000;
+        for (level, hold_ns) in UartEncoder::new(framing).encode(b'>') {
+            rx.on_level(level, at, &shared);
+            at += hold_ns;
+        }
+        rx.poll(at, &shared);
+        assert_eq!(handed_over(&mut rx, at), b"");
+        assert!(rx.line_moved());
+
+        let mut rx = CoreRx::deframing(2_000_000, std::mem::take(&mut rx.held));
+        rx.poll(at + framing.frame_ns(), &shared);
+        assert_eq!(handed_over(&mut rx, at + framing.frame_ns()), b">");
     }
 }

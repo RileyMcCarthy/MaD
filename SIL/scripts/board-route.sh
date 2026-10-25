@@ -16,10 +16,12 @@
 #   project   the e2e's default: the machine's project file E2E_PROJECT
 #             (mad-cosim.toml) under `$EMBSIM run`, the host's Chrome on the
 #             carrier's debug header J1 (USB 0403:6015), the production
-#             firmware booted off the module's flash. The file fixes Chrome's
+#             firmware booted off the module's flash; or, for FW-ISS
+#             (E2E_BOARD=rom, make e2e-rom), mad-serial-boot-cosim.toml, the
+#             ROM's serial boot with the flash erased. The file fixes Chrome's
 #             DevTools port (9222) and grants the port; `make flash-image
 #             sd-image` writes the images it names.
-#   emulator  the playground's default, the ROM board's (make e2e-rom), and
+#   emulator  the playground's default, the ROM playground's, and
 #             the board of what the project cannot run (make e2e-motion):
 #             `mad-emulator --chrome`, the P2 image P2_IMAGE on the bare chip,
 #             the host on P53/P55 (USB 0403:6001; BOARD_ARGS can change it).
@@ -111,9 +113,15 @@ else
   # modelled"): the suite skips SERVO-stall, saying so.
   unset E2E_JAM_FILE
   export E2E_BOARD_ROUTE=project
-  for need in "$sil/$project" "$sil/build/flash.bin" "$sil/build/sd.img"; do
-    [ -f "$need" ] || {
-      echo "board-route: missing $need (make flash-image sd-image)" >&2
+  [ -f "$sil/$project" ] || {
+    echo "board-route: missing $sil/$project" >&2
+    exit 2
+  }
+  # The images the file names (its `image = "..."` options): the flash boot's
+  # flash and card, the serial boot's card alone.
+  for image in $(sed -n 's/^image = "\(.*\)"$/\1/p' "$sil/$project"); do
+    [ -f "$sil/$image" ] || {
+      echo "board-route: missing $sil/$image, which $project names (make flash-image sd-image)" >&2
       exit 2
     }
   done

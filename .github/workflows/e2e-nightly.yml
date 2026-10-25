@@ -33,8 +33,9 @@
 # WHAT STILL DOES NOT TOUCH THE BOARD: A1 and FW1/2/3/5/6/7/8/9 drive a host
 # Chrome against in-page fakes (installFakeBootRom, installOpfsDataDir); they
 # run here and in `control-e2e-boardless` alike. FW-ISS runs in a step of
-# its own, on mad-emulator's ROM board (`mad-emulator --boot-rom --chrome`,
-# make e2e-rom), which moves onto the project's serial boot at step 11.
+# its own, on the project's serial boot, SIL/mad-serial-boot-cosim.toml
+# (make e2e-rom): the mask ROM on the module, its flash erased, the node on
+# J1.
 #
 # Use `workflow_dispatch` with suite=smoke to run e2e/smoke-ids.txt instead.
 
@@ -122,9 +123,9 @@ jobs:
         env:
           CHROME: /usr/bin/google-chrome
         run: make check
-      # FW-ISS's board: mad-emulator booting the mask ROM (no firmware image).
-      # The motion set's step builds the debug image itself (make e2e-motion).
-      - name: Build mad-emulator (release), for FW-ISS and the motion set
+      # The motion set's board; its step builds the debug image itself
+      # (make e2e-motion).
+      - name: Build mad-emulator (release), for the motion set
         working-directory: SIL
         run: |
           make protocol
@@ -182,19 +183,14 @@ jobs:
           make e2e-motion
 
       # FW-ISS: the app's flasher against the ISS booting the mask ROM, on
-      # the programming UART (make e2e-rom), on mad-emulator's board.
-      - name: Run FW-ISS on the ROM board
+      # the programming UART, on the project's serial boot (make e2e-rom).
+      - name: Run FW-ISS on the project's serial boot
         if: always()
         working-directory: SIL
         env:
           CHROME: /usr/bin/google-chrome
           BOARD_LOGS: /tmp/e2e-out/rom
-          BOARD_ROUTE: emulator
-          P2_IMAGE: p2iss/rom/rom_booter_v33k.bin
-          BOARD_ARGS: --boot-rom --usb-product-id 0x6015
-          E2E_BOARD: rom
-          SCENARIOS: FW-ISS
-        run: scripts/board-route.sh e2e
+        run: make e2e-rom
 
       - name: Timings
         if: always()
