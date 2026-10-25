@@ -30,11 +30,11 @@ still runs.
 | `make emulator` | Protocol + the Rust workspace |
 | `make playground` | `mad-playground.toml` under `embsim run`: the machine with MaD #285 fixed, MaD Control in a **Chrome window on the board's clock**, the app served by its dev server on 5174 (started for you). For a person. |
 | `make playground-iss` | The same target, under the name it had beside the native playground. |
-| `make playground-rom` | `mad-serial-boot-playground.toml`: the ROM's serial boot on `J1` (USB `0403:6015`), the app's flasher in a Chrome window on the board's clock. It may not boot what the app sends until FW-ISS runs on the project (MaD #284). |
+| `make playground-rom` | `mad-serial-boot-playground.toml`: the ROM's serial boot on `J1` (USB `0403:6015`), the app's flasher in a Chrome window on the board's clock. The flasher writes the flash, as FW-ISS does; a RAM load's reply is garbled until MaD #295 is fixed. |
 | `make playground-pty` | `mad.toml` under `embsim run`, its host a PTY at `/tmp/tty.iss`, for a serial console. No browser belongs behind it (below). |
 | `make e2e-emulator` | The machine's project with the host's Chrome on `J1`, `mad-cosim.toml`, under `embsim run`: a **headless** Chrome on the board's clock, DevTools on 9222, nothing open, until Ctrl-C; attach the e2e suite to it |
 | `make e2e` | The dev server, `e2e-emulator`'s board and the suite against it, then everything stopped (`SCENARIOS=…` selects) |
-| `make e2e-rom` | FW-ISS: the app's flasher in a headless Chrome on the board's clock, against the ISS booting the mask ROM (`mad-emulator`) |
+| `make e2e-rom` | FW-ISS: the app's flasher in a headless Chrome on the board's clock, against the ISS booting the mask ROM on the project's serial boot (`mad-serial-boot-cosim.toml`) |
 | `make e2e-bundle` | BUNDLE-live on `e2e-emulator`'s board: the app as it ships (built as `pages.yml` builds it, served by `vite preview`): connect, samples, machine state, unplug, and replug with the app reconnecting by itself |
 | `make e2e-motion` | What the project as drawn cannot run (the scenarios that move the carriage), on `mad-ic14-fixed-cosim.toml`, the board with MaD #285 fixed (`SCENARIOS=…` narrows the set; `MOTION_SHARD=K/N` runs every N-th of it from the K-th); SERVO-stall is skipped there, for the jam |
 | `make flash-image` | `build/flash.bin`: stage-1 and the production image, the module's boot flash |
@@ -262,10 +262,10 @@ to `$BOARD_LOGS/jam`. Without `E2E_JAM_FILE` set, SERVO-stall fails at once.
 Chrome; `ci.yml`), then BUNDLE-live on the built bundle, then G2+G3+H2+I on
 the board with MaD #285 fixed (`make e2e-motion`). The nightly
 (`e2e-nightly.yml`) runs the whole suite the same way after the node's Chrome
-canary, and FW-ISS on `mad-emulator`'s ROM board; beside it three jobs run
-everything the project as drawn cannot run on the #285-fixed board, a third
-each (`make e2e-motion MOTION_SHARD=K/3`). FW-ISS is flaky there on `main`
-too (MaD #284): nightly 39381693691 failed it, 39556919751 passed it.
+canary, and FW-ISS on the project's serial boot (`make e2e-rom`,
+`mad-serial-boot-cosim.toml`); beside it three jobs run everything the
+project as drawn cannot run on the #285-fixed board, a third each (`make
+e2e-motion MOTION_SHARD=K/3`).
 `control-e2e-boardless` gates the scenarios that need no board (A1 and the
 firmware-flash `FW*` ones, a host Chrome against in-page fakes).
 

@@ -11,9 +11,10 @@
 #   make playground-rom - mad-serial-boot-playground.toml: the ROM's serial boot, the app's flasher in a Chrome window
 #   make e2e-emulator   - mad-cosim.toml under embsim run: the machine, a headless Chrome on J1; prints the DevTools URL
 #   make e2e            - The app served, e2e-emulator's board and the e2e suite against it (SCENARIOS selects)
-#   make e2e-rom        - FW-ISS: the app's flasher against the ISS's mask ROM, headless (mad-emulator)
+#   make e2e-rom        - FW-ISS: the app's flasher against the ISS's mask ROM, on mad-serial-boot-cosim.toml
 #   make e2e-bundle     - BUNDLE-live: the built bundle (as pages.yml builds it) on e2e-emulator's board
 #   make e2e-motion     - What the project as drawn cannot run (the carriage's scenarios), on mad-ic14-fixed-cosim.toml
+#   make e2e-stall      - SERVO-stall on mad-emulator, the one scenario no project can run (its jam)
 #   make flash-image    - build/flash.bin: stage-1 and the production image, the module's boot flash
 #   make sd-image       - build/sd.img: a 32 MiB FAT16 card mirroring ./sd
 #   make check          - embsim check on MaD's seven project files (mad*.toml)
@@ -25,10 +26,12 @@
 # board's time, a 1 ms quantum at a time over DevTools, and its Web Serial
 # port is the node's, on the board's protocol pins. The e2e runs it on the
 # machine's project, mad-cosim.toml (embsim MIGRATING-MAD.md step 10), the
-# node on the carrier's debug header J1; e2e-motion, what the project as
-# drawn cannot run, and the playgrounds run it on the board with MaD #285
-# fixed, mad-ic14-fixed-cosim.toml and its headed copy (step 11). Only the
-# ROM board (e2e-rom) is still mad-emulator's (`--chrome`, step 1b). A browser on
+# node on the carrier's debug header J1, and FW-ISS on the project's serial
+# boot, mad-serial-boot-cosim.toml; e2e-motion, what the project as drawn
+# cannot run, and the playgrounds run it on the board with MaD #285 fixed,
+# mad-ic14-fixed-cosim.toml and its headed copy (step 11). Only SERVO-stall
+# (e2e-stall) is still mad-emulator's (`--chrome`, step 1b), for its jam,
+# which no project has. A browser on
 # the host's own clock (behind a PTY, or the WS bridge) measures the host,
 # not the machine: the ISS interprets every instruction at a few percent of
 # real time, and the app's 2 s response timeout would fire at a fraction of
@@ -64,7 +67,7 @@ BUILD_DIR = build
 FLASH_IMAGE = $(BUILD_DIR)/flash.bin
 SD_IMAGE = $(BUILD_DIR)/sd.img
 
-.PHONY: p2image p2image-production protocol emulator emulator-release test playground playground-iss playground-pty playground-rom e2e-emulator e2e e2e-rom e2e-bundle e2e-motion flash-image sd-image check bootrom clean
+.PHONY: p2image p2image-production protocol emulator emulator-release test playground playground-iss playground-pty playground-rom e2e-emulator e2e e2e-rom e2e-bundle e2e-motion e2e-stall flash-image sd-image check bootrom clean
 
 # Build the P2 image the ISS runs (`p2core`, `p2iss`, `mad-emulator`).
 #
@@ -245,26 +248,39 @@ bootrom:
 # Firmware page. The module's flash is erased and S301 pulls P59 up, so the
 # ROM waits for a serial boot on J1 (P62/P63), where the Prop Plug's FT231X
 # (0403:6015) sits; `Prop_Chk` answers without a reset pulse: no host kind
-# has modem-control pins, so the port's setSignals reaches no pin. It may
-# not boot what the app sends until FW-ISS runs on the project's serial boot
-# (MaD #284: on mad-serial-boot-cosim.toml the core reported "0 cogs
-# running; transmitting on no pin").
+# has modem-control pins, so the port's setSignals reaches no pin. The app's
+# flasher writes the flash, as FW-ISS does on the -cosim copy (make
+# e2e-rom); a RAM load's reply is garbled there until MaD #295 is fixed.
 ROM_PLAYGROUND_PROJECT = mad-serial-boot-playground.toml
 playground-rom: flash-image sd-image
 	$(EMBSIM) check $(ROM_PLAYGROUND_PROJECT)
 	EMBSIM="$(EMBSIM)" PLAYGROUND_PROJECT=$(ROM_PLAYGROUND_PROJECT) scripts/board-route.sh playground
 
-# The ISS mask ROM on the programming UART, mad-emulator's ROM board.
-ROM_IMAGE = p2iss/rom/rom_booter_v33k.bin
-
 # FW-ISS on the ROM board: the app's flasher, in a headless Chrome on the
 # board's clock, writing the program into the module's flash through the
-# mask ROM on the programming UART (USB 0403:6015). Still mad-emulator's
-# ROM board (BOARD_ROUTE=emulator) until it runs on the project's serial
-# boot (MaD #284); the e2e suite's other scenarios need the firmware's board
-# (make e2e).
-e2e-rom: emulator-release
-	BOARD_ROUTE=emulator P2_IMAGE=$(ROM_IMAGE) BOARD_ARGS="--boot-rom --usb-product-id 0x6015" E2E_BOARD=rom SCENARIOS=FW-ISS scripts/board-route.sh e2e
+# mask ROM on the programming UART. The board is the machine's project with
+# the ROM's serial boot, mad-serial-boot-cosim.toml (S301 position 3, the
+# flash erased), the node on J1 (USB 0403:6015). Nothing pulses RESn: the
+# node has no DTR, and J1.3 is unwired in the file. The ROM listens from
+# the START instant for 90 s of board time (600 timeouts of 3 000 000
+# clocks on its 20 MHz RC oscillator), and the probe arrives within a
+# second of it (measured, 0.54 s). The e2e suite's other scenarios need the
+# firmware's board (make e2e).
+ROM_PROJECT = mad-serial-boot-cosim.toml
+e2e-rom: sd-image
+	$(EMBSIM) check $(ROM_PROJECT)
+	EMBSIM="$(EMBSIM)" E2E_PROJECT=$(ROM_PROJECT) E2E_BOARD=rom SCENARIOS=FW-ISS scripts/board-route.sh e2e
+
+# SERVO-stall (a jammed carriage latches the stall; Live clears it and
+# re-enables motion), the one scenario no project can run: its jam is
+# mad-emulator's --jam-file, a lever the project's machine has no stepped
+# form of (mad-catalog/src/machine.rs, "Not modelled"). So it runs on
+# mad-emulator's board (BOARD_ROUTE=emulator): the debug image on the bare
+# chip, the host on P53/P55, a headless Chrome on the board's clock. This
+# target, mad-emulator and the debug image's route are what keep
+# mad-emulator in the tree (embsim MIGRATING-MAD.md step 11's exception).
+e2e-stall: p2image emulator-release
+	BOARD_ROUTE=emulator SCENARIOS=SERVO-stall scripts/board-route.sh e2e
 
 # Clean build artifacts
 clean:

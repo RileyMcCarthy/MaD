@@ -35,8 +35,9 @@
 # WHAT STILL DOES NOT TOUCH THE BOARD: A1 and FW1/2/3/5/6/7/8/9 drive a host
 # Chrome against in-page fakes (installFakeBootRom, installOpfsDataDir); they
 # run here and in `control-e2e-boardless` alike. FW-ISS runs in a step of
-# its own, on mad-emulator's ROM board (`mad-emulator --boot-rom --chrome`,
-# make e2e-rom), until it runs on the project's serial boot (MaD #284).
+# its own, on the project's serial boot, SIL/mad-serial-boot-cosim.toml
+# (make e2e-rom): the mask ROM on the module, its flash erased, the node on
+# J1.
 #
 # Use `workflow_dispatch` with suite=smoke to run e2e/smoke-ids.txt instead.
 
@@ -65,7 +66,7 @@ jobs:
     name: E2E on the ISS (${{ matrix.part }})
     runs-on: ubuntu-latest
     # Four jobs from one set of steps: `suite`, the whole suite on the
-    # project as drawn (make e2e) and FW-ISS on mad-emulator's ROM board;
+    # project as drawn (make e2e) and FW-ISS on the project's serial boot;
     # and `motion 1/3` to `motion 3/3`, the set the project as drawn cannot
     # run, on the board with MaD #285 fixed (make e2e-motion), a third each
     # (MOTION_SHARD: every third scenario, in the suite's order). The set is
@@ -140,13 +141,6 @@ jobs:
         env:
           CHROME: /usr/bin/google-chrome
         run: make check
-      # FW-ISS's board: mad-emulator booting the mask ROM (no firmware image).
-      - name: Build mad-emulator (release), for FW-ISS
-        if: matrix.part == 'suite'
-        working-directory: SIL
-        run: |
-          make protocol
-          cargo build --release --bin mad-emulator
       - name: Install Control deps + wasm + proto
         working-directory: Software/Control
         run: |
@@ -203,19 +197,14 @@ jobs:
           make e2e-motion
 
       # FW-ISS: the app's flasher against the ISS booting the mask ROM, on
-      # the programming UART (make e2e-rom), on mad-emulator's board.
-      - name: Run FW-ISS on the ROM board
+      # the programming UART, on the project's serial boot (make e2e-rom).
+      - name: Run FW-ISS on the project's serial boot
         if: ${{ always() && matrix.part == 'suite' }}
         working-directory: SIL
         env:
           CHROME: /usr/bin/google-chrome
           BOARD_LOGS: /tmp/e2e-out/rom
-          BOARD_ROUTE: emulator
-          P2_IMAGE: p2iss/rom/rom_booter_v33k.bin
-          BOARD_ARGS: --boot-rom --usb-product-id 0x6015
-          E2E_BOARD: rom
-          SCENARIOS: FW-ISS
-        run: scripts/board-route.sh e2e
+        run: make e2e-rom
 
       - name: Timings
         if: always()
