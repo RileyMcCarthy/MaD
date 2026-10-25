@@ -170,7 +170,7 @@ pub const RCFAST_HZ: u32 = 20_000_000;
 /// RCSLOW, the slow internal oscillator (`%SS` = `%01`): 20 kHz nominal.
 pub const RCSLOW_HZ: u32 = 20_000;
 /// The rate assumed while the guest has recorded none at hub `$14`.
-const UNRECORDED_CLKFREQ: u32 = 160_000_000;
+pub const UNRECORDED_CLKFREQ: u32 = 160_000_000;
 
 /// What the system clock runs from, as far as [`Machine::clock_hz`] goes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -759,8 +759,8 @@ pub struct Machine<P: PinBus> {
     /// The system counter and the virtual time, in nanoseconds, at which the
     /// clock last changed source: the origin of [`Self::time_map`].
     time_origin: (u64, u64),
-    /// The clock changed source during a [`Self::step_until`] pass, so the
-    /// pass's deadline is a different count of clocks now.
+    /// The clock changed source during a [`Self::step_until`] pass, which
+    /// ends it ([`Self::step_until`]).
     retimed: bool,
 }
 
@@ -1414,10 +1414,16 @@ impl<P: PinBus> Machine<P> {
     /// Round-robin in a single OS thread: no locking on hub RAM, and the
     /// interleaving is a pure function of the image, which is what makes a run
     /// bit-reproducible.
+    ///
+    /// The pass also ends early, after the instruction, when a cog drives a
+    /// net pin ([`PinBus::take_net_yield`]) or the clock changes source
+    /// ([`Self::time_map`]): a host that keeps a copy of the map, to stamp pin
+    /// traffic with, takes the new one before the guest runs on at the new
+    /// rate, and the next pass works the deadline out at that rate.
     pub fn step_until(&mut self, deadline_us: u64) -> Result<(), Trap> {
         // The deadline as the first count at which `now_us()` reads it, so the
         // pass and every cog are gated on the same comparison, in clocks.
-        let mut deadline_clocks = self.first_clock_at_us(deadline_us);
+        let deadline_clocks = self.first_clock_at_us(deadline_us);
         self.ff_deadline_clocks = deadline_clocks;
         self.retimed = false;
         // Round-robin over the running cogs, but skip any that have already
@@ -1443,15 +1449,14 @@ impl<P: PinBus> Machine<P> {
                     self.pins.set_clock(self.cogs[cog].clocks);
                     self.step_one(cog)?;
                     stepped = true;
-                    if std::mem::take(&mut self.retimed) {
-                        // The clock changed rate under the pass: the same
-                        // instant is a different count now, and an idle
-                        // fast-forward capped at the old one would carry a
-                        // slowed clock far past it.
-                        deadline_clocks = self.first_clock_at_us(deadline_us);
-                        self.ff_deadline_clocks = deadline_clocks;
-                    }
-                    if self.pins.take_net_yield() || std::mem::take(&mut self.clock_yield) {
+                    // A clock that changed rate under the pass makes the same
+                    // instant a different count, and an idle fast-forward
+                    // capped at the old one would carry a slowed clock far
+                    // past it: end the pass here.
+                    if self.pins.take_net_yield()
+                        || std::mem::take(&mut self.clock_yield)
+                        || std::mem::take(&mut self.retimed)
+                    {
                         return Ok(());
                     }
                 }
