@@ -27,7 +27,7 @@
 //!
 //! The run starts as the app does: the host asks once stage-1 has streamed
 //! the program, again every 20 ms until the firmware first answers, waits
-//! three communication ticks for any late answer to its retries, and only
+//! 30 ms for any late answer to its retries, and only
 //! then starts the burst, from which it counts. Deterministic: every instant
 //! is the board's, and the delays come from a fixed seed.
 //!
@@ -74,22 +74,22 @@ const READ_SAMPLE: u8 = 0;
 /// Requests in the burst.
 const REQUESTS: usize = 24;
 /// Requests the host keeps outstanding. The firmware answers in batches, once
-/// per tick of its 100 Hz communication task, and transmits a batch back to
+/// per pass of its communication task, and transmits a batch back to
 /// back: eight replies are a millisecond of the transmitter running.
 const IN_FLIGHT: usize = 8;
 /// While the firmware has not answered, the host asks again this often, as
 /// the app's runtime does after a timeout.
 const RETRY_NS: u64 = 20_000_000;
-/// One tick of the firmware's communication task.
+/// The window the burst's first requests spread over.
 const TICK_NS: u64 = 10_000_000;
-/// After the first answer, three ticks for any late answer to a retry.
+/// After the first answer, time for any late answer to a retry.
 const QUIET_NS: u64 = 3 * TICK_NS;
 /// Each reply that starts plans the next request this long after it, drawn
 /// uniformly. A sample reply is 26 bytes, 130 us on the wire, so many land
 /// while the batch is still being transmitted and the rest at arbitrary
 /// points of the firmware's loop.
 const SPREAD_NS: u64 = 400_000;
-/// A request with no reply after three communication ticks is lost.
+/// A request with no reply after 30 ms is lost.
 const REPLY_TIMEOUT_NS: u64 = 30_000_000;
 const SEED: u64 = 0x5EED_2B0D_1E55_0001;
 
@@ -308,7 +308,7 @@ impl Run {
                 if now < until {
                     return;
                 }
-                // The burst: the first requests at random points of one tick.
+                // The burst: the first requests at random points of a 10 ms window.
                 self.phase = Phase::Burst;
                 self.burst_from = Some((now, core.rx_overruns(RX_PIN)));
                 for _ in 0..IN_FLIGHT {
