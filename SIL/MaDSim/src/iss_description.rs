@@ -270,9 +270,13 @@ impl BenchForcePath {
 // The machine: servo, encoder, end stops
 // ============================================================
 
-/// Steps per millimetre, matching the native wiring's `STEPS_PER_MM`
-/// (4 × 2048 microsteps).
+/// Encoder counts per millimetre, matching the firmware's failsafe profile
+/// (`dev_nvram_config.c` `encoderStepsPerMM`, 4 × 2048).
 const STEPS_PER_MM: f64 = (4 * 2048) as f64;
+
+/// The drive's steps per millimetre when nothing says otherwise: the same as
+/// the encoder's, as in the failsafe profile (`servoStepsPerMM`).
+pub const DEFAULT_MOTOR_STEPS_PER_MM: u32 = 4 * 2048;
 
 /// Travel between the end stops, in millimetres.
 ///
@@ -437,7 +441,10 @@ impl CarriageTravel {
 }
 
 impl BenchMachine {
-    pub fn build() -> Result<Self, Box<dyn std::error::Error>> {
+    /// `motor_steps_per_mm` is the drive's scale; the encoder's is fixed at
+    /// `STEPS_PER_MM`. The firmware has to be told the same pair in its
+    /// machine profile, or it pulses the drive at the wrong rate.
+    pub fn build(motor_steps_per_mm: u32) -> Result<Self, Box<dyn std::error::Error>> {
         // The drive's own conventions, not the model's defaults. This machine
         // states them on the driver: DIR high = reverse, and the enable is an
         // open collector, so ENA low = enabled (the same pair
@@ -461,10 +468,11 @@ impl BenchMachine {
             // reason: the bench is here to test the firmware's loop, not to
             // invent mechanical losses nobody has measured.
             load_loss: 0.0,
-            ..stepper_motor::Config::new(STEPS_PER_MM)
+            ..stepper_motor::Config::new(f64::from(motor_steps_per_mm))
         })?;
-        // Encoder counts per millimetre equal steps per millimetre: this servo
-        // is closed-loop on the encoder, so the two scales are the same one.
+        // The encoder has its own scale. By default it equals the drive's, but
+        // a machine whose drive is geared or microstepped differently does
+        // not, and the firmware converts between them by its profile.
         let encoder = QuadratureEncoder::new(quadrature_encoder::Config::new(STEPS_PER_MM))?;
         let upper = EndSwitch::new(end_switch::Config::new(
             TRAVEL_MM,

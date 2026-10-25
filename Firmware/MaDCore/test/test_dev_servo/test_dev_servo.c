@@ -720,6 +720,50 @@ void test_dev_servo_stallUsesProfilePulseScale(void)
 }
 
 
+void test_dev_servo_pulsesAtTheProfileScale(void)
+{
+    VIBES_TEST("servo.pulses-at-profile-scale",
+               "src/DEV/dev_servo.c#dev_servo_private_applyVelocity",
+               "a machine profile whose drive takes half as many steps per millimetre as the encoder counts, then a steady speed of 20000 encoder counts per second");
+    VIBES_EXPECT_WHY("half-rate",
+                     "the drive is pulsed at 10000 steps per second",
+                     "each step moves the carriage two encoder counts, so the speed asked for in counts is reached at half the step rate");
+    servo_init_scaled(SHIPPED_MAX_VEL_COUNTS, SHIPPED_MAX_ACCEL_COUNTS, 8192, 4096);
+    dev_servo_enable(CH, true);
+    dev_servo_setVelocity(CH, 20000);
+    /* A carriage that moves two counts a step, so the loop runs on feedforward. */
+    for (int i = 0; i < 500; i++)
+    {
+        tick_with_share(2.0);
+    }
+    TEST_ASSERT_UINT32_WITHIN(20U, 10000U, d_pulseRate);
+}
+
+void test_dev_servo_moveAtProfileScaleArrivesWithoutStall(void)
+{
+    VIBES_TEST("servo.move-at-profile-scale",
+               "src/DEV/dev_servo.c#dev_servo_run",
+               "a machine profile whose drive takes half as many steps per millimetre as the encoder counts, and a 20 mm move at full speed with a carriage that moves two encoder counts per step");
+    VIBES_EXPECT("arrives", "the drive reports arrival within the parking deadband of the target");
+    VIBES_EXPECT("no-stall", "no stall is reported at any point");
+    servo_init_scaled(SHIPPED_MAX_VEL_COUNTS, SHIPPED_MAX_ACCEL_COUNTS, 8192, 4096);
+    dev_servo_enable(CH, true);
+    const int32_t target = counts_from_mm(20.0);
+    dev_servo_moveTo(CH, target, 0);
+    bool everStalled = false;
+    int ticks = 0;
+    do
+    {
+        tick_with_share(2.0);
+        everStalled = everStalled || dev_servo_isStalled(CH);
+        ticks++;
+    } while ((ticks < 20000) && !dev_servo_atTarget(CH));
+    TEST_ASSERT_TRUE(dev_servo_atTarget(CH));
+    TEST_ASSERT_INT32_WITHIN(8, target, d_encoderValue);
+    TEST_ASSERT_FALSE(everStalled);
+}
+
+
 /**********************************************************************
  * Liveness — what APP gates the machine on
  **********************************************************************/
@@ -2106,6 +2150,8 @@ int main(void)
     RUN_TEST(test_dev_servo_runawayIsReportedAsStall);
     RUN_TEST(test_dev_servo_stallOnHeldFollowingError);
     RUN_TEST(test_dev_servo_stallUsesProfilePulseScale);
+    RUN_TEST(test_dev_servo_pulsesAtTheProfileScale);
+    RUN_TEST(test_dev_servo_moveAtProfileScaleArrivesWithoutStall);
 
     RUN_TEST(test_dev_servo_isReadyFalseUntilFirstTick);
     RUN_TEST(test_dev_servo_isReadyTrueWhileDisabledButTicking);

@@ -189,7 +189,9 @@ static void dev_servo_private_applyVelocity(dev_servo_channel_E ch, float vel)
     }
     HAL_GPIO_setActive(cfg->gpioDirection, !cw);
     d->lastCw = cw;
-    const uint32_t freq = (uint32_t)fabsf(vel);
+    /* `vel` is encoder counts/s; the drive is pulsed in its own steps, and one
+     * step moves the carriage countsPerPulse encoder counts. */
+    const uint32_t freq = (uint32_t)(fabsf(vel) / d->countsPerPulse);
     if (!d->velActive)
     {
         HAL_pulseOut_startVelocity(cfg->pulseChannel, freq);

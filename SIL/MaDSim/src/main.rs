@@ -71,6 +71,13 @@ struct Args {
     #[arg(long, value_name = "COUNTS", default_value_t = 15)]
     jam_buzz_counts: u32,
 
+    /// The drive's steps per millimetre (the encoder's stays 8192). Set it to
+    /// something else together with a `profile.bin` on `--sd-path` whose
+    /// `servoStepsPerMM` matches, to run a machine whose drive and encoder
+    /// scales differ.
+    #[arg(long, value_name = "STEPS", default_value_t = iss_description::DEFAULT_MOTOR_STEPS_PER_MM)]
+    motor_steps_per_mm: u32,
+
     /// The host's Chrome on the link instead of the PTY (`host.rs`).
     #[command(flatten)]
     chrome: host::ChromeArgs,
@@ -312,7 +319,7 @@ fn run_iss(args: &Args, image_path: &std::path::Path) -> Result<(), Box<dyn std:
 
     let pulls = BenchPulls::new(IDLE_PULLS);
     let force = BenchForcePath::build();
-    let machine = BenchMachine::build()?;
+    let machine = BenchMachine::build(args.motor_steps_per_mm)?;
     let travel = machine.travel();
 
     let mut harness = host.wire(

@@ -197,8 +197,9 @@ typedef struct
  *   caller owns the mm->counts conversion (limit_mmps * encoderStepsPerMM),
  *   keeping this module unit-agnostic (see the ENCODER COUNTS note above). *
  * @param encoderStepsPerMM, servoStepsPerMM  Machine-profile scales. Their
- *   ratio is how many encoder counts one step pulse should move the carriage,
- *   which is what the stall guard expects of the pulses it sends. Pass <=0 for
+ *   ratio is how many encoder counts one step pulse moves the carriage: the
+ *   drive is pulsed at the commanded counts/s divided by it, and the stall
+ *   guard expects that many counts of each pulse it sends. Pass <=0 for
  *   either to assume one count per pulse. */
 void dev_servo_init(int lock, int32_t maxVelocityCounts, int32_t maxAccelCounts,
                     int32_t encoderStepsPerMM, int32_t servoStepsPerMM);
