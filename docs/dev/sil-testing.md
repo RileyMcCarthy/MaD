@@ -258,10 +258,15 @@ jam (a lever a stepped kind cannot take from a file the wall clock polls),
 so the suite skips it on every project file. On `mad-emulator` (`make
 e2e-stall`, which sets `BOARD_ROUTE=emulator` for `board-route.sh`; or
 `E2E_BOARD_ROUTE=emulator` with the suite attached by hand) it jams the
-carriage by creating `E2E_JAM_FILE`, the file
-`mad-emulator --jam-file` watches: while it exists the drive keeps stepping
-but the carriage and its encoder stand still. `board-route.sh` defaults it
-to `$BOARD_LOGS/jam`. Without `E2E_JAM_FILE` set, SERVO-stall fails at once.
+carriage by creating `E2E_JAM_FILE`, the file `mad-emulator --jam-file`
+watches: while it exists the drive keeps stepping but the carriage gets
+nowhere, its encoder buzzing within `--jam-buzz-counts` (default 15, the
+bench-measured wander of a powered drive against a jam) of where it stuck.
+`mad-emulator --motor-steps-per-mm N` gives the drive a scale of its own (the
+encoder stays at 8192 counts/mm); put a `profile.bin` with a matching
+`servoStepsPerMM` on `--sd-path` so the firmware pulses the drive by the same
+ratio. `board-route.sh` defaults it to `$BOARD_LOGS/jam`.
+Without `E2E_JAM_FILE` set, SERVO-stall fails at once.
 
 **In CI:** `control-e2e-board` gates a subset per PR on the project
 (`make check`, then `make e2e`, one board per scenario, on the runner's

@@ -152,11 +152,40 @@ typedef struct
     int32_t kiDen;             /* integral gain denominator (kiNum=0 disables the term) */
     int32_t integralLimit;     /* counts/s — anti-windup clamp on the integral contribution */
 
-    /* Stall guard: if |commandedVel| exceeds stallVelocity but the encoder moves
-     * less than stallMinMove counts for stallTicks consecutive ticks, flag a stall. */
+    /* Stall guard: the encoder judged against the PULSES the drive was sent.
+     *
+     * A window opens when |commandedVel| rises above stallVelocity and
+     * restarts whenever the command drops back below it or changes direction.
+     * Over the window the guard totals the step pulses actually emitted and
+     * converts them to the encoder counts they should produce (encoder steps
+     * per mm / servo steps per mm, from the machine profile). At the end of
+     * every stallTicks it compares that with the encoder's net movement in the
+     * pulsed direction, and flags a stall if the carriage delivered less than
+     * 1/stallProgressDen of it. That margin absorbs profile calibration error
+     * and drive lag through acceleration. A drive that is jammed but still
+     * powered buzzes the encoder back and forth by a few counts (measured:
+     * +-15 counts, longest still stretch 128 ms), so a per-tick "did it move?"
+     * test is reset by the buzz and never fires; net movement over a window
+     * against the pulses sent is not.
+     *
+     * The encoder running AGAINST the pulses by more than stallRunawayMove
+     * counts within a window is flagged at once: that is a reversed encoder
+     * (or drive) direction, where the loop's own correction drives the
+     * carriage further off.
+     *
+     * Backstop: a following error above followErrorLimit for followErrorTicks
+     * consecutive ticks is flagged too, whatever the pulses say. It catches a
+     * carriage that moves the right way but cannot keep up (the bench held
+     * about 2 mm of error at full command for seconds).
+     *
+     * A window verdict holds until the window restarts (command stops or
+     * reverses); every verdict clears when the drive is disabled. */
     int32_t stallVelocity;     /* counts/s */
-    int32_t stallMinMove;      /* counts per tick */
-    uint32_t stallTicks;
+    uint32_t stallTicks;       /* window length, in control ticks */
+    int32_t stallProgressDen;  /* minimum delivered share of the pulsed travel = 1/den */
+    int32_t stallRunawayMove;  /* counts against the pulses => immediate stall */
+    int32_t followErrorLimit;  /* counts */
+    uint32_t followErrorTicks; /* consecutive ticks over the limit => stall */
 } dev_servo_channelConfig_S;
 
 /**********************************************************************
@@ -166,8 +195,14 @@ typedef struct
  *   counts/s and counts/s^2, that OVERRIDE the compile-time defaults for every
  *   channel. Pass <=0 for either to keep the built-in (gentle) fallback. The
  *   caller owns the mm->counts conversion (limit_mmps * encoderStepsPerMM),
- *   keeping this module unit-agnostic (see the ENCODER COUNTS note above). */
-void dev_servo_init(int lock, int32_t maxVelocityCounts, int32_t maxAccelCounts);
+ *   keeping this module unit-agnostic (see the ENCODER COUNTS note above). *
+ * @param encoderStepsPerMM, servoStepsPerMM  Machine-profile scales. Their
+ *   ratio is how many encoder counts one step pulse moves the carriage: the
+ *   drive is pulsed at the commanded counts/s divided by it, and the stall
+ *   guard expects that many counts of each pulse it sends. Pass <=0 for
+ *   either to assume one count per pulse. */
+void dev_servo_init(int lock, int32_t maxVelocityCounts, int32_t maxAccelCounts,
+                    int32_t encoderStepsPerMM, int32_t servoStepsPerMM);
 void dev_servo_run(void); /* one control tick; call at a fixed rate from a cog */
 
 void dev_servo_enable(dev_servo_channel_E ch, bool enable);

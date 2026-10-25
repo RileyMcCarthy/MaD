@@ -2454,7 +2454,8 @@ const scenarios = [
   {
     // A latched servo stall is cleared from the Live screen. The board's
     // carriage is jammed (mad-emulator --jam-file: while the file exists the
-    // drive keeps stepping but the carriage and its encoder stand still), so
+    // drive keeps stepping but the carriage gets nowhere, its encoder
+    // buzzing a few counts either side as a powered drive's does), so
     // a jog trips dev_servo's stall guard and app_control latches
     // FAULT_SERVO_STALL. Only a disable request clears that latch, and while
     // faulted the machine reports motion off — the Live button has to offer
