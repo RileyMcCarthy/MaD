@@ -11,9 +11,9 @@
 //!
 //! | Member | What it is | Its pins, as the machine's |
 //! |---|---|---|
-//! | `DRIVE` | embsim's `StepperMotor`: [`STEPS_PER_MM`], `DIR` low forward, enable active high (energized = enabled), no load loss | `STEP`, `DIR`, `ENA`, read against `DRIVE_GND` |
+//! | `DRIVE` | embsim's `StepperMotor`: `drive_steps_per_mm` ([`STEPS_PER_MM`] by default), `DIR` low forward, enable active high (energized = enabled), no load loss | `STEP`, `DIR`, `ENA`, read against `DRIVE_GND` |
 //! | `READY` | the drive's ready output, held at the level the firmware reads as not ready (below) | `SRDY`, against `DRIVE_GND` |
-//! | `ENCODER` | embsim's `QuadratureEncoder`, as many counts a millimetre as steps, its output stage the `encoder_output` option | `ENC_A+`, `ENC_A-`, `ENC_B+`, `ENC_B-` (`rs422`) or `ENC_A+`, `ENC_B+` (`push-pull`, `npn-open-collector`), with `ENC_GND` their declared return (below) |
+//! | `ENCODER` | embsim's `QuadratureEncoder`, `encoder_counts_per_mm` ([`STEPS_PER_MM`] by default), its output stage the `encoder_output` option | `ENC_A+`, `ENC_A-`, `ENC_B+`, `ENC_B-` (`rs422`) or `ENC_A+`, `ENC_B+` (`push-pull`, `npn-open-collector`), with `ENC_GND` their declared return (below) |
 //! | `UPPER`, `LOWER` | embsim's `EndSwitch`, each a normally closed contact that opens past [`TRAVEL_MM`] and below 0 mm | `UPPER_COM`, `UPPER+`; `LOWER_COM`, `LOWER+` |
 //! | `DOOR`, `ESD_U`, `ESD_L`, `ESD_A` | `EndSwitch` contacts no carriage moves: the door's closed, the emergency stops' open | `DOOR_COM`, `DOOR+`, … `ESD_A_COM`, `ESD_A+` |
 //! | `LOAD_CELL` | MaD's load cell: the bridge's outputs behind 350 Ω, centred on the excitation it senses and scaled to it, released while either excitation pin reads nothing | `E+`, `E-` sensed, `S+`, `S-` driven |
@@ -29,6 +29,8 @@
 //! |---|---|
 //! | `encoder_output` | the encoder's output stage (`OutputStage::NAMES`): `rs422` by default, each channel a pair, what the Edge carrier's `J20` and its receiver `U25` are designed for; `npn-open-collector`, the machine's real encoder (a Taiss 600 P/R: A and B open collectors, no complements, no index), whose outputs sink while low and are released while high; or `push-pull` |
 //! | `sample` | the sample in the grips, one this crate carries: `sil-linear-reference` (the default, `run_iss`'s `SIL-Linear-Reference`) |
+//! | `drive_steps_per_mm` | the drive's steps a millimetre of carriage travel, above zero: [`STEPS_PER_MM`] by default. The firmware's machine profile must say the same (`servoStepsPerMM`) |
+//! | `encoder_counts_per_mm` | the encoder's counts a millimetre, above zero: [`STEPS_PER_MM`] by default (`encoderStepsPerMM`). The two differ on a machine whose drive is geared or microstepped apart from its encoder, and the firmware pulses the drive by their ratio |
 //!
 //! On the Edge carrier as drawn, `J20`'s `+` legs have no pull-up and
 //! `JP2`/`JP3` ground the `-` legs for a single-ended encoder, so an
@@ -113,11 +115,19 @@ pub const MACHINE: &str = "mad-machine";
 // The machine's figures, each MaD's current plant's
 // ============================================================
 
-/// Drive steps, and encoder counts, per millimetre of carriage travel: 4 ×
-/// 2048 microsteps. `STEPS_PER_MM` in `SIL/MaDSim/src/iss_description.rs`;
-/// the encoder's scale is the drive's because the servo closes its loop on
-/// the encoder (`BenchMachine::build`).
+/// Drive steps, and encoder counts, per millimetre of carriage travel when
+/// the project says nothing else: 4 × 2048 microsteps, the firmware's
+/// failsafe profile (`dev_nvram_config.c`: `encoderStepsPerMM` and
+/// `servoStepsPerMM` alike). The `drive_steps_per_mm` and
+/// `encoder_counts_per_mm` options set each on its own.
 pub const STEPS_PER_MM: f64 = (4 * 2048) as f64;
+
+/// The drive's and the encoder's scales, each per millimetre of travel.
+#[derive(Debug, Clone, Copy)]
+struct Scales {
+    drive_steps_per_mm: f64,
+    encoder_counts_per_mm: f64,
+}
 
 /// Where the upper end switch opens: 100 mm, the firmware's failsafe
 /// `maxPosition` (`Firmware/MaDCore/src/DEV/Config/dev_nvram_config.c`),
@@ -245,7 +255,8 @@ pub(crate) fn kind_info() -> KindInfo {
          ENC_GND (options.encoder_output: rs422, the default, npn-open-collector or \
          push-pull), the end switch, door and emergency-stop loops as contacts (each NAME_COM \
          and NAME+), and the load cell's bridge (E+, E- sensed; S+, S- driven); \
-         options.sample: sil-linear-reference",
+         options.sample: sil-linear-reference; options.drive_steps_per_mm and \
+         options.encoder_counts_per_mm: each 8192 by default",
     )
 }
 
@@ -266,8 +277,21 @@ pub(crate) fn component(request: ComponentRequest<'_>) -> Result<Box<dyn Compone
         .choice("sample", &SamplePreset::NAMES)?
         .and_then(SamplePreset::from_name)
         .unwrap_or_default();
+    let mut scale = |name: &'static str| -> Result<f64, ProjectError> {
+        match options.number(name)? {
+            None => Ok(STEPS_PER_MM),
+            Some(value) if value > 0.0 && value.is_finite() => Ok(value),
+            Some(value) => Err(ProjectError::message(format!(
+                "{context}: options.{name} is a scale a millimetre, above zero; {value} is not"
+            ))),
+        }
+    };
+    let scales = Scales {
+        drive_steps_per_mm: scale("drive_steps_per_mm")?,
+        encoder_counts_per_mm: scale("encoder_counts_per_mm")?,
+    };
     options.finish()?;
-    let (machine, report) = assemble(output, sample)
+    let (machine, report) = assemble(output, sample, scales)
         .map_err(|err| ProjectError::message(format!("{context}: {err}")))?;
     reports.add(MachineReport {
         subject: spec.name.clone(),
@@ -282,6 +306,7 @@ pub(crate) fn component(request: ComponentRequest<'_>) -> Result<Box<dyn Compone
 fn assemble(
     output: OutputStage,
     sample: SamplePreset,
+    scales: Scales,
 ) -> Result<(Assembly, MachineReport), Box<dyn std::error::Error>> {
     // The drive's own conventions: DIR high is reverse, the enable is
     // energized = enabled, so ENA high enables (the machine's owner,
@@ -291,10 +316,11 @@ fn assemble(
         dir_forward_level: Level::Low,
         enable_active_low: false,
         load_loss: 0.0,
-        ..stepper_motor::Config::new(STEPS_PER_MM)
+        ..stepper_motor::Config::new(scales.drive_steps_per_mm)
     })?;
-    let encoder =
-        QuadratureEncoder::new(quadrature_encoder::Config::new(STEPS_PER_MM).with_output(output))?;
+    let encoder = QuadratureEncoder::new(
+        quadrature_encoder::Config::new(scales.encoder_counts_per_mm).with_output(output),
+    )?;
     // Normally closed: each closes on the carriage's side of its point and
     // opens past it.
     let upper = EndSwitch::new(end_switch::Config::new(
@@ -416,6 +442,7 @@ fn assemble(
         encoder: encoder_input,
         travel,
         force,
+        encoder_counts_per_mm: scales.encoder_counts_per_mm,
         said: None,
     };
     Ok((machine, report))
@@ -638,6 +665,8 @@ struct MachineReport {
     travel: Arc<CarriageTravel>,
     /// The sample's force, newtons, as `f64` bits.
     force: Arc<AtomicU64>,
+    /// The encoder's scale, to say its count in millimetres.
+    encoder_counts_per_mm: f64,
     /// The last window said, so a carriage at rest says nothing.
     said: Option<(i64, i64, i64)>,
 }
@@ -680,7 +709,7 @@ impl Report for MachineReport {
         let count = self.encoder.count();
         vec![format!(
             "encoder at {count} counts ({:.6} mm), {} steps commanded, {:.6} N on the sample",
-            count as f64 / STEPS_PER_MM,
+            count as f64 / self.encoder_counts_per_mm,
             self.shaft.commanded_steps(),
             f64::from_bits(self.force.load(Ordering::Relaxed)),
         )]

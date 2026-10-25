@@ -15,11 +15,7 @@
 #include "app_control.h"
 #include "app_notification.h"
 
-#if APP_MOTION_USE_SERVO
 #include "dev_servo.h"
-#else
-#include "dev_stepper.h"
-#endif
 #include "dev_nvram.h"
 
 #include "HAL_GPIO.h"
@@ -48,12 +44,9 @@
     }
 #define APP_MOTION_LOCK_REL() HAL_lock_release(app_motion_data.lock)
 
-/* Actuator abstraction: app_motion speaks these; the build (APP_MOTION_USE_SERVO)
- * picks the driver. dev_servo closes the loop on the encoder, so getPosition is
- * the encoder truth and move() honours a feedrate; dev_stepper is open-loop, so
- * getPosition is the commanded step count. Both speak the same counts (servo and
- * encoder are 8192 steps/mm) and the same target/feedrate semantics. */
-#if APP_MOTION_USE_SERVO
+/* Actuator abstraction: app_motion speaks these, dev_servo answers. The servo
+ * closes its loop on the encoder, so every position, target and feedrate here
+ * is in encoder counts and getPosition is the encoder truth. */
 #define ACTUATOR_CH DEV_SERVO_CHANNEL_MAIN
 #define actuator_enable(en) dev_servo_enable(ACTUATOR_CH, (en))
 #define actuator_move(target, feedrate) dev_servo_moveTo(ACTUATOR_CH, (target), (feedrate))
@@ -65,22 +58,6 @@
 #define actuator_atTarget() dev_servo_atTarget(ACTUATOR_CH)
 #define actuator_getSetpoint() dev_servo_getSetpoint(ACTUATOR_CH)
 #define actuator_startWaveform(wf) dev_servo_startWaveform(ACTUATOR_CH, (wf))
-#define ACTUATOR_HAS_WAVEFORM 1
-#else
-#define ACTUATOR_CH DEV_STEPPER_CHANNEL_MAIN
-#define actuator_enable(en) dev_stepper_enable(ACTUATOR_CH, (en))
-#define actuator_move(target, feedrate) (void)dev_stepper_move(ACTUATOR_CH, (target), (feedrate))
-#define actuator_setVelocity(v) dev_stepper_setVelocity(ACTUATOR_CH, (v))
-#define actuator_stop() dev_stepper_stop(ACTUATOR_CH)
-#define actuator_setPosition(p) dev_stepper_setPosition(ACTUATOR_CH, (p))
-#define actuator_getPosition() dev_stepper_getSteps(ACTUATOR_CH)
-#define actuator_getTarget() dev_stepper_getTarget(ACTUATOR_CH)
-#define actuator_atTarget() dev_stepper_atTarget(ACTUATOR_CH)
-/* dev_stepper is open-loop and has no trajectory generator, so it has no
- * waveform. G123 is refused on that build rather than approximated. */
-#define actuator_getSetpoint() actuator_getTarget()
-#define ACTUATOR_HAS_WAVEFORM 0
-#endif
 
 /* Waveform (G123): the DRIVER generates the trajectory.
  *
@@ -384,7 +361,6 @@ static void app_motion_private_moveManager_start(void)
         break;
     case G123_WAVEFORM:
     {
-#if ACTUATOR_HAS_WAVEFORM
         /* The wave swings about wherever the carriage is right now, which is
          * also the point it is returned to at the end. */
         const app_motion_waveform_t *const req = &app_motion_data.currentMove.wave;
@@ -441,11 +417,6 @@ static void app_motion_private_moveManager_start(void)
                             req->dwellLowMs, (unsigned)req->skewPerMille);
             }
         }
-#else
-        app_motion_data.waveformRunning = false;
-        app_motion_data.waveformRefused = true;
-        DEBUG_ERROR("%s", "G123 waveform needs the servo actuator; refusing\n");
-#endif
         break;
     }
     default:
@@ -523,20 +494,15 @@ void app_motion_init(int lock)
      *
      * A profile that cannot describe the machine is not repaired with a
      * default: a guessed steps/mm would run every test at the wrong scale and
-     * report it as correct. Motion is refused until a real one is written. */
-#if APP_MOTION_USE_SERVO
-    /* The servo's unit is the ENCODER count -- positions, targets and feedrates
+     * report it as correct. Motion is refused until a real one is written.
+     *
+     * The servo's unit is the ENCODER count -- positions, targets and feedrates
      * are all closed on the encoder -- so the encoder's scale converts them.
      * The servo's own scale is still required: dev_servo pulses the drive by
      * the ratio of the two, and without it would be guessing how far a step
      * goes. */
     const int32_t actuatorStepsPerMM = machineProfile.encoderStepsPerMM;
     const bool scalesValid = (machineProfile.encoderStepsPerMM > 0) && (machineProfile.servoStepsPerMM > 0);
-#else
-    /* The open-loop stepper's unit is the drive step. */
-    const int32_t actuatorStepsPerMM = machineProfile.servoStepsPerMM;
-    const bool scalesValid = (machineProfile.servoStepsPerMM > 0);
-#endif
     app_motion_data.profileValid = profileRead && scalesValid;
     if (!app_motion_data.profileValid)
     {

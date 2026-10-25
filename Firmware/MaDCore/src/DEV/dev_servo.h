@@ -11,9 +11,8 @@
 //          cmd = setpointVel (feedforward) + Kp*err + Ki*∫err, with err measured
 //          against the ENCODER. So the encoder — not a count of emitted pulses —
 //          defines where the carriage is, the commanded feedrate is realised
-//          (not a slew-to-max), and slip under load is corrected. This replaces
-//          the open-loop "emit N steps and assume we arrived" model of
-//          dev_stepper. Run dev_servo_run() at a fixed rate from a dedicated cog.
+//          (not a slew-to-max), and slip under load is corrected. Run
+//          dev_servo_run() at a fixed rate from a dedicated cog.
 //
 /**********************************************************************
  * Includes
@@ -262,7 +261,7 @@ int32_t dev_servo_getSetpoint(dev_servo_channel_E ch);
 bool dev_servo_atTarget(dev_servo_channel_E ch);
 bool dev_servo_isStalled(dev_servo_channel_E ch);
 /* Liveness of the control loop: false until dev_servo_run() has completed a tick,
- * true from then on (mirrors dev_stepper_isReady). APP gates the machine on this,
+ * true from then on. APP gates the machine on this,
  * so it must reflect "the MOTOR cog is servicing the actuator" only — a mechanical
  * fault is reported by dev_servo_isStalled, not here. */
 bool dev_servo_isReady(dev_servo_channel_E ch);
