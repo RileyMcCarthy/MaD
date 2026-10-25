@@ -293,14 +293,17 @@ and reads every one; no pin list says what a pin is:
   `BankSupplies::pad_drive` — high at its bank's supply, at the strength the
   word's drive field sets (fast, 1.5 k, 15 k, 150 k, float);
 - a `P_ASYNC_TX` pad marks its line from the moment it is enabled and frames
-  bytes at the rate its bit period and the guest's clock give; a
-  `P_ASYNC_RX` pad gets a deframer at its own rate, and hands the guest its
-  bytes no faster than the line carries them: the guest leads by up to a
-  slice, so a slice's bytes come off the wire together, and each is handed
-  over a frame after the last on the guest's clock, which runs no further
-  than the next (the boot ROM's 16-byte receive ring overran on twenty at
-  once); a pad made a receive pin before its rate is written holds its
-  line's transitions for the deframer the rate gives it; a `P_TRANSITION` or
+  bytes at the rate its bit period and the guest's clock give, and takes one
+  byte at a time: it reads busy until the byte's frame is out, in the guest's
+  clocks, so a sender waits a frame time a byte, as on silicon; a
+  `P_ASYNC_RX` pad gets a deframer at its own rate and holds one byte, which
+  the next overwrites: since the guest runs ahead, a byte lands at its own
+  instant or the guest's present, whichever is later, and no closer to an
+  unread byte before it than the wire put them (`package.rs`, "Receive"), so
+  an overwritten byte is the firmware's own read gap
+  (`p2iss/tests/package_rx_overrun.rs`); a pad made a receive pin before its
+  rate is written holds its line's transitions for the deframer the rate
+  gives it; a `P_TRANSITION` or
   `P_NCO_FREQ` pad is a step train (`p2iss::pulse`), and a `WRPIN` to any
   other mode banks its count and hands the pad back to the word, so
   `_pinclear` releases it and the firmware's software step pulses

@@ -39,3 +39,19 @@ serde_json = "1"
 clap = { version = "4", features = ["derive"] }
 axum = { version = "0.8", features = ["ws"] }
 tokio = { version = "1", features = ["rt-multi-thread", "net", "sync", "macros", "time"] }
+
+# The ISS interprets hundreds of millions of guest instructions in every test
+# that boots the firmware, on embsim's engine, and unoptimized both are several
+# times slower: the dev-profile suite (CI's sil-rust and Behaviour ledger jobs)
+# then rides its time budget, and a slow runner tips it over. The interpreter,
+# its board adapter and every dependency (embsim among them) build optimized in
+# dev; the test code itself does not, and overflow checks and debug info stay
+# on throughout.
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.dev.package.p2core]
+opt-level = 3
+
+[profile.dev.package.p2iss]
+opt-level = 3
