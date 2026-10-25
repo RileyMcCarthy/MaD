@@ -11,17 +11,24 @@
 //! Encodings follow the P2 word layout (PNut-TS table, vendor/parseUtils.ts)
 //! and are checked with `decode()` before they are trusted:
 //! `EEEE 0110000 CZI DDDDDDDDD SSSSSSSSS` MOV, `EEEE 0010000 CZI ...` CMP,
-//! `EEEE 1010100 C1I ...` RDPIN, `EEEE 11110NN NNNN...` AUGS, and `reti1` is
+//! `EEEE 1010100 C1I ...` RDPIN, `EEEE 11110NN NNNN...` AUGS, SETSE1/SETINT1
+//! as the `$020`/`$025` S-field members of `EEEE 1101011 00L DDDDDDDDD ...`,
+//! TRGINT1 as D=`$022` of the `$024` group, and `reti1` is
 //! `CALLD INB, IRET1 WCZ`; `EEEE 0001000 CZI ...` ADD, `EEEE 1010001 SZI ...`
 //! SCA/SCAS, `EEEE 1101011 00L DDDDDDDDD 00010100x` SETQ/SETQ2,
 //! `EEEE 1100110 1LI ...` REP, `EEEE 1011001 CZI ...` CALLD and
-//! `EEEE 1101100 RAA ...` JMP.
+//! `EEEE 1101100 RAA ...` JMP. The interrupt is configured by those
+//! instructions, not by poking the model, because that is what makes a cog's
+//! event sensing run at all.
 //!
 //! The hold-off list is the P2 silicon document's (Interrupts): the branch
 //! waits while ALTxx, SCA/SCAS or SETQ/SETQ2 is executing, while AUGS/AUGD wait
-//! for their instruction, and while REP is executing or active.
+//! for their instruction, and while REP is executing or active. Silicon
+//! branches one instruction after the trigger, so the hold-off tests trigger
+//! with `TRGINT1` right before the prefix: the branch would otherwise land
+//! between the prefix and its instruction.
 
-use p2core::{decode, Machine, Op, PinBus};
+use p2core::{decode, IntState, Machine, Op, PinBus};
 use vibes_behaviour::{behaviour, expect, Test};
 
 /// The pin the interrupt watches.
@@ -57,6 +64,18 @@ fn rdpin(d: u32, s: u32) -> u32 {
 fn augs(n: u32) -> u32 {
     0xFF00_0000 | (n & 0x7F_FFFF)
 }
+/// `setse1 #cfg`.
+fn setse1(cfg: u32) -> u32 {
+    0xFD64_0020 | ((cfg & 0x1FF) << 9)
+}
+/// `setint1 #src`.
+fn setint1(src: u32) -> u32 {
+    0xFD64_0025 | ((src & 0x1FF) << 9)
+}
+/// `trgint1`.
+const TRGINT1: u32 = 0xFD60_4424;
+/// `jmp #$` sits right after the two configuring instructions.
+const SPIN: u32 = MAIN + 8;
 
 /// `mov d, s` (register S).
 fn mov_reg(d: u32, s: u32) -> u32 {
@@ -102,6 +121,11 @@ fn check_encodings() {
     assert_eq!((c.op, c.c, c.z), (Op::Cmp, true, true));
     assert_eq!(decode(rdpin(12, 13)).expect("rdpin decodes").op, Op::Rdpin);
     assert_eq!(decode(augs(1)).expect("augs decodes").op, Op::Augs);
+    let se = decode(setse1(0x1B5)).expect("setse1 decodes");
+    assert_eq!((se.op, se.d), (Op::Setse1, 0x1B5));
+    let si = decode(setint1(4)).expect("setint1 decodes");
+    assert_eq!((si.op, si.d), (Op::Setint1, 4));
+    assert_eq!(decode(TRGINT1).expect("trgint1 decodes").op, Op::Trgint1);
     let r = decode(RETI1).expect("reti1 decodes");
     assert_eq!(
         (r.op, r.d, r.s, r.c, r.z),
@@ -133,7 +157,7 @@ fn check_encodings() {
         (c.op, c.d, c.s, c.i, c.c, c.z),
         (Op::Calld, 30, 31, false, false, false)
     );
-    assert_eq!(decode(jmp_rel(-16)).expect("jmp decodes").op, Op::Jmp);
+    assert_eq!(decode(jmp_rel(-20)).expect("jmp decodes").op, Op::Jmp);
     assert_eq!(jmp_rel(-4), JMP_SELF, "jmp #$ is a relative jump by -4");
 }
 
@@ -166,8 +190,7 @@ impl PinBus for OneRxPin {
     }
 }
 
-/// A cog running `main` from hub with INT1 armed on "RX pin has a byte",
-/// vectored to `isr`.
+/// A cog about to run `main` from hub, with INT1 vectored to `isr`.
 fn machine(main: &[u32], isr: &[u32]) -> Machine<OneRxPin> {
     let mut m = Machine::new(&[0u8; 4096], OneRxPin::default());
     for (base, words) in [(MAIN, main), (ISR, isr)] {
@@ -181,8 +204,6 @@ fn machine(main: &[u32], isr: &[u32]) -> Machine<OneRxPin> {
     cog.pc = MAIN;
     cog.regs[13] = RX_PIN;
     cog.regs[REG_IJMP1] = ISR;
-    cog.se1_cfg = (0b110 << 6) | RX_PIN;
-    cog.int1_src = 4;
     m
 }
 
@@ -206,7 +227,10 @@ fn an_interrupt_hands_back_the_flags_it_found() {
     check_encodings();
 
     // ISR: take the byte, then clobber C and Z (`cmp x, x` sets Z, clears C).
-    let mut m = machine(&[JMP_SELF], &[rdpin(12, 13), cmp_wcz(12, 12), RETI1]);
+    let mut m = machine(
+        &[setse1((0b110 << 6) | RX_PIN), setint1(4), JMP_SELF],
+        &[rdpin(12, 13), cmp_wcz(12, 12), RETI1],
+    );
     m.cogs[0].c = true;
     m.cogs[0].z = false;
     m.pins.waiting = true;
@@ -217,9 +241,9 @@ fn an_interrupt_hands_back_the_flags_it_found() {
         (true, false),
         "flags after the ISR returned"
     );
-    assert_eq!(m.cogs[0].pc, MAIN, "back in the interrupted loop");
-    assert!(!m.cogs[0].in_int1, "the ISR has ended");
-    assert_eq!(m.int1_entries, 1, "interrupts taken for one byte");
+    assert_eq!(m.cogs[0].pc, SPIN, "back in the interrupted loop");
+    assert_eq!(m.cogs[0].int_state[0], IntState::Idle, "the ISR has ended");
+    assert_eq!(m.int_entries[0], 1, "interrupts taken for one byte");
 }
 
 #[test]
@@ -227,7 +251,7 @@ fn an_interrupt_waits_for_the_instruction_a_prefix_belongs_to() {
     behaviour!(Test {
         id: "p2.int1-after-prefix",
         covers: Some("SIL/p2core/src/lib.rs#step_one"),
-        given: "a serial byte arriving between a wide-immediate prefix and the instruction it widens, with an interrupt routine that loads a small constant",
+        given: "an interrupt triggered just before a wide-immediate prefix and the instruction it widens, with an interrupt routine that loads a small constant",
     });
     expect!(
         "prefixed-value-whole",
@@ -240,12 +264,12 @@ fn an_interrupt_waits_for_the_instruction_a_prefix_belongs_to() {
     );
     check_encodings();
 
+    // Silicon branches one instruction after the trigger -- here, right after
+    // the AUGS, unless the prefix holds it off until its MOV has run.
     let mut m = machine(
-        &[augs(0x12345), mov_imm(10, 0x67), JMP_SELF],
-        &[mov_imm(11, 5), rdpin(12, 13), RETI1],
+        &[TRGINT1, augs(0x12345), mov_imm(10, 0x67), JMP_SELF],
+        &[mov_imm(11, 5), RETI1],
     );
-    m.step(1).expect("the prefix runs"); // AUGS is pending now
-    m.pins.waiting = true; // the byte lands before the MOV it modifies
     m.step(12).expect("runs");
 
     assert_eq!(
@@ -254,7 +278,7 @@ fn an_interrupt_waits_for_the_instruction_a_prefix_belongs_to() {
         "the augmented MOV"
     );
     assert_eq!(m.cogs[0].regs[11], 5, "the ISR's MOV");
-    assert_eq!(m.int1_entries, 1, "the byte was still serviced");
+    assert_eq!(m.int_entries[0], 1, "the interrupt was still taken");
 }
 
 #[test]
@@ -262,7 +286,7 @@ fn an_interrupt_waits_for_the_instruction_a_scaled_product_belongs_to() {
     behaviour!(Test {
         id: "p2.int1-after-sca",
         covers: Some("SIL/p2core/src/lib.rs#step_one"),
-        given: "a serial byte arriving right after a scaled multiply, whose product the next instruction takes as its source, with an interrupt routine that loads a small constant",
+        given: "an interrupt triggered just before a scaled multiply, whose product the next instruction takes as its source, with an interrupt routine that loads a small constant",
     });
     expect!(
         "product-reaches-next",
@@ -275,19 +299,18 @@ fn an_interrupt_waits_for_the_instruction_a_scaled_product_belongs_to() {
     );
     expect!(
         "serviced-after",
-        "the byte is still serviced once that instruction has run"
+        "the interrupt is still taken, returning to the instruction after the one that used the product"
     );
     check_encodings();
 
     for signed in [false, true] {
         // 0x33 * 3 = 0x99 either way; S of the MOV would otherwise be r21 = 0.
+        // Without the hold-off the branch lands right after the multiply.
         let mut m = machine(
-            &[sca_imm(20, 3, signed), mov_reg(10, 21), JMP_SELF],
-            &[mov_imm(11, 5), rdpin(12, 13), RETI1],
+            &[TRGINT1, sca_imm(20, 3, signed), mov_reg(10, 21), JMP_SELF],
+            &[mov_imm(11, 5), RETI1],
         );
         m.cogs[0].regs[20] = 0x33;
-        m.step(1).expect("the multiply runs"); // the product is pending now
-        m.pins.waiting = true; // the byte lands before the MOV that takes it
         m.step(12).expect("runs");
 
         assert_eq!(
@@ -296,8 +319,13 @@ fn an_interrupt_waits_for_the_instruction_a_scaled_product_belongs_to() {
         );
         assert_eq!(m.cogs[0].regs[11], 5, "the ISR's MOV (signed: {signed})");
         assert_eq!(
-            m.int1_entries, 1,
-            "the byte was still serviced (signed: {signed})"
+            m.int_entries[0], 1,
+            "the interrupt was still taken (signed: {signed})"
+        );
+        assert_eq!(
+            m.cogs[0].regs[REG_IRET1] & 0xF_FFFF,
+            MAIN + 12,
+            "the ISR returned past the MOV (signed: {signed})"
         );
     }
 }
@@ -307,7 +335,7 @@ fn an_interrupt_waits_for_the_block_read_a_setq_sizes() {
     behaviour!(Test {
         id: "p2.int1-after-setq",
         covers: Some("SIL/p2core/src/lib.rs#step_one"),
-        given: "a serial byte arriving between a block-length prefix and the hub read it sizes, with an interrupt routine that loads a small constant",
+        given: "an interrupt triggered just before a block-length prefix and the hub read it sizes, with an interrupt routine that loads a small constant",
     });
     expect!(
         "block-whole",
@@ -316,17 +344,15 @@ fn an_interrupt_waits_for_the_block_read_a_setq_sizes() {
     );
     expect!(
         "serviced-after",
-        "the byte is still serviced once the read has run"
+        "the interrupt is still taken, returning to the instruction after the read"
     );
     check_encodings();
 
     let mut m = machine(
-        &[setq_imm(3), rdlong_imm(20, DATA), JMP_SELF],
-        &[mov_imm(11, 5), rdpin(12, 13), RETI1],
+        &[TRGINT1, setq_imm(3), rdlong_imm(20, DATA), JMP_SELF],
+        &[mov_imm(11, 5), RETI1],
     );
     load_block(&mut m);
-    m.step(1).expect("the prefix runs");
-    m.pins.waiting = true;
     m.step(12).expect("runs");
 
     assert_eq!(
@@ -334,7 +360,12 @@ fn an_interrupt_waits_for_the_block_read_a_setq_sizes() {
         BLOCK,
         "the block read into registers"
     );
-    assert_eq!(m.int1_entries, 1, "the byte was still serviced");
+    assert_eq!(m.int_entries[0], 1, "the interrupt was still taken");
+    assert_eq!(
+        m.cogs[0].regs[REG_IRET1] & 0xF_FFFF,
+        MAIN + 12,
+        "the ISR returned past the read"
+    );
 }
 
 #[test]
@@ -342,7 +373,7 @@ fn an_interrupt_waits_for_the_lookup_table_read_a_setq2_sizes() {
     behaviour!(Test {
         id: "p2.int1-after-setq2",
         covers: Some("SIL/p2core/src/lib.rs#step_one"),
-        given: "a serial byte arriving between a lookup-table block prefix and the hub read it redirects, with an interrupt routine that loads a small constant",
+        given: "an interrupt triggered just before a lookup-table block prefix and the hub read it redirects, with an interrupt routine that loads a small constant",
     });
     expect!(
         "table-filled",
@@ -351,17 +382,15 @@ fn an_interrupt_waits_for_the_lookup_table_read_a_setq2_sizes() {
     );
     expect!(
         "serviced-after",
-        "the byte is still serviced once the read has run"
+        "the interrupt is still taken, returning to the instruction after the read"
     );
     check_encodings();
 
     let mut m = machine(
-        &[setq2_imm(3), rdlong_imm(0, DATA), JMP_SELF],
-        &[mov_imm(11, 5), rdpin(12, 13), RETI1],
+        &[TRGINT1, setq2_imm(3), rdlong_imm(0, DATA), JMP_SELF],
+        &[mov_imm(11, 5), RETI1],
     );
     load_block(&mut m);
-    m.step(1).expect("the prefix runs");
-    m.pins.waiting = true;
     m.step(12).expect("runs");
 
     assert_eq!(
@@ -369,7 +398,12 @@ fn an_interrupt_waits_for_the_lookup_table_read_a_setq2_sizes() {
         BLOCK,
         "the block read into the lookup table"
     );
-    assert_eq!(m.int1_entries, 1, "the byte was still serviced");
+    assert_eq!(m.int_entries[0], 1, "the interrupt was still taken");
+    assert_eq!(
+        m.cogs[0].regs[REG_IRET1] & 0xF_FFFF,
+        MAIN + 12,
+        "the ISR returned past the read"
+    );
 }
 
 #[test]
@@ -377,7 +411,7 @@ fn an_interrupt_waits_for_a_repeated_block_to_finish() {
     behaviour!(Test {
         id: "p2.int1-held-in-rep",
         covers: Some("SIL/p2core/src/lib.rs#step_one"),
-        given: "a serial byte arriving as a hardware-repeated block of two instructions starts its five passes",
+        given: "an interrupt triggered just before a hardware-repeated block of two instructions starts its five passes",
     });
     expect!(
         "held-for-every-pass",
@@ -390,19 +424,24 @@ fn an_interrupt_waits_for_a_repeated_block_to_finish() {
     );
     expect!(
         "serviced-after",
-        "the byte is serviced by the first instruction after the block"
+        "the interrupt is taken at the first instruction after the block"
     );
     check_encodings();
 
     let mut m = machine(
-        &[rep_imm(2, 5), add_imm(20, 1), add_imm(21, 1), JMP_SELF],
-        &[rdpin(12, 13), RETI1],
+        &[
+            TRGINT1,
+            rep_imm(2, 5),
+            add_imm(20, 1),
+            add_imm(21, 1),
+            JMP_SELF,
+        ],
+        &[mov_imm(11, 5), RETI1],
     );
-    m.step(1).expect("the repeat starts");
-    m.pins.waiting = true;
+    m.step(2).expect("the trigger, then the repeat starts");
     m.step(10).expect("five passes of two instructions");
 
-    assert_eq!(m.int1_entries, 0, "interrupts taken inside the block");
+    assert_eq!(m.int_entries[0], 0, "interrupts taken inside the block");
     assert_eq!(
         (m.cogs[0].regs[20], m.cogs[0].regs[21]),
         (5, 5),
@@ -410,14 +449,17 @@ fn an_interrupt_waits_for_a_repeated_block_to_finish() {
     );
     assert_eq!(
         m.cogs[0].pc,
-        MAIN + 12,
+        MAIN + 16,
         "at the instruction after the block"
     );
     m.step(1).expect("the interrupt branch");
-    assert_eq!(m.int1_entries, 1, "the byte is serviced after the block");
+    assert_eq!(
+        m.int_entries[0], 1,
+        "the interrupt is taken after the block"
+    );
     assert_eq!(
         m.cogs[0].regs[REG_IRET1] & 0xF_FFFF,
-        MAIN + 12,
+        MAIN + 16,
         "the ISR returns to the instruction after the block"
     );
 }
@@ -427,7 +469,7 @@ fn an_interrupt_is_taken_once_a_branch_leaves_a_repeated_block() {
     behaviour!(Test {
         id: "p2.int1-after-rep-exit",
         covers: Some("SIL/p2core/src/lib.rs#step_one"),
-        given: "a serial byte arriving inside a hardware-repeated block that branches out of itself with passes still to go",
+        given: "an interrupt triggered just before a hardware-repeated block that branches out of itself with passes still to go",
     });
     expect!(
         "held-inside",
@@ -440,20 +482,29 @@ fn an_interrupt_is_taken_once_a_branch_leaves_a_repeated_block() {
     );
     check_encodings();
 
-    // MAIN: spin (the branch target) / rep / add / jmp back to the spin.
+    // MAIN: spin (the branch target) / trigger / rep / add / jmp back to the spin.
     let mut m = machine(
-        &[JMP_SELF, rep_imm(2, 100), add_imm(20, 1), jmp_rel(-16)],
-        &[rdpin(12, 13), RETI1],
+        &[
+            JMP_SELF,
+            TRGINT1,
+            rep_imm(2, 100),
+            add_imm(20, 1),
+            jmp_rel(-20),
+        ],
+        &[mov_imm(11, 5), RETI1],
     );
     m.cogs[0].pc = MAIN + 4;
-    m.step(1).expect("the repeat starts");
-    m.pins.waiting = true;
+    m.step(2).expect("the trigger, then the repeat starts");
     m.step(2).expect("the add, then the branch out");
 
-    assert_eq!(m.int1_entries, 0, "interrupts taken inside the block");
+    assert_eq!(m.int_entries[0], 0, "interrupts taken inside the block");
+    assert_eq!(m.cogs[0].regs[20], 1, "the block's add ran");
     assert_eq!(m.cogs[0].pc, MAIN, "at the branch target");
     m.step(1).expect("the interrupt branch");
-    assert_eq!(m.int1_entries, 1, "the byte is serviced outside the block");
+    assert_eq!(
+        m.int_entries[0], 1,
+        "the interrupt is taken outside the block"
+    );
     assert_eq!(
         m.cogs[0].regs[REG_IRET1] & 0xF_FFFF,
         MAIN,
@@ -485,7 +536,7 @@ fn an_ordinary_call_inside_the_isr_leaves_it_running() {
 
     // ISR: take the byte / call SUB / count / reti1. SUB: mark / return via r30.
     let mut m = machine(
-        &[JMP_SELF],
+        &[setse1((0b110 << 6) | RX_PIN), setint1(4), JMP_SELF],
         &[rdpin(12, 13), calld_reg(30, 31), add_imm(17, 1), RETI1],
     );
     for (k, w) in [mov_imm(16, 1), calld_reg(29, 30)].iter().enumerate() {
@@ -494,17 +545,27 @@ fn an_ordinary_call_inside_the_isr_leaves_it_running() {
     }
     m.cogs[0].regs[31] = SUB;
     m.pins.waiting = true;
-    m.step(3)
-        .expect("enter, take the byte, call the subroutine");
+    // The byte triggers as SETINT1 arms the source; the branch comes one
+    // instruction (the spin) later.
+    m.step(5).expect("configure, spin, enter, take the byte");
+    // The second byte lands as the routine calls its subroutine. A pin is
+    // seen one short instruction late and the branch comes one instruction
+    // after that, so a byte any later could not reach the boundary before
+    // reti1 even if the call had ended the routine.
+    m.pins.waiting = true;
+    m.step(1).expect("call the subroutine");
     assert_eq!(m.cogs[0].pc, SUB, "in the subroutine");
-    m.pins.waiting = true; // the second byte
     m.step(3)
         .expect("the subroutine and its return, then the count");
 
-    assert_eq!(m.int1_entries, 1, "interrupts taken before reti1");
+    assert_eq!(m.int_entries[0], 1, "interrupts taken before reti1");
     assert_eq!(m.cogs[0].regs[16], 1, "the subroutine ran");
     assert_eq!(m.cogs[0].regs[17], 1, "the ISR ran on after the subroutine");
     assert_eq!(m.cogs[0].pc, ISR + 12, "at the ISR's reti1");
-    m.step(2).expect("reti1, then the second interrupt branch");
-    assert_eq!(m.int1_entries, 2, "the second byte is serviced after reti1");
+    m.step(3)
+        .expect("reti1, one instruction of the spin, then the second interrupt branch");
+    assert_eq!(
+        m.int_entries[0], 2,
+        "the second byte is serviced after reti1"
+    );
 }
