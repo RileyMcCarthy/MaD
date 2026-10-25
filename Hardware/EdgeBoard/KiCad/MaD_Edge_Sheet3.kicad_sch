@@ -7028,6 +7028,16 @@
 		(uuid "5039a986-7719-435b-a5fa-584e7cf38e8b")
 	)
 	(label "EN_GND"
+		(at 76.2 68.58 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "37e25d32-fcd9-418d-9441-960647fcb38d")
+	)
+	(label "EN_GND"
 		(at 148.59 160.02 180)
 		(effects
 			(font
