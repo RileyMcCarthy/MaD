@@ -10,7 +10,10 @@
  *   - stop requests velocity hold at 0
  *   - setPosition redefines encoder reference + target
  *   - following error reflects setpoint vs encoder
- *   - stall guard latches after stallTicks of commanding without motion
+ *   - stall guard judges the encoder against the step pulses sent, over a
+ *     window: a frozen, buzzing or crawling carriage stalls, one running the
+ *     wrong way stalls at once, a following error held too long stalls, and
+ *     a carriage that follows (even lagging) never does
  *   - liveness (isReady) — what app_control gates the machine on
  *   - arrival is invalidated by every command that redefines the target,
  *     including one landing mid-tick, and the approach converges rather
@@ -91,7 +94,9 @@ static uint32_t d_setFrequencyCount;
 static uint32_t d_lastSetFrequency;
 static uint32_t d_stopCount;
 static uint32_t d_runCount;
-static uint32_t d_run_delta;
+/* Pulses the running train has emitted since it was (re)started, as the real
+ * engine counts them: rate x elapsed time, one control tick per read. */
+static double d_emitted;
 
 void HAL_pulseOut_start(HAL_pulseOut_channel_E channel, uint32_t pulses, uint32_t frequency)
 {
@@ -104,9 +109,10 @@ bool HAL_pulseOut_run(HAL_pulseOut_channel_E channel, uint32_t *pulses)
 {
     (void)channel;
     d_runCount++;
+    d_emitted += (double)d_pulseRate * 0.001;
     if (pulses != NULL)
     {
-        *pulses = d_run_delta;
+        *pulses = (uint32_t)d_emitted;
     }
     return false;
 }
@@ -124,6 +130,7 @@ void HAL_pulseOut_startVelocity(HAL_pulseOut_channel_E channel, uint32_t frequen
     d_startVelocityCount++;
     d_startVelocityFreq = frequency;
     d_pulseRate = frequency;
+    d_emitted = 0.0; /* a (re)started train counts from zero */
 }
 
 void HAL_pulseOut_setFrequency(HAL_pulseOut_channel_E channel, uint32_t frequency)
@@ -167,7 +174,7 @@ static void doubles_reset(void)
     d_lastSetFrequency = 0U;
     d_stopCount = 0U;
     d_runCount = 0U;
-    d_run_delta = 0U;
+    d_emitted = 0.0;
     d_gpioCount = 0U;
     d_gpioChannel = HAL_GPIO_COUNT;
     d_gpioActive = false;
@@ -197,13 +204,21 @@ static void doubles_reset(void)
 #define COUNTS_PER_MM 8192.0
 #define ONE_MICRON_COUNTS (COUNTS_PER_MM / 1000.0)
 
-static void servo_init_envelope(int32_t maxVelCounts, int32_t maxAccelCounts)
+/* `encoderPerMm`/`servoPerMm`: the profile's scales (0 = one count per pulse,
+ * which is what the carriage model below delivers). */
+static void servo_init_scaled(int32_t maxVelCounts, int32_t maxAccelCounts,
+                              int32_t encoderPerMm, int32_t servoPerMm)
 {
     HAL_lock_mock_reset();
     _stdio_debug_lock = HAL_lock_create();
     doubles_reset();
     memset(&dev_servo_data, 0, sizeof(dev_servo_data));
-    dev_servo_init(HAL_lock_create(), maxVelCounts, maxAccelCounts);
+    dev_servo_init(HAL_lock_create(), maxVelCounts, maxAccelCounts, encoderPerMm, servoPerMm);
+}
+
+static void servo_init_envelope(int32_t maxVelCounts, int32_t maxAccelCounts)
+{
+    servo_init_scaled(maxVelCounts, maxAccelCounts, 0, 0);
 }
 
 static void servo_init(void)
@@ -510,6 +525,198 @@ void test_dev_servo_disableClearsStallAndParks(void)
     TEST_ASSERT_FALSE(dev_servo_isStalled(CH));
     TEST_ASSERT_TRUE(dev_servo_atTarget(CH));
     TEST_ASSERT_EQUAL_INT32(0, dev_servo_getVelocity(CH));
+}
+
+
+/* Advance one tick with a carriage that delivers `share` of what the pulse
+ * train commands: 1 follows, 0.1 crawls (slipping nine steps in ten), and a
+ * negative share runs the opposite way -- a reversed encoder direction. */
+static void tick_with_share(double share)
+{
+    global_timeus += 1000U;
+    dev_servo_run();
+    if (d_startVelocityCount > 0U)
+    {
+        const double dir = d_gpioActive ? -1.0 : 1.0;
+        d_carriage += share * dir * (double)d_pulseRate * 0.001;
+        d_encoderValue = (int32_t)(d_carriage < 0.0 ? (d_carriage - 0.5) : (d_carriage + 0.5));
+    }
+}
+
+/* The encoder of a jammed drive that is still powered: it never rests for
+ * two ticks running, and never strays more than 15 counts from where it
+ * jammed -- the pattern measured on the bench. */
+static const int32_t d_buzz[] = { 0, 7, 15, 3, -9, -15, -4, 10, 12, -2, -11, 5 };
+#define BUZZ_LEN ((int)(sizeof(d_buzz) / sizeof(d_buzz[0])))
+
+void test_dev_servo_stallThroughEncoderBuzz(void)
+{
+    VIBES_TEST("servo.stall-through-encoder-buzz",
+               "src/DEV/dev_servo.c#dev_servo_private_stallGuard",
+               "an enabled motor drive commanded at high speed against a jam, with the encoder buzzing within 15 counts of the jam and changing on every tick");
+    VIBES_EXPECT_WHY("stall-reported",
+                     "the drive reports a stall within one stall window of the command",
+                     "a powered drive pulling against a jam shakes the encoder without getting anywhere, and only the net travel over a window tells that apart from motion");
+    servo_init();
+    dev_servo_enable(CH, true);
+    dev_servo_setVelocity(CH, 20000);
+    int ticks = 0;
+    while ((ticks < 1000) && !dev_servo_isStalled(CH))
+    {
+        d_encoderValue = d_buzz[ticks % BUZZ_LEN];
+        tick();
+        ticks++;
+    }
+    TEST_ASSERT_TRUE(dev_servo_isStalled(CH));
+    /* Window is 200 ticks; allow a few for the command to ramp past 0.5 mm/s. */
+    TEST_ASSERT_LESS_OR_EQUAL_INT(210, ticks);
+}
+
+void test_dev_servo_stallWhenCarriageCrawls(void)
+{
+    VIBES_TEST("servo.stall-when-carriage-crawls",
+               "src/DEV/dev_servo.c#dev_servo_private_stallGuard",
+               "an enabled motor drive commanded at high speed while the carriage covers only a tenth of the travel its step pulses call for");
+    VIBES_EXPECT_WHY("stall-reported",
+                     "the drive reports a stall",
+                     "a carriage that delivers under a quarter of the travel its step pulses call for over a window is slipping against a load it cannot move");
+    servo_init();
+    dev_servo_enable(CH, true);
+    dev_servo_setVelocity(CH, 20000);
+    int ticks = 0;
+    while ((ticks < 1000) && !dev_servo_isStalled(CH))
+    {
+        tick_with_share(0.1);
+        ticks++;
+    }
+    TEST_ASSERT_TRUE(dev_servo_isStalled(CH));
+}
+
+void test_dev_servo_noStallWhileCarriageLags(void)
+{
+    VIBES_TEST("servo.no-stall-while-carriage-lags",
+               "src/DEV/dev_servo.c#dev_servo_private_stallGuard",
+               "an enabled motor drive commanded at high speed for two seconds while the carriage covers half of the travel its step pulses call for");
+    VIBES_EXPECT_WHY("no-stall",
+                     "no stall is reported at any point",
+                     "a carriage that is moving the right way, however far behind, is under control and stopping it would abort a good test");
+    servo_init();
+    dev_servo_enable(CH, true);
+    dev_servo_setVelocity(CH, 20000);
+    bool everStalled = false;
+    for (int i = 0; i < 2000; i++)
+    {
+        tick_with_share(0.5);
+        everStalled = everStalled || dev_servo_isStalled(CH);
+    }
+    TEST_ASSERT_FALSE(everStalled);
+}
+
+void test_dev_servo_noStallOnFullSpeedMove(void)
+{
+    VIBES_TEST("servo.no-stall-on-full-speed-move",
+               "src/DEV/dev_servo.c#dev_servo_private_stallGuard",
+               "an enabled motor drive making a 100 mm move at full speed and back, with the carriage following the drive");
+    VIBES_EXPECT("no-stall", "no stall is reported at any point, through the ramps, the cruise or the final approach");
+    VIBES_EXPECT("arrives", "the drive reports arrival at each end");
+    servo_init();
+    dev_servo_enable(CH, true);
+    bool everStalled = false;
+    const int32_t ends[2] = { counts_from_mm(100.0), 0 };
+    for (int leg = 0; leg < 2; leg++)
+    {
+        dev_servo_moveTo(CH, ends[leg], 0);
+        int ticks = 0;
+        do
+        {
+            tick_with_motion();
+            everStalled = everStalled || dev_servo_isStalled(CH);
+            ticks++;
+        } while ((ticks < 20000) && !dev_servo_atTarget(CH));
+        TEST_ASSERT_TRUE(dev_servo_atTarget(CH));
+    }
+    TEST_ASSERT_FALSE(everStalled);
+}
+
+void test_dev_servo_runawayIsReportedAsStall(void)
+{
+    VIBES_TEST("servo.runaway-is-a-stall",
+               "src/DEV/dev_servo.c#dev_servo_private_stallGuard",
+               "an enabled motor drive commanded at high speed whose carriage runs the opposite way to its step pulses at their rate, as with a reversed encoder direction");
+    VIBES_EXPECT_WHY("stall-early",
+                     "the drive reports a stall before the end of the first stall window",
+                     "the loop's own correction drives a reversed carriage further from where it should be, so waiting out a window only lets it run further");
+    VIBES_EXPECT("bounded-travel",
+                 "the carriage has run no more than about a quarter of a millimetre the wrong way when the stall is reported");
+    servo_init();
+    dev_servo_enable(CH, true);
+    dev_servo_setVelocity(CH, 20000);
+    int ticks = 0;
+    while ((ticks < 1000) && !dev_servo_isStalled(CH))
+    {
+        tick_with_share(-1.0);
+        ticks++;
+    }
+    TEST_ASSERT_TRUE(dev_servo_isStalled(CH));
+    TEST_ASSERT_LESS_THAN_INT(200, ticks);
+    /* 0.25 mm threshold plus at most one tick of travel at the maximum speed. */
+    TEST_ASSERT_LESS_OR_EQUAL_INT32(2048 + (SHIPPED_MAX_VEL_COUNTS / 1000) + 1, -d_encoderValue);
+}
+
+
+void test_dev_servo_stallOnHeldFollowingError(void)
+{
+    VIBES_TEST("servo.stall-on-held-following-error",
+               "src/DEV/dev_servo.c#dev_servo_private_stallGuard",
+               "an enabled motor drive commanded at high speed while the carriage covers only 30 percent of the travel its step pulses call for");
+    VIBES_EXPECT_WHY("stall-reported",
+                     "the drive reports a stall once the following error has stayed above half a millimetre for half a second",
+                     "a carriage that keeps falling behind is failing to follow even while it moves the right way, and the error held at full command is the backstop that catches it");
+    VIBES_EXPECT("not-before",
+                 "no stall is reported while the following error is under half a millimetre");
+    servo_init();
+    dev_servo_enable(CH, true);
+    dev_servo_setVelocity(CH, 20000);
+    int ticks = 0;
+    int firstOverLimit = -1;
+    bool stalledEarly = false;
+    while ((ticks < 5000) && !dev_servo_isStalled(CH))
+    {
+        tick_with_share(0.3);
+        ticks++;
+        if (dev_servo_getFollowingError(CH) > 4096)
+        {
+            if (firstOverLimit < 0) { firstOverLimit = ticks; }
+        }
+        else if (dev_servo_isStalled(CH))
+        {
+            stalledEarly = true;
+        }
+    }
+    TEST_ASSERT_TRUE(dev_servo_isStalled(CH));
+    TEST_ASSERT_FALSE(stalledEarly);
+    TEST_ASSERT_TRUE(firstOverLimit > 0);
+    TEST_ASSERT_GREATER_OR_EQUAL_INT(firstOverLimit + 499, ticks);
+}
+
+void test_dev_servo_stallUsesProfilePulseScale(void)
+{
+    VIBES_TEST("servo.stall-uses-profile-pulse-scale",
+               "src/DEV/dev_servo.c#dev_servo_init",
+               "a machine profile whose encoder and servo steps per millimetre say each step pulse moves the carriage eight encoder counts, and a carriage that moves one count per pulse");
+    VIBES_EXPECT_WHY("stall-reported",
+                     "the drive reports a stall",
+                     "the travel the pulses call for comes from the profile's two scales, so a carriage delivering an eighth of it is short however steadily it moves");
+    servo_init_scaled(SHIPPED_MAX_VEL_COUNTS, SHIPPED_MAX_ACCEL_COUNTS, 8192, 1024);
+    dev_servo_enable(CH, true);
+    dev_servo_setVelocity(CH, 20000);
+    int ticks = 0;
+    while ((ticks < 1000) && !dev_servo_isStalled(CH))
+    {
+        tick_with_share(1.0);
+        ticks++;
+    }
+    TEST_ASSERT_TRUE(dev_servo_isStalled(CH));
 }
 
 
@@ -1892,6 +2099,13 @@ int main(void)
     RUN_TEST(test_dev_servo_followingErrorReflectsOffset);
     RUN_TEST(test_dev_servo_stallWhenCommandedWithoutMotion);
     RUN_TEST(test_dev_servo_disableClearsStallAndParks);
+    RUN_TEST(test_dev_servo_stallThroughEncoderBuzz);
+    RUN_TEST(test_dev_servo_stallWhenCarriageCrawls);
+    RUN_TEST(test_dev_servo_noStallWhileCarriageLags);
+    RUN_TEST(test_dev_servo_noStallOnFullSpeedMove);
+    RUN_TEST(test_dev_servo_runawayIsReportedAsStall);
+    RUN_TEST(test_dev_servo_stallOnHeldFollowingError);
+    RUN_TEST(test_dev_servo_stallUsesProfilePulseScale);
 
     RUN_TEST(test_dev_servo_isReadyFalseUntilFirstTick);
     RUN_TEST(test_dev_servo_isReadyTrueWhileDisabledButTicking);

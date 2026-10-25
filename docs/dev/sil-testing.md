@@ -221,8 +221,9 @@ back.
 On `mad-emulator` (`BOARD_ROUTE=emulator` for `board-route.sh`, or
 `E2E_BOARD_ROUTE=emulator` with the suite attached by hand), SERVO-stall jams
 the carriage by creating `E2E_JAM_FILE`, the file `mad-emulator --jam-file`
-watches: while it exists the drive keeps stepping but the carriage and its
-encoder stand still. `board-route.sh` defaults it to `$BOARD_LOGS/jam`.
+watches: while it exists the drive keeps stepping but the carriage gets
+nowhere, its encoder buzzing within `--jam-buzz-counts` (default 15, the
+bench-measured wander of a powered drive against a jam) of where it stuck. `board-route.sh` defaults it to `$BOARD_LOGS/jam`.
 Without `E2E_JAM_FILE` set, SERVO-stall fails at once.
 
 **In CI:** `control-e2e-board` gates a subset per PR on the project

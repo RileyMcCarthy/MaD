@@ -72,7 +72,9 @@ DEV_COGMANAGER_CHANNEL_CREATE_INIT(MOTOR, 4096)
      * profile — not a hardcoded constant — governs the velocity/accel ceilings. */
     const int32_t maxVelocityCounts = (int32_t)((int64_t)machineProfile.maxVelocity * machineProfile.encoderStepsPerMM);
     const int32_t maxAccelCounts = (int32_t)((int64_t)machineProfile.maxAcceleration * machineProfile.encoderStepsPerMM);
-    dev_servo_init(lock, maxVelocityCounts, maxAccelCounts); /* app_motion enables + commands it via the actuator macros */
+    /* app_motion enables + commands it via the actuator macros */
+    dev_servo_init(lock, maxVelocityCounts, maxAccelCounts,
+                   machineProfile.encoderStepsPerMM, machineProfile.servoStepsPerMM);
 #else
     DEBUG_INFO("%s", "Stepper cog initializing\n");
     dev_stepper_init(lock);

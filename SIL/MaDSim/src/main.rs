@@ -64,6 +64,13 @@ struct Args {
     #[arg(long, value_name = "PATH")]
     jam_file: Option<PathBuf>,
 
+    /// How far a jam buzzes either side of where the carriage stuck, in
+    /// encoder counts: a powered drive shakes a jammed carriage rather than
+    /// holding it dead still. The default is the +-15 counts measured on the
+    /// bench; 0 is a dead jam.
+    #[arg(long, value_name = "COUNTS", default_value_t = 15)]
+    jam_buzz_counts: u32,
+
     /// The host's Chrome on the link instead of the PTY (`host.rs`).
     #[command(flatten)]
     chrome: host::ChromeArgs,
@@ -380,7 +387,9 @@ fn run_iss(args: &Args, image_path: &std::path::Path) -> Result<(), Box<dyn std:
         machine.on_carriage_change(move |mm| g.on_position(mm));
     }
     if let Some(path) = &args.jam_file {
-        watch_jam_file(path.clone(), machine.coupling());
+        let coupling = machine.coupling();
+        coupling.set_buzz_counts(args.jam_buzz_counts);
+        watch_jam_file(path.clone(), coupling);
     }
 
     let (system, reporter) = host.into_parts();
