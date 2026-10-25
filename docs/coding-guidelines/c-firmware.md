@@ -110,7 +110,7 @@ Headers are found via per-layer `-Isrc/...` flags in `platformio.ini` (`build_fl
 | Layer | Prefix | Example |
 |------|--------|---------|
 | `APP/` | `app_` | `app_motion.c`, `app_control.c` |
-| `DEV/` | `dev_` (also `watchdog.c`) | `dev_stepper.c`, `dev_cogManager.c` |
+| `DEV/` | `dev_` (also `watchdog.c`) | `dev_servo.c`, `dev_cogManager.c` |
 | `IO/` | `IO_` | `IO_SDCard.c`, `IO_protocol.c` |
 | `Library/` | `lib_` | `lib_staticQueue.c`, `lib_timer.c` |
 | `HAL/Include/` | `HAL_` (also `HW_` for board pin headers) | `HAL_lock.h`, `HAL_GPIO.h`, `HW_pins.h` |
@@ -296,7 +296,7 @@ Inputs are **snapshotted once per tick** so the rest of the tick sees one consis
  * helpers, state-machine handlers, or processOutputs. */
 ```
 
-**Full pattern** (entry/exit on transition) — `src/DEV/watchdog.c`, `src/DEV/dev_nvram.c`, `src/DEV/dev_stepper.c`, `src/IO/IO_SDCard.c`:
+**Full pattern** (entry/exit on transition) — `src/DEV/watchdog.c`, `src/DEV/dev_nvram.c`, `src/IO/IO_SDCard.c`:
 
 ```c
 void module_run(/* channel if multi-instance */)

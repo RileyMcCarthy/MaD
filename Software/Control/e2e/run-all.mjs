@@ -6,14 +6,18 @@
  *
  * ONE configuration touches the board: the shipped P2 image interpreted by
  * the ISS, with the app in the host's Chrome held to the board's clock by
- * embsim's `chrome-cdp` node (`mad-emulator --chrome`). Every page and
- * dedicated worker lives the board's time, a 1 ms quantum at a time over
- * DevTools, and the page's Web Serial port is the node's, on the board's
- * protocol pins. The browser cannot outrun the board, because it lives only
- * the time the board grants it. Locally:
- *   cd SIL && make e2e-emulator          # prints "DevTools at http://127.0.0.1:PORT"
+ * embsim's `chrome-cdp` node. Every page and dedicated worker lives the
+ * board's time, a 1 ms quantum at a time over DevTools, and the page's Web
+ * Serial port is the node's, on the board's protocol pins. The browser
+ * cannot outrun the board, because it lives only the time the board grants
+ * it. The board is the machine's project, SIL/mad-cosim.toml, under `embsim
+ * run` (embsim MIGRATING-MAD.md step 10): the Edge carrier and the P2-EC32MB
+ * module as drawn, the production firmware booted off the module's flash,
+ * and the node on the carrier's debug header J1, where the machine's Prop
+ * Plug sits (USB 0403:6015). Locally:
+ *   cd SIL && make e2e-emulator          # prints "DevTools at http://127.0.0.1:9222"
  *   npm run dev                          # the app, on the host
- *   CDP_URL=http://127.0.0.1:PORT npm run e2e
+ *   CDP_URL=http://127.0.0.1:9222 npm run e2e
  * (`make e2e` in SIL/ does all three and stops what it started.)
  *
  * Every budget on that route is board time: a locator's `waitFor` timeout,
@@ -26,10 +30,18 @@
  * M11-mid-test-drop) pull the node's cable (`__embsim.link`): the port's
  * streams error with NetworkError, `disconnect` fires, and on the plug the
  * port returns as a new SerialPort with `connect`, which the app answers by
- * reconnecting to the port whose USB ids (0403:6001) it remembers.
+ * reconnecting to the port whose USB ids (0403:6015) it remembers.
  *
- * SERVO-stall jams the board's carriage by creating E2E_JAM_FILE, the file
- * mad-emulator watches (`--jam-file`); board-route.sh sets both.
+ * What the project as drawn cannot do, the suite skips there, saying why
+ * (`PROJECT_CANNOT`, below): the carriage never moves, since the isolator
+ * IC14 between the processor and the drive has its secondary grounds on a
+ * net of their own (SIL/mad-catalog/tests/mad.rs, "The drive"), and the
+ * project's machine has no jam. Until IC14 is settled those scenarios run
+ * on `mad-emulator --chrome` (the playgrounds' board): `cd SIL && make
+ * e2e-motion` takes them from `--list --cannot` and runs them with
+ * BOARD_ROUTE=emulator. `E2E_BOARD_ROUTE=emulator` attaches the suite there
+ * by hand, where SERVO-stall jams the carriage by creating E2E_JAM_FILE, the
+ * file mad-emulator watches (`--jam-file`); board-route.sh sets both.
  *
  * Without CDP_URL only the board-free scenarios run: A1 and
  * FW1/2/3/5/6/7/8/9 launch a host Chrome against in-page fakes and need no
@@ -41,8 +53,8 @@
  *
  * FW-ISS (the app flashing the ISS's mask ROM) needs the ROM board, not the
  * firmware's: `mad-emulator --boot-rom --chrome` (`cd SIL && make e2e-rom`,
- * which sets E2E_BOARD=rom). On that board it is the only scenario that runs;
- * on the firmware's it is skipped.
+ * which sets E2E_BOARD=rom and E2E_BOARD_ROUTE=emulator). On that board it
+ * is the only scenario that runs; on the firmware's it is skipped.
  *
  * Covers the parity-critical scenarios of docs/TEST_PLAN.md §4: A1, B1–B5, C1/C3/C4, D1/D2/D3,
  * E1, F1/F2/F4/F6/F7, G1/G2/G3 + G-limit, H1–H5, I1–I4, J1 (in G-limit), K1 (in B2+B3+B4) — plus
@@ -76,6 +88,9 @@ import {
   waitPageTime,
   restoreLink,
   takePageTime,
+  BOARD_ROUTE,
+  DEVICE_WAIT_MS,
+  awaitResponding,
 } from './fixtures.mjs';
 import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -85,6 +100,14 @@ import {
   assertFollowsLinearUm,
   assertFollowsSineWindowUm,
 } from './motion-accuracy.mjs';
+
+import {
+  interpolateAtUs,
+  motionStartTimeUs,
+  resampledPathMm,
+  assertSineMatch,
+  assertWaveformExcursion,
+} from './waveformMetrics.mjs';
 
 /** Sprint C parameterized matrices (M8–M12). */
 const MATRIX = JSON.parse(
@@ -100,24 +123,51 @@ const BOARD_FREE = new Set(['A1', 'FW1', 'FW2', 'FW3', 'FW5', 'FW6', 'FW7', 'FW8
 // --chrome` (make e2e-rom). Only FW-ISS, the app flashing that ROM, runs.
 const ROM_BOARD = process.env.E2E_BOARD === 'rom';
 
+// The scenarios that command the carriage to move: a jog, a home, or a test
+// profile with a linear or waveform move. Each asserts on that motion, or on
+// a test that runs while the carriage follows its setpoint.
+const MOVES = new Set([
+  'G2+G3+H2+I', 'G-limit', 'TC1-multiset', 'M13-jog-endpoint', 'M13-home-endpoint',
+  ...MATRIX.M12_linear_um.map((cell) => cell.id), 'M12-dwell', 'M12-wave-hold', 'M12-wave-skew',
+  ...MATRIX.M10_waveform.map((wf) => wf.id), 'TC4-dwell', 'TC6-disable-stops', 'TC11-velocity',
+  'VT-linear', 'TC14-jog', ...MATRIX.M8_jog.map((cell) => cell.id), 'M11-mid-test-drop',
+  'D2-settled-jog', 'D3+SR-slack', ...MATRIX.M9_force_slack.map((cell) => cell.id),
+  'P1-precision', 'BB-back-to-back', 'TM-busy-restart', 'TM-manual-gate', 'SERVO-stall',
+]);
+
+// What the machine's project as drawn cannot do (BOARD_ROUTE 'project':
+// SIL/mad-cosim.toml), each with why. The suite skips these there, named in
+// SCENARIOS or not, saying so; a run in which every scenario was skipped
+// fails, since it checked nothing. E2E_PROJECT_CANNOT=run runs them anyway,
+// for a change to the board, its file or the kinds that may lift the
+// reason. `--list --cannot` lists them, and `make e2e-motion` runs them on
+// mad-emulator's board meanwhile, so the motion coverage stays.
+//
+// The carriage: IC14, the isolator between the processor and the drive, has
+// its secondary ground pins (9, 15) on a net of their own with only C26 on
+// it, so nothing it drives reaches the drive's STEP, DIR and ENA (read:
+// Hardware/EdgeBoard/KiCad; SIL/mad-catalog/tests/mad.rs, "The drive"). The
+// run's summary says "0 steps commanded" with the encoder at 0 counts, and
+// the firmware latches SERVO_STALL at the first move it commands
+// (measured, G2+G3+H2+I on mad-cosim.toml). Whether the machine's carrier is
+// bodged there is not known; the file keeps the board as drawn.
+const IC14_WHY =
+  'needs the carriage to move: IC14 as drawn passes nothing to the drive (SIL/mad-catalog/tests/mad.rs, "The drive")';
+const PROJECT_CANNOT = new Map([...MOVES].map((id) => [id, IC14_WHY]));
+// The project's machine has no jam: a lever a stepped kind cannot take from
+// a file the wall clock polls (mad-catalog/src/machine.rs, "Not modelled").
+PROJECT_CANNOT.set('SERVO-stall', `jams the carriage, which the project's machine cannot (SIL/mad-catalog/src/machine.rs, "Not modelled"), and ${IC14_WHY}`);
+const RUN_CANNOT = process.env.E2E_PROJECT_CANNOT === 'run';
+// The suite is on the project: attached to its Chrome, or listing for
+// board-route.sh, which names the route before any board is up.
+const ON_PROJECT = BOARD_ROUTE === 'project' && (BOARD || process.env.E2E_BOARD_ROUTE === 'project');
+/** Why `id` cannot run on this board, or '' when it can. */
+const cannot = (id) => (ON_PROJECT && !RUN_CANNOT && PROJECT_CANNOT.get(id)) || '';
+
 // The app is the built bundle (board-route.sh with APP_DIST sets this), not
 // the dev server. BUNDLE-live runs only then; every other scenario runs on
 // either.
 const APP_IS_BUNDLE = process.env.E2E_APP === 'bundle';
-
-// Budget for any wait that depends on the DEVICE making progress: a protocol
-// round trip, a state change, a handshake, an SD write.
-//
-// Board time on the board route (the page's clock is the board's), so it is
-// what the machine itself would take, with room: the app's own response
-// timeout is 2 s per frame, and the firmware's slowest single operations
-// (SD writes, a download's first chunk) take a few seconds. No host-speed
-// factor applies: the board running at a few percent of real time, or at a
-// fraction of that while the firmware works its SD card, slows the host's
-// clock, not this one. A healthy run never spends it: it bounds a hang, it
-// does not pace a passing test. No wait in this suite is used to prove
-// something is ABSENT, so the ceiling cannot weaken an assertion.
-const DEVICE_WAIT_MS = 20_000;
 
 // Budget for a whole TEST PROGRAM: upload, execute every move, complete, and
 // come to rest, or pull the recorded data back off the device. The longest
@@ -199,74 +249,6 @@ async function readDownloadedCsvSeries(page) {
   });
 }
 
-/** Linear interpolation of `values` at virtual time `tUs`. Same contract as src/domain/sample.ts. */
-function interpolateAtUs(timesUs, values, tUs) {
-  const n = timesUs.length;
-  if (n === 0 || n !== values.length) return undefined;
-  if (tUs < timesUs[0] || tUs > timesUs[n - 1]) return undefined;
-  let lo = 0;
-  let hi = n - 1;
-  while (lo < hi) {
-    const mid = (lo + hi) >> 1;
-    if (timesUs[mid] < tUs) lo = mid + 1;
-    else hi = mid;
-  }
-  if (timesUs[lo] === tUs) return values[lo];
-  const i0 = lo - 1;
-  if (i0 < 0) return values[lo];
-  const span = timesUs[lo] - timesUs[i0];
-  if (span === 0) return values[i0];
-  const w = (tUs - timesUs[i0]) / span;
-  return values[i0] + w * (values[lo] - values[i0]);
-}
-
-/** First sample time at which position has moved ≥ `minDeltaUm` from the opening sample.
- *
- * Default 500 µm, not an encoder LSB: logging starts when `testRunning` goes
- * true, which is before the axis moves, and a parked gantry still twitches.
- * 80 µm treated that twitch as t0, so VT-linear's t0+400 ms landed 200 ms into
- * a move that had not started yet (2.2 mm of a commanded 4 mm). */
-function motionStartTimeUs(timesUs, positionsUm, minDeltaUm = 500) {
-  if (timesUs.length < 2 || timesUs.length !== positionsUm.length) return undefined;
-  const p0 = positionsUm[0];
-  for (let i = 1; i < timesUs.length; i++) {
-    if (Math.abs(positionsUm[i] - p0) >= minDeltaUm) return timesUs[i];
-  }
-  return undefined;
-}
-
-/** Path length ignoring high-frequency hunting and the leading rest prefix.
- *
- * Raw Σ|Δ| at 100 Hz counts encoder jitter as travel: a 42 mm multi-set move
- * reported 86 mm of "path" on a loaded CI runner. Resampling onto a 50 ms
- * virtual grid keeps the commanded reversals and drops the jitter. */
-function resampledPathMm(timeUs, posUm, { dtUs = 50_000, minDeltaUm = 500 } = {}) {
-  if (!timeUs.length || timeUs.length !== posUm.length) return 0;
-  const tStart = motionStartTimeUs(timeUs, posUm, minDeltaUm) ?? timeUs[0];
-  // Trim the teardown tail by DISPLACEMENT from where the gantry finally came to
-  // rest, not by how far it moved between two neighbouring samples. The old
-  // consecutive-sample test (< 50 µm) meant something different at every sample
-  // density: at the ~600 Hz a healthy emulator records it trims correctly, but at
-  // the ~40 Hz a contended runner records, a parked gantry drifts more than 50 µm
-  // between neighbours, nothing is trimmed, and the integral below accumulates
-  // the whole idle tail as path — 42 mm of commanded travel reported as 62.8 mm.
-  // Distance from the resting position is the same quantity at any density.
-  const restUm = posUm[posUm.length - 1];
-  let lastMoving = timeUs.length - 1;
-  while (lastMoving > 0 && Math.abs(posUm[lastMoving] - restUm) < 200) lastMoving -= 1;
-  if (lastMoving < 1) lastMoving = timeUs.length - 1;
-  const tEnd = timeUs[lastMoving];
-  let path = 0;
-  let lastP = interpolateAtUs(timeUs, posUm, tStart);
-  for (let t = tStart + dtUs; t <= tEnd && lastP != null; t += dtUs) {
-    const p = interpolateAtUs(timeUs, posUm, t);
-    if (p == null) break;
-    path += Math.abs(p - lastP) / 1000;
-    lastP = p;
-  }
-  return path;
-}
-
 /** SIL plant: 2048-line encoder × 4× quadrature. Position_um in the CSV is this encoder. */
 const SIL_ENCODER_STEPS_PER_MM = 4 * 2048;
 
@@ -298,111 +280,6 @@ function assertFollowsSineUm(series, { amplitudeMm, frequencyHz, cycles, centreM
     label,
     followBoundUm: Math.max(CONTRACT_UM, 15 * peakVelMmS),
   });
-}
-
-// Rigorously assert a recorded position series actually traces the COMMANDED sine
-// waveform — not merely that it oscillates. Checks: peak-to-peak ≈ 2·amplitude;
-// a least-squares sinusoid fit at the commanded frequency explains the motion
-// (R² high — a ramp/triangle/wrong-frequency would fail); the fitted amplitude
-// matches; and the number of midline crossings matches the commanded cycles.
-// This is the end-to-end proof that the firmware-native waveform = f(t).
-// Narrow a recorded run down to the COMMANDED WAVEFORM.
-//
-// A waveform run records three segments, and only the middle one is the wave.
-// The driver profiles a move to the UPPER PEAK (a sinusoid can only be joined
-// at rest at a peak), runs the whole cycles peak-to-peak, then profiles a move
-// back to the centre. Around those sits the program's own leading G1 to the
-// mean and a flat tail until teardown.
-//
-// None of that is the commanded shape, and it is not a small effect: for
-// WAVE-tri the approach is 5 mm against an 8 mm peak-to-peak, and a properly
-// homed gantry once reported 14.49 mm of "waveform" — failing the assertion
-// precisely BECAUSE homing had worked.
-//
-// E2E_WAVE_DUMP=1 writes the raw recorded series beside the artifacts, so the
-// windowing and the fit can be worked on offline instead of by re-running the
-// suite (a waveform scenario costs about a minute of emulator time).
-function dumpWaveSeries(label, posMm, tS, meta) {
-  if (!process.env.E2E_WAVE_DUMP) return;
-  try {
-    writeFileSync(
-      join(dirname(fileURLToPath(import.meta.url)), 'artifacts', `${label}-series.json`),
-      JSON.stringify({ meta, posMm, tS }),
-    );
-  } catch { /* diagnostics must never fail a run */ }
-}
-
-// The wave's extent is known rather than guessed: it lasts cycles/frequency
-// seconds. Which stretch of the record holds it is found by excursion, not by
-// hunting for where the gantry stopped — see waveformWindow.
-function waveformWindow(posMm, tS, { cycles, frequencyHz }) {
-  // Pick the waveDurS-wide window containing the most OSCILLATION — the largest
-  // total variation (summed |Δposition|) on a fixed time grid.
-  //
-  // Two earlier rules both failed, in instructive ways:
-  //
-  //  - Walking back from the last sample while neighbours moved less than a
-  //    fixed 0.05 mm. That is a distance between neighbours, so it means
-  //    something different at every sample density. At the ~600 Hz a healthy
-  //    emulator records it reads "parked" correctly; at the ~40 Hz a contended
-  //    CI runner records, a parked gantry drifts more than 0.05 mm between
-  //    neighbours, the walk-back never leaves the teardown tail, and the window
-  //    slides off the wave onto the tail and the approach ramp. That reported
-  //    "peak-to-peak (got 20.16)" for a gantry that had tracked its commanded
-  //    10 mm correctly — a measurement of the ramp, labelled as the wave.
-  //
-  //  - Maximum peak-to-peak. Density-independent, but the wrong quantity: the
-  //    approach ramp travels `distance` in one sweep, and for WAVE-sine-fast
-  //    that 5 mm ramp plus one 3 mm crest out-spans the wave's own 6 mm. The
-  //    window straddled the ramp and the sinusoid fit fell to R²=0.73.
-  //
-  // Total variation separates them by construction rather than by margin: a
-  // wave covers 2A twice per cycle (4·A·cycles = 36 mm for WAVE-sine-fast),
-  // a monotonic ramp covers `distance` exactly once (5 mm), and a parked tail
-  // covers almost nothing. Resampling onto a fixed grid first is what keeps it
-  // density-independent — summing raw |Δ| between samples would count sensor
-  // noise once per sample, which is precisely the density coupling being fixed.
-  const waveDurS = cycles / frequencyHz;
-  const n = posMm.length;
-  const t0 = tS[0];
-  const tEnd = tS[n - 1];
-
-  // Fixed grid, ~100 points per commanded cycle — fine enough to follow the
-  // wave, coarse enough not to chase noise.
-  const dt = waveDurS / (100 * cycles);
-  const grid = [];
-  const gval = [];
-  let j = 0;
-  for (let t = t0; t <= tEnd; t += dt) {
-    while (j + 1 < n && tS[j + 1] < t) j += 1;
-    const k = Math.min(j, n - 2);
-    const span = tS[k + 1] - tS[k];
-    const frac = span > 0 ? (t - tS[k]) / span : 0;
-    grid.push(t);
-    gval.push(posMm[k] + (posMm[k + 1] - posMm[k]) * frac);
-  }
-  // Prefix sums of |Δ| so each candidate window costs O(1).
-  const tv = [0];
-  for (let i = 1; i < gval.length; i++) tv.push(tv[i - 1] + Math.abs(gval[i] - gval[i - 1]));
-
-  const steps = Math.round(waveDurS / dt);
-  let bestStart = 0;
-  let bestTv = -1;
-  for (let i = 0; i + steps < tv.length; i++) {
-    const v = tv[i + steps] - tv[i];
-    if (v > bestTv) { bestTv = v; bestStart = i; }
-  }
-  // Record shorter than the wave itself: hand back everything and let the
-  // caller's duration assertion report it.
-  if (bestTv < 0) return { p: posMm, t: tS, waveDurS };
-
-  const startT = grid[bestStart];
-  const endT = grid[Math.min(bestStart + steps, grid.length - 1)];
-  let a = 0;
-  while (a < n - 1 && tS[a] < startT) a += 1;
-  let b = a;
-  while (b + 1 < n && tS[b + 1] <= endT) b += 1;
-  return { p: posMm.slice(a, b + 1), t: tS.slice(a, b + 1), waveDurS };
 }
 
 /* What the recorded data must show for EVERY move type.
@@ -479,200 +356,6 @@ function assertRecordedMotion(series, { label, expectMotion = true, settledTolUm
         `(off by ${settled.toFixed(2)} um, tol ${settledTolUm})`,
     );
   }
-}
-
-function assertSineMatch(series, { amplitudeMm, frequencyHz, cycles, centreMm }, label) {
-  assert(series && series.pos.length > 40, `${label}: enough samples (${series?.pos.length})`);
-  const posMm = series.pos.map((p) => p / 1000);
-  const tS = series.time.map((t) => t / 1e6);
-  dumpWaveSeries(label, posMm, tS, { amplitudeMm, frequencyHz, cycles, centreMm });
-
-  // Fit exactly the WAVEFORM, not the whole record. The record also contains the
-  // leading ramp-to-centre and — after the closing settle move parks the gantry —
-  // a flat tail that lasts until the run is torn down. Neither is the commanded
-  // sine, and the tail's length is teardown timing (0.1–0.4 s observed), so
-  // including it penalises a perfectly tracked wave in proportion to how slow
-  // the shutdown happened to be. That is what made the short 2 Hz case flaky:
-  // R² 0.67–0.70 over the whole record vs 0.99 over the wave itself, on motion
-  // that measured 2.85 mm of the commanded 3 mm at exactly 2 Hz every run.
-  //
-  // The wave's extent is known, not guessed: it runs for cycles/frequency
-  // seconds and ends where the gantry stops moving (whole cycles end on the
-  // centre, so the settle move is negligible). Take that window.
-  const { p, t, waveDurS } = waveformWindow(posMm, tS, { cycles, frequencyHz });
-  // A run where the gantry never moved collapses this window — it must still be
-  // long enough to hold the commanded cycles, or the fit below is meaningless.
-  assert(
-    p.length > 40 && t[t.length - 1] - t[0] > waveDurS * 0.8,
-    `${label}: recorded a full ${waveDurS.toFixed(2)}s of waveform motion (got ${(t[t.length - 1] - t[0]).toFixed(2)}s over ${p.length} samples; whole record ${posMm.length} samples spanning ${(tS[tS.length - 1] - tS[0]).toFixed(2)}s)`,
-  );
-  const n = p.length;
-  const t0 = t[0];
-
-  const maxP = Math.max(...p);
-  const minP = Math.min(...p);
-  const excursion = maxP - minP;
-  assert(
-    Math.abs(excursion - 2 * amplitudeMm) < Math.max(2, amplitudeMm * 0.4),
-    `${label}: peak-to-peak ≈ 2A=${(2 * amplitudeMm).toFixed(1)}mm (got ${excursion.toFixed(2)}; ` +
-      `window ${p.length} of ${posMm.length} samples, whole record spans ${(tS[tS.length - 1] - tS[0]).toFixed(2)}s)`,
-  );
-
-  // Least-squares fit  x(t) ≈ a·cos(ω t') + b·sin(ω t')  about the mean, ω=2πf.
-  const w = 2 * Math.PI * frequencyHz;
-  const mean = p.reduce((s, v) => s + v, 0) / n;
-  let Scc = 0, Sss = 0, Scs = 0, Sxc = 0, Sxs = 0, SStot = 0;
-  for (let i = 0; i < n; i++) {
-    const c = Math.cos(w * (t[i] - t0));
-    const s = Math.sin(w * (t[i] - t0));
-    const x = p[i] - mean;
-    Scc += c * c; Sss += s * s; Scs += c * s; Sxc += x * c; Sxs += x * s; SStot += x * x;
-  }
-  const det = Scc * Sss - Scs * Scs;
-  const a = (Sxc * Sss - Scs * Sxs) / det;
-  const b = (Scc * Sxs - Scs * Sxc) / det;
-  let SSres = 0;
-  for (let i = 0; i < n; i++) {
-    const fit = a * Math.cos(w * (t[i] - t0)) + b * Math.sin(w * (t[i] - t0));
-    const x = p[i] - mean;
-    SSres += (x - fit) * (x - fit);
-  }
-  const r2 = 1 - SSres / SStot;
-  const fitAmp = Math.sqrt(a * a + b * b);
-  assert(r2 > 0.8, `${label}: sinusoid fit R²>0.8 at ${frequencyHz}Hz (got ${r2.toFixed(3)})`);
-  assert(
-    Math.abs(fitAmp - amplitudeMm) < Math.max(1.5, amplitudeMm * 0.3),
-    `${label}: fitted amplitude ≈ ${amplitudeMm}mm (got ${fitAmp.toFixed(2)})`,
-  );
-
-  // Midline crossings over the WAVE WINDOW ≈ 2 per cycle (deadband = 0.3A).
-  // Counting over the whole record made this density-dependent too: a long
-  // parked tail pulls the mean toward the park value, so the wave's own
-  // excursions stop straddling it and the crossings vanish — "≥ 3 midline
-  // crossings (got 1)" on a correctly tracked triangle.
-  const fullMean = p.reduce((s, v) => s + v, 0) / p.length;
-  let crossings = 0;
-  let dir = 0;
-  for (const v of p) {
-    if (v > fullMean + 0.3 * amplitudeMm) { if (dir === -1) crossings++; dir = 1; }
-    else if (v < fullMean - 0.3 * amplitudeMm) { if (dir === 1) crossings++; dir = -1; }
-  }
-  assert(
-    crossings >= 2 * cycles - 1,
-    `${label}: ≥ ${2 * cycles - 1} midline crossings for ${cycles} cycle(s) (got ${crossings})`,
-  );
-
-  // Where the wave actually sat, not just what shape it was. Every check above
-  // this line is mean-centred by construction — the fit subtracts `mean`, the
-  // peak-to-peak is a difference, and the crossing count is about the series'
-  // own midline — so a waveform displaced bodily off the centre it was
-  // commanded about scores a perfect R² and passes all of them. That is exactly
-  // how a 0.82 mm systematic sag rode along unnoticed until it pushed the
-  // bottom of the stroke into the lower limit switch.
-  if (typeof centreMm === 'number') {
-    const offset = mean - centreMm;
-
-    // The tolerance used to be a fraction of the machine's RAMP-IN DEFICIT:
-    // a position sinusoid started from its own centre demands peak velocity
-    // 2*pi*f*A instantly, no accel-limited machine can produce that, and the
-    // Vpeak^2/(2*Amax) it loses getting there was integrated into the wave's
-    // centre. That is why 0.5-0.8 mm of slop was needed to avoid false alarms.
-    //
-    // The driver no longer starts there. It approaches the PEAK, where the
-    // trajectory's own velocity is zero, so there is no deficit to absorb and
-    // nothing systematic left for this to tolerate. Measured across this matrix
-    // with the anchor now landing on the cycles: 12, 14 and 19 um, against the
-    // 535-770 um the old rule allowed.
-    //
-    // 0.15 mm is about eight times the worst of those — enough headroom for a
-    // sparse CI recording to shift the window mean, and still tight enough that
-    // the 0.82 mm sag this check was originally written to catch could not hide
-    // in it. (It did hide: the old rule allowed 1.5 mm at A=10.)
-    const tol = 0.35;
-    assert(
-      Math.abs(offset) < tol,
-      `${label}: wave centred on the commanded ${centreMm}mm (sat at ${mean.toFixed(2)}mm, ` +
-        `off by ${offset.toFixed(3)}mm, tol ${tol.toFixed(2)}mm)`,
-    );
-  }
-}
-
-/** Peak-to-peak + cycle count for triangle (and other non-sine) waveforms. */
-function assertWaveformExcursion(series, { amplitudeMm, cycles, frequencyHz }, label) {
-  assert(series && series.pos.length > 40, `${label}: enough samples (${series?.pos.length})`);
-  const allPosMm = series.pos.map((v) => v / 1000);
-  const tS = series.time.map((v) => v / 1e6);
-  dumpWaveSeries(label, allPosMm, tS, { amplitudeMm, frequencyHz, cycles });
-  // Same window as the sine case: measure the wave, not the approach to it.
-  const { p: posMm, t, waveDurS } = waveformWindow(allPosMm, tS, { cycles, frequencyHz });
-  assert(
-    posMm.length > 40 && t[t.length - 1] - t[0] > waveDurS * 0.8,
-    `${label}: recorded a full ${waveDurS.toFixed(2)}s of waveform motion ` +
-      `(got ${(t[t.length - 1] - t[0]).toFixed(2)}s over ${posMm.length} samples)`,
-  );
-  const maxP = Math.max(...posMm);
-  const minP = Math.min(...posMm);
-  const excursion = maxP - minP;
-  assert(
-    Math.abs(excursion - 2 * amplitudeMm) < Math.max(2.5, amplitudeMm * 0.45),
-    `${label}: peak-to-peak ≈ 2A=${(2 * amplitudeMm).toFixed(1)}mm (got ${excursion.toFixed(2)}; ` +
-      `min ${minP.toFixed(2)} max ${maxP.toFixed(2)} first ${posMm[0].toFixed(2)} ` +
-      `last ${posMm[posMm.length - 1].toFixed(2)} n=${posMm.length})`,
-  );
-  const mean = posMm.reduce((s, v) => s + v, 0) / posMm.length;
-  let crossings = 0;
-  let dir = 0;
-  for (const v of posMm) {
-    if (v > mean + 0.25 * amplitudeMm) {
-      if (dir === -1) crossings += 1;
-      dir = 1;
-    } else if (v < mean - 0.25 * amplitudeMm) {
-      if (dir === 1) crossings += 1;
-      dir = -1;
-    }
-  }
-  assert(
-    crossings >= 2 * cycles - 1,
-    `${label}: ≥ ${2 * cycles - 1} midline crossings for ${cycles} cycle(s) (got ${crossings})`,
-  );
-
-  // The traverse is TRIANGULAR, not sinusoidal — proven from the recorded
-  // motion rather than from the bytes that were sent.
-  //
-  // Fit the fundamental and compare its amplitude to the commanded peak. That
-  // ratio is a property of the SHAPE and of nothing else: 8/pi^2 = 0.811 for a
-  // triangle, 1.000 for a sine, 4/pi = 1.273 for a square. Amplitude,
-  // frequency, centre and cycle count are all identical between a sine and a
-  // triangle, so every other assertion in this file passes either way — which
-  // is exactly how the shape bit came to be masked off in app_motion and
-  // ignored for as long as it was, with every test still green.
-  //
-  // Measured here: 0.845 and 0.831. Slightly above the ideal 0.811 because the
-  // deliverable traverse is a TRAPEZOID — its corners are rounded by the
-  // acceleration limit, which moves it a little toward a sine.
-  const w = 2 * Math.PI * frequencyHz;
-  const t0 = t[0];
-  const wMean = posMm.reduce((s2, v) => s2 + v, 0) / posMm.length;
-  let Sc = 0;
-  let Ss = 0;
-  let Scc2 = 0;
-  let Sss2 = 0;
-  for (let i = 0; i < posMm.length; i++) {
-    const c = Math.cos(w * (t[i] - t0));
-    const sn = Math.sin(w * (t[i] - t0));
-    const x = posMm[i] - wMean;
-    Sc += x * c;
-    Ss += x * sn;
-    Scc2 += c * c;
-    Sss2 += sn * sn;
-  }
-  const fundamental = Math.hypot(Sc / Scc2, Ss / Sss2);
-  const ratio = fundamental / amplitudeMm;
-  assert(
-    ratio > 0.7 && ratio < 0.92,
-    `${label}: fundamental/peak = ${ratio.toFixed(3)} — a triangle traverse is 8/pi²=0.811, ` +
-      `a sine would be 1.000, so this says the shape reached the machine`,
-  );
 }
 
 // What the History panel and the data folder say about the newest run, for
@@ -911,30 +594,6 @@ async function awaitRest(page, { stillMm = 0.02, stableTicks = 4, pollMs = 250, 
     await waitPageTime(page, pollMs);
   }
   throw new Error(`the axis never came to rest within ${timeoutMs}ms (last position ${last})`);
-}
-
-/** Status-bar `Responding` plus a firmware version: the session is up.
- *
- * One sample lights `Responding` for two seconds, so the badge alone is not
- * "the opening reads have finished". Starting a test while config / profile /
- * firmware-version still own the wire is the CI failure mode behind WAVE / TC11
- * / VT-linear: `proto/timeout`, then a CSV whose first second is idle.
- * `fw <version>` in the status bar is that handshake completing. */
-async function awaitResponding(page, { timeoutMs = DEVICE_WAIT_MS } = {}) {
-  const resp = page.getByTestId('responding');
-  const clock = await pageClock(page);
-  while ((await clock.elapsed()) < timeoutMs) {
-    const t = (await resp.textContent()) || '';
-    if (t.includes('Responding') && !t.includes('Not')) break;
-    await waitPageTime(page, 150);
-  }
-  const left = timeoutMs - (await clock.elapsed());
-  if (left <= 0) throw new Error('device never started responding (no sample stream)');
-  try {
-    await page.locator('.statusbar').getByText(/fw /).waitFor({ timeout: left });
-  } catch {
-    throw new Error('device responded but the opening handshake never published a firmware version');
-  }
 }
 
 async function readoutNum(page, label) {
@@ -2774,7 +2433,8 @@ const scenarios = [
   {
     // A latched servo stall is cleared from the Live screen. The board's
     // carriage is jammed (mad-emulator --jam-file: while the file exists the
-    // drive keeps stepping but the carriage and its encoder stand still), so
+    // drive keeps stepping but the carriage gets nowhere, its encoder
+    // buzzing a few counts either side as a powered drive's does), so
     // a jog trips dev_servo's stall guard and app_control latches
     // FAULT_SERVO_STALL. Only a disable request clears that latch, and while
     // faulted the machine reports motion off — the Live button has to offer
@@ -2786,7 +2446,7 @@ const scenarios = [
       if (!jamFile) {
         throw new Error(
           'SERVO-stall needs E2E_JAM_FILE, the file mad-emulator was given as --jam-file ' +
-            '(board-route.sh sets both; make e2e-emulator uses /tmp/mad-sil.jam)',
+            '(board-route.sh sets both with BOARD_ROUTE=emulator; the project has no jam)',
         );
       }
       const free = () => rmSync(jamFile, { force: true });
@@ -3165,17 +2825,28 @@ async function main() {
   }
   // `--list`: the ids SCENARIOS selects (all of them without it), in the
   // suite's order, one a line: FW-ISS only on the ROM board, BUNDLE-live only
-  // on the built bundle, and each left out otherwise.
+  // on the built bundle, and each left out otherwise. What this board cannot
+  // run is left out too, and said on stderr with why. `--board-free` lists
+  // only the scenarios that need no board. `--cannot` lists only those the
+  // project cannot run (`PROJECT_CANNOT`), whatever the route: the set
+  // `make e2e-motion` runs on mad-emulator's board.
   // SIL/scripts/board-route.sh runs them one board each from this.
   if (process.argv.includes('--list')) {
     const only = process.env.SCENARIOS ? new Set(process.env.SCENARIOS.split(',').map((x) => x.trim())) : null;
+    const boardFreeOnly = process.argv.includes('--board-free');
+    const cannotOnly = process.argv.includes('--cannot');
     for (const s of scenarios) {
       if (
         (s.id === 'FW-ISS') === ROM_BOARD &&
         (s.id !== 'BUNDLE-live' || APP_IS_BUNDLE) &&
-        (!only || only.has(s.id))
+        (!only || only.has(s.id)) &&
+        (!boardFreeOnly || BOARD_FREE.has(s.id))
       ) {
-        console.log(s.id);
+        if (cannotOnly) {
+          if (PROJECT_CANNOT.has(s.id)) console.log(s.id);
+        } else if (cannot(s.id)) {
+          if (!boardFreeOnly) console.error(`  ~ ${s.id}: skipped (${cannot(s.id)})`);
+        } else console.log(s.id);
       }
     }
     return;
@@ -3232,7 +2903,7 @@ async function main() {
     if (needBoard.length) {
       console.error(
         `✗ ${needBoard.join(', ')} touch the board: set CDP_URL to the DevTools URL of ` +
-          '`mad-emulator --chrome` (cd SIL && make e2e-emulator), or run `make e2e` in SIL/.',
+          'the board\'s run (cd SIL && make e2e-emulator), or run `make e2e` in SIL/.',
       );
       process.exit(2);
     }
@@ -3257,6 +2928,11 @@ async function main() {
     }
     if (s.id === 'BUNDLE-live' && !APP_IS_BUNDLE) {
       console.log(`  ~ ${s.id}: skipped (needs the built bundle: board-route.sh with APP_DIST)`);
+      skipped += 1;
+      continue;
+    }
+    if (cannot(s.id)) {
+      console.log(`  ~ ${s.id}: skipped (${cannot(s.id)})`);
       skipped += 1;
       continue;
     }
@@ -3333,6 +3009,10 @@ async function main() {
   }
 
   console.log(`\n${pass}/${selected.length - skipped} scenarios passed${skipped ? `, ${skipped} skipped` : ''}${only ? ' (filtered)' : ''}`);
+  if (selected.length > 0 && skipped === selected.length) {
+    console.log('✗ every scenario selected was skipped: this run checked nothing');
+    process.exit(1);
+  }
   if (failures.length) {
     console.log('\nFailures:');
     for (const f of failures) console.log(`  - ${f}`);

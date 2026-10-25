@@ -34,7 +34,7 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
-    include: ['src/**/*.test.ts', 'tools/**/*.test.ts'],
+    include: ['src/**/*.test.ts', 'tools/**/*.test.ts', 'e2e/**/*.test.ts'],
     coverage: {
       // v8 here; the e2e run reports istanbul-shaped data from the browser.
       // The two are NOT merged per-file — see tools/merge-coverage.mjs for why

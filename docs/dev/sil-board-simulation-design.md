@@ -108,13 +108,14 @@ interface.
 The EdgeBoard netlist contains the **socket** (`P2_EDGE_MODULE_SOCKET`), not the
 P2 Edge Module that plugs into it — the module is a separate Parallax product
 (its own PCB: P2 chip, boot flash, LDOs, pull-ups, and on the EC32MB variant,
-HyperRAM). The baseline plan folds the module into the P2 component (chip pin ≡
+PSRAM). The baseline plan folds the module into the P2 component (chip pin ≡
 edge finger, module internals behavioral). That assumption is **known to hide
 real failure classes we have already hit**: the boot-flash/SD bus sharing on
 P58–61 is module-internal wiring (it cost us the silent flash-boot failure in
-bring-up), and the EC32MB variant reserves P40–P57 for HyperRAM — which would
-collide with the RPI serial pins (P53/P55) the debug build uses. Module choice
-is a pin-validity question the simulation should enforce.
+bring-up), and the EC32MB variant keeps P40–P57 for its PSRAM and brings none
+of them to its card edge, so the RPI serial pins (P53/P55) the debug build uses
+have no path to the chip. Module choice is a pin-validity question the
+simulation should enforce.
 
 Parallax publishes the module schematics (PDF for both variants; their EDA
 source is DipTrace, not KiCad). Upgrade path, in increasing fidelity:
@@ -137,13 +138,57 @@ exempt from the CI-regeneration rule, which applies to boards we author in
 `Hardware/`. Re-export only if the machine's module is ever revised.
 
 **The machine uses the EC32MB variant**, and auditing the EdgeBoard netlist
-against its reservation table (P40–P57 = HyperRAM) already produced a real
-finding before any engine exists: the EdgeBoard drives reserved pins — isolator
+against its reservation table (P40–P57 = PSRAM) already produced a real
+finding before any engine exists: the EdgeBoard wires reserved pins — isolator
 IC2's outputs drive P52/P53 and its inputs take P54/P55 (the RPI serial path,
-matching `HW_PIN_RPI_RX/TX` = 53/55), and header J24 fans out P40–P47. This
-works today only because the firmware never initializes the HyperRAM, leaving
-its bus Hi-Z. The phase-3 tier-1 gate is that the reservation table reproduces
-exactly this finding.
+matching `HW_PIN_RPI_RX/TX` = 53/55), and header J24 fans out P40–P47. None of
+these lines reaches the chip: the EC32MB has no card-edge finger for P40–P57
+(fingers 55, 56, 59–67 and 69–77 are no-connects; read: the header of embsim's
+`boards/netlists/p2_ec32mb.net`, transcribed from Parallax's Rev B schematic).
+So a Pi on J4 cannot talk to the firmware, and the debug build's MAIN channel
+on P53/P55 runs on the PSRAM's own pins: a host on J4 received nothing
+(measured on #278's first round, before the route below). The phase-3 tier-1
+gate is that the reservation table reproduces exactly this finding.
+
+**The route, decided (2026-10-21).** The user's decision: the app reaches the
+firmware over the carrier's debug header J1 (P62/P63, RESn on J1.3), with the
+**production** build (pio env `propeller2`), through a Prop Plug. The app
+flashes over J1 (`Software/Control/README.md`, "Firmware flashing", which
+covers flashing only). That build's MAIN channel receives on P63 and
+transmits on P62 at 2,000,000 baud (`HW_pins.h`, `HAL_serial_config.c`),
+and J1's P62/P63 go straight to the
+socket's fingers 50 and 49 (`mad_edge.net`). `SIL/mad.toml` and its three
+twins put the host there, the production image in the module's flash, and
+nothing on J4; `SIL/mad-catalog/tests/mad.rs` holds the protocol round trip
+over J1. The debug build stays where a run needs its log on P62 or its MAIN
+channel on a bare chip's P53/P55 (`mad-emulator`, the `p2core`/`p2iss`
+suites, `mad-catalog/tests/boot.rs`). Two other ways out were not taken: a
+plain P2-EC module in J3 (the socket symbol names it; embsim has no `p2-ec`
+kind or netlist), and moving the debug build's MAIN channel, which needs a
+carrier change too, since J4's RPI_RX/RPI_TX reach only IC2.
+
+**Open: which image the machine runs.** The app as shipped flashes a
+release's madEdge image by default, the `propeller2_debug` build
+(`Software/Control/src/firmware/release.ts`, `pickFirmwareAsset`; the release
+job in `.github/workflows/ci.yml`), whose protocol is on P53/P55, which the
+EC32MB cannot reach (above); the single-port production build is the
+release's `-release.bin`, which the app flashes only as a local file. The
+bench has an FT232R attached, USB `0403:6001`, beside the P2-EVAL's FT231X
+(measured: `ioreg`, 2026-10-21; what the FT232R is wired to is not known);
+`0403:6001` is the id `mad-emulator` gives its host. If the machine runs the
+madEdge image, the route needs revisiting: that image's protocol reaches the
+chip only on a module with fingers for P53/P55, such as the plain P2-EC
+(inferred). If it runs the production image, the app's default asset would
+need changing to match.
+
+**IC14, the servo isolator.** IC14 (ISO6741DWR: STEP, DIR, ENA out to the
+drive, SRDY back) has its secondary ground pins 9 and 15 on an unnamed net
+with only C26 pin 2 on it, not on EN_GND (read: `mad_edge.net`,
+`Net-(IC14-GND2_1)`; the PCB has the same pads on the same net). As drawn,
+nothing IC14 drives reaches the drive, and its output to P5 gives its
+default high whatever SRDY says (`SIL/mad-catalog/tests/mad.rs`, the at-rest
+case). Whether the machine's carrier is bodged there is not known; the
+project files keep the board as drawn.
 
 ### Part classification (no separate "type file")
 

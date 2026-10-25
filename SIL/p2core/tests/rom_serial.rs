@@ -4,7 +4,7 @@
 //! on `>`, matches the command, and answers `\r\nProp_Ver G\r\n` on P62. That
 //! handshake is what UI flashing uses before the hex payload.
 
-use p2core::{Board, Machine, SdCard};
+use p2core::{Board, IntState, Machine, SdCard};
 use vibes_behaviour::{behaviour, expect, Test};
 
 fn rom() -> Option<Vec<u8>> {
@@ -23,9 +23,9 @@ fn dump(m: &Machine<Board>) -> String {
         c.pc,
         c.running,
         c.regs[0x1F4],
-        c.se1_cfg,
-        c.int1_src,
-        m.int1_entries,
+        c.se_cfg[0],
+        c.int_src[0],
+        m.int_entries[0],
         m.pins.rx_pending(),
         m.pins.console()
     )
@@ -62,7 +62,7 @@ fn the_rom_answers_prop_chk_on_the_programming_uart() {
 
     let mut trap = None;
     for _ in 0..200_000 {
-        if m.cogs[0].int1_src == 4 {
+        if m.cogs[0].int_src[0] == 4 {
             break;
         }
         match m.step(1) {
@@ -75,7 +75,7 @@ fn the_rom_answers_prop_chk_on_the_programming_uart() {
         }
     }
     assert_eq!(
-        m.cogs[0].int1_src,
+        m.cogs[0].int_src[0],
         4,
         "the ROM must arm INT1 for serial autobaud; {} trap={trap:?}",
         dump(&m)
@@ -84,7 +84,7 @@ fn the_rom_answers_prop_chk_on_the_programming_uart() {
     // The LUT receive buffer is 16 longs. Wait until get_rx is spinning, then
     // drain each byte before the next so the window is not overwritten.
     for _ in 0..200_000 {
-        if matches!(m.cogs[0].pc, 0x29A | 0x29B) && !m.cogs[0].in_int1 {
+        if matches!(m.cogs[0].pc, 0x29A | 0x29B) && m.cogs[0].int_state[0] != IntState::Active {
             break;
         }
         match m.step(1) {

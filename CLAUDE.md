@@ -58,7 +58,9 @@ make protocol     # Regenerate the Rust codec into ../Protocol/rust/src/generate
 make emulator     # firmware + protocol, then cargo build workspace
 make test         # emulator + `cargo test`
 make playground   # the ISS + MaD Control in a Chrome window on the board's clock (mad-emulator --chrome)
-make e2e          # the e2e suite on that route, headless (SCENARIOS=… selects); e2e-emulator for the board alone
+make check        # flash + card images, then `embsim check` on the four project files (mad*.toml)
+make e2e          # the e2e suite on the machine's project, mad-cosim.toml, headless (SCENARIOS=… selects); e2e-emulator for the board alone
+make e2e-motion   # what the project cannot run (the carriage's scenarios), on mad-emulator, until IC14 is settled
 make playground-pty  # the ISS on a PTY at /tmp/tty.iss, for a serial console (no browser behind it)
 make clean        # Remove build artifacts
 ```
@@ -111,9 +113,11 @@ Frontend-only browser PWA — the browser talks straight to the Propeller 2 over
 
 
 ### SIL Emulator Architecture
-Rust **Cargo workspace** under `SIL/` (see `SIL/Cargo.toml`; members are the MaD-side crates — `MaDSim`, `models`, and `protocol` (an out-of-tree member living at `Protocol/rust/`, next to its schema). The `embsim/*` crates below live in the `SIL/embsim` submodule, which is its own workspace, and are consumed as path deps):
+Rust **Cargo workspace** under `SIL/` (see `SIL/Cargo.toml`; members are the MaD-side crates — `MaDSim`, `mad-catalog`, `mad-runner`, `models`, `p2core`, `p2iss`, and `protocol` (an out-of-tree member living at `Protocol/rust/`, next to its schema). The `embsim/*` crates below live in the `SIL/embsim` submodule, which is its own workspace, and are consumed as path deps):
 
-- **`MaDSim/`** — `mad-emulator` binary: runs the Propeller 2 image on the ISS (`p2iss` / `p2core`), with pins on nets. Its host is `--chrome`, the host's Chrome with every page and worker held to the board's clock by embsim's `chrome-cdp` (the one configuration for the e2e suite and the playground; `src/host.rs`), or a PTY for a serial console.
+- **The project files** (`SIL/mad.toml`, `mad-cosim.toml`, `mad-serial-boot.toml`, `mad-serial-boot-cosim.toml`) — the machine as embsim projects: the Edge carrier, the P2-EC32MB module with the ISS as its core booting the production image (pio env `propeller2`) off its flash, the DS2 add-on, the machine, and the host on the carrier's debug header `J1`. `embsim run` hands them to `mad-runner`. The e2e suite runs on `mad-cosim.toml` (the host's Chrome on the board's clock, `make e2e`); the carriage cannot move there while `IC14` is as drawn, so the suite skips the motion scenarios on it, and they run on `mad-emulator` meanwhile (`make e2e-motion`).
+- **`mad-catalog/`** — MaD's kinds (`mad-edge`, `mad-ds2`, `mad-p2iss`, `mad-machine`) and the project files' tests; **`mad-runner/`** — the embsim command over them.
+- **`MaDSim/`** — `mad-emulator` binary: runs the debug Propeller 2 image on the ISS (`p2iss` / `p2core`) on the bare chip, with pins on nets. Its host is `--chrome`, the host's Chrome with every page and worker held to the board's clock by embsim's `chrome-cdp` (the playgrounds; `src/host.rs`), or a PTY for a serial console. Retires at embsim `MIGRATING-MAD.md` step 11.
 - **`embsim/cdp`** — `chrome-cdp`: the host's Chrome on a host's serial pins, metered over DevTools, its Web Serial a shim on the line.
 - **`embsim/core`** — PTY, timing, shared plumbing.
 - **`embsim/board`** — the board engine: nets, netlists, and the one interface between a part and the board (`PinDecl` with its role and thresholds, `Drive`, `Sense`).
@@ -122,14 +126,14 @@ Rust **Cargo workspace** under `SIL/` (see `SIL/Cargo.toml`; members are the MaD
 - **`embsim/models`** — part and machine models (flash, SD card, ADS122U04, stepper, encoder, switches, rails).
 - **`embsim/tools/*`** — trace viewer, memory inspect, UI shell helpers.
 
-End-to-end coverage lives with the app it exercises: `Software/Control/e2e/` drives the shipped app against this emulator.
+End-to-end coverage lives with the app it exercises: `Software/Control/e2e/` drives the shipped app against the project's board (`SIL/scripts/board-route.sh`).
 
 ### Communication Protocol
 Firmware ↔ UI communicates over serial (2,000,000 baud on hardware) using the generated protocol from `Protocol/MaDProtocol.yaml`. Motion profiles become G-code (`G0`, `G1`, `G4`, `G28`, `G90`, `G91`, `G122`) and are streamed line-by-line.
 
 ## Firmware Naming & File Conventions
 
-Files are prefixed with their layer: `IO_protocol.c`, `dev_stepper.c`, `app_control.c`, `lib_timer.c`. Use `src/template.ch` / `src/template.cx` for new files — standard section layout (includes, constants, typedefs, APIs, etc.).
+Files are prefixed with their layer: `IO_protocol.c`, `dev_servo.c`, `app_control.c`, `lib_timer.c`. Use `src/template.ch` / `src/template.cx` for new files — standard section layout (includes, constants, typedefs, APIs, etc.).
 
 ## CI/CD & Releases
 

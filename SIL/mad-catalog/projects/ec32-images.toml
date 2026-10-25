@@ -12,8 +12,13 @@
 #   cd SIL && make flash-image sd-image
 #   $(EMBSIM) check mad-catalog/projects/ec32-images.toml
 #
-# The processor runs nothing yet: `held-in-reset` until mad-catalog has the
-# ISS as a core (MIGRATING-MAD.md step 8).
+# The processor is MaD's instruction-set simulator (mad-p2iss), which boots
+# its ROM off the module's flash, so the file names MaD's catalog and runner.
+# tests/boot.rs runs that boot with the flash alone.
+
+[catalog]
+crates = [".."]
+runner = "../../mad-runner"
 
 [[board]]
 name = "EC32"
@@ -23,7 +28,7 @@ kind = "p2-ec32mb"
 value = "P2X8C4M64P"
 kind = "p2"
 [board.model.options]
-core = "held-in-reset"
+core = "mad-p2iss"
 
 # Stage-1 and the propeller2_debug program, laid out by `make flash-image`.
 [[board.model]]

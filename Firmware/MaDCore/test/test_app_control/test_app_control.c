@@ -37,7 +37,6 @@
 #include "HAL_lock.h"
 #include "HAL_GPIO.h"
 #include "app_gauge.h"               // app_gauge_coord_E
-#include "dev_stepper_config.h"      // dev_stepper_channel_E
 #include "dev_forceGauge_config.h"   // dev_forceGauge_channel_E
 #include "dev_nvram_config.h"        // dev_nvram_channel_t
 #include "dev_nvram_machineProfile.h"// MachineProfile
@@ -92,11 +91,9 @@ bool HAL_GPIO_getActive(HAL_GPIO_channel_E channel)
     return d_gpio[channel];
 }
 
-/* --- actuator (the MOTOR-cog driver app_control gates on; APP_MOTION_USE_SERVO
- *     picks which one, exactly as in the module under test) --- */
+/* --- dev_servo (the MOTOR-cog driver app_control gates on) --- */
 static bool d_actuatorReady;
 static bool d_actuatorStalled;
-#if APP_MOTION_USE_SERVO
 bool dev_servo_isReady(dev_servo_channel_E ch)
 {
     TEST_ASSERT_EQUAL_INT(DEV_SERVO_CHANNEL_MAIN, ch);
@@ -107,13 +104,6 @@ bool dev_servo_isStalled(dev_servo_channel_E ch)
     TEST_ASSERT_EQUAL_INT(DEV_SERVO_CHANNEL_MAIN, ch);
     return d_actuatorStalled;
 }
-#else
-bool dev_stepper_isReady(dev_stepper_channel_E ch)
-{
-    TEST_ASSERT_EQUAL_INT(DEV_STEPPER_CHANNEL_MAIN, ch);
-    return d_actuatorReady;
-}
-#endif
 
 /* --- dev_forceGauge --- */
 static bool d_forceGaugeReady; /* dev_forceGauge_isReady(MAIN) */
