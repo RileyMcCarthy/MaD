@@ -12,6 +12,7 @@ import {
   type CalibrationResult,
   type CalibrationRunner,
 } from './motorCalibration';
+import type { MotionSample } from './motionBenchmark';
 
 /** A finished run of `pulses` each way, the encoder counting `perPulse` per pulse. */
 function done(pulses: number, fwdPerPulse: number, revPerPulse = fwdPerPulse): CalibrationResult {
@@ -272,43 +273,65 @@ describe('motor calibration run', () => {
 
   /**
    * A machine for the runner to drive: each accepted move carries the encoder
-   * `countsPerPulse` per pulse over the move's nominal time, then creeps on by
-   * `lateCounts` over the next 200 ms, as a lagging drive does.
+   * `countsPerPulse` per pulse over the move's nominal time, `lagMs` behind the
+   * trajectory, then creeps on by `lateCounts` over the next 200 ms, as a
+   * lagging drive does. A move that reverses the last one loses `slackCounts`
+   * first. Every poll records a live sample.
    */
   function fakeMachine(opts: {
     countsPerPulse: number;
     lateCounts?: number;
+    slackCounts?: number;
+    lagMs?: number;
     acceptMoves?: boolean;
     disableAtMs?: number;
     neverSettles?: boolean;
   }) {
     let t = 0;
     let base = 0; // mm, where the last move started
+    let cmdBase = 0; // mm, where the last move was commanded from
+    let moveMm = 0;
     let moveStart = 0;
     let moveCountsTotal = 0;
     let moveMs = 1;
+    let lastDir = -1;
     let enabled = true;
     let stopped = false;
+    const samples: MotionSample[] = [];
+    const frac = (ms: number) => Math.min(1, Math.max(0, ms / moveMs));
     const position = () => {
       if (opts.disableAtMs !== undefined && t >= opts.disableAtMs) enabled = false;
       const late = opts.lateCounts ?? 0;
       const into = t - moveStart;
-      const frac = Math.min(1, into / moveMs);
       const lateFrac = Math.min(1, Math.max(0, (into - moveMs) / 200));
       const creep = opts.neverSettles ? Math.max(0, into - moveMs) / 50 : 0;
-      return base + (moveCountsTotal * frac + late * lateFrac + creep) / DEVICE.encoderStepsPerMM;
+      return base + (moveCountsTotal * frac(into - (opts.lagMs ?? 0)) + late * lateFrac + creep) / DEVICE.encoderStepsPerMM;
     };
+    const record = () =>
+      samples.push({
+        t: t / 1000,
+        position: position(),
+        commanded: cmdBase + moveMm * frac(t - moveStart),
+        setpoint: cmdBase + moveMm,
+      });
     const runner: CalibrationRunner = {
       move: (mm, speed) => {
         if (opts.acceptMoves === false) return Promise.resolve(false);
         base = position();
+        cmdBase += moveMm;
+        moveMm = mm;
         moveStart = t;
+        const dir = Math.sign(mm);
         const pulses = Math.trunc((Math.round(mm * 1000) * DEVICE.servoStepsPerMM) / 1000);
-        moveCountsTotal = pulses * opts.countsPerPulse;
+        const slack = dir !== lastDir ? (opts.slackCounts ?? 0) : 0;
+        lastDir = dir;
+        moveCountsTotal = pulses * opts.countsPerPulse - dir * slack;
         moveMs = (Math.abs(mm) / speed) * 1000;
         return Promise.resolve(true);
       },
       position,
+      samplesSince: (since) => samples.filter((s) => s.t >= since),
+      clock: () => t / 1000,
       motionEnabled: () => {
         position();
         return enabled && !stopped;
@@ -320,6 +343,7 @@ describe('motor calibration run', () => {
       },
       sleep: (ms) => {
         t += ms;
+        record();
         return Promise.resolve();
       },
       now: () => t,
@@ -445,6 +469,42 @@ describe('motor calibration run', () => {
       expect(run.ok && run.result.outcome).toBe('aborted-timeout');
       expect(m.wasStopped()).toBe(true);
       expect(m.runner.now()).toBeLessThanOrEqual(2 * 1000 + 3000 + 200);
+    },
+  );
+
+  behaviour(
+    {
+      id: 'motorcal.run-takes-up-slack',
+      covers: 'src/domain/motorCalibration.ts#runCalibration',
+      given: 'a drive that loses 13 encoder counts of motion every time it reverses, counting one count per pulse',
+      expect: {
+        'ratio-clean': 'the measured legs count exactly one per pulse, because a take-up move in the same direction comes first',
+        'lost-motion-reported': 'the motion lost on reversal is reported as 13 counts',
+      },
+      why: { 'ratio-clean': 'slack taken up on a reversal is not part of the drive-to-encoder ratio' },
+    },
+    async () => {
+      const { runner } = fakeMachine({ countsPerPulse: 1, slackCounts: 13 });
+      const run = await runCalibration(runner, plan(), DEVICE);
+      expect(run.ok).toBe(true);
+      if (!run.ok) return;
+      expect(run.result.countsForward).toBe(8192);
+      expect(run.result.countsReverse).toBe(-8192);
+      expect(run.result.lostMotionCounts).toBe(13);
+    },
+  );
+
+  behaviour(
+    {
+      id: 'motorcal.run-measures-drive-lag',
+      covers: 'src/domain/motorCalibration.ts#runCalibration',
+      given: 'a drive whose encoder follows the pulses 5 ms late',
+      expect: { 'lag-reported': 'the drive lag is reported as 5 ms' },
+    },
+    async () => {
+      const { runner } = fakeMachine({ countsPerPulse: 1, lagMs: 5 });
+      const run = await runCalibration(runner, plan(), DEVICE);
+      expect(run.ok && run.result.lagSeconds).toBeCloseTo(0.005, 3);
     },
   );
 });

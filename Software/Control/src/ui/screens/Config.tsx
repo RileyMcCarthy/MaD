@@ -105,9 +105,14 @@ export default function Config({ embedded = false }: { embedded?: boolean }) {
               encoderStepsPerMM: draft['Encoder (step/mm)'],
               servoStepsPerMM: draft['Servo (step/mm)'],
             }}
-            device={{
+            saved={{
               encoderStepsPerMM: config?.['Encoder (step/mm)'] ?? 0,
               servoStepsPerMM: config?.['Servo (step/mm)'] ?? 0,
+              maxPositionMm: config?.['Position Max (mm)'] ?? 0,
+              maxVelocityMmPerS: config?.['Velocity Max (mm/s)'] ?? 0,
+              maxAccelMmPerS2: config?.['Acceleration Max (mm/s^2)'] ?? 0,
+              servoKp: config?.['Servo Kp (1/s)'] ?? 0,
+              servoKi: config?.['Servo Ki (1/s^2)'] ?? 0,
             }}
           />
         </>

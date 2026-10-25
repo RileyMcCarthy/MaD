@@ -1,3 +1,5 @@
+import { estimateLagSeconds, type MotionSample } from './motionBenchmark';
+
 /**
  * Motor calibration: an open-loop check of the drive/encoder pair.
  *
@@ -60,7 +62,14 @@ export interface CalibrationResult {
   /** Encoder change over each leg. */
   countsForward: number;
   countsReverse: number;
+  /** Encoder counts the take-up move lost straight after a reversal (null if not measured). */
+  lostMotionCounts?: number | null;
+  /** The drive's lag behind the pulses during the forward leg, in seconds (null if not measured). */
+  lagSeconds?: number | null;
 }
+
+/** Before each measured leg, an unmeasured move this far in the same direction takes up the slack. */
+export const CALIBRATION_TAKEUP_MM = 0.5;
 
 export interface CalibrationProfile {
   encoderStepsPerMM: number;
@@ -85,6 +94,10 @@ export interface CalibrationRequest {
   maxTravelMm: number;
   /** How long the leg should take. */
   nominalMs: number;
+  /** The take-up move before each leg, in the same units. */
+  takeupMm: number;
+  takeupPulses: number;
+  takeupNominalMs: number;
 }
 
 export type CalibrationPlan = { ok: true; request: CalibrationRequest } | { ok: false; reason: string };
@@ -129,26 +142,45 @@ export function planCalibration(s: CalibrationSettings): CalibrationPlan {
       reason: `That is ${wanted} pulses each way; the calibration allows at most ${CALIBRATION_MAX_PULSES}. Use a shorter distance.`,
     };
   }
-  const moveUm = Math.round((wanted / s.device.servoStepsPerMM) * 1000);
-  // As the machine does it: app_motion turns X into whole encoder counts with
-  // the saved encoder steps/mm, and dev_servo pulses those at servo/encoder.
-  const counts = Math.trunc((moveUm * s.device.encoderStepsPerMM) / 1000);
-  const pulses = Math.round((counts * s.device.servoStepsPerMM) / s.device.encoderStepsPerMM);
+  const leg = toMachineMove(wanted, s.device);
+  const pulses = leg.pulses;
   if (pulses < 1) {
     return { ok: false, reason: 'Distance is too small to send a single pulse.' };
   }
+  const takeup = toMachineMove(Math.round(CALIBRATION_TAKEUP_MM * s.servoStepsPerMM), s.device);
   const pulseRate = s.speedMmPerS * s.servoStepsPerMM;
   const speedMmPerS = pulseRate / s.device.servoStepsPerMM;
   const expectedCounts = pulses * (s.encoderStepsPerMM / s.servoStepsPerMM);
   return {
     ok: true,
     request: {
-      moveMm: moveUm / 1000,
+      moveMm: leg.moveMm,
       speedMmPerS,
       pulses,
-      maxTravelMm: (CALIBRATION_OVERTRAVEL_FACTOR * expectedCounts) / s.device.encoderStepsPerMM,
+      // The bound covers the longer of the leg and the take-up.
+      maxTravelMm:
+        (CALIBRATION_OVERTRAVEL_FACTOR * Math.max(expectedCounts, takeup.pulses * (s.encoderStepsPerMM / s.servoStepsPerMM))) /
+        s.device.encoderStepsPerMM,
       nominalMs: (pulses / pulseRate) * 1000,
+      takeupMm: takeup.moveMm,
+      takeupPulses: takeup.pulses,
+      takeupNominalMs: (takeup.pulses / pulseRate) * 1000,
     },
+  };
+}
+
+/**
+ * A G124 that sends about `pulsesWanted` pulses on the machine, and exactly
+ * how many it sends. X goes over the wire in micrometres; app_motion turns it
+ * into whole encoder counts with the saved encoder steps/mm, and dev_servo
+ * pulses those at servo/encoder.
+ */
+function toMachineMove(pulsesWanted: number, device: CalibrationProfile): { moveMm: number; pulses: number } {
+  const moveUm = Math.round((pulsesWanted / device.servoStepsPerMM) * 1000);
+  const counts = Math.trunc((moveUm * device.encoderStepsPerMM) / 1000);
+  return {
+    moveMm: moveUm / 1000,
+    pulses: Math.round((counts * device.servoStepsPerMM) / device.encoderStepsPerMM),
   };
 }
 
@@ -299,6 +331,9 @@ export interface CalibrationRunner {
   move: (moveMm: number, speedMmPerS: number) => Promise<boolean>;
   /** Latest reported machine position in mm (the encoder), or null without live data. */
   position: () => number | null;
+  /** Every live sample since a moment on the live clock (for the drive's lag). */
+  samplesSince: (t: number) => MotionSample[];
+  clock: () => number;
   motionEnabled: () => boolean;
   testRunning: () => boolean;
   /** Abandon: disable motion. */
@@ -307,11 +342,11 @@ export interface CalibrationRunner {
   now: () => number;
 }
 
-export type CalibrationProgress = 'forward' | 'reverse';
+export type CalibrationProgress = 'take-up' | 'forward' | 'reverse';
 
 export type CalibrationRun = { ok: true; result: CalibrationResult } | { ok: false; reason: string };
 
-type Leg = { ok: true; counts: number } | { ok: false; outcome: CalibrationOutcome };
+type Leg = { ok: true; counts: number; samples: MotionSample[] } | { ok: false; outcome: CalibrationOutcome };
 
 /**
  * Drive one leg and measure it. The encoder is read once the carriage has held
@@ -321,24 +356,27 @@ type Leg = { ok: true; counts: number } | { ok: false; outcome: CalibrationOutco
  */
 async function runLeg(
   runner: CalibrationRunner,
-  request: CalibrationRequest,
+  moveMm: number,
+  speedMmPerS: number,
+  nominalMs: number,
+  maxTravelMm: number,
   device: CalibrationProfile,
-  sign: 1 | -1,
 ): Promise<Leg> {
   const start = runner.position();
   if (start === null) return { ok: false, outcome: 'refused-no-data' };
-  if (!(await runner.move(sign * request.moveMm, request.speedMmPerS))) {
+  const tClock = runner.clock();
+  if (!(await runner.move(moveMm, speedMmPerS))) {
     return { ok: false, outcome: runner.motionEnabled() ? 'refused-busy' : 'refused-motion-disabled' };
   }
   const t0 = runner.now();
-  const deadline = t0 + 2 * request.nominalMs + CALIBRATION_TIMEOUT_MARGIN_MS;
+  const deadline = t0 + 2 * nominalMs + CALIBRATION_TIMEOUT_MARGIN_MS;
   let last = start;
   let stillSince = runner.now();
   for (;;) {
     await runner.sleep(CALIBRATION_POLL_MS);
     if (!runner.motionEnabled()) return { ok: false, outcome: 'aborted-motion-disabled' };
     const pos = runner.position() ?? last;
-    if (Math.abs(pos - start) > request.maxTravelMm) {
+    if (Math.abs(pos - start) > maxTravelMm) {
       await runner.stop();
       return { ok: false, outcome: 'aborted-overtravel' };
     }
@@ -348,8 +386,12 @@ async function runLeg(
     }
     last = pos;
     const now = runner.now();
-    if (now - t0 >= request.nominalMs && now - stillSince >= CALIBRATION_SETTLE_MS) {
-      return { ok: true, counts: Math.round((pos - start) * device.encoderStepsPerMM) };
+    if (now - t0 >= nominalMs && now - stillSince >= CALIBRATION_SETTLE_MS) {
+      return {
+        ok: true,
+        counts: Math.round((pos - start) * device.encoderStepsPerMM),
+        samples: runner.samplesSince(tClock),
+      };
     }
     if (now > deadline) {
       await runner.stop();
@@ -358,7 +400,14 @@ async function runLeg(
   }
 }
 
-/** Run a calibration: G124 forward, settle, read; G124 back, settle, read. */
+/**
+ * Run the ratio check:
+ *   take-up forward (unmeasured) -> forward leg -> take-up back -> back leg.
+ * Every measured leg follows a move in its own direction, so the slack a
+ * reversal takes up is not counted against the ratio. The take-up back comes
+ * straight after a reversal, so the counts it falls short of what its pulses
+ * should give ARE that slack: the lost motion on reversal.
+ */
 export async function runCalibration(
   runner: CalibrationRunner,
   request: CalibrationRequest,
@@ -368,23 +417,40 @@ export async function runCalibration(
   const empty = { pulsesForward: 0, pulsesReverse: 0, countsForward: 0, countsReverse: 0 };
   if (!runner.motionEnabled()) return { ok: true, result: { outcome: 'refused-motion-disabled', ...empty } };
   if (runner.testRunning()) return { ok: true, result: { outcome: 'refused-busy', ...empty } };
+  const r = request;
+  const legOf = (sign: 1 | -1) => runLeg(runner, sign * r.moveMm, r.speedMmPerS, r.nominalMs, r.maxTravelMm, device);
+  const takeupOf = (sign: 1 | -1) =>
+    runLeg(runner, sign * r.takeupMm, r.speedMmPerS, r.takeupNominalMs, r.maxTravelMm, device);
 
+  onProgress?.('take-up');
+  const t1 = await takeupOf(1);
+  if (!t1.ok) return { ok: true, result: { outcome: t1.outcome, ...empty } };
   onProgress?.('forward');
-  const fwd = await runLeg(runner, request, device, 1);
+  const fwd = await legOf(1);
   if (!fwd.ok) return { ok: true, result: { outcome: fwd.outcome, ...empty } };
-  onProgress?.('reverse');
-  const back = await runLeg(runner, request, device, -1);
-  if (!back.ok) {
-    return { ok: true, result: { ...empty, outcome: back.outcome, pulsesForward: request.pulses, countsForward: fwd.counts } };
+  onProgress?.('take-up');
+  const t2 = await takeupOf(-1);
+  if (!t2.ok) {
+    return { ok: true, result: { ...empty, outcome: t2.outcome, pulsesForward: r.pulses, countsForward: fwd.counts } };
   }
+  onProgress?.('reverse');
+  const back = await legOf(-1);
+  if (!back.ok) {
+    return { ok: true, result: { ...empty, outcome: back.outcome, pulsesForward: r.pulses, countsForward: fwd.counts } };
+  }
+  // The measured ratio, from the two clean legs, prices the take-up's pulses.
+  const countsPerPulse = (Math.abs(fwd.counts) + Math.abs(back.counts)) / (2 * r.pulses);
+  const lostMotion = Math.round(r.takeupPulses * countsPerPulse - Math.abs(t2.counts));
   return {
     ok: true,
     result: {
       outcome: 'done',
-      pulsesForward: request.pulses,
+      pulsesForward: r.pulses,
       countsForward: fwd.counts,
-      pulsesReverse: -request.pulses,
+      pulsesReverse: -r.pulses,
       countsReverse: back.counts,
+      lostMotionCounts: countsPerPulse > 0 ? lostMotion : null,
+      lagSeconds: estimateLagSeconds(fwd.samples, r.speedMmPerS),
     },
   };
 }
