@@ -67,7 +67,7 @@ use embsim_board::{
     PinDecl, PinHandle, SerialLevelBridge, Thresholds,
 };
 use embsim_core::virtual_clock;
-use p2core::{Board, Machine, PinBus, PinMode, SdCard};
+use p2core::{Board, Machine, PinBus, PinMode, SdCard, TimeMap};
 
 /// How often the engine advances the guest **while nothing is on the wire**.
 ///
@@ -318,16 +318,17 @@ struct NetPins {
     /// traced and dropped.
     io: Option<ComponentNetIo>,
     shutdown: Arc<AtomicBool>,
-    /// The rate the machine's clock runs at ([`Machine::clock_hz`]), set
-    /// once the machine is built and refreshed each slice.
+    /// The machine's map from clocks to time ([`Machine::time_map`]), set
+    /// once the machine is built and refreshed before each pass.
     ///
     /// [`PinBus`] is called *by* the machine, so it cannot ask the machine for
-    /// its rate; the component reads it out after each slice and stores it
-    /// here, where [`NetPins::framing_for`] can derive a baud from it. It is
-    /// the rate the machine turns clocks into time at, so a divisor read
-    /// through it frames the bits the guest times: RCFAST through a ROM
-    /// boot, the program's own record once it selects the PLL.
-    clock_hz: u32,
+    /// its map; the component copies it in, and a pass that changes the
+    /// clock's source ends there ([`Machine::step_until`]), so the copy is the
+    /// machine's own while the guest runs. Through it a wire stamp and the
+    /// executing instruction's clock compare on one scale, and its rate is
+    /// what a smart pin's divisor divides ([`NetPins::framing_for`]): RCFAST
+    /// through a ROM boot, the program's own record once it selects the PLL.
+    time_map: TimeMap,
     /// Pins carried on nets as plain levels — see [`P2Iss::with_level_pins`].
     level_pins: Vec<u8>,
     /// Pins that emit pulse trains — see [`P2Iss::with_pulse_pins`].
@@ -379,28 +380,15 @@ impl NetPins {
         self.links.iter().position(|l| l.tx_pin == pin)
     }
 
-    /// The rate [`Machine::now_us`] converts clocks to time at.
-    ///
-    /// Not [`Self::guest_clk`]: during a ROM boot that reports the RC
-    /// oscillator, while the machine keeps converting at whatever hub `$14`
-    /// holds. Wire stamps have to be compared on the machine's own scale.
-    fn clock_hz(&self) -> u64 {
-        // Set from `Machine::clock_hz` as soon as the machine is built. Before
-        // that, the rate a machine converts at when no clock is recorded
-        // (p2core's `UNRECORDED_CLKFREQ`), as `pulse::clocks_to_ns` assumes.
-        match self.clock_hz {
-            0 => 160_000_000,
-            f => u64::from(f),
-        }
-    }
-
+    /// The virtual instant of system-counter value `clocks`, on the
+    /// machine's own map.
     fn clocks_to_ns(&self, clocks: u64) -> u64 {
-        (u128::from(clocks) * 1_000_000_000 / u128::from(self.clock_hz())) as u64
+        self.time_map.clocks_to_ns(clocks)
     }
 
     /// The first clock at or after virtual `ns`.
     fn ns_to_clocks(&self, ns: u64) -> u64 {
-        (u128::from(ns) * u128::from(self.clock_hz())).div_ceil(1_000_000_000) as u64
+        self.time_map.first_clock_at_ns(ns)
     }
 
     /// A receive pin's register as of the executing instruction: every byte
@@ -474,8 +462,8 @@ impl NetPins {
         }
     }
 
-    fn set_clock_hz(&mut self, hz: u32) {
-        self.clock_hz = hz;
+    fn set_time_map(&mut self, map: TimeMap) {
+        self.time_map = map;
     }
 
     fn guest_clk(&self) -> u32 {
@@ -484,7 +472,7 @@ impl NetPins {
         if let Some(core) = self.core.as_ref() {
             return u32::try_from(core.clock.hz()).unwrap_or(u32::MAX);
         }
-        self.clock_hz
+        u32::try_from(self.time_map.hz).unwrap_or(u32::MAX)
     }
 
     /// Begin (or retune) the train `WYPIN` just asked for.
@@ -913,7 +901,13 @@ impl NetPins {
             shared,
             io: None,
             shutdown: Arc::new(AtomicBool::new(false)),
-            clock_hz: 0,
+            // What a machine booted from an image with nothing recorded at
+            // `$14` runs at, until the machine's own map is copied in.
+            time_map: TimeMap {
+                origin_clocks: 0,
+                origin_ns: 0,
+                hz: u64::from(p2core::UNRECORDED_CLKFREQ),
+            },
             level_pins: Vec::new(),
             pulse_pins: Vec::new(),
             clock: 0,
@@ -1240,8 +1234,8 @@ impl P2Iss {
             BootSource::Image(image) => Machine::new(image, bus),
             BootSource::Rom(rom) => Machine::with_boot_rom(rom, bus),
         };
-        let hz = machine.clock_hz();
-        machine.pins.set_clock_hz(hz);
+        let map = machine.time_map();
+        machine.pins.set_time_map(map);
         Self {
             pins,
             links: links.to_vec(),
@@ -1494,11 +1488,11 @@ impl Component for P2Iss {
                 }
                 {
                     let mut machine = machine.lock().expect("machine never poisoned");
-                    // The rate the machine's clock runs at, so a baud derived
-                    // on the next transmit is the one the pin's divisor makes
-                    // at the clock the guest is timed by.
-                    let hz = machine.clock_hz();
-                    machine.pins.set_clock_hz(hz);
+                    // The machine's clock map, so wire stamps and a baud
+                    // derived on the next transmit are on the clock the guest
+                    // is timed by.
+                    let map = machine.time_map();
+                    machine.pins.set_time_map(map);
                     // Replay every transition the nets resolved since the last
                     // slice, in order, before the guest executes anything that
                     // could read a pin. One at a time: an edge-counted input
