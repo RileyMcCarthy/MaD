@@ -170,22 +170,27 @@ pub fn pin_name(pin: u8) -> &'static str {
 /// the cog looking at the pin reaches that stamp ([`PinBus::set_clock`]). The
 /// guest then sees every byte at the instruction it would on silicon, however
 /// many bytes one slice delivered.
+///
+/// Inside the P2 package the guest runs ahead of the engine instead, and a
+/// byte's stamp is the instant the package lands it at, not the one its frame
+/// closed at (`package.rs`, "Receive: one byte, landed in the guest's
+/// present").
 #[derive(Debug, Default)]
-struct RxPin {
+pub(crate) struct RxPin {
     /// Deframed bytes the guest's clock has not reached yet, oldest first,
-    /// each with the virtual nanosecond its frame closed.
-    arriving: VecDeque<(u64, u8)>,
+    /// each with the virtual nanosecond it lands at.
+    pub(crate) arriving: VecDeque<(u64, u8)>,
     /// `Z`'s byte: the last one to land, kept after it is read.
-    held: u8,
+    pub(crate) held: u8,
     /// `IN`: a byte has landed since the last `RDPIN`/`AKPIN`.
-    waiting: bool,
+    pub(crate) waiting: bool,
     /// Bytes overwritten before the guest read them.
-    overruns: u64,
+    pub(crate) overruns: u64,
 }
 
 impl RxPin {
-    /// Land every byte whose frame closed at or before `now_ns`, in order.
-    fn land_until(&mut self, now_ns: u64) {
+    /// Land every byte whose stamp is at or before `now_ns`, in order.
+    pub(crate) fn land_until(&mut self, now_ns: u64) {
         while let Some(&(at, byte)) = self.arriving.front() {
             if at > now_ns {
                 break;
@@ -402,6 +407,9 @@ impl NetPins {
 
     /// `RDPIN`/`AKPIN` on a receive pin: `IN` drops. True if it was one.
     fn acknowledge_rx(&self, pin: u8) -> bool {
+        if self.core_acknowledge_rx(pin) {
+            return true;
+        }
         match self.rx_now(pin) {
             Some(mut rx) => {
                 rx.waiting = false;
@@ -890,7 +898,10 @@ impl PinBus for NetPins {
             .tx_pace
             .iter()
             .flat_map(|pace| [pace.loaded_at, pace.idle_at]);
-        rx.chain(tx).filter(|&at| at > now).min()
+        rx.chain(tx)
+            .chain(self.core_next_pin_change(now))
+            .filter(|&at| at > now)
+            .min()
     }
 }
 
@@ -1008,6 +1019,9 @@ impl P2IssHandle {
     /// guest never sees them. Counted up to the instant the whole machine has
     /// executed to.
     pub fn rx_overruns(&self, rx_pin: u8) -> u64 {
+        if let Some(core) = self.core.as_ref() {
+            return core.rx_overruns(rx_pin);
+        }
         self.shared
             .rx
             .get(&rx_pin)
