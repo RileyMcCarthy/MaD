@@ -248,8 +248,10 @@ volts = 0.0
 # nothing pulses the reset, and neither boot needs it. The flash boot runs
 # from power-up, and the ROM's serial boot answers without a reset, P59's
 # pull-up (R302, the serial boot's scenario) selecting it. The app's
-# flasher resets the chip with DTR (Software/Control/README.md); no case
-# here flashes.
+# flasher resets the chip with DTR before its probe (Software/Control/
+# README.md); on the serial boot, with nothing on J1.3, the probe finds the
+# ROM still listening, as it does for 90 s of board time from the chip's
+# start (FW-ISS, make e2e-rom).
 
 # The adapter's I/O rail: the chip's P62/P63 bank (VIO_56_63) is 3.3 V.
 [[wire]]
