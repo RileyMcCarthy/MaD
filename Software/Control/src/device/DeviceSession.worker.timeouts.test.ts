@@ -49,6 +49,7 @@ vi.mock('@/wasm/protoemb_runtime.js', () => ({
     }
     feed_bytes(): void {}
     write(): void {}
+    query(): void {}
     read(): void {}
     clear_queue(): void {}
     get_stored(): unknown[] {
