@@ -28,10 +28,9 @@ See `docs/dev/bulletproof-test-plan.md` and `docs/dev/bug-class-coverage.md`.
 
 If you change behavior in a matrix cell, **add or update a test** that would have failed on the old bug.
 
-## Backend certification
+## Motion
 
-- [ ] **Stepper-only** — motion path exercised on stepper (CI default)
-- [ ] **Servo** — includes or needs `dev_servo` coverage (call out if not)
+- [ ] Motion change: `test_dev_servo` / `test_app_motion` and the motion e2e on `mad-emulator` (or why not)
 
 ## Test plan
 

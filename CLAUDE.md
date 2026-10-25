@@ -133,7 +133,7 @@ Firmware ↔ UI communicates over serial (2,000,000 baud on hardware) using the 
 
 ## Firmware Naming & File Conventions
 
-Files are prefixed with their layer: `IO_protocol.c`, `dev_stepper.c`, `app_control.c`, `lib_timer.c`. Use `src/template.ch` / `src/template.cx` for new files — standard section layout (includes, constants, typedefs, APIs, etc.).
+Files are prefixed with their layer: `IO_protocol.c`, `dev_servo.c`, `app_control.c`, `lib_timer.c`. Use `src/template.ch` / `src/template.cx` for new files — standard section layout (includes, constants, typedefs, APIs, etc.).
 
 ## CI/CD & Releases
 

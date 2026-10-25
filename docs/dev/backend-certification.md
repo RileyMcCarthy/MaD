@@ -1,25 +1,21 @@
 # Motion backend certification
 
-MaD firmware can drive motion through **stepper** or **servo** backends.
-CI unit and SIL coverage default to the **stepper** path.
+MaD firmware has one motion backend: the closed-loop servo, **`dev_servo`**,
+driven by `app_motion` on the MOTOR cog. The open-loop `dev_stepper` path was
+removed once nothing built it.
 
-| Backend | Automated coverage | Status |
-|---------|-------------------|--------|
-| **Stepper** (`dev_stepper`) | Unity `test_dev_stepper`, `test_app_motion` (stepper-pinned), SIL/WASM e2e | **Certified for CI** |
-| **Servo** (`dev_servo`) | Unity `test_dev_servo` (enable/move/velocity/stop/stall contracts) | **Unit-certified** — SIL still links stepper; HIL for plant fidelity |
+| Layer | Automated coverage |
+|-------|--------------------|
+| `dev_servo` | Unity `test_dev_servo`: enable, moveTo/atTarget, velocity mode, stop, setPosition, following error, waveforms, the profile's pulse scale, and the stall guard (frozen, buzzing, crawling, runaway, held following error) against HAL doubles |
+| `app_motion` | Unity `test_app_motion` against `dev_servo` doubles, including encoder-scaled moves and profile validation |
+| The machine | SIL: the P2 image on the ISS with `mad-emulator`'s drive, encoder and jam (`make e2e-motion`, SERVO-stall on every PR) |
 
 ## PR checklist
 
 When changing motion/HAL:
 
-1. Prefer tests against the stepper backend (what SIL links).
-2. If the change is servo-only, say so in the PR template “Backend certification”
-   section and describe manual/HIL verification.
-3. Do not claim “motion covered” in CI unless the stepper suite still passes.
-
-## Servo unit suite
-
-- `test_dev_servo` covers enable, moveTo/atTarget, velocity mode, stop, setPosition,
-  following-error readout, and stall detection against HAL doubles.
-- SIL/WASM e2e still exercise the **stepper** backend (default plant). Plant-model
-  servo fidelity remains HIL / future SIL flag work.
+1. Run `test_dev_servo` and `test_app_motion` (`pio test -e native_test -f …`).
+2. If the change touches how the carriage moves, run the motion e2e on
+   `mad-emulator` (`make -C SIL e2e-motion`) or say why it was not needed.
+3. Hardware the SIL cannot model (the real drive, its tuning) still needs a
+   bench check; say in the PR what was and was not run there.
