@@ -71,15 +71,20 @@ the pulses and rate it will send, and the encoder bound at which it gives up
 ### Reading the result
 
 The run ends with a single result: a **pass**, **warning** or **error** with
-what it means, then one line of numbers in the same units as the fields:
+what it means, then the one thing the run measures:
 
-> Measured: encoder 2397 steps/mm (entered 2400) · servo 6408 steps/mm (entered 6400)
+> Sent 6405 pulses each way (1 mm at 6400 servo steps/mm) → encoder moved **2398** counts (expected 2402)
 
-When the calibration passes, the measured values match what you entered. A
-single run measures only the ratio of the two values, so each measured value
-assumes the *other* one you entered is right. If they don't match, correct
-whichever value you trust less (usually not the one from datasheets). A
-negative value means the encoder counts against the motion.
+The pulses are what the machine sent, and the counts are what the encoder saw
+come back (averaged over both directions). *Expected* is what your two steps/mm
+values predict for those pulses. When the calibration passes the two match. A
+negative count means the encoder counts against the motion.
+
+When they don't match, a **Fix** line gives the value to change. One run only
+measures the ratio of the two values, so it gives both options: the servo
+steps/mm to set if your encoder steps/mm is right, and the encoder steps/mm to
+set if your servo steps/mm is right. Trust the one you can work out from
+datasheets (usually the encoder: counts per revolution ÷ mm per revolution).
 
 ### What the findings mean
 
@@ -90,7 +95,7 @@ negative value means the encoder counts against the motion.
 | The encoder counted only one way | One channel is missing, or the carriage did not move one way | Check the encoder wiring and that the carriage moves both ways |
 | The encoder counts the opposite way to the motion | The encoder is reversed relative to the drive. The servo loop would run away as wired | Swap encoder A and B, or reverse the drive's direction setting |
 | The encoder counted the same way whichever way the carriage was driven | The carriage did not reverse, or the direction signal is wrong | Check the drive direction wiring |
-| The steps/mm entered don't match the hardware | One of the two steps/mm values is wrong by more than 2%. The measured line shows the **encoder** steps/mm if servo steps/mm is right, and the **servo** steps/mm if encoder steps/mm is right | Work out which value you trust (usually the one from datasheets) and correct the other |
+| The steps/mm entered don't match the hardware | The counts that came back differ from the expected counts by more than 2%, so one of the two steps/mm values is wrong | Use the **Fix** line: change the value you trust less |
 | Forward and back differ by *n*% | The two directions disagree by more than 2% | Look for slip, backlash or lost pulses |
 
 !!! warning "Encoder steps/mm must equal servo steps/mm in this firmware"

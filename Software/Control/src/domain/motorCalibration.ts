@@ -192,14 +192,6 @@ export interface CalibrationLeg {
   counts: number;
   /** Signed: positive when the encoder moved the way the carriage was driven. */
   countsPerPulse: number;
-  /**
-   * The same measurement in the units the operator typed. One run fixes only
-   * the RATIO of the two values, so each is what the measurement makes it if
-   * the OTHER entered value is right. Signed like countsPerPulse; null when
-   * the encoder did not count.
-   */
-  encoderStepsPerMM: number | null;
-  servoStepsPerMM: number | null;
 }
 
 export interface CalibrationAssessment {
@@ -213,31 +205,22 @@ export interface CalibrationAssessment {
   /** If servo steps/mm is right: what encoder steps/mm the measurement implies. */
   impliedEncoderStepsPerMM: number | null;
   /**
-   * The run's measurement in the units the operator typed: the mean of the two
-   * directions, signed (negative = encoder counts against the motion). Null
-   * when either direction did not count. Each assumes the OTHER entered value
-   * is right, as on CalibrationLeg.
+   * What was actually measured, per direction on average: the pulses sent and
+   * the encoder counts that came back, signed so that a positive count means
+   * the encoder followed the motion. `expectedCounts` is what the entered
+   * steps/mm predict for those pulses. This is the only thing the run
+   * measures; any steps/mm derived from it assumes the other value is right.
    */
-  measuredEncoderStepsPerMM: number | null;
-  measuredServoStepsPerMM: number | null;
+  pulsesSent: number;
+  countsMeasured: number;
+  countsExpected: number;
   findings: CalibrationFinding[];
 }
 
-function leg(pulses: number, counts: number, profile: CalibrationProfile): CalibrationLeg {
+function leg(pulses: number, counts: number): CalibrationLeg {
   // Pulses carry the commanded direction's sign, so a positive ratio means the
   // encoder counted the way the carriage was driven.
-  const countsPerPulse = pulses === 0 ? 0 : counts / pulses;
-  return {
-    pulses,
-    counts,
-    countsPerPulse,
-    encoderStepsPerMM: countsPerPulse === 0 ? null : profile.servoStepsPerMM * countsPerPulse,
-    servoStepsPerMM: countsPerPulse === 0 ? null : profile.encoderStepsPerMM / countsPerPulse,
-  };
-}
-
-function mean(a: number | null, b: number | null): number | null {
-  return a === null || b === null ? null : (a + b) / 2;
+  return { pulses, counts, countsPerPulse: pulses === 0 ? 0 : counts / pulses };
 }
 
 function fmt(n: number, digits = 3): string {
@@ -250,8 +233,8 @@ export function assessCalibration(
   profile: CalibrationProfile,
 ): CalibrationAssessment {
   const expected = profile.encoderStepsPerMM / profile.servoStepsPerMM;
-  const forward = leg(result.pulsesForward, result.countsForward, profile);
-  const reverse = leg(result.pulsesReverse, result.countsReverse, profile);
+  const forward = leg(result.pulsesForward, result.countsForward);
+  const reverse = leg(result.pulsesReverse, result.countsReverse);
   const findings: CalibrationFinding[] = [];
 
   const silentBelow = CALIBRATION_SILENT_FRACTION * expected;
@@ -293,7 +276,7 @@ export function assessCalibration(
       findings.push({
         id: 'ratio-mismatch',
         severity: 'error',
-        message: `The steps/mm entered don't match the hardware (${fmt(Math.abs(error) * 100, 3)}% off). Correct whichever value you trust less: the encoder's counts per revolution and the drive's pulses per revolution tell you which.`,
+        message: `The steps/mm entered don't match the hardware (${fmt(Math.abs(error) * 100, 3)}% off).`,
       });
     }
     const spread = Math.abs(forward.countsPerPulse - reverse.countsPerPulse) / measured;
@@ -329,8 +312,12 @@ export function assessCalibration(
     measuredCountsPerPulse: measured,
     impliedServoStepsPerMM: measured === null ? null : profile.encoderStepsPerMM / measured,
     impliedEncoderStepsPerMM: measured === null ? null : profile.servoStepsPerMM * measured,
-    measuredEncoderStepsPerMM: mean(forward.encoderStepsPerMM, reverse.encoderStepsPerMM),
-    measuredServoStepsPerMM: mean(forward.servoStepsPerMM, reverse.servoStepsPerMM),
+    pulsesSent: (Math.abs(forward.pulses) + Math.abs(reverse.pulses)) / 2,
+    // Each leg's counts signed by its own direction, so both agree in sign
+    // when the encoder follows the motion and a reversed encoder reads negative.
+    countsMeasured:
+      (forward.counts * Math.sign(forward.pulses || 1) + reverse.counts * Math.sign(reverse.pulses || -1)) / 2,
+    countsExpected: ((Math.abs(forward.pulses) + Math.abs(reverse.pulses)) / 2) * expected,
     findings,
   };
 }

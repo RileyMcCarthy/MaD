@@ -1252,11 +1252,11 @@ const scenarios = [
         await page
           .getByText(/Calibration passed/)
           .waitFor({ timeout: DEVICE_WAIT_MS * 4 });
-        // Measured steps/mm against the SIL's 8192/8192 drive and encoder.
-        for (const id of ['measured-encoder', 'measured-servo']) {
-          const v = Number(await page.getByTestId(id).innerText());
-          assert(Math.abs(v / 8192 - 1) < 0.02, `${id} ${v} steps/mm, expected ~8192`);
-        }
+        // The SIL's drive and encoder are both 8192/mm: counts back match the
+        // pulses sent, with the right sign.
+        const measured = Number(await page.getByTestId('measured-counts').innerText());
+        const expected = Number(await page.getByTestId('expected-counts').innerText());
+        assert(expected > 0 && Math.abs(measured / expected - 1) < 0.02, `encoder moved ${measured} counts, expected ~${expected}`);
         assert((await page.locator('.badge.error').count()) === 0, 'the calibration reported an error');
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
       } finally {

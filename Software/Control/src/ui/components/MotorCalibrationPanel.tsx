@@ -35,9 +35,8 @@ type Outcome =
   | { kind: 'measured'; assessment: CalibrationAssessment; profile: CalibrationProfile }
   | { kind: 'failed'; badge: string; message: string };
 
-/** Whole steps/mm, like the fields they sit beside. */
-function stepsPerMM(v: number | null): string {
-  return v === null ? '—' : String(Math.round(v));
+function round(v: number, digits: number): string {
+  return Number(v.toPrecision(digits)).toString();
 }
 
 /**
@@ -146,16 +145,25 @@ function CalibrationResultCard({ outcome }: { outcome: Outcome }) {
         </span>{' '}
         {headline.message}
       </div>
-      <p
-        style={{ margin: '10px 0 0' }}
-        title="One run measures only the ratio of the two values, so each measured value assumes the other one you entered is right. Negative means the encoder counts against the motion."
-      >
-        Measured: encoder{' '}
-        <strong data-testid="measured-encoder">{stepsPerMM(assessment.measuredEncoderStepsPerMM)}</strong>{' '}
-        steps/mm <span className="muted">(entered {profile.encoderStepsPerMM})</span> · servo{' '}
-        <strong data-testid="measured-servo">{stepsPerMM(assessment.measuredServoStepsPerMM)}</strong>{' '}
-        steps/mm <span className="muted">(entered {profile.servoStepsPerMM})</span>
+      <p style={{ margin: '10px 0 0' }}>
+        Sent {Math.round(assessment.pulsesSent)} pulses each way (
+        {round(assessment.pulsesSent / profile.servoStepsPerMM, 3)} mm at {profile.servoStepsPerMM}{' '}
+        servo steps/mm) → encoder moved{' '}
+        <strong data-testid="measured-counts">{Math.round(assessment.countsMeasured)}</strong> counts{' '}
+        <span className="muted">
+          (expected <span data-testid="expected-counts">{Math.round(assessment.countsExpected)}</span>)
+        </span>
       </p>
+      {headline.id === 'ratio-mismatch' &&
+        assessment.impliedServoStepsPerMM !== null &&
+        assessment.impliedEncoderStepsPerMM !== null && (
+          <p style={{ margin: '8px 0 0' }} data-testid="suggested-fix">
+            Fix: if encoder steps/mm ({profile.encoderStepsPerMM}) is right, set servo steps/mm to{' '}
+            <strong>{Math.round(assessment.impliedServoStepsPerMM)}</strong>. If servo steps/mm (
+            {profile.servoStepsPerMM}) is right, set encoder steps/mm to{' '}
+            <strong>{Math.round(assessment.impliedEncoderStepsPerMM)}</strong>.
+          </p>
+        )}
       {rest.length > 0 && (
         <p className="muted" style={{ margin: '8px 0 0' }}>
           {rest.map((f) => f.message).join(' ')}
