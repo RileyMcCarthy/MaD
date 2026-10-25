@@ -27,9 +27,9 @@
 #             Chrome's DevTools port (9222) and grant the port; `make
 #             flash-image sd-image` writes the images they name.
 #   emulator  SERVO-stall's alone (make e2e-stall), since no project has a
-#             jam (MaD #298): `mad-emulator --chrome`, the debug image P2_IMAGE on the
-#             bare chip, the host on P53/P55 (USB 0403:6001), headless. The
-#             e2e only: every playground is a project's.
+#             jam (MaD #298): `mad-emulator --chrome`, the debug image
+#             P2_IMAGE on the bare chip, the host on P53/P55 (USB 0403:6001),
+#             headless. The e2e only: every playground is a project's.
 #
 # Environment: BOARD_ROUTE, EMBSIM (the embsim command; by default the
 # pinned submodule's, through cargo), E2E_PROJECT (mad-cosim.toml, relative

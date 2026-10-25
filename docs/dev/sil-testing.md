@@ -177,7 +177,8 @@ with MaD Control in the host's Chrome held to the board's clock by embsim's
   e2e-motion` (the set from `node e2e/run-all.mjs --list --cannot`, run on
   `mad-ic14-fixed-cosim.toml`; `board-route.sh` exports `E2E_PROJECT`, by
   which the suite skips), per PR G2+G3+H2+I and nightly the whole set.
-  SERVO-stall stays skipped there: no project has a jam yet.
+  SERVO-stall stays skipped there: no project has a jam yet (MaD #298), so
+  `make e2e-stall` runs it on `mad-emulator`.
 
 ### Playground
 
@@ -192,9 +193,10 @@ file's url, the dev server on 5174 (connect on the Connect screen: the port
 is granted). The board's log follows in the terminal, and the run prints
 where Chrome's DevTools are. Ctrl-C stops the board, Chrome and the dev
 server it started. `make playground-rom` does the same on
-`mad-serial-boot-playground.toml`, the window on the app's Firmware page;
-it may not boot what the app sends until FW-ISS runs on the project (MaD
-#284).
+`mad-serial-boot-playground.toml`, the window on the app's Firmware page:
+the app's flasher writes the module's flash through the ROM, as FW-ISS does
+on the headless copy. A RAM load's reply is garbled there until MaD #295 is
+fixed.
 
 ### Running the e2e suite
 
