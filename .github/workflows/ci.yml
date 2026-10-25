@@ -1037,10 +1037,16 @@ jobs:
       # every CI build reported the app_messageSlave.c fallback "0.0.0". PLATFORMIO_BUILD_FLAGS
       # is appended to each env's build_flags (pio parses the \" escapes shell-style).
       # Two images per release:
-      #  - madEdge: the MadEdge PCBA build (propeller2_debug) — protocol on its
-      #    own port (P53/P55), debug log on the Prop Plug port (P62/P63). This
-      #    is the image MaD Control flashes from "latest release".
-      #  - release: one port (P62/P63) carries the protocol, no debug log.
+      #  - release: the production build (propeller2_release). One port, P62/P63
+      #    (the debug header J1), carries the protocol at 2,000,000 baud; no
+      #    debug log. This is the image MaD Control flashes from "latest
+      #    release" (Software/Control/src/firmware/release.ts), and the release
+      #    cannot publish without it.
+      #  - madEdge: the propeller2_debug build. Protocol on P53/P55, debug log
+      #    on P62/P63. Only for a bench that wires P53/P55 to its own adapter:
+      #    the machine's P2-EC32MB uses P40-P57 for its PSRAM and does not bring
+      #    them out, so the Edge's J4/IC2 link never reaches the chip. Flashed
+      #    as a local file when wanted.
       # Each image is copied out right after its build: building the next env
       # has been seen to remove the previous env's output.
       - name: Build Firmware - MadEdge Version
