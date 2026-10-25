@@ -1251,8 +1251,17 @@ const scenarios = [
         await press(run);
         // The report appears once both parts have run: the open-loop check,
         // then the closed-loop tracking program from the SIL's saved profile.
-        await page.getByTestId('suggested-gains').waitFor({ timeout: DEVICE_WAIT_MS * 10 });
-        await page.getByText(/Calibration passed/).waitFor({ timeout: DEVICE_WAIT_MS });
+        const report = page.getByTestId('calibration-result');
+        await report.waitFor({ timeout: DEVICE_WAIT_MS * 10 });
+        // Settle on the finished report (the tracking part fills in last), then
+        // say what it showed if any part is missing.
+        await waitPageTime(page, 500);
+        const reportText = await report.innerText();
+        assert(/Calibration passed/.test(reportText), `the drive and encoder check did not pass: ${reportText}`);
+        assert(
+          (await page.getByTestId('suggested-gains').count()) === 1,
+          `the tracking run did not complete: ${reportText}`,
+        );
         // The SIL's drive and encoder are both 8192/mm: counts back match the
         // pulses sent, with the right sign.
         const measured = Number(await page.getByTestId('measured-counts').innerText());
