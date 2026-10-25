@@ -73,7 +73,7 @@ const FIRMWARE: Bundled = {
   manifest: {
     tag: 'firmware-v0.13',
     version: '0.13',
-    assetName: 'MaD-Firmware-0.13-madEdge.bin',
+    assetName: 'MaD-Firmware-0.13-release.bin',
     size: 4,
     sha256: 'ab'.repeat(32),
     publishedAt: '2026-10-18T06:50:07Z',
