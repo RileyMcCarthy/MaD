@@ -163,7 +163,10 @@ const dev_cogManager_config_S dev_cogManager_config = {
 #else
         DEV_COGMANAGER_CHANNEL_CONFIG_CREATE(MOTOR, 0U),    /* stepper: free-run (IO_pulseOut times it) */
 #endif
-        DEV_COGMANAGER_CHANNEL_CONFIG_CREATE(COMMUNICATION, 100U),
+        /* 1 kHz: the host polls one request at a time, so a request waits for this
+         * cog's next tick. At 100 Hz that wait made live samples arrive 10 or 20 ms
+         * apart (~75 Hz) against a 10 ms poll period. */
+        DEV_COGMANAGER_CHANNEL_CONFIG_CREATE(COMMUNICATION, 1000U),
         DEV_COGMANAGER_CHANNEL_CONFIG_CREATE(CONTROL, 1000U),
         DEV_COGMANAGER_CHANNEL_CONFIG_CREATE(LOGGER, 1000U),
         DEV_COGMANAGER_CHANNEL_CONFIG_CREATE(FORCEGAUGE, 0U),

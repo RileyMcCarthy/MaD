@@ -95,11 +95,15 @@ fn image_path() -> PathBuf {
     p
 }
 
-/// What the logging core's mount said, once it has said it.
+/// What the logging core's mount said, once it has ended the line.
+///
+/// The console fills as the guest hands each byte to its transmit pin, a
+/// frame time apart, so a look can land mid-line: until the line ends, the
+/// result is not all there.
 fn logger_mount(console: &str) -> Option<&str> {
     let at = console.find("LOGGER-cog mount result=")?;
     let rest = &console[at..];
-    Some(rest[..rest.find('\n').unwrap_or(rest.len())].trim_end())
+    Some(rest[..rest.find('\n')?].trim_end())
 }
 
 #[test]
