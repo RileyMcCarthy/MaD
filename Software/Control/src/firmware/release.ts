@@ -50,23 +50,41 @@ export interface FirmwareReleaseManifest {
 }
 
 /**
- * The image to flash from a release: always the MadEdge build, the one made
- * for the MadEdge PCBA (`-madEdge.bin`). Releases from before that name carry
- * the same build as `-debug.bin`. A release without it offers nothing; its
- * single-port `-release.bin` is flashed as a local file when wanted.
+ * Whether a release image is the production build (`-release.bin`). That
+ * build answers the protocol on P62/P63, the debug header J1 the app talks
+ * through. From 0.12 on it does so at 2,000,000 baud, the rate the app
+ * reconnects at after a flash; 0.11's ran at 230,400.
+ */
+export function isProductionImage(assetName: string): boolean {
+  return /-release\.bin$/i.test(assetName);
+}
+
+/**
+ * The image to flash from a release: its production build. A release without
+ * one offers nothing. Its other build (`-madEdge.bin`, `-debug.bin` in
+ * releases before 0.13) puts the protocol on P53/P55, which the machine's
+ * P2-EC32MB module uses for its PSRAM and never brings out, so the app could
+ * not reach the firmware after flashing it. That build, or any other image,
+ * is still flashed as a local file.
  */
 export function pickFirmwareAsset(release: GithubRelease): GithubAsset | null {
-  return (
-    release.assets.find((a) => /-madEdge\.bin$/i.test(a.name)) ??
-    release.assets.find((a) => /-debug\.bin$/i.test(a.name)) ??
-    null
-  );
+  return release.assets.find((a) => isProductionImage(a.name)) ?? null;
+}
+
+/** How the Firmware screen names a release image. */
+export function releaseImageLabel(assetName: string): string {
+  return isProductionImage(assetName) ? 'production build' : assetName;
 }
 
 /**
  * The newest published firmware release that has an image to flash. Drafts
  * and prereleases are never offered: this is the default a user flashes
- * without looking further.
+ * without looking further. Every release from 0.11 on carries a production
+ * build, and the release job cannot publish one without it. The ones passed
+ * over are firmware-v0.1, whose only image is named `program`, and any
+ * release made by hand without one. firmware-v0.11 is offered only if 0.12
+ * and 0.13 are gone; its build runs at 230,400 baud, so the app would not
+ * reach it at the 2,000,000 it reconnects at.
  */
 export function pickFirmwareRelease(
   releases: readonly GithubRelease[],
