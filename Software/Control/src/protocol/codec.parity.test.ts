@@ -17,10 +17,12 @@ const bytes = (b: Uint8Array): number[] => Array.from(b);
 // when the schema/template changes (and update docs/PARITY.md).
 const GOLD = {
   state: [178, 0],
-  sample: [217, 182, 129, 193, 164, 35, 64, 44, 66, 166, 50, 25, 148, 9, 25, 3],
+  // 19 bytes. Grew from 16 when machineCommanded was appended; the first 16
+  // bytes are unchanged (the old vector is a prefix), as an append must be.
+  sample: [217, 182, 129, 193, 164, 35, 64, 44, 66, 166, 50, 25, 148, 9, 25, 3, 187, 229, 99],
   stored: [217, 182, 129, 193, 164, 35, 32, 241, 0, 0, 64, 44, 66, 6],
   // MachineConfiguration (intrinsic load-cell constants) — MaDProtocol.yaml.
-  // 72 bytes: 20 of name, then 13 int32s.
+  // 80 bytes: 20 of name, then 15 int32s.
   //
   // Grew from 68 when restrictedVelocity was appended. The change is purely
   // additive -- the final `2, 0, 0, 0` is that field (int32, scale 1, little
@@ -28,11 +30,12 @@ const GOLD = {
   // encoder) and not one earlier byte moved. That is the property worth
   // checking when this vector changes: an append shifts nothing, so a diff
   // that touches the middle is a reordering and breaks every machine already
-  // in the field.
+  // in the field. servoKp (12.5 /s -> 12500) and servoKi (0) were appended
+  // the same way: the last eight bytes, nothing before them moved.
   config: [
     84, 101, 115, 116, 101, 114, 45, 49, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 200, 0, 0, 0, 144, 1,
     0, 0, 160, 134, 1, 0, 64, 66, 15, 0, 5, 0, 0, 0, 250, 0, 0, 0, 50, 0, 0, 0, 100, 0, 0, 0, 135, 214, 18, 0, 5, 0, 0,
-    0, 2, 0, 0, 0, 3, 0, 0, 0, 2, 0, 0, 0,
+    0, 2, 0, 0, 0, 3, 0, 0, 0, 2, 0, 0, 0, 212, 48, 0, 0, 0, 0, 0, 0,
   ],
   profile: [26, 162, 7, 0, 10, 0, 0, 0, 100, 0, 0, 0, 12, 0, 0, 0, 3, 0, 0, 0],
   move: [65, 225, 51, 224, 46, 0, 100, 0],
@@ -65,13 +68,13 @@ describe('codec golden byte vectors (frozen — guards the wire format)', () => 
       covers: 'src/protocol/generated/protoemb.ts#encodeSample',
       given: 'a live sample of 12.345 N machine force, −50.5 mm position, and a 10 mm setpoint',
       expect: {
-        'sample-bytes': 'the sample encodes to the agreed 16 bytes on the wire',
+        'sample-bytes': 'the sample encodes to the agreed 19 bytes on the wire',
       },
       why: { 'sample-bytes': 'the app and the firmware must speak the same live-sample bytes' },
     },
     () => {
       expect(
-        bytes(nu.encodeSample({ machineForce: 12.345, machinePosition: -50.5, machineSetpoint: 10.0, sampleForce: 3.21, samplePosition: 7.89 })),
+        bytes(nu.encodeSample({ machineForce: 12.345, machinePosition: -50.5, machineSetpoint: 10.0, sampleForce: 3.21, samplePosition: 7.89, machineCommanded: 9.5 })),
       ).toEqual(GOLD.sample);
     },
   );
@@ -97,7 +100,7 @@ describe('codec golden byte vectors (frozen — guards the wire format)', () => 
       covers: 'src/protocol/generated/protoemb.ts#encodeMachineConfiguration',
       given: 'a machine named Tester-1 with its load-cell, travel, and tensile limits',
       expect: {
-        'config-bytes': 'the configuration encodes to the agreed 68 bytes on the wire',
+        'config-bytes': 'the configuration encodes to the agreed 80 bytes on the wire',
       },
       why: { 'config-bytes': 'the app and the firmware must speak the same configuration bytes' },
     },
@@ -119,6 +122,8 @@ describe('codec golden byte vectors (frozen — guards the wire format)', () => 
             homingOffset: 2,
             jawOffset: 3,
             restrictedVelocity: 2,
+            servoKp: 12.5,
+            servoKi: 0,
           }),
         ),
       ).toEqual(GOLD.config);
@@ -256,7 +261,7 @@ describe('round-trip within scale precision', () => {
       },
     },
     () => {
-      const v = { machineForce: 12.345, machinePosition: -50.5, machineSetpoint: 10.0, sampleForce: 3.21, samplePosition: 7.89 };
+      const v = { machineForce: 12.345, machinePosition: -50.5, machineSetpoint: 10.0, sampleForce: 3.21, samplePosition: 7.89, machineCommanded: 9.5 };
       const out = nu.decodeSample(nu.encodeSample(v));
       expect(out.machineForce).toBeCloseTo(v.machineForce, 3);
       expect(out.machinePosition).toBeCloseTo(v.machinePosition, 3);
@@ -308,6 +313,8 @@ describe('round-trip within scale precision', () => {
         homingOffset: 2,
         jawOffset: 3,
         restrictedVelocity: 2,
+        servoKp: 12.5,
+        servoKi: 0,
       };
       const out = nu.decodeMachineConfiguration(nu.encodeMachineConfiguration(v));
       expect(out.name).toBe('Tester-1');
