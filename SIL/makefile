@@ -264,7 +264,8 @@ playground-rom: flash-image sd-image
 # node has no DTR, and J1.3 is unwired in the file. The ROM listens from
 # the START instant for 90 s of board time (600 timeouts of 3 000 000
 # clocks on its 20 MHz RC oscillator), and the probe arrives within a
-# second of it (measured, 0.54 s). The e2e suite's other scenarios need the
+# second of it (measured: the ROM's reply at 0.79-0.95 s of board time). The
+# e2e suite's other scenarios need the
 # firmware's board (make e2e).
 ROM_PROJECT = mad-serial-boot-cosim.toml
 e2e-rom: sd-image

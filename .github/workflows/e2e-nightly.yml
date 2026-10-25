@@ -19,8 +19,10 @@
 # lifecycle with moves, the mid-test drop and SERVO-stall. They run on the
 # board with #285 fixed (make e2e-motion: SIL/mad-ic14-fixed-cosim.toml,
 # mad-cosim.toml with one wire on IC14's ground), where the carriage moves,
-# in three jobs of their own beside the suite's (the matrix below);
-# SERVO-stall stays skipped there, since no project has a jam yet.
+# in three jobs of their own beside the suite's (the matrix below).
+# SERVO-stall stays skipped there, since no project has a jam: it runs
+# per-PR only (ci.yml, `make e2e-stall` on mad-emulator) until MaD #298
+# decides how a project stalls the carriage. The nightly does not run it.
 #
 # Not per-PR because a PR cannot afford it: the ISS runs at a few percent of
 # real time, so the whole suite is an hour or more of host time. ci.yml is

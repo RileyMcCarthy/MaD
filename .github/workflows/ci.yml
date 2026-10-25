@@ -1245,9 +1245,12 @@ jobs:
     # 25 held while the sil suite booted the firmware once (8-11 min a run on
     # #267). With SIL/mad.toml's boot case and the card mount added it ran
     # out at 25 with the sil suite 23.7 min in (run 39404042776), while
-    # sil-rust, the same tests in one cargo run, took 19 min. 45, sized for a
-    # slow shared runner, is what sil-rust had then.
-    timeout-minutes: 45
+    # sil-rust, the same tests in one cargo run, took 19 min. 45 then ran out
+    # too, with the serial-boot and package-receive boots added: the job was
+    # cancelled at 45 min with no report (run 40176421611, after 43.6 min on
+    # run 40155059290). 75 leaves room for one more firmware boot on a slow
+    # shared runner.
+    timeout-minutes: 75
     # The default token is read-only; posting the sticky comment needs this.
     # On a fork PR the token stays read-only regardless, and the post step
     # warns rather than failing — the job summary still carries the report.
