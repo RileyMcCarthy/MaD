@@ -68,16 +68,29 @@ the pulses and rate it will send, and the encoder bound at which it gives up
 (three times the distance the profile expects). The machine allows at most
 200 000 pulses each way and 20 000 pulses/s.
 
+### Reading the result
+
+The run ends with a single result: a **pass**, **warning** or **error** with
+what it means, then one line of numbers in the same units as the fields:
+
+> Measured: encoder 2397 steps/mm (entered 2400) · servo 6408 steps/mm (entered 6400)
+
+When the calibration passes, the measured values match what you entered. A
+single run measures only the ratio of the two values, so each measured value
+assumes the *other* one you entered is right. If they don't match, correct
+whichever value you trust less (usually not the one from datasheets). A
+negative value means the encoder counts against the motion.
+
 ### What the findings mean
 
 | Finding | What it means | What to do |
 |---|---|---|
-| The encoder counts the way the carriage moves, at the rate the profile expects | The two steps/mm values match the hardware (within 2%) | Nothing |
+| Calibration passed | The encoder follows the motor in the right direction, and the two steps/mm values match the hardware (within 2%) | Nothing |
 | The encoder did not count in either direction | No encoder counts at all | Check that the encoder is coupled to the motor, that A and B reach the board, that it shares a ground with the board, and that its outputs have pull-ups |
 | The encoder counted only one way | One channel is missing, or the carriage did not move one way | Check the encoder wiring and that the carriage moves both ways |
 | The encoder counts the opposite way to the motion | The encoder is reversed relative to the drive. The servo loop would run away as wired | Swap encoder A and B, or reverse the drive's direction setting |
 | The encoder counted the same way whichever way the carriage was driven | The carriage did not reverse, or the direction signal is wrong | Check the drive direction wiring |
-| Measured *x* counts per pulse; the profile implies *y* | One of the two steps/mm values is wrong. The report shows both implied values: the **servo** steps/mm if encoder steps/mm is right, and the **encoder** steps/mm if servo steps/mm is right | Work out which value you trust and correct the other |
+| The steps/mm entered don't match the hardware | One of the two steps/mm values is wrong by more than 2%. The measured line shows the **encoder** steps/mm if servo steps/mm is right, and the **servo** steps/mm if encoder steps/mm is right | Work out which value you trust (usually the one from datasheets) and correct the other |
 | Forward and back differ by *n*% | The two directions disagree by more than 2% | Look for slip, backlash or lost pulses |
 
 !!! warning "Encoder steps/mm must equal servo steps/mm in this firmware"

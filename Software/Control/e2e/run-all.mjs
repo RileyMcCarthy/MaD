@@ -1250,15 +1250,13 @@ const scenarios = [
         }
         await press(run);
         await page
-          .getByText('The encoder counts the way the carriage moves, at the rate the profile expects.')
+          .getByText(/Calibration passed/)
           .waitFor({ timeout: DEVICE_WAIT_MS * 4 });
-        const cells = async (direction) =>
-          page.locator('tr', { has: page.getByRole('cell', { name: direction, exact: true }) }).locator('td').allInnerTexts();
-        const fwd = await cells('Forward');
-        const back = await cells('Back');
-        assert(Number(fwd[1]) > 0 && Number(back[1]) < 0, `pulses not signed by direction: ${fwd[1]} / ${back[1]}`);
-        assert(Math.abs(Number(fwd[3]) - 1) < 0.02, `forward counts/pulse ${fwd[3]}, expected ~1`);
-        assert(Math.abs(Number(back[3]) - 1) < 0.02, `back counts/pulse ${back[3]}, expected ~1`);
+        // Measured steps/mm against the SIL's 8192/8192 drive and encoder.
+        for (const id of ['measured-encoder', 'measured-servo']) {
+          const v = Number(await page.getByTestId(id).innerText());
+          assert(Math.abs(v / 8192 - 1) < 0.02, `${id} ${v} steps/mm, expected ~8192`);
+        }
         assert((await page.locator('.badge.error').count()) === 0, 'the calibration reported an error');
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
       } finally {

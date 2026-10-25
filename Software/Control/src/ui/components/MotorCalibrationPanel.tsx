@@ -11,8 +11,8 @@ import {
   runCalibration,
   type CalibrationAssessment,
   type CalibrationFinding,
+  type CalibrationOutcome,
   type CalibrationProfile,
-  type CalibrationResult,
 } from '@/domain/motorCalibration';
 
 const SEVERITY_CLASS: Record<CalibrationFinding['severity'], string> = {
@@ -21,34 +21,46 @@ const SEVERITY_CLASS: Record<CalibrationFinding['severity'], string> = {
   error: 'error',
 };
 
-function fmt(n: number, digits = 4): string {
-  return Number(n.toPrecision(digits)).toString();
+const SEVERITY_RANK: Record<CalibrationFinding['severity'], number> = { error: 0, warning: 1, ok: 2 };
+
+/** What the button says while the machine works. */
+const BUTTON_PROGRESS: Partial<Record<CalibrationOutcome, string>> = {
+  starting: 'Starting…',
+  forward: 'Driving forward…',
+  reverse: 'Driving back…',
+};
+
+/** What the single result line shows. */
+type Outcome =
+  | { kind: 'measured'; assessment: CalibrationAssessment; profile: CalibrationProfile }
+  | { kind: 'failed'; badge: string; message: string };
+
+/** Whole steps/mm, like the fields they sit beside. */
+function stepsPerMM(v: number | null): string {
+  return v === null ? '—' : String(Math.round(v));
 }
 
 /**
- * Open-loop check of the drive/encoder pair against the steps/mm being
- * edited above. Report only: it never changes the profile.
+ * Open-loop check of the drive/encoder pair against the steps/mm being edited
+ * above. Report only: it never changes the profile. One result, one line of
+ * numbers, and what to do about it.
  */
 export default function MotorCalibrationPanel({ profile }: { profile: CalibrationProfile }) {
   const motionEnabled = useStore((s) => s.machineState?.motionEnabled ?? false);
   const [distanceMm, setDistanceMm] = useState(CALIBRATION_DEFAULT_DISTANCE_MM);
   const [speedMmPerS, setSpeedMmPerS] = useState(CALIBRATION_DEFAULT_SPEED_MM_S);
-  const [running, setRunning] = useState(false);
-  const [progress, setProgress] = useState<CalibrationResult | null>(null);
-  const [assessment, setAssessment] = useState<CalibrationAssessment | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [progress, setProgress] = useState<CalibrationOutcome | null>(null);
+  const [outcome, setOutcome] = useState<Outcome | null>(null);
 
+  const running = progress !== null;
   const plan = planCalibration({ ...profile, distanceMm, speedMmPerS });
 
   const onRun = async () => {
     if (!plan.ok) return;
-    // The profile the run was planned from, frozen: editing the fields while
-    // it runs must not change what the result is judged against.
+    // Frozen: editing the fields while it runs must not relabel the result.
     const judgedAgainst = { ...profile };
-    setRunning(true);
-    setError(null);
-    setAssessment(null);
-    setProgress(null);
+    setOutcome(null);
+    setProgress('starting');
     try {
       const run = await runCalibration(
         {
@@ -58,104 +70,97 @@ export default function MotorCalibrationPanel({ profile }: { profile: Calibratio
           now: () => Date.now(),
         },
         plan.request,
-        setProgress,
+        (r) => setProgress(r.outcome),
       );
       if (!run.ok) {
-        setError(run.reason);
+        setOutcome({ kind: 'failed', badge: 'error', message: run.reason });
       } else if (run.result.outcome === 'done') {
-        setAssessment(assessCalibration(run.result, judgedAgainst));
+        setOutcome({
+          kind: 'measured',
+          assessment: assessCalibration(run.result, judgedAgainst),
+          profile: judgedAgainst,
+        });
+      } else {
+        const refused = run.result.outcome.startsWith('refused');
+        setOutcome({
+          kind: 'failed',
+          badge: refused ? 'not run' : 'stopped',
+          message: OUTCOME_TEXT[run.result.outcome],
+        });
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setOutcome({ kind: 'failed', badge: 'error', message: err instanceof Error ? err.message : String(err) });
     } finally {
-      setRunning(false);
+      setProgress(null);
     }
   };
+
+  const hint = !motionEnabled ? 'Enable motion to run it.' : !plan.ok ? plan.reason : null;
 
   return (
     <div style={{ marginTop: 24 }}>
       <h3>Motor calibration</h3>
       <p className="muted">
-        Drives the carriage open loop (servo loop off) a short distance forward and back, and checks
-        how far the encoder moved against the encoder and servo steps/mm above. Nothing is changed:
-        the results tell you what to fix. Enable motion and keep the carriage clear of the end
-        stops.
+        Moves the carriage a short way forward and back with the servo loop off, and checks the
+        encoder and servo steps/mm above against the hardware. Nothing is saved.
       </p>
 
-      <div className="row" style={{ marginBottom: 12, alignItems: 'flex-end' }}>
+      <div className="row" style={{ alignItems: 'flex-end' }}>
         <NumberField label="Distance each way (mm)" value={distanceMm} min={0} onChange={setDistanceMm} />
         <NumberField label="Speed (mm/s)" value={speedMmPerS} min={0} onChange={setSpeedMmPerS} />
         <button className="primary" onClick={onRun} disabled={running || !plan.ok || !motionEnabled}>
-          {running ? 'Running…' : 'Run calibration'}
+          {running ? (BUTTON_PROGRESS[progress] ?? 'Running…') : 'Run calibration'}
         </button>
       </div>
+      {hint && !running && <p className="muted">{hint}</p>}
 
-      {!motionEnabled && <p className="muted">Enable motion to run the calibration.</p>}
-      {!plan.ok && <p className="muted">{plan.reason}</p>}
-      {plan.ok && (
-        <p className="muted">
-          {plan.request.pulses} pulses each way at {plan.request.frequency} pulses/s; stops if the
-          encoder moves more than {plan.request.maxCounts} counts.
-        </p>
-      )}
-
-      {progress && !assessment && <p>{OUTCOME_TEXT[progress.outcome]}</p>}
-      {error && <p className="badge error">{error}</p>}
-
-      {assessment && <CalibrationReport assessment={assessment} />}
+      {outcome && <CalibrationResultCard outcome={outcome} />}
     </div>
   );
 }
 
-function CalibrationReport({ assessment }: { assessment: CalibrationAssessment }) {
-  const rows = [
-    { name: 'Forward', leg: assessment.forward },
-    { name: 'Back', leg: assessment.reverse },
-  ];
+function CalibrationResultCard({ outcome }: { outcome: Outcome }) {
+  const cardStyle = { marginTop: 14, padding: 14, background: 'var(--panel-2)', borderRadius: 8 };
+  if (outcome.kind === 'failed') {
+    return (
+      <div style={cardStyle} data-testid="calibration-result">
+        <span className="badge error">{outcome.badge}</span> {outcome.message}
+      </div>
+    );
+  }
+  const { assessment, profile } = outcome;
+  // The headline is the worst thing the MEASUREMENT found. The firmware's
+  // equal-values caveat is about the profile, not this run, so it is only ever
+  // the note underneath, along with anything else.
+  const caveat = (f: CalibrationFinding) => f.id === 'loop-needs-one-to-one';
+  const byWorst = [...assessment.findings].sort(
+    (a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity],
+  );
+  const headline = byWorst.find((f) => !caveat(f)) ?? byWorst[0];
+  const rest = byWorst.filter((f) => f !== headline);
   return (
-    <>
-      <table>
-        <thead>
-          <tr>
-            <th>Direction</th>
-            <th>Pulses sent</th>
-            <th>Encoder counts</th>
-            <th>Counts per pulse</th>
-            <th>Profile expects</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map(({ name, leg }) => (
-            <tr key={name}>
-              <td>{name}</td>
-              <td>{leg.pulses}</td>
-              <td>{leg.counts}</td>
-              <td>{fmt(leg.countsPerPulse)}</td>
-              <td>{fmt(assessment.expectedCountsPerPulse)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-
-      <ul style={{ listStyle: 'none', padding: 0 }}>
-        {assessment.findings.map((f) => (
-          <li key={f.id} style={{ margin: '8px 0' }}>
-            <span className={`badge ${SEVERITY_CLASS[f.severity]}`}>{f.severity}</span> {f.message}
-          </li>
-        ))}
-      </ul>
-
-      {assessment.findings.some((f) => f.id === 'ratio-mismatch') &&
-        assessment.impliedServoStepsPerMM !== null &&
-        assessment.impliedEncoderStepsPerMM !== null && (
-          <p className="muted">
-            If encoder steps/mm is right, servo steps/mm should be about{' '}
-            <strong>{fmt(assessment.impliedServoStepsPerMM, 5)}</strong>. If servo steps/mm is
-            right, encoder steps/mm should be about{' '}
-            <strong>{fmt(assessment.impliedEncoderStepsPerMM, 5)}</strong>. Check the encoder's
-            counts per revolution and the drive's pulses per revolution to tell which.
-          </p>
-        )}
-    </>
+    <div style={cardStyle} data-testid="calibration-result">
+      <div>
+        <span className={`badge ${SEVERITY_CLASS[headline.severity]}`}>
+          {headline.severity === 'ok' ? 'pass' : headline.severity}
+        </span>{' '}
+        {headline.message}
+      </div>
+      <p
+        style={{ margin: '10px 0 0' }}
+        title="One run measures only the ratio of the two values, so each measured value assumes the other one you entered is right. Negative means the encoder counts against the motion."
+      >
+        Measured: encoder{' '}
+        <strong data-testid="measured-encoder">{stepsPerMM(assessment.measuredEncoderStepsPerMM)}</strong>{' '}
+        steps/mm <span className="muted">(entered {profile.encoderStepsPerMM})</span> · servo{' '}
+        <strong data-testid="measured-servo">{stepsPerMM(assessment.measuredServoStepsPerMM)}</strong>{' '}
+        steps/mm <span className="muted">(entered {profile.servoStepsPerMM})</span>
+      </p>
+      {rest.length > 0 && (
+        <p className="muted" style={{ margin: '8px 0 0' }}>
+          {rest.map((f) => f.message).join(' ')}
+        </p>
+      )}
+    </div>
   );
 }

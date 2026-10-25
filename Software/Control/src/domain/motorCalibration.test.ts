@@ -109,6 +109,7 @@ describe('motor calibration assessment', () => {
         'mismatch-reported': 'a mismatch between the measured and expected counts per pulse is reported as an error',
         'servo-implied': 'taking encoder steps/mm as right, the servo steps/mm the measurement implies is 6400',
         'encoder-implied': 'taking servo steps/mm as right, the encoder steps/mm the measurement implies is 900',
+        'how-far-off': 'the mismatch says how far off, in percent, the entered values are',
       },
       why: {
         'servo-implied':
@@ -120,6 +121,41 @@ describe('motor calibration assessment', () => {
       expect(a.findings.find((f) => f.id === 'ratio-mismatch')?.severity).toBe('error');
       expect(a.impliedServoStepsPerMM).toBeCloseTo(6400, 6);
       expect(a.impliedEncoderStepsPerMM).toBeCloseTo(900, 6);
+      const msg = a.findings.find((f) => f.id === 'ratio-mismatch')?.message ?? '';
+      expect(msg).toContain('62.5% off');
+    },
+  );
+
+  behaviour(
+    {
+      id: 'motorcal.legs-in-steps-per-mm',
+      covers: 'src/domain/motorCalibration.ts#assessCalibration',
+      given: 'a run on a 2400 counts per revolution encoder and a 6400 pulses per revolution drive, with 2400 and 6400 steps/mm entered',
+      expect: {
+        'encoder-per-leg': 'each direction reports the encoder steps/mm it measured, taking the entered servo steps/mm as right',
+        'servo-per-leg': 'each direction reports the servo steps/mm it measured, taking the entered encoder steps/mm as right',
+        'reversed-negative': 'an encoder counting against the motion gives negative steps/mm',
+        'silent-blank': 'a direction in which the encoder did not count reports no steps/mm',
+        'overall-mean': 'the run as a whole reports the mean of the two directions, in steps/mm',
+      },
+      why: { 'encoder-per-leg': 'the operator compares the measurement against the numbers they typed, in the same units' },
+    },
+    () => {
+      const profile = { encoderStepsPerMM: 2400, servoStepsPerMM: 6400 };
+      const a = assessCalibration(done(6400, 2400 / 6400), profile);
+      expect(a.forward.encoderStepsPerMM).toBeCloseTo(2400, 6);
+      expect(a.reverse.encoderStepsPerMM).toBeCloseTo(2400, 6);
+      expect(a.forward.servoStepsPerMM).toBeCloseTo(6400, 6);
+      expect(a.reverse.servoStepsPerMM).toBeCloseTo(6400, 6);
+      const reversed = assessCalibration(done(6400, -2400 / 6400), profile);
+      expect(reversed.forward.encoderStepsPerMM).toBeCloseTo(-2400, 6);
+      expect(reversed.forward.servoStepsPerMM).toBeCloseTo(-6400, 6);
+      const uneven = assessCalibration(done(6400, 2400 / 6400, 2000 / 6400), profile);
+      expect(uneven.measuredEncoderStepsPerMM).toBeCloseTo(2200, 6);
+      const silent = assessCalibration(done(6400, 0), profile);
+      expect(silent.forward.encoderStepsPerMM).toBeNull();
+      expect(silent.forward.servoStepsPerMM).toBeNull();
+      expect(silent.measuredServoStepsPerMM).toBeNull();
     },
   );
 
