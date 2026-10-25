@@ -103,8 +103,12 @@ fn a_run_across_a_slower_clock_stops_at_the_instant_asked_for() {
     behaviour!(Test {
         id: "p2.rom-boot-step-across-clock-change",
         covers: Some("SIL/p2core/src/lib.rs#step_until"),
-        given: "a chip booted from the ROM that selects its 20 kHz slow oscillator and then spins idle, run to one second of board time in a single pass",
+        given: "a chip booted from the ROM that selects its 20 kHz slow oscillator and then spins idle, run to one second of board time",
     });
+    expect!(
+        "pauses-at-switch",
+        "the run pauses at the instant the clock is switched, so pin traffic after it is stamped at the new rate"
+    );
     expect!(
         "stops-on-time",
         "the run ends one second into board time, 20 thousand clocks of the slow oscillator after the switch"
@@ -113,9 +117,19 @@ fn a_run_across_a_slower_clock_stops_at_the_instant_asked_for() {
     let program: Vec<u32> = [hubset(1).as_slice(), &[JMP_HERE]].concat();
     let mut m = Machine::with_boot_rom(&rom(&program), NullPins);
 
-    m.step_until(1_000_000).expect("the spin never traps");
-
+    // The pass ends after the clock word, at its instant on the old clock:
+    // 4 clocks of RCFAST.
+    m.step_until(1_000_000).expect("the clock word runs");
     assert_eq!(m.clock_hz(), RCSLOW_HZ);
+    assert_eq!(m.system_clocks(), 4, "the pass ran past the switch");
+
+    // As a host does: step again until the deadline is reached.
+    for _ in 0..8 {
+        if m.now_us() >= 1_000_000 {
+            break;
+        }
+        m.step_until(1_000_000).expect("the spin never traps");
+    }
     assert_eq!(m.now_us(), 1_000_000, "clocks {}", m.system_clocks());
     assert!(
         m.system_clocks() <= 4 + 20_000 + 2,
