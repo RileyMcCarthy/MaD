@@ -17,7 +17,7 @@
  * ISS there instead, refuses to run: the ISS behind the bridge is not a valid
  * SIL configuration (the browser runs at host speed, so its waits measure the
  * host). So this script has no valid backend until it moves onto the host the
- * board's clock meters, embsim's `chrome-cdp` (`mad-emulator --chrome`), as
+ * board's clock meters, embsim's `chrome-cdp` (`embsim run mad-cosim.toml`), as
  * the board-touching e2e scenarios have (`cd SIL && make e2e`); the app on the
  * board, for a person, is `cd SIL && make playground`.
  *

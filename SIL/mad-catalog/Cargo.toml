@@ -36,6 +36,6 @@ rstest.workspace = true
 # (`make protocol` writes it).
 protocol = { path = "../../Protocol/rust" }
 protoemb-framing = { path = "../../Protocol/ProtoEmb/framing" }
-# tests/projects.rs compares MaD's four project files entry by entry.
+# tests/projects.rs compares MaD's seven project files entry by entry.
 toml = "1.1"
 vibes-behaviour = { path = "../../Vibes/bindings/rust" }

@@ -61,8 +61,8 @@ pub struct ChromeArgs {
     #[arg(long, value_name = "PATH", requires = "chrome")]
     pub chrome_binary: Option<PathBuf>,
 
-    /// With `--chrome`: a page to open once Chrome holds it (the playground
-    /// opens the app).
+    /// With `--chrome`: a page to open once Chrome holds it (a window on the
+    /// app, for a person).
     #[arg(long, value_name = "URL", requires = "chrome")]
     pub url: Option<String>,
 

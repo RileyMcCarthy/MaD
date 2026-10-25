@@ -301,7 +301,9 @@ and reads every one; no pin list says what a pin is:
   instant or the guest's present, whichever is later, and no closer to an
   unread byte before it than the wire put them (`package.rs`, "Receive"), so
   an overwritten byte is the firmware's own read gap
-  (`p2iss/tests/package_rx_overrun.rs`); a `P_TRANSITION` or
+  (`p2iss/tests/package_rx_overrun.rs`); a pad made a receive pin before its
+  rate is written holds its line's transitions for the deframer the rate
+  gives it; a `P_TRANSITION` or
   `P_NCO_FREQ` pad is a step train (`p2iss::pulse`), and a `WRPIN` to any
   other mode banks its count and hands the pad back to the word, so
   `_pinclear` releases it and the firmware's software step pulses
@@ -331,8 +333,14 @@ Known gaps, written up for embsim and the serial-boot step: the pads ignore
 `P_INVERT_OUTPUT` in a logic-mode word (`BankSupplies::pad_drive` reads only
 the drive fields; QEMU's core has the same gap), so the 15 kΩ pull-up
 flexspin's `sdmm.cc` sets on the card's data-out pin `P58` (`OUT` low,
-inverted) presents as a pull-down; `TESTP` on `P0`/`P1` reads "a byte waits
-on `P63`" for the ROM's autobaud, a shortcut no net or mode word gives; and
+inverted) presents as a pull-down; `TESTP` on `P0`/`P1` reads high once
+`P63` has carried anything since it became a receive pin (a byte waiting,
+or, before the guest has given `P63` a bit period, its line moving, held
+for the deframer that bit period gives it) for the ROM's autobaud, a
+shortcut no net or mode word gives, with `RDPIN` on them `p2core::Board`'s
+fixed 2 000 000 baud measurement; a receive pin takes bytes whatever its
+`DIR`, where silicon's starts at the ROM's `dirh` after the autobaud `>`
+(the ROM drops each `>` and its parser scrolls past the rest); and
 stage-1's relaunch (`setq #$FF` / `rdlong 0, #0` / `jmp #0` at cog `$019`)
 works on the ISS only because the reloaded `$019` happens to be harmless:
 `p2core` executes the reloaded long where silicon runs the `jmp #0` it had
@@ -351,7 +359,8 @@ a tick of the 20 MHz RC clock from START, 100 ns apart at the closest; a step
 train's pin released by `_pinclear` and then driven as a plain pin; and the
 sync-serial clock's transitions half its period apart from the `WYPIN`, the
 pad released once the pin is cleared. `P2Iss` keeps its `Component` impl and
-pin lists until `mad-emulator` retires (step 11).
+pin lists while `mad-emulator` still runs SERVO-stall, the one scenario no
+project can run (MaD #298); they go when it retires (step 11).
 
 `p2iss/tests/ec32mb_sd_mount.rs`, stepped, is the same module with the card
 `make sd-image` writes in `J301`: the firmware's boot-time mount and its
@@ -798,7 +807,9 @@ and a failure it reports (a grant that sticks, a page that crashes, a Chrome
 that exits) stops the run with a non-zero exit. The run prints Chrome's
 DevTools URL in its "reached" line; a suite attaches there
 ([SIL testing](sil-testing.md#the-board-route-the-app-in-chrome-on-the-boards-clock)).
-The playgrounds keep this route until embsim `MIGRATING-MAD.md` step 11.
+Only SERVO-stall keeps this route (`make e2e-stall`, per PR), because it
+jams the carriage and no project has a jam (MaD #298); FW-ISS and the
+playgrounds moved onto the project at embsim `MIGRATING-MAD.md` step 11.
 
 The e2e runs on the machine's project instead (step 10): `make e2e-emulator`
 is `embsim run mad-cosim.toml`, whose `HOST` is the same kind on the
@@ -818,15 +829,19 @@ a run, measured). The carriage never moves there:
 `0 steps commanded`, and the firmware latches `SERVO_STALL` at the first
 move it commands (measured, G2+G3+H2+I), so the suite skips each scenario
 that moves the carriage, saying why (`run-all.mjs`, `PROJECT_CANNOT`).
-Until `IC14` is settled those run on this route instead (`make
-e2e-motion`), per PR G2+G3+H2+I and nightly the whole set.
+Those run on the board with MaD #285 fixed instead (`make e2e-motion`:
+`mad-ic14-fixed-cosim.toml`, `mad-cosim.toml` with one wire from `IC14`'s
+pin 9 to `EN_GND`), per PR G2+G3+H2+I and nightly the whole set; the
+suite skips SERVO-stall there, since the project's machine has no jam, and
+runs it on `mad-emulator` (`make e2e-stall`).
 
 | Target | Host |
 |---|---|
-| `make playground`, `playground-iss` | `mad-emulator`: Chrome, a window on the app |
-| `make playground-rom` | `mad-emulator`: Chrome, a window on the app's flasher, on the programming UART (`P62`/`P63`, USB `0403:6015`) |
+| `make playground`, `playground-iss` | `mad-playground.toml` (#285 fixed): Chrome, a window on the app, on `J1` (USB `0403:6015`), DevTools on 9222 |
+| `make playground-rom` | `mad-serial-boot-playground.toml`: Chrome, a window on the app's flasher, the ROM's serial boot on `J1` (USB `0403:6015`) |
 | `make e2e-emulator`, `make e2e`, `make e2e-bundle` | `mad-cosim.toml`: Chrome, headless, on `J1` (USB `0403:6015`), DevTools on 9222 |
-| `make e2e-rom` | `mad-emulator`: Chrome, headless, the mask ROM on the programming UART (USB `0403:6015`), for FW-ISS |
-| `make e2e-motion` | `mad-emulator`: Chrome, headless, DevTools on 9222, for what the project cannot run |
-| `make playground-pty` | `mad-emulator`: a PTY at `/tmp/tty.iss`, for a serial console |
+| `make e2e-rom` | `mad-serial-boot-cosim.toml`: Chrome, headless, on `J1` (USB `0403:6015`), the mask ROM's serial boot, for FW-ISS |
+| `make e2e-motion` | `mad-ic14-fixed-cosim.toml` (#285 fixed): Chrome, headless, on `J1`, DevTools on 9222, for what the project as drawn cannot run |
+| `make e2e-stall` | `mad-emulator`: Chrome, headless, the debug image's host on `P53`/`P55` (USB `0403:6001`), for SERVO-stall alone (its jam) |
+| `make playground-pty` | `mad.toml`: a PTY on `J1` at `/tmp/tty.iss`, for a serial console |
 | `embsim run mad.toml --pty PATH` | `mad.toml`: a PTY on `J1` (`mad-catalog/tests/pty_protocol.rs`) |

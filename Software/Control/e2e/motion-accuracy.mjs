@@ -13,12 +13,12 @@
  *     so a short move never tightens below the prior bound. A wrong rate
  *     still fails: it grows with travel and misses the 1 µm arrival.
  *
- * Encoder-while-moving is a different claim. The SIL plant (SERVO_LOAD_LOSS and
- * SERVO_TAU_S in MaDSim/src/wiring.rs) is a first-order lag, not a pure delay:
- * a sine's amplitude droops, and accel corners leave a residual a delay cannot
- * absorb. Firmware unit tests prove encoder tracking against an ideal plant.
- * Here, encoder follow is asserted only on linear cruise after the lag has
- * settled into a delay.
+ * Encoder-while-moving is a different claim. The SIL plant (DEFAULT_TAU_S and
+ * DEFAULT_LOAD_LOSS in SIL/embsim/models/src/machine/stepper_motor.rs) is a
+ * first-order lag, not a pure delay: a sine's amplitude droops, and accel
+ * corners leave a residual a delay cannot absorb. Firmware unit tests prove
+ * encoder tracking against an ideal plant. Here, encoder follow is asserted
+ * only on linear cruise after the lag has settled into a delay.
  */
 
 export const CONTRACT_UM = 1;

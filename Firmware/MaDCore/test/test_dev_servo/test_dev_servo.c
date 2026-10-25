@@ -144,9 +144,19 @@ void HAL_pulseOut_setFrequency(HAL_pulseOut_channel_E channel, uint32_t frequenc
 static uint32_t d_gpioCount;
 static HAL_GPIO_channel_E d_gpioChannel;
 static bool d_gpioActive;
+/* The drive-enable output is tracked on its own, so the direction capture
+ * above (and any carriage model that reads it) sees direction writes only. */
+static uint32_t d_enaCount;
+static bool d_enaActive;
 
 void HAL_GPIO_setActive(HAL_GPIO_channel_E channel, bool active)
 {
+    if (channel == HAL_GPIO_SERVO_ENA)
+    {
+        d_enaCount++;
+        d_enaActive = active;
+        return;
+    }
     d_gpioCount++;
     d_gpioChannel = channel;
     d_gpioActive = active;
@@ -178,6 +188,8 @@ static void doubles_reset(void)
     d_gpioCount = 0U;
     d_gpioChannel = HAL_GPIO_COUNT;
     d_gpioActive = false;
+    d_enaCount = 0U;
+    d_enaActive = false;
     d_midTickHook = NULL;
     d_carriage = 0.0;
     global_timeus = 0U;
@@ -294,7 +306,12 @@ void test_dev_servo_initialStateDisabledAtTarget(void)
     VIBES_EXPECT("arrival-at-encoder", "the drive reports arrival at the encoder position");
     VIBES_EXPECT("no-stall", "no stall is reported");
     VIBES_EXPECT("at-rest", "the commanded speed and the following error are zero");
+    VIBES_EXPECT_WHY("enable-output-off",
+                     "the drive's enable output is already driven off, before the first control tick",
+                     "an undriven enable pin floats, and the isolator to the drive turns a floating input into enabled");
     servo_init();
+    TEST_ASSERT_EQUAL_UINT32(1U, d_enaCount);
+    TEST_ASSERT_FALSE(d_enaActive);
     TEST_ASSERT_TRUE(dev_servo_atTarget(CH));
     TEST_ASSERT_FALSE(dev_servo_isStalled(CH));
     TEST_ASSERT_EQUAL_INT32(0, dev_servo_getPosition(CH));
@@ -414,6 +431,7 @@ void test_dev_servo_stopRequestsZeroVelocityTarget(void)
                "src/DEV/dev_servo.c#dev_servo_stop",
                "an enabled motor drive holding a non-zero speed, then a stop, with the encoder free to follow");
     VIBES_EXPECT("holds-zero-speed", "the drive holds a speed of zero");
+    VIBES_EXPECT("drive-stays-enabled", "the drive's enable output stays on while it holds at rest");
     VIBES_EXPECT_WHY("winds-down-to-rest",
                      "the commanded speed winds down to rest",
                      "stopping is a speed hold at rest, so the carriage decelerates under the same accel limit as any other speed change");
@@ -445,6 +463,54 @@ void test_dev_servo_stopRequestsZeroVelocityTarget(void)
         tick();
     }
     TEST_ASSERT_EQUAL_INT32(0, dev_servo_getVelocity(CH));
+    TEST_ASSERT_TRUE(d_enaActive);
+}
+
+void test_dev_servo_enableTurnsEnableOutputOn(void)
+{
+    VIBES_TEST("servo.enable-drives-output-on",
+               "src/DEV/dev_servo.c#dev_servo_run",
+               "a motor drive that is enabled, then several control ticks with the request unchanged");
+    VIBES_EXPECT("output-on", "the drive's enable output turns on at the first control tick");
+    VIBES_EXPECT_WHY("written-once",
+                     "the enable output is written once, on the change, and left alone while the request holds",
+                     "one cog owns the pin and touches it only when its level must change");
+    servo_init();
+    const uint32_t writesAtInit = d_enaCount;
+    dev_servo_enable(CH, true);
+    tick();
+    TEST_ASSERT_TRUE(d_enaActive);
+    for (int i = 0; i < 20; i++)
+    {
+        tick();
+    }
+    TEST_ASSERT_TRUE(d_enaActive);
+    TEST_ASSERT_EQUAL_UINT32(writesAtInit + 1U, d_enaCount);
+}
+
+void test_dev_servo_disableTurnsEnableOutputOff(void)
+{
+    VIBES_TEST("servo.disable-drives-output-off",
+               "src/DEV/dev_servo.c#dev_servo_run",
+               "an enabled motor drive holding a non-zero speed, then disabled for one control tick");
+    VIBES_EXPECT("pulses-stop", "the pulse train stops");
+    VIBES_EXPECT_WHY("output-off",
+                     "the drive's enable output turns off",
+                     "a fault, an emergency stop and a request to disable motion all reach the drive this way");
+    servo_init();
+    dev_servo_enable(CH, true);
+    dev_servo_setVelocity(CH, 8000);
+    for (int i = 0; i < 10; i++)
+    {
+        tick();
+    }
+    TEST_ASSERT_TRUE(d_enaActive);
+    TEST_ASSERT_TRUE(d_startVelocityCount > 0U);
+    const uint32_t stopsBefore = d_stopCount;
+    dev_servo_enable(CH, false);
+    tick();
+    TEST_ASSERT_EQUAL_UINT32(stopsBefore + 1U, d_stopCount);
+    TEST_ASSERT_FALSE(d_enaActive);
 }
 
 void test_dev_servo_setPositionUpdatesEncoderAndTarget(void)
@@ -2132,6 +2198,8 @@ int main(void)
 {
     UNITY_BEGIN();
     RUN_TEST(test_dev_servo_initialStateDisabledAtTarget);
+    RUN_TEST(test_dev_servo_enableTurnsEnableOutputOn);
+    RUN_TEST(test_dev_servo_disableTurnsEnableOutputOff);
     RUN_TEST(test_dev_servo_disabledParksAndReportsEncoder);
     RUN_TEST(test_dev_servo_moveToStagesTarget);
     RUN_TEST(test_dev_servo_moveToInvalidFeedrateUsesMax);

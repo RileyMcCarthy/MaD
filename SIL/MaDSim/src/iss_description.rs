@@ -88,13 +88,10 @@ pub const INPUT_PINS: &[u8] = &[
 /// backwards boots the machine with all three ESD lines asserted, which the
 /// native backend cannot reproduce and hardware would show immediately.
 pub const IDLE_PULLS: &[(u8, Level)] = &[
-    // The drive's enable. The firmware declares the line
-    // (`HAL_GPIO_SERVO_ENA`) and never writes it, on purpose: the enable is
-    // an open collector biased to its active level on the drive, so a P2 that
-    // leaves it alone leaves the drive enabled. Without this pull the net
-    // floats, the model reads "no level" as *not enabled*, and every step
-    // edge is discarded — the step pin pulses, the carriage never moves, and
-    // a closed-loop move runs forever chasing it.
+    // The drive's enable, active high (energized = enabled). The firmware
+    // drives it from the servo loop (`HAL_GPIO_SERVO_ENA`, low until motion
+    // is enabled); the pull defines the net as disabled before the firmware's
+    // first write, as the drive reads an undriven enable.
     (pins::SERVO_ENA, Level::Low),
     // activeLow = false: inactive is low.
     (pins::SERVO_RDY, Level::Low),
@@ -445,18 +442,13 @@ impl BenchMachine {
     /// `STEPS_PER_MM`. The firmware has to be told the same pair in its
     /// machine profile, or it pulses the drive at the wrong rate.
     pub fn build(motor_steps_per_mm: u32) -> Result<Self, Box<dyn std::error::Error>> {
-        // The drive's own conventions, not the model's defaults. This machine
-        // states them on the driver: DIR high = reverse, and the enable is an
-        // open collector, so ENA low = enabled (the same pair
-        // `board/tests/carriage_seam.rs` declares for this firmware). With the
-        // defaults (DIR high = forward, ENA high = enabled) the firmware's
-        // asserted enable read as *disabled* and the model ignored every step
-        // edge: the step pin pulsed millions of times, the shaft never moved,
-        // the encoder never counted, and a closed-loop move ran forever
-        // chasing a carriage that was not there.
+        // The drive's own conventions: DIR high = reverse, and the enable is
+        // energized = enabled, ENA high enables (the machine's owner,
+        // 2026-10-25). The firmware drives ENA high while motion is enabled
+        // and low otherwise (`dev_servo_private_applyEnable`).
         let motor = StepperMotor::new(stepper_motor::Config {
             dir_forward_level: Level::Low,
-            enable_active_low: true,
+            enable_active_low: false,
             // No load loss. `Config::new`'s 0.15 is the model's placeholder
             // for a drive that loses a share of its commanded travel, not a
             // measured property of this machine — and here it is the whole

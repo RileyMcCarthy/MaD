@@ -1,12 +1,16 @@
-//! MaD's four project files hold one machine: `SIL/mad.toml` (the production
-//! firmware booted off the module's flash, a `host-serial` on the carrier's
-//! debug header `J1`, where the machine's Prop Plug sits), `mad-cosim.toml`
-//! (the same with the host's Chrome), `mad-serial-boot.toml` (the ROM's
-//! serial boot, the flash erased, the same host) and
-//! `mad-serial-boot-cosim.toml` (that with the host's Chrome). Each file is
-//! complete on its own, so nothing but this test keeps their shared lines
-//! the same: a supply, a wire or a jumper changed in one file and not the
-//! others fails here, naming the section.
+//! MaD's seven project files hold one machine: `SIL/mad.toml` (the
+//! production firmware booted off the module's flash, a `host-serial` on the
+//! carrier's debug header `J1`, where the machine's Prop Plug sits),
+//! `mad-cosim.toml` (the same with the host's Chrome), `mad-serial-boot.toml`
+//! (the ROM's serial boot, the flash erased, the same host) and
+//! `mad-serial-boot-cosim.toml` (that with the host's Chrome); then
+//! `mad-ic14-fixed-cosim.toml`, `mad-cosim.toml` with the board fix MaD #285
+//! asks for, one wire on the servo isolator `IC14`'s ground, and the two
+//! playgrounds, `mad-playground.toml` and `mad-serial-boot-playground.toml`,
+//! the fix's file and the serial boot's with their Chrome headed on the app.
+//! Each file is complete on its own, so nothing but this test keeps their
+//! shared lines the same: a supply, a wire or a jumper changed in one file
+//! and not the others fails here, naming the section.
 //!
 //! The files are compared twice: as text, section by section (each file is
 //! cut at its `# ---- Title ----` lines, so the comments are held too), and
@@ -389,5 +393,186 @@ fn the_serial_boot_file_is_the_flash_boot_with_the_roms_boot() {
     );
     for key in ["mate", "jumper", "component"] {
         assert!(!entries(&flash, key).is_empty(), "the files have [[{key}]]");
+    }
+}
+
+/// The lines `twin` adds to `base`: `twin` must be `base` with one run of
+/// lines inserted, or this panics naming the first line that differs.
+fn inserted(base: (&str, &str), twin: (&str, &str)) -> Vec<String> {
+    let (base_name, base_text) = base;
+    let (twin_name, twin_text) = twin;
+    let ours: Vec<&str> = base_text.lines().collect();
+    let theirs: Vec<&str> = twin_text.lines().collect();
+    let head = ours.iter().zip(&theirs).take_while(|(a, b)| a == b).count();
+    let tail = ours[head..]
+        .iter()
+        .rev()
+        .zip(theirs[head..].iter().rev())
+        .take_while(|(a, b)| a == b)
+        .count();
+    assert_eq!(
+        head + tail,
+        ours.len(),
+        "{twin_name} is {base_name} with lines added, and no other change: {base_name} line {} \
+         reads {:?}, {twin_name}'s {:?}",
+        head + 1,
+        ours.get(head),
+        theirs.get(head)
+    );
+    theirs[head..theirs.len() - tail]
+        .iter()
+        .map(|line| (*line).to_string())
+        .collect()
+}
+
+/// The file with the board fix MaD #285 asks for, and the file it fixes.
+const IC14_FIXED: (&str, &str) = ("mad-cosim.toml", "mad-ic14-fixed-cosim.toml");
+
+#[test]
+fn the_ic14_fixed_file_is_the_cosim_file_with_one_wire() {
+    behaviour!(Test {
+        id: "mad-project.ic14-fixed-twin",
+        covers: Some("SIL/mad-ic14-fixed-cosim.toml"),
+        given: "the machine's project file whose host is the host's Chrome, beside its twin for \
+                a carrier with the servo isolator's ground fixed",
+    });
+    expect!(
+        "text-one-block",
+        "the twin is the file word for word with one run of lines added at the end of its \
+         scenario section"
+    );
+    expect!(
+        "one-wire",
+        "the twin's one added entry wires pin 9 of the servo isolator, its drive-side ground, \
+         to the drive side's return",
+        "as drawn, IC14's drive-side ground pins reach only a capacitor, so the isolator \
+         passes nothing to the drive; MaD issue 285's fix puts them on the drive side's return"
+    );
+    expect!(
+        "cites-the-fix",
+        "the added lines name MaD issue 285, the board fix, as the wire's reason"
+    );
+    let (base_name, twin_name) = IC14_FIXED;
+    let (base_text, twin_text) = (read(base_name), read(twin_name));
+    same_but(
+        (base_name, &base_text),
+        (twin_name, &twin_text),
+        &["Scenario"],
+    );
+    let added = inserted((base_name, &base_text), (twin_name, &twin_text));
+    let scenario = sections(&twin_text).pop().expect("the file has sections").1;
+    assert!(
+        scenario.trim_end().ends_with(added.join("\n").trim_end()),
+        "{twin_name}'s added lines end its scenario section: {added:#?}"
+    );
+    assert!(
+        added.iter().any(|line| line.contains("MaD #285")),
+        "{twin_name}'s added lines cite MaD #285: {added:#?}"
+    );
+
+    let (base, mut twin) = (parse(base_name, &base_text), parse(twin_name, &twin_text));
+    assert_eq!(base.get("pin_short"), None, "{base_name} shorts nothing");
+    let shorts = twin
+        .remove("pin_short")
+        .and_then(|shorts| shorts.as_array().cloned())
+        .unwrap_or_else(|| panic!("{twin_name} has [[pin_short]] entries"));
+    let pins: Vec<[Option<&str>; 2]> = shorts
+        .iter()
+        .map(|short| [field(short, "a"), field(short, "b")])
+        .collect();
+    assert_eq!(
+        pins,
+        [[Some("EDGE.IC14.9"), Some("EDGE.J21.8")]],
+        "{twin_name}'s one wire"
+    );
+    assert_eq!(base, twin, "{twin_name} is {base_name} but its wire");
+}
+
+/// The playgrounds, each beside the file it is a headed copy of.
+const PLAYGROUNDS: [(&str, &str); 2] = [
+    ("mad-ic14-fixed-cosim.toml", "mad-playground.toml"),
+    (
+        "mad-serial-boot-cosim.toml",
+        "mad-serial-boot-playground.toml",
+    ),
+];
+
+/// The app's dev server, where the makefile serves the app for a person.
+const DEV_SERVER: &str = "http://127.0.0.1:5174/";
+
+#[test]
+fn each_playground_is_its_cosim_file_with_chrome_headed_on_the_app() {
+    behaviour!(Test {
+        id: "mad-project.playgrounds",
+        covers: Some("SIL/mad-playground.toml"),
+        given: "each of the machine's two playground project files, beside the project file it \
+                copies: the board with the servo isolator's ground fixed, and the ROM's serial \
+                boot",
+    });
+    expect!(
+        "text-but-host",
+        "the two files are word for word the same outside the host's section"
+    );
+    expect!(
+        "headed-on-the-app",
+        "the playground's Chrome opens a window, its first page on the app's development \
+         server on the host",
+        "a person watches and drives the app in that window"
+    );
+    expect!(
+        "host-otherwise-same",
+        "the playground's host has every other option of the copied file's host, with the \
+         same values"
+    );
+    expect!(
+        "entries-but-host",
+        "every entry but the host's is the same in both"
+    );
+    for (base_name, playground_name) in PLAYGROUNDS {
+        let (base_text, playground_text) = (read(base_name), read(playground_name));
+        same_but(
+            (base_name, &base_text),
+            (playground_name, &playground_text),
+            &["The host"],
+        );
+        let (mut base, mut playground) = (
+            parse(base_name, &base_text),
+            parse(playground_name, &playground_text),
+        );
+        let (mut cosim, mut headed) = (
+            take_component(&mut base, "HOST"),
+            take_component(&mut playground, "HOST"),
+        );
+        assert_eq!(
+            option(&cosim, "headless"),
+            None,
+            "{base_name}'s Chrome is headless, the kind's default"
+        );
+        let options = |host: &mut Value| -> Table {
+            host.get_mut("options")
+                .and_then(Value::as_table_mut)
+                .map(std::mem::take)
+                .expect("the host has options")
+        };
+        let (cosim_options, mut headed_options) = (options(&mut cosim), options(&mut headed));
+        assert_eq!(
+            headed_options.remove("headless").and_then(|v| v.as_bool()),
+            Some(false),
+            "{playground_name}'s Chrome is headed"
+        );
+        let url = headed_options
+            .remove("url")
+            .and_then(|url| url.as_str().map(str::to_string))
+            .unwrap_or_else(|| panic!("{playground_name}'s Chrome opens a page"));
+        assert!(
+            url.starts_with(DEV_SERVER),
+            "{playground_name} opens {url}, a page of the dev server's at {DEV_SERVER}"
+        );
+        assert_eq!(cosim_options, headed_options, "{playground_name}'s host");
+        assert_eq!(cosim, headed, "{playground_name}'s host entry");
+        assert_eq!(
+            base, playground,
+            "{playground_name} is {base_name} but its host"
+        );
     }
 }
