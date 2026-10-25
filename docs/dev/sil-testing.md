@@ -19,8 +19,8 @@ make p2image      # the propeller2_debug image the emulator executes
 by `make p2image` (`pio run -e propeller2_debug`). The `playground*`, `e2e*`
 and `check` targets build the production image and lay out the module's
 flash and card (`make flash-image sd-image`), and the embsim tool builds
-`mad-runner`; `e2e-rom` builds the release emulator, whose ROM board it
-still runs.
+`mad-runner`; `e2e-stall` builds the debug image and the release
+`mad-emulator`, whose board it still runs SERVO-stall on.
 
 | Target | What it does |
 |---|---|
@@ -37,6 +37,7 @@ still runs.
 | `make e2e-rom` | FW-ISS: the app's flasher in a headless Chrome on the board's clock, against the ISS booting the mask ROM on the project's serial boot (`mad-serial-boot-cosim.toml`) |
 | `make e2e-bundle` | BUNDLE-live on `e2e-emulator`'s board: the app as it ships (built as `pages.yml` builds it, served by `vite preview`): connect, samples, machine state, unplug, and replug with the app reconnecting by itself |
 | `make e2e-motion` | What the project as drawn cannot run (the scenarios that move the carriage), on `mad-ic14-fixed-cosim.toml`, the board with MaD #285 fixed (`SCENARIOS=…` narrows the set; `MOTION_SHARD=K/N` runs every N-th of it from the K-th); SERVO-stall is skipped there, for the jam |
+| `make e2e-stall` | SERVO-stall on `mad-emulator`'s board (`BOARD_ROUTE=emulator`, the debug image, a headless Chrome on the board's clock): the one scenario no project can run, since it jams the carriage (MaD #298) |
 | `make flash-image` | `build/flash.bin`: stage-1 and the production image, the module's boot flash |
 | `make sd-image` | `build/sd.img`: a 32 MiB FAT16 card mirroring `./sd` |
 | `make check` | `embsim check` on the seven project files (`mad*.toml`), after `flash-image` and `sd-image` |
@@ -105,8 +106,8 @@ mad.toml --pty PATH` hands `mad-runner` run in its own process, and reads the
 firmware's version on the PTY before the run's 2 s of board time end.
 `tests/projects.rs` holds the seven files to one another. The debug image
 (`make p2image`) stays where a run needs its log on `P62` or its MAIN channel
-on the bare chip's `P53`/`P55`: `mad-emulator` (its ROM board and
-SERVO-stall by hand), the `p2core` and `p2iss` suites, and
+on the bare chip's `P53`/`P55`: `mad-emulator` (SERVO-stall, `make
+e2e-stall`), the `p2core` and `p2iss` suites, and
 `mad-catalog/tests/boot.rs`.
 
 ## The board route: the app in Chrome on the board's clock
@@ -119,12 +120,14 @@ with MaD Control in the host's Chrome held to the board's clock by embsim's
   (`make e2e-emulator`, embsim `MIGRATING-MAD.md` step 10), the carrier and
   the module as drawn, the production firmware booted off the module's flash,
   and the node on the carrier's debug header `J1`; the scenarios that move
-  the carriage on `mad-ic14-fixed-cosim.toml` (`make e2e-motion`), and the
-  playgrounds on its headed copy, `mad-playground.toml` (step 11).
+  the carriage on `mad-ic14-fixed-cosim.toml` (`make e2e-motion`); FW-ISS
+  on the ROM's serial boot, `mad-serial-boot-cosim.toml` (`make e2e-rom`);
+  and the playgrounds on headed copies, `mad-playground.toml` and
+  `mad-serial-boot-playground.toml` (step 11).
 - **`mad-emulator --chrome`** (step 1b): the debug firmware on the bare chip,
-  the node on `P53`/`P55`. Only the ROM board (`make e2e-rom`) still runs
-  here, until FW-ISS runs on the project's serial boot (MaD #284), and
-  SERVO-stall by hand, since no project has a jam.
+  the node on `P53`/`P55`. It runs SERVO-stall alone (`make e2e-stall`),
+  because that scenario jams the carriage and no project has a jam (MaD
+  #298). It retires once a project has one.
 
 - **Time.** Every page and dedicated worker in that Chrome lives the board's
   time, a 1 ms quantum at a time over DevTools
@@ -248,11 +251,12 @@ visible, enabled and what `elementFromPoint` finds at its centre, then forces
 the click. The link-drop scenarios (B5-reconnect, M11-idle-drop,
 M11-mid-test-drop) pull the node's cable (`__embsim.link('unplug')`) and put it
 back.
-SERVO-stall is not yet on a project: the machine's kind has no jam (a lever
-a stepped kind cannot take from a file the wall clock polls), so the suite
-skips it on every project file. On `mad-emulator` (`BOARD_ROUTE=emulator`
-for `board-route.sh`, or `E2E_BOARD_ROUTE=emulator` with the suite attached
-by hand) it jams the carriage by creating `E2E_JAM_FILE`, the file
+SERVO-stall is not yet on a project (MaD #298): the machine's kind has no
+jam (a lever a stepped kind cannot take from a file the wall clock polls),
+so the suite skips it on every project file. On `mad-emulator` (`make
+e2e-stall`, which sets `BOARD_ROUTE=emulator` for `board-route.sh`; or
+`E2E_BOARD_ROUTE=emulator` with the suite attached by hand) it jams the
+carriage by creating `E2E_JAM_FILE`, the file
 `mad-emulator --jam-file` watches: while it exists the drive keeps stepping
 but the carriage and its encoder stand still. `board-route.sh` defaults it
 to `$BOARD_LOGS/jam`. Without `E2E_JAM_FILE` set, SERVO-stall fails at once.
@@ -260,7 +264,8 @@ to `$BOARD_LOGS/jam`. Without `E2E_JAM_FILE` set, SERVO-stall fails at once.
 **In CI:** `control-e2e-board` gates a subset per PR on the project
 (`make check`, then `make e2e`, one board per scenario, on the runner's
 Chrome; `ci.yml`), then BUNDLE-live on the built bundle, then G2+G3+H2+I on
-the board with MaD #285 fixed (`make e2e-motion`). The nightly
+the board with MaD #285 fixed (`make e2e-motion`), then SERVO-stall on
+`mad-emulator` (`make e2e-stall`). The nightly
 (`e2e-nightly.yml`) runs the whole suite the same way after the node's Chrome
 canary, and FW-ISS on the project's serial boot (`make e2e-rom`,
 `mad-serial-boot-cosim.toml`); beside it three jobs run everything the

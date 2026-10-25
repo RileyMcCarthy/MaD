@@ -31,7 +31,7 @@
 # cannot run, and the playgrounds run it on the board with MaD #285 fixed,
 # mad-ic14-fixed-cosim.toml and its headed copy (step 11). Only SERVO-stall
 # (e2e-stall) is still mad-emulator's (`--chrome`, step 1b), for its jam,
-# which no project has. A browser on
+# which no project has (MaD #298). A browser on
 # the host's own clock (behind a PTY, or the WS bridge) measures the host,
 # not the machine: the ISS interprets every instruction at a few percent of
 # real time, and the app's 2 s response timeout would fire at a fraction of
@@ -278,7 +278,8 @@ e2e-rom: sd-image
 # mad-emulator's board (BOARD_ROUTE=emulator): the debug image on the bare
 # chip, the host on P53/P55, a headless Chrome on the board's clock. This
 # target, mad-emulator and the debug image's route are what keep
-# mad-emulator in the tree (embsim MIGRATING-MAD.md step 11's exception).
+# mad-emulator in the tree (embsim MIGRATING-MAD.md step 11's exception;
+# MaD #298 is the jam a project would need).
 e2e-stall: p2image emulator-release
 	BOARD_ROUTE=emulator SCENARIOS=SERVO-stall scripts/board-route.sh e2e
 

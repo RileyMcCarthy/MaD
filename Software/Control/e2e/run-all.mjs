@@ -41,10 +41,11 @@
  * wire on IC14's ground: `cd SIL && make e2e-motion` takes them from
  * `--list --cannot` and runs them there (E2E_PROJECT names the file, which
  * board-route.sh exports), where only SERVO-stall is skipped, for the jam.
- * SERVO-stall is not yet on any project: `E2E_BOARD_ROUTE=emulator`
- * attaches the suite to `mad-emulator --chrome` by hand, where it jams the
- * carriage by creating E2E_JAM_FILE, the file mad-emulator watches
- * (`--jam-file`); board-route.sh with BOARD_ROUTE=emulator sets both.
+ * SERVO-stall is not yet on any project (MaD #298): `cd SIL && make
+ * e2e-stall` runs it on `mad-emulator --chrome` (board-route.sh with
+ * BOARD_ROUTE=emulator, which sets E2E_BOARD_ROUTE=emulator), where it jams
+ * the carriage by creating E2E_JAM_FILE, the file mad-emulator watches
+ * (`--jam-file`).
  *
  * Without CDP_URL only the board-free scenarios run: A1 and
  * FW1/2/3/5/6/7/8/9 launch a host Chrome against in-page fakes and need no
@@ -162,7 +163,7 @@ const IC14_WHY =
 // The project's machine has no jam: a lever a stepped kind cannot take from
 // a file the wall clock polls (mad-catalog/src/machine.rs, "Not modelled").
 const JAM_WHY =
-  'jams the carriage, which the project\'s machine cannot (SIL/mad-catalog/src/machine.rs, "Not modelled"): not yet on a project';
+  'jams the carriage, which the project\'s machine cannot (SIL/mad-catalog/src/machine.rs, "Not modelled"; MaD #298): make e2e-stall runs it on mad-emulator';
 const PROJECT_CANNOT = new Map([...MOVES].map((id) => [id, IC14_WHY]));
 PROJECT_CANNOT.set('SERVO-stall', `${JAM_WHY}, and ${IC14_WHY}`);
 // The board with MaD #285 fixed: mad-cosim.toml with one wire from IC14's
@@ -2934,9 +2935,9 @@ async function main() {
   const timings = [];
   let skipped = 0;
   for (const s of selected) {
-    // The ROM board (E2E_BOARD=rom: mad-emulator --boot-rom --chrome, the
-    // mask ROM on the programming UART) runs FW-ISS and nothing else; the
-    // firmware's board runs everything else.
+    // The ROM board (E2E_BOARD=rom: mad-serial-boot-cosim.toml, the mask
+    // ROM's serial boot on J1) runs FW-ISS and nothing else; the firmware's
+    // board runs everything else.
     if (BOARD && (s.id === 'FW-ISS') !== ROM_BOARD && !BOARD_FREE.has(s.id)) {
       console.log(
         `  ~ ${s.id}: skipped (needs the ${ROM_BOARD ? "firmware's" : 'ROM'} board${

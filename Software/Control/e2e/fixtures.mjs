@@ -744,7 +744,8 @@ export function setCurrentScenario(id) {
  *     mad-cosim.toml` (`make e2e-emulator`): the carrier and the module as
  *     drawn, the production firmware off the module's flash, the host on J1;
  *   - `emulator`: `mad-emulator --chrome`, the debug firmware on the bare
- *     chip, the host on P53/P55 (the ROM board, and SERVO-stall by hand).
+ *     chip, the host on P53/P55: SERVO-stall's board alone (make e2e-stall;
+ *     no project has a jam, MaD #298).
  */
 export const BOARD_ROUTE = process.env.E2E_BOARD_ROUTE || 'project';
 
@@ -886,10 +887,11 @@ export async function chooseDataFolder(page) {
  * Install a `navigator.serial` whose port emulates the Propeller 2 boot ROM's
  * serial loader, entirely in-page.
  *
- * The SIL emulator does not serve this yet: its ROM boot (`--boot-rom`) puts
- * the host on a PTY and nothing models DTR, so a DTR pulse from the app could
- * not reset the chip. This fake is therefore the only way to drive the real
- * flashing UI end to end.
+ * The board does not serve all of this: the ROM's serial boot on the project
+ * (SIL/mad-serial-boot-cosim.toml, FW-ISS) answers without a reset, and
+ * nothing models DTR (MaD #134), so a DTR pulse from the app resets nothing
+ * there. This fake is therefore the only way to check that the app resets
+ * the chip before probing.
  *
  * It deliberately refuses to answer until DTR has been pulsed, so a test fails
  * if the app ever stops resetting the chip before probing.

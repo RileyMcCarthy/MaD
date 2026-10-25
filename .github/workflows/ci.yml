@@ -393,6 +393,11 @@ jobs:
   # mad-emulator it took 444.0 s of host time on the runner (run
   # 40063642331).
   #
+  # Last, SERVO-stall on mad-emulator (`make e2e-stall`), the one scenario
+  # no project can run: it jams the carriage, and only mad-emulator has a
+  # jam (its --jam-file; mad-catalog/src/machine.rs, "Not modelled";
+  # MaD #298).
+  #
   # Fires on the app, the protocol, the firmware or the SIL (the `sil` filter
   # covers Firmware/ and Protocol/), and on a move of the SIL/embsim pin: the
   # node is embsim's, so a pin move is exactly what this job exists to check.
@@ -512,10 +517,11 @@ jobs:
           SCENARIOS: G2+G3+H2+I
         run: make e2e-motion
       # SERVO-stall (a jammed carriage latches the stall; Live clears it and
-      # re-enables motion) on every PR, as #292 set: its jam is mad-emulator's
-      # --jam-file, and no project has a jam yet, so it runs on mad-emulator's
-      # board (BOARD_ROUTE=emulator, the debug image) until one does. It runs
-      # whenever the subset ran, passed or failed.
+      # re-enables motion) on every PR, as #292 set. Its jam is
+      # mad-emulator's --jam-file and no project has one (#298), so `make e2e-stall`
+      # builds the debug image and mad-emulator and runs it on mad-emulator's
+      # board (BOARD_ROUTE=emulator): the one thing mad-emulator still
+      # carries. It runs whenever the subset ran, passed or failed.
       - name: Run SERVO-stall on mad-emulator (its jam is mad-emulator's)
         if: ${{ !cancelled() && (steps.subset.outcome == 'success' || steps.subset.outcome == 'failure') }}
         working-directory: SIL
@@ -524,9 +530,7 @@ jobs:
           BOARD_LOGS: /tmp/e2e-out/stall
           BOARD_PER_SCENARIO: '1'
           E2E_TIMINGS: /tmp/e2e-out/timings-stall.json
-          SCENARIOS: SERVO-stall
-          BOARD_ROUTE: emulator
-        run: make p2image emulator-release && scripts/board-route.sh e2e
+        run: make e2e-stall
       # Host and board time per scenario, for sizing this subset. Reported,
       # never asserted.
       - name: Timings

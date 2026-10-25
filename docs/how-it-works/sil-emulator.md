@@ -18,14 +18,15 @@ Two systems run it:
   `J1`. The e2e suite runs here (`make e2e`, on `mad-cosim.toml`); so do the
   scenarios that move the carriage, on `mad-ic14-fixed-cosim.toml`, the
   board with MaD #285 fixed (`make e2e-motion`; as drawn, the isolator
-  `IC14` passes nothing to the drive), the playgrounds, on headed copies
-  (`make playground`, `playground-rom`), and `mad-catalog`'s tests.
+  `IC14` passes nothing to the drive), FW-ISS, the app's flasher against
+  the mask ROM, on `mad-serial-boot-cosim.toml` (`make e2e-rom`), the
+  playgrounds, on headed copies (`make playground`, `playground-rom`), and
+  `mad-catalog`'s tests.
 - **`mad-emulator`** (`SIL/MaDSim`): the debug image (`propeller2_debug`) on
-  the bare chip, the bench wired by hand, the host on `P53`/`P55`. Only its
-  ROM board still runs (`make e2e-rom`, FW-ISS, until it runs on the
-  project's serial boot, MaD #284), and SERVO-stall by hand, since no
-  project has a jam; it retires after that (embsim `MIGRATING-MAD.md` step
-  11).
+  the bare chip, the bench wired by hand, the host on `P53`/`P55`. It runs
+  one scenario, SERVO-stall (`make e2e-stall`, on every PR), because the
+  scenario jams the carriage and no project has a jam. It retires once one
+  does (MaD #298; embsim `MIGRATING-MAD.md` step 11).
 
 !!! info "This is not a mock"
     The firmware under test is the image you flash. The ISS executes its
@@ -98,7 +99,7 @@ components:
 
 - **Chrome on the board's clock** (`chrome-cdp`: `mad-cosim.toml`'s `HOST`,
   `make e2e`; `mad-playground.toml`'s, headed, `make playground`;
-  `mad-emulator --chrome`, `make e2e-rom`). Every page's
+  `mad-emulator --chrome`, `make e2e-stall`). Every page's
   `navigator.serial` is the node's shim, whose one port is this line (USB
   `0403:6015` on the project, `0403:6001` on `mad-emulator`), by Chrome's own
   rules; every page and dedicated worker lives the board's time, a 1 ms

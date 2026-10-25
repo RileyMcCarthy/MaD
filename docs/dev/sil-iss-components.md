@@ -356,7 +356,8 @@ a tick of the 20 MHz RC clock from START, 100 ns apart at the closest; a step
 train's pin released by `_pinclear` and then driven as a plain pin; and the
 sync-serial clock's transitions half its period apart from the `WYPIN`, the
 pad released once the pin is cleared. `P2Iss` keeps its `Component` impl and
-pin lists until `mad-emulator` retires (step 11).
+pin lists while `mad-emulator` still runs SERVO-stall, the one scenario no
+project can run (MaD #298); they go when it retires (step 11).
 
 `p2iss/tests/ec32mb_sd_mount.rs`, stepped, is the same module with the card
 `make sd-image` writes in `J301`: the firmware's boot-time mount and its
@@ -803,9 +804,9 @@ and a failure it reports (a grant that sticks, a page that crashes, a Chrome
 that exits) stops the run with a non-zero exit. The run prints Chrome's
 DevTools URL in its "reached" line; a suite attaches there
 ([SIL testing](sil-testing.md#the-board-route-the-app-in-chrome-on-the-boards-clock)).
-Only the ROM board (`make e2e-rom`) and SERVO-stall by hand keep this
-route; the playgrounds moved onto the project at embsim `MIGRATING-MAD.md`
-step 11.
+Only SERVO-stall keeps this route (`make e2e-stall`, per PR), because it
+jams the carriage and no project has a jam (MaD #298); FW-ISS and the
+playgrounds moved onto the project at embsim `MIGRATING-MAD.md` step 11.
 
 The e2e runs on the machine's project instead (step 10): `make e2e-emulator`
 is `embsim run mad-cosim.toml`, whose `HOST` is the same kind on the
@@ -828,7 +829,8 @@ that moves the carriage, saying why (`run-all.mjs`, `PROJECT_CANNOT`).
 Those run on the board with MaD #285 fixed instead (`make e2e-motion`:
 `mad-ic14-fixed-cosim.toml`, `mad-cosim.toml` with one wire from `IC14`'s
 pin 9 to `EN_GND`), per PR G2+G3+H2+I and nightly the whole set; the
-suite skips SERVO-stall there, since the project's machine has no jam.
+suite skips SERVO-stall there, since the project's machine has no jam, and
+runs it on `mad-emulator` (`make e2e-stall`).
 
 | Target | Host |
 |---|---|

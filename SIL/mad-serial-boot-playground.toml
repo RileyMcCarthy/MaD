@@ -472,9 +472,7 @@ pole = 1
 state = "closed"
 
 # S301 position 3: R302 holds P59 up, so the ROM waits for a serial boot
-# on P63 (mad-emulator's STRAP stands in for it today: the pull-up
-# run_iss_rom wires to P2.P59, SIL/MaDSim/src/main.rs). Position 4, R303's
-# pull-down, stays open.
+# on P63. Position 4, R303's pull-down, stays open.
 [[switch]]
 part = "EC32.S301"
 pole = 2
