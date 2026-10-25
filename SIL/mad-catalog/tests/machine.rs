@@ -482,8 +482,8 @@ fn steps_as_edges_sink_and_release_the_open_collectors() {
 // Travel as a rate
 // ============================================================
 
-/// Drive steps, and encoder counts, a millimetre: 4 × 2048 microsteps
-/// (`STEPS_PER_MM` in `iss_description.rs`).
+/// Drive steps, and encoder counts, a millimetre when the project sets
+/// neither: 4 × 2048 microsteps (`STEPS_PER_MM` in `machine.rs`).
 const STEPS_PER_MM: u64 = 8_192;
 
 /// The train's rate: 81 920 steps a second, 10 mm/s, the test's own. Carried
@@ -848,6 +848,63 @@ fn an_output_stage_the_kind_does_not_offer_is_refused() {
     for stage in ["\"push-pull\"", "\"rs422\"", "\"npn-open-collector\""] {
         assert!(message.contains(stage), "{message}");
     }
+    assert!(message.contains("MACHINE"), "{message}");
+}
+
+#[rstest]
+fn a_drive_and_an_encoder_on_their_own_scales() {
+    behaviour!(Test {
+        id: "machine.separate-scales",
+        covers: Some("SIL/mad-catalog/src/machine.rs#component"),
+        given: "the machine with a drive of 1024 steps a millimetre and an encoder of 8192 \
+                counts a millimetre, driven forward by 1024 steps",
+    });
+    expect!(
+        "one-millimetre",
+        "the carriage travels one millimetre: the encoder counts 8192, eight for each step, \
+         to within half a step",
+        "the drive's steps set how far the carriage goes and the encoder's scale how finely \
+         that is counted, so a firmware pulsing the drive has to convert between the two; \
+         the drive model publishes its carriage each time it crosses a half step, so the \
+         count can rest up to half a step short"
+    );
+    let (rig, step, _probe) = on_a_train(&project(
+        "drive_steps_per_mm = 1024\nencoder_counts_per_mm = 8192",
+        "",
+    ));
+    train(&step, 1024);
+    virtual_clock::wait_virtual_ns(rest_ns(1024));
+    let summary = rig.summary();
+    rig.finish();
+    let count: i64 = summary
+        .split("encoder at ")
+        .nth(1)
+        .and_then(|rest| rest.split(' ').next())
+        .and_then(|count| count.parse().ok())
+        .unwrap_or_else(|| panic!("no count in {summary}"));
+    assert!((8188..=8192).contains(&count), "{summary}");
+    assert!(summary.contains("1024 steps commanded"), "{summary}");
+}
+
+#[rstest]
+fn a_scale_that_is_not_above_zero_is_refused() {
+    behaviour!(Test {
+        id: "machine.non-positive-scale",
+        covers: Some("SIL/mad-catalog/src/machine.rs#component"),
+        given: "a project naming the machine with a drive of 0 steps a millimetre",
+    });
+    expect!(
+        "refused-naming-option",
+        "the project is refused, the error naming the drive's scale and the machine"
+    );
+    let _lock = suite_lock();
+    let refused = Project::parse(&project("drive_steps_per_mm = 0", ""))
+        .expect("the project parses")
+        .instantiate(&set())
+        .map(|_| ())
+        .expect_err("the scale is refused");
+    let message = refused.to_string();
+    assert!(message.contains("drive_steps_per_mm"), "{message}");
     assert!(message.contains("MACHINE"), "{message}");
 }
 
