@@ -75,6 +75,7 @@ DEV_COGMANAGER_CHANNEL_CREATE_INIT(MOTOR, 4096)
     /* app_motion enables + commands it via the actuator macros */
     dev_servo_init(lock, maxVelocityCounts, maxAccelCounts,
                    machineProfile.encoderStepsPerMM, machineProfile.servoStepsPerMM);
+    dev_servo_setGains(machineProfile.servoKp, machineProfile.servoKi);
 #else
     DEBUG_INFO("%s", "Stepper cog initializing\n");
     dev_stepper_init(lock);

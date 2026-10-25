@@ -2251,6 +2251,23 @@ void test_dev_servo_a_closed_loop_move_turns_the_feedback_back_on(void)
     TEST_ASSERT_TRUE(dev_servo_isStalled(CH));
 }
 
+void test_dev_servo_profile_gains_are_used(void)
+{
+    VIBES_TEST("servo.profile-gains",
+               "src/DEV/dev_servo.c#dev_servo_setGains",
+               "servo gains of 4 per second and 2 per second squared given from the machine profile");
+    VIBES_EXPECT("gains-applied", "the loop runs with those gains");
+    VIBES_EXPECT("zero-keeps-default", "a proportional gain of zero leaves the built-in gain in place");
+    servo_init();
+    dev_servo_setGains(4000, 2000);
+    TEST_ASSERT_EQUAL_FLOAT(4.0f, (float)dev_servo_channelConfig[CH].kpNum / (float)dev_servo_channelConfig[CH].kpDen);
+    TEST_ASSERT_EQUAL_FLOAT(2.0f, (float)dev_servo_channelConfig[CH].kiNum / (float)dev_servo_channelConfig[CH].kiDen);
+    servo_init();
+    dev_servo_setGains(0, 0);
+    TEST_ASSERT_EQUAL_FLOAT((float)dev_servo_channelConfigDefault[CH].kpNum / (float)dev_servo_channelConfigDefault[CH].kpDen,
+                            (float)dev_servo_channelConfig[CH].kpNum / (float)dev_servo_channelConfig[CH].kpDen);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -2305,6 +2322,7 @@ int main(void)
     RUN_TEST(test_position_moves_track_the_commanded_trapezoid_to_one_micron);
     RUN_TEST(test_waveforms_track_the_requested_cycle_to_one_micron_across_the_envelope);
     RUN_TEST(test_dev_servo_open_loop_move_ignores_the_encoder);
+    RUN_TEST(test_dev_servo_profile_gains_are_used);
     RUN_TEST(test_dev_servo_open_loop_moves_out_and_back_send_equal_pulses);
     RUN_TEST(test_dev_servo_leaving_open_loop_holds_where_the_encoder_is);
     RUN_TEST(test_dev_servo_a_closed_loop_move_turns_the_feedback_back_on);

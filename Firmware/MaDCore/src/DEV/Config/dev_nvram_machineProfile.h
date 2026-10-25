@@ -23,6 +23,12 @@ typedef struct
     int homingOffset;    // Distance to move off endstop after homing (mm)
     int jawOffset;       // Distance between upper and lower jaw at endstop (mm)
     int restrictedVelocity; // Speed cap while the machine is RESTRICTED (mm/s)
+    /* Servo loop gains, in thousandths: cmd += (servoKp/1000)*err (1/s) +
+     * (servoKi/1000)*integral(err) (1/s^2). APPEND-ONLY from here: a profile
+     * saved before a field existed is read up to its own length and the rest
+     * comes from the defaults (dev_nvram BOOT_LOAD). */
+    int servoKp; // Proportional gain, 1/s x 1000 (0 or less = built-in default)
+    int servoKi; // Integral gain, 1/s^2 x 1000 (0 = integral off)
 } MachineProfile;
 
 /* This struct is written to and read from the SD card as raw bytes, and it
@@ -32,8 +38,13 @@ typedef struct
  * makes it a deliberate one: it fails the build rather than the machine, and
  * whoever updates the number has to decide what happens to existing cards.
  *
+ * The decision for an APPENDED field: an older card is a prefix of the new
+ * record, and dev_nvram reads it over the defaults, so its saved fields are
+ * kept and the new ones take their defaults. Inserting, removing or retyping
+ * a field is still a break -- old cards would be read at the wrong offsets.
+ *
  * 20 bytes of name, padded to the 4-byte alignment of the ints that follow,
- * then 13 ints. */
+ * then 15 ints (servoKp and servoKi appended to the original 13). */
 /* A negative-size array rather than _Static_assert, and enforced by clang
  * rather than by the compiler that ships.
  *
@@ -48,6 +59,6 @@ typedef struct
  * array can carry: the error reads "'MachineProfile_is_persisted_raw_to_SD_so_
  * its_size_is_frozen' declared as an array with a negative size". */
 typedef char MachineProfile_is_persisted_raw_to_SD_so_its_size_is_frozen
-    [(sizeof(MachineProfile) == (DEV_NVRAM_MAX_MACHINE_PROFILE_NAME + (13 * sizeof(int)))) ? 1 : -1];
+    [(sizeof(MachineProfile) == (DEV_NVRAM_MAX_MACHINE_PROFILE_NAME + (15 * sizeof(int)))) ? 1 : -1];
 
 #endif // DEV_NVRAM_CONFIG_MACHINEPROFILE_H

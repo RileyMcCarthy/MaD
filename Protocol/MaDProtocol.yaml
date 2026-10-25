@@ -166,6 +166,13 @@ structs:
         raw_storage: true  # so micrometres were coarser than the sensor itself
         min: -200
         max: 200
+      - name: machineCommanded
+        type: int32
+        unit: mm
+        scale: 1000000     # NANOMETRES: where the trajectory says the machine should be NOW
+        raw_storage: true  # (machineSetpoint is where the move ENDS); position - this = following error
+        min: -200
+        max: 200
 
   Move:
     encoding: packed
@@ -369,6 +376,16 @@ structs:
         type: int32
         unit: mm/s
         scale: 1
+      - name: servoKp
+        type: int32
+        unit: 1/s
+        scale: 1000        # stored as thousandths
+        raw_storage: true
+      - name: servoKi
+        type: int32
+        unit: 1/s2
+        scale: 1000        # stored as thousandths
+        raw_storage: true
 
   SampleProfile:
     encoding: aligned

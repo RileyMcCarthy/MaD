@@ -1036,6 +1036,23 @@ void dev_servo_run(void)
     }
 }
 
+void dev_servo_setGains(int32_t kpMilli, int32_t kiMilli)
+{
+    for (dev_servo_channel_E ch = (dev_servo_channel_E)0; ch < DEV_SERVO_CHANNEL_COUNT; ch++)
+    {
+        if (kpMilli > 0)
+        {
+            dev_servo_channelConfig[ch].kpNum = kpMilli;
+            dev_servo_channelConfig[ch].kpDen = 1000;
+        }
+        if (kiMilli >= 0)
+        {
+            dev_servo_channelConfig[ch].kiNum = kiMilli;
+            dev_servo_channelConfig[ch].kiDen = 1000;
+        }
+    }
+}
+
 void dev_servo_enable(dev_servo_channel_E ch, bool enable)
 {
     if (ch >= DEV_SERVO_CHANNEL_COUNT) { return; }

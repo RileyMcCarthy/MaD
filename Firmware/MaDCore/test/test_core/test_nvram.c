@@ -2,6 +2,7 @@
 #include "HAL_lock.h"
 #include <string.h>
 #include <stdint.h>
+#include <stddef.h>
 #include "dev_nvram.h"
 #include "vibes_behaviour.h"
 
@@ -122,6 +123,31 @@ void test_dev_nvram_loadMachineProfile(void)
     TEST_ASSERT_TRUE(dev_nvram_getChannelData(DEV_NVRAM_CHANNEL_MACHINE_PROFILE, &currentProfile, sizeof(MachineProfile)));
     TEST_ASSERT_EQUAL_INT(DEV_NVRAM_READY, dev_nvram_getState(DEV_NVRAM_CHANNEL_MACHINE_PROFILE));
     TEST_ASSERT_EQUAL_MEMORY(&currentProfile, &dev_nvram_machineProfileTest1, sizeof(MachineProfile));
+}
+
+void test_dev_nvram_loadsAProfileSavedBeforeTheServoGains(void)
+{
+    VIBES_TEST("nvram.older-profile-keeps-its-values",
+               "src/DEV/dev_nvram.c#dev_nvram_run",
+               "an SD card holding a machine profile saved before the servo gains were added to it");
+    VIBES_EXPECT_WHY("saved-fields-kept",
+                     "on boot every field the card holds keeps its saved value",
+                     "adding a field to the profile must not throw away a machine's existing configuration");
+    VIBES_EXPECT("new-fields-default", "the servo gains take their default values");
+    FILE *file = fopen("./test/sd/profile.bin", "w");
+    TEST_ASSERT_NOT_NULL(file);
+    const size_t oldSize = offsetof(MachineProfile, servoKp);
+    TEST_ASSERT_EQUAL_size_t(oldSize, fwrite(&dev_nvram_machineProfileTest1, 1, oldSize, file));
+    fclose(file);
+
+    dev_nvram_run();
+    dev_nvram_run();
+
+    MachineProfile loaded;
+    TEST_ASSERT_TRUE(dev_nvram_getChannelData(DEV_NVRAM_CHANNEL_MACHINE_PROFILE, &loaded, sizeof(MachineProfile)));
+    TEST_ASSERT_EQUAL_MEMORY(&dev_nvram_machineProfileTest1, &loaded, oldSize);
+    TEST_ASSERT_EQUAL_INT(8000, loaded.servoKp);
+    TEST_ASSERT_EQUAL_INT(0, loaded.servoKi);
 }
 
 void test_dev_nvram_refusesOutOfRangeChannel(void)

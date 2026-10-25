@@ -203,6 +203,10 @@ typedef struct
  *   either to assume one count per pulse. */
 void dev_servo_init(int lock, int32_t maxVelocityCounts, int32_t maxAccelCounts,
                     int32_t encoderStepsPerMM, int32_t servoStepsPerMM);
+/* The loop gains from the machine profile, in thousandths (servoKp, servoKi).
+ * A kp of 0 or less keeps the built-in default; a ki of 0 switches the
+ * integral off. Call once after dev_servo_init, before the loop runs. */
+void dev_servo_setGains(int32_t kpMilli, int32_t kiMilli);
 void dev_servo_run(void); /* one control tick; call at a fixed rate from a cog */
 
 void dev_servo_enable(dev_servo_channel_E ch, bool enable);
