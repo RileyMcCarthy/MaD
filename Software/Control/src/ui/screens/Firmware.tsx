@@ -16,6 +16,7 @@ import {
 import {
   fetchReleaseImage,
   fetchReleaseManifest,
+  releaseImageLabel,
   type FirmwareReleaseManifest,
 } from '@/firmware/release';
 import { hostingRoot } from '@/hosting';
@@ -225,7 +226,8 @@ export default function Firmware() {
                   </>
                 ) : manifest ? (
                   <>
-                    <strong>{manifest.version}</strong> <span className="muted">(MadEdge, latest release)</span>
+                    <strong>{manifest.version}</strong>{' '}
+                    <span className="muted">({releaseImageLabel(manifest.assetName)}, latest release)</span>
                   </>
                 ) : (
                   <span className="muted">

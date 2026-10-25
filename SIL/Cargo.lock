@@ -539,6 +539,7 @@ dependencies = [
  "libc",
  "nix",
  "p2core",
+ "protoemb-framing",
  "rstest 0.26.1",
  "tracing",
  "vibes-behaviour",
