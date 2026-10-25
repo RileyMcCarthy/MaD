@@ -46,27 +46,35 @@ conservative wins.
 
 The **Motor calibration** panel on **Settings**, below the fields, checks that
 **Encoder (step/mm)** and **Servo (step/mm)** match the hardware. It drives the
-carriage a short distance forward and then back **open loop** (the servo loop is
-out of the path), and compares how far the encoder moved with what the two
-values predict.
+carriage a short distance forward and then back **open loop**, and compares how
+far the encoder moved with what the two values predict.
 
-It is **report only**. Nothing is written to the machine: the findings tell you
-what to fix, and you change the fields (and **Write to device**) yourself.
+Open loop means the servo runs its usual motion profile but ignores the
+encoder: the drive gets exactly the pulses the move calls for, and the encoder
+is only watched. The panel sends these moves as `G124`, a linear move with the
+servo feedback off (`G91` first, so they are relative). It reads the encoder
+from the live position after each move has come to rest.
+
+It is **report only**. Nothing is written to the machine: the result tells you
+what to fix, and you change the fields (and **Write to device**) yourself. The
+fields don't need saving first. The panel judges the values you have typed, but
+the machine needs *some* steps/mm saved, because it uses them to convert the
+move and the position.
 
 ### Before you run it
 
 - Enable motion and clear any fault.
 - Leave the carriage clear of both end stops, with room to move the test
   distance in each direction.
-- Close the door, and make sure the frame isn't loaded past its tension limit.
-  The calibration does not run while the machine is speed-restricted (see
-  below).
-- Don't start a test. A test can't start while a calibration is running.
+- Don't start a test or jog while it runs.
 
-**Distance each way** defaults to 1 mm and **Speed** to 1 mm/s. The panel shows
-the pulses and rate it will send, and the encoder bound at which it gives up
-(three times the distance the profile expects). The machine allows at most
-200 000 pulses each way and 20 000 pulses/s.
+**Distance each way** defaults to 5 mm and **Speed** to 1 mm/s, so a run takes
+about 11 seconds. A shorter distance still gives a pass or fail, but each run
+loses a few encoder counts at its ends, which matters more on a short run. The
+moves obey the usual motion rules: the profile's maximum speed and acceleration,
+and the restricted speed while the machine is restricted. The panel disables
+motion if the encoder moves more than three times the distance the profile
+expects, and allows at most 200 000 pulses each way.
 
 ### Reading the result
 
@@ -104,22 +112,13 @@ datasheets (usually the encoder: counts per revolution ÷ mm per revolution).
     drive's pulses per revolution to the encoder's counts per revolution, then
     set both fields to the same value.
 
-### Refusals and stops
-
-A **refusal** means the calibration never started and no pulses were sent. A
-**stop** means it was abandoned part way. The carriage is then held closed loop
-where it stopped, except when a jog has taken over the drive (below).
+### Runs that don't finish
 
 | Message | Why | What to do |
 |---|---|---|
-| Refused: enable motion (and clear any fault) first | Motion was off or the machine was faulted | Enable motion, clear the fault |
-| Refused: a move or a test is running | The carriage was already moving | Wait for it to finish |
-| Refused: the carriage is on an end stop | One of the two legs would push into the stop | Jog it clear first |
-| Refused: the machine is speed-restricted | The door is open or the frame is over its tension limit. The calibration can't honour the restricted-speed cap, so it does not run | Close the door, or take the load off the frame |
-| Stopped: motion was disabled | Motion was turned off mid-run | Run it again |
-| Stopped: the machine faulted | A fault mid-run | Clear the fault, run it again |
-| Stopped: the carriage reached an end stop | An end stop was hit mid-run | Jog clear, shorten the distance |
-| Stopped: the machine became speed-restricted | The door was opened or a tension limit tripped mid-run | Clear the restriction, run it again |
-| Stopped: a jog took the drive | You jogged during the run. Jogs are never refused for a calibration, but while one runs they move at the **restricted speed** (the profile's **Restricted Velocity (mm/s)**), or at 2 mm/s if that is 0. The jog carries on and the calibration gives way. **Home** is refused while a calibration runs | Run it again |
-| Stopped: the drive took far longer than expected | The pulses didn't go out in twice their nominal time plus a second | Check the drive |
+| Not run: enable motion (and clear any fault) first | Motion was off or the machine was faulted | Enable motion, clear the fault |
+| Not run: the machine is busy with a move or a test | A test was running, or the machine turned the move down | Wait for it to finish |
+| Not run: no live position from the machine | No samples are arriving | Check the connection |
+| Stopped: motion was disabled | Motion was turned off mid-run, or a fault disabled it | Clear the cause, run it again |
+| Stopped: the carriage was still moving long after the pulses should have finished | It hadn't settled after twice the move's time plus 3 seconds | Check the drive and the mechanics |
 | Stopped: the encoder moved over three times further than the profile expects | The drive is set much finer than servo steps/mm says, or encoder steps/mm is far too low | Check both values |

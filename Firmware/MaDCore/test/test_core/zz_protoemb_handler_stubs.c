@@ -16,7 +16,6 @@ bool ProtoEmb_onRead_state(ProtoEmb_MachineState_t *out) { (void)out; return fal
 bool ProtoEmb_onRead_machine_configuration(ProtoEmb_MachineConfiguration_t *out) { (void)out; return false; }
 bool ProtoEmb_onRead_firmware_version(ProtoEmb_FirmwareVersion_t *out) { (void)out; return false; }
 bool ProtoEmb_onRead_sample_profile(ProtoEmb_SampleProfile_t *out) { (void)out; return false; }
-bool ProtoEmb_onRead_motor_calibration_result(ProtoEmb_MotorCalibrationResult_t *out) { (void)out; return false; }
 
 /* onWrite / onWriteRaw: reject */
 ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWrite_machine_configuration_write(const ProtoEmb_MachineConfiguration_t *in) { (void)in; return PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK; }
@@ -34,8 +33,6 @@ ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWrite_gauge_length(void) { return 
 ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWrite_gauge_force(void) { return PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK; }
 ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWrite_test_waveform(const ProtoEmb_WaveformMove_t *in) { (void)in; return PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK; }
 ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWriteRaw_test_waveform(const uint8_t *payload, uint16_t payloadSize) { (void)payload; (void)payloadSize; return PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK; }
-ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWrite_motor_calibration(const ProtoEmb_MotorCalibrationRequest_t *in) { (void)in; return PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK; }
-ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWriteRaw_motor_calibration(const uint8_t *payload, uint16_t payloadSize) { (void)payload; (void)payloadSize; return PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK; }
 
 /* onQuery: reject */
 ProtoEmb_RuntimeQueryDisposition_E ProtoEmb_onQuery_file_download(const uint8_t *payload, uint16_t payloadSize, uint8_t *outPayload, uint16_t *outSize) { (void)payload; (void)payloadSize; (void)outPayload; (void)outSize; return PROTOEMB_RUNTIME_QUERY_DISPOSITION_NACK; }

@@ -17,7 +17,6 @@ For the wire framing and encoding rules, see
 | `machine_configuration` | 2 | on demand | high | `MachineConfiguration` |
 | `firmware_version` | 3 | on demand | high | `FirmwareVersion` |
 | `sample_profile` | 4 | on demand | high | `SampleProfile` |
-| `motor_calibration_result` | 5 | on demand (polled during a run) | high | `MotorCalibrationResult` |
 
 ## Writes (host commands, device ACK/NACKs)
 
@@ -33,7 +32,6 @@ For the wire framing and encoding rules, see
 | `gauge_force` | 7 | high | none |
 | `test_waveform` | 8 | high | `WaveformMove` — appends a `G123` waveform record to the open gcode channel |
 | `file_download` | 9 | high | raw → `StoredSample` |
-| `motor_calibration` | 10 | high | `MotorCalibrationRequest`. Starts the open-loop drive/encoder check. NACKed for a malformed request or while a run is in progress. Poll `motor_calibration_result` for progress and outcome |
 
 `file_download` sends a binary request (`testName(16) + sampleIndex(u32) +
 sampleCount(u32)`) and the device streams `StoredSample` records.
@@ -58,8 +56,6 @@ sampleCount(u32)`) and the device streams `StoredSample` records.
 | `TestRun` | aligned | 14 B | gcodeId + testDataId references |
 | `FirmwareVersion` | aligned | 16 B | Version string |
 | `Notification` | aligned | 101 B | Type + message string |
-| `MotorCalibrationRequest` | aligned | 12 B | Pulses each way, pulse rate, encoder bound |
-| `MotorCalibrationResult` | aligned | 17 B | State + signed pulses and encoder counts for each leg |
 
 ## Enums
 
@@ -69,23 +65,13 @@ sampleCount(u32)`) and the device streams `StoredSample` records.
   UPPER_ENDSTOP, LOWER_ENDSTOP, DOOR`
 - **`MotionState`** — `DISABLED, WAITING, MOVING`
 - **`GCode`** — `RAPID_MOVE(0), LINEAR_MOVE(1), CW_ARC(2), CCW_ARC(3), DWELL(4),
-  HOME(28), ABSOLUTE(90), INCREMENTAL(91), STOP(122), WAVEFORM(123)` (the values
-  are the G-code numbers; `STOP` is the test-complete `G122`, `WAVEFORM` is the
-  firmware-native `G123` canned cycle)
+  HOME(28), ABSOLUTE(90), INCREMENTAL(91), STOP(122), WAVEFORM(123),
+  OPEN_LOOP_MOVE(124)` (the values are the G-code numbers; `STOP` is the
+  test-complete `G122`, `WAVEFORM` is the firmware-native `G123` canned cycle,
+  `OPEN_LOOP_MOVE` is `G124`, a linear move with the servo feedback off, used by
+  the motor calibration)
 - **`WaveformShape`** — `SINE, TRIANGLE` (firmware-native `G123` is SINE-only in
   v1; the app pins triangle to sine)
-- **`MotorCalibrationState`** — `IDLE, STARTING, FORWARD, REVERSE, DONE,
-  REFUSED_MOTION_DISABLED, REFUSED_BUSY, REFUSED_AT_ENDSTOP,
-  ABORTED_MOTION_DISABLED, ABORTED_FAULT, ABORTED_ENDSTOP, ABORTED_TIMEOUT,
-  ABORTED_OVERTRAVEL, REFUSED_RESTRICTED, ABORTED_RESTRICTED, ABORTED_JOG`
-  (append only: firmware `app_motorCalibration_state_E` uses the same order).
-  `REFUSED_RESTRICTED` / `ABORTED_RESTRICTED`: the machine was, or became,
-  speed-restricted. `ABORTED_JOG`: a jog took the drive. Jogs (G0/G1 and the
-  G90/G91 sent with them) are accepted during a run and capped at the restricted
-  speed, or 2 mm/s when the profile's restricted velocity is 0. The G90/G91
-  alone does not end the run; it ends when the jog's G0/G1 takes the drive,
-  and the jog carries on at the capped speed. Other manual moves, Home
-  included, are NACKed until the run ends
 - **`NotificationType`**, **`LoggingState`**
 
 See [States, faults & restrictions](../user-guide/machine-states.md) for what each

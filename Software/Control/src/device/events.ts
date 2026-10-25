@@ -14,7 +14,6 @@ import {
   FirmwareVersion,
   Notification,
 } from '@/domain';
-import type { CalibrationResult } from '@/domain/motorCalibration';
 
 export type DeviceEvent =
   | { kind: 'connected' }
@@ -26,7 +25,6 @@ export type DeviceEvent =
   | { kind: 'state'; data: MachineState }
   | { kind: 'configuration'; data: MachineConfiguration }
   | { kind: 'sampleProfile'; data: SampleProfile }
-  | { kind: 'motorCalibration'; data: CalibrationResult }
   | { kind: 'firmwareVersion'; data: FirmwareVersion }
   | { kind: 'notification'; data: Notification }
   | { kind: 'ack'; command: number; success: boolean }

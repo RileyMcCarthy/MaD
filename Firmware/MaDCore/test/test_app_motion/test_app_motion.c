@@ -57,12 +57,6 @@ static bool d_speedLimited;
 bool app_control_motionEnabled(void) { return d_motionEnabled; }
 bool app_control_speedLimited(void) { return d_speedLimited; }
 
-/* --- app_motorCalibration (ticked by app_motion; exercised by its own suite) --- */
-static bool d_calibrating;
-void app_motorCalibration_init(int lock) { (void)lock; }
-void app_motorCalibration_run(void) {}
-bool app_motorCalibration_isActive(void) { return d_calibrating; }
-
 /* --- dev_servo inputs --- */
 static int32_t d_steps;       // dev_servo_getPosition(MAIN)
 static bool d_atTarget;       // dev_servo_atTarget(MAIN)
@@ -115,6 +109,18 @@ void dev_servo_moveTo(dev_servo_channel_E ch, int32_t targetCounts, int32_t feed
     d_moveCount++;
     d_lastMoveTarget = targetCounts;
     d_lastMoveStepsPerSecond = feedrateCountsPerSec;
+}
+
+static uint32_t d_openLoopMoveCount;
+static int32_t d_lastOpenLoopTarget;
+static int32_t d_lastOpenLoopStepsPerSecond;
+
+void dev_servo_moveToOpenLoop(dev_servo_channel_E ch, int32_t targetCounts, int32_t feedrateCountsPerSec)
+{
+    TEST_ASSERT_EQUAL_INT(DEV_SERVO_CHANNEL_MAIN, ch);
+    d_openLoopMoveCount++;
+    d_lastOpenLoopTarget = targetCounts;
+    d_lastOpenLoopStepsPerSecond = feedrateCountsPerSec;
 }
 
 /* --- dev_servo velocity mode (record the last call + count) --- */
@@ -250,9 +256,11 @@ bool dev_nvram_getChannelData(dev_nvram_channel_t channel, void *data, size_t si
 /* Reset all doubles to a benign baseline. */
 static void doubles_reset(void)
 {
+    d_openLoopMoveCount = 0U;
+    d_lastOpenLoopTarget = 0;
+    d_lastOpenLoopStepsPerSecond = 0;
     d_motionEnabled = true;
     d_speedLimited = false;
-    d_calibrating = false;
     d_steps = 0;
     d_atTarget = false;
     d_target = 0;
@@ -512,6 +520,40 @@ void test_incremental_mode_adds_current_position(void)
     app_motion_run(); /* snapshots d_steps=1500, then starts move */
     TEST_ASSERT_EQUAL_UINT32(1U, d_moveCount);
     TEST_ASSERT_EQUAL_INT32(1600, d_lastMoveTarget);
+}
+
+void test_open_loop_move_chains_from_the_commanded_position(void)
+{
+    VIBES_TEST("motion.open-loop-move",
+               "src/APP/app_motion.c#app_motion_private_moveManager_start",
+               "incremental mode, a commanded position of 30 millimetres while the encoder reads 15, and a 1 millimetre open-loop move");
+    VIBES_EXPECT("feedback-off", "the drive is given the move with its feedback off, and no closed-loop move is issued");
+    VIBES_EXPECT_WHY("from-commanded",
+                     "the drive is commanded to 31 millimetres",
+                     "open-loop moves chain from where the last one was commanded, so a move out and a move back send equal pulse counts whatever the encoder read");
+    VIBES_EXPECT("completes-on-arrival", "the move completes when the drive reports arrival");
+    motion_driveToWaiting();
+    app_motion_move_t g91 = make_move((uint8_t)G91_INCREMENTAL, 0, 0, 0);
+    TEST_ASSERT_TRUE(app_motion_addMove(&g91));
+    app_motion_run();
+    app_motion_run();
+    TEST_ASSERT_TRUE(app_motion_isIdle());
+
+    d_steps = 1500;    /* encoder: 15 mm at 100 steps/mm */
+    d_setpoint = 3000; /* commanded: 30 mm */
+    d_moveCount = 0U;
+    d_atTarget = false;
+    app_motion_move_t mv = make_move((uint8_t)G124_OPEN_LOOP_MOVE, 1000, 100, 0);
+    TEST_ASSERT_TRUE(app_motion_addMove(&mv));
+    app_motion_run();
+    TEST_ASSERT_EQUAL_UINT32(1U, d_openLoopMoveCount);
+    TEST_ASSERT_EQUAL_UINT32(0U, d_moveCount);
+    TEST_ASSERT_EQUAL_INT32(3100, d_lastOpenLoopTarget);
+    TEST_ASSERT_EQUAL_INT32(10, d_lastOpenLoopStepsPerSecond); /* 0.1 mm/s at 100 steps/mm */
+    TEST_ASSERT_FALSE(app_motion_isIdle());
+    d_atTarget = true;
+    app_motion_run();
+    TEST_ASSERT_TRUE(app_motion_isIdle());
 }
 
 /* Re-asserting absolute mode (G90) makes the target independent of the current
@@ -834,44 +876,6 @@ void test_an_unrestricted_machine_moves_at_the_speed_it_was_asked_for(void)
     d_speedLimited = false;
     runOneLinearMove(1000, 40000); /* 40 mm/s */
     TEST_ASSERT_EQUAL_INT32(40 * 100, d_lastMoveStepsPerSecond);
-}
-
-void test_a_jog_during_a_motor_calibration_moves_at_the_capped_speed(void)
-{
-    VIBES_TEST("motion.calibration-caps-jog-speed",
-               "src/APP/app_motion.c#app_motion_private_moveManager_start",
-               "a machine profile with a restricted velocity of 2 millimetres per second, a motor calibration running on an otherwise unrestricted machine, and a jog asking for 40");
-    VIBES_EXPECT_WHY("feedrate-capped",
-                     "the drive is commanded at 2 millimetres per second",
-                     "the operator can always jog during a calibration, and a jog that lands on a carriage being driven open loop moves slowly");
-
-    d_machineProfile.restrictedVelocity = 2; /* mm/s */
-    motion_init();
-    motion_driveToWaiting();
-
-    d_speedLimited = false;
-    d_calibrating = true;
-    runOneLinearMove(1000, 40000); /* 40 mm/s */
-    TEST_ASSERT_EQUAL_INT32(2 * 100, d_lastMoveStepsPerSecond);
-}
-
-void test_a_jog_during_a_motor_calibration_is_capped_without_a_restricted_velocity(void)
-{
-    VIBES_TEST("motion.calibration-caps-jog-speed-by-default",
-               "src/APP/app_motion.c#app_motion_private_moveManager_start",
-               "a machine profile whose restricted velocity is zero, as on the factory profile, a motor calibration running, and a jog asking for 40 millimetres per second");
-    VIBES_EXPECT_WHY("feedrate-capped",
-                     "the drive is commanded at 2 millimetres per second",
-                     "the jog cap during a calibration holds on every profile, including one that leaves restricted speed uncapped");
-
-    d_machineProfile.restrictedVelocity = 0;
-    motion_init();
-    motion_driveToWaiting();
-
-    d_speedLimited = false;
-    d_calibrating = true;
-    runOneLinearMove(1000, 40000); /* 40 mm/s */
-    TEST_ASSERT_EQUAL_INT32(2 * 100, d_lastMoveStepsPerSecond);
 }
 
 void test_a_profile_without_a_cap_does_not_stop_the_machine(void)
@@ -1318,6 +1322,7 @@ int main(void)
 
     RUN_TEST(test_zero_feedrate_move_issues_no_stepper_move);
     RUN_TEST(test_incremental_mode_adds_current_position);
+    RUN_TEST(test_open_loop_move_chains_from_the_commanded_position);
     RUN_TEST(test_absolute_mode_ignores_current_position);
 
     RUN_TEST(test_dwell_holds_until_period_elapses);
@@ -1332,8 +1337,6 @@ int main(void)
     RUN_TEST(test_a_restricted_machine_moves_at_the_capped_speed);
     RUN_TEST(test_a_restricted_machine_is_not_sped_up_to_the_cap);
     RUN_TEST(test_an_unrestricted_machine_moves_at_the_speed_it_was_asked_for);
-    RUN_TEST(test_a_jog_during_a_motor_calibration_moves_at_the_capped_speed);
-    RUN_TEST(test_a_jog_during_a_motor_calibration_is_capped_without_a_restricted_velocity);
     RUN_TEST(test_a_profile_without_a_cap_does_not_stop_the_machine);
     RUN_TEST(test_an_unusable_machine_profile_refuses_every_move);
     RUN_TEST(test_a_profile_that_could_not_be_read_refuses_every_move);

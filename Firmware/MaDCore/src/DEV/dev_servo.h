@@ -46,7 +46,6 @@ typedef enum
     DEV_SERVO_MODE_POSITION,  /* closed-loop to a position target (encoder counts) */
     DEV_SERVO_MODE_VELOCITY,  /* hold a commanded rate — jog and homing ONLY */
     DEV_SERVO_MODE_OSCILLATE, /* track a periodic trajectory about a centre */
-    DEV_SERVO_MODE_OPEN_LOOP, /* emit a fixed number of pulses, encoder only watched — calibration ONLY */
 } dev_servo_mode_E;
 
 /* The mode names which GENERATOR fills the setpoint, not a different control
@@ -173,6 +172,14 @@ void dev_servo_run(void); /* one control tick; call at a fixed rate from a cog *
 
 void dev_servo_enable(dev_servo_channel_E ch, bool enable);
 void dev_servo_moveTo(dev_servo_channel_E ch, int32_t targetCounts, int32_t feedrateCountsPerSec); /* closed-loop position at feedrate */
+/* The same move with the FEEDBACK STAGE OFF: the trapezoid is planned and fed
+ * to the drive exactly as for moveTo, but nothing is added from the encoder
+ * and the stall guard does not run. Target and feedrate are in DRIVE pulses
+ * (the trajectory counts what it sends, not what the encoder sees). Arrival
+ * is the trajectory reaching its target. Any later command restores the
+ * feedback, restarting the setpoint from the encoder. Used to measure the
+ * drive/encoder pair (motor calibration), not to position anything. */
+void dev_servo_moveToOpenLoop(dev_servo_channel_E ch, int32_t targetCounts, int32_t feedrateCountsPerSec);
 void dev_servo_setVelocity(dev_servo_channel_E ch, int32_t velCountsPerSec);
 
 /* Oscillate about `centreCounts` for `cycles` whole cycles, then stop.
@@ -200,25 +207,6 @@ bool dev_servo_waveformFeasible(dev_servo_channel_E ch, const dev_servo_waveform
 /* Whole cycles completed so far; the move is done when this reaches `cycles`. */
 uint32_t dev_servo_waveformCyclesDone(dev_servo_channel_E ch); /* closed-loop velocity hold */
 void dev_servo_stop(dev_servo_channel_E ch);
-/* Emit |signedPulses| step pulses at freqHz, OPEN LOOP, then stop.
- *
- * The feedback stage, the trajectory and the stall guard are all out of the
- * path: this exists to MEASURE the drive/encoder pair (how many counts come
- * back per pulse, and with which sign), which a loop closed on that same
- * encoder would hide. The setpoint follows the encoder every tick, so leaving
- * the mode (stop, moveTo, ...) starts from where the carriage really is.
- * Positive pulses drive the direction a closed-loop move toward increasing
- * counts would use. Rejected (returns false, nothing changes) for zero pulses
- * or a zero rate. */
-bool dev_servo_startOpenLoop(dev_servo_channel_E ch, int32_t signedPulses, uint32_t freqHz);
-/* True once the open-loop pulses requested by the LAST dev_servo_startOpenLoop
- * have all been emitted; *emitted (may be NULL) receives the count so far.
- * False while running, and false in any other mode. */
-bool dev_servo_openLoopDone(dev_servo_channel_E ch, uint32_t *emitted);
-/* True while the channel is still in open-loop mode: from dev_servo_startOpenLoop
- * until another mode (stop, moveTo, a velocity jog, homing, a waveform) takes
- * the drive. Still true once the pulses are all out. */
-bool dev_servo_isOpenLoop(dev_servo_channel_E ch);
 void dev_servo_setPosition(dev_servo_channel_E ch, int32_t counts);        /* homing: define encoder reference */
 
 int32_t dev_servo_getPosition(dev_servo_channel_E ch); /* encoder — single source of truth */

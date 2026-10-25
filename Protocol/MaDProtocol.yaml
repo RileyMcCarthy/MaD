@@ -83,6 +83,7 @@ enums:
       - { name: INCREMENTAL,  value: 91 }
       - { name: STOP,         value: 122 }
       - { name: WAVEFORM,     value: 123 }   # firmware-native waveform (canned cycle)
+      - { name: OPEN_LOOP_MOVE, value: 124 } # linear move with the servo feedback off (motor calibration)
 
   WaveformShape:
     description: "Traverse profile for a G123 waveform -- how the carriage gets from one peak to the other. Named constants for the host; the wire carries a plain uint8 (see WaveformMove.shape)."
@@ -105,26 +106,6 @@ enums:
       - IDLE
       - RUNNING
       - STOPPING
-
-  MotorCalibrationState:
-    description: "Progress and outcome of an open-loop motor calibration (firmware app_motorCalibration_state_E, same order)"
-    variants:
-      - IDLE                     # never run since boot
-      - STARTING                 # accepted; gates judged on the next control tick
-      - FORWARD                  # driving / settling the forward leg
-      - REVERSE                  # driving / settling the reverse leg
-      - DONE                     # both legs measured
-      - REFUSED_MOTION_DISABLED  # motion was off (or faulted) when it would have started
-      - REFUSED_BUSY             # a move or a test was running
-      - REFUSED_AT_ENDSTOP       # an end stop was made
-      - ABORTED_MOTION_DISABLED
-      - ABORTED_FAULT
-      - ABORTED_ENDSTOP
-      - ABORTED_TIMEOUT          # a leg took over twice its nominal time + 1 s
-      - ABORTED_OVERTRAVEL       # the encoder moved further than the request's bound
-      - REFUSED_RESTRICTED       # the machine was speed-restricted (door open, tension limit)
-      - ABORTED_RESTRICTED       # the machine became speed-restricted mid-run
-      - ABORTED_JOG              # a jog took the drive mid-run (the jog runs at the restricted speed)
 
 # ============================================================
 # Structs
@@ -434,51 +415,6 @@ structs:
         type: string
         max_length: 7
 
-  MotorCalibrationRequest:
-    encoding: aligned
-    description: "Open-loop motor calibration: drive this many step pulses each way, at this rate, with no servo loop"
-    fields:
-      - name: pulses
-        type: uint32
-        unit: pulses
-        scale: 1
-        min: 1
-        max: 200000      # APP_MOTORCALIBRATION_MAX_PULSES
-      - name: frequency
-        type: uint32
-        unit: pulses/s
-        scale: 1
-        min: 1
-        max: 20000       # APP_MOTORCALIBRATION_MAX_FREQUENCY
-      - name: maxCounts
-        type: uint32
-        unit: counts
-        scale: 1
-        min: 1           # a leg is abandoned once the encoder moves further than this
-
-  MotorCalibrationResult:
-    encoding: aligned
-    description: "Raw outcome of the last motor calibration; the host judges it against the profile"
-    fields:
-      - name: state
-        type: MotorCalibrationState
-      - name: pulsesForward
-        type: int32
-        unit: pulses
-        scale: 1         # pulses emitted, signed by commanded direction
-      - name: countsForward
-        type: int32
-        unit: counts
-        scale: 1         # encoder change over the forward leg
-      - name: pulsesReverse
-        type: int32
-        unit: pulses
-        scale: 1
-      - name: countsReverse
-        type: int32
-        unit: counts
-        scale: 1
-
   Notification:
     encoding: aligned
     description: "Firmware notification message"
@@ -526,12 +462,6 @@ messages:
     command_id: 4
     priority: high
     response: SampleProfile
-
-  motor_calibration_result:
-    tx_node: ui
-    command_id: 5
-    priority: high
-    response: MotorCalibrationResult
 
   # ── Commands (UI transmits; ACK/NACK unless response provided) ──
   machine_configuration_write:
@@ -589,13 +519,6 @@ messages:
     command_id: 7
     priority: high
     request: none
-
-  motor_calibration:
-    tx_node: ui
-    command_id: 10
-    priority: high
-    request: MotorCalibrationRequest
-    note: "Starts an open-loop drive/encoder check; poll motor_calibration_result for progress"
 
   file_download:
     tx_node: ui

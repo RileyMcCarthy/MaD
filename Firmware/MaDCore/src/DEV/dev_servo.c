@@ -70,9 +70,10 @@ typedef struct
     int32_t target;    /* counts (POSITION mode) */
     int32_t feedrate;  /* counts/s cruise speed (POSITION mode), 1..maxVelocity */
     int32_t targetVel; /* counts/s (VELOCITY mode) */
-    /* OPEN_LOOP mode */
-    int32_t openLoopPulses; /* signed: the sign is the direction */
-    uint32_t openLoopFreq;  /* pulses/s */
+    /* POSITION mode with the feedback stage off (dev_servo_moveToOpenLoop):
+     * the trajectory is fed straight to the drive and the encoder is only
+     * watched. Cleared by every other command. */
+    bool openLoop;
     /* OSCILLATE mode */
     dev_servo_waveform_S wave;
     /* Bumped by every command that changes what "at target" means. dev_servo_run
@@ -90,8 +91,6 @@ typedef struct
     bool atTarget;
     bool stalled;
     bool ready; /* the control loop has ticked (see dev_servo_isReady) */
-    uint32_t openLoopEmitted; /* pulses emitted by the current open-loop run */
-    bool openLoopDone;        /* ...and whether that is all of them */
 } dev_servo_output_S;
 
 typedef struct
@@ -134,13 +133,9 @@ typedef struct
     float waveRampDown;  /* TRIANGLE only: ramp share of the down traverse */
     float waveRampUp;    /* TRIANGLE only: ramp share of the up traverse   */
     uint8_t waveSegment; /* dev_servo_waveSegment_E */
+    bool wasOpenLoop; /* the previous tick ran with the feedback off */
     bool velActive; /* a velocity pulse train is currently running */
     bool lastCw;    /* direction of the running train (latched at start) */
-    /* The request seq the open-loop run was started for, so a fresh request
-     * restarts the train (and its emitted counter) exactly once. */
-    uint32_t openLoopSeq;
-    bool openLoopStarted;
-    uint32_t openLoopEmitted; /* pulses counted at the last tick of the train */
 } dev_servo_channelData_S;
 
 typedef struct
@@ -671,43 +666,6 @@ static void dev_servo_private_oscillate(dev_servo_channelData_S *d, float dt, ui
     d->wavePhase = next;
 }
 
-/* One tick of OPEN_LOOP mode. Called with the request already snapshotted.
- * Returns the pulses emitted so far and whether that is all of them. */
-static bool dev_servo_private_openLoop(dev_servo_channel_E ch, int32_t pulses, uint32_t freq, uint32_t seq,
-                                       uint32_t *emittedOut)
-{
-    const dev_servo_channelConfig_S *const cfg = &dev_servo_channelConfig[ch];
-    dev_servo_channelData_S *const d = &dev_servo_data.channel[ch];
-    const uint32_t wanted = (uint32_t)((pulses < 0) ? -pulses : pulses);
-
-    if ((d->openLoopStarted == false) || (d->openLoopSeq != seq))
-    {
-        /* A new run: drop whatever train is running so startVelocity resets
-         * the emitted counter, then start at the requested rate. */
-        dev_servo_private_applyVelocity(ch, 0.0f);
-        d->openLoopEmitted = 0U;
-        d->openLoopSeq = seq;
-        d->openLoopStarted = true;
-        dev_servo_private_applyVelocity(ch, (pulses >= 0) ? (float)freq : -(float)freq);
-    }
-
-    if (d->velActive)
-    {
-        uint32_t emitted = 0U;
-        (void)HAL_pulseOut_run(cfg->pulseChannel, &emitted);
-        d->openLoopEmitted = emitted;
-        if (emitted >= wanted)
-        {
-            /* The train stops on the tick that reaches the count, so it may run
-             * a tick's worth past it. The count reported is the one emitted,
-             * overshoot included: it is what the encoder was shown. */
-            dev_servo_private_applyVelocity(ch, 0.0f);
-        }
-    }
-    *emittedOut = d->openLoopEmitted;
-    return (d->velActive == false);
-}
-
 void dev_servo_run(void)
 {
     for (dev_servo_channel_E ch = (dev_servo_channel_E)0; ch < DEV_SERVO_CHANNEL_COUNT; ch++)
@@ -722,8 +680,7 @@ void dev_servo_run(void)
         const int32_t target = d->req.target;
         const int32_t feedrate = d->req.feedrate;
         const int32_t targetVel = d->req.targetVel;
-        const int32_t openLoopPulses = d->req.openLoopPulses;
-        const uint32_t openLoopFreq = d->req.openLoopFreq;
+        const bool openLoop = (mode == DEV_SERVO_MODE_POSITION) && d->req.openLoop;
         const uint32_t seq = d->req.seq;
         DEV_SERVO_LOCK_REL();
 
@@ -754,37 +711,21 @@ void dev_servo_run(void)
             d->out.atTarget = (d->req.seq == seq);
             d->out.stalled = false;
             d->out.ready = true; /* disabled but alive — the loop is still ticking */
-            d->out.openLoopDone = false;
             DEV_SERVO_LOCK_REL();
-            d->openLoopStarted = false;
+            d->wasOpenLoop = false;
             continue;
         }
 
-        if (mode == DEV_SERVO_MODE_OPEN_LOOP)
+        if (d->wasOpenLoop && (openLoop == false))
         {
-            uint32_t emitted = 0U;
-            const bool done = dev_servo_private_openLoop(ch, openLoopPulses, openLoopFreq, seq, &emitted);
-            /* The loop is open, so the setpoint simply follows the encoder: no
-             * error builds up, no stall is judged, and whatever mode comes next
-             * starts from where the carriage actually is. */
+            /* Leaving an open-loop move. Its trajectory counted PULSES, and
+             * where the encoder ended up is the only position the closed loop
+             * may trust, so the setpoint restarts there -- otherwise the first
+             * closed-loop tick would drag the carriage back by however far the
+             * pulses and the encoder disagreed. */
             dev_servo_private_resync(ch, pos);
-            d->commandedVel = done ? 0.0f : ((openLoopPulses >= 0) ? (float)openLoopFreq : -(float)openLoopFreq);
-            DEV_SERVO_LOCK_REQ_BLOCK();
-            d->out.position = pos;
-            d->out.velocity = (int32_t)d->commandedVel;
-            d->out.followingError = 0;
-            d->out.atTarget = false;
-            d->out.stalled = false;
-            d->out.ready = true;
-            if (d->req.seq == seq)
-            {
-                d->out.openLoopEmitted = emitted;
-                d->out.openLoopDone = done;
-            }
-            DEV_SERVO_LOCK_REL();
-            continue;
         }
-        d->openLoopStarted = false;
+        d->wasOpenLoop = openLoop;
 
         const float maxVel = (float)cfg->maxVelocity;
 
@@ -870,7 +811,10 @@ void dev_servo_run(void)
                  (d->waveSegment == (uint8_t)DEV_SERVO_WAVE_APPROACH))
                     ? cfg->waveformStartTolerance
                     : cfg->positionDeadband;
-            if ((dev_servo_private_iabs(profileTarget - pos) <= arriveWithin) &&
+            /* Open loop has no encoder truth to arrive by: it has arrived when
+             * its own trajectory has. */
+            const int32_t arriveFrom = openLoop ? d->setpointCounts : pos;
+            if ((dev_servo_private_iabs(profileTarget - arriveFrom) <= arriveWithin) &&
                 (fabsf(d->setpointVel) < 1.0f))
             {
                 atTarget = true; /* encoder is on target and the profile has wound down */
@@ -916,7 +860,7 @@ void dev_servo_run(void)
         const float kp = (float)cfg->kpNum / (float)cfg->kpDen;
 
         float iTerm = 0.0f;
-        if (cfg->kiNum != 0)
+        if ((cfg->kiNum != 0) && (openLoop == false))
         {
             const float ki = (float)cfg->kiNum / (float)cfg->kiDen;
             d->integral += error * dt;
@@ -926,7 +870,8 @@ void dev_servo_run(void)
             iTerm = ki * d->integral;
         }
 
-        float cmdVel = feedVel + (kp * error) + iTerm;
+        /* Open loop: the trajectory alone drives the pulses. */
+        float cmdVel = openLoop ? feedVel : (feedVel + (kp * error) + iTerm);
         if (cmdVel > maxVel) { cmdVel = maxVel; }
         if (cmdVel < -maxVel) { cmdVel = -maxVel; }
 
@@ -961,7 +906,10 @@ void dev_servo_run(void)
         /* ---- Stall guard: commanding motion but the encoder isn't following. ---- */
         bool stalled = false;
         const int32_t moved = dev_servo_private_iabs(pos - d->lastPos);
-        if ((fabsf(d->commandedVel) > (float)cfg->stallVelocity) && (moved < cfg->stallMinMove))
+        /* No stall guard with the feedback off: an encoder that does not follow
+         * is exactly what an open-loop move is used to find out. */
+        if ((openLoop == false) && (fabsf(d->commandedVel) > (float)cfg->stallVelocity) &&
+            (moved < cfg->stallMinMove))
         {
             d->stallCounter++;
             if (d->stallCounter >= cfg->stallTicks)
@@ -997,7 +945,11 @@ void dev_servo_enable(dev_servo_channel_E ch, bool enable)
     DEV_SERVO_LOCK_REL();
 }
 
-void dev_servo_moveTo(dev_servo_channel_E ch, int32_t targetCounts, int32_t feedrateCountsPerSec)
+/* Both position moves, in one lock: a move and its feedback mode must land
+ * together, or the control tick in between would run the new target with the
+ * old mode. */
+static void dev_servo_private_move(dev_servo_channel_E ch, int32_t targetCounts, int32_t feedrateCountsPerSec,
+                                   bool openLoop)
 {
     if (ch >= DEV_SERVO_CHANNEL_COUNT) { return; }
     const int32_t maxVel = dev_servo_channelConfig[ch].maxVelocity;
@@ -1007,6 +959,7 @@ void dev_servo_moveTo(dev_servo_channel_E ch, int32_t targetCounts, int32_t feed
     }
     DEV_SERVO_LOCK_REQ_BLOCK();
     dev_servo_data.channel[ch].req.mode = DEV_SERVO_MODE_POSITION;
+    dev_servo_data.channel[ch].req.openLoop = openLoop;
     dev_servo_data.channel[ch].req.target = targetCounts;
     dev_servo_data.channel[ch].req.feedrate = feedrateCountsPerSec;
     /* A fresh target invalidates the previous verdict: the caller must not see
@@ -1015,6 +968,16 @@ void dev_servo_moveTo(dev_servo_channel_E ch, int32_t targetCounts, int32_t feed
     dev_servo_data.channel[ch].req.seq++;
     dev_servo_data.channel[ch].out.atTarget = false;
     DEV_SERVO_LOCK_REL();
+}
+
+void dev_servo_moveTo(dev_servo_channel_E ch, int32_t targetCounts, int32_t feedrateCountsPerSec)
+{
+    dev_servo_private_move(ch, targetCounts, feedrateCountsPerSec, false);
+}
+
+void dev_servo_moveToOpenLoop(dev_servo_channel_E ch, int32_t targetCounts, int32_t feedrateCountsPerSec)
+{
+    dev_servo_private_move(ch, targetCounts, feedrateCountsPerSec, true);
 }
 
 void dev_servo_setVelocity(dev_servo_channel_E ch, int32_t velCountsPerSec)
@@ -1111,50 +1074,6 @@ void dev_servo_stop(dev_servo_channel_E ch)
     dev_servo_data.channel[ch].req.seq++;
     dev_servo_data.channel[ch].out.atTarget = false;
     DEV_SERVO_LOCK_REL();
-}
-
-bool dev_servo_startOpenLoop(dev_servo_channel_E ch, int32_t signedPulses, uint32_t freqHz)
-{
-    if ((ch >= DEV_SERVO_CHANNEL_COUNT) || (signedPulses == 0) || (freqHz == 0U))
-    {
-        return false;
-    }
-    DEV_SERVO_LOCK_REQ_BLOCK();
-    dev_servo_data.channel[ch].req.mode = DEV_SERVO_MODE_OPEN_LOOP;
-    dev_servo_data.channel[ch].req.openLoopPulses = signedPulses;
-    dev_servo_data.channel[ch].req.openLoopFreq = freqHz;
-    dev_servo_data.channel[ch].req.seq++;
-    dev_servo_data.channel[ch].out.atTarget = false;
-    /* Cleared here, not on the next tick, so a caller polling straight after
-     * starting can never see the PREVIOUS run's "done". */
-    dev_servo_data.channel[ch].out.openLoopDone = false;
-    dev_servo_data.channel[ch].out.openLoopEmitted = 0U;
-    DEV_SERVO_LOCK_REL();
-    return true;
-}
-
-bool dev_servo_openLoopDone(dev_servo_channel_E ch, uint32_t *emitted)
-{
-    if (ch >= DEV_SERVO_CHANNEL_COUNT) { return false; }
-    DEV_SERVO_LOCK_REQ_BLOCK();
-    const bool openLoop = (dev_servo_data.channel[ch].req.mode == DEV_SERVO_MODE_OPEN_LOOP);
-    const bool done = openLoop && dev_servo_data.channel[ch].out.openLoopDone;
-    const uint32_t count = dev_servo_data.channel[ch].out.openLoopEmitted;
-    DEV_SERVO_LOCK_REL();
-    if (emitted != NULL)
-    {
-        *emitted = count;
-    }
-    return done;
-}
-
-bool dev_servo_isOpenLoop(dev_servo_channel_E ch)
-{
-    if (ch >= DEV_SERVO_CHANNEL_COUNT) { return false; }
-    DEV_SERVO_LOCK_REQ_BLOCK();
-    const bool openLoop = (dev_servo_data.channel[ch].req.mode == DEV_SERVO_MODE_OPEN_LOOP);
-    DEV_SERVO_LOCK_REL();
-    return openLoop;
 }
 
 void dev_servo_setPosition(dev_servo_channel_E ch, int32_t counts)

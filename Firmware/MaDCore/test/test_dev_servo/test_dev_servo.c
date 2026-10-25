@@ -1877,149 +1877,127 @@ void test_waveforms_track_the_requested_cycle_to_one_micron_across_the_envelope(
     }
 }
 
-/* ---- Open loop (motor calibration) ---- */
+/* ---- Open-loop position moves (G124, motor calibration) ---- */
 
-void test_dev_servo_openLoopEmitsTheCountThenStops(void)
+/* Run the loop with the encoder frozen, summing the pulses the drive was asked
+ * for (rate x tick). Returns ticks until arrival, or -1. */
+static int open_loop_run(int maxTicks, double *pulses, uint32_t *peakRate, uint32_t *firstRate)
 {
-    VIBES_TEST("servo.open-loop-counted-pulses",
-               "src/DEV/dev_servo.c#dev_servo_startOpenLoop",
-               "an enabled motor drive asked for 1000 open-loop pulses forward at 500 pulses a second");
-    VIBES_EXPECT("train-at-rate", "a pulse train starts at the requested rate");
-    VIBES_EXPECT("forward-direction", "the direction is the one a move toward increasing encoder counts uses");
-    VIBES_EXPECT("not-done-early", "the run is not reported finished while pulses are still going out");
-    VIBES_EXPECT("stops-at-count", "the train stops once the count is reached, and the run reports finished with the pulses sent");
-    servo_init();
-    dev_servo_enable(CH, true);
-    tick();
-    TEST_ASSERT_TRUE(dev_servo_startOpenLoop(CH, 1000, 500U));
-    d_run_delta = 10U;
-    tick();
-    TEST_ASSERT_EQUAL_UINT32(1U, d_startVelocityCount);
-    TEST_ASSERT_EQUAL_UINT32(500U, d_startVelocityFreq);
-    TEST_ASSERT_FALSE(d_gpioActive);
-    uint32_t emitted = 0U;
-    TEST_ASSERT_FALSE(dev_servo_openLoopDone(CH, &emitted));
-    TEST_ASSERT_EQUAL_UINT32(10U, emitted);
-
-    d_run_delta = 1001U;
-    tick();
-    TEST_ASSERT_EQUAL_UINT32(0U, d_pulseRate);
-    TEST_ASSERT_TRUE(dev_servo_openLoopDone(CH, &emitted));
-    TEST_ASSERT_EQUAL_UINT32(1001U, emitted);
-}
-
-void test_dev_servo_openLoopNegativeRunsReverse(void)
-{
-    VIBES_TEST("servo.open-loop-reverse",
-               "src/DEV/dev_servo.c#dev_servo_startOpenLoop",
-               "an enabled motor drive asked for open-loop pulses with a negative count");
-    VIBES_EXPECT("reverse-direction", "the direction is the one a move toward decreasing encoder counts uses");
-    servo_init();
-    dev_servo_enable(CH, true);
-    TEST_ASSERT_TRUE(dev_servo_startOpenLoop(CH, -1000, 500U));
-    tick();
-    TEST_ASSERT_EQUAL_UINT32(1U, d_startVelocityCount);
-    TEST_ASSERT_TRUE(d_gpioActive);
-}
-
-void test_dev_servo_openLoopIgnoresTheEncoder(void)
-{
-    VIBES_TEST("servo.open-loop-ignores-encoder",
-               "src/DEV/dev_servo.c#dev_servo_run",
-               "open-loop pulses going out for far longer than the stall time while the encoder never moves");
-    VIBES_EXPECT_WHY("no-stall",
-                     "no stall is reported",
-                     "a silent encoder is a result the calibration reports, and must not trip the machine");
-    VIBES_EXPECT("rate-unchanged", "the pulse rate stays at the requested rate, with no correction from the encoder");
-    servo_init();
-    dev_servo_enable(CH, true);
-    TEST_ASSERT_TRUE(dev_servo_startOpenLoop(CH, 100000, 8192U));
-    for (int i = 0; i < 500; i++)
+    *pulses = 0.0;
+    *peakRate = 0U;
+    *firstRate = 0U;
+    for (int i = 0; i < maxTicks; i++)
     {
         tick();
+        if ((i == 0) || (*firstRate == 0U)) { *firstRate = d_pulseRate; }
+        if (d_pulseRate > *peakRate) { *peakRate = d_pulseRate; }
+        *pulses += (double)d_pulseRate * SERVO_DT_S;
+        if (dev_servo_atTarget(CH)) { return i + 1; }
     }
-    TEST_ASSERT_FALSE(dev_servo_isStalled(CH));
-    TEST_ASSERT_EQUAL_UINT32(8192U, d_pulseRate);
-    TEST_ASSERT_EQUAL_UINT32(0U, d_setFrequencyCount);
+    return -1;
 }
 
-void test_dev_servo_leavingOpenLoopHoldsWhereTheCarriageIs(void)
+void test_dev_servo_open_loop_move_ignores_the_encoder(void)
 {
-    VIBES_TEST("servo.open-loop-hands-back-in-place",
-               "src/DEV/dev_servo.c#dev_servo_stop",
-               "an open-loop run that moved the encoder 5000 counts, followed by a stop");
-    VIBES_EXPECT_WHY("no-pull-back",
-                     "the drive holds where the carriage now is and sends no pulses",
-                     "the closed loop must not drag the carriage back to where the open-loop run began");
+    VIBES_TEST("servo.open-loop-move",
+               "src/DEV/dev_servo.c#dev_servo_moveToOpenLoop",
+               "an enabled drive given a one-millimetre open-loop move at one millimetre a second, with the encoder never moving");
+    VIBES_EXPECT_WHY("arrives-on-trajectory",
+                     "the move arrives when its own trajectory does, in a little over a second",
+                     "with the feedback off there is no encoder truth to arrive by");
+    VIBES_EXPECT("pulses-match-distance", "the pulses sent add up to the distance, to within 0.2 percent");
+    VIBES_EXPECT("rate-capped", "the pulse rate never exceeds the requested feedrate, so nothing is added to chase the encoder");
+    VIBES_EXPECT("ramped", "the pulse train starts below the feedrate and ramps up, as a closed-loop move does");
+    VIBES_EXPECT("no-stall", "no stall is reported");
+    servo_init_envelope(SHIPPED_MAX_VEL_COUNTS, 81920); /* 10 mm/s^2: a ramp long enough to see */
+    dev_servo_enable(CH, true);
+    tick();
+    dev_servo_moveToOpenLoop(CH, 8192, 8192);
+    double pulses = 0.0;
+    uint32_t peak = 0U;
+    uint32_t first = 0U;
+    const int ticks = open_loop_run(3000, &pulses, &peak, &first);
+    TEST_ASSERT_TRUE(ticks > 1000);
+    TEST_ASSERT_TRUE(ticks < 1300);
+    TEST_ASSERT_TRUE(fabs(pulses - 8192.0) <= 0.002 * 8192.0);
+    TEST_ASSERT_TRUE(peak <= 8192U);
+    TEST_ASSERT_TRUE(first < 8192U);
+    TEST_ASSERT_FALSE(dev_servo_isStalled(CH));
+}
+
+void test_dev_servo_open_loop_moves_out_and_back_send_equal_pulses(void)
+{
+    VIBES_TEST("servo.open-loop-out-and-back",
+               "src/DEV/dev_servo.c#dev_servo_moveToOpenLoop",
+               "an open-loop move out one millimetre and back to where it was commanded from, with the encoder frozen");
+    VIBES_EXPECT("back-equals-out", "the pulses sent back equal the pulses sent out");
+    VIBES_EXPECT("back-reverses", "the drive is driven the other way on the way back");
     servo_init();
     dev_servo_enable(CH, true);
     tick();
-    TEST_ASSERT_TRUE(dev_servo_startOpenLoop(CH, 5000, 5000U));
-    d_run_delta = 5000U;
-    d_encoderValue = 5000;
+    dev_servo_moveToOpenLoop(CH, 8192, 8192);
+    double out = 0.0;
+    uint32_t peak = 0U;
+    uint32_t first = 0U;
+    TEST_ASSERT_TRUE(open_loop_run(3000, &out, &peak, &first) > 0);
+    const bool outActive = d_gpioActive;
+    dev_servo_moveToOpenLoop(CH, 0, 8192);
+    double back = 0.0;
+    TEST_ASSERT_TRUE(open_loop_run(3000, &back, &peak, &first) > 0);
+    TEST_ASSERT_TRUE(fabs(back - out) <= 0.002 * out);
+    TEST_ASSERT_TRUE(d_gpioActive != outActive);
+}
+
+void test_dev_servo_leaving_open_loop_holds_where_the_encoder_is(void)
+{
+    VIBES_TEST("servo.open-loop-hands-back-in-place",
+               "src/DEV/dev_servo.c#dev_servo_run",
+               "an open-loop move commanded one millimetre while the encoder moved only a third of that, followed by a stop");
+    VIBES_EXPECT_WHY("no-pull-back",
+                     "the drive holds where the encoder now is and sends no pulses",
+                     "the closed loop must not drag the carriage toward where the open-loop pulses said it went");
+    servo_init();
+    dev_servo_enable(CH, true);
     tick();
-    tick();
+    dev_servo_moveToOpenLoop(CH, 8192, 8192);
+    double pulses = 0.0;
+    uint32_t peak = 0U;
+    uint32_t first = 0U;
+    TEST_ASSERT_TRUE(open_loop_run(3000, &pulses, &peak, &first) > 0);
+    d_encoderValue = 2731;
+    d_carriage = 2731.0;
     dev_servo_stop(CH);
-    for (int i = 0; i < 20; i++)
+    for (int i = 0; i < 50; i++)
     {
         tick();
     }
     TEST_ASSERT_EQUAL_INT32(0, dev_servo_getVelocity(CH));
     TEST_ASSERT_EQUAL_UINT32(0U, d_pulseRate);
-    TEST_ASSERT_EQUAL_INT32(5000, dev_servo_getPosition(CH));
+    TEST_ASSERT_INT32_WITHIN(1, 2731, dev_servo_getSetpoint(CH));
 }
 
-void test_dev_servo_openLoopRejectsEmptyRequests(void)
+void test_dev_servo_a_closed_loop_move_turns_the_feedback_back_on(void)
 {
-    VIBES_TEST("servo.open-loop-empty-refused",
-               "src/DEV/dev_servo.c#dev_servo_startOpenLoop",
-               "open-loop requests for no pulses, or at a rate of zero");
-    VIBES_EXPECT("refused", "both are refused and the drive keeps its current mode");
-    servo_init();
-    TEST_ASSERT_FALSE(dev_servo_startOpenLoop(CH, 0, 500U));
-    TEST_ASSERT_FALSE(dev_servo_startOpenLoop(CH, 100, 0U));
-    TEST_ASSERT_EQUAL_INT(DEV_SERVO_MODE_IDLE, dev_servo_data.channel[CH].req.mode);
-}
-
-void test_dev_servo_openLoopModeIsReportedUntilAnotherMoveTakesTheDrive(void)
-{
-    VIBES_TEST("servo.open-loop-mode-reported",
-               "src/DEV/dev_servo.c#dev_servo_isOpenLoop",
-               "an open-loop run that has sent all its pulses, followed by a closed-loop move");
-    VIBES_EXPECT_WHY("open-loop-after-done",
-                     "the drive reads as open loop while its pulses go out and after they are all sent",
-                     "the motor calibration stops the drive itself unless another move has taken it");
-    VIBES_EXPECT("left-on-move", "the drive reads as no longer open loop once the closed-loop move is commanded");
+    VIBES_TEST("servo.closed-loop-after-open-loop",
+               "src/DEV/dev_servo.c#dev_servo_moveTo",
+               "an open-loop move, then an ordinary move, with the encoder frozen");
+    VIBES_EXPECT_WHY("stall-guard-back",
+                     "the ordinary move reports a stall when the encoder does not follow it",
+                     "only the open-loop move switches the feedback and its stall guard off");
     servo_init();
     dev_servo_enable(CH, true);
     tick();
-    TEST_ASSERT_FALSE(dev_servo_isOpenLoop(CH));
-    TEST_ASSERT_TRUE(dev_servo_startOpenLoop(CH, 1000, 500U));
-    TEST_ASSERT_TRUE(dev_servo_isOpenLoop(CH));
-    d_run_delta = 1001U;
-    tick();
-    TEST_ASSERT_TRUE(dev_servo_openLoopDone(CH, NULL));
-    TEST_ASSERT_TRUE(dev_servo_isOpenLoop(CH));
-    dev_servo_moveTo(CH, 0, 500);
-    TEST_ASSERT_FALSE(dev_servo_isOpenLoop(CH));
-}
-
-void test_dev_servo_openLoopNewRunClearsTheLastVerdict(void)
-{
-    VIBES_TEST("servo.open-loop-fresh-verdict",
-               "src/DEV/dev_servo.c#dev_servo_openLoopDone",
-               "a finished open-loop run, then a second one is asked for");
-    VIBES_EXPECT_WHY("not-done-at-once",
-                     "the second run reads as unfinished straight away, before the drive has ticked",
-                     "the calibration checks for a finish straight after starting a run, and must never take the last run's finish for this one's");
-    servo_init();
-    dev_servo_enable(CH, true);
-    TEST_ASSERT_TRUE(dev_servo_startOpenLoop(CH, 10, 500U));
-    d_run_delta = 10U;
-    tick();
-    TEST_ASSERT_TRUE(dev_servo_openLoopDone(CH, NULL));
-    TEST_ASSERT_TRUE(dev_servo_startOpenLoop(CH, -10, 500U));
-    TEST_ASSERT_FALSE(dev_servo_openLoopDone(CH, NULL));
+    dev_servo_moveToOpenLoop(CH, 8192, 8192);
+    double pulses = 0.0;
+    uint32_t peak = 0U;
+    uint32_t first = 0U;
+    TEST_ASSERT_TRUE(open_loop_run(3000, &pulses, &peak, &first) > 0);
+    dev_servo_moveTo(CH, 40960, 40960);
+    for (int i = 0; i < 400; i++)
+    {
+        tick();
+    }
+    TEST_ASSERT_TRUE(dev_servo_isStalled(CH));
 }
 
 int main(void)
@@ -2066,12 +2044,9 @@ int main(void)
     RUN_TEST(test_a_cycle_whose_holds_leave_no_time_to_move_is_refused);
     RUN_TEST(test_position_moves_track_the_commanded_trapezoid_to_one_micron);
     RUN_TEST(test_waveforms_track_the_requested_cycle_to_one_micron_across_the_envelope);
-    RUN_TEST(test_dev_servo_openLoopEmitsTheCountThenStops);
-    RUN_TEST(test_dev_servo_openLoopNegativeRunsReverse);
-    RUN_TEST(test_dev_servo_openLoopIgnoresTheEncoder);
-    RUN_TEST(test_dev_servo_leavingOpenLoopHoldsWhereTheCarriageIs);
-    RUN_TEST(test_dev_servo_openLoopRejectsEmptyRequests);
-    RUN_TEST(test_dev_servo_openLoopNewRunClearsTheLastVerdict);
-    RUN_TEST(test_dev_servo_openLoopModeIsReportedUntilAnotherMoveTakesTheDrive);
+    RUN_TEST(test_dev_servo_open_loop_move_ignores_the_encoder);
+    RUN_TEST(test_dev_servo_open_loop_moves_out_and_back_send_equal_pulses);
+    RUN_TEST(test_dev_servo_leaving_open_loop_holds_where_the_encoder_is);
+    RUN_TEST(test_dev_servo_a_closed_loop_move_turns_the_feedback_back_on);
     return UNITY_END();
 }

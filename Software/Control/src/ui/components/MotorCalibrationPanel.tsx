@@ -11,8 +11,8 @@ import {
   runCalibration,
   type CalibrationAssessment,
   type CalibrationFinding,
-  type CalibrationOutcome,
   type CalibrationProfile,
+  type CalibrationProgress,
 } from '@/domain/motorCalibration';
 
 const SEVERITY_CLASS: Record<CalibrationFinding['severity'], string> = {
@@ -24,8 +24,7 @@ const SEVERITY_CLASS: Record<CalibrationFinding['severity'], string> = {
 const SEVERITY_RANK: Record<CalibrationFinding['severity'], number> = { error: 0, warning: 1, ok: 2 };
 
 /** What the button says while the machine works. */
-const BUTTON_PROGRESS: Partial<Record<CalibrationOutcome, string>> = {
-  starting: 'Starting…',
+const BUTTON_PROGRESS: Record<CalibrationProgress, string> = {
   forward: 'Driving forward…',
   reverse: 'Driving back…',
 };
@@ -44,15 +43,23 @@ function round(v: number, digits: number): string {
  * above. Report only: it never changes the profile. One result, one line of
  * numbers, and what to do about it.
  */
-export default function MotorCalibrationPanel({ profile }: { profile: CalibrationProfile }) {
+export default function MotorCalibrationPanel({
+  profile,
+  device,
+}: {
+  /** The steps/mm being edited: what is judged. */
+  profile: CalibrationProfile;
+  /** The steps/mm saved on the machine: what its G-code and positions use. */
+  device: CalibrationProfile;
+}) {
   const motionEnabled = useStore((s) => s.machineState?.motionEnabled ?? false);
   const [distanceMm, setDistanceMm] = useState(CALIBRATION_DEFAULT_DISTANCE_MM);
   const [speedMmPerS, setSpeedMmPerS] = useState(CALIBRATION_DEFAULT_SPEED_MM_S);
-  const [progress, setProgress] = useState<CalibrationOutcome | null>(null);
+  const [progress, setProgress] = useState<CalibrationProgress | 'starting' | null>(null);
   const [outcome, setOutcome] = useState<Outcome | null>(null);
 
   const running = progress !== null;
-  const plan = planCalibration({ ...profile, distanceMm, speedMmPerS });
+  const plan = planCalibration({ ...profile, distanceMm, speedMmPerS, device });
 
   const onRun = async () => {
     if (!plan.ok) return;
@@ -63,13 +70,19 @@ export default function MotorCalibrationPanel({ profile }: { profile: Calibratio
     try {
       const run = await runCalibration(
         {
-          start: (r) => deviceClient.startMotorCalibration(r),
-          read: () => deviceClient.readMotorCalibrationResult(),
+          move: (mm, speed) => deviceClient.openLoopMove(mm, speed),
+          position: () => useStore.getState().latestSample?.['Machine Position (mm)'] ?? null,
+          motionEnabled: () => useStore.getState().machineState?.motionEnabled ?? false,
+          testRunning: () => useStore.getState().machineState?.testRunning ?? false,
+          stop: async () => {
+            await deviceClient.setMotionEnabled(false);
+          },
           sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
           now: () => Date.now(),
         },
         plan.request,
-        (r) => setProgress(r.outcome),
+        device,
+        setProgress,
       );
       if (!run.ok) {
         setOutcome({ kind: 'failed', badge: 'error', message: run.reason });
@@ -108,7 +121,7 @@ export default function MotorCalibrationPanel({ profile }: { profile: Calibratio
         <NumberField label="Distance each way (mm)" value={distanceMm} min={0} onChange={setDistanceMm} />
         <NumberField label="Speed (mm/s)" value={speedMmPerS} min={0} onChange={setSpeedMmPerS} />
         <button className="primary" onClick={onRun} disabled={running || !plan.ok || !motionEnabled}>
-          {running ? (BUTTON_PROGRESS[progress] ?? 'Running…') : 'Run calibration'}
+          {progress === null ? 'Run calibration' : progress === 'starting' ? 'Starting…' : BUTTON_PROGRESS[progress]}
         </button>
       </div>
       {hint && !running && <p className="muted">{hint}</p>}

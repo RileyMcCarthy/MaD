@@ -1,32 +1,39 @@
 /**
  * Motor calibration: an open-loop check of the drive/encoder pair.
  *
- * The machine drives a fixed number of step pulses forward and back with the
- * servo loop out of the path, and reports how far the encoder moved each way
- * (raw numbers only). Everything that judges those numbers against the
- * machine profile lives here, so it is pure and testable without a device.
+ * The app drives the carriage a fixed number of step pulses forward and back
+ * with `G124` (a linear move with the servo feedback off), and reads how far
+ * the encoder moved from the live samples. Everything that judges those
+ * numbers against the machine profile lives here, so it is pure and testable
+ * without a device.
  *
  * Report only: nothing here changes the profile. The point is to find a
  * setting that does not match the hardware before the closed loop runs on it.
+ *
+ * Two profiles are involved. The one being EDITED (`CalibrationProfile`) is
+ * what is judged. The one SAVED on the machine (`device`) is what the firmware
+ * uses to turn G-code millimetres into pulses and encoder counts into the
+ * position it reports, so it is what the conversions below must undo.
  */
 
-import {
-  MotorCalibrationState,
-  type MotorCalibrationRequest as ProtoMotorCalibrationRequest,
-  type MotorCalibrationResult as ProtoMotorCalibrationResult,
-} from '@/protocol/generated/protoemb';
-
-/** Firmware ceilings (APP_MOTORCALIBRATION_MAX_* in app_motorCalibration.h). */
+/** Slowest a leg may run before it is abandoned: twice its nominal time plus this. */
+export const CALIBRATION_TIMEOUT_MARGIN_MS = 3000;
+/** The carriage counts as stopped once the encoder holds still this long. */
+export const CALIBRATION_SETTLE_MS = 500;
+export const CALIBRATION_POLL_MS = 100;
 export const CALIBRATION_MAX_PULSES = 200_000;
-export const CALIBRATION_MAX_FREQUENCY = 20_000;
 
-/** Short and slow by default: one millimetre each way at one millimetre a second. */
-export const CALIBRATION_DEFAULT_DISTANCE_MM = 1;
+/**
+ * Slow, and long enough to measure the ratio well: each run loses a roughly
+ * fixed few encoder counts at its ends whatever its length, so on the bench a
+ * 1 mm run read 0.2-0.3% short and a 5 mm run under 0.1%.
+ */
+export const CALIBRATION_DEFAULT_DISTANCE_MM = 5;
 export const CALIBRATION_DEFAULT_SPEED_MM_S = 1;
 
-/** The firmware abandons a leg once the encoder has moved this many times the
- *  distance the profile expects — a drive far finer than the profile claims
- *  would otherwise carry the carriage much further than asked. */
+/** A leg is abandoned (motion disabled) once the encoder has moved this many
+ *  times the distance the profile expects -- a drive far finer than the
+ *  profile claims would otherwise carry the carriage much further than asked. */
 export const CALIBRATION_OVERTRAVEL_FACTOR = 3;
 
 /** How far measured counts per pulse may stray from the profile before it is
@@ -45,26 +52,17 @@ export const CALIBRATION_SILENT_FRACTION = 0.05;
 export const SERVO_LOOP_ASSUMES_ONE_PULSE_PER_COUNT = true;
 
 export type CalibrationOutcome =
-  | 'idle'
-  | 'starting'
-  | 'forward'
-  | 'reverse'
   | 'done'
   | 'refused-motion-disabled'
   | 'refused-busy'
-  | 'refused-at-endstop'
+  | 'refused-no-data'
   | 'aborted-motion-disabled'
-  | 'aborted-fault'
-  | 'aborted-endstop'
-  | 'aborted-timeout'
   | 'aborted-overtravel'
-  | 'refused-restricted'
-  | 'aborted-restricted'
-  | 'aborted-jog';
+  | 'aborted-timeout';
 
 export interface CalibrationResult {
   outcome: CalibrationOutcome;
-  /** Pulses emitted forward (positive) and back (negative). */
+  /** Pulses sent forward (positive) and back (negative). */
   pulsesForward: number;
   pulsesReverse: number;
   /** Encoder change over each leg. */
@@ -80,95 +78,83 @@ export interface CalibrationProfile {
 export interface CalibrationSettings extends CalibrationProfile {
   distanceMm: number;
   speedMmPerS: number;
+  /** The profile SAVED on the machine: the firmware's own conversions. */
+  device: CalibrationProfile;
 }
 
-export type CalibrationPlan =
-  | { ok: true; request: ProtoMotorCalibrationRequest }
-  | { ok: false; reason: string };
-
-const OUTCOME_BY_STATE: Record<MotorCalibrationState, CalibrationOutcome> = {
-  [MotorCalibrationState.IDLE]: 'idle',
-  [MotorCalibrationState.STARTING]: 'starting',
-  [MotorCalibrationState.FORWARD]: 'forward',
-  [MotorCalibrationState.REVERSE]: 'reverse',
-  [MotorCalibrationState.DONE]: 'done',
-  [MotorCalibrationState.REFUSED_MOTION_DISABLED]: 'refused-motion-disabled',
-  [MotorCalibrationState.REFUSED_BUSY]: 'refused-busy',
-  [MotorCalibrationState.REFUSED_AT_ENDSTOP]: 'refused-at-endstop',
-  [MotorCalibrationState.ABORTED_MOTION_DISABLED]: 'aborted-motion-disabled',
-  [MotorCalibrationState.ABORTED_FAULT]: 'aborted-fault',
-  [MotorCalibrationState.ABORTED_ENDSTOP]: 'aborted-endstop',
-  [MotorCalibrationState.ABORTED_TIMEOUT]: 'aborted-timeout',
-  [MotorCalibrationState.ABORTED_OVERTRAVEL]: 'aborted-overtravel',
-  [MotorCalibrationState.REFUSED_RESTRICTED]: 'refused-restricted',
-  [MotorCalibrationState.ABORTED_RESTRICTED]: 'aborted-restricted',
-  [MotorCalibrationState.ABORTED_JOG]: 'aborted-jog',
-};
-
-export function calibrationResultFromWire(r: ProtoMotorCalibrationResult): CalibrationResult {
-  return {
-    outcome: OUTCOME_BY_STATE[r.state] ?? 'idle',
-    pulsesForward: r.pulsesForward,
-    pulsesReverse: r.pulsesReverse,
-    countsForward: r.countsForward,
-    countsReverse: r.countsReverse,
-  };
+/** One leg, in the units G124 takes, and what it will really send. */
+export interface CalibrationRequest {
+  /** G124 X and F, in the machine's millimetres (its saved servo steps/mm). */
+  moveMm: number;
+  speedMmPerS: number;
+  /** The pulses that X turns into on the machine. */
+  pulses: number;
+  /** Abandon the leg once the reported position has moved further than this. */
+  maxTravelMm: number;
+  /** How long the leg should take. */
+  nominalMs: number;
 }
 
-/** True while the machine is still working on it. */
-export function isCalibrationActive(outcome: CalibrationOutcome): boolean {
-  return outcome === 'starting' || outcome === 'forward' || outcome === 'reverse';
-}
+export type CalibrationPlan = { ok: true; request: CalibrationRequest } | { ok: false; reason: string };
 
-/** One line an operator can act on, for each way a calibration can stop. */
+/** One line an operator can act on, for each way a calibration can end without a result. */
 export const OUTCOME_TEXT: Record<CalibrationOutcome, string> = {
-  idle: 'Not run yet.',
-  starting: 'Starting…',
-  forward: 'Driving forward…',
-  reverse: 'Driving back…',
   done: 'Complete.',
-  'refused-motion-disabled': 'Refused: enable motion (and clear any fault) first.',
-  'refused-busy': 'Refused: a move or a test is running.',
-  'refused-at-endstop': 'Refused: the carriage is on an end stop. Jog it clear first.',
+  'refused-motion-disabled': 'Not run: enable motion (and clear any fault) first.',
+  'refused-busy': 'Not run: the machine is busy with a move or a test.',
+  'refused-no-data': 'Not run: no live position from the machine.',
   'aborted-motion-disabled': 'Stopped: motion was disabled.',
-  'aborted-fault': 'Stopped: the machine faulted.',
-  'aborted-endstop': 'Stopped: the carriage reached an end stop.',
-  'aborted-timeout': 'Stopped: the drive took far longer than expected to send its pulses.',
   'aborted-overtravel':
     'Stopped: the encoder moved over three times further than the profile expects. The drive is likely set much finer than servo steps/mm says, or encoder steps/mm is far too low.',
-  'refused-restricted':
-    'Refused: the machine is speed-restricted (door open or a tension limit). Clear the restriction first.',
-  'aborted-restricted': 'Stopped: the machine became speed-restricted (door opened or a tension limit).',
-  'aborted-jog': 'Stopped: a jog took the drive. The jog ran at the restricted speed; run the calibration again.',
+  'aborted-timeout': 'Stopped: the carriage was still moving long after the pulses should have finished.',
 };
 
-/** Turn the operator's settings into a request the firmware will accept. */
+/**
+ * Turn the operator's settings into a G124 the machine will run.
+ *
+ * The run is sized in PULSES from the steps/mm being edited (distance x servo
+ * steps/mm), then expressed in the machine's millimetres, because the firmware
+ * converts G124's X with the servo steps/mm it has SAVED. X goes over the wire
+ * in micrometres, so the pulses actually sent are what that rounded X becomes.
+ */
 export function planCalibration(s: CalibrationSettings): CalibrationPlan {
   if (!(s.encoderStepsPerMM > 0) || !(s.servoStepsPerMM > 0)) {
     return { ok: false, reason: 'Encoder and servo steps/mm must both be greater than zero.' };
   }
+  if (!(s.device.encoderStepsPerMM > 0) || !(s.device.servoStepsPerMM > 0)) {
+    return {
+      ok: false,
+      reason: "The machine's saved profile has no steps/mm. Write a configuration to the device first.",
+    };
+  }
   if (!(s.distanceMm > 0) || !(s.speedMmPerS > 0)) {
     return { ok: false, reason: 'Distance and speed must both be greater than zero.' };
   }
-  const pulses = Math.round(s.distanceMm * s.servoStepsPerMM);
-  const frequency = Math.round(s.speedMmPerS * s.servoStepsPerMM);
-  const maxCounts = Math.ceil(CALIBRATION_OVERTRAVEL_FACTOR * s.distanceMm * s.encoderStepsPerMM);
-  if (pulses < 1 || frequency < 1) {
-    return { ok: false, reason: 'Distance or speed is too small to send a single pulse.' };
-  }
-  if (pulses > CALIBRATION_MAX_PULSES) {
+  const wanted = Math.round(s.distanceMm * s.servoStepsPerMM);
+  if (wanted > CALIBRATION_MAX_PULSES) {
     return {
       ok: false,
-      reason: `That is ${pulses} pulses; the machine allows at most ${CALIBRATION_MAX_PULSES}. Use a shorter distance.`,
+      reason: `That is ${wanted} pulses each way; the calibration allows at most ${CALIBRATION_MAX_PULSES}. Use a shorter distance.`,
     };
   }
-  if (frequency > CALIBRATION_MAX_FREQUENCY) {
-    return {
-      ok: false,
-      reason: `That is ${frequency} pulses/s; the machine allows at most ${CALIBRATION_MAX_FREQUENCY}. Use a lower speed.`,
-    };
+  const moveUm = Math.round((wanted / s.device.servoStepsPerMM) * 1000);
+  const pulses = Math.trunc((moveUm * s.device.servoStepsPerMM) / 1000); // as app_motion converts it
+  if (pulses < 1) {
+    return { ok: false, reason: 'Distance is too small to send a single pulse.' };
   }
-  return { ok: true, request: { pulses, frequency, maxCounts } };
+  const pulseRate = s.speedMmPerS * s.servoStepsPerMM;
+  const speedMmPerS = pulseRate / s.device.servoStepsPerMM;
+  const expectedCounts = pulses * (s.encoderStepsPerMM / s.servoStepsPerMM);
+  return {
+    ok: true,
+    request: {
+      moveMm: moveUm / 1000,
+      speedMmPerS,
+      pulses,
+      maxTravelMm: (CALIBRATION_OVERTRAVEL_FACTOR * expectedCounts) / s.device.encoderStepsPerMM,
+      nominalMs: (pulses / pulseRate) * 1000,
+    },
+  };
 }
 
 export type FindingSeverity = 'ok' | 'warning' | 'error';
@@ -323,46 +309,96 @@ export function assessCalibration(
 }
 
 export interface CalibrationRunner {
-  start: (request: ProtoMotorCalibrationRequest) => Promise<boolean>;
-  read: () => Promise<CalibrationResult>;
+  /** Send `G91` then `G124 X F` (relative, feedback off); true once accepted. */
+  move: (moveMm: number, speedMmPerS: number) => Promise<boolean>;
+  /** Latest reported machine position in mm (the encoder), or null without live data. */
+  position: () => number | null;
+  motionEnabled: () => boolean;
+  testRunning: () => boolean;
+  /** Abandon: disable motion. */
+  stop: () => Promise<void>;
   sleep: (ms: number) => Promise<void>;
   now: () => number;
 }
 
-export type CalibrationRun =
-  | { ok: true; result: CalibrationResult }
-  | { ok: false; reason: string };
+export type CalibrationProgress = 'forward' | 'reverse';
 
-export const CALIBRATION_POLL_MS = 250;
+export type CalibrationRun = { ok: true; result: CalibrationResult } | { ok: false; reason: string };
+
+type Leg = { ok: true; counts: number } | { ok: false; outcome: CalibrationOutcome };
 
 /**
- * Longest a run can legitimately take: the firmware gives each leg twice its
- * nominal time plus a second, then a quarter-second settle; the rest is slack
- * for the link.
+ * Drive one leg and measure it. The encoder is read once the carriage has held
+ * still for CALIBRATION_SETTLE_MS after the leg's nominal time -- a step/dir
+ * drive lags the pulses it is sent -- and the change is turned back into
+ * counts with the machine's own encoder steps/mm.
  */
-export function calibrationDeadlineMs(request: ProtoMotorCalibrationRequest): number {
-  const legMs = 2 * ((request.pulses * 1000) / request.frequency) + 1000 + 250;
-  return 2 * legMs + 5000;
+async function runLeg(
+  runner: CalibrationRunner,
+  request: CalibrationRequest,
+  device: CalibrationProfile,
+  sign: 1 | -1,
+): Promise<Leg> {
+  const start = runner.position();
+  if (start === null) return { ok: false, outcome: 'refused-no-data' };
+  if (!(await runner.move(sign * request.moveMm, request.speedMmPerS))) {
+    return { ok: false, outcome: runner.motionEnabled() ? 'refused-busy' : 'refused-motion-disabled' };
+  }
+  const t0 = runner.now();
+  const deadline = t0 + 2 * request.nominalMs + CALIBRATION_TIMEOUT_MARGIN_MS;
+  let last = start;
+  let stillSince = runner.now();
+  for (;;) {
+    await runner.sleep(CALIBRATION_POLL_MS);
+    if (!runner.motionEnabled()) return { ok: false, outcome: 'aborted-motion-disabled' };
+    const pos = runner.position() ?? last;
+    if (Math.abs(pos - start) > request.maxTravelMm) {
+      await runner.stop();
+      return { ok: false, outcome: 'aborted-overtravel' };
+    }
+    // Still = within half an encoder count of the last reading.
+    if (Math.abs(pos - last) * device.encoderStepsPerMM >= 0.5) {
+      stillSince = runner.now();
+    }
+    last = pos;
+    const now = runner.now();
+    if (now - t0 >= request.nominalMs && now - stillSince >= CALIBRATION_SETTLE_MS) {
+      return { ok: true, counts: Math.round((pos - start) * device.encoderStepsPerMM) };
+    }
+    if (now > deadline) {
+      await runner.stop();
+      return { ok: false, outcome: 'aborted-timeout' };
+    }
+  }
 }
 
-/** Start a calibration and poll its result until the machine has finished. */
+/** Run a calibration: G124 forward, settle, read; G124 back, settle, read. */
 export async function runCalibration(
   runner: CalibrationRunner,
-  request: ProtoMotorCalibrationRequest,
-  onProgress?: (result: CalibrationResult) => void,
+  request: CalibrationRequest,
+  device: CalibrationProfile,
+  onProgress?: (p: CalibrationProgress) => void,
 ): Promise<CalibrationRun> {
-  const accepted = await runner.start(request);
-  if (!accepted) {
-    return { ok: false, reason: 'The machine did not accept the calibration request.' };
+  const empty = { pulsesForward: 0, pulsesReverse: 0, countsForward: 0, countsReverse: 0 };
+  if (!runner.motionEnabled()) return { ok: true, result: { outcome: 'refused-motion-disabled', ...empty } };
+  if (runner.testRunning()) return { ok: true, result: { outcome: 'refused-busy', ...empty } };
+
+  onProgress?.('forward');
+  const fwd = await runLeg(runner, request, device, 1);
+  if (!fwd.ok) return { ok: true, result: { outcome: fwd.outcome, ...empty } };
+  onProgress?.('reverse');
+  const back = await runLeg(runner, request, device, -1);
+  if (!back.ok) {
+    return { ok: true, result: { ...empty, outcome: back.outcome, pulsesForward: request.pulses, countsForward: fwd.counts } };
   }
-  const deadline = runner.now() + calibrationDeadlineMs(request);
-  for (;;) {
-    const result = await runner.read();
-    onProgress?.(result);
-    if (!isCalibrationActive(result.outcome)) return { ok: true, result };
-    if (runner.now() > deadline) {
-      return { ok: false, reason: 'The machine did not finish the calibration in time.' };
-    }
-    await runner.sleep(CALIBRATION_POLL_MS);
-  }
+  return {
+    ok: true,
+    result: {
+      outcome: 'done',
+      pulsesForward: request.pulses,
+      countsForward: fwd.counts,
+      pulsesReverse: -request.pulses,
+      countsReverse: back.counts,
+    },
+  };
 }

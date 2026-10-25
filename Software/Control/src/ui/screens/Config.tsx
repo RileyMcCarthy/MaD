@@ -103,6 +103,10 @@ export default function Config({ embedded = false }: { embedded?: boolean }) {
               encoderStepsPerMM: draft['Encoder (step/mm)'],
               servoStepsPerMM: draft['Servo (step/mm)'],
             }}
+            device={{
+              encoderStepsPerMM: config?.['Encoder (step/mm)'] ?? 0,
+              servoStepsPerMM: config?.['Servo (step/mm)'] ?? 0,
+            }}
           />
         </>
       ) : (

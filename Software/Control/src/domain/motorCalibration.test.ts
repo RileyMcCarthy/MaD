@@ -1,17 +1,16 @@
 import { describe, expect } from 'vitest';
 import { behaviour } from '@vibes/behaviour';
-import { MotorCalibrationState } from '@/protocol/generated/protoemb';
 import {
-  CALIBRATION_MAX_FREQUENCY,
   CALIBRATION_MAX_PULSES,
-  CALIBRATION_POLL_MS,
+  CALIBRATION_SETTLE_MS,
   OUTCOME_TEXT,
   assessCalibration,
-  calibrationDeadlineMs,
-  calibrationResultFromWire,
   planCalibration,
   runCalibration,
+  type CalibrationProfile,
+  type CalibrationRequest,
   type CalibrationResult,
+  type CalibrationRunner,
 } from './motorCalibration';
 
 /** A finished run of `pulses` each way, the encoder counting `perPulse` per pulse. */
@@ -33,11 +32,19 @@ describe('motor calibration planning', () => {
     {
       id: 'motorcal.plan-from-profile',
       covers: 'src/domain/motorCalibration.ts#planCalibration',
-      given: 'a profile of 2400 encoder steps/mm and 6400 servo steps/mm, 1 mm each way at 1 mm/s',
+      given:
+        'servo 6400 and encoder 2400 steps/mm being edited, 8192 and 8192 saved on the machine, and 1 mm each way at 1 mm/s',
       expect: {
-        'pulses-from-servo': 'the pulse count is the distance times servo steps/mm',
-        'rate-from-servo': 'the pulse rate is the speed times servo steps/mm',
-        'bound-from-encoder': 'the encoder travel bound is three times the distance times encoder steps/mm',
+        'sized-by-edited-servo': 'the run is sized in pulses from the servo steps/mm being edited',
+        'machine-millimetres':
+          'the open-loop move is given in the machine millimetres its saved servo steps/mm turn into those pulses, to the micrometre',
+        'pulses-as-sent': 'the pulses reported are the ones the machine turns that rounded distance into',
+        'rate-from-edited': 'the pulse rate is the speed times the servo steps/mm being edited',
+        'bound-from-encoder':
+          'the run gives up once the encoder has moved three times what the edited values predict, in machine millimetres',
+      },
+      why: {
+        'machine-millimetres': 'the machine converts G-code millimetres with the steps/mm it has saved',
       },
     },
     () => {
@@ -46,12 +53,15 @@ describe('motor calibration planning', () => {
         servoStepsPerMM: 6400,
         distanceMm: 1,
         speedMmPerS: 1,
+        device: { encoderStepsPerMM: 8192, servoStepsPerMM: 8192 },
       });
       expect(plan.ok).toBe(true);
       if (!plan.ok) return;
-      expect(plan.request.pulses).toBe(6400);
-      expect(plan.request.frequency).toBe(6400);
-      expect(plan.request.maxCounts).toBe(7200);
+      expect(plan.request.moveMm).toBe(0.781); // 6400 pulses / 8192, to the micrometre
+      expect(plan.request.pulses).toBe(6397); // trunc(781 um * 8192 / 1000)
+      expect(plan.request.speedMmPerS * 8192).toBeCloseTo(6400, 6);
+      expect(plan.request.maxTravelMm * 8192).toBeCloseTo(3 * 6397 * (2400 / 6400), 6);
+      expect(plan.request.nominalMs).toBeCloseTo((6397 / 6400) * 1000, 6);
     },
   );
 
@@ -59,25 +69,26 @@ describe('motor calibration planning', () => {
     {
       id: 'motorcal.plan-limits',
       covers: 'src/domain/motorCalibration.ts#planCalibration',
-      given: 'calibration settings the machine would refuse',
+      given: 'calibration settings that cannot be run',
       expect: {
-        'unset-profile': 'a profile with zero steps/mm cannot be planned',
+        'unset-profile': 'zero steps/mm being edited cannot be planned',
+        'unsaved-device': 'a machine with no saved steps/mm cannot be planned, and the reason says to write a configuration first',
         'zero-distance': 'a zero distance or speed cannot be planned',
-        'too-far': 'a distance needing more pulses than the machine allows cannot be planned, and the reason names the limit',
-        'too-fast': 'a speed needing a faster pulse rate than the machine allows cannot be planned, and the reason names the limit',
+        'too-far': 'a distance needing more pulses than the calibration allows cannot be planned, and the reason names the limit',
       },
     },
     () => {
-      const base = { encoderStepsPerMM: 8192, servoStepsPerMM: 8192, distanceMm: 1, speedMmPerS: 1 };
+      const device = { encoderStepsPerMM: 8192, servoStepsPerMM: 8192 };
+      const base = { encoderStepsPerMM: 8192, servoStepsPerMM: 8192, distanceMm: 1, speedMmPerS: 1, device };
       expect(planCalibration({ ...base, servoStepsPerMM: 0 }).ok).toBe(false);
+      const unsaved = planCalibration({ ...base, device: { encoderStepsPerMM: 0, servoStepsPerMM: 0 } });
+      expect(unsaved.ok).toBe(false);
+      if (!unsaved.ok) expect(unsaved.reason).toMatch(/Write a configuration/);
       expect(planCalibration({ ...base, distanceMm: 0 }).ok).toBe(false);
       expect(planCalibration({ ...base, speedMmPerS: 0 }).ok).toBe(false);
       const far = planCalibration({ ...base, distanceMm: 100 });
       expect(far.ok).toBe(false);
       if (!far.ok) expect(far.reason).toContain(String(CALIBRATION_MAX_PULSES));
-      const fast = planCalibration({ ...base, speedMmPerS: 10 });
-      expect(fast.ok).toBe(false);
-      if (!fast.ok) expect(fast.reason).toContain(String(CALIBRATION_MAX_FREQUENCY));
     },
   );
 });
@@ -261,124 +272,186 @@ describe('motor calibration assessment', () => {
     },
   );
 
-  behaviour(
-    {
-      id: 'motorcal.outcome-from-wire',
-      covers: 'src/domain/motorCalibration.ts#calibrationResultFromWire',
-      given: 'a calibration result from the machine that was abandoned for overtravel',
-      expect: { 'outcome-named': 'it reads as abandoned for overtravel, with the counts carried unchanged' },
-    },
-    () => {
-      const r = calibrationResultFromWire({
-        state: MotorCalibrationState.ABORTED_OVERTRAVEL,
-        pulsesForward: 10,
-        countsForward: 99,
-        pulsesReverse: 0,
-        countsReverse: 0,
-      });
-      expect(r.outcome).toBe('aborted-overtravel');
-      expect(r.countsForward).toBe(99);
-    },
-  );
-
-  behaviour(
-    {
-      id: 'motorcal.restricted-and-jog-outcomes-from-wire',
-      covers: 'src/domain/motorCalibration.ts#calibrationResultFromWire',
-      given: 'calibration results from the machine refused for restricted speed, abandoned for restricted speed, and abandoned for a jog',
-      expect: {
-        'outcomes-named': 'each is reported as its own refusal or stop',
-        'operator-told': 'each has a line for the operator naming the restriction or the jog',
-      },
-    },
-    () => {
-      const read = (state: MotorCalibrationState) =>
-        calibrationResultFromWire({ state, pulsesForward: 0, countsForward: 0, pulsesReverse: 0, countsReverse: 0 })
-          .outcome;
-      expect(read(MotorCalibrationState.REFUSED_RESTRICTED)).toBe('refused-restricted');
-      expect(read(MotorCalibrationState.ABORTED_RESTRICTED)).toBe('aborted-restricted');
-      expect(read(MotorCalibrationState.ABORTED_JOG)).toBe('aborted-jog');
-      expect(OUTCOME_TEXT['refused-restricted']).toMatch(/restricted/);
-      expect(OUTCOME_TEXT['aborted-restricted']).toMatch(/restricted/);
-      expect(OUTCOME_TEXT['aborted-jog']).toMatch(/jog/);
-    },
-  );
 });
 
 describe('motor calibration run', () => {
-  function fakeRunner(results: CalibrationResult[], accept = true) {
+  const DEVICE: CalibrationProfile = { encoderStepsPerMM: 8192, servoStepsPerMM: 8192 };
+
+  /**
+   * A machine for the runner to drive: each accepted move carries the encoder
+   * `countsPerPulse` per pulse over the move's nominal time, then creeps on by
+   * `lateCounts` over the next 200 ms, as a lagging drive does.
+   */
+  function fakeMachine(opts: {
+    countsPerPulse: number;
+    lateCounts?: number;
+    acceptMoves?: boolean;
+    disableAtMs?: number;
+    neverSettles?: boolean;
+  }) {
     let t = 0;
-    const reads: CalibrationResult[] = [...results];
-    return {
-      runner: {
-        start: () => Promise.resolve(accept),
-        read: () => Promise.resolve(reads.length > 1 ? reads.shift()! : reads[0]),
-        sleep: (ms: number) => {
-          t += ms;
-          return Promise.resolve();
-        },
-        now: () => t,
-      },
+    let base = 0; // mm, where the last move started
+    let moveStart = 0;
+    let moveCountsTotal = 0;
+    let moveMs = 1;
+    let enabled = true;
+    let stopped = false;
+    const position = () => {
+      if (opts.disableAtMs !== undefined && t >= opts.disableAtMs) enabled = false;
+      const late = opts.lateCounts ?? 0;
+      const into = t - moveStart;
+      const frac = Math.min(1, into / moveMs);
+      const lateFrac = Math.min(1, Math.max(0, (into - moveMs) / 200));
+      const creep = opts.neverSettles ? Math.max(0, into - moveMs) / 50 : 0;
+      return base + (moveCountsTotal * frac + late * lateFrac + creep) / DEVICE.encoderStepsPerMM;
     };
+    const runner: CalibrationRunner = {
+      move: (mm, speed) => {
+        if (opts.acceptMoves === false) return Promise.resolve(false);
+        base = position();
+        moveStart = t;
+        const pulses = Math.trunc((Math.round(mm * 1000) * DEVICE.servoStepsPerMM) / 1000);
+        moveCountsTotal = pulses * opts.countsPerPulse;
+        moveMs = (Math.abs(mm) / speed) * 1000;
+        return Promise.resolve(true);
+      },
+      position,
+      motionEnabled: () => {
+        position();
+        return enabled && !stopped;
+      },
+      testRunning: () => false,
+      stop: () => {
+        stopped = true;
+        return Promise.resolve();
+      },
+      sleep: (ms) => {
+        t += ms;
+        return Promise.resolve();
+      },
+      now: () => t,
+    };
+    return { runner, wasStopped: () => stopped };
   }
-  const req = { pulses: 2400, frequency: 2400, maxCounts: 7200 };
-  const progress = (outcome: CalibrationResult['outcome']): CalibrationResult => ({
-    outcome,
-    pulsesForward: 0,
-    pulsesReverse: 0,
-    countsForward: 0,
-    countsReverse: 0,
-  });
+
+  const plan = (distanceMm = 1): CalibrationRequest => {
+    const p = planCalibration({ ...DEVICE, distanceMm, speedMmPerS: 1, device: DEVICE });
+    if (!p.ok) throw new Error(p.reason);
+    return p.request;
+  };
 
   behaviour(
     {
-      id: 'motorcal.run-polls-to-end',
+      id: 'motorcal.run-measures-both-ways',
       covers: 'src/domain/motorCalibration.ts#runCalibration',
-      given: 'a calibration the machine accepts and finishes after a few progress reports',
+      given: 'a machine whose encoder counts 0.375 per pulse, run 1 mm each way',
       expect: {
-        'final-result': 'the finished result is returned',
-        'progress-shown': 'every report on the way is passed on as progress',
+        'completes': 'the calibration completes',
+        'pulses-both-ways': 'the pulses sent are reported, positive forward and negative back',
+        'counts-both-ways': 'the encoder change each way is reported in counts, with the direction it moved',
       },
     },
     async () => {
-      const { runner } = fakeRunner([progress('starting'), progress('forward'), progress('reverse'), done(2400, 1)]);
-      const seen: string[] = [];
-      const run = await runCalibration(runner, req, (r) => seen.push(r.outcome));
-      expect(run.ok && run.result.outcome).toBe('done');
-      expect(seen).toEqual(['starting', 'forward', 'reverse', 'done']);
+      const { runner } = fakeMachine({ countsPerPulse: 0.375 });
+      const run = await runCalibration(runner, plan(), DEVICE);
+      expect(run.ok).toBe(true);
+      if (!run.ok) return;
+      expect(run.result.outcome).toBe('done');
+      expect(run.result.pulsesForward).toBe(8192);
+      expect(run.result.pulsesReverse).toBe(-8192);
+      expect(run.result.countsForward).toBe(3072);
+      expect(run.result.countsReverse).toBe(-3072);
     },
   );
 
   behaviour(
     {
-      id: 'motorcal.run-refused-request',
+      id: 'motorcal.run-reads-after-settling',
       covers: 'src/domain/motorCalibration.ts#runCalibration',
-      given: 'a calibration request the machine does not accept',
-      expect: { 'not-accepted': 'the run fails at once, saying the machine did not accept it' },
+      given: 'a drive that keeps moving the carriage for a moment after its last pulse',
+      expect: {
+        'late-movement-counted': 'the encoder is read only once the carriage has held still, so the late movement is counted',
+      },
+      why: { 'late-movement-counted': `a step and direction drive lags the pulses it is sent; the run waits ${CALIBRATION_SETTLE_MS} ms of stillness` },
     },
     async () => {
-      const { runner } = fakeRunner([progress('idle')], false);
-      const run = await runCalibration(runner, req);
-      expect(run.ok).toBe(false);
-      if (!run.ok) expect(run.reason).toMatch(/did not accept/);
+      const { runner } = fakeMachine({ countsPerPulse: 1, lateCounts: 40 });
+      const run = await runCalibration(runner, plan(), DEVICE);
+      expect(run.ok && run.result.countsForward).toBe(8192 + 40);
     },
   );
 
   behaviour(
     {
-      id: 'motorcal.run-deadline',
+      id: 'motorcal.run-refusals',
       covers: 'src/domain/motorCalibration.ts#runCalibration',
-      given: 'a calibration that the machine keeps reporting as in progress',
+      given: 'a calibration asked for while motion is off, or while the machine turns the move down',
       expect: {
-        'gives-up': 'the run fails once the longest time the machine could legitimately take has passed',
+        'motion-off': 'with motion off the calibration does not run and says to enable motion',
+        'move-refused': 'a move the machine turns down ends the calibration as busy',
       },
     },
     async () => {
-      const { runner } = fakeRunner([progress('forward')]);
-      const run = await runCalibration(runner, req);
-      expect(run.ok).toBe(false);
-      expect(runner.now()).toBeGreaterThan(calibrationDeadlineMs(req));
-      expect(runner.now()).toBeLessThanOrEqual(calibrationDeadlineMs(req) + 2 * CALIBRATION_POLL_MS);
+      const off = fakeMachine({ countsPerPulse: 1 });
+      await off.runner.stop();
+      const r1 = await runCalibration(off.runner, plan(), DEVICE);
+      expect(r1.ok && r1.result.outcome).toBe('refused-motion-disabled');
+      expect(OUTCOME_TEXT['refused-motion-disabled']).toMatch(/enable motion/);
+      const busy = fakeMachine({ countsPerPulse: 1, acceptMoves: false });
+      const r2 = await runCalibration(busy.runner, plan(), DEVICE);
+      expect(r2.ok && r2.result.outcome).toBe('refused-busy');
+    },
+  );
+
+  behaviour(
+    {
+      id: 'motorcal.run-stops-on-overtravel',
+      covers: 'src/domain/motorCalibration.ts#runCalibration',
+      given: 'a drive that carries the encoder five times further than the profile predicts',
+      expect: {
+        'abandoned': 'the calibration is abandoned as overtravelled',
+        'motion-disabled': 'motion is disabled to stop the carriage',
+      },
+      why: { 'abandoned': 'a drive set far finer than the profile claims carries the carriage much further than asked' },
+    },
+    async () => {
+      const m = fakeMachine({ countsPerPulse: 5 });
+      const run = await runCalibration(m.runner, plan(), DEVICE);
+      expect(run.ok && run.result.outcome).toBe('aborted-overtravel');
+      expect(m.wasStopped()).toBe(true);
+    },
+  );
+
+  behaviour(
+    {
+      id: 'motorcal.run-motion-disabled-midway',
+      covers: 'src/domain/motorCalibration.ts#runCalibration',
+      given: 'motion disabled part way through the forward move',
+      expect: { 'abandoned': 'the calibration ends, saying motion was disabled' },
+    },
+    async () => {
+      const m = fakeMachine({ countsPerPulse: 1, disableAtMs: 300 });
+      const run = await runCalibration(m.runner, plan(), DEVICE);
+      expect(run.ok && run.result.outcome).toBe('aborted-motion-disabled');
+    },
+  );
+
+  behaviour(
+    {
+      id: 'motorcal.run-timeout',
+      covers: 'src/domain/motorCalibration.ts#runCalibration',
+      given: 'a carriage that never comes to rest after its move',
+      expect: {
+        'abandoned': 'the calibration gives up after twice the move time plus three seconds, saying the carriage kept moving',
+        'motion-disabled': 'motion is disabled to stop the carriage',
+      },
+    },
+    async () => {
+      const m = fakeMachine({ countsPerPulse: 1, neverSettles: true });
+      const run = await runCalibration(m.runner, plan(), DEVICE);
+      expect(run.ok && run.result.outcome).toBe('aborted-timeout');
+      expect(m.wasStopped()).toBe(true);
+      expect(m.runner.now()).toBeLessThanOrEqual(2 * 1000 + 3000 + 200);
     },
   );
 });

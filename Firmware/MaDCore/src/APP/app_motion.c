@@ -13,7 +13,6 @@
 
 #include "app_motion.h"
 #include "app_control.h"
-#include "app_motorCalibration.h"
 #include "app_notification.h"
 
 #if APP_MOTION_USE_SERVO
@@ -41,9 +40,6 @@
  * Macros
  **********************************************************************/
 #define MOTION_QUEUE_SIZE 100
-/* Speed cap (mm/s) for a jog during a motor calibration when the machine
- * profile sets no restricted velocity. Slow enough to be a deliberate nudge. */
-#define APP_MOTION_CALIBRATION_JOG_CAP_MM_S 2
 
 #define APP_MOTION_LOCK_REQ() HAL_lock_try(app_motion_data.lock)
 #define APP_MOTION_LOCK_REQ_BLOCK()        \
@@ -61,6 +57,7 @@
 #define ACTUATOR_CH DEV_SERVO_CHANNEL_MAIN
 #define actuator_enable(en) dev_servo_enable(ACTUATOR_CH, (en))
 #define actuator_move(target, feedrate) dev_servo_moveTo(ACTUATOR_CH, (target), (feedrate))
+#define actuator_moveOpenLoop(target, feedrate) dev_servo_moveToOpenLoop(ACTUATOR_CH, (target), (feedrate))
 #define actuator_setVelocity(v) dev_servo_setVelocity(ACTUATOR_CH, (v))
 #define actuator_stop() dev_servo_stop(ACTUATOR_CH)
 #define actuator_setPosition(p) dev_servo_setPosition(ACTUATOR_CH, (p))
@@ -74,6 +71,8 @@
 #define ACTUATOR_CH DEV_STEPPER_CHANNEL_MAIN
 #define actuator_enable(en) dev_stepper_enable(ACTUATOR_CH, (en))
 #define actuator_move(target, feedrate) (void)dev_stepper_move(ACTUATOR_CH, (target), (feedrate))
+/* dev_stepper has no feedback to switch off: every move is already open loop. */
+#define actuator_moveOpenLoop(target, feedrate) actuator_move((target), (feedrate))
 #define actuator_setVelocity(v) dev_stepper_setVelocity(ACTUATOR_CH, (v))
 #define actuator_stop() dev_stepper_stop(ACTUATOR_CH)
 #define actuator_setPosition(p) dev_stepper_setPosition(ACTUATOR_CH, (p))
@@ -111,7 +110,6 @@ typedef struct
 {
     bool motionEnabled;
     bool limitSpeed;
-    bool calibrating;               /* app_motorCalibration_isActive()        */
     int32_t positionSteps;
     bool atTarget;
     int32_t gaugeSetpointSteps;   /* where the move ENDS                */
@@ -187,12 +185,7 @@ static bool app_motion_private_waveform_run(void);
 static void app_motion_private_processInputs(void)
 {
     app_motion_data.inputs.motionEnabled = app_control_motionEnabled();
-    /* A jog accepted while a motor calibration is running is capped like one in
-     * RESTRICTED: the operator chose to move a carriage that is being driven
-     * open loop, so it moves slowly. The calibration
-     * gives way to it; see app_motorCalibration_run. */
-    app_motion_data.inputs.calibrating = app_motorCalibration_isActive();
-    app_motion_data.inputs.limitSpeed = app_control_speedLimited() || app_motion_data.inputs.calibrating;
+    app_motion_data.inputs.limitSpeed = app_control_speedLimited();
     app_motion_data.inputs.positionSteps = actuator_getPosition();
     app_motion_data.inputs.atTarget = actuator_atTarget();
     /* TWO different quantities, and conflating them is why a recorded G1 used
@@ -332,9 +325,10 @@ static void app_motion_private_moveManager_start(void)
     {
     case G0_RAPID_MOVE:
     case G1_LINEAR_MOVE:
+    case G124_OPEN_LOOP_MOVE:
         if (app_motion_data.currentMove.f == 0U)
         {
-            DEBUG_WARNING("G0/G1 Command has zero feedrate: %d\n", app_motion_data.currentMove.f);
+            DEBUG_WARNING("G0/G1/G124 Command has zero feedrate: %d\n", app_motion_data.currentMove.f);
         }
         else
         {
@@ -353,26 +347,33 @@ static void app_motion_private_moveManager_start(void)
              * Clamped rather than refused, because refusing motion in
              * RESTRICTED is what would strand a specimen under load with no way
              * to back off. */
-            int32_t cap = app_motion_data.restrictedFeedrate;
-            /* A profile with no restricted velocity (the factory default, or
-             * one written before the field existed) leaves RESTRICTED uncapped,
-             * but a jog during a motor calibration is always capped. */
-            if (app_motion_data.inputs.calibrating && (cap <= 0))
+            if (app_motion_data.inputs.limitSpeed && (app_motion_data.restrictedFeedrate > 0) &&
+                (feedrate > app_motion_data.restrictedFeedrate))
             {
-                cap = APP_MOTION_CALIBRATION_JOG_CAP_MM_S * app_motion_data.stepsPerMM;
+                DEBUG_INFO("RESTRICTED: feedrate %d -> %d steps/s\n", feedrate,
+                           app_motion_data.restrictedFeedrate);
+                feedrate = app_motion_data.restrictedFeedrate;
             }
-            if (app_motion_data.inputs.limitSpeed && (cap > 0) && (feedrate > cap))
-            {
-                DEBUG_INFO("RESTRICTED: feedrate %d -> %d steps/s\n", feedrate, cap);
-                feedrate = cap;
-            }
+            const bool openLoop = (app_motion_data.currentMove.g == G124_OPEN_LOOP_MOVE);
             if (app_motion_data.absoluteMode == false)
             {
-                steps += app_motion_data.inputs.positionSteps;
+                /* Relative to where the machine IS -- except open loop, which
+                 * has no encoder truth: its moves chain from where the last one
+                 * was COMMANDED, so a G124 out and a G124 back send equal pulse
+                 * counts however far the encoder disagreed. */
+                steps += openLoop ? app_motion_data.inputs.gaugeCommandedSteps
+                                  : app_motion_data.inputs.positionSteps;
             }
             DEBUG_INFO("G0 command moving to steps %d at %d steps/s\n", steps, feedrate);
             DEBUG_INFO("moving from position (mm) %d to setpoint (mm) %d\n", app_motion_data.inputs.positionSteps / app_motion_data.stepsPerMM, steps / app_motion_data.stepsPerMM);
-            actuator_move(steps, feedrate);
+            if (openLoop)
+            {
+                actuator_moveOpenLoop(steps, feedrate);
+            }
+            else
+            {
+                actuator_move(steps, feedrate);
+            }
         }
         break;
     case G2_CW_ARC_MOVE:
@@ -492,6 +493,7 @@ static bool app_motion_private_moveManager_run(void)
     {
     case G0_RAPID_MOVE:
     case G1_LINEAR_MOVE:
+    case G124_OPEN_LOOP_MOVE:
         moveComplete = app_motion_data.inputs.atTarget;
         break;
     case G2_CW_ARC_MOVE:
@@ -565,7 +567,6 @@ void app_motion_init(int lock)
      * this queue. Single-cog access ⇒ within the queue's SPSC contract. */
     (void)lib_staticQueue_init(&app_motion_data.queue, app_motion_data.queueBuffer, MOTION_QUEUE_SIZE, sizeof(app_motion_move_t));
     lib_timer_init(&app_motion_data.endstopTimer, 1000);
-    app_motorCalibration_init(lock);
 }
 
 void app_motion_run(void)
@@ -573,10 +574,6 @@ void app_motion_run(void)
     app_motion_private_processInputs();
     app_motion_data.state = app_motion_private_getDesiredState();
     app_motion_private_processOutputs();
-    /* Ticked from here, after this tick's motion, so its busy check sees any
-     * move popped this tick (and gives way to a jog the same tick it starts);
-     * see app_motorCalibration_run. */
-    app_motorCalibration_run();
 }
 
 bool app_motion_addMove(const app_motion_move_t *move)

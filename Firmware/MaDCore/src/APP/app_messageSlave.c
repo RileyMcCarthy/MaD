@@ -11,7 +11,6 @@
 #include "app_gauge.h"
 #include "app_monitor.h"
 #include "app_motion.h"
-#include "app_motorCalibration.h"
 #include "app_notification.h"
 #include "app_testManagement.h"
 
@@ -150,32 +149,6 @@ bool ProtoEmb_onRead_sample_profile(ProtoEmb_SampleProfile_t *out)
     out->sampleWidth = sampleProfile.sampleWidth;
     out->sampleThickness = sampleProfile.sampleThickness;
     return true;
-}
-
-bool ProtoEmb_onRead_motor_calibration_result(ProtoEmb_MotorCalibrationResult_t *out)
-{
-    app_motorCalibration_result_S result;
-    app_motorCalibration_getResult(&result);
-    (void)memset(out, 0, sizeof(*out));
-    /* Same order on both sides; see MotorCalibrationState in the schema. */
-    out->state = (ProtoEmb_MotorCalibrationState_E)result.state;
-    out->pulsesForward = result.pulsesForward;
-    out->countsForward = result.countsForward;
-    out->pulsesReverse = result.pulsesReverse;
-    out->countsReverse = result.countsReverse;
-    return true;
-}
-
-ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWrite_motor_calibration(const ProtoEmb_MotorCalibrationRequest_t *in)
-{
-    app_motorCalibration_request_S request;
-    request.pulses = in->pulses;
-    request.frequency = in->frequency;
-    request.maxCounts = in->maxCounts;
-    /* ACK means "staged": whether the machine may move is judged on the
-     * control cog and reported in motor_calibration_result. */
-    return app_motorCalibration_request(&request) ? PROTOEMB_RUNTIME_WRITE_DISPOSITION_ACK
-                                                  : PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK;
 }
 
 ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWrite_machine_configuration_write(const ProtoEmb_MachineConfiguration_t *in)
@@ -419,14 +392,6 @@ ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWriteRaw_sample_profile_write(cons
 
 ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWriteRaw_test_run(const uint8_t *payload,
                                                                uint16_t payloadSize)
-{
-    (void)payload;
-    (void)payloadSize;
-    return PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK;
-}
-
-ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWriteRaw_motor_calibration(const uint8_t *payload,
-                                                                         uint16_t payloadSize)
 {
     (void)payload;
     (void)payloadSize;
