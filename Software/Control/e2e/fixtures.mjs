@@ -5,9 +5,10 @@
  * normal code paths run unchanged against:
  *
  *   - `navigator.serial`: on the board route, the shim of the `chrome-cdp`
- *     node `mad-emulator --chrome` runs (the board's protocol line, in a
- *     Chrome the board's clock meters; see "Board mode" below). Elsewhere a
- *     fake SerialPort over a WebSocket bridge (the hardware harness).
+ *     node of `embsim run mad-cosim.toml` (the host on the carrier's debug
+ *     header J1, in a Chrome the board's clock meters; see "Board mode"
+ *     below). Elsewhere a fake SerialPort over a WebSocket bridge (the
+ *     hardware harness).
  *   - `showDirectoryPicker()` → an OPFS directory (real FileSystemDirectoryHandle,
  *     no dialog, no permission prompt), installed by `page.addInitScript`.
  *
@@ -82,13 +83,15 @@ export const chromium =
 
 /**
  * Board mode: `CDP_URL` names the DevTools endpoint of the host's Chrome that
- * `mad-emulator --chrome` launched (embsim's `chrome-cdp` node; the run
- * prints "DevTools at http://127.0.0.1:PORT" once Chrome is reached). That
- * Chrome lives the board's time: every page and dedicated worker is held to
- * the board's clock over DevTools, a 1 ms quantum at a time, and every
- * page's `navigator.serial` is the node's shim, whose one port is the
- * board's protocol line (USB 0403:6001, granted to every origin with
- * `--granted`). So in this mode:
+ * the board's run launched: the `chrome-cdp` node of `embsim run
+ * mad-cosim.toml` (`make e2e-emulator`; the run prints "DevTools at
+ * http://127.0.0.1:PORT" once Chrome is reached). That Chrome lives the
+ * board's time: every page and dedicated worker is held to the board's clock
+ * over DevTools, a 1 ms quantum at a time, and every page's
+ * `navigator.serial` is the node's shim, whose one port is the host's line
+ * on the carrier's debug header J1, where the machine's Prop Plug sits (USB
+ * `E2E_PORT_USB`, 0403:6015, granted to every origin: the project's
+ * `granted = true`). So in this mode:
  *
  *   - pages are made in a fresh browser context per scenario, at about:blank,
  *     then navigated (Chrome holds a page made that way from birth; one made
@@ -127,6 +130,22 @@ export const OPFS_DIR = process.env.OPFS_DIR || 'mad-e2e';
  * emulator first (its `chrome-cdp` fails the run after 30 s of host time).
  */
 export const HOST_BACKSTOP_MS = Number(process.env.E2E_HOST_BACKSTOP_MS || 15 * 60_000);
+
+/**
+ * Budget for any wait that depends on the DEVICE making progress: a protocol
+ * round trip, a state change, a handshake, an SD write.
+ *
+ * Board time on the board route (the page's clock is the board's), so it is
+ * what the machine itself would take, with room: the app's own response
+ * timeout is 2 s per frame, and the firmware's slowest single operations
+ * (SD writes, a download's first chunk) take a few seconds. No host-speed
+ * factor applies: the board running at a few percent of real time, or at a
+ * fraction of that while the firmware works its SD card, slows the host's
+ * clock, not this one. A healthy run never spends it: it bounds a hang, it
+ * does not pace a passing test. No wait in this suite is used to prove
+ * something is ABSENT, so the ceiling cannot weaken an assertion.
+ */
+export const DEVICE_WAIT_MS = 20_000;
 
 /** Pages whose clock is the board's (board mode's). */
 const metered = new WeakSet();
@@ -719,18 +738,82 @@ export function setCurrentScenario(id) {
 }
 
 /**
+ * Which board the suite is attached to (SIL/scripts/board-route.sh sets it):
+ *
+ *   - `project`, the default: the machine's project, `embsim run
+ *     mad-cosim.toml` (`make e2e-emulator`): the carrier and the module as
+ *     drawn, the production firmware off the module's flash, the host on J1;
+ *   - `emulator`: `mad-emulator --chrome`, the debug firmware on the bare
+ *     chip, the host on P53/P55 (the playgrounds, and the ROM board).
+ */
+export const BOARD_ROUTE = process.env.E2E_BOARD_ROUTE || 'project';
+
+/**
+ * The USB ids of the board's port, `VVVV:PPPP` in hex. The project's
+ * `chrome-cdp` names them (SIL/mad-cosim.toml: 0403:6015, an FTDI FT231X,
+ * the chip in the Prop Plug on J1); `mad-emulator --chrome` reports an
+ * FT232R's, 0403:6001, unless `--usb-product-id` says otherwise.
+ */
+export const PORT_USB =
+  process.env.E2E_PORT_USB || (BOARD_ROUTE === 'emulator' ? '0403:6001' : '0403:6015');
+
+/**
+ * `PORT_USB` as the Connect screen labels the port: "USB 403:6015", the ids
+ * in lower-case hex without their leading zeros (Connect.tsx, `portName`).
+ * The row's text runs on into its buttons ("…6015ConnectForget"), so the
+ * id ends where lower-case hex does.
+ */
+const PORT_LABEL = (() => {
+  const [vid, pid] = PORT_USB.split(':').map((hex) => Number.parseInt(hex, 16).toString(16));
+  return new RegExp(`USB 0*${vid}:0*${pid}(?![0-9a-f])`);
+})();
+
+/**
  * The granted port that is the board. The bridge's fake grants exactly one;
- * on the board route the node's port is the board's FTDI (USB 0403:6001),
- * whose label is a sibling of the button in its row.
+ * on the board route the node's port is the one with the board's USB ids
+ * (`PORT_USB`), whose label is a sibling of the button in its row.
  */
 export function boardGrantedPort(page) {
   if (BOARD) {
-    return page.locator('.row', { hasText: /403:6001/i }).getByTestId('connect-granted').first();
+    return page.locator('.row', { hasText: PORT_LABEL }).getByTestId('connect-granted').first();
   }
   return page.getByTestId('connect-granted').first();
 }
 
-/** Connect the app to the board through the Connect screen. */
+/** Status-bar `Responding` plus a firmware version: the session is up.
+ *
+ * One sample lights `Responding` for two seconds, so the badge alone is not
+ * "the opening reads have finished". Starting a test while config / profile /
+ * firmware-version still own the wire is the CI failure mode behind WAVE / TC11
+ * / VT-linear: `proto/timeout`, then a CSV whose first second is idle.
+ * `fw <version>` in the status bar is that handshake completing. */
+export async function awaitResponding(page, { timeoutMs = DEVICE_WAIT_MS } = {}) {
+  const resp = page.getByTestId('responding');
+  const clock = await pageClock(page);
+  while ((await clock.elapsed()) < timeoutMs) {
+    const t = (await resp.textContent()) || '';
+    if (t.includes('Responding') && !t.includes('Not')) break;
+    await waitPageTime(page, 150);
+  }
+  const left = timeoutMs - (await clock.elapsed());
+  if (left <= 0) throw new Error('device never started responding (no sample stream)');
+  try {
+    await page.locator('.statusbar').getByText(/fw /).waitFor({ timeout: left });
+  } catch {
+    throw new Error('device responded but the opening handshake never published a firmware version');
+  }
+}
+
+/**
+ * Connect the app to the board through the Connect screen.
+ *
+ * On the board route the connect is done only once the firmware has
+ * answered: samples arriving and the opening handshake's firmware version
+ * published (`awaitResponding`, in page time). The status dot turns
+ * `.connected` as soon as the port opens (src/store/useStore.ts,
+ * `afterConnect`), with nothing yet heard from the board, so a scenario that
+ * stopped there would pass against a board whose firmware never answered.
+ */
 export async function connectToSil(page) {
   await page.goto(`${APP_URL}#/connect`);
   // First point at which the app is loaded and can take a marker.
@@ -747,6 +830,7 @@ export async function connectToSil(page) {
   // Wait until the store reports connected — the status dot gets `.connected`.
   // (Matching on text would falsely hit "Disconnected".)
   await page.locator('.dot.connected').waitFor({ timeout: 10_000 });
+  if (BOARD) await awaitResponding(page);
 }
 
 /**
