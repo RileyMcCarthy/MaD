@@ -1,7 +1,7 @@
 /*
  * Unit tests for src/DEV/dev_servo.c — closed-loop motion backend.
  *
- * Coverage (certification contracts parallel to test_dev_stepper):
+ * Coverage:
  *   - init: disabled, atTarget, encoder position is source of truth
  *   - enable / disable idle park
  *   - moveTo stages target; invalid feedrate clamps to maxVelocity

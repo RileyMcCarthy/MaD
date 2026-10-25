@@ -163,7 +163,7 @@ static inline int32_t dev_servo_private_iabs(int32_t x) { return (x < 0) ? -x : 
 /* Push the commanded velocity (counts/s, signed) to the step pin: set the
  * direction GPIO and the pulse frequency, starting the train if needed. A zero
  * command stops the train. (SERVO_DIR active=false => CW => increasing counts,
- * matching dev_stepper's convention.) */
+ * matching the drive's DIR convention.) */
 static void dev_servo_private_applyVelocity(dev_servo_channel_E ch, float vel)
 {
     const dev_servo_channelConfig_S *const cfg = &dev_servo_channelConfig[ch];

@@ -36,7 +36,7 @@ CI already gates MISRA/cppcheck (**medium + high only**; low is disabled), layer
 ## State-machine module idiom (APP / DEV / multi-state IO)
 
 New stateful modules should follow the existing pattern (see `watchdog`, `dev_nvram`,
-`dev_stepper`, `IO_SDCard`, `app_motion`):
+`dev_servo`, `IO_SDCard`, `app_motion`):
 
 1. **`module_init`** — allocate lock, clear state, one-time setup.
 2. **`module_run` (or cog tick)** each period:
