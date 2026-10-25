@@ -1167,6 +1167,11 @@ impl<P: PinBus> Machine<P> {
         // count-stepping, where it correctly means "no bound".)
         if waits_on_pin {
             target = target.min(self.ff_deadline_clocks);
+            // Nor past an instant the bus already knows a pin will change at:
+            // a byte that lands mid-slice is the guest's to read then.
+            if let Some(at) = self.pins.next_pin_change(mine) {
+                target = target.min(at);
+            }
         }
         if target != u64::MAX && target > mine {
             self.cogs[cog].clocks = target;
@@ -1290,6 +1295,7 @@ impl<P: PinBus> Machine<P> {
                 // an early return that stalls a single-cog bit-bang boot.
                 let cog_us = self.cogs[cog].clocks.saturating_mul(1_000_000) / hz;
                 if self.cogs[cog].running && cog_us < deadline_us {
+                    self.pins.set_clock(self.cogs[cog].clocks);
                     self.step_one(cog)?;
                     stepped = true;
                     if self.pins.take_net_yield() || std::mem::take(&mut self.clock_yield) {
@@ -1328,6 +1334,7 @@ impl<P: PinBus> Machine<P> {
             if self.cogs[cog].clocks >= deadline_clocks {
                 break;
             }
+            self.pins.set_clock(self.cogs[cog].clocks);
             self.step_one(cog)?;
             if self.pins.take_net_yield() || std::mem::take(&mut self.clock_yield) {
                 self.yield_clocks = Some(self.cogs[cog].clocks);
@@ -1353,6 +1360,7 @@ impl<P: PinBus> Machine<P> {
             let Some(cog) = self.frontier_cog() else {
                 break;
             };
+            self.pins.set_clock(self.cogs[cog].clocks);
             self.step_one(cog)?;
             ran += 1;
         }
