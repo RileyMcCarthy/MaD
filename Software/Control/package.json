@@ -38,7 +38,7 @@
     "react-router-dom": "^7.18.4",
     "serialport": "^13.0.0",
     "uplot": "^1.6.31",
-    "zustand": "^5.0.15"
+    "zustand": "^5.0.16"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",
