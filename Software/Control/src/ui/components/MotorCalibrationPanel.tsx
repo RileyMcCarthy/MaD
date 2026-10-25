@@ -17,6 +17,7 @@ import {
   type CalibrationResult,
 } from '@/domain/motorCalibration';
 import {
+  trackingMayRun,
   planTrackingRun,
   runTracking,
   suggestGains,
@@ -209,6 +210,15 @@ async function finishReport(
     return {
       ...base,
       tracking: { ran: false, why: 'Fix the drive and encoder first: the servo cannot track on these settings.' },
+    };
+  }
+  if (!trackingMayRun(profile, saved)) {
+    return {
+      ...base,
+      tracking: {
+        ran: false,
+        why: 'The tracking run moves with the steps/mm saved on the machine, and they differ from the ones checked here. Write these to the device, restart the machine, and run again.',
+      },
     };
   }
   const plan = planTrackingRun(saved);

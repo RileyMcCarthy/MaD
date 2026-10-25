@@ -10,6 +10,7 @@ import {
   settleToleranceMm,
   suggestGains,
   summarizeTracking,
+  trackingMayRun,
   type MachineLimits,
   type MotionSample,
   type MoveMeasurement,
@@ -81,6 +82,26 @@ describe('tracking program', () => {
       const none = planTrackingRun({ ...LIMITS, maxAccelMmPerS2: 0 });
       expect(none.ok).toBe(false);
       if (!none.ok) expect(none.reason).toMatch(/Acceleration Max/);
+    },
+  );
+});
+
+describe('tracking gate', () => {
+  behaviour(
+    {
+      id: 'benchmark.only-on-checked-scales',
+      covers: 'src/domain/motionBenchmark.ts#trackingMayRun',
+      given: 'steps/mm that passed the ratio check, and a machine that has saved the same ones or different ones',
+      expect: {
+        'same-runs': 'the tracking run may go ahead when the saved steps/mm are the ones checked',
+        'different-blocked': 'it may not when the machine has saved different steps/mm',
+      },
+      why: { 'different-blocked': 'the tracking run moves at the saved scale, which nothing has checked' },
+    },
+    () => {
+      const checked = { encoderStepsPerMM: 2400, servoStepsPerMM: 6400 };
+      expect(trackingMayRun(checked, { encoderStepsPerMM: 2400, servoStepsPerMM: 6400 })).toBe(true);
+      expect(trackingMayRun(checked, { encoderStepsPerMM: 8192, servoStepsPerMM: 8192 })).toBe(false);
     },
   );
 });

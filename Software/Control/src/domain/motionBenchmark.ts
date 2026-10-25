@@ -33,6 +33,19 @@ export interface MachineLimits {
   encoderStepsPerMM: number;
 }
 
+/**
+ * The tracking run is closed loop on the SAVED profile, so it may only run on
+ * steps/mm that the ratio check has just passed: a profile that passed as
+ * typed but differs from what the machine has saved would be driven at the
+ * saved (unchecked) scale -- on the bench that was 2.7x too fast.
+ */
+export function trackingMayRun(
+  checked: { encoderStepsPerMM: number; servoStepsPerMM: number },
+  saved: { encoderStepsPerMM: number; servoStepsPerMM: number },
+): boolean {
+  return checked.encoderStepsPerMM === saved.encoderStepsPerMM && checked.servoStepsPerMM === saved.servoStepsPerMM;
+}
+
 export interface TrackingMove {
   label: string;
   deltaMm: number;
