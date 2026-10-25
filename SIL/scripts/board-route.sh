@@ -13,20 +13,28 @@
 #
 # Two boards, BOARD_ROUTE picking (embsim MIGRATING-MAD.md steps 10 and 11):
 #
-#   project   the e2e's default: the machine's project file E2E_PROJECT
-#             (mad-cosim.toml) under `$EMBSIM run`, the host's Chrome on the
-#             carrier's debug header J1 (USB 0403:6015), the production
-#             firmware booted off the module's flash. The file fixes Chrome's
-#             DevTools port (9222) and grants the port; `make flash-image
-#             sd-image` writes the images it names.
-#   emulator  the playground's default, the ROM board's (make e2e-rom), and
-#             the board of what the project cannot run (make e2e-motion):
-#             `mad-emulator --chrome`, the P2 image P2_IMAGE on the bare chip,
-#             the host on P53/P55 (USB 0403:6001; BOARD_ARGS can change it).
+#   project   the default: a machine's project file under `$EMBSIM run`, the
+#             host's Chrome on the carrier's debug header J1 (USB 0403:6015).
+#             The e2e runs E2E_PROJECT (mad-cosim.toml; make e2e-motion names
+#             mad-ic14-fixed-cosim.toml, the board with MaD #285 fixed), the
+#             production firmware booted off the module's flash, headless.
+#             The playground runs PLAYGROUND_PROJECT (mad-playground.toml, a
+#             headed copy of the #285-fixed file; make playground-rom names
+#             mad-serial-boot-playground.toml), its Chrome a window opened on
+#             the app at the file's url, the dev server on 5174. The files fix
+#             Chrome's DevTools port (9222) and grant the port; `make
+#             flash-image sd-image` writes the images they name.
+#   emulator  the ROM board's (make e2e-rom) until the project's serial boot
+#             carries FW-ISS, and SERVO-stall's by hand (no project has a
+#             jam): `mad-emulator --chrome`, the P2 image P2_IMAGE on the bare
+#             chip, the host on P53/P55 (USB 0403:6001; BOARD_ARGS can change
+#             it).
 #
 # Environment: BOARD_ROUTE, EMBSIM (the embsim command; by default the
 # pinned submodule's, through cargo), E2E_PROJECT (mad-cosim.toml, relative
-# to SIL/), P2_IMAGE and EMULATOR (the mad-emulator binary), APP_PORT (5174),
+# to SIL/; exported to the suite, which skips by it), PLAYGROUND_PROJECT
+# (mad-playground.toml), P2_IMAGE and EMULATOR (the mad-emulator binary),
+# APP_PORT (5174),
 # DEVTOOLS_PORT (the emulator's: 9222; empty for one Chrome picks),
 # BOARD_LOGS (where the board's and the dev server's logs go), BOARD_ARGS
 # (more mad-emulator arguments), E2E_TIMINGS (a JSON file of per-scenario
@@ -60,7 +68,7 @@ esac
 
 sil=$(cd "$(dirname "$0")/.." && pwd)
 control="$sil/../Software/Control"
-route=${BOARD_ROUTE:-$([ "$mode" = e2e ] && echo project || echo emulator)}
+route=${BOARD_ROUTE:-project}
 case "$route" in
   project | emulator) ;;
   *)
@@ -68,16 +76,14 @@ case "$route" in
     exit 2
     ;;
 esac
-if [ "$mode" = playground ] && [ "$route" = project ]; then
-  # The project's Chrome is headless and opens nothing (mad-cosim.toml); a
-  # playground of the project is MIGRATING-MAD.md step 11's.
-  echo "board-route: the playground runs on mad-emulator (BOARD_ROUTE=emulator) until the project has a headed copy" >&2
-  exit 2
-fi
 image=${P2_IMAGE:-$sil/../Firmware/MaDCore/.pio/build/propeller2_debug/program}
 emulator=${EMULATOR:-$sil/target/release/mad-emulator}
 embsim=${EMBSIM:-cargo run --release --quiet --manifest-path $sil/embsim/Cargo.toml -p embsim-cli --}
-project=${E2E_PROJECT:-mad-cosim.toml}
+if [ "$mode" = playground ]; then
+  project=${PLAYGROUND_PROJECT:-mad-playground.toml}
+else
+  project=${E2E_PROJECT:-mad-cosim.toml}
+fi
 app_dist=''
 if [ -n "${APP_DIST:-}" ]; then
   [ -f "$APP_DIST/index.html" ] || {
@@ -88,6 +94,16 @@ if [ -n "${APP_DIST:-}" ]; then
 fi
 app_base=${APP_BASE:-/}
 app_port=${APP_PORT:-$([ -n "$app_dist" ] && echo 4173 || echo 5174)}
+if [ "$mode" = playground ] && [ "$route" = project ]; then
+  # A playground file opens the app at its HOST's url (a project's options
+  # come from its file alone): serve the app on that url's port.
+  file_port=$(sed -n 's|^url = "http://127\.0\.0\.1:\([0-9]*\)/.*|\1|p' "$sil/$project" | head -1)
+  if [ -n "$file_port" ] && [ -n "${APP_PORT:-}" ] && [ "$APP_PORT" != "$file_port" ]; then
+    echo "board-route: $project opens the app on port $file_port; APP_PORT=$APP_PORT would serve it where that window does not look" >&2
+    exit 2
+  fi
+  app_port=${file_port:-$app_port}
+fi
 app_url="http://127.0.0.1:$app_port$app_base"
 logs=${BOARD_LOGS:-$sil/target/board-route}
 mkdir -p "$logs"
@@ -108,9 +124,12 @@ if [ "$route" = emulator ]; then
   done
 else
   # The project's machine has no jam (mad-catalog/src/machine.rs, "Not
-  # modelled"): the suite skips SERVO-stall, saying so.
+  # modelled"): the suite skips SERVO-stall, saying so. The suite skips by
+  # the file (run-all.mjs, PROJECT_CANNOT): what IC14 as drawn keeps from
+  # the drive runs on the file with MaD #285 fixed.
   unset E2E_JAM_FILE
   export E2E_BOARD_ROUTE=project
+  export E2E_PROJECT=$project
   for need in "$sil/$project" "$sil/build/flash.bin" "$sil/build/sd.img"; do
     [ -f "$need" ] || {
       echo "board-route: missing $need (make flash-image sd-image)" >&2
@@ -242,7 +261,7 @@ start_board() {
     return 1
   fi
   echo "board-route: Chrome is on the board's clock; DevTools at $cdp_url"
-  if [ "$route" = project ] && [ "${E2E_BOARD:-}" != rom ]; then
+  if [ "$route" = project ] && [ "$mode" = e2e ] && [ "${E2E_BOARD:-}" != rom ]; then
     # Pacing, not a check: the scenario starts once the firmware is up, as
     # a person finds the machine powered, and its connect is what checks
     # that the firmware answers (fixtures.mjs, connectToSil: samples and a
@@ -279,6 +298,8 @@ start_board() {
 
 if [ "$mode" = playground ]; then
   start_board "$logs/board.log"
+  # The project's Chrome opens the file's url itself, a page on the board's
+  # clock from its first instant; mad-emulator's opens --url.
   echo "board-route: the app is open in the Chrome window. Ctrl-C stops the board, Chrome and the app's server."
   # Follow the board's own words (the guest's console, the link, the host).
   tail -n +1 -f "$logs/board.log" &

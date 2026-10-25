@@ -373,9 +373,10 @@ jobs:
   # 24 s of host), G1's SD-heavy run 208 s of it (PR body). The scenarios
   # that move the carriage do not run on the project as drawn: IC14, the
   # isolator between the processor and the drive, has its secondary grounds
-  # on a net of their own, so nothing reaches the drive and the firmware
-  # latches SERVO_STALL at the first move (SIL/mad-catalog/tests/mad.rs;
-  # run-all.mjs, PROJECT_CANNOT). The suite skips them there, saying why.
+  # on a net of their own (MaD #285), so nothing reaches the drive and the
+  # firmware latches SERVO_STALL at the first move (SIL/mad-catalog/tests/
+  # mad.rs; run-all.mjs, PROJECT_CANNOT). The suite skips them there, saying
+  # why.
   #
   # Then BUNDLE-live on one more board: the app as it ships, built as
   # pages.yml builds it and served by `vite preview`. Every scenario above
@@ -383,11 +384,14 @@ jobs:
   # is compiled for the app's browser floor, and a fault that compiling brings
   # in shows only there (#156: every device event lost, in production only).
   #
-  # Then the motion leg, until IC14 is settled: G2+G3+H2+I, a run carried
-  # through to download and view, on mad-emulator's board (`make
-  # e2e-motion`: the debug firmware on the bare chip, where the carriage
-  # moves), so a PR still runs one test that moves the carriage. Measured on
-  # an M2: 270.7 s of host time, 9.409 s of board time.
+  # Then the motion leg: G2+G3+H2+I, a run carried through to download and
+  # view, on the board with MaD #285 fixed (`make e2e-motion`:
+  # SIL/mad-ic14-fixed-cosim.toml, mad-cosim.toml with one wire from IC14's
+  # ground to EN_GND, where the carriage moves), so a PR still runs one test
+  # that moves the carriage, on a project. Measured on an M2 shared with a
+  # load average near 90: 1314.8 s of host time, 10.171 s of board time; on
+  # mad-emulator it took 444.0 s of host time on the runner (run
+  # 40063642331).
   #
   # Fires on the app, the protocol, the firmware or the SIL (the `sil` filter
   # covers Firmware/ and Protocol/), and on a move of the SIL/embsim pin: the
@@ -440,10 +444,10 @@ jobs:
         working-directory: Firmware/MaDCore
         run: pio pkg install --platform https://github.com/RileyMcCarthy/platform-propeller.git
       # The production image, laid out in the module's flash, and the card
-      # (make flash-image sd-image), then `embsim check` on the four project
+      # (make flash-image sd-image), then `embsim check` on the seven project
       # files, which builds the embsim tool and mad-runner (--release: the
       # ISS interprets every P2 instruction). check finds the runner's
-      # Chrome for the two cosim files and starts none.
+      # Chrome for the five whose host is Chrome and starts none.
       - name: The images, the runner and the project files (make check)
         working-directory: SIL
         env:
@@ -491,13 +495,13 @@ jobs:
           E2E_TIMINGS: /tmp/e2e-out/timings-bundle.json
           SCENARIOS: BUNDLE-live
         run: scripts/board-route.sh e2e
-      # What the project cannot run, on mad-emulator's board meanwhile: the
-      # one run carried through to download and view. `make e2e-motion`
-      # builds the debug image (pio env propeller2_debug) and mad-emulator
-      # (release), after the production image the steps above use, and runs
-      # what `run-all.mjs --list --cannot` names of SCENARIOS. It runs
-      # whenever the subset ran, passed or failed.
-      - name: Run the motion leg on mad-emulator (until IC14 is settled)
+      # What the project as drawn cannot run, on the board with MaD #285
+      # fixed: the one run carried through to download and view. `make
+      # e2e-motion` checks mad-ic14-fixed-cosim.toml and runs what
+      # `run-all.mjs --list --cannot` names of SCENARIOS there, one board
+      # each, on the images the steps above wrote. It runs whenever the
+      # subset ran, passed or failed.
+      - name: 'Run the motion leg on the board with IC14 fixed (MaD #285)'
         if: ${{ !cancelled() && (steps.subset.outcome == 'success' || steps.subset.outcome == 'failure') }}
         working-directory: SIL
         env:
@@ -819,8 +823,11 @@ jobs:
     # 25 was enough while every ISS test skipped. They now run against the real
     # P2 image: ~6 minutes locally, dominated by p2core's boot tests
     # interpreting hundreds of millions of instructions in the dev profile, and
-    # a shared 4-vCPU runner is slower than that.
-    timeout-minutes: 45
+    # a shared 4-vCPU runner is slower than that. 45 held until the cargo test
+    # step took 40.8 min of it (run 40063642331, #283); the stepped jog on the
+    # #285-fixed board (mad-catalog/tests/mad.rs) boots the firmware once
+    # more and runs 2.55 s of board time, so 60.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
         with:
@@ -1212,8 +1219,8 @@ jobs:
     # 25 held while the sil suite booted the firmware once (8-11 min a run on
     # #267). With SIL/mad.toml's boot case and the card mount added it ran
     # out at 25 with the sil suite 23.7 min in (run 39404042776), while
-    # sil-rust, the same tests in one cargo run, took 19 min. sil-rust's 45,
-    # sized for a slow shared runner, is taken here too.
+    # sil-rust, the same tests in one cargo run, took 19 min. 45, sized for a
+    # slow shared runner, is what sil-rust had then.
     timeout-minutes: 45
     # The default token is read-only; posting the sticky comment needs this.
     # On a fork PR the token stays read-only regardless, and the post step

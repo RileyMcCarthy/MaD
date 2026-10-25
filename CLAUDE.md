@@ -57,11 +57,11 @@ make firmware     # Firmware static library only
 make protocol     # Regenerate the Rust codec into ../Protocol/rust/src/generated
 make emulator     # firmware + protocol, then cargo build workspace
 make test         # emulator + `cargo test`
-make playground   # the ISS + MaD Control in a Chrome window on the board's clock (mad-emulator --chrome)
-make check        # flash + card images, then `embsim check` on the four project files (mad*.toml)
+make playground   # mad-playground.toml (IC14 fixed) under embsim run: MaD Control in a Chrome window on the board's clock
+make check        # flash + card images, then `embsim check` on the seven project files (mad*.toml)
 make e2e          # the e2e suite on the machine's project, mad-cosim.toml, headless (SCENARIOS=… selects); e2e-emulator for the board alone
-make e2e-motion   # what the project cannot run (the carriage's scenarios), on mad-emulator, until IC14 is settled
-make playground-pty  # the ISS on a PTY at /tmp/tty.iss, for a serial console (no browser behind it)
+make e2e-motion   # what the project as drawn cannot run (the carriage's scenarios), on mad-ic14-fixed-cosim.toml (MaD #285 fixed)
+make playground-pty  # mad.toml under embsim run, its host a PTY at /tmp/tty.iss, for a serial console (no browser behind it)
 make clean        # Remove build artifacts
 ```
 
@@ -115,9 +115,9 @@ Frontend-only browser PWA — the browser talks straight to the Propeller 2 over
 ### SIL Emulator Architecture
 Rust **Cargo workspace** under `SIL/` (see `SIL/Cargo.toml`; members are the MaD-side crates — `MaDSim`, `mad-catalog`, `mad-runner`, `models`, `p2core`, `p2iss`, and `protocol` (an out-of-tree member living at `Protocol/rust/`, next to its schema). The `embsim/*` crates below live in the `SIL/embsim` submodule, which is its own workspace, and are consumed as path deps):
 
-- **The project files** (`SIL/mad.toml`, `mad-cosim.toml`, `mad-serial-boot.toml`, `mad-serial-boot-cosim.toml`) — the machine as embsim projects: the Edge carrier, the P2-EC32MB module with the ISS as its core booting the production image (pio env `propeller2`) off its flash, the DS2 add-on, the machine, and the host on the carrier's debug header `J1`. `embsim run` hands them to `mad-runner`. The e2e suite runs on `mad-cosim.toml` (the host's Chrome on the board's clock, `make e2e`); the carriage cannot move there while `IC14` is as drawn, so the suite skips the motion scenarios on it, and they run on `mad-emulator` meanwhile (`make e2e-motion`).
+- **The project files** (`SIL/mad.toml`, `mad-cosim.toml`, `mad-serial-boot.toml`, `mad-serial-boot-cosim.toml`, `mad-ic14-fixed-cosim.toml`, and the playgrounds `mad-playground.toml`, `mad-serial-boot-playground.toml`) — the machine as embsim projects: the Edge carrier, the P2-EC32MB module with the ISS as its core booting the production image (pio env `propeller2`) off its flash, the DS2 add-on, the machine, and the host on the carrier's debug header `J1`. `embsim run` hands them to `mad-runner`; `mad-catalog/tests/projects.rs` holds them to one another. The e2e suite runs on `mad-cosim.toml` (the host's Chrome on the board's clock, `make e2e`); the carriage cannot move there while `IC14` is as drawn (MaD #285), so the suite skips the motion scenarios on it, and they run on `mad-ic14-fixed-cosim.toml`, the same file with #285's one wire (`make e2e-motion`). The playgrounds are headed copies of that file and of the serial boot's.
 - **`mad-catalog/`** — MaD's kinds (`mad-edge`, `mad-ds2`, `mad-p2iss`, `mad-machine`) and the project files' tests; **`mad-runner/`** — the embsim command over them.
-- **`MaDSim/`** — `mad-emulator` binary: runs the debug Propeller 2 image on the ISS (`p2iss` / `p2core`) on the bare chip, with pins on nets. Its host is `--chrome`, the host's Chrome with every page and worker held to the board's clock by embsim's `chrome-cdp` (the playgrounds; `src/host.rs`), or a PTY for a serial console. Retires at embsim `MIGRATING-MAD.md` step 11.
+- **`MaDSim/`** — `mad-emulator` binary: runs the debug Propeller 2 image on the ISS (`p2iss` / `p2core`) on the bare chip, with pins on nets. Its host is `--chrome`, the host's Chrome with every page and worker held to the board's clock by embsim's `chrome-cdp` (`src/host.rs`), or a PTY for a serial console. Only its ROM board still runs (`make e2e-rom`, FW-ISS), and SERVO-stall by hand; it retires once FW-ISS runs on the project's serial boot (embsim `MIGRATING-MAD.md` step 11).
 - **`embsim/cdp`** — `chrome-cdp`: the host's Chrome on a host's serial pins, metered over DevTools, its Web Serial a shim on the line.
 - **`embsim/core`** — PTY, timing, shared plumbing.
 - **`embsim/board`** — the board engine: nets, netlists, and the one interface between a part and the board (`PinDecl` with its role and thresholds, `Drive`, `Sense`).

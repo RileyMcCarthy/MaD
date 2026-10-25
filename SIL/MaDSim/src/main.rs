@@ -8,11 +8,12 @@
 //!
 //! - `--chrome`: the host's Chrome, every page and worker held to the board's
 //!   clock over DevTools by embsim's `chrome-cdp`, its Web Serial port this
-//!   line. The e2e configuration, and the one a person runs the app on
-//!   (`make playground`).
+//!   line: the ROM board (`make e2e-rom`, FW-ISS) and SERVO-stall by hand.
+//!   The e2e and the playgrounds run on the machine's project files
+//!   (`SIL/mad*.toml`, `docs/dev/sil-testing.md`).
 //! - otherwise a PTY (`--pty-path`), for a serial console or a program that
-//!   keeps wall time (`make playground-pty`). No browser belongs behind it:
-//!   a browser on the host's clock measures the host, not the machine.
+//!   keeps wall time. No browser belongs behind it: a browser on the host's
+//!   clock measures the host, not the machine.
 
 mod host;
 mod iss_description;

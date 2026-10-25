@@ -32,7 +32,7 @@ until it retires (embsim `MIGRATING-MAD.md` step 11).
 | `models` (`SIL/models/`) | MaD physics: gantry, sample, strain gauge |
 | `mad-catalog` (`SIL/mad-catalog/`) | MaD's kinds: the Edge carrier and the DS2 add-on from their netlists, the ISS as the P2's core, the machine |
 | `mad-runner` (`SIL/mad-runner/`) | The embsim command over MaD's kinds, which `embsim check` and `embsim run` build and run for the project files; the e2e's board is `embsim run mad-cosim.toml` |
-| `MaDSim` | The `mad-emulator` binary: ISS, bench, and host PTY or Chrome; the playgrounds' board |
+| `MaDSim` | The `mad-emulator` binary: ISS, bench, and host PTY or Chrome; only its ROM board still runs (`make e2e-rom`), until it retires |
 
 The dependency graph is acyclic — no generic crate depends on a project crate.
 See the [SIL emulator](../how-it-works/sil-emulator.md) page for the diagram.

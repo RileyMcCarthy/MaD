@@ -15,13 +15,17 @@ Two systems run it:
   netlists, the ISS as the module's processor booting the production image
   (`pio run -e propeller2`) off the module's flash, the DS2 add-on and the
   machine on the carrier's connectors, the host on the carrier's debug header
-  `J1`. The e2e suite runs here (`make e2e`, on `mad-cosim.toml`), and
-  `mad-catalog`'s tests.
+  `J1`. The e2e suite runs here (`make e2e`, on `mad-cosim.toml`); so do the
+  scenarios that move the carriage, on `mad-ic14-fixed-cosim.toml`, the
+  board with MaD #285 fixed (`make e2e-motion`; as drawn, the isolator
+  `IC14` passes nothing to the drive), the playgrounds, on headed copies
+  (`make playground`, `playground-rom`), and `mad-catalog`'s tests.
 - **`mad-emulator`** (`SIL/MaDSim`): the debug image (`propeller2_debug`) on
-  the bare chip, the bench wired by hand, the host on `P53`/`P55`. The
-  playgrounds run here until it retires (embsim `MIGRATING-MAD.md` step 11),
-  and so do the e2e scenarios that move the carriage (`make e2e-motion`),
-  which the project cannot run while its isolator `IC14` is as drawn.
+  the bare chip, the bench wired by hand, the host on `P53`/`P55`. Only its
+  ROM board still runs (`make e2e-rom`, FW-ISS, until it runs on the
+  project's serial boot, MaD #284), and SERVO-stall by hand, since no
+  project has a jam; it retires after that (embsim `MIGRATING-MAD.md` step
+  11).
 
 !!! info "This is not a mock"
     The firmware under test is the image you flash. The ISS executes its
@@ -93,7 +97,8 @@ sits; on `mad-emulator`, the bare chip's `P53`/`P55`. It is one of two
 components:
 
 - **Chrome on the board's clock** (`chrome-cdp`: `mad-cosim.toml`'s `HOST`,
-  `make e2e`; `mad-emulator --chrome`, `make playground`). Every page's
+  `make e2e`; `mad-playground.toml`'s, headed, `make playground`;
+  `mad-emulator --chrome`, `make e2e-rom`). Every page's
   `navigator.serial` is the node's shim, whose one port is this line (USB
   `0403:6015` on the project, `0403:6001` on `mad-emulator`), by Chrome's own
   rules; every page and dedicated worker lives the board's time, a 1 ms
@@ -101,10 +106,10 @@ components:
   of the board's time. Its rail pins are wired to a 3.3 V rail and the
   board's ground.
 - **A PTY** (`host-serial`: `mad.toml`'s `HOST`, `embsim run mad.toml --pty
-  PATH`; `make playground-pty`, `/tmp/tty.iss`), for a serial console or a
-  program. A browser behind it (the WS↔PTY bridge) runs at host speed while
-  the ISS runs at a few percent of real time, so it measures the host, not
-  the machine.
+  PATH`; `make playground-pty`, `embsim run mad.toml --pty /tmp/tty.iss`),
+  for a serial console or a program. A browser behind it (the WS↔PTY
+  bridge) runs at host speed while the ISS runs at a few percent of real
+  time, so it measures the host, not the machine.
 
 On real hardware the app uses Web Serial directly. See
 [SIL testing](../dev/sil-testing.md).

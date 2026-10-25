@@ -744,7 +744,7 @@ export function setCurrentScenario(id) {
  *     mad-cosim.toml` (`make e2e-emulator`): the carrier and the module as
  *     drawn, the production firmware off the module's flash, the host on J1;
  *   - `emulator`: `mad-emulator --chrome`, the debug firmware on the bare
- *     chip, the host on P53/P55 (the playgrounds, and the ROM board).
+ *     chip, the host on P53/P55 (the ROM board, and SERVO-stall by hand).
  */
 export const BOARD_ROUTE = process.env.E2E_BOARD_ROUTE || 'project';
 

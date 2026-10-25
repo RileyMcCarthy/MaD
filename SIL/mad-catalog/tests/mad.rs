@@ -33,13 +33,21 @@
 //!   on `J17` carries current, which the file's own wires give it
 //!   (`mad.toml`, "The machine on the carrier's connectors").
 //! - **The drive.** `IC14`, the isolator between the processor and the
-//!   drive, has its secondary ground pins on a net of their own (embsim
-//!   `board/tests/edgeboard.rs`; the layout has the same pads on the same
-//!   net, `Hardware/EdgeBoard/KiCad/MaD_Edge.kicad_pcb`), so nothing it
+//!   drive, has its secondary ground pins on a net of their own (MaD #285;
+//!   embsim `board/tests/edgeboard.rs`; the layout has the same pads on the
+//!   same net, `Hardware/EdgeBoard/KiCad/MaD_Edge.kicad_pcb`), so nothing it
 //!   drives reaches the drive's step, direction and enable inputs, and its
 //!   output to `P5` gives its default high whatever the drive's ready
 //!   output says. Whether the machine's carrier is bodged there is not
 //!   known; the file keeps the board as drawn.
+//! - **The drive, with #285 fixed.** `mad.toml` with the lines
+//!   `mad-ic14-fixed-cosim.toml` adds to `mad-cosim.toml` (one wire from
+//!   `IC14`'s pin 9 to `EN_GND`): the firmware enables motion and jogs the
+//!   carriage as the app does, and the encoder comes to rest within the
+//!   firmware's parking deadband of each target. The firmware never drives
+//!   the enable pin `P6`; `IC14` gives its default high there, which turns
+//!   on `Q1`, the transistor `JP1`'s pads 2-3 put on the drive's enable, and
+//!   `P5` reads the drive's ready line.
 //! - **The encoder.** With the drive's inputs driven from the bench (the
 //!   carrier's own path to them is `IC14`'s) and the chip held in reset
 //!   from the debug header, the drive turns the encoder, whose pairs reach
@@ -494,7 +502,8 @@ fn the_inputs_at_rest() {
         "enable-unreached",
         "the drive's enable input reads no source",
         "the servo isolator IC14's secondary ground pins are on a net of their own, so its \
-         outputs toward the drive have no return and stay released"
+         outputs toward the drive have no return and stay released, and the transistor that \
+         sinks the enable stays off"
     );
     expect!(
         "ready-unread",
@@ -803,27 +812,33 @@ fn settled(rig: &mut Rig, host: &mut HostPort, at: u64) -> (protocol::MachineSta
     }
 }
 
-/// Ask the firmware to enable motion, once, and wait at most
-/// [`ANSWER_WAIT_NS`] from `at` for its answer: whether it acknowledged the
-/// request, and the instant it answered.
-fn enable_motion(rig: &mut Rig, host: &mut HostPort, at: u64) -> (bool, u64) {
+/// Send the firmware one WRITE of `command` carrying `data`, and wait at
+/// most [`ANSWER_WAIT_NS`] from `at` for its answer: whether it
+/// acknowledged the write, and the instant it answered.
+fn write(rig: &mut Rig, host: &mut HostPort, command: u8, data: &[u8], at: u64) -> (bool, u64) {
     let first = at;
     let since = host.sent.len();
     let mut at = at;
-    host.write(protocol::MSG_WRITE_MOTION_ENABLE, &[1]);
+    host.write(command, data);
     loop {
         step(rig, &mut at);
-        if let Some(acknowledged) = host.acknowledged(protocol::MSG_WRITE_MOTION_ENABLE, since) {
+        if let Some(acknowledged) = host.acknowledged(command, since) {
             return (acknowledged, at);
         }
         assert!(
             at - first < ANSWER_WAIT_NS,
-            "no answer to the motion-enable request in {} ns of board time: the host received \
-             {:02X?}",
+            "no answer to the write of command {command} in {} ns of board time: the host \
+             received {:02X?}",
             at - first,
             host.received()
         );
     }
+}
+
+/// Ask the firmware to enable motion, once: whether it acknowledged the
+/// request, and the instant it answered ([`write`]).
+fn enable_motion(rig: &mut Rig, host: &mut HostPort, at: u64) -> (bool, u64) {
+    write(rig, host, protocol::MSG_WRITE_MOTION_ENABLE, &[1], at)
 }
 
 /// Whether `program` holds `text` as a C string: its bytes, then a NUL.
@@ -1323,4 +1338,199 @@ fn the_machines_open_collector_encoder_sticks_p9_and_p10_high() {
         [pair("2", "1"), pair("6", "7")],
         "{findings:?}"
     );
+}
+
+// ============================================================
+// IC14 fixed: the drive takes the firmware's lines
+// ============================================================
+
+/// The lines `mad-ic14-fixed-cosim.toml` adds to `mad-cosim.toml`: its one
+/// wire, on `IC14`'s ground, with its reason, at the end of the file
+/// (`tests/projects.rs` holds the twin to that). Added to `mad.toml`, they
+/// give the twin with `mad.toml`'s serial-port host.
+fn ic14_fix() -> String {
+    let read = |name: &str| {
+        std::fs::read_to_string(sil().join(name)).unwrap_or_else(|err| panic!("SIL/{name}: {err}"))
+    };
+    let (cosim, twin) = (read("mad-cosim.toml"), read("mad-ic14-fixed-cosim.toml"));
+    twin.strip_prefix(cosim.as_str())
+        .expect("mad-ic14-fixed-cosim.toml is mad-cosim.toml with lines added at its end")
+        .to_string()
+}
+
+/// Encoder counts, and drive steps, a millimetre: `mad-machine`'s scale.
+const COUNTS_PER_MM: i64 = mad_catalog::machine::STEPS_PER_MM as i64;
+
+/// The firmware's parking deadband: a commanded position counts as reached
+/// within this many encoder counts of it (`positionDeadband`,
+/// `Firmware/MaDCore/src/DEV/dev_servo.c`).
+const DEADBAND_COUNTS: i64 = 8;
+
+/// The jogs, in micrometres, as the app sends them (`manualMove`,
+/// `Software/Control/src/device/DeviceSession.worker.ts`: incremental
+/// positioning, then a rapid move by the distance), at 5 mm/s.
+const JOG_FORWARD_UM: i32 = 500;
+const JOG_BACK_UM: i32 = -250;
+const JOG_SPEED_UM_S: i32 = 5_000;
+
+/// The carriage is at rest once the encoder's count has not changed for
+/// this long; a jog gets at most [`JOG_WAIT_NS`] to come to rest.
+const REST_NS: u64 = 50_000_000;
+const JOG_WAIT_NS: u64 = 3_000_000_000;
+
+/// Jog the carriage by `um` as the app does, both writes acknowledged, and
+/// step the board until the encoder comes to rest: its count, and the
+/// instant.
+fn jog(rig: &mut Rig, host: &mut HostPort, um: i32, at: u64) -> (i64, u64) {
+    let mut at = at;
+    for (g, x, f) in [
+        (protocol::GCode::Incremental, 0, 0),
+        (protocol::GCode::RapidMove, um, JOG_SPEED_UM_S),
+    ] {
+        let mv = protocol::Move { g, x, f, p: 0 };
+        let (acknowledged, answered) =
+            write(rig, host, protocol::MSG_WRITE_MANUAL_MOVE, &mv.encode(), at);
+        assert!(acknowledged, "the firmware refused {mv:?} at {answered} ns");
+        at = answered;
+    }
+    let first = at;
+    let (mut count, mut since) = (rig.encoder_count(), at);
+    loop {
+        step(rig, &mut at);
+        let now = rig.encoder_count();
+        if now != count {
+            (count, since) = (now, at);
+        } else if at - since >= REST_NS {
+            return (count, at);
+        }
+        assert!(
+            at - first < JOG_WAIT_NS,
+            "the carriage was still moving {} ns after the jog of {um} um: {}",
+            at - first,
+            rig.summary("MACHINE")
+        );
+    }
+}
+
+#[test]
+fn with_ic14_fixed_the_firmware_jogs_the_carriage() {
+    behaviour!(Test {
+        id: "mad-project.ic14-fixed-jog",
+        covers: Some("SIL/mad-ic14-fixed-cosim.toml"),
+        given: "the machine's project file with the servo isolator's ground fixed, the firmware \
+                booted, and a host on the debug header that enables motion, then jogs the \
+                carriage 0.5 mm forward and 0.25 mm back at 5 mm/s",
+    });
+    expect!(
+        "enable-held",
+        "once motion is enabled, the drive's enable input reads low, the level that enables \
+         it, with the processor's enable pin left released",
+        "the firmware never drives the enable pin, the isolator gives its default high for an \
+         open input, and that turns on the transistor that sinks the enable with the carrier's \
+         enable jumper on its open-collector pads"
+    );
+    expect!(
+        "ready-on-p5",
+        "P5, the firmware's drive-ready input, reads low, the level the drive holds its ready \
+         line at"
+    );
+    expect!(
+        "jog-forward",
+        "the forward jog brings the encoder to rest within the firmware's 8-count parking \
+         deadband of the position it commanded",
+        "the step and direction lines reach the drive through the isolator and the line \
+         driver, and the firmware closes its loop on the encoder"
+    );
+    expect!(
+        "jog-back",
+        "the jog back brings the encoder to rest within the same deadband of the position it \
+         commanded, 0.25 mm forward of the start"
+    );
+    expect!(
+        "no-stall",
+        "a state read after both jogs reads motion still enabled and no fault",
+        "the firmware latches a servo stall when it commands motion that the encoder does not \
+         show"
+    );
+    expect!(
+        "ground-returned",
+        "the run reports neither the servo isolator's drive-side ground nor the drive side's \
+         return as a power net no source reaches"
+    );
+    let Some((dir, program)) = images("ic14-fixed-jog") else {
+        return;
+    };
+    let pty = dir.join("host.pty");
+    let mut project = Project::parse(&format!("{}{}", mad_toml(), ic14_fix()))
+        .expect("mad.toml with IC14's fix is a project")
+        .relative_to(&dir);
+    project
+        .set_component_option("HOST", "path", pty.to_str().expect("UTF-8"))
+        .expect("the file has a HOST");
+    let mut rig = Rig::start(project, Bench::default());
+    let mut host = HostPort::open(&pty);
+
+    let streamed = START_NS + program.len() as u64 * STAGE1_NS_PER_BYTE;
+    virtual_clock::wait_virtual_ns(streamed - SETTLE_NS);
+    let (_, answered_at) = ask(
+        &mut rig,
+        &mut host,
+        protocol::MSG_READ_FIRMWARE_VERSION,
+        streamed,
+    );
+    let (unfaulted, unfaulted_at) = settled(&mut rig, &mut host, answered_at);
+    let (acknowledged, enabled_at) = enable_motion(&mut rig, &mut host, unfaulted_at);
+    assert!(
+        acknowledged,
+        "the firmware refused to enable motion at {enabled_at} ns, after {unfaulted:?}"
+    );
+    let ena = rig.state("EDGE./MaD_Edge_Sheet3/SC_ENA");
+    let p5 = rig.level("EDGE.P5");
+    let p6 = rig.state("EDGE.P6");
+
+    let start = rig.encoder_count();
+    let (forward, forward_at) = jog(&mut rig, &mut host, JOG_FORWARD_UM, enabled_at);
+    let (back, back_at) = jog(&mut rig, &mut host, JOG_BACK_UM, forward_at);
+    let (state, state_at) = read_state(&mut rig, &mut host, back_at);
+    let _ = writeln!(
+        std::io::stderr(),
+        "motion enabled at {enabled_at} ns: SC_ENA {ena:?}, P5 {p5:?}, P6 {p6:?}; encoder \
+         {start} at the start, {forward} at {forward_at} ns, {back} at {back_at} ns; {state:?} \
+         at {state_at} ns; {}",
+        rig.summary("MACHINE")
+    );
+
+    assert_eq!(
+        p6,
+        Some(NetState::Floating),
+        "the firmware leaves P6 released"
+    );
+    assert_eq!(level_of(ena), Some(Level::Low), "SC_ENA: {ena:?}");
+    assert_eq!(p5, Some(Level::Low), "P5: {:?}", rig.state("EDGE.P5"));
+    let to_counts = |um: i32| i64::from(um) * COUNTS_PER_MM / 1_000;
+    let forward_target = start + to_counts(JOG_FORWARD_UM);
+    assert!(
+        (forward - forward_target).abs() <= DEADBAND_COUNTS,
+        "the forward jog came to rest at {forward}, against {forward_target}"
+    );
+    let back_target = forward_target + to_counts(JOG_BACK_UM);
+    assert!(
+        (back - back_target).abs() <= DEADBAND_COUNTS,
+        "the jog back came to rest at {back}, against {back_target}"
+    );
+    assert!(
+        state.motion_enabled && state.faulted_reason == protocol::FaultedReason::None,
+        "the state after the jogs: {state:?}"
+    );
+    let findings = rig.finish();
+    // The wire joins the two nets, so the board may name the one net after
+    // either: neither name, nor any net named after IC14's pins, is unsourced.
+    let unsourced: Vec<&Finding> = findings
+        .iter()
+        .filter(|finding| {
+            matches!(finding, Finding::PowerNetUnsourced { net }
+                if net.contains("IC14") || net == "EDGE./MaD_Edge_Sheet3/EN_GND")
+        })
+        .collect();
+    assert!(unsourced.is_empty(), "{unsourced:?}");
 }
