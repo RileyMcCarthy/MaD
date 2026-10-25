@@ -1833,7 +1833,7 @@ mod tests {
         });
         expect!(
             "first-at-chip",
-            "the chip can read the first byte from its own instant, not before"
+            "the first byte becomes readable at the chip's own instant"
         );
         expect!(
             "frame-apart",

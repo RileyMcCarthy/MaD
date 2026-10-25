@@ -363,18 +363,19 @@ fn the_boot_rom_takes_the_flashers_ram_load_on_the_debug_header() {
     });
     expect!(
         "version-reply",
-        "the host receives the boot ROM's version reply, Prop_Ver G, within 10 ms of board \
-         time of the probe",
+        "the host receives the boot ROM's reply naming the chip's version, G, within 10 ms \
+         of board time of the probe",
         "with P59 pulled up the ROM waits for a serial boot on P63, measures the host's rate \
          on the probe's leading '>' and answers on P62; the debug header carries both pins \
          straight to the chip"
     );
     expect!(
         "checksum-accepted",
-        "the chip writes '.' on its transmit pin within 10 ms of board time of the checksum, \
-         the program's longs and the host's complement summing to \"Prop\"",
-        "every byte of the program, and the separators the flasher puts between lines, \
-         reaches the ROM's receiver intact, each a byte's time after the last"
+        "within 10 ms of board time of the checksum the chip writes '.', its acceptance, on \
+         its transmit pin",
+        "the ROM accepts only when the program's longs and the host's complement sum to \
+         \"Prop\": every byte, and the separators the flasher puts between lines, reached \
+         its receiver intact"
     );
     let dir = scratch("ram-load");
     let pty = dir.join("host.pty");
