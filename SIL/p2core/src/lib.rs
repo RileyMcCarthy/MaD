@@ -160,6 +160,81 @@ pub const CLOCKS_PER_INSTRUCTION: u64 = 2;
 /// Extra clocks charged for a hub read or write.
 pub const CLOCKS_HUB_ACCESS: u64 = 9;
 
+/// RCFAST, the internal oscillator a P2 runs on out of reset: 20 MHz nominal.
+///
+/// Silicon runs it anywhere in 20–24 MHz. The boot ROM sizes its timeouts for
+/// a 30 MHz part (its `rc_max`), so its 60 s serial window is 1.8e9 clocks:
+/// a minute on the fastest part, 90 s at this nominal. The figure
+/// `p2iss::package::RCFAST_HZ` and `embsim_p2_qemu` take.
+pub const RCFAST_HZ: u32 = 20_000_000;
+/// RCSLOW, the slow internal oscillator (`%SS` = `%01`): 20 kHz nominal.
+pub const RCSLOW_HZ: u32 = 20_000;
+/// The rate assumed while the guest has recorded none at hub `$14`.
+const UNRECORDED_CLKFREQ: u32 = 160_000_000;
+
+/// What the system clock runs from, as far as [`Machine::clock_hz`] goes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClockSource {
+    /// An internal oscillator, at its nominal rate: RCFAST out of reset,
+    /// RCSLOW once a clock word selects it.
+    Oscillator(u32),
+    /// The crystal or the PLL a program selected, at the rate the program
+    /// recorded at hub `$14` ([`Machine::clkfreq`]), or 160 MHz while that
+    /// reads 0. This model knows no crystal, so the program's own record is
+    /// the only figure there is; a host that knows the crystal keeps its own
+    /// map ([`Machine::step_until_clocks`]).
+    Recorded,
+}
+
+impl ClockSource {
+    /// The source a `HUBSET` clock word selects: its `%SS` field
+    /// (P2X8C4M64P Datasheet, "System Clock", p. 18).
+    pub fn of_clock_word(word: u32) -> Self {
+        match word & 0b11 {
+            0b00 => Self::Oscillator(RCFAST_HZ),
+            0b01 => Self::Oscillator(RCSLOW_HZ),
+            _ => Self::Recorded,
+        }
+    }
+}
+
+/// How the system counter becomes virtual time: the rate since the clock
+/// last changed source, counted from the instant it did.
+///
+/// One map for everything that turns clocks into time, so a host that stamps
+/// pin traffic with it agrees with [`Machine::now_us`] to the clock.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TimeMap {
+    /// The system counter when the clock last changed source; 0 if it never
+    /// has.
+    pub origin_clocks: u64,
+    /// The virtual time then, in nanoseconds.
+    pub origin_ns: u64,
+    /// The rate since, in clocks per second.
+    pub hz: u64,
+}
+
+impl TimeMap {
+    /// Virtual nanoseconds at system-counter value `clocks`, rounded down. A
+    /// count before the origin (a cog behind the one that set the clock)
+    /// reads as the origin.
+    pub fn clocks_to_ns(&self, clocks: u64) -> u64 {
+        let since = u128::from(clocks.saturating_sub(self.origin_clocks)) * 1_000_000_000
+            / u128::from(self.hz.max(1));
+        self.origin_ns
+            .saturating_add(u64::try_from(since).unwrap_or(u64::MAX))
+    }
+
+    /// The first count, at or after the origin, whose instant is at or after
+    /// `ns`: the deadline in clocks for a deadline in time.
+    pub fn first_clock_at_ns(&self, ns: u64) -> u64 {
+        let after = u128::from(ns.saturating_sub(self.origin_ns));
+        let clocks = (after * u128::from(self.hz.max(1))).div_ceil(1_000_000_000);
+        self.origin_clocks
+            .saturating_add(u64::try_from(clocks).unwrap_or(u64::MAX))
+    }
+}
+
 /// A hub write that landed inside a watched range.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WatchHit {
@@ -663,8 +738,8 @@ pub struct Machine<P: PinBus> {
     /// End a [`Self::step_until_clocks`] pass at the instruction after a
     /// `HUBSET` that sets the clock, so the host can retime the guest before
     /// it runs on at the new rate. Off by default: a host that converts
-    /// clocks to time with hub `$14` ([`Self::step_until`]) has nothing to
-    /// retime.
+    /// clocks to time with [`Self::step_until`] has the machine retime
+    /// itself.
     pub yield_on_clock_word: bool,
     /// The last clock word a `HUBSET` set, and the clock count of the cog
     /// that set it, until [`Self::take_clock_word`] takes it.
@@ -674,6 +749,19 @@ pub struct Machine<P: PinBus> {
     clock_yield: bool,
     /// The clock count the last [`Self::step_until_clocks`] pass yielded at.
     yield_clocks: Option<u64>,
+    /// What the system clock runs from now ([`Self::clock_hz`]).
+    clock_source: ClockSource,
+    /// Whether a `HUBSET` clock word moves [`Self::clock_source`]. True for a
+    /// boot from the ROM, which starts on RCFAST as silicon does. An image
+    /// boot starts a program the ROM has already handed over to, and times it
+    /// at the rate it recorded throughout.
+    clock_follows_words: bool,
+    /// The system counter and the virtual time, in nanoseconds, at which the
+    /// clock last changed source: the origin of [`Self::time_map`].
+    time_origin: (u64, u64),
+    /// The clock changed source during a [`Self::step_until`] pass, so the
+    /// pass's deadline is a different count of clocks now.
+    retimed: bool,
 }
 
 impl<P: PinBus> Machine<P> {
@@ -719,6 +807,12 @@ impl<P: PinBus> Machine<P> {
         }
         m.cogs[0].running = true;
         m.cogs[0].pc = 0;
+        // Out of reset the chip runs on RCFAST. Hub `$14` is no clock rate
+        // here: the ROM keeps a base64 table at `$0`, so it reads
+        // `$FFFF_FFFF`, which as a rate would close the ROM's 60 s serial
+        // window in under half a second of board time.
+        m.clock_source = ClockSource::Oscillator(RCFAST_HZ);
+        m.clock_follows_words = true;
         m
     }
 
@@ -756,6 +850,10 @@ impl<P: PinBus> Machine<P> {
             clock_word: None,
             clock_yield: false,
             yield_clocks: None,
+            clock_source: ClockSource::Recorded,
+            clock_follows_words: false,
+            time_origin: (0, 0),
+            retimed: false,
         }
     }
 
@@ -1202,9 +1300,54 @@ impl<P: PinBus> Machine<P> {
     /// Clock frequency the guest recorded at hub `$14`, or 0 before boot.
     ///
     /// Read on demand: the guest writes it *after* the last `HUBSET`, so
-    /// sampling at `HUBSET` time always sees 0.
+    /// sampling at `HUBSET` time always sees 0. While the boot ROM runs it is
+    /// not a frequency at all; [`Self::clock_hz`] is the rate the clock runs
+    /// at.
     pub fn clkfreq(&self) -> u32 {
         self.rd_long(0x14)
+    }
+
+    /// The rate the system clock runs at now: what [`Self::now_us`] turns
+    /// clocks into time at, and what a smart pin's divisor divides.
+    pub fn clock_hz(&self) -> u32 {
+        match self.clock_source {
+            ClockSource::Oscillator(hz) => hz,
+            ClockSource::Recorded => match self.clkfreq() {
+                0 => UNRECORDED_CLKFREQ,
+                f => f,
+            },
+        }
+    }
+
+    /// What the system clock runs from now.
+    pub fn clock_source(&self) -> ClockSource {
+        self.clock_source
+    }
+
+    /// The map from the system counter to virtual time, as of now.
+    pub fn time_map(&self) -> TimeMap {
+        TimeMap {
+            origin_clocks: self.time_origin.0,
+            origin_ns: self.time_origin.1,
+            hz: u64::from(self.clock_hz()),
+        }
+    }
+
+    /// Move the clock to `source` from system-counter value `at` on.
+    ///
+    /// Time carries on from the instant the old rate had reached at `at`.
+    /// Counting every clock since boot at the new rate instead would throw
+    /// board time backwards or forwards by the ratio of the two: leaving
+    /// RCFAST for a 160 MHz PLL would put the guest eight times further back
+    /// than the engine it is slaved to.
+    fn retime(&mut self, source: ClockSource, at: u64) {
+        if source == self.clock_source {
+            return;
+        }
+        let at = at.max(self.time_origin.0);
+        self.time_origin = (at, self.time_map().clocks_to_ns(at));
+        self.clock_source = source;
+        self.retimed = true;
     }
 
     /// The system counter: what `GETCT` reads.
@@ -1253,13 +1396,17 @@ impl<P: PinBus> Machine<P> {
         best.map(|(i, _)| i)
     }
 
-    /// Virtual microseconds elapsed, from the system counter.
+    /// Virtual microseconds elapsed, from the system counter through
+    /// [`Self::time_map`].
     pub fn now_us(&self) -> u64 {
-        let hz = match self.clkfreq() {
-            0 => 160_000_000,
-            f => f,
-        } as u64;
-        self.system_clocks() * 1_000_000 / hz
+        self.time_map().clocks_to_ns(self.system_clocks()) / 1_000
+    }
+
+    /// The first system-counter value at which [`Self::now_us`] reads
+    /// `deadline_us`.
+    fn first_clock_at_us(&self, deadline_us: u64) -> u64 {
+        self.time_map()
+            .first_clock_at_ns(deadline_us.saturating_mul(1_000))
     }
 
     /// Run every running cog until `deadline_us`, or until one traps.
@@ -1268,12 +1415,11 @@ impl<P: PinBus> Machine<P> {
     /// interleaving is a pure function of the image, which is what makes a run
     /// bit-reproducible.
     pub fn step_until(&mut self, deadline_us: u64) -> Result<(), Trap> {
-        let hz = match self.clkfreq() {
-            0 => 160_000_000,
-            f => f,
-        } as u64;
-        let deadline_clocks = deadline_us.saturating_mul(hz) / 1_000_000;
+        // The deadline as the first count at which `now_us()` reads it, so the
+        // pass and every cog are gated on the same comparison, in clocks.
+        let mut deadline_clocks = self.first_clock_at_us(deadline_us);
         self.ff_deadline_clocks = deadline_clocks;
+        self.retimed = false;
         // Round-robin over the running cogs, but skip any that have already
         // reached the deadline — chiefly the idle-poll fast-forwarded ones,
         // whose clock has jumped to it. Keeping the round-robin *order* and the
@@ -1282,22 +1428,29 @@ impl<P: PinBus> Machine<P> {
         // needs the driver cog to keep getting turns across a yield, not to be
         // starved by a peer that is momentarily behind.
         loop {
-            if self.now_us() >= deadline_us {
+            if self.system_clocks() >= deadline_clocks {
                 break;
             }
             let mut stepped = false;
             for cog in 0..NUM_COGS {
-                // Gate each cog on the *same* microsecond rounding as the
-                // pass-level `now_us()` check, so a cog whose clock lands
-                // exactly on the deadline is "done" both ways. A per-cog gate
-                // in raw clocks rounds differently and can leave the pass
-                // wanting to continue while every cog is individually blocked —
-                // an early return that stalls a single-cog bit-bang boot.
-                let cog_us = self.cogs[cog].clocks.saturating_mul(1_000_000) / hz;
-                if self.cogs[cog].running && cog_us < deadline_us {
+                // Gate each cog on the *same* deadline as the pass-level
+                // check, so a cog whose clock lands exactly on it is "done"
+                // both ways. Two gates that round differently can leave the
+                // pass wanting to continue while every cog is individually
+                // blocked — an early return that stalls a single-cog bit-bang
+                // boot.
+                if self.cogs[cog].running && self.cogs[cog].clocks < deadline_clocks {
                     self.pins.set_clock(self.cogs[cog].clocks);
                     self.step_one(cog)?;
                     stepped = true;
+                    if std::mem::take(&mut self.retimed) {
+                        // The clock changed rate under the pass: the same
+                        // instant is a different count now, and an idle
+                        // fast-forward capped at the old one would carry a
+                        // slowed clock far past it.
+                        deadline_clocks = self.first_clock_at_us(deadline_us);
+                        self.ff_deadline_clocks = deadline_clocks;
+                    }
                     if self.pins.take_net_yield() || std::mem::take(&mut self.clock_yield) {
                         return Ok(());
                     }
@@ -3708,11 +3861,15 @@ impl<P: PinBus> Machine<P> {
                 // A word whose top nibble is `%0000` sets the clock; the
                 // other forms (reset, write protection, filters, the RNG
                 // seed) are not clock words. Recorded for a host that times
-                // the guest from it; `clkfreq()` still reads hub $14 for one
-                // that does not.
+                // the guest from it, and followed by the machine's own map
+                // when it booted from the ROM.
                 if d >> 28 == 0 {
-                    self.clock_word = Some((d, self.cogs[cog].clocks));
+                    let at = self.cogs[cog].clocks;
+                    self.clock_word = Some((d, at));
                     self.clock_yield = self.yield_on_clock_word;
+                    if self.clock_follows_words {
+                        self.retime(ClockSource::of_clock_word(d), at);
+                    }
                 }
             }
 
