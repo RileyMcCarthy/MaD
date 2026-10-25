@@ -599,7 +599,7 @@ void test_dev_servo_noStallWhileCarriageLags(void)
                "an enabled motor drive commanded at high speed for two seconds while the carriage covers half of the travel its step pulses call for");
     VIBES_EXPECT_WHY("no-stall",
                      "no stall is reported at any point",
-                     "a carriage that is moving the right way, however far behind, is under control and stopping it would abort a good test");
+                     "a carriage that is moving the right way and staying within half a millimetre of where it should be is under control, and stopping it would abort a good test");
     servo_init();
     dev_servo_enable(CH, true);
     dev_servo_setVelocity(CH, 20000);
