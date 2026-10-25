@@ -22,18 +22,20 @@
 /**********************************************************************
  * Constants
  **********************************************************************/
-/* Upper bound on a single channel's binary item size (bytes). Largest configured
- * item is currently 16 B (app_monitor_sample_t); 64 B leaves headroom for future
- * channel types. processWrite/processRead use a fixed scratch buffer of this size
- * rather than a VLA sized from the (runtime-indexed) channel config — flexcc has no
- * VLA support and they are a MISRA C:2023 Rule 18.8 violation. Both functions
- * bound-check itemSize against this so an oversized channel fails safe. */
-/* Must cover the LARGEST configured channel item. `MachineProfile` is 68
- * bytes (a 20-char name + 12 ints), and `processWrite`/`processRead`
- * *silently return* when an item exceeds this — a save that goes quiet is a
- * worse failure than one that errors, so this ceiling and the channel table
- * have to be changed together. */
-#define IO_SDCARD_MAX_ITEM_SIZE 72U
+/* Upper bound on a single channel's binary item size (bytes). processWrite and
+ * processRead stage one item in a fixed scratch buffer of this size rather than a
+ * VLA sized from the (runtime-indexed) channel config — flexcc has no VLA support
+ * and they are a MISRA C:2023 Rule 18.8 violation.
+ *
+ * It must cover the LARGEST configured item, which is `MachineProfile` (72 bytes,
+ * 80 once servoKp/servoKi are appended). The ceiling used to equal the profile's
+ * size exactly, and a profile one field larger sat in the queue forever:
+ * processWrite would not pop an item it could not stage, the queue never emptied,
+ * so the write channel never left ACTIVE and profile.bin was opened (truncated)
+ * and never written or closed. 128 leaves room for the profile to grow; an item
+ * over the ceiling is reported and discarded (see processWrite) so a channel can
+ * never wedge open on it. The LOGGER cog has a 4 KiB stack. */
+#define IO_SDCARD_MAX_ITEM_SIZE 128U
 
 /* Longest fully-expanded channel path (`<mount>/gcode/<id>.bin` and friends),
  * including the terminator. Sizes both the per-channel filename buffer and the
@@ -203,7 +205,15 @@ static void IO_SDCard_private_processWrite(IO_SDCard_channel_E channel)
     const uint32_t itemSize = IO_SDCard_config.channelConfig[channel].queueBufferItemSize;
     if (itemSize > IO_SDCARD_MAX_ITEM_SIZE)
     {
-        return; // configured item exceeds scratch buffer — fail safe (cannot happen for configured channels)
+        /* Cannot stage the item, so it can never be written. Discard what is
+         * queued rather than leave it: a queue that never empties holds the
+         * channel in ACTIVE, and the file is never closed. */
+        DEBUG_ERROR("IO_SDCARD: item of %u bytes exceeds the %u-byte ceiling; discarding it\n",
+                    (unsigned int)itemSize, (unsigned int)IO_SDCARD_MAX_ITEM_SIZE);
+        IO_SDCARD_LOCK_REQ_BLOCK();
+        lib_staticQueue_empty(&IO_SDCard_data.channelData[channel].queue);
+        IO_SDCARD_LOCK_REL();
+        return;
     }
     uint8_t itemBuffer[IO_SDCARD_MAX_ITEM_SIZE];
     while (IO_SDCard_private_lockedPop(channel, itemBuffer))
@@ -224,7 +234,10 @@ static void IO_SDCard_private_processRead(IO_SDCard_channel_E channel)
     const uint32_t itemSize = IO_SDCard_config.channelConfig[channel].queueBufferItemSize;
     if (itemSize > IO_SDCARD_MAX_ITEM_SIZE)
     {
-        return; // configured item exceeds scratch buffer — fail safe (cannot happen for configured channels)
+        DEBUG_ERROR("IO_SDCARD: item of %u bytes exceeds the %u-byte ceiling; nothing read\n",
+                    (unsigned int)itemSize, (unsigned int)IO_SDCARD_MAX_ITEM_SIZE);
+        IO_SDCard_data.channelData[channel].eof = true;
+        return;
     }
     uint8_t itemBuffer[IO_SDCARD_MAX_ITEM_SIZE];
     while (!lib_staticQueue_isfull(&IO_SDCard_data.channelData[channel].queue))

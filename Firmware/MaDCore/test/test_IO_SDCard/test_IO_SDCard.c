@@ -20,6 +20,7 @@
 #include <unistd.h> /* rmdir — tearing down the provisioned-directory fixture */
 
 #include "HAL_lock.h"
+#include "../../src/DEV/Config/dev_nvram_machineProfile.h"
 
 // ---- Module under test (pulled in by source include) --------------------------------
 #include "../../src/IO/IO_SDCard.c"
@@ -33,7 +34,7 @@ extern int _stdio_debug_lock; /* shared in mock_propeller2.c */
 
 // -------------------------------------------------------------------------------------
 // Test-local config (replaces the real Config/IO_SDCard_config.c).
-// Two channels matching IO_SDCARD_CHANNEL_COUNT == 2 (SAMPLE_DATA, GCODE).
+// One entry per IO_SDCARD_CHANNEL_* (SAMPLE_DATA, GCODE, PROFILE).
 // We use a small item type and a small queue so we can force full/empty deterministically.
 // -------------------------------------------------------------------------------------
 typedef struct
@@ -57,17 +58,24 @@ static const char gcodeNameFormat[] = "./test/sd/iosd_gcode_%s.bin";
 static const char nestedNameFormat[] = "./test/sd/iosd_fresh/gcode/%s.bin";
 static const char nestedFilePath[] = "./test/sd/iosd_fresh/gcode/unit.bin";
 
+// The profile channel carries the REAL machine profile record, so a profile
+// that outgrows what the channel can stage fails here, not on the bench.
+static MachineProfile profileBuffer[TEST_QUEUE_LEN];
+static const char profileNameFormat[] = "./test/sd/iosd_profile_%s.bin";
+
 // The module declares `extern IO_SDCard_config_S IO_SDCard_config;` — define it here.
 IO_SDCard_config_S IO_SDCard_config = {
     {
         {sampleBuffer, TEST_QUEUE_LEN, TEST_ITEM_SIZE, sampleNameFormat},
         {gcodeBuffer, TEST_QUEUE_LEN, TEST_ITEM_SIZE, gcodeNameFormat},
+        {profileBuffer, TEST_QUEUE_LEN, sizeof(MachineProfile), profileNameFormat},
     },
 };
 
 // Resolved temp file paths (computed from nameFormat for cleanup / direct fopen checks).
 static char sampleFilePath[255];
 static char gcodeFilePath[255];
+static char profileFilePath[255];
 
 // -------------------------------------------------------------------------------------
 // Helpers
@@ -78,12 +86,14 @@ static void buildPaths(void)
 {
     snprintf(sampleFilePath, sizeof(sampleFilePath), sampleNameFormat, TEST_BASE_NAME);
     snprintf(gcodeFilePath, sizeof(gcodeFilePath), gcodeNameFormat, TEST_BASE_NAME);
+    snprintf(profileFilePath, sizeof(profileFilePath), profileNameFormat, TEST_BASE_NAME);
 }
 
 static void removeTempFiles(void)
 {
     remove(sampleFilePath);
     remove(gcodeFilePath);
+    remove(profileFilePath);
 }
 
 // Delete the whole provisioned tree so the nested test always starts from "these
@@ -640,6 +650,59 @@ static void test_close_while_init_is_noop(void)
 }
 
 // =====================================================================================
+// The machine profile through its own channel, as dev_nvram saves it.
+// =====================================================================================
+
+// Returns the size of the file at `path` in bytes, or -1 when it cannot be opened.
+static long fileSize(const char *path)
+{
+    FILE *f = fopen(path, "rb");
+    if (f == NULL)
+    {
+        return -1;
+    }
+    (void)fseek(f, 0, SEEK_END);
+    const long size = ftell(f);
+    fclose(f);
+    return size;
+}
+
+static void test_profile_save_lands_whole_and_closes(void)
+{
+    VIBES_TEST("sd.profile-save-lands-whole",
+               "src/IO/IO_SDCard.c#IO_SDCard_run",
+               "a full machine profile saved through the card's profile channel, then a close");
+    VIBES_EXPECT_WHY("record-stored",
+                     "the whole profile is on the card, byte for byte",
+                     "the machine boots on the profile it reads back, and a record of any other length is read as unusable");
+    VIBES_EXPECT("reports-closed", "the channel then reports closed");
+    /* A distinct value in every byte, so a short or shifted record cannot pass. */
+    MachineProfile profile;
+    uint8_t *const bytes = (uint8_t *)&profile;
+    for (size_t i = 0U; i < sizeof(profile); i++)
+    {
+        bytes[i] = (uint8_t)(i + 1U);
+    }
+
+    TEST_ASSERT_TRUE(IO_SDCard_open(IO_SDCARD_CHANNEL_PROFILE, TEST_BASE_NAME, IO_SDCARD_MODE_WRITE));
+    runN(2); // -> ACTIVE
+    TEST_ASSERT_TRUE(IO_SDCard_push(IO_SDCARD_CHANNEL_PROFILE, &profile, sizeof(profile)));
+    runN(1); // drain to file
+    TEST_ASSERT_TRUE(IO_SDCard_close(IO_SDCARD_CHANNEL_PROFILE));
+    runN(4);
+
+    TEST_ASSERT_TRUE(IO_SDCard_isClosed(IO_SDCARD_CHANNEL_PROFILE));
+    TEST_ASSERT_EQUAL_INT32((long)sizeof(MachineProfile), fileSize(profileFilePath));
+    MachineProfile readBack;
+    (void)memset(&readBack, 0, sizeof(readBack));
+    FILE *f = fopen(profileFilePath, "rb");
+    TEST_ASSERT_NOT_NULL(f);
+    TEST_ASSERT_EQUAL_UINT(1u, (unsigned)fread(&readBack, sizeof(readBack), 1, f));
+    fclose(f);
+    TEST_ASSERT_EQUAL_MEMORY(&profile, &readBack, sizeof(profile));
+}
+
+// =====================================================================================
 // Runner
 // =====================================================================================
 int main(void)
@@ -670,6 +733,8 @@ int main(void)
     RUN_TEST(test_readDirect_guard_paths);
     RUN_TEST(test_readDirect_returns_zero_past_eof_but_status_ok);
     RUN_TEST(test_readDirect_busy_while_write_active);
+
+    RUN_TEST(test_profile_save_lands_whole_and_closes);
 
     RUN_TEST(test_close_while_init_is_noop);
 
