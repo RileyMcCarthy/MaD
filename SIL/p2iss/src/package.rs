@@ -118,7 +118,7 @@ use std::collections::{btree_map, BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use embsim_board::uart::{UartDecoder, UartFraming};
+use embsim_board::uart::{FramingError, UartDecoder, UartFraming};
 use embsim_board::{
     AttachError, ComponentNetIo, Drive, Level, PinHandle, SerialLevelBridge, TheveninDrive,
     WakeGate, WakeHandler, WEAK_DRIVE_OHMS,
@@ -597,9 +597,11 @@ pub(crate) struct CoreRx {
 
 impl CoreRx {
     fn new(baud: u32) -> Self {
-        let mut rx = Self::holding();
-        rx.set_rate(baud);
-        rx
+        Self {
+            decoder: Some(UartDecoder::new(UartFraming::new_8n1(baud))),
+            baud,
+            ..Self::holding()
+        }
     }
 
     /// A receive pin with no bit period yet: its line held.
@@ -614,16 +616,52 @@ impl CoreRx {
         }
     }
 
-    /// Deframe at `baud` from here on, after any transitions held for the
-    /// deframer; the register keeps its byte.
-    fn set_rate(&mut self, baud: u32) {
+    /// Deframe at `baud` from here on, the guest's clock standing at
+    /// `guest_ns`; the register keeps its byte. Any transitions held for the
+    /// deframer go through it first, each byte stamped with the instant its
+    /// own frame closed, so the held bytes land the wire's spacing apart
+    /// from the guest's present (module docs, "Receive"), not all at once.
+    fn set_rate(&mut self, baud: u32, guest_ns: u64, shared: &Shared) {
         let mut decoder = UartDecoder::new(UartFraming::new_8n1(baud));
-        for (level, at) in self.held.drain(..) {
+        let held = std::mem::take(&mut self.held);
+        let mut frames = Vec::new();
+        for (level, at) in held {
+            let closes_at = decoder.frame_deadline_ns();
             decoder.on_level(level, at);
+            while let Some(frame) = decoder.poll(at) {
+                frames.push((closes_at.unwrap_or(at).min(at), frame));
+            }
         }
         self.decoder = Some(decoder);
         self.baud = baud;
         self.armed_ns = None;
+        for (wire_ns, frame) in frames {
+            self.take_frame(frame, wire_ns, guest_ns, shared);
+        }
+    }
+
+    /// One frame off the wire, closed at `wire_ns`: a byte sent on its way
+    /// to the register, or a framing error counted.
+    fn take_frame(
+        &mut self,
+        frame: Result<u8, FramingError>,
+        wire_ns: u64,
+        guest_ns: u64,
+        shared: &Shared,
+    ) {
+        match frame {
+            Ok(byte) => {
+                shared.rx_bytes.fetch_add(1, Ordering::Relaxed);
+                self.arrive(byte, wire_ns, guest_ns);
+            }
+            Err(error) => {
+                shared.rx_framing_errors.fetch_add(1, Ordering::Relaxed);
+                tracing::debug!(
+                    ?error,
+                    "p2iss: receive frame dropped (bad framing on the wire)"
+                );
+            }
+        }
     }
 
     /// The line moved at `now`: into the deframer, or held for one.
@@ -646,20 +684,19 @@ impl CoreRx {
     /// each byte on its way to the register, the guest's clock standing at
     /// `guest_ns`.
     fn poll(&mut self, now_ns: u64, guest_ns: u64, shared: &Shared) {
-        while let Some(frame) = self.decoder.as_mut().and_then(|d| d.poll(now_ns)) {
-            match frame {
-                Ok(byte) => {
-                    shared.rx_bytes.fetch_add(1, Ordering::Relaxed);
-                    self.arrive(byte, now_ns, guest_ns);
-                }
-                Err(error) => {
-                    shared.rx_framing_errors.fetch_add(1, Ordering::Relaxed);
-                    tracing::debug!(
-                        ?error,
-                        "p2iss: receive frame dropped (bad framing on the wire)"
-                    );
-                }
-            }
+        loop {
+            let Some(decoder) = self.decoder.as_mut() else {
+                return;
+            };
+            // A frame the poll closes closed at its own deadline, which may
+            // be before `now_ns` (one held for a rate, closed only now).
+            let closes_at = decoder
+                .frame_deadline_ns()
+                .map_or(now_ns, |at| at.min(now_ns));
+            let Some(frame) = decoder.poll(now_ns) else {
+                return;
+            };
+            self.take_frame(frame, closes_at, guest_ns, shared);
         }
     }
 
@@ -944,12 +981,16 @@ impl NetPins {
             // A new rate is a new deframer, which takes any transitions held
             // for it first; the register keeps its byte.
             Some(existing) => {
-                let had_held = existing.line_moved();
-                existing.set_rate(baud);
-                if had_held {
-                    let guest_ns = self.shared.guest_now_ns.load(Ordering::Relaxed);
-                    existing.poll(virtual_clock::virtual_ns(), guest_ns, &self.shared);
-                }
+                // The held bytes land from the instruction that wrote the
+                // rate: the guest's present is the executing cog's clock,
+                // which may lead where the last wake left it.
+                let guest_ns = self
+                    .shared
+                    .guest_now_ns
+                    .load(Ordering::Relaxed)
+                    .max(self.core_now_ns());
+                existing.set_rate(baud, guest_ns, &self.shared);
+                existing.poll(virtual_clock::virtual_ns(), guest_ns, &self.shared);
             }
             None => {
                 rx.insert(p, CoreRx::new(baud));
@@ -2104,8 +2145,8 @@ mod tests {
         behaviour!(Test {
             id: "p2iss.rx-held-until-rate",
             covers: Some("SIL/p2iss/src/package.rs#CoreRx"),
-            given: "a pin set to receive before its rate is written, while a byte crosses its \
-                    line, then given 2 000 000 baud",
+            given: "a pin set to receive before its rate is written, while two bytes cross its \
+                    line back to back, then given 2 000 000 baud 100 µs later",
         });
         expect!(
             "nothing-before-rate",
@@ -2113,26 +2154,44 @@ mod tests {
         );
         expect!(
             "byte-after-rate",
-            "once it is written the chip reads the byte that crossed before",
+            "once it is written the chip reads the first byte from that instant",
             "the boot ROM sets its receive pin's rate from the host's first byte, which is on \
              the line before the rate is"
+        );
+        expect!(
+            "spacing-kept",
+            "it reads the second byte 5 µs after the first, a byte's time on the line",
+            "the pin holds one byte, so two bytes handed over together would lose the first"
         );
         let shared = Shared::default();
         let framing = UartFraming::new_8n1(2_000_000);
         let mut rx = CoreRx::holding();
         let mut at = 1_000_000;
-        for (level, hold_ns) in UartEncoder::new(framing).encode(b'>') {
-            rx.on_level(level, at, &shared);
-            at += hold_ns;
+        for byte in *b">P" {
+            for (level, hold_ns) in UartEncoder::new(framing).encode(byte) {
+                rx.on_level(level, at, &shared);
+                at += hold_ns;
+            }
         }
         rx.poll(at, at, &shared);
         assert_eq!(read_at(&mut rx, at), None, "nothing-before-rate");
         assert!(rx.line_moved(), "nothing-before-rate: the line moved");
 
-        rx.set_rate(2_000_000);
-        let after = at + framing.frame_ns();
-        rx.poll(after, after, &shared);
-        assert_eq!(read_at(&mut rx, after), Some(b'>'), "byte-after-rate");
+        let rate_at = at + 100_000;
+        rx.set_rate(2_000_000, rate_at, &shared);
+        rx.poll(rate_at, rate_at, &shared);
+        assert_eq!(read_at(&mut rx, rate_at), Some(b'>'), "byte-after-rate");
+        assert_eq!(
+            read_at(&mut rx, rate_at + framing.frame_ns() - 1),
+            None,
+            "spacing-kept: not yet"
+        );
+        assert_eq!(
+            read_at(&mut rx, rate_at + framing.frame_ns()),
+            Some(b'P'),
+            "spacing-kept"
+        );
+        assert_eq!(rx.pin.overruns, 0, "spacing-kept: nothing overwritten");
     }
 
     // ---- The pins, as the guest's instructions see them ----
