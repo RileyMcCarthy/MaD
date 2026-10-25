@@ -1452,9 +1452,9 @@ fn with_ic14_fixed_the_firmware_jogs_the_carriage() {
     behaviour!(Test {
         id: "mad-project.ic14-fixed-jog",
         covers: Some("SIL/mad-ic14-fixed-cosim.toml"),
-        given: "the machine's project with the servo isolator's ground fixed, the firmware \
-                booted, and a host on the debug header that enables motion, jogs 0.5 mm \
-                forward and 0.25 mm back, then disables motion",
+        given: "the machine's project with the servo isolator's ground fixed and the firmware \
+                booted; a host enables motion, jogs 0.5 mm forward and 0.25 mm back, then \
+                disables motion",
     });
     expect!(
         "disabled-at-rest",
