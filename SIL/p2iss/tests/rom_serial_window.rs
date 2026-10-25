@@ -36,6 +36,42 @@ const CHK: &[u8] = b"> Prop_Chk 0 0 0 0  ";
 /// start keeps it, and well inside the minute every part's window lasts.
 const IDLE_US: u64 = 10_000_000;
 
+/// Board time the ROM is given to answer once the host has sent: its reply
+/// takes microseconds, and the window has 80 s left.
+const REPLY_BUDGET_US: u64 = 5_000_000;
+
+/// Host time without any board time passing that ends the run: the engine or
+/// the host stopped, which is no verdict on the ROM. Every other wait is on
+/// board time, so a slow or loaded host only makes the run take longer.
+const STALL_WALL: Duration = Duration::from_secs(300);
+
+/// Watches board time for a stop, as host time passes.
+struct Stall {
+    board_us: u64,
+    since: Instant,
+}
+
+impl Stall {
+    fn new(board_us: u64) -> Self {
+        Self {
+            board_us,
+            since: Instant::now(),
+        }
+    }
+
+    /// Panics once board time has stood still for [`STALL_WALL`].
+    fn check(&mut self, board_us: u64) {
+        if board_us != self.board_us {
+            *self = Self::new(board_us);
+        } else if self.since.elapsed() > STALL_WALL {
+            panic!(
+                "no board time passed in {STALL_WALL:?} of host time, at {board_us} us: \
+                 the engine or the host stopped, which says nothing about the ROM"
+            );
+        }
+    }
+}
+
 static CLOCK_LOCK: Mutex<()> = Mutex::new(());
 
 fn lock_clock() -> MutexGuard<'static, ()> {
@@ -145,9 +181,10 @@ fn the_rom_still_answers_prop_chk_after_ten_seconds_of_silence() {
         .start()
         .expect("the ISS emulator starts");
 
-    // Silence on the wire until the board has run most of a minute. The ROM
-    // shutting down first stops its cog, and guest time with it.
+    // Silence on the wire for the idle. The ROM shutting its window first
+    // stops its cog, and guest time with it.
     let start = Instant::now();
+    let mut stall = Stall::new(handle.guest_now_us());
     loop {
         let now_us = handle.guest_now_us();
         if now_us >= IDLE_US {
@@ -158,10 +195,7 @@ fn the_rom_still_answers_prop_chk_after_ten_seconds_of_silence() {
             "the ROM shut its serial window {now_us} us into the board's time, \
              before the host had said anything"
         );
-        assert!(
-            start.elapsed() < Duration::from_secs(600),
-            "the board reached only {now_us} us of its {IDLE_US} us idle in 10 minutes"
-        );
+        stall.check(now_us);
         std::thread::sleep(Duration::from_millis(20));
     }
     eprintln!(
@@ -184,7 +218,8 @@ fn the_rom_still_answers_prop_chk_after_ten_seconds_of_silence() {
 
     let mut seen = Vec::new();
     let mut buf = [0u8; 256];
-    let start = Instant::now();
+    let sent_us = handle.guest_now_us();
+    let mut stall = Stall::new(sent_us);
     let found = loop {
         match link.read(&mut buf) {
             Ok(0) => {}
@@ -195,9 +230,13 @@ fn the_rom_still_answers_prop_chk_after_ten_seconds_of_silence() {
         if String::from_utf8_lossy(&seen).contains("Prop_Ver G") {
             break true;
         }
-        if start.elapsed() > Duration::from_secs(30) {
+        // A ROM that shut its window stops guest time: that is the verdict,
+        // not a stall.
+        let now_us = handle.guest_now_us();
+        if now_us >= sent_us + REPLY_BUDGET_US || handle.running_cogs() == 0 {
             break false;
         }
+        stall.check(now_us);
         std::thread::sleep(Duration::from_millis(5));
     };
 

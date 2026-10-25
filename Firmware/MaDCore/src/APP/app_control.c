@@ -167,14 +167,15 @@ static app_control_fault_E app_control_private_processFaults(void)
         (dev_forceGauge_isReady(DEV_FORCEGAUGE_CHANNEL_MAIN) == false);
 
 #if APP_MOTION_USE_SERVO
-    /* A stall is the driver commanding motion the encoder does not follow --
-     * more than stallVelocity asked for, under stallMinMove counts delivered,
-     * for stallTicks consecutive ticks. It is a mechanical fault, so unlike the
+    /* A stall is the driver sending step pulses the encoder does not follow
+     * -- too little net travel for the pulses over a window, travel the wrong
+     * way, or a following error held too long (see dev_servo.h). It is a
+     * mechanical fault, so unlike the
      * liveness faults above it LATCHES until the operator acknowledges it by
      * disabling motion.
      *
      * It has to. Disabling motion is exactly what clears dev_servo's stall
-     * flag -- the driver stops commanding velocity, the counter resets -- so a
+     * flag -- the driver stops commanding velocity, the window closes -- so a
      * fault recomputed from the live flag would disable the machine, watch its
      * own cause disappear, clear, re-enable and drive into the same jam 200 ms
      * later, indefinitely.

@@ -43,14 +43,6 @@ export const CALIBRATION_RATIO_TOLERANCE = 0.02;
 /** Below this share of the expected counts, the encoder is reported as not counting. */
 export const CALIBRATION_SILENT_FRACTION = 0.05;
 
-/**
- * Whether this firmware's servo loop emits one drive pulse per encoder count.
- * It does today (dev_servo commands a pulse rate equal to the encoder-count
- * rate), so any profile whose encoder and servo steps/mm differ will race the
- * carriage until that is fixed in firmware. Flip when it is.
- */
-export const SERVO_LOOP_ASSUMES_ONE_PULSE_PER_COUNT = true;
-
 export type CalibrationOutcome =
   | 'done'
   | 'refused-motion-disabled'
@@ -113,8 +105,8 @@ export const OUTCOME_TEXT: Record<CalibrationOutcome, string> = {
  * Turn the operator's settings into a G124 the machine will run.
  *
  * The run is sized in PULSES from the steps/mm being edited (distance x servo
- * steps/mm), then expressed in the machine's millimetres, because the firmware
- * converts G124's X with the servo steps/mm it has SAVED. X goes over the wire
+ * steps/mm), then expressed in the machine's millimetres, because the drive
+ * gets X times the servo steps/mm the machine has SAVED. X goes over the wire
  * in micrometres, so the pulses actually sent are what that rounded X becomes.
  */
 export function planCalibration(s: CalibrationSettings): CalibrationPlan {
@@ -138,7 +130,10 @@ export function planCalibration(s: CalibrationSettings): CalibrationPlan {
     };
   }
   const moveUm = Math.round((wanted / s.device.servoStepsPerMM) * 1000);
-  const pulses = Math.trunc((moveUm * s.device.servoStepsPerMM) / 1000); // as app_motion converts it
+  // As the machine does it: app_motion turns X into whole encoder counts with
+  // the saved encoder steps/mm, and dev_servo pulses those at servo/encoder.
+  const counts = Math.trunc((moveUm * s.device.encoderStepsPerMM) / 1000);
+  const pulses = Math.round((counts * s.device.servoStepsPerMM) / s.device.encoderStepsPerMM);
   if (pulses < 1) {
     return { ok: false, reason: 'Distance is too small to send a single pulse.' };
   }
@@ -167,8 +162,7 @@ export interface CalibrationFinding {
     | 'direction-reversed'
     | 'direction-inconsistent'
     | 'ratio-mismatch'
-    | 'asymmetric'
-    | 'loop-needs-one-to-one';
+    | 'asymmetric';
   severity: FindingSeverity;
   message: string;
 }
@@ -280,14 +274,6 @@ export function assessCalibration(
       id: 'matches',
       severity: 'ok',
       message: 'Calibration passed: the encoder follows the motor in the right direction, at the rate your steps/mm predict.',
-    });
-  }
-
-  if (SERVO_LOOP_ASSUMES_ONE_PULSE_PER_COUNT && Math.abs(expected - 1) > CALIBRATION_RATIO_TOLERANCE) {
-    findings.push({
-      id: 'loop-needs-one-to-one',
-      severity: 'warning',
-      message: `The servo loop in this firmware sends one drive pulse per encoder count, so encoder and servo steps/mm must be equal (they are ${profile.encoderStepsPerMM} and ${profile.servoStepsPerMM}). Set the drive's pulses per revolution to the encoder's counts per revolution, then set both values the same.`,
     });
   }
 

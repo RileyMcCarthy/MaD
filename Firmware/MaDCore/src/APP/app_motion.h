@@ -53,8 +53,8 @@ typedef enum
     G123_WAVEFORM = 123,
     /* G124 X F: a linear move with the servo FEEDBACK OFF. The trajectory is
      * the same trapezoid as G1, fed straight to the drive; the encoder is only
-     * watched. X and F are in drive terms (servo steps/mm). Meant to be used
-     * relative (G91) to measure the drive/encoder pair: a G124 that follows
+     * watched, so the drive gets exactly X times servo steps/mm pulses. Meant
+     * to be used relative (G91) to measure the drive/encoder pair: a G124 that follows
      * another moves from where the previous one COMMANDED, not from where the
      * encoder says it went. */
     G124_OPEN_LOOP_MOVE = 124,

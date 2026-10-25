@@ -106,12 +106,6 @@ datasheets (usually the encoder: counts per revolution ÷ mm per revolution).
 | The steps/mm entered don't match the hardware | The counts that came back differ from the expected counts by more than 2%, so one of the two steps/mm values is wrong | Use the **Fix** line: change the value you trust less |
 | Forward and back differ by *n*% | The two directions disagree by more than 2% | Look for slip, backlash or lost pulses |
 
-!!! warning "Encoder steps/mm must equal servo steps/mm in this firmware"
-    The servo loop sends one drive pulse per encoder count. If the two values
-    differ, the panel warns you even when the measurement matches. Set the
-    drive's pulses per revolution to the encoder's counts per revolution, then
-    set both fields to the same value.
-
 ### Runs that don't finish
 
 | Message | Why | What to do |

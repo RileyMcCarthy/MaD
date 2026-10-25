@@ -141,14 +141,11 @@ function CalibrationResultCard({ outcome }: { outcome: Outcome }) {
     );
   }
   const { assessment, profile } = outcome;
-  // The headline is the worst thing the MEASUREMENT found. The firmware's
-  // equal-values caveat is about the profile, not this run, so it is only ever
-  // the note underneath, along with anything else.
-  const caveat = (f: CalibrationFinding) => f.id === 'loop-needs-one-to-one';
+  // The worst finding is the headline; anything else is one muted note.
   const byWorst = [...assessment.findings].sort(
     (a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity],
   );
-  const headline = byWorst.find((f) => !caveat(f)) ?? byWorst[0];
+  const headline = byWorst[0];
   const rest = byWorst.filter((f) => f !== headline);
   return (
     <div style={cardStyle} data-testid="calibration-result">

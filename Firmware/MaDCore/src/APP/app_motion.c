@@ -132,13 +132,13 @@ typedef struct
     bool absoluteMode;
     lib_timer_S dwellTimer;
     lib_timer_S endstopTimer;
-    int32_t stepsPerMM;
+    int32_t stepsPerMM; /* actuator units per mm: encoder counts (servo) or drive steps (stepper) */
     /* False when the machine profile could not be read or cannot describe the
      * machine. Every distance and feedrate this module emits is scaled by
      * stepsPerMM, so an unusable profile means motion is refused, not guessed. */
     bool profileValid;
     /* Speed cap applied while app_control reports the machine RESTRICTED,
-     * in drive steps per second. Zero means no cap. */
+     * in actuator units per second. Zero means no cap. */
     int32_t restrictedFeedrate;
     int32_t maxPosition;
     int32_t homingVelocity;
@@ -542,15 +542,28 @@ void app_motion_init(int lock)
      * A profile that cannot describe the machine is not repaired with a
      * default: a guessed steps/mm would run every test at the wrong scale and
      * report it as correct. Motion is refused until a real one is written. */
-    app_motion_data.profileValid = profileRead && (machineProfile.servoStepsPerMM > 0);
+#if APP_MOTION_USE_SERVO
+    /* The servo's unit is the ENCODER count -- positions, targets and feedrates
+     * are all closed on the encoder -- so the encoder's scale converts them.
+     * The servo's own scale is still required: dev_servo pulses the drive by
+     * the ratio of the two, and without it would be guessing how far a step
+     * goes. */
+    const int32_t actuatorStepsPerMM = machineProfile.encoderStepsPerMM;
+    const bool scalesValid = (machineProfile.encoderStepsPerMM > 0) && (machineProfile.servoStepsPerMM > 0);
+#else
+    /* The open-loop stepper's unit is the drive step. */
+    const int32_t actuatorStepsPerMM = machineProfile.servoStepsPerMM;
+    const bool scalesValid = (machineProfile.servoStepsPerMM > 0);
+#endif
+    app_motion_data.profileValid = profileRead && scalesValid;
     if (!app_motion_data.profileValid)
     {
-        DEBUG_ERROR("MOTION: unusable machine profile (read=%d servoStepsPerMM=%d); refusing motion\n",
-                    (int)profileRead, (int)machineProfile.servoStepsPerMM);
+        DEBUG_ERROR("MOTION: unusable machine profile (read=%d encoderStepsPerMM=%d servoStepsPerMM=%d); refusing motion\n",
+                    (int)profileRead, (int)machineProfile.encoderStepsPerMM, (int)machineProfile.servoStepsPerMM);
         app_notification_send(APP_NOTIFICATION_TYPE_ERROR, "%s",
                               "Machine profile is missing or invalid; motion is refused until it is set");
     }
-    app_motion_data.stepsPerMM = machineProfile.servoStepsPerMM;
+    app_motion_data.stepsPerMM = actuatorStepsPerMM;
     app_motion_data.maxPosition = machineProfile.maxPosition;
     app_motion_data.homingVelocity = machineProfile.homingVelocity;
     app_motion_data.homingOffset = machineProfile.homingOffset;
@@ -559,7 +572,7 @@ void app_motion_init(int lock)
      * per-move path. Zero (an older profile, or a profile that does not set it)
      * disables the clamp rather than pinning the machine to a standstill. */
     app_motion_data.restrictedFeedrate =
-        (int32_t)(((int64_t)machineProfile.restrictedVelocity * machineProfile.servoStepsPerMM));
+        (int32_t)(((int64_t)machineProfile.restrictedVelocity * actuatorStepsPerMM));
     /* The move queue needs no locking: it is touched ONLY by the CONTROL cog
      * (app_testManagement pushes — test feed + staged manual moves — and
      * app_motion pops/clears, all from the same run loop). Manual moves from

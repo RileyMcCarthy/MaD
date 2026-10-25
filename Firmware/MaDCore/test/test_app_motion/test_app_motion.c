@@ -286,6 +286,9 @@ static void doubles_reset(void)
     d_notify_calls = 0;
     d_notify_lastType = APP_NOTIFICATION_TYPE_MESSAGE;
     memset(&d_machineProfile, 0, sizeof(d_machineProfile));
+    /* The servo closes on the encoder, so the encoder's scale is the one that
+     * converts; the servo's matches it unless a test says otherwise. */
+    d_machineProfile.encoderStepsPerMM = 100;
     d_machineProfile.servoStepsPerMM = 100;
     d_machineProfile.maxPosition = 200;     // mm
     d_machineProfile.homingVelocity = 5;    // mm/s
@@ -799,6 +802,7 @@ void test_zero_stepsPerMM_yields_zero_setpoint_and_position(void)
                      "converting steps to micrometres divides by steps per millimetre, so a missing value would divide by zero");
     VIBES_EXPECT("position-zero", "the published position is zero");
     /* Re-init with a profile that has 0 steps/mm. */
+    d_machineProfile.encoderStepsPerMM = 0;
     d_machineProfile.servoStepsPerMM = 0;
     motion_init();
 
@@ -822,6 +826,48 @@ static void runOneLinearMove(int32_t xUm, int32_t fUmS)
     app_motion_move_t mv = make_move((uint8_t)G1_LINEAR_MOVE, xUm, fUmS, 0);
     TEST_ASSERT_TRUE(app_motion_addMove(&mv));
     app_motion_run();
+}
+
+void test_servo_moves_are_scaled_by_the_encoder(void)
+{
+    VIBES_TEST("motion.servo-scaled-by-encoder",
+               "src/APP/app_motion.c#app_motion_init",
+               "a machine profile with 200 encoder steps and 100 servo steps per millimetre, then a 1 millimetre move at 10 millimetres per second");
+    VIBES_EXPECT_WHY("target-in-encoder-counts",
+                     "the drive is sent to 200 counts",
+                     "the servo closes its loop on the encoder, so every position it is given is in encoder counts");
+    VIBES_EXPECT("feedrate-in-encoder-counts", "the feedrate is 2000 counts per second");
+    VIBES_EXPECT("position-in-micrometres",
+                 "an encoder reading of 200 counts is published as 1000 micrometres");
+    d_machineProfile.encoderStepsPerMM = 200;
+    d_machineProfile.servoStepsPerMM = 100;
+    motion_init();
+    motion_driveToWaiting();
+    runOneLinearMove(1000, 10000);
+    TEST_ASSERT_EQUAL_INT32(200, d_lastMoveTarget);
+    TEST_ASSERT_EQUAL_INT32(2000, d_lastMoveStepsPerSecond);
+    d_steps = 200;
+    app_motion_run();
+    TEST_ASSERT_EQUAL_INT32(1000, app_motion_getPosition());
+}
+
+void test_a_profile_without_a_servo_scale_refuses_moves(void)
+{
+    VIBES_TEST("motion.missing-servo-scale-refuses-moves",
+               "src/APP/app_motion.c#app_motion_init",
+               "a machine profile with an encoder scale but zero servo steps per millimetre, then a linear move");
+    VIBES_EXPECT_WHY("move-refused",
+                     "the move is refused",
+                     "the drive is pulsed by the ratio of the two scales, so without the servo's the distance each step travels would be a guess");
+    VIBES_EXPECT("operator-told", "an error notification is raised when the profile is loaded");
+    d_machineProfile.encoderStepsPerMM = 100;
+    d_machineProfile.servoStepsPerMM = 0;
+    d_notify_calls = 0;
+    motion_init();
+    TEST_ASSERT_EQUAL_INT(1, d_notify_calls);
+    motion_driveToWaiting();
+    app_motion_move_t mv = make_move((uint8_t)G1_LINEAR_MOVE, 1000, 5, 0);
+    TEST_ASSERT_FALSE(app_motion_addMove(&mv));
 }
 
 void test_a_restricted_machine_moves_at_the_capped_speed(void)
@@ -908,6 +954,7 @@ void test_an_unusable_machine_profile_refuses_every_move(void)
                      "an error notification is raised when the profile is loaded",
                      "the refusal is otherwise indistinguishable from a machine that simply will not move, and the operator cannot fix a profile nobody told them was missing");
 
+    d_machineProfile.encoderStepsPerMM = 0;
     d_machineProfile.servoStepsPerMM = 0;
     d_notify_calls = 0;
     motion_init();
@@ -1339,6 +1386,8 @@ int main(void)
     RUN_TEST(test_an_unrestricted_machine_moves_at_the_speed_it_was_asked_for);
     RUN_TEST(test_a_profile_without_a_cap_does_not_stop_the_machine);
     RUN_TEST(test_an_unusable_machine_profile_refuses_every_move);
+    RUN_TEST(test_servo_moves_are_scaled_by_the_encoder);
+    RUN_TEST(test_a_profile_without_a_servo_scale_refuses_moves);
     RUN_TEST(test_a_profile_that_could_not_be_read_refuses_every_move);
     RUN_TEST(test_a_usable_profile_still_accepts_moves);
     RUN_TEST(test_addMove_queue_is_bounded);

@@ -251,24 +251,17 @@ describe('motor calibration assessment', () => {
 
   behaviour(
     {
-      id: 'motorcal.loop-needs-equal-scales',
+      id: 'motorcal.unequal-scales-pass',
       covers: 'src/domain/motorCalibration.ts#assessCalibration',
       given: 'a run that matches a profile whose encoder and servo steps/mm differ',
       expect: {
-        'still-matches': 'the measurement is reported as matching the profile',
-        'equal-scales-warned': 'a warning says the servo loop needs encoder and servo steps/mm to be equal',
-        'drive-setting-named': "the warning says to set the drive's pulses per revolution to the encoder's counts per revolution",
+        'only-matches': 'the only finding is that the profile matches the hardware',
       },
-      why: {
-        'equal-scales-warned': 'the servo loop in this firmware sends one drive pulse per encoder count',
-      },
+      why: { 'only-matches': 'the servo pulses the drive at the ratio of the two values, so they need not be equal' },
     },
     () => {
-      const profile = { encoderStepsPerMM: 2400, servoStepsPerMM: 6400 };
-      const a = assessCalibration(done(6400, 2400 / 6400), profile);
-      expect(ids(a)).toEqual(['matches', 'loop-needs-one-to-one']);
-      expect(a.findings[1].severity).toBe('warning');
-      expect(a.findings[1].message).toMatch(/pulses per revolution/);
+      const a = assessCalibration(done(6400, 2400 / 6400), { encoderStepsPerMM: 2400, servoStepsPerMM: 6400 });
+      expect(ids(a)).toEqual(['matches']);
     },
   );
 
