@@ -861,12 +861,12 @@ fn a_drive_and_an_encoder_on_their_own_scales() {
     });
     expect!(
         "one-millimetre",
-        "the carriage travels one millimetre: the encoder counts 8192, eight for each step, \
-         to within half a step",
+        "the carriage travels one millimetre: the encoder counts exactly 8192, eight for \
+         each step",
         "the drive's steps set how far the carriage goes and the encoder's scale how finely \
          that is counted, so a firmware pulsing the drive has to convert between the two; \
-         the drive model publishes its carriage each time it crosses a half step, so the \
-         count can rest up to half a step short"
+         the drive model publishes where the carriage comes to rest, so the count settles \
+         on the last step driven"
     );
     let (rig, step, _probe) = on_a_train(&project(
         "drive_steps_per_mm = 1024\nencoder_counts_per_mm = 8192",
@@ -882,7 +882,7 @@ fn a_drive_and_an_encoder_on_their_own_scales() {
         .and_then(|rest| rest.split(' ').next())
         .and_then(|count| count.parse().ok())
         .unwrap_or_else(|| panic!("no count in {summary}"));
-    assert!((8188..=8192).contains(&count), "{summary}");
+    assert_eq!(count, 8192, "{summary}");
     assert!(summary.contains("1024 steps commanded"), "{summary}");
 }
 
