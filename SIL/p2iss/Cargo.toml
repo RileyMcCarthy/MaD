@@ -22,4 +22,7 @@ libc = "0.2"
 
 [dev-dependencies]
 rstest.workspace = true
+# The host side of the protocol tests parses the firmware's replies with the
+# same framing layer the app's runtime uses.
+protoemb-framing = { path = "../../Protocol/ProtoEmb/framing" }
 vibes-behaviour = { path = "../../Vibes/bindings/rust" }

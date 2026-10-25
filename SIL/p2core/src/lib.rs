@@ -65,6 +65,13 @@ const COGINIT_LOAD_LONGS: usize = 0x1F8;
 // Cog special registers ($1F0..$1FF).
 const REG_IJMP1: u16 = 0x1F4;
 const REG_IRET1: u16 = 0x1F5;
+const REG_IJMP2: u16 = 0x1F2;
+const REG_IRET2: u16 = 0x1F3;
+const REG_IJMP3: u16 = 0x1F0;
+const REG_IRET3: u16 = 0x1F1;
+/// IJMPx / IRETx for INT1, INT2, INT3.
+const REG_IJMP: [u16; 3] = [REG_IJMP1, REG_IJMP2, REG_IJMP3];
+const REG_IRET: [u16; 3] = [REG_IRET1, REG_IRET2, REG_IRET3];
 const REG_PA: u16 = 0x1F6;
 const REG_PB: u16 = 0x1F7;
 const REG_PTRA: u16 = 0x1F8;
@@ -77,6 +84,70 @@ const REG_INB: u16 = 0x1FF;
 /// Where a unified 20-bit PC points. Cog and LUT step by 1, hub by 4.
 const LUT_BASE: u32 = 0x200;
 const HUB_BASE: u32 = 0x400;
+
+/// The 16 events each cog tracks (P2 documentation v35, "EVENTS"). Bit `n` of
+/// [`Cog::events`] is event `n`, and an interrupt source is an event number.
+/// What each one does on silicon is pinned by `hwtest/events.c`.
+pub mod event {
+    /// An interrupt was triggered (POLLINT/WAITINT/JINT).
+    pub const INT: u8 = 0;
+    /// CT passed CT1; CT2 and CT3 follow.
+    pub const CT1: u8 = 1;
+    /// Selectable event 1; SE2..SE4 follow.
+    pub const SE1: u8 = 4;
+    pub const PAT: u8 = 8;
+    pub const FBW: u8 = 9;
+    pub const XMT: u8 = 10;
+    pub const XFI: u8 = 11;
+    pub const XRO: u8 = 12;
+    pub const XRL: u8 = 13;
+    pub const ATN: u8 = 14;
+    pub const QMT: u8 = 15;
+}
+
+/// Where one interrupt is in its loop (P2 docs, "INTERRUPTS"): waiting for its
+/// event, triggered and waiting to branch, or running its ISR. A trigger that
+/// arrives in either of the last two is ignored.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum IntState {
+    #[default]
+    Idle,
+    Pending,
+    Active,
+}
+
+/// The CT1..CT3 bits of an event mask.
+const CT_EVENTS: u16 = 0b1110;
+
+/// A pad's input lags what drives it: a pin a cog drives is not seen by its
+/// own event sensors during a 2-clock instruction right after the drive, and
+/// is seen within a longer one (`hwtest/events.c`, `int_se_level`).
+const PIN_INPUT_DELAY: u64 = 3;
+/// How far one WAITxxx stall step advances when nothing predictable ends the
+/// wait sooner: a pin, a lock or another cog still can, so it is re-checked.
+const WAIT_STALL_QUANTUM: u64 = 64;
+/// The interrupt branch (an inserted CALLD) and RETIx/RESIx, both 4 clocks in
+/// cog/LUT execution on silicon (`int_waitx`, `int_waitint`).
+const CLOCKS_INT_BRANCH: u64 = 4;
+/// The hub FIFO prefetches this far ahead of the reader: a one-block RDFAST
+/// has already wrapped by the first read (`hwtest/events.c`, `fbw`).
+const FIFO_PREFETCH_BYTES: u32 = 19 * 4;
+
+/// What an instruction's event sensors work from, captured as it starts:
+/// its own side effects reach the sensors only during the next instruction.
+#[derive(Clone, Copy, Default)]
+struct SenseInput {
+    se_cfg: [u32; 4],
+    /// Which of `se_cfg` watch a pin or a lock (sampled into `se_level`).
+    se_sampled: u8,
+    /// Pin level (pin modes) or lock held (lock modes) per selectable event.
+    se_level: [bool; 4],
+    ct: [u32; 3],
+    pat: Option<(u32, u32, bool, bool)>,
+    ina: u32,
+    inb: u32,
+    atn: bool,
+}
 
 /// Nominal clocks charged per executed instruction.
 ///
@@ -152,9 +223,13 @@ pub struct Cog {
     /// CORDIC results, filled by QMUL/QDIV/... and read by GETQX/GETQY.
     qx: u32,
     qy: u32,
-    /// Hub write-FIFO cursor for `WRFAST`/`WFLONG`.
-    /// `ADDCT1` target for `WAITCT1`.
-    ct1: u32,
+    /// CT1..CT3 targets, set by ADDCT1..ADDCT3.
+    pub ct: [u32; 3],
+    /// When each CT flag was last cleared: it reads set if CT was past its
+    /// target at any instruction end since (see [`Cog::ct_flag`]).
+    ct_since: [u64; 3],
+    /// Clock at which the instruction now executing started.
+    insn_start: u64,
     /// Pending `ALTD`/`ALTS` field substitution for the next instruction.
     alt_d: Option<u16>,
     alt_s: Option<u16>,
@@ -165,12 +240,84 @@ pub struct Cog {
     /// This cog's streamer. Silicon has one per cog; the flash stub is the
     /// first code in this project that uses it.
     streamer: Streamer,
-    /// `SETINT1` source: 0 = off, 4 = SE1 (the boot ROM's autobaud).
-    pub int1_src: u8,
-    /// `SETSE1` configuration word (`%mmm_pppppp`).
-    pub se1_cfg: u32,
-    /// True while servicing INT1; blocks re-entry until RETI1/RESI1.
-    pub in_int1: bool,
+    /// Event-occurred flags as POLLxxx/WAITxxx/Jxxx see them: bit n = event n.
+    /// The CT flags are not kept here: CT is predictable, so they are worked
+    /// out when read ([`Cog::ct_flag`]) instead of on every instruction.
+    pub events: u16,
+    /// Events detected during the instruction now running. They join
+    /// `events`, and trigger interrupts, at its end.
+    raised: u16,
+    /// Events this instruction's side effects raise during the next one.
+    raised_next: u16,
+    /// `raised_next` of the previous instruction, due at the end of this one.
+    raised_due: u16,
+    /// Flags an instruction clears after its own end-of-instruction
+    /// registration (ADDCTn, SETSEn, SETPAT, RDFAST/WRFAST/FBLOCK, XINIT).
+    clear_after: u16,
+    /// SETSE1..SETSE4 configuration words.
+    pub se_cfg: [u32; 4],
+    /// The level each selectable-event sensor saw last, for the edge modes.
+    se_seen: [bool; 4],
+    /// Each sensor's start-of-instruction sample from the instruction before.
+    se_level_prev: [bool; 4],
+    /// Bit n: SE(n+1)'s sensor runs on a configuration SETSE just set, so it
+    /// has no previous level to compare; `se_fresh_next` is the SETSE itself,
+    /// whose own interval still senses the old configuration.
+    se_fresh: u8,
+    se_fresh_next: u8,
+    /// Bit n: SE(n+1) watches a pin or a lock, so it is sampled each
+    /// instruction (the LUT modes are raised by RDLUT/WRLUT instead).
+    se_sampled: u8,
+    /// SETPAT: (mask, match, compare INB, equal), and the last match state.
+    pat: Option<(u32, u32, bool, bool)>,
+    pat_seen: bool,
+    pat_fresh: bool,
+    pat_fresh_next: bool,
+    /// INA/INB at the start of the instruction before.
+    ina_prev: u32,
+    inb_prev: u32,
+    /// COGATN reached this cog and has not been sensed yet.
+    atn_in: bool,
+    /// The last CORDIC result's X and Y not read yet (else GETQX/GETQY is QMT).
+    q_unread: (bool, bool),
+    /// FIFO block length in bytes (0 = unlimited), bytes moved since
+    /// RDFAST/WRFAST, block wraps so far, and whether it reads.
+    fifo_block: u32,
+    fifo_moved: u32,
+    fifo_wraps: u32,
+    fifo_reads: bool,
+    /// Whether the streamer was already finished at the last sense.
+    xfi_seen: bool,
+    /// INT1..INT3 source event (0 = off), state, and the instruction index at
+    /// which each was triggered.
+    pub int_src: [u8; 3],
+    pub int_state: [IntState; 3],
+    int_since: [u64; 3],
+    /// STALLI in force, and the index of the last ALLOWI.
+    stalli: bool,
+    allowi_at: u64,
+    /// The instruction just run keeps the next boundary from taking an
+    /// interrupt branch (`GETCT WC`, `CRCNIB`).
+    int_shield: bool,
+    /// Instructions completed, interrupt branches included: the index of the
+    /// boundary the cog sits at.
+    boundary: u64,
+    /// A WAITxxx stall in progress, with its SETQ deadline (if any).
+    wait: Option<Option<u32>>,
+    /// The instruction just run is a WAITxxx that has not finished.
+    stalled: bool,
+    /// Something event-related has run on this cog (SETSE, SETINT, TRGINT,
+    /// SETPAT, a COGATN to it, an event raised, the streamer). Until then it
+    /// has nothing to sense -- CT flags are worked out when read -- and its
+    /// instructions skip the event bookkeeping altogether.
+    ev_live: bool,
+    /// The last full check found the sensors steady (see `sensors_steady`),
+    /// and nothing event-related has changed since: a step then only has to
+    /// sample its pins/locks and compare. Cleared by `touch_events`.
+    steady_valid: bool,
+    /// With `steady_valid`, when the only watched input is one pin: that pin
+    /// and the level it reads, so a step is one TESTP and a compare.
+    steady_pin: Option<(u8, bool)>,
     /// SCA/SCAS product, consumed as S of the next instruction.
     sca_s: Option<u32>,
 }
@@ -279,21 +426,188 @@ impl Default for Cog {
             rep: None,
             qx: 0,
             qy: 0,
-            ct1: 0,
+            ct: [0; 3],
+            ct_since: [0; 3],
+            insn_start: 0,
             alt_d: None,
             alt_s: None,
             alt_n: None,
             clocks: 0,
             streamer: Streamer::default(),
-            int1_src: 0,
-            se1_cfg: 0,
-            in_int1: false,
+            events: 0,
+            raised: 0,
+            raised_next: 0,
+            raised_due: 0,
+            clear_after: 0,
+            se_cfg: [0; 4],
+            se_seen: [false; 4],
+            se_level_prev: [false; 4],
+            se_fresh: 0,
+            se_fresh_next: 0,
+            se_sampled: 0,
+            pat: None,
+            pat_seen: false,
+            pat_fresh: false,
+            pat_fresh_next: false,
+            ina_prev: 0,
+            inb_prev: 0,
+            atn_in: false,
+            q_unread: (false, false),
+            fifo_block: 0,
+            fifo_moved: 0,
+            fifo_wraps: 0,
+            fifo_reads: false,
+            xfi_seen: false,
+            int_src: [0; 3],
+            int_state: [IntState::Idle; 3],
+            int_since: [0; 3],
+            stalli: false,
+            allowi_at: u64::MAX,
+            int_shield: false,
+            boundary: 0,
+            wait: None,
+            stalled: false,
+            ev_live: false,
+            steady_valid: false,
+            steady_pin: None,
             sca_s: None,
         }
     }
 }
 
 impl Cog {
+    /// CTn's event flag as an instruction starting at `t` sees it. The sensor
+    /// is a level -- set while the MSB of CT minus CTn is 0, so POLLCTn reads
+    /// 1 again until ADDCTn moves the target (`ct_flag_sticky`) -- and the
+    /// flag holds whatever it set at an instruction end after the last clear:
+    /// set if CT is past the target at `t`, or fell back out of that window
+    /// (CT reached the target + 2^31) since.
+    pub fn ct_flag(&self, n: usize, t: u64) -> bool {
+        let since = self.ct_since[n];
+        if t <= since {
+            return false;
+        }
+        let target = self.ct[n];
+        if (t as u32).wrapping_sub(target) as i32 >= 0 {
+            return true;
+        }
+        let fall = target.wrapping_add(0x8000_0000);
+        let span = t - since;
+        span >= 1 << 32 || u64::from((t as u32).wrapping_sub(fall)) < span
+    }
+
+    /// Read and clear an event flag, for POLLxxx/WAITxxx/Jxxx in the
+    /// instruction now executing.
+    fn take_event(&mut self, ev: u8) -> bool {
+        if (event::CT1..event::CT1 + 3).contains(&ev) {
+            let n = (ev - event::CT1) as usize;
+            let set = self.ct_flag(n, self.insn_start);
+            self.ct_since[n] = self.insn_start;
+            return set;
+        }
+        let bit = 1u16 << ev;
+        let set = self.events & bit != 0;
+        self.events &= !bit;
+        set
+    }
+
+    /// Something event-related changed on this cog: it is live from now on,
+    /// and any cached "sensors steady" verdict is stale.
+    fn touch_events(&mut self) {
+        self.ev_live = true;
+        self.steady_valid = false;
+    }
+
+    /// The cached-steady check: every watched pin or lock reads what it read
+    /// last time, and no level mode is active on it.
+    fn levels_steady(&self, cfg: &[u32; 4], sampled: u8, levels: &[bool; 4]) -> bool {
+        let mut bits = sampled;
+        while bits != 0 {
+            let n = bits.trailing_zeros() as usize;
+            bits &= bits - 1;
+            let level = levels[n];
+            if level != self.se_level_prev[n] || level != self.se_seen[n] {
+                return false;
+            }
+            let active = match (cfg[n] >> 6) & 7 {
+                4 | 5 => !level,
+                6 | 7 => level,
+                _ => false,
+            };
+            if active {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Nothing for the event sensors to sample as an instruction starts: no
+    /// selectable event on a pin or lock, no PAT, no COGATN arrived, no
+    /// interrupt source, nothing raised or about to be.
+    fn sensors_quiet(&self) -> bool {
+        self.se_sampled == 0
+            && self.se_fresh == 0
+            && self.pat.is_none()
+            && !self.atn_in
+            && self.int_src == [0; 3]
+            && (self.raised | self.raised_due | self.raised_next | self.clear_after) == 0
+            && self.streamer.xfi == self.xfi_seen
+    }
+
+    /// A sampling cog whose sensors saw nothing new: every pin or lock it
+    /// watches is where it was, so no edge; no level mode it uses is active;
+    /// nothing else raised, configured or due. This is the SERIAL cog's idle
+    /// spin -- RX interrupt armed, line idle -- most of what the ISS executes.
+    fn sensors_steady(&self, input: &SenseInput) -> bool {
+        if (self.raised | self.raised_due | self.raised_next | self.clear_after) != 0
+            || self.se_fresh != 0
+            || self.se_fresh_next != 0
+            || self.pat_fresh_next
+            || input.pat.is_some()
+            || input.atn
+            || self.streamer.xfi != self.xfi_seen
+            || self
+                .int_src
+                .iter()
+                .any(|&src| (event::CT1..event::CT1 + 3).contains(&src))
+            || self.se_sampled != input.se_sampled
+        {
+            return false;
+        }
+        let mut bits = self.se_sampled;
+        while bits != 0 {
+            let n = bits.trailing_zeros() as usize;
+            bits &= bits - 1;
+            let level = input.se_level[n];
+            if level != self.se_level_prev[n] || level != self.se_seen[n] {
+                return false;
+            }
+            let active = match (input.se_cfg[n] >> 6) & 7 {
+                4 | 5 => !level,
+                6 | 7 => level,
+                _ => false,
+            };
+            if active {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// The instruction a quiet cog just ran left it quiet: only CT to update.
+    fn sensors_quiet_after(&self) -> bool {
+        (self.raised | self.raised_next | self.clear_after) == 0
+            && self.se_fresh_next == 0
+            && !self.pat_fresh_next
+            && self.int_src == [0; 3]
+            && self.streamer.xfi == self.xfi_seen
+    }
+
+    /// Any interrupt with a source set, triggered, or running its ISR.
+    pub fn interrupts_armed(&self) -> bool {
+        self.ev_live && (self.int_src != [0; 3] || self.int_state != [IntState::Idle; 3])
+    }
+
     fn push(&mut self, v: u32) {
         self.stack[self.sp & 7] = v;
         self.sp = (self.sp + 1) & 7;
@@ -313,8 +627,8 @@ pub struct Machine<P: PinBus> {
     pub pins: P,
     /// Retired instructions across all cogs, for throughput measurement.
     pub retired: u64,
-    /// INT1 entries, for serial-boot bring-up.
-    pub int1_entries: u64,
+    /// Interrupt branches taken into INT1, INT2, INT3.
+    pub int_entries: [u64; 3],
     /// Trap on a hub access outside the 512 KB map instead of wrapping.
     ///
     /// **Off by default, and not a soundness check.** Silicon masks hub
@@ -428,7 +742,7 @@ impl<P: PinBus> Machine<P> {
             lock_alloc: [false; NUM_LOCKS],
             pins,
             retired: 0,
-            int1_entries: 0,
+            int_entries: [0; 3],
             strict_hub: false,
             ff_deadline_clocks: u64::MAX,
             ff_disabled: std::env::var_os("P2CORE_NO_FF").is_some(),
@@ -811,7 +1125,7 @@ impl<P: PinBus> Machine<P> {
         // burns the 60 s serial timeout in an instant and the ROM shuts down
         // before the host's first `>` arrives.
         let confirmed = p.confirmed();
-        let int1_armed = self.cogs[cog].int1_src != 0 && !self.cogs[cog].in_int1;
+        let int1_armed = self.cogs[cog].interrupts_armed();
         let transfer_busy = waits_on_pin && self.pins.external_transfer_busy();
         if confirmed && !self.ff_disabled && !transfer_busy && !int1_armed {
             self.fast_forward_poller(cog, waits_on_pin);
@@ -853,6 +1167,11 @@ impl<P: PinBus> Machine<P> {
         // count-stepping, where it correctly means "no bound".)
         if waits_on_pin {
             target = target.min(self.ff_deadline_clocks);
+            // Nor past an instant the bus already knows a pin will change at:
+            // a byte that lands mid-slice is the guest's to read then.
+            if let Some(at) = self.pins.next_pin_change(mine) {
+                target = target.min(at);
+            }
         }
         if target != u64::MAX && target > mine {
             self.cogs[cog].clocks = target;
@@ -976,6 +1295,7 @@ impl<P: PinBus> Machine<P> {
                 // an early return that stalls a single-cog bit-bang boot.
                 let cog_us = self.cogs[cog].clocks.saturating_mul(1_000_000) / hz;
                 if self.cogs[cog].running && cog_us < deadline_us {
+                    self.pins.set_clock(self.cogs[cog].clocks);
                     self.step_one(cog)?;
                     stepped = true;
                     if self.pins.take_net_yield() || std::mem::take(&mut self.clock_yield) {
@@ -1014,6 +1334,7 @@ impl<P: PinBus> Machine<P> {
             if self.cogs[cog].clocks >= deadline_clocks {
                 break;
             }
+            self.pins.set_clock(self.cogs[cog].clocks);
             self.step_one(cog)?;
             if self.pins.take_net_yield() || std::mem::take(&mut self.clock_yield) {
                 self.yield_clocks = Some(self.cogs[cog].clocks);
@@ -1039,6 +1360,7 @@ impl<P: PinBus> Machine<P> {
             let Some(cog) = self.frontier_cog() else {
                 break;
             };
+            self.pins.set_clock(self.cogs[cog].clocks);
             self.step_one(cog)?;
             ran += 1;
         }
@@ -1122,70 +1444,505 @@ impl<P: PinBus> Machine<P> {
         }
     }
 
-    /// SE1 "pin IN high" (`SETSE1 #%110<<6+pin`): the boot ROM uses this on
-    /// the autobaud timing pin, then on the UART RX pin.
-    pub fn se1_high(&self, cog: usize) -> bool {
-        let cfg = self.cogs[cog].se1_cfg;
-        if cfg == 0 {
-            return false;
-        }
-        let pin = (cfg & 63) as u8;
-        let mode = (cfg >> 6) & 7;
-        mode == 0b110 && self.pins.testp(pin)
-    }
-
+    /// One step of a cog: an interrupt branch if one is due at this boundary,
+    /// otherwise one instruction (or one stall step of a WAITxxx), followed by
+    /// the event sensing for that interval.
     fn step_one(&mut self, cog: usize) -> Result<(), Trap> {
-        self.cogs[cog].instructions += 1;
-        let pc = self.cogs[cog].pc;
-        // INT1 on SE1: the boot ROM's autobaud/receiver. Level-triggered on
-        // the configured pin's IN (a waiting serial byte), blocked while
-        // already in the ISR.
-        // ALTx prefixes the very next instruction in this cog. Taking INT1
-        // between them would let the ISR consume the prefix — the ROM's
-        // `altb x,#hexchrs` / `testb 0,x wc` pair would then test the wrong
-        // long and reject a valid Prop_Chk.
-        //
-        // Silicon holds the interrupt off the same way after AUGS/AUGD,
-        // SETQ/SETQ2 and SCA/SCAS (whose product is the next instruction's
-        // S), and for the whole of a REP block. Compiled FlexC code is dense
-        // with prefixes (`##` immediates, `setq`+`wrlong` register bursts), so
-        // an ISR beside it (HAL_serial's RX interrupt) would otherwise consume
-        // a prefix meant for the interrupted instruction.
-        let held_off = {
-            let c = &self.cogs[cog];
-            c.alt_d.is_some()
-                || c.alt_s.is_some()
-                || c.alt_n.is_some()
-                || c.aug_s.is_some()
-                || c.aug_d.is_some()
-                || c.setq.is_some()
-                || c.setq2.is_some()
-                || c.sca_s.is_some()
-                // Only inside the body: `rep` closes once the PC passes its end,
-                // so a block left by a branch must not hold interrupts off.
-                || c.rep.is_some_and(|(_, first, last)| (first..=last).contains(&pc))
-        };
-        if !self.cogs[cog].in_int1
-            && self.cogs[cog].int1_src == 4
-            && self.se1_high(cog)
-            && !held_off
-        {
-            // The interrupt branch is CALLD IRET1, IJMP1 WCZ: IRET1 keeps C
-            // and Z in bits 31:30 beside the PC, and RETI1 puts them back.
-            // The vector is a CALLD target like any other: the PC is its low
-            // 20 bits and C/Z load from its top two, which after a RESI1 are
-            // the ISR's own flags at the point it suspended.
-            let (c, z) = (self.cogs[cog].c, self.cogs[cog].z);
-            self.cogs[cog].regs[REG_IRET1 as usize] =
-                (u32::from(c) << 31) | (u32::from(z) << 30) | pc;
-            let vector = self.cogs[cog].regs[REG_IJMP1 as usize];
-            self.cogs[cog].c = vector & (1 << 31) != 0;
-            self.cogs[cog].z = vector & (1 << 30) != 0;
-            self.cogs[cog].pc = vector & 0xF_FFFF;
-            self.cogs[cog].in_int1 = true;
-            self.int1_entries += 1;
+        // Three kinds of step, cheapest first. A cog nothing event-related has
+        // run on has nothing to sense (CT flags are worked out when read). One
+        // whose sensors were found steady and have not changed since only
+        // samples the pins it watches. Otherwise the full sample and sense.
+        // (One call site for the instruction step: inlining it into several
+        // specialised paths costs more than the paths save.)
+        let c = &mut self.cogs[cog];
+        let live = c.ev_live;
+        if live && c.int_state.contains(&IntState::Pending) && self.take_interrupt(cog) {
             return Ok(());
         }
+        let c = &mut self.cogs[cog];
+        let start = c.clocks;
+        c.int_shield = false;
+        c.insn_start = start;
+        let pre_cfg = c.se_cfg;
+        let pre_sampled = c.se_sampled;
+        enum Pre {
+            Nothing,
+            OnePin,
+            Levels([bool; 4]),
+            Full(SenseInput),
+        }
+        let pre = if !live {
+            Pre::Nothing
+        } else if let (true, Some((pin, level))) = (c.steady_valid, c.steady_pin) {
+            // The serial cog's idle spin: one watched pin, still where it was.
+            if self.pins.testp(pin) == level {
+                Pre::OnePin
+            } else {
+                Pre::Levels(self.sense_levels(cog))
+            }
+        } else if c.steady_valid {
+            Pre::Levels(self.sense_levels(cog))
+        } else if c.sensors_quiet() {
+            Pre::Nothing
+        } else {
+            Pre::Full(self.sense_input(cog))
+        };
+        self.step_instruction(cog)?;
+        let c = &mut self.cogs[cog];
+        let completed = !std::mem::take(&mut c.stalled);
+        if completed {
+            c.boundary += 1;
+        }
+        if !c.ev_live {
+            return Ok(());
+        }
+        let input = match pre {
+            // Unchanged and inactive (it was steady): only a change on the
+            // cog itself can matter, and that clears `steady_valid`.
+            Pre::OnePin if c.steady_valid => return Ok(()),
+            Pre::OnePin => {
+                let mut levels = [false; 4];
+                if let Some((_, level)) = c.steady_pin {
+                    levels[pre_sampled.trailing_zeros() as usize & 3] = level;
+                }
+                SenseInput {
+                    se_cfg: pre_cfg,
+                    se_sampled: pre_sampled,
+                    se_level: levels,
+                    ct: c.ct,
+                    ..SenseInput::default()
+                }
+            }
+            Pre::Levels(levels) => {
+                if c.steady_valid && c.levels_steady(&pre_cfg, pre_sampled, &levels) {
+                    return Ok(());
+                }
+                SenseInput {
+                    se_cfg: pre_cfg,
+                    se_sampled: pre_sampled,
+                    se_level: levels,
+                    ct: c.ct,
+                    ..SenseInput::default()
+                }
+            }
+            Pre::Full(input) => {
+                if c.sensors_steady(&input) {
+                    c.steady_valid = true;
+                    c.steady_pin = (input.se_sampled.count_ones() == 1)
+                        .then(|| input.se_sampled.trailing_zeros() as usize)
+                        .filter(|&n| (input.se_cfg[n] >> 6) & 7 != 0)
+                        .map(|n| ((input.se_cfg[n] & 63) as u8, input.se_level[n]));
+                    return Ok(());
+                }
+                input
+            }
+            Pre::Nothing => {
+                if live && c.sensors_quiet_after() {
+                    return Ok(());
+                }
+                // Quiet as it started (or not yet live): nothing sampled, so
+                // the sensors see the configuration it started with.
+                SenseInput {
+                    se_cfg: pre_cfg,
+                    ..SenseInput::default()
+                }
+            }
+        };
+        // A stalled WAIT is still the instruction after the last boundary.
+        let index = c.boundary + u64::from(!completed);
+        self.sense_events(cog, start, &input, index);
+        Ok(())
+    }
+
+    /// Take the highest-priority interrupt that may branch at this boundary.
+    ///
+    /// Silicon (`hwtest/events.c`) branches one instruction after a trigger:
+    /// an interrupt is taken at a boundary only if it was already pending at
+    /// the one before. Nothing branches while a WAITxxx stalls (WAITX
+    /// included); while a prefix waits for the instruction it modifies (ALTx,
+    /// AUGS/AUGD, SETQ/SETQ2, SCA/SCAS) or `GETCT WC`/`CRCNIB` just ran;
+    /// inside a REP body; under STALLI, or on the boundary right after ALLOWI.
+    /// INT1 can interrupt INT2's and INT3's ISRs, INT2 can interrupt INT3's.
+    fn take_interrupt(&mut self, cog: usize) -> bool {
+        let pc = self.cogs[cog].pc;
+        let c = &self.cogs[cog];
+        if !c.int_state.contains(&IntState::Pending) {
+            return false;
+        }
+        if c.wait.is_some() || c.stalli || c.allowi_at == c.boundary || c.int_shield {
+            return false;
+        }
+        // ALTx prefixes the very next instruction in this cog. Taking an
+        // interrupt between them would let the ISR consume the prefix -- the
+        // ROM's `altb x,#hexchrs` / `testb 0,x wc` pair would then test the
+        // wrong long and reject a valid Prop_Chk. AUGx, SETQx and SCA/SCAS
+        // are the same, and compiled FlexC code is dense with `##` immediates
+        // and `setq`+`wrlong` bursts.
+        let held_off = c.alt_d.is_some()
+            || c.alt_s.is_some()
+            || c.alt_n.is_some()
+            || c.aug_s.is_some()
+            || c.aug_d.is_some()
+            || c.setq.is_some()
+            || c.setq2.is_some()
+            || c.sca_s.is_some()
+            // Only inside the body: `rep` closes once the PC passes its end,
+            // so a block left by a branch must not hold interrupts off.
+            || c.rep.is_some_and(|(_, first, last)| (first..=last).contains(&pc));
+        if held_off {
+            return false;
+        }
+        let floor = (0..3)
+            .find(|&x| c.int_state[x] == IntState::Active)
+            .unwrap_or(3);
+        let Some(x) = (0..floor)
+            .find(|&x| c.int_state[x] == IntState::Pending && c.int_since[x] < c.boundary)
+        else {
+            return false;
+        };
+
+        let start = self.cogs[cog].clocks;
+        let input = self.sense_input(cog);
+        // The branch is CALLD IRETx, IJMPx WCZ inserted into the pipeline:
+        // IRETx keeps C and Z in bits 31:30 beside the PC, and RETIx puts them
+        // back. The vector is a CALLD target like any other: the PC is its low
+        // 20 bits and C/Z load from its top two, which after a RESIx are the
+        // ISR's own flags at the point it suspended.
+        let (cf, zf) = (self.cogs[cog].c, self.cogs[cog].z);
+        self.cogs[cog].regs[REG_IRET[x] as usize] =
+            (u32::from(cf) << 31) | (u32::from(zf) << 30) | pc;
+        let vector = self.cogs[cog].regs[REG_IJMP[x] as usize];
+        self.cogs[cog].c = vector & (1 << 31) != 0;
+        self.cogs[cog].z = vector & (1 << 30) != 0;
+        self.cogs[cog].pc = vector & 0xF_FFFF;
+        self.cogs[cog].int_state[x] = IntState::Active;
+        self.cogs[cog].clocks += CLOCKS_INT_BRANCH;
+        self.cogs[cog].boundary += 1;
+        self.int_entries[x] += 1;
+        let index = self.cogs[cog].boundary;
+        self.sense_events(cog, start, &input, index);
+        true
+    }
+
+    /// Sample only the pins and locks this cog's selectable events watch.
+    #[inline(always)]
+    fn sense_levels(&self, cog: usize) -> [bool; 4] {
+        let c = &self.cogs[cog];
+        let mut levels = [false; 4];
+        let mut bits = c.se_sampled;
+        while bits != 0 {
+            let n = bits.trailing_zeros() as usize;
+            bits &= bits - 1;
+            let cfg = c.se_cfg[n];
+            levels[n] = if (cfg >> 6) & 7 != 0 {
+                self.pins.testp((cfg & 63) as u8)
+            } else {
+                self.locks[(cfg & 15) as usize].is_some()
+            };
+        }
+        levels
+    }
+
+    /// Sample what this cog's event sensors watch, as an instruction starts.
+    #[inline(always)]
+    fn sense_input(&mut self, cog: usize) -> SenseInput {
+        let c = &self.cogs[cog];
+        let mut input = SenseInput {
+            se_cfg: c.se_cfg,
+            se_sampled: c.se_sampled,
+            ct: c.ct,
+            pat: c.pat,
+            ..SenseInput::default()
+        };
+        let mut bits = c.se_sampled;
+        while bits != 0 {
+            let n = bits.trailing_zeros() as usize;
+            bits &= bits - 1;
+            let cfg = input.se_cfg[n];
+            input.se_level[n] = if (cfg >> 6) & 7 != 0 {
+                self.pins.testp((cfg & 63) as u8)
+            } else {
+                self.locks[(cfg & 15) as usize].is_some()
+            };
+        }
+        if input.pat.is_some() {
+            input.ina = self.pins.ina();
+            input.inb = self.pins.inb();
+        }
+        input.atn = std::mem::take(&mut self.cogs[cog].atn_in);
+        input
+    }
+
+    /// End of an instruction (or stall step, or interrupt branch): register
+    /// the events its interval raised, and trigger interrupts on them.
+    ///
+    /// The sensors work from `input`, sampled as the interval started, so an
+    /// instruction's own side effects -- a SETSE, a lock it took, a pin it
+    /// drove -- are sensed during the next one: `SETSE1` then `POLLSE1` reads
+    /// 0, and the POLLSE1 after that reads 1. Events an instruction raises
+    /// itself (RDLUT's read, GETQX's empty CORDIC, TRGINT) are visible to the
+    /// very next one. `index` is the instruction's boundary index, the
+    /// trigger time an interrupt branch compares against.
+    #[inline(always)]
+    fn sense_events(&mut self, cog: usize, start: u64, input: &SenseInput, index: u64) {
+        let streamer_done = self.cogs[cog].streamer.xfi;
+        let c = &mut self.cogs[cog];
+        c.steady_valid = false;
+        let end = c.clocks;
+        let long = end.saturating_sub(start) >= PIN_INPUT_DELAY;
+        let mut raised = std::mem::take(&mut c.raised) | std::mem::replace(&mut c.raised_due, 0);
+        c.raised_due = std::mem::take(&mut c.raised_next);
+
+        // CTn as an interrupt source: the level re-triggers an idle interrupt
+        // at every instruction end until ADDCTn moves the target
+        // (`int_ct_source`). The flags themselves are read through ct_flag.
+        if c.int_src
+            .iter()
+            .any(|&src| (event::CT1..event::CT1 + 3).contains(&src))
+        {
+            for n in 0..3 {
+                if (end as u32).wrapping_sub(input.ct[n]) as i32 >= 0 {
+                    raised |= 1 << (event::CT1 as usize + n);
+                }
+            }
+        }
+
+        // Selectable events. Pin modes see the pad PIN_INPUT_DELAY late:
+        // during a short instruction a pin is still at the level it had as
+        // the instruction before started.
+        for n in 0..4 {
+            let cfg = input.se_cfg[n];
+            let mode = (cfg >> 6) & 7;
+            if mode == 0 && (cfg >> 4) & 3 == 0 {
+                // LUT-access modes: RDLUT / WRLUT raise these themselves.
+                continue;
+            }
+            let sample = input.se_level[n];
+            let level = if mode != 0 {
+                let seen = if long || c.se_fresh & (1 << n) != 0 {
+                    sample
+                } else {
+                    c.se_level_prev[n]
+                };
+                c.se_level_prev[n] = sample;
+                seen
+            } else {
+                sample
+            };
+            let fresh = c.se_fresh & (1 << n) != 0;
+            let was = if fresh { level } else { c.se_seen[n] };
+            c.se_seen[n] = level;
+            let fire = match mode {
+                0 => match (cfg >> 4) & 3 {
+                    1 => !was && level,
+                    2 => was && !level,
+                    _ => was != level,
+                },
+                1 => !was && level,
+                2 => was && !level,
+                3 => was != level,
+                4 | 5 => !level,
+                _ => level,
+            };
+            if fire {
+                raised |= 1 << (event::SE1 as usize + n);
+            }
+        }
+        c.se_fresh = std::mem::take(&mut c.se_fresh_next);
+
+        // PAT: an edge, into the pattern (a second POLLPAT reads 0 even with
+        // the pins unchanged).
+        if let Some((mask, value, use_inb, equal)) = input.pat {
+            let (ina, inb) = if long {
+                (input.ina, input.inb)
+            } else {
+                (c.ina_prev, c.inb_prev)
+            };
+            let port = if use_inb { inb } else { ina };
+            let matched = ((port & mask) == value) == equal;
+            let was = if std::mem::take(&mut c.pat_fresh) {
+                false
+            } else {
+                c.pat_seen
+            };
+            c.pat_seen = matched;
+            if matched && !was {
+                raised |= 1 << event::PAT;
+            }
+            c.ina_prev = input.ina;
+            c.inb_prev = input.inb;
+        }
+        if std::mem::take(&mut c.pat_fresh_next) {
+            c.pat_fresh = true;
+        }
+
+        if input.atn {
+            raised |= 1 << event::ATN;
+        }
+        if streamer_done && !c.xfi_seen {
+            raised |= 1 << event::XFI;
+        }
+        c.xfi_seen = streamer_done;
+
+        // Interrupts: an event the source selects triggers an idle interrupt;
+        // one already triggered or in its ISR ignores it.
+        for x in 0..3 {
+            let src = c.int_src[x];
+            if src != 0 && c.int_state[x] == IntState::Idle && raised & (1 << src) != 0 {
+                c.int_state[x] = IntState::Pending;
+                c.int_since[x] = index;
+                raised |= 1 << event::INT;
+            }
+        }
+
+        c.events |= raised & !CT_EVENTS;
+        c.events &= !std::mem::take(&mut c.clear_after);
+    }
+
+    /// WAITxxx: wait for an event flag, then clear it. With a SETQ before it
+    /// the wait also ends, with C set, one clock after CT passes Q
+    /// (`ct_waitct_timeout`); a flag already set ends it in 2 clocks. Until
+    /// then the cog stalls on the instruction -- no interrupt branches -- in
+    /// steps that end where the next CT target or the deadline falls, so a CT
+    /// event ends the wait exactly 2 clocks after it (`ct_waitct_delta`).
+    /// Returns true while stalled.
+    fn exec_wait(&mut self, cog: usize, ins: &Decoded, pc: u32, ev: u8) -> bool {
+        let deadline = match self.cogs[cog].wait.take() {
+            Some(d) => d,
+            None => self.cogs[cog].setq.take(),
+        };
+        let c = &mut self.cogs[cog];
+        if c.take_event(ev) {
+            if ins.c {
+                c.c = false;
+            }
+            return false;
+        }
+        let now = c.clocks;
+        let timeout_at = deadline.map(|q| {
+            let dq = q.wrapping_sub(now as u32) as i32;
+            if dq < 0 {
+                now
+            } else {
+                now + dq as u64 + 1
+            }
+        });
+        let mut until = now + WAIT_STALL_QUANTUM;
+        for n in 0..3 {
+            let dt = c.ct[n].wrapping_sub(now as u32) as i32;
+            if dt > 0 {
+                until = until.min(now + dt as u64);
+            }
+        }
+        // A CT wait has nothing else to wait for: go straight to its target.
+        if (event::CT1..event::CT1 + 3).contains(&ev) {
+            let dt = c.ct[(ev - event::CT1) as usize].wrapping_sub(now as u32) as i32;
+            until = if dt > 0 { now + dt as u64 } else { now };
+        }
+        if let Some(t) = timeout_at {
+            if t <= until {
+                c.clocks = t.max(now);
+                if ins.c {
+                    c.c = true;
+                }
+                return false;
+            }
+        }
+        c.clocks = until;
+        c.wait = Some(deadline);
+        c.stalled = true;
+        c.pc = pc;
+        true
+    }
+
+    /// Selectable events a LUT access by this cog raises: `%000_00_00AA` (reads)
+    /// and `%000_00_01AA` (writes) of LUT `$1FC + AA`. The odd/even companion
+    /// cog's accesses (`%000_00_1xAA`) are not modelled.
+    fn lut_events(&self, cog: usize, at: usize, write: bool) -> u16 {
+        let mut ev = 0;
+        for (n, &cfg) in self.cogs[cog].se_cfg.iter().enumerate() {
+            let kind = (cfg >> 2) & 0x7F;
+            if kind == u32::from(write) && at == 0x1FC | (cfg & 3) as usize {
+                ev |= 1 << (event::SE1 as usize + n);
+            }
+        }
+        ev
+    }
+
+    /// The event a Jxxx/JNxxx tests, and whether it jumps on set (Jxxx).
+    fn jump_event(op: Op) -> (u8, bool) {
+        use Op::*;
+        let jumps = [
+            Jint, Jct1, Jct2, Jct3, Jse1, Jse2, Jse3, Jse4, Jpat, Jfbw, Jxmt, Jxfi, Jxro, Jxrl,
+            Jatn, Jqmt,
+        ];
+        let nojumps = [
+            Jnint, Jnct1, Jnct2, Jnct3, Jnse1, Jnse2, Jnse3, Jnse4, Jnpat, Jnfbw, Jnxmt, Jnxfi,
+            Jnxro, Jnxrl, Jnatn, Jnqmt,
+        ];
+        if let Some(n) = jumps.iter().position(|&j| j == op) {
+            (n as u8, true)
+        } else {
+            (
+                nojumps.iter().position(|&j| j == op).unwrap_or(0) as u8,
+                false,
+            )
+        }
+    }
+
+    /// The event a POLLxxx reads.
+    fn poll_event(op: Op) -> u8 {
+        use Op::*;
+        [
+            Pollint, Pollct1, Pollct2, Pollct3, Pollse1, Pollse2, Pollse3, Pollse4, Pollpat,
+            Pollfbw, Pollxmt, Pollxfi, Pollxro, Pollxrl, Pollatn, Pollqmt,
+        ]
+        .iter()
+        .position(|&p| p == op)
+        .unwrap_or(0) as u8
+    }
+
+    /// The event a WAITxxx waits for (there is no WAITQMT, and WAITXFI keeps
+    /// its functional-streamer arm).
+    fn wait_event(op: Op) -> u8 {
+        use Op::*;
+        match op {
+            Waitint => event::INT,
+            Waitct1 => event::CT1,
+            Waitct2 => event::CT1 + 1,
+            Waitct3 => event::CT1 + 2,
+            Waitse1 => event::SE1,
+            Waitse2 => event::SE1 + 1,
+            Waitse3 => event::SE1 + 2,
+            Waitse4 => event::SE1 + 3,
+            Waitpat => event::PAT,
+            Waitfbw => event::FBW,
+            Waitxmt => event::XMT,
+            Waitxro => event::XRO,
+            Waitxrl => event::XRL,
+            _ => event::ATN,
+        }
+    }
+
+    /// The hub FIFO moved `bytes`: raise FBW as its prefetch crosses into a new
+    /// block (it reloads its block count and start address there).
+    fn fifo_advance(&mut self, cog: usize, bytes: u32) {
+        let c = &mut self.cogs[cog];
+        c.fifo_moved = c.fifo_moved.wrapping_add(bytes);
+        let ahead = if c.fifo_reads { FIFO_PREFETCH_BYTES } else { 0 };
+        // A zero block count is unlimited: it never wraps.
+        if let Some(wraps) = c.fifo_moved.saturating_add(ahead).checked_div(c.fifo_block) {
+            if wraps > c.fifo_wraps {
+                c.fifo_wraps = wraps;
+                c.raised |= 1 << event::FBW;
+                c.touch_events();
+            }
+        }
+    }
+
+    fn step_instruction(&mut self, cog: usize) -> Result<(), Trap> {
+        self.cogs[cog].instructions += 1;
+        let pc = self.cogs[cog].pc;
         // The PC is 20 bits and hub addressing wraps: `$FC000` executes the
         // bytes at `$7C000`, which is precisely how the chip runs its boot
         // ROM — 16 KB copied to the top of RAM, COG 0 launched at `$FC000`.
@@ -1525,6 +2282,8 @@ impl<P: PinBus> Machine<P> {
     /// bits 31:29 select immediate-out / FIFO-out / pin-in, bits 22:17 are
     /// the data pin, bits 15:0 are the bit count.
     fn start_streamer(&mut self, cog: usize, mode: u32, data: u32) {
+        // Its XFI event needs the sensing.
+        self.cogs[cog].touch_events();
         let kind = ((mode >> 29) & 7) as u8;
         let pin = ((mode >> 17) & 63) as u8;
         let nbits = mode & 0xFFFF;
@@ -1572,6 +2331,7 @@ impl<P: PinBus> Machine<P> {
         self.cogs[cog].streamer.bits_left -= 1;
         if self.cogs[cog].streamer.bits_left == 0 {
             self.cogs[cog].streamer.xfi = true;
+            self.cogs[cog].steady_valid = false;
         }
         Some(bit)
     }
@@ -1595,6 +2355,7 @@ impl<P: PinBus> Machine<P> {
         }
         if self.cogs[cog].streamer.bits_left == 0 {
             self.cogs[cog].streamer.xfi = true;
+            self.cogs[cog].steady_valid = false;
         }
     }
 
@@ -2590,8 +3351,15 @@ impl<P: PinBus> Machine<P> {
                     self.cogs[cog].z = s & (1 << 30) != 0;
                 }
                 self.cogs[cog].pc = s & 0xF_FFFF;
-                if !ins.i && ins.s == REG_IRET1 {
-                    self.cogs[cog].in_int1 = false;
+                // "The CALLD with D = <any register>, S = IRETx, and WCZ
+                // signals the cog that the interrupt is complete" (P2 docs).
+                if !ins.i && ins.c && ins.z {
+                    if let Some(x) = REG_IRET.iter().position(|&r| r == ins.s) {
+                        if self.cogs[cog].int_state[x] == IntState::Active {
+                            self.cogs[cog].int_state[x] = IntState::Idle;
+                        }
+                        self.cogs[cog].clocks += CLOCKS_INT_BRANCH - CLOCKS_PER_INSTRUCTION;
+                    }
                 }
                 branched = true;
             }
@@ -2720,11 +3488,13 @@ impl<P: PinBus> Machine<P> {
 
             // ---- CORDIC, as plain functions
             Qmul => {
+                self.cogs[cog].q_unread = (true, true);
                 let p = (d as u64) * (s as u64);
                 self.cogs[cog].qx = p as u32;
                 self.cogs[cog].qy = (p >> 32) as u32;
             }
             Qdiv => {
+                self.cogs[cog].q_unread = (true, true);
                 // A preceding SETQ supplies the upper 32 bits of a 64-bit
                 // dividend -- `_getus` divides the full cycle count this way.
                 let hi = self.cogs[cog].setq.take().unwrap_or(0) as u64;
@@ -2743,6 +3513,7 @@ impl<P: PinBus> Machine<P> {
                 }
             }
             Qsqrt => {
+                self.cogs[cog].q_unread = (true, true);
                 // QSQRT D,S roots the 64-bit {S, D}: S is the UPPER long.
                 // FlexC's float sqrtf hands the mantissa over as S
                 // (`_sqrt64(0, m)` is `qsqrt 0, m`) and reads a 1.30 root
@@ -2753,6 +3524,7 @@ impl<P: PinBus> Machine<P> {
                 self.cogs[cog].qx = radicand.isqrt() as u32;
             }
             Qrotate => {
+                self.cogs[cog].q_unread = (true, true);
                 // QROTATE D,S rotates the point (X, Y) = (D, Q) by the angle
                 // S (a full turn is 2^32), where Q is a preceding SETQ and 0
                 // without one. Both components are signed. Rotating (D, 0)
@@ -2781,11 +3553,21 @@ impl<P: PinBus> Machine<P> {
                 self.cogs[cog].qy = (x * sin + y * cos) as i32 as u32;
             }
             Getqx => {
+                // Nothing queued: QMT (`qmt`). p2core's CORDIC is immediate,
+                // so "in progress" never applies.
+                if !std::mem::replace(&mut self.cogs[cog].q_unread.0, false) {
+                    self.cogs[cog].raised |= 1 << event::QMT;
+                    self.cogs[cog].touch_events();
+                }
                 let v = self.cogs[cog].qx;
                 self.set_reg(cog, ins.d, v);
                 self.wz(cog, ins, v);
             }
             Getqy => {
+                if !std::mem::replace(&mut self.cogs[cog].q_unread.1, false) {
+                    self.cogs[cog].raised |= 1 << event::QMT;
+                    self.cogs[cog].touch_events();
+                }
                 let v = self.cogs[cog].qy;
                 self.set_reg(cog, ins.d, v);
                 self.wz(cog, ins, v);
@@ -2862,6 +3644,9 @@ impl<P: PinBus> Machine<P> {
                 // the machine's time — and every cog reads a consistent one.
                 let ct = self.cogs[cog].clocks;
                 let v = if ins.c { (ct >> 32) as u32 } else { ct as u32 };
+                // The high half is a pair with the GETCT after it: no
+                // interrupt between them (`int_getct_wc`).
+                self.cogs[cog].int_shield |= ins.c;
                 self.set_reg(cog, ins.d, v);
             }
 
@@ -2891,10 +3676,9 @@ impl<P: PinBus> Machine<P> {
             // ADDCT1/2/3 arm a deadline: D + S goes BOTH into the deadline
             // register and back into D (silicon: din $80000000 + 1 leaves
             // d=$80000001). Bits 20:19 select which of CT1/CT2/CT3 is armed
-            // rather than meaning WC/WZ, so these never touch the flags.
-            // Three deadline registers on silicon; only `ct1` is modelled
-            // here, so 2 and 3 alias onto it.
-            // TODO: give `Cog` real `ct2`/`ct3` fields and route each here.
+            // rather than meaning WC/WZ, so these never touch the flags. Each
+            // has its own target (`ct_independent`), and ADDCTn clears its
+            // event flag.
             //
             // Addct1 must stay in this arm. It was briefly dropped while
             // applying silicon-conformance patches, and the firmware stopped
@@ -2902,18 +3686,17 @@ impl<P: PinBus> Machine<P> {
             // firmware arms its next wake, so the whole image traps on the
             // first one.
             Addct1 | Addct2 | Addct3 => {
+                let n = match ins.op {
+                    Addct1 => 0,
+                    Addct2 => 1,
+                    _ => 2,
+                };
                 let v = d.wrapping_add(s);
                 self.set_reg(cog, ins.d, v);
-                self.cogs[cog].ct1 = v;
-            }
-            Waitct1 => {
-                let target = self.cogs[cog].ct1;
-                // Against the same counter `GETCT` reads: the cog's own clock.
-                let now = self.cogs[cog].clocks as u32;
-                let delta = target.wrapping_sub(now);
-                if (delta as i32) > 0 {
-                    self.cogs[cog].clocks += delta as u64;
-                }
+                self.cogs[cog].ct[n] = v;
+                // Cleared after its own end: the old target's level at the end
+                // of this instruction does not count (`ct_addct_clears`).
+                self.cogs[cog].ct_since[n] = self.cogs[cog].clocks;
             }
             Waitx => {
                 // The cog is not executing during a wait: jump the clock
@@ -2933,83 +3716,162 @@ impl<P: PinBus> Machine<P> {
                 }
             }
 
-            // ---- conditional jumps on events
+            // ---- events: jump on, poll, wait, configure
             //
-            // The two families the boot ROM uses:
-            //   J{n}ct1/2/3 — timer events, which are REAL: `addct1` sets a
-            //     deadline and the serial timeout loops `jct1` on it. Modelled
-            //     against the same counter GETCT reads.
-            //   everything else (SE1-4, INT, ATN, PAT, FBW, XMT/XFI/XRO/XRL,
-            //     QMT) — event sources nothing in this model raises. The
-            //     "jump if event" form never jumps; the "jump if not" form
-            //     always does.
-            Jct1 | Jct2 | Jct3 => {
-                let now = self.cogs[cog].clocks as u32;
-                let passed = (now.wrapping_sub(self.cogs[cog].ct1) as i32) >= 0;
-                if passed {
+            // Jxxx/JNxxx jump if the flag is set/clear, POLLxxx copy it into
+            // C/Z, WAITxxx wait for it -- and all three clear it, unless the
+            // sensor sets it again at the end of the same instruction.
+            Jint | Jct1 | Jct2 | Jct3 | Jse1 | Jse2 | Jse3 | Jse4 | Jpat | Jfbw | Jxmt | Jxfi
+            | Jxro | Jxrl | Jatn | Jqmt | Jnint | Jnct1 | Jnct2 | Jnct3 | Jnse1 | Jnse2 | Jnse3
+            | Jnse4 | Jnpat | Jnfbw | Jnxmt | Jnxfi | Jnxro | Jnxrl | Jnatn | Jnqmt => {
+                let (ev, on_set) = Self::jump_event(ins.op);
+                let set = self.cogs[cog].take_event(ev);
+                if set == on_set {
                     self.cogs[cog].pc = self.rel9_target(ins, s, pc);
                     branched = true;
                 }
             }
-            Jnct1 | Jnct2 | Jnct3 => {
-                let now = self.cogs[cog].clocks as u32;
-                let passed = (now.wrapping_sub(self.cogs[cog].ct1) as i32) >= 0;
-                if !passed {
-                    self.cogs[cog].pc = self.rel9_target(ins, s, pc);
-                    branched = true;
-                }
-            }
-            Jint | Jse1 | Jse2 | Jse3 | Jse4 | Jpat | Jfbw | Jxmt | Jxfi | Jxro | Jxrl | Jatn
-            | Jqmt => {
-                // No such event ever fires here; never jump. (JQMT is the one
-                // to watch: it means "CORDIC result waiting", and the boot ROM
-                // does not use the CORDIC, so idle is correct.)
-            }
-            Jnint | Jnse1 | Jnse2 | Jnse3 | Jnse4 | Jnpat | Jnfbw | Jnxmt | Jnxfi | Jnxro
-            | Jnxrl | Jnatn | Jnqmt => {
-                self.cogs[cog].pc = self.rel9_target(ins, s, pc);
-                branched = true;
-            }
-
-            // ---- selectable events
-            Setse1 => self.cogs[cog].se1_cfg = d,
-            Setse2 | Setse3 | Setse4 => {}
-            Pollse1 | Pollse2 | Pollse3 | Pollse4 => {
-                // Poll-and-clear: no event pending, so C/Z report not-set.
+            Pollint | Pollct1 | Pollct2 | Pollct3 | Pollse1 | Pollse2 | Pollse3 | Pollse4
+            | Pollpat | Pollfbw | Pollxmt | Pollxfi | Pollxro | Pollxrl | Pollatn | Pollqmt => {
+                let set = self.cogs[cog].take_event(Self::poll_event(ins.op));
                 if ins.c {
-                    self.cogs[cog].c = false;
+                    self.cogs[cog].c = set;
                 }
                 if ins.z {
-                    self.cogs[cog].z = false;
+                    self.cogs[cog].z = set;
+                }
+            }
+            Waitint | Waitct1 | Waitct2 | Waitct3 | Waitse1 | Waitse2 | Waitse3 | Waitse4
+            | Waitpat | Waitfbw | Waitxmt | Waitxro | Waitxrl | Waitatn => {
+                branched = self.exec_wait(cog, ins, pc, Self::wait_event(ins.op));
+            }
+            Setse1 | Setse2 | Setse3 | Setse4 => {
+                let n = match ins.op {
+                    Setse1 => 0,
+                    Setse2 => 1,
+                    Setse3 => 2,
+                    _ => 3,
+                };
+                let cfg = d & 0x1FF;
+                self.cogs[cog].touch_events();
+                self.cogs[cog].se_cfg[n] = cfg;
+                if (cfg >> 6) & 7 != 0 || (cfg >> 4) & 3 != 0 {
+                    self.cogs[cog].se_sampled |= 1 << n;
+                } else {
+                    self.cogs[cog].se_sampled &= !(1 << n);
+                }
+                self.cogs[cog].se_fresh_next |= 1 << n;
+                self.cogs[cog].clear_after |= 1 << (event::SE1 as usize + n);
+            }
+            Setpat => {
+                // C selects INB, Z selects "equal" (P2 docs, POLLPAT).
+                let (c, z) = (self.cogs[cog].c, self.cogs[cog].z);
+                self.cogs[cog].touch_events();
+                self.cogs[cog].pat = Some((d, s, c, z));
+                self.cogs[cog].pat_fresh_next = true;
+                self.cogs[cog].clear_after |= 1 << event::PAT;
+            }
+            Cogatn => {
+                for target in 0..NUM_COGS {
+                    if d & (1 << target) != 0 {
+                        self.cogs[target].atn_in = true;
+                        self.cogs[target].touch_events();
+                    }
                 }
             }
 
             // ---- interrupts
-            Setint1 => self.cogs[cog].int1_src = (d & 0xF) as u8,
-            Setint2 | Setint3 => {}
+            Setint1 | Setint2 | Setint3 => {
+                let x = match ins.op {
+                    Setint1 => 0,
+                    Setint2 => 1,
+                    _ => 2,
+                };
+                self.cogs[cog].int_src[x] = (d & 0xF) as u8;
+                self.cogs[cog].touch_events();
+            }
+            Trgint1 | Trgint2 | Trgint3 => {
+                // A trigger like any event's: ignored while that interrupt is
+                // already triggered or in its own ISR (`int_self_retrigger`).
+                let x = match ins.op {
+                    Trgint1 => 0,
+                    Trgint2 => 1,
+                    _ => 2,
+                };
+                self.cogs[cog].touch_events();
+                if self.cogs[cog].int_state[x] == IntState::Idle {
+                    self.cogs[cog].int_state[x] = IntState::Pending;
+                    self.cogs[cog].int_since[x] = self.cogs[cog].boundary + 1;
+                    self.cogs[cog].raised |= 1 << event::INT;
+                }
+            }
+            Nixint1 | Nixint2 | Nixint3 => {
+                let x = match ins.op {
+                    Nixint1 => 0,
+                    Nixint2 => 1,
+                    _ => 2,
+                };
+                if self.cogs[cog].int_state[x] == IntState::Pending {
+                    self.cogs[cog].int_state[x] = IntState::Idle;
+                }
+            }
+            Stalli => {
+                self.cogs[cog].touch_events();
+                self.cogs[cog].stalli = true;
+            }
+            Allowi => {
+                self.cogs[cog].touch_events();
+                // Takes effect a boundary late: one more instruction runs
+                // before a stalled interrupt branches (`int_stalli`).
+                self.cogs[cog].stalli = false;
+                self.cogs[cog].allowi_at = self.cogs[cog].boundary + 1;
+            }
 
             // ---- hub FIFO
             Wrfast | Rdfast => {
-                // D is the block-wrap count (0 = unlimited); the ROM and the
-                // loaders only ever pass 0, so only the start address matters.
+                // D is the block count in 64-byte blocks (0 = unlimited). The
+                // addressing ignores it -- the ROM and the loaders only pass 0
+                // -- but the FBW event counts it.
                 self.cogs[cog].fifo_addr = s;
+                self.cogs[cog].fifo_block = (d & 0x3FFF) * 64;
+                self.cogs[cog].fifo_moved = 0;
+                self.cogs[cog].fifo_wraps = 0;
+                self.cogs[cog].fifo_reads = ins.op == Rdfast;
+                if self.cogs[cog].ev_live {
+                    self.cogs[cog].clear_after |= 1 << event::FBW;
+                    self.cogs[cog].steady_valid = false;
+                }
+            }
+            Fblock => {
+                // The block count and start address the FIFO reloads at its
+                // next wrap; only the count matters to this model.
+                self.cogs[cog].fifo_block = (d & 0x3FFF) * 64;
+                self.cogs[cog].fifo_moved = 0;
+                self.cogs[cog].fifo_wraps = 0;
+                if self.cogs[cog].ev_live {
+                    self.cogs[cog].clear_after |= 1 << event::FBW;
+                    self.cogs[cog].steady_valid = false;
+                }
             }
             Wfbyte => {
                 let a = self.cogs[cog].fifo_addr;
                 self.wr_byte(a, d);
                 self.cogs[cog].fifo_addr = a.wrapping_add(1);
+                self.fifo_advance(cog, 1);
             }
             Wfword => {
                 let a = self.cogs[cog].fifo_addr;
                 self.wr_byte(a, d & 0xFF);
                 self.wr_byte(a.wrapping_add(1), (d >> 8) & 0xFF);
                 self.cogs[cog].fifo_addr = a.wrapping_add(2);
+                self.fifo_advance(cog, 2);
             }
             Wflong => {
                 let a = self.cogs[cog].fifo_addr;
                 self.note_write(cog, a, d, 4);
                 self.wr_long(a, d);
                 self.cogs[cog].fifo_addr = a.wrapping_add(4);
+                self.fifo_advance(cog, 4);
             }
             Rfbyte | Rfword | Rflong => {
                 let a = self.cogs[cog].fifo_addr;
@@ -3019,6 +3881,7 @@ impl<P: PinBus> Machine<P> {
                     _ => (self.rd_long(a), 4),
                 };
                 self.cogs[cog].fifo_addr = a.wrapping_add(step);
+                self.fifo_advance(cog, step);
                 self.set_reg(cog, ins.d, v);
                 self.wz(cog, ins, v);
                 if ins.c {
@@ -3052,11 +3915,20 @@ impl<P: PinBus> Machine<P> {
             }
             Xinit | Xzero | Xcont => {
                 self.start_streamer(cog, d, if ins.op == Xzero { 0 } else { s });
+                // The command leaves the buffer at once, so it is empty again
+                // (XMT) during the next instruction.
+                self.cogs[cog].clear_after |=
+                    (1 << event::XMT) | (1 << event::XFI) | (1 << event::XRO);
+                self.cogs[cog].raised_next |= 1 << event::XMT;
+                self.cogs[cog].touch_events();
             }
             Waitxfi => {
                 // The matching `WYPIN` has already produced the edges.
                 self.cogs[cog].streamer.bits_left = 0;
                 self.cogs[cog].streamer.xfi = true;
+                self.cogs[cog].steady_valid = false;
+                self.cogs[cog].xfi_seen = true;
+                self.cogs[cog].events &= !(1 << event::XFI);
             }
             Rdpin | Rqpin => {
                 let (v, busy) = self.pins.rdpin((s & 63) as u8);
@@ -3282,6 +4154,7 @@ impl<P: PinBus> Machine<P> {
                 self.set_reg(cog, ins.d, r);
             }
             Crcnib => {
+                self.cogs[cog].int_shield = true;
                 // Four CRCBIT steps in one instruction, taking the data bit
                 // from the top of Q (MSB first) instead of C. Silicon:
                 // $F9DFC001 with D=2, S=#1 gave $00000001 -- `(D >> 1) ^ S`;
@@ -3489,7 +4362,13 @@ impl<P: PinBus> Machine<P> {
                 // $100..$1FF are real LUT addresses, and the boot ROM's
                 // circular receive buffer (`rdlut x,tail`) uses the register
                 // form.
-                let v = self.cogs[cog].lut[(s as usize) & (LUT_LONGS - 1)];
+                let at = (s as usize) & (LUT_LONGS - 1);
+                let ev = self.lut_events(cog, at, false);
+                if ev != 0 {
+                    self.cogs[cog].raised |= ev;
+                    self.cogs[cog].touch_events();
+                }
+                let v = self.cogs[cog].lut[at];
                 self.set_reg(cog, ins.d, v);
                 self.wz(cog, ins, v);
                 if ins.c {
@@ -3505,6 +4384,13 @@ impl<P: PinBus> Machine<P> {
                 // RDLUT cases then read back.
                 let at = (s as usize) & (LUT_LONGS - 1);
                 self.cogs[cog].lut[at] = d;
+                // The write lands as the instruction ends, so its event is
+                // sensed during the next one (`se_lut`).
+                let ev = self.lut_events(cog, at, true);
+                if ev != 0 {
+                    self.cogs[cog].raised_next |= ev;
+                    self.cogs[cog].touch_events();
+                }
             }
             _ => {
                 self.cogs[cog].running = false;
