@@ -28,16 +28,22 @@ typedef struct
     const char path[DEV_NVRAM_PATH_MAX];
     const uint32_t size;
     const bool loadOnBoot; // Load data once on boot
+    /* The length of the one earlier record this one extends by appending
+     * fields (0 = none). A file of exactly this length is read as a prefix and
+     * the newer fields keep their defaults; any other short file is an
+     * unrelated older layout and is ignored in favour of the defaults. */
+    const uint32_t legacySize;
 } dev_nvram_channelConfig_t;
 
-#define DEV_NVRAM_CHANNEL_CONFIG_CREATE(type, path, loadOnBoot) \
-    {                                                           \
-        &dev_nvram_##type##Data,                                \
-        &dev_nvram_##type##DataExternal,                        \
-        &dev_nvram_##type##Default,                             \
-        path,                                                   \
-        sizeof(type),                                           \
-        loadOnBoot,                                             \
+#define DEV_NVRAM_CHANNEL_CONFIG_CREATE(type, path, loadOnBoot, legacySize) \
+    {                                                                       \
+        &dev_nvram_##type##Data,                                            \
+        &dev_nvram_##type##DataExternal,                                    \
+        &dev_nvram_##type##Default,                                         \
+        path,                                                               \
+        sizeof(type),                                                       \
+        loadOnBoot,                                                         \
+        legacySize,                                                         \
     },
 
 #define DEV_NVRAM_CHANNEL_DATA_CREATE(type)     \

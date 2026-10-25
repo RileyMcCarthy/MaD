@@ -150,6 +150,28 @@ void test_dev_nvram_loadsAProfileSavedBeforeTheServoGains(void)
     TEST_ASSERT_EQUAL_INT(0, loaded.servoKi);
 }
 
+void test_dev_nvram_ignoresAnIncompatibleOlderProfile(void)
+{
+    VIBES_TEST("nvram.incompatible-profile-ignored",
+               "src/DEV/dev_nvram.c#dev_nvram_run",
+               "an SD card holding a 64-byte machine profile from an older layout whose fields sit at different offsets");
+    VIBES_EXPECT_WHY("defaults-used",
+                     "on boot the machine runs on the default profile, with none of the card's values",
+                     "values read at the wrong offsets would set limits nobody chose, like a 0.01 N force limit seen on the bench");
+    FILE *file = fopen("./test/sd/profile.bin", "w");
+    TEST_ASSERT_NOT_NULL(file);
+    TEST_ASSERT_EQUAL_size_t(64U, fwrite(&dev_nvram_machineProfileTest1, 1, 64U, file));
+    fclose(file);
+
+    dev_nvram_run();
+    dev_nvram_run();
+
+    MachineProfile loaded;
+    TEST_ASSERT_TRUE(dev_nvram_getChannelData(DEV_NVRAM_CHANNEL_MACHINE_PROFILE, &loaded, sizeof(MachineProfile)));
+    TEST_ASSERT_EQUAL_MEMORY(dev_nvram_config.channels[DEV_NVRAM_CHANNEL_MACHINE_PROFILE].dataDefault, &loaded,
+                             sizeof(MachineProfile));
+}
+
 void test_dev_nvram_refusesOutOfRangeChannel(void)
 {
     VIBES_TEST("nvram.unknown-channel-refused",

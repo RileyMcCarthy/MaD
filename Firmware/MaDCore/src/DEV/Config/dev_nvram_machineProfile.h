@@ -38,10 +38,13 @@ typedef struct
  * makes it a deliberate one: it fails the build rather than the machine, and
  * whoever updates the number has to decide what happens to existing cards.
  *
- * The decision for an APPENDED field: an older card is a prefix of the new
- * record, and dev_nvram reads it over the defaults, so its saved fields are
- * kept and the new ones take their defaults. Inserting, removing or retyping
- * a field is still a break -- old cards would be read at the wrong offsets.
+ * The decision for an APPENDED field: a card from the layout just before it
+ * is a prefix of the new record, so dev_nvram reads a file of exactly that
+ * legacy length over the defaults -- its saved fields are kept and the new
+ * ones take their defaults. Any other length (an older, incompatible layout:
+ * the bench card from before the load-cell fields were reworked is 64 bytes
+ * and would be read at the wrong offsets) still falls back to the defaults.
+ * Appending again means moving DEV_NVRAM_MACHINE_PROFILE_LEGACY_SIZE up.
  *
  * 20 bytes of name, padded to the 4-byte alignment of the ints that follow,
  * then 15 ints (servoKp and servoKi appended to the original 13). */
@@ -58,6 +61,10 @@ typedef struct
  * The message lives in the identifier, because that is all a negative-size
  * array can carry: the error reads "'MachineProfile_is_persisted_raw_to_SD_so_
  * its_size_is_frozen' declared as an array with a negative size". */
+/* The record before servoKp/servoKi were appended (name + 13 ints). A card of
+ * exactly this length is read as a prefix; see dev_nvram_channelConfig_t. */
+#define DEV_NVRAM_MACHINE_PROFILE_LEGACY_SIZE (DEV_NVRAM_MAX_MACHINE_PROFILE_NAME + (13 * sizeof(int)))
+
 typedef char MachineProfile_is_persisted_raw_to_SD_so_its_size_is_frozen
     [(sizeof(MachineProfile) == (DEV_NVRAM_MAX_MACHINE_PROFILE_NAME + (15 * sizeof(int)))) ? 1 : -1];
 
