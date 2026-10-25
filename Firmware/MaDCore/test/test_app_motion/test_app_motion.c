@@ -3,7 +3,7 @@
 // app_motion is a pure motion executor: it snapshots all external inputs once
 // per app_motion_run() (via processInputs), runs a small state machine
 // (DISABLED -> WAITING -> MOVING), pops moves from an internal lib_staticQueue,
-// and drives the stepper via the dev_stepper API. It also owns the G28 homing
+// and drives the servo via the dev_servo API. It also owns the G28 homing
 // sub-state-machine and converts steps<->um for the setpoint/position getters.
 //
 // INPUT-SNAPSHOT cadence: the module reads ALL inputs once at the top of
@@ -32,11 +32,8 @@
 #include "HAL_GPIO.h"                 // HAL_GPIO_channel_E, HAL_GPIO_ENDSTOP_UPPER
 #include "IO_positionFeedback.h"      // IO_positionFeedback_channel_E
 
-// Exercise the actuator-agnostic motion state machine against the dev_stepper
-// mocks below. app_motion's actuator abstraction is a 1:1 macro map, so pinning
-// the stepper backend fully covers the logic; the closed-loop dev_servo driver
-// (the production default) is validated by its own suite, not here.
-#define APP_MOTION_USE_SERVO 1
+// The motion state machine against the dev_servo doubles below; the
+// closed-loop driver itself is validated by its own suite, not here.
 #include "app_motion.h"
 
 /**********************************************************************
@@ -439,7 +436,7 @@ void test_waiting_pops_and_starts_move_then_moving(void)
     TEST_ASSERT_FALSE(app_motion_isIdle()); /* now MOVING */
 }
 
-/* A linear move completes (back to WAITING/idle) only once dev_stepper reports
+/* A linear move completes (back to WAITING/idle) only once dev_servo reports
  * atTarget; before that it stays MOVING. */
 void test_moving_completes_only_when_at_target(void)
 {
@@ -469,7 +466,7 @@ void test_moving_completes_only_when_at_target(void)
  * Tests: move arithmetic (steps/feed scaling, absolute vs incremental)
  **********************************************************************/
 
-/* Zero-feedrate G0/G1 is rejected: no dev_stepper_move is issued, but the
+/* Zero-feedrate G0/G1 is rejected: no dev_servo_moveTo is issued, but the
  * move still "completes" via the MOVING path once atTarget is reported. */
 void test_zero_feedrate_move_issues_no_stepper_move(void)
 {
@@ -690,7 +687,7 @@ void test_homing_full_sequence(void)
 
     /* Run 5: timer expired -> set jaw-offset coordinate + start backoff move.
      *   IO_positionFeedback_setValue: jawOffset(mm) -> um = 3*1000 = 3000
-     *   dev_stepper_setPosition: jawOffsetSteps = 100*3 = 300
+     *   dev_servo_setPosition: jawOffsetSteps = 100*3 = 300
      *   backoff move target = jawOffsetSteps + homingOffsetSteps
      *                       = 300 + 100*10 = 1300 steps @ 500 steps/s */
     global_timeus = 1500U * 1000U;
@@ -760,7 +757,7 @@ void test_homing_fails_when_target_reached_without_endstop(void)
  **********************************************************************/
 
 /* getSetpoint mirrors processOutputs: setpoint(um) = target(steps)*1000/stepsPerMM.
- * The snapshot of dev_stepper_getTarget is taken at run() time. */
+ * The snapshot of dev_servo_getTarget is taken at run() time. */
 void test_getSetpoint_scales_target_steps_to_nm(void)
 {
     VIBES_TEST("motion.setpoint-steps-to-micrometres",
