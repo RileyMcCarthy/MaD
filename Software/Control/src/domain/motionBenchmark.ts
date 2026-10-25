@@ -115,9 +115,18 @@ export interface MoveMeasurement {
 /** The servo parks once it is within this many encoder counts of a target (dev_servo positionDeadband). */
 export const SERVO_DEADBAND_COUNTS = 8;
 
-/** Within this of the target counts as settled: 1 µm, or the servo's parking deadband if that is coarser. */
+/** Close enough to MOVE ON: 1 µm, or the servo's parking deadband if that is coarser. */
 export function settleToleranceMm(encoderStepsPerMM: number): number {
   return Math.max(0.001, SERVO_DEADBAND_COUNTS / encoderStepsPerMM);
+}
+
+/**
+ * Close enough to count as SETTLED in the report: 1 µm, or one encoder count
+ * if that is coarser. Tighter than the deadband on purpose -- every move ends
+ * inside the deadband, so timing against it always reads zero.
+ */
+export function measureToleranceMm(encoderStepsPerMM: number): number {
+  return Math.max(0.001, 1 / encoderStepsPerMM);
 }
 
 /** Measure one move from its samples (oldest first, from just before the move to settled). */
@@ -303,6 +312,7 @@ export async function runTracking(
   onMove?: (index: number) => void,
 ): Promise<TrackingRun> {
   const tol = settleToleranceMm(limits.encoderStepsPerMM);
+  const measureTol = measureToleranceMm(limits.encoderStepsPerMM);
   const measurements: MoveMeasurement[] = [];
   for (let i = 0; i < moves.length; i++) {
     const move = moves[i];
@@ -341,7 +351,7 @@ export async function runTracking(
         break;
       }
     }
-    const m = measureMove(runner.samplesSince(t0 - 0.05), move, tol);
+    const m = measureMove(runner.samplesSince(t0 - 0.05), move, measureTol);
     if (m) measurements.push(m);
   }
   return { outcome: 'done', measurements };

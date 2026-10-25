@@ -1232,7 +1232,7 @@ const scenarios = [
     // each way -- which needs the firmware sequencer, the protocol pair and
     // the panel all to agree on signs and units.
     id: 'CAL1',
-    name: 'Motor calibration: open-loop check reports a matched drive and encoder',
+    name: 'Motor calibration: matched drive and encoder, then a tracking run and suggested gains',
     async run() {
       const { browser, page, errors } = await newSilPage();
       try {
@@ -1249,14 +1249,19 @@ const scenarios = [
           await waitPageTime(page, 200);
         }
         await press(run);
-        await page
-          .getByText(/Calibration passed/)
-          .waitFor({ timeout: DEVICE_WAIT_MS * 4 });
+        // The report appears once both parts have run: the open-loop check,
+        // then the closed-loop tracking program from the SIL's saved profile.
+        await page.getByTestId('suggested-gains').waitFor({ timeout: DEVICE_WAIT_MS * 10 });
+        await page.getByText(/Calibration passed/).waitFor({ timeout: DEVICE_WAIT_MS });
         // The SIL's drive and encoder are both 8192/mm: counts back match the
         // pulses sent, with the right sign.
         const measured = Number(await page.getByTestId('measured-counts').innerText());
         const expected = Number(await page.getByTestId('expected-counts').innerText());
         assert(expected > 0 && Math.abs(measured / expected - 1) < 0.02, `encoder moved ${measured} counts, expected ~${expected}`);
+        // Tracking on the ideal SIL drive: every move stops within a few µm.
+        const tracking = await page.getByTestId('tracking-summary').innerText();
+        const stopUm = Number(/Stops within ±([\d.]+) µm/.exec(tracking)?.[1] ?? NaN);
+        assert(stopUm < 5, `tracking stopped up to ${stopUm} µm from target: ${tracking}`);
         assert((await page.locator('.badge.error').count()) === 0, 'the calibration reported an error');
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
       } finally {

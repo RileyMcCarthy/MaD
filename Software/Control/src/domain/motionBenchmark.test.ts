@@ -7,7 +7,7 @@ import {
   measureMove,
   planTrackingRun,
   runTracking,
-  settleToleranceMm,
+  measureToleranceMm,
   suggestGains,
   summarizeTracking,
   trackingMayRun,
@@ -127,7 +127,7 @@ describe('measuring a move', () => {
         if (t >= 1) position = t < 1.2 ? 1.005 : t < 1.4 ? 1.0005 : 0.9995;
         return { position, commanded, setpoint: 1 };
       });
-      const m = measureMove(samples, MOVE, settleToleranceMm(8192));
+      const m = measureMove(samples, MOVE, measureToleranceMm(8192));
       expect(m).not.toBeNull();
       if (!m) return;
       expect(m.finalErrorUm).toBeCloseTo(-0.5, 6);

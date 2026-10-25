@@ -68,6 +68,13 @@ type Report =
       tracking: TrackingReport;
     };
 
+/** Samples arrive every ~13 ms, so a settle shorter than one sample is "at once". */
+const SAMPLE_MS = 15;
+
+function settleText(ms: number): string {
+  return ms < SAMPLE_MS ? 'at once' : `in ${Math.round(ms)} ms`;
+}
+
 function num(v: number, digits = 1): string {
   return Number(v.toFixed(digits)).toString();
 }
@@ -300,7 +307,7 @@ function CalibrationReport({ report }: { report: Report }) {
         <strong data-testid="lost-motion">
           {report.lostMotionCounts === null
             ? '—'
-            : `${report.lostMotionCounts} counts (${num(report.lostMotionCounts * umPerCount)} µm)`}
+            : `${report.lostMotionCounts} ${Math.abs(report.lostMotionCounts) === 1 ? 'count' : 'counts'} (${num(report.lostMotionCounts * umPerCount)} µm)`}
         </strong>
         {report.lagSeconds !== null && <span className="muted"> · drive lag {num(report.lagSeconds * 1000)} ms</span>}
       </p>
@@ -339,7 +346,7 @@ function TrackingSection({
         {s.maxSettleMs !== null && (
           <>
             {' '}
-            · settles in <strong>{Math.round(s.maxSettleMs)} ms</strong>
+            · settles <strong>{settleText(s.maxSettleMs)}</strong>
           </>
         )}
       </p>
@@ -366,7 +373,7 @@ function TrackingSection({
                 <td>{num(m.finalErrorUm)}</td>
                 <td>{num(m.peakFollowingErrorUm)}</td>
                 <td>{num(m.overshootUm)}</td>
-                <td>{m.settleMs === null ? '—' : Math.round(m.settleMs)}</td>
+                <td>{m.settleMs === null ? '—' : m.settleMs < SAMPLE_MS ? '< 15' : Math.round(m.settleMs)}</td>
               </tr>
             ))}
           </tbody>

@@ -185,7 +185,7 @@ Ported SIL regressions and matrices, all in `run-all.mjs`: `G-limit`, `TC1-multi
 `P1-precision`, `BB-back-to-back`, `TM-busy-restart`, `TM-manual-gate`, `D2-settled-jog`,
 `D3+SR-slack`, M8 jog cells, M9 slack cells, M10 WAVE-* cells, M11 link-loss cells,
 `FW1`–`FW3` / `FW5`–`FW9` (in-app loader UI; native `loadp2` CLI is still out of scope),
-`CAL1` (Settings → Motor calibration: the open-loop `G124` check on the SIL's matched 8192/mm
+`CAL1` (Settings → Motor calibration: the open-loop `G124` check, then the closed-loop tracking run, on the SIL's matched 8192/mm
 drive and encoder reports a match, with pulses signed by direction),
 `SERVO-stall` (a jammed carriage latches `SERVO_STALL` and Live clears it; needs
 `E2E_JAM_FILE`, and it runs nightly only, since it isn't in `e2e/smoke-ids.txt`
