@@ -604,6 +604,33 @@ static void test_readDirect_busy_while_write_active(void)
 }
 
 // =====================================================================================
+// open + push + close issued together, before the LOGGER cog has run (the profile save).
+// =====================================================================================
+
+static void test_open_push_close_before_the_logger_runs(void)
+{
+    VIBES_TEST("sd.save-issued-in-one-go",
+               "src/IO/IO_SDCard.c#IO_SDCard_close",
+               "an open, a record and a close requested together, before the card's own loop has run once, as a profile save does");
+    VIBES_EXPECT_WHY("record-stored",
+                     "the record is written to the card and the file is closed",
+                     "the close must not be mistaken for one of an idle channel just because the open has not been taken yet");
+    VIBES_EXPECT("not-closed-early", "the channel does not report closed until the record is on the card");
+    TEST_ASSERT_TRUE(IO_SDCard_open(IO_SDCARD_CHANNEL_GCODE, TEST_BASE_NAME, IO_SDCARD_MODE_WRITE));
+    test_item_S item = {.a = 0x12, .b = 0x34};
+    TEST_ASSERT_TRUE(IO_SDCard_push(IO_SDCARD_CHANNEL_GCODE, &item, TEST_ITEM_SIZE));
+    TEST_ASSERT_TRUE(IO_SDCard_close(IO_SDCARD_CHANNEL_GCODE));
+    TEST_ASSERT_FALSE(IO_SDCard_isClosed(IO_SDCARD_CHANNEL_GCODE));
+
+    runN(8);
+    TEST_ASSERT_TRUE(IO_SDCard_isClosed(IO_SDCARD_CHANNEL_GCODE));
+    test_item_S readBack[2] = {0};
+    TEST_ASSERT_EQUAL_UINT32(1u, readFileItems(gcodeFilePath, readBack, 2));
+    TEST_ASSERT_EQUAL_UINT32(0x12u, readBack[0].a);
+    TEST_ASSERT_EQUAL_UINT32(0x34u, readBack[0].b);
+}
+
+// =====================================================================================
 // close()-while-INIT must not latch disable (documented bug-guard in close()).
 // =====================================================================================
 
@@ -672,6 +699,7 @@ int main(void)
     RUN_TEST(test_readDirect_busy_while_write_active);
 
     RUN_TEST(test_close_while_init_is_noop);
+    RUN_TEST(test_open_push_close_before_the_logger_runs);
 
     return UNITY_END();
 }
