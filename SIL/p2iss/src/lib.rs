@@ -117,11 +117,6 @@ pub const P2ISS_PAD: Thresholds = Thresholds::new(
     DeadBand::Unknown,
 );
 
-/// Assumed clock frequency before the guest has recorded its own at hub `$14`.
-const NOMINAL_CLKFREQ: u32 = 160_000_000;
-/// RC oscillator the boot ROM runs on until a `HUBSET` writes `clkfreq`.
-const RC_CLKFREQ: u32 = 20_000_000;
-
 /// One asynchronous serial link the firmware drives, by physical pin.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SerialLink {
@@ -308,15 +303,16 @@ struct NetPins {
     /// traced and dropped.
     io: Option<ComponentNetIo>,
     shutdown: Arc<AtomicBool>,
-    /// The guest's recorded clock frequency, refreshed each slice.
+    /// The rate the machine's clock runs at ([`Machine::clock_hz`]), set
+    /// once the machine is built and refreshed each slice.
     ///
     /// [`PinBus`] is called *by* the machine, so it cannot ask the machine for
-    /// `clkfreq`; the component reads it out after each slice and stores it
-    /// here, where [`NetPins::framing_for`] can derive a rate from it.
-    clkfreq: u32,
-    /// True when the guest started in the boot ROM (RC oscillator, ~20 MHz)
-    /// rather than a flexcc image that already selected the 160 MHz PLL.
-    rom_boot: bool,
+    /// its rate; the component reads it out after each slice and stores it
+    /// here, where [`NetPins::framing_for`] can derive a baud from it. It is
+    /// the rate the machine turns clocks into time at, so a divisor read
+    /// through it frames the bits the guest times: RCFAST through a ROM
+    /// boot, the program's own record once it selects the PLL.
+    clock_hz: u32,
     /// Pins carried on nets as plain levels — see [`P2Iss::with_level_pins`].
     level_pins: Vec<u8>,
     /// Pins that emit pulse trains — see [`P2Iss::with_pulse_pins`].
@@ -374,8 +370,11 @@ impl NetPins {
     /// oscillator, while the machine keeps converting at whatever hub `$14`
     /// holds. Wire stamps have to be compared on the machine's own scale.
     fn clock_hz(&self) -> u64 {
-        match self.clkfreq {
-            0 => u64::from(NOMINAL_CLKFREQ),
+        // Set from `Machine::clock_hz` as soon as the machine is built. Before
+        // that, the rate a machine converts at when no clock is recorded
+        // (p2core's `UNRECORDED_CLKFREQ`), as `pulse::clocks_to_ns` assumes.
+        match self.clock_hz {
+            0 => 160_000_000,
             f => u64::from(f),
         }
     }
@@ -457,8 +456,8 @@ impl NetPins {
         }
     }
 
-    fn set_clkfreq(&mut self, hz: u32) {
-        self.clkfreq = hz;
+    fn set_clock_hz(&mut self, hz: u32) {
+        self.clock_hz = hz;
     }
 
     fn guest_clk(&self) -> u32 {
@@ -467,15 +466,7 @@ impl NetPins {
         if let Some(core) = self.core.as_ref() {
             return u32::try_from(core.clock.hz()).unwrap_or(u32::MAX);
         }
-        // The ROM fills a base64 table at hub $0, so `$14` is not clkfreq
-        // until an application writes it. Stay on the RC oscillator.
-        if self.rom_boot {
-            return RC_CLKFREQ;
-        }
-        match self.clkfreq {
-            0 => NOMINAL_CLKFREQ,
-            f => f,
-        }
+        self.clock_hz
     }
 
     /// Begin (or retune) the train `WYPIN` just asked for.
@@ -903,8 +894,7 @@ impl NetPins {
             shared,
             io: None,
             shutdown: Arc::new(AtomicBool::new(false)),
-            clkfreq: 0,
-            rom_boot: false,
+            clock_hz: 0,
             level_pins: Vec::new(),
             pulse_pins: Vec::new(),
             clock: 0,
@@ -953,8 +943,8 @@ impl P2IssHandle {
     /// The rate a transmit pin is actually framing at, once it has transmitted.
     ///
     /// `None` before the first byte. This is the ISS's own answer — derived
-    /// from the pin's `WXPIN` divisor and the `clkfreq` the guest recorded —
-    /// not the rate the link was declared with.
+    /// from the pin's `WXPIN` divisor and the rate the clock runs at
+    /// ([`Self::clock_hz`]) — not the rate the link was declared with.
     pub fn derived_baud(&self, tx_pin: u8) -> Option<u32> {
         self.shared
             .tx
@@ -1224,7 +1214,12 @@ impl P2Iss {
         // P61 (the flash strap) off whatever the bench puts on their nets, as
         // the chip does. A ROM boot that wants the programming UART carries
         // P59 as a level pin and pulls it up.
-        bus.rom_boot = matches!(source, BootSource::Rom(_));
+        let mut machine = match source {
+            BootSource::Image(image) => Machine::new(image, bus),
+            BootSource::Rom(rom) => Machine::with_boot_rom(rom, bus),
+        };
+        let hz = machine.clock_hz();
+        machine.pins.set_clock_hz(hz);
         Self {
             pins,
             links: links.to_vec(),
@@ -1232,10 +1227,7 @@ impl P2Iss {
             sense_pins: Vec::new(),
             pulse_pins: Vec::new(),
             shared,
-            machine: Arc::new(Mutex::new(match source {
-                BootSource::Image(image) => Machine::new(image, bus),
-                BootSource::Rom(rom) => Machine::with_boot_rom(rom, bus),
-            })),
+            machine: Arc::new(Mutex::new(machine)),
             shutdown,
         }
     }
@@ -1480,10 +1472,11 @@ impl Component for P2Iss {
                 }
                 {
                     let mut machine = machine.lock().expect("machine never poisoned");
-                    // The guest's own clkfreq, so a rate derived on the next
-                    // transmit uses the value the firmware actually recorded.
-                    let clk = machine.clkfreq();
-                    machine.pins.set_clkfreq(clk);
+                    // The rate the machine's clock runs at, so a baud derived
+                    // on the next transmit is the one the pin's divisor makes
+                    // at the clock the guest is timed by.
+                    let hz = machine.clock_hz();
+                    machine.pins.set_clock_hz(hz);
                     // Replay every transition the nets resolved since the last
                     // slice, in order, before the guest executes anything that
                     // could read a pin. One at a time: an edge-counted input
