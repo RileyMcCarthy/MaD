@@ -273,8 +273,8 @@ to = "MACHINE.DIR"
 # outputs): the kind reads STEP and DIR single-ended against DRIVE_GND
 # (mad-catalog/src/machine.rs, its DRIVE_GND reference).
 
-# SC_ENA, from JP1's common pad: Q1's open collector, which IC14's OUTC,
-# from P6, switches (JP1 on pads 2-3: the scenario, below).
+# SC_ENA, from JP1's common pad (IC14's OUTC, from P6, with JP1 on pads
+# 1-2: the scenario, below).
 [[wire]]
 from = "EDGE.J21.7"
 to = "MACHINE.ENA"
@@ -464,24 +464,20 @@ part = "EC32.S301"
 pole = 3
 state = "closed"
 
-# JP1, TTL-SINK, on pads 2-3 (B-C): SC_ENA on Q1's open collector, which
-# IC14's output OUTC switches through R24, so SC_ENA sinks to EN_GND while
-# OUTC is high. Pads 1-2 (A-C) put OUTC itself on SC_ENA. The firmware never
-# drives the enable pin P6 (read: Firmware/MaDCore/src/DEV/dev_stepper.c
-# never uses its channel's pinEnable; SIL/MaDSim/src/iss_description.rs,
-# IDLE_PULLS: "the enable is an open collector biased to its active level
-# on the drive"), so IC14 gives OUTC the default high an ISO674x without the
-# F option gives an open input (SLLSFJ6G, its "INx open" row; embsim
-# models/src/isolation/iso67xx.rs). Only pads 2-3 then hold the drive's
-# enable, active low, at its active level: on pads 1-2 SC_ENA rests at
-# OUTC's 5 V and the drive stays disabled (measured, IC14 fixed: 4.99 V on
-# SC_ENA with P6 released). embsim's drive model names Q1 as the machine's
-# enable path too (models/src/machine/stepper_motor.rs). Which pads the
-# machine's carrier has closed is not confirmed on the board. To put SC_ENA
-# on OUTC, change this entry's pole to 0.
+# JP1, TTL-SINK, on pads 1-2 (A-C), its default: SC_ENA from IC14's TTL
+# output OUTC. Pads 2-3 (B-C) put SC_ENA on Q1's open collector instead,
+# which OUTC switches through R24. The firmware drives the enable pin P6,
+# active high, from the servo loop on the MOTOR cog: low from start-up and
+# whenever motion is disabled, high while it is enabled
+# (Firmware/MaDCore/src/DEV/dev_servo.c, dev_servo_private_applyEnable), so
+# OUTC follows P6 onto SC_ENA. The drive's enable is energized = enabled
+# (ENA high enables; the machine's owner, 2026-10-25), which the machine's
+# kind models (mad-catalog/src/machine.rs). Which pads the machine's carrier
+# has closed is not confirmed on the board. To flip it, change this entry's
+# pole to 1.
 [[switch]]
 part = "EDGE.JP1"
-pole = 1
+pole = 0
 state = "closed"
 
 # JP2, JP3 and JP5 (A_GND, B_GND, ZI_GND) stay open: they ground A-, B- and

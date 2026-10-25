@@ -34,7 +34,9 @@ typedef enum
 
 typedef struct
 {
-    const uint8_t pinEnable;
+    /* The drive's enable input (energized = enabled): driven by dev_stepper_run
+     * alone, inactive from init and in DISABLED, active in every other state. */
+    const HAL_GPIO_channel_E gpioEnable;
     const uint8_t pinStep;
     const HAL_GPIO_channel_E gpioDirection;
     HAL_pulseOut_channel_E pulseChannel;

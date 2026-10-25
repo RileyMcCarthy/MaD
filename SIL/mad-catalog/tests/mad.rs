@@ -44,10 +44,11 @@
 //!   `mad-ic14-fixed-cosim.toml` adds to `mad-cosim.toml` (one wire from
 //!   `IC14`'s pin 9 to `EN_GND`): the firmware enables motion and jogs the
 //!   carriage as the app does, and the encoder comes to rest within the
-//!   firmware's parking deadband of each target. The firmware never drives
-//!   the enable pin `P6`; `IC14` gives its default high there, which turns
-//!   on `Q1`, the transistor `JP1`'s pads 2-3 put on the drive's enable, and
-//!   `P5` reads the drive's ready line.
+//!   firmware's parking deadband of each target. The firmware drives the
+//!   enable pin `P6` from its servo loop, active high: low at rest, high
+//!   once motion is enabled, low again once it is disabled. `IC14`'s `OUTC`
+//!   carries it to the drive's enable (`JP1` on its default pads 1-2), which
+//!   is energized = enabled, and `P5` reads the drive's ready line.
 //! - **The encoder.** With the drive's inputs driven from the bench (the
 //!   carrier's own path to them is `IC14`'s) and the chip held in reset
 //!   from the debug header, the drive turns the encoder, whose pairs reach
@@ -502,8 +503,8 @@ fn the_inputs_at_rest() {
         "enable-unreached",
         "the drive's enable input reads no source",
         "the servo isolator IC14's secondary ground pins are on a net of their own, so its \
-         outputs toward the drive have no return and stay released, and the transistor that \
-         sinks the enable stays off"
+         outputs toward the drive have no return and stay released, and the carrier's enable \
+         jumper, on its default pads, puts one of those outputs on the drive's enable"
     );
     expect!(
         "ready-unread",
@@ -1040,7 +1041,15 @@ fn held_low() -> Box<dyn Component> {
     }])
 }
 
-/// The drive's inputs from the bench: enabled (its enable is active low)
+/// A source at [`BENCH_HIGH_V`] from the start.
+fn held_high() -> Box<dyn Component> {
+    source(vec![Step {
+        at_ns: 0,
+        volts: BENCH_HIGH_V,
+    }])
+}
+
+/// The drive's inputs from the bench: enabled (its enable is active high)
 /// and forward (direction low) from the start, and [`STEPS`] steps; and the
 /// chip held in reset from the debug header's `RESn` (`J1.3`), so the
 /// processor runs nothing while the bench turns the drive: its pads,
@@ -1064,7 +1073,7 @@ fn bench_drive(bench: Bench) -> Bench {
     }
     bench
         .component("BENCH_RESET", held_low(), "OUT", "EDGE.J1.3")
-        .component("BENCH_ENA", held_low(), "OUT", "MACHINE.ENA")
+        .component("BENCH_ENA", held_high(), "OUT", "MACHINE.ENA")
         .component("BENCH_DIR", held_low(), "OUT", "MACHINE.DIR")
         .component("BENCH_STEP", source(steps), "OUT", "MACHINE.STEP")
 }
@@ -1358,6 +1367,9 @@ fn ic14_fix() -> String {
         .to_string()
 }
 
+/// The drive's enable input, `J21.7`, from `JP1`'s common pad.
+const SC_ENA: &str = "EDGE./MaD_Edge_Sheet3/SC_ENA";
+
 /// Encoder counts, and drive steps, a millimetre: `mad-machine`'s scale.
 const COUNTS_PER_MM: i64 = mad_catalog::machine::STEPS_PER_MM as i64;
 
@@ -1377,6 +1389,29 @@ const JOG_SPEED_UM_S: i32 = 5_000;
 /// this long; a jog gets at most [`JOG_WAIT_NS`] to come to rest.
 const REST_NS: u64 = 50_000_000;
 const JOG_WAIT_NS: u64 = 3_000_000_000;
+
+/// Board time the firmware gets to carry a change of motion enable to the
+/// drive's enable input: its control loop's 1 kHz tick and the servo loop's,
+/// with room.
+const ENABLE_WAIT_NS: u64 = 100_000_000;
+
+/// Step the board from `at` until `net` reads `level`, for at most
+/// [`ENABLE_WAIT_NS`]: the instant it did.
+fn until_level(rig: &mut Rig, net: &str, level: Level, at: u64) -> u64 {
+    let first = at;
+    let mut at = at;
+    while level_of(rig.state(net)) != Some(level) {
+        assert!(
+            at - first < ENABLE_WAIT_NS,
+            "{net} still reads {:?} {} ns after the motion enable changed; {}",
+            rig.state(net),
+            at - first,
+            rig.summary("MACHINE")
+        );
+        step(rig, &mut at);
+    }
+    at
+}
 
 /// Jog the carriage by `um` as the app does, both writes acknowledged, and
 /// step the board until the encoder comes to rest: its count, and the
@@ -1417,17 +1452,27 @@ fn with_ic14_fixed_the_firmware_jogs_the_carriage() {
     behaviour!(Test {
         id: "mad-project.ic14-fixed-jog",
         covers: Some("SIL/mad-ic14-fixed-cosim.toml"),
-        given: "the machine's project file with the servo isolator's ground fixed, the firmware \
-                booted, and a host on the debug header that enables motion, then jogs the \
-                carriage 0.5 mm forward and 0.25 mm back at 5 mm/s",
+        given: "the machine's project with the servo isolator's ground fixed, the firmware \
+                booted, and a host on the debug header that enables motion, jogs 0.5 mm \
+                forward and 0.25 mm back, then disables motion",
     });
     expect!(
+        "disabled-at-rest",
+        "before motion is enabled, the processor's enable pin and the drive's enable input \
+         both read low, the level that disables the drive",
+        "the firmware drives the enable pin low from start-up, and the isolator carries it to \
+         the drive with the carrier's enable jumper on its default pads"
+    );
+    expect!(
         "enable-held",
-        "once motion is enabled, the drive's enable input reads low, the level that enables \
-         it, with the processor's enable pin left released",
-        "the firmware never drives the enable pin, the isolator gives its default high for an \
-         open input, and that turns on the transistor that sinks the enable with the carrier's \
-         enable jumper on its open-collector pads"
+        "once motion is enabled, the processor's enable pin and the drive's enable input both \
+         read high, the level that enables the drive",
+        "the drive's enable is energized = enabled, and the firmware's servo loop drives the \
+         pin from the motion enable"
+    );
+    expect!(
+        "disable-drops-enable",
+        "once motion is disabled after the jogs, the drive's enable input reads low again"
     );
     expect!(
         "ready-on-p5",
@@ -1479,12 +1524,15 @@ fn with_ic14_fixed_the_firmware_jogs_the_carriage() {
         streamed,
     );
     let (unfaulted, unfaulted_at) = settled(&mut rig, &mut host, answered_at);
-    let (acknowledged, enabled_at) = enable_motion(&mut rig, &mut host, unfaulted_at);
+    let rest_ena = rig.state(SC_ENA);
+    let rest_p6 = rig.state("EDGE.P6");
+    let (acknowledged, acknowledged_at) = enable_motion(&mut rig, &mut host, unfaulted_at);
     assert!(
         acknowledged,
-        "the firmware refused to enable motion at {enabled_at} ns, after {unfaulted:?}"
+        "the firmware refused to enable motion at {acknowledged_at} ns, after {unfaulted:?}"
     );
-    let ena = rig.state("EDGE./MaD_Edge_Sheet3/SC_ENA");
+    let enabled_at = until_level(&mut rig, SC_ENA, Level::High, acknowledged_at);
+    let ena = rig.state(SC_ENA);
     let p5 = rig.level("EDGE.P5");
     let p6 = rig.state("EDGE.P6");
 
@@ -1492,20 +1540,39 @@ fn with_ic14_fixed_the_firmware_jogs_the_carriage() {
     let (forward, forward_at) = jog(&mut rig, &mut host, JOG_FORWARD_UM, enabled_at);
     let (back, back_at) = jog(&mut rig, &mut host, JOG_BACK_UM, forward_at);
     let (state, state_at) = read_state(&mut rig, &mut host, back_at);
+    let (disabled, disabled_ack_at) = write(
+        &mut rig,
+        &mut host,
+        protocol::MSG_WRITE_MOTION_ENABLE,
+        &[0],
+        state_at,
+    );
+    assert!(
+        disabled,
+        "the firmware refused to disable motion at {disabled_ack_at} ns"
+    );
+    let disabled_at = until_level(&mut rig, SC_ENA, Level::Low, disabled_ack_at);
     let _ = writeln!(
         std::io::stderr(),
-        "motion enabled at {enabled_at} ns: SC_ENA {ena:?}, P5 {p5:?}, P6 {p6:?}; encoder \
-         {start} at the start, {forward} at {forward_at} ns, {back} at {back_at} ns; {state:?} \
-         at {state_at} ns; {}",
+        "at rest: SC_ENA {rest_ena:?}, P6 {rest_p6:?}; motion enabled at {enabled_at} ns: \
+         SC_ENA {ena:?}, P5 {p5:?}, P6 {p6:?}; encoder {start} at the start, {forward} at \
+         {forward_at} ns, {back} at {back_at} ns; {state:?} at {state_at} ns; SC_ENA low again \
+         at {disabled_at} ns; {}",
         rig.summary("MACHINE")
     );
 
     assert_eq!(
-        p6,
-        Some(NetState::Floating),
-        "the firmware leaves P6 released"
+        level_of(rest_p6),
+        Some(Level::Low),
+        "P6 at rest: {rest_p6:?}"
     );
-    assert_eq!(level_of(ena), Some(Level::Low), "SC_ENA: {ena:?}");
+    assert_eq!(
+        level_of(rest_ena),
+        Some(Level::Low),
+        "SC_ENA at rest: {rest_ena:?}"
+    );
+    assert_eq!(level_of(p6), Some(Level::High), "P6 enabled: {p6:?}");
+    assert_eq!(level_of(ena), Some(Level::High), "SC_ENA enabled: {ena:?}");
     assert_eq!(p5, Some(Level::Low), "P5: {:?}", rig.state("EDGE.P5"));
     let to_counts = |um: i32| i64::from(um) * COUNTS_PER_MM / 1_000;
     let forward_target = start + to_counts(JOG_FORWARD_UM);

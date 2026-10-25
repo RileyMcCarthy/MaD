@@ -81,11 +81,13 @@ drive-side ground pins reach only `C26`). The fix's file is the board with
 #285 fixed, word for word `mad-cosim.toml` but one `[[pin_short]]` from
 `IC14`'s pin 9 to `J21.8` (`EN_GND`), the wire #285 names for a carrier
 built as drawn; `tests/projects.rs` holds it to that. Every file takes
-`JP1`, the enable jumper, on its open-collector pads 2–3: the firmware never
-drives the enable pin `P6`, so `IC14` gives its default high there, which
-turns `Q1` on to sink the drive's active-low enable; on pads 1–2 that high
-reaches the enable itself and the drive stays disabled (measured, #285
-fixed). Which pads the machine's carrier has closed is not confirmed.
+`JP1`, the enable jumper, on its default pads 1–2, which put `IC14`'s TTL
+output `OUTC` on the drive's enable `SC_ENA`. The firmware drives the enable
+pin `P6` active high from the servo loop: low from start-up and while motion
+is disabled, high while it is enabled, and the drive's enable is energized =
+enabled (ENA high enables), so on the #285-fixed board the drive follows the
+firmware's motion enable. Which pads the machine's carrier has closed is not
+confirmed.
 
 ```bash
 cd SIL

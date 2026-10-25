@@ -72,6 +72,7 @@ typedef struct
     int32_t totalSteps;
     bool moveComplete;
     bool directionCW;
+    bool enaActive; /* level last driven on the enable output */
 } dev_stepper_channelData_S;
 
 typedef struct
@@ -313,12 +314,34 @@ static void dev_stepper_private_runAction(dev_stepper_channel_E ch)
     }
 }
 
+/* Drive the enable output from the state: inactive in DISABLED, active in any
+ * other. Only this cog writes it (init and run share the MOTOR cog; P2 outputs
+ * OR across cogs, so a second writer could hold the drive enabled), only on a
+ * change, and never under the lock. Runs after the transition, so a disable
+ * has already stopped the pulse train. */
+static void dev_stepper_private_applyEnable(dev_stepper_channel_E ch)
+{
+    const bool enabled = (dev_stepper_data.channels[ch].state != DEV_STEPPER_STATE_DISABLED);
+    if (dev_stepper_data.channels[ch].enaActive != enabled)
+    {
+        HAL_GPIO_setActive(dev_stepper_channelConfig[ch].gpioEnable, enabled);
+        dev_stepper_data.channels[ch].enaActive = enabled;
+    }
+}
+
 /**********************************************************************
  * Public Function Definitions
  **********************************************************************/
 void dev_stepper_init(int lock)
 {
     dev_stepper_data.lock = lock;
+    /* The drive starts disabled: drive the enable output inactive now rather
+     * than leaving the pin floating until the first run. */
+    for (dev_stepper_channel_E ch = (dev_stepper_channel_E)0U; ch < DEV_STEPPER_CHANNEL_COUNT; ch++)
+    {
+        HAL_GPIO_setActive(dev_stepper_channelConfig[ch].gpioEnable, false);
+        dev_stepper_data.channels[ch].enaActive = false;
+    }
 }
 
 void dev_stepper_run()
@@ -337,6 +360,7 @@ void dev_stepper_run()
             dev_stepper_data.channels[ch].state = desiredState;
             dev_stepper_private_entryAction(ch);
         }
+        dev_stepper_private_applyEnable(ch);
         dev_stepper_private_runAction(ch);
         dev_stepper_private_stageOutput(ch);
     }

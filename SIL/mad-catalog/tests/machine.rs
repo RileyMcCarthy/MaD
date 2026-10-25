@@ -96,8 +96,9 @@ fn project_on(options: &str, excitation: Excitation, rest: &str) -> String {
     };
     wire("BENCH.DRIVE_GND", "MACHINE.DRIVE_GND", Some(0.0));
     wire("BENCH.ENC_GND", "MACHINE.ENC_GND", Some(0.0));
-    // The enable is active low.
-    wire("BENCH.ENA", "MACHINE.ENA", Some(0.0));
+    // The enable is active high (energized = enabled), held at the 5 V the
+    // carrier's IC14 drives it to.
+    wire("BENCH.ENA", "MACHINE.ENA", Some(5.0));
     // One loop supply, every contact's supply side on it.
     for (index, contact) in LOOPS.iter().enumerate() {
         let volts = (index == 0).then_some(LOOP_VOLTS);

@@ -28,7 +28,7 @@
  **********************************************************************/
 const dev_stepper_channelConfig_S dev_stepper_channelConfig[DEV_STEPPER_CHANNEL_COUNT] = {
     {
-        HW_PIN_SERVO_ENA,
+        HAL_GPIO_SERVO_ENA,
         HW_PIN_SERVO_PUL,
         HAL_GPIO_SERVO_DIR,
         HAL_PULSE_OUT_CHANNEL_SERVO,

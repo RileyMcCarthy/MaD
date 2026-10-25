@@ -35,7 +35,7 @@
 #include "dev_stepper.h"
 dev_stepper_channelConfig_S dev_stepper_channelConfig[DEV_STEPPER_CHANNEL_COUNT] = {
     [DEV_STEPPER_CHANNEL_MAIN] = {
-        .pinEnable = 1U,
+        .gpioEnable = HAL_GPIO_SERVO_ENA,
         .pinStep = 2U,
         .gpioDirection = HAL_GPIO_SERVO_DIR,
         .pulseChannel = HAL_PULSE_OUT_CHANNEL_SERVO,
@@ -71,6 +71,10 @@ static uint32_t d_lastSetFrequency;
 static uint32_t d_gpioCount;
 static HAL_GPIO_channel_E d_gpioChannel;
 static bool d_gpioActive;
+/* The drive-enable output is tracked on its own, so the direction capture
+ * above (and any carriage model that reads it) sees direction writes only. */
+static uint32_t d_enaCount;
+static bool d_enaActive;
 
 static void doubles_reset(void)
 {
@@ -94,6 +98,8 @@ static void doubles_reset(void)
     d_gpioCount = 0U;
     d_gpioChannel = HAL_GPIO_COUNT;
     d_gpioActive = false;
+    d_enaCount = 0U;
+    d_enaActive = false;
 }
 
 /* --- HAL_pulseOut --- */
@@ -140,6 +146,12 @@ void HAL_pulseOut_setFrequency(HAL_pulseOut_channel_E channel, uint32_t frequenc
 /* --- HAL_GPIO --- */
 void HAL_GPIO_setActive(HAL_GPIO_channel_E channel, bool active)
 {
+    if (channel == HAL_GPIO_SERVO_ENA)
+    {
+        d_enaCount++;
+        d_enaActive = active;
+        return;
+    }
     d_gpioCount++;
     d_gpioChannel = channel;
     d_gpioActive = active;
@@ -195,6 +207,11 @@ void test_dev_stepper_initialStateDisabled(void)
     VIBES_EXPECT("disabled", "the stepper is disabled");
     VIBES_EXPECT("at-zero", "the stepper sits at position zero with target zero");
     VIBES_EXPECT("reports-arrival", "the stepper reports arrival");
+    VIBES_EXPECT_WHY("enable-output-off",
+                     "the drive's enable output is already driven off, before the first control cycle",
+                     "an undriven enable pin floats, and the isolator to the drive turns a floating input into enabled");
+    TEST_ASSERT_EQUAL_UINT32(1U, d_enaCount);
+    TEST_ASSERT_FALSE(d_enaActive);
     TEST_ASSERT_EQUAL_INT(DEV_STEPPER_STATE_DISABLED, dev_stepper_getState(CH));
     TEST_ASSERT_EQUAL_INT32(0, dev_stepper_getSteps(CH));
     TEST_ASSERT_EQUAL_INT32(0, dev_stepper_getTarget(CH));
@@ -245,12 +262,15 @@ void test_dev_stepper_enableEntersStopped(void)
     VIBES_EXPECT("disabled-until-cycle", "the stepper stays disabled until that cycle");
     VIBES_EXPECT("stopped-after-cycle", "the stepper sits stopped afterwards");
     VIBES_EXPECT("no-pulse-train", "no pulse train is started");
+    VIBES_EXPECT("enable-output-on", "the drive's enable output turns on at that cycle, and only then");
     dev_stepper_enable(CH, true);
     /* Input is staged; not snapshotted until run(). */
     TEST_ASSERT_EQUAL_INT(DEV_STEPPER_STATE_DISABLED, dev_stepper_getState(CH));
+    TEST_ASSERT_FALSE(d_enaActive);
 
     dev_stepper_run();
     TEST_ASSERT_EQUAL_INT(DEV_STEPPER_STATE_STOPPED, dev_stepper_getState(CH));
+    TEST_ASSERT_TRUE(d_enaActive);
     /* No motion started simply by enabling. */
     TEST_ASSERT_EQUAL_UINT32(0U, d_startCount);
 }
@@ -261,13 +281,16 @@ void test_dev_stepper_disableFromStoppedReturnsToDisabled(void)
                "src/DEV/dev_stepper.c#dev_stepper_enable",
                "an enabled stepper sitting stopped, then disabled");
     VIBES_EXPECT("disabled-next-cycle", "the stepper is disabled on the next control cycle");
+    VIBES_EXPECT("enable-output-off", "the drive's enable output turns off on that cycle");
     dev_stepper_enable(CH, true);
     dev_stepper_run();
     TEST_ASSERT_EQUAL_INT(DEV_STEPPER_STATE_STOPPED, dev_stepper_getState(CH));
+    TEST_ASSERT_TRUE(d_enaActive);
 
     dev_stepper_enable(CH, false);
     dev_stepper_run();
     TEST_ASSERT_EQUAL_INT(DEV_STEPPER_STATE_DISABLED, dev_stepper_getState(CH));
+    TEST_ASSERT_FALSE(d_enaActive);
 }
 
 void test_dev_stepper_stoppedAtTargetStaysStopped(void)
@@ -440,6 +463,7 @@ void test_dev_stepper_disableDuringMoveStopsTrain(void)
                "a stepper in the middle of a move, then disabled");
     VIBES_EXPECT("train-stopped", "the next cycle stops the pulse train");
     VIBES_EXPECT("disabled", "the stepper is left disabled");
+    VIBES_EXPECT("enable-output-off", "the drive's enable output turns off");
     drive_to_moving(1000, 500U);
     TEST_ASSERT_EQUAL_UINT32(0U, d_stopCount);
 
@@ -447,6 +471,7 @@ void test_dev_stepper_disableDuringMoveStopsTrain(void)
     dev_stepper_run(); /* MOVING -> DISABLED, exit stops train */
     TEST_ASSERT_EQUAL_INT(DEV_STEPPER_STATE_DISABLED, dev_stepper_getState(CH));
     TEST_ASSERT_EQUAL_UINT32(1U, d_stopCount);
+    TEST_ASSERT_FALSE(d_enaActive);
 }
 
 void test_dev_stepper_stopRequestEndsMove(void)
