@@ -17,7 +17,7 @@
 //! |---|---|
 //! | no smart mode, `DIR` set | its `OUT` bit through the mode word's drive strength, high at its bank's supply ([`BankSupplies::pad_drive`]) |
 //! | `DIR` clear, or a smart input mode | released |
-//! | `P_ASYNC_TX` with `P_OE` | the line's idle mark until the first byte, then a [`SerialLevelBridge`] framing at the rate the pin's bit period and the guest's clock give |
+//! | `P_ASYNC_TX` with `P_OE` | the line's idle mark until the first byte, then a [`SerialLevelBridge`] framing at the rate the pin's bit period and the guest's clock give; the pin buffers one byte and reads busy until its last frame is out, in the guest's clocks ([`crate::TxPace`]) |
 //! | `P_ASYNC_RX` | read by a deframer at the rate its bit period and the guest's clock give; the pin holds one byte (below, "Receive") |
 //! | `P_TRANSITION` or `P_NCO_FREQ` with `P_OE` | a step train, one periodic drive per rate change ([`crate::pulse`]); a `WRPIN` to any other mode banks its count and hands the pad back to the word, so `_pinclear` (`DIRL`, `WRPIN #0`) releases it |
 //! | `P_PULSE` and the sync-serial modes, `DIR` set | the synchronous-serial hardware ([`p2core::SmartBus`]), clocked on the guest's own clock, so the module's flash and card share `P58`–`P61` as they do on the board; with `DIR` clear, or once the word is cleared, released |
@@ -111,8 +111,8 @@
 //! not.
 //!
 //! The pin answers `TESTP` and `RDPIN` as of the executing cog's clock
-//! ([`PinBus::set_clock`]), and a cog spinning on the pin is not
-//! fast-forwarded past a byte landing ([`PinBus::next_pin_change`]).
+//! ([`PinBus::set_clock`]), and a cog spinning on a pin is not fast-forwarded
+//! past a byte landing or a transmitter freeing ([`PinBus::next_pin_change`]).
 
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -131,7 +131,9 @@ use p2core::board::PIN_TX as DEBUG_TX;
 use p2core::{Board, Machine, PinBus, PinMode, SdCard};
 
 use crate::pulse::PulseDriver;
-use crate::{pin_name, NetPins, P2IssHandle, RxPin, Shared, TxLink, EDGE_QUEUE_MAX, SLICE_NS};
+use crate::{
+    pin_name, NetPins, P2IssHandle, RxPin, Shared, TxLink, TxPace, EDGE_QUEUE_MAX, SLICE_NS,
+};
 
 /// The internal RC oscillator the chip comes up on, nominal: Parallax states
 /// 20 MHz for RCFAST, which silicon runs anywhere in 20–24 MHz (the figure
@@ -404,6 +406,9 @@ pub(crate) struct CorePads {
     pending: VecDeque<Batch>,
     /// The sync-serial clock, while a burst runs.
     pump: Option<Pump>,
+    /// Each asynchronous transmit pin's buffer and shifter, in the guest's
+    /// clocks, by pin.
+    tx_pace: BTreeMap<u8, TxPace>,
     /// Pads the guest may have moved since the last publish; a pad whose
     /// key is unknown is published whatever this says.
     dirty: u64,
@@ -431,6 +436,7 @@ impl CorePads {
             ops: Vec::new(),
             pending: VecDeque::new(),
             pump: None,
+            tx_pace: BTreeMap::new(),
             dirty: 0,
             dirty_all: false,
         }
@@ -921,6 +927,14 @@ impl NetPins {
                     // pin, whatever the wire then makes of it.
                     self.inner.console.push(y as u8);
                 }
+                // The pin takes the byte into its buffer at once and paces
+                // the guest by its own clock; the wire frames it from the
+                // instruction's instant.
+                let frame = self.tx_frame_clocks(p);
+                let clock = self.clock;
+                if let Some(core) = self.core.as_mut() {
+                    core.tx_pace.entry(p).or_default().load(clock, frame);
+                }
                 self.core_op(CoreOp::Wypin { pin: p, y });
             }
             _ => self.inner.wypin(p, y),
@@ -1142,14 +1156,30 @@ impl NetPins {
         Some(f(rx))
     }
 
+    /// An asynchronous transmit pin's buffer and shifter, while the pin is
+    /// one and has taken a byte.
+    fn core_tx_pace(&self, pin: u8) -> Option<TxPace> {
+        let p = pin & 63;
+        if self.inner.pins[usize::from(p)].mode() != PinMode::AsyncTx {
+            return None;
+        }
+        self.core.as_ref()?.tx_pace.get(&p).copied()
+    }
+
     /// `RDPIN` on a receive pin: `Z`, its byte in bits 31:24, where an
     /// async-RX smart pin leaves it, and `IN` drops; read again with nothing
-    /// new, it is the same byte. `None` for a pin that is not one.
+    /// new, it is the same byte. On a transmit pin, C is busy until its last
+    /// frame is out. `None` for a pin that is neither.
     pub(crate) fn core_rdpin(&mut self, pin: u8) -> Option<(u32, bool)> {
-        self.with_core_rx(pin, |rx| {
+        if let Some(read) = self.with_core_rx(pin, |rx| {
             rx.waiting = false;
             (u32::from(rx.held) << 24, false)
-        })
+        }) {
+            return Some(read);
+        }
+        let pace = self.core_tx_pace(pin)?;
+        let (value, _) = self.inner.rdpin(pin);
+        Some((value, self.clock < pace.idle_at))
     }
 
     /// `AKPIN` on a receive pin: `IN` drops. Whether it was one.
@@ -1157,20 +1187,25 @@ impl NetPins {
         self.with_core_rx(pin, |rx| rx.waiting = false).is_some()
     }
 
-    /// The earliest clock after `now` at which a core's receive pin changes
-    /// by itself: a byte landing.
+    /// The earliest clock after `now` at which a core's pin changes by
+    /// itself: a byte landing, a transmit buffer taken or a shifter idle.
     pub(crate) fn core_next_pin_change(&self, now: u64) -> Option<u64> {
         let core = self.core.as_ref()?;
-        self.core_shared
-            .as_ref()?
-            .rx
-            .lock()
-            .expect("rx map never poisoned")
+        let tx = core
+            .tx_pace
             .values()
-            .filter_map(|rx| rx.pin.arriving.front())
-            .map(|&(at, _)| core.clock.ns_to_clocks_ceil(at))
-            .filter(|&at| at > now)
-            .min()
+            .flat_map(|pace| [pace.loaded_at, pace.idle_at]);
+        let rx: Vec<u64> = self.core_shared.as_ref().map_or_else(Vec::new, |shared| {
+            shared
+                .rx
+                .lock()
+                .expect("rx map never poisoned")
+                .values()
+                .filter_map(|rx| rx.pin.arriving.front())
+                .map(|&(at, _)| core.clock.ns_to_clocks_ceil(at))
+                .collect()
+        });
+        tx.chain(rx).filter(|&at| at > now).min()
     }
 
     /// `TESTP` on a receive pin: a byte is waiting.
@@ -1182,6 +1217,9 @@ impl NetPins {
     /// mode word gives this reading, and the measurement modes are not
     /// modelled, so a serial boot inside the package rests on it until they
     /// are.
+    ///
+    /// On a transmit pin, `IN` rises once its buffered byte has moved into
+    /// the shifter.
     pub(crate) fn core_testp(&self, pin: u8) -> Option<bool> {
         let p = pin & 63;
         if let Some(waiting) = self.with_core_rx(p, |rx| rx.waiting) {
@@ -1190,7 +1228,8 @@ impl NetPins {
         if (p == 0 || p == 1) && self.with_core_rx(63, |rx| rx.waiting) == Some(true) {
             return Some(true);
         }
-        None
+        let pace = self.core_tx_pace(p)?;
+        Some(self.clock >= pace.loaded_at)
     }
 }
 
@@ -1974,11 +2013,15 @@ mod tests {
 
     // ---- The pins, as the guest's instructions see them ----
 
-    /// `P_ASYNC_RX`.
+    /// `P_ASYNC_RX`; `P_ASYNC_TX` with `P_OE`.
     const ASYNC_RX: u32 = 0x3E;
+    const ASYNC_TX: u32 = 0x3C | p2core::smartpin::P_OE;
     /// `X` for 8-bit frames of 80 clocks a bit: 2 Mbaud at 160 MHz.
     const X_2MBAUD: u32 = 7 | (80 << 16);
+    /// One 10-bit frame at that rate.
+    const FRAME_CLOCKS: u64 = 800;
     const RX_PIN: u8 = 63;
+    const TX_PIN: u8 = 62;
 
     /// A core's bus with nothing on its pads, its clock at 160 MHz from
     /// clock count zero at instant zero, so clock `c` is `c * 6.25` ns.
@@ -2050,5 +2093,51 @@ mod tests {
         );
 
         assert!(!bus.testp(RX_PIN), "read-clears");
+    }
+
+    #[test]
+    fn a_transmit_pin_inside_the_package_takes_one_byte_a_frame() {
+        behaviour!(Test {
+            id: "p2-package.async-tx-paces-writer",
+            covers: Some("SIL/p2iss/src/package.rs#NetPins::core_wypin"),
+            given: "a program writing two bytes back to back to an idle asynchronous transmit pin \
+                    of the simulated chip at 2 Mbaud",
+        });
+        expect!(
+            "first-taken-at-once",
+            "the pin is ready for the next byte as soon as the first is written",
+            "an idle pin starts sending the first byte at once, which leaves room for one more"
+        );
+        expect!(
+            "second-waits-a-frame",
+            "after the second byte the pin is ready again only once the first byte's frame has \
+             been sent"
+        );
+        expect!(
+            "busy-until-sent",
+            "the pin reports busy until the second byte's frame has been sent too",
+            "flexspin's serial output waits on this busy report after every byte, so each byte \
+             costs the program a frame time"
+        );
+        let mut bus = core_pins();
+        bus.wrpin(TX_PIN, ASYNC_TX);
+        bus.wxpin(TX_PIN, X_2MBAUD);
+
+        bus.set_clock(1_000);
+        bus.wypin(TX_PIN, 0x55);
+        assert!(bus.testp(TX_PIN), "first-taken-at-once");
+
+        bus.set_clock(1_010);
+        bus.wypin(TX_PIN, 0x02);
+        assert!(!bus.testp(TX_PIN), "second-waits-a-frame: still buffered");
+        bus.set_clock(1_000 + FRAME_CLOCKS - 1);
+        assert!(!bus.testp(TX_PIN), "second-waits-a-frame: just before");
+        bus.set_clock(1_000 + FRAME_CLOCKS);
+        assert!(bus.testp(TX_PIN), "second-waits-a-frame: taken");
+
+        bus.set_clock(1_000 + 2 * FRAME_CLOCKS - 1);
+        assert!(bus.rdpin(TX_PIN).1, "busy-until-sent: still sending");
+        bus.set_clock(1_000 + 2 * FRAME_CLOCKS);
+        assert!(!bus.rdpin(TX_PIN).1, "busy-until-sent: done");
     }
 }

@@ -12,7 +12,9 @@
 //!
 //! The protocol's receive pin holds ONE byte, and the next byte overwrites
 //! it 800 clocks later at 2 Mbaud and 160 MHz. A firmware that polls the pin
-//! leaves it unread for longer than that between two receive calls. So the
+//! leaves it unread for longer than that between two receive calls, and for
+//! a byte time per byte it sends: the production build sends through
+//! flexspin's built-in serial, which waits out every byte's frame. So the
 //! host keeps eight READ_SAMPLE requests in flight, each sent at a random
 //! moment, many of them while the firmware is still sending replies, and
 //! requires a reply to every request and no byte overwritten on the pin.

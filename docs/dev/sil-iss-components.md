@@ -283,7 +283,9 @@ and reads every one; no pin list says what a pin is:
   `BankSupplies::pad_drive` — high at its bank's supply, at the strength the
   word's drive field sets (fast, 1.5 k, 15 k, 150 k, float);
 - a `P_ASYNC_TX` pad marks its line from the moment it is enabled and frames
-  bytes at the rate its bit period and the guest's clock give; a
+  bytes at the rate its bit period and the guest's clock give, and takes one
+  byte at a time: it reads busy until the byte's frame is out, in the guest's
+  clocks, so a sender waits a frame time a byte, as on silicon; a
   `P_ASYNC_RX` pad gets a deframer at its own rate and holds one byte, which
   the next overwrites: since the guest runs ahead, a byte lands at its own
   instant or the guest's present, whichever is later, and no closer to an

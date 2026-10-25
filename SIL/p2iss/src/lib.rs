@@ -224,11 +224,21 @@ type SharedRxPin = Arc<Mutex<RxPin>>;
 /// frame time per byte after the first, as on silicon. The wire itself is
 /// clocked by the link's bridge; this only paces the guest.
 #[derive(Debug, Default, Clone, Copy)]
-struct TxPace {
+pub(crate) struct TxPace {
     /// The clock at which the buffered byte enters the shifter: `IN` rises.
-    loaded_at: u64,
+    pub(crate) loaded_at: u64,
     /// The clock at which the shifter has sent everything: busy clears.
-    idle_at: u64,
+    pub(crate) idle_at: u64,
+}
+
+impl TxPace {
+    /// A `WYPIN` at `clock` of a byte whose frame takes `frame` clocks: it
+    /// waits in the buffer until the shifter is free, then takes a frame
+    /// time to send.
+    pub(crate) fn load(&mut self, clock: u64, frame: u64) {
+        self.loaded_at = clock.max(self.idle_at);
+        self.idle_at = self.loaded_at + frame;
+    }
 }
 
 /// The transmit half of one link, once the guest has configured its pin.
@@ -422,7 +432,7 @@ impl NetPins {
     /// Clocks one frame occupies on a transmit pin, as the guest programmed
     /// it: start bit, data bits, stop bit, each `X[31:16]` clocks. Zero until
     /// the pin is an async transmitter, so an unconfigured pin never blocks.
-    fn tx_frame_clocks(&self, pin: u8) -> u64 {
+    pub(crate) fn tx_frame_clocks(&self, pin: u8) -> u64 {
         let smart = self.inner.pins[usize::from(pin) & 63];
         if smart.mode() != PinMode::AsyncTx {
             return 0;
@@ -798,9 +808,7 @@ impl PinBus for NetPins {
         // a frame time to send.
         if let Some(i) = self.tx_index(pin) {
             let frame = self.tx_frame_clocks(pin);
-            let pace = &mut self.tx_pace[i];
-            pace.loaded_at = self.clock.max(pace.idle_at);
-            pace.idle_at = pace.loaded_at + frame;
+            self.tx_pace[i].load(self.clock, frame);
         }
         if self.shutdown.load(std::sync::atomic::Ordering::Relaxed) {
             return;
