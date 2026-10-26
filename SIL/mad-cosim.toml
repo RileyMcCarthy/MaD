@@ -5,15 +5,24 @@
 # on the carrier's connectors, and a host on a serial line (embsim
 # MIGRATING-MAD.md sections 1 and 4).
 #
-# Four files share every line but how the module boots and which host sits
-# where; mad-catalog/tests/projects.rs holds them to it:
+# Seven files share every line but how the module boots, which host sits
+# where, and one wire; mad-catalog/tests/projects.rs holds them to it:
 #
-#   file                        the module boots          the host
-#   mad.toml                    the firmware off flash    host-serial on J1
-#   mad-cosim.toml              the firmware off flash    chrome-cdp on J1
-#   mad-serial-boot.toml        the ROM's serial boot,    host-serial on J1
-#                               its flash erased
-#   mad-serial-boot-cosim.toml  the ROM's serial boot     chrome-cdp on J1
+#   file                             the module boots        the host
+#   mad.toml                         the firmware off flash  host-serial on J1
+#   mad-cosim.toml                   the firmware off flash  chrome-cdp on J1
+#   mad-ic14-fixed-cosim.toml        mad-cosim.toml with IC14's fix, one wire
+#   mad-playground.toml              that file, its Chrome headed on the app
+#   mad-serial-boot.toml             the ROM's serial boot,  host-serial on J1
+#                                    its flash erased
+#   mad-serial-boot-cosim.toml       the ROM's serial boot   chrome-cdp on J1
+#   mad-serial-boot-playground.toml  that file, its Chrome headed on the app
+#
+# All but the IC14 fix's two keep the carrier as drawn, where IC14, the
+# isolator between the processor and the servo drive, passes nothing (MaD
+# #285; the fix is the last entry of its file). The e2e runs mad-cosim.toml,
+# and mad-ic14-fixed-cosim.toml for the scenarios that move the carriage;
+# the playgrounds are for a person (SIL/makefile).
 #
 # J1 is the carrier's debug header, where the machine's Prop Plug sits. The
 # route is the user's decision (2026-10-21): the host on J1 and the
@@ -234,8 +243,10 @@ volts = 0.0
 # nothing pulses the reset, and neither boot needs it. The flash boot runs
 # from power-up, and the ROM's serial boot answers without a reset, P59's
 # pull-up (R302, the serial boot's scenario) selecting it. The app's
-# flasher resets the chip with DTR (Software/Control/README.md); no case
-# here flashes.
+# flasher resets the chip with DTR before its probe (Software/Control/
+# README.md); on the serial boot, with nothing on J1.3, the probe finds the
+# ROM still listening, as it does for 90 s of board time from the chip's
+# start (FW-ISS, make e2e-rom).
 
 # The adapter's I/O rail: the chip's P62/P63 bank (VIO_56_63) is 3.3 V.
 [[wire]]
@@ -466,11 +477,17 @@ part = "EC32.S301"
 pole = 3
 state = "closed"
 
-# JP1, TTL-SINK, on pads 1-2 (A-C): SC_ENA from IC14's TTL output OUTC.
-# Pads 2-3 (B-C) put SC_ENA on Q1's open collector instead, which OUTC
-# switches through R24. Pads 1-2 is the default this file takes; which pads
-# the machine's carrier has closed is not confirmed on the board. To flip
-# it, change this entry's pole to 1.
+# JP1, TTL-SINK, on pads 1-2 (A-C), its default: SC_ENA from IC14's TTL
+# output OUTC. Pads 2-3 (B-C) put SC_ENA on Q1's open collector instead,
+# which OUTC switches through R24. The firmware drives the enable pin P6,
+# active high, from the servo loop on the MOTOR cog: low from start-up and
+# whenever motion is disabled, high while it is enabled
+# (Firmware/MaDCore/src/DEV/dev_servo.c, dev_servo_private_applyEnable), so
+# OUTC follows P6 onto SC_ENA. The drive's enable is energized = enabled
+# (ENA high enables; the machine's owner, 2026-10-25), which the machine's
+# kind models (mad-catalog/src/machine.rs). Which pads the machine's carrier
+# has closed is not confirmed on the board. To flip it, change this entry's
+# pole to 1.
 [[switch]]
 part = "EDGE.JP1"
 pole = 0

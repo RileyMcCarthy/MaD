@@ -26,6 +26,7 @@ static const dev_servo_channelConfig_S dev_servo_channelConfigDefault[DEV_SERVO_
     {
         HAL_PULSE_OUT_CHANNEL_SERVO, /* pulseChannel */
         HAL_GPIO_SERVO_DIR,          /* gpioDirection */
+        HAL_GPIO_SERVO_ENA,          /* gpioEnable */
         HAL_ENCODER_CHANNEL_SERVO,   /* encoderChannel */
         1000U,                       /* loopPeriodUs     — 1 kHz control tick (match the cog rate) */
         24576,                       /* maxVelocity      — gentle fallback (3 mm/s); machine profile normally overrides (20 mm/s => 163840) */
@@ -147,6 +148,7 @@ typedef struct
     float waveRampUp;    /* TRIANGLE only: ramp share of the up traverse   */
     uint8_t waveSegment; /* dev_servo_waveSegment_E */
     bool wasOpenLoop; /* the previous tick ran with the feedback off */
+    bool enaActive; /* level last driven on the enable output (see applyEnable) */
     bool velActive; /* a velocity pulse train is currently running */
     bool lastCw;    /* direction of the running train (latched at start) */
 } dev_servo_channelData_S;
@@ -206,6 +208,21 @@ static void dev_servo_private_applyVelocity(dev_servo_channel_E ch, float vel)
     else
     {
         HAL_pulseOut_setFrequency(cfg->pulseChannel, freq);
+    }
+}
+
+/* Drive the enable output to `enabled`, touching the pin only when the level
+ * changes. Called from init and the control tick only -- both on the MOTOR
+ * cog -- so exactly one cog ever drives it (P2 outputs OR across cogs, so a
+ * second writer could hold the drive enabled). Never called under the lock:
+ * the pin is HAL, and the decision is this cog's own snapshot. */
+static void dev_servo_private_applyEnable(dev_servo_channel_E ch, bool enabled)
+{
+    dev_servo_channelData_S *const d = &dev_servo_data.channel[ch];
+    if (d->enaActive != enabled)
+    {
+        HAL_GPIO_setActive(dev_servo_channelConfig[ch].gpioEnable, enabled);
+        d->enaActive = enabled;
     }
 }
 
@@ -450,6 +467,10 @@ void dev_servo_init(int lock, int32_t maxVelocityCounts, int32_t maxAccelCounts,
         d->countsPerPulse = countsPerPulse;
         d->emittedLast = 0U;
         dev_servo_private_resync(ch, pos);
+        /* The drive starts disabled: drive the enable output inactive now
+         * rather than leaving the pin floating until the first tick. */
+        HAL_GPIO_setActive(dev_servo_channelConfig[ch].gpioEnable, false);
+        d->enaActive = false;
     }
 }
 
@@ -798,9 +819,11 @@ void dev_servo_run(void)
         }
         const float dt = (float)elapsedUs / 1000000.0f;
 
-        if (!enabled)
+        if (enabled == false)
         {
+            /* Pulses stop first, then the drive is disabled. */
             dev_servo_private_applyVelocity(ch, 0.0f);
+            dev_servo_private_applyEnable(ch, false);
             dev_servo_private_resync(ch, pos);
             DEV_SERVO_LOCK_REQ_BLOCK();
             d->out.position = pos;
@@ -826,6 +849,9 @@ void dev_servo_run(void)
             dev_servo_private_resync(ch, pos);
         }
         d->wasOpenLoop = openLoop;
+
+        /* Enable the drive before this tick can start a pulse train. */
+        dev_servo_private_applyEnable(ch, true);
 
         const float maxVel = (float)cfg->maxVelocity;
 

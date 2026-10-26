@@ -13,12 +13,16 @@
 # no VM.
 #
 # On the project as drawn the carriage never moves (IC14's secondary
-# grounds are on a net of their own; SIL/mad-catalog/tests/mad.rs), so the
-# suite skips the scenarios that move it there, each saying why (run-all.mjs,
-# PROJECT_CANNOT): the motion matrices, the waveforms, the run lifecycle
-# with moves, the mid-test drop and SERVO-stall. Until IC14 is settled they
-# run in a step of their own on mad-emulator's board (make e2e-motion), the
-# debug firmware on the bare chip, where the carriage moves.
+# grounds are on a net of their own, MaD #285; SIL/mad-catalog/tests/mad.rs),
+# so the suite skips the scenarios that move it there, each saying why
+# (run-all.mjs, PROJECT_CANNOT): the motion matrices, the waveforms, the run
+# lifecycle with moves, the mid-test drop and SERVO-stall. They run on the
+# board with #285 fixed (make e2e-motion: SIL/mad-ic14-fixed-cosim.toml,
+# mad-cosim.toml with one wire on IC14's ground), where the carriage moves,
+# in three jobs of their own beside the suite's (the matrix below).
+# SERVO-stall stays skipped there, since no project has a jam: it runs
+# per-PR only (ci.yml, `make e2e-stall` on mad-emulator) until MaD #298
+# decides how a project stalls the carriage. The nightly does not run it.
 #
 # Not per-PR because a PR cannot afford it: the ISS runs at a few percent of
 # real time, so the whole suite is an hour or more of host time. ci.yml is
@@ -33,8 +37,9 @@
 # WHAT STILL DOES NOT TOUCH THE BOARD: A1 and FW1/2/3/5/6/7/8/9 drive a host
 # Chrome against in-page fakes (installFakeBootRom, installOpfsDataDir); they
 # run here and in `control-e2e-boardless` alike. FW-ISS runs in a step of
-# its own, on mad-emulator's ROM board (`mad-emulator --boot-rom --chrome`,
-# make e2e-rom), which moves onto the project's serial boot at step 11.
+# its own, on the project's serial boot, SIL/mad-serial-boot-cosim.toml
+# (make e2e-rom): the mask ROM on the module, its flash erased, the node on
+# J1.
 #
 # Use `workflow_dispatch` with suite=smoke to run e2e/smoke-ids.txt instead.
 
@@ -60,12 +65,28 @@ concurrency:
 
 jobs:
   board:
-    name: E2E on the ISS (FlexC image + chrome-cdp)
+    name: E2E on the ISS (${{ matrix.part }})
     runs-on: ubuntu-latest
-    # GitHub's ceiling for a hosted job. On the project the 23 it runs (14
-    # on a board, 9 with none) took 753 s of host time on an M2, boards
-    # included. The motion set on mad-emulator is most of the night: the
-    # whole suite there took 3 h 55 min on the runner (run 39556919751).
+    # Four jobs from one set of steps: `suite`, the whole suite on the
+    # project as drawn (make e2e) and FW-ISS on the project's serial boot;
+    # and `motion 1/3` to `motion 3/3`, the set the project as drawn cannot
+    # run, on the board with MaD #285 fixed (make e2e-motion), a third each
+    # (MOTION_SHARD: every third scenario, in the suite's order). The set is
+    # most of the night: on mad-emulator it took 13 439 s of host time on
+    # the runner (run 39556919751), and the #285-fixed project takes longer
+    # (the PR that moved it there has the numbers), past one job's ceiling.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - part: suite
+          - part: motion 1/3
+            shard: 1/3
+          - part: motion 2/3
+            shard: 2/3
+          - part: motion 3/3
+            shard: 3/3
+    # GitHub's ceiling for a hosted job.
     timeout-minutes: 360
     steps:
       - uses: actions/checkout@v7
@@ -114,7 +135,7 @@ jobs:
         working-directory: Firmware/MaDCore
         run: pio pkg install --platform https://github.com/RileyMcCarthy/platform-propeller.git
       # The production image, laid out in the module's flash, and the card
-      # (make flash-image sd-image), then `embsim check` on the four project
+      # (make flash-image sd-image), then `embsim check` on the seven project
       # files, which builds the embsim tool and mad-runner (--release: the
       # ISS interprets every P2 instruction).
       - name: The images, the runner and the project files (make check)
@@ -122,13 +143,6 @@ jobs:
         env:
           CHROME: /usr/bin/google-chrome
         run: make check
-      # FW-ISS's board: mad-emulator booting the mask ROM (no firmware image).
-      # The motion set's step builds the debug image itself (make e2e-motion).
-      - name: Build mad-emulator (release), for FW-ISS and the motion set
-        working-directory: SIL
-        run: |
-          make protocol
-          cargo build --release --bin mad-emulator
       - name: Install Control deps + wasm + proto
         working-directory: Software/Control
         run: |
@@ -138,6 +152,7 @@ jobs:
       # A1 and the FW scenarios launch a host Chrome (`channel: 'chrome'`);
       # this brings in the shared libraries Playwright's driver needs.
       - name: Install Chromium for Playwright
+        if: matrix.part == 'suite'
         working-directory: Software/Control
         run: npx playwright install --with-deps chromium
 
@@ -148,6 +163,7 @@ jobs:
       # occasional stall while the app's worker boots (ci.yml,
       # control-e2e-board) costs one scenario, not the rest of the night.
       - name: Run the suite on the project
+        if: matrix.part == 'suite'
         working-directory: SIL
         env:
           CHROME: /usr/bin/google-chrome
@@ -161,19 +177,20 @@ jobs:
           fi
           make e2e
 
-      # What the project cannot run (run-all.mjs, PROJECT_CANNOT), on
-      # mad-emulator's board until IC14 is settled: `make e2e-motion`
-      # builds the debug image (pio env propeller2_debug) and runs what
-      # `run-all.mjs --list --cannot` names, one board each. On the smoke
-      # suite, the smoke ids among them.
-      - name: Run the motion set on mad-emulator (until IC14 is settled)
-        if: always()
+      # What the project as drawn cannot run (run-all.mjs, PROJECT_CANNOT),
+      # on the board with MaD #285 fixed: `make e2e-motion` checks
+      # mad-ic14-fixed-cosim.toml and runs this job's third of what
+      # `run-all.mjs --list --cannot` names there, one board each. On the
+      # smoke suite, the smoke ids among them.
+      - name: 'Run the motion set on the board with IC14 fixed (MaD #285)'
+        if: startsWith(matrix.part, 'motion')
         working-directory: SIL
         env:
           CHROME: /usr/bin/google-chrome
           BOARD_LOGS: /tmp/e2e-out/motion
           BOARD_PER_SCENARIO: '1'
           E2E_TIMINGS: /tmp/e2e-out/timings-motion.json
+          MOTION_SHARD: ${{ matrix.shard }}
         run: |
           SUITE="${{ github.event.inputs.suite || 'full' }}"
           if [ "$SUITE" = "smoke" ]; then
@@ -182,19 +199,14 @@ jobs:
           make e2e-motion
 
       # FW-ISS: the app's flasher against the ISS booting the mask ROM, on
-      # the programming UART (make e2e-rom), on mad-emulator's board.
-      - name: Run FW-ISS on the ROM board
-        if: always()
+      # the programming UART, on the project's serial boot (make e2e-rom).
+      - name: Run FW-ISS on the project's serial boot
+        if: ${{ always() && matrix.part == 'suite' }}
         working-directory: SIL
         env:
           CHROME: /usr/bin/google-chrome
           BOARD_LOGS: /tmp/e2e-out/rom
-          BOARD_ROUTE: emulator
-          P2_IMAGE: p2iss/rom/rom_booter_v33k.bin
-          BOARD_ARGS: --boot-rom --usb-product-id 0x6015
-          E2E_BOARD: rom
-          SCENARIOS: FW-ISS
-        run: scripts/board-route.sh e2e
+        run: make e2e-rom
 
       - name: Timings
         if: always()
@@ -218,6 +230,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: e2e-nightly-board-${{ github.run_number }}
+          name: e2e-nightly-board-${{ github.run_number }}-${{ strategy.job-index }}
           path: /tmp/e2e-out
           retention-days: 14

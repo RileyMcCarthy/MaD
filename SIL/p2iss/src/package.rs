@@ -114,11 +114,11 @@
 //! ([`PinBus::set_clock`]), and a cog spinning on a pin is not fast-forwarded
 //! past a byte landing or a transmitter freeing ([`PinBus::next_pin_change`]).
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{btree_map, BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use embsim_board::uart::{UartDecoder, UartFraming};
+use embsim_board::uart::{FramingError, UartDecoder, UartFraming};
 use embsim_board::{
     AttachError, ComponentNetIo, Drive, Level, PinHandle, SerialLevelBridge, TheveninDrive,
     WakeGate, WakeHandler, WEAK_DRIVE_OHMS,
@@ -562,10 +562,29 @@ impl CoreShared {
 
 /// One receive pin: its deframer at the rate the guest programmed, its
 /// holding register, and where the last byte it took off the wire lands.
+///
+/// A pin whose mode word makes it a receive pin before the guest has given
+/// it a bit period has no deframer yet: its line's transitions are held, at
+/// their instants, and the deframer the guest's bit period gives it takes
+/// them first. The boot ROM's serial loader is that pin: it sets `P63`
+/// receiving and learns the rate from the host's own first byte, which is
+/// on the wire before the rate is written (see [`NetPins::core_testp`]).
+/// The bytes held this way land as any late burst does (module docs,
+/// "Receive"): in the guest's present, the wire's spacing kept.
+///
+/// Silicon receives less: the ROM raises `P63`'s `DIR`, enabling the
+/// receiver, only once it has measured the host's `>` on `P0`/`P1`, so the
+/// bytes before that never arrive. Held here, they reach the register,
+/// where the ROM's receive interrupt drops each `>` and its command parser
+/// scrolls past the rest (`rom_booter_v33k.spin2`, the receiver ISR and
+/// `get_command`). A receive pin here ignores `DIR` at any time.
 #[derive(Debug)]
 pub(crate) struct CoreRx {
-    decoder: UartDecoder,
+    /// `None` until the guest gives the pin a bit period.
+    decoder: Option<UartDecoder>,
     baud: u32,
+    /// The line's transitions while the pin has no deframer, oldest first.
+    held: VecDeque<(Level, u64)>,
     /// The pin's one byte, and the bytes on their way to it, each stamped
     /// with the instant it lands (module docs, "Receive").
     pin: RxPin,
@@ -579,32 +598,105 @@ pub(crate) struct CoreRx {
 impl CoreRx {
     fn new(baud: u32) -> Self {
         Self {
-            decoder: UartDecoder::new(UartFraming::new_8n1(baud)),
+            decoder: Some(UartDecoder::new(UartFraming::new_8n1(baud))),
             baud,
+            ..Self::holding()
+        }
+    }
+
+    /// A receive pin with no bit period yet: its line held.
+    fn holding() -> Self {
+        Self {
+            decoder: None,
+            baud: 0,
+            held: VecDeque::new(),
             pin: RxPin::default(),
             last: None,
             armed_ns: None,
         }
     }
 
+    /// Deframe at `baud` from here on, the guest's clock standing at
+    /// `guest_ns`; the register keeps its byte. Any transitions held for the
+    /// deframer go through it first, each byte stamped with the instant its
+    /// own frame closed, so the held bytes land the wire's spacing apart
+    /// from the guest's present (module docs, "Receive"), not all at once.
+    fn set_rate(&mut self, baud: u32, guest_ns: u64, shared: &Shared) {
+        let mut decoder = UartDecoder::new(UartFraming::new_8n1(baud));
+        let held = std::mem::take(&mut self.held);
+        let mut frames = Vec::new();
+        for (level, at) in held {
+            let closes_at = decoder.frame_deadline_ns();
+            decoder.on_level(level, at);
+            while let Some(frame) = decoder.poll(at) {
+                frames.push((closes_at.unwrap_or(at).min(at), frame));
+            }
+        }
+        self.decoder = Some(decoder);
+        self.baud = baud;
+        self.armed_ns = None;
+        for (wire_ns, frame) in frames {
+            self.take_frame(frame, wire_ns, guest_ns, shared);
+        }
+    }
+
+    /// One frame off the wire, closed at `wire_ns`: a byte sent on its way
+    /// to the register, or a framing error counted.
+    fn take_frame(
+        &mut self,
+        frame: Result<u8, FramingError>,
+        wire_ns: u64,
+        guest_ns: u64,
+        shared: &Shared,
+    ) {
+        match frame {
+            Ok(byte) => {
+                shared.rx_bytes.fetch_add(1, Ordering::Relaxed);
+                self.arrive(byte, wire_ns, guest_ns);
+            }
+            Err(error) => {
+                shared.rx_framing_errors.fetch_add(1, Ordering::Relaxed);
+                tracing::debug!(
+                    ?error,
+                    "p2iss: receive frame dropped (bad framing on the wire)"
+                );
+            }
+        }
+    }
+
+    /// The line moved at `now`: into the deframer, or held for one.
+    fn on_level(&mut self, level: Level, now: u64, shared: &Shared) {
+        match self.decoder.as_mut() {
+            Some(decoder) => decoder.on_level(level, now),
+            None if self.held.len() >= EDGE_QUEUE_MAX => {
+                shared.edges_dropped.fetch_add(1, Ordering::Relaxed);
+            }
+            None => self.held.push_back((level, now)),
+        }
+    }
+
+    /// Whether the line has moved while the pin had no deframer.
+    fn line_moved(&self) -> bool {
+        !self.held.is_empty()
+    }
+
     /// Close every frame due at `now_ns`, counting what it took, and send
     /// each byte on its way to the register, the guest's clock standing at
     /// `guest_ns`.
     fn poll(&mut self, now_ns: u64, guest_ns: u64, shared: &Shared) {
-        while let Some(frame) = self.decoder.poll(now_ns) {
-            match frame {
-                Ok(byte) => {
-                    shared.rx_bytes.fetch_add(1, Ordering::Relaxed);
-                    self.arrive(byte, now_ns, guest_ns);
-                }
-                Err(error) => {
-                    shared.rx_framing_errors.fetch_add(1, Ordering::Relaxed);
-                    tracing::debug!(
-                        ?error,
-                        "p2iss: receive frame dropped (bad framing on the wire)"
-                    );
-                }
-            }
+        loop {
+            let Some(decoder) = self.decoder.as_mut() else {
+                return;
+            };
+            // A frame the poll closes closed at its own deadline, which may
+            // be before `now_ns` (one held for a rate, closed only now).
+            let closes_at = decoder
+                .frame_deadline_ns()
+                .map_or(now_ns, |at| at.min(now_ns));
+            let Some(frame) = decoder.poll(now_ns) else {
+                return;
+            };
+            self.take_frame(frame, closes_at, guest_ns, shared);
         }
     }
 
@@ -639,7 +731,7 @@ impl CoreRx {
 
     /// The frame deadline to arm, unless it is the one already armed.
     fn deadline_to_arm(&mut self) -> Option<u64> {
-        let at = self.decoder.frame_deadline_ns()?;
+        let at = self.decoder.as_ref()?.frame_deadline_ns()?;
         if self.armed_ns == Some(at) {
             return None;
         }
@@ -877,15 +969,28 @@ impl NetPins {
         }
         let clk = self.guest_clk();
         let Some(baud) = smart.baud_hz(clk).filter(|&b| b > 0) else {
+            // No bit period yet: the line is held until there is one.
+            if let btree_map::Entry::Vacant(slot) = rx.entry(p) {
+                slot.insert(CoreRx::holding());
+                core_shared.rx_mask.fetch_or(bit, Ordering::Relaxed);
+            }
             return;
         };
         match rx.get_mut(&p) {
-            Some(existing) if existing.baud == baud => {}
-            // A new rate is a new deframer; the register keeps its byte.
+            Some(existing) if existing.decoder.is_some() && existing.baud == baud => {}
+            // A new rate is a new deframer, which takes any transitions held
+            // for it first; the register keeps its byte.
             Some(existing) => {
-                existing.decoder = UartDecoder::new(UartFraming::new_8n1(baud));
-                existing.baud = baud;
-                existing.armed_ns = None;
+                // The held bytes land from the instruction that wrote the
+                // rate: the guest's present is the executing cog's clock,
+                // which may lead where the last wake left it.
+                let guest_ns = self
+                    .shared
+                    .guest_now_ns
+                    .load(Ordering::Relaxed)
+                    .max(self.core_now_ns());
+                existing.set_rate(baud, guest_ns, &self.shared);
+                existing.poll(virtual_clock::virtual_ns(), guest_ns, &self.shared);
             }
             None => {
                 rx.insert(p, CoreRx::new(baud));
@@ -1208,15 +1313,32 @@ impl NetPins {
         tx.chain(rx).filter(|&at| at > now).min()
     }
 
+    /// Whether `P63`, a receive pin, has a byte waiting or, with no bit
+    /// period yet, has seen its line move.
+    fn p63_carried(&self) -> bool {
+        self.with_core_rx(63, |rx| rx.waiting) == Some(true)
+            || self.core_shared.as_ref().is_some_and(|core_shared| {
+                core_shared
+                    .rx
+                    .lock()
+                    .expect("rx map never poisoned")
+                    .get(&63)
+                    .is_some_and(CoreRx::line_moved)
+            })
+    }
+
     /// `TESTP` on a receive pin: a byte is waiting.
     ///
     /// A known gap, kept from [`crate::P2Iss`]: the autobaud pins `P0` and
-    /// `P1`, while they are no receive pins of their own, read "a byte is
-    /// waiting on `P63`", the programming UART. The ROM's serial loader
-    /// measures the host's bit time on them with `SETSE1`; no net and no
-    /// mode word gives this reading, and the measurement modes are not
-    /// modelled, so a serial boot inside the package rests on it until they
-    /// are.
+    /// `P1`, while they are no receive pins of their own, read high once the
+    /// programming UART, `P63`, has carried anything since it became a
+    /// receive pin: a byte waiting, or, before the guest has given `P63` a
+    /// bit period, its line moving (held for its deframer, [`CoreRx`]). The
+    /// ROM's serial loader measures the host's bit time on them with
+    /// `SETSE1` and learns its rate from that; no net and no mode word gives
+    /// this reading, and the measurement modes are not modelled (`RDPIN` on
+    /// either reads `p2core::Board`'s fixed 2 000 000 baud measurement), so a
+    /// serial boot inside the package rests on it until they are.
     ///
     /// On a transmit pin, `IN` rises once its buffered byte has moved into
     /// the shifter.
@@ -1225,7 +1347,7 @@ impl NetPins {
         if let Some(waiting) = self.with_core_rx(p, |rx| rx.waiting) {
             return Some(waiting);
         }
-        if (p == 0 || p == 1) && self.with_core_rx(63, |rx| rx.waiting) == Some(true) {
+        if (p == 0 || p == 1) && self.p63_carried() {
             return Some(true);
         }
         let pace = self.core_tx_pace(p)?;
@@ -1350,7 +1472,7 @@ impl P2Core for P2IssCore {
                     let Some(rx) = rx.get_mut(&pin) else {
                         return;
                     };
-                    rx.decoder.on_level(level, now);
+                    rx.on_level(level, now, &shared);
                     rx.poll(now, shared.guest_now_ns.load(Ordering::Relaxed), &shared);
                     rx.deadline_to_arm()
                 };
@@ -1753,6 +1875,7 @@ impl P2IssHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use embsim_board::uart::UartEncoder;
     use vibes_behaviour::{behaviour, expect, Test};
 
     /// flexspin's 160 MHz word for a 20 MHz crystal: `%CC` = `%10`, the PLL
@@ -2015,6 +2138,60 @@ mod tests {
             200_000,
             "gap-kept"
         );
+    }
+
+    #[test]
+    fn a_line_that_moves_before_the_rate_is_written_is_deframed_once_it_is() {
+        behaviour!(Test {
+            id: "p2iss.rx-held-until-rate",
+            covers: Some("SIL/p2iss/src/package.rs#CoreRx"),
+            given: "a pin set to receive before its rate is written, while two bytes cross its \
+                    line back to back, then given 2 000 000 baud 100 µs later",
+        });
+        expect!(
+            "nothing-before-rate",
+            "until the rate is written the chip reads no byte, and sees that the line has moved"
+        );
+        expect!(
+            "byte-after-rate",
+            "once it is written the chip reads the first byte from that instant",
+            "the boot ROM sets its receive pin's rate from the host's first byte, which is on \
+             the line before the rate is"
+        );
+        expect!(
+            "spacing-kept",
+            "it reads the second byte 5 µs after the first, a byte's time on the line",
+            "the pin holds one byte, so two bytes handed over together would lose the first"
+        );
+        let shared = Shared::default();
+        let framing = UartFraming::new_8n1(2_000_000);
+        let mut rx = CoreRx::holding();
+        let mut at = 1_000_000;
+        for byte in *b">P" {
+            for (level, hold_ns) in UartEncoder::new(framing).encode(byte) {
+                rx.on_level(level, at, &shared);
+                at += hold_ns;
+            }
+        }
+        rx.poll(at, at, &shared);
+        assert_eq!(read_at(&mut rx, at), None, "nothing-before-rate");
+        assert!(rx.line_moved(), "nothing-before-rate: the line moved");
+
+        let rate_at = at + 100_000;
+        rx.set_rate(2_000_000, rate_at, &shared);
+        rx.poll(rate_at, rate_at, &shared);
+        assert_eq!(read_at(&mut rx, rate_at), Some(b'>'), "byte-after-rate");
+        assert_eq!(
+            read_at(&mut rx, rate_at + framing.frame_ns() - 1),
+            None,
+            "spacing-kept: not yet"
+        );
+        assert_eq!(
+            read_at(&mut rx, rate_at + framing.frame_ns()),
+            Some(b'P'),
+            "spacing-kept"
+        );
+        assert_eq!(rx.pin.overruns, 0, "spacing-kept: nothing overwritten");
     }
 
     // ---- The pins, as the guest's instructions see them ----
