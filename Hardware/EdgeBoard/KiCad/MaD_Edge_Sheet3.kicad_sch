@@ -8949,7 +8949,7 @@
 				(hide yes)
 			)
 		)
-		(property "Description" "0.1uF 6V SMD"
+		(property "Description" "0.1uF 50V X7R 0603"
 			(at 34.29 50.8 0)
 			(effects
 				(font
@@ -8958,7 +8958,7 @@
 				(hide yes)
 			)
 		)
-		(property "MANUFACTURER" "Samsung Electro-Mechanics"
+		(property "MANUFACTURER" "YAGEO"
 			(at 34.29 50.8 0)
 			(effects
 				(font
@@ -8967,7 +8967,7 @@
 				(hide yes)
 			)
 		)
-		(property "Manufacturer_Part_Number" "CL05A104KA5NNNC"
+		(property "Manufacturer_Part_Number" "CC0603KRX7R9BB104"
 			(at 34.29 50.8 0)
 			(effects
 				(font
@@ -8976,7 +8976,7 @@
 				(hide yes)
 			)
 		)
-		(property "DIGIKEY" "1276-1043-1-ND"
+		(property "DIGIKEY" ""
 			(at 34.29 50.8 0)
 			(effects
 				(font
@@ -9259,7 +9259,7 @@
 				(hide yes)
 			)
 		)
-		(property "Description" "0.1uF 6V SMD"
+		(property "Description" "0.1uF 50V X7R 0603"
 			(at 74.93 27.94 0)
 			(effects
 				(font
@@ -9268,7 +9268,7 @@
 				(hide yes)
 			)
 		)
-		(property "MANUFACTURER" "Samsung Electro-Mechanics"
+		(property "MANUFACTURER" "YAGEO"
 			(at 74.93 27.94 0)
 			(effects
 				(font
@@ -9277,7 +9277,7 @@
 				(hide yes)
 			)
 		)
-		(property "Manufacturer_Part_Number" "CL05A104KA5NNNC"
+		(property "Manufacturer_Part_Number" "CC0603KRX7R9BB104"
 			(at 74.93 27.94 0)
 			(effects
 				(font
@@ -9286,7 +9286,7 @@
 				(hide yes)
 			)
 		)
-		(property "DIGIKEY" "1276-1043-1-ND"
+		(property "DIGIKEY" ""
 			(at 74.93 27.94 0)
 			(effects
 				(font
@@ -10883,7 +10883,7 @@
 				(hide yes)
 			)
 		)
-		(property "Description" "0.1uF 6V SMD"
+		(property "Description" "0.1uF 50V X7R 0603"
 			(at 85.09 49.53 0)
 			(effects
 				(font
@@ -10892,7 +10892,7 @@
 				(hide yes)
 			)
 		)
-		(property "MANUFACTURER" "Samsung Electro-Mechanics"
+		(property "MANUFACTURER" "YAGEO"
 			(at 85.09 49.53 0)
 			(effects
 				(font
@@ -10901,7 +10901,7 @@
 				(hide yes)
 			)
 		)
-		(property "Manufacturer_Part_Number" "CL05A104KA5NNNC"
+		(property "Manufacturer_Part_Number" "CC0603KRX7R9BB104"
 			(at 85.09 49.53 0)
 			(effects
 				(font
@@ -10910,7 +10910,7 @@
 				(hide yes)
 			)
 		)
-		(property "DIGIKEY" "1276-1043-1-ND"
+		(property "DIGIKEY" ""
 			(at 85.09 49.53 0)
 			(effects
 				(font
@@ -13681,7 +13681,7 @@
 				(hide yes)
 			)
 		)
-		(property "Description" "0.1uF 6V SMD"
+		(property "Description" "0.1uF 50V X7R 0603"
 			(at 125.73 22.86 0)
 			(effects
 				(font
@@ -13690,7 +13690,7 @@
 				(hide yes)
 			)
 		)
-		(property "MANUFACTURER" "Samsung Electro-Mechanics"
+		(property "MANUFACTURER" "YAGEO"
 			(at 125.73 22.86 0)
 			(effects
 				(font
@@ -13699,7 +13699,7 @@
 				(hide yes)
 			)
 		)
-		(property "Manufacturer_Part_Number" "CL05A104KA5NNNC"
+		(property "Manufacturer_Part_Number" "CC0603KRX7R9BB104"
 			(at 125.73 22.86 0)
 			(effects
 				(font
@@ -13708,7 +13708,7 @@
 				(hide yes)
 			)
 		)
-		(property "DIGIKEY" "1276-1043-1-ND"
+		(property "DIGIKEY" ""
 			(at 125.73 22.86 0)
 			(effects
 				(font
@@ -14070,7 +14070,7 @@
 				(hide yes)
 			)
 		)
-		(property "Description" "0.1uF 6V SMD"
+		(property "Description" "0.1uF 50V X7R 0603"
 			(at 35.56 124.46 0)
 			(effects
 				(font
@@ -14079,7 +14079,7 @@
 				(hide yes)
 			)
 		)
-		(property "MANUFACTURER" "Samsung Electro-Mechanics"
+		(property "MANUFACTURER" "YAGEO"
 			(at 35.56 124.46 0)
 			(effects
 				(font
@@ -14088,7 +14088,7 @@
 				(hide yes)
 			)
 		)
-		(property "Manufacturer_Part_Number" "CL05A104KA5NNNC"
+		(property "Manufacturer_Part_Number" "CC0603KRX7R9BB104"
 			(at 35.56 124.46 0)
 			(effects
 				(font
@@ -14097,7 +14097,7 @@
 				(hide yes)
 			)
 		)
-		(property "DIGIKEY" "1276-1043-1-ND"
+		(property "DIGIKEY" ""
 			(at 35.56 124.46 0)
 			(effects
 				(font
@@ -15601,7 +15601,7 @@
 				(hide yes)
 			)
 		)
-		(property "Description" "0.1uF 6V SMD"
+		(property "Description" "0.1uF 50V X7R 0603"
 			(at 76.2 124.46 0)
 			(effects
 				(font
@@ -15610,7 +15610,7 @@
 				(hide yes)
 			)
 		)
-		(property "MANUFACTURER" "Samsung Electro-Mechanics"
+		(property "MANUFACTURER" "YAGEO"
 			(at 76.2 124.46 0)
 			(effects
 				(font
@@ -15619,7 +15619,7 @@
 				(hide yes)
 			)
 		)
-		(property "Manufacturer_Part_Number" "CL05A104KA5NNNC"
+		(property "Manufacturer_Part_Number" "CC0603KRX7R9BB104"
 			(at 76.2 124.46 0)
 			(effects
 				(font
@@ -15628,7 +15628,7 @@
 				(hide yes)
 			)
 		)
-		(property "DIGIKEY" "1276-1043-1-ND"
+		(property "DIGIKEY" ""
 			(at 76.2 124.46 0)
 			(effects
 				(font
@@ -17129,7 +17129,7 @@
 				(hide yes)
 			)
 		)
-		(property "NOTES" "F suffix required: outputs default LOW with an open input or unpowered side 1 (SLLSEP4K Table 7-2). Do not fit a non-F part."
+		(property "NOTES" "F suffix required: outputs default LOW with an open input or unpowered side 1 (SLLSEP4K Table 7-2). Do not fit a non-F part. Check the top marking reads ISO7741F on receipt (SLLSEP4K package addendum)."
 			(at 39.37 50.8 0)
 			(effects
 				(font
@@ -19409,7 +19409,7 @@
 				(hide yes)
 			)
 		)
-		(property "Description" "0.1uF 6V SMD"
+		(property "Description" "0.1uF 50V X7R 0603"
 			(at 209.55 120.65 0)
 			(effects
 				(font
@@ -19418,7 +19418,7 @@
 				(hide yes)
 			)
 		)
-		(property "MANUFACTURER" "Samsung Electro-Mechanics"
+		(property "MANUFACTURER" "YAGEO"
 			(at 209.55 120.65 0)
 			(effects
 				(font
@@ -19427,7 +19427,7 @@
 				(hide yes)
 			)
 		)
-		(property "Manufacturer_Part_Number" "CL05A104KA5NNNC"
+		(property "Manufacturer_Part_Number" "CC0603KRX7R9BB104"
 			(at 209.55 120.65 0)
 			(effects
 				(font
@@ -19436,7 +19436,7 @@
 				(hide yes)
 			)
 		)
-		(property "DIGIKEY" "1276-1043-1-ND"
+		(property "DIGIKEY" ""
 			(at 209.55 120.65 0)
 			(effects
 				(font
@@ -19643,7 +19643,7 @@
 				(hide yes)
 			)
 		)
-		(property "Description" "Encoder supply pass-through: 1 VIN (7-24 V in), 2 ENC+ (fused, to encoder V+), 3 0V (EN_GND)"
+		(property "Description" "Encoder supply pass-through: 1 VIN (the encoder's rated supply, 30 V max, isolated from V_IN), 2 +V (fused, to encoder V+), 3 0V (EN_GND)"
 			(at 273.05 115.57 0)
 			(effects
 				(font
@@ -19845,7 +19845,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "https://www.littelfuse.com/assetdocs/littelfuse-ptc-1206l-datasheet"
+		(property "Datasheet" "https://www.lcsc.com/datasheet/C7542932.pdf"
 			(at 246.38 115.57 0)
 			(effects
 				(font
@@ -19854,7 +19854,7 @@
 				(hide yes)
 			)
 		)
-		(property "Description" "PTC, 0.20 A hold, 0.42 A trip, 30 V, 1206 (encoder supply)"
+		(property "Description" "PTC, 0.20 A hold, 0.46 A trip, 30 V, 1206 (encoder supply)"
 			(at 246.38 115.57 0)
 			(effects
 				(font
@@ -19863,7 +19863,7 @@
 				(hide yes)
 			)
 		)
-		(property "MANUFACTURER" "Littelfuse"
+		(property "MANUFACTURER" "LUTE"
 			(at 246.38 115.57 0)
 			(effects
 				(font
@@ -19908,7 +19908,7 @@
 				(hide yes)
 			)
 		)
-		(property "manufacturer_1" "Littelfuse"
+		(property "manufacturer_1" "LUTE"
 			(at 246.38 115.57 0)
 			(effects
 				(font
@@ -20087,7 +20087,7 @@
 				(hide yes)
 			)
 		)
-		(property "NOTES" "Shunt for JP1 (always fit): 1-2 = 5V drive enable, 2-3 = OC (sink)"
+		(property "NOTES" "Shunt for JP1 (always fit): 1-2 = 5V drive enable, 2-3 = OC (sink). Hand-fit after assembly: no footprint, not in the CPL."
 			(at 175.26 140.97 0)
 			(effects
 				(font
@@ -20229,7 +20229,7 @@
 				(hide yes)
 			)
 		)
-		(property "NOTES" "Shunt for JP2 A_REF: fit only for an open-collector encoder"
+		(property "NOTES" "Shunt for JP2 A_REF: fit only for an open-collector encoder. Hand-fit after assembly: no footprint, not in the CPL."
 			(at 190.5 140.97 0)
 			(effects
 				(font
@@ -20371,7 +20371,7 @@
 				(hide yes)
 			)
 		)
-		(property "NOTES" "Shunt for JP3 B_REF: fit only for an open-collector encoder"
+		(property "NOTES" "Shunt for JP3 B_REF: fit only for an open-collector encoder. Hand-fit after assembly: no footprint, not in the CPL."
 			(at 205.74 140.97 0)
 			(effects
 				(font
@@ -20513,7 +20513,7 @@
 				(hide yes)
 			)
 		)
-		(property "NOTES" "Shunt for JP6 Z_REF: fit only for an open-collector encoder"
+		(property "NOTES" "Shunt for JP6 Z_REF: fit only for an open-collector encoder. Hand-fit after assembly: no footprint, not in the CPL."
 			(at 220.98 140.97 0)
 			(effects
 				(font

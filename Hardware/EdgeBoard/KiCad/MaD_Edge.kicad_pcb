@@ -3451,7 +3451,7 @@
 				)
 			)
 		)
-		(property "Description" "0.1uF 6V SMD"
+		(property "Description" "0.1uF 50V X7R 0603"
 			(at 0 0 0)
 			(layer "F.Fab")
 			(hide yes)
@@ -3463,7 +3463,7 @@
 				)
 			)
 		)
-		(property "MANUFACTURER" "Samsung Electro-Mechanics"
+		(property "MANUFACTURER" "YAGEO"
 			(at 0 0 0)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -3476,7 +3476,7 @@
 				)
 			)
 		)
-		(property "Manufacturer_Part_Number" "CL05A104KA5NNNC"
+		(property "Manufacturer_Part_Number" "CC0603KRX7R9BB104"
 			(at 0 0 0)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -3489,7 +3489,7 @@
 				)
 			)
 		)
-		(property "DIGIKEY" "1276-1043-1-ND"
+		(property "DIGIKEY" ""
 			(at 0 0 0)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -9169,7 +9169,7 @@
 				)
 			)
 		)
-		(property "Description" "0.1uF 6V SMD"
+		(property "Description" "0.1uF 50V X7R 0603"
 			(at 0 0 0)
 			(layer "F.Fab")
 			(hide yes)
@@ -9181,7 +9181,7 @@
 				)
 			)
 		)
-		(property "MANUFACTURER" "Samsung Electro-Mechanics"
+		(property "MANUFACTURER" "YAGEO"
 			(at 0 0 0)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -9194,7 +9194,7 @@
 				)
 			)
 		)
-		(property "Manufacturer_Part_Number" "CL05A104KA5NNNC"
+		(property "Manufacturer_Part_Number" "CC0603KRX7R9BB104"
 			(at 0 0 0)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -9207,7 +9207,7 @@
 				)
 			)
 		)
-		(property "DIGIKEY" "1276-1043-1-ND"
+		(property "DIGIKEY" ""
 			(at 0 0 0)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -12288,7 +12288,7 @@
 				)
 			)
 		)
-		(property "Description" "0.1uF 6V SMD"
+		(property "Description" "0.1uF 50V X7R 0603"
 			(at 0 0 90)
 			(layer "F.Fab")
 			(hide yes)
@@ -12300,7 +12300,7 @@
 				)
 			)
 		)
-		(property "MANUFACTURER" "Samsung Electro-Mechanics"
+		(property "MANUFACTURER" "YAGEO"
 			(at 0 0 0)
 			(layer "F.Fab")
 			(hide yes)
@@ -12312,7 +12312,7 @@
 				)
 			)
 		)
-		(property "Manufacturer_Part_Number" "CL05A104KA5NNNC"
+		(property "Manufacturer_Part_Number" "CC0603KRX7R9BB104"
 			(at 0 0 0)
 			(layer "F.Fab")
 			(hide yes)
@@ -12324,7 +12324,7 @@
 				)
 			)
 		)
-		(property "DIGIKEY" "1276-1043-1-ND"
+		(property "DIGIKEY" ""
 			(at 0 0 0)
 			(layer "F.Fab")
 			(hide yes)
@@ -16856,7 +16856,7 @@
 				)
 			)
 		)
-		(property "Description" "0.1uF 6V SMD"
+		(property "Description" "0.1uF 50V X7R 0603"
 			(at 0 0 90)
 			(layer "F.Fab")
 			(hide yes)
@@ -16868,7 +16868,7 @@
 				)
 			)
 		)
-		(property "MANUFACTURER" "Samsung Electro-Mechanics"
+		(property "MANUFACTURER" "YAGEO"
 			(at 0 0 90)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -16881,7 +16881,7 @@
 				)
 			)
 		)
-		(property "Manufacturer_Part_Number" "CL05A104KA5NNNC"
+		(property "Manufacturer_Part_Number" "CC0603KRX7R9BB104"
 			(at 0 0 90)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -16894,7 +16894,7 @@
 				)
 			)
 		)
-		(property "DIGIKEY" "1276-1043-1-ND"
+		(property "DIGIKEY" ""
 			(at 0 0 90)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -18231,7 +18231,7 @@
 				)
 			)
 		)
-		(property "Description" "0.1uF 6V SMD"
+		(property "Description" "0.1uF 50V X7R 0603"
 			(at 0 0 0)
 			(layer "F.Fab")
 			(hide yes)
@@ -18243,7 +18243,7 @@
 				)
 			)
 		)
-		(property "MANUFACTURER" "Samsung Electro-Mechanics"
+		(property "MANUFACTURER" "YAGEO"
 			(at 0 0 0)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -18256,7 +18256,7 @@
 				)
 			)
 		)
-		(property "Manufacturer_Part_Number" "CL05A104KA5NNNC"
+		(property "Manufacturer_Part_Number" "CC0603KRX7R9BB104"
 			(at 0 0 0)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -18269,7 +18269,7 @@
 				)
 			)
 		)
-		(property "DIGIKEY" "1276-1043-1-ND"
+		(property "DIGIKEY" ""
 			(at 0 0 0)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -18867,7 +18867,7 @@
 				)
 			)
 		)
-		(property "Description" "0.1uF 6V SMD"
+		(property "Description" "0.1uF 50V X7R 0603"
 			(at 0 0 270)
 			(layer "F.Fab")
 			(hide yes)
@@ -18879,7 +18879,7 @@
 				)
 			)
 		)
-		(property "MANUFACTURER" "Samsung Electro-Mechanics"
+		(property "MANUFACTURER" "YAGEO"
 			(at 0 0 270)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -18892,7 +18892,7 @@
 				)
 			)
 		)
-		(property "Manufacturer_Part_Number" "CL05A104KA5NNNC"
+		(property "Manufacturer_Part_Number" "CC0603KRX7R9BB104"
 			(at 0 0 270)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -18905,7 +18905,7 @@
 				)
 			)
 		)
-		(property "DIGIKEY" "1276-1043-1-ND"
+		(property "DIGIKEY" ""
 			(at 0 0 270)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -28074,7 +28074,7 @@
 				)
 			)
 		)
-		(property "Description" "0.1uF 6V SMD"
+		(property "Description" "0.1uF 50V X7R 0603"
 			(at 0 0 90)
 			(layer "F.Fab")
 			(hide yes)
@@ -28086,7 +28086,7 @@
 				)
 			)
 		)
-		(property "MANUFACTURER" "Samsung Electro-Mechanics"
+		(property "MANUFACTURER" "YAGEO"
 			(at 0 0 90)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -28099,7 +28099,7 @@
 				)
 			)
 		)
-		(property "Manufacturer_Part_Number" "CL05A104KA5NNNC"
+		(property "Manufacturer_Part_Number" "CC0603KRX7R9BB104"
 			(at 0 0 90)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -28112,7 +28112,7 @@
 				)
 			)
 		)
-		(property "DIGIKEY" "1276-1043-1-ND"
+		(property "DIGIKEY" ""
 			(at 0 0 90)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -28480,7 +28480,7 @@
 				)
 			)
 		)
-		(property "Description" "0.1uF 6V SMD"
+		(property "Description" "0.1uF 50V X7R 0603"
 			(at 0 0 90)
 			(layer "F.Fab")
 			(hide yes)
@@ -28492,7 +28492,7 @@
 				)
 			)
 		)
-		(property "MANUFACTURER" "Samsung Electro-Mechanics"
+		(property "MANUFACTURER" "YAGEO"
 			(at 0 0 90)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -28505,7 +28505,7 @@
 				)
 			)
 		)
-		(property "Manufacturer_Part_Number" "CL05A104KA5NNNC"
+		(property "Manufacturer_Part_Number" "CC0603KRX7R9BB104"
 			(at 0 0 90)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -28518,7 +28518,7 @@
 				)
 			)
 		)
-		(property "DIGIKEY" "1276-1043-1-ND"
+		(property "DIGIKEY" ""
 			(at 0 0 90)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -35406,7 +35406,7 @@
 				)
 			)
 		)
-		(property "Description" "0.1uF 6V SMD"
+		(property "Description" "0.1uF 50V X7R 0603"
 			(at 0 0 90)
 			(layer "F.Fab")
 			(hide yes)
@@ -35418,7 +35418,7 @@
 				)
 			)
 		)
-		(property "MANUFACTURER" "Samsung Electro-Mechanics"
+		(property "MANUFACTURER" "YAGEO"
 			(at 0 0 90)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -35431,7 +35431,7 @@
 				)
 			)
 		)
-		(property "Manufacturer_Part_Number" "CL05A104KA5NNNC"
+		(property "Manufacturer_Part_Number" "CC0603KRX7R9BB104"
 			(at 0 0 90)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -35444,7 +35444,7 @@
 				)
 			)
 		)
-		(property "DIGIKEY" "1276-1043-1-ND"
+		(property "DIGIKEY" ""
 			(at 0 0 90)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -37824,7 +37824,7 @@
 				)
 			)
 		)
-		(property "NOTES" "F suffix required: outputs default LOW with an open input or unpowered side 1 (SLLSEP4K Table 7-2). Do not fit a non-F part."
+		(property "NOTES" "F suffix required: outputs default LOW with an open input or unpowered side 1 (SLLSEP4K Table 7-2). Do not fit a non-F part. Check the top marking reads ISO7741F on receipt (SLLSEP4K package addendum)."
 			(at 0 0 270)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -42416,7 +42416,7 @@
 				)
 			)
 		)
-		(property "Description" "0.1uF 6V SMD"
+		(property "Description" "0.1uF 50V X7R 0603"
 			(at 0 0 180)
 			(layer "F.Fab")
 			(hide yes)
@@ -42428,7 +42428,7 @@
 				)
 			)
 		)
-		(property "MANUFACTURER" "Samsung Electro-Mechanics"
+		(property "MANUFACTURER" "YAGEO"
 			(at 0 0 180)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -42441,7 +42441,7 @@
 				)
 			)
 		)
-		(property "Manufacturer_Part_Number" "CL05A104KA5NNNC"
+		(property "Manufacturer_Part_Number" "CC0603KRX7R9BB104"
 			(at 0 0 180)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -42454,7 +42454,7 @@
 				)
 			)
 		)
-		(property "DIGIKEY" "1276-1043-1-ND"
+		(property "DIGIKEY" ""
 			(at 0 0 180)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -54842,7 +54842,7 @@
 				)
 			)
 		)
-		(property "Description" "0.1uF 6V SMD"
+		(property "Description" "0.1uF 50V X7R 0603"
 			(at 0 0 180)
 			(layer "F.Fab")
 			(hide yes)
@@ -54854,7 +54854,7 @@
 				)
 			)
 		)
-		(property "MANUFACTURER" "Samsung Electro-Mechanics"
+		(property "MANUFACTURER" "YAGEO"
 			(at 0 0 180)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -54867,7 +54867,7 @@
 				)
 			)
 		)
-		(property "Manufacturer_Part_Number" "CL05A104KA5NNNC"
+		(property "Manufacturer_Part_Number" "CC0603KRX7R9BB104"
 			(at 0 0 180)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -54880,7 +54880,7 @@
 				)
 			)
 		)
-		(property "DIGIKEY" "1276-1043-1-ND"
+		(property "DIGIKEY" ""
 			(at 0 0 180)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -55872,7 +55872,7 @@
 				)
 			)
 		)
-		(property "Description" "0.1uF 6V SMD"
+		(property "Description" "0.1uF 50V X7R 0603"
 			(at 0 0 270)
 			(layer "F.Fab")
 			(hide yes)
@@ -55884,7 +55884,7 @@
 				)
 			)
 		)
-		(property "MANUFACTURER" "Samsung Electro-Mechanics"
+		(property "MANUFACTURER" "YAGEO"
 			(at 0 0 270)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -55897,7 +55897,7 @@
 				)
 			)
 		)
-		(property "Manufacturer_Part_Number" "CL05A104KA5NNNC"
+		(property "Manufacturer_Part_Number" "CC0603KRX7R9BB104"
 			(at 0 0 270)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -55910,7 +55910,7 @@
 				)
 			)
 		)
-		(property "DIGIKEY" "1276-1043-1-ND"
+		(property "DIGIKEY" ""
 			(at 0 0 270)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -60962,7 +60962,7 @@
 				)
 			)
 		)
-		(property "Description" "0.1uF 6V SMD"
+		(property "Description" "0.1uF 50V X7R 0603"
 			(at 0 0 270)
 			(layer "F.Fab")
 			(hide yes)
@@ -60974,7 +60974,7 @@
 				)
 			)
 		)
-		(property "MANUFACTURER" "Samsung Electro-Mechanics"
+		(property "MANUFACTURER" "YAGEO"
 			(at 0 0 270)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -60987,7 +60987,7 @@
 				)
 			)
 		)
-		(property "Manufacturer_Part_Number" "CL05A104KA5NNNC"
+		(property "Manufacturer_Part_Number" "CC0603KRX7R9BB104"
 			(at 0 0 270)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -61000,7 +61000,7 @@
 				)
 			)
 		)
-		(property "DIGIKEY" "1276-1043-1-ND"
+		(property "DIGIKEY" ""
 			(at 0 0 270)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -65025,7 +65025,7 @@
 				)
 			)
 		)
-		(property "Description" "0.1uF 6V SMD"
+		(property "Description" "0.1uF 50V X7R 0603"
 			(at 0 0 0)
 			(layer "F.Fab")
 			(hide yes)
@@ -65037,7 +65037,7 @@
 				)
 			)
 		)
-		(property "MANUFACTURER" "Samsung Electro-Mechanics"
+		(property "MANUFACTURER" "YAGEO"
 			(at 0 0 0)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -65050,7 +65050,7 @@
 				)
 			)
 		)
-		(property "Manufacturer_Part_Number" "CL05A104KA5NNNC"
+		(property "Manufacturer_Part_Number" "CC0603KRX7R9BB104"
 			(at 0 0 0)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -65063,7 +65063,7 @@
 				)
 			)
 		)
-		(property "DIGIKEY" "1276-1043-1-ND"
+		(property "DIGIKEY" ""
 			(at 0 0 0)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -66249,7 +66249,7 @@
 				)
 			)
 		)
-		(property "Description" "0.1uF 6V SMD"
+		(property "Description" "0.1uF 50V X7R 0603"
 			(at 0 0 0)
 			(layer "F.Fab")
 			(hide yes)
@@ -66261,7 +66261,7 @@
 				)
 			)
 		)
-		(property "MANUFACTURER" "Samsung Electro-Mechanics"
+		(property "MANUFACTURER" "YAGEO"
 			(at 0 0 0)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -66274,7 +66274,7 @@
 				)
 			)
 		)
-		(property "Manufacturer_Part_Number" "CL05A104KA5NNNC"
+		(property "Manufacturer_Part_Number" "CC0603KRX7R9BB104"
 			(at 0 0 0)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -66287,7 +66287,7 @@
 				)
 			)
 		)
-		(property "DIGIKEY" "1276-1043-1-ND"
+		(property "DIGIKEY" ""
 			(at 0 0 0)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -68255,7 +68255,7 @@
 				)
 			)
 		)
-		(property "Description" "0.1uF 6V SMD"
+		(property "Description" "0.1uF 50V X7R 0603"
 			(at 0 0 90)
 			(layer "F.Fab")
 			(hide yes)
@@ -68267,7 +68267,7 @@
 				)
 			)
 		)
-		(property "MANUFACTURER" "Samsung Electro-Mechanics"
+		(property "MANUFACTURER" "YAGEO"
 			(at 0 0 90)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -68280,7 +68280,7 @@
 				)
 			)
 		)
-		(property "Manufacturer_Part_Number" "CL05A104KA5NNNC"
+		(property "Manufacturer_Part_Number" "CC0603KRX7R9BB104"
 			(at 0 0 90)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -68293,7 +68293,7 @@
 				)
 			)
 		)
-		(property "DIGIKEY" "1276-1043-1-ND"
+		(property "DIGIKEY" ""
 			(at 0 0 90)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -69209,7 +69209,7 @@
 				)
 			)
 		)
-		(property "Description" "0.1uF 6V SMD"
+		(property "Description" "0.1uF 50V X7R 0603"
 			(at 0 0 270)
 			(layer "F.Fab")
 			(hide yes)
@@ -69221,7 +69221,7 @@
 				)
 			)
 		)
-		(property "MANUFACTURER" "Samsung Electro-Mechanics"
+		(property "MANUFACTURER" "YAGEO"
 			(at 0 0 270)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -69234,7 +69234,7 @@
 				)
 			)
 		)
-		(property "Manufacturer_Part_Number" "CL05A104KA5NNNC"
+		(property "Manufacturer_Part_Number" "CC0603KRX7R9BB104"
 			(at 0 0 270)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -69247,7 +69247,7 @@
 				)
 			)
 		)
-		(property "DIGIKEY" "1276-1043-1-ND"
+		(property "DIGIKEY" ""
 			(at 0 0 270)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -70280,7 +70280,7 @@
 				)
 			)
 		)
-		(property "Description" "0.1uF 6V SMD"
+		(property "Description" "0.1uF 50V X7R 0603"
 			(at 0 0 0)
 			(layer "F.Fab")
 			(hide yes)
@@ -70292,7 +70292,7 @@
 				)
 			)
 		)
-		(property "MANUFACTURER" "Samsung Electro-Mechanics"
+		(property "MANUFACTURER" "YAGEO"
 			(at 0 0 0)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -70305,7 +70305,7 @@
 				)
 			)
 		)
-		(property "Manufacturer_Part_Number" "CL05A104KA5NNNC"
+		(property "Manufacturer_Part_Number" "CC0603KRX7R9BB104"
 			(at 0 0 0)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -70318,7 +70318,7 @@
 				)
 			)
 		)
-		(property "DIGIKEY" "1276-1043-1-ND"
+		(property "DIGIKEY" ""
 			(at 0 0 0)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -70596,7 +70596,7 @@
 				)
 			)
 		)
-		(property "Description" "Encoder supply pass-through: 1 VIN (7-24 V in), 2 ENC+ (fused, to encoder V+), 3 0V (EN_GND)"
+		(property "Description" "Encoder supply pass-through: 1 VIN (the encoder's rated supply, 30 V max, isolated from V_IN), 2 +V (fused, to encoder V+), 3 0V (EN_GND)"
 			(at 0 0 90)
 			(layer "F.Fab")
 			(hide yes)
@@ -73107,7 +73107,7 @@
 				)
 			)
 		)
-		(property "Datasheet" "https://www.littelfuse.com/assetdocs/littelfuse-ptc-1206l-datasheet"
+		(property "Datasheet" "https://www.lcsc.com/datasheet/C7542932.pdf"
 			(at 0 0 0)
 			(layer "F.Fab")
 			(hide yes)
@@ -73119,7 +73119,7 @@
 				)
 			)
 		)
-		(property "Description" "PTC, 0.20 A hold, 0.42 A trip, 30 V, 1206 (encoder supply)"
+		(property "Description" "PTC, 0.20 A hold, 0.46 A trip, 30 V, 1206 (encoder supply)"
 			(at 0 0 0)
 			(layer "F.Fab")
 			(hide yes)
@@ -73131,7 +73131,7 @@
 				)
 			)
 		)
-		(property "MANUFACTURER" "Littelfuse"
+		(property "MANUFACTURER" "LUTE"
 			(at 0 0 0)
 			(layer "F.Fab")
 			(hide yes)
@@ -73191,7 +73191,7 @@
 				)
 			)
 		)
-		(property "manufacturer_1" "Littelfuse"
+		(property "manufacturer_1" "LUTE"
 			(at 0 0 0)
 			(layer "F.Fab")
 			(hide yes)
@@ -73560,7 +73560,7 @@
 				)
 			)
 		)
-		(property "Description" "0.1uF 6V SMD"
+		(property "Description" "0.1uF 50V X7R 0603"
 			(at 0 0 180)
 			(layer "F.Fab")
 			(hide yes)
@@ -73572,7 +73572,7 @@
 				)
 			)
 		)
-		(property "MANUFACTURER" "Samsung Electro-Mechanics"
+		(property "MANUFACTURER" "YAGEO"
 			(at 0 0 180)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -73585,7 +73585,7 @@
 				)
 			)
 		)
-		(property "Manufacturer_Part_Number" "CL05A104KA5NNNC"
+		(property "Manufacturer_Part_Number" "CC0603KRX7R9BB104"
 			(at 0 0 180)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -73598,7 +73598,7 @@
 				)
 			)
 		)
-		(property "DIGIKEY" "1276-1043-1-ND"
+		(property "DIGIKEY" ""
 			(at 0 0 180)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -74038,7 +74038,7 @@
 				)
 			)
 		)
-		(property "Description" "0.1uF 6V SMD"
+		(property "Description" "0.1uF 50V X7R 0603"
 			(at 0 0 270)
 			(layer "F.Fab")
 			(hide yes)
@@ -74050,7 +74050,7 @@
 				)
 			)
 		)
-		(property "MANUFACTURER" "Samsung Electro-Mechanics"
+		(property "MANUFACTURER" "YAGEO"
 			(at 0 0 270)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -74063,7 +74063,7 @@
 				)
 			)
 		)
-		(property "Manufacturer_Part_Number" "CL05A104KA5NNNC"
+		(property "Manufacturer_Part_Number" "CC0603KRX7R9BB104"
 			(at 0 0 270)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -74076,7 +74076,7 @@
 				)
 			)
 		)
-		(property "DIGIKEY" "1276-1043-1-ND"
+		(property "DIGIKEY" ""
 			(at 0 0 270)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -74356,7 +74356,7 @@
 				)
 			)
 		)
-		(property "Description" "0.1uF 6V SMD"
+		(property "Description" "0.1uF 50V X7R 0603"
 			(at 0 0 270)
 			(layer "F.Fab")
 			(hide yes)
@@ -74368,7 +74368,7 @@
 				)
 			)
 		)
-		(property "MANUFACTURER" "Samsung Electro-Mechanics"
+		(property "MANUFACTURER" "YAGEO"
 			(at 0 0 270)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -74381,7 +74381,7 @@
 				)
 			)
 		)
-		(property "Manufacturer_Part_Number" "CL05A104KA5NNNC"
+		(property "Manufacturer_Part_Number" "CC0603KRX7R9BB104"
 			(at 0 0 270)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -74394,7 +74394,7 @@
 				)
 			)
 		)
-		(property "DIGIKEY" "1276-1043-1-ND"
+		(property "DIGIKEY" ""
 			(at 0 0 270)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -82454,7 +82454,7 @@
 				)
 			)
 		)
-		(property "Description" "0.1uF 6V SMD"
+		(property "Description" "0.1uF 50V X7R 0603"
 			(at 0 0 0)
 			(layer "F.Fab")
 			(hide yes)
@@ -82466,7 +82466,7 @@
 				)
 			)
 		)
-		(property "MANUFACTURER" "Samsung Electro-Mechanics"
+		(property "MANUFACTURER" "YAGEO"
 			(at 0 0 0)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -82479,7 +82479,7 @@
 				)
 			)
 		)
-		(property "Manufacturer_Part_Number" "CL05A104KA5NNNC"
+		(property "Manufacturer_Part_Number" "CC0603KRX7R9BB104"
 			(at 0 0 0)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -82492,7 +82492,7 @@
 				)
 			)
 		)
-		(property "DIGIKEY" "1276-1043-1-ND"
+		(property "DIGIKEY" ""
 			(at 0 0 0)
 			(unlocked yes)
 			(layer "F.Fab")
