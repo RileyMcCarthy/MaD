@@ -155,40 +155,41 @@ typedef struct
     int32_t kiDen;             /* integral gain denominator (kiNum=0 disables the term) */
     int32_t integralLimit;     /* counts/s — anti-windup clamp on the integral contribution */
 
-    /* Stall guard: the encoder judged against the PULSES the drive was sent.
+    /* Stall guard: two stages, both on the following error alone.
      *
-     * A window opens when |commandedVel| rises above stallVelocity and
-     * restarts whenever the command drops back below it or changes direction.
-     * Over the window the guard totals the step pulses actually emitted and
-     * converts them to the encoder counts they should produce (encoder steps
-     * per mm / servo steps per mm, from the machine profile). At the end of
-     * every stallTicks it compares that with the encoder's net movement in the
-     * pulsed direction, and flags a stall if the carriage delivered less than
-     * 1/stallProgressDen of it. That margin absorbs profile calibration error
-     * and drive lag through acceleration. A drive that is jammed but still
-     * powered buzzes the encoder back and forth by a few counts (measured:
-     * +-15 counts, longest still stretch 128 ms), so a per-tick "did it move?"
-     * test is reset by the buzz and never fires; net movement over a window
-     * against the pulses sent is not.
+     * The following error is the setpoint minus the encoder, so it measures
+     * the one thing a stall is: the carriage not being where the loop is
+     * driving it. A jam (dead or buzzing), a carriage that crawls, slips or
+     * cannot keep up, and a reversed encoder or drive direction all make it
+     * grow; a carriage that follows, however it lags, keeps it bounded.
      *
-     * The encoder running AGAINST the pulses by more than stallRunawayMove
-     * counts within a window is flagged at once: that is a reversed encoder
-     * (or drive) direction, where the loop's own correction drives the
-     * carriage further off.
+     * HARD CEILING: |error| above stallCeiling stalls on that tick. It is the
+     * runaway case -- a reversed direction, where the loop's own correction
+     * drives the carriage further off, or a jam at speed -- so it does not
+     * wait. It sits well above the largest error a healthy drive shows, so
+     * the coast through a full-speed stop or a reversal, and the lag through
+     * an acceleration ramp, never reach it.
      *
-     * Backstop: a following error above followErrorLimit for followErrorTicks
-     * consecutive ticks is flagged too, whatever the pulses say. It catches a
-     * carriage that moves the right way but cannot keep up (the bench held
-     * about 2 mm of error at full command for seconds).
+     * SOFT BAND: |error| above stallBand for stallBandTicks consecutive ticks
+     * stalls too. It is the slow case -- a carriage that moves the right way
+     * but stays too far behind, or a jam at a speed too low to reach the
+     * ceiling soon. The persistence is what lets the band sit lower than the
+     * ceiling: a healthy error passes through it briefly, on a ramp or a
+     * stop, and drops back before the time is up.
      *
-     * A window verdict holds until the window restarts (command stops or
-     * reverses); every verdict clears when the drive is disabled. */
-    int32_t stallVelocity;     /* counts/s */
-    uint32_t stallTicks;       /* window length, in control ticks */
-    int32_t stallProgressDen;  /* minimum delivered share of the pulsed travel = 1/den */
-    int32_t stallRunawayMove;  /* counts against the pulses => immediate stall */
-    int32_t followErrorLimit;  /* counts */
-    uint32_t followErrorTicks; /* consecutive ticks over the limit => stall */
+     * The values are derived from the SIL twin's drive (a 20 ms first-order
+     * lag, the shipped 50 mm/s and 600 mm/s^2 profile; see the defaults in
+     * dev_servo.c). The real drive's lag has not been measured, so they are
+     * placeholders on hardware until it is.
+     *
+     * A verdict LATCHES: it holds until the drive is disabled (the operator's
+     * acknowledgement, in app_control) or its position is redefined
+     * (dev_servo_setPosition, which zeroes the error with it). So a runaway
+     * that trips the ceiling for one tick is still reported to a reader that
+     * only looks every few ticks. */
+    int32_t stallCeiling;    /* counts: |following error| above => stall at once */
+    int32_t stallBand;       /* counts: |following error| above ...              */
+    uint32_t stallBandTicks; /* ... for this many consecutive ticks => stall    */
 } dev_servo_channelConfig_S;
 
 /**********************************************************************
@@ -201,8 +202,7 @@ typedef struct
  *   keeping this module unit-agnostic (see the ENCODER COUNTS note above). *
  * @param encoderStepsPerMM, servoStepsPerMM  Machine-profile scales. Their
  *   ratio is how many encoder counts one step pulse moves the carriage: the
- *   drive is pulsed at the commanded counts/s divided by it, and the stall
- *   guard expects that many counts of each pulse it sends. Pass <=0 for
+ *   drive is pulsed at the commanded counts/s divided by it. Pass <=0 for
  *   either to assume one count per pulse. */
 void dev_servo_init(int lock, int32_t maxVelocityCounts, int32_t maxAccelCounts,
                     int32_t encoderStepsPerMM, int32_t servoStepsPerMM);
