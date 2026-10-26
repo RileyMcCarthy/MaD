@@ -841,6 +841,15 @@ static void hold_encoder_off_target(int32_t offset, int ticks)
     }
 }
 
+static void park_at_origin_scaled(int32_t encoderPerMm)
+{
+    servo_init_scaled(SHIPPED_MAX_VEL_COUNTS, SHIPPED_MAX_ACCEL_COUNTS, encoderPerMm, 0);
+    dev_servo_enable(CH, true);
+    dev_servo_moveTo(CH, 0, 0);
+    tick();
+    TEST_ASSERT_TRUE(dev_servo_atTarget(CH));
+}
+
 static void park_at_origin(void)
 {
     servo_init();
@@ -863,6 +872,9 @@ void test_dev_servo_errorPastTheCeilingStallsAtOnce(void)
     VIBES_EXPECT_WHY("latched",
                      "the stall is still reported after the carriage is put back, until the drive is disabled",
                      "a stall the controller only samples now and then must not vanish before it is seen");
+    VIBES_EXPECT_WHY("set-position-clears",
+                     "a stall tripped again is cleared by giving the drive a new position, without disabling it",
+                     "redefining the position puts the setpoint on the carriage, so the error the stall was about is gone");
     park_at_origin();
     hold_encoder_off_target(STALL_CEILING, 1);
     TEST_ASSERT_FALSE(dev_servo_isStalled(CH));
@@ -874,6 +886,13 @@ void test_dev_servo_errorPastTheCeilingStallsAtOnce(void)
     hold_encoder_off_target(0, 1000);
     TEST_ASSERT_TRUE(dev_servo_isStalled(CH));
     dev_servo_enable(CH, false);
+    tick();
+    TEST_ASSERT_FALSE(dev_servo_isStalled(CH));
+
+    dev_servo_enable(CH, true);
+    hold_encoder_off_target(STALL_CEILING + 1, 1);
+    TEST_ASSERT_TRUE(dev_servo_isStalled(CH));
+    dev_servo_setPosition(CH, d_encoderValue);
     tick();
     TEST_ASSERT_FALSE(dev_servo_isStalled(CH));
 }
@@ -915,6 +934,36 @@ void test_dev_servo_briefErrorInTheSoftBandDoesNotStall(void)
         everStalled = everStalled || dev_servo_isStalled(CH);
     }
     TEST_ASSERT_FALSE(everStalled);
+}
+
+/* The profile's encoder scale on the bench (#308): 2400 counts per mm, so
+ * the 2 mm ceiling is 4800 counts and the 1 mm band 2400. */
+#define BENCH_COUNTS_PER_MM 2400
+#define BENCH_STALL_CEILING (2 * BENCH_COUNTS_PER_MM)
+#define BENCH_STALL_BAND BENCH_COUNTS_PER_MM
+
+void test_dev_servo_stallThresholdsFollowTheEncoderScale(void)
+{
+    VIBES_TEST("servo.stall-thresholds-follow-the-encoder-scale",
+               "src/DEV/dev_servo.c#dev_servo_init",
+               "a machine profile with 2400 encoder counts per millimetre, an enabled motor drive at rest, and its carriage pushed off where it should be");
+    VIBES_EXPECT_WHY("ceiling-is-2-mm",
+                     "an error of exactly 2 mm for a tick reports no stall, and one count more reports it on that tick",
+                     "the ceiling is a distance the carriage may run wrong, so it has to mean the same 2 mm whatever the encoder's resolution");
+    VIBES_EXPECT("band-is-1-mm",
+                 "an error just over 1 mm held for half a second reports a stall, and not a tick before");
+    park_at_origin_scaled(BENCH_COUNTS_PER_MM);
+    hold_encoder_off_target(BENCH_STALL_CEILING, 1);
+    TEST_ASSERT_FALSE(dev_servo_isStalled(CH));
+    hold_encoder_off_target(0, 1);
+    hold_encoder_off_target(-(BENCH_STALL_CEILING + 1), 1);
+    TEST_ASSERT_TRUE(dev_servo_isStalled(CH));
+
+    park_at_origin_scaled(BENCH_COUNTS_PER_MM);
+    hold_encoder_off_target(BENCH_STALL_BAND + 1, STALL_BAND_TICKS - 1);
+    TEST_ASSERT_FALSE(dev_servo_isStalled(CH));
+    hold_encoder_off_target(BENCH_STALL_BAND + 1, 1);
+    TEST_ASSERT_TRUE(dev_servo_isStalled(CH));
 }
 
 void test_dev_servo_slowFallingBehindStallsInTheSoftBand(void)
@@ -2384,6 +2433,7 @@ int main(void)
     RUN_TEST(test_dev_servo_errorHeldInTheSoftBandStalls);
     RUN_TEST(test_dev_servo_briefErrorInTheSoftBandDoesNotStall);
     RUN_TEST(test_dev_servo_slowFallingBehindStallsInTheSoftBand);
+    RUN_TEST(test_dev_servo_stallThresholdsFollowTheEncoderScale);
     RUN_TEST(test_dev_servo_pulsesAtTheProfileScale);
     RUN_TEST(test_dev_servo_moveAtProfileScaleArrivesWithoutStall);
 

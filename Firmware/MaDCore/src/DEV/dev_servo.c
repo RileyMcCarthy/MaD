@@ -13,6 +13,13 @@
 /**********************************************************************
  * Constants
  **********************************************************************/
+/* The stall guard's thresholds are LENGTHS (dev_servo.h): dev_servo_init
+ * converts them to counts through the profile's encoderStepsPerMM, so they
+ * mean 2 mm and 1 mm on any encoder. The counts in the defaults below are the
+ * same lengths at 8192 counts/mm, used only for an unprovisioned profile. */
+#define DEV_SERVO_STALL_CEILING_UM 2000
+#define DEV_SERVO_STALL_BAND_UM 1000
+
 /* Compile-time DEFAULTS in encoder counts (servo = 8192 counts/mm). Wiring
  * (pulse/dir/encoder channels) and control tuning (gains, stall guard, loop
  * period) are fixed here; maxVelocity/maxAccel are OVERRIDDEN per channel at
@@ -49,8 +56,10 @@ static const dev_servo_channelConfig_S dev_servo_channelConfigDefault[DEV_SERVO_
          * long as it lasts, since the command is clamped at maxVelocity and
          * leaves the proportional term no headroom to close it. Placeholders
          * on hardware until the real drive's lag is measured. */
-        16384,                       /* stallCeiling     — 2 mm: 1.9x the worst healthy error */
-        8192,                        /* stallBand        — 1 mm: above the 0.83 mm a cruise holds */
+        16384,                       /* stallCeiling     — 2 mm at 8192 counts/mm (DEV_SERVO_STALL_CEILING_UM):
+                                      *   1.9x the worst healthy error */
+        8192,                        /* stallBand        — 1 mm at 8192 counts/mm (DEV_SERVO_STALL_BAND_UM):
+                                      *   above the 0.83 mm a cruise holds */
         500U,                        /* stallBandTicks   — held for 500 ms; healthy excursions
                                       *   above 1 mm last at most 231 ms */
     },
@@ -310,6 +319,13 @@ static void dev_servo_private_advanceSetpoint(dev_servo_channelData_S *d, float 
     dev_servo_private_publishSetpoint(d);
 }
 
+/* A length in microns as encoder counts at `countsPerMM`, rounded to the
+ * nearest count. */
+static int32_t dev_servo_private_countsFromUm(int32_t um, int32_t countsPerMM)
+{
+    return (int32_t)((((int64_t)um * (int64_t)countsPerMM) + 500) / 1000);
+}
+
 /* One tick of the stall guard (rules in dev_servo.h). `error` is this tick's
  * following error. Returns the stall verdict, which latches. */
 static bool dev_servo_private_stallGuard(dev_servo_channelData_S *d,
@@ -387,6 +403,13 @@ void dev_servo_init(int lock, int32_t maxVelocityCounts, int32_t maxAccelCounts,
         dev_servo_channelConfig[ch] = dev_servo_channelConfigDefault[ch];
         if (maxVelocityCounts > 0) { dev_servo_channelConfig[ch].maxVelocity = maxVelocityCounts; }
         if (maxAccelCounts > 0) { dev_servo_channelConfig[ch].maxAccel = maxAccelCounts; }
+        if (encoderStepsPerMM > 0)
+        {
+            dev_servo_channelConfig[ch].stallCeiling =
+                dev_servo_private_countsFromUm(DEV_SERVO_STALL_CEILING_UM, encoderStepsPerMM);
+            dev_servo_channelConfig[ch].stallBand =
+                dev_servo_private_countsFromUm(DEV_SERVO_STALL_BAND_UM, encoderStepsPerMM);
+        }
 
         dev_servo_channelData_S *const d = &dev_servo_data.channel[ch];
         const int32_t pos = HAL_encoder_value(dev_servo_channelConfig[ch].encoderChannel);

@@ -177,6 +177,12 @@ typedef struct
      * ceiling: a healthy error passes through it briefly, on a ramp or a
      * stop, and drops back before the time is up.
      *
+     * The ceiling (2 mm) and the band (1 mm) are lengths: dev_servo_init
+     * converts them to counts with the profile's encoderStepsPerMM, so a
+     * 2400 counts/mm encoder trips past 4800 and 2400 counts. Only an
+     * unprovisioned profile (encoderStepsPerMM <= 0) keeps the default
+     * counts, which are those lengths at 8192 counts/mm.
+     *
      * The values are derived from the SIL twin's drive (a 20 ms first-order
      * lag, the shipped 50 mm/s and 600 mm/s^2 profile; see the defaults in
      * dev_servo.c). The real drive's lag has not been measured, so they are
@@ -187,8 +193,8 @@ typedef struct
      * (dev_servo_setPosition, which zeroes the error with it). So a runaway
      * that trips the ceiling for one tick is still reported to a reader that
      * only looks every few ticks. */
-    int32_t stallCeiling;    /* counts: |following error| above => stall at once */
-    int32_t stallBand;       /* counts: |following error| above ...              */
+    int32_t stallCeiling;    /* counts (2 mm via encoderStepsPerMM): |following error| above => stall at once */
+    int32_t stallBand;       /* counts (1 mm via encoderStepsPerMM): |following error| above ...              */
     uint32_t stallBandTicks; /* ... for this many consecutive ticks => stall    */
 } dev_servo_channelConfig_S;
 
@@ -203,7 +209,9 @@ typedef struct
  * @param encoderStepsPerMM, servoStepsPerMM  Machine-profile scales. Their
  *   ratio is how many encoder counts one step pulse moves the carriage: the
  *   drive is pulsed at the commanded counts/s divided by it. Pass <=0 for
- *   either to assume one count per pulse. */
+ *   either to assume one count per pulse. encoderStepsPerMM also converts the
+ *   stall guard's 2 mm ceiling and 1 mm band to counts; <=0 keeps their
+ *   8192 counts/mm defaults. */
 void dev_servo_init(int lock, int32_t maxVelocityCounts, int32_t maxAccelCounts,
                     int32_t encoderStepsPerMM, int32_t servoStepsPerMM);
 void dev_servo_run(void); /* one control tick; call at a fixed rate from a cog */
