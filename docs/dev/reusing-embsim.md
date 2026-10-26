@@ -20,7 +20,7 @@ the `mad-p2iss` core, the carrier, the add-on and the machine are kinds of
 (the host's Chrome on the board's clock) on the carrier's debug header `J1`;
 `embsim run` hands the files to `SIL/mad-runner`, the embsim command over
 MaD's kinds. `mad-emulator` seats the same ISS as a component named `P2`
-whose pins are `P0`..`P63`, with a `HostPty` or `--chrome` on `P53`/`P55`,
+whose pins are `P0`..`P63`, with a `HostPty` or `--chrome` on `P30`/`P32`,
 for SERVO-stall alone until a project can jam the carriage (MaD #298;
 embsim `MIGRATING-MAD.md` step 11).
 

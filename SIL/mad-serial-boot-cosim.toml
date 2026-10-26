@@ -32,7 +32,9 @@
 #
 # Open, for the user: which image the machine runs. By default the app
 # flashes a release's madEdge image, the propeller2_debug build, whose
-# protocol is on P53/P55, pins the P2-EC32MB has no finger for (read:
+# protocol is on P53/P55, pins the P2-EC32MB has no finger for, in every
+# release so far (the build has it on P30/P32 since the Edge v0.3 pin
+# move) (read:
 # Software/Control/src/firmware/release.ts, pickFirmwareAsset; .github/
 # workflows/ci.yml, the release's two images). The production build is the
 # release's -release.bin, which the app flashes only as a local file.

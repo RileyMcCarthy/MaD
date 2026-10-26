@@ -39,8 +39,8 @@
 
 FIRMWARE_DIR = ../Firmware/MaDCore
 # The P2 image mad-emulator and the p2core/p2iss suites execute: the debug
-# build, its MAIN channel on P53/P55 and its log on P62. Those routes put
-# the host straight on the chip's P53/P55 and read the log: the chip on no
+# build, its MAIN channel on P30/P32 and its log on P62. Those routes put
+# the host straight on the chip's P30/P32 and read the log: the chip on no
 # module and no carrier, so nothing sits between the host and those pins.
 P2_ENV = propeller2_debug
 P2_IMAGE = $(FIRMWARE_DIR)/.pio/build/$(P2_ENV)/program
@@ -277,7 +277,7 @@ e2e-rom: sd-image
 # mad-emulator's --jam-file, a lever the project's machine has no stepped
 # form of (mad-catalog/src/machine.rs, "Not modelled"). So it runs on
 # mad-emulator's board (BOARD_ROUTE=emulator): the debug image on the bare
-# chip, the host on P53/P55, a headless Chrome on the board's clock. This
+# chip, the host on P30/P32, a headless Chrome on the board's clock. This
 # target, mad-emulator and the debug image's route are what keep
 # mad-emulator in the tree (embsim MIGRATING-MAD.md step 11's exception;
 # MaD #298 is the jam a project would need).

@@ -33,11 +33,11 @@ use embsim_board::{
 use embsim_core::virtual_clock;
 use p2iss::{P2Iss, SerialLink};
 
-/// The MaD protocol link, as the firmware programs it: RX on P53, TX on P55,
+/// The MaD protocol link, as the firmware programs it: RX on P30, TX on P32,
 /// 2,000,000 baud — one bit is 500 ns.
 const PROTO: SerialLink = SerialLink {
-    tx_pin: 55,
-    rx_pin: 53,
+    tx_pin: p2core::board::PIN_PROTO_TX,
+    rx_pin: p2core::board::PIN_PROTO_RX,
     nominal_baud: 2_000_000,
 };
 
@@ -227,9 +227,9 @@ fn the_iss_answers_the_protocol_over_a_wire() {
         .component("HOST", Box::new(HostUart::new(framing, host.clone())))
         .harness(
             Harness::new()
-                .connect_str("P2.P55", "HOST.RX")
+                .connect_str(&format!("P2.{}", p2iss::pin_name(PROTO.tx_pin)), "HOST.RX")
                 .expect("endpoints parse")
-                .connect_str("HOST.TX", "P2.P53")
+                .connect_str("HOST.TX", &format!("P2.{}", p2iss::pin_name(PROTO.rx_pin)))
                 .expect("endpoints parse"),
         )
         .start()

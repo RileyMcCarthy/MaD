@@ -182,8 +182,9 @@ fn a_pin_reads_its_driver_and_an_input_reads_the_outside() {
     assert_eq!(board.output_level(4), None, "an input has no output level");
 }
 
-/// The high bank is reached the same way — the SD and protocol pins live
-/// there, so a bank mix-up would be invisible on pins 0..31 and fatal above.
+/// The high bank is reached the same way — the SD pins and the protocol's
+/// transmit pin (P32) live there, so a bank mix-up would be invisible on pins
+/// 0..31 and fatal above.
 #[test]
 fn the_upper_bank_is_addressed_correctly() {
     let mut board = Board::new(SdCard::blank(0));

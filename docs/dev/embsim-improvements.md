@@ -78,9 +78,9 @@ Do this **after P0**. Same pin graph and time counter as native. CLI: `--backend
 
 ### Smartpin modes (MaD debug image)
 
-Use `propeller2_debug` so MAIN is hardware UART (pins 53/55), not FlexC `_txraw`.
+Use `propeller2_debug` so MAIN is hardware UART (pins 30/32), not FlexC `_txraw`.
 
-- [ ] `P_ASYNC_TX` / `P_ASYNC_RX` — 2 Mbaud on 53/55 → host PTY; 115200 on 0/2 → ADS122U04.
+- [ ] `P_ASYNC_TX` / `P_ASYNC_RX` — 2 Mbaud on 30/32 → host PTY; 115200 on 0/2 → ADS122U04.
 - [ ] `P_QUADRATURE` — encoder A/B (9/10).
 - [ ] `P_TRANSITION` + `P_OE` — counted stepper pulses (pin 8).
 - [ ] `P_NCO_FREQ` + `P_OE` — continuous velocity.
