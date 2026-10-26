@@ -4793,7 +4793,7 @@
 			)
 			(embedded_fonts no)
 		)
-		(symbol "Transistor_BJT:2N3904"
+		(symbol "Transistor_BJT:MMBT3904"
 			(pin_names
 				(offset 0)
 				(hide yes)
@@ -4810,7 +4810,7 @@
 					(justify left)
 				)
 			)
-			(property "Value" "2N3904"
+			(property "Value" "MMBT3904"
 				(at 5.08 0 0)
 				(effects
 					(font
@@ -4819,7 +4819,7 @@
 					(justify left)
 				)
 			)
-			(property "Footprint" "Package_TO_SOT_THT:TO-92_Inline"
+			(property "Footprint" "Package_TO_SOT_SMD:SOT-23"
 				(at 5.08 -1.905 0)
 				(effects
 					(font
@@ -4830,7 +4830,7 @@
 					(hide yes)
 				)
 			)
-			(property "Datasheet" "https://www.onsemi.com/pub/Collateral/2N3903-D.PDF"
+			(property "Datasheet" "https://www.onsemi.com/pdf/datasheet/pzt3904-d.pdf"
 				(at 0 0 0)
 				(effects
 					(font
@@ -4840,7 +4840,7 @@
 					(hide yes)
 				)
 			)
-			(property "Description" "0.2A Ic, 40V Vce, Small Signal NPN Transistor, TO-92"
+			(property "Description" "0.2A Ic, 40V Vce, Small Signal NPN Transistor, SOT-23"
 				(at 0 0 0)
 				(effects
 					(font
@@ -4858,7 +4858,7 @@
 					(hide yes)
 				)
 			)
-			(property "ki_fp_filters" "TO?92*"
+			(property "ki_fp_filters" "SOT?23*"
 				(at 0 0 0)
 				(effects
 					(font
@@ -4867,37 +4867,25 @@
 					(hide yes)
 				)
 			)
-			(symbol "2N3904_0_1"
+			(symbol "MMBT3904_0_1"
 				(polyline
 					(pts
-						(xy 0.635 1.905) (xy 0.635 -1.905) (xy 0.635 -1.905)
+						(xy -2.54 0) (xy 0.635 0)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy 0.635 1.905) (xy 0.635 -1.905)
 					)
 					(stroke
 						(width 0.508)
-						(type default)
-					)
-					(fill
-						(type none)
-					)
-				)
-				(polyline
-					(pts
-						(xy 0.635 0.635) (xy 2.54 2.54)
-					)
-					(stroke
-						(width 0)
-						(type default)
-					)
-					(fill
-						(type none)
-					)
-				)
-				(polyline
-					(pts
-						(xy 0.635 -0.635) (xy 2.54 -2.54) (xy 2.54 -2.54)
-					)
-					(stroke
-						(width 0)
 						(type default)
 					)
 					(fill
@@ -4915,9 +4903,35 @@
 						(type none)
 					)
 				)
+			)
+			(symbol "MMBT3904_1_1"
 				(polyline
 					(pts
-						(xy 1.27 -1.778) (xy 1.778 -1.27) (xy 2.286 -2.286) (xy 1.27 -1.778) (xy 1.27 -1.778)
+						(xy 0.635 0.635) (xy 2.54 2.54)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy 0.635 -0.635) (xy 2.54 -2.54)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy 1.27 -1.778) (xy 1.778 -1.27) (xy 2.286 -2.286) (xy 1.27 -1.778)
 					)
 					(stroke
 						(width 0)
@@ -4927,11 +4941,9 @@
 						(type outline)
 					)
 				)
-			)
-			(symbol "2N3904_1_1"
-				(pin passive line
+				(pin input line
 					(at -5.08 0 0)
-					(length 5.715)
+					(length 2.54)
 					(name "B"
 						(effects
 							(font
@@ -4939,7 +4951,7 @@
 							)
 						)
 					)
-					(number "2"
+					(number "1"
 						(effects
 							(font
 								(size 1.27 1.27)
@@ -4975,7 +4987,7 @@
 							)
 						)
 					)
-					(number "1"
+					(number "2"
 						(effects
 							(font
 								(size 1.27 1.27)
@@ -12952,7 +12964,7 @@
 		)
 	)
 	(symbol
-		(lib_id "Transistor_BJT:2N3904")
+		(lib_id "Transistor_BJT:MMBT3904")
 		(at 77.47 91.44 0)
 		(unit 1)
 		(exclude_from_sim no)
@@ -12970,7 +12982,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "NPN"
+		(property "Value" "MMBT3904"
 			(at 82.55 92.7099 0)
 			(effects
 				(font
@@ -12979,7 +12991,7 @@
 				(justify left)
 			)
 		)
-		(property "Footprint" "Package_TO_SOT_SMD:TSOT-23"
+		(property "Footprint" "Package_TO_SOT_SMD:SOT-23"
 			(at 82.55 93.345 0)
 			(effects
 				(font
@@ -12990,7 +13002,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "https://www.onsemi.com/pub/Collateral/2N3903-D.PDF"
+		(property "Datasheet" "https://www.lcsc.com/datasheet/C20526.pdf"
 			(at 77.47 91.44 0)
 			(effects
 				(font
@@ -13054,7 +13066,7 @@
 				(hide yes)
 			)
 		)
-		(property "NOTES" ""
+		(property "NOTES" "SOT-23 pinout 1 B, 2 E, 3 C (JSCJ MMBT3904 datasheet p.1)"
 			(at 77.47 91.44 0)
 			(effects
 				(font
@@ -17200,7 +17212,7 @@
 		(in_bom yes)
 		(on_board yes)
 		(dnp no)
-		(uuid "8c09dfd7-f8c8-46d1-bb48-d91c92f4eb86")
+		(uuid "78697427-8987-4bb5-85b4-d518da110f0b")
 		(property "Reference" "R39"
 			(at 49.53 85.09 90)
 			(effects
@@ -17326,10 +17338,10 @@
 			)
 		)
 		(pin "1"
-			(uuid "899316f6-afdd-45a1-a5f1-a87c8c4f0cab")
+			(uuid "cada9093-38e6-40e8-bcf0-ea3826d2eacc")
 		)
 		(pin "2"
-			(uuid "7c3207a2-4e6f-412d-85db-71e261e9b5f2")
+			(uuid "c8ff78d7-745f-429d-a128-e7e2f3eebe32")
 		)
 		(instances
 			(project "MaD_Edge"
@@ -17348,7 +17360,7 @@
 			(width 0)
 			(type default)
 		)
-		(uuid "3a53c577-763c-4845-9e57-6c1850d53ce8")
+		(uuid "676288c6-e8da-4b43-87ed-e58f763a9d4e")
 	)
 	(global_label "P6"
 		(shape input)
@@ -17360,7 +17372,7 @@
 			)
 			(justify left)
 		)
-		(uuid "312cc9dd-6168-470c-b9ae-e0f06398e0c3")
+		(uuid "7aeed2a5-44dc-435e-99ff-ff6202c7f434")
 		(property "Intersheetrefs" "${INTERSHEET_REFS}"
 			(at 44.45 74 90)
 			(effects
@@ -17380,7 +17392,7 @@
 			(width 0)
 			(type default)
 		)
-		(uuid "18e79a5b-76c7-4532-b63c-8b13dc32d361")
+		(uuid "d138af41-3242-42ee-b233-f0acc38bd613")
 	)
 	(symbol
 		(lib_id "power:GND")
@@ -17390,7 +17402,7 @@
 		(in_bom yes)
 		(on_board yes)
 		(dnp no)
-		(uuid "c17f9fb4-404a-4362-a338-ca6bec6506e7")
+		(uuid "6c26625e-207c-4263-8940-22aa0643383e")
 		(property "Reference" "#PWR0249"
 			(at 44.45 96.52 0)
 			(effects
@@ -17435,7 +17447,7 @@
 			)
 		)
 		(pin "1"
-			(uuid "184c5e3f-386c-4360-baed-1aab4e905c01")
+			(uuid "7ac91d62-687e-4868-b514-ddd150cd0e3b")
 		)
 		(instances
 			(project "MaD_Edge"
@@ -17455,6 +17467,6 @@
 			)
 			(justify left bottom)
 		)
-		(uuid "36d244ff-ac18-4975-9632-7ad987dfe2ca")
+		(uuid "19d3dcb6-0f71-44b1-b137-2660c3b31af1")
 	)
 )
