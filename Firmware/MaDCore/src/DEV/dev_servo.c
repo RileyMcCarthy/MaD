@@ -122,6 +122,7 @@ typedef struct
     uint32_t emittedLast;   /* pulse engine's cumulative count at the last read */
     uint32_t stallCounter;  /* ticks into the current window; 0 = no window open */
     int32_t stallStartPos;  /* encoder position when the window opened */
+    int32_t stallTurnBack;  /* furthest travel against this window's pulses so far (<= 0) */
     float stallExpected;    /* encoder counts the pulses emitted since then should give */
     bool stallForward;      /* direction of the command that opened the window */
     bool stallLatched;      /* this window has judged a stall */
@@ -318,6 +319,7 @@ static void dev_servo_private_stallReset(dev_servo_channelData_S *d)
 {
     d->stallCounter = 0U;
     d->stallStartPos = 0;
+    d->stallTurnBack = 0;
     d->stallExpected = 0.0f;
     d->stallForward = true;
     d->stallLatched = false;
@@ -375,10 +377,21 @@ static bool dev_servo_private_stallGuard(dev_servo_channelData_S *d,
     {
         d->stallLatched = true;
     }
+    /* Where the carriage turned. A window that a reversal opens starts while
+     * the carriage still carries the old direction's speed, and the drive's
+     * lag takes it on, against the new pulses, until it turns. That coast is
+     * travel from pulses sent before the window, which the window does not
+     * count either (above), so the window's travel is judged from the turn.
+     * The reference moves back by at most stallRunawayMove: any more travel
+     * against the pulses has already stalled, just above. */
+    if (progress < d->stallTurnBack)
+    {
+        d->stallTurnBack = progress;
+    }
     if (d->stallCounter >= cfg->stallTicks)
     {
         const float needed = d->stallExpected / (float)cfg->stallProgressDen;
-        if ((float)progress < needed)
+        if ((float)(progress - d->stallTurnBack) < needed)
         {
             d->stallLatched = true;
         }

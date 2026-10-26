@@ -163,9 +163,14 @@ typedef struct
      * converts them to the encoder counts they should produce (encoder steps
      * per mm / servo steps per mm, from the machine profile). At the end of
      * every stallTicks it compares that with the encoder's net movement in the
-     * pulsed direction, and flags a stall if the carriage delivered less than
+     * pulsed direction, measured from where the carriage turned to follow
+     * them, and flags a stall if the carriage delivered less than
      * 1/stallProgressDen of it. That margin absorbs profile calibration error
-     * and drive lag through acceleration. A drive that is jammed but still
+     * and drive lag through acceleration. Measuring from the turn absorbs the
+     * lag across a reversal: the carriage coasts on in the old direction
+     * after the command flips (measured on the SIL twin's drive, a 20 ms lag:
+     * 0.16 mm after a waveform's 50 mm/s return), and that travel comes from
+     * pulses sent before the window opened. A drive that is jammed but still
      * powered buzzes the encoder back and forth by a few counts (measured:
      * +-15 counts, longest still stretch 128 ms), so a per-tick "did it move?"
      * test is reset by the buzz and never fires; net movement over a window

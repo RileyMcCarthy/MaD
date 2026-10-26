@@ -765,6 +765,87 @@ void test_dev_servo_stallOnHeldFollowingError(void)
     TEST_ASSERT_GREATER_OR_EQUAL_INT(firstOverLimit + 499, ticks);
 }
 
+/* A carriage behind a drive with LAG: its speed follows the step rate through
+ * a first-order lag of time constant `tauS`, solved exactly over each 1 ms
+ * tick: embsim's StepperMotor, the SIL twin's drive (20 ms there, no load
+ * loss). tick_with_motion's carriage moves exactly what each tick's pulses
+ * say; this one coasts on after the command turns back, by about its speed
+ * times the lag. */
+static double d_carriageVel; /* counts/s */
+
+static void tick_with_lag(double tauS)
+{
+    global_timeus += 1000U;
+    dev_servo_run();
+    const double dir = d_gpioActive ? -1.0 : 1.0;
+    const double rate = (d_startVelocityCount > 0U) ? (dir * (double)d_pulseRate) : 0.0;
+    const double decay = exp(-SERVO_DT_S / tauS);
+    d_carriage += (rate * SERVO_DT_S) + ((d_carriageVel - rate) * tauS * (1.0 - decay));
+    d_carriageVel = rate + ((d_carriageVel - rate) * decay);
+    d_encoderValue = (int32_t)(d_carriage < 0.0 ? (d_carriage - 0.5) : (d_carriage + 0.5));
+}
+
+/* The SIL twin's drive lag (SIL/mad-catalog/src/machine.rs: embsim's
+ * StepperMotor at its default time constant). */
+#define TWIN_DRIVE_LAG_S 0.020
+
+void test_dev_servo_noStallThroughAWaveformOnALaggingDrive(void)
+{
+    VIBES_TEST("servo.no-stall-through-a-waveform-on-a-lagging-drive",
+               "src/DEV/dev_servo.c#dev_servo_private_stallGuard",
+               "an enabled motor drive running two cycles of a 4 mm, 0.5 Hz sine about a centre 6 mm away, its carriage following the step rate through a 20 ms lag");
+    VIBES_EXPECT_WHY("no-stall",
+                     "no stall is reported through the approach to the peak, the cycles or the return to the centre",
+                     "the approach and the return run at the machine's full speed, so the carriage coasts past each of them before it is drawn back");
+    VIBES_EXPECT("cycles-done", "both cycles complete");
+    servo_init();
+    d_carriageVel = 0.0;
+    dev_servo_enable(CH, true);
+    TEST_ASSERT_TRUE(dev_servo_startWaveform(CH, WF(counts_from_mm(6.0), counts_from_mm(4.0), 500000U, 2U,
+                                                    DEV_SERVO_WAVE_SINE)));
+    bool everStalled = false;
+    int ticks = 0;
+    do
+    {
+        tick_with_lag(TWIN_DRIVE_LAG_S);
+        everStalled = everStalled || dev_servo_isStalled(CH);
+        ticks++;
+    } while ((ticks < 30000) && !dev_servo_atTarget(CH));
+    TEST_ASSERT_EQUAL_UINT32(2U, dev_servo_waveformCyclesDone(CH));
+    TEST_ASSERT_FALSE(everStalled);
+}
+
+void test_dev_servo_stallWhenJammedAtAReversal(void)
+{
+    VIBES_TEST("servo.stall-when-jammed-at-a-reversal",
+               "src/DEV/dev_servo.c#dev_servo_private_stallGuard",
+               "an enabled motor drive running one way at speed, then commanded back, with the carriage jammed from that moment and its encoder buzzing within 15 counts");
+    VIBES_EXPECT_WHY("stall-reported",
+                     "the drive reports a stall within one stall window of the command turning",
+                     "a carriage that never turns to follow the new pulses has delivered none of their travel, wherever the window is judged from");
+    servo_init();
+    dev_servo_enable(CH, true);
+    dev_servo_setVelocity(CH, 20000);
+    for (int i = 0; i < 300; i++)
+    {
+        tick_with_motion();
+    }
+    TEST_ASSERT_FALSE(dev_servo_isStalled(CH));
+    const int32_t jam = d_encoderValue;
+    dev_servo_setVelocity(CH, -20000);
+    int ticks = 0;
+    while ((ticks < 1000) && !dev_servo_isStalled(CH))
+    {
+        d_encoderValue = jam + d_buzz[ticks % BUZZ_LEN];
+        tick();
+        ticks++;
+    }
+    TEST_ASSERT_TRUE(dev_servo_isStalled(CH));
+    /* The command decelerates through zero before the reversed window opens;
+     * allow for that, then one 200-tick window. */
+    TEST_ASSERT_LESS_OR_EQUAL_INT(260, ticks);
+}
+
 void test_dev_servo_stallUsesProfilePulseScale(void)
 {
     VIBES_TEST("servo.stall-uses-profile-pulse-scale",
@@ -2217,6 +2298,8 @@ int main(void)
     RUN_TEST(test_dev_servo_noStallOnFullSpeedMove);
     RUN_TEST(test_dev_servo_runawayIsReportedAsStall);
     RUN_TEST(test_dev_servo_stallOnHeldFollowingError);
+    RUN_TEST(test_dev_servo_noStallThroughAWaveformOnALaggingDrive);
+    RUN_TEST(test_dev_servo_stallWhenJammedAtAReversal);
     RUN_TEST(test_dev_servo_stallUsesProfilePulseScale);
     RUN_TEST(test_dev_servo_pulsesAtTheProfileScale);
     RUN_TEST(test_dev_servo_moveAtProfileScaleArrivesWithoutStall);
