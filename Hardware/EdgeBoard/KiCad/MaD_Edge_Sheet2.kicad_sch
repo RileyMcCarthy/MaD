@@ -4,6 +4,13 @@
 	(generator_version "9.0")
 	(uuid "9625535a-d38d-478e-a1c2-663297506a5c")
 	(paper "A4")
+	(title_block
+		(title "MaD Edge carrier: I/O and host link")
+		(date "2026-10-25")
+		(rev "v0.3")
+		(company "MaD")
+		(comment 1 "Revision v0.3: fixes from the SIL hardware findings; see Hardware/EdgeBoard/readme.md")
+	)
 	(lib_symbols
 		(symbol "74xGxx:SN74LVC1G14DBV"
 			(exclude_from_sim no)
