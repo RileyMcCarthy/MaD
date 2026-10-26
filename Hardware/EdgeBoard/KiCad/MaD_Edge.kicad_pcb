@@ -86628,6 +86628,39 @@
 		(layer "F.SilkS")
 		(uuid "ff16318f-1975-472c-97c9-a3f5bd148c1e")
 	)
+	(gr_circle
+		(center 77.47 156.9)
+		(end 78.07 156.9)
+		(stroke
+			(width 0.1)
+			(type default)
+		)
+		(fill no)
+		(layer "Dwgs.User")
+		(uuid "48079ba6-d9d0-47c5-9389-4354a2f67265")
+	)
+	(gr_circle
+		(center 78.74 156.3)
+		(end 79.339999 156.3)
+		(stroke
+			(width 0.1)
+			(type default)
+		)
+		(fill no)
+		(layer "Dwgs.User")
+		(uuid "bf07a224-8e1e-4ad2-a429-5e89e63c9fe2")
+	)
+	(gr_circle
+		(center 76.2 157.5)
+		(end 76.8 157.5)
+		(stroke
+			(width 0.1)
+			(type default)
+		)
+		(fill no)
+		(layer "Dwgs.User")
+		(uuid "d431965c-d2fb-4de7-8a48-ae3f380311e8")
+	)
 	(gr_line
 		(start 138.429999 118.110001)
 		(end 1.905 118.11)
@@ -87310,6 +87343,18 @@
 				(thickness 0.1016)
 			)
 			(justify mirror)
+		)
+	)
+	(gr_text "FAB NOTE: the three circled vias sit inside J3 pads 9-11 (P31/P30/P29, 0.3 mm drill).\nFill and cap them: IPC-4761 Type VII, epoxy filled and copper capped, planarized.\nAll other vias: tented both sides."
+		(at 0 214.5 0)
+		(layer "Dwgs.User")
+		(uuid "355a640b-d91d-4c4f-b482-d388d81be57f")
+		(effects
+			(font
+				(size 1.2 1.2)
+				(thickness 0.18)
+			)
+			(justify left top)
 		)
 	)
 	(segment
