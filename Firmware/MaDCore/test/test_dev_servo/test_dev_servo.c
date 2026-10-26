@@ -846,6 +846,124 @@ void test_dev_servo_stallWhenJammedAtAReversal(void)
     TEST_ASSERT_LESS_OR_EQUAL_INT(260, ticks);
 }
 
+/* Run at 10 mm/s on the lagging carriage, then command `backVel` the other
+ * way. The carriage coasts on against the new pulses (about 0.2 mm) before
+ * it turns. */
+static void run_then_reverse_on_lag(int32_t backVel)
+{
+    servo_init();
+    d_carriageVel = 0.0;
+    dev_servo_enable(CH, true);
+    dev_servo_setVelocity(CH, 81920);
+    for (int i = 0; i < 400; i++)
+    {
+        tick_with_lag(TWIN_DRIVE_LAG_S);
+    }
+    TEST_ASSERT_FALSE(dev_servo_isStalled(CH));
+    dev_servo_setVelocity(CH, backVel);
+}
+
+void test_dev_servo_stallWhenJammedWhereACoastTurns(void)
+{
+    VIBES_TEST("servo.stall-when-jammed-where-a-coast-turns",
+               "src/DEV/dev_servo.c#dev_servo_private_stallGuard",
+               "an enabled motor drive at 10 mm/s, its carriage following through a 20 ms lag, commanded back at 3 mm/s and jammed where the carriage turns, its encoder buzzing within 15 counts");
+    VIBES_EXPECT_WHY("stall-reported",
+                     "the drive reports a stall within one stall window of the command turning",
+                     "the lag that carries the carriage on past the reversal is excused up to where it turns, and from there the jammed carriage delivers none of the travel the new pulses call for");
+    run_then_reverse_on_lag(-24576);
+    int ticks = 0;
+    bool jammed = false;
+    int32_t jam = 0;
+    while ((ticks < 1000) && !dev_servo_isStalled(CH))
+    {
+        if (!jammed)
+        {
+            tick_with_lag(TWIN_DRIVE_LAG_S);
+            if (d_carriageVel <= 0.0)
+            {
+                jammed = true;
+                jam = d_encoderValue;
+            }
+        }
+        else
+        {
+            d_encoderValue = jam + d_buzz[ticks % BUZZ_LEN];
+            tick();
+        }
+        ticks++;
+    }
+    TEST_ASSERT_TRUE(dev_servo_isStalled(CH));
+    /* The command decelerates through zero before the reversed window opens;
+     * allow for that, then one 200-tick window. */
+    TEST_ASSERT_LESS_OR_EQUAL_INT(260, ticks);
+}
+
+void test_dev_servo_stallWhenJammedAfterAHealthyWindow(void)
+{
+    VIBES_TEST("servo.stall-when-jammed-after-a-healthy-window",
+               "src/DEV/dev_servo.c#dev_servo_private_stallGuard",
+               "an enabled motor drive at 10 mm/s, its carriage following through a 20 ms lag, commanded back at 0.75 mm/s for one stall window, then jammed early in the next");
+    VIBES_EXPECT("no-stall-before-jam", "no stall is reported before the jam");
+    VIBES_EXPECT_WHY("stall-reported",
+                     "the drive reports a stall within one stall window of the jam",
+                     "each window is judged from its own start, so the coast excused at the reversal excuses no later window");
+    run_then_reverse_on_lag(-6144);
+    /* The reversed window excuses the coast and ends healthy; the jam lands
+     * about 30 ticks into the window after it. */
+    bool stalledBeforeJam = false;
+    for (int i = 0; i < 450; i++)
+    {
+        tick_with_lag(TWIN_DRIVE_LAG_S);
+        stalledBeforeJam = stalledBeforeJam || dev_servo_isStalled(CH);
+    }
+    TEST_ASSERT_FALSE(stalledBeforeJam);
+    const int32_t jam = d_encoderValue;
+    int ticks = 0;
+    while ((ticks < 2000) && !dev_servo_isStalled(CH))
+    {
+        d_encoderValue = jam + d_buzz[ticks % BUZZ_LEN];
+        tick();
+        ticks++;
+    }
+    TEST_ASSERT_TRUE(dev_servo_isStalled(CH));
+    TEST_ASSERT_LESS_OR_EQUAL_INT(200, ticks);
+}
+
+void test_dev_servo_stallWhenPushedBackMidWindow(void)
+{
+    VIBES_TEST("servo.stall-when-pushed-back-mid-window",
+               "src/DEV/dev_servo.c#dev_servo_private_stallGuard",
+               "an enabled motor drive commanded at speed, its carriage pushed back 0.24 mm by a load, to behind where it started, then covering 30 percent of the travel its step pulses call for");
+    VIBES_EXPECT_WHY("stall-reported",
+                     "the drive reports a stall within one stall window of the push",
+                     "travel a load takes back counts against the window it happens in; the only travel against the pulses a window excuses is the lag carrying the carriage on as the window opens");
+    servo_init();
+    dev_servo_enable(CH, true);
+    dev_servo_setVelocity(CH, 20000);
+    /* The command opens a window at once; the push lands about 20 ticks in,
+     * 2000 counts over 10 ticks, short of the 2048-count runaway. */
+    for (int i = 0; i < 20; i++)
+    {
+        tick_with_motion();
+    }
+    TEST_ASSERT_FALSE(dev_servo_isStalled(CH));
+    int ticks = 0;
+    while ((ticks < 2000) && !dev_servo_isStalled(CH))
+    {
+        if (ticks < 10)
+        {
+            d_carriage -= 200.0;
+        }
+        /* 30 percent clears a window's quarter bar on its own, so only the
+         * push can leave this window short. */
+        tick_with_share(0.3);
+        ticks++;
+    }
+    TEST_ASSERT_TRUE(dev_servo_isStalled(CH));
+    TEST_ASSERT_LESS_OR_EQUAL_INT(200, ticks);
+}
+
 void test_dev_servo_stallUsesProfilePulseScale(void)
 {
     VIBES_TEST("servo.stall-uses-profile-pulse-scale",
@@ -2300,6 +2418,9 @@ int main(void)
     RUN_TEST(test_dev_servo_stallOnHeldFollowingError);
     RUN_TEST(test_dev_servo_noStallThroughAWaveformOnALaggingDrive);
     RUN_TEST(test_dev_servo_stallWhenJammedAtAReversal);
+    RUN_TEST(test_dev_servo_stallWhenJammedWhereACoastTurns);
+    RUN_TEST(test_dev_servo_stallWhenJammedAfterAHealthyWindow);
+    RUN_TEST(test_dev_servo_stallWhenPushedBackMidWindow);
     RUN_TEST(test_dev_servo_stallUsesProfilePulseScale);
     RUN_TEST(test_dev_servo_pulsesAtTheProfileScale);
     RUN_TEST(test_dev_servo_moveAtProfileScaleArrivesWithoutStall);

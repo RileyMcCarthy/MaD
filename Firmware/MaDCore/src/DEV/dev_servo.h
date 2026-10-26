@@ -167,10 +167,13 @@ typedef struct
      * them, and flags a stall if the carriage delivered less than
      * 1/stallProgressDen of it. That margin absorbs profile calibration error
      * and drive lag through acceleration. Measuring from the turn absorbs the
-     * lag across a reversal: the carriage coasts on in the old direction
-     * after the command flips (measured on the SIL twin's drive, a 20 ms lag:
+     * lag across a reversal: a window can open while the carriage still
+     * coasts on the other way (measured on the SIL twin's drive, a 20 ms lag:
      * 0.16 mm after a waveform's 50 mm/s return), and that travel comes from
-     * pulses sent before the window opened. A drive that is jammed but still
+     * pulses sent before the window opened. The turn point is fixed the first
+     * tick the carriage gains on it, so only that opening coast is excused,
+     * and never more than stallRunawayMove of it; travel lost later in the
+     * window counts against it. A drive that is jammed but still
      * powered buzzes the encoder back and forth by a few counts (measured:
      * +-15 counts, longest still stretch 128 ms), so a per-tick "did it move?"
      * test is reset by the buzz and never fires; net movement over a window
@@ -179,7 +182,11 @@ typedef struct
      * The encoder running AGAINST the pulses by more than stallRunawayMove
      * counts within a window is flagged at once: that is a reversed encoder
      * (or drive) direction, where the loop's own correction drives the
-     * carriage further off.
+     * carriage further off. It is measured from where the window opened, so
+     * it also counts the opening coast: a drive whose coast after a
+     * full-speed stop exceeds stallRunawayMove trips it (about 25 ms of lag
+     * at 600 mm/s^2, from a model of this guard; the coast grows with
+     * acceleration times lag squared).
      *
      * Backstop: a following error above followErrorLimit for followErrorTicks
      * consecutive ticks is flagged too, whatever the pulses say. It catches a

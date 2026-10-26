@@ -122,7 +122,9 @@ typedef struct
     uint32_t emittedLast;   /* pulse engine's cumulative count at the last read */
     uint32_t stallCounter;  /* ticks into the current window; 0 = no window open */
     int32_t stallStartPos;  /* encoder position when the window opened */
-    int32_t stallTurnBack;  /* furthest travel against this window's pulses so far (<= 0) */
+    int32_t stallTurnBack;  /* travel against this window's pulses where the carriage
+                             * turned to follow them (<= 0, >= -stallRunawayMove) */
+    bool stallTurned;       /* the carriage has turned: stallTurnBack is final */
     float stallExpected;    /* encoder counts the pulses emitted since then should give */
     bool stallForward;      /* direction of the command that opened the window */
     bool stallLatched;      /* this window has judged a stall */
@@ -320,6 +322,7 @@ static void dev_servo_private_stallReset(dev_servo_channelData_S *d)
     d->stallCounter = 0U;
     d->stallStartPos = 0;
     d->stallTurnBack = 0;
+    d->stallTurned = false;
     d->stallExpected = 0.0f;
     d->stallForward = true;
     d->stallLatched = false;
@@ -377,16 +380,40 @@ static bool dev_servo_private_stallGuard(dev_servo_channelData_S *d,
     {
         d->stallLatched = true;
     }
-    /* Where the carriage turned. A window that a reversal opens starts while
-     * the carriage still carries the old direction's speed, and the drive's
-     * lag takes it on, against the new pulses, until it turns. That coast is
-     * travel from pulses sent before the window, which the window does not
-     * count either (above), so the window's travel is judged from the turn.
-     * The reference moves back by at most stallRunawayMove: any more travel
-     * against the pulses has already stalled, just above. */
-    if (progress < d->stallTurnBack)
+    /* Where the carriage turned. A window can open while the carriage still
+     * carries speed the other way (the command reversed, or dropped below
+     * stallVelocity and came back the other way), and the drive's lag takes
+     * it on, against the new pulses, until it turns. That coast is travel
+     * from pulses sent before the window, which the window does not count
+     * either (above), so the window's travel is judged from the turn.
+     *
+     * The turn point is fixed the first tick the carriage gains on it. Only
+     * the coast at the start of a window is excused: travel lost later in
+     * the window (a load pushing the carriage back) counts against it. A
+     * window that opens with the carriage following fixes it at once, at 0.
+     *
+     * It is clamped at stallRunawayMove back. More travel than that against
+     * the pulses is a runaway stall (above), but the clamp holds on its own,
+     * so the window rule never excuses more than that whatever the runaway
+     * rule decides. */
+    if (d->stallTurned == false)
     {
-        d->stallTurnBack = progress;
+        if (progress < d->stallTurnBack)
+        {
+            d->stallTurnBack = progress;
+            if (d->stallTurnBack < -cfg->stallRunawayMove)
+            {
+                d->stallTurnBack = -cfg->stallRunawayMove;
+            }
+        }
+        else if (progress > d->stallTurnBack)
+        {
+            d->stallTurned = true;
+        }
+        else
+        {
+            /* Not moving either way this tick: still coasting to the turn. */
+        }
     }
     if (d->stallCounter >= cfg->stallTicks)
     {
