@@ -15943,7 +15943,7 @@
 				(justify right)
 			)
 		)
-		(property "Value" "AM26LV32IDR"
+		(property "Value" "AM26C32IDR"
 			(at 105.41 130.81 0)
 			(effects
 				(font
@@ -15961,7 +15961,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "http://www.ti.com/lit/ds/symlink/am26lv32.pdf"
+		(property "Datasheet" "https://www.ti.com/lit/ds/symlink/am26c32.pdf"
 			(at 110.49 144.78 0)
 			(effects
 				(font
@@ -15970,7 +15970,7 @@
 				(hide yes)
 			)
 		)
-		(property "Description" "IC RECEIVER 0/4 16SOIC"
+		(property "Description" "Quad differential line receiver, 5 V, SOIC-16"
 			(at 110.49 134.62 0)
 			(effects
 				(font
@@ -15988,7 +15988,7 @@
 				(hide yes)
 			)
 		)
-		(property "Manufacturer_Part_Number" "AM26LV32IDR"
+		(property "Manufacturer_Part_Number" "AM26C32IDR"
 			(at 110.49 134.62 0)
 			(effects
 				(font
@@ -16006,7 +16006,7 @@
 				(hide yes)
 			)
 		)
-		(property "LCSC" "C524786"
+		(property "LCSC" "C36693"
 			(at 110.49 134.62 0)
 			(effects
 				(font
@@ -16015,7 +16015,7 @@
 				(hide yes)
 			)
 		)
-		(property "NOTES" ""
+		(property "NOTES" "Must be a 5 V receiver (AM26C32, VCC 4.5-5.5 V, VOH >= 3.8 V). Not AM26LV32 (3.6 V max) or AM26LS32 (VOH 2.7 V). Symbol is AM26LV32xD: same pinout."
 			(at 110.49 134.62 0)
 			(effects
 				(font
@@ -16033,7 +16033,7 @@
 				(hide yes)
 			)
 		)
-		(property "manufacturer_part_number_1" "AM26LV32IDR"
+		(property "manufacturer_part_number_1" "AM26C32IDR"
 			(at 110.49 134.62 0)
 			(effects
 				(font
@@ -16042,7 +16042,7 @@
 				(hide yes)
 			)
 		)
-		(property "Qty Bought" "3 lcsc"
+		(property "Qty Bought" ""
 			(at 110.49 134.62 0)
 			(effects
 				(font
@@ -17212,7 +17212,7 @@
 		(in_bom yes)
 		(on_board yes)
 		(dnp no)
-		(uuid "78697427-8987-4bb5-85b4-d518da110f0b")
+		(uuid "baa6431d-cc5d-49fe-be97-58791bc883f9")
 		(property "Reference" "R39"
 			(at 49.53 85.09 90)
 			(effects
@@ -17338,10 +17338,10 @@
 			)
 		)
 		(pin "1"
-			(uuid "cada9093-38e6-40e8-bcf0-ea3826d2eacc")
+			(uuid "570e54b3-b7fd-4347-98db-4dd9db904061")
 		)
 		(pin "2"
-			(uuid "c8ff78d7-745f-429d-a128-e7e2f3eebe32")
+			(uuid "d39e0348-d307-4e18-937d-75f81374611e")
 		)
 		(instances
 			(project "MaD_Edge"
@@ -17360,7 +17360,7 @@
 			(width 0)
 			(type default)
 		)
-		(uuid "676288c6-e8da-4b43-87ed-e58f763a9d4e")
+		(uuid "9e9dce99-0958-4be0-a70b-70b7758c4ca1")
 	)
 	(global_label "P6"
 		(shape input)
@@ -17372,7 +17372,7 @@
 			)
 			(justify left)
 		)
-		(uuid "7aeed2a5-44dc-435e-99ff-ff6202c7f434")
+		(uuid "6d502896-60f7-45e0-9ba2-60a83f70dc3f")
 		(property "Intersheetrefs" "${INTERSHEET_REFS}"
 			(at 44.45 74 90)
 			(effects
@@ -17392,7 +17392,7 @@
 			(width 0)
 			(type default)
 		)
-		(uuid "d138af41-3242-42ee-b233-f0acc38bd613")
+		(uuid "6e287744-8779-485f-87fb-d5b7c8124951")
 	)
 	(symbol
 		(lib_id "power:GND")
@@ -17402,7 +17402,7 @@
 		(in_bom yes)
 		(on_board yes)
 		(dnp no)
-		(uuid "6c26625e-207c-4263-8940-22aa0643383e")
+		(uuid "f44e6033-62ab-453c-b80a-9f0f51f90951")
 		(property "Reference" "#PWR0249"
 			(at 44.45 96.52 0)
 			(effects
@@ -17447,7 +17447,7 @@
 			)
 		)
 		(pin "1"
-			(uuid "7ac91d62-687e-4868-b514-ddd150cd0e3b")
+			(uuid "372adb1b-85a1-4a1e-b63f-148796885bd4")
 		)
 		(instances
 			(project "MaD_Edge"
@@ -17467,6 +17467,196 @@
 			)
 			(justify left bottom)
 		)
-		(uuid "19d3dcb6-0f71-44b1-b137-2660c3b31af1")
+		(uuid "06380416-7ed0-488c-aa9c-4008825f2d68")
+	)
+	(symbol
+		(lib_id "Device:C_Small")
+		(at 231.14 110.49 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(uuid "4d58b6fd-75ba-47ff-9057-da260516739d")
+		(property "Reference" "C30"
+			(at 233.68 109.2262 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Value" "0.1uF"
+			(at 233.68 111.76 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Footprint" "Capacitor_SMD:C_0402_1005Metric"
+			(at 231.14 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "~"
+			(at 231.14 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "0.1uF 16V X7R 0402"
+			(at 231.14 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER" "Samsung Electro-Mechanics"
+			(at 231.14 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer_Part_Number" "CL05B104KO5NNNC"
+			(at 231.14 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "DIGIKEY" ""
+			(at 231.14 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" "C1525"
+			(at 231.14 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "NOTES" "U25 decoupling: place at U25 pin 16 (0402 to fit beside JP2)"
+			(at 231.14 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "manufacturer_1" "Samsung Electro-Mechanics"
+			(at 231.14 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "manufacturer_part_number_1" "CL05B104KO5NNNC"
+			(at 231.14 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Qty Bought" ""
+			(at 231.14 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Receptical" ""
+			(at 231.14 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "1"
+			(uuid "a860e429-6e96-4fdb-a17b-92b6369682b9")
+		)
+		(pin "2"
+			(uuid "55a6a954-8f62-4f7f-b1b5-6a668dfcc104")
+		)
+		(instances
+			(project "MaD_Edge"
+				(path "/7e1266c3-436e-48c1-8e6f-07c0e2581bd5/3848150c-e17f-4b7c-8b45-f477f8e036d7"
+					(reference "C30")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(wire
+		(pts
+			(xy 231.14 107.95) (xy 231.14 105.41)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "3b999fc1-11c8-4493-b54a-462c530ba967")
+	)
+	(label "SC_5V"
+		(at 231.14 105.41 90)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "8eaa30b0-72f9-4cae-b295-42fa70aa9b10")
+	)
+	(wire
+		(pts
+			(xy 231.14 113.03) (xy 231.14 115.57)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "e8076c19-a76b-47ac-9760-a1bf659cc731")
+	)
+	(label "EN_GND"
+		(at 231.14 115.57 270)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right bottom)
+		)
+		(uuid "d3b6ec32-23ec-40d8-ac43-c4ce30df6f07")
 	)
 )
