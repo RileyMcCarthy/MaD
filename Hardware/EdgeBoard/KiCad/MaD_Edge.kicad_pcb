@@ -1776,7 +1776,7 @@
 				)
 			)
 		)
-		(property "Value" "43K"
+		(property "Value" "4.7K"
 			(at 0 1.43 90)
 			(layer "F.Fab")
 			(hide yes)
@@ -1851,7 +1851,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C23172"
+		(property "LCSC" "C23162"
 			(at 0 0 90)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -1864,7 +1864,7 @@
 				)
 			)
 		)
-		(property "NOTES" ""
+		(property "NOTES" "Q1 base resistor: ~0.8 mA base drive so Q1 saturates at the drive enable current"
 			(at 0 0 90)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -1890,7 +1890,7 @@
 				)
 			)
 		)
-		(property "manufacturer_part_number_1" "0603WAF4302T5E"
+		(property "manufacturer_part_number_1" "0603WAF4701T5E"
 			(at 0 0 90)
 			(unlocked yes)
 			(layer "F.Fab")

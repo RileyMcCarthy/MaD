@@ -15424,7 +15424,7 @@
 				(justify right)
 			)
 		)
-		(property "Value" "43K"
+		(property "Value" "4.7K"
 			(at 67.31 93.98 90)
 			(effects
 				(font
@@ -15487,7 +15487,7 @@
 				(hide yes)
 			)
 		)
-		(property "LCSC" "C23172"
+		(property "LCSC" "C23162"
 			(at 69.85 91.44 0)
 			(effects
 				(font
@@ -15496,7 +15496,7 @@
 				(hide yes)
 			)
 		)
-		(property "NOTES" ""
+		(property "NOTES" "Q1 base resistor: ~0.8 mA base drive so Q1 saturates at the drive enable current"
 			(at 69.85 91.44 0)
 			(effects
 				(font
@@ -15514,7 +15514,7 @@
 				(hide yes)
 			)
 		)
-		(property "manufacturer_part_number_1" "0603WAF4302T5E"
+		(property "manufacturer_part_number_1" "0603WAF4701T5E"
 			(at 69.85 91.44 0)
 			(effects
 				(font
