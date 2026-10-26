@@ -8762,8 +8762,8 @@
 		)
 		(uuid "e7739b3f-f8e2-4873-ab43-1cb63c02ac20")
 	)
-	(label "RPI_5V"
-		(at 85.09 21.59 0)
+	(label "RPI_3V3"
+		(at 82.55 21.59 0)
 		(effects
 			(font
 				(size 1.27 1.27)
@@ -8932,7 +8932,7 @@
 			)
 		)
 	)
-	(global_label "P52"
+	(global_label "P29"
 		(shape input)
 		(at 30.48 34.29 180)
 		(fields_autoplaced yes)
@@ -9086,7 +9086,7 @@
 			)
 		)
 	)
-	(global_label "P54"
+	(global_label "P31"
 		(shape input)
 		(at 30.48 29.21 180)
 		(fields_autoplaced yes)
@@ -9218,7 +9218,7 @@
 			)
 		)
 	)
-	(global_label "P55"
+	(global_label "P32"
 		(shape input)
 		(at 30.48 26.67 180)
 		(fields_autoplaced yes)
@@ -9262,7 +9262,7 @@
 			)
 		)
 	)
-	(global_label "P53"
+	(global_label "P30"
 		(shape input)
 		(at 30.48 31.75 180)
 		(fields_autoplaced yes)
@@ -24206,7 +24206,7 @@
 				(hide yes)
 			)
 		)
-		(property "NOTES" "Pin Compatible with ISO77xx"
+		(property "NOTES" "Non-F (default-high) part only: UART lines idle high. VCC2 = RPI_3V3 from the Pi 3.3 V pin (VCC 2.25-5.5 V, SLLSFJ6G)."
 			(at 38.1 21.59 0)
 			(effects
 				(font
@@ -24224,7 +24224,7 @@
 				(hide yes)
 			)
 		)
-		(property "manufacturer_part_number_1" "ISO6742DWR or ISO7742FDWR"
+		(property "manufacturer_part_number_1" "ISO6742DWR"
 			(at 38.1 21.59 0)
 			(effects
 				(font
