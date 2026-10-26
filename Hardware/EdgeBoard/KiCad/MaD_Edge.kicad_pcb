@@ -947,7 +947,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C2862403"
+		(property "LCSC" "C5216407"
 			(at 0 0 0)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -82917,7 +82917,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C2862403"
+		(property "LCSC" "C5216407"
 			(at 0 0 0)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -82930,7 +82930,7 @@
 				)
 			)
 		)
-		(property "NOTES" "Pin Compatible with ISO77xx"
+		(property "NOTES" "Pin compatible with ISO77xx. Ordered as the non-F ISO6742DWR (LCSC C5216407): outputs idle high while the input side is unpowered or undriven (SLLSFJ6G)."
 			(at 0 0 0)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -82956,7 +82956,7 @@
 				)
 			)
 		)
-		(property "manufacturer_part_number_1" "ISO6742DWR or ISO7742FDWR"
+		(property "manufacturer_part_number_1" "ISO6742DWR"
 			(at 0 0 0)
 			(unlocked yes)
 			(layer "F.Fab")

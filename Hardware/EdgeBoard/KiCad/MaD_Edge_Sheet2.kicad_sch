@@ -24204,7 +24204,7 @@
 				(hide yes)
 			)
 		)
-		(property "LCSC" "C2862403"
+		(property "LCSC" "C5216407"
 			(at 38.1 21.59 0)
 			(effects
 				(font
@@ -29819,7 +29819,7 @@
 				(hide yes)
 			)
 		)
-		(property "LCSC" "C2862403"
+		(property "LCSC" "C5216407"
 			(at 36.83 134.62 0)
 			(effects
 				(font
@@ -29828,7 +29828,7 @@
 				(hide yes)
 			)
 		)
-		(property "NOTES" "Pin Compatible with ISO77xx"
+		(property "NOTES" "Pin compatible with ISO77xx. Ordered as the non-F ISO6742DWR (LCSC C5216407): outputs idle high while the input side is unpowered or undriven (SLLSFJ6G)."
 			(at 36.83 134.62 0)
 			(effects
 				(font
@@ -29846,7 +29846,7 @@
 				(hide yes)
 			)
 		)
-		(property "manufacturer_part_number_1" "ISO6742DWR or ISO7742FDWR"
+		(property "manufacturer_part_number_1" "ISO6742DWR"
 			(at 36.83 134.62 0)
 			(effects
 				(font
