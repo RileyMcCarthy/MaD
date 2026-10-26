@@ -42158,7 +42158,7 @@
 	(footprint "kibuzzard-647774DE"
 		(layer "F.Cu")
 		(uuid "822daa64-b75f-412e-8bd5-3882ff406c26")
-		(at 19.67 191.541431)
+		(at 19.67 191.786431)
 		(descr "Generated with KiBuzzard")
 		(tags "kb_params=eyJBbGlnbm1lbnRDaG9pY2UiOiAiQ2VudGVyIiwgIkNhcExlZnRDaG9pY2UiOiAiWyIsICJDYXBSaWdodENob2ljZSI6ICJdIiwgIkZvbnRDb21ib0JveCI6ICJSb2JvdG8tQm9sZCIsICJIZWlnaHRDdHJsIjogIjEuNDciLCAiTGF5ZXJDb21ib0JveCI6ICJGLlNpbGtTIiwgIk11bHRpTGluZVRleHQiOiAiT0MvNVYiLCAiUGFkZGluZ0JvdHRvbUN0cmwiOiAiNSIsICJQYWRkaW5nTGVmdEN0cmwiOiAiNSIsICJQYWRkaW5nUmlnaHRDdHJsIjogIjUiLCAiUGFkZGluZ1RvcEN0cmwiOiAiNSIsICJXaWR0aEN0cmwiOiAiIn0=")
 		(property "Reference" "kibuzzard-647774DE"
@@ -42699,13 +42699,12 @@
 		(descr "SOT, 3 Pin (JEDEC TO-236 Var AB https://www.jedec.org/document_search?search_api_views_fulltext=TO-236), generated with kicad-footprint-generator ipc_gullwing_generator.py")
 		(tags "SOT TO_SOT_SMD")
 		(property "Reference" "Q1"
-			(at 0 -2.4 270)
+			(at -0.195 -2.4 270)
 			(layer "F.SilkS")
-			(hide yes)
 			(uuid "44a792fd-f857-4770-95bc-cdc64f2e7604")
 			(effects
 				(font
-					(size 1 1)
+					(size 0.8 0.8)
 					(thickness 0.15)
 				)
 			)
@@ -86745,8 +86744,19 @@
 		(layer "Edge.Cuts")
 		(uuid "9a88ec81-e1f3-42b7-b201-0328c754b6b2")
 	)
+	(gr_text "ENC OUT 5V MAX"
+		(at 38.6 210.35 0)
+		(layer "F.SilkS")
+		(uuid "000e42f1-2de8-4595-a5ad-57554de86108")
+		(effects
+			(font
+				(size 0.8 0.8)
+				(thickness 0.15)
+			)
+		)
+	)
 	(gr_text "3V3"
-		(at 116.6864 119.8552 270)
+		(at 115.55 119.36 0)
 		(layer "F.SilkS" knockout)
 		(uuid "036f2e46-26e2-4bc6-9f1c-abc8972eba4d")
 		(effects
@@ -86822,13 +86832,13 @@
 			)
 		)
 	)
-	(gr_text "SHUNT=OC"
-		(at 44.1 192.4 90)
+	(gr_text "OC: A B Z"
+		(at 44.1 192.1 90)
 		(layer "F.SilkS")
 		(uuid "43b2500d-d6fd-4e93-9de8-906a48ab16c5")
 		(effects
 			(font
-				(size 0.8 0.8)
+				(size 0.9 0.9)
 				(thickness 0.15)
 			)
 		)
@@ -86856,12 +86866,12 @@
 		)
 	)
 	(gr_text "+V"
-		(at 38.6 206.75 0)
+		(at 38.6 206.24 0)
 		(layer "F.SilkS")
 		(uuid "4d4bfdd0-975d-43ea-b39f-f677f88f4489")
 		(effects
 			(font
-				(size 0.9 0.9)
+				(size 0.8 0.8)
 				(thickness 0.15)
 			)
 		)
@@ -86959,12 +86969,12 @@
 		)
 	)
 	(gr_text "0V"
-		(at 41.14 206.75 0)
+		(at 41.14 206.24 0)
 		(layer "F.SilkS")
 		(uuid "b65dee29-1fb9-4249-a520-51a3f2c235e7")
 		(effects
 			(font
-				(size 0.9 0.9)
+				(size 0.8 0.8)
 				(thickness 0.15)
 			)
 		)
@@ -87060,12 +87070,12 @@
 		)
 	)
 	(gr_text "VIN"
-		(at 36.06 206.75 0)
+		(at 36.06 206.24 0)
 		(layer "F.SilkS")
 		(uuid "f8f3f853-475a-4e18-88bf-2d643d1ab398")
 		(effects
 			(font
-				(size 0.9 0.9)
+				(size 0.8 0.8)
 				(thickness 0.15)
 			)
 		)
