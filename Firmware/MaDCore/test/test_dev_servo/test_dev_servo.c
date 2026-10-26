@@ -98,13 +98,6 @@ static uint32_t d_runCount;
  * engine counts them: rate x elapsed time, one control tick per read. */
 static double d_emitted;
 
-void HAL_pulseOut_start(HAL_pulseOut_channel_E channel, uint32_t pulses, uint32_t frequency)
-{
-    (void)channel;
-    (void)pulses;
-    (void)frequency;
-}
-
 bool HAL_pulseOut_run(HAL_pulseOut_channel_E channel, uint32_t *pulses)
 {
     (void)channel;
