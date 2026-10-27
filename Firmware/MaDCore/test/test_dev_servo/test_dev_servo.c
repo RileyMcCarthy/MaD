@@ -760,7 +760,7 @@ void test_dev_servo_noStallThroughFullSpeedStopsOnALaggingDrive(void)
                "an enabled motor drive making full-speed moves of 10 mm out and back and 100 mm out and back, its carriage following the step rate through a 20 ms lag");
     VIBES_EXPECT_WHY("coasts-past",
                      "the carriage overshoots each stop by more than 0.3 mm before it is drawn back",
-                     "this is the coast that a lagging drive makes at every full-speed stop and reversal, which an earlier stall rule mistook for a jam");
+                     "this is the coast that a lagging drive makes at every full-speed stop and reversal, so a stall guard has to let it pass");
     VIBES_EXPECT_WHY("no-stall",
                      "no stall is reported at any point, through the ramps, the long cruise, the overshoots or the reversals",
                      "a healthy drive's error stays under the 2 mm at which a stall is immediate, and spends no half second over the 1 mm at which a held error is one");
@@ -983,12 +983,14 @@ void test_dev_servo_stallThresholdsFollowTheEncoderScale(void)
 
 void test_dev_servo_slowFallingBehindStallsInTheSoftBand(void)
 {
-    VIBES_TEST("servo.slow-falling-behind-stalls-in-the-soft-band",
+    VIBES_TEST("servo.stall-on-held-following-error",
                "src/DEV/dev_servo.c#dev_servo_private_stallGuard",
                "an enabled motor drive commanded at high speed while the carriage covers only a fifth of the travel its step pulses call for, so it settles about 1.2 mm behind");
     VIBES_EXPECT_WHY("stall-reported",
                      "the drive reports a stall half a second after the error passes 1 mm",
                      "a carriage that keeps falling behind is failing to follow even while it moves the right way, and never runs far enough off to reach the hard ceiling");
+    VIBES_EXPECT("not-before",
+                 "no stall is reported while the following error is at or under 1 mm");
     VIBES_EXPECT("never-near-the-ceiling",
                  "the error never reaches 2 mm, so it is the held error that reports the stall");
     servo_init();
@@ -996,6 +998,7 @@ void test_dev_servo_slowFallingBehindStallsInTheSoftBand(void)
     dev_servo_setVelocity(CH, 20000);
     int ticks = 0;
     int firstOverBand = -1;
+    bool stalledInsideBand = false;
     int32_t worst = 0;
     while ((ticks < 5000) && !dev_servo_isStalled(CH))
     {
@@ -1003,12 +1006,48 @@ void test_dev_servo_slowFallingBehindStallsInTheSoftBand(void)
         ticks++;
         const int32_t err = dev_servo_getFollowingError(CH);
         if (err > worst) { worst = err; }
-        if ((err > STALL_BAND) && (firstOverBand < 0)) { firstOverBand = ticks; }
+        if (err > STALL_BAND)
+        {
+            if (firstOverBand < 0) { firstOverBand = ticks; }
+        }
+        else if (dev_servo_isStalled(CH))
+        {
+            stalledInsideBand = true;
+        }
     }
     TEST_ASSERT_TRUE(dev_servo_isStalled(CH));
+    TEST_ASSERT_FALSE(stalledInsideBand);
     TEST_ASSERT_TRUE(firstOverBand > 0);
     TEST_ASSERT_INT_WITHIN(1, firstOverBand + STALL_BAND_TICKS - 1, ticks);
     TEST_ASSERT_LESS_THAN_INT32(STALL_CEILING, worst);
+}
+
+/* A profile whose two scales say each step pulse moves the carriage eight
+ * encoder counts, on a carriage that moves one. The loop pulses the drive for
+ * eight counts a pulse, so the carriage delivers an eighth of every command:
+ * with Kp = 8 it runs at 2500 + error counts/s against a 20000 counts/s
+ * setpoint, and the error closes on 17500 counts (2.1 mm) with a one-second
+ * time constant. It passes the 1 mm band about 0.63 s in, so the band stalls
+ * it about 1.13 s in (1134 ticks, measured), well before it would reach the
+ * 2 mm ceiling (2.75 s). */
+void test_dev_servo_stallUsesProfilePulseScale(void)
+{
+    VIBES_TEST("servo.stall-uses-profile-pulse-scale",
+               "src/DEV/dev_servo.c#dev_servo_init",
+               "a machine profile whose encoder and servo steps per millimetre say each step pulse moves the carriage eight encoder counts, and a carriage that moves one count per pulse");
+    VIBES_EXPECT_WHY("stall-reported",
+                     "the drive reports a stall",
+                     "the drive is pulsed by the profile's two scales, so a carriage delivering an eighth of the travel per pulse falls ever further behind where the loop is driving it");
+    servo_init_scaled(SHIPPED_MAX_VEL_COUNTS, SHIPPED_MAX_ACCEL_COUNTS, 8192, 1024);
+    dev_servo_enable(CH, true);
+    dev_servo_setVelocity(CH, 20000);
+    int ticks = 0;
+    while ((ticks < 5000) && !dev_servo_isStalled(CH))
+    {
+        tick_with_share(1.0);
+        ticks++;
+    }
+    TEST_ASSERT_TRUE(dev_servo_isStalled(CH));
 }
 
 
@@ -2645,6 +2684,7 @@ int main(void)
     RUN_TEST(test_dev_servo_errorHeldInTheSoftBandStalls);
     RUN_TEST(test_dev_servo_briefErrorInTheSoftBandDoesNotStall);
     RUN_TEST(test_dev_servo_slowFallingBehindStallsInTheSoftBand);
+    RUN_TEST(test_dev_servo_stallUsesProfilePulseScale);
     RUN_TEST(test_dev_servo_stallThresholdsFollowTheEncoderScale);
     RUN_TEST(test_dev_servo_pulsesAtTheProfileScale);
     RUN_TEST(test_dev_servo_moveAtProfileScaleArrivesWithoutStall);
