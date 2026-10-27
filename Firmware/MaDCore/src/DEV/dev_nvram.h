@@ -27,12 +27,17 @@ typedef struct
 
     const char path[DEV_NVRAM_PATH_MAX];
     const uint32_t size;
-    const bool loadOnBoot; // Load data once on boot
     /* The length of the one earlier record this one extends by appending
      * fields (0 = none). A file of exactly this length is read as a prefix and
      * the newer fields keep their defaults; any other short file is an
-     * unrelated older layout and is ignored in favour of the defaults. */
+     * unrelated older layout and is ignored in favour of the defaults.
+     *
+     * Kept before loadOnBoot, not after it: flexcc initialises a uint32_t that
+     * follows a bool in this const table three bytes off from where it reads
+     * it (72 read back as 0x48000000 on the P2, 2026-10-26), so every older
+     * card fell back to the defaults on hardware while the host tests passed. */
     const uint32_t legacySize;
+    const bool loadOnBoot; // Load data once on boot
 } dev_nvram_channelConfig_t;
 
 #define DEV_NVRAM_CHANNEL_CONFIG_CREATE(type, path, loadOnBoot, legacySize) \
@@ -42,8 +47,8 @@ typedef struct
         &dev_nvram_##type##Default,                                         \
         path,                                                               \
         sizeof(type),                                                       \
-        loadOnBoot,                                                         \
         legacySize,                                                         \
+        loadOnBoot,                                                         \
     },
 
 #define DEV_NVRAM_CHANNEL_DATA_CREATE(type)     \
