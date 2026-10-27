@@ -125,9 +125,11 @@ typedef struct
 {
     HAL_pulseOut_channel_E pulseChannel;
     HAL_GPIO_channel_E gpioDirection;
-    /* The drive's enable input (energized = enabled). Driven by the control
-     * loop alone, from dev_servo_enable's state: inactive from init until the
-     * actuator is enabled, and again on every path that disables it. */
+    /* The drive's enable input. Driven by the control loop (the MOTOR cog)
+     * alone, from dev_servo_enable's state: inactive from the first control
+     * tick until the actuator is enabled, and again on every path that
+     * disables it. dev_servo_init does not touch it (init runs on the MAIN
+     * cog, and P2 outputs OR across cogs). */
     HAL_GPIO_channel_E gpioEnable;
     HAL_encoder_channel_E encoderChannel;
 
@@ -222,7 +224,8 @@ void dev_servo_run(void); /* one control tick; call at a fixed rate from a cog *
 
 /* Request the drive enabled or disabled. The next control tick applies it:
  * it drives the enable output (gpioEnable) to match, and while disabled emits
- * no pulses. Disabled is the state from dev_servo_init. */
+ * no pulses. Disabled is the state from dev_servo_init; the enable output is
+ * first driven (inactive) by the first control tick, not by init. */
 void dev_servo_enable(dev_servo_channel_E ch, bool enable);
 void dev_servo_moveTo(dev_servo_channel_E ch, int32_t targetCounts, int32_t feedrateCountsPerSec); /* closed-loop position at feedrate */
 void dev_servo_setVelocity(dev_servo_channel_E ch, int32_t velCountsPerSec);
