@@ -22,7 +22,7 @@ const GOLD = {
   sample: [217, 182, 129, 193, 164, 35, 64, 44, 66, 166, 50, 25, 148, 9, 25, 3, 187, 229, 99],
   stored: [217, 182, 129, 193, 164, 35, 32, 241, 0, 0, 64, 44, 66, 6],
   // MachineConfiguration (intrinsic load-cell constants) — MaDProtocol.yaml.
-  // 80 bytes: 20 of name, then 15 int32s.
+  // 84 bytes: 20 of name, then 16 int32s.
   //
   // Grew from 68 when restrictedVelocity was appended. The change is purely
   // additive -- the final `2, 0, 0, 0` is that field (int32, scale 1, little
@@ -31,11 +31,12 @@ const GOLD = {
   // checking when this vector changes: an append shifts nothing, so a diff
   // that touches the middle is a reordering and breaks every machine already
   // in the field. servoKp (12.5 /s -> 12500) and servoKi (0) were appended
-  // the same way: the last eight bytes, nothing before them moved.
+  // the same way: the last eight bytes, nothing before them moved. Then
+  // servoEnableActiveLow (1): the final `1, 0, 0, 0`, again an append.
   config: [
     84, 101, 115, 116, 101, 114, 45, 49, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 200, 0, 0, 0, 144, 1,
     0, 0, 160, 134, 1, 0, 64, 66, 15, 0, 5, 0, 0, 0, 250, 0, 0, 0, 50, 0, 0, 0, 100, 0, 0, 0, 135, 214, 18, 0, 5, 0, 0,
-    0, 2, 0, 0, 0, 3, 0, 0, 0, 2, 0, 0, 0, 212, 48, 0, 0, 0, 0, 0, 0,
+    0, 2, 0, 0, 0, 3, 0, 0, 0, 2, 0, 0, 0, 212, 48, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0,
   ],
   profile: [26, 162, 7, 0, 10, 0, 0, 0, 100, 0, 0, 0, 12, 0, 0, 0, 3, 0, 0, 0],
   move: [65, 225, 51, 224, 46, 0, 100, 0],
@@ -124,6 +125,7 @@ describe('codec golden byte vectors (frozen — guards the wire format)', () => 
             restrictedVelocity: 2,
             servoKp: 12.5,
             servoKi: 0,
+            servoEnableActiveLow: 1,
           }),
         ),
       ).toEqual(GOLD.config);
@@ -315,6 +317,7 @@ describe('round-trip within scale precision', () => {
         restrictedVelocity: 2,
         servoKp: 12.5,
         servoKi: 0,
+        servoEnableActiveLow: 1,
       };
       const out = nu.decodeMachineConfiguration(nu.encodeMachineConfiguration(v));
       expect(out.name).toBe('Tester-1');

@@ -39,6 +39,7 @@ These are the fields as they appear on the Settings screen, in order.
 | **Jaw Offset (mm)** | Distance from the home reference to the jaw |
 | **Servo Kp (1/s)** | How hard the servo corrects a position error (8 by default; the motor calibration suggests a value) |
 | **Servo Ki (1/s^2)** | Removes a steady position error under load (0 = off) |
+| **Drive enable** | Which level of the drive's enable input turns the drive on. Servo drives such as the DMM DYN4 are on while the input is energized (**High enables**, the default); most stepper drivers are off while it is energized (**Low enables**). If this is wrong, the drive never turns on and the carriage doesn't move. Takes effect after a reboot. |
 
 These are *machine* limits — distinct from the per-test limits you set in a
 [sample profile](sample-profiles.md). Both are enforced, and whichever is more

@@ -27,6 +27,7 @@ static const dev_servo_channelConfig_S dev_servo_channelConfigDefault[DEV_SERVO_
         HAL_PULSE_OUT_CHANNEL_SERVO, /* pulseChannel */
         HAL_GPIO_SERVO_DIR,          /* gpioDirection */
         HAL_GPIO_SERVO_ENA,          /* gpioEnable */
+        false,                       /* enableActiveLow  — high enables (DMM DYN4 default) */
         HAL_ENCODER_CHANNEL_SERVO,   /* encoderChannel */
         1000U,                       /* loopPeriodUs     — 1 kHz control tick (match the cog rate) */
         24576,                       /* maxVelocity      — gentle fallback (3 mm/s); machine profile normally overrides (20 mm/s => 163840) */
@@ -70,6 +71,15 @@ static dev_servo_channelConfig_S dev_servo_channelConfig[DEV_SERVO_CHANNEL_COUNT
 /**********************************************************************
  * Typedefs
  **********************************************************************/
+/* Level last driven on a drive's enable output. UNKNOWN until the MOTOR cog's
+ * first control tick writes it, so that first write always happens. */
+typedef enum
+{
+    DEV_SERVO_ENA_UNKNOWN = 0,
+    DEV_SERVO_ENA_INACTIVE,
+    DEV_SERVO_ENA_ACTIVE
+} dev_servo_enaLevel_E;
+
 typedef struct
 {
     bool enabled;
@@ -148,7 +158,7 @@ typedef struct
     float waveRampUp;    /* TRIANGLE only: ramp share of the up traverse   */
     uint8_t waveSegment; /* dev_servo_waveSegment_E */
     bool wasOpenLoop; /* the previous tick ran with the feedback off */
-    bool enaActive; /* level last driven on the enable output (see applyEnable) */
+    uint8_t enaLevel; /* dev_servo_enaLevel_E: last level driven on the enable output */
     bool velActive; /* a velocity pulse train is currently running */
     bool lastCw;    /* direction of the running train (latched at start) */
 } dev_servo_channelData_S;
@@ -212,17 +222,23 @@ static void dev_servo_private_applyVelocity(dev_servo_channel_E ch, float vel)
 }
 
 /* Drive the enable output to `enabled`, touching the pin only when the level
- * changes. Called from init and the control tick only -- both on the MOTOR
- * cog -- so exactly one cog ever drives it (P2 outputs OR across cogs, so a
- * second writer could hold the drive enabled). Never called under the lock:
- * the pin is HAL, and the decision is this cog's own snapshot. */
+ * changes (or has never been written). Called from the control tick only, so
+ * the MOTOR cog is the one cog that ever drives the pin. That matters because
+ * P2 outputs OR across cogs: dev_servo_init runs on the MAIN cog (the cog
+ * manager calls init functions before cogstart), and an inactive-HIGH level
+ * driven there would hold the pin high forever, so the drive could never be
+ * enabled. Never called under the lock: the pin is HAL, and the decision is
+ * this cog's own snapshot. */
 static void dev_servo_private_applyEnable(dev_servo_channel_E ch, bool enabled)
 {
     dev_servo_channelData_S *const d = &dev_servo_data.channel[ch];
-    if (d->enaActive != enabled)
+    const uint8_t level = enabled ? (uint8_t)DEV_SERVO_ENA_ACTIVE : (uint8_t)DEV_SERVO_ENA_INACTIVE;
+    if (d->enaLevel != level)
     {
-        HAL_GPIO_setActive(dev_servo_channelConfig[ch].gpioEnable, enabled);
-        d->enaActive = enabled;
+        /* A drive enabled by a low input sees the opposite level. */
+        HAL_GPIO_setActive(dev_servo_channelConfig[ch].gpioEnable,
+                           enabled != dev_servo_channelConfig[ch].enableActiveLow);
+        d->enaLevel = level;
     }
 }
 
@@ -467,10 +483,11 @@ void dev_servo_init(int lock, int32_t maxVelocityCounts, int32_t maxAccelCounts,
         d->countsPerPulse = countsPerPulse;
         d->emittedLast = 0U;
         dev_servo_private_resync(ch, pos);
-        /* The drive starts disabled: drive the enable output inactive now
-         * rather than leaving the pin floating until the first tick. */
-        HAL_GPIO_setActive(dev_servo_channelConfig[ch].gpioEnable, false);
-        d->enaActive = false;
+        /* The drive starts disabled, but the enable output is NOT written here:
+         * init runs on the MAIN cog, and only the MOTOR cog may drive the pin
+         * (see dev_servo_private_applyEnable). The first control tick drives it
+         * inactive, before any tick can start a pulse train. */
+        d->enaLevel = (uint8_t)DEV_SERVO_ENA_UNKNOWN;
     }
 }
 
@@ -1076,6 +1093,14 @@ void dev_servo_setGains(int32_t kpMilli, int32_t kiMilli)
             dev_servo_channelConfig[ch].kiNum = kiMilli;
             dev_servo_channelConfig[ch].kiDen = 1000;
         }
+    }
+}
+
+void dev_servo_setEnableActiveLow(bool activeLow)
+{
+    for (dev_servo_channel_E ch = (dev_servo_channel_E)0; ch < DEV_SERVO_CHANNEL_COUNT; ch++)
+    {
+        dev_servo_channelConfig[ch].enableActiveLow = activeLow;
     }
 }
 
