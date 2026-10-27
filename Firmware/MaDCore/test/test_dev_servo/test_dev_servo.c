@@ -10,10 +10,15 @@
  *   - stop requests velocity hold at 0
  *   - setPosition redefines encoder reference + target
  *   - following error reflects setpoint vs encoder
- *   - stall guard judges the encoder against the step pulses sent, over a
- *     window: a frozen, buzzing or crawling carriage stalls, one running the
- *     wrong way stalls at once, a following error held too long stalls, and
- *     a carriage that follows (even lagging) never does
+ *   - stall guard, two stages on the following error and a travel check on
+ *     the pulses: past the 2 mm hard ceiling stalls at once (a reversed
+ *     encoder, a jam at speed), held over the 1 mm soft band for 500 ms
+ *     stalls (a carriage that falls behind), a brief excursion into the band
+ *     does not, under a quarter of each 1 mm of pulsed travel stalls (a dead
+ *     encoder, a jam near the target or at tensile speed, a crawl), and a
+ *     carriage that follows -- even through a 20 ms drive lag and its coast
+ *     past full-speed stops -- never stalls; a frame redefined mid-tick is
+ *     not a stall
  *   - liveness (isReady) — what app_control gates the machine on
  *   - arrival is invalidated by every command that redefines the target,
  *     including one landing mid-tick, and the approach converges rather
@@ -51,12 +56,22 @@ void HAL_encoder_start(HAL_encoder_channel_E ch) { (void)ch; }
  * exactly the window a command issued by another cog can land in, so it models
  * the CONTROL cog commanding a move mid-tick on the MOTOR cog. */
 static void (*d_midTickHook)(void);
+/* The same, but fired AFTER the reading is taken, so the tick carries on with
+ * a reading from before the hook ran: another cog's command landing between
+ * the encoder read and the following-error computation. */
+static void (*d_afterReadHook)(void);
 
 /* Sub-count-accurate carriage position for tick_with_motion(). Precision
  * matters — the slow final approach commands rates below one count per tick,
  * and integer truncation there would stall the carriage short of the deadband
  * and mask the settling behaviour under test. */
 static double d_carriage;
+static double d_carriageVel; /* counts/s, for tick_with_lag */
+/* Faults for tick_with_lag: an encoder that stops counting while the carriage
+ * goes on moving (a dead encoder, a slipped coupling), and a carriage that
+ * stops while its encoder goes on reading it (a jam). */
+static bool d_encoderStopped;
+static bool d_carriageJammed;
 
 int32_t HAL_encoder_value(HAL_encoder_channel_E ch)
 {
@@ -67,7 +82,14 @@ int32_t HAL_encoder_value(HAL_encoder_channel_E ch)
         d_midTickHook = NULL; /* one-shot */
         hook();
     }
-    return d_encoderValue;
+    const int32_t reading = d_encoderValue;
+    if (d_afterReadHook != NULL)
+    {
+        void (*hook)(void) = d_afterReadHook;
+        d_afterReadHook = NULL; /* one-shot */
+        hook();
+    }
+    return reading;
 }
 void HAL_encoder_set(HAL_encoder_channel_E ch, int32_t v)
 {
@@ -184,7 +206,11 @@ static void doubles_reset(void)
     d_enaCount = 0U;
     d_enaActive = false;
     d_midTickHook = NULL;
+    d_afterReadHook = NULL;
     d_carriage = 0.0;
+    d_carriageVel = 0.0;
+    d_encoderStopped = false;
+    d_carriageJammed = false;
     global_timeus = 0U;
 }
 
@@ -560,21 +586,28 @@ void test_dev_servo_followingErrorReflectsOffset(void)
     TEST_ASSERT_TRUE(dev_servo_getFollowingError(CH) > 0);
 }
 
+/* The stall guard's two stages, as dev_servo.c configures them: an error over
+ * STALL_CEILING stalls at once, and one over STALL_BAND for STALL_BAND_TICKS
+ * consecutive ticks stalls too. */
+#define STALL_CEILING 16384      /* 2 mm */
+#define STALL_BAND 8192          /* 1 mm */
+#define STALL_BAND_TICKS 500
+
 void test_dev_servo_stallWhenCommandedWithoutMotion(void)
 {
     VIBES_TEST("servo.stall-when-commanded-without-motion",
                "src/DEV/dev_servo.c#dev_servo_run",
-               "an enabled motor drive commanded at high speed while the encoder stays frozen for longer than the stall window");
+               "an enabled motor drive commanded at high speed while the encoder stays frozen");
     VIBES_EXPECT_WHY("stall-reported",
                      "the drive reports a stall",
                      "a jammed carriage is reported as a stall so the controller can stop pulling against the jam");
     servo_init();
     d_encoderValue = 0; /* frozen encoder */
     dev_servo_enable(CH, true);
-    /* High velocity so |cmd| > stallVelocity (default 4096). */
+    /* 20000 counts/s and more: the travel check judges the first 1 mm of
+     * pulses, and the encoder has covered none of it. */
     dev_servo_setVelocity(CH, 20000);
-    /* stallTicks default = 200. */
-    for (int i = 0; i < 250; i++)
+    for (int i = 0; i < 1500; i++)
     {
         tick();
     }
@@ -595,7 +628,7 @@ void test_dev_servo_disableClearsStallAndParks(void)
     d_encoderValue = 0;
     dev_servo_enable(CH, true);
     dev_servo_setVelocity(CH, 20000);
-    for (int i = 0; i < 250; i++)
+    for (int i = 0; i < 1500; i++)
     {
         tick();
     }
@@ -634,23 +667,24 @@ void test_dev_servo_stallThroughEncoderBuzz(void)
 {
     VIBES_TEST("servo.stall-through-encoder-buzz",
                "src/DEV/dev_servo.c#dev_servo_private_stallGuard",
-               "an enabled motor drive commanded at high speed against a jam, with the encoder buzzing within 15 counts of the jam and changing on every tick");
+               "an enabled motor drive commanded at 20000 encoder counts per second against a jam, with the encoder buzzing within 15 counts of the jam and changing on every tick");
     VIBES_EXPECT_WHY("stall-reported",
-                     "the drive reports a stall within one stall window of the command",
-                     "a powered drive pulling against a jam shakes the encoder without getting anywhere, and only the net travel over a window tells that apart from motion");
+                     "the drive reports a stall within a second of the command",
+                     "a powered drive pulling against a jam shakes the encoder without getting anywhere, so the gap to where it should be keeps growing whatever the buzz does");
     servo_init();
     dev_servo_enable(CH, true);
     dev_servo_setVelocity(CH, 20000);
     int ticks = 0;
-    while ((ticks < 1000) && !dev_servo_isStalled(CH))
+    while ((ticks < 2000) && !dev_servo_isStalled(CH))
     {
         d_encoderValue = d_buzz[ticks % BUZZ_LEN];
         tick();
         ticks++;
     }
     TEST_ASSERT_TRUE(dev_servo_isStalled(CH));
-    /* Window is 200 ticks; allow a few for the command to ramp past 0.5 mm/s. */
-    TEST_ASSERT_LESS_OR_EQUAL_INT(210, ticks);
+    /* The pulses reach 1 mm (8192 counts) in under 400 ticks, and the buzz
+     * covers 30 counts of it at most, far short of the quarter it needs. */
+    TEST_ASSERT_LESS_OR_EQUAL_INT(1000, ticks);
 }
 
 void test_dev_servo_stallWhenCarriageCrawls(void)
@@ -660,12 +694,12 @@ void test_dev_servo_stallWhenCarriageCrawls(void)
                "an enabled motor drive commanded at high speed while the carriage covers only a tenth of the travel its step pulses call for");
     VIBES_EXPECT_WHY("stall-reported",
                      "the drive reports a stall",
-                     "a carriage that delivers under a quarter of the travel its step pulses call for over a window is slipping against a load it cannot move");
+                     "a carriage that delivers a tenth of the travel it is driven through falls ever further behind, slipping against a load it cannot move");
     servo_init();
     dev_servo_enable(CH, true);
     dev_servo_setVelocity(CH, 20000);
     int ticks = 0;
-    while ((ticks < 1000) && !dev_servo_isStalled(CH))
+    while ((ticks < 3000) && !dev_servo_isStalled(CH))
     {
         tick_with_share(0.1);
         ticks++;
@@ -719,16 +753,113 @@ void test_dev_servo_noStallOnFullSpeedMove(void)
     TEST_ASSERT_FALSE(everStalled);
 }
 
+/* A carriage behind a drive with LAG: its speed follows the step rate through
+ * a first-order lag of time constant `tauS`, solved exactly over each 1 ms
+ * tick. That is embsim's StepperMotor, the SIL twin's drive. Where
+ * tick_with_motion's carriage moves exactly what each tick's pulses say, this
+ * one falls behind through every ramp and coasts on past every stop and
+ * reversal, by about its speed times the lag. */
+static void tick_with_lag(double tauS)
+{
+    global_timeus += 1000U;
+    dev_servo_run();
+    const double dir = d_gpioActive ? -1.0 : 1.0;
+    const double rate = (d_startVelocityCount > 0U) ? (dir * (double)d_pulseRate) : 0.0;
+    if (d_carriageJammed)
+    {
+        d_carriageVel = 0.0;
+    }
+    else
+    {
+        const double decay = exp(-SERVO_DT_S / tauS);
+        d_carriage += (rate * SERVO_DT_S) + ((d_carriageVel - rate) * tauS * (1.0 - decay));
+        d_carriageVel = rate + ((d_carriageVel - rate) * decay);
+    }
+    if (!d_encoderStopped)
+    {
+        d_encoderValue = (int32_t)(d_carriage < 0.0 ? (d_carriage - 0.5) : (d_carriage + 0.5));
+    }
+}
+
+/* The SIL twin's drive lag: embsim's StepperMotor at its default time
+ * constant. A placeholder for the real drive, whose lag is unmeasured. */
+#define TWIN_DRIVE_LAG_S 0.020
+
+void test_dev_servo_noStallThroughFullSpeedStopsOnALaggingDrive(void)
+{
+    VIBES_TEST("servo.no-stall-through-full-speed-stops-on-a-lagging-drive",
+               "src/DEV/dev_servo.c#dev_servo_private_stallGuard",
+               "an enabled motor drive making full-speed moves of 10 mm out and back and 100 mm out and back, its carriage following the step rate through a 20 ms lag");
+    VIBES_EXPECT_WHY("coasts-past",
+                     "the carriage overshoots each stop by more than 0.3 mm before it is drawn back",
+                     "this is the coast that a lagging drive makes at every full-speed stop and reversal, so a stall guard has to let it pass");
+    VIBES_EXPECT_WHY("no-stall",
+                     "no stall is reported at any point, through the ramps, the long cruise, the overshoots or the reversals",
+                     "a healthy drive's error stays under the 2 mm at which a stall is immediate, and spends no half second over the 1 mm at which a held error is one");
+    VIBES_EXPECT("arrives", "the drive reports arrival at each end");
+    servo_init();
+    d_carriageVel = 0.0;
+    dev_servo_enable(CH, true);
+    bool everStalled = false;
+    const int32_t ends[4] = { counts_from_mm(10.0), 0, counts_from_mm(100.0), 0 };
+    for (int leg = 0; leg < 4; leg++)
+    {
+        const int32_t from = d_encoderValue;
+        const int32_t to = ends[leg];
+        const double sign = (to > from) ? 1.0 : -1.0;
+        double overshoot = 0.0;
+        dev_servo_moveTo(CH, to, 0);
+        int ticks = 0;
+        do
+        {
+            tick_with_lag(TWIN_DRIVE_LAG_S);
+            everStalled = everStalled || dev_servo_isStalled(CH);
+            const double past = sign * (d_carriage - (double)to);
+            if (past > overshoot) { overshoot = past; }
+            ticks++;
+        } while ((ticks < 30000) && !dev_servo_atTarget(CH));
+        TEST_ASSERT_TRUE(dev_servo_atTarget(CH));
+        TEST_ASSERT_GREATER_THAN_INT32(counts_from_mm(0.3), (int32_t)overshoot);
+    }
+    TEST_ASSERT_FALSE(everStalled);
+}
+
+void test_dev_servo_noStallThroughAWaveformOnALaggingDrive(void)
+{
+    VIBES_TEST("servo.no-stall-through-a-waveform-on-a-lagging-drive",
+               "src/DEV/dev_servo.c#dev_servo_private_stallGuard",
+               "an enabled motor drive running two cycles of a 4 mm, 0.5 Hz sine about a centre 6 mm away, its carriage following the step rate through a 20 ms lag");
+    VIBES_EXPECT_WHY("no-stall",
+                     "no stall is reported through the approach to the peak, the cycles or the return to the centre",
+                     "the approach and the return run at the machine's full speed, so the carriage coasts past each of them before it is drawn back");
+    VIBES_EXPECT("cycles-done", "both cycles complete");
+    servo_init();
+    d_carriageVel = 0.0;
+    dev_servo_enable(CH, true);
+    TEST_ASSERT_TRUE(dev_servo_startWaveform(CH, WF(counts_from_mm(6.0), counts_from_mm(4.0), 500000U, 2U,
+                                                    DEV_SERVO_WAVE_SINE)));
+    bool everStalled = false;
+    int ticks = 0;
+    do
+    {
+        tick_with_lag(TWIN_DRIVE_LAG_S);
+        everStalled = everStalled || dev_servo_isStalled(CH);
+        ticks++;
+    } while ((ticks < 30000) && !dev_servo_atTarget(CH));
+    TEST_ASSERT_EQUAL_UINT32(2U, dev_servo_waveformCyclesDone(CH));
+    TEST_ASSERT_FALSE(everStalled);
+}
+
 void test_dev_servo_runawayIsReportedAsStall(void)
 {
     VIBES_TEST("servo.runaway-is-a-stall",
                "src/DEV/dev_servo.c#dev_servo_private_stallGuard",
                "an enabled motor drive commanded at high speed whose carriage runs the opposite way to its step pulses at their rate, as with a reversed encoder direction");
     VIBES_EXPECT_WHY("stall-early",
-                     "the drive reports a stall before the end of the first stall window",
-                     "the loop's own correction drives a reversed carriage further from where it should be, so waiting out a window only lets it run further");
+                     "the drive reports a stall within a quarter of a second, without waiting out the half second a held error needs",
+                     "the loop's own correction drives a reversed carriage further from where it should be, so waiting only lets it run further");
     VIBES_EXPECT("bounded-travel",
-                 "the carriage has run no more than about a quarter of a millimetre the wrong way when the stall is reported");
+                 "the carriage has run less than 2 mm the wrong way when the stall is reported");
     servo_init();
     dev_servo_enable(CH, true);
     dev_servo_setVelocity(CH, 20000);
@@ -739,47 +870,257 @@ void test_dev_servo_runawayIsReportedAsStall(void)
         ticks++;
     }
     TEST_ASSERT_TRUE(dev_servo_isStalled(CH));
-    TEST_ASSERT_LESS_THAN_INT(200, ticks);
-    /* 0.25 mm threshold plus at most one tick of travel at the maximum speed. */
-    TEST_ASSERT_LESS_OR_EQUAL_INT32(2048 + (SHIPPED_MAX_VEL_COUNTS / 1000) + 1, -d_encoderValue);
+    TEST_ASSERT_LESS_THAN_INT(250, ticks);
+    /* The error is the setpoint ahead plus the carriage behind, so the
+     * carriage's own share of the 2 mm ceiling is less than all of it. */
+    TEST_ASSERT_LESS_THAN_INT32(STALL_CEILING, -d_encoderValue);
 }
 
+/* Park the drive at 0 and hold the encoder `offset` counts away for `ticks`
+ * ticks, as a load or a knock would push it. The setpoint stays on the
+ * target, so the following error is the offset itself. */
+static void hold_encoder_off_target(int32_t offset, int ticks)
+{
+    for (int i = 0; i < ticks; i++)
+    {
+        d_encoderValue = offset;
+        tick();
+    }
+}
 
-void test_dev_servo_stallOnHeldFollowingError(void)
+static void park_at_origin_scaled(int32_t encoderPerMm)
+{
+    servo_init_scaled(SHIPPED_MAX_VEL_COUNTS, SHIPPED_MAX_ACCEL_COUNTS, encoderPerMm, 0);
+    dev_servo_enable(CH, true);
+    dev_servo_moveTo(CH, 0, 0);
+    tick();
+    TEST_ASSERT_TRUE(dev_servo_atTarget(CH));
+}
+
+static void park_at_origin(void)
+{
+    servo_init();
+    dev_servo_enable(CH, true);
+    dev_servo_moveTo(CH, 0, 0);
+    tick();
+    TEST_ASSERT_TRUE(dev_servo_atTarget(CH));
+}
+
+void test_dev_servo_errorPastTheCeilingStallsAtOnce(void)
+{
+    VIBES_TEST("servo.error-past-the-ceiling-stalls-at-once",
+               "src/DEV/dev_servo.c#dev_servo_private_stallGuard",
+               "an enabled motor drive at rest whose carriage is pushed just over 2 mm from where it should be for a single control tick, then put back");
+    VIBES_EXPECT_WHY("stall-on-that-tick",
+                     "the drive reports a stall on that tick",
+                     "an error that large is a runaway, and a stall at the hard ceiling does not wait for the error to persist");
+    VIBES_EXPECT("not-at-the-ceiling",
+                 "an error of exactly 2 mm for a tick reports no stall");
+    VIBES_EXPECT_WHY("latched",
+                     "the stall is still reported after the carriage is put back, until the drive is disabled",
+                     "a stall the controller only samples now and then must not vanish before it is seen");
+    VIBES_EXPECT_WHY("set-position-clears",
+                     "a stall tripped again is cleared by giving the drive a new position, without disabling it",
+                     "redefining the position puts the setpoint on the carriage, so the error the stall was about is gone");
+    park_at_origin();
+    hold_encoder_off_target(STALL_CEILING, 1);
+    TEST_ASSERT_FALSE(dev_servo_isStalled(CH));
+    hold_encoder_off_target(0, 1);
+
+    hold_encoder_off_target(-(STALL_CEILING + 1), 1);
+    TEST_ASSERT_TRUE(dev_servo_isStalled(CH));
+
+    hold_encoder_off_target(0, 1000);
+    TEST_ASSERT_TRUE(dev_servo_isStalled(CH));
+    dev_servo_enable(CH, false);
+    tick();
+    TEST_ASSERT_FALSE(dev_servo_isStalled(CH));
+
+    dev_servo_enable(CH, true);
+    hold_encoder_off_target(STALL_CEILING + 1, 1);
+    TEST_ASSERT_TRUE(dev_servo_isStalled(CH));
+    dev_servo_setPosition(CH, d_encoderValue);
+    tick();
+    TEST_ASSERT_FALSE(dev_servo_isStalled(CH));
+}
+
+/* A carriage that MOVES while it holds a set distance behind where it should
+ * be. Holding the encoder still instead would be a carriage that does not move
+ * while the drive is pulsed -- the travel check's case, which stalls within a
+ * millimetre of pulses -- so the soft band is tested on a carriage that keeps
+ * up with the setpoint's speed but not its position.
+ *
+ * The drive holds a steady 82000 counts/s (about 10 mm/s), reached in a single
+ * tick, so the setpoint advances a whole 82 counts a tick and the error is
+ * exactly the offset asked for. The carriage then covers 82 counts of the
+ * 82 + Kp x offset / 1000 that each tick's pulses call for: over a quarter of
+ * them for any offset up to the 2 mm ceiling, so the travel check holds. */
+#define HELD_SPEED_COUNTS 82000
+static int32_t d_heldDirection; /* +1 forward, -1 in reverse */
+
+static void hold_behind(int32_t offset, int ticks)
+{
+    for (int i = 0; i < ticks; i++)
+    {
+        d_encoderValue = dev_servo_data.channel[CH].setpointCounts - (d_heldDirection * offset);
+        tick();
+    }
+}
+
+static void hold_behind_at_speed_scaled(int32_t encoderPerMm, int32_t direction)
+{
+    servo_init_scaled(SHIPPED_MAX_VEL_COUNTS, HELD_SPEED_COUNTS * 1000, encoderPerMm, 0);
+    d_heldDirection = direction;
+    dev_servo_enable(CH, true);
+    dev_servo_setVelocity(CH, direction * HELD_SPEED_COUNTS);
+    hold_behind(0, 5);
+    TEST_ASSERT_EQUAL_INT32(0, dev_servo_getFollowingError(CH));
+    TEST_ASSERT_FALSE(dev_servo_isStalled(CH));
+}
+
+static void hold_behind_at_speed(void)
+{
+    hold_behind_at_speed_scaled(0, 1);
+}
+
+void test_dev_servo_errorHeldInTheSoftBandStalls(void)
+{
+    VIBES_TEST("servo.error-held-in-the-soft-band-stalls",
+               "src/DEV/dev_servo.c#dev_servo_private_stallGuard",
+               "an enabled motor drive holding about 10 mm/s whose carriage moves at that speed but 1.5 mm behind where it should be, between the 1 mm soft band and the 2 mm hard ceiling");
+    VIBES_EXPECT_WHY("stall-after-half-a-second",
+                     "the drive reports a stall once the error has been held for half a second",
+                     "a carriage that stays too far behind for that long is not following, even though it never runs away");
+    VIBES_EXPECT("not-before", "no stall is reported before the half second is up");
+    hold_behind_at_speed();
+    hold_behind(counts_from_mm(1.5), STALL_BAND_TICKS - 1);
+    TEST_ASSERT_FALSE(dev_servo_isStalled(CH));
+    hold_behind(counts_from_mm(1.5), 1);
+    TEST_ASSERT_TRUE(dev_servo_isStalled(CH));
+}
+
+void test_dev_servo_errorAtTheBandDoesNotStall(void)
+{
+    VIBES_TEST("servo.error-at-the-band-does-not-stall",
+               "src/DEV/dev_servo.c#dev_servo_private_stallGuard",
+               "an enabled motor drive holding about 10 mm/s whose carriage moves at that speed but exactly 1 mm behind where it should be, for a second");
+    VIBES_EXPECT_WHY("no-stall",
+                     "no stall is reported at any point",
+                     "the soft band counts an error held over 1 mm; an error of 1 mm is inside it");
+    hold_behind_at_speed();
+    bool everStalled = false;
+    for (int i = 0; i < (2 * STALL_BAND_TICKS); i++)
+    {
+        hold_behind(STALL_BAND, 1);
+        everStalled = everStalled || dev_servo_isStalled(CH);
+    }
+    TEST_ASSERT_FALSE(everStalled);
+}
+
+void test_dev_servo_briefErrorInTheSoftBandDoesNotStall(void)
+{
+    VIBES_TEST("servo.brief-error-in-the-soft-band-does-not-stall",
+               "src/DEV/dev_servo.c#dev_servo_private_stallGuard",
+               "an enabled motor drive holding about 10 mm/s whose carriage moves at that speed but falls 1.5 mm behind for just under half a second at a time, five times, coming back to just inside 1 mm for one control tick between them");
+    VIBES_EXPECT_WHY("no-stall",
+                     "no stall is reported at any point",
+                     "a healthy error passes through the soft band on a ramp or a stop and drops back; each excursion starts the half-second count again from zero");
+    hold_behind_at_speed();
+    bool everStalled = false;
+    for (int burst = 0; burst < 5; burst++)
+    {
+        for (int i = 0; i < (STALL_BAND_TICKS - 1); i++)
+        {
+            hold_behind(counts_from_mm(1.5), 1);
+            everStalled = everStalled || dev_servo_isStalled(CH);
+        }
+        hold_behind(STALL_BAND - 1, 1);
+        everStalled = everStalled || dev_servo_isStalled(CH);
+    }
+    TEST_ASSERT_FALSE(everStalled);
+}
+
+/* The profile's encoder scale on the bench (#308): 2400 counts per mm, so
+ * the 2 mm ceiling is 4800 counts and the 1 mm band 2400. */
+#define BENCH_COUNTS_PER_MM 2400
+#define BENCH_STALL_CEILING (2 * BENCH_COUNTS_PER_MM)
+#define BENCH_STALL_BAND BENCH_COUNTS_PER_MM
+
+void test_dev_servo_stallThresholdsFollowTheEncoderScale(void)
+{
+    VIBES_TEST("servo.stall-thresholds-follow-the-encoder-scale",
+               "src/DEV/dev_servo.c#dev_servo_init",
+               "a machine profile with 2400 encoder counts per millimetre, and an enabled motor drive whose carriage is pushed off where it should be while at rest, then falls behind while moving in reverse at about 34 mm/s");
+    VIBES_EXPECT_WHY("ceiling-is-2-mm",
+                     "an error of exactly 2 mm for a tick reports no stall, and one count more reports it on that tick",
+                     "the ceiling is a distance the carriage may run wrong, so it has to mean the same 2 mm whatever the encoder's resolution");
+    VIBES_EXPECT("band-is-1-mm",
+                 "a carriage just over 1 mm behind for half a second reports a stall, and not a tick before");
+    park_at_origin_scaled(BENCH_COUNTS_PER_MM);
+    hold_encoder_off_target(BENCH_STALL_CEILING, 1);
+    TEST_ASSERT_FALSE(dev_servo_isStalled(CH));
+    hold_encoder_off_target(0, 1);
+    hold_encoder_off_target(-(BENCH_STALL_CEILING + 1), 1);
+    TEST_ASSERT_TRUE(dev_servo_isStalled(CH));
+
+    hold_behind_at_speed_scaled(BENCH_COUNTS_PER_MM, -1);
+    hold_behind(BENCH_STALL_BAND + 1, STALL_BAND_TICKS - 1);
+    TEST_ASSERT_FALSE(dev_servo_isStalled(CH));
+    hold_behind(BENCH_STALL_BAND + 1, 1);
+    TEST_ASSERT_TRUE(dev_servo_isStalled(CH));
+}
+
+void test_dev_servo_slowFallingBehindStallsInTheSoftBand(void)
 {
     VIBES_TEST("servo.stall-on-held-following-error",
                "src/DEV/dev_servo.c#dev_servo_private_stallGuard",
-               "an enabled motor drive commanded at high speed while the carriage covers only 30 percent of the travel its step pulses call for");
+               "an enabled motor drive commanded at about 5 mm/s while the carriage covers only three tenths of the travel its step pulses call for, so it settles about 1.4 mm behind");
     VIBES_EXPECT_WHY("stall-reported",
-                     "the drive reports a stall once the following error has stayed above half a millimetre for half a second",
-                     "a carriage that keeps falling behind is failing to follow even while it moves the right way, and the error held at full command is the backstop that catches it");
+                     "the drive reports a stall half a second after the error passes 1 mm",
+                     "a carriage that keeps falling behind is failing to follow even while it moves the right way, and never runs far enough off to reach the hard ceiling");
     VIBES_EXPECT("not-before",
-                 "no stall is reported while the following error is under half a millimetre");
+                 "no stall is reported while the following error is at or under 1 mm");
+    VIBES_EXPECT("never-near-the-ceiling",
+                 "the error never reaches 2 mm, so it is the held error that reports the stall");
     servo_init();
     dev_servo_enable(CH, true);
-    dev_servo_setVelocity(CH, 20000);
+    /* Kp x error makes up the 70 percent the carriage loses: it settles where
+     * 0.3 x (40000 + 8 x error) = 40000, about 11700 counts behind. Three
+     * tenths is over the quarter of its pulses the travel check asks for. */
+    dev_servo_setVelocity(CH, 40000);
     int ticks = 0;
-    int firstOverLimit = -1;
-    bool stalledEarly = false;
+    int firstOverBand = -1;
+    bool stalledInsideBand = false;
+    int32_t worst = 0;
     while ((ticks < 5000) && !dev_servo_isStalled(CH))
     {
         tick_with_share(0.3);
         ticks++;
-        if (dev_servo_getFollowingError(CH) > 4096)
+        const int32_t err = dev_servo_getFollowingError(CH);
+        if (err > worst) { worst = err; }
+        if (err > STALL_BAND)
         {
-            if (firstOverLimit < 0) { firstOverLimit = ticks; }
+            if (firstOverBand < 0) { firstOverBand = ticks; }
         }
         else if (dev_servo_isStalled(CH))
         {
-            stalledEarly = true;
+            stalledInsideBand = true;
         }
     }
     TEST_ASSERT_TRUE(dev_servo_isStalled(CH));
-    TEST_ASSERT_FALSE(stalledEarly);
-    TEST_ASSERT_TRUE(firstOverLimit > 0);
-    TEST_ASSERT_GREATER_OR_EQUAL_INT(firstOverLimit + 499, ticks);
+    TEST_ASSERT_FALSE(stalledInsideBand);
+    TEST_ASSERT_TRUE(firstOverBand > 0);
+    TEST_ASSERT_INT_WITHIN(1, firstOverBand + STALL_BAND_TICKS - 1, ticks);
+    TEST_ASSERT_LESS_THAN_INT32(STALL_CEILING, worst);
 }
 
+/* A profile whose two scales say each step pulse moves the carriage eight
+ * encoder counts, on a carriage that moves one. The loop pulses the drive for
+ * eight counts a pulse, so the carriage delivers an eighth of every command.
+ * The travel check counts each pulse at the profile's eight counts too, so the
+ * first millimetre of pulses (8192 counts) finds an eighth of it delivered:
+ * 236 ticks (measured). Counted at one count a pulse, the pulses would look
+ * fully delivered, and only the soft band would stall it, at 1134 ticks. */
 void test_dev_servo_stallUsesProfilePulseScale(void)
 {
     VIBES_TEST("servo.stall-uses-profile-pulse-scale",
@@ -787,17 +1128,346 @@ void test_dev_servo_stallUsesProfilePulseScale(void)
                "a machine profile whose encoder and servo steps per millimetre say each step pulse moves the carriage eight encoder counts, and a carriage that moves one count per pulse");
     VIBES_EXPECT_WHY("stall-reported",
                      "the drive reports a stall",
-                     "the travel the pulses call for comes from the profile's two scales, so a carriage delivering an eighth of it is short however steadily it moves");
+                     "the drive is pulsed by the profile's two scales, so a carriage delivering an eighth of the travel per pulse falls ever further behind where the loop is driving it");
+    VIBES_EXPECT_WHY("within-half-a-second",
+                     "the stall is reported within half a second of the command",
+                     "the pulses are judged at the profile's scale too, so the first millimetre of them shows the carriage delivering an eighth");
     servo_init_scaled(SHIPPED_MAX_VEL_COUNTS, SHIPPED_MAX_ACCEL_COUNTS, 8192, 1024);
     dev_servo_enable(CH, true);
     dev_servo_setVelocity(CH, 20000);
     int ticks = 0;
-    while ((ticks < 1000) && !dev_servo_isStalled(CH))
+    while ((ticks < 5000) && !dev_servo_isStalled(CH))
     {
         tick_with_share(1.0);
         ticks++;
     }
     TEST_ASSERT_TRUE(dev_servo_isStalled(CH));
+    TEST_ASSERT_LESS_THAN_INT(500, ticks);
+}
+
+/* ---- The travel check: pulses sent, and the encoder's share of them. ---- */
+
+/* The travel check judges every 1 mm of net pulsed travel, and a window that
+ * had already seen its quarter when the fault began passes once more, so a
+ * faulty carriage is driven at most two of them blind. */
+#define TRAVEL_CHECK_COUNTS 8192 /* 1 mm */
+
+/* Run a 10 mm move at `feedMm` mm/s on the twin's lagging drive until the
+ * setpoint has `remainMm` of it left. */
+static void move_until_remaining(double feedMm, double remainMm)
+{
+    servo_init();
+    dev_servo_enable(CH, true);
+    const int32_t target = counts_from_mm(10.0);
+    dev_servo_moveTo(CH, target, counts_from_mm(feedMm));
+    int ticks = 0;
+    while ((ticks < 400000) && (dev_servo_getSetpoint(CH) < (target - counts_from_mm(remainMm))))
+    {
+        tick_with_lag(TWIN_DRIVE_LAG_S);
+        ticks++;
+    }
+    TEST_ASSERT_FALSE(dev_servo_isStalled(CH));
+}
+
+/* Ticks on the lagging drive until a stall or `maxTicks`; returns ticks used. */
+static int run_until_stall(int maxTicks)
+{
+    int ticks = 0;
+    while ((ticks < maxTicks) && !dev_servo_isStalled(CH))
+    {
+        tick_with_lag(TWIN_DRIVE_LAG_S);
+        ticks++;
+    }
+    return ticks;
+}
+
+void test_dev_servo_encoderStoppingNearTheTargetStalls(void)
+{
+    VIBES_TEST("servo.stall-when-encoder-stops-near-the-target",
+               "src/DEV/dev_servo.c#dev_servo_private_stallGuard",
+               "a 10 mm move at 1 mm/s, and again at 0.05 mm/s, whose encoder stops counting with 0.5 mm of the move left while the carriage goes on following the step pulses through a 20 ms lag");
+    VIBES_EXPECT_WHY("stall-reported",
+                     "the drive reports a stall within 3 seconds",
+                     "the loop goes on pulsing the drive toward a target the encoder never reaches, so the carriage runs on until the stall stops it");
+    VIBES_EXPECT("bounded-travel",
+                 "the carriage has run less than 2 mm from where the encoder stopped when the stall is reported");
+    const double feeds[2] = { 1.0, 0.05 };
+    for (int f = 0; f < 2; f++)
+    {
+        move_until_remaining(feeds[f], 0.5);
+        const double from = d_carriage;
+        d_encoderStopped = true;
+        const int ticks = run_until_stall(3000);
+        TEST_ASSERT_TRUE(dev_servo_isStalled(CH));
+        TEST_ASSERT_LESS_THAN_INT(3000, ticks);
+        TEST_ASSERT_LESS_THAN_INT32(2 * TRAVEL_CHECK_COUNTS, (int32_t)fabs(d_carriage - from));
+    }
+}
+
+void test_dev_servo_encoderStoppingDuringAWaveformStalls(void)
+{
+    VIBES_TEST("servo.stall-when-encoder-stops-during-a-waveform",
+               "src/DEV/dev_servo.c#dev_servo_private_stallGuard",
+               "an enabled motor drive running a 0.25 mm, 1 Hz sine whose encoder stops counting three seconds in while the carriage goes on following the step pulses through a 20 ms lag");
+    VIBES_EXPECT_WHY("stall-reported",
+                     "the drive reports a stall within a second",
+                     "the loop corrects toward the frozen reading on every cycle, so the carriage drifts further from the centre with each one");
+    VIBES_EXPECT("bounded-travel",
+                 "the carriage is less than 2 mm from where the encoder stopped when the stall is reported");
+    servo_init();
+    dev_servo_enable(CH, true);
+    TEST_ASSERT_TRUE(dev_servo_startWaveform(CH, WF(0, counts_from_mm(0.25), 1000000U, 1000U,
+                                                    DEV_SERVO_WAVE_SINE)));
+    for (int i = 0; i < 3000; i++)
+    {
+        tick_with_lag(TWIN_DRIVE_LAG_S);
+    }
+    TEST_ASSERT_FALSE(dev_servo_isStalled(CH));
+    const double from = d_carriage;
+    d_encoderStopped = true;
+    const int ticks = run_until_stall(1000);
+    TEST_ASSERT_TRUE(dev_servo_isStalled(CH));
+    TEST_ASSERT_LESS_THAN_INT(1000, ticks);
+    TEST_ASSERT_LESS_THAN_INT32(2 * TRAVEL_CHECK_COUNTS, (int32_t)fabs(d_carriage - from));
+}
+
+void test_dev_servo_jamNearTheTargetStalls(void)
+{
+    VIBES_TEST("servo.stall-when-jammed-near-the-target",
+               "src/DEV/dev_servo.c#dev_servo_private_stallGuard",
+               "a 10 mm move at 1 mm/s whose carriage jams with 0.5 mm of the move left, its encoder still reading it");
+    VIBES_EXPECT_WHY("stall-reported",
+                     "the drive reports a stall within a second",
+                     "the move can never arrive, and until the stall is reported the drive is pulsed into the jam");
+    move_until_remaining(1.0, 0.5);
+    d_carriageJammed = true;
+    const int ticks = run_until_stall(1000);
+    TEST_ASSERT_TRUE(dev_servo_isStalled(CH));
+    TEST_ASSERT_LESS_THAN_INT(1000, ticks);
+}
+
+void test_dev_servo_jamAtTensileSpeedStalls(void)
+{
+    VIBES_TEST("servo.stall-when-jammed-at-tensile-speed",
+               "src/DEV/dev_servo.c#dev_servo_private_stallGuard",
+               "a move at 0.01 mm/s whose carriage jams 0.3 seconds in, its encoder still reading it");
+    VIBES_EXPECT_WHY("stall-reported",
+                     "the drive reports a stall within 6 seconds of the jam",
+                     "the following error grows by only 10 um a second at this speed, while the pulses the loop sends into the jam reach 1 mm within seconds");
+    servo_init();
+    dev_servo_enable(CH, true);
+    dev_servo_moveTo(CH, counts_from_mm(100.0), counts_from_mm(0.01));
+    for (int i = 0; i < 300; i++)
+    {
+        tick_with_lag(TWIN_DRIVE_LAG_S);
+    }
+    d_carriageJammed = true;
+    const int ticks = run_until_stall(6000);
+    TEST_ASSERT_TRUE(dev_servo_isStalled(CH));
+    TEST_ASSERT_LESS_THAN_INT(6000, ticks);
+}
+
+void test_dev_servo_travelCheckFollowsTheEncoderScale(void)
+{
+    VIBES_TEST("servo.travel-check-follows-the-encoder-scale",
+               "src/DEV/dev_servo.c#dev_servo_init",
+               "a machine profile with 2400 encoder counts per millimetre, and an enabled motor drive commanded at 1 mm/s while its encoder stays frozen");
+    VIBES_EXPECT_WHY("judged-at-1-mm",
+                     "the stall is reported on the control tick at which the step pulses have called for 1 mm of travel, 2400 counts",
+                     "the travel judged at a time is a distance, so it has to mean the same millimetre whatever the encoder's resolution");
+    servo_init_scaled(SHIPPED_MAX_VEL_COUNTS, SHIPPED_MAX_ACCEL_COUNTS, BENCH_COUNTS_PER_MM, 0);
+    dev_servo_enable(CH, true);
+    dev_servo_setVelocity(CH, BENCH_COUNTS_PER_MM);
+    int ticks = 0;
+    double pulsedBefore = 0.0;
+    while ((ticks < 3000) && !dev_servo_isStalled(CH))
+    {
+        pulsedBefore = d_emitted;
+        tick();
+        ticks++;
+    }
+    TEST_ASSERT_TRUE(dev_servo_isStalled(CH));
+    /* One count of travel per pulse: the tick that stalls is the first whose
+     * pulses reach the 2400 counts. */
+    TEST_ASSERT_LESS_THAN_INT32(BENCH_COUNTS_PER_MM, (int32_t)pulsedBefore);
+    TEST_ASSERT_GREATER_OR_EQUAL_INT32(BENCH_COUNTS_PER_MM, (int32_t)d_emitted);
+}
+
+void test_dev_servo_stallHoldsThroughNewCommands(void)
+{
+    VIBES_TEST("servo.stall-holds-through-new-commands",
+               "src/DEV/dev_servo.c#dev_servo_private_stallGuard",
+               "a stalled motor drive, still enabled, that is given a new move, then a speed command, then a stop, with control ticks after each and the carriage put back where it should be");
+    VIBES_EXPECT_WHY("still-reported",
+                     "the stall is still reported after each of them",
+                     "a stall stays reported until the drive is disabled or its position is redefined, so a controller that reads it late still sees it");
+    servo_init();
+    dev_servo_enable(CH, true);
+    dev_servo_setVelocity(CH, 20000);
+    int ticks = 0;
+    while ((ticks < 1500) && !dev_servo_isStalled(CH))
+    {
+        tick();
+        ticks++;
+    }
+    TEST_ASSERT_TRUE(dev_servo_isStalled(CH));
+
+    dev_servo_moveTo(CH, 0, 0);
+    for (int i = 0; i < 50; i++)
+    {
+        d_encoderValue = dev_servo_getSetpoint(CH);
+        tick();
+    }
+    TEST_ASSERT_TRUE(dev_servo_isStalled(CH));
+    dev_servo_setVelocity(CH, 1000);
+    for (int i = 0; i < 50; i++)
+    {
+        d_encoderValue = dev_servo_getSetpoint(CH);
+        tick();
+    }
+    TEST_ASSERT_TRUE(dev_servo_isStalled(CH));
+    dev_servo_stop(CH);
+    for (int i = 0; i < 50; i++)
+    {
+        d_encoderValue = dev_servo_getSetpoint(CH);
+        tick();
+    }
+    TEST_ASSERT_TRUE(dev_servo_isStalled(CH));
+}
+
+void test_dev_servo_slowCrawlStalls(void)
+{
+    VIBES_TEST("servo.stall-when-carriage-crawls-slowly",
+               "src/DEV/dev_servo.c#dev_servo_private_stallGuard",
+               "an enabled motor drive commanded at 1 mm/s while the carriage covers only a fifth of the travel its step pulses call for, falling less than 0.5 mm behind");
+    VIBES_EXPECT_WHY("stall-reported",
+                     "the drive reports a stall within a second",
+                     "a carriage that delivers under a quarter of the travel it is pulsed for is not following, even when its following error stays well inside the 1 mm band");
+    servo_init();
+    dev_servo_enable(CH, true);
+    dev_servo_setVelocity(CH, counts_from_mm(1.0));
+    int ticks = 0;
+    int32_t worst = 0;
+    while ((ticks < 1000) && !dev_servo_isStalled(CH))
+    {
+        tick_with_share(0.2);
+        const int32_t err = dev_servo_getFollowingError(CH);
+        if (err > worst) { worst = err; }
+        ticks++;
+    }
+    TEST_ASSERT_TRUE(dev_servo_isStalled(CH));
+    TEST_ASSERT_LESS_THAN_INT32(STALL_BAND, worst);
+}
+
+void test_dev_servo_reEnableAfterAStallHoldsStill(void)
+{
+    VIBES_TEST("servo.re-enable-after-a-stall-holds-still",
+               "src/DEV/dev_servo.c#dev_servo_run",
+               "a drive that stalled against a jam that stays, then stopped and disabled as the controller does when it reports the stall, then enabled again with no move commanded, its encoder buzzing at the jam");
+    VIBES_EXPECT_WHY("no-stall",
+                     "no stall is reported for 5 seconds after it is enabled again",
+                     "acknowledging a stall clears it, and with no move commanded the drive holds where the carriage stands");
+    VIBES_EXPECT("holds", "the following error stays within 30 counts, the width of the buzz");
+    servo_init();
+    dev_servo_enable(CH, true);
+    dev_servo_moveTo(CH, counts_from_mm(5.0), counts_from_mm(10.0));
+    const int32_t jamAt = counts_from_mm(2.0);
+    int ticks = 0;
+    while ((ticks < 5000) && !dev_servo_isStalled(CH))
+    {
+        tick_with_motion();
+        if (d_carriage > (double)jamAt) { d_carriage = (double)jamAt; }
+        d_encoderValue = (int32_t)d_carriage + (((int32_t)d_carriage >= jamAt) ? d_buzz[ticks % BUZZ_LEN] : 0);
+        ticks++;
+    }
+    TEST_ASSERT_TRUE(dev_servo_isStalled(CH));
+    dev_servo_stop(CH);
+    dev_servo_enable(CH, false);
+    for (int i = 0; i < 50; i++)
+    {
+        d_encoderValue = jamAt + d_buzz[(ticks + i) % BUZZ_LEN];
+        tick();
+    }
+    TEST_ASSERT_FALSE(dev_servo_isStalled(CH));
+    dev_servo_enable(CH, true);
+    bool everStalled = false;
+    int32_t worst = 0;
+    for (int i = 0; i < 5000; i++)
+    {
+        d_encoderValue = jamAt + d_buzz[i % BUZZ_LEN];
+        tick();
+        everStalled = everStalled || dev_servo_isStalled(CH);
+        const int32_t err = abs(dev_servo_getFollowingError(CH));
+        if (err > worst) { worst = err; }
+    }
+    TEST_ASSERT_FALSE(everStalled);
+    TEST_ASSERT_LESS_OR_EQUAL_INT32(30, worst);
+}
+
+/* ---- A frame redefined by another core while a control tick runs. ---- */
+
+static int32_t d_redefineTo;
+static void redefine_frame(void) { dev_servo_setPosition(CH, d_redefineTo); }
+
+void test_dev_servo_frameRedefinedMidTickIsNotAStall(void)
+{
+    VIBES_TEST("servo.frame-redefined-mid-tick-is-not-a-stall",
+               "src/DEV/dev_servo.c#dev_servo_run",
+               "a stopped motor drive whose position is redefined 100 mm away by another core between a control tick's encoder reading and its use of it, as homing does, then a 1 mm move in the new frame");
+    VIBES_EXPECT_WHY("no-stall",
+                     "no stall is reported at any point",
+                     "that tick's reading and its setpoint belong to different frames, so their difference is the redefinition and says nothing about the carriage");
+    VIBES_EXPECT("move-arrives", "the move arrives at its target in the new frame");
+    servo_init();
+    dev_servo_enable(CH, true);
+    dev_servo_stop(CH);
+    for (int i = 0; i < 10; i++)
+    {
+        tick_with_motion();
+    }
+    d_redefineTo = counts_from_mm(100.0);
+    d_afterReadHook = redefine_frame;
+    tick_with_motion();
+    TEST_ASSERT_NULL(d_afterReadHook);
+    bool everStalled = dev_servo_isStalled(CH);
+    const int32_t target = d_redefineTo + counts_from_mm(1.0);
+    dev_servo_moveTo(CH, target, 0);
+    int ticks = 0;
+    do
+    {
+        tick_with_motion();
+        everStalled = everStalled || dev_servo_isStalled(CH);
+        ticks++;
+    } while ((ticks < 5000) && !dev_servo_atTarget(CH));
+    TEST_ASSERT_FALSE(everStalled);
+    TEST_ASSERT_TRUE(dev_servo_atTarget(CH));
+    TEST_ASSERT_INT32_WITHIN(8, target, d_encoderValue);
+}
+
+void test_dev_servo_frameRedefinedMidTickWhileParked(void)
+{
+    VIBES_TEST("servo.frame-redefined-mid-tick-while-parked",
+               "src/DEV/dev_servo.c#dev_servo_run",
+               "a motor drive parked on its target whose position is redefined 100 mm away by another core between a control tick's encoder reading and its use of it");
+    VIBES_EXPECT("no-stall", "no stall is reported at any point");
+    VIBES_EXPECT_WHY("holds-in-new-frame",
+                     "the drive holds at the new position with no following error and reports arrival there",
+                     "the redefinition moves the setpoint with the frame, even when the tick that overlaps it was about to park the setpoint on the old target");
+    park_at_origin();
+    d_redefineTo = counts_from_mm(100.0);
+    d_afterReadHook = redefine_frame;
+    tick();
+    TEST_ASSERT_NULL(d_afterReadHook);
+    bool everStalled = dev_servo_isStalled(CH);
+    for (int i = 0; i < 100; i++)
+    {
+        tick();
+        everStalled = everStalled || dev_servo_isStalled(CH);
+    }
+    TEST_ASSERT_FALSE(everStalled);
+    TEST_ASSERT_EQUAL_INT32(0, dev_servo_getFollowingError(CH));
+    TEST_ASSERT_TRUE(dev_servo_atTarget(CH));
+    TEST_ASSERT_EQUAL_INT32(d_redefineTo, dev_servo_getPosition(CH));
 }
 
 
@@ -2405,6 +3075,8 @@ static void bench_init(int32_t kiMilli, double tauS, double lossCountsPerS)
 
 /* The calibration's tracking move: 10 mm at 5 mm/s. Returns the overshoot past
  * the target in counts, and where the carriage parked. */
+/* The carriage lag in seconds (2 ms); the servo.integral-ignores-ramp-lag
+ * given states it, so change both together. */
 #define BENCH_TAU_S 0.002
 static double bench_move_overshoot(int32_t kiMilli, int32_t *parkedAt, bool *arrived)
 {
@@ -2432,7 +3104,7 @@ void test_the_integral_does_not_turn_ramp_lag_into_overshoot(void)
 {
     VIBES_TEST("servo.integral-ignores-ramp-lag",
                "src/DEV/dev_servo.c#dev_servo_private_integrate",
-               "a 2400 counts/mm machine with proportional gain 10, whose carriage lags its pulses by 4 ms, making a 10 mm move at 5 mm/s and 50 mm/s^2");
+               "a 2400 counts/mm machine with proportional gain 10, whose carriage lags its pulses by 2 ms, making a 10 mm move at 5 mm/s and 50 mm/s^2");
     VIBES_EXPECT_WHY("overshoot-as-without-integral",
                      "with integral gain 12.5 or 50 the move overshoots its target by at most 0.25 um more than with the integral off",
                      "the carriage falls behind while its trajectory accelerates; that lag is transient, and an integral that learned it would push the carriage past the target when the move stops");
@@ -2568,8 +3240,25 @@ int main(void)
     RUN_TEST(test_dev_servo_noStallWhileCarriageLags);
     RUN_TEST(test_dev_servo_noStallOnFullSpeedMove);
     RUN_TEST(test_dev_servo_runawayIsReportedAsStall);
-    RUN_TEST(test_dev_servo_stallOnHeldFollowingError);
+    RUN_TEST(test_dev_servo_noStallThroughFullSpeedStopsOnALaggingDrive);
+    RUN_TEST(test_dev_servo_noStallThroughAWaveformOnALaggingDrive);
+    RUN_TEST(test_dev_servo_errorPastTheCeilingStallsAtOnce);
+    RUN_TEST(test_dev_servo_errorHeldInTheSoftBandStalls);
+    RUN_TEST(test_dev_servo_errorAtTheBandDoesNotStall);
+    RUN_TEST(test_dev_servo_briefErrorInTheSoftBandDoesNotStall);
+    RUN_TEST(test_dev_servo_slowFallingBehindStallsInTheSoftBand);
     RUN_TEST(test_dev_servo_stallUsesProfilePulseScale);
+    RUN_TEST(test_dev_servo_stallThresholdsFollowTheEncoderScale);
+    RUN_TEST(test_dev_servo_encoderStoppingNearTheTargetStalls);
+    RUN_TEST(test_dev_servo_encoderStoppingDuringAWaveformStalls);
+    RUN_TEST(test_dev_servo_jamNearTheTargetStalls);
+    RUN_TEST(test_dev_servo_jamAtTensileSpeedStalls);
+    RUN_TEST(test_dev_servo_travelCheckFollowsTheEncoderScale);
+    RUN_TEST(test_dev_servo_stallHoldsThroughNewCommands);
+    RUN_TEST(test_dev_servo_slowCrawlStalls);
+    RUN_TEST(test_dev_servo_reEnableAfterAStallHoldsStill);
+    RUN_TEST(test_dev_servo_frameRedefinedMidTickIsNotAStall);
+    RUN_TEST(test_dev_servo_frameRedefinedMidTickWhileParked);
     RUN_TEST(test_dev_servo_pulsesAtTheProfileScale);
     RUN_TEST(test_dev_servo_moveAtProfileScaleArrivesWithoutStall);
 

@@ -7,8 +7,8 @@ use p2iss::{sdimage, P2Iss, SerialLink};
 use std::time::{Duration, Instant};
 
 const PROTO: SerialLink = SerialLink {
-    tx_pin: 55,
-    rx_pin: 53,
+    tx_pin: p2core::board::PIN_PROTO_TX,
+    rx_pin: p2core::board::PIN_PROTO_RX,
     nominal_baud: 2_000_000,
 };
 
