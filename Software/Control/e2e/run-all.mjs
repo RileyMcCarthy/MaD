@@ -199,13 +199,19 @@ const cannot = (id) => {
  * The hard stop of the machine on the board the suite runs, in millimetres:
  * the `hard_stop_mm` option of the project file board-route.sh names
  * (E2E_PROJECT, relative to SIL/), or null when the board is not a project
- * or its machine has none.
+ * or its machine has none. The line is TOML's `key = value`, with or without
+ * a trailing comment; a value that is not a finite number fails here.
  */
 function hardStopMm() {
   if (!ON_PROJECT || !process.env.E2E_PROJECT) return null;
   const file = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'SIL', process.env.E2E_PROJECT);
-  const line = readFileSync(file, 'utf8').match(/^hard_stop_mm = (\S+)$/m);
-  return line ? Number(line[1]) : null;
+  const line = readFileSync(file, 'utf8').match(/^[ \t]*hard_stop_mm[ \t]*=[ \t]*([^\s#]+)[ \t]*(?:#.*)?$/m);
+  if (!line) return null;
+  const mm = Number(line[1]);
+  if (!Number.isFinite(mm)) {
+    throw new Error(`${process.env.E2E_PROJECT}: hard_stop_mm = ${line[1]} is not millimetres`);
+  }
+  return mm;
 }
 
 // The app is the built bundle (board-route.sh with APP_DIST sets this), not
@@ -2477,12 +2483,12 @@ const scenarios = [
   {
     // A latched servo stall is cleared from the Live screen, and the machine
     // moves again afterwards. The board's machine has a hard stop above the
-    // carriage's start (SIL/mad-hard-stop-cosim.toml, 3 mm): the drive turns
-    // on against it while the encoder, on the carriage's side of the drive,
-    // stops counting, so a jog past the stop trips dev_servo's stall guard
-    // and app_control latches FAULT_SERVO_STALL. Only a disable request
-    // clears that latch, and while faulted the machine reports motion off:
-    // the Live button has to offer the disable, then the enable once the
+    // carriage's start (SIL/mad-hard-stop-cosim.toml, 3 mm): the drive takes
+    // the steps it is sent while the carriage, and the encoder on its side of
+    // the drive, stay on the stop, so a jog past the stop trips dev_servo's
+    // stall guard and app_control latches FAULT_SERVO_STALL. Only a disable
+    // request clears that latch, and while faulted the machine reports motion
+    // off: the Live button has to offer the disable, then the enable once the
     // fault is gone.
     //
     // Enabled again with no move commanded, the machine holds where it is.
@@ -2491,10 +2497,16 @@ const scenarios = [
     // holds its setpoint on the encoder every tick (read: app_motion.c,
     // app_motion_private_getDesiredState; dev_servo.c, dev_servo_run and
     // dev_servo_private_resync), so nothing drives the carriage back into the
-    // stop. A drive pushing at the stop would stall again within about 0.7 s
-    // by the guard's 1 mm band alone (1 mm of following error at the jog's
-    // 5 mm/s, then 500 ms; dev_servo.h), so the scenario watches 2 s. Then a
-    // jog away from the stop moves the carriage the distance commanded.
+    // stop. That is a claim that something does NOT happen, so the scenario
+    // watches a fixed 2 s of board time (fixtures.mjs, at DEVICE_WAIT_MS: an
+    // absence is watched for a fixed window, never on that budget). The
+    // window is sized by the guard: pulses the encoder does not follow stall the drive once 1 mm of
+    // them has gone, 2 mm at most (dev_servo.h, the travel check), as in the
+    // first stall here, where the drive lost 1.03-1.04 mm past the stop
+    // (measured: the machine's summary, 4 runs). So a push at the stop of
+    // 1 mm/s or more stalls inside the window (inferred); the carriage, held
+    // on the stop, would not show one. Then a jog away from the stop moves
+    // the carriage the distance commanded.
     id: 'SERVO-stall',
     name: 'A carriage at a hard stop latches SERVO_STALL; Live clears it, re-enables motion, and a jog leaves the stop',
     async run() {

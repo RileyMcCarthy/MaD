@@ -142,8 +142,11 @@ export const HOST_BACKSTOP_MS = Number(process.env.E2E_HOST_BACKSTOP_MS || 15 * 
  * factor applies: the board running at a few percent of real time, or at a
  * fraction of that while the firmware works its SD card, slows the host's
  * clock, not this one. A healthy run never spends it: it bounds a hang, it
- * does not pace a passing test. No wait in this suite is used to prove
- * something is ABSENT, so the ceiling cannot weaken an assertion.
+ * does not pace a passing test. No wait on this budget is used to prove
+ * something is ABSENT, so the ceiling cannot weaken an assertion. A scenario
+ * that must show an absence watches a fixed window of board time instead
+ * (`waitPageTime`), sized where it is used by how soon the thing would show
+ * if it happened: SERVO-stall's 2 s with no stall after re-enabling motion.
  */
 export const DEVICE_WAIT_MS = 20_000;
 
