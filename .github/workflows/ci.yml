@@ -1062,11 +1062,13 @@ jobs:
       #    debug log. This is the image MaD Control flashes from "latest
       #    release" (Software/Control/src/firmware/release.ts), and the release
       #    cannot publish without it.
-      #  - madEdge: the propeller2_debug build. Protocol on P53/P55, debug log
-      #    on P62/P63. Only for a bench that wires P53/P55 to its own adapter:
-      #    the machine's P2-EC32MB uses P40-P57 for its PSRAM and does not bring
-      #    them out, so the Edge's J4/IC2 link never reaches the chip. Flashed
-      #    as a local file when wanted.
+      #  - madEdge: the propeller2_debug build. Protocol on P30/P32, debug log
+      #    on P62/P63. P30/P32 are the Edge carrier's J4/IC2 Pi link from v0.3
+      #    on; earlier carriers bring them to no host connector (they put IC2
+      #    on P52-P55, which the machine's P2-EC32MB keeps for its PSRAM), so
+      #    there it needs a bench adapter on P30/P32. Images built before the
+      #    pin move have the protocol on P53/P55. Flashed as a local file when
+      #    wanted.
       # Each image is copied out right after its build: building the next env
       # has been seen to remove the previous env's output.
       - name: Build Firmware - MadEdge Version

@@ -46,8 +46,8 @@ pub mod pins {
     pub const ENDSTOP_DOOR: u8 = 21;
     pub const ESD_POWER: u8 = 22;
     pub const CHARGE_PUMP: u8 = 28;
-    pub const RPI_RX: u8 = 53;
-    pub const RPI_TX: u8 = 55;
+    pub const RPI_RX: u8 = 30;
+    pub const RPI_TX: u8 = 32;
 }
 
 /// Every pin the ISS carries on a net as a plain level.

@@ -31,8 +31,8 @@ const SD_MOSI: u8 = 59;
 const SD_MISO: u8 = 58;
 
 const PROTO: SerialLink = SerialLink {
-    tx_pin: 55,
-    rx_pin: 53,
+    tx_pin: p2core::board::PIN_PROTO_TX,
+    rx_pin: p2core::board::PIN_PROTO_RX,
     nominal_baud: 2_000_000,
 };
 

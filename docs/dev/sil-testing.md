@@ -58,7 +58,9 @@ unwired), where the machine's Prop Plug sits, and the module's flash holds the
 carries; the app flashes over `J1` (`Software/Control/README.md`, "Firmware
 flashing"). **Open:** which image the machine runs. By default the app flashes
 a release's madEdge image, the `propeller2_debug` build, whose protocol is on
-`P53`/`P55` (`Software/Control/src/firmware/release.ts`, `pickFirmwareAsset`);
+`P53`/`P55` in every release so far (`Software/Control/src/firmware/release.ts`,
+`pickFirmwareAsset`; the build has it on `P30`/`P32` since the Edge v0.3 pin
+move);
 the production build is the release's `-release.bin`, flashed only as a local
 file. Nothing sits on the Pi's connector `J4`: its line goes through
 `IC2` to the carrier's `P52`–`P55`, which the EC32MB keeps for its PSRAMs and
@@ -108,7 +110,7 @@ mad.toml --pty PATH` hands `mad-runner` run in its own process, and reads the
 firmware's version on the PTY before the run's 2 s of board time end.
 `tests/projects.rs` holds the seven files to one another. The debug image
 (`make p2image`) stays where a run needs its log on `P62` or its MAIN channel
-on the bare chip's `P53`/`P55`: `mad-emulator` (SERVO-stall, `make
+on the bare chip's `P30`/`P32`: `mad-emulator` (SERVO-stall, `make
 e2e-stall`), the `p2core` and `p2iss` suites, and
 `mad-catalog/tests/boot.rs`.
 
@@ -127,7 +129,7 @@ with MaD Control in the host's Chrome held to the board's clock by embsim's
   and the playgrounds on headed copies, `mad-playground.toml` and
   `mad-serial-boot-playground.toml` (step 11).
 - **`mad-emulator --chrome`** (step 1b): the debug firmware on the bare chip,
-  the node on `P53`/`P55`. It runs SERVO-stall alone (`make e2e-stall`),
+  the node on `P30`/`P32`. It runs SERVO-stall alone (`make e2e-stall`),
   because that scenario jams the carriage and no project has a jam (MaD
   #298). It retires once a project has one.
 
@@ -140,14 +142,14 @@ with MaD Control in the host's Chrome held to the board's clock by embsim's
 - **Serial.** Every page's `navigator.serial` is the node's shim, whose one
   port is the board's protocol line, 2,000,000 baud 8N1, granted to every
   origin: on the project the line on `J1` (`P63`/`P62`), USB `0403:6015`, an
-  FTDI FT231X, the chip in the Prop Plug; on `mad-emulator` `P53`/`P55`, USB
+  FTDI FT231X, the chip in the Prop Plug; on `mad-emulator` `P30`/`P32`, USB
   `0403:6001`. It follows Chrome's rules: a `close()` refused while a stream
   is locked, `NetworkError` on an unplug, a new `SerialPort` and `connect` on
   a replug. The line has no modem pins: DTR, RTS and a break reach nothing.
 - **The host's pins.** On the project, the file's wires: `HOST.TX` to
   `EDGE.J1.2` (`P63`), `EDGE.J1.1` (`P62`) to `HOST.RX`, `HOST.GND` on
   `J1.4`, `HOST.VIO` on the adapter's 3.3 V. On `mad-emulator`, the
-  harness's host pins (`HOST.TX` to `P2.P53`, `P2.P55` to `HOST.RX`).
+  harness's host pins (`HOST.TX` to `P2.P30`, `P2.P32` to `HOST.RX`).
 - **What it costs.** The ISS runs at a few percent of real time, so a second
   of the board's time is tens of seconds of the host's. On the project
   (measured, Apple M2, 2026-10-21): each board first boots the firmware off

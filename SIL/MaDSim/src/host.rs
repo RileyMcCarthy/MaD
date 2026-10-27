@@ -341,8 +341,8 @@ mod tests {
             "http://127.0.0.1:5174/",
         ]);
         let link = SerialLink {
-            tx_pin: 55,
-            rx_pin: 53,
+            tx_pin: crate::iss_description::pins::RPI_TX,
+            rx_pin: crate::iss_description::pins::RPI_RX,
             nominal_baud: 2_000_000,
         };
         let project = chrome_project(&cli.chrome, link).expect("the entry parses");
