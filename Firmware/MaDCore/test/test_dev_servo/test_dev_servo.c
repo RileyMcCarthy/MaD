@@ -98,13 +98,6 @@ static uint32_t d_runCount;
  * engine counts them: rate x elapsed time, one control tick per read. */
 static double d_emitted;
 
-void HAL_pulseOut_start(HAL_pulseOut_channel_E channel, uint32_t pulses, uint32_t frequency)
-{
-    (void)channel;
-    (void)pulses;
-    (void)frequency;
-}
-
 bool HAL_pulseOut_run(HAL_pulseOut_channel_E channel, uint32_t *pulses)
 {
     (void)channel;
@@ -307,16 +300,39 @@ void test_dev_servo_initialStateDisabledAtTarget(void)
     VIBES_EXPECT("no-stall", "no stall is reported");
     VIBES_EXPECT("at-rest", "the commanded speed and the following error are zero");
     VIBES_EXPECT_WHY("enable-output-off",
-                     "the drive's enable output is already driven off, before the first control tick",
-                     "an undriven enable pin floats, and the isolator to the drive turns a floating input into enabled");
+                     "the drive's enable output is left for the first control tick to drive off",
+                     "start-up runs on a different processor core from the control loop, and every core's level on a pin is combined, so a level held by the start-up core could keep the drive from ever being enabled");
     servo_init();
-    TEST_ASSERT_EQUAL_UINT32(1U, d_enaCount);
-    TEST_ASSERT_FALSE(d_enaActive);
+    TEST_ASSERT_EQUAL_UINT32(0U, d_enaCount);
     TEST_ASSERT_TRUE(dev_servo_atTarget(CH));
     TEST_ASSERT_FALSE(dev_servo_isStalled(CH));
     TEST_ASSERT_EQUAL_INT32(0, dev_servo_getPosition(CH));
     TEST_ASSERT_EQUAL_INT32(0, dev_servo_getVelocity(CH));
     TEST_ASSERT_EQUAL_INT32(0, dev_servo_getFollowingError(CH));
+}
+
+void test_dev_servo_firstTickDrivesEnableOutputOff(void)
+{
+    VIBES_TEST("servo.first-tick-drives-output-off",
+               "src/DEV/dev_servo.c#dev_servo_run",
+               "a motor drive just after start-up, still disabled, then several control ticks");
+    VIBES_EXPECT_WHY("output-off",
+                     "the drive's enable output is driven off at the first control tick",
+                     "an undriven enable pin floats, and the isolator to the drive turns a floating input into enabled");
+    VIBES_EXPECT("written-once",
+                 "the enable output is written once, and left alone while the drive stays disabled");
+    VIBES_EXPECT("no-pulse-train", "no pulse train starts");
+    servo_init();
+    d_enaActive = true; /* make the first write observable */
+    tick();
+    TEST_ASSERT_FALSE(d_enaActive);
+    TEST_ASSERT_EQUAL_UINT32(1U, d_enaCount);
+    for (int i = 0; i < 20; i++)
+    {
+        tick();
+    }
+    TEST_ASSERT_EQUAL_UINT32(1U, d_enaCount);
+    TEST_ASSERT_EQUAL_UINT32(0U, d_startVelocityCount);
 }
 
 void test_dev_servo_disabledParksAndReportsEncoder(void)
@@ -476,7 +492,6 @@ void test_dev_servo_enableTurnsEnableOutputOn(void)
                      "the enable output is written once, on the change, and left alone while the request holds",
                      "one cog owns the pin and touches it only when its level must change");
     servo_init();
-    const uint32_t writesAtInit = d_enaCount;
     dev_servo_enable(CH, true);
     tick();
     TEST_ASSERT_TRUE(d_enaActive);
@@ -485,7 +500,7 @@ void test_dev_servo_enableTurnsEnableOutputOn(void)
         tick();
     }
     TEST_ASSERT_TRUE(d_enaActive);
-    TEST_ASSERT_EQUAL_UINT32(writesAtInit + 1U, d_enaCount);
+    TEST_ASSERT_EQUAL_UINT32(1U, d_enaCount);
 }
 
 void test_dev_servo_disableTurnsEnableOutputOff(void)
@@ -2338,6 +2353,7 @@ int main(void)
 {
     UNITY_BEGIN();
     RUN_TEST(test_dev_servo_initialStateDisabledAtTarget);
+    RUN_TEST(test_dev_servo_firstTickDrivesEnableOutputOff);
     RUN_TEST(test_dev_servo_enableTurnsEnableOutputOn);
     RUN_TEST(test_dev_servo_disableTurnsEnableOutputOff);
     RUN_TEST(test_dev_servo_disabledParksAndReportsEncoder);
