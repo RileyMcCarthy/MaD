@@ -299,8 +299,8 @@ void test_dev_servo_initialStateDisabledAtTarget(void)
     VIBES_EXPECT("arrival-at-encoder", "the drive reports arrival at the encoder position");
     VIBES_EXPECT("no-stall", "no stall is reported");
     VIBES_EXPECT("at-rest", "the commanded speed and the following error are zero");
-    VIBES_EXPECT_WHY("enable-output-unwritten",
-                     "start-up leaves the drive's enable output unwritten, for the first control tick to drive",
+    VIBES_EXPECT_WHY("enable-output-off",
+                     "the drive's enable output is left for the first control tick to drive off",
                      "start-up runs on a different processor core from the control loop, and every core's level on a pin is combined, so a level held by the start-up core could keep the drive from ever being enabled");
     servo_init();
     TEST_ASSERT_EQUAL_UINT32(0U, d_enaCount);
