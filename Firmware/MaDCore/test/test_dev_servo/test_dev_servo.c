@@ -2935,6 +2935,8 @@ static void bench_init(int32_t kiMilli, double tauS, double lossCountsPerS)
 
 /* The calibration's tracking move: 10 mm at 5 mm/s. Returns the overshoot past
  * the target in counts, and where the carriage parked. */
+/* The carriage lag in seconds (2 ms); the servo.integral-ignores-ramp-lag
+ * given states it, so change both together. */
 #define BENCH_TAU_S 0.002
 static double bench_move_overshoot(int32_t kiMilli, int32_t *parkedAt, bool *arrived)
 {
@@ -2962,7 +2964,7 @@ void test_the_integral_does_not_turn_ramp_lag_into_overshoot(void)
 {
     VIBES_TEST("servo.integral-ignores-ramp-lag",
                "src/DEV/dev_servo.c#dev_servo_private_integrate",
-               "a 2400 counts/mm machine with proportional gain 10, whose carriage lags its pulses by 4 ms, making a 10 mm move at 5 mm/s and 50 mm/s^2");
+               "a 2400 counts/mm machine with proportional gain 10, whose carriage lags its pulses by 2 ms, making a 10 mm move at 5 mm/s and 50 mm/s^2");
     VIBES_EXPECT_WHY("overshoot-as-without-integral",
                      "with integral gain 12.5 or 50 the move overshoots its target by at most 0.25 um more than with the integral off",
                      "the carriage falls behind while its trajectory accelerates; that lag is transient, and an integral that learned it would push the carriage past the target when the move stops");
