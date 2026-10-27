@@ -8,11 +8,11 @@
 //!
 //! - `--chrome`: the host's Chrome, every page and worker held to the board's
 //!   clock over DevTools by embsim's `chrome-cdp`, its Web Serial port this
-//!   line: SERVO-stall (`make e2e-stall`), whose jam (`--jam-file`) no
-//!   project has (MaD #298). Everything else runs on the machine's project
-//!   files (`SIL/mad*.toml`, `docs/dev/sil-testing.md`), FW-ISS on the ROM's
-//!   serial boot among them; this binary retires once a project can jam the
-//!   carriage (embsim `MIGRATING-MAD.md` step 11).
+//!   line. No make target or CI job runs it: every scenario runs on the
+//!   machine's project files (`SIL/mad*.toml`, `docs/dev/sil-testing.md`),
+//!   FW-ISS on the ROM's serial boot and SERVO-stall on the file whose
+//!   machine has a hard stop among them (MaD #298), and this binary retires
+//!   (embsim `MIGRATING-MAD.md` step 11).
 //! - otherwise a PTY (`--pty-path`), for a serial console or a program that
 //!   keeps wall time. No browser belongs behind it: a browser on the host's
 //!   clock measures the host, not the machine.
