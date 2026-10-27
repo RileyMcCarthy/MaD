@@ -137,9 +137,10 @@ typedef struct
     int32_t maxVelocity;       /* counts/s — hard safety clamp on commanded velocity */
     int32_t maxAccel;          /* counts/s^2 — trajectory accel/decel limit */
     int32_t positionDeadband;  /* counts — within this of target => settled, park.
-                                * 8 counts = 0.977 um on the shipped 8192 counts/mm
-                                * machine, so a commanded position is reached
-                                * inside 1 um. */
+                                * Set at init to 1 um of the profile's encoder
+                                * scale, truncated, floored at 2 counts: 8 counts
+                                * (0.977 um) at 8192 counts/mm, 2 (0.83 um) at
+                                * 2400. */
     /* How close the approach move must get before the CYCLES may begin.
      *
      * Deliberately tighter than positionDeadband, because the two answer
@@ -155,7 +156,13 @@ typedef struct
     int32_t kpDen;             /* proportional gain denominator */
     int32_t kiNum;             /* integral gain numerator (1/s^2): cmd += kiNum*∫err/kiDen */
     int32_t kiDen;             /* integral gain denominator (kiNum=0 disables the term) */
-    int32_t integralLimit;     /* counts/s — anti-windup clamp on the integral contribution */
+    int32_t integralLimit;     /* counts/s — backstop clamp on the integral contribution.
+                                * The integral only accumulates once the trajectory
+                                * has held a steady velocity for 3/Kp seconds, and
+                                * not while the command is saturated, so a ramp's
+                                * transient lag is not learned and returned as
+                                * overshoot; a steady error under load still is
+                                * nulled. */
 
     /* Stall guard: the encoder judged against the PULSES the drive was sent.
      *
@@ -205,7 +212,8 @@ typedef struct
  *   ratio is how many encoder counts one step pulse moves the carriage: the
  *   drive is pulsed at the commanded counts/s divided by it, and the stall
  *   guard expects that many counts of each pulse it sends. Pass <=0 for
- *   either to assume one count per pulse. */
+ *   either to assume one count per pulse. encoderStepsPerMM also sets the
+ *   parking deadband to 1 um (see positionDeadband); <=0 keeps 8 counts. */
 void dev_servo_init(int lock, int32_t maxVelocityCounts, int32_t maxAccelCounts,
                     int32_t encoderStepsPerMM, int32_t servoStepsPerMM);
 void dev_servo_run(void); /* one control tick; call at a fixed rate from a cog */
