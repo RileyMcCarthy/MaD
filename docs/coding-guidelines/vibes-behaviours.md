@@ -318,7 +318,7 @@ Read the preview aloud; a line with no main clause is a rewrite whatever the
 lint says. `lint` exits 4 on an error (names from the code, contrast words,
 vague claims); warnings (machinery in a claim, a garden-path scene, length, a
 `then` restating its scene) are advice. A word this repo genuinely uses that
-the defaults flag goes in [`vibes.lint.json`](../../vibes.lint.json), scoped
+the defaults flag goes in `vibes.lint.json` at the repo root, scoped
 by path with `in` and with a `why`. The blocking `Behaviour wording` job runs
 `vibes lint` over the committed ledger on every PR. In TS the test title is
 `<given> [<id>]`, so rewording a `given` changes that row's `test` too.
