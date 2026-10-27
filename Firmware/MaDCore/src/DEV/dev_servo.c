@@ -38,16 +38,18 @@ static const dev_servo_channelConfig_S dev_servo_channelConfigDefault[DEV_SERVO_
         1000U,                       /* loopPeriodUs     — 1 kHz control tick (match the cog rate) */
         24576,                       /* maxVelocity      — gentle fallback (3 mm/s); machine profile normally overrides (20 mm/s => 163840) */
         245760,                      /* maxAccel         — gentle fallback (30 mm/s^2); machine profile normally overrides (50 mm/s^2 => 409600) */
-        8,                           /* positionDeadband — 0.977 um; a commanded
-                                      *   position is reached inside the 1 um contract */
+        8,                           /* positionDeadband — fallback only; dev_servo_init
+                                      *   sets it to DEV_SERVO_DEADBAND_NM of the
+                                      *   profile's encoder scale (8 at 8192 counts/mm) */
         2,                           /* waveformStartTolerance — ~0.25 um, so the first
                                       *   cycle starts inside the 1 um contract */
         8,                           /* kpNum            — cmd += 8*err; ~just under maxAccel/maxVel~=10 edge */
         1,                           /* kpDen */
-        0,                           /* kiNum            — integral OFF (validated Ki~20 nulls load error,
-                                      *                    but overshoots without proper anti-windup) */
+        0,                           /* kiNum            — integral OFF: unloaded motion needs none;
+                                      *                    Ki nulls a steady error under load */
         1,                           /* kiDen */
-        81920,                       /* integralLimit    — 10 mm/s of integral authority (anti-windup) */
+        81920,                       /* integralLimit    — 10 mm/s of integral authority (a backstop;
+                                      *   the integral is gated, see dev_servo_private_integrate) */
         /* Stall guard (dev_servo.h). On the SIL twin's drive (20 ms lag,
          * shipped 50 mm/s and 600 mm/s^2 profile) a healthy carriage shows at
          * most 0.86 mm of following error on moves and waveforms, 1.07 mm on
@@ -64,6 +66,22 @@ static const dev_servo_channelConfig_S dev_servo_channelConfigDefault[DEV_SERVO_
                                       *   above 1 mm last at most 231 ms */
     },
 };
+
+/* The parking deadband, as a length: the encoder scale differs between
+ * machines (8192 counts/mm here, 2400 on the bench), and a deadband fixed in
+ * counts parks a coarse machine several microns off. Floored at two counts so a
+ * one-count encoder flicker cannot unpark a settled axis. */
+#define DEV_SERVO_DEADBAND_NM 1000
+#define DEV_SERVO_DEADBAND_MIN_COUNTS 2
+
+/* How long, in closed-loop time constants (1/Kp), the trajectory must hold a
+ * steady velocity before the integral may accumulate. Three time constants
+ * leave under 5% of a ramp's transient following error, so what is left to
+ * integrate is a steady error. */
+#define DEV_SERVO_INTEGRAL_SETTLE_TAUS 3.0f
+/* A setpoint velocity change smaller than this per tick (counts/s) is a
+ * steady trajectory, not an acceleration: float rounding at cruise. */
+#define DEV_SERVO_STEADY_DV 1.0f
 
 /* Active per-channel config: seeded from the defaults above at init, then
  * maxVelocity/maxAccel are overlaid from the machine profile. All runtime reads
@@ -82,6 +100,15 @@ static dev_servo_channelConfig_S dev_servo_channelConfig[DEV_SERVO_CHANNEL_COUNT
 /**********************************************************************
  * Typedefs
  **********************************************************************/
+/* Level last driven on a drive's enable output. UNKNOWN until the MOTOR cog's
+ * first control tick writes it, so that first write always happens. */
+typedef enum
+{
+    DEV_SERVO_ENA_UNKNOWN = 0,
+    DEV_SERVO_ENA_INACTIVE,
+    DEV_SERVO_ENA_ACTIVE
+} dev_servo_enaLevel_E;
+
 typedef struct
 {
     bool enabled;
@@ -127,6 +154,7 @@ typedef struct
     float setpointVel;     /* counts/s — also the velocity feedforward term */
 
     float integral;     /* ∫err dt (counts·s) */
+    uint32_t steadyUs;  /* how long the setpoint velocity has held steady */
     float commandedVel; /* counts/s actually applied (for telemetry) */
     uint32_t lastTickUs; /* HAL_time_getUs() at the previous tick (for measured dt) */
     float countsPerPulse;   /* encoder counts one step pulse moves the carriage */
@@ -150,7 +178,7 @@ typedef struct
     float waveRampDown;  /* TRIANGLE only: ramp share of the down traverse */
     float waveRampUp;    /* TRIANGLE only: ramp share of the up traverse   */
     uint8_t waveSegment; /* dev_servo_waveSegment_E */
-    bool enaActive; /* level last driven on the enable output (see applyEnable) */
+    uint8_t enaLevel; /* dev_servo_enaLevel_E: last level driven on the enable output */
     bool velActive; /* a velocity pulse train is currently running */
     bool lastCw;    /* direction of the running train (latched at start) */
 } dev_servo_channelData_S;
@@ -213,17 +241,21 @@ static void dev_servo_private_applyVelocity(dev_servo_channel_E ch, float vel)
 }
 
 /* Drive the enable output to `enabled`, touching the pin only when the level
- * changes. Called from init and the control tick only -- both on the MOTOR
- * cog -- so exactly one cog ever drives it (P2 outputs OR across cogs, so a
- * second writer could hold the drive enabled). Never called under the lock:
- * the pin is HAL, and the decision is this cog's own snapshot. */
+ * changes (or has never been written). Called from the control tick only, so
+ * the MOTOR cog is the one cog that ever drives the pin. That matters because
+ * P2 outputs OR across cogs: dev_servo_init runs on the MAIN cog (the cog
+ * manager calls init functions before cogstart), and an inactive-HIGH level
+ * driven there would hold the pin high forever, so the drive could never be
+ * enabled. Never called under the lock: the pin is HAL, and the decision is
+ * this cog's own snapshot. */
 static void dev_servo_private_applyEnable(dev_servo_channel_E ch, bool enabled)
 {
     dev_servo_channelData_S *const d = &dev_servo_data.channel[ch];
-    if (d->enaActive != enabled)
+    const uint8_t level = enabled ? (uint8_t)DEV_SERVO_ENA_ACTIVE : (uint8_t)DEV_SERVO_ENA_INACTIVE;
+    if (d->enaLevel != level)
     {
         HAL_GPIO_setActive(dev_servo_channelConfig[ch].gpioEnable, enabled);
-        d->enaActive = enabled;
+        d->enaLevel = level;
     }
 }
 
@@ -351,6 +383,71 @@ static bool dev_servo_private_stallGuard(dev_servo_channelData_S *d,
     return d->stallLatched;
 }
 
+/* One tick of the integral term; returns Ki*∫err (counts/s).
+ *
+ * The integral exists for ONE job: a steady error that the proportional term
+ * can only reduce, never remove -- a sample pulling against the drive, which
+ * leaves P alone standing off by load/Kp. It must not learn anything else.
+ * Integrated unconditionally it also learns the TRANSIENT following error of
+ * every ramp (the machine lags its trajectory while that accelerates), and
+ * hands it back as overshoot when the move stops: 3.7 um with Ki 0, 16.2 um
+ * with Ki 12.5 and 50.8 um with Ki 50 on the bench (2400 counts/mm, Kp 10,
+ * a 10 mm move at 5 mm/s and 50 mm/s^2).
+ *
+ * So it accumulates only once the trajectory has held a steady velocity --
+ * cruise, a hold, a parked target -- for DEV_SERVO_INTEGRAL_SETTLE_TAUS
+ * closed-loop time constants, by when the ramp's transient has decayed and
+ * whatever error is left is a steady one. While the trajectory accelerates
+ * (ramps, the braking curve, a waveform) it is FROZEN, not cleared: a load
+ * learned at cruise is still there when the move stops, so the term keeps
+ * holding against it. And it never grows while the command is clamped at
+ * maxVelocity in the direction it would push (conditional integration), so a
+ * saturated stretch cannot wind it up either. integralLimit stays as a
+ * backstop on its authority. */
+static float dev_servo_private_integrate(dev_servo_channelData_S *d,
+                                         const dev_servo_channelConfig_S *cfg,
+                                         float error, float feedVel, float kp,
+                                         bool steady, uint32_t elapsedUs, float dt)
+{
+    if (cfg->kiNum == 0)
+    {
+        d->integral = 0.0f;
+        return 0.0f;
+    }
+    const float ki = (float)cfg->kiNum / (float)cfg->kiDen;
+
+    if (steady == false)
+    {
+        d->steadyUs = 0U;
+    }
+    else if (d->steadyUs <= (0xFFFFFFFFU - elapsedUs))
+    {
+        d->steadyUs += elapsedUs;
+    }
+    else
+    {
+        d->steadyUs = 0xFFFFFFFFU;
+    }
+
+    const float settleUs = (kp > 0.0f) ? ((DEV_SERVO_INTEGRAL_SETTLE_TAUS * 1000000.0f) / kp) : 0.0f;
+    if ((float)d->steadyUs >= settleUs)
+    {
+        float candidate = d->integral + (error * dt);
+        const float maxIntegral = (float)cfg->integralLimit / ki;
+        if (candidate > maxIntegral) { candidate = maxIntegral; }
+        if (candidate < -maxIntegral) { candidate = -maxIntegral; }
+        const float maxVel = (float)cfg->maxVelocity;
+        const float unclamped = feedVel + (kp * error) + (ki * candidate);
+        const bool saturated = ((unclamped > maxVel) && (error > 0.0f)) ||
+                               ((unclamped < -maxVel) && (error < 0.0f));
+        if (saturated == false)
+        {
+            d->integral = candidate;
+        }
+    }
+    return ki * d->integral;
+}
+
 /* Reset all dynamic state to "holding at the current encoder position". */
 static void dev_servo_private_resync(dev_servo_channel_E ch, int32_t pos)
 {
@@ -358,6 +455,7 @@ static void dev_servo_private_resync(dev_servo_channel_E ch, int32_t pos)
     dev_servo_private_snapSetpoint(d, pos);
     d->setpointVel = 0.0f;
     d->integral = 0.0f;
+    d->steadyUs = 0U;
     d->commandedVel = 0.0f;
     d->stallBandCount = 0U;
     d->stallLatched = false;
@@ -409,6 +507,12 @@ void dev_servo_init(int lock, int32_t maxVelocityCounts, int32_t maxAccelCounts,
                 dev_servo_private_countsFromUm(DEV_SERVO_STALL_CEILING_UM, encoderStepsPerMM);
             dev_servo_channelConfig[ch].stallBand =
                 dev_servo_private_countsFromUm(DEV_SERVO_STALL_BAND_UM, encoderStepsPerMM);
+
+            /* Truncated, so the deadband never exceeds DEV_SERVO_DEADBAND_NM
+             * (which divides 1 mm exactly). */
+            int32_t deadband = encoderStepsPerMM / (1000000 / DEV_SERVO_DEADBAND_NM);
+            if (deadband < DEV_SERVO_DEADBAND_MIN_COUNTS) { deadband = DEV_SERVO_DEADBAND_MIN_COUNTS; }
+            dev_servo_channelConfig[ch].positionDeadband = deadband;
         }
 
         dev_servo_channelData_S *const d = &dev_servo_data.channel[ch];
@@ -428,10 +532,11 @@ void dev_servo_init(int lock, int32_t maxVelocityCounts, int32_t maxAccelCounts,
         d->lastCw = true;
         d->countsPerPulse = countsPerPulse;
         dev_servo_private_resync(ch, pos);
-        /* The drive starts disabled: drive the enable output inactive now
-         * rather than leaving the pin floating until the first tick. */
-        HAL_GPIO_setActive(dev_servo_channelConfig[ch].gpioEnable, false);
-        d->enaActive = false;
+        /* The drive starts disabled, but the enable output is NOT written here:
+         * init runs on the MAIN cog, and only the MOTOR cog may drive the pin
+         * (see dev_servo_private_applyEnable). The first control tick drives it
+         * inactive, before any tick can start a pulse train. */
+        d->enaLevel = (uint8_t)DEV_SERVO_ENA_UNKNOWN;
     }
 }
 
@@ -802,6 +907,9 @@ void dev_servo_run(void)
         dev_servo_private_applyEnable(ch, true);
 
         const float maxVel = (float)cfg->maxVelocity;
+        /* The setpoint velocity before stage 1 moves it: whether it changed
+         * this tick is what the integral gate asks (see _integrate). */
+        const float spVelBefore = d->setpointVel;
 
         /* ---- Stage 1: trajectory generator -> (setpointVel, setpointPos) ---- */
         float desiredSpVel = 0.0f;
@@ -930,16 +1038,9 @@ void dev_servo_run(void)
         const float error = d->setpointPos - (float)pos;
         const float kp = (float)cfg->kpNum / (float)cfg->kpDen;
 
-        float iTerm = 0.0f;
-        if (cfg->kiNum != 0)
-        {
-            const float ki = (float)cfg->kiNum / (float)cfg->kiDen;
-            d->integral += error * dt;
-            const float maxIntegral = (float)cfg->integralLimit / ki; /* anti-windup clamp */
-            if (d->integral > maxIntegral) { d->integral = maxIntegral; }
-            if (d->integral < -maxIntegral) { d->integral = -maxIntegral; }
-            iTerm = ki * d->integral;
-        }
+        const bool steady = (fabsf(d->setpointVel - spVelBefore) <= DEV_SERVO_STEADY_DV);
+        const float iTerm =
+            dev_servo_private_integrate(d, cfg, error, feedVel, kp, steady, elapsedUs, dt);
 
         float cmdVel = feedVel + (kp * error) + iTerm;
         if (cmdVel > maxVel) { cmdVel = maxVel; }
