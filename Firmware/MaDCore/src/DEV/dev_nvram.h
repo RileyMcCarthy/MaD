@@ -28,10 +28,11 @@ typedef struct
     const char path[DEV_NVRAM_PATH_MAX];
     const uint32_t size;
     const bool loadOnBoot; // Load data once on boot
-    /* The length of the one earlier record this one extends by appending
-     * fields (0 = none). A file of exactly this length is read as a prefix and
-     * the newer fields keep their defaults; any other short file is an
-     * unrelated older layout and is ignored in favour of the defaults. */
+    /* The length of the oldest earlier record this one extends by appending
+     * fields (0 = none). A file from this length up to `size` that ends on a
+     * field (a whole number of ints past it) is read as a prefix, and the
+     * newer fields keep their defaults; any other length is an unrelated
+     * older layout and is ignored in favour of the defaults. */
     const uint32_t legacySize;
 } dev_nvram_channelConfig_t;
 

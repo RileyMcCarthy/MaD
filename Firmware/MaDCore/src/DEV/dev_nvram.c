@@ -346,7 +346,8 @@ void dev_nvram_private_runAction(dev_nvram_channel_t channel)
             {
                 /* the current layout */
             }
-            else if ((legacy != 0U) && (n == legacy))
+            else if ((legacy != 0U) && (n >= legacy) && (n < dev_nvram_config.channels[channel].size) &&
+                     (((n - legacy) % sizeof(int)) == 0U))
             {
                 DEBUG_WARNING("legacy record: %zu of %u bytes, the newer fields from defaults\n", n,
                               (unsigned int)dev_nvram_config.channels[channel].size);
