@@ -16,11 +16,11 @@ make p2image      # the propeller2_debug image the emulator executes
 
 `make emulator` generates the Rust codec into `Protocol/rust/src/generated`
 (`make protocol`) and then `cargo build`. The image is a runtime input, built
-by `make p2image` (`pio run -e propeller2_debug`). The `playground*` and
-`e2e-motion` targets build it, and the release emulator, for you; the `e2e`,
-`e2e-emulator` and `e2e-bundle` targets build the production image and lay
-out the module's flash and card (`make flash-image sd-image`), and the embsim
-tool builds `mad-runner`.
+by `make p2image` (`pio run -e propeller2_debug`). The `playground*`, `e2e*`
+and `check` targets build the production image and lay out the module's
+flash and card (`make flash-image sd-image`), and the embsim tool builds
+`mad-runner`; `e2e-stall` builds the debug image and the release
+`mad-emulator`, whose board it still runs SERVO-stall on.
 
 | Target | What it does |
 |---|---|
@@ -28,18 +28,19 @@ tool builds `mad-runner`.
 | `make p2image-production` | Build the production image (`pio run -e propeller2`), the one the project files' flash holds |
 | `make protocol` | Regenerate the Rust protocol types for SIL |
 | `make emulator` | Protocol + the Rust workspace |
-| `make playground` | The ISS with MaD Control in a **Chrome window on the board's clock** (`mad-emulator --chrome`), the app served by its dev server (started for you). For a person. |
+| `make playground` | `mad-playground.toml` under `embsim run`: the machine with MaD #285 fixed, MaD Control in a **Chrome window on the board's clock**, the app served by its dev server on 5174 (started for you). For a person. |
 | `make playground-iss` | The same target, under the name it had beside the native playground. |
-| `make playground-rom` | The ISS booting the mask ROM, the app's flasher in a Chrome window on the board's clock, on the programming UART (`P62`/`P63`, USB `0403:6015`) |
-| `make playground-pty` | The ISS on a PTY at `/tmp/tty.iss`, at real time at most, for a serial console. No browser belongs behind it (below). |
+| `make playground-rom` | `mad-serial-boot-playground.toml`: the ROM's serial boot on `J1` (USB `0403:6015`), the app's flasher in a Chrome window on the board's clock. The flasher writes the flash, as FW-ISS does; a RAM load's reply is garbled until MaD #295 is fixed. |
+| `make playground-pty` | `mad.toml` under `embsim run`, its host a PTY at `/tmp/tty.iss`, for a serial console. No browser belongs behind it (below). |
 | `make e2e-emulator` | The machine's project with the host's Chrome on `J1`, `mad-cosim.toml`, under `embsim run`: a **headless** Chrome on the board's clock, DevTools on 9222, nothing open, until Ctrl-C; attach the e2e suite to it |
 | `make e2e` | The dev server, `e2e-emulator`'s board and the suite against it, then everything stopped (`SCENARIOS=…` selects) |
-| `make e2e-rom` | FW-ISS: the app's flasher in a headless Chrome on the board's clock, against the ISS booting the mask ROM (`mad-emulator`) |
+| `make e2e-rom` | FW-ISS: the app's flasher in a headless Chrome on the board's clock, against the ISS booting the mask ROM on the project's serial boot (`mad-serial-boot-cosim.toml`) |
 | `make e2e-bundle` | BUNDLE-live on `e2e-emulator`'s board: the app as it ships (built as `pages.yml` builds it, served by `vite preview`): connect, samples, machine state, unplug, and replug with the app reconnecting by itself |
-| `make e2e-motion` | What the project as drawn cannot run (the scenarios that move the carriage, and SERVO-stall), on `mad-emulator`'s board, until `IC14` is settled (`SCENARIOS=…` narrows the set) |
+| `make e2e-motion` | What the project as drawn cannot run (the scenarios that move the carriage), on `mad-ic14-fixed-cosim.toml`, the board with MaD #285 fixed (`SCENARIOS=…` narrows the set; `MOTION_SHARD=K/N` runs every N-th of it from the K-th); SERVO-stall is skipped there, for the jam |
+| `make e2e-stall` | SERVO-stall on `mad-emulator`'s board (`BOARD_ROUTE=emulator`, the debug image, a headless Chrome on the board's clock): the one scenario no project can run, since it jams the carriage (MaD #298) |
 | `make flash-image` | `build/flash.bin`: stage-1 and the production image, the module's boot flash |
 | `make sd-image` | `build/sd.img`: a 32 MiB FAT16 card mirroring `./sd` |
-| `make check` | `embsim check` on the four project files (`mad*.toml`), after `flash-image` and `sd-image` |
+| `make check` | `embsim check` on the seven project files (`mad*.toml`), after `flash-image` and `sd-image` |
 | `make test` | Build both images + protocol, then `cargo test` (includes `mad-catalog`'s PTY round trip on `mad.toml` — no Chrome) |
 | `make clean` | Remove build artifacts and `cargo clean` |
 
@@ -70,10 +71,27 @@ has no finger for, so it cannot reach the chip
 | `mad-cosim.toml` | the same | `chrome-cdp` on `J1`, USB `0403:6015` |
 | `mad-serial-boot.toml` | the ROM's serial boot, the flash erased | `host-serial` on `J1` |
 | `mad-serial-boot-cosim.toml` | the same | `chrome-cdp` on `J1`, USB `0403:6015` |
+| `mad-ic14-fixed-cosim.toml` | `mad-cosim.toml` with MaD #285 fixed: one wire from `IC14`'s ground to `EN_GND` | `chrome-cdp` on `J1` |
+| `mad-playground.toml` | `mad-ic14-fixed-cosim.toml` | its Chrome headed, a window on the app |
+| `mad-serial-boot-playground.toml` | `mad-serial-boot-cosim.toml` | its Chrome headed, a window on the app's Firmware page |
+
+Every file but the #285 fix's two keeps the carrier as drawn, where `IC14`,
+the isolator between the processor and the servo drive, passes nothing (its
+drive-side ground pins reach only `C26`). The fix's file is the board with
+#285 fixed, word for word `mad-cosim.toml` but one `[[pin_short]]` from
+`IC14`'s pin 9 to `J21.8` (`EN_GND`), the wire #285 names for a carrier
+built as drawn; `tests/projects.rs` holds it to that. Every file takes
+`JP1`, the enable jumper, on its default pads 1–2, which put `IC14`'s TTL
+output `OUTC` on the drive's enable `SC_ENA`. The firmware drives the enable
+pin `P6` active high from the servo loop: low from start-up and while motion
+is disabled, high while it is enabled, and the drive's enable is energized =
+enabled (ENA high enables), so on the #285-fixed board the drive follows the
+firmware's motion enable. Which pads the machine's carrier has closed is not
+confirmed.
 
 ```bash
 cd SIL
-make flash-image sd-image check    # the production image, both images laid out, all four files checked
+make flash-image sd-image check    # the production image, both images laid out, all seven files checked
 MAD_REQUIRE_P2_IMAGE=1 cargo test -p mad-catalog --test mad --test projects
 ```
 
@@ -81,13 +99,17 @@ MAD_REQUIRE_P2_IMAGE=1 cargo test -p mad-catalog --test mad --test projects
 firmware booted off the flash and answering the host over `J1` (its version
 and the machine's state, framed by ProtoEmb's framing crate and decoded with
 the generated Rust codec, then the machine reading unfaulted and taking the
-host's request to enable motion); and the encoder's pairs with the chip held
-in reset. `tests/pty_protocol.rs` runs `mad.toml` live, the command `embsim
-run mad.toml --pty PATH` hands `mad-runner` run in its own process, and reads
-the firmware's version on the PTY before the run's 2 s of board time end.
-`tests/projects.rs` holds the four files to one another. The debug image (`make p2image`) stays where a run needs its log
-on `P62` or its MAIN channel on the bare chip's `P53`/`P55`: the playgrounds
-(`mad-emulator`), the `p2core` and `p2iss` suites, and
+host's request to enable motion); the encoder's pairs with the chip held
+in reset; and, with #285's wire added, the firmware jogging the carriage
+0.5 mm forward and 0.25 mm back, each to rest within its 8-count parking
+deadband, the drive enabled and `P5` reading the drive's ready line.
+`tests/pty_protocol.rs` runs `mad.toml` live, the command `embsim run
+mad.toml --pty PATH` hands `mad-runner` run in its own process, and reads the
+firmware's version on the PTY before the run's 2 s of board time end.
+`tests/projects.rs` holds the seven files to one another. The debug image
+(`make p2image`) stays where a run needs its log on `P62` or its MAIN channel
+on the bare chip's `P53`/`P55`: `mad-emulator` (SERVO-stall, `make
+e2e-stall`), the `p2core` and `p2iss` suites, and
 `mad-catalog/tests/boot.rs`.
 
 ## The board route: the app in Chrome on the board's clock
@@ -96,13 +118,18 @@ There is **one** configuration a browser belongs in: the P2 image on the ISS,
 with MaD Control in the host's Chrome held to the board's clock by embsim's
 `chrome-cdp` node (embsim `PROJECTS.md` §5). Two boards carry it:
 
-- **The e2e's: the machine's project**, `mad-cosim.toml` under `embsim run`
-  (`make e2e-emulator`, embsim `MIGRATING-MAD.md` step 10): the carrier and
+- **The machine's project**, under `embsim run`: the e2e on `mad-cosim.toml`
+  (`make e2e-emulator`, embsim `MIGRATING-MAD.md` step 10), the carrier and
   the module as drawn, the production firmware booted off the module's flash,
-  and the node on the carrier's debug header `J1`.
-- **The playgrounds': `mad-emulator --chrome`** (step 1b): the debug firmware
-  on the bare chip, the node on `P53`/`P55`. They move onto the project at
-  step 11.
+  and the node on the carrier's debug header `J1`; the scenarios that move
+  the carriage on `mad-ic14-fixed-cosim.toml` (`make e2e-motion`); FW-ISS
+  on the ROM's serial boot, `mad-serial-boot-cosim.toml` (`make e2e-rom`);
+  and the playgrounds on headed copies, `mad-playground.toml` and
+  `mad-serial-boot-playground.toml` (step 11).
+- **`mad-emulator --chrome`** (step 1b): the debug firmware on the bare chip,
+  the node on `P53`/`P55`. It runs SERVO-stall alone (`make e2e-stall`),
+  because that scenario jams the carriage and no project has a jam (MaD
+  #298). It retires once a project has one.
 
 - **Time.** Every page and dedicated worker in that Chrome lives the board's
   time, a 1 ms quantum at a time over DevTools
@@ -139,18 +166,21 @@ with MaD Control in the host's Chrome held to the board's clock by embsim's
   redraw only now and then.
 - **What the project as drawn cannot do.** The carriage never moves: `IC14`,
   the isolator between the processor and the drive, has its secondary
-  grounds on a net of their own, so nothing reaches the drive's step,
-  direction and enable inputs (`mad-catalog/tests/mad.rs`), the run's summary says
-  `0 steps commanded`, and the firmware latches `SERVO_STALL` at the first
-  move it commands (measured). The project's machine has no jam either. The
-  suite skips each scenario that moves the carriage, and SERVO-stall, on the
-  project, saying why (`e2e/run-all.mjs`, `PROJECT_CANNOT`): 41 of the 55
-  that touch a board. `E2E_PROJECT_CANNOT=run` runs them anyway, for a
-  change that may lift the reason. Whether the machine's carrier is bodged
-  at `IC14` is not known. Until it is settled they run on `mad-emulator`'s
-  board, where the carriage moves: `make e2e-motion` (the set from
-  `node e2e/run-all.mjs --list --cannot`, run with `BOARD_ROUTE=emulator`),
-  per PR G2+G3+H2+I and nightly the whole set.
+  grounds on a net of their own (MaD #285), so nothing reaches the drive's
+  step, direction and enable inputs (`mad-catalog/tests/mad.rs`), the run's
+  summary says `0 steps commanded`, and the firmware latches `SERVO_STALL` at
+  the first move it commands (measured). The project's machine has no jam
+  either. The suite skips each scenario that moves the carriage, and
+  SERVO-stall, on the project as drawn, saying why (`e2e/run-all.mjs`,
+  `PROJECT_CANNOT`): 41 of the 55 that touch a board.
+  `E2E_PROJECT_CANNOT=run` runs them anyway, for a change that may lift the
+  reason. Whether the machine's carrier is bodged at `IC14` is not known.
+  They run on the board with #285 fixed, where the carriage moves: `make
+  e2e-motion` (the set from `node e2e/run-all.mjs --list --cannot`, run on
+  `mad-ic14-fixed-cosim.toml`; `board-route.sh` exports `E2E_PROJECT`, by
+  which the suite skips), per PR G2+G3+H2+I and nightly the whole set.
+  SERVO-stall stays skipped there: no project has a jam yet (MaD #298), so
+  `make e2e-stall` runs it on `mad-emulator`.
 
 ### Playground
 
@@ -159,9 +189,16 @@ cd SIL
 make playground
 ```
 
-A Chrome window opens on the app (connect on the Connect screen: the port is
-granted). The board's log follows in the terminal. Ctrl-C stops the board,
-Chrome and the dev server it started.
+`mad-playground.toml` runs under `embsim run`: the machine with MaD #285
+fixed, so the carriage moves. Its Chrome opens a window on the app at the
+file's url, the dev server on 5174 (connect on the Connect screen: the port
+is granted). The board's log follows in the terminal, and the run prints
+where Chrome's DevTools are. Ctrl-C stops the board, Chrome and the dev
+server it started. `make playground-rom` does the same on
+`mad-serial-boot-playground.toml`, the window on the app's Firmware page:
+the app's flasher writes the module's flash through the ROM, as FW-ISS does
+on the headless copy. A RAM load's reply is garbled there until MaD #295 is
+fixed.
 
 ### Running the e2e suite
 
@@ -187,9 +224,9 @@ server another checkout started there is refused, by the working directory
 (`vite preview`); BUNDLE-live runs only on the bundle. The dev server stays
 the suite's server because a failure report carries the app's log
 (`__madLog`), which a dev build exposes without an opt-in
-(`src/diagnostics/log.ts`). On `mad-emulator`'s board (`make e2e-motion`) the
-M13 scenarios also read the live stream through `__madLive`, which only a
-dev build has (`src/store/liveBuffer.ts`).
+(`src/diagnostics/log.ts`). The M13 scenarios (`make e2e-motion`) also read
+the live stream through `__madLive`, which only a dev build has
+(`src/store/liveBuffer.ts`).
 
 A scenario's connect is done only once the firmware has answered: samples
 arriving and the opening handshake's firmware version in the status bar,
@@ -218,9 +255,12 @@ visible, enabled and what `elementFromPoint` finds at its centre, then forces
 the click. The link-drop scenarios (B5-reconnect, M11-idle-drop,
 M11-mid-test-drop) pull the node's cable (`__embsim.link('unplug')`) and put it
 back.
-On `mad-emulator` (`BOARD_ROUTE=emulator` for `board-route.sh`, or
-`E2E_BOARD_ROUTE=emulator` with the suite attached by hand), SERVO-stall jams
-the carriage by creating `E2E_JAM_FILE`, the file `mad-emulator --jam-file`
+SERVO-stall is not yet on a project (MaD #298): the machine's kind has no
+jam (a lever a stepped kind cannot take from a file the wall clock polls),
+so the suite skips it on every project file. On `mad-emulator` (`make
+e2e-stall`, which sets `BOARD_ROUTE=emulator` for `board-route.sh`; or
+`E2E_BOARD_ROUTE=emulator` with the suite attached by hand) it jams the
+carriage by creating `E2E_JAM_FILE`, the file `mad-emulator --jam-file`
 watches: while it exists the drive keeps stepping but the carriage gets
 nowhere, its encoder buzzing within `--jam-buzz-counts` (default 15, the
 bench-measured wander of a powered drive against a jam) of where it stuck.
@@ -233,11 +273,13 @@ Without `E2E_JAM_FILE` set, SERVO-stall fails at once.
 **In CI:** `control-e2e-board` gates a subset per PR on the project
 (`make check`, then `make e2e`, one board per scenario, on the runner's
 Chrome; `ci.yml`), then BUNDLE-live on the built bundle, then G2+G3+H2+I on
-`mad-emulator` (`make e2e-motion`) until `IC14` is settled. The nightly
+the board with MaD #285 fixed (`make e2e-motion`), then SERVO-stall on
+`mad-emulator` (`make e2e-stall`). The nightly
 (`e2e-nightly.yml`) runs the whole suite the same way after the node's Chrome
-canary, then everything the project cannot run on `mad-emulator` (`make
-e2e-motion`), and FW-ISS on `mad-emulator`'s ROM board. FW-ISS is flaky
-there on `main` too: nightly 39381693691 failed it, 39556919751 passed it.
+canary, and FW-ISS on the project's serial boot (`make e2e-rom`,
+`mad-serial-boot-cosim.toml`); beside it three jobs run everything the
+project as drawn cannot run on the #285-fixed board, a third each (`make
+e2e-motion MOTION_SHARD=K/3`).
 `control-e2e-boardless` gates the scenarios that need no board (A1 and the
 firmware-flash `FW*` ones, a host Chrome against in-page fakes).
 

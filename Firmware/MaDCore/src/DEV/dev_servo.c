@@ -26,6 +26,7 @@ static const dev_servo_channelConfig_S dev_servo_channelConfigDefault[DEV_SERVO_
     {
         HAL_PULSE_OUT_CHANNEL_SERVO, /* pulseChannel */
         HAL_GPIO_SERVO_DIR,          /* gpioDirection */
+        HAL_GPIO_SERVO_ENA,          /* gpioEnable */
         HAL_ENCODER_CHANNEL_SERVO,   /* encoderChannel */
         1000U,                       /* loopPeriodUs     — 1 kHz control tick (match the cog rate) */
         24576,                       /* maxVelocity      — gentle fallback (3 mm/s); machine profile normally overrides (20 mm/s => 163840) */
@@ -87,6 +88,15 @@ static dev_servo_channelConfig_S dev_servo_channelConfig[DEV_SERVO_CHANNEL_COUNT
 /**********************************************************************
  * Typedefs
  **********************************************************************/
+/* Level last driven on a drive's enable output. UNKNOWN until the MOTOR cog's
+ * first control tick writes it, so that first write always happens. */
+typedef enum
+{
+    DEV_SERVO_ENA_UNKNOWN = 0,
+    DEV_SERVO_ENA_INACTIVE,
+    DEV_SERVO_ENA_ACTIVE
+} dev_servo_enaLevel_E;
+
 typedef struct
 {
     bool enabled;
@@ -161,6 +171,7 @@ typedef struct
     float waveRampDown;  /* TRIANGLE only: ramp share of the down traverse */
     float waveRampUp;    /* TRIANGLE only: ramp share of the up traverse   */
     uint8_t waveSegment; /* dev_servo_waveSegment_E */
+    uint8_t enaLevel; /* dev_servo_enaLevel_E: last level driven on the enable output */
     bool velActive; /* a velocity pulse train is currently running */
     bool lastCw;    /* direction of the running train (latched at start) */
 } dev_servo_channelData_S;
@@ -220,6 +231,25 @@ static void dev_servo_private_applyVelocity(dev_servo_channel_E ch, float vel)
     else
     {
         HAL_pulseOut_setFrequency(cfg->pulseChannel, freq);
+    }
+}
+
+/* Drive the enable output to `enabled`, touching the pin only when the level
+ * changes (or has never been written). Called from the control tick only, so
+ * the MOTOR cog is the one cog that ever drives the pin. That matters because
+ * P2 outputs OR across cogs: dev_servo_init runs on the MAIN cog (the cog
+ * manager calls init functions before cogstart), and an inactive-HIGH level
+ * driven there would hold the pin high forever, so the drive could never be
+ * enabled. Never called under the lock: the pin is HAL, and the decision is
+ * this cog's own snapshot. */
+static void dev_servo_private_applyEnable(dev_servo_channel_E ch, bool enabled)
+{
+    dev_servo_channelData_S *const d = &dev_servo_data.channel[ch];
+    const uint8_t level = enabled ? (uint8_t)DEV_SERVO_ENA_ACTIVE : (uint8_t)DEV_SERVO_ENA_INACTIVE;
+    if (d->enaLevel != level)
+    {
+        HAL_GPIO_setActive(dev_servo_channelConfig[ch].gpioEnable, enabled);
+        d->enaLevel = level;
     }
 }
 
@@ -538,6 +568,11 @@ void dev_servo_init(int lock, int32_t maxVelocityCounts, int32_t maxAccelCounts,
         d->countsPerPulse = countsPerPulse;
         d->emittedLast = 0U;
         dev_servo_private_resync(ch, pos);
+        /* The drive starts disabled, but the enable output is NOT written here:
+         * init runs on the MAIN cog, and only the MOTOR cog may drive the pin
+         * (see dev_servo_private_applyEnable). The first control tick drives it
+         * inactive, before any tick can start a pulse train. */
+        d->enaLevel = (uint8_t)DEV_SERVO_ENA_UNKNOWN;
     }
 }
 
@@ -885,9 +920,11 @@ void dev_servo_run(void)
         }
         const float dt = (float)elapsedUs / 1000000.0f;
 
-        if (!enabled)
+        if (enabled == false)
         {
+            /* Pulses stop first, then the drive is disabled. */
             dev_servo_private_applyVelocity(ch, 0.0f);
+            dev_servo_private_applyEnable(ch, false);
             dev_servo_private_resync(ch, pos);
             DEV_SERVO_LOCK_REQ_BLOCK();
             d->out.position = pos;
@@ -901,6 +938,9 @@ void dev_servo_run(void)
             DEV_SERVO_LOCK_REL();
             continue;
         }
+
+        /* Enable the drive before this tick can start a pulse train. */
+        dev_servo_private_applyEnable(ch, true);
 
         const float maxVel = (float)cfg->maxVelocity;
         /* The setpoint velocity before stage 1 moves it: whether it changed

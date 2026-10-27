@@ -46,16 +46,16 @@ extern const HAL_pulseOut_channelConfig_S HAL_pulseOut_channelConfig[HAL_PULSE_O
  * Public Function Definitions
  **********************************************************************/
 
-void HAL_pulseOut_start(HAL_pulseOut_channel_E channel, uint32_t pulses, uint32_t frequency);
+/* Continuous (NCO) velocity output, the only pulse-out mode. `startVelocity`
+ * begins an unbounded pulse train at `frequency` (steps/s) and resets the
+ * emitted counter; call it again to re-baseline (e.g. after a direction
+ * reversal). `setFrequency` retargets the rate on the fly without resetting the
+ * emitted counter (glitch-free); it is ignored while the channel is stopped.
+ * `run` writes the cumulative emitted count to `*pulses` while the channel is
+ * running (and leaves it untouched otherwise) and always returns false: the
+ * train never "completes". `stop` ends the train. */
 bool HAL_pulseOut_run(HAL_pulseOut_channel_E channel, uint32_t *pulses);
 void HAL_pulseOut_stop(HAL_pulseOut_channel_E channel);
-
-/* Continuous (NCO) velocity output. `startVelocity` begins an unbounded pulse
- * train at `frequency` (steps/s) and resets the emitted counter (read via
- * HAL_pulseOut_run); call it again to re-baseline (e.g. after a direction
- * reversal). `setFrequency` retargets the rate on the fly without resetting the
- * emitted counter (glitch-free). In velocity mode HAL_pulseOut_run reports the
- * cumulative emitted count and never signals completion. */
 void HAL_pulseOut_startVelocity(HAL_pulseOut_channel_E channel, uint32_t frequency);
 void HAL_pulseOut_setFrequency(HAL_pulseOut_channel_E channel, uint32_t frequency);
 /**********************************************************************

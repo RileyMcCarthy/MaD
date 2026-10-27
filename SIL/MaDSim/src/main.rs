@@ -8,11 +8,14 @@
 //!
 //! - `--chrome`: the host's Chrome, every page and worker held to the board's
 //!   clock over DevTools by embsim's `chrome-cdp`, its Web Serial port this
-//!   line. The e2e configuration, and the one a person runs the app on
-//!   (`make playground`).
+//!   line: SERVO-stall (`make e2e-stall`), whose jam (`--jam-file`) no
+//!   project has (MaD #298). Everything else runs on the machine's project
+//!   files (`SIL/mad*.toml`, `docs/dev/sil-testing.md`), FW-ISS on the ROM's
+//!   serial boot among them; this binary retires once a project can jam the
+//!   carriage (embsim `MIGRATING-MAD.md` step 11).
 //! - otherwise a PTY (`--pty-path`), for a serial console or a program that
-//!   keeps wall time (`make playground-pty`). No browser belongs behind it:
-//!   a browser on the host's clock measures the host, not the machine.
+//!   keeps wall time. No browser belongs behind it: a browser on the host's
+//!   clock measures the host, not the machine.
 
 mod host;
 mod iss_description;
@@ -46,16 +49,9 @@ struct Args {
     #[arg(long, default_value = "info")]
     log_level: String,
 
-    /// The P2 image to execute: `propeller2_debug`'s `program`, or a mask ROM
-    /// when `--boot-rom` is set.
+    /// The P2 image to execute: `propeller2_debug`'s `program`.
     #[arg(value_name = "IMAGE")]
     image: PathBuf,
-
-    /// Boot the mask ROM and put the host on the programming UART (P62/P63)
-    /// instead of the protocol link. The ROM's serial strap (P59 pull-up) is
-    /// fitted, so `Prop_Chk` works without a DTR→RESn line.
-    #[arg(long)]
-    boot_rom: bool,
 
     /// Jam the carriage while this file exists: the drive keeps stepping but
     /// the carriage, and with it the encoder, stops (a servo stall, as the
@@ -141,102 +137,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let image = args.image.clone();
-    if args.boot_rom {
-        run_iss_rom(&args, &image)
-    } else {
-        run_iss(&args, &image)
-    }
-}
-
-/// Boot the mask ROM with the host on the programming UART (P62/P63).
-///
-/// The host is the PTY, or with `--chrome` the host's Chrome, whose page
-/// flashes through its Web Serial port. The ROM's serial strap is a pull-up on
-/// P59, so `Prop_Chk` works without a DTR line (nothing models DTR: the
-/// chrome-cdp's `setSignals` reaches nothing).
-fn run_iss_rom(args: &Args, rom_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
-    use embsim_board::{AttachError, Component, ComponentNetIo, Harness, PinDecl, TheveninDrive};
-    use p2iss::{P2Iss, SerialLink};
-
-    const PROG: SerialLink = SerialLink {
-        tx_pin: 62,
-        rx_pin: 63,
-        nominal_baud: 2_000_000,
-    };
-
-    /// A 15 kΩ resistor to `volts`: a static pull, declared as the pin's idle
-    /// drive, so the board stamps it from build.
-    struct Pull {
-        pins: [PinDecl; 1],
-    }
-    impl Pull {
-        fn new(volts: f64) -> Self {
-            Self {
-                pins: [PinDecl::analog_source("A").with_idle(Some(TheveninDrive {
-                    volts,
-                    impedance: 15_000.0,
-                }))],
-            }
-        }
-    }
-    impl Component for Pull {
-        fn pins(&self) -> &[PinDecl] {
-            &self.pins
-        }
-        fn attach(&mut self, _io: ComponentNetIo) -> Result<(), AttachError> {
-            Ok(())
-        }
-    }
-
-    install_shutdown_signals();
-    let rom = std::fs::read(rom_path)?;
-    info!(
-        "ISS ROM: {} ({} bytes) — programming UART on P{}/P{}",
-        rom_path.display(),
-        rom.len(),
-        PROG.tx_pin,
-        PROG.rx_pin
-    );
-
-    embsim_core::virtual_clock::init(args.speed, 20_000_000);
-    let _time_authority = embsim_core::virtual_clock::take_time_authority();
-
-    let iss = P2Iss::with_boot_rom(&rom, p2core::SdCard::blank(0), &[PROG]).with_level_pins(&[59]);
-    let handle = iss.handle();
-
-    let host = host::Host::open(&args.chrome, &args.pty_path, PROG)?;
-    let harness = host.wire(
-        Harness::new().connect_str("P2.P59", "STRAP.A")?,
-        "P2.P62",
-        "P2.P63",
-    )?;
-    let (system, reporter) = host.into_parts();
-
-    let system = system
-        .component("P2", Box::new(iss))
-        .component("STRAP", Box::new(Pull::new(3.3)));
-    let _system = system.harness(harness).start()?;
-    let reporter = reporter.spawn(&SHUTDOWN, &HOST_FAILED);
-
-    info!("ISS ROM serial running; main thread parked.");
-    std::thread::spawn(move || {
-        let mut echoed = 0usize;
-        loop {
-            std::thread::sleep(std::time::Duration::from_secs(5));
-            let (tx, rx) = handle.byte_counts();
-            let console = handle.console();
-            if console.len() > echoed {
-                let fresh = &console[echoed..];
-                eprint!("{fresh}");
-                echoed = console.len();
-            }
-            info!(
-                "ISS ROM: tx={tx} rx={rx} guest_us={}",
-                handle.guest_now_us()
-            );
-        }
-    });
-    park_until_shutdown(reporter)
+    run_iss(&args, &image)
 }
 
 /// Run the P2 image on the instruction-set simulator.

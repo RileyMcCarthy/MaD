@@ -35,13 +35,17 @@
  * What the project as drawn cannot do, the suite skips there, saying why
  * (`PROJECT_CANNOT`, below): the carriage never moves, since the isolator
  * IC14 between the processor and the drive has its secondary grounds on a
- * net of their own (SIL/mad-catalog/tests/mad.rs, "The drive"), and the
- * project's machine has no jam. Until IC14 is settled those scenarios run
- * on `mad-emulator --chrome` (the playgrounds' board): `cd SIL && make
- * e2e-motion` takes them from `--list --cannot` and runs them with
- * BOARD_ROUTE=emulator. `E2E_BOARD_ROUTE=emulator` attaches the suite there
- * by hand, where SERVO-stall jams the carriage by creating E2E_JAM_FILE, the
- * file mad-emulator watches (`--jam-file`); board-route.sh sets both.
+ * net of their own (MaD #285; SIL/mad-catalog/tests/mad.rs, "The drive"),
+ * and the project's machine has no jam. Those scenarios run on the board
+ * with #285 fixed, SIL/mad-ic14-fixed-cosim.toml, mad-cosim.toml with one
+ * wire on IC14's ground: `cd SIL && make e2e-motion` takes them from
+ * `--list --cannot` and runs them there (E2E_PROJECT names the file, which
+ * board-route.sh exports), where only SERVO-stall is skipped, for the jam.
+ * SERVO-stall is not yet on any project (MaD #298): `cd SIL && make
+ * e2e-stall` runs it on `mad-emulator --chrome` (board-route.sh with
+ * BOARD_ROUTE=emulator, which sets E2E_BOARD_ROUTE=emulator), where it jams
+ * the carriage by creating E2E_JAM_FILE, the file mad-emulator watches
+ * (`--jam-file`).
  *
  * Without CDP_URL only the board-free scenarios run: A1 and
  * FW1/2/3/5/6/7/8/9 launch a host Chrome against in-page fakes and need no
@@ -52,9 +56,10 @@
  * Naming a board scenario without CDP_URL is refused.
  *
  * FW-ISS (the app flashing the ISS's mask ROM) needs the ROM board, not the
- * firmware's: `mad-emulator --boot-rom --chrome` (`cd SIL && make e2e-rom`,
- * which sets E2E_BOARD=rom and E2E_BOARD_ROUTE=emulator). On that board it
- * is the only scenario that runs; on the firmware's it is skipped.
+ * firmware's: the project's serial boot, SIL/mad-serial-boot-cosim.toml
+ * (`cd SIL && make e2e-rom`, which sets E2E_BOARD=rom and
+ * E2E_BOARD_ROUTE=project). On that board it is the only scenario that
+ * runs; on the firmware's it is skipped.
  *
  * Covers the parity-critical scenarios of docs/TEST_PLAN.md §4: A1, B1–B5, C1/C3/C4, D1/D2/D3,
  * E1, F1/F2/F4/F6/F7, G1/G2/G3 + G-limit, H1–H5, I1–I4, J1 (in G-limit), K1 (in B2+B3+B4) — plus
@@ -119,8 +124,9 @@ const MATRIX = JSON.parse(
 // boot ROM), so they run without an emulator.
 const BOARD_FREE = new Set(['A1', 'FW1', 'FW2', 'FW3', 'FW5', 'FW6', 'FW7', 'FW8', 'FW9']);
 
-// The board is the mask ROM, not the firmware: `mad-emulator --boot-rom
-// --chrome` (make e2e-rom). Only FW-ISS, the app flashing that ROM, runs.
+// The board is the mask ROM, not the firmware: the project's serial boot,
+// mad-serial-boot-cosim.toml (make e2e-rom). Only FW-ISS, the app flashing
+// that ROM, runs.
 const ROM_BOARD = process.env.E2E_BOARD === 'rom';
 
 // The scenarios that command the carriage to move: a jog, a home, or a test
@@ -141,28 +147,43 @@ const MOVES = new Set([
 // fails, since it checked nothing. E2E_PROJECT_CANNOT=run runs them anyway,
 // for a change to the board, its file or the kinds that may lift the
 // reason. `--list --cannot` lists them, and `make e2e-motion` runs them on
-// mad-emulator's board meanwhile, so the motion coverage stays.
+// the board with IC14 fixed (`IC14_FIXED`, below), so the motion coverage
+// stays on a project.
 //
 // The carriage: IC14, the isolator between the processor and the drive, has
 // its secondary ground pins (9, 15) on a net of their own with only C26 on
-// it, so nothing it drives reaches the drive's STEP, DIR and ENA (read:
-// Hardware/EdgeBoard/KiCad; SIL/mad-catalog/tests/mad.rs, "The drive"). The
-// run's summary says "0 steps commanded" with the encoder at 0 counts, and
-// the firmware latches SERVO_STALL at the first move it commands
-// (measured, G2+G3+H2+I on mad-cosim.toml). Whether the machine's carrier is
-// bodged there is not known; the file keeps the board as drawn.
+// it, so nothing it drives reaches the drive's STEP, DIR and ENA (MaD #285;
+// read: Hardware/EdgeBoard/KiCad; SIL/mad-catalog/tests/mad.rs, "The
+// drive"). The run's summary says "0 steps commanded" with the encoder at 0
+// counts, and the firmware latches SERVO_STALL at the first move it
+// commands (measured, G2+G3+H2+I on mad-cosim.toml). Whether the machine's
+// carrier is bodged there is not known; the file keeps the board as drawn.
 const IC14_WHY =
-  'needs the carriage to move: IC14 as drawn passes nothing to the drive (SIL/mad-catalog/tests/mad.rs, "The drive")';
-const PROJECT_CANNOT = new Map([...MOVES].map((id) => [id, IC14_WHY]));
+  'needs the carriage to move: IC14 as drawn passes nothing to the drive (MaD #285; SIL/mad-catalog/tests/mad.rs, "The drive")';
 // The project's machine has no jam: a lever a stepped kind cannot take from
 // a file the wall clock polls (mad-catalog/src/machine.rs, "Not modelled").
-PROJECT_CANNOT.set('SERVO-stall', `jams the carriage, which the project's machine cannot (SIL/mad-catalog/src/machine.rs, "Not modelled"), and ${IC14_WHY}`);
+const JAM_WHY =
+  'jams the carriage, which the project\'s machine cannot (SIL/mad-catalog/src/machine.rs, "Not modelled"; MaD #298): make e2e-stall runs it on mad-emulator';
+const PROJECT_CANNOT = new Map([...MOVES].map((id) => [id, IC14_WHY]));
+PROJECT_CANNOT.set('SERVO-stall', `${JAM_WHY}, and ${IC14_WHY}`);
+// The board with MaD #285 fixed: mad-cosim.toml with one wire from IC14's
+// pin 9 to EN_GND (SIL/mad-ic14-fixed-cosim.toml; mad-catalog/tests/
+// projects.rs holds it to that). Its carriage moves, so of the set above it
+// skips SERVO-stall alone, for the jam.
+const IC14_FIXED = 'mad-ic14-fixed-cosim.toml';
+// The project file the board runs (board-route.sh exports it; relative to
+// SIL/, the as-drawn mad-cosim.toml by default).
+const PROJECT = (process.env.E2E_PROJECT || 'mad-cosim.toml').split('/').pop();
 const RUN_CANNOT = process.env.E2E_PROJECT_CANNOT === 'run';
 // The suite is on the project: attached to its Chrome, or listing for
 // board-route.sh, which names the route before any board is up.
 const ON_PROJECT = BOARD_ROUTE === 'project' && (BOARD || process.env.E2E_BOARD_ROUTE === 'project');
 /** Why `id` cannot run on this board, or '' when it can. */
-const cannot = (id) => (ON_PROJECT && !RUN_CANNOT && PROJECT_CANNOT.get(id)) || '';
+const cannot = (id) => {
+  if (!ON_PROJECT || RUN_CANNOT) return '';
+  if (PROJECT === IC14_FIXED) return id === 'SERVO-stall' ? JAM_WHY : '';
+  return PROJECT_CANNOT.get(id) || '';
+};
 
 // The app is the built bundle (board-route.sh with APP_DIST sets this), not
 // the dev server. BUNDLE-live runs only then; every other scenario runs on
@@ -2446,7 +2467,7 @@ const scenarios = [
       if (!jamFile) {
         throw new Error(
           'SERVO-stall needs E2E_JAM_FILE, the file mad-emulator was given as --jam-file ' +
-            '(board-route.sh sets both with BOARD_ROUTE=emulator; the project has no jam)',
+            '(board-route.sh sets both with BOARD_ROUTE=emulator; no project has a jam yet)',
         );
       }
       const free = () => rmSync(jamFile, { force: true });
@@ -2552,9 +2573,10 @@ const scenarios = [
     name: 'Firmware: UI flash talks to the ISS mask ROM over Web Serial',
     async run() {
       // The ROM board only (E2E_BOARD=rom, `make e2e-rom`): the node's port
-      // is the programming UART, as the P2 Edge's FT231X (0403:6015). The
-      // ROM's serial strap is pulled up, so Prop_Chk is answered without the
-      // reset pulse the app sends (no pin carries DTR).
+      // is the programming UART on J1, as a Parallax FT231X (0403:6015). The
+      // ROM's serial strap is pulled up (S301 position 3), so Prop_Chk is
+      // answered without the reset pulse the app sends (no pin carries DTR):
+      // the ROM listens for 90 s of board time from the chip's start.
       const { browser, page, errors } = await newSilPage();
       try {
         page.on('dialog', (d) => d.accept());
@@ -2828,8 +2850,8 @@ async function main() {
   // on the built bundle, and each left out otherwise. What this board cannot
   // run is left out too, and said on stderr with why. `--board-free` lists
   // only the scenarios that need no board. `--cannot` lists only those the
-  // project cannot run (`PROJECT_CANNOT`), whatever the route: the set
-  // `make e2e-motion` runs on mad-emulator's board.
+  // project as drawn cannot run (`PROJECT_CANNOT`), whatever the route: the
+  // set `make e2e-motion` runs on the board with IC14 fixed.
   // SIL/scripts/board-route.sh runs them one board each from this.
   if (process.argv.includes('--list')) {
     const only = process.env.SCENARIOS ? new Set(process.env.SCENARIOS.split(',').map((x) => x.trim())) : null;
@@ -2914,9 +2936,9 @@ async function main() {
   const timings = [];
   let skipped = 0;
   for (const s of selected) {
-    // The ROM board (E2E_BOARD=rom: mad-emulator --boot-rom --chrome, the
-    // mask ROM on the programming UART) runs FW-ISS and nothing else; the
-    // firmware's board runs everything else.
+    // The ROM board (E2E_BOARD=rom: mad-serial-boot-cosim.toml, the mask
+    // ROM's serial boot on J1) runs FW-ISS and nothing else; the firmware's
+    // board runs everything else.
     if (BOARD && (s.id === 'FW-ISS') !== ROM_BOARD && !BOARD_FREE.has(s.id)) {
       console.log(
         `  ~ ${s.id}: skipped (needs the ${ROM_BOARD ? "firmware's" : 'ROM'} board${

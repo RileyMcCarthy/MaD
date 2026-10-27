@@ -50,7 +50,8 @@ MaD/
 ├── SIL/                     Software-in-the-loop test rig (Rust workspace)
 │   ├── embsim/              ⎘ submodule → github.com/RileyMcCarthy/embsim (reusable SIL framework)
 │   ├── models/              MaD physics models (gantry, sample, strain gauge)
-│   └── MaDSim/              The mad-emulator binary (entry + machine wiring)
+│   ├── mad-catalog/         MaD's embsim kinds (carrier, add-on, ISS, machine); mad*.toml are the machine's projects
+│   └── MaDSim/              The mad-emulator binary, SERVO-stall's board until a project can jam (MaD #298)
 ├── Hardware/                KiCad PCB designs (EdgeBoard, DS2Addon)
 └── docs/  +  mkdocs.yml     The documentation site
 ```
@@ -99,8 +100,8 @@ pio check -e propeller2 --fail-on-defect=medium --fail-on-defect=high  # MISRA (
 ### Run the full simulation (no hardware)
 ```bash
 cd SIL
-make test         # build the P2 image + emulator, run the Rust test suite
-make playground   # the ISS + the app in a Chrome window on the board's clock
+make test         # build both P2 images + the workspace, run the Rust test suite
+make playground   # the machine's project + the app in a Chrome window on the board's clock
 make e2e          # the e2e suite on the machine's project, mad-cosim.toml (SCENARIOS=… for a subset)
 ```
 

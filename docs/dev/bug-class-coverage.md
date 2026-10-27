@@ -36,12 +36,13 @@ they are guarded today. Update it when you add a new class or close a gap.
 
 **Where the WASM e2e guards that move the carriage run.** The e2e runs on the
 machine's project (`SIL/mad-cosim.toml`, `make e2e`), where the carriage
-cannot move while `IC14` is as drawn, so the suite skips there every scenario
-that moves it (`e2e/run-all.mjs`, `PROJECT_CANNOT`): `TM-busy-restart`,
-`TM-manual-gate`, `D2-settled-jog`, `D3+SR-slack`, the M8, M9, M10 and M12
-cells, the M11 mid-test drop and SERVO-stall among them. Until `IC14` is
-settled they run on `mad-emulator`'s board (`cd SIL && make e2e-motion`):
-the nightly runs them all, and each PR runs G2+G3+H2+I.
+cannot move while `IC14` is as drawn (MaD #285), so the suite skips there
+every scenario that moves it (`e2e/run-all.mjs`, `PROJECT_CANNOT`):
+`TM-busy-restart`, `TM-manual-gate`, `D2-settled-jog`, `D3+SR-slack`, the M8,
+M9, M10 and M12 cells, the M11 mid-test drop and SERVO-stall among them. They
+run on the board with #285 fixed, `SIL/mad-ic14-fixed-cosim.toml` (`cd SIL &&
+make e2e-motion`): the nightly runs them all, and each PR runs G2+G3+H2+I.
+SERVO-stall stays skipped there: no project has a jam yet.
 
 ## Shared helpers (prefer these)
 
@@ -78,7 +79,7 @@ npm run e2e
 # smoke subset (see e2e/smoke-ids.txt):
 npm run e2e:smoke
 # what moves the carriage (TM-busy-restart / TM-manual-gate and the
-# matrices) runs on mad-emulator's board until IC14 is settled:
+# matrices) runs on the board with MaD #285 fixed:
 cd SIL && make e2e-motion SCENARIOS=TM-busy-restart,TM-manual-gate
 ```
 
