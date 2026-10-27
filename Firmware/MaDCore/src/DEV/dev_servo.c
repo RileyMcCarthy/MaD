@@ -27,7 +27,6 @@ static const dev_servo_channelConfig_S dev_servo_channelConfigDefault[DEV_SERVO_
         HAL_PULSE_OUT_CHANNEL_SERVO, /* pulseChannel */
         HAL_GPIO_SERVO_DIR,          /* gpioDirection */
         HAL_GPIO_SERVO_ENA,          /* gpioEnable */
-        false,                       /* enableActiveLow  — high enables (DMM DYN4 default) */
         HAL_ENCODER_CHANNEL_SERVO,   /* encoderChannel */
         1000U,                       /* loopPeriodUs     — 1 kHz control tick (match the cog rate) */
         24576,                       /* maxVelocity      — gentle fallback (3 mm/s); machine profile normally overrides (20 mm/s => 163840) */
@@ -51,6 +50,7 @@ static const dev_servo_channelConfig_S dev_servo_channelConfigDefault[DEV_SERVO_
         2048,                        /* stallRunawayMove — 0.25 mm against the pulses */
         4096,                        /* followErrorLimit — 0.5 mm */
         500U,                        /* followErrorTicks — held for 500 ms */
+        false,                       /* enableActiveLow  — high enables (DMM DYN4 default) */
     },
 };
 

@@ -131,12 +131,6 @@ typedef struct
      * disables it. dev_servo_init does not touch it (init runs on the MAIN
      * cog, and P2 outputs OR across cogs). */
     HAL_GPIO_channel_E gpioEnable;
-    /* Which level of gpioEnable enables the drive. false: driven active
-     * (high) enables it, as on the DMM DYN4 by default; true: driven low
-     * enables it, for a drive whose enable input disables it while energized.
-     * The drive decides this, so it comes from the machine profile
-     * (dev_servo_setEnableActiveLow). */
-    bool enableActiveLow;
     HAL_encoder_channel_E encoderChannel;
 
     uint32_t loopPeriodUs;     /* nominal control-tick period (must match the cog rate) */
@@ -197,6 +191,15 @@ typedef struct
     int32_t stallRunawayMove;  /* counts against the pulses => immediate stall */
     int32_t followErrorLimit;  /* counts */
     uint32_t followErrorTicks; /* consecutive ticks over the limit => stall */
+    /* Which level of gpioEnable enables the drive. false: driven active
+     * (high) enables it, as on the DMM DYN4 by default; true: driven low
+     * enables it, for a drive whose enable input disables it while energized.
+     * The drive decides this, so it comes from the machine profile
+     * (dev_servo_setEnableActiveLow). LAST in the struct on purpose: flexcc
+     * initialises a field that follows a bool in a const table a few bytes
+     * off from where it reads it (see dev_nvram_channelConfig_t), so a bool
+     * mid-struct would shift every field after it on the P2. */
+    bool enableActiveLow;
 } dev_servo_channelConfig_S;
 
 /**********************************************************************

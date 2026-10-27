@@ -354,8 +354,9 @@ void dev_nvram_private_runAction(dev_nvram_channel_t channel)
             }
             else
             {
-                DEBUG_ERROR("unreadable record: %zu bytes (expected %u) -- using defaults\n", n,
-                            (unsigned int)dev_nvram_config.channels[channel].size);
+                DEBUG_ERROR("unreadable record: %u bytes (expected %u, or an older prefix from %u) -- using defaults\n",
+                            (unsigned int)n, (unsigned int)dev_nvram_config.channels[channel].size,
+                            (unsigned int)legacy);
                 (void)memcpy(dev_nvram_data.channels[channel].data, dev_nvram_config.channels[channel].dataDefault,
                              dev_nvram_config.channels[channel].size);
             }
