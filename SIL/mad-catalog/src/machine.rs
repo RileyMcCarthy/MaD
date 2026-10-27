@@ -37,17 +37,24 @@
 //!
 //! With `hard_stop_mm` the carriage meets a stop there, on the side of it
 //! the carriage starts on: above the start, the carriage goes no higher;
-//! below it, no lower. The drive does not: it takes every step it is sent
-//! and its shaft turns on, as embsim's `StepperMotor` models it (its *Not
-//! modeled*: torque, stall, lost steps). The encoder counts the carriage,
-//! on the load side, so it stops counting at the stop, and the end switches
-//! and the sample see no travel past it.
+//! below it, no lower. The drive counts every step it is sent, and the
+//! steps the stop refuses are lost. On a rigid drivetrain the stop blocks
+//! the rotor too, and what runs on is the count; embsim's `StepperMotor`
+//! has no stall (its *Not modeled*: torque, stall, lost steps), so the
+//! count is its shaft position, which runs on past the stop at the speed
+//! its lag gives it. The encoder counts the carriage, on the load side, so
+//! it stops counting at the stop, and the end switches and the sample see
+//! no travel past it.
 //!
 //! The shaft travel the stop refuses is lost: from then on the carriage
 //! follows the shaft that far behind it, so a shaft turning back takes the
-//! carriage off the stop at once. A stepper driven against a stop loses
-//! the steps it cannot take, which is this; it is also what `mad-emulator`'s
-//! jam does with the travel lost while jammed (its `Coupling`). The real
+//! carriage off the stop at once. A shaft reversed while it runs on past
+//! the stop first spends its lag (the model's 20 ms time constant), as a
+//! free shaft reversing does, where a blocked rotor would turn back at once
+//! (inferred); SERVO-stall disables the drive before it reverses, so it
+//! never meets this. A stepper driven against a stop loses the steps it
+//! cannot take, which is this; it is also what `mad-emulator`'s jam does
+//! with the travel lost while jammed (its `Coupling`). The real
 //! machine's drive is a servo drive, whose behaviour against a stop is not
 //! known here (inferred: it may hold its count, or fault). The stop has no
 //! compliance, no bounce and no buzz: the carriage sits on it exactly. With
@@ -332,8 +339,8 @@ pub(crate) fn kind_info() -> KindInfo {
          and NAME+), and the load cell's bridge (E+, E- sensed; S+, S- driven); \
          options.sample: sil-linear-reference; options.drive_steps_per_mm and \
          options.encoder_counts_per_mm: each 8192 by default; options.hard_stop_mm: a \
-         carriage position in millimetres the carriage cannot pass while the drive turns on, \
-         none by default",
+         carriage position in millimetres the carriage cannot pass, the drive's steps past it \
+         lost, none by default",
     )
 }
 

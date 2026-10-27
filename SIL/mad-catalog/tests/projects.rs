@@ -511,8 +511,8 @@ fn the_hard_stop_file_is_the_ic14_fixed_file_with_one_stop() {
         "one-option",
         "the twin's machine has one option more, a hard stop above the carriage's start and \
          short of the 15 millimetres of grip slack",
-        "the stall scenario drives the carriage into the stop and back off it with no sample \
-         load, and the drive turns on against the stop"
+        "the stall scenario jogs the carriage up into the stop and back off it, and short of \
+         the grip slack the sample takes no load"
     );
     expect!(
         "cites-the-issue",
@@ -553,7 +553,11 @@ fn the_hard_stop_file_is_the_ic14_fixed_file_with_one_stop() {
         .and_then(|machine| machine.get_mut("options"))
         .and_then(Value::as_table_mut)
         .and_then(|options| options.remove("hard_stop_mm"))
-        .and_then(|stop| stop.as_float())
+        // A number, as the kind reads it: `3.0` or a whole `3`.
+        .and_then(|stop| {
+            stop.as_float()
+                .or_else(|| stop.as_integer().map(|whole| whole as f64))
+        })
         .unwrap_or_else(|| panic!("{twin_name}'s machine names a hard stop in millimetres"));
     // Above the carriage's start, 0 mm, and short of the grip slack, 15 mm
     // (mad-catalog/src/machine.rs, GANTRY_SLACK_MM).

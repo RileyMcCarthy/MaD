@@ -119,10 +119,11 @@ sample = "sil-linear-reference"
 # which this carrier cannot read; mad-catalog/tests/mad.rs runs that case.
 encoder_output = "rs422"
 # A hard stop 3 mm above the carriage's start, inside its travel and short
-# of the grip slack's 15 mm: the carriage meets it there while the drive
-# turns on, and the encoder, on the carriage's side of the drive, stops
-# counting there (mad-catalog/src/machine.rs, "The hard stop"). SERVO-stall
-# jogs the carriage into it and back off it (make e2e-stall; MaD #298).
+# of the grip slack's 15 mm: the carriage meets it there, the drive's steps
+# past it are lost, and the encoder, on the carriage's side of the drive,
+# stops counting there (mad-catalog/src/machine.rs, "The hard stop").
+# SERVO-stall jogs the carriage into it and back off it (make e2e-stall;
+# MaD #298).
 # This file is mad-ic14-fixed-cosim.toml with this option alone
 # (mad-catalog/tests/projects.rs).
 hard_stop_mm = 3.0

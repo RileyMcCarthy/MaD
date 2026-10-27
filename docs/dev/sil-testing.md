@@ -264,9 +264,9 @@ back.
 SERVO-stall runs on `mad-hard-stop-cosim.toml` (`make e2e-stall`; MaD
 #298), whose machine has a hard stop 3 mm above the carriage's start (the
 `mad-machine` kind's `hard_stop_mm`, `SIL/mad-catalog/src/machine.rs`, "The
-hard stop"): the drive turns on against the stop while the carriage, and
-the encoder on its side of the drive, stay there, and the travel the stop
-refuses is lost, so a jog back leaves the stop at once. The scenario jogs
+hard stop"): the drive counts every step it is sent while the carriage,
+and the encoder on its side of the drive, stay on the stop, and the travel
+the stop refuses is lost, so a jog back leaves the stop at once. The scenario jogs
 5 mm into the stop, waits for `Fault: SERVO_STALL`, clears it, re-enables
 motion, watches 2 s with no move commanded, then jogs 2 mm off the stop.
 It reads the stop from the file `E2E_PROJECT` names, and fails at once on a

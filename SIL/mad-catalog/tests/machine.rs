@@ -1123,7 +1123,7 @@ fn direction(dir: &PinHandle, back: bool) {
 }
 
 #[rstest]
-fn a_hard_stop_holds_the_carriage_while_the_drive_turns_on() {
+fn a_hard_stop_holds_the_carriage_while_the_drive_takes_its_steps() {
     behaviour!(Test {
         id: "machine.hard-stop",
         covers: Some("SIL/mad-catalog/src/machine.rs#Carriage"),
@@ -1144,7 +1144,8 @@ fn a_hard_stop_holds_the_carriage_while_the_drive_turns_on() {
     expect!(
         "drive-turns-on",
         "the drive takes every forward step it is sent",
-        "the stop holds the carriage, and the drive keeps turning against it"
+        "the stop holds the carriage alone: the drive counts every step it is sent, and the \
+         travel the stop refuses is lost"
     );
     expect!(
         "travel-lost",
@@ -1241,4 +1242,31 @@ fn a_hard_stop_at_the_carriages_start_is_refused() {
     let message = refused.to_string();
     assert!(message.contains("hard_stop_mm"), "{message}");
     assert!(message.contains("MACHINE"), "{message}");
+}
+
+#[rstest]
+fn a_hard_stop_at_no_finite_position_is_refused() {
+    behaviour!(Test {
+        id: "machine.hard-stop-not-finite",
+        covers: Some("SIL/mad-catalog/src/machine.rs#component"),
+        given: "projects naming the machine with a hard stop at no finite position: infinitely \
+                far above the carriage's start, infinitely far below it, and not a number",
+    });
+    expect!(
+        "refused-naming-option",
+        "each project is refused, the error naming the hard stop's option and the machine",
+        "a stop at no finite position never holds the carriage, which is a machine with no \
+         stop, and a project says that by leaving the option out"
+    );
+    let _lock = suite_lock();
+    for stop in ["inf", "-inf", "nan"] {
+        let refused = Project::parse(&project(&format!("hard_stop_mm = {stop}"), ""))
+            .expect("the project parses")
+            .instantiate(&set())
+            .map(|_| ())
+            .expect_err("the stop is refused");
+        let message = refused.to_string();
+        assert!(message.contains("hard_stop_mm"), "{stop}: {message}");
+        assert!(message.contains("MACHINE"), "{stop}: {message}");
+    }
 }
