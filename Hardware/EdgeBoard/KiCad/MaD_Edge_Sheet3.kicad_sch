@@ -4,6 +4,13 @@
 	(generator_version "9.0")
 	(uuid "67880fcd-77f0-421d-b3dc-2fc4db5cdd1d")
 	(paper "A4")
+	(title_block
+		(title "MaD Edge carrier: servo and encoder")
+		(date "2026-10-25")
+		(rev "v0.3")
+		(company "MaD")
+		(comment 1 "Revision v0.3: fixes from the SIL hardware findings; see Hardware/EdgeBoard/readme.md")
+	)
 	(lib_symbols
 		(symbol "74xGxx:SN74LVC1G14DBV"
 			(exclude_from_sim no)
@@ -204,6 +211,177 @@
 						)
 					)
 					(number "4"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+				)
+			)
+			(embedded_fonts no)
+		)
+		(symbol "Connector_Generic:Conn_01x03"
+			(pin_names
+				(offset 1.016)
+				(hide yes)
+			)
+			(exclude_from_sim no)
+			(in_bom yes)
+			(on_board yes)
+			(property "Reference" "J"
+				(at 0 5.08 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+				)
+			)
+			(property "Value" "Conn_01x03"
+				(at 0 -5.08 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+				)
+			)
+			(property "Footprint" ""
+				(at 0 0 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(property "Datasheet" "~"
+				(at 0 0 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(property "Description" "Generic connector, single row, 01x03, script generated (kicad-library-utils/schlib/autogen/connector/)"
+				(at 0 0 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(property "ki_keywords" "connector"
+				(at 0 0 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(property "ki_fp_filters" "Connector*:*_1x??_*"
+				(at 0 0 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(symbol "Conn_01x03_1_1"
+				(rectangle
+					(start -1.27 3.81)
+					(end 1.27 -3.81)
+					(stroke
+						(width 0.254)
+						(type default)
+					)
+					(fill
+						(type background)
+					)
+				)
+				(rectangle
+					(start -1.27 2.667)
+					(end 0 2.413)
+					(stroke
+						(width 0.1524)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(rectangle
+					(start -1.27 0.127)
+					(end 0 -0.127)
+					(stroke
+						(width 0.1524)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(rectangle
+					(start -1.27 -2.413)
+					(end 0 -2.667)
+					(stroke
+						(width 0.1524)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(pin passive line
+					(at -5.08 2.54 0)
+					(length 3.81)
+					(name "Pin_1"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+					(number "1"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+				)
+				(pin passive line
+					(at -5.08 0 0)
+					(length 3.81)
+					(name "Pin_2"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+					(number "2"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+				)
+				(pin passive line
+					(at -5.08 -2.54 0)
+					(length 3.81)
+					(name "Pin_3"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+					(number "3"
 						(effects
 							(font
 								(size 1.27 1.27)
@@ -1114,6 +1292,155 @@
 					(at 3.81 0 180)
 					(length 2.54)
 					(name "A"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+					(number "2"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+				)
+			)
+			(embedded_fonts no)
+		)
+		(symbol "Device:Polyfuse_Small"
+			(pin_numbers
+				(hide yes)
+			)
+			(pin_names
+				(offset 0)
+			)
+			(exclude_from_sim no)
+			(in_bom yes)
+			(on_board yes)
+			(property "Reference" "F"
+				(at -1.905 0 90)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+				)
+			)
+			(property "Value" "Polyfuse_Small"
+				(at 1.905 0 90)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+				)
+			)
+			(property "Footprint" ""
+				(at 1.27 -5.08 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(justify left)
+					(hide yes)
+				)
+			)
+			(property "Datasheet" "~"
+				(at 0 0 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(property "Description" "Resettable fuse, polymeric positive temperature coefficient, small symbol"
+				(at 0 0 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(property "ki_keywords" "resettable fuse PTC PPTC polyfuse polyswitch"
+				(at 0 0 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(property "ki_fp_filters" "*polyfuse* *PTC*"
+				(at 0 0 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(symbol "Polyfuse_Small_0_1"
+				(polyline
+					(pts
+						(xy -1.016 1.27) (xy -1.016 0.762) (xy 1.016 -0.762) (xy 1.016 -1.27)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(rectangle
+					(start -0.508 1.27)
+					(end 0.508 -1.27)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy 0 2.54) (xy 0 -2.54)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+			)
+			(symbol "Polyfuse_Small_1_1"
+				(pin passive line
+					(at 0 2.54 270)
+					(length 0.635)
+					(name "~"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+					(number "1"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+				)
+				(pin passive line
+					(at 0 -2.54 90)
+					(length 0.635)
+					(name "~"
 						(effects
 							(font
 								(size 1.27 1.27)
@@ -4623,6 +4950,402 @@
 			)
 			(embedded_fonts no)
 		)
+		(symbol "Mechanical:Housing"
+			(pin_names
+				(offset 1.016)
+			)
+			(exclude_from_sim no)
+			(in_bom yes)
+			(on_board yes)
+			(property "Reference" "N"
+				(at 3.81 0 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(justify left)
+				)
+			)
+			(property "Value" "Housing"
+				(at 3.81 -1.905 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(justify left)
+				)
+			)
+			(property "Footprint" ""
+				(at 1.27 1.27 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(property "Datasheet" "~"
+				(at 1.27 1.27 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(property "Description" "Housing"
+				(at 0 0 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(property "ki_keywords" "housing enclosure"
+				(at 0 0 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(property "ki_fp_filters" "Enclosure* Housing*"
+				(at 0 0 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(symbol "Housing_0_1"
+				(polyline
+					(pts
+						(xy -5.715 0) (xy -0.635 0) (xy 3.175 3.81)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy -5.715 0) (xy -5.715 -4.445) (xy -0.635 -4.445) (xy 3.175 -0.635) (xy 3.175 3.81) (xy -1.905 3.81)
+						(xy -5.715 0)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type background)
+					)
+				)
+				(rectangle
+					(start -5.08 -0.635)
+					(end -1.27 -1.905)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy -4.5212 -1.5748) (xy -4.4704 -1.3716)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(circle
+					(center -4.445 -3.175)
+					(radius 0.635)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type outline)
+					)
+				)
+				(polyline
+					(pts
+						(xy -4.4196 -1.2192) (xy -4.3688 -0.9652)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy -4.4196 -1.6764) (xy -4.064 -1.6764)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy -4.318 -1.3208) (xy -4.0132 -1.3208)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy -4.2164 -0.9144) (xy -3.9116 -0.9144)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy -3.9116 -1.6256) (xy -3.8608 -1.3716)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy -3.81 -1.2192) (xy -3.7592 -0.9652)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy -3.6068 -1.5748) (xy -3.556 -1.3716)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy -3.5052 -1.2192) (xy -3.4544 -0.9652)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy -3.5052 -1.6764) (xy -3.1496 -1.6764)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy -3.4036 -1.3208) (xy -3.0988 -1.3208)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy -3.302 -0.9144) (xy -2.9972 -0.9144)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy -2.9972 -1.6256) (xy -2.9464 -1.3716)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy -2.8956 -1.2192) (xy -2.8448 -0.9652)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy -2.6924 -1.5748) (xy -2.6416 -1.3716)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy -2.5908 -1.2192) (xy -2.54 -0.9652)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy -2.5908 -1.6764) (xy -2.2352 -1.6764)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy -2.4892 -1.3208) (xy -2.1844 -1.3208)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy -2.3876 -0.9144) (xy -2.0828 -0.9144)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy -2.0828 -1.6256) (xy -2.032 -1.3716)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy -1.9812 -1.2192) (xy -1.9304 -0.9652)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(circle
+					(center -1.905 -3.175)
+					(radius 0.635)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type outline)
+					)
+				)
+				(polyline
+					(pts
+						(xy -0.635 0) (xy -0.635 -4.445)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+			)
+			(embedded_fonts no)
+		)
 		(symbol "Tensile_Board:SHIELD"
 			(power)
 			(pin_names
@@ -4793,7 +5516,7 @@
 			)
 			(embedded_fonts no)
 		)
-		(symbol "Transistor_BJT:2N3904"
+		(symbol "Transistor_BJT:MMBT3904"
 			(pin_names
 				(offset 0)
 				(hide yes)
@@ -4810,7 +5533,7 @@
 					(justify left)
 				)
 			)
-			(property "Value" "2N3904"
+			(property "Value" "MMBT3904"
 				(at 5.08 0 0)
 				(effects
 					(font
@@ -4819,7 +5542,7 @@
 					(justify left)
 				)
 			)
-			(property "Footprint" "Package_TO_SOT_THT:TO-92_Inline"
+			(property "Footprint" "Package_TO_SOT_SMD:SOT-23"
 				(at 5.08 -1.905 0)
 				(effects
 					(font
@@ -4830,7 +5553,7 @@
 					(hide yes)
 				)
 			)
-			(property "Datasheet" "https://www.onsemi.com/pub/Collateral/2N3903-D.PDF"
+			(property "Datasheet" "https://www.onsemi.com/pdf/datasheet/pzt3904-d.pdf"
 				(at 0 0 0)
 				(effects
 					(font
@@ -4840,7 +5563,7 @@
 					(hide yes)
 				)
 			)
-			(property "Description" "0.2A Ic, 40V Vce, Small Signal NPN Transistor, TO-92"
+			(property "Description" "0.2A Ic, 40V Vce, Small Signal NPN Transistor, SOT-23"
 				(at 0 0 0)
 				(effects
 					(font
@@ -4858,7 +5581,7 @@
 					(hide yes)
 				)
 			)
-			(property "ki_fp_filters" "TO?92*"
+			(property "ki_fp_filters" "SOT?23*"
 				(at 0 0 0)
 				(effects
 					(font
@@ -4867,37 +5590,25 @@
 					(hide yes)
 				)
 			)
-			(symbol "2N3904_0_1"
+			(symbol "MMBT3904_0_1"
 				(polyline
 					(pts
-						(xy 0.635 1.905) (xy 0.635 -1.905) (xy 0.635 -1.905)
+						(xy -2.54 0) (xy 0.635 0)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy 0.635 1.905) (xy 0.635 -1.905)
 					)
 					(stroke
 						(width 0.508)
-						(type default)
-					)
-					(fill
-						(type none)
-					)
-				)
-				(polyline
-					(pts
-						(xy 0.635 0.635) (xy 2.54 2.54)
-					)
-					(stroke
-						(width 0)
-						(type default)
-					)
-					(fill
-						(type none)
-					)
-				)
-				(polyline
-					(pts
-						(xy 0.635 -0.635) (xy 2.54 -2.54) (xy 2.54 -2.54)
-					)
-					(stroke
-						(width 0)
 						(type default)
 					)
 					(fill
@@ -4915,9 +5626,35 @@
 						(type none)
 					)
 				)
+			)
+			(symbol "MMBT3904_1_1"
 				(polyline
 					(pts
-						(xy 1.27 -1.778) (xy 1.778 -1.27) (xy 2.286 -2.286) (xy 1.27 -1.778) (xy 1.27 -1.778)
+						(xy 0.635 0.635) (xy 2.54 2.54)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy 0.635 -0.635) (xy 2.54 -2.54)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy 1.27 -1.778) (xy 1.778 -1.27) (xy 2.286 -2.286) (xy 1.27 -1.778)
 					)
 					(stroke
 						(width 0)
@@ -4927,11 +5664,9 @@
 						(type outline)
 					)
 				)
-			)
-			(symbol "2N3904_1_1"
-				(pin passive line
+				(pin input line
 					(at -5.08 0 0)
-					(length 5.715)
+					(length 2.54)
 					(name "B"
 						(effects
 							(font
@@ -4939,7 +5674,7 @@
 							)
 						)
 					)
-					(number "2"
+					(number "1"
 						(effects
 							(font
 								(size 1.27 1.27)
@@ -4975,7 +5710,7 @@
 							)
 						)
 					)
-					(number "1"
+					(number "2"
 						(effects
 							(font
 								(size 1.27 1.27)
@@ -5358,14 +6093,6 @@
 		(uuid "bcb4a48f-e519-45a0-a323-d1f61742df02")
 	)
 	(no_connect
-		(at 123.19 154.94)
-		(uuid "bede5115-95f1-4831-be4f-f75d9fa6d729")
-	)
-	(no_connect
-		(at 123.19 149.86)
-		(uuid "bede5115-95f1-4831-be4f-f75d9fa6d72a")
-	)
-	(no_connect
 		(at 40.64 139.7)
 		(uuid "e66e7c32-4316-41b9-ba26-aa66e7326730")
 	)
@@ -5516,16 +6243,6 @@
 			(type default)
 		)
 		(uuid "19759936-ef16-4197-af96-6e6a08bc390a")
-	)
-	(wire
-		(pts
-			(xy 129.54 167.64) (xy 132.08 167.64)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "1b58c8c0-edc8-4b9b-a242-9d0f0d200b08")
 	)
 	(wire
 		(pts
@@ -5939,16 +6656,6 @@
 	)
 	(wire
 		(pts
-			(xy 123.19 135.89) (xy 123.19 137.16)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "65cef4db-9892-4451-80a0-1b78a09857ed")
-	)
-	(wire
-		(pts
 			(xy 142.24 138.43) (xy 125.73 138.43)
 		)
 		(stroke
@@ -6019,16 +6726,6 @@
 	)
 	(wire
 		(pts
-			(xy 148.59 167.64) (xy 142.24 167.64)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "73cbcaba-9a9e-43e1-9d9a-9b1683e828b9")
-	)
-	(wire
-		(pts
 			(xy 73.66 132.08) (xy 87.63 132.08)
 		)
 		(stroke
@@ -6059,7 +6756,7 @@
 	)
 	(wire
 		(pts
-			(xy 142.24 133.35) (xy 123.19 133.35)
+			(xy 142.24 133.35) (xy 139.7 133.35)
 		)
 		(stroke
 			(width 0)
@@ -6489,7 +7186,7 @@
 	)
 	(wire
 		(pts
-			(xy 142.24 135.89) (xy 123.19 135.89)
+			(xy 142.24 135.89) (xy 139.7 135.89)
 		)
 		(stroke
 			(width 0)
@@ -6699,16 +7396,6 @@
 	)
 	(wire
 		(pts
-			(xy 123.19 133.35) (xy 123.19 132.08)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "f0da2461-bb64-4065-a750-d2773ab47fe4")
-	)
-	(wire
-		(pts
 			(xy 121.92 60.96) (xy 142.24 60.96)
 		)
 		(stroke
@@ -6907,16 +7594,6 @@
 		)
 		(uuid "13201af4-09a2-4120-b1c0-49643192abfe")
 	)
-	(label "Z-"
-		(at 129.54 167.64 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left bottom)
-		)
-		(uuid "25a80f41-dd07-4151-8da3-7a65e07f5734")
-	)
 	(label "ZI+"
 		(at 139.7 138.43 0)
 		(effects
@@ -7037,7 +7714,7 @@
 		)
 		(uuid "37e25d32-fcd9-418d-9441-960647fcb38d")
 	)
-	(label "EN_GND"
+	(label "ENC_REF"
 		(at 148.59 160.02 180)
 		(effects
 			(font
@@ -7147,7 +7824,7 @@
 		)
 		(uuid "7d45c001-8541-4cfd-898d-04b5655d1a9a")
 	)
-	(label "EN_GND"
+	(label "ENC_REF"
 		(at 148.59 176.53 180)
 		(effects
 			(font
@@ -7257,16 +7934,6 @@
 		)
 		(uuid "bbf16dcc-069c-4786-b245-1b479e52a6aa")
 	)
-	(label "EN_GND"
-		(at 148.59 167.64 180)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify right bottom)
-		)
-		(uuid "be99e2d0-0852-4464-8c40-5b3b5da3b430")
-	)
 	(label "ISS_5V"
 		(at 139.065 25.4 0)
 		(effects
@@ -7297,7 +7964,7 @@
 		)
 		(uuid "c8a41416-feb7-49a0-9f8e-decfe383f30d")
 	)
-	(label "EN_GND"
+	(label "ENC_REF"
 		(at 148.59 152.4 180)
 		(effects
 			(font
@@ -7903,7 +8570,7 @@
 				)
 			)
 		)
-		(property "Value" "ZI_GND"
+		(property "Value" "ZI_REF"
 			(at 138.43 172.72 0)
 			(effects
 				(font
@@ -7983,7 +8650,7 @@
 				(hide yes)
 			)
 		)
-		(property "NOTES" ""
+		(property "NOTES" "Shunt only for a single-ended push-pull (TTL) ZI signal; OPEN for RS-422 or unused (no ZI pull-up fitted)"
 			(at 137.16 176.53 0)
 			(effects
 				(font
@@ -8282,7 +8949,7 @@
 				(hide yes)
 			)
 		)
-		(property "Description" "0.1uF 6V SMD"
+		(property "Description" "0.1uF 50V X7R 0603"
 			(at 34.29 50.8 0)
 			(effects
 				(font
@@ -8291,7 +8958,7 @@
 				(hide yes)
 			)
 		)
-		(property "MANUFACTURER" "Samsung Electro-Mechanics"
+		(property "MANUFACTURER" "YAGEO"
 			(at 34.29 50.8 0)
 			(effects
 				(font
@@ -8300,7 +8967,7 @@
 				(hide yes)
 			)
 		)
-		(property "Manufacturer_Part_Number" "CL05A104KA5NNNC"
+		(property "Manufacturer_Part_Number" "CC0603KRX7R9BB104"
 			(at 34.29 50.8 0)
 			(effects
 				(font
@@ -8309,7 +8976,7 @@
 				(hide yes)
 			)
 		)
-		(property "DIGIKEY" "1276-1043-1-ND"
+		(property "DIGIKEY" ""
 			(at 34.29 50.8 0)
 			(effects
 				(font
@@ -8592,7 +9259,7 @@
 				(hide yes)
 			)
 		)
-		(property "Description" "0.1uF 6V SMD"
+		(property "Description" "0.1uF 50V X7R 0603"
 			(at 74.93 27.94 0)
 			(effects
 				(font
@@ -8601,7 +9268,7 @@
 				(hide yes)
 			)
 		)
-		(property "MANUFACTURER" "Samsung Electro-Mechanics"
+		(property "MANUFACTURER" "YAGEO"
 			(at 74.93 27.94 0)
 			(effects
 				(font
@@ -8610,7 +9277,7 @@
 				(hide yes)
 			)
 		)
-		(property "Manufacturer_Part_Number" "CL05A104KA5NNNC"
+		(property "Manufacturer_Part_Number" "CC0603KRX7R9BB104"
 			(at 74.93 27.94 0)
 			(effects
 				(font
@@ -8619,7 +9286,7 @@
 				(hide yes)
 			)
 		)
-		(property "DIGIKEY" "1276-1043-1-ND"
+		(property "DIGIKEY" ""
 			(at 74.93 27.94 0)
 			(effects
 				(font
@@ -10216,7 +10883,7 @@
 				(hide yes)
 			)
 		)
-		(property "Description" "0.1uF 6V SMD"
+		(property "Description" "0.1uF 50V X7R 0603"
 			(at 85.09 49.53 0)
 			(effects
 				(font
@@ -10225,7 +10892,7 @@
 				(hide yes)
 			)
 		)
-		(property "MANUFACTURER" "Samsung Electro-Mechanics"
+		(property "MANUFACTURER" "YAGEO"
 			(at 85.09 49.53 0)
 			(effects
 				(font
@@ -10234,7 +10901,7 @@
 				(hide yes)
 			)
 		)
-		(property "Manufacturer_Part_Number" "CL05A104KA5NNNC"
+		(property "Manufacturer_Part_Number" "CC0603KRX7R9BB104"
 			(at 85.09 49.53 0)
 			(effects
 				(font
@@ -10243,7 +10910,7 @@
 				(hide yes)
 			)
 		)
-		(property "DIGIKEY" "1276-1043-1-ND"
+		(property "DIGIKEY" ""
 			(at 85.09 49.53 0)
 			(effects
 				(font
@@ -11065,155 +11732,6 @@
 			(project "MaD_Edge"
 				(path "/7e1266c3-436e-48c1-8e6f-07c0e2581bd5/3848150c-e17f-4b7c-8b45-f477f8e036d7"
 					(reference "#PWR0224")
-					(unit 1)
-				)
-			)
-		)
-	)
-	(symbol
-		(lib_id "Jumper:Jumper_2_Open")
-		(at 137.16 167.64 0)
-		(unit 1)
-		(exclude_from_sim no)
-		(in_bom yes)
-		(on_board yes)
-		(dnp no)
-		(fields_autoplaced yes)
-		(uuid "6032afc6-87ce-4636-acec-10888e1f6ca5")
-		(property "Reference" "JP4"
-			(at 137.16 161.29 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Value" "Z_GND"
-			(at 137.16 163.83 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Footprint" "Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm_Vertical"
-			(at 137.16 167.64 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Datasheet" "~"
-			(at 137.16 167.64 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Description" "~"
-			(at 137.16 167.64 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "MANUFACTURER" "~"
-			(at 137.16 167.64 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Manufacturer_Part_Number" "~"
-			(at 137.16 167.64 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "DIGIKEY" "~"
-			(at 137.16 167.64 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "LCSC" "C492401"
-			(at 137.16 167.64 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "NOTES" ""
-			(at 137.16 167.64 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "manufacturer_1" "XFCN"
-			(at 137.16 167.64 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "manufacturer_part_number_1" "PZ254V-11-02P"
-			(at 137.16 167.64 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Qty Bought" "header"
-			(at 137.16 167.64 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Receptical" ""
-			(at 137.16 167.64 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(pin "1"
-			(uuid "a9124393-65c0-4717-903d-54914d176dd2")
-		)
-		(pin "2"
-			(uuid "540126c9-ecb9-4ca9-9c67-e2b74c8f5be6")
-		)
-		(instances
-			(project "MaD_Edge"
-				(path "/7e1266c3-436e-48c1-8e6f-07c0e2581bd5/3848150c-e17f-4b7c-8b45-f477f8e036d7"
-					(reference "JP4")
 					(unit 1)
 				)
 			)
@@ -12670,7 +13188,7 @@
 				)
 			)
 		)
-		(property "Value" "B_GND"
+		(property "Value" "B_REF"
 			(at 137.16 156.21 0)
 			(effects
 				(font
@@ -12741,7 +13259,7 @@
 				(hide yes)
 			)
 		)
-		(property "NOTES" ""
+		(property "NOTES" "Shunt only for a single-ended open-collector encoder; OPEN for RS-422"
 			(at 137.16 160.02 0)
 			(effects
 				(font
@@ -12952,7 +13470,7 @@
 		)
 	)
 	(symbol
-		(lib_id "Transistor_BJT:2N3904")
+		(lib_id "Transistor_BJT:MMBT3904")
 		(at 77.47 91.44 0)
 		(unit 1)
 		(exclude_from_sim no)
@@ -12970,7 +13488,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "NPN"
+		(property "Value" "MMBT3904"
 			(at 82.55 92.7099 0)
 			(effects
 				(font
@@ -12979,7 +13497,7 @@
 				(justify left)
 			)
 		)
-		(property "Footprint" "Package_TO_SOT_SMD:TSOT-23"
+		(property "Footprint" "Package_TO_SOT_SMD:SOT-23"
 			(at 82.55 93.345 0)
 			(effects
 				(font
@@ -12990,7 +13508,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "https://www.onsemi.com/pub/Collateral/2N3903-D.PDF"
+		(property "Datasheet" "https://www.lcsc.com/datasheet/C20526.pdf"
 			(at 77.47 91.44 0)
 			(effects
 				(font
@@ -13054,7 +13572,7 @@
 				(hide yes)
 			)
 		)
-		(property "NOTES" ""
+		(property "NOTES" "SOT-23 pinout 1 B, 2 E, 3 C (JSCJ MMBT3904 datasheet p.1)"
 			(at 77.47 91.44 0)
 			(effects
 				(font
@@ -13163,7 +13681,7 @@
 				(hide yes)
 			)
 		)
-		(property "Description" "0.1uF 6V SMD"
+		(property "Description" "0.1uF 50V X7R 0603"
 			(at 125.73 22.86 0)
 			(effects
 				(font
@@ -13172,7 +13690,7 @@
 				(hide yes)
 			)
 		)
-		(property "MANUFACTURER" "Samsung Electro-Mechanics"
+		(property "MANUFACTURER" "YAGEO"
 			(at 125.73 22.86 0)
 			(effects
 				(font
@@ -13181,7 +13699,7 @@
 				(hide yes)
 			)
 		)
-		(property "Manufacturer_Part_Number" "CL05A104KA5NNNC"
+		(property "Manufacturer_Part_Number" "CC0603KRX7R9BB104"
 			(at 125.73 22.86 0)
 			(effects
 				(font
@@ -13190,7 +13708,7 @@
 				(hide yes)
 			)
 		)
-		(property "DIGIKEY" "1276-1043-1-ND"
+		(property "DIGIKEY" ""
 			(at 125.73 22.86 0)
 			(effects
 				(font
@@ -13552,7 +14070,7 @@
 				(hide yes)
 			)
 		)
-		(property "Description" "0.1uF 6V SMD"
+		(property "Description" "0.1uF 50V X7R 0603"
 			(at 35.56 124.46 0)
 			(effects
 				(font
@@ -13561,7 +14079,7 @@
 				(hide yes)
 			)
 		)
-		(property "MANUFACTURER" "Samsung Electro-Mechanics"
+		(property "MANUFACTURER" "YAGEO"
 			(at 35.56 124.46 0)
 			(effects
 				(font
@@ -13570,7 +14088,7 @@
 				(hide yes)
 			)
 		)
-		(property "Manufacturer_Part_Number" "CL05A104KA5NNNC"
+		(property "Manufacturer_Part_Number" "CC0603KRX7R9BB104"
 			(at 35.56 124.46 0)
 			(effects
 				(font
@@ -13579,7 +14097,7 @@
 				(hide yes)
 			)
 		)
-		(property "DIGIKEY" "1276-1043-1-ND"
+		(property "DIGIKEY" ""
 			(at 35.56 124.46 0)
 			(effects
 				(font
@@ -14757,7 +15275,7 @@
 				)
 			)
 		)
-		(property "Value" "A_GND"
+		(property "Value" "A_REF"
 			(at 137.16 148.59 0)
 			(effects
 				(font
@@ -14828,7 +15346,7 @@
 				(hide yes)
 			)
 		)
-		(property "NOTES" ""
+		(property "NOTES" "Shunt only for a single-ended open-collector encoder; OPEN for RS-422"
 			(at 137.16 152.4 0)
 			(effects
 				(font
@@ -14906,7 +15424,7 @@
 				(justify right)
 			)
 		)
-		(property "Value" "43K"
+		(property "Value" "4.7K"
 			(at 67.31 93.98 90)
 			(effects
 				(font
@@ -14969,7 +15487,7 @@
 				(hide yes)
 			)
 		)
-		(property "LCSC" "C23172"
+		(property "LCSC" "C23162"
 			(at 69.85 91.44 0)
 			(effects
 				(font
@@ -14978,7 +15496,7 @@
 				(hide yes)
 			)
 		)
-		(property "NOTES" ""
+		(property "NOTES" "Q1 base resistor: ~0.8 mA base drive so Q1 saturates at the drive enable current"
 			(at 69.85 91.44 0)
 			(effects
 				(font
@@ -14996,7 +15514,7 @@
 				(hide yes)
 			)
 		)
-		(property "manufacturer_part_number_1" "0603WAF4302T5E"
+		(property "manufacturer_part_number_1" "0603WAF4701T5E"
 			(at 69.85 91.44 0)
 			(effects
 				(font
@@ -15083,7 +15601,7 @@
 				(hide yes)
 			)
 		)
-		(property "Description" "0.1uF 6V SMD"
+		(property "Description" "0.1uF 50V X7R 0603"
 			(at 76.2 124.46 0)
 			(effects
 				(font
@@ -15092,7 +15610,7 @@
 				(hide yes)
 			)
 		)
-		(property "MANUFACTURER" "Samsung Electro-Mechanics"
+		(property "MANUFACTURER" "YAGEO"
 			(at 76.2 124.46 0)
 			(effects
 				(font
@@ -15101,7 +15619,7 @@
 				(hide yes)
 			)
 		)
-		(property "Manufacturer_Part_Number" "CL05A104KA5NNNC"
+		(property "Manufacturer_Part_Number" "CC0603KRX7R9BB104"
 			(at 76.2 124.46 0)
 			(effects
 				(font
@@ -15110,7 +15628,7 @@
 				(hide yes)
 			)
 		)
-		(property "DIGIKEY" "1276-1043-1-ND"
+		(property "DIGIKEY" ""
 			(at 76.2 124.46 0)
 			(effects
 				(font
@@ -15931,7 +16449,7 @@
 				(justify right)
 			)
 		)
-		(property "Value" "AM26LV32IDR"
+		(property "Value" "AM26C32IDR"
 			(at 105.41 130.81 0)
 			(effects
 				(font
@@ -15949,7 +16467,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "http://www.ti.com/lit/ds/symlink/am26lv32.pdf"
+		(property "Datasheet" "https://www.ti.com/lit/ds/symlink/am26c32.pdf"
 			(at 110.49 144.78 0)
 			(effects
 				(font
@@ -15958,7 +16476,7 @@
 				(hide yes)
 			)
 		)
-		(property "Description" "IC RECEIVER 0/4 16SOIC"
+		(property "Description" "Quad differential line receiver, 5 V, SOIC-16"
 			(at 110.49 134.62 0)
 			(effects
 				(font
@@ -15976,7 +16494,7 @@
 				(hide yes)
 			)
 		)
-		(property "Manufacturer_Part_Number" "AM26LV32IDR"
+		(property "Manufacturer_Part_Number" "AM26C32IDR"
 			(at 110.49 134.62 0)
 			(effects
 				(font
@@ -15994,7 +16512,7 @@
 				(hide yes)
 			)
 		)
-		(property "LCSC" "C524786"
+		(property "LCSC" "C36693"
 			(at 110.49 134.62 0)
 			(effects
 				(font
@@ -16003,7 +16521,7 @@
 				(hide yes)
 			)
 		)
-		(property "NOTES" ""
+		(property "NOTES" "Must be a 5 V receiver (AM26C32, VCC 4.5-5.5 V, VOH >= 3.8 V). Not AM26LV32 (3.6 V max) or AM26LS32 (VOH 2.7 V). Symbol is AM26LV32xD: same pinout."
 			(at 110.49 134.62 0)
 			(effects
 				(font
@@ -16021,7 +16539,7 @@
 				(hide yes)
 			)
 		)
-		(property "manufacturer_part_number_1" "AM26LV32IDR"
+		(property "manufacturer_part_number_1" "AM26C32IDR"
 			(at 110.49 134.62 0)
 			(effects
 				(font
@@ -16030,7 +16548,7 @@
 				(hide yes)
 			)
 		)
-		(property "Qty Bought" "3 lcsc"
+		(property "Qty Bought" ""
 			(at 110.49 134.62 0)
 			(effects
 				(font
@@ -16529,7 +17047,7 @@
 				)
 			)
 		)
-		(property "Value" "ISO6741DWR"
+		(property "Value" "ISO7741FDWR"
 			(at 55.88 46.99 0)
 			(effects
 				(font
@@ -16546,7 +17064,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "https://www.ti.com/general/docs/suppproductinfo.tsp?distId=26&gotoUrl=https://www.ti.com/lit/gpn/iso6741"
+		(property "Datasheet" "https://www.ti.com/lit/ds/symlink/iso7741.pdf"
 			(at 39.37 50.8 0)
 			(effects
 				(font
@@ -16555,7 +17073,7 @@
 				(hide yes)
 			)
 		)
-		(property "Description" "Digital Isolators General-purpose, quad-channel, 3/1 digital isolator 16-SOIC -40 to 125"
+		(property "Description" "Digital isolator, 3/1 channels, default-low (F) outputs, SOIC-16 DW"
 			(at 39.37 50.8 0)
 			(effects
 				(font
@@ -16574,7 +17092,7 @@
 				(hide yes)
 			)
 		)
-		(property "Manufacturer_Part_Number" "ISO6741DWR"
+		(property "Manufacturer_Part_Number" "ISO7741FDWR"
 			(at 68.58 845.72 0)
 			(effects
 				(font
@@ -16593,7 +17111,7 @@
 				(hide yes)
 			)
 		)
-		(property "DIGIKEY" "296-ISO6741DWRCT-ND"
+		(property "DIGIKEY" ""
 			(at 39.37 50.8 0)
 			(effects
 				(font
@@ -16602,7 +17120,7 @@
 				(hide yes)
 			)
 		)
-		(property "LCSC" "C571196"
+		(property "LCSC" "C485810"
 			(at 39.37 50.8 0)
 			(effects
 				(font
@@ -16611,7 +17129,7 @@
 				(hide yes)
 			)
 		)
-		(property "NOTES" "Pin Compatible with ISO77xx"
+		(property "NOTES" "F suffix required: outputs default LOW with an open input or unpowered side 1 (SLLSEP4K Table 7-2). Do not fit a non-F part. Check the top marking reads ISO7741F on receipt (SLLSEP4K package addendum)."
 			(at 39.37 50.8 0)
 			(effects
 				(font
@@ -16629,7 +17147,7 @@
 				(hide yes)
 			)
 		)
-		(property "manufacturer_part_number_1" "ISO6741DWR or ISO7741DWR"
+		(property "manufacturer_part_number_1" "ISO7741FDWR"
 			(at 39.37 50.8 0)
 			(effects
 				(font
@@ -16638,7 +17156,7 @@
 				(hide yes)
 			)
 		)
-		(property "Qty Bought" "3 - lcsc"
+		(property "Qty Bought" ""
 			(at 39.37 50.8 0)
 			(effects
 				(font
@@ -17187,6 +17705,2863 @@
 			(project "MaD_Edge"
 				(path "/7e1266c3-436e-48c1-8e6f-07c0e2581bd5/3848150c-e17f-4b7c-8b45-f477f8e036d7"
 					(reference "IC16")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "Device:R_Small")
+		(at 44.45 85.09 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(uuid "49a8b61d-3c8a-47dc-a3a2-6a242b4a93d1")
+		(property "Reference" "R39"
+			(at 49.53 85.09 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "10K"
+			(at 46.99 85.09 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" "Resistor_SMD:R_0603_1608Metric"
+			(at 44.45 85.09 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "~"
+			(at 44.45 85.09 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "P6 pull-down: servo enable off until firmware drives P6"
+			(at 44.45 85.09 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER" "UNI-ROYAL(Uniroyal Elec)"
+			(at 44.45 85.09 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer_Part_Number" "0603WAF1002T5E"
+			(at 44.45 85.09 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "DIGIKEY" ""
+			(at 44.45 85.09 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" "C25804"
+			(at 44.45 85.09 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "NOTES" ""
+			(at 44.45 85.09 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "manufacturer_1" "UNI-ROYAL(Uniroyal Elec)"
+			(at 44.45 85.09 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "manufacturer_part_number_1" "0603WAF1002T5E"
+			(at 44.45 85.09 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Qty Bought" ""
+			(at 44.45 85.09 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Receptical" ""
+			(at 44.45 85.09 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "1"
+			(uuid "0cc3ab13-703c-4b5c-b4f5-89ef20a1577b")
+		)
+		(pin "2"
+			(uuid "f0be03fc-08b8-4620-a58b-4dfb33e97a49")
+		)
+		(instances
+			(project "MaD_Edge"
+				(path "/7e1266c3-436e-48c1-8e6f-07c0e2581bd5/3848150c-e17f-4b7c-8b45-f477f8e036d7"
+					(reference "R39")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(wire
+		(pts
+			(xy 44.45 82.55) (xy 44.45 80.01)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "a6547b5f-df54-495f-aa73-dae2aced1e7f")
+	)
+	(global_label "P6"
+		(shape input)
+		(at 44.45 80.01 90)
+		(fields_autoplaced yes)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left)
+		)
+		(uuid "0e96e374-dd30-488f-962a-9c625971dc7a")
+		(property "Intersheetrefs" "${INTERSHEET_REFS}"
+			(at 44.45 74 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+				(hide yes)
+			)
+		)
+	)
+	(wire
+		(pts
+			(xy 44.45 87.63) (xy 44.45 90.17)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "77192ce5-96d3-40eb-b1e2-5d354dcacc5c")
+	)
+	(symbol
+		(lib_id "power:GND")
+		(at 44.45 90.17 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(uuid "26e53710-15d2-4bfd-a062-f6139621e00c")
+		(property "Reference" "#PWR0249"
+			(at 44.45 96.52 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Value" "GND"
+			(at 44.45 93.98 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" ""
+			(at 44.45 90.17 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" ""
+			(at 44.45 90.17 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" ""
+			(at 44.45 90.17 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(pin "1"
+			(uuid "ba704e85-17e1-4cd7-b1eb-bd02af3c35a5")
+		)
+		(instances
+			(project "MaD_Edge"
+				(path "/7e1266c3-436e-48c1-8e6f-07c0e2581bd5/3848150c-e17f-4b7c-8b45-f477f8e036d7"
+					(reference "#PWR0249")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(text "R39 holds P6 low: servo enable off through\nreset, boot and flashing. IC14 is an F part:\noutputs default low if side 1 is unpowered."
+		(exclude_from_sim no)
+		(at 20.32 104.14 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "c155e1ce-6be7-4096-b777-1720cbb423e4")
+	)
+	(symbol
+		(lib_id "Device:C_Small")
+		(at 231.14 110.49 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(uuid "15c5d814-9249-40c8-99eb-019eba4dc998")
+		(property "Reference" "C30"
+			(at 233.68 109.2262 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Value" "0.1uF"
+			(at 233.68 111.76 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Footprint" "Capacitor_SMD:C_0402_1005Metric"
+			(at 231.14 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "~"
+			(at 231.14 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "0.1uF 16V X7R 0402"
+			(at 231.14 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER" "Samsung Electro-Mechanics"
+			(at 231.14 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer_Part_Number" "CL05B104KO5NNNC"
+			(at 231.14 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "DIGIKEY" ""
+			(at 231.14 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" "C1525"
+			(at 231.14 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "NOTES" "U25 decoupling: place at U25 pin 16 (0402 to fit beside JP2)"
+			(at 231.14 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "manufacturer_1" "Samsung Electro-Mechanics"
+			(at 231.14 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "manufacturer_part_number_1" "CL05B104KO5NNNC"
+			(at 231.14 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Qty Bought" ""
+			(at 231.14 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Receptical" ""
+			(at 231.14 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "1"
+			(uuid "e48e7e3a-12d3-4a56-baf9-4240a7ed9d99")
+		)
+		(pin "2"
+			(uuid "520522ce-a857-444e-91eb-be76ea20f97f")
+		)
+		(instances
+			(project "MaD_Edge"
+				(path "/7e1266c3-436e-48c1-8e6f-07c0e2581bd5/3848150c-e17f-4b7c-8b45-f477f8e036d7"
+					(reference "C30")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(wire
+		(pts
+			(xy 231.14 107.95) (xy 231.14 105.41)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "deebd88c-e814-4abd-ab28-cb7e509b4de0")
+	)
+	(label "SC_5V"
+		(at 231.14 105.41 90)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "5aaac726-0a53-465b-872e-c8ffe0e85186")
+	)
+	(wire
+		(pts
+			(xy 231.14 113.03) (xy 231.14 115.57)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "ab4cbe03-3b47-473f-b730-6e49da807d0c")
+	)
+	(label "EN_GND"
+		(at 231.14 115.57 270)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right bottom)
+		)
+		(uuid "5b5b19dc-af03-4cb1-9437-42aff8abff3d")
+	)
+	(wire
+		(pts
+			(xy 123.19 132.08) (xy 124.46 132.08)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "aa30725d-e1d6-4c56-b616-daaede5c9c8b")
+	)
+	(wire
+		(pts
+			(xy 124.46 132.08) (xy 124.46 134.62)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "f2b89e84-9d46-4aac-b285-90a3931a9ab7")
+	)
+	(label "SC_5V"
+		(at 124.46 134.62 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "d29eaef6-456b-454b-8b25-c0f4298f0fd7")
+	)
+	(wire
+		(pts
+			(xy 123.19 137.16) (xy 127 137.16)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "3cd73a3d-662b-48d2-88c7-c85342c441f2")
+	)
+	(label "EN_GND"
+		(at 127 137.16 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "941b54d0-b444-4151-a0f6-7f16a9bacff3")
+	)
+	(wire
+		(pts
+			(xy 123.19 149.86) (xy 125.73 149.86)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "ed7bb369-19ab-495b-95e6-d88db0f5a730")
+	)
+	(label "Z+"
+		(at 125.73 149.86 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "83f74fc0-6d7f-4926-a9e8-7a3923aa630e")
+	)
+	(wire
+		(pts
+			(xy 123.19 154.94) (xy 125.73 154.94)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "8a5dcdc7-0912-48e0-ac01-b8680bbe3482")
+	)
+	(label "Z-"
+		(at 125.73 154.94 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "fb13a3e1-c139-4af6-b30b-4c4f1afd0b78")
+	)
+	(symbol
+		(lib_id "Jumper:Jumper_2_Open")
+		(at 137.16 167.64 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "16e93afe-abd8-4a2b-bce3-aaaef021270f")
+		(property "Reference" "JP6"
+			(at 137.16 161.29 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "Z_REF"
+			(at 137.16 163.83 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" "Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm_Vertical"
+			(at 137.16 167.64 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "~"
+			(at 137.16 167.64 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "~"
+			(at 137.16 167.64 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER" "~"
+			(at 137.16 167.64 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer_Part_Number" "~"
+			(at 137.16 167.64 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "DIGIKEY" "~"
+			(at 137.16 167.64 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" "C492401"
+			(at 137.16 167.64 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "NOTES" "Shunt only for a single-ended open-collector encoder; OPEN for RS-422"
+			(at 137.16 167.64 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "manufacturer_1" "XFCN"
+			(at 137.16 167.64 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "manufacturer_part_number_1" "PZ254V-11-02P"
+			(at 137.16 167.64 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Qty Bought" "header"
+			(at 137.16 167.64 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Receptical" ""
+			(at 137.16 167.64 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "1"
+			(uuid "dc89f158-c3eb-423f-9eb5-6bdc560c6728")
+		)
+		(pin "2"
+			(uuid "685dc8f1-1d1e-4631-ba8c-3d220c1eeedc")
+		)
+		(instances
+			(project "MaD_Edge"
+				(path "/7e1266c3-436e-48c1-8e6f-07c0e2581bd5/3848150c-e17f-4b7c-8b45-f477f8e036d7"
+					(reference "JP6")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(wire
+		(pts
+			(xy 129.54 167.64) (xy 132.08 167.64)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "59ad972b-60e5-4e47-ae6b-ddce210df9ae")
+	)
+	(label "Z-"
+		(at 129.54 167.64 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "a687788c-d55a-4e36-ad13-0498101c694b")
+	)
+	(wire
+		(pts
+			(xy 148.59 167.64) (xy 142.24 167.64)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "d14d10ab-94f4-4ba1-939a-5cfc0174e6ed")
+	)
+	(label "ENC_REF"
+		(at 148.59 167.64 180)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right bottom)
+		)
+		(uuid "20d37b48-5271-46f0-a3c4-96ce8c9d97f7")
+	)
+	(symbol
+		(lib_id "Device:R_Small")
+		(at 175.26 110.49 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(uuid "b37affd7-c1aa-4005-9130-9b9896dcaaa3")
+		(property "Reference" "R40"
+			(at 180.34 110.49 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "2.2K"
+			(at 177.8 110.49 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" "Resistor_SMD:R_0603_1608Metric"
+			(at 175.26 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "~"
+			(at 175.26 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Encoder A+ pull-up for open-collector outputs"
+			(at 175.26 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER" "UNI-ROYAL(Uniroyal Elec)"
+			(at 175.26 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer_Part_Number" "0603WAF2201T5E"
+			(at 175.26 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "DIGIKEY" ""
+			(at 175.26 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" "C4190"
+			(at 175.26 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "NOTES" ""
+			(at 175.26 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "manufacturer_1" "UNI-ROYAL(Uniroyal Elec)"
+			(at 175.26 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "manufacturer_part_number_1" "0603WAF2201T5E"
+			(at 175.26 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Qty Bought" ""
+			(at 175.26 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Receptical" ""
+			(at 175.26 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "1"
+			(uuid "462be23b-a20d-475b-b9b8-2f1a3c6ba470")
+		)
+		(pin "2"
+			(uuid "73643015-3bec-4e8f-8ab1-0676b80205a2")
+		)
+		(instances
+			(project "MaD_Edge"
+				(path "/7e1266c3-436e-48c1-8e6f-07c0e2581bd5/3848150c-e17f-4b7c-8b45-f477f8e036d7"
+					(reference "R40")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(wire
+		(pts
+			(xy 175.26 107.95) (xy 175.26 105.41)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "9f9ff800-ba03-4120-99f0-90d30d7043c3")
+	)
+	(label "SC_5V"
+		(at 175.26 105.41 90)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "2174d037-4a6f-4559-a5ad-6f01e967bb4c")
+	)
+	(wire
+		(pts
+			(xy 175.26 113.03) (xy 175.26 115.57)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "dc23953f-3377-4840-8b86-6a42bea69c2f")
+	)
+	(label "A+"
+		(at 175.26 115.57 270)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right bottom)
+		)
+		(uuid "8fa9159e-d022-4f48-aeef-d00d65f97ef5")
+	)
+	(symbol
+		(lib_id "Device:R_Small")
+		(at 182.88 110.49 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(uuid "ac1d278c-88c1-45a5-a5f5-60d5f4dc4514")
+		(property "Reference" "R41"
+			(at 187.96 110.49 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "2.2K"
+			(at 185.42 110.49 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" "Resistor_SMD:R_0603_1608Metric"
+			(at 182.88 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "~"
+			(at 182.88 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Encoder B+ pull-up for open-collector outputs"
+			(at 182.88 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER" "UNI-ROYAL(Uniroyal Elec)"
+			(at 182.88 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer_Part_Number" "0603WAF2201T5E"
+			(at 182.88 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "DIGIKEY" ""
+			(at 182.88 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" "C4190"
+			(at 182.88 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "NOTES" ""
+			(at 182.88 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "manufacturer_1" "UNI-ROYAL(Uniroyal Elec)"
+			(at 182.88 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "manufacturer_part_number_1" "0603WAF2201T5E"
+			(at 182.88 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Qty Bought" ""
+			(at 182.88 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Receptical" ""
+			(at 182.88 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "1"
+			(uuid "7c8b7937-ab4a-4583-8287-8542ae6ea36d")
+		)
+		(pin "2"
+			(uuid "e04dea63-1e15-4d12-8b2a-8af1c10da1d2")
+		)
+		(instances
+			(project "MaD_Edge"
+				(path "/7e1266c3-436e-48c1-8e6f-07c0e2581bd5/3848150c-e17f-4b7c-8b45-f477f8e036d7"
+					(reference "R41")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(wire
+		(pts
+			(xy 182.88 107.95) (xy 182.88 105.41)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "457c901d-2961-41dd-b704-9a926f8f43fe")
+	)
+	(label "SC_5V"
+		(at 182.88 105.41 90)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "9c3dfc00-a3f0-42be-899a-e5a251ff2e76")
+	)
+	(wire
+		(pts
+			(xy 182.88 113.03) (xy 182.88 115.57)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "c58d3b75-cd6d-4624-b08e-f866d437e4ac")
+	)
+	(label "B+"
+		(at 182.88 115.57 270)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right bottom)
+		)
+		(uuid "bbbbd45b-20b3-4e61-8833-842bda439fe4")
+	)
+	(symbol
+		(lib_id "Device:R_Small")
+		(at 190.5 110.49 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(uuid "22eca5af-832b-45cd-97eb-7da1ceb23e19")
+		(property "Reference" "R42"
+			(at 195.58 110.49 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "2.2K"
+			(at 193.04 110.49 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" "Resistor_SMD:R_0603_1608Metric"
+			(at 190.5 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "~"
+			(at 190.5 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Encoder Z+ pull-up for open-collector outputs"
+			(at 190.5 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER" "UNI-ROYAL(Uniroyal Elec)"
+			(at 190.5 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer_Part_Number" "0603WAF2201T5E"
+			(at 190.5 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "DIGIKEY" ""
+			(at 190.5 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" "C4190"
+			(at 190.5 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "NOTES" ""
+			(at 190.5 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "manufacturer_1" "UNI-ROYAL(Uniroyal Elec)"
+			(at 190.5 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "manufacturer_part_number_1" "0603WAF2201T5E"
+			(at 190.5 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Qty Bought" ""
+			(at 190.5 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Receptical" ""
+			(at 190.5 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "1"
+			(uuid "5a815a4b-2982-48ea-b0b9-d08aff8c7163")
+		)
+		(pin "2"
+			(uuid "5c76a00d-980e-4189-b1d3-3ca8a74d19b2")
+		)
+		(instances
+			(project "MaD_Edge"
+				(path "/7e1266c3-436e-48c1-8e6f-07c0e2581bd5/3848150c-e17f-4b7c-8b45-f477f8e036d7"
+					(reference "R42")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(wire
+		(pts
+			(xy 190.5 107.95) (xy 190.5 105.41)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "e49e0cec-ac53-46b6-aa35-b8564b63173c")
+	)
+	(label "SC_5V"
+		(at 190.5 105.41 90)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "b3ce46d8-d0bd-47fe-828b-76acaf63d98d")
+	)
+	(wire
+		(pts
+			(xy 190.5 113.03) (xy 190.5 115.57)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "2fdef7e1-eacc-4c51-80ef-75ac5bdb01d8")
+	)
+	(label "Z+"
+		(at 190.5 115.57 270)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right bottom)
+		)
+		(uuid "24303eee-52c9-4bb3-b2b4-5f0b3f9d154b")
+	)
+	(symbol
+		(lib_id "Device:R_Small")
+		(at 201.93 110.49 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(uuid "521dbe73-3762-402a-95cd-859ed308ecab")
+		(property "Reference" "R43"
+			(at 207.01 110.49 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "2.2K"
+			(at 204.47 110.49 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" "Resistor_SMD:R_0603_1608Metric"
+			(at 201.93 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "~"
+			(at 201.93 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "ENC_REF divider, top"
+			(at 201.93 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER" "UNI-ROYAL(Uniroyal Elec)"
+			(at 201.93 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer_Part_Number" "0603WAF2201T5E"
+			(at 201.93 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "DIGIKEY" ""
+			(at 201.93 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" "C4190"
+			(at 201.93 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "NOTES" ""
+			(at 201.93 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "manufacturer_1" "UNI-ROYAL(Uniroyal Elec)"
+			(at 201.93 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "manufacturer_part_number_1" "0603WAF2201T5E"
+			(at 201.93 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Qty Bought" ""
+			(at 201.93 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Receptical" ""
+			(at 201.93 110.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "1"
+			(uuid "f832bca8-09a8-4d8f-b9fc-b710f5956303")
+		)
+		(pin "2"
+			(uuid "f66b967f-827b-47e8-aa96-ddf7c4945702")
+		)
+		(instances
+			(project "MaD_Edge"
+				(path "/7e1266c3-436e-48c1-8e6f-07c0e2581bd5/3848150c-e17f-4b7c-8b45-f477f8e036d7"
+					(reference "R43")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(wire
+		(pts
+			(xy 201.93 107.95) (xy 201.93 105.41)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "96c1bb52-f454-4175-8d0b-7ef9ddc6ac14")
+	)
+	(label "SC_5V"
+		(at 201.93 105.41 90)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "28f7e677-147f-4481-82e8-3c432a3d03e1")
+	)
+	(symbol
+		(lib_id "Device:R_Small")
+		(at 201.93 120.65 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(uuid "ac242e11-4efa-42e8-b85e-dd891f339e73")
+		(property "Reference" "R44"
+			(at 207.01 120.65 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "2.2K"
+			(at 204.47 120.65 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" "Resistor_SMD:R_0603_1608Metric"
+			(at 201.93 120.65 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "~"
+			(at 201.93 120.65 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "ENC_REF divider, bottom"
+			(at 201.93 120.65 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER" "UNI-ROYAL(Uniroyal Elec)"
+			(at 201.93 120.65 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer_Part_Number" "0603WAF2201T5E"
+			(at 201.93 120.65 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "DIGIKEY" ""
+			(at 201.93 120.65 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" "C4190"
+			(at 201.93 120.65 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "NOTES" ""
+			(at 201.93 120.65 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "manufacturer_1" "UNI-ROYAL(Uniroyal Elec)"
+			(at 201.93 120.65 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "manufacturer_part_number_1" "0603WAF2201T5E"
+			(at 201.93 120.65 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Qty Bought" ""
+			(at 201.93 120.65 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Receptical" ""
+			(at 201.93 120.65 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "1"
+			(uuid "bff5597c-aa54-429b-ab23-de51ec4f2bbf")
+		)
+		(pin "2"
+			(uuid "fff58635-356a-4d81-a13d-26fa0b451786")
+		)
+		(instances
+			(project "MaD_Edge"
+				(path "/7e1266c3-436e-48c1-8e6f-07c0e2581bd5/3848150c-e17f-4b7c-8b45-f477f8e036d7"
+					(reference "R44")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(wire
+		(pts
+			(xy 201.93 113.03) (xy 201.93 115.57)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "fbc067a2-b3cf-4062-983b-460949658fd2")
+	)
+	(wire
+		(pts
+			(xy 201.93 115.57) (xy 201.93 118.11)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "4dcfa595-cf4d-48da-8c8f-f388788eb1c5")
+	)
+	(wire
+		(pts
+			(xy 201.93 123.19) (xy 201.93 125.73)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "ed46a0fd-6547-408e-a428-ba8e87a2df21")
+	)
+	(label "EN_GND"
+		(at 201.93 125.73 270)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right bottom)
+		)
+		(uuid "188d51a1-0e85-4ac6-a321-89eb6a0fc2ed")
+	)
+	(symbol
+		(lib_id "Device:C_Small")
+		(at 209.55 120.65 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(uuid "d571973f-7f97-463b-825b-e06d344b9c11")
+		(property "Reference" "C31"
+			(at 212.09 119.3862 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Value" "0.1uF"
+			(at 212.09 121.92 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Footprint" "Capacitor_SMD:C_0603_1608Metric"
+			(at 209.55 120.65 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "~"
+			(at 209.55 120.65 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "0.1uF 50V X7R 0603"
+			(at 209.55 120.65 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER" "YAGEO"
+			(at 209.55 120.65 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer_Part_Number" "CC0603KRX7R9BB104"
+			(at 209.55 120.65 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "DIGIKEY" ""
+			(at 209.55 120.65 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" "C14663"
+			(at 209.55 120.65 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "NOTES" "ENC_REF decoupling"
+			(at 209.55 120.65 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "manufacturer_1" "YAGEO"
+			(at 209.55 120.65 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "manufacturer_part_number_1" "CC0603KRX7R9BB104"
+			(at 209.55 120.65 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Qty Bought" "100 - lcsc"
+			(at 209.55 120.65 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Receptical" ""
+			(at 209.55 120.65 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "1"
+			(uuid "ffb06a51-d3fd-47d8-95b8-cf856f3b32f2")
+		)
+		(pin "2"
+			(uuid "be56058d-c5ed-4038-b046-e94ae52fe771")
+		)
+		(instances
+			(project "MaD_Edge"
+				(path "/7e1266c3-436e-48c1-8e6f-07c0e2581bd5/3848150c-e17f-4b7c-8b45-f477f8e036d7"
+					(reference "C31")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(wire
+		(pts
+			(xy 209.55 118.11) (xy 209.55 115.57)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "fe47a69e-087c-4fd5-ba16-98ec3b2b576a")
+	)
+	(wire
+		(pts
+			(xy 209.55 123.19) (xy 209.55 125.73)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "53ba9bda-ed14-4ed7-8713-1b2c10e97e64")
+	)
+	(label "EN_GND"
+		(at 209.55 125.73 270)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right bottom)
+		)
+		(uuid "9ab43912-bcb9-44a9-b9ec-255fb1e1ff0a")
+	)
+	(wire
+		(pts
+			(xy 201.93 115.57) (xy 209.55 115.57)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "7551df0d-cfe1-41fb-935e-644a89cac2e0")
+	)
+	(wire
+		(pts
+			(xy 209.55 115.57) (xy 214.63 115.57)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "92bac618-4b7f-4966-9398-adfb435e8088")
+	)
+	(junction
+		(at 201.93 115.57)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "9ea6dba1-6ff0-4a05-871f-ea49dd55f653")
+	)
+	(junction
+		(at 209.55 115.57)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "0f84ceea-f5fe-4405-8211-d587b7a5e948")
+	)
+	(label "ENC_REF"
+		(at 214.63 115.57 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "d55c9b47-fb6c-4d9a-a38f-c0b29a632e45")
+	)
+	(text "Encoder input (v0.3): R40-R42 pull A+/B+/Z+ up for an open-collector A/B/Z encoder.\nJP2/JP3/JP6/JP5 tie A-/B-/Z-/ZI- to ENC_REF (SC_5V/2: R43/R44, C31).\nOpen-collector (NPN) encoder on A+/B+/Z+: fit JP2, JP3, JP6. RS-422 line driver: all four OPEN.\nJ25: encoder supply pass-through (1 VIN, 2 ENC+ via F1, 3 0V). U25 is a 5 V AM26C32."
+		(exclude_from_sim no)
+		(at 175.26 97.79 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "4b825af6-5b63-43e7-93d0-41218c37342f")
+	)
+	(symbol
+		(lib_id "Connector_Generic:Conn_01x03")
+		(at 273.05 115.57 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "909314a1-8867-4313-9770-133bde75407f")
+		(property "Reference" "J25"
+			(at 275.59 114.2999 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Value" "ENC_PWR"
+			(at 275.59 116.8399 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Footprint" "Connector_PinHeader_2.54mm:PinHeader_1x03_P2.54mm_Vertical"
+			(at 273.05 115.57 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "~"
+			(at 273.05 115.57 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Encoder supply pass-through: 1 VIN (the encoder's rated supply, 30 V max, isolated from V_IN), 2 +V (fused, to encoder V+), 3 0V (EN_GND)"
+			(at 273.05 115.57 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER" "~"
+			(at 273.05 115.57 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer_Part_Number" "~"
+			(at 273.05 115.57 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "DIGIKEY" "~"
+			(at 273.05 115.57 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" "C2937625"
+			(at 273.05 115.57 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "NOTES" "Pin order keeps VIN and 0V apart so one stray shunt cannot short the supply"
+			(at 273.05 115.57 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "manufacturer_1" "XFCN"
+			(at 273.05 115.57 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "manufacturer_part_number_1" "PZ254V-11-03P"
+			(at 273.05 115.57 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Qty Bought" ""
+			(at 273.05 115.57 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Receptical" ""
+			(at 273.05 115.57 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "1"
+			(uuid "85549564-788f-4fd0-8757-3f498d620ad7")
+		)
+		(pin "2"
+			(uuid "72158d39-2dc7-474e-a23b-c4f12251ccd7")
+		)
+		(pin "3"
+			(uuid "89e1f87c-4400-4233-b6c3-0f970eae6131")
+		)
+		(instances
+			(project "MaD_Edge"
+				(path "/7e1266c3-436e-48c1-8e6f-07c0e2581bd5/3848150c-e17f-4b7c-8b45-f477f8e036d7"
+					(reference "J25")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(wire
+		(pts
+			(xy 267.97 113.03) (xy 262.89 113.03)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "ea063534-a83c-4243-a460-bc6598ed777b")
+	)
+	(label "ENC_VIN"
+		(at 262.89 113.03 180)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right bottom)
+		)
+		(uuid "0e9f8d4f-6007-49bc-ba90-a6654694d8d6")
+	)
+	(wire
+		(pts
+			(xy 267.97 115.57) (xy 262.89 115.57)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "72c7ea90-07b9-47ca-99c2-9414e77240af")
+	)
+	(label "ENC_V+"
+		(at 262.89 115.57 180)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right bottom)
+		)
+		(uuid "0750214c-0832-42d2-a2c9-5d56f4f02607")
+	)
+	(wire
+		(pts
+			(xy 267.97 118.11) (xy 262.89 118.11)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "42476e48-df3c-41a7-8da6-5e2e2e9b4808")
+	)
+	(label "EN_GND"
+		(at 262.89 118.11 180)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right bottom)
+		)
+		(uuid "d0357f92-7d7a-452d-85f9-9034d83445c0")
+	)
+	(symbol
+		(lib_id "Device:Polyfuse_Small")
+		(at 246.38 115.57 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(uuid "8f617408-573d-472e-ab41-6720e048cce6")
+		(property "Reference" "F1"
+			(at 251.46 115.57 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "0.2A/30V"
+			(at 248.92 115.57 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" "Fuse:Fuse_1206_3216Metric"
+			(at 246.38 115.57 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "https://www.lcsc.com/datasheet/C7542932.pdf"
+			(at 246.38 115.57 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "PTC, 0.20 A hold, 0.46 A trip, 30 V, 1206 (encoder supply)"
+			(at 246.38 115.57 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER" "LUTE"
+			(at 246.38 115.57 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer_Part_Number" "1206L020/30NR"
+			(at 246.38 115.57 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "DIGIKEY" ""
+			(at 246.38 115.57 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" "C7542932"
+			(at 246.38 115.57 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "NOTES" ""
+			(at 246.38 115.57 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "manufacturer_1" "LUTE"
+			(at 246.38 115.57 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "manufacturer_part_number_1" "1206L020/30NR"
+			(at 246.38 115.57 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Qty Bought" ""
+			(at 246.38 115.57 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Receptical" ""
+			(at 246.38 115.57 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "1"
+			(uuid "d48b5318-93df-4a76-bf16-a86e3a8a0604")
+		)
+		(pin "2"
+			(uuid "1f26f898-3dbd-465a-870b-08f8501e1bc4")
+		)
+		(instances
+			(project "MaD_Edge"
+				(path "/7e1266c3-436e-48c1-8e6f-07c0e2581bd5/3848150c-e17f-4b7c-8b45-f477f8e036d7"
+					(reference "F1")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(wire
+		(pts
+			(xy 246.38 113.03) (xy 246.38 110.49)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "bd8e7933-afd4-46dd-8c2e-7871f21c1a11")
+	)
+	(label "ENC_VIN"
+		(at 246.38 110.49 90)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "2c83c3ae-eee7-4edc-9316-609de4850b30")
+	)
+	(wire
+		(pts
+			(xy 246.38 118.11) (xy 246.38 120.65)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "2f7338b9-f879-45bf-a14f-c97362af8345")
+	)
+	(label "ENC_V+"
+		(at 246.38 120.65 270)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right bottom)
+		)
+		(uuid "ec60de83-8f27-417b-acff-4c366de9f256")
+	)
+	(symbol
+		(lib_id "Mechanical:Housing")
+		(at 175.26 140.97 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board no)
+		(dnp no)
+		(uuid "ce7b3630-e466-4121-857e-620b59a56f0b")
+		(property "Reference" "SH1"
+			(at 180.34 140.97 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "Shunt 2.54mm"
+			(at 177.8 140.97 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" ""
+			(at 175.26 140.97 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "~"
+			(at 175.26 140.97 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Shunt for JP1 (always fit): 1-2 = 5V drive enable, 2-3 = OC (sink)"
+			(at 175.26 140.97 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER" "HCTL"
+			(at 175.26 140.97 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer_Part_Number" "HC-JP254-1-65-CL-B-G0"
+			(at 175.26 140.97 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "DIGIKEY" ""
+			(at 175.26 140.97 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" "C5380290"
+			(at 175.26 140.97 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "NOTES" "Shunt for JP1 (always fit): 1-2 = 5V drive enable, 2-3 = OC (sink). Hand-fit after assembly: no footprint, not in the CPL."
+			(at 175.26 140.97 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "manufacturer_1" "HCTL"
+			(at 175.26 140.97 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "manufacturer_part_number_1" "HC-JP254-1-65-CL-B-G0"
+			(at 175.26 140.97 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Qty Bought" ""
+			(at 175.26 140.97 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Receptical" ""
+			(at 175.26 140.97 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(instances
+			(project "MaD_Edge"
+				(path "/7e1266c3-436e-48c1-8e6f-07c0e2581bd5/3848150c-e17f-4b7c-8b45-f477f8e036d7"
+					(reference "SH1")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "Mechanical:Housing")
+		(at 190.5 140.97 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board no)
+		(dnp no)
+		(uuid "6c1113a3-9824-4f6d-84d3-a92f3b1d50bf")
+		(property "Reference" "SH2"
+			(at 195.58 140.97 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "Shunt 2.54mm"
+			(at 193.04 140.97 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" ""
+			(at 190.5 140.97 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "~"
+			(at 190.5 140.97 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Shunt for JP2 A_REF: fit only for an open-collector encoder"
+			(at 190.5 140.97 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER" "HCTL"
+			(at 190.5 140.97 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer_Part_Number" "HC-JP254-1-65-CL-B-G0"
+			(at 190.5 140.97 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "DIGIKEY" ""
+			(at 190.5 140.97 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" "C5380290"
+			(at 190.5 140.97 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "NOTES" "Shunt for JP2 A_REF: fit only for an open-collector encoder. Hand-fit after assembly: no footprint, not in the CPL."
+			(at 190.5 140.97 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "manufacturer_1" "HCTL"
+			(at 190.5 140.97 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "manufacturer_part_number_1" "HC-JP254-1-65-CL-B-G0"
+			(at 190.5 140.97 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Qty Bought" ""
+			(at 190.5 140.97 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Receptical" ""
+			(at 190.5 140.97 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(instances
+			(project "MaD_Edge"
+				(path "/7e1266c3-436e-48c1-8e6f-07c0e2581bd5/3848150c-e17f-4b7c-8b45-f477f8e036d7"
+					(reference "SH2")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "Mechanical:Housing")
+		(at 205.74 140.97 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board no)
+		(dnp no)
+		(uuid "76f8f860-d62a-43d2-969e-30974ef3fd5f")
+		(property "Reference" "SH3"
+			(at 210.82 140.97 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "Shunt 2.54mm"
+			(at 208.28 140.97 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" ""
+			(at 205.74 140.97 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "~"
+			(at 205.74 140.97 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Shunt for JP3 B_REF: fit only for an open-collector encoder"
+			(at 205.74 140.97 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER" "HCTL"
+			(at 205.74 140.97 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer_Part_Number" "HC-JP254-1-65-CL-B-G0"
+			(at 205.74 140.97 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "DIGIKEY" ""
+			(at 205.74 140.97 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" "C5380290"
+			(at 205.74 140.97 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "NOTES" "Shunt for JP3 B_REF: fit only for an open-collector encoder. Hand-fit after assembly: no footprint, not in the CPL."
+			(at 205.74 140.97 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "manufacturer_1" "HCTL"
+			(at 205.74 140.97 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "manufacturer_part_number_1" "HC-JP254-1-65-CL-B-G0"
+			(at 205.74 140.97 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Qty Bought" ""
+			(at 205.74 140.97 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Receptical" ""
+			(at 205.74 140.97 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(instances
+			(project "MaD_Edge"
+				(path "/7e1266c3-436e-48c1-8e6f-07c0e2581bd5/3848150c-e17f-4b7c-8b45-f477f8e036d7"
+					(reference "SH3")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "Mechanical:Housing")
+		(at 220.98 140.97 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board no)
+		(dnp no)
+		(uuid "7e56a334-7b1c-40ee-a6da-6c0042ec5381")
+		(property "Reference" "SH4"
+			(at 226.06 140.97 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "Shunt 2.54mm"
+			(at 223.52 140.97 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" ""
+			(at 220.98 140.97 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "~"
+			(at 220.98 140.97 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Shunt for JP6 Z_REF: fit only for an open-collector encoder"
+			(at 220.98 140.97 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER" "HCTL"
+			(at 220.98 140.97 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer_Part_Number" "HC-JP254-1-65-CL-B-G0"
+			(at 220.98 140.97 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "DIGIKEY" ""
+			(at 220.98 140.97 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" "C5380290"
+			(at 220.98 140.97 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "NOTES" "Shunt for JP6 Z_REF: fit only for an open-collector encoder. Hand-fit after assembly: no footprint, not in the CPL."
+			(at 220.98 140.97 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "manufacturer_1" "HCTL"
+			(at 220.98 140.97 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "manufacturer_part_number_1" "HC-JP254-1-65-CL-B-G0"
+			(at 220.98 140.97 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Qty Bought" ""
+			(at 220.98 140.97 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Receptical" ""
+			(at 220.98 140.97 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(instances
+			(project "MaD_Edge"
+				(path "/7e1266c3-436e-48c1-8e6f-07c0e2581bd5/3848150c-e17f-4b7c-8b45-f477f8e036d7"
+					(reference "SH4")
 					(unit 1)
 				)
 			)

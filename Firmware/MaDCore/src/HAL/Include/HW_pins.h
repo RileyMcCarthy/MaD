@@ -28,8 +28,11 @@ typedef enum
     HW_PIN_ESD_POWER = 22,
     HW_PIN_CHARGE_PUMP = 28,
 
-    HW_PIN_RPI_RX = 53,
-    HW_PIN_RPI_TX = 55,
+    // The Raspberry Pi link through isolator IC2 (Edge carrier v0.3), the
+    // debug build's MAIN channel: IC2 OUTC (pin 5) drives P30, P32 drives
+    // IC2 INA (pin 3). The P2-EC32MB brings no finger out for P40-P57.
+    HW_PIN_RPI_RX = 30,
+    HW_PIN_RPI_TX = 32,
 
     HW_PIN_MAIN_RX = 63,
     HW_PIN_MAIN_TX = 62,
