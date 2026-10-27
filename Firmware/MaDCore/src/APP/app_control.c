@@ -157,7 +157,8 @@ static app_control_fault_E app_control_private_processFaults(void)
 
     /* A stall is the encoder not following where the driver is driving it
      * -- a following error past the hard ceiling, or held in the soft band
-     * too long (see dev_servo.h). It is a mechanical fault, so unlike the
+     * too long, or too little encoder travel for the step pulses sent (see
+     * dev_servo.h). It is a mechanical fault, so unlike the
      * liveness faults above it LATCHES until the operator acknowledges it by
      * disabling motion.
      *
