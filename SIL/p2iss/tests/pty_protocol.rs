@@ -23,10 +23,10 @@ use embsim_board::{Harness, System};
 use embsim_core::virtual_clock;
 use p2iss::{HostPty, P2Iss, SerialLink};
 
-/// The MaD protocol link: RX on P53, TX on P55, 2,000,000 baud.
+/// The MaD protocol link: RX on P30, TX on P32, 2,000,000 baud.
 const PROTO: SerialLink = SerialLink {
-    tx_pin: 55,
-    rx_pin: 53,
+    tx_pin: p2core::board::PIN_PROTO_TX,
+    rx_pin: p2core::board::PIN_PROTO_RX,
     nominal_baud: 2_000_000,
 };
 
@@ -120,9 +120,9 @@ fn a_host_on_the_pty_gets_an_answer_from_the_iss() {
         .component("HOST", Box::new(host))
         .harness(
             Harness::new()
-                .connect_str("P2.P55", "HOST.RX")
+                .connect_str(&format!("P2.{}", p2iss::pin_name(PROTO.tx_pin)), "HOST.RX")
                 .expect("endpoints parse")
-                .connect_str("HOST.TX", "P2.P53")
+                .connect_str("HOST.TX", &format!("P2.{}", p2iss::pin_name(PROTO.rx_pin)))
                 .expect("endpoints parse"),
         )
         .start()

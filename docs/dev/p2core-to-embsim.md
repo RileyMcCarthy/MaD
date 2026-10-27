@@ -273,7 +273,7 @@ Gates checked 2026-09-18 on this branch:
 
 - [ ] **`p2core/src/board.rs` is titled "A MaD board".** Pins 58–63 are the P2
       boot-pin convention (flash/SD SPI, ROM serial), so the struct is really a
-      P2 reference board. Only the protocol link on 53/55 (`PIN_PROTO_TX/RX`) is
+      P2 reference board. Only the protocol link on 30/32 (`PIN_PROTO_RX/TX`) is
       MaD. Rename, and make the protocol pins a constructor parameter.
 - [ ] **`p2iss::sdimage::mad_card`** builds MaD's FAT layout (profile record and
       two directories). Keep `build`/`Dir` upstream; move `mad_card` and its unit

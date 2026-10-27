@@ -32,7 +32,9 @@
 #
 # Open, for the user: which image the machine runs. By default the app
 # flashes a release's madEdge image, the propeller2_debug build, whose
-# protocol is on P53/P55, pins the P2-EC32MB has no finger for (read:
+# protocol is on P53/P55, pins the P2-EC32MB has no finger for, in every
+# release so far (the build has it on P30/P32 since the Edge v0.3 pin
+# move) (read:
 # Software/Control/src/firmware/release.ts, pickFirmwareAsset; .github/
 # workflows/ci.yml, the release's two images). The production build is the
 # release's -release.bin, which the app flashes only as a local file.
@@ -73,8 +75,10 @@ core = "mad-p2iss"
 # the firmware off it. That build's MAIN channel receives on P63 and
 # transmits on P62 at 2 000 000 baud (Firmware/MaDCore/src/HAL/Include/
 # HW_pins.h, HW_PIN_MAIN_RX/TX; src/HAL/Config/HAL_serial_config.c, the row
-# without ENABLE_DEBUG_SERIAL). The propeller2_debug build's is P53/P55,
-# which the P2-EC32MB keeps for its PSRAMs (below), with its log on P62.
+# without ENABLE_DEBUG_SERIAL). The propeller2_debug build's is P30/P32,
+# IC2's Pi link from the Edge carrier v0.3 on; on this carrier (read:
+# mad_edge.net, nets P30 and P32) P30 reaches no part and P32 only header
+# J22, and that build's log is on P62.
 [[board.model]]
 value = "SPI Flash 16MB (128Mb)"
 kind = "w25q128jv"

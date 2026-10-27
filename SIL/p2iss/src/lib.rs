@@ -1607,8 +1607,8 @@ mod tests {
     use vibes_behaviour::{behaviour, expect, Test};
 
     const LINK: SerialLink = SerialLink {
-        tx_pin: 55,
-        rx_pin: 53,
+        tx_pin: p2core::board::PIN_PROTO_TX,
+        rx_pin: p2core::board::PIN_PROTO_RX,
         nominal_baud: 2_000_000,
     };
     /// `P_ASYNC_TX | P_OE`, and `X` for 8-bit frames of 80 clocks a bit:

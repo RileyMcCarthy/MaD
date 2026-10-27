@@ -32,9 +32,10 @@ pub const PIN_CS: u8 = 60;
 pub const PIN_CLK: u8 = 61;
 pub const PIN_TX: u8 = 62;
 pub const PIN_RX: u8 = 63;
-/// The MaD protocol link to the host (`HW_PIN_RPI_*`), 2,000,000 baud.
-pub const PIN_PROTO_TX: u8 = 55;
-pub const PIN_PROTO_RX: u8 = 53;
+/// The MaD protocol link to the host (`HW_PIN_RPI_*`, the debug build's MAIN
+/// channel), 2,000,000 baud: P32 transmits, P30 receives.
+pub const PIN_PROTO_TX: u8 = 32;
+pub const PIN_PROTO_RX: u8 = 30;
 
 /// `P_OE` in a `WRPIN` mode word: the bit that makes a smart pin drive its
 /// pad. Without it the pin is configured but still an input.

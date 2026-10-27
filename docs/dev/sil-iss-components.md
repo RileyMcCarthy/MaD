@@ -43,7 +43,7 @@ why the three maps disagreed:
 
 | Component | Transport | Status |
 |---|---|---|
-| Host protocol link (P55/P53 on `P2Iss`; P62/P63 on the project files) | UART framed on Thevenin levels, rate derived from the guest's own `WXPIN` divisor | **done** |
+| Host protocol link (P32/P30 on `P2Iss`; P62/P63 on the project files) | UART framed on Thevenin levels, rate derived from the guest's own `WXPIN` divisor | **done** |
 | Debug console (P62) | Byte-level inside `p2core::Board`, forwarded to the emulator log | **partial** — not a node |
 | DS2 piggy board (netlist) + ADS122U04 | UART on levels; analog inputs via MNA cluster solve | **done** — see F1 |
 | Load cell bridge | Two Thevenin drives into AIN0/AIN1 | **done** |
@@ -717,8 +717,10 @@ runs is open
 Its MAIN channel receives on `P63` and transmits on `P62` at 2,000,000 baud
 (`HW_pins.h`, `HAL_serial_config.c`), with the FlexC console's own smart
 pins (`HAL_SERIAL_TYPE_BUILTIN`). The debug
-build's MAIN channel, `P53`/`P55`, cannot reach the chip on the P2-EC32MB:
-the module keeps `P40`–`P57` for its PSRAMs and has no finger for them
+build's MAIN channel is `P30`/`P32`, IC2's Raspberry Pi link from the Edge
+carrier v0.3 on; the SIL's carrier (`mad_edge.net`, before v0.3) brings
+neither to a host connector (`P30` reaches no part, `P32` only header `J22`),
+and its IC2 is on `P52`–`P55`, which the P2-EC32MB keeps for its PSRAMs
 ([board design](sil-board-simulation-design.md#the-p2-edge-module-gap)).
 
 `mad-catalog/tests/mad.rs` boots the production image in `P2IssCore` off the
@@ -779,7 +781,7 @@ what the host received, and a parser started at an earlier request finds
 it again (`mad.rs`, `HostPort::answer`).
 
 `mad-emulator`, the `p2core`/`p2iss` suites and `mad-catalog/tests/boot.rs`
-keep the debug image: they put the host on the bare chip's `P53`/`P55`, or
+keep the debug image: they put the host on the bare chip's `P30`/`P32`, or
 read the log on `P62`. `boot.rs`'s console case is `ec32mb_flash_boot.rs`'s
 boot said by a project file. It passes with the production image too
 (measured, 2026-10-21): no request reaches the firmware there, and the
@@ -796,7 +798,7 @@ and misleading for looking.
 
 So the browser runs on the board's clock. `mad-emulator --chrome` puts
 embsim's `chrome-cdp` node where the PTY host sits, on the harness's host pins
-(`HOST.TX` to `P2.P53`, `P2.P55` to `HOST.RX`) with its rail wired
+(`HOST.TX` to `P2.P30`, `P2.P32` to `HOST.RX`) with its rail wired
 (`HOST.VIO` on the P2's 3.3 V, `HOST.GND` on the bench ground). The node
 launches the host's Chrome at the board's first slice and holds every page and
 dedicated worker to the board's time over DevTools, a 1 ms quantum at a time;
@@ -842,6 +844,6 @@ runs it on `mad-emulator` (`make e2e-stall`).
 | `make e2e-emulator`, `make e2e`, `make e2e-bundle` | `mad-cosim.toml`: Chrome, headless, on `J1` (USB `0403:6015`), DevTools on 9222 |
 | `make e2e-rom` | `mad-serial-boot-cosim.toml`: Chrome, headless, on `J1` (USB `0403:6015`), the mask ROM's serial boot, for FW-ISS |
 | `make e2e-motion` | `mad-ic14-fixed-cosim.toml` (#285 fixed): Chrome, headless, on `J1`, DevTools on 9222, for what the project as drawn cannot run |
-| `make e2e-stall` | `mad-emulator`: Chrome, headless, the debug image's host on `P53`/`P55` (USB `0403:6001`), for SERVO-stall alone (its jam) |
+| `make e2e-stall` | `mad-emulator`: Chrome, headless, the debug image's host on `P30`/`P32` (USB `0403:6001`), for SERVO-stall alone (its jam) |
 | `make playground-pty` | `mad.toml`: a PTY on `J1` at `/tmp/tty.iss`, for a serial console |
 | `embsim run mad.toml --pty PATH` | `mad.toml`: a PTY on `J1` (`mad-catalog/tests/pty_protocol.rs`) |
