@@ -146,7 +146,7 @@ describe('flashWithSession', () => {
       covers: 'src/firmware/flashWithSession.ts#flashWithSession',
       given: 'a flash whose port will not close afterwards',
       expect: {
-        'warning-logged': 'a port-left-open warning naming the port is logged, rather than the failure being swallowed',
+        'warning-logged': 'a port-left-open warning naming the port is logged',
       },
       why: {
         'warning-logged': 'a port this page keeps open blocks the next connect, and the log is the only place that says why',

@@ -105,7 +105,7 @@ describe('motion accuracy matcher', () => {
         'a 2 mm linear move at 5 mm/s, where 2.5 percent of travel (50 um) is smaller than 15 ms of cruise velocity (75 um)',
       expect: {
         'bound-never-tightens':
-          'the follow bound is at least 15 ms of cruise velocity (75 um), so sizing on travel never makes a short move\'s bound tighter than sizing on velocity did',
+          'the bound stays at the 75 um velocity floor; sizing on travel never makes a short move\'s bound tighter',
       },
     },
     () => {

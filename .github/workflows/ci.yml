@@ -1421,6 +1421,31 @@ jobs:
       - name: No BH number collides with the base branch's
         run: node Vibes/bin/vibes.mjs renumber --base "origin/${{ github.base_ref }}" --check
 
+  # BLOCKING. The decidable half of Vibes/bindings/CLAIMS.md over the committed
+  # ledger: names from the code, contrast words, vague claims (errors), and
+  # machinery, garden-path scenes and over-long claims (warnings, advice only).
+  # A claim's `given` and `then` are written as separate strings, so each half
+  # can pass review alone and still compose into a line that reads badly; this
+  # catches the part of that a machine can decide. Reads behaviours.jsonl and
+  # runs no suite. Words this repo genuinely uses live in vibes.lint.json,
+  # scoped by path.
+  vibes-lint:
+    name: Behaviour wording
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - run: git submodule update --init Vibes
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - name: Build Vibes
+        working-directory: Vibes
+        run: npm ci --no-audit --no-fund && npm run build
+      - name: Lint every claim in the ledger
+        run: node Vibes/bin/vibes.mjs lint
+
   ci-gate:
     name: CI Gate
     needs:
@@ -1434,6 +1459,7 @@ jobs:
       - embsim-pin-ci
       - vibes-pin-ci
       - vibes-numbers
+      - vibes-lint
       - docs-ci
       - firmware-unit-tests
       - protocol-codegen

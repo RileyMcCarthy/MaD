@@ -37,9 +37,9 @@ Each expectation is its own row in the ledger, its own `BH-` number, and its own
 line in the report:
 
 ```
-- given a pause command with a duration
-  **exactly one pause is produced** BH-88
-  **the duration is kept in milliseconds without conversion** BH-89
+- **When** a pause command with a duration
+  - exactly one pause is produced `BH-88`
+  - the duration is kept in milliseconds without conversion `BH-89`
 ```
 
 | field | what it is |
@@ -109,9 +109,9 @@ this repo. **If you have to explain a word, change the word.**
 Each field does one job. The report prints them together:
 
 ```
-- given one of the cores stops reporting that it is running
-  **the machine reports a core fault**
-  BH-352 · `src/APP/app_control.c#app_control_run`
+- **When** one of the cores stops reporting that it is running
+  - the machine reports a core fault `BH-352`
+  <sub>`src/APP/app_control.c#app_control_run`</sub>
 ```
 
 For a long time `then` was printed as the headline on its own, so it had to
@@ -128,6 +128,45 @@ an outcome when it is only a label.
 `then` still has to be specific enough that a bug makes it false, and it still
 has to carry any condition the scene does not establish. It simply must not
 repeat the scene it was handed.
+
+## The report supplies the frame — `given` finishes the sentence
+
+`given` and `then` are written as separate strings, but the renderer prints
+`**When** <given>` and nests the expectations under it, so `given` is the
+first half of a sentence the report already started. It has to name a
+**situation**, and read as one on the first pass. Each half of this one passed
+every rule above on its own:
+
+> **When** *a byte left on the load-cell ADC serial link by an abandoned
+> exchange, then a start*
+
+"A byte **left**" garden-paths as a verb — the main clause never arrives — and
+", then a start" is a bare noun with nothing happening in it. What it meant:
+
+> **When** *a start of the load-cell ADC with a leftover byte on the link from
+> an abandoned exchange*
+
+Sequence with `after`, `while`, `that begins with`; a second beat needs
+something happening in it. Watch a participle that is also a past tense right
+after a noun (`left`, `read`, `set`, `sent`, `held`, `run`) — *a waveform run
+by the driver* reads as a waveform that ran; *the driver runs a waveform* does
+not. The one reliable check is not a rule: **render it and read it** with
+`vibes preview` (below).
+
+## An expectation is an outcome, not a step
+
+*"the leftover is flushed before the configuration read-back"* is a step in a
+driver's procedure — true, checked, and no use to a reader, who learns that
+something internal happens in some order and nothing about what the machine
+does. Its sibling is the claim:
+
+| | |
+|---|---|
+| BAD | the leftover is flushed before the configuration read-back |
+| GOOD | the start completes and the converter is converting |
+
+Test it: could an operator, or anyone outside that function, tell whether this
+held? If the only way to know is to watch the code run, it is a `why` at most.
 
 ## State the rule, not the instance
 
@@ -265,10 +304,29 @@ recorded its expectations, or the report says they were deleted.
 
 A runnable suite is declared by a committed `vibes.suite.json` next to it
 (discovered via `git ls-files` — an uncommitted suite file is invisible, on
-purpose). After adding or changing behaviours:
+purpose).
+
+While writing a claim, render it — neither of these runs a suite:
 
 ```bash
-node Vibes/bin/vibes.mjs collect --write   # regenerate behaviours.jsonl
+node Vibes/bin/vibes.mjs preview --given "…" --then "…" [--then "…"] [--why "…"]   # the line the PR will show, then linted
+node Vibes/bin/vibes.mjs preview --id <id>                                         # a committed claim, as it renders
+node Vibes/bin/vibes.mjs lint [--file <test file>]                                 # the decidable half of CLAIMS.md, over the ledger
+```
+
+Read the preview aloud; a line with no main clause is a rewrite whatever the
+lint says. `lint` exits 4 on an error (names from the code, contrast words,
+vague claims); warnings (machinery in a claim, a garden-path scene, length, a
+`then` restating its scene) are advice. A word this repo genuinely uses that
+the defaults flag goes in [`vibes.lint.json`](../../vibes.lint.json), scoped
+by path with `in` and with a `why`. The blocking `Behaviour wording` job runs
+`vibes lint` over the committed ledger on every PR. In TS the test title is
+`<given> [<id>]`, so rewording a `given` changes that row's `test` too.
+
+After adding or changing behaviours:
+
+```bash
+node Vibes/bin/vibes.mjs collect --write   # regenerate behaviours.jsonl (runs every suite)
 ```
 
 and commit the ledger with your change. The `BH-n` numbers it assigns are

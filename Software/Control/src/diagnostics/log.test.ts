@@ -309,7 +309,7 @@ describe('console filter', () => {
       covers: 'src/diagnostics/log.ts#setLogFilter',
       given: 'the console filter is set to a string of commas and spaces',
       expect: {
-        'nothing-mirrors': 'no events reach the console, not even errors',
+        'nothing-mirrors': 'no event of any level reaches the console, errors included',
       },
     },
     () => {

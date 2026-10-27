@@ -134,7 +134,7 @@ describe('firmwareRelease build', () => {
       covers: 'tools/firmwareRelease.ts#firmwareRelease',
       given: 'the build-time lookup of the latest firmware release fails once, then GitHub answers',
       expect: {
-        'retried-not-cached': 'the next attempt asks GitHub again instead of reusing the failure',
+        'retried-not-cached': 'the next attempt asks GitHub again',
         'bundled-on-retry': 'the retry bundles the release description and image',
       },
       why: {

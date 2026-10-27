@@ -307,7 +307,7 @@ void test_a_stall_faults_the_machine_and_stops_it(void)
     VIBES_EXPECT_WHY("stall-faults",
                      "the machine faults and names the stall",
                      "the drive has detected this for as long as it has existed and nothing read it, so a jammed carriage was driven against its jam until somebody noticed by ear");
-    VIBES_EXPECT("motion-stops", "the machine leaves the enabled state and motion is no longer permitted");
+    VIBES_EXPECT("motion-stops", "the machine leaves the enabled state and refuses motion");
 
     control_init();
     enableMotion();
@@ -323,7 +323,7 @@ void test_a_stall_stays_reported_after_the_drive_stops_reporting_it(void)
 {
     VIBES_TEST("control.stall-latches",
                "src/APP/app_control.c#app_control_private_processFaults",
-               "a stall that has faulted the machine, and then a drive that no longer reports the stall");
+               "a stall that has faulted the machine, after which the drive stops reporting the stall");
     VIBES_EXPECT_WHY("fault-persists",
                      "the machine stays faulted on the stall",
                      "stopping the drive is what makes the stall stop being reported, so a fault recomputed from the live flag would clear itself the instant it acted, re-enable the machine, and drive into the same jam again roughly five times a second");
@@ -349,7 +349,7 @@ void test_disabling_motion_acknowledges_a_stall(void)
                "a latched stall, and an operator asking for motion off while the drive is still reporting the stall");
     VIBES_EXPECT_WHY("cleared-on-first-request",
                      "the fault clears on that request, even though the drive still reports the stall",
-                     "the request is processed before the faults are recomputed and the latch only re-arms while motion is enabled, so the stall still being reported on that tick is the residue of the one that stopped the machine rather than a new one");
+                     "the request is processed before the faults are recomputed and the latch only re-arms while motion is enabled, so the stall still being reported on that tick is the residue of the one that stopped the machine");
     VIBES_EXPECT_WHY("can-re-enable",
                      "motion can be enabled again afterwards",
                      "the operator clears the jam by hand, and a fault with no way back would leave the machine needing a power cycle to recover from a stopped carriage");
@@ -449,7 +449,7 @@ void test_run_forceGaugeUnreadyFaultsImmediately(void)
     VIBES_EXPECT_WHY("load-cell-fault-on-first-run",
                      "the machine faults on the first control update and names the load cell as the reason",
                      "the driver has already spent its retry budget by the time it reports unready, so any delay here is time spent applying force against a load cell known to be gone");
-    VIBES_EXPECT("motion-disabled", "motion is no longer enabled");
+    VIBES_EXPECT("motion-disabled", "motion is disabled");
     control_init();
     enableMotion();
 
