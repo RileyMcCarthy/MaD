@@ -24,7 +24,7 @@ Starting MaD
 
 **Boots the real image to a fully-populated machine and answers protocol
 requests.** All eight cogs run, every peripheral has its smart pins configured
-(force gauge 0/2, servo encoder 9, host protocol 53/55, SD SPI 58-61, debug
+(force gauge 0/2, servo encoder 9, host protocol 30/32, SD SPI 58-61, debug
 console 62/63), and a host request gets a structured reply:
 
 ```
@@ -68,7 +68,7 @@ shows up as a wrong rate instead of bytes that look fine:
 |-----|------|---------|---------|
 | 0/2 | Async Rx/Tx | 115,273 | 115,200 (force gauge) |
 | 9 | Quadrature | — | servo encoder |
-| 53/55 | Async Rx/Tx | 2,000,000 | 2,000,000 (host protocol) |
+| 30/32 | Async Rx/Tx | 2,000,000 | 2,000,000 (host protocol) |
 | 58/59/61 | SyncRx / SyncTx / Pulse | — | SD MISO / MOSI / clock |
 | 62/63 | Async Tx/Rx | 230,547 | 230,400 (debug console) |
 

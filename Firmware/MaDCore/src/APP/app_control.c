@@ -155,17 +155,17 @@ static app_control_fault_E app_control_private_processFaults(void)
     app_control_data.fault[APP_CONTROL_FAULT_FORCE_GAUGE_COMMUNICATION] =
         (dev_forceGauge_isReady(DEV_FORCEGAUGE_CHANNEL_MAIN) == false);
 
-    /* A stall is the driver sending step pulses the encoder does not follow
-     * -- too little net travel for the pulses over a window, travel the wrong
-     * way, or a following error held too long (see dev_servo.h). It is a
-     * mechanical fault, so unlike the
+    /* A stall is the encoder not following where the driver is driving it
+     * -- a following error past the hard ceiling, or held in the soft band
+     * too long, or too little encoder travel for the step pulses sent (see
+     * dev_servo.h). It is a mechanical fault, so unlike the
      * liveness faults above it LATCHES until the operator acknowledges it by
      * disabling motion.
      *
      * It has to. Disabling motion is exactly what clears dev_servo's stall
-     * flag -- the driver stops commanding velocity, the window closes -- so a
+     * flag -- the driver stops commanding velocity and drops its verdict -- so a
      * fault recomputed from the live flag would disable the machine, watch its
-     * own cause disappear, clear, re-enable and drive into the same jam 200 ms
+     * own cause disappear, clear, re-enable and drive into the same jam moments
      * later, indefinitely.
      *
      * Latching only while motion is ENABLED is what makes the acknowledgement

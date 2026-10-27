@@ -31,8 +31,9 @@
 use p2core::{decode, IntState, Machine, Op, PinBus};
 use vibes_behaviour::{behaviour, expect, Test};
 
-/// The pin the interrupt watches.
-const RX_PIN: u32 = 53;
+/// The pin the interrupt watches: the firmware's protocol receive pin, P30
+/// (`HW_PIN_RPI_RX`), in the low bank.
+const RX_PIN: u32 = 30;
 /// Where the ISR lives in hub, and where the interrupted code runs.
 const MAIN: u32 = 0x400;
 const ISR: u32 = 0x500;

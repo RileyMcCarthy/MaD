@@ -13,6 +13,14 @@
 /**********************************************************************
  * Constants
  **********************************************************************/
+/* The stall guard's thresholds are LENGTHS (dev_servo.h): dev_servo_init
+ * converts them to counts through the profile's encoderStepsPerMM, so they
+ * mean 2 mm, 1 mm and 1 mm on any encoder. The counts in the defaults below are the
+ * same lengths at 8192 counts/mm, used only for an unprovisioned profile. */
+#define DEV_SERVO_STALL_CEILING_UM 2000
+#define DEV_SERVO_STALL_BAND_UM 1000
+#define DEV_SERVO_STALL_TRAVEL_UM 1000
+
 /* Compile-time DEFAULTS in encoder counts (servo = 8192 counts/mm). Wiring
  * (pulse/dir/encoder channels) and control tuning (gains, stall guard, loop
  * period) are fixed here; maxVelocity/maxAccel are OVERRIDDEN per channel at
@@ -43,15 +51,25 @@ static const dev_servo_channelConfig_S dev_servo_channelConfigDefault[DEV_SERVO_
         1,                           /* kiDen */
         81920,                       /* integralLimit    — 10 mm/s of integral authority (a backstop;
                                       *   the integral is gated, see dev_servo_private_integrate) */
-        4096,                        /* stallVelocity    — 0.5 mm/s */
-        200U,                        /* stallTicks       — 200 ms judging window */
-        4,                           /* stallProgressDen — under 1/4 of the pulsed travel => stall;
-                                      *   pulsing above 0.5 mm/s for 200 ms is at least
-                                      *   819 counts, so the bar is >= 204 counts (25 um)
-                                      *   and a +-15 count buzz can never pass for motion */
-        2048,                        /* stallRunawayMove — 0.25 mm against the pulses */
-        4096,                        /* followErrorLimit — 0.5 mm */
-        500U,                        /* followErrorTicks — held for 500 ms */
+        /* Stall guard (dev_servo.h). On the SIL twin's drive (20 ms lag,
+         * shipped 50 mm/s and 600 mm/s^2 profile) a healthy carriage shows at
+         * most 0.86 mm of following error on moves and waveforms, 1.07 mm on
+         * full-speed jog reversals, and overshoots a full-speed stop by
+         * 0.34 mm. A full-speed cruise HOLDS its ramp error (0.83 mm) for as
+         * long as it lasts, since the command is clamped at maxVelocity and
+         * leaves the proportional term no headroom to close it. Placeholders
+         * on hardware until the real drive's lag is measured. */
+        16384,                       /* stallCeiling     — 2 mm at 8192 counts/mm (DEV_SERVO_STALL_CEILING_UM):
+                                      *   1.9x the worst healthy error */
+        8192,                        /* stallBand        — 1 mm at 8192 counts/mm (DEV_SERVO_STALL_BAND_UM):
+                                      *   above the 0.83 mm a cruise holds */
+        500U,                        /* stallBandTicks   — held for 500 ms; healthy excursions
+                                      *   above 1 mm last at most 231 ms */
+        8192,                        /* stallTravel      — 1 mm at 8192 counts/mm (DEV_SERVO_STALL_TRAVEL_UM):
+                                      *   pulsed travel judged at a time. On the twin's
+                                      *   drive it alone stays quiet to 30 ms of lag
+                                      *   (shipped profile), past the band's 22 ms */
+        4,                           /* stallProgressDen — the encoder must cover a quarter of it */
         false,                       /* enableActiveLow  — high enables (DMM DYN4 default) */
     },
 };
@@ -116,6 +134,13 @@ typedef struct
      * computed against a target that was superseded mid-tick — see the publish
      * guard in dev_servo_run and the note on dev_servo_atTarget. */
     uint32_t seq;
+    /* Bumped twice by dev_servo_setPosition: to odd before it writes the
+     * encoder, back to even once the setpoint is moved into the new frame. A
+     * tick that saw it odd, or saw it change, may have read the encoder in one
+     * frame and the setpoint in the other (see the frame check in
+     * dev_servo_run). `origin` is the position the last one set. */
+    uint32_t frame;
+    int32_t origin;
 } dev_servo_request_S;
 
 typedef struct
@@ -148,17 +173,17 @@ typedef struct
 
     float integral;     /* ∫err dt (counts·s) */
     uint32_t steadyUs;  /* how long the setpoint velocity has held steady */
-    float commandedVel; /* counts/s actually applied (for stall + telemetry) */
+    float commandedVel; /* counts/s actually applied (for telemetry) */
     uint32_t lastTickUs; /* HAL_time_getUs() at the previous tick (for measured dt) */
+    float countsPerPulse;   /* encoder counts one step pulse moves the carriage */
     /* Stall guard (see the notes in dev_servo.h). */
-    float countsPerPulse;   /* encoder counts one step pulse should move the carriage */
-    uint32_t emittedLast;   /* pulse engine's cumulative count at the last read */
-    uint32_t stallCounter;  /* ticks into the current window; 0 = no window open */
-    int32_t stallStartPos;  /* encoder position when the window opened */
-    float stallExpected;    /* encoder counts the pulses emitted since then should give */
-    bool stallForward;      /* direction of the command that opened the window */
-    bool stallLatched;      /* this window has judged a stall */
-    uint32_t followTicks;   /* consecutive ticks over the following-error limit */
+    uint32_t stallBandCount; /* consecutive ticks with |error| over stallBand */
+    uint32_t emittedLast;    /* pulse engine's running total at the last read */
+    float travelPulsed;      /* travel check: counts the pulses since the checkpoint
+                              *   should give, signed by direction */
+    int32_t travelLow;       /* travel check: lowest encoder reading since the checkpoint */
+    int32_t travelHigh;      /* travel check: highest encoder reading since the checkpoint */
+    bool stallLatched;       /* a stage has tripped; held until the drive is disabled */
     /* Oscillator phase as a WRAPPING accumulator: 2^32 counts to the cycle, so
      * the wrap IS the modulo and a completed cycle is just the carry. No
      * elapsed-microsecond counter means no 32-bit duration ceiling -- the old
@@ -353,82 +378,78 @@ static void dev_servo_private_advanceSetpoint(dev_servo_channelData_S *d, float 
     dev_servo_private_publishSetpoint(d);
 }
 
-/* Close any open stall window; the next qualifying command opens a fresh one. */
-static void dev_servo_private_stallReset(dev_servo_channelData_S *d)
+/* A length in microns as encoder counts at `countsPerMM`, rounded to the
+ * nearest count. */
+static int32_t dev_servo_private_countsFromUm(int32_t um, int32_t countsPerMM)
 {
-    d->stallCounter = 0U;
-    d->stallStartPos = 0;
-    d->stallExpected = 0.0f;
-    d->stallForward = true;
-    d->stallLatched = false;
+    return (int32_t)((((int64_t)um * (int64_t)countsPerMM) + 500) / 1000);
 }
 
-/* One tick of the stall guard (rules in dev_servo.h). `pos` is this tick's
- * encoder reading, `pulses` the step pulses emitted since the last tick and
- * `error` the following error. Returns the stall verdict. */
+/* Open a fresh travel-check window at encoder reading `pos`. */
+static void dev_servo_private_travelCheckpoint(dev_servo_channelData_S *d, int32_t pos)
+{
+    d->travelPulsed = 0.0f;
+    d->travelLow = pos;
+    d->travelHigh = pos;
+}
+
+/* One tick of the travel check (dev_servo.h). `pulsed` is the encoder counts
+ * the pulses emitted since the last tick should give, signed by direction.
+ * Returns true when the encoder has not covered its share of them. */
+static bool dev_servo_private_travelCheck(dev_servo_channelData_S *d,
+                                          const dev_servo_channelConfig_S *cfg,
+                                          int32_t pos, float pulsed)
+{
+    bool stalled = false;
+    d->travelPulsed += pulsed;
+    if (pos < d->travelLow) { d->travelLow = pos; }
+    if (pos > d->travelHigh) { d->travelHigh = pos; }
+    const float reach = fabsf(d->travelPulsed);
+    if (reach >= (float)cfg->stallTravel)
+    {
+        /* Progress in the pulses' direction, from the furthest point the
+         * encoder reached the other way: a lagging drive's coast through a
+         * stop or a reversal runs against the new pulses before it turns. */
+        const int32_t progress = (d->travelPulsed > 0.0f) ? (pos - d->travelLow) : (d->travelHigh - pos);
+        if (((float)progress * (float)cfg->stallProgressDen) < reach)
+        {
+            stalled = true;
+        }
+        else
+        {
+            dev_servo_private_travelCheckpoint(d, pos);
+        }
+    }
+    return stalled;
+}
+
+/* One tick of the stall guard (rules in dev_servo.h). `error` is this tick's
+ * following error, `pos` its encoder reading and `pulsed` the travel the
+ * pulses emitted since the last tick should give. Returns the stall verdict,
+ * which latches. */
 static bool dev_servo_private_stallGuard(dev_servo_channelData_S *d,
                                          const dev_servo_channelConfig_S *cfg,
-                                         int32_t pos, uint32_t pulses, float error)
+                                         float error, int32_t pos, float pulsed)
 {
-    /* Backstop first: it holds whatever the window below decides. */
-    if (fabsf(error) > (float)cfg->followErrorLimit)
+    const float magnitude = fabsf(error);
+    if (magnitude > (float)cfg->stallBand)
     {
-        if (d->followTicks < cfg->followErrorTicks)
+        if (d->stallBandCount < cfg->stallBandTicks)
         {
-            d->followTicks++;
+            d->stallBandCount++;
         }
     }
     else
     {
-        d->followTicks = 0U;
+        d->stallBandCount = 0U;
     }
-    const bool lagging = (d->followTicks >= cfg->followErrorTicks);
-
-    const float cmd = d->commandedVel;
-    const bool forward = (cmd >= 0.0f);
-    if (fabsf(cmd) <= (float)cfg->stallVelocity)
-    {
-        dev_servo_private_stallReset(d);
-        return lagging;
-    }
-    if ((d->stallCounter == 0U) || (forward != d->stallForward))
-    {
-        /* Open (or, on a reversal, reopen) the window here: travel is judged
-         * from where these pulses started, in the direction they drive. */
-        dev_servo_private_stallReset(d);
-        d->stallStartPos = pos;
-        d->stallForward = forward;
-    }
-    else
-    {
-        /* The pulses since the last tick belong to this window. On the tick
-         * that opens it they were emitted before it began, so they are not. */
-        d->stallExpected += (float)pulses * d->countsPerPulse;
-    }
-    d->stallCounter++;
-
-    /* Net travel in the pulsed direction (negative = going the wrong way). */
-    const int32_t moved = pos - d->stallStartPos;
-    const int32_t progress = forward ? moved : -moved;
-
-    if (progress < -cfg->stallRunawayMove)
+    const bool travelShort = dev_servo_private_travelCheck(d, cfg, pos, pulsed);
+    if ((magnitude > (float)cfg->stallCeiling) || (d->stallBandCount >= cfg->stallBandTicks) ||
+        travelShort)
     {
         d->stallLatched = true;
     }
-    if (d->stallCounter >= cfg->stallTicks)
-    {
-        const float needed = d->stallExpected / (float)cfg->stallProgressDen;
-        if ((float)progress < needed)
-        {
-            d->stallLatched = true;
-        }
-        if (d->stallLatched == false)
-        {
-            /* Healthy window: judge the next one from here. */
-            d->stallCounter = 0U;
-        }
-    }
-    return d->stallLatched || lagging;
+    return d->stallLatched;
 }
 
 /* One tick of the integral term; returns Ki*∫err (counts/s).
@@ -505,8 +526,9 @@ static void dev_servo_private_resync(dev_servo_channel_E ch, int32_t pos)
     d->integral = 0.0f;
     d->steadyUs = 0U;
     d->commandedVel = 0.0f;
-    dev_servo_private_stallReset(d);
-    d->followTicks = 0U;
+    d->stallBandCount = 0U;
+    dev_servo_private_travelCheckpoint(d, pos);
+    d->stallLatched = false;
 }
 
 /**********************************************************************
@@ -551,6 +573,13 @@ void dev_servo_init(int lock, int32_t maxVelocityCounts, int32_t maxAccelCounts,
         if (maxAccelCounts > 0) { dev_servo_channelConfig[ch].maxAccel = maxAccelCounts; }
         if (encoderStepsPerMM > 0)
         {
+            dev_servo_channelConfig[ch].stallCeiling =
+                dev_servo_private_countsFromUm(DEV_SERVO_STALL_CEILING_UM, encoderStepsPerMM);
+            dev_servo_channelConfig[ch].stallBand =
+                dev_servo_private_countsFromUm(DEV_SERVO_STALL_BAND_UM, encoderStepsPerMM);
+            dev_servo_channelConfig[ch].stallTravel =
+                dev_servo_private_countsFromUm(DEV_SERVO_STALL_TRAVEL_UM, encoderStepsPerMM);
+
             /* Truncated, so the deadband never exceeds DEV_SERVO_DEADBAND_NM
              * (which divides 1 mm exactly). */
             int32_t deadband = encoderStepsPerMM / (1000000 / DEV_SERVO_DEADBAND_NM);
@@ -565,6 +594,8 @@ void dev_servo_init(int lock, int32_t maxVelocityCounts, int32_t maxAccelCounts,
         d->req.target = pos;
         d->req.feedrate = dev_servo_channelConfig[ch].maxVelocity;
         d->req.targetVel = 0;
+        d->req.frame = 0U;
+        d->req.origin = pos;
         d->out.position = pos;
         d->out.velocity = 0;
         d->out.followingError = 0;
@@ -574,7 +605,6 @@ void dev_servo_init(int lock, int32_t maxVelocityCounts, int32_t maxAccelCounts,
         d->velActive = false;
         d->lastCw = true;
         d->countsPerPulse = countsPerPulse;
-        d->emittedLast = 0U;
         dev_servo_private_resync(ch, pos);
         /* The drive starts disabled, but the enable output is NOT written here:
          * init runs on the MAIN cog, and only the MOTOR cog may drive the pin
@@ -913,6 +943,7 @@ void dev_servo_run(void)
         const int32_t targetVel = d->req.targetVel;
         const bool openLoop = (mode == DEV_SERVO_MODE_POSITION) && d->req.openLoop;
         const uint32_t seq = d->req.seq;
+        const uint32_t frame = d->req.frame;
         DEV_SERVO_LOCK_REL();
 
         const int32_t pos = HAL_encoder_value(cfg->encoderChannel); /* the one source of truth */
@@ -1139,32 +1170,55 @@ void dev_servo_run(void)
         /* ---- Apply, then advance the pulse engine (drives the SIL encoder). ---- */
         d->commandedVel = cmdVel;
         dev_servo_private_applyVelocity(ch, cmdVel);
-        uint32_t pulses = 0U;
+        /* Encoder counts the pulses emitted since the last tick should give,
+         * signed by the direction they were sent in (the travel check). */
+        float pulsed = 0.0f;
         if (d->velActive)
         {
-            uint32_t emitted = 0U;
+            uint32_t emitted = 0U; /* the engine's running total since the train started */
             (void)HAL_pulseOut_run(cfg->pulseChannel, &emitted);
-            pulses = emitted - d->emittedLast; /* cumulative since start; wrap-safe */
+            const uint32_t pulses = emitted - d->emittedLast; /* wrap-safe */
             d->emittedLast = emitted;
-        }
-
-        /* ---- Stall guard: pulses sent but the encoder isn't following. ----
-         * Not with the feedback off: an encoder that does not follow, or runs
-         * backwards, is exactly what an open-loop move is used to find out, so
-         * it must not fault the machine. The window restarts when the feedback
-         * comes back. */
-        bool stalled = false;
-        if (openLoop)
-        {
-            dev_servo_private_stallReset(d);
-            d->followTicks = 0U;
-        }
-        else
-        {
-            stalled = dev_servo_private_stallGuard(d, cfg, pos, pulses, error);
+            pulsed = (float)pulses * d->countsPerPulse;
+            if (d->lastCw == false)
+            {
+                pulsed = -pulsed;
+            }
         }
 
         DEV_SERVO_LOCK_REQ_BLOCK();
+        /* The frame check. dev_servo_setPosition runs on another cog, and it
+         * moves the encoder's frame and this channel's setpoint at different
+         * moments. A tick that overlapped it may have read the encoder in one
+         * frame and the setpoint in the other, so its following error is the
+         * frame shift, not a fault. Such a tick judges no stall, and if the
+         * redefinition finished during it, the setpoint is put back into the
+         * new frame: this tick's own writes may have overwritten it. */
+        const uint32_t frameNow = d->req.frame;
+        const bool oneFrame = (frameNow == frame) && ((frame & 1U) == 0U);
+        if ((oneFrame == false) && ((frameNow & 1U) == 0U))
+        {
+            dev_servo_private_resync(ch, d->req.origin);
+        }
+        /* ---- Stall guard: the encoder isn't where the loop is driving it. ----
+         * Not with the feedback off: an encoder that does not follow, or runs
+         * backwards, is exactly what an open-loop move is used to find out, so
+         * it must not fault the machine. Its band count and travel window
+         * restart here, so the guard starts fresh when the feedback comes back. */
+        bool stalled = d->stallLatched;
+        if (openLoop)
+        {
+            d->stallBandCount = 0U;
+            dev_servo_private_travelCheckpoint(d, pos);
+        }
+        else if (oneFrame)
+        {
+            stalled = dev_servo_private_stallGuard(d, cfg, error, pos, pulsed);
+        }
+        else
+        {
+            /* a frame shift is not a fault (above) */
+        }
         d->out.position = pos;
         d->out.velocity = (int32_t)d->commandedVel;
         d->out.followingError = (int32_t)error;
@@ -1345,10 +1399,18 @@ void dev_servo_stop(dev_servo_channel_E ch)
 void dev_servo_setPosition(dev_servo_channel_E ch, int32_t counts)
 {
     if (ch >= DEV_SERVO_CHANNEL_COUNT) { return; }
+    /* Odd while the frame is being redefined (see the frame check in
+     * dev_servo_run), so that a tick reading the encoder after the write below
+     * knows its setpoint may still be in the old frame. */
+    DEV_SERVO_LOCK_REQ_BLOCK();
+    dev_servo_data.channel[ch].req.frame++;
+    DEV_SERVO_LOCK_REL();
     HAL_encoder_set(dev_servo_channelConfig[ch].encoderChannel, counts);
     DEV_SERVO_LOCK_REQ_BLOCK();
     dev_servo_data.channel[ch].req.target = counts;
+    dev_servo_data.channel[ch].req.origin = counts;
     dev_servo_private_resync(ch, counts);
+    dev_servo_data.channel[ch].req.frame++; /* even: the new frame is in place */
     /* Re-defining the coordinate frame moves the target with it; re-judge. */
     dev_servo_data.channel[ch].req.seq++;
     dev_servo_data.channel[ch].out.atTarget = false;

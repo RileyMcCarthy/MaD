@@ -23,7 +23,7 @@ Two systems run it:
   playgrounds, on headed copies (`make playground`, `playground-rom`), and
   `mad-catalog`'s tests.
 - **`mad-emulator`** (`SIL/MaDSim`): the debug image (`propeller2_debug`) on
-  the bare chip, the bench wired by hand, the host on `P53`/`P55`. It runs
+  the bare chip, the bench wired by hand, the host on `P30`/`P32`. It runs
   one scenario, SERVO-stall (`make e2e-stall`, on every PR), because the
   scenario jams the carriage and no project has a jam. It retires once one
   does (MaD #298; embsim `MIGRATING-MAD.md` step 11).
@@ -94,7 +94,7 @@ Pin numbers are the firmware's, named in `iss_description::pins` from
 
 The host end sits on the protocol nets at 2,000,000 baud 8N1: on the project,
 the carrier's debug header `J1` (`P63`/`P62`), where the machine's Prop Plug
-sits; on `mad-emulator`, the bare chip's `P53`/`P55`. It is one of two
+sits; on `mad-emulator`, the bare chip's `P30`/`P32`. It is one of two
 components:
 
 - **Chrome on the board's clock** (`chrome-cdp`: `mad-cosim.toml`'s `HOST`,
