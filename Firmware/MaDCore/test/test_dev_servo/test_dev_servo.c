@@ -2373,6 +2373,202 @@ void test_dev_servo_profile_gains_are_used(void)
                             (float)dev_servo_channelConfig[CH].kpNum / (float)dev_servo_channelConfig[CH].kpDen);
 }
 
+/**********************************************************************
+ * The integral term, and parking, on a lagging plant
+ **********************************************************************/
+
+/* The bench machine: 2400 encoder counts per mm, 5 mm/s, 50 mm/s^2, Kp 10. */
+#define BENCH_COUNTS_PER_MM 2400
+#define BENCH_MAX_VEL_COUNTS (5 * BENCH_COUNTS_PER_MM)
+#define BENCH_MAX_ACCEL_COUNTS (50 * BENCH_COUNTS_PER_MM)
+#define BENCH_ONE_MICRON_COUNTS (BENCH_COUNTS_PER_MM / 1000.0)
+
+/* A carriage with inertia, like the SIL plant: its speed follows the pulsed
+ * rate as a first-order lag of d_plantTauS, so it falls behind its trajectory
+ * while that accelerates. d_plantLoss (counts/s) is a constant load pulling it
+ * back, all the time, the way a sample pulls against the drive. */
+static double d_plantVel;
+static double d_plantTauS;
+static double d_plantLoss;
+
+static void plant_reset(double tauS, double lossCountsPerS)
+{
+    d_plantVel = 0.0;
+    d_plantTauS = tauS;
+    d_plantLoss = lossCountsPerS;
+}
+
+static void tick_with_plant(void)
+{
+    global_timeus += 1000U;
+    dev_servo_run();
+    const double dir = d_gpioActive ? -1.0 : 1.0;
+    const double pulsed = dir * (double)d_pulseRate;
+    d_plantVel += (pulsed - d_plantVel) * (SERVO_DT_S / d_plantTauS);
+    d_carriage += (d_plantVel - d_plantLoss) * SERVO_DT_S;
+    d_encoderValue = (int32_t)(d_carriage < 0.0 ? (d_carriage - 0.5) : (d_carriage + 0.5));
+}
+
+/* Gains as the machine profile states them: Kp whole, Ki in thousandths. */
+static void set_gains(int32_t kp, int32_t kiMilli)
+{
+    dev_servo_channelConfig[CH].kpNum = kp;
+    dev_servo_channelConfig[CH].kpDen = 1;
+    dev_servo_channelConfig[CH].kiNum = kiMilli;
+    dev_servo_channelConfig[CH].kiDen = 1000;
+}
+
+static void bench_init(int32_t kiMilli, double tauS, double lossCountsPerS)
+{
+    servo_init_scaled(BENCH_MAX_VEL_COUNTS, BENCH_MAX_ACCEL_COUNTS, BENCH_COUNTS_PER_MM,
+                      BENCH_COUNTS_PER_MM);
+    set_gains(10, kiMilli);
+    plant_reset(tauS, lossCountsPerS);
+    dev_servo_enable(CH, true);
+}
+
+/* The calibration's tracking move: 10 mm at 5 mm/s. Returns the overshoot past
+ * the target in counts, and where the carriage parked. */
+#define BENCH_TAU_S 0.002
+static double bench_move_overshoot(int32_t kiMilli, int32_t *parkedAt, bool *arrived)
+{
+    bench_init(kiMilli, BENCH_TAU_S, 0.0);
+    const int32_t target = 10 * BENCH_COUNTS_PER_MM;
+    dev_servo_moveTo(CH, target, 0);
+    double overshoot = 0.0;
+    int i = 0;
+    for (; (i < 20000) && !dev_servo_atTarget(CH); i++)
+    {
+        tick_with_plant();
+        if ((d_carriage - (double)target) > overshoot) { overshoot = d_carriage - (double)target; }
+    }
+    *arrived = dev_servo_atTarget(CH);
+    for (int j = 0; j < 500; j++)
+    {
+        tick_with_plant();
+        if ((d_carriage - (double)target) > overshoot) { overshoot = d_carriage - (double)target; }
+    }
+    *parkedAt = d_encoderValue;
+    return overshoot;
+}
+
+void test_the_integral_does_not_turn_ramp_lag_into_overshoot(void)
+{
+    VIBES_TEST("servo.integral-ignores-ramp-lag",
+               "src/DEV/dev_servo.c#dev_servo_private_integrate",
+               "a 2400 counts/mm machine with proportional gain 10, whose carriage lags its pulses by 4 ms, making a 10 mm move at 5 mm/s and 50 mm/s^2");
+    VIBES_EXPECT_WHY("overshoot-as-without-integral",
+                     "with integral gain 12.5 or 50 the move overshoots its target by at most 0.25 um more than with the integral off",
+                     "the carriage falls behind while its trajectory accelerates; that lag is transient, and an integral that learned it would push the carriage past the target when the move stops");
+    VIBES_EXPECT("arrives", "every move reports arrival");
+
+    int32_t parked = 0;
+    bool arrived = false;
+    const double base = bench_move_overshoot(0, &parked, &arrived);
+    TEST_ASSERT_TRUE(arrived);
+    const int32_t kis[2] = { 12500, 50000 };
+    for (unsigned k = 0U; k < 2U; k++)
+    {
+        const double os = bench_move_overshoot(kis[k], &parked, &arrived);
+        char msg[160];
+        (void)snprintf(msg, sizeof(msg),
+                       "Ki %.1f overshot %.2f um against %.2f um with Ki 0",
+                       kis[k] / 1000.0, os / BENCH_ONE_MICRON_COUNTS, base / BENCH_ONE_MICRON_COUNTS);
+        printf("  %s\n", msg);
+        TEST_ASSERT_TRUE(arrived);
+        TEST_ASSERT_TRUE_MESSAGE(os <= base + (0.25 * BENCH_ONE_MICRON_COUNTS), msg);
+    }
+}
+
+/* Mean following error (setpoint - carriage, counts) over the last `window`
+ * ticks of `ticks` ticks driven on the plant. */
+static double mean_following_error(int ticks, int window)
+{
+    double sum = 0.0;
+    for (int i = 0; i < ticks; i++)
+    {
+        tick_with_plant();
+        if (i >= (ticks - window))
+        {
+            sum += (double)dev_servo_data.channel[CH].setpointPos - d_carriage;
+        }
+    }
+    return sum / (double)window;
+}
+
+/* A load costing the carriage 0.05 mm/s of the speed it is pulsed at. */
+#define BENCH_LOAD_COUNTS_PER_S (0.05 * BENCH_COUNTS_PER_MM)
+
+void test_the_integral_nulls_a_steady_load_while_moving(void)
+{
+    VIBES_TEST("servo.integral-nulls-load-while-moving",
+               "src/DEV/dev_servo.c#dev_servo_private_integrate",
+               "a 2400 counts/mm machine with proportional gain 10, pulling at a steady 0.5 mm/s against a constant load that costs the carriage 0.05 mm/s");
+    VIBES_EXPECT_WHY("standoff-without-integral",
+                     "with the integral off the carriage trails its trajectory by the load divided by the proportional gain (5 um)",
+                     "the proportional term only pushes harder once it is behind, so it settles where its push matches the load");
+    VIBES_EXPECT("nulled-with-integral",
+                 "with integral gain 50 the carriage tracks its trajectory to within 0.25 um once the speed has held for a few seconds");
+
+    const int32_t feed = BENCH_COUNTS_PER_MM / 2;
+    bench_init(0, BENCH_TAU_S, BENCH_LOAD_COUNTS_PER_S);
+    dev_servo_moveTo(CH, 100 * BENCH_COUNTS_PER_MM, feed);
+    const double pOnly = mean_following_error(8000, 1000);
+    printf("  Ki 0: trailing %.2f um\n", pOnly / BENCH_ONE_MICRON_COUNTS);
+    TEST_ASSERT_TRUE(fabs(pOnly - (BENCH_LOAD_COUNTS_PER_S / 10.0)) <= 0.5);
+
+    bench_init(50000, BENCH_TAU_S, BENCH_LOAD_COUNTS_PER_S);
+    dev_servo_moveTo(CH, 100 * BENCH_COUNTS_PER_MM, feed);
+    const double pi = mean_following_error(8000, 1000);
+    printf("  Ki 50: trailing %.2f um\n", pi / BENCH_ONE_MICRON_COUNTS);
+    TEST_ASSERT_TRUE(fabs(pi) <= (0.25 * BENCH_ONE_MICRON_COUNTS));
+}
+
+void test_the_integral_nulls_a_steady_load_while_holding(void)
+{
+    VIBES_TEST("servo.integral-nulls-load-while-holding",
+               "src/DEV/dev_servo.c#dev_servo_private_integrate",
+               "a 2400 counts/mm machine with proportional gain 10 and integral gain 50, stopped and holding station against a constant load that pulls the carriage back at 0.05 mm/s");
+    VIBES_EXPECT("nulled", "the carriage holds its position to within 0.25 um once it has been held for a few seconds");
+
+    bench_init(50000, BENCH_TAU_S, BENCH_LOAD_COUNTS_PER_S);
+    dev_servo_stop(CH);
+    const double err = mean_following_error(6000, 1000);
+    printf("  holding: off by %.2f um\n", err / BENCH_ONE_MICRON_COUNTS);
+    TEST_ASSERT_TRUE(fabs(err) <= (0.25 * BENCH_ONE_MICRON_COUNTS));
+}
+
+void test_the_parking_deadband_is_a_micron_of_any_encoder_scale(void)
+{
+    VIBES_TEST("servo.parking-deadband-in-microns",
+               "src/DEV/dev_servo.c#dev_servo_init",
+               "machine profiles whose encoders count 8192, 2400 and 1000 steps per mm");
+    VIBES_EXPECT_WHY("whole-counts-within-a-micron",
+                     "a move counts as arrived within the most whole encoder counts that fit in 0.001 mm: 8 at 8192 per mm, 2 at 2400",
+                     "the positioning contract is a length, and the same number of counts is three times as far on a 2400 counts/mm encoder as on an 8192 one");
+    VIBES_EXPECT_WHY("two-count-floor",
+                     "an encoder too coarse to fit two counts in 0.001 mm still gets two counts",
+                     "a one-count flicker of a carriage standing still must not count as leaving the target");
+    VIBES_EXPECT("parks-within-a-micron",
+                 "on the 2400 counts/mm machine, a 10 mm move whose carriage overshoots comes to rest within 0.001 mm of its target");
+
+    servo_init_scaled(SHIPPED_MAX_VEL_COUNTS, SHIPPED_MAX_ACCEL_COUNTS, 8192, 8192);
+    TEST_ASSERT_EQUAL_INT32(8, dev_servo_channelConfig[CH].positionDeadband);
+    servo_init_scaled(SHIPPED_MAX_VEL_COUNTS, SHIPPED_MAX_ACCEL_COUNTS, 2400, 2400);
+    TEST_ASSERT_EQUAL_INT32(2, dev_servo_channelConfig[CH].positionDeadband);
+    servo_init_scaled(SHIPPED_MAX_VEL_COUNTS, SHIPPED_MAX_ACCEL_COUNTS, 1000, 1000);
+    TEST_ASSERT_EQUAL_INT32(2, dev_servo_channelConfig[CH].positionDeadband);
+
+    int32_t parked = 0;
+    bool arrived = false;
+    const double os = bench_move_overshoot(0, &parked, &arrived);
+    printf("  overshoot %.2f um, parked %d counts off\n", os / BENCH_ONE_MICRON_COUNTS,
+           (int)(parked - (10 * BENCH_COUNTS_PER_MM)));
+    TEST_ASSERT_TRUE(arrived);
+    TEST_ASSERT_TRUE_MESSAGE(os > 0.0, "the plant must overshoot for this to test parking");
+    TEST_ASSERT_INT32_WITHIN(2, 10 * BENCH_COUNTS_PER_MM, parked);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -2435,5 +2631,9 @@ int main(void)
     RUN_TEST(test_dev_servo_open_loop_moves_out_and_back_send_equal_pulses);
     RUN_TEST(test_dev_servo_leaving_open_loop_holds_where_the_encoder_is);
     RUN_TEST(test_dev_servo_a_closed_loop_move_turns_the_feedback_back_on);
+    RUN_TEST(test_the_integral_does_not_turn_ramp_lag_into_overshoot);
+    RUN_TEST(test_the_integral_nulls_a_steady_load_while_moving);
+    RUN_TEST(test_the_integral_nulls_a_steady_load_while_holding);
+    RUN_TEST(test_the_parking_deadband_is_a_micron_of_any_encoder_scale);
     return UNITY_END();
 }
