@@ -282,7 +282,14 @@ function CalibrationReport({ report }: { report: Report }) {
       </div>
       <p style={{ margin: '8px 0 0' }}>
         Sent {Math.round(ratio.pulsesSent)} pulses each way → encoder moved{' '}
-        <strong data-testid="measured-counts">{Math.round(ratio.countsMeasured)}</strong> counts{' '}
+        {ratio.countsMeasured === null ? (
+          <strong data-testid="per-direction-counts">
+            forward {Math.round(ratio.forward.counts)} · back {Math.round(ratio.reverse.counts)}
+          </strong>
+        ) : (
+          <strong data-testid="measured-counts">{Math.round(ratio.countsMeasured)}</strong>
+        )}{' '}
+        counts{' '}
         <span className="muted">
           (expected <span data-testid="expected-counts">{Math.round(ratio.countsExpected)}</span>)
         </span>

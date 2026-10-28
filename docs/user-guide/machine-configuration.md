@@ -98,8 +98,11 @@ run measured:
 > Sent 32000 pulses each way → encoder moved **11993** counts (expected 12000)
 
 The pulses are what the machine sent, and the counts are what the encoder saw
-come back (averaged over both directions). *Expected* is what your two steps/mm
-values predict. When they don't match, a **Fix** line gives the value to
+come back (averaged over both directions). If the encoder counted only one way,
+or counted the same way in both directions, an average would point at the wrong
+fault, so the line shows each direction's counts instead (for example
+"forward 2400 · back 2400"). *Expected* is what your two steps/mm values
+predict. When they don't match, a **Fix** line gives the value to
 change. One run only measures the ratio of the two values, so it gives both
 options. Trust the one you can work out from datasheets (usually the encoder:
 counts per revolution ÷ mm per revolution).
