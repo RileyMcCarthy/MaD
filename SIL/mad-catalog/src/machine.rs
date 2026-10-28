@@ -11,7 +11,7 @@
 //!
 //! | Member | What it is | Its pins, as the machine's |
 //! |---|---|---|
-//! | `DRIVE` | embsim's `StepperMotor`: `drive_steps_per_mm` ([`STEPS_PER_MM`] by default), `DIR` low forward, enable active high (energized = enabled), no load loss | `STEP`, `DIR`, `ENA`, read against `DRIVE_GND` |
+//! | `DRIVE` | embsim's `StepperMotor`: `drive_steps_per_mm` ([`STEPS_PER_MM`] by default), `DIR` low forward, enable active high (energized = enabled, the DMM DYN4 default; the profile's `servoEnableActiveLow` must match), no load loss | `STEP`, `DIR`, `ENA`, read against `DRIVE_GND` |
 //! | `READY` | the drive's ready output, held at the level the firmware reads as not ready (below) | `SRDY`, against `DRIVE_GND` |
 //! | `ENCODER` | embsim's `QuadratureEncoder`, `encoder_counts_per_mm` ([`STEPS_PER_MM`] by default), its output stage the `encoder_output` option | `ENC_A+`, `ENC_A-`, `ENC_B+`, `ENC_B-` (`rs422`) or `ENC_A+`, `ENC_B+` (`push-pull`, `npn-open-collector`), with `ENC_GND` their declared return (below) |
 //! | `UPPER`, `LOWER` | embsim's `EndSwitch`, each a normally closed contact that opens past [`TRAVEL_MM`] and below 0 mm | `UPPER_COM`, `UPPER+`; `LOWER_COM`, `LOWER+` |
@@ -405,9 +405,14 @@ fn assemble(
     hard_stop: Option<f64>,
 ) -> Result<(Assembly, MachineReport), Box<dyn std::error::Error>> {
     // The drive's own conventions: DIR high is reverse, the enable is
-    // energized = enabled, so ENA high enables (the machine's owner,
-    // 2026-10-25: the firmware drives it high to enable, through IC14's OUTC
-    // on JP1's default pads 1-2), and no load loss.
+    // energized = enabled, so ENA high enables, and no load loss. The enable
+    // is the real drive's, a DMM DYN4 (the machine's owner, 2026-10-26),
+    // whose ENA input enables the drive while energized by default and can
+    // be set active low in its parameters (reported in LinuxCNC and Mesa
+    // wiring guides for the DYN4; the DYN4 manual's parameter table is the
+    // primary source). It is not the firmware's choice: the machine profile's
+    // servoEnableActiveLow (0, the default) has to match this drive, and a
+    // drive set the other way would need both changed.
     let drive = StepperMotor::new(stepper_motor::Config {
         dir_forward_level: Level::Low,
         enable_active_low: false,

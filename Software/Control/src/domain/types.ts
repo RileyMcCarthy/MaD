@@ -86,6 +86,10 @@ export interface MachineConfiguration {
   'Servo Kp (1/s)': number;
   /** Servo loop integral gain (1/s^2); 0 switches the integral off. */
   'Servo Ki (1/s^2)': number;
+  /** Which level of the drive's enable input enables it: false = energized
+   *  (high) enables, the DMM DYN4's default; true = energized disables, as
+   *  on most stepper drivers. A property of the drive, not the board. */
+  'Drive Enable Active Low': boolean;
 }
 
 export interface FirmwareVersion {

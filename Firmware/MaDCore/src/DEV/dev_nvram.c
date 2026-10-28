@@ -346,15 +346,17 @@ void dev_nvram_private_runAction(dev_nvram_channel_t channel)
             {
                 /* the current layout */
             }
-            else if ((legacy != 0U) && (n == legacy))
+            else if ((legacy != 0U) && (n >= legacy) && (n < dev_nvram_config.channels[channel].size) &&
+                     (((n - legacy) % sizeof(int)) == 0U))
             {
                 DEBUG_WARNING("legacy record: %zu of %u bytes, the newer fields from defaults\n", n,
                               (unsigned int)dev_nvram_config.channels[channel].size);
             }
             else
             {
-                DEBUG_ERROR("unreadable record: %zu bytes (expected %u) -- using defaults\n", n,
-                            (unsigned int)dev_nvram_config.channels[channel].size);
+                DEBUG_ERROR("unreadable record: %u bytes (expected %u, or an older prefix from %u) -- using defaults\n",
+                            (unsigned int)n, (unsigned int)dev_nvram_config.channels[channel].size,
+                            (unsigned int)legacy);
                 (void)memcpy(dev_nvram_data.channels[channel].data, dev_nvram_config.channels[channel].dataDefault,
                              dev_nvram_config.channels[channel].size);
             }

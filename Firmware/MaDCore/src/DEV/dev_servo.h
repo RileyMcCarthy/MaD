@@ -238,6 +238,15 @@ typedef struct
     uint32_t stallBandTicks;  /* ... for this many consecutive ticks => stall    */
     int32_t stallTravel;      /* counts (1 mm via encoderStepsPerMM): net pulsed travel judged at a time */
     int32_t stallProgressDen; /* the encoder must cover at least 1/this of it  */
+    /* Which level of gpioEnable enables the drive. false: driven active
+     * (high) enables it, as on the DMM DYN4 by default; true: driven low
+     * enables it, for a drive whose enable input disables it while energized.
+     * The drive decides this, so it comes from the machine profile
+     * (dev_servo_setEnableActiveLow). LAST in the struct on purpose: flexcc
+     * initialises a field that follows a bool in a const table a few bytes
+     * off from where it reads it (see dev_nvram_channelConfig_t), so a bool
+     * mid-struct would shift every field after it on the P2. */
+    bool enableActiveLow;
 } dev_servo_channelConfig_S;
 
 /**********************************************************************
@@ -261,6 +270,11 @@ void dev_servo_init(int lock, int32_t maxVelocityCounts, int32_t maxAccelCounts,
  * A kp of 0 or less keeps the built-in default; a ki of 0 switches the
  * integral off. Call once after dev_servo_init, before the loop runs. */
 void dev_servo_setGains(int32_t kpMilli, int32_t kiMilli);
+/* The drive's enable polarity from the machine profile (servoEnableActiveLow):
+ * true makes a LOW enable output the enabled state. Call once after
+ * dev_servo_init, before the loop runs; the first control tick drives the
+ * output to the disabled level for this polarity. */
+void dev_servo_setEnableActiveLow(bool activeLow);
 void dev_servo_run(void); /* one control tick; call at a fixed rate from a cog */
 
 /* Request the drive enabled or disabled. The next control tick applies it:
