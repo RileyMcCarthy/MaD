@@ -160,7 +160,7 @@ fn coginit_with_a_literal_d_writes_no_register() {
     behaviour!(Test {
         id: "p2.coginit-literal-request",
         covers: Some("SIL/p2core/src/lib.rs#coginit"),
-        given: "a cog that asks to start any free cog with the request written into the instruction itself rather than a register",
+        given: "a cog that asks to start any free cog with the request written as a literal in the instruction itself",
     });
     expect!("starts", "cog 1 starts");
     expect!(
