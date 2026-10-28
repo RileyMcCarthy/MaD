@@ -257,6 +257,10 @@ typedef struct
  *   8192 counts/mm defaults. */
 void dev_servo_init(int lock, int32_t maxVelocityCounts, int32_t maxAccelCounts,
                     int32_t encoderStepsPerMM, int32_t servoStepsPerMM);
+/* The loop gains from the machine profile, in thousandths (servoKp, servoKi).
+ * A kp of 0 or less keeps the built-in default; a ki of 0 switches the
+ * integral off. Call once after dev_servo_init, before the loop runs. */
+void dev_servo_setGains(int32_t kpMilli, int32_t kiMilli);
 void dev_servo_run(void); /* one control tick; call at a fixed rate from a cog */
 
 /* Request the drive enabled or disabled. The next control tick applies it:
@@ -265,6 +269,15 @@ void dev_servo_run(void); /* one control tick; call at a fixed rate from a cog *
  * first driven (inactive) by the first control tick, not by init. */
 void dev_servo_enable(dev_servo_channel_E ch, bool enable);
 void dev_servo_moveTo(dev_servo_channel_E ch, int32_t targetCounts, int32_t feedrateCountsPerSec); /* closed-loop position at feedrate */
+/* The same move with the FEEDBACK STAGE OFF: the trapezoid is planned and fed
+ * to the drive exactly as for moveTo (in encoder counts, pulsed at the
+ * profile's servo/encoder ratio), but nothing is added from the encoder and
+ * the stall guard does not run. Arrival is the trajectory reaching its target,
+ * so the pulses sent are the target distance times that ratio whatever the
+ * encoder does. Any later command restores the feedback, restarting the
+ * setpoint from the encoder. Used to measure the drive/encoder pair (motor
+ * calibration), not to position anything. */
+void dev_servo_moveToOpenLoop(dev_servo_channel_E ch, int32_t targetCounts, int32_t feedrateCountsPerSec);
 void dev_servo_setVelocity(dev_servo_channel_E ch, int32_t velCountsPerSec);
 
 /* Oscillate about `centreCounts` for `cycles` whole cycles, then stop.

@@ -28,6 +28,7 @@ export function sampleToShared(sample: ProtoSample): SampleData {
     'Machine Force (N)': sample.machineForce,
     'Machine Position (mm)': sample.machinePosition,
     'Machine Setpoint (mm)': sample.machineSetpoint,
+    'Machine Commanded (mm)': sample.machineCommanded,
     'Sample Force (N)': sample.sampleForce,
     'Sample Position (mm)': sample.samplePosition,
   };
@@ -61,6 +62,8 @@ export function configToShared(
     'Homing Offset (mm)': config.homingOffset,
     'Jaw Offset (mm)': config.jawOffset,
     'Restricted Velocity (mm/s)': config.restrictedVelocity,
+    'Servo Kp (1/s)': config.servoKp,
+    'Servo Ki (1/s^2)': config.servoKi,
   };
 }
 
@@ -82,6 +85,8 @@ export function configFromShared(
     homingOffset: config['Homing Offset (mm)'],
     jawOffset: config['Jaw Offset (mm)'],
     restrictedVelocity: config['Restricted Velocity (mm/s)'],
+    servoKp: config['Servo Kp (1/s)'],
+    servoKi: config['Servo Ki (1/s^2)'],
   };
 }
 

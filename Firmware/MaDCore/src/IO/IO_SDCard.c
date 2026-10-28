@@ -123,10 +123,18 @@ static IO_SDCard_data_S IO_SDCard_data;
  * Private Function Prototypes
  **********************************************************************/
 static void IO_SDCard_private_processDirectRead(IO_SDCard_channel_E channel);
+static bool IO_SDCard_private_openPending(IO_SDCard_channel_E channel);
 
 /**********************************************************************
  * Private Function Definitions
  **********************************************************************/
+
+/* An open requested but not yet acted on: still waiting to be staged, or staged and waiting
+ * for INIT to move to OPEN. Call with the module lock held. */
+static bool IO_SDCard_private_openPending(IO_SDCard_channel_E channel)
+{
+    return IO_SDCARD_LOCKED_REQUEST(channel).enable || IO_SDCARD_INTERNAL_REQUEST(channel).enable;
+}
 
 static IO_SDCard_state_E IO_SDCard_getDesiredState(IO_SDCard_channel_E channel)
 {
@@ -491,8 +499,15 @@ bool IO_SDCard_close(IO_SDCard_channel_E channel)
         /* Closing while already INIT must not latch disable: INIT never consumes disable in the
          * state machine (only OPEN/ACTIVE does), so a redundant close leaves disable stuck and the
          * next WRITE session can reopen then immediately fall through ACTIVE→CLOSE with an empty
-         * queue (truncated file before new moves are queued). */
-        if (IO_SDCard_data.channelData[channel].state == IO_SDCARD_STATE_INIT)
+         * queue (truncated file before new moves are queued).
+         *
+         * But INIT with an open still PENDING is not idle: it is a session that has not started
+         * yet, and its close must be kept. open+push+close issued back to back -- the profile
+         * save does exactly that -- used to land here with the LOGGER cog not yet having taken
+         * the open, so the close was dropped: the file was opened (truncated), never written
+         * out or closed, and every profile save on the P2 left an empty profile.bin. */
+        if ((IO_SDCard_data.channelData[channel].state == IO_SDCARD_STATE_INIT) &&
+            (IO_SDCard_private_openPending(channel) == false))
         {
             IO_SDCARD_LOCKED_REQUEST(channel).disable = false;
             IO_SDCARD_INTERNAL_REQUEST(channel).disable = false;
@@ -513,7 +528,13 @@ bool IO_SDCard_isClosed(IO_SDCard_channel_E channel)
     bool closed = false;
     if (channel < IO_SDCARD_CHANNEL_COUNT)
     {
-        closed = (IO_SDCard_data.channelData[channel].state == IO_SDCARD_STATE_INIT);
+        /* Closed means the session is OVER: a channel still in INIT with its open not yet taken
+         * by the LOGGER cog has not started, and reporting it closed told the profile save its
+         * data was on the card before the file had even been opened. */
+        IO_SDCARD_LOCK_REQ_BLOCK();
+        closed = (IO_SDCard_data.channelData[channel].state == IO_SDCARD_STATE_INIT) &&
+                 (IO_SDCard_private_openPending(channel) == false);
+        IO_SDCARD_LOCK_REL();
     }
     return closed;
 }

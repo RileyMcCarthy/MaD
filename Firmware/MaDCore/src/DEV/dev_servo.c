@@ -122,6 +122,10 @@ typedef struct
     int32_t target;    /* counts (POSITION mode) */
     int32_t feedrate;  /* counts/s cruise speed (POSITION mode), 1..maxVelocity */
     int32_t targetVel; /* counts/s (VELOCITY mode) */
+    /* POSITION mode with the feedback stage off (dev_servo_moveToOpenLoop):
+     * the trajectory is fed straight to the drive and the encoder is only
+     * watched. Cleared by every other command. */
+    bool openLoop;
     /* OSCILLATE mode */
     dev_servo_waveform_S wave;
     /* Bumped by every command that changes what "at target" means. dev_servo_run
@@ -196,6 +200,7 @@ typedef struct
     float waveRampDown;  /* TRIANGLE only: ramp share of the down traverse */
     float waveRampUp;    /* TRIANGLE only: ramp share of the up traverse   */
     uint8_t waveSegment; /* dev_servo_waveSegment_E */
+    bool wasOpenLoop; /* the previous tick ran with the feedback off */
     uint8_t enaLevel; /* dev_servo_enaLevel_E: last level driven on the enable output */
     bool velActive; /* a velocity pulse train is currently running */
     bool lastCw;    /* direction of the running train (latched at start) */
@@ -933,6 +938,7 @@ void dev_servo_run(void)
         const int32_t target = d->req.target;
         const int32_t feedrate = d->req.feedrate;
         const int32_t targetVel = d->req.targetVel;
+        const bool openLoop = (mode == DEV_SERVO_MODE_POSITION) && d->req.openLoop;
         const uint32_t seq = d->req.seq;
         const uint32_t frame = d->req.frame;
         DEV_SERVO_LOCK_REL();
@@ -967,8 +973,20 @@ void dev_servo_run(void)
             d->out.stalled = false;
             d->out.ready = true; /* disabled but alive — the loop is still ticking */
             DEV_SERVO_LOCK_REL();
+            d->wasOpenLoop = false;
             continue;
         }
+
+        if (d->wasOpenLoop && (openLoop == false))
+        {
+            /* Leaving an open-loop move. Its trajectory counted PULSES, and
+             * where the encoder ended up is the only position the closed loop
+             * may trust, so the setpoint restarts there -- otherwise the first
+             * closed-loop tick would drag the carriage back by however far the
+             * pulses and the encoder disagreed. */
+            dev_servo_private_resync(ch, pos);
+        }
+        d->wasOpenLoop = openLoop;
 
         /* Enable the drive before this tick can start a pulse train. */
         dev_servo_private_applyEnable(ch, true);
@@ -1060,7 +1078,10 @@ void dev_servo_run(void)
                  (d->waveSegment == (uint8_t)DEV_SERVO_WAVE_APPROACH))
                     ? cfg->waveformStartTolerance
                     : cfg->positionDeadband;
-            if ((dev_servo_private_iabs(profileTarget - pos) <= arriveWithin) &&
+            /* Open loop has no encoder truth to arrive by: it has arrived when
+             * its own trajectory has. */
+            const int32_t arriveFrom = openLoop ? d->setpointCounts : pos;
+            if ((dev_servo_private_iabs(profileTarget - arriveFrom) <= arriveWithin) &&
                 (fabsf(d->setpointVel) < 1.0f))
             {
                 atTarget = true; /* encoder is on target and the profile has wound down */
@@ -1106,10 +1127,21 @@ void dev_servo_run(void)
         const float kp = (float)cfg->kpNum / (float)cfg->kpDen;
 
         const bool steady = (fabsf(d->setpointVel - spVelBefore) <= DEV_SERVO_STEADY_DV);
-        const float iTerm =
-            dev_servo_private_integrate(d, cfg, error, feedVel, kp, steady, elapsedUs, dt);
+        /* Open loop learns nothing: the feedback is off, so its error is the
+         * pulses and the encoder disagreeing, not a load to hold against. The
+         * steady clock restarts too, so closed loop settles before it learns. */
+        float iTerm = 0.0f;
+        if (openLoop == false)
+        {
+            iTerm = dev_servo_private_integrate(d, cfg, error, feedVel, kp, steady, elapsedUs, dt);
+        }
+        else
+        {
+            d->steadyUs = 0U;
+        }
 
-        float cmdVel = feedVel + (kp * error) + iTerm;
+        /* Open loop: the trajectory alone drives the pulses. */
+        float cmdVel = openLoop ? feedVel : (feedVel + (kp * error) + iTerm);
         if (cmdVel > maxVel) { cmdVel = maxVel; }
         if (cmdVel < -maxVel) { cmdVel = -maxVel; }
 
@@ -1165,9 +1197,25 @@ void dev_servo_run(void)
         {
             dev_servo_private_resync(ch, d->req.origin);
         }
-        /* ---- Stall guard: the encoder isn't where the loop is driving it. ---- */
-        const bool stalled =
-            oneFrame ? dev_servo_private_stallGuard(d, cfg, error, pos, pulsed) : d->stallLatched;
+        /* ---- Stall guard: the encoder isn't where the loop is driving it. ----
+         * Not with the feedback off: an encoder that does not follow, or runs
+         * backwards, is exactly what an open-loop move is used to find out, so
+         * it must not fault the machine. Its band count and travel window
+         * restart here, so the guard starts fresh when the feedback comes back. */
+        bool stalled = d->stallLatched;
+        if (openLoop)
+        {
+            d->stallBandCount = 0U;
+            dev_servo_private_travelCheckpoint(d, pos);
+        }
+        else if (oneFrame)
+        {
+            stalled = dev_servo_private_stallGuard(d, cfg, error, pos, pulsed);
+        }
+        else
+        {
+            /* a frame shift is not a fault (above) */
+        }
         d->out.position = pos;
         d->out.velocity = (int32_t)d->commandedVel;
         d->out.followingError = (int32_t)error;
@@ -1181,6 +1229,23 @@ void dev_servo_run(void)
     }
 }
 
+void dev_servo_setGains(int32_t kpMilli, int32_t kiMilli)
+{
+    for (dev_servo_channel_E ch = (dev_servo_channel_E)0; ch < DEV_SERVO_CHANNEL_COUNT; ch++)
+    {
+        if (kpMilli > 0)
+        {
+            dev_servo_channelConfig[ch].kpNum = kpMilli;
+            dev_servo_channelConfig[ch].kpDen = 1000;
+        }
+        if (kiMilli >= 0)
+        {
+            dev_servo_channelConfig[ch].kiNum = kiMilli;
+            dev_servo_channelConfig[ch].kiDen = 1000;
+        }
+    }
+}
+
 void dev_servo_enable(dev_servo_channel_E ch, bool enable)
 {
     if (ch >= DEV_SERVO_CHANNEL_COUNT) { return; }
@@ -1189,7 +1254,11 @@ void dev_servo_enable(dev_servo_channel_E ch, bool enable)
     DEV_SERVO_LOCK_REL();
 }
 
-void dev_servo_moveTo(dev_servo_channel_E ch, int32_t targetCounts, int32_t feedrateCountsPerSec)
+/* Both position moves, in one lock: a move and its feedback mode must land
+ * together, or the control tick in between would run the new target with the
+ * old mode. */
+static void dev_servo_private_move(dev_servo_channel_E ch, int32_t targetCounts, int32_t feedrateCountsPerSec,
+                                   bool openLoop)
 {
     if (ch >= DEV_SERVO_CHANNEL_COUNT) { return; }
     const int32_t maxVel = dev_servo_channelConfig[ch].maxVelocity;
@@ -1199,6 +1268,7 @@ void dev_servo_moveTo(dev_servo_channel_E ch, int32_t targetCounts, int32_t feed
     }
     DEV_SERVO_LOCK_REQ_BLOCK();
     dev_servo_data.channel[ch].req.mode = DEV_SERVO_MODE_POSITION;
+    dev_servo_data.channel[ch].req.openLoop = openLoop;
     dev_servo_data.channel[ch].req.target = targetCounts;
     dev_servo_data.channel[ch].req.feedrate = feedrateCountsPerSec;
     /* A fresh target invalidates the previous verdict: the caller must not see
@@ -1207,6 +1277,16 @@ void dev_servo_moveTo(dev_servo_channel_E ch, int32_t targetCounts, int32_t feed
     dev_servo_data.channel[ch].req.seq++;
     dev_servo_data.channel[ch].out.atTarget = false;
     DEV_SERVO_LOCK_REL();
+}
+
+void dev_servo_moveTo(dev_servo_channel_E ch, int32_t targetCounts, int32_t feedrateCountsPerSec)
+{
+    dev_servo_private_move(ch, targetCounts, feedrateCountsPerSec, false);
+}
+
+void dev_servo_moveToOpenLoop(dev_servo_channel_E ch, int32_t targetCounts, int32_t feedrateCountsPerSec)
+{
+    dev_servo_private_move(ch, targetCounts, feedrateCountsPerSec, true);
 }
 
 void dev_servo_setVelocity(dev_servo_channel_E ch, int32_t velCountsPerSec)

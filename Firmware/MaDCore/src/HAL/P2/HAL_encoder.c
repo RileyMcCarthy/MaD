@@ -15,6 +15,14 @@
 /**********************************************************************
  * Constants
  **********************************************************************/
+/* A and B go through the pin's FILT1 input filter (at reset: three equal
+ * samples, one every 32 clocks, so a level must hold ~0.6 us at 160 MHz).
+ * The bench encoder is open collector on pull-ups, and on the P2-EVAL about
+ * one edge in five carried a glitch; unfiltered, the decoder miscounted some
+ * of them and the count wandered by ~10 counts per 24000. Filtered, it reads
+ * the same to the count run after run. Real edges are far slower than the
+ * filter: 50 mm/s at 8192 counts/mm is ~2.4 us between edges per channel. */
+#define HAL_ENCODER_INPUT_FILTER P_FILT1_AB
 
 /*********************************************************************
  * Macros
@@ -86,7 +94,7 @@ void HAL_encoder_start(HAL_encoder_channel_E channel)
     
     // Configure smart pin for quadrature mode
     // P_QUADRATURE mode with pin difference encoded in bits 24-26
-    uint32_t pin_mode = P_QUADRATURE | ((dif & 0x7) << 24);
+    uint32_t pin_mode = P_QUADRATURE | HAL_ENCODER_INPUT_FILTER | ((dif & 0x7) << 24);
     _pinstart(config->pinA, pin_mode, 0, 0);
     
     // Set initial value
@@ -143,7 +151,7 @@ void HAL_encoder_set(HAL_encoder_channel_E channel, int32_t value)
     
     // Restart the pin
     int32_t dif = HAL_encoder_channelData[channel].pinB - HAL_encoder_channelData[channel].pinA;
-    uint32_t pin_mode = P_QUADRATURE | ((dif & 0x7) << 24);
+    uint32_t pin_mode = P_QUADRATURE | HAL_ENCODER_INPUT_FILTER | ((dif & 0x7) << 24);
     _pinstart(HAL_encoder_channelData[channel].pinA, pin_mode, 0, 0);
     
     // Set the offset to achieve the desired preset value
