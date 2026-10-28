@@ -8,6 +8,7 @@ extern void test_dev_nvram_loadDefaultMachineProfile(void);
 extern void test_dev_nvram_saveMachineProfile(void);
 extern void test_dev_nvram_loadMachineProfile(void);
 extern void test_dev_nvram_loadsAProfileSavedBeforeTheServoGains(void);
+extern void test_dev_nvram_loadsAProfileSavedBeforeTheEnablePolarity(void);
 extern void test_dev_nvram_ignoresAnIncompatibleOlderProfile(void);
 extern void test_watchdog(void);
 extern void test_dev_nvram_refusesOutOfRangeChannel(void);
@@ -72,6 +73,7 @@ void process()
     RUN_TEST(test_dev_nvram_saveMachineProfile);
     RUN_TEST(test_dev_nvram_loadMachineProfile);
     RUN_TEST(test_dev_nvram_loadsAProfileSavedBeforeTheServoGains);
+    RUN_TEST(test_dev_nvram_loadsAProfileSavedBeforeTheEnablePolarity);
     RUN_TEST(test_dev_nvram_ignoresAnIncompatibleOlderProfile);
     RUN_TEST(test_dev_nvram_refusesOutOfRangeChannel);
     RUN_TEST(test_watchdog);

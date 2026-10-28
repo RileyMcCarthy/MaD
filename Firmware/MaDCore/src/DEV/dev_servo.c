@@ -70,6 +70,7 @@ static const dev_servo_channelConfig_S dev_servo_channelConfigDefault[DEV_SERVO_
                                       *   drive it alone stays quiet to 30 ms of lag
                                       *   (shipped profile), past the band's 22 ms */
         4,                           /* stallProgressDen — the encoder must cover a quarter of it */
+        false,                       /* enableActiveLow  — high enables (DMM DYN4 default) */
     },
 };
 
@@ -278,7 +279,9 @@ static void dev_servo_private_applyEnable(dev_servo_channel_E ch, bool enabled)
     const uint8_t level = enabled ? (uint8_t)DEV_SERVO_ENA_ACTIVE : (uint8_t)DEV_SERVO_ENA_INACTIVE;
     if (d->enaLevel != level)
     {
-        HAL_GPIO_setActive(dev_servo_channelConfig[ch].gpioEnable, enabled);
+        /* A drive enabled by a low input sees the opposite level. */
+        HAL_GPIO_setActive(dev_servo_channelConfig[ch].gpioEnable,
+                           enabled != dev_servo_channelConfig[ch].enableActiveLow);
         d->enaLevel = level;
     }
 }
@@ -1243,6 +1246,14 @@ void dev_servo_setGains(int32_t kpMilli, int32_t kiMilli)
             dev_servo_channelConfig[ch].kiNum = kiMilli;
             dev_servo_channelConfig[ch].kiDen = 1000;
         }
+    }
+}
+
+void dev_servo_setEnableActiveLow(bool activeLow)
+{
+    for (dev_servo_channel_E ch = (dev_servo_channel_E)0; ch < DEV_SERVO_CHANNEL_COUNT; ch++)
+    {
+        dev_servo_channelConfig[ch].enableActiveLow = activeLow;
     }
 }
 

@@ -74,6 +74,7 @@ DEV_COGMANAGER_CHANNEL_CREATE_INIT(MOTOR, 4096)
     dev_servo_init(lock, maxVelocityCounts, maxAccelCounts,
                    machineProfile.encoderStepsPerMM, machineProfile.servoStepsPerMM);
     dev_servo_setGains(machineProfile.servoKp, machineProfile.servoKi);
+    dev_servo_setEnableActiveLow(machineProfile.servoEnableActiveLow != 0);
 }
 
 DEV_COGMANAGER_CHANNEL_CREATE_RUN(MOTOR)
