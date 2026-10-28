@@ -591,7 +591,7 @@ describe('recentActions', () => {
         'newest-thirty': 'only the newest 30 steps are listed, oldest first',
         'earlier-counted': 'a first line says how many earlier steps are in the attached log',
       },
-      why: { 'earlier-counted': 'a reader must know the recipe is cut, not that the session began there' },
+      why: { 'earlier-counted': 'a reader must know the recipe starts part-way through the session' },
     },
     () => {
       const t = Date.UTC(2026, 0, 1, 12, 0, 0);

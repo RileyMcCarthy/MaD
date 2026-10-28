@@ -1831,10 +1831,10 @@ void test_oscillate_returns_to_its_centre_after_whole_cycles(void)
 {
     VIBES_TEST("servo.oscillate-no-drift",
                "src/DEV/dev_servo.c#dev_servo_run",
-               "a waveform run by the driver instead of streamed as velocity");
+               "the driver runs a waveform for a whole number of cycles");
     VIBES_EXPECT_WHY("ends-where-it-started",
                      "the carriage ends a whole number of cycles back at its centre",
-                     "the setpoint is evaluated from phase rather than integrated from a rate, so there is no accumulator that can fall behind and stay behind");
+                     "the setpoint is evaluated from phase, with no integrated rate, so there is no accumulator that can fall behind and stay behind");
     VIBES_EXPECT_WHY("residual-does-not-grow-with-cycles",
                      "running four times as many cycles leaves exactly the same residual as one",
                      "drift and a settling offset both look like a small error at the end of one run; only running different cycle counts separates them, and an evaluated setpoint must show no per-cycle component at all");
@@ -1922,8 +1922,8 @@ void test_an_infeasible_waveform_is_rejected_not_approximated(void)
                "src/DEV/dev_servo.c#dev_servo_startWaveform",
                "a waveform whose peak acceleration exceeds the machine");
     VIBES_EXPECT_WHY("refused",
-                     "the driver refuses the move instead of running a smaller one",
-                     "running whatever the limiter allows yields a specimen that never saw the loading the report claims, which on a fatigue test is a wrong result rather than a slow one");
+                     "the driver refuses the move outright",
+                     "running whatever the limiter allows yields a specimen that never saw the loading the report claims, which on a fatigue test is a wrong result");
 
     servo_init();
     /* maxAccel 500000 counts/s^2: omega^2*A at 10 Hz and 10000 counts is
@@ -2112,7 +2112,7 @@ void test_the_phase_accumulator_loses_nothing_over_whole_cycles(void)
                      "computing the step as (uint32)(freqHz*dt*2^32) discards a fraction of a phase unit every tick, always in the same direction, which is invisible over a few seconds and is 1.9 um of position error after an hour — a fatigue run is precisely the case that suffers and precisely the case a short test cannot see");
     VIBES_EXPECT_WHY("period-exact-to-within-a-tick",
                      "the cycles occupy the requested duration to better than one control tick",
-                     "a cycle cannot end between ticks, so one tick is the floor; anything worse is the generator's own frequency error rather than sampling");
+                     "a cycle cannot end between ticks, so one tick is the floor; anything worse is the generator's own frequency error");
 
     /* Frequencies whose period is a whole number of 1 ms ticks, so the ideal
      * duration is exactly representable and any error is the accumulator's. */
@@ -2414,7 +2414,7 @@ void test_a_move_does_not_run_ahead_of_its_own_trajectory(void)
                      "a point-to-point move that arrives at the right place can still have travelled a different path to get there, and on a tensile test the path IS the loading history");
     VIBES_EXPECT_WHY("offset-does-not-scale-with-speed",
                      "the offset at 25 mm/s is the same as at 5 mm/s",
-                     "commanding the END-of-interval velocity rather than the interval average puts the machine exactly one control tick of travel ahead of its trajectory — an error invisible at low speed and proportional to it, which is the signature this check exists to catch");
+                     "each interval commands its average velocity; commanding the velocity at the END of the interval would put the machine exactly one control tick of travel ahead of its trajectory — an error invisible at low speed and proportional to it, which is the signature this check exists to catch");
 
     const int32_t mv = dev_servo_channelConfig[CH].maxVelocity;
     const int32_t feeds[3] = { mv / 10, mv / 4, mv / 2 };
@@ -2478,7 +2478,7 @@ void test_a_hold_at_one_peak_only(void)
                      "the machine does not move while a hold is commanded",
                      "a hold that drifts is a slow ramp, and the specimen sees a different load history than the report claims");
     VIBES_EXPECT_WHY("period-is-unchanged",
-                     "the cycle still takes 1/f — the hold takes its time from the traverses, not from the period",
+                     "the cycle still takes 1/f, and the hold's time comes out of the traverses",
                      "if dwell extended the period, adding a hold would silently change the frequency of a fatigue test");
 
     /* 0.5 Hz (2000 ticks/cycle), 0.4 s held at the top, nothing at the bottom. */
@@ -2527,7 +2527,7 @@ void test_a_cycle_whose_holds_leave_no_time_to_move_is_refused(void)
                "src/DEV/dev_servo.c#dev_servo_private_planWaveform",
                "holds that together ask for more than the whole period");
     VIBES_EXPECT_WHY("refused",
-                     "the driver refuses the cycle rather than shortening the holds to fit",
+                     "the driver refuses the cycle outright",
                      "silently trimming a hold gives a specimen a different dwell than the report claims, and dwell is the variable the test exists to study");
 
     servo_init();
@@ -2879,6 +2879,146 @@ void test_waveforms_track_the_requested_cycle_to_one_micron_across_the_envelope(
     }
 }
 
+/* ---- Open-loop position moves (G124, motor calibration) ---- */
+
+/* Run the loop with the encoder frozen, summing the pulses the drive was asked
+ * for (rate x tick). Returns ticks until arrival, or -1. */
+static int open_loop_run(int maxTicks, double *pulses, uint32_t *peakRate, uint32_t *firstRate)
+{
+    *pulses = 0.0;
+    *peakRate = 0U;
+    *firstRate = 0U;
+    for (int i = 0; i < maxTicks; i++)
+    {
+        tick();
+        if ((i == 0) || (*firstRate == 0U)) { *firstRate = d_pulseRate; }
+        if (d_pulseRate > *peakRate) { *peakRate = d_pulseRate; }
+        *pulses += (double)d_pulseRate * SERVO_DT_S;
+        if (dev_servo_atTarget(CH)) { return i + 1; }
+    }
+    return -1;
+}
+
+void test_dev_servo_open_loop_move_ignores_the_encoder(void)
+{
+    VIBES_TEST("servo.open-loop-move",
+               "src/DEV/dev_servo.c#dev_servo_moveToOpenLoop",
+               "an enabled drive given a one-millimetre open-loop move at one millimetre a second, with the encoder never moving");
+    VIBES_EXPECT_WHY("arrives-on-trajectory",
+                     "the move arrives when its own trajectory does, in a little over a second",
+                     "with the feedback off there is no encoder truth to arrive by");
+    VIBES_EXPECT("pulses-match-distance", "the pulses sent add up to the distance, to within 0.2 percent");
+    VIBES_EXPECT("rate-capped", "the pulse rate never exceeds the requested feedrate, so nothing is added to chase the encoder");
+    VIBES_EXPECT("ramped", "the pulse train starts below the feedrate and ramps up, as a closed-loop move does");
+    VIBES_EXPECT("no-stall", "no stall is reported");
+    servo_init_envelope(SHIPPED_MAX_VEL_COUNTS, 81920); /* 10 mm/s^2: a ramp long enough to see */
+    dev_servo_enable(CH, true);
+    tick();
+    dev_servo_moveToOpenLoop(CH, 8192, 8192);
+    double pulses = 0.0;
+    uint32_t peak = 0U;
+    uint32_t first = 0U;
+    const int ticks = open_loop_run(3000, &pulses, &peak, &first);
+    TEST_ASSERT_TRUE(ticks > 1000);
+    TEST_ASSERT_TRUE(ticks < 1300);
+    TEST_ASSERT_TRUE(fabs(pulses - 8192.0) <= 0.002 * 8192.0);
+    TEST_ASSERT_TRUE(peak <= 8192U);
+    TEST_ASSERT_TRUE(first < 8192U);
+    TEST_ASSERT_FALSE(dev_servo_isStalled(CH));
+}
+
+void test_dev_servo_open_loop_moves_out_and_back_send_equal_pulses(void)
+{
+    VIBES_TEST("servo.open-loop-out-and-back",
+               "src/DEV/dev_servo.c#dev_servo_moveToOpenLoop",
+               "an open-loop move out one millimetre and back to where it was commanded from, with the encoder frozen");
+    VIBES_EXPECT("back-equals-out", "the pulses sent back equal the pulses sent out");
+    VIBES_EXPECT("back-reverses", "the drive is driven the other way on the way back");
+    servo_init();
+    dev_servo_enable(CH, true);
+    tick();
+    dev_servo_moveToOpenLoop(CH, 8192, 8192);
+    double out = 0.0;
+    uint32_t peak = 0U;
+    uint32_t first = 0U;
+    TEST_ASSERT_TRUE(open_loop_run(3000, &out, &peak, &first) > 0);
+    const bool outActive = d_gpioActive;
+    dev_servo_moveToOpenLoop(CH, 0, 8192);
+    double back = 0.0;
+    TEST_ASSERT_TRUE(open_loop_run(3000, &back, &peak, &first) > 0);
+    TEST_ASSERT_TRUE(fabs(back - out) <= 0.002 * out);
+    TEST_ASSERT_TRUE(d_gpioActive != outActive);
+}
+
+void test_dev_servo_leaving_open_loop_holds_where_the_encoder_is(void)
+{
+    VIBES_TEST("servo.open-loop-hands-back-in-place",
+               "src/DEV/dev_servo.c#dev_servo_run",
+               "an open-loop move commanded one millimetre while the encoder moved only a third of that, followed by a stop");
+    VIBES_EXPECT_WHY("no-pull-back",
+                     "the drive holds where the encoder now is and sends no pulses",
+                     "the closed loop must not drag the carriage toward where the open-loop pulses said it went");
+    servo_init();
+    dev_servo_enable(CH, true);
+    tick();
+    dev_servo_moveToOpenLoop(CH, 8192, 8192);
+    double pulses = 0.0;
+    uint32_t peak = 0U;
+    uint32_t first = 0U;
+    TEST_ASSERT_TRUE(open_loop_run(3000, &pulses, &peak, &first) > 0);
+    d_encoderValue = 2731;
+    d_carriage = 2731.0;
+    dev_servo_stop(CH);
+    for (int i = 0; i < 50; i++)
+    {
+        tick();
+    }
+    TEST_ASSERT_EQUAL_INT32(0, dev_servo_getVelocity(CH));
+    TEST_ASSERT_EQUAL_UINT32(0U, d_pulseRate);
+    TEST_ASSERT_INT32_WITHIN(1, 2731, dev_servo_getSetpoint(CH));
+}
+
+void test_dev_servo_a_closed_loop_move_turns_the_feedback_back_on(void)
+{
+    VIBES_TEST("servo.closed-loop-after-open-loop",
+               "src/DEV/dev_servo.c#dev_servo_moveTo",
+               "an open-loop move, then an ordinary move, with the encoder frozen");
+    VIBES_EXPECT_WHY("stall-guard-back",
+                     "the ordinary move reports a stall when the encoder does not follow it",
+                     "only the open-loop move switches the feedback and its stall guard off");
+    servo_init();
+    dev_servo_enable(CH, true);
+    tick();
+    dev_servo_moveToOpenLoop(CH, 8192, 8192);
+    double pulses = 0.0;
+    uint32_t peak = 0U;
+    uint32_t first = 0U;
+    TEST_ASSERT_TRUE(open_loop_run(3000, &pulses, &peak, &first) > 0);
+    dev_servo_moveTo(CH, 40960, 40960);
+    for (int i = 0; i < 400; i++)
+    {
+        tick();
+    }
+    TEST_ASSERT_TRUE(dev_servo_isStalled(CH));
+}
+
+void test_dev_servo_profile_gains_are_used(void)
+{
+    VIBES_TEST("servo.profile-gains",
+               "src/DEV/dev_servo.c#dev_servo_setGains",
+               "servo gains of 4 per second and 2 per second squared given from the machine profile");
+    VIBES_EXPECT("gains-applied", "the loop runs with those gains");
+    VIBES_EXPECT("zero-keeps-default", "a proportional gain of zero leaves the built-in gain in place");
+    servo_init();
+    dev_servo_setGains(4000, 2000);
+    TEST_ASSERT_EQUAL_FLOAT(4.0f, (float)dev_servo_channelConfig[CH].kpNum / (float)dev_servo_channelConfig[CH].kpDen);
+    TEST_ASSERT_EQUAL_FLOAT(2.0f, (float)dev_servo_channelConfig[CH].kiNum / (float)dev_servo_channelConfig[CH].kiDen);
+    servo_init();
+    dev_servo_setGains(0, 0);
+    TEST_ASSERT_EQUAL_FLOAT((float)dev_servo_channelConfigDefault[CH].kpNum / (float)dev_servo_channelConfigDefault[CH].kpDen,
+                            (float)dev_servo_channelConfig[CH].kpNum / (float)dev_servo_channelConfig[CH].kpDen);
+}
+
 /**********************************************************************
  * The integral term, and parking, on a lagging plant
  **********************************************************************/
@@ -3150,6 +3290,11 @@ int main(void)
     RUN_TEST(test_a_cycle_whose_holds_leave_no_time_to_move_is_refused);
     RUN_TEST(test_position_moves_track_the_commanded_trapezoid_to_one_micron);
     RUN_TEST(test_waveforms_track_the_requested_cycle_to_one_micron_across_the_envelope);
+    RUN_TEST(test_dev_servo_open_loop_move_ignores_the_encoder);
+    RUN_TEST(test_dev_servo_profile_gains_are_used);
+    RUN_TEST(test_dev_servo_open_loop_moves_out_and_back_send_equal_pulses);
+    RUN_TEST(test_dev_servo_leaving_open_loop_holds_where_the_encoder_is);
+    RUN_TEST(test_dev_servo_a_closed_loop_move_turns_the_feedback_back_on);
     RUN_TEST(test_the_integral_does_not_turn_ramp_lag_into_overshoot);
     RUN_TEST(test_the_integral_nulls_a_steady_load_while_moving);
     RUN_TEST(test_the_integral_nulls_a_steady_load_while_holding);

@@ -28,6 +28,8 @@ void app_gauge_setGaugeForce(void) { d_setForceCount++; }
 /* ---- app_motion ---- */
 static int32_t d_setpoint;
 int32_t app_motion_getSetpoint(void) { return d_setpoint; }
+static int32_t d_commanded;
+int32_t app_motion_getCommandedPosition(void) { return d_commanded; }
 
 /* ---- app_control ---- */
 static app_control_fault_E d_fault;
@@ -359,6 +361,40 @@ void test_m5_onWrite_manual_move_nacks_when_busy(void)
     TEST_ASSERT_EQUAL_INT(PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK, ProtoEmb_onWrite_manual_move(&in));
 }
 
+void test_servo_gains_round_trip_through_bridge(void)
+{
+    VIBES_TEST("bridge.servo-gains-saved-and-read-back",
+               "src/APP/app_messageSlave.c#ProtoEmb_onWrite_machine_configuration_write",
+               "a machine configuration written with a servo proportional gain of 12.5 per second and an integral gain of 40 per second squared");
+    VIBES_EXPECT("gains-read-back", "reading the profile back returns both gains unchanged");
+    ProtoEmb_MachineConfiguration_t in;
+    memset(&in, 0, sizeof(in));
+    in.servoStepsPerMM = 200;
+    in.servoKp = 12500;
+    in.servoKi = 40000;
+    TEST_ASSERT_EQUAL_INT(PROTOEMB_RUNTIME_WRITE_DISPOSITION_ACK, ProtoEmb_onWrite_machine_configuration_write(&in));
+    ProtoEmb_MachineConfiguration_t out;
+    TEST_ASSERT_TRUE(ProtoEmb_onRead_machine_configuration(&out));
+    TEST_ASSERT_EQUAL_INT32(12500, out.servoKp);
+    TEST_ASSERT_EQUAL_INT32(40000, out.servoKi);
+}
+
+void test_sample_carries_the_commanded_position(void)
+{
+    VIBES_TEST("bridge.sample-carries-commanded-position",
+               "src/APP/app_messageSlave.c#ProtoEmb_onRead_sample",
+               "a move whose trajectory is at 1.5 mm on its way to a 4 mm target");
+    VIBES_EXPECT_WHY("commanded-sent",
+                     "the live sample carries the 1.5 mm the trajectory is at, beside the 4 mm target",
+                     "the gap between where the machine is told to be and where it is, is the servo's following error");
+    d_setpoint = 4000000;
+    d_commanded = 1500000;
+    ProtoEmb_Sample_t s;
+    TEST_ASSERT_TRUE(ProtoEmb_onRead_sample(&s));
+    TEST_ASSERT_EQUAL_INT32(1500000, s.machineCommanded);
+    TEST_ASSERT_EQUAL_INT32(4000000, s.machineSetpoint);
+}
+
 void test_machine_configuration_round_trips_through_bridge(void)
 {
     VIBES_TEST("bridge.machine-config-saved-and-read-back",
@@ -404,5 +440,7 @@ int main(void)
     RUN_TEST(test_m5_onWrite_test_run_start_nack_when_rejected);
     RUN_TEST(test_m5_onWrite_manual_move_nacks_when_busy);
     RUN_TEST(test_machine_configuration_round_trips_through_bridge);
+    RUN_TEST(test_servo_gains_round_trip_through_bridge);
+    RUN_TEST(test_sample_carries_the_commanded_position);
     return UNITY_END();
 }

@@ -31,7 +31,7 @@ abstractions (SIL serial, OPFS data folder) live in the harness — never in `sr
 | Project PTY round trip | `cargo test -p mad-catalog --test pty_protocol` | `SIL/mad.toml` run live on a PTY, one `firmware_version` round trip, no Chrome | `cd SIL && make test` |
 | TS unit | `vitest` (`src/**/*.test.ts`) | domain, codec, device policy, storage, firmware loader, diagnostics | `npm test` |
 | E2E smoke | Playwright | 20 IDs in `e2e/smoke-ids.txt` | `npm run e2e:smoke` |
-| E2E full | Playwright | 49 scenarios in `e2e/run-all.mjs` (parity + matrices M8–M11 + FW*) | `npm run e2e` |
+| E2E full | Playwright | 50 scenarios in `e2e/run-all.mjs` (parity + matrices M8–M11 + FW*) | `npm run e2e` |
 
 `npm run verify` is the offline Control gate (tsc + eslint + vitest + coverage + production build). Coverage thresholds apply only to `src/firmware/**`.
 
@@ -187,6 +187,8 @@ Ported SIL regressions and matrices, all in `run-all.mjs`: `G-limit`, `TC1-multi
 `P1-precision`, `BB-back-to-back`, `TM-busy-restart`, `TM-manual-gate`, `D2-settled-jog`,
 `D3+SR-slack`, M8 jog cells, M9 slack cells, M10 WAVE-* cells, M11 link-loss cells,
 `FW1`–`FW3` / `FW5`–`FW9` (in-app loader UI; native `loadp2` CLI is still out of scope),
+`CAL1` (Settings → Motor calibration: the open-loop `G124` check, then the closed-loop tracking run, on the SIL's matched 8192/mm
+drive and encoder reports a match, with pulses signed by direction),
 `SERVO-stall` (a carriage jogged into a hard stop latches `SERVO_STALL`, Live
 clears it and re-enables motion, and a jog takes the carriage off the stop;
 needs the board with the stop, `make e2e-stall`, which CI runs on every PR).

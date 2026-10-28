@@ -138,7 +138,7 @@ const MOVES = new Set([
   ...MATRIX.M10_waveform.map((wf) => wf.id), 'TC4-dwell', 'TC6-disable-stops', 'TC11-velocity',
   'VT-linear', 'TC14-jog', ...MATRIX.M8_jog.map((cell) => cell.id), 'M11-mid-test-drop',
   'D2-settled-jog', 'D3+SR-slack', ...MATRIX.M9_force_slack.map((cell) => cell.id),
-  'P1-precision', 'BB-back-to-back', 'TM-busy-restart', 'TM-manual-gate', 'SERVO-stall',
+  'P1-precision', 'BB-back-to-back', 'TM-busy-restart', 'TM-manual-gate', 'SERVO-stall', 'CAL1',
 ]);
 
 // What the machine's project as drawn cannot do (BOARD_ROUTE 'project':
@@ -1269,6 +1269,59 @@ const scenarios = [
           .catch(() => {
             throw new Error('motion did not report enabled');
           });
+        assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
+      } finally {
+        await browser.close();
+      }
+    },
+  },
+  {
+    // The open-loop drive/encoder check under Settings. The emulated machine's
+    // drive and encoder are both 8192 steps/mm and wired the same way round,
+    // so the report must say the profile matches and show one count per pulse
+    // each way -- which needs the firmware sequencer, the protocol pair and
+    // the panel all to agree on signs and units.
+    id: 'CAL1',
+    name: 'Motor calibration: matched drive and encoder, then a tracking run and suggested gains',
+    async run() {
+      const { browser, page, errors } = await newSilPage();
+      try {
+        await connectToSil(page);
+        await prepareManualControl(page);
+        await page.goto(`${APP_URL}#/settings`);
+        await page.getByRole('heading', { name: 'Motor calibration' }).waitFor({ timeout: DEVICE_WAIT_MS });
+        const run = page.getByRole('button', { name: 'Run calibration' });
+        await run.waitFor({ timeout: DEVICE_WAIT_MS });
+        // Enabled once the machine profile has been read and motion is on.
+        const clock = await pageClock(page);
+        while (await run.isDisabled()) {
+          assert((await clock.elapsed()) < DEVICE_WAIT_MS, 'Run calibration never became available');
+          await waitPageTime(page, 200);
+        }
+        await press(run);
+        // The report appears once both parts have run: the open-loop check,
+        // then the closed-loop tracking program from the SIL's saved profile.
+        const report = page.getByTestId('calibration-result');
+        await report.waitFor({ timeout: DEVICE_WAIT_MS * 10 });
+        // Settle on the finished report (the tracking part fills in last), then
+        // say what it showed if any part is missing.
+        await waitPageTime(page, 500);
+        const reportText = await report.innerText();
+        assert(/Calibration passed/.test(reportText), `the drive and encoder check did not pass: ${reportText}`);
+        assert(
+          (await page.getByTestId('suggested-gains').count()) === 1,
+          `the tracking run did not complete: ${reportText}`,
+        );
+        // The SIL's drive and encoder are both 8192/mm: counts back match the
+        // pulses sent, with the right sign.
+        const measured = Number(await page.getByTestId('measured-counts').innerText());
+        const expected = Number(await page.getByTestId('expected-counts').innerText());
+        assert(expected > 0 && Math.abs(measured / expected - 1) < 0.02, `encoder moved ${measured} counts, expected ~${expected}`);
+        // Tracking on the ideal SIL drive: every move stops within a few µm.
+        const tracking = await page.getByTestId('tracking-summary').innerText();
+        const stopUm = Number(/Stops within ±([\d.]+) µm/.exec(tracking)?.[1] ?? NaN);
+        assert(stopUm < 5, `tracking stopped up to ${stopUm} µm from target: ${tracking}`);
+        assert((await page.locator('.badge.error').count()) === 0, 'the calibration reported an error');
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
       } finally {
         await browser.close();

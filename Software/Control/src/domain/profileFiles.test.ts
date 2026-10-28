@@ -218,7 +218,7 @@ describe('parseMotionSetJson + replaceSetAt (F5)', () => {
     {
       id: 'profiles.load-set-replaces-only-the-target',
       covers: 'src/domain/profileFiles.ts#replaceSetAt',
-      given: 'a motion profile with two sets, loading a saved set onto the second',
+      given: 'loading a set from file into the second slot of a two-set motion profile',
       expect: {
         'target-replaced': 'the second slot holds the loaded set',
         'others-unchanged': 'the other slot keeps the set it already had',

@@ -42,6 +42,13 @@ typedef enum
     G91_INCREMENTAL = 91,
     G122_STOP = 122,
     G123_WAVEFORM = 123,
+    /* G124 X F: a linear move with the servo FEEDBACK OFF. The trajectory is
+     * the same trapezoid as G1, fed straight to the drive; the encoder is only
+     * watched, so the drive gets exactly X times servo steps/mm pulses. Meant
+     * to be used relative (G91) to measure the drive/encoder pair: a G124 that follows
+     * another moves from where the previous one COMMANDED, not from where the
+     * encoder says it went. */
+    G124_OPEN_LOOP_MOVE = 124,
 } app_motion_gcode_E;
 
 typedef enum

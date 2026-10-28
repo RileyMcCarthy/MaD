@@ -60,7 +60,7 @@ describe('ByteRing — basic capture', () => {
       },
       why: {
         'byte-counts':
-          'a frame that arrived in two reads looks different from one that arrived whole, and that difference is usually the bug',
+          'a frame that arrived in two reads looks different from one that arrived whole, and the log has to show which of the two happened',
       },
     },
     () => {

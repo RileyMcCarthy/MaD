@@ -683,6 +683,31 @@ export class DeviceSession {
     }, 'manualMove');
   }
 
+  /**
+   * A relative open-loop move: `G91` then `G124 X F`, the servo feedback off.
+   * Same queueing and acks as manualMove; used by the motor calibration.
+   */
+  async openLoopMove(mm: number, speed: number): Promise<boolean> {
+    const moves: ProtoMove[] = [
+      { g: 91 as GCode, x: 0, f: 0, p: 0 },
+      { g: 124 as GCode, x: mm, f: speed, p: 0 },
+    ];
+    return this.runOp(async () => {
+      for (const move of moves) {
+        let buf: Uint8Array;
+        try {
+          buf = validateAndEncodeMove(move);
+        } catch (err) {
+          this.emit([{ kind: 'error', message: err instanceof Error ? err.message : String(err) }]);
+          return false;
+        }
+        const ok = await this.writeAndAck(MSG_WRITE_MANUAL_MOVE, buf, 5000);
+        if (!ok) return false;
+      }
+      return true;
+    }, 'openLoopMove');
+  }
+
   homeAxis(): void {
     this.client?.write(MSG_WRITE_MANUAL_MOVE, validateAndEncodeMove({ g: 28 as GCode, x: 0, f: 0, p: 0 }));
   }

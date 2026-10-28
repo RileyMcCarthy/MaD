@@ -190,7 +190,7 @@ fn qrotate_operands_are_signed() {
     });
     expect!(
         "negative-x-and-y",
-        "negative X and Y are rotated as negative numbers, not as values near 2^32",
+        "negative X and Y are rotated as signed negative numbers",
         "a negative X read as unsigned saturates the result at the largest long"
     );
     check_encodings();

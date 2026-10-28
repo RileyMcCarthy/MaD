@@ -50,6 +50,7 @@
 #define ACTUATOR_CH DEV_SERVO_CHANNEL_MAIN
 #define actuator_enable(en) dev_servo_enable(ACTUATOR_CH, (en))
 #define actuator_move(target, feedrate) dev_servo_moveTo(ACTUATOR_CH, (target), (feedrate))
+#define actuator_moveOpenLoop(target, feedrate) dev_servo_moveToOpenLoop(ACTUATOR_CH, (target), (feedrate))
 #define actuator_setVelocity(v) dev_servo_setVelocity(ACTUATOR_CH, (v))
 #define actuator_stop() dev_servo_stop(ACTUATOR_CH)
 #define actuator_setPosition(p) dev_servo_setPosition(ACTUATOR_CH, (p))
@@ -299,9 +300,10 @@ static void app_motion_private_moveManager_start(void)
     {
     case G0_RAPID_MOVE:
     case G1_LINEAR_MOVE:
+    case G124_OPEN_LOOP_MOVE:
         if (app_motion_data.currentMove.f == 0U)
         {
-            DEBUG_WARNING("G0/G1 Command has zero feedrate: %d\n", app_motion_data.currentMove.f);
+            DEBUG_WARNING("G0/G1/G124 Command has zero feedrate: %d\n", app_motion_data.currentMove.f);
         }
         else
         {
@@ -327,13 +329,26 @@ static void app_motion_private_moveManager_start(void)
                            app_motion_data.restrictedFeedrate);
                 feedrate = app_motion_data.restrictedFeedrate;
             }
+            const bool openLoop = (app_motion_data.currentMove.g == G124_OPEN_LOOP_MOVE);
             if (app_motion_data.absoluteMode == false)
             {
-                steps += app_motion_data.inputs.positionSteps;
+                /* Relative to where the machine IS -- except open loop, which
+                 * has no encoder truth: its moves chain from where the last one
+                 * was COMMANDED, so a G124 out and a G124 back send equal pulse
+                 * counts however far the encoder disagreed. */
+                steps += openLoop ? app_motion_data.inputs.gaugeCommandedSteps
+                                  : app_motion_data.inputs.positionSteps;
             }
             DEBUG_INFO("G0 command moving to steps %d at %d steps/s\n", steps, feedrate);
             DEBUG_INFO("moving from position (mm) %d to setpoint (mm) %d\n", app_motion_data.inputs.positionSteps / app_motion_data.stepsPerMM, steps / app_motion_data.stepsPerMM);
-            actuator_move(steps, feedrate);
+            if (openLoop)
+            {
+                actuator_moveOpenLoop(steps, feedrate);
+            }
+            else
+            {
+                actuator_move(steps, feedrate);
+            }
         }
         break;
     case G2_CW_ARC_MOVE:
@@ -447,6 +462,7 @@ static bool app_motion_private_moveManager_run(void)
     {
     case G0_RAPID_MOVE:
     case G1_LINEAR_MOVE:
+    case G124_OPEN_LOOP_MOVE:
         moveComplete = app_motion_data.inputs.atTarget;
         break;
     case G2_CW_ARC_MOVE:

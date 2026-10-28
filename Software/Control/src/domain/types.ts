@@ -22,6 +22,8 @@ export interface SampleData {
   'Machine Force (N)': number;
   'Machine Position (mm)': number;
   'Machine Setpoint (mm)': number;
+  /** Where the trajectory says the machine should be right now (the setpoint is where the move ends). */
+  'Machine Commanded (mm)': number;
   'Sample Force (N)': number;
   'Sample Position (mm)': number;
 }
@@ -80,6 +82,10 @@ export interface MachineConfiguration {
   /* Speed ceiling while the machine is RESTRICTED -- on an endstop, with the
    * door open, or over a tension limit. Zero means no ceiling. */
   'Restricted Velocity (mm/s)': number;
+  /** Servo loop proportional gain (1/s). */
+  'Servo Kp (1/s)': number;
+  /** Servo loop integral gain (1/s^2); 0 switches the integral off. */
+  'Servo Ki (1/s^2)': number;
 }
 
 export interface FirmwareVersion {
