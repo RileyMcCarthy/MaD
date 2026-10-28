@@ -10,6 +10,7 @@ function sample(force: number): SampleData {
     'Machine Force (N)': force,
     'Machine Position (mm)': force / 10,
     'Machine Setpoint (mm)': force / 10,
+    'Machine Commanded (mm)': force / 10,
     'Sample Force (N)': force,
     'Sample Position (mm)': force / 10,
   };

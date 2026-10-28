@@ -108,6 +108,18 @@ void dev_servo_moveTo(dev_servo_channel_E ch, int32_t targetCounts, int32_t feed
     d_lastMoveStepsPerSecond = feedrateCountsPerSec;
 }
 
+static uint32_t d_openLoopMoveCount;
+static int32_t d_lastOpenLoopTarget;
+static int32_t d_lastOpenLoopStepsPerSecond;
+
+void dev_servo_moveToOpenLoop(dev_servo_channel_E ch, int32_t targetCounts, int32_t feedrateCountsPerSec)
+{
+    TEST_ASSERT_EQUAL_INT(DEV_SERVO_CHANNEL_MAIN, ch);
+    d_openLoopMoveCount++;
+    d_lastOpenLoopTarget = targetCounts;
+    d_lastOpenLoopStepsPerSecond = feedrateCountsPerSec;
+}
+
 /* --- dev_servo velocity mode (record the last call + count) --- */
 static uint32_t d_setVelocityCount;
 static int32_t d_lastSetVelocity;
@@ -241,6 +253,9 @@ bool dev_nvram_getChannelData(dev_nvram_channel_t channel, void *data, size_t si
 /* Reset all doubles to a benign baseline. */
 static void doubles_reset(void)
 {
+    d_openLoopMoveCount = 0U;
+    d_lastOpenLoopTarget = 0;
+    d_lastOpenLoopStepsPerSecond = 0;
     d_motionEnabled = true;
     d_speedLimited = false;
     d_steps = 0;
@@ -505,6 +520,40 @@ void test_incremental_mode_adds_current_position(void)
     app_motion_run(); /* snapshots d_steps=1500, then starts move */
     TEST_ASSERT_EQUAL_UINT32(1U, d_moveCount);
     TEST_ASSERT_EQUAL_INT32(1600, d_lastMoveTarget);
+}
+
+void test_open_loop_move_chains_from_the_commanded_position(void)
+{
+    VIBES_TEST("motion.open-loop-move",
+               "src/APP/app_motion.c#app_motion_private_moveManager_start",
+               "incremental mode, a commanded position of 30 millimetres while the encoder reads 15, and a 1 millimetre open-loop move");
+    VIBES_EXPECT("feedback-off", "the drive is given the move with its feedback off, and no closed-loop move is issued");
+    VIBES_EXPECT_WHY("from-commanded",
+                     "the drive is commanded to 31 millimetres",
+                     "open-loop moves chain from where the last one was commanded, so a move out and a move back send equal pulse counts whatever the encoder read");
+    VIBES_EXPECT("completes-on-arrival", "the move completes when the drive reports arrival");
+    motion_driveToWaiting();
+    app_motion_move_t g91 = make_move((uint8_t)G91_INCREMENTAL, 0, 0, 0);
+    TEST_ASSERT_TRUE(app_motion_addMove(&g91));
+    app_motion_run();
+    app_motion_run();
+    TEST_ASSERT_TRUE(app_motion_isIdle());
+
+    d_steps = 1500;    /* encoder: 15 mm at 100 steps/mm */
+    d_setpoint = 3000; /* commanded: 30 mm */
+    d_moveCount = 0U;
+    d_atTarget = false;
+    app_motion_move_t mv = make_move((uint8_t)G124_OPEN_LOOP_MOVE, 1000, 100, 0);
+    TEST_ASSERT_TRUE(app_motion_addMove(&mv));
+    app_motion_run();
+    TEST_ASSERT_EQUAL_UINT32(1U, d_openLoopMoveCount);
+    TEST_ASSERT_EQUAL_UINT32(0U, d_moveCount);
+    TEST_ASSERT_EQUAL_INT32(3100, d_lastOpenLoopTarget);
+    TEST_ASSERT_EQUAL_INT32(10, d_lastOpenLoopStepsPerSecond); /* 0.1 mm/s at 100 steps/mm */
+    TEST_ASSERT_FALSE(app_motion_isIdle());
+    d_atTarget = true;
+    app_motion_run();
+    TEST_ASSERT_TRUE(app_motion_isIdle());
 }
 
 /* Re-asserting absolute mode (G90) makes the target independent of the current
@@ -1317,6 +1366,7 @@ int main(void)
 
     RUN_TEST(test_zero_feedrate_move_issues_no_stepper_move);
     RUN_TEST(test_incremental_mode_adds_current_position);
+    RUN_TEST(test_open_loop_move_chains_from_the_commanded_position);
     RUN_TEST(test_absolute_mode_ignores_current_position);
 
     RUN_TEST(test_dwell_holds_until_period_elapses);

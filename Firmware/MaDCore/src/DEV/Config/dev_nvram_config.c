@@ -54,11 +54,15 @@ DEV_NVRAM_CHANNEL_DATA_CREATE(MachineProfile) = {
     10,         // homingVelocity
     5,          // homingOffset
     25,         // jawOffset - default distance between jaws at endstop (mm)
+    0,          // restrictedVelocity - no cap
+    8000,       // servoKp - 8 /s, dev_servo's tuned default
+    0,          // servoKi - integral off
 };
 
 // should rename to have prefix like lib or app or io etc
 const dev_nvram_config_t dev_nvram_config = {
-    {DEV_NVRAM_CHANNEL_CONFIG_CREATE(MachineProfile, SD_CARD_MOUNT_PATH "/profile.bin", true)},
+    {DEV_NVRAM_CHANNEL_CONFIG_CREATE(MachineProfile, SD_CARD_MOUNT_PATH "/profile.bin", true,
+                                     DEV_NVRAM_MACHINE_PROFILE_LEGACY_SIZE)},
 };
 
 /**********************************************************************

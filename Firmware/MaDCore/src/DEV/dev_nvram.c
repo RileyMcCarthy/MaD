@@ -331,21 +331,35 @@ void dev_nvram_private_runAction(dev_nvram_channel_t channel)
         }
         else
         {
-            // Read data from file
-            const size_t n = fread(dev_nvram_data.channels[channel].data, dev_nvram_config.channels[channel].size, 1, dev_nvram_data.channels[channel].file);
-            if (n != 1)
+            /* Defaults first, then whatever the file holds over them. A file of
+             * the channel's legacy length is the record before the latest
+             * fields were appended -- a PREFIX of today's -- so its fields keep
+             * their saved values and only the newer ones come from the
+             * defaults. Any other length is a layout this build cannot read,
+             * and the defaults stand. */
+            (void)memcpy(dev_nvram_data.channels[channel].data, dev_nvram_config.channels[channel].dataDefault,
+                         dev_nvram_config.channels[channel].size);
+            const size_t n = fread(dev_nvram_data.channels[channel].data, 1U, dev_nvram_config.channels[channel].size,
+                                   dev_nvram_data.channels[channel].file);
+            const uint32_t legacy = dev_nvram_config.channels[channel].legacySize;
+            if (n == dev_nvram_config.channels[channel].size)
             {
-                DEBUG_ERROR("incorrect number of bytes read: %zu (expected 1 record of %u bytes) — using defaults\n", n,
-                            (unsigned int)dev_nvram_config.channels[channel].size);
-                (void)memcpy(dev_nvram_data.channels[channel].data, dev_nvram_config.channels[channel].dataDefault,
-                             dev_nvram_config.channels[channel].size);
-                dev_nvram_data.channels[channel].hasError = false;
-                dev_nvram_data.channels[channel].readComplete = true;
+                /* the current layout */
+            }
+            else if ((legacy != 0U) && (n == legacy))
+            {
+                DEBUG_WARNING("legacy record: %zu of %u bytes, the newer fields from defaults\n", n,
+                              (unsigned int)dev_nvram_config.channels[channel].size);
             }
             else
             {
-                dev_nvram_data.channels[channel].readComplete = true;
+                DEBUG_ERROR("unreadable record: %zu bytes (expected %u) -- using defaults\n", n,
+                            (unsigned int)dev_nvram_config.channels[channel].size);
+                (void)memcpy(dev_nvram_data.channels[channel].data, dev_nvram_config.channels[channel].dataDefault,
+                             dev_nvram_config.channels[channel].size);
             }
+            dev_nvram_data.channels[channel].hasError = false;
+            dev_nvram_data.channels[channel].readComplete = true;
         }
         break;
     case DEV_NVRAM_READY:

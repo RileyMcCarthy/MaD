@@ -83,6 +83,7 @@ enums:
       - { name: INCREMENTAL,  value: 91 }
       - { name: STOP,         value: 122 }
       - { name: WAVEFORM,     value: 123 }   # firmware-native waveform (canned cycle)
+      - { name: OPEN_LOOP_MOVE, value: 124 } # linear move with the servo feedback off (motor calibration)
 
   WaveformShape:
     description: "Traverse profile for a G123 waveform -- how the carriage gets from one peak to the other. Named constants for the host; the wire carries a plain uint8 (see WaveformMove.shape)."
@@ -163,6 +164,13 @@ structs:
         unit: mm
         scale: 1000000     # struct stores NANOMETRES; one encoder count is 122 nm,
         raw_storage: true  # so micrometres were coarser than the sensor itself
+        min: -200
+        max: 200
+      - name: machineCommanded
+        type: int32
+        unit: mm
+        scale: 1000000     # NANOMETRES: where the trajectory says the machine should be NOW
+        raw_storage: true  # (machineSetpoint is where the move ENDS); position - this = following error
         min: -200
         max: 200
 
@@ -368,6 +376,16 @@ structs:
         type: int32
         unit: mm/s
         scale: 1
+      - name: servoKp
+        type: int32
+        unit: 1/s
+        scale: 1000        # stored as thousandths
+        raw_storage: true
+      - name: servoKi
+        type: int32
+        unit: 1/s2
+        scale: 1000        # stored as thousandths
+        raw_storage: true
 
   SampleProfile:
     encoding: aligned
