@@ -987,7 +987,7 @@ void test_dev_servo_errorHeldInTheSoftBandStalls(void)
 {
     VIBES_TEST("servo.error-held-in-the-soft-band-stalls",
                "src/DEV/dev_servo.c#dev_servo_private_stallGuard",
-               "an enabled motor drive holding about 10 mm/s whose carriage moves at that speed but 1.5 mm behind where it should be, between the 1 mm soft band and the 2 mm hard ceiling");
+               "an enabled drive at about 10 mm/s whose carriage keeps pace 1.5 mm behind, between the 1 mm soft band and the 2 mm hard ceiling");
     VIBES_EXPECT_WHY("stall-after-half-a-second",
                      "the drive reports a stall once the error has been held for half a second",
                      "a carriage that stays too far behind for that long is not following, even though it never runs away");
@@ -1021,7 +1021,7 @@ void test_dev_servo_briefErrorInTheSoftBandDoesNotStall(void)
 {
     VIBES_TEST("servo.brief-error-in-the-soft-band-does-not-stall",
                "src/DEV/dev_servo.c#dev_servo_private_stallGuard",
-               "an enabled motor drive holding about 10 mm/s whose carriage moves at that speed but falls 1.5 mm behind for just under half a second at a time, five times, coming back to just inside 1 mm for one control tick between them");
+               "an enabled drive at about 10 mm/s whose carriage falls 1.5 mm behind five times, each for just under half a second, with one tick back inside 1 mm between");
     VIBES_EXPECT_WHY("no-stall",
                      "no stall is reported at any point",
                      "a healthy error passes through the soft band on a ramp or a stop and drops back; each excursion starts the half-second count again from zero");
@@ -1050,7 +1050,7 @@ void test_dev_servo_stallThresholdsFollowTheEncoderScale(void)
 {
     VIBES_TEST("servo.stall-thresholds-follow-the-encoder-scale",
                "src/DEV/dev_servo.c#dev_servo_init",
-               "a machine profile with 2400 encoder counts per millimetre, and an enabled motor drive whose carriage is pushed off where it should be while at rest, then falls behind while moving in reverse at about 34 mm/s");
+               "a profile with 2400 encoder counts per millimetre, and an enabled drive whose carriage is pushed off target at rest, then falls behind moving in reverse at about 34 mm/s");
     VIBES_EXPECT_WHY("ceiling-is-2-mm",
                      "an error of exactly 2 mm for a tick reports no stall, and one count more reports it on that tick",
                      "the ceiling is a distance the carriage may run wrong, so it has to mean the same 2 mm whatever the encoder's resolution");
@@ -1185,7 +1185,7 @@ void test_dev_servo_encoderStoppingNearTheTargetStalls(void)
 {
     VIBES_TEST("servo.stall-when-encoder-stops-near-the-target",
                "src/DEV/dev_servo.c#dev_servo_private_stallGuard",
-               "a 10 mm move at 1 mm/s, and again at 0.05 mm/s, whose encoder stops counting with 0.5 mm of the move left while the carriage goes on following the step pulses through a 20 ms lag");
+               "a 10 mm move, at 1 mm/s and at 0.05 mm/s, whose encoder stops counting 0.5 mm short while the carriage keeps following the steps through a 20 ms lag");
     VIBES_EXPECT_WHY("stall-reported",
                      "the drive reports a stall within 3 seconds",
                      "the loop goes on pulsing the drive toward a target the encoder never reaches, so the carriage runs on until the stall stops it");
@@ -1363,7 +1363,7 @@ void test_dev_servo_reEnableAfterAStallHoldsStill(void)
 {
     VIBES_TEST("servo.re-enable-after-a-stall-holds-still",
                "src/DEV/dev_servo.c#dev_servo_run",
-               "a drive that stalled against a jam that stays, then stopped and disabled as the controller does when it reports the stall, then enabled again with no move commanded, its encoder buzzing at the jam");
+               "a drive that stalled against a lasting jam, was stopped and disabled as the controller does on a stall, then enabled with no move, its encoder buzzing at the jam");
     VIBES_EXPECT_WHY("no-stall",
                      "no stall is reported for 5 seconds after it is enabled again",
                      "acknowledging a stall clears it, and with no move commanded the drive holds where the carriage stands");
@@ -1413,7 +1413,7 @@ void test_dev_servo_frameRedefinedMidTickIsNotAStall(void)
 {
     VIBES_TEST("servo.frame-redefined-mid-tick-is-not-a-stall",
                "src/DEV/dev_servo.c#dev_servo_run",
-               "a stopped motor drive whose position is redefined 100 mm away by another core between a control tick's encoder reading and its use of it, as homing does, then a 1 mm move in the new frame");
+               "a stopped drive whose position another core redefines 100 mm away mid-tick, as homing does, then a 1 mm move in the new frame");
     VIBES_EXPECT_WHY("no-stall",
                      "no stall is reported at any point",
                      "that tick's reading and its setpoint belong to different frames, so their difference is the redefinition and says nothing about the carriage");
@@ -1888,7 +1888,7 @@ void test_an_unknown_wire_shape_is_refused_not_defaulted(void)
                      "bytes 0 and 1 convert to the sine and triangle profiles and to nothing else",
                      "the shape byte is what selects the loading a specimen sees, so a converter that returned the wrong profile for a byte it does recognise would run the wrong test silently");
     VIBES_EXPECT_WHY("unknown-bytes-refused",
-                     "every other byte is refused, and the caller's shape is left untouched",
+                     "every other byte is refused, and the shape already held is left untouched",
                      "a newer host asking an older firmware for a profile it has never heard of must fail loudly: defaulting the unknown byte to a sine files a plausible record under a test that was never performed");
 
     /* The out-param starts at a value neither branch would naturally produce,
@@ -2473,7 +2473,7 @@ void test_a_hold_at_one_peak_only(void)
                "a waveform asked to hold at the upper peak and not at the lower one");
     VIBES_EXPECT_WHY("holds-only-where-asked",
                      "the carriage holds at the upper peak for the requested time and does not hold at the lower one",
-                     "creep-fatigue is a hold at peak tension with no hold in compression, so a single symmetric dwell parameter cannot express the test that most needs one");
+                     "creep-fatigue is a hold at peak tension with no hold in compression, so a single symmetric dwell setting cannot express the test that most needs one");
     VIBES_EXPECT_WHY("hold-is-stationary",
                      "the machine does not move while a hold is commanded",
                      "a hold that drifts is a slow ramp, and the specimen sees a different load history than the report claims");

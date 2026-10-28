@@ -152,7 +152,7 @@ describe('parseSampleProfileJson (F3)', () => {
     {
       id: 'profiles.sp-must-be-a-json-object',
       covers: 'src/domain/profileFiles.ts#parseSampleProfileJson',
-      given: 'a .sp file that is not JSON, or is a JSON array or null',
+      given: 'a .sp file that is not JSON, or whose JSON is a list or an empty value',
       expect: {
         'import-rejected': 'the import is rejected and nothing opens in the editor',
       },

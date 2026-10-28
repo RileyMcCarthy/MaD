@@ -134,7 +134,7 @@ void test_dev_nvram_refusesOutOfRangeChannel(void)
                      "the channel array is indexed by this value, so only an in-range channel may be written");
     VIBES_EXPECT("get-refused", "each read is refused");
     VIBES_EXPECT("profile-unchanged", "the machine still holds its previous profile");
-    VIBES_EXPECT("caller-buffer-untouched", "the caller's read buffer is left untouched");
+    VIBES_EXPECT("caller-buffer-untouched", "nothing is written into the space given for the read");
 
     MachineProfile currentProfile;
     MachineProfile sentinel;
