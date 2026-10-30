@@ -575,6 +575,12 @@ impl Component for BridgeProbe {
 /// outputs, started and a quarter observation in; the source's `STEP`
 /// port and what the probe is handed.
 fn on_a_train(text: &str) -> (Rig, PinHandle, Handed) {
+    let (rig, step, _direction, handed) = on_a_train_with_direction(text);
+    (rig, step, handed)
+}
+
+/// [`on_a_train`], with the source's `DIR` port too.
+fn on_a_train_with_direction(text: &str) -> (Rig, PinHandle, PinHandle, Handed) {
     let handles: Arc<Mutex<Vec<PinHandle>>> = Arc::default();
     let source = Train {
         pins: [
@@ -599,9 +605,12 @@ fn on_a_train(text: &str) -> (Rig, PinHandle, Handed) {
                     .connect(ep("PROBE.S-"), ep("MACHINE.S-")),
             )
     });
-    let step = handles.lock().expect("never poisoned")[0].clone();
+    let (step, direction) = {
+        let handles = handles.lock().expect("never poisoned");
+        (handles[0].clone(), handles[1].clone())
+    };
     virtual_clock::wait_virtual_ns(DEFAULT_OBSERVE_INTERVAL_US * 250);
-    (rig, step, handed)
+    (rig, step, direction, handed)
 }
 
 /// Drive `step` with a train of `steps` at [`TRAIN_HZ`] from now.
@@ -1071,4 +1080,193 @@ fn the_report_says_where_the_carriage_went_and_the_force_on_the_sample() {
         ((loaded - 2.5) / 2.5).abs() < 1e-5,
         "{at_half_load_summary}"
     );
+}
+
+// ============================================================
+// The hard stop
+// ============================================================
+
+/// Where the cases put the hard stop: 2 mm from the carriage's start, at
+/// 0 mm. The carriage is driven 3 mm toward it, then 1 mm back.
+const STOP_MM: u64 = 2;
+const TOWARD_THE_STOP: u64 = 3 * STEPS_PER_MM;
+const BACK_OFF_THE_STOP: u64 = STEPS_PER_MM;
+
+/// The encoder's count the summary gives: the figure after "encoder at ".
+fn encoder_count(summary: &str) -> i64 {
+    summary
+        .split("encoder at ")
+        .nth(1)
+        .and_then(|rest| rest.split(' ').next())
+        .and_then(|count| count.parse().ok())
+        .unwrap_or_else(|| panic!("the summary names the encoder's count: {summary}"))
+}
+
+/// The shaft travel the summary says was lost against the hard stop,
+/// millimetres: the figure before "mm of shaft travel lost against it".
+fn lost_against_the_stop(summary: &str) -> f64 {
+    let (before, _) = summary
+        .split_once(" mm of shaft travel lost against it")
+        .unwrap_or_else(|| panic!("the summary names the travel lost at the stop: {summary}"));
+    let figure = before.rsplit(' ').next().expect("a figure before the unit");
+    figure
+        .parse()
+        .unwrap_or_else(|_| panic!("{figure:?} is millimetres, in {summary}"))
+}
+
+/// Set the drive's direction input: low forward, high back. One
+/// observation of the drive passes before the next train, so the train
+/// starts with the direction already latched.
+fn direction(dir: &PinHandle, back: bool) {
+    dir.drive(Drive::Thevenin(if back { HIGH } else { LOW }));
+    virtual_clock::wait_virtual_ns(DEFAULT_OBSERVE_INTERVAL_US * 1_000);
+}
+
+#[rstest]
+fn a_hard_stop_holds_the_carriage_while_the_drive_takes_its_steps() {
+    behaviour!(Test {
+        id: "machine.hard-stop",
+        covers: Some("SIL/mad-catalog/src/machine.rs#Carriage"),
+        given: "the machine with a hard stop 2 millimetres above the carriage's start, driven \
+                forward by 3 millimetres of steps and brought to rest, then back by 1 \
+                millimetre of steps",
+    });
+    expect!(
+        "encoder-at-the-stop",
+        "after the forward steps the encoder counts the stop's position, 2 millimetres",
+        "the encoder turns with the carriage, on its side of the drive, so it stops counting \
+         where the carriage stops"
+    );
+    expect!(
+        "never-past",
+        "the report says the furthest the carriage went from its start is the stop"
+    );
+    expect!(
+        "drive-turns-on",
+        "the drive takes every forward step it is sent",
+        "the stop holds the carriage alone: the drive counts every step it is sent, and the \
+         travel the stop refuses is lost"
+    );
+    expect!(
+        "travel-lost",
+        "the report says the 1 millimetre the drive turned past the stop was lost against it"
+    );
+    expect!(
+        "leaves-at-once",
+        "after the steps back the encoder counts 1 millimetre: the carriage comes off the stop \
+         with the drive's first step back",
+        "the travel lost against the stop stays lost, as a stepper's steps lost against a \
+         stop are"
+    );
+    let (mut rig, step, dir, _probe) =
+        on_a_train_with_direction(&project(&format!("hard_stop_mm = {STOP_MM}"), ""));
+    train(&step, TOWARD_THE_STOP);
+    virtual_clock::wait_virtual_ns(rest_ns(TOWARD_THE_STOP));
+    let at_the_stop = rig.summary();
+    let window = rig.look();
+    direction(&dir, true);
+    train(&step, BACK_OFF_THE_STOP);
+    virtual_clock::wait_virtual_ns(rest_ns(BACK_OFF_THE_STOP));
+    let backed_off = rig.summary();
+    rig.finish();
+
+    let stop_counts = (STOP_MM * STEPS_PER_MM) as i64;
+    assert_eq!(encoder_count(&at_the_stop), stop_counts, "{at_the_stop}");
+    let (now, min, max) = carriage(&window);
+    assert_eq!(
+        (now, min, max),
+        (STOP_MM as f64, 0.0, STOP_MM as f64),
+        "{window}"
+    );
+    assert!(
+        at_the_stop.contains(&format!("{TOWARD_THE_STOP} steps commanded")),
+        "{at_the_stop}"
+    );
+    let lost = lost_against_the_stop(&at_the_stop);
+    let past = (TOWARD_THE_STOP / STEPS_PER_MM - STOP_MM) as f64;
+    assert!((lost - past).abs() < 1e-6, "{at_the_stop}");
+    assert_eq!(
+        encoder_count(&backed_off),
+        stop_counts - BACK_OFF_THE_STOP as i64,
+        "{backed_off}"
+    );
+}
+
+#[rstest]
+fn a_hard_stop_below_the_start_holds_a_carriage_driven_back() {
+    behaviour!(Test {
+        id: "machine.hard-stop-below",
+        covers: Some("SIL/mad-catalog/src/machine.rs#Carriage"),
+        given: "the machine with a hard stop 2 millimetres below the carriage's start, driven \
+                back by 3 millimetres of steps",
+    });
+    expect!(
+        "encoder-at-the-stop",
+        "the encoder counts the stop's position, minus 2 millimetres",
+        "the carriage starts above the stop, so the stop is the lowest it goes"
+    );
+    let (rig, step, dir, _probe) =
+        on_a_train_with_direction(&project(&format!("hard_stop_mm = -{STOP_MM}"), ""));
+    direction(&dir, true);
+    train(&step, TOWARD_THE_STOP);
+    virtual_clock::wait_virtual_ns(rest_ns(TOWARD_THE_STOP));
+    let summary = rig.summary();
+    rig.finish();
+
+    assert_eq!(
+        encoder_count(&summary),
+        -((STOP_MM * STEPS_PER_MM) as i64),
+        "{summary}"
+    );
+}
+
+#[rstest]
+fn a_hard_stop_at_the_carriages_start_is_refused() {
+    behaviour!(Test {
+        id: "machine.hard-stop-at-start",
+        covers: Some("SIL/mad-catalog/src/machine.rs#component"),
+        given: "a project naming the machine with a hard stop at 0 millimetres, where the \
+                carriage starts",
+    });
+    expect!(
+        "refused-naming-option",
+        "the project is refused, the error naming the hard stop's option and the machine",
+        "the carriage starts on one side of its stop, which is the side it stays on"
+    );
+    let _lock = suite_lock();
+    let refused = Project::parse(&project("hard_stop_mm = 0", ""))
+        .expect("the project parses")
+        .instantiate(&set())
+        .map(|_| ())
+        .expect_err("the stop is refused");
+    let message = refused.to_string();
+    assert!(message.contains("hard_stop_mm"), "{message}");
+    assert!(message.contains("MACHINE"), "{message}");
+}
+
+#[rstest]
+fn a_hard_stop_at_no_finite_position_is_refused() {
+    behaviour!(Test {
+        id: "machine.hard-stop-not-finite",
+        covers: Some("SIL/mad-catalog/src/machine.rs#component"),
+        given: "projects naming the machine with a hard stop at no finite position: infinitely \
+                far above the carriage's start, infinitely far below it, and not a number",
+    });
+    expect!(
+        "refused-naming-option",
+        "each project is refused, the error naming the hard stop's option and the machine",
+        "a stop at no finite position never holds the carriage, which is a machine with no \
+         stop, and a project says that by leaving the option out"
+    );
+    let _lock = suite_lock();
+    for stop in ["inf", "-inf", "nan"] {
+        let refused = Project::parse(&project(&format!("hard_stop_mm = {stop}"), ""))
+            .expect("the project parses")
+            .instantiate(&set())
+            .map(|_| ())
+            .expect_err("the stop is refused");
+        let message = refused.to_string();
+        assert!(message.contains("hard_stop_mm"), "{stop}: {message}");
+        assert!(message.contains("MACHINE"), "{stop}: {message}");
+    }
 }

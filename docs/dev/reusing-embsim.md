@@ -20,9 +20,10 @@ the `mad-p2iss` core, the carrier, the add-on and the machine are kinds of
 (the host's Chrome on the board's clock) on the carrier's debug header `J1`;
 `embsim run` hands the files to `SIL/mad-runner`, the embsim command over
 MaD's kinds. `mad-emulator` seats the same ISS as a component named `P2`
-whose pins are `P0`..`P63`, with a `HostPty` or `--chrome` on `P30`/`P32`,
-for SERVO-stall alone until a project can jam the carriage (MaD #298;
-embsim `MIGRATING-MAD.md` step 11).
+whose pins are `P0`..`P63`, with a `HostPty` or `--chrome` on `P30`/`P32`;
+no make target or CI job runs it since SERVO-stall moved onto a project
+whose machine has a hard stop, and it retires (MaD #298; embsim
+`MIGRATING-MAD.md` step 11).
 
 ## How MaD uses it
 
@@ -33,7 +34,7 @@ embsim `MIGRATING-MAD.md` step 11).
 | `models` (`SIL/models/`) | MaD physics: gantry, sample, strain gauge |
 | `mad-catalog` (`SIL/mad-catalog/`) | MaD's kinds: the Edge carrier and the DS2 add-on from their netlists, the ISS as the P2's core, the machine |
 | `mad-runner` (`SIL/mad-runner/`) | The embsim command over MaD's kinds, which `embsim check` and `embsim run` build and run for the project files; the e2e's board is `embsim run mad-cosim.toml` |
-| `MaDSim` | The `mad-emulator` binary: ISS, bench, and host PTY or Chrome; it runs SERVO-stall alone (`make e2e-stall`), until a project can jam the carriage (MaD #298) |
+| `MaDSim` | The `mad-emulator` binary: ISS, bench, and host PTY or Chrome; no make target or CI job runs it since SERVO-stall moved onto `mad-hard-stop-cosim.toml`, and it retires (MaD #298; embsim `MIGRATING-MAD.md` step 11) |
 
 The dependency graph is acyclic — no generic crate depends on a project crate.
 See the [SIL emulator](../how-it-works/sil-emulator.md) page for the diagram.

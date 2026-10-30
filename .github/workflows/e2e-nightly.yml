@@ -20,9 +20,10 @@
 # board with #285 fixed (make e2e-motion: SIL/mad-ic14-fixed-cosim.toml,
 # mad-cosim.toml with one wire on IC14's ground), where the carriage moves,
 # in three jobs of their own beside the suite's (the matrix below).
-# SERVO-stall stays skipped there, since no project has a jam: it runs
-# per-PR only (ci.yml, `make e2e-stall` on mad-emulator) until MaD #298
-# decides how a project stalls the carriage. The nightly does not run it.
+# SERVO-stall stays skipped there, since nothing stops that board's
+# carriage: it runs per-PR only (ci.yml, `make e2e-stall`), on that board
+# with a hard stop on its carriage, SIL/mad-hard-stop-cosim.toml (MaD
+# #298). The nightly does not run it.
 #
 # Not per-PR because a PR cannot afford it: the ISS runs at a few percent of
 # real time, so the whole suite is an hour or more of host time. ci.yml is
@@ -135,7 +136,7 @@ jobs:
         working-directory: Firmware/MaDCore
         run: pio pkg install --platform https://github.com/RileyMcCarthy/platform-propeller.git
       # The production image, laid out in the module's flash, and the card
-      # (make flash-image sd-image), then `embsim check` on the seven project
+      # (make flash-image sd-image), then `embsim check` on the eight project
       # files, which builds the embsim tool and mad-runner (--release: the
       # ISS interprets every P2 instruction).
       - name: The images, the runner and the project files (make check)

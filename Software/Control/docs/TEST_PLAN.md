@@ -15,7 +15,8 @@ abstractions (SIL serial, OPFS data folder) live in the harness — never in `sr
 > e2e`). The project as drawn cannot move the carriage (MaD #285), so the suite
 > skips the scenarios that move it there, saying why (`PROJECT_CANNOT`), and runs
 > them on the board with #285 fixed, `SIL/mad-ic14-fixed-cosim.toml` (`cd SIL &&
-> make e2e-motion`); SERVO-stall needs a jam no project has yet. Do not run the
+> make e2e-motion`); SERVO-stall runs on that board with a hard stop on its
+> carriage, `SIL/mad-hard-stop-cosim.toml` (`cd SIL && make e2e-stall`). Do not run the
 > suite against the ISS behind the WS bridge (the bridge's `MAD_PTY` on
 > `make playground-pty`'s `/tmp/tty.iss`): that measures the host, not the
 > machine.
@@ -188,9 +189,9 @@ Ported SIL regressions and matrices, all in `run-all.mjs`: `G-limit`, `TC1-multi
 `FW1`–`FW3` / `FW5`–`FW9` (in-app loader UI; native `loadp2` CLI is still out of scope),
 `CAL1` (Settings → Motor calibration: the open-loop `G124` check, then the closed-loop tracking run, on the SIL's matched 8192/mm
 drive and encoder reports a match, with pulses signed by direction),
-`SERVO-stall` (a jammed carriage latches `SERVO_STALL` and Live clears it; needs
-`E2E_JAM_FILE`, and it runs nightly only, since it isn't in `e2e/smoke-ids.txt`
-or the per-PR subset).
+`SERVO-stall` (a carriage jogged into a hard stop latches `SERVO_STALL`, Live
+clears it and re-enables motion, and a jog takes the carriage off the stop;
+needs the board with the stop, `make e2e-stall`, which CI runs on every PR).
 
 Smoke subset (`e2e/smoke-ids.txt`, 20 IDs): A1, B1+C1, D1, E1, G1, G2+G3+H2+I,
 TM-busy-restart, TM-manual-gate, P1-precision, VT-linear, BB-back-to-back,
