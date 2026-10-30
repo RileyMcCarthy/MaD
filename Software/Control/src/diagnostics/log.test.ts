@@ -387,7 +387,7 @@ describe('sanitize', () => {
     {
       id: 'diag.log-sanitize-redacts-bytes',
       covers: 'src/diagnostics/log.ts#sanitize',
-      given: 'log data containing a byte array, an array buffer, and a data view',
+      given: 'log data holding bytes in three forms: a byte array, a raw binary block, and a view onto one',
       expect: {
         'byte-count-only': 'each is recorded as its byte count',
         'bytes-not-kept': 'none of the bytes themselves are kept',
@@ -683,10 +683,10 @@ describe('worker → main batching', () => {
     {
       id: 'diag.log-flushes-on-interval',
       covers: 'src/diagnostics/log.ts#setLogSink',
-      given: 'two events are logged while worker logs are being forwarded to the main thread, then the flush interval elapses',
+      given: 'two events are logged while worker logs are being forwarded to the main thread, then the batch interval elapses',
       expect: {
         'nothing-per-event': 'nothing crosses per event',
-        'one-batch-per-interval': 'the events logged since the last flush leave together in one batch',
+        'one-batch-per-interval': 'the events logged since the last batch leave together in one batch',
       },
       why: { 'nothing-per-event': 'nothing high-rate should cross from the worker per event' },
     },
@@ -716,7 +716,7 @@ describe('worker → main batching', () => {
       given: 'enough events to hit the batch size threshold while worker logs are being forwarded',
       expect: {
         'sent-immediately': 'the whole batch is sent immediately',
-        'no-empty-follow-up': 'the flush timer sends no empty follow-up',
+        'no-empty-follow-up': 'the batch timer sends no empty follow-up',
       },
     },
     () => {
@@ -736,10 +736,10 @@ describe('worker → main batching', () => {
     {
       id: 'diag.log-flushes-on-demand',
       covers: 'src/diagnostics/log.ts#flushLog',
-      given: 'a buffered worker log event, a demand flush, then another event followed by disconnecting the forwarder',
+      given: 'a worker log event waiting to be sent, a request to send now, then another event followed by disconnecting the forwarder',
       expect: {
-        'demand-flush-delivers': 'the demand flush delivers what was buffered',
-        'teardown-delivers': 'disconnecting the forwarder delivers the event buffered after it',
+        'demand-flush-delivers': 'the request to send now delivers the waiting event',
+        'teardown-delivers': 'disconnecting the forwarder delivers the event logged after the request',
       },
       why: {
         'teardown-delivers':
@@ -764,10 +764,10 @@ describe('worker → main batching', () => {
     {
       id: 'diag.log-keeps-logging-when-sink-dead',
       covers: 'src/diagnostics/log.ts#flushLog',
-      given: 'the worker log forwarder throws, then an event is logged and flushed',
+      given: 'the worker log forwarder throws, then an event is logged and sent',
       expect: {
-        'failure-counted': 'the flush failure is counted',
-        'no-throw': 'the flush returns without throwing',
+        'failure-counted': 'the failed send is counted',
+        'no-throw': 'the send returns without throwing',
         'kept-locally': 'the event stays in the local crash log',
       },
       why: { 'no-throw': 'a released worker connection must not take logging down with it' },
@@ -788,7 +788,7 @@ describe('worker → main batching', () => {
     {
       id: 'diag.log-buffers-nothing-without-sink',
       covers: 'src/diagnostics/log.ts#setLogSink',
-      given: 'an event is logged with no worker log forwarder, then a forwarder is installed and flushed',
+      given: 'an event is logged with no worker log forwarder, then a forwarder is installed and asked to send',
       expect: {
         'nothing-delivered': 'the newly installed forwarder is sent nothing',
       },

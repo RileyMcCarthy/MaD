@@ -115,8 +115,12 @@ line without running a suite.
 
 10. **Cite an expectation as `BH-42`, never renumber by hand.** The collector
    assigns the number on first collection and carries it forever; it lives in
-   `behaviours.jsonl` and `behaviours.next`. On a merge conflict in either,
-   keep the LARGER number — a reused number silently repoints old references.
+   `behaviours.jsonl` and `behaviours.next`. A number is provisional until the
+   PR merges — another open PR may take the same one. After every merge of
+   `main` (and whenever the `Behaviour numbers settled` check fails), run
+   `node Vibes/bin/vibes.mjs renumber --base origin/main` and fix any citation
+   it reports moving. Do NOT settle a `behaviours.next` conflict by keeping the
+   larger side by hand: both branches' rows would end up sharing numbers.
 
 11. **`id` is stable identity — reword freely, never rename casually.**
    `area.claim-in-brief` kebab-case (e.g. `gantry.slack-consumed-before-extension`).

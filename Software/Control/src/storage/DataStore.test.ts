@@ -196,9 +196,9 @@ describe('DataStore mutex + index integrity', () => {
     {
       id: 'storage.next-test-name-is-monotonic',
       covers: 'src/storage/DataStore.ts#nextTestName',
-      given: 'eight callers asking for the next test name at the same time',
+      given: 'eight requests for the next test name at the same time',
       expect: {
-        'names-differ': 'each caller gets a different name',
+        'names-differ': 'each request gets a different name',
         'consecutive-block': 'the eight names form a consecutive block',
       },
       why: { 'names-differ': 'two tests started together must not share a name, or one would overwrite the other' },
@@ -317,7 +317,7 @@ describe('DataStore mutex + index integrity', () => {
       covers: 'src/storage/DataStore.ts#updateTestRun',
       given: 'one saved run, then an update for a run that has no record',
       expect: {
-        'reports-not-saved': 'the update resolves false, so the caller can tell nothing was saved',
+        'reports-not-saved': 'the update reports that nothing was saved',
         'no-record-invented': 'no record is created for the missing run',
         'history-unchanged': 'the history still lists only the saved run, unchanged',
         'existing-run-reports-saved': 'an update to the saved run resolves true',

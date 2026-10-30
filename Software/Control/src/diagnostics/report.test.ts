@@ -256,7 +256,7 @@ describe('buildIssueUrl', () => {
       expect: {
         'within-url-budget': 'the issue link stays within the maximum length GitHub will open',
         'errors-point-at-attachment':
-          'the error block is replaced by a pointer to the attached diagnostics file',
+          'the error block is replaced by a note that points to the attached diagnostics file',
         'cheaper-blocks-kept': 'the summary, steps, and counters survive intact',
       },
       why: {

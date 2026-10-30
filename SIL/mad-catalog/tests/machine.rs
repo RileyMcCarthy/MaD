@@ -659,8 +659,8 @@ fn travel_as_a_rate_opens_the_upper_loop_past_one_hundred_millimetres() {
     );
     expect!(
         "sample-loaded",
-        "at 100 millimetres the bridge reads the sample's 5 newtons through the load cell's \
-         sensitivity and excitation: minus 0.803 millivolts at 3.3 volts",
+        "at 100 millimetres the bridge reads the sample's 5 newtons as minus 0.803 millivolts \
+         at 3.3 volts",
         "the sample takes load past 15 millimetres of grip slack and reaches 5 newtons at \
          the end of travel"
     );
@@ -762,8 +762,8 @@ fn the_bridge_follows_its_excitation_and_loads_past_the_grip_slack() {
     );
     expect!(
         "ratiometric",
-        "at 57.5 millimetres the outputs differ by minus 0.548 millivolts, the sample's 2.5 \
-         newtons scaled to the 4.5 volts across the excitation",
+        "at 57.5 millimetres the outputs differ by minus 0.548 millivolts: the sample's 2.5 \
+         newtons over 4.5 volts of excitation",
         "the load cell gives minus 4.868 millivolts a volt at its 100-newton full scale, and \
          the reference sample takes 5 newtons over the 85 millimetres past the slack"
     );
