@@ -764,7 +764,7 @@ describe('worker → main batching', () => {
     {
       id: 'diag.log-keeps-logging-when-sink-dead',
       covers: 'src/diagnostics/log.ts#flushLog',
-      given: 'the worker log forwarder throws, then an event is logged and sent',
+      given: 'the worker log forwarder throws, then an event is logged and a send is attempted',
       expect: {
         'failure-counted': 'the failed send is counted',
         'no-throw': 'the send returns without throwing',
@@ -788,7 +788,7 @@ describe('worker → main batching', () => {
     {
       id: 'diag.log-buffers-nothing-without-sink',
       covers: 'src/diagnostics/log.ts#setLogSink',
-      given: 'an event is logged with no worker log forwarder, then a forwarder is installed and asked to send',
+      given: 'an event is logged with no worker log forwarder, then a forwarder is installed and the log is asked to send',
       expect: {
         'nothing-delivered': 'the newly installed forwarder is sent nothing',
       },

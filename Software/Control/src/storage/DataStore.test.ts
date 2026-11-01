@@ -320,7 +320,7 @@ describe('DataStore mutex + index integrity', () => {
         'reports-not-saved': 'the update reports that nothing was saved',
         'no-record-invented': 'no record is created for the missing run',
         'history-unchanged': 'the history still lists only the saved run, unchanged',
-        'existing-run-reports-saved': 'an update to the saved run resolves true',
+        'existing-run-reports-saved': 'an update to the saved run reports that it was saved',
       },
     },
     async () => {

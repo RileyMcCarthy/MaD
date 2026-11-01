@@ -1198,8 +1198,8 @@ fn the_encoders_pairs_reach_p9_and_p10() {
     behaviour!(Test {
         id: "mad-project.encoder-pairs",
         covers: Some("SIL/mad.toml"),
-        given: "the machine's project file, the debug header keeping the chip in reset, and the \
-                drive given eight forward steps 2 ms apart",
+        given: "the machine's project file, a bench source on the debug header holding the chip \
+                in reset, and the drive given eight forward steps 2 ms apart",
     });
     expect!(
         "one-count-a-step",
@@ -1268,8 +1268,8 @@ fn the_machines_open_collector_encoder_sticks_p9_and_p10_high() {
     behaviour!(Test {
         id: "mad-project.open-collector-encoder",
         covers: Some("SIL/mad.toml"),
-        given: "the machine's real NPN open-collector encoder on the + legs of the carrier's \
-                encoder connector, ground jumpers closed, the debug header keeping the chip in \
+        given: "the machine's real NPN open-collector encoder on the encoder connector's + \
+                legs, ground jumpers closed, a debug-header bench source holding the chip in \
                 reset, and the drive given eight forward steps",
     });
     expect!(

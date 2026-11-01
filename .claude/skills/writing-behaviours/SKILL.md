@@ -114,10 +114,11 @@ line without running a suite.
    If each predicts the other, there is no claim.
 
 10. **Cite an expectation as `BH-42`, never renumber by hand.** The collector
-   assigns the number on first collection and carries it forever; it lives in
-   `behaviours.jsonl` and `behaviours.next`. A number is provisional until the
-   PR merges — another open PR may take the same one. After every merge of
-   `main` (and whenever the `Behaviour numbers settled` check fails), run
+   assigns the number on first collection, and carries it unchanged once the
+   PR merges; it lives in `behaviours.jsonl` and `behaviours.next`. Until then
+   it is provisional — another open PR may take the same one. After every
+   merge of `main` (and whenever the `Behaviour numbers settled` check fails),
+   fetch first so `origin/main` is current, then run
    `node Vibes/bin/vibes.mjs renumber --base origin/main` and fix any citation
    it reports moving. Do NOT settle a `behaviours.next` conflict by keeping the
    larger side by hand: both branches' rows would end up sharing numbers.
