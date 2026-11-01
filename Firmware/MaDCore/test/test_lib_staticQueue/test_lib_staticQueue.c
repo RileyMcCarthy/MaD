@@ -60,7 +60,7 @@ void test_items_come_back_in_the_order_they_went_in(void)
                "three values pushed in ascending order");
     VIBES_EXPECT_WHY("fifo",
                      "they pop in the same order they were pushed",
-                     "the queue carries a time series, so an order inversion would reorder a stress-strain curve rather than lose it, which is far harder to notice");
+                     "the queue carries a time series, so an order inversion would scramble a stress-strain curve while keeping every point, which is far harder to notice than a loss");
 
     TEST_ASSERT_TRUE(push(10));
     TEST_ASSERT_TRUE(push(20));
@@ -125,7 +125,7 @@ void test_the_ring_wraps_without_losing_or_reordering(void)
                "twenty push/pop cycles through a four-slot ring, which wraps five times");
     VIBES_EXPECT_WHY("survives-the-wrap",
                      "every value comes back exactly once and in order across every wrap",
-                     "the indices wrap by hand rather than by masking, so an off-by-one at the fold would corrupt only the samples that straddle it and only after the queue had been running a while");
+                     "the indices wrap by comparison with the size, with no power-of-two mask, so an off-by-one at the fold would corrupt only the samples that straddle it and only after the queue had been running a while");
 
     int32_t out = 0;
     for (int32_t i = 0; i < 20; i++)
@@ -144,7 +144,7 @@ void test_count_is_right_on_both_sides_of_the_fold(void)
                "a queue whose write index has wrapped past its read index");
     VIBES_EXPECT_WHY("both-branches",
                      "count reports the true occupancy whether the write index is ahead of the read index or behind it",
-                     "count() takes a different branch in each case and the wrapped branch is the one a long run spends most of its time in, so an error there under-reports backpressure exactly when it matters");
+                     "the count is computed differently in each case and the wrapped case is the one a long run spends most of its time in, so an error there under-reports backpressure exactly when it matters");
 
     /* Advance both indices so that a later push folds rear past front. */
     TEST_ASSERT_TRUE(push(1));
@@ -175,10 +175,10 @@ void test_a_null_payload_is_refused_rather_than_copied(void)
 {
     VIBES_TEST("queue.null-payload-refused",
                "src/Library/lib_staticQueue.c#lib_staticQueue_push",
-               "a push handed a null data pointer");
+               "a push handed no data to copy");
     VIBES_EXPECT_WHY("refused",
                      "the push returns false and the queue stays empty",
-                     "the alternative is a memcpy from address zero inside the sampling path, which on the P2 reads the interrupt vectors rather than trapping");
+                     "copying from address zero inside the sampling path would, on the P2, silently read the interrupt vectors; nothing traps it");
 
     TEST_ASSERT_FALSE(lib_staticQueue_push(&q, NULL));
     TEST_ASSERT_TRUE(lib_staticQueue_isempty(&q));
@@ -188,10 +188,10 @@ void test_a_pop_may_discard_without_a_destination(void)
 {
     VIBES_TEST("queue.pop-null-discards",
                "src/Library/lib_staticQueue.c#lib_staticQueue_pop",
-               "a pop with a null destination on a queue holding one value");
+               "a pop given nowhere to copy the value, on a queue holding one value");
     VIBES_EXPECT_WHY("consumed-not-copied",
                      "the value is consumed and the queue becomes empty",
-                     "the drain path uses this to throw away a record it cannot write, so a null destination has to advance the ring rather than refuse");
+                     "a record that cannot be written is thrown away this way, so a pop with nowhere to copy has to consume the value and move on");
 
     TEST_ASSERT_TRUE(push(7));
     TEST_ASSERT_TRUE(lib_staticQueue_pop(&q, NULL));
@@ -223,7 +223,7 @@ void test_a_zero_sized_queue_reports_full_and_never_writes(void)
                "a queue initialised with a maximum size of zero");
     VIBES_EXPECT_WHY("init-reports-failure",
                      "init returns false, the queue reports full, and every push is refused",
-                     "a misconfigured channel must not turn into a memcpy against a zero-length buffer; reporting full is what makes the refusal happen at the push rather than at the write");
+                     "a misconfigured channel must not turn into a copy into zero bytes of storage; reporting full makes the push itself refuse, before any copy happens");
 
     lib_staticQueue_S bad;
     int32_t none[1] = { 0 };

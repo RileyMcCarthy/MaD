@@ -43,7 +43,7 @@ why the three maps disagreed:
 
 | Component | Transport | Status |
 |---|---|---|
-| Host protocol link (P55/P53) | UART framed on Thevenin levels, rate derived from the guest's own `WXPIN` divisor | **done** |
+| Host protocol link (P32/P30 on `P2Iss`; P62/P63 on the project files) | UART framed on Thevenin levels, rate derived from the guest's own `WXPIN` divisor | **done** |
 | Debug console (P62) | Byte-level inside `p2core::Board`, forwarded to the emulator log | **partial** — not a node |
 | DS2 piggy board (netlist) + ADS122U04 | UART on levels; analog inputs via MNA cluster solve | **done** — see F1 |
 | Load cell bridge | Two Thevenin drives into AIN0/AIN1 | **done** |
@@ -196,9 +196,12 @@ should be re-tested once S1's framing gap closes rather than chased separately.
 
 `p2iss::flashnode::FlashNode` is a first-class component on real nets. It wraps
 `p2core::SpiFlash` (the shared protocol: `$66`/`$99` reset, `$04` write-disable,
-`$05` status→`$00`, `$03` read-data), senses CLK/CS/MOSI and drives MISO. It
-shares the four Edge-module pins with the microSD, distinguished by chip select,
-with **CLK/CS swapped** (flash `CLK=P60`, `CS=P61`).
+`$05` status→`$00`, `$03` read-data), senses CLK/CS/MOSI and drives MISO only
+while the part sends data, status or its ID (`SpiFlash::drives_miso`), releasing
+it otherwise. That is what a microSD on the same four Edge-module pins needs,
+with **CLK/CS swapped** (flash `CLK=P60`, `CS=P61`): the flash's `CS` is the
+card's clock, so every low half of a card clock pulse selects it. No test puts
+a card beside this node yet; `rom_boot_net.rs` has the flash alone.
 
 **It works because the ISS yields at every net-pin event** — the mechanism that
 answers "why can't embsim handle a bit-banged device". See *The yield mechanism*
@@ -246,6 +249,16 @@ fixes came with them: the 20-bit PC now **wraps** rather than trapping (so
 `PTRA`/`PTRB` expression — without that the ROM's own self-load read from the
 wrong place. Test: `p2core/tests/rom_boot_chain.rs`.
 
+Board time on a ROM boot is the clock the chip runs on (`p2core::Machine::
+time_map`): RCFAST's nominal 20 MHz out of reset, then whatever each `HUBSET`
+clock word selects — RCSLOW, or for the crystal and PLL the rate the program
+recorded at hub `$14` — carried on from the instant of the switch. Hub `$14`
+is the ROM's scratch until a program is loaded, so the ROM's serial window
+(1.8e9 clocks, a minute on the fastest 30 MHz part) lasts 90 s of board time,
+as it would at nominal. Tests: `p2core/tests/rom_time_base.rs`,
+`p2iss/tests/rom_serial_window.rs`. A `P2IssCore` keeps its own map from the
+clock word and the crystal on `XI`.
+
 Reference: `p2iss/rom/rom_booter_v33k.spin2` (trimmed Parallax source; see
 `p2iss/rom/README.md`).
 
@@ -266,7 +279,115 @@ implementing rather than inferring the decision tree.
 
 Depends on B1: there is nothing to boot *from* until the flash is a device.
 
+### B3 — the ISS as the P2 package's core, booting off the P2-EC32MB's flash — **DONE**
+
+`p2iss::P2IssCore` (`p2iss/src/package.rs`; embsim `MIGRATING-MAD.md` step 2)
+is the same `p2core` machine and the same net bus as `P2Iss`, as an
+`embsim_boards::p2::P2Core`: it fills the P2-EC32MB's processor slot `U100`
+inside embsim's `P2Package`, which holds it until the module's reset has
+released and the datasheet's 3 ms restart delay has run out (5.5 ms from the
+module's fingers), then starts it on the engine thread. It takes all 64 pads
+and reads every one; no pin list says what a pin is:
+
+- a pad drives from the guest's `DIR`, `OUT` and mode word, through
+  `BankSupplies::pad_drive` — high at its bank's supply, at the strength the
+  word's drive field sets (fast, 1.5 k, 15 k, 150 k, float);
+- a `P_ASYNC_TX` pad marks its line from the moment it is enabled and frames
+  bytes at the rate its bit period and the guest's clock give, and takes one
+  byte at a time: it reads busy until the byte's frame is out, in the guest's
+  clocks, so a sender waits a frame time a byte, as on silicon; a
+  `P_ASYNC_RX` pad gets a deframer at its own rate and holds one byte, which
+  the next overwrites: since the guest runs ahead, a byte lands at its own
+  instant or the guest's present, whichever is later, and no closer to an
+  unread byte before it than the wire put them (`package.rs`, "Receive"), so
+  an overwritten byte is the firmware's own read gap
+  (`p2iss/tests/package_rx_overrun.rs`); a pad made a receive pin before its
+  rate is written holds its line's transitions for the deframer the rate
+  gives it; a `P_TRANSITION` or
+  `P_NCO_FREQ` pad is a step train (`p2iss::pulse`), and a `WRPIN` to any
+  other mode banks its count and hands the pad back to the word, so
+  `_pinclear` releases it and the firmware's software step pulses
+  (`HAL_pulseOut.c`, below about 1.22 kHz) reach the net; the sync-serial
+  pins are the smart bus (G4), clocked on the guest's own clock, so the
+  module's flash and card share `P58`–`P61`, and a bus pin with `DIR` clear
+  or its word cleared is released;
+- a pad whose published drive is strong reads its `OUT`, every other pad its
+  net (`p2core::Board::sensed`, the strong-mask rule);
+- the guest's clock is the one its `HUBSET` word selects (reported to the
+  package, whose `XI` reading depends on it) and the crystal the package reads
+  on `XI` gives: RCFAST from START, then the PLL's 160 MHz from the module's
+  20 MHz TCXO. Hub `$14` plays no part;
+- **the guest leads, and every change waits for its own instant** (embsim
+  `DESIGN.md` rule 3). A wake runs the cogs in clock order, at most one
+  slice past the engine; an instruction that does something outside — a pad,
+  a mode word, a byte for a transmit pin, a train, the clock word — ends the
+  pass, and what it did is carried out by the wake at the instant it ran at
+  (its cog's clock after it, through the clock map), which then wakes again
+  at that instant so the engine resolves the change, and delivers any
+  answer, before the guest's next instruction. The bus clock's edges are
+  clock counts the pass stops at, carried out the same way. Two wakes a
+  change;
+- nothing straps a pin: `S301` does.
+
+Known gaps, written up for embsim and the serial-boot step: the pads ignore
+`P_INVERT_OUTPUT` in a logic-mode word (`BankSupplies::pad_drive` reads only
+the drive fields; QEMU's core has the same gap), so the 15 kΩ pull-up
+flexspin's `sdmm.cc` sets on the card's data-out pin `P58` (`OUT` low,
+inverted) presents as a pull-down; `TESTP` on `P0`/`P1` reads high once
+`P63` has carried anything since it became a receive pin (a byte waiting,
+or, before the guest has given `P63` a bit period, its line moving, held
+for the deframer that bit period gives it) for the ROM's autobaud, a
+shortcut no net or mode word gives, with `RDPIN` on them `p2core::Board`'s
+fixed 2 000 000 baud measurement; a receive pin takes bytes whatever its
+`DIR`, where silicon's starts at the ROM's `dirh` after the autobaud `>`
+(the ROM drops each `>` and its parser scrolls past the rest); and
+stage-1's relaunch (`setq #$FF` / `rdlong 0, #0` / `jmp #0` at cog `$019`)
+works on the ISS only because the reloaded `$019` happens to be harmless:
+`p2core` executes the reloaded long where silicon runs the `jmp #0` it had
+already fetched.
+
+`p2iss/tests/ec32mb_flash_boot.rs`, stepped, builds the module from its
+vendor netlist, powers it from `J203`'s fingers, closes `S301` positions 2
+(FLASH) and 4 (the `P59` pull-down), and holds that the ROM reads stage-1 at
+0 and stage-1 the 324 512-byte `propeller2_debug` program at `$400`, that the
+core starts at 5.5 ms, and that a terminal at 230 400 baud on `J203.50`
+(`P62/PRG_DBG_TXD`) reads `Starting MaD Board` at 1.254 s of board time, with
+the firmware on 160 MHz from the crystal. `p2iss/tests/package_pads.rs`,
+stepped, boots small programs the same way with a scope on one pad: the
+boot's 18 373 flash clock edges each on a nanosecond of its own, every one on
+a tick of the 20 MHz RC clock from START, 100 ns apart at the closest; a step
+train's pin released by `_pinclear` and then driven as a plain pin; and the
+sync-serial clock's transitions half its period apart from the `WYPIN`, the
+pad released once the pin is cleared. `P2Iss` keeps its `Component` impl and
+pin lists while `mad-emulator` still runs SERVO-stall, the one scenario no
+project can run (MaD #298); they go when it retires (step 11).
+
+`p2iss/tests/ec32mb_sd_mount.rs`, stepped, is the same module with the card
+`make sd-image` writes in `J301`: the firmware's boot-time mount and its
+logging core's mount both succeed, and the card is read at block 0 and then
+at its root directory, block 129. It needs embsim with the W25Q128JV's DO
+released until it has data to shift out (RileyMcCarthy/embsim#141). Before
+that the flash, whose `/CS` is the card's clock `P61` with `S301` FLASH
+closed, drove `P58` high through every low half of the card's mode-3 clock
+at 25 Ω against the card's 265 Ω (`R304`), and was deselected on each
+rising edge. The failure took a second departure from silicon, in
+`p2core`: the smart bus latches MISO from the level held just before the
+rising edge, while `sdmm.cc` asks for the sample after it
+(`wxpin #7 | 32`) and `p2core` drops that bit (RileyMcCarthy/MaD#269). So
+every byte read `$FF`, the card heard only `CMD0`, and the mount failed
+with errno 12. Just after each edge `P58` already carried the card's bit
+(measured in #268's review), so a `p2core` that sampled after the edge
+would have read the card even beside the old flash (inferred). The flash's
+fix is needed regardless: the part leaves DO at high impedance until it has
+data to send (W25Q128JV Revision F §8.2.6, Figure 14, p.28). One gap
+remains on that net: before the card has had a command, embsim's card
+drives MISO whenever `P60`, the flash's clock, selects it, so the ROM's and
+stage-1's flash reads fight it (the flash wins, at ten times the strength,
+and the boot is unaffected; RileyMcCarthy/embsim#142).
+
 ### G1 — Debug console is not a node
+*Inside the package (B3) it is: `P62` is an async transmit pad on the
+module's net, and a terminal on `J203.50` reads it.* For `P2Iss`:
 P62/P63 are still byte-level inside `p2core::Board`. They should be a
 `SerialLink` like the protocol and force-gauge links.
 
@@ -532,6 +653,140 @@ run. Speed alternates between 0.10-0.11x when idle and 0.00x whenever the SD is
 busy. The remaining work is the throughput programme above, not another
 correctness hunt.
 
+### G11 — the boot off the flash, and every pad on a net — **measured**
+
+The two costs embsim's `NODES.md` §13 review item 10 left open (embsim
+`MIGRATING-MAD.md` step 3), measured by `p2iss/examples/iss_speed.rs` with
+`P2IssCore` in the P2-EC32MB's package (B3) against `P2Iss` on no board.
+Every mode runs stepped, so the run's host time is its cost. Release build,
+Apple M2 (8 CPUs) shared with other work, 2026-10-19, two runs each. The host
+was loaded (its load average is printed with each run), which inflates the
+wall figures by up to three times; the CPU figures (user and system, every
+thread) are the comparable ones:
+
+```text
+cd SIL && make p2image && cargo build --release -p p2iss --examples
+./target/release/examples/iss_speed ec32mb 2   # P2IssCore, the module, its flash
+./target/release/examples/iss_speed            # P2Iss, the image in hub RAM, the link's 2 pins on nets
+./target/release/examples/iss_speed levels     # the same with 14 GPIO pins on nets as levels
+```
+
+| Route | Phase | Board time | Host s per board s, wall (CPU) | Load average |
+|---|---|---|---|---|
+| `ec32mb` | boot: START to the firmware's first line | 1.247 s | 32.4 (10.7); 21.1 (10.6) | 28.3; 23.4 |
+| `ec32mb` | running, every pad on a net | 2.0 s | 23.7 (11.0); 19.3 (11.1) | 28.3; 23.4 |
+| bare | running, the link on nets | 2.0 s | 39.5 (10.5); 21.5 (10.1) | 32.3; 27.0 |
+| `levels` | running, the link and 14 pins on nets | 2.0 s | 27.2 (10.4); 11.2 (9.3) | 34.4; 24.8 |
+
+- **The boot off the flash** is 1.247 s of board time from START (5.5 ms
+  after the fingers are powered), all but 0.3 ms of it the ROM and stage-1 on
+  the 20 MHz RC oscillator: stage-1 bit-bangs the 324 512-byte program, about
+  5.2 million pad changes, each a stop of the guest, a wake at the change's
+  own instant and one more after the net has resolved (about 2.5 µs of host
+  CPU each). In the dev profile `cargo test` builds, `ec32mb_flash_boot.rs`
+  took 165 s on CI's runner and 264–596 s here (a host at a load of 20–100),
+  both measured before the stamping below.
+- **What stamping each change at its own instant costs** (embsim
+  `DESIGN.md` rule 3), against the same core stamping changes at the wake's
+  instant, alternating runs on the same host at a load of 23–31: the boot
+  9.3 and 8.9 CPU s per board s before, 10.7 and 10.6 after, about 17 % more;
+  running 10.0 and 9.9 before, 11.0 and 11.1 after, about 11 % more. The
+  second wake per change is most of it; publishing only the pads a write
+  moved took the boot's overhead from 31 % to 17 %.
+- **Every pad on a net** costs about what today's routes cost: 11.0–11.1
+  CPU s per board s against 9.3–10.5, the spread between runs nearly as
+  large as the difference. All 64 pads read their nets; only the pads the
+  guest changes are published.
+- **A fast load** is not called for by these numbers. The boot is a fixed
+  1.25 board s per board, at the same host cost per board second as the
+  firmware running, so it weighs only where boards are started often (the
+  e2e's board per scenario: about 13 s of host CPU each, release). Its host
+  cost is per pad change, so what would shrink it is fewer clock edges — a
+  stage-1 that reads the flash two bits a clock, as Parallax's own loader
+  does with Fast Read Dual Output (`p2iss/rom/stage1.spin2`) — not a faster
+  guest clock, and not a load that skips the chain.
+
+### The project files: the host on `J1`, the production build in the flash
+
+`SIL/mad.toml` and its three twins put the host on the carrier's debug header
+`J1` (`P62`, `P63`, `GND`), where the machine's Prop Plug sits, and the
+module's flash holds the production build (`pio run -e propeller2`,
+`make flash-image`), the route the user decided; which image the machine
+runs is open
+([board design](sil-board-simulation-design.md#the-p2-edge-module-gap)).
+Its MAIN channel receives on `P63` and transmits on `P62` at 2,000,000 baud
+(`HW_pins.h`, `HAL_serial_config.c`), with the FlexC console's own smart
+pins (`HAL_SERIAL_TYPE_BUILTIN`). The debug
+build's MAIN channel is `P30`/`P32`, IC2's Raspberry Pi link from the Edge
+carrier v0.3 on; the SIL's carrier (`mad_edge.net`, before v0.3) brings
+neither to a host connector (`P30` reaches no part, `P32` only header `J22`),
+and its IC2 is on `P52`–`P55`, which the P2-EC32MB keeps for its PSRAMs
+([board design](sil-board-simulation-design.md#the-p2-edge-module-gap)).
+
+`mad-catalog/tests/mad.rs` boots the production image in `P2IssCore` off the
+module's flash and sends ProtoEmb frames on `J1`: the firmware answers the
+version read and the state read on `P62`, at 2,000,000 baud by the rate the
+core derives, and acknowledges a request to enable motion. Two things differ
+from the debug image there:
+
+- the production image still prints `Starting MaD Board` on `P62`
+  (`main.c`) at the FlexC console's default rate (230,400 baud, inferred)
+  before its serial core sets the pin to 2,000,000, so a host at the
+  protocol's rate reads that line as framing errors (27 of them, measured),
+  and the core's report keeps `P62`'s bytes as the console: it says the boot
+  line, then the protocol's bytes as text (measured);
+- a request that lands before the serial core has armed its receive
+  interrupt would go unanswered (inferred), so the case asks again every
+  20 ms of board time. In the runs here the first request, sent at 1.226 s
+  of board time, was answered at 1.235 s (measured).
+
+#### The machine's faults on the project files
+
+Read off the ISS's hub RAM (`dev_cogManager`'s channel table and
+`app_control`'s fault flags, at the addresses the build's listing gives)
+every 20 ms of board time, both images in `mad.toml` (measured, 2026-10-21):
+
+- **A core fault while the channels come up.** The cog manager moves a
+  channel one state per pass of the main cog's 100 ms loop (`Main/MaD.c`):
+  the first pass launches its cog, the second sees the launch and reports
+  the channel running (`dev_cogManager.c`), and the firmware reports a core
+  fault until all seven have (`app_control.c`, `processFaults`). The
+  production image's first state read, at 1.244 s, 65 ms after its boot
+  line, falls in that window and answers the core fault; by 1.308 s every
+  channel is running, its lock allocated (ids 2 to 8) and its stack
+  canaries intact, and the core fault is gone. It is the boot's own
+  window, on both images, and not a fault that stands.
+- **The emergency-stop circuit's power.** With nothing on the carrier's
+  `J17` (`GPI_3`), every read after that window answered `ESD_POWER`, to
+  3.1 s of board time, on both images. `P22` reads `J17`'s loop through
+  `IC12` and `U8` with `R8`'s pull-up to `VIO_16_23` (read:
+  `mad_edge.net`): with no current in the loop it rests high, and the
+  firmware reads `P22` high as the emergency-stop circuit without power
+  (`HAL_GPIO_config.c`, active high), which faults the machine and refuses
+  motion. `mad-emulator` holds `P22` low with a bench pull
+  (`MaDSim/src/iss_description.rs`, `IDLE_PULLS`), which is why motion
+  enables there. The project files close `J17`'s loop from the carrier's
+  `5V_IO` to `GND_IO`, as the switch loops take them, standing for a
+  powered circuit (inferred); with it the machine reads unfaulted from
+  1.314 s and enabling motion is acknowledged (measured). What the machine
+  has on `J17` is not confirmed: with nothing there, the firmware on the
+  machine would fault the same way (inferred from the netlist and the
+  firmware).
+
+The core fault is first in the firmware's order and the reported reason is
+the first fault set, so during the window it also hides the power fault
+(`app_control_private_processFaults`). A case that reads the same command
+twice takes only the answer to its own request: the first answer stays in
+what the host received, and a parser started at an earlier request finds
+it again (`mad.rs`, `HostPort::answer`).
+
+`mad-emulator`, the `p2core`/`p2iss` suites and `mad-catalog/tests/boot.rs`
+keep the debug image: they put the host on the bare chip's `P30`/`P32`, or
+read the log on `P62`. `boot.rs`'s console case is `ec32mb_flash_boot.rs`'s
+boot said by a project file. It passes with the production image too
+(measured, 2026-10-21): no request reaches the firmware there, and the
+summary keeps `P62` at the console's rate.
+
 ## The host: Chrome on the board's clock, or a PTY
 
 The ISS interprets every instruction, so a run's virtual time falls far behind
@@ -543,7 +798,7 @@ and misleading for looking.
 
 So the browser runs on the board's clock. `mad-emulator --chrome` puts
 embsim's `chrome-cdp` node where the PTY host sits, on the harness's host pins
-(`HOST.TX` to `P2.P53`, `P2.P55` to `HOST.RX`) with its rail wired
+(`HOST.TX` to `P2.P30`, `P2.P32` to `HOST.RX`) with its rail wired
 (`HOST.VIO` on the P2's 3.3 V, `HOST.GND` on the bench ground). The node
 launches the host's Chrome at the board's first slice and holds every page and
 dedicated worker to the board's time over DevTools, a 1 ms quantum at a time;
@@ -552,13 +807,43 @@ every page's `navigator.serial` is its shim, whose one port is this line (USB
 the `chrome-cdp` kind), as a project file names it (`SIL/MaDSim/src/host.rs`),
 and a failure it reports (a grant that sticks, a page that crashes, a Chrome
 that exits) stops the run with a non-zero exit. The run prints Chrome's
-DevTools URL in its "reached" line; the e2e suite attaches there
+DevTools URL in its "reached" line; a suite attaches there
 ([SIL testing](sil-testing.md#the-board-route-the-app-in-chrome-on-the-boards-clock)).
+Only SERVO-stall keeps this route (`make e2e-stall`, per PR), because it
+jams the carriage and no project has a jam (MaD #298); FW-ISS and the
+playgrounds moved onto the project at embsim `MIGRATING-MAD.md` step 11.
+
+The e2e runs on the machine's project instead (step 10): `make e2e-emulator`
+is `embsim run mad-cosim.toml`, whose `HOST` is the same kind on the
+carrier's debug header `J1` (USB `0403:6015`, DevTools on 9222, the port
+granted to every origin), the module booting the production image off its
+flash. Measured on an Apple M2, 2026-10-21, one board per scenario
+(`BOARD_PER_SCENARIO=1`): the 23 scenarios that run there (14 on a
+board, and 9 that need none) passed in 753 s of host time, boards
+included, the per-PR ten in 512 s, and BUNDLE-live on the bundle in 36 s;
+each board boots the firmware off the flash first,
+about 1.3 s of board time in 24 s of host, and the board then ran at about
+0.1x with the app attached. The
+production image's boot line goes out on `P62` at the console's rate,
+which the node's receiver at 2,000,000 baud reads as framing errors (27 in
+a run, measured). The carriage never moves there:
+`IC14` as drawn passes nothing to the drive, the run's summary says
+`0 steps commanded`, and the firmware latches `SERVO_STALL` at the first
+move it commands (measured, G2+G3+H2+I), so the suite skips each scenario
+that moves the carriage, saying why (`run-all.mjs`, `PROJECT_CANNOT`).
+Those run on the board with MaD #285 fixed instead (`make e2e-motion`:
+`mad-ic14-fixed-cosim.toml`, `mad-cosim.toml` with one wire from `IC14`'s
+pin 9 to `EN_GND`), per PR G2+G3+H2+I and nightly the whole set; the
+suite skips SERVO-stall there, since the project's machine has no jam, and
+runs it on `mad-emulator` (`make e2e-stall`).
 
 | Target | Host |
 |---|---|
-| `make playground`, `playground-iss` | Chrome, a window on the app |
-| `make playground-rom` | Chrome, a window on the app's flasher, on the programming UART (`P62`/`P63`, USB `0403:6015`) |
-| `make e2e-emulator`, `make e2e` | Chrome, headless, DevTools on 9222 |
-| `make e2e-rom` | Chrome, headless, the mask ROM on the programming UART (USB `0403:6015`), for FW-ISS |
-| `make playground-pty` | a PTY at `/tmp/tty.iss`, for a serial console |
+| `make playground`, `playground-iss` | `mad-playground.toml` (#285 fixed): Chrome, a window on the app, on `J1` (USB `0403:6015`), DevTools on 9222 |
+| `make playground-rom` | `mad-serial-boot-playground.toml`: Chrome, a window on the app's flasher, the ROM's serial boot on `J1` (USB `0403:6015`) |
+| `make e2e-emulator`, `make e2e`, `make e2e-bundle` | `mad-cosim.toml`: Chrome, headless, on `J1` (USB `0403:6015`), DevTools on 9222 |
+| `make e2e-rom` | `mad-serial-boot-cosim.toml`: Chrome, headless, on `J1` (USB `0403:6015`), the mask ROM's serial boot, for FW-ISS |
+| `make e2e-motion` | `mad-ic14-fixed-cosim.toml` (#285 fixed): Chrome, headless, on `J1`, DevTools on 9222, for what the project as drawn cannot run |
+| `make e2e-stall` | `mad-emulator`: Chrome, headless, the debug image's host on `P30`/`P32` (USB `0403:6001`), for SERVO-stall alone (its jam) |
+| `make playground-pty` | `mad.toml`: a PTY on `J1` at `/tmp/tty.iss`, for a serial console |
+| `embsim run mad.toml --pty PATH` | `mad.toml`: a PTY on `J1` (`mad-catalog/tests/pty_protocol.rs`) |

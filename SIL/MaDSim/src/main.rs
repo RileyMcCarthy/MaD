@@ -8,11 +8,14 @@
 //!
 //! - `--chrome`: the host's Chrome, every page and worker held to the board's
 //!   clock over DevTools by embsim's `chrome-cdp`, its Web Serial port this
-//!   line. The e2e configuration, and the one a person runs the app on
-//!   (`make playground`).
+//!   line: SERVO-stall (`make e2e-stall`), whose jam (`--jam-file`) no
+//!   project has (MaD #298). Everything else runs on the machine's project
+//!   files (`SIL/mad*.toml`, `docs/dev/sil-testing.md`), FW-ISS on the ROM's
+//!   serial boot among them; this binary retires once a project can jam the
+//!   carriage (embsim `MIGRATING-MAD.md` step 11).
 //! - otherwise a PTY (`--pty-path`), for a serial console or a program that
-//!   keeps wall time (`make playground-pty`). No browser belongs behind it:
-//!   a browser on the host's clock measures the host, not the machine.
+//!   keeps wall time. No browser belongs behind it: a browser on the host's
+//!   clock measures the host, not the machine.
 
 mod host;
 mod iss_description;
@@ -46,16 +49,30 @@ struct Args {
     #[arg(long, default_value = "info")]
     log_level: String,
 
-    /// The P2 image to execute: `propeller2_debug`'s `program`, or a mask ROM
-    /// when `--boot-rom` is set.
+    /// The P2 image to execute: `propeller2_debug`'s `program`.
     #[arg(value_name = "IMAGE")]
     image: PathBuf,
 
-    /// Boot the mask ROM and put the host on the programming UART (P62/P63)
-    /// instead of the protocol link. The ROM's serial strap (P59 pull-up) is
-    /// fitted, so `Prop_Chk` works without a DTR→RESn line.
-    #[arg(long)]
-    boot_rom: bool,
+    /// Jam the carriage while this file exists: the drive keeps stepping but
+    /// the carriage, and with it the encoder, stops (a servo stall, as the
+    /// firmware's guard sees one). Removing the file frees it. The e2e suite's
+    /// stall scenario creates and removes it.
+    #[arg(long, value_name = "PATH")]
+    jam_file: Option<PathBuf>,
+
+    /// How far a jam buzzes either side of where the carriage stuck, in
+    /// encoder counts: a powered drive shakes a jammed carriage rather than
+    /// holding it dead still. The default is the +-15 counts measured on the
+    /// bench; 0 is a dead jam.
+    #[arg(long, value_name = "COUNTS", default_value_t = 15)]
+    jam_buzz_counts: u32,
+
+    /// The drive's steps per millimetre (the encoder's stays 8192). Set it to
+    /// something else together with a `profile.bin` on `--sd-path` whose
+    /// `servoStepsPerMM` matches, to run a machine whose drive and encoder
+    /// scales differ.
+    #[arg(long, value_name = "STEPS", default_value_t = iss_description::DEFAULT_MOTOR_STEPS_PER_MM)]
+    motor_steps_per_mm: u32,
 
     /// The host's Chrome on the link instead of the PTY (`host.rs`).
     #[command(flatten)]
@@ -120,102 +137,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let image = args.image.clone();
-    if args.boot_rom {
-        run_iss_rom(&args, &image)
-    } else {
-        run_iss(&args, &image)
-    }
-}
-
-/// Boot the mask ROM with the host on the programming UART (P62/P63).
-///
-/// The host is the PTY, or with `--chrome` the host's Chrome, whose page
-/// flashes through its Web Serial port. The ROM's serial strap is a pull-up on
-/// P59, so `Prop_Chk` works without a DTR line (nothing models DTR: the
-/// chrome-cdp's `setSignals` reaches nothing).
-fn run_iss_rom(args: &Args, rom_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
-    use embsim_board::{AttachError, Component, ComponentNetIo, Harness, PinDecl, TheveninDrive};
-    use p2iss::{P2Iss, SerialLink};
-
-    const PROG: SerialLink = SerialLink {
-        tx_pin: 62,
-        rx_pin: 63,
-        nominal_baud: 2_000_000,
-    };
-
-    /// A 15 kΩ resistor to `volts`: a static pull, declared as the pin's idle
-    /// drive, so the board stamps it from build.
-    struct Pull {
-        pins: [PinDecl; 1],
-    }
-    impl Pull {
-        fn new(volts: f64) -> Self {
-            Self {
-                pins: [PinDecl::analog_source("A").with_idle(Some(TheveninDrive {
-                    volts,
-                    impedance: 15_000.0,
-                }))],
-            }
-        }
-    }
-    impl Component for Pull {
-        fn pins(&self) -> &[PinDecl] {
-            &self.pins
-        }
-        fn attach(&mut self, _io: ComponentNetIo) -> Result<(), AttachError> {
-            Ok(())
-        }
-    }
-
-    install_shutdown_signals();
-    let rom = std::fs::read(rom_path)?;
-    info!(
-        "ISS ROM: {} ({} bytes) — programming UART on P{}/P{}",
-        rom_path.display(),
-        rom.len(),
-        PROG.tx_pin,
-        PROG.rx_pin
-    );
-
-    embsim_core::virtual_clock::init(args.speed, 20_000_000);
-    let _time_authority = embsim_core::virtual_clock::take_time_authority();
-
-    let iss = P2Iss::with_boot_rom(&rom, p2core::SdCard::blank(0), &[PROG]).with_level_pins(&[59]);
-    let handle = iss.handle();
-
-    let host = host::Host::open(&args.chrome, &args.pty_path, PROG)?;
-    let harness = host.wire(
-        Harness::new().connect_str("P2.P59", "STRAP.A")?,
-        "P2.P62",
-        "P2.P63",
-    )?;
-    let (system, reporter) = host.into_parts();
-
-    let system = system
-        .component("P2", Box::new(iss))
-        .component("STRAP", Box::new(Pull::new(3.3)));
-    let _system = system.harness(harness).start()?;
-    let reporter = reporter.spawn(&SHUTDOWN, &HOST_FAILED);
-
-    info!("ISS ROM serial running; main thread parked.");
-    std::thread::spawn(move || {
-        let mut echoed = 0usize;
-        loop {
-            std::thread::sleep(std::time::Duration::from_secs(5));
-            let (tx, rx) = handle.byte_counts();
-            let console = handle.console();
-            if console.len() > echoed {
-                let fresh = &console[echoed..];
-                eprint!("{fresh}");
-                echoed = console.len();
-            }
-            info!(
-                "ISS ROM: tx={tx} rx={rx} guest_us={}",
-                handle.guest_now_us()
-            );
-        }
-    });
-    park_until_shutdown(reporter)
+    run_iss(&args, &image)
 }
 
 /// Run the P2 image on the instruction-set simulator.
@@ -298,7 +220,7 @@ fn run_iss(args: &Args, image_path: &std::path::Path) -> Result<(), Box<dyn std:
 
     let pulls = BenchPulls::new(IDLE_PULLS);
     let force = BenchForcePath::build();
-    let machine = BenchMachine::build()?;
+    let machine = BenchMachine::build(args.motor_steps_per_mm)?;
     let travel = machine.travel();
 
     let mut harness = host.wire(
@@ -370,10 +292,12 @@ fn run_iss(args: &Args, image_path: &std::path::Path) -> Result<(), Box<dyn std:
     }
     {
         let g = Arc::clone(&gantry_model);
-        machine
-            .motor
-            .shaft()
-            .on_position_change(move |mm| g.on_position(mm));
+        machine.on_carriage_change(move |mm| g.on_position(mm));
+    }
+    if let Some(path) = &args.jam_file {
+        let coupling = machine.coupling();
+        coupling.set_buzz_counts(args.jam_buzz_counts);
+        watch_jam_file(path.clone(), coupling);
     }
 
     let (system, reporter) = host.into_parts();
@@ -449,6 +373,30 @@ fn run_iss(args: &Args, image_path: &std::path::Path) -> Result<(), Box<dyn std:
         }
     });
     park_until_shutdown(reporter)
+}
+
+/// Jam the carriage while `path` exists, and free it when it goes.
+///
+/// Polled on the wall clock: the board runs at a few percent of real time, so
+/// 20 ms of wall time is well under a millisecond of the board's. A file left
+/// from an earlier run is removed first, so every run starts free.
+fn watch_jam_file(path: PathBuf, coupling: Arc<iss_description::Coupling>) {
+    let _ = std::fs::remove_file(&path);
+    info!(
+        "Jam control: the carriage jams while {} exists",
+        path.display()
+    );
+    std::thread::spawn(move || loop {
+        let jammed = path.exists();
+        if jammed != coupling.jammed() {
+            coupling.set_jammed(jammed);
+            info!(
+                "Jam control: carriage {}",
+                if jammed { "JAMMED" } else { "freed" }
+            );
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    });
 }
 
 /// Configure the global tracing subscriber from a log-level string.

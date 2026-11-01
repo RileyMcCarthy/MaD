@@ -15,6 +15,7 @@ P2 adapter: FlexC/Spin programs, loadp2, encodings.
 | `locks.c` | Lock pool (`_locknew` / `_locktry`) | `hw_compare.py --capture --prog locks` | `--test silicon_reports` |
 | `cogs.c` | Two cogs, hub mailbox | `hw_compare.py --capture --prog cogs` | `--test silicon_reports` |
 | `timed.c` | GETCT/WAITX cycle deltas | `hw_compare.py --capture --prog timed` | `--test silicon_reports` / `--test op_coverage` |
+| `events.c` | Event flags (CT, SE pin/lock/LUT modes, PAT, ATN, QMT, FBW) and INT1-3: latency, hold-offs, flags, priority, nesting, RESI, WAITINT | `hw_compare.py --capture --prog events` | `--test silicon_reports` |
 
 `P2_PORT` overrides the default FTDI (`/dev/cu.usbserial-PLX6ZJLYQ`).
 
@@ -44,6 +45,19 @@ cargo run -p p2core --example probe_encodings -- --coverage hwtest/golden/probe.
 
 Every `Op` is in a bucket (`p2core::op_bucket`). Probe, prefix, locks, cogs,
 and timed (GETCT/WAITX) must have silicon goldens (`--test op_coverage`).
+
+Events and interrupts on silicon (`events.c`, all matched by p2core): an
+interrupt branches one instruction after it is triggered, and not while a
+prefix (AUGS, SETQ, ALTx), `GETCT WC`, a REP body, STALLI or any WAITx is in
+the way; ALLOWI lets it through one instruction late. A flag an instruction's
+side effect raises (SETSE, a lock, a driven pin) is visible two instructions
+later, one it raises itself (RDLUT, GETQX) on the next. CT events are levels
+(the flag sets again until ADDCT moves the target), pin edges/PAT/ATN/QMT are
+one-shot, and taking an interrupt does not clear its source's flag. WAITINT
+ends when an interrupt is triggered, before it branches. The interrupt branch
+and RETIx/RESIx each cost 4 clocks. Not captured: streamer events (XMT, XFI,
+XRO, XRL) and the companion-cog LUT modes; p2core raises XMT/XFI from its
+functional streamer and never raises XRO/XRL or companion LUT events.
 
 WAITX on silicon: `getct; waitx N; getct` delta is **N+4** (two GETCTs and
 the WAITX instruction at 2 clocks each, plus N extra). p2core matches that

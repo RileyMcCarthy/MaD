@@ -4,7 +4,7 @@ The firmware runs on a **Parallax Propeller 2** and is written in C, compiled
 with the FlexC compiler via PlatformIO. It lives in `Firmware/MaDCore/`.
 
 It is built from ~20 small modules, each prefixed with its layer
-(`app_control.c`, `dev_stepper.c`, `IO_protocol.c`, `lib_timer.c`). The map below
+(`app_control.c`, `dev_servo.c`, `IO_protocol.c`, `lib_timer.c`). The map below
 is the fastest way to see how they fit together — and how a test flows from the
 host all the way down to a motor pulse.
 
@@ -19,7 +19,7 @@ Two data paths run through the firmware in opposite directions:
 
 **Hover (or keyboard-tab) over any module** to see what it does and which of the
 eight cores it runs on. The ★ edges are the spine this page is really about:
-`app_testManagement` feeds `app_motion`, which feeds `dev_stepper`.
+`app_testManagement` feeds `app_motion`, which feeds `dev_servo`.
 
 <div class="fw-map">
 <svg viewBox="0 0 1200 690" role="group" aria-label="MaD firmware module interaction map" xmlns="http://www.w3.org/2000/svg">
@@ -86,11 +86,11 @@ eight cores it runs on. The ★ edges are the spine this page is really about:
     <title>app_control — The safety state machine (DISABLED → RESTRICTED → MANUAL → TEST). Each tick it folds faults, restrictions and operator requests into one gated output — motionEnabled — that the whole motion chain obeys.</title>
     <g class="fw-card"><rect class="fw-card-bg" x="8" y="289.5" width="232" height="145" rx="8"/><text class="fw-card-title" x="20" y="313.5">app_control</text><text class="fw-card-meta" x="20" y="332.5">CONTROL cog · 1 kHz</text><text class="fw-card-body" x="20" y="348.5">The safety state machine (DISABLED →</text><text class="fw-card-body" x="20" y="362.5">RESTRICTED → MANUAL → TEST). Each tick</text><text class="fw-card-body" x="20" y="376.5">it folds faults, restrictions and</text><text class="fw-card-body" x="20" y="390.5">operator requests into one gated</text><text class="fw-card-body" x="20" y="404.5">output — motionEnabled — that the</text><text class="fw-card-body" x="20" y="418.5">whole motion chain obeys.</text></g>
   </g>
-  <g class="fw-node fw-node--cmd" tabindex="0" role="img" aria-label="app_motion: Pure motion executor. Pops one move off its queue and turns the G-code (G0/G1 linear, G4 dwell, G28 home, G123 waveform) into dev_stepper commands. Knows nothing about test sessions.">
+  <g class="fw-node fw-node--cmd" tabindex="0" role="img" aria-label="app_motion: Pure motion executor. Pops one move off its queue and turns the G-code (G0/G1 linear, G4 dwell, G28 home, G123 waveform) into dev_servo commands. Knows nothing about test sessions.">
     <rect class="fw-node-box" x="240" y="369" width="200" height="46" rx="8"/>
     <text class="fw-node-label" x="340" y="386">app_motion</text><text class="fw-node-sub" x="340" y="403">CONTROL cog · 1 kHz</text>
-    <title>app_motion — Pure motion executor. Pops one move off its queue and turns the G-code (G0/G1 linear, G4 dwell, G28 home, G123 waveform) into dev_stepper commands. Knows nothing about test sessions.</title>
-    <g class="fw-card"><rect class="fw-card-bg" x="8" y="319.5" width="232" height="145" rx="8"/><text class="fw-card-title" x="20" y="343.5">app_motion</text><text class="fw-card-meta" x="20" y="362.5">CONTROL cog · 1 kHz</text><text class="fw-card-body" x="20" y="378.5">Pure motion executor. Pops one move</text><text class="fw-card-body" x="20" y="392.5">off its queue and turns the G-code</text><text class="fw-card-body" x="20" y="406.5">(G0/G1 linear, G4 dwell, G28 home,</text><text class="fw-card-body" x="20" y="420.5">G123 waveform) into dev_stepper</text><text class="fw-card-body" x="20" y="434.5">commands. Knows nothing about test</text><text class="fw-card-body" x="20" y="448.5">sessions.</text></g>
+    <title>app_motion — Pure motion executor. Pops one move off its queue and turns the G-code (G0/G1 linear, G4 dwell, G28 home, G123 waveform) into dev_servo commands. Knows nothing about test sessions.</title>
+    <g class="fw-card"><rect class="fw-card-bg" x="8" y="319.5" width="232" height="145" rx="8"/><text class="fw-card-title" x="20" y="343.5">app_motion</text><text class="fw-card-meta" x="20" y="362.5">CONTROL cog · 1 kHz</text><text class="fw-card-body" x="20" y="378.5">Pure motion executor. Pops one move</text><text class="fw-card-body" x="20" y="392.5">off its queue and turns the G-code</text><text class="fw-card-body" x="20" y="406.5">(G0/G1 linear, G4 dwell, G28 home,</text><text class="fw-card-body" x="20" y="420.5">G123 waveform) into dev_servo</text><text class="fw-card-body" x="20" y="434.5">commands. Knows nothing about test</text><text class="fw-card-body" x="20" y="448.5">sessions.</text></g>
   </g>
   <g class="fw-node fw-node--fb" tabindex="0" role="img" aria-label="app_gauge: Stateless framing layer over the sensors: reports jaw position (µm) and load (mN) in either the machine frame or the zeroed sample frame by subtracting latched offsets.">
     <rect class="fw-node-box" x="760" y="369" width="200" height="46" rx="8"/>
@@ -98,11 +98,11 @@ eight cores it runs on. The ★ edges are the spine this page is really about:
     <title>app_gauge — Stateless framing layer over the sensors: reports jaw position (µm) and load (mN) in either the machine frame or the zeroed sample frame by subtracting latched offsets.</title>
     <g class="fw-card"><rect class="fw-card-bg" x="960" y="326.5" width="232" height="131" rx="8"/><text class="fw-card-title" x="972" y="350.5">app_gauge</text><text class="fw-card-meta" x="972" y="369.5">framing helper · no cog</text><text class="fw-card-body" x="972" y="385.5">Stateless framing layer over the</text><text class="fw-card-body" x="972" y="399.5">sensors: reports jaw position (µm) and</text><text class="fw-card-body" x="972" y="413.5">load (mN) in either the machine frame</text><text class="fw-card-body" x="972" y="427.5">or the zeroed sample frame by</text><text class="fw-card-body" x="972" y="441.5">subtracting latched offsets.</text></g>
   </g>
-  <g class="fw-node fw-node--cmd" tabindex="0" role="img" aria-label="dev_stepper: Turns position / velocity commands into step + direction pulses (NCO smart-pin) and tracks the live step count. Each tick it copies a lock-protected staging struct written by app_motion.">
+  <g class="fw-node fw-node--cmd" tabindex="0" role="img" aria-label="dev_servo: Closed-loop servo: a 1 kHz loop turns position / velocity commands into step + direction pulses, closed on the encoder, and reports arrival and stalls. app_motion hands it commands through a lock-protected request struct.">
     <rect class="fw-node-box" x="240" y="459" width="200" height="46" rx="8"/>
-    <text class="fw-node-label" x="340" y="476">dev_stepper</text><text class="fw-node-sub" x="340" y="493">MOTOR cog · free-run</text>
-    <title>dev_stepper — Turns position / velocity commands into step + direction pulses (NCO smart-pin) and tracks the live step count. Each tick it copies a lock-protected staging struct written by app_motion.</title>
-    <g class="fw-card"><rect class="fw-card-bg" x="8" y="409.5" width="232" height="145" rx="8"/><text class="fw-card-title" x="20" y="433.5">dev_stepper</text><text class="fw-card-meta" x="20" y="452.5">MOTOR cog · free-run</text><text class="fw-card-body" x="20" y="468.5">Turns position / velocity commands</text><text class="fw-card-body" x="20" y="482.5">into step + direction pulses (NCO</text><text class="fw-card-body" x="20" y="496.5">smart-pin) and tracks the live step</text><text class="fw-card-body" x="20" y="510.5">count. Each tick it copies a</text><text class="fw-card-body" x="20" y="524.5">lock-protected staging struct written</text><text class="fw-card-body" x="20" y="538.5">by app_motion.</text></g>
+    <text class="fw-node-label" x="340" y="476">dev_servo</text><text class="fw-node-sub" x="340" y="493">MOTOR cog · 1 kHz</text>
+    <title>dev_servo — Closed-loop servo: a 1 kHz loop turns position / velocity commands into step + direction pulses, closed on the encoder, and reports arrival and stalls. app_motion hands it commands through a lock-protected request struct.</title>
+    <g class="fw-card"><rect class="fw-card-bg" x="8" y="409.5" width="232" height="145" rx="8"/><text class="fw-card-title" x="20" y="433.5">dev_servo</text><text class="fw-card-meta" x="20" y="452.5">MOTOR cog · 1 kHz</text><text class="fw-card-body" x="20" y="468.5">Closed-loop servo: turns position /</text><text class="fw-card-body" x="20" y="482.5">velocity commands into step + dir</text><text class="fw-card-body" x="20" y="496.5">pulses, closed on the encoder, and</text><text class="fw-card-body" x="20" y="510.5">reports arrival and stalls. Commands</text><text class="fw-card-body" x="20" y="524.5">arrive in a lock-protected request</text><text class="fw-card-body" x="20" y="538.5">struct written by app_motion.</text></g>
   </g>
   <g class="fw-node fw-node--fb" tabindex="0" role="img" aria-label="dev_forceGauge: Drives the ADS122U04 24-bit load-cell ADC over UART (IO_ADS122U04) and converts raw counts to millinewtons using the calibrated zero + scale from NVRAM.">
     <rect class="fw-node-box" x="755" y="459" width="210" height="46" rx="8"/>
@@ -173,13 +173,13 @@ flowchart TB
     TM["app_testManagement<br/><small>CONTROL cog</small>"]
     MO["app_motion<br/><small>CONTROL cog</small>"]
     CO["app_control · safety gate<br/><small>CONTROL cog</small>"]
-    ST["dev_stepper<br/><small>MOTOR cog</small>"]
+    ST["dev_servo<br/><small>MOTOR cog</small>"]
     GANTRY["Motor + gantry"]
     HOST -->|Web Serial| FDS --> MS
     MS -->|"manual jog (staged)"| TM
     MS -->|upload program| SD -->|binary moves| TM
     TM -->|"addMove() — lock-free queue, same cog"| MO
-    MO -->|"move()/setVelocity() — staging struct, cross-cog lock"| ST
+    MO -->|"moveTo()/setVelocity() — request struct, cross-cog lock"| ST
     CO -.->|motionEnabled| MO
     ST -->|step + dir pulses| GANTRY
 ```
@@ -192,10 +192,10 @@ Two things make this work:
   *both* ends run on the **CONTROL cog** — manual jogs that arrive on the
   COMMUNICATION cog are first parked in a request slot and only enqueued from the
   CONTROL cog, so the queue only ever has one writer.
-- **`app_motion → dev_stepper` is a lock-protected hand-off.** `app_motion` calls
-  `dev_stepper_move()` / `dev_stepper_setVelocity()`, which write a staging struct
-  guarded by the stepper's lock; the free-running **MOTOR cog** copies that struct
-  each tick to drive the pulse hardware. This edge *does* need a lock because it
+- **`app_motion → dev_servo` is a lock-protected hand-off.** `app_motion` calls
+  `dev_servo_moveTo()` / `dev_servo_setVelocity()`, which write a request struct
+  guarded by the servo's lock; the **MOTOR cog** snapshots it on every 1 kHz
+  control tick and drives the pulse hardware, closed on the encoder. This edge *does* need a lock because it
   crosses cores.
 
 The CONTROL cog runs its three modules in a fixed order every tick —
@@ -280,7 +280,7 @@ integration.
 |---|---|---|---|
 | **Primary** (boot core) | `dev_nvram` · `dev_cogManager` · `watchdog` | 10 Hz | Boots & supervises the other 7 cogs; persists the machine profile |
 | `MONITOR` | `app_monitor` (+ `app_gauge`, `IO_positionFeedback`) | 1 kHz | Aggregate samples, enforce limits, queue the SD log |
-| `MOTOR` | `dev_stepper` | free-run | Step + direction pulse generation (NCO) |
+| `MOTOR` | `dev_servo` | 1 kHz | Closed-loop servo: step + direction pulses, closed on the encoder |
 | `COMMUNICATION` | `app_messageSlave` · `app_notification` | 100 Hz | Host serial port: decode & answer ProtoEmb messages |
 | `CONTROL` | `app_testManagement` → `app_motion` → `app_control` | 1 kHz | Test lifecycle, motion execution, safety state |
 | `LOGGER` | `IO_SDCard` | 1 kHz | Stream packed records to/from the SD card |
@@ -310,7 +310,7 @@ into "motion is off."
     queue) are unsynchronised by contract; the owning module adds a lock only when
     its topology needs one. The motion spine shows both patterns in two lines:
     `app_testManagement → app_motion` is **lock-free** (single producer/consumer on
-    one cog), while `app_motion → dev_stepper` is **lock-protected** (it crosses to
+    one cog), while `app_motion → dev_servo` is **lock-protected** (it crosses to
     the MOTOR cog).
 
 ## The control state machine

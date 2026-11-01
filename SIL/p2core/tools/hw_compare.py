@@ -37,13 +37,14 @@ GOLDEN_DIR = CRATE / "hwtest" / "golden"
 PIO = Path.home() / ".platformio" / "packages"
 DEFAULT_PORT = os.environ.get("P2_PORT", "/dev/cu.usbserial-PLX6ZJLYQ")
 BAUD = "230400"
-REPORT = re.compile(r"^(P2CORE-HW|CLKFREQ |PASS |FAIL |RESULT |LOCKS|COGS|TIMED)")
+REPORT = re.compile(r"^(P2CORE-HW|CLKFREQ |PASS |FAIL |RESULT |LOCKS|COGS|TIMED|EVENTS)")
 PROGS = {
     "oracle": "oracle.c",
     "locks": "locks.c",
     "cogs": "cogs.c",
     "timed": "timed.c",
     "pins": "pins.c",
+    "events": "events.c",
 }
 
 

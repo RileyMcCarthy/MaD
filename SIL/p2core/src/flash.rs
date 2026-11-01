@@ -93,6 +93,11 @@ pub struct SpiFlash {
     out_count: u32,
     /// The bit currently held on MISO, updated as the clock moves.
     miso_bit: bool,
+    /// `out_byte` is something the part sends (data, status, an ID byte),
+    /// not the filler it shifts while the master is still shifting in.
+    out_is_output: bool,
+    /// `miso_bit` came from such a byte: the part is driving DO.
+    driving: bool,
     phase: Phase,
     addr_acc: u32,
     read_addr: u32,
@@ -165,6 +170,17 @@ impl SpiFlash {
         }
     }
 
+    /// Whether the part drives DO: selected, and shifting out the data of a
+    /// read, the status register or the JEDEC ID, from the edge that
+    /// presents its first bit. Deselected, and while the master shifts the
+    /// instruction and any address in, DO is at high impedance (W25Q128JV
+    /// Revision F §4.1, p.9; §8.2.6 Figure 14, p.28; §8.2.4 Figure 8a,
+    /// p.25). A net adapter releases the line while this is false, so a
+    /// device sharing the line (the microSD on a P2 Edge) can drive it.
+    pub fn drives_miso(&self) -> bool {
+        self.selected && self.driving
+    }
+
     /// The bit currently on MISO (P58).
     pub fn miso(&self) -> bool {
         if !self.selected {
@@ -200,7 +216,9 @@ impl SpiFlash {
         self.jedec_idx = 0;
         self.phase = Phase::Command;
         self.out_byte = self.next_out();
+        self.out_is_output = false;
         self.miso_bit = self.out_bit();
+        self.driving = false;
     }
 
     /// Clock a bit, sampling `mosi`. Returns after updating the outgoing bit,
@@ -233,6 +251,7 @@ impl SpiFlash {
             // before the pulse ends, not after. Presenting on the falling edge
             // instead reads back one bit late and the checksum never matches.
             self.miso_bit = self.out_bit();
+            self.driving = self.out_is_output;
             self.out_count += 1;
             if self.out_count == 8 {
                 if self.served.len() < 4096 {
@@ -240,6 +259,8 @@ impl SpiFlash {
                 }
                 self.out_count = 0;
                 self.out_byte = self.next_out();
+                self.out_is_output =
+                    matches!(self.phase, Phase::Reading | Phase::Status | Phase::Jedec);
             }
         }
     }
@@ -379,6 +400,7 @@ impl SpiFlash {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use vibes_behaviour::{behaviour, expect, Test};
 
     /// Shift a command byte in, MSB first.
     fn send(flash: &mut SpiFlash, byte: u8) {
@@ -522,5 +544,131 @@ mod tests {
         tx(&mut flash, &[0x02, 0x00, 0x00, 0x00, 0xAA]);
         tx(&mut flash, &[0x05]);
         assert_eq!(flash.commands, vec![0x06, 0x02, 0x05]);
+    }
+
+    /// Shift `byte` in as [`send`] does, and say whether the part drove DO
+    /// after any of its edges.
+    fn send_watching(flash: &mut SpiFlash, byte: u8) -> bool {
+        let mut drove = false;
+        for i in (0..8).rev() {
+            let bit = (byte >> i) & 1 != 0;
+            flash.clock(true, bit);
+            drove |= flash.drives_miso();
+            flash.clock(false, bit);
+            drove |= flash.drives_miso();
+        }
+        drove
+    }
+
+    /// Read a byte out as [`recv`] does, and say whether the part drove DO
+    /// after every one of its edges.
+    fn recv_watching(flash: &mut SpiFlash) -> (u8, bool) {
+        let mut b = 0u8;
+        let mut drove = true;
+        for _ in 0..8 {
+            flash.clock(true, true);
+            drove &= flash.drives_miso();
+            flash.clock(false, true);
+            drove &= flash.drives_miso();
+            b = (b << 1) | u8::from(flash.miso());
+        }
+        (b, drove)
+    }
+
+    #[test]
+    fn a_read_drives_the_data_line_only_while_it_sends_data() {
+        behaviour!(Test {
+            id: "p2core.flash-read-drives-do-for-data",
+            covers: Some("SIL/p2core/src/flash.rs#SpiFlash::drives_miso"),
+            given: "the boot flash selected, sent a read instruction and a three-byte address, \
+                    read for two bytes, then deselected",
+        });
+        expect!(
+            "released-before-data",
+            "the flash leaves its data-out line undriven from the moment it is selected \
+             until the first bit of the data"
+        );
+        expect!(
+            "drives-data",
+            "it drives the line through every bit of both data bytes, and they are the \
+             bytes stored from the address on"
+        );
+        expect!(
+            "released-deselected",
+            "it releases the line once it is deselected"
+        );
+        let mut image = vec![0u8; 0x500];
+        image[0x400] = 0x5A;
+        image[0x401] = 0xC3;
+        let mut flash = SpiFlash::with_image(image);
+        flash.set_selected(true);
+        let mut early = flash.drives_miso();
+        for b in [0x03, 0x00, 0x04, 0x00] {
+            early |= send_watching(&mut flash, b);
+        }
+        assert!(!early, "DO undriven through the instruction and address");
+        let (first, drove_first) = recv_watching(&mut flash);
+        let (second, drove_second) = recv_watching(&mut flash);
+        assert_eq!((first, second), (0x5A, 0xC3), "the bytes from $400");
+        assert!(drove_first && drove_second, "DO driven for every data bit");
+        flash.set_selected(false);
+        assert!(!flash.drives_miso(), "DO released once deselected");
+    }
+
+    #[test]
+    fn a_status_read_drives_the_data_line_once_its_instruction_is_in() {
+        behaviour!(Test {
+            id: "p2core.flash-status-drives-do-after-instruction",
+            covers: Some("SIL/p2core/src/flash.rs#SpiFlash::drives_miso"),
+            given: "the boot flash selected and sent the read-status instruction, then read \
+                    for one byte",
+        });
+        expect!(
+            "released-instruction",
+            "the flash leaves its data-out line undriven while the instruction goes in"
+        );
+        expect!(
+            "drives-status",
+            "it drives the line through every bit of the status byte"
+        );
+        let mut flash = SpiFlash::with_image(vec![0xFF; 16]);
+        flash.set_selected(true);
+        assert!(
+            !send_watching(&mut flash, 0x05),
+            "DO undriven for the opcode"
+        );
+        let (status, drove) = recv_watching(&mut flash);
+        assert_eq!(status, 0x00, "idle and not write-enabled");
+        assert!(drove, "DO driven for the status byte");
+    }
+
+    #[test]
+    fn writes_never_drive_the_data_line() {
+        behaviour!(Test {
+            id: "p2core.flash-writes-leave-do-undriven",
+            covers: Some("SIL/p2core/src/flash.rs#SpiFlash::drives_miso"),
+            given: "the boot flash sent a write enable, then a page program of one byte, each \
+                    in its own selection",
+        });
+        expect!(
+            "never-drives",
+            "the flash never drives its data-out line through either instruction, the \
+             address or the byte programmed"
+        );
+        expect!(
+            "programmed",
+            "the byte lands at the address the page program named"
+        );
+        let mut flash = SpiFlash::with_image(vec![0xFF; 512]);
+        flash.set_selected(true);
+        let mut drove = send_watching(&mut flash, 0x06);
+        flash.set_selected(false);
+        flash.set_selected(true);
+        for b in [0x02, 0x00, 0x01, 0x10, 0xA5] {
+            drove |= send_watching(&mut flash, b);
+        }
+        flash.set_selected(false);
+        assert!(!drove, "DO undriven through both instructions");
+        assert_eq!(flash.image_bytes()[0x110], 0xA5, "the programmed byte");
     }
 }

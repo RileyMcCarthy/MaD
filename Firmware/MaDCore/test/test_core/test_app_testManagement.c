@@ -492,7 +492,7 @@ void test_app_testManagement_earlierRefusalDoesNotTaintNextTest(void)
                "a G123 refused before the test started (a manual waveform or the previous test's), then a test that runs cleanly");
     VIBES_EXPECT_WHY("completion-announced",
                      "the new test is announced complete",
-                     "a refusal belongs to the test that asked for the waveform, not to whichever test ends next");
+                     "a refusal belongs to the test that asked for the waveform, and only that test ends with its warning");
     tm_init();
     d_waveformRefused = true; /* latched before this test */
     tm_driveToRunning();
@@ -666,7 +666,7 @@ void test_m5_lifecycle_start_manual_matrix(void)
     VIBES_TEST("test-run.start-and-jog-only-while-idle",
                "src/APP/app_testManagement.c#app_testManagement_isBusy",
                "a start and a jog attempted while idle, while a start is waiting to begin, while a test is running, and after every way a test can finish");
-    VIBES_EXPECT("refused-while-busy", "both are refused while a start is waiting to begin or a test is running");
+    VIBES_EXPECT("refused-while-busy", "both are refused in the two busy states: a pending start and a running test");
     VIBES_EXPECT("accepted-otherwise", "both are accepted in every other phase");
     VIBES_EXPECT("busy-matches-phase", "the machine reports itself busy in exactly those two phases");
     /* Columns: phase → expectStartAccepted, expectManualAccepted, expectBusy */

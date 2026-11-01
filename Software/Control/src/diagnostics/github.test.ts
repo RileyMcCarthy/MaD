@@ -133,7 +133,7 @@ describe('token storage', () => {
       expect: {
         'saved-in-folder': "the browser's token is written to the folder's settings",
         'in-use': 'that token is the one in use',
-        'browser-copy-removed': 'the browser no longer holds a copy',
+        'browser-copy-removed': 'the browser\'s copy of the token is deleted',
       },
       why: {
         'browser-copy-removed': 'the folder is the single place the token lives, so clearing it there clears it',

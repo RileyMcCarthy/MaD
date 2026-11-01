@@ -61,8 +61,8 @@ pub struct ChromeArgs {
     #[arg(long, value_name = "PATH", requires = "chrome")]
     pub chrome_binary: Option<PathBuf>,
 
-    /// With `--chrome`: a page to open once Chrome holds it (the playground
-    /// opens the app).
+    /// With `--chrome`: a page to open once Chrome holds it (a window on the
+    /// app, for a person).
     #[arg(long, value_name = "URL", requires = "chrome")]
     pub url: Option<String>,
 
@@ -341,8 +341,8 @@ mod tests {
             "http://127.0.0.1:5174/",
         ]);
         let link = SerialLink {
-            tx_pin: 55,
-            rx_pin: 53,
+            tx_pin: crate::iss_description::pins::RPI_TX,
+            rx_pin: crate::iss_description::pins::RPI_RX,
             nominal_baud: 2_000_000,
         };
         let project = chrome_project(&cli.chrome, link).expect("the entry parses");

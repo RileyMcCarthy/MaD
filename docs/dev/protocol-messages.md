@@ -65,9 +65,11 @@ sampleCount(u32)`) and the device streams `StoredSample` records.
   UPPER_ENDSTOP, LOWER_ENDSTOP, DOOR`
 - **`MotionState`** — `DISABLED, WAITING, MOVING`
 - **`GCode`** — `RAPID_MOVE(0), LINEAR_MOVE(1), CW_ARC(2), CCW_ARC(3), DWELL(4),
-  HOME(28), ABSOLUTE(90), INCREMENTAL(91), STOP(122), WAVEFORM(123)` (the values
-  are the G-code numbers; `STOP` is the test-complete `G122`, `WAVEFORM` is the
-  firmware-native `G123` canned cycle)
+  HOME(28), ABSOLUTE(90), INCREMENTAL(91), STOP(122), WAVEFORM(123),
+  OPEN_LOOP_MOVE(124)` (the values are the G-code numbers; `STOP` is the
+  test-complete `G122`, `WAVEFORM` is the firmware-native `G123` canned cycle,
+  `OPEN_LOOP_MOVE` is `G124`, a linear move with the servo feedback off, used by
+  the motor calibration)
 - **`WaveformShape`** — `SINE, TRIANGLE` (firmware-native `G123` is SINE-only in
   v1; the app pins triangle to sine)
 - **`NotificationType`**, **`LoggingState`**

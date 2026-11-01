@@ -98,6 +98,27 @@ pub trait PinBus {
     fn take_net_yield(&mut self) -> bool {
         false
     }
+
+    /// The system-counter clock of the cog about to step, given before every
+    /// [`crate::Machine`] step — so before the interrupt check that may call
+    /// [`PinBus::testp`], as well as the instruction itself.
+    ///
+    /// A slice runs many instructions against one outside instant, but a
+    /// smart pin's state moves *within* it: an async receiver latches a byte
+    /// at the instant its frame closes, and a transmitter stays busy for a
+    /// frame time after each `WYPIN`. A model that tracks those instants
+    /// answers `testp`/`rdpin` as of this clock. The default ignores it.
+    fn set_clock(&mut self, _clocks: u64) {}
+
+    /// The earliest clock after `now` at which a pin this bus models changes
+    /// by itself (a byte landing, a transmitter going idle), if it knows one.
+    ///
+    /// A cog spinning on a pin is never fast-forwarded past it: skipping to
+    /// the slice deadline would carry the cog over the instant the pin it is
+    /// watching changed, and a byte it would have read is overwritten unseen.
+    fn next_pin_change(&self, _now: u64) -> Option<u64> {
+        None
+    }
 }
 
 /// A bus where nothing is connected. Enough to boot; hangs any driver that

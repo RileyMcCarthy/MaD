@@ -114,7 +114,7 @@ Out-of-range packed fields never encode (bit-wrap).
 
 ### D3 — Backend certification
 
-- `docs/dev/backend-certification.md` — stepper CI-certified; servo not yet
+- `docs/dev/backend-certification.md` — the servo is the only backend; what covers it
 
 ## Definition of done
 

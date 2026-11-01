@@ -12,6 +12,21 @@ Motion is gated for safety. Click **Enable motion** to allow the machine to move
 the **Motion** state badge switches to *enabled*. Click **Disable motion** to
 stop allowing motion.
 
+While a fault is showing, the machine refuses to enable motion, so the button
+offers a disable instead: **Disable motion** for most faults, or
+**Clear stall (disable motion)** for a `SERVO_STALL`. The fault's hint appears
+under the controls.
+
+### Clear a servo stall
+
+A servo stall (`SERVO_STALL`) means the carriage stopped moving while the drive
+was still pushing it. It stays set until motion is disabled, but it doesn't need
+a reboot:
+
+1. Clear the obstruction.
+2. Click **Clear stall (disable motion)**. The **Fault** badge returns to `NONE`.
+3. Click **Enable motion**.
+
 !!! warning
     Enabling motion only *permits* movement — it doesn't move anything by itself.
     Motion is still subject to the machine's restrictions (endstops, door

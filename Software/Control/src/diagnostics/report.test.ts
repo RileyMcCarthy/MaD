@@ -13,7 +13,7 @@ import {
   shortUserAgent,
 } from './report';
 import type { DiagnosticsBundle } from './exportBundle';
-import type { LogEntry } from './log';
+import { sanitize, type LogEntry } from './log';
 import { summariseForTriage } from './triage';
 
 function entry(over: Partial<LogEntry> = {}): LogEntry {
@@ -591,7 +591,7 @@ describe('recentActions', () => {
         'newest-thirty': 'only the newest 30 steps are listed, oldest first',
         'earlier-counted': 'a first line says how many earlier steps are in the attached log',
       },
-      why: { 'earlier-counted': 'a reader must know the recipe is cut, not that the session began there' },
+      why: { 'earlier-counted': 'a reader must know the recipe starts part-way through the session' },
     },
     () => {
       const t = Date.UTC(2026, 0, 1, 12, 0, 0);
@@ -706,6 +706,47 @@ describe('buildApiIssueBody', () => {
     },
     () => {
       expect(buildApiIssueBody({ summary: 'x' }, bundle(), 'https://gist/x')).not.toContain('### Previous session');
+    },
+  );
+
+  behaviour(
+    {
+      id: 'diag.report-api-body-error-credentials-redacted',
+      covers: 'src/diagnostics/report.ts#buildApiIssueBody',
+      given: 'a session whose recent error was logged with an error object that quotes a GitHub token in its message and stack',
+      expect: {
+        'no-token-in-body': 'the issue body carries no GitHub token',
+        'stack-still-shown': 'the error and its stack frames are still listed, with the token replaced by a redaction marker',
+      },
+      why: {
+        'no-token-in-body': 'the issue body is public, and the token would let anyone act as the reporter on GitHub',
+      },
+    },
+    () => {
+      const token = `ghp_${'a1B2c3D4e5'.repeat(3)}xyz789`;
+      const err = new Error(`GitHub API 401\nresponse: {"message":"Bad credentials","token":"${token}"}`);
+      err.stack = [
+        'Error: GitHub API 401',
+        `response: {"message":"Bad credentials","token":"${token}"}`,
+        '    at createIssue (http://localhost/src/diagnostics/github.ts:10:1)',
+        '    at fileReport (http://localhost/src/diagnostics/report.ts:20:1)',
+      ].join('\n');
+      const log = {
+        entries: [
+          entry({ seq: 1, level: 'error', cat: 'app', tag: 'report-file', msg: 'GitHub API 401', data: sanitize({ error: err }) }),
+        ],
+        counters: {},
+        dropped: 0,
+        startedAt: 0,
+      };
+
+      const body = buildApiIssueBody({ summary: 'filing failed' }, bundle({ log }), 'https://gist/x');
+      const section = body.slice(body.indexOf('### Recent errors'), body.indexOf('### Failure counters'));
+
+      expect(body).not.toContain('ghp_');
+      expect(section).toContain('app/report-file GitHub API 401');
+      expect(section).toContain('<redacted-credential>');
+      expect(section).toContain('at createIssue ');
     },
   );
 });

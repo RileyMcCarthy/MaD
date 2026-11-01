@@ -14,10 +14,14 @@ The tool is a submodule at `Vibes/`; its own rules are `Vibes/bindings/CLAIMS.md
 and its wire contract `Vibes/bindings/SCHEMA.md`. Tool changes go upstream first.
 
 ```
-- given a sample 2 mm by 1 mm, with a 100 N reading after 1 mm of extension
-  **stress is 50 megapascals** BH-10
-  **strain is 10 percent** BH-8
+- **When** a sample 2 mm by 1 mm, with a 100 N reading after 1 mm of extension
+  - stress is 50 megapascals `BH-10`
+  - strain is 10 percent `BH-8`
 ```
+
+`given` and `then` are written as separate strings but read as ONE line, so
+**render a claim before you commit it** — `vibes preview` (rule 16) prints that
+line without running a suite.
 
 ## The non-negotiables
 
@@ -127,7 +131,48 @@ and its wire contract `Vibes/bindings/SCHEMA.md`. Tool changes go upstream first
    conditions, it is two tests. Never self-report status — pass/fail joins from
    the runner, and every expectation of a test shares that test's verdict.
 
-14. **After changing behaviours:** `node Vibes/bin/vibes.mjs collect --write`
+14. **The report supplies the frame — `given` finishes its sentence.** The
+   renderer prints `**When** <given>` and nests the expectations under it, so
+   `given` names a SITUATION and must read as one on the first pass. Each half
+   of this claim passed every rule above; composed, it has no main clause:
+   - BAD: given *a byte left on the load-cell ADC serial link by an abandoned
+     exchange, then a start* — "a byte **left**" garden-paths as a verb, and
+     ", then a start" is a bare noun with nothing happening in it.
+   - GOOD: given *a start of the load-cell ADC with a leftover byte on the link
+     from an abandoned exchange*
+   Sequence with `after`, `while`, `that begins with`; a second beat needs
+   something happening in it. Watch a participle that is also a past tense
+   right after a noun (`left`, `read`, `set`, `sent`, `held`, `run`): use the
+   `-ing` form, a relative clause, or a finite verb ("the driver **runs** a
+   waveform", not "a waveform **run** by the driver").
+
+15. **An expectation is an OUTCOME, not a step.** If the sentence describes what
+   the code does on its way to the result, it is a `why` at most.
+   - BAD:  `the leftover is flushed before the configuration read-back`
+   - GOOD: `the start completes and the converter is converting`
+   Test it: could an operator, or anyone outside that function, tell whether
+   this held? If the only way to know is to watch the code run, it is not an
+   expectation.
+
+16. **Render it and read it — while writing, not after.** Neither command runs
+   a suite:
+   ```bash
+   node Vibes/bin/vibes.mjs preview --given "<given>" --then "<then>" [--then "<then2>"] [--why "<why>"]
+   node Vibes/bin/vibes.mjs preview --id <id>    # a claim already in the ledger, as it renders
+   node Vibes/bin/vibes.mjs lint [--file <test file>]
+   ```
+   `preview` prints the composed `**When** …` block exactly as the PR will, and
+   lints it. Read the block aloud: a line with no main clause is a rewrite,
+   whatever the lint says. `lint` exits 4 on an error (names from the code,
+   contrast words, vague claims); warnings (machinery, garden paths, length,
+   restating the scene) are advice — fix them unless the claim genuinely reads
+   fine. A word this repo genuinely uses that the lint flags goes in
+   `vibes.lint.json`, scoped by path with `in`, and with a `why`. CI's
+   `Behaviour wording` job runs `vibes lint` over the whole ledger and blocks on
+   errors. In TS the test title is `<given> [<id>]`, so rewording a `given` also
+   changes that row's `test` field.
+
+17. **After changing behaviours:** `node Vibes/bin/vibes.mjs collect --write`
    and commit `behaviours.jsonl` alongside the change.
 
 ## Snippets

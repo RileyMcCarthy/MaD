@@ -556,11 +556,19 @@
       },
       {
         "netclass": "Power",
-        "pattern": "/MaD_Edge_Sheet2/RPI_5V"
+        "pattern": "/MaD_Edge_Sheet2/RPI_3V3"
       },
       {
         "netclass": "Power",
         "pattern": "/MaD_Edge_Sheet2/RPI_GND"
+      },
+      {
+        "netclass": "Power",
+        "pattern": "/MaD_Edge_Sheet3/ENC_V+"
+      },
+      {
+        "netclass": "Power",
+        "pattern": "/MaD_Edge_Sheet3/ENC_VIN"
       },
       {
         "netclass": "Power",

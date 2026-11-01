@@ -5,6 +5,7 @@ import { estimateSeconds, flashWriteMs } from '@/firmware/image';
 import { LOADER_BAUD_RATE } from '@/firmware/webSerialTransport';
 import { programPort, type ProgramProgress } from '@/firmware/program';
 import { closeFlashPort } from '@/firmware/closeFlashPort';
+import { flashWithSession } from '@/firmware/flashWithSession';
 import { logger } from '@/diagnostics/log';
 import {
   describePort,
@@ -15,6 +16,7 @@ import {
 import {
   fetchReleaseImage,
   fetchReleaseManifest,
+  releaseImageLabel,
   type FirmwareReleaseManifest,
 } from '@/firmware/release';
 import { hostingRoot } from '@/hosting';
@@ -128,17 +130,12 @@ export default function Firmware() {
     );
     if (!ok) return;
 
-    // The main device session is touched only when it is on the port being
-    // flashed (one adapter for both). Flashing over a separate programming
-    // adapter, as on the MadEdge PCBA, leaves the main connection running.
-    const sharesPort = deviceClient.heldPort() === target.port;
-    // Set once the session has handed its port over; it is then always given
-    // back afterwards, whether the flash worked or not.
-    let tookSessionPort = false;
+    // Which port the main session holds, read before anything is awaited.
+    const heldPort = deviceClient.heldPort();
+    // Fetch (and check) the release before touching the board, so a failed
+    // download leaves the live session and the flash as they were.
+    let firmware: Uint8Array;
     try {
-      // Fetch (and check) the release before touching the board, so a failed
-      // download leaves the live session and the flash as they were.
-      let firmware: Uint8Array;
       if (file) {
         firmware = new Uint8Array(await file.arrayBuffer());
       } else if (manifest) {
@@ -147,47 +144,37 @@ export default function Firmware() {
       } else {
         return;
       }
+    } catch (err) {
+      setStatus({ kind: 'error', message: err instanceof Error ? err.message : String(err) });
+      return;
+    }
 
-      setStatus({ kind: 'running', progress: { phase: 'resetting' } });
-      // On a shared port the worker holds the streams (also while connecting or
-      // after a lost link), and the chip reboots, so that session has to go.
-      if (sharesPort) {
-        await disconnect();
-        tookSessionPort = true;
-      }
-
-      let result;
-      try {
-        result = await programPort(target.port, firmware, {
+    setStatus({ kind: 'running', progress: { phase: 'resetting' } });
+    // Hands the main session's port over (only when it is the target) and back.
+    await flashWithSession({
+      heldPort,
+      target: target.port,
+      targetLabel: target.label,
+      disconnect,
+      program: (port) =>
+        programPort(port, firmware, {
           // The P2 Edge boots from SPI flash, so that is the only thing the app
           // offers. RAM loading stays available to tools/hw-p2load.mts, where
           // running a build without committing it is a bring-up convenience.
           mode: 'flash',
           onProgress: (progress) => setStatus({ kind: 'running', progress }),
-        });
-      } finally {
-        // The page opened this port; it must not keep it, whatever happened.
-        if (!(await closeFlashPort(target.port))) {
-          logger('flash').warn('port-left-open', 'the flash port did not close; unplug and replug the adapter', {
-            port: target.label,
-          });
-        }
-      }
-
-      setStatus({
-        kind: 'done',
-        message: `Wrote ${result.imageBytes.toLocaleString()} bytes to flash. The board has rebooted into the new firmware.`,
-      });
-    } catch (err) {
-      setStatus({ kind: 'error', message: err instanceof Error ? err.message : String(err) });
-    }
-
-    if (tookSessionPort) {
-      // Give the firmware a moment to come up, then reconnect to the same port:
-      // no chooser, and the user is never left disconnected by a flash.
-      await new Promise((r) => setTimeout(r, 1500));
-      await connect({ port: target.port });
-    }
+        }),
+      closePort: closeFlashPort,
+      connect: (port) => connect({ port }),
+      wait: (ms) => new Promise((r) => setTimeout(r, ms)),
+      log: logger('flash'),
+      onDone: (result) =>
+        setStatus({
+          kind: 'done',
+          message: `Wrote ${result.imageBytes.toLocaleString()} bytes to flash. The board has rebooted into the new firmware.`,
+        }),
+      onError: (err) => setStatus({ kind: 'error', message: err instanceof Error ? err.message : String(err) }),
+    });
   };
 
   const pct =
@@ -239,7 +226,8 @@ export default function Firmware() {
                   </>
                 ) : manifest ? (
                   <>
-                    <strong>{manifest.version}</strong> <span className="muted">(MadEdge, latest release)</span>
+                    <strong>{manifest.version}</strong>{' '}
+                    <span className="muted">({releaseImageLabel(manifest.assetName)}, latest release)</span>
                   </>
                 ) : (
                   <span className="muted">

@@ -21,8 +21,8 @@ use p2iss::{sdimage, P2Iss, SerialLink};
 /// The protocol link, declared so the ISS's pins exist; nothing is wired to
 /// them here, because this test is about the card, not the wire.
 const PROTO: SerialLink = SerialLink {
-    tx_pin: 55,
-    rx_pin: 53,
+    tx_pin: p2core::board::PIN_PROTO_TX,
+    rx_pin: p2core::board::PIN_PROTO_RX,
     nominal_baud: 2_000_000,
 };
 

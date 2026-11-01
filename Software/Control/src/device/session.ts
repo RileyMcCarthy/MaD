@@ -330,6 +330,11 @@ export class DeviceClient {
     return this.remote.manualMove(mm, speed);
   }
 
+  /** Relative open-loop move (G91 + G124): the servo feedback off. */
+  openLoopMove(mm: number, speed: number): Promise<boolean> {
+    return this.remote.openLoopMove(mm, speed);
+  }
+
   homeAxis(): Promise<void> {
     return this.remote.homeAxis();
   }

@@ -73,7 +73,7 @@ const FIRMWARE: Bundled = {
   manifest: {
     tag: 'firmware-v0.13',
     version: '0.13',
-    assetName: 'MaD-Firmware-0.13-madEdge.bin',
+    assetName: 'MaD-Firmware-0.13-release.bin',
     size: 4,
     sha256: 'ab'.repeat(32),
     publishedAt: '2026-10-18T06:50:07Z',
@@ -146,7 +146,7 @@ describe('assemble-pages-app', () => {
       covers: 'tools/assemble-pages-app.mts#assemble',
       given: 'released builds 0.9.0, 0.10.0 and 0.4.1, found in no particular order',
       expect: {
-        'newest-first': 'the published version list runs newest first by version number, not alphabetically',
+        'newest-first': 'the published version list runs newest first by version number, with 0.10.0 above 0.9.0',
         'latest-is-highest': 'the version marked latest is the highest version number, 0.10.0',
         'publish-time-kept': 'each listed version carries when it was published',
       },

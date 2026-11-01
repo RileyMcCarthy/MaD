@@ -47,12 +47,15 @@ Open **Firmware** in the sidebar. **Installed** is what the machine is running;
 
 To update:
 
-1. Check **Will flash** shows the latest release. The app picks the MadEdge
-   build (`MaD-Firmware-<version>-madEdge.bin`) of the newest
+1. Check **Will flash** shows the latest release. The app picks the production
+   build (`MaD-Firmware-<version>-release.bin`) of the newest
    [GitHub release](https://github.com/RileyMcCarthy/MaD/releases) by itself;
-   there is nothing to download.
+   there is nothing to download. That build talks to the app on J1, the same
+   port it is programmed through. MaD Control 0.4.2 and earlier label this row
+   "MadEdge" whatever the image is; the prompt in step 2 names the real file.
 2. Check the **Port** is the machine you mean to program, then click
-   **Write to flash** and confirm.
+   **Write to flash**. Check the prompt names
+   `MaD-Firmware-<version>-release.bin`, then confirm.
 
 The status line runs through *Resetting the board…*, *Uploading… n%*, then
 *Finishing…*. The board reboots into the new firmware and **Installed** updates.
@@ -60,8 +63,13 @@ The status line runs through *Resetting the board…*, *Uploading… n%*, then
 Programming uses the **Debug/Programming header (J1)** and an adapter that
 drives RESn from DTR, such as a Parallax Prop Plug. On production hardware
 that's the same connection you already use for control — if the machine is
-talking to the app, it can be programmed. The isolated Raspberry Pi link has no
-reset line and **cannot** program the board.
+talking to the app, it can be programmed. The isolated Raspberry Pi link
+**cannot** program the board: on the machine's P2-EC32MB module it isn't
+connected to the chip.
+
+If the machine was flashed with a `-madEdge.bin` image, it shows **Connected**
+but never **Responding**: that build talks on P53/P55, which the machine's
+P2-EC32MB module doesn't bring out. Flash the latest release over J1 as above.
 
 [:octicons-arrow-right-24: Full firmware guide](../user-guide/firmware-and-diagnostics.md)
 

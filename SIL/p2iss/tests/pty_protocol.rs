@@ -23,10 +23,10 @@ use embsim_board::{Harness, System};
 use embsim_core::virtual_clock;
 use p2iss::{HostPty, P2Iss, SerialLink};
 
-/// The MaD protocol link: RX on P53, TX on P55, 2,000,000 baud.
+/// The MaD protocol link: RX on P30, TX on P32, 2,000,000 baud.
 const PROTO: SerialLink = SerialLink {
-    tx_pin: 55,
-    rx_pin: 53,
+    tx_pin: p2core::board::PIN_PROTO_TX,
+    rx_pin: p2core::board::PIN_PROTO_RX,
     nominal_baud: 2_000_000,
 };
 
@@ -120,9 +120,9 @@ fn a_host_on_the_pty_gets_an_answer_from_the_iss() {
         .component("HOST", Box::new(host))
         .harness(
             Harness::new()
-                .connect_str("P2.P55", "HOST.RX")
+                .connect_str(&format!("P2.{}", p2iss::pin_name(PROTO.tx_pin)), "HOST.RX")
                 .expect("endpoints parse")
-                .connect_str("HOST.TX", "P2.P53")
+                .connect_str("HOST.TX", &format!("P2.{}", p2iss::pin_name(PROTO.rx_pin)))
                 .expect("endpoints parse"),
         )
         .start()
@@ -143,14 +143,21 @@ fn a_host_on_the_pty_gets_an_answer_from_the_iss() {
         std::thread::sleep(Duration::from_millis(5));
     }
 
-    link.write_all(&REQUEST).expect("the host can write");
-    link.flush().expect("the host can flush");
-
-    // Read until the reply header appears, exactly as a host driver would.
+    // Read until the reply header appears, exactly as a host driver would,
+    // repeating the request every 2 s as the app does. The transmit pin comes
+    // up during init, before the serial task is reading, and a receive pin
+    // holds a single byte: a request that lands in that window is lost, on
+    // silicon as here.
     let mut seen: Vec<u8> = Vec::new();
     let mut buf = [0u8; 256];
     let start = Instant::now();
+    let mut last_request: Option<Instant> = None;
     let found = loop {
+        if last_request.is_none_or(|at| at.elapsed() > Duration::from_secs(2)) {
+            link.write_all(&REQUEST).expect("the host can write");
+            link.flush().expect("the host can flush");
+            last_request = Some(Instant::now());
+        }
         match link.read(&mut buf) {
             Ok(0) => {}
             Ok(n) => seen.extend_from_slice(&buf[..n]),

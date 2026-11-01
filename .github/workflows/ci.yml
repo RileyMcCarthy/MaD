@@ -348,38 +348,55 @@ jobs:
           retention-days: 14
 
   # BLOCKING (in ci-gate.needs). The board-touching e2e scenarios, per
-  # PR, on the one route a browser belongs on: the shipped P2 image interpreted
-  # by the ISS (mad-emulator), and MaD Control in the runner's own Chrome, every
+  # PR, on the one route a browser belongs on: the shipped P2 image
+  # interpreted by the ISS, and MaD Control in the runner's own Chrome, every
   # page and dedicated worker held to the board's clock by embsim's
-  # `chrome-cdp` node (`mad-emulator --chrome`), its Web Serial port the
-  # board's protocol line. The app's timeouts mean in board time what they
-  # say, and every budget in the suite is board time, so nothing here depends
-  # on how fast the runner is; host time is printed, never asserted.
+  # `chrome-cdp` node, its Web Serial port the board's protocol line. The
+  # board is the machine's project, SIL/mad-cosim.toml, under `embsim run`
+  # (`make e2e`, each board the command `make e2e-emulator` runs; embsim
+  # MIGRATING-MAD.md step 10): the Edge carrier and the P2-EC32MB module as
+  # drawn, the production firmware (pio env propeller2) booted off the
+  # module's flash, and the node on the carrier's debug header J1 (USB
+  # 0403:6015). The app's timeouts mean in board time what they say, and
+  # every budget in the suite is board time, so nothing here depends on how
+  # fast the runner is; host time is printed, never asserted. No image, no
+  # VM: the runner's own Chrome, headless, as embsim's chrome-cdp job runs
+  # it.
   #
-  # A fetch that holds a virtual-time budget for 2 s is granted that budget
-  # again under `advance` (embsim f8781e0). The eleven-scenario subset passed
-  # on that tree (run 38097116906), including D1 and B2+B3+B4. This subset
-  # boots the app about 15 times, one board per scenario, so a grant that
-  # still does not end costs one scenario.
-  #
-  # A SUBSET, because the board is slow: the ISS runs at a few percent of
-  # real time, so a scenario costs 20-60x its board time in host time. The
-  # subset is the connect path (B1+C1, B2+B3+B4, NAV), the live screen
-  # (C3+C4), the data folder and G-code (F1+F2, F7), a manual enable (D1),
-  # a run started and a run carried to download and view (G1, G2+G3+H2+I),
-  # and two link drops on the node's cable (B5-reconnect, M11-idle-drop).
-  # Measured on an M2 (PR #155 has the table): about 20 s of board time and
-  # 7 minutes of host time for all eleven, G2+G3+H2+I's SD-heavy run and
-  # download five of them. A runner at half that speed spends about 15
-  # minutes here after 20 minutes of builds. The motion matrices, the
-  # waveforms and the mid-test drop (a 40 mm move at 2 mm/s, 20 s of board
-  # time) run nightly (e2e-nightly.yml), on the same route.
+  # A SUBSET, one board per scenario, so a grant that does not end costs
+  # one scenario: the connect path (B1+C1, B2+B3+B4, NAV), the live screen
+  # (C3+C4), the data folder and G-code (F1+F2, F7), a manual enable (D1), a
+  # run started and completed (G1, a dwell), and two link drops on the
+  # node's cable (B5-reconnect, M11-idle-drop). Measured on an M2, the ten
+  # boards ran 23.6 s of board time in 512 s of host time, each first
+  # booting the firmware off the module's flash (about 1.3 s of board time,
+  # 24 s of host), G1's SD-heavy run 208 s of it (PR body). The scenarios
+  # that move the carriage do not run on the project as drawn: IC14, the
+  # isolator between the processor and the drive, has its secondary grounds
+  # on a net of their own (MaD #285), so nothing reaches the drive and the
+  # firmware latches SERVO_STALL at the first move (SIL/mad-catalog/tests/
+  # mad.rs; run-all.mjs, PROJECT_CANNOT). The suite skips them there, saying
+  # why.
   #
   # Then BUNDLE-live on one more board: the app as it ships, built as
   # pages.yml builds it and served by `vite preview`. Every scenario above
   # runs on the dev server, which compiles for the newest Chrome; the bundle
   # is compiled for the app's browser floor, and a fault that compiling brings
   # in shows only there (#156: every device event lost, in production only).
+  #
+  # Then the motion leg: G2+G3+H2+I, a run carried through to download and
+  # view, on the board with MaD #285 fixed (`make e2e-motion`:
+  # SIL/mad-ic14-fixed-cosim.toml, mad-cosim.toml with one wire from IC14's
+  # ground to EN_GND, where the carriage moves), so a PR still runs one test
+  # that moves the carriage, on a project. Measured on an M2 shared with a
+  # load average near 90: 1314.8 s of host time, 10.171 s of board time; on
+  # mad-emulator it took 444.0 s of host time on the runner (run
+  # 40063642331).
+  #
+  # Last, SERVO-stall on mad-emulator (`make e2e-stall`), the one scenario
+  # no project can run: it jams the carriage, and only mad-emulator has a
+  # jam (its --jam-file; mad-catalog/src/machine.rs, "Not modelled";
+  # MaD #298).
   #
   # Fires on the app, the protocol, the firmware or the SIL (the `sil` filter
   # covers Firmware/ and Protocol/), and on a move of the SIL/embsim pin: the
@@ -406,9 +423,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
+      # Both workspaces: the runner builds in SIL's, the embsim tool in the
+      # submodule's own.
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: SIL
+          workspaces: |
+            SIL
+            SIL/embsim
       - uses: actions/setup-python@v7
         with:
           python-version: '3.11'
@@ -427,15 +448,16 @@ jobs:
       - name: Install the Propeller platform (flexcc/flexspin)
         working-directory: Firmware/MaDCore
         run: pio pkg install --platform https://github.com/RileyMcCarthy/platform-propeller.git
-      - name: Build the P2 image the ISS interprets
-        working-directory: Firmware/MaDCore
-        run: pio run -e propeller2_debug
-      # --release is not optional: the ISS interprets every P2 instruction.
-      - name: Build mad-emulator (release)
+      # The production image, laid out in the module's flash, and the card
+      # (make flash-image sd-image), then `embsim check` on the seven project
+      # files, which builds the embsim tool and mad-runner (--release: the
+      # ISS interprets every P2 instruction). check finds the runner's
+      # Chrome for the five whose host is Chrome and starts none.
+      - name: The images, the runner and the project files (make check)
         working-directory: SIL
-        run: |
-          make protocol
-          cargo build --release --bin mad-emulator
+        env:
+          CHROME: /usr/bin/google-chrome
+        run: make check
       - name: Install Control deps + wasm + proto
         working-directory: Software/Control
         run: |
@@ -447,11 +469,12 @@ jobs:
       - name: Build the shipped bundle
         working-directory: Software/Control
         run: npx vite build --base="/${{ github.event.repository.name }}/app/" --outDir /tmp/mad-bundle
-      # scripts/board-route.sh starts the dev server, then for each scenario
-      # a fresh board with a headless Chrome on its clock (DevTools on 9222),
-      # waits for the run's "reached" line, runs that scenario attached there,
-      # and stops the board; a board that stops costs one scenario.
-      - name: Run the board subset on the ISS
+      # `make e2e` starts the dev server, then for each scenario a fresh
+      # board (`embsim run mad-cosim.toml`, its headless Chrome's DevTools
+      # on 9222), waits for the run's "reached" line, runs that scenario
+      # attached there, and stops the board with SIGTERM, which prints its
+      # summary; a board that stops costs one scenario.
+      - name: Run the board subset on the project
         id: subset
         working-directory: SIL
         env:
@@ -459,13 +482,13 @@ jobs:
           BOARD_LOGS: /tmp/e2e-out
           BOARD_PER_SCENARIO: '1'
           E2E_TIMINGS: /tmp/e2e-out/timings.json
-          SCENARIOS: B1+C1,F7,F1+F2,B2+B3+B4,C3+C4,D1,G1,G2+G3+H2+I,NAV,B5-reconnect,M11-idle-drop
-        run: scripts/board-route.sh e2e
-      # The same route with `vite preview` serving the bundle (APP_DIST) in
+          SCENARIOS: B1+C1,F7,F1+F2,B2+B3+B4,C3+C4,D1,G1,NAV,B5-reconnect,M11-idle-drop
+        run: make e2e
+      # The same board with `vite preview` serving the bundle (APP_DIST) in
       # place of the dev server: connect, samples, machine state, unplug, and
       # replug with the app reconnecting by itself. It runs whenever the
       # subset ran, passed or failed.
-      - name: Run the shipped bundle on the ISS
+      - name: Run the shipped bundle on the project
         if: ${{ !cancelled() && (steps.subset.outcome == 'success' || steps.subset.outcome == 'failure') }}
         working-directory: SIL
         env:
@@ -477,6 +500,37 @@ jobs:
           E2E_TIMINGS: /tmp/e2e-out/timings-bundle.json
           SCENARIOS: BUNDLE-live
         run: scripts/board-route.sh e2e
+      # What the project as drawn cannot run, on the board with MaD #285
+      # fixed: the one run carried through to download and view. `make
+      # e2e-motion` checks mad-ic14-fixed-cosim.toml and runs what
+      # `run-all.mjs --list --cannot` names of SCENARIOS there, one board
+      # each, on the images the steps above wrote. It runs whenever the
+      # subset ran, passed or failed.
+      - name: 'Run the motion leg on the board with IC14 fixed (MaD #285)'
+        if: ${{ !cancelled() && (steps.subset.outcome == 'success' || steps.subset.outcome == 'failure') }}
+        working-directory: SIL
+        env:
+          CHROME: /usr/bin/google-chrome
+          BOARD_LOGS: /tmp/e2e-out/motion
+          BOARD_PER_SCENARIO: '1'
+          E2E_TIMINGS: /tmp/e2e-out/timings-motion.json
+          SCENARIOS: G2+G3+H2+I
+        run: make e2e-motion
+      # SERVO-stall (a jammed carriage latches the stall; Live clears it and
+      # re-enables motion) on every PR, as #292 set. Its jam is
+      # mad-emulator's --jam-file and no project has one (#298), so `make e2e-stall`
+      # builds the debug image and mad-emulator and runs it on mad-emulator's
+      # board (BOARD_ROUTE=emulator): the one thing mad-emulator still
+      # carries. It runs whenever the subset ran, passed or failed.
+      - name: Run SERVO-stall on mad-emulator (its jam is mad-emulator's)
+        if: ${{ !cancelled() && (steps.subset.outcome == 'success' || steps.subset.outcome == 'failure') }}
+        working-directory: SIL
+        env:
+          CHROME: /usr/bin/google-chrome
+          BOARD_LOGS: /tmp/e2e-out/stall
+          BOARD_PER_SCENARIO: '1'
+          E2E_TIMINGS: /tmp/e2e-out/timings-stall.json
+        run: make e2e-stall
       # Host and board time per scenario, for sizing this subset. Reported,
       # never asserted.
       - name: Timings
@@ -485,7 +539,7 @@ jobs:
           node -e '
             const fs = require("fs");
             const read = (p) => { try { return JSON.parse(fs.readFileSync(p, "utf8")).timings; } catch { return []; } };
-            const timings = [...read("/tmp/e2e-out/timings.json"), ...read("/tmp/e2e-out/timings-bundle.json")];
+            const timings = [...read("/tmp/e2e-out/timings.json"), ...read("/tmp/e2e-out/timings-bundle.json"), ...read("/tmp/e2e-out/timings-motion.json"), ...read("/tmp/e2e-out/timings-stall.json")];
             if (timings.length === 0) process.exit(0);
             const rows = timings.map((r) => `| ${r.id} | ${r.verdict} | ${r.hostS.toFixed(1)} | ${r.boardS === null ? "–" : r.boardS.toFixed(3)} |`);
             const out = ["| scenario | verdict | host s | board s |", "|---|---|---|---|", ...rows].join("\n");
@@ -789,8 +843,11 @@ jobs:
     # 25 was enough while every ISS test skipped. They now run against the real
     # P2 image: ~6 minutes locally, dominated by p2core's boot tests
     # interpreting hundreds of millions of instructions in the dev profile, and
-    # a shared 4-vCPU runner is slower than that.
-    timeout-minutes: 45
+    # a shared 4-vCPU runner is slower than that. 45 held until the cargo test
+    # step took 40.8 min of it (run 40063642331, #283); the stepped jog on the
+    # #285-fixed board (mad-catalog/tests/mad.rs) boots the firmware once
+    # more and runs 2.55 s of board time, so 60.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
         with:
@@ -825,6 +882,23 @@ jobs:
       # Built here rather than reused from `build-firmware`: that job only runs
       # when `firmware` changed, so on a SIL-only PR its artifact would not
       # exist, and it runs on a macOS runner at a 10x minute multiplier.
+      #
+      # Two images. The production build (propeller2) is the one SIL/mad.toml's
+      # module flash holds: its protocol is on P62/P63, the carrier's debug
+      # header, where the project files' host is (mad-catalog/tests/mad.rs).
+      # It is built first and copied out, because building one env has been
+      # seen to remove another env's output (the release job's note);
+      # MAD_P2_PRODUCTION_IMAGE points the test at the copy. The debug build
+      # (propeller2_debug) is the rest of the suite's.
+      - name: Build the production P2 image the project files boot
+        working-directory: Firmware/MaDCore
+        run: pio run -e propeller2
+      - name: Keep the production image out of .pio
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/p2-production"
+          cp Firmware/MaDCore/.pio/build/propeller2/program "$RUNNER_TEMP/p2-production/program"
+          echo "MAD_P2_PRODUCTION_IMAGE=$RUNNER_TEMP/p2-production/program" >> "$GITHUB_ENV"
       - name: Build the P2 image the ISS interprets
         working-directory: Firmware/MaDCore
         run: pio run -e propeller2_debug
@@ -842,6 +916,7 @@ jobs:
         run: |
           fail=0
           for f in Firmware/MaDCore/.pio/build/propeller2_debug/program \
+                   "$MAD_P2_PRODUCTION_IMAGE" \
                    SIL/p2core/tests/golden/hub_mnemonics.txt; do
             if [ -s "$f" ]; then echo "ok   $f ($(wc -c < "$f") bytes)"; else echo "::error::missing or empty: $f"; fail=1; fi
           done
@@ -982,10 +1057,18 @@ jobs:
       # every CI build reported the app_messageSlave.c fallback "0.0.0". PLATFORMIO_BUILD_FLAGS
       # is appended to each env's build_flags (pio parses the \" escapes shell-style).
       # Two images per release:
-      #  - madEdge: the MadEdge PCBA build (propeller2_debug) — protocol on its
-      #    own port (P53/P55), debug log on the Prop Plug port (P62/P63). This
-      #    is the image MaD Control flashes from "latest release".
-      #  - release: one port (P62/P63) carries the protocol, no debug log.
+      #  - release: the production build (propeller2_release). One port, P62/P63
+      #    (the debug header J1), carries the protocol at 2,000,000 baud; no
+      #    debug log. This is the image MaD Control flashes from "latest
+      #    release" (Software/Control/src/firmware/release.ts), and the release
+      #    cannot publish without it.
+      #  - madEdge: the propeller2_debug build. Protocol on P30/P32, debug log
+      #    on P62/P63. P30/P32 are the Edge carrier's J4/IC2 Pi link from v0.3
+      #    on; earlier carriers bring them to no host connector (they put IC2
+      #    on P52-P55, which the machine's P2-EC32MB keeps for its PSRAM), so
+      #    there it needs a bench adapter on P30/P32. Images built before the
+      #    pin move have the protocol on P53/P55. Flashed as a local file when
+      #    wanted.
       # Each image is copied out right after its build: building the next env
       # has been seen to remove the previous env's output.
       - name: Build Firmware - MadEdge Version
@@ -1161,7 +1244,15 @@ jobs:
     name: Behaviour ledger
     if: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # 25 held while the sil suite booted the firmware once (8-11 min a run on
+    # #267). With SIL/mad.toml's boot case and the card mount added it ran
+    # out at 25 with the sil suite 23.7 min in (run 39404042776), while
+    # sil-rust, the same tests in one cargo run, took 19 min. 45 then ran out
+    # too, with the serial-boot and package-receive boots added: the job was
+    # cancelled at 45 min with no report (run 40176421611, after 43.6 min on
+    # run 40155059290). 75 leaves room for one more firmware boot on a slow
+    # shared runner.
+    timeout-minutes: 75
     # The default token is read-only; posting the sticky comment needs this.
     # On a fork PR the token stays read-only regardless, and the post step
     # warns rather than failing — the job summary still carries the report.
@@ -1222,6 +1313,42 @@ jobs:
             echo "ok $f"
           done
 
+      # The sil suite boots the propeller2_debug program off the module's
+      # flash (p2iss/tests/ec32mb_flash_boot.rs), and the production program
+      # (propeller2) in SIL/mad.toml (mad-catalog/tests/mad.rs). Without an
+      # image those tests skip and their behaviours read as holding, so the
+      # job builds both, as sil-rust does, and requires them. Each image is
+      # copied out of .pio right after its build, because building another
+      # env, or the firmware suite's own build in the report step, can clear
+      # .pio/build; MAD_P2_IMAGE and MAD_P2_PRODUCTION_IMAGE point the tests
+      # at the copies.
+      - name: Install the Propeller platform (flexcc/flexspin)
+        working-directory: Firmware/MaDCore
+        run: pio pkg install --platform https://github.com/RileyMcCarthy/platform-propeller.git
+      - name: Build the production P2 image the sil suite boots
+        working-directory: Firmware/MaDCore
+        run: pio run -e propeller2
+      - name: Keep the production image out of .pio
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/p2-production"
+          cp Firmware/MaDCore/.pio/build/propeller2/program "$RUNNER_TEMP/p2-production/program"
+          echo "kept $(wc -c < "$RUNNER_TEMP/p2-production/program") bytes"
+      - name: Build the P2 image the sil suite boots
+        working-directory: Firmware/MaDCore
+        run: pio run -e propeller2_debug
+      - name: Keep the image out of .pio
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/p2"
+          cp Firmware/MaDCore/.pio/build/propeller2_debug/program "$RUNNER_TEMP/p2/program"
+          echo "kept $(wc -c < "$RUNNER_TEMP/p2/program") bytes"
+      # mad-catalog's tests decode the firmware's answers with the generated
+      # Rust codec (the `protocol` crate), which `make protocol` writes.
+      - name: Generate the Rust protocol codec (make protocol)
+        working-directory: SIL
+        run: make protocol
+
       - name: Build Vibes
         working-directory: Vibes
         run: npm ci --no-audit --no-fund && npm test && npm run build
@@ -1235,6 +1362,10 @@ jobs:
       # and the exit code is re-raised at the end.
       - name: Behaviour report
         id: report
+        env:
+          MAD_REQUIRE_P2_IMAGE: '1'
+          MAD_P2_IMAGE: ${{ runner.temp }}/p2/program
+          MAD_P2_PRODUCTION_IMAGE: ${{ runner.temp }}/p2-production/program
         run: |
           set +e
           node Vibes/bin/vibes.mjs report --base "origin/${{ github.base_ref }}" > vibes-report.md
@@ -1292,6 +1423,31 @@ jobs:
       - name: No BH number collides with the base branch's
         run: node Vibes/bin/vibes.mjs renumber --base "origin/${{ github.base_ref }}" --check
 
+  # BLOCKING. The decidable half of Vibes/bindings/CLAIMS.md over the committed
+  # ledger: names from the code, contrast words, vague claims (errors), and
+  # machinery, garden-path scenes and over-long claims (warnings, advice only).
+  # A claim's `given` and `then` are written as separate strings, so each half
+  # can pass review alone and still compose into a line that reads badly; this
+  # catches the part of that a machine can decide. Reads behaviours.jsonl and
+  # runs no suite. Words this repo genuinely uses live in vibes.lint.json,
+  # scoped by path.
+  vibes-lint:
+    name: Behaviour wording
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - run: git submodule update --init Vibes
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - name: Build Vibes
+        working-directory: Vibes
+        run: npm ci --no-audit --no-fund && npm run build
+      - name: Lint every claim in the ledger
+        run: node Vibes/bin/vibes.mjs lint
+
   ci-gate:
     name: CI Gate
     needs:
@@ -1305,6 +1461,7 @@ jobs:
       - embsim-pin-ci
       - vibes-pin-ci
       - vibes-numbers
+      - vibes-lint
       - docs-ci
       - firmware-unit-tests
       - protocol-codegen

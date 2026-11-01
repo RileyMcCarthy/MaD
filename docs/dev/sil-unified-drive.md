@@ -133,8 +133,9 @@ right split; the alternative — moving `Drive` down into `core` — would make 
 peripheral invent `hi`/`lo` placeholders for the board to overwrite.
 
 The boundary where it survives is **not a net**. It is
-`HAL_pulseOut_start(channel, pulses, frequency)`
-(`Firmware/MaDCore/src/HAL/Include/HAL_pulseOut.h:49`), a real C header the
+`HAL_pulseOut_startVelocity(channel, frequency)` /
+`HAL_pulseOut_setFrequency(channel, frequency)`
+(`Firmware/MaDCore/src/HAL/Include/HAL_pulseOut.h`), a real C header the
 firmware compiles against — the shape of the P2's smart-pin registers, not an
 embsim design choice. The serial peripheral is the same story and already
 settled it: the peripheral deals in bytes over an FD, the board frames them.

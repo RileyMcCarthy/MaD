@@ -14,6 +14,7 @@ import { useStore } from '@/store/useStore';
 import Modal from './Modal';
 import GcodePreview from './GcodePreview';
 import { markRunCompleted } from './markRunCompleted';
+import { startTestOnDevice } from './startTestOnDevice';
 
 interface TestRunnerProps {
   /** Called after a run is created/started/completed so the history can refresh. */
@@ -199,26 +200,22 @@ export default function TestRunner({ onChanged }: TestRunnerProps) {
       activeTestName.current = testName;
       sawRunning.current = false;
 
-      // Motion is gated by the firmware state machine — a test won't move the
-      // gantry unless motion is enabled first. (It is enabled as a
-      // separate dashboard step before Run test.)
-      await deviceClient.setMotionEnabled(true);
-
-      // Push the sample profile to firmware, then upload + start the test.
-      await deviceClient.writeSampleProfile(selectedSample);
-      const result = await deviceClient.runTest({
+      // Enable motion, push the sample profile, then upload + start the test.
+      // A refused sample profile write fails the start before runTest(), so a
+      // test never runs on the previous profile's limits.
+      const started = await startTestOnDevice(deviceClient, dataStore, selectedSample, {
         gcode,
         gcodeId: testName,
         testDataId: testName,
         ...(gaugeLengthMm !== undefined ? { gaugeLengthMm } : {}),
       });
 
-      if (!result.success) {
+      if (!started.ok) {
+        // startTestOnDevice already marked the run 'error'.
         activeTestName.current = null;
         sawRunning.current = false;
         clearWatchdog();
-        await dataStore.updateTestRun(testName, { status: 'error' });
-        setMessage(`Test failed: ${result.error ?? 'unknown'}`);
+        setMessage(started.error);
       } else {
         setMessage(`Test ${testName} started.`);
         // Stuck-run watchdog: if firmware never reports completion well past

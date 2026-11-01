@@ -49,9 +49,17 @@ pub enum PinMode {
     Unknown(u32),
 }
 
+/// The mode-select field (bits 20:17) of the pin-configuration word: `%0000`
+/// is the logic modes, `%0000_CIO_HHH_LLL`, whose low bits set the drive
+/// strengths; anything else is a DAC, ADC or comparator configuration.
+const MODE_SELECT_MASK: u32 = 0xF << 17;
+
 impl PinMode {
     fn from_cfg(cfg: u32) -> Self {
-        if cfg == 0 {
+        // No smart function (`%MMMMM` = 0) in a logic mode is a plain pin:
+        // `DIR` and `OUT` drive it, at the strengths the word's `HHH`/`LLL`
+        // fields set (a pull-up is `DIR` and `OUT` high through 15 kΩ).
+        if cfg & MODE_MASK & !1 == 0 && cfg & MODE_SELECT_MASK == 0 {
             return PinMode::Off;
         }
         match cfg & MODE_MASK {

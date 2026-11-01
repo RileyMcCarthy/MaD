@@ -3,7 +3,7 @@
 // app_motion is a pure motion executor: it snapshots all external inputs once
 // per app_motion_run() (via processInputs), runs a small state machine
 // (DISABLED -> WAITING -> MOVING), pops moves from an internal lib_staticQueue,
-// and drives the stepper via the dev_stepper API. It also owns the G28 homing
+// and drives the servo via the dev_servo API. It also owns the G28 homing
 // sub-state-machine and converts steps<->um for the setpoint/position getters.
 //
 // INPUT-SNAPSHOT cadence: the module reads ALL inputs once at the top of
@@ -32,11 +32,8 @@
 #include "HAL_GPIO.h"                 // HAL_GPIO_channel_E, HAL_GPIO_ENDSTOP_UPPER
 #include "IO_positionFeedback.h"      // IO_positionFeedback_channel_E
 
-// Exercise the actuator-agnostic motion state machine against the dev_stepper
-// mocks below. app_motion's actuator abstraction is a 1:1 macro map, so pinning
-// the stepper backend fully covers the logic; the closed-loop dev_servo driver
-// (the production default) is validated by its own suite, not here.
-#define APP_MOTION_USE_SERVO 1
+// The motion state machine against the dev_servo doubles below; the
+// closed-loop driver itself is validated by its own suite, not here.
 #include "app_motion.h"
 
 /**********************************************************************
@@ -109,6 +106,18 @@ void dev_servo_moveTo(dev_servo_channel_E ch, int32_t targetCounts, int32_t feed
     d_moveCount++;
     d_lastMoveTarget = targetCounts;
     d_lastMoveStepsPerSecond = feedrateCountsPerSec;
+}
+
+static uint32_t d_openLoopMoveCount;
+static int32_t d_lastOpenLoopTarget;
+static int32_t d_lastOpenLoopStepsPerSecond;
+
+void dev_servo_moveToOpenLoop(dev_servo_channel_E ch, int32_t targetCounts, int32_t feedrateCountsPerSec)
+{
+    TEST_ASSERT_EQUAL_INT(DEV_SERVO_CHANNEL_MAIN, ch);
+    d_openLoopMoveCount++;
+    d_lastOpenLoopTarget = targetCounts;
+    d_lastOpenLoopStepsPerSecond = feedrateCountsPerSec;
 }
 
 /* --- dev_servo velocity mode (record the last call + count) --- */
@@ -244,6 +253,9 @@ bool dev_nvram_getChannelData(dev_nvram_channel_t channel, void *data, size_t si
 /* Reset all doubles to a benign baseline. */
 static void doubles_reset(void)
 {
+    d_openLoopMoveCount = 0U;
+    d_lastOpenLoopTarget = 0;
+    d_lastOpenLoopStepsPerSecond = 0;
     d_motionEnabled = true;
     d_speedLimited = false;
     d_steps = 0;
@@ -271,6 +283,9 @@ static void doubles_reset(void)
     d_notify_calls = 0;
     d_notify_lastType = APP_NOTIFICATION_TYPE_MESSAGE;
     memset(&d_machineProfile, 0, sizeof(d_machineProfile));
+    /* The servo closes on the encoder, so the encoder's scale is the one that
+     * converts; the servo's matches it unless a test says otherwise. */
+    d_machineProfile.encoderStepsPerMM = 100;
     d_machineProfile.servoStepsPerMM = 100;
     d_machineProfile.maxPosition = 200;     // mm
     d_machineProfile.homingVelocity = 5;    // mm/s
@@ -421,7 +436,7 @@ void test_waiting_pops_and_starts_move_then_moving(void)
     TEST_ASSERT_FALSE(app_motion_isIdle()); /* now MOVING */
 }
 
-/* A linear move completes (back to WAITING/idle) only once dev_stepper reports
+/* A linear move completes (back to WAITING/idle) only once dev_servo reports
  * atTarget; before that it stays MOVING. */
 void test_moving_completes_only_when_at_target(void)
 {
@@ -451,7 +466,7 @@ void test_moving_completes_only_when_at_target(void)
  * Tests: move arithmetic (steps/feed scaling, absolute vs incremental)
  **********************************************************************/
 
-/* Zero-feedrate G0/G1 is rejected: no dev_stepper_move is issued, but the
+/* Zero-feedrate G0/G1 is rejected: no dev_servo_moveTo is issued, but the
  * move still "completes" via the MOVING path once atTarget is reported. */
 void test_zero_feedrate_move_issues_no_stepper_move(void)
 {
@@ -505,6 +520,40 @@ void test_incremental_mode_adds_current_position(void)
     app_motion_run(); /* snapshots d_steps=1500, then starts move */
     TEST_ASSERT_EQUAL_UINT32(1U, d_moveCount);
     TEST_ASSERT_EQUAL_INT32(1600, d_lastMoveTarget);
+}
+
+void test_open_loop_move_chains_from_the_commanded_position(void)
+{
+    VIBES_TEST("motion.open-loop-move",
+               "src/APP/app_motion.c#app_motion_private_moveManager_start",
+               "incremental mode, a commanded position of 30 millimetres while the encoder reads 15, and a 1 millimetre open-loop move");
+    VIBES_EXPECT("feedback-off", "the drive is given the move with its feedback off, and no closed-loop move is issued");
+    VIBES_EXPECT_WHY("from-commanded",
+                     "the drive is commanded to 31 millimetres",
+                     "open-loop moves chain from where the last one was commanded, so a move out and a move back send equal pulse counts whatever the encoder read");
+    VIBES_EXPECT("completes-on-arrival", "the move completes when the drive reports arrival");
+    motion_driveToWaiting();
+    app_motion_move_t g91 = make_move((uint8_t)G91_INCREMENTAL, 0, 0, 0);
+    TEST_ASSERT_TRUE(app_motion_addMove(&g91));
+    app_motion_run();
+    app_motion_run();
+    TEST_ASSERT_TRUE(app_motion_isIdle());
+
+    d_steps = 1500;    /* encoder: 15 mm at 100 steps/mm */
+    d_setpoint = 3000; /* commanded: 30 mm */
+    d_moveCount = 0U;
+    d_atTarget = false;
+    app_motion_move_t mv = make_move((uint8_t)G124_OPEN_LOOP_MOVE, 1000, 100, 0);
+    TEST_ASSERT_TRUE(app_motion_addMove(&mv));
+    app_motion_run();
+    TEST_ASSERT_EQUAL_UINT32(1U, d_openLoopMoveCount);
+    TEST_ASSERT_EQUAL_UINT32(0U, d_moveCount);
+    TEST_ASSERT_EQUAL_INT32(3100, d_lastOpenLoopTarget);
+    TEST_ASSERT_EQUAL_INT32(10, d_lastOpenLoopStepsPerSecond); /* 0.1 mm/s at 100 steps/mm */
+    TEST_ASSERT_FALSE(app_motion_isIdle());
+    d_atTarget = true;
+    app_motion_run();
+    TEST_ASSERT_TRUE(app_motion_isIdle());
 }
 
 /* Re-asserting absolute mode (G90) makes the target independent of the current
@@ -638,7 +687,7 @@ void test_homing_full_sequence(void)
 
     /* Run 5: timer expired -> set jaw-offset coordinate + start backoff move.
      *   IO_positionFeedback_setValue: jawOffset(mm) -> um = 3*1000 = 3000
-     *   dev_stepper_setPosition: jawOffsetSteps = 100*3 = 300
+     *   dev_servo_setPosition: jawOffsetSteps = 100*3 = 300
      *   backoff move target = jawOffsetSteps + homingOffsetSteps
      *                       = 300 + 100*10 = 1300 steps @ 500 steps/s */
     global_timeus = 1500U * 1000U;
@@ -708,7 +757,7 @@ void test_homing_fails_when_target_reached_without_endstop(void)
  **********************************************************************/
 
 /* getSetpoint mirrors processOutputs: setpoint(um) = target(steps)*1000/stepsPerMM.
- * The snapshot of dev_stepper_getTarget is taken at run() time. */
+ * The snapshot of dev_servo_getTarget is taken at run() time. */
 void test_getSetpoint_scales_target_steps_to_nm(void)
 {
     VIBES_TEST("motion.setpoint-steps-to-micrometres",
@@ -750,6 +799,7 @@ void test_zero_stepsPerMM_yields_zero_setpoint_and_position(void)
                      "converting steps to micrometres divides by steps per millimetre, so a missing value would divide by zero");
     VIBES_EXPECT("position-zero", "the published position is zero");
     /* Re-init with a profile that has 0 steps/mm. */
+    d_machineProfile.encoderStepsPerMM = 0;
     d_machineProfile.servoStepsPerMM = 0;
     motion_init();
 
@@ -773,6 +823,48 @@ static void runOneLinearMove(int32_t xUm, int32_t fUmS)
     app_motion_move_t mv = make_move((uint8_t)G1_LINEAR_MOVE, xUm, fUmS, 0);
     TEST_ASSERT_TRUE(app_motion_addMove(&mv));
     app_motion_run();
+}
+
+void test_servo_moves_are_scaled_by_the_encoder(void)
+{
+    VIBES_TEST("motion.servo-scaled-by-encoder",
+               "src/APP/app_motion.c#app_motion_init",
+               "a machine profile with 200 encoder steps and 100 servo steps per millimetre, then a 1 millimetre move at 10 millimetres per second");
+    VIBES_EXPECT_WHY("target-in-encoder-counts",
+                     "the drive is sent to 200 counts",
+                     "the servo closes its loop on the encoder, so every position it is given is in encoder counts");
+    VIBES_EXPECT("feedrate-in-encoder-counts", "the feedrate is 2000 counts per second");
+    VIBES_EXPECT("position-in-micrometres",
+                 "an encoder reading of 200 counts is published as 1000 micrometres");
+    d_machineProfile.encoderStepsPerMM = 200;
+    d_machineProfile.servoStepsPerMM = 100;
+    motion_init();
+    motion_driveToWaiting();
+    runOneLinearMove(1000, 10000);
+    TEST_ASSERT_EQUAL_INT32(200, d_lastMoveTarget);
+    TEST_ASSERT_EQUAL_INT32(2000, d_lastMoveStepsPerSecond);
+    d_steps = 200;
+    app_motion_run();
+    TEST_ASSERT_EQUAL_INT32(1000, app_motion_getPosition());
+}
+
+void test_a_profile_without_a_servo_scale_refuses_moves(void)
+{
+    VIBES_TEST("motion.missing-servo-scale-refuses-moves",
+               "src/APP/app_motion.c#app_motion_init",
+               "a machine profile with an encoder scale but zero servo steps per millimetre, then a linear move");
+    VIBES_EXPECT_WHY("move-refused",
+                     "the move is refused",
+                     "the drive is pulsed by the ratio of the two scales, so without the servo's the distance each step travels would be a guess");
+    VIBES_EXPECT("operator-told", "an error notification is raised when the profile is loaded");
+    d_machineProfile.encoderStepsPerMM = 100;
+    d_machineProfile.servoStepsPerMM = 0;
+    d_notify_calls = 0;
+    motion_init();
+    TEST_ASSERT_EQUAL_INT(1, d_notify_calls);
+    motion_driveToWaiting();
+    app_motion_move_t mv = make_move((uint8_t)G1_LINEAR_MOVE, 1000, 5, 0);
+    TEST_ASSERT_FALSE(app_motion_addMove(&mv));
 }
 
 void test_a_restricted_machine_moves_at_the_capped_speed(void)
@@ -859,6 +951,7 @@ void test_an_unusable_machine_profile_refuses_every_move(void)
                      "an error notification is raised when the profile is loaded",
                      "the refusal is otherwise indistinguishable from a machine that simply will not move, and the operator cannot fix a profile nobody told them was missing");
 
+    d_machineProfile.encoderStepsPerMM = 0;
     d_machineProfile.servoStepsPerMM = 0;
     d_notify_calls = 0;
     motion_init();
@@ -885,7 +978,7 @@ void test_a_profile_that_could_not_be_read_refuses_every_move(void)
                "a machine profile whose NVRAM read fails");
     VIBES_EXPECT_WHY("move-refused",
                      "the move is refused",
-                     "the read used to be issued and its result discarded, so a failed read left whatever the uninitialised profile struct happened to hold and the machine ran against it");
+                     "a move planned against a profile that was never read would run on whatever values happened to be in memory");
 
     d_nvramReadSucceeds = false;
     motion_init();
@@ -992,8 +1085,8 @@ void test_waveform_is_handed_to_the_driver_in_the_drivers_units(void)
                "src/APP/app_motion.c#app_motion_private_moveManager_start",
                "a G123 record carrying amplitude in um, frequency in mHz and a shape bit");
     VIBES_EXPECT_WHY("converted-to-driver-units",
-                     "the driver is asked for the same waveform in counts, microhertz and its own shape enum",
-                     "this layer no longer generates anything, so a unit slip here is the only way the machine can run a waveform that is not the one asked for, and it would look entirely healthy while doing it");
+                     "the driver is asked for the same waveform in counts, microhertz and its own shape code",
+                     "the driver generates the waveform, so a unit slip here is the only way the machine can run a waveform that is not the one asked for, and it would look entirely healthy while doing it");
 
     motion_driveToWaiting();
     d_steps = 4321;          /* the wave swings about wherever we are now */
@@ -1050,8 +1143,8 @@ void test_a_refused_waveform_completes_the_move_instead_of_hanging(void)
                "src/APP/app_motion.c#app_motion_private_waveform_run",
                "a waveform the driver refuses because the machine cannot deliver it");
     VIBES_EXPECT_WHY("move-ends",
-                     "the move completes rather than waiting for a run that never started",
-                     "completion is now the driver's arrival verdict, and a refused waveform never arrives -- so without this the move, the test and the machine all wait forever");
+                     "the move completes at once",
+                     "completion is the driver's arrival verdict, and a refused waveform never arrives -- so without this the move, the test and the machine all wait forever");
 
     motion_driveToWaiting();
     d_waveformAccepted = false;
@@ -1078,7 +1171,7 @@ void test_a_refused_waveform_is_reported_once_to_test_management(void)
                "G123 waveforms refused for being infeasible or for an unknown shape, and one the driver accepted");
     VIBES_EXPECT_WHY("refusal-reported",
                      "each refusal is reported after the move has ended",
-                     "test management needs it to end the test with a warning instead of Test Complete!");
+                     "test management uses it to end the test with a warning, so a refused waveform is never announced as Test Complete!");
     VIBES_EXPECT("reported-once", "a refusal is reported only once");
     VIBES_EXPECT("accepted-not-reported", "an accepted waveform reports no refusal");
 
@@ -1125,7 +1218,7 @@ void test_a_waveform_runs_until_the_driver_reports_arrival(void)
                "a waveform the driver accepted and has not finished");
     VIBES_EXPECT_WHY("waits-for-the-driver",
                      "the move stays in progress until the driver reports arrival",
-                     "the driver alone knows how many cycles have elapsed and whether the closing move to the centre has landed; a duration guessed in this layer is the thing that used to end waveforms early or late");
+                     "the driver alone knows how many cycles have elapsed and whether the closing move to the centre has landed; a duration estimated in this layer would end a waveform early or late");
 
     motion_driveToWaiting();
     d_atTarget = false;
@@ -1152,7 +1245,7 @@ void test_the_recorded_setpoint_during_a_waveform_is_the_trajectory(void)
                "src/APP/app_motion.c#app_motion_private_processInputs",
                "a waveform in progress, where the driver's target and its live setpoint differ");
     VIBES_EXPECT_WHY("reports-the-profile-not-the-destination",
-                     "the published setpoint is the driver's live profile position, not the move's end target",
+                     "the published setpoint follows the driver's live profile position through the cycle",
                      "a waveform's target is the centre it will finish at, so reporting the target would record a flat line through the middle of an oscillation and make a tracking error impossible to see in the data");
 
     motion_driveToWaiting();
@@ -1204,7 +1297,7 @@ void test_a_waveform_with_an_unknown_shape_never_reaches_the_driver(void)
                      "the driver is never asked to start the waveform",
                      "the adapter must not pick a profile on the host's behalf: laundering a reserved byte into a sine is how a machine runs a loading nobody requested and files it under the shape that was asked for");
     VIBES_EXPECT_WHY("move-completes",
-                     "the move completes rather than hanging the queue",
+                     "the move completes and the queue moves on",
                      "a refused waveform must not strand the test in MOVING forever -- the operator needs the program to end so the refusal is visible");
 
     motion_driveToWaiting();
@@ -1273,6 +1366,7 @@ int main(void)
 
     RUN_TEST(test_zero_feedrate_move_issues_no_stepper_move);
     RUN_TEST(test_incremental_mode_adds_current_position);
+    RUN_TEST(test_open_loop_move_chains_from_the_commanded_position);
     RUN_TEST(test_absolute_mode_ignores_current_position);
 
     RUN_TEST(test_dwell_holds_until_period_elapses);
@@ -1289,6 +1383,8 @@ int main(void)
     RUN_TEST(test_an_unrestricted_machine_moves_at_the_speed_it_was_asked_for);
     RUN_TEST(test_a_profile_without_a_cap_does_not_stop_the_machine);
     RUN_TEST(test_an_unusable_machine_profile_refuses_every_move);
+    RUN_TEST(test_servo_moves_are_scaled_by_the_encoder);
+    RUN_TEST(test_a_profile_without_a_servo_scale_refuses_moves);
     RUN_TEST(test_a_profile_that_could_not_be_read_refuses_every_move);
     RUN_TEST(test_a_usable_profile_still_accepts_moves);
     RUN_TEST(test_addMove_queue_is_bounded);

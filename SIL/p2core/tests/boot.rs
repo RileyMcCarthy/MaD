@@ -9,6 +9,7 @@
 
 use std::path::PathBuf;
 
+use p2core::board::{PIN_PROTO_RX, PIN_PROTO_TX};
 use p2core::{baud_matches, Board, Machine, PinMode, SdCard, SmartPins};
 
 /// Where hub execution begins: below this the unified PC is cog RAM ($000-$1FF)
@@ -296,7 +297,7 @@ fn cog_manager_starts_the_other_cogs() {
 ///
 /// All eight cogs run and every peripheral the machine needs has its smart
 /// pins configured -- the force gauge UART (0/2), the servo encoder (9), the
-/// protocol link to the host (53/55 at 2,000,000 baud), the SD SPI (58-61) and
+/// protocol link to the host (30/32 at 2,000,000 baud), the SD SPI (58-61) and
 /// the debug console (62/63). That is the point at which a host-side test can
 /// start driving the protocol.
 #[test]
@@ -313,8 +314,8 @@ fn boots_to_a_fully_configured_machine() {
     for (pin, what) in [
         (0u8, "force-gauge RX"),
         (2, "force-gauge TX"),
-        (53, "protocol RX"),
-        (55, "protocol TX"),
+        (PIN_PROTO_RX, "protocol RX"),
+        (PIN_PROTO_TX, "protocol TX"),
         (62, "debug TX"),
     ] {
         assert!(
@@ -396,8 +397,8 @@ fn smart_pin_configuration_is_decoded_and_baud_rates_are_right() {
     for (pin, mode, nominal, what) in [
         (2u8, PinMode::AsyncTx, 115_200u32, "force gauge TX"),
         (0, PinMode::AsyncRx, 115_200, "force gauge RX"),
-        (55, PinMode::AsyncTx, 2_000_000, "protocol TX"),
-        (53, PinMode::AsyncRx, 2_000_000, "protocol RX"),
+        (PIN_PROTO_TX, PinMode::AsyncTx, 2_000_000, "protocol TX"),
+        (PIN_PROTO_RX, PinMode::AsyncRx, 2_000_000, "protocol RX"),
         (62, PinMode::AsyncTx, 230_400, "debug console TX"),
         (63, PinMode::AsyncRx, 230_400, "debug console RX"),
     ] {

@@ -45,6 +45,9 @@ describe('proto ↔ display mapping', () => {
         homingOffset: 2,
         jawOffset: 3,
         restrictedVelocity: 2,
+        servoKp: 8,
+        servoKi: 0,
+        servoEnableActiveLow: 1,
       };
       const shared = configToShared(proto);
       expect(shared.Name).toBe('M1');
@@ -69,6 +72,7 @@ describe('proto ↔ display mapping', () => {
         machineForce: 1,
         machinePosition: 2,
         machineSetpoint: 3,
+        machineCommanded: 2.5,
         sampleForce: 4,
         samplePosition: 5,
       });

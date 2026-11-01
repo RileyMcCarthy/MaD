@@ -11,9 +11,8 @@
 //          cmd = setpointVel (feedforward) + Kp*err + Ki*∫err, with err measured
 //          against the ENCODER. So the encoder — not a count of emitted pulses —
 //          defines where the carriage is, the commanded feedrate is realised
-//          (not a slew-to-max), and slip under load is corrected. This replaces
-//          the open-loop "emit N steps and assume we arrived" model of
-//          dev_stepper. Run dev_servo_run() at a fixed rate from a dedicated cog.
+//          (not a slew-to-max), and slip under load is corrected. Run
+//          dev_servo_run() at a fixed rate from a dedicated cog.
 //
 /**********************************************************************
  * Includes
@@ -126,15 +125,22 @@ typedef struct
 {
     HAL_pulseOut_channel_E pulseChannel;
     HAL_GPIO_channel_E gpioDirection;
+    /* The drive's enable input. Driven by the control loop (the MOTOR cog)
+     * alone, from dev_servo_enable's state: inactive from the first control
+     * tick until the actuator is enabled, and again on every path that
+     * disables it. dev_servo_init does not touch it (init runs on the MAIN
+     * cog, and P2 outputs OR across cogs). */
+    HAL_GPIO_channel_E gpioEnable;
     HAL_encoder_channel_E encoderChannel;
 
     uint32_t loopPeriodUs;     /* nominal control-tick period (must match the cog rate) */
     int32_t maxVelocity;       /* counts/s — hard safety clamp on commanded velocity */
     int32_t maxAccel;          /* counts/s^2 — trajectory accel/decel limit */
     int32_t positionDeadband;  /* counts — within this of target => settled, park.
-                                * 8 counts = 0.977 um on the shipped 8192 counts/mm
-                                * machine, so a commanded position is reached
-                                * inside 1 um. */
+                                * Set at init to 1 um of the profile's encoder
+                                * scale, truncated, floored at 2 counts: 8 counts
+                                * (0.977 um) at 8192 counts/mm, 2 (0.83 um) at
+                                * 2400. */
     /* How close the approach move must get before the CYCLES may begin.
      *
      * Deliberately tighter than positionDeadband, because the two answer
@@ -150,13 +156,97 @@ typedef struct
     int32_t kpDen;             /* proportional gain denominator */
     int32_t kiNum;             /* integral gain numerator (1/s^2): cmd += kiNum*∫err/kiDen */
     int32_t kiDen;             /* integral gain denominator (kiNum=0 disables the term) */
-    int32_t integralLimit;     /* counts/s — anti-windup clamp on the integral contribution */
+    int32_t integralLimit;     /* counts/s — backstop clamp on the integral contribution.
+                                * The integral only accumulates once the trajectory
+                                * has held a steady velocity for 3/Kp seconds, and
+                                * not while the command is saturated, so a ramp's
+                                * transient lag is not learned and returned as
+                                * overshoot; a steady error under load still is
+                                * nulled. */
 
-    /* Stall guard: if |commandedVel| exceeds stallVelocity but the encoder moves
-     * less than stallMinMove counts for stallTicks consecutive ticks, flag a stall. */
-    int32_t stallVelocity;     /* counts/s */
-    int32_t stallMinMove;      /* counts per tick */
-    uint32_t stallTicks;
+    /* Stall guard: two stages on the following error, and a travel check on
+     * the step pulses.
+     *
+     * The following error is the setpoint minus the encoder, so it measures
+     * the carriage not being where the loop is driving it. A jam at speed, a
+     * carriage that crawls, slips or cannot keep up, and a reversed encoder or
+     * drive direction all make it grow; a carriage that follows, however it
+     * lags, keeps it bounded.
+     *
+     * It cannot see a carriage that moves while its encoder does not (a dead
+     * encoder, a slipped coupling), nor a jam close to the target: once the
+     * setpoint has arrived, the error stops growing, and the proportional term
+     * keeps pulsing the drive at Kp x error for as long as it lasts. The
+     * TRAVEL CHECK sees both, because it judges the encoder against the step
+     * pulses the drive is actually sent.
+     *
+     * HARD CEILING: |error| above stallCeiling stalls on that tick. It is the
+     * runaway case -- a reversed direction, where the loop's own correction
+     * drives the carriage further off, or a jam at speed -- so it does not
+     * wait. It sits well above the largest error a healthy drive shows, so
+     * the coast through a full-speed stop or a reversal, and the lag through
+     * an acceleration ramp, never reach it.
+     *
+     * SOFT BAND: |error| above stallBand for stallBandTicks consecutive ticks
+     * stalls too. It is the slow case -- a carriage that moves the right way
+     * but stays too far behind, or a jam at a speed too low to reach the
+     * ceiling soon. The persistence is what lets the band sit lower than the
+     * ceiling: a healthy error passes through it briefly, on a ramp or a
+     * stop, and drops back before the time is up.
+     *
+     * TRAVEL CHECK: the guard totals the pulses' travel in encoder counts
+     * (pulses x encoder counts per pulse, signed by direction) from a
+     * checkpoint. Once that net travel reaches stallTravel, the encoder must
+     * have covered at least 1/stallProgressDen of it in the same direction,
+     * measured from the furthest point it reached the OTHER way since the
+     * checkpoint. If it has, the checkpoint moves to here; if not, it is a
+     * stall. Judging by distance, not time, bounds how far a carriage can be
+     * driven blind at any speed: a dead encoder or a jam is reported within
+     * two stallTravels of pulses wherever it happens -- at the slowest feed,
+     * near the target, or during a small waveform, since the travel is net
+     * and a drifting oscillation adds up. (Two, not one: a window that had
+     * already seen its quarter when the encoder stopped passes once more.)
+     * Measuring from the furthest point the other way excuses the coast of a
+     * lagging drive through a stop or a reversal, which runs against the new
+     * pulses before the carriage turns. A reversed encoder never turns, so it
+     * makes no progress from that point and is caught like a dead one. The
+     * 1/stallProgressDen margin absorbs drive lag through acceleration and a
+     * profile scale that is off by up to that factor. A jammed drive that is
+     * still powered buzzes its encoder by a few counts (measured: +-15), which
+     * is far short of a quarter of stallTravel.
+     *
+     * The ceiling (2 mm), the band (1 mm) and the travel (1 mm) are lengths:
+     * dev_servo_init converts them to counts with the profile's
+     * encoderStepsPerMM, so a 2400 counts/mm encoder trips past 4800 and 2400
+     * counts and judges every 2400 counts of pulses. Only an unprovisioned
+     * profile (encoderStepsPerMM <= 0) keeps the default counts, which are
+     * those lengths at 8192 counts/mm.
+     *
+     * The values are derived from the SIL twin's drive (a 20 ms first-order
+     * lag, the shipped 50 mm/s and 600 mm/s^2 profile; see the defaults in
+     * dev_servo.c). The real drive's lag has not been measured, so they are
+     * placeholders on hardware until it is.
+     *
+     * A verdict LATCHES: it holds until the drive is disabled (the operator's
+     * acknowledgement, in app_control) or its position is redefined
+     * (dev_servo_setPosition, which zeroes the error with it). A new move, a
+     * speed command or a stop does not clear it. So a runaway that trips the
+     * ceiling for one tick is still reported to a reader that only looks
+     * every few ticks. */
+    int32_t stallCeiling;     /* counts (2 mm via encoderStepsPerMM): |following error| above => stall at once */
+    int32_t stallBand;        /* counts (1 mm via encoderStepsPerMM): |following error| above ...              */
+    uint32_t stallBandTicks;  /* ... for this many consecutive ticks => stall    */
+    int32_t stallTravel;      /* counts (1 mm via encoderStepsPerMM): net pulsed travel judged at a time */
+    int32_t stallProgressDen; /* the encoder must cover at least 1/this of it  */
+    /* Which level of gpioEnable enables the drive. false: driven active
+     * (high) enables it, as on the DMM DYN4 by default; true: driven low
+     * enables it, for a drive whose enable input disables it while energized.
+     * The drive decides this, so it comes from the machine profile
+     * (dev_servo_setEnableActiveLow). LAST in the struct on purpose: flexcc
+     * initialises a field that follows a bool in a const table a few bytes
+     * off from where it reads it (see dev_nvram_channelConfig_t), so a bool
+     * mid-struct would shift every field after it on the P2. */
+    bool enableActiveLow;
 } dev_servo_channelConfig_S;
 
 /**********************************************************************
@@ -166,12 +256,42 @@ typedef struct
  *   counts/s and counts/s^2, that OVERRIDE the compile-time defaults for every
  *   channel. Pass <=0 for either to keep the built-in (gentle) fallback. The
  *   caller owns the mm->counts conversion (limit_mmps * encoderStepsPerMM),
- *   keeping this module unit-agnostic (see the ENCODER COUNTS note above). */
-void dev_servo_init(int lock, int32_t maxVelocityCounts, int32_t maxAccelCounts);
+ *   keeping this module unit-agnostic (see the ENCODER COUNTS note above). *
+ * @param encoderStepsPerMM, servoStepsPerMM  Machine-profile scales. Their
+ *   ratio is how many encoder counts one step pulse moves the carriage: the
+ *   drive is pulsed at the commanded counts/s divided by it. Pass <=0 for
+ *   either to assume one count per pulse. encoderStepsPerMM also converts the
+ *   stall guard's 2 mm ceiling, 1 mm band and 1 mm travel to counts, and sets
+ *   the parking deadband to 1 um (see positionDeadband); <=0 keeps their
+ *   8192 counts/mm defaults. */
+void dev_servo_init(int lock, int32_t maxVelocityCounts, int32_t maxAccelCounts,
+                    int32_t encoderStepsPerMM, int32_t servoStepsPerMM);
+/* The loop gains from the machine profile, in thousandths (servoKp, servoKi).
+ * A kp of 0 or less keeps the built-in default; a ki of 0 switches the
+ * integral off. Call once after dev_servo_init, before the loop runs. */
+void dev_servo_setGains(int32_t kpMilli, int32_t kiMilli);
+/* The drive's enable polarity from the machine profile (servoEnableActiveLow):
+ * true makes a LOW enable output the enabled state. Call once after
+ * dev_servo_init, before the loop runs; the first control tick drives the
+ * output to the disabled level for this polarity. */
+void dev_servo_setEnableActiveLow(bool activeLow);
 void dev_servo_run(void); /* one control tick; call at a fixed rate from a cog */
 
+/* Request the drive enabled or disabled. The next control tick applies it:
+ * it drives the enable output (gpioEnable) to match, and while disabled emits
+ * no pulses. Disabled is the state from dev_servo_init; the enable output is
+ * first driven (inactive) by the first control tick, not by init. */
 void dev_servo_enable(dev_servo_channel_E ch, bool enable);
 void dev_servo_moveTo(dev_servo_channel_E ch, int32_t targetCounts, int32_t feedrateCountsPerSec); /* closed-loop position at feedrate */
+/* The same move with the FEEDBACK STAGE OFF: the trapezoid is planned and fed
+ * to the drive exactly as for moveTo (in encoder counts, pulsed at the
+ * profile's servo/encoder ratio), but nothing is added from the encoder and
+ * the stall guard does not run. Arrival is the trajectory reaching its target,
+ * so the pulses sent are the target distance times that ratio whatever the
+ * encoder does. Any later command restores the feedback, restarting the
+ * setpoint from the encoder. Used to measure the drive/encoder pair (motor
+ * calibration), not to position anything. */
+void dev_servo_moveToOpenLoop(dev_servo_channel_E ch, int32_t targetCounts, int32_t feedrateCountsPerSec);
 void dev_servo_setVelocity(dev_servo_channel_E ch, int32_t velCountsPerSec);
 
 /* Oscillate about `centreCounts` for `cycles` whole cycles, then stop.
@@ -199,7 +319,11 @@ bool dev_servo_waveformFeasible(dev_servo_channel_E ch, const dev_servo_waveform
 /* Whole cycles completed so far; the move is done when this reaches `cycles`. */
 uint32_t dev_servo_waveformCyclesDone(dev_servo_channel_E ch); /* closed-loop velocity hold */
 void dev_servo_stop(dev_servo_channel_E ch);
-void dev_servo_setPosition(dev_servo_channel_E ch, int32_t counts);        /* homing: define encoder reference */
+/* Homing: define the encoder reference. Safe against a control tick running on
+ * the MOTOR cog at the same time: a tick that read the encoder in one frame and
+ * the setpoint in the other neither judges a stall nor keeps the old frame's
+ * setpoint (see the frame check in dev_servo_run). */
+void dev_servo_setPosition(dev_servo_channel_E ch, int32_t counts);
 
 int32_t dev_servo_getPosition(dev_servo_channel_E ch); /* encoder — single source of truth */
 int32_t dev_servo_getVelocity(dev_servo_channel_E ch); /* current commanded velocity (counts/s) */
@@ -220,7 +344,7 @@ int32_t dev_servo_getSetpoint(dev_servo_channel_E ch);
 bool dev_servo_atTarget(dev_servo_channel_E ch);
 bool dev_servo_isStalled(dev_servo_channel_E ch);
 /* Liveness of the control loop: false until dev_servo_run() has completed a tick,
- * true from then on (mirrors dev_stepper_isReady). APP gates the machine on this,
+ * true from then on. APP gates the machine on this,
  * so it must reflect "the MOTOR cog is servicing the actuator" only — a mechanical
  * fault is reported by dev_servo_isStalled, not here. */
 bool dev_servo_isReady(dev_servo_channel_E ch);

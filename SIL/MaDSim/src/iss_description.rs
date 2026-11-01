@@ -5,8 +5,8 @@
 //! bench does not, so the polarity has to be right on the wire or the machine
 //! reads its own ESD lines as tripped.
 
-use std::sync::atomic::{AtomicI64, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use embsim_board::netlist;
 use embsim_board::{
@@ -46,8 +46,8 @@ pub mod pins {
     pub const ENDSTOP_DOOR: u8 = 21;
     pub const ESD_POWER: u8 = 22;
     pub const CHARGE_PUMP: u8 = 28;
-    pub const RPI_RX: u8 = 53;
-    pub const RPI_TX: u8 = 55;
+    pub const RPI_RX: u8 = 30;
+    pub const RPI_TX: u8 = 32;
 }
 
 /// Every pin the ISS carries on a net as a plain level.
@@ -88,13 +88,10 @@ pub const INPUT_PINS: &[u8] = &[
 /// backwards boots the machine with all three ESD lines asserted, which the
 /// native backend cannot reproduce and hardware would show immediately.
 pub const IDLE_PULLS: &[(u8, Level)] = &[
-    // The drive's enable. The firmware declares the line
-    // (`HAL_GPIO_SERVO_ENA`) and never writes it, on purpose: the enable is
-    // an open collector biased to its active level on the drive, so a P2 that
-    // leaves it alone leaves the drive enabled. Without this pull the net
-    // floats, the model reads "no level" as *not enabled*, and every step
-    // edge is discarded — the step pin pulses, the carriage never moves, and
-    // a closed-loop move runs forever chasing it.
+    // The drive's enable, active high (energized = enabled). The firmware
+    // drives it from the servo loop (`HAL_GPIO_SERVO_ENA`, low until motion
+    // is enabled); the pull defines the net as disabled before the firmware's
+    // first write, as the drive reads an undriven enable.
     (pins::SERVO_ENA, Level::Low),
     // activeLow = false: inactive is low.
     (pins::SERVO_RDY, Level::Low),
@@ -270,9 +267,13 @@ impl BenchForcePath {
 // The machine: servo, encoder, end stops
 // ============================================================
 
-/// Steps per millimetre, matching the native wiring's `STEPS_PER_MM`
-/// (4 × 2048 microsteps).
+/// Encoder counts per millimetre, matching the firmware's failsafe profile
+/// (`dev_nvram_config.c` `encoderStepsPerMM`, 4 × 2048).
 const STEPS_PER_MM: f64 = (4 * 2048) as f64;
+
+/// The drive's steps per millimetre when nothing says otherwise: the same as
+/// the encoder's, as in the failsafe profile (`servoStepsPerMM`).
+pub const DEFAULT_MOTOR_STEPS_PER_MM: u32 = 4 * 2048;
 
 /// Travel between the end stops, in millimetres.
 ///
@@ -302,6 +303,101 @@ pub struct BenchMachine {
     /// silently runs into an endstop looks, from every other vantage point,
     /// exactly like a test that simply never finishes.
     travel: Arc<CarriageTravel>,
+    /// What couples the shaft to the carriage, and whether it is jammed.
+    coupling: Arc<Coupling>,
+    /// Everything else that follows the carriage (the sample's gantry).
+    followers: Followers,
+}
+
+/// Callbacks that follow the carriage position, in millimetres.
+type Followers = Arc<Mutex<Vec<Box<dyn Fn(f64) + Send>>>>;
+
+/// The mechanism between the drive's shaft and the carriage, which can jam.
+///
+/// Free, the carriage follows the shaft step for step. Jammed, the drive still
+/// takes every step it is given and the shaft still turns, but the carriage
+/// stays where it is: the encoder stops counting, the end stops and the sample
+/// see no travel. That is a stall exactly as the firmware's servo guard
+/// defines one -- motion commanded, the encoder not following -- and the only
+/// way the bench can produce it. Freed again, the carriage resumes from where
+/// it stuck, not from where the shaft got to: the travel lost while jammed
+/// stays lost, as a slipped coupling's would.
+///
+/// A jam can also **buzz** (`set_buzz_counts`): a drive that is still powered
+/// shakes the carriage against the jam, so the encoder wanders a few counts
+/// either side of where it stuck while the shaft turns, and never gets
+/// anywhere. Measured on the bench (2026-10-24): within +-15 counts, changing
+/// on most ticks. That is the case a per-tick "did the encoder move?" guard
+/// misses, so the stall scenario runs against it.
+#[derive(Debug, Default)]
+pub struct Coupling {
+    jammed: AtomicBool,
+    state: Mutex<CouplingState>,
+}
+
+#[derive(Debug, Default)]
+struct CouplingState {
+    /// The last shaft position seen; `None` before the first.
+    shaft_mm: Option<f64>,
+    carriage_mm: f64,
+    /// Shaft position when the current jam began; `None` while free.
+    jammed_at_shaft_mm: Option<f64>,
+    /// Peak wander of a buzzing jam, in millimetres (0 = a dead jam).
+    buzz_mm: f64,
+}
+
+/// Shaft travel over which a buzzing jam swings once through its full range,
+/// in millimetres: about 80 steps, so at any jog speed the encoder changes on
+/// nearly every control tick.
+const BUZZ_PERIOD_MM: f64 = 0.01;
+
+impl Coupling {
+    /// Jam the carriage (`true`) or free it (`false`).
+    pub fn set_jammed(&self, jammed: bool) {
+        // Each jam buzzes from where it sticks, not on from the last one.
+        self.state.lock().unwrap().jammed_at_shaft_mm = None;
+        self.jammed.store(jammed, Ordering::SeqCst);
+    }
+
+    /// Make a jam buzz up to `counts` encoder counts either side of where the
+    /// carriage stuck (0, the default, is a dead jam).
+    pub fn set_buzz_counts(&self, counts: u32) {
+        self.state.lock().unwrap().buzz_mm = f64::from(counts) / STEPS_PER_MM;
+    }
+
+    pub fn jammed(&self) -> bool {
+        self.jammed.load(Ordering::SeqCst)
+    }
+
+    /// The shaft is at `shaft_mm`: where the carriage now is, or `None` when
+    /// it did not move.
+    fn follow(&self, shaft_mm: f64) -> Option<f64> {
+        let mut state = self.state.lock().unwrap();
+        match state.shaft_mm.replace(shaft_mm) {
+            None => {
+                state.carriage_mm = shaft_mm;
+                Some(state.carriage_mm)
+            }
+            Some(previous) if self.jammed() => {
+                let from = *state.jammed_at_shaft_mm.get_or_insert(previous);
+                (state.buzz_mm > 0.0)
+                    .then(|| state.carriage_mm + state.buzz_mm * buzz(shaft_mm - from))
+            }
+            Some(previous) => {
+                state.jammed_at_shaft_mm = None;
+                state.carriage_mm += shaft_mm - previous;
+                Some(state.carriage_mm)
+            }
+        }
+    }
+}
+
+/// Where a buzzing jam sits, from -1 to 1, after `shaft_mm` of shaft travel
+/// since it stuck: a triangle wave starting at 0, so the jam begins exactly
+/// where the carriage stopped.
+fn buzz(shaft_mm: f64) -> f64 {
+    let phase = (shaft_mm / BUZZ_PERIOD_MM + 0.25).rem_euclid(1.0);
+    1.0 - 4.0 * (phase - 0.5).abs()
 }
 
 /// Min/max carriage travel since the last report, in micrometres.
@@ -342,19 +438,17 @@ impl CarriageTravel {
 }
 
 impl BenchMachine {
-    pub fn build() -> Result<Self, Box<dyn std::error::Error>> {
-        // The drive's own conventions, not the model's defaults. This machine
-        // states them on the driver: DIR high = reverse, and the enable is an
-        // open collector, so ENA low = enabled (the same pair
-        // `board/tests/carriage_seam.rs` declares for this firmware). With the
-        // defaults (DIR high = forward, ENA high = enabled) the firmware's
-        // asserted enable read as *disabled* and the model ignored every step
-        // edge: the step pin pulsed millions of times, the shaft never moved,
-        // the encoder never counted, and a closed-loop move ran forever
-        // chasing a carriage that was not there.
+    /// `motor_steps_per_mm` is the drive's scale; the encoder's is fixed at
+    /// `STEPS_PER_MM`. The firmware has to be told the same pair in its
+    /// machine profile, or it pulses the drive at the wrong rate.
+    pub fn build(motor_steps_per_mm: u32) -> Result<Self, Box<dyn std::error::Error>> {
+        // The drive's own conventions: DIR high = reverse, and the enable is
+        // energized = enabled, ENA high enables (the machine's owner,
+        // 2026-10-25). The firmware drives ENA high while motion is enabled
+        // and low otherwise (`dev_servo_private_applyEnable`).
         let motor = StepperMotor::new(stepper_motor::Config {
             dir_forward_level: Level::Low,
-            enable_active_low: true,
+            enable_active_low: false,
             // No load loss. `Config::new`'s 0.15 is the model's placeholder
             // for a drive that loses a share of its commanded travel, not a
             // measured property of this machine — and here it is the whole
@@ -366,10 +460,11 @@ impl BenchMachine {
             // reason: the bench is here to test the firmware's loop, not to
             // invent mechanical losses nobody has measured.
             load_loss: 0.0,
-            ..stepper_motor::Config::new(STEPS_PER_MM)
+            ..stepper_motor::Config::new(f64::from(motor_steps_per_mm))
         })?;
-        // Encoder counts per millimetre equal steps per millimetre: this servo
-        // is closed-loop on the encoder, so the two scales are the same one.
+        // The encoder has its own scale. By default it equals the drive's, but
+        // a machine whose drive is geared or microstepped differently does
+        // not, and the firmware converts between them by its profile.
         let encoder = QuadratureEncoder::new(quadrature_encoder::Config::new(STEPS_PER_MM))?;
         let upper = EndSwitch::new(end_switch::Config::new(
             TRAVEL_MM,
@@ -386,11 +481,21 @@ impl BenchMachine {
         let lower_actuator = lower.actuator();
         let travel = Arc::new(CarriageTravel::new());
         let travel_in = Arc::clone(&travel);
-        motor.shaft().on_position_change(move |mm| {
+        let coupling = Arc::new(Coupling::default());
+        let coupling_in = Arc::clone(&coupling);
+        let followers: Followers = Arc::default();
+        let followers_in = Arc::clone(&followers);
+        motor.shaft().on_position_change(move |shaft_mm| {
+            let Some(mm) = coupling_in.follow(shaft_mm) else {
+                return;
+            };
             encoder_in.set_position_mm(mm);
             upper_actuator.set_position_mm(mm);
             lower_actuator.set_position_mm(mm);
             travel_in.record(mm);
+            for follower in followers_in.lock().unwrap().iter() {
+                follower(mm);
+            }
         });
 
         Ok(Self {
@@ -399,7 +504,20 @@ impl BenchMachine {
             upper,
             lower,
             travel,
+            coupling,
+            followers,
         })
+    }
+
+    /// The shaft-to-carriage coupling, to jam and free it.
+    pub fn coupling(&self) -> Arc<Coupling> {
+        Arc::clone(&self.coupling)
+    }
+
+    /// Call `follower` with the carriage position, in millimetres, whenever
+    /// the carriage moves.
+    pub fn on_carriage_change(&self, follower: impl Fn(f64) + Send + 'static) {
+        self.followers.lock().unwrap().push(Box::new(follower));
     }
 
     /// Where the carriage has been, for the run's own telemetry.
@@ -530,5 +648,101 @@ impl Component for MisoPullUp {
 
     fn attach(&mut self, _io: ComponentNetIo) -> Result<(), AttachError> {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use vibes_behaviour::{behaviour, expect, Test};
+
+    #[test]
+    fn a_jammed_carriage_holds_while_the_shaft_turns() {
+        behaviour!(Test {
+            id: "emulator.carriage-jam",
+            covers: Some("SIL/MaDSim/src/iss_description.rs#Coupling"),
+            given: "the emulated gantry jammed part way through a move, the drive still \
+                    stepping, then freed",
+        });
+        expect!(
+            "follows-when-free",
+            "a free carriage moves exactly as far as the drive's shaft turns"
+        );
+        expect!(
+            "holds-when-jammed",
+            "a jammed carriage stays where it stuck however far the shaft turns, so the \
+             encoder sees no motion"
+        );
+        expect!(
+            "resumes-from-stuck",
+            "freed, the carriage moves on from where it stuck, and the travel the shaft made \
+             while jammed is lost"
+        );
+        let coupling = Coupling::default();
+        assert_eq!(coupling.follow(2.0), Some(2.0));
+        assert_eq!(coupling.follow(3.5), Some(3.5));
+        coupling.set_jammed(true);
+        assert_eq!(coupling.follow(5.0), None);
+        assert_eq!(coupling.follow(9.0), None);
+        coupling.set_jammed(false);
+        assert_eq!(coupling.follow(10.0), Some(4.5));
+    }
+
+    #[test]
+    fn a_buzzing_jam_wanders_but_gets_nowhere() {
+        behaviour!(Test {
+            id: "emulator.carriage-jam-buzz",
+            covers: Some("SIL/MaDSim/src/iss_description.rs#Coupling"),
+            given: "the emulated gantry jammed with a 15-count buzz while the drive keeps \
+                    stepping for 10 mm, then freed",
+        });
+        expect!(
+            "wanders",
+            "the carriage keeps moving while jammed, never more than 15 encoder counts from \
+             where it stuck and over the full range either side"
+        );
+        expect!(
+            "resumes-from-stuck",
+            "freed, the carriage moves on from where it stuck, and the buzz leaves no offset"
+        );
+        let coupling = Coupling::default();
+        coupling.set_buzz_counts(15);
+        assert_eq!(coupling.follow(3.0), Some(3.0));
+        coupling.set_jammed(true);
+        let limit = 15.0 / STEPS_PER_MM;
+        let (mut lo, mut hi, mut changes) = (0.0_f64, 0.0_f64, 0);
+        let mut last = 3.0;
+        for step in 1..=81_920 {
+            let shaft = 3.0 + f64::from(step) / STEPS_PER_MM;
+            let at = coupling
+                .follow(shaft)
+                .expect("a buzzing jam reports where it is");
+            let off = at - 3.0;
+            assert!(
+                off.abs() <= limit + 1e-12,
+                "wandered {off} mm past the buzz"
+            );
+            lo = lo.min(off);
+            hi = hi.max(off);
+            if (at - last).abs() > 0.0 {
+                changes += 1;
+            }
+            last = at;
+        }
+        assert!(
+            hi > 0.99 * limit && lo < -0.99 * limit,
+            "buzz spans {lo}..{hi}"
+        );
+        assert!(
+            changes > 80_000,
+            "the carriage rested while the shaft turned"
+        );
+        coupling.set_jammed(false);
+        let shaft = 13.0 + 1.0 / STEPS_PER_MM;
+        let freed = coupling.follow(shaft).unwrap();
+        assert!(
+            (freed - (3.0 + 1.0 / STEPS_PER_MM)).abs() < 1e-9,
+            "freed at {freed}"
+        );
     }
 }

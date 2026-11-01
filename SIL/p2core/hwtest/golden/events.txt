@@ -1,0 +1,52 @@
+# Silicon console captured from a P2-EVAL.
+# Source: hwtest/events.c
+# Captured: 2026-10-19T06:21:47Z
+# Recapture: python3 tools/hw_compare.py --capture --prog <name>
+
+EVENTS
+PASS ct_flag_sticky 00000003
+PASS ct_addct_clears 00000000
+PASS ct_independent 00000005
+PASS ct_jct 00000007
+PASS ct_waitct_delta 000003ec
+PASS ct_waitct_timeout 00010131
+PASS se_rise 00000002
+PASS se_fall 00000002
+PASS se_change 00000001
+PASS se_high 00000006
+PASS se_low 00000002
+PASS se_setse_clears 00000000
+PASS se_all4 0000000d
+PASS se_jse 00000005
+PASS se_waitse_timeout 00010131
+PASS se_waitse_ready 0000000e
+PASS se_lock 00000009
+PASS se_lut 00000002
+PASS pat_inb_equal 00000002
+PASS atn_self 00000001
+PASS qmt 00000001
+PASS fbw 00000006
+PASS int_trg_source_off 00000101
+PASS int_trg_latency 00000101
+PASS int_flags 00000109
+PASS int_augs_0 00010001
+PASS int_augs_1 00010101
+PASS int_augs_2 00010101
+PASS int_setq 00010001
+PASS int_getct_wc 00000001
+PASS int_rep 00000801
+PASS int_stalli 00001401
+PASS int_nixint 00000000
+PASS int_waitx 010003fa
+PASS int_priority 00000123
+PASS int_nest_3_1 0000031a
+PASS int_nest_1_3 000001b3
+PASS int_self_retrigger 00000001
+PASS int_se_edge 00000211
+PASS int_se_level 00000004
+PASS int_ct_source 00000003
+PASS int_pollint 00000001
+PASS int_waitint 02280014
+PASS int_resi 00000122
+PASS int_atn_source 00000001
+RESULT 0 PASS

@@ -256,7 +256,7 @@ describe('DeviceClient.disconnect', () => {
       given: 'a disconnect whose port the browser refuses to close twice while its streams are still being released',
       expect: {
         'port-closed': 'the port is closed in the end, so other programs can open it',
-        'nothing-held': 'the session no longer holds a port',
+        'nothing-held': 'the session holds no port',
       },
       why: {
         'port-closed':
@@ -409,7 +409,7 @@ describe('DeviceClient release failures stay contained', () => {
       covers: 'src/device/session.ts#connect',
       given: 'a connection whose session fails to start and whose port the browser then refuses to close',
       expect: {
-        'handshake-error-thrown': 'the connect fails with the handshake error, not the port-release error',
+        'handshake-error-thrown': 'the connect fails with the handshake error',
       },
       why: {
         'handshake-error-thrown': 'the handshake error says why the connection failed; the close failure is already in the log',
@@ -449,7 +449,7 @@ describe('DeviceClient release failures stay contained', () => {
       given: 'a disconnect after the device was unplugged, so closing the port fails and it has no streams left',
       expect: {
         'disconnect-succeeds': 'the disconnect succeeds, with no message about the browser holding the port',
-        'nothing-held': 'the session no longer holds a port',
+        'nothing-held': 'the session holds no port',
       },
       why: {
         'disconnect-succeeds': 'an unplugged port has nothing left to release, and telling the operator to close the tab would be wrong',

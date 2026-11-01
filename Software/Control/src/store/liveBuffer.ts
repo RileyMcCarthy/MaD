@@ -24,6 +24,7 @@ export interface LiveSeries {
   machineForce: Float64Array;
   machinePosition: Float64Array;
   machineSetpoint: Float64Array;
+  machineCommanded: Float64Array;
   sampleForce: Float64Array;
   samplePosition: Float64Array;
   /** Number of valid points (≤ CAPACITY). */
@@ -41,6 +42,7 @@ const RING = {
   machineForce: new Float64Array(CAPACITY),
   machinePosition: new Float64Array(CAPACITY),
   machineSetpoint: new Float64Array(CAPACITY),
+  machineCommanded: new Float64Array(CAPACITY),
   sampleForce: new Float64Array(CAPACITY),
   samplePosition: new Float64Array(CAPACITY),
 };
@@ -50,6 +52,7 @@ const OUT = {
   machineForce: new Float64Array(CAPACITY),
   machinePosition: new Float64Array(CAPACITY),
   machineSetpoint: new Float64Array(CAPACITY),
+  machineCommanded: new Float64Array(CAPACITY),
   sampleForce: new Float64Array(CAPACITY),
   samplePosition: new Float64Array(CAPACITY),
 };
@@ -59,6 +62,7 @@ const FIELDS: Array<keyof typeof RING> = [
   'machineForce',
   'machinePosition',
   'machineSetpoint',
+  'machineCommanded',
   'sampleForce',
   'samplePosition',
 ];
@@ -72,6 +76,7 @@ function writeAt(
   RING.machineForce[idx] = s['Machine Force (N)'];
   RING.machinePosition[idx] = s['Machine Position (mm)'];
   RING.machineSetpoint[idx] = s['Machine Setpoint (mm)'];
+  RING.machineCommanded[idx] = s['Machine Commanded (mm)'] ?? s['Machine Setpoint (mm)'];
   RING.sampleForce[idx] = s['Sample Force (N)'];
   RING.samplePosition[idx] = s['Sample Position (mm)'];
 }
@@ -96,6 +101,7 @@ export interface LiveSample {
   machineForce: number;
   machinePosition: number;
   machineSetpoint: number;
+  machineCommanded: number;
   sampleForce: number;
   samplePosition: number;
 }
@@ -117,9 +123,38 @@ export function latestLiveSample(): LiveSample | null {
     machineForce: RING.machineForce[idx],
     machinePosition: RING.machinePosition[idx],
     machineSetpoint: RING.machineSetpoint[idx],
+    machineCommanded: RING.machineCommanded[idx],
     sampleForce: RING.sampleForce[idx],
     samplePosition: RING.samplePosition[idx],
   };
+}
+
+/** Seconds on the live buffer's clock (the `t` its samples carry). */
+export function liveClockSeconds(): number {
+  return (performance.now() - t0) / 1000;
+}
+
+/**
+ * Every buffered sample with `t` at or after `sinceSeconds`, oldest first, at
+ * full precision. For measuring a move: note liveClockSeconds() before it,
+ * read back after. Samples older than the buffer's capacity are gone.
+ */
+export function liveSamplesSince(sinceSeconds: number): LiveSample[] {
+  const out: LiveSample[] = [];
+  for (let k = count; k >= 1; k--) {
+    const idx = (writePos - k + CAPACITY) % CAPACITY;
+    if (RING.t[idx] < sinceSeconds) continue;
+    out.push({
+      t: RING.t[idx],
+      machineForce: RING.machineForce[idx],
+      machinePosition: RING.machinePosition[idx],
+      machineSetpoint: RING.machineSetpoint[idx],
+      machineCommanded: RING.machineCommanded[idx],
+      sampleForce: RING.sampleForce[idx],
+      samplePosition: RING.samplePosition[idx],
+    });
+  }
+  return out;
 }
 
 export function resetLiveBuffer(): void {
@@ -158,6 +193,7 @@ export function getLiveSeries(): LiveSeries {
       machineForce: RING.machineForce.subarray(0, count),
       machinePosition: RING.machinePosition.subarray(0, count),
       machineSetpoint: RING.machineSetpoint.subarray(0, count),
+      machineCommanded: RING.machineCommanded.subarray(0, count),
       sampleForce: RING.sampleForce.subarray(0, count),
       samplePosition: RING.samplePosition.subarray(0, count),
       length: count,
@@ -175,6 +211,7 @@ export function getLiveSeries(): LiveSeries {
     machineForce: OUT.machineForce,
     machinePosition: OUT.machinePosition,
     machineSetpoint: OUT.machineSetpoint,
+    machineCommanded: OUT.machineCommanded,
     sampleForce: OUT.sampleForce,
     samplePosition: OUT.samplePosition,
     length: CAPACITY,

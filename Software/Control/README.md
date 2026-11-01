@@ -128,6 +128,10 @@ The **Firmware** page programs the Propeller 2 over Web Serial — no native
 loader directly, writing to SPI flash through a 496-byte stub. (RAM loading is
 CLI-only — `npm run hw:flash -- --ram` — since the P2 Edge boots from flash.)
 Requires the Debug/Programming header J1 and an adapter that wires DTR to `RESn`.
+By default it writes the latest firmware release's production build
+(`MaD-Firmware-<version>-release.bin`), which answers the app on that same J1
+port; the release's `-madEdge.bin` build, or any local build, is flashed as a
+local file.
 See [docs/FLASHING.md](docs/FLASHING.md) for the protocol, hardware requirements,
 and the CLI harness (`npm run hw:flash`) used to validate it against a board.
 

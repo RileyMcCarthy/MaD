@@ -24,8 +24,8 @@ use p2iss::{P2Iss, SerialLink};
 
 /// The protocol link, declared so the machine boots the way it does elsewhere.
 const PROTO: SerialLink = SerialLink {
-    tx_pin: 55,
-    rx_pin: 53,
+    tx_pin: p2core::board::PIN_PROTO_TX,
+    rx_pin: p2core::board::PIN_PROTO_RX,
     nominal_baud: 2_000_000,
 };
 

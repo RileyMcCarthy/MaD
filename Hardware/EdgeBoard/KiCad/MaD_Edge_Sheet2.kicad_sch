@@ -4,6 +4,13 @@
 	(generator_version "9.0")
 	(uuid "9625535a-d38d-478e-a1c2-663297506a5c")
 	(paper "A4")
+	(title_block
+		(title "MaD Edge carrier: I/O and host link")
+		(date "2026-10-25")
+		(rev "v0.3")
+		(company "MaD")
+		(comment 1 "Revision v0.3: fixes from the SIL hardware findings; see Hardware/EdgeBoard/readme.md")
+	)
 	(lib_symbols
 		(symbol "74xGxx:SN74LVC1G14DBV"
 			(exclude_from_sim no)
@@ -8762,8 +8769,8 @@
 		)
 		(uuid "e7739b3f-f8e2-4873-ab43-1cb63c02ac20")
 	)
-	(label "RPI_5V"
-		(at 85.09 21.59 0)
+	(label "RPI_3V3"
+		(at 82.55 21.59 0)
 		(effects
 			(font
 				(size 1.27 1.27)
@@ -8932,7 +8939,7 @@
 			)
 		)
 	)
-	(global_label "P52"
+	(global_label "P29"
 		(shape input)
 		(at 30.48 34.29 180)
 		(fields_autoplaced yes)
@@ -9086,7 +9093,7 @@
 			)
 		)
 	)
-	(global_label "P54"
+	(global_label "P31"
 		(shape input)
 		(at 30.48 29.21 180)
 		(fields_autoplaced yes)
@@ -9218,7 +9225,7 @@
 			)
 		)
 	)
-	(global_label "P55"
+	(global_label "P32"
 		(shape input)
 		(at 30.48 26.67 180)
 		(fields_autoplaced yes)
@@ -9262,7 +9269,7 @@
 			)
 		)
 	)
-	(global_label "P53"
+	(global_label "P30"
 		(shape input)
 		(at 30.48 31.75 180)
 		(fields_autoplaced yes)
@@ -9741,7 +9748,7 @@
 				(hide yes)
 			)
 		)
-		(property "Description" "0.1uF 6V SMD"
+		(property "Description" "0.1uF 50V X7R 0603"
 			(at 29.21 171.45 0)
 			(effects
 				(font
@@ -9750,7 +9757,7 @@
 				(hide yes)
 			)
 		)
-		(property "MANUFACTURER" "Samsung Electro-Mechanics"
+		(property "MANUFACTURER" "YAGEO"
 			(at 29.21 171.45 0)
 			(effects
 				(font
@@ -9759,7 +9766,7 @@
 				(hide yes)
 			)
 		)
-		(property "Manufacturer_Part_Number" "CL05A104KA5NNNC"
+		(property "Manufacturer_Part_Number" "CC0603KRX7R9BB104"
 			(at 29.21 171.45 0)
 			(effects
 				(font
@@ -9768,7 +9775,7 @@
 				(hide yes)
 			)
 		)
-		(property "DIGIKEY" "1276-1043-1-ND"
+		(property "DIGIKEY" ""
 			(at 29.21 171.45 0)
 			(effects
 				(font
@@ -11241,7 +11248,7 @@
 				(justify left)
 			)
 		)
-		(property "Footprint" "Connector_Molex:Molex_Micro-Fit_3.0_43045-0615_2x03_P3.00mm_Vertical"
+		(property "Footprint" "Connector_Molex:Molex_Micro-Fit_3.0_43045-0618_2x03-1MP_P3.00mm_Vertical"
 			(at 96.52 29.21 0)
 			(effects
 				(font
@@ -11873,7 +11880,7 @@
 				(hide yes)
 			)
 		)
-		(property "Description" "0.1uF 6V SMD"
+		(property "Description" "0.1uF 50V X7R 0603"
 			(at 83.82 81.28 0)
 			(effects
 				(font
@@ -11882,7 +11889,7 @@
 				(hide yes)
 			)
 		)
-		(property "MANUFACTURER" "Samsung Electro-Mechanics"
+		(property "MANUFACTURER" "YAGEO"
 			(at 83.82 81.28 0)
 			(effects
 				(font
@@ -11891,7 +11898,7 @@
 				(hide yes)
 			)
 		)
-		(property "Manufacturer_Part_Number" "CL05A104KA5NNNC"
+		(property "Manufacturer_Part_Number" "CC0603KRX7R9BB104"
 			(at 83.82 81.28 0)
 			(effects
 				(font
@@ -11900,7 +11907,7 @@
 				(hide yes)
 			)
 		)
-		(property "DIGIKEY" "1276-1043-1-ND"
+		(property "DIGIKEY" ""
 			(at 83.82 81.28 0)
 			(effects
 				(font
@@ -15251,7 +15258,7 @@
 				(hide yes)
 			)
 		)
-		(property "Description" "0.1uF 6V SMD"
+		(property "Description" "0.1uF 50V X7R 0603"
 			(at 97.79 176.53 0)
 			(effects
 				(font
@@ -15260,7 +15267,7 @@
 				(hide yes)
 			)
 		)
-		(property "MANUFACTURER" "Samsung Electro-Mechanics"
+		(property "MANUFACTURER" "YAGEO"
 			(at 97.79 176.53 0)
 			(effects
 				(font
@@ -15269,7 +15276,7 @@
 				(hide yes)
 			)
 		)
-		(property "Manufacturer_Part_Number" "CL05A104KA5NNNC"
+		(property "Manufacturer_Part_Number" "CC0603KRX7R9BB104"
 			(at 97.79 176.53 0)
 			(effects
 				(font
@@ -15278,7 +15285,7 @@
 				(hide yes)
 			)
 		)
-		(property "DIGIKEY" "1276-1043-1-ND"
+		(property "DIGIKEY" ""
 			(at 97.79 176.53 0)
 			(effects
 				(font
@@ -17145,7 +17152,7 @@
 				(hide yes)
 			)
 		)
-		(property "Description" "0.1uF 6V SMD"
+		(property "Description" "0.1uF 50V X7R 0603"
 			(at 154.94 20.32 0)
 			(effects
 				(font
@@ -17154,7 +17161,7 @@
 				(hide yes)
 			)
 		)
-		(property "MANUFACTURER" "Samsung Electro-Mechanics"
+		(property "MANUFACTURER" "YAGEO"
 			(at 154.94 20.32 0)
 			(effects
 				(font
@@ -17163,7 +17170,7 @@
 				(hide yes)
 			)
 		)
-		(property "Manufacturer_Part_Number" "CL05A104KA5NNNC"
+		(property "Manufacturer_Part_Number" "CC0603KRX7R9BB104"
 			(at 154.94 20.32 0)
 			(effects
 				(font
@@ -17172,7 +17179,7 @@
 				(hide yes)
 			)
 		)
-		(property "DIGIKEY" "1276-1043-1-ND"
+		(property "DIGIKEY" ""
 			(at 154.94 20.32 0)
 			(effects
 				(font
@@ -17888,7 +17895,7 @@
 				(hide yes)
 			)
 		)
-		(property "Description" "0.1uF 6V SMD"
+		(property "Description" "0.1uF 50V X7R 0603"
 			(at 154.94 58.42 0)
 			(effects
 				(font
@@ -17897,7 +17904,7 @@
 				(hide yes)
 			)
 		)
-		(property "MANUFACTURER" "Samsung Electro-Mechanics"
+		(property "MANUFACTURER" "YAGEO"
 			(at 154.94 58.42 0)
 			(effects
 				(font
@@ -17906,7 +17913,7 @@
 				(hide yes)
 			)
 		)
-		(property "Manufacturer_Part_Number" "CL05A104KA5NNNC"
+		(property "Manufacturer_Part_Number" "CC0603KRX7R9BB104"
 			(at 154.94 58.42 0)
 			(effects
 				(font
@@ -17915,7 +17922,7 @@
 				(hide yes)
 			)
 		)
-		(property "DIGIKEY" "1276-1043-1-ND"
+		(property "DIGIKEY" ""
 			(at 154.94 58.42 0)
 			(effects
 				(font
@@ -19093,7 +19100,7 @@
 				(hide yes)
 			)
 		)
-		(property "Description" "0.1uF 6V SMD"
+		(property "Description" "0.1uF 50V X7R 0603"
 			(at 78.74 134.62 0)
 			(effects
 				(font
@@ -19102,7 +19109,7 @@
 				(hide yes)
 			)
 		)
-		(property "MANUFACTURER" "Samsung Electro-Mechanics"
+		(property "MANUFACTURER" "YAGEO"
 			(at 78.74 134.62 0)
 			(effects
 				(font
@@ -19111,7 +19118,7 @@
 				(hide yes)
 			)
 		)
-		(property "Manufacturer_Part_Number" "CL05A104KA5NNNC"
+		(property "Manufacturer_Part_Number" "CC0603KRX7R9BB104"
 			(at 78.74 134.62 0)
 			(effects
 				(font
@@ -19120,7 +19127,7 @@
 				(hide yes)
 			)
 		)
-		(property "DIGIKEY" "1276-1043-1-ND"
+		(property "DIGIKEY" ""
 			(at 78.74 134.62 0)
 			(effects
 				(font
@@ -19930,7 +19937,7 @@
 				(hide yes)
 			)
 		)
-		(property "Description" "0.1uF 6V SMD"
+		(property "Description" "0.1uF 50V X7R 0603"
 			(at 36.83 55.88 0)
 			(effects
 				(font
@@ -19939,7 +19946,7 @@
 				(hide yes)
 			)
 		)
-		(property "MANUFACTURER" "Samsung Electro-Mechanics"
+		(property "MANUFACTURER" "YAGEO"
 			(at 36.83 55.88 0)
 			(effects
 				(font
@@ -19948,7 +19955,7 @@
 				(hide yes)
 			)
 		)
-		(property "Manufacturer_Part_Number" "CL05A104KA5NNNC"
+		(property "Manufacturer_Part_Number" "CC0603KRX7R9BB104"
 			(at 36.83 55.88 0)
 			(effects
 				(font
@@ -19957,7 +19964,7 @@
 				(hide yes)
 			)
 		)
-		(property "DIGIKEY" "1276-1043-1-ND"
+		(property "DIGIKEY" ""
 			(at 36.83 55.88 0)
 			(effects
 				(font
@@ -20719,7 +20726,7 @@
 				(hide yes)
 			)
 		)
-		(property "Description" "0.1uF 6V SMD"
+		(property "Description" "0.1uF 50V X7R 0603"
 			(at 31.75 90.17 0)
 			(effects
 				(font
@@ -20728,7 +20735,7 @@
 				(hide yes)
 			)
 		)
-		(property "MANUFACTURER" "Samsung Electro-Mechanics"
+		(property "MANUFACTURER" "YAGEO"
 			(at 31.75 90.17 0)
 			(effects
 				(font
@@ -20737,7 +20744,7 @@
 				(hide yes)
 			)
 		)
-		(property "Manufacturer_Part_Number" "CL05A104KA5NNNC"
+		(property "Manufacturer_Part_Number" "CC0603KRX7R9BB104"
 			(at 31.75 90.17 0)
 			(effects
 				(font
@@ -20746,7 +20753,7 @@
 				(hide yes)
 			)
 		)
-		(property "DIGIKEY" "1276-1043-1-ND"
+		(property "DIGIKEY" ""
 			(at 31.75 90.17 0)
 			(effects
 				(font
@@ -21505,7 +21512,7 @@
 				(hide yes)
 			)
 		)
-		(property "Description" "0.1uF 6V SMD"
+		(property "Description" "0.1uF 50V X7R 0603"
 			(at 74.93 21.59 0)
 			(effects
 				(font
@@ -21514,7 +21521,7 @@
 				(hide yes)
 			)
 		)
-		(property "MANUFACTURER" "Samsung Electro-Mechanics"
+		(property "MANUFACTURER" "YAGEO"
 			(at 74.93 21.59 0)
 			(effects
 				(font
@@ -21523,7 +21530,7 @@
 				(hide yes)
 			)
 		)
-		(property "Manufacturer_Part_Number" "CL05A104KA5NNNC"
+		(property "Manufacturer_Part_Number" "CC0603KRX7R9BB104"
 			(at 74.93 21.59 0)
 			(effects
 				(font
@@ -21532,7 +21539,7 @@
 				(hide yes)
 			)
 		)
-		(property "DIGIKEY" "1276-1043-1-ND"
+		(property "DIGIKEY" ""
 			(at 74.93 21.59 0)
 			(effects
 				(font
@@ -24197,7 +24204,7 @@
 				(hide yes)
 			)
 		)
-		(property "LCSC" "C2862403"
+		(property "LCSC" "C5216407"
 			(at 38.1 21.59 0)
 			(effects
 				(font
@@ -24206,7 +24213,7 @@
 				(hide yes)
 			)
 		)
-		(property "NOTES" "Pin Compatible with ISO77xx"
+		(property "NOTES" "Non-F (default-high) part only: UART lines idle high. VCC2 = RPI_3V3 from the Pi 3.3 V pin (VCC 2.25-5.5 V, SLLSFJ6G)."
 			(at 38.1 21.59 0)
 			(effects
 				(font
@@ -24224,7 +24231,7 @@
 				(hide yes)
 			)
 		)
-		(property "manufacturer_part_number_1" "ISO6742DWR or ISO7742FDWR"
+		(property "manufacturer_part_number_1" "ISO6742DWR"
 			(at 38.1 21.59 0)
 			(effects
 				(font
@@ -26602,7 +26609,7 @@
 				(hide yes)
 			)
 		)
-		(property "Description" "0.1uF 6V SMD"
+		(property "Description" "0.1uF 50V X7R 0603"
 			(at 31.75 134.62 0)
 			(effects
 				(font
@@ -26611,7 +26618,7 @@
 				(hide yes)
 			)
 		)
-		(property "MANUFACTURER" "Samsung Electro-Mechanics"
+		(property "MANUFACTURER" "YAGEO"
 			(at 31.75 134.62 0)
 			(effects
 				(font
@@ -26620,7 +26627,7 @@
 				(hide yes)
 			)
 		)
-		(property "Manufacturer_Part_Number" "CL05A104KA5NNNC"
+		(property "Manufacturer_Part_Number" "CC0603KRX7R9BB104"
 			(at 31.75 134.62 0)
 			(effects
 				(font
@@ -26629,7 +26636,7 @@
 				(hide yes)
 			)
 		)
-		(property "DIGIKEY" "1276-1043-1-ND"
+		(property "DIGIKEY" ""
 			(at 31.75 134.62 0)
 			(effects
 				(font
@@ -27480,7 +27487,7 @@
 				(hide yes)
 			)
 		)
-		(property "Description" "0.1uF 6V SMD"
+		(property "Description" "0.1uF 50V X7R 0603"
 			(at 83.82 55.88 0)
 			(effects
 				(font
@@ -27489,7 +27496,7 @@
 				(hide yes)
 			)
 		)
-		(property "MANUFACTURER" "Samsung Electro-Mechanics"
+		(property "MANUFACTURER" "YAGEO"
 			(at 83.82 55.88 0)
 			(effects
 				(font
@@ -27498,7 +27505,7 @@
 				(hide yes)
 			)
 		)
-		(property "Manufacturer_Part_Number" "CL05A104KA5NNNC"
+		(property "Manufacturer_Part_Number" "CC0603KRX7R9BB104"
 			(at 83.82 55.88 0)
 			(effects
 				(font
@@ -27507,7 +27514,7 @@
 				(hide yes)
 			)
 		)
-		(property "DIGIKEY" "1276-1043-1-ND"
+		(property "DIGIKEY" ""
 			(at 83.82 55.88 0)
 			(effects
 				(font
@@ -28354,7 +28361,7 @@
 				(hide yes)
 			)
 		)
-		(property "Description" "0.1uF 6V SMD"
+		(property "Description" "0.1uF 50V X7R 0603"
 			(at 133.35 182.88 0)
 			(effects
 				(font
@@ -28363,7 +28370,7 @@
 				(hide yes)
 			)
 		)
-		(property "MANUFACTURER" "Samsung Electro-Mechanics"
+		(property "MANUFACTURER" "YAGEO"
 			(at 133.35 182.88 0)
 			(effects
 				(font
@@ -28372,7 +28379,7 @@
 				(hide yes)
 			)
 		)
-		(property "Manufacturer_Part_Number" "CL05A104KA5NNNC"
+		(property "Manufacturer_Part_Number" "CC0603KRX7R9BB104"
 			(at 133.35 182.88 0)
 			(effects
 				(font
@@ -28381,7 +28388,7 @@
 				(hide yes)
 			)
 		)
-		(property "DIGIKEY" "1276-1043-1-ND"
+		(property "DIGIKEY" ""
 			(at 133.35 182.88 0)
 			(effects
 				(font
@@ -28664,7 +28671,7 @@
 				(hide yes)
 			)
 		)
-		(property "Description" "0.1uF 6V SMD"
+		(property "Description" "0.1uF 50V X7R 0603"
 			(at 154.94 96.52 0)
 			(effects
 				(font
@@ -28673,7 +28680,7 @@
 				(hide yes)
 			)
 		)
-		(property "MANUFACTURER" "Samsung Electro-Mechanics"
+		(property "MANUFACTURER" "YAGEO"
 			(at 154.94 96.52 0)
 			(effects
 				(font
@@ -28682,7 +28689,7 @@
 				(hide yes)
 			)
 		)
-		(property "Manufacturer_Part_Number" "CL05A104KA5NNNC"
+		(property "Manufacturer_Part_Number" "CC0603KRX7R9BB104"
 			(at 154.94 96.52 0)
 			(effects
 				(font
@@ -28691,7 +28698,7 @@
 				(hide yes)
 			)
 		)
-		(property "DIGIKEY" "1276-1043-1-ND"
+		(property "DIGIKEY" ""
 			(at 154.94 96.52 0)
 			(effects
 				(font
@@ -29317,7 +29324,7 @@
 				(hide yes)
 			)
 		)
-		(property "Description" "0.1uF 6V SMD"
+		(property "Description" "0.1uF 50V X7R 0603"
 			(at 154.94 134.62 0)
 			(effects
 				(font
@@ -29326,7 +29333,7 @@
 				(hide yes)
 			)
 		)
-		(property "MANUFACTURER" "Samsung Electro-Mechanics"
+		(property "MANUFACTURER" "YAGEO"
 			(at 154.94 134.62 0)
 			(effects
 				(font
@@ -29335,7 +29342,7 @@
 				(hide yes)
 			)
 		)
-		(property "Manufacturer_Part_Number" "CL05A104KA5NNNC"
+		(property "Manufacturer_Part_Number" "CC0603KRX7R9BB104"
 			(at 154.94 134.62 0)
 			(effects
 				(font
@@ -29344,7 +29351,7 @@
 				(hide yes)
 			)
 		)
-		(property "DIGIKEY" "1276-1043-1-ND"
+		(property "DIGIKEY" ""
 			(at 154.94 134.62 0)
 			(effects
 				(font
@@ -29467,7 +29474,7 @@
 				(hide yes)
 			)
 		)
-		(property "Description" "0.1uF 6V SMD"
+		(property "Description" "0.1uF 50V X7R 0603"
 			(at 33.02 21.59 0)
 			(effects
 				(font
@@ -29476,7 +29483,7 @@
 				(hide yes)
 			)
 		)
-		(property "MANUFACTURER" "Samsung Electro-Mechanics"
+		(property "MANUFACTURER" "YAGEO"
 			(at 33.02 21.59 0)
 			(effects
 				(font
@@ -29485,7 +29492,7 @@
 				(hide yes)
 			)
 		)
-		(property "Manufacturer_Part_Number" "CL05A104KA5NNNC"
+		(property "Manufacturer_Part_Number" "CC0603KRX7R9BB104"
 			(at 33.02 21.59 0)
 			(effects
 				(font
@@ -29494,7 +29501,7 @@
 				(hide yes)
 			)
 		)
-		(property "DIGIKEY" "1276-1043-1-ND"
+		(property "DIGIKEY" ""
 			(at 33.02 21.59 0)
 			(effects
 				(font
@@ -29812,7 +29819,7 @@
 				(hide yes)
 			)
 		)
-		(property "LCSC" "C2862403"
+		(property "LCSC" "C5216407"
 			(at 36.83 134.62 0)
 			(effects
 				(font
@@ -29821,7 +29828,7 @@
 				(hide yes)
 			)
 		)
-		(property "NOTES" "Pin Compatible with ISO77xx"
+		(property "NOTES" "Pin compatible with ISO77xx. Ordered as the non-F ISO6742DWR (LCSC C5216407): outputs idle high while the input side is unpowered or undriven (SLLSFJ6G)."
 			(at 36.83 134.62 0)
 			(effects
 				(font
@@ -29839,7 +29846,7 @@
 				(hide yes)
 			)
 		)
-		(property "manufacturer_part_number_1" "ISO6742DWR or ISO7742FDWR"
+		(property "manufacturer_part_number_1" "ISO6742DWR"
 			(at 36.83 134.62 0)
 			(effects
 				(font

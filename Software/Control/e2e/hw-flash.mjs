@@ -3,8 +3,10 @@
  * screen, then connect and read the version back — the UI path a user takes.
  *
  * Needs a single-port board: the Prop Plug's DTR resets the chip, and the
- * production build (`pio run -e propeller2`) answers the protocol on the same
- * P62/P63 pins.
+ * production build (`pio run -e propeller2`, or a release's
+ * `MaD-Firmware-<v>-release.bin`, the image the app flashes by default)
+ * answers the protocol on the same P62/P63 pins. A `-madEdge.bin` image puts
+ * the protocol on P53/P55, so the version read-back here would fail.
  *
  *   Terminal 1:  MAD_SERIAL=/dev/cu.usbserial-XXXX node tools/hw-ws-bridge.mjs
  *   Terminal 2:  npm run dev

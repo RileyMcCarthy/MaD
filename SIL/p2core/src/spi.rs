@@ -165,6 +165,11 @@ impl SpiShift {
         }
     }
 
+    /// Whether the next sampled bit completes a word.
+    pub fn rx_completes_next(&self) -> bool {
+        self.rx_have + 1 >= self.rx_want
+    }
+
     /// Take a completed word (`RDPIN` on the DO pin).
     pub fn take_rx(&mut self) -> Option<u32> {
         self.takes += 1;
