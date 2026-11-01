@@ -99,6 +99,16 @@ export default function Config({ embedded = false }: { embedded?: boolean }) {
                 onChange={(n) => setDraft((d) => (d ? { ...d, [field]: n } : d))}
               />
             ))}
+            <label className="field">
+              Drive enable
+              <select
+                value={draft['Drive Enable Active Low'] ? 'low' : 'high'}
+                onChange={(e) => setDraft({ ...draft, 'Drive Enable Active Low': e.target.value === 'low' })}
+              >
+                <option value="high">High enables (servo drives, DMM DYN4 default)</option>
+                <option value="low">Low enables (most stepper drivers)</option>
+              </select>
+            </label>
           </div>
           <MotorCalibrationPanel
             profile={{

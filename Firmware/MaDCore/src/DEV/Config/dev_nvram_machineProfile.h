@@ -29,6 +29,11 @@ typedef struct
      * comes from the defaults (dev_nvram BOOT_LOAD). */
     int servoKp; // Proportional gain, 1/s x 1000 (0 or less = built-in default)
     int servoKi; // Integral gain, 1/s^2 x 1000 (0 = integral off)
+    /* Which level of the drive's enable input enables it: 0 = energized
+     * (P6 high) enables, the DMM DYN4's default; 1 = energized disables, as on
+     * most stepper drivers. The drive decides this, not the board, so it is
+     * the machine's to say. */
+    int servoEnableActiveLow;
 } MachineProfile;
 
 /* This struct is written to and read from the SD card as raw bytes, and it
@@ -44,10 +49,12 @@ typedef struct
  * ones take their defaults. Any other length (an older, incompatible layout:
  * the bench card from before the load-cell fields were reworked is 64 bytes
  * and would be read at the wrong offsets) still falls back to the defaults.
- * Appending again means moving DEV_NVRAM_MACHINE_PROFILE_LEGACY_SIZE up.
+ * Every layout since then only appended, so any length from there up to the
+ * current size that ends on a field is a prefix too.
  *
  * 20 bytes of name, padded to the 4-byte alignment of the ints that follow,
- * then 15 ints (servoKp and servoKi appended to the original 13). */
+ * then 16 ints (servoKp, servoKi and servoEnableActiveLow appended to the
+ * original 13). */
 /* A negative-size array rather than _Static_assert, and enforced by clang
  * rather than by the compiler that ships.
  *
@@ -61,11 +68,11 @@ typedef struct
  * The message lives in the identifier, because that is all a negative-size
  * array can carry: the error reads "'MachineProfile_is_persisted_raw_to_SD_so_
  * its_size_is_frozen' declared as an array with a negative size". */
-/* The record before servoKp/servoKi were appended (name + 13 ints). A card of
- * exactly this length is read as a prefix; see dev_nvram_channelConfig_t. */
+/* The oldest record read as a prefix: the one before servoKp/servoKi were
+ * appended (name + 13 ints). See dev_nvram_channelConfig_t. */
 #define DEV_NVRAM_MACHINE_PROFILE_LEGACY_SIZE (DEV_NVRAM_MAX_MACHINE_PROFILE_NAME + (13 * sizeof(int)))
 
 typedef char MachineProfile_is_persisted_raw_to_SD_so_its_size_is_frozen
-    [(sizeof(MachineProfile) == (DEV_NVRAM_MAX_MACHINE_PROFILE_NAME + (15 * sizeof(int)))) ? 1 : -1];
+    [(sizeof(MachineProfile) == (DEV_NVRAM_MAX_MACHINE_PROFILE_NAME + (16 * sizeof(int)))) ? 1 : -1];
 
 #endif // DEV_NVRAM_CONFIG_MACHINEPROFILE_H

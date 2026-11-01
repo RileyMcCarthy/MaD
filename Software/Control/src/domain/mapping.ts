@@ -64,6 +64,7 @@ export function configToShared(
     'Restricted Velocity (mm/s)': config.restrictedVelocity,
     'Servo Kp (1/s)': config.servoKp,
     'Servo Ki (1/s^2)': config.servoKi,
+    'Drive Enable Active Low': config.servoEnableActiveLow !== 0,
   };
 }
 
@@ -87,6 +88,7 @@ export function configFromShared(
     restrictedVelocity: config['Restricted Velocity (mm/s)'],
     servoKp: config['Servo Kp (1/s)'],
     servoKi: config['Servo Ki (1/s^2)'],
+    servoEnableActiveLow: config['Drive Enable Active Low'] ? 1 : 0,
   };
 }
 

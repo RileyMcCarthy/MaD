@@ -57,6 +57,7 @@ DEV_NVRAM_CHANNEL_DATA_CREATE(MachineProfile) = {
     0,          // restrictedVelocity - no cap
     8000,       // servoKp - 8 /s, dev_servo's tuned default
     0,          // servoKi - integral off
+    0,          // servoEnableActiveLow - energized enables (DMM DYN4 default)
 };
 
 // should rename to have prefix like lib or app or io etc

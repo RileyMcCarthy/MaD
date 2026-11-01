@@ -150,6 +150,35 @@ void test_dev_nvram_loadsAProfileSavedBeforeTheServoGains(void)
     TEST_ASSERT_EQUAL_INT(0, loaded.servoKi);
 }
 
+void test_dev_nvram_loadsAProfileSavedBeforeTheEnablePolarity(void)
+{
+    VIBES_TEST("nvram.profile-before-enable-polarity",
+               "src/DEV/dev_nvram.c#dev_nvram_run",
+               "an SD card holding a machine profile saved with the servo gains but before the drive's enable polarity was added");
+    VIBES_EXPECT_WHY("gains-kept",
+                     "on boot the saved servo gains and every earlier field keep their values",
+                     "every profile layout since the gains only appended fields, so each older record is still a prefix");
+    VIBES_EXPECT("polarity-default", "the enable polarity takes its default, high enables the drive");
+    MachineProfile saved = dev_nvram_machineProfileTest1;
+    saved.servoKp = 12000;
+    saved.servoKi = 500;
+    saved.servoEnableActiveLow = 1;
+    FILE *file = fopen("./test/sd/profile.bin", "w");
+    TEST_ASSERT_NOT_NULL(file);
+    const size_t oldSize = offsetof(MachineProfile, servoEnableActiveLow);
+    TEST_ASSERT_EQUAL_size_t(oldSize, fwrite(&saved, 1, oldSize, file));
+    fclose(file);
+
+    dev_nvram_run();
+    dev_nvram_run();
+
+    MachineProfile loaded;
+    TEST_ASSERT_TRUE(dev_nvram_getChannelData(DEV_NVRAM_CHANNEL_MACHINE_PROFILE, &loaded, sizeof(MachineProfile)));
+    TEST_ASSERT_EQUAL_MEMORY(&saved, &loaded, oldSize);
+    TEST_ASSERT_EQUAL_INT(12000, loaded.servoKp);
+    TEST_ASSERT_EQUAL_INT(0, loaded.servoEnableActiveLow);
+}
+
 void test_dev_nvram_ignoresAnIncompatibleOlderProfile(void)
 {
     VIBES_TEST("nvram.incompatible-profile-ignored",

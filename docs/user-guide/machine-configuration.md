@@ -39,6 +39,7 @@ These are the fields as they appear on the Settings screen, in order.
 | **Jaw Offset (mm)** | Distance from the home reference to the jaw |
 | **Servo Kp (1/s)** | How hard the servo corrects a position error (8 by default; the motor calibration suggests a value) |
 | **Servo Ki (1/s^2)** | Removes a steady position error under load (0 = off) |
+| **Drive enable** | Which level of the drive's enable input turns the drive on. Servo drives such as the DMM DYN4 are on while the input is energized (**High enables**, the default); most stepper drivers are off while it is energized (**Low enables**). If this is wrong, the drive never turns on and the carriage doesn't move. Takes effect after a reboot. |
 
 These are *machine* limits — distinct from the per-test limits you set in a
 [sample profile](sample-profiles.md). Both are enforced, and whichever is more
@@ -97,8 +98,11 @@ run measured:
 > Sent 32000 pulses each way → encoder moved **11993** counts (expected 12000)
 
 The pulses are what the machine sent, and the counts are what the encoder saw
-come back (averaged over both directions). *Expected* is what your two steps/mm
-values predict. When they don't match, a **Fix** line gives the value to
+come back (averaged over both directions). If the encoder counted only one way,
+or counted the same way in both directions, an average would point at the wrong
+fault, so the line shows each direction's counts instead (for example
+"forward 2400 · back 2400"). *Expected* is what your two steps/mm values
+predict. When they don't match, a **Fix** line gives the value to
 change. One run only measures the ratio of the two values, so it gives both
 options. Trust the one you can work out from datasheets (usually the encoder:
 counts per revolution ÷ mm per revolution).

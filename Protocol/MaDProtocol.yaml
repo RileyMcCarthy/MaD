@@ -386,6 +386,12 @@ structs:
         unit: 1/s2
         scale: 1000        # stored as thousandths
         raw_storage: true
+      - name: servoEnableActiveLow
+        type: int32        # 0 = the drive's enable input energized enables it
+                           # (DMM DYN4 default), 1 = energized disables it
+        scale: 1
+        min: 0
+        max: 1
 
   SampleProfile:
     encoding: aligned

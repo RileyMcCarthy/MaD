@@ -47,6 +47,7 @@ describe('proto ↔ display mapping', () => {
         restrictedVelocity: 2,
         servoKp: 8,
         servoKi: 0,
+        servoEnableActiveLow: 1,
       };
       const shared = configToShared(proto);
       expect(shared.Name).toBe('M1');

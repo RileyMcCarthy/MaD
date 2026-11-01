@@ -222,9 +222,14 @@ export interface CalibrationAssessment {
    * the encoder followed the motion. `expectedCounts` is what the entered
    * steps/mm predict for those pulses. This is the only thing the run
    * measures; any steps/mm derived from it assumes the other value is right.
+   *
+   * `countsMeasured` is null when the two legs disagree (one direction silent,
+   * or the encoder counted the same way both ways): an average of legs that
+   * disagree points at the wrong fault, so read `forward.counts` and
+   * `reverse.counts` instead.
    */
   pulsesSent: number;
-  countsMeasured: number;
+  countsMeasured: number | null;
   countsExpected: number;
   findings: CalibrationFinding[];
 }
@@ -254,6 +259,8 @@ export function assessCalibration(
   const revSilent = Math.abs(reverse.countsPerPulse) < silentBelow;
 
   let measured: number | null = null;
+  // False when the legs disagree, so their average would mislead.
+  let legsAgree = true;
   if (fwdSilent && revSilent) {
     findings.push({
       id: 'encoder-silent',
@@ -262,6 +269,7 @@ export function assessCalibration(
         'The encoder did not count in either direction. Check that it is coupled to the motor, that A and B reach the board, that it shares a ground with the board, and that its outputs have pull-ups.',
     });
   } else if (fwdSilent || revSilent) {
+    legsAgree = false;
     findings.push({
       id: 'one-direction-silent',
       severity: 'error',
@@ -275,6 +283,7 @@ export function assessCalibration(
         'The encoder counts the opposite way to the motion. Swap the encoder A and B wires, or reverse the drive direction setting; the servo loop would run away as wired.',
     });
   } else if (forward.countsPerPulse < 0 || reverse.countsPerPulse < 0) {
+    legsAgree = false;
     findings.push({
       id: 'direction-inconsistent',
       severity: 'error',
@@ -319,8 +328,11 @@ export function assessCalibration(
     pulsesSent: (Math.abs(forward.pulses) + Math.abs(reverse.pulses)) / 2,
     // Each leg's counts signed by its own direction, so both agree in sign
     // when the encoder follows the motion and a reversed encoder reads negative.
-    countsMeasured:
-      (forward.counts * Math.sign(forward.pulses || 1) + reverse.counts * Math.sign(reverse.pulses || -1)) / 2,
+    // Null when the legs disagree: their average would read like a dead
+    // encoder or a ratio mismatch rather than the direction fault reported.
+    countsMeasured: legsAgree
+      ? (forward.counts * Math.sign(forward.pulses || 1) + reverse.counts * Math.sign(reverse.pulses || -1)) / 2
+      : null,
     countsExpected: ((Math.abs(forward.pulses) + Math.abs(reverse.pulses)) / 2) * expected,
     findings,
   };

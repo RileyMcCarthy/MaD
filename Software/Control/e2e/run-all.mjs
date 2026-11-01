@@ -2560,8 +2560,9 @@ const scenarios = [
     id: 'FW1',
     name: 'Firmware: flash a .bin through the boot ROM loader',
     async run() {
-      // Uses the in-page boot-ROM fake, not SIL: the emulator has no P2 boot
-      // ROM and the WS bridge carries no DTR line. See installFakeBootRom.
+      // Uses the in-page boot-ROM fake, not SIL: no DTR reaches the P2's
+      // reset line, so the app's reset pulse never restarts the chip into its
+      // boot ROM (MaD #134). See installFakeBootRom.
       const browser = await chromium.launch({ channel: 'chrome', headless: true });
       try {
         const page = await browser.newPage();

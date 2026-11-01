@@ -129,6 +129,7 @@ bool ProtoEmb_onRead_machine_configuration(ProtoEmb_MachineConfiguration_t *out)
     out->restrictedVelocity = profile.restrictedVelocity;
     out->servoKp = profile.servoKp;
     out->servoKi = profile.servoKi;
+    out->servoEnableActiveLow = profile.servoEnableActiveLow;
     memcpy(out->name, profile.name, DEV_NVRAM_MAX_MACHINE_PROFILE_NAME);
     DEBUG_INFO("%s", "responding with machine profile\n");
     return true;
@@ -174,6 +175,7 @@ ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWrite_machine_configuration_write(
     newProfile.restrictedVelocity = in->restrictedVelocity;
     newProfile.servoKp = in->servoKp;
     newProfile.servoKi = in->servoKi;
+    newProfile.servoEnableActiveLow = in->servoEnableActiveLow;
 
     dev_nvram_updateChannelData(DEV_NVRAM_CHANNEL_MACHINE_PROFILE, &newProfile, sizeof(MachineProfile));
     app_message_slave_setMachineProfile(&newProfile);

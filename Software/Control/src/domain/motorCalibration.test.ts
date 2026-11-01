@@ -239,6 +239,54 @@ describe('motor calibration assessment', () => {
 
   behaviour(
     {
+      id: 'motorcal.inconsistent-no-average',
+      covers: 'src/domain/motorCalibration.ts#assessCalibration',
+      given:
+        'a run of 6400 pulses forward and 6400 back in which the encoder counted up 2400 both ways, on a 2400 encoder and 6400 servo steps/mm profile',
+      expect: {
+        'no-averaged-count': 'no averaged encoder count is reported',
+        'per-direction-counts': 'the counts from each direction are still reported, 2400 forward and 2400 back',
+      },
+      why: {
+        'no-averaged-count':
+          'the two legs cancel to an average of zero counts, which would read like a dead encoder when the fault is the drive direction',
+      },
+    },
+    () => {
+      const a = assessCalibration(done(6400, 2400 / 6400, -2400 / 6400), { encoderStepsPerMM: 2400, servoStepsPerMM: 6400 });
+      expect(ids(a)).toEqual(['direction-inconsistent']);
+      expect(a.countsMeasured).toBeNull();
+      expect(a.forward.counts).toBe(2400);
+      expect(a.reverse.counts).toBe(2400);
+    },
+  );
+
+  behaviour(
+    {
+      id: 'motorcal.one-way-silent-no-average',
+      covers: 'src/domain/motorCalibration.ts#assessCalibration',
+      given:
+        'a run of 2400 pulses each way in which the encoder counted 2400 forward and only 48 back, on a profile with equal encoder and servo steps/mm',
+      expect: {
+        'no-averaged-count': 'no averaged encoder count is reported',
+        'per-direction-counts': 'the counts from each direction are still reported, 2400 forward and 48 back',
+      },
+      why: {
+        'no-averaged-count':
+          'an average of about 1200 counts would read like a 50% ratio mismatch when the fault is one silent channel',
+      },
+    },
+    () => {
+      const a = assessCalibration(done(2400, 1, 0.02), MATCHED);
+      expect(ids(a)).toEqual(['one-direction-silent']);
+      expect(a.countsMeasured).toBeNull();
+      expect(a.forward.counts).toBe(2400);
+      expect(a.reverse.counts).toBe(-48);
+    },
+  );
+
+  behaviour(
+    {
       id: 'motorcal.asymmetric',
       covers: 'src/domain/motorCalibration.ts#assessCalibration',
       given: 'a run that counted the expected amount forward but ten percent less driving back',

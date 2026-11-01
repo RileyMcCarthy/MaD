@@ -529,6 +529,30 @@ void test_dev_servo_enableTurnsEnableOutputOn(void)
     TEST_ASSERT_EQUAL_UINT32(1U, d_enaCount);
 }
 
+void test_dev_servo_enableActiveLowInvertsEnableOutput(void)
+{
+    VIBES_TEST("servo.enable-active-low",
+               "src/DEV/dev_servo.c#dev_servo_setEnableActiveLow",
+               "a motor drive whose enable input is set active low, through start-up, enable and disable");
+    VIBES_EXPECT_WHY("disabled-high",
+                     "the enable output is driven high at the first control tick, while the drive is disabled",
+                     "most stepper drivers stop while their enable input is energized, so for them high is off");
+    VIBES_EXPECT("enabled-low", "enabling the drive drives the enable output low");
+    VIBES_EXPECT("disabled-high-again", "disabling it drives the output high again");
+    servo_init();
+    dev_servo_setEnableActiveLow(true);
+    d_enaActive = false; /* make the first write observable */
+    tick();
+    TEST_ASSERT_TRUE(d_enaActive);
+    dev_servo_enable(CH, true);
+    tick();
+    TEST_ASSERT_FALSE(d_enaActive);
+    dev_servo_enable(CH, false);
+    tick();
+    TEST_ASSERT_TRUE(d_enaActive);
+    TEST_ASSERT_EQUAL_UINT32(3U, d_enaCount);
+}
+
 void test_dev_servo_disableTurnsEnableOutputOff(void)
 {
     VIBES_TEST("servo.disable-drives-output-off",
@@ -3224,6 +3248,7 @@ int main(void)
     RUN_TEST(test_dev_servo_firstTickDrivesEnableOutputOff);
     RUN_TEST(test_dev_servo_enableTurnsEnableOutputOn);
     RUN_TEST(test_dev_servo_disableTurnsEnableOutputOff);
+    RUN_TEST(test_dev_servo_enableActiveLowInvertsEnableOutput);
     RUN_TEST(test_dev_servo_disabledParksAndReportsEncoder);
     RUN_TEST(test_dev_servo_moveToStagesTarget);
     RUN_TEST(test_dev_servo_moveToInvalidFeedrateUsesMax);

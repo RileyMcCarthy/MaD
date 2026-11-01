@@ -367,16 +367,20 @@ void test_servo_gains_round_trip_through_bridge(void)
                "src/APP/app_messageSlave.c#ProtoEmb_onWrite_machine_configuration_write",
                "a machine configuration written with a servo proportional gain of 12.5 per second and an integral gain of 40 per second squared");
     VIBES_EXPECT("gains-read-back", "reading the profile back returns both gains unchanged");
+    VIBES_EXPECT("enable-polarity-read-back",
+                 "a drive enable polarity of active low written with them reads back unchanged");
     ProtoEmb_MachineConfiguration_t in;
     memset(&in, 0, sizeof(in));
     in.servoStepsPerMM = 200;
     in.servoKp = 12500;
     in.servoKi = 40000;
+    in.servoEnableActiveLow = 1;
     TEST_ASSERT_EQUAL_INT(PROTOEMB_RUNTIME_WRITE_DISPOSITION_ACK, ProtoEmb_onWrite_machine_configuration_write(&in));
     ProtoEmb_MachineConfiguration_t out;
     TEST_ASSERT_TRUE(ProtoEmb_onRead_machine_configuration(&out));
     TEST_ASSERT_EQUAL_INT32(12500, out.servoKp);
     TEST_ASSERT_EQUAL_INT32(40000, out.servoKi);
+    TEST_ASSERT_EQUAL_INT32(1, out.servoEnableActiveLow);
 }
 
 void test_sample_carries_the_commanded_position(void)
