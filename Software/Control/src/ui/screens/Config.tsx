@@ -4,6 +4,7 @@ import { MachineConfiguration } from '@/domain';
 import NumberField from '@/ui/components/NumberField';
 import MotorCalibrationPanel from '@/ui/components/MotorCalibrationPanel';
 import ForceZeroPanel from '@/ui/components/ForceZeroPanel';
+import LoadCellSensitivityPanel from '@/ui/components/LoadCellSensitivityPanel';
 
 const NUMERIC_FIELDS: Array<keyof MachineConfiguration> = [
   'Encoder (step/mm)',
@@ -76,18 +77,26 @@ export default function Config({ embedded = false }: { embedded?: boolean }) {
     </div>
   );
 
+  const savedLoadCell = {
+    capacityN: config?.['Load Cell Capacity (N)'] ?? 0,
+    sensitivityMvV: config?.['Load Cell Sensitivity (mV/V)'] ?? 0,
+    zeroBalanceMvV: config?.['Load Cell Zero Balance (mV/V)'] ?? 0,
+  };
+
   // Load cell calibration is its own panel, but edits the same draft: the zero
   // it reads goes into the profile here and is written with it.
   const loadCell = draft && (
     <div className="panel">
       <h2>Load cell calibration</h2>
       <ForceZeroPanel
-        saved={{
-          capacityN: config?.['Load Cell Capacity (N)'] ?? 0,
-          sensitivityMvV: config?.['Load Cell Sensitivity (mV/V)'] ?? 0,
-          zeroBalanceMvV: config?.['Load Cell Zero Balance (mV/V)'] ?? 0,
-        }}
+        saved={savedLoadCell}
         onUseZero={(zero) => setDraft((d) => (d ? { ...d, 'Load Cell Zero Balance (mV/V)': zero } : d))}
+      />
+      <LoadCellSensitivityPanel
+        saved={savedLoadCell}
+        onUseSensitivity={(sensitivity) =>
+          setDraft((d) => (d ? { ...d, 'Load Cell Sensitivity (mV/V)': sensitivity } : d))
+        }
       />
     </div>
   );

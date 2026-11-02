@@ -36,7 +36,7 @@ export const ZERO_MIN_SAMPLES = 20;
 export const FORCE_QUANTUM_N = 0.001;
 
 /** Profiles store mV/V as whole nV/V. */
-const NV_PER_MV = 1e6;
+export const NV_PER_MV = 1e6;
 
 export type ZeroPlan = { ok: true } | { ok: false; reason: string };
 
@@ -70,16 +70,26 @@ export interface ZeroMeasurement {
 
 export type ZeroResult = { ok: true; measurement: ZeroMeasurement } | { ok: false; reason: string };
 
+/** A few seconds of steady force readings, summarized. */
+export interface ForceReading {
+  samples: number;
+  meanN: number;
+  /** Standard deviation. */
+  noiseN: number;
+  peakToPeakN: number;
+  /** Mean of the last third of the readings minus the first third. */
+  driftN: number;
+  /** The reading moved more than its noise explains while it was being read. */
+  drifting: boolean;
+}
+
 /**
- * Judge readings taken with the load cell unloaded.
- *
- * A reading still settling (a load cell warming up, a grip just let go)
- * shows as the last third of the readings sitting apart from the first
- * third by more than twice the noise; the zero is then reported but flagged.
+ * Summarize readings meant to be steady. A reading still moving (a load cell
+ * warming up, a grip just let go, a weight still swinging) shows as the last
+ * third of the readings sitting apart from the first third by more than twice
+ * the noise.
  */
-export function measureZero(forcesN: readonly number[], saved: SavedLoadCell): ZeroResult {
-  const plan = planZero(saved);
-  if (!plan.ok) return plan;
+export function summarizeReadings(forcesN: readonly number[]): { ok: true; reading: ForceReading } | { ok: false; reason: string } {
   const n = forcesN.length;
   if (n < ZERO_MIN_SAMPLES) {
     return {
@@ -88,24 +98,42 @@ export function measureZero(forcesN: readonly number[], saved: SavedLoadCell): Z
     };
   }
   const mean = forcesN.reduce((a, f) => a + f, 0) / n;
-  const variance = forcesN.reduce((a, f) => a + (f - mean) ** 2, 0) / (n - 1);
-  const noiseN = Math.sqrt(variance);
+  const noiseN = Math.sqrt(forcesN.reduce((a, f) => a + (f - mean) ** 2, 0) / (n - 1));
   const third = Math.floor(n / 3);
   const avg = (xs: readonly number[]) => xs.reduce((a, f) => a + f, 0) / xs.length;
   const driftN = avg(forcesN.slice(n - third)) - avg(forcesN.slice(0, third));
-  const mvPerN = saved.sensitivityMvV / saved.capacityN;
-  const zeroBalanceMvV = Math.round((mean * mvPerN + saved.zeroBalanceMvV) * NV_PER_MV) / NV_PER_MV;
   return {
     ok: true,
-    measurement: {
+    reading: {
       samples: n,
-      zeroBalanceMvV,
-      offsetN: mean,
+      meanN: mean,
       noiseN,
-      noiseNvV: Math.abs(noiseN * mvPerN) * NV_PER_MV,
       peakToPeakN: Math.max(...forcesN) - Math.min(...forcesN),
       driftN,
       drifting: Math.abs(driftN) > Math.max(2 * noiseN, 2 * FORCE_QUANTUM_N),
+    },
+  };
+}
+
+/** Judge readings taken with the load cell unloaded. */
+export function measureZero(forcesN: readonly number[], saved: SavedLoadCell): ZeroResult {
+  const plan = planZero(saved);
+  if (!plan.ok) return plan;
+  const summary = summarizeReadings(forcesN);
+  if (!summary.ok) return summary;
+  const r = summary.reading;
+  const mvPerN = saved.sensitivityMvV / saved.capacityN;
+  return {
+    ok: true,
+    measurement: {
+      samples: r.samples,
+      zeroBalanceMvV: Math.round((r.meanN * mvPerN + saved.zeroBalanceMvV) * NV_PER_MV) / NV_PER_MV,
+      offsetN: r.meanN,
+      noiseN: r.noiseN,
+      noiseNvV: Math.abs(r.noiseN * mvPerN) * NV_PER_MV,
+      peakToPeakN: r.peakToPeakN,
+      driftN: r.driftN,
+      drifting: r.drifting,
     },
   };
 }
