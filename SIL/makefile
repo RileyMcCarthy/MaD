@@ -67,7 +67,7 @@ BUILD_DIR = build
 FLASH_IMAGE = $(BUILD_DIR)/flash.bin
 SD_IMAGE = $(BUILD_DIR)/sd.img
 
-.PHONY: p2image p2image-production protocol emulator emulator-release test playground playground-iss playground-pty playground-rom e2e-emulator e2e e2e-rom e2e-bundle e2e-motion e2e-stall flash-image sd-image check bootrom clean
+.PHONY: p2image p2image-production protocol emulator emulator-release test playground playground-iss playground-pty playground-rom e2e-emulator e2e e2e-rom e2e-bundle e2e-motion e2e-stall e2e-compat flash-image sd-image check bootrom clean
 
 # Build the P2 image the ISS runs (`p2core`, `p2iss`, `mad-emulator`).
 #
@@ -202,6 +202,30 @@ e2e-motion: flash-image sd-image
 	fi; \
 	echo "e2e-motion: $$ids"; \
 	EMBSIM="$(EMBSIM)" E2E_PROJECT=$(MOTION_PROJECT) SCENARIOS="$$ids" scripts/board-route.sh e2e
+
+# The firmware-compatibility scenarios that need other firmware on the
+# board (run-all.mjs, NEEDS_FIRMWARE), on e2e's board with that firmware in
+# the module's flash: COMPAT-too-old on a release from before the app could
+# ask the firmware which protocol it speaks (COMPAT_OLD_TAG, as published),
+# and COMPAT-app-too-old on this tree's firmware built one protocol_version
+# ahead. scripts/compat-images.sh builds both; no firmware source changes
+# for either. This tree's image goes back in the flash afterwards, however
+# the runs end. The scenarios that need this tree's firmware (COMPAT-ok, and
+# COMPAT-ok-motion in e2e-motion) run with the rest of the suite.
+COMPAT_OLD_TAG ?= firmware-v0.14
+e2e-compat: flash-image sd-image
+	$(EMBSIM) check $(E2E_PROJECT)
+	EMBSIM="$(EMBSIM)" COMPAT_OLD_TAG=$(COMPAT_OLD_TAG) scripts/compat-images.sh
+	@trap '$(EMBSIM) flash-image $(PRODUCTION_IMAGE) -o $(FLASH_IMAGE) >/dev/null' EXIT; \
+	status=0; \
+	for run in old:COMPAT-too-old future:COMPAT-app-too-old; do \
+	  firmware=$${run%%:*}; \
+	  echo "e2e-compat: $${run#*:} on the $$firmware firmware"; \
+	  cp $(BUILD_DIR)/flash-compat-$$firmware.bin $(FLASH_IMAGE); \
+	  E2E_FIRMWARE=$$firmware SCENARIOS=$${run#*:} EMBSIM="$(EMBSIM)" E2E_PROJECT=$(E2E_PROJECT) \
+	    scripts/board-route.sh e2e || status=1; \
+	done; \
+	exit $$status
 
 # The module's boot flash: embsim's stage-1 loader, then the production
 # image behind it, as the P2's ROM boots it off the flash (`embsim

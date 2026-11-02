@@ -52,6 +52,11 @@ import {
   MSG_STATE_PERIOD_MS,
   STOREDSAMPLE_WIRE_SIZE,
   DEVICEINFO_WIRE_SIZE,
+  SAMPLE_WIRE_SIZE,
+  MACHINESTATE_WIRE_SIZE,
+  MACHINECONFIGURATION_WIRE_SIZE,
+  FIRMWAREVERSION_WIRE_SIZE,
+  SAMPLEPROFILE_WIRE_SIZE,
 } from '@/protocol/generated/protoemb';
 import {
   MachineConfiguration,
@@ -342,6 +347,9 @@ export class DeviceSession {
 
   private gibberishEvents = 0;
 
+  /** Replies that could not be read, by command: each is logged once, then counted. */
+  private undecodable = new Map<number, number>();
+
   /** Warnings already emitted, so a persistently wrong link warns twice, not forever. */
   private gibberishWarnings = 0;
 
@@ -367,6 +375,8 @@ export class DeviceSession {
     lastError: '',
     lastErrorAt: 0,
     eventDeliveryFailures: 0,
+    /** Replies dropped because they could not be read (see unreadableReply). */
+    undecodable: 0,
   };
 
   private readonly periodic = new PeriodicAggregator();
@@ -412,7 +422,9 @@ export class DeviceSession {
       lastError: '',
       lastErrorAt: 0,
       eventDeliveryFailures: 0,
+      undecodable: 0,
     };
+    this.undecodable.clear();
     this.client.register_periodic_with_timeout(
       MSG_READ_SAMPLE,
       MSG_SAMPLE_PERIOD_MS,
@@ -1097,7 +1109,13 @@ export class DeviceSession {
         if (request !== undefined) this.rejectWaitersForRequest(request, 'response timeout');
       }
       this.logRawEvent(ev);
-      for (const mapped of this.mapEvent(ev)) {
+      let mappedEvents: DeviceEvent[];
+      try {
+        mappedEvents = this.mapEvent(ev);
+      } catch (err) {
+        mappedEvents = this.unreadableReply(ev, err);
+      }
+      for (const mapped of mappedEvents) {
         if (mapped.kind === 'sample') {
           this.lastSample = mapped.data;
           // Tallied here rather than in `logRawEvent` because the sanity check
@@ -1240,7 +1258,34 @@ export class DeviceSession {
     }
   }
 
+  /**
+   * A reply this app cannot read: its length is not the one its message has
+   * (the firmware and app were generated from different layouts), or it
+   * failed to decode. Dropped, so no misread value reaches the screen, and
+   * the session carries on: the device-info handshake still runs, and its
+   * verdict says what to do. A read waiting on it fails at once instead of
+   * timing out. Logged the first time per command, then only counted.
+   */
+  private unreadableReply(ev: RawEvent, err: unknown): DeviceEvent[] {
+    const command = ev.command ?? -1;
+    const seen = this.undecodable.get(command) ?? 0;
+    this.undecodable.set(command, seen + 1);
+    this.stats.undecodable += 1;
+    const reason = err instanceof Error ? err.message : String(err);
+    const name = commandName(command, 'read');
+    if (ev.event === 'data') this.rejectWaitersForRequest({ command, dir: 'read' }, `${name}: ${reason}`);
+    if (seen > 0) return [];
+    logProto.error('unreadable-reply', name, { command, bytes: u8(ev.payload).length, reason });
+    return [{ kind: 'error', message: `${name}: ${reason}` }];
+  }
+
   private mapData(command: number, payload: Uint8Array): DeviceEvent[] {
+    const expected = REPLY_WIRE_SIZE.get(command);
+    if (expected !== undefined && payload.length !== expected) {
+      throw new Error(
+        `reply is ${payload.length} bytes, this app reads ${expected}: the firmware speaks another protocol version`,
+      );
+    }
     switch (command) {
       case MSG_READ_SAMPLE:
         return [{ kind: 'sample', data: sampleToShared(decodeSample(payload)) }];
@@ -1576,6 +1621,20 @@ function u8(payload?: number[] | Uint8Array): Uint8Array {
   // copy); tolerate a plain number[] too (older build / non-serde_bytes path).
   return payload instanceof Uint8Array ? payload : Uint8Array.from(payload);
 }
+
+/**
+ * The exact length of each read's reply: every message has a fixed wire size,
+ * so any other length is a reply from firmware generated from another layout.
+ * The device-info reply is absent: it only grows by appending, and is read
+ * zero-filled whatever its length.
+ */
+const REPLY_WIRE_SIZE = new Map<number, number>([
+  [MSG_READ_SAMPLE, SAMPLE_WIRE_SIZE],
+  [MSG_READ_STATE, MACHINESTATE_WIRE_SIZE],
+  [MSG_READ_MACHINE_CONFIGURATION, MACHINECONFIGURATION_WIRE_SIZE],
+  [MSG_READ_FIRMWARE_VERSION, FIRMWAREVERSION_WIRE_SIZE],
+  [MSG_READ_SAMPLE_PROFILE, SAMPLEPROFILE_WIRE_SIZE],
+]);
 
 /** `payload` padded with zeros to at least `size` bytes; longer payloads unchanged. */
 export function zeroFilled(payload: Uint8Array, size: number): Uint8Array {

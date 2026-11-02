@@ -64,8 +64,7 @@ interface AppState {
    *  (firmware from before the handshake) or has not been asked yet. */
   deviceProtocol: number | null;
   /** Whether this app can drive the connected firmware; null until the
-   *  handshake answers. Survives a disconnect, so the reason to update stays on
-   *  screen until compatible firmware is connected. */
+   *  handshake answers, and again once the connection ends. */
   firmwareCompat: FirmwareCompat | null;
   notifications: UiNotification[];
 
@@ -345,15 +344,12 @@ function afterConnect(set: SetState, getState: GetState, label: string): void {
     .then((samples) => seedSamples(samples, MSG_SAMPLE_PERIOD_MS))
     .catch(() => undefined);
 
-  // Pull initial device info. These are background best-effort reads — retry
-  // a transient miss (the link is up) and never raise the top-level `error`
-  // (only a user-initiated Machine→Reload should surface a config failure).
-  void retryRead(() => deviceClient.readMachineConfiguration()).then((config) => {
-    if (config) set({ config });
-  });
-  void retryRead(() => deviceClient.readSampleProfile()).then((sampleProfile) => {
-    if (sampleProfile) set({ sampleProfile });
-  });
+  // The protocol question first, then the initial device info. Firmware on
+  // another protocol answers the configuration reads in a layout this app
+  // would misread, so they wait for the verdict and are skipped on a mismatch.
+  // Background best-effort reads: retry a transient miss (the link is up) and
+  // never raise the top-level `error` (only a user-initiated Machine→Reload
+  // should surface a config failure).
   const generation = connectGeneration;
   void checkConnectedFirmware({
     client: deviceClient,
@@ -362,7 +358,39 @@ function afterConnect(set: SetState, getState: GetState, label: string): void {
     apply: set,
     appProtocol: PROTOCOL_VERSION,
     minFirmware: MIN_FIRMWARE,
+    afterCompatible: () => {
+      void retryRead(() => deviceClient.readMachineConfiguration()).then((config) => {
+        if (config) set({ config });
+      });
+      void retryRead(() => deviceClient.readSampleProfile()).then((sampleProfile) => {
+        if (sampleProfile) set({ sampleProfile });
+      });
+    },
   });
+}
+
+/**
+ * Forget the connected firmware's verdict when its connection ends: the next
+ * connection asks again, and may be another board. Lifts the motion block
+ * with it, since there is nothing left to drive.
+ */
+function clearFirmwareVerdict(set: SetState): void {
+  connectGeneration += 1;
+  deviceClient.setMotionBlock(null);
+  set({ firmwareCompat: null, deviceProtocol: null });
+}
+
+/**
+ * When the connected firmware cannot be driven, say why and refuse. The
+ * device client refuses the command anyway; this is the operator hearing
+ * the reason at the moment they asked.
+ */
+function refusedForFirmware(getState: GetState, what: string): boolean {
+  const reason = deviceClient.motionBlockReason();
+  if (reason === null) return false;
+  logStore.warn(`${what}-refused`, reason);
+  getState().notify(NotificationType.WARN, reason);
+  return true;
 }
 
 
@@ -499,6 +527,7 @@ export const useStore = create<AppState>((set, getState) => ({
           const lost = patch.disconnect.unexpected;
           userDisconnect = false;
           stopTimers();
+          clearFirmwareVerdict(set);
           if (lost) logStore.warn('disconnected', patch.disconnect.reason ?? 'link lost');
           else logStore.info('disconnected', 'user disconnect');
           // Flush the freshest sample so the frozen readouts show the true last
@@ -570,6 +599,7 @@ export const useStore = create<AppState>((set, getState) => ({
       // would not let go of, which the operator must hear about.
       error = err instanceof Error ? err.message : String(err);
     }
+    clearFirmwareVerdict(set);
     set({
       connection: 'disconnected',
       responding: false,
@@ -650,6 +680,7 @@ export const useStore = create<AppState>((set, getState) => ({
 
   setMotionEnabled: (enabled) => {
     logStore.info('motion-enable', undefined, { enabled });
+    if (enabled && refusedForFirmware(getState, 'motion-enable')) return Promise.resolve(false);
     return logOutcome('motion-enable', deviceClient.setMotionEnabled(enabled));
   },
   emergencyStop: async () => {
@@ -672,10 +703,12 @@ export const useStore = create<AppState>((set, getState) => ({
   },
   manualMove: (mm, speed) => {
     logStore.info('jog', undefined, { mm, speed });
+    if (refusedForFirmware(getState, 'jog')) return Promise.resolve(false);
     return logOutcome('jog', deviceClient.manualMove(mm, speed));
   },
   homeAxis: () => {
     logStore.info('home');
+    if (refusedForFirmware(getState, 'home')) return Promise.resolve();
     return deviceClient.homeAxis();
   },
   zeroForce: () => {

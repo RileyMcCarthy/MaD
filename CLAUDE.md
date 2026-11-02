@@ -64,6 +64,7 @@ make e2e          # the e2e suite on the machine's project, mad-cosim.toml, head
 make e2e-motion   # what the project as drawn cannot run (the carriage's scenarios), on mad-ic14-fixed-cosim.toml (MaD #285 fixed)
 make e2e-rom      # FW-ISS: the app's flasher against the mask ROM, on mad-serial-boot-cosim.toml (the ROM's serial boot)
 make e2e-stall    # SERVO-stall on mad-emulator: its jam is mad-emulator's alone (MaD #298)
+make e2e-compat   # the firmware-compat scenarios on firmware the app can't drive: firmware-v0.14 as released, and this tree one protocol_version ahead
 make playground-pty  # mad.toml under embsim run, its host a PTY at /tmp/tty.iss, for a serial console (no browser behind it)
 make clean        # Remove build artifacts
 ```

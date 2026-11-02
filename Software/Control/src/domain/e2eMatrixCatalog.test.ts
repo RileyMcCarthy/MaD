@@ -193,6 +193,8 @@ describe('Sprint C e2e matrix catalog', () => {
         'BB-back-to-back',
         'B5-reconnect',
         'FW1',
+        'COMPAT-ok',
+        'COMPAT-update-loop',
       ]);
       for (const id of catalog.smoke_ids) {
         expect(known.has(id), `smoke id ${id} not in catalog/legacy set`).toBe(true);

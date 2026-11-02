@@ -8,6 +8,8 @@ const APP = 4;
 function board(answers: { version?: string; info?: { protocolVersion: number } | null | 'silent' }) {
   const blocks: Array<string | null> = [];
   const patches: FirmwareCheckPatch[] = [];
+  /** How many times the configuration reads were started. */
+  const configReads = { count: 0 };
   const client = {
     readFirmwareVersion: async () => {
       if (answers.version === undefined) throw new Error('timeout');
@@ -33,8 +35,9 @@ function board(answers: { version?: string; info?: { protocolVersion: number } |
       apply: (p) => void patches.push(p),
       appProtocol: APP,
       minFirmware: null,
+      afterCompatible: () => void (configReads.count += 1),
     });
-  return { blocks, patches, run };
+  return { blocks, patches, configReads, run };
 }
 
 describe('checkConnectedFirmware', () => {
@@ -134,6 +137,41 @@ describe('checkConnectedFirmware', () => {
       await b.run(() => false);
       expect(b.blocks).toEqual([]);
       expect(b.patches).toEqual([]);
+    },
+  );
+
+  behaviour(
+    {
+      id: 'firmware-check.config-reads-wait-for-verdict',
+      covers: 'src/store/firmwareCheck.ts#checkConnectedFirmware',
+      given: 'a board connected, before the app reads its machine configuration and sample profile',
+      expect: {
+        'read-when-matching': "the configuration is read when the firmware reports the app's protocol",
+        'read-when-unanswered': 'the configuration is read when the board never answers the protocol question',
+        'skipped-on-mismatch':
+          'the configuration is never read from firmware on another protocol, or from firmware that refuses to say',
+      },
+      why: {
+        'skipped-on-mismatch':
+          'firmware on another protocol lays its configuration out differently, so every value read from it would be wrong',
+      },
+    },
+    async () => {
+      const reads = async (answers: Parameters<typeof board>[0]) => {
+        const b = board(answers);
+        const verdict = await b.run();
+        return { reads: b.configReads.count, verdict };
+      };
+      expect(await reads({ version: '0.15', info: { protocolVersion: APP } })).toEqual({
+        reads: 1,
+        verdict: { kind: 'ok' },
+      });
+      expect(await reads({ version: '0.15', info: 'silent' })).toEqual({ reads: 1, verdict: null });
+      expect((await reads({ version: '0.13', info: null })).reads).toBe(0);
+      expect((await reads({ version: '0.20', info: { protocolVersion: APP + 1 } })).reads).toBe(0);
+      const stale = board({ version: '0.15', info: { protocolVersion: APP } });
+      expect(await stale.run(() => false)).toBeUndefined();
+      expect(stale.configReads.count).toBe(0);
     },
   );
 });
