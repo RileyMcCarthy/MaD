@@ -81,7 +81,7 @@ case "$route" in
     exit 2
     ;;
 esac
-image=${P2_IMAGE:-$sil/../Firmware/MaDCore/.pio/build/propeller2_debug/program}
+image=${P2_IMAGE:-$sil/../Firmware/MaDCore/.pio/build/MaDEdge/program}
 emulator=${EMULATOR:-$sil/target/release/mad-emulator}
 embsim=${EMBSIM:-cargo run --release --quiet --manifest-path $sil/embsim/Cargo.toml -p embsim-cli --}
 if [ "$mode" = playground ]; then

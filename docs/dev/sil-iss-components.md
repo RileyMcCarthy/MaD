@@ -349,7 +349,7 @@ already fetched.
 `p2iss/tests/ec32mb_flash_boot.rs`, stepped, builds the module from its
 vendor netlist, powers it from `J203`'s fingers, closes `S301` positions 2
 (FLASH) and 4 (the `P59` pull-down), and holds that the ROM reads stage-1 at
-0 and stage-1 the 324 512-byte `propeller2_debug` program at `$400`, that the
+0 and stage-1 the 324 512-byte `MaDEdge` program at `$400`, that the
 core starts at 5.5 ms, and that a terminal at 230 400 baud on `J203.50`
 (`P62/PRG_DBG_TXD`) reads `Starting MaD Board` at 1.254 s of board time, with
 the firmware on 160 MHz from the crystal. `p2iss/tests/package_pads.rs`,
@@ -710,7 +710,7 @@ cd SIL && make p2image && cargo build --release -p p2iss --examples
 
 `SIL/mad.toml` and its three twins put the host on the carrier's debug header
 `J1` (`P62`, `P63`, `GND`), where the machine's Prop Plug sits, and the
-module's flash holds the production build (`pio run -e propeller2`,
+module's flash holds the production build (`pio run -e P2Eval`,
 `make flash-image`), the route the user decided; which image the machine
 runs is open
 ([board design](sil-board-simulation-design.md#the-p2-edge-module-gap)).

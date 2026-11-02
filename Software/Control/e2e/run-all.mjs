@@ -97,6 +97,7 @@ import {
   DEVICE_WAIT_MS,
   awaitResponding,
 } from './fixtures.mjs';
+import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -122,7 +123,7 @@ const MATRIX = JSON.parse(
 // The scenarios that never touch the board: they launch a host Chrome
 // against in-page fakes (the capability gate, and the flasher against a fake
 // boot ROM), so they run without an emulator.
-const BOARD_FREE = new Set(['A1', 'FW1', 'FW2', 'FW3', 'FW5', 'FW6', 'FW7', 'FW8', 'FW9']);
+const BOARD_FREE = new Set(['A1', 'FW1', 'FW2', 'FW3', 'FW5', 'FW6', 'FW7', 'FW8', 'FW9', 'FW10', 'FW11']);
 
 // The board is the mask ROM, not the firmware: the project's serial boot,
 // mad-serial-boot-cosim.toml (make e2e-rom). Only FW-ISS, the app flashing
@@ -2664,8 +2665,9 @@ const scenarios = [
         // Flash is the only mode the app offers: the P2 Edge boots from SPI
         // flash, so a RAM load would look like a successful update and then
         // vanish on the next power cycle. RAM loading lives in the CLI.
+        // (A P2Eval/MaDEdge board choice may appear; a RAM option may not.)
         assert(
-          (await page.getByRole('radio').count()) === 0,
+          (await page.getByRole('radio', { name: /\bRAM\b/ }).count()) === 0,
           'a programming-mode selector reappeared in the UI',
         );
         assert(
@@ -2706,6 +2708,99 @@ const scenarios = [
           `payload after stub was ${JSON.stringify(rom.payload)}`,
         );
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
+      } finally { await browser.close(); }
+    },
+  },
+  {
+    id: 'FW10',
+    name: 'Firmware: the board choice flashes the chosen release build',
+    async run() {
+      const browser = await chromium.launch({ channel: 'chrome', headless: true });
+      try {
+        const page = await browser.newPage();
+        const errors = [];
+        page.on('pageerror', (e) => errors.push(e.message));
+        await page.addInitScript(installFakeBootRom);
+        await page.addInitScript(installOpfsDataDir, OPFS_DIR);
+        page.on('dialog', (d) => d.accept());
+
+        // Stand in for the served release folder, whatever the dev server's
+        // firmware plugin would answer.
+        const images = {
+          P2Eval: Buffer.from(Array.from({ length: 600 }, (_, i) => i & 0xff)),
+          MaDEdge: Buffer.from(Array.from({ length: 900 }, (_, i) => (255 - i) & 0xff)),
+        };
+        const entry = (board) => ({
+          assetName: `MaD-Firmware-9.9-${board}.bin`,
+          size: images[board].length,
+          sha256: createHash('sha256').update(images[board]).digest('hex'),
+        });
+        const fetched = [];
+        await page.route('**/firmware/latest.json', (r) => r.fulfill({
+          contentType: 'application/json',
+          body: JSON.stringify({
+            tag: 'firmware-v9.9', version: '9.9', ...entry('P2Eval'),
+            publishedAt: null, htmlUrl: 'https://example.invalid/r',
+            boards: { P2Eval: entry('P2Eval'), MaDEdge: entry('MaDEdge') },
+          }),
+        }));
+        await page.route('**/firmware/latest*.bin', (r) => {
+          const name = r.request().url().split('/').pop();
+          fetched.push(name);
+          return r.fulfill({
+            contentType: 'application/octet-stream',
+            body: name === 'latest-MaDEdge.bin' ? images.MaDEdge : images.P2Eval,
+          });
+        });
+
+        await page.goto(`${APP_URL_HOST}#/firmware`);
+        await page.getByTestId('firmware-source').filter({ hasText: /P2Eval production build/ }).waitFor();
+        assert(await page.getByTestId('board-P2Eval').isChecked(), 'P2Eval is not the default board');
+        await page.getByTestId('flash-target').filter({ hasText: /USB/ }).waitFor({ timeout: DEVICE_WAIT_MS });
+
+        await page.getByTestId('board-MaDEdge').check();
+        await page.getByTestId('firmware-source').filter({ hasText: /MaDEdge debug build/ }).waitFor();
+        await page.getByTestId('flash-firmware').click();
+        await page.getByTestId('flash-status').filter({ hasText: /Wrote .* bytes to flash/ })
+          .waitFor({ timeout: 30_000 });
+
+        assert(
+          JSON.stringify(fetched) === JSON.stringify(['latest-MaDEdge.bin']),
+          `downloaded ${JSON.stringify(fetched)}`,
+        );
+        const rom = await page.evaluate(() => ({
+          len: window.__bootRom.image.length,
+          payload: window.__bootRom.image.slice(496, 496 + 4),
+        }));
+        assert(rom.len === 496 + 900, `image length ${rom.len}, expected ${496 + 900}`);
+        assert(
+          JSON.stringify(rom.payload) === JSON.stringify([255, 254, 253, 252]),
+          `flashed payload starts ${JSON.stringify(rom.payload)}, not the MaDEdge image`,
+        );
+        assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
+      } finally { await browser.close(); }
+    },
+  },
+  {
+    id: 'FW11',
+    name: 'Firmware: a release with only a P2Eval build offers no board choice',
+    async run() {
+      const browser = await chromium.launch({ channel: 'chrome', headless: true });
+      try {
+        const page = await browser.newPage();
+        await page.addInitScript(installFakeBootRom);
+        await page.addInitScript(installOpfsDataDir, OPFS_DIR);
+        // A description in the shape served before the board choice existed.
+        await page.route('**/firmware/latest.json', (r) => r.fulfill({
+          contentType: 'application/json',
+          body: JSON.stringify({
+            tag: 'firmware-v0.14', version: '0.14', assetName: 'MaD-Firmware-0.14-release.bin',
+            size: 64, sha256: '0'.repeat(64), publishedAt: null, htmlUrl: 'https://example.invalid/r',
+          }),
+        }));
+        await page.goto(`${APP_URL_HOST}#/firmware`);
+        await page.getByTestId('firmware-source').filter({ hasText: /P2Eval production build/ }).waitFor();
+        assert((await page.getByTestId('firmware-board').count()) === 0, 'offered a board the release has no build for');
       } finally { await browser.close(); }
     },
   },

@@ -5,7 +5,7 @@
 //!
 //! ```text
 //! cargo run -p p2core --release --example boot -- \
-//!     ../../Firmware/MaDCore/.pio/build/propeller2_debug/program
+//!     ../../Firmware/MaDCore/.pio/build/MaDEdge/program
 //! ```
 //!
 //! Also prints sustained instruction throughput, which is the number that
@@ -18,7 +18,7 @@ use p2core::{Machine, NullPins};
 fn main() {
     let path = std::env::args()
         .nth(1)
-        .unwrap_or_else(|| "../Firmware/MaDCore/.pio/build/propeller2_debug/program".to_string());
+        .unwrap_or_else(|| "../Firmware/MaDCore/.pio/build/MaDEdge/program".to_string());
     let budget: u64 = std::env::args()
         .nth(2)
         .and_then(|s| s.parse().ok())
@@ -28,7 +28,7 @@ fn main() {
         Ok(b) => b,
         Err(e) => {
             eprintln!("cannot read {path}: {e}");
-            eprintln!("build it first: cd Firmware/MaDCore && pio run -e propeller2_debug");
+            eprintln!("build it first: cd Firmware/MaDCore && pio run -e MaDEdge");
             std::process::exit(2);
         }
     };

@@ -10,8 +10,8 @@ Run the gate(s) for the area you touched (see
 [CI/CD](ci-cd-and-releases.md#running-the-gates-locally)). At minimum:
 
 - **App:** `npm run verify` in `Software/Control`.
-- **Firmware:** `pio check` + `pio test -e native_test`, and build `propeller2`.
-  The SIL emulator runs the `propeller2_debug` image (`make p2image`).
+- **Firmware:** `pio check` + `pio test -e native_test`, and build `P2Eval`.
+  The SIL emulator runs the `MaDEdge` image (`make p2image`).
 - **Protocol:** regenerate all consumers and run `./examples/verify.sh`.
 - **Anything user-facing:** `mkdocs build --strict` if you changed docs.
 
@@ -56,7 +56,7 @@ hard-to-debug failures:
   File System Access. Test-only fakes (SIL serial, OPFS) live in `e2e/`, never in
   `src/`.
 - **Native *and* P2** — always exercise both the host (`native_*`) and the real
-  `propeller2` builds; pointer sizes and timing differ.
+  `P2Eval` builds; pointer sizes and timing differ.
 - **embsim stays generic** — no generic embsim crate may depend on MaD-specific
   code. MaD specifics live in `MaDSim/`, `models/`, and the `protocol` crate (`Protocol/rust/`).
 - **The app is not a safety device** — never make the UI halt the machine on link

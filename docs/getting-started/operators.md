@@ -48,14 +48,14 @@ Open **Firmware** in the sidebar. **Installed** is what the machine is running;
 To update:
 
 1. Check **Will flash** shows the latest release. The app picks the production
-   build (`MaD-Firmware-<version>-release.bin`) of the newest
+   build (`MaD-Firmware-<version>-P2Eval.bin`) of the newest
    [GitHub release](https://github.com/RileyMcCarthy/MaD/releases) by itself;
    there is nothing to download. That build talks to the app on J1, the same
    port it is programmed through. MaD Control 0.4.2 and earlier label this row
    "MadEdge" whatever the image is; the prompt in step 2 names the real file.
 2. Check the **Port** is the machine you mean to program, then click
    **Write to flash**. Check the prompt names
-   `MaD-Firmware-<version>-release.bin`, then confirm.
+   `MaD-Firmware-<version>-P2Eval.bin`, then confirm.
 
 The status line runs through *Resetting the board…*, *Uploading… n%*, then
 *Finishing…*. The board reboots into the new firmware and **Installed** updates.
@@ -67,7 +67,7 @@ talking to the app, it can be programmed. The isolated Raspberry Pi link
 **cannot** program the board: on the machine's P2-EC32MB module it isn't
 connected to the chip.
 
-If the machine was flashed with a `-madEdge.bin` image, it shows **Connected**
+If the machine was flashed with a `-MaDEdge.bin` image, it shows **Connected**
 but never **Responding**: that build talks on P53/P55, which the machine's
 P2-EC32MB module doesn't bring out. Flash the latest release over J1 as above.
 

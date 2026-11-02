@@ -11,12 +11,12 @@ you can test the whole stack — firmware, protocol, app — without hardware. A
 cd SIL
 git submodule update --init --recursive   # first time: embsim + ProtoEmb submodules
 make emulator     # Rust protocol types, then cargo build
-make p2image      # the propeller2_debug image the emulator executes
+make p2image      # the MaDEdge image the emulator executes
 ```
 
 `make emulator` generates the Rust codec into `Protocol/rust/src/generated`
 (`make protocol`) and then `cargo build`. The image is a runtime input, built
-by `make p2image` (`pio run -e propeller2_debug`). The `playground*`, `e2e*`
+by `make p2image` (`pio run -e MaDEdge`). The `playground*`, `e2e*`
 and `check` targets build the production image and lay out the module's
 flash and card (`make flash-image sd-image`), and the embsim tool builds
 `mad-runner`. No target runs `mad-emulator` any more: SERVO-stall
@@ -24,8 +24,8 @@ flash and card (`make flash-image sd-image`), and the embsim tool builds
 
 | Target | What it does |
 |---|---|
-| `make p2image` | Build the debug P2 image the ISS executes on the board route (`pio run -e propeller2_debug`) |
-| `make p2image-production` | Build the production image (`pio run -e propeller2`), the one the project files' flash holds |
+| `make p2image` | Build the debug P2 image the ISS executes on the board route (`pio run -e MaDEdge`) |
+| `make p2image-production` | Build the production image (`pio run -e P2Eval`), the one the project files' flash holds |
 | `make protocol` | Regenerate the Rust protocol types for SIL |
 | `make emulator` | Protocol + the Rust workspace |
 | `make playground` | `mad-playground.toml` under `embsim run`: the machine with MaD #285 fixed, MaD Control in a **Chrome window on the board's clock**, the app served by its dev server on 5174 (started for you). For a person. |
@@ -52,16 +52,16 @@ carrier, the P2-EC32MB module in its socket with the ISS as its processor
 the carrier's connectors (embsim `MIGRATING-MAD.md` §1 and §4). Its host is on
 the carrier's **debug header `J1`** (`P62`, `P63` and `GND`; `RESn`, `J1.3`,
 unwired), where the machine's Prop Plug sits, and the module's flash holds the
-**production build** (`pio run -e propeller2`), as the user decided
+**production build** (`pio run -e P2Eval`), as the user decided
 (2026-10-21). That build's MAIN channel receives on `P63` and transmits on
 `P62` at 2,000,000 baud (`HW_pins.h`, `HAL_serial_config.c`), the pins `J1`
 carries; the app flashes over `J1` (`Software/Control/README.md`, "Firmware
 flashing"). **Open:** which image the machine runs. By default the app flashes
-a release's madEdge image, the `propeller2_debug` build, whose protocol is on
+a release's MaDEdge image, the `MaDEdge` build, whose protocol is on
 `P53`/`P55` in every release so far (`Software/Control/src/firmware/release.ts`,
 `pickFirmwareAsset`; the build has it on `P30`/`P32` since the Edge v0.3 pin
 move);
-the production build is the release's `-release.bin`, flashed only as a local
+the production build is the release's `-P2Eval.bin`, flashed only as a local
 file. Nothing sits on the Pi's connector `J4`: its line goes through
 `IC2` to the carrier's `P52`–`P55`, which the EC32MB keeps for its PSRAMs and
 has no finger for, so it cannot reach the chip

@@ -22,9 +22,9 @@ commands run from `Firmware/MaDCore/`.
 ```bash
 cd Firmware/MaDCore
 
-pio run -e propeller2              # production hardware build
-pio run -e propeller2_debug       # debug serial; this image is what the SIL emulator executes
-pio run -e propeller2 -t upload   # flash a connected board
+pio run -e P2Eval              # production hardware build
+pio run -e MaDEdge       # debug serial; this image is what the SIL emulator executes
+pio run -e P2Eval -t upload   # flash a connected board
 pio test -e native_test           # Unity unit tests on the host, against a mock HAL
 pio check                         # MISRA C:2023 + CERT static analysis
 ```
@@ -33,9 +33,8 @@ pio check                         # MISRA C:2023 + CERT static analysis
 
 | Environment | Compiler | Purpose |
 |---|---|---|
-| `propeller2` | FlexC | Production hardware build: the protocol on P62/P63 (header J1) at 2,000,000 baud. The machine runs this build. |
-| `propeller2_release` | FlexC | The same build as `propeller2`, released as `MaD-Firmware-<version>-release.bin`. MaD Control flashes this image by default. |
-| `propeller2_debug` | FlexC | Hardware build with `ENABLE_DEBUG_SERIAL=1`: the protocol on P30/P32, a debug log on P62/P63. P30/P32 are the Edge carrier's Raspberry Pi link (J4, through IC2) from carrier v0.3 on; earlier carriers wire IC2 to P52–P55, which the machine's P2-EC32MB does not bring out, so on those this build is for a bench with its own adapter on P30/P32. Images built before the pin move have the protocol on P53/P55. Released as `MaD-Firmware-<version>-madEdge.bin`. This image is what the [SIL emulator](../how-it-works/sil-emulator.md) executes. |
+| `P2Eval` | FlexC | Production hardware build: the protocol on P62/P63 (header J1) at 2,000,000 baud. The machine runs this build. Released as `MaD-Firmware-<version>-P2Eval.bin`; MaD Control flashes this image by default. |
+| `MaDEdge` | FlexC | Hardware build with `ENABLE_DEBUG_SERIAL=1`: the protocol on P30/P32, a debug log on P62/P63. P30/P32 are the Edge carrier's Raspberry Pi link (J4, through IC2) from carrier v0.3 on; earlier carriers wire IC2 to P52–P55, which the machine's P2-EC32MB does not bring out, so on those this build is for a bench with its own adapter on P30/P32. Images built before the pin move have the protocol on P53/P55. Released as `MaD-Firmware-<version>-MaDEdge.bin`. This image is what the [SIL emulator](../how-it-works/sil-emulator.md) executes. |
 | `native_test` | gcc | Unity unit tests. `test/mock_propeller2.c` stands in for the HAL; `HAL/P2/` is not compiled. |
 
 ## Code generation runs automatically
@@ -46,7 +45,7 @@ the generator by hand for firmware builds — but see
 [Protocol & code generation](protocol-codegen.md) if you change the schema.
 
 !!! warning "Native vs. Propeller 2"
-    Run `pio test -e native_test` **and** a real `propeller2` build: pointer
+    Run `pio test -e native_test` **and** a real `P2Eval` build: pointer
     sizes and timing differ between the host and the P2, and a change that's
     clean on one can break the other. The emulator runs the P2 image.
 

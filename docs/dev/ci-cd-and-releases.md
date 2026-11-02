@@ -27,12 +27,12 @@ relevant jobs:
 | `firmware-layering` | firmware changed | **Blocking (baseline-gated).** `scripts/check_layering.py` enforces downward-only includes (APP→DEV→IO→Library→HAL→HW); pre-existing violations are frozen in `.layering-baseline`, so it fails only on **new** upward includes |
 | `python-lint` | firmware changed | **Blocking.** `ruff` over the PlatformIO SCons hooks (`Firmware/MaDCore/extra_scripts`; `ruff.toml`, mirrors the Python guide). The ProtoEmb generator is linted in [its own repo's CI](https://github.com/RileyMcCarthy/protoemb) |
 | `firmware-misra` | firmware changed | **Blocking.** `pio check` (cppcheck + MISRA) with `check_severity = medium, high` — low is not reported. Fails CI Gate on any medium/high defect. CERT is not enforced (no cert.py with bundled cppcheck) |
-| `sil-rust` | SIL / firmware / protocol changed | **Blocking.** `make protocol` + the `propeller2_debug` image, then `cargo fmt --check`, `cargo clippy -- -D warnings`, and `cargo test` on the SIL workspace — all three gating. rustfmt covers `mad-emulator` + `models`; the generated `protocol` crate is excluded because `make protocol` rewrites it every build. Generated-codec clippy allows are scoped to the `mod protoemb` declaration in `Protocol/rust/src/lib.rs`, never crate-wide |
-| `build-firmware` | firmware changed, or a firmware tag | Builds `propeller2_debug` and `propeller2` release |
+| `sil-rust` | SIL / firmware / protocol changed | **Blocking.** `make protocol` + the `MaDEdge` image, then `cargo fmt --check`, `cargo clippy -- -D warnings`, and `cargo test` on the SIL workspace — all three gating. rustfmt covers `mad-emulator` + `models`; the generated `protocol` crate is excluded because `make protocol` rewrites it every build. Generated-codec clippy allows are scoped to the `mod protoemb` declaration in `Protocol/rust/src/lib.rs`, never crate-wide |
+| `build-firmware` | firmware changed, or a firmware tag | Builds `P2Eval` and `MaDEdge`, released as `MaD-Firmware-<version>-<board>.bin` |
 | `build-hardware` | hardware changed, or a hardware tag | KiBot → Gerbers, BOM, interactive BOM, 3D models for each board |
 | `vibes` (Behaviour ledger) | every PR | **Informational** (not in `ci-gate.needs`). Diffs the behaviour ledger against the base branch and posts the report as a PR comment; it fails when a behaviour breaks or is removed, but does not block the merge |
 | **`ci-gate`** | **every PR** | **Aggregates all of the above except `vibes`. Fails if any job failed/was cancelled; passes when they succeeded or were legitimately skipped. This is the single required status check (`CI Gate`) on `main`.** |
-| `release-*` | a `firmware-v*` / `hardware-v*` tag | Publishes a GitHub Release with the built artifacts. `release-firmware` then dispatches `pages.yml` on `main`, so `/app/firmware/` serves the new release ([Pages deploy](#pages-deploy-githubworkflowspagesyml)). MaD Control releases are cut by `pages.yml` on `madcontrol-v*` tags. |
+| `release-*` | a `firmware-v*` / `hardware-v*` tag | Publishes a GitHub Release with the built artifacts. `release-firmware` then dispatches `pages.yml` on `main`, so `/app/firmware/` serves the new release (both boards' images) ([Pages deploy](#pages-deploy-githubworkflowspagesyml)). MaD Control releases are cut by `pages.yml` on `madcontrol-v*` tags. |
 
 The PR trigger has **no path filter** — every PR runs at least `changes` + `ci-gate`, so the required `CI Gate` check always reports. Requiring the gate (instead of each job individually) is what keeps path-filtered skips from blocking a PR forever.
 
@@ -206,7 +206,7 @@ cd SIL && cargo fmt -p mad-emulator -p models --check \
        && cargo test --workspace --all-targets
 
 # Firmware static analysis + unit tests + layer rule
-cd Firmware/MaDCore && pio check -e propeller2 --fail-on-defect=medium --fail-on-defect=high && pio test -e native_test
+cd Firmware/MaDCore && pio check -e P2Eval --fail-on-defect=medium --fail-on-defect=high && pio test -e native_test
 python3 Firmware/MaDCore/scripts/check_layering.py Firmware/MaDCore/src
 
 # Python SCons-hook lint (from repo root, ruff.toml is auto-discovered;
