@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import {
   HashRouter,
   NavLink,
@@ -7,7 +7,10 @@ import {
   Route,
   Routes,
   useLocation,
+  useNavigate,
 } from 'react-router-dom';
+import RebootPrompt from './ui/components/RebootPrompt';
+import Modal from './ui/components/Modal';
 import CapabilityGate from './ui/CapabilityGate';
 import DataFolderGate from './ui/DataFolderGate';
 import ErrorBoundary from './ui/ErrorBoundary';
@@ -50,15 +53,16 @@ function useGlobalErrorHandlers(): void {
   }, []);
 }
 
-// Note: the UI deliberately does NOT guard tab-close/reload. The machine runs
+// Note: the UI does not guard tab-close/reload for the MACHINE's sake. It runs
 // tests autonomously from its SD card and is protected by its own hardware
-// e-stop + sensors, so losing the UI is a non-event — the test keeps running and
-// the UI simply reconnects to monitor it. No beforeunload/pagehide interference.
+// e-stop + sensors, so losing the UI is a non-event for a test. The one guard is
+// for the operator's own unsaved editing (`unsavedWork`), and only while there
+// is some.
 
 // Connect is the landing route — keep it eager. The rest (incl. the uPlot-heavy
-// Live/Viewer screens) are code-split so the initial bundle stays lean.
+// Control/Viewer screens) are code-split so the initial bundle stays lean.
 import Connect from './ui/screens/Connect';
-const Live = lazy(() => import('./ui/screens/Live'));
+const Control = lazy(() => import('./ui/screens/Control'));
 const Profiles = lazy(() => import('./ui/screens/Profiles'));
 const Create = lazy(() => import('./ui/screens/Create'));
 const Runs = lazy(() => import('./ui/screens/Runs'));
@@ -155,8 +159,74 @@ function logBoundaryCrash(scope: string) {
 const onShellCrash = logBoundaryCrash('screen');
 const onRootCrash = logBoundaryCrash('root');
 
+/**
+ * Ask before leaving a screen with unsaved work: the browser's own prompt for a
+ * tab close or reload, and a dialog for the sidebar links. HashRouter has no
+ * navigation blocker, so the links are guarded where they are clicked.
+ */
+function useUnsavedGuard() {
+  const unsavedWork = useStore((s) => s.unsavedWork);
+  const setUnsavedWork = useStore((s) => s.setUnsavedWork);
+  const navigate = useNavigate();
+  const [pending, setPending] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!unsavedWork) return undefined;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [unsavedWork]);
+
+  const guard = (to: string) => (e: React.MouseEvent) => {
+    if (!unsavedWork) return;
+    e.preventDefault();
+    setPending(to);
+  };
+
+  const dialog = (
+    <Modal open={pending !== null} title="Unsaved changes" onClose={() => setPending(null)} width={440}>
+      <p>
+        Your {unsavedWork} has changes that are not saved. Leave this page and lose them?
+      </p>
+      <div className="row" style={{ justifyContent: 'flex-end' }}>
+        <button className="primary" onClick={() => setPending(null)} data-testid="unsaved-stay">
+          Stay
+        </button>
+        <button
+          className="danger"
+          data-testid="unsaved-leave"
+          onClick={() => {
+            const to = pending;
+            setPending(null);
+            setUnsavedWork(null);
+            if (to) navigate(to);
+          }}
+        >
+          Leave without saving
+        </button>
+      </div>
+    </Modal>
+  );
+  return { guard, dialog };
+}
+
+const NAV: Array<[string, string]> = [
+  ['/connect', 'Connect'],
+  ['/control', 'Control'],
+  ['/profiles', 'Sample profiles'],
+  ['/create', 'Motion profiles'],
+  ['/runs', 'Test runs'],
+  ['/firmware', 'Firmware'],
+  ['/about', 'About'],
+  ['/settings', 'Settings'],
+];
+
 function Shell() {
   const location = useLocation();
+  const { guard, dialog } = useUnsavedGuard();
   // Navigation breadcrumbs: "what was the user doing" is usually answered by
   // the route trail more directly than by anything else in the log.
   useEffect(() => {
@@ -167,14 +237,11 @@ function Shell() {
       <aside className="sidebar">
         <div className="brand">MaD Control</div>
         <nav className="nav">
-          <NavLink to="/connect">Connect</NavLink>
-          <NavLink to="/live">Live</NavLink>
-          <NavLink to="/profiles">Sample profiles</NavLink>
-          <NavLink to="/create">Motion profiles</NavLink>
-          <NavLink to="/runs">Test runs</NavLink>
-          <NavLink to="/firmware">Firmware</NavLink>
-          <NavLink to="/about">About</NavLink>
-          <NavLink to="/settings">Settings</NavLink>
+          {NAV.map(([to, label]) => (
+            <NavLink key={to} to={to} onClick={location.pathname === to ? undefined : guard(to)}>
+              {label}
+            </NavLink>
+          ))}
         </nav>
         <div className="sidebar-footer">Web Serial · WASM</div>
       </aside>
@@ -195,6 +262,8 @@ function Shell() {
         </ErrorBoundary>
       </main>
       <Toasts />
+      <RebootPrompt />
+      {dialog}
     </div>
   );
 }
@@ -215,7 +284,7 @@ export default function App() {
           <Route element={<Shell />}>
             <Route index element={<Navigate to="/connect" replace />} />
             <Route path="/connect" element={<Connect />} />
-            <Route path="/live" element={<Live />} />
+            <Route path="/control" element={<Control />} />
             {/* Machine configuration now lives within Settings; keep the old
                 path as a redirect for deep links / bookmarks. */}
             <Route path="/config" element={<Navigate to="/settings" replace />} />

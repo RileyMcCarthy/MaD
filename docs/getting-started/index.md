@@ -37,6 +37,6 @@ relies on the Web Serial and File System Access browser APIs. Check the
 4. Open **Firmware** and check the version. A board that has never been
    programmed shows **Connected** but never **Responding** — flash it here
    first.
-5. Watch live data on the **Live** screen, or build and run a test.
+5. Watch live data on the **Control** screen, and run a test from there.
 
 The full, screenshot-led walkthrough is in [For operators](operators.md).

@@ -16,6 +16,12 @@ export interface ExpectedMotion {
  * Reconstruct the expected position-vs-time curve from a run's G-code (sample
  * frame), anchored at `initialPositionMm`. Mirrors the generator's kinematics.
  */
+/** A numeric G-code word's value (e.g. `num('G123 A5 F1', 'F')` → 1), or null. */
+function num(line: string, letter: string): number | null {
+  const m = new RegExp(`(?:^|\\s)${letter}(-?[\\d.]+)`, 'i').exec(line.split(';')[0]);
+  return m ? Number(m[1]) : null;
+}
+
 export function generateExpectedMotion(
   gcode: string[],
   initialPositionMm: number,
@@ -64,6 +70,29 @@ export function generateExpectedMotion(
       time.push(startTime);
       position.push(currentPosition);
       time.push(currentTime);
+      continue;
+    }
+    if (g === 123) {
+      // A cosine from rest where the carriage is (a peak of the wave),
+      // setting off in the direction of A's sign: A amplitude (mm), F
+      // frequency (Hz), C whole cycles.
+      const amp = num(line, 'A') ?? 0;
+      const freq = num(line, 'F') ?? 0;
+      const cycles = Math.round(num(line, 'C') ?? 0);
+      // E: a chirp, sweeping linearly to this frequency across the cycles.
+      const end = num(line, 'E') ?? 0;
+      const endFreq = end > 0 ? end : freq;
+      if (amp !== 0 && freq > 0 && cycles > 0) {
+        const steps = cycles * 64;
+        const span = (2 * cycles) / (freq + endFreq);
+        for (let k = 1; k <= steps; k++) {
+          const t = (k / steps) * span;
+          const turns = freq * t + ((endFreq - freq) * t * t) / (2 * span);
+          position.push(currentPosition + amp * (1 - Math.cos(2 * Math.PI * turns)));
+          time.push(currentTime + t);
+        }
+        currentTime += span;
+      }
       continue;
     }
     if (g === 4 && p !== null) {

@@ -95,11 +95,11 @@ export function resampledPathMm(timeUs, posUm, { dtUs = 50_000, minDeltaUm = 500
 // This is the end-to-end proof that the firmware-native waveform = f(t).
 // Narrow a recorded run down to the COMMANDED WAVEFORM.
 //
-// A waveform run records three segments, and only the middle one is the wave.
-// The driver profiles a move to the UPPER PEAK (a sinusoid can only be joined
-// at rest at a peak), runs the whole cycles peak-to-peak, then profiles a move
-// back to the centre. Around those sits the program's own leading G1 to the
-// mean and a flat tail until teardown.
+// A waveform run records more than the wave. The driver starts the cycles at
+// the centre, catching up with them at its acceleration limit and locking on
+// within a quarter cycle, and brakes onto the centre after the last one.
+// Around that sits the program's own leading G1 to the centre and a flat tail
+// until teardown.
 //
 // None of that is the commanded shape, and it is not a small effect: for
 // WAVE-tri the approach is 5 mm against an 8 mm peak-to-peak, and a properly
@@ -312,9 +312,10 @@ export function assertSineMatch(series, { amplitudeMm, frequencyHz, cycles, cent
     // Vpeak^2/(2*Amax) it loses getting there was integrated into the wave's
     // centre. That is why 0.5-0.8 mm of slop was needed to avoid false alarms.
     //
-    // The driver no longer starts there. It approaches the PEAK, where the
-    // trajectory's own velocity is zero, so there is no deficit to absorb and
-    // nothing systematic left for this to tolerate. Measured across this matrix
+    // The driver still starts there, but its follower closes the POSITION
+    // gap before locking on, so the deficit is made up rather than carried
+    // into the wave's centre, and there is nothing systematic left for this
+    // to tolerate. Measured across this matrix
     // with the anchor now landing on the cycles: 12, 14 and 19 um, against the
     // 535-770 um the old rule allowed.
     //

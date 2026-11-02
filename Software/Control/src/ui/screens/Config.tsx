@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useStore } from '@/store/useStore';
-import { MachineConfiguration } from '@/domain';
+import { MachineConfiguration, NotificationType } from '@/domain';
 import NumberField from '@/ui/components/NumberField';
 import MotorCalibrationPanel from '@/ui/components/MotorCalibrationPanel';
+import { useSavedFlash, useUnsavedWork } from '@/ui/useUnsavedWork';
 
 const NUMERIC_FIELDS: Array<keyof MachineConfiguration> = [
   'Encoder (step/mm)',
@@ -32,7 +33,13 @@ export default function Config({ embedded = false }: { embedded?: boolean }) {
 
   const [draft, setDraft] = useState<MachineConfiguration | null>(null);
   const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
+  const [message, setMessage] = useState<{ text: string; tone: 'ok' | 'error' } | null>(null);
+  const notify = useStore((s) => s.notify);
+  const [justSaved, flashSaved] = useSavedFlash();
+  // Unsaved: the draft differs from what the machine last reported. Only while
+  // connected, since the editor is not shown otherwise.
+  const unsaved = connected && draft !== null && config !== null && JSON.stringify(draft) !== JSON.stringify(config);
+  const { confirmDiscard } = useUnsavedWork('machine configuration', unsaved);
 
   useEffect(() => {
     if (config) setDraft(config);
@@ -50,7 +57,14 @@ export default function Config({ embedded = false }: { embedded?: boolean }) {
     setMessage(null);
     const ok = await saveConfig(draft);
     setSaving(false);
-    setMessage(ok ? 'Saved to device.' : 'Device rejected the configuration.');
+    if (ok) {
+      flashSaved();
+      setMessage({ text: `Written to the machine at ${new Date().toLocaleTimeString()}.`, tone: 'ok' });
+      notify(NotificationType.SUCCESS, 'Machine configuration written to the machine.');
+    } else {
+      setMessage({ text: 'Not saved: the machine rejected the configuration.', tone: 'error' });
+      notify(NotificationType.ERROR, 'Machine configuration was not saved: the machine rejected it.');
+    }
   };
 
   // `embedded` → an <h2> section within a page; standalone → its own <h1> page.
@@ -74,12 +88,32 @@ export default function Config({ embedded = false }: { embedded?: boolean }) {
   return wrap(
     <>
       <div className="row" style={{ marginBottom: 14 }}>
-        <button onClick={() => refreshConfig()}>Read from device</button>
-        <button className="primary" onClick={onSave} disabled={!draft || saving}>
-          {saving ? 'Writing…' : 'Write to device'}
+        <button
+          onClick={() => {
+            if (confirmDiscard()) void refreshConfig();
+          }}
+        >
+          Read from device
         </button>
-        {message && <span className="muted">{message}</span>}
+        <button
+          className={justSaved ? 'ok' : 'primary'}
+          onClick={onSave}
+          disabled={!draft || saving}
+          data-testid="save-machine-config"
+        >
+          {saving ? 'Writing…' : justSaved ? 'Saved ✓' : 'Write to device'}
+        </button>
+        {unsaved && (
+          <span className="badge tone-warn" data-testid="unsaved-badge" title="Write to the device to keep these changes">
+            Unsaved changes
+          </span>
+        )}
       </div>
+      {message && (
+        <p className={message.tone === 'ok' ? 'save-ok' : 'run-error'} style={{ marginTop: 0 }}>
+          {message.text}
+        </p>
+      )}
 
       {draft ? (
         <>

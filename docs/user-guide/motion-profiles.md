@@ -22,22 +22,32 @@ left). You can add and delete sets and moves freely.
 
 | Type | Parameters | What it does |
 |---|---|---|
-| **Linear** | position/distance + velocity | A controlled pull or return. *Absolute* uses a target position; *relative* uses a distance from the current position. |
+| **Linear** | position + velocity | A controlled pull or return to a position. |
 | **Dwell** | time (ms) | Hold position for a fixed time. |
-| **Waveform** | centre, shape, amplitude, frequency, cycles | A repeated oscillation about the centre, for cyclic / fatigue loading. Choose a **sine** or **triangle** traverse. |
+| **Waveform** | a waveform type, then that type's parameters | **Sine:** amplitude, frequency — one cycle that starts and ends at rest where the gantry is, swinging out to twice the amplitude: up first for a positive amplitude, down first for a negative one. **Sigmoid:** position, velocity, acceleration — an S-curve move: like a linear move, but its acceleration rises and falls smoothly instead of switching on and off. **Chirp:** amplitude, start and end frequency, duration — a sine whose frequency sweeps steadily from start to end, for seeing how a material responds across loading rates in one run. The duration is rounded to whole cycles so it ends at rest where it started. |
 
-Each move has an **absolute / relative** selector, which also renames the waveform's centre field: **Centre** is a position when absolute, **Centre offset** a distance from where the machine already is when relative.
+Every position is **absolute**: sample extension in mm, measured from zero length.
 
-For the **Waveform** move, the
-app shows the live **peak velocity** and **duration**, and warns you if it would
-exceed the machine's velocity limit. The machine generates the oscillation
-itself, so long cyclic runs continue unattended.
+**Repeating a sine.** One sine move is one cycle. Put it in a set on its own and
+use the set's **executions** for the number of cycles; back-to-back cycles run
+as one continuous wave. The gantry's position when it starts is the bottom (or,
+for a negative amplitude, the top) of the stroke, so to oscillate around a
+position, first move one amplitude below (or above) it. A back-and-forth at constant speed (a triangle
+wave) is a set of two linear moves, out and back, repeated the same way.
 
-The machine moves to the **top** of the stroke before the first cycle and
-returns to the centre after the last one. That is not padding: an oscillation
-can only be started and stopped at a peak, where its own speed is momentarily
-zero, so those two moves are what let the cycles themselves be exactly the shape
-you asked for. The preview shows them.
+For the **Waveform** move, the app shows the live **peak velocity**, **peak
+acceleration** and **duration**, and warns you if they exceed the machine's
+limits.
+
+A **sine** runs as the machine's own canned cycle, so long cyclic runs continue
+unattended. It is a cosine from rest: starting and ending at a peak, where the
+wave's own speed is zero, means the gantry follows it exactly from the first
+moment, with no extra moves before or after.
+
+A **sigmoid** is sent as a chain of short straight moves whose speeds follow the
+S-curve; the machine carries its speed from one into the next, so it runs as one
+smooth motion. It takes a little longer than a linear move at the same velocity
+and acceleration, because its acceleration builds up gradually.
 
 A waveform the machine cannot physically deliver — too fast for its amplitude,
 say — is **refused** rather than run at a reduced amplitude, so a specimen never

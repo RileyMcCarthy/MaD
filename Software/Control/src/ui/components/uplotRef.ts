@@ -95,24 +95,8 @@ export function growingZeroRange(seedMax?: number): (u: uPlot, min: number, max:
   };
 }
 
-/** Build a uPlot scale `range` fn that keeps the given ref values in view. */
-export function rangeIncluding(refs: RefLine[]): (u: uPlot, min: number, max: number) => [number, number] {
-  const vals = refs.map((r) => r.value).filter((v) => Number.isFinite(v));
-  return (_u, min, max) => {
-    let lo = min;
-    let hi = max;
-    for (const v of vals) {
-      lo = Math.min(lo, v);
-      hi = Math.max(hi, v);
-    }
-    if (lo === hi) hi = lo + 1;
-    const pad = (hi - lo) * 0.05;
-    return [lo - pad, hi + pad];
-  };
-}
-
 /**
- * Like `rangeIncluding`, but snaps the bounds to a "nice" step so the axis
+ * A range that keeps the given ref values in view, snapping the bounds to a "nice" step so the axis
  * labels hold still while live data streams in. A raw padded range moves every
  * frame (pad = 5% of an ever-changing span), which makes the tick labels
  * unreadable; snapped bounds only change when the data actually crosses a step.
@@ -129,5 +113,104 @@ export function stableRange(refs: RefLine[] = []): (u: uPlot, min: number, max: 
     if (hi - lo < 1e-9) hi = lo + 1;
     const step = 10 ** Math.floor(Math.log10((hi - lo) / 2));
     return [Math.floor(lo / step) * step, Math.ceil(hi / step) * step];
+  };
+}
+
+/**
+ * uPlot plugin that shows the values under the cursor in a small box next to
+ * it, alongside a solid vertical line (styled in styles.css). The legend under
+ * the chart carries the same numbers, but reading them there means looking
+ * away from the trace. Each series row uses that series' own `value`
+ * formatter, so the box and the legend always agree.
+ */
+export function cursorTooltipPlugin(opts: { xLabel: string; xDecimals?: number }): uPlot.Plugin {
+  let tip: HTMLDivElement | null = null;
+  const xFmt = fixedDecimals(opts.xDecimals ?? 2);
+  return {
+    hooks: {
+      init: (u: uPlot) => {
+        tip = document.createElement('div');
+        tip.className = 'u-tooltip';
+        tip.style.display = 'none';
+        u.over.appendChild(tip);
+      },
+      setCursor: (u: uPlot) => {
+        if (!tip) return;
+        const { left, top, idx } = u.cursor;
+        if (idx == null || left == null || left < 0 || top == null || top < 0) {
+          tip.style.display = 'none';
+          return;
+        }
+        const rows: HTMLDivElement[] = [];
+        const row = (label: string, value: string, color?: string) => {
+          const r = document.createElement('div');
+          r.className = 'u-tooltip-row';
+          const name = document.createElement('span');
+          name.className = 'u-tooltip-label';
+          if (color) name.style.color = color;
+          name.textContent = label;
+          const val = document.createElement('span');
+          val.className = 'u-tooltip-value';
+          val.textContent = value;
+          r.append(name, val);
+          rows.push(r);
+        };
+        row(opts.xLabel, xFmt(u, u.data[0][idx] ?? null));
+        u.series.forEach((s, i) => {
+          if (i === 0 || s.show === false) return;
+          const v = u.data[i]?.[idx] ?? null;
+          const text =
+            typeof s.value === 'function'
+              ? String(s.value(u, v as number, i, idx))
+              : v == null || !Number.isFinite(v)
+                ? '—'
+                : v.toFixed(3);
+          // uPlot normalises `stroke` to a function once the chart is built.
+          const stroke = typeof s.stroke === 'function' ? s.stroke(u, i) : s.stroke;
+          const color = typeof stroke === 'string' ? stroke : undefined;
+          row(typeof s.label === 'string' ? s.label : `Series ${i}`, text, color);
+        });
+        tip.replaceChildren(...rows);
+        tip.style.display = 'block';
+        // Sit right of the cursor; flip to the left near the right edge.
+        const overW = u.over.clientWidth;
+        const tipW = tip.offsetWidth;
+        const x = left + 14 + tipW > overW ? left - 14 - tipW : left + 14;
+        tip.style.transform = `translate(${Math.max(0, x)}px, ${Math.max(0, Math.min(top, u.over.clientHeight - tip.offsetHeight))}px)`;
+      },
+    },
+  };
+}
+
+/**
+ * uPlot scale `range` that fits the data in view with a little padding, so the
+ * trace fills the chart's height. uPlot hands it the min/max of the points
+ * inside the visible x window, so zooming in on a section also stretches that
+ * section vertically. Limit lines outside the data are not pulled into view.
+ */
+export function fitDataRange(padFraction = 0.05): (u: uPlot, min: number, max: number) => [number, number] {
+  return (_u, min, max) => {
+    if (!Number.isFinite(min) || !Number.isFinite(max)) return [0, 1];
+    const span = max - min || Math.abs(max) * 0.1 || 1;
+    const pad = span * padFraction;
+    return [min - pad, max + pad];
+  };
+}
+
+/**
+ * Hook for a chart that zooms on x by dragging: reports whether the x scale
+ * is narrower than the full data, so the chart can offer a reset button.
+ */
+export function zoomStatePlugin(fullX: [number, number], onZoomed: (zoomed: boolean) => void): uPlot.Plugin {
+  return {
+    hooks: {
+      setScale: (u: uPlot, key: string) => {
+        if (key !== 'x') return;
+        const { min, max } = u.scales.x;
+        if (min == null || max == null) return;
+        const span = fullX[1] - fullX[0] || 1;
+        onZoomed(min > fullX[0] + span * 1e-6 || max < fullX[1] - span * 1e-6);
+      },
+    },
   };
 }

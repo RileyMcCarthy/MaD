@@ -43,7 +43,10 @@ const GOLD = {
   // Derived by hand from the WaveformMove field table in MaDProtocol.yaml
   // (offset/width/scale per field), NOT captured from the encoder -- a golden
   // vector blessed from the thing it guards proves only self-consistency.
-  waveform: [0, 80, 195, 0, 0, 9, 61, 48, 6, 0, 0, 0, 0, 0, 0, 0, 243, 1],
+  // Amplitude is signed (-3000..3000 mm, the direction the wave sets off in), so
+  // it is carried offset by 3000 mm in 26 bits.
+  // A chirp's end frequency follows, 27 bits (0 here: no sweep).
+  waveform: [0, 208, 134, 202, 1, 18, 122, 96, 12, 0, 0, 0, 0, 0, 0, 0, 230, 3, 0, 0, 0],
 };
 
 describe('codec golden byte vectors (frozen — guards the wire format)', () => {
@@ -176,7 +179,7 @@ describe('codec golden byte vectors (frozen — guards the wire format)', () => 
     },
     () => {
       expect(
-        bytes(nu.encodeWaveformMove({ shape: nu.WaveformShape.SINE, amplitude: 5, frequency: 2, cycles: 100, dwellHigh: 0, dwellLow: 0, skewPerMille: 500 })),
+        bytes(nu.encodeWaveformMove({ shape: nu.WaveformShape.SINE, amplitude: 5, frequency: 2, cycles: 100, dwellHigh: 0, dwellLow: 0, skewPerMille: 500 , endFrequency: 0})),
       ).toEqual(GOLD.waveform);
     },
   );
@@ -245,7 +248,7 @@ describe('round-trip within scale precision', () => {
       },
     },
     () => {
-      const v = { shape: nu.WaveformShape.TRIANGLE, amplitude: 12.345, frequency: 0.5, cycles: 1000, dwellHigh: 0, dwellLow: 0, skewPerMille: 500 };
+      const v = { shape: nu.WaveformShape.TRIANGLE, amplitude: 12.345, frequency: 0.5, cycles: 1000, dwellHigh: 0, dwellLow: 0, skewPerMille: 500 , endFrequency: 0};
       const out = nu.decodeWaveformMove(nu.encodeWaveformMove(v));
       expect(out.shape).toBe(nu.WaveformShape.TRIANGLE);
       expect(out.amplitude).toBeCloseTo(12.345, 3);

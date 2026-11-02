@@ -16,7 +16,7 @@ Common issues with the control app and how to resolve them.
 
 | Symptom | Likely cause & fix |
 |---|---|
-| **Jog does nothing** | Motion isn't enabled, or a **restriction** is active (endstop, door, tension). Check the State badges on [Live](live-monitoring.md). |
+| **Jog does nothing** | Motion isn't enabled, or a **restriction** is active (endstop, door, tension). Check the State badges on [Control](live-monitoring.md). |
 | **A move is rejected** | The target is outside the encodable / configured range, or the input was zero/blank. The app blocks out-of-range moves before sending them. |
 | **A fault is shown** | Faults (e.g. `WATCHDOG`, `ESD_*`, `COG`) generally require a machine reboot. See the [faults reference](machine-states.md). |
 

@@ -78,17 +78,17 @@ P2-EC32MB module doesn't bring out. Flash the recommended release over J1 as abo
 
 ## 4. Watch live data
 
-Open **Live**. You'll see real-time readouts (machine and sample force/position),
+Open **Control**. You'll see real-time readouts (machine and sample force/position),
 the machine **state** (faults, restrictions, motion, test), manual **controls**,
 and a live **force & position** chart:
 
-![The Live monitoring screen](../assets/screenshots/02-live.png)
+![The Control screen](../assets/screenshots/02-live.png)
 
 To move the gantry by hand, click **Enable motion**, set a jog distance and
 speed, and use **+ Jog up** / **− Jog down**. You can also **Home**, **Zero
 force**, and **Zero length** here.
 
-[:octicons-arrow-right-24: Live monitoring](../user-guide/live-monitoring.md) ·
+[:octicons-arrow-right-24: Control](../user-guide/live-monitoring.md) ·
 [Manual control](../user-guide/manual-control.md)
 
 ## 5. Set up a test
@@ -111,12 +111,12 @@ A test combines two things:
 
 ## 6. Run it
 
-Open **Test runs**. In the **New test** card, pick your saved sample and motion
-profiles, optionally **Preview G-code**, then click **Run test**. The run appears
-in the **History** table and updates to *completed* on its own when the machine
-finishes:
+Open **Control**. In the **New test** card, pick your saved sample and motion
+profiles, optionally **Preview G-code**, then click **Run test**. The live readouts
+and charts on the same page show the test as it runs, and the card says when the
+machine finishes. Each run is recorded in the **History** table on **Test runs**:
 
-![The Test runs screen with history](../assets/screenshots/06-test-runs.png)
+![The New test card on Control](../assets/screenshots/06-test-runs.png)
 
 !!! warning "The machine is the safety authority"
     MaD runs tests **autonomously from its SD card** and is protected by its own
@@ -127,7 +127,7 @@ finishes:
 
 ## 7. Review the results
 
-Back in **Test runs**, click **Download data** on a finished run to pull the CSV
+Open **Test runs** and click **Download data** on a finished run to pull the CSV
 off the machine, then **View** to see the analysis — force vs time, position
 (actual / setpoint / expected), and a stress–strain curve:
 

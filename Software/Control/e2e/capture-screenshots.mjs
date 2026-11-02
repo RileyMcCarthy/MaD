@@ -53,16 +53,16 @@ const MOTION = {
       name: 'Preload',
       executions: 1,
       moves: [
-        { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 5, distance: 5, time: 0, circularOffset: 0 } },
+        { moveType: 'linear', moveParameters: { position: 5, velocity: 5, time: 0 } },
       ],
     },
     {
       name: 'Cycle',
       executions: 3,
       moves: [
-        { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 10, distance: 20, time: 0, circularOffset: 0 } },
-        { moveType: 'dwell', absoluteOrRelative: 'absolute', moveParameters: { position: 0, velocity: 0, distance: 0, time: 500, circularOffset: 0 } },
-        { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 10, distance: -20, time: 0, circularOffset: 0 } },
+        { moveType: 'linear', moveParameters: { position: 20, velocity: 10, time: 0 } },
+        { moveType: 'dwell', moveParameters: { position: 0, velocity: 0, time: 500 } },
+        { moveType: 'linear', moveParameters: { position: 0, velocity: 10, time: 0 } },
       ],
     },
   ],
@@ -223,7 +223,7 @@ async function main() {
 
   // 2. Live monitoring — real streamed samples; enable motion + jog for movement.
   await safe('live', async () => {
-    await page.goto(`${APP_URL}#/live`);
+    await page.goto(`${APP_URL}#/control`);
     await page.locator('[data-testid="live-combined-chart"] canvas').first().waitFor({ timeout: 12000 });
     const enable = page.getByRole('button', { name: 'Enable motion' });
     if (await enable.count()) await enable.click().catch(() => {});
@@ -270,9 +270,9 @@ async function main() {
     });
   });
 
-  // 5. Test Runs — runner (seeded profiles selectable) + history table.
+  // 5. Test runner (seeded profiles selectable) on Control.
   await safe('test-runs', async () => {
-    await page.goto(`${APP_URL}#/runs`);
+    await page.goto(`${APP_URL}#/control`);
     await page.waitForTimeout(800);
     const runner = page.locator('.panel', { hasText: 'New Test' });
     await runner.locator('select').nth(0).selectOption({ index: 1 }).catch(() => {});

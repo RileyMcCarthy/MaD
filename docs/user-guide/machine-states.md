@@ -1,7 +1,7 @@
 # States, faults & restrictions
 
 The machine reports a state, and — when something is wrong — a fault or a
-restriction. These appear as badges on the [Live](live-monitoring.md) screen.
+restriction. These appear as badges on the [Control](live-monitoring.md) screen.
 This page explains what each one means.
 
 The short version: a **fault** stops everything and usually needs a reboot; a
@@ -64,7 +64,7 @@ as soon as the cause goes away. No reboot needed — just resolve the cause.
 
 ## Where you'll see them
 
-These show up as **State badges** on the [Live](live-monitoring.md) screen —
+These show up as **State badges** on the [Control](live-monitoring.md) screen —
 hover any badge for a short explanation without leaving the screen. There's also
 a separate **Motion** badge that simply reports whether the machine is disabled,
 waiting, or moving.

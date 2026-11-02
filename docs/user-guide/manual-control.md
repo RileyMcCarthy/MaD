@@ -1,10 +1,10 @@
 # Manual control
 
 Manual motion controls live in the **Controls** card on the
-[Live](live-monitoring.md) screen. Use them to position the gantry, home the
+[Control](live-monitoring.md) screen. Use them to position the gantry, home the
 axis, and zero the force gauge and encoder before a test.
 
-![Controls on the Live screen](../assets/screenshots/02-live.png)
+![Controls on the Control screen](../assets/screenshots/02-live.png)
 
 ## Enable motion
 
