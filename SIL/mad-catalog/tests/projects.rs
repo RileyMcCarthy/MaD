@@ -1,13 +1,11 @@
-//! MaD's seven project files hold one machine: `SIL/mad.toml` (the
+//! MaD's six project files hold one machine: `SIL/mad.toml` (the
 //! production firmware booted off the module's flash, a `host-serial` on the
 //! carrier's debug header `J1`, where the machine's Prop Plug sits),
 //! `mad-cosim.toml` (the same with the host's Chrome), `mad-serial-boot.toml`
 //! (the ROM's serial boot, the flash erased, the same host) and
-//! `mad-serial-boot-cosim.toml` (that with the host's Chrome); then
-//! `mad-ic14-fixed-cosim.toml`, `mad-cosim.toml` with the board fix MaD #285
-//! asks for, one wire on the servo isolator `IC14`'s ground, and the two
+//! `mad-serial-boot-cosim.toml` (that with the host's Chrome); then the two
 //! playgrounds, `mad-playground.toml` and `mad-serial-boot-playground.toml`,
-//! the fix's file and the serial boot's with their Chrome headed on the app.
+//! the two Chrome files with their Chrome headed on the app.
 //! Each file is complete on its own, so nothing but this test keeps their
 //! shared lines the same: a supply, a wire or a jumper changed in one file
 //! and not the others fails here, naming the section.
@@ -302,8 +300,8 @@ fn the_serial_boot_file_is_the_flash_boot_with_the_roms_boot() {
     expect!(
         "pi-connector-empty",
         "both files leave the Raspberry Pi's connector J4 empty, no supply and no wire on it",
-        "the Pi's line reaches the carrier's P52 to P55 only, pins the P2-EC32MB module has no \
-         finger for"
+        "the Pi's line reaches the carrier's P29 to P32 only, which the production build's \
+         protocol channel does not use: its channel is on the debug header"
     );
     expect!(
         "entries-identical",
@@ -396,101 +394,9 @@ fn the_serial_boot_file_is_the_flash_boot_with_the_roms_boot() {
     }
 }
 
-/// The lines `twin` adds to `base`: `twin` must be `base` with one run of
-/// lines inserted, or this panics naming the first line that differs.
-fn inserted(base: (&str, &str), twin: (&str, &str)) -> Vec<String> {
-    let (base_name, base_text) = base;
-    let (twin_name, twin_text) = twin;
-    let ours: Vec<&str> = base_text.lines().collect();
-    let theirs: Vec<&str> = twin_text.lines().collect();
-    let head = ours.iter().zip(&theirs).take_while(|(a, b)| a == b).count();
-    let tail = ours[head..]
-        .iter()
-        .rev()
-        .zip(theirs[head..].iter().rev())
-        .take_while(|(a, b)| a == b)
-        .count();
-    assert_eq!(
-        head + tail,
-        ours.len(),
-        "{twin_name} is {base_name} with lines added, and no other change: {base_name} line {} \
-         reads {:?}, {twin_name}'s {:?}",
-        head + 1,
-        ours.get(head),
-        theirs.get(head)
-    );
-    theirs[head..theirs.len() - tail]
-        .iter()
-        .map(|line| (*line).to_string())
-        .collect()
-}
-
-/// The file with the board fix MaD #285 asks for, and the file it fixes.
-const IC14_FIXED: (&str, &str) = ("mad-cosim.toml", "mad-ic14-fixed-cosim.toml");
-
-#[test]
-fn the_ic14_fixed_file_is_the_cosim_file_with_one_wire() {
-    behaviour!(Test {
-        id: "mad-project.ic14-fixed-twin",
-        covers: Some("SIL/mad-ic14-fixed-cosim.toml"),
-        given: "the machine's project file whose host is the host's Chrome, beside its twin for \
-                a carrier with the servo isolator's ground fixed",
-    });
-    expect!(
-        "text-one-block",
-        "the twin is the file word for word with one run of lines added at the end of its \
-         scenario section"
-    );
-    expect!(
-        "one-wire",
-        "the twin's one added entry wires pin 9 of the servo isolator, its drive-side ground, \
-         to the drive side's return",
-        "as drawn, IC14's drive-side ground pins reach only a capacitor, so the isolator \
-         passes nothing to the drive; MaD issue 285's fix puts them on the drive side's return"
-    );
-    expect!(
-        "cites-the-fix",
-        "the added lines name MaD issue 285, the board fix, as the wire's reason"
-    );
-    let (base_name, twin_name) = IC14_FIXED;
-    let (base_text, twin_text) = (read(base_name), read(twin_name));
-    same_but(
-        (base_name, &base_text),
-        (twin_name, &twin_text),
-        &["Scenario"],
-    );
-    let added = inserted((base_name, &base_text), (twin_name, &twin_text));
-    let scenario = sections(&twin_text).pop().expect("the file has sections").1;
-    assert!(
-        scenario.trim_end().ends_with(added.join("\n").trim_end()),
-        "{twin_name}'s added lines end its scenario section: {added:#?}"
-    );
-    assert!(
-        added.iter().any(|line| line.contains("MaD #285")),
-        "{twin_name}'s added lines cite MaD #285: {added:#?}"
-    );
-
-    let (base, mut twin) = (parse(base_name, &base_text), parse(twin_name, &twin_text));
-    assert_eq!(base.get("pin_short"), None, "{base_name} shorts nothing");
-    let shorts = twin
-        .remove("pin_short")
-        .and_then(|shorts| shorts.as_array().cloned())
-        .unwrap_or_else(|| panic!("{twin_name} has [[pin_short]] entries"));
-    let pins: Vec<[Option<&str>; 2]> = shorts
-        .iter()
-        .map(|short| [field(short, "a"), field(short, "b")])
-        .collect();
-    assert_eq!(
-        pins,
-        [[Some("EDGE.IC14.9"), Some("EDGE.J21.8")]],
-        "{twin_name}'s one wire"
-    );
-    assert_eq!(base, twin, "{twin_name} is {base_name} but its wire");
-}
-
 /// The playgrounds, each beside the file it is a headed copy of.
 const PLAYGROUNDS: [(&str, &str); 2] = [
-    ("mad-ic14-fixed-cosim.toml", "mad-playground.toml"),
+    ("mad-cosim.toml", "mad-playground.toml"),
     (
         "mad-serial-boot-cosim.toml",
         "mad-serial-boot-playground.toml",
@@ -506,8 +412,7 @@ fn each_playground_is_its_cosim_file_with_chrome_headed_on_the_app() {
         id: "mad-project.playgrounds",
         covers: Some("SIL/mad-playground.toml"),
         given: "each of the machine's two playground project files, beside the project file it \
-                copies: the board with the servo isolator's ground fixed, and the ROM's serial \
-                boot",
+                copies: the flash boot with the host's Chrome, and the ROM's serial boot",
     });
     expect!(
         "text-but-host",

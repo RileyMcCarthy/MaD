@@ -32,13 +32,11 @@
 //! | `drive_steps_per_mm` | the drive's steps a millimetre of carriage travel, above zero: [`STEPS_PER_MM`] by default. The firmware's machine profile must say the same (`servoStepsPerMM`) |
 //! | `encoder_counts_per_mm` | the encoder's counts a millimetre, above zero: [`STEPS_PER_MM`] by default (`encoderStepsPerMM`). The two differ on a machine whose drive is geared or microstepped apart from its encoder, and the firmware pulses the drive by their ratio |
 //!
-//! On the Edge carrier as drawn, `J20`'s `+` legs have no pull-up and
-//! `JP2`/`JP3` ground the `-` legs for a single-ended encoder, so an
-//! `npn-open-collector` encoder leaves `P9` and `P10` high at every count
-//! and the run reports `U25`'s pairs inside their band (`PairInBand`;
-//! embsim `NODES.md` §20, `board/tests/edge_encoder_pairs.rs`): inferred
-//! from the AM26LV32's datasheet and embsim's model, not yet checked on the
-//! machine.
+//! On the Edge carrier as drawn (v0.3), `R40`-`R42` pull `J20`'s `+` legs
+//! up to `SC_5V` and `JP2`/`JP3`/`JP6` tie the `-` legs to `ENC_REF`, half
+//! of `SC_5V`, so an `npn-open-collector` encoder's quadrature reaches `P9`
+//! and `P10` (`tests/mad.rs`): inferred from the drawing and embsim's
+//! AM26LV32 model, not yet checked on the machine.
 //!
 //! # The switch loops
 //!
@@ -64,9 +62,8 @@
 //! ready, and the inactive level is a sink (inferred from the netlist). The
 //! sink is 0 V behind embsim's stated 25 Ω bench default
 //! ([`DEFAULT_PUSH_PULL_IMPEDANCE`]): no drive datasheet names the output.
-//! `IC14`'s secondary ground pins are on a net of their own on the carrier
-//! as drawn (embsim `board/tests/edgeboard.rs`), so what `P5` reads there is
-//! the board's question, not the machine's.
+//! `IC14`'s secondary ground pins are on `EN_GND` on the carrier as drawn
+//! (`netlists/mad_edge.net`), so `P5` follows `SRDY` (`tests/mad.rs`).
 //!
 //! # The encoder's return
 //!

@@ -439,15 +439,20 @@ Still to do:
   - New: GPO on P31, GPI on P29.
   - The index channel on this board is P12 (Z, channel 4) and P11 (ZI, channel 3).
     The firmware names them the other way round.
-- `SIL/mad-catalog/netlists/mad_edge.net` needs a re-export from these files,
-  together with embsim's `mad_edge` fixture. This changes:
+- embsim's own `mad_edge` fixture (upstream) still needs the same re-export.
+
+Done since (2026-11-01, MaD's SIL):
+
+- `SIL/mad-catalog/netlists/mad_edge.net` re-exported from these files with
+  KiCad 9's `kicad-cli`. This brought in:
   - JP4 removed, JP6 added.
   - Q1 pin order, and R24 = 4.7 kΩ.
   - U25 enables and channel 4.
   - The ENC_REF network.
   - IC2 on P29-P32.
   - The SC_5V loads.
-- SIL tests that assume a JP4 shunt, or Q1 in TO-92 order, need updating.
+  - IC14's GND2 on EN_GND (MaD #299).
+- SIL tests that assumed a JP4 shunt updated.
 
 ## Working with the design
 
