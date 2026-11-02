@@ -19,12 +19,15 @@ import {
   NotificationType,
   FaultedReason,
   RestrictedReason,
+  MIN_FIRMWARE,
+  type FirmwareCompat,
 } from '@/domain';
+import { checkConnectedFirmware } from './firmwareCheck';
 import { pushSample, resetLiveBuffer, seedSamples } from './liveBuffer';
 import { reduceDeviceEvent } from './deviceEventReduce';
 import { logger } from '@/diagnostics/log';
 import { loadToken } from '@/diagnostics/github';
-import { MSG_SAMPLE_PERIOD_MS } from '@/protocol/generated/protoemb';
+import { MSG_SAMPLE_PERIOD_MS, PROTOCOL_VERSION } from '@/protocol/generated/protoemb';
 
 // Numeric readout refresh. 4 Hz is the classic instrument-display rate: fast
 // enough to feel live, slow enough that the digits are actually readable.
@@ -57,6 +60,13 @@ interface AppState {
   config: MachineConfiguration | null;
   sampleProfile: SampleProfile | null;
   firmwareVersion: string | null;
+  /** The protocol version the firmware reported; null when it reported none
+   *  (firmware from before the handshake) or has not been asked yet. */
+  deviceProtocol: number | null;
+  /** Whether this app can drive the connected firmware; null until the
+   *  handshake answers. Survives a disconnect, so the reason to update stays on
+   *  screen until compatible firmware is connected. */
+  firmwareCompat: FirmwareCompat | null;
   notifications: UiNotification[];
 
   /** Reactive mirror of the data folder, restored at startup and kept in sync
@@ -207,6 +217,8 @@ let lastBaud = DEFAULT_BAUD_RATE;
 let userDisconnect = false;
 /** Pending service-worker update applier (set by the PWA layer). */
 let pendingUpdate: (() => void) | null = null;
+/** Counts connections, so a firmware check that outlives its connection is dropped. */
+let connectGeneration = 0;
 
 /** Persisted serial preference so we can auto-reconnect next session. The port
  *  object itself isn't serializable — we re-find it via getPorts() by USB id. */
@@ -342,15 +354,23 @@ function afterConnect(set: SetState, getState: GetState, label: string): void {
   void retryRead(() => deviceClient.readSampleProfile()).then((sampleProfile) => {
     if (sampleProfile) set({ sampleProfile });
   });
-  void retryRead(() => deviceClient.readFirmwareVersion()).then((version) => {
-    if (version) set({ firmwareVersion: version });
+  const generation = connectGeneration;
+  void checkConnectedFirmware({
+    client: deviceClient,
+    read: retryRead,
+    isCurrent: () => generation === connectGeneration,
+    apply: set,
+    appProtocol: PROTOCOL_VERSION,
+    minFirmware: MIN_FIRMWARE,
   });
 }
+
 
 /** Set while a connect runs; see `connect`. */
 let connectInFlight: Promise<void> | null = null;
 
 async function connectOnce(args: ConnectArgs, set: SetState, getState: GetState): Promise<void> {
+  connectGeneration += 1;
   set({ connection: 'connecting', error: null });
   try {
     const port = args.port ?? (await deviceClient.requestPort());
@@ -411,6 +431,8 @@ export const useStore = create<AppState>((set, getState) => ({
   config: null,
   sampleProfile: null,
   firmwareVersion: null,
+  deviceProtocol: null,
+  firmwareCompat: null,
   notifications: [],
   dataFolder: null,
   dataFolderReady: false,
@@ -715,4 +737,5 @@ export function __resetStoreForTests(): void {
   lastBaud = DEFAULT_BAUD_RATE;
   userDisconnect = false;
   pendingUpdate = null;
+  connectGeneration = 0;
 }

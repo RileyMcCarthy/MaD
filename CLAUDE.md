@@ -150,6 +150,12 @@ git tag firmware-v1.0.0 && git push --tags   # Firmware release
 git tag hardware-v1.0.0 && git push --tags   # Hardware release
 ```
 
+**Release order.** MaD Control drives only firmware on its own `protocol_version`
+(the frozen `device_info` handshake). After a bump, release firmware before the
+app: `release.sh --check`/`--publish` refuse until a firmware release speaks the
+app's protocol. `Protocol/scripts/check_protocol_compat.py` (CI) fails a
+wire-incompatible schema change made without a bump.
+
 **Linking issues.** A PR that resolves a filed issue says `Fixes #N` in its
 description (one line per issue), so merging it closes the issue. This includes
 the in-app bug reports titled `[app] …`. A PR that only relates to an issue, or

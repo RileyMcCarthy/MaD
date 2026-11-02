@@ -14,12 +14,14 @@ import {
   validateFirmwareFile,
 } from '@/firmware/portPref';
 import {
+  fetchFirmwareManifest,
   fetchReleaseImage,
-  fetchReleaseManifest,
+  recommendedRelease,
   releaseImageLabel,
-  type FirmwareReleaseManifest,
+  type FirmwareManifestEntry,
 } from '@/firmware/release';
 import { hostingRoot } from '@/hosting';
+import { PROTOCOL_VERSION } from '@/protocol/generated/protoemb';
 
 type Status =
   | { kind: 'idle' }
@@ -28,14 +30,25 @@ type Status =
   | { kind: 'done'; message: string }
   | { kind: 'error'; message: string };
 
-/** The default image: the latest firmware release, served from this origin. */
+/**
+ * The default image: the recommended firmware, the newest release that speaks
+ * this app's protocol, served from this origin.
+ */
 type Release =
   | { kind: 'loading' }
-  | { kind: 'ready'; manifest: FirmwareReleaseManifest }
+  | { kind: 'ready'; manifest: FirmwareManifestEntry }
   | { kind: 'unavailable'; message: string };
+
+/** What the Protocol row says about the connected firmware. */
+function protocolLabel(deviceProtocol: number | null, checked: boolean): string {
+  if (!checked) return '—';
+  return deviceProtocol === null ? 'not reported (firmware from before the protocol check)' : String(deviceProtocol);
+}
 
 export default function Firmware() {
   const fw = useStore((s) => s.firmwareVersion);
+  const deviceProtocol = useStore((s) => s.deviceProtocol);
+  const compat = useStore((s) => s.firmwareCompat);
   const connection = useStore((s) => s.connection);
   const responding = useStore((s) => s.responding);
   const connect = useStore((s) => s.connect);
@@ -62,8 +75,19 @@ export default function Firmware() {
 
   useEffect(() => {
     let live = true;
-    fetchReleaseManifest(hostingRoot(import.meta.env.BASE_URL)).then(
-      (m) => live && setRelease({ kind: 'ready', manifest: m }),
+    fetchFirmwareManifest(hostingRoot(import.meta.env.BASE_URL)).then(
+      (m) => {
+        if (!live) return;
+        const recommended = recommendedRelease(m, PROTOCOL_VERSION);
+        setRelease(
+          recommended
+            ? { kind: 'ready', manifest: recommended }
+            : {
+                kind: 'unavailable',
+                message: `No firmware release speaks this app's protocol (${PROTOCOL_VERSION}) yet.`,
+              },
+        );
+      },
       (err: unknown) =>
         live &&
         setRelease({ kind: 'unavailable', message: err instanceof Error ? err.message : String(err) }),
@@ -73,11 +97,10 @@ export default function Firmware() {
     };
   }, []);
 
-  const useRelease = () => {
+  const clearFile = () => {
     setFile(null);
     setFileError(null);
     if (fileInput.current) fileInput.current.value = '';
-    setStatus({ kind: 'idle' });
   };
 
   /**
@@ -120,15 +143,26 @@ export default function Firmware() {
     }
   };
 
-  const program = async () => {
-    if (!source || !target) return;
+  /**
+   * Program the chosen source, or (`recommended`) the recommended release
+   * whatever file is chosen: the one-click update.
+   */
+  const program = async (use: 'chosen' | 'recommended' = 'chosen') => {
+    const local = use === 'chosen' ? file : null;
+    const chosen = local
+      ? { name: local.name, size: local.size }
+      : manifest
+        ? { name: `${manifest.assetName} (${manifest.tag})`, size: manifest.size }
+        : null;
+    if (!chosen || !target) return;
     // Name the port in the prompt: a wrong target is the expensive mistake, and
     // this is the last point at which the user can catch it.
     const ok = window.confirm(
-      `Write "${source.name}" to the SPI flash of ${target.label}?\n\n` +
+      `Write "${chosen.name}" to the SPI flash of ${target.label}?\n\n` +
         'This replaces the firmware permanently. Do not disconnect until it finishes.',
     );
     if (!ok) return;
+    if (use === 'recommended') clearFile();
 
     // Which port the main session holds, read before anything is awaited.
     const heldPort = deviceClient.heldPort();
@@ -136,8 +170,8 @@ export default function Firmware() {
     // download leaves the live session and the flash as they were.
     let firmware: Uint8Array;
     try {
-      if (file) {
-        firmware = new Uint8Array(await file.arrayBuffer());
+      if (local) {
+        firmware = new Uint8Array(await local.arrayBuffer());
       } else if (manifest) {
         setStatus({ kind: 'downloading', name: manifest.assetName });
         firmware = await fetchReleaseImage(hostingRoot(import.meta.env.BASE_URL), manifest);
@@ -183,6 +217,10 @@ export default function Firmware() {
       : null;
 
   const installed = connected && responding ? (fw ?? 'Unknown') : null;
+  // The firmware cannot be driven by this app (the banner says why); an update
+  // is the way out, so the install button leads.
+  const mismatched = compat?.kind === 'firmwareTooOld' || compat?.kind === 'appTooOld';
+  const updateWanted = compat?.kind === 'firmwareTooOld' || compat?.kind === 'belowMinFirmware';
   const releaseDate = manifest?.publishedAt
     ? new Date(manifest.publishedAt).toLocaleDateString()
     : null;
@@ -200,7 +238,19 @@ export default function Firmware() {
               <td />
             </tr>
             <tr>
-              <td>Latest release</td>
+              <td>Protocol</td>
+              <td data-testid="fw-protocol" className={mismatched ? 'error' : undefined}>
+                {connected && responding ? (
+                  protocolLabel(deviceProtocol, compat !== null)
+                ) : (
+                  <span className="muted">— connect to read</span>
+                )}
+                <span className="muted"> · this app speaks {PROTOCOL_VERSION}</span>
+              </td>
+              <td />
+            </tr>
+            <tr>
+              <td>Recommended</td>
               <td data-testid="fw-latest">
                 {release.kind === 'ready' ? (
                   <>
@@ -208,10 +258,11 @@ export default function Firmware() {
                       {release.manifest.version}
                     </a>
                     {releaseDate && <span className="muted"> · {releaseDate}</span>}
+                    <span className="muted"> · the newest release for protocol {release.manifest.protocolVersion}</span>
                   </>
                 ) : (
                   <span className="muted">
-                    {release.kind === 'loading' ? 'Checking…' : 'Unavailable'}
+                    {release.kind === 'loading' ? 'Checking…' : release.message}
                   </span>
                 )}
               </td>
@@ -227,13 +278,13 @@ export default function Firmware() {
                 ) : manifest ? (
                   <>
                     <strong>{manifest.version}</strong>{' '}
-                    <span className="muted">({releaseImageLabel(manifest.assetName)}, latest release)</span>
+                    <span className="muted">({releaseImageLabel(manifest.assetName)}, recommended release)</span>
                   </>
                 ) : (
                   <span className="muted">
                     {release.kind === 'loading'
-                      ? 'Checking for the latest release…'
-                      : 'No release available — choose a local file.'}
+                      ? 'Checking for the recommended release…'
+                      : 'No recommended release — choose a local file.'}
                   </span>
                 )}
                 {source && !fileError && (
@@ -241,9 +292,15 @@ export default function Firmware() {
                 )}
               </td>
               <td style={{ textAlign: 'right' }}>
-                {file && manifest && (
-                  <button type="button" onClick={useRelease} disabled={busy} data-testid="use-release">
-                    Use latest release
+                {manifest && (
+                  <button
+                    type="button"
+                    className={updateWanted ? 'primary' : undefined}
+                    onClick={() => void program('recommended')}
+                    disabled={busy || !target}
+                    data-testid="install-recommended"
+                  >
+                    Install recommended firmware ({manifest.version})
                   </button>
                 )}{' '}
                 <button
@@ -297,7 +354,7 @@ export default function Firmware() {
 
         <button
           className="primary"
-          onClick={() => void program()}
+          onClick={() => void program('chosen')}
           disabled={!source || !!fileError || !target || busy}
           data-testid="flash-firmware"
           style={{ marginTop: 12 }}

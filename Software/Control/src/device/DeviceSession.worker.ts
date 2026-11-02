@@ -25,6 +25,7 @@ import {
   decodeMachineConfiguration,
   decodeSampleProfile,
   decodeFirmwareVersion,
+  decodeDeviceInfo,
   decodeNotification,
   encodeMachineConfiguration,
   encodeSampleProfile,
@@ -36,6 +37,7 @@ import {
   MSG_READ_MACHINE_CONFIGURATION,
   MSG_READ_FIRMWARE_VERSION,
   MSG_READ_SAMPLE_PROFILE,
+  MSG_READ_DEVICE_INFO,
   MSG_WRITE_MACHINE_CONFIGURATION_WRITE,
   MSG_WRITE_MOTION_ENABLE,
   MSG_WRITE_TEST_RUN,
@@ -49,6 +51,7 @@ import {
   MSG_SAMPLE_PERIOD_MS,
   MSG_STATE_PERIOD_MS,
   STOREDSAMPLE_WIRE_SIZE,
+  DEVICEINFO_WIRE_SIZE,
 } from '@/protocol/generated/protoemb';
 import {
   MachineConfiguration,
@@ -631,6 +634,29 @@ export class DeviceSession {
       const e = await p;
       return (e as Extract<DeviceEvent, { kind: 'firmwareVersion' }>).data.version;
     }, 'readFirmwareVersion');
+  }
+
+  /**
+   * The compatibility handshake: which protocol version the firmware speaks.
+   * Resolves null when the firmware refuses the read (NACK), which is what
+   * firmware from before the handshake does with a command it does not know.
+   * Rejects only when the board does not answer at all.
+   */
+  async readDeviceInfo(): Promise<{ protocolVersion: number } | null> {
+    return this.runOp(async () => {
+      const p = this.waitFor(
+        (e) =>
+          e.kind === 'deviceInfo' ||
+          (e.kind === 'ack' && e.command === MSG_READ_DEVICE_INFO && !e.success),
+        3000,
+        'deviceInfo',
+        MSG_READ_DEVICE_INFO,
+        'read',
+      );
+      this.requestRead(MSG_READ_DEVICE_INFO);
+      const e = await p;
+      return e.kind === 'deviceInfo' ? { protocolVersion: e.data.protocolVersion } : null;
+    }, 'readDeviceInfo');
   }
 
   // ── High-level writes (command → ACK) ──
@@ -1224,6 +1250,10 @@ export class DeviceSession {
         return [{ kind: 'configuration', data: configToShared(decodeMachineConfiguration(payload)) }];
       case MSG_READ_FIRMWARE_VERSION:
         return [{ kind: 'firmwareVersion', data: decodeFirmwareVersion(payload) }];
+      case MSG_READ_DEVICE_INFO:
+        // Frozen and append-only (MaDProtocol.yaml): a firmware from before a
+        // field was appended sends a shorter reply, read as zero-filled.
+        return [{ kind: 'deviceInfo', data: decodeDeviceInfo(zeroFilled(payload, DEVICEINFO_WIRE_SIZE)) }];
       case MSG_READ_SAMPLE_PROFILE:
         return [{ kind: 'sampleProfile', data: sampleProfileToShared(decodeSampleProfile(payload)) }];
       default:
@@ -1545,6 +1575,14 @@ function u8(payload?: number[] | Uint8Array): Uint8Array {
   // serde_bytes makes the wasm hand back a Uint8Array directly (no per-element
   // copy); tolerate a plain number[] too (older build / non-serde_bytes path).
   return payload instanceof Uint8Array ? payload : Uint8Array.from(payload);
+}
+
+/** `payload` padded with zeros to at least `size` bytes; longer payloads unchanged. */
+export function zeroFilled(payload: Uint8Array, size: number): Uint8Array {
+  if (payload.length >= size) return payload;
+  const out = new Uint8Array(size);
+  out.set(payload);
+  return out;
 }
 
 function concatBytes(chunks: Uint8Array[]): Uint8Array {

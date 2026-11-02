@@ -137,6 +137,28 @@ a {
   margin-bottom: 20px;
 }
 
+/* A condition that holds for the whole session (the firmware cannot be driven,
+   or an update is recommended): shown under the status bar on every screen. */
+.banner {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-left-width: 4px;
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 18px;
+}
+
+.banner > span {
+  flex: 1 1 280px;
+}
+
+.banner.error { border-left-color: var(--danger); }
+.banner.warn { border-left-color: var(--warn); }
+
 .dot {
   width: 10px;
   height: 10px;

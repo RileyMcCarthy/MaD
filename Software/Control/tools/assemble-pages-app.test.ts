@@ -12,7 +12,7 @@ import {
   redirectPage,
   releasesFromDir,
 } from './assemble-pages-app.mts';
-import type { Bundled } from './firmwareRelease';
+import type { FirmwareSite } from './firmwareRelease';
 
 /* The assembler is driven the way pages.yml's ZIP_DIR dry run drives it: real
  * mad-control-v*.zip files in a temp folder, unpacked by the real `unzip` into
@@ -69,17 +69,25 @@ function zipOf(files: Record<string, string>): Buffer {
   return Buffer.concat([...locals, dir, end]);
 }
 
-const FIRMWARE: Bundled = {
-  manifest: {
-    tag: 'firmware-v0.13',
-    version: '0.13',
-    assetName: 'MaD-Firmware-0.13-release.bin',
-    size: 4,
-    sha256: 'ab'.repeat(32),
-    publishedAt: '2026-10-18T06:50:07Z',
-    htmlUrl: 'https://example.invalid/r',
-  },
-  image: Buffer.from([1, 2, 3, 4]),
+const LATEST = {
+  tag: 'firmware-v0.14',
+  version: '0.14',
+  assetName: 'MaD-Firmware-0.14-release.bin',
+  size: 4,
+  sha256: 'ab'.repeat(32),
+  publishedAt: '2026-10-18T06:50:07Z',
+  htmlUrl: 'https://example.invalid/r',
+};
+const PER_PROTOCOL = { releases: [{ ...LATEST, protocolVersion: 2, path: 'firmware/MaD-Firmware-0.14-release.bin' }] };
+const FIRMWARE: FirmwareSite = {
+  latest: LATEST,
+  manifest: PER_PROTOCOL,
+  files: new Map([
+    ['firmware/latest.json', Buffer.from(JSON.stringify(LATEST))],
+    ['firmware/latest.bin', Buffer.from([1, 2, 3, 4])],
+    ['firmware/manifest.json', Buffer.from(JSON.stringify(PER_PROTOCOL))],
+    ['firmware/MaD-Firmware-0.14-release.bin', Buffer.from([1, 2, 3, 4])],
+  ]),
 };
 
 // The CLI test starts vite-node, which takes about a second on its own.
@@ -121,7 +129,8 @@ describe('assemble-pages-app', () => {
       expect: {
         'each-in-own-folder': 'each release is unpacked, files intact, into its own version folder under the app folder',
         'others-ignored': 'a zip not named like a released app build is not published',
-        'shared-firmware': 'the latest firmware release is written once, beside the versions, for every version to share',
+        'shared-firmware':
+          'the firmware releases (the newest per protocol, their images, and the newest of all) are written once, beside the versions, for every version to share',
         'retires-old-worker': "a script that removes the old unversioned app's service worker is written at the app folder's root",
       },
     },
@@ -134,8 +143,10 @@ describe('assemble-pages-app', () => {
       expect(readFileSync(join(out, 'v0.4.1/index.html'), 'utf8')).toBe('<p>app 0.4.1</p>');
       expect(readFileSync(join(out, 'v0.4.1/assets/app.js'), 'utf8')).toBe('console.log("0.4.1")');
       expect(existsSync(join(out, 'vsomething-else'))).toBe(false);
-      expect(JSON.parse(readFileSync(join(out, 'firmware/latest.json'), 'utf8'))).toEqual(FIRMWARE.manifest);
+      expect(JSON.parse(readFileSync(join(out, 'firmware/latest.json'), 'utf8'))).toEqual(LATEST);
       expect([...readFileSync(join(out, 'firmware/latest.bin'))]).toEqual([1, 2, 3, 4]);
+      expect(JSON.parse(readFileSync(join(out, 'firmware/manifest.json'), 'utf8'))).toEqual(PER_PROTOCOL);
+      expect([...readFileSync(join(out, 'firmware/MaD-Firmware-0.14-release.bin'))]).toEqual([1, 2, 3, 4]);
       expect(readFileSync(join(out, 'sw.js'), 'utf8')).toMatch(/registration\.unregister\(\)/);
     },
   );

@@ -29,7 +29,7 @@ unions:   { ... }   # optional; MaDProtocol.yaml has none today
 messages: { ... }
 ```
 
-- **`protocol_version`** (int) — emitted as a constant in every target (`PROTOEMB_PROTOCOL_VERSION 1`, verified in `Firmware/.../protoemb.h:18`). It is **not** part of the frame yet (`wire-format.md:84-87`). Bump it when you make a breaking change (see §8).
+- **`protocol_version`** (int) — emitted as a constant in every target (`PROTOEMB_PROTOCOL_VERSION` in C, `PROTOCOL_VERSION` in TS). It is not part of the frame; the firmware reports it in the `device_info` handshake, and MaD Control drives only firmware whose number equals its own. Bump it with every wire-incompatible change (see §8) — CI fails one made without a bump.
 - **`nodes`** — the list of communicating endpoints. For MaD this is `ui` and `madcore`. Each node index becomes a constant (`PROTOEMB_NODE_UI 0U`, `PROTOEMB_NODE_MADCORE 1U`, verified in `protoemb.h:21-22`). Every message's `tx_node` **must** be in this list or validation fails (`generate.py:703-706`).
 - **`defaults`** — global encoding defaults. `encoding: packed` is the project default (`generate.py:303` reads `defaults.encoding`). `byte_order` / `bit_order` / `reserved_bits` are read by the generator (`generate.py:518-519`) but, in practice, **only `encoding` changes generated output today** — `byte_order`/`bit_order` are not emitted as constants in any target, and the wire is hard-coded little-endian / LSB-first by the framing layer and templates. Do not change `byte_order` away from `little_endian` — both frame and payload layers assume LE (`wire-format.md:11`).
 - **`prefix` / `library_name`** — optional library identity (default `ProtoEmb`). MaD relies on the default; the thermostat example overrides it with `prefix: Thermostat` (`examples/thermostat.yaml:5`). A prefix must be a valid identifier (`generate.py:72-76`).
@@ -211,7 +211,11 @@ pub fn build_write_frame_from(source: u8, command: u8, data: &[u8]) -> Vec<u8> {
 
 - **Append, don't reorder/insert.** Enum variant indices, struct field order, and union variant order are all wire-significant. Adding a field/variant at the end is the only change that doesn't shift existing offsets.
 - **Widening a packed field changes its byte size.** Raising an enum's variant count past a power-of-two boundary, or widening a numeric `min`/`max`/`scale` range, can grow the packed struct — a breaking wire change.
-- **Bump `protocol_version`** on any breaking change. Note there is currently **no on-wire version handshake** (`wire-format.md:84-87`), so a version bump is a human/coordination signal: firmware, apps, and SIL must be regenerated and shipped together.
+- **Appending a struct field is breaking too.** Every struct has a fixed wire size, and the generated decoders read exactly that many bytes, so a reader built before the append fails on (or misreads) the longer or shorter payload. Only a **new message** is compatible: firmware that does not know it NACKs it.
+- **Bump `protocol_version`** on any breaking change. The firmware reports the number in the **`device_info` handshake** (READ 5, `DeviceInfo { protocolVersion }`), read by MaD Control on every connect; on a mismatch the app blocks motion and offers the matching firmware (or the latest app, when the firmware is newer). Firmware from before the handshake NACKs the read and counts as too old.
+- **The handshake is frozen.** `device_info`'s command id and `DeviceInfo`'s existing fields never change, with or without a bump: every app must be able to read every firmware's answer. It may only grow by appending, and the app zero-fills a shorter reply.
+- **`Protocol/scripts/check_protocol_compat.py` enforces this** on every PR (`protocol-codegen` job): it compares the schema with the base branch using the generator's own layout sizing, and fails a wire-incompatible change without a bump, or any change to the handshake. Run it locally with `python3 Protocol/scripts/check_protocol_compat.py` (compares with `origin/main`).
+- **Release firmware before the app after a bump.** MaD Control's release check (`release.sh --check`) refuses until a published firmware release speaks its protocol. See `docs/dev/ci-cd-and-releases.md`.
 - `runtime:` block (`max_payload`, `frame_timeout_ms`) is supported by the generator (`generate.py:511`, `:520-521`; defaults 4096 / 100 ms) and is what sizes `PROTOEMB_RUNTIME_MAX_PAYLOAD` / `PROTOEMB_RUNTIME_TIMEOUT_MS` in the C runtime. It is **unused by `MaDProtocol.yaml`** today (no `runtime:` block), so the defaults apply; leave it out unless you have a measured need.
 
 ---
@@ -284,7 +288,7 @@ CI is `.github/workflows/ci.yml`. The `changes` job path filter `protocol:` is `
 |---|---|
 | `wasm-control-ci` | wasm-pack, `npm run generate:proto`, `npm run verify`, diagnostics e2e, schema↔domain lockstep (M12) |
 | `protoemb-ci` | `make test` in ProtoEmb (generator pytest + C/Rust/TS wire conformance + framing/runtime `cargo test`) |
-| `protocol-codegen` | generate C/TS/Rust **twice**, `diff` for byte-reproducibility |
+| `protocol-codegen` | generate C/TS/Rust **twice**, `diff` for byte-reproducibility; on a PR, `check_protocol_compat.py` against the base branch |
 | `sil-rust` | `make protocol` + the `propeller2_debug` image + fmt/clippy/`cargo test` |
 | `embsim-ci` | pinned embsim workspace tests |
 | `firmware-unit-tests` | `pio test -e native_test` (regenerates C via the PlatformIO pre-hook) |
@@ -304,7 +308,8 @@ A **ProtoEmb gitlink** move additionally runs `protoemb-pin-ci`: `make verify` (
 - [ ] `min`/`max` fit the declared type; packed ranges fit allocated bits; fractional `scale` only on `float`.
 - [ ] Nested struct/union shares parent `encoding`.
 - [ ] Message `tx_node` is in `nodes:`; READ/WRITE/DATA `command_id`s don't collide; `response` names a struct; `priority` is `high`/`low`.
-- [ ] Breaking change → `protocol_version` bumped.
+- [ ] Breaking change (including an appended struct field) → `protocol_version` bumped; `python3 Protocol/scripts/check_protocol_compat.py` passes.
+- [ ] `device_info` / `DeviceInfo` untouched (or only appended to).
 - [ ] Ran all three `generate.py` commands — each printed "Schema validation passed".
 - [ ] Ran `verify.sh`; firmware builds (`propeller2_debug`/`native_test`), `cargo build` (SIL), `tsc`/lint (desktop) pass.
 - [ ] Did **not** hand-edit generated code (it is gitignored; CI regenerates). No need to commit `Generated/` / `generated/` trees.

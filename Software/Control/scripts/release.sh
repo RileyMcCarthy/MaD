@@ -11,6 +11,11 @@
 #
 # Protected `main`: bump on a branch with --no-tag, merge the PR, then --publish.
 # Admin shortcut (bypass): on main, `scripts/release.sh patch --push`.
+#
+# Release order: MaD Control drives only firmware on its own protocol_version
+# (Protocol/MaDProtocol.yaml). --check and --publish refuse a release until a
+# published firmware-v* release speaks that protocol, so after a bump the
+# firmware is released first. Both need Software/Control's node_modules.
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -36,6 +41,9 @@ Usage (from repo root or Software/Control):
 
 Protected main: bump on a branch with --no-tag, merge the PR, then --publish.
 Admin shortcut (bypass): on main, scripts/release.sh patch --push.
+
+--check and --publish also require a published firmware release that speaks
+the app's protocol_version: after a protocol bump, release firmware first.
 EOF
 }
 
@@ -46,6 +54,28 @@ pkg_version() {
 pkg_version_at() {
   local ref=$1
   git show "${ref}:Software/Control/package.json" | node -e "let s='';process.stdin.on('data',d=>s+=d);process.stdin.on('end',()=>console.log(JSON.parse(s).version))"
+}
+
+# protocol_version of MaDProtocol.yaml at a git ref.
+protocol_version_at() {
+  local ref=$1
+  git show "${ref}:Protocol/MaDProtocol.yaml" |
+    sed -n 's/^protocol_version:[[:space:]]*\([0-9][0-9]*\)[[:space:]]*$/\1/p'
+}
+
+# The release-order rule: some published firmware must speak the protocol of
+# the commit being released, or the new app would refuse every machine with
+# nothing to update to.
+require_firmware_for_protocol() {
+  local ref=$1
+  local protocol
+  protocol=$(protocol_version_at "$ref")
+  if [[ -z "$protocol" ]]; then
+    echo "error: no protocol_version in Protocol/MaDProtocol.yaml at ${ref}." >&2
+    exit 1
+  fi
+  echo "MaD Control at ${ref} speaks protocol ${protocol}; looking for firmware that does too."
+  (cd "$CONTROL_DIR" && MAD_APP_PROTOCOL="$protocol" npx --no-install vite-node tools/check-firmware-protocol.mts)
 }
 
 require_clean() {
@@ -104,6 +134,7 @@ check() {
     exit 1
   fi
   echo "MaD Control ${pkg} matches tag ${PREFIX}${tag_version}"
+  require_firmware_for_protocol HEAD
 }
 
 publish() {
@@ -120,6 +151,8 @@ publish() {
     echo "Bump first: $0 patch --no-tag" >&2
     exit 1
   fi
+
+  require_firmware_for_protocol origin/main
 
   if git rev-parse "$tag" >/dev/null 2>&1; then
     local existing
