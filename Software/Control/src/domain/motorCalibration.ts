@@ -26,12 +26,13 @@ export const CALIBRATION_POLL_MS = 100;
 export const CALIBRATION_MAX_PULSES = 200_000;
 
 /**
- * Slow, and long enough to measure the ratio well: each run loses a roughly
- * fixed few encoder counts at its ends whatever its length, so on the bench a
- * 1 mm run read 0.2-0.3% short and a 5 mm run under 0.1%.
+ * The check the panel runs; not operator settings. Slow, and long enough to
+ * measure the ratio well: each run loses a roughly fixed few encoder counts at
+ * its ends whatever its length, so on the bench a 1 mm run read 0.2-0.3% short
+ * and a 5 mm run under 0.1%.
  */
-export const CALIBRATION_DEFAULT_DISTANCE_MM = 5;
-export const CALIBRATION_DEFAULT_SPEED_MM_S = 1;
+export const CALIBRATION_CHECK_DISTANCE_MM = 5;
+export const CALIBRATION_CHECK_SPEED_MM_S = 1;
 
 /** A leg is abandoned (motion disabled) once the encoder has moved this many
  *  times the distance the profile expects -- a drive far finer than the
@@ -115,7 +116,7 @@ export const OUTCOME_TEXT: Record<CalibrationOutcome, string> = {
 };
 
 /**
- * Turn the operator's settings into a G124 the machine will run.
+ * Turn the check's settings into a G124 the machine will run.
  *
  * The run is sized in PULSES from the steps/mm being edited (distance x servo
  * steps/mm), then expressed in the machine's millimetres, because the drive
@@ -139,7 +140,7 @@ export function planCalibration(s: CalibrationSettings): CalibrationPlan {
   if (wanted > CALIBRATION_MAX_PULSES) {
     return {
       ok: false,
-      reason: `That is ${wanted} pulses each way; the calibration allows at most ${CALIBRATION_MAX_PULSES}. Use a shorter distance.`,
+      reason: `That is ${wanted} pulses each way; the calibration allows at most ${CALIBRATION_MAX_PULSES}. Check servo steps/mm.`,
     };
   }
   const leg = toMachineMove(wanted, s.device);
