@@ -35,7 +35,7 @@
     "idb-keyval": "^6.3.0",
     "react": "^19.0.0",
     "react-dom": "^19.3.1",
-    "react-router-dom": "^7.18.4",
+    "react-router-dom": "^7.18.5",
     "serialport": "^13.0.0",
     "uplot": "^1.6.31",
     "zustand": "^5.0.16"
@@ -58,7 +58,7 @@
     "jsdom": "^29.1.1",
     "playwright": "^1.64.1",
     "typescript": "^5.9.3",
-    "typescript-eslint": "^8.72.0",
+    "typescript-eslint": "^8.72.1",
     "vite": "^6.4.5",
     "vite-node": "^6.0.0",
     "vite-plugin-istanbul": "^8.0.0",
