@@ -7,7 +7,7 @@
 # clock by embsim's `chrome-cdp` node, its Web Serial port the board's
 # protocol line. The board is the machine's project, SIL/mad-cosim.toml,
 # under `embsim run` (`make e2e`; embsim MIGRATING-MAD.md step 10): the
-# production firmware (pio env propeller2) booted off the P2-EC32MB's
+# production firmware (pio env P2Eval) booted off the P2-EC32MB's
 # flash, the node on the Edge carrier's debug header J1. Every budget in
 # the suite is board time; host time is printed, never asserted. No image,
 # no VM.

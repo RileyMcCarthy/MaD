@@ -308,6 +308,43 @@ describe('firmwareRelease dev server', () => {
 
   behaviour(
     {
+      id: 'firmware-release.dev-serves-board-images',
+      covers: 'tools/firmwareRelease.ts#firmwareRelease',
+      given: 'a latest release carrying a P2Eval image and a MaDEdge image, asked for through the dev server',
+      expect: {
+        'both-listed': 'the release description lists both boards, each with its file name and checksum',
+        'madedge-served': 'the MaDEdge image is answered at its own download path, byte for byte',
+      },
+    },
+    async () => {
+      const MADEDGE = new Uint8Array([9, 8, 7]);
+      const withBoth: GithubRelease = {
+        ...RELEASE,
+        tag_name: 'firmware-v0.15',
+        assets: [
+          { id: 7, name: 'MaD-Firmware-0.15-P2Eval.bin', size: IMAGE.byteLength },
+          { id: 8, name: 'MaD-Firmware-0.15-MaDEdge.bin', size: MADEDGE.byteLength },
+        ],
+      };
+      const fetchFn = vi.fn(async (input: string | URL | Request): Promise<Response> => {
+        const url = String(input);
+        if (url.endsWith('/releases/assets/7')) return new Response(IMAGE);
+        if (url.endsWith('/releases/assets/8')) return new Response(MADEDGE);
+        if (url.includes('/releases?')) return new Response(JSON.stringify([withBoth]));
+        throw new Error(`unexpected fetch ${url}`);
+      });
+      const dev = devServer(plugin(fetchFn));
+      const m = JSON.parse(String((await dev.request('/firmware/latest.json')).res.body));
+      expect(Object.keys(m.boards)).toEqual(['P2Eval', 'MaDEdge']);
+      expect(m.boards.MaDEdge.assetName).toBe('MaD-Firmware-0.15-MaDEdge.bin');
+      expect(m.boards.MaDEdge.sha256).toMatch(/^[0-9a-f]{64}$/);
+      const e = await dev.request('/firmware/latest-MaDEdge.bin');
+      expect([...(e.res.body as Buffer)]).toEqual([...MADEDGE]);
+    },
+  );
+
+  behaviour(
+    {
       id: 'firmware-release.dev-other-paths-pass',
       covers: 'tools/firmwareRelease.ts#firmwareRelease',
       given: 'the dev server asked for paths that are not the release description or image',

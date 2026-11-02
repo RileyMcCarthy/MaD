@@ -38,7 +38,7 @@ export interface FlashWithSessionDeps<P, R> {
  * The session is touched only when it holds the port being flashed (one
  * adapter for both: the machine, whose production build talks on J1, the port
  * it is programmed through). Flashing over a separate programming adapter, as
- * on a bench running the MadEdge build with its protocol on P53/P55, leaves the
+ * on a bench running the MaDEdge build with its protocol on P53/P55, leaves the
  * main connection running. The flash port is always
  * closed afterwards, whatever happened. Once the session has handed its port
  * over, it is always reconnected to that same port (no chooser), even after a

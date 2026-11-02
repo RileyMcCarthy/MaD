@@ -1,8 +1,8 @@
 # MaD SIL Testing - Makefile
 #
 # Commands:
-#   make p2image        - Build the P2 image the ISS executes (propeller2_debug)
-#   make p2image-production - Build the production P2 image (propeller2), the one flash-image lays out
+#   make p2image        - Build the P2 image the ISS executes (MaDEdge)
+#   make p2image-production - Build the production P2 image (P2Eval), the one flash-image lays out
 #   make emulator       - Build the Rust emulator
 #   make test           - Build the image, run the Rust test suite
 #   make playground     - mad-playground.toml under embsim run: the machine, MaD Control in a Chrome window on the board's clock
@@ -45,14 +45,14 @@ FIRMWARE_DIR = ../Firmware/MaDCore
 # build, its MAIN channel on P30/P32 and its log on P62. Those routes put
 # the host straight on the chip's P30/P32 and read the log: the chip on no
 # module and no carrier, so nothing sits between the host and those pins.
-P2_ENV = propeller2_debug
+P2_ENV = MaDEdge
 P2_IMAGE = $(FIRMWARE_DIR)/.pio/build/$(P2_ENV)/program
 # The production build, the project files' route (the user's decision;
 # which image the machine runs is open, SIL/mad.toml's header): its MAIN
 # channel on P62/P63, the carrier's debug header J1, where the Prop Plug
 # sits. The project files' module flash holds it (flash-image), and
 # mad-catalog/tests/mad.rs boots it.
-PRODUCTION_ENV = propeller2
+PRODUCTION_ENV = P2Eval
 PRODUCTION_IMAGE = $(FIRMWARE_DIR)/.pio/build/$(PRODUCTION_ENV)/program
 PROTOEMB_GENERATOR = ../Protocol/ProtoEmb/core/generate.py
 PROTOEMB_SCHEMA = ../Protocol/MaDProtocol.yaml

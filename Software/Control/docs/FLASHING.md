@@ -60,9 +60,13 @@ production hardware **one connection serves both control and programming** —
 the app defaults to reusing the port it is already connected to, and after a
 flash it reconnects to that port at that rate. That is why the Firmware screen's
 default image is the latest release's production build
-(`MaD-Firmware-<version>-release.bin`; `pickFirmwareAsset` in
+(`MaD-Firmware-<version>-P2Eval.bin`; `pickFirmwareAsset` in
 `src/firmware/release.ts`). A release without one offers nothing, and the
-screen offers the newest release that has one.
+screen offers the newest release that has one. When that release also carries a MaDEdge build,
+the screen offers a **Board** choice between the two; P2Eval stays the
+default. The served folder holds `firmware/latest.json`, `firmware/latest.bin`
+(P2Eval, the path every deployed app version reads) and
+`firmware/latest-MaDEdge.bin`.
 
 Two things this does *not* work over:
 
@@ -72,7 +76,7 @@ Two things this does *not* work over:
   P53/P55 out, the link has no reset line.
 - Any USB-serial cable that does not drive `RESn` from DTR.
 
-A debug firmware build (`propeller2_debug`, released as `-madEdge.bin`) moves
+A debug firmware build (`MaDEdge`, released as `-MaDEdge.bin`) moves
 the protocol UART to P53/P55 and puts a debug log on P62/P63, so on a
 two-adapter bench setup the programming port and the control port differ. That
 is what the **Port** control on the Firmware screen is for. The machine itself
@@ -101,15 +105,15 @@ Seeing `Prop_Ver G` proves the DTR reset and the autobaud window both work.
 Then:
 
 ```bash
-MAD_SERIAL=/dev/cu.usbserial-XXXX npm run hw:flash -- --ram   ../../Firmware/MaDCore/.pio/build/propeller2/program
-MAD_SERIAL=/dev/cu.usbserial-XXXX npm run hw:flash -- --flash ../../Firmware/MaDCore/.pio/build/propeller2/program
+MAD_SERIAL=/dev/cu.usbserial-XXXX npm run hw:flash -- --ram   ../../Firmware/MaDCore/.pio/build/P2Eval/program
+MAD_SERIAL=/dev/cu.usbserial-XXXX npm run hw:flash -- --flash ../../Firmware/MaDCore/.pio/build/P2Eval/program
 ```
 
 Note the firmware build artifact is named `program` with no extension; CI
-renames it to `MaD-Firmware-<version>-release.bin` (`propeller2_release`, the
-same build as `propeller2`) and `MaD-Firmware-<version>-madEdge.bin`
-(`propeller2_debug`) for release assets. Releases before 0.13 named the debug
-build `-debug.bin`. The file picker in the UI accepts all of them.
+renames it to `MaD-Firmware-<version>-<board>.bin` for release assets:
+`-P2Eval.bin` and `-MaDEdge.bin`, after the PlatformIO env. Releases up to
+0.14 named them `-release.bin` and `-madEdge.bin` (`-debug.bin` before 0.13);
+the app recognises both namings. The file picker in the UI accepts all of them.
 
 ## In SIL
 

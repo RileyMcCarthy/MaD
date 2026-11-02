@@ -153,7 +153,7 @@ gate is that the reservation table reproduces exactly this finding.
 
 **The route, decided (2026-10-21).** The user's decision: the app reaches the
 firmware over the carrier's debug header J1 (P62/P63, RESn on J1.3), with the
-**production** build (pio env `propeller2`), through a Prop Plug. The app
+**production** build (pio env `P2Eval`), through a Prop Plug. The app
 flashes over J1 (`Software/Control/README.md`, "Firmware flashing", which
 covers flashing only). That build's MAIN channel receives on P63 and
 transmits on P62 at 2,000,000 baud (`HW_pins.h`, `HAL_serial_config.c`),
@@ -181,16 +181,16 @@ well; what this section finds about J4 above held for the carrier before
 v0.3. The production build's MAIN is unchanged, on P62/P63.
 
 **Open: which image the machine runs.** The app as shipped flashes a
-release's madEdge image by default, the `propeller2_debug` build
+release's MaDEdge image by default, the `MaDEdge` build
 (`Software/Control/src/firmware/release.ts`, `pickFirmwareAsset`; the release
 job in `.github/workflows/ci.yml`), whose protocol is on P53/P55 in every
 release so far, which the EC32MB cannot reach (above; P30/P32 since the move
 above); the single-port production build is the
-release's `-release.bin`, which the app flashes only as a local file. The
+release's `-P2Eval.bin`, which the app flashes only as a local file. The
 bench has an FT232R attached, USB `0403:6001`, beside the P2-EVAL's FT231X
 (measured: `ioreg`, 2026-10-21; what the FT232R is wired to is not known);
 `0403:6001` is the id `mad-emulator` gives its host. If the machine runs the
-madEdge image, the route needs revisiting: a released image's protocol reaches
+MaDEdge image, the route needs revisiting: a released image's protocol reaches
 the chip only on a module with fingers for P53/P55, such as the plain P2-EC
 (inferred), and one built since the move reaches it on a v0.3 carrier's J4. If it runs the production image, the app's default asset would
 need changing to match.
