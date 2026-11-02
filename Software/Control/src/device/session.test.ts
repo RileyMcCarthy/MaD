@@ -50,8 +50,12 @@ Object.defineProperty(globalThis, 'navigator', {
   writable: true,
 });
 
-/** What the worker's connect does; a test swaps it to fail the handshake. */
-const remote = vi.hoisted(() => ({ connect: async (): Promise<void> => undefined }));
+/** What the worker's connect does; a test swaps it to fail the handshake.
+ *  `sent` records the motion commands that reached the worker. */
+const remote = vi.hoisted(() => ({
+  connect: async (): Promise<void> => undefined,
+  sent: [] as string[],
+}));
 
 vi.mock('comlink', () => ({
   wrap: () => ({
@@ -59,6 +63,15 @@ vi.mock('comlink', () => ({
     setLogSink: async () => undefined,
     connect: () => remote.connect(),
     disconnect: async () => undefined,
+    setMotionEnabled: async (enabled: boolean) => (remote.sent.push(`motion-enable:${enabled}`), true),
+    emergencyStop: async () => (remote.sent.push('estop'), true),
+    manualMove: async () => (remote.sent.push('jog'), true),
+    openLoopMove: async () => (remote.sent.push('open-loop-move'), true),
+    homeAxis: async () => void remote.sent.push('home'),
+    runTest: async (p: { gcodeId: string; testDataId: string }) => (
+      remote.sent.push('run-test'), { success: true, gcodeId: p.gcodeId, testDataId: p.testDataId }
+    ),
+    streamGcode: async () => (remote.sent.push('stream-gcode'), { success: true }),
   }),
   proxy: <T>(v: T) => v,
   transfer: <T>(v: T) => v,
@@ -166,6 +179,78 @@ describe('DeviceClient worker recovery', () => {
       expect(client.workerCreateCount).toBe(2);
       expect(workers[0].terminated).toBe(true);
       expect(workers[1].terminated).toBe(false);
+    },
+  );
+});
+
+describe('DeviceClient motion block', () => {
+  const run = { gcode: ['G1 X1 F1'], gcodeId: 'g1', testDataId: 't1' };
+
+  behaviour(
+    {
+      id: 'session.motion-block-refuses-movement',
+      covers: 'src/device/session.ts#DeviceClient.setMotionBlock',
+      given: 'motion blocked because the connected firmware speaks another protocol than the app',
+      expect: {
+        'movement-refused':
+          'enabling motion, jogging, an open-loop move, homing, starting a test and sending G-code are all refused without reaching the machine',
+        'reason-given': 'the refused homing, test start and G-code report the reason the block was set with',
+        'stop-still-sent': 'disabling motion and the STOP button still reach the machine',
+      },
+      why: {
+        'movement-refused':
+          'a protocol mismatch means no motion command can be trusted to mean the same thing to the firmware',
+      },
+    },
+    async () => {
+      remote.sent.length = 0;
+      const client = new DeviceClient({ workerFactory: () => new FakeWorker() as unknown as Worker });
+      client.setMotionBlock('firmware too old');
+      expect(await client.setMotionEnabled(true)).toBe(false);
+      expect(await client.manualMove(1, 1)).toBe(false);
+      expect(await client.openLoopMove(1, 1)).toBe(false);
+      await expect(client.homeAxis()).rejects.toThrow('firmware too old');
+      expect(await client.runTest(run)).toEqual({
+        success: false,
+        gcodeId: 'g1',
+        testDataId: 't1',
+        error: 'firmware too old',
+      });
+      expect(await client.streamGcode('G1 X1')).toEqual({ success: false, error: 'firmware too old' });
+      expect(client.motionBlockReason()).toBe('firmware too old');
+      expect(await client.setMotionEnabled(false)).toBe(true);
+      expect(await client.emergencyStop()).toBe(true);
+      expect(remote.sent).toEqual(['motion-enable:false', 'estop']);
+    },
+  );
+
+  behaviour(
+    {
+      id: 'session.motion-block-cleared',
+      covers: 'src/device/session.ts#DeviceClient.setMotionBlock',
+      given: 'a motion block that is then cleared, as when compatible firmware is connected',
+      expect: { 'movement-sent': 'every motion command reaches the machine again' },
+    },
+    async () => {
+      remote.sent.length = 0;
+      const client = new DeviceClient({ workerFactory: () => new FakeWorker() as unknown as Worker });
+      client.setMotionBlock('firmware too old');
+      client.setMotionBlock(null);
+      expect(client.motionBlockReason()).toBeNull();
+      await client.setMotionEnabled(true);
+      await client.manualMove(1, 1);
+      await client.openLoopMove(1, 1);
+      await client.homeAxis();
+      await client.runTest(run);
+      await client.streamGcode('G1 X1');
+      expect(remote.sent).toEqual([
+        'motion-enable:true',
+        'jog',
+        'open-loop-move',
+        'home',
+        'run-test',
+        'stream-gcode',
+      ]);
     },
   );
 });

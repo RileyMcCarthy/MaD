@@ -5,43 +5,40 @@
 # on the carrier's connectors, and a host on a serial line (embsim
 # MIGRATING-MAD.md sections 1 and 4).
 #
-# Eight files share every line but how the module boots, which host sits
-# where, one wire and one stop; mad-catalog/tests/projects.rs holds them to
-# it:
+# Seven files share every line but how the module boots, which host sits
+# where, and one stop; mad-catalog/tests/projects.rs holds them to it:
 #
 #   file                             the module boots        the host
 #   mad.toml                         the firmware off flash  host-serial on J1
 #   mad-cosim.toml                   the firmware off flash  chrome-cdp on J1
-#   mad-ic14-fixed-cosim.toml        mad-cosim.toml with IC14's fix, one wire
 #   mad-playground.toml              that file, its Chrome headed on the app
-#   mad-hard-stop-cosim.toml         mad-ic14-fixed-cosim.toml with a hard
-#                                    stop, one option of the machine's
+#   mad-hard-stop-cosim.toml         mad-cosim.toml with a hard stop, one
+#                                    option of the machine's
 #   mad-serial-boot.toml             the ROM's serial boot,  host-serial on J1
 #                                    its flash erased
 #   mad-serial-boot-cosim.toml       the ROM's serial boot   chrome-cdp on J1
 #   mad-serial-boot-playground.toml  that file, its Chrome headed on the app
 #
-# All but the IC14 fix's three keep the carrier as drawn, where IC14, the
-# isolator between the processor and the servo drive, passes nothing (MaD
-# #285; the fix is the last entry of its file). The e2e runs mad-cosim.toml,
-# mad-ic14-fixed-cosim.toml for the scenarios that move the carriage, and
-# mad-hard-stop-cosim.toml for SERVO-stall, which drives the carriage into
-# its stop; the playgrounds are for a person (SIL/makefile).
+# Every file takes the carrier as drawn: the Edge carrier v0.3 schematic
+# (mad-catalog/netlists/mad_edge.net, its header says what it holds). The
+# e2e runs mad-cosim.toml, the scenarios that move the carriage with the
+# rest, and mad-hard-stop-cosim.toml for SERVO-stall, which drives the
+# carriage into its stop; the playgrounds are for a person (SIL/makefile).
 #
 # J1 is the carrier's debug header, where the machine's Prop Plug sits. The
 # route is the user's decision (2026-10-21): the host on J1 and the
-# production build (pio env propeller2), whose MAIN channel, the protocol,
+# production build (pio env P2Eval), whose MAIN channel, the protocol,
 # is on P62/P63, the pins J1 carries. The app flashes the firmware over J1
 # (Software/Control/README.md, "Firmware flashing").
 #
 # Open, for the user: which image the machine runs. By default the app
-# flashes a release's madEdge image, the propeller2_debug build, whose
+# flashes a release's MaDEdge image, the MaDEdge build, whose
 # protocol is on P53/P55, pins the P2-EC32MB has no finger for, in every
 # release so far (the build has it on P30/P32 since the Edge v0.3 pin
 # move) (read:
 # Software/Control/src/firmware/release.ts, pickFirmwareAsset; .github/
 # workflows/ci.yml, the release's two images). The production build is the
-# release's -release.bin, which the app flashes only as a local file.
+# release's -P2Eval.bin, which the app flashes only as a local file.
 #
 #   cd SIL && make flash-image sd-image check
 #
@@ -75,7 +72,7 @@ kind = "p2"
 core = "mad-p2iss"
 
 # The module's flash, erased: no image. The app's flasher writes the
-# production firmware (pio env propeller2) into it through the ROM's serial
+# production firmware (pio env P2Eval) into it through the ROM's serial
 # loader; that build's MAIN channel receives on P63 and transmits on P62
 # (Firmware/MaDCore/src/HAL/Include/HW_pins.h, HW_PIN_MAIN_RX/TX), the
 # pins J1 carries.
@@ -111,7 +108,8 @@ kind = "mad-machine"
 sample = "sil-linear-reference"
 # rs422, the default: each channel a pair, what J20 and U25 are designed
 # for. npn-open-collector is the machine's real encoder (a Taiss 600 P/R),
-# which this carrier cannot read; mad-catalog/tests/mad.rs runs that case.
+# which the carrier reads with JP2 and JP3 closed (R40 and R41 pull the +
+# legs up); mad-catalog/tests/mad.rs runs that case.
 encoder_output = "rs422"
 
 # ---- The host ---------------------------------------------------------------
@@ -177,8 +175,9 @@ to = "EDGE.J2.2"
 volts = 0.0
 
 # SC_5V, the servo side's 5 V: IC14's isolated side (VCC2), the line driver
-# U24, the line receiver U25, IC16's primary (VCC1) and R25, the ready
-# output's pull-up. Nothing on the carrier makes it (read: mad_edge.net;
+# U24, the line receiver U25, IC16's primary (VCC1), R25, the ready
+# output's pull-up, R40-R42, the encoder's A+, B+ and Z+ pull-ups, and R43,
+# the top of ENC_REF's divider. Nothing on the carrier makes it (read: mad_edge.net;
 # embsim board/tests/edgeboard.rs, the domains a bare carrier reports), so
 # it comes in on J21; that the drive's cable brings it is inferred.
 [[wire]]
@@ -186,8 +185,8 @@ from = "BENCH.SERVO5V"
 to = "EDGE.J21.1"
 volts = 5.0
 
-# EN_GND, the servo side's return, on J21.8 (J21.9, J20.5 and the B pads of
-# JP2-JP5 are the same net).
+# EN_GND, the servo side's return, on J21.8 (J21.9, J20.5 and J25.3 are the
+# same net, and so are IC14's side-2 ground pins).
 [[wire]]
 from = "BENCH.SERVOGND"
 to = "EDGE.J21.8"
@@ -229,12 +228,11 @@ to = "DS2.J2.2"
 volts = 0.0
 
 # Nothing on J4, the Raspberry Pi's connector: no supply and no wire. The
-# host is on J1 (below), and the Pi's line could not reach the firmware on
-# this module: J4's RPI_RX and RPI_TX go only to the isolator IC2, whose
-# carrier side is on P52-P55 (read: mad_edge.net), and the P2-EC32MB has
-# no finger for those pins (the module in its socket, above). The
-# production firmware does not use them (HAL_serial_config.c). IC2's Pi
-# side (RPI_5V, RPI_GND) is left unpowered, as it is with no Pi seated.
+# host is on J1 (below). J4's RPI_RX and RPI_TX go only to the isolator
+# IC2, whose carrier side is on P29-P32 (read: mad_edge.net); the
+# production firmware does not use those pins, the debug build's MAIN
+# channel does (HAL_serial_config.c). IC2's Pi side (RPI_3V3, RPI_GND) is
+# left unpowered, as it is with no Pi seated.
 
 # ---- The host's wires -------------------------------------------------------
 
@@ -329,10 +327,9 @@ to = "EDGE.J20.4"
 from = "MACHINE.ENC_GND"
 to = "EDGE.J20.5"
 
-# No wire on ZI+ and ZI- (J20.9, J20.10), U25's third pair: the machine's
-# encoder has no index. An open pair rests at U25's own input bias, its
-# fail-safe high. J20.7 and J20.8 (Z+, Z-) are U25's enables G and ~G, set
-# by JP4 (the scenario, below).
+# No wire on Z+, Z-, ZI+ or ZI- (J20.7-J20.10), U25's fourth and third
+# pairs: the machine's encoder has no index. An open pair rests at U25's
+# own input bias, its fail-safe high; R42 pulls Z+ up to SC_5V besides.
 
 # The switch loops. Each loop's pin 2 is its + (the current regulator's
 # anode), pin 1 its - (the opto LED's cathode); the carrier powers no loop.
@@ -497,15 +494,11 @@ part = "EDGE.JP1"
 pole = 0
 state = "closed"
 
-# JP2, JP3 and JP5 (A_GND, B_GND, ZI_GND) stay open: they ground A-, B- and
-# ZI- for a single-ended encoder, and the machine's encoder drives both legs
-# of each pair (encoder_output = "rs422").
-
-# JP4, Z_GND: Z-, U25's active-low enable ~G, to EN_GND, so the receiver's
-# outputs are enabled with nothing on Z+ (its G).
-[[jumper]]
-part = "EDGE.JP4"
-state = "closed"
+# JP2, JP3, JP6 and JP5 (A_REF, B_REF, Z_REF, ZI_REF) stay open: they tie
+# A-, B-, Z- and ZI- to ENC_REF, half of SC_5V (R43, R44), for a
+# single-ended or open-collector encoder, and the machine's encoder drives
+# both legs of each pair (encoder_output = "rs422"). U25's enables are tied
+# on in the drawing (G to SC_5V, ~G to EN_GND), so no jumper sets them.
 
 # The add-on's JP1 and JP2: the bridge's A0 and A1 to the converter's AIN0
 # and AIN1 (R6 and R7, the alternative, are not fitted).

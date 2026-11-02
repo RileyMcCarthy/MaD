@@ -5,6 +5,7 @@ import {
   FaultedReason,
   JOG_INCREMENTS_MM,
   NotificationType,
+  blocksMotion,
   formatJogIncrementLabel,
   isSelectedJogIncrement,
 } from '@/domain';
@@ -52,6 +53,9 @@ export default function Live() {
   const zeroForce = useStore((s) => s.zeroForce);
   const zeroLength = useStore((s) => s.zeroLength);
   const testRunning = useStore((s) => Boolean(s.machineState?.testRunning));
+  // The store explains a jog refused for the firmware itself; the toast below
+  // is for a jog the machine turned down.
+  const firmwareBlocks = useStore((s) => blocksMotion(s.firmwareCompat));
   // No state frame yet (fresh connect, or a reconnect reset it to null) means
   // the machine's condition is UNKNOWN — which must never be collapsed into a
   // safe-sounding default. `Boolean(state?.testRunning)` reads unknown as "no
@@ -74,7 +78,7 @@ export default function Live() {
       return;
     }
     const ok = await manualMove(mm, jogSpeed);
-    if (!ok) notify(NotificationType.WARN, 'Jog was rejected by the machine.');
+    if (!ok && !firmwareBlocks) notify(NotificationType.WARN, 'Jog was rejected by the machine.');
   };
 
   if (!connected) {
@@ -140,7 +144,8 @@ export default function Live() {
           >
             {motion ? motion.label : 'Motion …'}
           </button>
-          <button onClick={() => homeAxis()} disabled={manualBlocked} title="Homes the axis (G28)">Home</button>
+          {/* A refused Home rejects; the store has already said why in a toast. */}
+          <button onClick={() => void homeAxis().catch(() => undefined)} disabled={manualBlocked} title="Homes the axis (G28)">Home</button>
           <button onClick={() => zeroForce()} disabled={manualBlocked}>Zero force</button>
           <button onClick={() => zeroLength()} disabled={manualBlocked}>Zero length</button>
         </div>

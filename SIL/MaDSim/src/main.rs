@@ -49,7 +49,7 @@ struct Args {
     #[arg(long, default_value = "info")]
     log_level: String,
 
-    /// The P2 image to execute: `propeller2_debug`'s `program`.
+    /// The P2 image to execute: `MaDEdge`'s `program`.
     #[arg(value_name = "IMAGE")]
     image: PathBuf,
 

@@ -6,7 +6,7 @@
 //! The boot is a project of the P2-EC32MB module alone: powered from its
 //! `J203` fingers as a carrier powers them, `S301` positions 2 (FLASH) and 4
 //! (the `P59` pull-down) closed, the module's flash holding stage-1 and the
-//! `propeller2_debug` program as `make flash-image` lays them out (the same
+//! `MaDEdge` program as `make flash-image` lays them out (the same
 //! command, `embsim flash-image`, run in process), and a `host-serial` at
 //! the firmware's console rate on the debug-transmit finger, `J203.50`
 //! (`P62/PRG_DBG_TXD`). `embsim run` runs it stepped for the boot's time,
@@ -14,7 +14,7 @@
 //! chain under it is `p2iss/tests/ec32mb_flash_boot.rs`'s; this is that boot
 //! said by a project file.
 //!
-//! It keeps the `propeller2_debug` image while `SIL/mad.toml` boots the
+//! It keeps the `MaDEdge` image while `SIL/mad.toml` boots the
 //! production one (`tests/mad.rs`): it is `ec32mb_flash_boot.rs`'s boot, which
 //! runs that image, said by a project file, and the debug build writes its
 //! log on `P62` for the whole run. The console case passes with the
@@ -27,7 +27,7 @@
 //!
 //! Stepped: `run` holds the virtual clock and advances it only while it
 //! waits, so the report is the board's time and state. The boot skips,
-//! saying why, when the `propeller2_debug` image is absent (`make p2image`),
+//! saying why, when the `MaDEdge` image is absent (`make p2image`),
 //! as the `p2iss` suites that run the firmware do; `MAD_REQUIRE_P2_IMAGE`
 //! turns the skip into a failure. The seating cases need no image and no
 //! clock: a survey builds nothing.
@@ -289,7 +289,7 @@ kind = "p2"
 [board.model.options]
 core = "mad-p2iss"
 
-# Stage-1 and the propeller2_debug program, laid out by `embsim flash-image`.
+# Stage-1 and the MaDEdge program, laid out by `embsim flash-image`.
 [[board.model]]
 value = "SPI Flash 16MB (128Mb)"
 kind = "w25q128jv"
@@ -297,7 +297,7 @@ kind = "w25q128jv"
 pins = "by-function"
 image = "flash.bin"
 
-# The firmware's debug console: flexspin's printf on P62, at the propeller2
+# The firmware's debug console: flexspin's printf on P62, at the P2Eval
 # environment's monitor_speed.
 [[component]]
 name = "HOST"
@@ -354,24 +354,24 @@ const STAGE1_NS_PER_BYTE: u64 = 4_000;
 /// (measured).
 const FIRST_LINE_NS: u64 = 100_000_000;
 
-/// The firmware's console rate: the `propeller2` environment's
+/// The firmware's console rate: the `P2Eval` environment's
 /// `monitor_speed`.
 const CONSOLE_BAUD: f64 = 230_400.0;
 
-/// The `propeller2_debug` program: `MAD_P2_IMAGE` names a copy kept out of
+/// The `MaDEdge` program: `MAD_P2_IMAGE` names a copy kept out of
 /// `.pio` (the ledger job's), else the build's own.
 fn image_path() -> PathBuf {
     let p = std::env::var_os("MAD_P2_IMAGE").map_or_else(
         || {
             PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../../Firmware/MaDCore/.pio/build/propeller2_debug/program")
+                .join("../../Firmware/MaDCore/.pio/build/MaDEdge/program")
         },
         PathBuf::from,
     );
     if !p.exists() && std::env::var_os("MAD_REQUIRE_P2_IMAGE").is_some() {
         panic!(
             "MAD_REQUIRE_P2_IMAGE is set but the P2 image is missing at {}. \
-             Build it with `make p2image` (or `cd Firmware/MaDCore && pio run -e propeller2_debug`).",
+             Build it with `make p2image` (or `cd Firmware/MaDCore && pio run -e MaDEdge`).",
             p.display()
         );
     }

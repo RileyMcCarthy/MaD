@@ -16,7 +16,7 @@ cp -R SIL/p2core /tmp/p2char && cd /tmp/p2char
 patch -p0 < .../p2core-instrumentation.patch      # paths are lib.rs-relative
 cp .../characterize.rs examples/
 cargo run --release --example characterize -- \
-    ../../Firmware/MaDCore/.pio/build/propeller2_debug/program 200000000
+    ../../Firmware/MaDCore/.pio/build/MaDEdge/program 200000000
 ```
 
 ## QEMU half — what an invalidation costs

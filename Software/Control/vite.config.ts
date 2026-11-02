@@ -70,9 +70,26 @@ export default defineConfig({
       },
       workbox: {
         // The wasm + worker assets must be precached for offline use.
-        // So is the bundled firmware release, so an offline update still works.
-        globPatterns: ['**/*.{js,css,html,wasm,svg}', 'firmware/latest.{json,bin}'],
+        // So are bundled firmware releases, so an offline update still works.
+        globPatterns: ['**/*.{js,css,html,wasm,svg}', 'firmware/*.{json,bin}'],
         maximumFileSizeToCacheInBytes: 8 * 1024 * 1024,
+        // On Pages the firmware is not in this release's bundle: one folder
+        // beside every release serves it (tools/assemble-pages-app.mts), outside
+        // what this build can precache. Keep what the app fetches from it: the
+        // list fresh when online, each image (named by its release) once.
+        // src/pwa.ts fetches the recommended image at startup to fill this.
+        runtimeCaching: [
+          {
+            urlPattern: ({ url, sameOrigin }) => sameOrigin && url.pathname.endsWith('/firmware/manifest.json'),
+            handler: 'NetworkFirst',
+            options: { cacheName: 'mad-firmware-manifest' },
+          },
+          {
+            urlPattern: ({ url, sameOrigin }) => sameOrigin && /\/firmware\/[^/]+-release\.bin$/.test(url.pathname),
+            handler: 'CacheFirst',
+            options: { cacheName: 'mad-firmware-images', expiration: { maxEntries: 4 } },
+          },
+        ],
         // Don't hijack the open page; the new SW waits until we apply it.
         skipWaiting: false,
         clientsClaim: false,

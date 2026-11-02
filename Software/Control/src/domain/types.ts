@@ -96,6 +96,11 @@ export interface FirmwareVersion {
   version: string;
 }
 
+/** The compatibility handshake's reply: the protocol version the firmware speaks. */
+export interface DeviceInfo {
+  protocolVersion: number;
+}
+
 /** Position-vs-time waveform shapes for a "math" move (host-expanded to G1
  *  segments). Both are continuous and start/end at the centre over whole cycles
  *  (so they begin smoothly from the current position). */

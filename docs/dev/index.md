@@ -72,8 +72,8 @@ running SIL; PlatformIO only if you're building firmware.
 
     ```bash
     cd Firmware/MaDCore
-    pio run -e propeller2          # build
-    pio run -e propeller2 -t upload  # flash
+    pio run -e P2Eval          # build
+    pio run -e P2Eval -t upload  # flash
     ```
 
 ## Deep dives

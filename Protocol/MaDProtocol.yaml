@@ -1,3 +1,11 @@
+# The firmware reports this number (device_info) and MaD Control drives only
+# firmware whose number equals its own. Bump it with any change to the wire
+# layout of an existing message: a struct field added, removed, reordered or
+# retyped, an enum variant removed or reordered, a command id moved. Every
+# struct has a fixed wire size, so appending a field is a breaking change.
+# Protocol/scripts/check_protocol_compat.py fails CI on such a change without a
+# bump. After a bump, release firmware before MaD Control: the app's release
+# check refuses to publish until a firmware release speaks its protocol.
 protocol_version: 2
 
 nodes:
@@ -439,6 +447,19 @@ structs:
         type: string
         max_length: 16
 
+  # FROZEN: the compatibility handshake. Every MaD Control, past and future,
+  # reads this struct to decide whether it can talk to the firmware at all, so
+  # its layout can never change with protocol_version. Never remove, reorder
+  # or retype a field; append only, and an app must zero-fill a reply shorter
+  # than its own DEVICEINFO_WIRE_SIZE (Software/Control readDeviceInfo).
+  # Protocol/scripts/check_protocol_compat.py enforces this.
+  DeviceInfo:
+    encoding: aligned
+    description: "What the firmware speaks: the protocol_version it was generated from"
+    fields:
+      - name: protocolVersion
+        type: uint32
+
   TestRun:
     encoding: aligned
     description: "Test run command — references uploaded G-code and assigns test data ID"
@@ -497,6 +518,15 @@ messages:
     command_id: 4
     priority: high
     response: SampleProfile
+
+  # FROZEN: the compatibility handshake (see DeviceInfo). Its command_id and
+  # response never change. Firmware from before it NACKs the read, which the
+  # app treats as too old to drive.
+  device_info:
+    tx_node: ui
+    command_id: 5
+    priority: high
+    response: DeviceInfo
 
   # ── Commands (UI transmits; ACK/NACK unless response provided) ──
   machine_configuration_write:

@@ -10,20 +10,19 @@ the virtual serial port exactly as it would to a real board.
 
 Two systems run it:
 
-- **The machine's project files** (`SIL/mad.toml` and its twins, under
+- **The machine's project files** (`SIL/mad.toml` and the others, under
   `embsim run`): the Edge carrier and the P2-EC32MB module from their
   netlists, the ISS as the module's processor booting the production image
-  (`pio run -e propeller2`) off the module's flash, the DS2 add-on and the
+  (`pio run -e P2Eval`) off the module's flash, the DS2 add-on and the
   machine on the carrier's connectors, the host on the carrier's debug header
   `J1`. The e2e suite runs here (`make e2e`, on `mad-cosim.toml`); so do the
-  scenarios that move the carriage, on `mad-ic14-fixed-cosim.toml`, the
-  board with MaD #285 fixed (`make e2e-motion`; as drawn, the isolator
-  `IC14` passes nothing to the drive), SERVO-stall, on that board with a
-  hard stop on its carriage, `mad-hard-stop-cosim.toml` (`make e2e-stall`,
-  MaD #298), FW-ISS, the app's flasher against the mask ROM, on
-  `mad-serial-boot-cosim.toml` (`make e2e-rom`), the playgrounds, on headed
-  copies (`make playground`, `playground-rom`), and `mad-catalog`'s tests.
-- **`mad-emulator`** (`SIL/MaDSim`): the debug image (`propeller2_debug`) on
+  scenarios that move the carriage, on the same file (`make e2e-motion`),
+  SERVO-stall, on that file with a hard stop on its carriage,
+  `mad-hard-stop-cosim.toml` (`make e2e-stall`, MaD #298), FW-ISS, the
+  app's flasher against the mask ROM, on `mad-serial-boot-cosim.toml`
+  (`make e2e-rom`), the playgrounds, on headed copies (`make playground`,
+  `playground-rom`), and `mad-catalog`'s tests.
+- **`mad-emulator`** (`SIL/MaDSim`): the debug image (`MaDEdge`) on
   the bare chip, the bench wired by hand, the host on `P30`/`P32`. No make
   target or CI job runs it since SERVO-stall moved onto a project, and it
   retires (MaD #298; embsim `MIGRATING-MAD.md` step 11).

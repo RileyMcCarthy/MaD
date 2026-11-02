@@ -35,14 +35,12 @@ they are guarded today. Update it when you add a new class or close a gap.
 | **Host reliability (worker / storage)** | poisoned WASM; index drop under concurrent write | `session.test.ts` crash fanout + recreate; `DataStore.test.ts` mutex + rebuildIndex | **M7** sessionPolicy; single-in-flight op mutex |
 
 **Where the WASM e2e guards that move the carriage run.** The e2e runs on the
-machine's project (`SIL/mad-cosim.toml`, `make e2e`), where the carriage
-cannot move while `IC14` is as drawn (MaD #285), so the suite skips there
-every scenario that moves it (`e2e/run-all.mjs`, `PROJECT_CANNOT`):
-`TM-busy-restart`, `TM-manual-gate`, `D2-settled-jog`, `D3+SR-slack`, the M8,
-M9, M10 and M12 cells, the M11 mid-test drop and SERVO-stall among them. They
-run on the board with #285 fixed, `SIL/mad-ic14-fixed-cosim.toml` (`cd SIL &&
-make e2e-motion`): the nightly runs them all, and each PR runs G2+G3+H2+I.
-SERVO-stall stays skipped there, since nothing stops that board's carriage:
+machine's project (`SIL/mad-cosim.toml`): `TM-busy-restart`,
+`TM-manual-gate`, `D2-settled-jog`, `D3+SR-slack`, the M8, M9, M10 and M12
+cells and the M11 mid-test drop among them (`e2e/run-all.mjs`, `MOVES`;
+`node e2e/run-all.mjs --list --moves`), run by `cd SIL && make e2e-motion`:
+the nightly runs them all, and each PR runs G2+G3+H2+I. SERVO-stall is
+skipped there (`PROJECT_CANNOT`), since nothing stops that board's carriage:
 it runs on that file with a hard stop, `SIL/mad-hard-stop-cosim.toml` (`cd SIL
 && make e2e-stall`, MaD #298).
 
@@ -81,7 +79,7 @@ npm run e2e
 # smoke subset (see e2e/smoke-ids.txt):
 npm run e2e:smoke
 # what moves the carriage (TM-busy-restart / TM-manual-gate and the
-# matrices) runs on the board with MaD #285 fixed:
+# matrices) runs on mad-cosim.toml:
 cd SIL && make e2e-motion SCENARIOS=TM-busy-restart,TM-manual-gate
 ```
 

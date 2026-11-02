@@ -349,7 +349,7 @@ already fetched.
 `p2iss/tests/ec32mb_flash_boot.rs`, stepped, builds the module from its
 vendor netlist, powers it from `J203`'s fingers, closes `S301` positions 2
 (FLASH) and 4 (the `P59` pull-down), and holds that the ROM reads stage-1 at
-0 and stage-1 the 324 512-byte `propeller2_debug` program at `$400`, that the
+0 and stage-1 the 324 512-byte `MaDEdge` program at `$400`, that the
 core starts at 5.5 ms, and that a terminal at 230 400 baud on `J203.50`
 (`P62/PRG_DBG_TXD`) reads `Starting MaD Board` at 1.254 s of board time, with
 the firmware on 160 MHz from the crystal. `p2iss/tests/package_pads.rs`,
@@ -708,9 +708,9 @@ cd SIL && make p2image && cargo build --release -p p2iss --examples
 
 ### The project files: the host on `J1`, the production build in the flash
 
-`SIL/mad.toml` and its three twins put the host on the carrier's debug header
+`SIL/mad.toml` and the other project files put the host on the carrier's debug header
 `J1` (`P62`, `P63`, `GND`), where the machine's Prop Plug sits, and the
-module's flash holds the production build (`pio run -e propeller2`,
+module's flash holds the production build (`pio run -e P2Eval`,
 `make flash-image`), the route the user decided; which image the machine
 runs is open
 ([board design](sil-board-simulation-design.md#the-p2-edge-module-gap)).
@@ -718,9 +718,9 @@ Its MAIN channel receives on `P63` and transmits on `P62` at 2,000,000 baud
 (`HW_pins.h`, `HAL_serial_config.c`), with the FlexC console's own smart
 pins (`HAL_SERIAL_TYPE_BUILTIN`). The debug
 build's MAIN channel is `P30`/`P32`, IC2's Raspberry Pi link from the Edge
-carrier v0.3 on; the SIL's carrier (`mad_edge.net`, before v0.3) brings
-neither to a host connector (`P30` reaches no part, `P32` only header `J22`),
-and its IC2 is on `P52`–`P55`, which the P2-EC32MB keeps for its PSRAMs
+carrier v0.3 on, which the SIL's carrier (`mad_edge.net`, re-exported
+from v0.3 on 2026-11-01) now draws; the project files leave the Pi's
+connector `J4` empty
 ([board design](sil-board-simulation-design.md#the-p2-edge-module-gap)).
 
 `mad-catalog/tests/mad.rs` boots the production image in `P2IssCore` off the
@@ -827,25 +827,22 @@ about 1.3 s of board time in 24 s of host, and the board then ran at about
 0.1x with the app attached. The
 production image's boot line goes out on `P62` at the console's rate,
 which the node's receiver at 2,000,000 baud reads as framing errors (27 in
-a run, measured). The carriage never moves there:
-`IC14` as drawn passes nothing to the drive, the run's summary says
-`0 steps commanded`, and the firmware latches `SERVO_STALL` at the first
-move it commands (measured, G2+G3+H2+I), so the suite skips each scenario
-that moves the carriage, saying why (`run-all.mjs`, `PROJECT_CANNOT`).
-Those run on the board with MaD #285 fixed instead (`make e2e-motion`:
-`mad-ic14-fixed-cosim.toml`, `mad-cosim.toml` with one wire from `IC14`'s
-pin 9 to `EN_GND`), per PR G2+G3+H2+I and nightly the whole set; the
-suite skips SERVO-stall there, since nothing stops that board's carriage,
-and runs it on that file with a hard stop 3 mm above the carriage's start,
-`mad-hard-stop-cosim.toml` (`make e2e-stall`, per PR).
+a run, measured). The scenarios that move the carriage run on the same
+file (`make e2e-motion`), per PR G2+G3+H2+I and nightly the whole set:
+since the 2026-11-01 re-export of `mad_edge.net` (Edge v0.3), `IC14`'s
+drive-side grounds are on `EN_GND` (MaD #299) and the carriage moves. The
+suite skips SERVO-stall there, since nothing stops the carriage
+(`run-all.mjs`, `PROJECT_CANNOT`), and runs it on that file with a hard
+stop 3 mm above the carriage's start, `mad-hard-stop-cosim.toml` (`make
+e2e-stall`, per PR).
 
 | Target | Host |
 |---|---|
-| `make playground`, `playground-iss` | `mad-playground.toml` (#285 fixed): Chrome, a window on the app, on `J1` (USB `0403:6015`), DevTools on 9222 |
+| `make playground`, `playground-iss` | `mad-playground.toml` (`mad-cosim.toml`, headed): Chrome, a window on the app, on `J1` (USB `0403:6015`), DevTools on 9222 |
 | `make playground-rom` | `mad-serial-boot-playground.toml`: Chrome, a window on the app's flasher, the ROM's serial boot on `J1` (USB `0403:6015`) |
 | `make e2e-emulator`, `make e2e`, `make e2e-bundle` | `mad-cosim.toml`: Chrome, headless, on `J1` (USB `0403:6015`), DevTools on 9222 |
 | `make e2e-rom` | `mad-serial-boot-cosim.toml`: Chrome, headless, on `J1` (USB `0403:6015`), the mask ROM's serial boot, for FW-ISS |
-| `make e2e-motion` | `mad-ic14-fixed-cosim.toml` (#285 fixed): Chrome, headless, on `J1`, DevTools on 9222, for what the project as drawn cannot run |
-| `make e2e-stall` | `mad-hard-stop-cosim.toml` (#285 fixed, a hard stop on the carriage): Chrome, headless, on `J1`, DevTools on 9222, for SERVO-stall alone |
+| `make e2e-motion` | `mad-cosim.toml`: Chrome, headless, on `J1`, DevTools on 9222, for the scenarios that move the carriage |
+| `make e2e-stall` | `mad-hard-stop-cosim.toml` (a hard stop on the carriage): Chrome, headless, on `J1`, DevTools on 9222, for SERVO-stall alone |
 | `make playground-pty` | `mad.toml`: a PTY on `J1` at `/tmp/tty.iss`, for a serial console |
 | `embsim run mad.toml --pty PATH` | `mad.toml`: a PTY on `J1` (`mad-catalog/tests/pty_protocol.rs`) |

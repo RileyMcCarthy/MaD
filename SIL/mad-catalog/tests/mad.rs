@@ -33,31 +33,24 @@
 //!   on `J17` carries current, which the file's own wires give it
 //!   (`mad.toml`, "The machine on the carrier's connectors").
 //! - **The drive.** `IC14`, the isolator between the processor and the
-//!   drive, has its secondary ground pins on a net of their own (MaD #285;
-//!   embsim `board/tests/edgeboard.rs`; the layout has the same pads on the
-//!   same net, `Hardware/EdgeBoard/KiCad/MaD_Edge.kicad_pcb`), so nothing it
-//!   drives reaches the drive's step, direction and enable inputs, and its
-//!   output to `P5` gives its default high whatever the drive's ready
-//!   output says. Whether the machine's carrier is bodged there is not
-//!   known; the file keeps the board as drawn.
-//! - **The drive, with #285 fixed.** `mad.toml` with the lines
-//!   `mad-ic14-fixed-cosim.toml` adds to `mad-cosim.toml` (one wire from
-//!   `IC14`'s pin 9 to `EN_GND`): the firmware enables motion and jogs the
-//!   carriage as the app does, and the encoder comes to rest within the
-//!   firmware's parking deadband of each target. The firmware drives the
-//!   enable pin `P6` from its servo loop, active high: low at rest, high
-//!   once motion is enabled, low again once it is disabled. `IC14`'s `OUTC`
-//!   carries it to the drive's enable (`JP1` on its default pads 1-2), which
-//!   is energized = enabled, and `P5` reads the drive's ready line.
-//! - **The encoder.** With the drive's inputs driven from the bench (the
-//!   carrier's own path to them is `IC14`'s) and the chip held in reset
-//!   from the debug header, the drive turns the encoder, whose pairs reach
-//!   `P9` and `P10` through the line receiver `U25` and the isolator
-//!   `IC16`, `A` on `P9` and `B` on `P10` in the encoder's own phase, each
-//!   pair's `-` leg the opposite of its `+` leg; with the machine's real
-//!   NPN open-collector encoder on the `+` legs and the ground jumpers
-//!   closed, `P9` and `P10` stay high and the run names `U25`'s pairs
-//!   (embsim `board/tests/edge_encoder_pairs.rs`).
+//!   drive, has its secondary ground pins on `EN_GND` (the Edge carrier
+//!   v0.3 drawing, `netlists/mad_edge.net`). At rest `R39` holds the enable
+//!   pin `P6` low, so the drive's enable reads low, and `P5` follows the
+//!   drive's ready line. The firmware enables motion and jogs the carriage
+//!   as the app does, and the encoder comes to rest within the firmware's
+//!   parking deadband of each target. The firmware drives `P6` from its
+//!   servo loop, active high: low at rest, high once motion is enabled, low
+//!   again once it is disabled. `IC14`'s `OUTC` carries it to the drive's
+//!   enable (`JP1` on its default pads 1-2), which is energized = enabled.
+//! - **The encoder.** With the chip held in reset from the debug header and
+//!   the processor's step, direction and enable pins driven from the bench,
+//!   through `IC14` and the line driver `U24` to the drive, the drive turns
+//!   the encoder, whose pairs reach `P9` and `P10` through the line
+//!   receiver `U25` and the isolator `IC16`, `A` on `P9` and `B` on `P10` in
+//!   the encoder's own phase, each pair's `-` leg the opposite of its `+`
+//!   leg. The machine's real NPN open-collector encoder on the `+` legs,
+//!   with the jumpers that tie the `-` legs to `ENC_REF` closed, reads the
+//!   same on `P9` and `P10`: `R40` and `R41` pull a released output up.
 //!   The bench, the probes and the open collector's three changes are the
 //!   cases' own, added to the file as loaded; the file is unchanged.
 //!
@@ -107,19 +100,19 @@ fn sil() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
 }
 
-/// The production program (pio env `propeller2`), the one `make
+/// The production program (pio env `P2Eval`), the one `make
 /// flash-image` lays out: `MAD_P2_PRODUCTION_IMAGE` names a copy kept out
 /// of `.pio` (the CI jobs'), else the build's own.
 fn image_path() -> PathBuf {
     let p = std::env::var_os("MAD_P2_PRODUCTION_IMAGE").map_or_else(
-        || sil().join("../Firmware/MaDCore/.pio/build/propeller2/program"),
+        || sil().join("../Firmware/MaDCore/.pio/build/P2Eval/program"),
         PathBuf::from,
     );
     if !p.exists() && std::env::var_os("MAD_REQUIRE_P2_IMAGE").is_some() {
         panic!(
             "MAD_REQUIRE_P2_IMAGE is set but the production P2 image is missing at {}. \
              Build it with `make p2image-production` (or `cd Firmware/MaDCore && pio run -e \
-             propeller2`).",
+             P2Eval`).",
             p.display()
         );
     }
@@ -501,27 +494,23 @@ fn the_inputs_at_rest() {
     );
     expect!(
         "enable-unreached",
-        "the drive's enable input reads no source",
-        "the servo isolator IC14's secondary ground pins are on a net of their own, so its \
-         outputs toward the drive have no return and stay released, and the carrier's enable \
-         jumper, on its default pads, puts one of those outputs on the drive's enable"
+        "the drive's enable input reads low, the level that disables the drive",
+        "the carrier's pull-down holds the processor's enable pin low while the chip runs its \
+         boot ROM, and the servo isolator IC14 carries that level to the drive with the enable \
+         jumper on its default pads"
     );
     expect!(
         "ready-unread",
-        "P5, the firmware's drive-ready input, reads high while the drive holds its ready line \
+        "P5, the firmware's drive-ready input, reads low while the drive holds its ready line \
          low",
-        "IC14's secondary side, where the ready line enters, has no ground, so it gives its \
-         default high on P5"
+        "IC14 carries the ready line to P5 without inverting it"
     );
     expect!(
         "receiver-over-range",
         "the run reports the line receiver U25's supply once, at 5 volts, above its \
-         recommended 3.6 volts"
-    );
-    expect!(
-        "isolator-ground-unsourced",
-        "the run reports the net of IC14's secondary ground pins as a power net no source \
-         reaches"
+         recommended 3.6 volts",
+        "the drawing's 5 volt AM26C32 has no model of its own, and the AM26LV32 model standing \
+         in for it is rated to 3.6 volts"
     );
     let Some((dir, _)) = images("at-rest") else {
         return;
@@ -559,8 +548,10 @@ fn the_inputs_at_rest() {
         rig.state("EDGE.P22")
     );
     assert_eq!(
-        rig.state("EDGE./MaD_Edge_Sheet3/SC_ENA"),
-        Some(NetState::Floating)
+        level_of(rig.state(SC_ENA)),
+        Some(Level::Low),
+        "{:?}",
+        rig.state(SC_ENA)
     );
     assert_eq!(
         rig.state("EDGE./MaD_Edge_Sheet3/SC_SRDY"),
@@ -568,7 +559,7 @@ fn the_inputs_at_rest() {
     );
     assert_eq!(
         rig.level("EDGE.P5"),
-        Some(Level::High),
+        Some(Level::Low),
         "{:?}",
         rig.state("EDGE.P5")
     );
@@ -580,12 +571,6 @@ fn the_inputs_at_rest() {
                 && (*max - 3.6).abs() < 1e-9)
     });
     assert_eq!(u25.count(), 1, "{findings:?}");
-    assert!(
-        findings.contains(&Finding::PowerNetUnsourced {
-            net: "EDGE.Net-(IC14-GND2_1)".to_string(),
-        }),
-        "{findings:?}"
-    );
 }
 
 // ============================================================
@@ -1000,11 +985,19 @@ fn the_firmware_answers_the_host_on_the_debug_header() {
 // The encoder, turned by the drive
 // ============================================================
 
-/// The bench's drive on the drive's inputs: each a source behind embsim's
-/// stated push-pull default, at the 5 V the line driver `U24` swings from
-/// `SC_5V`. The test's own rig: the carrier's path to these inputs is
-/// `IC14`'s, which as drawn drives nothing.
-const BENCH_HIGH_V: f64 = 5.0;
+/// The bench's drive on the processor's step, direction and enable pins
+/// while the chip is held in reset: each a source behind embsim's stated
+/// push-pull default, at the 3.3 V of the chip's bank supply. The carrier
+/// carries them to the drive as it carries the firmware's: `IC14`, then the
+/// line driver `U24` for step and direction, `JP1` for the enable.
+const BENCH_HIGH_V: f64 = 3.3;
+
+/// The module's card-edge fingers for the processor's enable, direction
+/// and step pins, `P6`, `P7` and `P8` (read: `netlists/mad_edge.net`, `J3`
+/// pins 34, 33 and 32; the module's `J203` lands on `J3` finger for finger).
+const P6_FINGER: &str = "EC32.J203.34";
+const P7_FINGER: &str = "EC32.J203.33";
+const P8_FINGER: &str = "EC32.J203.32";
 
 /// The steps: the first rise 12.107 ms after the start, then one every
 /// 2 ms, each 100 µs high, every instant off the converter pump's 250 µs
@@ -1046,12 +1039,12 @@ fn held_high() -> Box<dyn Component> {
     }])
 }
 
-/// The drive's inputs from the bench: enabled (its enable is active high)
-/// and forward (direction low) from the start, and [`STEPS`] steps; and the
-/// chip held in reset from the debug header's `RESn` (`J1.3`), so the
-/// processor runs nothing while the bench turns the drive: its pads,
-/// `P9` and `P10` among them, rest released, as they do while its ROM
-/// runs.
+/// The processor's drive pins from the bench: the drive enabled (its enable
+/// is active high) and forward (direction low) from the start, and
+/// [`STEPS`] steps; and the chip held in reset from the debug header's
+/// `RESn` (`J1.3`), so the processor runs nothing while the bench turns the
+/// drive: its pads, `P6` to `P10` among them, rest released, as they do
+/// while its ROM runs.
 fn bench_drive(bench: Bench) -> Bench {
     let mut steps = vec![Step {
         at_ns: 0,
@@ -1070,9 +1063,9 @@ fn bench_drive(bench: Bench) -> Bench {
     }
     bench
         .component("BENCH_RESET", held_low(), "OUT", "EDGE.J1.3")
-        .component("BENCH_ENA", held_high(), "OUT", "MACHINE.ENA")
-        .component("BENCH_DIR", held_low(), "OUT", "MACHINE.DIR")
-        .component("BENCH_STEP", source(steps), "OUT", "MACHINE.STEP")
+        .component("BENCH_ENA", held_high(), "OUT", P6_FINGER)
+        .component("BENCH_DIR", held_low(), "OUT", P7_FINGER)
+        .component("BENCH_STEP", source(steps), "OUT", P8_FINGER)
 }
 
 /// The encoder connector's four legs, as `J20` carries them to `U25`:
@@ -1198,8 +1191,9 @@ fn the_encoders_pairs_reach_p9_and_p10() {
     behaviour!(Test {
         id: "mad-project.encoder-pairs",
         covers: Some("SIL/mad.toml"),
-        given: "the machine's project file, a bench source on the debug header holding the chip \
-                in reset, and the drive given eight forward steps 2 ms apart",
+        given: "the machine's project file, a debug-header source holding the chip in reset, \
+                and bench sources on its step, direction and enable pins giving the drive eight \
+                forward steps",
     });
     expect!(
         "one-count-a-step",
@@ -1264,13 +1258,13 @@ fn the_encoders_pairs_reach_p9_and_p10() {
 }
 
 #[test]
-fn the_machines_open_collector_encoder_sticks_p9_and_p10_high() {
+fn the_machines_open_collector_encoder_reaches_p9_and_p10() {
     behaviour!(Test {
         id: "mad-project.open-collector-encoder",
         covers: Some("SIL/mad.toml"),
-        given: "the machine's real NPN open-collector encoder on the encoder connector's + \
-                legs, ground jumpers closed, a debug-header bench source holding the chip in \
-                reset, and the drive given eight forward steps",
+        given: "the machine's NPN open-collector encoder on the + legs, the - legs on the \
+                encoder reference, the chip in reset from the debug header, and eight forward \
+                steps to the drive",
     });
     expect!(
         "one-count-a-step",
@@ -1279,17 +1273,13 @@ fn the_machines_open_collector_encoder_sticks_p9_and_p10_high() {
     );
     expect!(
         "stuck-high",
-        "P9 and P10 read high at every count",
-        "the carrier has no pull-up on the + legs: a released output rests at the line \
-         receiver's own input bias, a valid high against the grounded - leg, and a sinking \
-         one leaves the pair no difference, which the AM26LV32 reads as its fail-safe high"
+        "at every count P9 carries the encoder's A channel and P10 its B channel",
+        "the carrier pulls each + leg up to its 5 volt servo rail and ties each - leg to half \
+         of it, so a released output reads high and a sinking one low"
     );
     expect!(
         "pairs-reported",
-        "the run reports the line receiver's A and B pairs (pins 2 and 1, pins 6 and 7) once \
-         each inside their band, outputs high",
-        "the AM26LV32's datasheet guarantees no level for a pair within 0.2 volts with a \
-         common-mode voltage applied"
+        "no pair of the line receiver is reported inside its band"
     );
     let Some((dir, _)) = images("open-collector") else {
         return;
@@ -1328,39 +1318,21 @@ fn the_machines_open_collector_encoder_sticks_p9_and_p10_high() {
     assert_eq!(steps_commanded(&mut rig), 8, "{}", rig.summary("MACHINE"));
     assert_held_in_reset(&mut rig);
     for at in &read {
+        let (a, b) = channels(at.count);
         assert_eq!(
             (at.p9, at.p10),
-            (Some(Level::High), Some(Level::High)),
-            "at count {}: {read:?}",
+            (Some(a), Some(b)),
+            "P9 and P10 at count {}: {read:?}",
             at.count
         );
     }
     let findings = rig.finish();
-    let pair = |pin: &str, inverting: &str| (pin.to_string(), inverting.to_string());
-    assert_eq!(
-        u25_pairs_reported(&findings),
-        [pair("2", "1"), pair("6", "7")],
-        "{findings:?}"
-    );
+    assert!(u25_pairs_reported(&findings).is_empty(), "{findings:?}");
 }
 
 // ============================================================
-// IC14 fixed: the drive takes the firmware's lines
+// The drive takes the firmware's lines
 // ============================================================
-
-/// The lines `mad-ic14-fixed-cosim.toml` adds to `mad-cosim.toml`: its one
-/// wire, on `IC14`'s ground, with its reason, at the end of the file
-/// (`tests/projects.rs` holds the twin to that). Added to `mad.toml`, they
-/// give the twin with `mad.toml`'s serial-port host.
-fn ic14_fix() -> String {
-    let read = |name: &str| {
-        std::fs::read_to_string(sil().join(name)).unwrap_or_else(|err| panic!("SIL/{name}: {err}"))
-    };
-    let (cosim, twin) = (read("mad-cosim.toml"), read("mad-ic14-fixed-cosim.toml"));
-    twin.strip_prefix(cosim.as_str())
-        .expect("mad-ic14-fixed-cosim.toml is mad-cosim.toml with lines added at its end")
-        .to_string()
-}
 
 /// The drive's enable input, `J21.7`, from `JP1`'s common pad.
 const SC_ENA: &str = "EDGE./MaD_Edge_Sheet3/SC_ENA";
@@ -1443,13 +1415,12 @@ fn jog(rig: &mut Rig, host: &mut HostPort, um: i32, at: u64) -> (i64, u64) {
 }
 
 #[test]
-fn with_ic14_fixed_the_firmware_jogs_the_carriage() {
+fn the_firmware_jogs_the_carriage() {
     behaviour!(Test {
         id: "mad-project.ic14-fixed-jog",
-        covers: Some("SIL/mad-ic14-fixed-cosim.toml"),
-        given: "the machine's project with the servo isolator's ground fixed and the firmware \
-                booted; a host enables motion, jogs 0.5 mm forward and 0.25 mm back, then \
-                disables motion",
+        covers: Some("SIL/mad.toml"),
+        given: "the machine's project file with the firmware booted; a host enables motion, \
+                jogs 0.5 mm forward and 0.25 mm back, then disables motion",
     });
     expect!(
         "disabled-at-rest",
@@ -1497,13 +1468,11 @@ fn with_ic14_fixed_the_firmware_jogs_the_carriage() {
         "the run reports neither the servo isolator's drive-side ground nor the drive side's \
          return as a power net no source reaches"
     );
-    let Some((dir, program)) = images("ic14-fixed-jog") else {
+    let Some((dir, program)) = images("jog") else {
         return;
     };
     let pty = dir.join("host.pty");
-    let mut project = Project::parse(&format!("{}{}", mad_toml(), ic14_fix()))
-        .expect("mad.toml with IC14's fix is a project")
-        .relative_to(&dir);
+    let mut project = load(&dir);
     project
         .set_component_option("HOST", "path", pty.to_str().expect("UTF-8"))
         .expect("the file has a HOST");
@@ -1585,8 +1554,8 @@ fn with_ic14_fixed_the_firmware_jogs_the_carriage() {
         "the state after the jogs: {state:?}"
     );
     let findings = rig.finish();
-    // The wire joins the two nets, so the board may name the one net after
-    // either: neither name, nor any net named after IC14's pins, is unsourced.
+    // Neither the drive side's return nor any net named after IC14's pins is
+    // unsourced.
     let unsourced: Vec<&Finding> = findings
         .iter()
         .filter(|finding| {

@@ -153,13 +153,13 @@ gate is that the reservation table reproduces exactly this finding.
 
 **The route, decided (2026-10-21).** The user's decision: the app reaches the
 firmware over the carrier's debug header J1 (P62/P63, RESn on J1.3), with the
-**production** build (pio env `propeller2`), through a Prop Plug. The app
+**production** build (pio env `P2Eval`), through a Prop Plug. The app
 flashes over J1 (`Software/Control/README.md`, "Firmware flashing", which
 covers flashing only). That build's MAIN channel receives on P63 and
 transmits on P62 at 2,000,000 baud (`HW_pins.h`, `HAL_serial_config.c`),
 and J1's P62/P63 go straight to the
-socket's fingers 50 and 49 (`mad_edge.net`). `SIL/mad.toml` and its three
-twins put the host there, the production image in the module's flash, and
+socket's fingers 50 and 49 (`mad_edge.net`). `SIL/mad.toml` and the other
+project files put the host there, the production image in the module's flash, and
 nothing on J4; `SIL/mad-catalog/tests/mad.rs` holds the protocol round trip
 over J1. The debug build stays where a run needs its log on P62 or its MAIN
 channel on a bare chip's P30/P32 (P53/P55 before the move below;
@@ -175,34 +175,37 @@ v0.3 puts IC2's carrier side on P29–P32, pins the EC32MB brings to fingers
 P30 receives from IC2's OUTC (pin 5) and P32 drives its INA (pin 3) (read:
 the v0.3 netlist exported from `Hardware/EdgeBoard/KiCad`; `HW_pins.h`).
 `mad-emulator` and the `p2core`/`p2iss` suites put the host on P30/P32. The
-SIL's `mad_edge.net` is still the carrier before v0.3, IC2 on P52–P55, so
-what this section finds about J4 holds for the project files' board until
-that netlist is refreshed. The production build's MAIN is unchanged, on
-P62/P63.
+SIL's `mad_edge.net` was re-exported from the v0.3 files on 2026-11-01
+(KiCad 9's `kicad-cli`), so the project files' board has IC2 on P29–P32 as
+well; what this section finds about J4 above held for the carrier before
+v0.3. The production build's MAIN is unchanged, on P62/P63.
 
 **Open: which image the machine runs.** The app as shipped flashes a
-release's madEdge image by default, the `propeller2_debug` build
+release's MaDEdge image by default, the `MaDEdge` build
 (`Software/Control/src/firmware/release.ts`, `pickFirmwareAsset`; the release
 job in `.github/workflows/ci.yml`), whose protocol is on P53/P55 in every
 release so far, which the EC32MB cannot reach (above; P30/P32 since the move
 above); the single-port production build is the
-release's `-release.bin`, which the app flashes only as a local file. The
+release's `-P2Eval.bin`, which the app flashes only as a local file. The
 bench has an FT232R attached, USB `0403:6001`, beside the P2-EVAL's FT231X
 (measured: `ioreg`, 2026-10-21; what the FT232R is wired to is not known);
 `0403:6001` is the id `mad-emulator` gives its host. If the machine runs the
-madEdge image, the route needs revisiting: a released image's protocol reaches
+MaDEdge image, the route needs revisiting: a released image's protocol reaches
 the chip only on a module with fingers for P53/P55, such as the plain P2-EC
 (inferred), and one built since the move reaches it on a v0.3 carrier's J4. If it runs the production image, the app's default asset would
 need changing to match.
 
-**IC14, the servo isolator.** IC14 (ISO6741DWR: STEP, DIR, ENA out to the
-drive, SRDY back) has its secondary ground pins 9 and 15 on an unnamed net
-with only C26 pin 2 on it, not on EN_GND (read: `mad_edge.net`,
-`Net-(IC14-GND2_1)`; the PCB has the same pads on the same net). As drawn,
-nothing IC14 drives reaches the drive, and its output to P5 gives its
-default high whatever SRDY says (`SIL/mad-catalog/tests/mad.rs`, the at-rest
-case). Whether the machine's carrier is bodged there is not known; the
-project files keep the board as drawn.
+**IC14, the servo isolator.** IC14 (STEP, DIR, ENA out to the drive, SRDY
+back) had its secondary ground pins 9 and 15 on an unnamed net with only C26
+pin 2 on it, not on EN_GND (read: the pre-v0.3 `mad_edge.net`,
+`Net-(IC14-GND2_1)`; MaD #285): nothing IC14 drove reached the drive, and
+its output to P5 gave its default high whatever SRDY said. The drawing now
+grounds them on EN_GND (MaD #299), and the SIL netlist follows it since its
+2026-11-01 re-export: at rest SC_ENA reads low and P5 follows the drive's
+ready line, and the firmware jogs the carriage (`SIL/mad-catalog/tests/mad.rs`).
+The project files model the current drawing, not the boards as built (the
+user's decision, 2026-11-01). IC14 is drawn as ISO7741FDWR; its symbol's
+part name places embsim's ISO6741DWR model (same pinout).
 
 ### Part classification (no separate "type file")
 

@@ -32,28 +32,32 @@
  * port returns as a new SerialPort with `connect`, which the app answers by
  * reconnecting to the port whose USB ids (0403:6015) it remembers.
  *
- * What the project as drawn cannot do, the suite skips there, saying why
- * (`PROJECT_CANNOT`, below): the carriage never moves, since the isolator
- * IC14 between the processor and the drive has its secondary grounds on a
- * net of their own (MaD #285; SIL/mad-catalog/tests/mad.rs, "The drive").
- * Those scenarios run on the board with #285 fixed,
- * SIL/mad-ic14-fixed-cosim.toml, mad-cosim.toml with one wire on IC14's
- * ground: `cd SIL && make e2e-motion` takes them from `--list --cannot` and
- * runs them there (E2E_PROJECT names the file, which board-route.sh
- * exports), where only SERVO-stall is skipped, since nothing stops that
- * board's carriage. SERVO-stall runs on SIL/mad-hard-stop-cosim.toml, the
- * #285-fixed file with a hard stop 3 mm above the carriage's start (MaD
- * #298): `cd SIL && make e2e-stall` jogs the carriage into the stop there.
- * That board skips the other scenarios that move the carriage, since its
- * stop would meet them.
+ * What the project cannot do, the suite skips there, saying why
+ * (`PROJECT_CANNOT`, below). The scenarios that move the carriage
+ * (`MOVES`) run on the machine's project like every other: `cd SIL && make
+ * e2e-motion` takes them from `--list --moves` and runs them on
+ * mad-cosim.toml, the set the nightly splits across its motion jobs.
+ * SERVO-stall runs on SIL/mad-hard-stop-cosim.toml, mad-cosim.toml with a
+ * hard stop 3 mm above the carriage's start (MaD #298): `cd SIL && make
+ * e2e-stall` jogs the carriage into the stop there. mad-cosim.toml skips
+ * SERVO-stall, since nothing stops its carriage, and the hard-stop board
+ * skips the other scenarios that move the carriage, since its stop would
+ * meet them.
  *
- * Without CDP_URL only the board-free scenarios run: A1 and
- * FW1/2/3/5/6/7/8/9 launch a host Chrome against in-page fakes and need no
- * emulator at all, which is what ci.yml's per-PR `control-e2e-boardless` job
- * runs:
+ * Without CDP_URL only the board-free scenarios run: A1, FW1/2/3/5/6/7/8/9/10/11
+ * and COMPAT-reconnect/-silent/-update-loop launch a host Chrome against
+ * in-page fakes and need no emulator at all, which is what ci.yml's per-PR
+ * `control-e2e-boardless` job runs:
  *   npm run dev
- *   SCENARIOS=A1,FW1,FW2,FW3,FW5,FW6,FW7,FW8,FW9 npm run e2e
+ *   SCENARIOS=A1,FW1,FW2,FW3,FW5,FW6,FW7,FW8,FW9,FW10,FW11,COMPAT-reconnect,COMPAT-silent,COMPAT-update-loop npm run e2e
  * Naming a board scenario without CDP_URL is refused.
+ *
+ * COMPAT-too-old and COMPAT-app-too-old need firmware the app cannot drive
+ * in the module's flash (E2E_FIRMWARE names it): `cd SIL && make
+ * e2e-compat` puts a release from before the device-info handshake there,
+ * then this tree's firmware built one protocol_version ahead, and runs each.
+ * On a board with this tree's firmware they are skipped, saying so, and on
+ * one with other firmware every other board scenario is.
  *
  * FW-ISS (the app flashing the ISS's mask ROM) needs the ROM board, not the
  * firmware's: the project's serial boot, SIL/mad-serial-boot-cosim.toml
@@ -96,7 +100,9 @@ import {
   BOARD_ROUTE,
   DEVICE_WAIT_MS,
   awaitResponding,
+  readAppLog,
 } from './fixtures.mjs';
+import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -122,7 +128,30 @@ const MATRIX = JSON.parse(
 // The scenarios that never touch the board: they launch a host Chrome
 // against in-page fakes (the capability gate, and the flasher against a fake
 // boot ROM), so they run without an emulator.
-const BOARD_FREE = new Set(['A1', 'FW1', 'FW2', 'FW3', 'FW5', 'FW6', 'FW7', 'FW8', 'FW9']);
+const BOARD_FREE = new Set([
+  'A1', 'FW1', 'FW2', 'FW3', 'FW5', 'FW6', 'FW7', 'FW8', 'FW9', 'FW10', 'FW11',
+  'COMPAT-reconnect', 'COMPAT-silent', 'COMPAT-update-loop',
+]);
+
+// The firmware in the board's flash (make e2e-compat sets it): 'old', a
+// release from before the app could ask which protocol the firmware speaks;
+// 'future', this tree's firmware generated one protocol_version ahead; unset,
+// this tree's. Each compatibility scenario below needs one of them, and every
+// other board scenario needs this tree's.
+const FIRMWARE = process.env.E2E_FIRMWARE || 'current';
+const NEEDS_FIRMWARE = new Map([
+  ['COMPAT-too-old', 'old'],
+  ['COMPAT-app-too-old', 'future'],
+]);
+/** Why board scenario `id` cannot run on this board's firmware, or ''. */
+const wrongFirmware = (id) => {
+  if (BOARD_FREE.has(id)) return '';
+  const wants = NEEDS_FIRMWARE.get(id) ?? 'current';
+  if (wants === FIRMWARE) return '';
+  return wants === 'current'
+    ? `needs this tree's firmware; the board runs the ${FIRMWARE} one`
+    : `needs the ${wants} firmware on the board: make e2e-compat`;
+};
 
 // The board is the mask ROM, not the firmware: the project's serial boot,
 // mad-serial-boot-cosim.toml (make e2e-rom). Only FW-ISS, the app flashing
@@ -139,49 +168,32 @@ const MOVES = new Set([
   'VT-linear', 'TC14-jog', ...MATRIX.M8_jog.map((cell) => cell.id), 'M11-mid-test-drop',
   'D2-settled-jog', 'D3+SR-slack', ...MATRIX.M9_force_slack.map((cell) => cell.id),
   'P1-precision', 'BB-back-to-back', 'TM-busy-restart', 'TM-manual-gate', 'SERVO-stall', 'CAL1',
+  'COMPAT-ok-motion',
 ]);
 
-// What the machine's project as drawn cannot do (BOARD_ROUTE 'project':
+// What the machine's project cannot do (BOARD_ROUTE 'project':
 // SIL/mad-cosim.toml), each with why. The suite skips these there, named in
 // SCENARIOS or not, saying so; a run in which every scenario was skipped
 // fails, since it checked nothing. E2E_PROJECT_CANNOT=run runs them anyway,
 // for a change to the board, its file or the kinds that may lift the
-// reason. `--list --cannot` lists them, and `make e2e-motion` runs them on
-// the board with IC14 fixed (`IC14_FIXED`, below), so the motion coverage
-// stays on a project.
+// reason. `--list --cannot` lists them.
 //
-// The carriage: IC14, the isolator between the processor and the drive, has
-// its secondary ground pins (9, 15) on a net of their own with only C26 on
-// it, so nothing it drives reaches the drive's STEP, DIR and ENA (MaD #285;
-// read: Hardware/EdgeBoard/KiCad; SIL/mad-catalog/tests/mad.rs, "The
-// drive"). The run's summary says "0 steps commanded" with the encoder at 0
-// counts, and the firmware latches SERVO_STALL at the first move it
-// commands (measured, G2+G3+H2+I on mad-cosim.toml). Whether the machine's
-// carrier is bodged there is not known; the file keeps the board as drawn.
-const IC14_WHY =
-  'needs the carriage to move: IC14 as drawn passes nothing to the drive (MaD #285; SIL/mad-catalog/tests/mad.rs, "The drive")';
 // SERVO-stall drives the carriage into a hard stop, which only one board's
 // machine has (the machine's hard_stop_mm; mad-catalog/src/machine.rs, "The
 // hard stop"; MaD #298).
 const STOP_WHY =
   'drives the carriage into a hard stop, which this board\'s machine has none of (MaD #298): make e2e-stall runs it on mad-hard-stop-cosim.toml';
-const PROJECT_CANNOT = new Map([...MOVES].map((id) => [id, IC14_WHY]));
-PROJECT_CANNOT.set('SERVO-stall', `${STOP_WHY}, and ${IC14_WHY}`);
-// The board with MaD #285 fixed: mad-cosim.toml with one wire from IC14's
-// pin 9 to EN_GND (SIL/mad-ic14-fixed-cosim.toml; mad-catalog/tests/
-// projects.rs holds it to that). Its carriage moves, so of the set above it
-// skips SERVO-stall alone, for the stop.
-const IC14_FIXED = 'mad-ic14-fixed-cosim.toml';
-// That board with a hard stop on its carriage, 3 mm above the carriage's
-// start (SIL/mad-hard-stop-cosim.toml, the machine's hard_stop_mm;
-// mad-catalog/tests/projects.rs holds it to that one option). SERVO-stall
-// runs there; the other scenarios that move the carriage would meet the
-// stop, so it skips them.
+const PROJECT_CANNOT = new Map([['SERVO-stall', STOP_WHY]]);
+// mad-cosim.toml with a hard stop on its carriage, 3 mm above the
+// carriage's start (SIL/mad-hard-stop-cosim.toml, the machine's
+// hard_stop_mm; mad-catalog/tests/projects.rs holds it to that one option).
+// SERVO-stall runs there; the other scenarios that move the carriage would
+// meet the stop, so it skips them.
 const HARD_STOP = 'mad-hard-stop-cosim.toml';
 const STOPPED_WHY =
-  'moves the carriage, which meets a hard stop on this board (MaD #298): make e2e-motion runs it on mad-ic14-fixed-cosim.toml';
+  'moves the carriage, which meets a hard stop on this board (MaD #298): make e2e-motion runs it on mad-cosim.toml';
 // The project file the board runs (board-route.sh exports it; relative to
-// SIL/, the as-drawn mad-cosim.toml by default).
+// SIL/, mad-cosim.toml by default).
 const PROJECT = (process.env.E2E_PROJECT || 'mad-cosim.toml').split('/').pop();
 const RUN_CANNOT = process.env.E2E_PROJECT_CANNOT === 'run';
 // The suite is on the project: attached to its Chrome, or listing for
@@ -191,7 +203,6 @@ const ON_PROJECT = BOARD_ROUTE === 'project' && (BOARD || process.env.E2E_BOARD_
 const cannot = (id) => {
   if (!ON_PROJECT || RUN_CANNOT) return '';
   if (PROJECT === HARD_STOP) return id !== 'SERVO-stall' && MOVES.has(id) ? STOPPED_WHY : '';
-  if (PROJECT === IC14_FIXED) return id === 'SERVO-stall' ? STOP_WHY : '';
   return PROJECT_CANNOT.get(id) || '';
 };
 
@@ -903,6 +914,132 @@ async function walkDataFolderGate() {
   } finally {
     await browser.close();
   }
+}
+
+// ── Firmware compatibility (the device-info handshake) ──
+
+/**
+ * The protocol this app speaks and the fixed size of each reply it reads,
+ * from the generated codec the dev server serves: the fake board answers in
+ * exactly these sizes, and the scenarios expect this number.
+ */
+function protocolFacts() {
+  const file = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'protocol', 'generated', 'protoemb.ts');
+  const text = readFileSync(file, 'utf8');
+  const num = (name) => {
+    const m = text.match(new RegExp(`^export const ${name} = (\\d+);$`, 'm'));
+    if (!m) throw new Error(`${name} not found in ${file}: run npm run generate:proto`);
+    return Number(m[1]);
+  };
+  return {
+    protocol: num('PROTOCOL_VERSION'),
+    sizes: {
+      sample: num('SAMPLE_WIRE_SIZE'),
+      config: num('MACHINECONFIGURATION_WIRE_SIZE'),
+      profile: num('SAMPLEPROFILE_WIRE_SIZE'),
+      version: num('FIRMWAREVERSION_WIRE_SIZE'),
+    },
+  };
+}
+
+/** The app's session log so far: main thread and worker, merged. */
+async function appLogEntries(page) {
+  return (await readAppLog(page))?.entries ?? [];
+}
+
+/** Log entries with category `cat` and tag `tag` (and a message starting `msg`). */
+const logged = (entries, cat, tag, msg) =>
+  entries.filter((e) => e.cat === cat && e.tag === tag && (msg === undefined || String(e.msg ?? '').startsWith(msg)));
+
+/** Wait until the app has logged `cat`/`tag`, in the page's time. */
+async function awaitLogged(page, cat, tag, { timeoutMs = DEVICE_WAIT_MS, msg } = {}) {
+  const clock = await pageClock(page);
+  while ((await clock.elapsed()) < timeoutMs) {
+    const hits = logged(await appLogEntries(page), cat, tag, msg);
+    if (hits.length) return hits;
+    await waitPageTime(page, 200);
+  }
+  throw new Error(`the app never logged ${cat}/${tag}${msg ? ` ${msg}` : ''} within ${timeoutMs} ms`);
+}
+
+/** The banner that says the firmware cannot be driven (or an update is recommended). */
+const compatBanner = (page) => page.getByTestId('firmware-compat');
+
+/**
+ * A host Chrome on the in-page fake board (installFakeBootRom with firmware):
+ * no emulator. Confirm dialogs (the flash prompt) are accepted.
+ */
+async function fakeBoardPage(board) {
+  const browser = await chromium.launch({ channel: 'chrome', headless: true });
+  const page = await browser.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  page.on('dialog', (d) => d.accept());
+  await page.addInitScript(installFakeBootRom, { ...board, sizes: protocolFacts().sizes });
+  await page.addInitScript(installOpfsDataDir, OPFS_DIR);
+  return { browser, page, errors };
+}
+
+/** Connect the app to the fake board through the Connect screen. */
+async function connectFakeBoard(page) {
+  await page.goto(`${APP_URL_HOST}#/connect`);
+  await press(page.getByTestId('connect-device'));
+  await page.locator('.dot.connected').waitFor({ timeout: DEVICE_WAIT_MS });
+}
+
+/** What the fake board received: WRITE frames as [command, first data byte]. */
+async function fakeBoardWrites(page) {
+  return page.evaluate(() => window.__bootRom.writes.map((w) => [w.cmd, w.data[0] ?? null]));
+}
+
+// Write command ids the fake board records (Protocol/MaDProtocol.yaml).
+const WRITE_MOTION_ENABLE = 1;
+const WRITE_TEST_RUN = 2;
+const WRITE_MANUAL_MOVE = 3;
+const WRITE_TEST_MOVE = 4;
+
+/**
+ * Press every control that moves the gantry on the Live screen (Enable
+ * motion, a jog, Home) on firmware the app cannot drive: each is refused,
+ * with a toast saying why.
+ */
+async function pressRefusedLiveControls(page, base = APP_URL) {
+  await page.goto(`${base}#/live`);
+  await page.getByText(/Motion: (enabled|disabled)/).waitFor({ timeout: DEVICE_WAIT_MS });
+  const enable = page.getByRole('button', { name: 'Enable motion' });
+  await enable.waitFor({ timeout: DEVICE_WAIT_MS });
+  await press(enable);
+  await page.locator('.toast').getByText(/too old|newer than this version|did not say which protocol/).first()
+    .waitFor({ timeout: DEVICE_WAIT_MS });
+  await press(page.getByRole('button', { name: '+ Jog up' }));
+  await press(page.getByRole('button', { name: 'Home' }));
+  await awaitLogged(page, 'store', 'home-refused');
+  const entries = await appLogEntries(page);
+  for (const tag of ['motion-enable-refused', 'jog-refused', 'home-refused']) {
+    assert(logged(entries, 'store', tag).length > 0, `the app did not refuse (${tag} not logged)`);
+  }
+  assert(
+    (await page.getByText('Motion: enabled').count()) === 0,
+    'motion was enabled on firmware the app cannot drive',
+  );
+}
+
+/** Start a seeded test from the Runs screen; on firmware the app cannot drive it is refused. */
+async function startRefusedTest(page) {
+  await seedProfiles(page, {
+    sample: { serial: 'Compat-Sample', maxForce: 500, maxVelocity: 25, maxDisplacement: 100, sampleWidth: 4, sampleThickness: 1.5 },
+    motion: { name: 'Compat-Motion', moves: [
+      { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 5, distance: 2, time: 0, circularOffset: 0 } },
+    ] },
+  });
+  await selectSeeded(page);
+  const runner = page.locator('.panel', { hasText: 'New Test' });
+  await press(page.getByTestId('run-test'));
+  await runner.getByText(/Test failed: .*firmware/i).waitFor({ timeout: DEVICE_WAIT_MS });
+  assert(
+    logged(await appLogEntries(page), 'device', 'motion-refused', 'run-test').length > 0,
+    'the device client did not refuse the test start',
+  );
 }
 
 // ── Scenarios (extend toward TEST_PLAN.md §4) ──
@@ -2664,8 +2801,9 @@ const scenarios = [
         // Flash is the only mode the app offers: the P2 Edge boots from SPI
         // flash, so a RAM load would look like a successful update and then
         // vanish on the next power cycle. RAM loading lives in the CLI.
+        // (A P2Eval/MaDEdge board choice may appear; a RAM option may not.)
         assert(
-          (await page.getByRole('radio').count()) === 0,
+          (await page.getByRole('radio', { name: /\bRAM\b/ }).count()) === 0,
           'a programming-mode selector reappeared in the UI',
         );
         assert(
@@ -2706,6 +2844,112 @@ const scenarios = [
           `payload after stub was ${JSON.stringify(rom.payload)}`,
         );
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
+      } finally { await browser.close(); }
+    },
+  },
+  {
+    id: 'FW10',
+    name: 'Firmware: the board choice picks which build of the recommended release Install recommended flashes',
+    async run() {
+      const browser = await chromium.launch({ channel: 'chrome', headless: true });
+      try {
+        const page = await browser.newPage();
+        const errors = [];
+        page.on('pageerror', (e) => errors.push(e.message));
+        await page.addInitScript(installFakeBootRom);
+        await page.addInitScript(installOpfsDataDir, OPFS_DIR);
+        page.on('dialog', (d) => d.accept());
+
+        // Stand in for the served release folder, whatever the dev server's
+        // firmware plugin would answer.
+        const images = {
+          P2Eval: Buffer.from(Array.from({ length: 600 }, (_, i) => i & 0xff)),
+          MaDEdge: Buffer.from(Array.from({ length: 900 }, (_, i) => (255 - i) & 0xff)),
+        };
+        const entry = (board) => ({
+          assetName: `MaD-Firmware-9.9-${board}.bin`,
+          size: images[board].length,
+          sha256: createHash('sha256').update(images[board]).digest('hex'),
+          path: `firmware/MaD-Firmware-9.9-${board}.bin`,
+        });
+        const fetched = [];
+        // The recommended release for this app's protocol, with both builds.
+        await page.route('**/firmware/manifest.json', (r) => r.fulfill({
+          contentType: 'application/json',
+          body: JSON.stringify({
+            releases: [{
+              tag: 'firmware-v9.9', version: '9.9', ...entry('P2Eval'),
+              publishedAt: null, htmlUrl: 'https://example.invalid/r',
+              boards: { P2Eval: entry('P2Eval'), MaDEdge: entry('MaDEdge') },
+              protocolVersion: protocolFacts().protocol,
+            }],
+          }),
+        }));
+        await page.route('**/firmware/MaD-Firmware-9.9-*.bin', (r) => {
+          const name = r.request().url().split('/').pop();
+          fetched.push(name);
+          return r.fulfill({
+            contentType: 'application/octet-stream',
+            body: name === 'MaD-Firmware-9.9-MaDEdge.bin' ? images.MaDEdge : images.P2Eval,
+          });
+        });
+
+        await page.goto(`${APP_URL_HOST}#/firmware`);
+        await page.getByTestId('firmware-source').filter({ hasText: /P2Eval production build/ }).waitFor();
+        assert(await page.getByTestId('board-P2Eval').isChecked(), 'P2Eval is not the default board');
+        await page.getByTestId('flash-target').filter({ hasText: /USB/ }).waitFor({ timeout: DEVICE_WAIT_MS });
+
+        await page.getByTestId('board-MaDEdge').check();
+        await page.getByTestId('firmware-source').filter({ hasText: /MaDEdge debug build/ }).waitFor();
+        const install = page.getByTestId('install-recommended');
+        await install.filter({ hasText: 'Install recommended firmware (9.9, MaDEdge)' }).waitFor({ timeout: DEVICE_WAIT_MS });
+        await install.click();
+        await page.getByTestId('flash-status').filter({ hasText: /Wrote .* bytes to flash/ })
+          .waitFor({ timeout: 30_000 });
+
+        assert(
+          JSON.stringify(fetched) === JSON.stringify(['MaD-Firmware-9.9-MaDEdge.bin']),
+          `downloaded ${JSON.stringify(fetched)}`,
+        );
+        const rom = await page.evaluate(() => ({
+          len: window.__bootRom.image.length,
+          payload: window.__bootRom.image.slice(496, 496 + 4),
+        }));
+        assert(rom.len === 496 + 900, `image length ${rom.len}, expected ${496 + 900}`);
+        assert(
+          JSON.stringify(rom.payload) === JSON.stringify([255, 254, 253, 252]),
+          `flashed payload starts ${JSON.stringify(rom.payload)}, not the MaDEdge image`,
+        );
+        assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
+      } finally { await browser.close(); }
+    },
+  },
+  {
+    id: 'FW11',
+    name: 'Firmware: a release with only a P2Eval build offers no board choice',
+    async run() {
+      const browser = await chromium.launch({ channel: 'chrome', headless: true });
+      try {
+        const page = await browser.newPage();
+        await page.addInitScript(installFakeBootRom);
+        await page.addInitScript(installOpfsDataDir, OPFS_DIR);
+        // The recommended release carries only its P2Eval build.
+        const p2eval = {
+          assetName: 'MaD-Firmware-0.15-P2Eval.bin', size: 64, sha256: '0'.repeat(64),
+          path: 'firmware/MaD-Firmware-0.15-P2Eval.bin',
+        };
+        await page.route('**/firmware/manifest.json', (r) => r.fulfill({
+          contentType: 'application/json',
+          body: JSON.stringify({
+            releases: [{
+              tag: 'firmware-v0.15', version: '0.15', ...p2eval, publishedAt: null,
+              htmlUrl: 'https://example.invalid/r', boards: { P2Eval: p2eval }, protocolVersion: protocolFacts().protocol,
+            }],
+          }),
+        }));
+        await page.goto(`${APP_URL_HOST}#/firmware`);
+        await page.getByTestId('firmware-source').filter({ hasText: /P2Eval production build/ }).waitFor();
+        assert((await page.getByTestId('firmware-board').count()) === 0, 'offered a board the release has no build for');
       } finally { await browser.close(); }
     },
   },
@@ -2962,6 +3206,358 @@ const scenarios = [
       } finally { await browser.close(); }
     },
   },
+  // ── Firmware compatibility: the device-info handshake (#335) ──
+  //
+  // On the board, the firmware is real: this tree's (COMPAT-ok, and
+  // COMPAT-ok-motion in the motion set), a release from
+  // before the handshake (COMPAT-too-old), or this tree's built one
+  // protocol_version ahead (COMPAT-app-too-old); `make e2e-compat` puts the
+  // last two in the module's flash. Board-free, the in-page fake board stands
+  // in where only the app matters: a verdict's life across connections, a
+  // board that never answers, and the update loop, whose real flash the ISS
+  // cannot take (the app's DTR reaches no reset there, MaD #134).
+  {
+    id: 'COMPAT-ok',
+    name: 'Firmware compat: this tree\'s firmware gets the ok verdict, no banner, and motion enables',
+    async run() {
+      const { protocol } = protocolFacts();
+      const { browser, page, errors } = await newSilPage();
+      try {
+        await connectToSil(page);
+        const [verdict] = await awaitLogged(page, 'store', 'firmware-compat');
+        assert(verdict.data?.verdict === 'ok', `verdict ${JSON.stringify(verdict.data)}, expected ok`);
+        await page.goto(`${APP_URL}#/firmware`);
+        const row = page.getByTestId('fw-protocol');
+        await row.filter({ hasText: `${protocol} · this app speaks ${protocol}` }).waitFor({ timeout: DEVICE_WAIT_MS });
+        assert(!(await row.getAttribute('class'))?.includes('error'), 'the Protocol row is marked as a mismatch');
+        assert((await compatBanner(page).count()) === 0, 'a firmware banner is shown for matching firmware');
+        // The gate lets a good board's motion through: enable, then disable.
+        await page.goto(`${APP_URL}#/live`);
+        await page.getByText(/Motion: (enabled|disabled)/).waitFor({ timeout: DEVICE_WAIT_MS });
+        await press(page.getByRole('button', { name: 'Enable motion' }));
+        await page.getByText('Motion: enabled').waitFor({ timeout: DEVICE_WAIT_MS });
+        await press(page.getByRole('button', { name: 'Disable motion' }));
+        await page.getByText('Motion: disabled').waitFor({ timeout: DEVICE_WAIT_MS });
+        assert(logged(await appLogEntries(page), 'device', 'motion-refused').length === 0, 'a motion command was refused');
+        assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
+      } finally {
+        await browser.close();
+      }
+    },
+  },
+  {
+    id: 'COMPAT-ok-motion',
+    name: 'Firmware compat: on matching firmware a jog, a test run and Home all move the gantry',
+    async run() {
+      const { browser, page, errors } = await newSilPage();
+      try {
+        await connectToSil(page);
+        const [verdict] = await awaitLogged(page, 'store', 'firmware-compat');
+        assert(verdict.data?.verdict === 'ok', `verdict ${JSON.stringify(verdict.data)}, expected ok`);
+        await chooseDataFolder(page);
+        // Enable motion and jog to machine zero (zeroLength jogs and settles).
+        await zeroLength(page);
+        await page.locator('label.field', { hasText: 'Jog (mm)' }).locator('input').fill('2');
+        const setWas = await readoutNum(page, 'Machine Setpoint');
+        await press(page.getByRole('button', { name: '+ Jog up' }));
+        const at = await settleMotion(page, { setpointWas: setWas });
+        assert(Math.abs(at - 2) < 0.25, `the 2 mm jog landed at ${at} mm`);
+        // A short test run: upload, run, complete.
+        await seedProfiles(page, {
+          sample: { serial: 'Compat-OK', maxForce: 500, maxVelocity: 25, maxDisplacement: 100, sampleWidth: 4, sampleThickness: 1.5 },
+          motion: { name: 'Compat-OK-Motion', moves: [
+            { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 5, distance: 3, time: 0, circularOffset: 0 } },
+            { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 5, distance: -3, time: 0, circularOffset: 0 } },
+          ] },
+        });
+        await selectSeeded(page);
+        const runner = page.locator('.panel', { hasText: 'New Test' });
+        await press(page.getByTestId('run-test'));
+        await runner.getByText(/started/i).waitFor({ timeout: DEVICE_WAIT_MS });
+        await page.locator('tbody tr').first().locator('.badge.completed').waitFor({ timeout: RUN_WAIT_MS });
+        // Home: the seek starts moving the gantry. Disabling motion stops it,
+        // since a full seek to the endstop is M13-home-endpoint's to measure.
+        await prepareManualControl(page);
+        const before = await readoutNum(page, 'Machine Position');
+        await press(page.getByRole('button', { name: 'Home' }));
+        const clock = await pageClock(page);
+        let moved = false;
+        while ((await clock.elapsed()) < DEVICE_WAIT_MS) {
+          if (Math.abs((await readoutNum(page, 'Machine Position')) - before) > 1) {
+            moved = true;
+            break;
+          }
+          await waitPageTime(page, 100);
+        }
+        assert(moved, 'Home never moved the gantry');
+        await press(page.getByRole('button', { name: 'Disable motion' }));
+        await page.getByText('Motion: disabled').waitFor({ timeout: DEVICE_WAIT_MS });
+        assert(logged(await appLogEntries(page), 'device', 'motion-refused').length === 0, 'a motion command was refused');
+        assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
+      } finally {
+        await browser.close();
+      }
+    },
+  },
+  {
+    id: 'COMPAT-too-old',
+    name: 'Firmware compat: a release from before the handshake gets the too-old banner at once; motion refused, STOP sent',
+    async run() {
+      const { browser, page, errors } = await newSilPage();
+      try {
+        // Not connectToSil: this firmware's samples carry fewer fields than
+        // the app reads, so the app drops them as unreadable and the session
+        // never shows Responding. That is part of what is checked here.
+        await page.goto(`${APP_URL}#/connect`);
+        await press(boardGrantedPort(page), { timeout: 10_000 });
+        await page.locator('.dot.connected').waitFor({ timeout: 10_000 });
+        const clock = await pageClock(page);
+        await compatBanner(page).filter({ hasText: /too old/ }).waitFor({ timeout: DEVICE_WAIT_MS });
+        const tookMs = await clock.elapsed();
+        // The refusal is a NACK, answered at once: no read timeout (3 s) is spent.
+        assert(tookMs < 2000, `the too-old verdict took ${tookMs} ms of board time from connecting`);
+        const entries = await appLogEntries(page);
+        const [verdict] = logged(entries, 'store', 'firmware-compat');
+        assert(
+          verdict?.data?.verdict === 'firmwareTooOld' && verdict.data.deviceProtocol === null,
+          `verdict ${JSON.stringify(verdict?.data)}, expected firmwareTooOld with no protocol`,
+        );
+        assert(
+          !entries.some((e) => /timeout/i.test(`${e.tag} ${e.msg ?? ''}`) && /DEVICE_INFO|deviceInfo/.test(JSON.stringify(e))),
+          'the device-info read timed out instead of being refused',
+        );
+        assert(
+          (await compatBanner(page).textContent())?.includes('does not report a protocol'),
+          'the banner does not say the firmware reports no protocol',
+        );
+        // The app reads this firmware's samples as unreadable and lives on.
+        // The worker's entries reach the page's log in batches, so wait for it.
+        await awaitLogged(page, 'proto', 'unreadable-reply', { msg: 'READ_SAMPLE' });
+        await page.goto(`${APP_URL}#/firmware`);
+        await page.getByTestId('fw-protocol').filter({ hasText: 'not reported' }).waitFor({ timeout: DEVICE_WAIT_MS });
+
+        await pressRefusedLiveControls(page);
+        await chooseDataFolder(page);
+        await startRefusedTest(page);
+        // The calibration's open-loop moves cannot start: the panel needs the
+        // machine configuration, which is not read from firmware on another
+        // protocol, and its button needs motion enabled.
+        await page.goto(`${APP_URL}#/settings`);
+        await page.getByRole('heading', { name: 'Settings' }).waitFor({ timeout: DEVICE_WAIT_MS });
+        const calibrate = page.getByRole('button', { name: 'Run calibration' });
+        assert(
+          (await calibrate.count()) === 0 || (await calibrate.isDisabled()),
+          'the motor calibration (open-loop moves) could start',
+        );
+
+        // STOP still reaches the firmware, which acknowledges it.
+        await press(page.getByTestId('estop'));
+        await page.locator('.toast').getByText('Emergency stop — motion disabled.').first().waitFor({ timeout: DEVICE_WAIT_MS });
+        await awaitLogged(page, 'proto', 'tx', { msg: 'WRITE_MOTION_ENABLE' });
+        const after = await appLogEntries(page);
+        // Samples kept arriving short the whole time; they were reported once.
+        const unreadable = logged(after, 'proto', 'unreadable-reply', 'READ_SAMPLE').length;
+        assert(unreadable === 1, `the short samples were reported ${unreadable} times, expected once`);
+        const tx = (name) => logged(after, 'proto', 'tx', name).length;
+        assert(tx('WRITE_MOTION_ENABLE') === 1, `motion-enable writes sent: ${tx('WRITE_MOTION_ENABLE')}, expected only STOP's`);
+        for (const name of ['WRITE_MANUAL_MOVE', 'WRITE_TEST_MOVE', 'WRITE_TEST_RUN']) {
+          assert(tx(name) === 0, `${name} reached the firmware`);
+        }
+        assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
+      } finally {
+        await browser.close();
+      }
+    },
+  },
+  {
+    id: 'COMPAT-app-too-old',
+    name: 'Firmware compat: firmware a protocol ahead gets the app-too-old banner; motion refused; it links to the latest app',
+    async run() {
+      const { protocol } = protocolFacts();
+      const { browser, page, errors } = await newSilPage();
+      try {
+        await connectToSil(page);
+        await compatBanner(page).filter({ hasText: /newer than this version/ }).waitFor({ timeout: DEVICE_WAIT_MS });
+        const [verdict] = logged(await appLogEntries(page), 'store', 'firmware-compat');
+        assert(
+          verdict?.data?.verdict === 'appTooOld' && verdict.data.deviceProtocol === protocol + 1,
+          `verdict ${JSON.stringify(verdict?.data)}, expected appTooOld at protocol ${protocol + 1}`,
+        );
+        await pressRefusedLiveControls(page);
+        // The way out: the latest app. On an unversioned copy that is a
+        // reload, after disconnecting.
+        await page.evaluate(() => {
+          window.__beforeLatest = true;
+        });
+        await press(page.getByTestId('open-latest-app'));
+        await page.waitForFunction(() => window.__beforeLatest === undefined, null, { timeout: DEVICE_WAIT_MS });
+        await page.locator('.statusbar').waitFor({ timeout: DEVICE_WAIT_MS });
+        assert((await page.locator('.dot.connected').count()) === 0, 'the app stayed connected after opening the latest version');
+        assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
+      } finally {
+        await browser.close();
+      }
+    },
+  },
+  {
+    id: 'COMPAT-reconnect',
+    name: 'Firmware compat (fake board): the verdict clears on disconnect and is asked again on reconnect',
+    async run() {
+      const { browser, page, errors } = await fakeBoardPage({ firmware: { version: '0.14', protocol: null } });
+      try {
+        await connectFakeBoard(page);
+        await compatBanner(page).filter({ hasText: /too old/ }).waitFor({ timeout: DEVICE_WAIT_MS });
+        await pressRefusedLiveControls(page, APP_URL_HOST);
+        // STOP goes through to the board as a motion disable.
+        await press(page.getByTestId('estop'));
+        await page.locator('.toast').getByText('Emergency stop — motion disabled.').first().waitFor({ timeout: DEVICE_WAIT_MS });
+        const writes = await fakeBoardWrites(page);
+        assert(
+          JSON.stringify(writes) === JSON.stringify([[WRITE_MOTION_ENABLE, 0]]),
+          `the board received ${JSON.stringify(writes)}; expected only STOP's motion disable`,
+        );
+        // Disconnect: the verdict goes with the connection.
+        await page.goto(`${APP_URL_HOST}#/connect`);
+        await press(page.getByRole('button', { name: 'Disconnect' }));
+        await page.locator('.dot.disconnected').waitFor({ timeout: DEVICE_WAIT_MS });
+        await compatBanner(page).waitFor({ state: 'detached', timeout: DEVICE_WAIT_MS });
+        // Reconnect: asked again, same answer.
+        const asked = await page.evaluate(() => window.__bootRom.reads.filter((c) => c === 5).length);
+        await connectFakeBoard(page);
+        await compatBanner(page).filter({ hasText: /too old/ }).waitFor({ timeout: DEVICE_WAIT_MS });
+        const askedAgain = await page.evaluate(() => window.__bootRom.reads.filter((c) => c === 5).length);
+        assert(askedAgain === asked + 1, `the protocol was asked ${askedAgain - asked} more time(s) on reconnect, expected once`);
+        assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
+      } finally {
+        await browser.close();
+      }
+    },
+  },
+  {
+    id: 'COMPAT-silent',
+    name: 'Firmware compat (fake board): motion stays blocked while checking and when the board never answers the protocol question',
+    async run() {
+      const { browser, page, errors } = await fakeBoardPage({ firmware: { version: '0.15', protocol: 'silent' } });
+      try {
+        await connectFakeBoard(page);
+        // Fail closed: blocked from the moment the connection opens, saying so.
+        await compatBanner(page).and(page.locator('[data-kind="checking"]')).waitFor({ timeout: DEVICE_WAIT_MS });
+        await page.goto(`${APP_URL_HOST}#/live`);
+        await page.getByText(/Motion: (enabled|disabled)/).waitFor({ timeout: DEVICE_WAIT_MS });
+        await press(page.getByRole('button', { name: 'Enable motion' }));
+        await page.locator('.toast').getByText(/^Checking which protocol/).first().waitFor({ timeout: DEVICE_WAIT_MS });
+        // Four tries, each given up on after the link's response timeout.
+        await awaitLogged(page, 'store', 'firmware-compat', { timeoutMs: 40_000, msg: 'no reply' });
+        await compatBanner(page).and(page.locator('[data-kind="unanswered"]')).waitFor({ timeout: DEVICE_WAIT_MS });
+        assert(
+          (await compatBanner(page).textContent())?.includes('did not say which protocol it speaks'),
+          'the banner does not say the firmware never answered',
+        );
+        await pressRefusedLiveControls(page, APP_URL_HOST);
+        // STOP still goes through.
+        await press(page.getByTestId('estop'));
+        await page.locator('.toast').getByText('Emergency stop — motion disabled.').first().waitFor({ timeout: DEVICE_WAIT_MS });
+        const writes = await fakeBoardWrites(page);
+        assert(
+          JSON.stringify(writes) === JSON.stringify([[WRITE_MOTION_ENABLE, 0]]),
+          `the board received ${JSON.stringify(writes)}; expected only STOP's motion disable`,
+        );
+        assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
+      } finally {
+        await browser.close();
+      }
+    },
+  },
+  {
+    id: 'COMPAT-update-loop',
+    name: 'Firmware compat (fake board): too-old banner → Install recommended firmware → checksum checked → flashed → reconnected → ok',
+    async run() {
+      const { protocol } = protocolFacts();
+      const IMAGE = Buffer.from(Array.from({ length: 3000 }, (_, i) => (i * 13 + 5) & 0xff));
+      const sha256 = createHash('sha256').update(IMAGE).digest('hex');
+      const entry = (version, proto) => {
+        const p2eval = {
+          assetName: `MaD-Firmware-${version}-P2Eval.bin`,
+          size: IMAGE.length,
+          sha256,
+          path: `firmware/MaD-Firmware-${version}-P2Eval.bin`,
+        };
+        return {
+          tag: `firmware-v${version}`,
+          version,
+          ...p2eval,
+          boards: { P2Eval: p2eval },
+          publishedAt: '2026-11-01T00:00:00Z',
+          htmlUrl: 'https://example.invalid/release',
+          protocolVersion: proto,
+        };
+      };
+      // The release for this app's protocol, and a newer one for the next
+      // protocol that this app must not offer.
+      const manifest = { releases: [entry('0.99', protocol + 1), entry('0.15', protocol)] };
+      const { browser, page, errors } = await fakeBoardPage({
+        firmware: { version: '0.14', protocol: null },
+        afterFlash: { version: '0.15', protocol },
+      });
+      try {
+        let served = Buffer.from(IMAGE);
+        served[100] ^= 0xff; // first, an image whose bytes do not match the checksum
+        const fetched = [];
+        await page.route('**/firmware/manifest.json', (route) => {
+          fetched.push('manifest.json');
+          return route.fulfill({ contentType: 'application/json', body: JSON.stringify(manifest) });
+        });
+        await page.route('**/firmware/*-P2Eval.bin', (route) => {
+          fetched.push(new URL(route.request().url()).pathname.split('/').pop());
+          return route.fulfill({ contentType: 'application/octet-stream', body: served });
+        });
+        await connectFakeBoard(page);
+        await page.evaluate(() => {
+          window.__sameApp = true;
+        });
+        await compatBanner(page).filter({ hasText: /too old/ }).waitFor({ timeout: DEVICE_WAIT_MS });
+        await press(page.getByTestId('update-firmware'));
+        const install = page.getByTestId('install-recommended');
+        await install.filter({ hasText: 'Install recommended firmware (0.15)' }).waitFor({ timeout: DEVICE_WAIT_MS });
+
+        // A corrupted image is refused before the board is touched.
+        await press(install);
+        await page.getByTestId('flash-status').filter({ hasText: /does not match its release checksum/ })
+          .waitFor({ timeout: 30_000 });
+        assert((await page.evaluate(() => window.__bootRom.reset)) === 0, 'the board was reset for an image that failed its checksum');
+        assert((await page.locator('.dot.connected').count()) === 1, 'the session was dropped for an image that failed its checksum');
+
+        // The right image: flashed, the board boots it, the app reconnects and asks again.
+        served = Buffer.from(IMAGE);
+        await press(install);
+        await page.getByTestId('flash-status').filter({ hasText: /Wrote .* bytes to flash/ }).waitFor({ timeout: 60_000 });
+        const rom = await page.evaluate(() => ({
+          reset: window.__bootRom.reset,
+          finished: window.__bootRom.finished,
+          payload: window.__bootRom.image.slice(496),
+        }));
+        assert(rom.reset >= 1 && rom.finished, `the board was not flashed (${JSON.stringify({ reset: rom.reset, finished: rom.finished })})`);
+        assert(Buffer.from(rom.payload).equals(IMAGE), 'the flashed payload is not the recommended release image');
+        assert(
+          fetched.every((f) => f === 'manifest.json' || f === 'MaD-Firmware-0.15-P2Eval.bin'),
+          `the app fetched ${JSON.stringify(fetched)}; the release for another protocol must not be downloaded`,
+        );
+        await page.locator('.dot.connected').waitFor({ timeout: DEVICE_WAIT_MS });
+        await compatBanner(page).waitFor({ state: 'detached', timeout: DEVICE_WAIT_MS });
+        await page.getByTestId('fw-version').filter({ hasText: '0.15' }).waitFor({ timeout: DEVICE_WAIT_MS });
+        await page.getByTestId('fw-protocol').filter({ hasText: `${protocol} · this app speaks ${protocol}` })
+          .waitFor({ timeout: DEVICE_WAIT_MS });
+        // Motion works on the new firmware, in the same page: no reload.
+        await page.goto(`${APP_URL_HOST}#/live`);
+        await press(page.getByRole('button', { name: 'Enable motion' }));
+        await page.getByText('Motion: enabled').waitFor({ timeout: DEVICE_WAIT_MS });
+        assert(await page.evaluate(() => window.__sameApp === true), 'the app was reloaded');
+        assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
+      } finally {
+        await browser.close();
+      }
+    },
+  },
 ];
 
 /**
@@ -2991,22 +3587,32 @@ async function main() {
   // on the built bundle, and each left out otherwise. What this board cannot
   // run is left out too, and said on stderr with why. `--board-free` lists
   // only the scenarios that need no board. `--cannot` lists only those the
-  // project as drawn cannot run (`PROJECT_CANNOT`), whatever the route: the
-  // set `make e2e-motion` runs on the board with IC14 fixed.
+  // project cannot run (`PROJECT_CANNOT`), whatever the route. `--moves`
+  // lists only the scenarios that move the carriage (`MOVES`) that the
+  // project can run: the set `make e2e-motion` runs on mad-cosim.toml.
+  // `--no-moves` leaves those out: the rest, which the nightly's suite job
+  // runs beside its motion jobs.
   // SIL/scripts/board-route.sh runs them one board each from this.
   if (process.argv.includes('--list')) {
     const only = process.env.SCENARIOS ? new Set(process.env.SCENARIOS.split(',').map((x) => x.trim())) : null;
     const boardFreeOnly = process.argv.includes('--board-free');
     const cannotOnly = process.argv.includes('--cannot');
+    const movesOnly = process.argv.includes('--moves');
+    const noMoves = process.argv.includes('--no-moves');
     for (const s of scenarios) {
       if (
         (s.id === 'FW-ISS') === ROM_BOARD &&
         (s.id !== 'BUNDLE-live' || APP_IS_BUNDLE) &&
         (!only || only.has(s.id)) &&
-        (!boardFreeOnly || BOARD_FREE.has(s.id))
+        (!boardFreeOnly || BOARD_FREE.has(s.id)) &&
+        (!noMoves || !MOVES.has(s.id))
       ) {
         if (cannotOnly) {
           if (PROJECT_CANNOT.has(s.id)) console.log(s.id);
+        } else if (movesOnly) {
+          if (MOVES.has(s.id) && !PROJECT_CANNOT.has(s.id)) console.log(s.id);
+        } else if (wrongFirmware(s.id)) {
+          if (!boardFreeOnly) console.error(`  ~ ${s.id}: skipped (${wrongFirmware(s.id)})`);
         } else if (cannot(s.id)) {
           if (!boardFreeOnly) console.error(`  ~ ${s.id}: skipped (${cannot(s.id)})`);
         } else console.log(s.id);
@@ -3096,6 +3702,11 @@ async function main() {
     }
     if (cannot(s.id)) {
       console.log(`  ~ ${s.id}: skipped (${cannot(s.id)})`);
+      skipped += 1;
+      continue;
+    }
+    if (BOARD && wrongFirmware(s.id)) {
+      console.log(`  ~ ${s.id}: skipped (${wrongFirmware(s.id)})`);
       skipped += 1;
       continue;
     }
