@@ -371,12 +371,7 @@ jobs:
   # boards ran 23.6 s of board time in 512 s of host time, each first
   # booting the firmware off the module's flash (about 1.3 s of board time,
   # 24 s of host), G1's SD-heavy run 208 s of it (PR body). The scenarios
-  # that move the carriage do not run on the project as drawn: IC14, the
-  # isolator between the processor and the drive, has its secondary grounds
-  # on a net of their own (MaD #285), so nothing reaches the drive and the
-  # firmware latches SERVO_STALL at the first move (SIL/mad-catalog/tests/
-  # mad.rs; run-all.mjs, PROJECT_CANNOT). The suite skips them there, saying
-  # why.
+  # that move the carriage run in the motion leg (below).
   #
   # Then BUNDLE-live on one more board: the app as it ships, built as
   # pages.yml builds it and served by `vite preview`. Every scenario above
@@ -385,16 +380,15 @@ jobs:
   # in shows only there (#156: every device event lost, in production only).
   #
   # Then the motion leg: G2+G3+H2+I, a run carried through to download and
-  # view, on the board with MaD #285 fixed (`make e2e-motion`:
-  # SIL/mad-ic14-fixed-cosim.toml, mad-cosim.toml with one wire from IC14's
-  # ground to EN_GND, where the carriage moves), so a PR still runs one test
-  # that moves the carriage, on a project. Measured on an M2 shared with a
-  # load average near 90: 1314.8 s of host time, 10.171 s of board time; on
-  # mad-emulator it took 444.0 s of host time on the runner (run
-  # 40063642331).
+  # view, on the same project (`make e2e-motion`, mad-cosim.toml), so a PR
+  # runs one test that moves the carriage. Measured on an M2 shared with a
+  # load average near 90, on the board with IC14's ground wired by hand
+  # before the carrier's drawing grounded it: 1314.8 s of host time, 10.171 s
+  # of board time; on mad-emulator it took 444.0 s of host time on the runner
+  # (run 40063642331).
   #
   # Last, SERVO-stall on the board with a hard stop on its carriage (`make
-  # e2e-stall`: SIL/mad-hard-stop-cosim.toml, the #285-fixed file with the
+  # e2e-stall`: SIL/mad-hard-stop-cosim.toml, mad-cosim.toml with the
   # machine's hard_stop_mm; MaD #298): a jog into the stop latches the
   # stall, Live clears it and re-enables motion, and a jog takes the
   # carriage off the stop.
@@ -450,7 +444,7 @@ jobs:
         working-directory: Firmware/MaDCore
         run: pio pkg install --platform https://github.com/RileyMcCarthy/platform-propeller.git
       # The production image, laid out in the module's flash, and the card
-      # (make flash-image sd-image), then `embsim check` on the eight project
+      # (make flash-image sd-image), then `embsim check` on the seven project
       # files, which builds the embsim tool and mad-runner (--release: the
       # ISS interprets every P2 instruction). check finds the runner's
       # Chrome for the six whose host is Chrome and starts none.
@@ -501,13 +495,12 @@ jobs:
           E2E_TIMINGS: /tmp/e2e-out/timings-bundle.json
           SCENARIOS: BUNDLE-live
         run: scripts/board-route.sh e2e
-      # What the project as drawn cannot run, on the board with MaD #285
-      # fixed: the one run carried through to download and view. `make
-      # e2e-motion` checks mad-ic14-fixed-cosim.toml and runs what
-      # `run-all.mjs --list --cannot` names of SCENARIOS there, one board
-      # each, on the images the steps above wrote. It runs whenever the
-      # subset ran, passed or failed.
-      - name: 'Run the motion leg on the board with IC14 fixed (MaD #285)'
+      # The motion leg: the one run carried through to download and view.
+      # `make e2e-motion` checks mad-cosim.toml and runs what `run-all.mjs
+      # --list --moves` names of SCENARIOS, one board each, on the images
+      # the steps above wrote. It runs whenever the subset ran, passed or
+      # failed.
+      - name: 'Run the motion leg on the project'
         if: ${{ !cancelled() && (steps.subset.outcome == 'success' || steps.subset.outcome == 'failure') }}
         working-directory: SIL
         env:
@@ -873,9 +866,9 @@ jobs:
     # P2 image: ~6 minutes locally, dominated by p2core's boot tests
     # interpreting hundreds of millions of instructions in the dev profile, and
     # a shared 4-vCPU runner is slower than that. 45 held until the cargo test
-    # step took 40.8 min of it (run 40063642331, #283); the stepped jog on the
-    # #285-fixed board (mad-catalog/tests/mad.rs) boots the firmware once
-    # more and runs 2.55 s of board time, so 60.
+    # step took 40.8 min of it (run 40063642331, #283); the stepped jog
+    # (mad-catalog/tests/mad.rs) boots the firmware once more and runs 2.55 s
+    # of board time, so 60.
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7

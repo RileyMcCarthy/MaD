@@ -21,7 +21,7 @@ relevant jobs:
 | `vibes-pin-ci` | **the `Vibes` gitlink moved** | **Blocking.** Mirror of upstream Vibes CI for the commit being pinned: the tool's install, typecheck, tests and build, plus compile probes of its C, Rust and TypeScript bindings |
 | `docs-ci` | `docs/**` or `mkdocs.yml` changed | **Blocking.** `mkdocs build --strict` — broken nav entries, dead internal links and config warnings are errors. Previously this ran only on a push to `main` via `pages.yml`, so a bad docs PR merged green and took the Pages deploy down |
 | `control-e2e-boardless` | app or protocol changed, or the `SIL/embsim` gitlink moved | **Blocking.** The e2e scenarios that need no board (A1, the firmware-flash `FW*` ones, and the firmware-compatibility `COMPAT-reconnect`, `COMPAT-silent` and `COMPAT-update-loop` on an in-page fake board): the real app in a real host Chrome against in-page fakes, no emulator. The scenarios that touch the board run in `control-e2e-board` and the nightly. See [below](#the-e2e-suite) |
-| `control-e2e-board` | app, protocol, firmware or SIL changed, or the `SIL/embsim` gitlink moved | **Blocking.** A subset of the board-touching e2e scenarios on the board route: the machine's project, `SIL/mad-cosim.toml` under `embsim run` (the production P2 image on the ISS, booted off the module's flash), and the app in the runner's Chrome held to the board's clock by embsim's `chrome-cdp` node on the carrier's debug header `J1`, one fresh board per scenario (`make check`, then `make e2e`, `BOARD_PER_SCENARIO=1`), then BUNDLE-live on the bundle as `pages.yml` builds it (`APP_DIST`, served by `vite preview`), then G2+G3+H2+I on the board with MaD #285 fixed, `SIL/mad-ic14-fixed-cosim.toml` (`make e2e-motion`), then SERVO-stall on that board with a hard stop on its carriage, `SIL/mad-hard-stop-cosim.toml` (`make e2e-stall`; MaD #298), then the firmware-compatibility scenarios on firmware the app cannot drive (`make e2e-compat`: firmware-v0.14 as released, and this tree's firmware built one `protocol_version` ahead). The whole suite runs nightly on the same route (`e2e-nightly.yml`), with what the project as drawn cannot run on the #285-fixed board in three jobs beside it. See [below](#the-e2e-suite) |
+| `control-e2e-board` | app, protocol, firmware or SIL changed, or the `SIL/embsim` gitlink moved | **Blocking.** A subset of the board-touching e2e scenarios on the board route: the machine's project, `SIL/mad-cosim.toml` under `embsim run` (the production P2 image on the ISS, booted off the module's flash), and the app in the runner's Chrome held to the board's clock by embsim's `chrome-cdp` node on the carrier's debug header `J1`, one fresh board per scenario (`make check`, then `make e2e`, `BOARD_PER_SCENARIO=1`), then BUNDLE-live on the bundle as `pages.yml` builds it (`APP_DIST`, served by `vite preview`), then the motion leg G2+G3+H2+I on the same file (`make e2e-motion`), then SERVO-stall on that file with a hard stop on its carriage, `SIL/mad-hard-stop-cosim.toml` (`make e2e-stall`; MaD #298), then the firmware-compatibility scenarios on firmware the app cannot drive (`make e2e-compat`: firmware-v0.14 as released, and this tree's firmware built one `protocol_version` ahead). The whole suite runs nightly on the same route (`e2e-nightly.yml`): a suite job runs all but the scenarios that move the carriage (`run-all.mjs --list --no-moves`), and three jobs beside it run those (`make e2e-motion`, `MOTION_SHARD=1/3`..`3/3`). See [below](#the-e2e-suite) |
 | `firmware-unit-tests` | firmware or protocol changed | `pio test -e native_test` — the host Unity suite under AddressSanitizer (no Propeller toolchain needed) |
 | `protocol-codegen` | protocol changed | **Blocking.** Regenerates all three targets (C/TS/Rust) twice and asserts success + byte-reproducibility (generated files are gitignored, so this guards the schema/templates + generator determinism, not committed-file drift). On a PR it also runs `Protocol/scripts/check_protocol_compat.py` against the base branch: a wire-incompatible schema change without a `protocol_version` bump fails, and so does any change to the frozen `device_info` handshake ([release order](#release-order-after-a-protocol-change)) |
 | `firmware-layering` | firmware changed | **Blocking (baseline-gated).** `scripts/check_layering.py` enforces downward-only includes (APP→DEV→IO→Library→HAL→HW); pre-existing violations are frozen in `.layering-baseline`, so it fails only on **new** upward includes |
@@ -45,13 +45,11 @@ one valid configuration for the scenarios that touch the board: the shipped P2
 image on the ISS, and the runner's Chrome with every page and worker held to
 the board's clock by embsim's `chrome-cdp` node, its Web Serial port the
 board's protocol line. The board is the machine's project, `SIL/mad-cosim.toml`
-(`make e2e`): the carriage cannot move there while `IC14` is as drawn (MaD
-#285), so the suite skips the scenarios that move it, saying why, and they run
-on the board with #285 fixed, `SIL/mad-ic14-fixed-cosim.toml` (`make
-e2e-motion`: G2+G3+H2+I per PR, the whole set nightly). SERVO-stall, which
-drives the carriage into a hard stop, runs per PR on that board with the
-machine's stop, `SIL/mad-hard-stop-cosim.toml` (`make e2e-stall`; MaD #298).
-FW-ISS runs nightly on the ROM's
+(`make e2e`); the scenarios that move the carriage run on the same file
+(`make e2e-motion`: G2+G3+H2+I per PR, the whole set nightly in three
+shards). SERVO-stall, which drives the carriage into a hard stop, runs per
+PR on that file with the machine's stop, `SIL/mad-hard-stop-cosim.toml`
+(`make e2e-stall`; MaD #298). FW-ISS runs nightly on the ROM's
 serial boot, `SIL/mad-serial-boot-cosim.toml` (`make e2e-rom`). The
 firmware-compatibility scenarios that need firmware the app cannot drive run
 on `mad-cosim.toml` with that firmware in the module's flash (`make
@@ -74,7 +72,7 @@ board time in host time:
 |---|---|---|
 | `control-e2e-board` | per PR: the app, the protocol, the firmware, `SIL/`, or a move of the `SIL/embsim` pin (#148) | **Gates.** A subset of the board scenarios on the ISS with `chrome-cdp` (its comment names the scenarios and the time), and BUNDLE-live on the shipped bundle. A fetch that holds a virtual-time budget is granted that budget again under `advance` |
 | `control-e2e-boardless` | per PR: the app, or a pin move | **Gates.** The scenarios that never reach a board (A1 and the `FW*` flasher ones, a host Chrome against in-page fakes) |
-| `e2e-nightly.yml` | 06:17 UTC daily, or by hand | The whole suite on the same route, after the node's Chrome canary (a worker's timer on the board's clock) |
+| `e2e-nightly.yml` | 06:17 UTC daily, or by hand | The whole suite on the same route, after the node's Chrome canary (a worker's timer on the board's clock): all but the scenarios that move the carriage, plus FW-ISS, in one job, and those scenarios in three `make e2e-motion` jobs (`MOTION_SHARD=1/3`..`3/3`), all on `mad-cosim.toml` |
 
 A move of the `SIL/embsim` pin runs the board job as #148 intended: the node
 the suite runs on is embsim's, and `sil-rust` exercises `mad-emulator` itself
