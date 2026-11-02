@@ -343,8 +343,8 @@ export default function Firmware() {
                 {target
                   ? target.label
                   : needsChoice
-                    ? 'Several serial devices — choose the programming port (J1).'
-                    : 'No programming port yet — choose the Prop Plug on J1 or the P2-EVAL USB.'}
+                    ? 'Several serial devices — choose which one is the programming port (J1).'
+                    : 'No serial device yet — choose the programming port: the Prop Plug on J1 or the P2-EVAL USB.'}
               </td>
               <td style={{ textAlign: 'right' }}>
                 <button onClick={() => void choosePort()} disabled={busy} data-testid="choose-flash-port">
