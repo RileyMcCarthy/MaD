@@ -83,6 +83,8 @@ export default class ErrorBoundary extends Component<Props, State> {
               <BugReportForm
                 initialSummary={`Crash: ${error.message}`.slice(0, 200)}
                 initialSteps={`Crashed on ${window.location.hash || '#/'}.\nWhat I was doing: `}
+                // The root fallback has replaced the router, so a Settings link goes nowhere.
+                settingsTip={!this.props.full}
               />
             </div>
           )}

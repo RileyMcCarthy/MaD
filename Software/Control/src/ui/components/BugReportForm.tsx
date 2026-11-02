@@ -12,6 +12,8 @@ interface Props {
   initialSummary?: string;
   /** Prefill for the reproduction steps. */
   initialSteps?: string;
+  /** Show the "connect GitHub in Settings" tip. Off where there is no router to follow it. */
+  settingsTip?: boolean;
 }
 
 /**
@@ -19,7 +21,11 @@ interface Props {
  * crash fallback, so it must not depend on the router: the root error boundary
  * renders it outside the HashRouter.
  */
-export default function BugReportForm({ initialSummary = '', initialSteps = '' }: Props) {
+export default function BugReportForm({
+  initialSummary = '',
+  initialSteps = '',
+  settingsTip = true,
+}: Props) {
   const [summary, setSummary] = useState(initialSummary);
   const [steps, setSteps] = useState(initialSteps);
   const [includeSerialTail, setIncludeSerialTail] = useState(true);
@@ -73,7 +79,7 @@ export default function BugReportForm({ initialSummary = '', initialSteps = '' }
 
   return (
     <>
-      {!githubConnected && (
+      {settingsTip && !githubConnected && (
         <p className="muted">
           Tip: connect GitHub in <a href="#/settings">Settings</a> to file in one click, with the
           log attached automatically.

@@ -174,10 +174,6 @@ function trackHeap(): void {
 }
 
 /**
- * Install app-level capture. Idempotent — React StrictMode double-invokes
- * effects in dev, and double-wrapping the console would double every line.
- */
-/**
  * Dev server only: record each hot module update. A crash right after one is
  * usually a half-saved file being hot-swapped in, not a bug in the saved code —
  * and nothing else in a report would say so.
@@ -188,6 +184,10 @@ function trackHotUpdates(): void {
   });
 }
 
+/**
+ * Install app-level capture. Idempotent — React StrictMode double-invokes
+ * effects in dev, and double-wrapping the console would double every line.
+ */
 export function installAppDiagnostics(): void {
   if (installed) return;
   installed = true;

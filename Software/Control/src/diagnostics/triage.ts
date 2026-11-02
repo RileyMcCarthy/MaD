@@ -35,6 +35,9 @@ export interface TriageSummary {
   flags: string[];
 }
 
+/** How soon after a dev-server hot update a crash is blamed on it. */
+export const HOT_UPDATE_CRASH_WINDOW_MS = 5000;
+
 const FAILURE_KEY = /error|nack|timeout|fail|trap|stall|jank|undecodable|abort|refus|reject/i;
 
 function describe(e: LogEntry): { at: number; tag: string; msg: string } {
@@ -71,9 +74,19 @@ export function summariseForTriage(log: LogSnapshot): TriageSummary {
   }
   if (has('wasm', 'poll-trap')) flags.push('the protocol core trapped (WASM panic)');
   if (has('ui', 'render-crash')) flags.push('a screen crashed while rendering');
-  const crash = entries.find((e) => e.cat === 'ui' && e.tag === 'render-crash');
+  // The latest crash is the one being reported; an update long before it is
+  // just an earlier save in the same dev session.
+  const crash = entries.filter((e) => e.cat === 'ui' && e.tag === 'render-crash').pop();
   const hotUpdate = crash
-    ? entries.filter((e) => e.cat === 'app' && e.tag === 'hmr' && e.t <= crash.t).pop()
+    ? entries
+        .filter(
+          (e) =>
+            e.cat === 'app' &&
+            e.tag === 'hmr' &&
+            e.t <= crash.t &&
+            crash.t - e.t <= HOT_UPDATE_CRASH_WINDOW_MS,
+        )
+        .pop()
     : undefined;
   if (crash && hotUpdate) {
     flags.push(

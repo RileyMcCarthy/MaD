@@ -52,6 +52,31 @@ describe('summariseForTriage', () => {
 
   behaviour(
     {
+      id: 'diag.triage-crash-long-after-hot-update',
+      covers: 'src/diagnostics/triage.ts#summariseForTriage',
+      given: 'a screen crash on the development server, a minute after the last hot update',
+      expect: {
+        'no-hot-update-flag': 'the report summary carries no hot-update warning',
+      },
+      why: {
+        'no-hot-update-flag':
+          'only a crash within a few seconds of an update is blamed on it; earlier saves are ordinary editing',
+      },
+    },
+    () => {
+      const crashAt = Date.UTC(2026, 0, 1, 13, 0, 0);
+      const t = summariseForTriage(
+        snap([
+          e({ t: crashAt - 60_000, cat: 'app', tag: 'hmr', msg: 'hot update', data: { files: '/src/App.tsx' } }),
+          e({ t: crashAt, level: 'error', cat: 'ui', tag: 'render-crash', msg: 'boom' }),
+        ]),
+      );
+      expect(t.flags.some((f) => f.includes('hot update'))).toBe(false);
+    },
+  );
+
+  behaviour(
+    {
       id: 'diag.triage-crash-without-hot-update',
       covers: 'src/diagnostics/triage.ts#summariseForTriage',
       given: 'a screen crash on the development server, with the only hot update logged after it',
