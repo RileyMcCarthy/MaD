@@ -39,8 +39,7 @@ export interface FirmwareCheckOptions {
   /**
    * The reads that interpret the firmware's structured replies (machine
    * configuration, sample profile). Run once the verdict says the layouts
-   * match, or when no verdict could be had; skipped on a protocol mismatch,
-   * where every value they returned would be misread.
+   * match; skipped otherwise, where every value they returned could be misread.
    */
   afterCompatible?: () => void;
 }
@@ -48,14 +47,15 @@ export interface FirmwareCheckOptions {
 const log = logger('store');
 
 /**
- * Firmware on another protocol has every motion command refused until the
- * connection ends. A board that never answers the handshake leaves no
- * verdict: the link is not working, and nothing is blocked on a guess.
+ * Motion fails closed: the caller blocks it when the connection opens
+ * (`CHECKING`), and this lifts the block only for firmware that answers with
+ * this app's protocol. Firmware on another protocol, or one that never
+ * answers, keeps every motion command refused until the connection ends.
  *
- * Resolves with the verdict (null for none), or undefined when the connection
- * was replaced before the board answered.
+ * Resolves with the verdict, or undefined when the connection was replaced
+ * before the board answered.
  */
-export async function checkConnectedFirmware(opts: FirmwareCheckOptions): Promise<FirmwareCompat | null | undefined> {
+export async function checkConnectedFirmware(opts: FirmwareCheckOptions): Promise<FirmwareCompat | undefined> {
   const { client, read, isCurrent, apply, appProtocol, minFirmware, afterCompatible } = opts;
   const version = await read(() => client.readFirmwareVersion());
   if (!isCurrent()) return undefined;
@@ -64,11 +64,11 @@ export async function checkConnectedFirmware(opts: FirmwareCheckOptions): Promis
   const info = await read(() => client.readDeviceInfo());
   if (!isCurrent()) return undefined;
   if (info === undefined) {
-    log.warn('firmware-compat', 'no reply to the device-info read');
-    client.setMotionBlock(null);
-    apply({ firmwareCompat: null, deviceProtocol: null });
-    afterCompatible?.();
-    return null;
+    const unanswered: FirmwareCompat = { kind: 'unanswered' };
+    log.warn('firmware-compat', 'no reply to the device-info read', { verdict: unanswered.kind, appProtocol });
+    client.setMotionBlock(describeFirmwareCompat(unanswered));
+    apply({ firmwareCompat: unanswered, deviceProtocol: null });
+    return unanswered;
   }
   const deviceProtocol = info?.protocolVersion ?? null;
   const compat = checkFirmwareCompat({

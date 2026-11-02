@@ -20,6 +20,8 @@ import {
   FaultedReason,
   RestrictedReason,
   MIN_FIRMWARE,
+  CHECKING,
+  describeFirmwareCompat,
   type FirmwareCompat,
 } from '@/domain';
 import { checkConnectedFirmware } from './firmwareCheck';
@@ -63,8 +65,9 @@ interface AppState {
   /** The protocol version the firmware reported; null when it reported none
    *  (firmware from before the handshake) or has not been asked yet. */
   deviceProtocol: number | null;
-  /** Whether this app can drive the connected firmware; null until the
-   *  handshake answers, and again once the connection ends. */
+  /** Whether this app can drive the connected firmware: `checking` from the
+   *  moment a connection opens until the firmware answers, null with no
+   *  connection. */
   firmwareCompat: FirmwareCompat | null;
   notifications: UiNotification[];
 
@@ -399,7 +402,10 @@ let connectInFlight: Promise<void> | null = null;
 
 async function connectOnce(args: ConnectArgs, set: SetState, getState: GetState): Promise<void> {
   connectGeneration += 1;
-  set({ connection: 'connecting', error: null });
+  // Fail closed: nothing moves the gantry until the firmware has said it speaks
+  // this app's protocol (checkConnectedFirmware lifts it).
+  deviceClient.setMotionBlock(describeFirmwareCompat(CHECKING));
+  set({ connection: 'connecting', error: null, firmwareCompat: CHECKING, deviceProtocol: null });
   try {
     const port = args.port ?? (await deviceClient.requestPort());
     const baud = args.baud ?? DEFAULT_BAUD_RATE;
@@ -419,6 +425,7 @@ async function connectOnce(args: ConnectArgs, set: SetState, getState: GetState)
     afterConnect(set, getState, label);
   } catch (err) {
     // A failed (re)connect keeps canReconnect as-is so the user can retry.
+    clearFirmwareVerdict(set);
     logStore.error('connect-failed', err instanceof Error ? err.message : String(err));
     set({
       connection: 'disconnected',

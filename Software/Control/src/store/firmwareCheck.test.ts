@@ -106,22 +106,24 @@ describe('checkConnectedFirmware', () => {
 
   behaviour(
     {
-      id: 'firmware-check.silent-board-no-verdict',
+      id: 'firmware-check.silent-board-blocked',
       covers: 'src/store/firmwareCheck.ts#checkConnectedFirmware',
       given: 'a board connected that never answers the question about its protocol',
       expect: {
-        'no-verdict': 'no verdict is shown, and motion is not blocked',
+        'motion-blocked': 'motion stays blocked, with the reason that the firmware did not answer',
+        'verdict-shown': 'the screens are told the firmware did not answer',
       },
       why: {
-        'no-verdict':
-          'a board that answers nothing has a broken link, which the responding indicator already shows; a guess must not lock out a working machine',
+        'motion-blocked':
+          'without an answer the app cannot know what its motion commands would mean to that firmware, so it fails closed',
       },
     },
     async () => {
       const b = board({ version: '0.15', info: 'silent' });
-      await b.run();
-      expect(b.blocks).toEqual([null]);
-      expect(b.patches.at(-1)).toEqual({ firmwareCompat: null, deviceProtocol: null });
+      expect(await b.run()).toEqual({ kind: 'unanswered' });
+      expect(b.blocks).toHaveLength(1);
+      expect(b.blocks[0]).toContain('did not say which protocol it speaks');
+      expect(b.patches.at(-1)).toEqual({ firmwareCompat: { kind: 'unanswered' }, deviceProtocol: null });
     },
   );
 
@@ -147,9 +149,9 @@ describe('checkConnectedFirmware', () => {
       given: 'a board connected, before the app reads its machine configuration and sample profile',
       expect: {
         'read-when-matching': "the configuration is read when the firmware reports the app's protocol",
-        'read-when-unanswered': 'the configuration is read when the board never answers the protocol question',
         'skipped-on-mismatch':
           'the configuration is never read from firmware on another protocol, or from firmware that refuses to say',
+        'skipped-when-unanswered': 'the configuration is never read from a board that does not answer the question',
       },
       why: {
         'skipped-on-mismatch':
@@ -166,7 +168,7 @@ describe('checkConnectedFirmware', () => {
         reads: 1,
         verdict: { kind: 'ok' },
       });
-      expect(await reads({ version: '0.15', info: 'silent' })).toEqual({ reads: 1, verdict: null });
+      expect(await reads({ version: '0.15', info: 'silent' })).toEqual({ reads: 0, verdict: { kind: 'unanswered' } });
       expect((await reads({ version: '0.13', info: null })).reads).toBe(0);
       expect((await reads({ version: '0.20', info: { protocolVersion: APP + 1 } })).reads).toBe(0);
       const stale = board({ version: '0.15', info: { protocolVersion: APP } });

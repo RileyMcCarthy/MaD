@@ -48,9 +48,10 @@ instead.
 ### When the app asks you to update
 
 Each version of MaD Control speaks one version of the serial protocol, and
-on connect it asks the firmware which one it speaks. When they differ, a
-banner under the status bar says so on every screen, and the app refuses to
-move the machine (enable motion, jog, home, run a test) until they match.
+on connect it asks the firmware which one it speaks. Until the firmware
+answers with this app's protocol, the app refuses to move the machine
+(enable motion, jog, home, run a test), and a banner under the status bar
+says why on every screen.
 **STOP** and disabling motion always work.
 
 - **Firmware too old**: the firmware speaks an older protocol, or is from
@@ -60,6 +61,11 @@ move the machine (enable motion, jog, home, run a test) until they match.
 - **Firmware update recommended**: the protocols match, but this app version
   recommends a newer firmware release for a fix. The machine still moves;
   update when convenient.
+- **Checking which protocol the firmware speaks**: shown for a moment after
+  connecting. Motion stays disabled until the firmware answers.
+- **Firmware did not say which protocol it speaks**: the firmware never
+  answered, so the app can't tell whether it is safe to drive. Motion stays
+  disabled: check the cable and reconnect, or update the firmware.
 
 ### Doing the update
 

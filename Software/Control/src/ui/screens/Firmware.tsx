@@ -22,6 +22,7 @@ import {
 } from '@/firmware/release';
 import { hostingRoot } from '@/hosting';
 import { PROTOCOL_VERSION } from '@/protocol/generated/protoemb';
+import type { FirmwareCompat } from '@/domain';
 
 type Status =
   | { kind: 'idle' }
@@ -40,8 +41,10 @@ type Release =
   | { kind: 'unavailable'; message: string };
 
 /** What the Protocol row says about the connected firmware. */
-function protocolLabel(deviceProtocol: number | null, checked: boolean): string {
-  if (!checked) return '—';
+function protocolLabel(deviceProtocol: number | null, compat: FirmwareCompat | null): string {
+  if (compat === null) return '—';
+  if (compat.kind === 'checking') return 'checking…';
+  if (compat.kind === 'unanswered') return 'no answer';
   return deviceProtocol === null ? 'not reported (firmware from before the protocol check)' : String(deviceProtocol);
 }
 
@@ -219,12 +222,14 @@ export default function Firmware() {
   // The handshake's answers stand once it has a verdict, even when no sample
   // arrives: firmware on another protocol sends samples this app cannot read,
   // and this is the screen its operator comes to for the update.
-  const heard = connected && (responding || compat !== null);
+  const heard = connected && (responding || (compat !== null && compat.kind !== 'checking'));
   const installed = heard ? (fw ?? 'Unknown') : null;
   // The firmware cannot be driven by this app (the banner says why); an update
   // is the way out, so the install button leads.
-  const mismatched = compat?.kind === 'firmwareTooOld' || compat?.kind === 'appTooOld';
-  const updateWanted = compat?.kind === 'firmwareTooOld' || compat?.kind === 'belowMinFirmware';
+  const mismatched =
+    compat?.kind === 'firmwareTooOld' || compat?.kind === 'appTooOld' || compat?.kind === 'unanswered';
+  const updateWanted =
+    compat?.kind === 'firmwareTooOld' || compat?.kind === 'belowMinFirmware' || compat?.kind === 'unanswered';
   const releaseDate = manifest?.publishedAt
     ? new Date(manifest.publishedAt).toLocaleDateString()
     : null;
@@ -245,7 +250,7 @@ export default function Firmware() {
               <td>Protocol</td>
               <td data-testid="fw-protocol" className={mismatched ? 'error' : undefined}>
                 {heard ? (
-                  protocolLabel(deviceProtocol, compat !== null)
+                  protocolLabel(deviceProtocol, compat)
                 ) : (
                   <span className="muted">— connect to read</span>
                 )}

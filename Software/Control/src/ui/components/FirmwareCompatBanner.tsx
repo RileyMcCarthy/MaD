@@ -18,7 +18,8 @@ async function openLatestApp(disconnect: () => Promise<void>): Promise<void> {
 
 /**
  * Whether this app can drive the connected firmware, shown on every screen
- * while it cannot (or an update is recommended), with the way out.
+ * while it cannot (still checking, no answer, another protocol) or an update
+ * is recommended, with the way out. `data-kind` names the verdict.
  */
 export default function FirmwareCompatBanner() {
   const compat = useStore((s) => s.firmwareCompat);
@@ -26,12 +27,17 @@ export default function FirmwareCompatBanner() {
   const navigate = useNavigate();
   const { pathname } = useLocation();
   if (compat === null || compat.kind === 'ok') return null;
-  const blocking = blocksMotion(compat);
+  const blocking = blocksMotion(compat) && compat.kind !== 'checking';
 
   return (
-    <div className={`banner ${blocking ? 'error' : 'warn'}`} role="alert" data-testid="firmware-compat">
+    <div
+      className={`banner ${blocking ? 'error' : 'warn'}`}
+      role={compat.kind === 'checking' ? 'status' : 'alert'}
+      data-testid="firmware-compat"
+      data-kind={compat.kind}
+    >
       <span>{describeFirmwareCompat(compat)}</span>
-      {compat.kind === 'appTooOld' ? (
+      {compat.kind === 'checking' ? null : compat.kind === 'appTooOld' ? (
         <button className="primary" onClick={() => void openLatestApp(disconnect)} data-testid="open-latest-app">
           Open the latest MaD Control
         </button>

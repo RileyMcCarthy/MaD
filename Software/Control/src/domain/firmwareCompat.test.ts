@@ -1,6 +1,7 @@
 import { describe, expect } from 'vitest';
 import { behaviour } from '@vibes/behaviour';
 import {
+  CHECKING,
   blocksMotion,
   checkFirmwareCompat,
   compareFirmwareVersions,
@@ -208,6 +209,51 @@ describe('describeFirmwareCompat', () => {
       expect(min).toContain('0.14');
       expect(min).toContain('0.15');
       expect(describeFirmwareCompat({ kind: 'ok' })).toContain('matches');
+    },
+  );
+});
+
+describe('motion fails closed', () => {
+  behaviour(
+    {
+      id: 'firmware-compat.blocked-until-answered',
+      covers: 'src/domain/firmwareCompat.ts#blocksMotion',
+      given: 'a connection whose firmware is still being asked which protocol it speaks, or never answered',
+      expect: {
+        'checking-blocks': 'motion is blocked while the question is on its way',
+        'unanswered-blocks': 'motion stays blocked when the firmware never answers',
+        'match-allows': 'motion is allowed only once the firmware reports this app\'s protocol, recommended update or not',
+        'no-connection': 'with no connection there is no verdict, and nothing to block',
+      },
+      why: {
+        'unanswered-blocks':
+          'without an answer the app cannot know what its motion commands would mean to that firmware',
+      },
+    },
+    () => {
+      expect(blocksMotion(CHECKING)).toBe(true);
+      expect(blocksMotion({ kind: 'unanswered' })).toBe(true);
+      expect(blocksMotion({ kind: 'ok' })).toBe(false);
+      expect(blocksMotion({ kind: 'belowMinFirmware', firmwareVersion: '0.14', minFirmware: '0.15' })).toBe(false);
+      expect(blocksMotion(null)).toBe(false);
+    },
+  );
+
+  behaviour(
+    {
+      id: 'firmware-compat.blocked-reason-shown',
+      covers: 'src/domain/firmwareCompat.ts#describeFirmwareCompat',
+      given: 'motion blocked while the firmware is being asked, or because it never answered',
+      expect: {
+        'checking-says-waiting': 'the operator is told the app is checking the firmware and motion stays disabled until it answers',
+        'unanswered-says-why': 'the operator is told the firmware did not answer, and to check the connection or update the firmware',
+      },
+    },
+    () => {
+      expect(describeFirmwareCompat(CHECKING)).toMatch(/^Checking which protocol .* Motion stays disabled until it answers\.$/);
+      const unanswered = describeFirmwareCompat({ kind: 'unanswered' });
+      expect(unanswered).toContain('did not say which protocol it speaks');
+      expect(unanswered).toContain('check the connection and reconnect, or update the firmware');
     },
   );
 });

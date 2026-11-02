@@ -807,6 +807,16 @@ export async function awaitResponding(page, { timeoutMs = DEVICE_WAIT_MS } = {})
   } catch {
     throw new Error('device responded but the opening handshake never published a firmware version');
   }
+  // Motion fails closed until the firmware says which protocol it speaks: a
+  // scenario that enabled motion before the answer would be refused.
+  try {
+    await page.locator('[data-testid="firmware-compat"][data-kind="checking"]').waitFor({
+      state: 'detached',
+      timeout: Math.max(1000, timeoutMs - (await clock.elapsed())),
+    });
+  } catch {
+    throw new Error('the firmware never answered which protocol it speaks (still checking)');
+  }
 }
 
 /**

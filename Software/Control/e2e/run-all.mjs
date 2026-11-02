@@ -1009,7 +1009,8 @@ async function pressRefusedLiveControls(page, base = APP_URL) {
   const enable = page.getByRole('button', { name: 'Enable motion' });
   await enable.waitFor({ timeout: DEVICE_WAIT_MS });
   await press(enable);
-  await page.locator('.toast').getByText(/firmware/i).first().waitFor({ timeout: DEVICE_WAIT_MS });
+  await page.locator('.toast').getByText(/too old|newer than this version|did not say which protocol/).first()
+    .waitFor({ timeout: DEVICE_WAIT_MS });
   await press(page.getByRole('button', { name: '+ Jog up' }));
   await press(page.getByRole('button', { name: 'Home' }));
   await awaitLogged(page, 'store', 'home-refused');
@@ -3327,21 +3328,32 @@ const scenarios = [
   },
   {
     id: 'COMPAT-silent',
-    name: 'Firmware compat (fake board): a board that never answers the protocol question gets no verdict and blocks nothing',
+    name: 'Firmware compat (fake board): motion stays blocked while checking and when the board never answers the protocol question',
     async run() {
       const { browser, page, errors } = await fakeBoardPage({ firmware: { version: '0.15', protocol: 'silent' } });
       try {
         await connectFakeBoard(page);
+        // Fail closed: blocked from the moment the connection opens, saying so.
+        await compatBanner(page).and(page.locator('[data-kind="checking"]')).waitFor({ timeout: DEVICE_WAIT_MS });
+        await page.goto(`${APP_URL_HOST}#/live`);
+        await page.getByText(/Motion: (enabled|disabled)/).waitFor({ timeout: DEVICE_WAIT_MS });
+        await press(page.getByRole('button', { name: 'Enable motion' }));
+        await page.locator('.toast').getByText(/^Checking which protocol/).first().waitFor({ timeout: DEVICE_WAIT_MS });
         // Four tries, each given up on after the link's response timeout.
         await awaitLogged(page, 'store', 'firmware-compat', { timeoutMs: 40_000, msg: 'no reply' });
-        assert((await compatBanner(page).count()) === 0, 'a banner is shown with no verdict');
-        await page.goto(`${APP_URL_HOST}#/live`);
-        await press(page.getByRole('button', { name: 'Enable motion' }));
-        await page.getByText('Motion: enabled').waitFor({ timeout: DEVICE_WAIT_MS });
+        await compatBanner(page).and(page.locator('[data-kind="unanswered"]')).waitFor({ timeout: DEVICE_WAIT_MS });
+        assert(
+          (await compatBanner(page).textContent())?.includes('did not say which protocol it speaks'),
+          'the banner does not say the firmware never answered',
+        );
+        await pressRefusedLiveControls(page, APP_URL_HOST);
+        // STOP still goes through.
+        await press(page.getByTestId('estop'));
+        await page.locator('.toast').getByText('Emergency stop — motion disabled.').first().waitFor({ timeout: DEVICE_WAIT_MS });
         const writes = await fakeBoardWrites(page);
         assert(
-          writes.some(([cmd, on]) => cmd === WRITE_MOTION_ENABLE && on === 1),
-          `motion enable never reached the board (it received ${JSON.stringify(writes)})`,
+          JSON.stringify(writes) === JSON.stringify([[WRITE_MOTION_ENABLE, 0]]),
+          `the board received ${JSON.stringify(writes)}; expected only STOP's motion disable`,
         );
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
       } finally {

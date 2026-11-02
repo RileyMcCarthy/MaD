@@ -11,6 +11,10 @@
  * `minFirmware` (src/domain/compat.json) is the one hand-kept input: a floor
  * for fixes that did not change the protocol. Falling below it only
  * recommends an update.
+ *
+ * Motion fails closed: from the moment a connection opens until the firmware
+ * answers with a protocol this app speaks, nothing that moves the gantry is
+ * sent. A firmware that never answers stays blocked.
  */
 
 import compat from './compat.json';
@@ -19,6 +23,10 @@ import compat from './compat.json';
 export const MIN_FIRMWARE: string | null = (compat as { minFirmware: string | null }).minFirmware;
 
 export type FirmwareCompat =
+  /** The question is on its way: the connection is open, the answer not in. */
+  | { kind: 'checking' }
+  /** The firmware never answered the question (nor refused it). */
+  | { kind: 'unanswered' }
   /** Same protocol, and at or above any minimum firmware. */
   | { kind: 'ok' }
   /** The firmware speaks an older protocol, or predates the handshake (`deviceProtocol` null). */
@@ -90,14 +98,24 @@ export function checkFirmwareCompat(input: FirmwareCompatInput): FirmwareCompat 
   return { kind: 'ok' };
 }
 
-/** Whether a verdict means the app must not move the machine. */
+/** The verdict while the question is on its way. */
+export const CHECKING: FirmwareCompat = { kind: 'checking' };
+
+/**
+ * Whether a verdict means the app must not move the machine: every verdict but
+ * a match. No verdict (null) means no connection, so nothing to move.
+ */
 export function blocksMotion(compat: FirmwareCompat | null): boolean {
-  return compat !== null && (compat.kind === 'firmwareTooOld' || compat.kind === 'appTooOld');
+  return compat !== null && compat.kind !== 'ok' && compat.kind !== 'belowMinFirmware';
 }
 
 /** One sentence for the operator: what is wrong, and what to do about it. */
 export function describeFirmwareCompat(compat: FirmwareCompat): string {
   switch (compat.kind) {
+    case 'checking':
+      return "Checking which protocol the machine's firmware speaks. Motion stays disabled until it answers.";
+    case 'unanswered':
+      return "The machine's firmware did not say which protocol it speaks, so this app cannot tell whether it can drive it. Motion is disabled: check the connection and reconnect, or update the firmware.";
     case 'ok':
       return 'The firmware matches this version of MaD Control.';
     case 'firmwareTooOld':

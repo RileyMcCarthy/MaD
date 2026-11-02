@@ -35,12 +35,14 @@ page.on('dialog', (d) => {
   void d.accept();
 });
 const banner = page.getByTestId('firmware-compat');
+/** The banner once the firmware has answered (or been given up on). */
+const verdictBanner = page.locator('[data-testid="firmware-compat"]:not([data-kind="checking"])');
 let ok = false;
 try {
   // 1. Connect to the board as it is.
   await connectToSil(page);
-  await banner.waitFor({ timeout: 15_000 });
-  step(1, `connected; banner: "${await text(banner)}"`);
+  await verdictBanner.waitFor({ timeout: 30_000 });
+  step(1, `connected; banner: "${await text(verdictBanner)}"`);
   await page.goto(`${APP_URL}#/firmware`);
   step(1, `Installed: ${await text(page.getByTestId('fw-version'))}; Protocol: ${await text(page.getByTestId('fw-protocol'))}`);
 
