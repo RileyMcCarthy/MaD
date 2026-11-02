@@ -1394,8 +1394,8 @@ const scenarios = [
         // Wait for the state to be KNOWN before touching the toggle. It is not
         // yet the moment to read it: while the state is unknown the button
         // says 'Motion …', and while the machine is faulted (a booting one
-        // is, for about 100 ms of board time from its first answer, the ~130 ms
-        // after the boot line that board-route.sh names) it says 'Disable motion'.
+        // is, for ~100 ms of board time from its first answer (~130 ms after
+        // the boot line, as board-route.sh measures it)) it says 'Disable motion'.
         // enableMotion waits past both for 'Enable motion' or motion on.
         await page.getByText(/Motion: (enabled|disabled)/).waitFor({ timeout: DEVICE_WAIT_MS });
         // State poll should report motion enabled (badge text flips).
@@ -3496,7 +3496,7 @@ const scenarios = [
   },
   {
     id: 'COMPAT-update-loop',
-    name: 'Firmware compat (fake board): too-old banner → Install recommended firmware → checksum checked → flashed → reconnected → ok',
+    name: 'Firmware compat (fake board): too-old banner → local file chosen → Install recommended firmware → checksum checked → flashed → reconnected → ok',
     async run() {
       const { protocol } = protocolFacts();
       const IMAGE = Buffer.from(Array.from({ length: 3000 }, (_, i) => (i * 13 + 5) & 0xff));
@@ -3585,7 +3585,6 @@ const scenarios = [
         }));
         assert(rom.reset >= 1 && rom.finished, `the board was not flashed (${JSON.stringify({ reset: rom.reset, finished: rom.finished })})`);
         assert(Buffer.from(rom.payload).equals(IMAGE), 'the flashed payload is not the recommended release image');
-        assert(!Buffer.from(rom.payload).equals(LOCAL), 'Install recommended flashed the chosen local file');
         assert(
           prompts.length === 2 && prompts[1].includes('MaD-Firmware-0.15-P2Eval.bin (firmware-v0.15)'),
           `the second flash prompt does not name the recommended release: ${JSON.stringify(prompts)}`,
