@@ -15,7 +15,7 @@ const PROTO: SerialLink = SerialLink {
 fn main() {
     let image = std::fs::read(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../Firmware/MaDCore/.pio/build/propeller2_debug/program"
+        "/../../Firmware/MaDCore/.pio/build/MaDEdge/program"
     ))
     .expect("image");
     let img = sdimage::mad_card(32 * 1024 * 1024, None).expect("builds");

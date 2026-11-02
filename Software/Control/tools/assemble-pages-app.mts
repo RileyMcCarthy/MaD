@@ -21,8 +21,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
-import { fetchLatestFirmware, type Bundled } from './firmwareRelease';
-import { RELEASE_IMAGE_PATH, RELEASE_MANIFEST_PATH } from '../src/firmware/release';
+import { fetchLatestFirmware, servedFiles, type Bundled } from './firmwareRelease';
 
 const REPO = process.env.MAD_REPO || 'RileyMcCarthy/MaD';
 const TAG_PREFIX = 'madcontrol-v';
@@ -170,10 +169,10 @@ export async function assemble(opts: AssembleOptions): Promise<void> {
     writeFileSync(join(out, 'index.html'), redirectPage(latest));
     writeFileSync(join(out, 'sw.js'), RETIRE_SW);
 
-    const { manifest, image } = await opts.fetchFirmware();
+    const bundled = await opts.fetchFirmware();
     mkdirSync(join(out, 'firmware'), { recursive: true });
-    writeFileSync(join(out, RELEASE_MANIFEST_PATH), JSON.stringify(manifest));
-    writeFileSync(join(out, RELEASE_IMAGE_PATH), image);
+    for (const [path, contents] of servedFiles(bundled)) writeFileSync(join(out, path), contents);
+    const { manifest } = bundled;
     log(`[assemble] latest app v${latest}; firmware ${manifest.tag} (${manifest.assetName})`);
   } finally {
     rmSync(work, { recursive: true, force: true });

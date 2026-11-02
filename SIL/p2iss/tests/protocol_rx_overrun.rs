@@ -88,14 +88,14 @@ fn image_path() -> PathBuf {
         .map_or_else(
             || {
                 PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                    .join("../../Firmware/MaDCore/.pio/build/propeller2_debug/program")
+                    .join("../../Firmware/MaDCore/.pio/build/MaDEdge/program")
             },
             PathBuf::from,
         );
     if !p.exists() && std::env::var_os("MAD_REQUIRE_P2_IMAGE").is_some() {
         panic!(
             "MAD_REQUIRE_P2_IMAGE is set but the P2 image is missing at {}. \
-             Build it with `make p2image` (or `cd Firmware/MaDCore && pio run -e propeller2_debug`).",
+             Build it with `make p2image` (or `cd Firmware/MaDCore && pio run -e MaDEdge`).",
             p.display()
         );
     }
@@ -324,7 +324,7 @@ fn every_read_sample_request_is_answered() {
 
     let Ok(image) = std::fs::read(image_path()) else {
         eprintln!(
-            "\n*** SKIPPED: {} needs the P2 image at\n***   {}\n*** Build it with `make p2image` (or `cd ../Firmware/MaDCore && pio run -e propeller2_debug`).\n*** This test asserted NOTHING.\n",
+            "\n*** SKIPPED: {} needs the P2 image at\n***   {}\n*** Build it with `make p2image` (or `cd ../Firmware/MaDCore && pio run -e MaDEdge`).\n*** This test asserted NOTHING.\n",
             module_path!(),
             image_path().display()
         );

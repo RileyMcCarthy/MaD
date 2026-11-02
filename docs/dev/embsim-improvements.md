@@ -64,7 +64,7 @@ Do this **after P0**. Same pin graph and time counter as native. CLI: `--backend
 - [ ] **Do not** make QEMU or Renode the kernel. Optional later: Renode/Unicorn **behind `IssCore`** for Cortex-M / RISC-V.
 - [ ] Crate name: **`embsim-p2-iss`** (sibling of `embsim-p2` HAL trampolines). Spike may live in MaD `SIL/p2core/` then promote.
 
-### P2 core (must-work from MaD `propeller2_debug/program`)
+### P2 core (must-work from MaD `MaDEdge/program`)
 
 - [ ] Load raw FlexC hub image at `$000`; boot `coginit` to `$404` / `entry`.
 - [ ] `HUBSET` (record clkfreq at hub `$14`; ignore PLL).
@@ -78,7 +78,7 @@ Do this **after P0**. Same pin graph and time counter as native. CLI: `--backend
 
 ### Smartpin modes (MaD debug image)
 
-Use `propeller2_debug` so MAIN is hardware UART (pins 30/32), not FlexC `_txraw`.
+Use `MaDEdge` so MAIN is hardware UART (pins 30/32), not FlexC `_txraw`.
 
 - [ ] `P_ASYNC_TX` / `P_ASYNC_RX` — 2 Mbaud on 30/32 → host PTY; 115200 on 0/2 → ADS122U04.
 - [ ] `P_QUADRATURE` — encoder A/B (9/10).
@@ -89,7 +89,7 @@ Use `propeller2_debug` so MAIN is hardware UART (pins 30/32), not FlexC `_txraw`
 
 ### MaD consumer
 
-- [ ] `mad-emulator --backend iss --firmware …/propeller2_debug/program`
+- [ ] `mad-emulator --backend iss --firmware …/MaDEdge/program`
 - [ ] `make playground-iss` (or `playground-p2bin`) — same PTY `/tmp/tty.rpi` as native.
 - [ ] Pin map from `HW_pins.h`, not gcc DWARF.
 - [ ] E2E unchanged except which playground is running. PR CI = native; nightly = ISS smoke IDs.
