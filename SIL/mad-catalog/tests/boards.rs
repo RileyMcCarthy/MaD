@@ -14,7 +14,7 @@
 use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard};
 
-use embsim_board::{BuiltSystem, Finding, Level, NetState, PinRef, Project};
+use embsim_board::{BoardSurvey, BuiltSystem, Finding, Level, NetState, PinRef, Project};
 use embsim_boards::catalog::CatalogSet;
 use embsim_core::virtual_clock::{self, ClockMode};
 use rstest::rstest;
@@ -82,8 +82,29 @@ fn net_at(built: &BuiltSystem, board: &str, part: &str, pin: &str) -> String {
         .unwrap_or_else(|| panic!("{board}.{part}.{pin} is on no net of {board}"))
 }
 
+/// The net on the far side of `board`'s two-pin part `part`, from its pin on
+/// `net` (or on a net `net` is merged with).
+fn beyond(built: &BuiltSystem, board: &str, part: &str, net: &str) -> String {
+    let ends = ["1", "2"].map(|pin| net_at(built, board, part, pin));
+    match ends.iter().position(|end| built.names_are_merged(end, net)) {
+        Some(near) => ends[1 - near].clone(),
+        None => panic!("{board}.{part} has no pin on {net}"),
+    }
+}
+
+/// The pin of `reference` that the board's schematic names `function`.
+fn pin_named(survey: &BoardSurvey, reference: &str, function: &str) -> String {
+    survey
+        .pins_of(reference)
+        .unwrap_or_else(|| panic!("the board has a {reference}"))
+        .iter()
+        .find(|site| site.pinfunction.as_deref() == Some(function))
+        .map(|site| site.pin.clone())
+        .unwrap_or_else(|| panic!("{reference} has no pin named {function}"))
+}
+
 /// The key and the model the survey gave `reference`.
-fn placed(survey: &embsim_board::BoardSurvey, reference: &str) -> (Option<String>, Option<String>) {
+fn placed(survey: &BoardSurvey, reference: &str) -> (Option<String>, Option<String>) {
     let part = survey
         .parts()
         .find(|part| part.reference == reference)
@@ -224,26 +245,40 @@ fn the_carrier_builds_with_the_module_seated_and_the_add_on_on_its_cable() {
         "cable-crossed",
         "the carrier's force-gauge transmit line reaches the add-on's receive pin, and the \
          add-on's transmit pin the carrier's receive line",
-        "the cable crosses transmit and receive between the carrier's J9 and the add-on's J1"
+        "the cable crosses transmit and receive between the carrier's J9 and the add-on's J1, \
+         and a series resistor on the add-on carries each line to the converter"
     );
     expect!(
         "receiver-over-range",
         "only the encoder's line receiver U25 is reported above its recommended range, once: \
          its supply at 5 volts, against a 3.6 volt maximum",
-        "the carrier feeds its low-voltage AM26LV32 from its 5 volt rail, inside the part's 6 \
-         volt absolute maximum"
+        "the carrier feeds its low-voltage AM26LV32 from the servo connector's 5 volt supply on \
+         J21, the rail its 5 volt line driver U24 shares, inside the part's 6 volt absolute \
+         maximum"
+    );
+    // The converter's serial pins, by the names the add-on's schematic gives
+    // them.
+    let converter = board_project("DS2", mad_catalog::boards::DS2)
+        .survey(&set(), "DS2")
+        .expect("the add-on surveys");
+    let (converter_rx, converter_tx) = (
+        pin_named(&converter, "U1", "RX"),
+        pin_named(&converter, "U1", "TX"),
     );
     let (fingers, cable, over_range) = build("edge-bench.toml", |built| {
         let rail = net_at(built, "EDGE", "J3", "41");
         let fingers = ["41", "42"]
             .map(|finger| built.names_are_merged(&net_at(built, "EC32", "J203", finger), &rail));
         let rail_named_5v = rail == "EDGE.+5V";
-        let crossed = |edge: &str, addon: &str| {
-            built.names_are_merged(
-                &net_at(built, "EDGE", "J9", edge),
-                &net_at(built, "DS2", "J1", addon),
-            )
+        // The carrier's force-gauge lines on J9, each over the cable to the
+        // add-on and through a series resistor to a converter pin.
+        let carrier_tx = net_at(built, "EDGE", "J9", "4");
+        let carrier_rx = net_at(built, "EDGE", "J9", "2");
+        let reaches = |line: &str, resistor: &str, pin: &str| {
+            beyond(built, "DS2", resistor, line) == net_at(built, "DS2", "U1", pin)
         };
+        let tx_to_rx = reaches(&carrier_tx, "R3", &converter_rx);
+        let tx_from_rx = reaches(&carrier_rx, "R4", &converter_tx);
         let over_range: Vec<(String, String, f64, f64, Option<f64>)> = built
             .diagnostics()
             .findings()
@@ -262,12 +297,27 @@ fn the_carrier_builds_with_the_module_seated_and_the_add_on_on_its_cable() {
             .collect();
         (
             (rail_named_5v, fingers),
-            (crossed("4", "3"), crossed("2", "4")),
+            ((carrier_tx, carrier_rx), (tx_to_rx, tx_from_rx)),
             over_range,
         )
     });
     assert_eq!(fingers, (true, [true, true]));
-    assert_eq!(cable, (true, true));
+    let ((carrier_tx, carrier_rx), (tx_to_rx, tx_from_rx)) = cable;
+    assert_eq!(
+        (carrier_tx.as_str(), carrier_rx.as_str()),
+        (
+            "EDGE./MaD_Edge_Sheet2/IFG_TX",
+            "EDGE./MaD_Edge_Sheet2/IFG_RX"
+        )
+    );
+    assert!(
+        tx_to_rx,
+        "the carrier's transmit line does not reach the converter's RX (U1.{converter_rx})"
+    );
+    assert!(
+        tx_from_rx,
+        "the converter's TX (U1.{converter_tx}) does not reach the carrier's receive line"
+    );
     let [(part, pin, volts, max, absolute_max)] = over_range.as_slice() else {
         panic!("one pin above its recommended range, found {over_range:?}");
     };
