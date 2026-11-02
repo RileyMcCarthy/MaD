@@ -1,4 +1,5 @@
 import { Component, ErrorInfo, ReactNode } from 'react';
+import BugReportForm from './components/BugReportForm';
 
 interface Props {
   children: ReactNode;
@@ -14,6 +15,8 @@ interface Props {
 
 interface State {
   error: Error | null;
+  /** The bug report form is open under the error. */
+  reporting: boolean;
 }
 
 /**
@@ -27,9 +30,9 @@ interface State {
  * window 'error' / 'unhandledrejection' listeners installed in App.
  */
 export default class ErrorBoundary extends Component<Props, State> {
-  override state: State = { error: null };
+  override state: State = { error: null, reporting: false };
 
-  static getDerivedStateFromError(error: Error): State {
+  static getDerivedStateFromError(error: Error): Partial<State> {
     return { error };
   }
 
@@ -39,10 +42,10 @@ export default class ErrorBoundary extends Component<Props, State> {
     this.props.onError?.(error, info);
   }
 
-  private reset = (): void => this.setState({ error: null });
+  private reset = (): void => this.setState({ error: null, reporting: false });
 
   override render(): ReactNode {
-    const { error } = this.state;
+    const { error, reporting } = this.state;
     if (!error) return this.props.children;
 
     const title = this.props.title ?? 'Something went wrong';
@@ -64,7 +67,25 @@ export default class ErrorBoundary extends Component<Props, State> {
             {this.props.full && (
               <button onClick={() => window.location.reload()}>Reload app</button>
             )}
+            {!reporting && (
+              <button
+                onClick={() => this.setState({ reporting: true })}
+                data-testid="crash-report-bug"
+              >
+                Report bug
+              </button>
+            )}
           </div>
+          {/* componentDidCatch has already logged the crash with both stacks,
+              so the report's bundle carries the trace without retyping it. */}
+          {reporting && (
+            <div style={{ marginTop: 12 }} data-testid="crash-report-form">
+              <BugReportForm
+                initialSummary={`Crash: ${error.message}`.slice(0, 200)}
+                initialSteps={`Crashed on ${window.location.hash || '#/'}.\nWhat I was doing: `}
+              />
+            </div>
+          )}
         </div>
       </div>
     );
