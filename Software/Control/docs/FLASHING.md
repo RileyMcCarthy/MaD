@@ -122,14 +122,18 @@ the app recognises both namings. The file picker in the UI accepts all of them.
 
 ## In SIL
 
-The whole update runs in SIL, on the ISS, with nothing faked: e2e scenario FW1
-on `SIL/mad-reflash-cosim.toml` (`cd SIL && make e2e-reflash`, MaD #134). The
+The whole update runs in SIL, on the ISS, with nothing faked: e2e scenarios FW1
+and COMPAT-reflash on `SIL/mad-reflash-cosim.toml` (`cd SIL && make e2e-reflash`, MaD #134). The
 app connects to the machine's project with the firmware booted off the module's
 flash; the Firmware page resets the chip with its DTR pulse, which crosses
 embsim's `chrome-cdp` DTR pin and a Prop Plug reset stage onto J1.3 and the
 chip's `RESN`; the ROM, back in its serial window, takes the stub and the image;
 the stub writes the module's simulated flash; and the reconnected session finds
-the image's own version stamp. The board differs from the machine's default
+the image's own version stamp. Scenario COMPAT-reflash runs the same chain from
+the other end: the board boots the release from before the protocol handshake,
+the too-old banner offers the recommended firmware, Install recommended firmware
+writes it, and the reconnected session reports an `ok` verdict with motion
+enabled. The board differs from the machine's default
 project in two places, both open questions for the real machine: the Prop Plug
 is taken to reset on DTR assert (`invert_dtr`), and S301's P59 pull-down is
 open, without which the ROM boots the flash at once after a reset and no

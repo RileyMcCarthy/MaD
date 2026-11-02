@@ -15,7 +15,7 @@
 #   make e2e-bundle     - BUNDLE-live: the built bundle (as pages.yml builds it) on e2e-emulator's board
 #   make e2e-motion     - The scenarios that move the carriage, on mad-cosim.toml (MOTION_SHARD splits them)
 #   make e2e-stall      - SERVO-stall on mad-hard-stop-cosim.toml: the carriage jogged into a hard stop
-#   make e2e-reflash    - FW1: the app flashing the firmware for real, DTR resetting the chip, on mad-reflash-cosim.toml
+#   make e2e-reflash    - FW1 and COMPAT-reflash: the app flashing the firmware for real, DTR resetting the chip, on mad-reflash-cosim.toml
 #   make reflash-image  - build/reflash.bin: the production image stamped with a version of its own, FW1's
 #   make flash-image    - build/flash.bin: stage-1 and the production image, the module's boot flash
 #   make sd-image       - build/sd.img: a 32 MiB FAT16 card mirroring ./sd
@@ -322,19 +322,48 @@ reflash-image:
 	cd $(FIRMWARE_DIR) && PLATFORMIO_BUILD_DIR=$(REFLASH_BUILD) PLATFORMIO_BUILD_FLAGS='-DFIRMWARE_VERSION=\"$(REFLASH_VERSION)\"' pio run -e $(PRODUCTION_ENV)
 	cp $(REFLASH_BUILD)/$(PRODUCTION_ENV)/program $(REFLASH_IMAGE)
 
-# FW1 on the reflash board: the app's flasher, in a headless Chrome on the
-# board's clock, updating the machine's firmware for real. The board is
-# mad-reflash-cosim.toml: mad-cosim.toml with the Prop Plug's reset stage on
-# J1.3 (the node's DTR, the stage's open collector, the chip's RESN) and
-# S301's P59 pulls open, so after a reset the ROM listens on J1 for 100 ms
-# before it boots the flash. The app connects, flashes build/reflash.bin
-# (its DTR pulse resets the chip into that window), and reconnects; FW1
-# passes once the status bar shows the image's stamp. The e2e suite's other
-# scenarios need the firmware's board (make e2e).
+# The reflash board, mad-reflash-cosim.toml: mad-cosim.toml with the Prop
+# Plug's reset stage on J1.3 (the node's DTR, the stage's open collector,
+# the chip's RESN) and S301's P59 pulls open, so after a reset the ROM
+# listens on J1 for 100 ms before it boots the flash. Two scenarios, each
+# updating the machine's firmware for real, in a headless Chrome on the
+# board's clock: the app's DTR pulse resets the chip into that window, the
+# ROM's loader takes build/reflash.bin, and the session reconnects to what
+# the board boots.
+#   FW1             on this tree's firmware, a local file on the Firmware
+#                   screen; passes once the status bar shows the stamp
+#   COMPAT-reflash  on the release from before the protocol handshake
+#                   (COMPAT_OLD_TAG, scripts/compat-images.sh), the
+#                   too-old banner's Install recommended firmware; passes
+#                   once the verdict is ok and motion enables
+# This tree's image goes back in the flash afterwards, however the runs end,
+# and E2E_TIMINGS, when set, gets both runs' timings.
+# The e2e suite's other scenarios need the firmware's board (make e2e).
 REFLASH_PROJECT = mad-reflash-cosim.toml
 e2e-reflash: flash-image sd-image reflash-image
 	$(EMBSIM) check $(REFLASH_PROJECT)
-	EMBSIM="$(EMBSIM)" E2E_PROJECT=$(REFLASH_PROJECT) E2E_BOARD=reflash E2E_REFLASH_IMAGE=$(abspath $(REFLASH_IMAGE)) E2E_REFLASH_VERSION=$(REFLASH_VERSION) SCENARIOS=FW1 scripts/board-route.sh e2e
+	EMBSIM="$(EMBSIM)" COMPAT_OLD_TAG=$(COMPAT_OLD_TAG) scripts/compat-images.sh
+	@trap '$(EMBSIM) flash-image $(PRODUCTION_IMAGE) -o $(FLASH_IMAGE) >/dev/null' EXIT; \
+	status=0; \
+	for run in current:FW1 old:COMPAT-reflash; do \
+	  firmware=$${run%%:*}; \
+	  echo "e2e-reflash: $${run#*:} on the $$firmware firmware"; \
+	  if [ $$firmware = current ]; then \
+	    $(EMBSIM) flash-image $(PRODUCTION_IMAGE) -o $(FLASH_IMAGE) >/dev/null; \
+	  else \
+	    cp $(BUILD_DIR)/flash-compat-$$firmware.bin $(FLASH_IMAGE); \
+	  fi; \
+	  E2E_FIRMWARE=$$firmware SCENARIOS=$${run#*:} EMBSIM="$(EMBSIM)" \
+	    E2E_PROJECT=$(REFLASH_PROJECT) E2E_BOARD=reflash \
+	    E2E_REFLASH_IMAGE=$(abspath $(REFLASH_IMAGE)) E2E_REFLASH_VERSION=$(REFLASH_VERSION) \
+	    E2E_TIMINGS=$${E2E_TIMINGS:+$$E2E_TIMINGS.$$firmware} \
+	    scripts/board-route.sh e2e || status=1; \
+	done; \
+	if [ -n "$${E2E_TIMINGS:-}" ]; then \
+	  node -e 'const fs = require("fs"); const [out, ...parts] = process.argv.slice(1); const timings = parts.flatMap((p) => { try { return JSON.parse(fs.readFileSync(p, "utf8")).timings; } catch { return []; } }); fs.writeFileSync(out, JSON.stringify({ board: true, timings }, null, 2));' \
+	    "$$E2E_TIMINGS" "$$E2E_TIMINGS.current" "$$E2E_TIMINGS.old"; \
+	fi; \
+	exit $$status
 
 # Clean build artifacts
 clean:

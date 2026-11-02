@@ -71,8 +71,11 @@
  * flash with the Prop Plug's reset on J1.3 and the ROM's serial window open
  * after a reset (`cd SIL && make e2e-reflash`, which sets E2E_BOARD=reflash
  * and the image to flash, E2E_REFLASH_IMAGE, a production build stamped
- * E2E_REFLASH_VERSION). On that board it is the only scenario that runs; on
- * the others it is skipped; without a board it flashes the in-page fake.
+ * E2E_REFLASH_VERSION). COMPAT-reflash runs there too, on the release from
+ * before the protocol handshake (E2E_FIRMWARE=old), and installs the same
+ * image from the too-old banner. On that board they are the only scenarios
+ * that run; on the others they are skipped; without a board FW1 flashes the
+ * in-page fake.
  *
  * Covers the parity-critical scenarios of docs/TEST_PLAN.md §4: A1, B1–B5, C1/C3/C4, D1/D2/D3,
  * E1, F1/F2/F4/F6/F7, G1/G2/G3 + G-limit, H1–H5, I1–I4, J1 (in G-limit), K1 (in B2+B3+B4) — plus
@@ -152,10 +155,11 @@ const FIRMWARE = process.env.E2E_FIRMWARE || 'current';
 const NEEDS_FIRMWARE = new Map([
   ['COMPAT-too-old', 'old'],
   ['COMPAT-app-too-old', 'future'],
+  ['COMPAT-reflash', 'old'],
 ]);
 /** Why board scenario `id` cannot run on this board's firmware, or ''. */
 const wrongFirmware = (id) => {
-  if (BOARD_FREE.has(id)) return '';
+  if (boardFree(id)) return '';
   const wants = NEEDS_FIRMWARE.get(id) ?? 'current';
   if (wants === FIRMWARE) return '';
   return wants === 'current'
@@ -171,13 +175,14 @@ const ROM_BOARD = process.env.E2E_BOARD === 'rom';
 // The board is the app's flasher's: SIL/mad-reflash-cosim.toml (make
 // e2e-reflash), the firmware off the module's flash with the Prop Plug's
 // reset on J1.3 and the ROM's serial window open after a reset (MaD #134).
-// Only FW1 runs, flashing E2E_REFLASH_IMAGE, a production build stamped
+// FW1 runs there on this tree's firmware, and COMPAT-reflash on the old
+// one, each flashing E2E_REFLASH_IMAGE, a production build stamped
 // E2E_REFLASH_VERSION, through the ROM's loader for real.
 const REFLASH_BOARD = process.env.E2E_BOARD === 'reflash';
 
-// Each special board's one scenario; every other board scenario is the
+// The special boards' scenarios; every other board scenario is the
 // firmware board's (mad-cosim.toml and its twins).
-const ONLY_ON = new Map([['FW-ISS', 'rom'], ['FW1', 'reflash']]);
+const ONLY_ON = new Map([['FW-ISS', 'rom'], ['FW1', 'reflash'], ['COMPAT-reflash', 'reflash']]);
 const THIS_BOARD = ROM_BOARD ? 'rom' : REFLASH_BOARD ? 'reflash' : 'firmware';
 const MAKE_FOR = { rom: 'make e2e-rom', reflash: 'make e2e-reflash', firmware: 'make e2e' };
 /** Whether `id` is this board's to run. */
@@ -3663,6 +3668,94 @@ const scenarios = [
       }
     },
   },
+  {
+    id: 'COMPAT-reflash',
+    name: 'Firmware compat (board): a release from before the handshake → Install recommended firmware → the board reflashed for real → ok, motion enabled',
+    async run() {
+      // The reflash board (make e2e-reflash) booting the release from before
+      // the app could ask which protocol the firmware speaks
+      // (E2E_FIRMWARE=old). The release the app recommends is this tree's
+      // production image, stamped E2E_REFLASH_VERSION, which no release
+      // carries yet: the manifest and image the dev server would fetch from
+      // GitHub are served here, as COMPAT-update-loop serves them. The
+      // update is the machine's own: the DTR reset through the Prop Plug's
+      // reset stage, the ROM's loader, the stub writing the module's flash,
+      // and the board booting what it wrote.
+      const { protocol } = protocolFacts();
+      const path = process.env.E2E_REFLASH_IMAGE;
+      const version = process.env.E2E_REFLASH_VERSION;
+      assert(path && version, 'COMPAT-reflash needs E2E_REFLASH_IMAGE and E2E_REFLASH_VERSION; make e2e-reflash sets both');
+      const image = readFileSync(path);
+      const p2eval = {
+        assetName: `MaD-Firmware-${version}-P2Eval.bin`,
+        size: image.length,
+        sha256: createHash('sha256').update(image).digest('hex'),
+        path: `firmware/MaD-Firmware-${version}-P2Eval.bin`,
+      };
+      const manifest = {
+        releases: [{
+          tag: `firmware-v${version}`,
+          version,
+          ...p2eval,
+          boards: { P2Eval: p2eval },
+          publishedAt: '2026-11-01T00:00:00Z',
+          htmlUrl: 'https://example.invalid/release',
+          protocolVersion: protocol,
+        }],
+      };
+      const { browser, page, errors } = await newSilPage();
+      try {
+        page.on('dialog', (d) => d.accept());
+        await page.route('**/firmware/manifest.json', (route) =>
+          route.fulfill({ contentType: 'application/json', body: JSON.stringify(manifest) }));
+        await page.route('**/firmware/*-P2Eval.bin', (route) =>
+          route.fulfill({ contentType: 'application/octet-stream', body: image }));
+        // Not connectToSil: the old firmware's samples are unreadable to this
+        // app, so the session never shows Responding (COMPAT-too-old).
+        await page.goto(`${APP_URL}#/connect`);
+        await press(boardGrantedPort(page), { timeout: 10_000 });
+        await page.locator('.dot.connected').waitFor({ timeout: 10_000 });
+        await compatBanner(page).filter({ hasText: /too old/ }).waitFor({ timeout: DEVICE_WAIT_MS });
+        await press(page.getByTestId('update-firmware'));
+        const install = page.getByTestId('install-recommended');
+        await install.filter({ hasText: `Install recommended firmware (${version})` }).waitFor({ timeout: DEVICE_WAIT_MS });
+
+        const clock = await pageClock(page);
+        const hostStart = Date.now();
+        await press(install);
+        await page.getByTestId('flash-status').filter({ hasText: /Wrote .* bytes to flash/ })
+          .waitFor({ timeout: FLASH_WAIT_MS });
+        console.log(
+          `  COMPAT-reflash: the recommended ${image.length}-byte image written in ` +
+            `${((await clock.elapsed()) / 1000).toFixed(3)} s of board time, ` +
+            `${((Date.now() - hostStart) / 1000).toFixed(1)} s of host time`,
+        );
+        // The session reconnects to what the board booted from its flash,
+        // asks again, and the verdict is ok.
+        await page.locator('.dot.connected').waitFor({ timeout: DEVICE_WAIT_MS });
+        await compatBanner(page).waitFor({ state: 'detached', timeout: DEVICE_WAIT_MS });
+        await page.getByTestId('fw-version').filter({ hasText: version }).waitFor({ timeout: DEVICE_WAIT_MS });
+        await page.getByTestId('fw-protocol').filter({ hasText: `${protocol} · this app speaks ${protocol}` })
+          .waitFor({ timeout: DEVICE_WAIT_MS });
+        const verdicts = logged(await appLogEntries(page), 'store', 'firmware-compat').map((e) => e.data?.verdict);
+        assert(
+          verdicts[0] === 'firmwareTooOld' && verdicts[verdicts.length - 1] === 'ok',
+          `verdicts ${JSON.stringify(verdicts)}, expected firmwareTooOld then ok`,
+        );
+        // Motion works on the firmware the board now runs.
+        await page.goto(`${APP_URL}#/live`);
+        await press(page.getByRole('button', { name: 'Enable motion' }));
+        await page.getByText('Motion: enabled').waitFor({ timeout: DEVICE_WAIT_MS });
+        console.log(
+          `  COMPAT-reflash: ok and motion enabled ${((await clock.elapsed()) / 1000).toFixed(3)} s of ` +
+            'board time after Install',
+        );
+        assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
+      } finally {
+        await browser.close();
+      }
+    },
+  },
 ];
 
 /**
@@ -3791,8 +3884,9 @@ async function main() {
   for (const s of selected) {
     // The ROM board (E2E_BOARD=rom: mad-serial-boot-cosim.toml, the mask
     // ROM's serial boot on J1) runs FW-ISS and nothing else, the reflash
-    // board (E2E_BOARD=reflash: mad-reflash-cosim.toml) FW1 and nothing
-    // else; the firmware's board runs everything else.
+    // board (E2E_BOARD=reflash: mad-reflash-cosim.toml) FW1 and
+    // COMPAT-reflash and nothing else; the firmware's board runs everything
+    // else.
     if (BOARD && !onThisBoard(s.id) && !boardFree(s.id)) {
       const needs = ONLY_ON.get(s.id) ?? 'firmware';
       console.log(`  ~ ${s.id}: skipped (needs the ${needs} board: ${MAKE_FOR[needs]})`);
