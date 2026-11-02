@@ -2456,13 +2456,15 @@ impl<P: PinBus> Machine<P> {
             (d & 7) as usize
         };
 
-        let mut fresh = Cog::default();
         // The hub FIFO's pointer is not part of what COGINIT loads: the cog
         // comes up with it where it was. loadp2's flash programmer, which the
         // boot ROM relaunches cog 0 into straight after a hex download, reads
         // it with its first `GETPTR` as "size of download in bytes" (loadp2
         // flash_loader.spin2), the bytes the ROM's `WFBYTE`s moved it by.
-        fresh.fifo_addr = self.cogs[target].fifo_addr;
+        let mut fresh = Cog {
+            fifo_addr: self.cogs[target].fifo_addr,
+            ..Cog::default()
+        };
         if hubexec {
             fresh.pc = s;
         } else {

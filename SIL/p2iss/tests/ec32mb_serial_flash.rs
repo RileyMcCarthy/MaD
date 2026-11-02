@@ -137,8 +137,10 @@ fn build_flash_image(stub: &[u8], firmware: &[u8]) -> Vec<u8> {
     put(&mut img, 2, 0);
     put(&mut img, 1, 0);
     let sum = img
-        .chunks_exact(4)
-        .map(|w| u32::from_le_bytes(w.try_into().expect("a long")))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|w| u32::from_le_bytes(*w))
         .fold(0u32, u32::wrapping_add);
     put(&mut img, 1, 0u32.wrapping_sub(sum));
     img
@@ -194,10 +196,8 @@ impl Component for Flasher {
             let (shared, bridge) = (Arc::clone(&self.shared), Arc::clone(&bridge));
             let rx = io.pin("RX")?;
             io.on_sense("RX", move |sense| {
-                for frame in bridge.receive_sense(&rx, &sense) {
-                    if let Ok(byte) = frame {
-                        shared.heard.lock().unwrap().push(byte);
-                    }
+                for byte in bridge.receive_sense(&rx, &sense).into_iter().flatten() {
+                    shared.heard.lock().unwrap().push(byte);
                 }
             })?;
         }
@@ -205,10 +205,8 @@ impl Component for Flasher {
             let shared = Arc::clone(&self.shared);
             let arm = io.clone();
             io.on_wake_ns(move |now| {
-                for frame in bridge.service(now) {
-                    if let Ok(byte) = frame {
-                        shared.heard.lock().unwrap().push(byte);
-                    }
+                for byte in bridge.service(now).into_iter().flatten() {
+                    shared.heard.lock().unwrap().push(byte);
                 }
                 let ready = shared
                     .line
