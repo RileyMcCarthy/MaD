@@ -157,6 +157,9 @@ export default function Firmware() {
       return;
     }
 
+    // The MaDEdge build moves the protocol to the Edge carrier's Pi link, so
+    // nothing answers on the flash port once it is written.
+    const answersOnFlashPort = file !== null || board === 'P2Eval';
     setStatus({ kind: 'running', progress: { phase: 'resetting' } });
     // Hands the main session's port over (only when it is the target) and back.
     await flashWithSession({
@@ -174,12 +177,15 @@ export default function Firmware() {
         }),
       closePort: closeFlashPort,
       connect: (port) => connect({ port }),
+      answersOnFlashPort,
       wait: (ms) => new Promise((r) => setTimeout(r, ms)),
       log: logger('flash'),
       onDone: (result) =>
         setStatus({
           kind: 'done',
-          message: `Wrote ${result.imageBytes.toLocaleString()} bytes to flash. The board has rebooted into the new firmware.`,
+          message:
+            `Wrote ${result.imageBytes.toLocaleString()} bytes to flash. The board has rebooted into the new firmware.` +
+            (answersOnFlashPort ? '' : " It now answers only over the Edge carrier's Pi link: connect over that link."),
         }),
       onError: (err) => setStatus({ kind: 'error', message: err instanceof Error ? err.message : String(err) }),
     });

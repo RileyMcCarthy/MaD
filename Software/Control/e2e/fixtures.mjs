@@ -913,7 +913,7 @@ export function installFakeBootRom(options = 1) {
   const { ports: portCount = 1, getPortsFails = false, writeDelayMs = 0 } =
     typeof options === 'number' ? { ports: options } : options;
   const CHECKSUM_MAGIC = 0x706f7250;
-  const state = { reset: 0, image: [], finished: false, ok: null, dtr: null, bytesIn: 0, replies: 0, checksum: null, finishedAt: null, closedAt: null };
+  const state = { opens: 0, reset: 0, image: [], finished: false, ok: null, dtr: null, bytesIn: 0, replies: 0, checksum: null, finishedAt: null, closedAt: null };
   window.__bootRom = state;
 
   let controller;
@@ -993,6 +993,7 @@ export function installFakeBootRom(options = 1) {
     let writable;
     return {
       async open() {
+        state.opens += 1;
         readable = new ReadableStream({
           start(c) {
             controller = c;

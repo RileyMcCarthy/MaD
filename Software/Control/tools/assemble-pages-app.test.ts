@@ -254,4 +254,35 @@ describe('assemble-pages-app', () => {
       expect(existsSync(out)).toBe(false);
     },
   );
+  behaviour(
+    {
+      id: 'pages-assemble.board-images-served',
+      covers: 'tools/assemble-pages-app.mts#assemble',
+      given: 'a firmware release that carries a MaDEdge build beside the P2Eval one',
+      expect: {
+        'madedge-image-written': 'the MaDEdge image is written byte for byte to its own file in the shared firmware folder',
+        'p2eval-image-kept': 'the P2Eval image is still the default firmware image',
+        'both-boards-listed': 'the firmware description lists both boards, each with its image name, size and checksum',
+      },
+    },
+    async () => {
+      release('0.4.1');
+      const boards = {
+        P2Eval: { assetName: 'MaD-Firmware-0.13-P2Eval.bin', size: 4, sha256: 'ab'.repeat(32) },
+        MaDEdge: { assetName: 'MaD-Firmware-0.13-MaDEdge.bin', size: 3, sha256: 'cd'.repeat(32) },
+      };
+      const withEdge: Bundled = {
+        manifest: { ...FIRMWARE.manifest, assetName: boards.P2Eval.assetName, boards },
+        image: FIRMWARE.image,
+        boardImages: { P2Eval: FIRMWARE.image, MaDEdge: Buffer.from([9, 8, 7]) },
+      };
+      await run(vi.fn(async () => withEdge));
+      expect([...readFileSync(join(out, 'firmware/latest-MaDEdge.bin'))]).toEqual([9, 8, 7]);
+      expect([...readFileSync(join(out, 'firmware/latest.bin'))]).toEqual([1, 2, 3, 4]);
+      const manifest = JSON.parse(readFileSync(join(out, 'firmware/latest.json'), 'utf8')) as {
+        boards: Record<string, unknown>;
+      };
+      expect(manifest.boards).toEqual(boards);
+    },
+  );
 });
