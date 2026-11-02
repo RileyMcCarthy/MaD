@@ -35,12 +35,21 @@
 # sessions (Chrome's `Emulation` on workers is undocumented), which would put
 # the app's worker, and its 2 s response timeout, back on host time.
 #
-# WHAT STILL DOES NOT TOUCH THE BOARD: A1 and FW1/2/3/5/6/7/8/9 drive a host
+# WHAT STILL DOES NOT TOUCH THE BOARD: A1 and FW2/3/5/6/7/8/9 drive a host
 # Chrome against in-page fakes (installFakeBootRom, installOpfsDataDir); they
 # run here and in `control-e2e-boardless` alike. FW-ISS runs in a step of
 # its own, on the project's serial boot, SIL/mad-serial-boot-cosim.toml
 # (make e2e-rom): the mask ROM on the module, its flash erased, the node on
-# J1.
+# J1. FW1 runs in a step of its own too, on the reflash board,
+# SIL/mad-reflash-cosim.toml (make e2e-reflash, MaD #134): the app updates
+# the firmware for real, its DTR pulse resetting the chip through the Prop
+# Plug's reset stage on J1.3, the ROM taking the image in its serial window,
+# the stub writing the module's flash, and the session reconnecting to the
+# image's own version stamp. Without a board (`control-e2e-boardless`) FW1
+# still checks the flasher's bytes against the in-page fake. What the fakes
+# alone still cover: two adapters at once (FW3, FW9), no port or a failing
+# getPorts (FW8), a declined confirmation (FW5), file checks (FW6), the
+# controls locked mid-flash (FW7) and a ROM that never answers (FW2).
 #
 # Use `workflow_dispatch` with suite=smoke to run e2e/smoke-ids.txt instead.
 
@@ -136,7 +145,7 @@ jobs:
         working-directory: Firmware/MaDCore
         run: pio pkg install --platform https://github.com/RileyMcCarthy/platform-propeller.git
       # The production image, laid out in the module's flash, and the card
-      # (make flash-image sd-image), then `embsim check` on the eight project
+      # (make flash-image sd-image), then `embsim check` on the nine project
       # files, which builds the embsim tool and mad-runner (--release: the
       # ISS interprets every P2 instruction).
       - name: The images, the runner and the project files (make check)
@@ -209,13 +218,28 @@ jobs:
           BOARD_LOGS: /tmp/e2e-out/rom
         run: make e2e-rom
 
+      # FW1 on the reflash board (make e2e-reflash; MaD #134): the app
+      # flashes build/reflash.bin, the production build stamped sil-reflash,
+      # through the ROM's loader after its DTR reset, and the reconnected
+      # session must report that stamp. The step prints the flash's board
+      # and host time (FW1: wrote ... in ... s), and the Timings table
+      # carries the scenario's.
+      - name: Run FW1 on the reflash board
+        if: ${{ always() && matrix.part == 'suite' }}
+        working-directory: SIL
+        env:
+          CHROME: /usr/bin/google-chrome
+          BOARD_LOGS: /tmp/e2e-out/reflash
+          E2E_TIMINGS: /tmp/e2e-out/timings-reflash.json
+        run: make e2e-reflash
+
       - name: Timings
         if: always()
         run: |
           node -e '
             const fs = require("fs");
             const read = (p) => { try { return JSON.parse(fs.readFileSync(p, "utf8")).timings; } catch { return []; } };
-            const timings = [...read("/tmp/e2e-out/timings.json"), ...read("/tmp/e2e-out/timings-motion.json")];
+            const timings = [...read("/tmp/e2e-out/timings.json"), ...read("/tmp/e2e-out/timings-motion.json"), ...read("/tmp/e2e-out/timings-reflash.json")];
             if (timings.length === 0) process.exit(0);
             const rows = timings.map((r) => `| ${r.id} | ${r.verdict} | ${r.hostS.toFixed(1)} | ${r.boardS === null ? "–" : r.boardS.toFixed(3)} |`);
             const out = ["| scenario | verdict | host s | board s |", "|---|---|---|---|", ...rows].join("\n");
