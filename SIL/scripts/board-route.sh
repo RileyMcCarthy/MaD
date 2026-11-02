@@ -291,7 +291,11 @@ start_board() {
     # production firmware's first line on P62 (Firmware/MaDCore/src/Main/
     # main.c), which the run prints as the core's console. Without it the
     # scenario starts anyway once the bound passes (300 s of host time, a
-    # hang's bound only), and its connect decides.
+    # hang's bound only), and its connect decides. The line comes before the
+    # machine is ready: for the next ~130 ms of board time the state the
+    # firmware reports carries a fault while its cogs and the force gauge
+    # come up (measured), and the scenarios connect 105-260 ms after it, so
+    # a step waits for the state it needs (fixtures.mjs, enableMotion).
     local booted=''
     for _ in $(seq 1 600); do
       if grep -qF 'P62 "Starting MaD Board' "$log"; then
