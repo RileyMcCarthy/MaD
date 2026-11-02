@@ -289,6 +289,57 @@ fn the_rom_boots_the_image_the_stub_programmed() {
     );
 }
 
+#[test]
+fn the_stub_relaunches_cog_0_on_the_firmware_it_programmed() {
+    behaviour!(Test {
+        id: "p2.flash-stub-relaunches-firmware",
+        covers: Some("SIL/p2core/src/lib.rs#execute"),
+        given:
+            "the app's flash stub and a firmware longer than one 2 KB block of the cog's LUT RAM, \
+                sitting in hub RAM the way the boot ROM leaves a finished download",
+    });
+    expect!(
+        "moved-to-zero",
+        "once the flash is programmed, hub RAM from address zero holds the firmware byte for byte"
+    );
+    expect!(
+        "firmware-runs",
+        "cog 0 then runs the firmware's own instructions from address zero"
+    );
+
+    // The console payload first, so the relaunched cog parks on its `jmp #$`
+    // (cog address 2), then filler that takes the firmware past one LUT block:
+    // the stub moves it 512 longs at a time, so a second block only arrives
+    // when each block transfer steps its pointers over the whole block.
+    let mut fw = console_b_payload();
+    fw.extend((0..3000u32).map(|i| (i.wrapping_mul(31).wrapping_add(7) & 0xFF) as u8));
+    let Some(m) = run_stub_on(&fw) else {
+        eprintln!(
+            "\n*** SKIPPED: {} needs the PWA's vendored loadp2 stub at\n***   {}\n\
+             *** This test asserted NOTHING.\n",
+            module_path!(),
+            image_ts_path().display()
+        );
+        return;
+    };
+
+    let first_bad = (0..fw.len()).find(|&k| m.hub[k] != fw[k]);
+    assert_eq!(
+        first_bad,
+        None,
+        "hub RAM from $00000 must hold the firmware after the stub's move; \
+         hub[..16]={:02x?}",
+        &m.hub[..16]
+    );
+    assert!(
+        m.cogs[0].running && m.cogs[0].pc == 2,
+        "cog 0 must be parked on the firmware's jmp #$ at cog address 2; \
+         running={} pc={:#x}",
+        m.cogs[0].running,
+        m.cogs[0].pc
+    );
+}
+
 /// `SKIP` is what lets the stub start at all, and its one subtlety is easy to
 /// get wrong in a way that shows up as a bogus "bad instruction".
 #[test]

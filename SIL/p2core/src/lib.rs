@@ -2369,6 +2369,17 @@ impl<P: PinBus> Machine<P> {
     ///
     /// `elements` is the number of items a `SETQ` block transfer will move: a
     /// PTR expression advances by the *whole* block, not one item.
+    /// Longs a `RDLONG`/`WRLONG` moves: the block a pending `SETQ` (the
+    /// register file) or `SETQ2` (the LUT) asks for, else one. A PTRx
+    /// expression's index is scaled by it, so `ptra++` steps over the block.
+    fn block_longs(is_long: bool, cog: &Cog) -> u32 {
+        match (is_long, cog.setq2, cog.setq) {
+            (true, Some(count), _) => count.min(LUT_LONGS as u32 - 1) + 1,
+            (true, None, Some(count)) => count.min(COG_LONGS as u32 - 1) + 1,
+            _ => 1,
+        }
+    }
+
     fn ptr_operand(&mut self, cog: usize, ins: &Decoded, s: u32, scale: i32, elements: u32) -> u32 {
         // An augmented S is a 32-bit literal address, never a PTR expression.
         if !ins.i || s & 0x100 == 0 || self.cogs[cog].aug_s_active {
@@ -3409,10 +3420,7 @@ impl<P: PinBus> Machine<P> {
                     Rdword => 2,
                     _ => 1,
                 };
-                let elements = match (ins.op, self.cogs[cog].setq) {
-                    (Rdlong, Some(count)) => count.min(COG_LONGS as u32 - 1) + 1,
-                    _ => 1,
-                };
+                let elements = Self::block_longs(ins.op == Rdlong, &self.cogs[cog]);
                 let s = self.ptr_operand(cog, ins, s, scale, elements);
                 self.cogs[cog].clocks += CLOCKS_HUB_ACCESS;
                 if ins.op == Rdlong {
@@ -3466,13 +3474,31 @@ impl<P: PinBus> Machine<P> {
                     Wrword => 2,
                     _ => 1,
                 };
-                let elements = match (ins.op, self.cogs[cog].setq) {
-                    (Wrlong, Some(count)) => count.min(COG_LONGS as u32 - 1) + 1,
-                    _ => 1,
-                };
+                let elements = Self::block_longs(ins.op == Wrlong, &self.cogs[cog]);
                 let s = self.ptr_operand(cog, ins, s, scale, elements);
                 self.cogs[cog].clocks += CLOCKS_HUB_ACCESS;
                 if ins.op == Wrlong {
+                    if let Some(count) = self.cogs[cog].setq2.take() {
+                        // The LUT's block to hub: `SETQ2 n` + `WRLONG d, addr`
+                        // writes LUT longs d..d+n, an immediate D filling
+                        // with it as SETQ's does. loadp2's flash programmer
+                        // moves the application down to $00000 this way,
+                        // 512 longs at a time through the LUT, before it
+                        // relaunches cog 0 there (flash_loader.spin2 `.move`).
+                        let n = count.min(LUT_LONGS as u32 - 1);
+                        self.check_hub(cog, s)?;
+                        for k in 0..=n {
+                            let v = if ins.l {
+                                d
+                            } else {
+                                self.cogs[cog].lut[(ins.d as usize + k as usize) & (LUT_LONGS - 1)]
+                            };
+                            let a = s.wrapping_add(k.wrapping_mul(4));
+                            self.note_write(cog, a, v, 4);
+                            self.wr_long(a, v);
+                        }
+                        return Ok(false);
+                    }
                     if let Some(count) = self.cogs[cog].setq.take() {
                         let n = count.min(COG_LONGS as u32 - 1);
                         self.check_hub(cog, s)?;
