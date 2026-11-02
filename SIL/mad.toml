@@ -9,8 +9,8 @@
 # where, and one stop; mad-catalog/tests/projects.rs holds them to it:
 #
 #   file                             the module boots        the host
-#   mad.toml                         the firmware off flash  host-serial on J1
-#   mad-cosim.toml                   the firmware off flash  chrome-cdp on J1
+#   mad.toml                         the firmware off flash  host-serial on J4
+#   mad-cosim.toml                   the firmware off flash  chrome-cdp on J4
 #   mad-playground.toml              that file, its Chrome headed on the app
 #   mad-hard-stop-cosim.toml         mad-cosim.toml with a hard stop, one
 #                                    option of the machine's
@@ -25,20 +25,18 @@
 # rest, and mad-hard-stop-cosim.toml for SERVO-stall, which drives the
 # carriage into its stop; the playgrounds are for a person (SIL/makefile).
 #
-# J1 is the carrier's debug header, where the machine's Prop Plug sits. The
-# route is the user's decision (2026-10-21): the host on J1 and the
-# production build (pio env P2Eval), whose MAIN channel, the protocol,
-# is on P62/P63, the pins J1 carries. The app flashes the firmware over J1
-# (Software/Control/README.md, "Firmware flashing").
-#
-# Open, for the user: which image the machine runs. By default the app
-# flashes a release's MaDEdge image, the MaDEdge build, whose
-# protocol is on P53/P55, pins the P2-EC32MB has no finger for, in every
-# release so far (the build has it on P30/P32 since the Edge v0.3 pin
-# move) (read:
-# Software/Control/src/firmware/release.ts, pickFirmwareAsset; .github/
-# workflows/ci.yml, the release's two images). The production build is the
-# release's -P2Eval.bin, which the app flashes only as a local file.
+# The machine has two serial ports, and each file puts its host on the one
+# its boot talks on. The firmware, one image (pio env MaD), has its
+# protocol, the MAIN channel, on P30/P32 at 2 000 000 baud, which the
+# isolator IC2 carries to and from the carrier's control port J4, where the
+# machine's FTDI adapter sits: the flash-boot files' host is there. J1, the
+# carrier's debug header, is the programming port, where the Prop Plug
+# sits: the chip's P62/P63, where the ROM's serial loader listens and the
+# firmware writes its log. The serial-boot files' host is there, as the
+# app's flasher is. The protocol stays off J1 because the Prop Plug's DTR
+# resets the chip whenever a port is opened on it (read: Firmware/MaDCore/
+# platformio.ini, env MaD; src/HAL/Include/HW_pins.h, HW_PIN_MAIN_RX/TX and
+# HW_PIN_DEBUG_RX/TX; mad_edge.net, IC2 on P29-P32 and J4).
 #
 #   cd SIL && make flash-image sd-image check
 #
@@ -71,14 +69,13 @@ kind = "p2"
 [board.model.options]
 core = "mad-p2iss"
 
-# The module's flash, holding embsim's stage-1 and the production program
-# (pio env P2Eval) as `make flash-image` lays them out: the ROM boots
-# the firmware off it. That build's MAIN channel receives on P63 and
-# transmits on P62 at 2 000 000 baud (Firmware/MaDCore/src/HAL/Include/
-# HW_pins.h, HW_PIN_MAIN_RX/TX; src/HAL/Config/HAL_serial_config.c, the row
-# without ENABLE_DEBUG_SERIAL). The MaDEdge build's is P30/P32,
-# IC2's Pi link (read: mad_edge.net, nets P30 and P32: IC2's OUTC and INA),
-# and that build's log is on P62.
+# The module's flash, holding embsim's stage-1 and the firmware's program
+# (pio env MaD) as `make flash-image` lays them out: the ROM boots the
+# firmware off it. Its MAIN channel receives on P30 and transmits on P32 at
+# 2 000 000 baud (Firmware/MaDCore/src/HAL/Include/HW_pins.h,
+# HW_PIN_MAIN_RX/TX), IC2's link to the control port J4 (read:
+# mad_edge.net, nets P30 and P32: IC2's OUTC and INA), and its log is on
+# P62, J1's.
 [[board.model]]
 value = "SPI Flash 16MB (128Mb)"
 kind = "w25q128jv"
@@ -119,9 +116,9 @@ encoder_output = "rs422"
 # ---- The host ---------------------------------------------------------------
 
 # The host's end of the serial line, a PTY whose bytes are levels on the
-# wire, at the production firmware's protocol rate: the MAIN channel's
-# 2 000 000 baud (the boards, above). The PTY is .embsim/HOST.pty beside
-# this file; `embsim run --pty PATH` moves it.
+# wire, at the firmware's protocol rate: the MAIN channel's 2 000 000 baud
+# (the boards, above). The PTY is .embsim/HOST.pty beside this file;
+# `embsim run --pty PATH` moves it.
 [[component]]
 name = "HOST"
 kind = "host-serial"
@@ -217,48 +214,67 @@ from = "BENCH.AGND"
 to = "DS2.J2.2"
 volts = 0.0
 
-# Nothing on J4, the Raspberry Pi's connector: no supply and no wire. The
-# host is on J1 (below). J4's RPI_RX and RPI_TX go only to the isolator
-# IC2, whose carrier side is on P29-P32 (read: mad_edge.net); the
-# production firmware does not use those pins, the debug build's MAIN
-# channel does (HAL_serial_config.c). IC2's Pi side (RPI_3V3, RPI_GND) is
-# left unpowered, as it is with no Pi seated.
+# No bench supply on J4, the control port: IC2's side on it (RPI_3V3, its
+# VCC2, and RPI_GND, its GND2) takes its power from whatever is plugged into
+# J4, a Raspberry Pi or a USB adapter, and nothing on the carrier ties
+# RPI_GND to a voltage (read: mad_edge.net, IC2's note). Each file's host's
+# wires (below) power that side where its host sits on J4, and leave it
+# unpowered, as with nothing plugged in, where its host sits on J1.
 
 # ---- The host's wires -------------------------------------------------------
 
-# The host on the carrier's debug header J1, the Prop Plug's: J1.1 is P62
-# (the chip's transmit: the firmware's answers, and the ROM's), J1.2 is P63
-# (its receive), J1.4 the carrier's GND. J1.1 and J1.2 go straight to the
-# socket's fingers 50 and 49, and on to the chip's P62 and P63 (read:
-# mad_edge.net, nets P62 and P63; embsim boards/netlists/p2_ec32mb.net).
-# J1.3, RESn, stays unwired: the host kinds have no modem-control pins, so
-# nothing pulses the reset, and neither boot needs it. The flash boot runs
-# from power-up, and the ROM's serial boot answers without a reset, P59's
-# pull-up (R302, the serial boot's scenario) selecting it. The app's
-# flasher resets the chip with DTR before its probe (Software/Control/
-# README.md); on the serial boot, with nothing on J1.3, the probe finds the
-# ROM still listening, as it does for 90 s of board time from the chip's
-# start (FW-ISS, make e2e-rom).
+# The host on the carrier's control port J4, where the machine's FTDI
+# adapter sits, through the isolator IC2, an ISO6742DWR (read:
+# mad_edge.net, IC2 and nets P30, P32, RPI_RX, RPI_TX, RPI_3V3 and
+# RPI_GND). J4.3, RPI_RX, is IC2's input INC, whose output OUTC is P30, the
+# chip's receive pin: what the host sends. J4.2, RPI_TX, is IC2's output
+# OUTA, from its input INA on P32, the chip's transmit pin: the firmware's
+# answers. J4.1, RPI_3V3, is IC2's side-2 supply VCC2, and J4.6, RPI_GND,
+# its side-2 ground GND2 (pins 9 and 15). J4.4 and J4.5 (RPI_GPO, IC2's
+# OUTB from P31, and RPI_GPI, its IND to P29) and J4.7 (SHIELD) stay
+# unwired: the adapter brings a transmit line, a receive line, a supply and
+# a ground. IC2's enables, EN1 and EN2, are unconnected in the drawing, and
+# the part reads an open enable as enabled (embsim's iso67xx model, its
+# function table).
+#
+# The debug header J1 stays unwired: it is the programming port, P62/P63,
+# where the firmware writes its log and the ROM's serial loader listens.
+# Nothing here flashes the firmware or reads its log, and nothing pulses
+# J1.3, RESn: the flash boot runs from power-up.
 
-# The adapter's I/O rail: the chip's P62/P63 bank (VIO_56_63) is 3.3 V.
+# The adapter's I/O rail, 3.3 V: the host's pins, and IC2's side on J4.
 [[wire]]
 from = "ADAPTER.3V3"
 to = "HOST.VIO"
 volts = 3.3
 
-# The host's ground, the carrier's, on J1.4.
+# RPI_3V3, IC2's VCC2, on the same rail: one source, one voltage (embsim
+# PROJECTS.md section 6).
+[[wire]]
+from = "ADAPTER.3V3"
+to = "EDGE.J4.1"
+
+# RPI_GND, IC2's side-2 return, which nothing on the carrier ties to a
+# voltage: the adapter's 0 V, as the bench ties GND_IO and IFG_GND (the
+# supplies, above).
+[[wire]]
+from = "ADAPTER.GND"
+to = "EDGE.J4.6"
+volts = 0.0
+
+# The host's ground, RPI_GND, on J4.6.
 [[wire]]
 from = "HOST.GND"
-to = "EDGE.J1.4"
+to = "EDGE.J4.6"
 
-# P63, the chip's receive pin: what the host sends.
+# RPI_RX, IC2's INC to OUTC, P30: what the host sends.
 [[wire]]
 from = "HOST.TX"
-to = "EDGE.J1.2"
+to = "EDGE.J4.3"
 
-# P62, the chip's transmit pin: what the host receives.
+# RPI_TX, IC2's OUTA from INA, P32: what the host receives.
 [[wire]]
-from = "EDGE.J1.1"
+from = "EDGE.J4.2"
 to = "HOST.RX"
 
 # ---- The machine on the carrier's connectors --------------------------------

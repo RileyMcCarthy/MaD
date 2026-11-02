@@ -9,8 +9,10 @@ Common issues with the control app and how to resolve them.
 | **"Unsupported browser" screen** | You're not in a Chromium browser. Use Chrome or Edge on desktop — see [requirements](../getting-started/requirements.md). |
 | **No port in the chooser** | The machine isn't powered or the USB-serial driver isn't installed. Check the cable, power, and (on Windows) the adapter driver. |
 | **Banner: firmware too old, or newer than this app** | The app and the firmware speak different versions of the serial protocol, so the app will not move the machine. Click **Update firmware** and [install the recommended firmware](firmware-and-diagnostics.md#when-the-app-asks-you-to-update), or, when the firmware is the newer one, **Open the latest MaD Control**. |
-| **Connected but "Not responding"** | The port opened but the firmware isn't talking. Check the [baud rate](connecting.md) (default 2,000,000), confirm the machine is powered through its [power-up sequence](../how-it-works/the-machine.md#power-up-sequence), and that nothing else holds the port. A machine flashed with a `-MaDEdge.bin` image never answers on J1: [flash the latest release](firmware-and-diagnostics.md#if-it-doesnt-work). |
+| **Connected but "Not responding"** | The port opened but the firmware isn't talking. Check the [baud rate](connecting.md) (default 2,000,000), confirm the machine is powered through its [power-up sequence](../how-it-works/the-machine.md#power-up-sequence), that nothing else holds the port, and that you are on the **control port** (the adapter on P30/P32, J4 on the Edge carrier), not the Prop Plug on J1: current firmware never answers on J1, and opening J1 restarts the machine. See [the two ports](firmware-and-diagnostics.md#two-ports-control-and-programming). |
 | **Link drops randomly** | Loose USB, power dip, or the machine rebooted. Use **Reconnect**; the app auto-reconnects when the device replugs. |
+| **The machine restarts whenever the app connects** | The app is connected to the programming port (J1), whose adapter resets the chip through DTR. Connect on the control port instead; the Connect page marks the Firmware page's programming port. |
+| **Auto-reconnect doesn't pick a port** | Two granted ports share the remembered adapter's USB id (the Prop Plug and the control adapter can both be FTDI parts). The app won't guess between them, since one of them restarts the machine: pick the control port on the Connect page. |
 
 ## Motion
 
@@ -18,7 +20,7 @@ Common issues with the control app and how to resolve them.
 |---|---|
 | **Jog does nothing** | Motion isn't enabled, or a **restriction** is active (endstop, door, tension). Check the State badges on [Live](live-monitoring.md). |
 | **A move is rejected** | The target is outside the encodable / configured range, or the input was zero/blank. The app blocks out-of-range moves before sending them. |
-| **A fault is shown** | Faults (e.g. `WATCHDOG`, `ESD_*`, `COG`) generally require a machine reboot. See the [faults reference](machine-states.md). |
+| **A fault is shown** | Faults (e.g. `WATCHDOG`, `ESD_*`, `COG`) generally require a machine reboot: power-cycle it, or have the app send the [reboot command](firmware-and-diagnostics.md#rebooting-the-machine). Reconnecting alone does not restart it. See the [faults reference](machine-states.md). |
 
 ## Tests
 

@@ -11,7 +11,7 @@ smart-pin misconfiguration, because it never executes a byte of P2 machine code.
 
 ```
 cargo run -p p2core --release --example run -- \
-    ../../Firmware/MaDCore/.pio/build/MaDEdge/program
+    ../../Firmware/MaDCore/.pio/build/MaD/program
 ```
 
 ```

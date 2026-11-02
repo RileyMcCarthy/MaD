@@ -14,9 +14,11 @@
 # Two boards, BOARD_ROUTE picking (embsim MIGRATING-MAD.md steps 10 and 11):
 #
 #   project   the default: a machine's project file under `$EMBSIM run`, the
-#             host's Chrome on the carrier's debug header J1 (USB 0403:6015).
-#             The e2e runs E2E_PROJECT (mad-cosim.toml, the production
-#             firmware booted off the module's flash, headless, make
+#             host's Chrome on the carrier's control port J4 (USB 0403:6001)
+#             for a flash boot, on its debug header J1 (USB 0403:6015) for
+#             the ROM's serial boot.
+#             The e2e runs E2E_PROJECT (mad-cosim.toml, the firmware booted
+#             off the module's flash, headless, make
 #             e2e-motion's file as well; make e2e-stall names
 #             mad-hard-stop-cosim.toml, that file with a hard stop on its
 #             carriage (MaD #298), and make e2e-rom
@@ -28,7 +30,7 @@
 #             the app at the file's url, the dev server on 5174. The files fix
 #             Chrome's DevTools port (9222) and grant the port; `make
 #             flash-image sd-image` writes the images they name.
-#   emulator  `mad-emulator --chrome`, the debug image P2_IMAGE on the bare
+#   emulator  `mad-emulator --chrome`, the firmware's image P2_IMAGE on the bare
 #             chip, the host on P30/P32 (USB 0403:6001), headless. No make
 #             target or CI job runs it: SERVO-stall, the last scenario it
 #             carried, runs on mad-hard-stop-cosim.toml (MaD #298), and the
@@ -81,7 +83,7 @@ case "$route" in
     exit 2
     ;;
 esac
-image=${P2_IMAGE:-$sil/../Firmware/MaDCore/.pio/build/MaDEdge/program}
+image=${P2_IMAGE:-$sil/../Firmware/MaDCore/.pio/build/MaD/program}
 emulator=${EMULATOR:-$sil/target/release/mad-emulator}
 embsim=${EMBSIM:-cargo run --release --quiet --manifest-path $sil/embsim/Cargo.toml -p embsim-cli --}
 if [ "$mode" = playground ]; then
@@ -286,7 +288,7 @@ start_board() {
     # board with nothing to answer it, the rest queued behind it
     # (src/device/DeviceSession.worker.ts, runOp): 2252 ms of board time
     # until the response timeout, measured on a silent board. The hint is the
-    # production firmware's first line on P62 (Firmware/MaDCore/src/Main/
+    # firmware's first line on P62, its debug log (Firmware/MaDCore/src/Main/
     # main.c), which the run prints as the core's console. Without it the
     # scenario starts anyway once the bound passes (300 s of host time, a
     # hang's bound only), and its connect decides.

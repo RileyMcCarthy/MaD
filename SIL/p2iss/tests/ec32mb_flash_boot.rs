@@ -10,7 +10,7 @@
 //! the boot ROM bit-bangs the flash on `P58`–`P61`, which `S301` position 2
 //! (FLASH) joins to the flash's select; position 4 pulls `P59` down, which
 //! the ROM reads as "boot what the flash holds". The flash holds stage-1
-//! and the `MaDEdge` program, laid out as `make flash-image` will
+//! and the `MaD` program, laid out as `make flash-image` will
 //! (`p2iss::flashimage::boot_flash`). Stage-1 streams the program into hub
 //! and reloads cog `$000`–`$0FF` from it. On silicon its `jmp #0` at `$019`,
 //! already fetched, then runs the program's first long; the ISS executes the
@@ -27,7 +27,7 @@
 //!
 //! Stepped: virtual time advances as the engine processes events, so every
 //! assertion is on virtual time and the board's state. Skips, saying why,
-//! when the `MaDEdge` image is absent (`make p2image`), as the other
+//! when the `MaD` image is absent (`make p2image`), as the other
 //! suites that run the firmware do; `MAD_REQUIRE_P2_IMAGE` turns the skip
 //! into a failure.
 
@@ -57,7 +57,7 @@ const RESET_RELEASE_NS: u64 = 2_500_000;
 const START_NS: u64 = RESET_RELEASE_NS + P2_RESTART_DELAY_NS;
 
 /// The firmware's debug console rate: flexspin's `printf` on `P62`, the
-/// `P2Eval` environment's `monitor_speed`.
+/// `MaD` environment's `monitor_speed`.
 const CONSOLE_BAUD: u32 = 230_400;
 
 /// The module's TCXO, `X100` (Epson TG2520SMN 20.0000M).
@@ -90,21 +90,21 @@ fn rom(name: &str) -> Option<Vec<u8>> {
     .ok()
 }
 
-/// The `MaDEdge` program: `MAD_P2_IMAGE` names a copy kept out of
+/// The `MaD` program: `MAD_P2_IMAGE` names a copy kept out of
 /// `.pio` (the ledger job's, where building another environment can clear
 /// `.pio/build`), else the build's own.
 fn image_path() -> PathBuf {
     let p = std::env::var_os("MAD_P2_IMAGE").map_or_else(
         || {
             PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../../Firmware/MaDCore/.pio/build/MaDEdge/program")
+                .join("../../Firmware/MaDCore/.pio/build/MaD/program")
         },
         PathBuf::from,
     );
     if !p.exists() && std::env::var_os("MAD_REQUIRE_P2_IMAGE").is_some() {
         panic!(
             "MAD_REQUIRE_P2_IMAGE is set but the P2 image is missing at {}. \
-             Build it with `make p2image` (or `cd Firmware/MaDCore && pio run -e MaDEdge`).",
+             Build it with `make p2image` (or `cd Firmware/MaDCore && pio run -e MaD`).",
             p.display()
         );
     }

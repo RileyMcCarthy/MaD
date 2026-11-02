@@ -32,7 +32,7 @@ pub const PIN_CS: u8 = 60;
 pub const PIN_CLK: u8 = 61;
 pub const PIN_TX: u8 = 62;
 pub const PIN_RX: u8 = 63;
-/// The MaD protocol link to the host (`HW_PIN_RPI_*`, the debug build's MAIN
+/// The MaD protocol link to the host (`HW_PIN_MAIN_*`, the firmware's MAIN
 /// channel), 2,000,000 baud: P32 transmits, P30 receives.
 pub const PIN_PROTO_TX: u8 = 32;
 pub const PIN_PROTO_RX: u8 = 30;

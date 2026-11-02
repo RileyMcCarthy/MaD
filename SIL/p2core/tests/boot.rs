@@ -4,7 +4,7 @@
 //! still tests standalone. Build it with:
 //!
 //! ```text
-//! cd Firmware/MaDCore && pio run -e MaDEdge
+//! cd Firmware/MaDCore && pio run -e MaD
 //! ```
 
 use std::path::PathBuf;
@@ -51,14 +51,14 @@ fn strip_ansi(s: &str) -> String {
 
 fn image() -> Option<Vec<u8>> {
     let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../Firmware/MaDCore/.pio/build/MaDEdge/program");
+        .join("../../Firmware/MaDCore/.pio/build/MaD/program");
     // See the note on MAD_REQUIRE_P2_IMAGE in the p2iss suites: skipping is
     // right on a laptop that has not built the image and wrong in a job whose
     // whole purpose is to execute the FlexC-compiled firmware.
     if !p.exists() && std::env::var_os("MAD_REQUIRE_P2_IMAGE").is_some() {
         panic!(
             "MAD_REQUIRE_P2_IMAGE is set but the P2 image is missing at {}. \
-             Build it with `make p2image` (or `cd Firmware/MaDCore && pio run -e MaDEdge`).",
+             Build it with `make p2image` (or `cd Firmware/MaDCore && pio run -e MaD`).",
             p.display()
         );
     }
@@ -68,7 +68,7 @@ fn image() -> Option<Vec<u8>> {
 #[test]
 fn boot_trampoline_reaches_main() {
     let Some(img) = image() else {
-        eprintln!("skipping: MaDEdge/program not built");
+        eprintln!("skipping: MaD/program not built");
         return;
     };
     let mut m = Machine::new(&img, SmartPins::default());
@@ -110,7 +110,7 @@ fn boot_trampoline_reaches_main() {
 #[test]
 fn clock_setup_records_clkfreq() {
     let Some(img) = image() else {
-        eprintln!("skipping: MaDEdge/program not built");
+        eprintln!("skipping: MaD/program not built");
         return;
     };
     let mut m = Machine::new(&img, SmartPins::default());
@@ -164,7 +164,7 @@ fn hub_write_with_l_bit_decodes() {
 #[test]
 fn firmware_transmits_its_startup_banner() {
     let Some(img) = image() else {
-        eprintln!("skipping: MaDEdge/program not built");
+        eprintln!("skipping: MaD/program not built");
         return;
     };
     let mut m = Machine::new(&img, SmartPins::default());
@@ -192,7 +192,7 @@ fn firmware_transmits_its_startup_banner() {
 #[test]
 fn absent_sd_card_takes_the_failure_path() {
     let Some(img) = image() else {
-        eprintln!("skipping: MaDEdge/program not built");
+        eprintln!("skipping: MaD/program not built");
         return;
     };
     let mut m = Machine::new(&img, SmartPins::default());
@@ -219,7 +219,7 @@ fn absent_sd_card_takes_the_failure_path() {
 #[test]
 fn soft_float_produces_sane_timestamps() {
     let Some(img) = image() else {
-        eprintln!("skipping: MaDEdge/program not built");
+        eprintln!("skipping: MaD/program not built");
         return;
     };
     let mut m = Machine::new(&img, SmartPins::default());

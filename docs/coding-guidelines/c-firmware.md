@@ -211,7 +211,7 @@ Strict downward dependency: `APP → DEV → IO → Library → HAL → HW`. Eac
 - Put per-module configuration (channel tables, buffer sizes, paths) in a `Config/` subfolder file that defines the data the module declares `extern`. Pattern: `src/IO/Config/IO_SDCard_config.c:31` defines buffers via `IO_SDCARD_CHANNEL_DATA_DEFINE(...)`, and `src/IO/IO_SDCard.c:74` consumes it via `extern IO_SDCard_config_S IO_SDCard_config;`.
 
 **Don't**
-- **Never** include a low-level MCU / P2 / `flexcc` framework header from `APP/`, `DEV/`, or `IO/`. The HAL is the only thing that touches `HAL/P2/`. The `P2Eval` builds compile `HAL/P2/`. `native_test` does not: `test/mock_propeller2.c` provides the HAL symbols the unit tests call (`platformio.ini`).
+- **Never** include a low-level MCU / P2 / `flexcc` framework header from `APP/`, `DEV/`, or `IO/`. The HAL is the only thing that touches `HAL/P2/`. The `MaD` build compiles `HAL/P2/`. `native_test` does not: `test/mock_propeller2.c` provides the HAL symbols the unit tests call (`platformio.ini`).
 - Don't call "upward" across layers. The one tolerated exception is logging: `Library/` and lower files may include `IO_Debug.h` for `DEBUG_*` (`src/Library/lib_staticQueue.c:4` includes `IO_Debug.h` plus `<string.h>`/`<stdio.h>`). Don't add other upward calls.
 
 ---
@@ -334,14 +334,14 @@ if (data == NULL)
 
 - **Bounds-check channel indices** with a `*_VALID` macro before use: `#define WATCHDOG_CHANNEL_VALID(channel) (...)` then guard every public entry (`src/DEV/watchdog.c:27`, `:229`).
 - **Discard intentional ignored returns with `(void)`** to satisfy MISRA Rule 17.7: `(void)lib_staticQueue_init(...)` (`src/APP/app_motion.c:330`), `(void)IO_positionFeedback_setValue(...)` (`src/APP/app_motion.c:202`).
-- **Logging** uses the `DEBUG_*` macros, never bare `printf`. They are compiled out unless `ENABLE_DEBUG_SERIAL` (`src/IO/IO_Debug.h:19`) and take a format + at least one arg — for a constant string pass `"%s"`:
+- **Logging** uses the `DEBUG_*` macros, never bare `printf`. They always go to the debug log on P62/P63 (J1, the programming port; the protocol has its own port on P30/P32, `src/IO/IO_Debug.h`) and take a format + at least one arg — for a constant string pass `"%s"`:
 
 ```c
 DEBUG_ERROR("%s", "lib_staticQueue_push: data is FULL\n");   // constant string
 DEBUG_INFO("G4 command pausing for %u ms", app_motion_data.currentMove.p);
 ```
 
-Levels (all defined in `src/IO/IO_Debug.h`): `DEBUG_WARNING` yellow (`:33`), `DEBUG_INFO` green (`:35`), `DEBUG_ERROR` red (`:37`).
+Levels (all defined in `src/IO/IO_Debug.h`): `DEBUG_WARNING` yellow (`:29`), `DEBUG_INFO` green (`:31`), `DEBUG_ERROR` red (`:33`).
 - **Watchdog**: each cog `watchdog_kick(channel)`s within its loop; `watchdog_isAlive` / `watchdog_isAllAlive` feed `APP_CONTROL_FAULT_WATCHDOG` (`src/APP/app_control.h:38`). Don't add a long-running cog step without keeping the kick cadence under `TIMEOUT_ERROR` (2000 ms, `src/DEV/watchdog.c:19`).
 
 ---
@@ -358,14 +358,14 @@ New modules and non-trivial behaviour changes need tests — not only “builds 
 
 **Don't**
 - Ship new APP/DEV state machines or public control-path APIs with zero automated coverage.
-- Rely solely on `pio run -e P2Eval` as proof of correctness (pointer size / timing differ on native).
+- Rely solely on `pio run -e MaD` as proof of correctness (pointer size / timing differ on native).
 
 Suggested local loop for a firmware change:
 
 ```bash
 # from Firmware/MaDCore/
-pio check -e P2Eval --fail-on-defect=medium --fail-on-defect=high
-pio run -e MaDEdge
+pio check -e MaD --fail-on-defect=medium --fail-on-defect=high
+pio run -e MaD
 pio test -e native_test
 # from SIL/ when behaviour crosses the emulator
 make test
@@ -394,12 +394,12 @@ make test
 
 ```bash
 # from Firmware/MaDCore/
-pio check -e P2Eval --fail-on-defect=medium --fail-on-defect=high
-pio run -e MaDEdge    # the image the SIL emulator executes
+pio check -e MaD --fail-on-defect=medium --fail-on-defect=high
+pio run -e MaD        # the one image: hardware and the SIL emulator run it
 pio test -e native_test         # Unity unit tests (ASan + stack-protector)
 ```
 
-Always run the host unit tests and a P2 build — pointer sizes and timing differ (`native_test` adds `-fsanitize=address -fstack-protector-all`; `P2Eval` is the FlexC image).
+Always run the host unit tests and a P2 build — pointer sizes and timing differ (`native_test` adds `-fsanitize=address -fstack-protector-all`; `MaD` is the FlexC image).
 
 ### Exactly how `pio check` is configured
 
@@ -419,7 +419,7 @@ check_flags =
 ```
 
 - **`check_severity = medium, high`** — **low is not reported and not enforced.** Hundreds of low findings were style / cross-TU false positives (unused macros, unused public APIs, unused tags/typedefs, macro paste). They are not a useful gate for this tree.
-- **CI Gate (`firmware-misra`)** runs `pio check -e P2Eval --skip-packages --fail-on-defect=medium --fail-on-defect=high` and **blocks merge** if any medium or high defect remains.
+- **CI Gate (`firmware-misra`)** runs `pio check -e MaD --skip-packages --fail-on-defect=medium --fail-on-defect=high` and **blocks merge** if any medium or high defect remains.
 - `misra.json` points cppcheck's MISRA addon at `misra-rules.txt` (rule descriptions only; does not turn rules on/off).
 - CERT is **not** enforced (no `cert.py` with the bundled cppcheck). To enforce CERT later, vendor an addon and add it to `check_flags`.
 - `check_src_filters` scopes analysis to hand-written layers (`APP/`, `DEV/`, `IO/`, `Library/`, `Main/`) — `HAL/`, `HW/`, `IO/generated/`, and `Generated/` are not in the filter (headers may still appear when included from checked `.c` files).

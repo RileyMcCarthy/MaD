@@ -180,7 +180,7 @@ SIL's `mad_edge.net` was re-exported from the v0.3 files on 2026-11-01
 well; what this section finds about J4 above held for the carrier before
 v0.3. The production build's MAIN is unchanged, on P62/P63.
 
-**Open: which image the machine runs.** The app as shipped flashes a
+**Was open: which image the machine runs** (resolved below). The app as shipped flashes a
 release's MaDEdge image by default, the `MaDEdge` build
 (`Software/Control/src/firmware/release.ts`, `pickFirmwareAsset`; the release
 job in `.github/workflows/ci.yml`), whose protocol is on P53/P55 in every
@@ -194,6 +194,22 @@ MaDEdge image, the route needs revisiting: a released image's protocol reaches
 the chip only on a module with fingers for P53/P55, such as the plain P2-EC
 (inferred), and one built since the move reaches it on a v0.3 carrier's J4. If it runs the production image, the app's default asset would
 need changing to match.
+
+**One firmware, two ports (2026-11-01).** Superseding the two routes above:
+the `P2Eval` and `MaDEdge` envs are gone, replaced by one, `MaD`
+(`pio run -e MaD`; `make p2image`). Its MAIN channel is always on P30/P32 at
+2,000,000 baud, and P62/P63 (J1) is for programming and the debug log only,
+because opening J1 toggled DTR and rebooted the machine on every connect. Each
+release carries the one image, `MaD-Firmware-<version>.bin`, which the app
+flashes over J1 and then talks to over the control port. The flash-boot
+project files (`SIL/mad.toml`, `mad-cosim.toml`, `mad-playground.toml`,
+`mad-hard-stop-cosim.toml`) put the host on J4, through IC2 to P30/P32 (USB
+`0403:6001`); the serial-boot files (`mad-serial-boot*.toml`) keep it on J1
+(`0403:6015`) to flash. `make p2image-production` and
+`MAD_P2_PRODUCTION_IMAGE` are gone. The real machine moves over when its v0.3
+carrier is built and stays on firmware 0.14 until then; the P2-EVAL bench
+moves its FTDI adapter (A5069RR4) from P53/P55 to P30 (FTDI TX) and P32 (FTDI
+RX).
 
 **IC14, the servo isolator.** IC14 (STEP, DIR, ENA out to the drive, SRDY
 back) had its secondary ground pins 9 and 15 on an unnamed net with only C26

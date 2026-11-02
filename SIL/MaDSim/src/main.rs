@@ -49,7 +49,7 @@ struct Args {
     #[arg(long, default_value = "info")]
     log_level: String,
 
-    /// The P2 image to execute: `MaDEdge`'s `program`.
+    /// The P2 image to execute: the `MaD` environment's `program`.
     #[arg(value_name = "IMAGE")]
     image: PathBuf,
 
