@@ -356,10 +356,9 @@ fn the_boot_rom_takes_the_flashers_ram_load_on_the_debug_header() {
     behaviour!(Test {
         id: "mad-project.serial-boot-ram-load",
         covers: Some("SIL/mad-serial-boot.toml"),
-        given: "the machine's project file set for the ROM's serial boot with the module's \
-                flash erased, and a serial-port host on the carrier's debug header doing what the \
-                app's flasher does at 2 000 000 baud: the boot ROM's check-device probe, then a \
-                twelve-byte program as hex with its checksum",
+        given: "a chip with erased flash booting over serial, and a host on the debug header \
+                sending the app flasher's 2 Mbaud sequence: the check-device probe, then a \
+                twelve-byte hex program and checksum",
     });
     expect!(
         "version-reply",
