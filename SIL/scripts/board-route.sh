@@ -16,16 +16,16 @@
 #   project   the default: a machine's project file under `$EMBSIM run`, the
 #             host's Chrome on the carrier's debug header J1 (USB 0403:6015).
 #             The e2e runs E2E_PROJECT (mad-cosim.toml, the production
-#             firmware booted off the module's flash, headless; make
-#             e2e-motion names mad-ic14-fixed-cosim.toml, the board with MaD
-#             #285 fixed, make e2e-stall mad-hard-stop-cosim.toml, that board
-#             with a hard stop on its carriage (MaD #298), make e2e-rom
+#             firmware booted off the module's flash, headless, make
+#             e2e-motion's file as well; make e2e-stall names
+#             mad-hard-stop-cosim.toml, that file with a hard stop on its
+#             carriage (MaD #298), make e2e-rom
 #             mad-serial-boot-cosim.toml, the ROM's serial boot with the
 #             flash erased, and make e2e-reflash mad-reflash-cosim.toml, the
 #             Prop Plug's reset on J1.3 for FW1's real flash, MaD #134). The
 #             playground runs
-#             PLAYGROUND_PROJECT (mad-playground.toml, a headed copy of the
-#             #285-fixed file; make playground-rom names
+#             PLAYGROUND_PROJECT (mad-playground.toml, a headed copy of
+#             mad-cosim.toml; make playground-rom names
 #             mad-serial-boot-playground.toml), its Chrome a window opened on
 #             the app at the file's url, the dev server on 5174. The files fix
 #             Chrome's DevTools port (9222) and grant the port; `make
@@ -39,7 +39,7 @@
 #
 # Environment: BOARD_ROUTE, EMBSIM (the embsim command; by default the
 # pinned submodule's, through cargo), E2E_PROJECT (mad-cosim.toml, relative
-# to SIL/; exported to the suite, which skips by it), PLAYGROUND_PROJECT
+# to SIL/; exported to the suite), PLAYGROUND_PROJECT
 # (mad-playground.toml), P2_IMAGE and EMULATOR (the mad-emulator binary),
 # APP_PORT (5174),
 # DEVTOOLS_PORT (the emulator's: 9222; empty for one Chrome picks),
@@ -135,10 +135,9 @@ if [ "$route" = emulator ]; then
     }
   done
 else
-  # The suite skips by the file (run-all.mjs, PROJECT_CANNOT): what IC14 as
-  # drawn keeps from the drive runs on the file with MaD #285 fixed, and
-  # SERVO-stall on that file with a hard stop on its carriage, which skips
-  # the other scenarios that move the carriage.
+  # The suite skips by the file (run-all.mjs, PROJECT_CANNOT): SERVO-stall
+  # runs on the file with a hard stop on its carriage, which skips the other
+  # scenarios that move the carriage.
   unset E2E_JAM_FILE
   export E2E_BOARD_ROUTE=project
   export E2E_PROJECT=$project

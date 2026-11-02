@@ -12,18 +12,15 @@
 # the suite is board time; host time is printed, never asserted. No image,
 # no VM.
 #
-# On the project as drawn the carriage never moves (IC14's secondary
-# grounds are on a net of their own, MaD #285; SIL/mad-catalog/tests/mad.rs),
-# so the suite skips the scenarios that move it there, each saying why
-# (run-all.mjs, PROJECT_CANNOT): the motion matrices, the waveforms, the run
-# lifecycle with moves, the mid-test drop and SERVO-stall. They run on the
-# board with #285 fixed (make e2e-motion: SIL/mad-ic14-fixed-cosim.toml,
-# mad-cosim.toml with one wire on IC14's ground), where the carriage moves,
-# in three jobs of their own beside the suite's (the matrix below).
-# SERVO-stall stays skipped there, since nothing stops that board's
-# carriage: it runs per-PR only (ci.yml, `make e2e-stall`), on that board
-# with a hard stop on its carriage, SIL/mad-hard-stop-cosim.toml (MaD
-# #298). The nightly does not run it.
+# The scenarios that move the carriage (run-all.mjs, MOVES: the motion
+# matrices, the waveforms, the run lifecycle with moves, the mid-test drop)
+# run on the same project in three jobs of their own beside the suite's
+# (make e2e-motion; the matrix below); the suite's job leaves them out
+# (`run-all.mjs --list --no-moves`). SERVO-stall is skipped on the project,
+# since nothing stops its carriage (run-all.mjs, PROJECT_CANNOT): it runs
+# per-PR only (ci.yml, `make e2e-stall`), on that file with a hard stop on
+# its carriage, SIL/mad-hard-stop-cosim.toml (MaD #298). The nightly does
+# not run it.
 #
 # Not per-PR because a PR cannot afford it: the ISS runs at a few percent of
 # real time, so the whole suite is an hour or more of host time. ci.yml is
@@ -77,14 +74,14 @@ jobs:
   board:
     name: E2E on the ISS (${{ matrix.part }})
     runs-on: ubuntu-latest
-    # Four jobs from one set of steps: `suite`, the whole suite on the
-    # project as drawn (make e2e) and FW-ISS on the project's serial boot;
-    # and `motion 1/3` to `motion 3/3`, the set the project as drawn cannot
-    # run, on the board with MaD #285 fixed (make e2e-motion), a third each
-    # (MOTION_SHARD: every third scenario, in the suite's order). The set is
-    # most of the night: on mad-emulator it took 13 439 s of host time on
-    # the runner (run 39556919751), and the #285-fixed project takes longer
-    # (the PR that moved it there has the numbers), past one job's ceiling.
+    # Four jobs from one set of steps: `suite`, the suite on the project
+    # but the scenarios that move the carriage (make e2e) and FW-ISS on the
+    # project's serial boot; and `motion 1/3` to `motion 3/3`, the
+    # scenarios that move the carriage, on the same project (make
+    # e2e-motion), a third each (MOTION_SHARD: every third scenario, in the
+    # suite's order). The set is most of the night: on mad-emulator it took
+    # 13 439 s of host time on the runner (run 39556919751), and the project
+    # takes longer, past one job's ceiling.
     strategy:
       fail-fast: false
       matrix:
@@ -145,7 +142,7 @@ jobs:
         working-directory: Firmware/MaDCore
         run: pio pkg install --platform https://github.com/RileyMcCarthy/platform-propeller.git
       # The production image, laid out in the module's flash, and the card
-      # (make flash-image sd-image), then `embsim check` on the nine project
+      # (make flash-image sd-image), then `embsim check` on the eight project
       # files, which builds the embsim tool and mad-runner (--release: the
       # ISS interprets every P2 instruction).
       - name: The images, the runner and the project files (make check)
@@ -185,14 +182,16 @@ jobs:
           if [ "$SUITE" = "smoke" ]; then
             export SCENARIOS=$(grep -v -e '^#' -e '^[[:space:]]*$' ../Software/Control/e2e/smoke-ids.txt | paste -sd, -)
           fi
+          # The motion jobs run the scenarios that move the carriage.
+          SCENARIOS=$(cd ../Software/Control && node e2e/run-all.mjs --list --no-moves | paste -sd, -)
+          export SCENARIOS
           make e2e
 
-      # What the project as drawn cannot run (run-all.mjs, PROJECT_CANNOT),
-      # on the board with MaD #285 fixed: `make e2e-motion` checks
-      # mad-ic14-fixed-cosim.toml and runs this job's third of what
-      # `run-all.mjs --list --cannot` names there, one board each. On the
-      # smoke suite, the smoke ids among them.
-      - name: 'Run the motion set on the board with IC14 fixed (MaD #285)'
+      # The scenarios that move the carriage (run-all.mjs, MOVES): `make
+      # e2e-motion` checks mad-cosim.toml and runs this job's third of what
+      # `run-all.mjs --list --moves` names, one board each. On the smoke
+      # suite, the smoke ids among them.
+      - name: 'Run the motion set on the project'
         if: startsWith(matrix.part, 'motion')
         working-directory: SIL
         env:
