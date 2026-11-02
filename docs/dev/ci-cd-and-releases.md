@@ -20,15 +20,15 @@ relevant jobs:
 | `protoemb-pin-ci` | **the `Protocol/ProtoEmb` gitlink moved** | **Blocking.** Mirror of the above for the other submodule: `make verify` round-trip, ruff, clippy `-D warnings` (native + `wasm32`), `wasm-pack` build, `cargo deny` per crate + `pip-audit`, MSRV per crate manifest |
 | `vibes-pin-ci` | **the `Vibes` gitlink moved** | **Blocking.** Mirror of upstream Vibes CI for the commit being pinned: the tool's install, typecheck, tests and build, plus compile probes of its C, Rust and TypeScript bindings |
 | `docs-ci` | `docs/**` or `mkdocs.yml` changed | **Blocking.** `mkdocs build --strict` — broken nav entries, dead internal links and config warnings are errors. Previously this ran only on a push to `main` via `pages.yml`, so a bad docs PR merged green and took the Pages deploy down |
-| `control-e2e-boardless` | app or protocol changed, or the `SIL/embsim` gitlink moved | **Blocking.** The e2e scenarios that need no board (A1 and the firmware-flash `FW*` ones): the real app in a real host Chrome against in-page fakes, no emulator. The scenarios that touch the board run in `control-e2e-board` and the nightly. See [below](#the-e2e-suite) |
-| `control-e2e-board` | app, protocol, firmware or SIL changed, or the `SIL/embsim` gitlink moved | **Blocking.** A subset of the board-touching e2e scenarios on the board route: the machine's project, `SIL/mad-cosim.toml` under `embsim run` (the production P2 image on the ISS, booted off the module's flash), and the app in the runner's Chrome held to the board's clock by embsim's `chrome-cdp` node on the carrier's debug header `J1`, one fresh board per scenario (`make check`, then `make e2e`, `BOARD_PER_SCENARIO=1`), then BUNDLE-live on the bundle as `pages.yml` builds it (`APP_DIST`, served by `vite preview`), then the motion leg G2+G3+H2+I on the same file (`make e2e-motion`), then SERVO-stall on that file with a hard stop on its carriage, `SIL/mad-hard-stop-cosim.toml` (`make e2e-stall`; MaD #298). The whole suite runs nightly on the same route (`e2e-nightly.yml`): a suite job runs all but the scenarios that move the carriage (`run-all.mjs --list --no-moves`), and three jobs beside it run those (`make e2e-motion`, `MOTION_SHARD=1/3`..`3/3`). See [below](#the-e2e-suite) |
+| `control-e2e-boardless` | app or protocol changed, or the `SIL/embsim` gitlink moved | **Blocking.** The e2e scenarios that need no board (A1, the firmware-flash `FW*` ones, and the firmware-compatibility `COMPAT-reconnect`, `COMPAT-silent` and `COMPAT-update-loop` on an in-page fake board): the real app in a real host Chrome against in-page fakes, no emulator. The scenarios that touch the board run in `control-e2e-board` and the nightly. See [below](#the-e2e-suite) |
+| `control-e2e-board` | app, protocol, firmware or SIL changed, or the `SIL/embsim` gitlink moved | **Blocking.** A subset of the board-touching e2e scenarios on the board route: the machine's project, `SIL/mad-cosim.toml` under `embsim run` (the production P2 image on the ISS, booted off the module's flash), and the app in the runner's Chrome held to the board's clock by embsim's `chrome-cdp` node on the carrier's debug header `J1`, one fresh board per scenario (`make check`, then `make e2e`, `BOARD_PER_SCENARIO=1`), then BUNDLE-live on the bundle as `pages.yml` builds it (`APP_DIST`, served by `vite preview`), then the motion leg G2+G3+H2+I on the same file (`make e2e-motion`), then SERVO-stall on that file with a hard stop on its carriage, `SIL/mad-hard-stop-cosim.toml` (`make e2e-stall`; MaD #298), then the firmware-compatibility scenarios on firmware the app cannot drive (`make e2e-compat`: firmware-v0.14 as released, and this tree's firmware built one `protocol_version` ahead). The whole suite runs nightly on the same route (`e2e-nightly.yml`): a suite job runs all but the scenarios that move the carriage (`run-all.mjs --list --no-moves`), and three jobs beside it run those (`make e2e-motion`, `MOTION_SHARD=1/3`..`3/3`). See [below](#the-e2e-suite) |
 | `firmware-unit-tests` | firmware or protocol changed | `pio test -e native_test` — the host Unity suite under AddressSanitizer (no Propeller toolchain needed) |
-| `protocol-codegen` | protocol changed | **Blocking.** Regenerates all three targets (C/TS/Rust) twice and asserts success + byte-reproducibility (generated files are gitignored, so this guards the schema/templates + generator determinism, not committed-file drift) |
+| `protocol-codegen` | protocol changed | **Blocking.** Regenerates all three targets (C/TS/Rust) twice and asserts success + byte-reproducibility (generated files are gitignored, so this guards the schema/templates + generator determinism, not committed-file drift). On a PR it also runs `Protocol/scripts/check_protocol_compat.py` against the base branch: a wire-incompatible schema change without a `protocol_version` bump fails, and so does any change to the frozen `device_info` handshake ([release order](#release-order-after-a-protocol-change)) |
 | `firmware-layering` | firmware changed | **Blocking (baseline-gated).** `scripts/check_layering.py` enforces downward-only includes (APP→DEV→IO→Library→HAL→HW); pre-existing violations are frozen in `.layering-baseline`, so it fails only on **new** upward includes |
 | `python-lint` | firmware changed | **Blocking.** `ruff` over the PlatformIO SCons hooks (`Firmware/MaDCore/extra_scripts`; `ruff.toml`, mirrors the Python guide). The ProtoEmb generator is linted in [its own repo's CI](https://github.com/RileyMcCarthy/protoemb) |
 | `firmware-misra` | firmware changed | **Blocking.** `pio check` (cppcheck + MISRA) with `check_severity = medium, high` — low is not reported. Fails CI Gate on any medium/high defect. CERT is not enforced (no cert.py with bundled cppcheck) |
 | `sil-rust` | SIL / firmware / protocol changed | **Blocking.** `make protocol` + the `MaDEdge` image, then `cargo fmt --check`, `cargo clippy -- -D warnings`, and `cargo test` on the SIL workspace — all three gating. rustfmt covers `mad-emulator` + `models`; the generated `protocol` crate is excluded because `make protocol` rewrites it every build. Generated-codec clippy allows are scoped to the `mod protoemb` declaration in `Protocol/rust/src/lib.rs`, never crate-wide |
-| `build-firmware` | firmware changed, or a firmware tag | Builds `P2Eval` and `MaDEdge`, released as `MaD-Firmware-<version>-<board>.bin` |
+| `build-firmware` | firmware changed, or a firmware tag | Builds `P2Eval` and `MaDEdge`, released as `MaD-Firmware-<version>-<board>.bin`, and writes `firmware-info.json` (the release's `protocolVersion`, read from the generated header) |
 | `build-hardware` | hardware changed, or a hardware tag | KiBot → Gerbers, BOM, interactive BOM, 3D models for each board |
 | `vibes` (Behaviour ledger) | every PR | **Informational** (not in `ci-gate.needs`). Diffs the behaviour ledger against the base branch and posts the report as a PR comment; it fails when a behaviour breaks or is removed, but does not block the merge |
 | **`ci-gate`** | **every PR** | **Aggregates all of the above except `vibes`. Fails if any job failed/was cancelled; passes when they succeeded or were legitimately skipped. This is the single required status check (`CI Gate`) on `main`.** |
@@ -50,7 +50,16 @@ board's protocol line. The board is the machine's project, `SIL/mad-cosim.toml`
 shards). SERVO-stall, which drives the carriage into a hard stop, runs per
 PR on that file with the machine's stop, `SIL/mad-hard-stop-cosim.toml`
 (`make e2e-stall`; MaD #298). FW-ISS runs nightly on the ROM's
-serial boot, `SIL/mad-serial-boot-cosim.toml` (`make e2e-rom`). Every budget in the
+serial boot, `SIL/mad-serial-boot-cosim.toml` (`make e2e-rom`). The
+firmware-compatibility scenarios that need firmware the app cannot drive run
+on `mad-cosim.toml` with that firmware in the module's flash (`make
+e2e-compat`, per PR and nightly): COMPAT-too-old on firmware-v0.14 as
+released, from before the device-info handshake, and COMPAT-app-too-old on
+this tree's firmware built one `protocol_version` ahead
+(`SIL/scripts/compat-images.sh`; no firmware source changes for either).
+COMPAT-ok runs in the per-PR subset and COMPAT-ok-motion in the motion set;
+COMPAT-reconnect, COMPAT-silent and COMPAT-update-loop are board-free, on the
+in-page fake board. Every budget in the
 suite is board time, so a result does not depend on how fast the runner is.
 The ISS behind the WS↔PTY bridge is not a configuration: the bridge hands the
 board's bytes to a browser running at host speed, so every wait measures the
@@ -140,8 +149,12 @@ https://rileymccarthy.github.io/MaD/app/vX.Y.Z/    → one release, exactly as i
     - `versions.json`, which lists the releases for the app's version picker on
       **About**;
     - the `/app/` redirect, which keeps the page part of the URL;
-    - `/app/firmware/`, the latest firmware release, shared by every version so
-      an older app still offers the newest firmware;
+    - `/app/firmware/`, shared by every version: `manifest.json` lists the
+      newest firmware release for each protocol version, with each image
+      beside it, and every app offers the one that speaks its own protocol as
+      the recommended firmware. Only releases carrying `firmware-info.json`
+      are listed. `latest.json` + `latest.bin` hold the newest release of
+      all, for app versions from before the manifest;
     - an `/app/sw.js` that removes the service worker left by the unversioned
       app.
 - **Merging to `main` never changes a published app.** It redeploys only when
@@ -185,6 +198,26 @@ Firmware and hardware are still cut with version tags:
 git tag firmware-v1.0.0 && git push origin firmware-v1.0.0   # firmware binaries
 git tag hardware-v1.0.0 && git push origin hardware-v1.0.0   # manufacturing files
 ```
+
+### Release order after a protocol change
+
+MaD Control drives only firmware whose `protocol_version` equals its own: on
+connect it reads the firmware's number with the `device_info` handshake, and
+when they differ it blocks motion and offers the update (or, when the firmware
+is the newer one, a link to the latest app). So after a change that bumps
+`protocol_version` in `Protocol/MaDProtocol.yaml`:
+
+1. Merge the change.
+2. **Release the firmware first** (`firmware-vX.Y.Z`). Its release carries
+   `firmware-info.json`, and the Pages redeploy lists it in
+   `/app/firmware/manifest.json` for the new protocol.
+3. Then release MaD Control. `release.sh --publish`, and the tag's `check`
+   job (`release.sh --check`), refuse until a published firmware release
+   speaks the app's protocol, since the new app would otherwise find every
+   machine too old and have nothing to offer.
+
+Older app versions keep working with older firmware: each one is recommended
+the newest release of its own protocol.
 
 ## Running the gates locally
 

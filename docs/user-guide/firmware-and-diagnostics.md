@@ -45,30 +45,58 @@ copy disappears at the next reset — as an update it would look like it worked
 and then silently revert. That path lives in the `hw:flash` developer CLI
 instead.
 
+### When the app asks you to update
+
+Each version of MaD Control speaks one version of the serial protocol, and
+on connect it asks the firmware which one it speaks. Until the firmware
+answers with this app's protocol, the app refuses to move the machine
+(enable motion, jog, home, run a test), and a banner under the status bar
+says why on every screen.
+**STOP** and disabling motion always work.
+
+- **Firmware too old**: the firmware speaks an older protocol, or is from
+  before the app could ask. Click **Update firmware**, then **Install
+  recommended firmware** on the Firmware screen.
+- **Firmware newer than this app**: click **Open the latest MaD Control**.
+- **Firmware update recommended**: the protocols match, but this app version
+  recommends a newer firmware release for a fix. The machine still moves;
+  update when convenient.
+- **Checking which protocol the firmware speaks**: shown for a moment after
+  connecting. Motion stays disabled until the firmware answers.
+- **Firmware did not say which protocol it speaks**: the firmware never
+  answered, so the app can't tell whether it is safe to drive. Motion stays
+  disabled: check the cable and reconnect, or update the firmware.
+
 ### Doing the update
 
 1. **Connect to the machine** as usual. The **Firmware** screen shows the
-   **Installed** version next to the **Latest release**.
-2. **Will flash** shows the latest release. The app writes that release's
+   **Installed** version, the **Protocol** it speaks next to the one this app
+   speaks, and the **Recommended** release: the newest firmware release that
+   speaks this app's protocol.
+2. **Will flash** shows the recommended release. The app writes that release's
    P2Eval production build (`MaD-Firmware-<version>-P2Eval.bin`), fetched by
    the app — there is nothing to download. It puts the protocol on J1, so the
    app reaches the new firmware on the port it just programmed. MaD Control
    0.4.2 and earlier label this row "MadEdge" whatever the image is; the prompt
    in step 3 names the real file.
    When the release also carries a MaDEdge build, a **Board** choice appears:
-   **P2Eval** (the default) or **MaDEdge**. The MaDEdge debug build moves the
+   **P2Eval** (the default) or **MaDEdge**, and **Install recommended
+   firmware** flashes the chosen one. The MaDEdge debug build moves the
    protocol to the Edge carrier's Pi link and puts a debug log on J1, so after
    flashing it the app reaches the firmware only over that link. Don't pick it
    for a machine whose carrier does not bring that link out. To flash any
    other image, or a local build, click **Use a local file…** and pick it.
 3. Check the **Port** shown is the machine you mean to program, then click
-   **Write to flash**. The prompt names the file it will write: check it is
+   **Install recommended firmware** (or **Write to flash** for a local file;
+   with none picked it writes the recommended release too). The prompt names
+   the file it will write: check it is
    `MaD-Firmware-<version>-P2Eval.bin` (or the local file you picked), then
    confirm.
 4. The status line walks through *Resetting the board…*, then *Uploading… n%*,
    then *Finishing…*.
 5. When it completes, confirm **Installed** shows the version you just
-   flashed.
+   flashed. The app reconnects and asks the protocol again, and the banner
+   clears.
 
 !!! tip "Bench setups with two adapters"
     The **Port** line names the port that will be programmed. On production

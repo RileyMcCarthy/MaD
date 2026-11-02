@@ -1,7 +1,14 @@
 import { describe, expect, vi } from 'vitest';
 import { behaviour } from '@vibes/behaviour';
-import { firmwareRelease, type FirmwareReleaseDeps } from './firmwareRelease';
-import type { GithubRelease } from '../src/firmware/release';
+import { createHash } from 'node:crypto';
+import {
+  describeSite,
+  fetchFirmwareSite,
+  firmwareRelease,
+  releasedProtocols,
+  type FirmwareReleaseDeps,
+} from './firmwareRelease';
+import type { FirmwareManifest, GithubRelease } from '../src/firmware/release';
 
 /* The plugin is driven the way Vite drives it: `configureServer` with a fake
  * server whose `middlewares.use` captures the handler, and `generateBundle`
@@ -21,20 +28,38 @@ const RELEASE: GithubRelease = {
 };
 
 type Route = () => Response | Promise<Response>;
+type AssetRoute = (id: number) => Response | Promise<Response>;
 
-/** A fetch that answers the releases listing and the asset download from the
- *  given routes, recording every URL it was asked for. */
-function github(routes: { list?: Route; asset?: Route }) {
+/** A fetch that answers the releases listing and the asset downloads (by
+ *  asset id) from the given routes, recording every URL it was asked for. */
+function github(routes: { list?: Route; asset?: AssetRoute }) {
   const list: Route = routes.list ?? (() => new Response(JSON.stringify([RELEASE])));
-  const asset: Route = routes.asset ?? (() => new Response(IMAGE));
+  const asset: AssetRoute = routes.asset ?? (() => new Response(IMAGE));
   const fn = vi.fn(async (input: string | URL | Request): Promise<Response> => {
     const url = String(input);
-    if (url.includes('/releases/assets/')) return asset();
+    const id = /\/releases\/assets\/(\d+)$/.exec(url)?.[1];
+    if (id !== undefined) return asset(Number(id));
     if (url.includes('/releases?')) return list();
     throw new Error(`unexpected fetch ${url}`);
   });
   return fn;
 }
+
+/** A published firmware release whose production image is asset `id` (bytes
+ *  `[id]`), with a firmware-info.json (asset `id + 100`) when it speaks a protocol. */
+function described(version: string, id: number, publishedAt: string, protocol: number | null): GithubRelease {
+  return {
+    ...RELEASE,
+    tag_name: `firmware-v${version}`,
+    published_at: publishedAt,
+    assets: [
+      { id, name: `MaD-Firmware-${version}-release.bin`, size: 1 },
+      ...(protocol === null ? [] : [{ id: id + 100, name: 'firmware-info.json', size: info(version, protocol).length }]),
+    ],
+  };
+}
+
+const info = (version: string, protocol: number) => Buffer.from(JSON.stringify({ version, protocolVersion: protocol }));
 
 function plugin(fetchFn: ReturnType<typeof github>, env: Record<string, string> = {}) {
   const deps: FirmwareReleaseDeps = { fetch: fetchFn as unknown as typeof fetch, env };
@@ -118,10 +143,13 @@ function devServer(p: ReturnType<typeof firmwareRelease>) {
     if (!handler) throw new Error('no middleware registered');
     const res = fakeRes();
     let passed = false;
-    handler({ url }, res, () => {
-      passed = true;
+    await new Promise<void>((resolve) => {
+      handler!({ url }, res, () => {
+        passed = true;
+        resolve();
+      });
+      void res.done.then(resolve);
     });
-    if (!passed) await res.done;
     return { passed, res };
   };
   return { registered: () => handler !== null, request, warnings };
@@ -156,14 +184,18 @@ describe('firmwareRelease build', () => {
       expect(first.emitted).toHaveLength(0);
       const second = await bundle(p);
       expect(calls).toBe(2);
-      expect(second.emitted.map((f) => f.fileName)).toEqual(['firmware/latest.json', 'firmware/latest.bin']);
+      expect(second.emitted.map((f) => f.fileName)).toEqual([
+        'firmware/latest.json',
+        'firmware/latest.bin',
+        'firmware/manifest.json',
+      ]);
     },
   );
 
   behaviour(
     {
       id: 'firmware-release.size-mismatch-refused',
-      covers: 'tools/firmwareRelease.ts#fetchLatestFirmware',
+      covers: 'tools/firmwareRelease.ts#fetchFirmwareSite',
       given: 'a release image whose downloaded length differs from the size the release lists',
       expect: {
         'names-both-sizes': 'the image is refused with a message naming the size received and the size the release lists',
@@ -180,7 +212,7 @@ describe('firmwareRelease build', () => {
   behaviour(
     {
       id: 'firmware-release.listing-http-error',
-      covers: 'tools/firmwareRelease.ts#fetchLatestFirmware',
+      covers: 'tools/firmwareRelease.ts#fetchFirmwareSite',
       given: "GitHub answers the build's request for the repository's releases with an error status",
       expect: { 'names-status': 'the lookup fails naming the HTTP status' },
     },
@@ -194,7 +226,7 @@ describe('firmwareRelease build', () => {
   behaviour(
     {
       id: 'firmware-release.asset-http-error',
-      covers: 'tools/firmwareRelease.ts#fetchLatestFirmware',
+      covers: 'tools/firmwareRelease.ts#fetchFirmwareSite',
       given: 'GitHub answers the download of the chosen release image with an error status',
       expect: { 'names-status': 'the lookup fails naming the image and the HTTP status' },
     },
@@ -262,6 +294,199 @@ describe('firmwareRelease build', () => {
       expect(r.emitted).toHaveLength(0);
       expect(r.error).toBeNull();
       expect(fetchFn).not.toHaveBeenCalled();
+    },
+  );
+});
+
+describe('fetchFirmwareSite', () => {
+  behaviour(
+    {
+      id: 'firmware-release.site-newest-per-protocol',
+      covers: 'tools/firmwareRelease.ts#fetchFirmwareSite',
+      given:
+        'releases 0.16 speaking protocol 3, 0.15 and 0.14 speaking protocol 2, and 0.13 from before releases said which protocol they speak',
+      expect: {
+        'listed-per-protocol': 'the list of releases names 0.16 for protocol 3 and 0.15 for protocol 2, each with its checksum',
+        'images-beside': 'the images of 0.16 and 0.15 are served under their own file names',
+        'older-not-downloaded': "0.14's image is never downloaded",
+        'latest-kept': 'the newest release, 0.16, is still served as the latest release for older apps',
+      },
+    },
+    async () => {
+      const releases = [
+        described('0.13', 1, '2026-10-01T00:00:00Z', null),
+        described('0.14', 2, '2026-10-20T00:00:00Z', 2),
+        described('0.16', 4, '2026-11-20T00:00:00Z', 3),
+        described('0.15', 3, '2026-11-10T00:00:00Z', 2),
+      ];
+      const infos: Record<number, Buffer> = { 102: info('0.14', 2), 103: info('0.15', 2), 104: info('0.16', 3) };
+      const asked: number[] = [];
+      const fetchFn = github({
+        list: () => new Response(JSON.stringify(releases)),
+        asset: (id) => {
+          asked.push(id);
+          return new Response(infos[id] ?? new Uint8Array([id]));
+        },
+      });
+      const site = await fetchFirmwareSite(fetchFn as unknown as typeof fetch, {});
+      const sha = (b: number) => createHash('sha256').update(Buffer.from([b])).digest('hex');
+      expect(site.manifest.releases.map((r) => [r.tag, r.protocolVersion, r.sha256])).toEqual([
+        ['firmware-v0.16', 3, sha(4)],
+        ['firmware-v0.15', 2, sha(3)],
+      ]);
+      expect([...site.files.get('firmware/MaD-Firmware-0.16-release.bin')!]).toEqual([4]);
+      expect([...site.files.get('firmware/MaD-Firmware-0.15-release.bin')!]).toEqual([3]);
+      expect(asked).not.toContain(2);
+      expect(site.latest.tag).toBe('firmware-v0.16');
+      expect(JSON.parse(site.files.get('firmware/manifest.json')!.toString())).toEqual(site.manifest);
+      expect(describeSite(site)).toContain('firmware-v0.15 (protocol 2)');
+    },
+  );
+
+  behaviour(
+    {
+      id: 'firmware-release.site-none-described',
+      covers: 'tools/firmwareRelease.ts#fetchFirmwareSite',
+      given: 'releases that all come from before releases said which protocol they speak',
+      expect: {
+        'empty-list': 'the list of releases per protocol is served empty',
+        'latest-kept': 'the newest release is still served as the latest release',
+      },
+    },
+    async () => {
+      const site = await fetchFirmwareSite(github({}) as unknown as typeof fetch, {});
+      expect(site.manifest).toEqual({ releases: [] });
+      expect(site.latest.tag).toBe('firmware-v0.12');
+      expect(describeSite(site)).toContain('none yet');
+    },
+  );
+
+  behaviour(
+    {
+      id: 'firmware-release.site-malformed-info',
+      covers: 'tools/firmwareRelease.ts#fetchFirmwareSite',
+      given:
+        "a release whose file saying which protocol it speaks is not JSON, or has no protocol version, beside an older release whose file is sound",
+      expect: {
+        'bad-release-left-out': 'the release with the bad file is left out of the list of releases per protocol',
+        'warned-by-name': 'a warning names that release and its malformed file',
+        'others-still-listed': 'the sound release is still listed for its protocol',
+      },
+      why: {
+        'others-still-listed':
+          'every Pages deploy and app release reads this list, so one bad release file must not stop them all',
+      },
+    },
+    async () => {
+      for (const body of ['not json', JSON.stringify({ version: '0.15' })]) {
+        const bad = described('0.15', 3, '2026-11-10T00:00:00Z', 2);
+        bad.assets[1].size = body.length;
+        const good = described('0.14', 2, '2026-10-20T00:00:00Z', 2);
+        const fetchFn = github({
+          list: () => new Response(JSON.stringify([bad, good])),
+          asset: (id) =>
+            new Response(id === 103 ? body : id === 102 ? info('0.14', 2) : new Uint8Array([id])),
+        });
+        const site = await fetchFirmwareSite(fetchFn as unknown as typeof fetch, {});
+        expect(site.manifest.releases.map((r) => r.tag)).toEqual(['firmware-v0.14']);
+        expect(site.warnings).toEqual([
+          'firmware-v0.15: firmware-info.json is malformed; the release is left out of the firmware list',
+        ]);
+      }
+    },
+  );
+
+  behaviour(
+    {
+      id: 'firmware-release.site-info-http-error',
+      covers: 'tools/firmwareRelease.ts#fetchFirmwareSite',
+      given: "GitHub answers the download of a release's protocol file with an error status",
+      expect: { 'names-status': 'the lookup fails naming the file and the HTTP status' },
+    },
+    async () => {
+      const fetchFn = github({
+        list: () => new Response(JSON.stringify([described('0.14', 2, '2026-10-20T00:00:00Z', 2)])),
+        asset: (id) => (id === 102 ? new Response('', { status: 502 }) : new Response(new Uint8Array([id]))),
+      });
+      await expect(fetchFirmwareSite(fetchFn as unknown as typeof fetch, {})).rejects.toThrow(
+        'downloading firmware-info.json: HTTP 502',
+      );
+    },
+  );
+});
+
+describe('fetchFirmwareSite boards', () => {
+  behaviour(
+    {
+      id: 'firmware-release.site-entry-board-images',
+      covers: 'tools/firmwareRelease.ts#fetchFirmwareSite',
+      given: 'release 0.15 speaking protocol 2, carrying a P2Eval image and a MaDEdge image under the board names',
+      expect: {
+        'entry-lists-both': "its entry for protocol 2 lists both boards' images, each with its checksum and its own file name",
+        'both-served': 'both images are served under their own file names, byte for byte',
+        'latest-too': 'the latest release for older apps lists both boards, the MaDEdge image at its own latest path',
+      },
+    },
+    async () => {
+      const release: GithubRelease = {
+        ...RELEASE,
+        tag_name: 'firmware-v0.15',
+        published_at: '2026-11-10T00:00:00Z',
+        assets: [
+          { id: 5, name: 'MaD-Firmware-0.15-P2Eval.bin', size: 1 },
+          { id: 6, name: 'MaD-Firmware-0.15-MaDEdge.bin', size: 1 },
+          { id: 105, name: 'firmware-info.json', size: info('0.15', 2).length },
+        ],
+      };
+      const fetchFn = github({
+        list: () => new Response(JSON.stringify([release])),
+        asset: (id) => new Response(id === 105 ? info('0.15', 2) : new Uint8Array([id])),
+      });
+      const site = await fetchFirmwareSite(fetchFn as unknown as typeof fetch, {});
+      const [entry] = site.manifest.releases;
+      const sha = (b: number) => createHash('sha256').update(Buffer.from([b])).digest('hex');
+      expect(entry.boards).toEqual({
+        P2Eval: { assetName: 'MaD-Firmware-0.15-P2Eval.bin', size: 1, sha256: sha(5), path: 'firmware/MaD-Firmware-0.15-P2Eval.bin' },
+        MaDEdge: { assetName: 'MaD-Firmware-0.15-MaDEdge.bin', size: 1, sha256: sha(6), path: 'firmware/MaD-Firmware-0.15-MaDEdge.bin' },
+      });
+      expect([...site.files.get('firmware/MaD-Firmware-0.15-P2Eval.bin')!]).toEqual([5]);
+      expect([...site.files.get('firmware/MaD-Firmware-0.15-MaDEdge.bin')!]).toEqual([6]);
+      expect(Object.keys(site.latest.boards ?? {})).toEqual(['P2Eval', 'MaDEdge']);
+      expect([...site.files.get('firmware/latest-MaDEdge.bin')!]).toEqual([6]);
+    },
+  );
+});
+
+describe('releasedProtocols', () => {
+  behaviour(
+    {
+      id: 'firmware-release.protocols-without-images',
+      covers: 'tools/firmwareRelease.ts#releasedProtocols',
+      given: 'releases 0.15 and 0.14 speaking protocol 2, and 0.13 from before releases said which protocol they speak',
+      expect: {
+        'newest-per-protocol': 'protocol 2 is reported as spoken by 0.15, its newest release',
+        'no-image-downloaded': 'no firmware image is downloaded to find out',
+      },
+    },
+    async () => {
+      const releases = [
+        described('0.13', 1, '2026-10-01T00:00:00Z', null),
+        described('0.14', 2, '2026-10-20T00:00:00Z', 2),
+        described('0.15', 3, '2026-11-10T00:00:00Z', 2),
+      ];
+      const infos: Record<number, Buffer> = { 102: info('0.14', 2), 103: info('0.15', 2) };
+      const asked: number[] = [];
+      const fetchFn = github({
+        list: () => new Response(JSON.stringify(releases)),
+        asset: (id) => {
+          asked.push(id);
+          return new Response(infos[id] ?? new Uint8Array([id]));
+        },
+      });
+      expect(await releasedProtocols(fetchFn as unknown as typeof fetch, {})).toEqual([
+        { tag: 'firmware-v0.15', protocolVersion: 2 },
+      ]);
+      expect(asked.every((id) => id > 100)).toBe(true);
     },
   );
 });
@@ -347,18 +572,46 @@ describe('firmwareRelease dev server', () => {
     {
       id: 'firmware-release.dev-other-paths-pass',
       covers: 'tools/firmwareRelease.ts#firmwareRelease',
-      given: 'the dev server asked for paths that are not the release description or image',
+      given: 'the dev server asked for paths that are not firmware release files',
       expect: {
-        'passed-through': 'each request is handed on to the rest of the app and GitHub is never asked',
+        'passed-through': 'each request outside the firmware folder is handed on to the rest of the app and GitHub is never asked',
+        'unknown-file-passed': 'a firmware-folder file that no release provides is handed on to the rest of the app',
       },
     },
     async () => {
       const fetchFn = github({});
       const dev = devServer(plugin(fetchFn));
-      for (const url of ['/', '/firmware/latest.json.map', '/firmware/other.bin', '/index.html?x=firmware/latest.json']) {
+      for (const url of ['/', '/firmware/latest.json.map', '/index.html?x=firmware/latest.json']) {
         expect((await dev.request(url)).passed).toBe(true);
       }
       expect(fetchFn).not.toHaveBeenCalled();
+      expect((await dev.request('/firmware/other.bin')).passed).toBe(true);
+    },
+  );
+
+  behaviour(
+    {
+      id: 'firmware-release.dev-serves-per-protocol',
+      covers: 'tools/firmwareRelease.ts#firmwareRelease',
+      given: 'the dev server asked for the list of releases per protocol and a listed image, with a release that speaks protocol 2',
+      expect: {
+        'manifest-served': 'the list is answered as JSON naming that release and its protocol',
+        'image-served': "the listed image is answered under its own file name, byte for byte",
+      },
+    },
+    async () => {
+      const release = described('0.14', 5, '2026-11-01T00:00:00Z', 2);
+      const fetchFn = github({
+        list: () => new Response(JSON.stringify([release])),
+        asset: (id) => new Response(id === 105 ? info('0.14', 2) : new Uint8Array([id])),
+      });
+      const dev = devServer(plugin(fetchFn));
+      const m = await dev.request('/MaD/app/firmware/manifest.json');
+      expect(m.res.headers['Content-Type']).toBe('application/json');
+      const manifest = JSON.parse(String(m.res.body)) as FirmwareManifest;
+      expect(manifest.releases.map((r) => [r.tag, r.protocolVersion])).toEqual([['firmware-v0.14', 2]]);
+      const i = await dev.request(`/MaD/app/${manifest.releases[0].path}`);
+      expect([...(i.res.body as Buffer)]).toEqual([5]);
     },
   );
 

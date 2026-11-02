@@ -1,12 +1,19 @@
 /**
- * The latest published firmware release, as the Firmware screen offers it.
+ * The published firmware releases, as the Firmware screen offers them.
  *
  * GitHub's release API answers cross-origin requests, but the asset bytes are
  * served from a host that sends no CORS header, so the browser cannot download
  * a release itself. The app's own origin serves it instead: the Vite plugin in
  * `tools/firmwareRelease.ts` proxies GitHub on the dev server and bundles the
- * files into a production build. Both serve the same two files under
- * `firmware/`, described by {@link FirmwareReleaseManifest}.
+ * files into a production build, and the Pages deploy writes the same files
+ * once for every hosted app version (`tools/assemble-pages-app.mts`). Under
+ * `firmware/` they are:
+ *  - `manifest.json` ({@link FirmwareManifest}): the newest release for each
+ *    protocol version, with each board's image beside it under its own file
+ *    name. An app offers the one that speaks its own protocol, for the board
+ *    chosen: the recommended firmware.
+ *  - `latest.json` + `latest.bin` (+ `latest-MaDEdge.bin`): the newest release
+ *    of all, read by app versions from before the manifest.
  *
  * The selection logic is shared with that plugin, so it stays free of DOM and
  * Node APIs alike.
@@ -15,9 +22,20 @@
 /** Tags that are firmware releases; the repo also tags app and hardware releases. */
 export const FIRMWARE_TAG_PREFIX = 'firmware-v';
 
-/** Where the manifest and image are served, relative to the app's base URL. */
+/** Where the newest release and its image are served, relative to the hosting root. */
 export const RELEASE_MANIFEST_PATH = 'firmware/latest.json';
 export const RELEASE_IMAGE_PATH = 'firmware/latest.bin';
+
+/** Where the newest release per protocol version is listed, relative to the hosting root. */
+export const FIRMWARE_MANIFEST_PATH = 'firmware/manifest.json';
+
+/**
+ * The asset each firmware release carries beside its images, saying which
+ * protocol its firmware speaks (written by ci.yml's firmware build from the
+ * generated header). Releases from before the compatibility handshake have
+ * none.
+ */
+export const FIRMWARE_INFO_ASSET = 'firmware-info.json';
 
 /**
  * The boards a firmware build targets, named after its PlatformIO env.
@@ -79,6 +97,9 @@ export interface BoardImage {
   size: number;
   /** Lowercase hex SHA-256 of the image, checked before anything is written. */
   sha256: string;
+  /** Where the image is served, relative to the hosting root; the board's
+   *  `latest` path (BOARD_IMAGE_PATHS) when absent. */
+  path?: string;
 }
 
 /**
@@ -98,6 +119,28 @@ export interface FirmwareReleaseManifest {
   publishedAt: string | null;
   htmlUrl: string;
   boards?: Partial<Record<Board, BoardImage>>;
+  /** Where the P2Eval image is served, relative to the hosting root;
+   *  `firmware/latest.bin` when absent. */
+  path?: string;
+}
+
+/** What a release's `firmware-info.json` says. */
+export interface FirmwareInfo {
+  version: string;
+  protocolVersion: number;
+}
+
+/** One release in `firmware/manifest.json`: every board image it has, each
+ *  served under its own file name. */
+export interface FirmwareManifestEntry extends FirmwareReleaseManifest {
+  /** The protocol version the release's firmware speaks. */
+  protocolVersion: number;
+  path: string;
+}
+
+/** `firmware/manifest.json`: the newest release for each protocol version. */
+export interface FirmwareManifest {
+  releases: FirmwareManifestEntry[];
 }
 
 /**
@@ -125,10 +168,15 @@ export function boardImage(
   board: Board,
 ): (BoardImage & { path: string }) | null {
   const listed = manifest.boards?.[board];
-  if (listed) return { ...listed, path: BOARD_IMAGE_PATHS[board] };
+  if (listed) return { ...listed, path: listed.path ?? BOARD_IMAGE_PATHS[board] };
   // A manifest from before the board choice describes only the P2Eval image.
   if (board === 'P2Eval') {
-    return { assetName: manifest.assetName, size: manifest.size, sha256: manifest.sha256, path: RELEASE_IMAGE_PATH };
+    return {
+      assetName: manifest.assetName,
+      size: manifest.size,
+      sha256: manifest.sha256,
+      path: manifest.path ?? RELEASE_IMAGE_PATH,
+    };
   }
   return null;
 }
@@ -146,14 +194,54 @@ export function boardImage(
 export function pickFirmwareRelease(
   releases: readonly GithubRelease[],
 ): { release: GithubRelease; asset: GithubAsset } | null {
-  const published = releases
-    .filter((r) => !r.draft && !r.prerelease && r.tag_name.startsWith(FIRMWARE_TAG_PREFIX))
-    .sort((a, b) => (b.published_at ?? '').localeCompare(a.published_at ?? ''));
-  for (const release of published) {
+  for (const release of publishedFirmware(releases)) {
     const asset = pickFirmwareAsset(release);
     if (asset) return { release, asset };
   }
   return null;
+}
+
+/** Published firmware releases (no drafts or prereleases), newest first. */
+function publishedFirmware(releases: readonly GithubRelease[]): GithubRelease[] {
+  return releases
+    .filter((r) => !r.draft && !r.prerelease && r.tag_name.startsWith(FIRMWARE_TAG_PREFIX))
+    .sort((a, b) => (b.published_at ?? '').localeCompare(a.published_at ?? ''));
+}
+
+/**
+ * The published firmware releases that say which protocol they speak, each
+ * with its P2Eval image (the one every release has) and its
+ * `firmware-info.json`, newest first. A release without that file predates
+ * the compatibility handshake: its firmware cannot tell an app which protocol
+ * it speaks, so no app recommends it.
+ */
+export function describedReleases(
+  releases: readonly GithubRelease[],
+): { release: GithubRelease; asset: GithubAsset; info: GithubAsset }[] {
+  const out: { release: GithubRelease; asset: GithubAsset; info: GithubAsset }[] = [];
+  for (const release of publishedFirmware(releases)) {
+    const asset = pickFirmwareAsset(release);
+    const info = release.assets.find((a) => a.name === FIRMWARE_INFO_ASSET);
+    if (asset && info) out.push({ release, asset, info });
+  }
+  return out;
+}
+
+/** The first of `candidates` for each protocol version; given newest first, the newest. */
+export function newestPerProtocol<T extends { protocolVersion: number }>(candidates: readonly T[]): T[] {
+  const seen = new Set<number>();
+  return candidates.filter((c) => !seen.has(c.protocolVersion) && seen.add(c.protocolVersion));
+}
+
+export function isFirmwareInfo(value: unknown): value is FirmwareInfo {
+  if (typeof value !== 'object' || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return typeof v.version === 'string' && Number.isInteger(v.protocolVersion);
+}
+
+/** The path a release image is served at, relative to the hosting root. */
+export function firmwareImagePath(assetName: string): string {
+  return `firmware/${assetName}`;
 }
 
 /** The manifest for a picked release, once its images' digests are known.
@@ -176,10 +264,45 @@ export function toManifest(
   };
 }
 
+/**
+ * The manifest entry for a release whose firmware speaks `protocolVersion`.
+ * `boards` lists each board image it has, each with the path it is served at
+ * (`firmwareImagePath`); the top-level fields describe its P2Eval image.
+ */
+export function toManifestEntry(
+  release: GithubRelease,
+  asset: GithubAsset,
+  sha256: string,
+  protocolVersion: number,
+  boards?: Partial<Record<Board, BoardImage>>,
+): FirmwareManifestEntry {
+  return { ...toManifest(release, asset, sha256, boards), protocolVersion, path: firmwareImagePath(asset.name) };
+}
+
+/**
+ * The firmware this app recommends: the newest listed release that speaks its
+ * protocol, or null when no release does yet. Which board's image to flash is
+ * the Firmware screen's Board choice (`boardImage`).
+ */
+export function recommendedRelease(
+  manifest: FirmwareManifest,
+  appProtocol: number,
+): FirmwareManifestEntry | null {
+  const matching = manifest.releases
+    .filter((r) => r.protocolVersion === appProtocol)
+    .sort((a, b) => (b.publishedAt ?? '').localeCompare(a.publishedAt ?? ''));
+  return matching[0] ?? null;
+}
+
 function isBoardImage(value: unknown): value is BoardImage {
   if (typeof value !== 'object' || value === null) return false;
   const i = value as Record<string, unknown>;
-  return typeof i.assetName === 'string' && typeof i.size === 'number' && typeof i.sha256 === 'string';
+  return (
+    typeof i.assetName === 'string' &&
+    typeof i.size === 'number' &&
+    typeof i.sha256 === 'string' &&
+    (i.path === undefined || typeof i.path === 'string')
+  );
 }
 
 function isManifest(value: unknown): value is FirmwareReleaseManifest {
@@ -200,22 +323,34 @@ function isManifest(value: unknown): value is FirmwareReleaseManifest {
   );
 }
 
+function isManifestEntry(value: unknown): value is FirmwareManifestEntry {
+  if (!isManifest(value)) return false;
+  const m = value as unknown as Record<string, unknown>;
+  return Number.isInteger(m.protocolVersion) && typeof m.path === 'string';
+}
+
+function isFirmwareManifest(value: unknown): value is FirmwareManifest {
+  if (typeof value !== 'object' || value === null) return false;
+  const releases = (value as Record<string, unknown>).releases;
+  return Array.isArray(releases) && releases.every(isManifestEntry);
+}
+
 type FetchFn = (input: string) => Promise<Response>;
 
 /**
- * Read the served manifest. Throws with a message fit for the screen when
- * there is none — a build made offline, or a dev server that could not reach
- * GitHub.
+ * Read the served list of releases per protocol. Throws with a message fit
+ * for the screen when there is none — a build made offline, or a dev server
+ * that could not reach GitHub.
  */
-export async function fetchReleaseManifest(
+export async function fetchFirmwareManifest(
   baseUrl: string,
   fetchFn: FetchFn = (input) => fetch(input),
-): Promise<FirmwareReleaseManifest> {
+): Promise<FirmwareManifest> {
   let res: Response;
   try {
-    res = await fetchFn(`${baseUrl}${RELEASE_MANIFEST_PATH}`);
+    res = await fetchFn(`${baseUrl}${FIRMWARE_MANIFEST_PATH}`);
   } catch {
-    throw new Error('Could not reach the app server for the latest release.');
+    throw new Error('Could not reach the app server for the firmware releases.');
   }
   if (!res.ok) throw new Error('No firmware release is bundled with this copy of the app.');
   // try/catch rather than `.catch(() => null)`: @vitest/coverage-v8 5 counts
@@ -227,7 +362,7 @@ export async function fetchReleaseManifest(
   } catch {
     /* not JSON: reported as malformed below */
   }
-  if (!isManifest(body)) throw new Error('The bundled firmware release description is malformed.');
+  if (!isFirmwareManifest(body)) throw new Error('The bundled firmware release description is malformed.');
   return body;
 }
 
@@ -260,4 +395,24 @@ export async function fetchReleaseImage(
     throw new Error(`Downloaded ${image.assetName} does not match its release checksum.`);
   }
   return bytes;
+}
+
+/**
+ * Fetch the recommended firmware for `board` once, so the service worker
+ * keeps a copy (vite.config.ts) and an update still works offline. Never
+ * throws: a failure only means nothing was cached this time.
+ */
+export async function cacheRecommendedRelease(
+  baseUrl: string,
+  appProtocol: number,
+  fetchFn: FetchFn = (input) => fetch(input),
+  board: Board = 'P2Eval',
+): Promise<FirmwareManifestEntry | null> {
+  try {
+    const entry = recommendedRelease(await fetchFirmwareManifest(baseUrl, fetchFn), appProtocol);
+    if (entry && boardImage(entry, board)) await fetchReleaseImage(baseUrl, entry, fetchFn, board);
+    return entry;
+  } catch {
+    return null;
+  }
 }

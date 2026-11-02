@@ -12,6 +12,7 @@ import {
   MachineConfiguration,
   SampleProfile,
   FirmwareVersion,
+  DeviceInfo,
   Notification,
 } from '@/domain';
 
@@ -26,6 +27,7 @@ export type DeviceEvent =
   | { kind: 'configuration'; data: MachineConfiguration }
   | { kind: 'sampleProfile'; data: SampleProfile }
   | { kind: 'firmwareVersion'; data: FirmwareVersion }
+  | { kind: 'deviceInfo'; data: DeviceInfo }
   | { kind: 'notification'; data: Notification }
   | { kind: 'ack'; command: number; success: boolean }
   | { kind: 'data'; command: number; payload: Uint8Array }
