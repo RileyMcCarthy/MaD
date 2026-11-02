@@ -2840,7 +2840,7 @@ const scenarios = [
   },
   {
     id: 'FW10',
-    name: 'Firmware: the board choice picks which build of the recommended release Install recommended flashes',
+    name: 'Firmware: the board choice picks which build of the recommended release Install recommended flashes; only P2Eval reconnects after',
     async run() {
       const browser = await chromium.launch({ channel: 'chrome', headless: true });
       try {
@@ -2885,6 +2885,11 @@ const scenarios = [
           });
         });
 
+        // The main connection holds the port being flashed, as on a machine
+        // whose production build talks on J1.
+        await page.goto(`${APP_URL_HOST}#/connect`);
+        await press(page.getByTestId('connect-device'));
+        await page.locator('.dot.connected').waitFor({ timeout: 10_000 });
         await page.goto(`${APP_URL_HOST}#/firmware`);
         await page.getByTestId('firmware-source').filter({ hasText: /P2Eval production build/ }).waitFor();
         assert(await page.getByTestId('board-P2Eval').isChecked(), 'P2Eval is not the default board');
@@ -2897,6 +2902,18 @@ const scenarios = [
         await install.click();
         await page.getByTestId('flash-status').filter({ hasText: /Wrote .* bytes to flash/ })
           .waitFor({ timeout: 30_000 });
+        const opensAfterEdge = await page.evaluate(() => window.__bootRom.opens);
+        // Past the reconnect's settle delay (RECONNECT_SETTLE_MS, 1.5 s).
+        await page.waitForTimeout(3000);
+        assert(
+          (await page.evaluate(() => window.__bootRom.opens)) === opensAfterEdge,
+          'the app reopened the flash port after a MaDEdge flash, which answers only on the Pi link',
+        );
+        assert((await page.locator('.dot.connected').count()) === 0, 'still connected after a MaDEdge flash');
+        assert(
+          /connect over that link/.test((await page.getByTestId('flash-status').textContent()) ?? ''),
+          'the done message does not send the operator to the Pi link',
+        );
 
         assert(
           JSON.stringify(fetched) === JSON.stringify(['MaD-Firmware-9.9-MaDEdge.bin']),
@@ -2910,6 +2927,23 @@ const scenarios = [
         assert(
           JSON.stringify(rom.payload) === JSON.stringify([255, 254, 253, 252]),
           `flashed payload starts ${JSON.stringify(rom.payload)}, not the MaDEdge image`,
+        );
+
+        // A P2Eval flash over the held port still hands the connection back.
+        await page.goto(`${APP_URL_HOST}#/connect`);
+        await press(page.getByTestId('connect-device'));
+        await page.locator('.dot.connected').waitFor({ timeout: 10_000 });
+        await page.goto(`${APP_URL_HOST}#/firmware`);
+        await page.getByTestId('board-P2Eval').check();
+        await page.getByTestId('firmware-source').filter({ hasText: /P2Eval production build/ }).waitFor();
+        await page.getByTestId('flash-firmware').click();
+        await page.getByTestId('flash-status').filter({ hasText: /Wrote .* bytes to flash/ })
+          .waitFor({ timeout: 30_000 });
+        const opensAfterEval = await page.evaluate(() => window.__bootRom.opens);
+        await page.locator('.dot.connected').waitFor({ timeout: 10_000 });
+        assert(
+          (await page.evaluate(() => window.__bootRom.opens)) === opensAfterEval + 1,
+          'a P2Eval flash did not reconnect to the flash port',
         );
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
       } finally { await browser.close(); }
