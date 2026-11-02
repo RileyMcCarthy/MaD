@@ -266,9 +266,9 @@ fn the_flashers_load_through_the_roms_serial_loader_programs_the_modules_flash()
     behaviour!(Test {
         id: "p2iss.ec32mb-serial-flash-load",
         covers: Some("SIL/p2iss/src/package.rs#P2IssCore"),
-        given: "a P2-EC32MB module with its flash erased and its boot switch set for the ROM's \
-                serial boot, and a host on its debug fingers sending what the app's flasher sends: \
-                the probe, then the flash stub and a firmware as hex",
+        given: "a P2-EC32MB module, its flash erased and strapped for the ROM's serial boot, sent \
+                what the app's flasher sends: the probe, then the flash programmer and a firmware \
+                as hex",
     });
     expect!(
         "rom-answers",
@@ -276,7 +276,7 @@ fn the_flashers_load_through_the_roms_serial_loader_programs_the_modules_flash()
     );
     expect!(
         "stub-programs",
-        "the stub enables writes, erases and programs pages of the module's flash"
+        "the module's flash is write-enabled, erased and programmed page by page"
     );
     expect!(
         "firmware-in-flash",
@@ -425,13 +425,13 @@ fn the_flashers_load_through_the_roms_serial_loader_programs_the_modules_flash()
     drop(system);
 }
 
-/// The production firmware (pio env `propeller2`): `MAD_P2_PRODUCTION_IMAGE`
+/// The production firmware (pio env `P2Eval`): `MAD_P2_PRODUCTION_IMAGE`
 /// names a copy kept out of `.pio` (CI's), else the build's own.
 fn production_image() -> Option<Vec<u8>> {
     let path = std::env::var_os("MAD_P2_PRODUCTION_IMAGE").map_or_else(
         || {
             PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../../Firmware/MaDCore/.pio/build/propeller2/program")
+                .join("../../Firmware/MaDCore/.pio/build/P2Eval/program")
         },
         PathBuf::from,
     );
@@ -450,10 +450,9 @@ fn the_firmware_the_flasher_writes_boots_from_flash_after_a_dtr_reset() {
     behaviour!(Test {
         id: "p2iss.ec32mb-reflash-boots",
         covers: Some("SIL/p2iss/src/package.rs#P2IssCore::enter_reset"),
-        given: "a P2-EC32MB module with its flash erased and nothing on P59, and a host on its \
-                debug fingers whose DTR reaches the module's reset through a Prop Plug's reset \
-                stage, writing the production firmware through the ROM's serial loader and then \
-                asserting DTR",
+        given: "a P2-EC32MB module, its flash erased and P59 unstrapped, sent the production \
+                firmware through the ROM's serial loader and then reset by DTR through a Prop \
+                Plug's reset stage",
     });
     expect!(
         "written",

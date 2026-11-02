@@ -348,16 +348,15 @@ fn the_roms_serial_loader_starts_the_flash_stub_on_its_download() {
     behaviour!(Test {
         id: "p2.rom-serial-flash-stub",
         covers: Some("SIL/p2core/src/lib.rs#coginit"),
-        given: "the mask ROM with the serial strap pulled up and an erased flash, sent the \
-                flasher's probe and then the app's flash stub and a firmware as hex, ending \
-                with the run command",
+        given: "the mask ROM with the serial strap pulled up and an erased flash, sent the app's \
+                flash load: the probe, then the flash programmer and a firmware as hex",
     });
     expect!(
         "stub-sizes-its-download",
-        "the stub finds its own download's size and programs the firmware into the flash at \
-         the offset the boot loader reads it from",
-        "the ROM relaunches cog 0 straight into the stub, whose first instruction reads the \
-         hub FIFO's pointer as the size of the download, so the pointer survives the relaunch"
+        "the programmer finds the size of what it was sent and writes the firmware into the \
+         flash at the offset the boot loader reads it from",
+        "the ROM restarts the first core straight into the programmer, which takes the download's \
+         size from where the ROM's writing into memory left off, so that survives the restart"
     );
 
     std::env::set_var("P2CORE_NO_FF", "1");
