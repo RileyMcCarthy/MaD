@@ -42,7 +42,9 @@ every scenario that moves it (`e2e/run-all.mjs`, `PROJECT_CANNOT`):
 M9, M10 and M12 cells, the M11 mid-test drop and SERVO-stall among them. They
 run on the board with #285 fixed, `SIL/mad-ic14-fixed-cosim.toml` (`cd SIL &&
 make e2e-motion`): the nightly runs them all, and each PR runs G2+G3+H2+I.
-SERVO-stall stays skipped there: no project has a jam yet.
+SERVO-stall stays skipped there, since nothing stops that board's carriage:
+it runs on that file with a hard stop, `SIL/mad-hard-stop-cosim.toml` (`cd SIL
+&& make e2e-stall`, MaD #298).
 
 ## Shared helpers (prefer these)
 

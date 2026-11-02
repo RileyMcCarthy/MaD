@@ -5,24 +5,28 @@
 # on the carrier's connectors, and a host on a serial line (embsim
 # MIGRATING-MAD.md sections 1 and 4).
 #
-# Seven files share every line but how the module boots, which host sits
-# where, and one wire; mad-catalog/tests/projects.rs holds them to it:
+# Eight files share every line but how the module boots, which host sits
+# where, one wire and one stop; mad-catalog/tests/projects.rs holds them to
+# it:
 #
 #   file                             the module boots        the host
 #   mad.toml                         the firmware off flash  host-serial on J1
 #   mad-cosim.toml                   the firmware off flash  chrome-cdp on J1
 #   mad-ic14-fixed-cosim.toml        mad-cosim.toml with IC14's fix, one wire
 #   mad-playground.toml              that file, its Chrome headed on the app
+#   mad-hard-stop-cosim.toml         mad-ic14-fixed-cosim.toml with a hard
+#                                    stop, one option of the machine's
 #   mad-serial-boot.toml             the ROM's serial boot,  host-serial on J1
 #                                    its flash erased
 #   mad-serial-boot-cosim.toml       the ROM's serial boot   chrome-cdp on J1
 #   mad-serial-boot-playground.toml  that file, its Chrome headed on the app
 #
-# All but the IC14 fix's two keep the carrier as drawn, where IC14, the
+# All but the IC14 fix's three keep the carrier as drawn, where IC14, the
 # isolator between the processor and the servo drive, passes nothing (MaD
 # #285; the fix is the last entry of its file). The e2e runs mad-cosim.toml,
-# and mad-ic14-fixed-cosim.toml for the scenarios that move the carriage;
-# the playgrounds are for a person (SIL/makefile).
+# mad-ic14-fixed-cosim.toml for the scenarios that move the carriage, and
+# mad-hard-stop-cosim.toml for SERVO-stall, which drives the carriage into
+# its stop; the playgrounds are for a person (SIL/makefile).
 #
 # J1 is the carrier's debug header, where the machine's Prop Plug sits. The
 # route is the user's decision (2026-10-21): the host on J1 and the
