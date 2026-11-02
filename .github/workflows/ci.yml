@@ -1122,6 +1122,8 @@ jobs:
       # Software/Control/tools/firmwareRelease.ts); a release without it is
       # never recommended.
       - name: Describe the release's protocol (firmware-info.json)
+        env:
+          VERSION: ${{ steps.get_version.outputs.VERSION }}
         run: |
           set -euo pipefail
           P=$(sed -n 's/^#define PROTOEMB_PROTOCOL_VERSION \([0-9][0-9]*\)$/\1/p' Firmware/MaDCore/src/Generated/protoemb.h)
@@ -1129,7 +1131,7 @@ jobs:
             echo "::error::PROTOEMB_PROTOCOL_VERSION not found in Firmware/MaDCore/src/Generated/protoemb.h"
             exit 1
           fi
-          printf '{"version": "%s", "protocolVersion": %s}\n' "${{ steps.get_version.outputs.VERSION }}" "$P" \
+          printf '{"version": "%s", "protocolVersion": %s}\n' "$VERSION" "$P" \
             > release-assets/firmware-info.json
           cat release-assets/firmware-info.json
           ls -la release-assets/
