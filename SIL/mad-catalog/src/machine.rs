@@ -31,6 +31,34 @@
 //! | `sample` | the sample in the grips, one this crate carries: `sil-linear-reference` (the default, `run_iss`'s `SIL-Linear-Reference`) |
 //! | `drive_steps_per_mm` | the drive's steps a millimetre of carriage travel, above zero: [`STEPS_PER_MM`] by default. The firmware's machine profile must say the same (`servoStepsPerMM`) |
 //! | `encoder_counts_per_mm` | the encoder's counts a millimetre, above zero: [`STEPS_PER_MM`] by default (`encoderStepsPerMM`). The two differ on a machine whose drive is geared or microstepped apart from its encoder, and the firmware pulses the drive by their ratio |
+//! | `hard_stop_mm` | a carriage position the carriage cannot pass, in millimetres, finite and off the carriage's start at [`START_MM`]: none by default (below, "The hard stop") |
+//!
+//! # The hard stop
+//!
+//! With `hard_stop_mm` the carriage meets a stop there, on the side of it
+//! the carriage starts on: above the start, the carriage goes no higher;
+//! below it, no lower. The drive counts every step it is sent, and the
+//! steps the stop refuses are lost. On a rigid drivetrain the stop blocks
+//! the rotor too, and what runs on is the count; embsim's `StepperMotor`
+//! has no stall (its *Not modeled*: torque, stall, lost steps), so the
+//! count is its shaft position, which runs on past the stop at the speed
+//! its lag gives it. The encoder counts the carriage, on the load side, so
+//! it stops counting at the stop, and the end switches and the sample see
+//! no travel past it.
+//!
+//! The shaft travel the stop refuses is lost: from then on the carriage
+//! follows the shaft that far behind it, so a shaft turning back takes the
+//! carriage off the stop at once. A shaft reversed while it runs on past
+//! the stop first spends its lag (the model's 20 ms time constant), as a
+//! free shaft reversing does, where a blocked rotor would turn back at once
+//! (inferred); SERVO-stall disables the drive before it reverses, so it
+//! never meets this. A stepper driven against a stop loses the steps it
+//! cannot take, which is this; it is also what `mad-emulator`'s jam does
+//! with the travel lost while jammed (its `Coupling`). The real
+//! machine's drive is a servo drive, whose behaviour against a stop is not
+//! known here (inferred: it may hold its count, or fault). The stop has no
+//! compliance, no bounce and no buzz: the carriage sits on it exactly. With
+//! no stop the carriage is the shaft, number for number.
 //!
 //! On the Edge carrier as drawn, `J20`'s `+` legs have no pull-up and
 //! `JP2`/`JP3` ground the `-` legs for a single-ended encoder, so an
@@ -87,9 +115,10 @@
 //!   reads only A and B (`HAL_encoder_config.c`).
 //! - **Pressing an emergency stop, opening the door**: each holds its rest
 //!   state.
-//! - **A jammed carriage** (`mad-emulator`'s `Coupling`, jammed while its
-//!   `--jam-file` exists): a lever a stepped kind cannot take from a file the
-//!   wall clock polls; the carriage always follows the shaft.
+//! - **A jam that comes and goes** (`mad-emulator`'s `Coupling`, jammed
+//!   while its `--jam-file` exists): a lever a stepped kind cannot take from
+//!   a file the wall clock polls. A carriage that cannot go on is the hard
+//!   stop's (above), fixed where the project puts it for the whole run.
 
 use std::fmt;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
@@ -129,6 +158,55 @@ struct Scales {
     encoder_counts_per_mm: f64,
 }
 
+/// The carriage on the drive's shaft, and the hard stop it may meet (module
+/// docs, "The hard stop").
+#[derive(Debug)]
+struct Carriage {
+    /// The stop, millimetres; `None`, the carriage is the shaft.
+    stop_mm: Option<f64>,
+    /// The shaft travel lost against the stop, millimetres, signed as the
+    /// shaft turned, as `f64` bits: the carriage is the shaft less this.
+    lost_mm: AtomicU64,
+}
+
+impl Carriage {
+    fn new(stop_mm: Option<f64>) -> Self {
+        Self {
+            stop_mm,
+            lost_mm: AtomicU64::new(0.0_f64.to_bits()),
+        }
+    }
+
+    /// The shaft is at `shaft_mm`: where the carriage is. A carriage the
+    /// shaft would take past the stop is on it, and the shaft's travel
+    /// beyond is lost.
+    fn follow(&self, shaft_mm: f64) -> f64 {
+        let Some(stop) = self.stop_mm else {
+            return shaft_mm;
+        };
+        let lost = self.lost();
+        let free = shaft_mm - lost;
+        // The stop's side away from the start is the side the carriage
+        // cannot reach.
+        let beyond = if stop > START_MM {
+            free > stop
+        } else {
+            free < stop
+        };
+        if !beyond {
+            return free;
+        }
+        self.lost_mm
+            .store((lost + (free - stop)).to_bits(), Ordering::Relaxed);
+        stop
+    }
+
+    /// The shaft travel lost against the stop so far, millimetres.
+    fn lost(&self) -> f64 {
+        f64::from_bits(self.lost_mm.load(Ordering::Relaxed))
+    }
+}
+
 /// Where the upper end switch opens: 100 mm, the firmware's failsafe
 /// `maxPosition` (`Firmware/MaDCore/src/DEV/Config/dev_nvram_config.c`),
 /// `TRAVEL_MM` in `iss_description.rs`.
@@ -137,6 +215,10 @@ pub const TRAVEL_MM: f64 = 100.0;
 /// Where the lower end switch opens: the carriage's start, 0 mm (the lower
 /// switch of `BenchMachine::build`).
 pub const LOWER_MM: f64 = 0.0;
+
+/// Where the carriage starts, 0 mm: the drive's shaft's first position, from
+/// which its travel is counted. A hard stop is on one side of it.
+pub const START_MM: f64 = 0.0;
 
 /// Grip slack before the sample takes load, in millimetres: `run_iss`'s
 /// gantry (`engagement_slack_mm: 15.0`, `SIL/MaDSim/src/main.rs`).
@@ -256,7 +338,9 @@ pub(crate) fn kind_info() -> KindInfo {
          push-pull), the end switch, door and emergency-stop loops as contacts (each NAME_COM \
          and NAME+), and the load cell's bridge (E+, E- sensed; S+, S- driven); \
          options.sample: sil-linear-reference; options.drive_steps_per_mm and \
-         options.encoder_counts_per_mm: each 8192 by default",
+         options.encoder_counts_per_mm: each 8192 by default; options.hard_stop_mm: a \
+         carriage position in millimetres the carriage cannot pass, the drive's steps past it \
+         lost, none by default",
     )
 }
 
@@ -290,8 +374,19 @@ pub(crate) fn component(request: ComponentRequest<'_>) -> Result<Box<dyn Compone
         drive_steps_per_mm: scale("drive_steps_per_mm")?,
         encoder_counts_per_mm: scale("encoder_counts_per_mm")?,
     };
+    let hard_stop = match options.number("hard_stop_mm")? {
+        None => None,
+        Some(mm) if mm.is_finite() && mm != START_MM => Some(mm),
+        Some(mm) => {
+            return Err(ProjectError::message(format!(
+                "{context}: options.hard_stop_mm is a carriage position in millimetres, finite \
+                 and off the carriage's start at {START_MM} mm, so the carriage starts on one \
+                 side of it; {mm} is not"
+            )))
+        }
+    };
     options.finish()?;
-    let (machine, report) = assemble(output, sample, scales)
+    let (machine, report) = assemble(output, sample, scales, hard_stop)
         .map_err(|err| ProjectError::message(format!("{context}: {err}")))?;
     reports.add(MachineReport {
         subject: spec.name.clone(),
@@ -307,6 +402,7 @@ fn assemble(
     output: OutputStage,
     sample: SamplePreset,
     scales: Scales,
+    hard_stop: Option<f64>,
 ) -> Result<(Assembly, MachineReport), Box<dyn std::error::Error>> {
     // The drive's own conventions: DIR high is reverse, the enable is
     // energized = enabled, so ENA high enables, and no load loss. The enable
@@ -378,13 +474,20 @@ fn assemble(
         gauge.on_change(move |millivolts| bridge.set_output_mv(millivolts));
     }
 
-    // The shaft: the carriage turns the encoder, reaches the end switches and
-    // strains the sample. Each runs inside the drive's observation.
+    // The shaft moves the carriage, short of the hard stop if there is one;
+    // the carriage turns the encoder, reaches the end switches and strains
+    // the sample. Each runs inside the drive's observation.
     let travel = Arc::new(CarriageTravel::new());
+    let carriage = Arc::new(Carriage::new(hard_stop));
     let (count, up, down) = (encoder.input(), upper.actuator(), lower.actuator());
     let feed = {
-        let (gantry, travel) = (Arc::clone(&gantry), Arc::clone(&travel));
-        move |mm: f64| {
+        let (gantry, travel, carriage) = (
+            Arc::clone(&gantry),
+            Arc::clone(&travel),
+            Arc::clone(&carriage),
+        );
+        move |shaft_mm: f64| {
+            let mm = carriage.follow(shaft_mm);
             count.set_position_mm(mm);
             up.set_position_mm(mm);
             down.set_position_mm(mm);
@@ -395,7 +498,7 @@ fn assemble(
     // The carriage starts at 0 mm and the drive publishes only a change, so
     // every follower is handed the start once: the switches close, the
     // sample's zero-force baseline is the start.
-    feed(0.0);
+    feed(START_MM);
     let shaft = drive.shaft();
     shaft.on_position_change(feed);
 
@@ -446,6 +549,7 @@ fn assemble(
         shaft,
         encoder: encoder_input,
         travel,
+        carriage,
         force,
         encoder_counts_per_mm: scales.encoder_counts_per_mm,
         said: None,
@@ -662,12 +766,14 @@ impl CarriageTravel {
 
 /// What the machine says: where the carriage went since the last look, and
 /// at the end where it is, what the drive was commanded, the encoder's
-/// count and the force on the sample.
+/// count and the force on the sample, and with a hard stop the shaft travel
+/// lost against it.
 struct MachineReport {
     subject: String,
     shaft: MotorShaft,
     encoder: EncoderInput,
     travel: Arc<CarriageTravel>,
+    carriage: Arc<Carriage>,
     /// The sample's force, newtons, as `f64` bits.
     force: Arc<AtomicU64>,
     /// The encoder's scale, to say its count in millimetres.
@@ -712,12 +818,19 @@ impl Report for MachineReport {
 
     fn summary(&self) -> Vec<String> {
         let count = self.encoder.count();
-        vec![format!(
+        let mut lines = vec![format!(
             "encoder at {count} counts ({:.6} mm), {} steps commanded, {:.6} N on the sample",
             count as f64 / self.encoder_counts_per_mm,
             self.shaft.commanded_steps(),
             f64::from_bits(self.force.load(Ordering::Relaxed)),
-        )]
+        )];
+        if let Some(stop) = self.carriage.stop_mm {
+            lines.push(format!(
+                "hard stop at {stop:.3} mm, {:.6} mm of shaft travel lost against it",
+                self.carriage.lost().abs()
+            ));
+        }
+        lines
     }
 }
 

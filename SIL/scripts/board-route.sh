@@ -18,18 +18,22 @@
 #             The e2e runs E2E_PROJECT (mad-cosim.toml, the production
 #             firmware booted off the module's flash, headless; make
 #             e2e-motion names mad-ic14-fixed-cosim.toml, the board with MaD
-#             #285 fixed, and make e2e-rom mad-serial-boot-cosim.toml, the
-#             ROM's serial boot with the flash erased). The playground runs
+#             #285 fixed, make e2e-stall mad-hard-stop-cosim.toml, that board
+#             with a hard stop on its carriage (MaD #298), and make e2e-rom
+#             mad-serial-boot-cosim.toml, the ROM's serial boot with the
+#             flash erased). The playground runs
 #             PLAYGROUND_PROJECT (mad-playground.toml, a headed copy of the
 #             #285-fixed file; make playground-rom names
 #             mad-serial-boot-playground.toml), its Chrome a window opened on
 #             the app at the file's url, the dev server on 5174. The files fix
 #             Chrome's DevTools port (9222) and grant the port; `make
 #             flash-image sd-image` writes the images they name.
-#   emulator  SERVO-stall's alone (make e2e-stall), since no project has a
-#             jam (MaD #298): `mad-emulator --chrome`, the debug image
-#             P2_IMAGE on the bare chip, the host on P30/P32 (USB 0403:6001),
-#             headless. The e2e only: every playground is a project's.
+#   emulator  `mad-emulator --chrome`, the debug image P2_IMAGE on the bare
+#             chip, the host on P30/P32 (USB 0403:6001), headless. No make
+#             target or CI job runs it: SERVO-stall, the last scenario it
+#             carried, runs on mad-hard-stop-cosim.toml (MaD #298), and the
+#             route retires with mad-emulator (embsim MIGRATING-MAD.md step
+#             11). The e2e only: every playground is a project's.
 #
 # Environment: BOARD_ROUTE, EMBSIM (the embsim command; by default the
 # pinned submodule's, through cargo), E2E_PROJECT (mad-cosim.toml, relative
@@ -40,9 +44,9 @@
 # BOARD_LOGS (where the board's and the dev server's logs go), BOARD_ARGS
 # (more mad-emulator arguments), E2E_TIMINGS (a JSON file of per-scenario
 # host and board times), E2E_JAM_FILE (the emulator's: the file whose
-# presence jams the board's carriage, passed to mad-emulator as --jam-file
-# and to the suite for SERVO-stall; default $BOARD_LOGS/jam; the project's
-# machine has no jam), and BOARD_PER_SCENARIO=1: a fresh board for each
+# presence jams the board's carriage, passed to mad-emulator as --jam-file;
+# default $BOARD_LOGS/jam; no scenario creates it), and
+# BOARD_PER_SCENARIO=1: a fresh board for each
 # scenario, so a board that stops (the node's worker-boot stall) costs that
 # scenario alone.
 #
@@ -111,10 +115,10 @@ mkdir -p "$logs"
 if [ "$route" = emulator ]; then
   # Every playground is a project's (embsim MIGRATING-MAD.md step 11).
   if [ "$mode" = playground ]; then
-    echo "board-route: mad-emulator carries SERVO-stall alone; a playground runs a project (make playground)" >&2
+    echo "board-route: mad-emulator runs no playground; a playground runs a project (make playground)" >&2
     exit 2
   fi
-  # The suite's stall scenario jams the carriage by creating this file.
+  # mad-emulator jams its carriage while this file exists.
   export E2E_JAM_FILE=${E2E_JAM_FILE:-$logs/jam}
   # mad-emulator's port is the FT232R's, unless BOARD_ARGS names another.
   case " ${BOARD_ARGS:-} " in
@@ -129,10 +133,10 @@ if [ "$route" = emulator ]; then
     }
   done
 else
-  # The project's machine has no jam (mad-catalog/src/machine.rs, "Not
-  # modelled"): the suite skips SERVO-stall, saying so. The suite skips by
-  # the file (run-all.mjs, PROJECT_CANNOT): what IC14 as drawn keeps from
-  # the drive runs on the file with MaD #285 fixed.
+  # The suite skips by the file (run-all.mjs, PROJECT_CANNOT): what IC14 as
+  # drawn keeps from the drive runs on the file with MaD #285 fixed, and
+  # SERVO-stall on that file with a hard stop on its carriage, which skips
+  # the other scenarios that move the carriage.
   unset E2E_JAM_FILE
   export E2E_BOARD_ROUTE=project
   export E2E_PROJECT=$project

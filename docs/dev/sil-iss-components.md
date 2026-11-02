@@ -809,9 +809,10 @@ and a failure it reports (a grant that sticks, a page that crashes, a Chrome
 that exits) stops the run with a non-zero exit. The run prints Chrome's
 DevTools URL in its "reached" line; a suite attaches there
 ([SIL testing](sil-testing.md#the-board-route-the-app-in-chrome-on-the-boards-clock)).
-Only SERVO-stall keeps this route (`make e2e-stall`, per PR), because it
-jams the carriage and no project has a jam (MaD #298); FW-ISS and the
-playgrounds moved onto the project at embsim `MIGRATING-MAD.md` step 11.
+No make target or CI job runs this route: SERVO-stall, the last scenario it
+carried, runs on `mad-hard-stop-cosim.toml`, a project whose machine has a
+hard stop (MaD #298); FW-ISS and the playgrounds moved onto the project at
+embsim `MIGRATING-MAD.md` step 11.
 
 The e2e runs on the machine's project instead (step 10): `make e2e-emulator`
 is `embsim run mad-cosim.toml`, whose `HOST` is the same kind on the
@@ -834,8 +835,9 @@ that moves the carriage, saying why (`run-all.mjs`, `PROJECT_CANNOT`).
 Those run on the board with MaD #285 fixed instead (`make e2e-motion`:
 `mad-ic14-fixed-cosim.toml`, `mad-cosim.toml` with one wire from `IC14`'s
 pin 9 to `EN_GND`), per PR G2+G3+H2+I and nightly the whole set; the
-suite skips SERVO-stall there, since the project's machine has no jam, and
-runs it on `mad-emulator` (`make e2e-stall`).
+suite skips SERVO-stall there, since nothing stops that board's carriage,
+and runs it on that file with a hard stop 3 mm above the carriage's start,
+`mad-hard-stop-cosim.toml` (`make e2e-stall`, per PR).
 
 | Target | Host |
 |---|---|
@@ -844,6 +846,6 @@ runs it on `mad-emulator` (`make e2e-stall`).
 | `make e2e-emulator`, `make e2e`, `make e2e-bundle` | `mad-cosim.toml`: Chrome, headless, on `J1` (USB `0403:6015`), DevTools on 9222 |
 | `make e2e-rom` | `mad-serial-boot-cosim.toml`: Chrome, headless, on `J1` (USB `0403:6015`), the mask ROM's serial boot, for FW-ISS |
 | `make e2e-motion` | `mad-ic14-fixed-cosim.toml` (#285 fixed): Chrome, headless, on `J1`, DevTools on 9222, for what the project as drawn cannot run |
-| `make e2e-stall` | `mad-emulator`: Chrome, headless, the debug image's host on `P30`/`P32` (USB `0403:6001`), for SERVO-stall alone (its jam) |
+| `make e2e-stall` | `mad-hard-stop-cosim.toml` (#285 fixed, a hard stop on the carriage): Chrome, headless, on `J1`, DevTools on 9222, for SERVO-stall alone |
 | `make playground-pty` | `mad.toml`: a PTY on `J1` at `/tmp/tty.iss`, for a serial console |
 | `embsim run mad.toml --pty PATH` | `mad.toml`: a PTY on `J1` (`mad-catalog/tests/pty_protocol.rs`) |
