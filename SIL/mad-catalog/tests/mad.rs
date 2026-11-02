@@ -1272,13 +1272,13 @@ fn the_machines_open_collector_encoder_reaches_p9_and_p10() {
          many as the drive was given"
     );
     expect!(
-        "quadrature-on-p9-p10",
+        "stuck-high",
         "at every count P9 carries the encoder's A channel and P10 its B channel",
         "the carrier pulls each + leg up to its 5 volt servo rail and ties each - leg to half \
          of it, so a released output reads high and a sinking one low"
     );
     expect!(
-        "pairs-silent",
+        "pairs-reported",
         "no pair of the line receiver is reported inside its band"
     );
     let Some((dir, _)) = images("open-collector") else {
