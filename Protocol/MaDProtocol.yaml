@@ -226,8 +226,8 @@ structs:
         unit: mm
         scale: 10000       # struct stores 0.1 um; one encoder count is 0.122 um,
         raw_storage: true  # so the wire is no longer the coarsest step in the chain
-        min: 0
-        max: 3000
+        min: -3000         # the sign is the direction: the wave starts at rest where the
+        max: 3000          # carriage is and rises first (+) or falls first (-)
 
       - name: frequency
         type: int32
@@ -278,6 +278,18 @@ structs:
         scale: 1
         min: 1
         max: 999
+
+      # A CHIRP: the frequency sweeps linearly from `frequency` to this over the
+      # wave, keeping its phase continuous; `cycles` whole cycles still fit it
+      # exactly, so it still ends at rest where it started. 0 = no sweep, the
+      # plain fixed-frequency wave. Plain sine traverse only (no holds, skew).
+      - name: endFrequency
+        type: int32
+        unit: Hz
+        scale: 1000000     # uHz, as `frequency`
+        raw_storage: true
+        min: 0
+        max: 100
 
   # ── Storage struct (packed for faster serial download) ──
 

@@ -56,32 +56,41 @@ step the machine cannot deliver. Dwell and skew therefore compose freely instead
 of each needing its own feasibility argument.
 
 A plain sinusoid falls **out** of this template as the zero-dwell, symmetric,
-sine-traverse case — `centre + A·cos(2πφ)` exactly.
+sine-traverse case — `centre + A·cos(2πφ)` exactly (phase 0 being the top of
+the template; a rising wave starts half a cycle in, at the bottom).
 
-### Why the cycle starts at a peak
+### Starting and stopping at rest
 
-A sinusoid's velocity is `ωA·cos`, so at its **centre** the velocity is maximal.
-A machine standing at rest at the centre cannot begin one without infinite
-acceleration. The only phases at which a sinusoid can be joined or left at rest
-are its **peaks**.
+A wave starts **at rest where the carriage is**, which is one of its peaks, and
+ends there after whole cycles. A positive amplitude rises first, so the carriage
+is at the lower peak and the wave is centred `A` above it:
+`start + A·(1 − cos 2πft)`. A negative amplitude falls first, from the upper
+peak. In the cycle template that is the start of the rising (or falling)
+traverse.
 
-So a waveform runs as three segments:
+A cosine has zero speed at its peaks, so starting and stopping there asks the
+carriage for no jump in speed: a feasible wave is followed exactly from its first
+tick. (A sinusoid started at its *centre* is already at full speed `ωA` there,
+which a carriage at rest cannot match without infinite acceleration.)
+
+The wave still goes through the servo's **follower**, which every motion that
+computes its own setpoint shares:
 
 ```mermaid
 flowchart LR
-    A["APPROACH<br/>profiled move to the peak"] --> B["RUN<br/>N whole cycles, peak to peak"] --> C["RETURN<br/>profiled move to the centre"]
+    A["desired setpoint<br/>(the wave, evaluated from phase)"] --> B["follower<br/>pass through when within maxVel / maxAccel,<br/>else catch up at maxAccel"] --> C["commanded setpoint"] --> D["feedback<br/>feed-forward + Kp·error"]
 ```
 
-Every instant of all three is inside the acceleration budget, so the delivered
-trajectory equals the requested one rather than a lagged copy of it.
+Where the desired trajectory is within the machine's speed and acceleration
+limits, which feasibility already guarantees for a wave, it passes straight
+through. The follower only acts if a trajectory asks for more than that.
 
-!!! note "This replaced a position anchor"
-    Earlier the trajectory started at the centre, the ramp-in lost
-    `Vpeak²/(2·Amax)` of travel, and the whole oscillation sat that far below the
-    centre the operator asked for — 0.82 mm on the reference 5 mm / 1 Hz case,
-    enough to drive the bottom of the stroke into the lower limit switch. An
-    outer position loop in `app_motion` was added to claw it back. Starting at
-    the peak removes the cause, so the anchor, its gain and its clamp are gone.
+!!! note "History"
+    The driver once started at the centre and only matched the wave's speed, so
+    the travel lost getting up to speed stayed lost and the oscillation sat
+    `Vpeak²/(2·Amax)` off its centre (0.82 mm on the 5 mm / 1 Hz case). It then
+    started at the upper peak with extra full-speed moves out to it and back.
+    Starting at rest where the carriage is removes both.
 
 ### The triangle traverse
 
@@ -212,13 +221,14 @@ G123 A<mm> F<Hz> C<cycles> [W<shape>] [H<s>] [L<s>] [S<skew>]
 
 | Letter | Meaning | Unit | Wire resolution |
 | --- | --- | --- | --- |
-| `A` | peak excursion from the mean (not peak-to-peak) | mm | 0.1 µm |
+| `A` | peak excursion from the mean (not peak-to-peak); its sign is the direction it sets off in | mm | 0.1 µm |
 | `F` | frequency of the **whole** cycle, holds included | Hz | 1 µHz |
 | `C` | whole cycles | count | 1 |
 | `W` | traverse profile — 0 sine, 1 triangle | — | 1 byte |
 | `H` | hold at the **upper** peak | s | 1 ms |
 | `L` | hold at the **lower** peak | s | 1 ms |
 | `S` | share of the traversing time spent descending; 0.5 symmetric | ratio | 1 ‰ |
+| `E` | **chirp**: the frequency it sweeps to, linearly across the `C` cycles (phase-continuous); `0` = no sweep; a plain sine only (no `W1`, `H`, `L`, `S`) | Hz | 1 µHz |
 
 Omitting `H`, `L` and `S` gives a hold-free symmetric cycle — exactly what
 `G123` has always meant, so an existing program keeps its meaning.

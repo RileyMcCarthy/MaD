@@ -95,8 +95,9 @@ bool dev_servo_waveShapeFromWire(uint8_t wire, dev_servo_wave_E *shape);
  *     [ hold at +A ] [ traverse down ] [ hold at -A ] [ traverse up ]
  *        dwellHighUs                      dwellLowUs
  *
- * Phase 0 is the START of the upper hold, which is a velocity zero whether or
- * not that hold has any duration -- so the approach can always join there.
+ * The wave starts at rest at a peak -- the start of the rising traverse, or of
+ * the falling one when `startHigh` -- and ends there after whole cycles, so it
+ * never asks the carriage for a jump in speed at either end.
  *
  * `freqMicroHz` is the frequency of the WHOLE cycle including both holds, so
  * one cycle always takes 1/f whatever the dwells are; the holds take time from
@@ -112,6 +113,14 @@ typedef struct
     uint16_t skewPerMille;   /* of the traversing time, the share spent going DOWN;
                               * 500 is symmetric, 800 is slow-load/fast-unload        */
     dev_servo_wave_E shape;  /* traverse profile                                      */
+    /* A CHIRP: the frequency sweeps linearly from freqMicroHz to this across
+     * the wave, phase-continuous, `cycles` whole cycles still ending it at rest
+     * where it started. 0 = no sweep. A plain sine traverse only. */
+    uint32_t endFreqMicroHz;
+    /* Where the wave starts and ends, at rest: the lower peak (false), so it
+     * rises first, or the upper one (true), so it falls first. LAST: flexcc
+     * misreads a field that follows a bool in a const-initialised struct. */
+    bool startHigh;
 } dev_servo_waveform_S;
 
 /* The symmetric, dwell-free case -- a plain sinusoid or triangle. */
@@ -141,17 +150,6 @@ typedef struct
                                 * scale, truncated, floored at 2 counts: 8 counts
                                 * (0.977 um) at 8192 counts/mm, 2 (0.83 um) at
                                 * 2400. */
-    /* How close the approach move must get before the CYCLES may begin.
-     *
-     * Deliberately tighter than positionDeadband, because the two answer
-     * different questions. The deadband stops a parked axis hunting over an
-     * encoder count or two while it holds station — a tolerance on staying
-     * put. This is a tolerance on STARTING, and whatever it leaves behind is a
-     * position error against the requested waveform from its very first
-     * sample, which no amount of good tracking afterwards can retract. Handing
-     * over at the parking deadband put the first tick of the cycles 16 counts
-     * (2 um) off a trajectory the loop then tracked to 0.1 um. */
-    int32_t waveformStartTolerance; /* counts */
     int32_t kpNum;             /* proportional gain numerator   (cmd += kpNum*err/kpDen) */
     int32_t kpDen;             /* proportional gain denominator */
     int32_t kiNum;             /* integral gain numerator (1/s^2): cmd += kiNum*∫err/kiDen */
@@ -342,6 +340,17 @@ int32_t dev_servo_getSetpoint(dev_servo_channel_E ch);
  * clears it, so a caller that issues a move and polls this can never see the
  * previous move's "arrived" and retire the new move without moving. */
 bool dev_servo_atTarget(dev_servo_channel_E ch);
+/* Stage the move that follows the running closed-loop position move. When the
+ * running move's trajectory reaches its target the loop switches to this one in
+ * the same control tick, without waiting for the encoder to settle. If both go
+ * the same way the running move arrives at speed -- the slower of the two
+ * feedrates, capped so this one could still stop within its own length -- and
+ * otherwise it stops first. Any other command clears it; only a closed-loop
+ * position move accepts it. Feedrate as for moveTo. */
+void dev_servo_stageNext(dev_servo_channel_E ch, int32_t targetCounts, int32_t feedrateCountsPerSec);
+/* How many times the loop has switched to a staged move; the caller compares
+ * it with the count when it staged one to learn that the switch happened. */
+uint32_t dev_servo_getHandovers(dev_servo_channel_E ch);
 bool dev_servo_isStalled(dev_servo_channel_E ch);
 /* Liveness of the control loop: false until dev_servo_run() has completed a tick,
  * true from then on. APP gates the machine on this,
