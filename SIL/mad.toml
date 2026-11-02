@@ -5,9 +5,9 @@
 # on the carrier's connectors, and a host on a serial line (embsim
 # MIGRATING-MAD.md sections 1 and 4).
 #
-# Eight files share every line but how the module boots, which host sits
-# where, one wire and one stop; mad-catalog/tests/projects.rs holds them to
-# it:
+# Nine files share every line but how the module boots, which host sits
+# where, one wire, one stop and the reset; mad-catalog/tests/projects.rs
+# holds them to it:
 #
 #   file                             the module boots        the host
 #   mad.toml                         the firmware off flash  host-serial on J1
@@ -20,13 +20,17 @@
 #                                    its flash erased
 #   mad-serial-boot-cosim.toml       the ROM's serial boot   chrome-cdp on J1
 #   mad-serial-boot-playground.toml  that file, its Chrome headed on the app
+#   mad-reflash-cosim.toml           mad-cosim.toml with the Prop Plug's
+#                                    reset on J1.3 and the ROM's serial
+#                                    window open after a reset
 #
 # All but the IC14 fix's three keep the carrier as drawn, where IC14, the
 # isolator between the processor and the servo drive, passes nothing (MaD
 # #285; the fix is the last entry of its file). The e2e runs mad-cosim.toml,
-# mad-ic14-fixed-cosim.toml for the scenarios that move the carriage, and
+# mad-ic14-fixed-cosim.toml for the scenarios that move the carriage,
 # mad-hard-stop-cosim.toml for SERVO-stall, which drives the carriage into
-# its stop; the playgrounds are for a person (SIL/makefile).
+# its stop, and mad-reflash-cosim.toml for FW1, the app flashing the
+# firmware over J1; the playgrounds are for a person (SIL/makefile).
 #
 # J1 is the carrier's debug header, where the machine's Prop Plug sits. The
 # route is the user's decision (2026-10-21): the host on J1 and the
@@ -234,14 +238,15 @@ volts = 0.0
 # (its receive), J1.4 the carrier's GND. J1.1 and J1.2 go straight to the
 # socket's fingers 50 and 49, and on to the chip's P62 and P63 (read:
 # mad_edge.net, nets P62 and P63; embsim boards/netlists/p2_ec32mb.net).
-# J1.3, RESn, stays unwired: the host kinds have no modem-control pins, so
-# nothing pulses the reset, and neither boot needs it. The flash boot runs
-# from power-up, and the ROM's serial boot answers without a reset, P59's
-# pull-up (R302, the serial boot's scenario) selecting it. The app's
-# flasher resets the chip with DTR before its probe (Software/Control/
-# README.md); on the serial boot, with nothing on J1.3, the probe finds the
-# ROM still listening, as it does for 90 s of board time from the chip's
-# start (FW-ISS, make e2e-rom).
+# J1.3, RESn, stays unwired, and the host's DTR with it: neither boot needs
+# a reset. The flash boot runs from power-up, and the ROM's serial boot
+# answers without a reset, P59's pull-up (R302, the serial boot's scenario)
+# selecting it. The app's flasher resets the chip with DTR before its probe
+# (Software/Control/README.md); on the serial boot, with nothing on J1.3,
+# the probe finds the ROM still listening, as it does for 90 s of board time
+# from the chip's start (FW-ISS, make e2e-rom). The board whose J1.3 the
+# flasher's DTR reaches, through the Prop Plug's reset stage, is
+# mad-reflash-cosim.toml (FW1, make e2e-reflash).
 
 # The adapter's I/O rail: the chip's P62/P63 bank (VIO_56_63) is 3.3 V.
 [[wire]]

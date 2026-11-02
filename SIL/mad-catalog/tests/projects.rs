@@ -7,9 +7,11 @@
 //! `mad-ic14-fixed-cosim.toml`, `mad-cosim.toml` with the board fix MaD #285
 //! asks for, one wire on the servo isolator `IC14`'s ground;
 //! `mad-hard-stop-cosim.toml`, that file with a hard stop on the machine's
-//! carriage (MaD #298); and the two playgrounds, `mad-playground.toml` and
+//! carriage (MaD #298); the two playgrounds, `mad-playground.toml` and
 //! `mad-serial-boot-playground.toml`, the fix's file and the serial boot's
-//! with their Chrome headed on the app.
+//! with their Chrome headed on the app; and `mad-reflash-cosim.toml`,
+//! `mad-cosim.toml` with the Prop Plug's reset on `J1.3` and the ROM's
+//! serial window open after a reset, the board the app's flasher runs on.
 //! Each file is complete on its own, so nothing but this test keeps their
 //! shared lines the same: a supply, a wire or a jumper changed in one file
 //! and not the others fails here, naming the section.
@@ -655,4 +657,108 @@ fn each_playground_is_its_cosim_file_with_chrome_headed_on_the_app() {
             "{playground_name} is {base_name} but its host"
         );
     }
+}
+
+/// The file the app's flasher runs on, and the file it resets.
+const REFLASH: (&str, &str) = ("mad-cosim.toml", "mad-reflash-cosim.toml");
+
+#[test]
+fn the_reflash_file_is_the_cosim_file_with_the_prop_plugs_reset() {
+    behaviour!(Test {
+        id: "mad-project.reflash-twin",
+        covers: Some("SIL/mad-reflash-cosim.toml"),
+        given: "the machine's project file whose host is the host's Chrome, beside its twin for \
+                the app's firmware flasher",
+    });
+    expect!(
+        "text-but-reset",
+        "the two files are word for word the same outside the host's section, the host's \
+         wires and the scenario"
+    );
+    expect!(
+        "dtr-inverted",
+        "the twin's host is the base's with its adapter's DTR inverted",
+        "the machine's Prop Plug is taken to reset the chip when the host asserts DTR, which \
+         the plug's reset stage does on a rising edge of an inverted DTR"
+    );
+    expect!(
+        "reset-stage-on-j1",
+        "the twin adds a Prop Plug reset stage between the host's DTR and the debug header's \
+         reset pin, grounded on the header",
+        "the debug header's third pin is the chip's reset, where the Prop Plug's reset line \
+         lands"
+    );
+    expect!(
+        "serial-window-open",
+        "the twin leaves the boot switch's P59 pull-down open, closing only the flash's chip \
+         select, where the base closes both",
+        "with nothing on P59 the ROM listens on its serial loader for 100 ms after a reset \
+         before it boots the flash, and the app's flasher probes in that window"
+    );
+    expect!(
+        "entries-identical",
+        "every other board, model, component, wire, mate, switch and jumper is the same in both"
+    );
+    let (base_name, twin_name) = REFLASH;
+    let (base_text, twin_text) = (read(base_name), read(twin_name));
+    same_but(
+        (base_name, &base_text),
+        (twin_name, &twin_text),
+        &["The host", "The host's wires", "Scenario"],
+    );
+    let (mut base, mut twin) = (parse(base_name, &base_text), parse(twin_name, &twin_text));
+
+    let (base_host, mut twin_host) = (
+        take_component(&mut base, "HOST"),
+        take_component(&mut twin, "HOST"),
+    );
+    let inverted = twin_host
+        .get_mut("options")
+        .and_then(Value::as_table_mut)
+        .and_then(|options| options.remove("invert_dtr"));
+    assert_eq!(
+        inverted.as_ref().and_then(Value::as_bool),
+        Some(true),
+        "{twin_name}'s adapter inverts DTR"
+    );
+    assert_eq!(option(&base_host, "invert_dtr"), None, "{base_name}'s host");
+    assert_eq!(base_host, twin_host, "{twin_name}'s host is {base_name}'s");
+
+    let plug = take_component(&mut twin, "PLUG");
+    assert_eq!(field(&plug, "kind"), Some("prop-plug-reset"), "{twin_name}");
+    assert!(
+        entries(&base, "component")
+            .iter()
+            .all(|entry| field(entry, "kind") != Some("prop-plug-reset")),
+        "{base_name} has no reset stage"
+    );
+    let wires = entries_mut(&mut twin, "wire");
+    let on_plug = |wire: &Value| {
+        ["from", "to"]
+            .iter()
+            .any(|end| field(wire, end).is_some_and(|end| end.starts_with("PLUG.")))
+    };
+    let plug_wires: Vec<Value> = wires.iter().filter(|wire| on_plug(wire)).cloned().collect();
+    wires.retain(|wire| !on_plug(wire));
+    assert_eq!(
+        wire_from(&plug_wires, "HOST.DTR"),
+        Some(("PLUG.DTR", None)),
+        "{twin_name}"
+    );
+    assert_eq!(
+        wire_from(&plug_wires, "PLUG.VSS"),
+        Some(("EDGE.J1.4", None)),
+        "{twin_name}"
+    );
+    assert_eq!(
+        wire_from(&plug_wires, "PLUG.RES"),
+        Some(("EDGE.J1.3", None)),
+        "{twin_name}"
+    );
+    assert_eq!(plug_wires.len(), 3, "{twin_name}: {plug_wires:?}");
+
+    assert_eq!(s301_closed(&mut base), [1, 3], "{base_name}'s S301");
+    assert_eq!(s301_closed(&mut twin), [1], "{twin_name}'s S301");
+
+    assert_eq!(base, twin, "{twin_name} is {base_name} but its reset");
 }

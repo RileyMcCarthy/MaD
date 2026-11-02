@@ -111,17 +111,36 @@ same build as `propeller2`) and `MaD-Firmware-<version>-madEdge.bin`
 (`propeller2_debug`) for release assets. Releases before 0.13 named the debug
 build `-debug.bin`. The file picker in the UI accepts all of them.
 
+## In SIL
+
+The whole update runs in SIL, on the ISS, with nothing faked: e2e scenario FW1
+on `SIL/mad-reflash-cosim.toml` (`cd SIL && make e2e-reflash`, MaD #134). The
+app connects to the machine's project with the firmware booted off the module's
+flash; the Firmware page resets the chip with its DTR pulse, which crosses
+embsim's `chrome-cdp` DTR pin and a Prop Plug reset stage onto J1.3 and the
+chip's `RESN`; the ROM, back in its serial window, takes the stub and the image;
+the stub writes the module's simulated flash; and the reconnected session finds
+the image's own version stamp. The board differs from the machine's default
+project in two places, both open questions for the real machine: the Prop Plug
+is taken to reset on DTR assert (`invert_dtr`), and S301's P59 pull-down is
+open, without which the ROM boots the flash at once after a reset and no
+flasher finds it (`SIL/mad-reflash-cosim.toml` says why for each).
+
 ## Open validation
 
 Unit tests cover the framing, the checksum arithmetic and the image assembly
-against an independent re-implementation of the ROM side, but the following can
-only be confirmed on a board:
+against an independent re-implementation of the ROM side, and FW1 runs the
+chain in SIL (above), but the following can only be confirmed on a board:
 
 - **DTR→RESn actually resets.** The schematic shows the net; the pulse shape a
-  given adapter produces is not verified.
+  given adapter produces is not verified, nor which DTR edge the machine's
+  Prop Plug resets on (SIL takes the assert).
 - **The reset→autobaud window is reachable from JavaScript.** The ROM listens
   for `> ` only briefly before falling through to flash boot, and Web Serial
   write latency is less predictable than a native `write()`. `detectP2` retries
-  five times, which may need tuning.
+  five times, which may need tuning. In SIL the window is 100 ms (S301 positions
+  3 and 4 open) and the probe lands inside it; with P59 pulled down there is no
+  window at all.
 - **The flash stub programs this board's SPI part.** The stub is loadp2's, so
-  it is the same code the desktop path used, but it has not been run here.
+  it is the same code the desktop path used; SIL runs it against embsim's
+  W25Q128JV model, not the module's real part.

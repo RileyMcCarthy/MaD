@@ -318,6 +318,32 @@ impl Board {
 }
 
 impl Board {
+    /// The chip's reset, as the pins see it: every smart pin's mode word,
+    /// `X`, `Y` and state cleared, every cog's `DIR` and `OUT` bits low, the
+    /// synchronous-serial hardware and the quadrature decoders idle, and
+    /// nothing in flight on the byte-routed SD path — a chip in reset
+    /// floats every pin. Kept: what the world outside presents to each pin
+    /// ([`Self::set_input_level`]), the strong-drive mask an adapter last
+    /// published, the card and the flash (parts of the board, not the
+    /// chip), and the logs.
+    pub fn reset_pins(&mut self) {
+        self.pins = [SmartPin::default(); 64];
+        self.rx_bits = 8;
+        self.tx.clear();
+        self.pending = 0;
+        self.rx_bytes.clear();
+        self.in_flag = [false; 64];
+        self.edges.clear();
+        self.dir_cog = [[0; 2]; NUM_COGS];
+        self.dir = [0; 2];
+        self.out_cog = [[0; 2]; NUM_COGS];
+        self.out = [0; 2];
+        self.spi = SpiShift::new();
+        self.smart_bus = SmartBus::new();
+        self.drive_mask = [0; 2];
+        self.quad = [None; 64];
+    }
+
     /// Enable the synchronous-serial smart-pin model, so `WRPIN`/`WYPIN`/`RDPIN`
     /// on sync pins drive [`Board::smart_bus`] instead of the byte-routed SD
     /// path. The net adapter turns this on; standalone runs leave it off.

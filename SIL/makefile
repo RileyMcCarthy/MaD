@@ -15,9 +15,11 @@
 #   make e2e-bundle     - BUNDLE-live: the built bundle (as pages.yml builds it) on e2e-emulator's board
 #   make e2e-motion     - What the project as drawn cannot run (the carriage's scenarios), on mad-ic14-fixed-cosim.toml
 #   make e2e-stall      - SERVO-stall on mad-hard-stop-cosim.toml: the carriage jogged into a hard stop
+#   make e2e-reflash    - FW1: the app flashing the firmware for real, DTR resetting the chip, on mad-reflash-cosim.toml
+#   make reflash-image  - build/reflash.bin: the production image stamped with a version of its own, FW1's
 #   make flash-image    - build/flash.bin: stage-1 and the production image, the module's boot flash
 #   make sd-image       - build/sd.img: a 32 MiB FAT16 card mirroring ./sd
-#   make check          - embsim check on MaD's eight project files (mad*.toml)
+#   make check          - embsim check on MaD's nine project files (mad*.toml)
 #   make clean          - Remove build artifacts
 #
 # There is ONE configuration a browser belongs in: the P2 image on the ISS,
@@ -31,7 +33,9 @@
 # cannot run, and the playgrounds run it on the board with MaD #285 fixed,
 # mad-ic14-fixed-cosim.toml and its headed copy (step 11); SERVO-stall
 # (e2e-stall) on that board with a hard stop on its carriage,
-# mad-hard-stop-cosim.toml (MaD #298). No e2e target runs mad-emulator. A
+# mad-hard-stop-cosim.toml (MaD #298); FW1 (e2e-reflash) on the board the
+# app's flasher can reach, mad-reflash-cosim.toml (MaD #134). No e2e target
+# runs mad-emulator. A
 # browser on the host's own clock (behind a PTY, or the WS bridge) measures
 # the host, not the machine: the ISS interprets every instruction at a few
 # percent of real time, and the app's 2 s response timeout would fire at a
@@ -67,7 +71,7 @@ BUILD_DIR = build
 FLASH_IMAGE = $(BUILD_DIR)/flash.bin
 SD_IMAGE = $(BUILD_DIR)/sd.img
 
-.PHONY: p2image p2image-production protocol emulator emulator-release test playground playground-iss playground-pty playground-rom e2e-emulator e2e e2e-rom e2e-bundle e2e-motion e2e-stall flash-image sd-image check bootrom clean
+.PHONY: p2image p2image-production protocol emulator emulator-release test playground playground-iss playground-pty playground-rom e2e-emulator e2e e2e-rom e2e-bundle e2e-motion e2e-stall e2e-reflash flash-image reflash-image sd-image check bootrom clean
 
 # Build the P2 image the ISS runs (`p2core`, `p2iss`, `mad-emulator`).
 #
@@ -232,7 +236,7 @@ sd-image:
 # refuses its file on a machine where it finds none. Both boots name the
 # card `make sd-image` writes; the flash boot names `make flash-image`'s.
 PROJECTS = mad.toml mad-serial-boot.toml
-COSIM_PROJECTS = mad-cosim.toml mad-serial-boot-cosim.toml mad-ic14-fixed-cosim.toml mad-hard-stop-cosim.toml
+COSIM_PROJECTS = mad-cosim.toml mad-serial-boot-cosim.toml mad-ic14-fixed-cosim.toml mad-hard-stop-cosim.toml mad-reflash-cosim.toml
 PLAYGROUND_PROJECTS = mad-playground.toml mad-serial-boot-playground.toml
 check: flash-image sd-image
 	for project in $(PROJECTS) $(COSIM_PROJECTS) $(PLAYGROUND_PROJECTS); do $(EMBSIM) check $$project || exit 1; done
@@ -262,8 +266,8 @@ playground-rom: flash-image sd-image
 # board's clock, writing the program into the module's flash through the
 # mask ROM on the programming UART. The board is the machine's project with
 # the ROM's serial boot, mad-serial-boot-cosim.toml (S301 position 3, the
-# flash erased), the node on J1 (USB 0403:6015). Nothing pulses RESn: the
-# node has no DTR, and J1.3 is unwired in the file. The ROM listens from
+# flash erased), the node on J1 (USB 0403:6015). Nothing pulses RESn: J1.3
+# and the node's DTR are unwired in the file. The ROM listens from
 # the START instant for 90 s of board time (600 timeouts of 3 000 000
 # clocks on its 20 MHz RC oscillator), and the probe arrives within a
 # second of it (measured: the ROM replies at 0.63-0.95 s of board time). The
@@ -285,6 +289,34 @@ STALL_PROJECT = mad-hard-stop-cosim.toml
 e2e-stall: flash-image sd-image
 	$(EMBSIM) check $(STALL_PROJECT)
 	EMBSIM="$(EMBSIM)" E2E_PROJECT=$(STALL_PROJECT) SCENARIOS=SERVO-stall scripts/board-route.sh e2e
+
+# FW1's image (MaD #134): the production build stamped with a version the
+# flash image's build does not report (it reports 0.0.0, no stamp), built
+# into a directory of its own so the flash image's build is left as it is.
+# The app flashes it on the reflash board, and the stamp in the status bar
+# afterwards is this image, running. 15 characters at most: the protocol
+# carries no more (extra_scripts/check_firmware_version.py refuses longer).
+REFLASH_VERSION = sil-reflash
+REFLASH_BUILD = $(abspath $(BUILD_DIR))/reflash-pio
+REFLASH_IMAGE = $(BUILD_DIR)/reflash.bin
+reflash-image:
+	mkdir -p $(BUILD_DIR)
+	cd $(FIRMWARE_DIR) && PLATFORMIO_BUILD_DIR=$(REFLASH_BUILD) PLATFORMIO_BUILD_FLAGS='-DFIRMWARE_VERSION=\"$(REFLASH_VERSION)\"' pio run -e $(PRODUCTION_ENV)
+	cp $(REFLASH_BUILD)/$(PRODUCTION_ENV)/program $(REFLASH_IMAGE)
+
+# FW1 on the reflash board: the app's flasher, in a headless Chrome on the
+# board's clock, updating the machine's firmware for real. The board is
+# mad-reflash-cosim.toml: mad-cosim.toml with the Prop Plug's reset stage on
+# J1.3 (the node's DTR, the stage's open collector, the chip's RESN) and
+# S301's P59 pulls open, so after a reset the ROM listens on J1 for 100 ms
+# before it boots the flash. The app connects, flashes build/reflash.bin
+# (its DTR pulse resets the chip into that window), and reconnects; FW1
+# passes once the status bar shows the image's stamp. The e2e suite's other
+# scenarios need the firmware's board (make e2e).
+REFLASH_PROJECT = mad-reflash-cosim.toml
+e2e-reflash: flash-image sd-image reflash-image
+	$(EMBSIM) check $(REFLASH_PROJECT)
+	EMBSIM="$(EMBSIM)" E2E_PROJECT=$(REFLASH_PROJECT) E2E_BOARD=reflash E2E_REFLASH_IMAGE=$(abspath $(REFLASH_IMAGE)) E2E_REFLASH_VERSION=$(REFLASH_VERSION) SCENARIOS=FW1 scripts/board-route.sh e2e
 
 # Clean build artifacts
 clean:

@@ -508,6 +508,11 @@ pub(crate) struct CoreShared {
     stalled: AtomicBool,
     /// The package held the core ([`P2Core::reset`]).
     held: AtomicBool,
+    /// The chip is in reset ([`P2Core::enter_reset`]) until the package
+    /// starts it again.
+    in_reset: AtomicBool,
+    /// Resets the core entered.
+    resets: AtomicU64,
     /// The reset inputs, as the package last delivered them.
     reset: Mutex<P2ResetState>,
     /// The START instant, once the package started the core.
@@ -879,6 +884,57 @@ impl NetPins {
             let strong = core.strong_mask();
             self.inner.set_strong_mask(strong);
         }
+    }
+
+    /// The chip's reset, at the bus, at `now`: every step train stopped
+    /// (its count banked in a held segment), every transmit bridge dropped
+    /// with whatever it had queued, every receive pin forgotten, the smart
+    /// pins and every cog's `DIR` and `OUT` cleared, nothing waiting for its
+    /// instant, the guest's clock back at its reset segment, and every pad
+    /// released — a chip in reset floats every pin.
+    pub(crate) fn core_reset(&mut self, now: u64) {
+        let trains =
+            std::mem::take(&mut *self.shared.pulse.lock().expect("pulse map never poisoned"));
+        for driver in trains.into_values() {
+            driver.stop(now);
+        }
+        self.shared
+            .tx
+            .lock()
+            .expect("tx map never poisoned")
+            .clear();
+        self.shared
+            .edges
+            .lock()
+            .expect("edge queue never poisoned")
+            .clear();
+        if let Some(core_shared) = self.core_shared.as_ref() {
+            core_shared.rx_mask.store(0, Ordering::Relaxed);
+            core_shared
+                .rx
+                .lock()
+                .expect("rx map never poisoned")
+                .clear();
+        }
+        self.inner.reset_pins();
+        self.net_yield = false;
+        self.clock = 0;
+        if let Some(core) = self.core.as_mut() {
+            for handle in &core.handles {
+                handle.release();
+            }
+            core.published = [Some(None); 64];
+            core.keys = [None; 64];
+            core.owned = 0;
+            core.ops.clear();
+            core.pending.clear();
+            core.pump = None;
+            core.tx_pace.clear();
+            core.dirty = 0;
+            core.dirty_all = false;
+            core.clock = GuestClock::new();
+        }
+        self.refresh_strong();
     }
 
     /// Take ownership of pad `pin` for a bridge or a train, or hand it back
@@ -1367,6 +1423,11 @@ pub struct P2IssCore {
     core_shared: Arc<CoreShared>,
     machine: Arc<Mutex<Machine<NetPins>>>,
     shutdown: Arc<AtomicBool>,
+    /// The boot ROM, run again at every START after a reset.
+    rom: Arc<[u8]>,
+    /// The pads, kept from attach: a START after a reset arms the guest's
+    /// first wake through them.
+    pads: Option<P2Pads>,
 }
 
 impl std::fmt::Debug for P2IssCore {
@@ -1398,6 +1459,8 @@ impl P2IssCore {
             core_shared,
             machine: Arc::new(Mutex::new(machine)),
             shutdown,
+            rom: Arc::from(rom),
+            pads: None,
         }
     }
 
@@ -1518,6 +1581,7 @@ impl P2Core for P2IssCore {
         // The first wake, at once: the package holds it until its START
         // gate opens, so it lands at the START instant.
         self.core_shared.arm(&pads, 1);
+        self.pads = Some(pads);
         Ok(())
     }
 
@@ -1525,27 +1589,79 @@ impl P2Core for P2IssCore {
     /// nanosecond, and the package's first wake lands on it, so the guest's
     /// first instruction runs at that instant and every change it makes is
     /// stamped from there.
+    ///
+    /// After a reset ([`P2Core::enter_reset`]) the chip boots again: the
+    /// machine is rebooted from the ROM ([`Machine::reboot_from_rom`]: every
+    /// cog cleared, hub RAM cleared with the ROM at its top, cog 0 running
+    /// it), and the guest's first wake is armed at this instant.
     fn start(&mut self) {
         let now = virtual_clock::virtual_ns();
-        if let Some(core) = self
-            .machine
-            .lock()
-            .expect("machine never poisoned")
-            .pins
-            .core
-            .as_mut()
+        let rebooting = self.core_shared.in_reset.swap(false, Ordering::Relaxed);
         {
-            core.clock.anchor(now);
+            let mut machine = self.machine.lock().expect("machine never poisoned");
+            if rebooting {
+                machine.reboot_from_rom(&self.rom);
+            }
+            if let Some(core) = machine.pins.core.as_mut() {
+                core.clock.anchor(now);
+            }
         }
         *self
             .core_shared
             .started_at_ns
             .lock()
             .expect("start never poisoned") = Some(now);
+        if rebooting {
+            self.core_shared.stalled.store(false, Ordering::Relaxed);
+            if let Some(pads) = self.pads.as_ref() {
+                self.core_shared.arm(pads, now);
+            }
+            tracing::info!(
+                start_ns = now,
+                "p2iss: START after a reset; the ROM runs again from its first instruction"
+            );
+        } else {
+            tracing::info!(
+                start_ns = now,
+                "p2iss: START; the guest's clock counts from here"
+            );
+        }
+    }
+
+    /// `RESN` asserted: the guest stops where it is, and the bus is reset —
+    /// every pad released, every step train stopped, every byte in flight
+    /// dropped ([`NetPins::core_reset`]); the clock word goes back to the
+    /// one the chip starts in, so the package reads `XI` as out of reset.
+    /// The package starts the core again the restart delay after `RESN`
+    /// rises, and [`P2Core::start`] boots it from the ROM.
+    fn enter_reset(&mut self) -> bool {
+        let now = virtual_clock::virtual_ns();
+        self.core_shared.in_reset.store(true, Ordering::Relaxed);
+        self.core_shared.resets.fetch_add(1, Ordering::Relaxed);
+        self.machine
+            .lock()
+            .expect("machine never poisoned")
+            .pins
+            .core_reset(now);
+        *self
+            .core_shared
+            .own_wake_ns
+            .lock()
+            .expect("own wake never poisoned") = None;
+        *self
+            .core_shared
+            .started_at_ns
+            .lock()
+            .expect("start never poisoned") = None;
+        if let Some(pads) = self.pads.as_ref() {
+            pads.set_clock_mode(0);
+        }
         tracing::info!(
-            start_ns = now,
-            "p2iss: START; the guest's clock counts from here"
+            at_ns = now,
+            "p2iss: reset; every pad released and the guest stopped until the package starts \
+             it again"
         );
+        true
     }
 
     /// Held by the package — a brownout without a reset: the guest runs no
@@ -1566,7 +1682,10 @@ fn wake(
     arm: &P2Pads,
     now: u64,
 ) {
-    if shutdown.load(Ordering::Relaxed) || core_shared.held.load(Ordering::Relaxed) {
+    if shutdown.load(Ordering::Relaxed)
+        || core_shared.held.load(Ordering::Relaxed)
+        || core_shared.in_reset.load(Ordering::Relaxed)
+    {
         return;
     }
     core_shared.consume(now);
@@ -1847,6 +1966,20 @@ impl P2IssHandle {
         self.core
             .as_ref()
             .is_some_and(|core| core.stalled.load(Ordering::Relaxed))
+    }
+
+    /// Resets the core entered (`RESN` asserted while it ran), for a core.
+    pub fn resets(&self) -> u64 {
+        self.core
+            .as_ref()
+            .map_or(0, |core| core.resets.load(Ordering::Relaxed))
+    }
+
+    /// Whether the chip is in reset now, for a core.
+    pub fn in_reset(&self) -> bool {
+        self.core
+            .as_ref()
+            .is_some_and(|core| core.in_reset.load(Ordering::Relaxed))
     }
 
     /// Whether the package held the core (a brownout without a reset).

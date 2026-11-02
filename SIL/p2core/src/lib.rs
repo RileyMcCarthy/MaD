@@ -784,11 +784,44 @@ impl<P: PinBus> Machine<P> {
     /// executed and tested like everything else.
     pub fn with_boot_rom(rom: &[u8], pins: P) -> Self {
         let mut m = Self::new(&[], pins);
-        m.hub.iter_mut().for_each(|b| *b = 0);
+        m.load_boot_rom(rom);
+        m
+    }
+
+    /// Reset the chip as its `RESN` pin does, and run the boot ROM again.
+    ///
+    /// What the reset leaves is the state [`Self::with_boot_rom`] builds:
+    /// every cog stopped and cleared, cog 0 loaded from the base of `rom`
+    /// and running it from cog address 0; hub RAM cleared with `rom` at its
+    /// top; the locks free; the system counter back at 0, on RCFAST
+    /// ("Propeller restarts 3 ms after RESn transitions from low to high",
+    /// P2X8C4M64P Datasheet, Pin Descriptions, p. 6, and from there boots
+    /// as from power-up). The bus is kept, with what it knows of the world
+    /// outside the chip: its smart pins and `DIR`/`OUT` bits are the bus's
+    /// to clear ([`Board::reset_pins`]). The diagnostic counters
+    /// ([`Self::retired`], [`Self::int_entries`]) and the host's settings
+    /// ([`Self::strict_hub`], [`Self::yield_on_clock_word`], the
+    /// watchpoints) carry on across the reset.
+    pub fn reboot_from_rom(&mut self, rom: &[u8]) {
+        self.locks = [None; NUM_LOCKS];
+        self.lock_alloc = [false; NUM_LOCKS];
+        self.ff_deadline_clocks = u64::MAX;
+        self.clock_word = None;
+        self.clock_yield = false;
+        self.yield_clocks = None;
+        self.time_origin = (0, 0);
+        self.retimed = false;
+        self.load_boot_rom(rom);
+    }
+
+    /// Hub RAM cleared with `rom` at its top, every cog cleared, and cog 0
+    /// running the ROM from its first long on RCFAST.
+    fn load_boot_rom(&mut self, rom: &[u8]) {
+        self.hub.iter_mut().for_each(|b| *b = 0);
         let top = HUB_BYTES - (16 * 1024);
         let n = rom.len().min(16 * 1024);
-        m.hub[top..top + n].copy_from_slice(&rom[..n]);
-        for cog in m.cogs.iter_mut() {
+        self.hub[top..top + n].copy_from_slice(&rom[..n]);
+        for cog in self.cogs.iter_mut() {
             *cog = Default::default();
         }
         // COG 0 boots the way every coginit does: its 512 registers loaded
@@ -802,18 +835,21 @@ impl<P: PinBus> Machine<P> {
         // walks into the serial path with garbage timing.
         for i in 0..COG_LONGS {
             let a = top + i * 4;
-            m.cogs[0].regs[i] =
-                u32::from_le_bytes([m.hub[a], m.hub[a + 1], m.hub[a + 2], m.hub[a + 3]]);
+            self.cogs[0].regs[i] = u32::from_le_bytes([
+                self.hub[a],
+                self.hub[a + 1],
+                self.hub[a + 2],
+                self.hub[a + 3],
+            ]);
         }
-        m.cogs[0].running = true;
-        m.cogs[0].pc = 0;
+        self.cogs[0].running = true;
+        self.cogs[0].pc = 0;
         // Out of reset the chip runs on RCFAST. Hub `$14` is no clock rate
         // here: the ROM keeps a base64 table at `$0`, so it reads
         // `$FFFF_FFFF`, which as a rate would close the ROM's 60 s serial
         // window in under half a second of board time.
-        m.clock_source = ClockSource::Oscillator(RCFAST_HZ);
-        m.clock_follows_words = true;
-        m
+        self.clock_source = ClockSource::Oscillator(RCFAST_HZ);
+        self.clock_follows_words = true;
     }
 
     pub fn new(image: &[u8], pins: P) -> Self {
