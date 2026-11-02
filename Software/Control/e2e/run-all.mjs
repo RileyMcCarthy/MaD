@@ -45,11 +45,11 @@
  * meet them.
  *
  * Without CDP_URL only the board-free scenarios run: A1 and
- * FW1/2/3/5/6/7/8/9 launch a host Chrome against in-page fakes and need no
+ * FW1/2/3/5/6/7/8/9/10/11 launch a host Chrome against in-page fakes and need no
  * emulator at all, which is what ci.yml's per-PR `control-e2e-boardless` job
  * runs:
  *   npm run dev
- *   SCENARIOS=A1,FW1,FW2,FW3,FW5,FW6,FW7,FW8,FW9 npm run e2e
+ *   SCENARIOS=A1,FW1,FW2,FW3,FW5,FW6,FW7,FW8,FW9,FW10,FW11 npm run e2e
  * Naming a board scenario without CDP_URL is refused.
  *
  * FW-ISS (the app flashing the ISS's mask ROM) needs the ROM board, not the
