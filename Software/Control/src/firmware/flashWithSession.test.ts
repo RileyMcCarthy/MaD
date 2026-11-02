@@ -1,21 +1,26 @@
 import { describe, expect } from 'vitest';
 import { behaviour } from '@vibes/behaviour';
-import { flashWithSession, RECONNECT_SETTLE_MS, type FlashWithSessionDeps } from './flashWithSession';
+import {
+  FLASH_ON_CONTROL_PORT,
+  flashWithSession,
+  RECONNECT_SETTLE_MS,
+  type FlashWithSessionDeps,
+} from './flashWithSession';
 
 interface FakePort {
   name: string;
 }
 
 /** Plain fakes for every side effect, recording the order they ran in. */
-function harness(opts: { shared: boolean; programFails?: boolean; closeFails?: boolean }) {
+function harness(opts: { held: 'control' | 'flash' | 'none'; programFails?: boolean; closeFails?: boolean }) {
   const calls: string[] = [];
   const target: FakePort = { name: 'flash' };
-  const other: FakePort = { name: 'session' };
+  const control: FakePort = { name: 'control' };
   const warnings: { tag: string; data?: Record<string, unknown> }[] = [];
   const outcome: { done?: number; error?: unknown } = {};
   const flashError = new Error('no response from the boot ROM');
   const deps: FlashWithSessionDeps<FakePort, number> = {
-    heldPort: opts.shared ? target : other,
+    heldPort: opts.held === 'flash' ? target : opts.held === 'control' ? control : null,
     target,
     targetLabel: 'USB 0403:6015',
     disconnect: async () => {
@@ -56,20 +61,22 @@ function harness(opts: { shared: boolean; programFails?: boolean; closeFails?: b
 describe('flashWithSession', () => {
   behaviour(
     {
-      id: 'flash.shared-port-handed-back',
+      id: 'flash.control-session-reconnected-to-control-port',
       covers: 'src/firmware/flashWithSession.ts#flashWithSession',
-      given: 'a flash over the same port the main connection holds, which succeeds',
+      given: 'a successful flash over the programming port while the app is connected through the control port',
       expect: {
-        'session-disconnected-first': 'the main connection is disconnected before the flash starts',
-        'port-closed': 'the flash port is closed after the flash',
-        'reconnected-same-port': 'after a settle delay the main connection reconnects to that same port, without a chooser',
+        'session-stopped-first': 'the control connection is stopped before the flash starts',
+        'port-closed': 'the programming port is closed after the flash',
+        'reconnected-to-control': 'after a settle delay the app reconnects through the control port, without a chooser',
       },
       why: {
-        'reconnected-same-port': 'a flash must never leave the operator disconnected or asking which port to use',
+        'session-stopped-first': 'the flash reboots the machine, so the control connection would only see silence',
+        'reconnected-to-control':
+          'the firmware answers only on the control port; reopening the programming port would reset the machine again',
       },
     },
     async () => {
-      const h = harness({ shared: true });
+      const h = harness({ held: 'control' });
       await flashWithSession(h.deps);
       expect(h.calls).toEqual([
         'disconnect',
@@ -77,7 +84,7 @@ describe('flashWithSession', () => {
         'close:flash',
         'done',
         `wait:${RECONNECT_SETTLE_MS}`,
-        'connect:flash',
+        'connect:control',
       ]);
       expect(h.outcome.done).toBe(4592);
       expect(h.warnings).toEqual([]);
@@ -86,20 +93,21 @@ describe('flashWithSession', () => {
 
   behaviour(
     {
-      id: 'flash.shared-port-handed-back-after-failure',
+      id: 'flash.control-session-reconnected-after-failure',
       covers: 'src/firmware/flashWithSession.ts#flashWithSession',
-      given: 'a flash over the same port the main connection holds, which fails',
+      given: 'a failed flash over the programming port while the app is connected through the control port',
       expect: {
-        'port-closed': 'the flash port is still closed',
-        'reconnected-same-port': 'the main connection still reconnects to that same port',
+        'port-closed': 'the programming port is still closed',
+        'reconnected-to-control': 'the app still reconnects through the control port',
         'error-surfaced': 'the flash error is reported, and the flash is not reported as done',
       },
       why: {
-        'reconnected-same-port': 'a failed flash is when the operator most needs the connection back to see what the board is doing',
+        'reconnected-to-control':
+          'the board keeps the firmware it had, and a failed flash is when the operator most needs to see what it is doing',
       },
     },
     async () => {
-      const h = harness({ shared: true, programFails: true });
+      const h = harness({ held: 'control', programFails: true });
       await flashWithSession(h.deps);
       expect(h.calls).toEqual([
         'disconnect',
@@ -107,7 +115,7 @@ describe('flashWithSession', () => {
         'close:flash',
         'error',
         `wait:${RECONNECT_SETTLE_MS}`,
-        'connect:flash',
+        'connect:control',
       ]);
       expect(h.outcome.error).toBe(h.flashError);
       expect(h.outcome.done).toBeUndefined();
@@ -116,27 +124,45 @@ describe('flashWithSession', () => {
 
   behaviour(
     {
-      id: 'flash.separate-adapter-leaves-session-alone',
+      id: 'flash.unconnected-flash-opens-nothing-else',
       covers: 'src/firmware/flashWithSession.ts#flashWithSession',
-      given: 'a flash over a separate programming adapter while the main connection holds another port',
+      given: 'a flash over the programming port while the app is not connected',
       expect: {
-        'session-untouched': 'the main connection is neither disconnected nor reconnected',
-        'port-closed': 'the flash port is still closed after the flash',
+        'no-connection-opened': 'the app opens no connection afterwards, whether the flash worked or not',
+        'port-closed': 'the programming port is closed after the flash',
       },
       why: {
-        'session-untouched':
-          'on a bench that runs the MadEdge build, the protocol has its own adapter on P53/P55, and a running session there must keep running',
+        'no-connection-opened':
+          'the port just flashed is the programming port, and opening it again would reset the machine; the operator connects through the control port',
       },
     },
     async () => {
       for (const programFails of [false, true]) {
-        const h = harness({ shared: false, programFails });
+        const h = harness({ held: 'none', programFails });
         await flashWithSession(h.deps);
         expect(h.calls).not.toContain('disconnect');
         expect(h.calls.some((c) => c.startsWith('connect:'))).toBe(false);
-        expect(h.calls.some((c) => c.startsWith('wait:'))).toBe(false);
         expect(h.calls).toContain('close:flash');
       }
+    },
+  );
+
+  behaviour(
+    {
+      id: 'flash.control-port-refused',
+      covers: 'src/firmware/flashWithSession.ts#flashWithSession',
+      given: 'a flash aimed at the port the control connection holds',
+      expect: {
+        'refused-untouched': 'the flash is refused before the connection, the port or the board is touched',
+        'says-programming-port': 'the refusal tells the operator to flash through the programming port on J1',
+      },
+    },
+    async () => {
+      const h = harness({ held: 'flash' });
+      await flashWithSession(h.deps);
+      expect(h.calls).toEqual(['error']);
+      expect((h.outcome.error as Error).message).toBe(FLASH_ON_CONTROL_PORT);
+      expect(FLASH_ON_CONTROL_PORT).toMatch(/J1/);
     },
   );
 
@@ -153,12 +179,12 @@ describe('flashWithSession', () => {
       },
     },
     async () => {
-      const h = harness({ shared: true, closeFails: true });
+      const h = harness({ held: 'control', closeFails: true });
       await flashWithSession(h.deps);
       expect(h.warnings).toEqual([{ tag: 'port-left-open', data: { port: 'USB 0403:6015' } }]);
       // The flash itself still worked, and the session still comes back.
       expect(h.outcome.done).toBe(4592);
-      expect(h.calls).toContain('connect:flash');
+      expect(h.calls).toContain('connect:control');
     },
   );
 });

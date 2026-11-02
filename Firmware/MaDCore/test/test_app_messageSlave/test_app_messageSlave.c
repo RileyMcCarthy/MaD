@@ -15,6 +15,8 @@
 #include "../../src/APP/app_messageSlave.c"
 
 extern void HAL_lock_mock_reset(void);
+extern int HAL_system_mock_rebootCount;
+extern uint32_t global_timeus;
 
 /* ---- app_gauge ---- */
 static int32_t d_force[APP_GAUGE_COORD_COUNT];
@@ -39,7 +41,8 @@ app_control_fault_E app_control_getFault(void) { return d_fault; }
 app_control_restriction_E app_control_getRestriction(void) { return d_restriction; }
 bool app_control_motionEnabled(void) { return d_motionEnabled; }
 bool app_control_triggerMotionEnabled(void) { return d_trigEnRet; }
-bool app_control_triggerMotionDisabled(void) { return d_trigDisRet; }
+static int d_trigDisCount;
+bool app_control_triggerMotionDisabled(void) { d_trigDisCount++; return d_trigDisRet; }
 
 /* ---- app_testManagement ---- */
 static bool d_isRunning, d_isBusy, d_addMoveRet, d_startRet;
@@ -115,6 +118,7 @@ void setUp(void)
     d_setLenCount = d_setForceCount = 0;
     d_setpoint = 0;
     d_fault = 0; d_restriction = 0; d_motionEnabled = false; d_trigEnRet = d_trigDisRet = false;
+    d_trigDisCount = 0;
     d_isRunning = d_isBusy = d_addMoveRet = d_startRet = false;
     d_busyUntilEnd = false;
     memset(&d_lastManualMove, 0, sizeof(d_lastManualMove));
@@ -440,6 +444,43 @@ void test_machine_configuration_round_trips_through_bridge(void)
     TEST_ASSERT_EQUAL_STRING("RIG-A", out.name);
 }
 
+void test_onWrite_reboot_acks_then_reboots(void)
+{
+    VIBES_TEST("bridge.reboot-acknowledged-then-restarts",
+               "src/APP/app_messageSlave.c#ProtoEmb_onWrite_reboot",
+               "the control app asks an idle machine to reboot");
+    VIBES_EXPECT("acknowledged", "the request is acknowledged");
+    VIBES_EXPECT("motion-off", "motion is turned off");
+    VIBES_EXPECT_WHY("restarts-after-reply",
+                     "the machine restarts only once 100 ms have passed since the request",
+                     "the acknowledgement has to leave on the wire before the restart cuts it off");
+    global_timeus = 5000000U;
+    d_trigDisRet = true;
+    TEST_ASSERT_EQUAL_INT(PROTOEMB_RUNTIME_WRITE_DISPOSITION_ACK, ProtoEmb_onWrite_reboot());
+    TEST_ASSERT_EQUAL_INT(1, d_trigDisCount);
+    app_messageSlave_run();
+    global_timeus += 99000U;
+    app_messageSlave_run();
+    TEST_ASSERT_EQUAL_INT(0, HAL_system_mock_rebootCount);
+    global_timeus += 1000U;
+    app_messageSlave_run();
+    TEST_ASSERT_EQUAL_INT(1, HAL_system_mock_rebootCount);
+}
+
+void test_onWrite_reboot_refused_during_test(void)
+{
+    VIBES_TEST("bridge.reboot-refused-during-test",
+               "src/APP/app_messageSlave.c#ProtoEmb_onWrite_reboot",
+               "the control app asks the machine to reboot while a test is running");
+    VIBES_EXPECT("refused", "the request is refused");
+    VIBES_EXPECT("keeps-running", "the machine keeps running");
+    d_isRunning = true;
+    TEST_ASSERT_EQUAL_INT(PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK, ProtoEmb_onWrite_reboot());
+    global_timeus += 1000000U;
+    app_messageSlave_run();
+    TEST_ASSERT_EQUAL_INT(0, HAL_system_mock_rebootCount);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -460,5 +501,7 @@ int main(void)
     RUN_TEST(test_machine_configuration_round_trips_through_bridge);
     RUN_TEST(test_servo_gains_round_trip_through_bridge);
     RUN_TEST(test_sample_carries_the_commanded_position);
+    RUN_TEST(test_onWrite_reboot_acks_then_reboots);
+    RUN_TEST(test_onWrite_reboot_refused_during_test);
     return UNITY_END();
 }
