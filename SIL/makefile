@@ -14,10 +14,10 @@
 #   make e2e-rom        - FW-ISS: the app's flasher against the ISS's mask ROM, on mad-serial-boot-cosim.toml
 #   make e2e-bundle     - BUNDLE-live: the built bundle (as pages.yml builds it) on e2e-emulator's board
 #   make e2e-motion     - The scenarios that move the carriage, on mad-cosim.toml (MOTION_SHARD splits them)
-#   make e2e-stall      - SERVO-stall on mad-emulator, the one scenario no project can run (its jam)
+#   make e2e-stall      - SERVO-stall on mad-hard-stop-cosim.toml: the carriage jogged into a hard stop
 #   make flash-image    - build/flash.bin: stage-1 and the production image, the module's boot flash
 #   make sd-image       - build/sd.img: a 32 MiB FAT16 card mirroring ./sd
-#   make check          - embsim check on MaD's six project files (mad*.toml)
+#   make check          - embsim check on MaD's seven project files (mad*.toml)
 #   make clean          - Remove build artifacts
 #
 # There is ONE configuration a browser belongs in: the P2 image on the ISS,
@@ -29,9 +29,9 @@
 # node on the carrier's debug header J1, and FW-ISS on the project's serial
 # boot, mad-serial-boot-cosim.toml; e2e-motion, the scenarios that move
 # the carriage, runs on mad-cosim.toml too, and the playgrounds on its
-# headed copy (step 11). Only SERVO-stall
-# (e2e-stall) is still mad-emulator's (`--chrome`, step 1b), for its jam,
-# which no project has (MaD #298). A browser on
+# headed copy (step 11); SERVO-stall (e2e-stall) on that file with a hard
+# stop on its carriage, mad-hard-stop-cosim.toml (MaD #298). No e2e target
+# runs mad-emulator. A browser on
 # the host's own clock (behind a PTY, or the WS bridge) measures the host,
 # not the machine: the ISS interprets every instruction at a few percent of
 # real time, and the app's 2 s response timeout would fire at a fraction of
@@ -178,8 +178,8 @@ e2e-bundle: flash-image sd-image
 
 # The scenarios that move the carriage (run-all.mjs, MOVES, listed by
 # `--list --moves`), on the machine's project, mad-cosim.toml. The list
-# leaves out SERVO-stall, which jams the carriage: no project has a jam yet
-# (make e2e-stall). `make e2e-motion SCENARIOS=G2+G3+H2+I` narrows the set;
+# leaves out SERVO-stall, which drives the carriage into a hard stop:
+# e2e-stall runs it. `make e2e-motion SCENARIOS=G2+G3+H2+I` narrows the set;
 # naming nothing in it fails. MOTION_SHARD=K/N runs the K-th of N shares of
 # the set, every N-th scenario from the K-th in the suite's order, so a
 # workflow can split it across jobs (the nightly runs three); a share left
@@ -219,14 +219,15 @@ sd-image:
 # MaD's project files (embsim MIGRATING-MAD.md section 1): the machine as it
 # runs, booting the firmware off the module's flash, and the ROM's serial
 # boot, each with a host-serial and with the host's Chrome (chrome-cdp) on
-# the same pins; and the two playgrounds, headed copies of the two Chrome
-# files. `embsim check` builds each: every part placed, every wire on a
+# the same pins; that file with a hard stop on the carriage (MaD #298); and
+# the two playgrounds, headed copies of the two Chrome files. `embsim check`
+# builds each: every part placed, every wire on a
 # connector, every option the kinds take; it boots the chip with time held
 # and runs nothing. A chrome-cdp starts no Chrome at check, but check
 # refuses its file on a machine where it finds none. Both boots name the
 # card `make sd-image` writes; the flash boot names `make flash-image`'s.
 PROJECTS = mad.toml mad-serial-boot.toml
-COSIM_PROJECTS = mad-cosim.toml mad-serial-boot-cosim.toml
+COSIM_PROJECTS = mad-cosim.toml mad-serial-boot-cosim.toml mad-hard-stop-cosim.toml
 PLAYGROUND_PROJECTS = mad-playground.toml mad-serial-boot-playground.toml
 check: flash-image sd-image
 	for project in $(PROJECTS) $(COSIM_PROJECTS) $(PLAYGROUND_PROJECTS); do $(EMBSIM) check $$project || exit 1; done
@@ -268,17 +269,17 @@ e2e-rom: sd-image
 	$(EMBSIM) check $(ROM_PROJECT)
 	EMBSIM="$(EMBSIM)" E2E_PROJECT=$(ROM_PROJECT) E2E_BOARD=rom SCENARIOS=FW-ISS scripts/board-route.sh e2e
 
-# SERVO-stall (a jammed carriage latches the stall; Live clears it and
-# re-enables motion), the one scenario no project can run: its jam is
-# mad-emulator's --jam-file, a lever the project's machine has no stepped
-# form of (mad-catalog/src/machine.rs, "Not modelled"). So it runs on
-# mad-emulator's board (BOARD_ROUTE=emulator): the debug image on the bare
-# chip, the host on P30/P32, a headless Chrome on the board's clock. This
-# target, mad-emulator and the debug image's route are what keep
-# mad-emulator in the tree (embsim MIGRATING-MAD.md step 11's exception;
-# MaD #298 is the jam a project would need).
-e2e-stall: p2image emulator-release
-	BOARD_ROUTE=emulator SCENARIOS=SERVO-stall scripts/board-route.sh e2e
+# SERVO-stall (a carriage jogged into a hard stop latches the stall; Live
+# clears it and re-enables motion; a jog takes the carriage off the stop) on
+# mad-hard-stop-cosim.toml: mad-cosim.toml with a hard stop 3 mm
+# above the carriage's start (the machine's hard_stop_mm;
+# mad-catalog/src/machine.rs, "The hard stop"; mad-catalog/tests/projects.rs
+# holds the file to that one option). The suite skips the board's other
+# scenarios that move the carriage, which the stop would meet (MaD #298).
+STALL_PROJECT = mad-hard-stop-cosim.toml
+e2e-stall: flash-image sd-image
+	$(EMBSIM) check $(STALL_PROJECT)
+	EMBSIM="$(EMBSIM)" E2E_PROJECT=$(STALL_PROJECT) SCENARIOS=SERVO-stall scripts/board-route.sh e2e
 
 # Clean build artifacts
 clean:

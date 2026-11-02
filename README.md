@@ -51,7 +51,7 @@ MaD/
 │   ├── embsim/              ⎘ submodule → github.com/RileyMcCarthy/embsim (reusable SIL framework)
 │   ├── models/              MaD physics models (gantry, sample, strain gauge)
 │   ├── mad-catalog/         MaD's embsim kinds (carrier, add-on, ISS, machine); mad*.toml are the machine's projects
-│   └── MaDSim/              The mad-emulator binary, SERVO-stall's board until a project can jam (MaD #298)
+│   └── MaDSim/              The mad-emulator binary; no target runs it, and it retires (MaD #298)
 ├── Hardware/                KiCad PCB designs (EdgeBoard, DS2Addon)
 └── docs/  +  mkdocs.yml     The documentation site
 ```

@@ -5,13 +5,15 @@
 # on the carrier's connectors, and a host on a serial line (embsim
 # MIGRATING-MAD.md sections 1 and 4).
 #
-# Six files share every line but how the module boots and which host sits
-# where; mad-catalog/tests/projects.rs holds them to it:
+# Seven files share every line but how the module boots, which host sits
+# where, and one stop; mad-catalog/tests/projects.rs holds them to it:
 #
 #   file                             the module boots        the host
 #   mad.toml                         the firmware off flash  host-serial on J1
 #   mad-cosim.toml                   the firmware off flash  chrome-cdp on J1
 #   mad-playground.toml              that file, its Chrome headed on the app
+#   mad-hard-stop-cosim.toml         mad-cosim.toml with a hard stop, one
+#                                    option of the machine's
 #   mad-serial-boot.toml             the ROM's serial boot,  host-serial on J1
 #                                    its flash erased
 #   mad-serial-boot-cosim.toml       the ROM's serial boot   chrome-cdp on J1
@@ -20,7 +22,8 @@
 # Every file takes the carrier as drawn: the Edge carrier v0.3 schematic
 # (mad-catalog/netlists/mad_edge.net, its header says what it holds). The
 # e2e runs mad-cosim.toml, the scenarios that move the carriage with the
-# rest; the playgrounds are for a person (SIL/makefile).
+# rest, and mad-hard-stop-cosim.toml for SERVO-stall, which drives the
+# carriage into its stop; the playgrounds are for a person (SIL/makefile).
 #
 # J1 is the carrier's debug header, where the machine's Prop Plug sits. The
 # route is the user's decision (2026-10-21): the host on J1 and the

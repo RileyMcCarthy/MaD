@@ -33,16 +33,16 @@
  * reconnecting to the port whose USB ids (0403:6015) it remembers.
  *
  * What the project cannot do, the suite skips there, saying why
- * (`PROJECT_CANNOT`, below): the project's machine has no jam, so
- * SERVO-stall is skipped. The scenarios that move the carriage (`MOVES`)
- * run on the project like every other: `cd SIL && make e2e-motion` takes
- * them from `--list --moves` and runs them on mad-cosim.toml, the set the
- * nightly splits across its motion jobs.
- * SERVO-stall is not yet on any project (MaD #298): `cd SIL && make
- * e2e-stall` runs it on `mad-emulator --chrome` (board-route.sh with
- * BOARD_ROUTE=emulator, which sets E2E_BOARD_ROUTE=emulator), where it jams
- * the carriage by creating E2E_JAM_FILE, the file mad-emulator watches
- * (`--jam-file`).
+ * (`PROJECT_CANNOT`, below). The scenarios that move the carriage
+ * (`MOVES`) run on the machine's project like every other: `cd SIL && make
+ * e2e-motion` takes them from `--list --moves` and runs them on
+ * mad-cosim.toml, the set the nightly splits across its motion jobs.
+ * SERVO-stall runs on SIL/mad-hard-stop-cosim.toml, mad-cosim.toml with a
+ * hard stop 3 mm above the carriage's start (MaD #298): `cd SIL && make
+ * e2e-stall` jogs the carriage into the stop there. mad-cosim.toml skips
+ * SERVO-stall, since nothing stops its carriage, and the hard-stop board
+ * skips the other scenarios that move the carriage, since its stop would
+ * meet them.
  *
  * Without CDP_URL only the board-free scenarios run: A1 and
  * FW1/2/3/5/6/7/8/9 launch a host Chrome against in-page fakes and need no
@@ -94,7 +94,7 @@ import {
   DEVICE_WAIT_MS,
   awaitResponding,
 } from './fixtures.mjs';
-import { readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import {
@@ -145,11 +145,23 @@ const MOVES = new Set([
 // for a change to the board, its file or the kinds that may lift the
 // reason. `--list --cannot` lists them.
 //
-// The project's machine has no jam: a lever a stepped kind cannot take from
-// a file the wall clock polls (mad-catalog/src/machine.rs, "Not modelled").
-const JAM_WHY =
-  'jams the carriage, which the project\'s machine cannot (SIL/mad-catalog/src/machine.rs, "Not modelled"; MaD #298): make e2e-stall runs it on mad-emulator';
-const PROJECT_CANNOT = new Map([['SERVO-stall', JAM_WHY]]);
+// SERVO-stall drives the carriage into a hard stop, which only one board's
+// machine has (the machine's hard_stop_mm; mad-catalog/src/machine.rs, "The
+// hard stop"; MaD #298).
+const STOP_WHY =
+  'drives the carriage into a hard stop, which this board\'s machine has none of (MaD #298): make e2e-stall runs it on mad-hard-stop-cosim.toml';
+const PROJECT_CANNOT = new Map([['SERVO-stall', STOP_WHY]]);
+// mad-cosim.toml with a hard stop on its carriage, 3 mm above the
+// carriage's start (SIL/mad-hard-stop-cosim.toml, the machine's
+// hard_stop_mm; mad-catalog/tests/projects.rs holds it to that one option).
+// SERVO-stall runs there; the other scenarios that move the carriage would
+// meet the stop, so it skips them.
+const HARD_STOP = 'mad-hard-stop-cosim.toml';
+const STOPPED_WHY =
+  'moves the carriage, which meets a hard stop on this board (MaD #298): make e2e-motion runs it on mad-cosim.toml';
+// The project file the board runs (board-route.sh exports it; relative to
+// SIL/, mad-cosim.toml by default).
+const PROJECT = (process.env.E2E_PROJECT || 'mad-cosim.toml').split('/').pop();
 const RUN_CANNOT = process.env.E2E_PROJECT_CANNOT === 'run';
 // The suite is on the project: attached to its Chrome, or listing for
 // board-route.sh, which names the route before any board is up.
@@ -157,8 +169,28 @@ const ON_PROJECT = BOARD_ROUTE === 'project' && (BOARD || process.env.E2E_BOARD_
 /** Why `id` cannot run on this board, or '' when it can. */
 const cannot = (id) => {
   if (!ON_PROJECT || RUN_CANNOT) return '';
+  if (PROJECT === HARD_STOP) return id !== 'SERVO-stall' && MOVES.has(id) ? STOPPED_WHY : '';
   return PROJECT_CANNOT.get(id) || '';
 };
+
+/**
+ * The hard stop of the machine on the board the suite runs, in millimetres:
+ * the `hard_stop_mm` option of the project file board-route.sh names
+ * (E2E_PROJECT, relative to SIL/), or null when the board is not a project
+ * or its machine has none. The line is TOML's `key = value`, with or without
+ * a trailing comment; a value that is not a finite number fails here.
+ */
+function hardStopMm() {
+  if (!ON_PROJECT || !process.env.E2E_PROJECT) return null;
+  const file = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'SIL', process.env.E2E_PROJECT);
+  const line = readFileSync(file, 'utf8').match(/^[ \t]*hard_stop_mm[ \t]*=[ \t]*([^\s#]+)[ \t]*(?:#.*)?$/m);
+  if (!line) return null;
+  const mm = Number(line[1]);
+  if (!Number.isFinite(mm)) {
+    throw new Error(`${process.env.E2E_PROJECT}: hard_stop_mm = ${line[1]} is not millimetres`);
+  }
+  return mm;
+}
 
 // The app is the built bundle (board-route.sh with APP_DIST sets this), not
 // the dev server. BUNDLE-live runs only then; every other scenario runs on
@@ -2480,25 +2512,42 @@ const scenarios = [
     },
   },
   {
-    // A latched servo stall is cleared from the Live screen. The board's
-    // carriage is jammed (mad-emulator --jam-file: while the file exists the
-    // drive keeps stepping but the carriage gets nowhere, its encoder
-    // buzzing a few counts either side as a powered drive's does), so
-    // a jog trips dev_servo's stall guard and app_control latches
-    // FAULT_SERVO_STALL. Only a disable request clears that latch, and while
-    // faulted the machine reports motion off — the Live button has to offer
-    // the disable, then the enable once the fault is gone.
+    // A latched servo stall is cleared from the Live screen, and the machine
+    // moves again afterwards. The board's machine has a hard stop above the
+    // carriage's start (SIL/mad-hard-stop-cosim.toml, 3 mm): the drive takes
+    // the steps it is sent while the carriage, and the encoder on its side of
+    // the drive, stay on the stop, so a jog past the stop trips dev_servo's
+    // stall guard and app_control latches FAULT_SERVO_STALL. Only a disable
+    // request clears that latch, and while faulted the machine reports motion
+    // off: the Live button has to offer the disable, then the enable once the
+    // fault is gone.
+    //
+    // Enabled again with no move commanded, the machine holds where it is.
+    // While motion is off, app_motion stops the drive (dev_servo_stop: a
+    // velocity command of zero, which drops the jog's target) and dev_servo
+    // holds its setpoint on the encoder every tick (read: app_motion.c,
+    // app_motion_private_getDesiredState; dev_servo.c, dev_servo_run and
+    // dev_servo_private_resync), so nothing drives the carriage back into the
+    // stop. That is a claim that something does NOT happen, so the scenario
+    // watches a fixed 2 s of board time (fixtures.mjs, at DEVICE_WAIT_MS: an
+    // absence is watched for a fixed window, never on that budget). The
+    // window is sized by the guard: pulses the encoder does not follow stall the drive once 1 mm of
+    // them has gone, 2 mm at most (dev_servo.h, the travel check), as in the
+    // first stall here, where the drive lost 1.03-1.04 mm past the stop
+    // (measured: the machine's summary, 4 runs). So a push at the stop of
+    // 1 mm/s or more stalls inside the window (inferred); the carriage, held
+    // on the stop, would not show one. Then a jog away from the stop moves
+    // the carriage the distance commanded.
     id: 'SERVO-stall',
-    name: 'A jammed gantry latches SERVO_STALL; Live clears it and re-enables motion',
+    name: 'A carriage at a hard stop latches SERVO_STALL; Live clears it, re-enables motion, and a jog leaves the stop',
     async run() {
-      const jamFile = process.env.E2E_JAM_FILE;
-      if (!jamFile) {
+      const stopMm = hardStopMm();
+      if (stopMm === null) {
         throw new Error(
-          'SERVO-stall needs E2E_JAM_FILE, the file mad-emulator was given as --jam-file ' +
-            '(board-route.sh sets both with BOARD_ROUTE=emulator; no project has a jam yet)',
+          'SERVO-stall needs the board whose machine has a hard stop: cd SIL && make e2e-stall ' +
+            `(E2E_PROJECT=${HARD_STOP})`,
         );
       }
-      const free = () => rmSync(jamFile, { force: true });
       const { browser, page, errors } = await newSilPage();
       try {
         await connectToSil(page);
@@ -2506,10 +2555,12 @@ const scenarios = [
         await awaitResponding(page);
         await zeroLength(page);
         await page.getByText('Fault: NONE').waitFor({ timeout: DEVICE_WAIT_MS });
+        const speed = page.locator('label.field', { hasText: 'Speed (mm/s)' }).locator('input');
+        const jog = page.locator('label.field', { hasText: 'Jog (mm)' }).locator('input');
 
-        writeFileSync(jamFile, '');
-        await page.locator('label.field', { hasText: 'Speed (mm/s)' }).locator('input').fill('5');
-        await page.locator('label.field', { hasText: 'Jog (mm)' }).locator('input').fill('5');
+        // A jog that would end 2 mm past the stop.
+        await speed.fill('5');
+        await jog.fill(String(stopMm + 2));
         await press(page.getByRole('button', { name: '+ Jog up' }));
         await page.getByText('Fault: SERVO_STALL').waitFor({ timeout: DEVICE_WAIT_MS });
         await page.getByText('Motion: disabled').waitFor({ timeout: DEVICE_WAIT_MS });
@@ -2517,16 +2568,55 @@ const scenarios = [
           !(await page.getByRole('button', { name: 'Enable motion' }).count()),
           'a stalled machine is offered "Enable motion", which it would refuse',
         );
+        // The carriage sits on the stop, so the encoder reads the stop to the
+        // readout's last digit, 1 um. The frame is the carriage's: the board
+        // starts with the carriage and the encoder at 0 mm, and nothing here
+        // homes or redefines the position.
+        const stalledAt = await awaitRest(page);
+        assert(
+          Math.abs(stalledAt - stopMm) <= 0.001,
+          `the carriage stalled at ${stalledAt} mm, against the stop at ${stopMm} mm`,
+        );
 
-        free();
         await press(page.getByRole('button', { name: 'Clear stall (disable motion)' }));
         await page.getByText('Fault: NONE').waitFor({ timeout: DEVICE_WAIT_MS });
         await press(page.getByRole('button', { name: 'Enable motion' }));
         await page.getByText('Motion: enabled').waitFor({ timeout: DEVICE_WAIT_MS });
+
+        // Enabled with no move: the carriage stays on the stop and nothing
+        // stalls.
+        await waitPageTime(page, 2000);
+        const heldAt = await readoutNum(page, 'Machine Position');
+        const setpointHeld = await readoutNum(page, 'Machine Setpoint');
+        console.log(
+          `  SERVO-stall: stalled at ${stalledAt} mm; re-enabled with no move, 2 s on: position ` +
+            `${heldAt} mm, setpoint readout ${setpointHeld} mm`,
+        );
+        assert(
+          (await page.getByText('Fault: NONE').count()) && (await page.getByText('Motion: enabled').count()),
+          'the machine stalled again after it was re-enabled with no move commanded',
+        );
+        assert(
+          Math.abs(heldAt - stalledAt) <= 0.001,
+          `the carriage moved from ${stalledAt} mm to ${heldAt} mm with no move commanded`,
+        );
+
+        // A jog away from the stop moves the carriage that far. The firmware
+        // parks within 1 um of its target (dev_servo, positionDeadband), and
+        // the readout's last digit is 1 um.
+        await jog.fill('2');
+        await press(page.getByRole('button', { name: '− Jog down' }));
+        await settleMotion(page, { setpointWas: setpointHeld });
+        const leftAt = await readoutNum(page, 'Machine Position');
+        console.log(`  SERVO-stall: jogged 2 mm off the stop to ${leftAt} mm`);
+        assert(
+          Math.abs(leftAt - (stalledAt - 2)) <= 0.002,
+          `a 2 mm jog off the stop at ${stalledAt} mm came to rest at ${leftAt} mm`,
+        );
         await page.getByText('Fault: NONE').waitFor({ timeout: DEVICE_WAIT_MS });
+        await page.getByText('Motion: enabled').waitFor({ timeout: DEVICE_WAIT_MS });
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
       } finally {
-        free();
         await browser.close();
       }
     },

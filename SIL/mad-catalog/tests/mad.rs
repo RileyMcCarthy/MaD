@@ -839,12 +839,9 @@ fn the_firmware_answers_the_host_on_the_debug_header() {
     behaviour!(Test {
         id: "mad-project.protocol-on-j1",
         covers: Some("SIL/mad.toml"),
-        given: "the machine's project file, the production firmware in the module's flash and a \
-                serial-port host on the carrier's debug header, run until stage-1 has streamed \
-                the program, then the host reading the firmware's version, again every 20 ms \
-                until it is answered, then reading the machine's state, again every 20 ms until \
-                it reads unfaulted, and then asking once for motion to be enabled and reading \
-                the state again",
+        given: "the production firmware booted from flash, with a host on the debug header that \
+                reads the version until answered, reads the state until unfaulted, then enables \
+                motion and reads the state again",
     });
     expect!(
         "version-answered",
@@ -863,8 +860,8 @@ fn the_firmware_answers_the_host_on_the_debug_header() {
     );
     expect!(
         "state-answered",
-        "the host's read of the machine's state is answered with a data frame that reads as a \
-         machine with motion disabled and no test running",
+        "the host's state read is answered with a frame showing motion disabled and no test \
+         running",
         "the firmware starts with motion off, and only the operator turns it on; a fault \
          holds motion off as well, so this reading also holds on a faulted machine"
     );
@@ -1194,9 +1191,9 @@ fn the_encoders_pairs_reach_p9_and_p10() {
     behaviour!(Test {
         id: "mad-project.encoder-pairs",
         covers: Some("SIL/mad.toml"),
-        given: "the machine's project file, a bench source holding the chip's reset low on the \
-                carrier's debug header, and bench sources on the processor's step, direction \
-                and enable pins giving the drive eight forward steps 2 ms apart",
+        given: "the machine's project file, a debug-header source holding the chip in reset, \
+                and bench sources on its step, direction and enable pins giving the drive eight \
+                forward steps",
     });
     expect!(
         "one-count-a-step",
@@ -1265,10 +1262,9 @@ fn the_machines_open_collector_encoder_reaches_p9_and_p10() {
     behaviour!(Test {
         id: "mad-project.open-collector-encoder",
         covers: Some("SIL/mad.toml"),
-        given: "the machine's project file with the machine's real encoder, an NPN open \
-                collector, on the + legs of the carrier's encoder connector, the jumpers that \
-                tie the - legs to the encoder reference closed, and the bench holding the \
-                chip's reset low and giving the drive eight forward steps",
+        given: "the machine's NPN open-collector encoder on the + legs, the - legs on the \
+                encoder reference, the chip in reset from the debug header, and eight forward \
+                steps to the drive",
     });
     expect!(
         "one-count-a-step",

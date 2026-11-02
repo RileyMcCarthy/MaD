@@ -912,9 +912,8 @@ mod tests {
         behaviour!(Test {
             id: "p2core.pad-read-strong-mask",
             covers: Some("SIL/p2core/src/board.rs#Board::sensed"),
-            given: "two pads driven high whose nets both read low, one through the 15 kΩ pull \
-                    mode and one in the fast mode, each pad's drive strength known as it was put \
-                    on its net",
+            given: "two pads driven high onto nets that read low, one in the 15 kΩ pull mode \
+                    and one in fast mode, each with its drive strength recorded",
         });
         expect!(
             "pull-drives",

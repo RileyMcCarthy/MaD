@@ -40,8 +40,9 @@ machine's project (`SIL/mad-cosim.toml`): `TM-busy-restart`,
 cells and the M11 mid-test drop among them (`e2e/run-all.mjs`, `MOVES`;
 `node e2e/run-all.mjs --list --moves`), run by `cd SIL && make e2e-motion`:
 the nightly runs them all, and each PR runs G2+G3+H2+I. SERVO-stall is
-skipped there (`PROJECT_CANNOT`): no project has a jam yet, so `make
-e2e-stall` runs it on `mad-emulator`.
+skipped there (`PROJECT_CANNOT`), since nothing stops that board's carriage:
+it runs on that file with a hard stop, `SIL/mad-hard-stop-cosim.toml` (`cd SIL
+&& make e2e-stall`, MaD #298).
 
 ## Shared helpers (prefer these)
 

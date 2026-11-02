@@ -240,7 +240,7 @@ describe('assemble-pages-app', () => {
       },
     },
     () => {
-      const viteNode = fileURLToPath(new URL('../node_modules/vite-node/vite-node.mjs', import.meta.url));
+      const viteNode = fileURLToPath(new URL('../node_modules/vite-node/dist/cli.mjs', import.meta.url));
       const script = fileURLToPath(new URL('./assemble-pages-app.mts', import.meta.url));
       const r = spawnSync(process.execPath, [viteNode, script], {
         cwd: fileURLToPath(new URL('..', import.meta.url)),

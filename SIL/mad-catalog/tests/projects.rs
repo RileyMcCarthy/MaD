@@ -1,11 +1,13 @@
-//! MaD's six project files hold one machine: `SIL/mad.toml` (the
+//! MaD's seven project files hold one machine: `SIL/mad.toml` (the
 //! production firmware booted off the module's flash, a `host-serial` on the
 //! carrier's debug header `J1`, where the machine's Prop Plug sits),
 //! `mad-cosim.toml` (the same with the host's Chrome), `mad-serial-boot.toml`
 //! (the ROM's serial boot, the flash erased, the same host) and
-//! `mad-serial-boot-cosim.toml` (that with the host's Chrome); then the two
-//! playgrounds, `mad-playground.toml` and `mad-serial-boot-playground.toml`,
-//! the two Chrome files with their Chrome headed on the app.
+//! `mad-serial-boot-cosim.toml` (that with the host's Chrome); then
+//! `mad-hard-stop-cosim.toml`, `mad-cosim.toml` with a hard stop on the
+//! machine's carriage (MaD #298); and the two playgrounds,
+//! `mad-playground.toml` and `mad-serial-boot-playground.toml`, the two
+//! Chrome files with their Chrome headed on the app.
 //! Each file is complete on its own, so nothing but this test keeps their
 //! shared lines the same: a supply, a wire or a jumper changed in one file
 //! and not the others fails here, naming the section.
@@ -392,6 +394,113 @@ fn the_serial_boot_file_is_the_flash_boot_with_the_roms_boot() {
     for key in ["mate", "jumper", "component"] {
         assert!(!entries(&flash, key).is_empty(), "the files have [[{key}]]");
     }
+}
+
+/// The lines `twin` adds to `base`: `twin` must be `base` with one run of
+/// lines inserted, or this panics naming the first line that differs.
+fn inserted(base: (&str, &str), twin: (&str, &str)) -> Vec<String> {
+    let (base_name, base_text) = base;
+    let (twin_name, twin_text) = twin;
+    let ours: Vec<&str> = base_text.lines().collect();
+    let theirs: Vec<&str> = twin_text.lines().collect();
+    let head = ours.iter().zip(&theirs).take_while(|(a, b)| a == b).count();
+    let tail = ours[head..]
+        .iter()
+        .rev()
+        .zip(theirs[head..].iter().rev())
+        .take_while(|(a, b)| a == b)
+        .count();
+    assert_eq!(
+        head + tail,
+        ours.len(),
+        "{twin_name} is {base_name} with lines added, and no other change: {base_name} line {} \
+         reads {:?}, {twin_name}'s {:?}",
+        head + 1,
+        ours.get(head),
+        theirs.get(head)
+    );
+    theirs[head..theirs.len() - tail]
+        .iter()
+        .map(|line| (*line).to_string())
+        .collect()
+}
+
+/// The file with a hard stop on the machine's carriage, and the file it
+/// stops.
+const HARD_STOP: (&str, &str) = ("mad-cosim.toml", "mad-hard-stop-cosim.toml");
+
+#[test]
+fn the_hard_stop_file_is_the_cosim_file_with_one_stop() {
+    behaviour!(Test {
+        id: "mad-project.hard-stop-twin",
+        covers: Some("SIL/mad-hard-stop-cosim.toml"),
+        given: "the machine's project file whose host is the host's Chrome, beside its twin \
+                whose carriage meets a hard stop",
+    });
+    expect!(
+        "text-one-block",
+        "the twin is the file word for word with one run of lines added to its machine's \
+         section"
+    );
+    expect!(
+        "one-option",
+        "the twin's machine has one option more, a hard stop above the carriage's start and \
+         short of the 15 millimetres of grip slack",
+        "the stall scenario jogs the carriage up into the stop and back off it, and short of \
+         the grip slack the sample takes no load"
+    );
+    expect!(
+        "cites-the-issue",
+        "the added lines name MaD issue 298, the stall scenario's need for a carriage that \
+         stops, as the stop's reason"
+    );
+    expect!(
+        "entries-but-stop",
+        "every board, model, component, wire, mate, switch, jumper and short is the same in \
+         both but the machine's stop"
+    );
+    let (base_name, twin_name) = HARD_STOP;
+    let (base_text, twin_text) = (read(base_name), read(twin_name));
+    same_but(
+        (base_name, &base_text),
+        (twin_name, &twin_text),
+        &["The machine"],
+    );
+    let added = inserted((base_name, &base_text), (twin_name, &twin_text));
+    let machine = sections(&twin_text)
+        .into_iter()
+        .find(|(title, _)| title == "The machine")
+        .expect("the file has the machine's section")
+        .1;
+    assert!(
+        machine.contains(&added.join("\n")),
+        "{twin_name}'s added lines are in its machine's section: {added:#?}"
+    );
+    assert!(
+        added.iter().any(|line| line.contains("MaD #298")),
+        "{twin_name}'s added lines cite MaD #298: {added:#?}"
+    );
+
+    let (base, mut twin) = (parse(base_name, &base_text), parse(twin_name, &twin_text));
+    let stop = entries_mut(&mut twin, "component")
+        .iter_mut()
+        .find(|entry| field(entry, "name") == Some("MACHINE"))
+        .and_then(|machine| machine.get_mut("options"))
+        .and_then(Value::as_table_mut)
+        .and_then(|options| options.remove("hard_stop_mm"))
+        // A number, as the kind reads it: `3.0` or a whole `3`.
+        .and_then(|stop| {
+            stop.as_float()
+                .or_else(|| stop.as_integer().map(|whole| whole as f64))
+        })
+        .unwrap_or_else(|| panic!("{twin_name}'s machine names a hard stop in millimetres"));
+    // Above the carriage's start, 0 mm, and short of the grip slack, 15 mm
+    // (mad-catalog/src/machine.rs, GANTRY_SLACK_MM).
+    assert!(
+        stop > 0.0 && stop < 15.0,
+        "{twin_name}'s stop is at {stop} mm"
+    );
+    assert_eq!(base, twin, "{twin_name} is {base_name} but its stop");
 }
 
 /// The playgrounds, each beside the file it is a headed copy of.

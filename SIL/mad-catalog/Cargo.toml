@@ -15,8 +15,8 @@ publish = false
 # embsim-cli from the same checkout, and SIL/Cargo.lock locks the rest.
 embsim-board = { path = "../embsim/board" }
 embsim-boards = { path = "../embsim/boards" }
-# The virtual clock: the instant a component starts at, which its wakes
-# count from.
+# The virtual clock. Only the tests use it (nothing in src/ imports it): they
+# hold its stepped clock across a build, as `embsim check` does.
 embsim-core = { path = "../embsim/core" }
 # The machine's drive, encoder and contacts (mad-machine).
 embsim-models = { path = "../embsim/models" }
@@ -36,6 +36,6 @@ rstest.workspace = true
 # (`make protocol` writes it).
 protocol = { path = "../../Protocol/rust" }
 protoemb-framing = { path = "../../Protocol/ProtoEmb/framing" }
-# tests/projects.rs compares MaD's six project files entry by entry.
+# tests/projects.rs compares MaD's seven project files entry by entry.
 toml = "1.1"
 vibes-behaviour = { path = "../../Vibes/bindings/rust" }

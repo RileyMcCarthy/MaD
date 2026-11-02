@@ -809,9 +809,10 @@ and a failure it reports (a grant that sticks, a page that crashes, a Chrome
 that exits) stops the run with a non-zero exit. The run prints Chrome's
 DevTools URL in its "reached" line; a suite attaches there
 ([SIL testing](sil-testing.md#the-board-route-the-app-in-chrome-on-the-boards-clock)).
-Only SERVO-stall keeps this route (`make e2e-stall`, per PR), because it
-jams the carriage and no project has a jam (MaD #298); FW-ISS and the
-playgrounds moved onto the project at embsim `MIGRATING-MAD.md` step 11.
+No make target or CI job runs this route: SERVO-stall, the last scenario it
+carried, runs on `mad-hard-stop-cosim.toml`, a project whose machine has a
+hard stop (MaD #298); FW-ISS and the playgrounds moved onto the project at
+embsim `MIGRATING-MAD.md` step 11.
 
 The e2e runs on the machine's project instead (step 10): `make e2e-emulator`
 is `embsim run mad-cosim.toml`, whose `HOST` is the same kind on the
@@ -830,9 +831,10 @@ a run, measured). The scenarios that move the carriage run on the same
 file (`make e2e-motion`), per PR G2+G3+H2+I and nightly the whole set:
 since the 2026-11-01 re-export of `mad_edge.net` (Edge v0.3), `IC14`'s
 drive-side grounds are on `EN_GND` (MaD #299) and the carriage moves. The
-suite skips SERVO-stall there, since the project's machine has no jam
-(`run-all.mjs`, `PROJECT_CANNOT`), and runs it on `mad-emulator` (`make
-e2e-stall`).
+suite skips SERVO-stall there, since nothing stops the carriage
+(`run-all.mjs`, `PROJECT_CANNOT`), and runs it on that file with a hard
+stop 3 mm above the carriage's start, `mad-hard-stop-cosim.toml` (`make
+e2e-stall`, per PR).
 
 | Target | Host |
 |---|---|
@@ -841,6 +843,6 @@ e2e-stall`).
 | `make e2e-emulator`, `make e2e`, `make e2e-bundle` | `mad-cosim.toml`: Chrome, headless, on `J1` (USB `0403:6015`), DevTools on 9222 |
 | `make e2e-rom` | `mad-serial-boot-cosim.toml`: Chrome, headless, on `J1` (USB `0403:6015`), the mask ROM's serial boot, for FW-ISS |
 | `make e2e-motion` | `mad-cosim.toml`: Chrome, headless, on `J1`, DevTools on 9222, for the scenarios that move the carriage |
-| `make e2e-stall` | `mad-emulator`: Chrome, headless, the debug image's host on `P30`/`P32` (USB `0403:6001`), for SERVO-stall alone (its jam) |
+| `make e2e-stall` | `mad-hard-stop-cosim.toml` (a hard stop on the carriage): Chrome, headless, on `J1`, DevTools on 9222, for SERVO-stall alone |
 | `make playground-pty` | `mad.toml`: a PTY on `J1` at `/tmp/tty.iss`, for a serial console |
 | `embsim run mad.toml --pty PATH` | `mad.toml`: a PTY on `J1` (`mad-catalog/tests/pty_protocol.rs`) |
