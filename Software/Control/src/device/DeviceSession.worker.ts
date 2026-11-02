@@ -52,11 +52,6 @@ import {
   MSG_STATE_PERIOD_MS,
   STOREDSAMPLE_WIRE_SIZE,
   DEVICEINFO_WIRE_SIZE,
-  SAMPLE_WIRE_SIZE,
-  MACHINESTATE_WIRE_SIZE,
-  MACHINECONFIGURATION_WIRE_SIZE,
-  FIRMWAREVERSION_WIRE_SIZE,
-  SAMPLEPROFILE_WIRE_SIZE,
 } from '@/protocol/generated/protoemb';
 import {
   MachineConfiguration,
@@ -97,6 +92,7 @@ import {
   UPLOAD_DEFAULT_MAX_RETRIES,
 } from './sessionPolicy';
 import { boundaryCallback } from './boundaryCallback';
+import { readReplyMismatch, schemaMismatchMessage } from './payloadSchema';
 
 /** Poll cadence (ms). Faster than the sample period so reads/writes drain promptly. */
 const TICK_MS = 4;
@@ -350,6 +346,9 @@ export class DeviceSession {
   /** Replies that could not be read, by command: each is logged once, then counted. */
   private undecodable = new Map<number, number>();
 
+  /** The firmware's version once read, to name it when its replies do not fit. */
+  private firmwareVersion: string | null = null;
+
   /** Warnings already emitted, so a persistently wrong link warns twice, not forever. */
   private gibberishWarnings = 0;
 
@@ -425,6 +424,7 @@ export class DeviceSession {
       undecodable: 0,
     };
     this.undecodable.clear();
+    this.firmwareVersion = null;
     this.client.register_periodic_with_timeout(
       MSG_READ_SAMPLE,
       MSG_SAMPLE_PERIOD_MS,
@@ -611,9 +611,12 @@ export class DeviceSession {
       const batch = this.client.get_stored(MSG_READ_SAMPLE) as {
         entries: Array<number[] | Uint8Array>;
       };
-      return batch.entries.map((e) =>
-        sampleToShared(decodeSample(e instanceof Uint8Array ? e : Uint8Array.from(e))),
-      );
+      // Samples the ring kept from firmware on another layout are not this
+      // app's to read (see unreadableReply); they are left out, not misread.
+      return batch.entries
+        .map((e) => (e instanceof Uint8Array ? e : Uint8Array.from(e)))
+        .filter((e) => readReplyMismatch(MSG_READ_SAMPLE, e) === null)
+        .map((e) => sampleToShared(decodeSample(e)));
     } catch {
       return [];
     }
@@ -1280,12 +1283,8 @@ export class DeviceSession {
   }
 
   private mapData(command: number, payload: Uint8Array): DeviceEvent[] {
-    const expected = REPLY_WIRE_SIZE.get(command);
-    if (expected !== undefined && payload.length !== expected) {
-      throw new Error(
-        `reply is ${payload.length} bytes, this app reads ${expected}: the firmware speaks another protocol version`,
-      );
-    }
+    const mismatch = readReplyMismatch(command, payload);
+    if (mismatch !== null) throw new Error(schemaMismatchMessage(mismatch, this.firmwareVersion));
     switch (command) {
       case MSG_READ_SAMPLE:
         return [{ kind: 'sample', data: sampleToShared(decodeSample(payload)) }];
@@ -1293,8 +1292,11 @@ export class DeviceSession {
         return [{ kind: 'state', data: stateToShared(decodeMachineState(payload)) }];
       case MSG_READ_MACHINE_CONFIGURATION:
         return [{ kind: 'configuration', data: configToShared(decodeMachineConfiguration(payload)) }];
-      case MSG_READ_FIRMWARE_VERSION:
-        return [{ kind: 'firmwareVersion', data: decodeFirmwareVersion(payload) }];
+      case MSG_READ_FIRMWARE_VERSION: {
+        const data = decodeFirmwareVersion(payload);
+        this.firmwareVersion = data.version || null;
+        return [{ kind: 'firmwareVersion', data }];
+      }
       case MSG_READ_DEVICE_INFO:
         // Frozen and append-only (MaDProtocol.yaml): a firmware from before a
         // field was appended sends a shorter reply, read as zero-filled.
@@ -1621,20 +1623,6 @@ function u8(payload?: number[] | Uint8Array): Uint8Array {
   // copy); tolerate a plain number[] too (older build / non-serde_bytes path).
   return payload instanceof Uint8Array ? payload : Uint8Array.from(payload);
 }
-
-/**
- * The exact length of each read's reply: every message has a fixed wire size,
- * so any other length is a reply from firmware generated from another layout.
- * The device-info reply is absent: it only grows by appending, and is read
- * zero-filled whatever its length.
- */
-const REPLY_WIRE_SIZE = new Map<number, number>([
-  [MSG_READ_SAMPLE, SAMPLE_WIRE_SIZE],
-  [MSG_READ_STATE, MACHINESTATE_WIRE_SIZE],
-  [MSG_READ_MACHINE_CONFIGURATION, MACHINECONFIGURATION_WIRE_SIZE],
-  [MSG_READ_FIRMWARE_VERSION, FIRMWAREVERSION_WIRE_SIZE],
-  [MSG_READ_SAMPLE_PROFILE, SAMPLEPROFILE_WIRE_SIZE],
-]);
 
 /** `payload` padded with zeros to at least `size` bytes; longer payloads unchanged. */
 export function zeroFilled(payload: Uint8Array, size: number): Uint8Array {

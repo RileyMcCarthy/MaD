@@ -88,6 +88,7 @@ const FIRMWARE: FirmwareSite = {
     ['firmware/manifest.json', Buffer.from(JSON.stringify(PER_PROTOCOL))],
     ['firmware/MaD-Firmware-0.14-release.bin', Buffer.from([1, 2, 3, 4])],
   ]),
+  warnings: [],
 };
 
 // The CLI test starts vite-node, which takes about a second on its own.

@@ -3,7 +3,7 @@
 # layout of an existing message: a struct field added, removed, reordered or
 # retyped, an enum variant removed or reordered, a command id moved. Every
 # struct has a fixed wire size, so appending a field is a breaking change.
-# Protocol/tools/check_protocol_compat.py fails CI on such a change without a
+# Protocol/scripts/check_protocol_compat.py fails CI on such a change without a
 # bump. After a bump, release firmware before MaD Control: the app's release
 # check refuses to publish until a firmware release speaks its protocol.
 protocol_version: 2
@@ -440,7 +440,7 @@ structs:
   # its layout can never change with protocol_version. Never remove, reorder
   # or retype a field; append only, and an app must zero-fill a reply shorter
   # than its own DEVICEINFO_WIRE_SIZE (Software/Control readDeviceInfo).
-  # Protocol/tools/check_protocol_compat.py enforces this.
+  # Protocol/scripts/check_protocol_compat.py enforces this.
   DeviceInfo:
     encoding: aligned
     description: "What the firmware speaks: the protocol_version it was generated from"

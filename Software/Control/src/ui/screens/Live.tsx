@@ -144,7 +144,8 @@ export default function Live() {
           >
             {motion ? motion.label : 'Motion …'}
           </button>
-          <button onClick={() => homeAxis()} disabled={manualBlocked} title="Homes the axis (G28)">Home</button>
+          {/* A refused Home rejects; the store has already said why in a toast. */}
+          <button onClick={() => void homeAxis().catch(() => undefined)} disabled={manualBlocked} title="Homes the axis (G28)">Home</button>
           <button onClick={() => zeroForce()} disabled={manualBlocked}>Zero force</button>
           <button onClick={() => zeroLength()} disabled={manualBlocked}>Zero length</button>
         </div>

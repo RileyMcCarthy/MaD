@@ -44,6 +44,8 @@ export interface FirmwareSite {
   manifest: FirmwareManifest;
   /** Every file to serve, by path relative to the hosting root. */
   files: Map<string, Buffer>;
+  /** Releases left out of the manifest, each with why (a malformed firmware-info.json). */
+  warnings: string[];
 }
 
 /** What the plugin reads from the outside world. Defaults to the real `fetch`
@@ -85,8 +87,17 @@ async function githubReleases(fetchFn: typeof fetch, env: Record<string, string 
   return { repo, releases, download };
 }
 
-/** The newest release for each protocol version, read from each release's firmware-info.json. */
-async function newestByProtocol(releases: GithubRelease[], download: (asset: GithubAsset) => Promise<Buffer>) {
+/**
+ * The newest release for each protocol version, read from each release's
+ * firmware-info.json. A release whose file is malformed is left out, with a
+ * warning: one bad release must not stop every deploy. A download that fails
+ * still throws, since a retry fixes it.
+ */
+async function newestByProtocol(
+  releases: GithubRelease[],
+  download: (asset: GithubAsset) => Promise<Buffer>,
+  warn: (message: string) => void,
+) {
   const described = [];
   for (const candidate of describedReleases(releases)) {
     let info: unknown = null;
@@ -96,7 +107,8 @@ async function newestByProtocol(releases: GithubRelease[], download: (asset: Git
       if (!(err instanceof SyntaxError)) throw err;
     }
     if (!isFirmwareInfo(info)) {
-      throw new Error(`${candidate.release.tag_name}: ${FIRMWARE_INFO_ASSET} is malformed`);
+      warn(`${candidate.release.tag_name}: ${FIRMWARE_INFO_ASSET} is malformed; the release is left out of the firmware list`);
+      continue;
     }
     described.push({ ...candidate, protocolVersion: info.protocolVersion });
   }
@@ -110,9 +122,10 @@ async function newestByProtocol(releases: GithubRelease[], download: (asset: Git
 export async function releasedProtocols(
   fetchFn: typeof fetch,
   env: Record<string, string | undefined>,
+  warn: (message: string) => void = (message) => console.warn(`warning: ${message}`),
 ): Promise<{ tag: string; protocolVersion: number }[]> {
   const { releases, download } = await githubReleases(fetchFn, env);
-  return (await newestByProtocol(releases, download)).map((c) => ({
+  return (await newestByProtocol(releases, download, warn)).map((c) => ({
     tag: c.release.tag_name,
     protocolVersion: c.protocolVersion,
   }));
@@ -134,15 +147,16 @@ export async function fetchFirmwareSite(
     [RELEASE_IMAGE_PATH, latestImage],
   ]);
 
+  const warnings: string[] = [];
   const manifest: FirmwareManifest = { releases: [] };
-  for (const c of await newestByProtocol(releases, download)) {
+  for (const c of await newestByProtocol(releases, download, (w) => void warnings.push(w))) {
     const image = c.asset.id === picked.asset.id ? latestImage : await download(c.asset);
     const entry = toManifestEntry(c.release, c.asset, sha256(image), c.protocolVersion);
     manifest.releases.push(entry);
     files.set(entry.path, image);
   }
   files.set(FIRMWARE_MANIFEST_PATH, Buffer.from(JSON.stringify(manifest)));
-  return { latest, manifest, files };
+  return { latest, manifest, files, warnings };
 }
 
 /** One line for a log: what the site serves. */
@@ -180,7 +194,8 @@ export function firmwareRelease(deps: FirmwareReleaseDeps = {}): Plugin {
         const wanted = /\/(firmware\/[^/]+\.(?:json|bin))$/.exec(path)?.[1];
         if (!wanted) return next();
         site().then(
-          ({ files }) => {
+          ({ files, warnings }) => {
+            for (const w of warnings) server.config.logger.warn(`[firmware-release] ${w}`, { timestamp: false });
             const body = files.get(wanted);
             if (!body) return next();
             res.setHeader('Cache-Control', 'no-store');
@@ -200,6 +215,7 @@ export function firmwareRelease(deps: FirmwareReleaseDeps = {}): Plugin {
       if (disabled) return;
       try {
         const s = await site();
+        for (const w of s.warnings) this.warn(w);
         for (const [fileName, source] of s.files) this.emitFile({ type: 'asset', fileName, source });
         this.info(`bundled ${describeSite(s)}`);
       } catch (err) {

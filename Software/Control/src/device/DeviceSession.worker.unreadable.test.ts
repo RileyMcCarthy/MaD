@@ -24,6 +24,8 @@ const core = vi.hoisted(() => ({
   polls: [] as unknown[][],
   /** Commands the session asked the core to read. */
   reads: [] as number[],
+  /** What the core's sample ring holds. */
+  stored: [] as Uint8Array[],
 }));
 
 vi.mock('@/wasm/protoemb_runtime.js', () => ({
@@ -43,8 +45,8 @@ vi.mock('@/wasm/protoemb_runtime.js', () => ({
       core.reads.push(command);
     }
     clear_queue(): void {}
-    get_stored(): unknown[] {
-      return [];
+    get_stored(): { entries: Uint8Array[] } {
+      return { entries: core.stored };
     }
   },
 }));
@@ -55,6 +57,7 @@ const cleanups: Array<() => Promise<void> | void> = [];
 beforeEach(() => {
   core.polls.length = 0;
   core.reads.length = 0;
+  core.stored.length = 0;
 });
 
 afterEach(async () => {
@@ -78,7 +81,8 @@ behaviour(
     given:
       'the board answers the machine-configuration read with a reply 12 bytes shorter than this app reads, as firmware from before fields were added to the configuration does',
     expect: {
-      'read-fails-at-once': 'the read fails as soon as the reply arrives, naming both lengths',
+      'read-fails-at-once':
+        'the read fails as soon as the reply arrives, saying the firmware uses an older protocol and naming both sizes',
       'session-survives': 'the session stays connected, and the next read is answered',
     },
     why: {
@@ -92,7 +96,9 @@ behaviour(
     await vi.waitFor(() => expect(core.reads).toEqual([MSG_READ_MACHINE_CONFIGURATION]));
     const short = MACHINECONFIGURATION_WIRE_SIZE - 12;
     core.polls.push([{ event: 'data', command: MSG_READ_MACHINE_CONFIGURATION, payload: new Uint8Array(short) }]);
-    await expect(config).rejects.toThrow(`reply is ${short} bytes, this app reads ${MACHINECONFIGURATION_WIRE_SIZE}`);
+    await expect(config).rejects.toThrow(
+      `uses an older protocol than this app (its machine configuration is ${short} bytes; this app expects ${MACHINECONFIGURATION_WIRE_SIZE})`,
+    );
 
     const info = session.readDeviceInfo();
     await vi.waitFor(() => expect(core.reads).toEqual([MSG_READ_MACHINE_CONFIGURATION, MSG_READ_DEVICE_INFO]));
@@ -125,5 +131,22 @@ behaviour(
     expect(seen.filter((e) => e.kind === 'sample')).toEqual([]);
     expect(seen.filter((e) => e.kind === 'error')).toHaveLength(1);
     expect(logged.filter((e) => e.tag === 'unreadable-reply')).toHaveLength(1);
+  },
+);
+
+behaviour(
+  {
+    id: 'session.stored-samples-of-another-layout-left-out',
+    covers: 'src/device/DeviceSession.worker.ts#DeviceSession.getStoredSamples',
+    given: 'the samples kept since connecting, where some are three bytes shorter than this app reads',
+    expect: {
+      'only-readable-handed-over':
+        'only the samples of this app\'s layout are handed to the live chart; the shorter ones are left out',
+    },
+  },
+  async () => {
+    const session = await connectedSession();
+    core.stored.push(new Uint8Array(SAMPLE_WIRE_SIZE), new Uint8Array(SAMPLE_WIRE_SIZE - 3), new Uint8Array(SAMPLE_WIRE_SIZE));
+    expect(await session.getStoredSamples()).toHaveLength(2);
   },
 );

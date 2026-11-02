@@ -365,20 +365,33 @@ describe('fetchFirmwareSite', () => {
     {
       id: 'firmware-release.site-malformed-info',
       covers: 'tools/firmwareRelease.ts#fetchFirmwareSite',
-      given: "a release whose file saying which protocol it speaks is not JSON, or has no protocol version",
-      expect: { 'names-release': 'the lookup fails naming the release and the malformed file' },
+      given:
+        "a release whose file saying which protocol it speaks is not JSON, or has no protocol version, beside an older release whose file is sound",
+      expect: {
+        'bad-release-left-out': 'the release with the bad file is left out of the list of releases per protocol',
+        'warned-by-name': 'a warning names that release and its malformed file',
+        'others-still-listed': 'the sound release is still listed for its protocol',
+      },
+      why: {
+        'others-still-listed':
+          'every Pages deploy and app release reads this list, so one bad release file must not stop them all',
+      },
     },
     async () => {
-      for (const body of ['not json', JSON.stringify({ version: '0.14' })]) {
-        const release = described('0.14', 2, '2026-10-20T00:00:00Z', 2);
-        release.assets[1].size = body.length;
+      for (const body of ['not json', JSON.stringify({ version: '0.15' })]) {
+        const bad = described('0.15', 3, '2026-11-10T00:00:00Z', 2);
+        bad.assets[1].size = body.length;
+        const good = described('0.14', 2, '2026-10-20T00:00:00Z', 2);
         const fetchFn = github({
-          list: () => new Response(JSON.stringify([release])),
-          asset: (id) => new Response(id === 102 ? body : new Uint8Array([id])),
+          list: () => new Response(JSON.stringify([bad, good])),
+          asset: (id) =>
+            new Response(id === 103 ? body : id === 102 ? info('0.14', 2) : new Uint8Array([id])),
         });
-        await expect(fetchFirmwareSite(fetchFn as unknown as typeof fetch, {})).rejects.toThrow(
-          'firmware-v0.14: firmware-info.json is malformed',
-        );
+        const site = await fetchFirmwareSite(fetchFn as unknown as typeof fetch, {});
+        expect(site.manifest.releases.map((r) => r.tag)).toEqual(['firmware-v0.14']);
+        expect(site.warnings).toEqual([
+          'firmware-v0.15: firmware-info.json is malformed; the release is left out of the firmware list',
+        ]);
       }
     },
   );

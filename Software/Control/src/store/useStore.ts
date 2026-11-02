@@ -712,7 +712,8 @@ export const useStore = create<AppState>((set, getState) => ({
   },
   homeAxis: () => {
     logStore.info('home');
-    if (refusedForFirmware(getState, 'home')) return Promise.resolve();
+    // Refused like the device client refuses it: a rejection carrying why.
+    if (refusedForFirmware(getState, 'home')) return Promise.reject(new Error(deviceClient.motionBlockReason()!));
     return deviceClient.homeAxis();
   },
   zeroForce: () => {

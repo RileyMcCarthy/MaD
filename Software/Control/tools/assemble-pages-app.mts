@@ -174,6 +174,7 @@ export async function assemble(opts: AssembleOptions): Promise<void> {
     const site = await opts.fetchFirmware();
     mkdirSync(join(out, 'firmware'), { recursive: true });
     for (const [path, body] of site.files) writeFileSync(join(out, path), body);
+    for (const w of site.warnings) log(`[assemble] warning: ${w}`);
     log(`[assemble] latest app v${latest}; firmware ${describeSite(site)}`);
   } finally {
     rmSync(work, { recursive: true, force: true });
