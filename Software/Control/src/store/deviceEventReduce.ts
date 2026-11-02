@@ -64,6 +64,7 @@ export function reduceDeviceEvent(e: DeviceEvent, userDisconnect: boolean): Devi
     }
     case 'portAvailable':
     case 'data':
+    case 'deviceInfo':
       return {};
     default:
       return {};

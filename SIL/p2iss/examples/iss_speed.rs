@@ -22,7 +22,7 @@
 //! cargo run --release -p p2iss --example iss_speed -- ec32mb [SECONDS]
 //! ```
 //!
-//! Needs the `propeller2_debug` image (`make p2image`); the `ec32mb` mode
+//! Needs the `MaDEdge` image (`make p2image`); the `ec32mb` mode
 //! also the boot ROM and stage-1 in `p2iss/rom/`.
 
 use std::path::PathBuf;
@@ -54,7 +54,7 @@ fn read(path: PathBuf) -> Vec<u8> {
 
 fn image() -> Vec<u8> {
     read(manifest(
-        "../../Firmware/MaDCore/.pio/build/propeller2_debug/program",
+        "../../Firmware/MaDCore/.pio/build/MaDEdge/program",
     ))
 }
 

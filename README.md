@@ -51,7 +51,7 @@ MaD/
 │   ├── embsim/              ⎘ submodule → github.com/RileyMcCarthy/embsim (reusable SIL framework)
 │   ├── models/              MaD physics models (gantry, sample, strain gauge)
 │   ├── mad-catalog/         MaD's embsim kinds (carrier, add-on, ISS, machine); mad*.toml are the machine's projects
-│   └── MaDSim/              The mad-emulator binary, SERVO-stall's board until a project can jam (MaD #298)
+│   └── MaDSim/              The mad-emulator binary; no target runs it, and it retires (MaD #298)
 ├── Hardware/                KiCad PCB designs (EdgeBoard, DS2Addon)
 └── docs/  +  mkdocs.yml     The documentation site
 ```
@@ -90,11 +90,11 @@ npm run app               # opens your browser; connect via Web Serial
 ### Build the firmware
 ```bash
 cd Firmware/MaDCore
-pio run -e propeller2              # build for hardware
-pio run -e propeller2 -t upload   # flash a connected board
-pio run -e propeller2_debug      # image the SIL emulator executes
+pio run -e P2Eval              # build for hardware
+pio run -e P2Eval -t upload   # flash a connected board
+pio run -e MaDEdge      # image the SIL emulator executes
 pio test -e native_test           # unit tests
-pio check -e propeller2 --fail-on-defect=medium --fail-on-defect=high  # MISRA (medium+high)
+pio check -e P2Eval --fail-on-defect=medium --fail-on-defect=high  # MISRA (medium+high)
 ```
 
 ### Run the full simulation (no hardware)

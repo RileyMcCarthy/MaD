@@ -38,10 +38,10 @@ void test_a_fresh_queue_is_empty_and_holds_nothing(void)
 {
     VIBES_TEST("queue.fresh-is-empty",
                "src/Library/lib_staticQueue.c#lib_staticQueue_init",
-               "a queue initialised over a four-slot buffer");
+               "a queue initialised over four slots");
     VIBES_EXPECT("empty", "the queue reports empty and a count of zero");
     VIBES_EXPECT_WHY("pop-refuses",
-                     "a pop returns false and leaves the caller's variable untouched",
+                     "a pop returns false and writes nothing to where the value would go",
                      "a consumer that trusted the return would otherwise log whatever happened to be on its stack as a real sample");
 
     TEST_ASSERT_TRUE(lib_staticQueue_isempty(&q));
@@ -84,7 +84,7 @@ void test_the_usable_capacity_is_one_less_than_the_buffer(void)
                "a four-slot queue filled until it refuses");
     VIBES_EXPECT_WHY("three-of-four",
                      "exactly three pushes succeed and the fourth is refused",
-                     "one slot is spent distinguishing full from empty, so a caller sizing a buffer for N samples gets N-1 and needs to know it");
+                     "one slot is spent distinguishing full from empty, so a queue sized for N samples holds N-1, and whoever sizes it needs to know");
 
     TEST_ASSERT_TRUE(push(1));
     TEST_ASSERT_TRUE(push(2));

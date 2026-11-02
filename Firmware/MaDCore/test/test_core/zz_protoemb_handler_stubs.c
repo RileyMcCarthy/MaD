@@ -16,6 +16,7 @@ bool ProtoEmb_onRead_state(ProtoEmb_MachineState_t *out) { (void)out; return fal
 bool ProtoEmb_onRead_machine_configuration(ProtoEmb_MachineConfiguration_t *out) { (void)out; return false; }
 bool ProtoEmb_onRead_firmware_version(ProtoEmb_FirmwareVersion_t *out) { (void)out; return false; }
 bool ProtoEmb_onRead_sample_profile(ProtoEmb_SampleProfile_t *out) { (void)out; return false; }
+bool ProtoEmb_onRead_device_info(ProtoEmb_DeviceInfo_t *out) { (void)out; return false; }
 
 /* onWrite / onWriteRaw: reject */
 ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWrite_machine_configuration_write(const ProtoEmb_MachineConfiguration_t *in) { (void)in; return PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK; }

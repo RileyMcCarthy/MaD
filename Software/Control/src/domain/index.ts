@@ -8,3 +8,4 @@ export * from './exportCsv';
 export * from './stateLabels';
 export * from './profileFiles';
 export * from './jogIncrements';
+export * from './firmwareCompat';

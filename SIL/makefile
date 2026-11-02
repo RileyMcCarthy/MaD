@@ -1,11 +1,11 @@
 # MaD SIL Testing - Makefile
 #
 # Commands:
-#   make p2image        - Build the P2 image the ISS executes (propeller2_debug)
-#   make p2image-production - Build the production P2 image (propeller2), the one flash-image lays out
+#   make p2image        - Build the P2 image the ISS executes (MaDEdge)
+#   make p2image-production - Build the production P2 image (P2Eval), the one flash-image lays out
 #   make emulator       - Build the Rust emulator
 #   make test           - Build the image, run the Rust test suite
-#   make playground     - mad-playground.toml under embsim run: the machine (IC14 fixed), MaD Control in a Chrome window on the board's clock
+#   make playground     - mad-playground.toml under embsim run: the machine, MaD Control in a Chrome window on the board's clock
 #   make playground-iss - The same target, under the name it had beside the native one
 #   make playground-pty - mad.toml under embsim run, its host a PTY at /tmp/tty.iss, for a serial console
 #   make playground-rom - mad-serial-boot-playground.toml: the ROM's serial boot, the app's flasher in a Chrome window
@@ -13,8 +13,8 @@
 #   make e2e            - The app served, e2e-emulator's board and the e2e suite against it (SCENARIOS selects)
 #   make e2e-rom        - FW-ISS: the app's flasher against the ISS's mask ROM, on mad-serial-boot-cosim.toml
 #   make e2e-bundle     - BUNDLE-live: the built bundle (as pages.yml builds it) on e2e-emulator's board
-#   make e2e-motion     - What the project as drawn cannot run (the carriage's scenarios), on mad-ic14-fixed-cosim.toml
-#   make e2e-stall      - SERVO-stall on mad-emulator, the one scenario no project can run (its jam)
+#   make e2e-motion     - The scenarios that move the carriage, on mad-cosim.toml (MOTION_SHARD splits them)
+#   make e2e-stall      - SERVO-stall on mad-hard-stop-cosim.toml: the carriage jogged into a hard stop
 #   make flash-image    - build/flash.bin: stage-1 and the production image, the module's boot flash
 #   make sd-image       - build/sd.img: a 32 MiB FAT16 card mirroring ./sd
 #   make check          - embsim check on MaD's seven project files (mad*.toml)
@@ -27,11 +27,11 @@
 # port is the node's, on the board's protocol pins. The e2e runs it on the
 # machine's project, mad-cosim.toml (embsim MIGRATING-MAD.md step 10), the
 # node on the carrier's debug header J1, and FW-ISS on the project's serial
-# boot, mad-serial-boot-cosim.toml; e2e-motion, what the project as drawn
-# cannot run, and the playgrounds run it on the board with MaD #285 fixed,
-# mad-ic14-fixed-cosim.toml and its headed copy (step 11). Only SERVO-stall
-# (e2e-stall) is still mad-emulator's (`--chrome`, step 1b), for its jam,
-# which no project has (MaD #298). A browser on
+# boot, mad-serial-boot-cosim.toml; e2e-motion, the scenarios that move
+# the carriage, runs on mad-cosim.toml too, and the playgrounds on its
+# headed copy (step 11); SERVO-stall (e2e-stall) on that file with a hard
+# stop on its carriage, mad-hard-stop-cosim.toml (MaD #298). No e2e target
+# runs mad-emulator. A browser on
 # the host's own clock (behind a PTY, or the WS bridge) measures the host,
 # not the machine: the ISS interprets every instruction at a few percent of
 # real time, and the app's 2 s response timeout would fire at a fraction of
@@ -42,14 +42,14 @@ FIRMWARE_DIR = ../Firmware/MaDCore
 # build, its MAIN channel on P30/P32 and its log on P62. Those routes put
 # the host straight on the chip's P30/P32 and read the log: the chip on no
 # module and no carrier, so nothing sits between the host and those pins.
-P2_ENV = propeller2_debug
+P2_ENV = MaDEdge
 P2_IMAGE = $(FIRMWARE_DIR)/.pio/build/$(P2_ENV)/program
 # The production build, the project files' route (the user's decision;
 # which image the machine runs is open, SIL/mad.toml's header): its MAIN
 # channel on P62/P63, the carrier's debug header J1, where the Prop Plug
 # sits. The project files' module flash holds it (flash-image), and
 # mad-catalog/tests/mad.rs boots it.
-PRODUCTION_ENV = propeller2
+PRODUCTION_ENV = P2Eval
 PRODUCTION_IMAGE = $(FIRMWARE_DIR)/.pio/build/$(PRODUCTION_ENV)/program
 PROTOEMB_GENERATOR = ../Protocol/ProtoEmb/core/generate.py
 PROTOEMB_SCHEMA = ../Protocol/MaDProtocol.yaml
@@ -67,7 +67,7 @@ BUILD_DIR = build
 FLASH_IMAGE = $(BUILD_DIR)/flash.bin
 SD_IMAGE = $(BUILD_DIR)/sd.img
 
-.PHONY: p2image p2image-production protocol emulator emulator-release test playground playground-iss playground-pty playground-rom e2e-emulator e2e e2e-rom e2e-bundle e2e-motion e2e-stall flash-image sd-image check bootrom clean
+.PHONY: p2image p2image-production protocol emulator emulator-release test playground playground-iss playground-pty playground-rom e2e-emulator e2e e2e-rom e2e-bundle e2e-motion e2e-stall e2e-compat flash-image sd-image check bootrom clean
 
 # Build the P2 image the ISS runs (`p2core`, `p2iss`, `mad-emulator`).
 #
@@ -104,8 +104,8 @@ emulator-release: protocol
 	cargo build --release --bin mad-emulator
 
 # MaD Control on the ISS, for a person (embsim MIGRATING-MAD.md step 11):
-# mad-playground.toml, the machine with MaD #285 fixed (a headed copy of
-# mad-ic14-fixed-cosim.toml, so the carriage moves), under embsim run. Its
+# mad-playground.toml, the machine (a headed copy of mad-cosim.toml),
+# under embsim run. Its
 # Chrome opens a window on the app, served by its dev server on 5174
 # (started here unless this checkout's answers there), every page and worker
 # in that Chrome on the board's clock; the run prints where its DevTools
@@ -176,23 +176,20 @@ e2e-bundle: flash-image sd-image
 	cd ../Software/Control && ./node_modules/.bin/vite build --base=$(BUNDLE_BASE) --outDir $(BUNDLE_DIR) --emptyOutDir
 	APP_DIST=$(BUNDLE_DIR) APP_BASE=$(BUNDLE_BASE) SCENARIOS=BUNDLE-live EMBSIM="$(EMBSIM)" E2E_PROJECT=$(E2E_PROJECT) scripts/board-route.sh e2e
 
-# What the project as drawn cannot run (run-all.mjs, PROJECT_CANNOT, listed
-# by `--list --cannot`): the scenarios that move the carriage, which IC14 as
-# drawn keeps from the drive (MaD #285), on the board with #285 fixed,
-# mad-ic14-fixed-cosim.toml: mad-cosim.toml with one wire from IC14's ground
-# to EN_GND (mad-catalog/tests/projects.rs holds it to that). The suite
-# skips SERVO-stall there, which jams the carriage, saying why: no project
-# has a jam yet. `make e2e-motion SCENARIOS=G2+G3+H2+I` narrows the set;
+# The scenarios that move the carriage (run-all.mjs, MOVES, listed by
+# `--list --moves`), on the machine's project, mad-cosim.toml. The list
+# leaves out SERVO-stall, which drives the carriage into a hard stop:
+# e2e-stall runs it. `make e2e-motion SCENARIOS=G2+G3+H2+I` narrows the set;
 # naming nothing in it fails. MOTION_SHARD=K/N runs the K-th of N shares of
 # the set, every N-th scenario from the K-th in the suite's order, so a
 # workflow can split it across jobs (the nightly runs three); a share left
 # empty, of a set narrowed below N, runs nothing and passes.
-MOTION_PROJECT = mad-ic14-fixed-cosim.toml
+MOTION_PROJECT = mad-cosim.toml
 MOTION_SHARD ?=
 e2e-motion: flash-image sd-image
 	$(EMBSIM) check $(MOTION_PROJECT)
-	@ids=$$(cd ../Software/Control && node e2e/run-all.mjs --list --cannot | paste -sd, -); \
-	if [ -z "$$ids" ]; then echo "e2e-motion: SCENARIOS names nothing the project cannot run" >&2; exit 1; fi; \
+	@ids=$$(cd ../Software/Control && node e2e/run-all.mjs --list --moves | paste -sd, -); \
+	if [ -z "$$ids" ]; then echo "e2e-motion: SCENARIOS names no scenario that moves the carriage" >&2; exit 1; fi; \
 	if [ -n "$(MOTION_SHARD)" ]; then \
 	  echo "$(MOTION_SHARD)" | awk -F/ 'NF == 2 && $$1 >= 1 && $$2 >= $$1 { ok = 1 } END { exit !ok }' \
 	    || { echo "e2e-motion: MOTION_SHARD=$(MOTION_SHARD) is not K/N with 1 <= K <= N" >&2; exit 2; }; \
@@ -201,6 +198,30 @@ e2e-motion: flash-image sd-image
 	fi; \
 	echo "e2e-motion: $$ids"; \
 	EMBSIM="$(EMBSIM)" E2E_PROJECT=$(MOTION_PROJECT) SCENARIOS="$$ids" scripts/board-route.sh e2e
+
+# The firmware-compatibility scenarios that need other firmware on the
+# board (run-all.mjs, NEEDS_FIRMWARE), on e2e's board with that firmware in
+# the module's flash: COMPAT-too-old on a release from before the app could
+# ask the firmware which protocol it speaks (COMPAT_OLD_TAG, as published),
+# and COMPAT-app-too-old on this tree's firmware built one protocol_version
+# ahead. scripts/compat-images.sh builds both; no firmware source changes
+# for either. This tree's image goes back in the flash afterwards, however
+# the runs end. The scenarios that need this tree's firmware (COMPAT-ok, and
+# COMPAT-ok-motion in e2e-motion) run with the rest of the suite.
+COMPAT_OLD_TAG ?= firmware-v0.14
+e2e-compat: flash-image sd-image
+	$(EMBSIM) check $(E2E_PROJECT)
+	EMBSIM="$(EMBSIM)" COMPAT_OLD_TAG=$(COMPAT_OLD_TAG) scripts/compat-images.sh
+	@trap '$(EMBSIM) flash-image $(PRODUCTION_IMAGE) -o $(FLASH_IMAGE) >/dev/null' EXIT; \
+	status=0; \
+	for run in old:COMPAT-too-old future:COMPAT-app-too-old; do \
+	  firmware=$${run%%:*}; \
+	  echo "e2e-compat: $${run#*:} on the $$firmware firmware"; \
+	  cp $(BUILD_DIR)/flash-compat-$$firmware.bin $(FLASH_IMAGE); \
+	  E2E_FIRMWARE=$$firmware SCENARIOS=$${run#*:} EMBSIM="$(EMBSIM)" E2E_PROJECT=$(E2E_PROJECT) \
+	    scripts/board-route.sh e2e || status=1; \
+	done; \
+	exit $$status
 
 # The module's boot flash: embsim's stage-1 loader, then the production
 # image behind it, as the P2's ROM boots it off the flash (`embsim
@@ -222,15 +243,15 @@ sd-image:
 # MaD's project files (embsim MIGRATING-MAD.md section 1): the machine as it
 # runs, booting the firmware off the module's flash, and the ROM's serial
 # boot, each with a host-serial and with the host's Chrome (chrome-cdp) on
-# the same pins; the flash boot with MaD #285 fixed, with the host's Chrome;
-# and the two playgrounds, headed copies of that file and of the serial
-# boot's. `embsim check` builds each: every part placed, every wire on a
+# the same pins; that file with a hard stop on the carriage (MaD #298); and
+# the two playgrounds, headed copies of the two Chrome files. `embsim check`
+# builds each: every part placed, every wire on a
 # connector, every option the kinds take; it boots the chip with time held
 # and runs nothing. A chrome-cdp starts no Chrome at check, but check
 # refuses its file on a machine where it finds none. Both boots name the
 # card `make sd-image` writes; the flash boot names `make flash-image`'s.
 PROJECTS = mad.toml mad-serial-boot.toml
-COSIM_PROJECTS = mad-cosim.toml mad-serial-boot-cosim.toml mad-ic14-fixed-cosim.toml
+COSIM_PROJECTS = mad-cosim.toml mad-serial-boot-cosim.toml mad-hard-stop-cosim.toml
 PLAYGROUND_PROJECTS = mad-playground.toml mad-serial-boot-playground.toml
 check: flash-image sd-image
 	for project in $(PROJECTS) $(COSIM_PROJECTS) $(PLAYGROUND_PROJECTS); do $(EMBSIM) check $$project || exit 1; done
@@ -272,17 +293,17 @@ e2e-rom: sd-image
 	$(EMBSIM) check $(ROM_PROJECT)
 	EMBSIM="$(EMBSIM)" E2E_PROJECT=$(ROM_PROJECT) E2E_BOARD=rom SCENARIOS=FW-ISS scripts/board-route.sh e2e
 
-# SERVO-stall (a jammed carriage latches the stall; Live clears it and
-# re-enables motion), the one scenario no project can run: its jam is
-# mad-emulator's --jam-file, a lever the project's machine has no stepped
-# form of (mad-catalog/src/machine.rs, "Not modelled"). So it runs on
-# mad-emulator's board (BOARD_ROUTE=emulator): the debug image on the bare
-# chip, the host on P30/P32, a headless Chrome on the board's clock. This
-# target, mad-emulator and the debug image's route are what keep
-# mad-emulator in the tree (embsim MIGRATING-MAD.md step 11's exception;
-# MaD #298 is the jam a project would need).
-e2e-stall: p2image emulator-release
-	BOARD_ROUTE=emulator SCENARIOS=SERVO-stall scripts/board-route.sh e2e
+# SERVO-stall (a carriage jogged into a hard stop latches the stall; Live
+# clears it and re-enables motion; a jog takes the carriage off the stop) on
+# mad-hard-stop-cosim.toml: mad-cosim.toml with a hard stop 3 mm
+# above the carriage's start (the machine's hard_stop_mm;
+# mad-catalog/src/machine.rs, "The hard stop"; mad-catalog/tests/projects.rs
+# holds the file to that one option). The suite skips the board's other
+# scenarios that move the carriage, which the stop would meet (MaD #298).
+STALL_PROJECT = mad-hard-stop-cosim.toml
+e2e-stall: flash-image sd-image
+	$(EMBSIM) check $(STALL_PROJECT)
+	EMBSIM="$(EMBSIM)" E2E_PROJECT=$(STALL_PROJECT) SCENARIOS=SERVO-stall scripts/board-route.sh e2e
 
 # Clean build artifacts
 clean:

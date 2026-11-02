@@ -142,8 +142,11 @@ export const HOST_BACKSTOP_MS = Number(process.env.E2E_HOST_BACKSTOP_MS || 15 * 
  * factor applies: the board running at a few percent of real time, or at a
  * fraction of that while the firmware works its SD card, slows the host's
  * clock, not this one. A healthy run never spends it: it bounds a hang, it
- * does not pace a passing test. No wait in this suite is used to prove
- * something is ABSENT, so the ceiling cannot weaken an assertion.
+ * does not pace a passing test. No wait on this budget is used to prove
+ * something is ABSENT, so the ceiling cannot weaken an assertion. A scenario
+ * that must show an absence watches a fixed window of board time instead
+ * (`waitPageTime`), sized where it is used by how soon the thing would show
+ * if it happened: SERVO-stall's 2 s with no stall after re-enabling motion.
  */
 export const DEVICE_WAIT_MS = 20_000;
 
@@ -744,8 +747,9 @@ export function setCurrentScenario(id) {
  *     mad-cosim.toml` (`make e2e-emulator`): the carrier and the module as
  *     drawn, the production firmware off the module's flash, the host on J1;
  *   - `emulator`: `mad-emulator --chrome`, the debug firmware on the bare
- *     chip, the host on P30/P32: SERVO-stall's board alone (make e2e-stall;
- *     no project has a jam, MaD #298).
+ *     chip, the host on P30/P32. No make target runs it since SERVO-stall
+ *     moved onto mad-hard-stop-cosim.toml (MaD #298); it retires with
+ *     mad-emulator.
  */
 export const BOARD_ROUTE = process.env.E2E_BOARD_ROUTE || 'project';
 
@@ -802,6 +806,16 @@ export async function awaitResponding(page, { timeoutMs = DEVICE_WAIT_MS } = {})
     await page.locator('.statusbar').getByText(/fw /).waitFor({ timeout: left });
   } catch {
     throw new Error('device responded but the opening handshake never published a firmware version');
+  }
+  // Motion fails closed until the firmware says which protocol it speaks: a
+  // scenario that enabled motion before the answer would be refused.
+  try {
+    await page.locator('[data-testid="firmware-compat"][data-kind="checking"]').waitFor({
+      state: 'detached',
+      timeout: Math.max(1000, timeoutMs - (await clock.elapsed())),
+    });
+  } catch {
+    throw new Error('the firmware never answered which protocol it speaks (still checking)');
   }
 }
 
@@ -904,12 +918,40 @@ export async function chooseDataFolder(page) {
  *                requestPort() always returns the one real ROM.
  *   getPortsFails make getPorts() reject, as a permissions policy would.
  *   writeDelayMs  slow the sink so mid-upload UI states are observable.
+ *   firmware      a board running firmware until its first reset: the port
+ *                 answers the MaD protocol as that firmware would, so the app
+ *                 can connect a session to it. `{ version, protocol }`, where
+ *                 `protocol` is the number it reports when asked which
+ *                 protocol it speaks, null to refuse the question (firmware
+ *                 from before the question existed), or 'silent' to never
+ *                 answer it. Without it the port is the ROM alone, as before.
+ *   afterFlash    the firmware the board boots once a flash completes, in the
+ *                 same shape: the image the app wrote, as far as the app can
+ *                 tell. Without it the board stays in its ROM.
+ *   sizes         the protocol's fixed reply sizes, from the generated codec
+ *                 (`protocolSizes()` in run-all.mjs): needed with `firmware`.
+ *
+ * The firmware answers every read the app's session makes with a reply of
+ * the right size (zeros, but for its version and protocol), acknowledges
+ * every write, and keeps motion enabled or disabled as the app last set it,
+ * so the Live screen's controls unlock. `window.__bootRom.firmware` is what
+ * it runs now (null in the ROM), `.reads` and `.writes` every command it
+ * received, in order.
  */
 export function installFakeBootRom(options = 1) {
-  const { ports: portCount = 1, getPortsFails = false, writeDelayMs = 0 } =
-    typeof options === 'number' ? { ports: options } : options;
+  const {
+    ports: portCount = 1,
+    getPortsFails = false,
+    writeDelayMs = 0,
+    firmware = null,
+    afterFlash = null,
+    sizes = null,
+  } = typeof options === 'number' ? { ports: options } : options;
   const CHECKSUM_MAGIC = 0x706f7250;
-  const state = { reset: 0, image: [], finished: false, ok: null, dtr: null, bytesIn: 0, replies: 0, checksum: null, finishedAt: null, closedAt: null };
+  const state = {
+    reset: 0, image: [], finished: false, ok: null, dtr: null, bytesIn: 0, replies: 0, checksum: null,
+    finishedAt: null, closedAt: null, firmware, reads: [], writes: [], motionEnabled: false,
+  };
   window.__bootRom = state;
 
   let controller;
@@ -918,13 +960,91 @@ export function installFakeBootRom(options = 1) {
   let sum = 0;
   let longBuf = [];
 
-  const emit = (s) => {
-    const bytes = Uint8Array.from(s, (c) => c.charCodeAt(0));
+  const emitBytes = (bytes) => {
     state.replies += 1;
     try {
-      controller?.enqueue(bytes);
+      controller?.enqueue(Uint8Array.from(bytes));
     } catch {
       /* closed */
+    }
+  };
+  const emit = (s) => emitBytes(Array.from(s, (c) => c.charCodeAt(0)));
+
+  // The firmware's side of the MaD protocol (Protocol/ProtoEmb/docs/wire-format.md).
+  const crc8 = (bytes) => {
+    let crc = 0;
+    for (let b of bytes) {
+      for (let i = 0; i < 8; i++) {
+        const mix = (crc ^ b) & 1;
+        crc >>= 1;
+        if (mix) crc ^= 0x8c;
+        b >>= 1;
+      }
+    }
+    return crc;
+  };
+  const reply = (cmd, payload) =>
+    emitBytes([0x55, 0x02, cmd, payload.length & 0xff, payload.length >> 8, ...payload, crc8(payload)]);
+  const zeros = (n) => new Array(n).fill(0);
+  const onRead = (cmd) => {
+    const fw = state.firmware;
+    state.reads.push(cmd);
+    switch (cmd) {
+      case 0: return reply(0, zeros(sizes.sample));
+      // MachineState, packed LSB first: fault (4 bits), restriction (3), test running, motion enabled.
+      case 1: return reply(1, [0, state.motionEnabled ? 1 : 0]);
+      case 2: return reply(2, zeros(sizes.config));
+      case 3: {
+        const text = Array.from(fw.version, (c) => c.charCodeAt(0)).slice(0, sizes.version - 1);
+        return reply(3, [...text, ...zeros(sizes.version - text.length)]);
+      }
+      case 4: return reply(4, zeros(sizes.profile));
+      case 5:
+        if (fw.protocol === 'silent') return undefined;
+        if (fw.protocol === null) return emitBytes([0x55, 0x00, 5]);
+        return reply(5, [fw.protocol & 0xff, (fw.protocol >> 8) & 0xff, (fw.protocol >> 16) & 0xff, fw.protocol >>> 24]);
+      default:
+        return emitBytes([0x55, 0x00, cmd]);
+    }
+  };
+  const onWrite = (cmd, data) => {
+    state.writes.push({ cmd, data });
+    if (cmd === 1) state.motionEnabled = data[0] !== 0;
+    emitBytes([0x55, 0x01, cmd]);
+  };
+  let rx = [];
+  function consumeProtocol(chunk) {
+    rx.push(...chunk);
+    for (;;) {
+      const sync = rx.indexOf(0x55);
+      if (sync < 0) {
+        rx = [];
+        return;
+      }
+      rx = rx.slice(sync);
+      if (rx.length < 3) return;
+      const [, type, cmd] = rx;
+      if (type === 0x00) {
+        rx = rx.slice(3);
+        onRead(cmd);
+      } else if (type === 0x01) {
+        if (rx.length < 5) return;
+        const len = rx[3] | (rx[4] << 8);
+        if (rx.length < 6 + len) return;
+        const data = rx.slice(5, 5 + len);
+        rx = rx.slice(6 + len);
+        onWrite(cmd, data);
+      } else {
+        rx = rx.slice(1);
+      }
+    }
+  }
+  // A completed flash: the chip runs what was written.
+  const boot = () => {
+    if (afterFlash) {
+      state.firmware = afterFlash;
+      state.motionEnabled = false;
+      rx = [];
     }
   };
 
@@ -959,6 +1079,7 @@ export function installFakeBootRom(options = 1) {
         state.finishedAt = performance.now();
         state.ok = true;
         hexMode = false;
+        boot();
         continue;
       }
       if (tok === '?') {
@@ -970,6 +1091,7 @@ export function installFakeBootRom(options = 1) {
         state.checksum = state.image.splice(-4, 4);
         emit(state.ok ? '.' : '!');
         hexMode = false;
+        if (state.ok) boot();
         continue;
       }
       if (!/^[0-9a-f]{2}$/.test(tok)) continue;
@@ -997,7 +1119,8 @@ export function installFakeBootRom(options = 1) {
         writable = new WritableStream({
           async write(chunk) {
             if (writeDelayMs) await new Promise((r) => setTimeout(r, writeDelayMs));
-            consume(String.fromCharCode(...chunk));
+            if (state.firmware) consumeProtocol(chunk);
+            else consume(String.fromCharCode(...chunk));
           },
         });
       },
@@ -1014,6 +1137,8 @@ export function installFakeBootRom(options = 1) {
         // A falling edge on DTR is what actually resets the P2.
         if (state.dtr === true && dataTerminalReady === false) {
           state.reset += 1;
+          // A reset stops the firmware: the chip is in its ROM again.
+          state.firmware = null;
           state.image = [];
           state.finished = false;
           state.ok = null;

@@ -99,7 +99,7 @@ behaviour(
       'every-failure-counted':
         'a bug report reads this count to show how many batches of samples, machine states and disconnects never reached the screen',
       'logged-once':
-        'a broken callback fails on every poll of the link, and one entry per failure would flood the log that reports the problem',
+        'a broken event handler fails on every poll of the link, and one entry per failure would flood the log that reports the problem',
     },
   },
   async () => {

@@ -15,6 +15,7 @@ import CapabilityGate from './ui/CapabilityGate';
 import DataFolderGate from './ui/DataFolderGate';
 import ErrorBoundary from './ui/ErrorBoundary';
 import Toast from './ui/Toast';
+import FirmwareCompatBanner from './ui/components/FirmwareCompatBanner';
 import { useStore } from './store/useStore';
 import { NotificationType } from './domain';
 import { logger } from './diagnostics/log';
@@ -246,6 +247,7 @@ function Shell() {
       </aside>
       <main className="main">
         <StatusBar />
+        <FirmwareCompatBanner />
         {/* Screen-level boundary: a crashed screen shows a recoverable panel but
             leaves the sidebar, status bar, and global STOP intact. Keyed by route
             so navigating away clears a stuck error. */}

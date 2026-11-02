@@ -96,6 +96,11 @@ export interface FirmwareVersion {
   version: string;
 }
 
+/** The compatibility handshake's reply: the protocol version the firmware speaks. */
+export interface DeviceInfo {
+  protocolVersion: number;
+}
+
 /**
  * The waveform a `math` move runs:
  *  - `sine`: a cyclic sine around wherever the gantry is (amplitude,

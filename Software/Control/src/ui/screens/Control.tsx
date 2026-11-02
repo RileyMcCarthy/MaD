@@ -6,6 +6,7 @@ import {
   JOG_INCREMENTS_MM,
   RestrictedReason,
   NotificationType,
+  blocksMotion,
   formatJogIncrementLabel,
   isSelectedJogIncrement,
 } from '@/domain';
@@ -58,6 +59,9 @@ export default function Control() {
   const homeAxis = useStore((s) => s.homeAxis);
   const zeroForce = useStore((s) => s.zeroForce);
   const zeroLength = useStore((s) => s.zeroLength);
+  // The store explains a jog refused for the firmware itself; the toast below
+  // is for a jog the machine turned down.
+  const firmwareBlocks = useStore((s) => blocksMotion(s.firmwareCompat));
   // No state frame yet (fresh connect, or a reconnect reset it to null) means
   // the machine's condition is UNKNOWN — which must never be collapsed into a
   // safe-sounding default. `Boolean(state?.testRunning)` reads unknown as "no
@@ -93,7 +97,7 @@ export default function Control() {
       return;
     }
     const ok = await manualMove(mm, jogSpeed);
-    if (!ok) notify(NotificationType.WARN, 'Jog was rejected by the machine.');
+    if (!ok && !firmwareBlocks) notify(NotificationType.WARN, 'Jog was rejected by the machine.');
   };
 
   if (!connected) {
@@ -174,8 +178,9 @@ export default function Control() {
           >
             {motion ? motion.label : 'Motion …'}
           </button>
+          {/* A refused Home rejects; the store has already said why in a toast. */}
           <button
-            onClick={() => homeAxis()}
+            onClick={() => void homeAxis().catch(() => undefined)}
             disabled={moveBlocked}
             title={moveBlocked ? status.moveBlockedReason : 'Homes the axis (G28)'}
           >

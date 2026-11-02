@@ -134,7 +134,7 @@ void test_start_writes_then_reads_back_all_five_registers(void)
 {
     VIBES_TEST("ads122.start-writes-and-verifies-config",
                "src/IO/IO_ADS122U04.c#IO_ADS122U04_start",
-               "a start of the load-cell ADC whose configuration read-back matches what was written");
+               "a start of the load-cell ADC whose configuration reads back as written");
     VIBES_EXPECT("start-succeeds", "the start succeeds");
     VIBES_EXPECT("config-written", "the configuration is written to the converter");
     /* The echo read-back equals what was written, so verification passes; also
@@ -148,7 +148,7 @@ void test_start_fails_on_register_read_timeout(void)
 {
     VIBES_TEST("ads122.start-fails-on-read-timeout",
                "src/IO/IO_ADS122U04.c#IO_ADS122U04_start",
-               "a start of the load-cell ADC whose configuration read-back never arrives");
+               "a start of the load-cell ADC whose configuration check gets no reply");
     VIBES_EXPECT("start-fails", "the start fails");
     VIBES_EXPECT("never-converts", "the converter is never told to begin converting");
     d_readOk = false; /* read-back times out */
@@ -245,7 +245,7 @@ void test_receiveConversion_drains_stale_bytes_before_requesting(void)
                "src/IO/IO_ADS122U04.c#IO_ADS122U04_receiveConversion",
                "leftover bytes sitting on the load-cell ADC serial link from a previous request, then a new conversion");
     VIBES_EXPECT_WHY("flushed-before-request",
-                     "the leftovers are flushed before the read request goes out",
+                     "the leftovers are discarded before the read request goes out",
                      "a conversion is three framed bytes; leftovers from a previous timed-out request would rotate every later reading");
     VIBES_EXPECT("signal-from-new-conversion", "the reported signal comes from the new conversion");
     d_staleBytes = 5;

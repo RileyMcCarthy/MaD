@@ -50,19 +50,19 @@ fn sil() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
 }
 
-/// The production program (pio env `propeller2`), the one `make
+/// The production program (pio env `P2Eval`), the one `make
 /// flash-image` lays out: `MAD_P2_PRODUCTION_IMAGE` names a copy kept out
 /// of `.pio` (the CI jobs'), else the build's own.
 fn image_path() -> PathBuf {
     let p = std::env::var_os("MAD_P2_PRODUCTION_IMAGE").map_or_else(
-        || sil().join("../Firmware/MaDCore/.pio/build/propeller2/program"),
+        || sil().join("../Firmware/MaDCore/.pio/build/P2Eval/program"),
         PathBuf::from,
     );
     if !p.exists() && std::env::var_os("MAD_REQUIRE_P2_IMAGE").is_some() {
         panic!(
             "MAD_REQUIRE_P2_IMAGE is set but the production P2 image is missing at {}. \
              Build it with `make p2image-production` (or `cd Firmware/MaDCore && pio run -e \
-             propeller2`).",
+             P2Eval`).",
             p.display()
         );
     }
@@ -200,10 +200,8 @@ fn the_firmware_answers_its_version_on_the_hosts_pty() {
     behaviour!(Test {
         id: "mad-project.pty-round-trip",
         covers: Some("SIL/mad.toml"),
-        given: "the machine's project file run live for 2 s of board time, the production \
-                firmware in the module's flash, and a program on the host's PTY reading the \
-                firmware's version from the run's start, again every 100 ms of its own time \
-                until answered",
+        given: "the production firmware run live for 2 s of board time, with a host program on \
+                the PTY reading the firmware's version every 100 ms until answered",
     });
     expect!(
         "version-answered",

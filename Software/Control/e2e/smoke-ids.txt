@@ -20,3 +20,5 @@ M12-sigmoid
 M11-idle-drop
 B5-reconnect
 FW1
+COMPAT-ok
+COMPAT-update-loop

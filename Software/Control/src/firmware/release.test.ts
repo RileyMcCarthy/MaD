@@ -1,12 +1,20 @@
 import { afterEach, describe, expect, vi } from 'vitest';
 import { behaviour } from '@vibes/behaviour';
 import {
+  cacheRecommendedRelease,
+  describedReleases,
+  fetchFirmwareManifest,
+  boardImage,
   fetchReleaseImage,
-  fetchReleaseManifest,
+  isFirmwareInfo,
+  newestPerProtocol,
   pickFirmwareAsset,
   pickFirmwareRelease,
+  recommendedRelease,
   releaseImageLabel,
   toManifest,
+  toManifestEntry,
+  type FirmwareManifestEntry,
   type FirmwareReleaseManifest,
   type GithubRelease,
 } from './release';
@@ -37,7 +45,25 @@ const manifest = (over: Partial<FirmwareReleaseManifest> = {}): FirmwareReleaseM
   ...over,
 });
 
+const entry = (over: Partial<FirmwareManifestEntry> = {}): FirmwareManifestEntry => ({
+  ...manifest(),
+  protocolVersion: 2,
+  path: 'firmware/MaD-Firmware-0.1-release.bin',
+  ...over,
+});
+
 const serve = (body: BodyInit, status = 200) => async () => new Response(body, { status });
+
+/** A release carrying a production image and, unless `described` is false, its firmware-info.json. */
+const firmware = (tag: string, publishedAt: string, described = true): GithubRelease =>
+  release({
+    tag_name: tag,
+    published_at: publishedAt,
+    assets: [
+      { id: 1, name: `MaD-Firmware-${tag.slice('firmware-v'.length)}-release.bin`, size: 4 },
+      ...(described ? [{ id: 2, name: 'firmware-info.json', size: 40 }] : []),
+    ],
+  });
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -170,14 +196,27 @@ describe('releaseImageLabel', () => {
     {
       id: 'flash.release-label-production',
       covers: 'src/firmware/release.ts#releaseImageLabel',
-      given: 'the latest release image is named MaD-Firmware-0.13-release.bin',
+      given: 'a release image named MaD-Firmware-0.15-P2Eval.bin, or MaD-Firmware-0.13-release.bin from before the board names',
       expect: {
-        'named-production':
-          'the Firmware screen calls it the production build, as it does any image whose name ends in -release.bin',
+        'named-production': 'the Firmware screen calls both the P2Eval production build',
       },
     },
     () => {
-      expect(releaseImageLabel('MaD-Firmware-0.13-release.bin')).toBe('production build');
+      expect(releaseImageLabel('MaD-Firmware-0.15-P2Eval.bin')).toBe('P2Eval production build');
+      expect(releaseImageLabel('MaD-Firmware-0.13-release.bin')).toBe('P2Eval production build');
+    },
+  );
+
+  behaviour(
+    {
+      id: 'flash.release-label-madedge',
+      covers: 'src/firmware/release.ts#releaseImageLabel',
+      given: 'a release image named MaD-Firmware-0.15-MaDEdge.bin, or MaD-Firmware-0.13-madEdge.bin from before the board names',
+      expect: { 'named-debug': 'the Firmware screen calls both the MaDEdge debug build' },
+    },
+    () => {
+      expect(releaseImageLabel('MaD-Firmware-0.15-MaDEdge.bin')).toBe('MaDEdge debug build');
+      expect(releaseImageLabel('MaD-Firmware-0.13-madEdge.bin')).toBe('MaDEdge debug build');
     },
   );
 
@@ -185,7 +224,7 @@ describe('releaseImageLabel', () => {
     {
       id: 'flash.release-label-other-image',
       covers: 'src/firmware/release.ts#releaseImageLabel',
-      given: 'the latest release image is named MaD-Firmware-0.13-madEdge.bin',
+      given: 'a release image whose name names no board',
       expect: { 'named-by-file': 'the Firmware screen names it by its file name' },
       why: {
         'named-by-file':
@@ -193,7 +232,7 @@ describe('releaseImageLabel', () => {
       },
     },
     () => {
-      expect(releaseImageLabel('MaD-Firmware-0.13-madEdge.bin')).toBe('MaD-Firmware-0.13-madEdge.bin');
+      expect(releaseImageLabel('program')).toBe('program');
     },
   );
 });
@@ -223,66 +262,200 @@ describe('toManifest', () => {
   );
 });
 
-describe('fetchReleaseManifest', () => {
+describe('fetchFirmwareManifest', () => {
   behaviour(
     {
       id: 'flash.release-manifest-loads',
-      covers: 'src/firmware/release.ts#fetchReleaseManifest',
-      given: 'a copy of the app served with a bundled firmware release, under a sub-path',
+      covers: 'src/firmware/release.ts#fetchFirmwareManifest',
+      given: 'a copy of the app served with its bundled firmware releases, under a sub-path',
       expect: {
-        'read-from-base': "the release description is read from the app's own sub-path",
-        'described-release': 'the release it describes is the one offered',
+        'read-from-base': "the list of releases is read from the app's own sub-path",
+        'described-release': 'the releases it lists are the ones offered',
       },
     },
     async () => {
-      const fetchMock = vi.fn(async () => new Response(JSON.stringify(manifest())));
+      const fetchMock = vi.fn(async () => new Response(JSON.stringify({ releases: [entry()] })));
       vi.stubGlobal('fetch', fetchMock);
-      const m = await fetchReleaseManifest('/MaD/app/');
-      expect(fetchMock).toHaveBeenCalledWith('/MaD/app/firmware/latest.json');
-      expect(m.tag).toBe('firmware-v0.1');
+      const m = await fetchFirmwareManifest('/MaD/app/');
+      expect(fetchMock).toHaveBeenCalledWith('/MaD/app/firmware/manifest.json');
+      expect(m.releases.map((r) => r.tag)).toEqual(['firmware-v0.1']);
     },
   );
 
   behaviour(
     {
       id: 'flash.release-manifest-unreachable',
-      covers: 'src/firmware/release.ts#fetchReleaseManifest',
-      given: 'the app server cannot be reached while looking up the latest release',
+      covers: 'src/firmware/release.ts#fetchFirmwareManifest',
+      given: 'the app server cannot be reached while looking up the firmware releases',
       expect: { 'says-unreachable': 'the lookup fails with a message saying the server could not be reached' },
     },
     async () => {
       const offline = async (): Promise<Response> => {
         throw new TypeError('Failed to fetch');
       };
-      await expect(fetchReleaseManifest('/', offline)).rejects.toThrow(/Could not reach/);
+      await expect(fetchFirmwareManifest('/', offline)).rejects.toThrow(/Could not reach/);
     },
   );
 
   behaviour(
     {
       id: 'flash.release-manifest-malformed',
-      covers: 'src/firmware/release.ts#fetchReleaseManifest',
-      given: 'a bundled release description that is missing its checksum',
-      expect: { 'says-malformed': 'the lookup fails with a message saying the description is malformed' },
+      covers: 'src/firmware/release.ts#fetchFirmwareManifest',
+      given:
+        'a bundled list of releases with an entry missing its checksum, one missing its protocol version, or one that is not JSON at all',
+      expect: { 'says-malformed': 'each lookup fails with a message saying the description is malformed' },
     },
     async () => {
-      const partial: Partial<FirmwareReleaseManifest> = manifest();
-      delete partial.sha256;
-      await expect(fetchReleaseManifest('/', serve(JSON.stringify(partial)))).rejects.toThrow(/malformed/);
+      const noChecksum: Partial<FirmwareManifestEntry> = entry();
+      delete noChecksum.sha256;
+      const noProtocol: Partial<FirmwareManifestEntry> = entry();
+      delete noProtocol.protocolVersion;
+      for (const body of [
+        JSON.stringify({ releases: [noChecksum] }),
+        JSON.stringify({ releases: [noProtocol] }),
+        JSON.stringify([entry()]),
+        'null',
+        '<html>',
+      ]) {
+        await expect(fetchFirmwareManifest('/', serve(body))).rejects.toThrow(/malformed/);
+      }
     },
   );
 
   behaviour(
     {
       id: 'flash.release-missing-explained',
-      covers: 'src/firmware/release.ts#fetchReleaseManifest',
-      given: 'a copy of the app served without a bundled firmware release',
+      covers: 'src/firmware/release.ts#fetchFirmwareManifest',
+      given: 'a copy of the app served without bundled firmware releases',
       expect: {
-        'says-none-bundled': 'looking up the latest release fails with a message saying none is bundled',
+        'says-none-bundled': 'looking up the firmware releases fails with a message saying none is bundled',
       },
     },
     async () => {
-      await expect(fetchReleaseManifest('/', serve('', 404))).rejects.toThrow(/No firmware release is bundled/);
+      await expect(fetchFirmwareManifest('/', serve('', 404))).rejects.toThrow(/No firmware release is bundled/);
+    },
+  );
+});
+
+describe('releases per protocol', () => {
+  behaviour(
+    {
+      id: 'flash.release-described-only',
+      covers: 'src/firmware/release.ts#describedReleases',
+      given:
+        'published firmware releases where some carry a file saying which protocol they speak and the older ones do not, plus a draft that does',
+      expect: {
+        'described-newest-first':
+          'only the published releases that say which protocol they speak are candidates, newest first',
+      },
+      why: {
+        'described-newest-first':
+          "a release without that file predates the firmware's protocol report, so an app connected to it would still find it too old",
+      },
+    },
+    () => {
+      const picked = describedReleases([
+        firmware('firmware-v0.13', '2026-10-18T00:00:00Z', false),
+        firmware('firmware-v0.14', '2026-11-01T00:00:00Z'),
+        { ...firmware('firmware-v0.16', '2026-11-20T00:00:00Z'), draft: true },
+        firmware('firmware-v0.15', '2026-11-10T00:00:00Z'),
+      ]);
+      expect(picked.map((p) => p.release.tag_name)).toEqual(['firmware-v0.15', 'firmware-v0.14']);
+      expect(picked.map((p) => [p.asset.name, p.info.name])).toEqual([
+        ['MaD-Firmware-0.15-release.bin', 'firmware-info.json'],
+        ['MaD-Firmware-0.14-release.bin', 'firmware-info.json'],
+      ]);
+    },
+  );
+
+  behaviour(
+    {
+      id: 'flash.release-newest-per-protocol',
+      covers: 'src/firmware/release.ts#newestPerProtocol',
+      given: 'candidate releases, newest first, where two speak protocol 3 and one older one speaks protocol 2',
+      expect: { 'one-per-protocol': 'the newest release of each protocol is kept, and only that one' },
+    },
+    () => {
+      const kept = newestPerProtocol([
+        { tag: '0.16', protocolVersion: 3 },
+        { tag: '0.15', protocolVersion: 3 },
+        { tag: '0.14', protocolVersion: 2 },
+      ]);
+      expect(kept.map((k) => k.tag)).toEqual(['0.16', '0.14']);
+    },
+  );
+
+  behaviour(
+    {
+      id: 'flash.release-info-shape',
+      covers: 'src/firmware/release.ts#isFirmwareInfo',
+      given: "a release's file saying which protocol its firmware speaks",
+      expect: {
+        'version-and-whole-protocol':
+          'it is accepted only with a version string and a whole-number protocol version',
+      },
+    },
+    () => {
+      expect(isFirmwareInfo({ version: '0.14', protocolVersion: 2 })).toBe(true);
+      expect(isFirmwareInfo({ version: '0.14', protocolVersion: '2' })).toBe(false);
+      expect(isFirmwareInfo({ version: '0.14', protocolVersion: 2.5 })).toBe(false);
+      expect(isFirmwareInfo({ protocolVersion: 2 })).toBe(false);
+      expect(isFirmwareInfo(null)).toBe(false);
+    },
+  );
+
+  behaviour(
+    {
+      id: 'flash.release-entry-served-beside-manifest',
+      covers: 'src/firmware/release.ts#toManifestEntry',
+      given: 'the firmware release tagged firmware-v0.14, speaking protocol 2, and its production image',
+      expect: {
+        'protocol-recorded': 'its entry records protocol 2 alongside the version, image name, size and checksum',
+        'image-path': 'its image is served in the firmware folder under its own file name',
+      },
+    },
+    () => {
+      const e = toManifestEntry(
+        release({ tag_name: 'firmware-v0.14' }),
+        { id: 3, name: 'MaD-Firmware-0.14-release.bin', size: 291396 },
+        'ABC',
+        2,
+      );
+      expect([e.version, e.assetName, e.size, e.sha256, e.protocolVersion]).toEqual([
+        '0.14',
+        'MaD-Firmware-0.14-release.bin',
+        291396,
+        'abc',
+        2,
+      ]);
+      expect(e.path).toBe('firmware/MaD-Firmware-0.14-release.bin');
+    },
+  );
+
+  behaviour(
+    {
+      id: 'flash.release-recommended-matches-protocol',
+      covers: 'src/firmware/release.ts#recommendedRelease',
+      given: 'listed releases speaking protocols 3 and 2, and an app on protocol 2',
+      expect: {
+        'matching-newest': "the recommended firmware is the newest release speaking the app's protocol",
+        'none-when-absent': 'an app on a protocol no release speaks yet is recommended nothing',
+      },
+      why: {
+        'matching-newest':
+          'every hosted app version shares one firmware folder, so an older app must not be handed firmware made for a newer one',
+      },
+    },
+    () => {
+      const manifest = {
+        releases: [
+          entry({ tag: 'firmware-v0.16', protocolVersion: 3, publishedAt: '2026-11-20T00:00:00Z' }),
+          entry({ tag: 'firmware-v0.14', protocolVersion: 2, publishedAt: '2026-11-01T00:00:00Z' }),
+          entry({ tag: 'firmware-v0.15', protocolVersion: 2, publishedAt: '2026-11-10T00:00:00Z' }),
+        ],
+      };
+      expect(recommendedRelease(manifest, 2)?.tag).toBe('firmware-v0.15');
+      expect(recommendedRelease(manifest, 4)).toBeNull();
     },
   );
 });
@@ -298,6 +471,20 @@ describe('fetchReleaseImage', () => {
     async () => {
       const bytes = await fetchReleaseImage('/', manifest(), serve(IMAGE));
       expect(Array.from(bytes)).toEqual(Array.from(IMAGE));
+    },
+  );
+
+  behaviour(
+    {
+      id: 'flash.release-image-from-its-path',
+      covers: 'src/firmware/release.ts#fetchReleaseImage',
+      given: 'a recommended release whose image is served under its own file name, for an app under a sub-path',
+      expect: { 'read-from-path': "the image is downloaded from that file name in the app's firmware folder" },
+    },
+    async () => {
+      const fetchMock = vi.fn(async () => new Response(IMAGE));
+      await fetchReleaseImage('/MaD/app/', entry(), fetchMock);
+      expect(fetchMock).toHaveBeenCalledWith('/MaD/app/firmware/MaD-Firmware-0.1-release.bin');
     },
   );
 
@@ -341,6 +528,202 @@ describe('fetchReleaseImage', () => {
       await expect(
         fetchReleaseImage('/', manifest(), serve(new Uint8Array([4, 3, 2, 1]))),
       ).rejects.toThrow(/does not match its release checksum/);
+    },
+  );
+});
+
+describe('cacheRecommendedRelease', () => {
+  behaviour(
+    {
+      id: 'flash.release-cached-for-offline',
+      covers: 'src/firmware/release.ts#cacheRecommendedRelease',
+      given: "an app on protocol 2 starting while the server lists a release for protocol 2",
+      expect: {
+        'image-fetched': "the recommended release's image is fetched once, so the app's offline copy holds it",
+      },
+    },
+    async () => {
+      const fetchMock = vi.fn(async (url: string) =>
+        url.endsWith('manifest.json')
+          ? new Response(JSON.stringify({ releases: [entry()] }))
+          : new Response(IMAGE),
+      );
+      expect((await cacheRecommendedRelease('/MaD/app/', 2, fetchMock))?.tag).toBe('firmware-v0.1');
+      expect(fetchMock.mock.calls.map(([u]) => u)).toEqual([
+        '/MaD/app/firmware/manifest.json',
+        '/MaD/app/firmware/MaD-Firmware-0.1-release.bin',
+      ]);
+    },
+  );
+
+  behaviour(
+    {
+      id: 'flash.release-cache-failure-quiet',
+      covers: 'src/firmware/release.ts#cacheRecommendedRelease',
+      given: 'an app starting while the server cannot be reached, or lists no release for its protocol',
+      expect: { 'nothing-cached-quietly': 'nothing is cached and the app carries on without an error' },
+    },
+    async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (): Promise<Response> => {
+          throw new TypeError('Failed to fetch');
+        }),
+      );
+      expect(await cacheRecommendedRelease('/', 2)).toBeNull();
+      const other = vi.fn(async () => new Response(JSON.stringify({ releases: [entry({ protocolVersion: 3 })] })));
+      expect(await cacheRecommendedRelease('/', 2, other)).toBeNull();
+      expect(other).toHaveBeenCalledTimes(1);
+    },
+  );
+});
+
+describe('board choice', () => {
+  behaviour(
+    {
+      id: 'flash.release-board-images',
+      covers: 'src/firmware/release.ts#pickFirmwareAsset',
+      given: 'a firmware release carrying MaD-Firmware-0.15-MaDEdge.bin and MaD-Firmware-0.15-P2Eval.bin',
+      expect: {
+        'p2eval-default': 'with no board named, the P2Eval image is the one offered',
+        'madedge-on-request': 'asked for the MaDEdge board, the MaDEdge image is the one offered',
+      },
+    },
+    () => {
+      const r = release({
+        assets: [
+          { id: 1, name: 'MaD-Firmware-0.15-MaDEdge.bin', size: 9 },
+          { id: 2, name: 'MaD-Firmware-0.15-P2Eval.bin', size: 8 },
+        ],
+      });
+      expect(pickFirmwareAsset(r)?.name).toBe('MaD-Firmware-0.15-P2Eval.bin');
+      expect(pickFirmwareAsset(r, 'MaDEdge')?.name).toBe('MaD-Firmware-0.15-MaDEdge.bin');
+    },
+  );
+
+  behaviour(
+    {
+      id: 'flash.release-board-legacy-names',
+      covers: 'src/firmware/release.ts#pickFirmwareAsset',
+      given: 'a firmware release from before the board names, carrying a -madEdge.bin image and a -release.bin image',
+      expect: { 'madedge-is-madedge-image': 'asked for the MaDEdge board, the -madEdge.bin image is the one offered' },
+    },
+    () => {
+      const r = release({
+        assets: [
+          { id: 1, name: 'MaD-Firmware-0.14-madEdge.bin', size: 9 },
+          { id: 2, name: 'MaD-Firmware-0.14-release.bin', size: 8 },
+        ],
+      });
+      expect(pickFirmwareAsset(r, 'MaDEdge')?.name).toBe('MaD-Firmware-0.14-madEdge.bin');
+    },
+  );
+
+  behaviour(
+    {
+      id: 'flash.release-board-old-description',
+      covers: 'src/firmware/release.ts#boardImage',
+      given: 'a served release description written before the board choice, which lists no boards',
+      expect: {
+        'p2eval-from-top-level': 'the P2Eval image is the one the description names, at the original download path',
+        'no-madedge': 'no MaDEdge image is offered',
+      },
+    },
+    () => {
+      expect(boardImage(manifest(), 'P2Eval')).toEqual({
+        assetName: 'MaD-Firmware-0.1-release.bin',
+        size: IMAGE.byteLength,
+        sha256: IMAGE_SHA256,
+        path: 'firmware/latest.bin',
+      });
+      expect(boardImage(manifest(), 'MaDEdge')).toBeNull();
+    },
+  );
+
+  behaviour(
+    {
+      id: 'flash.release-board-madedge-download',
+      covers: 'src/firmware/release.ts#fetchReleaseImage',
+      given: 'a served release that lists a MaDEdge image, with the MaDEdge board chosen',
+      expect: {
+        'madedge-path': 'the image is downloaded from the MaDEdge download path',
+        'checked-against-madedge': 'the download is checked against the MaDEdge entry and handed over byte for byte',
+      },
+    },
+    async () => {
+      const m = manifest({
+        boards: {
+          P2Eval: { assetName: 'MaD-Firmware-0.1-P2Eval.bin', size: 8, sha256: '0'.repeat(64) },
+          MaDEdge: { assetName: 'MaD-Firmware-0.1-MaDEdge.bin', size: IMAGE.byteLength, sha256: IMAGE_SHA256 },
+        },
+      });
+      const asked: string[] = [];
+      const bytes = await fetchReleaseImage(
+        '/app/',
+        m,
+        async (url) => {
+          asked.push(url);
+          return new Response(IMAGE);
+        },
+        'MaDEdge',
+      );
+      expect(asked).toEqual(['/app/firmware/latest-MaDEdge.bin']);
+      expect(Array.from(bytes)).toEqual(Array.from(IMAGE));
+    },
+  );
+
+  behaviour(
+    {
+      id: 'flash.release-board-missing',
+      covers: 'src/firmware/release.ts#fetchReleaseImage',
+      given: 'a served release with no MaDEdge image, with the MaDEdge board chosen',
+      expect: { 'refused-naming-board': 'nothing is downloaded, and the refusal names the release version and the board' },
+    },
+    async () => {
+      const fetchFn = vi.fn(async () => new Response(IMAGE));
+      await expect(fetchReleaseImage('/', manifest(), fetchFn, 'MaDEdge')).rejects.toThrow(
+        /Firmware 0\.1 has no MaDEdge build/,
+      );
+      expect(fetchFn).not.toHaveBeenCalled();
+    },
+  );
+
+  behaviour(
+    {
+      id: 'flash.release-board-description-loads',
+      covers: 'src/firmware/release.ts#fetchFirmwareManifest',
+      given: 'a listed release with a P2Eval and a MaDEdge image, each served under its own file name',
+      expect: {
+        'boards-read': 'both boards are offered with the file names the description gives',
+        'own-paths': "each board's image is downloaded from its own file name in the firmware folder",
+      },
+    },
+    async () => {
+      const boards = {
+        P2Eval: { assetName: 'MaD-Firmware-0.1-P2Eval.bin', size: 4, sha256: IMAGE_SHA256, path: 'firmware/MaD-Firmware-0.1-P2Eval.bin' },
+        MaDEdge: { assetName: 'MaD-Firmware-0.1-MaDEdge.bin', size: 4, sha256: IMAGE_SHA256, path: 'firmware/MaD-Firmware-0.1-MaDEdge.bin' },
+      };
+      const m = await fetchFirmwareManifest('/', serve(JSON.stringify({ releases: [entry({ boards })] })));
+      const listed = m.releases[0];
+      expect(boardImage(listed, 'MaDEdge')?.assetName).toBe('MaD-Firmware-0.1-MaDEdge.bin');
+      expect(boardImage(listed, 'P2Eval')?.assetName).toBe('MaD-Firmware-0.1-P2Eval.bin');
+      expect(boardImage(listed, 'MaDEdge')?.path).toBe('firmware/MaD-Firmware-0.1-MaDEdge.bin');
+    },
+  );
+
+  behaviour(
+    {
+      id: 'flash.release-board-description-malformed',
+      covers: 'src/firmware/release.ts#fetchFirmwareManifest',
+      given: "a listed release whose board list is not a list of images, or gives an image's path as a number",
+      expect: { 'refused-malformed': 'the release is refused as malformed, so no image is offered from it' },
+    },
+    async () => {
+      for (const boards of [null, { MaDEdge: { assetName: 'x.bin' } }, { MaDEdge: { assetName: 'x.bin', size: 1, sha256: 'ab', path: 7 } }]) {
+        await expect(
+          fetchFirmwareManifest('/', serve(JSON.stringify({ releases: [{ ...entry(), boards }] }))),
+        ).rejects.toThrow(/malformed/);
+      }
     },
   );
 });
