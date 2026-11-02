@@ -1590,7 +1590,7 @@ void test_dev_servo_stagedMoveTheSameWayCarriesTheSpeedThrough(void)
                "a 10 mm move at 10 mm/s with a second 10 mm move at 10 mm/s staged after it, the same way");
     VIBES_EXPECT_WHY("no-dip",
                      "the commanded speed stays within 2 percent of 10 mm/s through the junction",
-                     "a program of moves in one direction should run as one smooth motion, not stop at every line");
+                     "a program of moves in one direction runs as one smooth motion through every line");
     VIBES_EXPECT("second-arrives", "the second move then arrives at its own target");
     servo_init();
     dev_servo_enable(CH, true);

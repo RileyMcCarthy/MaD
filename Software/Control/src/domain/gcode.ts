@@ -185,7 +185,7 @@ export function parseGcodeWaveform(line: string): ProtoWaveformMove | null {
     }
   }
 
-  return { shape, amplitude, frequency, cycles, dwellHigh, dwellLow, skewPerMille };
+  return { shape, amplitude, frequency, cycles, dwellHigh, dwellLow, skewPerMille, endFrequency: 0 };
 }
 
 /** Validate a WaveformMove against the codec's encodable ranges (prevents bit-wrap). */

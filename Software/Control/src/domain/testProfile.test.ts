@@ -362,7 +362,7 @@ describe('generateTestGcode — waveform (math) move', () => {
       const ops = gcodeLinesToProgram(gcode, 15);
       const waveforms = ops.filter((o) => o.kind === 'waveform');
       expect(waveforms.length).toBe(1);
-      expect(waveforms[0].buf.length).toBe(18); // 18-byte WaveformMove (was 9 before dwell/skew) wire size
+      expect(waveforms[0].buf.length).toBe(21); // 21-byte WaveformMove wire size
       const wf = decodeWaveformMove(waveforms[0].buf);
       expect(wf.shape).toBe(WaveformShape.SINE); // v1 is sine-only
       expect(wf.amplitude).toBeCloseTo(4, 3);
