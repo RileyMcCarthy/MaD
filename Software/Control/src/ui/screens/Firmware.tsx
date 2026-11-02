@@ -216,7 +216,11 @@ export default function Firmware() {
       ? Math.floor(((status.progress.sent ?? 0) / status.progress.total) * 100)
       : null;
 
-  const installed = connected && responding ? (fw ?? 'Unknown') : null;
+  // The handshake's answers stand once it has a verdict, even when no sample
+  // arrives: firmware on another protocol sends samples this app cannot read,
+  // and this is the screen its operator comes to for the update.
+  const heard = connected && (responding || compat !== null);
+  const installed = heard ? (fw ?? 'Unknown') : null;
   // The firmware cannot be driven by this app (the banner says why); an update
   // is the way out, so the install button leads.
   const mismatched = compat?.kind === 'firmwareTooOld' || compat?.kind === 'appTooOld';
@@ -240,7 +244,7 @@ export default function Firmware() {
             <tr>
               <td>Protocol</td>
               <td data-testid="fw-protocol" className={mismatched ? 'error' : undefined}>
-                {connected && responding ? (
+                {heard ? (
                   protocolLabel(deviceProtocol, compat !== null)
                 ) : (
                   <span className="muted">— connect to read</span>

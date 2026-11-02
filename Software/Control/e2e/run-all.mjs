@@ -3244,23 +3244,34 @@ const scenarios = [
           (await compatBanner(page).textContent())?.includes('does not report a protocol'),
           'the banner does not say the firmware reports no protocol',
         );
-        // The app reads this firmware's samples as unreadable, once, and lives on.
-        assert(logged(entries, 'proto', 'unreadable-reply', 'READ_SAMPLE').length === 1, 'the short samples were not reported once');
+        // The app reads this firmware's samples as unreadable and lives on.
+        // The worker's entries reach the page's log in batches, so wait for it.
+        await awaitLogged(page, 'proto', 'unreadable-reply', { msg: 'READ_SAMPLE' });
         await page.goto(`${APP_URL}#/firmware`);
         await page.getByTestId('fw-protocol').filter({ hasText: 'not reported' }).waitFor({ timeout: DEVICE_WAIT_MS });
 
         await pressRefusedLiveControls(page);
         await chooseDataFolder(page);
         await startRefusedTest(page);
-        // The calibration's open-loop moves cannot start: they need motion enabled.
+        // The calibration's open-loop moves cannot start: the panel needs the
+        // machine configuration, which is not read from firmware on another
+        // protocol, and its button needs motion enabled.
         await page.goto(`${APP_URL}#/settings`);
-        const calibrate = page.getByRole('button', { name: /Check drive/i });
-        if (await calibrate.count()) assert(await calibrate.isDisabled(), 'the open-loop check could start');
+        await page.getByRole('heading', { name: 'Settings' }).waitFor({ timeout: DEVICE_WAIT_MS });
+        const calibrate = page.getByRole('button', { name: 'Run calibration' });
+        assert(
+          (await calibrate.count()) === 0 || (await calibrate.isDisabled()),
+          'the motor calibration (open-loop moves) could start',
+        );
 
         // STOP still reaches the firmware, which acknowledges it.
         await press(page.getByTestId('estop'));
         await page.locator('.toast').getByText('Emergency stop — motion disabled.').first().waitFor({ timeout: DEVICE_WAIT_MS });
+        await awaitLogged(page, 'proto', 'tx', { msg: 'WRITE_MOTION_ENABLE' });
         const after = await appLogEntries(page);
+        // Samples kept arriving short the whole time; they were reported once.
+        const unreadable = logged(after, 'proto', 'unreadable-reply', 'READ_SAMPLE').length;
+        assert(unreadable === 1, `the short samples were reported ${unreadable} times, expected once`);
         const tx = (name) => logged(after, 'proto', 'tx', name).length;
         assert(tx('WRITE_MOTION_ENABLE') === 1, `motion-enable writes sent: ${tx('WRITE_MOTION_ENABLE')}, expected only STOP's`);
         for (const name of ['WRITE_MANUAL_MOVE', 'WRITE_TEST_MOVE', 'WRITE_TEST_RUN']) {

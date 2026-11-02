@@ -653,6 +653,9 @@ export const useStore = create<AppState>((set, getState) => ({
   },
 
   refreshConfig: async () => {
+    // Firmware on another protocol lays its configuration out differently:
+    // anything read from it would be misread, so it is not asked.
+    if (deviceClient.motionBlockReason() !== null) return;
     try {
       const config = await deviceClient.readMachineConfiguration();
       set({ config });
@@ -662,6 +665,7 @@ export const useStore = create<AppState>((set, getState) => ({
   },
 
   saveConfig: async (config) => {
+    if (refusedForFirmware(getState, 'save-config')) return false;
     // Field-level diff, not the whole object: a wrong machine configuration is
     // a common silent root cause, and "what did they actually change" is the
     // question a report needs to answer. Values are plain numbers/strings.
