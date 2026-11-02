@@ -14,6 +14,7 @@ import {
   FirmwareVersion,
   Notification,
 } from '@/domain';
+import type { PayloadMismatch } from './payloadSchema';
 
 export type DeviceEvent =
   | { kind: 'connected' }
@@ -30,6 +31,9 @@ export type DeviceEvent =
   | { kind: 'ack'; command: number; success: boolean }
   | { kind: 'data'; command: number; payload: Uint8Array }
   | { kind: 'timeout' }
+  /** A reply's length does not match this app's schema (older/newer firmware).
+   *  Sent once per command per session; the reply itself is dropped. */
+  | { kind: 'schemaMismatch'; mismatch: PayloadMismatch }
   | { kind: 'error'; message: string };
 
 /** A batch of events delivered to the main thread per poll tick. */

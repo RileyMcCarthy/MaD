@@ -109,6 +109,21 @@ describe('B4 reduceDeviceEvent matrix', () => {
 
   behaviour(
     {
+      id: 'live.protocol-mismatch-kept',
+      covers: 'src/store/deviceEventReduce.ts#reduceDeviceEvent',
+      given: "the worker reporting that the board's machine configuration replies are 72 bytes where this app expects 84",
+      expect: {
+        'mismatch-kept': 'the mismatch is kept, with both sizes, for the screen to show the update message',
+      },
+    },
+    () => {
+      const mismatch = { command: 2, name: 'machine configuration', expected: 84, actual: 72 };
+      expect(reduceDeviceEvent({ kind: 'schemaMismatch', mismatch }, false)).toEqual({ schemaMismatch: mismatch });
+    },
+  );
+
+  behaviour(
+    {
       id: 'live.operator-disconnect-is-expected',
       covers: 'src/store/deviceEventReduce.ts#reduceDeviceEvent',
       given: 'the operator disconnecting from the machine',

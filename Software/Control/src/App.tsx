@@ -12,7 +12,7 @@ import CapabilityGate from './ui/CapabilityGate';
 import DataFolderGate from './ui/DataFolderGate';
 import ErrorBoundary from './ui/ErrorBoundary';
 import Toast from './ui/Toast';
-import { useStore } from './store/useStore';
+import { useStore, useProtocolMismatchMessage } from './store/useStore';
 import { NotificationType } from './domain';
 import { logger } from './diagnostics/log';
 
@@ -76,6 +76,7 @@ function StatusBar() {
   const emergencyStop = useStore((s) => s.emergencyStop);
   const updateReady = useStore((s) => s.updateReady);
   const applyUpdate = useStore((s) => s.applyUpdate);
+  const protocolMismatch = useProtocolMismatchMessage();
   const label =
     connection === 'connected'
       ? `Connected · ${portLabel ?? 'device'}${fw ? ` · fw ${fw}` : ''}`
@@ -89,6 +90,11 @@ function StatusBar() {
       {connection === 'connected' && (
         <span className={`badge ${responding ? 'downloaded' : 'error'}`} data-testid="responding">
           {responding ? 'Responding' : 'Not responding'}
+        </span>
+      )}
+      {connection === 'connected' && protocolMismatch && (
+        <span className="fault" role="alert" data-testid="protocol-mismatch">
+          {protocolMismatch}
         </span>
       )}
       {connection === 'disconnected' && canReconnect && (

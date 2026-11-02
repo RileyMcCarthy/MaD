@@ -89,6 +89,7 @@ import {
   UPLOAD_DEFAULT_MAX_RETRIES,
 } from './sessionPolicy';
 import { boundaryCallback } from './boundaryCallback';
+import { expectedReadReplyBytes, readReplyMismatch, schemaMismatchMessage, type PayloadMismatch } from './payloadSchema';
 
 /** Poll cadence (ms). Faster than the sample period so reads/writes drain promptly. */
 const TICK_MS = 4;
@@ -364,9 +365,16 @@ export class DeviceSession {
     lastError: '',
     lastErrorAt: 0,
     eventDeliveryFailures: 0,
+    decodeFailures: 0,
   };
 
   private readonly periodic = new PeriodicAggregator();
+
+  /** Commands whose undecodable replies have been logged (and, for a size
+   *  mismatch, reported to the main thread) this session. A mismatched sample
+   *  arrives at the poll rate, so only the first per command is spoken for;
+   *  `stats.decodeFailures` counts them all. */
+  private readonly decodeFailuresReported = new Set<number>();
 
   /** Register the main-thread event callback. It arrives as a Comlink proxy
    *  and is stored wrapped, so no call site can reach the proxy through
@@ -409,7 +417,9 @@ export class DeviceSession {
       lastError: '',
       lastErrorAt: 0,
       eventDeliveryFailures: 0,
+      decodeFailures: 0,
     };
+    this.decodeFailuresReported.clear();
     this.client.register_periodic_with_timeout(
       MSG_READ_SAMPLE,
       MSG_SAMPLE_PERIOD_MS,
@@ -596,9 +606,10 @@ export class DeviceSession {
       const batch = this.client.get_stored(MSG_READ_SAMPLE) as {
         entries: Array<number[] | Uint8Array>;
       };
-      return batch.entries.map((e) =>
-        sampleToShared(decodeSample(e instanceof Uint8Array ? e : Uint8Array.from(e))),
-      );
+      return batch.entries
+        .map((e) => (e instanceof Uint8Array ? e : Uint8Array.from(e)))
+        .filter((e) => readReplyMismatch(MSG_READ_SAMPLE, e) === null)
+        .map((e) => sampleToShared(decodeSample(e)));
     } catch {
       return [];
     }
@@ -1071,7 +1082,16 @@ export class DeviceSession {
         if (request !== undefined) this.rejectWaitersForRequest(request, 'response timeout');
       }
       this.logRawEvent(ev);
-      for (const mapped of this.mapEvent(ev)) {
+      let decoded: DeviceEvent[];
+      try {
+        decoded = this.mapEvent(ev);
+      } catch (err) {
+        // One frame the codec cannot read must not take the session down: an
+        // exception here escapes the worker and the link is lost.
+        this.onDecodeFailure(ev, err);
+        continue;
+      }
+      for (const mapped of decoded) {
         if (mapped.kind === 'sample') {
           this.lastSample = mapped.data;
           // Tallied here rather than in `logRawEvent` because the sanity check
@@ -1215,6 +1235,8 @@ export class DeviceSession {
   }
 
   private mapData(command: number, payload: Uint8Array): DeviceEvent[] {
+    const mismatch = readReplyMismatch(command, payload);
+    if (mismatch !== null) return this.onPayloadMismatch(mismatch);
     switch (command) {
       case MSG_READ_SAMPLE:
         return [{ kind: 'sample', data: sampleToShared(decodeSample(payload)) }];
@@ -1229,6 +1251,42 @@ export class DeviceSession {
       default:
         return [{ kind: 'data', command, payload }];
     }
+  }
+
+  /**
+   * A read reply whose size is not this app's schema: drop it, fail the read
+   * waiting on it with the reason (so a connect-time read does not sit out its
+   * timeout), and tell the main thread once per command per session.
+   */
+  private onPayloadMismatch(mismatch: PayloadMismatch): DeviceEvent[] {
+    this.stats.decodeFailures += 1;
+    this.rejectWaitersForRequest(
+      { command: mismatch.command, dir: 'read' },
+      schemaMismatchMessage(mismatch, null),
+    );
+    if (this.decodeFailuresReported.has(mismatch.command)) return [];
+    this.decodeFailuresReported.add(mismatch.command);
+    logProto.warn('payload-size-mismatch', commandName(mismatch.command, 'read'), {
+      expected: mismatch.expected,
+      actual: mismatch.actual,
+    });
+    return [{ kind: 'schemaMismatch', mismatch }];
+  }
+
+  /** A frame the codec threw on. Counted every time, logged once per command. */
+  private onDecodeFailure(ev: RawEvent, err: unknown): void {
+    this.stats.decodeFailures += 1;
+    const command = ev.command ?? -1;
+    const key = ev.event === 'notification' ? -2 : command;
+    if (this.decodeFailuresReported.has(key)) return;
+    this.decodeFailuresReported.add(key);
+    logProto.error('decode-failed', err instanceof Error ? `${err.name}: ${err.message}` : String(err), {
+      event: ev.event,
+      // A data frame is always the reply to a read.
+      command: command >= 0 ? commandName(command, ev.event === 'data' ? 'read' : this.dirFor(command)) : undefined,
+      expected: ev.event === 'data' ? expectedReadReplyBytes(command) : undefined,
+      actual: u8(ev.payload).length,
+    });
   }
 
   private emit(events: DeviceEvent[]): void {

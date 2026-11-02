@@ -10,6 +10,7 @@ import { create } from 'zustand';
 import { deviceClient, DEFAULT_BAUD_RATE } from '@/device/session';
 import { dataStore } from '@/storage/DataStore';
 import { DeviceEvent } from '@/device/events';
+import { schemaMismatchMessage, type PayloadMismatch } from '@/device/payloadSchema';
 import {
   MachineState,
   SampleData,
@@ -57,6 +58,9 @@ interface AppState {
   config: MachineConfiguration | null;
   sampleProfile: SampleProfile | null;
   firmwareVersion: string | null;
+  /** First reply this session whose size did not match this app's schema;
+   *  see `protocolMismatchMessage`. Cleared on each connect. */
+  schemaMismatch: PayloadMismatch | null;
   notifications: UiNotification[];
 
   /** Reactive mirror of the data folder, restored at startup and kept in sync
@@ -351,7 +355,7 @@ function afterConnect(set: SetState, getState: GetState, label: string): void {
 let connectInFlight: Promise<void> | null = null;
 
 async function connectOnce(args: ConnectArgs, set: SetState, getState: GetState): Promise<void> {
-  set({ connection: 'connecting', error: null });
+  set({ connection: 'connecting', error: null, schemaMismatch: null, firmwareVersion: null });
   try {
     const port = args.port ?? (await deviceClient.requestPort());
     const baud = args.baud ?? DEFAULT_BAUD_RATE;
@@ -411,6 +415,7 @@ export const useStore = create<AppState>((set, getState) => ({
   config: null,
   sampleProfile: null,
   firmwareVersion: null,
+  schemaMismatch: null,
   notifications: [],
   dataFolder: null,
   dataFolderReady: false,
@@ -441,6 +446,9 @@ export const useStore = create<AppState>((set, getState) => ({
         if (patch.config !== undefined) set({ config: patch.config });
         if (patch.sampleProfile !== undefined) set({ sampleProfile: patch.sampleProfile });
         if (patch.firmwareVersion !== undefined) set({ firmwareVersion: patch.firmwareVersion });
+        if (patch.schemaMismatch !== undefined && getState().schemaMismatch === null) {
+          set({ schemaMismatch: patch.schemaMismatch });
+        }
 
         if (patch.counters) {
           for (const c of patch.counters) {
@@ -715,4 +723,13 @@ export function __resetStoreForTests(): void {
   lastBaud = DEFAULT_BAUD_RATE;
   userDisconnect = false;
   pendingUpdate = null;
+}
+
+/** The user-facing line when the connected firmware's protocol does not match
+ *  this app's, or null. Re-renders when the firmware version arrives, since the
+ *  first mismatched sample usually lands before the version read completes. */
+export function useProtocolMismatchMessage(): string | null {
+  const mismatch = useStore((s) => s.schemaMismatch);
+  const fw = useStore((s) => s.firmwareVersion);
+  return mismatch ? schemaMismatchMessage(mismatch, fw) : null;
 }

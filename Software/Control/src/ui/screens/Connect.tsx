@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { useStore } from '@/store/useStore';
+import { Link } from 'react-router-dom';
+import { useStore, useProtocolMismatchMessage } from '@/store/useStore';
 import { deviceClient, DEFAULT_BAUD_RATE } from '@/device/session';
 
 const BAUD_RATES = [9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600, 2000000];
@@ -10,6 +11,7 @@ export default function Connect() {
   const error = useStore((s) => s.error);
   const portLabel = useStore((s) => s.portLabel);
   const fw = useStore((s) => s.firmwareVersion);
+  const protocolMismatch = useProtocolMismatchMessage();
   const connect = useStore((s) => s.connect);
   const disconnect = useStore((s) => s.disconnect);
   const reconnect = useStore((s) => s.reconnect);
@@ -139,6 +141,12 @@ export default function Connect() {
           </div>
         )}
 
+        {connected && protocolMismatch && (
+          <p className="fault" style={{ marginTop: 12 }} data-testid="connect-protocol-mismatch">
+            {protocolMismatch}{' '}
+            <Link to="/firmware">Open Firmware</Link>
+          </p>
+        )}
         {error && (
           <p className="fault" style={{ marginTop: 12 }}>
             {error}

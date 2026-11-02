@@ -6,6 +6,7 @@
  */
 
 import type { DeviceEvent } from '@/device/events';
+import type { PayloadMismatch } from '@/device/payloadSchema';
 import type { MachineConfiguration, MachineState, SampleData, SampleProfile } from '@/domain';
 
 export type DeviceEventPatch = {
@@ -13,6 +14,8 @@ export type DeviceEventPatch = {
   config?: MachineConfiguration | null;
   sampleProfile?: SampleProfile | null;
   firmwareVersion?: string | null;
+  /** The firmware's replies do not fit this app's schema. */
+  schemaMismatch?: PayloadMismatch;
   /** Sample arrived — caller updates lastSampleAt / liveBuffer. */
   sample?: SampleData;
   /** Throttled error toast message (undefined = no toast). */
@@ -50,6 +53,8 @@ export function reduceDeviceEvent(e: DeviceEvent, userDisconnect: boolean): Devi
       };
     case 'timeout':
       return { counters: ['timeout'] };
+    case 'schemaMismatch':
+      return { schemaMismatch: e.mismatch };
     case 'ack':
       return e.success ? {} : { counters: ['nack'] };
     case 'notification':
