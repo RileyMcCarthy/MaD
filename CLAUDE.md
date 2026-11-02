@@ -64,6 +64,7 @@ make e2e          # the e2e suite on the machine's project, mad-cosim.toml, head
 make e2e-motion   # the scenarios that move the carriage (run-all.mjs --list --moves), on mad-cosim.toml; MOTION_SHARD=K/N splits
 make e2e-rom      # FW-ISS: the app's flasher against the mask ROM, on mad-serial-boot-cosim.toml (the ROM's serial boot)
 make e2e-stall    # SERVO-stall on mad-emulator: its jam is mad-emulator's alone (MaD #298)
+make e2e-compat   # the firmware-compat scenarios on firmware the app can't drive: firmware-v0.14 as released, and this tree one protocol_version ahead
 make playground-pty  # mad.toml under embsim run, its host a PTY at /tmp/tty.iss, for a serial console (no browser behind it)
 make clean        # Remove build artifacts
 ```
@@ -149,6 +150,12 @@ Software/Control/scripts/release.sh --publish        # tag origin/main as madcon
 git tag firmware-v1.0.0 && git push --tags   # Firmware release
 git tag hardware-v1.0.0 && git push --tags   # Hardware release
 ```
+
+**Release order.** MaD Control drives only firmware on its own `protocol_version`
+(the frozen `device_info` handshake). After a bump, release firmware before the
+app: `release.sh --check`/`--publish` refuse until a firmware release speaks the
+app's protocol. `Protocol/scripts/check_protocol_compat.py` (CI) fails a
+wire-incompatible schema change made without a bump.
 
 **Linking issues.** A PR that resolves a filed issue says `Fixes #N` in its
 description (one line per issue), so merging it closes the issue. This includes

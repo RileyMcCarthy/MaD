@@ -163,6 +163,19 @@ void test_onRead_firmware_version_default(void)
     TEST_ASSERT_EQUAL_STRING("0.0.0", out.version);
 }
 
+void test_onRead_device_info_reports_protocol(void)
+{
+    VIBES_TEST("bridge.device-info-reports-protocol",
+               "src/APP/app_messageSlave.c#ProtoEmb_onRead_device_info",
+               "the control app asks the machine which protocol it speaks");
+    VIBES_EXPECT_WHY("protocol-number",
+                     "the machine answers with the protocol version its message definitions were generated from",
+                     "the control app drives only firmware whose protocol version equals its own, and offers a firmware update otherwise");
+    ProtoEmb_DeviceInfo_t out;
+    TEST_ASSERT_TRUE(ProtoEmb_onRead_device_info(&out));
+    TEST_ASSERT_EQUAL_UINT32(PROTOEMB_PROTOCOL_VERSION, out.protocolVersion);
+}
+
 void test_onRead_sample_profile_maps_monitor(void)
 {
     VIBES_TEST("bridge.sample-profile-read-matches-loaded",
@@ -432,6 +445,7 @@ int main(void)
     UNITY_BEGIN();
     RUN_TEST(test_onRead_state_maps_app_control);
     RUN_TEST(test_onRead_firmware_version_default);
+    RUN_TEST(test_onRead_device_info_reports_protocol);
     RUN_TEST(test_onRead_sample_profile_maps_monitor);
     RUN_TEST(test_onWrite_motion_enable_true_acks_on_trigger);
     RUN_TEST(test_onWrite_motion_enable_false_uses_disable_trigger);

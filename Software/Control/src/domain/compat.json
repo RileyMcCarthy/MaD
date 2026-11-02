@@ -1,0 +1,4 @@
+{
+  "note": "minFirmware: the oldest firmware release this app recommends, for fixes that did not change protocol_version (a protocol change is detected on its own). null = no floor. Below it, the app recommends an update but still drives the machine. See src/domain/firmwareCompat.ts.",
+  "minFirmware": null
+}

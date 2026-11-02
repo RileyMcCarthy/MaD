@@ -53,6 +53,8 @@
     "WAVE-tri",
     "M11-idle-drop",
     "B5-reconnect",
-    "FW1"
+    "FW1",
+    "COMPAT-ok",
+    "COMPAT-update-loop"
   ]
 }

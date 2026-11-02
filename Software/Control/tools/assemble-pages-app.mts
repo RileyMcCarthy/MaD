@@ -4,7 +4,9 @@
  *   site/app/v<version>/      each release, unpacked from its mad-control-v<version>.zip
  *   site/app/versions.json    { latest, versions: [{ version, publishedAt }] }, newest first
  *   site/app/index.html       redirects to the latest release, keeping the route
- *   site/app/firmware/        the latest firmware release, shared by every version
+ *   site/app/firmware/        the firmware releases, shared by every version: the newest
+ *                             per protocol version (manifest.json) and the newest of all
+ *                             (latest.*, for versions from before the manifest)
  *   site/app/sw.js            removes the service worker of the old unversioned app
  *
  * Each release is built once, when it is tagged (pages.yml), so merging to main
@@ -21,7 +23,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
-import { fetchLatestFirmware, servedFiles, type Bundled } from './firmwareRelease';
+import { describeSite, fetchFirmwareSite, type FirmwareSite } from './firmwareRelease';
 
 const REPO = process.env.MAD_REPO || 'RileyMcCarthy/MaD';
 const TAG_PREFIX = 'madcontrol-v';
@@ -135,8 +137,8 @@ export interface AssembleOptions {
   out: string;
   /** The releases to publish; given a scratch folder to download into. */
   listReleases: (work: string) => Release[] | Promise<Release[]>;
-  /** The firmware release served at /app/firmware/ for every version. */
-  fetchFirmware: () => Promise<Bundled>;
+  /** The firmware releases served at /app/firmware/ for every version. */
+  fetchFirmware: () => Promise<FirmwareSite>;
   log?: (line: string) => void;
 }
 
@@ -169,11 +171,11 @@ export async function assemble(opts: AssembleOptions): Promise<void> {
     writeFileSync(join(out, 'index.html'), redirectPage(latest));
     writeFileSync(join(out, 'sw.js'), RETIRE_SW);
 
-    const bundled = await opts.fetchFirmware();
+    const site = await opts.fetchFirmware();
     mkdirSync(join(out, 'firmware'), { recursive: true });
-    for (const [path, contents] of servedFiles(bundled)) writeFileSync(join(out, path), contents);
-    const { manifest } = bundled;
-    log(`[assemble] latest app v${latest}; firmware ${manifest.tag} (${manifest.assetName})`);
+    for (const [path, body] of site.files) writeFileSync(join(out, path), body);
+    for (const w of site.warnings) log(`[assemble] warning: ${w}`);
+    log(`[assemble] latest app v${latest}; firmware ${describeSite(site)}`);
   } finally {
     rmSync(work, { recursive: true, force: true });
   }
@@ -184,7 +186,7 @@ async function main(): Promise<void> {
   await assemble({
     out: resolve(process.env.OUT ?? 'site/app'),
     listReleases: (work) => (zipDir ? releasesFromDir(resolve(zipDir)) : releasesFromGithub(work)),
-    fetchFirmware: () => fetchLatestFirmware(fetch, process.env),
+    fetchFirmware: () => fetchFirmwareSite(fetch, process.env),
   });
 }
 

@@ -25,6 +25,7 @@ import {
   decodeMachineConfiguration,
   decodeSampleProfile,
   decodeFirmwareVersion,
+  decodeDeviceInfo,
   decodeNotification,
   encodeMachineConfiguration,
   encodeSampleProfile,
@@ -36,6 +37,7 @@ import {
   MSG_READ_MACHINE_CONFIGURATION,
   MSG_READ_FIRMWARE_VERSION,
   MSG_READ_SAMPLE_PROFILE,
+  MSG_READ_DEVICE_INFO,
   MSG_WRITE_MACHINE_CONFIGURATION_WRITE,
   MSG_WRITE_MOTION_ENABLE,
   MSG_WRITE_TEST_RUN,
@@ -49,6 +51,7 @@ import {
   MSG_SAMPLE_PERIOD_MS,
   MSG_STATE_PERIOD_MS,
   STOREDSAMPLE_WIRE_SIZE,
+  DEVICEINFO_WIRE_SIZE,
 } from '@/protocol/generated/protoemb';
 import {
   MachineConfiguration,
@@ -89,6 +92,7 @@ import {
   UPLOAD_DEFAULT_MAX_RETRIES,
 } from './sessionPolicy';
 import { boundaryCallback } from './boundaryCallback';
+import { readReplyMismatch, schemaMismatchMessage } from './payloadSchema';
 
 /** Poll cadence (ms). Faster than the sample period so reads/writes drain promptly. */
 const TICK_MS = 4;
@@ -339,6 +343,12 @@ export class DeviceSession {
 
   private gibberishEvents = 0;
 
+  /** Replies that could not be read, by command: each is logged once, then counted. */
+  private undecodable = new Map<number, number>();
+
+  /** The firmware's version once read, to name it when its replies do not fit. */
+  private firmwareVersion: string | null = null;
+
   /** Warnings already emitted, so a persistently wrong link warns twice, not forever. */
   private gibberishWarnings = 0;
 
@@ -364,6 +374,8 @@ export class DeviceSession {
     lastError: '',
     lastErrorAt: 0,
     eventDeliveryFailures: 0,
+    /** Replies dropped because they could not be read (see unreadableReply). */
+    undecodable: 0,
   };
 
   private readonly periodic = new PeriodicAggregator();
@@ -409,7 +421,10 @@ export class DeviceSession {
       lastError: '',
       lastErrorAt: 0,
       eventDeliveryFailures: 0,
+      undecodable: 0,
     };
+    this.undecodable.clear();
+    this.firmwareVersion = null;
     this.client.register_periodic_with_timeout(
       MSG_READ_SAMPLE,
       MSG_SAMPLE_PERIOD_MS,
@@ -596,9 +611,12 @@ export class DeviceSession {
       const batch = this.client.get_stored(MSG_READ_SAMPLE) as {
         entries: Array<number[] | Uint8Array>;
       };
-      return batch.entries.map((e) =>
-        sampleToShared(decodeSample(e instanceof Uint8Array ? e : Uint8Array.from(e))),
-      );
+      // Samples the ring kept from firmware on another layout are not this
+      // app's to read (see unreadableReply); they are left out, not misread.
+      return batch.entries
+        .map((e) => (e instanceof Uint8Array ? e : Uint8Array.from(e)))
+        .filter((e) => readReplyMismatch(MSG_READ_SAMPLE, e) === null)
+        .map((e) => sampleToShared(decodeSample(e)));
     } catch {
       return [];
     }
@@ -631,6 +649,29 @@ export class DeviceSession {
       const e = await p;
       return (e as Extract<DeviceEvent, { kind: 'firmwareVersion' }>).data.version;
     }, 'readFirmwareVersion');
+  }
+
+  /**
+   * The compatibility handshake: which protocol version the firmware speaks.
+   * Resolves null when the firmware refuses the read (NACK), which is what
+   * firmware from before the handshake does with a command it does not know.
+   * Rejects only when the board does not answer at all.
+   */
+  async readDeviceInfo(): Promise<{ protocolVersion: number } | null> {
+    return this.runOp(async () => {
+      const p = this.waitFor(
+        (e) =>
+          e.kind === 'deviceInfo' ||
+          (e.kind === 'ack' && e.command === MSG_READ_DEVICE_INFO && !e.success),
+        3000,
+        'deviceInfo',
+        MSG_READ_DEVICE_INFO,
+        'read',
+      );
+      this.requestRead(MSG_READ_DEVICE_INFO);
+      const e = await p;
+      return e.kind === 'deviceInfo' ? { protocolVersion: e.data.protocolVersion } : null;
+    }, 'readDeviceInfo');
   }
 
   // ── High-level writes (command → ACK) ──
@@ -1071,7 +1112,13 @@ export class DeviceSession {
         if (request !== undefined) this.rejectWaitersForRequest(request, 'response timeout');
       }
       this.logRawEvent(ev);
-      for (const mapped of this.mapEvent(ev)) {
+      let mappedEvents: DeviceEvent[];
+      try {
+        mappedEvents = this.mapEvent(ev);
+      } catch (err) {
+        mappedEvents = this.unreadableReply(ev, err);
+      }
+      for (const mapped of mappedEvents) {
         if (mapped.kind === 'sample') {
           this.lastSample = mapped.data;
           // Tallied here rather than in `logRawEvent` because the sanity check
@@ -1214,7 +1261,30 @@ export class DeviceSession {
     }
   }
 
+  /**
+   * A reply this app cannot read: its length is not the one its message has
+   * (the firmware and app were generated from different layouts), or it
+   * failed to decode. Dropped, so no misread value reaches the screen, and
+   * the session carries on: the device-info handshake still runs, and its
+   * verdict says what to do. A read waiting on it fails at once instead of
+   * timing out. Logged the first time per command, then only counted.
+   */
+  private unreadableReply(ev: RawEvent, err: unknown): DeviceEvent[] {
+    const command = ev.command ?? -1;
+    const seen = this.undecodable.get(command) ?? 0;
+    this.undecodable.set(command, seen + 1);
+    this.stats.undecodable += 1;
+    const reason = err instanceof Error ? err.message : String(err);
+    const name = commandName(command, 'read');
+    if (ev.event === 'data') this.rejectWaitersForRequest({ command, dir: 'read' }, `${name}: ${reason}`);
+    if (seen > 0) return [];
+    logProto.error('unreadable-reply', name, { command, bytes: u8(ev.payload).length, reason });
+    return [{ kind: 'error', message: `${name}: ${reason}` }];
+  }
+
   private mapData(command: number, payload: Uint8Array): DeviceEvent[] {
+    const mismatch = readReplyMismatch(command, payload);
+    if (mismatch !== null) throw new Error(schemaMismatchMessage(mismatch, this.firmwareVersion));
     switch (command) {
       case MSG_READ_SAMPLE:
         return [{ kind: 'sample', data: sampleToShared(decodeSample(payload)) }];
@@ -1222,8 +1292,15 @@ export class DeviceSession {
         return [{ kind: 'state', data: stateToShared(decodeMachineState(payload)) }];
       case MSG_READ_MACHINE_CONFIGURATION:
         return [{ kind: 'configuration', data: configToShared(decodeMachineConfiguration(payload)) }];
-      case MSG_READ_FIRMWARE_VERSION:
-        return [{ kind: 'firmwareVersion', data: decodeFirmwareVersion(payload) }];
+      case MSG_READ_FIRMWARE_VERSION: {
+        const data = decodeFirmwareVersion(payload);
+        this.firmwareVersion = data.version || null;
+        return [{ kind: 'firmwareVersion', data }];
+      }
+      case MSG_READ_DEVICE_INFO:
+        // Frozen and append-only (MaDProtocol.yaml): a firmware from before a
+        // field was appended sends a shorter reply, read as zero-filled.
+        return [{ kind: 'deviceInfo', data: decodeDeviceInfo(zeroFilled(payload, DEVICEINFO_WIRE_SIZE)) }];
       case MSG_READ_SAMPLE_PROFILE:
         return [{ kind: 'sampleProfile', data: sampleProfileToShared(decodeSampleProfile(payload)) }];
       default:
@@ -1545,6 +1622,14 @@ function u8(payload?: number[] | Uint8Array): Uint8Array {
   // serde_bytes makes the wasm hand back a Uint8Array directly (no per-element
   // copy); tolerate a plain number[] too (older build / non-serde_bytes path).
   return payload instanceof Uint8Array ? payload : Uint8Array.from(payload);
+}
+
+/** `payload` padded with zeros to at least `size` bytes; longer payloads unchanged. */
+export function zeroFilled(payload: Uint8Array, size: number): Uint8Array {
+  if (payload.length >= size) return payload;
+  const out = new Uint8Array(size);
+  out.set(payload);
+  return out;
 }
 
 function concatBytes(chunks: Uint8Array[]): Uint8Array {

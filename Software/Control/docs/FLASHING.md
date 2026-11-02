@@ -59,14 +59,19 @@ production firmware build puts the protocol UART, at 2,000,000 baud
 production hardware **one connection serves both control and programming** —
 the app defaults to reusing the port it is already connected to, and after a
 flash it reconnects to that port at that rate. That is why the Firmware screen's
-default image is the latest release's production build
+default image is a release's production build
 (`MaD-Firmware-<version>-P2Eval.bin`; `pickFirmwareAsset` in
-`src/firmware/release.ts`). A release without one offers nothing, and the
-screen offers the newest release that has one. When that release also carries a MaDEdge build,
-the screen offers a **Board** choice between the two; P2Eval stays the
-default. The served folder holds `firmware/latest.json`, `firmware/latest.bin`
-(P2Eval, the path every deployed app version reads) and
-`firmware/latest-MaDEdge.bin`.
+`src/firmware/release.ts`). The release is the recommended one: the newest
+that speaks this app's protocol version (`recommendedRelease`, read from
+`firmware/manifest.json`). A release without a production build offers
+nothing, and one without `firmware-info.json` predates the protocol
+handshake, so it is never recommended. When that release also carries a
+MaDEdge build, the screen offers a **Board** choice between the two, and
+**Install recommended firmware** flashes the chosen board's build; P2Eval
+stays the default. The served folder holds `firmware/manifest.json` with each
+listed release's images beside it, plus `firmware/latest.json`,
+`firmware/latest.bin` (P2Eval, the path every deployed app version reads)
+and `firmware/latest-MaDEdge.bin` for app versions from before the manifest.
 
 Two things this does *not* work over:
 
