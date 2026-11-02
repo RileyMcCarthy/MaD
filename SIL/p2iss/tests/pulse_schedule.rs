@@ -163,8 +163,8 @@ fn a_finite_train_stopped_partway_banks_the_pulses_it_ran() {
     });
     expect!(
         "count-banked",
-        "the stop hands the drive a held train carrying 500 pulses: one pulse for every two \
-         transitions, at the train's rate, over the virtual time it ran"
+        "the stop hands the drive a held train of 500 pulses, one per two transitions, at the \
+         train's rate over the time it ran"
     );
     expect!(
         "drive-steps",
