@@ -327,3 +327,93 @@ fn skip_cancels_a_slot_without_decoding_it() {
         "the slot before the cancelled one ran"
     );
 }
+
+/// The flasher's hex load for a flash image: `Prop_Hex`, each 128 bytes as
+/// ` xx` hex with ` > ` after it, and `~` (`loadImage` with the checksum
+/// handshake off, as for the flash stub).
+fn hex_flash_load(image: &[u8]) -> Vec<u8> {
+    let mut out = b"> Prop_Hex 0 0 0 0".to_vec();
+    for chunk in image.chunks(128) {
+        for b in chunk {
+            out.extend_from_slice(format!(" {b:02x}").as_bytes());
+        }
+        out.extend_from_slice(b" > ");
+    }
+    out.push(b'~');
+    out
+}
+
+#[test]
+fn the_roms_serial_loader_starts_the_flash_stub_on_its_download() {
+    behaviour!(Test {
+        id: "p2.rom-serial-flash-stub",
+        covers: Some("SIL/p2core/src/lib.rs#coginit"),
+        given: "the mask ROM with the serial strap pulled up and an erased flash, sent the \
+                flasher's probe and then the app's flash stub and a firmware as hex, ending \
+                with the run command",
+    });
+    expect!(
+        "stub-sizes-its-download",
+        "the stub finds its own download's size and programs the firmware into the flash at \
+         the offset the boot loader reads it from",
+        "the ROM relaunches cog 0 straight into the stub, whose first instruction reads the \
+         hub FIFO's pointer as the size of the download, so the pointer survives the relaunch"
+    );
+
+    std::env::set_var("P2CORE_NO_FF", "1");
+    let (Some(rom), Some(stub)) = (
+        std::fs::read(
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../p2iss/rom/rom_booter_v33k.bin"),
+        )
+        .ok(),
+        flash_loader_stub(),
+    ) else {
+        eprintln!("\n*** SKIPPED: needs `make bootrom` and the app's stub. Asserted NOTHING.\n");
+        return;
+    };
+    let fw = payload();
+    let board = Board::new(SdCard::blank(0)).with_flash(vec![0xFF; 1 << 20]);
+    let mut m = Machine::with_boot_rom(&rom, board);
+    m.pins.set_input_level(59, true);
+    let step = |m: &mut Machine<Board>, n: u64| {
+        for _ in 0..n {
+            if m.step(1).is_err() || !m.cogs[0].running {
+                break;
+            }
+        }
+    };
+    // Into get_rx, its receive interrupt armed.
+    for _ in 0..400_000 {
+        if m.cogs[0].int_src[0] == 4 && matches!(m.cogs[0].pc, 0x29A | 0x29B) {
+            break;
+        }
+        step(&mut m, 1);
+    }
+    let mut feed = b"> Prop_Chk 0 0 0 0  ".to_vec();
+    feed.extend(hex_flash_load(&build_flash_image(&stub, &fw)));
+    for b in feed {
+        m.pins.push_rx(b);
+        for _ in 0..8_000 {
+            step(&mut m, 1);
+            if m.pins.rx_pending() == 0 {
+                break;
+            }
+        }
+        step(&mut m, 400);
+    }
+    step(&mut m, 8_000_000);
+    let flash = m.pins.flash.image_bytes();
+    let at = flash.windows(8).position(|w| w == &fw[..8]);
+    assert_eq!(
+        at,
+        Some(144),
+        "console {:?}, cog 0 at {:#X} running {}, fifo {:#X}, commands {:?}",
+        m.pins.console(),
+        m.cogs[0].pc,
+        m.cogs[0].running,
+        m.cogs[0].fifo_addr,
+        m.pins.flash.commands
+    );
+    assert_eq!(&flash[144..144 + fw.len()], &fw[..]);
+}

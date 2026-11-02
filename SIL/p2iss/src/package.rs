@@ -20,6 +20,7 @@
 //! | `P_ASYNC_TX` with `P_OE` | the line's idle mark until the first byte, then a [`SerialLevelBridge`] framing at the rate the pin's bit period and the guest's clock give; the pin buffers one byte and reads busy until its last frame is out, in the guest's clocks ([`crate::TxPace`]) |
 //! | `P_ASYNC_RX` | read by a deframer at the rate its bit period and the guest's clock give; the pin holds one byte (below, "Receive") |
 //! | `P_TRANSITION` or `P_NCO_FREQ` with `P_OE` | a step train, one periodic drive per rate change ([`crate::pulse`]); a `WRPIN` to any other mode banks its count and hands the pad back to the word, so `_pinclear` (`DIRL`, `WRPIN #0`) releases it |
+//! | `P_TRANSITION` clocking a streamer transfer (`XINIT`), or toggling every 16 clocks or faster | a synchronous clock: each transition a change of its own at its instant on the guest's clock, the streamer's output bit presented and its input bit sampled at the edges ([`p2core::Machine::stream_burst_edge`]); loadp2's flash programmer and loader clock the module's flash this way |
 //! | `P_PULSE` and the sync-serial modes, `DIR` set | the synchronous-serial hardware ([`p2core::SmartBus`]), clocked on the guest's own clock, so the module's flash and card share `P58`–`P61` as they do on the board; with `DIR` clear, or once the word is cleared, released |
 //!
 //! A pad whose published drive is strong (under [`WEAK_DRIVE_OHMS`]) reads
@@ -362,6 +363,12 @@ pub(crate) enum CoreOp {
     ClockWord { word: u32, at: u64 },
     /// The sync-serial clock's next transition.
     PumpEdge,
+    /// A `WYPIN` that starts a streamer transfer on a transition clock pin,
+    /// which the bus clocks an edge at a time
+    /// ([`p2core::PinBus::defers_streamer`]).
+    StreamStart { clock_pin: u8 },
+    /// That transfer's next transition.
+    StreamEdge,
 }
 
 /// What one instant holds: the ops of one instruction, or one clock edge.
@@ -377,6 +384,14 @@ struct Batch {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Pump {
     next_edge_clocks: u64,
+}
+
+/// A streamer transfer's transition clock running on the guest's clock: the
+/// clock count its next transition falls on, and the clocks between two.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct StreamPump {
+    next_edge_clocks: u64,
+    period_clocks: u64,
 }
 
 /// What a [`P2IssCore`]'s bus keeps of its pads: the handles, what each
@@ -406,6 +421,8 @@ pub(crate) struct CorePads {
     pending: VecDeque<Batch>,
     /// The sync-serial clock, while a burst runs.
     pump: Option<Pump>,
+    /// A streamer transfer's transition clock, while one runs.
+    stream_pump: Option<StreamPump>,
     /// Each asynchronous transmit pin's buffer and shifter, in the guest's
     /// clocks, by pin.
     tx_pace: BTreeMap<u8, TxPace>,
@@ -436,6 +453,7 @@ impl CorePads {
             ops: Vec::new(),
             pending: VecDeque::new(),
             pump: None,
+            stream_pump: None,
             tx_pace: BTreeMap::new(),
             dirty: 0,
             dirty_all: false,
@@ -929,6 +947,7 @@ impl NetPins {
             core.ops.clear();
             core.pending.clear();
             core.pump = None;
+            core.stream_pump = None;
             core.tx_pace.clear();
             core.dirty = 0;
             core.dirty_all = false;
@@ -1130,6 +1149,9 @@ impl NetPins {
                 CoreOp::Wxpin { pin } => self.retune_rx(pin),
                 CoreOp::Wypin { pin, y } => self.core_wypin_now(pin, y),
                 CoreOp::BurstStart => self.core_burst_start(at_clocks),
+                CoreOp::StreamStart { clock_pin } => self.core_stream_start(clock_pin, at_clocks),
+                // The machine's to carry out (`apply_due`).
+                CoreOp::StreamEdge => {}
                 CoreOp::PumpEdge => self.core_pump_edge(),
             }
         }
@@ -1159,6 +1181,21 @@ impl NetPins {
                     next_edge_clocks: at_clocks.saturating_add(half),
                 });
             }
+        }
+    }
+
+    /// A streamer transfer starts at clock count `at_clocks`, the `WYPIN`'s:
+    /// its first transition comes one period later, the transition pin's
+    /// `X[15:0]` clocks (`WXPIN`; P2 silicon documentation, smart pin mode
+    /// `%00101`, "transition output").
+    fn core_stream_start(&mut self, clock_pin: u8, at_clocks: u64) {
+        let x = self.inner.pins[usize::from(clock_pin & 63)].x & 0xFFFF;
+        let period_clocks = u64::from(x.max(1));
+        if let Some(core) = self.core.as_mut() {
+            core.stream_pump = Some(StreamPump {
+                next_edge_clocks: at_clocks.saturating_add(period_clocks),
+                period_clocks,
+            });
         }
     }
 
@@ -1796,6 +1833,19 @@ fn advance(
             return settle(machine, shared, core_shared, arm, now);
         }
     }
+    if let Some(stream) = core.stream_pump {
+        if stream.next_edge_clocks <= frontier {
+            // The cog that started the transfer waits on WAITXFI: the edge
+            // is a change of its own, at its instant.
+            let due = stream.next_edge_clocks;
+            core.pending.push_back(Batch {
+                at_ns: core.clock.clocks_to_ns(due),
+                at_clocks: due,
+                ops: vec![CoreOp::StreamEdge],
+            });
+            return settle(machine, shared, core_shared, arm, now);
+        }
+    }
     let guest_ns = core.clock.clocks_to_ns(frontier);
     if guest_ns > now {
         // The guest is ahead; it goes on when the engine reaches it.
@@ -1807,6 +1857,9 @@ fn advance(
     let mut horizon = core.clock.ns_to_clocks_ceil(now.saturating_add(SLICE_NS));
     if let Some(pump) = core.pump {
         horizon = horizon.min(pump.next_edge_clocks);
+    }
+    if let Some(stream) = core.stream_pump {
+        horizon = horizon.min(stream.next_edge_clocks);
     }
     machine.pins.net_yield = false;
     if let Err(trap) = machine.step_until_clocks(horizon) {
@@ -1832,6 +1885,16 @@ fn advance(
                 at_ns: core.clock.clocks_to_ns(due),
                 at_clocks: due,
                 ops: vec![CoreOp::PumpEdge],
+            });
+        }
+    }
+    if let Some(stream) = core.stream_pump {
+        let due = stream.next_edge_clocks;
+        if frontier >= due || op_clocks.is_some_and(|at| at >= due) {
+            core.pending.push_back(Batch {
+                at_ns: core.clock.clocks_to_ns(due),
+                at_clocks: due,
+                ops: vec![CoreOp::StreamEdge],
             });
         }
     }
@@ -1909,11 +1972,39 @@ fn apply_due(
                     .store(core.clock.stalled, Ordering::Relaxed);
             }
         }
+        if batch.ops.contains(&CoreOp::StreamEdge) {
+            stream_edge(machine);
+        }
         machine.pins.apply_core_ops(&batch.ops, batch.at_clocks);
         // Each batch is one stop of the guest for a change outside.
         shared.net_yields.fetch_add(1, Ordering::Relaxed);
         applied = true;
     }
+}
+
+/// One transition of the streamer transfer, at its instant: the machine
+/// flips the clock pad, samples or presents its data bit
+/// ([`Machine::stream_burst_edge`]), and the pads it moved go on their nets
+/// now; the next transition is a period on, or the transfer is over and the
+/// cog waiting on WAITXFI runs on.
+fn stream_edge(machine: &mut Machine<NetPins>) {
+    let more = machine.stream_burst_edge();
+    // The pad writes noted a publish for a pass's batch; this is the edge's
+    // instant, so they go out here.
+    if let Some(core) = machine.pins.core.as_mut() {
+        core.ops.clear();
+    }
+    machine.pins.publish_pads();
+    if let Some(core) = machine.pins.core.as_mut() {
+        core.stream_pump = match (core.stream_pump, more) {
+            (Some(stream), true) => Some(StreamPump {
+                next_edge_clocks: stream.next_edge_clocks.saturating_add(stream.period_clocks),
+                ..stream
+            }),
+            _ => None,
+        };
+    }
+    machine.pins.net_yield = false;
 }
 
 /// Replay every transition the nets resolved since the last look, in order,
