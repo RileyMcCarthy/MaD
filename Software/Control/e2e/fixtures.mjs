@@ -860,7 +860,7 @@ export async function recoverMachine() {
     browser = session.browser;
     const { page } = session;
     await connectToSil(page);
-    await page.goto(`${APP_URL}#/live`);
+    await page.goto(`${APP_URL}#/control`);
     // The control is a single toggle whose label follows motionEnabled, so this
     // locator matches nothing at all when motion is already off.
     const disable = page.getByRole('button', { name: 'Disable motion' });

@@ -91,21 +91,20 @@ describe('Sprint C e2e matrix catalog', () => {
 
   behaviour(
     {
-      id: 'matrix.waveform-catalog-includes-sine-and-triangle',
+      id: 'matrix.waveform-catalog-covers-sine',
       covers: 'e2e/matrix-catalog.json',
       given: 'the waveform matrix catalog',
       expect: {
-        'sine-and-triangle': 'sine and triangle are both covered',
-        'five-or-more-cells': 'at least five cells are listed',
+        'sine-only': 'every cell is a sine, the one waveform the machine runs as a canned cycle',
+        'four-or-more-cells': 'at least four cells are listed',
         'positive-drive-values':
           'each cell carries a positive amplitude, a positive frequency and at least one cycle',
       },
     },
     () => {
       const shapes = new Set(catalog.M10_waveform.map((c) => c.shape));
-      expect(shapes.has('sine')).toBe(true);
-      expect(shapes.has('triangle')).toBe(true);
-      expect(catalog.M10_waveform.length).toBeGreaterThanOrEqual(5);
+      expect([...shapes]).toEqual(['sine']);
+      expect(catalog.M10_waveform.length).toBeGreaterThanOrEqual(4);
       for (const c of catalog.M10_waveform) {
         expect(c.amplitude).toBeGreaterThan(0);
         expect(c.frequency).toBeGreaterThan(0);
@@ -191,6 +190,7 @@ describe('Sprint C e2e matrix catalog', () => {
         'P1-precision',
         'VT-linear',
         'BB-back-to-back',
+        'M12-sigmoid',
         'B5-reconnect',
         'FW1',
       ]);

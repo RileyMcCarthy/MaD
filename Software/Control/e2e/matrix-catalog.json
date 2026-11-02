@@ -14,13 +14,11 @@
     { "id": "WAVE-sine", "shape": "sine", "label": "A=5mm f=1Hz ×2", "amplitude": 5, "frequency": 1, "cycles": 2, "distance": 6, "maxDisp": 100 },
     { "id": "WAVE-sine-slow-large", "shape": "sine", "label": "A=10mm f=0.5Hz ×2", "amplitude": 10, "frequency": 0.5, "cycles": 2, "distance": 12, "maxDisp": 100 },
     { "id": "WAVE-sine-fast", "shape": "sine", "label": "A=3mm f=2Hz ×3", "amplitude": 3, "frequency": 2, "cycles": 3, "distance": 5, "maxDisp": 100 },
-    { "id": "WAVE-sine-small", "shape": "sine", "label": "A=2mm f=0.5Hz ×2", "amplitude": 2, "frequency": 0.5, "cycles": 2, "distance": 4, "maxDisp": 100 },
-    { "id": "WAVE-tri", "shape": "triangle", "label": "A=4mm f=1Hz ×2 triangle", "amplitude": 4, "frequency": 1, "cycles": 2, "distance": 5, "maxDisp": 100 },
-    { "id": "WAVE-tri-slow", "shape": "triangle", "label": "A=8mm f=0.5Hz ×2 triangle", "amplitude": 8, "frequency": 0.5, "cycles": 2, "distance": 10, "maxDisp": 100 }
+    { "id": "WAVE-sine-small", "shape": "sine", "label": "A=2mm f=0.5Hz ×2", "amplitude": 2, "frequency": 0.5, "cycles": 2, "distance": 4, "maxDisp": 100 }
   ],
   "M12_linear_um": [
     { "id": "M12-linear-absolute", "label": "linear, absolute", "targetMm": 8, "velocityMmS": 4, "absolute": true },
-    { "id": "M12-linear-relative", "label": "linear, relative", "distanceMm": 6, "velocityMmS": 3 },
+    { "id": "M12-linear-relative", "label": "linear, 6 mm", "distanceMm": 6, "velocityMmS": 3 },
     { "id": "M12-linear-long", "label": "50 mm at 10 mm/s", "distanceMm": 50, "velocityMmS": 10, "maxDisplacement": 80 },
     { "id": "M12-linear-2mm-5", "label": "2 mm at 5 mm/s", "distanceMm": 2, "velocityMmS": 5 },
     { "id": "M12-linear-10mm-1", "label": "10 mm at 1 mm/s", "distanceMm": 10, "velocityMmS": 1 },
@@ -50,7 +48,7 @@
     "M8-jog-roundtrip-5",
     "M9-mid-slack",
     "WAVE-sine",
-    "WAVE-tri",
+    "M12-sigmoid",
     "M11-idle-drop",
     "B5-reconnect",
     "FW1"

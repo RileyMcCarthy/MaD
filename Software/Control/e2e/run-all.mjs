@@ -134,7 +134,7 @@ const ROM_BOARD = process.env.E2E_BOARD === 'rom';
 // a test that runs while the carriage follows its setpoint.
 const MOVES = new Set([
   'G2+G3+H2+I', 'G-limit', 'TC1-multiset', 'M13-jog-endpoint', 'M13-home-endpoint',
-  ...MATRIX.M12_linear_um.map((cell) => cell.id), 'M12-dwell', 'M12-wave-hold', 'M12-wave-skew',
+  ...MATRIX.M12_linear_um.map((cell) => cell.id), 'M12-dwell', 'M12-sigmoid',
   ...MATRIX.M10_waveform.map((wf) => wf.id), 'TC4-dwell', 'TC6-disable-stops', 'TC11-velocity',
   'VT-linear', 'TC14-jog', ...MATRIX.M8_jog.map((cell) => cell.id), 'M11-mid-test-drop',
   'D2-settled-jog', 'D3+SR-slack', ...MATRIX.M9_force_slack.map((cell) => cell.id),
@@ -430,16 +430,15 @@ async function describeNewestRun(page) {
 // Returns the run row locator. Assumes profiles are seeded + selected by the caller.
 async function runAndDownload(page, { completeTimeout = RUN_WAIT_MS } = {}) {
   const runner = page.locator('.panel', { hasText: 'New Test' });
-  await press(page.getByTestId('run-test'));
+  await startRun(page);
   await runner.getByText(/started/i).waitFor({ timeout: DEVICE_WAIT_MS });
-  const row = page.locator('tbody tr').first();
-  // A run the firmware abandons never gets a completed badge, so waiting for
-  // one burns the whole budget and then reports "timeout" instead of the
-  // reason. The firmware does say why, as a warning notification the app
-  // surfaces as a toast — race the badge against it and fail immediately with
+  // A run the firmware abandons never finishes, so waiting for that burns the
+  // whole budget and then reports "timeout" instead of the reason. The
+  // firmware does say why, as a warning notification the app surfaces as a
+  // toast — race the runner's "finished" against it and fail immediately with
   // the board's own words.
   const abortToast = page.locator('.toast').getByText(/Test aborted/i).first();
-  const completed = row.locator('.badge.completed').waitFor({ timeout: completeTimeout });
+  const completed = runner.getByText(/finished/i).waitFor({ timeout: completeTimeout });
   const abortReason = abortToast.waitFor({ timeout: completeTimeout }).then(
     async () => `the firmware ended the run early: ${((await abortToast.textContent()) ?? '').trim()}`,
     // No abort inside the budget: let the completion wait decide the outcome.
@@ -453,6 +452,9 @@ async function runAndDownload(page, { completeTimeout = RUN_WAIT_MS } = {}) {
   }
   if (early) throw new Error(early);
   await completed;
+  await openHistory(page);
+  const row = page.locator('tbody tr').first();
+  await row.locator('.badge.completed').waitFor({ timeout: DEVICE_WAIT_MS });
   await press(row.getByRole('button', { name: /Download data/i }));
   await row.locator('.badge.downloaded').waitFor({ timeout: RUN_WAIT_MS });
   return row;
@@ -503,7 +505,7 @@ async function settleMotion(page, opts = {}) {
   if (setpointWas !== null) {
     const cmdBudget = Math.min(timeoutMs, 10_000);
     while ((await clock.elapsed()) < cmdBudget) {
-      const set = await num('Machine Setpoint');
+      const set = await num('Machine Target');
       if (Number.isFinite(set) && Math.abs(set - setpointWas) > tolMm) break;
       await waitPageTime(page, pollMs);
     }
@@ -516,7 +518,7 @@ async function settleMotion(page, opts = {}) {
   let set = NaN;
   while ((await clock.elapsed()) < timeoutMs) {
     pos = await num('Machine Position');
-    set = await num('Machine Setpoint');
+    set = await num('Machine Target');
     const arrived = Number.isFinite(pos) && Number.isFinite(set) && Math.abs(pos - set) <= tolMm;
     const still = Number.isFinite(last) && Math.abs(pos - last) <= stillMm;
     if (arrived && still) {
@@ -676,7 +678,7 @@ async function clickReconnect(page, { timeoutMs = DEVICE_WAIT_MS } = {}) {
 }
 
 async function prepareManualControl(page) {
-  await page.goto(`${APP_URL}#/live`);
+  await page.goto(`${APP_URL}#/control`);
   await page.getByRole('button', { name: /Home/ }).waitFor({ timeout: DEVICE_WAIT_MS });
   await page.getByText(/Motion: (enabled|disabled)/).waitFor({ timeout: DEVICE_WAIT_MS });
   await ensureTestIdle(page);
@@ -706,7 +708,7 @@ async function zeroLength(page) {
   for (let i = 0; i < 4 && Number.isFinite(p) && Math.abs(p) > 0.5; i++) {
     await jog.fill(Math.abs(p).toFixed(2));
     const setWas = parseFloat(
-      await page.locator('.readout', { hasText: 'Machine Setpoint' }).locator('.value').first().innerText(),
+      await page.locator('.readout', { hasText: 'Machine Target' }).locator('.value').first().innerText(),
     );
     await press(page.getByRole('button', { name: p > 0 ? '− Jog down' : '+ Jog up' }));
     await settleMotion(page, { setpointWas: Number.isFinite(setWas) ? setWas : null });
@@ -720,15 +722,36 @@ async function zeroLength(page) {
   return p;
 }
 
-// Go to Runs and pick the (only) seeded sample + motion profile in the runner.
+// Go to Control and pick the (only) seeded sample + motion profile in the runner.
 async function selectSeeded(page) {
-  await page.goto(`${APP_URL}#/runs`);
+  await page.goto(`${APP_URL}#/control`);
   const runner = page.locator('.panel', { hasText: 'New Test' });
   await runner.locator('select').nth(0).selectOption({ index: 1 });
   await runner.locator('select').nth(1).selectOption({ index: 1 });
 }
 
 // Read the single downloaded run CSV from OPFS and summarise its position column.
+// Press Run test, accepting the limit warning when the profiles go beyond the
+// machine's or sample's limits (several scenarios do, on purpose).
+async function startRun(page) {
+  await press(page.getByTestId('run-test'));
+  const anyway = page.getByTestId('run-anyway');
+  const asked = await anyway.waitFor({ timeout: 1500 }).then(() => true, () => false);
+  if (asked) await press(anyway);
+}
+
+// Wait on Control until the runner reports the run finished (the runner marks
+// the run record completed, so it must stay on screen until then).
+async function awaitRunFinished(page, { timeout = RUN_WAIT_MS } = {}) {
+  await page.locator('.panel', { hasText: 'New Test' }).getByText(/finished/i).waitFor({ timeout });
+}
+
+// Open the run history on Test runs.
+async function openHistory(page) {
+  await page.goto(`${APP_URL}#/runs`);
+  await page.locator('tbody tr').first().waitFor({ timeout: DEVICE_WAIT_MS });
+}
+
 async function readDownloadedCsvStats(page) {
   return page.evaluate(async () => {
     const root = await navigator.storage.getDirectory();
@@ -915,7 +938,7 @@ const scenarios = [
       const { browser, page, errors } = await newSilPage();
       try {
         await connectToSil(page);
-        await page.goto(`${APP_URL}#/live`);
+        await page.goto(`${APP_URL}#/control`);
         await awaitResponding(page);
         const forceText = (await page.locator('.readout', { hasText: 'Machine Force' }).locator('.value').textContent())?.trim() || '';
         assert(/^-?\d/.test(forceText), `live readout never populated (got ${forceText})`);
@@ -1005,7 +1028,7 @@ const scenarios = [
       const { browser, page, errors } = await newSilPage();
       try {
         await connectToSil(page);
-        await page.goto(`${APP_URL}#/live`);
+        await page.goto(`${APP_URL}#/control`);
         const combined = page.locator('[data-testid="live-combined-chart"]');
         await combined.locator('canvas').first().waitFor({ timeout: DEVICE_WAIT_MS });
         // Coordinate toggle: switch to Sample and back; chart must survive.
@@ -1223,7 +1246,7 @@ const scenarios = [
       const { browser, page, errors } = await newSilPage();
       try {
         await connectToSil(page);
-        await page.goto(`${APP_URL}#/live`);
+        await page.goto(`${APP_URL}#/control`);
         // Confirm the Live controls are present (i.e. connected).
         await page.getByRole('button', { name: /Home/ }).waitFor({ timeout: DEVICE_WAIT_MS });
         // Wait for the state to be KNOWN before reading the toggle: while it is
@@ -1384,26 +1407,28 @@ const scenarios = [
             id: 'gm', name: 'G-Motion', description: 'dwell', createdAt: new Date().toISOString(),
             profile: { name: 'G-Motion', description: 'dwell', sets: [
               { name: 'S', executions: 1, moves: [
-                { moveType: 'dwell', absoluteOrRelative: 'absolute', moveParameters: { position: 0, velocity: 0, distance: 0, time: 2000, circularOffset: 0 } },
+                { moveType: 'dwell', moveParameters: { position: 0, velocity: 0, time: 2000 } },
               ] },
             ] },
           });
         });
 
-        await page.goto(`${APP_URL}#/runs`);
+        await page.goto(`${APP_URL}#/control`);
         const runnerPanel = page.locator('.panel', { hasText: 'New Test' });
         await runnerPanel.locator('select').nth(0).selectOption({ index: 1 });
         await runnerPanel.locator('select').nth(1).selectOption({ index: 1 });
-        await press(page.getByTestId('run-test'));
+        await startRun(page);
 
         // The run record is created and the device accepts the test (status running).
         await page.locator('.panel', { hasText: 'New Test' }).getByText(/started/i).waitFor({ timeout: DEVICE_WAIT_MS });
-        await page.locator('tbody .badge', { hasText: 'running' }).first().waitFor({ timeout: DEVICE_WAIT_MS });
+        await page.getByText('Test: running').waitFor({ timeout: DEVICE_WAIT_MS });
         // Leave the machine idle: let the 2 s dwell finish. On the board route
         // the next scenario starts a few milliseconds of the board's time after
         // this one ends, and a run still going makes the firmware refuse the
         // next scenario's TEST_RUN as busy.
-        await page.locator('tbody .badge.completed').first().waitFor({ timeout: RUN_WAIT_MS });
+        await awaitRunFinished(page);
+        await openHistory(page);
+        await page.locator('tbody .badge.completed').first().waitFor({ timeout: DEVICE_WAIT_MS });
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
       } finally {
         await browser.close();
@@ -1423,17 +1448,19 @@ const scenarios = [
         await seedProfiles(page, {
           sample: { serial: 'Life-Sample', maxForce: 500, maxVelocity: 25, maxDisplacement: 100, sampleWidth: 4, sampleThickness: 1.5 },
           motion: { name: 'Life-Motion', moves: [
-            { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 5, distance: PEAK_MM, time: 0, circularOffset: 0 } },
-            { moveType: 'dwell', absoluteOrRelative: 'absolute', moveParameters: { position: 0, velocity: 0, distance: 0, time: 300, circularOffset: 0 } },
-            { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 10, distance: -PEAK_MM, time: 0, circularOffset: 0 } },
+            { moveType: 'linear', moveParameters: { position: PEAK_MM, velocity: 5, time: 0 } },
+            { moveType: 'dwell', moveParameters: { position: 0, velocity: 0, time: 300 } },
+            { moveType: 'linear', moveParameters: { position: 0, velocity: 10, time: 0 } },
           ] },
         });
-        await page.goto(`${APP_URL}#/runs`);
+        await page.goto(`${APP_URL}#/control`);
         const runner = page.locator('.panel', { hasText: 'New Test' });
         await runner.locator('select').nth(0).selectOption({ index: 1 });
         await runner.locator('select').nth(1).selectOption({ index: 1 });
-        await press(page.getByTestId('run-test'));
+        await startRun(page);
         await runner.getByText(/started/i).waitFor({ timeout: DEVICE_WAIT_MS });
+        await awaitRunFinished(page);
+        await openHistory(page);
         const row = page.locator('tbody tr').first();
         // G3: firmware runs the test and testRunning toggles → run auto-marks completed.
         await row.locator('.badge.completed').waitFor({ timeout: RUN_WAIT_MS });
@@ -1470,7 +1497,7 @@ const scenarios = [
         // Zero the gauge length so sample displacement starts at 0 — prior scenarios
         // may leave the gantry past the 8 mm limit, which would trip the limit instantly
         // (sub-1 s test → the 1 s testRunning poll misses it → no completion detected).
-        await page.goto(`${APP_URL}#/live`);
+        await page.goto(`${APP_URL}#/control`);
         await press(page.getByRole('button', { name: 'Zero length' }));
         await awaitReadoutNear(page, 'Sample Position', 0, { eps: 1 });
         const LIMIT_MM = 8;
@@ -1480,15 +1507,17 @@ const scenarios = [
         await seedProfiles(page, {
           sample: { serial: 'Limit-Sample', maxForce: 500, maxVelocity: 25, maxDisplacement: LIMIT_MM, sampleWidth: 4, sampleThickness: 1.5 },
           motion: { name: 'Over-Motion', moves: [
-            { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 4, distance: 20, time: 0, circularOffset: 0 } },
+            { moveType: 'linear', moveParameters: { position: 20, velocity: 4, time: 0 } },
           ] },
         });
-        await page.goto(`${APP_URL}#/runs`);
+        await page.goto(`${APP_URL}#/control`);
         const runner = page.locator('.panel', { hasText: 'New Test' });
         await runner.locator('select').nth(0).selectOption({ index: 1 });
         await runner.locator('select').nth(1).selectOption({ index: 1 });
-        await press(page.getByTestId('run-test'));
+        await startRun(page);
         await runner.getByText(/started/i).waitFor({ timeout: DEVICE_WAIT_MS });
+        await awaitRunFinished(page);
+        await openHistory(page);
         const row = page.locator('tbody tr').first();
         await row.locator('.badge.completed').waitFor({ timeout: RUN_WAIT_MS });
         await press(row.getByRole('button', { name: /Download data/i }));
@@ -1521,12 +1550,12 @@ const scenarios = [
           sample: { serial: 'MS-Sample', maxForce: 500, maxVelocity: 25, maxDisplacement: 100, sampleWidth: 4, sampleThickness: 1.5 },
           motion: { name: 'MultiSet', sets: [
             { name: 'A', executions: 2, moves: [
-              { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 10, distance: 8, time: 0, circularOffset: 0 } },
-              { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 10, distance: -8, time: 0, circularOffset: 0 } },
+              { moveType: 'linear', moveParameters: { position: 8, velocity: 10, time: 0 } },
+              { moveType: 'linear', moveParameters: { position: 0, velocity: 10, time: 0 } },
             ] },
             { name: 'B', executions: 1, moves: [
-              { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 10, distance: 5, time: 0, circularOffset: 0 } },
-              { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 10, distance: -5, time: 0, circularOffset: 0 } },
+              { moveType: 'linear', moveParameters: { position: 5, velocity: 10, time: 0 } },
+              { moveType: 'linear', moveParameters: { position: 0, velocity: 10, time: 0 } },
             ] },
           ] },
         });
@@ -1557,7 +1586,7 @@ const scenarios = [
       const { browser, page, errors } = await newSilPage();
       try {
         await connectToSil(page);
-        await page.goto(`${APP_URL}#/live`);
+        await page.goto(`${APP_URL}#/control`);
         await page.getByRole('button', { name: /Home/ }).waitFor({ timeout: DEVICE_WAIT_MS });
         await page.getByText(/Motion: (enabled|disabled)/).waitFor({ timeout: DEVICE_WAIT_MS });
         const enableBtn = page.getByRole('button', { name: 'Enable motion' });
@@ -1639,7 +1668,7 @@ const scenarios = [
       const { browser, page, errors } = await newSilPage();
       try {
         await connectToSil(page);
-        await page.goto(`${APP_URL}#/live`);
+        await page.goto(`${APP_URL}#/control`);
         await page.getByRole('button', { name: /Home/ }).waitFor({ timeout: DEVICE_WAIT_MS });
         await page.getByText(/Motion: (enabled|disabled)/).waitFor({ timeout: DEVICE_WAIT_MS });
         const enableBtn = page.getByRole('button', { name: 'Enable motion' });
@@ -1756,7 +1785,7 @@ const scenarios = [
             .fill(String(Math.abs(cell.setupJogMm)));
           await page.locator('label.field', { hasText: 'Speed (mm/s)' }).locator('input').fill('20');
           const setWas = parseFloat(
-            await page.locator('.readout', { hasText: 'Machine Setpoint' }).locator('.value').first().innerText(),
+            await page.locator('.readout', { hasText: 'Machine Target' }).locator('.value').first().innerText(),
           );
           await press(page.getByRole('button', {
             name: cell.setupJogMm > 0 ? '+ Jog up' : '− Jog down',
@@ -1765,11 +1794,11 @@ const scenarios = [
         }
         const maxDisp = cell.maxDisplacement
           ?? Math.max(40, Math.abs(cell.distanceMm ?? cell.targetMm ?? 0) + Math.abs(cell.setupJogMm ?? 0) + 10);
-        const moves = cell.absolute
-          ? [{ moveType: 'linear', absoluteOrRelative: 'absolute',
-               moveParameters: { position: cell.targetMm, velocity: cell.velocityMmS, distance: 0, time: 0 } }]
-          : [{ moveType: 'linear', absoluteOrRelative: 'relative',
-               moveParameters: { position: 0, velocity: cell.velocityMmS, distance: cell.distanceMm, time: 0 } }];
+        // Positions are absolute from zero length; a cell given as a distance
+        // moves that far from where its setup jog left the gantry.
+        const target = cell.absolute ? cell.targetMm : (cell.setupJogMm ?? 0) + cell.distanceMm;
+        const moves = [{ moveType: 'linear',
+                         moveParameters: { position: target, velocity: cell.velocityMmS, time: 0 } }];
         await seedProfiles(page, {
           sample: { serial: `Rec-${cell.id}`, maxForce: 500, maxVelocity: 60, maxDisplacement: maxDisp,
                     sampleWidth: 4, sampleThickness: 1.5 },
@@ -1795,29 +1824,20 @@ const scenarios = [
       label: 'linear then dwell then linear',
       expectMotion: true,
       moves: [
-        { moveType: 'linear', absoluteOrRelative: 'absolute',
-          moveParameters: { position: 5, velocity: 5, distance: 0, time: 0 } },
-        { moveType: 'dwell', absoluteOrRelative: 'absolute',
-          moveParameters: { position: 0, velocity: 0, distance: 0, time: 400 } },
-        { moveType: 'linear', absoluteOrRelative: 'absolute',
-          moveParameters: { position: 9, velocity: 5, distance: 0, time: 0 } },
+        { moveType: 'linear',
+          moveParameters: { position: 5, velocity: 5, time: 0 } },
+        { moveType: 'dwell',
+          moveParameters: { position: 0, velocity: 0, time: 400 } },
+        { moveType: 'linear',
+          moveParameters: { position: 9, velocity: 5, time: 0 } },
       ],
     },
     {
-      id: 'M12-wave-hold',
-      label: 'waveform holding at peak tension only',
-      moves: [{ moveType: 'math', absoluteOrRelative: 'relative',
-                moveParameters: { position: 0, velocity: 0, distance: 6, time: 0,
-                                  waveform: 'sine', amplitude: 4, frequency: 0.5, cycles: 2,
-                                  dwellHigh: 0.6, dwellLow: 0 } }],
-    },
-    {
-      id: 'M12-wave-skew',
-      label: 'waveform loading slower than it unloads',
-      moves: [{ moveType: 'math', absoluteOrRelative: 'relative',
-                moveParameters: { position: 0, velocity: 0, distance: 6, time: 0,
-                                  waveform: 'sine', amplitude: 4, frequency: 0.5, cycles: 2,
-                                  skew: 0.75 } }],
+      id: 'M12-sigmoid',
+      label: 'sigmoid step',
+      moves: [{ moveType: 'math',
+                moveParameters: { position: 6, velocity: 4, time: 0,
+                                  waveform: 'sigmoid', acceleration: 20 } }],
     },
   ].map((mv) => ({
     id: mv.id,
@@ -1843,7 +1863,7 @@ const scenarios = [
     },
   })),
 
-  // M10 — firmware-native G123 waveform matrix (sine + triangle from catalog).
+  // M10 — firmware-native G123 sine waveform matrix (from catalog).
   ...MATRIX.M10_waveform.map((wf) => ({
     id: wf.id,
     name: `M10 waveform G123 — ${wf.shape} (${wf.label})`,
@@ -1856,8 +1876,16 @@ const scenarios = [
         await zeroLength(page);
         await seedProfiles(page, {
           sample: { serial: `Wave-${wf.id}`, maxForce: 500, maxVelocity: 60, maxDisplacement: wf.maxDisp, sampleWidth: 4, sampleThickness: 1.5 },
-          motion: { name: wf.id, moves: [
-            { moveType: 'math', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 0, distance: wf.distance, time: 0, waveform: wf.shape, amplitude: wf.amplitude, frequency: wf.frequency, cycles: wf.cycles } },
+          // A wave starts at rest where the gantry is, its lower peak for a
+          // positive amplitude, one cycle per execution: move to the bottom of
+          // the stroke first, so it swings about wf.distance.
+          motion: { name: wf.id, sets: [
+            { name: 'Start', executions: 1, moves: [
+              { moveType: 'linear', moveParameters: { position: wf.distance - wf.amplitude, velocity: 10, time: 0 } },
+            ] },
+            { name: 'Wave', executions: wf.cycles, moves: [
+              { moveType: 'math', moveParameters: { position: 0, velocity: 0, time: 0, waveform: wf.shape, amplitude: wf.amplitude, frequency: wf.frequency } },
+            ] },
           ] },
         });
         await selectSeeded(page);
@@ -1890,9 +1918,9 @@ const scenarios = [
         await seedProfiles(page, {
           sample: { serial: 'Dwell-Sample', maxForce: 500, maxVelocity: 25, maxDisplacement: 100, sampleWidth: 4, sampleThickness: 1.5 },
           motion: { name: 'Dwell', moves: [
-            { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 10, distance: 10, time: 0, circularOffset: 0 } },
-            { moveType: 'dwell', absoluteOrRelative: 'absolute', moveParameters: { position: 0, velocity: 0, distance: 0, time: 2000, circularOffset: 0 } },
-            { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 10, distance: -10, time: 0, circularOffset: 0 } },
+            { moveType: 'linear', moveParameters: { position: 10, velocity: 10, time: 0 } },
+            { moveType: 'dwell', moveParameters: { position: 0, velocity: 0, time: 2000 } },
+            { moveType: 'linear', moveParameters: { position: 0, velocity: 10, time: 0 } },
           ] },
         });
         await selectSeeded(page);
@@ -1920,15 +1948,15 @@ const scenarios = [
         await seedProfiles(page, {
           sample: { serial: 'Stop-Sample', maxForce: 500, maxVelocity: 25, maxDisplacement: 100, sampleWidth: 4, sampleThickness: 1.5 },
           motion: { name: 'Long', moves: [
-            { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 3, distance: 30, time: 0, circularOffset: 0 } },
+            { moveType: 'linear', moveParameters: { position: 30, velocity: 3, time: 0 } },
           ] },
         });
         await selectSeeded(page);
         const runner = page.locator('.panel', { hasText: 'New Test' });
-        await press(page.getByTestId('run-test'));
+        await startRun(page);
         await runner.getByText(/started/i).waitFor({ timeout: DEVICE_WAIT_MS });
         // Observe the firmware actually running, then disable motion.
-        await page.goto(`${APP_URL}#/live`);
+        await page.goto(`${APP_URL}#/control`);
         await page.getByText('Test: running').waitFor({ timeout: DEVICE_WAIT_MS });
         await press(page.getByRole('button', { name: 'Disable motion' }));
         // The firmware aborts the test (END_MOTION_DISABLED) → Test goes idle.
@@ -1951,7 +1979,7 @@ const scenarios = [
         await seedProfiles(page, {
           sample: { serial: 'Vel-Sample', maxForce: 500, maxVelocity: 25, maxDisplacement: 100, sampleWidth: 4, sampleThickness: 1.5 },
           motion: { name: 'Ramp', moves: [
-            { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: V, distance: 15, time: 0, circularOffset: 0 } },
+            { moveType: 'linear', moveParameters: { position: 15, velocity: V, time: 0 } },
           ] },
         });
         await selectSeeded(page);
@@ -1992,7 +2020,7 @@ const scenarios = [
         await seedProfiles(page, {
           sample: { serial: 'VT-Sample', maxForce: 500, maxVelocity: 25, maxDisplacement: 100, sampleWidth: 4, sampleThickness: 1.5 },
           motion: { name: 'VT-Ramp', moves: [
-            { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: V, distance: DIST_MM, time: 0, circularOffset: 0 } },
+            { moveType: 'linear', moveParameters: { position: DIST_MM, velocity: V, time: 0 } },
           ] },
         });
         await selectSeeded(page);
@@ -2045,7 +2073,7 @@ const scenarios = [
         const before = parseFloat(await posValue());
         await page.locator('label.field', { hasText: 'Jog (mm)' }).locator('input').fill('5');
         const setWas = parseFloat(
-          await page.locator('.readout', { hasText: 'Machine Setpoint' }).locator('.value').first().innerText(),
+          await page.locator('.readout', { hasText: 'Machine Target' }).locator('.value').first().innerText(),
         );
         await press(page.getByRole('button', { name: '+ Jog up' }));
         await settleMotion(page, { setpointWas: Number.isFinite(setWas) ? setWas : null });
@@ -2070,15 +2098,15 @@ const scenarios = [
         const start = await num('Machine Position');
         await page.locator('label.field', { hasText: 'Jog (mm)' }).locator('input').fill(String(cell.mm));
         await page.locator('label.field', { hasText: 'Speed (mm/s)' }).locator('input').fill(String(cell.speed));
-        const setBefore = await num('Machine Setpoint');
+        const setBefore = await num('Machine Target');
         await press(page.getByRole('button', { name: '+ Jog up' }));
         await settleMotion(page, { setpointWas: setBefore });
         const up = await num('Machine Position');
-        const upSet = await num('Machine Setpoint');
+        const upSet = await num('Machine Target');
         assert(Math.abs(up - start - cell.mm) < cell.epsMm, `jog +${cell.mm}mm (Δ ${(up - start).toFixed(3)})`);
         assert(Math.abs(up - upSet) < 0.15, `settled onto setpoint (|Δ| ${Math.abs(up - upSet).toFixed(3)})`);
         if (cell.roundTrip) {
-          const setBeforeDown = await num('Machine Setpoint');
+          const setBeforeDown = await num('Machine Target');
           await press(page.getByRole('button', { name: '− Jog down' }));
           await settleMotion(page, { setpointWas: setBeforeDown });
           const end = await num('Machine Position');
@@ -2113,7 +2141,7 @@ const scenarios = [
       const { browser, page, errors } = await newSilPage();
       try {
         await connectToSil(page);
-        await page.goto(`${APP_URL}#/live`);
+        await page.goto(`${APP_URL}#/control`);
         await awaitResponding(page);
         // Sever the link (simulates USB unplug / emulator death).
         await dropLink(page);
@@ -2151,7 +2179,7 @@ const scenarios = [
           }
         });
         await connectToSil(page);
-        await page.goto(`${APP_URL}#/live`);
+        await page.goto(`${APP_URL}#/control`);
         // Samples, and the opening handshake's firmware version.
         await awaitResponding(page);
         const forceText = (await page.locator('.readout', { hasText: 'Machine Force' }).locator('.value').textContent())?.trim() || '';
@@ -2183,7 +2211,7 @@ const scenarios = [
       const { browser, page, errors } = await newSilPage();
       try {
         await connectToSil(page);
-        await page.goto(`${APP_URL}#/live`);
+        await page.goto(`${APP_URL}#/control`);
         await awaitResponding(page);
         await dropLink(page);
         await page.locator('.dot.disconnected').waitFor({ timeout: DEVICE_WAIT_MS });
@@ -2206,13 +2234,13 @@ const scenarios = [
         await seedProfiles(page, {
           sample: { serial: 'M11-Drop', maxForce: 500, maxVelocity: 25, maxDisplacement: 100, sampleWidth: 4, sampleThickness: 1.5 },
           motion: { name: 'LongDrop', moves: [
-            { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 2, distance: 40, time: 0, circularOffset: 0 } },
+            { moveType: 'linear', moveParameters: { position: 40, velocity: 2, time: 0 } },
           ] },
         });
         await selectSeeded(page);
-        await press(page.getByTestId('run-test'));
+        await startRun(page);
         await page.locator('.panel', { hasText: 'New Test' }).getByText(/started/i).waitFor({ timeout: DEVICE_WAIT_MS });
-        await page.goto(`${APP_URL}#/live`);
+        await page.goto(`${APP_URL}#/control`);
         await page.getByText('Test: running').waitFor({ timeout: DEVICE_WAIT_MS });
         // Drop link while test is running — UI must not throw; machine keeps going.
         await dropLink(page);
@@ -2242,18 +2270,18 @@ const scenarios = [
         const startPos = await num('Machine Position');
         await page.locator('label.field', { hasText: 'Jog (mm)' }).locator('input').fill('4');
         await page.locator('label.field', { hasText: 'Speed (mm/s)' }).locator('input').fill('20');
-        const upSetWas = await num('Machine Setpoint');
+        const upSetWas = await num('Machine Target');
         await press(page.getByRole('button', { name: '+ Jog up' }));
         await settleMotion(page, { setpointWas: upSetWas });
         const upPos = await num('Machine Position');
-        const upSet = await num('Machine Setpoint');
+        const upSet = await num('Machine Target');
         assert(Math.abs(upPos - startPos - 4) < 0.2, `jog +4mm landed (Δ ${(upPos - startPos).toFixed(3)}mm)`);
         assert(Math.abs(upPos - upSet) < 0.12, `position settles onto setpoint (|Δ| ${Math.abs(upPos - upSet).toFixed(3)}mm)`);
-        const downSetWas = await num('Machine Setpoint');
+        const downSetWas = await num('Machine Target');
         await press(page.getByRole('button', { name: '− Jog down' }));
         await settleMotion(page, { setpointWas: downSetWas });
         const endPos = await num('Machine Position');
-        const endSet = await num('Machine Setpoint');
+        const endSet = await num('Machine Target');
         assert(Math.abs(endPos - endSet) < 0.12, `position settles after down-jog (|Δ| ${Math.abs(endPos - endSet).toFixed(3)}mm)`);
         assert(Math.abs(endPos - startPos) < 0.2, `round trip returns to start (Δ ${(endPos - startPos).toFixed(3)}mm)`);
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
@@ -2284,7 +2312,7 @@ const scenarios = [
         for (const cell of MATRIX.M9_force_slack) {
           await jog.fill(String(cell.jogMm));
           // Return near zero between cells when needed.
-          const cellSetWas = await num('Machine Setpoint');
+          const cellSetWas = await num('Machine Target');
           if (cell.jogMm >= 18) {
             // cumulative: we may already be at ~10 from prior cell — go absolute via extra jog
             await press(page.getByRole('button', { name: '+ Jog up' }));
@@ -2303,7 +2331,7 @@ const scenarios = [
         }
         // Return so later scenarios start near zero.
         await jog.fill('25');
-        const returnSetWas = await num('Machine Setpoint');
+        const returnSetWas = await num('Machine Target');
         await press(page.getByRole('button', { name: '− Jog down' }));
         await settleMotion(page, { setpointWas: returnSetWas });
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
@@ -2327,10 +2355,10 @@ const scenarios = [
         // Two jogs of half if past slack so we don't overshoot from boot.
         const half = cell.jogMm / 2;
         await jog.fill(String(half));
-        const firstSetWas = await num('Machine Setpoint');
+        const firstSetWas = await num('Machine Target');
         await press(page.getByRole('button', { name: '+ Jog up' }));
         await settleMotion(page, { setpointWas: firstSetWas });
-        const secondSetWas = await num('Machine Setpoint');
+        const secondSetWas = await num('Machine Target');
         await press(page.getByRole('button', { name: '+ Jog up' }));
         await settleMotion(page, { setpointWas: secondSetWas });
         const pos = await num('Sample Position');
@@ -2359,9 +2387,9 @@ const scenarios = [
         await seedProfiles(page, {
           sample: { serial: 'Frac-Sample', maxForce: 500, maxVelocity: 25, maxDisplacement: 100, sampleWidth: 4, sampleThickness: 1.5 },
           motion: { name: 'Frac', moves: [
-            { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 8, distance: TARGET_MM, time: 0, circularOffset: 0 } },
-            { moveType: 'dwell', absoluteOrRelative: 'absolute', moveParameters: { position: 0, velocity: 0, distance: 0, time: 300, circularOffset: 0 } },
-            { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 8, distance: -TARGET_MM, time: 0, circularOffset: 0 } },
+            { moveType: 'linear', moveParameters: { position: TARGET_MM, velocity: 8, time: 0 } },
+            { moveType: 'dwell', moveParameters: { position: 0, velocity: 0, time: 300 } },
+            { moveType: 'linear', moveParameters: { position: 0, velocity: 8, time: 0 } },
           ] },
         });
         await selectSeeded(page);
@@ -2406,18 +2434,22 @@ const scenarios = [
         await seedProfiles(page, {
           sample: { serial: 'BB-Sample', maxForce: 500, maxVelocity: 25, maxDisplacement: 100, sampleWidth: 4, sampleThickness: 1.5 },
           motion: { name: 'BB', moves: [
-            { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 10, distance: 6, time: 0, circularOffset: 0 } },
-            { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 10, distance: -6, time: 0, circularOffset: 0 } },
+            { moveType: 'linear', moveParameters: { position: 6, velocity: 10, time: 0 } },
+            { moveType: 'linear', moveParameters: { position: 0, velocity: 10, time: 0 } },
           ] },
         });
         await selectSeeded(page);
+        const runner = page.locator('.panel', { hasText: 'New Test' });
         // Run #1.
-        await press(page.getByTestId('run-test'));
-        await page.locator('tbody tr').first().locator('.badge.completed').waitFor({ timeout: RUN_WAIT_MS });
+        await startRun(page);
+        await runner.getByText(/started/i).waitFor({ timeout: DEVICE_WAIT_MS });
+        await awaitRunFinished(page);
         // Run #2 — same profiles, immediately after (newest run is prepended).
-        await press(page.getByTestId('run-test'));
+        await startRun(page);
+        await runner.getByText(/started/i).waitFor({ timeout: DEVICE_WAIT_MS });
+        await awaitRunFinished(page);
+        await openHistory(page);
         await page.locator('tbody tr').nth(1).waitFor({ timeout: DEVICE_WAIT_MS });
-        await page.locator('tbody tr').first().locator('.badge.completed').waitFor({ timeout: RUN_WAIT_MS });
         const names = await page.locator('tbody tr td:first-child').allTextContents();
         assert(new Set(names.slice(0, 2)).size === 2, `two distinct runs recorded (${names.slice(0, 2).join(', ')})`);
         const completed = await page.locator('tbody .badge.completed').count();
@@ -2441,13 +2473,13 @@ const scenarios = [
         await seedProfiles(page, {
           sample: { serial: 'TM-Restart', maxForce: 500, maxVelocity: 25, maxDisplacement: 100, sampleWidth: 4, sampleThickness: 1.5 },
           motion: { name: 'Long-TM', moves: [
-            { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 3, distance: 30, time: 0, circularOffset: 0 } },
+            { moveType: 'linear', moveParameters: { position: 30, velocity: 3, time: 0 } },
           ] },
         });
         await selectSeeded(page);
-        await press(page.getByTestId('run-test'));
+        await startRun(page);
         await page.locator('.panel', { hasText: 'New Test' }).getByText(/started/i).waitFor({ timeout: DEVICE_WAIT_MS });
-        await page.goto(`${APP_URL}#/live`);
+        await page.goto(`${APP_URL}#/control`);
         await page.getByText('Test: running').waitFor({ timeout: DEVICE_WAIT_MS });
         await press(page.getByRole('button', { name: 'Disable motion' }));
         await page.getByText('Test: idle').waitFor({ timeout: DEVICE_WAIT_MS });
@@ -2457,14 +2489,14 @@ const scenarios = [
         await seedProfiles(page, {
           sample: { serial: 'TM-Restart2', maxForce: 500, maxVelocity: 25, maxDisplacement: 100, sampleWidth: 4, sampleThickness: 1.5 },
           motion: { name: 'Short-TM', moves: [
-            { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 10, distance: 5, time: 0, circularOffset: 0 } },
-            { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 10, distance: -5, time: 0, circularOffset: 0 } },
+            { moveType: 'linear', moveParameters: { position: 5, velocity: 10, time: 0 } },
+            { moveType: 'linear', moveParameters: { position: 0, velocity: 10, time: 0 } },
           ] },
         });
         await selectSeeded(page);
-        await press(page.getByTestId('run-test'));
+        await startRun(page);
         await page.locator('.panel', { hasText: 'New Test' }).getByText(/started/i).waitFor({ timeout: DEVICE_WAIT_MS });
-        await page.goto(`${APP_URL}#/live`);
+        await page.goto(`${APP_URL}#/control`);
         await page.getByText('Test: running').waitFor({ timeout: 20_000 });
         await page.getByText('Test: idle').waitFor({ timeout: RUN_WAIT_MS });
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
@@ -2489,13 +2521,13 @@ const scenarios = [
         await seedProfiles(page, {
           sample: { serial: 'TM-Gate', maxForce: 500, maxVelocity: 25, maxDisplacement: 100, sampleWidth: 4, sampleThickness: 1.5 },
           motion: { name: 'Gate-Long', moves: [
-            { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 3, distance: 25, time: 0, circularOffset: 0 } },
+            { moveType: 'linear', moveParameters: { position: 25, velocity: 3, time: 0 } },
           ] },
         });
         await selectSeeded(page);
-        await press(page.getByTestId('run-test'));
+        await startRun(page);
         await page.locator('.panel', { hasText: 'New Test' }).getByText(/started/i).waitFor({ timeout: DEVICE_WAIT_MS });
-        await page.goto(`${APP_URL}#/live`);
+        await page.goto(`${APP_URL}#/control`);
         await page.getByText('Test: running').waitFor({ timeout: DEVICE_WAIT_MS });
         assert(await jogUp.isDisabled(), 'jog disabled while test running');
         await page.getByText('Test: idle').waitFor({ timeout: RUN_WAIT_MS });

@@ -9,6 +9,9 @@
 import { create } from 'zustand';
 import { deviceClient, DEFAULT_BAUD_RATE } from '@/device/session';
 import { dataStore } from '@/storage/DataStore';
+import { markRunCompleted } from '@/storage/markRunCompleted';
+import { RunTrack, staleRunningRuns, stepRunTrack } from '@/domain/runTracking';
+import { isRebootNotice } from '@/domain/rebootNotice';
 import { DeviceEvent } from '@/device/events';
 import {
   MachineState,
@@ -21,6 +24,7 @@ import {
   RestrictedReason,
 } from '@/domain';
 import { pushSample, resetLiveBuffer, seedSamples } from './liveBuffer';
+import { clearExpectedPath, expectedPositionAt, planJog, planTest } from './expectedPath';
 import { reduceDeviceEvent } from './deviceEventReduce';
 import { logger } from '@/diagnostics/log';
 import { loadToken } from '@/diagnostics/github';
@@ -53,6 +57,16 @@ interface AppState {
   canReconnect: boolean;
 
   machineState: MachineState | null;
+  /** The last test run the app saw finish (its run record is marked completed). */
+  finishedRun: string | null;
+  /** Bumped whenever run records change outside a screen (completion, stale cleanup). */
+  runsChangedAt: number;
+  /** Start tracking a run before it is sent, so its finish is never missed. */
+  trackRun: (testName: string) => void;
+  /** The machine accepted the run's start; `gcode` draws its expected path on the live chart. */
+  confirmRunStarted: (testName: string, gcode: string[]) => void;
+  /** Stop tracking a run that failed to start. */
+  dropRun: (testName: string) => void;
   latestSample: SampleData | null;
   config: MachineConfiguration | null;
   sampleProfile: SampleProfile | null;
@@ -82,6 +96,21 @@ interface AppState {
   grantDataFolder: () => Promise<void>;
   refreshConfig: () => Promise<void>;
   saveConfig: (config: MachineConfiguration) => Promise<boolean>;
+  /**
+   * What the open screen holds that is not saved yet (e.g. `motion profile
+   * "Pull"`), or null. While set, leaving the screen asks first.
+   */
+  unsavedWork: string | null;
+  setUnsavedWork: (what: string | null) => void;
+  /** The machine has settings saved that it only loads at startup. */
+  rebootNeeded: boolean;
+  dismissReboot: () => void;
+  /**
+   * Reboot the machine by closing and reopening its port: opening the port
+   * pulses the P2's reset line, as every connect does. Resolves whether the
+   * app is connected again afterwards.
+   */
+  rebootMachine: () => Promise<boolean>;
   /** Set the active sample profile locally (e.g. the one selected for a run) so
    *  the live charts show its limits without a device round-trip. */
   setSampleProfile: (profile: SampleProfile | null) => void;
@@ -307,9 +336,53 @@ async function retryRead<T>(fn: () => Promise<T>, attempts = 4): Promise<T | und
   return undefined;
 }
 
+/**
+ * The run whose finish the app is watching for. Module state, not a screen's,
+ * so the finish is caught on whichever page the operator is on.
+ */
+let runTrack: RunTrack | null = null;
+/** Stale "running" runs are cleaned up once per connection, at the first idle report. */
+let staleRunsChecked = false;
+
+function advanceRunTracking(machine: MachineState | null): void {
+  const step = stepRunTrack(runTrack, machine, Date.now());
+  runTrack = step.track;
+  const { notify } = useStore.getState();
+  if (step.finished) {
+    const name = step.finished;
+    logStore.info('run-finished', name);
+    void markRunCompleted(dataStore, name, notify).then(() =>
+      useStore.setState({ finishedRun: name, runsChangedAt: Date.now() }),
+    );
+  }
+  if (!staleRunsChecked && machine !== null && !machine.testRunning && dataStore.connected) {
+    staleRunsChecked = true;
+    void completeStaleRuns(machine);
+  }
+}
+
+/**
+ * Runs left marked running by a session that missed their finish (a reload or
+ * a closed tab mid-test). The machine is idle, so their test is over: mark them
+ * completed so their data can be downloaded, which also shows whether any was
+ * recorded.
+ */
+async function completeStaleRuns(machine: MachineState): Promise<void> {
+  const rows = await dataStore.getTestRunIndex();
+  const stale = staleRunningRuns(rows, machine, runTrack?.testName ?? null);
+  if (stale.length === 0) return;
+  const { notify } = useStore.getState();
+  for (const name of stale) {
+    logStore.warn('stale-run-completed', name);
+    await markRunCompleted(dataStore, name, notify);
+  }
+  useStore.setState({ runsChangedAt: Date.now() });
+}
+
 /** Shared post-connect setup for both the serial and dev-WebSocket paths. */
 function afterConnect(set: SetState, getState: GetState, label: string): void {
   set({ connection: 'connected', portLabel: label });
+  staleRunsChecked = false;
 
   if (mirrorTimer) clearInterval(mirrorTimer);
   mirrorTimer = setInterval(() => {
@@ -356,6 +429,7 @@ async function connectOnce(args: ConnectArgs, set: SetState, getState: GetState)
     const port = args.port ?? (await deviceClient.requestPort());
     const baud = args.baud ?? DEFAULT_BAUD_RATE;
     resetLiveBuffer();
+    clearExpectedPath();
     userDisconnect = false;
     await deviceClient.connect(port, baud);
     lastPort = port;
@@ -407,6 +481,19 @@ export const useStore = create<AppState>((set, getState) => ({
   portLabel: null,
   canReconnect: false,
   machineState: null,
+  finishedRun: null,
+  runsChangedAt: 0,
+  trackRun: (testName) => {
+    runTrack = { testName, sawRunning: false, startedAtMs: null };
+    logStore.info('run-track', testName);
+  },
+  confirmRunStarted: (testName, gcode) => {
+    if (runTrack?.testName === testName) runTrack = { ...runTrack, startedAtMs: Date.now() };
+    planTest(gcode);
+  },
+  dropRun: (testName) => {
+    if (runTrack?.testName === testName) runTrack = null;
+  },
   latestSample: null,
   config: null,
   sampleProfile: null,
@@ -427,7 +514,8 @@ export const useStore = create<AppState>((set, getState) => ({
         const patch = reduceDeviceEvent(e, userDisconnect);
 
         if (patch.sample) {
-          pushSample(patch.sample);
+          const target = patch.sample['Machine Setpoint (mm)'];
+          pushSample(patch.sample, (t) => expectedPositionAt(t, target));
           pendingSample = patch.sample;
           lastSampleAt = Date.now();
         }
@@ -437,6 +525,12 @@ export const useStore = create<AppState>((set, getState) => ({
             logStateTransition(getState().machineState ?? null, patch.machineState);
           }
           set({ machineState: patch.machineState });
+          advanceRunTracking(patch.machineState);
+          // With motion off the machine drops its queued moves, so the planned
+          // path no longer describes anything.
+          if (patch.machineState && (!patch.machineState.motionEnabled || patch.machineState.faultedReason !== FaultedReason.NONE)) {
+            clearExpectedPath();
+          }
         }
         if (patch.config !== undefined) set({ config: patch.config });
         if (patch.sampleProfile !== undefined) set({ sampleProfile: patch.sampleProfile });
@@ -459,7 +553,11 @@ export const useStore = create<AppState>((set, getState) => ({
           }
         }
 
-        if (patch.notification) {
+        if (patch.notification && isRebootNotice(patch.notification.Message)) {
+          // Shown as the reboot prompt instead of a toast.
+          logStore.info('reboot-needed', patch.notification.Message.trim());
+          set({ rebootNeeded: true });
+        } else if (patch.notification) {
           set((s) => ({
             notifications: [
               ...s.notifications.slice(-49),
@@ -620,7 +718,30 @@ export const useStore = create<AppState>((set, getState) => ({
     });
     const ok = await deviceClient.writeMachineConfiguration(config);
     logStore.info('saveConfig', ok ? 'accepted' : 'rejected', { ok });
-    if (ok) set({ config });
+    // The machine reads its profile from the SD card at startup only.
+    if (ok) set({ config, rebootNeeded: true });
+    return ok;
+  },
+
+  unsavedWork: null,
+  setUnsavedWork: (what) => {
+    if (getState().unsavedWork !== what) set({ unsavedWork: what });
+  },
+  rebootNeeded: false,
+  dismissReboot: () => set({ rebootNeeded: false }),
+  rebootMachine: async () => {
+    const s = getState();
+    const port = lastPort;
+    if (!port || s.machineState?.testRunning) {
+      logStore.warn('reboot', 'refused', { hasPort: port !== null, testRunning: Boolean(s.machineState?.testRunning) });
+      return false;
+    }
+    const baud = lastBaud;
+    logStore.info('reboot', 'reopening the port to reset the machine');
+    await s.disconnect();
+    await getState().connect({ port, baud });
+    const ok = getState().connection === 'connected';
+    if (ok) set({ rebootNeeded: false });
     return ok;
   },
 
@@ -632,6 +753,7 @@ export const useStore = create<AppState>((set, getState) => ({
   },
   emergencyStop: async () => {
     logStore.warn('estop', 'user pressed STOP');
+    clearExpectedPath();
     const ok = await deviceClient.emergencyStop().catch(() => false);
     logStore.warn('estop-result', undefined, { acknowledged: ok });
     set((s) => ({
@@ -650,10 +772,22 @@ export const useStore = create<AppState>((set, getState) => ({
   },
   manualMove: (mm, speed) => {
     logStore.info('jog', undefined, { mm, speed });
-    return logOutcome('jog', deviceClient.manualMove(mm, speed));
+    planJog(mm, speed);
+    return logOutcome('jog', deviceClient.manualMove(mm, speed)).then(
+      (ok) => {
+        if (!ok) clearExpectedPath();
+        return ok;
+      },
+      (err: unknown) => {
+        clearExpectedPath();
+        throw err;
+      },
+    );
   },
   homeAxis: () => {
     logStore.info('home');
+    // Homing runs to the endstop, a path the app cannot draw.
+    clearExpectedPath();
     return deviceClient.homeAxis();
   },
   zeroForce: () => {

@@ -1,9 +1,9 @@
-# Live monitoring
+# Control
 
-The **Live** screen is the hub: real-time readouts, machine state, manual
+The **Control** screen is the hub: real-time readouts, machine state, manual
 controls, and live charts, all updating continuously while you're connected.
 
-![The Live screen](../assets/screenshots/02-live.png)
+![The Control screen](../assets/screenshots/02-live.png)
 
 ## Readouts
 
@@ -14,7 +14,8 @@ read):
 |---|---|
 | **Machine Force** | Force measured at the gauge, in machine coordinates |
 | **Machine Position** | Gantry position from the encoder |
-| **Machine Setpoint** | The position the motion controller is targeting |
+| **Machine Setpoint** | Where the motion trajectory says the gantry should be right now, with acceleration included. Machine Position follows it, and a test run records it as *setpoint*. |
+| **Machine Target** | Where the current move ends. It changes in one step when a move starts. |
 | **Sample Force** | Force in sample coordinates (zeroed at the gauge) |
 | **Sample Position** | Extension of the sample relative to its gauge length |
 

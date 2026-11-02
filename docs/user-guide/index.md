@@ -9,11 +9,11 @@ The app is organised as a sidebar of screens:
 | Screen | What it's for |
 |---|---|
 | [Connect](connecting.md) | Choose a baud rate and connect to the machine over USB |
-| [Live](live-monitoring.md) | Real-time readouts, machine state, and live charts |
-| [Live → controls](manual-control.md) | Enable motion, jog, home, and zero the machine |
+| [Control](live-monitoring.md) | Real-time readouts, machine state, and live charts |
+| [Control → controls](manual-control.md) | Enable motion, jog, home, and zero the machine |
 | [Sample profiles](sample-profiles.md) | Create/edit sample profiles (material limits & dimensions) |
 | [Motion profiles](motion-profiles.md) | Build the move sequence a test runs |
-| [Test runs](running-a-test.md) | Run a test and track it in the history table |
+| [Control → run a test](running-a-test.md) | Run a test while watching live data |
 | [Test runs → View](test-history-and-analysis.md) | Download data and analyse a finished run |
 | [Settings](settings-and-data.md) | Data folder + machine configuration |
 | [Firmware](firmware-and-diagnostics.md) | Firmware version and diagnostics export |

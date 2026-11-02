@@ -1,10 +1,11 @@
 # Running a test
 
-You run tests from the **Test runs** screen. The **New test** card at the top
-combines a sample profile with a motion profile and starts the run; the
-**History** table below tracks every run.
+You run tests from the **Control** screen, so the live readouts and charts are
+in view while the test runs. The **New test** card combines a sample profile
+with a motion profile and starts the run, and says when the machine finishes.
+Every run is recorded in the **History** table on the **Test runs** screen.
 
-![The Test runs screen](../assets/screenshots/06-test-runs.png)
+![The New test card](../assets/screenshots/06-test-runs.png)
 
 ## Before you run
 
@@ -33,13 +34,15 @@ When you run, the app:
 - generates the G-code and **uploads** it to the machine's SD card,
 - enables motion and **starts** the test.
 
-The run appears in **History** with a *running* badge.
+The run appears in **History** on **Test runs** with a *running* badge.
 
 ## While it runs
 
-The machine executes the motion **autonomously from its SD card**. The **Run**
-button reflects the firmware's `testRunning` state, and the run auto-marks
-**completed** when the firmware reports it has finished.
+The machine executes the motion **autonomously from its SD card**, and the
+readouts and charts on **Control** follow it live. The **Run** button reflects
+the firmware's `testRunning` state. When the firmware reports it has finished,
+the card says so and the run is marked **completed**. Stay on **Control** until
+then; if you leave, use **Mark done** in History afterwards.
 
 !!! warning "Losing the UI doesn't stop the test"
     The test keeps running even if you close the tab or unplug USB — the app just
