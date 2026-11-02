@@ -19,7 +19,7 @@
 //!
 //! Stepped: virtual time advances as the engine processes events, so every
 //! assertion is on virtual time and the board's state. Skips, saying why,
-//! when the `propeller2_debug` image is absent (`make p2image`);
+//! when the `MaDEdge` image is absent (`make p2image`);
 //! `MAD_REQUIRE_P2_IMAGE` turns the skip into a failure.
 
 use std::path::PathBuf;
@@ -75,20 +75,20 @@ fn rom(name: &str) -> Option<Vec<u8>> {
     .ok()
 }
 
-/// The `propeller2_debug` program: `MAD_P2_IMAGE` names a copy kept out of
+/// The `MaDEdge` program: `MAD_P2_IMAGE` names a copy kept out of
 /// `.pio`, else the build's own.
 fn image_path() -> PathBuf {
     let p = std::env::var_os("MAD_P2_IMAGE").map_or_else(
         || {
             PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../../Firmware/MaDCore/.pio/build/propeller2_debug/program")
+                .join("../../Firmware/MaDCore/.pio/build/MaDEdge/program")
         },
         PathBuf::from,
     );
     if !p.exists() && std::env::var_os("MAD_REQUIRE_P2_IMAGE").is_some() {
         panic!(
             "MAD_REQUIRE_P2_IMAGE is set but the P2 image is missing at {}. \
-             Build it with `make p2image` (or `cd Firmware/MaDCore && pio run -e propeller2_debug`).",
+             Build it with `make p2image` (or `cd Firmware/MaDCore && pio run -e MaDEdge`).",
             p.display()
         );
     }

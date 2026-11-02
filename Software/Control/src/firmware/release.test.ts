@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, vi } from 'vitest';
 import { behaviour } from '@vibes/behaviour';
 import {
+  boardImage,
   fetchReleaseImage,
   fetchReleaseManifest,
   pickFirmwareAsset,
@@ -170,14 +171,27 @@ describe('releaseImageLabel', () => {
     {
       id: 'flash.release-label-production',
       covers: 'src/firmware/release.ts#releaseImageLabel',
-      given: 'the latest release image is named MaD-Firmware-0.13-release.bin',
+      given: 'a release image named MaD-Firmware-0.15-P2Eval.bin, or MaD-Firmware-0.13-release.bin from before the board names',
       expect: {
-        'named-production':
-          'the Firmware screen calls it the production build, as it does any image whose name ends in -release.bin',
+        'named-production': 'the Firmware screen calls both the P2Eval production build',
       },
     },
     () => {
-      expect(releaseImageLabel('MaD-Firmware-0.13-release.bin')).toBe('production build');
+      expect(releaseImageLabel('MaD-Firmware-0.15-P2Eval.bin')).toBe('P2Eval production build');
+      expect(releaseImageLabel('MaD-Firmware-0.13-release.bin')).toBe('P2Eval production build');
+    },
+  );
+
+  behaviour(
+    {
+      id: 'flash.release-label-madedge',
+      covers: 'src/firmware/release.ts#releaseImageLabel',
+      given: 'a release image named MaD-Firmware-0.15-MaDEdge.bin, or MaD-Firmware-0.13-madEdge.bin from before the board names',
+      expect: { 'named-debug': 'the Firmware screen calls both the MaDEdge debug build' },
+    },
+    () => {
+      expect(releaseImageLabel('MaD-Firmware-0.15-MaDEdge.bin')).toBe('MaDEdge debug build');
+      expect(releaseImageLabel('MaD-Firmware-0.13-madEdge.bin')).toBe('MaDEdge debug build');
     },
   );
 
@@ -185,7 +199,7 @@ describe('releaseImageLabel', () => {
     {
       id: 'flash.release-label-other-image',
       covers: 'src/firmware/release.ts#releaseImageLabel',
-      given: 'the latest release image is named MaD-Firmware-0.13-madEdge.bin',
+      given: 'a release image whose name names no board',
       expect: { 'named-by-file': 'the Firmware screen names it by its file name' },
       why: {
         'named-by-file':
@@ -193,7 +207,7 @@ describe('releaseImageLabel', () => {
       },
     },
     () => {
-      expect(releaseImageLabel('MaD-Firmware-0.13-madEdge.bin')).toBe('MaD-Firmware-0.13-madEdge.bin');
+      expect(releaseImageLabel('program')).toBe('program');
     },
   );
 });
@@ -341,6 +355,151 @@ describe('fetchReleaseImage', () => {
       await expect(
         fetchReleaseImage('/', manifest(), serve(new Uint8Array([4, 3, 2, 1]))),
       ).rejects.toThrow(/does not match its release checksum/);
+    },
+  );
+});
+
+describe('board choice', () => {
+  behaviour(
+    {
+      id: 'flash.release-board-images',
+      covers: 'src/firmware/release.ts#pickFirmwareAsset',
+      given: 'a firmware release carrying MaD-Firmware-0.15-MaDEdge.bin and MaD-Firmware-0.15-P2Eval.bin',
+      expect: {
+        'p2eval-default': 'with no board named, the P2Eval image is the one offered',
+        'madedge-on-request': 'asked for the MaDEdge board, the MaDEdge image is the one offered',
+      },
+    },
+    () => {
+      const r = release({
+        assets: [
+          { id: 1, name: 'MaD-Firmware-0.15-MaDEdge.bin', size: 9 },
+          { id: 2, name: 'MaD-Firmware-0.15-P2Eval.bin', size: 8 },
+        ],
+      });
+      expect(pickFirmwareAsset(r)?.name).toBe('MaD-Firmware-0.15-P2Eval.bin');
+      expect(pickFirmwareAsset(r, 'MaDEdge')?.name).toBe('MaD-Firmware-0.15-MaDEdge.bin');
+    },
+  );
+
+  behaviour(
+    {
+      id: 'flash.release-board-legacy-names',
+      covers: 'src/firmware/release.ts#pickFirmwareAsset',
+      given: 'a firmware release from before the board names, carrying a -madEdge.bin image and a -release.bin image',
+      expect: { 'madedge-is-madedge-image': 'asked for the MaDEdge board, the -madEdge.bin image is the one offered' },
+    },
+    () => {
+      const r = release({
+        assets: [
+          { id: 1, name: 'MaD-Firmware-0.14-madEdge.bin', size: 9 },
+          { id: 2, name: 'MaD-Firmware-0.14-release.bin', size: 8 },
+        ],
+      });
+      expect(pickFirmwareAsset(r, 'MaDEdge')?.name).toBe('MaD-Firmware-0.14-madEdge.bin');
+    },
+  );
+
+  behaviour(
+    {
+      id: 'flash.release-board-old-description',
+      covers: 'src/firmware/release.ts#boardImage',
+      given: 'a served release description written before the board choice, which lists no boards',
+      expect: {
+        'p2eval-from-top-level': 'the P2Eval image is the one the description names, at the original download path',
+        'no-madedge': 'no MaDEdge image is offered',
+      },
+    },
+    () => {
+      expect(boardImage(manifest(), 'P2Eval')).toEqual({
+        assetName: 'MaD-Firmware-0.1-release.bin',
+        size: IMAGE.byteLength,
+        sha256: IMAGE_SHA256,
+        path: 'firmware/latest.bin',
+      });
+      expect(boardImage(manifest(), 'MaDEdge')).toBeNull();
+    },
+  );
+
+  behaviour(
+    {
+      id: 'flash.release-board-madedge-download',
+      covers: 'src/firmware/release.ts#fetchReleaseImage',
+      given: 'a served release that lists a MaDEdge image, with the MaDEdge board chosen',
+      expect: {
+        'madedge-path': 'the image is downloaded from the MaDEdge download path',
+        'checked-against-madedge': 'the download is checked against the MaDEdge entry and handed over byte for byte',
+      },
+    },
+    async () => {
+      const m = manifest({
+        boards: {
+          P2Eval: { assetName: 'MaD-Firmware-0.1-P2Eval.bin', size: 8, sha256: '0'.repeat(64) },
+          MaDEdge: { assetName: 'MaD-Firmware-0.1-MaDEdge.bin', size: IMAGE.byteLength, sha256: IMAGE_SHA256 },
+        },
+      });
+      const asked: string[] = [];
+      const bytes = await fetchReleaseImage(
+        '/app/',
+        m,
+        async (url) => {
+          asked.push(url);
+          return new Response(IMAGE);
+        },
+        'MaDEdge',
+      );
+      expect(asked).toEqual(['/app/firmware/latest-MaDEdge.bin']);
+      expect(Array.from(bytes)).toEqual(Array.from(IMAGE));
+    },
+  );
+
+  behaviour(
+    {
+      id: 'flash.release-board-missing',
+      covers: 'src/firmware/release.ts#fetchReleaseImage',
+      given: 'a served release with no MaDEdge image, with the MaDEdge board chosen',
+      expect: { 'refused-naming-board': 'nothing is downloaded, and the refusal names the release version and the board' },
+    },
+    async () => {
+      const fetchFn = vi.fn(async () => new Response(IMAGE));
+      await expect(fetchReleaseImage('/', manifest(), fetchFn, 'MaDEdge')).rejects.toThrow(
+        /Firmware 0\.1 has no MaDEdge build/,
+      );
+      expect(fetchFn).not.toHaveBeenCalled();
+    },
+  );
+
+  behaviour(
+    {
+      id: 'flash.release-board-description-loads',
+      covers: 'src/firmware/release.ts#fetchReleaseManifest',
+      given: 'a served release description listing a P2Eval and a MaDEdge image',
+      expect: { 'boards-read': 'both boards are offered with the file names the description gives' },
+    },
+    async () => {
+      const boards = {
+        P2Eval: { assetName: 'MaD-Firmware-0.1-P2Eval.bin', size: 4, sha256: IMAGE_SHA256 },
+        MaDEdge: { assetName: 'MaD-Firmware-0.1-MaDEdge.bin', size: 4, sha256: IMAGE_SHA256 },
+      };
+      const m = await fetchReleaseManifest('/', serve(JSON.stringify(manifest({ boards }))));
+      expect(boardImage(m, 'MaDEdge')?.assetName).toBe('MaD-Firmware-0.1-MaDEdge.bin');
+      expect(boardImage(m, 'P2Eval')?.assetName).toBe('MaD-Firmware-0.1-P2Eval.bin');
+    },
+  );
+
+  behaviour(
+    {
+      id: 'flash.release-board-description-malformed',
+      covers: 'src/firmware/release.ts#fetchReleaseManifest',
+      given: 'a served release description whose board list is not a list of images',
+      expect: { 'refused-malformed': 'the release is refused as malformed, so no image is offered from it' },
+    },
+    async () => {
+      for (const boards of [null, { MaDEdge: { assetName: 'x.bin' } }]) {
+        await expect(
+          fetchReleaseManifest('/', serve(JSON.stringify({ ...manifest(), boards }))),
+        ).rejects.toThrow(/malformed/);
+      }
     },
   );
 });

@@ -27,18 +27,18 @@
 #
 # J1 is the carrier's debug header, where the machine's Prop Plug sits. The
 # route is the user's decision (2026-10-21): the host on J1 and the
-# production build (pio env propeller2), whose MAIN channel, the protocol,
+# production build (pio env P2Eval), whose MAIN channel, the protocol,
 # is on P62/P63, the pins J1 carries. The app flashes the firmware over J1
 # (Software/Control/README.md, "Firmware flashing").
 #
 # Open, for the user: which image the machine runs. By default the app
-# flashes a release's madEdge image, the propeller2_debug build, whose
+# flashes a release's MaDEdge image, the MaDEdge build, whose
 # protocol is on P53/P55, pins the P2-EC32MB has no finger for, in every
 # release so far (the build has it on P30/P32 since the Edge v0.3 pin
 # move) (read:
 # Software/Control/src/firmware/release.ts, pickFirmwareAsset; .github/
 # workflows/ci.yml, the release's two images). The production build is the
-# release's -release.bin, which the app flashes only as a local file.
+# release's -P2Eval.bin, which the app flashes only as a local file.
 #
 #   cd SIL && make flash-image sd-image check
 #
@@ -72,7 +72,7 @@ kind = "p2"
 core = "mad-p2iss"
 
 # The module's flash, erased: no image. The app's flasher writes the
-# production firmware (pio env propeller2) into it through the ROM's serial
+# production firmware (pio env P2Eval) into it through the ROM's serial
 # loader; that build's MAIN channel receives on P63 and transmits on P62
 # (Firmware/MaDCore/src/HAL/Include/HW_pins.h, HW_PIN_MAIN_RX/TX), the
 # pins J1 carries.

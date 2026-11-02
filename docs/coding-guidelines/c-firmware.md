@@ -211,7 +211,7 @@ Strict downward dependency: `APP → DEV → IO → Library → HAL → HW`. Eac
 - Put per-module configuration (channel tables, buffer sizes, paths) in a `Config/` subfolder file that defines the data the module declares `extern`. Pattern: `src/IO/Config/IO_SDCard_config.c:31` defines buffers via `IO_SDCARD_CHANNEL_DATA_DEFINE(...)`, and `src/IO/IO_SDCard.c:74` consumes it via `extern IO_SDCard_config_S IO_SDCard_config;`.
 
 **Don't**
-- **Never** include a low-level MCU / P2 / `flexcc` framework header from `APP/`, `DEV/`, or `IO/`. The HAL is the only thing that touches `HAL/P2/`. The `propeller2` builds compile `HAL/P2/`. `native_test` does not: `test/mock_propeller2.c` provides the HAL symbols the unit tests call (`platformio.ini`).
+- **Never** include a low-level MCU / P2 / `flexcc` framework header from `APP/`, `DEV/`, or `IO/`. The HAL is the only thing that touches `HAL/P2/`. The `P2Eval` builds compile `HAL/P2/`. `native_test` does not: `test/mock_propeller2.c` provides the HAL symbols the unit tests call (`platformio.ini`).
 - Don't call "upward" across layers. The one tolerated exception is logging: `Library/` and lower files may include `IO_Debug.h` for `DEBUG_*` (`src/Library/lib_staticQueue.c:4` includes `IO_Debug.h` plus `<string.h>`/`<stdio.h>`). Don't add other upward calls.
 
 ---
@@ -358,14 +358,14 @@ New modules and non-trivial behaviour changes need tests — not only “builds 
 
 **Don't**
 - Ship new APP/DEV state machines or public control-path APIs with zero automated coverage.
-- Rely solely on `pio run -e propeller2` as proof of correctness (pointer size / timing differ on native).
+- Rely solely on `pio run -e P2Eval` as proof of correctness (pointer size / timing differ on native).
 
 Suggested local loop for a firmware change:
 
 ```bash
 # from Firmware/MaDCore/
-pio check -e propeller2 --fail-on-defect=medium --fail-on-defect=high
-pio run -e propeller2_debug
+pio check -e P2Eval --fail-on-defect=medium --fail-on-defect=high
+pio run -e MaDEdge
 pio test -e native_test
 # from SIL/ when behaviour crosses the emulator
 make test
@@ -394,12 +394,12 @@ make test
 
 ```bash
 # from Firmware/MaDCore/
-pio check -e propeller2 --fail-on-defect=medium --fail-on-defect=high
-pio run -e propeller2_debug    # the image the SIL emulator executes
+pio check -e P2Eval --fail-on-defect=medium --fail-on-defect=high
+pio run -e MaDEdge    # the image the SIL emulator executes
 pio test -e native_test         # Unity unit tests (ASan + stack-protector)
 ```
 
-Always run the host unit tests and a P2 build — pointer sizes and timing differ (`native_test` adds `-fsanitize=address -fstack-protector-all`; `propeller2` is the FlexC image).
+Always run the host unit tests and a P2 build — pointer sizes and timing differ (`native_test` adds `-fsanitize=address -fstack-protector-all`; `P2Eval` is the FlexC image).
 
 ### Exactly how `pio check` is configured
 
@@ -419,7 +419,7 @@ check_flags =
 ```
 
 - **`check_severity = medium, high`** — **low is not reported and not enforced.** Hundreds of low findings were style / cross-TU false positives (unused macros, unused public APIs, unused tags/typedefs, macro paste). They are not a useful gate for this tree.
-- **CI Gate (`firmware-misra`)** runs `pio check -e propeller2 --skip-packages --fail-on-defect=medium --fail-on-defect=high` and **blocks merge** if any medium or high defect remains.
+- **CI Gate (`firmware-misra`)** runs `pio check -e P2Eval --skip-packages --fail-on-defect=medium --fail-on-defect=high` and **blocks merge** if any medium or high defect remains.
 - `misra.json` points cppcheck's MISRA addon at `misra-rules.txt` (rule descriptions only; does not turn rules on/off).
 - CERT is **not** enforced (no `cert.py` with the bundled cppcheck). To enforce CERT later, vendor an addon and add it to `check_flags`.
 - `check_src_filters` scopes analysis to hand-written layers (`APP/`, `DEV/`, `IO/`, `Library/`, `Main/`) — `HAL/`, `HW/`, `IO/generated/`, and `Generated/` are not in the filter (headers may still appear when included from checked `.c` files).

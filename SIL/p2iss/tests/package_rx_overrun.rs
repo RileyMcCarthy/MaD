@@ -4,7 +4,7 @@
 //!
 //! The module of `ec32mb_flash_boot.rs` — the vendor netlist, powered from
 //! its `J203` fingers, `S301` set to boot from flash, [`P2IssCore`] inside
-//! [`P2Package`] — with the production firmware (`pio run -e propeller2`) in
+//! [`P2Package`] — with the production firmware (`pio run -e P2Eval`) in
 //! its flash, the firmware's FAT16 card in its socket, and a host on the two
 //! fingers the production build's protocol uses: `P63` (`J203` pin 49) into
 //! the chip and `P62` (pin 50) out of it, the pair the Edge carrier's `J1`
@@ -121,7 +121,7 @@ fn image_path() -> PathBuf {
         .map_or_else(
             || {
                 PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                    .join("../../Firmware/MaDCore/.pio/build/propeller2/program")
+                    .join("../../Firmware/MaDCore/.pio/build/P2Eval/program")
             },
             PathBuf::from,
         );
@@ -129,7 +129,7 @@ fn image_path() -> PathBuf {
         panic!(
             "MAD_REQUIRE_P2_IMAGE is set but the production P2 image is missing at {}. \
              Build it with `make p2image-production` (or `cd Firmware/MaDCore && pio run -e \
-             propeller2`).",
+             P2Eval`).",
             p.display()
         );
     }

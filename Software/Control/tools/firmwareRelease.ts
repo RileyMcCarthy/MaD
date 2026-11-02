@@ -2,8 +2,10 @@
  * Vite plugin: serve the latest firmware release from the app's own origin.
  *
  * The browser cannot fetch a release asset from GitHub (no CORS on the asset
- * host), so this plugin does it in Node and serves `firmware/latest.json` +
- * `firmware/latest.bin` (see src/firmware/release.ts):
+ * host), so this plugin does it in Node and serves `firmware/latest.json`,
+ * `firmware/latest.bin` (the P2Eval build) and one more image per other board
+ * the release carries, e.g. `firmware/latest-MaDEdge.bin` (see
+ * src/firmware/release.ts):
  *  - dev server: fetched from GitHub on the first request, then cached for the
  *    life of the server;
  *  - build: fetched once and emitted into the bundle.
@@ -17,17 +19,39 @@
 import { createHash } from 'node:crypto';
 import type { Plugin } from 'vite';
 import {
+  BOARDS,
+  BOARD_IMAGE_PATHS,
   RELEASE_IMAGE_PATH,
   RELEASE_MANIFEST_PATH,
+  pickFirmwareAsset,
   pickFirmwareRelease,
   toManifest,
+  type Board,
+  type BoardImage,
   type FirmwareReleaseManifest,
+  type GithubAsset,
   type GithubRelease,
 } from '../src/firmware/release';
 
 export interface Bundled {
   manifest: FirmwareReleaseManifest;
+  /** The P2Eval image, served at `firmware/latest.bin`. */
   image: Buffer;
+  /** Every other board's image the release carries. */
+  boardImages?: Partial<Record<Board, Buffer>>;
+}
+
+/** Every file a bundle serves, by its path under the app's base URL. */
+export function servedFiles(bundled: Bundled): Array<[string, string | Buffer]> {
+  const files: Array<[string, string | Buffer]> = [
+    [RELEASE_MANIFEST_PATH, JSON.stringify(bundled.manifest)],
+    [RELEASE_IMAGE_PATH, bundled.image],
+  ];
+  for (const board of BOARDS) {
+    const image = bundled.boardImages?.[board];
+    if (image && board !== 'P2Eval') files.push([BOARD_IMAGE_PATHS[board], image]);
+  }
+  return files;
 }
 
 /** What the plugin reads from the outside world. Defaults to the real `fetch`
@@ -57,16 +81,39 @@ export async function fetchLatestFirmware(
   const picked = pickFirmwareRelease((await list.json()) as GithubRelease[]);
   if (!picked) throw new Error(`${repo} has no firmware release with a flashable image`);
 
-  const asset = await fetchFn(`${api}/releases/assets/${picked.asset.id}`, {
-    headers: headers(env, 'application/octet-stream'),
-  });
-  if (!asset.ok) throw new Error(`downloading ${picked.asset.name}: HTTP ${asset.status}`);
-  const image = Buffer.from(await asset.arrayBuffer());
-  if (image.byteLength !== picked.asset.size) {
-    throw new Error(`${picked.asset.name}: got ${image.byteLength} bytes, release says ${picked.asset.size}`);
+  const download = async (asset: GithubAsset): Promise<Buffer> => {
+    const res = await fetchFn(`${api}/releases/assets/${asset.id}`, {
+      headers: headers(env, 'application/octet-stream'),
+    });
+    if (!res.ok) throw new Error(`downloading ${asset.name}: HTTP ${res.status}`);
+    const bytes = Buffer.from(await res.arrayBuffer());
+    if (bytes.byteLength !== asset.size) {
+      throw new Error(`${asset.name}: got ${bytes.byteLength} bytes, release says ${asset.size}`);
+    }
+    return bytes;
+  };
+
+  // The P2Eval image is the default and must download; each other board's is
+  // served too when the release carries one.
+  const boardImages: Partial<Record<Board, Buffer>> = {};
+  const boards: Partial<Record<Board, BoardImage>> = {};
+  for (const board of BOARDS) {
+    const asset = board === 'P2Eval' ? picked.asset : pickFirmwareAsset(picked.release, board);
+    if (!asset) continue;
+    const bytes = await download(asset);
+    boardImages[board] = bytes;
+    boards[board] = {
+      assetName: asset.name,
+      size: asset.size,
+      sha256: createHash('sha256').update(bytes).digest('hex'),
+    };
   }
-  const sha256 = createHash('sha256').update(image).digest('hex');
-  return { manifest: toManifest(picked.release, picked.asset, sha256), image };
+  const image = boardImages.P2Eval!;
+  return {
+    manifest: toManifest(picked.release, picked.asset, boards.P2Eval!.sha256, boards),
+    image,
+    boardImages,
+  };
 }
 
 export function firmwareRelease(deps: FirmwareReleaseDeps = {}): Plugin {
@@ -89,21 +136,26 @@ export function firmwareRelease(deps: FirmwareReleaseDeps = {}): Plugin {
 
     configureServer(server) {
       if (disabled) return;
+      const paths = [RELEASE_MANIFEST_PATH, ...BOARDS.map((b) => BOARD_IMAGE_PATHS[b])];
       server.middlewares.use((req, res, next) => {
         const path = (req.url ?? '').split('?')[0];
-        const wantsManifest = path.endsWith(`/${RELEASE_MANIFEST_PATH}`);
-        const wantsImage = path.endsWith(`/${RELEASE_IMAGE_PATH}`);
-        if (!wantsManifest && !wantsImage) return next();
+        const wanted = paths.find((p) => path.endsWith(`/${p}`));
+        if (!wanted) return next();
         latest().then(
-          ({ manifest, image }) => {
-            res.setHeader('Cache-Control', 'no-store');
-            if (wantsManifest) {
-              res.setHeader('Content-Type', 'application/json');
-              res.end(JSON.stringify(manifest));
-            } else {
-              res.setHeader('Content-Type', 'application/octet-stream');
-              res.end(image);
+          (bundled) => {
+            const file = servedFiles(bundled).find(([p]) => p === wanted);
+            if (!file) {
+              // A board this release has no image for.
+              res.statusCode = 404;
+              res.end();
+              return;
             }
+            res.setHeader('Cache-Control', 'no-store');
+            res.setHeader(
+              'Content-Type',
+              wanted === RELEASE_MANIFEST_PATH ? 'application/json' : 'application/octet-stream',
+            );
+            res.end(file[1]);
           },
           (err: unknown) => {
             server.config.logger.warn(`[firmware-release] ${String(err)}`);
@@ -117,10 +169,12 @@ export function firmwareRelease(deps: FirmwareReleaseDeps = {}): Plugin {
     async generateBundle() {
       if (disabled) return;
       try {
-        const { manifest, image } = await latest();
-        this.emitFile({ type: 'asset', fileName: RELEASE_MANIFEST_PATH, source: JSON.stringify(manifest) });
-        this.emitFile({ type: 'asset', fileName: RELEASE_IMAGE_PATH, source: image });
-        this.info(`bundled ${manifest.tag} (${manifest.assetName}, ${manifest.size} bytes)`);
+        const bundled = await latest();
+        for (const [fileName, source] of servedFiles(bundled)) {
+          this.emitFile({ type: 'asset', fileName, source });
+        }
+        const { manifest } = bundled;
+        this.info(`bundled ${manifest.tag} (${Object.values(manifest.boards ?? {}).map((b) => b.assetName).join(', ') || manifest.assetName})`);
       } catch (err) {
         if (required) this.error(`no firmware release to bundle: ${String(err)}`);
         this.warn(`no firmware release bundled; the Firmware screen will offer local files only (${String(err)})`);
