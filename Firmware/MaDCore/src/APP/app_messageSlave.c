@@ -142,6 +142,15 @@ bool ProtoEmb_onRead_firmware_version(ProtoEmb_FirmwareVersion_t *out)
     return true;
 }
 
+/* The compatibility handshake: the protocol_version this image was generated
+ * from. MaD Control drives only firmware whose number equals its own. */
+bool ProtoEmb_onRead_device_info(ProtoEmb_DeviceInfo_t *out)
+{
+    (void)memset(out, 0, sizeof(*out));
+    out->protocolVersion = (uint32_t)PROTOEMB_PROTOCOL_VERSION;
+    return true;
+}
+
 bool ProtoEmb_onRead_sample_profile(ProtoEmb_SampleProfile_t *out)
 {
     app_monitor_sampleProfile_S sampleProfile;

@@ -67,6 +67,8 @@ export class DeviceClient {
 
   private sinkInstalled = false;
 
+  private motionBlock: string | null = null;
+
   private readonly workerFactory: () => Worker;
 
   /** How many workers this client has constructed (fresh-on-connect / crash recovery). */
@@ -317,7 +319,38 @@ export class DeviceClient {
     return this.remote.readFirmwareVersion();
   }
 
+  /** Which protocol the firmware speaks; null when it predates the handshake. */
+  readDeviceInfo(): Promise<{ protocolVersion: number } | null> {
+    return this.remote.readDeviceInfo();
+  }
+
+  /**
+   * Refuse every command that can move the gantry, with `reason` as the
+   * explanation, until cleared with null. Set while the connected firmware
+   * speaks another protocol than this app: no motion command's encoding can
+   * be trusted then. Disabling motion and STOP always go through.
+   */
+  setMotionBlock(reason: string | null): void {
+    if (reason !== this.motionBlock) {
+      logger('device').warn('motion-block', reason ?? 'cleared');
+    }
+    this.motionBlock = reason;
+  }
+
+  /** Why motion commands are refused, or null when they are not. */
+  motionBlockReason(): string | null {
+    return this.motionBlock;
+  }
+
+  /** True (and logged) when a motion command must be refused. */
+  private refuseMotion(command: string): boolean {
+    if (this.motionBlock === null) return false;
+    logger('device').warn('motion-refused', command, { reason: this.motionBlock });
+    return true;
+  }
+
   setMotionEnabled(enabled: boolean): Promise<boolean> {
+    if (enabled && this.refuseMotion('motion-enable')) return Promise.resolve(false);
     return this.remote.setMotionEnabled(enabled);
   }
 
@@ -327,15 +360,18 @@ export class DeviceClient {
   }
 
   manualMove(mm: number, speed: number): Promise<boolean> {
+    if (this.refuseMotion('jog')) return Promise.resolve(false);
     return this.remote.manualMove(mm, speed);
   }
 
   /** Relative open-loop move (G91 + G124): the servo feedback off. */
   openLoopMove(mm: number, speed: number): Promise<boolean> {
+    if (this.refuseMotion('open-loop-move')) return Promise.resolve(false);
     return this.remote.openLoopMove(mm, speed);
   }
 
   homeAxis(): Promise<void> {
+    if (this.refuseMotion('home')) return Promise.reject(new Error(this.motionBlock!));
     return this.remote.homeAxis();
   }
 
@@ -348,10 +384,19 @@ export class DeviceClient {
   }
 
   runTest(params: RunTestParams): Promise<RunTestResult> {
+    if (this.refuseMotion('run-test')) {
+      return Promise.resolve({
+        success: false,
+        gcodeId: params.gcodeId,
+        testDataId: params.testDataId,
+        error: this.motionBlock!,
+      });
+    }
     return this.remote.runTest(params);
   }
 
   streamGcode(gcode: string): Promise<{ success: boolean; error?: string }> {
+    if (this.refuseMotion('stream-gcode')) return Promise.resolve({ success: false, error: this.motionBlock! });
     return this.remote.streamGcode(gcode);
   }
 

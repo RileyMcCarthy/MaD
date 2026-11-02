@@ -8,6 +8,7 @@ Common issues with the control app and how to resolve them.
 |---|---|
 | **"Unsupported browser" screen** | You're not in a Chromium browser. Use Chrome or Edge on desktop — see [requirements](../getting-started/requirements.md). |
 | **No port in the chooser** | The machine isn't powered or the USB-serial driver isn't installed. Check the cable, power, and (on Windows) the adapter driver. |
+| **Banner: firmware too old, or newer than this app** | The app and the firmware speak different versions of the serial protocol, so the app will not move the machine. Click **Update firmware** and [install the recommended firmware](firmware-and-diagnostics.md#when-the-app-asks-you-to-update), or, when the firmware is the newer one, **Open the latest MaD Control**. |
 | **Connected but "Not responding"** | The port opened but the firmware isn't talking. Check the [baud rate](connecting.md) (default 2,000,000), confirm the machine is powered through its [power-up sequence](../how-it-works/the-machine.md#power-up-sequence), and that nothing else holds the port. A machine flashed with a `-MaDEdge.bin` image never answers on J1: [flash the latest release](firmware-and-diagnostics.md#if-it-doesnt-work). |
 | **Link drops randomly** | Loose USB, power dip, or the machine rebooted. Use **Reconnect**; the app auto-reconnects when the device replugs. |
 
