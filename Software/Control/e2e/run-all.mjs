@@ -92,6 +92,7 @@ import {
   boardGrantedPort,
   chromium,
   press,
+  enableMotion,
   pageClock,
   waitPageTime,
   restoreLink,
@@ -716,9 +717,7 @@ async function prepareManualControl(page) {
   await page.getByRole('button', { name: /Home/ }).waitFor({ timeout: DEVICE_WAIT_MS });
   await page.getByText(/Motion: (enabled|disabled)/).waitFor({ timeout: DEVICE_WAIT_MS });
   await ensureTestIdle(page);
-  const enable = page.getByRole('button', { name: 'Enable motion' });
-  if (await enable.count()) await press(enable);
-  await page.getByText('Motion: enabled').waitFor({ timeout: DEVICE_WAIT_MS });
+  await enableMotion(page);
   await awaitRest(page);
 }
 
@@ -1388,20 +1387,16 @@ const scenarios = [
         await page.goto(`${APP_URL}#/live`);
         // Confirm the Live controls are present (i.e. connected).
         await page.getByRole('button', { name: /Home/ }).waitFor({ timeout: DEVICE_WAIT_MS });
-        // Wait for the state to be KNOWN before reading the toggle: while it is
-        // unknown the button says 'Motion …' and is disabled, so counting for
-        // 'Enable motion' too early would skip the click and this scenario
-        // would then wait forever for a transition nobody requested.
+        // Wait for the state to be KNOWN before touching the toggle. It is not
+        // yet the moment to read it: while the state is unknown the button
+        // says 'Motion …', and while the machine is faulted (a booting one
+        // is, for about 100 ms of board time) it says 'Disable motion'.
+        // enableMotion waits past both for 'Enable motion' or motion on.
         await page.getByText(/Motion: (enabled|disabled)/).waitFor({ timeout: DEVICE_WAIT_MS });
-        const enableBtn = page.getByRole('button', { name: 'Enable motion' });
-        if (await enableBtn.count()) await press(enableBtn);
         // State poll should report motion enabled (badge text flips).
-        await page
-          .getByText('Motion: enabled')
-          .waitFor({ timeout: DEVICE_WAIT_MS })
-          .catch(() => {
-            throw new Error('motion did not report enabled');
-          });
+        await enableMotion(page).catch((err) => {
+          throw new Error(`motion did not report enabled: ${err.message}`);
+        });
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
       } finally {
         await browser.close();
@@ -1722,9 +1717,7 @@ const scenarios = [
         await page.goto(`${APP_URL}#/live`);
         await page.getByRole('button', { name: /Home/ }).waitFor({ timeout: DEVICE_WAIT_MS });
         await page.getByText(/Motion: (enabled|disabled)/).waitFor({ timeout: DEVICE_WAIT_MS });
-        const enableBtn = page.getByRole('button', { name: 'Enable motion' });
-        if (await enableBtn.count()) await press(enableBtn);
-        await page.getByText('Motion: enabled').waitFor({ timeout: DEVICE_WAIT_MS });
+        await enableMotion(page);
 
         const live = () => page.evaluate(() => globalThis.__madLive?.latest() ?? null);
         assert(await live(), 'the live sample ring is exposed (dev build)');
@@ -1804,9 +1797,7 @@ const scenarios = [
         await page.goto(`${APP_URL}#/live`);
         await page.getByRole('button', { name: /Home/ }).waitFor({ timeout: DEVICE_WAIT_MS });
         await page.getByText(/Motion: (enabled|disabled)/).waitFor({ timeout: DEVICE_WAIT_MS });
-        const enableBtn = page.getByRole('button', { name: 'Enable motion' });
-        if (await enableBtn.count()) await press(enableBtn);
-        await page.getByText('Motion: enabled').waitFor({ timeout: DEVICE_WAIT_MS });
+        await enableMotion(page);
 
         const live = () => page.evaluate(() => globalThis.__madLive?.latest() ?? null);
         const before = await live();

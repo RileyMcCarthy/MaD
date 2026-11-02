@@ -298,6 +298,35 @@ export async function press(locator, { timeout = 15_000 } = {}) {
 }
 
 /**
+ * Turn motion on from Live, once the machine can take the request.
+ *
+ * A known machine state is not that moment. A booting board answers the
+ * protocol about 27 ms of board time after its boot line, and for about the
+ * next 100 ms every state it reports carries a fault: COG until the cog
+ * manager's next 100 ms tick marks the cogs it has just started as running
+ * (Firmware/MaDCore/src/DEV/dev_cogManager.c, BOOT to RUNNING, and the main
+ * loop in Main/MaD.c), then FORCE_GAUGE_COMMUNICATION until the gauge's
+ * first read; on the ISS the last faulted answer is about 130 ms after the
+ * boot line (measured). Live offers a faulted machine "Disable motion"
+ * (src/domain/motionControl.ts), and the app reads the machine's state once
+ * a second, so a connect whose first state lands in that window shows
+ * "Disable motion" for a second before it offers "Enable motion". A step
+ * that looked for "Enable motion" once found none then, pressed nothing,
+ * and waited for a "Motion: enabled" nobody had asked for. So this waits
+ * for one of the two states it can act on, motion already on or "Enable
+ * motion" offered, and presses only the second. Every wait is the device
+ * budget, on the page's clock in board mode. e2e/enableMotion.test.ts holds
+ * it to a booting machine.
+ */
+export async function enableMotion(page) {
+  const enable = page.getByRole('button', { name: 'Enable motion' });
+  const enabled = page.getByText('Motion: enabled');
+  await enable.or(enabled).first().waitFor({ timeout: DEVICE_WAIT_MS });
+  if (await enable.count()) await press(enable);
+  await enabled.waitFor({ timeout: DEVICE_WAIT_MS });
+}
+
+/**
  * Drop the link the app is using. The cable stays out until
  * `restoreLink()` (`clickReconnect` in run-all puts it back first).
  *
