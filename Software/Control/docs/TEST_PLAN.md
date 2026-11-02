@@ -12,11 +12,10 @@ abstractions (SIL serial, OPFS data folder) live in the harness — never in `sr
 > board run on one SIL configuration only: the P2 image on the ISS with the app in
 > the host's Chrome, every page and worker held to the board's clock by embsim's
 > `chrome-cdp`, on the machine's project (`SIL/mad-cosim.toml`, `cd SIL && make
-> e2e`). The project as drawn cannot move the carriage (MaD #285), so the suite
-> skips the scenarios that move it there, saying why (`PROJECT_CANNOT`), and runs
-> them on the board with #285 fixed, `SIL/mad-ic14-fixed-cosim.toml` (`cd SIL &&
-> make e2e-motion`); SERVO-stall runs on that board with a hard stop on its
-> carriage, `SIL/mad-hard-stop-cosim.toml` (`cd SIL && make e2e-stall`). Do not run the
+> e2e`); the scenarios that move the carriage run on the same file (`cd SIL &&
+> make e2e-motion`). Nothing stops that board's carriage, so the suite skips
+> SERVO-stall there, saying why (`PROJECT_CANNOT`), and runs it on that file with
+> a hard stop, `SIL/mad-hard-stop-cosim.toml` (`cd SIL && make e2e-stall`). Do not run the
 > suite against the ISS behind the WS bridge (the bridge's `MAD_PTY` on
 > `make playground-pty`'s `/tmp/tty.iss`): that measures the host, not the
 > machine.
