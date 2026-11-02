@@ -32,20 +32,17 @@
  * port returns as a new SerialPort with `connect`, which the app answers by
  * reconnecting to the port whose USB ids (0403:6015) it remembers.
  *
- * What the project as drawn cannot do, the suite skips there, saying why
- * (`PROJECT_CANNOT`, below): the carriage never moves, since the isolator
- * IC14 between the processor and the drive has its secondary grounds on a
- * net of their own (MaD #285; SIL/mad-catalog/tests/mad.rs, "The drive").
- * Those scenarios run on the board with #285 fixed,
- * SIL/mad-ic14-fixed-cosim.toml, mad-cosim.toml with one wire on IC14's
- * ground: `cd SIL && make e2e-motion` takes them from `--list --cannot` and
- * runs them there (E2E_PROJECT names the file, which board-route.sh
- * exports), where only SERVO-stall is skipped, since nothing stops that
- * board's carriage. SERVO-stall runs on SIL/mad-hard-stop-cosim.toml, the
- * #285-fixed file with a hard stop 3 mm above the carriage's start (MaD
- * #298): `cd SIL && make e2e-stall` jogs the carriage into the stop there.
- * That board skips the other scenarios that move the carriage, since its
- * stop would meet them.
+ * What the project cannot do, the suite skips there, saying why
+ * (`PROJECT_CANNOT`, below). The scenarios that move the carriage
+ * (`MOVES`) run on the machine's project like every other: `cd SIL && make
+ * e2e-motion` takes them from `--list --moves` and runs them on
+ * mad-cosim.toml, the set the nightly splits across its motion jobs.
+ * SERVO-stall runs on SIL/mad-hard-stop-cosim.toml, mad-cosim.toml with a
+ * hard stop 3 mm above the carriage's start (MaD #298): `cd SIL && make
+ * e2e-stall` jogs the carriage into the stop there. mad-cosim.toml skips
+ * SERVO-stall, since nothing stops its carriage, and the hard-stop board
+ * skips the other scenarios that move the carriage, since its stop would
+ * meet them.
  *
  * Without CDP_URL only the board-free scenarios run: A1 and
  * FW1/2/3/5/6/7/8/9 launch a host Chrome against in-page fakes and need no
@@ -141,47 +138,29 @@ const MOVES = new Set([
   'P1-precision', 'BB-back-to-back', 'TM-busy-restart', 'TM-manual-gate', 'SERVO-stall', 'CAL1',
 ]);
 
-// What the machine's project as drawn cannot do (BOARD_ROUTE 'project':
+// What the machine's project cannot do (BOARD_ROUTE 'project':
 // SIL/mad-cosim.toml), each with why. The suite skips these there, named in
 // SCENARIOS or not, saying so; a run in which every scenario was skipped
 // fails, since it checked nothing. E2E_PROJECT_CANNOT=run runs them anyway,
 // for a change to the board, its file or the kinds that may lift the
-// reason. `--list --cannot` lists them, and `make e2e-motion` runs them on
-// the board with IC14 fixed (`IC14_FIXED`, below), so the motion coverage
-// stays on a project.
+// reason. `--list --cannot` lists them.
 //
-// The carriage: IC14, the isolator between the processor and the drive, has
-// its secondary ground pins (9, 15) on a net of their own with only C26 on
-// it, so nothing it drives reaches the drive's STEP, DIR and ENA (MaD #285;
-// read: Hardware/EdgeBoard/KiCad; SIL/mad-catalog/tests/mad.rs, "The
-// drive"). The run's summary says "0 steps commanded" with the encoder at 0
-// counts, and the firmware latches SERVO_STALL at the first move it
-// commands (measured, G2+G3+H2+I on mad-cosim.toml). Whether the machine's
-// carrier is bodged there is not known; the file keeps the board as drawn.
-const IC14_WHY =
-  'needs the carriage to move: IC14 as drawn passes nothing to the drive (MaD #285; SIL/mad-catalog/tests/mad.rs, "The drive")';
 // SERVO-stall drives the carriage into a hard stop, which only one board's
 // machine has (the machine's hard_stop_mm; mad-catalog/src/machine.rs, "The
 // hard stop"; MaD #298).
 const STOP_WHY =
   'drives the carriage into a hard stop, which this board\'s machine has none of (MaD #298): make e2e-stall runs it on mad-hard-stop-cosim.toml';
-const PROJECT_CANNOT = new Map([...MOVES].map((id) => [id, IC14_WHY]));
-PROJECT_CANNOT.set('SERVO-stall', `${STOP_WHY}, and ${IC14_WHY}`);
-// The board with MaD #285 fixed: mad-cosim.toml with one wire from IC14's
-// pin 9 to EN_GND (SIL/mad-ic14-fixed-cosim.toml; mad-catalog/tests/
-// projects.rs holds it to that). Its carriage moves, so of the set above it
-// skips SERVO-stall alone, for the stop.
-const IC14_FIXED = 'mad-ic14-fixed-cosim.toml';
-// That board with a hard stop on its carriage, 3 mm above the carriage's
-// start (SIL/mad-hard-stop-cosim.toml, the machine's hard_stop_mm;
-// mad-catalog/tests/projects.rs holds it to that one option). SERVO-stall
-// runs there; the other scenarios that move the carriage would meet the
-// stop, so it skips them.
+const PROJECT_CANNOT = new Map([['SERVO-stall', STOP_WHY]]);
+// mad-cosim.toml with a hard stop on its carriage, 3 mm above the
+// carriage's start (SIL/mad-hard-stop-cosim.toml, the machine's
+// hard_stop_mm; mad-catalog/tests/projects.rs holds it to that one option).
+// SERVO-stall runs there; the other scenarios that move the carriage would
+// meet the stop, so it skips them.
 const HARD_STOP = 'mad-hard-stop-cosim.toml';
 const STOPPED_WHY =
-  'moves the carriage, which meets a hard stop on this board (MaD #298): make e2e-motion runs it on mad-ic14-fixed-cosim.toml';
+  'moves the carriage, which meets a hard stop on this board (MaD #298): make e2e-motion runs it on mad-cosim.toml';
 // The project file the board runs (board-route.sh exports it; relative to
-// SIL/, the as-drawn mad-cosim.toml by default).
+// SIL/, mad-cosim.toml by default).
 const PROJECT = (process.env.E2E_PROJECT || 'mad-cosim.toml').split('/').pop();
 const RUN_CANNOT = process.env.E2E_PROJECT_CANNOT === 'run';
 // The suite is on the project: attached to its Chrome, or listing for
@@ -191,7 +170,6 @@ const ON_PROJECT = BOARD_ROUTE === 'project' && (BOARD || process.env.E2E_BOARD_
 const cannot = (id) => {
   if (!ON_PROJECT || RUN_CANNOT) return '';
   if (PROJECT === HARD_STOP) return id !== 'SERVO-stall' && MOVES.has(id) ? STOPPED_WHY : '';
-  if (PROJECT === IC14_FIXED) return id === 'SERVO-stall' ? STOP_WHY : '';
   return PROJECT_CANNOT.get(id) || '';
 };
 
@@ -2991,22 +2969,30 @@ async function main() {
   // on the built bundle, and each left out otherwise. What this board cannot
   // run is left out too, and said on stderr with why. `--board-free` lists
   // only the scenarios that need no board. `--cannot` lists only those the
-  // project as drawn cannot run (`PROJECT_CANNOT`), whatever the route: the
-  // set `make e2e-motion` runs on the board with IC14 fixed.
+  // project cannot run (`PROJECT_CANNOT`), whatever the route. `--moves`
+  // lists only the scenarios that move the carriage (`MOVES`) that the
+  // project can run: the set `make e2e-motion` runs on mad-cosim.toml.
+  // `--no-moves` leaves those out: the rest, which the nightly's suite job
+  // runs beside its motion jobs.
   // SIL/scripts/board-route.sh runs them one board each from this.
   if (process.argv.includes('--list')) {
     const only = process.env.SCENARIOS ? new Set(process.env.SCENARIOS.split(',').map((x) => x.trim())) : null;
     const boardFreeOnly = process.argv.includes('--board-free');
     const cannotOnly = process.argv.includes('--cannot');
+    const movesOnly = process.argv.includes('--moves');
+    const noMoves = process.argv.includes('--no-moves');
     for (const s of scenarios) {
       if (
         (s.id === 'FW-ISS') === ROM_BOARD &&
         (s.id !== 'BUNDLE-live' || APP_IS_BUNDLE) &&
         (!only || only.has(s.id)) &&
-        (!boardFreeOnly || BOARD_FREE.has(s.id))
+        (!boardFreeOnly || BOARD_FREE.has(s.id)) &&
+        (!noMoves || !MOVES.has(s.id))
       ) {
         if (cannotOnly) {
           if (PROJECT_CANNOT.has(s.id)) console.log(s.id);
+        } else if (movesOnly) {
+          if (MOVES.has(s.id) && !PROJECT_CANNOT.has(s.id)) console.log(s.id);
         } else if (cannot(s.id)) {
           if (!boardFreeOnly) console.error(`  ~ ${s.id}: skipped (${cannot(s.id)})`);
         } else console.log(s.id);

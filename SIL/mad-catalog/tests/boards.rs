@@ -122,11 +122,11 @@ fn the_edge_carrier_kind_places_every_part() {
     });
     expect!(
         "every-part-placed",
-        "each of the carrier's 168 parts takes a model, and the survey refuses none"
+        "each of the carrier's 178 parts takes a model, and the survey refuses none"
     );
     expect!(
         "socket-a-connector",
-        "the module socket J3 is one of the carrier's 24 connectors, where the P2 module's \
+        "the module socket J3 is one of the carrier's 25 connectors, where the P2 module's \
          mate lands",
         "its symbol comes from the carrier's own library, so the board kind says what it is"
     );
@@ -134,19 +134,45 @@ fn the_edge_carrier_kind_places_every_part() {
         "receiver-by-part-number",
         "the encoder's line receiver U25 takes the AM26LV32 receiver's model, chosen by its \
          manufacturer part number AM26LV32IDR",
-        "the schematic names the part U25 was bought as"
+        "the drawing's 5 volt AM26C32 has the same pins and no model of its own, so the \
+         netlist names the AM26LV32 in its place"
+    );
+    expect!(
+        "enable-transistor-sot23",
+        "the enable transistor Q1 takes an NPN model with its base on pin 1, its emitter on pin \
+         2 and its collector on pin 3",
+        "Q1 is drawn with the SOT-23 MMBT3904 symbol, whose pin order differs from the TO-92 \
+         2N3904's"
     );
     let survey = board_project("EDGE", mad_catalog::boards::EDGE)
         .survey(&set(), "EDGE")
         .expect("the carrier surveys");
-    assert_eq!(survey.part_count, 168);
+    assert_eq!(survey.part_count, 178);
     assert!(survey.compliant(), "{survey}");
     let connectors: Vec<&str> = survey
         .connectors
         .iter()
         .map(|connector| connector.reference.as_str())
         .collect();
-    assert_eq!(connectors.len(), 24, "{connectors:?}");
+    assert_eq!(connectors.len(), 25, "{connectors:?}");
+    assert_eq!(placed(&survey, "Q1").0.as_deref(), Some("MMBT3904"));
+    let q1 = mad_catalog::boards::mmbt3904_sot23();
+    let branches: Vec<(&str, &str, Option<&str>)> = q1
+        .branches
+        .iter()
+        .map(|branch| {
+            (
+                branch.a.as_str(),
+                branch.b.as_str(),
+                branch.control.as_ref().map(|(pin, _)| pin.as_str()),
+            )
+        })
+        .collect();
+    assert_eq!(
+        branches,
+        [("1", "2", None), ("3", "2", Some("1"))],
+        "Q1: the base-emitter diode, then the collector-emitter branch the base gates"
+    );
     assert!(connectors.contains(&"J3"), "{connectors:?}");
     assert_eq!(
         placed(&survey, "U25"),
@@ -249,12 +275,18 @@ fn the_carrier_builds_with_the_module_seated_and_the_add_on_on_its_cable() {
          and a series resistor on the add-on carries each line to the converter"
     );
     expect!(
+        "fuse-conducts",
+        "the encoder supply's fuse F1 joins the two pins of the encoder supply header J25 it \
+         sits between",
+        "below its trip current a resettable fuse is a closed path"
+    );
+    expect!(
         "receiver-over-range",
         "only the encoder's line receiver U25 is reported above its recommended range, once: \
          its supply at 5 volts, against a 3.6 volt maximum",
-        "the carrier feeds its low-voltage AM26LV32 from the servo connector's 5 volt supply on \
-         J21, the rail its 5 volt line driver U24 shares, inside the part's 6 volt absolute \
-         maximum"
+        "U25 runs from the servo connector's 5 volt supply on J21, the rail its 5 volt \
+         line driver U24 shares, as the drawing's 5 volt AM26C32 does; the AM26LV32 model \
+         standing in for it is rated to 3.6 volts, inside its 6 volt absolute maximum"
     );
     // The converter's serial pins, by the names the add-on's schematic gives
     // them.
@@ -265,7 +297,7 @@ fn the_carrier_builds_with_the_module_seated_and_the_add_on_on_its_cable() {
         pin_named(&converter, "U1", "RX"),
         pin_named(&converter, "U1", "TX"),
     );
-    let (fingers, cable, over_range) = build("edge-bench.toml", |built| {
+    let (fingers, cable, fuse, over_range) = build("edge-bench.toml", |built| {
         let rail = net_at(built, "EDGE", "J3", "41");
         let fingers = ["41", "42"]
             .map(|finger| built.names_are_merged(&net_at(built, "EC32", "J203", finger), &rail));
@@ -298,6 +330,10 @@ fn the_carrier_builds_with_the_module_seated_and_the_add_on_on_its_cable() {
         (
             (rail_named_5v, fingers),
             ((carrier_tx, carrier_rx), (tx_to_rx, tx_from_rx)),
+            built.names_are_merged(
+                &net_at(built, "EDGE", "J25", "1"),
+                &net_at(built, "EDGE", "J25", "2"),
+            ),
             over_range,
         )
     });
@@ -318,6 +354,7 @@ fn the_carrier_builds_with_the_module_seated_and_the_add_on_on_its_cable() {
         tx_from_rx,
         "the converter's TX (U1.{converter_tx}) does not reach the carrier's receive line"
     );
+    assert!(fuse, "J25.1 and J25.2 are apart: F1 conducts nothing");
     let [(part, pin, volts, max, absolute_max)] = over_range.as_slice() else {
         panic!("one pin above its recommended range, found {over_range:?}");
     };
