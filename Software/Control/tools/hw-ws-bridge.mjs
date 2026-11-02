@@ -30,7 +30,7 @@
 import { WebSocketServer } from 'ws';
 import { SerialPort } from 'serialport';
 
-// The default is one bench's P53/P55 adapter, which only a `-madEdge.bin`
+// The default is one bench's P53/P55 adapter, which only a `-MaDEdge.bin`
 // image talks on. The production build talks on J1: set MAD_SERIAL to that adapter.
 const DEV = process.env.MAD_SERIAL || '/dev/cu.usbserial-A5069RR4';
 const BAUD = Number(process.env.MAD_BAUD || 2000000);

@@ -4,9 +4,11 @@
  * The browser cannot fetch a release asset from GitHub (no CORS on the asset
  * host), so this plugin does it in Node and serves the files under `firmware/`
  * that src/firmware/release.ts describes: `manifest.json` with the newest
- * release per protocol version and their images, and `latest.json` +
- * `latest.bin` for app versions from before the manifest. The Pages deploy
- * (assemble-pages-app.mts) writes the same files from the same function.
+ * release per protocol version and every board image each carries, under its
+ * own file name; and `latest.json` + `latest.bin` (the P2Eval build) + one
+ * `latest-<Board>.bin` per other board, for app versions from before the
+ * manifest. The Pages deploy (assemble-pages-app.mts) writes the same files
+ * from the same function.
  *  - dev server: fetched from GitHub on the first request, then cached for the
  *    life of the server;
  *  - build: fetched once and emitted into the bundle.
@@ -20,16 +22,22 @@
 import { createHash } from 'node:crypto';
 import type { Plugin } from 'vite';
 import {
+  BOARDS,
+  BOARD_IMAGE_PATHS,
   FIRMWARE_INFO_ASSET,
   FIRMWARE_MANIFEST_PATH,
   RELEASE_IMAGE_PATH,
   RELEASE_MANIFEST_PATH,
   describedReleases,
   isFirmwareInfo,
+  firmwareImagePath,
   newestPerProtocol,
+  pickFirmwareAsset,
   pickFirmwareRelease,
   toManifest,
   toManifestEntry,
+  type Board,
+  type BoardImage,
   type FirmwareManifest,
   type FirmwareReleaseManifest,
   type GithubAsset,
@@ -140,20 +148,50 @@ export async function fetchFirmwareSite(
   const picked = pickFirmwareRelease(releases);
   if (!picked) throw new Error(`${repo} has no firmware release with a flashable image`);
 
-  const latestImage = await download(picked.asset);
-  const latest = toManifest(picked.release, picked.asset, sha256(latestImage));
-  const files = new Map<string, Buffer>([
-    [RELEASE_MANIFEST_PATH, Buffer.from(JSON.stringify(latest))],
-    [RELEASE_IMAGE_PATH, latestImage],
-  ]);
+  // Each asset is downloaded once, however many of the files below serve it.
+  const downloaded = new Map<number, Promise<Buffer>>();
+  const fetchAsset = (asset: GithubAsset) => {
+    let bytes = downloaded.get(asset.id);
+    if (!bytes) {
+      bytes = download(asset);
+      downloaded.set(asset.id, bytes);
+    }
+    return bytes;
+  };
+  /** Every board image a release carries: the P2Eval one must download, the
+   *  others are served when the release has them. */
+  const releaseImages = async (release: GithubRelease, p2eval: GithubAsset) => {
+    const images: { board: Board; asset: GithubAsset; bytes: Buffer }[] = [];
+    for (const board of BOARDS) {
+      const asset = board === 'P2Eval' ? p2eval : pickFirmwareAsset(release, board);
+      if (asset) images.push({ board, asset, bytes: await fetchAsset(asset) });
+    }
+    return images;
+  };
+  const describe = (images: { board: Board; asset: GithubAsset; bytes: Buffer }[], served: (b: Board, a: GithubAsset) => string | undefined) => {
+    const boards: Partial<Record<Board, BoardImage>> = {};
+    for (const { board, asset, bytes } of images) {
+      const path = served(board, asset);
+      boards[board] = { assetName: asset.name, size: asset.size, sha256: sha256(bytes), ...(path ? { path } : {}) };
+    }
+    return boards;
+  };
 
+  // The newest release of all: latest.json, latest.bin and latest-<Board>.bin.
+  const latestImages = await releaseImages(picked.release, picked.asset);
+  const latestBoards = describe(latestImages, () => undefined);
+  const latest = toManifest(picked.release, picked.asset, latestBoards.P2Eval!.sha256, latestBoards);
+  const files = new Map<string, Buffer>([[RELEASE_MANIFEST_PATH, Buffer.from(JSON.stringify(latest))]]);
+  for (const { board, bytes } of latestImages) files.set(BOARD_IMAGE_PATHS[board], bytes);
+
+  // The newest release per protocol: every board image under its own name.
   const warnings: string[] = [];
   const manifest: FirmwareManifest = { releases: [] };
   for (const c of await newestByProtocol(releases, download, (w) => void warnings.push(w))) {
-    const image = c.asset.id === picked.asset.id ? latestImage : await download(c.asset);
-    const entry = toManifestEntry(c.release, c.asset, sha256(image), c.protocolVersion);
-    manifest.releases.push(entry);
-    files.set(entry.path, image);
+    const images = await releaseImages(c.release, c.asset);
+    const boards = describe(images, (_, asset) => firmwareImagePath(asset.name));
+    manifest.releases.push(toManifestEntry(c.release, c.asset, boards.P2Eval!.sha256, c.protocolVersion, boards));
+    for (const { asset, bytes } of images) files.set(firmwareImagePath(asset.name), bytes);
   }
   files.set(FIRMWARE_MANIFEST_PATH, Buffer.from(JSON.stringify(manifest)));
   return { latest, manifest, files, warnings };
@@ -162,7 +200,8 @@ export async function fetchFirmwareSite(
 /** One line for a log: what the site serves. */
 export function describeSite(site: FirmwareSite): string {
   const perProtocol = site.manifest.releases.map((r) => `${r.tag} (protocol ${r.protocolVersion})`);
-  return `latest ${site.latest.tag} (${site.latest.assetName}); recommended per protocol: ${
+  const latestImages = Object.values(site.latest.boards ?? {}).map((b) => b.assetName).join(', ') || site.latest.assetName;
+  return `latest ${site.latest.tag} (${latestImages}); recommended per protocol: ${
     perProtocol.length > 0 ? perProtocol.join(', ') : 'none yet'
   }`;
 }

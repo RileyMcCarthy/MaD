@@ -74,21 +74,23 @@ says why on every screen.
    speaks, and the **Recommended** release: the newest firmware release that
    speaks this app's protocol.
 2. **Will flash** shows the recommended release. The app writes that release's
-   production build (`MaD-Firmware-<version>-release.bin`), fetched by the app —
-   there is nothing to download. It puts the protocol on J1, so the app reaches
-   the new firmware on the port it just programmed. MaD Control 0.4.2 and
-   earlier label this row "MadEdge" whatever the image is; the prompt in step 3
-   names the real file. Releases from 0.13 on also carry a `-madEdge.bin` build
-   for a bench with a second adapter: it moves the protocol to P53/P55 and puts
-   a debug log on J1. Don't flash it to the machine — its P2-EC32MB module uses
-   P40–P57 for its own memory and doesn't bring them out, so the app could no
-   longer reach the firmware. To flash that build, or a local one, click
-   **Use a local file…** and pick it.
+   P2Eval production build (`MaD-Firmware-<version>-P2Eval.bin`), fetched by
+   the app — there is nothing to download. It puts the protocol on J1, so the
+   app reaches the new firmware on the port it just programmed. MaD Control
+   0.4.2 and earlier label this row "MadEdge" whatever the image is; the prompt
+   in step 3 names the real file.
+   When the release also carries a MaDEdge build, a **Board** choice appears:
+   **P2Eval** (the default) or **MaDEdge**, and **Install recommended
+   firmware** flashes the chosen one. The MaDEdge debug build moves the
+   protocol to the Edge carrier's Pi link and puts a debug log on J1, so after
+   flashing it the app reaches the firmware only over that link. Don't pick it
+   for a machine whose carrier does not bring that link out. To flash any
+   other image, or a local build, click **Use a local file…** and pick it.
 3. Check the **Port** shown is the machine you mean to program, then click
    **Install recommended firmware** (or **Write to flash** for a local file;
    with none picked it writes the recommended release too). The prompt names
    the file it will write: check it is
-   `MaD-Firmware-<version>-release.bin` (or the local file you picked), then
+   `MaD-Firmware-<version>-P2Eval.bin` (or the local file you picked), then
    confirm.
 4. The status line walks through *Resetting the board…*, then *Uploading… n%*,
    then *Finishing…*.
@@ -114,11 +116,11 @@ says why on every screen.
   If it keeps failing, power-cycle the machine and try again.
 - **The version doesn't change after a flash** — the machine may have rebooted
   into the previous image. Power-cycle it, reconnect, and check again.
-- **Connected, but never Responding, after flashing a `-madEdge.bin`** — that
+- **Connected, but never Responding, after flashing a `-MaDEdge.bin`** — that
   build talks on P53/P55, which don't reach the machine's chip. Programming
   doesn't need the firmware, so the machine can still be flashed: on the
   **Firmware** screen pick the J1 port, click **Write to flash**, and check the
-  prompt names `MaD-Firmware-<version>-release.bin` before you confirm. If the
+  prompt names `MaD-Firmware-<version>-P2Eval.bin` before you confirm. If the
   app was connected on J1, it reconnects there afterwards and the machine
   answers; otherwise connect to J1.
 

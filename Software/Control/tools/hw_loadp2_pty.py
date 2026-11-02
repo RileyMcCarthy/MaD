@@ -11,7 +11,7 @@ import struct
 import subprocess
 
 LOADP2 = os.path.expanduser("~/.platformio/packages/tool-loadp2/bin/macos/loadp2")
-PROG = "/Users/rileymccarthy/Documents/MaD/Firmware/MaDCore/.pio/build/propeller2/program"
+PROG = "/Users/rileymccarthy/Documents/MaD/Firmware/MaDCore/.pio/build/P2Eval/program"
 DEV = os.environ.get("MAD_SERIAL", "/dev/cu.usbserial-PLX6ZJLYQ")
 
 

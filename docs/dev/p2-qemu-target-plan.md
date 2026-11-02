@@ -614,7 +614,7 @@ framing changes, and `embsim-p2-qemu` lands beside `embsim-p2-iss` under
 
 ## Measurements
 
-All from 2026-09-19, quiet M2, `propeller2_debug/program`, best-of-N over 50M
+All from 2026-09-19, quiet M2, `MaDEdge/program`, best-of-N over 50M
 instructions, in an isolated copy of `p2core`.
 
 | Variant | M inst/s | vs base |

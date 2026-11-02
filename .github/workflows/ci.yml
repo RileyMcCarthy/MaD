@@ -267,7 +267,7 @@ jobs:
 
   # BLOCKING (in ci-gate.needs). The board-free e2e scenarios, per PR: the real
   # app in a real host Chrome, with no emulator at all. A1 (the unsupported-
-  # browser screen) and FW1/2/3/5/6/7/8/9 (the firmware-flash UI) drive the app
+  # browser screen) and FW1/2/3/5/6/7/8/9/10/11 (the firmware-flash UI) drive the app
   # against in-page fakes (installFakeBootRom, installOpfsDataDir) and never
   # reach a board, so they mean the same thing here as anywhere. The
   # board-touching scenarios run in `control-e2e-board` below.
@@ -327,7 +327,7 @@ jobs:
       - name: Run the board-free scenarios
         env:
           APP_URL: http://127.0.0.1:5174
-          SCENARIOS: A1,FW1,FW2,FW3,FW5,FW6,FW7,FW8,FW9,COMPAT-reconnect,COMPAT-silent,COMPAT-update-loop
+          SCENARIOS: A1,FW1,FW2,FW3,FW5,FW6,FW7,FW8,FW9,FW10,FW11,COMPAT-reconnect,COMPAT-silent,COMPAT-update-loop
         run: npm run e2e
       # e2e/artifacts holds the per-scenario merged main+worker app log that
       # dumpFailureArtifacts writes. Collect into one directory first:
@@ -355,7 +355,7 @@ jobs:
   # board is the machine's project, SIL/mad-cosim.toml, under `embsim run`
   # (`make e2e`, each board the command `make e2e-emulator` runs; embsim
   # MIGRATING-MAD.md step 10): the Edge carrier and the P2-EC32MB module as
-  # drawn, the production firmware (pio env propeller2) booted off the
+  # drawn, the production firmware (pio env P2Eval) booted off the
   # module's flash, and the node on the carrier's debug header J1 (USB
   # 0403:6015). The app's timeouts mean in board time what they say, and
   # every budget in the suite is board time, so nothing here depends on how
@@ -851,7 +851,7 @@ jobs:
         run: pipx run ruff==0.13.2 check --output-format=github Firmware/MaDCore/extra_scripts
 
   # BLOCKING. SIL Rust workspace: builds the generated protocol Rust
-  # (make protocol) and the propeller2_debug image the ISS executes, then runs
+  # (make protocol) and the MaDEdge image the ISS executes, then runs
   # rustfmt, clippy and cargo test — all three gating. The lint backlog that
   # kept clippy advisory has been cleared: the one real finding was fixed, and
   # the generated codec's template-style lints are allowed at the `mod`
@@ -905,25 +905,25 @@ jobs:
       # when `firmware` changed, so on a SIL-only PR its artifact would not
       # exist, and it runs on a macOS runner at a 10x minute multiplier.
       #
-      # Two images. The production build (propeller2) is the one SIL/mad.toml's
+      # Two images. The production build (P2Eval) is the one SIL/mad.toml's
       # module flash holds: its protocol is on P62/P63, the carrier's debug
       # header, where the project files' host is (mad-catalog/tests/mad.rs).
       # It is built first and copied out, because building one env has been
       # seen to remove another env's output (the release job's note);
       # MAD_P2_PRODUCTION_IMAGE points the test at the copy. The debug build
-      # (propeller2_debug) is the rest of the suite's.
+      # (MaDEdge) is the rest of the suite's.
       - name: Build the production P2 image the project files boot
         working-directory: Firmware/MaDCore
-        run: pio run -e propeller2
+        run: pio run -e P2Eval
       - name: Keep the production image out of .pio
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/p2-production"
-          cp Firmware/MaDCore/.pio/build/propeller2/program "$RUNNER_TEMP/p2-production/program"
+          cp Firmware/MaDCore/.pio/build/P2Eval/program "$RUNNER_TEMP/p2-production/program"
           echo "MAD_P2_PRODUCTION_IMAGE=$RUNNER_TEMP/p2-production/program" >> "$GITHUB_ENV"
       - name: Build the P2 image the ISS interprets
         working-directory: Firmware/MaDCore
-        run: pio run -e propeller2_debug
+        run: pio run -e MaDEdge
       # Decodes every hub instruction in the image just built (29k of them)
       # and writes flexcc's own mnemonic for each, so decoder_golden.rs checks
       # p2core against the compiler rather than against itself. The golden is
@@ -937,7 +937,7 @@ jobs:
       - name: Assert the firmware artifacts exist
         run: |
           fail=0
-          for f in Firmware/MaDCore/.pio/build/propeller2_debug/program \
+          for f in Firmware/MaDCore/.pio/build/MaDEdge/program \
                    "$MAD_P2_PRODUCTION_IMAGE" \
                    SIL/p2core/tests/golden/hub_mnemonics.txt; do
             if [ -s "$f" ]; then echo "ok   $f ($(wc -c < "$f") bytes)"; else echo "::error::missing or empty: $f"; fail=1; fi
@@ -1001,10 +1001,10 @@ jobs:
           set -o pipefail
           # Never combine --silent with --fail-on-defect: silent defeats the fail gate.
           # check_severity in platformio.ini is medium,high; fail on either.
-          pio check -e propeller2 --skip-packages \
+          pio check -e P2Eval --skip-packages \
             --fail-on-defect=medium --fail-on-defect=high \
             | tee pio-check.txt
-          pio check -e propeller2 --skip-packages --json-output \
+          pio check -e P2Eval --skip-packages --json-output \
             | sed -n '/^\[{/,$p' > pio-check.json || true
           {
             echo "## Firmware MISRA / cppcheck (blocking: medium + high)"
@@ -1078,13 +1078,14 @@ jobs:
       # argument for the built program, not a build flag, so it never defined the macro and
       # every CI build reported the app_messageSlave.c fallback "0.0.0". PLATFORMIO_BUILD_FLAGS
       # is appended to each env's build_flags (pio parses the \" escapes shell-style).
-      # Two images per release:
-      #  - release: the production build (propeller2_release). One port, P62/P63
+      # Two images per release, named MaD-Firmware-<version>-<board>.bin after
+      # their PlatformIO env (MaD Control finds them by that name; see
+      # Software/Control/src/firmware/release.ts):
+      #  - P2Eval: the production build. One port, P62/P63
       #    (the debug header J1), carries the protocol at 2,000,000 baud; no
       #    debug log. This is the image MaD Control flashes from "latest
-      #    release" (Software/Control/src/firmware/release.ts), and the release
-      #    cannot publish without it.
-      #  - madEdge: the propeller2_debug build. Protocol on P30/P32, debug log
+      #    release" by default, and the release cannot publish without it.
+      #  - MaDEdge: the debug build, offered on the Firmware screen's board choice. Protocol on P30/P32, debug log
       #    on P62/P63. P30/P32 are the Edge carrier's J4/IC2 Pi link from v0.3
       #    on; earlier carriers bring them to no host connector (they put IC2
       #    on P52-P55, which the machine's P2-EC32MB keeps for its PSRAM), so
@@ -1093,27 +1094,27 @@ jobs:
       #    wanted.
       # Each image is copied out right after its build: building the next env
       # has been seen to remove the previous env's output.
-      - name: Build Firmware - MadEdge Version
+      - name: Build Firmware - MaDEdge (debug)
         working-directory: Firmware/MaDCore
         env:
           PLATFORMIO_BUILD_FLAGS: '-DFIRMWARE_VERSION=\"${{ steps.get_version.outputs.VERSION }}\"'
-        run: pio run -e propeller2_debug
-      - name: Collect the MadEdge image
+        run: pio run -e MaDEdge
+      - name: Collect the MaDEdge image
         run: |
           set -euo pipefail
           mkdir -p release-assets
-          cp Firmware/MaDCore/.pio/build/propeller2_debug/program \
-            "release-assets/MaD-Firmware-${{ steps.get_version.outputs.VERSION }}-madEdge.bin"
-      - name: Build Firmware - Release Version
+          cp Firmware/MaDCore/.pio/build/MaDEdge/program \
+            "release-assets/MaD-Firmware-${{ steps.get_version.outputs.VERSION }}-MaDEdge.bin"
+      - name: Build Firmware - P2Eval (production)
         working-directory: Firmware/MaDCore
         env:
           PLATFORMIO_BUILD_FLAGS: '-DFIRMWARE_VERSION=\"${{ steps.get_version.outputs.VERSION }}\"'
-        run: pio run -e propeller2_release
-      - name: Collect the release image
+        run: pio run -e P2Eval
+      - name: Collect the P2Eval image
         run: |
           set -euo pipefail
-          cp Firmware/MaDCore/.pio/build/propeller2_release/program \
-            "release-assets/MaD-Firmware-${{ steps.get_version.outputs.VERSION }}-release.bin"
+          cp Firmware/MaDCore/.pio/build/P2Eval/program \
+            "release-assets/MaD-Firmware-${{ steps.get_version.outputs.VERSION }}-P2Eval.bin"
       - name: Assert the version string is embedded in every image
         run: |
           set -euo pipefail
@@ -1355,9 +1356,9 @@ jobs:
             echo "ok $f"
           done
 
-      # The sil suite boots the propeller2_debug program off the module's
+      # The sil suite boots the MaDEdge program off the module's
       # flash (p2iss/tests/ec32mb_flash_boot.rs), and the production program
-      # (propeller2) in SIL/mad.toml (mad-catalog/tests/mad.rs). Without an
+      # (P2Eval) in SIL/mad.toml (mad-catalog/tests/mad.rs). Without an
       # image those tests skip and their behaviours read as holding, so the
       # job builds both, as sil-rust does, and requires them. Each image is
       # copied out of .pio right after its build, because building another
@@ -1369,21 +1370,21 @@ jobs:
         run: pio pkg install --platform https://github.com/RileyMcCarthy/platform-propeller.git
       - name: Build the production P2 image the sil suite boots
         working-directory: Firmware/MaDCore
-        run: pio run -e propeller2
+        run: pio run -e P2Eval
       - name: Keep the production image out of .pio
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/p2-production"
-          cp Firmware/MaDCore/.pio/build/propeller2/program "$RUNNER_TEMP/p2-production/program"
+          cp Firmware/MaDCore/.pio/build/P2Eval/program "$RUNNER_TEMP/p2-production/program"
           echo "kept $(wc -c < "$RUNNER_TEMP/p2-production/program") bytes"
       - name: Build the P2 image the sil suite boots
         working-directory: Firmware/MaDCore
-        run: pio run -e propeller2_debug
+        run: pio run -e MaDEdge
       - name: Keep the image out of .pio
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/p2"
-          cp Firmware/MaDCore/.pio/build/propeller2_debug/program "$RUNNER_TEMP/p2/program"
+          cp Firmware/MaDCore/.pio/build/MaDEdge/program "$RUNNER_TEMP/p2/program"
           echo "kept $(wc -c < "$RUNNER_TEMP/p2/program") bytes"
       # mad-catalog's tests decode the firmware's answers with the generated
       # Rust codec (the `protocol` crate), which `make protocol` writes.

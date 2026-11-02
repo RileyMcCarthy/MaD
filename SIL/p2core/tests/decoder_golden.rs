@@ -8,7 +8,7 @@
 //! Regenerate the golden after rebuilding the firmware:
 //!
 //! ```text
-//! cd Firmware/MaDCore && pio run -e propeller2_debug
+//! cd Firmware/MaDCore && pio run -e MaDEdge
 //! cd SIL/p2core && python3 tools/gen_golden.py
 //! ```
 
@@ -40,7 +40,7 @@ fn equivalent(golden: &str, got: &str) -> bool {
 
 #[test]
 fn decoder_matches_flexcc_listing() {
-    let img = crate_path("../../Firmware/MaDCore/.pio/build/propeller2_debug/program");
+    let img = crate_path("../../Firmware/MaDCore/.pio/build/MaDEdge/program");
     let gold = crate_path("tests/golden/hub_mnemonics.txt");
     // See the note on MAD_REQUIRE_P2_IMAGE in the p2iss suites: skipping is
     // right on a laptop that has not built the image/golden and wrong in a job
@@ -53,7 +53,7 @@ fn decoder_matches_flexcc_listing() {
             if image_res.is_err() {
                 missing.push(format!(
                     "the P2 image is missing at {}. \
-                     Build it with `make p2image` (or `cd Firmware/MaDCore && pio run -e propeller2_debug`)",
+                     Build it with `make p2image` (or `cd Firmware/MaDCore && pio run -e MaDEdge`)",
                     img.display()
                 ));
             }

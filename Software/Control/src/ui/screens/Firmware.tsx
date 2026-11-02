@@ -14,10 +14,13 @@ import {
   validateFirmwareFile,
 } from '@/firmware/portPref';
 import {
+  BOARDS,
+  boardImage,
   fetchFirmwareManifest,
   fetchReleaseImage,
   recommendedRelease,
   releaseImageLabel,
+  type Board,
   type FirmwareManifestEntry,
 } from '@/firmware/release';
 import { hostingRoot } from '@/hosting';
@@ -58,6 +61,8 @@ export default function Firmware() {
   const disconnect = useStore((s) => s.disconnect);
 
   const [release, setRelease] = useState<Release>({ kind: 'loading' });
+  // Which board's build to take from the release.
+  const [board, setBoard] = useState<Board>('P2Eval');
   // A local file, when chosen, replaces the release until it is cleared.
   const [file, setFile] = useState<File | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
@@ -69,11 +74,14 @@ export default function Firmware() {
   const connected = connection === 'connected';
   const busy = status.kind === 'running' || status.kind === 'downloading';
   const manifest = release.kind === 'ready' ? release.manifest : null;
+  // The boards this release has an image for; P2Eval always, when ready.
+  const offeredBoards = manifest ? BOARDS.filter((b) => boardImage(manifest, b)) : [];
+  const releaseImage = manifest ? boardImage(manifest, board) : null;
   // What "Write to flash" would program: the chosen file, else the release.
   const source = file
     ? { name: file.name, size: file.size }
-    : manifest
-      ? { name: `${manifest.assetName} (${manifest.tag})`, size: manifest.size }
+    : manifest && releaseImage
+      ? { name: `${releaseImage.assetName} (${manifest.tag})`, size: releaseImage.size }
       : null;
 
   useEffect(() => {
@@ -148,14 +156,15 @@ export default function Firmware() {
 
   /**
    * Program the chosen source, or (`recommended`) the recommended release
-   * whatever file is chosen: the one-click update.
+   * whatever file is chosen: the one-click update. A release is flashed as the
+   * Board choice's image.
    */
   const program = async (use: 'chosen' | 'recommended' = 'chosen') => {
     const local = use === 'chosen' ? file : null;
     const chosen = local
       ? { name: local.name, size: local.size }
-      : manifest
-        ? { name: `${manifest.assetName} (${manifest.tag})`, size: manifest.size }
+      : manifest && releaseImage
+        ? { name: `${releaseImage.assetName} (${manifest.tag})`, size: releaseImage.size }
         : null;
     if (!chosen || !target) return;
     // Name the port in the prompt: a wrong target is the expensive mistake, and
@@ -175,9 +184,9 @@ export default function Firmware() {
     try {
       if (local) {
         firmware = new Uint8Array(await local.arrayBuffer());
-      } else if (manifest) {
-        setStatus({ kind: 'downloading', name: manifest.assetName });
-        firmware = await fetchReleaseImage(hostingRoot(import.meta.env.BASE_URL), manifest);
+      } else if (manifest && releaseImage) {
+        setStatus({ kind: 'downloading', name: releaseImage.assetName });
+        firmware = await fetchReleaseImage(hostingRoot(import.meta.env.BASE_URL), manifest, undefined, board);
       } else {
         return;
       }
@@ -284,10 +293,10 @@ export default function Firmware() {
                   <>
                     <strong>{file.name}</strong> <span className="muted">(local file)</span>
                   </>
-                ) : manifest ? (
+                ) : manifest && releaseImage ? (
                   <>
                     <strong>{manifest.version}</strong>{' '}
-                    <span className="muted">({releaseImageLabel(manifest.assetName)}, recommended release)</span>
+                    <span className="muted">({releaseImageLabel(releaseImage.assetName)}, recommended release)</span>
                   </>
                 ) : (
                   <span className="muted">
@@ -301,7 +310,7 @@ export default function Firmware() {
                 )}
               </td>
               <td style={{ textAlign: 'right' }}>
-                {manifest && (
+                {manifest && releaseImage && (
                   <button
                     type="button"
                     className={updateWanted ? 'primary' : undefined}
@@ -309,7 +318,8 @@ export default function Firmware() {
                     disabled={busy || !target}
                     data-testid="install-recommended"
                   >
-                    Install recommended firmware ({manifest.version})
+                    Install recommended firmware ({manifest.version}
+                    {board === 'P2Eval' ? '' : `, ${board}`})
                   </button>
                 )}{' '}
                 <button
@@ -337,6 +347,36 @@ export default function Firmware() {
                 />
               </td>
             </tr>
+            {!file && offeredBoards.length > 1 && (
+              <tr>
+                <td>Board</td>
+                <td data-testid="firmware-board">
+                  {offeredBoards.map((b) => (
+                    <label key={b} style={{ marginRight: 16 }}>
+                      <input
+                        type="radio"
+                        name="firmware-board"
+                        value={b}
+                        checked={board === b}
+                        disabled={busy}
+                        data-testid={`board-${b}`}
+                        onChange={() => {
+                          setBoard(b);
+                          setStatus({ kind: 'idle' });
+                        }}
+                      />{' '}
+                      {b}
+                    </label>
+                  ))}
+                  <div className="muted">
+                    {board === 'P2Eval'
+                      ? 'Production build: control and programming share header J1.'
+                      : "Debug build: control moves to the Edge carrier's Pi link and J1 carries a debug log. Reconnect over that link after flashing."}
+                  </div>
+                </td>
+                <td />
+              </tr>
+            )}
             <tr>
               <td>Port</td>
               <td data-testid="flash-target" className={target ? undefined : 'error'}>

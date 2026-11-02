@@ -57,7 +57,7 @@ mkdir -p "$future/Firmware/MaDCore" "$future/Protocol"
 sed "s/^protocol_version:.*/protocol_version: $next/" "$root/Protocol/MaDProtocol.yaml" > "$future/Protocol/MaDProtocol.yaml"
 ln -s "$root/Protocol/ProtoEmb" "$future/Protocol/ProtoEmb"
 echo "compat-images: building this tree's production image at protocol_version $next"
-(cd "$future/Firmware/MaDCore" && PLATFORMIO_BUILD_FLAGS='-DFIRMWARE_VERSION=\"compat-next\"' pio run -e propeller2 >"$work/future-build.log" 2>&1) || {
+(cd "$future/Firmware/MaDCore" && PLATFORMIO_BUILD_FLAGS='-DFIRMWARE_VERSION=\"compat-next\"' pio run -e P2Eval >"$work/future-build.log" 2>&1) || {
   tail -40 "$work/future-build.log" >&2
   exit 1
 }
@@ -67,5 +67,5 @@ grep -q "^#define PROTOEMB_PROTOCOL_VERSION $next\$" "$future/Firmware/MaDCore/s
 }
 
 $embsim flash-image "$old" -o "$sil/build/flash-compat-old.bin"
-$embsim flash-image "$future/Firmware/MaDCore/.pio/build/propeller2/program" -o "$sil/build/flash-compat-future.bin"
+$embsim flash-image "$future/Firmware/MaDCore/.pio/build/P2Eval/program" -o "$sil/build/flash-compat-future.bin"
 echo "compat-images: build/flash-compat-old.bin ($tag), build/flash-compat-future.bin (protocol_version $next)"

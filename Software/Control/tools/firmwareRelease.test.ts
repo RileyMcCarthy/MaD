@@ -415,6 +415,48 @@ describe('fetchFirmwareSite', () => {
   );
 });
 
+describe('fetchFirmwareSite boards', () => {
+  behaviour(
+    {
+      id: 'firmware-release.site-entry-board-images',
+      covers: 'tools/firmwareRelease.ts#fetchFirmwareSite',
+      given: 'release 0.15 speaking protocol 2, carrying a P2Eval image and a MaDEdge image under the board names',
+      expect: {
+        'entry-lists-both': "its entry for protocol 2 lists both boards' images, each with its checksum and its own file name",
+        'both-served': 'both images are served under their own file names, byte for byte',
+        'latest-too': 'the latest release for older apps lists both boards, the MaDEdge image at its own latest path',
+      },
+    },
+    async () => {
+      const release: GithubRelease = {
+        ...RELEASE,
+        tag_name: 'firmware-v0.15',
+        published_at: '2026-11-10T00:00:00Z',
+        assets: [
+          { id: 5, name: 'MaD-Firmware-0.15-P2Eval.bin', size: 1 },
+          { id: 6, name: 'MaD-Firmware-0.15-MaDEdge.bin', size: 1 },
+          { id: 105, name: 'firmware-info.json', size: info('0.15', 2).length },
+        ],
+      };
+      const fetchFn = github({
+        list: () => new Response(JSON.stringify([release])),
+        asset: (id) => new Response(id === 105 ? info('0.15', 2) : new Uint8Array([id])),
+      });
+      const site = await fetchFirmwareSite(fetchFn as unknown as typeof fetch, {});
+      const [entry] = site.manifest.releases;
+      const sha = (b: number) => createHash('sha256').update(Buffer.from([b])).digest('hex');
+      expect(entry.boards).toEqual({
+        P2Eval: { assetName: 'MaD-Firmware-0.15-P2Eval.bin', size: 1, sha256: sha(5), path: 'firmware/MaD-Firmware-0.15-P2Eval.bin' },
+        MaDEdge: { assetName: 'MaD-Firmware-0.15-MaDEdge.bin', size: 1, sha256: sha(6), path: 'firmware/MaD-Firmware-0.15-MaDEdge.bin' },
+      });
+      expect([...site.files.get('firmware/MaD-Firmware-0.15-P2Eval.bin')!]).toEqual([5]);
+      expect([...site.files.get('firmware/MaD-Firmware-0.15-MaDEdge.bin')!]).toEqual([6]);
+      expect(Object.keys(site.latest.boards ?? {})).toEqual(['P2Eval', 'MaDEdge']);
+      expect([...site.files.get('firmware/latest-MaDEdge.bin')!]).toEqual([6]);
+    },
+  );
+});
+
 describe('releasedProtocols', () => {
   behaviour(
     {
@@ -486,6 +528,43 @@ describe('firmwareRelease dev server', () => {
       expect(i.res.headers['Content-Type']).toBe('application/octet-stream');
       expect([...(i.res.body as Buffer)]).toEqual([...IMAGE]);
       expect([m.res.headers['Cache-Control'], i.res.headers['Cache-Control']]).toEqual(['no-store', 'no-store']);
+    },
+  );
+
+  behaviour(
+    {
+      id: 'firmware-release.dev-serves-board-images',
+      covers: 'tools/firmwareRelease.ts#firmwareRelease',
+      given: 'a latest release carrying a P2Eval image and a MaDEdge image, asked for through the dev server',
+      expect: {
+        'both-listed': 'the release description lists both boards, each with its file name and checksum',
+        'madedge-served': 'the MaDEdge image is answered at its own download path, byte for byte',
+      },
+    },
+    async () => {
+      const MADEDGE = new Uint8Array([9, 8, 7]);
+      const withBoth: GithubRelease = {
+        ...RELEASE,
+        tag_name: 'firmware-v0.15',
+        assets: [
+          { id: 7, name: 'MaD-Firmware-0.15-P2Eval.bin', size: IMAGE.byteLength },
+          { id: 8, name: 'MaD-Firmware-0.15-MaDEdge.bin', size: MADEDGE.byteLength },
+        ],
+      };
+      const fetchFn = vi.fn(async (input: string | URL | Request): Promise<Response> => {
+        const url = String(input);
+        if (url.endsWith('/releases/assets/7')) return new Response(IMAGE);
+        if (url.endsWith('/releases/assets/8')) return new Response(MADEDGE);
+        if (url.includes('/releases?')) return new Response(JSON.stringify([withBoth]));
+        throw new Error(`unexpected fetch ${url}`);
+      });
+      const dev = devServer(plugin(fetchFn));
+      const m = JSON.parse(String((await dev.request('/firmware/latest.json')).res.body));
+      expect(Object.keys(m.boards)).toEqual(['P2Eval', 'MaDEdge']);
+      expect(m.boards.MaDEdge.assetName).toBe('MaD-Firmware-0.15-MaDEdge.bin');
+      expect(m.boards.MaDEdge.sha256).toMatch(/^[0-9a-f]{64}$/);
+      const e = await dev.request('/firmware/latest-MaDEdge.bin');
+      expect([...(e.res.body as Buffer)]).toEqual([...MADEDGE]);
     },
   );
 
