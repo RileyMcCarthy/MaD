@@ -200,10 +200,8 @@ fn the_firmware_answers_its_version_on_the_hosts_pty() {
     behaviour!(Test {
         id: "mad-project.pty-round-trip",
         covers: Some("SIL/mad.toml"),
-        given: "the machine's project file run live for 2 s of board time, the production \
-                firmware in the module's flash, and a program on the host's PTY reading the \
-                firmware's version from the run's start, again every 100 ms of its own time \
-                until answered",
+        given: "the production firmware run live for 2 s of board time, with a host program on \
+                the PTY reading the firmware's version every 100 ms until answered",
     });
     expect!(
         "version-answered",

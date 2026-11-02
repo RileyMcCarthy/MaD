@@ -76,14 +76,14 @@ describe('callbacks handed to the device worker', () => {
     {
       id: 'worker-boundary.method-call-on-unwrapped-callback',
       given:
-        'a main-thread callback the worker holds as it arrived, invoked as a method of the worker object',
+        'a main-thread event handler the worker holds as it arrived, invoked as a method of the worker object',
       expect: {
         'call-rejected': "the worker's call fails",
         'nothing-delivered': 'no events reach the main thread',
       },
       why: {
         'call-rejected':
-          'the library that carries calls between threads treats every property of a forwarded callback as another remote call, so its call method sends the worker object itself, and that object cannot be copied between threads',
+          'the library that carries calls between threads treats every property of a forwarded function as another remote call, so its call method sends the worker object itself, and that object cannot be copied between threads',
       },
     },
     async () => {
@@ -105,14 +105,14 @@ describe('callbacks handed to the device worker', () => {
       id: 'worker-boundary.wrapped-callback-delivers',
       covers: 'src/device/boundaryCallback.ts#boundaryCallback',
       given:
-        'a main-thread callback wrapped as soon as the worker receives it, invoked as a method of the worker object',
+        'a main-thread event handler wrapped as soon as the worker receives it, invoked as a method of the worker object',
       expect: {
         'batch-delivered': 'the main thread receives the batch of events intact and in order',
-        'settles-after-delivery': 'the worker side of the call settles only once the main thread has run the callback',
+        'settles-after-delivery': 'the worker side of the call settles only once the main thread has run the handler',
       },
       why: {
         'batch-delivered':
-          'samples, machine state and disconnects all reach the screen through this one callback',
+          'samples, machine state and disconnects all reach the screen through this one handler',
       },
     },
     async () => {
@@ -133,7 +133,7 @@ describe('callbacks handed to the device worker', () => {
     {
       id: 'worker-boundary.failed-delivery-reaches-worker',
       covers: 'src/device/boundaryCallback.ts#boundaryCallback',
-      given: 'a wrapped main-thread callback whose handler throws',
+      given: 'a main-thread event handler, wrapped by the worker, that throws',
       expect: {
         'rejected-with-cause': "the worker's call is rejected with the main thread's error message",
       },

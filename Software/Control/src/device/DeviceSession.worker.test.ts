@@ -50,13 +50,13 @@ behaviour(
     id: 'worker-boundary.session-delivers-through-method-call',
     covers: 'src/device/DeviceSession.worker.ts#DeviceSession.setEventSink',
     given:
-      "the device worker holding the event callback the main thread registered with it, invoked as a method of the worker object",
+      "the device worker holding the event handler the main thread registered with it, invoked as a method of the worker object",
     expect: {
       'batch-delivered': 'the main thread receives the batch of events intact and in order',
     },
     why: {
       'batch-delivered':
-        "a bundler may compile the worker's call to its event callback into a method call, and every sample, machine state and disconnect reaches the screen through that callback",
+        "a bundler may compile the worker's call to its event handler into a method call, and every sample, machine state and disconnect reaches the screen through that handler",
     },
   },
   async () => {

@@ -25,6 +25,11 @@
       "words": ["stub"],
       "in": "SIL/p2core/tests/flash_program",
       "why": "The same Parallax flash-boot stub, run on the instruction-set simulator."
+    },
+    {
+      "words": ["null"],
+      "in": "src/domain/profileFiles",
+      "why": "JSON's own literal for no value. A .sp file whose whole content is null is a case the import must refuse, and the claim has to name it: \"an empty value\" reads as \"\" or {}, which are different cases."
     }
   ]
 }
