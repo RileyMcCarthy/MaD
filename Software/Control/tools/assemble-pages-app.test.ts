@@ -252,7 +252,11 @@ describe('assemble-pages-app', () => {
       },
     },
     () => {
-      const viteNode = fileURLToPath(new URL('../node_modules/vite-node/dist/cli.mjs', import.meta.url));
+      // The CLI entry from vite-node's own `bin`, so a move of it (as 3 -> 6 did)
+      // does not break this test.
+      const pkgUrl = new URL('../node_modules/vite-node/package.json', import.meta.url);
+      const { bin } = JSON.parse(readFileSync(pkgUrl, 'utf8')) as { bin: string | Record<string, string> };
+      const viteNode = fileURLToPath(new URL(typeof bin === 'string' ? bin : bin['vite-node'], pkgUrl));
       const script = fileURLToPath(new URL('./assemble-pages-app.mts', import.meta.url));
       const r = spawnSync(process.execPath, [viteNode, script], {
         cwd: fileURLToPath(new URL('..', import.meta.url)),

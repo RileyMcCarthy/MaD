@@ -38,7 +38,7 @@ transferred to the worker.
 
 ## Prerequisites
 
-- Node 20+ and npm
+- Node 22.12+ and npm (see `engines.node` in `package.json`)
 - Rust + `wasm-pack` + the `wasm32-unknown-unknown` target (for `build:wasm`)
 - Python 3 (for `generate:proto`)
 

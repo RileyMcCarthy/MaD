@@ -98,7 +98,7 @@ monitoring (the operator resolves a missed completion via History if needed).
   `npm run verify`; dead `lint` script fixed; stale disable directives removed.
 - **CI job** `wasm-control-ci` (cargo test → build wasm → generate proto →
   verify), gated on `Software/Control/**` + `Protocol/**`.
-- `.nvmrc`, `engines.node>=20`, repo `dependabot.yml` (npm + cargo + actions).
+- `.nvmrc`, `engines.node` (`^22.12.0 || ^24.0.0 || >=26.0.0`, the range the locked vitest accepts), repo `dependabot.yml` (npm + cargo + actions).
 - `noImplicitOverride` enabled.
 
 ## Tests added
