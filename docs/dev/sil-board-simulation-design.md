@@ -139,14 +139,14 @@ exempt from the CI-regeneration rule, which applies to boards we author in
 
 **The machine uses the EC32MB variant**, and auditing the EdgeBoard netlist
 against its reservation table (P40–P57 = PSRAM) already produced a real
-finding before any engine exists: the EdgeBoard wires reserved pins — isolator
-IC2's outputs drive P52/P53 and its inputs take P54/P55 (the RPI serial path,
-matching `HW_PIN_RPI_RX/TX` = 53/55 as they then were), and header J24 fans
+finding before any engine exists: the pre-v0.3 EdgeBoard netlist wired reserved
+pins — isolator IC2's outputs drove P52/P53 and its inputs took P54/P55 (the RPI serial path,
+matching `HW_PIN_RPI_RX/TX` = 53/55 as they then were), and header J24 fanned
 out P40–P47. None of
-these lines reaches the chip: the EC32MB has no card-edge finger for P40–P57
+these lines reached the chip: the EC32MB has no card-edge finger for P40–P57
 (fingers 55, 56, 59–67 and 69–77 are no-connects; read: the header of embsim's
 `boards/netlists/p2_ec32mb.net`, transcribed from Parallax's Rev B schematic).
-So a Pi on J4 cannot talk to the firmware, and the debug build's MAIN channel
+So a Pi on J4 could not talk to the firmware, and the debug build's MAIN channel
 on P53/P55 ran on the PSRAM's own pins: a host on J4 received nothing
 (measured on #278's first round, before the route below). The phase-3 tier-1
 gate is that the reservation table reproduces exactly this finding.

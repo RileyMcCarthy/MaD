@@ -1212,8 +1212,8 @@ fn the_encoders_pairs_reach_p9_and_p10() {
         "pairs-wired",
         "at every count each pair's plus leg on the carrier's encoder connector carries its \
          channel's level and its minus leg the opposite level",
-        "the encoder drives both legs of each pair, and the jumpers that would ground the minus \
-         legs are open"
+        "the encoder drives both legs of each pair, and the jumpers that would tie the minus \
+         legs to the encoder reference are open"
     );
     expect!(
         "pairs-silent",
