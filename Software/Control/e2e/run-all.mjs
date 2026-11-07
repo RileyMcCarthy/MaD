@@ -3465,7 +3465,7 @@ const scenarios = [
           .waitFor({ timeout: DEVICE_WAIT_MS });
         assert((await page.getByTestId('open-app-release').count()) === 0, 'a MaD Control release was offered');
         await press(page.getByTestId('install-app-firmware'));
-        await page.getByRole('heading', { name: 'Firmware' }).waitFor({ timeout: DEVICE_WAIT_MS });
+        await page.getByRole('heading', { name: 'Firmware', exact: true }).waitFor({ timeout: DEVICE_WAIT_MS });
         const row = page.getByTestId('fw-protocol');
         await row.filter({ hasText: `${protocol + 1} · this app speaks ${protocol}` }).waitFor({ timeout: DEVICE_WAIT_MS });
         assert((await row.getAttribute('class'))?.includes('error'), 'the Protocol row is not marked as a mismatch');
