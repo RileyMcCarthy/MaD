@@ -1415,7 +1415,7 @@ const scenarios = [
     // each way -- which needs the firmware sequencer, the protocol pair and
     // the panel all to agree on signs and units.
     id: 'CAL1',
-    name: 'Motor calibration: matched drive and encoder, then a tracking run and suggested gains',
+    name: 'Motor calibration: the drive and encoder check passes, then motion calibration tracks and suggests gains',
     async run() {
       const { browser, page, errors } = await newSilPage();
       try {
@@ -1423,33 +1423,43 @@ const scenarios = [
         await prepareManualControl(page);
         await page.goto(`${APP_URL}#/settings`);
         await page.getByRole('heading', { name: 'Motor calibration' }).waitFor({ timeout: DEVICE_WAIT_MS });
-        const run = page.getByRole('button', { name: 'Run calibration' });
-        await run.waitFor({ timeout: DEVICE_WAIT_MS });
+        const check = page.getByRole('button', { name: 'Run check' });
+        await check.waitFor({ timeout: DEVICE_WAIT_MS });
         // Enabled once the machine profile has been read and motion is on.
         const clock = await pageClock(page);
-        while (await run.isDisabled()) {
-          assert((await clock.elapsed()) < DEVICE_WAIT_MS, 'Run calibration never became available');
+        while (await check.isDisabled()) {
+          assert((await clock.elapsed()) < DEVICE_WAIT_MS, 'Run check never became available');
           await waitPageTime(page, 200);
         }
-        await press(run);
-        // The report appears once both parts have run: the open-loop check,
-        // then the closed-loop tracking program from the SIL's saved profile.
+        await press(check);
+        // Routine 1: the open-loop drive and encoder check.
         const report = page.getByTestId('calibration-result');
         await report.waitFor({ timeout: DEVICE_WAIT_MS * 10 });
-        // Settle on the finished report (the tracking part fills in last), then
-        // say what it showed if any part is missing.
-        await waitPageTime(page, 500);
         const reportText = await report.innerText();
         assert(/Calibration passed/.test(reportText), `the drive and encoder check did not pass: ${reportText}`);
-        assert(
-          (await page.getByTestId('suggested-gains').count()) === 1,
-          `the tracking run did not complete: ${reportText}`,
-        );
         // The SIL's drive and encoder are both 8192/mm: counts back match the
         // pulses sent, with the right sign.
         const measured = Number(await page.getByTestId('measured-counts').innerText());
         const expected = Number(await page.getByTestId('expected-counts').innerText());
         assert(expected > 0 && Math.abs(measured / expected - 1) < 0.02, `encoder moved ${measured} counts, expected ~${expected}`);
+        // Routine 2 unlocks once the check passed on the saved steps/mm: the
+        // closed-loop tracking program from the SIL's saved profile.
+        const motion = page.getByRole('button', { name: 'Run motion calibration' });
+        const unlock = await pageClock(page);
+        while (await motion.isDisabled()) {
+          assert((await unlock.elapsed()) < DEVICE_WAIT_MS, `Run motion calibration never unlocked after: ${reportText}`);
+          await waitPageTime(page, 200);
+        }
+        await press(motion);
+        const motionReport = page.getByTestId('motion-result');
+        await motionReport.waitFor({ timeout: DEVICE_WAIT_MS * 10 });
+        // Settle on the finished report, then say what it showed if any part is missing.
+        await waitPageTime(page, 500);
+        const motionText = await motionReport.innerText();
+        assert(
+          (await page.getByTestId('suggested-gains').count()) === 1,
+          `the tracking run did not complete: ${motionText}`,
+        );
         // Tracking on the ideal SIL drive: every move stops within a few µm.
         const tracking = await page.getByTestId('tracking-summary').innerText();
         const stopUm = Number(/Stops within ±([\d.]+) µm/.exec(tracking)?.[1] ?? NaN);
