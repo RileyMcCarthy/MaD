@@ -327,7 +327,7 @@ jobs:
       - name: Run the board-free scenarios
         env:
           APP_URL: http://127.0.0.1:5174
-          SCENARIOS: A1,FW1,FW2,FW3,FW5,FW6,FW7,FW8,FW9,FW10,FW11,COMPAT-reconnect,COMPAT-silent,COMPAT-update-loop
+          SCENARIOS: A1,FW1,FW2,FW3,FW5,FW6,FW7,FW8,FW9,FW10,FW11,COMPAT-reconnect,COMPAT-silent,COMPAT-update-loop,COMPAT-app-release,COMPAT-app-firmware
         run: npm run e2e
       # e2e/artifacts holds the per-scenario merged main+worker app log that
       # dumpFailureArtifacts writes. Collect into one directory first:

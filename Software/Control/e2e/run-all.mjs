@@ -45,11 +45,12 @@
  * meet them.
  *
  * Without CDP_URL only the board-free scenarios run: A1, FW1/2/3/5/6/7/8/9/10/11
- * and COMPAT-reconnect/-silent/-update-loop launch a host Chrome against
- * in-page fakes and need no emulator at all, which is what ci.yml's per-PR
- * `control-e2e-boardless` job runs:
+ * and COMPAT-reconnect/-silent/-update-loop/-app-release/-app-firmware launch
+ * a host Chrome against in-page fakes and need no emulator at all, which is
+ * what ci.yml's per-PR `control-e2e-boardless` job runs (COMPAT-app-release
+ * starts a second dev server of its own, at a release's base):
  *   npm run dev
- *   SCENARIOS=A1,FW1,FW2,FW3,FW5,FW6,FW7,FW8,FW9,FW10,FW11,COMPAT-reconnect,COMPAT-silent,COMPAT-update-loop npm run e2e
+ *   SCENARIOS=A1,FW1,FW2,FW3,FW5,FW6,FW7,FW8,FW9,FW10,FW11,COMPAT-reconnect,COMPAT-silent,COMPAT-update-loop,COMPAT-app-release,COMPAT-app-firmware npm run e2e
  * Naming a board scenario without CDP_URL is refused.
  *
  * COMPAT-too-old and COMPAT-app-too-old need firmware the app cannot drive
@@ -131,7 +132,7 @@ const MATRIX = JSON.parse(
 // boot ROM), so they run without an emulator.
 const BOARD_FREE = new Set([
   'A1', 'FW1', 'FW2', 'FW3', 'FW5', 'FW6', 'FW7', 'FW8', 'FW9', 'FW10', 'FW11',
-  'COMPAT-reconnect', 'COMPAT-silent', 'COMPAT-update-loop',
+  'COMPAT-reconnect', 'COMPAT-silent', 'COMPAT-update-loop', 'COMPAT-app-release', 'COMPAT-app-firmware',
 ]);
 
 // The firmware in the board's flash (make e2e-compat sets it): 'old', a
@@ -989,6 +990,54 @@ async function connectFakeBoard(page) {
 /** What the fake board received: WRITE frames as [command, first data byte]. */
 async function fakeBoardWrites(page) {
   return page.evaluate(() => window.__bootRom.writes.map((w) => [w.cmd, w.data[0] ?? null]));
+}
+
+/**
+ * One release in the firmware manifest the Firmware screen reads
+ * (firmware/manifest.json): firmware `version` for protocol `proto`, whose
+ * P2Eval build is `image`.
+ */
+function manifestEntry(version, proto, image) {
+  const p2eval = {
+    assetName: `MaD-Firmware-${version}-P2Eval.bin`,
+    size: image.length,
+    sha256: createHash('sha256').update(image).digest('hex'),
+    path: `firmware/MaD-Firmware-${version}-P2Eval.bin`,
+  };
+  return {
+    tag: `firmware-v${version}`,
+    version,
+    ...p2eval,
+    boards: { P2Eval: p2eval },
+    publishedAt: '2026-11-01T00:00:00Z',
+    htmlUrl: 'https://example.invalid/release',
+    protocolVersion: proto,
+  };
+}
+
+/**
+ * The app served the way a hosted release is: a second dev server whose base
+ * is the release's folder, /MaD/app/v<version>/, so the app finds the release
+ * list (/MaD/app/versions.json) beside it. It keeps its own dependency cache,
+ * so the main dev server's is never rewritten under it. Close it when done.
+ */
+async function releaseAppServer(version) {
+  const { createServer } = await import('vite');
+  const server = await createServer({
+    root: join(dirname(fileURLToPath(import.meta.url)), '..'),
+    base: `/MaD/app/v${version}/`,
+    cacheDir: 'node_modules/.vite-e2e-release',
+    server: { host: '127.0.0.1', port: 0 },
+    logLevel: 'warn',
+    clearScreen: false,
+  });
+  await server.listen();
+  const url = server.resolvedUrls?.local[0];
+  if (!url) {
+    await server.close();
+    throw new Error('the release dev server reported no address');
+  }
+  return { url, close: () => server.close() };
 }
 
 // Write command ids the fake board records (Protocol/MaDProtocol.yaml).
@@ -3397,7 +3446,7 @@ const scenarios = [
   },
   {
     id: 'COMPAT-app-too-old',
-    name: 'Firmware compat: firmware a protocol ahead gets the app-too-old banner; motion refused; it links to the latest app',
+    name: 'Firmware compat: firmware a protocol ahead gets the app-too-old banner; motion refused; with no release to offer, it leads to firmware for this app',
     async run() {
       const { protocol } = protocolFacts();
       const { browser, page, errors } = await newSilPage();
@@ -3410,15 +3459,110 @@ const scenarios = [
           `verdict ${JSON.stringify(verdict?.data)}, expected appTooOld at protocol ${protocol + 1}`,
         );
         await pressRefusedLiveControls(page);
-        // The way out: the latest app. On an unversioned copy that is a
-        // reload, after disconnecting.
+        // This copy is not a release (the dev server), so it has no release
+        // to offer: the way out is this app's firmware, on the Firmware screen.
+        await compatBanner(page).filter({ hasText: `No released MaD Control speaks protocol ${protocol + 1}` })
+          .waitFor({ timeout: DEVICE_WAIT_MS });
+        assert((await page.getByTestId('open-app-release').count()) === 0, 'a MaD Control release was offered');
+        await press(page.getByTestId('install-app-firmware'));
+        await page.getByRole('heading', { name: 'Firmware' }).waitFor({ timeout: DEVICE_WAIT_MS });
+        const row = page.getByTestId('fw-protocol');
+        await row.filter({ hasText: `${protocol + 1} · this app speaks ${protocol}` }).waitFor({ timeout: DEVICE_WAIT_MS });
+        assert((await row.getAttribute('class'))?.includes('error'), 'the Protocol row is not marked as a mismatch');
+        assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
+      } finally {
+        await browser.close();
+      }
+    },
+  },
+  {
+    id: 'COMPAT-app-release',
+    name: 'Firmware compat (fake board): a hosted release facing firmware a protocol ahead offers the newest release that speaks it, and opens it on the same screen after letting the port go',
+    async run() {
+      const { protocol } = protocolFacts();
+      const ahead = protocol + 1;
+      const server = await releaseAppServer('0.0.1');
+      const { browser, page, errors } = await fakeBoardPage({ firmware: { version: '0.99', protocol: ahead } });
+      try {
+        // The release list beside this release: the newest speaks a protocol
+        // further ahead, two speak the firmware's, and the oldest is from
+        // before the list recorded protocols.
+        const list = {
+          latest: '0.7.0',
+          versions: [
+            { version: '0.7.0', publishedAt: null, protocolVersion: ahead + 1 },
+            { version: '0.6.1', publishedAt: null, protocolVersion: ahead },
+            { version: '0.6.0', publishedAt: null, protocolVersion: ahead },
+            { version: '0.0.1', publishedAt: null, protocolVersion: protocol },
+            { version: '0.0.0', publishedAt: null },
+          ],
+        };
+        await page.route('**/MaD/app/versions.json', (route) =>
+          route.fulfill({ contentType: 'application/json', body: JSON.stringify(list) }));
+        await page.route('**/MaD/app/v0.6.1/**', (route) =>
+          route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>MaD Control 0.6.1</title>' }));
+        await page.goto(`${server.url}#/connect`);
+        await press(page.getByTestId('connect-device'));
+        await page.locator('.dot.connected').waitFor({ timeout: DEVICE_WAIT_MS });
+        await compatBanner(page).filter({ hasText: `MaD Control 0.6.1 speaks protocol ${ahead}.` })
+          .waitFor({ timeout: DEVICE_WAIT_MS });
+        await pressRefusedLiveControls(page, server.url);
+        // Firmware for this app stays on offer, behind the release.
+        const install = page.getByTestId('install-app-firmware');
+        await install.waitFor({ timeout: DEVICE_WAIT_MS });
+        assert(!(await install.getAttribute('class'))?.includes('primary'), 'installing firmware leads while a release speaks the protocol');
+        // The port's state as the page goes, kept where the next page can read it.
         await page.evaluate(() => {
-          window.__beforeLatest = true;
+          addEventListener('pagehide', () => {
+            sessionStorage.setItem('mad-e2e-port-closed', String(window.__bootRom.closedAt !== null));
+          });
         });
-        await press(page.getByTestId('open-latest-app'));
-        await page.waitForFunction(() => window.__beforeLatest === undefined, null, { timeout: DEVICE_WAIT_MS });
-        await page.locator('.statusbar').waitFor({ timeout: DEVICE_WAIT_MS });
-        assert((await page.locator('.dot.connected').count()) === 0, 'the app stayed connected after opening the latest version');
+        await press(page.getByTestId('open-app-release'));
+        await page.waitForURL(/\/MaD\/app\/v0\.6\.1\/#\/live$/, { timeout: DEVICE_WAIT_MS });
+        const closed = await page.evaluate(() => sessionStorage.getItem('mad-e2e-port-closed'));
+        assert(closed === 'true', `the port was ${closed === 'false' ? 'still open' : 'never seen'} as the release opened`);
+        assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
+      } finally {
+        await browser.close();
+        await server.close();
+      }
+    },
+  },
+  {
+    id: 'COMPAT-app-firmware',
+    name: 'Firmware compat (fake board): firmware a protocol ahead with no release to offer → Install firmware for this app → Install recommended firmware → flashed → reconnected → ok',
+    async run() {
+      const { protocol } = protocolFacts();
+      const IMAGE = Buffer.from(Array.from({ length: 3000 }, (_, i) => (i * 7 + 3) & 0xff));
+      // The release for this app's protocol, and one for the board's that
+      // this app must not offer.
+      const manifest = { releases: [manifestEntry('0.99', protocol + 1, IMAGE), manifestEntry('0.15', protocol, IMAGE)] };
+      const { browser, page, errors } = await fakeBoardPage({
+        firmware: { version: '0.99', protocol: protocol + 1 },
+        afterFlash: { version: '0.15', protocol },
+      });
+      try {
+        await page.route('**/firmware/manifest.json', (route) =>
+          route.fulfill({ contentType: 'application/json', body: JSON.stringify(manifest) }));
+        await page.route('**/firmware/MaD-Firmware-0.15-P2Eval.bin', (route) =>
+          route.fulfill({ contentType: 'application/octet-stream', body: IMAGE }));
+        await connectFakeBoard(page);
+        // An unversioned copy (this dev server) has no release to offer.
+        await compatBanner(page).filter({ hasText: `No released MaD Control speaks protocol ${protocol + 1}` })
+          .waitFor({ timeout: DEVICE_WAIT_MS });
+        assert((await page.getByTestId('open-app-release').count()) === 0, 'a MaD Control release was offered');
+        await press(page.getByTestId('install-app-firmware'));
+        const install = page.getByTestId('install-recommended');
+        await install.filter({ hasText: 'Install recommended firmware (0.15)' }).waitFor({ timeout: DEVICE_WAIT_MS });
+        assert((await install.getAttribute('class'))?.includes('primary'), 'Install recommended firmware does not lead');
+        await press(install);
+        await page.getByTestId('flash-status').filter({ hasText: /Wrote .* bytes to flash/ }).waitFor({ timeout: 60_000 });
+        const payload = await page.evaluate(() => window.__bootRom.image.slice(496));
+        assert(Buffer.from(payload).equals(IMAGE), 'the flashed payload is not the recommended release image');
+        await page.locator('.dot.connected').waitFor({ timeout: DEVICE_WAIT_MS });
+        await compatBanner(page).waitFor({ state: 'detached', timeout: DEVICE_WAIT_MS });
+        await page.getByTestId('fw-protocol').filter({ hasText: `${protocol} · this app speaks ${protocol}` })
+          .waitFor({ timeout: DEVICE_WAIT_MS });
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
       } finally {
         await browser.close();
@@ -3500,24 +3644,7 @@ const scenarios = [
     async run() {
       const { protocol } = protocolFacts();
       const IMAGE = Buffer.from(Array.from({ length: 3000 }, (_, i) => (i * 13 + 5) & 0xff));
-      const sha256 = createHash('sha256').update(IMAGE).digest('hex');
-      const entry = (version, proto) => {
-        const p2eval = {
-          assetName: `MaD-Firmware-${version}-P2Eval.bin`,
-          size: IMAGE.length,
-          sha256,
-          path: `firmware/MaD-Firmware-${version}-P2Eval.bin`,
-        };
-        return {
-          tag: `firmware-v${version}`,
-          version,
-          ...p2eval,
-          boards: { P2Eval: p2eval },
-          publishedAt: '2026-11-01T00:00:00Z',
-          htmlUrl: 'https://example.invalid/release',
-          protocolVersion: proto,
-        };
-      };
+      const entry = (version, proto) => manifestEntry(version, proto, IMAGE);
       // The release for this app's protocol, and a newer one for the next
       // protocol that this app must not offer.
       const manifest = { releases: [entry('0.99', protocol + 1), entry('0.15', protocol)] };

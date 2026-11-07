@@ -239,12 +239,12 @@ export default function Firmware() {
   // and this is the screen its operator comes to for the update.
   const heard = connected && (responding || (compat !== null && compat.kind !== 'checking'));
   const installed = heard ? (fw ?? 'Unknown') : null;
-  // The firmware cannot be driven by this app (the banner says why); an update
-  // is the way out, so the install button leads.
+  // The firmware cannot be driven by this app (the banner says why); this
+  // app's firmware is the way out, so the install button leads. On firmware a
+  // protocol ahead that is a step back to this app's protocol.
   const mismatched =
     compat?.kind === 'firmwareTooOld' || compat?.kind === 'appTooOld' || compat?.kind === 'unanswered';
-  const updateWanted =
-    compat?.kind === 'firmwareTooOld' || compat?.kind === 'belowMinFirmware' || compat?.kind === 'unanswered';
+  const installWanted = mismatched || compat?.kind === 'belowMinFirmware';
   const releaseDate = manifest?.publishedAt
     ? new Date(manifest.publishedAt).toLocaleDateString()
     : null;
@@ -319,7 +319,7 @@ export default function Firmware() {
                 {manifest && releaseImage && (
                   <button
                     type="button"
-                    className={updateWanted ? 'primary' : undefined}
+                    className={installWanted ? 'primary' : undefined}
                     onClick={() => void program('recommended')}
                     disabled={busy || !target}
                     data-testid="install-recommended"

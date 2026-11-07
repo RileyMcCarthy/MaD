@@ -123,8 +123,21 @@ export function describeFirmwareCompat(compat: FirmwareCompat): string {
         ? `The machine's firmware is too old for this version of MaD Control (it does not report a protocol; this app needs protocol ${compat.appProtocol}). Motion is disabled until the firmware is updated.`
         : `The machine's firmware is too old for this version of MaD Control (protocol ${compat.deviceProtocol}; this app needs ${compat.appProtocol}). Motion is disabled until the firmware is updated.`;
     case 'appTooOld':
-      return `The machine's firmware is newer than this version of MaD Control (protocol ${compat.deviceProtocol}; this app speaks ${compat.appProtocol}). Motion is disabled.`;
+      return `The machine's firmware is newer than this version of MaD Control (protocol ${compat.deviceProtocol}; this app speaks ${compat.appProtocol}). Motion is disabled: open a MaD Control that speaks protocol ${compat.deviceProtocol}, or install firmware for this app.`;
     case 'belowMinFirmware':
       return `A firmware update is recommended: ${compat.firmwareVersion} is older than ${compat.minFirmware}, the oldest this version of MaD Control recommends.`;
   }
+}
+
+/**
+ * Which way out an app too old for its firmware has, once it knows: `release`
+ * is the newest released MaD Control that speaks the firmware's protocol, or
+ * null when there is none to offer (no release speaks it, or this copy is not
+ * a release and has no list to look in). A firmware no release speaks is
+ * built from ahead of every release, so its way out is this app's firmware.
+ */
+export function describeAppForFirmware(deviceProtocol: number, release: string | null): string {
+  return release === null
+    ? `No released MaD Control speaks protocol ${deviceProtocol}, so the machine is probably running a development firmware build.`
+    : `MaD Control ${release} speaks protocol ${deviceProtocol}.`;
 }

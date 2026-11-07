@@ -61,6 +61,30 @@ describe('fetchHostedVersions', () => {
 
   behaviour(
     {
+      id: 'hosting.versions-list-with-protocols',
+      covers: 'src/hosting.ts#fetchHostedVersions',
+      given: 'a shared list whose newer entries also record the protocol each release speaks',
+      expect: { 'list-read': 'the list is read whole, with every release on it' },
+      why: {
+        'list-read':
+          'releases up to 0.4.3 read this list with the same check, so the protocol recorded beside a version must leave it readable',
+      },
+    },
+    async () => {
+      const list = {
+        latest: '0.5.0',
+        versions: [
+          { version: '0.5.0', publishedAt: null, protocolVersion: 3 },
+          { version: '0.4.3', publishedAt: null },
+        ],
+      };
+      const got = await fetchHostedVersions('/MaD/app/v0.4.3/', async () => new Response(JSON.stringify(list)));
+      expect(got).toEqual(list);
+    },
+  );
+
+  behaviour(
+    {
       id: 'hosting.versions-absent',
       covers: 'src/hosting.ts#fetchHostedVersions',
       given: 'a development build, and a release folder whose shared list is missing or malformed',

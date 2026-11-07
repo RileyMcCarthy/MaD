@@ -1,58 +1,41 @@
 import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useStore } from '@/store/useStore';
-import { blocksMotion, describeFirmwareCompat } from '@/domain';
+import { blocksMotion, describeAppForFirmware, describeFirmwareCompat } from '@/domain';
 import { appForProtocol, fetchHostedVersions, hostedVersion, versionUrl } from '@/hosting';
 
 /**
- * Where a firmware a protocol ahead of this app leaves the operator:
- *   'reload'   an unversioned copy (a dev server): reloading may bring a newer build
- *   'looking'  the release list is on its way
- *   string     the newest hosted release that speaks the firmware's protocol
- *   'none'     no released app speaks it: the firmware is unreleased, so the
- *              way out is the recommended firmware, not another app
+ * The released MaD Control that speaks a newer firmware's protocol: its
+ * version, null when there is none to offer, or 'looking' while the release
+ * list is on its way. An unversioned copy (a dev server) has no list beside
+ * it, so it has none to offer.
  */
-type NewerApp = 'reload' | 'looking' | 'none' | { version: string };
-
-function useNewerApp(deviceProtocol: number | null): NewerApp | null {
+function useAppForFirmware(deviceProtocol: number | null): string | null | 'looking' {
   const base = import.meta.env.BASE_URL;
-  const [found, setFound] = useState<{ protocol: number; app: NewerApp } | null>(null);
+  const hosted = hostedVersion(base) !== null;
+  const [found, setFound] = useState<{ protocol: number; release: string | null } | null>(null);
   useEffect(() => {
-    if (deviceProtocol === null || hostedVersion(base) === null) return;
+    if (deviceProtocol === null || !hosted) return;
     let live = true;
     void fetchHostedVersions(base).then((list) => {
-      const version = list ? appForProtocol(list, deviceProtocol) : null;
-      if (live) setFound({ protocol: deviceProtocol, app: version ? { version } : 'none' });
+      if (live) setFound({ protocol: deviceProtocol, release: list ? appForProtocol(list, deviceProtocol) : null });
     });
     return () => {
       live = false;
     };
-  }, [base, deviceProtocol]);
-  if (deviceProtocol === null) return null;
-  if (hostedVersion(base) === null) return 'reload';
-  return found?.protocol === deviceProtocol ? found.app : 'looking';
+  }, [base, hosted, deviceProtocol]);
+  if (deviceProtocol === null || !hosted) return null;
+  return found?.protocol === deviceProtocol ? found.release : 'looking';
 }
 
 /**
- * Open the release that speaks the firmware's protocol, on the same screen. A
- * hosted release lives in its own frozen folder, so it is opened by its
- * address; an unversioned copy reloads, which also applies a waiting
- * service-worker update.
+ * Open release `version` of MaD Control on the same screen. A hosted release
+ * lives in its own frozen folder beside this one; the port is let go first,
+ * so the release opened can take it.
  */
-async function openApp(disconnect: () => Promise<void>, version: string | null): Promise<void> {
+async function openRelease(disconnect: () => Promise<void>, version: string): Promise<void> {
   await disconnect();
-  if (version === null) window.location.reload();
-  else window.location.assign(versionUrl(import.meta.env.BASE_URL, version, window.location.hash));
-}
-
-/** The second sentence of a too-old app's banner: where to go from here. */
-function appTooOldWayOut(app: NewerApp, deviceProtocol: number): string {
-  if (app === 'reload') return 'Reload to load a newer build of MaD Control, or install the recommended firmware.';
-  if (app === 'looking') return 'Looking for a MaD Control release that speaks it…';
-  if (app === 'none') {
-    return `No released MaD Control speaks protocol ${deviceProtocol}, so the machine is running unreleased firmware: install the recommended firmware.`;
-  }
-  return `MaD Control ${app.version} speaks it.`;
+  window.location.assign(versionUrl(import.meta.env.BASE_URL, version, window.location.hash));
 }
 
 /**
@@ -65,21 +48,40 @@ export default function FirmwareCompatBanner() {
   const disconnect = useStore((s) => s.disconnect);
   const navigate = useNavigate();
   const { pathname } = useLocation();
-  const newerApp = useNewerApp(compat?.kind === 'appTooOld' ? compat.deviceProtocol : null);
+  const release = useAppForFirmware(compat?.kind === 'appTooOld' ? compat.deviceProtocol : null);
   if (compat === null || compat.kind === 'ok') return null;
   const blocking = blocksMotion(compat) && compat.kind !== 'checking';
+  // The Firmware screen is where every firmware way out leads.
+  const toFirmware = (label: string, testId: string, primary: boolean) =>
+    pathname !== '/firmware' && (
+      <button className={primary ? 'primary' : undefined} onClick={() => navigate('/firmware')} data-testid={testId}>
+        {label}
+      </button>
+    );
 
-  // Whether opening another app is the way out; otherwise the firmware is.
-  const openable = newerApp === 'reload' || (typeof newerApp === 'object' && newerApp !== null);
-  const updateButton = pathname !== '/firmware' && (
-    <button
-      className={blocking && !openable ? 'primary' : undefined}
-      onClick={() => navigate('/firmware')}
-      data-testid="update-firmware"
-    >
-      Update firmware
-    </button>
-  );
+  if (compat.kind === 'appTooOld') {
+    // Firmware a protocol ahead: open the release that speaks it, or put this
+    // app's firmware back on the machine.
+    const found = release === 'looking' ? null : release;
+    return (
+      <div className="banner error" role="alert" data-testid="firmware-compat" data-kind={compat.kind}>
+        <span>
+          {describeFirmwareCompat(compat)}
+          {release !== 'looking' && ` ${describeAppForFirmware(compat.deviceProtocol, release)}`}
+        </span>
+        {found !== null && (
+          <button
+            className="primary"
+            onClick={() => void openRelease(disconnect, found)}
+            data-testid="open-app-release"
+          >
+            Open MaD Control {found}
+          </button>
+        )}{' '}
+        {toFirmware('Install firmware for this app', 'install-app-firmware', found === null)}
+      </div>
+    );
+  }
 
   return (
     <div
@@ -88,26 +90,8 @@ export default function FirmwareCompatBanner() {
       data-testid="firmware-compat"
       data-kind={compat.kind}
     >
-      <span>
-        {describeFirmwareCompat(compat)}
-        {compat.kind === 'appTooOld' && newerApp !== null && ` ${appTooOldWayOut(newerApp, compat.deviceProtocol)}`}
-      </span>
-      {compat.kind === 'checking' ? null : compat.kind === 'appTooOld' ? (
-        <>
-          {openable && (
-            <button
-              className="primary"
-              onClick={() => void openApp(disconnect, newerApp === 'reload' ? null : newerApp.version)}
-              data-testid="open-latest-app"
-            >
-              {newerApp === 'reload' ? 'Reload MaD Control' : `Open MaD Control ${newerApp.version}`}
-            </button>
-          )}{' '}
-          {updateButton}
-        </>
-      ) : (
-        updateButton
-      )}
+      <span>{describeFirmwareCompat(compat)}</span>
+      {compat.kind !== 'checking' && toFirmware('Update firmware', 'update-firmware', blocking)}
     </div>
   );
 }
