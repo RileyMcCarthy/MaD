@@ -41,6 +41,7 @@ jobs:
       sil: ${{ steps.changes.outputs.sil }}
       docs: ${{ steps.changes.outputs.docs }}
       embsim_pin: ${{ steps.changes.outputs.embsim_pin }}
+      e2e_workflow: ${{ steps.changes.outputs.e2e_workflow }}
       protoemb_pin: ${{ steps.changes.outputs.protoemb_pin }}
       vibes_pin: ${{ steps.changes.outputs.vibes_pin }}
       is_release: ${{ startsWith(github.ref, 'refs/tags/') }}
@@ -92,6 +93,11 @@ jobs:
             vibes_pin:
               - 'Vibes'
               - '.gitmodules'
+            # This file: it defines the e2e jobs, so a change to it runs them
+            # (#348 split the board job and, touching only this file, ran
+            # none of its legs). Only the e2e jobs, not the rest of CI.
+            e2e_workflow:
+              - '.github/workflows/ci.yml'
 
   # Offline gate for the frontend-only Web Serial + WASM control app: build
   # wasm + generated codec, then the app verify gate (typecheck + eslint +
@@ -273,14 +279,16 @@ jobs:
   # board-touching scenarios run in `control-e2e-board` below.
   #
   # A move of the SIL/embsim pin runs this job too, as #148 made
-  # control-e2e-sil do; the board job is the one a pin move can change.
+  # control-e2e-sil do; the board job is the one a pin move can change. A
+  # change to this file (`e2e_workflow`) runs it too.
   control-e2e-boardless:
     name: Control e2e (board-free scenarios)
     needs: changes
     if: |
       needs.changes.outputs.is_release != 'true' &&
       (needs.changes.outputs.wasm_control == 'true' ||
-       needs.changes.outputs.embsim_pin == 'true')
+       needs.changes.outputs.embsim_pin == 'true' ||
+       needs.changes.outputs.e2e_workflow == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     defaults:
@@ -411,6 +419,7 @@ jobs:
   # Fires on the app, the protocol, the firmware or the SIL (the `sil` filter
   # covers Firmware/ and Protocol/), and on a move of the SIL/embsim pin: the
   # node is embsim's, so a pin move is exactly what this job exists to check.
+  # And on a change to this file (`e2e_workflow`), which defines it.
   control-e2e-board:
     name: Control e2e (the board, ISS + chrome-cdp, ${{ matrix.leg }})
     needs: changes
@@ -418,7 +427,8 @@ jobs:
       needs.changes.outputs.is_release != 'true' &&
       (needs.changes.outputs.wasm_control == 'true' ||
        needs.changes.outputs.sil == 'true' ||
-       needs.changes.outputs.embsim_pin == 'true')
+       needs.changes.outputs.embsim_pin == 'true' ||
+       needs.changes.outputs.e2e_workflow == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
