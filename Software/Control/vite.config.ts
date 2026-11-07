@@ -11,12 +11,14 @@ const { version } = createRequire(import.meta.url)('./package.json') as { versio
 
 // Build identity, surfaced in the session log so a bug report names the exact
 // build it came from. A shallow CI checkout or a tarball has no git metadata,
-// so a failure here is expected rather than fatal.
+// so a failure here is expected rather than fatal. `-dirty` marks uncommitted
+// app changes: a report from such a build cannot be reproduced from the SHA.
 function gitSha(): string {
+  const git = (args: string): string =>
+    execSync(`git ${args}`, { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
   try {
-    return execSync('git rev-parse --short HEAD', { stdio: ['ignore', 'pipe', 'ignore'] })
-      .toString()
-      .trim();
+    const sha = git('rev-parse --short HEAD');
+    return git('status --porcelain -- .') === '' ? sha : `${sha}-dirty`;
   } catch {
     return 'unknown';
   }
