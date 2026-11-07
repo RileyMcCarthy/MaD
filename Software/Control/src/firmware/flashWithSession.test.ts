@@ -7,7 +7,12 @@ interface FakePort {
 }
 
 /** Plain fakes for every side effect, recording the order they ran in. */
-function harness(opts: { shared: boolean; programFails?: boolean; closeFails?: boolean }) {
+function harness(opts: {
+  shared: boolean;
+  programFails?: boolean;
+  closeFails?: boolean;
+  answersOnFlashPort?: boolean;
+}) {
   const calls: string[] = [];
   const target: FakePort = { name: 'flash' };
   const other: FakePort = { name: 'session' };
@@ -18,6 +23,7 @@ function harness(opts: { shared: boolean; programFails?: boolean; closeFails?: b
     heldPort: opts.shared ? target : other,
     target,
     targetLabel: 'USB 0403:6015',
+    answersOnFlashPort: opts.answersOnFlashPort,
     disconnect: async () => {
       calls.push('disconnect');
     },
@@ -159,6 +165,50 @@ describe('flashWithSession', () => {
       // The flash itself still worked, and the session still comes back.
       expect(h.outcome.done).toBe(4592);
       expect(h.calls).toContain('connect:flash');
+    },
+  );
+  behaviour(
+    {
+      id: 'flash.image-elsewhere-not-reconnected',
+      covers: 'src/firmware/flashWithSession.ts#flashWithSession',
+      given:
+        'a successful flash, over the port the main connection holds, of a build that talks to the app over a different link',
+      expect: {
+        'done-reported': 'the flash is reported as done',
+        'port-closed': 'the flash port is closed after the flash',
+        'left-disconnected': 'the main connection stays disconnected, with no reconnect attempted',
+      },
+      why: {
+        'left-disconnected':
+          "the MaDEdge build answers only on the Edge carrier's Pi link, so a reconnect to the flash port would never be answered",
+      },
+    },
+    async () => {
+      const h = harness({ shared: true, answersOnFlashPort: false });
+      await flashWithSession(h.deps);
+      expect(h.outcome.done).toBe(4592);
+      expect(h.calls).toEqual(['disconnect', 'program:flash', 'close:flash', 'done']);
+    },
+  );
+
+  behaviour(
+    {
+      id: 'flash.image-elsewhere-failure-reconnected',
+      covers: 'src/firmware/flashWithSession.ts#flashWithSession',
+      given:
+        'a failed flash, over the port the main connection holds, of a build that talks to the app over a different link',
+      expect: {
+        'reconnected-same-port': 'after a settle delay the main connection reconnects to that same port',
+      },
+      why: {
+        'reconnected-same-port': 'a failed flash leaves the board on the firmware it already had, which still answers there',
+      },
+    },
+    async () => {
+      const h = harness({ shared: true, programFails: true, answersOnFlashPort: false });
+      await flashWithSession(h.deps);
+      expect(h.outcome.error).toBe(h.flashError);
+      expect(h.calls.slice(-2)).toEqual([`wait:${RECONNECT_SETTLE_MS}`, 'connect:flash']);
     },
   );
 });

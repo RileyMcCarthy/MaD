@@ -252,7 +252,11 @@ describe('assemble-pages-app', () => {
       },
     },
     () => {
-      const viteNode = fileURLToPath(new URL('../node_modules/vite-node/dist/cli.mjs', import.meta.url));
+      // The CLI entry from vite-node's own `bin`, so a move of it (as 3 -> 6 did)
+      // does not break this test.
+      const pkgUrl = new URL('../node_modules/vite-node/package.json', import.meta.url);
+      const { bin } = JSON.parse(readFileSync(pkgUrl, 'utf8')) as { bin: string | Record<string, string> };
+      const viteNode = fileURLToPath(new URL(typeof bin === 'string' ? bin : bin['vite-node'], pkgUrl));
       const script = fileURLToPath(new URL('./assemble-pages-app.mts', import.meta.url));
       const r = spawnSync(process.execPath, [viteNode, script], {
         cwd: fileURLToPath(new URL('..', import.meta.url)),
@@ -264,6 +268,59 @@ describe('assemble-pages-app', () => {
       expect(r.status).not.toBeNull();
       expect(r.stderr).toContain('refusing to publish an empty app');
       expect(existsSync(out)).toBe(false);
+    },
+  );
+  behaviour(
+    {
+      id: 'pages-assemble.board-images-served',
+      covers: 'tools/assemble-pages-app.mts#assemble',
+      given: 'a firmware release that carries a MaDEdge build beside the P2Eval one',
+      expect: {
+        'madedge-image-written': 'the MaDEdge image is written byte for byte under its release name and as the latest MaDEdge download',
+        'p2eval-image-kept': 'the P2Eval image is still the default firmware image',
+        'both-boards-listed':
+          'the per-release firmware list and the latest-release description for older app versions both list both boards, each with its image name, size and checksum',
+      },
+    },
+    async () => {
+      release('0.4.1');
+      const boards = {
+        P2Eval: { assetName: 'MaD-Firmware-0.14-P2Eval.bin', size: 4, sha256: 'ab'.repeat(32), path: 'firmware/MaD-Firmware-0.14-P2Eval.bin' },
+        MaDEdge: { assetName: 'MaD-Firmware-0.14-MaDEdge.bin', size: 3, sha256: 'cd'.repeat(32), path: 'firmware/MaD-Firmware-0.14-MaDEdge.bin' },
+      };
+      // The latest-release description names each image without a path: older
+      // apps fetch latest.bin and latest-<Board>.bin.
+      const latestBoards = {
+        P2Eval: { assetName: boards.P2Eval.assetName, size: 4, sha256: boards.P2Eval.sha256 },
+        MaDEdge: { assetName: boards.MaDEdge.assetName, size: 3, sha256: boards.MaDEdge.sha256 },
+      };
+      const latest = { ...LATEST, assetName: boards.P2Eval.assetName, boards: latestBoards };
+      const manifest = { releases: [{ ...latest, boards, protocolVersion: 2, path: boards.P2Eval.path }] };
+      const withEdge: FirmwareSite = {
+        latest,
+        manifest,
+        files: new Map([
+          ['firmware/latest.json', Buffer.from(JSON.stringify(latest))],
+          ['firmware/latest.bin', Buffer.from([1, 2, 3, 4])],
+          ['firmware/latest-MaDEdge.bin', Buffer.from([9, 8, 7])],
+          ['firmware/manifest.json', Buffer.from(JSON.stringify(manifest))],
+          [boards.P2Eval.path, Buffer.from([1, 2, 3, 4])],
+          [boards.MaDEdge.path, Buffer.from([9, 8, 7])],
+        ]),
+        warnings: [],
+      };
+      await run(vi.fn(async () => withEdge));
+      expect([...readFileSync(join(out, boards.MaDEdge.path))]).toEqual([9, 8, 7]);
+      expect([...readFileSync(join(out, 'firmware/latest-MaDEdge.bin'))]).toEqual([9, 8, 7]);
+      expect([...readFileSync(join(out, 'firmware/latest.bin'))]).toEqual([1, 2, 3, 4]);
+      const served = JSON.parse(readFileSync(join(out, 'firmware/manifest.json'), 'utf8')) as {
+        releases: { boards: Record<string, unknown> }[];
+      };
+      expect(served.releases[0].boards).toEqual(boards);
+      const servedLatest = JSON.parse(readFileSync(join(out, 'firmware/latest.json'), 'utf8')) as {
+        boards: Record<string, unknown>;
+      };
+      expect(servedLatest.boards).toEqual(latestBoards);
     },
   );
 });
