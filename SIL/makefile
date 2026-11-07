@@ -1,21 +1,20 @@
 # MaD SIL Testing - Makefile
 #
 # Commands:
-#   make p2image        - Build the P2 image the ISS executes (MaDEdge)
-#   make p2image-production - Build the production P2 image (P2Eval), the one flash-image lays out
+#   make p2image        - Build the firmware's P2 image (pio env MaD), the one image the ISS executes
 #   make emulator       - Build the Rust emulator
 #   make test           - Build the image, run the Rust test suite
 #   make playground     - mad-playground.toml under embsim run: the machine, MaD Control in a Chrome window on the board's clock
 #   make playground-iss - The same target, under the name it had beside the native one
 #   make playground-pty - mad.toml under embsim run, its host a PTY at /tmp/tty.iss, for a serial console
 #   make playground-rom - mad-serial-boot-playground.toml: the ROM's serial boot, the app's flasher in a Chrome window
-#   make e2e-emulator   - mad-cosim.toml under embsim run: the machine, a headless Chrome on J1; prints the DevTools URL
+#   make e2e-emulator   - mad-cosim.toml under embsim run: the machine, a headless Chrome on the control port J4; prints the DevTools URL
 #   make e2e            - The app served, e2e-emulator's board and the e2e suite against it (SCENARIOS selects)
 #   make e2e-rom        - FW-ISS: the app's flasher against the ISS's mask ROM, on mad-serial-boot-cosim.toml
 #   make e2e-bundle     - BUNDLE-live: the built bundle (as pages.yml builds it) on e2e-emulator's board
 #   make e2e-motion     - The scenarios that move the carriage, on mad-cosim.toml (MOTION_SHARD splits them)
 #   make e2e-stall      - SERVO-stall on mad-hard-stop-cosim.toml: the carriage jogged into a hard stop
-#   make flash-image    - build/flash.bin: stage-1 and the production image, the module's boot flash
+#   make flash-image    - build/flash.bin: stage-1 and the firmware's image, the module's boot flash
 #   make sd-image       - build/sd.img: a 32 MiB FAT16 card mirroring ./sd
 #   make check          - embsim check on MaD's seven project files (mad*.toml)
 #   make clean          - Remove build artifacts
@@ -26,8 +25,9 @@
 # board's time, a 1 ms quantum at a time over DevTools, and its Web Serial
 # port is the node's, on the board's protocol pins. The e2e runs it on the
 # machine's project, mad-cosim.toml (embsim MIGRATING-MAD.md step 10), the
-# node on the carrier's debug header J1, and FW-ISS on the project's serial
-# boot, mad-serial-boot-cosim.toml; e2e-motion, the scenarios that move
+# node on the carrier's control port J4, and FW-ISS on the project's serial
+# boot, mad-serial-boot-cosim.toml, the node on the debug header J1, the
+# programming port; e2e-motion, the scenarios that move
 # the carriage, runs on mad-cosim.toml too, and the playgrounds on its
 # headed copy (step 11); SERVO-stall (e2e-stall) on that file with a hard
 # stop on its carriage, mad-hard-stop-cosim.toml (MaD #298). No e2e target
@@ -38,19 +38,14 @@
 # that in the board's time.
 
 FIRMWARE_DIR = ../Firmware/MaDCore
-# The P2 image mad-emulator and the p2core/p2iss suites execute: the debug
-# build, its MAIN channel on P30/P32 and its log on P62. Those routes put
-# the host straight on the chip's P30/P32 and read the log: the chip on no
-# module and no carrier, so nothing sits between the host and those pins.
-P2_ENV = MaDEdge
+# The firmware's one P2 image, the one everything here executes: the
+# project files' module flash (flash-image), mad-emulator, and the
+# mad-catalog, p2core and p2iss suites. Its MAIN channel, the protocol, is
+# on P30/P32 at 2 000 000 baud, which the Edge carrier's isolator IC2 takes
+# to its control port J4; its log is on P62, the debug header J1, which is
+# otherwise the programming port (Firmware/MaDCore/platformio.ini).
+P2_ENV = MaD
 P2_IMAGE = $(FIRMWARE_DIR)/.pio/build/$(P2_ENV)/program
-# The production build, the project files' route (the user's decision;
-# which image the machine runs is open, SIL/mad.toml's header): its MAIN
-# channel on P62/P63, the carrier's debug header J1, where the Prop Plug
-# sits. The project files' module flash holds it (flash-image), and
-# mad-catalog/tests/mad.rs boots it.
-PRODUCTION_ENV = P2Eval
-PRODUCTION_IMAGE = $(FIRMWARE_DIR)/.pio/build/$(PRODUCTION_ENV)/program
 PROTOEMB_GENERATOR = ../Protocol/ProtoEmb/core/generate.py
 PROTOEMB_SCHEMA = ../Protocol/MaDProtocol.yaml
 PROTOEMB_TEMPLATES = ../Protocol/ProtoEmb/core/templates
@@ -67,9 +62,10 @@ BUILD_DIR = build
 FLASH_IMAGE = $(BUILD_DIR)/flash.bin
 SD_IMAGE = $(BUILD_DIR)/sd.img
 
-.PHONY: p2image p2image-production protocol emulator emulator-release test playground playground-iss playground-pty playground-rom e2e-emulator e2e e2e-rom e2e-bundle e2e-motion e2e-stall e2e-compat flash-image sd-image check bootrom clean
+.PHONY: p2image protocol emulator emulator-release test playground playground-iss playground-pty playground-rom e2e-emulator e2e e2e-rom e2e-bundle e2e-motion e2e-stall e2e-compat flash-image sd-image check bootrom clean
 
-# Build the P2 image the ISS runs (`p2core`, `p2iss`, `mad-emulator`).
+# Build the P2 image the ISS runs (`p2core`, `p2iss`, `mad-catalog`,
+# `mad-emulator`, and the project files' flash).
 #
 # A `make test` dependency on purpose: those crates' tests skip when the image
 # is absent, and PlatformIO drops stale environment directories whenever the
@@ -77,11 +73,6 @@ SD_IMAGE = $(BUILD_DIR)/sd.img
 # suite into no-ops that still report green.
 p2image:
 	cd $(FIRMWARE_DIR) && pio run -e $(P2_ENV)
-
-# Build the production image the project files' flash holds, a `make test`
-# dependency for the same reason: mad-catalog/tests/mad.rs skips without it.
-p2image-production:
-	cd $(FIRMWARE_DIR) && pio run -e $(PRODUCTION_ENV)
 
 # Generate Rust protocol types used by SIL (MaD-specific; kept out of the
 # generic embsim crates — lands in the `protocol` crate at ../Protocol).
@@ -92,12 +83,9 @@ protocol:
 emulator: protocol
 	cargo build
 
-# Run tests. The production image is built first and the debug image last,
-# the order CI builds them in (.github/workflows/ci.yml: building one env
-# has been seen to remove another env's output). MAD_REQUIRE_P2_IMAGE turns
-# a test's "the image is missing, so skip" into a failure, so an image lost
-# that way fails the run.
-test: emulator p2image-production p2image
+# Run tests. MAD_REQUIRE_P2_IMAGE turns a test's "the image is missing, so
+# skip" into a failure, so an image PlatformIO dropped fails the run.
+test: emulator p2image
 	MAD_REQUIRE_P2_IMAGE=1 cargo test
 
 emulator-release: protocol
@@ -124,8 +112,8 @@ playground: flash-image sd-image
 playground-iss: playground
 
 # The machine's project with a serial port for its host, mad.toml under
-# embsim run, its PTY at /tmp/tty.iss: the production firmware's protocol at
-# 2 000 000 baud on J1, for a serial console or a program that speaks it. The
+# embsim run, its PTY at /tmp/tty.iss: the firmware's protocol at
+# 2 000 000 baud on the control port J4, for a serial console or a program that speaks it. The
 # board runs unpaced, at whatever rate the ISS manages. No browser belongs
 # behind it (see the top of this file). The path is DELIBERATELY NOT
 # /tmp/tty.rpi, which Software/Control/tools/sil-ws-bridge.mjs opens by
@@ -134,12 +122,12 @@ playground-pty: flash-image sd-image
 	$(EMBSIM) run mad.toml --pty /tmp/tty.iss
 
 # The e2e's board (embsim MIGRATING-MAD.md step 10): the machine's project
-# with the host's Chrome on the carrier's debug header J1, mad-cosim.toml,
-# run by the embsim tool. The module boots the production firmware off its
-# flash (flash-image) with its card in its socket (sd-image); the chrome-cdp
-# node launches Chrome headless at the run's first slice, its DevTools on
-# 9222 (the file's devtools_port), its one Web Serial port the line on J1,
-# USB 0403:6015, granted to every origin. The run is unpaced: the page lives
+# with the host's Chrome on the carrier's control port J4, mad-cosim.toml,
+# run by the embsim tool. The module boots the firmware off its flash
+# (flash-image) with its card in its socket (sd-image); the chrome-cdp node
+# launches Chrome headless at the run's first slice, its DevTools on 9222
+# (the file's devtools_port), its one Web Serial port the line on J4, USB
+# 0403:6001 (an FTDI FT232R), granted to every origin. The run is unpaced: the page lives
 # only the time the board grants it. It runs until SIGTERM or Ctrl-C, then
 # prints its summary.
 E2E_PROJECT = mad-cosim.toml
@@ -201,20 +189,26 @@ e2e-motion: flash-image sd-image
 
 # The firmware-compatibility scenarios that need other firmware on the
 # board (run-all.mjs, NEEDS_FIRMWARE), on e2e's board with that firmware in
-# the module's flash: COMPAT-too-old on a release from before the app could
-# ask the firmware which protocol it speaks (COMPAT_OLD_TAG, as published),
-# and COMPAT-app-too-old on this tree's firmware built one protocol_version
-# ahead. scripts/compat-images.sh builds both; no firmware source changes
-# for either. This tree's image goes back in the flash afterwards, however
-# the runs end. The scenarios that need this tree's firmware (COMPAT-ok, and
-# COMPAT-ok-motion in e2e-motion) run with the rest of the suite.
-COMPAT_OLD_TAG ?= firmware-v0.14
+# the module's flash: COMPAT-app-too-old on this tree's firmware built one
+# protocol_version ahead. scripts/compat-images.sh builds it; no firmware
+# source changes for it. This tree's image goes back in the flash
+# afterwards, however the run ends. The scenarios that need this tree's
+# firmware (COMPAT-ok, and COMPAT-ok-motion in e2e-motion) run with the rest
+# of the suite.
+#
+# COMPAT-too-old does not run here. Its firmware, a release from before the
+# app could ask the firmware which protocol it speaks (firmware-v0.14 and
+# every release before the one-image firmware), has its protocol on P62/P63,
+# the debug header J1, and e2e's board has its host on the control port J4
+# (P30/P32), where that firmware never listens: the app would see a board
+# that never answers, not a firmware too old. No project file puts a
+# flash-booted machine's host on J1.
 e2e-compat: flash-image sd-image
 	$(EMBSIM) check $(E2E_PROJECT)
-	EMBSIM="$(EMBSIM)" COMPAT_OLD_TAG=$(COMPAT_OLD_TAG) scripts/compat-images.sh
-	@trap '$(EMBSIM) flash-image $(PRODUCTION_IMAGE) -o $(FLASH_IMAGE) >/dev/null' EXIT; \
+	EMBSIM="$(EMBSIM)" scripts/compat-images.sh
+	@trap '$(EMBSIM) flash-image $(P2_IMAGE) -o $(FLASH_IMAGE) >/dev/null' EXIT; \
 	status=0; \
-	for run in old:COMPAT-too-old future:COMPAT-app-too-old; do \
+	for run in future:COMPAT-app-too-old; do \
 	  firmware=$${run%%:*}; \
 	  echo "e2e-compat: $${run#*:} on the $$firmware firmware"; \
 	  cp $(BUILD_DIR)/flash-compat-$$firmware.bin $(FLASH_IMAGE); \
@@ -223,14 +217,13 @@ e2e-compat: flash-image sd-image
 	done; \
 	exit $$status
 
-# The module's boot flash: embsim's stage-1 loader, then the production
+# The module's boot flash: embsim's stage-1 loader, then the firmware's
 # image behind it, as the P2's ROM boots it off the flash (`embsim
 # flash-image`). A project names it in its w25q128jv entry (`image =
-# "build/flash.bin"`). The production image, because the project files'
-# host is on J1 (P62/P63), where that build's MAIN channel is.
-flash-image: p2image-production
+# "build/flash.bin"`).
+flash-image: p2image
 	mkdir -p $(BUILD_DIR)
-	$(EMBSIM) flash-image $(PRODUCTION_IMAGE) -o $(FLASH_IMAGE)
+	$(EMBSIM) flash-image $(P2_IMAGE) -o $(FLASH_IMAGE)
 
 # The card in the module's socket: 32 MiB of FAT16 holding the directories
 # the firmware writes into, with ./sd mirrored onto it when it is there, the
@@ -310,4 +303,3 @@ clean:
 	rm -rf test-results $(BUILD_DIR)
 	cargo clean
 	cd $(FIRMWARE_DIR) && pio run -e $(P2_ENV) -t clean
-	cd $(FIRMWARE_DIR) && pio run -e $(PRODUCTION_ENV) -t clean

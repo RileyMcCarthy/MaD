@@ -18,9 +18,6 @@
 /*********************************************************************
  * Macros
  **********************************************************************/
-#ifndef ENABLE_DEBUG_SERIAL
-#define ENABLE_DEBUG_SERIAL 0
-#endif
 /**********************************************************************
  * Typedefs
  **********************************************************************/
@@ -35,7 +32,6 @@ typedef enum
 typedef enum
 {
     HAL_SERIAL_TYPE_HARDWARE,
-    HAL_SERIAL_TYPE_BUILTIN,
     HAL_SERIAL_TYPE_COUNT,
 } HAL_serial_type_E;
 

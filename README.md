@@ -84,23 +84,27 @@ cd Software/Control
 npm install
 npm run build:wasm        # compile the Rust protocol core → src/wasm/
 npm run generate:proto    # generate the TS codec from the YAML schema
-npm run app               # opens your browser; connect via Web Serial
+npm run app               # opens your browser; connect on the control port via Web Serial
 ```
 
 ### Build the firmware
 ```bash
 cd Firmware/MaDCore
-pio run -e P2Eval              # build for hardware
-pio run -e P2Eval -t upload   # flash a connected board
-pio run -e MaDEdge      # image the SIL emulator executes
-pio test -e native_test           # unit tests
-pio check -e P2Eval --fail-on-defect=medium --fail-on-defect=high  # MISRA (medium+high)
+pio run -e MaD                 # the firmware: hardware and the SIL emulator run this image
+pio run -e MaD -t upload       # flash a connected board through J1 (the programming port)
+pio test -e native_test        # unit tests
+pio check -e MaD --fail-on-defect=medium --fail-on-defect=high  # MISRA (medium+high)
 ```
+
+The machine has two serial ports: the **control port** (the secondary serial on
+P30/P32, J4 on the Edge carrier v0.3), which carries the protocol and never
+resets the chip, and the **programming port** (J1, or the P2-EVAL's own USB),
+whose DTR resets the chip for flashing and which carries the debug log.
 
 ### Run the full simulation (no hardware)
 ```bash
 cd SIL
-make test         # build both P2 images + the workspace, run the Rust test suite
+make test         # build the P2 image + the workspace, run the Rust test suite
 make playground   # the machine's project + the app in a Chrome window on the board's clock
 make e2e          # the e2e suite on the machine's project, mad-cosim.toml (SCENARIOS=… for a subset)
 ```

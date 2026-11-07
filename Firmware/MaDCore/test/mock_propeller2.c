@@ -15,6 +15,7 @@ uint32_t global_timeus;
  * When global_timems_force is true, HAL_time_getMs returns global_timems and
  * ignores global_timeus (us counters cannot represent full ms wrap). */
 bool global_timems_force = false;
+extern int HAL_system_mock_rebootCount;
 uint32_t global_timems = 0U;
 
 /* Shared across every suite: Library/ objects (compiled into all suites via
@@ -30,6 +31,7 @@ void HAL_lock_mock_reset(void)
     memset(locks, 0, sizeof(locks));
     global_timems_force = false;
     global_timems = 0U;
+    HAL_system_mock_rebootCount = 0;
 }
 
 // HAL time mock implementations
@@ -91,7 +93,9 @@ int32_t HAL_lock_create(void)
 
 // HAL system mock implementations
 void HAL_system_init(void) {}
-void HAL_system_reboot(void) {}
+/* Counts reboots instead of rebooting; reset with the locks. */
+int HAL_system_mock_rebootCount = 0;
+void HAL_system_reboot(void) { HAL_system_mock_rebootCount++; }
 int HAL_system_startThread(void (*func)(void *), void *arg, void *stack, uint32_t stackSize)
 {
     (void)func; (void)arg; (void)stack; (void)stackSize;

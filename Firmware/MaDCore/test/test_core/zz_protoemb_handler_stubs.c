@@ -32,6 +32,7 @@ ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWrite_sample_profile_write(const P
 ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWriteRaw_sample_profile_write(const uint8_t *payload, uint16_t payloadSize) { (void)payload; (void)payloadSize; return PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK; }
 ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWrite_gauge_length(void) { return PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK; }
 ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWrite_gauge_force(void) { return PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK; }
+ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWrite_reboot(void) { return PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK; }
 ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWrite_test_waveform(const ProtoEmb_WaveformMove_t *in) { (void)in; return PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK; }
 ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWriteRaw_test_waveform(const uint8_t *payload, uint16_t payloadSize) { (void)payload; (void)payloadSize; return PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK; }
 

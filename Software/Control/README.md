@@ -80,7 +80,8 @@ The app only ever uses the **Web Serial API** — whatever stands behind
 
 - **`npm run app`** — opens the app in *your own* browser, so `requestPort()` shows
   Chrome's native port chooser and connects to **real hardware** (the genuine Web
-  Serial flow, with permissions that persist in your profile).
+  Serial flow, with permissions that persist in your profile). Connect on the
+  control port (P30/P32); J1 is the Firmware page's programming port.
 - **`make playground`** (in `SIL/`) — the **SIL emulator** with the app in a Chrome
   window it launches, every page and worker held to the board's clock by embsim's
   `chrome-cdp`, whose Web Serial port is the board's protocol line (no hardware
@@ -127,11 +128,15 @@ The **Firmware** page programs the Propeller 2 over Web Serial — no native
 `loadp2` needed. It resets the chip with DTR and drives the boot ROM's serial
 loader directly, writing to SPI flash through a 496-byte stub. (RAM loading is
 CLI-only — `npm run hw:flash -- --ram` — since the P2 Edge boots from flash.)
-Requires the Debug/Programming header J1 and an adapter that wires DTR to `RESn`.
-By default it writes the latest firmware release's production build
-(`MaD-Firmware-<version>-P2Eval.bin`), which answers the app on that same J1
-port; the release's `-MaDEdge.bin` build, or any local build, is flashed as a
-local file.
+It flashes through the **programming port** only: the Debug/Programming header
+J1 (or the P2-EVAL's own USB) with an adapter that wires DTR to `RESn`. The app
+talks to the machine on a separate **control port**, the secondary serial on
+P30/P32 (J4 on the Edge carrier v0.3; an FTDI adapter on a P2-EVAL bench),
+which has no reset line, so connecting never restarts the machine. A flash
+stops the control session and reconnects it to the control port afterwards;
+the port the session holds is never flashed. By default it writes the
+recommended release's one image (`MaD-Firmware-<version>.bin`); any other
+build is flashed as a local file.
 See [docs/FLASHING.md](docs/FLASHING.md) for the protocol, hardware requirements,
 and the CLI harness (`npm run hw:flash`) used to validate it against a board.
 

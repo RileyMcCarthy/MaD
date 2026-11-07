@@ -41,7 +41,7 @@
 
 extern void HAL_lock_mock_reset(void);
 
-/* DEBUG_ERROR (ENABLE_DEBUG_SERIAL=1) grabs this lock; give it a real id. */
+/* DEBUG_ERROR grabs this lock; give it a real id. */
 extern int _stdio_debug_lock; /* shared in mock_propeller2.c */
 
 /* ====================================================================== *

@@ -46,7 +46,7 @@ The firmware, the control app, and the SIL emulator all speak the same wire form
 Each area has its own gate (see the checklist below). Run the relevant one locally before pushing. Firmware `pio check` enforces **medium + high** only (low severity is disabled project-wide); fix medium/high rather than suppressing.
 
 ### Native vs P2 testing
-Pointer sizes and timing differ between the Propeller 2 and the host. Run `pio test -e native_test` and a `P2Eval` build for firmware changes — passing on one target does not guarantee the other. The SIL emulator executes the `MaDEdge` image.
+Pointer sizes and timing differ between the Propeller 2 and the host. Run `pio test -e native_test` and a `MaD` build for firmware changes — passing on one target does not guarantee the other. The SIL emulator executes the same `MaD` image the hardware runs.
 
 ### SIL is single-instance
 Treat the emulator as single-instance. Don't write tests that assume parallel emulator instances.
@@ -63,7 +63,7 @@ Run the gate for each area you touched:
 
 | Area | Lint / static check | Tests |
 | --- | --- | --- |
-| Firmware (C) | `pio check -e P2Eval --fail-on-defect=medium --fail-on-defect=high` (from `Firmware/MaDCore/`) | `pio test -e native_test` |
+| Firmware (C) | `pio check -e MaD --fail-on-defect=medium --fail-on-defect=high` (from `Firmware/MaDCore/`) | `pio test -e native_test` |
 | Software (TS/React) | `npm run verify` (from `Software/Control/` — tsc + eslint + tests + build) | included in `verify` (`npm test`, Vitest) |
 | SIL (Rust) | `cargo clippy` + `cargo fmt --check` (from `SIL/`) | `make test` (emulator + `cargo test`) |
 | Protocol / generated code | — | Regenerate all three targets with `generate.py` and commit the output (re-run the schema's conformance/`verify.sh` check) |

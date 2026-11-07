@@ -1,23 +1,24 @@
 /**
  * Flash a firmware image to ACTUAL P2 hardware through the app's Firmware
- * screen, then connect and read the version back — the UI path a user takes.
+ * screen — the UI path a user takes — over the programming port.
  *
- * Needs a single-port board: the Prop Plug's DTR resets the chip, and the
- * production build (`pio run -e P2Eval`, or a release's
- * `MaD-Firmware-<v>-P2Eval.bin`, the image the app flashes by default)
- * answers the protocol on the same P62/P63 pins. A `-MaDEdge.bin` image puts
- * the protocol on P53/P55, so the version read-back here would fail.
+ * The bridge's adapter must be the programming port: a Prop Plug on header
+ * J1, or the P2-EVAL's own USB, whose DTR resets the chip into its boot ROM.
+ * The firmware (`pio run -e MaD`, or a release's `MaD-Firmware-<v>.bin`)
+ * answers the protocol only on the control port (P30/P32), so this script
+ * does not read the version back: connect a second adapter there and use the
+ * Connect page (or hw-read-save-config.mjs over a bridge on that adapter).
  *
  *   Terminal 1:  MAD_SERIAL=/dev/cu.usbserial-XXXX node tools/hw-ws-bridge.mjs
  *   Terminal 2:  npm run dev
- *   Then:        MAD_FIRMWARE=../../Firmware/MaDCore/.pio/build/P2Eval/program \
+ *   Then:        MAD_FIRMWARE=../../Firmware/MaDCore/.pio/build/MaD/program \
  *                  node e2e/hw-flash.mjs
  *
  * Set HEADED=1 to watch the browser.
  */
 import { resolve } from 'node:path';
 import { existsSync, writeFileSync } from 'node:fs';
-import { newSilPage, connectToSil, readAppLog, APP_URL } from './fixtures.mjs';
+import { newSilPage, readAppLog, APP_URL } from './fixtures.mjs';
 
 const FIRMWARE = resolve(process.env.MAD_FIRMWARE ?? '');
 const HEADED = process.env.HEADED === '1';
@@ -57,20 +58,7 @@ try {
     await page.waitForTimeout(250);
   }
 
-  // The board rebooted into the new image; give it time to mount SD and boot.
-  await page.waitForTimeout(3000);
-  await connectToSil(page);
-  await page.goto(`${APP_URL}#/firmware`);
-  const version = page.getByTestId('fw-version');
-  const deadline = Date.now() + 20_000;
-  let text = '';
-  while (Date.now() < deadline) {
-    text = ((await version.textContent()) ?? '').trim();
-    if (text && !text.startsWith('—') && text !== 'Unknown') break;
-    await page.waitForTimeout(500);
-  }
-  console.log(`[hw-flash] firmware version after flash: ${text}`);
-  ok = text !== '' && !text.startsWith('—') && text !== 'Unknown';
+  ok = true;
 } catch (err) {
   console.error('[hw-flash] FAILED:', err instanceof Error ? err.message : err);
 } finally {
