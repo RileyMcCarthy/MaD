@@ -41,6 +41,7 @@ jobs:
       sil: ${{ steps.changes.outputs.sil }}
       docs: ${{ steps.changes.outputs.docs }}
       embsim_pin: ${{ steps.changes.outputs.embsim_pin }}
+      e2e_workflow: ${{ steps.changes.outputs.e2e_workflow }}
       protoemb_pin: ${{ steps.changes.outputs.protoemb_pin }}
       vibes_pin: ${{ steps.changes.outputs.vibes_pin }}
       is_release: ${{ startsWith(github.ref, 'refs/tags/') }}
@@ -92,6 +93,11 @@ jobs:
             vibes_pin:
               - 'Vibes'
               - '.gitmodules'
+            # This file: it defines the e2e jobs, so a change to it runs them
+            # (#348 split the board job and, touching only this file, ran
+            # none of its legs). Only the e2e jobs, not the rest of CI.
+            e2e_workflow:
+              - '.github/workflows/ci.yml'
 
   # Offline gate for the frontend-only Web Serial + WASM control app: build
   # wasm + generated codec, then the app verify gate (typecheck + eslint +
@@ -273,14 +279,16 @@ jobs:
   # board-touching scenarios run in `control-e2e-board` below.
   #
   # A move of the SIL/embsim pin runs this job too, as #148 made
-  # control-e2e-sil do; the board job is the one a pin move can change.
+  # control-e2e-sil do; the board job is the one a pin move can change. A
+  # change to this file (`e2e_workflow`) runs it too.
   control-e2e-boardless:
     name: Control e2e (board-free scenarios)
     needs: changes
     if: |
       needs.changes.outputs.is_release != 'true' &&
       (needs.changes.outputs.wasm_control == 'true' ||
-       needs.changes.outputs.embsim_pin == 'true')
+       needs.changes.outputs.embsim_pin == 'true' ||
+       needs.changes.outputs.e2e_workflow == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     defaults:
@@ -393,19 +401,40 @@ jobs:
   # stall, Live clears it and re-enables motion, and a jog takes the
   # carriage off the stop.
   #
+  # THREE LEGS, one runner each (the matrix below), since a board is
+  # single-instance per machine and one runner ran them all one after another
+  # in 47-51 min (run 41384441895: setup 5 min, the subset 15.4 min with G1
+  # alone 6.7, BUNDLE-live 1.1, the motion leg 22, SERVO-stall 3-5,
+  # e2e-compat 4). Each leg pays the same setup (`make check`, the app's
+  # deps) and runs its share, so the gate waits on the longest leg, not the
+  # sum. The scenarios are the same; only where they run moved:
+  #   motion  the motion leg (G2+G3+H2+I)                       ~27 min
+  #   g1      G1, SERVO-stall, the compatibility scenarios       ~20 min
+  #   subset  the subset less G1, then BUNDLE-live               ~15 min
+  # G1 left the subset's leg because it alone is SD-heavy; move a scenario
+  # between legs by its SCENARIOS list. fail-fast is off so a leg that fails
+  # leaves the others to finish (and upload their diagnostics). Every leg
+  # reports as `control-e2e-board` in ci-gate.needs.
+  #
   # Fires on the app, the protocol, the firmware or the SIL (the `sil` filter
   # covers Firmware/ and Protocol/), and on a move of the SIL/embsim pin: the
   # node is embsim's, so a pin move is exactly what this job exists to check.
+  # And on a change to this file (`e2e_workflow`), which defines it.
   control-e2e-board:
-    name: Control e2e (the board, ISS + chrome-cdp)
+    name: Control e2e (the board, ISS + chrome-cdp, ${{ matrix.leg }})
     needs: changes
     if: |
       needs.changes.outputs.is_release != 'true' &&
       (needs.changes.outputs.wasm_control == 'true' ||
        needs.changes.outputs.sil == 'true' ||
-       needs.changes.outputs.embsim_pin == 'true')
+       needs.changes.outputs.embsim_pin == 'true' ||
+       needs.changes.outputs.e2e_workflow == 'true')
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        leg: [motion, g1, subset]
     steps:
       - uses: actions/checkout@v7
         with:
@@ -462,29 +491,36 @@ jobs:
       # The bundle BUNDLE-live runs against: a production build, as pages.yml
       # builds a release, at the unversioned base the scenario's URLs expect.
       - name: Build the shipped bundle
+        if: matrix.leg == 'subset'
         working-directory: Software/Control
         run: npx vite build --base="/${{ github.event.repository.name }}/app/" --outDir /tmp/mad-bundle
+      # Every step above passed: the legs' runs below each run from here,
+      # whether the run before them in the same leg passed or failed.
+      - name: Setup done
+        id: setup
+        run: 'true'
       # `make e2e` starts the dev server, then for each scenario a fresh
       # board (`embsim run mad-cosim.toml`, its headless Chrome's DevTools
       # on 9222), waits for the run's "reached" line, runs that scenario
       # attached there, and stops the board with SIGTERM, which prints its
       # summary; a board that stops costs one scenario.
+      # The subset's leg runs all of it but G1; the g1 leg runs G1 alone.
       - name: Run the board subset on the project
-        id: subset
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' && (matrix.leg == 'subset' || matrix.leg == 'g1') }}
         working-directory: SIL
         env:
           CHROME: /usr/bin/google-chrome
           BOARD_LOGS: /tmp/e2e-out
           BOARD_PER_SCENARIO: '1'
           E2E_TIMINGS: /tmp/e2e-out/timings.json
-          SCENARIOS: B1+C1,F7,F1+F2,B2+B3+B4,C3+C4,D1,G1,NAV,B5-reconnect,M11-idle-drop,COMPAT-ok
+          SCENARIOS: ${{ matrix.leg == 'g1' && 'G1' || 'B1+C1,F7,F1+F2,B2+B3+B4,C3+C4,D1,NAV,B5-reconnect,M11-idle-drop,COMPAT-ok' }}
         run: make e2e
       # The same board with `vite preview` serving the bundle (APP_DIST) in
       # place of the dev server: connect, samples, machine state, unplug, and
-      # replug with the app reconnecting by itself. It runs whenever the
-      # subset ran, passed or failed.
+      # replug with the app reconnecting by itself. The subset's leg, after
+      # the subset, passed or failed.
       - name: Run the shipped bundle on the project
-        if: ${{ !cancelled() && (steps.subset.outcome == 'success' || steps.subset.outcome == 'failure') }}
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' && matrix.leg == 'subset' }}
         working-directory: SIL
         env:
           CHROME: /usr/bin/google-chrome
@@ -498,10 +534,9 @@ jobs:
       # The motion leg: the one run carried through to download and view.
       # `make e2e-motion` checks mad-cosim.toml and runs what `run-all.mjs
       # --list --moves` names of SCENARIOS, one board each, on the images
-      # the steps above wrote. It runs whenever the subset ran, passed or
-      # failed.
+      # the steps above wrote. The motion leg, alone on its runner.
       - name: 'Run the motion leg on the project'
-        if: ${{ !cancelled() && (steps.subset.outcome == 'success' || steps.subset.outcome == 'failure') }}
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' && matrix.leg == 'motion' }}
         working-directory: SIL
         env:
           CHROME: /usr/bin/google-chrome
@@ -514,10 +549,10 @@ jobs:
       # Live clears it and re-enables motion; a jog takes the carriage off
       # the stop) on every PR, as #292 set, on the board with a hard stop
       # (#298): `make e2e-stall` checks mad-hard-stop-cosim.toml and runs it
-      # there, one board, on the images the steps above wrote. It runs
-      # whenever the subset ran, passed or failed.
+      # there, one board, on the images the steps above wrote. The g1 leg,
+      # after G1, passed or failed.
       - name: 'Run SERVO-stall on the board with a hard stop (MaD #298)'
-        if: ${{ !cancelled() && (steps.subset.outcome == 'success' || steps.subset.outcome == 'failure') }}
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' && matrix.leg == 'g1' }}
         working-directory: SIL
         env:
           CHROME: /usr/bin/google-chrome
@@ -530,10 +565,10 @@ jobs:
       # before the handshake) and COMPAT-app-too-old on this tree's firmware
       # built one protocol_version ahead (`make e2e-compat`; it downloads the
       # one and builds the other, scripts/compat-images.sh), one board each,
-      # then puts this tree's image back. It runs whenever the subset ran,
-      # passed or failed.
+      # then puts this tree's image back. The g1 leg, last, since it swaps
+      # the image the runs before it boot.
       - name: 'Run the compatibility scenarios on other firmware (make e2e-compat)'
-        if: ${{ !cancelled() && (steps.subset.outcome == 'success' || steps.subset.outcome == 'failure') }}
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' && matrix.leg == 'g1' }}
         working-directory: SIL
         env:
           CHROME: /usr/bin/google-chrome
@@ -541,10 +576,13 @@ jobs:
           BOARD_PER_SCENARIO: '1'
           E2E_TIMINGS: /tmp/e2e-out/timings-compat.json
         run: make e2e-compat
-      # Host and board time per scenario, for sizing this subset. Reported,
-      # never asserted.
+      # Host and board time per scenario, for sizing this subset and its
+      # legs. Reported, never asserted; each leg writes its own table, under
+      # its name, to the run's summary.
       - name: Timings
         if: always()
+        env:
+          LEG: ${{ matrix.leg }}
         run: |
           node -e '
             const fs = require("fs");
@@ -552,7 +590,7 @@ jobs:
             const timings = [...read("/tmp/e2e-out/timings.json"), ...read("/tmp/e2e-out/timings-bundle.json"), ...read("/tmp/e2e-out/timings-motion.json"), ...read("/tmp/e2e-out/timings-stall.json"), ...read("/tmp/e2e-out/timings-compat.json")];
             if (timings.length === 0) process.exit(0);
             const rows = timings.map((r) => `| ${r.id} | ${r.verdict} | ${r.hostS.toFixed(1)} | ${r.boardS === null ? "–" : r.boardS.toFixed(3)} |`);
-            const out = ["| scenario | verdict | host s | board s |", "|---|---|---|---|", ...rows].join("\n");
+            const out = [`#### control-e2e-board: ${process.env.LEG} leg`, "", "| scenario | verdict | host s | board s |", "|---|---|---|---|", ...rows].join("\n");
             console.log(out);
             if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, out + "\n");
           '
@@ -565,7 +603,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: control-e2e-board-${{ github.run_number }}
+          name: control-e2e-board-${{ matrix.leg }}-${{ github.run_number }}
           path: /tmp/e2e-out
           retention-days: 14
 

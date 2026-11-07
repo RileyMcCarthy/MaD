@@ -102,8 +102,9 @@ export function commandName(command: number, dir?: CommandDir): string {
 }
 
 /**
- * The high-rate periodics. These arrive at ~100 Hz and ~10 Hz respectively and
- * must never get a log entry each — call sites aggregate them instead.
+ * The periodics. Samples arrive at ~100 Hz and the machine state every second
+ * (MaDProtocol.yaml, period_ms); neither gets a log entry each — call sites
+ * aggregate them instead.
  */
 export function isPeriodicCommand(command: number): boolean {
   return command === MSG_READ_SAMPLE || command === MSG_READ_STATE;
