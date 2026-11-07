@@ -28,6 +28,75 @@ const snap = (entries: LogEntry[], over: Partial<LogSnapshot> = {}): LogSnapshot
 describe('summariseForTriage', () => {
   behaviour(
     {
+      id: 'diag.triage-crash-after-hot-update',
+      covers: 'src/diagnostics/triage.ts#summariseForTriage',
+      given: 'a screen crash on the development server, logged just after a hot update of one source file',
+      expect: {
+        'names-hot-update': 'the report summary warns that the crash followed a hot update and names that file',
+      },
+      why: {
+        'names-hot-update':
+          'a half-saved file swapped into the running app crashes it with the same message as broken saved code',
+      },
+    },
+    () => {
+      const t = summariseForTriage(
+        snap([
+          e({ cat: 'app', tag: 'hmr', msg: 'hot update', data: { files: '/src/App.tsx' } }),
+          e({ level: 'error', cat: 'ui', tag: 'render-crash', msg: 'useNavigate is not defined' }),
+        ]),
+      );
+      expect(t.flags.some((f) => f.includes('hot update of /src/App.tsx'))).toBe(true);
+    },
+  );
+
+  behaviour(
+    {
+      id: 'diag.triage-crash-long-after-hot-update',
+      covers: 'src/diagnostics/triage.ts#summariseForTriage',
+      given: 'a screen crash on the development server, a minute after the last hot update',
+      expect: {
+        'no-hot-update-flag': 'the report summary carries no hot-update warning',
+      },
+      why: {
+        'no-hot-update-flag':
+          'only a crash within a few seconds of an update is blamed on it; earlier saves are ordinary editing',
+      },
+    },
+    () => {
+      const crashAt = Date.UTC(2026, 0, 1, 13, 0, 0);
+      const t = summariseForTriage(
+        snap([
+          e({ t: crashAt - 60_000, cat: 'app', tag: 'hmr', msg: 'hot update', data: { files: '/src/App.tsx' } }),
+          e({ t: crashAt, level: 'error', cat: 'ui', tag: 'render-crash', msg: 'boom' }),
+        ]),
+      );
+      expect(t.flags.some((f) => f.includes('hot update'))).toBe(false);
+    },
+  );
+
+  behaviour(
+    {
+      id: 'diag.triage-crash-without-hot-update',
+      covers: 'src/diagnostics/triage.ts#summariseForTriage',
+      given: 'a screen crash on the development server, with the only hot update logged after it',
+      expect: {
+        'no-hot-update-flag': 'the report summary carries no hot-update warning',
+      },
+    },
+    () => {
+      const t = summariseForTriage(
+        snap([
+          e({ level: 'error', cat: 'ui', tag: 'render-crash', msg: 'boom' }),
+          e({ cat: 'app', tag: 'hmr', msg: 'hot update', data: { files: '/src/App.tsx' } }),
+        ]),
+      );
+      expect(t.flags.some((f) => f.includes('hot update'))).toBe(false);
+    },
+  );
+
+  behaviour(
+    {
       id: 'diag.triage-error-first-line',
       covers: 'src/diagnostics/triage.ts#summariseForTriage',
       given: 'first and last errors whose messages carry a component stack on later lines',
