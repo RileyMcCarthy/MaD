@@ -174,6 +174,17 @@ function trackHeap(): void {
 }
 
 /**
+ * Dev server only: record each hot module update. A crash right after one is
+ * usually a half-saved file being hot-swapped in, not a bug in the saved code —
+ * and nothing else in a report would say so.
+ */
+function trackHotUpdates(): void {
+  import.meta.hot?.on('vite:beforeUpdate', (payload) => {
+    log.info('hmr', 'hot update', { files: payload.updates.map((u) => u.path).join(', ') });
+  });
+}
+
+/**
  * Install app-level capture. Idempotent — React StrictMode double-invokes
  * effects in dev, and double-wrapping the console would double every line.
  */
@@ -186,5 +197,6 @@ export function installAppDiagnostics(): void {
   trackUserActions();
   trackMainThreadHealth();
   trackHeap();
+  trackHotUpdates();
   persistence = startLogPersistence(SESSION_ID);
 }
