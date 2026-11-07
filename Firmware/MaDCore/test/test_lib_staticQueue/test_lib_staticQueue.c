@@ -137,6 +137,38 @@ void test_the_ring_wraps_without_losing_or_reordering(void)
     }
 }
 
+void test_peek_reads_ahead_without_removing_across_the_fold(void)
+{
+    VIBES_TEST("queue.peek-reads-ahead",
+               "src/Library/lib_staticQueue.c#lib_staticQueue_peek",
+               "a four-slot ring holding three values that straddle the wrap");
+    VIBES_EXPECT("reads-each-place", "looking ahead returns each value at its place from the front, across the wrap");
+    VIBES_EXPECT("nothing-removed", "looking ahead removes nothing: the values still pop in order");
+    VIBES_EXPECT("past-the-end", "looking past the last value reports that there is nothing there");
+
+    int32_t out = 0;
+    for (int32_t i = 0; i < 2; i++)
+    {
+        TEST_ASSERT_TRUE(push(i));
+        TEST_ASSERT_TRUE(lib_staticQueue_pop(&q, &out)); /* move the front up to the fold */
+    }
+    TEST_ASSERT_TRUE(push(10));
+    TEST_ASSERT_TRUE(push(11));
+    TEST_ASSERT_TRUE(push(12));
+    for (int32_t i = 0; i < 3; i++)
+    {
+        TEST_ASSERT_TRUE(lib_staticQueue_peek(&q, i, &out));
+        TEST_ASSERT_EQUAL_INT32(10 + i, out);
+    }
+    TEST_ASSERT_FALSE(lib_staticQueue_peek(&q, 3, &out));
+    TEST_ASSERT_EQUAL_INT32(3, lib_staticQueue_count(&q));
+    for (int32_t i = 0; i < 3; i++)
+    {
+        TEST_ASSERT_TRUE(lib_staticQueue_pop(&q, &out));
+        TEST_ASSERT_EQUAL_INT32(10 + i, out);
+    }
+}
+
 void test_count_is_right_on_both_sides_of_the_fold(void)
 {
     VIBES_TEST("queue.count-across-the-fold",
@@ -243,6 +275,7 @@ int main(void)
     RUN_TEST(test_the_usable_capacity_is_one_less_than_the_buffer);
     RUN_TEST(test_a_full_queue_refuses_rather_than_dropping_the_oldest);
     RUN_TEST(test_the_ring_wraps_without_losing_or_reordering);
+    RUN_TEST(test_peek_reads_ahead_without_removing_across_the_fold);
     RUN_TEST(test_count_is_right_on_both_sides_of_the_fold);
     RUN_TEST(test_a_null_payload_is_refused_rather_than_copied);
     RUN_TEST(test_a_pop_may_discard_without_a_destination);

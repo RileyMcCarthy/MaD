@@ -57,6 +57,10 @@ bool app_control_speedLimited(void) { return d_speedLimited; }
 /* --- dev_servo inputs --- */
 static int32_t d_steps;       // dev_servo_getPosition(MAIN)
 static bool d_atTarget;       // dev_servo_atTarget(MAIN)
+static uint32_t d_handovers;  // dev_servo_getHandovers(MAIN)
+static uint32_t d_stageCount; // dev_servo_stageNext calls
+static int32_t d_lastStageTarget;
+static int32_t d_lastStageStepsPerSecond;
 static int32_t d_target;      // dev_servo_getTarget(MAIN)
 static int32_t d_setpoint;    // dev_servo_getSetpoint(MAIN)
 
@@ -69,6 +73,18 @@ bool dev_servo_atTarget(dev_servo_channel_E ch)
 {
     TEST_ASSERT_EQUAL_INT(DEV_SERVO_CHANNEL_MAIN, ch);
     return d_atTarget;
+}
+uint32_t dev_servo_getHandovers(dev_servo_channel_E ch)
+{
+    TEST_ASSERT_EQUAL_INT(DEV_SERVO_CHANNEL_MAIN, ch);
+    return d_handovers;
+}
+void dev_servo_stageNext(dev_servo_channel_E ch, int32_t targetCounts, int32_t feedrateCountsPerSec)
+{
+    TEST_ASSERT_EQUAL_INT(DEV_SERVO_CHANNEL_MAIN, ch);
+    d_stageCount++;
+    d_lastStageTarget = targetCounts;
+    d_lastStageStepsPerSecond = feedrateCountsPerSec;
 }
 int32_t dev_servo_getTarget(dev_servo_channel_E ch)
 {
@@ -186,6 +202,9 @@ bool dev_servo_waveShapeFromWire(uint8_t wire, dev_servo_wave_E *shape)
     return true;
 }
 
+static bool d_lastWaveStartHigh;
+static uint32_t d_lastWaveEndFreq;
+
 bool dev_servo_startWaveform(dev_servo_channel_E ch, const dev_servo_waveform_S *waveform)
 {
     TEST_ASSERT_EQUAL_INT(DEV_SERVO_CHANNEL_MAIN, ch);
@@ -195,6 +214,8 @@ bool dev_servo_startWaveform(dev_servo_channel_E ch, const dev_servo_waveform_S 
     d_waveformCount++;
     d_lastWaveCentre = waveform->centreCounts;
     d_lastWaveAmplitude = amplitudeCounts;
+    d_lastWaveStartHigh = waveform->startHigh;
+    d_lastWaveEndFreq = waveform->endFreqMicroHz;
     d_lastWaveFreqMicroHz = freqMicroHz;
     d_lastWaveCycles = waveform->cycles;
     d_lastWaveShape = waveform->shape;
@@ -260,6 +281,10 @@ static void doubles_reset(void)
     d_speedLimited = false;
     d_steps = 0;
     d_atTarget = false;
+    d_handovers = 0U;
+    d_stageCount = 0U;
+    d_lastStageTarget = 0;
+    d_lastStageStepsPerSecond = 0;
     d_target = 0;
     d_endstopUpperActive = false;
 
@@ -460,6 +485,119 @@ void test_moving_completes_only_when_at_target(void)
     d_atTarget = true;
     app_motion_run(); /* MOVING, at target -> WAITING */
     TEST_ASSERT_TRUE(app_motion_isIdle());
+}
+
+/**********************************************************************
+ * Tests: look-ahead between straight moves
+ **********************************************************************/
+
+/* Queue `n` moves and start the first (WAITING -> MOVING). */
+static void motion_queueAndStart(const app_motion_move_t *moves, int n)
+{
+    for (int i = 0; i < n; i++)
+    {
+        TEST_ASSERT_TRUE(app_motion_addMove(&moves[i]));
+    }
+    app_motion_run();
+}
+
+void test_the_next_straight_move_is_staged_while_one_runs(void)
+{
+    VIBES_TEST("motion.next-move-staged",
+               "src/APP/app_motion.c#app_motion_private_stageNext",
+               "a straight move to 1 mm running, with a straight move to 2 mm queued after it");
+    VIBES_EXPECT_WHY("staged", "the move to 2 mm is handed to the drive while the first is still running",
+                     "the drive can only carry its speed into the next move if it knows that move before it arrives");
+    VIBES_EXPECT("not-started-early", "the first move is not cut short: the drive is given no new target");
+    motion_driveToWaiting();
+    const app_motion_move_t moves[2] = {make_move((uint8_t)G1_LINEAR_MOVE, 1000, 100, 0),
+                                        make_move((uint8_t)G1_LINEAR_MOVE, 2000, 100, 0)};
+    motion_queueAndStart(moves, 2);
+    d_target = 100;
+    app_motion_run();
+    TEST_ASSERT_EQUAL_UINT32(1U, d_stageCount);
+    TEST_ASSERT_EQUAL_INT32(200, d_lastStageTarget);
+    TEST_ASSERT_EQUAL_UINT32(1U, d_moveCount);
+}
+
+void test_the_staged_move_becomes_the_running_one_when_the_drive_switches(void)
+{
+    VIBES_TEST("motion.hand-over-taken",
+               "src/APP/app_motion.c#app_motion_private_takeHandover",
+               "two straight moves, the second staged, and the drive reporting that it has switched to it");
+    VIBES_EXPECT("running-second", "the motion planner is running the second move and stays busy until it arrives");
+    VIBES_EXPECT("queue-drained", "the second move has left the queue");
+    motion_driveToWaiting();
+    const app_motion_move_t moves[2] = {make_move((uint8_t)G1_LINEAR_MOVE, 1000, 100, 0),
+                                        make_move((uint8_t)G1_LINEAR_MOVE, 2000, 100, 0)};
+    motion_queueAndStart(moves, 2);
+    app_motion_run(); /* stages the second */
+    d_handovers = 1U;
+    app_motion_run(); /* the drive switched */
+    TEST_ASSERT_EQUAL_INT32(2000, app_motion_data.currentMove.x);
+    TEST_ASSERT_FALSE(app_motion_isIdle());
+    TEST_ASSERT_EQUAL_INT32(0, lib_staticQueue_count(&app_motion_data.queue));
+    d_atTarget = true;
+    app_motion_run();
+    TEST_ASSERT_TRUE(app_motion_isIdle());
+}
+
+void test_the_last_move_still_waits_for_the_gantry_to_settle(void)
+{
+    VIBES_TEST("motion.last-move-settles",
+               "src/APP/app_motion.c#app_motion_private_moveManager_run",
+               "a straight move with nothing queued after it");
+    VIBES_EXPECT("nothing-staged", "nothing is handed to the drive ahead of time");
+    VIBES_EXPECT("busy-until-settled", "the motion planner stays busy until the gantry has settled on the target");
+    motion_driveToWaiting();
+    const app_motion_move_t mv = make_move((uint8_t)G1_LINEAR_MOVE, 1000, 100, 0);
+    motion_queueAndStart(&mv, 1);
+    app_motion_run();
+    TEST_ASSERT_EQUAL_UINT32(0U, d_stageCount);
+    TEST_ASSERT_FALSE(app_motion_isIdle());
+    d_atTarget = true;
+    app_motion_run();
+    TEST_ASSERT_TRUE(app_motion_isIdle());
+}
+
+void test_a_move_before_a_dwell_is_not_staged(void)
+{
+    VIBES_TEST("motion.settles-before-dwell",
+               "src/APP/app_motion.c#app_motion_private_stageNext",
+               "a straight move followed by a dwell");
+    VIBES_EXPECT_WHY("nothing-staged",
+                     "nothing is handed to the drive ahead of time, so the move stops and settles before the dwell",
+                     "a dwell holds the sample where the move put it, so its time counts from arrival");
+    motion_driveToWaiting();
+    const app_motion_move_t moves[2] = {make_move((uint8_t)G1_LINEAR_MOVE, 1000, 100, 0),
+                                        make_move((uint8_t)G4_DWELL, 0, 0, 500U)};
+    motion_queueAndStart(moves, 2);
+    app_motion_run();
+    TEST_ASSERT_EQUAL_UINT32(0U, d_stageCount);
+}
+
+void test_a_relative_move_is_staged_from_where_the_running_one_was_sent(void)
+{
+    VIBES_TEST("motion.staged-relative-from-target",
+               "src/APP/app_motion.c#app_motion_private_stageNext",
+               "a move to 1 mm running in absolute positioning, then a switch to relative and a 0.5 mm move, with the gantry still short of 1 mm");
+    VIBES_EXPECT_WHY("from-target", "the 0.5 mm move is staged to end at 1.5 mm",
+                     "the running move's trajectory ends exactly where it was sent, so a relative program adds up exactly");
+    VIBES_EXPECT("mode-kept", "once the drive switches, the planner is in relative positioning");
+    motion_driveToWaiting();
+    const app_motion_move_t moves[3] = {make_move((uint8_t)G1_LINEAR_MOVE, 1000, 100, 0),
+                                        make_move((uint8_t)G91_INCREMENTAL, 0, 0, 0),
+                                        make_move((uint8_t)G1_LINEAR_MOVE, 500, 100, 0)};
+    motion_queueAndStart(moves, 3);
+    d_steps = 98;   /* still short */
+    d_target = 100; /* where the running move was sent */
+    app_motion_run();
+    TEST_ASSERT_EQUAL_UINT32(1U, d_stageCount);
+    TEST_ASSERT_EQUAL_INT32(150, d_lastStageTarget);
+    d_handovers = 1U;
+    app_motion_run();
+    TEST_ASSERT_FALSE(app_motion_data.absoluteMode);
+    TEST_ASSERT_EQUAL_INT32(0, lib_staticQueue_count(&app_motion_data.queue));
 }
 
 /**********************************************************************
@@ -1079,6 +1217,24 @@ void test_isIdle_false_when_move_queued(void)
 /* The adapter's whole job: translate the move record into a driver request.
  * Every one of these numbers is a unit conversion that silently produces a
  * wrong-sized test if it is off. */
+void test_a_negative_amplitude_falls_first(void)
+{
+    VIBES_TEST("motion.waveform-negative-amplitude",
+               "src/APP/app_motion.c#app_motion_private_moveManager_start",
+               "a G123 record with an amplitude of minus 5 mm, started with the gantry at 4321 steps");
+    VIBES_EXPECT_WHY("falls-first",
+                     "the driver is asked for a 5 mm wave that starts at its upper peak, where the gantry is, centred 5 mm below it",
+                     "the sign of the amplitude is the direction the wave sets off in");
+    motion_driveToWaiting();
+    d_steps = 4321;
+    app_motion_move_t wf = make_waveform(-50000, 250000U, 2U, 0U);
+    TEST_ASSERT_TRUE(app_motion_addMove(&wf));
+    app_motion_run();
+    TEST_ASSERT_EQUAL_INT32(500, d_lastWaveAmplitude);
+    TEST_ASSERT_EQUAL_INT32(4321 - 500, d_lastWaveCentre);
+    TEST_ASSERT_TRUE(d_lastWaveStartHigh);
+}
+
 void test_waveform_is_handed_to_the_driver_in_the_drivers_units(void)
 {
     VIBES_TEST("motion.waveform-handed-to-driver",
@@ -1089,7 +1245,7 @@ void test_waveform_is_handed_to_the_driver_in_the_drivers_units(void)
                      "the driver generates the waveform, so a unit slip here is the only way the machine can run a waveform that is not the one asked for, and it would look entirely healthy while doing it");
 
     motion_driveToWaiting();
-    d_steps = 4321;          /* the wave swings about wherever we are now */
+    d_steps = 4321;          /* the wave starts at rest where we are now, its lower peak */
     d_waveformCount = 0U;
 
     /* 50000 tenth-um = 5 mm; at 100 steps/mm that is 500 steps. */
@@ -1097,12 +1253,15 @@ void test_waveform_is_handed_to_the_driver_in_the_drivers_units(void)
     wf.wave.dwellHighMs = 250U;
     wf.wave.dwellLowMs = 40U;
     wf.wave.skewPerMille = 700U;
+    wf.wave.endFreqMicroHz = 750000U;
     TEST_ASSERT_TRUE(app_motion_addMove(&wf));
     app_motion_run(); /* pop + start */
+    TEST_ASSERT_EQUAL_UINT32(750000U, d_lastWaveEndFreq);
 
     TEST_ASSERT_EQUAL_UINT32(1U, d_waveformCount);
-    TEST_ASSERT_EQUAL_INT32(4321, d_lastWaveCentre);
+    TEST_ASSERT_EQUAL_INT32(4321 + 500, d_lastWaveCentre);
     TEST_ASSERT_EQUAL_INT32(500, d_lastWaveAmplitude);
+    TEST_ASSERT_FALSE(d_lastWaveStartHigh);
     TEST_ASSERT_EQUAL_UINT32(250000U, d_lastWaveFreqMicroHz);
     TEST_ASSERT_EQUAL_UINT32(7U, d_lastWaveCycles);
     TEST_ASSERT_EQUAL_INT(DEV_SERVO_WAVE_TRIANGLE, d_lastWaveShape);
@@ -1363,6 +1522,11 @@ int main(void)
     RUN_TEST(test_disable_stops_disables_and_clears_queue);
     RUN_TEST(test_waiting_pops_and_starts_move_then_moving);
     RUN_TEST(test_moving_completes_only_when_at_target);
+    RUN_TEST(test_the_next_straight_move_is_staged_while_one_runs);
+    RUN_TEST(test_the_staged_move_becomes_the_running_one_when_the_drive_switches);
+    RUN_TEST(test_the_last_move_still_waits_for_the_gantry_to_settle);
+    RUN_TEST(test_a_move_before_a_dwell_is_not_staged);
+    RUN_TEST(test_a_relative_move_is_staged_from_where_the_running_one_was_sent);
 
     RUN_TEST(test_zero_feedrate_move_issues_no_stepper_move);
     RUN_TEST(test_incremental_mode_adds_current_position);
@@ -1392,6 +1556,7 @@ int main(void)
     RUN_TEST(test_isIdle_false_when_move_queued);
 
     RUN_TEST(test_waveform_is_handed_to_the_driver_in_the_drivers_units);
+    RUN_TEST(test_a_negative_amplitude_falls_first);
     RUN_TEST(test_a_sine_shape_bit_selects_a_sine);
     RUN_TEST(test_a_refused_waveform_completes_the_move_instead_of_hanging);
     RUN_TEST(test_a_refused_waveform_is_reported_once_to_test_management);

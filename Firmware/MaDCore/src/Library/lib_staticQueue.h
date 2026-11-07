@@ -32,6 +32,9 @@ typedef struct
 bool lib_staticQueue_init(lib_staticQueue_S *queue, void *buf, int max_size, int item_size);
 bool lib_staticQueue_push(lib_staticQueue_S *queue, void *data);
 bool lib_staticQueue_pop(lib_staticQueue_S *queue, void *data);
+/* Copy the item `index` places from the front (0 = the next pop) without
+ * removing it. False when the queue holds no item at that place. */
+bool lib_staticQueue_peek(lib_staticQueue_S *queue, int32_t index, void *data);
 void lib_staticQueue_empty(lib_staticQueue_S *queue);
 bool lib_staticQueue_isempty(lib_staticQueue_S *queue);
 bool lib_staticQueue_isfull(lib_staticQueue_S *queue);

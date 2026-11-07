@@ -349,7 +349,7 @@ describe('generateTestGcode — waveform (math) move', () => {
       given: 'a generated sine of 4 mm, 1 Hz, three cycles, uploaded with 15 mm of gauge length',
       expect: {
         'one-waveform': 'the program carries exactly one waveform',
-        'wire-size': 'the waveform takes the agreed 9 bytes on the wire',
+        'wire-size': 'the waveform takes the agreed 21 bytes on the wire',
         'sine-shape': 'the waveform carries the sine shape',
         'authored-values': 'the waveform carries the authored amplitude, frequency, and cycle count',
       },
@@ -362,7 +362,7 @@ describe('generateTestGcode — waveform (math) move', () => {
       const ops = gcodeLinesToProgram(gcode, 15);
       const waveforms = ops.filter((o) => o.kind === 'waveform');
       expect(waveforms.length).toBe(1);
-      expect(waveforms[0].buf.length).toBe(18); // 18-byte WaveformMove (was 9 before dwell/skew) wire size
+      expect(waveforms[0].buf.length).toBe(21); // 21-byte WaveformMove wire size
       const wf = decodeWaveformMove(waveforms[0].buf);
       expect(wf.shape).toBe(WaveformShape.SINE); // v1 is sine-only
       expect(wf.amplitude).toBeCloseTo(4, 3);
