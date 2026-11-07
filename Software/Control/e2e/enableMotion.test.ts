@@ -235,7 +235,8 @@ describe('the e2e harness turning motion on', () => {
       covers: 'e2e/fixtures.mjs#enableMotion',
       given: 'the e2e harness turns motion on for a machine that already has it on',
       expect: {
-        'nothing-asked': 'the harness asks the machine nothing, and motion stays on',
+        'nothing-asked': 'the harness asks the machine nothing',
+        'motion-stays-on': 'the machine still has motion on when the harness is done',
       },
     },
     async () => {
@@ -256,7 +257,7 @@ describe('the e2e harness turning motion on', () => {
       given:
         'the e2e harness turns motion on for a machine whose force gauge never answers, so every state it reports carries that fault',
       expect: {
-        'gives-up-in-budget': 'the harness stops with an error once its 20 s device budget of page time has passed',
+        'gives-up-in-budget': "the harness stops with an error once 20 s of the machine's time has passed",
         'nothing-asked': 'the harness asks the machine nothing',
       },
     },

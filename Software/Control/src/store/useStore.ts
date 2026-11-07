@@ -121,10 +121,10 @@ const logStore = logger('store');
 /**
  * Log machine-state changes only.
  *
- * State frames arrive at ~10 Hz, so logging each one would bury everything
- * else; the transitions are what matter. Faults and restriction changes are
- * called out at warn so they stand out in a report — a run that ended early
- * almost always has one of these immediately before it.
+ * A state frame arrives every second, so logging each one would bury
+ * everything else; the transitions are what matter. Faults and restriction
+ * changes are called out at warn so they stand out in a report — a run that
+ * ended early almost always has one of these immediately before it.
  */
 function logStateTransition(prev: MachineState | null, next: MachineState): void {
   if (
@@ -489,7 +489,7 @@ export const useStore = create<AppState>((set, getState) => ({
           lastSampleAt = Date.now();
         }
         if (e.kind === 'state' && patch.machineState !== undefined) {
-          // State arrives at ~10 Hz; only transitions are worth an entry.
+          // State arrives every second; only transitions are worth an entry.
           if (patch.machineState !== null) {
             logStateTransition(getState().machineState ?? null, patch.machineState);
           }
