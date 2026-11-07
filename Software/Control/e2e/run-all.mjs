@@ -1394,7 +1394,8 @@ const scenarios = [
         // Wait for the state to be KNOWN before touching the toggle. It is not
         // yet the moment to read it: while the state is unknown the button
         // says 'Motion …', and while the machine is faulted (a booting one
-        // is, for about 100 ms of board time) it says 'Disable motion'.
+        // is, for ~100 ms of board time from its first answer (~130 ms after
+        // the boot line, as board-route.sh measures it)) it says 'Disable motion'.
         // enableMotion waits past both for 'Enable motion' or motion on.
         await page.getByText(/Motion: (enabled|disabled)/).waitFor({ timeout: DEVICE_WAIT_MS });
         // State poll should report motion enabled (badge text flips).
@@ -2840,7 +2841,7 @@ const scenarios = [
   },
   {
     id: 'FW10',
-    name: 'Firmware: the board choice picks which build of the recommended release Install recommended flashes',
+    name: 'Firmware: the board choice picks which build of the recommended release Install recommended flashes; only P2Eval reconnects after',
     async run() {
       const browser = await chromium.launch({ channel: 'chrome', headless: true });
       try {
@@ -2885,6 +2886,11 @@ const scenarios = [
           });
         });
 
+        // The main connection holds the port being flashed, as on a machine
+        // whose production build talks on J1.
+        await page.goto(`${APP_URL_HOST}#/connect`);
+        await press(page.getByTestId('connect-device'));
+        await page.locator('.dot.connected').waitFor({ timeout: 10_000 });
         await page.goto(`${APP_URL_HOST}#/firmware`);
         await page.getByTestId('firmware-source').filter({ hasText: /P2Eval production build/ }).waitFor();
         assert(await page.getByTestId('board-P2Eval').isChecked(), 'P2Eval is not the default board');
@@ -2897,6 +2903,18 @@ const scenarios = [
         await install.click();
         await page.getByTestId('flash-status').filter({ hasText: /Wrote .* bytes to flash/ })
           .waitFor({ timeout: 30_000 });
+        const opensAfterEdge = await page.evaluate(() => window.__bootRom.opens);
+        // Past the reconnect's settle delay (RECONNECT_SETTLE_MS, 1.5 s).
+        await page.waitForTimeout(3000);
+        assert(
+          (await page.evaluate(() => window.__bootRom.opens)) === opensAfterEdge,
+          'the app reopened the flash port after a MaDEdge flash, which answers only on the Pi link',
+        );
+        assert((await page.locator('.dot.connected').count()) === 0, 'still connected after a MaDEdge flash');
+        assert(
+          /connect over that link/.test((await page.getByTestId('flash-status').textContent()) ?? ''),
+          'the done message does not send the operator to the Pi link',
+        );
 
         assert(
           JSON.stringify(fetched) === JSON.stringify(['MaD-Firmware-9.9-MaDEdge.bin']),
@@ -2910,6 +2928,23 @@ const scenarios = [
         assert(
           JSON.stringify(rom.payload) === JSON.stringify([255, 254, 253, 252]),
           `flashed payload starts ${JSON.stringify(rom.payload)}, not the MaDEdge image`,
+        );
+
+        // A P2Eval flash over the held port still hands the connection back.
+        await page.goto(`${APP_URL_HOST}#/connect`);
+        await press(page.getByTestId('connect-device'));
+        await page.locator('.dot.connected').waitFor({ timeout: 10_000 });
+        await page.goto(`${APP_URL_HOST}#/firmware`);
+        await page.getByTestId('board-P2Eval').check();
+        await page.getByTestId('firmware-source').filter({ hasText: /P2Eval production build/ }).waitFor();
+        await page.getByTestId('flash-firmware').click();
+        await page.getByTestId('flash-status').filter({ hasText: /Wrote .* bytes to flash/ })
+          .waitFor({ timeout: 30_000 });
+        const opensAfterEval = await page.evaluate(() => window.__bootRom.opens);
+        await page.locator('.dot.connected').waitFor({ timeout: 10_000 });
+        assert(
+          (await page.evaluate(() => window.__bootRom.opens)) === opensAfterEval + 1,
+          'a P2Eval flash did not reconnect to the flash port',
         );
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
       } finally { await browser.close(); }
@@ -3461,7 +3496,7 @@ const scenarios = [
   },
   {
     id: 'COMPAT-update-loop',
-    name: 'Firmware compat (fake board): too-old banner → Install recommended firmware → checksum checked → flashed → reconnected → ok',
+    name: 'Firmware compat (fake board): too-old banner → local file chosen → Install recommended firmware → checksum checked → flashed → reconnected → ok',
     async run() {
       const { protocol } = protocolFacts();
       const IMAGE = Buffer.from(Array.from({ length: 3000 }, (_, i) => (i * 13 + 5) & 0xff));
@@ -3511,12 +3546,33 @@ const scenarios = [
         const install = page.getByTestId('install-recommended');
         await install.filter({ hasText: 'Install recommended firmware (0.15)' }).waitFor({ timeout: DEVICE_WAIT_MS });
 
+        // A local file is chosen first: Install recommended must still flash the
+        // release, name it in the prompt, and drop the file choice.
+        const prompts = [];
+        page.on('dialog', (d) => prompts.push(d.message()));
+        const LOCAL = Buffer.from(IMAGE.map((b) => b ^ 0x5a));
+        await page.getByTestId('firmware-file').setInputFiles({
+          name: 'local-program.bin',
+          mimeType: 'application/octet-stream',
+          buffer: LOCAL,
+        });
+        await page.getByTestId('choose-local-file').filter({ hasText: 'Choose another file' })
+          .waitFor({ timeout: DEVICE_WAIT_MS });
+
         // A corrupted image is refused before the board is touched.
         await press(install);
         await page.getByTestId('flash-status').filter({ hasText: /does not match its release checksum/ })
           .waitFor({ timeout: 30_000 });
         assert((await page.evaluate(() => window.__bootRom.reset)) === 0, 'the board was reset for an image that failed its checksum');
         assert((await page.locator('.dot.connected').count()) === 1, 'the session was dropped for an image that failed its checksum');
+        assert(
+          prompts.length === 1
+            && prompts[0].includes('MaD-Firmware-0.15-P2Eval.bin (firmware-v0.15)')
+            && !prompts[0].includes('local-program.bin'),
+          `the flash prompt does not name the recommended release: ${JSON.stringify(prompts)}`,
+        );
+        await page.getByTestId('choose-local-file').filter({ hasText: 'Use a local file' })
+          .waitFor({ timeout: DEVICE_WAIT_MS });
 
         // The right image: flashed, the board boots it, the app reconnects and asks again.
         served = Buffer.from(IMAGE);
@@ -3529,6 +3585,10 @@ const scenarios = [
         }));
         assert(rom.reset >= 1 && rom.finished, `the board was not flashed (${JSON.stringify({ reset: rom.reset, finished: rom.finished })})`);
         assert(Buffer.from(rom.payload).equals(IMAGE), 'the flashed payload is not the recommended release image');
+        assert(
+          prompts.length === 2 && prompts[1].includes('MaD-Firmware-0.15-P2Eval.bin (firmware-v0.15)'),
+          `the second flash prompt does not name the recommended release: ${JSON.stringify(prompts)}`,
+        );
         assert(
           fetched.every((f) => f === 'manifest.json' || f === 'MaD-Firmware-0.15-P2Eval.bin'),
           `the app fetched ${JSON.stringify(fetched)}; the release for another protocol must not be downloaded`,
