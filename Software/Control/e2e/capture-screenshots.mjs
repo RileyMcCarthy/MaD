@@ -31,7 +31,7 @@
 import { mkdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
-import { installFakeSerial, installOpfsDataDir, APP_URL, BRIDGE_URL, OPFS_DIR, chromium } from './fixtures.mjs';
+import { installFakeSerial, installOpfsDataDir, enableMotion, APP_URL, BRIDGE_URL, OPFS_DIR, chromium } from './fixtures.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const OUT = process.env.SHOT_DIR || resolve(HERE, '../../../docs/assets/screenshots');
@@ -225,9 +225,10 @@ async function main() {
   await safe('live', async () => {
     await page.goto(`${APP_URL}#/live`);
     await page.locator('[data-testid="live-combined-chart"] canvas').first().waitFor({ timeout: 12000 });
-    const enable = page.getByRole('button', { name: 'Enable motion' });
-    if (await enable.count()) await enable.click().catch(() => {});
-    await page.getByText('Motion: enabled').waitFor({ timeout: 8000 }).catch(() => {});
+    // A just-booted board can still be reporting its boot fault when the app
+    // first reads its state, and Live offers a faulted machine only "Disable
+    // motion": enableMotion waits for "Enable motion" (or motion already on).
+    await safe('enable-motion', () => enableMotion(page));
     await safe('jog', async () => {
       await page.locator('label.field', { hasText: 'Speed (mm/s)' }).locator('input').fill('20');
       await page.locator('label.field', { hasText: 'Jog (mm)' }).locator('input').fill('10');
