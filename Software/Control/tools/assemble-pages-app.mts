@@ -2,7 +2,7 @@
  * Assemble the public site's /app/ folder from the released MaD Control builds.
  *
  *   site/app/v<version>/      each release, unpacked from its mad-control-v<version>.zip
- *   site/app/versions.json    { latest, versions: [{ version, publishedAt }] }, newest first
+ *   site/app/versions.json    { latest, versions: [{ version, publishedAt, protocolVersion? }] }, newest first
  *   site/app/index.html       redirects to the latest release, keeping the route
  *   site/app/firmware/        the firmware releases, shared by every version: the newest
  *                             per protocol version (manifest.json) and the newest of all
@@ -20,7 +20,7 @@
  * deploy never replaces the site with an empty app folder.
  */
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { describeSite, fetchFirmwareSite, type FirmwareSite } from './firmwareRelease';
@@ -86,6 +86,21 @@ export function releasesFromDir(dir: string): Release[] {
       publishedAt: statSync(join(dir, m[0])).mtime.toISOString(),
       zip: join(dir, m[0]),
     }));
+}
+
+/**
+ * The protocol a release speaks, from the app-info.json its build wrote; null
+ * for a release built before the file existed (0.4.3 and older).
+ */
+export function readProtocolVersion(dir: string): number | null {
+  const file = join(dir, 'app-info.json');
+  if (!existsSync(file)) return null;
+  try {
+    const info = JSON.parse(readFileSync(file, 'utf8')) as { protocolVersion?: unknown };
+    return Number.isInteger(info.protocolVersion) ? (info.protocolVersion as number) : null;
+  } catch {
+    return null;
+  }
 }
 
 /** The /app/ entry page: straight on to the latest release, same route and query. */
@@ -156,18 +171,18 @@ export async function assemble(opts: AssembleOptions): Promise<void> {
 
     rmSync(out, { recursive: true, force: true });
     mkdirSync(out, { recursive: true });
+    const versions: { version: string; publishedAt: string | null; protocolVersion?: number }[] = [];
     for (const r of releases) {
       const dir = join(out, `v${r.version}`);
       mkdirSync(dir, { recursive: true });
       execFileSync('unzip', ['-q', r.zip, '-d', dir]);
-      log(`[assemble] v${r.version} ← ${r.zip}`);
+      const protocolVersion = readProtocolVersion(dir);
+      versions.push({ version: r.version, publishedAt: r.publishedAt, ...(protocolVersion === null ? {} : { protocolVersion }) });
+      log(`[assemble] v${r.version} ← ${r.zip}${protocolVersion === null ? '' : ` (protocol ${protocolVersion})`}`);
     }
 
     const latest = releases[0].version;
-    writeFileSync(
-      join(out, 'versions.json'),
-      JSON.stringify({ latest, versions: releases.map((r) => ({ version: r.version, publishedAt: r.publishedAt })) }, null, 2),
-    );
+    writeFileSync(join(out, 'versions.json'), JSON.stringify({ latest, versions }, null, 2));
     writeFileSync(join(out, 'index.html'), redirectPage(latest));
     writeFileSync(join(out, 'sw.js'), RETIRE_SW);
 

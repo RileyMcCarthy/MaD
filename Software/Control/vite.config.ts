@@ -5,6 +5,7 @@ import istanbul from 'vite-plugin-istanbul';
 import { fileURLToPath, URL } from 'node:url';
 import { execSync } from 'node:child_process';
 import { createRequire } from 'node:module';
+import { readFileSync } from 'node:fs';
 import { firmwareRelease } from './tools/firmwareRelease';
 
 const { version } = createRequire(import.meta.url)('./package.json') as { version: string };
@@ -20,6 +21,14 @@ function gitSha(): string {
   } catch {
     return 'unknown';
   }
+}
+
+// The protocol this build speaks, from the schema the codec is generated from.
+function protocolVersion(): number {
+  const schema = readFileSync(new URL('../../Protocol/MaDProtocol.yaml', import.meta.url), 'utf8');
+  const m = /^protocol_version:\s*(\d+)/m.exec(schema);
+  if (!m) throw new Error('Protocol/MaDProtocol.yaml has no protocol_version');
+  return Number(m[1]);
 }
 
 // Frontend-only MaD control app. No backend: talks to the Propeller 2 over
@@ -48,6 +57,20 @@ export default defineConfig({
         ]
       : []),
     react(),
+    // app-info.json beside index.html: which protocol this release speaks, read
+    // by the Pages assembly into versions.json so a release can find the one
+    // that speaks a newer firmware's protocol.
+    {
+      name: 'mad-app-info',
+      apply: 'build',
+      generateBundle() {
+        this.emitFile({
+          type: 'asset',
+          fileName: 'app-info.json',
+          source: JSON.stringify({ version, protocolVersion: protocolVersion() }),
+        });
+      },
+    },
     // The latest firmware release, served from this origin so the Firmware
     // screen can offer it by default (GitHub's asset host has no CORS).
     firmwareRelease(),

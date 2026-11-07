@@ -1,6 +1,6 @@
 import { describe, expect } from 'vitest';
 import { behaviour } from '@vibes/behaviour';
-import { fetchHostedVersions, hostedVersion, hostingRoot, versionUrl } from './hosting';
+import { appForProtocol, fetchHostedVersions, hostedVersion, hostingRoot, versionUrl } from './hosting';
 
 describe('hosting paths', () => {
   behaviour(
@@ -70,6 +70,50 @@ describe('fetchHostedVersions', () => {
       expect(await fetchHostedVersions('/')).toBeNull();
       expect(await fetchHostedVersions('/MaD/app/v0.4.0/', async () => new Response('', { status: 404 }))).toBeNull();
       expect(await fetchHostedVersions('/MaD/app/v0.4.0/', async () => new Response('{"latest":1}'))).toBeNull();
+    },
+  );
+});
+
+describe('appForProtocol', () => {
+  const list = {
+    latest: '0.6.0',
+    versions: [
+      { version: '0.6.0', publishedAt: null, protocolVersion: 4 },
+      { version: '0.5.1', publishedAt: null, protocolVersion: 3 },
+      { version: '0.5.0', publishedAt: null, protocolVersion: 3 },
+      { version: '0.4.3', publishedAt: null },
+    ],
+  };
+
+  behaviour(
+    {
+      id: 'hosting.app-for-protocol',
+      covers: 'src/hosting.ts#appForProtocol',
+      given: 'a release list whose newest release speaks protocol 4 and two older ones speak protocol 3',
+      expect: {
+        'newest-match': 'the release offered for protocol 3 is 0.5.1, the newest of the two that speak it',
+      },
+    },
+    () => {
+      expect(appForProtocol(list, 3)).toBe('0.5.1');
+    },
+  );
+
+  behaviour(
+    {
+      id: 'hosting.app-for-protocol-none',
+      covers: 'src/hosting.ts#appForProtocol',
+      given: 'a firmware protocol that no release on the list is recorded as speaking',
+      expect: {
+        'none-offered': 'no release is offered, even with releases built before protocols were recorded on the list',
+      },
+      why: {
+        'none-offered': 'a release that does not record its protocol cannot be shown to speak the firmware\'s',
+      },
+    },
+    () => {
+      expect(appForProtocol(list, 5)).toBeNull();
+      expect(appForProtocol(list, 2)).toBeNull();
     },
   );
 });

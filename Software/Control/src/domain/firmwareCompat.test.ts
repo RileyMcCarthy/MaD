@@ -190,7 +190,8 @@ describe('describeFirmwareCompat', () => {
           "a too-old firmware's message names its protocol and the one the app needs, and says motion is disabled until it is updated",
         'unreported-names-app-protocol':
           'a firmware that reports no protocol gets a message naming the protocol the app needs',
-        'app-too-old-says-open-latest': 'a too-old app says to open the latest MaD Control',
+        'app-too-old-names-protocols':
+          "a too-old app's message names the firmware's protocol and the app's, and says motion is disabled",
         'minimum-names-releases': 'a recommended update names the installed release and the minimum',
       },
     },
@@ -202,9 +203,10 @@ describe('describeFirmwareCompat', () => {
       expect(describeFirmwareCompat({ kind: 'firmwareTooOld', deviceProtocol: null, appProtocol: 4 })).toContain(
         'needs protocol 4',
       );
-      expect(describeFirmwareCompat({ kind: 'appTooOld', deviceProtocol: 5, appProtocol: 4 })).toContain(
-        'open the latest MaD Control',
-      );
+      const newer = describeFirmwareCompat({ kind: 'appTooOld', deviceProtocol: 5, appProtocol: 4 });
+      expect(newer).toContain('protocol 5');
+      expect(newer).toContain('speaks 4');
+      expect(newer).toContain('Motion is disabled');
       const min = describeFirmwareCompat({ kind: 'belowMinFirmware', firmwareVersion: '0.14', minFirmware: '0.15' });
       expect(min).toContain('0.14');
       expect(min).toContain('0.15');

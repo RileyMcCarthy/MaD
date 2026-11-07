@@ -110,10 +110,10 @@ afterEach(() => {
 });
 
 /** Writes one release build, as `release-app` attaches it, into ZIP_DIR. */
-function release(version: string): void {
+function release(version: string, extra: Record<string, string> = {}): void {
   writeFileSync(
     join(zipDir, `mad-control-v${version}.zip`),
-    zipOf({ 'index.html': `<p>app ${version}</p>`, 'assets/app.js': `console.log(${JSON.stringify(version)})` }),
+    zipOf({ 'index.html': `<p>app ${version}</p>`, 'assets/app.js': `console.log(${JSON.stringify(version)})`, ...extra }),
   );
 }
 
@@ -149,6 +149,34 @@ describe('assemble-pages-app', () => {
       expect(JSON.parse(readFileSync(join(out, 'firmware/manifest.json'), 'utf8'))).toEqual(PER_PROTOCOL);
       expect([...readFileSync(join(out, 'firmware/MaD-Firmware-0.14-release.bin'))]).toEqual([1, 2, 3, 4]);
       expect(readFileSync(join(out, 'sw.js'), 'utf8')).toMatch(/registration\.unregister\(\)/);
+    },
+  );
+
+  behaviour(
+    {
+      id: 'pages-assemble.versions-carry-protocol',
+      covers: 'tools/assemble-pages-app.mts#assemble',
+      given: 'a released build that records the protocol it speaks, beside one built before builds recorded it',
+      expect: {
+        'protocol-listed': 'the published version list gives the protocol of the build that records one',
+        'unknown-left-out': 'the older build is listed with no protocol',
+      },
+      why: {
+        'protocol-listed': 'an app facing newer firmware looks up the release that speaks its protocol in this list',
+      },
+    },
+    async () => {
+      release('0.4.3');
+      release('0.5.0', { 'app-info.json': JSON.stringify({ version: '0.5.0', protocolVersion: 3 }) });
+      await run();
+      const versions = JSON.parse(readFileSync(join(out, 'versions.json'), 'utf8')) as {
+        versions: { version: string; protocolVersion?: number }[];
+      };
+      expect(versions.versions.map((v) => [v.version, v.protocolVersion])).toEqual([
+        ['0.5.0', 3],
+        ['0.4.3', undefined],
+      ]);
+      expect('protocolVersion' in versions.versions[1]).toBe(false);
     },
   );
 

@@ -123,7 +123,7 @@ export function describeFirmwareCompat(compat: FirmwareCompat): string {
         ? `The machine's firmware is too old for this version of MaD Control (it does not report a protocol; this app needs protocol ${compat.appProtocol}). Motion is disabled until the firmware is updated.`
         : `The machine's firmware is too old for this version of MaD Control (protocol ${compat.deviceProtocol}; this app needs ${compat.appProtocol}). Motion is disabled until the firmware is updated.`;
     case 'appTooOld':
-      return `The machine's firmware is newer than this version of MaD Control (protocol ${compat.deviceProtocol}; this app speaks ${compat.appProtocol}). Motion is disabled; open the latest MaD Control.`;
+      return `The machine's firmware is newer than this version of MaD Control (protocol ${compat.deviceProtocol}; this app speaks ${compat.appProtocol}). Motion is disabled.`;
     case 'belowMinFirmware':
       return `A firmware update is recommended: ${compat.firmwareVersion} is older than ${compat.minFirmware}, the oldest this version of MaD Control recommends.`;
   }

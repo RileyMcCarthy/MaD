@@ -4,7 +4,7 @@
  * The public site serves every MaD Control release side by side:
  *   /<repo>/app/v0.4.0/   one release, frozen as it shipped
  *   /<repo>/app/          redirects to the latest release, keeping the route
- *   /<repo>/app/versions.json   the releases on offer, newest first
+ *   /<repo>/app/versions.json   the releases on offer, newest first, with the protocol each speaks
  *   /<repo>/app/firmware/       the latest firmware release, shared by all
  * (assembled by tools/assemble-pages-app.mts). A dev server or any other
  * unversioned build has none of this: its base is the hosting root itself.
@@ -28,7 +28,8 @@ export function versionUrl(baseUrl: string, version: string, hash = ''): string 
 
 export interface HostedVersions {
   latest: string;
-  versions: { version: string; publishedAt: string | null }[];
+  /** Newest first. `protocolVersion` is missing for releases built before it was recorded. */
+  versions: { version: string; publishedAt: string | null; protocolVersion?: number }[];
 }
 
 function isHostedVersions(value: unknown): value is HostedVersions {
@@ -57,4 +58,12 @@ export async function fetchHostedVersions(
   } catch {
     return null;
   }
+}
+
+/**
+ * The newest release that speaks `protocol`, or null when none on the list is
+ * known to: a release built before the protocol was recorded never matches.
+ */
+export function appForProtocol(list: HostedVersions, protocol: number): string | null {
+  return list.versions.find((v) => v.protocolVersion === protocol)?.version ?? null;
 }
