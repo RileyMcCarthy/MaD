@@ -83,7 +83,10 @@ fn lock_clock() -> MutexGuard<'static, ()> {
 }
 
 fn image_path() -> PathBuf {
-    let p = std::env::var_os("P2_IMAGE")
+    // MAD_P2_IMAGE as the other image tests read it (CI keeps a copy out of
+    // .pio, which the firmware suite's build can clear); P2_IMAGE still works.
+    let p = std::env::var_os("MAD_P2_IMAGE")
+        .or_else(|| std::env::var_os("P2_IMAGE"))
         .filter(|p| !p.is_empty())
         .map_or_else(
             || {
