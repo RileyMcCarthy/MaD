@@ -5,6 +5,7 @@ import {
   blocksMotion,
   checkFirmwareCompat,
   compareFirmwareVersions,
+  describeAppForFirmware,
   describeFirmwareCompat,
   MIN_FIRMWARE,
   parseFirmwareVersion,
@@ -190,7 +191,10 @@ describe('describeFirmwareCompat', () => {
           "a too-old firmware's message names its protocol and the one the app needs, and says motion is disabled until it is updated",
         'unreported-names-app-protocol':
           'a firmware that reports no protocol gets a message naming the protocol the app needs',
-        'app-too-old-says-open-latest': 'a too-old app says to open the latest MaD Control',
+        'app-too-old-names-protocols':
+          "a too-old app's message names the firmware's protocol and the app's, and says motion is disabled",
+        'app-too-old-says-open-latest':
+          "a too-old app says to open a MaD Control that speaks the firmware's protocol, or to install firmware for this app",
         'minimum-names-releases': 'a recommended update names the installed release and the minimum',
       },
     },
@@ -202,13 +206,50 @@ describe('describeFirmwareCompat', () => {
       expect(describeFirmwareCompat({ kind: 'firmwareTooOld', deviceProtocol: null, appProtocol: 4 })).toContain(
         'needs protocol 4',
       );
-      expect(describeFirmwareCompat({ kind: 'appTooOld', deviceProtocol: 5, appProtocol: 4 })).toContain(
-        'open the latest MaD Control',
-      );
+      const newer = describeFirmwareCompat({ kind: 'appTooOld', deviceProtocol: 5, appProtocol: 4 });
+      expect(newer).toContain('protocol 5');
+      expect(newer).toContain('speaks 4');
+      expect(newer).toContain('Motion is disabled');
+      expect(newer).toContain('open a MaD Control that speaks protocol 5, or install firmware for this app');
       const min = describeFirmwareCompat({ kind: 'belowMinFirmware', firmwareVersion: '0.14', minFirmware: '0.15' });
       expect(min).toContain('0.14');
       expect(min).toContain('0.15');
       expect(describeFirmwareCompat({ kind: 'ok' })).toContain('matches');
+    },
+  );
+});
+
+describe('describeAppForFirmware', () => {
+  behaviour(
+    {
+      id: 'firmware-compat.app-for-firmware-found',
+      covers: 'src/domain/firmwareCompat.ts#describeAppForFirmware',
+      given: "firmware a protocol ahead of this app, with a released MaD Control that speaks the firmware's protocol",
+      expect: { 'release-named': 'the operator is told the version of that release and the protocol it speaks' },
+    },
+    () => {
+      expect(describeAppForFirmware(5, '0.6.1')).toBe('MaD Control 0.6.1 speaks protocol 5.');
+    },
+  );
+
+  behaviour(
+    {
+      id: 'firmware-compat.app-for-firmware-none',
+      covers: 'src/domain/firmwareCompat.ts#describeAppForFirmware',
+      given: "firmware a protocol ahead of this app, with no released MaD Control to offer for the firmware's protocol",
+      expect: {
+        'development-build':
+          'the operator is told that no released MaD Control speaks that protocol, so the firmware is probably a development build',
+      },
+      why: {
+        'development-build':
+          'every firmware protocol that is released gets a MaD Control release that speaks it, straight after the firmware',
+      },
+    },
+    () => {
+      const none = describeAppForFirmware(5, null);
+      expect(none).toContain('No released MaD Control speaks protocol 5');
+      expect(none).toContain('development firmware build');
     },
   );
 });

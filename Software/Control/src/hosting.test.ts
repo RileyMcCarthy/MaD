@@ -1,6 +1,6 @@
 import { describe, expect } from 'vitest';
 import { behaviour } from '@vibes/behaviour';
-import { fetchHostedVersions, hostedVersion, hostingRoot, versionUrl } from './hosting';
+import { appForProtocol, fetchHostedVersions, hostedVersion, hostingRoot, versionUrl } from './hosting';
 
 describe('hosting paths', () => {
   behaviour(
@@ -61,6 +61,30 @@ describe('fetchHostedVersions', () => {
 
   behaviour(
     {
+      id: 'hosting.versions-list-with-protocols',
+      covers: 'src/hosting.ts#fetchHostedVersions',
+      given: 'a shared list whose newer entries also record the protocol each release speaks',
+      expect: { 'list-read': 'the list is read whole, with every release on it' },
+      why: {
+        'list-read':
+          'releases up to 0.4.3 read this list with the same check, so the protocol recorded beside a version must leave it readable',
+      },
+    },
+    async () => {
+      const list = {
+        latest: '0.5.0',
+        versions: [
+          { version: '0.5.0', publishedAt: null, protocolVersion: 3 },
+          { version: '0.4.3', publishedAt: null },
+        ],
+      };
+      const got = await fetchHostedVersions('/MaD/app/v0.4.3/', async () => new Response(JSON.stringify(list)));
+      expect(got).toEqual(list);
+    },
+  );
+
+  behaviour(
+    {
       id: 'hosting.versions-absent',
       covers: 'src/hosting.ts#fetchHostedVersions',
       given: 'a development build, and a release folder whose shared list is missing or malformed',
@@ -70,6 +94,50 @@ describe('fetchHostedVersions', () => {
       expect(await fetchHostedVersions('/')).toBeNull();
       expect(await fetchHostedVersions('/MaD/app/v0.4.0/', async () => new Response('', { status: 404 }))).toBeNull();
       expect(await fetchHostedVersions('/MaD/app/v0.4.0/', async () => new Response('{"latest":1}'))).toBeNull();
+    },
+  );
+});
+
+describe('appForProtocol', () => {
+  const list = {
+    latest: '0.6.0',
+    versions: [
+      { version: '0.6.0', publishedAt: null, protocolVersion: 4 },
+      { version: '0.5.1', publishedAt: null, protocolVersion: 3 },
+      { version: '0.5.0', publishedAt: null, protocolVersion: 3 },
+      { version: '0.4.3', publishedAt: null },
+    ],
+  };
+
+  behaviour(
+    {
+      id: 'hosting.app-for-protocol',
+      covers: 'src/hosting.ts#appForProtocol',
+      given: 'a release list whose newest release speaks protocol 4 and two older ones speak protocol 3',
+      expect: {
+        'newest-match': 'the release offered for protocol 3 is 0.5.1, the newest of the two that speak it',
+      },
+    },
+    () => {
+      expect(appForProtocol(list, 3)).toBe('0.5.1');
+    },
+  );
+
+  behaviour(
+    {
+      id: 'hosting.app-for-protocol-none',
+      covers: 'src/hosting.ts#appForProtocol',
+      given: 'a firmware protocol that no release on the list is recorded as speaking',
+      expect: {
+        'none-offered': 'no release is offered, even with releases built before protocols were recorded on the list',
+      },
+      why: {
+        'none-offered': 'a release that does not record its protocol cannot be shown to speak the firmware\'s',
+      },
+    },
+    () => {
+      expect(appForProtocol(list, 5)).toBeNull();
+      expect(appForProtocol(list, 2)).toBeNull();
     },
   );
 });

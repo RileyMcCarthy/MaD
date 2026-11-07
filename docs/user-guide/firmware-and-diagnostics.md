@@ -57,7 +57,11 @@ says why on every screen.
 - **Firmware too old**: the firmware speaks an older protocol, or is from
   before the app could ask. Click **Update firmware**, then **Install
   recommended firmware** on the Firmware screen.
-- **Firmware newer than this app**: click **Open the latest MaD Control**.
+- **Firmware newer than this app**: when a released MaD Control speaks the
+  firmware's protocol, the banner names it: click **Open MaD Control X.Y.Z**
+  to open that release on the same screen. When none does, the firmware is
+  probably a development build: click **Install firmware for this app**, then
+  **Install recommended firmware** on the Firmware screen.
 - **Firmware update recommended**: the protocols match, but this app version
   recommends a newer firmware release for a fix. The machine still moves;
   update when convenient.
