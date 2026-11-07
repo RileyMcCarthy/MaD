@@ -22,6 +22,13 @@ export interface FlashWithSessionDeps<P, R> {
   closePort: (port: P) => Promise<boolean>;
   /** Reconnect the main session to the given port. */
   connect: (port: P) => Promise<void>;
+  /**
+   * Whether the image being written answers on the port it is flashed
+   * through; defaults to true. False for the MaDEdge build, whose protocol
+   * moves to the Edge carrier's Pi link: a reconnect to the flash port after
+   * it is written could never be answered.
+   */
+  answersOnFlashPort?: boolean;
   /** Wait before reconnecting (the firmware's boot). */
   wait: (ms: number) => Promise<void>;
   /** Where `port-left-open` goes. */
@@ -42,13 +49,18 @@ export interface FlashWithSessionDeps<P, R> {
  * main connection running. The flash port is always
  * closed afterwards, whatever happened. Once the session has handed its port
  * over, it is always reconnected to that same port (no chooser), even after a
- * failed flash, so the user is never left disconnected by a flash.
+ * failed flash, so the user is never left disconnected by a flash. The one
+ * exception is a successful flash of an image that does not answer on that
+ * port (`answersOnFlashPort: false`): the session is then left disconnected,
+ * for the operator to connect over the link the new image talks on.
  */
 export async function flashWithSession<P, R>(deps: FlashWithSessionDeps<P, R>): Promise<void> {
   const sharesPort = deps.heldPort !== null && deps.heldPort === deps.target;
   // Set once the session has handed its port over; it is then always given
   // back afterwards, whether the flash worked or not.
   let tookSessionPort = false;
+  // Set once the new image is on the board.
+  let flashed = false;
   try {
     // On a shared port the worker holds the streams (also while connecting or
     // after a lost link), and the chip reboots, so that session has to go.
@@ -68,12 +80,15 @@ export async function flashWithSession<P, R>(deps: FlashWithSessionDeps<P, R>): 
         });
       }
     }
+    flashed = true;
     deps.onDone(result);
   } catch (err) {
     deps.onError(err);
   }
 
-  if (tookSessionPort) {
+  // A failed flash leaves the board on the image it had, so it still comes back.
+  const answers = !flashed || (deps.answersOnFlashPort ?? true);
+  if (tookSessionPort && answers) {
     await deps.wait(RECONNECT_SETTLE_MS);
     await deps.connect(deps.target);
   }
