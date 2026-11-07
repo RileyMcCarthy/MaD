@@ -1,6 +1,6 @@
 import { describe, expect } from 'vitest';
 import { behaviour } from '@vibes/behaviour';
-import { ByteRing, BYTE_RING_CAPACITY, CHUNK_META_CAPACITY } from './byteRing';
+import { ByteRing, BYTE_RING_CAPACITY, CHUNK_META_CAPACITY, failedPayload } from './byteRing';
 
 /** Decode a snapshot chunk's base64 payload back to bytes. */
 function decode(b64: string): Uint8Array {
@@ -327,12 +327,12 @@ describe('ByteRing — resource ceiling', () => {
       given: 'a byte capture created with default capacity',
       expect: {
         'documented-footprint':
-          'its memory footprint is the documented 64 KiB payload plus 4096 chunk records',
+          'its memory footprint is the documented 1 MiB payload plus 49152 chunk records',
       },
     },
     () => {
       const ring = new ByteRing();
-      // 64 KiB payload + 4096 slots × (8 abs + 4 len + 8 at + 1 dir) bytes.
+      // 1 MiB payload + 49152 slots × (8 abs + 4 len + 8 at + 1 dir) bytes.
       const expected = BYTE_RING_CAPACITY + CHUNK_META_CAPACITY * (8 + 4 + 8 + 1);
       expect(ring.footprintBytes()).toBe(expected);
     },
@@ -517,6 +517,29 @@ describe('ByteRing.tailHex', () => {
       const ring = new ByteRing(16, 4);
       ring.push('rx', Uint8Array.from([0x00, 0x0f, 0x10]));
       expect(ring.tailHex(3)).toBe('00 0f 10');
+    },
+  );
+});
+
+describe('failedPayload', () => {
+  behaviour(
+    {
+      id: 'diag.failed-command-bytes-kept',
+      covers: 'src/diagnostics/byteRing.ts#failedPayload',
+      given: 'a command the device refused, carrying three bytes',
+      expect: {
+        'length-recorded': 'the record states how many bytes the command carried',
+        'bytes-recorded': 'the record lists every byte of the command as hex, first byte first',
+      },
+      why: {
+        'bytes-recorded':
+          'the raw serial capture covers only the last few minutes of a session, and a report can be filed any time after the failure',
+      },
+    },
+    () => {
+      const out = failedPayload(Uint8Array.of(0x00, 0x7b, 0xff));
+      expect(out.bytes).toBe(3);
+      expect(out.payloadHex).toBe('00 7b ff');
     },
   );
 });

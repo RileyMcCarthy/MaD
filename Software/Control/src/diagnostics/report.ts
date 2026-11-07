@@ -172,6 +172,21 @@ function entryStack(e: LogEntry): string | undefined {
   return found?.trim();
 }
 
+/** Bytes of a failed command shown in the issue; the gist keeps the rest. */
+export const ISSUE_PAYLOAD_BYTES = 64;
+
+/** The bytes a failed command carried, indented under its error, or undefined. */
+function payloadLine(e: LogEntry): string | undefined {
+  const hex = e.data?.payloadHex;
+  if (typeof hex !== 'string' || hex === '') return undefined;
+  // The entry's own count wins: a long dump may have been cut by the sanitizer.
+  const kept = hex.split(' ').filter((b) => /^[0-9a-f]{2}$/.test(b));
+  const total = typeof e.data?.bytes === 'number' ? e.data.bytes : kept.length;
+  const shown = kept.slice(0, ISSUE_PAYLOAD_BYTES).join(' ');
+  const rest = total > ISSUE_PAYLOAD_BYTES ? ` … +${total - ISSUE_PAYLOAD_BYTES} B` : '';
+  return `    payload (${total} B): ${shown}${rest}`;
+}
+
 /**
  * The last few error-level entries — usually the actual story.
  *
@@ -186,7 +201,9 @@ function recentErrors(bundle: DiagnosticsBundle, limit = 5, stackLines = 0): str
   return errors
     .map((e) => {
       const at = new Date(e.t).toISOString().slice(11, 23);
-      const head = `${at} ${e.cat}/${e.tag} ${firstLine(e.msg)}`.trim();
+      const line = `${at} ${e.cat}/${e.tag} ${firstLine(e.msg)}`.trim();
+      const payload = payloadLine(e);
+      const head = payload === undefined ? line : `${line}\n${payload}`;
       const stack = stackLines > 0 ? entryStack(e) : undefined;
       if (stack === undefined || shown.has(stack)) return head;
       shown.add(stack);

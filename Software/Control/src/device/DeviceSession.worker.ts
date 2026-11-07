@@ -17,7 +17,7 @@
 import init, { WasmClient } from '@/wasm/protoemb_runtime.js';
 import wasmUrl from '@/wasm/protoemb_runtime_bg.wasm?url';
 import { logger, setLogSink, flushLog, nowMs, type LogBatchSink } from '@/diagnostics/log';
-import { byteRing } from '@/diagnostics/byteRing';
+import { byteRing, failedPayload } from '@/diagnostics/byteRing';
 import { commandName, isPeriodicCommand, requestOf, summariseGcode, type CommandDir } from './commandNames';
 import {
   decodeSample,
@@ -1480,10 +1480,10 @@ export class DeviceSession {
       // Round-trip time is the cheapest early warning there is: a link that is
       // about to fail usually gets slow before it stops answering.
       logProto.debug('rtt', commandName(command, 'write'), {
-      ...this.opTag(),
         ...this.opTag(),
         durMs: Math.round(nowMs() - started),
         success: e.success,
+        ...(e.success ? {} : failedPayload(data)),
       });
       return e.success;
     } catch (err) {
@@ -1491,6 +1491,7 @@ export class DeviceSession {
         ...this.opTag(),
         durMs: Math.round(nowMs() - started),
         reason: err instanceof Error ? err.message : String(err),
+        ...failedPayload(data),
       });
       return false;
     }
@@ -1507,6 +1508,7 @@ export class DeviceSession {
       ...this.opTag(),
       durMs: Math.round(nowMs() - started),
       success: e.success,
+      ...(e.success ? {} : failedPayload(data)),
     });
     if (!e.success) throw new Error(`device NACKed command ${command}`);
   }
@@ -1523,7 +1525,12 @@ export class DeviceSession {
         attempt += 1;
         const reason = err instanceof Error ? err.message : String(err);
         if (!shouldRetryUpload(attempt, maxRetries)) {
-          logProto.error('upload-failed', commandName(command, 'write'), { attempt, reason, ...this.opTag() });
+          logProto.error('upload-failed', commandName(command, 'write'), {
+            attempt,
+            reason,
+            ...this.opTag(),
+            ...failedPayload(data),
+          });
           throw err;
         }
         logProto.warn('upload-retry', commandName(command, 'write'), { attempt, maxRetries, reason, ...this.opTag() });
