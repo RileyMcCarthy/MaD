@@ -139,8 +139,29 @@ jobs:
         run: |
           npm run build:wasm
           npm run generate:proto
+      # The Behaviour ledger job reads this run instead of running the suite
+      # again: the binding writes what each test declares to $VIBES_BEHAVIOURS,
+      # and vitest.config.ts adds a JSON report at $VIBES_RESULTS beside its
+      # usual reporters.
       - name: Verify (typecheck + lint + tests + build)
-        run: npm run verify
+        id: verify
+        env:
+          VIBES_BEHAVIOURS: ${{ runner.temp }}/vibes/control/behaviours.jsonl
+          VIBES_RESULTS: ${{ runner.temp }}/vibes/control/results.out
+        run: |
+          mkdir -p "$RUNNER_TEMP/vibes/control"
+          npm run verify
+      # Uploaded when the tests ran, passing or not: a failing test is exactly
+      # the run the ledger must read test by test. Nothing is uploaded when
+      # verify stopped before vitest, and the ledger then has no verdict.
+      - name: Upload the control suite's run for the Behaviour ledger
+        if: ${{ !cancelled() && (steps.verify.outcome == 'success' || steps.verify.outcome == 'failure') }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: vibes-control
+          path: ${{ runner.temp }}/vibes/control/
+          if-no-files-found: warn
+          retention-days: 7
       # The unit tests cover the logging machinery; they cannot cover the
       # instrumentation call sites, and the worker half (protocol frames,
       # correlation ids, byte ring, batch transport) only runs with a device
@@ -835,9 +856,29 @@ jobs:
           python-version: '3.x'
       - name: Install PlatformIO Core (pinned for reproducibility)
         run: pip install "platformio==6.1.18"
+      # The Behaviour ledger job reads this run instead of running the suite
+      # again: the binding writes what each test declares to
+      # $VIBES_BEHAVIOURS, and pio's output carries the verdicts. pipefail
+      # keeps pio's exit status as the step's.
       - name: Run firmware Unity unit tests (native_test, ASan)
+        id: tests
         working-directory: Firmware/MaDCore
-        run: pio test -e native_test
+        env:
+          VIBES_BEHAVIOURS: ${{ runner.temp }}/vibes/firmware/behaviours.jsonl
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/vibes/firmware"
+          pio test -e native_test 2>&1 | tee "$RUNNER_TEMP/vibes/firmware/results.out"
+      # Uploaded when the tests ran, passing or not: a failing test is exactly
+      # the run the ledger must read test by test.
+      - name: Upload the firmware suite's run for the Behaviour ledger
+        if: ${{ !cancelled() && (steps.tests.outcome == 'success' || steps.tests.outcome == 'failure') }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: vibes-firmware
+          path: ${{ runner.temp }}/vibes/firmware/
+          if-no-files-found: warn
+          retention-days: 7
 
   # ── Phase 0 deterministic gates ───────────────────────────────────────────
   # BLOCKING jobs feed ci-gate. The clippy backlog is cleared, so `sil-rust`
@@ -1017,6 +1058,7 @@ jobs:
         working-directory: SIL
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Cargo test (blocking)
+        id: tests
         working-directory: SIL
         # The workspace is the MaD-side crates only (protocol, models,
         # p2core, p2iss, mad-catalog, mad-runner). The embsim
@@ -1026,10 +1068,32 @@ jobs:
         # MAD_REQUIRE_P2_IMAGE turns "the image is missing, so skip" into a
         # failure. A developer without a built image still gets skips; a CI job
         # that lost its image build goes red instead of silently reverting to
-        # asserting nothing about the firmware that ships.
+        # asserting nothing about the firmware that ships. The Behaviour ledger
+        # takes the sil suite's verdicts from this run, so it inherits that.
+        #
+        # The ledger job reads this run instead of running the suite again: the
+        # binding writes what each test declares to $VIBES_BEHAVIOURS, and
+        # libtest's output carries the verdicts. pipefail keeps cargo's exit
+        # status as the step's.
         env:
           MAD_REQUIRE_P2_IMAGE: '1'
-        run: cargo test --workspace --all-targets --locked
+          VIBES_BEHAVIOURS: ${{ runner.temp }}/vibes/sil/behaviours.jsonl
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/vibes/sil"
+          cargo test --workspace --all-targets --locked 2>&1 | tee "$RUNNER_TEMP/vibes/sil/results.out"
+      # Uploaded when the tests ran, passing or not: a failing test is exactly
+      # the run the ledger must read test by test. cargo stops at the first
+      # test binary that fails, and the ledger gives what it never reached no
+      # verdict rather than reading it as removed.
+      - name: Upload the sil suite's run for the Behaviour ledger
+        if: ${{ !cancelled() && (steps.tests.outcome == 'success' || steps.tests.outcome == 'failure') }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: vibes-sil
+          path: ${{ runner.temp }}/vibes/sil/
+          if-no-files-found: warn
+          retention-days: 7
 
   # BLOCKING. MISRA/cppcheck via `pio check`. Low severity is disabled in
   # platformio.ini (check_severity = medium, high) — style noise only. Medium and
@@ -1340,23 +1404,28 @@ jobs:
   # broke or was removed is reported, not failed on: the broken test already
   # fails its own suite's job, and a removal is usually the point of the PR.
   # The job goes red only when the ledger could not be built (exit 3: a suite
-  # declared nothing, or a picture could not be read).
+  # has no verdict, or a picture could not be read).
+  #
+  # It runs no suite. firmware-unit-tests, wasm-control-ci and sil-rust each
+  # upload what their binding declared and their runner's output as
+  # `vibes-<suite>`, and `vibes report --from` builds the ledger from those —
+  # so the sil verdicts carry sil-rust's MAD_REQUIRE_P2_IMAGE, and nothing
+  # here builds an image or installs a toolchain. A job the path filter
+  # skipped leaves no input: its suite's rows are carried from the base, and
+  # the report names it. A job that failed after its tests ran is read test by
+  # test, marked incomplete: a failing test stopped holding, the rest hold, and
+  # what the run never reached has no verdict (exit 3) — never removed. A job
+  # that left no run (cancelled, or failed before its tests) gets an empty
+  # input, and its whole suite has no verdict.
   #
   # fetch-depth: 0 is required — the default shallow clone cannot resolve the
   # base branch, and the ledger diff would then report every behaviour as new.
   vibes:
     name: Behaviour ledger
-    if: ${{ github.event_name == 'pull_request' }}
+    needs: [changes, firmware-unit-tests, wasm-control-ci, sil-rust]
+    if: ${{ always() && github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
-    # 25 held while the sil suite booted the firmware once (8-11 min a run on
-    # #267). With SIL/mad.toml's boot case and the card mount added it ran
-    # out at 25 with the sil suite 23.7 min in (run 39404042776), while
-    # sil-rust, the same tests in one cargo run, took 19 min. 45 then ran out
-    # too, with the serial-boot and package-receive boots added: the job was
-    # cancelled at 45 min with no report (run 40176421611, after 43.6 min on
-    # run 40155059290). 75 leaves room for one more firmware boot on a slow
-    # shared runner.
-    timeout-minutes: 75
+    timeout-minutes: 10
     # The default token is read-only; posting the sticky comment needs this.
     # On a fork PR the token stays read-only regardless, and the post step
     # warns rather than failing — the job summary still carries the report.
@@ -1367,24 +1436,15 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-          submodules: recursive
+      - run: git submodule update --init Vibes
       - uses: actions/setup-node@v7
         with:
           node-version: 20
-      - uses: actions/setup-python@v7
-        with:
-          python-version: '3.x'
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Install PlatformIO
-        run: pip install -U platformio
-      - name: Install protocol generator deps
-        run: pip install -r Protocol/ProtoEmb/core/requirements.txt
 
       # The firmware suite has a macOS-only twin, native_test_noasan, because
       # AddressSanitizer will not initialise on that host. Collecting locally
       # means pointing the suite at it, and that swap has reached a commit
-      # twice. In CI it silently drops the sanitizer from the run the ledger is
-      # built from, so a behaviour can pass here and fail the sanitized gate.
+      # twice. A committed suite must name the environment CI runs.
       - name: Suites must not name a machine-local environment
         run: |
           if git grep -n noasan -- '*vibes.suite.json'; then
@@ -1417,62 +1477,79 @@ jobs:
             echo "ok $f"
           done
 
-      # The sil suite boots the MaDEdge program off the module's
-      # flash (p2iss/tests/ec32mb_flash_boot.rs), and the production program
-      # (P2Eval) in SIL/mad.toml (mad-catalog/tests/mad.rs). Without an
-      # image those tests skip and their behaviours read as holding, so the
-      # job builds both, as sil-rust does, and requires them. Each image is
-      # copied out of .pio right after its build, because building another
-      # env, or the firmware suite's own build in the report step, can clear
-      # .pio/build; MAD_P2_IMAGE and MAD_P2_PRODUCTION_IMAGE point the tests
-      # at the copies.
-      - name: Install the Propeller platform (flexcc/flexspin)
-        working-directory: Firmware/MaDCore
-        run: pio pkg install --platform https://github.com/RileyMcCarthy/platform-propeller.git
-      - name: Build the production P2 image the sil suite boots
-        working-directory: Firmware/MaDCore
-        run: pio run -e P2Eval
-      - name: Keep the production image out of .pio
+      # A job that failed may still have uploaded its tests' run; a cancelled
+      # one is never read.
+      - name: Download the firmware suite's run
+        if: ${{ needs.firmware-unit-tests.result == 'success' || needs.firmware-unit-tests.result == 'failure' }}
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          name: vibes-firmware
+          path: ${{ runner.temp }}/vibes/firmware
+      - name: Download the control suite's run
+        if: ${{ needs.wasm-control-ci.result == 'success' || needs.wasm-control-ci.result == 'failure' }}
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          name: vibes-control
+          path: ${{ runner.temp }}/vibes/control
+      - name: Download the sil suite's run
+        if: ${{ needs.sil-rust.result == 'success' || needs.sil-rust.result == 'failure' }}
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          name: vibes-sil
+          path: ${{ runner.temp }}/vibes/sil
+      # What each job's result means to the report:
+      # - succeeded, with its run: read as it is.
+      # - skipped by the path filter: no directory — "not run for this
+      #   change", its rows carried from the base.
+      # - failed, with its run: read test by test, marked `incomplete`, so
+      #   what it never reached has no verdict instead of reading as removed.
+      # - anything that left no run (cancelled, failed before its tests, or
+      #   skipped because `changes` itself failed): an empty directory, so the
+      #   whole suite has no verdict.
+      - name: Decide each suite's input from its job's result
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          FIRMWARE: ${{ needs.firmware-unit-tests.result }}
+          CONTROL: ${{ needs.wasm-control-ci.result }}
+          SIL: ${{ needs.sil-rust.result }}
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/p2-production"
-          cp Firmware/MaDCore/.pio/build/P2Eval/program "$RUNNER_TEMP/p2-production/program"
-          echo "kept $(wc -c < "$RUNNER_TEMP/p2-production/program") bytes"
-      - name: Build the P2 image the sil suite boots
-        working-directory: Firmware/MaDCore
-        run: pio run -e MaDEdge
-      - name: Keep the image out of .pio
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/p2"
-          cp Firmware/MaDCore/.pio/build/MaDEdge/program "$RUNNER_TEMP/p2/program"
-          echo "kept $(wc -c < "$RUNNER_TEMP/p2/program") bytes"
-      # mad-catalog's tests decode the firmware's answers with the generated
-      # Rust codec (the `protocol` crate), which `make protocol` writes.
-      - name: Generate the Rust protocol codec (make protocol)
-        working-directory: SIL
-        run: make protocol
+          in="$RUNNER_TEMP/vibes"
+          mkdir -p "$in"
+          decide() {
+            local suite="$1" result="$2" dir="$in/$1"
+            if [ "$result" = success ] && [ -s "$dir/behaviours.jsonl" ]; then
+              echo "$suite: read from its job ($(wc -l < "$dir/behaviours.jsonl") declarations)"
+            elif [ "$result" = skipped ] && [ "$CHANGES" = success ]; then
+              rm -rf "$dir"
+              echo "$suite: its job was skipped — not run for this change"
+            elif [ "$result" = failure ] && [ -s "$dir/behaviours.jsonl" ]; then
+              touch "$dir/incomplete"
+              echo "::warning::$suite: its job failed after its tests ran ($(wc -l < "$dir/behaviours.jsonl") declarations) — read test by test; what it did not reach has no verdict"
+            else
+              rm -rf "$dir" && mkdir -p "$dir"
+              echo "::warning::$suite: its job's result is '$result' and left no complete run — its behaviours have no verdict"
+            fi
+          }
+          decide firmware "$FIRMWARE"
+          decide control "$CONTROL"
+          decide sil "$SIL"
 
       - name: Build Vibes
         working-directory: Vibes
-        run: npm ci --no-audit --no-fund && npm test && npm run build
+        run: npm ci --no-audit --no-fund && npm run build
 
-      - name: Install Control deps
-        working-directory: Software/Control
-        run: npm ci --no-audit --no-fund
-
-      # Capture the verdict instead of failing here: a suite that did not
-      # report is exactly the run whose report must reach the PR, so posting
-      # comes first and the exit code is re-raised at the end.
+      # Capture the verdict instead of failing here: a suite with no verdict is
+      # exactly the run whose report must reach the PR, so posting comes first
+      # and the exit code is re-raised at the end.
       - name: Behaviour report
         id: report
-        env:
-          MAD_REQUIRE_P2_IMAGE: '1'
-          MAD_P2_IMAGE: ${{ runner.temp }}/p2/program
-          MAD_P2_PRODUCTION_IMAGE: ${{ runner.temp }}/p2-production/program
         run: |
           set +e
-          node Vibes/bin/vibes.mjs report --base "origin/${{ github.base_ref }}" > vibes-report.md
+          node Vibes/bin/vibes.mjs report --base "origin/${{ github.base_ref }}" --from "$RUNNER_TEMP/vibes" > vibes-report.md
           echo "code=$?" >> "$GITHUB_OUTPUT"
           cat vibes-report.md
 
