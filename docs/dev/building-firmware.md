@@ -23,7 +23,7 @@ commands run from `Firmware/MaDCore/`.
 cd Firmware/MaDCore
 
 pio run -e P2Eval              # production hardware build
-pio run -e MaDEdge       # debug serial; this image is what the SIL emulator executes
+pio run -e MaDEdge       # debug serial; the p2core/p2iss suites execute this image
 pio run -e P2Eval -t upload   # flash a connected board
 pio test -e native_test           # Unity unit tests on the host, against a mock HAL
 pio check                         # MISRA C:2023 + CERT static analysis
@@ -34,7 +34,7 @@ pio check                         # MISRA C:2023 + CERT static analysis
 | Environment | Compiler | Purpose |
 |---|---|---|
 | `P2Eval` | FlexC | Production hardware build: the protocol on P62/P63 (header J1) at 2,000,000 baud. The machine runs this build. Released as `MaD-Firmware-<version>-P2Eval.bin`; MaD Control flashes this image by default. |
-| `MaDEdge` | FlexC | Hardware build with `ENABLE_DEBUG_SERIAL=1`: the protocol on P30/P32, a debug log on P62/P63. P30/P32 are the Edge carrier's Raspberry Pi link (J4, through IC2) from carrier v0.3 on; earlier carriers wire IC2 to P52–P55, which the machine's P2-EC32MB does not bring out, so on those this build is for a bench with its own adapter on P30/P32. Images built before the pin move have the protocol on P53/P55. Released as `MaD-Firmware-<version>-MaDEdge.bin`. This image is what the [SIL emulator](../how-it-works/sil-emulator.md) executes. |
+| `MaDEdge` | FlexC | Hardware build with `ENABLE_DEBUG_SERIAL=1`: the protocol on P30/P32, a debug log on P62/P63. P30/P32 are the Edge carrier's Raspberry Pi link (J4, through IC2) from carrier v0.3 on; earlier carriers wire IC2 to P52–P55, which the machine's P2-EC32MB does not bring out, so on those this build is for a bench with its own adapter on P30/P32. Images built before the pin move have the protocol on P53/P55. Released as `MaD-Firmware-<version>-MaDEdge.bin`. The `p2core`/`p2iss` suites execute this image; the [SIL emulator](../how-it-works/sil-emulator.md)'s project files boot `P2Eval` off the module's flash. |
 | `native_test` | gcc | Unity unit tests. `test/mock_propeller2.c` stands in for the HAL; `HAL/P2/` is not compiled. |
 
 ## Code generation runs automatically

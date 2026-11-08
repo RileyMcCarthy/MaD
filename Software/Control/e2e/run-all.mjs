@@ -62,9 +62,9 @@
  *
  * FW-ISS (the app flashing the ISS's mask ROM) needs the ROM board, not the
  * firmware's: the project's serial boot, SIL/mad-serial-boot-cosim.toml
- * (`cd SIL && make e2e-rom`, which sets E2E_BOARD=rom and
- * E2E_BOARD_ROUTE=project). On that board it is the only scenario that
- * runs; on the firmware's it is skipped.
+ * (`cd SIL && make e2e-rom`, which sets E2E_BOARD=rom and names that file
+ * in E2E_PROJECT). On that board it is the only scenario that runs; on the
+ * firmware's it is skipped.
  *
  * FW1 with a board flashes the board's firmware for real (MaD #134), on the
  * reflash board: SIL/mad-reflash-cosim.toml, the firmware off the module's
@@ -110,7 +110,6 @@ import {
   waitPageTime,
   restoreLink,
   takePageTime,
-  BOARD_ROUTE,
   DEVICE_WAIT_MS,
   awaitResponding,
   readAppLog,
@@ -208,10 +207,10 @@ const MOVES = new Set([
   'COMPAT-ok-motion',
 ]);
 
-// What the machine's project cannot do (BOARD_ROUTE 'project':
-// SIL/mad-cosim.toml), each with why. The suite skips these there, named in
-// SCENARIOS or not, saying so; a run in which every scenario was skipped
-// fails, since it checked nothing. E2E_PROJECT_CANNOT=run runs them anyway,
+// What the machine's project cannot do (SIL/mad-cosim.toml), each with
+// why. The suite skips these there, named in SCENARIOS or not, saying so;
+// a run in which every scenario was skipped fails, since it checked
+// nothing. E2E_PROJECT_CANNOT=run runs them anyway,
 // for a change to the board, its file or the kinds that may lift the
 // reason. `--list --cannot` lists them.
 //
@@ -233,9 +232,9 @@ const STOPPED_WHY =
 // SIL/, mad-cosim.toml by default).
 const PROJECT = (process.env.E2E_PROJECT || 'mad-cosim.toml').split('/').pop();
 const RUN_CANNOT = process.env.E2E_PROJECT_CANNOT === 'run';
-// The suite is on the project: attached to its Chrome, or listing for
-// board-route.sh, which names the route before any board is up.
-const ON_PROJECT = BOARD_ROUTE === 'project' && (BOARD || process.env.E2E_BOARD_ROUTE === 'project');
+// The suite is on a project: attached to its Chrome, or listing for
+// board-route.sh, which names the file (E2E_PROJECT) before any board is up.
+const ON_PROJECT = BOARD || Boolean(process.env.E2E_PROJECT);
 /** Why `id` cannot run on this board, or '' when it can. */
 const cannot = (id) => {
   if (!ON_PROJECT || RUN_CANNOT) return '';
@@ -246,12 +245,12 @@ const cannot = (id) => {
 /**
  * The hard stop of the machine on the board the suite runs, in millimetres:
  * the `hard_stop_mm` option of the project file board-route.sh names
- * (E2E_PROJECT, relative to SIL/), or null when the board is not a project
- * or its machine has none. The line is TOML's `key = value`, with or without
+ * (E2E_PROJECT, relative to SIL/), or null when no file is named or its
+ * machine has none. The line is TOML's `key = value`, with or without
  * a trailing comment; a value that is not a finite number fails here.
  */
 function hardStopMm() {
-  if (!ON_PROJECT || !process.env.E2E_PROJECT) return null;
+  if (!process.env.E2E_PROJECT) return null;
   const file = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'SIL', process.env.E2E_PROJECT);
   const line = readFileSync(file, 'utf8').match(/^[ \t]*hard_stop_mm[ \t]*=[ \t]*([^\s#]+)[ \t]*(?:#.*)?$/m);
   if (!line) return null;
@@ -4055,7 +4054,7 @@ async function main() {
       if (BOARD && !(await boardAlive())) {
         const left = selected.length - selected.indexOf(s) - 1;
         console.log(
-          `\n✗ the board is gone (nothing answers at ${CDP_URL}): mad-emulator stopped, and its ` +
+          `\n✗ the board is gone (nothing answers at ${CDP_URL}): the board's run stopped, and its ` +
             `log says why. ${left} scenario${left === 1 ? '' : 's'} not run.`,
         );
         failures.push(`the board stopped during ${s.id}; ${left} scenarios not run`);

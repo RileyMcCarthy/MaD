@@ -395,7 +395,7 @@ make test
 ```bash
 # from Firmware/MaDCore/
 pio check -e P2Eval --fail-on-defect=medium --fail-on-defect=high
-pio run -e MaDEdge    # the image the SIL emulator executes
+pio run -e MaDEdge    # the debug image the p2core/p2iss suites execute
 pio test -e native_test         # Unity unit tests (ASan + stack-protector)
 ```
 

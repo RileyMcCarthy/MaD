@@ -771,26 +771,11 @@ export function setCurrentScenario(id) {
 }
 
 /**
- * Which board the suite is attached to (SIL/scripts/board-route.sh sets it):
- *
- *   - `project`, the default: the machine's project, `embsim run
- *     mad-cosim.toml` (`make e2e-emulator`): the carrier and the module as
- *     drawn, the production firmware off the module's flash, the host on J1;
- *   - `emulator`: `mad-emulator --chrome`, the debug firmware on the bare
- *     chip, the host on P30/P32. No make target runs it since SERVO-stall
- *     moved onto mad-hard-stop-cosim.toml (MaD #298); it retires with
- *     mad-emulator.
- */
-export const BOARD_ROUTE = process.env.E2E_BOARD_ROUTE || 'project';
-
-/**
  * The USB ids of the board's port, `VVVV:PPPP` in hex. The project's
  * `chrome-cdp` names them (SIL/mad-cosim.toml: 0403:6015, an FTDI FT231X,
- * the chip in the Prop Plug on J1); `mad-emulator --chrome` reports an
- * FT232R's, 0403:6001, unless `--usb-product-id` says otherwise.
+ * the chip in the Prop Plug on J1).
  */
-export const PORT_USB =
-  process.env.E2E_PORT_USB || (BOARD_ROUTE === 'emulator' ? '0403:6001' : '0403:6015');
+export const PORT_USB = process.env.E2E_PORT_USB || '0403:6015';
 
 /**
  * `PORT_USB` as the Connect screen labels the port: "USB 403:6015", the ids
@@ -864,9 +849,9 @@ export async function connectToSil(page) {
   // First point at which the app is loaded and can take a marker.
   if (currentScenario !== null) await markAppLog(page, `scenario ${currentScenario}`);
   if (BOARD) {
-    // The emulator grants the port to every origin (`--granted`, as Chrome's
-    // SerialAllowUsbDevicesForUrls policy would), so the Connect screen
-    // lists it as granted.
+    // The project's chrome-cdp grants the port to every origin (its
+    // `granted = true`, as Chrome's SerialAllowUsbDevicesForUrls policy
+    // would), so the Connect screen lists it as granted.
     await press(boardGrantedPort(page), { timeout: 10_000 });
   } else {
     // The primary button (testid connect-device) prompts requestPort() → our fake.

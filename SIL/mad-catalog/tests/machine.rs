@@ -7,10 +7,10 @@
 //! and 3.3 V across the load cell's excitation (the add-on's `VDDA`), or
 //! the excitation a case names.
 //!
-//! The plant's figures are written out here, MaD's current plant's
-//! (`SIL/MaDSim/src/iss_description.rs` and `run_iss` in
-//! `SIL/MaDSim/src/main.rs`), and never taken from the kind's own
-//! constants: a wrong figure in the kind fails a case.
+//! The plant's figures are written out here, the plant's as the retired
+//! `mad-emulator` had them (`SIL/MaDSim/src/iss_description.rs` and
+//! `run_iss` in `SIL/MaDSim/src/main.rs`, at 4bf392614), and never taken
+//! from the kind's own constants: a wrong figure in the kind fails a case.
 //!
 //! Stepped (embsim `TESTING.md` rule 9): one case at a time under a suite
 //! lock, the clock re-anchored stepped, the system started with time held,
