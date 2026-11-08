@@ -50,8 +50,7 @@ describe('parseGcodeToMove', () => {
       },
     },
     () => {
-      // TEMP (edge-case demo, reverted): one failing test.
-      expect(parseGcodeToMove('G2 X5 I3')).toEqual({ g: 2, x: 6, f: 0, p: 0 });
+      expect(parseGcodeToMove('G2 X5 I3')).toEqual({ g: 2, x: 5, f: 0, p: 0 });
     },
   );
 });

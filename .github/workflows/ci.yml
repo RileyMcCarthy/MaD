@@ -845,8 +845,7 @@ jobs:
   # protocol from the YAML and installs its own generator deps.
   firmware-unit-tests:
     needs: changes
-    # TEMP (edge-case demo, reverted): skipped, so the ledger carries it.
-    if: false && (needs.changes.outputs.firmware == 'true' || needs.changes.outputs.protocol == 'true')
+    if: needs.changes.outputs.firmware == 'true' || needs.changes.outputs.protocol == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -972,10 +971,6 @@ jobs:
     # of board time, so 60.
     timeout-minutes: 60
     steps:
-      # TEMP (edge-case demo, reverted): fails before its tests, so it
-      # uploads nothing and the ledger gives the whole suite no verdict.
-      - name: TEMP stop before the tests
-        run: exit 1
       - uses: actions/checkout@v7
         with:
           submodules: recursive
