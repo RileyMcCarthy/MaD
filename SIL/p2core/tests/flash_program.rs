@@ -289,6 +289,57 @@ fn the_rom_boots_the_image_the_stub_programmed() {
     );
 }
 
+#[test]
+fn the_stub_relaunches_cog_0_on_the_firmware_it_programmed() {
+    behaviour!(Test {
+        id: "p2.flash-stub-relaunches-firmware",
+        covers: Some("SIL/p2core/src/lib.rs#execute"),
+        given:
+            "the app's flash stub and a firmware longer than one 2 KB block of the cog's LUT RAM, \
+                sitting in hub RAM the way the boot ROM leaves a finished download",
+    });
+    expect!(
+        "moved-to-zero",
+        "once the flash is programmed, hub RAM from address zero holds the firmware byte for byte"
+    );
+    expect!(
+        "firmware-runs",
+        "cog 0 then runs the firmware's own instructions from address zero"
+    );
+
+    // The console payload first, so the relaunched cog parks on its `jmp #$`
+    // (cog address 2), then filler that takes the firmware past one LUT block:
+    // the stub moves it 512 longs at a time, so a second block only arrives
+    // when each block transfer steps its pointers over the whole block.
+    let mut fw = console_b_payload();
+    fw.extend((0..3000u32).map(|i| (i.wrapping_mul(31).wrapping_add(7) & 0xFF) as u8));
+    let Some(m) = run_stub_on(&fw) else {
+        eprintln!(
+            "\n*** SKIPPED: {} needs the PWA's vendored loadp2 stub at\n***   {}\n\
+             *** This test asserted NOTHING.\n",
+            module_path!(),
+            image_ts_path().display()
+        );
+        return;
+    };
+
+    let first_bad = (0..fw.len()).find(|&k| m.hub[k] != fw[k]);
+    assert_eq!(
+        first_bad,
+        None,
+        "hub RAM from $00000 must hold the firmware after the stub's move; \
+         hub[..16]={:02x?}",
+        &m.hub[..16]
+    );
+    assert!(
+        m.cogs[0].running && m.cogs[0].pc == 2,
+        "cog 0 must be parked on the firmware's jmp #$ at cog address 2; \
+         running={} pc={:#x}",
+        m.cogs[0].running,
+        m.cogs[0].pc
+    );
+}
+
 /// `SKIP` is what lets the stub start at all, and its one subtlety is easy to
 /// get wrong in a way that shows up as a bogus "bad instruction".
 #[test]
@@ -326,4 +377,93 @@ fn skip_cancels_a_slot_without_decoding_it() {
         m.cogs[0].regs[PA], 0xAA,
         "the slot before the cancelled one ran"
     );
+}
+
+/// The flasher's hex load for a flash image: `Prop_Hex`, each 128 bytes as
+/// ` xx` hex with ` > ` after it, and `~` (`loadImage` with the checksum
+/// handshake off, as for the flash stub).
+fn hex_flash_load(image: &[u8]) -> Vec<u8> {
+    let mut out = b"> Prop_Hex 0 0 0 0".to_vec();
+    for chunk in image.chunks(128) {
+        for b in chunk {
+            out.extend_from_slice(format!(" {b:02x}").as_bytes());
+        }
+        out.extend_from_slice(b" > ");
+    }
+    out.push(b'~');
+    out
+}
+
+#[test]
+fn the_roms_serial_loader_starts_the_flash_stub_on_its_download() {
+    behaviour!(Test {
+        id: "p2.rom-serial-flash-stub",
+        covers: Some("SIL/p2core/src/lib.rs#coginit"),
+        given: "the mask ROM with the serial strap pulled up and an erased flash, sent the app's \
+                flash load: the probe, then the flash programmer and a firmware as hex",
+    });
+    expect!(
+        "stub-sizes-its-download",
+        "the programmer finds the size of what it was sent and writes the firmware into the \
+         flash at the offset the boot loader reads it from",
+        "the ROM restarts the first core straight into the programmer, which takes the download's \
+         size from where the ROM's writing into memory left off, so that survives the restart"
+    );
+
+    std::env::set_var("P2CORE_NO_FF", "1");
+    let (Some(rom), Some(stub)) = (
+        std::fs::read(
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../p2iss/rom/rom_booter_v33k.bin"),
+        )
+        .ok(),
+        flash_loader_stub(),
+    ) else {
+        eprintln!("\n*** SKIPPED: needs `make bootrom` and the app's stub. Asserted NOTHING.\n");
+        return;
+    };
+    let fw = payload();
+    let board = Board::new(SdCard::blank(0)).with_flash(vec![0xFF; 1 << 20]);
+    let mut m = Machine::with_boot_rom(&rom, board);
+    m.pins.set_input_level(59, true);
+    let step = |m: &mut Machine<Board>, n: u64| {
+        for _ in 0..n {
+            if m.step(1).is_err() || !m.cogs[0].running {
+                break;
+            }
+        }
+    };
+    // Into get_rx, its receive interrupt armed.
+    for _ in 0..400_000 {
+        if m.cogs[0].int_src[0] == 4 && matches!(m.cogs[0].pc, 0x29A | 0x29B) {
+            break;
+        }
+        step(&mut m, 1);
+    }
+    let mut feed = b"> Prop_Chk 0 0 0 0  ".to_vec();
+    feed.extend(hex_flash_load(&build_flash_image(&stub, &fw)));
+    for b in feed {
+        m.pins.push_rx(b);
+        for _ in 0..8_000 {
+            step(&mut m, 1);
+            if m.pins.rx_pending() == 0 {
+                break;
+            }
+        }
+        step(&mut m, 400);
+    }
+    step(&mut m, 8_000_000);
+    let flash = m.pins.flash.image_bytes();
+    let at = flash.windows(8).position(|w| w == &fw[..8]);
+    assert_eq!(
+        at,
+        Some(144),
+        "console {:?}, cog 0 at {:#X} running {}, fifo {:#X}, commands {:?}",
+        m.pins.console(),
+        m.cogs[0].pc,
+        m.cogs[0].running,
+        m.cogs[0].fifo_addr,
+        m.pins.flash.commands
+    );
+    assert_eq!(&flash[144..144 + fw.len()], &fw[..]);
 }

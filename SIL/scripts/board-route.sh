@@ -19,9 +19,11 @@
 #             firmware booted off the module's flash, headless, make
 #             e2e-motion's file as well; make e2e-stall names
 #             mad-hard-stop-cosim.toml, that file with a hard stop on its
-#             carriage (MaD #298), and make e2e-rom
+#             carriage (MaD #298), make e2e-rom
 #             mad-serial-boot-cosim.toml, the ROM's serial boot with the
-#             flash erased). The playground runs
+#             flash erased, and make e2e-reflash mad-reflash-cosim.toml, the
+#             Prop Plug's reset on J1.3 for FW1's real flash, MaD #134). The
+#             playground runs
 #             PLAYGROUND_PROJECT (mad-playground.toml, a headed copy of
 #             mad-cosim.toml; make playground-rom names
 #             mad-serial-boot-playground.toml), its Chrome a window opened on
