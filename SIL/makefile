@@ -3,7 +3,7 @@
 # Commands:
 #   make p2image        - Build the P2 image the ISS executes (MaDEdge)
 #   make p2image-production - Build the production P2 image (P2Eval), the one flash-image lays out
-#   make emulator       - Build the Rust emulator
+#   make emulator       - Build the SIL workspace
 #   make test           - Build the image, run the Rust test suite
 #   make playground     - mad-playground.toml under embsim run: the machine, MaD Control in a Chrome window on the board's clock
 #   make playground-iss - The same target, under the name it had beside the native one
@@ -30,18 +30,17 @@
 # boot, mad-serial-boot-cosim.toml; e2e-motion, the scenarios that move
 # the carriage, runs on mad-cosim.toml too, and the playgrounds on its
 # headed copy (step 11); SERVO-stall (e2e-stall) on that file with a hard
-# stop on its carriage, mad-hard-stop-cosim.toml (MaD #298). No e2e target
-# runs mad-emulator. A browser on
+# stop on its carriage, mad-hard-stop-cosim.toml (MaD #298). A browser on
 # the host's own clock (behind a PTY, or the WS bridge) measures the host,
 # not the machine: the ISS interprets every instruction at a few percent of
 # real time, and the app's 2 s response timeout would fire at a fraction of
 # that in the board's time.
 
 FIRMWARE_DIR = ../Firmware/MaDCore
-# The P2 image mad-emulator and the p2core/p2iss suites execute: the debug
-# build, its MAIN channel on P30/P32 and its log on P62. Those routes put
-# the host straight on the chip's P30/P32 and read the log: the chip on no
-# module and no carrier, so nothing sits between the host and those pins.
+# The P2 image the p2core/p2iss suites execute: the debug build, its MAIN
+# channel on P30/P32 and its log on P62. Those tests put the host straight
+# on the chip's P30/P32 and read the log: the chip on no module and no
+# carrier, so nothing sits between the host and those pins.
 P2_ENV = MaDEdge
 P2_IMAGE = $(FIRMWARE_DIR)/.pio/build/$(P2_ENV)/program
 # The production build, the project files' route (the user's decision;
@@ -67,9 +66,9 @@ BUILD_DIR = build
 FLASH_IMAGE = $(BUILD_DIR)/flash.bin
 SD_IMAGE = $(BUILD_DIR)/sd.img
 
-.PHONY: p2image p2image-production protocol emulator emulator-release test playground playground-iss playground-pty playground-rom e2e-emulator e2e e2e-rom e2e-bundle e2e-motion e2e-stall e2e-compat flash-image sd-image check bootrom clean
+.PHONY: p2image p2image-production protocol emulator test playground playground-iss playground-pty playground-rom e2e-emulator e2e e2e-rom e2e-bundle e2e-motion e2e-stall e2e-compat flash-image sd-image check bootrom clean
 
-# Build the P2 image the ISS runs (`p2core`, `p2iss`, `mad-emulator`).
+# Build the P2 image the ISS runs (`p2core`, `p2iss`).
 #
 # A `make test` dependency on purpose: those crates' tests skip when the image
 # is absent, and PlatformIO drops stale environment directories whenever the
@@ -88,7 +87,7 @@ p2image-production:
 protocol:
 	python3 $(PROTOEMB_GENERATOR) --schema $(PROTOEMB_SCHEMA) --target rs --output ../Protocol/rust/src/generated --templates $(PROTOEMB_TEMPLATES)
 
-# Build the Rust emulator. The image is a runtime input, not a link input.
+# Build the SIL workspace. The image is a runtime input, not a link input.
 emulator: protocol
 	cargo build
 
@@ -99,9 +98,6 @@ emulator: protocol
 # that way fails the run.
 test: emulator p2image-production p2image
 	MAD_REQUIRE_P2_IMAGE=1 cargo test
-
-emulator-release: protocol
-	cargo build --release --bin mad-emulator
 
 # MaD Control on the ISS, for a person (embsim MIGRATING-MAD.md step 11):
 # mad-playground.toml, the machine (a headed copy of mad-cosim.toml),
@@ -234,7 +230,7 @@ flash-image: p2image-production
 
 # The card in the module's socket: 32 MiB of FAT16 holding the directories
 # the firmware writes into, with ./sd mirrored onto it when it is there, the
-# card mad-emulator --sd-path builds. A project names it in its sd-card
+# card `p2iss::sdimage::mad_card` builds. A project names it in its sd-card
 # entry (`image = "build/sd.img"`).
 sd-image:
 	mkdir -p $(BUILD_DIR)

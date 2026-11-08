@@ -19,8 +19,8 @@ make p2image      # the MaDEdge image the emulator executes
 by `make p2image` (`pio run -e MaDEdge`). The `playground*`, `e2e*`
 and `check` targets build the production image and lay out the module's
 flash and card (`make flash-image sd-image`), and the embsim tool builds
-`mad-runner`. No target runs `mad-emulator` any more: SERVO-stall
-(`e2e-stall`) runs on `mad-hard-stop-cosim.toml` (MaD #298).
+`mad-runner`. SERVO-stall (`e2e-stall`) runs on `mad-hard-stop-cosim.toml`
+(MaD #298).
 
 | Target | What it does |
 |---|---|
@@ -114,14 +114,14 @@ mad.toml --pty PATH` hands `mad-runner` run in its own process, and reads the
 firmware's version on the PTY before the run's 2 s of board time end.
 `tests/projects.rs` holds the seven files to one another. The debug image
 (`make p2image`) stays where a run needs its log on `P62` or its MAIN channel
-on the bare chip's `P30`/`P32`: `mad-emulator`, the `p2core` and `p2iss`
-suites, and `mad-catalog/tests/boot.rs`.
+on the bare chip's `P30`/`P32`: the `p2core` and `p2iss` suites, and
+`mad-catalog/tests/boot.rs`.
 
 ## The board route: the app in Chrome on the board's clock
 
 There is **one** configuration a browser belongs in: the P2 image on the ISS,
 with MaD Control in the host's Chrome held to the board's clock by embsim's
-`chrome-cdp` node (embsim `PROJECTS.md` §5). Two boards carry it:
+`chrome-cdp` node (embsim `PROJECTS.md` §5). One board carries it:
 
 - **The machine's project**, under `embsim run`: the e2e on `mad-cosim.toml`
   (`make e2e-emulator`, embsim `MIGRATING-MAD.md` step 10), the carrier and
@@ -133,10 +133,6 @@ with MaD Control in the host's Chrome held to the board's clock by embsim's
   `mad-serial-boot-cosim.toml` (`make e2e-rom`); and the playgrounds on
   headed copies, `mad-playground.toml` and `mad-serial-boot-playground.toml`
   (step 11).
-- **`mad-emulator --chrome`** (step 1b): the debug firmware on the bare chip,
-  the node on `P30`/`P32` (`BOARD_ROUTE=emulator`). No make target or CI job
-  runs it since SERVO-stall moved onto a project; it retires with
-  `mad-emulator` (MaD #298; embsim `MIGRATING-MAD.md` step 11).
 
 - **Time.** Every page and dedicated worker in that Chrome lives the board's
   time, a 1 ms quantum at a time over DevTools
@@ -147,14 +143,12 @@ with MaD Control in the host's Chrome held to the board's clock by embsim's
 - **Serial.** Every page's `navigator.serial` is the node's shim, whose one
   port is the board's protocol line, 2,000,000 baud 8N1, granted to every
   origin: on the project the line on `J1` (`P63`/`P62`), USB `0403:6015`, an
-  FTDI FT231X, the chip in the Prop Plug; on `mad-emulator` `P30`/`P32`, USB
-  `0403:6001`. It follows Chrome's rules: a `close()` refused while a stream
+  FTDI FT231X, the chip in the Prop Plug. It follows Chrome's rules: a `close()` refused while a stream
   is locked, `NetworkError` on an unplug, a new `SerialPort` and `connect` on
   a replug. The line has no modem pins: DTR, RTS and a break reach nothing.
 - **The host's pins.** On the project, the file's wires: `HOST.TX` to
   `EDGE.J1.2` (`P63`), `EDGE.J1.1` (`P62`) to `HOST.RX`, `HOST.GND` on
-  `J1.4`, `HOST.VIO` on the adapter's 3.3 V. On `mad-emulator`, the
-  harness's host pins (`HOST.TX` to `P2.P30`, `P2.P32` to `HOST.RX`).
+  `J1.4`, `HOST.VIO` on the adapter's 3.3 V.
 - **What it costs.** The ISS runs at a few percent of real time, so a second
   of the board's time is tens of seconds of the host's. On the project
   (measured, Apple M2, 2026-10-21): each board first boots the firmware off

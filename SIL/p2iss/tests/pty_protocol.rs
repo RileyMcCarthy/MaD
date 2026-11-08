@@ -1,9 +1,9 @@
 //! The whole SIL path on the ISS: a host opens a PTY, and the firmware answers.
 //!
 //! `protocol_on_levels.rs` proves the wire. This proves the *product*: the
-//! surface `mad-emulator` exposes — a PTY at `/tmp/tty.…` that host software
-//! opens and speaks the MaD protocol over — served by `p2core` executing the
-//! real flexcc image, with every byte crossing a net as edges.
+//! surface the retired `mad-emulator` exposed — a PTY at `/tmp/tty.…` that
+//! host software opens and speaks the MaD protocol over — served by `p2core`
+//! executing the real flexcc image, with every byte crossing a net as edges.
 //!
 //! The native backend hands the PTY master straight to a peripheral serial
 //! channel, so the bytes never touch a net. Here the same descriptor sits

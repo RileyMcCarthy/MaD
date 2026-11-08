@@ -98,7 +98,6 @@ import {
   waitPageTime,
   restoreLink,
   takePageTime,
-  BOARD_ROUTE,
   DEVICE_WAIT_MS,
   awaitResponding,
   readAppLog,
@@ -172,10 +171,10 @@ const MOVES = new Set([
   'COMPAT-ok-motion',
 ]);
 
-// What the machine's project cannot do (BOARD_ROUTE 'project':
-// SIL/mad-cosim.toml), each with why. The suite skips these there, named in
-// SCENARIOS or not, saying so; a run in which every scenario was skipped
-// fails, since it checked nothing. E2E_PROJECT_CANNOT=run runs them anyway,
+// What the machine's project cannot do (SIL/mad-cosim.toml), each with
+// why. The suite skips these there, named in SCENARIOS or not, saying so;
+// a run in which every scenario was skipped fails, since it checked
+// nothing. E2E_PROJECT_CANNOT=run runs them anyway,
 // for a change to the board, its file or the kinds that may lift the
 // reason. `--list --cannot` lists them.
 //
@@ -199,7 +198,7 @@ const PROJECT = (process.env.E2E_PROJECT || 'mad-cosim.toml').split('/').pop();
 const RUN_CANNOT = process.env.E2E_PROJECT_CANNOT === 'run';
 // The suite is on the project: attached to its Chrome, or listing for
 // board-route.sh, which names the route before any board is up.
-const ON_PROJECT = BOARD_ROUTE === 'project' && (BOARD || process.env.E2E_BOARD_ROUTE === 'project');
+const ON_PROJECT = BOARD || process.env.E2E_BOARD_ROUTE === 'project';
 /** Why `id` cannot run on this board, or '' when it can. */
 const cannot = (id) => {
   if (!ON_PROJECT || RUN_CANNOT) return '';
@@ -3799,7 +3798,7 @@ async function main() {
       if (BOARD && !(await boardAlive())) {
         const left = selected.length - selected.indexOf(s) - 1;
         console.log(
-          `\n✗ the board is gone (nothing answers at ${CDP_URL}): mad-emulator stopped, and its ` +
+          `\n✗ the board is gone (nothing answers at ${CDP_URL}): the board's run stopped, and its ` +
             `log says why. ${left} scenario${left === 1 ? '' : 's'} not run.`,
         );
         failures.push(`the board stopped during ${s.id}; ${left} scenarios not run`);

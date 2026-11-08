@@ -24,7 +24,8 @@
 //! per-cell span calibration in the machine profile supersedes the nominal).
 //! The default wiring parameters mirror the machine profile's intrinsic
 //! load-cell constants — see `docs/dev/sil-board-simulation-design.md` and
-//! `MaDSim/src/wiring.rs`.
+//! the machine that configures the gauge (`GAUGE_MV_PER_V` and its
+//! neighbours in `SIL/mad-catalog/src/machine.rs`).
 //!
 //! All sensitivity parameters are configurable via `Config`.
 //! Has no knowledge of MCU peripherals.
