@@ -62,9 +62,9 @@
  *
  * FW-ISS (the app flashing the ISS's mask ROM) needs the ROM board, not the
  * firmware's: the project's serial boot, SIL/mad-serial-boot-cosim.toml
- * (`cd SIL && make e2e-rom`, which sets E2E_BOARD=rom and
- * E2E_BOARD_ROUTE=project). On that board it is the only scenario that
- * runs; on the firmware's it is skipped.
+ * (`cd SIL && make e2e-rom`, which sets E2E_BOARD=rom and names that file
+ * in E2E_PROJECT). On that board it is the only scenario that runs; on the
+ * firmware's it is skipped.
  *
  * FW1 with a board flashes the board's firmware for real (MaD #134), on the
  * reflash board: SIL/mad-reflash-cosim.toml, the firmware off the module's
@@ -232,9 +232,9 @@ const STOPPED_WHY =
 // SIL/, mad-cosim.toml by default).
 const PROJECT = (process.env.E2E_PROJECT || 'mad-cosim.toml').split('/').pop();
 const RUN_CANNOT = process.env.E2E_PROJECT_CANNOT === 'run';
-// The suite is on the project: attached to its Chrome, or listing for
-// board-route.sh, which names the route before any board is up.
-const ON_PROJECT = BOARD || process.env.E2E_BOARD_ROUTE === 'project';
+// The suite is on a project: attached to its Chrome, or listing for
+// board-route.sh, which names the file (E2E_PROJECT) before any board is up.
+const ON_PROJECT = BOARD || Boolean(process.env.E2E_PROJECT);
 /** Why `id` cannot run on this board, or '' when it can. */
 const cannot = (id) => {
   if (!ON_PROJECT || RUN_CANNOT) return '';
@@ -245,12 +245,12 @@ const cannot = (id) => {
 /**
  * The hard stop of the machine on the board the suite runs, in millimetres:
  * the `hard_stop_mm` option of the project file board-route.sh names
- * (E2E_PROJECT, relative to SIL/), or null when the board is not a project
- * or its machine has none. The line is TOML's `key = value`, with or without
+ * (E2E_PROJECT, relative to SIL/), or null when no file is named or its
+ * machine has none. The line is TOML's `key = value`, with or without
  * a trailing comment; a value that is not a finite number fails here.
  */
 function hardStopMm() {
-  if (!ON_PROJECT || !process.env.E2E_PROJECT) return null;
+  if (!process.env.E2E_PROJECT) return null;
   const file = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'SIL', process.env.E2E_PROJECT);
   const line = readFileSync(file, 'utf8').match(/^[ \t]*hard_stop_mm[ \t]*=[ \t]*([^\s#]+)[ \t]*(?:#.*)?$/m);
   if (!line) return null;

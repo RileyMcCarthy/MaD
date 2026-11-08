@@ -90,9 +90,8 @@ logs=${BOARD_LOGS:-$sil/target/board-route}
 mkdir -p "$logs"
 # The suite skips by the file (run-all.mjs, PROJECT_CANNOT): SERVO-stall
 # runs on the file with a hard stop on its carriage, which skips the other
-# scenarios that move the carriage. E2E_BOARD_ROUTE tells its `--list` that
-# it lists for a project, before any board is up.
-export E2E_BOARD_ROUTE=project
+# scenarios that move the carriage. E2E_PROJECT tells its `--list` which
+# file it lists for, before any board is up.
 export E2E_PROJECT=$project
 [ -f "$sil/$project" ] || {
   echo "board-route: missing $sil/$project" >&2
