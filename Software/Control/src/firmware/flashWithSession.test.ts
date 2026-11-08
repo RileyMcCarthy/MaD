@@ -154,7 +154,12 @@ describe('flashWithSession', () => {
       given: 'a flash aimed at the port the control connection holds',
       expect: {
         'refused-untouched': 'the flash is refused before the connection, the port or the board is touched',
+        'says-disconnect': 'the refusal tells the operator to disconnect first, then flash',
         'says-programming-port': 'the refusal tells the operator to flash through the programming port on J1',
+      },
+      why: {
+        'says-disconnect':
+          'a machine on firmware 0.14 or earlier is connected through its programming port, and disconnecting is how its operator upgrades it',
       },
     },
     async () => {
@@ -162,6 +167,7 @@ describe('flashWithSession', () => {
       await flashWithSession(h.deps);
       expect(h.calls).toEqual(['error']);
       expect((h.outcome.error as Error).message).toBe(FLASH_ON_CONTROL_PORT);
+      expect(FLASH_ON_CONTROL_PORT).toMatch(/disconnect on the Connect page, then flash/);
       expect(FLASH_ON_CONTROL_PORT).toMatch(/J1/);
     },
   );

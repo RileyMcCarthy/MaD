@@ -12,6 +12,8 @@
  * label the UI can show so a wrong guess is visible before anything is written.
  */
 
+import { portMatchesUsbId } from '@/device/controlPort';
+
 const FLASH_PORT_KEY = 'mad.flashPort';
 
 interface FlashPortPref {
@@ -91,10 +93,7 @@ export function resolveFlashPort(
   if (candidates.length === 1) return { kind: 'resolved', ...candidates[0], reason: 'only-port' };
 
   if (pref?.vendorId !== undefined) {
-    const matches = candidates.filter(({ port }) => {
-      const info = port.getInfo();
-      return info.usbVendorId === pref.vendorId && info.usbProductId === pref.productId;
-    });
+    const matches = candidates.filter(({ port }) => portMatchesUsbId(port, pref));
     if (matches.length === 1) {
       return { kind: 'resolved', ...matches[0], reason: 'remembered' };
     }

@@ -105,13 +105,6 @@ interface AppState {
   homeAxis: () => Promise<void>;
   zeroForce: () => Promise<void>;
   zeroLength: () => Promise<void>;
-  /**
-   * Reboot the machine with the protocol's reboot command, then reopen the
-   * control port to read the new boot (the control port has no reset line, so
-   * reopening alone restarts nothing). Refused while a test runs. Resolves
-   * whether the app is connected again afterwards.
-   */
-  rebootMachine: () => Promise<boolean>;
   dismissNotification: (id: number) => void;
   /** Append a notification (used by global error handlers and ad-hoc messages). */
   notify: (type: NotificationType, message: string) => void;
@@ -223,8 +216,6 @@ const RESPONDING_TIMEOUT_MS = 2000;
 /** Last successful connection, kept for reconnect (SerialPort isn't serializable). */
 let lastPort: SerialPort | null = null;
 let lastBaud = DEFAULT_BAUD_RATE;
-/** How long a rebooting machine gets before the control port is reopened. */
-const REBOOT_SETTLE_MS = 1500;
 /** Set just before a user-initiated disconnect so loss handling can tell them apart. */
 let userDisconnect = false;
 /** Pending service-worker update applier (set by the PWA layer). */
@@ -729,25 +720,6 @@ export const useStore = create<AppState>((set, getState) => ({
   zeroLength: () => {
     logStore.info('zero-length');
     return deviceClient.zeroLength();
-  },
-  rebootMachine: async () => {
-    const s = getState();
-    const port = lastPort;
-    if (!port || s.connection !== 'connected' || s.machineState?.testRunning) {
-      logStore.warn('reboot', 'refused', {
-        connection: s.connection,
-        testRunning: Boolean(s.machineState?.testRunning),
-      });
-      return false;
-    }
-    const baud = lastBaud;
-    const acked = await deviceClient.reboot().catch(() => false);
-    logStore.info('reboot', acked ? 'the machine is rebooting' : 'the machine refused to reboot', { acked });
-    if (!acked) return false;
-    await s.disconnect();
-    await new Promise((r) => setTimeout(r, REBOOT_SETTLE_MS));
-    await getState().connect({ port, baud });
-    return getState().connection === 'connected';
   },
 
   dismissNotification: (id) =>

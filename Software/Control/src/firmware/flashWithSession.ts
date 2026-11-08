@@ -5,8 +5,9 @@ export const RECONNECT_SETTLE_MS = 1500;
 
 /** Why a flash on the control port is refused, fit for the screen. */
 export const FLASH_ON_CONTROL_PORT =
-  'That is the control port, the one MaD Control is connected through. Firmware is written over the ' +
-  "programming port: the Prop Plug on header J1, or the P2-EVAL's own USB. Choose that port to flash.";
+  'MaD Control is connected through this port: disconnect on the Connect page, then flash. ' +
+  "Firmware is written over the programming port, the Prop Plug on header J1 or the P2-EVAL's own USB " +
+  '(a machine still on firmware 0.14 or earlier is also connected through it).';
 
 /**
  * Everything {@link flashWithSession} touches, injected so each path can be

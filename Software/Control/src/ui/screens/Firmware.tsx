@@ -63,6 +63,9 @@ export default function Firmware() {
   const [fileError, setFileError] = useState<string | null>(null);
   const [target, setTarget] = useState<{ port: SerialPort; label: string } | null>(null);
   const [needsChoice, setNeedsChoice] = useState(false);
+  // The only granted port is the one the session is connected through: a
+  // machine on 0.14 or earlier, whose protocol is still on J1.
+  const [heldOnly, setHeldOnly] = useState(false);
   const [status, setStatus] = useState<Status>({ kind: 'idle' });
   const fileInput = useRef<HTMLInputElement>(null);
 
@@ -118,7 +121,9 @@ export default function Firmware() {
     } catch {
       ports = [];
     }
-    const resolution = resolveFlashPort(ports, undefined, deviceClient.heldPort());
+    const held = deviceClient.heldPort();
+    const resolution = resolveFlashPort(ports, undefined, held);
+    setHeldOnly(resolution.kind === 'none' && held !== null && ports.includes(held));
     if (resolution.kind === 'resolved') {
       setTarget({ port: resolution.port, label: describePort(resolution.port, resolution.index) });
       setNeedsChoice(false);
@@ -344,7 +349,9 @@ export default function Firmware() {
                   ? target.label
                   : needsChoice
                     ? 'Several serial devices — choose which one is the programming port (J1).'
-                    : 'No serial device yet — choose the programming port: the Prop Plug on J1 or the P2-EVAL USB.'}
+                    : heldOnly
+                      ? 'MaD Control is connected through the only serial device: disconnect on the Connect page, then flash it (a machine on firmware 0.14 or earlier).'
+                      : 'No serial device yet — choose the programming port: the Prop Plug on J1 or the P2-EVAL USB.'}
               </td>
               <td style={{ textAlign: 'right' }}>
                 <button onClick={() => void choosePort()} disabled={busy} data-testid="choose-flash-port">

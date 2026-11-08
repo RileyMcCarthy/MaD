@@ -3129,7 +3129,13 @@ const scenarios = [
         const page = await browser.newPage();
         await page.addInitScript(installFakeBootRom);
         await page.addInitScript(installOpfsDataDir, OPFS_DIR);
+        // The Firmware page remembered the fake's adapter (0403:6015) as its
+        // programming port: the Connect page marks it.
+        await page.addInitScript(() => {
+          localStorage.setItem('mad.flashPort', JSON.stringify({ vendorId: 0x0403, productId: 0x6015, index: 0 }));
+        });
         await page.goto(`${APP_URL_HOST}#/connect`);
+        await page.getByTestId('granted-programming-port').waitFor();
         await page.getByTestId('control-port-hint').filter({ hasText: /P30\/P32/ }).waitFor();
         await page.getByTestId('control-port-hint').filter({ hasText: /J1/ }).waitFor();
         await page.goto(`${APP_URL_HOST}#/firmware`);

@@ -11,10 +11,24 @@
  * mistake on its own.
  */
 
-/** The USB identity remembered for the control port. */
-export interface ControlPortId {
+/** A USB identity remembered for a port. */
+export interface UsbId {
   vendorId?: number;
   productId?: number;
+}
+
+/** The USB identity remembered for the control port. */
+export type ControlPortId = UsbId;
+
+/**
+ * Whether `port` reports the remembered USB vendor and product ids. A
+ * remembered id without a vendor matches nothing: an adapter that reports no
+ * id cannot be told apart.
+ */
+export function portMatchesUsbId(port: SerialPort, id: UsbId | null): boolean {
+  if (id?.vendorId === undefined) return false;
+  const info = port.getInfo();
+  return info.usbVendorId === id.vendorId && info.usbProductId === id.productId;
 }
 
 /**
@@ -26,10 +40,7 @@ export interface ControlPortId {
 export function matchControlPort(ports: readonly SerialPort[], pref: ControlPortId | null): SerialPort | null {
   if (ports.length === 0) return null;
   if (pref?.vendorId === undefined) return ports.length === 1 ? ports[0] : null;
-  const byId = ports.filter((p) => {
-    const i = p.getInfo();
-    return i.usbVendorId === pref.vendorId && i.usbProductId === pref.productId;
-  });
+  const byId = ports.filter((p) => portMatchesUsbId(p, pref));
   return byId.length === 1 ? byId[0] : null;
 }
 

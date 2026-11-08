@@ -90,6 +90,9 @@ The check judges the steps/mm you have **typed**. If those differ from the ones
 saved on the machine, **Run motion calibration** stays locked and the panel
 asks you to write them, restart the machine, and run the check again.
 
+To restart the machine, power-cycle it: reconnecting the app does not restart
+it ([Rebooting the machine](firmware-and-diagnostics.md#rebooting-the-machine)).
+
 ### Reading the result
 
 The **drive and encoder check** shows a **pass**, **warning** or **error**,

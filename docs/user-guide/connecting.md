@@ -52,8 +52,8 @@ reloads and survive in your browser profile. Use **Refresh** to re-scan and
   If two granted ports share the adapter's USB id (the Prop Plug and the
   control adapter can be identical FTDI parts), it doesn't guess: pick the
   control port yourself.
-- Reconnecting does not restart the machine. To restart it, see
-  [Rebooting the machine](firmware-and-diagnostics.md#rebooting-the-machine).
+- Reconnecting does not restart the machine. To restart it, power-cycle it
+  ([Rebooting the machine](firmware-and-diagnostics.md#rebooting-the-machine)).
 
 !!! note "Responding vs. Connected"
     **Connected** means the serial port is open. **Responding** means the

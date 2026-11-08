@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useStore } from '@/store/useStore';
 import { deviceClient, DEFAULT_BAUD_RATE } from '@/device/session';
-import { CONTROL_PORT_HINT } from '@/device/controlPort';
+import { CONTROL_PORT_HINT, portMatchesUsbId } from '@/device/controlPort';
 import { readFlashPortPref } from '@/firmware/portPref';
 
 const BAUD_RATES = [9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600, 2000000];
@@ -43,14 +43,7 @@ export default function Connect() {
   // The port the Firmware page programs through, when its USB id is known:
   // connecting there would restart the machine and find no protocol.
   const flashPref = readFlashPortPref();
-  const isProgrammingPort = (p: SerialPort) => {
-    const info = p.getInfo();
-    return (
-      flashPref?.vendorId !== undefined &&
-      info.usbVendorId === flashPref.vendorId &&
-      info.usbProductId === flashPref.productId
-    );
-  };
+  const isProgrammingPort = (p: SerialPort) => portMatchesUsbId(p, flashPref);
 
   const forgetPort = async (p: SerialPort) => {
     const withForget = p as SerialPort & { forget?: () => Promise<void> };

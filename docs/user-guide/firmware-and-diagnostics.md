@@ -103,16 +103,26 @@ says why on every screen.
     with nothing wired there, or the app can no longer talk to it (flashing
     0.14 back over J1 as a local file recovers it). The real machine stays on
     0.14 until its Edge carrier v0.3 (the one with the isolated J4 link) is
-    built. A P2-EVAL bench moves over by rewiring its FTDI adapter from
-    P53/P55 to P30 (adapter TX) and P32 (adapter RX).
+    built.
+
+    To move a P2-EVAL bench from 0.14 to the two-port firmware:
+
+    1. On the **Connect** page, **Disconnect**. The app is connected over J1
+       (the P2-EVAL USB), and it never flashes the port it is connected
+       through.
+    2. On the **Firmware** page, choose the P2-EVAL USB as the **Programming
+       port** and **Install recommended firmware**. Stay disconnected: the
+       new firmware no longer answers on J1.
+    3. Rewire the FTDI adapter from P53/P55 to **P30** (adapter TX → P2 RX)
+       and **P32** (adapter RX ← P2 TX), with its ground to the board's.
+    4. On the **Connect** page, connect to the FTDI adapter: that is the
+       control port from now on.
 
 ### Rebooting the machine
 
 Reconnecting on the control port does not restart the machine. When a restart
-is needed (to clear a latched fault, say), power-cycle it, or have the app send
-the protocol's **reboot** command: the firmware acknowledges, disables motion
-and restarts about 100 ms later, and the app reopens the control port to pick
-up the new boot. The firmware refuses to reboot while a test runs.
+is needed (to clear a latched fault, or to apply a saved machine
+configuration), power-cycle the machine.
 
 ### If it doesn't work
 

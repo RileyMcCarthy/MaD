@@ -62,10 +62,10 @@ The split exists because the programming adapter's DTR is wired to `RESn`:
 when the protocol shared J1, every connect, page refresh and auto-reconnect
 rebooted the machine, aborting tests and briefly floating the pins (the bench
 drive treats a floating ENA as enabled). The control port has no reset line,
-so opening it restarts nothing; to restart the machine from the app, the
-protocol's `reboot` write (the store's `rebootMachine()`) makes the firmware
-ACK, disable motion and reboot ~100 ms later (NACK while a test runs), and the
-app then reopens the control port to read the new boot.
+so opening it restarts nothing. The protocol has a `reboot` write for that:
+the firmware ACKs, disables motion and reboots ~100 ms later (NACK while a
+test runs). The worker sends it (`DeviceSession.reboot`); no screen does yet,
+so until one does, the operator power-cycles the machine.
 
 So the app holds two ports with distinct roles. The **control port** is the
 Connect page's: live data and tests. The **programming port** is used only by
@@ -76,6 +76,15 @@ session holds is refused (`resolveFlashPort` excludes it), and auto-reconnect
 refuses to guess when two granted ports share the remembered USB id
 (`matchControlPort` in `src/device/controlPort.ts`), since the wrong guess
 resets the machine.
+
+Upgrading a machine from 0.14 or earlier, whose protocol is still on J1: the
+app is connected over the programming port, so the Firmware page offers no
+port to flash and refuses that one ("MaD Control is connected through this
+port; disconnect, then flash"). Disconnect on the Connect page, flash over J1
+from the Firmware page while disconnected, rewire the bench's FTDI adapter to
+P30 (adapter TX) / P32 (adapter RX), then connect on that adapter. The user
+guide has the same steps (`docs/user-guide/firmware-and-diagnostics.md`,
+"Machines still on firmware 0.14 or earlier").
 
 Each release carries one image, `MaD-Firmware-<version>.bin`
 (`pickFirmwareAsset` in `src/firmware/release.ts`). The Firmware screen
