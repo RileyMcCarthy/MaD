@@ -1,8 +1,10 @@
 import { describe, expect } from 'vitest';
 import { behaviour } from '@vibes/behaviour';
 import {
-  BENCHMARK_TRAVEL_MAX_MM,
+  ACCEL_DELIVERED_MIN,
   KP_MIN,
+  SWEEP_SHARES,
+  assessAcceleration,
   estimateLagSeconds,
   measureMove,
   planTrackingRun,
@@ -44,8 +46,9 @@ describe('tracking program', () => {
       covers: 'src/domain/motionBenchmark.ts#planTrackingRun',
       given: 'a saved profile of 100 mm travel, 50 mm/s and 600 mm/s²',
       expect: {
-        'largest-move': 'the largest move is a quarter of the travel, 25 mm, swung half each side of the start',
-        'full-speed': 'one large move runs at the full 50 mm/s',
+        'largest-move': 'the largest move is a tenth of the travel, 10 mm, swung half each side of the start',
+        'full-speed': 'the fastest moves run at the full 50 mm/s',
+        'sweep-speeds': 'there are moves at a quarter, half and three quarters of 50 mm/s, each in both directions',
         'small-moves': 'there are 1 mm, 0.1 mm and 0.01 mm moves in both directions, and two 0.1 mm moves the same way',
         'returns-to-start': 'the moves add up to nothing, so the carriage ends where it started',
       },
@@ -54,9 +57,13 @@ describe('tracking program', () => {
       const plan = planTrackingRun(LIMITS);
       expect(plan.ok).toBe(true);
       if (!plan.ok) return;
-      expect(plan.travelMm).toBe(25);
-      expect(Math.max(...plan.moves.map((m) => Math.abs(m.deltaMm)))).toBe(25);
+      expect(plan.travelMm).toBe(10);
+      expect(Math.max(...plan.moves.map((m) => Math.abs(m.deltaMm)))).toBe(10);
       expect(plan.moves.some((m) => m.speedMmPerS === 50)).toBe(true);
+      for (const v of [12.5, 25, 37.5]) {
+        expect(plan.moves.some((m) => m.speedMmPerS === v && m.deltaMm > 0)).toBe(true);
+        expect(plan.moves.some((m) => m.speedMmPerS === v && m.deltaMm < 0)).toBe(true);
+      }
       for (const d of [1, 0.1, 0.01]) {
         expect(plan.moves.some((m) => m.deltaMm === d)).toBe(true);
         expect(plan.moves.some((m) => m.deltaMm === -d || m.deltaMm === -2 * d)).toBe(true);
@@ -70,18 +77,124 @@ describe('tracking program', () => {
     {
       id: 'benchmark.program-limits',
       covers: 'src/domain/motionBenchmark.ts#planTrackingRun',
-      given: 'saved profiles that are long, or missing their motion envelope',
+      given: 'saved profiles missing their motion envelope',
       expect: {
-        'capped-travel': `on a long machine the largest move is capped at ${BENCHMARK_TRAVEL_MAX_MM} mm`,
         'needs-envelope': 'without Position Max, Velocity Max or Acceleration Max no program is planned, and the reason names them',
       },
     },
     () => {
-      const long = planTrackingRun({ ...LIMITS, maxPositionMm: 1000 });
-      expect(long.ok && long.travelMm).toBe(BENCHMARK_TRAVEL_MAX_MM);
       const none = planTrackingRun({ ...LIMITS, maxAccelMmPerS2: 0 });
       expect(none.ok).toBe(false);
       if (!none.ok) expect(none.reason).toMatch(/Acceleration Max/);
+    },
+  );
+});
+
+describe('acceleration sweep', () => {
+  /** The sweep's moves from the plan, each measured with the following error `fe(speed)` in µm. */
+  function sweep(limits: MachineLimits, fe: (speedMmPerS: number) => number, shares: readonly number[] = SWEEP_SHARES) {
+    const plan = planTrackingRun(limits);
+    if (!plan.ok) throw new Error(plan.reason);
+    return plan.moves
+      .filter((m) => m.sweepShare !== undefined && shares.includes(m.sweepShare))
+      .map(
+        (m): MoveMeasurement => ({
+          label: m.label,
+          deltaMm: m.deltaMm,
+          speedMmPerS: m.speedMmPerS,
+          sweepShare: m.sweepShare,
+          finalErrorUm: 0,
+          peakFollowingErrorUm: fe(m.speedMmPerS),
+          overshootUm: 0,
+          settleMs: 0,
+        }),
+      );
+  }
+  const LAG_S = 0.004;
+
+  behaviour(
+    {
+      id: 'benchmark.accel-kept-up',
+      covers: 'src/domain/motionBenchmark.ts#assessAcceleration',
+      given: 'a sweep on a drive with a 4 ms lag, whose following error on every move is that lag times the speed',
+      expect: {
+        'passes': 'Acceleration Max passes',
+        'top-speed': 'the top speed tested is the full Velocity Max',
+        'all-delivered': 'every speed of the sweep is reported as delivering all of Acceleration Max',
+      },
+      why: { 'passes': "following error from the drive's lag is the same at cruise as in the ramp, so it says nothing about acceleration" },
+    },
+    () => {
+      const v = assessAcceleration(sweep(LIMITS, (s) => LAG_S * s * 1000), LIMITS, LAG_S);
+      expect(v.kind).toBe('pass');
+      if (v.kind !== 'pass') return;
+      expect(v.topSpeedMmPerS).toBe(50);
+      expect(v.steps).toHaveLength(SWEEP_SHARES.length);
+      for (const st of v.steps) expect(st.delivered).toBe(1);
+    },
+  );
+
+  behaviour(
+    {
+      id: 'benchmark.accel-too-high',
+      covers: 'src/domain/motionBenchmark.ts#assessAcceleration',
+      given: 'a sweep in which the ramp to full speed leaves the carriage half a ramp length behind its trajectory, and every slower ramp keeps up',
+      expect: {
+        'too-high': 'Acceleration Max is judged too high',
+        'worst-named': 'the ramp to full speed is named as the worst, delivering about half of Acceleration Max',
+        'slower-pass': `the slower ramps are each reported as delivering at least ${ACCEL_DELIVERED_MIN * 100}% of it`,
+      },
+      why: {
+        'worst-named':
+          'delivering a share r of the acceleration leaves the carriage about (1 − r) of the ramp length, speed²/2·acceleration, behind when the trajectory reaches speed',
+      },
+    },
+    () => {
+      const halfRampUm = ((50 * 50) / (2 * 600)) * 1000 * 0.5;
+      const forgivenUm = (8 / LIMITS.encoderStepsPerMM) * 1000;
+      const v = assessAcceleration(sweep(LIMITS, (s) => (s === 50 ? halfRampUm + forgivenUm : 0)), LIMITS, null);
+      expect(v.kind).toBe('too-high');
+      if (v.kind !== 'too-high') return;
+      expect(v.worst.speedMmPerS).toBe(50);
+      expect(v.worst.delivered).toBeCloseTo(0.5, 6);
+      for (const st of v.steps.filter((x) => x.speedMmPerS < 50)) {
+        expect(st.delivered).toBeGreaterThanOrEqual(ACCEL_DELIVERED_MIN);
+      }
+    },
+  );
+
+  behaviour(
+    {
+      id: 'benchmark.accel-room-limited',
+      covers: 'src/domain/motionBenchmark.ts#assessAcceleration',
+      given: 'a machine with 100 mm of travel and a gentle 60 mm/s² acceleration, where a tenth of the travel is too short to reach full speed, and the carriage keeps up',
+      expect: {
+        'reached-speed': 'the top speed tested is the fastest that room allows at Acceleration Max, the square root of acceleration times distance',
+      },
+    },
+    () => {
+      const gentle = { ...LIMITS, maxAccelMmPerS2: 60 };
+      const v = assessAcceleration(sweep(gentle, () => 0), gentle, null);
+      expect(v.kind).toBe('pass');
+      if (v.kind !== 'pass') return;
+      expect(v.topSpeedMmPerS).toBeCloseTo(Math.sqrt(60 * 10), 2);
+    },
+  );
+
+  behaviour(
+    {
+      id: 'benchmark.accel-not-judged',
+      covers: 'src/domain/motionBenchmark.ts#assessAcceleration',
+      given: 'a run that stopped after only the two slowest speeds of the sweep were measured',
+      expect: {
+        'not-judged': 'Acceleration Max is left unjudged',
+        'measured-shown': 'the two speeds that were measured are still reported',
+      },
+    },
+    () => {
+      const v = assessAcceleration(sweep(LIMITS, () => 0, [0.25, 0.5]), LIMITS, null);
+      expect(v.kind).toBe('not-judged');
+      expect(v.steps).toHaveLength(2);
     },
   );
 });
