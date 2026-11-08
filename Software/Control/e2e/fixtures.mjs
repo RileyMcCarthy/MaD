@@ -313,9 +313,10 @@ export async function press(locator, { timeout = 15_000 } = {}) {
  * that looked for "Enable motion" once found none then, pressed nothing,
  * and waited for a "Motion: enabled" nobody had asked for. So this waits
  * for one of the two states it can act on, motion already on or "Enable
- * motion" offered, and presses only the second. Every wait is the device
- * budget, on the page's clock in board mode. e2e/enableMotion.test.ts holds
- * it to a booting machine.
+ * motion" offered, and presses only the second. Each wait has its own
+ * ceiling on the page's clock in board mode: the device budget for the two
+ * state waits, and press()'s own for the click between them.
+ * e2e/enableMotion.test.ts holds it to a booting machine.
  */
 export async function enableMotion(page) {
   const enable = page.getByRole('button', { name: 'Enable motion' });
