@@ -3812,11 +3812,13 @@ const scenarios = [
         await page.route('**/firmware/*-P2Eval.bin', (route) =>
           route.fulfill({ contentType: 'application/octet-stream', body: image }));
         // Not connectToSil: the old firmware's samples are unreadable to this
-        // app, so the session never shows Responding (COMPAT-too-old).
+        // app, so the session never shows Responding (COMPAT-too-old). Its
+        // 3-byte refusal of the device-info read predates protocol 3's
+        // reason byte, so the read goes unanswered (COMPAT-too-old).
         await page.goto(`${APP_URL}#/connect`);
         await press(boardGrantedPort(page), { timeout: 10_000 });
         await page.locator('.dot.connected').waitFor({ timeout: 10_000 });
-        await compatBanner(page).filter({ hasText: /too old/ }).waitFor({ timeout: DEVICE_WAIT_MS });
+        await compatBanner(page).and(page.locator('[data-kind="unanswered"]')).waitFor({ timeout: DEVICE_WAIT_MS });
         await press(page.getByTestId('update-firmware'));
         const install = page.getByTestId('install-recommended');
         await install.filter({ hasText: `Install recommended firmware (${version})` }).waitFor({ timeout: DEVICE_WAIT_MS });
@@ -3840,8 +3842,8 @@ const scenarios = [
           .waitFor({ timeout: DEVICE_WAIT_MS });
         const verdicts = logged(await appLogEntries(page), 'store', 'firmware-compat').map((e) => e.data?.verdict);
         assert(
-          verdicts[0] === 'firmwareTooOld' && verdicts[verdicts.length - 1] === 'ok',
-          `verdicts ${JSON.stringify(verdicts)}, expected firmwareTooOld then ok`,
+          verdicts[0] === 'unanswered' && verdicts[verdicts.length - 1] === 'ok',
+          `verdicts ${JSON.stringify(verdicts)}, expected unanswered then ok`,
         );
         // Motion works on the firmware the board now runs.
         await page.goto(`${APP_URL}#/live`);
