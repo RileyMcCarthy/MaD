@@ -47,10 +47,18 @@ export interface ByteRingSnapshot {
   capacityBytes: number;
 }
 
-/** 64 KiB ≈ several seconds of 2 Mbaud traffic, or minutes of idle polling. */
-export const BYTE_RING_CAPACITY = 64 * 1024;
-/** Chunk-metadata slots. At ~100 Hz this is ~40 s of read/write boundaries. */
-export const CHUNK_META_CAPACITY = 4096;
+/*
+ * Sized for about five minutes of a streaming session, because a report is
+ * usually filed minutes after the failure it is about. Measured on a bench
+ * session streaming samples at ~60 Hz: ~1.7 KB/s of traffic in ~130 chunks/s,
+ * so five minutes is ~510 KB and ~39 k chunks. Both limits carry headroom, and
+ * whichever fills first sets the window. ~2 MiB of fixed worker heap; the
+ * exported window is a few MB of JSON.
+ */
+/** 1 MiB ≈ six minutes of streaming at the measured rate. */
+export const BYTE_RING_CAPACITY = 1024 * 1024;
+/** Chunk-metadata slots: ≈ six minutes of read/write boundaries at ~130 chunks/s. */
+export const CHUNK_META_CAPACITY = 48 * 1024;
 
 const DIR_RX = 0;
 const DIR_TX = 1;
@@ -65,6 +73,25 @@ function toBase64(bytes: Uint8Array): string {
     binary += String.fromCharCode(...bytes.subarray(i, i + B64_SLICE));
   }
   return btoa(binary);
+}
+
+/** Space-separated lowercase hex, the same shape `tailHex` prints. */
+export function hexOf(bytes: Uint8Array): string {
+  let out = '';
+  for (let i = 0; i < bytes.length; i++) {
+    out += bytes[i].toString(16).padStart(2, '0');
+    if (i + 1 < bytes.length) out += ' ';
+  }
+  return out;
+}
+
+/**
+ * Log data for a command the device refused or never answered: its length and
+ * its bytes. Logged with the failure itself, so the evidence survives however
+ * long after it the report is filed, which the ring above cannot promise.
+ */
+export function failedPayload(bytes: Uint8Array): { bytes: number; payloadHex: string } {
+  return { bytes: bytes.length, payloadHex: hexOf(bytes) };
 }
 
 export class ByteRing {
@@ -208,13 +235,7 @@ export class ByteRing {
   tailHex(n = 64): string {
     const len = Math.min(n, this.written, this.capacity);
     if (len <= 0) return '';
-    const bytes = this.read(this.written - len, len);
-    let out = '';
-    for (let i = 0; i < len; i++) {
-      out += bytes[i].toString(16).padStart(2, '0');
-      if (i + 1 < len) out += ' ';
-    }
-    return out;
+    return hexOf(this.read(this.written - len, len));
   }
 
   /** Cheap counters for the bundle header — no allocation of payload data. */
@@ -257,7 +278,7 @@ export class ByteRing {
     this.rxBytes = 0;
     this.txBytes = 0;
     // The backing arrays are intentionally NOT reallocated or zeroed: stale
-    // bytes are unreachable (nothing references them) and zeroing 64 KB is
+    // bytes are unreachable (nothing references them) and zeroing 1 MiB is
     // pointless work.
   }
 }

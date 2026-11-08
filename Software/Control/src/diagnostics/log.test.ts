@@ -4,6 +4,7 @@ import {
   LOG_CAPACITY,
   LOG_FLUSH_INTERVAL_MS,
   LOG_FLUSH_MAX_ENTRIES,
+  SANITIZE_HEX_MAX,
   SANITIZE_STACK_MAX,
   SANITIZE_STRING_MAX,
   clearLog,
@@ -380,6 +381,28 @@ describe('sanitize', () => {
 
       const huge = 'y'.repeat(SANITIZE_STACK_MAX + 10);
       expect(sanitize({ stack: huge })!.stack).toContain('…(+10 chars)');
+    },
+  );
+
+  behaviour(
+    {
+      id: 'diag.log-sanitize-keeps-hex-dumps',
+      covers: 'src/diagnostics/log.ts#sanitize',
+      given: 'a 300-byte hex dump in log data, under a name ending in "Hex"',
+      expect: {
+        'dump-kept-whole': 'a value named as a hex dump is kept whole, up to the larger hex limit',
+        'dump-limit-bounded': 'a hex dump beyond that limit is still cut short and marked',
+      },
+      why: {
+        'dump-kept-whole': 'a full batch of moves is several hundred bytes, and every one of them can be the fault',
+      },
+    },
+    () => {
+      const dump = Array.from({ length: 300 }, () => 'ab').join(' ');
+      expect(sanitize({ payloadHex: dump })!.payloadHex).toBe(dump);
+
+      const huge = 'a'.repeat(SANITIZE_HEX_MAX + 10);
+      expect(sanitize({ payloadHex: huge })!.payloadHex).toContain('…(+10 chars)');
     },
   );
 
