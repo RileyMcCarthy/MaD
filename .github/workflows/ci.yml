@@ -995,12 +995,12 @@ jobs:
         working-directory: Firmware/MaDCore
         run: pio pkg install --platform https://github.com/RileyMcCarthy/platform-propeller.git
       # The ISS executes the SHIPPED artifact, and the shipped artifact is
-      # compiled by flexcc, not clang. Without this the p2core/p2iss/MaDSim
+      # compiled by flexcc, not clang. Without this the p2core/p2iss/mad-catalog
       # tests that boot the firmware find no image and skip -- printing a
       # banner and passing, which is how this suite once reported 54 passed
       # while asserting nothing. CI is the one place that must never be allowed
       # to do that, hence MAD_REQUIRE_P2_IMAGE on the test step below. There is
-      # no native firmware library any more: mad-emulator runs this image too.
+      # no native firmware library any more.
       #
       # Built here rather than reused from `build-firmware`: that job only runs
       # when `firmware` changed, so on a SIL-only PR its artifact would not
@@ -1036,7 +1036,7 @@ jobs:
       # than no gate.
       - name: rustfmt (gating)
         working-directory: SIL
-        run: cargo fmt -p mad-emulator -p models -p mad-catalog -p mad-runner --check
+        run: cargo fmt -p models -p mad-catalog -p mad-runner --check
       # --locked here and on the test step: `embsim check` builds mad-runner
       # with SIL/Cargo.lock --locked, so a lock that no longer matches the
       # manifests fails here, before a project's check meets it.
@@ -1047,7 +1047,7 @@ jobs:
         id: tests
         working-directory: SIL
         # The workspace is the MaD-side crates only (protocol, models,
-        # MaDSim, p2core, p2iss, mad-catalog, mad-runner). The embsim
+        # p2core, p2iss, mad-catalog, mad-runner). The embsim
         # submodule suite is re-run by the sibling `embsim-ci` job (mirror of
         # protoemb-ci) on the pinned commit.
         #

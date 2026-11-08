@@ -23,9 +23,11 @@
 //! comparators at the configured thresholds — see the provenance notes in
 //! `embsim_models::limit_switch` for the switch behavior contract.
 //!
-//! Parameter sources: thresholds and slack come from the system description
-//! (`MaDSim/src/wiring.rs`), mirroring the physical machine's switch
-//! placement and grip setup — they are rig-specific, not part constants.
+//! Parameter sources: thresholds and slack come from the machine that
+//! configures the gantry (`GANTRY_SLACK_MM` and the parked thresholds in
+//! `SIL/mad-catalog/src/machine.rs`), mirroring the physical machine's
+//! switch placement and grip setup — they are rig-specific, not part
+//! constants.
 //!
 //! Has no knowledge of MCU peripherals.
 

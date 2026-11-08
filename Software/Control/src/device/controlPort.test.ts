@@ -17,7 +17,7 @@ describe('portMatchesUsbId', () => {
       expect: {
         'same-id-matches': 'an adapter reporting both remembered ids matches',
         'other-product-differs': 'an adapter from the same vendor with another product id does not',
-        'nothing-remembered': 'with no vendor remembered, no adapter matches, not even one that reports no id',
+        'nothing-remembered': 'with no vendor remembered, no adapter matches, including one that reports no id',
       },
     },
     () => {

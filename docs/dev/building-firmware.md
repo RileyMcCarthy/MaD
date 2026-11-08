@@ -22,7 +22,7 @@ commands run from `Firmware/MaDCore/`.
 ```bash
 cd Firmware/MaDCore
 
-pio run -e MaD                 # the firmware; hardware and the SIL emulator run this image
+pio run -e MaD                 # the firmware; hardware and the SIL run this image
 pio run -e MaD -t upload       # flash a connected board through J1
 pio test -e native_test        # Unity unit tests on the host, against a mock HAL
 pio check -e MaD               # MISRA C:2023 + CERT static analysis

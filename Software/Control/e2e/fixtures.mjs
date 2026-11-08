@@ -772,26 +772,11 @@ export function setCurrentScenario(id) {
 }
 
 /**
- * Which board the suite is attached to (SIL/scripts/board-route.sh sets it):
- *
- *   - `project`, the default: the machine's project, `embsim run
- *     mad-cosim.toml` (`make e2e-emulator`): the carrier and the module as
- *     drawn, the firmware off the module's flash, the host on the control
- *     port J4 (P30/P32 through IC2);
- *   - `emulator`: `mad-emulator --chrome`, the debug firmware on the bare
- *     chip, the host on P30/P32. No make target runs it since SERVO-stall
- *     moved onto mad-hard-stop-cosim.toml (MaD #298); it retires with
- *     mad-emulator.
- */
-export const BOARD_ROUTE = process.env.E2E_BOARD_ROUTE || 'project';
-
-/**
  * The USB ids of the board's port, `VVVV:PPPP` in hex. The project's
  * `chrome-cdp` names them: the control port's adapter on J4 is an FTDI
- * FT232R, 0403:6001 (SIL/mad-cosim.toml), as `mad-emulator --chrome`
- * reports; the ROM board's (E2E_BOARD=rom) and the reflash board's
- * (E2E_BOARD=reflash) is the Prop Plug's FT231X on J1, 0403:6015
- * (SIL/mad-serial-boot-cosim.toml, SIL/mad-reflash-cosim.toml).
+ * FT232R, 0403:6001 (SIL/mad-cosim.toml); the ROM board's (E2E_BOARD=rom)
+ * and the reflash board's (E2E_BOARD=reflash) is the Prop Plug's FT231X on
+ * J1, 0403:6015 (SIL/mad-serial-boot-cosim.toml, SIL/mad-reflash-cosim.toml).
  */
 export const PORT_USB =
   process.env.E2E_PORT_USB
@@ -869,9 +854,9 @@ export async function connectToSil(page) {
   // First point at which the app is loaded and can take a marker.
   if (currentScenario !== null) await markAppLog(page, `scenario ${currentScenario}`);
   if (BOARD) {
-    // The emulator grants the port to every origin (`--granted`, as Chrome's
-    // SerialAllowUsbDevicesForUrls policy would), so the Connect screen
-    // lists it as granted.
+    // The project's chrome-cdp grants the port to every origin (its
+    // `granted = true`, as Chrome's SerialAllowUsbDevicesForUrls policy
+    // would), so the Connect screen lists it as granted.
     await press(boardGrantedPort(page), { timeout: 10_000 });
   } else {
     // The primary button (testid connect-device) prompts requestPort() → our fake.

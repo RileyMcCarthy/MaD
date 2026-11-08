@@ -162,8 +162,8 @@ socket's fingers 50 and 49 (`mad_edge.net`). `SIL/mad.toml` and the other
 project files put the host there, the production image in the module's flash, and
 nothing on J4; `SIL/mad-catalog/tests/mad.rs` holds the protocol round trip
 over J1. The debug build stays where a run needs its log on P62 or its MAIN
-channel on a bare chip's P30/P32 (P53/P55 before the move below;
-`mad-emulator`, the `p2core`/`p2iss` suites, `mad-catalog/tests/boot.rs`).
+channel on a bare chip's P30/P32 (P53/P55 before the move below; the
+`p2core`/`p2iss` suites, `mad-catalog/tests/boot.rs`).
 Two other ways out were not taken then: a plain P2-EC module in J3 (the
 socket symbol names it; embsim has no `p2-ec` kind or netlist), and moving
 the debug build's MAIN channel, which needs a carrier change too, since J4's
@@ -174,7 +174,7 @@ v0.3 puts IC2's carrier side on P29–P32, pins the EC32MB brings to fingers
 11–8 (read: `p2_ec32mb.net`), and the debug build's MAIN channel follows:
 P30 receives from IC2's OUTC (pin 5) and P32 drives its INA (pin 3) (read:
 the v0.3 netlist exported from `Hardware/EdgeBoard/KiCad`; `HW_pins.h`).
-`mad-emulator` and the `p2core`/`p2iss` suites put the host on P30/P32. The
+The `p2core`/`p2iss` suites put the host on P30/P32. The
 SIL's `mad_edge.net` was re-exported from the v0.3 files on 2026-11-01
 (KiCad 9's `kicad-cli`), so the project files' board has IC2 on P29–P32 as
 well; what this section finds about J4 above held for the carrier before
@@ -189,7 +189,7 @@ above); the single-port production build is the
 release's `-P2Eval.bin`, which the app flashes only as a local file. The
 bench has an FT232R attached, USB `0403:6001`, beside the P2-EVAL's FT231X
 (measured: `ioreg`, 2026-10-21; what the FT232R is wired to is not known);
-`0403:6001` is the id `mad-emulator` gives its host. If the machine runs the
+`0403:6001` is the id the retired `mad-emulator` gave its host. If the machine runs the
 MaDEdge image, the route needs revisiting: a released image's protocol reaches
 the chip only on a module with fingers for P53/P55, such as the plain P2-EC
 (inferred), and one built since the move reaches it on a v0.3 carrier's J4. If it runs the production image, the app's default asset would

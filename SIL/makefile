@@ -2,7 +2,7 @@
 #
 # Commands:
 #   make p2image        - Build the firmware's P2 image (pio env MaD), the one image the ISS executes
-#   make emulator       - Build the Rust emulator
+#   make emulator       - Build the SIL workspace
 #   make test           - Build the image, run the Rust test suite
 #   make playground     - mad-playground.toml under embsim run: the machine, MaD Control in a Chrome window on the board's clock
 #   make playground-iss - The same target, under the name it had beside the native one
@@ -34,19 +34,19 @@
 # headed copy (step 11); SERVO-stall (e2e-stall) on that file with a hard
 # stop on its carriage, mad-hard-stop-cosim.toml (MaD #298); FW1 and
 # COMPAT-reflash (e2e-reflash) on the board the app's flasher can reach,
-# mad-reflash-cosim.toml, the node on J1 (MaD #134). No e2e target runs mad-emulator. A
-# browser on the host's own clock (behind a PTY, or the WS bridge) measures
-# the host, not the machine: the ISS interprets every instruction at a few
-# percent of real time, and the app's 2 s response timeout would fire at a
-# fraction of that in the board's time.
+# mad-reflash-cosim.toml, the node on J1 (MaD #134). A browser on the host's
+# own clock (behind a PTY, or the WS bridge) measures the host, not the
+# machine: the ISS interprets every instruction at a few percent of real
+# time, and the app's 2 s response timeout would fire at a fraction of that
+# in the board's time.
 
 FIRMWARE_DIR = ../Firmware/MaDCore
 # The firmware's one P2 image, the one everything here executes: the
-# project files' module flash (flash-image), mad-emulator, and the
-# mad-catalog, p2core and p2iss suites. Its MAIN channel, the protocol, is
-# on P30/P32 at 2 000 000 baud, which the Edge carrier's isolator IC2 takes
-# to its control port J4; its log is on P62, the debug header J1, which is
-# otherwise the programming port (Firmware/MaDCore/platformio.ini).
+# project files' module flash (flash-image), and the mad-catalog, p2core and
+# p2iss suites. Its MAIN channel, the protocol, is on P30/P32 at 2 000 000
+# baud, which the Edge carrier's isolator IC2 takes to its control port J4;
+# its log is on P62, the debug header J1, which is otherwise the programming
+# port (Firmware/MaDCore/platformio.ini).
 P2_ENV = MaD
 P2_IMAGE = $(FIRMWARE_DIR)/.pio/build/$(P2_ENV)/program
 PROTOEMB_GENERATOR = ../Protocol/ProtoEmb/core/generate.py
@@ -65,10 +65,10 @@ BUILD_DIR = build
 FLASH_IMAGE = $(BUILD_DIR)/flash.bin
 SD_IMAGE = $(BUILD_DIR)/sd.img
 
-.PHONY: p2image protocol emulator emulator-release test playground playground-iss playground-pty playground-rom e2e-emulator e2e e2e-rom e2e-bundle e2e-motion e2e-stall e2e-compat e2e-reflash flash-image reflash-image sd-image check bootrom clean
+.PHONY: p2image protocol emulator test playground playground-iss playground-pty playground-rom e2e-emulator e2e e2e-rom e2e-bundle e2e-motion e2e-stall e2e-compat e2e-reflash flash-image reflash-image sd-image check bootrom clean
 
-# Build the P2 image the ISS runs (`p2core`, `p2iss`, `mad-catalog`,
-# `mad-emulator`, and the project files' flash).
+# Build the P2 image the ISS runs (`p2core`, `p2iss`, `mad-catalog`, and the
+# project files' flash).
 #
 # A `make test` dependency on purpose: those crates' tests skip when the image
 # is absent, and PlatformIO drops stale environment directories whenever the
@@ -82,7 +82,7 @@ p2image:
 protocol:
 	python3 $(PROTOEMB_GENERATOR) --schema $(PROTOEMB_SCHEMA) --target rs --output ../Protocol/rust/src/generated --templates $(PROTOEMB_TEMPLATES)
 
-# Build the Rust emulator. The image is a runtime input, not a link input.
+# Build the SIL workspace. The image is a runtime input, not a link input.
 emulator: protocol
 	cargo build
 
@@ -90,9 +90,6 @@ emulator: protocol
 # skip" into a failure, so an image PlatformIO dropped fails the run.
 test: emulator p2image
 	MAD_REQUIRE_P2_IMAGE=1 cargo test
-
-emulator-release: protocol
-	cargo build --release --bin mad-emulator
 
 # MaD Control on the ISS, for a person (embsim MIGRATING-MAD.md step 11):
 # mad-playground.toml, the machine (a headed copy of mad-cosim.toml),
@@ -231,7 +228,7 @@ flash-image: p2image
 
 # The card in the module's socket: 32 MiB of FAT16 holding the directories
 # the firmware writes into, with ./sd mirrored onto it when it is there, the
-# card mad-emulator --sd-path builds. A project names it in its sd-card
+# card `p2iss::sdimage::mad_card` builds. A project names it in its sd-card
 # entry (`image = "build/sd.img"`).
 sd-image:
 	mkdir -p $(BUILD_DIR)

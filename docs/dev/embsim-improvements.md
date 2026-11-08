@@ -1,6 +1,6 @@
 # embsim improvement backlog
 
-Living TODO for the SIL framework (`SIL/embsim`) and the MaD consumer (`SIL/MaDSim`).
+Living TODO for the SIL framework (`SIL/embsim`) and MaD's crates on it (`SIL/p2iss`, `SIL/mad-catalog`).
 Inspired by what Renode gets right as an ISS **without** turning embsim into a Renode remake.
 
 **Order is dependency order.** Native SIL stays the default (fast PR CI). ISS is an option on the same pin/time fabric.
@@ -87,7 +87,7 @@ The `MaD` image's MAIN is a hardware UART on pins 30/32, not FlexC `_txraw` (it 
 - [ ] GPIO IN/OUT/DIR — enable, dir, endstops, ESD.
 - [ ] **v1 skip:** SD SPI (58–61), I2C navkey (bit-bang). Mount-fail is already a firmware path.
 
-### MaD consumer
+### MaD consumer (superseded: the project files run the ISS, and `mad-emulator` retired with MaD #298)
 
 - [ ] `mad-emulator --backend iss --firmware …/MaD/program`
 - [ ] `make playground-iss` (or `playground-p2bin`) — same PTY `/tmp/tty.rpi` as native.

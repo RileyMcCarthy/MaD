@@ -27,7 +27,7 @@ relevant jobs:
 | `firmware-layering` | firmware changed | **Blocking (baseline-gated).** `scripts/check_layering.py` enforces downward-only includes (APP→DEV→IO→Library→HAL→HW); pre-existing violations are frozen in `.layering-baseline`, so it fails only on **new** upward includes |
 | `python-lint` | firmware changed | **Blocking.** `ruff` over the PlatformIO SCons hooks (`Firmware/MaDCore/extra_scripts`; `ruff.toml`, mirrors the Python guide). The ProtoEmb generator is linted in [its own repo's CI](https://github.com/RileyMcCarthy/protoemb) |
 | `firmware-misra` | firmware changed | **Blocking.** `pio check` (cppcheck + MISRA) with `check_severity = medium, high` — low is not reported. Fails CI Gate on any medium/high defect. CERT is not enforced (no cert.py with bundled cppcheck) |
-| `sil-rust` | SIL / firmware / protocol changed | **Blocking.** `make protocol` + the `MaD` image, then `cargo fmt --check`, `cargo clippy -- -D warnings`, and `cargo test` on the SIL workspace — all three gating. rustfmt covers `mad-emulator` + `models`; the generated `protocol` crate is excluded because `make protocol` rewrites it every build. Generated-codec clippy allows are scoped to the `mod protoemb` declaration in `Protocol/rust/src/lib.rs`, never crate-wide |
+| `sil-rust` | SIL / firmware / protocol changed | **Blocking.** `make protocol` + the `MaD` image, then `cargo fmt --check`, `cargo clippy -- -D warnings`, and `cargo test` on the SIL workspace — all three gating. rustfmt covers `models`, `mad-catalog` and `mad-runner`; the generated `protocol` crate is excluded because `make protocol` rewrites it every build. Generated-codec clippy allows are scoped to the `mod protoemb` declaration in `Protocol/rust/src/lib.rs`, never crate-wide |
 | `build-firmware` | firmware changed, or a firmware tag | Builds the one `MaD` image, released as `MaD-Firmware-<version>.bin`, and writes `firmware-info.json` (the release's `protocolVersion`, read from the generated header) |
 | `build-hardware` | hardware changed, or a hardware tag | KiBot → Gerbers, BOM, interactive BOM, 3D models for each board |
 | `vibes` (Behaviour ledger) | every PR, after `firmware-unit-tests`, `wasm-control-ci` and `sil-rust` | **Informational** (not in `ci-gate.needs`). Runs no suite: builds the behaviour ledger from what those three jobs uploaded as they ran their tests (`vibes report --from`), diffs it against the base branch and posts the report as a sticky PR comment. A suite whose job was skipped keeps its base rows and is named in the report; a failed job's run is read test by test. A behaviour that breaks or is removed leads the comment but does not fail the job; it goes red only when a behaviour has no verdict (exit 3: a job left no run, or its run stopped before reaching it) or a picture could not be read, and it never blocks the merge |
@@ -76,8 +76,8 @@ board time in host time:
 | `e2e-nightly.yml` | 06:17 UTC daily, or by hand | The whole suite on the same route, after the node's Chrome canary (a worker's timer on the board's clock): all but the scenarios that move the carriage, plus FW-ISS, in one job, and those scenarios in three `make e2e-motion` jobs (`MOTION_SHARD=1/3`..`3/3`), all on `mad-cosim.toml` |
 
 A move of the `SIL/embsim` pin runs the board job as #148 intended: the node
-the suite runs on is embsim's, and `sil-rust` exercises `mad-emulator` itself
-against the pin.
+the suite runs on is embsim's, and `sil-rust` exercises `p2iss`, `mad-catalog`
+and `mad-runner` against the pin.
 
 Until the native firmware library was removed, `control-e2e-sil` ran the full
 suite per PR against that library behind the bridge, unpaced (`--speed 0`) so the
@@ -237,7 +237,7 @@ cd SIL && make test
 
 # SIL Rust gates — all three block CI. rustfmt skips the generated `protocol`
 # crate, which `make protocol` rewrites on every build.
-cd SIL && cargo fmt -p mad-emulator -p models --check \
+cd SIL && cargo fmt -p models -p mad-catalog -p mad-runner --check \
        && cargo clippy --workspace --all-targets -- -D warnings \
        && cargo test --workspace --all-targets
 

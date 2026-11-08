@@ -360,8 +360,9 @@ a tick of the 20 MHz RC clock from START, 100 ns apart at the closest; a step
 train's pin released by `_pinclear` and then driven as a plain pin; and the
 sync-serial clock's transitions half its period apart from the `WYPIN`, the
 pad released once the pin is cleared. `P2Iss` keeps its `Component` impl and
-pin lists while `mad-emulator` still runs SERVO-stall, the one scenario no
-project can run (MaD #298); they go when it retires (step 11).
+pin lists for the `p2iss` tests that still use them. `mad-emulator`, their
+last consumer outside those tests, has retired (MaD #362); they go in step
+11's follow-up, which MaD #298 tracks until it lands.
 
 `p2iss/tests/ec32mb_sd_mount.rs`, stepped, is the same module with the card
 `make sd-image` writes in `J301`: the firmware's boot-time mount and its
@@ -769,9 +770,9 @@ every 20 ms of board time, both images in `mad.toml` (measured, 2026-10-21):
   `mad_edge.net`): with no current in the loop it rests high, and the
   firmware reads `P22` high as the emergency-stop circuit without power
   (`HAL_GPIO_config.c`, active high), which faults the machine and refuses
-  motion. `mad-emulator` holds `P22` low with a bench pull
-  (`MaDSim/src/iss_description.rs`, `IDLE_PULLS`), which is why motion
-  enables there. The project files close `J17`'s loop from the carrier's
+  motion. The retired `mad-emulator` held `P22` low with a bench pull
+  (`SIL/MaDSim/src/iss_description.rs` at 4bf392614, `IDLE_PULLS`), which
+  is why motion enabled there. The project files close `J17`'s loop from the carrier's
   `5V_IO` to `GND_IO`, as the switch loops take them, standing for a
   powered circuit (inferred); with it the machine reads unfaulted from
   1.314 s and enabling motion is acknowledged (measured). What the machine
@@ -786,7 +787,7 @@ twice takes only the answer to its own request: the first answer stays in
 what the host received, and a parser started at an earlier request finds
 it again (`mad.rs`, `HostPort::answer`).
 
-`mad-emulator`, the `p2core`/`p2iss` suites and `mad-catalog/tests/boot.rs`
+The `p2core`/`p2iss` suites and `mad-catalog/tests/boot.rs`
 kept the debug image (now the one `MaD` image): they put the host on the bare chip's `P30`/`P32`, or
 read the log on `P62`. `boot.rs`'s console case is `ec32mb_flash_boot.rs`'s
 boot said by a project file. It passes with the production image too
@@ -802,26 +803,22 @@ budget is counted on the browser's clock. A browser on the host's own clock,
 behind the emulator's PTY, times out a live board: worthless for asserting,
 and misleading for looking.
 
-So the browser runs on the board's clock. `mad-emulator --chrome` puts
-embsim's `chrome-cdp` node where the PTY host sits, on the harness's host pins
-(`HOST.TX` to `P2.P30`, `P2.P32` to `HOST.RX`) with its rail wired
-(`HOST.VIO` on the P2's 3.3 V, `HOST.GND` on the bench ground). The node
-launches the host's Chrome at the board's first slice and holds every page and
-dedicated worker to the board's time over DevTools, a 1 ms quantum at a time;
-every page's `navigator.serial` is its shim, whose one port is this line (USB
-`0403:6001`). It is built through embsim's catalog (`embsim_cdp::catalog`,
-the `chrome-cdp` kind), as a project file names it (`SIL/MaDSim/src/host.rs`),
-and a failure it reports (a grant that sticks, a page that crashes, a Chrome
-that exits) stops the run with a non-zero exit. The run prints Chrome's
-DevTools URL in its "reached" line; a suite attaches there
+So the browser runs on the board's clock. A project file puts embsim's
+`chrome-cdp` node where the PTY host would sit, on the host's pins with its
+rail wired. The node launches the host's Chrome at the board's first slice
+and holds every page and dedicated worker to the board's time over
+DevTools, a 1 ms quantum at a time; every page's `navigator.serial` is its
+shim, whose one port is this line. It is built through embsim's catalog
+(`embsim_cdp::catalog`, the `chrome-cdp` kind), and a failure it reports (a
+grant that sticks, a page that crashes, a Chrome that exits) stops the run.
+The run prints Chrome's DevTools URL in its "reached" line; a suite attaches
+there
 ([SIL testing](sil-testing.md#the-board-route-the-app-in-chrome-on-the-boards-clock)).
-No make target or CI job runs this route: SERVO-stall, the last scenario it
-carried, runs on `mad-hard-stop-cosim.toml`, a project whose machine has a
-hard stop (MaD #298); FW-ISS and the playgrounds moved onto the project at
-embsim `MIGRATING-MAD.md` step 11.
+Until MaD #298 retired it, `mad-emulator --chrome` put the same node on the
+bare chip's `P30`/`P32`.
 
-The e2e runs on the machine's project instead (step 10): `make e2e-emulator`
-is `embsim run mad-cosim.toml`, whose `HOST` is the same kind on the
+The e2e runs on the machine's project (step 10): `make e2e-emulator`
+is `embsim run mad-cosim.toml`, whose `HOST` is that kind on the
 carrier's control port `J4` (USB `0403:6001`, DevTools on 9222, the port
 granted to every origin; on `J1`, USB `0403:6015`, with the production image,
 until 2026-11-01), the module booting the firmware off its flash. Measured

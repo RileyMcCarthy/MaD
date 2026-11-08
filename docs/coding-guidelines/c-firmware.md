@@ -395,7 +395,7 @@ make test
 ```bash
 # from Firmware/MaDCore/
 pio check -e MaD --fail-on-defect=medium --fail-on-defect=high
-pio run -e MaD        # the one image: hardware and the SIL emulator run it
+pio run -e MaD        # the one image: hardware and the SIL run it
 pio test -e native_test         # Unity unit tests (ASan + stack-protector)
 ```
 

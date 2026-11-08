@@ -50,8 +50,7 @@ MaD/
 ├── SIL/                     Software-in-the-loop test rig (Rust workspace)
 │   ├── embsim/              ⎘ submodule → github.com/RileyMcCarthy/embsim (reusable SIL framework)
 │   ├── models/              MaD physics models (gantry, sample, strain gauge)
-│   ├── mad-catalog/         MaD's embsim kinds (carrier, add-on, ISS, machine); mad*.toml are the machine's projects
-│   └── MaDSim/              The mad-emulator binary; no target runs it, and it retires (MaD #298)
+│   └── mad-catalog/         MaD's embsim kinds (carrier, add-on, ISS, machine); mad*.toml are the machine's projects
 ├── Hardware/                KiCad PCB designs (EdgeBoard, DS2Addon)
 └── docs/  +  mkdocs.yml     The documentation site
 ```
@@ -90,7 +89,7 @@ npm run app               # opens your browser; connect on the control port via 
 ### Build the firmware
 ```bash
 cd Firmware/MaDCore
-pio run -e MaD                 # the firmware: hardware and the SIL emulator run this image
+pio run -e MaD                 # the firmware: hardware and the SIL run this image
 pio run -e MaD -t upload       # flash a connected board through J1 (the programming port)
 pio test -e native_test        # unit tests
 pio check -e MaD --fail-on-defect=medium --fail-on-defect=high  # MISRA (medium+high)
