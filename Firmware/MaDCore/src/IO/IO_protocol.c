@@ -216,12 +216,6 @@ IO_protocol_incommingType_E IO_protocol_recieveRequest(IO_protocol_readType_E *r
     return incommingType;
 }
 
-bool IO_protocol_respondNACK(IO_protocol_writeType_E originalRequest)
-{
-    const uint8_t data[3] = {0x55, IO_PROTOCOL_OUTGOING_TYPE_NACK, originalRequest};
-    return IO_fullDuplexSerial_send(IO_FULLDUPLEXSERIAL_CHANNEL_MAIN, data, 3U);
-}
-
 bool IO_protocol_respondACK(IO_protocol_writeType_E originalRequest)
 {
     const uint8_t data[3] = {0x55, IO_PROTOCOL_OUTGOING_TYPE_ACK, originalRequest};

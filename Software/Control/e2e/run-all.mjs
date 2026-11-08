@@ -46,8 +46,9 @@
  *
  * Without CDP_URL only the board-free scenarios run: A1, FW1/2/3/5/6/7/8/9/10/11
  * and COMPAT-reconnect/-silent/-update-loop launch a host Chrome against
- * in-page fakes and need no emulator at all, which is what ci.yml's per-PR
- * `control-e2e-boardless` job runs:
+ * in-page fakes and need no emulator at all (FW1 flashes a board when one is
+ * attached, below), which is what ci.yml's per-PR `control-e2e-boardless` job
+ * runs:
  *   npm run dev
  *   SCENARIOS=A1,FW1,FW2,FW3,FW5,FW6,FW7,FW8,FW9,FW10,FW11,COMPAT-reconnect,COMPAT-silent,COMPAT-update-loop npm run e2e
  * Naming a board scenario without CDP_URL is refused.
@@ -64,6 +65,17 @@
  * (`cd SIL && make e2e-rom`, which sets E2E_BOARD=rom and
  * E2E_BOARD_ROUTE=project). On that board it is the only scenario that
  * runs; on the firmware's it is skipped.
+ *
+ * FW1 with a board flashes the board's firmware for real (MaD #134), on the
+ * reflash board: SIL/mad-reflash-cosim.toml, the firmware off the module's
+ * flash with the Prop Plug's reset on J1.3 and the ROM's serial window open
+ * after a reset (`cd SIL && make e2e-reflash`, which sets E2E_BOARD=reflash
+ * and the image to flash, E2E_REFLASH_IMAGE, a production build stamped
+ * E2E_REFLASH_VERSION). COMPAT-reflash runs there too, on the release from
+ * before the protocol handshake (E2E_FIRMWARE=old), and installs the same
+ * image from the too-old banner. On that board they are the only scenarios
+ * that run; on the others they are skipped; without a board FW1 flashes the
+ * in-page fake.
  *
  * Covers the parity-critical scenarios of docs/TEST_PLAN.md §4: A1, B1–B5, C1/C3/C4, D1/D2/D3,
  * E1, F1/F2/F4/F6/F7, G1/G2/G3 + G-limit, H1–H5, I1–I4, J1 (in G-limit), K1 (in B2+B3+B4) — plus
@@ -125,9 +137,10 @@ const MATRIX = JSON.parse(
   readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'matrix-catalog.json'), 'utf8'),
 );
 
-// The scenarios that never touch the board: they launch a host Chrome
-// against in-page fakes (the capability gate, and the flasher against a fake
-// boot ROM), so they run without an emulator.
+// The scenarios that need no board: they launch a host Chrome against
+// in-page fakes (the capability gate, and the flasher against a fake boot
+// ROM), so they run without an emulator. FW1 is one only where there is no
+// board (`boardFree`, below).
 const BOARD_FREE = new Set([
   'A1', 'FW1', 'FW2', 'FW3', 'FW5', 'FW6', 'FW7', 'FW8', 'FW9', 'FW10', 'FW11',
   'COMPAT-reconnect', 'COMPAT-silent', 'COMPAT-update-loop',
@@ -142,10 +155,11 @@ const FIRMWARE = process.env.E2E_FIRMWARE || 'current';
 const NEEDS_FIRMWARE = new Map([
   ['COMPAT-too-old', 'old'],
   ['COMPAT-app-too-old', 'future'],
+  ['COMPAT-reflash', 'old'],
 ]);
 /** Why board scenario `id` cannot run on this board's firmware, or ''. */
 const wrongFirmware = (id) => {
-  if (BOARD_FREE.has(id)) return '';
+  if (boardFree(id)) return '';
   const wants = NEEDS_FIRMWARE.get(id) ?? 'current';
   if (wants === FIRMWARE) return '';
   return wants === 'current'
@@ -157,6 +171,28 @@ const wrongFirmware = (id) => {
 // mad-serial-boot-cosim.toml (make e2e-rom). Only FW-ISS, the app flashing
 // that ROM, runs.
 const ROM_BOARD = process.env.E2E_BOARD === 'rom';
+
+// The board is the app's flasher's: SIL/mad-reflash-cosim.toml (make
+// e2e-reflash), the firmware off the module's flash with the Prop Plug's
+// reset on J1.3 and the ROM's serial window open after a reset (MaD #134).
+// FW1 runs there on this tree's firmware, and COMPAT-reflash on the old
+// one, each flashing E2E_REFLASH_IMAGE, a production build stamped
+// E2E_REFLASH_VERSION, through the ROM's loader for real.
+const REFLASH_BOARD = process.env.E2E_BOARD === 'reflash';
+
+// The special boards' scenarios; every other board scenario is the
+// firmware board's (mad-cosim.toml and its twins).
+const ONLY_ON = new Map([['FW-ISS', 'rom'], ['FW1', 'reflash'], ['COMPAT-reflash', 'reflash']]);
+const THIS_BOARD = ROM_BOARD ? 'rom' : REFLASH_BOARD ? 'reflash' : 'firmware';
+const MAKE_FOR = { rom: 'make e2e-rom', reflash: 'make e2e-reflash', firmware: 'make e2e' };
+/** Whether `id` is this board's to run. */
+const onThisBoard = (id) => (ONLY_ON.get(id) ?? 'firmware') === THIS_BOARD;
+/**
+ * Whether `id` runs without a board here. FW1 flashes the board's firmware
+ * wherever a board is attached, so it needs one then (the reflash board's);
+ * without one it flashes the in-page fake boot ROM.
+ */
+const boardFree = (id) => BOARD_FREE.has(id) && !(id === 'FW1' && (BOARD || REFLASH_BOARD));
 
 // The scenarios that command the carriage to move: a jog, a home, or a test
 // profile with a linear or waveform move. Each asserts on that motion, or on
@@ -914,6 +950,75 @@ async function walkDataFolderGate() {
   }
 }
 
+/** Board time the flash of a production image is given: the upload, the
+ *  write the app waits out, a hang's bound only (it never paces a pass). */
+const FLASH_WAIT_MS = 300_000;
+
+/**
+ * FW1 on the reflash board (SIL/mad-reflash-cosim.toml, `make e2e-reflash`;
+ * MaD #134): the machine's own firmware update, end to end, with nothing
+ * faked. The app connects to the board, which runs the firmware off the
+ * module's flash; the Firmware page hands the session's port over, resets
+ * the chip with its DTR pulse (the node's DTR pin, the Prop Plug's reset
+ * stage, J1.3, the chip's RESN), finds the ROM in its serial window, loads
+ * the flash stub and E2E_REFLASH_IMAGE through it, waits out the write, and
+ * gives the port back; the session reconnects to whatever the board now
+ * runs. E2E_REFLASH_VERSION is that image's stamp, which the firmware the
+ * board booted does not report, so the stamp in the status bar is the image
+ * the flash wrote, running.
+ */
+async function flashTheBoard() {
+  const path = process.env.E2E_REFLASH_IMAGE;
+  const version = process.env.E2E_REFLASH_VERSION;
+  assert(
+    path && version,
+    'FW1 on the board flashes E2E_REFLASH_IMAGE, stamped E2E_REFLASH_VERSION; make e2e-reflash sets both',
+  );
+  const image = readFileSync(path);
+  const { browser, page, errors } = await newSilPage();
+  try {
+    page.on('dialog', (d) => d.accept());
+    await connectToSil(page);
+    const fw = page.locator('.statusbar').getByText(/fw /);
+    const before = (await fw.textContent()) || '';
+    assert(
+      !before.includes(`fw ${version}`),
+      `the board already reports ${version} before the flash (${before}): the check would prove nothing`,
+    );
+
+    await page.goto(`${APP_URL}#/firmware`);
+    await page.getByTestId('flash-target').filter({ hasText: /USB 0403:6015/ })
+      .waitFor({ timeout: DEVICE_WAIT_MS });
+    await page.getByTestId('firmware-file').setInputFiles({
+      name: 'program',
+      mimeType: 'application/octet-stream',
+      buffer: image,
+    });
+    const clock = await pageClock(page);
+    const hostStart = Date.now();
+    await press(page.getByTestId('flash-firmware'));
+    await page.getByTestId('flash-status').filter({ hasText: /Wrote .* bytes to flash/ })
+      .waitFor({ timeout: FLASH_WAIT_MS });
+    const flashedMs = await clock.elapsed();
+    console.log(
+      `  FW1: wrote ${image.length} bytes to the board's flash in ${(flashedMs / 1000).toFixed(3)} s ` +
+        `of board time, ${((Date.now() - hostStart) / 1000).toFixed(1)} s of host time`,
+    );
+
+    // The app gives the session its port back once the write is out; the
+    // session reconnects to the firmware the flash wrote.
+    await page.locator('.statusbar').getByText(`fw ${version}`).waitFor({ timeout: DEVICE_WAIT_MS });
+    await awaitResponding(page);
+    console.log(
+      `  FW1: the board answers as ${version} ${((await clock.elapsed()) / 1000).toFixed(3)} s of board ` +
+        `time after the flash began (it reported "${before.trim()}" before)`,
+    );
+    assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
+  } finally {
+    await browser.close();
+  }
+}
+
 // ── Firmware compatibility (the device-info handshake) ──
 
 /**
@@ -1414,7 +1519,7 @@ const scenarios = [
     // each way -- which needs the firmware sequencer, the protocol pair and
     // the panel all to agree on signs and units.
     id: 'CAL1',
-    name: 'Motor calibration: matched drive and encoder, then a tracking run and suggested gains',
+    name: 'Motor calibration: the drive and encoder check passes, then motion calibration tracks and suggests gains',
     async run() {
       const { browser, page, errors } = await newSilPage();
       try {
@@ -1422,38 +1527,96 @@ const scenarios = [
         await prepareManualControl(page);
         await page.goto(`${APP_URL}#/settings`);
         await page.getByRole('heading', { name: 'Motor calibration' }).waitFor({ timeout: DEVICE_WAIT_MS });
-        const run = page.getByRole('button', { name: 'Run calibration' });
-        await run.waitFor({ timeout: DEVICE_WAIT_MS });
+        const check = page.getByRole('button', { name: 'Run check' });
+        await check.waitFor({ timeout: DEVICE_WAIT_MS });
         // Enabled once the machine profile has been read and motion is on.
         const clock = await pageClock(page);
-        while (await run.isDisabled()) {
-          assert((await clock.elapsed()) < DEVICE_WAIT_MS, 'Run calibration never became available');
+        while (await check.isDisabled()) {
+          assert((await clock.elapsed()) < DEVICE_WAIT_MS, 'Run check never became available');
           await waitPageTime(page, 200);
         }
-        await press(run);
-        // The report appears once both parts have run: the open-loop check,
-        // then the closed-loop tracking program from the SIL's saved profile.
+        await press(check);
+        // Routine 1: the open-loop drive and encoder check.
         const report = page.getByTestId('calibration-result');
         await report.waitFor({ timeout: DEVICE_WAIT_MS * 10 });
-        // Settle on the finished report (the tracking part fills in last), then
-        // say what it showed if any part is missing.
-        await waitPageTime(page, 500);
         const reportText = await report.innerText();
         assert(/Calibration passed/.test(reportText), `the drive and encoder check did not pass: ${reportText}`);
-        assert(
-          (await page.getByTestId('suggested-gains').count()) === 1,
-          `the tracking run did not complete: ${reportText}`,
-        );
         // The SIL's drive and encoder are both 8192/mm: counts back match the
         // pulses sent, with the right sign.
         const measured = Number(await page.getByTestId('measured-counts').innerText());
         const expected = Number(await page.getByTestId('expected-counts').innerText());
         assert(expected > 0 && Math.abs(measured / expected - 1) < 0.02, `encoder moved ${measured} counts, expected ~${expected}`);
+        // Routine 2 unlocks once the check passed on the saved steps/mm: the
+        // closed-loop tracking program from the SIL's saved profile.
+        const motion = page.getByRole('button', { name: 'Run motion calibration' });
+        const unlock = await pageClock(page);
+        while (await motion.isDisabled()) {
+          assert((await unlock.elapsed()) < DEVICE_WAIT_MS, `Run motion calibration never unlocked after: ${reportText}`);
+          await waitPageTime(page, 200);
+        }
+        await press(motion);
+        const motionReport = page.getByTestId('motion-result');
+        await motionReport.waitFor({ timeout: DEVICE_WAIT_MS * 10 });
+        // Settle on the finished report, then say what it showed if any part is missing.
+        await waitPageTime(page, 500);
+        const motionText = await motionReport.innerText();
+        assert(
+          (await page.getByTestId('suggested-gains').count()) === 1,
+          `the tracking run did not complete: ${motionText}`,
+        );
         // Tracking on the ideal SIL drive: every move stops within a few µm.
         const tracking = await page.getByTestId('tracking-summary').innerText();
         const stopUm = Number(/Stops within ±([\d.]+) µm/.exec(tracking)?.[1] ?? NaN);
         assert(stopUm < 5, `tracking stopped up to ${stopUm} µm from target: ${tracking}`);
         assert((await page.locator('.badge.error').count()) === 0, 'the calibration reported an error');
+        assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
+      } finally {
+        await browser.close();
+      }
+    },
+  },
+  {
+    // The Load cell calibration steps under Settings, which only read: the
+    // zero read on the emulated load cell reaches the profile being edited,
+    // and a weight that never went on is refused by name. Nothing moves.
+    id: 'CAL2',
+    name: 'Load cell calibration: the zero read reaches the profile, and a weight that never registered is refused',
+    async run() {
+      const { browser, page, errors } = await newSilPage();
+      try {
+        await connectToSil(page);
+        await page.goto(`${APP_URL}#/settings`);
+        await page.getByRole('heading', { name: 'Load cell calibration' }).waitFor({ timeout: DEVICE_WAIT_MS });
+        const readZero = page.getByRole('button', { name: 'Read zero' });
+        await readZero.waitFor({ timeout: DEVICE_WAIT_MS });
+        // Enabled once the machine profile, with its load cell, has been read.
+        const clock = await pageClock(page);
+        while (await readZero.isDisabled()) {
+          assert((await clock.elapsed()) < DEVICE_WAIT_MS, 'Read zero never became available');
+          await waitPageTime(page, 200);
+        }
+        await press(readZero);
+        const zero = page.getByTestId('zero-balance');
+        await zero.waitFor({ timeout: DEVICE_WAIT_MS * 3 });
+        const zeroMvV = Number((await zero.innerText()).replace(' mV/V', ''));
+        assert(Number.isFinite(zeroMvV), `the zero read did not give a number: ${await page.getByTestId('zero-result').innerText()}`);
+        await press(page.getByRole('button', { name: 'Use this zero' }));
+        const zeroField = Number(await page.getByLabel('Load Cell Zero Balance (mV/V)').inputValue());
+        assert(Math.abs(zeroField - zeroMvV) < 1e-9, `Load Cell Zero Balance shows ${zeroField}, the zero read was ${zeroMvV}`);
+
+        // Sensitivity: nothing hangs from the emulated load cell, so a 1 kg
+        // "weight" moves the reading by nothing and is refused by name.
+        await press(page.getByRole('button', { name: '1. Read unloaded' }));
+        await page.getByTestId('sensitivity-unloaded').waitFor({ timeout: DEVICE_WAIT_MS * 3 });
+        await page.getByLabel('Mass (kg)').fill('1');
+        await press(page.getByRole('button', { name: '2. Read with weight' }));
+        const result = page.getByTestId('sensitivity-result');
+        await result.waitFor({ timeout: DEVICE_WAIT_MS * 3 });
+        const resultText = await result.innerText();
+        assert(
+          /The 1 kg weight moved the reading by under 50 mN/.test(resultText),
+          `the weight that never went on was not refused by name: ${resultText}`,
+        );
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
       } finally {
         await browser.close();
@@ -2775,9 +2938,13 @@ const scenarios = [
     id: 'FW1',
     name: 'Firmware: flash a .bin through the boot ROM loader',
     async run() {
-      // Uses the in-page boot-ROM fake, not SIL: no DTR reaches the P2's
-      // reset line, so the app's reset pulse never restarts the chip into its
-      // boot ROM (MaD #134). See installFakeBootRom.
+      // With a board (the reflash board, make e2e-reflash) the app flashes
+      // its firmware for real: flashTheBoard. Without one, the in-page boot
+      // ROM fake (installFakeBootRom) checks the bytes the flasher sends.
+      if (BOARD) {
+        await flashTheBoard();
+        return;
+      }
       const browser = await chromium.launch({ channel: 'chrome', headless: true });
       try {
         const page = await browser.newPage();
@@ -2985,8 +3152,9 @@ const scenarios = [
       // The ROM board only (E2E_BOARD=rom, `make e2e-rom`): the node's port
       // is the programming UART on J1, as a Parallax FT231X (0403:6015). The
       // ROM's serial strap is pulled up (S301 position 3), so Prop_Chk is
-      // answered without the reset pulse the app sends (no pin carries DTR):
-      // the ROM listens for 90 s of board time from the chip's start.
+      // answered without the reset pulse the app sends (J1.3 and the node's
+      // DTR are unwired on that board): the ROM listens for 90 s of board
+      // time from the chip's start.
       const { browser, page, errors } = await newSilPage();
       try {
         page.on('dialog', (d) => d.accept());
@@ -3608,6 +3776,94 @@ const scenarios = [
       }
     },
   },
+  {
+    id: 'COMPAT-reflash',
+    name: 'Firmware compat (board): a release from before the handshake → Install recommended firmware → the board reflashed for real → ok, motion enabled',
+    async run() {
+      // The reflash board (make e2e-reflash) booting the release from before
+      // the app could ask which protocol the firmware speaks
+      // (E2E_FIRMWARE=old). The release the app recommends is this tree's
+      // production image, stamped E2E_REFLASH_VERSION, which no release
+      // carries yet: the manifest and image the dev server would fetch from
+      // GitHub are served here, as COMPAT-update-loop serves them. The
+      // update is the machine's own: the DTR reset through the Prop Plug's
+      // reset stage, the ROM's loader, the stub writing the module's flash,
+      // and the board booting what it wrote.
+      const { protocol } = protocolFacts();
+      const path = process.env.E2E_REFLASH_IMAGE;
+      const version = process.env.E2E_REFLASH_VERSION;
+      assert(path && version, 'COMPAT-reflash needs E2E_REFLASH_IMAGE and E2E_REFLASH_VERSION; make e2e-reflash sets both');
+      const image = readFileSync(path);
+      const p2eval = {
+        assetName: `MaD-Firmware-${version}-P2Eval.bin`,
+        size: image.length,
+        sha256: createHash('sha256').update(image).digest('hex'),
+        path: `firmware/MaD-Firmware-${version}-P2Eval.bin`,
+      };
+      const manifest = {
+        releases: [{
+          tag: `firmware-v${version}`,
+          version,
+          ...p2eval,
+          boards: { P2Eval: p2eval },
+          publishedAt: '2026-11-01T00:00:00Z',
+          htmlUrl: 'https://example.invalid/release',
+          protocolVersion: protocol,
+        }],
+      };
+      const { browser, page, errors } = await newSilPage();
+      try {
+        page.on('dialog', (d) => d.accept());
+        await page.route('**/firmware/manifest.json', (route) =>
+          route.fulfill({ contentType: 'application/json', body: JSON.stringify(manifest) }));
+        await page.route('**/firmware/*-P2Eval.bin', (route) =>
+          route.fulfill({ contentType: 'application/octet-stream', body: image }));
+        // Not connectToSil: the old firmware's samples are unreadable to this
+        // app, so the session never shows Responding (COMPAT-too-old).
+        await page.goto(`${APP_URL}#/connect`);
+        await press(boardGrantedPort(page), { timeout: 10_000 });
+        await page.locator('.dot.connected').waitFor({ timeout: 10_000 });
+        await compatBanner(page).filter({ hasText: /too old/ }).waitFor({ timeout: DEVICE_WAIT_MS });
+        await press(page.getByTestId('update-firmware'));
+        const install = page.getByTestId('install-recommended');
+        await install.filter({ hasText: `Install recommended firmware (${version})` }).waitFor({ timeout: DEVICE_WAIT_MS });
+
+        const clock = await pageClock(page);
+        const hostStart = Date.now();
+        await press(install);
+        await page.getByTestId('flash-status').filter({ hasText: /Wrote .* bytes to flash/ })
+          .waitFor({ timeout: FLASH_WAIT_MS });
+        console.log(
+          `  COMPAT-reflash: the recommended ${image.length}-byte image written in ` +
+            `${((await clock.elapsed()) / 1000).toFixed(3)} s of board time, ` +
+            `${((Date.now() - hostStart) / 1000).toFixed(1)} s of host time`,
+        );
+        // The session reconnects to what the board booted from its flash,
+        // asks again, and the verdict is ok.
+        await page.locator('.dot.connected').waitFor({ timeout: DEVICE_WAIT_MS });
+        await compatBanner(page).waitFor({ state: 'detached', timeout: DEVICE_WAIT_MS });
+        await page.getByTestId('fw-version').filter({ hasText: version }).waitFor({ timeout: DEVICE_WAIT_MS });
+        await page.getByTestId('fw-protocol').filter({ hasText: `${protocol} · this app speaks ${protocol}` })
+          .waitFor({ timeout: DEVICE_WAIT_MS });
+        const verdicts = logged(await appLogEntries(page), 'store', 'firmware-compat').map((e) => e.data?.verdict);
+        assert(
+          verdicts[0] === 'firmwareTooOld' && verdicts[verdicts.length - 1] === 'ok',
+          `verdicts ${JSON.stringify(verdicts)}, expected firmwareTooOld then ok`,
+        );
+        // Motion works on the firmware the board now runs.
+        await page.goto(`${APP_URL}#/live`);
+        await press(page.getByRole('button', { name: 'Enable motion' }));
+        await page.getByText('Motion: enabled').waitFor({ timeout: DEVICE_WAIT_MS });
+        console.log(
+          `  COMPAT-reflash: ok and motion enabled ${((await clock.elapsed()) / 1000).toFixed(3)} s of ` +
+            'board time after Install',
+        );
+        assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
+      } finally {
+        await browser.close();
+      }
+    },
+  },
 ];
 
 /**
@@ -3633,7 +3889,8 @@ async function main() {
     process.exit(2);
   }
   // `--list`: the ids SCENARIOS selects (all of them without it), in the
-  // suite's order, one a line: FW-ISS only on the ROM board, BUNDLE-live only
+  // suite's order, one a line: FW-ISS only on the ROM board, FW1 only on the
+  // reflash board, BUNDLE-live only
   // on the built bundle, and each left out otherwise. What this board cannot
   // run is left out too, and said on stderr with why. `--board-free` lists
   // only the scenarios that need no board. `--cannot` lists only those the
@@ -3651,10 +3908,10 @@ async function main() {
     const noMoves = process.argv.includes('--no-moves');
     for (const s of scenarios) {
       if (
-        (s.id === 'FW-ISS') === ROM_BOARD &&
+        onThisBoard(s.id) &&
         (s.id !== 'BUNDLE-live' || APP_IS_BUNDLE) &&
         (!only || only.has(s.id)) &&
-        (!boardFreeOnly || BOARD_FREE.has(s.id)) &&
+        (!boardFreeOnly || boardFree(s.id)) &&
         (!noMoves || !MOVES.has(s.id))
       ) {
         if (cannotOnly) {
@@ -3734,14 +3991,13 @@ async function main() {
   let skipped = 0;
   for (const s of selected) {
     // The ROM board (E2E_BOARD=rom: mad-serial-boot-cosim.toml, the mask
-    // ROM's serial boot on J1) runs FW-ISS and nothing else; the firmware's
-    // board runs everything else.
-    if (BOARD && (s.id === 'FW-ISS') !== ROM_BOARD && !BOARD_FREE.has(s.id)) {
-      console.log(
-        `  ~ ${s.id}: skipped (needs the ${ROM_BOARD ? "firmware's" : 'ROM'} board${
-          ROM_BOARD ? '' : ': make e2e-rom'
-        })`,
-      );
+    // ROM's serial boot on J1) runs FW-ISS and nothing else, the reflash
+    // board (E2E_BOARD=reflash: mad-reflash-cosim.toml) FW1 and
+    // COMPAT-reflash and nothing else; the firmware's board runs everything
+    // else.
+    if (BOARD && !onThisBoard(s.id) && !boardFree(s.id)) {
+      const needs = ONLY_ON.get(s.id) ?? 'firmware';
+      console.log(`  ~ ${s.id}: skipped (needs the ${needs} board: ${MAKE_FOR[needs]})`);
       skipped += 1;
       continue;
     }
@@ -3812,7 +4068,7 @@ async function main() {
     // scenario's pages lived: the board's on the board route.
     // A board-free scenario's host Chrome keeps host time: no board time.
     const hostS = (Date.now() - started) / 1000;
-    const boardS = BOARD && !BOARD_FREE.has(s.id) ? takePageTime() / 1000 : null;
+    const boardS = BOARD && !boardFree(s.id) ? takePageTime() / 1000 : null;
     timings.push({ id: s.id, verdict, hostS, boardS });
     console.log(
       `${verdict === 'pass' ? '✅' : '❌'}  (host ${hostS.toFixed(1)} s` +

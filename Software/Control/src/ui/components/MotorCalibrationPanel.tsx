@@ -2,10 +2,9 @@ import { useState } from 'react';
 import { useStore } from '@/store/useStore';
 import { deviceClient } from '@/device/session';
 import { latestLiveSample, liveClockSeconds, liveSamplesSince } from '@/store/liveBuffer';
-import NumberField from '@/ui/components/NumberField';
 import {
-  CALIBRATION_DEFAULT_DISTANCE_MM,
-  CALIBRATION_DEFAULT_SPEED_MM_S,
+  CALIBRATION_CHECK_DISTANCE_MM,
+  CALIBRATION_CHECK_SPEED_MM_S,
   OUTCOME_TEXT,
   assessCalibration,
   planCalibration,
@@ -14,19 +13,22 @@ import {
   type CalibrationFinding,
   type CalibrationProfile,
   type CalibrationProgress,
-  type CalibrationResult,
 } from '@/domain/motorCalibration';
 import {
+  ACCEL_DELIVERED_MIN,
+  assessAcceleration,
   trackingMayRun,
   planTrackingRun,
   runTracking,
   suggestGains,
   summarizeTracking,
+  type AccelVerdict,
   type GainSuggestion,
   type MachineLimits,
   type MotionSample,
   type MoveMeasurement,
   type TrackingRunner,
+  type TrackingOutcome,
   type TrackingSummary,
 } from '@/domain/motionBenchmark';
 
@@ -52,11 +54,7 @@ export interface SavedMachine extends CalibrationProfile, MachineLimits {
   servoKi: number;
 }
 
-type TrackingReport =
-  | { ran: false; why: string }
-  | { ran: true; stopped: string | null; moves: MoveMeasurement[]; summary: TrackingSummary; gains: GainSuggestion };
-
-type Report =
+type CheckReport =
   | { kind: 'failed'; badge: string; message: string }
   | {
       kind: 'measured';
@@ -65,8 +63,25 @@ type Report =
       ratio: CalibrationAssessment;
       lostMotionCounts: number | null;
       lagSeconds: number | null;
-      tracking: TrackingReport;
     };
+
+type MotionReport =
+  | { kind: 'failed'; message: string }
+  | {
+      kind: 'measured';
+      stopped: string | null;
+      moves: MoveMeasurement[];
+      summary: TrackingSummary;
+      accel: AccelVerdict;
+      gains: GainSuggestion;
+    };
+
+/** A drive and encoder check that passed: the steps/mm it passed on and the drive lag it measured. */
+interface PassedCheck {
+  encoderStepsPerMM: number;
+  servoStepsPerMM: number;
+  lagSeconds: number | null;
+}
 
 /** Samples arrive every ~13 ms, so a settle shorter than one sample is "at once". */
 const SAMPLE_MS = 15;
@@ -90,9 +105,17 @@ function toMotionSamples(sinceSeconds: number): MotionSample[] {
 
 type CommonRunner = Omit<TrackingRunner, 'jog'>;
 
+const CARD = { marginTop: 14, padding: 14, background: 'var(--panel-2)', borderRadius: 8 };
+
 /**
- * Motor calibration and motion benchmark, against the steps/mm being edited
- * above and the profile saved on the machine. Report only: nothing is saved.
+ * Motor calibration as two routines against the profile saved on the machine.
+ * Report only: nothing is saved.
+ *
+ * 1. Drive and encoder check: pulses out against encoder counts in, with the
+ *    servo loop off, judged against the steps/mm being edited.
+ * 2. Motion calibration: the closed-loop acceleration sweep and tracking run,
+ *    and suggested servo gains. It moves closed loop on the SAVED steps/mm, so
+ *    it unlocks only once the check has passed on exactly those.
  */
 export default function MotorCalibrationPanel({
   profile,
@@ -104,14 +127,21 @@ export default function MotorCalibrationPanel({
   saved: SavedMachine;
 }) {
   const motionEnabled = useStore((s) => s.machineState?.motionEnabled ?? false);
-  const [distanceMm, setDistanceMm] = useState(CALIBRATION_DEFAULT_DISTANCE_MM);
-  const [speedMmPerS, setSpeedMmPerS] = useState(CALIBRATION_DEFAULT_SPEED_MM_S);
-  const [progress, setProgress] = useState<string | null>(null);
-  const [report, setReport] = useState<Report | null>(null);
+  const [checkProgress, setCheckProgress] = useState<string | null>(null);
+  const [checkReport, setCheckReport] = useState<CheckReport | null>(null);
+  const [passed, setPassed] = useState<PassedCheck | null>(null);
+  const [motionProgress, setMotionProgress] = useState<string | null>(null);
+  const [motionReport, setMotionReport] = useState<MotionReport | null>(null);
 
-  const running = progress !== null;
-  const plan = planCalibration({ ...profile, distanceMm, speedMmPerS, device: saved });
+  const running = checkProgress !== null || motionProgress !== null;
+  const plan = planCalibration({
+    ...profile,
+    distanceMm: CALIBRATION_CHECK_DISTANCE_MM,
+    speedMmPerS: CALIBRATION_CHECK_SPEED_MM_S,
+    device: saved,
+  });
   const tracking = planTrackingRun(saved);
+  const checkedSaved = passed !== null && trackingMayRun(passed, saved);
 
   const common: CommonRunner = {
     samplesSince: toMotionSamples,
@@ -124,13 +154,14 @@ export default function MotorCalibrationPanel({
     now: () => Date.now(),
   };
 
-  const onRun = async () => {
+  const onCheck = async () => {
     if (!plan.ok) return;
     // Frozen: editing the fields while it runs must not relabel the result.
     const judgedAgainst = { ...profile };
     const savedAtStart = { ...saved };
-    setReport(null);
-    setProgress('Starting…');
+    setCheckReport(null);
+    setPassed(null);
+    setCheckProgress('Starting…');
     try {
       const run = await runCalibration(
         {
@@ -141,127 +172,134 @@ export default function MotorCalibrationPanel({
         },
         plan.request,
         savedAtStart,
-        (p) => setProgress(`Drive and encoder: ${RATIO_PROGRESS[p]}`),
+        (p) => setCheckProgress(RATIO_PROGRESS[p]),
       );
       if (!run.ok) {
-        setReport({ kind: 'failed', badge: 'error', message: run.reason });
+        setCheckReport({ kind: 'failed', badge: 'error', message: run.reason });
       } else if (run.result.outcome !== 'done') {
-        setReport({
+        setCheckReport({
           kind: 'failed',
           badge: run.result.outcome.startsWith('refused') ? 'not run' : 'stopped',
           message: OUTCOME_TEXT[run.result.outcome],
         });
       } else {
-        setReport(await finishReport(run.result, judgedAgainst, savedAtStart, common, setProgress));
+        const ratio = assessCalibration(run.result, judgedAgainst);
+        const lagSeconds = run.result.lagSeconds ?? null;
+        setCheckReport({
+          kind: 'measured',
+          profile: judgedAgainst,
+          saved: savedAtStart,
+          ratio,
+          lostMotionCounts: run.result.lostMotionCounts ?? null,
+          lagSeconds,
+        });
+        if (!ratio.findings.some((f) => f.severity === 'error')) setPassed({ ...judgedAgainst, lagSeconds });
       }
     } catch (err) {
-      setReport({ kind: 'failed', badge: 'error', message: err instanceof Error ? err.message : String(err) });
+      setCheckReport({ kind: 'failed', badge: 'error', message: err instanceof Error ? err.message : String(err) });
     } finally {
-      setProgress(null);
+      setCheckProgress(null);
     }
   };
 
-  const hint = !motionEnabled ? 'Enable motion to run it.' : !plan.ok ? plan.reason : null;
+  const onMotion = async () => {
+    if (!tracking.ok || passed === null) return;
+    const savedAtStart = { ...saved };
+    const lagSeconds = passed.lagSeconds;
+    setMotionReport(null);
+    setMotionProgress('Starting…');
+    try {
+      const run = await runTracking(
+        { ...common, jog: (mm, speed) => deviceClient.manualMove(mm, speed) },
+        tracking.moves,
+        savedAtStart,
+        (i) => setMotionProgress(`Move ${i + 1} of ${tracking.moves.length}…`),
+      );
+      const summary = summarizeTracking(run.measurements);
+      setMotionReport({
+        kind: 'measured',
+        stopped: STOPPED_TEXT[run.outcome],
+        moves: run.measurements,
+        summary,
+        accel: assessAcceleration(run.measurements, savedAtStart, lagSeconds),
+        gains: suggestGains({ lagSeconds, limits: savedAtStart, summary }),
+      });
+    } catch (err) {
+      setMotionReport({ kind: 'failed', message: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setMotionProgress(null);
+    }
+  };
+
+  const checkHint = !motionEnabled ? 'Enable motion to run it.' : !plan.ok ? plan.reason : null;
+  const motionHint = !tracking.ok
+    ? tracking.reason
+    : !checkedSaved
+      ? passed === null
+        ? 'Run the drive and encoder check first: this moves closed loop on the steps/mm saved on the machine.'
+        : 'The check passed on steps/mm the machine has not saved. Write them to the device, restart the machine, and run the check again.'
+      : !motionEnabled
+        ? 'Enable motion to run it.'
+        : null;
 
   return (
-    <div style={{ marginTop: 24 }}>
-      <h3>Motor calibration</h3>
+    <div>
+      <h3>1 · Drive and encoder check</h3>
       <p className="muted">
-        Checks the encoder and servo steps/mm above against the hardware with the servo loop off, then
-        runs a short test program closed loop to measure how closely the servo follows its encoder, and
-        suggests servo gains. Nothing is saved.
+        Sends a known number of step pulses with the servo loop off ({CALIBRATION_CHECK_DISTANCE_MM} mm each way at{' '}
+        {CALIBRATION_CHECK_SPEED_MM_S} mm/s) and counts what the encoder sees, to check the encoder and servo
+        steps/mm in Machine configuration against the hardware. Also measures lost motion on reversal and the
+        drive&apos;s lag.
       </p>
-      {tracking.ok ? (
-        <p data-testid="calibration-warning" style={{ margin: '0 0 12px' }}>
-          <span className="badge running">before running</span> Velocity Max, Acceleration Max and
-          Position Max must be right in the profile saved on the machine. The test program moves up to{' '}
-          {num(tracking.travelMm / 2, 3)} mm either side of where the carriage is now, at up to{' '}
-          {saved.maxVelocityMmPerS} mm/s and {saved.maxAccelMmPerS2} mm/s². Leave that much room each
-          way.
-        </p>
-      ) : (
-        <p className="muted">{tracking.reason}</p>
-      )}
-
       <div className="row" style={{ alignItems: 'flex-end' }}>
-        <NumberField label="Check distance (mm)" value={distanceMm} min={0} onChange={setDistanceMm} />
-        <NumberField label="Check speed (mm/s)" value={speedMmPerS} min={0} onChange={setSpeedMmPerS} />
-        <button className="primary" onClick={onRun} disabled={running || !plan.ok || !motionEnabled}>
-          {progress ?? 'Run calibration'}
+        <button className="primary" onClick={onCheck} disabled={running || !plan.ok || !motionEnabled}>
+          {checkProgress ?? 'Run check'}
         </button>
       </div>
-      {hint && !running && <p className="muted">{hint}</p>}
+      {checkHint && checkProgress === null && <p className="muted">{checkHint}</p>}
+      {checkReport && <CheckResult report={checkReport} />}
 
-      {report && <CalibrationReport report={report} />}
+      <h3 style={{ marginTop: 24 }}>2 · Motion calibration</h3>
+      <p className="muted">
+        Runs a short test program closed loop: it ramps at Acceleration Max to a quarter, half, three quarters
+        and all of Velocity Max to check the machine can deliver that acceleration, measures how closely the
+        servo follows its encoder, and suggests servo gains.
+      </p>
+      {tracking.ok && (
+        <p data-testid="calibration-warning" style={{ margin: '0 0 12px' }}>
+          <span className="badge running">before running</span> Velocity Max, Acceleration Max and Position Max
+          must be right in the profile saved on the machine. The test program moves up to{' '}
+          {num(tracking.travelMm / 2, 3)} mm either side of where the carriage is now, at up to{' '}
+          {saved.maxVelocityMmPerS} mm/s and {saved.maxAccelMmPerS2} mm/s². Leave that much room each way.
+        </p>
+      )}
+      <div className="row" style={{ alignItems: 'flex-end' }}>
+        <button
+          className="primary"
+          onClick={onMotion}
+          disabled={running || !tracking.ok || !checkedSaved || !motionEnabled}
+        >
+          {motionProgress ?? 'Run motion calibration'}
+        </button>
+      </div>
+      {motionHint && motionProgress === null && <p className="muted">{motionHint}</p>}
+      {motionReport && <MotionResult report={motionReport} saved={saved} />}
     </div>
   );
 }
 
-async function finishReport(
-  result: CalibrationResult,
-  profile: CalibrationProfile,
-  saved: SavedMachine,
-  common: CommonRunner,
-  setProgress: (p: string) => void,
-): Promise<Report> {
-  const ratio = assessCalibration(result, profile);
-  const base = {
-    kind: 'measured' as const,
-    profile,
-    saved,
-    ratio,
-    lostMotionCounts: result.lostMotionCounts ?? null,
-    lagSeconds: result.lagSeconds ?? null,
-  };
-  if (ratio.findings.some((f) => f.severity === 'error')) {
-    return {
-      ...base,
-      tracking: { ran: false, why: 'Fix the drive and encoder first: the servo cannot track on these settings.' },
-    };
-  }
-  if (!trackingMayRun(profile, saved)) {
-    return {
-      ...base,
-      tracking: {
-        ran: false,
-        why: 'The tracking run moves with the steps/mm saved on the machine, and they differ from the ones checked here. Write these to the device, restart the machine, and run again.',
-      },
-    };
-  }
-  const plan = planTrackingRun(saved);
-  if (!plan.ok) return { ...base, tracking: { ran: false, why: plan.reason } };
-  const run = await runTracking(
-    { ...common, jog: (mm, speed) => deviceClient.manualMove(mm, speed) },
-    plan.moves,
-    saved,
-    (i) => setProgress(`Tracking: move ${i + 1} of ${plan.moves.length}…`),
-  );
-  const summary = summarizeTracking(run.measurements);
-  const stopped =
-    run.outcome === 'done'
-      ? null
-      : run.outcome === 'aborted-overtravel'
-        ? 'Stopped: the carriage went further than a move asked for.'
-        : run.outcome === 'aborted-motion-disabled'
-          ? 'Stopped: motion was disabled.'
-          : 'Stopped: the machine turned a move down.';
-  return {
-    ...base,
-    tracking: {
-      ran: true,
-      stopped,
-      moves: run.measurements,
-      summary,
-      gains: suggestGains({ lagSeconds: result.lagSeconds ?? null, limits: saved, summary }),
-    },
-  };
-}
+const STOPPED_TEXT: Record<TrackingOutcome, string | null> = {
+  done: null,
+  'aborted-overtravel': 'Stopped: the carriage went further than a move asked for.',
+  'aborted-motion-disabled': 'Stopped: motion was disabled.',
+  'aborted-timeout': 'Stopped: a move never finished.',
+  'move-refused': 'Stopped: the machine turned a move down.',
+};
 
-function CalibrationReport({ report }: { report: Report }) {
-  const card = { marginTop: 14, padding: 14, background: 'var(--panel-2)', borderRadius: 8 };
+function CheckResult({ report }: { report: CheckReport }) {
   if (report.kind === 'failed') {
     return (
-      <div style={card} data-testid="calibration-result">
+      <div style={CARD} data-testid="calibration-result">
         <span className="badge error">{report.badge}</span> {report.message}
       </div>
     );
@@ -272,8 +310,7 @@ function CalibrationReport({ report }: { report: Report }) {
   const rest = byWorst.slice(1);
   const umPerCount = 1000 / saved.encoderStepsPerMM;
   return (
-    <div style={card} data-testid="calibration-result">
-      <h4 style={{ margin: '0 0 8px' }}>Drive and encoder</h4>
+    <div style={CARD} data-testid="calibration-result">
       <div>
         <span className={`badge ${SEVERITY_CLASS[headline.severity]}`}>
           {headline.severity === 'ok' ? 'pass' : headline.severity}
@@ -318,15 +355,22 @@ function CalibrationReport({ report }: { report: Report }) {
         </strong>
         {report.lagSeconds !== null && <span className="muted"> · drive lag {num(report.lagSeconds * 1000)} ms</span>}
       </p>
+    </div>
+  );
+}
 
-      <h4 style={{ margin: '16px 0 8px' }}>Tracking</h4>
-      {report.tracking.ran ? (
-        <TrackingSection tracking={report.tracking} saved={saved} />
-      ) : (
-        <p className="muted" style={{ margin: 0 }}>
-          Not run. {report.tracking.why}
-        </p>
-      )}
+function MotionResult({ report, saved }: { report: MotionReport; saved: SavedMachine }) {
+  if (report.kind === 'failed') {
+    return (
+      <div style={CARD} data-testid="motion-result">
+        <span className="badge error">error</span> {report.message}
+      </div>
+    );
+  }
+  return (
+    <div style={CARD} data-testid="motion-result">
+      <h4 style={{ margin: '0 0 8px' }}>Tracking</h4>
+      <TrackingSection tracking={report} saved={saved} />
     </div>
   );
 }
@@ -335,7 +379,7 @@ function TrackingSection({
   tracking,
   saved,
 }: {
-  tracking: Extract<TrackingReport, { ran: true }>;
+  tracking: Extract<MotionReport, { kind: 'measured' }>;
   saved: SavedMachine;
 }) {
   const s = tracking.summary;
@@ -387,6 +431,9 @@ function TrackingSection({
         </table>
       </details>
 
+      <h4 style={{ margin: '16px 0 8px' }}>Acceleration</h4>
+      <AccelSection accel={tracking.accel} saved={saved} />
+
       <h4 style={{ margin: '16px 0 8px' }}>Suggested servo gains</h4>
       <p style={{ margin: 0 }} data-testid="suggested-gains">
         Servo Kp <strong>{tracking.gains.kp}</strong> /s, Servo Ki <strong>{tracking.gains.ki}</strong> /s²{' '}
@@ -395,9 +442,67 @@ function TrackingSection({
         </span>
       </p>
       <p className="muted" style={{ margin: '4px 0 0' }}>
-        {tracking.gains.notes.join(' ')} A starting point: enter them above, Write to device, restart the
+        {tracking.gains.notes.join(' ')} A starting point: enter them in Machine configuration, Write to device, restart the
         machine, and run this again to compare.
       </p>
+    </>
+  );
+}
+
+function pct(share: number): string {
+  return `${Math.round(share * 100)}%`;
+}
+
+function AccelSection({ accel, saved }: { accel: AccelVerdict; saved: SavedMachine }) {
+  const limit = `Acceleration Max (${saved.maxAccelMmPerS2} mm/s²)`;
+  const untested =
+    accel.kind === 'pass' && accel.topSpeedMmPerS < saved.maxVelocityMmPerS
+      ? ` In the room available the moves only reached ${num(accel.topSpeedMmPerS, 2)} mm/s, so ramps to higher speeds are untested.`
+      : '';
+  return (
+    <>
+      <p style={{ margin: 0 }} data-testid="acceleration-verdict">
+        {accel.kind === 'pass' && (
+          <>
+            <span className="badge downloaded">pass</span> The carriage kept up with {limit} at every speed up to{' '}
+            {num(accel.topSpeedMmPerS, 2)} mm/s.{untested}
+          </>
+        )}
+        {accel.kind === 'too-high' && (
+          <>
+            <span className="badge error">too high</span> {limit} is more than this machine delivers: ramping to{' '}
+            {num(accel.worst.reachedMmPerS, 2)} mm/s the carriage managed about {pct(accel.worst.delivered)} of it
+            (at least {pct(ACCEL_DELIVERED_MIN)} needed). Lower Acceleration Max, or Velocity Max, Write to device,
+            restart the machine, and run this again.
+          </>
+        )}
+        {accel.kind === 'not-judged' && (
+          <span className="muted">Not judged: the run stopped before every speed of the sweep had been measured.</span>
+        )}
+      </p>
+      {accel.steps.length > 0 && (
+        <table style={{ marginTop: 8 }}>
+          <thead>
+            <tr>
+              <th>Ramp to (mm/s)</th>
+              <th>Peak following (µm)</th>
+              <th>Acceleration delivered</th>
+            </tr>
+          </thead>
+          <tbody>
+            {accel.steps.map((st) => (
+              <tr key={st.share}>
+                <td>
+                  {num(st.reachedMmPerS, 2)}
+                  {st.reachedMmPerS < st.speedMmPerS && <span className="muted"> (of {num(st.speedMmPerS, 2)})</span>}
+                </td>
+                <td>{num(st.peakFollowingErrorUm)}</td>
+                <td>{pct(st.delivered)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </>
   );
 }

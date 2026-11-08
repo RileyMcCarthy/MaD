@@ -16,14 +16,15 @@
 # debug header J1 (USB 0403:6015). The e2e runs E2E_PROJECT (mad-cosim.toml,
 # the production firmware booted off the module's flash, headless, make
 # e2e-motion's file as well; make e2e-stall names mad-hard-stop-cosim.toml,
-# that file with a hard stop on its carriage (MaD #298), and make e2e-rom
-# mad-serial-boot-cosim.toml, the ROM's serial boot with the flash erased).
-# The playground runs PLAYGROUND_PROJECT (mad-playground.toml, a headed copy
-# of mad-cosim.toml; make playground-rom names
-# mad-serial-boot-playground.toml), its Chrome a window opened on the app at
-# the file's url, the dev server on 5174. The files fix Chrome's DevTools
-# port (9222) and grant the port; `make flash-image sd-image` writes the
-# images they name.
+# that file with a hard stop on its carriage (MaD #298), make e2e-rom
+# mad-serial-boot-cosim.toml, the ROM's serial boot with the flash erased,
+# and make e2e-reflash mad-reflash-cosim.toml, the Prop Plug's reset on J1.3
+# for FW1's real flash, MaD #134). The playground runs PLAYGROUND_PROJECT
+# (mad-playground.toml, a headed copy of mad-cosim.toml; make playground-rom
+# names mad-serial-boot-playground.toml), its Chrome a window opened on the
+# app at the file's url, the dev server on 5174. The files fix Chrome's
+# DevTools port (9222) and grant the port; `make flash-image sd-image` writes
+# the images they name.
 #
 # Environment: EMBSIM (the embsim command; by default the
 # pinned submodule's, through cargo), E2E_PROJECT (mad-cosim.toml, relative

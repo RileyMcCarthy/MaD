@@ -60,6 +60,28 @@ pub trait PinBus {
     fn set_pad(&mut self, _pin: u8, _high: bool) {}
     /// Invert the pad on `pin`. A transition smart pin's `WYPIN n` is n of these.
     fn toggle_pad(&mut self, _pin: u8) {}
+    /// Whether the bus takes a streamer transfer one clock edge at a time
+    /// ([`crate::Machine::stream_burst_edge`]) rather than all of it inside
+    /// the `WYPIN` that clocks it. A bus whose pads are nets defers: there
+    /// every edge is a change at an instant of its own, and what the far end
+    /// answers on one edge is read on the next.
+    fn defers_streamer(&self) -> bool {
+        false
+    }
+    /// Whether a transition smart pin's `WYPIN` on `pin` is a synchronous
+    /// clock, which a deferring bus clocks edge by edge
+    /// ([`Self::defers_streamer`]) even with no streamer transfer armed (a
+    /// clock started before the `XINIT` that samples it, a status poll
+    /// read with `TESTP`). The bus decides by the pin's own settings; one
+    /// that answers false makes such a `WYPIN` a plain `wypin` (a step
+    /// train).
+    fn clocks_synchronously(&self, _pin: u8) -> bool {
+        false
+    }
+    /// A deferred streamer transfer began with the instruction now running:
+    /// `clock_pin` is its transition clock, and the bus clocks it from this
+    /// instruction's instant ([`crate::Machine::stream_burst_edge`]).
+    fn stream_burst_started(&mut self, _clock_pin: u8) {}
     /// The level the pad currently shows.
     fn pad_level(&self, _pin: u8) -> bool {
         false
