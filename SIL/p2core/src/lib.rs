@@ -762,6 +762,28 @@ pub struct Machine<P: PinBus> {
     /// The clock changed source during a [`Self::step_until`] pass, which
     /// ends it ([`Self::step_until`]).
     retimed: bool,
+    /// A streamer transfer the bus is clocking one edge at a time
+    /// ([`PinBus::defers_streamer`]).
+    stream_burst: Option<StreamBurst>,
+    /// Every pad's level at each falling edge of the burst running with no
+    /// transfer armed, oldest first (`INA`, `INB`): an input transfer armed
+    /// while the burst runs takes its first bits from here.
+    stream_history: std::collections::VecDeque<(u32, u32)>,
+}
+
+/// The falling edges [`Machine::stream_history`] keeps: far more than the
+/// few clocks between a clock's `WYPIN` and the `XINIT` that follows it.
+const STREAM_HISTORY_EDGES: usize = 64;
+
+/// A streamer transfer clocked by a transition smart pin, one edge at a
+/// time: the cog whose streamer it is, the clock pin, the transitions left,
+/// and whether the next one rises.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct StreamBurst {
+    cog: usize,
+    clock_pin: u8,
+    toggles_left: u32,
+    rising_next: bool,
 }
 
 impl<P: PinBus> Machine<P> {
@@ -784,11 +806,46 @@ impl<P: PinBus> Machine<P> {
     /// executed and tested like everything else.
     pub fn with_boot_rom(rom: &[u8], pins: P) -> Self {
         let mut m = Self::new(&[], pins);
-        m.hub.iter_mut().for_each(|b| *b = 0);
+        m.load_boot_rom(rom);
+        m
+    }
+
+    /// Reset the chip as its `RESN` pin does, and run the boot ROM again.
+    ///
+    /// What the reset leaves is the state [`Self::with_boot_rom`] builds:
+    /// every cog stopped and cleared, cog 0 loaded from the base of `rom`
+    /// and running it from cog address 0; hub RAM cleared with `rom` at its
+    /// top; the locks free; the system counter back at 0, on RCFAST
+    /// ("Propeller restarts 3 ms after RESn transitions from low to high",
+    /// P2X8C4M64P Datasheet, Pin Descriptions, p. 6, and from there boots
+    /// as from power-up). The bus is kept, with what it knows of the world
+    /// outside the chip: its smart pins and `DIR`/`OUT` bits are the bus's
+    /// to clear ([`Board::reset_pins`]). The diagnostic counters
+    /// ([`Self::retired`], [`Self::int_entries`]) and the host's settings
+    /// ([`Self::strict_hub`], [`Self::yield_on_clock_word`], the
+    /// watchpoints) carry on across the reset.
+    pub fn reboot_from_rom(&mut self, rom: &[u8]) {
+        self.locks = [None; NUM_LOCKS];
+        self.lock_alloc = [false; NUM_LOCKS];
+        self.ff_deadline_clocks = u64::MAX;
+        self.clock_word = None;
+        self.clock_yield = false;
+        self.yield_clocks = None;
+        self.time_origin = (0, 0);
+        self.retimed = false;
+        self.stream_burst = None;
+        self.stream_history.clear();
+        self.load_boot_rom(rom);
+    }
+
+    /// Hub RAM cleared with `rom` at its top, every cog cleared, and cog 0
+    /// running the ROM from its first long on RCFAST.
+    fn load_boot_rom(&mut self, rom: &[u8]) {
+        self.hub.iter_mut().for_each(|b| *b = 0);
         let top = HUB_BYTES - (16 * 1024);
         let n = rom.len().min(16 * 1024);
-        m.hub[top..top + n].copy_from_slice(&rom[..n]);
-        for cog in m.cogs.iter_mut() {
+        self.hub[top..top + n].copy_from_slice(&rom[..n]);
+        for cog in self.cogs.iter_mut() {
             *cog = Default::default();
         }
         // COG 0 boots the way every coginit does: its 512 registers loaded
@@ -802,18 +859,21 @@ impl<P: PinBus> Machine<P> {
         // walks into the serial path with garbage timing.
         for i in 0..COG_LONGS {
             let a = top + i * 4;
-            m.cogs[0].regs[i] =
-                u32::from_le_bytes([m.hub[a], m.hub[a + 1], m.hub[a + 2], m.hub[a + 3]]);
+            self.cogs[0].regs[i] = u32::from_le_bytes([
+                self.hub[a],
+                self.hub[a + 1],
+                self.hub[a + 2],
+                self.hub[a + 3],
+            ]);
         }
-        m.cogs[0].running = true;
-        m.cogs[0].pc = 0;
+        self.cogs[0].running = true;
+        self.cogs[0].pc = 0;
         // Out of reset the chip runs on RCFAST. Hub `$14` is no clock rate
         // here: the ROM keeps a base64 table at `$0`, so it reads
         // `$FFFF_FFFF`, which as a rate would close the ROM's 60 s serial
         // window in under half a second of board time.
-        m.clock_source = ClockSource::Oscillator(RCFAST_HZ);
-        m.clock_follows_words = true;
-        m
+        self.clock_source = ClockSource::Oscillator(RCFAST_HZ);
+        self.clock_follows_words = true;
     }
 
     pub fn new(image: &[u8], pins: P) -> Self {
@@ -854,6 +914,8 @@ impl<P: PinBus> Machine<P> {
             clock_follows_words: false,
             time_origin: (0, 0),
             retimed: false,
+            stream_burst: None,
+            stream_history: std::collections::VecDeque::new(),
         }
     }
 
@@ -2307,6 +2369,17 @@ impl<P: PinBus> Machine<P> {
     ///
     /// `elements` is the number of items a `SETQ` block transfer will move: a
     /// PTR expression advances by the *whole* block, not one item.
+    /// Longs a `RDLONG`/`WRLONG` moves: the block a pending `SETQ` (the
+    /// register file) or `SETQ2` (the LUT) asks for, else one. A PTRx
+    /// expression's index is scaled by it, so `ptra++` steps over the block.
+    fn block_longs(is_long: bool, cog: &Cog) -> u32 {
+        match (is_long, cog.setq2, cog.setq) {
+            (true, Some(count), _) => count.min(LUT_LONGS as u32 - 1) + 1,
+            (true, None, Some(count)) => count.min(COG_LONGS as u32 - 1) + 1,
+            _ => 1,
+        }
+    }
+
     fn ptr_operand(&mut self, cog: usize, ins: &Decoded, s: u32, scale: i32, elements: u32) -> u32 {
         // An augmented S is a 32-bit literal address, never a PTR expression.
         if !ins.i || s & 0x100 == 0 || self.cogs[cog].aug_s_active {
@@ -2394,7 +2467,15 @@ impl<P: PinBus> Machine<P> {
             (d & 7) as usize
         };
 
-        let mut fresh = Cog::default();
+        // The hub FIFO's pointer is not part of what COGINIT loads: the cog
+        // comes up with it where it was. loadp2's flash programmer, which the
+        // boot ROM relaunches cog 0 into straight after a hex download, reads
+        // it with its first `GETPTR` as "size of download in bytes" (loadp2
+        // flash_loader.spin2), the bytes the ROM's `WFBYTE`s moved it by.
+        let mut fresh = Cog {
+            fifo_addr: self.cogs[target].fifo_addr,
+            ..Cog::default()
+        };
         if hubexec {
             fresh.pc = s;
         } else {
@@ -2500,7 +2581,17 @@ impl<P: PinBus> Machine<P> {
             return;
         }
         let pin = self.cogs[cog].streamer.pin;
-        let bit = u8::from(self.pins.pad_level(pin));
+        let level = self.pins.pad_level(pin);
+        self.streamer_in_level(cog, level);
+    }
+
+    /// Take `level` as the input transfer's next bit, MSB first into the hub
+    /// FIFO.
+    fn streamer_in_level(&mut self, cog: usize, level: bool) {
+        if self.cogs[cog].streamer.kind != 6 || self.cogs[cog].streamer.bits_left == 0 {
+            return;
+        }
+        let bit = u8::from(level);
         self.cogs[cog].streamer.byte = (self.cogs[cog].streamer.byte << 1) | bit;
         self.cogs[cog].streamer.byte_bits += 1;
         self.cogs[cog].streamer.bits_left -= 1;
@@ -2531,6 +2622,75 @@ impl<P: PinBus> Machine<P> {
             if i % 2 == 0 {
                 self.streamer_in_bit(cog);
             }
+        }
+    }
+
+    /// Whether `cog`'s streamer has a transfer armed (`XINIT` out of
+    /// immediate data or the FIFO, or into the FIFO) with bits still to go.
+    fn streamer_armed(&self, cog: usize) -> bool {
+        let st = &self.cogs[cog].streamer;
+        st.bits_left > 0 && matches!(st.kind, 2 | 4 | 6)
+    }
+
+    /// The transition clock of the streamer transfer the bus is clocking,
+    /// while one runs ([`PinBus::defers_streamer`]).
+    pub fn stream_burst_clock_pin(&self) -> Option<u8> {
+        self.stream_burst.map(|burst| burst.clock_pin)
+    }
+
+    /// One transition of the streamer transfer the bus is clocking, at its
+    /// instant: the clock pad flips; on a falling edge an input transfer
+    /// samples its pin, and an output transfer presents its next bit for
+    /// the rising edge after it. The transfer's first output bit was
+    /// presented when it began. Returns whether transitions remain; the last
+    /// finishes the transfer, which `WAITXFI` was waiting for.
+    ///
+    /// An input bit is read at the falling edge, half a clock after the
+    /// rising edge that shifted it out has resolved on the nets: a bus's
+    /// device presents the bit a rising edge clocks out at that edge (embsim's
+    /// SPI devices do; `embsim_models::spi_shift`), which is also where the
+    /// ROM's bit-banged read takes it with `TESTP` once its `DRVH`/`DRVL`
+    /// pair has landed. Read before the rising edge instead, every bit would
+    /// be the one before it.
+    pub fn stream_burst_edge(&mut self) -> bool {
+        let Some(mut burst) = self.stream_burst else {
+            return false;
+        };
+        let cog = burst.cog;
+        self.pins.toggle_pad(burst.clock_pin);
+        if !burst.rising_next {
+            let (kind, bits_left) = {
+                let st = &self.cogs[cog].streamer;
+                (st.kind, st.bits_left)
+            };
+            if kind == 6 && bits_left > 0 {
+                self.streamer_in_bit(cog);
+            } else if bits_left == 0 {
+                if self.stream_history.len() == STREAM_HISTORY_EDGES {
+                    self.stream_history.pop_front();
+                }
+                self.stream_history
+                    .push_back((self.pins.ina(), self.pins.inb()));
+            }
+            if burst.toggles_left > 1 {
+                if let Some(bit) = self.streamer_out_bit(cog) {
+                    let pin = self.cogs[cog].streamer.pin;
+                    self.pins.set_pad(pin, bit);
+                }
+            }
+        }
+        burst.rising_next = !burst.rising_next;
+        burst.toggles_left = burst.toggles_left.saturating_sub(1);
+        if burst.toggles_left == 0 {
+            self.stream_burst = None;
+            let c = &mut self.cogs[cog];
+            c.streamer.bits_left = 0;
+            c.streamer.xfi = true;
+            c.steady_valid = false;
+            false
+        } else {
+            self.stream_burst = Some(burst);
+            true
         }
     }
 
@@ -3260,10 +3420,7 @@ impl<P: PinBus> Machine<P> {
                     Rdword => 2,
                     _ => 1,
                 };
-                let elements = match (ins.op, self.cogs[cog].setq) {
-                    (Rdlong, Some(count)) => count.min(COG_LONGS as u32 - 1) + 1,
-                    _ => 1,
-                };
+                let elements = Self::block_longs(ins.op == Rdlong, &self.cogs[cog]);
                 let s = self.ptr_operand(cog, ins, s, scale, elements);
                 self.cogs[cog].clocks += CLOCKS_HUB_ACCESS;
                 if ins.op == Rdlong {
@@ -3317,13 +3474,31 @@ impl<P: PinBus> Machine<P> {
                     Wrword => 2,
                     _ => 1,
                 };
-                let elements = match (ins.op, self.cogs[cog].setq) {
-                    (Wrlong, Some(count)) => count.min(COG_LONGS as u32 - 1) + 1,
-                    _ => 1,
-                };
+                let elements = Self::block_longs(ins.op == Wrlong, &self.cogs[cog]);
                 let s = self.ptr_operand(cog, ins, s, scale, elements);
                 self.cogs[cog].clocks += CLOCKS_HUB_ACCESS;
                 if ins.op == Wrlong {
+                    if let Some(count) = self.cogs[cog].setq2.take() {
+                        // The LUT's block to hub: `SETQ2 n` + `WRLONG d, addr`
+                        // writes LUT longs d..d+n, an immediate D filling
+                        // with it as SETQ's does. loadp2's flash programmer
+                        // moves the application down to $00000 this way,
+                        // 512 longs at a time through the LUT, before it
+                        // relaunches cog 0 there (flash_loader.spin2 `.move`).
+                        let n = count.min(LUT_LONGS as u32 - 1);
+                        self.check_hub(cog, s)?;
+                        for k in 0..=n {
+                            let v = if ins.l {
+                                d
+                            } else {
+                                self.cogs[cog].lut[(ins.d as usize + k as usize) & (LUT_LONGS - 1)]
+                            };
+                            let a = s.wrapping_add(k.wrapping_mul(4));
+                            self.note_write(cog, a, v, 4);
+                            self.wr_long(a, v);
+                        }
+                        return Ok(false);
+                    }
                     if let Some(count) = self.cogs[cog].setq.take() {
                         let n = count.min(COG_LONGS as u32 - 1);
                         self.check_hub(cog, s)?;
@@ -4064,9 +4239,35 @@ impl<P: PinBus> Machine<P> {
                 let pin = (s & 63) as u8;
                 // Transition smart pin (`%00101`): `WYPIN n` is n pad toggles.
                 // loadp2 clocks SPI this way, in lockstep with the streamer.
-                if self.pins.pin_cfg(pin) & 0x3F == 0x0A {
+                if self.pins.pin_cfg(pin) & 0x3F != 0x0A {
+                    self.pins.wypin(pin, d);
+                } else if !self.pins.defers_streamer() {
                     self.clock_with_streamer(cog, pin, d);
+                } else if d > 0 && (self.streamer_armed(cog) || self.pins.clocks_synchronously(pin))
+                {
+                    // The bus clocks it, an edge at a time; an output
+                    // transfer's first bit is on its pin before the first
+                    // rising edge. A synchronous clock with no transfer
+                    // armed is clocked the same way: loadp2's status poll
+                    // reads the flash's answer with TESTP, and its loader
+                    // arms the transfer a few clocks after the clock starts.
+                    if self.streamer_armed(cog) && matches!(self.cogs[cog].streamer.kind, 2 | 4) {
+                        if let Some(bit) = self.streamer_out_bit(cog) {
+                            let data = self.cogs[cog].streamer.pin;
+                            self.pins.set_pad(data, bit);
+                        }
+                    }
+                    self.stream_history.clear();
+                    self.stream_burst = Some(StreamBurst {
+                        cog,
+                        clock_pin: pin,
+                        toggles_left: d,
+                        rising_next: !self.pins.pad_level(pin),
+                    });
+                    self.pins.stream_burst_started(pin);
                 } else {
+                    // A transition pin the bus takes for no synchronous
+                    // clock: a step train, the bus's to make (a rate).
                     self.pins.wypin(pin, d);
                 }
             }
@@ -4077,12 +4278,37 @@ impl<P: PinBus> Machine<P> {
             }
             Xinit | Xzero | Xcont => {
                 self.start_streamer(cog, d, if ins.op == Xzero { 0 } else { s });
+                // An input transfer armed under a clock that is already
+                // running (loadp2's flash loader: `WYPIN`, `WAITX #3`,
+                // `XINIT`) takes the bits that clock has shifted out so far:
+                // the two are aligned on silicon to start together.
+                if self.cogs[cog].streamer.kind == 6
+                    && self.stream_burst.is_some_and(|burst| burst.cog == cog)
+                {
+                    let pin = self.cogs[cog].streamer.pin;
+                    let history: Vec<(u32, u32)> = self.stream_history.drain(..).collect();
+                    for (ina, inb) in history {
+                        let level = if pin < 32 {
+                            ina >> pin
+                        } else {
+                            inb >> (pin - 32)
+                        } & 1
+                            != 0;
+                        self.streamer_in_level(cog, level);
+                    }
+                }
                 // The command leaves the buffer at once, so it is empty again
                 // (XMT) during the next instruction.
                 self.cogs[cog].clear_after |=
                     (1 << event::XMT) | (1 << event::XFI) | (1 << event::XRO);
                 self.cogs[cog].raised_next |= 1 << event::XMT;
                 self.cogs[cog].touch_events();
+            }
+            Waitxfi if self.stream_burst.is_some_and(|burst| burst.cog == cog) => {
+                // The bus is still clocking the transfer: wait, as silicon's
+                // WAITXFI does, until its last edge.
+                self.cogs[cog].pc = pc;
+                branched = true;
             }
             Waitxfi => {
                 // The matching `WYPIN` has already produced the edges.
