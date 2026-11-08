@@ -3495,7 +3495,7 @@ const scenarios = [
   },
   {
     id: 'COMPAT-too-old',
-    name: 'Firmware compat: a release from before the handshake gets the too-old banner at once; motion refused, STOP sent',
+    name: 'Firmware compat: a release from before the handshake gets the no-answer banner; motion refused, STOP sent',
     async run() {
       const { browser, page, errors } = await newSilPage();
       try {
@@ -3505,30 +3505,22 @@ const scenarios = [
         await page.goto(`${APP_URL}#/connect`);
         await press(boardGrantedPort(page), { timeout: 10_000 });
         await page.locator('.dot.connected').waitFor({ timeout: 10_000 });
-        const clock = await pageClock(page);
-        await compatBanner(page).filter({ hasText: /too old/ }).waitFor({ timeout: DEVICE_WAIT_MS });
-        const tookMs = await clock.elapsed();
-        // The refusal is a NACK, answered at once: no read timeout (3 s) is spent.
-        assert(tookMs < 2000, `the too-old verdict took ${tookMs} ms of board time from connecting`);
+        // This firmware refuses the device-info read with the 3-byte NACK from
+        // before protocol 3. From protocol 3 on a NACK carries a reason byte,
+        // so this app cannot read that refusal: the read goes unanswered.
+        await compatBanner(page).and(page.locator('[data-kind="unanswered"]')).waitFor({ timeout: DEVICE_WAIT_MS });
         const entries = await appLogEntries(page);
         const [verdict] = logged(entries, 'store', 'firmware-compat');
+        assert(verdict?.data?.verdict === 'unanswered', `verdict ${JSON.stringify(verdict?.data)}, expected unanswered`);
         assert(
-          verdict?.data?.verdict === 'firmwareTooOld' && verdict.data.deviceProtocol === null,
-          `verdict ${JSON.stringify(verdict?.data)}, expected firmwareTooOld with no protocol`,
-        );
-        assert(
-          !entries.some((e) => /timeout/i.test(`${e.tag} ${e.msg ?? ''}`) && /DEVICE_INFO|deviceInfo/.test(JSON.stringify(e))),
-          'the device-info read timed out instead of being refused',
-        );
-        assert(
-          (await compatBanner(page).textContent())?.includes('does not report a protocol'),
-          'the banner does not say the firmware reports no protocol',
+          (await compatBanner(page).textContent())?.includes('did not say which protocol it speaks'),
+          'the banner does not say the firmware never answered',
         );
         // The app reads this firmware's samples as unreadable and lives on.
         // The worker's entries reach the page's log in batches, so wait for it.
         await awaitLogged(page, 'proto', 'unreadable-reply', { msg: 'READ_SAMPLE' });
         await page.goto(`${APP_URL}#/firmware`);
-        await page.getByTestId('fw-protocol').filter({ hasText: 'not reported' }).waitFor({ timeout: DEVICE_WAIT_MS });
+        await page.getByTestId('fw-protocol').filter({ hasText: 'no answer' }).waitFor({ timeout: DEVICE_WAIT_MS });
 
         await pressRefusedLiveControls(page);
         await chooseDataFolder(page);
