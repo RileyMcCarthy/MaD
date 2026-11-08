@@ -6,7 +6,8 @@
 # Protocol/scripts/check_protocol_compat.py fails CI on such a change without a
 # bump. After a bump, release firmware before MaD Control: the app's release
 # check refuses to publish until a firmware release speaks its protocol.
-protocol_version: 3
+# 4: WaveformMove gains endFrequency (chirp). Protocol 3 is the NACK reason byte (#359).
+protocol_version: 4
 
 nodes:
   - ui
