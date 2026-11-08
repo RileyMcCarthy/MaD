@@ -1,16 +1,7 @@
 import { useState } from 'react';
 import { useStore } from '@/store/useStore';
-import { liveClockSeconds, liveSamplesSince } from '@/store/liveBuffer';
 import { ZERO_READ_MS, measureZero, planZero, type SavedLoadCell, type ZeroResult } from '@/domain/forceZero';
-
-function num(v: number, digits: number): string {
-  return Number(v.toFixed(digits)).toString();
-}
-
-/** Newtons to the precision the firmware reports (1 mN), in mN below 1 N. */
-function forceText(n: number): string {
-  return Math.abs(n) < 1 ? `${num(n * 1000, 1)} mN` : `${num(n, 3)} N`;
-}
+import { forceText, num, readMachineForces } from '@/ui/components/loadCellReading';
 
 /**
  * Load cell zero and noise, against the load cell values saved on the machine.
@@ -37,16 +28,13 @@ export default function ForceZeroPanel({
     const savedAtStart = { ...saved };
     setResult(null);
     setUsed(false);
-    if (useStore.getState().machineState?.testRunning) {
-      setResult({ ok: false, reason: 'Not read: a test is running.' });
-      return;
-    }
     setReading(true);
-    const t0 = liveClockSeconds();
-    await new Promise<void>((resolve) => setTimeout(resolve, ZERO_READ_MS));
-    const forces = liveSamplesSince(t0).map((s) => s.machineForce);
-    setResult(measureZero(forces, savedAtStart));
-    setReading(false);
+    try {
+      const read = await readMachineForces();
+      setResult(read.ok ? measureZero(read.forcesN, savedAtStart) : read);
+    } finally {
+      setReading(false);
+    }
   };
 
   const m = result?.ok ? result.measurement : null;

@@ -43,7 +43,8 @@ describe('load cell zero', () => {
     },
     () => {
       const r = measureZero(readings(100, 0.5), { ...CELL, sensitivityMvV: -2 });
-      expect(r.ok && r.measurement.zeroBalanceMvV).toBeCloseTo(0, 9);
+      expect(r.ok).toBe(true);
+      if (r.ok) expect(r.measurement.zeroBalanceMvV).toBeCloseTo(0, 9);
     },
   );
 
@@ -97,7 +98,8 @@ describe('load cell zero', () => {
     },
     () => {
       const r = measureZero(readings(99, 0.2, 0.01), CELL);
-      expect(r.ok && r.measurement.drifting).toBe(false);
+      expect(r.ok).toBe(true);
+      if (r.ok) expect(r.measurement.drifting).toBe(false);
     },
   );
 

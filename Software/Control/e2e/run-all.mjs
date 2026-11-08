@@ -1472,6 +1472,54 @@ const scenarios = [
     },
   },
   {
+    // The Load cell calibration steps under Settings, which only read: the
+    // zero read on the emulated load cell reaches the profile being edited,
+    // and a weight that never went on is refused by name. Nothing moves.
+    id: 'CAL2',
+    name: 'Load cell calibration: the zero read reaches the profile, and a weight that never registered is refused',
+    async run() {
+      const { browser, page, errors } = await newSilPage();
+      try {
+        await connectToSil(page);
+        await page.goto(`${APP_URL}#/settings`);
+        await page.getByRole('heading', { name: 'Load cell calibration' }).waitFor({ timeout: DEVICE_WAIT_MS });
+        const readZero = page.getByRole('button', { name: 'Read zero' });
+        await readZero.waitFor({ timeout: DEVICE_WAIT_MS });
+        // Enabled once the machine profile, with its load cell, has been read.
+        const clock = await pageClock(page);
+        while (await readZero.isDisabled()) {
+          assert((await clock.elapsed()) < DEVICE_WAIT_MS, 'Read zero never became available');
+          await waitPageTime(page, 200);
+        }
+        await press(readZero);
+        const zero = page.getByTestId('zero-balance');
+        await zero.waitFor({ timeout: DEVICE_WAIT_MS * 3 });
+        const zeroMvV = Number((await zero.innerText()).replace(' mV/V', ''));
+        assert(Number.isFinite(zeroMvV), `the zero read did not give a number: ${await page.getByTestId('zero-result').innerText()}`);
+        await press(page.getByRole('button', { name: 'Use this zero' }));
+        const zeroField = Number(await page.getByLabel('Load Cell Zero Balance (mV/V)').inputValue());
+        assert(Math.abs(zeroField - zeroMvV) < 1e-9, `Load Cell Zero Balance shows ${zeroField}, the zero read was ${zeroMvV}`);
+
+        // Sensitivity: nothing hangs from the emulated load cell, so a 1 kg
+        // "weight" moves the reading by nothing and is refused by name.
+        await press(page.getByRole('button', { name: '1. Read unloaded' }));
+        await page.getByTestId('sensitivity-unloaded').waitFor({ timeout: DEVICE_WAIT_MS * 3 });
+        await page.getByLabel('Mass (kg)').fill('1');
+        await press(page.getByRole('button', { name: '2. Read with weight' }));
+        const result = page.getByTestId('sensitivity-result');
+        await result.waitFor({ timeout: DEVICE_WAIT_MS * 3 });
+        const resultText = await result.innerText();
+        assert(
+          /The 1 kg weight moved the reading by under 50 mN/.test(resultText),
+          `the weight that never went on was not refused by name: ${resultText}`,
+        );
+        assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
+      } finally {
+        await browser.close();
+      }
+    },
+  },
+  {
     id: 'F4+F6',
     name: 'Create: build motion profile (dwell), save, import .mp',
     async run() {

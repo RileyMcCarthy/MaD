@@ -188,6 +188,8 @@ Ported SIL regressions and matrices, all in `run-all.mjs`: `G-limit`, `TC1-multi
 `FW1`–`FW3` / `FW5`–`FW9` (in-app loader UI; native `loadp2` CLI is still out of scope),
 `CAL1` (Settings → Motor calibration: the open-loop `G124` drive and encoder check, then motion calibration, the closed-loop run it unlocks, on the SIL's matched 8192/mm
 drive and encoder reports a match, with pulses signed by direction),
+`CAL2` (Settings → Load cell calibration, read only: **Read zero** then **Use this zero** puts the zero read into
+Machine configuration, and a 1 kg weight that never went on is refused by name),
 `SERVO-stall` (a carriage jogged into a hard stop latches `SERVO_STALL`, Live
 clears it and re-enables motion, and a jog takes the carriage off the stop;
 needs the board with the stop, `make e2e-stall`, which CI runs on every PR).

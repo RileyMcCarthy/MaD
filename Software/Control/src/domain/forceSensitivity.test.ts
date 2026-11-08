@@ -93,8 +93,10 @@ describe('load cell sensitivity from known weights', () => {
       const at = (massKg: number) => fitSensitivity([{ massKg, unloadedN: 0, loadedN: massKg * STANDARD_GRAVITY }], CELL);
       const light = at(1);
       const heavy = at(Math.ceil((LIGHT_LOAD_SHARE * 100) / STANDARD_GRAVITY));
-      expect(light.ok && light.fit.lightLoad).toBe(true);
-      expect(heavy.ok && heavy.fit.lightLoad).toBe(false);
+      expect(light.ok).toBe(true);
+      expect(heavy.ok).toBe(true);
+      if (light.ok) expect(light.fit.lightLoad).toBe(true);
+      if (heavy.ok) expect(heavy.fit.lightLoad).toBe(false);
     },
   );
 
@@ -107,7 +109,8 @@ describe('load cell sensitivity from known weights', () => {
     },
     () => {
       const r = fitSensitivity([{ massKg: 5, unloadedN: 0, loadedN: 50 }], CELL, 9.78);
-      expect(r.ok && r.fit.points[0].knownN).toBeCloseTo(48.9, 9);
+      expect(r.ok).toBe(true);
+      if (r.ok) expect(r.fit.points[0].knownN).toBeCloseTo(48.9, 9);
     },
   );
 

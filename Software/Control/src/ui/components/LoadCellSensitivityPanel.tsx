@@ -1,25 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useStore } from '@/store/useStore';
-import { liveClockSeconds, liveSamplesSince } from '@/store/liveBuffer';
 import NumberField from '@/ui/components/NumberField';
-import { ZERO_READ_MS, planZero, summarizeReadings, type ForceReading, type SavedLoadCell } from '@/domain/forceZero';
+import { planZero, summarizeReadings, type ForceReading, type SavedLoadCell } from '@/domain/forceZero';
 import { LIGHT_LOAD_SHARE, STANDARD_GRAVITY, fitSensitivity, type WeightPoint } from '@/domain/forceSensitivity';
-
-function num(v: number, digits: number): string {
-  return Number(v.toFixed(digits)).toString();
-}
-
-/** Newtons, in mN below 1 N. */
-function forceText(n: number): string {
-  return Math.abs(n) < 1 ? `${num(n * 1000, 1)} mN` : `${num(n, 3)} N`;
-}
-
-/** Read the machine's force for ZERO_READ_MS and summarize it. */
-async function readForce(): Promise<ReturnType<typeof summarizeReadings>> {
-  const t0 = liveClockSeconds();
-  await new Promise<void>((resolve) => setTimeout(resolve, ZERO_READ_MS));
-  return summarizeReadings(liveSamplesSince(t0).map((s) => s.machineForce));
-}
+import { forceText, num, readMachineForces } from '@/ui/components/loadCellReading';
 
 interface ReadPoint extends WeightPoint {
   /** The weight was still swinging while it was read. */
@@ -62,13 +46,10 @@ export default function LoadCellSensitivityPanel({
 
   const read = async (kind: 'unloaded' | 'weight') => {
     setError(null);
-    if (useStore.getState().machineState?.testRunning) {
-      setError('Not read: a test is running.');
-      return;
-    }
     setBusy(kind);
     try {
-      const r = await readForce();
+      const read = await readMachineForces();
+      const r = read.ok ? summarizeReadings(read.forcesN) : read;
       if (!r.ok) {
         setError(r.reason);
         return;
