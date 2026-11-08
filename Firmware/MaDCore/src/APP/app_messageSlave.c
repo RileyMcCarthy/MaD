@@ -276,6 +276,7 @@ ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWrite_test_waveform(const ProtoEmb
     move.wave.dwellHighMs = in->dwellHigh;
     move.wave.dwellLowMs = in->dwellLow;
     move.wave.skewPerMille = (uint16_t)in->skewPerMille;
+    move.wave.endFreqMicroHz = (uint32_t)in->endFrequency;
     move.wave.shape = in->shape;
     return IO_SDCard_push(IO_SDCARD_CHANNEL_GCODE, &move, sizeof(app_motion_move_t)) ? PROTOEMB_RUNTIME_WRITE_DISPOSITION_ACK : PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK_SD_QUEUE_FULL;
 }
