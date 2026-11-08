@@ -69,7 +69,6 @@ typedef enum
 // This module is not THREADSAFE, it is assumed that the caller will handle the locking if required
 void IO_protocol_init(void);
 IO_protocol_incommingType_E IO_protocol_recieveRequest(IO_protocol_readType_E *readType, IO_protocol_writeType_E *writeType, void *data, uint32_t *size, const uint16_t maxSize);
-bool IO_protocol_respondNACK(IO_protocol_writeType_E originalRequest);
 bool IO_protocol_respondACK(IO_protocol_writeType_E originalRequest);
 bool IO_protocol_respondData(IO_protocol_readType_E originalRequest, uint8_t *data, uint16_t size);
 bool IO_protocol_sendNotification(uint8_t *data, uint16_t size);
