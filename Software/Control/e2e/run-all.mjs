@@ -3645,7 +3645,7 @@ const scenarios = [
   },
   {
     id: 'COMPAT-app-release',
-    name: 'Firmware compat (fake board): a hosted release facing firmware a protocol ahead offers the newest release that speaks it, and opens it on the same screen after letting the port go',
+    name: 'Firmware compat (fake board): a hosted release facing firmware a protocol ahead offers the latest while its release list cannot be read, then the newest release that speaks the protocol, opened on the same screen after letting the port go',
     async run() {
       const { protocol } = protocolFacts();
       const ahead = protocol + 1;
@@ -3665,18 +3665,41 @@ const scenarios = [
             { version: '0.0.0', publishedAt: null },
           ],
         };
+        // The list cannot be read at first (the site unreachable, say).
+        let listServed = false;
         await page.route('**/MaD/app/versions.json', (route) =>
-          route.fulfill({ contentType: 'application/json', body: JSON.stringify(list) }));
+          listServed
+            ? route.fulfill({ contentType: 'application/json', body: JSON.stringify(list) })
+            : route.fulfill({ status: 503, body: '' }));
         await page.route('**/MaD/app/v0.6.1/**', (route) =>
           route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>MaD Control 0.6.1</title>' }));
         await page.goto(`${server.url}#/connect`);
         await press(page.getByTestId('connect-device'));
         await page.locator('.dot.connected').waitFor({ timeout: DEVICE_WAIT_MS });
+        // Which release speaks the protocol is unknown: the latest is offered,
+        // and reflashing the board is not urged.
+        await compatBanner(page).filter({ hasText: 'The list of MaD Control releases could not be loaded' })
+          .waitFor({ timeout: DEVICE_WAIT_MS });
+        assert(
+          !(await compatBanner(page).textContent())?.includes('development firmware'),
+          'an unread release list was reported as development firmware',
+        );
+        const latest = page.getByTestId('open-latest-app');
+        assert((await latest.getAttribute('class'))?.includes('primary'), 'Open the latest MaD Control does not lead');
+        const install = page.getByTestId('install-app-firmware');
+        assert(!(await install.getAttribute('class'))?.includes('primary'), 'installing firmware leads with the release list unread');
+        // The list is asked for again on the next connection, and now it is there.
+        listServed = true;
+        await page.goto(`${server.url}#/connect`);
+        await press(page.getByRole('button', { name: 'Disconnect' }));
+        await page.locator('.dot.disconnected').waitFor({ timeout: DEVICE_WAIT_MS });
+        await press(page.getByTestId('connect-device'));
+        await page.locator('.dot.connected').waitFor({ timeout: DEVICE_WAIT_MS });
         await compatBanner(page).filter({ hasText: `MaD Control 0.6.1 speaks protocol ${ahead}.` })
           .waitFor({ timeout: DEVICE_WAIT_MS });
+        assert((await page.getByTestId('open-latest-app').count()) === 0, 'the latest is still offered beside the release');
         await pressRefusedLiveControls(page, server.url);
         // Firmware for this app stays on offer, behind the release.
-        const install = page.getByTestId('install-app-firmware');
         await install.waitFor({ timeout: DEVICE_WAIT_MS });
         assert(!(await install.getAttribute('class'))?.includes('primary'), 'installing firmware leads while a release speaks the protocol');
         // The port's state as the page goes, kept where the next page can read it.

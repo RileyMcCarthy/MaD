@@ -144,12 +144,20 @@ https://rileymccarthy.github.io/MaD/app/vX.Y.Z/    → one release, exactly as i
 - **Each release is built once.** Pushing a `madcontrol-vX.Y.Z` tag runs the
   `release-app` job. It builds the app for its own folder (base path
   `/<repo>/app/vX.Y.Z/`), attaches the build to the **MaD Control X.Y.Z** GitHub
-  Release as `mad-control-vX.Y.Z.zip`, then asks `main` to redeploy.
+  Release as `mad-control-vX.Y.Z.zip`, then asks `main` to redeploy. Every
+  build writes `app-info.json` beside its `index.html`: `{ version,
+  protocolVersion }`, the protocol read from `Protocol/MaDProtocol.yaml` (the
+  job fails if it is missing).
 - **Every deploy re-assembles the site.** The `build` job builds the docs from
   `main`, then `tools/assemble-pages-app.mts` unpacks every release zip into
   `site/app/vX.Y.Z/` and writes:
-    - `versions.json`, which lists the releases for the app's version picker on
-      **About**;
+    - `versions.json`, which lists the releases, newest first, for the app's
+      version picker on **About**. Each entry also gives the `protocolVersion`
+      from that release's `app-info.json`, so an app facing firmware a
+      protocol ahead can offer the newest release that speaks it. Releases
+      built before `app-info.json` (0.4.3 and older) have no protocol listed
+      and are never offered that way; they read the list with a check that
+      ignores the extra field;
     - the `/app/` redirect, which keeps the page part of the URL;
     - `/app/firmware/`, shared by every version: `manifest.json` lists the
       newest firmware release for each protocol version, with each image

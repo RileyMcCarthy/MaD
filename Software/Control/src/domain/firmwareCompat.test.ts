@@ -228,7 +228,7 @@ describe('describeAppForFirmware', () => {
       expect: { 'release-named': 'the operator is told the version of that release and the protocol it speaks' },
     },
     () => {
-      expect(describeAppForFirmware(5, '0.6.1')).toBe('MaD Control 0.6.1 speaks protocol 5.');
+      expect(describeAppForFirmware(5, { kind: 'release', version: '0.6.1' })).toBe('MaD Control 0.6.1 speaks protocol 5.');
     },
   );
 
@@ -247,9 +247,27 @@ describe('describeAppForFirmware', () => {
       },
     },
     () => {
-      const none = describeAppForFirmware(5, null);
+      const none = describeAppForFirmware(5, { kind: 'none' });
       expect(none).toContain('No released MaD Control speaks protocol 5');
       expect(none).toContain('development firmware build');
+    },
+  );
+
+  behaviour(
+    {
+      id: 'firmware-compat.app-for-firmware-unknown',
+      covers: 'src/domain/firmwareCompat.ts#describeAppForFirmware',
+      given: 'firmware a protocol ahead of this app, on a release whose list of MaD Control releases could not be loaded',
+      expect: {
+        'list-unreadable':
+          "the operator is told the list could not be loaded, so which release speaks the firmware's protocol is not known",
+      },
+    },
+    () => {
+      const unknown = describeAppForFirmware(5, { kind: 'unknown' });
+      expect(unknown).toContain('could not be loaded');
+      expect(unknown).toContain('protocol 5');
+      expect(unknown).not.toContain('development firmware');
     },
   );
 });

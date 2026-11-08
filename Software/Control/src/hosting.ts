@@ -10,6 +10,8 @@
  * unversioned build has none of this: its base is the hosting root itself.
  */
 
+import type { AppForFirmware } from '@/domain';
+
 /** The release this copy is, from its base path; null when not a versioned build. */
 export function hostedVersion(baseUrl: string): string | null {
   const m = /\/v(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)\/$/.exec(baseUrl);
@@ -66,4 +68,22 @@ export async function fetchHostedVersions(
  */
 export function appForProtocol(list: HostedVersions, protocol: number): string | null {
   return list.versions.find((v) => v.protocolVersion === protocol)?.version ?? null;
+}
+
+/**
+ * Where an app too old for firmware on `protocol` can send the operator.
+ * `list` is the release list beside this release: undefined while it is on
+ * its way, null when it could not be read. An unversioned copy (`hosted`
+ * false) has no list beside it and no release to offer.
+ */
+export function appForFirmware(
+  hosted: boolean,
+  list: HostedVersions | null | undefined,
+  protocol: number,
+): AppForFirmware {
+  if (!hosted) return { kind: 'none' };
+  if (list === undefined) return { kind: 'looking' };
+  if (list === null) return { kind: 'unknown' };
+  const version = appForProtocol(list, protocol);
+  return version === null ? { kind: 'none' } : { kind: 'release', version };
 }

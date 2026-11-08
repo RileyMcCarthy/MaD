@@ -130,14 +130,32 @@ export function describeFirmwareCompat(compat: FirmwareCompat): string {
 }
 
 /**
- * Which way out an app too old for its firmware has, once it knows: `release`
- * is the newest released MaD Control that speaks the firmware's protocol, or
- * null when there is none to offer (no release speaks it, or this copy is not
- * a release and has no list to look in). A firmware no release speaks is
- * built from ahead of every release, so its way out is this app's firmware.
+ * Where an app too old for its firmware can send the operator:
+ *   looking   the release list beside this release is on its way
+ *   release   `version` is the newest released MaD Control that speaks the
+ *             firmware's protocol
+ *   none      no release speaks it (or this copy is not a release, with no
+ *             list beside it): the firmware is built from ahead of every
+ *             release, so the way out is this app's firmware
+ *   unknown   the release list could not be read, so which release speaks
+ *             it is not known
  */
-export function describeAppForFirmware(deviceProtocol: number, release: string | null): string {
-  return release === null
-    ? `No released MaD Control speaks protocol ${deviceProtocol}, so the machine is probably running a development firmware build.`
-    : `MaD Control ${release} speaks protocol ${deviceProtocol}.`;
+export type AppForFirmware =
+  | { kind: 'looking' }
+  | { kind: 'release'; version: string }
+  | { kind: 'none' }
+  | { kind: 'unknown' };
+
+/** The sentence that follows the verdict, naming the way out; null while still looking. */
+export function describeAppForFirmware(deviceProtocol: number, app: AppForFirmware): string | null {
+  switch (app.kind) {
+    case 'looking':
+      return null;
+    case 'release':
+      return `MaD Control ${app.version} speaks protocol ${deviceProtocol}.`;
+    case 'none':
+      return `No released MaD Control speaks protocol ${deviceProtocol}, so the machine is probably running a development firmware build.`;
+    case 'unknown':
+      return `The list of MaD Control releases could not be loaded, so this app cannot tell which release speaks protocol ${deviceProtocol}.`;
+  }
 }

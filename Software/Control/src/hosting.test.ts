@@ -1,6 +1,6 @@
 import { describe, expect } from 'vitest';
 import { behaviour } from '@vibes/behaviour';
-import { appForProtocol, fetchHostedVersions, hostedVersion, hostingRoot, versionUrl } from './hosting';
+import { appForFirmware, appForProtocol, fetchHostedVersions, hostedVersion, hostingRoot, versionUrl } from './hosting';
 
 describe('hosting paths', () => {
   behaviour(
@@ -138,6 +138,74 @@ describe('appForProtocol', () => {
     () => {
       expect(appForProtocol(list, 5)).toBeNull();
       expect(appForProtocol(list, 2)).toBeNull();
+    },
+  );
+});
+
+describe('appForFirmware', () => {
+  const list = {
+    latest: '0.6.0',
+    versions: [
+      { version: '0.6.0', publishedAt: null, protocolVersion: 4 },
+      { version: '0.5.1', publishedAt: null, protocolVersion: 3 },
+      { version: '0.5.0', publishedAt: null, protocolVersion: 3 },
+    ],
+  };
+
+  behaviour(
+    {
+      id: 'hosting.app-for-firmware-listed',
+      covers: 'src/hosting.ts#appForFirmware',
+      given: 'a release whose list of releases has been read, two of them speaking protocol 3 and none protocol 5',
+      expect: {
+        'match-offered': 'for firmware on protocol 3, the newer of the two releases is offered',
+        'no-match': 'for firmware on protocol 5, no release is offered',
+      },
+    },
+    () => {
+      expect(appForFirmware(true, list, 3)).toEqual({ kind: 'release', version: '0.5.1' });
+      expect(appForFirmware(true, list, 5)).toEqual({ kind: 'none' });
+    },
+  );
+
+  behaviour(
+    {
+      id: 'hosting.app-for-firmware-unreadable',
+      covers: 'src/hosting.ts#appForFirmware',
+      given: 'a release whose list of releases could not be read',
+      expect: { unknown: "which release speaks the firmware's protocol is reported as unknown" },
+      why: {
+        unknown:
+          'an unread list says nothing about which releases exist, so the operator is not sent to reflash a board that may run released firmware',
+      },
+    },
+    () => {
+      expect(appForFirmware(true, null, 3)).toEqual({ kind: 'unknown' });
+    },
+  );
+
+  behaviour(
+    {
+      id: 'hosting.app-for-firmware-loading',
+      covers: 'src/hosting.ts#appForFirmware',
+      given: 'a release whose list of releases is still on its way',
+      expect: { 'still-looking': 'the answer is still being looked up' },
+    },
+    () => {
+      expect(appForFirmware(true, undefined, 3)).toEqual({ kind: 'looking' });
+    },
+  );
+
+  behaviour(
+    {
+      id: 'hosting.app-for-firmware-unversioned',
+      covers: 'src/hosting.ts#appForFirmware',
+      given: 'a copy of the app that is not a release, such as a development server',
+      expect: { 'none-offered': 'no release is offered, since there is no list of releases beside it' },
+    },
+    () => {
+      expect(appForFirmware(false, undefined, 3)).toEqual({ kind: 'none' });
+      expect(appForFirmware(false, list, 3)).toEqual({ kind: 'none' });
     },
   );
 });
