@@ -1464,7 +1464,7 @@ const scenarios = [
     // each way -- which needs the firmware sequencer, the protocol pair and
     // the panel all to agree on signs and units.
     id: 'CAL1',
-    name: 'Motor calibration: matched drive and encoder, then a tracking run and suggested gains',
+    name: 'Motor calibration: the drive and encoder check passes, then motion calibration tracks and suggests gains',
     async run() {
       const { browser, page, errors } = await newSilPage();
       try {
@@ -1472,38 +1472,96 @@ const scenarios = [
         await prepareManualControl(page);
         await page.goto(`${APP_URL}#/settings`);
         await page.getByRole('heading', { name: 'Motor calibration' }).waitFor({ timeout: DEVICE_WAIT_MS });
-        const run = page.getByRole('button', { name: 'Run calibration' });
-        await run.waitFor({ timeout: DEVICE_WAIT_MS });
+        const check = page.getByRole('button', { name: 'Run check' });
+        await check.waitFor({ timeout: DEVICE_WAIT_MS });
         // Enabled once the machine profile has been read and motion is on.
         const clock = await pageClock(page);
-        while (await run.isDisabled()) {
-          assert((await clock.elapsed()) < DEVICE_WAIT_MS, 'Run calibration never became available');
+        while (await check.isDisabled()) {
+          assert((await clock.elapsed()) < DEVICE_WAIT_MS, 'Run check never became available');
           await waitPageTime(page, 200);
         }
-        await press(run);
-        // The report appears once both parts have run: the open-loop check,
-        // then the closed-loop tracking program from the SIL's saved profile.
+        await press(check);
+        // Routine 1: the open-loop drive and encoder check.
         const report = page.getByTestId('calibration-result');
         await report.waitFor({ timeout: DEVICE_WAIT_MS * 10 });
-        // Settle on the finished report (the tracking part fills in last), then
-        // say what it showed if any part is missing.
-        await waitPageTime(page, 500);
         const reportText = await report.innerText();
         assert(/Calibration passed/.test(reportText), `the drive and encoder check did not pass: ${reportText}`);
-        assert(
-          (await page.getByTestId('suggested-gains').count()) === 1,
-          `the tracking run did not complete: ${reportText}`,
-        );
         // The SIL's drive and encoder are both 8192/mm: counts back match the
         // pulses sent, with the right sign.
         const measured = Number(await page.getByTestId('measured-counts').innerText());
         const expected = Number(await page.getByTestId('expected-counts').innerText());
         assert(expected > 0 && Math.abs(measured / expected - 1) < 0.02, `encoder moved ${measured} counts, expected ~${expected}`);
+        // Routine 2 unlocks once the check passed on the saved steps/mm: the
+        // closed-loop tracking program from the SIL's saved profile.
+        const motion = page.getByRole('button', { name: 'Run motion calibration' });
+        const unlock = await pageClock(page);
+        while (await motion.isDisabled()) {
+          assert((await unlock.elapsed()) < DEVICE_WAIT_MS, `Run motion calibration never unlocked after: ${reportText}`);
+          await waitPageTime(page, 200);
+        }
+        await press(motion);
+        const motionReport = page.getByTestId('motion-result');
+        await motionReport.waitFor({ timeout: DEVICE_WAIT_MS * 10 });
+        // Settle on the finished report, then say what it showed if any part is missing.
+        await waitPageTime(page, 500);
+        const motionText = await motionReport.innerText();
+        assert(
+          (await page.getByTestId('suggested-gains').count()) === 1,
+          `the tracking run did not complete: ${motionText}`,
+        );
         // Tracking on the ideal SIL drive: every move stops within a few µm.
         const tracking = await page.getByTestId('tracking-summary').innerText();
         const stopUm = Number(/Stops within ±([\d.]+) µm/.exec(tracking)?.[1] ?? NaN);
         assert(stopUm < 5, `tracking stopped up to ${stopUm} µm from target: ${tracking}`);
         assert((await page.locator('.badge.error').count()) === 0, 'the calibration reported an error');
+        assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
+      } finally {
+        await browser.close();
+      }
+    },
+  },
+  {
+    // The Load cell calibration steps under Settings, which only read: the
+    // zero read on the emulated load cell reaches the profile being edited,
+    // and a weight that never went on is refused by name. Nothing moves.
+    id: 'CAL2',
+    name: 'Load cell calibration: the zero read reaches the profile, and a weight that never registered is refused',
+    async run() {
+      const { browser, page, errors } = await newSilPage();
+      try {
+        await connectToSil(page);
+        await page.goto(`${APP_URL}#/settings`);
+        await page.getByRole('heading', { name: 'Load cell calibration' }).waitFor({ timeout: DEVICE_WAIT_MS });
+        const readZero = page.getByRole('button', { name: 'Read zero' });
+        await readZero.waitFor({ timeout: DEVICE_WAIT_MS });
+        // Enabled once the machine profile, with its load cell, has been read.
+        const clock = await pageClock(page);
+        while (await readZero.isDisabled()) {
+          assert((await clock.elapsed()) < DEVICE_WAIT_MS, 'Read zero never became available');
+          await waitPageTime(page, 200);
+        }
+        await press(readZero);
+        const zero = page.getByTestId('zero-balance');
+        await zero.waitFor({ timeout: DEVICE_WAIT_MS * 3 });
+        const zeroMvV = Number((await zero.innerText()).replace(' mV/V', ''));
+        assert(Number.isFinite(zeroMvV), `the zero read did not give a number: ${await page.getByTestId('zero-result').innerText()}`);
+        await press(page.getByRole('button', { name: 'Use this zero' }));
+        const zeroField = Number(await page.getByLabel('Load Cell Zero Balance (mV/V)').inputValue());
+        assert(Math.abs(zeroField - zeroMvV) < 1e-9, `Load Cell Zero Balance shows ${zeroField}, the zero read was ${zeroMvV}`);
+
+        // Sensitivity: nothing hangs from the emulated load cell, so a 1 kg
+        // "weight" moves the reading by nothing and is refused by name.
+        await press(page.getByRole('button', { name: '1. Read unloaded' }));
+        await page.getByTestId('sensitivity-unloaded').waitFor({ timeout: DEVICE_WAIT_MS * 3 });
+        await page.getByLabel('Mass (kg)').fill('1');
+        await press(page.getByRole('button', { name: '2. Read with weight' }));
+        const result = page.getByTestId('sensitivity-result');
+        await result.waitFor({ timeout: DEVICE_WAIT_MS * 3 });
+        const resultText = await result.innerText();
+        assert(
+          /The 1 kg weight moved the reading by under 50 mN/.test(resultText),
+          `the weight that never went on was not refused by name: ${resultText}`,
+        );
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
       } finally {
         await browser.close();

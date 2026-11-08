@@ -28,8 +28,9 @@ These are the fields as they appear on the Settings screen, in order.
 | **Name** | A label for this machine |
 | **Encoder (step/mm)** | Encoder counts per millimetre of travel |
 | **Servo (step/mm)** | Motor pulses per millimetre of travel |
-| **Force Gauge (N/step)** | How much force one gauge reading step represents |
-| **Force Gauge Zero Offset (steps)** | The gauge's zero point |
+| **Load Cell Capacity (N)** | The load cell's rated force, from its datasheet |
+| **Load Cell Sensitivity (mV/V)** | The load cell's output at capacity, per volt of excitation (its datasheet's rated output; the [load cell calibration](#load-cell-calibration) measures it) |
+| **Load Cell Zero Balance (mV/V)** | What the load cell reads with nothing on it (the [load cell calibration](#load-cell-calibration) measures it) |
 | **Position Max (mm)** | How far the jaw is allowed to travel |
 | **Velocity Max (mm/s)** | Fastest the machine will move |
 | **Acceleration Max (mm/s²)** | How hard the machine is allowed to accelerate |
@@ -47,30 +48,32 @@ conservative wins.
 
 ## Motor calibration
 
-The **Motor calibration** panel on **Settings**, below the fields, does two
-things in one run, then gives you one report:
+The **Motor calibration** box on **Settings**, below **Machine configuration**,
+has two routines. Run them in order:
 
-1. **Drive and encoder.** It checks that **Encoder (step/mm)** and
+1. **Drive and encoder check.** Checks that **Encoder (step/mm)** and
    **Servo (step/mm)** match the hardware and that the encoder counts the way
-   the carriage moves. It drives the carriage a short distance forward and back
+   the carriage moves. It drives the carriage 5 mm forward and back at 1 mm/s
    **open loop**: the servo runs its usual motion profile but ignores the
    encoder, so the drive gets exactly the pulses the move calls for, and the
    encoder is only watched. These moves are sent as `G124`, a linear move with
    the servo feedback off.
-2. **Tracking.** If the first part passes, it runs a short test program
-   **closed loop** and measures how closely the servo follows its encoder:
-   large moves at mid and full speed, then 1 mm, 0.1 mm and 0.01 mm moves in
-   both directions. From that it **suggests servo gains** (Kp and Ki).
+2. **Motion calibration.** Runs a short test program **closed loop**. It checks
+   the machine can deliver **Acceleration Max**, measures how closely the servo
+   follows its encoder, and **suggests servo gains** (Kp and Ki). It unlocks
+   only once the check has passed in this session on the steps/mm **saved** on
+   the machine, because it moves on those, and it uses the drive lag the check
+   measured.
 
-It is **report only**. Nothing is written to the machine: you change the
+Both are **report only**. Nothing is written to the machine: you change the
 fields (and **Write to device**) yourself.
 
 !!! warning "The saved profile's motion limits must be right first"
-    The tracking program is built from the profile **saved on the machine**:
-    **Velocity Max**, **Acceleration Max** and **Position Max**. It swings up to
-    a quarter of Position Max (at most 25 mm) in total, half either side of
-    where the carriage starts, at up to Velocity Max. The panel shows the
-    distances and speeds before you run it. Leave that much room each way.
+    The motion calibration is built from the profile **saved on the machine**:
+    **Velocity Max**, **Acceleration Max** and **Position Max**. Its longest
+    move is a tenth of Position Max, swung half either side of where the
+    carriage starts, at up to Velocity Max. The panel shows the distance and
+    speeds before you run it. Leave that much room each way.
 
 ### Before you run it
 
@@ -78,22 +81,19 @@ fields (and **Write to device**) yourself.
 - Leave the carriage clear of both end stops, with the room the panel asks for.
 - Don't start a test or jog while it runs.
 
-**Check distance** defaults to 5 mm and **Check speed** to 1 mm/s. A shorter
-distance still gives a pass or fail, but each leg loses a few encoder counts at
-its ends, which matters more on a short one. Before each measured leg, a
-0.5 mm move in the same direction takes up any slack, so slack doesn't count
-against the ratio. The panel disables motion if the encoder moves more than
-three times the distance the profile expects.
+Before each measured leg of the check, a 0.5 mm move in the same direction
+takes up any slack, so slack doesn't count against the ratio. The panel
+disables motion if the encoder moves more than three times the distance the
+profile expects.
 
-The drive-and-encoder check judges the steps/mm you have **typed**. The
-tracking run moves with the steps/mm **saved** on the machine, so it only runs
-when the two are the same. Otherwise the report asks you to write them and
-restart first.
+The check judges the steps/mm you have **typed**. If those differ from the ones
+saved on the machine, **Run motion calibration** stays locked and the panel
+asks you to write them, restart the machine, and run the check again.
 
 ### Reading the result
 
-**Drive and encoder** shows a **pass**, **warning** or **error**, then what the
-run measured:
+The **drive and encoder check** shows a **pass**, **warning** or **error**,
+then what the run measured:
 
 > Sent 32000 pulses each way → encoder moved **11993** counts (expected 12000)
 
@@ -115,6 +115,32 @@ It also reports:
   larger.
 - **Drive lag**: how far behind the pulses the encoder runs at a steady speed.
 
+The **motion calibration** program ramps at Acceleration Max up to a quarter,
+half, three quarters and all of Velocity Max, each speed out, back and out again
+so both directions are covered. Every move the firmware runs accelerates at
+Acceleration Max, so ramping to rising speeds is how it tests that one value:
+a motor has less torque the faster it turns. Then come 1 mm, 0.1 mm and 0.01 mm
+moves in both directions.
+
+**Acceleration** says whether the carriage kept up:
+
+- **pass**: it delivered Acceleration Max at every speed up to the one shown.
+  If a tenth of Position Max is too short to reach Velocity Max at that
+  acceleration, the report shows the speed it did reach, and ramps to higher
+  speeds are untested.
+- **too high**: on at least one ramp the carriage delivered under 80% of
+  Acceleration Max. A carriage that can't accelerate as fast as its trajectory
+  falls behind it through the ramp, so the following error beyond what the
+  drive lag explains, divided by the ramp's length, is the share it fell short
+  by. Lower **Acceleration Max** (or **Velocity Max**), write, restart and run
+  it again.
+- **not judged**: the run stopped before every speed had been measured.
+
+The table gives each speed's peak following error and the share of
+Acceleration Max delivered. The servo's corrections during a ramp hide part of
+a shortfall, so treat a marginal pass with care; a carriage that stalls fails
+clearly.
+
 **Tracking** sums up the program: the largest stop error, the peak following
 error (the gap between where the trajectory is and where the encoder is), the
 largest overshoot, and the longest settle time. **Each move** expands to the
@@ -133,7 +159,7 @@ needs an external reference.
   with nothing to correct only adds overshoot.
 
 To try them, enter **Servo Kp (1/s)** and **Servo Ki (1/s^2)**, **Write to
-device**, restart the machine, and run the calibration again to compare.
+device**, restart the machine, and run the motion calibration again to compare.
 
 ### What the findings mean
 
@@ -149,6 +175,10 @@ device**, restart the machine, and run the calibration again to compare.
 
 ### Runs that don't finish
 
+These are for the drive and encoder check. The motion calibration stops with
+"the carriage went further than a move asked for", "motion was disabled",
+"a move never finished" or "the machine turned a move down".
+
 | Message | Why | What to do |
 |---|---|---|
 | Not run: enable motion (and clear any fault) first | Motion was off or the machine was faulted | Enable motion, clear the fault |
@@ -157,3 +187,69 @@ device**, restart the machine, and run the calibration again to compare.
 | Stopped: motion was disabled | Motion was turned off mid-run, or a fault disabled it | Clear the cause, run it again |
 | Stopped: the carriage was still moving long after the pulses should have finished | It hadn't settled after twice the move's time plus 3 seconds | Check the drive and the mechanics |
 | Stopped: the encoder moved over three times further than the profile expects | The drive is set much finer than servo steps/mm says, or encoder steps/mm is far too low | Check both values |
+
+## Load cell calibration
+
+The **Load cell calibration** box on **Settings**, below **Motor calibration**,
+measures the two load cell values a datasheet can only give you nominally.
+Neither moves the carriage.
+
+Force is worked out from the bridge signal as
+(signal − **Zero Balance**) × **Capacity** ÷ **Sensitivity**, all in **mV/V**:
+millivolts of bridge output per volt of excitation. A load cell rated 2 mV/V
+puts out 2 mV per volt of excitation at its capacity, so 10 mV at 5 V. The
+machine measures the signal against the excitation itself, so supply drift
+cancels out.
+
+!!! warning "Restart after writing load cell values"
+    The machine loads the load cell values when it starts. Both steps work
+    from the values it **started with**, so after **Write to device**, restart
+    the machine before reading again.
+
+### Zero and noise
+
+Take any sample out of the grips, let the load cell hang free, and press
+**Read zero**. It reads for 3 s and reports:
+
+- **Zero balance**: the bridge signal with nothing on the load cell, next to
+  the saved value and the force the saved one was leaving in the readings.
+  **Use this zero** puts it into **Load Cell Zero Balance (mV/V)** in Machine
+  configuration; then **Write to device** and restart.
+- **Noise**: one standard deviation of the readings, in force, in nV/V and as a
+  share of capacity, and the spread from lowest to highest. This is the
+  smallest force the machine can tell apart.
+- **still settling**: the reading moved more than its noise explains while it
+  was read. Wait (a cold load cell can take minutes) and read again. The noise
+  figure includes the drift while it does.
+
+### Sensitivity from known weights
+
+The load cell must hang vertically, with the weight pulling it the way a sample
+would.
+
+1. Press **1. Read unloaded**.
+2. Enter the mass in **Mass (kg)**, counting the hanger, hang it, and press
+   **2. Read with weight**.
+3. Repeat step 2 with more weights, the heaviest you have, ideally up to at
+   least 20% of capacity. Press **Read unloaded again** whenever you like: each
+   weight is measured from the most recent unloaded reading, and the panel
+   shows how far that has moved from the first one.
+
+Each weight is the change from the unloaded reading, so the **zero balance does
+not have to be right first**. The new sensitivity is the saved one × the force
+read ÷ (mass × gravity); with several weights it comes from a least-squares
+line through zero. **Gravity (m/s²)** defaults to standard gravity, 9.80665;
+local gravity differs by up to about 0.3%.
+
+Each weight's row shows its known force, the force read, the **error** against
+the saved sensitivity, and how far it sits **off the line**. **Linearity** is
+the furthest any weight sits from the line, as a share of the heaviest weight.
+**Use this sensitivity** puts the value into **Load Cell Sensitivity (mV/V)**;
+then **Write to device** and restart. **Remove** drops a weight.
+
+| Flag | What it means | What to do |
+|---|---|---|
+| polarity | The weights read as pushing | If they hang the way a sample pulls, the load cell is wired the other way round; the new sensitivity flips its sign to match |
+| light | The heaviest weight is under 20% of capacity, so the line is stretched a long way to full scale | Add a heavier weight |
+| swinging | A weight was still moving while it was read | Remove it, let it settle, read it again |
+| moved the reading by under 50 mN | That weight barely registered | Check it hangs from the load cell, and that Capacity and Sensitivity are entered |
