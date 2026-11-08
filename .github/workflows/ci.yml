@@ -180,6 +180,10 @@ jobs:
         run: |
           pip install pyyaml==6.0.3
           python3 Protocol/scripts/check_schema_domain_lockstep.py
+      # TEMP (edge-case demo, reverted): the job fails AFTER its run was
+      # uploaded, so the ledger must ignore that upload and give no verdict.
+      - name: TEMP fail after the upload
+        run: exit 1
 
   # ProtoEmb library suite (generator unit tests, cross-language wire
   # conformance, framing + runtime crate tests) run against the *pinned
@@ -840,7 +844,8 @@ jobs:
   # protocol from the YAML and installs its own generator deps.
   firmware-unit-tests:
     needs: changes
-    if: needs.changes.outputs.firmware == 'true' || needs.changes.outputs.protocol == 'true'
+    # TEMP (edge-case demo, reverted): skipped, so the ledger carries it.
+    if: false && (needs.changes.outputs.firmware == 'true' || needs.changes.outputs.protocol == 'true')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -949,7 +954,9 @@ jobs:
   # declaration in Protocol/rust/src/lib.rs.
   sil-rust:
     needs: changes
+    # TEMP (edge-case demo, reverted): skipped, so the ledger carries it.
     if: |
+      false &&
       needs.changes.outputs.is_release != 'true' &&
       needs.changes.outputs.sil == 'true'
     runs-on: ubuntu-latest
