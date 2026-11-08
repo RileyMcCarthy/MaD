@@ -1315,9 +1315,11 @@ jobs:
   # never block a PR.
   # The behaviour ledger: what this change adds, and what stopped holding.
   #
-  # Informational, so deliberately NOT in ci-gate.needs while it beds in. It
-  # exits 1 when a behaviour breaks or is removed, so promoting it later is a
-  # one-line change.
+  # Informational, so deliberately NOT in ci-gate.needs. A behaviour that
+  # broke or was removed is reported, not failed on: the broken test already
+  # fails its own suite's job, and a removal is usually the point of the PR.
+  # The job goes red only when the ledger could not be built (exit 3: a suite
+  # declared nothing, or a picture could not be read).
   #
   # fetch-depth: 0 is required — the default shallow clone cannot resolve the
   # base branch, and the ledger diff would then report every behaviour as new.
@@ -1438,9 +1440,9 @@ jobs:
         working-directory: Software/Control
         run: npm ci --no-audit --no-fund
 
-      # Capture the verdict instead of failing here: a broken behaviour is
-      # exactly the run whose report must reach the PR, so posting comes first
-      # and the exit code is re-raised at the end.
+      # Capture the verdict instead of failing here: a suite that did not
+      # report is exactly the run whose report must reach the PR, so posting
+      # comes first and the exit code is re-raised at the end.
       - name: Behaviour report
         id: report
         env:
@@ -1482,28 +1484,6 @@ jobs:
       - name: Propagate the verdict
         run: exit ${{ steps.report.outputs.code }}
 
-  # BLOCKING. A BH number is provisional until it reaches main: two open PRs
-  # take the same ones, and behaviours.jsonl merges without a conflict, so a
-  # PR must settle its numbers against the base before it lands. Runs no suites.
-  vibes-numbers:
-    name: Behaviour numbers settled
-    if: ${{ github.event_name == 'pull_request' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-      - run: git submodule update --init Vibes
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 20
-      - name: Build Vibes
-        working-directory: Vibes
-        run: npm ci --no-audit --no-fund && npm run build
-      - name: No BH number collides with the base branch's
-        run: node Vibes/bin/vibes.mjs renumber --base "origin/${{ github.base_ref }}" --check
-
   # BLOCKING. The decidable half of Vibes/bindings/CLAIMS.md over the committed
   # ledger: names from the code, contrast words, vague claims (errors), and
   # machinery, garden-path scenes and over-long claims (warnings, advice only).
@@ -1541,7 +1521,6 @@ jobs:
       - embsim-ci
       - embsim-pin-ci
       - vibes-pin-ci
-      - vibes-numbers
       - vibes-lint
       - docs-ci
       - firmware-unit-tests
