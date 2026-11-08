@@ -3763,6 +3763,11 @@ const scenarios = [
         await page.goto(`${APP_URL}#/connect`);
         await press(page.getByRole('button', { name: 'Disconnect' }));
         await page.locator('.dot.disconnected').waitFor({ timeout: DEVICE_WAIT_MS });
+        // The dot turns on the worker's session-closed event, a few tens of
+        // milliseconds before the main thread lets go of the port, and the
+        // Firmware page resolves its target once, as it opens: an operator's
+        // pace, not the instant the dot turns.
+        await waitPageTime(page, 2_000);
         await page.goto(`${APP_URL}#/firmware`);
         await page.getByTestId('flash-target').filter({ hasText: /USB 0403:6015/ })
           .waitFor({ timeout: DEVICE_WAIT_MS });
