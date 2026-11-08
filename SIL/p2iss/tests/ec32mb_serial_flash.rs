@@ -423,20 +423,20 @@ fn the_flashers_load_through_the_roms_serial_loader_programs_the_modules_flash()
     drop(system);
 }
 
-/// The production firmware (pio env `P2Eval`): `MAD_P2_PRODUCTION_IMAGE`
-/// names a copy kept out of `.pio` (CI's), else the build's own.
-fn production_image() -> Option<Vec<u8>> {
-    let path = std::env::var_os("MAD_P2_PRODUCTION_IMAGE").map_or_else(
+/// The firmware (pio env `MaD`): `MAD_P2_IMAGE` names a copy kept out of
+/// `.pio` (CI's), else the build's own.
+fn firmware_image() -> Option<Vec<u8>> {
+    let path = std::env::var_os("MAD_P2_IMAGE").map_or_else(
         || {
             PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../../Firmware/MaDCore/.pio/build/P2Eval/program")
+                .join("../../Firmware/MaDCore/.pio/build/MaD/program")
         },
         PathBuf::from,
     );
     let image = std::fs::read(&path).ok();
     if image.is_none() && std::env::var_os("MAD_REQUIRE_P2_IMAGE").is_some() {
         panic!(
-            "MAD_REQUIRE_P2_IMAGE is set but the production image is missing at {}",
+            "MAD_REQUIRE_P2_IMAGE is set but the firmware image is missing at {}",
             path.display()
         );
     }
@@ -448,7 +448,7 @@ fn the_firmware_the_flasher_writes_boots_from_flash_after_a_dtr_reset() {
     behaviour!(Test {
         id: "p2iss.ec32mb-reflash-boots",
         covers: Some("SIL/p2iss/src/package.rs#P2IssCore::enter_reset"),
-        given: "a P2-EC32MB module, its flash erased and P59 unstrapped, sent the production \
+        given: "a P2-EC32MB module, its flash erased and P59 unstrapped, sent the \
                 firmware through the ROM's serial loader and then reset by DTR through a Prop \
                 Plug's reset stage",
     });
@@ -465,11 +465,11 @@ fn the_firmware_the_flasher_writes_boots_from_flash_after_a_dtr_reset() {
          flash, which loadp2's loader reads in through the streamer"
     );
 
-    let (Some(boot_rom), Some(stub), Some(fw)) = (rom(), flash_loader_stub(), production_image())
+    let (Some(boot_rom), Some(stub), Some(fw)) = (rom(), flash_loader_stub(), firmware_image())
     else {
         eprintln!(
-            "\n*** SKIPPED: needs `make bootrom`, the app's flash stub and the production image \
-             (make p2image-production). Asserted NOTHING.\n"
+            "\n*** SKIPPED: needs `make bootrom`, the app's flash stub and the firmware image \
+             (make p2image). Asserted NOTHING.\n"
         );
         return;
     };

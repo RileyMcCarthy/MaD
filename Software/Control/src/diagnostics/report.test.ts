@@ -6,6 +6,7 @@ import {
   buildIssueUrl,
   bundleFileName,
   environmentBlock,
+  ISSUE_PAYLOAD_BYTES,
   ISSUE_URL_MAX,
   recentActions,
   ISSUE_STACK_LINES,
@@ -747,6 +748,40 @@ describe('buildApiIssueBody', () => {
       expect(section).toContain('app/report-file GitHub API 401');
       expect(section).toContain('<redacted-credential>');
       expect(section).toContain('at createIssue ');
+    },
+  );
+});
+
+describe('failed command bytes in the issue', () => {
+  behaviour(
+    {
+      id: 'report.failed-command-bytes-shown',
+      covers: 'src/diagnostics/report.ts#recentErrors',
+      given: 'a session whose test upload failed on a refused 21-byte command and on a refused 100-byte batch',
+      expect: {
+        'short-shown-whole': 'the issue lists every byte of the short command under its error',
+        'long-shown-capped': 'the issue lists the first 64 bytes of the long batch and says how many more the attached log holds',
+      },
+    },
+    () => {
+      const short = Array.from({ length: 21 }, (_, i) => i.toString(16).padStart(2, '0')).join(' ');
+      const long = Array.from({ length: 100 }, () => 'ee').join(' ');
+      const log = {
+        entries: [
+          entry({ seq: 1, level: 'error', cat: 'proto', tag: 'upload-failed', msg: 'WRITE_TEST_WAVEFORM(8)', data: { bytes: 21, payloadHex: short } }),
+          entry({ seq: 2, level: 'error', cat: 'proto', tag: 'upload-failed', msg: 'WRITE_TEST_MOVE(4)', data: { bytes: 100, payloadHex: long } }),
+        ],
+        counters: {},
+        dropped: 0,
+        startedAt: 0,
+      };
+
+      const body = buildApiIssueBody({ summary: 'upload failed' }, bundle({ log }), 'https://gist/x');
+      const section = body.slice(body.indexOf('### Recent errors'), body.indexOf('### Failure counters'));
+
+      expect(section).toContain(`proto/upload-failed WRITE_TEST_WAVEFORM(8)\n    payload (21 B): ${short}\n`);
+      const shownLong = Array.from({ length: ISSUE_PAYLOAD_BYTES }, () => 'ee').join(' ');
+      expect(section).toContain(`payload (100 B): ${shownLong} … +${100 - ISSUE_PAYLOAD_BYTES} B`);
     },
   );
 });

@@ -6,13 +6,21 @@
  * both 1 — so the timed-out frame's read/write type byte is what tells a lost
  * state poll from a lost motion-enable write.
  *
+ * Also what the session log keeps about a write the board refused or never
+ * answered: the bytes that write carried.
+ *
  * The protocol core here is a stand-in that replays scripted poll results, one
  * batch per tick, and records what the session hands it to send.
  */
 import { afterEach, beforeEach, expect, vi } from 'vitest';
 import { behaviour } from '@vibes/behaviour';
 import { subscribeLog, type LogEntry } from '@/diagnostics/log';
-import { MSG_READ_STATE, MSG_WRITE_MOTION_ENABLE } from '@/protocol/generated/protoemb';
+import {
+  MSG_READ_STATE,
+  MSG_WRITE_MANUAL_MOVE,
+  MSG_WRITE_MOTION_ENABLE,
+  MSG_WRITE_TEST_MOVE,
+} from '@/protocol/generated/protoemb';
 import { DeviceSession } from './DeviceSession.worker';
 
 const core = vi.hoisted(() => ({
@@ -20,6 +28,10 @@ const core = vi.hoisted(() => ({
   polls: [] as unknown[][],
   /** Commands the session handed the core to write. */
   writes: [] as number[],
+  /** The bytes of each write, in the same order as `writes`. */
+  payloads: [] as Uint8Array[],
+  /** A command the board refuses (NACKs) every time it is written. */
+  refused: null as number | null,
 }));
 
 vi.mock('@/wasm/protoemb_runtime.js', () => ({
@@ -34,8 +46,10 @@ vi.mock('@/wasm/protoemb_runtime.js', () => ({
       return new Uint8Array(0);
     }
     feed_bytes(): void {}
-    write(command: number): void {
+    write(command: number, data: Uint8Array): void {
       core.writes.push(command);
+      core.payloads.push(data.slice());
+      if (command === core.refused) core.polls.push([{ event: 'nack', command }]);
     }
     read(): void {}
     clear_queue(): void {}
@@ -51,6 +65,9 @@ vi.mock('@/wasm/protoemb_runtime_bg.wasm?url', () => ({ default: 'protoemb_runti
 const readRequest = (command: number): number[] => [0x55, 0x00, command];
 const writeRequest = (command: number): number[] => [0x55, 0x01, command, 1, 0, 1, 0];
 
+/** Two-digit lowercase hex per byte, space-separated: how a report prints bytes. */
+const hex = (bytes: Uint8Array): string => Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join(' ');
+
 let logged: LogEntry[] = [];
 let unsubscribe: () => void = () => undefined;
 const cleanups: Array<() => Promise<void> | void> = [];
@@ -58,11 +75,14 @@ const cleanups: Array<() => Promise<void> | void> = [];
 beforeEach(() => {
   core.polls.length = 0;
   core.writes.length = 0;
+  core.payloads.length = 0;
+  core.refused = null;
   logged = [];
   unsubscribe = subscribeLog((e) => logged.push(e));
 });
 
 afterEach(async () => {
+  vi.useRealTimers();
   unsubscribe();
   for (const fn of cleanups.splice(0)) await fn();
 });
@@ -132,5 +152,62 @@ behaviour(
     expect(await enabled).toBe(false);
     const failed = logged.filter((e) => e.tag === 'tx-failed');
     expect(failed.map((e) => e.data?.reason)).toEqual(['response timeout']);
+  },
+);
+
+behaviour(
+  {
+    id: 'session.refused-upload-logs-its-bytes',
+    covers: 'src/device/DeviceSession.worker.ts#DeviceSession.uploadWithRetry',
+    given: 'a G-code program whose upload the board refuses on every retry',
+    expect: {
+      'bytes-logged': 'the upload failure in the session log lists every byte of the refused upload as hex',
+      'length-logged': 'the upload failure in the session log states how many bytes the refused upload carried',
+    },
+    why: {
+      'bytes-logged':
+        'the raw serial capture covers only the last few minutes of a session, and a report can be filed any time after the failure',
+    },
+  },
+  async () => {
+    vi.useFakeTimers();
+    core.refused = MSG_WRITE_TEST_MOVE;
+    const session = await connectedSession();
+
+    const streamed = session.streamGcode('G1 X5 F100\nG1 X0 F100');
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect((await streamed).success).toBe(false);
+    const sent = core.payloads.filter((_, i) => core.writes[i] === MSG_WRITE_TEST_MOVE);
+    expect(sent.length).toBeGreaterThan(1);
+    const failed = logged.filter((e) => e.tag === 'upload-failed');
+    expect(failed).toHaveLength(1);
+    expect(failed[0].data?.payloadHex).toBe(hex(sent[sent.length - 1]));
+    expect(failed[0].data?.bytes).toBe(sent[sent.length - 1].length);
+  },
+);
+
+behaviour(
+  {
+    id: 'session.unanswered-write-logs-its-bytes',
+    covers: 'src/device/DeviceSession.worker.ts#DeviceSession.writeAndAck',
+    given: 'a manual jog whose first move the board never answers',
+    expect: {
+      'bytes-logged': 'the failed send in the session log lists every byte of the unanswered move as hex',
+      'length-logged': 'the failed send in the session log states how many bytes the unanswered move carried',
+    },
+  },
+  async () => {
+    const session = await connectedSession();
+
+    const moved = session.manualMove(5, 100);
+    await vi.waitFor(() => expect(core.writes).toEqual([MSG_WRITE_MANUAL_MOVE]));
+    core.polls.push([{ event: 'timeout', frame: writeRequest(MSG_WRITE_MANUAL_MOVE) }]);
+
+    expect(await moved).toBe(false);
+    const failed = logged.filter((e) => e.tag === 'tx-failed');
+    expect(failed).toHaveLength(1);
+    expect(failed[0].data?.payloadHex).toBe(hex(core.payloads[0]));
+    expect(failed[0].data?.bytes).toBe(core.payloads[0].length);
   },
 );

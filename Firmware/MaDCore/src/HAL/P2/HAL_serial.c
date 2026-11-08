@@ -180,7 +180,6 @@ void HAL_serial_private_TXFlush(HAL_serial_channel_E channel)
             while (_pinr(HAL_serial_channelConfig[channel].tx) == 0)
                 ;
             break;
-        case HAL_SERIAL_TYPE_BUILTIN:
         default:
             break;
     }
@@ -188,7 +187,6 @@ void HAL_serial_private_TXFlush(HAL_serial_channel_E channel)
 
 static inline bool HAL_serial_private_readByte(HAL_serial_channel_E channel, uint8_t *const byte)
 {
-    int32_t tmp = -1;
     if ((channel == HAL_SERIAL_RX_ISR_CHANNEL) && HAL_serial_data.armed)
     {
         /* The ISR owns the pin now; reading it here would steal a byte. */
@@ -200,17 +198,6 @@ static inline bool HAL_serial_private_readByte(HAL_serial_channel_E channel, uin
             if (_pinr(HAL_serial_channelConfig[channel].rx) != 0)
             {
                 *byte = (_rdpin(HAL_serial_channelConfig[channel].rx) >> 24);
-                return true;
-            }
-            else
-            {
-                return false;
-            }
-        case HAL_SERIAL_TYPE_BUILTIN:
-            tmp = _rxpoll();
-            if (tmp != -1)
-            {
-                *byte = tmp;
                 return true;
             }
             else
@@ -233,9 +220,6 @@ static inline void HAL_serial_private_writeByte(HAL_serial_channel_E channel, ui
     {
         case HAL_SERIAL_TYPE_HARDWARE:
             _wypin(HAL_serial_channelConfig[channel].tx, byte);
-            break;
-        case HAL_SERIAL_TYPE_BUILTIN:
-            _txraw(byte);
             break;
         default:
             break;
@@ -267,8 +251,6 @@ void HAL_serial_start(HAL_serial_channel_E channel)
                 _pinstart(HAL_serial_channelConfig[channel].rx, P_ASYNC_RX, bitMode, 0);
             }
             break;
-        case HAL_SERIAL_TYPE_BUILTIN:
-            _setbaud(HAL_serial_channelConfig[channel].baud);
         default:
             break;
         }
@@ -286,7 +268,6 @@ void HAL_serial_stop(HAL_serial_channel_E channel)
                 _pinclear(HAL_serial_channelConfig[channel].rx);
                 _pinclear(HAL_serial_channelConfig[channel].tx);
                 break;
-            case HAL_SERIAL_TYPE_BUILTIN:
             case HAL_SERIAL_TYPE_COUNT:
                 // do not disable the serial port
                 break;

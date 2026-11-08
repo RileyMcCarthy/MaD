@@ -43,7 +43,7 @@ Verified at handoff time:
 
 ## Not yet verified
 
-- **Hardware build** (`pio run -e P2Eval`) — not attempted in this session.
+- **Hardware build** (`pio run -e MaD`) — not attempted in this session.
 - **SIL Playwright E2E** (`make test` from `SIL/`) — not run. The protocol regen step (`make protocol`) failed on a missing `yaml` Python module in the env; pre-existing, unrelated to the refactor. To run E2E, fix the Python env or skip regen.
 - **`make playground`** end-to-end test of start/abort/finish flow.
 - **MISRA check** (`pio check`).
@@ -73,6 +73,6 @@ Verified at handoff time:
 
 1. Fix the local `yaml` Python module so `make test` works, then run SIL Playwright suite end-to-end.
 2. Run `make playground`, drive a test through the UI, verify start → moves → G122 → clean stop. Verify abort mid-test. Verify a second test launches cleanly right after the first.
-3. `pio run -e P2Eval` to confirm the hardware build still links (CONTROL cog stack is unchanged at 1024B; testManagement data is in BSS, not stack).
+3. `pio run -e MaD` to confirm the hardware build still links (CONTROL cog stack is unchanged at 1024B; testManagement data is in BSS, not stack).
 4. `pio check` for MISRA regressions.
 5. Decide whether to drop the snapshot `testRunning` field from `app_control` and re-point the SIL DWARF reader.

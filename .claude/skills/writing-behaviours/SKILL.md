@@ -168,7 +168,11 @@ line without running a suite.
    changes that row's `test` field.
 
 16. **After changing behaviours:** `node Vibes/bin/vibes.mjs collect --write`
-   and commit `behaviours.jsonl` alongside the change.
+   and commit `behaviours.jsonl` alongside the change. CI does not run
+   `collect`: the `Behaviour ledger` job reads what the test jobs declared while
+   they ran. So a new Rust test target that declares behaviours also goes in
+   `SIL/vibes.suite.json`'s `cmd` (which lists targets; `sil-rust` runs the whole
+   workspace), or local `collect` misses rows that CI reports as new.
 
 ## Snippets
 

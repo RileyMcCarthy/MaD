@@ -24,9 +24,12 @@ not allocate. Levels are `debug | info | warn | error`.
 The `data` object is passed through `sanitize()`: depth-1 only, strings capped at
 200 chars, `Uint8Array`/`ArrayBuffer` reduced to `{ bytes: n }`, `Error` to
 name/message/5 stack frames, path-ish keys reduced to their basename, and
-non-finite numbers stringified so they survive JSON. Nothing logged should ever
-carry file contents or a full filesystem path — a bundle can end up in a public
-issue.
+non-finite numbers stringified so they survive JSON. Two kinds of key keep
+longer strings: a key ending in `stack` (see [Crash stacks](#crash-stacks)), and
+a key ending in `Hex`, such as `payloadHex`, which keeps up to
+`SANITIZE_HEX_MAX` (1536) characters, about 512 bytes of space-separated hex.
+Nothing logged should ever carry file contents or a full filesystem path — a
+bundle can end up in a public issue.
 
 ## Threads
 
@@ -169,6 +172,14 @@ of the last 64 (or 96) bytes from the byte ring, inline in the entry. For a
 framing or CRC fault those bytes are the whole story, and by export time they
 would long since have been overwritten.
 
+A write the device refused (NACK) or never answered carries its own bytes too:
+the failed `rtt` entry, `tx-failed` and `upload-failed` each add `bytes` (the
+payload length) and `payloadHex` (the payload as hex), from `failedPayload()` in
+`byteRing.ts`. They are logged with the failure, so they survive however long
+after it the report is filed. The issue body prints them under the error that
+carries them (`upload-failed` is the error-level one), capped at the first 64
+bytes (`ISSUE_PAYLOAD_BYTES` in `report.ts`); the gist keeps the whole entry.
+
 ## Crash stacks
 
 Strings under a key ending in `stack` keep up to `SANITIZE_STACK_MAX` (4000)
@@ -178,11 +189,15 @@ frame of the failing code.
 
 ## Raw serial tail
 
-`src/diagnostics/byteRing.ts` keeps the last **64 KiB** of RX+TX in a
-preallocated circular buffer with per-chunk metadata (direction, timestamp,
-absolute offset). Chunk boundaries and inter-chunk timing survive, because a
-frame split across two reads looks very different from one that arrived whole —
-and that difference is usually the bug.
+`src/diagnostics/byteRing.ts` keeps the last **1 MiB** of RX+TX in a
+preallocated circular buffer with **48k** per-chunk metadata records (direction,
+timestamp, absolute offset): about five minutes of a streaming session, because
+a report is usually filed minutes after the failure. Whichever limit fills first
+sets the window. An exported bundle that includes the tail is now a few MB.
+
+Chunk boundaries and inter-chunk timing survive, because a frame split across
+two reads looks very different from one that arrived whole — and that
+difference is usually the bug.
 
 `push()` is one `set()` memcpy plus a few typed-array stores: no allocation, and
 a footprint that cannot creep (asserted in tests). Residency uses **absolute**

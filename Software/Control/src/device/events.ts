@@ -29,7 +29,8 @@ export type DeviceEvent =
   | { kind: 'firmwareVersion'; data: FirmwareVersion }
   | { kind: 'deviceInfo'; data: DeviceInfo }
   | { kind: 'notification'; data: Notification }
-  | { kind: 'ack'; command: number; success: boolean }
+  /** `reason` is the device's code for a refusal (`success: false`); see nackReason.ts. */
+  | { kind: 'ack'; command: number; success: boolean; reason?: number }
   | { kind: 'data'; command: number; payload: Uint8Array }
   | { kind: 'timeout' }
   | { kind: 'error'; message: string };

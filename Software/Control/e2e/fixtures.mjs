@@ -5,9 +5,9 @@
  * normal code paths run unchanged against:
  *
  *   - `navigator.serial`: on the board route, the shim of the `chrome-cdp`
- *     node of `embsim run mad-cosim.toml` (the host on the carrier's debug
- *     header J1, in a Chrome the board's clock meters; see "Board mode"
- *     below). Elsewhere a fake SerialPort over a WebSocket bridge (the
+ *     node of `embsim run mad-cosim.toml` (the host on the control port, the
+ *     carrier's J4 through the isolator IC2 to P30/P32, in a Chrome the
+ *     board's clock meters; see "Board mode" below). Elsewhere a fake SerialPort over a WebSocket bridge (the
  *     hardware harness).
  *   - `showDirectoryPicker()` → an OPFS directory (real FileSystemDirectoryHandle,
  *     no dialog, no permission prompt), installed by `page.addInitScript`.
@@ -88,10 +88,11 @@ export const chromium =
  * http://127.0.0.1:PORT" once Chrome is reached). That Chrome lives the
  * board's time: every page and dedicated worker is held to the board's clock
  * over DevTools, a 1 ms quantum at a time, and every page's
- * `navigator.serial` is the node's shim, whose one port is the host's line
- * on the carrier's debug header J1, where the machine's Prop Plug sits (USB
- * `E2E_PORT_USB`, 0403:6015, granted to every origin: the project's
- * `granted = true`). So in this mode:
+ * `navigator.serial` is the node's shim, whose one port is the host's line:
+ * the control port on the carrier's J4 (USB `E2E_PORT_USB`, 0403:6001, an
+ * FTDI FT232R), or, on the ROM board, the programming port on the debug
+ * header J1, where the machine's Prop Plug sits (0403:6015). Either is
+ * granted to every origin: the project's `granted = true`. So in this mode:
  *
  *   - pages are made in a fresh browser context per scenario, at about:blank,
  *     then navigated (Chrome holds a page made that way from birth; one made
@@ -771,26 +772,15 @@ export function setCurrentScenario(id) {
 }
 
 /**
- * Which board the suite is attached to (SIL/scripts/board-route.sh sets it):
- *
- *   - `project`, the default: the machine's project, `embsim run
- *     mad-cosim.toml` (`make e2e-emulator`): the carrier and the module as
- *     drawn, the production firmware off the module's flash, the host on J1;
- *   - `emulator`: `mad-emulator --chrome`, the debug firmware on the bare
- *     chip, the host on P30/P32. No make target runs it since SERVO-stall
- *     moved onto mad-hard-stop-cosim.toml (MaD #298); it retires with
- *     mad-emulator.
- */
-export const BOARD_ROUTE = process.env.E2E_BOARD_ROUTE || 'project';
-
-/**
  * The USB ids of the board's port, `VVVV:PPPP` in hex. The project's
- * `chrome-cdp` names them (SIL/mad-cosim.toml: 0403:6015, an FTDI FT231X,
- * the chip in the Prop Plug on J1); `mad-emulator --chrome` reports an
- * FT232R's, 0403:6001, unless `--usb-product-id` says otherwise.
+ * `chrome-cdp` names them: the control port's adapter on J4 is an FTDI
+ * FT232R, 0403:6001 (SIL/mad-cosim.toml); the ROM board's (E2E_BOARD=rom)
+ * and the reflash board's (E2E_BOARD=reflash) is the Prop Plug's FT231X on
+ * J1, 0403:6015 (SIL/mad-serial-boot-cosim.toml, SIL/mad-reflash-cosim.toml).
  */
 export const PORT_USB =
-  process.env.E2E_PORT_USB || (BOARD_ROUTE === 'emulator' ? '0403:6001' : '0403:6015');
+  process.env.E2E_PORT_USB
+  || (['rom', 'reflash'].includes(process.env.E2E_BOARD ?? '') ? '0403:6015' : '0403:6001');
 
 /**
  * `PORT_USB` as the Connect screen labels the port: "USB 403:6015", the ids
@@ -864,9 +854,9 @@ export async function connectToSil(page) {
   // First point at which the app is loaded and can take a marker.
   if (currentScenario !== null) await markAppLog(page, `scenario ${currentScenario}`);
   if (BOARD) {
-    // The emulator grants the port to every origin (`--granted`, as Chrome's
-    // SerialAllowUsbDevicesForUrls policy would), so the Connect screen
-    // lists it as granted.
+    // The project's chrome-cdp grants the port to every origin (its
+    // `granted = true`, as Chrome's SerialAllowUsbDevicesForUrls policy
+    // would), so the Connect screen lists it as granted.
     await press(boardGrantedPort(page), { timeout: 10_000 });
   } else {
     // The primary button (testid connect-device) prompts requestPort() → our fake.
@@ -948,9 +938,14 @@ export async function chooseDataFolder(page) {
  *                requestPort() always returns the one real ROM.
  *   getPortsFails make getPorts() reject, as a permissions policy would.
  *   writeDelayMs  slow the sink so mid-upload UI states are observable.
- *   firmware      a board running firmware until its first reset: the port
- *                 answers the MaD protocol as that firmware would, so the app
- *                 can connect a session to it. `{ version, protocol }`, where
+ *   firmware      a board running firmware until its first reset. The board
+ *                 then has two ports, as the machine does: the control port
+ *                 (an FT232R, 0403:6001, first in getPorts() and what
+ *                 requestPort() hands back), which answers the MaD protocol
+ *                 as that firmware would and which no DTR edge resets; and
+ *                 the programming port, the ROM above (0403:6015). A reset
+ *                 through the programming port silences the control port
+ *                 until a flash boots firmware again. `{ version, protocol }`, where
  *                 `protocol` is the number it reports when asked which
  *                 protocol it speaks, null to refuse the question (firmware
  *                 from before the question existed), or 'silent' to never
@@ -966,7 +961,8 @@ export async function chooseDataFolder(page) {
  * every write, and keeps motion enabled or disabled as the app last set it,
  * so the Live screen's controls unlock. `window.__bootRom.firmware` is what
  * it runs now (null in the ROM), `.reads` and `.writes` every command it
- * received, in order.
+ * received, in order, and `.opens` how often each port was opened
+ * (`{ control, programming }`).
  */
 export function installFakeBootRom(options = 1) {
   const {
@@ -979,26 +975,33 @@ export function installFakeBootRom(options = 1) {
   } = typeof options === 'number' ? { ports: options } : options;
   const CHECKSUM_MAGIC = 0x706f7250;
   const state = {
-    opens: 0, reset: 0, image: [], finished: false, ok: null, dtr: null, bytesIn: 0, replies: 0, checksum: null,
+    reset: 0, image: [], finished: false, ok: null, dtr: null, bytesIn: 0, replies: 0, checksum: null,
     finishedAt: null, closedAt: null, firmware, reads: [], writes: [], motionEnabled: false,
+    opens: { control: 0, programming: 0 },
   };
   window.__bootRom = state;
 
-  let controller;
+  // Each port's read side: the ROM answers on the programming port, the
+  // firmware on the control port.
+  const controllers = { control: null, programming: null };
   let buffered = '';
   let hexMode = false;
   let sum = 0;
   let longBuf = [];
 
-  const emitBytes = (bytes) => {
+  // Without firmware there is one port, the ROM's, which also carries
+  // nothing else; with it the protocol has its own port.
+  const protocolRole = firmware ? 'control' : 'programming';
+  const emitTo = (role, bytes) => {
     state.replies += 1;
     try {
-      controller?.enqueue(Uint8Array.from(bytes));
+      controllers[role]?.enqueue(Uint8Array.from(bytes));
     } catch {
       /* closed */
     }
   };
-  const emit = (s) => emitBytes(Array.from(s, (c) => c.charCodeAt(0)));
+  const emitBytes = (bytes) => emitTo(protocolRole, bytes);
+  const emit = (s) => emitTo('programming', Array.from(s, (c) => c.charCodeAt(0)));
 
   // The firmware's side of the MaD protocol (Protocol/ProtoEmb/docs/wire-format.md).
   const crc8 = (bytes) => {
@@ -1031,10 +1034,13 @@ export function installFakeBootRom(options = 1) {
       case 4: return reply(4, zeros(sizes.profile));
       case 5:
         if (fw.protocol === 'silent') return undefined;
+        // Firmware from before the handshake (protocol 1-2) refuses with the
+        // 3-byte NACK it really sends, which predates protocol 3's reason byte.
         if (fw.protocol === null) return emitBytes([0x55, 0x00, 5]);
         return reply(5, [fw.protocol & 0xff, (fw.protocol >> 8) & 0xff, (fw.protocol >> 16) & 0xff, fw.protocol >>> 24]);
       default:
-        return emitBytes([0x55, 0x00, cmd]);
+        // This tree's firmware: [0x55][0x00][CMD][REASON], 0x01 = UNKNOWN_COMMAND.
+        return emitBytes([0x55, 0x00, cmd, 0x01]);
     }
   };
   const onWrite = (cmd, data) => {
@@ -1136,22 +1142,28 @@ export function installFakeBootRom(options = 1) {
     }
   }
 
-  const makePort = () => {
+  const makePort = (role = 'programming') => {
     let readable;
     let writable;
     return {
       async open() {
-        state.opens += 1;
+        state.opens[role] += 1;
         readable = new ReadableStream({
           start(c) {
-            controller = c;
+            controllers[role] = c;
           },
         });
         writable = new WritableStream({
           async write(chunk) {
             if (writeDelayMs) await new Promise((r) => setTimeout(r, writeDelayMs));
-            if (state.firmware) consumeProtocol(chunk);
-            else consume(String.fromCharCode(...chunk));
+            if (role === 'control') {
+              // The firmware answers here; the ROM never does.
+              if (state.firmware) consumeProtocol(chunk);
+            } else if (state.firmware && !firmware) {
+              consumeProtocol(chunk);
+            } else {
+              consume(String.fromCharCode(...chunk));
+            }
           },
         });
       },
@@ -1162,9 +1174,11 @@ export function installFakeBootRom(options = 1) {
         return writable;
       },
       getInfo() {
-        return { usbVendorId: 0x0403, usbProductId: 0x6015 };
+        return { usbVendorId: 0x0403, usbProductId: role === 'control' ? 0x6001 : 0x6015 };
       },
       async setSignals({ dataTerminalReady }) {
+        // The control port's DTR reaches no reset line.
+        if (role === 'control') return;
         // A falling edge on DTR is what actually resets the P2.
         if (state.dtr === true && dataTerminalReady === false) {
           state.reset += 1;
@@ -1192,17 +1206,20 @@ export function installFakeBootRom(options = 1) {
   };
 
   const port = makePort();
+  const control = firmware ? makePort('control') : null;
   // Extra ports are decoys: same ids, no ROM behind them. Only the first can
   // actually be programmed, so a test that flashes a decoy would hang.
   // ports: 0 means nothing has been granted yet — requestPort() still hands
   // back the real ROM, which is what the chooser would do.
-  const ports =
-    portCount === 0 ? [] : [port, ...Array.from({ length: portCount - 1 }, makePort)];
+  const ports = [
+    ...(control ? [control] : []),
+    ...(portCount === 0 ? [] : [port, ...Array.from({ length: portCount - 1 }, () => makePort())]),
+  ];
   Object.defineProperty(navigator, 'serial', {
     configurable: true,
     value: {
       async requestPort() {
-        return port;
+        return control ?? port;
       },
       async getPorts() {
         if (getPortsFails) throw new DOMException('denied', 'SecurityError');

@@ -8,6 +8,7 @@
 
 import { create } from 'zustand';
 import { deviceClient, DEFAULT_BAUD_RATE } from '@/device/session';
+import { matchControlPort } from '@/device/controlPort';
 import { dataStore } from '@/storage/DataStore';
 import { DeviceEvent } from '@/device/events';
 import {
@@ -257,10 +258,9 @@ function readSerialPref(): SerialPref | null {
   }
 }
 
-/** Find a still-granted port matching the saved preference. Matches by USB id;
- *  only falls back to "the sole granted port" when the pref has no USB id (the
- *  SIL fake serial / an adapter that doesn't report one) — never binds to an
- *  unrelated real device just because it's the only one plugged in. */
+/** Find a still-granted port matching the saved preference (matchControlPort):
+ *  the programming adapter on J1 may share the control adapter's USB id, and
+ *  opening J1 restarts the machine, so an ambiguous match is left to the user. */
 async function findGrantedPortForPref(pref: SerialPref | null): Promise<SerialPort | null> {
   let ports: SerialPort[] = [];
   try {
@@ -268,17 +268,7 @@ async function findGrantedPortForPref(pref: SerialPref | null): Promise<SerialPo
   } catch {
     return null;
   }
-  if (ports.length === 0) return null;
-  const byId = ports.find((p) => {
-    const i = p.getInfo();
-    return (
-      pref?.vendorId !== undefined &&
-      i.usbVendorId === pref.vendorId &&
-      i.usbProductId === pref.productId
-    );
-  });
-  if (byId) return byId;
-  return pref?.vendorId === undefined && ports.length === 1 ? ports[0] : null;
+  return matchControlPort(ports, pref);
 }
 
 /** Auto-reconnect to a previously-used, still-granted port at startup. */

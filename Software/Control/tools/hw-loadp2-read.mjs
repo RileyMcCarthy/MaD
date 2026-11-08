@@ -10,7 +10,7 @@ import { spawn } from 'node:child_process';
 import { homedir } from 'node:os';
 
 const LOADP2 = `${homedir()}/.platformio/packages/tool-loadp2/bin/macos/loadp2`;
-const PROG = '/Users/rileymccarthy/Documents/MaD/Firmware/MaDCore/.pio/build/P2Eval/program';
+const PROG = '/Users/rileymccarthy/Documents/MaD/Firmware/MaDCore/.pio/build/MaD/program';
 const DEV = process.env.MAD_SERIAL || '/dev/cu.usbserial-PLX6ZJLYQ';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

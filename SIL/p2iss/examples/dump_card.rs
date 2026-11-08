@@ -1,22 +1,20 @@
 //! Write MaD's SD card image to a file: the 32 MiB FAT16 card
-//! `p2iss::sdimage::mad_card` builds, the card `mad-emulator` gives the
-//! firmware. `make sd-image` writes it for a project's `sd-card` entry, and
-//! a host FAT driver can judge it.
+//! `p2iss::sdimage::mad_card` builds. `make sd-image` writes it for a
+//! project's `sd-card` entry, and a host FAT driver can judge it.
 //!
 //! ```text
 //! cargo run -p p2iss --example dump_card -- IMAGE [DIR]
 //! ```
 //!
-//! `DIR`, when it is a directory, is mirrored onto the card, as
-//! `mad-emulator --sd-path` mirrors it (`make sd-image` passes `SIL/sd`). The
-//! firmware's `/test` and `/gcode` are on the card either way: it opens files
-//! inside them and does not create them.
+//! `DIR`, when it is a directory, is mirrored onto the card (`make sd-image`
+//! passes `SIL/sd`). The firmware's `/test` and `/gcode` are on the card
+//! either way: it opens files inside them and does not create them.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 /// 32 MiB: FAT16 at 2 KiB clusters, mid-window (`p2iss::sdimage`), the size
-/// `mad-emulator` builds its card at.
+/// of the card in a project's `sd-card` entry.
 const CARD_BYTES: usize = 32 * 1024 * 1024;
 
 fn main() -> ExitCode {
