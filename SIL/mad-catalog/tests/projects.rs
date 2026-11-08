@@ -1,4 +1,4 @@
-//! MaD's seven project files hold one machine: `SIL/mad.toml` (the
+//! MaD's eight project files hold one machine: `SIL/mad.toml` (the
 //! firmware booted off the module's flash, a `host-serial` on the carrier's
 //! control port `J4`, where the machine's FTDI adapter sits, through the
 //! isolator `IC2`), `mad-cosim.toml` (the same with the host's Chrome),
@@ -7,9 +7,12 @@
 //! where the Prop Plug sits) and `mad-serial-boot-cosim.toml` (that with the
 //! host's Chrome); then
 //! `mad-hard-stop-cosim.toml`, `mad-cosim.toml` with a hard stop on the
-//! machine's carriage (MaD #298); and the two playgrounds,
+//! machine's carriage (MaD #298); the two playgrounds,
 //! `mad-playground.toml` and `mad-serial-boot-playground.toml`, the two
-//! Chrome files with their Chrome headed on the app.
+//! Chrome files with their Chrome headed on the app; and
+//! `mad-reflash-cosim.toml`, `mad-cosim.toml` with its host's Chrome on the
+//! programming port `J1`, the Prop Plug's reset on `J1.3` and the ROM's
+//! serial window open after a reset, the board the app's flasher runs on.
 //! Each file is complete on its own, so nothing but this test keeps their
 //! shared lines the same: a supply, a wire or a jumper changed in one file
 //! and not the others fails here, naming the section.
@@ -219,6 +222,19 @@ fn host_wires(file: &mut Table) -> Vec<Value> {
     let host: Vec<Value> = wires.iter().filter(|wire| on_host(wire)).cloned().collect();
     wires.retain(|wire| !on_host(wire));
     host
+}
+
+/// The wire in `wires` from `from`: its other end and its voltage.
+fn wire_from<'a>(wires: &'a [Value], from: &str) -> Option<(&'a str, Option<f64>)> {
+    wires
+        .iter()
+        .find(|wire| field(wire, "from") == Some(from))
+        .map(|wire| {
+            (
+                field(wire, "to").expect("a wire has a to"),
+                wire.get("volts").and_then(Value::as_float),
+            )
+        })
 }
 
 /// The wires as `(from, to, volts)`, sorted.
@@ -634,4 +650,149 @@ fn each_playground_is_its_cosim_file_with_chrome_headed_on_the_app() {
             "{playground_name} is {base_name} but its host"
         );
     }
+}
+
+/// The file the app's flasher runs on, and the file it resets.
+const REFLASH: (&str, &str) = ("mad-cosim.toml", "mad-reflash-cosim.toml");
+
+#[test]
+fn the_reflash_file_is_the_cosim_file_with_the_prop_plugs_reset() {
+    behaviour!(Test {
+        id: "mad-project.reflash-twin",
+        covers: Some("SIL/mad-reflash-cosim.toml"),
+        given: "the machine's project file whose host is the host's Chrome, beside its twin for \
+                the app's firmware flasher",
+    });
+    expect!(
+        "text-but-reset",
+        "the two files are word for word the same outside the host's section, the host's \
+         wires and the scenario"
+    );
+    expect!(
+        "dtr-inverted",
+        "the twin's adapter inverts DTR, and the base's keeps the line as the host drives it",
+        "the machine's Prop Plug is taken to reset the chip when the host asserts DTR, which \
+         the plug's reset stage does on a rising edge of an inverted DTR"
+    );
+    expect!(
+        "prop-plug-ids",
+        "the twin's serial port reports USB ids 0403:6015, the Prop Plug's FTDI FT231X, and \
+         every other option of its host is the base's",
+        "the app's flasher writes the firmware through the Prop Plug on the debug header"
+    );
+    expect!(
+        "host-on-debug-header",
+        "the twin's host sends to the chip's receive pin P63, reads its transmit pin P62 and \
+         shares the carrier's ground on the debug header, from a 3.3 volt rail of its own, and \
+         leaves the control port J4 empty",
+        "the ROM's serial loader and the firmware's log are on the debug header; the \
+         firmware's protocol on the control port is out of this host's reach, so the flash is \
+         judged by the new firmware's boot line in its log"
+    );
+    expect!(
+        "reset-stage-on-j1",
+        "the twin adds a Prop Plug reset stage between the host's DTR and the debug header's \
+         reset pin, grounded on the header",
+        "the debug header's third pin is the chip's reset, where the Prop Plug's reset line \
+         lands"
+    );
+    expect!(
+        "serial-window-open",
+        "the twin leaves the boot switch's P59 pull-down open, closing only the flash's chip \
+         select, where the base closes both",
+        "with nothing on P59 the ROM listens on its serial loader for 100 ms after a reset \
+         before it boots the flash, and the app's flasher probes in that window"
+    );
+    expect!(
+        "entries-identical",
+        "every other board, model, component, wire, mate, switch and jumper is the same in both"
+    );
+    let (base_name, twin_name) = REFLASH;
+    let (base_text, twin_text) = (read(base_name), read(twin_name));
+    same_but(
+        (base_name, &base_text),
+        (twin_name, &twin_text),
+        &["The host", "The host's wires", "Scenario"],
+    );
+    let (mut base, mut twin) = (parse(base_name, &base_text), parse(twin_name, &twin_text));
+
+    let (mut base_host, mut twin_host) = (
+        take_component(&mut base, "HOST"),
+        take_component(&mut twin, "HOST"),
+    );
+    let host_option = |host: &mut Value, key: &str| -> Option<Value> {
+        host.get_mut("options")
+            .and_then(Value::as_table_mut)
+            .and_then(|options| options.remove(key))
+    };
+    assert_eq!(
+        host_option(&mut twin_host, "invert_dtr").and_then(|v| v.as_bool()),
+        Some(true),
+        "{twin_name}'s adapter inverts DTR"
+    );
+    assert_eq!(option(&base_host, "invert_dtr"), None, "{base_name}'s host");
+    assert_eq!(
+        host_option(&mut twin_host, "usb_product_id").and_then(|v| v.as_integer()),
+        Some(0x6015),
+        "{twin_name}'s adapter is the Prop Plug's FT231X"
+    );
+    assert_eq!(
+        host_option(&mut base_host, "usb_product_id").and_then(|v| v.as_integer()),
+        Some(0x6001),
+        "{base_name}'s adapter is the control port's FT232R"
+    );
+    assert_eq!(base_host, twin_host, "{twin_name}'s host is {base_name}'s");
+
+    let plug = take_component(&mut twin, "PLUG");
+    assert_eq!(field(&plug, "kind"), Some("prop-plug-reset"), "{twin_name}");
+    assert!(
+        entries(&base, "component")
+            .iter()
+            .all(|entry| field(entry, "kind") != Some("prop-plug-reset")),
+        "{base_name} has no reset stage"
+    );
+    let wires = entries_mut(&mut twin, "wire");
+    let on_plug = |wire: &Value| {
+        ["from", "to"]
+            .iter()
+            .any(|end| field(wire, end).is_some_and(|end| end.starts_with("PLUG.")))
+    };
+    let plug_wires: Vec<Value> = wires.iter().filter(|wire| on_plug(wire)).cloned().collect();
+    wires.retain(|wire| !on_plug(wire));
+    assert_eq!(
+        wire_from(&plug_wires, "HOST.DTR"),
+        Some(("PLUG.DTR", None)),
+        "{twin_name}"
+    );
+    assert_eq!(
+        wire_from(&plug_wires, "PLUG.VSS"),
+        Some(("EDGE.J1.4", None)),
+        "{twin_name}"
+    );
+    assert_eq!(
+        wire_from(&plug_wires, "PLUG.RES"),
+        Some(("EDGE.J1.3", None)),
+        "{twin_name}"
+    );
+    assert_eq!(plug_wires.len(), 3, "{twin_name}: {plug_wires:?}");
+
+    let on_j4 = on_connector(&twin, "J4");
+    assert!(on_j4.is_empty(), "{twin_name} wires J4: {on_j4:?}");
+    let debug = ends(&host_wires(&mut twin));
+    let mut expected = vec![
+        wire("ADAPTER.3V3", "HOST.VIO", Some(3.3)),
+        // P63, the chip's receive pin, and P62, its transmit pin.
+        wire("HOST.TX", "EDGE.J1.2", None),
+        wire("EDGE.J1.1", "HOST.RX", None),
+        wire("HOST.GND", "EDGE.J1.4", None),
+    ];
+    expected.sort_by(|a, b| (&a.0, &a.1).cmp(&(&b.0, &b.1)));
+    assert_eq!(debug, expected, "{twin_name}'s host on J1");
+    // The base's host wires, on J4, are the serial-boot twin test's.
+    host_wires(&mut base);
+
+    assert_eq!(s301_closed(&mut base), [1, 3], "{base_name}'s S301");
+    assert_eq!(s301_closed(&mut twin), [1], "{twin_name}'s S301");
+
+    assert_eq!(base, twin, "{twin_name} is {base_name} but its port and reset");
 }

@@ -5,8 +5,9 @@
 # on the carrier's connectors, and a host on a serial line (embsim
 # MIGRATING-MAD.md sections 1 and 4).
 #
-# Seven files share every line but how the module boots, which host sits
-# where, and one stop; mad-catalog/tests/projects.rs holds them to it:
+# Eight files share every line but how the module boots, which host sits
+# where, one stop and the reset; mad-catalog/tests/projects.rs holds them
+# to it:
 #
 #   file                             the module boots        the host
 #   mad.toml                         the firmware off flash  host-serial on J4
@@ -18,12 +19,18 @@
 #                                    its flash erased
 #   mad-serial-boot-cosim.toml       the ROM's serial boot   chrome-cdp on J1
 #   mad-serial-boot-playground.toml  that file, its Chrome headed on the app
+#   mad-reflash-cosim.toml           the firmware off flash  chrome-cdp on J1,
+#                                    with the Prop Plug's reset on J1.3 and
+#                                    the ROM's serial window open after a
+#                                    reset
 #
 # Every file takes the carrier as drawn: the Edge carrier v0.3 schematic
 # (mad-catalog/netlists/mad_edge.net, its header says what it holds). The
 # e2e runs mad-cosim.toml, the scenarios that move the carriage with the
-# rest, and mad-hard-stop-cosim.toml for SERVO-stall, which drives the
-# carriage into its stop; the playgrounds are for a person (SIL/makefile).
+# rest, mad-hard-stop-cosim.toml for SERVO-stall, which drives the
+# carriage into its stop, and mad-reflash-cosim.toml for FW1 and
+# COMPAT-reflash, the app flashing the firmware over J1; the playgrounds are
+# for a person (SIL/makefile).
 #
 # The machine has two serial ports, and each file puts its host on the one
 # its boot talks on. The firmware, one image (pio env MaD), has its
@@ -33,10 +40,13 @@
 # carrier's debug header, is the programming port, where the Prop Plug
 # sits: the chip's P62/P63, where the ROM's serial loader listens and the
 # firmware writes its log. The serial-boot files' host is there, as the
-# app's flasher is. The protocol stays off J1 because the Prop Plug's DTR
-# resets the chip whenever a port is opened on it (read: Firmware/MaDCore/
-# platformio.ini, env MaD; src/HAL/Include/HW_pins.h, HW_PIN_MAIN_RX/TX and
-# HW_PIN_DEBUG_RX/TX; mad_edge.net, IC2 on P29-P32 and J4).
+# app's flasher is, and so is mad-reflash-cosim.toml's: it boots the
+# firmware off flash, and its host flashes a new one and reads the log, the
+# firmware's protocol out of its reach on J4. The protocol stays off J1
+# because the Prop Plug's DTR resets the chip whenever a port is opened on
+# it (read: Firmware/MaDCore/platformio.ini, env MaD; src/HAL/Include/
+# HW_pins.h, HW_PIN_MAIN_RX/TX and HW_PIN_DEBUG_RX/TX; mad_edge.net, IC2 on
+# P29-P32 and J4).
 #
 #   cd SIL && make flash-image sd-image check
 #
@@ -254,7 +264,9 @@ volts = 0.0
 # The debug header J1 stays unwired: it is the programming port, P62/P63,
 # where the firmware writes its log and the ROM's serial loader listens.
 # Nothing here flashes the firmware or reads its log, and nothing pulses
-# J1.3, RESn: the flash boot runs from power-up.
+# J1.3, RESn: the flash boot runs from power-up. The board whose J1.3 the
+# app's flasher's DTR reaches, through the Prop Plug's reset stage, is
+# mad-reflash-cosim.toml (FW1, make e2e-reflash).
 
 # The adapter's I/O rail, 3.3 V: the host's pins, and IC2's side on J4.
 [[wire]]

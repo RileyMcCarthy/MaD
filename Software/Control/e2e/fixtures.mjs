@@ -789,11 +789,13 @@ export const BOARD_ROUTE = process.env.E2E_BOARD_ROUTE || 'project';
  * The USB ids of the board's port, `VVVV:PPPP` in hex. The project's
  * `chrome-cdp` names them: the control port's adapter on J4 is an FTDI
  * FT232R, 0403:6001 (SIL/mad-cosim.toml), as `mad-emulator --chrome`
- * reports; the ROM board's (E2E_BOARD=rom) is the Prop Plug's FT231X on J1,
- * 0403:6015 (SIL/mad-serial-boot-cosim.toml).
+ * reports; the ROM board's (E2E_BOARD=rom) and the reflash board's
+ * (E2E_BOARD=reflash) is the Prop Plug's FT231X on J1, 0403:6015
+ * (SIL/mad-serial-boot-cosim.toml, SIL/mad-reflash-cosim.toml).
  */
 export const PORT_USB =
-  process.env.E2E_PORT_USB || (process.env.E2E_BOARD === 'rom' ? '0403:6015' : '0403:6001');
+  process.env.E2E_PORT_USB
+  || (['rom', 'reflash'].includes(process.env.E2E_BOARD ?? '') ? '0403:6015' : '0403:6001');
 
 /**
  * `PORT_USB` as the Connect screen labels the port: "USB 403:6015", the ids

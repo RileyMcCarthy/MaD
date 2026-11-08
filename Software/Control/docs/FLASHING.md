@@ -131,17 +131,51 @@ renames it to `MaD-Firmware-<version>.bin` for release assets. Releases up to
 0.13). The file picker in the UI accepts any of them as a local file; flashing
 an old one puts the protocol back on J1 (or on pins the app can't reach).
 
+## In SIL
+
+The update runs in SIL, on the ISS, with nothing faked: e2e scenarios FW1 and
+COMPAT-reflash on `SIL/mad-reflash-cosim.toml` (`cd SIL && make e2e-reflash`,
+MaD #134). That board's host is on the programming port J1, the Prop Plug's
+(USB 0403:6015), and the module boots the firmware off its flash. With no
+session held, the Firmware page resets the chip with its DTR pulse, which
+crosses embsim's `chrome-cdp` DTR pin and a Prop Plug reset stage onto J1.3 and
+the chip's `RESN`; the ROM, back in its serial window, takes the stub and the
+image; the stub writes the module's simulated flash; and the new firmware's
+boot line on J1 (P62), `Starting MaD Board <version>`, names the image's own
+stamp in the board's log. The app opens nothing afterwards, having held no
+control port. Scenario COMPAT-reflash runs the same chain from the other end:
+the board boots the release from before the protocol handshake, which answers
+on J1, the too-old banner offers the recommended firmware, the operator
+disconnects (the app never flashes the port its session holds), and Install
+recommended firmware writes it.
+
+What SIL does not run yet is the reconnect to the new firmware: it answers on
+the control port J4, and embsim's `chrome-cdp` gives a board one port. A board
+with the host on both J1 and J4 is the follow-up; until then the reconnect, the
+`ok` verdict and motion on the new firmware are held by COMPAT-update-loop on
+the in-page fake board.
+
+The board differs from the machine's default project, beyond where its host
+sits, in two places, both open questions for the real machine: the Prop Plug
+is taken to reset on DTR assert (`invert_dtr`), and S301's P59 pull-down is
+open, without which the ROM boots the flash at once after a reset and no
+flasher finds it (`SIL/mad-reflash-cosim.toml` says why for each).
+
 ## Open validation
 
 Unit tests cover the framing, the checksum arithmetic and the image assembly
-against an independent re-implementation of the ROM side, but the following can
-only be confirmed on a board:
+against an independent re-implementation of the ROM side, and FW1 runs the
+chain in SIL (above), but the following can only be confirmed on a board:
 
 - **DTR→RESn actually resets.** The schematic shows the net; the pulse shape a
-  given adapter produces is not verified.
+  given adapter produces is not verified, nor which DTR edge the machine's
+  Prop Plug resets on (SIL takes the assert).
 - **The reset→autobaud window is reachable from JavaScript.** The ROM listens
   for `> ` only briefly before falling through to flash boot, and Web Serial
   write latency is less predictable than a native `write()`. `detectP2` retries
-  five times, which may need tuning.
+  five times, which may need tuning. In SIL the window is 100 ms (S301 positions
+  3 and 4 open) and the probe lands inside it; with P59 pulled down there is no
+  window at all.
 - **The flash stub programs this board's SPI part.** The stub is loadp2's, so
-  it is the same code the desktop path used, but it has not been run here.
+  it is the same code the desktop path used; SIL runs it against embsim's
+  W25Q128JV model, not the module's real part.

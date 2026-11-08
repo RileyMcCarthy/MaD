@@ -404,8 +404,8 @@ fn the_firmware_boots_off_the_modules_flash_and_its_core_reports_the_console() {
     });
     expect!(
         "console-reported",
-        "the core's report gives the firmware's first console line, \"Starting MaD Board\", \
-         at the look that finds it, after the core started"
+        "the core's report gives the firmware's first console line, \"Starting MaD Board\" \
+         and the firmware's version, at the look that finds it, after the core started"
     );
     expect!(
         "rate-reported",
@@ -460,7 +460,13 @@ fn the_firmware_boots_off_the_modules_flash_and_its_core_reports_the_console() {
     assert_eq!(code, ExitCode::SUCCESS, "the run ends cleanly: {err}");
 
     let core = lines_of(&out, "EC32.U100");
-    let first = "P62 \"Starting MaD Board\"";
+    // The boot line names the image's version after the words (src/Main/
+    // main.c): "0.0.0" unstamped.
+    let first = core
+        .iter()
+        .find(|line| line.starts_with("P62 \"Starting MaD Board "))
+        .copied()
+        .unwrap_or_else(|| panic!("the core's report has the boot line: {core:#?}"));
     let said = said_at_ns(&out, "EC32.U100", first).unwrap_or_else(|| {
         panic!(
             "the core's report gives the firmware's first line within {run_ns} ns: if the \

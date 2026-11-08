@@ -71,6 +71,17 @@ the single-port production build (`P2Eval`) in the flash, and nothing on `J4`
 | `mad-playground.toml` | `mad-cosim.toml` | its Chrome headed, a window on the app |
 | `mad-hard-stop-cosim.toml` | `mad-cosim.toml` with a hard stop on the carriage, 3 mm above its start (the machine's `hard_stop_mm`) | `chrome-cdp` on `J4` |
 | `mad-serial-boot-playground.toml` | `mad-serial-boot-cosim.toml` | its Chrome headed, a window on the app's Firmware page |
+| `mad-reflash-cosim.toml` | `mad-cosim.toml`'s flash boot, `S301`'s `P59` pulls open so the ROM listens 100 ms after a reset | `chrome-cdp` on `J1`, USB `0403:6015`, DTR inverted into a Prop Plug reset stage on `J1.3` (`make e2e-reflash`: FW1, COMPAT-reflash) |
+
+The reflash board's host is on `J1`, the programming port, because that is
+where the app flashes; the firmware it writes answers on `J4`, which that
+board's one Chrome port does not reach. FW1 and COMPAT-reflash therefore
+end with the flash written and the new firmware's boot line,
+`Starting MaD Board <version>`, in the board's log on `P62`
+(`E2E_BOARD_LOG`, exported by `SIL/scripts/board-route.sh`); the app opens
+nothing after the flash, having held no control port. Reconnecting to the
+new firmware on that board waits on embsim's `chrome-cdp` carrying two
+ports, so a board can have the host on `J1` and `J4`.
 
 Every file takes the carrier as the current drawing has it, not the
 boards as built (the user's decision, 2026-11-01): `mad_edge.net` was

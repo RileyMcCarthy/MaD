@@ -1,30 +1,47 @@
 #!/usr/bin/env bash
-# The firmware the firmware-compatibility scenario COMPAT-app-too-old needs
-# on the board (Software/Control/e2e/run-all.mjs), laid out for the module's
-# flash as `make flash-image` lays out this tree's (`embsim flash-image`):
+# The firmware the firmware-compatibility scenarios need on the board
+# (Software/Control/e2e/run-all.mjs: COMPAT-app-too-old, COMPAT-reflash),
+# each laid out for the module's flash as `make flash-image` lays out this
+# tree's (`embsim flash-image`):
 #
+#   build/flash-compat-old.bin     a released image from before the app could
+#                                  ask the firmware which protocol it speaks:
+#                                  COMPAT_OLD_TAG (firmware-v0.14), as
+#                                  published. Its protocol is on P62/P63, the
+#                                  debug header J1, so only the reflash board,
+#                                  whose host is on J1, runs it (SIL/makefile,
+#                                  e2e-reflash).
 #   build/flash-compat-future.bin  this tree's image (pio env MaD), generated
 #                                  from the schema with protocol_version one
 #                                  higher: firmware from after the app's
 #                                  protocol, and otherwise this tree's.
 #
-# No firmware source changes for it: it is this tree built from a scratch
-# copy whose schema says the next version (target/compat/future).
+# No firmware source changes for either: the old one is a release, and the
+# new one is this tree built from a scratch copy whose schema says the next
+# version (target/compat/future).
 #
-# COMPAT-too-old's firmware, a release from before the device-info
-# handshake, is not built here: every such release has its protocol on the
-# debug header J1 (P62/P63), and the e2e's board has its host on the control
-# port J4 (P30/P32), where that firmware never listens (SIL/makefile,
-# e2e-compat).
-#
-# Environment: EMBSIM (the embsim command).
+# Environment: EMBSIM (the embsim command), COMPAT_OLD_TAG, MAD_REPO
+# (owner/name the release comes from; RileyMcCarthy/MaD).
 set -euo pipefail
 
 sil=$(cd "$(dirname "$0")/.." && pwd)
 root=$(cd "$sil/.." && pwd)
 embsim=${EMBSIM:-cargo run --release --quiet --manifest-path $sil/embsim/Cargo.toml -p embsim-cli --}
+tag=${COMPAT_OLD_TAG:-firmware-v0.14}
+repo=${MAD_REPO:-RileyMcCarthy/MaD}
 work="$sil/target/compat"
 mkdir -p "$work" "$sil/build"
+
+# The released image, as the Firmware screen would have downloaded it: the
+# releases before the one-image firmware name it -release.bin.
+version=${tag#firmware-v}
+old="$work/$tag-release.bin"
+if [ ! -s "$old" ]; then
+  echo "compat-images: downloading $tag's image from $repo"
+  curl -fsSL --retry 3 -o "$old.part" \
+    "https://github.com/$repo/releases/download/$tag/MaD-Firmware-$version-release.bin"
+  mv "$old.part" "$old"
+fi
 
 # This tree's firmware with the next protocol_version: a copy of the firmware
 # project beside a copy of the schema, the generator linked in, as the
@@ -51,5 +68,6 @@ grep -q "^#define PROTOEMB_PROTOCOL_VERSION $next\$" "$future/Firmware/MaDCore/s
   exit 1
 }
 
+$embsim flash-image "$old" -o "$sil/build/flash-compat-old.bin"
 $embsim flash-image "$future/Firmware/MaDCore/.pio/build/MaD/program" -o "$sil/build/flash-compat-future.bin"
-echo "compat-images: build/flash-compat-future.bin (protocol_version $next)"
+echo "compat-images: build/flash-compat-old.bin ($tag), build/flash-compat-future.bin (protocol_version $next)"

@@ -21,9 +21,11 @@
 #             off the module's flash, headless, make
 #             e2e-motion's file as well; make e2e-stall names
 #             mad-hard-stop-cosim.toml, that file with a hard stop on its
-#             carriage (MaD #298), and make e2e-rom
+#             carriage (MaD #298), make e2e-rom
 #             mad-serial-boot-cosim.toml, the ROM's serial boot with the
-#             flash erased). The playground runs
+#             flash erased, and make e2e-reflash mad-reflash-cosim.toml, the
+#             Prop Plug's reset on J1.3 for FW1's real flash, MaD #134). The
+#             playground runs
 #             PLAYGROUND_PROJECT (mad-playground.toml, a headed copy of
 #             mad-cosim.toml; make playground-rom names
 #             mad-serial-boot-playground.toml), its Chrome a window opened on
@@ -50,7 +52,10 @@
 # default $BOARD_LOGS/jam; no scenario creates it), and
 # BOARD_PER_SCENARIO=1: a fresh board for each
 # scenario, so a board that stops (the node's worker-boot stall) costs that
-# scenario alone.
+# scenario alone. The suite is told where the running board's log is
+# (E2E_BOARD_LOG): the reflash board's scenarios read the firmware's boot
+# line on P62 there, the only word the new firmware sends that board's
+# host (make e2e-reflash).
 #
 # APP_DIST=DIR serves a built bundle (`vite build --base=APP_BASE --outDir
 # DIR`) with `vite preview` in place of the dev server: the code the app ships
@@ -236,6 +241,7 @@ fi
 cdp_url=''
 start_board() {
   local log=$1
+  export E2E_BOARD_LOG=$log
   if [ "$route" = project ]; then
     # The file fixes the DevTools port. A Chrome already answering there
     # would be some other run's, and the suite would attach to it.
