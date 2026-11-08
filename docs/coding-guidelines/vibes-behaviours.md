@@ -334,7 +334,22 @@ keeps its committed rows when you collect, instead of losing them.
 CI (`Behaviour ledger` job) reports the
 diff on every PR — as a single comment on the PR, edited in place on each run
 so it always shows the latest verdict, and in the job summary — and warns when
-the committed ledger is stale. A behaviour that stopped holding or was removed
-leads the comment but does not fail the job: the failing test already fails its
-own suite's job, and a removal is reviewed in the comment. The job fails only
-when a suite declared nothing, so its behaviours have no verdict.
+the committed ledger is stale.
+
+It runs no suite. `firmware-unit-tests`, `wasm-control-ci` and `sil-rust` set
+`$VIBES_BEHAVIOURS` while their tests run and keep the runner's output, and the
+report is built from what they upload (`vibes report --from`). So:
+
+- A suite whose job the path filter **skipped** keeps its rows from the base,
+  and the report names it in one line under the headline.
+- A suite whose job **failed or was cancelled** has no verdict, however much of
+  it ran: none of its behaviours read as removed or as holding.
+- A suite's `cmd` must run the same tests as its CI job, or `collect --write`
+  and the report see different declarations and every PR shows the difference.
+  `sil-rust` runs the whole SIL workspace while `SIL/vibes.suite.json` lists
+  test targets, so a new Rust test target that declares behaviours goes in that
+  list too.
+
+A behaviour that stopped holding or was removed leads the comment but does not
+fail the job: the failing test already fails its own suite's job, and a removal
+is reviewed in the comment. The job fails only when a suite has no verdict.
