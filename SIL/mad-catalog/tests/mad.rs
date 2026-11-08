@@ -702,7 +702,7 @@ impl HostPort {
     fn acknowledged(&self, command: u8, since: usize) -> Option<bool> {
         self.first(since, |frame| match frame {
             ParsedFrame::Ack(answered) if answered == command => Some(true),
-            ParsedFrame::Nack(answered) if answered == command => Some(false),
+            ParsedFrame::Nack { command: answered, .. } if answered == command => Some(false),
             _ => None,
         })
     }

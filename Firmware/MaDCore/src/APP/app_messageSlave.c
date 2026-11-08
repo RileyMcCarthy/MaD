@@ -196,9 +196,23 @@ ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWrite_motion_enable(bool in)
 {
     if (in)
     {
-        return app_control_triggerMotionEnabled() ? PROTOEMB_RUNTIME_WRITE_DISPOSITION_ACK : PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK;
+        /* Enabling is refused only while a fault is latched. */
+        return app_control_triggerMotionEnabled() ? PROTOEMB_RUNTIME_WRITE_DISPOSITION_ACK : PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK_FAULTED;
     }
     return app_control_triggerMotionDisabled() ? PROTOEMB_RUNTIME_WRITE_DISPOSITION_ACK : PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK;
+}
+
+/* Test start and manual moves refuse for one of two reasons, which the module
+ * reports as one bool: motion is off, or the test machinery is busy. Motion is
+ * read after the refusal, so the reason names the state that refused it. */
+static ProtoEmb_RuntimeWriteDisposition_E app_message_slave_motionDisposition(bool accepted)
+{
+    if (accepted)
+    {
+        return PROTOEMB_RUNTIME_WRITE_DISPOSITION_ACK;
+    }
+    return app_control_motionEnabled() ? PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK_BUSY
+                                       : PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK_MOTION_DISABLED;
 }
 
 ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWrite_test_run(const ProtoEmb_TestRun_t *in)
@@ -221,21 +235,21 @@ ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWrite_test_run(const ProtoEmb_Test
     }
 
     app_monitor_setTestName(testDataId);
-    return app_testManagement_triggerTestStart(gcodeId) ? PROTOEMB_RUNTIME_WRITE_DISPOSITION_ACK : PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK;
+    return app_message_slave_motionDisposition(app_testManagement_triggerTestStart(gcodeId));
 }
 
 ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWrite_manual_move(const ProtoEmb_Move_t *in)
 {
     app_motion_move_t move;
     app_message_slave_fillMove(&move, in);
-    return app_testManagement_addManualMove(&move) ? PROTOEMB_RUNTIME_WRITE_DISPOSITION_ACK : PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK;
+    return app_message_slave_motionDisposition(app_testManagement_addManualMove(&move));
 }
 
 ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWrite_test_move(const ProtoEmb_Move_t *in)
 {
     app_motion_move_t move;
     app_message_slave_fillMove(&move, in);
-    return IO_SDCard_push(IO_SDCARD_CHANNEL_GCODE, &move, sizeof(app_motion_move_t)) ? PROTOEMB_RUNTIME_WRITE_DISPOSITION_ACK : PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK;
+    return IO_SDCard_push(IO_SDCARD_CHANNEL_GCODE, &move, sizeof(app_motion_move_t)) ? PROTOEMB_RUNTIME_WRITE_DISPOSITION_ACK : PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK_SD_QUEUE_FULL;
 }
 
 ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWrite_test_waveform(const ProtoEmb_WaveformMove_t *in)
@@ -254,7 +268,7 @@ ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWrite_test_waveform(const ProtoEmb
     move.wave.dwellLowMs = in->dwellLow;
     move.wave.skewPerMille = (uint16_t)in->skewPerMille;
     move.wave.shape = in->shape;
-    return IO_SDCard_push(IO_SDCARD_CHANNEL_GCODE, &move, sizeof(app_motion_move_t)) ? PROTOEMB_RUNTIME_WRITE_DISPOSITION_ACK : PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK;
+    return IO_SDCard_push(IO_SDCARD_CHANNEL_GCODE, &move, sizeof(app_motion_move_t)) ? PROTOEMB_RUNTIME_WRITE_DISPOSITION_ACK : PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK_SD_QUEUE_FULL;
 }
 
 ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWriteRaw_test_move(const uint8_t *payload,
@@ -279,13 +293,13 @@ ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWriteRaw_test_move(const uint8_t *
             app_message_slave_fillMove(&move, &protoMove);
             if (!IO_SDCard_push(IO_SDCARD_CHANNEL_GCODE, &move, sizeof(app_motion_move_t)))
             {
-                return PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK;
+                return PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK_SD_QUEUE_FULL;
             }
         }
         return PROTOEMB_RUNTIME_WRITE_DISPOSITION_ACK;
     }
 
-    return PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK;
+    return PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK_BAD_SIZE;
 }
 
 ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWrite_sample_profile_write(const ProtoEmb_SampleProfile_t *in)
@@ -321,7 +335,7 @@ ProtoEmb_RuntimeQueryDisposition_E ProtoEmb_onQuery_file_download(const uint8_t 
 
     if (payloadSize < headerSize)
     {
-        return PROTOEMB_RUNTIME_QUERY_DISPOSITION_NACK;
+        return PROTOEMB_RUNTIME_QUERY_DISPOSITION_NACK_BAD_SIZE;
     }
 
     char testName[17];
@@ -357,7 +371,7 @@ ProtoEmb_RuntimeQueryDisposition_E ProtoEmb_onQuery_file_download(const uint8_t 
 
     if (readStatus != IO_SDCARD_READDIRECT_STATUS_OK)
     {
-        return PROTOEMB_RUNTIME_QUERY_DISPOSITION_NACK;
+        return PROTOEMB_RUNTIME_QUERY_DISPOSITION_NACK_SD_READ_FAILED;
     }
 
     for (uint32_t i = 0U; i < itemsRead; i++)
@@ -378,7 +392,7 @@ ProtoEmb_RuntimeQueryDisposition_E ProtoEmb_onQuery_file_download(const uint8_t 
 /* Raw write fallbacks. The runtime dispatch only invokes onWriteRaw_* when an
  * incoming payload is NOT the message's fixed wire size. test_move uses this for
  * filename-open and batched moves (above); the commands below have no raw/batch
- * form, so a wrong-size payload is malformed → NACK. These were previously the
+ * form, so a wrong-size payload is malformed → NACK BAD_SIZE. These were previously the
  * generated weak defaults; the runtime no longer emits defaults, so the app must
  * define every declared handler (a missing one is now a link error, not a silent
  * NACK). */
@@ -387,7 +401,7 @@ ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWriteRaw_machine_configuration_wri
 {
     (void)payload;
     (void)payloadSize;
-    return PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK;
+    return PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK_BAD_SIZE;
 }
 
 ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWriteRaw_manual_move(const uint8_t *payload,
@@ -395,7 +409,7 @@ ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWriteRaw_manual_move(const uint8_t
 {
     (void)payload;
     (void)payloadSize;
-    return PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK;
+    return PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK_BAD_SIZE;
 }
 
 ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWriteRaw_sample_profile_write(const uint8_t *payload,
@@ -403,7 +417,7 @@ ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWriteRaw_sample_profile_write(cons
 {
     (void)payload;
     (void)payloadSize;
-    return PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK;
+    return PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK_BAD_SIZE;
 }
 
 ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWriteRaw_test_run(const uint8_t *payload,
@@ -411,7 +425,7 @@ ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWriteRaw_test_run(const uint8_t *p
 {
     (void)payload;
     (void)payloadSize;
-    return PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK;
+    return PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK_BAD_SIZE;
 }
 
 ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWriteRaw_test_waveform(const uint8_t *payload,
@@ -419,7 +433,7 @@ ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWriteRaw_test_waveform(const uint8
 {
     (void)payload;
     (void)payloadSize;
-    return PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK;
+    return PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK_BAD_SIZE;
 }
 
 /* Pull-style notification fill is unused: the firmware pushes notifications

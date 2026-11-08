@@ -6,7 +6,8 @@
 # Protocol/scripts/check_protocol_compat.py fails CI on such a change without a
 # bump. After a bump, release firmware before MaD Control: the app's release
 # check refuses to publish until a firmware release speaks its protocol.
-protocol_version: 2
+# 3: a NACK carries a reason byte ([0x55][0x00][CMD][REASON]).
+protocol_version: 3
 
 nodes:
   - ui
@@ -468,6 +469,25 @@ structs:
       - name: message
         type: string
         max_length: 100
+
+# ============================================================
+# NACK reasons
+# ============================================================
+# Why the firmware refused a request: the fourth byte of a NACK. ProtoEmb
+# owns 0x00-0x1F (REFUSED, UNKNOWN_COMMAND, BAD_CRC, BAD_SIZE, UNAVAILABLE);
+# these are numbered from 0x20 in order. Append only: a code a released app
+# knows must keep its meaning.
+nack_reasons:
+  - name: MOTION_DISABLED
+    description: "Motion is off. Turn motion on first."
+  - name: FAULTED
+    description: "The machine has a fault. Clear it before turning motion on."
+  - name: BUSY
+    description: "A test is running, or earlier moves have not been taken up yet."
+  - name: SD_QUEUE_FULL
+    description: "The SD card has not caught up with the upload; its write queue is full."
+  - name: SD_READ_FAILED
+    description: "The test's data file could not be opened or read on the SD card."
 
 # ============================================================
 # Messages — routing table with timing

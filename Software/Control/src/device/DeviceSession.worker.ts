@@ -19,6 +19,7 @@ import wasmUrl from '@/wasm/protoemb_runtime_bg.wasm?url';
 import { logger, setLogSink, flushLog, nowMs, type LogBatchSink } from '@/diagnostics/log';
 import { byteRing } from '@/diagnostics/byteRing';
 import { commandName, isPeriodicCommand, requestOf, summariseGcode, type CommandDir } from './commandNames';
+import { nackReasonName, nackReasonText } from './nackReason';
 import {
   decodeSample,
   decodeMachineState,
@@ -133,6 +134,8 @@ interface Waiter {
 interface RawEvent {
   event: 'ack' | 'nack' | 'data' | 'notification' | 'timeout' | 'error';
   command?: number;
+  /** Present on `nack`: the device's reason code (see nackReason.ts). */
+  reason?: number;
   payload?: number[] | Uint8Array;
   message?: string;
   /** Present on `timeout`: the framed request that timed out
@@ -1190,7 +1193,11 @@ export class DeviceSession {
         logProto.info('ack', commandName(command, 'write'), this.opTag(command));
         break;
       case 'nack':
-        logProto.warn('nack', commandName(command, 'write'), { command, ...this.opTag(command) });
+        logProto.warn('nack', commandName(command, 'write'), {
+          command,
+          reason: nackReasonName(ev.reason),
+          ...this.opTag(command),
+        });
         break;
       case 'timeout': {
         // The frame says which request was lost; the in-flight op does not
@@ -1247,7 +1254,7 @@ export class DeviceSession {
       case 'ack':
         return [{ kind: 'ack', command: ev.command ?? -1, success: true }];
       case 'nack':
-        return [{ kind: 'ack', command: ev.command ?? -1, success: false }];
+        return [{ kind: 'ack', command: ev.command ?? -1, success: false, reason: ev.reason }];
       case 'notification':
         return [{ kind: 'notification', data: notificationToShared(decodeNotification(u8(ev.payload))) }];
       case 'timeout':
@@ -1508,7 +1515,7 @@ export class DeviceSession {
       durMs: Math.round(nowMs() - started),
       success: e.success,
     });
-    if (!e.success) throw new Error(`device NACKed command ${command}`);
+    if (!e.success) throw new Error(`device NACKed command ${command}: ${nackReasonText(e.reason)}`);
   }
 
   private async uploadWithRetry(command: number, data: Uint8Array, maxRetries: number): Promise<void> {

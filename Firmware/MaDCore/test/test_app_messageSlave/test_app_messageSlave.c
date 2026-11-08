@@ -196,15 +196,15 @@ void test_onWrite_motion_enable_true_acks_on_trigger(void)
 {
     VIBES_TEST("bridge.enable-motion-ack-follows-machine",
                "src/APP/app_messageSlave.c#ProtoEmb_onWrite_motion_enable",
-               "a request to enable motion, first when the machine accepts it, then when the machine refuses");
+               "a request to enable motion, first on a healthy machine, then on a machine holding a fault");
     VIBES_EXPECT("ack-when-taken", "the request is acknowledged when the machine takes it");
     VIBES_EXPECT_WHY("refused-when-declined",
-                     "the request is refused when the machine does not take it",
+                     "the request is refused, and the refusal names the fault as the reason",
                      "the control app must not show motion as enabled until the machine has taken the request");
     d_trigEnRet = true;
     TEST_ASSERT_EQUAL_INT(PROTOEMB_RUNTIME_WRITE_DISPOSITION_ACK, ProtoEmb_onWrite_motion_enable(true));
     d_trigEnRet = false;
-    TEST_ASSERT_EQUAL_INT(PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK, ProtoEmb_onWrite_motion_enable(true));
+    TEST_ASSERT_EQUAL_INT(PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK_FAULTED, ProtoEmb_onWrite_motion_enable(true));
 }
 
 void test_onWrite_motion_enable_false_uses_disable_trigger(void)
@@ -236,10 +236,11 @@ void test_onWrite_manual_move_fills_and_forwards(void)
 {
     VIBES_TEST("bridge.jog-carries-target-speed-pause",
                "src/APP/app_messageSlave.c#ProtoEmb_onWrite_manual_move",
-               "a jog with a target, a speed and a pause, first accepted, then turned down");
+               "a jog with a target, a speed and a pause, first accepted, then turned down with motion on and again with motion off");
     VIBES_EXPECT("values-carried", "the target, speed and pause reach the machine unchanged");
     VIBES_EXPECT("accepted-acknowledged", "the jog is acknowledged when the machine accepts it");
-    VIBES_EXPECT("turned-down-refused", "the jog is refused when the machine turns it down");
+    VIBES_EXPECT("turned-down-refused", "a jog turned down with motion on is refused, naming the machine as busy");
+    VIBES_EXPECT("motion-off-refused", "a jog turned down with motion off is refused, naming motion being off as the reason");
     ProtoEmb_Move_t in;
     memset(&in, 0, sizeof(in));
     in.g = (ProtoEmb_GCode_E)1; in.x = 1234; in.f = 56; in.p = 78;
@@ -251,7 +252,10 @@ void test_onWrite_manual_move_fills_and_forwards(void)
     TEST_ASSERT_EQUAL_UINT32(78, d_lastManualMove.p);
 
     d_addMoveRet = false;
-    TEST_ASSERT_EQUAL_INT(PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK, ProtoEmb_onWrite_manual_move(&in));
+    d_motionEnabled = true;
+    TEST_ASSERT_EQUAL_INT(PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK_BUSY, ProtoEmb_onWrite_manual_move(&in));
+    d_motionEnabled = false;
+    TEST_ASSERT_EQUAL_INT(PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK_MOTION_DISABLED, ProtoEmb_onWrite_manual_move(&in));
 }
 
 void test_onWrite_test_move_pushes_to_sd(void)
@@ -261,7 +265,7 @@ void test_onWrite_test_move_pushes_to_sd(void)
                "a motion-program move offered twice, first with room on the card, then with the card full");
     VIBES_EXPECT("move-stored", "the first move reaches the card with its target unchanged");
     VIBES_EXPECT("stored-acknowledged", "the stored move is acknowledged");
-    VIBES_EXPECT("full-card-refused", "the move offered to the full card is refused");
+    VIBES_EXPECT("full-card-refused", "the move offered to the full card is refused, naming the card's full write queue as the reason");
     ProtoEmb_Move_t in;
     memset(&in, 0, sizeof(in));
     in.g = (ProtoEmb_GCode_E)1; in.x = 99;
@@ -269,7 +273,7 @@ void test_onWrite_test_move_pushes_to_sd(void)
     TEST_ASSERT_EQUAL_INT(PROTOEMB_RUNTIME_WRITE_DISPOSITION_ACK, ProtoEmb_onWrite_test_move(&in));
     TEST_ASSERT_EQUAL_INT32(99, d_lastSdPush.x);
     d_sdPushRet = false;
-    TEST_ASSERT_EQUAL_INT(PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK, ProtoEmb_onWrite_test_move(&in));
+    TEST_ASSERT_EQUAL_INT(PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK_SD_QUEUE_FULL, ProtoEmb_onWrite_test_move(&in));
 }
 
 void test_onWrite_sample_profile_maps_and_forwards(void)
@@ -344,34 +348,72 @@ void test_m5_onWrite_test_run_start_nack_when_rejected(void)
 {
     VIBES_TEST("bridge.start-test-refused-when-machine-rejects",
                "src/APP/app_messageSlave.c#ProtoEmb_onWrite_test_run",
-               "a request to start a test while idle, with the machine turning the start down");
+               "a request to start a test while idle with motion on, with the machine turning the start down");
     VIBES_EXPECT_WHY("request-refused",
-                     "the request is refused",
+                     "the request is refused, naming the machine as busy",
                      "the control app has to see the refusal so a test is not shown as running");
     VIBES_EXPECT("no-stop", "no stop is issued");
     VIBES_EXPECT("start-offered-once", "the start is put to the machine once");
     d_isBusy = false;
     d_busyUntilEnd = false;
     d_startRet = false; /* firmware rejects the start (e.g. still busy race) */
+    d_motionEnabled = true;
     ProtoEmb_TestRun_t in;
     memset(&in, 0, sizeof(in));
     memcpy(in.gcodeId, "gc0003", 6);
     memcpy(in.testDataId, "td0003", 6);
-    TEST_ASSERT_EQUAL_INT(PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK, ProtoEmb_onWrite_test_run(&in));
+    TEST_ASSERT_EQUAL_INT(PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK_BUSY, ProtoEmb_onWrite_test_run(&in));
     TEST_ASSERT_EQUAL_INT(0, d_endCount);
     TEST_ASSERT_EQUAL_INT(1, d_startCount);
+}
+
+void test_onWrite_test_run_refused_with_motion_off(void)
+{
+    VIBES_TEST("bridge.start-test-refused-with-motion-off",
+               "src/APP/app_messageSlave.c#ProtoEmb_onWrite_test_run",
+               "a request to start a test while motion is off");
+    VIBES_EXPECT_WHY("motion-off-named",
+                     "the request is refused, naming motion being off as the reason",
+                     "the operator can act on that reason: turn motion on and start again");
+    d_isBusy = false;
+    d_busyUntilEnd = false;
+    d_startRet = false;
+    d_motionEnabled = false;
+    ProtoEmb_TestRun_t in;
+    memset(&in, 0, sizeof(in));
+    memcpy(in.gcodeId, "gc0004", 6);
+    memcpy(in.testDataId, "td0004", 6);
+    TEST_ASSERT_EQUAL_INT(PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK_MOTION_DISABLED, ProtoEmb_onWrite_test_run(&in));
+}
+
+void test_onWriteRaw_wrong_size_payloads_name_the_size(void)
+{
+    VIBES_TEST("bridge.wrong-size-payload-refused-as-bad-size",
+               "src/APP/app_messageSlave.c#ProtoEmb_onWriteRaw_test_waveform",
+               "a waveform, a configuration, a jog, a sample profile and a test start, each sent with the wrong number of bytes, and a program upload with none");
+    VIBES_EXPECT_WHY("each-named-bad-size",
+                     "each is refused, naming the payload size as the reason",
+                     "a control app built from a different protocol layout sends payloads of the wrong size, and the reason says so");
+    const uint8_t bytes[3] = { 1U, 2U, 3U };
+    TEST_ASSERT_EQUAL_INT(PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK_BAD_SIZE, ProtoEmb_onWriteRaw_test_waveform(bytes, sizeof(bytes)));
+    TEST_ASSERT_EQUAL_INT(PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK_BAD_SIZE, ProtoEmb_onWriteRaw_machine_configuration_write(bytes, sizeof(bytes)));
+    TEST_ASSERT_EQUAL_INT(PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK_BAD_SIZE, ProtoEmb_onWriteRaw_manual_move(bytes, sizeof(bytes)));
+    TEST_ASSERT_EQUAL_INT(PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK_BAD_SIZE, ProtoEmb_onWriteRaw_sample_profile_write(bytes, sizeof(bytes)));
+    TEST_ASSERT_EQUAL_INT(PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK_BAD_SIZE, ProtoEmb_onWriteRaw_test_run(bytes, sizeof(bytes)));
+    TEST_ASSERT_EQUAL_INT(PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK_BAD_SIZE, ProtoEmb_onWriteRaw_test_move(bytes, 0U));
 }
 
 void test_m5_onWrite_manual_move_nacks_when_busy(void)
 {
     /* same as bridge.jog-carries-target-speed-pause: a jog the machine turns down is refused */
     d_addMoveRet = false; /* addManualMove rejects while busy */
+    d_motionEnabled = true;
     ProtoEmb_Move_t in;
     memset(&in, 0, sizeof(in));
     in.g = (ProtoEmb_GCode_E)1;
     in.x = 10;
     in.f = 5;
-    TEST_ASSERT_EQUAL_INT(PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK, ProtoEmb_onWrite_manual_move(&in));
+    TEST_ASSERT_EQUAL_INT(PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK_BUSY, ProtoEmb_onWrite_manual_move(&in));
 }
 
 void test_servo_gains_round_trip_through_bridge(void)
@@ -456,6 +498,8 @@ int main(void)
     RUN_TEST(test_onWrite_test_run_idle_does_not_end);
     RUN_TEST(test_onWrite_test_run_busy_ends_then_starts);
     RUN_TEST(test_m5_onWrite_test_run_start_nack_when_rejected);
+    RUN_TEST(test_onWrite_test_run_refused_with_motion_off);
+    RUN_TEST(test_onWriteRaw_wrong_size_payloads_name_the_size);
     RUN_TEST(test_m5_onWrite_manual_move_nacks_when_busy);
     RUN_TEST(test_machine_configuration_round_trips_through_bridge);
     RUN_TEST(test_servo_gains_round_trip_through_bridge);
