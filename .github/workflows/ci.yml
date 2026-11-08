@@ -606,7 +606,7 @@ jobs:
       # opens nothing afterwards: the new firmware answers on the control
       # port J4, which this board's one Chrome port does not reach. FW1 from
       # this tree's firmware with a local file; COMPAT-reflash from
-      # firmware-v0.14 (which answers on J1) with the too-old banner's
+      # firmware-v0.14 (which answers on J1) with the no-answer banner's
       # Install recommended firmware. Each writes this tree's image in ~10 s
       # of board time, ~4-8 min of host time; `make e2e-reflash` builds the
       # stamped image and fetches the release first, then puts this tree's

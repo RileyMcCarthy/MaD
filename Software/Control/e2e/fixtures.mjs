@@ -1034,10 +1034,13 @@ export function installFakeBootRom(options = 1) {
       case 4: return reply(4, zeros(sizes.profile));
       case 5:
         if (fw.protocol === 'silent') return undefined;
+        // Firmware from before the handshake (protocol 1-2) refuses with the
+        // 3-byte NACK it really sends, which predates protocol 3's reason byte.
         if (fw.protocol === null) return emitBytes([0x55, 0x00, 5]);
         return reply(5, [fw.protocol & 0xff, (fw.protocol >> 8) & 0xff, (fw.protocol >> 16) & 0xff, fw.protocol >>> 24]);
       default:
-        return emitBytes([0x55, 0x00, cmd]);
+        // This tree's firmware: [0x55][0x00][CMD][REASON], 0x01 = UNKNOWN_COMMAND.
+        return emitBytes([0x55, 0x00, cmd, 0x01]);
     }
   };
   const onWrite = (cmd, data) => {

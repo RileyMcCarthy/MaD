@@ -37,6 +37,30 @@ For the wire framing and encoding rules, see
 `file_download` sends a binary request (`testName(16) + sampleIndex(u32) +
 sampleCount(u32)`) and the device streams `StoredSample` records.
 
+## NACK reasons
+
+A NACK is `[0x55][0x00][CMD][REASON]` (protocol 3 on). The runtime sends
+`UNKNOWN_COMMAND` (`0x01`) for a command with no handler, `BAD_CRC` (`0x02`)
+for a write whose payload fails its CRC, `BAD_SIZE` (`0x03`) when a `bool` or
+empty-payload write has the wrong size, and `UNAVAILABLE` (`0x04`) when a read
+provider declines. The handlers (`APP/app_messageSlave.c`) add these:
+
+| Message | Reason | When |
+|---|---|---|
+| `motion_enable` (on) | `FAULTED` (`0x21`) | a fault is latched |
+| `test_run` | `MOTION_DISABLED` (`0x20`) | motion is off |
+| `test_run` | `BUSY` (`0x22`) | a test is already running or starting |
+| `manual_move` | `MOTION_DISABLED` / `BUSY` | motion is off / a test is running or the move slots are full |
+| `test_move` (6-byte id) | `SD_OPEN_FAILED` (`0x26`) | the program file could not be opened for writing |
+| `test_move` (moves), `test_waveform` | `SD_QUEUE_FULL` (`0x23`) | the SD write queue is full |
+| `file_download` | `BAD_SIZE` (`0x03`) | the request is shorter than its 24-byte header |
+| `file_download` | `SD_BUSY` (`0x25`) | the test's data file is still being written (the app retries) |
+| `file_download` | `SD_READ_FAILED` (`0x24`) | the data file could not be opened, or not read at the asked sample |
+| every struct write | `BAD_SIZE` (`0x03`) | the payload is not the struct's wire size |
+
+Any other refusal is `REFUSED` (`0x00`). The codes and descriptions are
+`nack_reasons` in `Protocol/MaDProtocol.yaml`; append new ones, never renumber.
+
 ## Async (device transmits unsolicited)
 
 | Message | Priority | Payload |

@@ -8,7 +8,8 @@
  */
 import { afterEach, beforeEach, expect, vi } from 'vitest';
 import { behaviour } from '@vibes/behaviour';
-import { MSG_READ_DEVICE_INFO } from '@/protocol/generated/protoemb';
+import { MSG_READ_DEVICE_INFO, NACK_REASON } from '@/protocol/generated/protoemb';
+import { clearLog, logSnapshot } from '@/diagnostics/log';
 import { DeviceSession } from './DeviceSession.worker';
 
 const core = vi.hoisted(() => ({
@@ -133,5 +134,30 @@ behaviour(
     expect(
       await askDeviceInfo({ event: 'data', command: MSG_READ_DEVICE_INFO, payload: [3, 0, 0, 0, 9, 9, 9, 9] }, session),
     ).toEqual({ protocolVersion: 3 });
+  },
+);
+
+behaviour(
+  {
+    id: 'session.refusal-reason-logged',
+    covers: 'src/device/DeviceSession.worker.ts#DeviceSession.logRawEvent',
+    given: 'the board refuses a request, giving the reason that the request named a command it does not have',
+    expect: {
+      'reason-logged': 'the refusal in the session log names that reason',
+    },
+    why: {
+      'reason-logged': 'a bug report is built from the session log, and the reason is what tells a developer where to look',
+    },
+  },
+  async () => {
+    clearLog();
+    const info = await askDeviceInfo({
+      event: 'nack',
+      command: MSG_READ_DEVICE_INFO,
+      reason: NACK_REASON.UNKNOWN_COMMAND,
+    });
+    expect(info).toBeNull();
+    const nack = logSnapshot().entries.find((e) => e.cat === 'proto' && e.tag === 'nack');
+    expect(nack?.data?.reason).toBe('UNKNOWN_COMMAND');
   },
 );

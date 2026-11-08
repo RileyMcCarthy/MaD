@@ -332,7 +332,7 @@ reflash-image:
 #                   "Starting MaD Board sil-reflash" after the flash
 #   COMPAT-reflash  on the release from before the protocol handshake
 #                   (COMPAT_OLD_TAG, scripts/compat-images.sh), whose
-#                   protocol is on J1; the too-old banner's Install
+#                   protocol is on J1; the no-answer banner's Install
 #                   recommended firmware, then the same boot line
 # This tree's image goes back in the flash afterwards, however the runs end,
 # and E2E_TIMINGS, when set, gets both runs' timings.
