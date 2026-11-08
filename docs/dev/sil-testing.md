@@ -11,7 +11,7 @@ you can test the whole stack — firmware, protocol, app — without hardware. A
 cd SIL
 git submodule update --init --recursive   # first time: embsim + ProtoEmb submodules
 make emulator     # Rust protocol types, then cargo build
-make p2image      # the MaDEdge image the emulator executes
+make p2image      # the debug image (MaDEdge) the p2core/p2iss suites execute
 ```
 
 `make emulator` generates the Rust codec into `Protocol/rust/src/generated`
@@ -24,7 +24,7 @@ flash and card (`make flash-image sd-image`), and the embsim tool builds
 
 | Target | What it does |
 |---|---|
-| `make p2image` | Build the debug P2 image the ISS executes on the board route (`pio run -e MaDEdge`) |
+| `make p2image` | Build the debug P2 image the `p2core`/`p2iss` suites and `mad-catalog/tests/boot.rs` execute (`pio run -e MaDEdge`) |
 | `make p2image-production` | Build the production image (`pio run -e P2Eval`), the one the project files' flash holds |
 | `make protocol` | Regenerate the Rust protocol types for SIL |
 | `make emulator` | Protocol + the Rust workspace |
@@ -40,7 +40,7 @@ flash and card (`make flash-image sd-image`), and the embsim tool builds
 | `make e2e-stall` | SERVO-stall on `mad-hard-stop-cosim.toml`, `mad-cosim.toml` with a hard stop 3 mm above the carriage's start (MaD #298): a jog into the stop latches the stall, Live clears it and re-enables motion, and a jog takes the carriage off the stop |
 | `make flash-image` | `build/flash.bin`: stage-1 and the production image, the module's boot flash |
 | `make sd-image` | `build/sd.img`: a 32 MiB FAT16 card mirroring `./sd` |
-| `make check` | `embsim check` on the seven project files (`mad*.toml`), after `flash-image` and `sd-image` |
+| `make check` | `embsim check` on the eight project files (`mad*.toml`), after `flash-image` and `sd-image` |
 | `make test` | Build both images + protocol, then `cargo test` (includes `mad-catalog`'s PTY round trip on `mad.toml` — no Chrome) |
 | `make clean` | Remove build artifacts and `cargo clean` |
 
@@ -96,7 +96,7 @@ confirmed.
 
 ```bash
 cd SIL
-make flash-image sd-image check    # the production image, both images laid out, all seven files checked
+make flash-image sd-image check    # the production image, both images laid out, all eight files checked
 MAD_REQUIRE_P2_IMAGE=1 cargo test -p mad-catalog --test mad --test projects
 ```
 
@@ -112,7 +112,7 @@ deadband, the drive enabled and `P5` reading the drive's ready line.
 `tests/pty_protocol.rs` runs `mad.toml` live, the command `embsim run
 mad.toml --pty PATH` hands `mad-runner` run in its own process, and reads the
 firmware's version on the PTY before the run's 2 s of board time end.
-`tests/projects.rs` holds the seven files to one another. The debug image
+`tests/projects.rs` holds the eight files to one another. The debug image
 (`make p2image`) stays where a run needs its log on `P62` or its MAIN channel
 on the bare chip's `P30`/`P32`: the `p2core` and `p2iss` suites, and
 `mad-catalog/tests/boot.rs`.

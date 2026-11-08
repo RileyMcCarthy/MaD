@@ -91,7 +91,7 @@ npm run app               # opens your browser; connect via Web Serial
 cd Firmware/MaDCore
 pio run -e P2Eval              # build for hardware
 pio run -e P2Eval -t upload   # flash a connected board
-pio run -e MaDEdge      # image the SIL emulator executes
+pio run -e MaDEdge      # debug image: the one the p2core/p2iss suites execute
 pio test -e native_test           # unit tests
 pio check -e P2Eval --fail-on-defect=medium --fail-on-defect=high  # MISRA (medium+high)
 ```

@@ -359,9 +359,9 @@ a tick of the 20 MHz RC clock from START, 100 ns apart at the closest; a step
 train's pin released by `_pinclear` and then driven as a plain pin; and the
 sync-serial clock's transitions half its period apart from the `WYPIN`, the
 pad released once the pin is cleared. `P2Iss` keeps its `Component` impl and
-pin lists for the `p2iss` tests that still use them; `mad-emulator`, their
-last consumer outside those tests, retired with MaD #298, and they go in its
-follow-up (step 11).
+pin lists for the `p2iss` tests that still use them. `mad-emulator`, their
+last consumer outside those tests, has retired (MaD #362); they go in step
+11's follow-up, which MaD #298 tracks until it lands.
 
 `p2iss/tests/ec32mb_sd_mount.rs`, stepped, is the same module with the card
 `make sd-image` writes in `J301`: the firmware's boot-time mount and its

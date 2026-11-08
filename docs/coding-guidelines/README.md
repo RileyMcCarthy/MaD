@@ -46,7 +46,7 @@ The firmware, the control app, and the SIL emulator all speak the same wire form
 Each area has its own gate (see the checklist below). Run the relevant one locally before pushing. Firmware `pio check` enforces **medium + high** only (low severity is disabled project-wide); fix medium/high rather than suppressing.
 
 ### Native vs P2 testing
-Pointer sizes and timing differ between the Propeller 2 and the host. Run `pio test -e native_test` and a `P2Eval` build for firmware changes — passing on one target does not guarantee the other. The SIL emulator executes the `MaDEdge` image.
+Pointer sizes and timing differ between the Propeller 2 and the host. Run `pio test -e native_test` and a `P2Eval` build for firmware changes — passing on one target does not guarantee the other. On the SIL, the project files boot the `P2Eval` image off the module's flash, and the `p2core`/`p2iss` suites execute `MaDEdge`.
 
 ### SIL is single-instance
 Treat the emulator as single-instance. Don't write tests that assume parallel emulator instances.

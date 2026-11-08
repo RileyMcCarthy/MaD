@@ -11,7 +11,8 @@ Run the gate(s) for the area you touched (see
 
 - **App:** `npm run verify` in `Software/Control`.
 - **Firmware:** `pio check` + `pio test -e native_test`, and build `P2Eval`.
-  The SIL emulator runs the `MaDEdge` image (`make p2image`).
+  The SIL's project files boot the `P2Eval` image (`make flash-image`), and
+  the `p2core`/`p2iss` suites run `MaDEdge` (`make p2image`).
 - **Protocol:** regenerate all consumers and run `./examples/verify.sh`.
 - **Anything user-facing:** `mkdocs build --strict` if you changed docs.
 

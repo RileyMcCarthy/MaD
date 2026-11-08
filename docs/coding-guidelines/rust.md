@@ -58,8 +58,8 @@ The project files' runs execute the firmware's P2 image on the ISS. It does not 
 ## 2. Cargo.toml conventions
 
 - **Inherit shared metadata** from the workspace. Reusable crates use `version.workspace = true`, `edition.workspace = true`, `license.workspace = true`, `repository.workspace = true` (e.g. `embsim/core/Cargo.toml:3-6`).
-- **MaD-specific / non-publishable crates set `publish = false`** and omit `license`/`repository` (see `mad-catalog/Cargo.toml:11`, `Protocol/rust/Cargo.toml:6`, `models/Cargo.toml:8`).
-- **All external dep versions live in `[workspace.dependencies]`** (`Cargo.toml:30-42`) and are referenced as `tracing.workspace = true` / `rstest.workspace = true`. **Do not** pin a third-party version inline in a member crate — add it to the workspace table to prevent drift.
+- **MaD-specific / non-publishable crates set `publish = false`** and omit `license`/`repository` (see `mad-runner/Cargo.toml:9`, `Protocol/rust/Cargo.toml:6`, `models/Cargo.toml:8`).
+- **All external dep versions live in `[workspace.dependencies]`** (`Cargo.toml:33-38`) and are referenced as `tracing.workspace = true` / `rstest.workspace = true`. **Do not** pin a third-party version inline in a member crate — add it to the workspace table to prevent drift.
 - **Intra-workspace deps use `path = "..."`** (e.g. `embsim-core = { path = "../core" }`).
 - Reusable crates fill in `description`, `keywords`, and `categories` (they are packaged as if they could be published — `embsim/core/Cargo.toml:7-9`).
 - **Optional/web features are gated.** The `web` feature pulls in axum/tokio/UI; the headless build drops them. The pattern, verbatim from `embsim/tools/trace/Cargo.toml:11-16`:

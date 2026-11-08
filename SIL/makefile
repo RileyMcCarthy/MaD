@@ -1,7 +1,7 @@
 # MaD SIL Testing - Makefile
 #
 # Commands:
-#   make p2image        - Build the P2 image the ISS executes (MaDEdge)
+#   make p2image        - Build the debug P2 image (MaDEdge), the one the p2core/p2iss suites execute
 #   make p2image-production - Build the production P2 image (P2Eval), the one flash-image lays out
 #   make emulator       - Build the SIL workspace
 #   make test           - Build the image, run the Rust test suite
