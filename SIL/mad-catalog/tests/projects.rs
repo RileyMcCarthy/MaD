@@ -794,5 +794,8 @@ fn the_reflash_file_is_the_cosim_file_with_the_prop_plugs_reset() {
     assert_eq!(s301_closed(&mut base), [1, 3], "{base_name}'s S301");
     assert_eq!(s301_closed(&mut twin), [1], "{twin_name}'s S301");
 
-    assert_eq!(base, twin, "{twin_name} is {base_name} but its port and reset");
+    assert_eq!(
+        base, twin,
+        "{twin_name} is {base_name} but its port and reset"
+    );
 }
