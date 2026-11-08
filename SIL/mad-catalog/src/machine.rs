@@ -3,11 +3,12 @@
 //! §10, "A plant: an `Assembly`" and "MaD's plant"; `MIGRATING-MAD.md` §3).
 //!
 //! The component is an [`Assembly`] of embsim's machine models and MaD's
-//! own, the parts `mad-emulator` couples by callbacks today
+//! own, the parts the retired `mad-emulator` coupled by callbacks
 //! (`BenchMachine::build` in `SIL/MaDSim/src/iss_description.rs`, the
 //! gantry, sample and strain-gauge chain in `run_iss` in
 //! `SIL/MaDSim/src/main.rs`, and the load cell in
-//! `SIL/MaDSim/src/system_description.rs`):
+//! `SIL/MaDSim/src/system_description.rs`). Every citation of those files
+//! here is to them at 4bf392614, on main before MaD #298 retired them:
 //!
 //! | Member | What it is | Its pins, as the machine's |
 //! |---|---|---|
@@ -53,7 +54,7 @@
 //! free shaft reversing does, where a blocked rotor would turn back at once
 //! (inferred); SERVO-stall disables the drive before it reverses, so it
 //! never meets this. A stepper driven against a stop loses the steps it
-//! cannot take, which is this; it is also what `mad-emulator`'s jam does
+//! cannot take, which is this; it is also what `mad-emulator`'s jam did
 //! with the travel lost while jammed (its `Coupling`). The real
 //! machine's drive is a servo drive, whose behaviour against a stop is not
 //! known here (inferred: it may hold its count, or fault). The stop has no
@@ -75,8 +76,8 @@
 //! `GND_IO` (`J5.3`–`J8.3`) on the carrier. Current in the loop lights the
 //! opto and pulls its processor pin low (the 1 kΩ pull-ups `R2`, `R5`, …
 //! to the module's bank supply; read: `netlists/mad_edge.net`). So each
-//! contact rests in the state the firmware reads as inactive
-//! (`IDLE_PULLS` in `iss_description.rs`, the `activeLow` flags in
+//! contact rests in the state the firmware reads as inactive (`IDLE_PULLS`
+//! in mad-emulator's `iss_description.rs`, the `activeLow` flags in
 //! `HAL_GPIO_config.c`): the end switches and the door, whose inactive
 //! level is low, rest closed; the three emergency stops, whose inactive
 //! level is high, rest open.
@@ -84,7 +85,7 @@
 //! # The drive's ready output
 //!
 //! `SRDY` is held at the firmware's inactive level for `SERVO_RDY` (`P5`,
-//! low), as `mad-emulator` holds it (`IDLE_PULLS`). On the carrier `SC_SRDY`
+//! low), as `mad-emulator` held it (`IDLE_PULLS`). On the carrier `SC_SRDY`
 //! (`J21.6`) has a 1 kΩ pull-up to `SC_5V` (`R25`) and reaches `P5` through
 //! the non-inverting isolator `IC14`'s channel D, so an open output reads as
 //! ready, and the inactive level is a sink (inferred from the netlist). The
@@ -113,9 +114,10 @@
 //! - **Pressing an emergency stop, opening the door**: each holds its rest
 //!   state.
 //! - **A jam that comes and goes** (`mad-emulator`'s `Coupling`, jammed
-//!   while its `--jam-file` exists): a lever a stepped kind cannot take from
-//!   a file the wall clock polls. A carriage that cannot go on is the hard
-//!   stop's (above), fixed where the project puts it for the whole run.
+//!   while its `--jam-file` existed; retired with it, MaD #298): a lever a
+//!   stepped kind cannot take from a file the wall clock polls. A carriage
+//!   that cannot go on is the hard stop's (above), fixed where the project
+//!   puts it for the whole run.
 
 use std::fmt;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
@@ -218,7 +220,8 @@ pub const LOWER_MM: f64 = 0.0;
 pub const START_MM: f64 = 0.0;
 
 /// Grip slack before the sample takes load, in millimetres: `run_iss`'s
-/// gantry (`engagement_slack_mm: 15.0`, `SIL/MaDSim/src/main.rs`).
+/// gantry (`engagement_slack_mm: 15.0`, `SIL/MaDSim/src/main.rs` at
+/// 4bf392614).
 pub const GANTRY_SLACK_MM: f64 = 15.0;
 
 /// The gantry's own limit comparators, parked outside the working range as
@@ -245,7 +248,7 @@ pub const GAUGE_EXCITATION_V: f64 = 3.3;
 
 /// Each bridge output's source impedance: the Wishiot 10 kg cell's 350 Ω
 /// full bridge, `BRIDGE_SOURCE_OHMS` in
-/// `SIL/MaDSim/src/system_description.rs`.
+/// `SIL/MaDSim/src/system_description.rs` at 4bf392614.
 pub const BRIDGE_SOURCE_OHMS: f64 = 350.0;
 
 /// The ready output's sink: 0 V behind embsim's stated bench default
@@ -275,9 +278,9 @@ const HELD_AT_OPERATE_MM: f64 = 0.0;
 /// A sample this crate carries, named by the `sample` option.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SamplePreset {
-    /// `run_iss`'s `SIL-Linear-Reference` (`SIL/MaDSim/src/main.rs`): 5 N
-    /// over the 85 mm of travel past the grip slack, a linear bar of 20 mm²
-    /// on a 20 mm gauge length.
+    /// `run_iss`'s `SIL-Linear-Reference` (`SIL/MaDSim/src/main.rs` at
+    /// 4bf392614): 5 N over the 85 mm of travel past the grip slack, a
+    /// linear bar of 20 mm² on a 20 mm gauge length.
     #[default]
     SilLinearReference,
 }
@@ -665,8 +668,8 @@ impl LoadCellInput {
 }
 
 /// MaD's load cell (`LoadCellBridge` and `BridgeDrive` in
-/// `SIL/MaDSim/src/system_description.rs`): its excitation sensed on `E±`,
-/// its outputs `S±` driven.
+/// `SIL/MaDSim/src/system_description.rs` at 4bf392614): its excitation
+/// sensed on `E±`, its outputs `S±` driven.
 struct LoadCell {
     bridge: Arc<Mutex<Bridge>>,
 }

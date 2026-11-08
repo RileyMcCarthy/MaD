@@ -607,6 +607,17 @@ messages:
     note: "Binary request: testName(16) + sampleIndex(u32) + sampleCount(u32)"
     response: StoredSample
 
+  # The machine reboots: ACKed, then the firmware restarts once the ACK has
+  # left. NACKed while a test runs. The control port (the secondary serial)
+  # has no reset line, so this is how MaD Control applies a saved machine
+  # configuration. A new message, so no protocol_version bump: firmware
+  # from before it NACKs the request.
+  reboot:
+    tx_node: ui
+    command_id: 10
+    priority: high
+    request: none
+
   # ── Async (madcore transmits unsolicited) ──
   notification:
     tx_node: madcore

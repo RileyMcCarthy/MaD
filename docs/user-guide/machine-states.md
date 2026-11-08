@@ -34,6 +34,9 @@ when motion is disabled, with no reboot (see
 [Clear a servo stall](manual-control.md#clear-a-servo-stall)). The badge shows
 the code in the first column below.
 
+Reconnecting the app does not restart the machine: power-cycle it
+([Rebooting the machine](firmware-and-diagnostics.md#rebooting-the-machine)).
+
 | Badge | What it means | What to do |
 |---|---|---|
 | `NONE` | No fault — normal | — |

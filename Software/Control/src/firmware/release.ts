@@ -9,11 +9,10 @@
  * once for every hosted app version (`tools/assemble-pages-app.mts`). Under
  * `firmware/` they are:
  *  - `manifest.json` ({@link FirmwareManifest}): the newest release for each
- *    protocol version, with each board's image beside it under its own file
- *    name. An app offers the one that speaks its own protocol, for the board
- *    chosen: the recommended firmware.
- *  - `latest.json` + `latest.bin` (+ `latest-MaDEdge.bin`): the newest release
- *    of all, read by app versions from before the manifest.
+ *    protocol version, its image beside it under its own file name. An app
+ *    offers the one that speaks its own protocol: the recommended firmware.
+ *  - `latest.json` + `latest.bin`: the newest release of all, read by app
+ *    versions from before the manifest.
  *
  * The selection logic is shared with that plugin, so it stays free of DOM and
  * Node APIs alike.
@@ -38,40 +37,27 @@ export const FIRMWARE_MANIFEST_PATH = 'firmware/manifest.json';
 export const FIRMWARE_INFO_ASSET = 'firmware-info.json';
 
 /**
- * The boards a firmware build targets, named after its PlatformIO env.
- *  - P2Eval: the production build. The protocol runs on P62/P63 (the debug
- *    header J1) at 2,000,000 baud, the port the app also programs through.
- *  - MaDEdge: the debug build. The protocol moves to the Edge carrier's Pi
- *    link and J1 carries a debug log instead.
+ * There is one firmware build (PlatformIO env `MaD`), its release asset
+ * `MaD-Firmware-<version>.bin`. Its protocol runs on the secondary serial
+ * (P30/P32), the control port; J1 is for programming only.
+ *
+ * Releases up to 0.14 carried single-port builds instead, named by board: the
+ * production build (`-P2Eval.bin`, `-release.bin` before) answered on J1, the
+ * port the app programs through, and the debug build (`-MaDEdge.bin`,
+ * `-madEdge.bin`, `-debug.bin`) on pins this app cannot reach. Neither is ever
+ * recommended: no app on the control port could talk to them.
  */
-export const BOARDS = ['P2Eval', 'MaDEdge'] as const;
-export type Board = (typeof BOARDS)[number];
+const LEGACY_SUFFIXES = ['P2Eval', 'release', 'MaDEdge', 'madEdge', 'debug'] as const;
+/** The single-port production build of releases up to 0.14. */
+const LEGACY_PRODUCTION_SUFFIXES = ['P2Eval', 'release'] as const;
 
-/**
- * Release asset suffixes per board, newest first. Releases up to 0.14 predate
- * the board names: the P2Eval build was `-release.bin`, the MaDEdge build
- * `-madEdge.bin` (`-debug.bin` before 0.13).
- */
-const BOARD_ASSET_SUFFIXES: Record<Board, readonly string[]> = {
-  P2Eval: ['P2Eval', 'release'],
-  MaDEdge: ['MaDEdge', 'madEdge', 'debug'],
-};
-
-/** Where each board's image is served. P2Eval keeps the original path, which
- *  every deployed app version reads. */
-export const BOARD_IMAGE_PATHS: Record<Board, string> = {
-  P2Eval: RELEASE_IMAGE_PATH,
-  MaDEdge: 'firmware/latest-MaDEdge.bin',
-};
-
-/** The board a release image was built for, from its file name. */
-export function boardOfAsset(assetName: string): Board | null {
-  for (const board of BOARDS) {
-    for (const suffix of BOARD_ASSET_SUFFIXES[board]) {
-      if (assetName.endsWith(`-${suffix}.bin`)) return board;
-    }
-  }
-  return null;
+/** Whether a release asset is the firmware image (the two-port build). */
+export function isFirmwareImage(assetName: string): boolean {
+  return (
+    assetName.startsWith('MaD-Firmware-') &&
+    assetName.endsWith('.bin') &&
+    !LEGACY_SUFFIXES.some((suffix) => assetName.endsWith(`-${suffix}.bin`))
+  );
 }
 
 /** The fields of a GitHub release this module reads. */
@@ -91,23 +77,7 @@ export interface GithubAsset {
   size: number;
 }
 
-/** One served image: the release asset it came from, and how to check it. */
-export interface BoardImage {
-  assetName: string;
-  size: number;
-  /** Lowercase hex SHA-256 of the image, checked before anything is written. */
-  sha256: string;
-  /** Where the image is served, relative to the hosting root; the board's
-   *  `latest` path (BOARD_IMAGE_PATHS) when absent. */
-  path?: string;
-}
-
-/**
- * What `firmware/latest.json` says about the served images. The top-level
- * image fields describe `firmware/latest.bin`, the P2Eval build; `boards`
- * lists every board's image, and is absent from manifests written before
- * the board choice existed.
- */
+/** What `firmware/latest.json` says about the served image, `firmware/latest.bin`. */
 export interface FirmwareReleaseManifest {
   tag: string;
   /** The tag without its prefix, e.g. "0.12". */
@@ -118,8 +88,7 @@ export interface FirmwareReleaseManifest {
   sha256: string;
   publishedAt: string | null;
   htmlUrl: string;
-  boards?: Partial<Record<Board, BoardImage>>;
-  /** Where the P2Eval image is served, relative to the hosting root;
+  /** Where the image is served, relative to the hosting root;
    *  `firmware/latest.bin` when absent. */
   path?: string;
 }
@@ -130,8 +99,7 @@ export interface FirmwareInfo {
   protocolVersion: number;
 }
 
-/** One release in `firmware/manifest.json`: every board image it has, each
- *  served under its own file name. */
+/** One release in `firmware/manifest.json`: its image, served under its own file name. */
 export interface FirmwareManifestEntry extends FirmwareReleaseManifest {
   /** The protocol version the release's firmware speaks. */
   protocolVersion: number;
@@ -143,60 +111,45 @@ export interface FirmwareManifest {
   releases: FirmwareManifestEntry[];
 }
 
+/** A release's firmware image, or null when it carries none (every release up to 0.14). */
+export function pickFirmwareAsset(release: GithubRelease): GithubAsset | null {
+  return release.assets.find((a) => isFirmwareImage(a.name)) ?? null;
+}
+
 /**
- * A release's image for one board; the P2Eval build unless asked otherwise.
- * The app flashes P2Eval by default because it answers on the port the app
- * programs through; the MaDEdge build moves the protocol to the Edge
- * carrier's Pi link, so the app reaches it only over that link.
+ * What `latest.bin` serves from a release: its firmware image, else (a release
+ * up to 0.14) its single-port production build, which the app versions that
+ * read `latest.*` flash and reconnect to on the same port.
  */
-export function pickFirmwareAsset(release: GithubRelease, board: Board = 'P2Eval'): GithubAsset | null {
-  return release.assets.find((a) => boardOfAsset(a.name) === board) ?? null;
+function pickLatestAsset(release: GithubRelease): GithubAsset | null {
+  return (
+    pickFirmwareAsset(release) ??
+    release.assets.find((a) => LEGACY_PRODUCTION_SUFFIXES.some((suffix) => a.name.endsWith(`-${suffix}.bin`))) ??
+    null
+  );
 }
 
-/** How the Firmware screen names a release image. */
-export function releaseImageLabel(assetName: string): string {
-  const board = boardOfAsset(assetName);
-  if (board === 'P2Eval') return 'P2Eval production build';
-  if (board === 'MaDEdge') return 'MaDEdge debug build';
-  return assetName;
-}
-
-/** A served board image, with the path to fetch it from; null when the
- *  release has none for that board. */
-export function boardImage(
-  manifest: FirmwareReleaseManifest,
-  board: Board,
-): (BoardImage & { path: string }) | null {
-  const listed = manifest.boards?.[board];
-  if (listed) return { ...listed, path: listed.path ?? BOARD_IMAGE_PATHS[board] };
-  // A manifest from before the board choice describes only the P2Eval image.
-  if (board === 'P2Eval') {
-    return {
-      assetName: manifest.assetName,
-      size: manifest.size,
-      sha256: manifest.sha256,
-      path: manifest.path ?? RELEASE_IMAGE_PATH,
-    };
-  }
-  return null;
+/** Where a manifest's image is served, relative to the hosting root. */
+export function imagePath(manifest: FirmwareReleaseManifest): string {
+  return manifest.path ?? RELEASE_IMAGE_PATH;
 }
 
 /**
- * The newest published firmware release that has an image to flash. Drafts
- * and prereleases are never offered: this is the default a user flashes
- * without looking further. Every release from 0.11 on carries a production
- * build, and the release job cannot publish one without it. The ones passed
- * over are firmware-v0.1, whose only image is named `program`, and any
- * release made by hand without one. firmware-v0.11 is offered only if 0.12
- * and 0.13 are gone; its build runs at 230,400 baud, so the app would not
- * reach it at the 2,000,000 it reconnects at.
+ * The newest published firmware release to serve as `latest.*`: the newest
+ * with a firmware image, or, before any release has one, the newest with a
+ * single-port production build (`pickLatestAsset`). Drafts and prereleases
+ * are never served. Passed over: firmware-v0.1, whose only image is named
+ * `program`, and any release made by hand without an image.
  */
 export function pickFirmwareRelease(
   releases: readonly GithubRelease[],
 ): { release: GithubRelease; asset: GithubAsset } | null {
-  for (const release of publishedFirmware(releases)) {
-    const asset = pickFirmwareAsset(release);
-    if (asset) return { release, asset };
+  const published = publishedFirmware(releases);
+  for (const pick of [pickFirmwareAsset, pickLatestAsset]) {
+    for (const release of published) {
+      const asset = pick(release);
+      if (asset) return { release, asset };
+    }
   }
   return null;
 }
@@ -210,10 +163,11 @@ function publishedFirmware(releases: readonly GithubRelease[]): GithubRelease[] 
 
 /**
  * The published firmware releases that say which protocol they speak, each
- * with its P2Eval image (the one every release has) and its
- * `firmware-info.json`, newest first. A release without that file predates
- * the compatibility handshake: its firmware cannot tell an app which protocol
- * it speaks, so no app recommends it.
+ * with its firmware image and its `firmware-info.json`, newest first. A
+ * release without that file predates the compatibility handshake: its
+ * firmware cannot tell an app which protocol it speaks, so no app recommends
+ * it. A release without a firmware image (up to 0.14) has only single-port
+ * builds, which no app on the control port reaches.
  */
 export function describedReleases(
   releases: readonly GithubRelease[],
@@ -244,16 +198,9 @@ export function firmwareImagePath(assetName: string): string {
   return `firmware/${assetName}`;
 }
 
-/** The manifest for a picked release, once its images' digests are known.
- *  `boards` lists every served board image, the P2Eval one included. */
-export function toManifest(
-  release: GithubRelease,
-  asset: GithubAsset,
-  sha256: string,
-  boards?: Partial<Record<Board, BoardImage>>,
-): FirmwareReleaseManifest {
+/** The manifest for a picked release, once its image's digest is known. */
+export function toManifest(release: GithubRelease, asset: GithubAsset, sha256: string): FirmwareReleaseManifest {
   return {
-    ...(boards ? { boards } : {}),
     tag: release.tag_name,
     version: release.tag_name.slice(FIRMWARE_TAG_PREFIX.length),
     assetName: asset.name,
@@ -264,25 +211,20 @@ export function toManifest(
   };
 }
 
-/**
- * The manifest entry for a release whose firmware speaks `protocolVersion`.
- * `boards` lists each board image it has, each with the path it is served at
- * (`firmwareImagePath`); the top-level fields describe its P2Eval image.
- */
+/** The manifest entry for a release whose firmware speaks `protocolVersion`,
+ *  its image served at `firmwareImagePath`. */
 export function toManifestEntry(
   release: GithubRelease,
   asset: GithubAsset,
   sha256: string,
   protocolVersion: number,
-  boards?: Partial<Record<Board, BoardImage>>,
 ): FirmwareManifestEntry {
-  return { ...toManifest(release, asset, sha256, boards), protocolVersion, path: firmwareImagePath(asset.name) };
+  return { ...toManifest(release, asset, sha256), protocolVersion, path: firmwareImagePath(asset.name) };
 }
 
 /**
  * The firmware this app recommends: the newest listed release that speaks its
- * protocol, or null when no release does yet. Which board's image to flash is
- * the Firmware screen's Board choice (`boardImage`).
+ * protocol, or null when no release does yet.
  */
 export function recommendedRelease(
   manifest: FirmwareManifest,
@@ -294,25 +236,9 @@ export function recommendedRelease(
   return matching[0] ?? null;
 }
 
-function isBoardImage(value: unknown): value is BoardImage {
-  if (typeof value !== 'object' || value === null) return false;
-  const i = value as Record<string, unknown>;
-  return (
-    typeof i.assetName === 'string' &&
-    typeof i.size === 'number' &&
-    typeof i.sha256 === 'string' &&
-    (i.path === undefined || typeof i.path === 'string')
-  );
-}
-
 function isManifest(value: unknown): value is FirmwareReleaseManifest {
   if (typeof value !== 'object' || value === null) return false;
   const m = value as Record<string, unknown>;
-  if (m.boards !== undefined) {
-    if (typeof m.boards !== 'object' || m.boards === null) return false;
-    const boards = m.boards as Record<string, unknown>;
-    if (!BOARDS.every((b) => boards[b] === undefined || isBoardImage(boards[b]))) return false;
-  }
   return (
     typeof m.tag === 'string' &&
     typeof m.version === 'string' &&
@@ -371,46 +297,42 @@ function toHex(digest: ArrayBuffer): string {
 }
 
 /**
- * Download one board's served image and check it is the one the manifest
- * describes. A truncated or swapped file must never reach the flash.
+ * Download the served image and check it is the one the manifest describes.
+ * A truncated or swapped file must never reach the flash.
  */
 export async function fetchReleaseImage(
   baseUrl: string,
   manifest: FirmwareReleaseManifest,
   fetchFn: FetchFn = (input) => fetch(input),
-  board: Board = 'P2Eval',
 ): Promise<Uint8Array> {
-  const image = boardImage(manifest, board);
-  if (!image) throw new Error(`Firmware ${manifest.version} has no ${board} build.`);
-  const res = await fetchFn(`${baseUrl}${image.path}`);
-  if (!res.ok) throw new Error(`Downloading ${image.assetName} failed (HTTP ${res.status}).`);
+  const res = await fetchFn(`${baseUrl}${imagePath(manifest)}`);
+  if (!res.ok) throw new Error(`Downloading ${manifest.assetName} failed (HTTP ${res.status}).`);
   const bytes = new Uint8Array(await res.arrayBuffer());
-  if (bytes.byteLength !== image.size) {
+  if (bytes.byteLength !== manifest.size) {
     throw new Error(
-      `Downloaded ${image.assetName} is ${bytes.byteLength.toLocaleString()} bytes, expected ${image.size.toLocaleString()}.`,
+      `Downloaded ${manifest.assetName} is ${bytes.byteLength.toLocaleString()} bytes, expected ${manifest.size.toLocaleString()}.`,
     );
   }
   const digest = toHex(await crypto.subtle.digest('SHA-256', bytes));
-  if (digest !== image.sha256) {
-    throw new Error(`Downloaded ${image.assetName} does not match its release checksum.`);
+  if (digest !== manifest.sha256) {
+    throw new Error(`Downloaded ${manifest.assetName} does not match its release checksum.`);
   }
   return bytes;
 }
 
 /**
- * Fetch the recommended firmware for `board` once, so the service worker
- * keeps a copy (vite.config.ts) and an update still works offline. Never
- * throws: a failure only means nothing was cached this time.
+ * Fetch the recommended firmware once, so the service worker keeps a copy
+ * (vite.config.ts) and an update still works offline. Never throws: a failure
+ * only means nothing was cached this time.
  */
 export async function cacheRecommendedRelease(
   baseUrl: string,
   appProtocol: number,
   fetchFn: FetchFn = (input) => fetch(input),
-  board: Board = 'P2Eval',
 ): Promise<FirmwareManifestEntry | null> {
   try {
     const entry = recommendedRelease(await fetchFirmwareManifest(baseUrl, fetchFn), appProtocol);
-    if (entry && boardImage(entry, board)) await fetchReleaseImage(baseUrl, entry, fetchFn, board);
+    if (entry) await fetchReleaseImage(baseUrl, entry, fetchFn);
     return entry;
   } catch {
     return null;

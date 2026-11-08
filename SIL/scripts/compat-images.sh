@@ -1,19 +1,20 @@
 #!/usr/bin/env bash
 # The firmware the firmware-compatibility scenarios need on the board
-# (Software/Control/e2e/run-all.mjs: COMPAT-too-old, COMPAT-app-too-old),
+# (Software/Control/e2e/run-all.mjs: COMPAT-app-too-old, COMPAT-reflash),
 # each laid out for the module's flash as `make flash-image` lays out this
 # tree's (`embsim flash-image`):
 #
-#   build/flash-compat-old.bin     a released production image from before the
-#                                  app could ask the firmware which protocol it
-#                                  speaks: COMPAT_OLD_TAG (firmware-v0.14), as
-#                                  published. It refuses the question, and its
-#                                  samples and configuration have fewer fields
-#                                  than this app reads.
-#   build/flash-compat-future.bin  this tree's production image, generated from
-#                                  the schema with protocol_version one higher:
-#                                  firmware from after the app's protocol, and
-#                                  otherwise this tree's.
+#   build/flash-compat-old.bin     a released image from before the app could
+#                                  ask the firmware which protocol it speaks:
+#                                  COMPAT_OLD_TAG (firmware-v0.14), as
+#                                  published. Its protocol is on P62/P63, the
+#                                  debug header J1, so only the reflash board,
+#                                  whose host is on J1, runs it (SIL/makefile,
+#                                  e2e-reflash).
+#   build/flash-compat-future.bin  this tree's image (pio env MaD), generated
+#                                  from the schema with protocol_version one
+#                                  higher: firmware from after the app's
+#                                  protocol, and otherwise this tree's.
 #
 # No firmware source changes for either: the old one is a release, and the
 # new one is this tree built from a scratch copy whose schema says the next
@@ -31,11 +32,12 @@ repo=${MAD_REPO:-RileyMcCarthy/MaD}
 work="$sil/target/compat"
 mkdir -p "$work" "$sil/build"
 
-# The released image, as the Firmware screen would have downloaded it.
+# The released image, as the Firmware screen would have downloaded it: the
+# releases before the one-image firmware name it -release.bin.
 version=${tag#firmware-v}
 old="$work/$tag-release.bin"
 if [ ! -s "$old" ]; then
-  echo "compat-images: downloading $tag's production image from $repo"
+  echo "compat-images: downloading $tag's image from $repo"
   curl -fsSL --retry 3 -o "$old.part" \
     "https://github.com/$repo/releases/download/$tag/MaD-Firmware-$version-release.bin"
   mv "$old.part" "$old"
@@ -56,8 +58,8 @@ mkdir -p "$future/Firmware/MaDCore" "$future/Protocol"
 (cd "$root/Firmware/MaDCore" && tar cf - --exclude=.pio --exclude=src/Generated .) | (cd "$future/Firmware/MaDCore" && tar xf -)
 sed "s/^protocol_version:.*/protocol_version: $next/" "$root/Protocol/MaDProtocol.yaml" > "$future/Protocol/MaDProtocol.yaml"
 ln -s "$root/Protocol/ProtoEmb" "$future/Protocol/ProtoEmb"
-echo "compat-images: building this tree's production image at protocol_version $next"
-(cd "$future/Firmware/MaDCore" && PLATFORMIO_BUILD_FLAGS='-DFIRMWARE_VERSION=\"compat-next\"' pio run -e P2Eval >"$work/future-build.log" 2>&1) || {
+echo "compat-images: building this tree's image at protocol_version $next"
+(cd "$future/Firmware/MaDCore" && PLATFORMIO_BUILD_FLAGS='-DFIRMWARE_VERSION=\"compat-next\"' pio run -e MaD >"$work/future-build.log" 2>&1) || {
   tail -40 "$work/future-build.log" >&2
   exit 1
 }
@@ -67,5 +69,5 @@ grep -q "^#define PROTOEMB_PROTOCOL_VERSION $next\$" "$future/Firmware/MaDCore/s
 }
 
 $embsim flash-image "$old" -o "$sil/build/flash-compat-old.bin"
-$embsim flash-image "$future/Firmware/MaDCore/.pio/build/P2Eval/program" -o "$sil/build/flash-compat-future.bin"
+$embsim flash-image "$future/Firmware/MaDCore/.pio/build/MaD/program" -o "$sil/build/flash-compat-future.bin"
 echo "compat-images: build/flash-compat-old.bin ($tag), build/flash-compat-future.bin (protocol_version $next)"

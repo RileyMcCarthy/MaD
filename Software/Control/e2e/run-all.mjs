@@ -12,9 +12,9 @@
  * cannot outrun the board, because it lives only the time the board grants
  * it. The board is the machine's project, SIL/mad-cosim.toml, under `embsim
  * run` (embsim MIGRATING-MAD.md step 10): the Edge carrier and the P2-EC32MB
- * module as drawn, the production firmware booted off the module's flash,
- * and the node on the carrier's debug header J1, where the machine's Prop
- * Plug sits (USB 0403:6015). Locally:
+ * module as drawn, the firmware booted off the module's flash, and the node
+ * on the carrier's control port J4, where the machine's FTDI adapter sits
+ * (USB 0403:6001). Locally:
  *   cd SIL && make e2e-emulator          # prints "DevTools at http://127.0.0.1:9222"
  *   npm run dev                          # the app, on the host
  *   CDP_URL=http://127.0.0.1:9222 npm run e2e
@@ -30,7 +30,7 @@
  * M11-mid-test-drop) pull the node's cable (`__embsim.link`): the port's
  * streams error with NetworkError, `disconnect` fires, and on the plug the
  * port returns as a new SerialPort with `connect`, which the app answers by
- * reconnecting to the port whose USB ids (0403:6015) it remembers.
+ * reconnecting to the port whose USB ids (0403:6001) it remembers.
  *
  * What the project cannot do, the suite skips there, saying why
  * (`PROJECT_CANNOT`, below). The scenarios that move the carriage
@@ -53,29 +53,31 @@
  *   SCENARIOS=A1,FW1,FW2,FW3,FW5,FW6,FW7,FW8,FW9,FW10,FW11,COMPAT-reconnect,COMPAT-silent,COMPAT-update-loop npm run e2e
  * Naming a board scenario without CDP_URL is refused.
  *
- * COMPAT-too-old and COMPAT-app-too-old need firmware the app cannot drive
- * in the module's flash (E2E_FIRMWARE names it): `cd SIL && make
- * e2e-compat` puts a release from before the device-info handshake there,
- * then this tree's firmware built one protocol_version ahead, and runs each.
+ * COMPAT-app-too-old needs firmware the app cannot drive in the module's
+ * flash (E2E_FIRMWARE names it): `cd SIL && make e2e-compat` puts this
+ * tree's firmware built one protocol_version ahead there and runs it.
  * On a board with this tree's firmware they are skipped, saying so, and on
  * one with other firmware every other board scenario is.
  *
  * FW-ISS (the app flashing the ISS's mask ROM) needs the ROM board, not the
  * firmware's: the project's serial boot, SIL/mad-serial-boot-cosim.toml
- * (`cd SIL && make e2e-rom`, which sets E2E_BOARD=rom and
- * E2E_BOARD_ROUTE=project). On that board it is the only scenario that
- * runs; on the firmware's it is skipped.
+ * (`cd SIL && make e2e-rom`, which sets E2E_BOARD=rom and names that file
+ * in E2E_PROJECT). On that board it is the only scenario that runs; on the
+ * firmware's it is skipped.
  *
  * FW1 with a board flashes the board's firmware for real (MaD #134), on the
  * reflash board: SIL/mad-reflash-cosim.toml, the firmware off the module's
- * flash with the Prop Plug's reset on J1.3 and the ROM's serial window open
- * after a reset (`cd SIL && make e2e-reflash`, which sets E2E_BOARD=reflash
- * and the image to flash, E2E_REFLASH_IMAGE, a production build stamped
- * E2E_REFLASH_VERSION). COMPAT-reflash runs there too, on the release from
- * before the protocol handshake (E2E_FIRMWARE=old), and installs the same
- * image from the too-old banner. On that board they are the only scenarios
- * that run; on the others they are skipped; without a board FW1 flashes the
- * in-page fake.
+ * flash, the host on the programming port J1 with the Prop Plug's reset on
+ * J1.3 and the ROM's serial window open after a reset (`cd SIL && make
+ * e2e-reflash`, which sets E2E_BOARD=reflash and the image to flash,
+ * E2E_REFLASH_IMAGE, this tree's build stamped E2E_REFLASH_VERSION).
+ * COMPAT-reflash runs there too, on the release from before the protocol
+ * handshake (E2E_FIRMWARE=old), whose protocol is on J1, and installs the
+ * same image from the too-old banner. The new firmware's protocol is on the
+ * control port J4, out of that board's one port's reach, so each reads the
+ * firmware's boot line in the board's log (E2E_BOARD_LOG) instead of
+ * reconnecting. On that board they are the only scenarios that run; on the
+ * others they are skipped; without a board FW1 flashes the in-page fake.
  *
  * Covers the parity-critical scenarios of docs/TEST_PLAN.md §4: A1, B1–B5, C1/C3/C4, D1/D2/D3,
  * E1, F1/F2/F4/F6/F7, G1/G2/G3 + G-limit, H1–H5, I1–I4, J1 (in G-limit), K1 (in B2+B3+B4) — plus
@@ -110,7 +112,6 @@ import {
   waitPageTime,
   restoreLink,
   takePageTime,
-  BOARD_ROUTE,
   DEVICE_WAIT_MS,
   awaitResponding,
   readAppLog,
@@ -147,14 +148,11 @@ const BOARD_FREE = new Set([
   'COMPAT-reconnect', 'COMPAT-silent', 'COMPAT-update-loop',
 ]);
 
-// The firmware in the board's flash (make e2e-compat sets it): 'old', a
-// release from before the app could ask which protocol the firmware speaks;
-// 'future', this tree's firmware generated one protocol_version ahead; unset,
+// The firmware in the board's flash (make e2e-compat sets it): 'future', this tree's firmware generated one protocol_version ahead; unset,
 // this tree's. Each compatibility scenario below needs one of them, and every
 // other board scenario needs this tree's.
 const FIRMWARE = process.env.E2E_FIRMWARE || 'current';
 const NEEDS_FIRMWARE = new Map([
-  ['COMPAT-too-old', 'old'],
   ['COMPAT-app-too-old', 'future'],
   ['COMPAT-reflash', 'old'],
 ]);
@@ -177,7 +175,7 @@ const ROM_BOARD = process.env.E2E_BOARD === 'rom';
 // e2e-reflash), the firmware off the module's flash with the Prop Plug's
 // reset on J1.3 and the ROM's serial window open after a reset (MaD #134).
 // FW1 runs there on this tree's firmware, and COMPAT-reflash on the old
-// one, each flashing E2E_REFLASH_IMAGE, a production build stamped
+// one, each flashing E2E_REFLASH_IMAGE, this tree's build stamped
 // E2E_REFLASH_VERSION, through the ROM's loader for real.
 const REFLASH_BOARD = process.env.E2E_BOARD === 'reflash';
 
@@ -208,10 +206,10 @@ const MOVES = new Set([
   'COMPAT-ok-motion',
 ]);
 
-// What the machine's project cannot do (BOARD_ROUTE 'project':
-// SIL/mad-cosim.toml), each with why. The suite skips these there, named in
-// SCENARIOS or not, saying so; a run in which every scenario was skipped
-// fails, since it checked nothing. E2E_PROJECT_CANNOT=run runs them anyway,
+// What the machine's project cannot do (SIL/mad-cosim.toml), each with
+// why. The suite skips these there, named in SCENARIOS or not, saying so;
+// a run in which every scenario was skipped fails, since it checked
+// nothing. E2E_PROJECT_CANNOT=run runs them anyway,
 // for a change to the board, its file or the kinds that may lift the
 // reason. `--list --cannot` lists them.
 //
@@ -233,9 +231,9 @@ const STOPPED_WHY =
 // SIL/, mad-cosim.toml by default).
 const PROJECT = (process.env.E2E_PROJECT || 'mad-cosim.toml').split('/').pop();
 const RUN_CANNOT = process.env.E2E_PROJECT_CANNOT === 'run';
-// The suite is on the project: attached to its Chrome, or listing for
-// board-route.sh, which names the route before any board is up.
-const ON_PROJECT = BOARD_ROUTE === 'project' && (BOARD || process.env.E2E_BOARD_ROUTE === 'project');
+// The suite is on a project: attached to its Chrome, or listing for
+// board-route.sh, which names the file (E2E_PROJECT) before any board is up.
+const ON_PROJECT = BOARD || Boolean(process.env.E2E_PROJECT);
 /** Why `id` cannot run on this board, or '' when it can. */
 const cannot = (id) => {
   if (!ON_PROJECT || RUN_CANNOT) return '';
@@ -246,12 +244,12 @@ const cannot = (id) => {
 /**
  * The hard stop of the machine on the board the suite runs, in millimetres:
  * the `hard_stop_mm` option of the project file board-route.sh names
- * (E2E_PROJECT, relative to SIL/), or null when the board is not a project
- * or its machine has none. The line is TOML's `key = value`, with or without
+ * (E2E_PROJECT, relative to SIL/), or null when no file is named or its
+ * machine has none. The line is TOML's `key = value`, with or without
  * a trailing comment; a value that is not a finite number fails here.
  */
 function hardStopMm() {
-  if (!ON_PROJECT || !process.env.E2E_PROJECT) return null;
+  if (!process.env.E2E_PROJECT) return null;
   const file = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'SIL', process.env.E2E_PROJECT);
   const line = readFileSync(file, 'utf8').match(/^[ \t]*hard_stop_mm[ \t]*=[ \t]*([^\s#]+)[ \t]*(?:#.*)?$/m);
   if (!line) return null;
@@ -951,21 +949,75 @@ async function walkDataFolderGate() {
   }
 }
 
-/** Board time the flash of a production image is given: the upload, the
+/** Board time the flash of a firmware image is given: the upload, the
  *  write the app waits out, a hang's bound only (it never paces a pass). */
 const FLASH_WAIT_MS = 300_000;
 
 /**
+ * The running board's log (SIL/scripts/board-route.sh exports its path as
+ * E2E_BOARD_LOG): the board's console, the firmware's lines on P62 among it,
+ * as `P62 "<line>"`. Empty before the board has written any.
+ */
+function boardLog() {
+  const path = process.env.E2E_BOARD_LOG;
+  assert(path, 'the board log is SIL/scripts/board-route.sh\'s, which exports E2E_BOARD_LOG');
+  try {
+    return readFileSync(path, 'latin1');
+  } catch {
+    return '';
+  }
+}
+
+/** The firmware's boot line on P62 (src/Main/main.c), naming `version`. */
+const bootLine = (version) => `P62 "Starting MaD Board ${version}"`;
+
+/**
+ * Wait, in the page's time, until the board's log past `from` (a length of
+ * boardLog()) holds the firmware's boot line naming `version`.
+ */
+async function awaitBootLine(page, version, from, { timeoutMs = DEVICE_WAIT_MS } = {}) {
+  const clock = await pageClock(page);
+  while ((await clock.elapsed()) < timeoutMs) {
+    if (boardLog().slice(from).includes(bootLine(version))) return;
+    await waitPageTime(page, 200);
+  }
+  throw new Error(
+    `the board's log (${process.env.E2E_BOARD_LOG}) shows no ${bootLine(version)} within ${timeoutMs} ms ` +
+      'of board time after the flash',
+  );
+}
+
+/**
+ * After a flash on the reflash board, with no session held: the app opens
+ * nothing. The programming port stays closed, so no DTR pulse resets the
+ * chip again, and the session stays down: the firmware's protocol is on the
+ * control port J4, which this board's one Chrome port does not reach.
+ */
+async function assertNoReopen(page, scenario) {
+  const before = logged(await appLogEntries(page), 'device', 'port-open').length;
+  // Past the reconnect the app would make: RECONNECT_SETTLE_MS (1.5 s) after
+  // the write, and a margin.
+  await waitPageTime(page, 5_000);
+  const after = logged(await appLogEntries(page), 'device', 'port-open').length;
+  assert(after === before, `${scenario}: the app opened a port ${after - before} time(s) after the flash`);
+  assert(
+    (await page.locator('.dot.connected').count()) === 0,
+    `${scenario}: the session reconnected after the flash`,
+  );
+}
+
+/**
  * FW1 on the reflash board (SIL/mad-reflash-cosim.toml, `make e2e-reflash`;
  * MaD #134): the machine's own firmware update, end to end, with nothing
- * faked. The app connects to the board, which runs the firmware off the
- * module's flash; the Firmware page hands the session's port over, resets
- * the chip with its DTR pulse (the node's DTR pin, the Prop Plug's reset
- * stage, J1.3, the chip's RESN), finds the ROM in its serial window, loads
- * the flash stub and E2E_REFLASH_IMAGE through it, waits out the write, and
- * gives the port back; the session reconnects to whatever the board now
- * runs. E2E_REFLASH_VERSION is that image's stamp, which the firmware the
- * board booted does not report, so the stamp in the status bar is the image
+ * faked. The board runs this tree's firmware off the module's flash, its
+ * protocol on the control port J4; the board's one Chrome port is the
+ * programming port J1, where the Prop Plug sits. The Firmware page, with no
+ * session held, resets the chip with its DTR pulse (the node's DTR pin, the
+ * Prop Plug's reset stage, J1.3, the chip's RESN), finds the ROM in its
+ * serial window, loads the flash stub and E2E_REFLASH_IMAGE through it, and
+ * waits out the write; it then opens nothing, having held no control port.
+ * E2E_REFLASH_VERSION is that image's stamp, which the firmware the board
+ * booted does not print, so its boot line on J1 after the flash is the image
  * the flash wrote, running.
  */
 async function flashTheBoard() {
@@ -979,12 +1031,13 @@ async function flashTheBoard() {
   const { browser, page, errors } = await newSilPage();
   try {
     page.on('dialog', (d) => d.accept());
-    await connectToSil(page);
-    const fw = page.locator('.statusbar').getByText(/fw /);
-    const before = (await fw.textContent()) || '';
     assert(
-      !before.includes(`fw ${version}`),
-      `the board already reports ${version} before the flash (${before}): the check would prove nothing`,
+      boardLog().includes('P62 "Starting MaD Board '),
+      'the board has not printed its boot line: the firmware it booted is not up',
+    );
+    assert(
+      !boardLog().includes(bootLine(version)),
+      `the board already printed ${bootLine(version)} before the flash: the check would prove nothing`,
     );
 
     await page.goto(`${APP_URL}#/firmware`);
@@ -997,6 +1050,7 @@ async function flashTheBoard() {
     });
     const clock = await pageClock(page);
     const hostStart = Date.now();
+    const logFrom = boardLog().length;
     await press(page.getByTestId('flash-firmware'));
     await page.getByTestId('flash-status').filter({ hasText: /Wrote .* bytes to flash/ })
       .waitFor({ timeout: FLASH_WAIT_MS });
@@ -1006,13 +1060,11 @@ async function flashTheBoard() {
         `of board time, ${((Date.now() - hostStart) / 1000).toFixed(1)} s of host time`,
     );
 
-    // The app gives the session its port back once the write is out; the
-    // session reconnects to the firmware the flash wrote.
-    await page.locator('.statusbar').getByText(`fw ${version}`).waitFor({ timeout: DEVICE_WAIT_MS });
-    await awaitResponding(page);
+    await assertNoReopen(page, 'FW1');
+    await awaitBootLine(page, version, logFrom);
     console.log(
-      `  FW1: the board answers as ${version} ${((await clock.elapsed()) / 1000).toFixed(3)} s of board ` +
-        `time after the flash began (it reported "${before.trim()}" before)`,
+      `  FW1: the board printed ${bootLine(version)} ${((await clock.elapsed()) / 1000).toFixed(3)} s of ` +
+        'board time after the flash began',
     );
     assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
   } finally {
@@ -2960,7 +3012,6 @@ const scenarios = [
         // Flash is the only mode the app offers: the P2 Edge boots from SPI
         // flash, so a RAM load would look like a successful update and then
         // vanish on the next power cycle. RAM loading lives in the CLI.
-        // (A P2Eval/MaDEdge board choice may appear; a RAM option may not.)
         assert(
           (await page.getByRole('radio', { name: /\bRAM\b/ }).count()) === 0,
           'a programming-mode selector reappeared in the UI',
@@ -3008,7 +3059,7 @@ const scenarios = [
   },
   {
     id: 'FW10',
-    name: 'Firmware: the board choice picks which build of the recommended release Install recommended flashes; only P2Eval reconnects after',
+    name: "Firmware: Install recommended flashes the release's one image, with no board to choose",
     async run() {
       const browser = await chromium.launch({ channel: 'chrome', headless: true });
       try {
@@ -3021,72 +3072,40 @@ const scenarios = [
 
         // Stand in for the served release folder, whatever the dev server's
         // firmware plugin would answer.
-        const images = {
-          P2Eval: Buffer.from(Array.from({ length: 600 }, (_, i) => i & 0xff)),
-          MaDEdge: Buffer.from(Array.from({ length: 900 }, (_, i) => (255 - i) & 0xff)),
-        };
-        const entry = (board) => ({
-          assetName: `MaD-Firmware-9.9-${board}.bin`,
-          size: images[board].length,
-          sha256: createHash('sha256').update(images[board]).digest('hex'),
-          path: `firmware/MaD-Firmware-9.9-${board}.bin`,
-        });
+        const image = Buffer.from(Array.from({ length: 900 }, (_, i) => (255 - i) & 0xff));
         const fetched = [];
-        // The recommended release for this app's protocol, with both builds.
         await page.route('**/firmware/manifest.json', (r) => r.fulfill({
           contentType: 'application/json',
           body: JSON.stringify({
             releases: [{
-              tag: 'firmware-v9.9', version: '9.9', ...entry('P2Eval'),
+              tag: 'firmware-v9.9', version: '9.9',
+              assetName: 'MaD-Firmware-9.9.bin', size: image.length,
+              sha256: createHash('sha256').update(image).digest('hex'),
+              path: 'firmware/MaD-Firmware-9.9.bin',
               publishedAt: null, htmlUrl: 'https://example.invalid/r',
-              boards: { P2Eval: entry('P2Eval'), MaDEdge: entry('MaDEdge') },
               protocolVersion: protocolFacts().protocol,
             }],
           }),
         }));
-        await page.route('**/firmware/MaD-Firmware-9.9-*.bin', (r) => {
-          const name = r.request().url().split('/').pop();
-          fetched.push(name);
-          return r.fulfill({
-            contentType: 'application/octet-stream',
-            body: name === 'MaD-Firmware-9.9-MaDEdge.bin' ? images.MaDEdge : images.P2Eval,
-          });
+        await page.route('**/firmware/MaD-Firmware-9.9*.bin', (r) => {
+          fetched.push(r.request().url().split('/').pop());
+          return r.fulfill({ contentType: 'application/octet-stream', body: image });
         });
 
-        // The main connection holds the port being flashed, as on a machine
-        // whose production build talks on J1.
-        await page.goto(`${APP_URL_HOST}#/connect`);
-        await press(page.getByTestId('connect-device'));
-        await page.locator('.dot.connected').waitFor({ timeout: 10_000 });
         await page.goto(`${APP_URL_HOST}#/firmware`);
-        await page.getByTestId('firmware-source').filter({ hasText: /P2Eval production build/ }).waitFor();
-        assert(await page.getByTestId('board-P2Eval').isChecked(), 'P2Eval is not the default board');
+        await page.getByTestId('firmware-source').filter({ hasText: /9\.9/ }).waitFor();
+        assert(
+          (await page.locator('[data-testid="firmware-board"], [data-testid^="board-"]').count()) === 0,
+          'the Firmware screen offers a board choice',
+        );
         await page.getByTestId('flash-target').filter({ hasText: /USB/ }).waitFor({ timeout: DEVICE_WAIT_MS });
-
-        await page.getByTestId('board-MaDEdge').check();
-        await page.getByTestId('firmware-source').filter({ hasText: /MaDEdge debug build/ }).waitFor();
         const install = page.getByTestId('install-recommended');
-        await install.filter({ hasText: 'Install recommended firmware (9.9, MaDEdge)' }).waitFor({ timeout: DEVICE_WAIT_MS });
+        await install.filter({ hasText: 'Install recommended firmware (9.9)' }).waitFor({ timeout: DEVICE_WAIT_MS });
         await install.click();
         await page.getByTestId('flash-status').filter({ hasText: /Wrote .* bytes to flash/ })
           .waitFor({ timeout: 30_000 });
-        const opensAfterEdge = await page.evaluate(() => window.__bootRom.opens);
-        // Past the reconnect's settle delay (RECONNECT_SETTLE_MS, 1.5 s).
-        await page.waitForTimeout(3000);
-        assert(
-          (await page.evaluate(() => window.__bootRom.opens)) === opensAfterEdge,
-          'the app reopened the flash port after a MaDEdge flash, which answers only on the Pi link',
-        );
-        assert((await page.locator('.dot.connected').count()) === 0, 'still connected after a MaDEdge flash');
-        assert(
-          /connect over that link/.test((await page.getByTestId('flash-status').textContent()) ?? ''),
-          'the done message does not send the operator to the Pi link',
-        );
 
-        assert(
-          JSON.stringify(fetched) === JSON.stringify(['MaD-Firmware-9.9-MaDEdge.bin']),
-          `downloaded ${JSON.stringify(fetched)}`,
-        );
+        assert(JSON.stringify(fetched) === JSON.stringify(['MaD-Firmware-9.9.bin']), `downloaded ${JSON.stringify(fetched)}`);
         const rom = await page.evaluate(() => ({
           len: window.__bootRom.image.length,
           payload: window.__bootRom.image.slice(496, 496 + 4),
@@ -3094,24 +3113,7 @@ const scenarios = [
         assert(rom.len === 496 + 900, `image length ${rom.len}, expected ${496 + 900}`);
         assert(
           JSON.stringify(rom.payload) === JSON.stringify([255, 254, 253, 252]),
-          `flashed payload starts ${JSON.stringify(rom.payload)}, not the MaDEdge image`,
-        );
-
-        // A P2Eval flash over the held port still hands the connection back.
-        await page.goto(`${APP_URL_HOST}#/connect`);
-        await press(page.getByTestId('connect-device'));
-        await page.locator('.dot.connected').waitFor({ timeout: 10_000 });
-        await page.goto(`${APP_URL_HOST}#/firmware`);
-        await page.getByTestId('board-P2Eval').check();
-        await page.getByTestId('firmware-source').filter({ hasText: /P2Eval production build/ }).waitFor();
-        await page.getByTestId('flash-firmware').click();
-        await page.getByTestId('flash-status').filter({ hasText: /Wrote .* bytes to flash/ })
-          .waitFor({ timeout: 30_000 });
-        const opensAfterEval = await page.evaluate(() => window.__bootRom.opens);
-        await page.locator('.dot.connected').waitFor({ timeout: 10_000 });
-        assert(
-          (await page.evaluate(() => window.__bootRom.opens)) === opensAfterEval + 1,
-          'a P2Eval flash did not reconnect to the flash port',
+          `flashed payload starts ${JSON.stringify(rom.payload)}, not the release image`,
         );
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
       } finally { await browser.close(); }
@@ -3119,30 +3121,25 @@ const scenarios = [
   },
   {
     id: 'FW11',
-    name: 'Firmware: a release with only a P2Eval build offers no board choice',
+    name: 'Connect and Firmware name the port each one wants',
     async run() {
       const browser = await chromium.launch({ channel: 'chrome', headless: true });
       try {
         const page = await browser.newPage();
         await page.addInitScript(installFakeBootRom);
         await page.addInitScript(installOpfsDataDir, OPFS_DIR);
-        // The recommended release carries only its P2Eval build.
-        const p2eval = {
-          assetName: 'MaD-Firmware-0.15-P2Eval.bin', size: 64, sha256: '0'.repeat(64),
-          path: 'firmware/MaD-Firmware-0.15-P2Eval.bin',
-        };
-        await page.route('**/firmware/manifest.json', (r) => r.fulfill({
-          contentType: 'application/json',
-          body: JSON.stringify({
-            releases: [{
-              tag: 'firmware-v0.15', version: '0.15', ...p2eval, publishedAt: null,
-              htmlUrl: 'https://example.invalid/r', boards: { P2Eval: p2eval }, protocolVersion: protocolFacts().protocol,
-            }],
-          }),
-        }));
+        // The Firmware page remembered the fake's adapter (0403:6015) as its
+        // programming port: the Connect page marks it.
+        await page.addInitScript(() => {
+          localStorage.setItem('mad.flashPort', JSON.stringify({ vendorId: 0x0403, productId: 0x6015, index: 0 }));
+        });
+        await page.goto(`${APP_URL_HOST}#/connect`);
+        await page.getByTestId('granted-programming-port').waitFor();
+        await page.getByTestId('control-port-hint').filter({ hasText: /P30\/P32/ }).waitFor();
+        await page.getByTestId('control-port-hint').filter({ hasText: /J1/ }).waitFor();
         await page.goto(`${APP_URL_HOST}#/firmware`);
-        await page.getByTestId('firmware-source').filter({ hasText: /P2Eval production build/ }).waitFor();
-        assert((await page.getByTestId('firmware-board').count()) === 0, 'offered a board the release has no build for');
+        await page.getByTestId('programming-port-hint').filter({ hasText: /J1/ }).waitFor();
+        await page.getByTestId('programming-port-hint').filter({ hasText: /P2-EVAL/ }).waitFor();
       } finally { await browser.close(); }
     },
   },
@@ -3403,10 +3400,11 @@ const scenarios = [
   // ── Firmware compatibility: the device-info handshake (#335) ──
   //
   // On the board, the firmware is real: this tree's (COMPAT-ok, and
-  // COMPAT-ok-motion in the motion set), a release from
-  // before the handshake (COMPAT-too-old), or this tree's built one
-  // protocol_version ahead (COMPAT-app-too-old); `make e2e-compat` puts the
-  // last two in the module's flash. Board-free, the in-page fake board stands
+  // COMPAT-ok-motion in the motion set), or this tree's built one
+  // protocol_version ahead (COMPAT-app-too-old), which `make e2e-compat`
+  // puts in the module's flash. Releases from before the handshake (0.14 and
+  // older) answer on J1 only, never on the control port the board's host is
+  // on, so the too-old verdict is checked board-free (COMPAT-update-loop). Board-free, the in-page fake board stands
   // in where only the app matters: a verdict's life across connections, a
   // board that never answers, and the update loop, whose real flash the ISS
   // cannot take (the app's DTR reaches no reset there, MaD #134).
@@ -3494,68 +3492,6 @@ const scenarios = [
     },
   },
   {
-    id: 'COMPAT-too-old',
-    name: 'Firmware compat: a release from before the handshake gets the no-answer banner; motion refused, STOP sent',
-    async run() {
-      const { browser, page, errors } = await newSilPage();
-      try {
-        // Not connectToSil: this firmware's samples carry fewer fields than
-        // the app reads, so the app drops them as unreadable and the session
-        // never shows Responding. That is part of what is checked here.
-        await page.goto(`${APP_URL}#/connect`);
-        await press(boardGrantedPort(page), { timeout: 10_000 });
-        await page.locator('.dot.connected').waitFor({ timeout: 10_000 });
-        // This firmware refuses the device-info read with the 3-byte NACK from
-        // before protocol 3. From protocol 3 on a NACK carries a reason byte,
-        // so this app cannot read that refusal: the read goes unanswered.
-        await compatBanner(page).and(page.locator('[data-kind="unanswered"]')).waitFor({ timeout: DEVICE_WAIT_MS });
-        const entries = await appLogEntries(page);
-        const [verdict] = logged(entries, 'store', 'firmware-compat');
-        assert(verdict?.data?.verdict === 'unanswered', `verdict ${JSON.stringify(verdict?.data)}, expected unanswered`);
-        assert(
-          (await compatBanner(page).textContent())?.includes('did not say which protocol it speaks'),
-          'the banner does not say the firmware never answered',
-        );
-        // The app reads this firmware's samples as unreadable and lives on.
-        // The worker's entries reach the page's log in batches, so wait for it.
-        await awaitLogged(page, 'proto', 'unreadable-reply', { msg: 'READ_SAMPLE' });
-        await page.goto(`${APP_URL}#/firmware`);
-        await page.getByTestId('fw-protocol').filter({ hasText: 'no answer' }).waitFor({ timeout: DEVICE_WAIT_MS });
-
-        await pressRefusedLiveControls(page);
-        await chooseDataFolder(page);
-        await startRefusedTest(page);
-        // The calibration's open-loop moves cannot start: the panel needs the
-        // machine configuration, which is not read from firmware on another
-        // protocol, and its button needs motion enabled.
-        await page.goto(`${APP_URL}#/settings`);
-        await page.getByRole('heading', { name: 'Settings' }).waitFor({ timeout: DEVICE_WAIT_MS });
-        const calibrate = page.getByRole('button', { name: 'Run calibration' });
-        assert(
-          (await calibrate.count()) === 0 || (await calibrate.isDisabled()),
-          'the motor calibration (open-loop moves) could start',
-        );
-
-        // STOP still reaches the firmware, which acknowledges it.
-        await press(page.getByTestId('estop'));
-        await page.locator('.toast').getByText('Emergency stop — motion disabled.').first().waitFor({ timeout: DEVICE_WAIT_MS });
-        await awaitLogged(page, 'proto', 'tx', { msg: 'WRITE_MOTION_ENABLE' });
-        const after = await appLogEntries(page);
-        // Samples kept arriving short the whole time; they were reported once.
-        const unreadable = logged(after, 'proto', 'unreadable-reply', 'READ_SAMPLE').length;
-        assert(unreadable === 1, `the short samples were reported ${unreadable} times, expected once`);
-        const tx = (name) => logged(after, 'proto', 'tx', name).length;
-        assert(tx('WRITE_MOTION_ENABLE') === 1, `motion-enable writes sent: ${tx('WRITE_MOTION_ENABLE')}, expected only STOP's`);
-        for (const name of ['WRITE_MANUAL_MOVE', 'WRITE_TEST_MOVE', 'WRITE_TEST_RUN']) {
-          assert(tx(name) === 0, `${name} reached the firmware`);
-        }
-        assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
-      } finally {
-        await browser.close();
-      }
-    },
-  },
-  {
     id: 'COMPAT-app-too-old',
     name: 'Firmware compat: firmware a protocol ahead gets the app-too-old banner; motion refused; it links to the latest app',
     async run() {
@@ -3609,7 +3545,7 @@ const scenarios = [
         await compatBanner(page).waitFor({ state: 'detached', timeout: DEVICE_WAIT_MS });
         // Reconnect: asked again, same answer. The pre-handshake firmware's
         // 3-byte refusal cannot be read from protocol 3 on, so each connection
-        // asks as many times as its retries allow (COMPAT-too-old).
+        // asks as many times as its retries allow.
         const asked = await page.evaluate(() => window.__bootRom.reads.filter((c) => c === 5).length);
         await connectFakeBoard(page);
         await compatBanner(page).and(page.locator('[data-kind="unanswered"]')).waitFor({ timeout: DEVICE_WAIT_MS });
@@ -3666,23 +3602,17 @@ const scenarios = [
       const { protocol } = protocolFacts();
       const IMAGE = Buffer.from(Array.from({ length: 3000 }, (_, i) => (i * 13 + 5) & 0xff));
       const sha256 = createHash('sha256').update(IMAGE).digest('hex');
-      const entry = (version, proto) => {
-        const p2eval = {
-          assetName: `MaD-Firmware-${version}-P2Eval.bin`,
-          size: IMAGE.length,
-          sha256,
-          path: `firmware/MaD-Firmware-${version}-P2Eval.bin`,
-        };
-        return {
-          tag: `firmware-v${version}`,
-          version,
-          ...p2eval,
-          boards: { P2Eval: p2eval },
-          publishedAt: '2026-11-01T00:00:00Z',
-          htmlUrl: 'https://example.invalid/release',
-          protocolVersion: proto,
-        };
-      };
+      const entry = (version, proto) => ({
+        tag: `firmware-v${version}`,
+        version,
+        assetName: `MaD-Firmware-${version}.bin`,
+        size: IMAGE.length,
+        sha256,
+        path: `firmware/MaD-Firmware-${version}.bin`,
+        publishedAt: '2026-11-01T00:00:00Z',
+        htmlUrl: 'https://example.invalid/release',
+        protocolVersion: proto,
+      });
       // The release for this app's protocol, and a newer one for the next
       // protocol that this app must not offer.
       const manifest = { releases: [entry('0.99', protocol + 1), entry('0.15', protocol)] };
@@ -3698,7 +3628,7 @@ const scenarios = [
           fetched.push('manifest.json');
           return route.fulfill({ contentType: 'application/json', body: JSON.stringify(manifest) });
         });
-        await page.route('**/firmware/*-P2Eval.bin', (route) => {
+        await page.route('**/firmware/MaD-Firmware-*.bin', (route) => {
           fetched.push(new URL(route.request().url()).pathname.split('/').pop());
           return route.fulfill({ contentType: 'application/octet-stream', body: served });
         });
@@ -3732,7 +3662,7 @@ const scenarios = [
         assert((await page.locator('.dot.connected').count()) === 1, 'the session was dropped for an image that failed its checksum');
         assert(
           prompts.length === 1
-            && prompts[0].includes('MaD-Firmware-0.15-P2Eval.bin (firmware-v0.15)')
+            && prompts[0].includes('MaD-Firmware-0.15.bin (firmware-v0.15)')
             && !prompts[0].includes('local-program.bin'),
           `the flash prompt does not name the recommended release: ${JSON.stringify(prompts)}`,
         );
@@ -3751,11 +3681,11 @@ const scenarios = [
         assert(rom.reset >= 1 && rom.finished, `the board was not flashed (${JSON.stringify({ reset: rom.reset, finished: rom.finished })})`);
         assert(Buffer.from(rom.payload).equals(IMAGE), 'the flashed payload is not the recommended release image');
         assert(
-          prompts.length === 2 && prompts[1].includes('MaD-Firmware-0.15-P2Eval.bin (firmware-v0.15)'),
+          prompts.length === 2 && prompts[1].includes('MaD-Firmware-0.15.bin (firmware-v0.15)'),
           `the second flash prompt does not name the recommended release: ${JSON.stringify(prompts)}`,
         );
         assert(
-          fetched.every((f) => f === 'manifest.json' || f === 'MaD-Firmware-0.15-P2Eval.bin'),
+          fetched.every((f) => f === 'manifest.json' || f === 'MaD-Firmware-0.15.bin'),
           `the app fetched ${JSON.stringify(fetched)}; the release for another protocol must not be downloaded`,
         );
         await page.locator('.dot.connected').waitFor({ timeout: DEVICE_WAIT_MS });
@@ -3763,6 +3693,11 @@ const scenarios = [
         await page.getByTestId('fw-version').filter({ hasText: '0.15' }).waitFor({ timeout: DEVICE_WAIT_MS });
         await page.getByTestId('fw-protocol').filter({ hasText: `${protocol} · this app speaks ${protocol}` })
           .waitFor({ timeout: DEVICE_WAIT_MS });
+        // Flashed through the programming port, reconnected through the
+        // control port: the programming port was opened for the flash only.
+        const opens = await page.evaluate(() => window.__bootRom.opens);
+        assert(opens.programming === 1, `the programming port was opened ${opens.programming} times; once, for the flash`);
+        assert(opens.control === 2, `the control port was opened ${opens.control} times; expected the connect and the reconnect`);
         // Motion works on the new firmware, in the same page: no reload.
         await page.goto(`${APP_URL_HOST}#/live`);
         await press(page.getByRole('button', { name: 'Enable motion' }));
@@ -3776,34 +3711,38 @@ const scenarios = [
   },
   {
     id: 'COMPAT-reflash',
-    name: 'Firmware compat (board): a release from before the handshake → Install recommended firmware → the board reflashed for real → ok, motion enabled',
+    name: 'Firmware compat (board): a release from before the handshake → Install recommended firmware → the board reflashed for real → the new firmware boots',
     async run() {
       // The reflash board (make e2e-reflash) booting the release from before
       // the app could ask which protocol the firmware speaks
-      // (E2E_FIRMWARE=old). The release the app recommends is this tree's
-      // production image, stamped E2E_REFLASH_VERSION, which no release
+      // (E2E_FIRMWARE=old), whose protocol is on P62/P63, the programming
+      // port J1 this board's host is on. The release the app recommends is
+      // this tree's image, stamped E2E_REFLASH_VERSION, which no release
       // carries yet: the manifest and image the dev server would fetch from
-      // GitHub are served here, as COMPAT-update-loop serves them. The
-      // update is the machine's own: the DTR reset through the Prop Plug's
-      // reset stage, the ROM's loader, the stub writing the module's flash,
-      // and the board booting what it wrote.
+      // GitHub are served here, as COMPAT-update-loop serves them. The update
+      // is the machine's own: the DTR reset through the Prop Plug's reset
+      // stage, the ROM's loader, the stub writing the module's flash, and the
+      // board running what it wrote, which says so in its boot line on J1.
+      //
+      // That is where this scenario ends. The new firmware's protocol is on
+      // the control port J4, and the board's one Chrome port is J1, so the
+      // app's reconnect, the ok verdict and motion on the new firmware are
+      // out of reach here (COMPAT-update-loop holds them on the fake board).
+      // Follow-up: embsim's chrome-cdp with two ports, so a board can carry
+      // J1 and J4.
       const { protocol } = protocolFacts();
       const path = process.env.E2E_REFLASH_IMAGE;
       const version = process.env.E2E_REFLASH_VERSION;
       assert(path && version, 'COMPAT-reflash needs E2E_REFLASH_IMAGE and E2E_REFLASH_VERSION; make e2e-reflash sets both');
       const image = readFileSync(path);
-      const p2eval = {
-        assetName: `MaD-Firmware-${version}-P2Eval.bin`,
-        size: image.length,
-        sha256: createHash('sha256').update(image).digest('hex'),
-        path: `firmware/MaD-Firmware-${version}-P2Eval.bin`,
-      };
       const manifest = {
         releases: [{
           tag: `firmware-v${version}`,
           version,
-          ...p2eval,
-          boards: { P2Eval: p2eval },
+          assetName: `MaD-Firmware-${version}.bin`,
+          size: image.length,
+          sha256: createHash('sha256').update(image).digest('hex'),
+          path: `firmware/MaD-Firmware-${version}.bin`,
           publishedAt: '2026-11-01T00:00:00Z',
           htmlUrl: 'https://example.invalid/release',
           protocolVersion: protocol,
@@ -3814,12 +3753,12 @@ const scenarios = [
         page.on('dialog', (d) => d.accept());
         await page.route('**/firmware/manifest.json', (route) =>
           route.fulfill({ contentType: 'application/json', body: JSON.stringify(manifest) }));
-        await page.route('**/firmware/*-P2Eval.bin', (route) =>
+        await page.route('**/firmware/MaD-Firmware-*.bin', (route) =>
           route.fulfill({ contentType: 'application/octet-stream', body: image }));
         // Not connectToSil: the old firmware's samples are unreadable to this
-        // app, so the session never shows Responding (COMPAT-too-old). Its
-        // 3-byte refusal of the device-info read predates protocol 3's
-        // reason byte, so the read goes unanswered (COMPAT-too-old).
+        // app, so the session never shows Responding. Its 3-byte refusal of the
+        // device-info read predates protocol 3's reason byte, so to this app the
+        // read goes unanswered.
         await page.goto(`${APP_URL}#/connect`);
         await press(boardGrantedPort(page), { timeout: 10_000 });
         await page.locator('.dot.connected').waitFor({ timeout: 10_000 });
@@ -3827,10 +3766,32 @@ const scenarios = [
         await press(page.getByTestId('update-firmware'));
         const install = page.getByTestId('install-recommended');
         await install.filter({ hasText: `Install recommended firmware (${version})` }).waitFor({ timeout: DEVICE_WAIT_MS });
+        const verdicts = logged(await appLogEntries(page), 'store', 'firmware-compat').map((e) => e.data?.verdict);
+        assert(verdicts[0] === 'unanswered', `verdicts ${JSON.stringify(verdicts)}, expected unanswered first`);
+
+        // The session holds the board's one port, and the app never flashes
+        // the port its session holds: the operator disconnects, and the
+        // Firmware page offers that port, the Prop Plug's, as the target.
+        await page.goto(`${APP_URL}#/connect`);
+        await press(page.getByRole('button', { name: 'Disconnect' }));
+        await page.locator('.dot.disconnected').waitFor({ timeout: DEVICE_WAIT_MS });
+        // The dot turns on the worker's session-closed event, a few tens of
+        // milliseconds before the main thread lets go of the port, and the
+        // Firmware page resolves its target once, as it opens: an operator's
+        // pace, not the instant the dot turns.
+        await waitPageTime(page, 2_000);
+        await page.goto(`${APP_URL}#/firmware`);
+        await page.getByTestId('flash-target').filter({ hasText: /USB 0403:6015/ })
+          .waitFor({ timeout: DEVICE_WAIT_MS });
+        assert(
+          !boardLog().includes(bootLine(version)),
+          `the board already printed ${bootLine(version)} before the flash: the check would prove nothing`,
+        );
 
         const clock = await pageClock(page);
         const hostStart = Date.now();
-        await press(install);
+        const logFrom = boardLog().length;
+        await press(install.filter({ hasText: `Install recommended firmware (${version})` }));
         await page.getByTestId('flash-status').filter({ hasText: /Wrote .* bytes to flash/ })
           .waitFor({ timeout: FLASH_WAIT_MS });
         console.log(
@@ -3838,25 +3799,11 @@ const scenarios = [
             `${((await clock.elapsed()) / 1000).toFixed(3)} s of board time, ` +
             `${((Date.now() - hostStart) / 1000).toFixed(1)} s of host time`,
         );
-        // The session reconnects to what the board booted from its flash,
-        // asks again, and the verdict is ok.
-        await page.locator('.dot.connected').waitFor({ timeout: DEVICE_WAIT_MS });
-        await compatBanner(page).waitFor({ state: 'detached', timeout: DEVICE_WAIT_MS });
-        await page.getByTestId('fw-version').filter({ hasText: version }).waitFor({ timeout: DEVICE_WAIT_MS });
-        await page.getByTestId('fw-protocol').filter({ hasText: `${protocol} · this app speaks ${protocol}` })
-          .waitFor({ timeout: DEVICE_WAIT_MS });
-        const verdicts = logged(await appLogEntries(page), 'store', 'firmware-compat').map((e) => e.data?.verdict);
-        assert(
-          verdicts[0] === 'unanswered' && verdicts[verdicts.length - 1] === 'ok',
-          `verdicts ${JSON.stringify(verdicts)}, expected unanswered then ok`,
-        );
-        // Motion works on the firmware the board now runs.
-        await page.goto(`${APP_URL}#/live`);
-        await press(page.getByRole('button', { name: 'Enable motion' }));
-        await page.getByText('Motion: enabled').waitFor({ timeout: DEVICE_WAIT_MS });
+        await assertNoReopen(page, 'COMPAT-reflash');
+        await awaitBootLine(page, version, logFrom);
         console.log(
-          `  COMPAT-reflash: ok and motion enabled ${((await clock.elapsed()) / 1000).toFixed(3)} s of ` +
-            'board time after Install',
+          `  COMPAT-reflash: the board printed ${bootLine(version)} ` +
+            `${((await clock.elapsed()) / 1000).toFixed(3)} s of board time after Install`,
         );
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
       } finally {
@@ -4054,7 +4001,7 @@ async function main() {
       if (BOARD && !(await boardAlive())) {
         const left = selected.length - selected.indexOf(s) - 1;
         console.log(
-          `\n✗ the board is gone (nothing answers at ${CDP_URL}): mad-emulator stopped, and its ` +
+          `\n✗ the board is gone (nothing answers at ${CDP_URL}): the board's run stopped, and its ` +
             `log says why. ${left} scenario${left === 1 ? '' : 's'} not run.`,
         );
         failures.push(`the board stopped during ${s.id}; ${left} scenarios not run`);

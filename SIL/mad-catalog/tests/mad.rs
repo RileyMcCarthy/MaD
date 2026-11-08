@@ -1,10 +1,9 @@
 //! `SIL/mad.toml`, the machine as it runs, stepped: the Edge carrier, the
 //! P2-EC32MB module in its socket with MaD's instruction-set simulator as
-//! its processor booting the production firmware off the module's flash,
-//! the module's card, the DS2 add-on on the force cable, the machine on the
-//! carrier's connectors and a `host-serial` on the carrier's debug header
-//! `J1`, where the machine's Prop Plug sits (embsim `MIGRATING-MAD.md` step
-//! 9). The file is loaded with `Project::load` and built with the set
+//! its processor booting the firmware off the module's flash, the module's
+//! card, the DS2 add-on on the force cable, the machine on the carrier's
+//! connectors and a `host-serial` on the carrier's control port `J4`, where
+//! the machine's FTDI adapter sits (embsim `MIGRATING-MAD.md` step 9). The file is loaded with `Project::load` and built with the set
 //! `mad-runner` runs (`embsim_cli::shipped()` and `mad_catalog::register`),
 //! as embsim's `board/tests/edge_project_live.rs` builds its file; its paths
 //! are made relative to a scratch directory holding the two images it
@@ -13,12 +12,13 @@
 //! What the board as drawn does, held as the plan's checks are (`NODES.md`
 //! §13, review item 1):
 //!
-//! - **The protocol over `J1`.** The production build's MAIN channel is
-//!   `P63`/`P62` (`HW_pins.h`, `HAL_serial_config.c`), which `J1` carries
-//!   straight to the module's fingers. Once the firmware has booted off the
-//!   flash, the host's protocol requests cross `J1` to the chip's own `P63`,
-//!   and the firmware's answers come back on `P62` to the host, framed as
-//!   ProtoEmb frames them and decoded with MaD's generated codec. A state
+//! - **The protocol over `J4`.** The firmware's MAIN channel is
+//!   `P30`/`P32` (`HW_pins.h`, `HW_PIN_MAIN_RX`/`TX`), which the isolator
+//!   `IC2` carries to and from `J4`. Once the firmware has booted off the
+//!   flash, the host's protocol requests cross `J4` and `IC2` to the chip's
+//!   own `P30`, and the firmware's answers on `P32` come back through `IC2`
+//!   to the host, framed as ProtoEmb frames them and decoded with MaD's
+//!   generated codec. A state
 //!   read in the firmware's first passes can answer a core fault while its
 //!   cog manager brings its channels up, over two passes of its 100 ms
 //!   loop (measured: a fault at 1.244 s of board time, none by 1.308 s);
@@ -58,9 +58,9 @@
 //! builds (the converter's protocol thread joins it as an actor), the
 //! system started with time held, the case's thread a registered actor;
 //! every assertion is on virtual time and the board's state. Each case
-//! skips, saying why, when the production image is absent (`make
-//! p2image-production`), as `tests/boot.rs` does for the debug image;
-//! `MAD_REQUIRE_P2_IMAGE` turns the skip into a failure. The cases take one
+//! skips, saying why, when the image is absent (`make p2image`), as
+//! `tests/boot.rs` does; `MAD_REQUIRE_P2_IMAGE` turns the skip into a
+//! failure. The cases take one
 //! lock: the clock is the process's.
 
 use std::io::{Read as _, Write as _};
@@ -100,19 +100,18 @@ fn sil() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
 }
 
-/// The production program (pio env `P2Eval`), the one `make
-/// flash-image` lays out: `MAD_P2_PRODUCTION_IMAGE` names a copy kept out
-/// of `.pio` (the CI jobs'), else the build's own.
+/// The firmware's program (pio env `MaD`), the one `make flash-image` lays
+/// out: `MAD_P2_IMAGE` names a copy kept out of `.pio` (the CI jobs'), else
+/// the build's own.
 fn image_path() -> PathBuf {
-    let p = std::env::var_os("MAD_P2_PRODUCTION_IMAGE").map_or_else(
-        || sil().join("../Firmware/MaDCore/.pio/build/P2Eval/program"),
+    let p = std::env::var_os("MAD_P2_IMAGE").map_or_else(
+        || sil().join("../Firmware/MaDCore/.pio/build/MaD/program"),
         PathBuf::from,
     );
     if !p.exists() && std::env::var_os("MAD_REQUIRE_P2_IMAGE").is_some() {
         panic!(
-            "MAD_REQUIRE_P2_IMAGE is set but the production P2 image is missing at {}. \
-             Build it with `make p2image-production` (or `cd Firmware/MaDCore && pio run -e \
-             P2Eval`).",
+            "MAD_REQUIRE_P2_IMAGE is set but the P2 image is missing at {}. \
+             Build it with `make p2image` (or `cd Firmware/MaDCore && pio run -e MaD`).",
             p.display()
         );
     }
@@ -125,7 +124,7 @@ const CARD_BYTES: usize = 32 * 1024 * 1024;
 /// A directory of the case's own under Cargo's scratch directory for
 /// integration tests, holding the two images `mad.toml` names at the paths
 /// it names them by (`build/flash.bin`, `build/sd.img`): the flash laid out
-/// from the production program by `embsim flash-image`, the command `make
+/// from the program by `embsim flash-image`, the command `make
 /// flash-image` runs, here in process; the card `make sd-image` writes,
 /// `SIL/sd` mirrored onto it when it is there. With them, the program's
 /// bytes. `None`, having said why, without the program.
@@ -133,8 +132,8 @@ fn images(case: &str) -> Option<(PathBuf, Vec<u8>)> {
     let image = image_path();
     let Ok(program) = std::fs::read(&image) else {
         eprintln!(
-            "\n*** SKIPPED: {}::{case} needs the production P2 image at\n***   {}\n*** Build it \
-             with `make p2image-production`.\n*** This test asserted NOTHING.\n",
+            "\n*** SKIPPED: {}::{case} needs the P2 image at\n***   {}\n*** Build it \
+             with `make p2image`.\n*** This test asserted NOTHING.\n",
             module_path!(),
             image.display()
         );
@@ -469,7 +468,7 @@ fn the_inputs_at_rest() {
     behaviour!(Test {
         id: "mad-project.at-rest",
         covers: Some("SIL/mad.toml"),
-        given: "the machine's project file, its host a serial port on the carrier's debug header, \
+        given: "the machine's project file, its host a serial port on the carrier's control port, \
                 run 10.1 ms from power-on, past every supply's start-up",
     });
     expect!(
@@ -574,7 +573,7 @@ fn the_inputs_at_rest() {
 }
 
 // ============================================================
-// The firmware booted: the protocol over the debug header
+// The firmware booted: the protocol over the control port
 // ============================================================
 
 /// The START instant: the module's reset releases at 2.5 ms (the AP62301
@@ -601,7 +600,7 @@ const ANSWER_WAIT_NS: u64 = 600_000_000;
 /// The step the case hands the engine while it waits for an answer.
 const ANSWER_STEP_NS: u64 = 1_000_000;
 
-/// The firmware's MAIN channel rate (`HAL_serial_config.c`).
+/// The firmware's MAIN channel rate (`HAL_serial_config.c`), on `P32`.
 const MAIN_BAUD: f64 = 2_000_000.0;
 
 /// The host's end of the line: the PTY `host-serial` made, which the case
@@ -837,19 +836,19 @@ fn holds_c_string(program: &[u8], text: &str) -> bool {
 }
 
 #[test]
-fn the_firmware_answers_the_host_on_the_debug_header() {
+fn the_firmware_answers_the_host_on_the_control_port() {
     behaviour!(Test {
-        id: "mad-project.protocol-on-j1",
+        id: "mad-project.protocol-on-j4",
         covers: Some("SIL/mad.toml"),
-        given: "the production firmware booted from flash, with a host on the debug header that \
+        given: "the firmware booted from flash, with a host on the carrier's control port that \
                 reads the version until answered, reads the state until unfaulted, then enables \
                 motion and reads the state again",
     });
     expect!(
         "version-answered",
         "the host receives a data frame answering the version read, its check byte intact",
-        "the production build's protocol channel receives on P63 and transmits on P62, which \
-         the debug header carries straight to the module's fingers"
+        "the firmware's protocol channel receives on P30 and transmits on P32, which the \
+         carrier's isolator carries to and from the control port"
     );
     expect!(
         "version-decodes",
@@ -857,8 +856,8 @@ fn the_firmware_answers_the_host_on_the_debug_header() {
          as text"
     );
     expect!(
-        "requests-reach-p63",
-        "the chip's own P63 falls once for every fall of every request the host sent"
+        "requests-reach-p30",
+        "the chip's own P30 falls once for every fall of every request the host sent"
     );
     expect!(
         "state-answered",
@@ -886,7 +885,7 @@ fn the_firmware_answers_the_host_on_the_debug_header() {
     );
     expect!(
         "main-at-2m",
-        "the core's summary gives the rate the firmware programmed on P62, within 0.1 percent \
+        "the core's summary gives the rate the firmware programmed on P32, within 0.1 percent \
          of 2 000 000 baud"
     );
     let Some((dir, program)) = images("protocol") else {
@@ -897,7 +896,7 @@ fn the_firmware_answers_the_host_on_the_debug_header() {
     project
         .set_component_option("HOST", "path", pty.to_str().expect("UTF-8"))
         .expect("the file has a HOST");
-    let mut rig = Rig::start(project, Bench::default().probe("P63", "EC32.J203.49"));
+    let mut rig = Rig::start(project, Bench::default().probe("P30", "EC32.J203.10"));
     let mut host = HostPort::open(&pty);
 
     // Stage-1 streams the program; the host starts asking after it.
@@ -964,21 +963,21 @@ fn the_firmware_answers_the_host_on_the_debug_header() {
         .map(|(_, request)| frame_falls(request))
         .sum();
     assert_eq!(
-        falls(&rig.seen("P63")),
+        falls(&rig.seen("P30")),
         falls_sent,
-        "the chip's P63 fell once for each fall of the host's {} requests",
+        "the chip's P30 fell once for each fall of the host's {} requests",
         host.sent.len()
     );
 
     let core = rig.summary_line("EC32.U100", " cogs running; ");
     let baud: f64 = core
-        .split_once("P62 at ")
+        .split_once("P32 at ")
         .and_then(|(_, rest)| rest.split_once(" baud"))
         .and_then(|(baud, _)| baud.parse().ok())
-        .unwrap_or_else(|| panic!("the core transmitted on P62: {core}"));
+        .unwrap_or_else(|| panic!("the core transmitted on P32: {core}"));
     assert!(
         (baud - MAIN_BAUD).abs() / MAIN_BAUD < 0.001,
-        "P62 at {baud} baud: {core}"
+        "P32 at {baud} baud: {core}"
     );
     rig.finish();
 }

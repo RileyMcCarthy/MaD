@@ -6,7 +6,6 @@ members = [
     "models",
     "p2core",
     "p2iss",
-    "MaDSim",
     # MaD's own embsim kinds, and the runner that is the embsim command over
     # them (embsim PROJECTS.md §10, "A runner the project owns"); a project
     # file names both in its [catalog].
@@ -15,7 +14,7 @@ members = [
 ]
 # The generic embsim library is a git submodule with its own workspace root
 # (https://github.com/RileyMcCarthy/embsim). Its crates are consumed as path
-# dependencies (see MaDSim/Cargo.toml) — path deps across a workspace boundary
+# dependencies (see mad-catalog/Cargo.toml) — path deps across a workspace boundary
 # are fine, but the directory must be excluded so cargo doesn't treat the
 # nested workspace as part of this one.
 exclude = ["embsim"]
@@ -33,10 +32,8 @@ repository = "https://github.com/rileymccarthy/MaD"
 # (The embsim submodule centralizes its own in embsim/Cargo.toml.)
 [workspace.dependencies]
 tracing = "0.1"
-tracing-subscriber = "0.3"
 rstest = "0.26"
 serde_json = "1"
-clap = { version = "4", features = ["derive"] }
 axum = { version = "0.8", features = ["ws"] }
 tokio = { version = "1", features = ["rt-multi-thread", "net", "sync", "macros", "time"] }
 

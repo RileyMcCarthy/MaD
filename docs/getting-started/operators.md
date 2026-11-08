@@ -23,10 +23,17 @@ see [requirements](requirements.md).
 
 1. Power the machine on (see the
    [power-up sequence](../how-it-works/the-machine.md#power-up-sequence)) and
-   connect it to your computer over USB.
+   plug its **control port** into your computer over USB: the USB-serial
+   adapter on the controller's P30/P32 (header **J4** on the Edge carrier v0.3;
+   on a P2-EVAL bench, an FTDI adapter with its TX on P30 and its RX on P32).
 2. In the app, open **Connect** in the sidebar.
 3. Leave the **baud rate** at the default (**2,000,000**) and click **Connect
-   device**. Your browser shows a serial-port chooser — pick the machine's port.
+   device**. Your browser shows a serial-port chooser — pick the control port.
+
+Opening the control port never restarts the machine, so refreshing the page or
+reconnecting mid-test is safe. Don't connect to the Prop Plug on header **J1**:
+that is the programming port, the Firmware page's alone, and opening it
+restarts the machine.
 
 When connected, the status bar turns green and shows **Connected** with a
 **Responding** badge once the firmware starts streaming data:
@@ -48,31 +55,29 @@ updated.
   **Connected** but never **Responding** (a new board that has never been
   programmed), update it now, before your first test.
 
-To update:
+To update, plug a Prop Plug into the **Debug/Programming header (J1)** (or,
+on a P2-EVAL bench, its own USB) as well — that is the **programming port**,
+and its adapter resets the chip from DTR to reach the boot ROM. The control
+port has no reset line and cannot program the board.
 
-1. Check **Will flash** shows the recommended release. The app picks the
-   production build (`MaD-Firmware-<version>-P2Eval.bin`) of that
-   [GitHub release](https://github.com/RileyMcCarthy/MaD/releases) by itself;
-   there is nothing to download. That build talks to the app on J1, the same
-   port it is programmed through. MaD Control 0.4.2 and earlier label this row
-   "MadEdge" whatever the image is; the prompt in step 2 names the real file.
-2. Check the **Port** is the machine you mean to program, then click
-   **Install recommended firmware**. Check the prompt names
-   `MaD-Firmware-<version>-P2Eval.bin`, then confirm.
+1. Check **Will flash** shows the recommended release. The app fetches that
+   [GitHub release](https://github.com/RileyMcCarthy/MaD/releases)'s one
+   image, `MaD-Firmware-<version>.bin`, by itself; there is nothing to
+   download.
+2. Check the **Programming port** is the Prop Plug on J1 of the machine you
+   mean to program (the app never offers the control port it is connected
+   through), then click **Install recommended firmware**. Check the prompt
+   names `MaD-Firmware-<version>.bin`, then confirm.
 
-The status line runs through *Resetting the board…*, *Uploading… n%*, then
-*Finishing…*. The board reboots into the new firmware and **Installed** updates.
+The app stops the control session, and the status line runs through
+*Resetting the board…*, *Uploading… n%*, then *Finishing…*. The board reboots
+into the new firmware, the app reconnects on the control port, and
+**Installed** updates.
 
-Programming uses the **Debug/Programming header (J1)** and an adapter that
-drives RESn from DTR, such as a Parallax Prop Plug. On production hardware
-that's the same connection you already use for control — if the machine is
-talking to the app, it can be programmed. The isolated Raspberry Pi link
-**cannot** program the board: on the machine's P2-EC32MB module it isn't
-connected to the chip.
-
-If the machine was flashed with a `-MaDEdge.bin` image, it shows **Connected**
-but never **Responding**: that build talks on P53/P55, which the machine's
-P2-EC32MB module doesn't bring out. Flash the recommended release over J1 as above.
+A machine still on firmware 0.14 or earlier talks to the app on J1 and has
+nothing on P30/P32 until its Edge carrier v0.3 is built: keep it on 0.14
+rather than installing a newer release. See
+[the two ports](../user-guide/firmware-and-diagnostics.md#two-ports-control-and-programming).
 
 [:octicons-arrow-right-24: Full firmware guide](../user-guide/firmware-and-diagnostics.md)
 

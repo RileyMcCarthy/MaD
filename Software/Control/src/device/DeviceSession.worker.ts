@@ -48,6 +48,7 @@ import {
   MSG_WRITE_SAMPLE_PROFILE_WRITE,
   MSG_WRITE_GAUGE_LENGTH,
   MSG_WRITE_GAUGE_FORCE,
+  MSG_WRITE_REBOOT,
   MSG_WRITE_FILE_DOWNLOAD,
   MSG_SAMPLE_PERIOD_MS,
   MSG_STATE_PERIOD_MS,
@@ -762,6 +763,15 @@ export class DeviceSession {
 
   zeroLength(): void {
     this.client?.write(MSG_WRITE_GAUGE_LENGTH, new Uint8Array(0));
+  }
+
+  /**
+   * Ask the machine to reboot; resolves whether it acknowledged. It restarts
+   * shortly after its ACK, so the caller reconnects to read the new boot. The
+   * control port has no reset line: this is the only way the app restarts it.
+   */
+  async reboot(): Promise<boolean> {
+    return this.runOp(() => this.writeAndAck(MSG_WRITE_REBOOT, new Uint8Array(0), 2000), 'reboot');
   }
 
   // ── Test run: upload binary moves, then start ──

@@ -383,6 +383,11 @@ export class DeviceClient {
     return this.remote.zeroLength();
   }
 
+  /** Ask the machine to reboot; resolves whether it acknowledged. */
+  reboot(): Promise<boolean> {
+    return this.remote.reboot();
+  }
+
   runTest(params: RunTestParams): Promise<RunTestResult> {
     if (this.refuseMotion('run-test')) {
       return Promise.resolve({

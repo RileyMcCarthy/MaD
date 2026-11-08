@@ -274,7 +274,7 @@ Generates the thermostat example to C/Rust/TS, compiles (`cc -std=c11 -Wall -Wex
 
 ### c. Downstream compilation must still pass
 
-- **Firmware (C / MISRA + CERT):** generated C is **deliberately excluded from `pio check`** — `check_src_filters` lists `src/APP`, `DEV`, `IO`, `Library`, `Main` and **not** `src/Generated/` (`platformio.ini:4-9`). So MISRA C:2023 / CERT (via cppcheck) do **not** apply to generated protocol code, and you do **not** add suppressions there. Your obligation is that `pio run -e MaDEdge` / `pio test -e native_test` **compile** the generated code (it's in `build_src_filter` via `+<Generated/>`, `platformio.ini`).
+- **Firmware (C / MISRA + CERT):** generated C is **deliberately excluded from `pio check`** — `check_src_filters` lists `src/APP`, `DEV`, `IO`, `Library`, `Main` and **not** `src/Generated/` (`platformio.ini:4-9`). So MISRA C:2023 / CERT (via cppcheck) do **not** apply to generated protocol code, and you do **not** add suppressions there. Your obligation is that `pio run -e MaD` / `pio test -e native_test` **compile** the generated code (it's in `build_src_filter` via `+<Generated/>`, `platformio.ini`).
 - **Rust (SIL):** the generated `protoemb.rs` carries `#![allow(dead_code, clippy::identity_op, clippy::excessive_precision)]` (verified at `protoemb.rs:6`), so it passes `clippy` without hand-tuning. Ensure `cargo build` in `SIL/` succeeds after regeneration (`make protocol && cargo build`).
 - **TypeScript (shipped app):** the generated `protoemb.ts` must typecheck under the app's `tsc`/ESLint. After `npm run generate:proto`, run `npm run verify` in `Software/Control/` (tsc + eslint + Vitest + build).
 
@@ -291,7 +291,7 @@ CI is `.github/workflows/ci.yml`. The `changes` job path filter `protocol:` is `
 | `wasm-control-ci` | wasm-pack, `npm run generate:proto`, `npm run verify`, diagnostics e2e, schema↔domain lockstep (M12) |
 | `protoemb-ci` | `make test` in ProtoEmb (generator pytest + C/Rust/TS wire conformance + framing/runtime `cargo test`) |
 | `protocol-codegen` | generate C/TS/Rust **twice**, `diff` for byte-reproducibility; on a PR, `check_protocol_compat.py` against the base branch |
-| `sil-rust` | `make protocol` + the `MaDEdge` image + fmt/clippy/`cargo test` |
+| `sil-rust` | `make protocol` + the `MaD` image + fmt/clippy/`cargo test` |
 | `embsim-ci` | pinned embsim workspace tests |
 | `firmware-unit-tests` | `pio test -e native_test` (regenerates C via the PlatformIO pre-hook) |
 | `control-e2e-boardless` | the board-free Control e2e scenarios — **gates** |
@@ -313,5 +313,5 @@ A **ProtoEmb gitlink** move additionally runs `protoemb-pin-ci`: `make verify` (
 - [ ] Breaking change (including an appended struct field) → `protocol_version` bumped; `python3 Protocol/scripts/check_protocol_compat.py` passes.
 - [ ] `device_info` / `DeviceInfo` untouched (or only appended to).
 - [ ] Ran all three `generate.py` commands — each printed "Schema validation passed".
-- [ ] Ran `verify.sh`; firmware builds (`MaDEdge`/`native_test`), `cargo build` (SIL), `tsc`/lint (desktop) pass.
+- [ ] Ran `verify.sh`; firmware builds (`MaD`/`native_test`), `cargo build` (SIL), `tsc`/lint (desktop) pass.
 - [ ] Did **not** hand-edit generated code (it is gitignored; CI regenerates). No need to commit `Generated/` / `generated/` trees.

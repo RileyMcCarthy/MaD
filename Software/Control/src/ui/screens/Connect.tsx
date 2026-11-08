@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useStore } from '@/store/useStore';
 import { deviceClient, DEFAULT_BAUD_RATE } from '@/device/session';
+import { CONTROL_PORT_HINT, portMatchesUsbId } from '@/device/controlPort';
+import { readFlashPortPref } from '@/firmware/portPref';
 
 const BAUD_RATES = [9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600, 2000000];
 
@@ -38,6 +40,10 @@ export default function Connect() {
       ? `USB ${info.usbVendorId.toString(16)}:${(info.usbProductId ?? 0).toString(16)}`
       : `Serial device ${i + 1}`;
   };
+  // The port the Firmware page programs through, when its USB id is known:
+  // connecting there would restart the machine and find no protocol.
+  const flashPref = readFlashPortPref();
+  const isProgrammingPort = (p: SerialPort) => portMatchesUsbId(p, flashPref);
 
   const forgetPort = async (p: SerialPort) => {
     const withForget = p as SerialPort & { forget?: () => Promise<void> };
@@ -55,9 +61,12 @@ export default function Connect() {
       <h1>Connect</h1>
       <div className="panel">
         <h2>Device</h2>
+        <p className="muted" data-testid="control-port-hint">
+          {CONTROL_PORT_HINT}
+        </p>
         <p className="muted">
-          The MaD tester connects over a USB-to-serial bridge. Pick a baud rate, then connect
-          to a previously granted device or add a new one (the browser shows a chooser).
+          Pick a baud rate, then connect to a previously granted device or add a new one (the browser shows a
+          chooser).
         </p>
 
         <div className="row" style={{ marginBottom: 12 }}>
@@ -95,7 +104,15 @@ export default function Connect() {
                 <div className="muted" style={{ marginBottom: 6 }}>Previously granted devices</div>
                 {grantedPorts.map((p, i) => (
                   <div className="row" key={i} style={{ marginBottom: 6 }}>
-                    <span style={{ flex: 1 }}>{portName(p, i)}</span>
+                    <span style={{ flex: 1 }}>
+                      {portName(p, i)}
+                      {isProgrammingPort(p) && (
+                        <span className="muted" data-testid="granted-programming-port">
+                          {' '}
+                          · the Firmware page&apos;s programming port
+                        </span>
+                      )}
+                    </span>
                     <button
                       onClick={() => connect({ port: p, baud })}
                       disabled={connecting}
