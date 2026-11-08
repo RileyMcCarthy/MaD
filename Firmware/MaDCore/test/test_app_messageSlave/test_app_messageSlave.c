@@ -94,13 +94,14 @@ bool IO_fullDuplexSerial_receive(IO_fullDuplexSerial_channel_E ch, uint8_t *d, u
 
 /* ---- IO_SDCard ---- */
 static bool d_sdPushRet, d_sdOpenRet;
+static IO_SDCard_readDirectStatus_E d_readStatus;
 static app_motion_move_t d_lastSdPush;
 bool IO_SDCard_push(IO_SDCard_channel_E ch, void *d, uint32_t s) { (void)ch; memcpy(&d_lastSdPush, d, s < sizeof(d_lastSdPush) ? s : sizeof(d_lastSdPush)); return d_sdPushRet; }
 bool IO_SDCard_open(IO_SDCard_channel_E ch, const char *n, IO_SDCard_mode_E m) { (void)ch; (void)n; (void)m; return d_sdOpenRet; }
 uint32_t IO_SDCard_readDirectEx(IO_SDCard_channel_E ch, const char *fileName, void *buffer, uint32_t index, uint32_t count, IO_SDCard_readDirectStatus_E *outStatus)
 {
     (void)ch; (void)fileName; (void)buffer; (void)index; (void)count;
-    *outStatus = IO_SDCARD_READDIRECT_STATUS_OK;
+    *outStatus = d_readStatus;
     return 0;
 }
 
@@ -129,6 +130,7 @@ void setUp(void)
     memset(&d_nvramProfile, 0, sizeof(d_nvramProfile));
     d_updateCount = 0;
     d_sdPushRet = d_sdOpenRet = false;
+    d_readStatus = IO_SDCARD_READDIRECT_STATUS_OK;
     memset(&d_lastSdPush, 0, sizeof(d_lastSdPush));
     memset(&app_message_slave_data, 0, sizeof(app_message_slave_data));
     app_messageSlave_init(s_lock);
@@ -482,6 +484,92 @@ void test_machine_configuration_round_trips_through_bridge(void)
     TEST_ASSERT_EQUAL_STRING("RIG-A", out.name);
 }
 
+/* A download request: a 16-byte test name, then the first sample and how many. */
+static uint16_t download_request(uint8_t *req)
+{
+    memset(req, 0, 24U);
+    memcpy(req, "td0001", 6U);
+    const uint32_t index = 0U;
+    const uint32_t count = 4U;
+    memcpy(&req[16], &index, sizeof(index));
+    memcpy(&req[20], &count, sizeof(count));
+    return 24U;
+}
+
+void test_onQuery_file_download_short_request_is_bad_size(void)
+{
+    VIBES_TEST("bridge.download-short-request-refused",
+               "src/APP/app_messageSlave.c#ProtoEmb_onQuery_file_download",
+               "a request for a test's samples that stops before saying how many samples it wants");
+    VIBES_EXPECT("named-bad-size", "the request is refused, naming the payload size as the reason");
+    uint8_t req[24];
+    uint8_t out[64];
+    uint16_t outSize = 0U;
+    (void)download_request(req);
+    TEST_ASSERT_EQUAL_INT(PROTOEMB_RUNTIME_QUERY_DISPOSITION_NACK_BAD_SIZE, ProtoEmb_onQuery_file_download(req, 20U, out, &outSize));
+    TEST_ASSERT_EQUAL_UINT16(0U, outSize);
+}
+
+void test_onQuery_file_download_while_file_still_written_is_sd_busy(void)
+{
+    VIBES_TEST("bridge.download-while-saving-refused-as-busy",
+               "src/APP/app_messageSlave.c#ProtoEmb_onQuery_file_download",
+               "a request for a test's samples while the test is still writing its data file");
+    VIBES_EXPECT_WHY("named-sd-busy",
+                     "the request is refused, naming the data file as still being written",
+                     "the condition passes on its own, and the control app asks again for exactly this reason");
+    uint8_t req[24];
+    uint8_t out[64];
+    uint16_t outSize = 0U;
+    d_readStatus = IO_SDCARD_READDIRECT_STATUS_BUSY;
+    TEST_ASSERT_EQUAL_INT(PROTOEMB_RUNTIME_QUERY_DISPOSITION_NACK_SD_BUSY, ProtoEmb_onQuery_file_download(req, download_request(req), out, &outSize));
+}
+
+void test_onQuery_file_download_on_card_error_is_sd_read_failed(void)
+{
+    VIBES_TEST("bridge.download-card-error-refused",
+               "src/APP/app_messageSlave.c#ProtoEmb_onQuery_file_download",
+               "a request for a test's samples whose data file cannot be opened, and one whose file cannot be read at the asked sample");
+    VIBES_EXPECT("named-read-failed", "each request is refused, naming the failed read of the data file as the reason");
+    uint8_t req[24];
+    uint8_t out[64];
+    uint16_t outSize = 0U;
+    d_readStatus = IO_SDCARD_READDIRECT_STATUS_FILE_ERROR;
+    TEST_ASSERT_EQUAL_INT(PROTOEMB_RUNTIME_QUERY_DISPOSITION_NACK_SD_READ_FAILED, ProtoEmb_onQuery_file_download(req, download_request(req), out, &outSize));
+    d_readStatus = IO_SDCARD_READDIRECT_STATUS_SEEK_ERROR;
+    TEST_ASSERT_EQUAL_INT(PROTOEMB_RUNTIME_QUERY_DISPOSITION_NACK_SD_READ_FAILED, ProtoEmb_onQuery_file_download(req, download_request(req), out, &outSize));
+}
+
+void test_onWriteRaw_test_move_open_refused_is_sd_open_failed(void)
+{
+    VIBES_TEST("bridge.program-open-refused",
+               "src/APP/app_messageSlave.c#ProtoEmb_onWriteRaw_test_move",
+               "the start of a program upload, naming the program file, with the card refusing to open it");
+    VIBES_EXPECT_WHY("named-open-failed",
+                     "the upload is refused, naming the program file that could not be opened as the reason",
+                     "opening the file is the first step of every upload, so this reason tells a failed upload apart from a refused move");
+    d_sdOpenRet = false;
+    TEST_ASSERT_EQUAL_INT(PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK_SD_OPEN_FAILED, ProtoEmb_onWriteRaw_test_move((const uint8_t *)"gc0001", 6U));
+    d_sdOpenRet = true;
+    TEST_ASSERT_EQUAL_INT(PROTOEMB_RUNTIME_WRITE_DISPOSITION_ACK, ProtoEmb_onWriteRaw_test_move((const uint8_t *)"gc0001", 6U));
+}
+
+void test_program_records_to_full_card_are_sd_queue_full(void)
+{
+    VIBES_TEST("bridge.program-records-refused-on-full-card",
+               "src/APP/app_messageSlave.c#ProtoEmb_onWrite_test_waveform",
+               "a waveform and a batch of two moves offered to the card while its write queue is full");
+    VIBES_EXPECT("waveform-named-queue-full", "the waveform is refused, naming the card's full write queue as the reason");
+    VIBES_EXPECT("batch-named-queue-full", "the batch is refused, naming the card's full write queue as the reason");
+    d_sdPushRet = false;
+    ProtoEmb_WaveformMove_t wave;
+    memset(&wave, 0, sizeof(wave));
+    TEST_ASSERT_EQUAL_INT(PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK_SD_QUEUE_FULL, ProtoEmb_onWrite_test_waveform(&wave));
+    uint8_t batch[2U * PROTOEMB_MOVE_WIRE_SIZE];
+    memset(batch, 0, sizeof(batch));
+    TEST_ASSERT_EQUAL_INT(PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK_SD_QUEUE_FULL, ProtoEmb_onWriteRaw_test_move(batch, (uint16_t)sizeof(batch)));
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -500,6 +588,11 @@ int main(void)
     RUN_TEST(test_m5_onWrite_test_run_start_nack_when_rejected);
     RUN_TEST(test_onWrite_test_run_refused_with_motion_off);
     RUN_TEST(test_onWriteRaw_wrong_size_payloads_name_the_size);
+    RUN_TEST(test_onQuery_file_download_short_request_is_bad_size);
+    RUN_TEST(test_onQuery_file_download_while_file_still_written_is_sd_busy);
+    RUN_TEST(test_onQuery_file_download_on_card_error_is_sd_read_failed);
+    RUN_TEST(test_onWriteRaw_test_move_open_refused_is_sd_open_failed);
+    RUN_TEST(test_program_records_to_full_card_are_sd_queue_full);
     RUN_TEST(test_m5_onWrite_manual_move_nacks_when_busy);
     RUN_TEST(test_machine_configuration_round_trips_through_bridge);
     RUN_TEST(test_servo_gains_round_trip_through_bridge);

@@ -3592,7 +3592,7 @@ const scenarios = [
       const { browser, page, errors } = await fakeBoardPage({ firmware: { version: '0.14', protocol: null } });
       try {
         await connectFakeBoard(page);
-        await compatBanner(page).filter({ hasText: /too old/ }).waitFor({ timeout: DEVICE_WAIT_MS });
+        await compatBanner(page).and(page.locator('[data-kind="unanswered"]')).waitFor({ timeout: DEVICE_WAIT_MS });
         await pressRefusedLiveControls(page, APP_URL_HOST);
         // STOP goes through to the board as a motion disable.
         await press(page.getByTestId('estop'));
@@ -3607,12 +3607,17 @@ const scenarios = [
         await press(page.getByRole('button', { name: 'Disconnect' }));
         await page.locator('.dot.disconnected').waitFor({ timeout: DEVICE_WAIT_MS });
         await compatBanner(page).waitFor({ state: 'detached', timeout: DEVICE_WAIT_MS });
-        // Reconnect: asked again, same answer.
+        // Reconnect: asked again, same answer. The pre-handshake firmware's
+        // 3-byte refusal cannot be read from protocol 3 on, so each connection
+        // asks as many times as its retries allow (COMPAT-too-old).
         const asked = await page.evaluate(() => window.__bootRom.reads.filter((c) => c === 5).length);
         await connectFakeBoard(page);
-        await compatBanner(page).filter({ hasText: /too old/ }).waitFor({ timeout: DEVICE_WAIT_MS });
+        await compatBanner(page).and(page.locator('[data-kind="unanswered"]')).waitFor({ timeout: DEVICE_WAIT_MS });
         const askedAgain = await page.evaluate(() => window.__bootRom.reads.filter((c) => c === 5).length);
-        assert(askedAgain === asked + 1, `the protocol was asked ${askedAgain - asked} more time(s) on reconnect, expected once`);
+        assert(
+          askedAgain === 2 * asked,
+          `the protocol was asked ${askedAgain - asked} time(s) on reconnect, ${asked} on the first connection`,
+        );
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
       } finally {
         await browser.close();
@@ -3656,7 +3661,7 @@ const scenarios = [
   },
   {
     id: 'COMPAT-update-loop',
-    name: 'Firmware compat (fake board): too-old banner → local file chosen → Install recommended firmware → checksum checked → flashed → reconnected → ok',
+    name: 'Firmware compat (fake board): no-answer banner → local file chosen → Install recommended firmware → checksum checked → flashed → reconnected → ok',
     async run() {
       const { protocol } = protocolFacts();
       const IMAGE = Buffer.from(Array.from({ length: 3000 }, (_, i) => (i * 13 + 5) & 0xff));
@@ -3701,7 +3706,7 @@ const scenarios = [
         await page.evaluate(() => {
           window.__sameApp = true;
         });
-        await compatBanner(page).filter({ hasText: /too old/ }).waitFor({ timeout: DEVICE_WAIT_MS });
+        await compatBanner(page).and(page.locator('[data-kind="unanswered"]')).waitFor({ timeout: DEVICE_WAIT_MS });
         await press(page.getByTestId('update-firmware'));
         const install = page.getByTestId('install-recommended');
         await install.filter({ hasText: 'Install recommended firmware (0.15)' }).waitFor({ timeout: DEVICE_WAIT_MS });

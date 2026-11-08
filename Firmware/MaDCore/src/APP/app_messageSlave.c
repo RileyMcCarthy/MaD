@@ -279,7 +279,7 @@ ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWriteRaw_test_move(const uint8_t *
         char gcodeId[7];
         memset(gcodeId, 0, sizeof(gcodeId));
         memcpy(gcodeId, payload, payloadSize < (sizeof(gcodeId) - 1U) ? payloadSize : (sizeof(gcodeId) - 1U));
-        return IO_SDCard_open(IO_SDCARD_CHANNEL_GCODE, gcodeId, IO_SDCARD_MODE_WRITE) ? PROTOEMB_RUNTIME_WRITE_DISPOSITION_ACK : PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK;
+        return IO_SDCard_open(IO_SDCARD_CHANNEL_GCODE, gcodeId, IO_SDCARD_MODE_WRITE) ? PROTOEMB_RUNTIME_WRITE_DISPOSITION_ACK : PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK_SD_OPEN_FAILED;
     }
 
     if ((payloadSize > 0U) && ((payloadSize % PROTOEMB_MOVE_WIRE_SIZE) == 0U))
@@ -369,6 +369,12 @@ ProtoEmb_RuntimeQueryDisposition_E ProtoEmb_onQuery_file_download(const uint8_t 
                                                       readCount,
                                                       &readStatus);
 
+    if (readStatus == IO_SDCARD_READDIRECT_STATUS_BUSY)
+    {
+        /* Still open for writing: the test is logging or flushing. Transient;
+         * the app retries this one. */
+        return PROTOEMB_RUNTIME_QUERY_DISPOSITION_NACK_SD_BUSY;
+    }
     if (readStatus != IO_SDCARD_READDIRECT_STATUS_OK)
     {
         return PROTOEMB_RUNTIME_QUERY_DISPOSITION_NACK_SD_READ_FAILED;

@@ -29,7 +29,7 @@ byte `0x55`; multi-byte fields are little-endian.
 ```text
 READ request:   [0x55] [0x00] [CMD]
 WRITE request:  [0x55] [0x01] [CMD] [LEN_LO] [LEN_HI] [DATA…] [CRC8]
-NACK response:  [0x55] [0x00] [CMD]
+NACK response:  [0x55] [0x00] [CMD] [REASON]
 ACK response:   [0x55] [0x01] [CMD]
 DATA response:  [0x55] [0x02] [CMD] [LEN_LO] [LEN_HI] [DATA…] [CRC8]
 NOTIFICATION:   [0x55] [0x03] [0x00] [LEN_LO] [LEN_HI] [DATA…] [CRC8]
@@ -37,6 +37,14 @@ NOTIFICATION:   [0x55] [0x03] [0x00] [LEN_LO] [LEN_HI] [DATA…] [CRC8]
 
 - The **type byte** is direction-overloaded: `0x00` = READ / NACK, `0x01` =
   WRITE / ACK, `0x02` = DATA, `0x03` = NOTIFICATION.
+- **REASON** says why the firmware refused the request (protocol 3 on). Codes
+  below `0x20` belong to ProtoEmb's runtime (`REFUSED`, `UNKNOWN_COMMAND`,
+  `BAD_CRC`, `BAD_SIZE`, `UNAVAILABLE`); MaD's own, from `0x20`, are the
+  `nack_reasons` in `MaDProtocol.yaml`. MaD Control logs the reason's name and
+  shows its meaning in the error, for example `device NACKed command 8:
+  BAD_SIZE: The payload is not the size this command takes.` A code the app
+  does not know shows as `reason 0xNN`. Which reasons each message can return
+  is in the [protocol-messages reference](../dev/protocol-messages.md#nack-reasons).
 - **CRC8** is CRC-8/MAXIM over the payload only. The parser resynchronises by
   scanning for `0x55`; integrity rests on the CRC.
 

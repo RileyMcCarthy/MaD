@@ -488,6 +488,10 @@ nack_reasons:
     description: "The SD card has not caught up with the upload; its write queue is full."
   - name: SD_READ_FAILED
     description: "The test's data file could not be opened or read on the SD card."
+  - name: SD_BUSY
+    description: "The test's data file is still being written. Try again once the test has finished saving."
+  - name: SD_OPEN_FAILED
+    description: "The program file could not be opened for writing on the SD card."
 
 # ============================================================
 # Messages — routing table with timing
