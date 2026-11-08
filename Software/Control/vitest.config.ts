@@ -1,4 +1,4 @@
-import { defineConfig, type Plugin } from 'vitest/config';
+import { configDefaults, defineConfig, type Plugin } from 'vitest/config';
 import { fileURLToPath, URL } from 'node:url';
 import { existsSync } from 'node:fs';
 
@@ -6,7 +6,7 @@ const src = fileURLToPath(new URL('./src', import.meta.url));
 
 /**
  * The protocol core's WebAssembly glue (src/wasm) exists only after
- * `npm run build:wasm`, and the Behaviour ledger job runs the suite without
+ * `npm run build:wasm`, and `vibes collect` can run the suite without
  * it; the tests that reach it stand it in with `vi.mock`. Vitest 2 let such a
  * mock replace an import that resolved to nothing; Vitest 5 fails the import
  * first. When the glue has not been built, resolve its two imports to
@@ -24,6 +24,14 @@ function unbuiltWasmGlue(): Plugin {
   };
 }
 
+/**
+ * The Behaviour ledger takes this suite's verdicts from the CI job that already
+ * runs it, so with $VIBES_RESULTS set vitest also writes its JSON report there.
+ * Every reporter it would otherwise use stays, so the job's own output and
+ * annotations are unchanged.
+ */
+const vibesResults = process.env.VIBES_RESULTS;
+
 // Separate from vite.config.ts so the PWA plugin doesn't run during tests.
 export default defineConfig({
   plugins: [unbuiltWasmGlue()],
@@ -34,6 +42,9 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
+    ...(vibesResults === undefined || vibesResults === ''
+      ? {}
+      : { reporters: [...configDefaults.reporters, 'json'], outputFile: { json: vibesResults } }),
     include: ['src/**/*.test.ts', 'tools/**/*.test.ts', 'e2e/**/*.test.ts'],
     coverage: {
       // v8 here; the e2e run reports istanbul-shaped data from the browser.

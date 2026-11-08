@@ -3,6 +3,8 @@ import { useStore } from '@/store/useStore';
 import { MachineConfiguration, NotificationType } from '@/domain';
 import NumberField from '@/ui/components/NumberField';
 import MotorCalibrationPanel from '@/ui/components/MotorCalibrationPanel';
+import ForceZeroPanel from '@/ui/components/ForceZeroPanel';
+import LoadCellSensitivityPanel from '@/ui/components/LoadCellSensitivityPanel';
 import { useSavedFlash, useUnsavedWork } from '@/ui/useUnsavedWork';
 
 const NUMERIC_FIELDS: Array<keyof MachineConfiguration> = [
@@ -67,17 +69,69 @@ export default function Config({ embedded = false }: { embedded?: boolean }) {
     }
   };
 
-  // `embedded` → an <h2> section within a page; standalone → its own <h1> page.
+  // Motor calibration judges the steps/mm being edited above, against the profile saved on the machine.
+  const motor = draft && (
+    <div className="panel">
+      <h2>Motor calibration</h2>
+      <MotorCalibrationPanel
+        profile={{
+          encoderStepsPerMM: draft['Encoder (step/mm)'],
+          servoStepsPerMM: draft['Servo (step/mm)'],
+        }}
+        saved={{
+          encoderStepsPerMM: config?.['Encoder (step/mm)'] ?? 0,
+          servoStepsPerMM: config?.['Servo (step/mm)'] ?? 0,
+          maxPositionMm: config?.['Position Max (mm)'] ?? 0,
+          maxVelocityMmPerS: config?.['Velocity Max (mm/s)'] ?? 0,
+          maxAccelMmPerS2: config?.['Acceleration Max (mm/s^2)'] ?? 0,
+          servoKp: config?.['Servo Kp (1/s)'] ?? 0,
+          servoKi: config?.['Servo Ki (1/s^2)'] ?? 0,
+        }}
+      />
+    </div>
+  );
+
+  const savedLoadCell = {
+    capacityN: config?.['Load Cell Capacity (N)'] ?? 0,
+    sensitivityMvV: config?.['Load Cell Sensitivity (mV/V)'] ?? 0,
+    zeroBalanceMvV: config?.['Load Cell Zero Balance (mV/V)'] ?? 0,
+  };
+
+  // Load cell calibration is its own panel, but edits the same draft: the zero
+  // it reads goes into the profile here and is written with it.
+  const loadCell = draft && (
+    <div className="panel">
+      <h2>Load cell calibration</h2>
+      <ForceZeroPanel
+        saved={savedLoadCell}
+        onUseZero={(zero) => setDraft((d) => (d ? { ...d, 'Load Cell Zero Balance (mV/V)': zero } : d))}
+      />
+      <LoadCellSensitivityPanel
+        saved={savedLoadCell}
+        onUseSensitivity={(sensitivity) =>
+          setDraft((d) => (d ? { ...d, 'Load Cell Sensitivity (mV/V)': sensitivity } : d))
+        }
+      />
+    </div>
+  );
+
+  // `embedded` → <h2> sections within a page; standalone → its own <h1> page.
   const wrap = (panel: React.ReactNode) =>
     embedded ? (
-      <div className="panel">
-        <h2>Machine configuration</h2>
-        {panel}
-      </div>
+      <>
+        <div className="panel">
+          <h2>Machine configuration</h2>
+          {panel}
+        </div>
+        {connected && motor}
+        {connected && loadCell}
+      </>
     ) : (
       <div>
         <h1>Machine configuration</h1>
         <div className="panel">{panel}</div>
+        {connected && motor}
+        {connected && loadCell}
       </div>
     );
 
@@ -144,21 +198,6 @@ export default function Config({ embedded = false }: { embedded?: boolean }) {
               </select>
             </label>
           </div>
-          <MotorCalibrationPanel
-            profile={{
-              encoderStepsPerMM: draft['Encoder (step/mm)'],
-              servoStepsPerMM: draft['Servo (step/mm)'],
-            }}
-            saved={{
-              encoderStepsPerMM: config?.['Encoder (step/mm)'] ?? 0,
-              servoStepsPerMM: config?.['Servo (step/mm)'] ?? 0,
-              maxPositionMm: config?.['Position Max (mm)'] ?? 0,
-              maxVelocityMmPerS: config?.['Velocity Max (mm/s)'] ?? 0,
-              maxAccelMmPerS2: config?.['Acceleration Max (mm/s^2)'] ?? 0,
-              servoKp: config?.['Servo Kp (1/s)'] ?? 0,
-              servoKi: config?.['Servo Ki (1/s^2)'] ?? 0,
-            }}
-          />
         </>
       ) : (
         <p className="muted">Reading configuration…</p>

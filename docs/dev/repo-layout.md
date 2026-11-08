@@ -20,7 +20,10 @@ MaD/
 │   ├── embsim/              ⎘ submodule → github.com/RileyMcCarthy/embsim
 │   │                        (core, peripherals, models, runtime, p2, tools)
 │   ├── models/              MaD-specific physics (gantry, sample, strain gauge)
-│   ├── MaDSim/              The mad-emulator binary (entry + machine wiring)
+│   ├── p2core/              The Propeller 2 instruction-set simulator (ISS)
+│   ├── p2iss/               The ISS as an embsim component, in the P2 package
+│   ├── mad-catalog/         MaD's embsim kinds; mad*.toml are the machine's projects
+│   ├── mad-runner/          The embsim command over MaD's kinds
 │   └── test-fixtures/       Sample/motion profiles
 ├── Hardware/                KiCad PCBs (EdgeBoard, DS2Addon)
 ├── docs/  +  mkdocs.yml     This documentation site

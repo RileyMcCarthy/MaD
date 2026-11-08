@@ -297,6 +297,36 @@ export async function press(locator, { timeout = 15_000 } = {}) {
 }
 
 /**
+ * Turn motion on from Live, once the machine can take the request.
+ *
+ * A known machine state is not that moment. A booting board answers the
+ * protocol about 27 ms of board time after its boot line, and for about the
+ * next 100 ms every state it reports carries a fault: COG until the cog
+ * manager's next 100 ms tick marks the cogs it has just started as running
+ * (Firmware/MaDCore/src/DEV/dev_cogManager.c, BOOT to RUNNING, and the main
+ * loop in Main/MaD.c), then FORCE_GAUGE_COMMUNICATION until the gauge's
+ * first read; on the ISS the last faulted answer is about 130 ms after the
+ * boot line (measured). Live offers a faulted machine "Disable motion"
+ * (src/domain/motionControl.ts), and the app reads the machine's state once
+ * a second, so a connect whose first state lands in that window shows
+ * "Disable motion" for a second before it offers "Enable motion". A step
+ * that looked for "Enable motion" once found none then, pressed nothing,
+ * and waited for a "Motion: enabled" nobody had asked for. So this waits
+ * for one of the two states it can act on, motion already on or "Enable
+ * motion" offered, and presses only the second. Each wait has its own
+ * ceiling on the page's clock in board mode: the device budget for the two
+ * state waits, and press()'s own for the click between them.
+ * e2e/enableMotion.test.ts holds it to a booting machine.
+ */
+export async function enableMotion(page) {
+  const enable = page.getByRole('button', { name: 'Enable motion' });
+  const enabled = page.getByText('Motion: enabled');
+  await enable.or(enabled).first().waitFor({ timeout: DEVICE_WAIT_MS });
+  if (await enable.count()) await press(enable);
+  await enabled.waitFor({ timeout: DEVICE_WAIT_MS });
+}
+
+/**
  * Drop the link the app is using. The cable stays out until
  * `restoreLink()` (`clickReconnect` in run-all puts it back first).
  *
@@ -741,26 +771,11 @@ export function setCurrentScenario(id) {
 }
 
 /**
- * Which board the suite is attached to (SIL/scripts/board-route.sh sets it):
- *
- *   - `project`, the default: the machine's project, `embsim run
- *     mad-cosim.toml` (`make e2e-emulator`): the carrier and the module as
- *     drawn, the production firmware off the module's flash, the host on J1;
- *   - `emulator`: `mad-emulator --chrome`, the debug firmware on the bare
- *     chip, the host on P30/P32. No make target runs it since SERVO-stall
- *     moved onto mad-hard-stop-cosim.toml (MaD #298); it retires with
- *     mad-emulator.
- */
-export const BOARD_ROUTE = process.env.E2E_BOARD_ROUTE || 'project';
-
-/**
  * The USB ids of the board's port, `VVVV:PPPP` in hex. The project's
  * `chrome-cdp` names them (SIL/mad-cosim.toml: 0403:6015, an FTDI FT231X,
- * the chip in the Prop Plug on J1); `mad-emulator --chrome` reports an
- * FT232R's, 0403:6001, unless `--usb-product-id` says otherwise.
+ * the chip in the Prop Plug on J1).
  */
-export const PORT_USB =
-  process.env.E2E_PORT_USB || (BOARD_ROUTE === 'emulator' ? '0403:6001' : '0403:6015');
+export const PORT_USB = process.env.E2E_PORT_USB || '0403:6015';
 
 /**
  * `PORT_USB` as the Connect screen labels the port: "USB 403:6015", the ids
@@ -834,9 +849,9 @@ export async function connectToSil(page) {
   // First point at which the app is loaded and can take a marker.
   if (currentScenario !== null) await markAppLog(page, `scenario ${currentScenario}`);
   if (BOARD) {
-    // The emulator grants the port to every origin (`--granted`, as Chrome's
-    // SerialAllowUsbDevicesForUrls policy would), so the Connect screen
-    // lists it as granted.
+    // The project's chrome-cdp grants the port to every origin (its
+    // `granted = true`, as Chrome's SerialAllowUsbDevicesForUrls policy
+    // would), so the Connect screen lists it as granted.
     await press(boardGrantedPort(page), { timeout: 10_000 });
   } else {
     // The primary button (testid connect-device) prompts requestPort() → our fake.
@@ -949,7 +964,7 @@ export function installFakeBootRom(options = 1) {
   } = typeof options === 'number' ? { ports: options } : options;
   const CHECKSUM_MAGIC = 0x706f7250;
   const state = {
-    reset: 0, image: [], finished: false, ok: null, dtr: null, bytesIn: 0, replies: 0, checksum: null,
+    opens: 0, reset: 0, image: [], finished: false, ok: null, dtr: null, bytesIn: 0, replies: 0, checksum: null,
     finishedAt: null, closedAt: null, firmware, reads: [], writes: [], motionEnabled: false,
   };
   window.__bootRom = state;
@@ -1111,6 +1126,7 @@ export function installFakeBootRom(options = 1) {
     let writable;
     return {
       async open() {
+        state.opens += 1;
         readable = new ReadableStream({
           start(c) {
             controller = c;

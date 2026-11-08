@@ -19,9 +19,10 @@
 //! Plasticity/yield, viscoelasticity, necking, and fracture are not modeled
 //! — the model stays linear to any extension.
 //!
-//! Parameter sources: material presets and per-scenario stiffness live in
-//! the system description (`MaDSim/src/wiring.rs`); modulus values are
-//! textbook nominals for the preset materials, not measurements.
+//! Parameter sources: the sample presets and their stiffness live in the
+//! machine that configures the sample (`SamplePreset` in
+//! `SIL/mad-catalog/src/machine.rs`); modulus values are textbook nominals
+//! for the preset materials, not measurements.
 //!
 //! Has no knowledge of MCU peripherals or drivers.
 

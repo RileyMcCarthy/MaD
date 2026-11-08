@@ -7,7 +7,7 @@ description: How to write and word Vibes behaviour declarations when adding or c
 
 A test declares the **condition** it sets up once, then one or more
 **expectations** for that condition. Each expectation is its own row in
-`behaviours.jsonl`, its own `BH-` number, and its own line in the PR report.
+`behaviours.jsonl` and its own line in the PR report.
 PRs are reviewed from the **diff of that ledger** — added / respecified /
 removed / stopped holding. The reader has never opened the code. Full guide: `docs/coding-guidelines/vibes-behaviours.md`.
 The tool is a submodule at `Vibes/`; its own rules are `Vibes/bindings/CLAIMS.md`
@@ -15,12 +15,12 @@ and its wire contract `Vibes/bindings/SCHEMA.md`. Tool changes go upstream first
 
 ```
 - **When** a sample 2 mm by 1 mm, with a 100 N reading after 1 mm of extension
-  - stress is 50 megapascals `BH-10`
-  - strain is 10 percent `BH-8`
+  - stress is 50 megapascals
+  - strain is 10 percent
 ```
 
 `given` and `then` are written as separate strings but read as ONE line, so
-**render a claim before you commit it** — `vibes preview` (rule 16) prints that
+**render a claim before you commit it** — `vibes preview` (rule 15) prints that
 line without running a suite.
 
 ## The non-negotiables
@@ -113,30 +113,20 @@ line without running a suite.
    Test it: cover `given` and read `then`. Then cover `then` and read `given`.
    If each predicts the other, there is no claim.
 
-10. **Cite an expectation as `BH-42`, never renumber by hand.** The collector
-   assigns the number on first collection, and carries it unchanged once the
-   PR merges; it lives in `behaviours.jsonl` and `behaviours.next`. Until then
-   it is provisional — another open PR may take the same one. After every
-   merge of `main` (and whenever the `Behaviour numbers settled` check fails),
-   fetch first so `origin/main` is current, then run
-   `node Vibes/bin/vibes.mjs renumber --base origin/main` and fix any citation
-   it reports moving. Do NOT settle a `behaviours.next` conflict by keeping the
-   larger side by hand: both branches' rows would end up sharing numbers.
-
-11. **`id` is stable identity — reword freely, never rename casually.**
+10. **`id` is stable identity — reword freely, never rename casually.**
    `area.claim-in-brief` kebab-case (e.g. `gantry.slack-consumed-before-extension`).
    Same id + new wording renders as *respecified* (good, reviewable).
    New id renders as removed + added (a lie, if it's the same behaviour).
 
-12. **Declare on ENTRY.** In C the macro is the FIRST statement of the test
+11. **Declare on ENTRY.** In C the macro is the FIRST statement of the test
    body; nothing checks this for you, and a crash before it makes the
    behaviour read as deleted. TS/Rust: call `behaviour(...)` first thing.
 
-13. **One test, one condition.** If a test sets up two genuinely different
+12. **One test, one condition.** If a test sets up two genuinely different
    conditions, it is two tests. Never self-report status — pass/fail joins from
    the runner, and every expectation of a test shares that test's verdict.
 
-14. **The report supplies the frame — `given` finishes its sentence.** The
+13. **The report supplies the frame — `given` finishes its sentence.** The
    renderer prints `**When** <given>` and nests the expectations under it, so
    `given` names a SITUATION and must read as one on the first pass. Each half
    of this claim passed every rule above; composed, it has no main clause:
@@ -151,7 +141,7 @@ line without running a suite.
    `-ing` form, a relative clause, or a finite verb ("the driver **runs** a
    waveform", not "a waveform **run** by the driver").
 
-15. **An expectation is an OUTCOME, not a step.** If the sentence describes what
+14. **An expectation is an OUTCOME, not a step.** If the sentence describes what
    the code does on its way to the result, it is a `why` at most.
    - BAD:  `the leftover is flushed before the configuration read-back`
    - GOOD: `the start completes and the converter is converting`
@@ -159,7 +149,7 @@ line without running a suite.
    this held? If the only way to know is to watch the code run, it is not an
    expectation.
 
-16. **Render it and read it — while writing, not after.** Neither command runs
+15. **Render it and read it — while writing, not after.** Neither command runs
    a suite:
    ```bash
    node Vibes/bin/vibes.mjs preview --given "<given>" --then "<then>" [--then "<then2>"] [--why "<why>"]
@@ -177,8 +167,12 @@ line without running a suite.
    errors. In TS the test title is `<given> [<id>]`, so rewording a `given` also
    changes that row's `test` field.
 
-17. **After changing behaviours:** `node Vibes/bin/vibes.mjs collect --write`
-   and commit `behaviours.jsonl` alongside the change.
+16. **After changing behaviours:** `node Vibes/bin/vibes.mjs collect --write`
+   and commit `behaviours.jsonl` alongside the change. CI does not run
+   `collect`: the `Behaviour ledger` job reads what the test jobs declared while
+   they ran. So a new Rust test target that declares behaviours also goes in
+   `SIL/vibes.suite.json`'s `cmd` (which lists targets; `sil-rust` runs the whole
+   workspace), or local `collect` misses rows that CI reports as new.
 
 ## Snippets
 

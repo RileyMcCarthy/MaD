@@ -139,14 +139,14 @@ exempt from the CI-regeneration rule, which applies to boards we author in
 
 **The machine uses the EC32MB variant**, and auditing the EdgeBoard netlist
 against its reservation table (P40–P57 = PSRAM) already produced a real
-finding before any engine exists: the EdgeBoard wires reserved pins — isolator
-IC2's outputs drive P52/P53 and its inputs take P54/P55 (the RPI serial path,
-matching `HW_PIN_RPI_RX/TX` = 53/55 as they then were), and header J24 fans
+finding before any engine exists: the pre-v0.3 EdgeBoard netlist wired reserved
+pins — isolator IC2's outputs drove P52/P53 and its inputs took P54/P55 (the RPI serial path,
+matching `HW_PIN_RPI_RX/TX` = 53/55 as they then were), and header J24 fanned
 out P40–P47. None of
-these lines reaches the chip: the EC32MB has no card-edge finger for P40–P57
+these lines reached the chip: the EC32MB has no card-edge finger for P40–P57
 (fingers 55, 56, 59–67 and 69–77 are no-connects; read: the header of embsim's
 `boards/netlists/p2_ec32mb.net`, transcribed from Parallax's Rev B schematic).
-So a Pi on J4 cannot talk to the firmware, and the debug build's MAIN channel
+So a Pi on J4 could not talk to the firmware, and the debug build's MAIN channel
 on P53/P55 ran on the PSRAM's own pins: a host on J4 received nothing
 (measured on #278's first round, before the route below). The phase-3 tier-1
 gate is that the reservation table reproduces exactly this finding.
@@ -162,8 +162,8 @@ socket's fingers 50 and 49 (`mad_edge.net`). `SIL/mad.toml` and the other
 project files put the host there, the production image in the module's flash, and
 nothing on J4; `SIL/mad-catalog/tests/mad.rs` holds the protocol round trip
 over J1. The debug build stays where a run needs its log on P62 or its MAIN
-channel on a bare chip's P30/P32 (P53/P55 before the move below;
-`mad-emulator`, the `p2core`/`p2iss` suites, `mad-catalog/tests/boot.rs`).
+channel on a bare chip's P30/P32 (P53/P55 before the move below; the
+`p2core`/`p2iss` suites, `mad-catalog/tests/boot.rs`).
 Two other ways out were not taken then: a plain P2-EC module in J3 (the
 socket symbol names it; embsim has no `p2-ec` kind or netlist), and moving
 the debug build's MAIN channel, which needs a carrier change too, since J4's
@@ -174,7 +174,7 @@ v0.3 puts IC2's carrier side on P29–P32, pins the EC32MB brings to fingers
 11–8 (read: `p2_ec32mb.net`), and the debug build's MAIN channel follows:
 P30 receives from IC2's OUTC (pin 5) and P32 drives its INA (pin 3) (read:
 the v0.3 netlist exported from `Hardware/EdgeBoard/KiCad`; `HW_pins.h`).
-`mad-emulator` and the `p2core`/`p2iss` suites put the host on P30/P32. The
+The `p2core`/`p2iss` suites put the host on P30/P32. The
 SIL's `mad_edge.net` was re-exported from the v0.3 files on 2026-11-01
 (KiCad 9's `kicad-cli`), so the project files' board has IC2 on P29–P32 as
 well; what this section finds about J4 above held for the carrier before
@@ -189,7 +189,7 @@ above); the single-port production build is the
 release's `-P2Eval.bin`, which the app flashes only as a local file. The
 bench has an FT232R attached, USB `0403:6001`, beside the P2-EVAL's FT231X
 (measured: `ioreg`, 2026-10-21; what the FT232R is wired to is not known);
-`0403:6001` is the id `mad-emulator` gives its host. If the machine runs the
+`0403:6001` is the id the retired `mad-emulator` gave its host. If the machine runs the
 MaDEdge image, the route needs revisiting: a released image's protocol reaches
 the chip only on a module with fingers for P53/P55, such as the plain P2-EC
 (inferred), and one built since the move reaches it on a v0.3 carrier's J4. If it runs the production image, the app's default asset would

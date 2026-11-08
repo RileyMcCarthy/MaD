@@ -56,7 +56,7 @@ When risk is higher than the PR's tests cover, **suggest concrete follow-up test
 author or coding agent can implement later. Be specific:
 
 - What to test (scenario, inputs, expected outcome)
-- Where it should live (Unity path, Vitest file, `Software/Control/e2e/`, `mad-emulator` scenario)
+- Where it should live (Unity path, Vitest file, `Software/Control/e2e/` scenario on a project file)
 - Why it matters (regression class: motion safety, wire compatibility, sample path, etc.)
 
 Phrase these so a human can click **Fix with Copilot** / mention `@copilot` to open a

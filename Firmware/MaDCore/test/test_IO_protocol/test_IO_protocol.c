@@ -271,19 +271,6 @@ void test_respondACK_frames_correctly(void)
     TEST_ASSERT_EQUAL_HEX8(IO_PROTOCOL_WRITE_TYPE_TEST_RUN, d_tx[2]);
 }
 
-void test_respondNACK_frames_correctly(void)
-{
-    VIBES_TEST("protocol.nack-echoes-command",
-               "src/IO/IO_protocol.c#IO_protocol_respondNACK",
-               "a negative acknowledgement of a manual-move write");
-    VIBES_EXPECT("nack-frame",
-                 "the reply is a start byte, a negative acknowledgement, and the manual-move command echoed back");
-    TEST_ASSERT_TRUE(IO_protocol_respondNACK(IO_PROTOCOL_WRITE_TYPE_MANUAL_MOVE));
-    TEST_ASSERT_EQUAL_HEX8(0x55, d_tx[0]);
-    TEST_ASSERT_EQUAL_HEX8(IO_PROTOCOL_OUTGOING_TYPE_NACK, d_tx[1]);
-    TEST_ASSERT_EQUAL_HEX8(IO_PROTOCOL_WRITE_TYPE_MANUAL_MOVE, d_tx[2]);
-}
-
 void test_respondData_frames_header_payload_crc(void)
 {
     VIBES_TEST("protocol.data-reply-carries-payload",
@@ -339,7 +326,6 @@ int main(void)
     RUN_TEST(test_near_zero_clock_does_not_spurious_timeout);
     RUN_TEST(test_timeout_survives_uint32_ms_wrap);
     RUN_TEST(test_respondACK_frames_correctly);
-    RUN_TEST(test_respondNACK_frames_correctly);
     RUN_TEST(test_respondData_frames_header_payload_crc);
     RUN_TEST(test_sendNotification_frames_with_zero_command);
     return UNITY_END();

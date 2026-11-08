@@ -237,6 +237,13 @@ impl TxPace {
 }
 
 /// The transmit half of one link, once the guest has configured its pin.
+/// The slowest transition pin the package's bus clocks edge by edge
+/// ([`p2core::PinBus::clocks_synchronously`]): one transition every 16
+/// clocks, 5 MHz at the firmware's 160 MHz. loadp2's flash clock makes one
+/// a clock; a step/direction drive's step train toggles far slower, and is
+/// carried as a rate ([`crate::pulse`]).
+const SYNC_CLOCK_MAX_TRANSITION_CLOCKS: u32 = 16;
+
 #[derive(Debug)]
 struct TxLink {
     bridge: Arc<SerialLevelBridge>,
@@ -689,6 +696,52 @@ impl PinBus for NetPins {
             self.inner.dir_out_changed(cog, reg, value);
             self.publish_levels();
         }
+    }
+
+    fn defers_streamer(&self) -> bool {
+        // Inside the package every edge is a change at its own instant, and
+        // a flash's answer to one edge is on its net by the next.
+        self.core.is_some()
+    }
+
+    fn stream_burst_started(&mut self, clock_pin: u8) {
+        self.core_op(package::CoreOp::StreamStart { clock_pin });
+    }
+
+    fn clocks_synchronously(&self, pin: u8) -> bool {
+        // By speed: a transition pin toggling every
+        // `SYNC_CLOCK_MAX_TRANSITION_CLOCKS` clocks or faster is a bus clock,
+        // whose every edge something samples (loadp2 runs the flash's clock
+        // at one clock a transition); slower, it is a step train, a rate on
+        // its net (the firmware's step output, whose transitions are 80
+        // clocks apart and more).
+        self.core.is_some()
+            && self.inner.pins[usize::from(pin & 63)].x & 0xFFFF <= SYNC_CLOCK_MAX_TRANSITION_CLOCKS
+    }
+
+    fn pin_cfg(&self, pin: u8) -> u32 {
+        // The streamer asks which mode a pin is in to find its clock; only
+        // inside the package does it hand the bus its transfers
+        // (`defers_streamer`), so only there does the answer matter.
+        if self.core.is_some() {
+            self.inner.pins[usize::from(pin & 63)].cfg
+        } else {
+            0
+        }
+    }
+
+    fn set_pad(&mut self, pin: u8, high: bool) {
+        self.inner.set_pad(pin, high);
+        self.core_note_pads(1u64 << (pin & 63));
+    }
+
+    fn toggle_pad(&mut self, pin: u8) {
+        self.inner.toggle_pad(pin);
+        self.core_note_pads(1u64 << (pin & 63));
+    }
+
+    fn pad_level(&self, pin: u8) -> bool {
+        self.inner.pad_level(pin)
     }
 
     fn wrpin(&mut self, pin: u8, cfg: u32) {
@@ -1147,6 +1200,27 @@ impl P2IssHandle {
             .trace
             .clone()
             .unwrap_or_default()
+    }
+
+    /// Each cog's state, for diagnosis: `(cog, running, pc, hub FIFO
+    /// pointer)`.
+    pub fn cogs(&self) -> Vec<(usize, bool, u32, u32)> {
+        self.machine
+            .lock()
+            .expect("machine never poisoned")
+            .cogs
+            .iter()
+            .enumerate()
+            .map(|(i, c)| (i, c.running, c.pc, c.fifo_addr))
+            .collect()
+    }
+
+    /// `len` bytes of hub RAM from `addr`, for diagnosis.
+    pub fn hub_bytes(&self, addr: usize, len: usize) -> Vec<u8> {
+        let machine = self.machine.lock().expect("machine never poisoned");
+        (addr..addr + len)
+            .map(|a| machine.hub[a % machine.hub.len()])
+            .collect()
     }
 
     /// Cogs currently running.
