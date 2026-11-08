@@ -4,17 +4,18 @@
 //!
 //! The module of `ec32mb_flash_boot.rs` — the vendor netlist, powered from
 //! its `J203` fingers, `S301` set to boot from flash, [`P2IssCore`] inside
-//! [`P2Package`] — with the production firmware (`pio run -e P2Eval`) in
-//! its flash, the firmware's FAT16 card in its socket, and a host on the two
-//! fingers the production build's protocol uses: `P63` (`J203` pin 49) into
-//! the chip and `P62` (pin 50) out of it, the pair the Edge carrier's `J1`
-//! carries. This is the route the project files run (`SIL/mad.toml`).
+//! [`P2Package`] — with the firmware (`pio run -e MaD`) in its flash, the
+//! firmware's FAT16 card in its socket, and a host on the two fingers its
+//! protocol uses: `P30` (`J203` pin 10) into the chip and `P32` (pin 8) out
+//! of it, the pair the Edge carrier's isolator `IC2` takes to its control
+//! port `J4`. This is the route the flash-boot project files run
+//! (`SIL/mad.toml`), less the isolator.
 //!
 //! The protocol's receive pin holds ONE byte, and the next byte overwrites
 //! it 800 clocks later at 2 Mbaud and 160 MHz. A firmware that polls the pin
 //! leaves it unread for longer than that between two receive calls, and for
-//! a byte time per byte it sends: the production build sends through
-//! flexspin's built-in serial, which waits out every byte's frame. So the
+//! a byte time per byte it sends, if it sends through a transmitter that
+//! waits out every byte's frame. So the
 //! host keeps eight READ_SAMPLE requests in flight, each sent at a random
 //! moment, many of them while the firmware is still sending replies, and
 //! requires a reply to every request and no byte overwritten on the pin.
@@ -31,7 +32,7 @@
 //! then starts the burst, from which it counts. Deterministic: every instant
 //! is the board's, and the delays come from a fixed seed.
 //!
-//! `MAD_P2_PRODUCTION_IMAGE=path` runs it against another production build.
+//! `MAD_P2_IMAGE=path` runs it against another build.
 //! Skipped when the image is absent (`MAD_REQUIRE_P2_IMAGE` makes that a
 //! failure).
 
@@ -54,8 +55,8 @@ use p2iss::{sdimage, P2IssCore, P2IssHandle};
 use protoemb_framing::{build_read_frame, FrameParser, ParsedFrame};
 use vibes_behaviour::{behaviour, expect, Test};
 
-/// The production build's protocol pins (`HW_pins.h`, `HAL_serial_config.c`).
-const RX_PIN: u8 = 63;
+/// The firmware's protocol receive pin (`HW_pins.h`, `HW_PIN_MAIN_RX`).
+const RX_PIN: u8 = 30;
 const BAUD: u32 = 2_000_000;
 
 /// The START instant: the module's reset releases at 2.5 ms (the AP62301
@@ -113,23 +114,22 @@ fn rom(name: &str) -> Option<Vec<u8>> {
     .ok()
 }
 
-/// The production program: `MAD_P2_PRODUCTION_IMAGE` names a copy kept out
-/// of `.pio` (the CI job's) or another build, else the build's own.
+/// The program: `MAD_P2_IMAGE` names a copy kept out of `.pio` (the CI
+/// job's) or another build, else the build's own.
 fn image_path() -> PathBuf {
-    let p = std::env::var_os("MAD_P2_PRODUCTION_IMAGE")
+    let p = std::env::var_os("MAD_P2_IMAGE")
         .filter(|p| !p.is_empty())
         .map_or_else(
             || {
                 PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                    .join("../../Firmware/MaDCore/.pio/build/P2Eval/program")
+                    .join("../../Firmware/MaDCore/.pio/build/MaD/program")
             },
             PathBuf::from,
         );
     if !p.exists() && std::env::var_os("MAD_REQUIRE_P2_IMAGE").is_some() {
         panic!(
-            "MAD_REQUIRE_P2_IMAGE is set but the production P2 image is missing at {}. \
-             Build it with `make p2image-production` (or `cd Firmware/MaDCore && pio run -e \
-             P2Eval`).",
+            "MAD_REQUIRE_P2_IMAGE is set but the P2 image is missing at {}. \
+             Build it with `make p2image` (or `cd Firmware/MaDCore && pio run -e MaD`).",
             p.display()
         );
     }
@@ -429,8 +429,8 @@ fn every_read_sample_request_is_answered_on_the_module() {
 
     let Ok(program) = std::fs::read(image_path()) else {
         eprintln!(
-            "\n*** SKIPPED: {} needs the production P2 image at\n***   {}\n*** Build it with \
-             `make p2image-production`.\n*** This test asserted NOTHING.\n",
+            "\n*** SKIPPED: {} needs the P2 image at\n***   {}\n*** Build it with \
+             `make p2image`.\n*** This test asserted NOTHING.\n",
             module_path!(),
             image_path().display()
         );
@@ -476,11 +476,11 @@ fn every_read_sample_request_is_answered_on_the_module() {
         .component("HOST", Box::new(host))
         .harness(
             Harness::new()
-                // P63/PRG_DBG_RXD and P62/PRG_DBG_TXD, the module's
-                // programming-serial fingers.
-                .connect_str("HOST.TX", "EC32.J203.49")
+                // P30 and P32, the firmware's protocol fingers
+                // (`p2_ec32mb.net`: 10 and 8).
+                .connect_str("HOST.TX", "EC32.J203.10")
                 .expect("the receive finger exists")
-                .connect_str("EC32.J203.50", "HOST.RX")
+                .connect_str("EC32.J203.8", "HOST.RX")
                 .expect("the transmit finger exists")
                 // 5 V into the two `5V` fingers, 0 V into the three `GND`
                 // fingers (`p2_ec32mb.net`: 41/42 and 43/44/45).

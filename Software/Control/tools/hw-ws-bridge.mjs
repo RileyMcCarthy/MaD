@@ -30,8 +30,9 @@
 import { WebSocketServer } from 'ws';
 import { SerialPort } from 'serialport';
 
-// The default is one bench's P53/P55 adapter, which only a `-MaDEdge.bin`
-// image talks on. The production build talks on J1: set MAD_SERIAL to that adapter.
+// The default is the P2-EVAL bench's control-port adapter (FTDI A5069RR4, its
+// TX on P30 and RX on P32), where the firmware talks. To flash through the
+// bridge, set MAD_SERIAL to the programming port's adapter (J1 / P2-EVAL USB).
 const DEV = process.env.MAD_SERIAL || '/dev/cu.usbserial-A5069RR4';
 const BAUD = Number(process.env.MAD_BAUD || 2000000);
 const PORT = Number(process.env.PORT || 9999);

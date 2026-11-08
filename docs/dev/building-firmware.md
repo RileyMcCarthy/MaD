@@ -22,20 +22,28 @@ commands run from `Firmware/MaDCore/`.
 ```bash
 cd Firmware/MaDCore
 
-pio run -e P2Eval              # production hardware build
-pio run -e MaDEdge       # debug serial; the p2core/p2iss suites execute this image
-pio run -e P2Eval -t upload   # flash a connected board
-pio test -e native_test           # Unity unit tests on the host, against a mock HAL
-pio check                         # MISRA C:2023 + CERT static analysis
+pio run -e MaD                 # the firmware; hardware and the SIL run this image
+pio run -e MaD -t upload       # flash a connected board through J1
+pio test -e native_test        # Unity unit tests on the host, against a mock HAL
+pio check -e MaD               # MISRA C:2023 + CERT static analysis
 ```
+
+The image is `.pio/build/MaD/program`.
 
 ## Environments
 
 | Environment | Compiler | Purpose |
 |---|---|---|
-| `P2Eval` | FlexC | Production hardware build: the protocol on P62/P63 (header J1) at 2,000,000 baud. The machine runs this build. Released as `MaD-Firmware-<version>-P2Eval.bin`; MaD Control flashes this image by default. |
-| `MaDEdge` | FlexC | Hardware build with `ENABLE_DEBUG_SERIAL=1`: the protocol on P30/P32, a debug log on P62/P63. P30/P32 are the Edge carrier's Raspberry Pi link (J4, through IC2) from carrier v0.3 on; earlier carriers wire IC2 to P52–P55, which the machine's P2-EC32MB does not bring out, so on those this build is for a bench with its own adapter on P30/P32. Images built before the pin move have the protocol on P53/P55. Released as `MaD-Firmware-<version>-MaDEdge.bin`. The `p2core`/`p2iss` suites execute this image; the [SIL emulator](../how-it-works/sil-emulator.md)'s project files boot `P2Eval` off the module's flash. |
+| `MaD` | FlexC | The firmware, one build for every board. The protocol (MAIN channel) is on the secondary serial, P30 (P2 RX) / P32 (P2 TX), at 2,000,000 baud: the Edge carrier v0.3's isolated link (J4, through IC2), or on a P2-EVAL bench an FTDI adapter with its TX on P30 and its RX on P32. P62/P63 (header J1, or the P2-EVAL's own USB) is for programming only (the ROM's serial loader, reset by the adapter's DTR) and carries the debug log. Released as `MaD-Firmware-<version>.bin`, the image MaD Control flashes. This image is also what the [SIL emulator](../how-it-works/sil-emulator.md) executes. |
 | `native_test` | gcc | Unity unit tests. `test/mock_propeller2.c` stands in for the HAL; `HAL/P2/` is not compiled. |
+| `native_test_noasan` | gcc | The same suite without ASan, for hosts where ASan is broken. |
+
+The protocol left J1 because opening J1 toggles DTR, which reboots the chip:
+with the protocol there, every connect, page refresh and auto-reconnect aborted
+tests and briefly floated the pins. The `P2Eval` (protocol on J1) and `MaDEdge`
+(`ENABLE_DEBUG_SERIAL=1`, protocol on P30/P32) envs, and `propeller2` /
+`propeller2_debug` before them, no longer exist; releases up to 0.14 were built
+from them. The machine stays on 0.14 until its Edge carrier v0.3 is built.
 
 ## Code generation runs automatically
 
@@ -45,12 +53,14 @@ the generator by hand for firmware builds — but see
 [Protocol & code generation](protocol-codegen.md) if you change the schema.
 
 !!! warning "Native vs. Propeller 2"
-    Run `pio test -e native_test` **and** a real `P2Eval` build: pointer
+    Run `pio test -e native_test` **and** a real `MaD` build: pointer
     sizes and timing differ between the host and the P2, and a change that's
     clean on one can break the other. The emulator runs the P2 image.
 
 ## Flashing notes
 
-Flashing uses the native `loadp2` bootloader (via `pio run -t upload`). This is
-desktop/CLI tooling and **cannot** run in the browser app — which is why the web
-app does not offer firmware updates.
+`pio run -t upload` flashes with the native `loadp2` bootloader through the
+programming port (J1). MaD Control's Firmware page does the same from the
+browser over Web Serial, also on J1, never on the control port; see
+[Firmware & diagnostics](../user-guide/firmware-and-diagnostics.md) and
+`Software/Control/docs/FLASHING.md`.

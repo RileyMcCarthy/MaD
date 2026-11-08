@@ -4,9 +4,9 @@
 //!
 //! The run is the one `mad-runner` makes of `SIL/mad.toml`: the Edge
 //! carrier, the P2-EC32MB module with MaD's instruction-set simulator as its
-//! processor booting the production firmware off the module's flash, the
-//! module's card, the DS2 add-on, the machine, and a `host-serial` on the
-//! carrier's debug header `J1`, whose PTY this test opens. `embsim_cli::run`
+//! processor booting the firmware off the module's flash, the module's
+//! card, the DS2 add-on, the machine, and a `host-serial` on the carrier's
+//! control port `J4`, whose PTY this test opens. `embsim_cli::run`
 //! takes the command line `embsim run` hands the runner, over the set the
 //! runner holds (`embsim_cli::shipped()` and `mad_catalog::register`), in
 //! this test's process. The file's paths are made relative to a scratch
@@ -22,9 +22,8 @@
 //! run's own end, in board time. Host time only paces the host's requests.
 //! `tests/mad.rs` holds the same line stepped, instant by instant.
 //!
-//! Skipped, saying why, when the production image is absent (`make
-//! p2image-production`); `MAD_REQUIRE_P2_IMAGE` turns the skip into a
-//! failure.
+//! Skipped, saying why, when the image is absent (`make p2image`);
+//! `MAD_REQUIRE_P2_IMAGE` turns the skip into a failure.
 
 #![cfg(unix)]
 
@@ -50,19 +49,18 @@ fn sil() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
 }
 
-/// The production program (pio env `P2Eval`), the one `make
-/// flash-image` lays out: `MAD_P2_PRODUCTION_IMAGE` names a copy kept out
-/// of `.pio` (the CI jobs'), else the build's own.
+/// The firmware's program (pio env `MaD`), the one `make flash-image` lays
+/// out: `MAD_P2_IMAGE` names a copy kept out of `.pio` (the CI jobs'), else
+/// the build's own.
 fn image_path() -> PathBuf {
-    let p = std::env::var_os("MAD_P2_PRODUCTION_IMAGE").map_or_else(
-        || sil().join("../Firmware/MaDCore/.pio/build/P2Eval/program"),
+    let p = std::env::var_os("MAD_P2_IMAGE").map_or_else(
+        || sil().join("../Firmware/MaDCore/.pio/build/MaD/program"),
         PathBuf::from,
     );
     if !p.exists() && std::env::var_os("MAD_REQUIRE_P2_IMAGE").is_some() {
         panic!(
-            "MAD_REQUIRE_P2_IMAGE is set but the production P2 image is missing at {}. \
-             Build it with `make p2image-production` (or `cd Firmware/MaDCore && pio run -e \
-             P2Eval`).",
+            "MAD_REQUIRE_P2_IMAGE is set but the P2 image is missing at {}. \
+             Build it with `make p2image` (or `cd Firmware/MaDCore && pio run -e MaD`).",
             p.display()
         );
     }
@@ -84,7 +82,7 @@ const POLL: Duration = Duration::from_millis(100);
 
 /// A scratch directory holding `mad.toml` as the file names it, beside the
 /// two images it names (`build/flash.bin`, `build/sd.img`): the flash laid
-/// out from the production program by `embsim flash-image`, the command
+/// out from the program by `embsim flash-image`, the command
 /// `make flash-image` runs, here in process; the card `make sd-image`
 /// writes. With it, the program's bytes. `None`, having said why, without
 /// the program.
@@ -92,8 +90,8 @@ fn scratch() -> Option<(PathBuf, Vec<u8>)> {
     let image = image_path();
     let Ok(program) = std::fs::read(&image) else {
         eprintln!(
-            "\n*** SKIPPED: {} needs the production P2 image at\n***   {}\n*** Build it with \
-             `make p2image-production`.\n*** This test asserted NOTHING.\n",
+            "\n*** SKIPPED: {} needs the P2 image at\n***   {}\n*** Build it with \
+             `make p2image`.\n*** This test asserted NOTHING.\n",
             module_path!(),
             image.display()
         );
@@ -200,14 +198,14 @@ fn the_firmware_answers_its_version_on_the_hosts_pty() {
     behaviour!(Test {
         id: "mad-project.pty-round-trip",
         covers: Some("SIL/mad.toml"),
-        given: "the production firmware run live for 2 s of board time, with a host program on \
+        given: "the firmware run live for 2 s of board time, with a host program on \
                 the PTY reading the firmware's version every 100 ms until answered",
     });
     expect!(
         "version-answered",
         "the program receives a data frame answering its read before the run ends",
-        "the debug header carries the firmware's protocol channel, P63 and P62, to the \
-         host, and the PTY is the host's end of that line"
+        "the carrier's control port carries the firmware's protocol channel, P30 and P32, \
+         through its isolator to the host, and the PTY is the host's end of that line"
     );
     expect!(
         "version-decodes",

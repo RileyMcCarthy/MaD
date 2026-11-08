@@ -28,14 +28,18 @@ typedef enum
     HW_PIN_ESD_POWER = 22,
     HW_PIN_CHARGE_PUMP = 28,
 
-    // The Raspberry Pi link through isolator IC2 (Edge carrier v0.3), the
-    // debug build's MAIN channel: IC2 OUTC (pin 5) drives P30, P32 drives
-    // IC2 INA (pin 3). The P2-EC32MB brings no finger out for P40-P57.
-    HW_PIN_RPI_RX = 30,
-    HW_PIN_RPI_TX = 32,
+    // The MAIN channel, the protocol: the secondary serial. On the Edge
+    // carrier v0.3 it is the link through isolator IC2 (IC2 OUTC, pin 5,
+    // drives P30; P32 drives IC2 INA, pin 3); on a P2-EVAL bench, an FTDI
+    // adapter's TX on P30 and RX on P32. The P2-EC32MB brings no finger out
+    // for P40-P57.
+    HW_PIN_MAIN_RX = 30,
+    HW_PIN_MAIN_TX = 32,
 
-    HW_PIN_MAIN_RX = 63,
-    HW_PIN_MAIN_TX = 62,
+    // J1 / the P2's own USB: programming (the ROM's serial loader, reset by
+    // the adapter's DTR) and the debug log (stdout). Not the protocol.
+    HW_PIN_DEBUG_RX = 63,
+    HW_PIN_DEBUG_TX = 62,
     
     // SD Card pins (P2 Edge Module standard configuration)
     HW_PIN_SD_CLK = 61,

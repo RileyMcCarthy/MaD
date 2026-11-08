@@ -18,6 +18,7 @@
 #include "dev_nvram.h"
 
 #include "HAL_lock.h"
+#include "HAL_system.h"
 #include "HAL_time.h"
 
 #include "IO_Debug.h"
@@ -40,11 +41,19 @@ static const char *APP_MESSAGE_SLAVE_VERSION = "0.0.0";
     }
 #define APP_MESSAGESLAVE_LOCK_REL() HAL_lock_release(app_message_slave_data.lock)
 
+/* How long a requested reboot waits, so its ACK leaves the wire first (a few
+ * bytes at 2 Mbaud take well under 1 ms). */
+#define APP_MESSAGESLAVE_REBOOT_DELAY_MS (100U)
+
 typedef struct
 {
     MachineProfile machineProfile;
     int lock;
     ProtoEmb_Runtime_t runtime;
+    /* Set by the reboot request and read by app_messageSlave_run: both on this
+     * module's cog (the runtime calls the handler from run), so no lock. */
+    bool rebootPending;
+    uint32_t rebootRequestedMs;
     app_monitor_sample_t sampleReadBuffer[APP_MESSAGE_SLAVE_TX_BUFFER_SIZE / sizeof(app_monitor_sample_t)];
 } app_message_slave_data_S;
 
@@ -311,6 +320,18 @@ ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWrite_gauge_force(void)
     return PROTOEMB_RUNTIME_WRITE_DISPOSITION_ACK;
 }
 
+ProtoEmb_RuntimeWriteDisposition_E ProtoEmb_onWrite_reboot(void)
+{
+    if (app_testManagement_isRunning())
+    {
+        return PROTOEMB_RUNTIME_WRITE_DISPOSITION_NACK;
+    }
+    (void)app_control_triggerMotionDisabled();
+    app_message_slave_data.rebootRequestedMs = HAL_time_getMs();
+    app_message_slave_data.rebootPending = true;
+    return PROTOEMB_RUNTIME_WRITE_DISPOSITION_ACK;
+}
+
 ProtoEmb_RuntimeQueryDisposition_E ProtoEmb_onQuery_file_download(const uint8_t *payload,
                                                                   uint16_t payloadSize,
                                                                   uint8_t *outPayload,
@@ -435,6 +456,8 @@ void app_messageSlave_init(int lock)
 {
     app_message_slave_data.lock = lock;
     dev_nvram_getChannelData(DEV_NVRAM_CHANNEL_MACHINE_PROFILE, &app_message_slave_data.machineProfile, sizeof(MachineProfile));
+    app_message_slave_data.rebootPending = false;
+    app_message_slave_data.rebootRequestedMs = 0U;
     ProtoEmb_Runtime_init(&app_message_slave_data.runtime);
 }
 
@@ -449,6 +472,11 @@ void app_messageSlave_run(void)
         }
     }
     ProtoEmb_Runtime_tick(&app_message_slave_data.runtime);
+    if (app_message_slave_data.rebootPending &&
+        ((HAL_time_getMs() - app_message_slave_data.rebootRequestedMs) >= APP_MESSAGESLAVE_REBOOT_DELAY_MS))
+    {
+        HAL_system_reboot();
+    }
 }
 
 bool app_messageSlave_sendNotification(const ProtoEmb_Notification_t *notification)

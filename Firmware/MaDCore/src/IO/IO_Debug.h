@@ -16,17 +16,13 @@
 
 extern int _stdio_debug_lock;
 
-#if ENABLE_DEBUG_SERIAL
-// if we have a seperate debug serial port, we can use the raw printf. This is useful for debugging
+// The debug log has its own port (P62/P63, J1), apart from the protocol's.
 #define DEBUG_PRINTF_RAW(color, fmt, ...)                                                                                  \
     while (!HAL_lock_try(_stdio_debug_lock))                                                                                   \
     {                                                                                                                      \
     }                                                                                                                      \
     fprintf(stdout, color "%0.3f - %s:%d: " fmt ANSI_COLOR_RESET, HAL_time_getUs() / 1000000.0f, __FILE__, __LINE__, __VA_ARGS__); \
     HAL_lock_release(_stdio_debug_lock);
-#else
-#define DEBUG_PRINTF_RAW(color, fmt, ...)
-#endif
 
 #define DEBUG_MESSAGE(color, fmt, ...)DEBUG_PRINTF_RAW(color, fmt, __VA_ARGS__);
 

@@ -13,8 +13,10 @@
 #
 # The board is a machine's project file under `$EMBSIM run` (embsim
 # MIGRATING-MAD.md steps 10 and 11), the host's Chrome on the carrier's
-# debug header J1 (USB 0403:6015). The e2e runs E2E_PROJECT (mad-cosim.toml,
-# the production firmware booted off the module's flash, headless, make
+# control port J4 (USB 0403:6001) for a flash boot, on its debug header J1
+# (USB 0403:6015) for the ROM's serial boot and the reflash board. The e2e
+# runs E2E_PROJECT (mad-cosim.toml,
+# the firmware booted off the module's flash, headless, make
 # e2e-motion's file as well; make e2e-stall names mad-hard-stop-cosim.toml,
 # that file with a hard stop on its carriage (MaD #298), make e2e-rom
 # mad-serial-boot-cosim.toml, the ROM's serial boot with the flash erased,
@@ -34,7 +36,10 @@
 # (a JSON file of per-scenario host and board times), and
 # BOARD_PER_SCENARIO=1: a fresh board for each
 # scenario, so a board that stops (the node's worker-boot stall) costs that
-# scenario alone.
+# scenario alone. The suite is told where the running board's log is
+# (E2E_BOARD_LOG): the reflash board's scenarios read the firmware's boot
+# line on P62 there, the only word the new firmware sends that board's
+# host (make e2e-reflash).
 #
 # APP_DIST=DIR serves a built bundle (`vite build --base=APP_BASE --outDir
 # DIR`) with `vite preview` in place of the dev server: the code the app ships
@@ -187,6 +192,7 @@ fi
 cdp_url=''
 start_board() {
   local log=$1
+  export E2E_BOARD_LOG=$log
   # The file fixes the DevTools port. A Chrome already answering there
   # would be some other run's, and the suite would attach to it.
   if curl -sf http://127.0.0.1:9222/json/version >/dev/null 2>&1; then
@@ -227,7 +233,7 @@ start_board() {
     # board with nothing to answer it, the rest queued behind it
     # (src/device/DeviceSession.worker.ts, runOp): 2252 ms of board time
     # until the response timeout, measured on a silent board. The hint is the
-    # production firmware's first line on P62 (Firmware/MaDCore/src/Main/
+    # firmware's first line on P62, its debug log (Firmware/MaDCore/src/Main/
     # main.c), which the run prints as the core's console. Without it the
     # scenario starts anyway once the bound passes (300 s of host time, a
     # hang's bound only), and its connect decides. The line comes before the

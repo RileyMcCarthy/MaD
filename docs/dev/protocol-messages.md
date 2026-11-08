@@ -32,6 +32,7 @@ For the wire framing and encoding rules, see
 | `gauge_force` | 7 | high | none |
 | `test_waveform` | 8 | high | `WaveformMove` — appends a `G123` waveform record to the open gcode channel |
 | `file_download` | 9 | high | raw → `StoredSample` |
+| `reboot` | 10 | high | none — ACKed, then the firmware disables motion and reboots ~100 ms later; NACKed while a test runs. The control port has no reset line, so this is how the app restarts the machine. |
 
 `file_download` sends a binary request (`testName(16) + sampleIndex(u32) +
 sampleCount(u32)`) and the device streams `StoredSample` records.
