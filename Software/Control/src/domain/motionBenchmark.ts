@@ -2,11 +2,12 @@
  * Motion benchmark: how well the closed-loop servo tracks its own encoder,
  * and Kp/Ki to start tuning from.
  *
- * The run is a G-code program built from the SAVED machine profile: large
- * moves at mid and full speed, then 1 mm, 0.1 mm and 0.01 mm moves, with
- * direction changes and a same-direction pair. Every move is measured from
- * the full-rate live samples, which carry the encoder position, the
- * trajectory's commanded position and the move's target.
+ * The run is a G-code program built from the SAVED machine profile: an
+ * acceleration sweep that ramps at Acceleration Max to a quarter, half,
+ * three quarters and all of Velocity Max, then 1 mm, 0.1 mm and 0.01 mm
+ * moves, with direction changes and a same-direction pair. Every move is
+ * measured from the full-rate live samples, which carry the encoder position,
+ * the trajectory's commanded position and the move's target.
  *
  * It measures TRACKING: the servo against its own encoder. It cannot see an
  * error the encoder shares (a wrong steps/mm, a loose coupling between the
@@ -50,20 +51,30 @@ export interface TrackingMove {
   label: string;
   deltaMm: number;
   speedMmPerS: number;
+  /** Set on the acceleration sweep's moves: the share of Velocity Max this move ramps to. */
+  sweepShare?: number;
 }
 
 export type TrackingPlan =
   | { ok: true; moves: TrackingMove[]; travelMm: number }
   | { ok: false; reason: string };
 
-/** The largest move, as a share of the machine's travel, and a hard ceiling. */
-export const BENCHMARK_TRAVEL_SHARE = 0.25;
-export const BENCHMARK_TRAVEL_MAX_MM = 25;
+/** The sweep's full-length moves, as a share of the travel between the endstops (Position Max). */
+export const BENCHMARK_TRAVEL_SHARE = 0.1;
+
+/** The speeds the acceleration sweep ramps to, as shares of Velocity Max. */
+export const SWEEP_SHARES = [0.25, 0.5, 0.75, 1] as const;
 
 /**
  * The program, relative to where the carriage starts, ending where it began.
- * The large moves swing L/2 either side of the start, so the operator needs
- * L/2 of room each way.
+ *
+ * Every move the firmware runs accelerates at Acceleration Max, so the sweep
+ * tests that one acceleration at rising speeds: motor torque falls as speed
+ * rises, so the faster ramps are where a too-high Acceleration Max shows.
+ * Each speed swings L/2 out, L back and L/2 out again, with L a tenth of
+ * Position Max, so the operator needs L/2 of room each way. A move too short
+ * to reach a speed at Acceleration Max tops out below it, and the assessment
+ * reports the speed it did reach.
  */
 export function planTrackingRun(limits: MachineLimits): TrackingPlan {
   if (!(limits.maxPositionMm > 0) || !(limits.maxVelocityMmPerS > 0) || !(limits.maxAccelMmPerS2 > 0)) {
@@ -75,14 +86,17 @@ export function planTrackingRun(limits: MachineLimits): TrackingPlan {
   if (!(limits.encoderStepsPerMM > 0)) {
     return { ok: false, reason: 'The saved profile needs Encoder steps/mm.' };
   }
-  const L = round3(Math.min(BENCHMARK_TRAVEL_SHARE * limits.maxPositionMm, BENCHMARK_TRAVEL_MAX_MM));
+  // An even number of micrometres, so the half moves stay exact on the wire.
+  const L = Math.round(BENCHMARK_TRAVEL_SHARE * limits.maxPositionMm * 500) / 500;
   const vMax = limits.maxVelocityMmPerS;
-  const vMid = round3(0.4 * vMax);
   const vSlow = round3(Math.min(1, 0.05 * vMax));
-  const moves: TrackingMove[] = [
-    { label: `+${L / 2} mm at ${vMid} mm/s`, deltaMm: L / 2, speedMmPerS: vMid },
-    { label: `−${L} mm at ${vMax} mm/s`, deltaMm: -L, speedMmPerS: vMax },
-    { label: `+${L / 2} mm at ${vMid} mm/s`, deltaMm: L / 2, speedMmPerS: vMid },
+  const moves: TrackingMove[] = [];
+  for (const share of SWEEP_SHARES) {
+    const v = round3(share * vMax);
+    const half = { deltaMm: L / 2, speedMmPerS: v, sweepShare: share, label: `+${L / 2} mm at ${v} mm/s` };
+    moves.push(half, { deltaMm: -L, speedMmPerS: v, sweepShare: share, label: `−${L} mm at ${v} mm/s` }, { ...half });
+  }
+  moves.push(
     { label: `+1 mm at ${vSlow} mm/s`, deltaMm: 1, speedMmPerS: vSlow },
     { label: `−1 mm at ${vSlow} mm/s`, deltaMm: -1, speedMmPerS: vSlow },
     { label: '+0.1 mm', deltaMm: 0.1, speedMmPerS: vSlow },
@@ -90,8 +104,9 @@ export function planTrackingRun(limits: MachineLimits): TrackingPlan {
     { label: '−0.2 mm', deltaMm: -0.2, speedMmPerS: vSlow },
     { label: '+0.01 mm', deltaMm: 0.01, speedMmPerS: vSlow },
     { label: '−0.01 mm', deltaMm: -0.01, speedMmPerS: vSlow },
-  ];
-  return { ok: true, moves, travelMm: L };
+  );
+  // The 1 mm moves need a millimetre whatever the sweep's length.
+  return { ok: true, moves, travelMm: Math.max(L, 1) };
 }
 
 function round3(n: number): number {
@@ -102,6 +117,8 @@ export interface MoveMeasurement {
   label: string;
   deltaMm: number;
   speedMmPerS: number;
+  /** Carried from the move: set on the acceleration sweep's moves. */
+  sweepShare?: number;
   /** Encoder minus target once settled, in micrometres (signed). */
   finalErrorUm: number;
   /** Largest |commanded − encoder| during the move. */
@@ -159,6 +176,7 @@ export function measureMove(samples: MotionSample[], move: TrackingMove, toleran
     label: move.label,
     deltaMm: move.deltaMm,
     speedMmPerS: move.speedMmPerS,
+    ...(move.sweepShare === undefined ? {} : { sweepShare: move.sweepShare }),
     finalErrorUm: (last.position - target) * 1000,
     peakFollowingErrorUm: peakFe * 1000,
     overshootUm: Math.max(0, overshoot) * 1000,
@@ -217,6 +235,85 @@ export function summarizeTracking(m: MoveMeasurement[]): TrackingSummary {
     maxOvershootUm: Math.max(0, ...m.map((x) => x.overshootUm)),
     maxSettleMs: settles.length ? Math.max(...settles) : null,
   };
+}
+
+/**
+ * The share of Acceleration Max the carriage must deliver on every sweep move
+ * for Acceleration Max to pass.
+ */
+export const ACCEL_DELIVERED_MIN = 0.8;
+
+/** One speed of the acceleration sweep, judged. */
+export interface SweepStep {
+  share: number;
+  /** The speed asked for. */
+  speedMmPerS: number;
+  /** The fastest the trajectory got on this step's moves (a short move tops out below the speed asked for). */
+  reachedMmPerS: number;
+  /** Largest following error over this step's moves. */
+  peakFollowingErrorUm: number;
+  /** The worst share of Acceleration Max delivered over this step's moves, 0 to 1. */
+  delivered: number;
+}
+
+export type AccelVerdict =
+  | { kind: 'pass'; steps: SweepStep[]; topSpeedMmPerS: number }
+  | { kind: 'too-high'; steps: SweepStep[]; worst: SweepStep }
+  | { kind: 'not-judged'; steps: SweepStep[] };
+
+/**
+ * Could the carriage deliver Acceleration Max at every speed the sweep reached?
+ *
+ * A carriage that falls short of the acceleration it is asked for falls
+ * behind its trajectory through the ramp: delivering a share r of
+ * Acceleration Max leaves it about (1 − r) of the ramp's length, v²/2a,
+ * behind by the time the trajectory reaches speed. So the following error
+ * beyond what the drive's lag explains (lag x speed), divided by the ramp's
+ * length, is the share the carriage did NOT deliver. The servo's parking
+ * deadband is forgiven, since the servo itself allows that much error.
+ *
+ * The servo's correction during the ramp hides part of a shortfall, so this
+ * reads generous; a carriage that stalls is still far outside it.
+ */
+export function assessAcceleration(
+  moves: MoveMeasurement[],
+  limits: MachineLimits,
+  lagSeconds: number | null,
+): AccelVerdict {
+  const a = limits.maxAccelMmPerS2;
+  const forgivenUm = (SERVO_DEADBAND_COUNTS / limits.encoderStepsPerMM) * 1000;
+  const lag = lagSeconds !== null && lagSeconds > 0 ? lagSeconds : 0;
+  const steps: SweepStep[] = [];
+  for (const share of SWEEP_SHARES) {
+    const mine = moves.filter((m) => m.sweepShare === share);
+    if (mine.length === 0) continue;
+    let reached = 0;
+    let peakFe = 0;
+    let delivered = 1;
+    for (const m of mine) {
+      // The trapezoid ramps at a; a move too short to reach its speed peaks at sqrt(a·d).
+      const v = Math.min(m.speedMmPerS, Math.sqrt(a * Math.abs(m.deltaMm)));
+      const rampUm = ((v * v) / (2 * a)) * 1000;
+      const behindUm = Math.max(0, m.peakFollowingErrorUm - lag * v * 1000 - forgivenUm);
+      reached = Math.max(reached, v);
+      peakFe = Math.max(peakFe, m.peakFollowingErrorUm);
+      delivered = Math.min(delivered, rampUm > 0 ? Math.max(0, 1 - behindUm / rampUm) : 1);
+    }
+    steps.push({
+      share,
+      speedMmPerS: mine[0].speedMmPerS,
+      reachedMmPerS: round(reached, 3),
+      peakFollowingErrorUm: peakFe,
+      delivered,
+    });
+  }
+  if (steps.length < SWEEP_SHARES.length) return { kind: 'not-judged', steps };
+  const failing = steps.filter((s) => s.delivered < ACCEL_DELIVERED_MIN);
+  if (failing.length > 0) {
+    const worst = failing.reduce((w, s) => (s.delivered < w.delivered ? s : w));
+    return { kind: 'too-high', steps, worst };
+  }
+  return { kind: 'pass', steps, topSpeedMmPerS: Math.max(...steps.map((s) => s.reachedMmPerS)) };
 }
 
 export interface GainSuggestion {
