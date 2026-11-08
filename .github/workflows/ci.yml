@@ -144,18 +144,23 @@ jobs:
       # and vitest.config.ts adds a JSON report at $VIBES_RESULTS beside its
       # usual reporters.
       - name: Verify (typecheck + lint + tests + build)
+        id: verify
         env:
           VIBES_BEHAVIOURS: ${{ runner.temp }}/vibes/control/behaviours.jsonl
           VIBES_RESULTS: ${{ runner.temp }}/vibes/control/results.out
         run: |
           mkdir -p "$RUNNER_TEMP/vibes/control"
           npm run verify
+      # Uploaded when the tests ran, passing or not: a failing test is exactly
+      # the run the ledger must read test by test. Nothing is uploaded when
+      # verify stopped before vitest, and the ledger then has no verdict.
       - name: Upload the control suite's run for the Behaviour ledger
+        if: ${{ !cancelled() && (steps.verify.outcome == 'success' || steps.verify.outcome == 'failure') }}
         uses: actions/upload-artifact@v7
         with:
           name: vibes-control
           path: ${{ runner.temp }}/vibes/control/
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 7
       # The unit tests cover the logging machinery; they cannot cover the
       # instrumentation call sites, and the worker half (protocol frames,
@@ -856,6 +861,7 @@ jobs:
       # $VIBES_BEHAVIOURS, and pio's output carries the verdicts. pipefail
       # keeps pio's exit status as the step's.
       - name: Run firmware Unity unit tests (native_test, ASan)
+        id: tests
         working-directory: Firmware/MaDCore
         env:
           VIBES_BEHAVIOURS: ${{ runner.temp }}/vibes/firmware/behaviours.jsonl
@@ -863,12 +869,15 @@ jobs:
           set -o pipefail
           mkdir -p "$RUNNER_TEMP/vibes/firmware"
           pio test -e native_test 2>&1 | tee "$RUNNER_TEMP/vibes/firmware/results.out"
+      # Uploaded when the tests ran, passing or not: a failing test is exactly
+      # the run the ledger must read test by test.
       - name: Upload the firmware suite's run for the Behaviour ledger
+        if: ${{ !cancelled() && (steps.tests.outcome == 'success' || steps.tests.outcome == 'failure') }}
         uses: actions/upload-artifact@v7
         with:
           name: vibes-firmware
           path: ${{ runner.temp }}/vibes/firmware/
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 7
 
   # ── Phase 0 deterministic gates ───────────────────────────────────────────
@@ -1049,6 +1058,7 @@ jobs:
         working-directory: SIL
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Cargo test (blocking)
+        id: tests
         working-directory: SIL
         # The workspace is the MaD-side crates only (protocol, models,
         # MaDSim, p2core, p2iss, mad-catalog, mad-runner). The embsim
@@ -1072,12 +1082,17 @@ jobs:
           set -o pipefail
           mkdir -p "$RUNNER_TEMP/vibes/sil"
           cargo test --workspace --all-targets --locked 2>&1 | tee "$RUNNER_TEMP/vibes/sil/results.out"
+      # Uploaded when the tests ran, passing or not: a failing test is exactly
+      # the run the ledger must read test by test. cargo stops at the first
+      # test binary that fails, and the ledger gives what it never reached no
+      # verdict rather than reading it as removed.
       - name: Upload the sil suite's run for the Behaviour ledger
+        if: ${{ !cancelled() && (steps.tests.outcome == 'success' || steps.tests.outcome == 'failure') }}
         uses: actions/upload-artifact@v7
         with:
           name: vibes-sil
           path: ${{ runner.temp }}/vibes/sil/
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 7
 
   # BLOCKING. MISRA/cppcheck via `pio check`. Low severity is disabled in
@@ -1397,9 +1412,11 @@ jobs:
   # so the sil verdicts carry sil-rust's MAD_REQUIRE_P2_IMAGE, and nothing
   # here builds an image or installs a toolchain. A job the path filter
   # skipped leaves no input: its suite's rows are carried from the base, and
-  # the report names it. A job that failed or was cancelled gets an empty
-  # input: its behaviours have no verdict (exit 3), never removed and never
-  # holding, however much of it ran before it stopped.
+  # the report names it. A job that failed after its tests ran is read test by
+  # test, marked incomplete: a failing test stopped holding, the rest hold, and
+  # what the run never reached has no verdict (exit 3) — never removed. A job
+  # that left no run (cancelled, or failed before its tests) gets an empty
+  # input, and its whole suite has no verdict.
   #
   # fetch-depth: 0 is required — the default shallow clone cannot resolve the
   # base branch, and the ledger diff would then report every behaviour as new.
@@ -1460,34 +1477,38 @@ jobs:
             echo "ok $f"
           done
 
-      # Only a job that succeeded is read. A failed one may have uploaded a
-      # partial run before it stopped, and a partial run reads as removals.
+      # A job that failed may still have uploaded its tests' run; a cancelled
+      # one is never read.
       - name: Download the firmware suite's run
-        if: ${{ needs.firmware-unit-tests.result == 'success' }}
+        if: ${{ needs.firmware-unit-tests.result == 'success' || needs.firmware-unit-tests.result == 'failure' }}
         continue-on-error: true
         uses: actions/download-artifact@v8
         with:
           name: vibes-firmware
           path: ${{ runner.temp }}/vibes/firmware
       - name: Download the control suite's run
-        if: ${{ needs.wasm-control-ci.result == 'success' }}
+        if: ${{ needs.wasm-control-ci.result == 'success' || needs.wasm-control-ci.result == 'failure' }}
         continue-on-error: true
         uses: actions/download-artifact@v8
         with:
           name: vibes-control
           path: ${{ runner.temp }}/vibes/control
       - name: Download the sil suite's run
-        if: ${{ needs.sil-rust.result == 'success' }}
+        if: ${{ needs.sil-rust.result == 'success' || needs.sil-rust.result == 'failure' }}
         continue-on-error: true
         uses: actions/download-artifact@v8
         with:
           name: vibes-sil
           path: ${{ runner.temp }}/vibes/sil
-      # What each job's result means to the report. Skipped by the path
-      # filter: no directory, so the suite is "not run for this change" and
-      # keeps its base rows. Anything else that left no complete run — failed,
-      # cancelled, or skipped because `changes` itself did not succeed: an
-      # empty directory, so its behaviours have no verdict.
+      # What each job's result means to the report:
+      # - succeeded, with its run: read as it is.
+      # - skipped by the path filter: no directory — "not run for this
+      #   change", its rows carried from the base.
+      # - failed, with its run: read test by test, marked `incomplete`, so
+      #   what it never reached has no verdict instead of reading as removed.
+      # - anything that left no run (cancelled, failed before its tests, or
+      #   skipped because `changes` itself failed): an empty directory, so the
+      #   whole suite has no verdict.
       - name: Decide each suite's input from its job's result
         env:
           CHANGES: ${{ needs.changes.result }}
@@ -1505,6 +1526,9 @@ jobs:
             elif [ "$result" = skipped ] && [ "$CHANGES" = success ]; then
               rm -rf "$dir"
               echo "$suite: its job was skipped — not run for this change"
+            elif [ "$result" = failure ] && [ -s "$dir/behaviours.jsonl" ]; then
+              touch "$dir/incomplete"
+              echo "::warning::$suite: its job failed after its tests ran ($(wc -l < "$dir/behaviours.jsonl") declarations) — read test by test; what it did not reach has no verdict"
             else
               rm -rf "$dir" && mkdir -p "$dir"
               echo "::warning::$suite: its job's result is '$result' and left no complete run — its behaviours have no verdict"

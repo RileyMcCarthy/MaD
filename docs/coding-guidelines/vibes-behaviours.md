@@ -342,8 +342,12 @@ report is built from what they upload (`vibes report --from`). So:
 
 - A suite whose job the path filter **skipped** keeps its rows from the base,
   and the report names it in one line under the headline.
-- A suite whose job **failed or was cancelled** has no verdict, however much of
-  it ran: none of its behaviours read as removed or as holding.
+- A suite whose job **failed after its tests ran** is read test by test: a
+  failing test stopped holding, the rest hold, and anything the run never
+  reached (cargo stops at the first failing test binary) has no verdict —
+  never a removal.
+- A suite whose job left **no run** — cancelled, or failed before its tests —
+  has no verdict as a whole.
 - A suite's `cmd` must run the same tests as its CI job, or `collect --write`
   and the report see different declarations and every PR shows the difference.
   `sil-rust` runs the whole SIL workspace while `SIL/vibes.suite.json` lists
@@ -352,4 +356,4 @@ report is built from what they upload (`vibes report --from`). So:
 
 A behaviour that stopped holding or was removed leads the comment but does not
 fail the job: the failing test already fails its own suite's job, and a removal
-is reviewed in the comment. The job fails only when a suite has no verdict.
+is reviewed in the comment. The job fails only when a behaviour has no verdict.
