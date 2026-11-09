@@ -348,6 +348,12 @@ bool dev_servo_atTarget(dev_servo_channel_E ch);
  * otherwise it stops first. Any other command clears it; only a closed-loop
  * position move accepts it. Feedrate as for moveTo. */
 void dev_servo_stageNext(dev_servo_channel_E ch, int32_t targetCounts, int32_t feedrateCountsPerSec);
+/* Lower the staged move's feedrate to at most maxFeedrateCountsPerSec, if one
+ * is still waiting to be switched to; a slower one is left as it is. False when
+ * nothing is staged -- the loop may already have switched to it -- so the caller
+ * learns it did not reach a move that is already running. Atomic with the
+ * switch, which is why it is not a second dev_servo_stageNext. */
+bool dev_servo_capStaged(dev_servo_channel_E ch, int32_t maxFeedrateCountsPerSec);
 /* How many times the loop has switched to a staged move; the caller compares
  * it with the count when it staged one to learn that the switch happened. */
 uint32_t dev_servo_getHandovers(dev_servo_channel_E ch);
