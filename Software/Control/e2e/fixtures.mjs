@@ -921,11 +921,12 @@ export async function chooseDataFolder(page) {
  * Install a `navigator.serial` whose port emulates the Propeller 2 boot ROM's
  * serial loader, entirely in-page.
  *
- * The board does not serve all of this: the ROM's serial boot on the project
- * (SIL/mad-serial-boot-cosim.toml, FW-ISS) answers without a reset, and
- * nothing models DTR (MaD #134), so a DTR pulse from the app resets nothing
- * there. This fake is therefore the only way to check that the app resets
- * the chip before probing.
+ * The board serves this only in part. On the reflash board
+ * (SIL/mad-reflash-cosim.toml, FW1 with a board, make e2e-reflash) the app's
+ * DTR reaches the Prop Plug's reset stage on J1.3 and resets the P2 (MaD
+ * #134). The ROM's serial boot project (SIL/mad-serial-boot-cosim.toml,
+ * FW-ISS) leaves J1.3 unwired, so there the ROM answers without a reset. This
+ * fake is the board-free check that the app resets the chip before probing.
  *
  * It deliberately refuses to answer until DTR has been pulsed, so a test fails
  * if the app ever stops resetting the chip before probing.

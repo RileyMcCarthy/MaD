@@ -3406,8 +3406,10 @@ const scenarios = [
   // older) answer on J1 only, never on the control port the board's host is
   // on, so the too-old verdict is checked board-free (COMPAT-update-loop). Board-free, the in-page fake board stands
   // in where only the app matters: a verdict's life across connections, a
-  // board that never answers, and the update loop, whose real flash the ISS
-  // cannot take (the app's DTR reaches no reset there, MaD #134).
+  // board that never answers, and the update loop, whose reconnect and ok
+  // verdict the ISS cannot reach yet: the reflash board flashes for real
+  // (COMPAT-reflash, MaD #134), but its one Chrome port is J1 and the new
+  // firmware answers on J4.
   {
     id: 'COMPAT-ok',
     name: 'Firmware compat: this tree\'s firmware gets the ok verdict, no banner, and motion enables',
