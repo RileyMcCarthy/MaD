@@ -1644,6 +1644,22 @@ void dev_servo_stageNext(dev_servo_channel_E ch, int32_t targetCounts, int32_t f
     DEV_SERVO_LOCK_REL();
 }
 
+bool dev_servo_capStaged(dev_servo_channel_E ch, int32_t maxFeedrateCountsPerSec)
+{
+    if ((ch >= DEV_SERVO_CHANNEL_COUNT) || (maxFeedrateCountsPerSec <= 0)) { return false; }
+    DEV_SERVO_LOCK_REQ_BLOCK();
+    dev_servo_channelData_S *const d = &dev_servo_data.channel[ch];
+    /* Under the same lock as the handover, so the cap lands on the staged move
+     * or not at all: never on the move after it, and never on a stale copy. */
+    const bool pending = d->req.nextValid;
+    if (pending && (d->req.nextFeedrate > maxFeedrateCountsPerSec))
+    {
+        d->req.nextFeedrate = maxFeedrateCountsPerSec;
+    }
+    DEV_SERVO_LOCK_REL();
+    return pending;
+}
+
 uint32_t dev_servo_getHandovers(dev_servo_channel_E ch)
 {
     if (ch >= DEV_SERVO_CHANNEL_COUNT) { return 0U; }
