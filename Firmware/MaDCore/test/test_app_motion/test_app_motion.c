@@ -61,6 +61,8 @@ static uint32_t d_handovers;  // dev_servo_getHandovers(MAIN)
 static uint32_t d_stageCount; // dev_servo_stageNext calls
 static int32_t d_lastStageTarget;
 static int32_t d_lastStageStepsPerSecond;
+static bool d_stagePending;      // a staged move the servo has not switched to
+static uint32_t d_capStagedCount; // dev_servo_capStaged calls
 static int32_t d_target;      // dev_servo_getTarget(MAIN)
 static int32_t d_setpoint;    // dev_servo_getSetpoint(MAIN)
 
@@ -85,6 +87,18 @@ void dev_servo_stageNext(dev_servo_channel_E ch, int32_t targetCounts, int32_t f
     d_stageCount++;
     d_lastStageTarget = targetCounts;
     d_lastStageStepsPerSecond = feedrateCountsPerSec;
+    d_stagePending = true;
+}
+/* Models the servo's staged copy: lowered while it is still pending. */
+bool dev_servo_capStaged(dev_servo_channel_E ch, int32_t maxFeedrateCountsPerSec)
+{
+    TEST_ASSERT_EQUAL_INT(DEV_SERVO_CHANNEL_MAIN, ch);
+    d_capStagedCount++;
+    if (d_stagePending && (d_lastStageStepsPerSecond > maxFeedrateCountsPerSec))
+    {
+        d_lastStageStepsPerSecond = maxFeedrateCountsPerSec;
+    }
+    return d_stagePending;
 }
 int32_t dev_servo_getTarget(dev_servo_channel_E ch)
 {
@@ -285,6 +299,8 @@ static void doubles_reset(void)
     d_stageCount = 0U;
     d_lastStageTarget = 0;
     d_lastStageStepsPerSecond = 0;
+    d_stagePending = false;
+    d_capStagedCount = 0U;
     d_target = 0;
     d_endstopUpperActive = false;
 
@@ -1041,6 +1057,39 @@ void test_a_restricted_machine_is_not_sped_up_to_the_cap(void)
     TEST_ASSERT_EQUAL_INT32(1 * 100, d_lastMoveStepsPerSecond);
 }
 
+void test_a_move_staged_before_the_machine_turns_restricted_runs_capped(void)
+{
+    VIBES_TEST("motion.restricted-staged-move-is-capped",
+               "src/APP/app_motion.c#app_motion_private_capStaged",
+               "a restricted velocity of 2 millimetres per second, two moves at 40 queued on an unrestricted machine, and the machine turning restricted while the first runs");
+    VIBES_EXPECT_WHY("staged-capped",
+                     "the second move, already handed to the drive at 40, is lowered to 2 millimetres per second before the drive switches to it",
+                     "with look-ahead the next move is handed over while the one before it runs, so an endstop or open door reached in between would otherwise be met at full speed");
+    VIBES_EXPECT("runs-capped", "once the drive switches, the move it runs is the second one at 2 millimetres per second");
+
+    d_machineProfile.restrictedVelocity = 2; /* mm/s */
+    motion_init();
+    motion_driveToWaiting();
+    const app_motion_move_t moves[2] = {make_move((uint8_t)G1_LINEAR_MOVE, 1000, 40000, 0),
+                                        make_move((uint8_t)G1_LINEAR_MOVE, 2000, 40000, 0)};
+    motion_queueAndStart(moves, 2);
+    app_motion_run(); /* stages the second, unrestricted */
+    TEST_ASSERT_EQUAL_UINT32(1U, d_stageCount);
+    TEST_ASSERT_EQUAL_INT32(40 * 100, d_lastStageStepsPerSecond);
+
+    d_speedLimited = true; /* e.g. an endstop during the first move */
+    app_motion_run();
+    TEST_ASSERT_EQUAL_INT32(2 * 100, d_lastStageStepsPerSecond);
+    app_motion_run();
+    TEST_ASSERT_EQUAL_UINT32(1U, d_capStagedCount); /* lowered once, not every tick */
+
+    d_stagePending = false;
+    d_handovers = 1U; /* the drive switches to the staged move */
+    app_motion_run();
+    TEST_ASSERT_EQUAL_INT32(2000, app_motion_data.currentMove.x);
+    TEST_ASSERT_EQUAL_INT32(2 * 100, d_lastStageStepsPerSecond);
+}
+
 void test_an_unrestricted_machine_moves_at_the_speed_it_was_asked_for(void)
 {
     VIBES_TEST("motion.unrestricted-speed-is-untouched",
@@ -1544,6 +1593,7 @@ int main(void)
 
     RUN_TEST(test_a_restricted_machine_moves_at_the_capped_speed);
     RUN_TEST(test_a_restricted_machine_is_not_sped_up_to_the_cap);
+    RUN_TEST(test_a_move_staged_before_the_machine_turns_restricted_runs_capped);
     RUN_TEST(test_an_unrestricted_machine_moves_at_the_speed_it_was_asked_for);
     RUN_TEST(test_a_profile_without_a_cap_does_not_stop_the_machine);
     RUN_TEST(test_an_unusable_machine_profile_refuses_every_move);

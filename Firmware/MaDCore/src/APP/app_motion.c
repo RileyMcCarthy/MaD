@@ -58,6 +58,7 @@
 #define actuator_getTarget() dev_servo_getTarget(ACTUATOR_CH)
 #define actuator_atTarget() dev_servo_atTarget(ACTUATOR_CH)
 #define actuator_stageNext(target, feedrate) dev_servo_stageNext(ACTUATOR_CH, (target), (feedrate))
+#define actuator_capStaged(feedrate) dev_servo_capStaged(ACTUATOR_CH, (feedrate))
 #define actuator_getHandovers() dev_servo_getHandovers(ACTUATOR_CH)
 #define actuator_getSetpoint() dev_servo_getSetpoint(ACTUATOR_CH)
 #define actuator_startWaveform(wf) dev_servo_startWaveform(ACTUATOR_CH, (wf))
@@ -116,6 +117,7 @@ typedef struct
     int32_t stagedEntries;  /* queue entries it takes up, mode changes included */
     bool stagedAbsolute;    /* the positioning mode once those entries have run */
     uint32_t handoversSeen; /* inputs.handovers when it was staged */
+    int32_t stagedFeedrate; /* counts/s it was staged at, after any RESTRICTED cap */
     lib_timer_S dwellTimer;
     lib_timer_S endstopTimer;
     int32_t stepsPerMM; /* actuator units per mm: encoder counts (servo) or drive steps (stepper) */
@@ -166,6 +168,7 @@ static bool app_motion_private_linearMove(const app_motion_move_t *move, bool ab
                                          int32_t *steps, int32_t *feedrate);
 static void app_motion_private_stageNext(void);
 static void app_motion_private_takeHandover(void);
+static void app_motion_private_capStaged(void);
 static bool app_motion_private_waveform_run(void);
 
 /**********************************************************************
@@ -514,8 +517,31 @@ static void app_motion_private_stageNext(void)
             app_motion_data.stagedEntries = i + 1;
             app_motion_data.stagedAbsolute = absolute;
             app_motion_data.handoversSeen = app_motion_data.inputs.handovers;
+            app_motion_data.stagedFeedrate = feedrate;
         }
         break;
+    }
+}
+
+/* The RESTRICTED cap is applied when a move is converted, and a staged move was
+ * converted while the one before it started running. If the machine has turned
+ * RESTRICTED since (an endstop, an open door, a sample or frame over its
+ * tension limit), the staged copy the servo holds is lowered to the cap before
+ * the servo switches to it, so the move that runs is the capped one. Only the
+ * staged move: the running move's own speed is not changed here. */
+static void app_motion_private_capStaged(void)
+{
+    if (app_motion_data.inputs.limitSpeed && (app_motion_data.restrictedFeedrate > 0) &&
+        (app_motion_data.stagedFeedrate > app_motion_data.restrictedFeedrate))
+    {
+        /* False only if the servo switched to it after this tick's inputs were
+         * read; the handover is then taken next tick, as for any other. */
+        if (actuator_capStaged(app_motion_data.restrictedFeedrate))
+        {
+            DEBUG_INFO("RESTRICTED: staged feedrate %d -> %d steps/s\n", app_motion_data.stagedFeedrate,
+                       app_motion_data.restrictedFeedrate);
+        }
+        app_motion_data.stagedFeedrate = app_motion_data.restrictedFeedrate;
     }
 }
 
@@ -545,6 +571,10 @@ static bool app_motion_private_moveManager_run(void)
             {
                 app_motion_private_takeHandover();
                 app_motion_private_stageNext();
+            }
+            else
+            {
+                app_motion_private_capStaged();
             }
         }
         else if (app_motion_data.inputs.atTarget)

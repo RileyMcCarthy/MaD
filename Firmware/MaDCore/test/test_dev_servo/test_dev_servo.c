@@ -1666,6 +1666,26 @@ void test_dev_servo_stopClearsTheStagedMove(void)
     TEST_ASSERT_EQUAL_UINT32(0U, dev_servo_getHandovers(CH));
 }
 
+void test_dev_servo_capStagedLowersOnlyAPendingStagedMove(void)
+{
+    VIBES_TEST("servo.cap-staged",
+               "src/DEV/dev_servo.c#dev_servo_capStaged",
+               "a 10 mm move with a second 10 mm move at 40 mm/s staged after it, then a cap of 5 mm/s on the staged move");
+    VIBES_EXPECT_WHY("pending-capped",
+                     "the cap is accepted and, once the loop switches, the second move runs at no more than 5 mm/s",
+                     "the motion planner lowers a move it staged before the machine turned restricted, and only a move not yet running can be lowered this way");
+    VIBES_EXPECT("nothing-pending", "after the switch a second cap is refused, since nothing is staged any more");
+    servo_init();
+    dev_servo_enable(CH, true);
+    dev_servo_moveTo(CH, counts_from_mm(10.0), counts_from_mm(10.0));
+    dev_servo_stageNext(CH, counts_from_mm(20.0), counts_from_mm(40.0));
+    TEST_ASSERT_TRUE(dev_servo_capStaged(CH, counts_from_mm(5.0)));
+    for (int i = 0; (i < 40000) && (dev_servo_getHandovers(CH) == 0U); i++) { tick_with_motion(); }
+    TEST_ASSERT_EQUAL_UINT32(1U, dev_servo_getHandovers(CH));
+    TEST_ASSERT_EQUAL_INT32(counts_from_mm(5.0), dev_servo_data.channel[CH].req.feedrate);
+    TEST_ASSERT_FALSE(dev_servo_capStaged(CH, counts_from_mm(5.0)));
+}
+
 /**********************************************************************
  * Liveness — what APP gates the machine on
  **********************************************************************/
@@ -3623,6 +3643,7 @@ int main(void)
     RUN_TEST(test_dev_servo_stagedMoveTheOtherWayStopsFirst);
     RUN_TEST(test_dev_servo_arrivalSpeedLetsAShortNextMoveStop);
     RUN_TEST(test_dev_servo_stopClearsTheStagedMove);
+    RUN_TEST(test_dev_servo_capStagedLowersOnlyAPendingStagedMove);
     RUN_TEST(test_dev_servo_commandLandingMidtickIsNotReportedAsArrival);
     RUN_TEST(test_dev_servo_setVelocityClearsArrival);
     RUN_TEST(test_dev_servo_stopClearsArrival);
