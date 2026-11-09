@@ -262,8 +262,10 @@ bootrom:
 # headed copy of mad-serial-boot-cosim.toml, its window on the app's
 # Firmware page. The module's flash is erased and S301 pulls P59 up, so the
 # ROM waits for a serial boot on J1 (P62/P63), where the Prop Plug's FT231X
-# (0403:6015) sits; `Prop_Chk` answers without a reset pulse: no host kind
-# has modem-control pins, so the port's setSignals reaches no pin. The app's
+# (0403:6015) sits; `Prop_Chk` answers without a reset pulse: this file
+# leaves J1.3 (RESn) and the host's DTR unwired, so the port's setSignals
+# reaches no pin here. The board where DTR reaches the Prop Plug's reset
+# stage and resets the P2 is mad-reflash-cosim.toml (make e2e-reflash). The app's
 # flasher writes the flash, as FW-ISS does on the -cosim copy (make
 # e2e-rom); a RAM load's reply is garbled there until MaD #295 is fixed.
 ROM_PLAYGROUND_PROJECT = mad-serial-boot-playground.toml

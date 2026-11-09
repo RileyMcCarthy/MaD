@@ -236,7 +236,6 @@ impl TxPace {
     }
 }
 
-/// The transmit half of one link, once the guest has configured its pin.
 /// The slowest transition pin the package's bus clocks edge by edge
 /// ([`p2core::PinBus::clocks_synchronously`]): one transition every 16
 /// clocks, 5 MHz at the firmware's 160 MHz. loadp2's flash clock makes one
@@ -244,6 +243,7 @@ impl TxPace {
 /// carried as a rate ([`crate::pulse`]).
 const SYNC_CLOCK_MAX_TRANSITION_CLOCKS: u32 = 16;
 
+/// The transmit half of one link, once the guest has configured its pin.
 #[derive(Debug)]
 struct TxLink {
     bridge: Arc<SerialLevelBridge>,

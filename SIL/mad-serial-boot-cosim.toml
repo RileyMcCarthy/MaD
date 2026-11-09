@@ -250,7 +250,7 @@ volts = 0.0
 # sends the ROM), J1.4 the carrier's GND. J1.1 and J1.2 go straight to the
 # socket's fingers 50 and 49, and on to the chip's P62 and P63 (read:
 # mad_edge.net, nets P62 and P63; embsim boards/netlists/p2_ec32mb.net).
-# J1.3, RESn, stays unwired: the host kinds have no modem-control pins, so
+# J1.3, RESn, stays unwired, and so does the host's DTR, so
 # nothing pulses the reset, and the ROM's serial boot answers without one,
 # P59's pull-up (R302, the scenario) selecting it. The app's flasher resets
 # the chip with DTR before its probe (Software/Control/README.md, "Firmware

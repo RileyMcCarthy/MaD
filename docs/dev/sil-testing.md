@@ -154,7 +154,10 @@ with MaD Control in the host's Chrome held to the board's clock by embsim's
   reflash file `J1` (`P63`/`P62`), USB `0403:6015`, an FTDI FT231X, the chip
   in the Prop Plug. It follows Chrome's rules: a `close()` refused while a stream
   is locked, `NetworkError` on an unplug, a new `SerialPort` and `connect` on
-  a replug. The line has no modem pins: DTR, RTS and a break reach nothing.
+  a replug. DTR is the line's one modem pin: `open()` asserts it and
+  `setSignals()` moves it, and only the reflash file wires it, through the
+  Prop Plug's reset stage onto `J1.3`, so there it resets the P2. RTS and a
+  break reach nothing.
 - **The host's pins.** On the project, the file's wires: on the flash-boot
   files to `J4`'s receive and transmit lines (through `IC2` to `P30`/`P32`)
   and its ground; on the serial-boot files and the reflash file `HOST.TX` to
