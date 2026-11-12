@@ -491,9 +491,14 @@ const STEPS_PER_MM: u64 = 8_192;
 /// as a rate, the train costs the engine one publish however long it is.
 const TRAIN_HZ: u32 = 81_920;
 
-/// The steps from the start to the upper end switch: 100 mm, the firmware's
-/// travel (`TRAVEL_MM` in `iss_description.rs`), 819 200 steps.
+/// The steps from the start to the lower end switch, at the high end of the
+/// travel: 100 mm, the firmware's travel (`TRAVEL_MM` in
+/// `iss_description.rs`), 819 200 steps.
 const TO_THE_LIMIT: u64 = 100 * STEPS_PER_MM;
+
+/// The steps back from the start to the upper end switch, at the low end of
+/// the travel: 10 mm (`UPPER_MM` in `machine.rs`), 81 920 steps.
+const BACK_TO_THE_UPPER_LIMIT: u64 = 10 * STEPS_PER_MM;
 
 /// What the bridge reads with the reference sample's 5 N on the load cell:
 /// 5 N of its 100 N full scale at −4.868009 mV/V, times 3.3 V across it
@@ -638,7 +643,7 @@ fn bridge(handed: &Handed) -> (f64, f64) {
 }
 
 #[rstest]
-fn travel_as_a_rate_opens_the_upper_loop_past_one_hundred_millimetres() {
+fn travel_as_a_rate_opens_the_lower_loop_past_one_hundred_millimetres() {
     behaviour!(Test {
         id: "machine.travel-as-a-rate",
         covers: Some("SIL/mad-catalog/src/machine.rs#assemble"),
@@ -654,17 +659,18 @@ fn travel_as_a_rate_opens_the_upper_loop_past_one_hundred_millimetres() {
     );
     expect!(
         "closed-to-the-limit",
-        "the upper end-switch loop carries the loop's 5 volts throughout the travel and with \
+        "the lower end-switch loop carries the loop's 5 volts throughout the travel and with \
          the carriage at rest at 100 millimetres"
     );
     expect!(
         "open-past-the-limit",
-        "one step past 100 millimetres the upper loop is open: nothing drives its far side",
-        "the upper end switch opens where the firmware's travel ends, 100 millimetres"
+        "one step past 100 millimetres the lower loop is open: nothing drives its far side",
+        "position is the distance between the jaws, so the lower end switch is at the high \
+         end of the travel, and it opens where the firmware's travel ends, 100 millimetres"
     );
     expect!(
-        "lower-closed",
-        "the lower end-switch loop carries the loop's 5 volts throughout"
+        "upper-closed",
+        "the upper end-switch loop carries the loop's 5 volts throughout"
     );
     expect!(
         "sample-loaded",
@@ -684,17 +690,17 @@ fn travel_as_a_rate_opens_the_upper_loop_past_one_hundred_millimetres() {
         let wait = (total - waited).min(100_000_000);
         virtual_clock::wait_virtual_ns(wait);
         waited += wait;
-        closed_on_the_way.push((rig.state("UPPER+"), rig.state("LOWER+")));
+        closed_on_the_way.push((rig.state("LOWER+"), rig.state("UPPER+")));
     }
     let at_the_limit = rig.summary();
-    let (upper_at_limit, lower_at_limit) = (rig.state("UPPER+"), rig.state("LOWER+"));
+    let (lower_at_limit, upper_at_limit) = (rig.state("LOWER+"), rig.state("UPPER+"));
     let (positive, negative) = bridge(&probe);
     let bridge_mv = (positive - negative) * 1_000.0;
 
     train(&step, 1);
     virtual_clock::wait_virtual_ns(rest_ns(1));
     let past_the_limit = rig.summary();
-    let (upper_past, lower_past) = (rig.state("UPPER+"), rig.state("LOWER+"));
+    let (lower_past, upper_past) = (rig.state("LOWER+"), rig.state("UPPER+"));
     rig.finish();
 
     let driven = NetState::Driven(Level::High);
@@ -712,6 +718,68 @@ fn travel_as_a_rate_opens_the_upper_loop_past_one_hundred_millimetres() {
         );
     }
     assert!(
+        closed_on_the_way.iter().all(|(lower, _)| *lower == driven),
+        "{closed_on_the_way:?}"
+    );
+    assert_eq!(lower_at_limit, driven);
+    assert_eq!(lower_past, NetState::Floating);
+    assert!(
+        closed_on_the_way.iter().all(|(_, upper)| *upper == driven),
+        "{closed_on_the_way:?}"
+    );
+    assert_eq!((upper_at_limit, upper_past), (driven, driven));
+    assert!(
+        ((bridge_mv - AT_THE_LIMIT_MV) / AT_THE_LIMIT_MV).abs() < 1e-5,
+        "the bridge reads {bridge_mv} mV, 5 N reads {AT_THE_LIMIT_MV} mV"
+    );
+}
+
+#[rstest]
+fn travel_back_opens_the_upper_loop_ten_millimetres_above_the_start() {
+    behaviour!(Test {
+        id: "machine.upper-limit-at-the-low-end",
+        covers: Some("SIL/mad-catalog/src/machine.rs#assemble"),
+        given: "the machine driven back from its start, the jaws closing, by a step train \
+                carried as a rate, 81920 steps at 10 millimetres a second, which bring the \
+                carriage to rest 10 millimetres above its start, then by one step more",
+    });
+    expect!(
+        "closed-to-the-limit",
+        "the upper end-switch loop carries the loop's 5 volts throughout the travel and with \
+         the carriage at rest 10 millimetres above its start"
+    );
+    expect!(
+        "open-past-the-limit",
+        "one step further the upper loop is open: nothing drives its far side",
+        "the upper end switch is at the low end of the travel, the end the firmware's homing \
+         drives toward, so a home started at the carriage's start finds it 10 millimetres on"
+    );
+    expect!(
+        "lower-closed",
+        "the lower end-switch loop carries the loop's 5 volts throughout"
+    );
+    let (rig, step, dir, _probe) = on_a_train_with_direction(&project("", ""));
+    direction(&dir, true);
+
+    train(&step, BACK_TO_THE_UPPER_LIMIT);
+    let total = rest_ns(BACK_TO_THE_UPPER_LIMIT);
+    let mut closed_on_the_way = Vec::new();
+    let mut waited = 0;
+    while waited < total {
+        let wait = (total - waited).min(100_000_000);
+        virtual_clock::wait_virtual_ns(wait);
+        waited += wait;
+        closed_on_the_way.push((rig.state("UPPER+"), rig.state("LOWER+")));
+    }
+    let (upper_at_limit, lower_at_limit) = (rig.state("UPPER+"), rig.state("LOWER+"));
+
+    train(&step, 1);
+    virtual_clock::wait_virtual_ns(rest_ns(1));
+    let (upper_past, lower_past) = (rig.state("UPPER+"), rig.state("LOWER+"));
+    rig.finish();
+
+    let driven = NetState::Driven(Level::High);
+    assert!(
         closed_on_the_way.iter().all(|(upper, _)| *upper == driven),
         "{closed_on_the_way:?}"
     );
@@ -722,10 +790,6 @@ fn travel_as_a_rate_opens_the_upper_loop_past_one_hundred_millimetres() {
         "{closed_on_the_way:?}"
     );
     assert_eq!((lower_at_limit, lower_past), (driven, driven));
-    assert!(
-        ((bridge_mv - AT_THE_LIMIT_MV) / AT_THE_LIMIT_MV).abs() < 1e-5,
-        "the bridge reads {bridge_mv} mV, 5 N reads {AT_THE_LIMIT_MV} mV"
-    );
 }
 
 // ============================================================
