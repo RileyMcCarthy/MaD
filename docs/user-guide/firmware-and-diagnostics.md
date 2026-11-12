@@ -79,8 +79,9 @@ so you don't connect to it by mistake.
 
 ## Restarting the machine
 
-Connecting and reconnecting never restart the machine. To restart it (to apply
-a saved machine configuration, for example), power-cycle it.
+After you write the machine configuration, the app offers **Reboot now**,
+which tells the machine to restart and reconnects once it has booted. Otherwise,
+to restart it, power-cycle it.
 
 ## Updating the app
 

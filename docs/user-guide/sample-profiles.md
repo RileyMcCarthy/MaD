@@ -41,3 +41,5 @@ into **strain** — that's what produces the stress–strain curve in the
   saved profiles). See the [file formats reference](file-formats.md).
 - There is nothing to send to the machine from here: when you start a test,
   the app writes the selected sample profile to the machine for that test.
+- The save button shows **Saved ✓** when it worked, and leaving with unsaved
+  changes asks first.

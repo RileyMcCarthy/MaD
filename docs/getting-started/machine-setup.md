@@ -10,13 +10,14 @@ sensitivity you enter there.
 
 !!! info "Settings take effect after a restart"
     The machine reads its configuration when it starts. After **Write to
-    device**, **power-cycle the machine** before relying on the new values.
-    Reconnecting the app does not restart it.
+    device**, the app asks to reboot: click **Reboot now** before relying on
+    the new values (or power-cycle the machine). Everywhere below, "write and
+    reboot" means this.
 
 ## 1. Enter the machine configuration
 
 Under **Machine configuration**, the values load from the machine. Fill them in
-from your hardware's datasheets, then click **Write to device** and power-cycle.
+from your hardware's datasheets, then click **Write to device** and **Reboot now**.
 
 ![The Machine configuration panel](../assets/screenshots/settings-machine-configuration.png)
 
@@ -37,11 +38,11 @@ field.
 
 !!! warning "If the carriage never moves"
     A wrong **Drive enable** leaves the drive switched off: motion enables,
-    jogs are accepted, and nothing moves. Flip it, write, power-cycle.
+    jogs are accepted, and nothing moves. Flip it, write and reboot.
 
 ## 2. Check the drive and encoder
 
-Open **Live**, click **Enable motion**, and jog the carriage to the middle of
+Open **Control**, click **Enable motion**, and jog the carriage to the middle of
 its travel. Then go back to **Settings → Motor calibration** and click **Run
 check**.
 
@@ -57,7 +58,7 @@ counts what the encoder sees.
 
     ![A failed check with a suggested fix](../assets/screenshots/motor-calibration-check-mismatch.png)
 
-    Change the value you trust less, **Write to device**, power-cycle, and run
+    Change the value you trust less, **Write to device**, reboot, and run
     the check again.
 
 Every finding is explained in
@@ -75,10 +76,10 @@ It runs a short program closed loop and reports three things:
 
 - **Acceleration**: *pass* means the carriage kept up with **Acceleration
   Max** at every speed. *too high* means lower **Acceleration Max** (or
-  **Velocity Max**), write, power-cycle and run it again.
+  **Velocity Max**), write and reboot, and run it again.
 - **Tracking**: how closely the servo follows its encoder.
 - **Suggested servo gains**: starting values for **Servo Kp** and **Servo
-  Ki**. Enter them in Machine configuration, write, power-cycle, and run the
+  Ki**. Enter them in Machine configuration, write and reboot, and run the
   calibration again to compare.
 
 Neither routine writes anything to the machine. You change the fields yourself.
@@ -95,7 +96,7 @@ zero**. After 3 seconds it shows the zero balance and the noise:
 ![Zero and noise result](../assets/screenshots/load-cell-zero-result.png)
 
 Click **Use this zero** (it fills in **Load Cell Zero Balance** above), then
-**Write to device** and power-cycle. If the badge says *still settling*, wait
+**Write to device** and reboot. If the badge says *still settling*, wait
 and read again.
 
 ### Sensitivity
@@ -110,14 +111,14 @@ With the load cell hanging vertically:
 
 ![Sensitivity fitted from three known weights](../assets/screenshots/load-cell-sensitivity-result.png)
 
-Click **Use this sensitivity**, then **Write to device** and power-cycle.
+Click **Use this sensitivity**, then **Write to device** and reboot.
 
 The flags (*light*, *swinging*, *polarity*) are explained in
 [Load cell calibration](../user-guide/load-cell-calibration.md#flags).
 
 ## 5. Confirm
 
-After the last power-cycle, reconnect and check on **Live** that:
+After the last reboot, check on **Control** that:
 
 - with nothing in the grips, **Machine Force** reads close to zero;
 - a known weight reads its weight;

@@ -230,8 +230,7 @@ describe('DataStore mutex + index integrity', () => {
         moves: [
           {
             moveType: 'linear' as const,
-            absoluteOrRelative: 'relative' as const,
-            moveParameters: { position: 0, velocity: 5, distance: 10, time: 0 },
+            moveParameters: { position: 10, velocity: 5, time: 0 },
           },
         ],
       };

@@ -52,16 +52,16 @@ const MOTION = {
       name: 'Preload',
       executions: 1,
       moves: [
-        { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 5, distance: 5, time: 0, circularOffset: 0 } },
+        { moveType: 'linear', moveParameters: { position: 5, velocity: 5, time: 0 } },
       ],
     },
     {
       name: 'Cycle',
       executions: 3,
       moves: [
-        { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 10, distance: 20, time: 0, circularOffset: 0 } },
-        { moveType: 'dwell', absoluteOrRelative: 'absolute', moveParameters: { position: 0, velocity: 0, distance: 0, time: 500, circularOffset: 0 } },
-        { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 10, distance: -20, time: 0, circularOffset: 0 } },
+        { moveType: 'linear', moveParameters: { position: 20, velocity: 10, time: 0 } },
+        { moveType: 'dwell', moveParameters: { position: 0, velocity: 0, time: 500 } },
+        { moveType: 'linear', moveParameters: { position: 0, velocity: 10, time: 0 } },
       ],
     },
   ],
@@ -462,7 +462,7 @@ async function main() {
   await safe('connect', async () => {
     await page.getByTestId('connect-granted').first().waitFor({ timeout: 8000 });
     await shot(page, 'connect');
-    await go(page, '/live');
+    await go(page, '/control');
     await shot(page, 'live-disconnected');
     await go(page, '/firmware');
     await page.getByTestId('install-recommended').waitFor({ timeout: 15000 }).catch(() => {});
@@ -489,7 +489,7 @@ async function main() {
 
   // ---- The firmware banner, one shot per verdict, on the Live screen. ----
   await safe('banners', async () => {
-    await go(page, '/live');
+    await go(page, '/control');
     const verdicts = {
       'banner-checking': { firmwareCompat: { kind: 'checking' }, firmwareVersion: null, deviceProtocol: null },
       'banner-firmware-too-old': { firmwareVersion: '0.14', deviceProtocol: 3, firmwareCompat: { kind: 'firmwareTooOld', deviceProtocol: 3, appProtocol: 4 } },
@@ -510,7 +510,7 @@ async function main() {
 
   // ---- The status bar. ----
   await safe('statusbar', async () => {
-    await go(page, '/live');
+    await go(page, '/control');
     await shotOf(page, 'status-connected', [statusbar]);
     await setState(page, { responding: false, firmwareVersion: null }, null);
     await shotOf(page, 'status-not-responding', [statusbar]);
@@ -526,7 +526,7 @@ async function main() {
 
   // ---- Live: the normal screen, then State + Controls in every machine state. ----
   await safe('live', async () => {
-    await go(page, '/live');
+    await go(page, '/control');
     await page.locator('[data-testid="live-combined-chart"] canvas').first().waitFor({ timeout: 12000 });
     await page.locator('label.field', { hasText: 'Speed (mm/s)' }).locator('input').fill('4');
     await page.getByRole('button', { name: '+ Jog up' }).click();
@@ -538,7 +538,7 @@ async function main() {
   });
 
   await safe('machine-states', async () => {
-    await go(page, '/live');
+    await go(page, '/control');
     const both = [panel(page, 'State'), panel(page, 'Controls')];
     await setState(page, {}, { motionEnabled: false });
     await shotOf(page, 'state-disabled', both);
@@ -588,7 +588,7 @@ async function main() {
 
   await safe('motor-calibration-mismatch', async () => {
     // The drive is set finer than Servo (step/mm) says: the encoder sees more travel.
-    await go(page, '/live');
+    await go(page, '/control');
     await go(page, '/settings');
     await page.evaluate(async () => {
       const { deviceClient } = await import('/src/device/session.ts');
@@ -606,7 +606,7 @@ async function main() {
   });
 
   await safe('load-cell-run', async () => {
-    await go(page, '/live');
+    await go(page, '/control');
     await go(page, '/settings');
     const cell = panel(page, 'Load cell calibration');
     // Nothing on the load cell; the true zero sits a little off the saved one.
@@ -659,14 +659,17 @@ async function main() {
     await page.keyboard.press('Escape').catch(() => {});
   });
 
+  // 5. Test runner (seeded profiles selectable) on Control.
   await safe('test-runs', async () => {
-    await go(page, '/runs');
+    await go(page, '/control');
     await page.waitForTimeout(800);
     const runner = panel(page, 'New test');
     await runner.locator('select').nth(0).selectOption({ index: 1 }).catch(() => {});
     await runner.locator('select').nth(1).selectOption({ index: 1 }).catch(() => {});
     await shot(page, 'test-runs', { height: 1150 });
     await shotOf(page, 'test-runs-new-test', [runner]);
+    await go(page, '/runs');
+    await page.waitForTimeout(800);
     await shotOf(page, 'test-runs-history', [panel(page, 'History')], { height: 1150 });
   });
 
