@@ -2,12 +2,12 @@
 
 Runs the **real flexcc-compiled P2 image**, instruction by instruction.
 
-This is a second SIL execution model, not a replacement for the existing one.
-The native backend (`embsim-p2`) compiles the firmware with clang for the host
-and substitutes the HAL — fast, debuggable, and structurally unable to see
-flexcc codegen bugs, 32-bit pointer assumptions, cog stack overflow, or
-smart-pin misconfiguration, because it never executes a byte of P2 machine code.
-`p2core` executes the artifact you actually flash.
+This is the SIL's execution model. The native backend it began beside (retired
+in d185b04eb) compiled the firmware with clang for the host and substituted the
+HAL — fast, debuggable, and structurally unable to see flexcc codegen bugs,
+32-bit pointer assumptions, cog stack overflow, or smart-pin misconfiguration,
+because it never executed a byte of P2 machine code. `p2core` executes the
+artifact you actually flash.
 
 ```
 cargo run -p p2core --release --example run -- \
@@ -33,9 +33,10 @@ console 62/63), and a host request gets a structured reply:
 ```
 
 That is the capability SIL tests need. The SD card model completes the CMD0 /
-CMD8 handshake with a correct R7; mounting a real filesystem is not done yet, so
-the firmware currently takes its documented mount-failure path and runs on
-failsafe records.
+CMD8 handshake with a correct R7 and serves blocks, so the firmware mounts a
+FAT16 image (`p2iss`'s `sdimage::mad_card` builds one;
+`p2iss/tests/ec32mb_sd_mount.rs`). On a blank card it takes its documented
+mount-failure path and runs on failsafe records, as in the console above.
 
 ## Design
 

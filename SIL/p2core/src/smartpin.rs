@@ -5,7 +5,7 @@
 //! `WYPIN` — taking the byte and discarding the rest — is a shim: it works, and
 //! it cannot see a wrong `clkfreq`, a wrong bit period, or a driver that
 //! programmed the wrong mode entirely. Those are exactly the bugs an ISS exists
-//! to catch, since the native backend never executes a `WRPIN` at all.
+//! to catch, since the retired native backend never executed a `WRPIN` at all.
 //!
 //! So this decodes the configuration. It does **not** simulate individual bit
 //! edges inside the CPU: the serial bridge on the net frames at the baud this

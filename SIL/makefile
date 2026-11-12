@@ -2,6 +2,7 @@
 #
 # Commands:
 #   make p2image        - Build the firmware's P2 image (pio env MaD), the one image the ISS executes
+#   make protocol       - Regenerate the Rust codec into ../Protocol/rust/src/generated
 #   make emulator       - Build the SIL workspace
 #   make test           - Build the image, run the Rust test suite
 #   make playground     - mad-playground.toml under embsim run: the machine, MaD Control in a Chrome window on the board's clock
@@ -14,10 +15,12 @@
 #   make e2e-bundle     - BUNDLE-live: the built bundle (as pages.yml builds it) on e2e-emulator's board
 #   make e2e-motion     - The scenarios that move the carriage, on mad-cosim.toml (MOTION_SHARD splits them)
 #   make e2e-stall      - SERVO-stall on mad-hard-stop-cosim.toml: the carriage jogged into a hard stop
+#   make e2e-compat     - The compatibility scenarios on e2e-emulator's board, on this tree's firmware one protocol_version ahead and on a release behind
 #   make e2e-reflash    - FW1 and COMPAT-reflash: the app flashing the firmware for real over J1, DTR resetting the chip, on mad-reflash-cosim.toml
 #   make reflash-image  - build/reflash.bin: the firmware's image stamped with a version of its own, FW1's
 #   make flash-image    - build/flash.bin: stage-1 and the firmware's image, the module's boot flash
 #   make sd-image       - build/sd.img: a 32 MiB FAT16 card mirroring ./sd
+#   make bootrom        - Rebuild p2iss/rom's boot ROM and stage-1 loader from their .spin2 sources (needs flexspin)
 #   make check          - embsim check on MaD's eight project files (mad*.toml)
 #   make clean          - Remove build artifacts
 #
@@ -78,7 +81,7 @@ p2image:
 	cd $(FIRMWARE_DIR) && pio run -e $(P2_ENV)
 
 # Generate Rust protocol types used by SIL (MaD-specific; kept out of the
-# generic embsim crates — lands in the `protocol` crate at ../Protocol).
+# generic embsim crates — lands in the `protocol` crate at ../Protocol/rust).
 protocol:
 	python3 $(PROTOEMB_GENERATOR) --schema $(PROTOEMB_SCHEMA) --target rs --output ../Protocol/rust/src/generated --templates $(PROTOEMB_TEMPLATES)
 
@@ -368,6 +371,6 @@ e2e-reflash: flash-image sd-image reflash-image
 
 # Clean build artifacts
 clean:
-	rm -rf test-results $(BUILD_DIR)
+	rm -rf $(BUILD_DIR)
 	cargo clean
 	cd $(FIRMWARE_DIR) && pio run -e $(P2_ENV) -t clean
