@@ -958,7 +958,7 @@ void test_m4_first_fault_wins_adjacent_pairs(void)
                "src/APP/app_control.c#app_control_run",
                "each neighbouring pair of fault causes tripped at the same time, in turn");
     VIBES_EXPECT_WHY("earlier-cause-reported",
-                     "the machine reports the earlier one in a fixed order: stopped core, stalled watchdog, the emergency stop, the upper then the lower end-of-travel emergency switch, lost emergency-stop power, drive, load cell link, load cell overload",
+                     "the earlier one is reported, in this order: core, watchdog, emergency stop, upper then lower end-of-travel emergency switch, emergency-stop power, drive, load cell link, overload",
                      "causes near the front produce the ones behind them, since a dead core also stops the drive answering and a pressed emergency stop is what cuts the emergency-stop power, so this order names the root cause");
     static const app_control_fault_E order[] = {
         APP_CONTROL_FAULT_COG,

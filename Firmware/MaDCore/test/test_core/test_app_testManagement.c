@@ -589,7 +589,7 @@ void test_app_testManagement_travelLimitEndsRun(void)
                "a running test, then motion reporting that it dropped a move at a travel limit");
     VIBES_EXPECT_WHY("test-ends",
                      "the test stops and no further moves of its program are sent",
-                     "a program that has lost one of its moves is no longer the test that was asked for");
+                     "a program missing one of its moves is a different test from the one that was asked for");
     VIBES_EXPECT("operator-warned", "the operator is warned that the test stopped at a travel limit");
     tm_init();
     tm_driveToRunning();

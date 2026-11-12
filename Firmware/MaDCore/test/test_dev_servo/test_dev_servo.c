@@ -3654,7 +3654,7 @@ void test_a_move_parks_on_the_belt_encoder(void)
 {
     VIBES_TEST("servo.move-parks-at-60-counts-per-mm",
                "src/DEV/dev_servo.c#dev_servo_run",
-               "the machine's own scale, 60 encoder counts per mm with the shipped 50 mm/s and 600 mm/s^2 limits, making a 10 mm move at 5 mm/s and the same move back");
+               "a 60 counts/mm machine with the shipped speed and acceleration limits, making a 10 mm move at 5 mm/s and the same move back");
     VIBES_EXPECT_WHY("arrives-within-two-counts",
                      "each move reports arrival with the encoder within two counts of its target",
                      "one count is 17 um here, so the parking band is the two-count floor, the tightest an encoder this coarse can hold");

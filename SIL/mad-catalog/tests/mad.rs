@@ -1713,10 +1713,9 @@ fn the_firmware_holds_the_carriage_to_the_upper_travel_limit_and_homes_off_it() 
     behaviour!(Test {
         id: "mad-project.upper-travel-limit",
         covers: Some("SIL/mad.toml"),
-        given: "the machine's project file with the firmware booted and motion enabled; a \
-                host jogs the carriage 15 mm toward the upper travel limit at 50 mm/s, from \
-                10 mm short of its switch, jogs 1 mm further toward it, jogs 1 mm away, and \
-                then homes",
+        given: "the machine's project file, motion enabled; a host jogs 15 mm at 50 mm/s \
+                toward the upper travel limit 10 mm away, then 1 mm further, 1 mm back, and \
+                homes",
     });
     expect!(
         "stops-at-the-limit",
@@ -1742,8 +1741,8 @@ fn the_firmware_holds_the_carriage_to_the_upper_travel_limit_and_homes_off_it() 
     );
     expect!(
         "homes-to-the-switch",
-        "homing, started with the switch still open, leaves the carriage 5 mm below the \
-         point where the switch opens, to within 0.8 mm, and the firmware reporting 30 mm",
+        "homing from the open switch leaves the carriage 5 mm below where the switch opens, \
+         to within 0.8 mm, and the firmware reporting 30 mm",
         "homing first moves off a switch that is already active and takes its reference \
          where the switch goes active on the approach; taken where the carriage stood, it \
          would be out by the 3 mm the full-speed jog overran"
@@ -1921,10 +1920,9 @@ fn the_firmware_faults_when_a_jog_overloads_the_load_cell() {
     behaviour!(Test {
         id: "mad-project.overload-stops-a-jog",
         covers: Some("SIL/mad.toml"),
-        given: "the machine's project file with a card whose machine profile rates the load \
-                cell at 2 N, the firmware booted and motion enabled; a host jogs the carriage \
-                60 mm into the reference sample at 20 mm/s, which carries 2.4 N at 55.8 mm, \
-                and then asks for motion again",
+        given: "the machine's project file with a load cell rated 2 N, motion enabled; a host \
+                jogs 60 mm into the sample, which carries 2.4 N at 55.8 mm, and asks for \
+                motion again",
     });
     expect!(
         "stops-at-the-overload",
@@ -2002,9 +2000,9 @@ fn an_emergency_stop_holds_the_machine_off_until_it_is_acknowledged() {
     behaviour!(Test {
         id: "mad-project.emergency-stop-latches",
         covers: Some("SIL/mad.toml"),
-        given: "the machine's project file with the firmware booted and motion enabled; the \
-                emergency stop's loop is closed for 200 ms and opened again, and a host then \
-                asks for motion off and for motion on",
+        given: "the machine's project file with motion enabled; the emergency stop's loop is \
+                closed for 200 ms and opened again, and a host then asks for motion off and \
+                for motion on",
     });
     expect!(
         "stops-while-pressed",
@@ -2013,8 +2011,8 @@ fn an_emergency_stop_holds_the_machine_off_until_it_is_acknowledged() {
     );
     expect!(
         "held-after-release",
-        "200 ms after the loop opens again, a state read still gives the emergency stop as \
-         the fault, with motion off and the drive's enable input still low",
+        "200 ms after the loop opens, the state still gives the emergency stop as the fault, \
+         with motion off and the drive's enable low",
         "the firmware keeps the request for motion through a fault, so a fault that cleared \
          with its input would switch the drive back on with nobody asking"
     );
@@ -2142,10 +2140,8 @@ fn the_firmware_jogs_the_carriage_on_the_belts_encoder() {
     behaviour!(Test {
         id: "mad-project.belt-encoder-jog",
         covers: Some("SIL/mad.toml"),
-        given: "the machine's project file with the machine's own scales, an encoder of 60 \
-                counts a millimetre and a drive of 160 steps a millimetre, on the machine and \
-                in the card's machine profile, the firmware booted and motion enabled; a host \
-                jogs 10 mm forward and 5 mm back at 5 mm/s",
+        given: "the machine's project file on a 60 counts/mm encoder and a 160 steps/mm \
+                drive, motion enabled; a host jogs 10 mm forward and 5 mm back at 5 mm/s",
     });
     expect!(
         "jog-forward",

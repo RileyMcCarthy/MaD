@@ -739,14 +739,14 @@ fn travel_back_opens_the_upper_loop_ten_millimetres_above_the_start() {
     behaviour!(Test {
         id: "machine.upper-limit-at-the-low-end",
         covers: Some("SIL/mad-catalog/src/machine.rs#assemble"),
-        given: "the machine driven back from its start, the jaws closing, by a step train \
-                carried as a rate, 81920 steps at 10 millimetres a second, which bring the \
-                carriage to rest 10 millimetres above its start, then by one step more",
+        given: "the machine driven back from its start, the jaws closing, by 81920 steps at \
+                10 millimetres a second, which bring the carriage to rest 10 millimetres \
+                above its start, then by one step more",
     });
     expect!(
         "closed-to-the-limit",
-        "the upper end-switch loop carries the loop's 5 volts throughout the travel and with \
-         the carriage at rest 10 millimetres above its start"
+        "the upper end-switch loop carries the loop's 5 volts all the way there and at rest \
+         there"
     );
     expect!(
         "open-past-the-limit",
