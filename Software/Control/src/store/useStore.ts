@@ -239,6 +239,8 @@ let respondingTimer: ReturnType<typeof setInterval> | null = null;
 let lastSampleAt = 0;
 /** Throttle for device-error toasts so a burst of protocol errors can't spam. */
 let lastErrorToastAt = 0;
+/** Time the firmware takes to restart and boot after acknowledging a reboot. */
+const REBOOT_BOOT_MS = 2000;
 /** No sample within this window ⇒ "not responding". */
 const RESPONDING_TIMEOUT_MS = 2000;
 
@@ -790,8 +792,16 @@ export const useStore = create<AppState>((set, getState) => ({
       return false;
     }
     const baud = lastBaud;
-    logStore.info('reboot', 'reopening the port to reset the machine');
+    // The control port has no reset line: the machine restarts on command,
+    // after its ACK. Reconnecting then reads the new boot afresh.
+    logStore.info('reboot', 'asking the machine to restart');
+    const acked = await deviceClient.reboot().catch(() => false);
+    if (!acked) {
+      logStore.warn('reboot', 'the machine did not acknowledge the reboot');
+      return false;
+    }
     await s.disconnect();
+    await new Promise((resolve) => setTimeout(resolve, REBOOT_BOOT_MS));
     await getState().connect({ port, baud });
     const ok = getState().connection === 'connected';
     if (ok) set({ rebootNeeded: false });

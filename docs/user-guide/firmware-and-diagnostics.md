@@ -1,160 +1,114 @@
-# Firmware & diagnostics
+# Firmware
 
-The **Firmware** screen shows the firmware version reported by the connected
-machine and lets you update it. Diagnostics for troubleshooting live on the
-**About** screen.
+The **Firmware** screen shows the firmware the machine is running, the release
+this app recommends, and flashes it. For the first-time walkthrough see
+[Flash the firmware](../getting-started/flashing-firmware.md).
 
-![The Firmware screen](../assets/screenshots/09-firmware.png)
+![The Firmware screen](../assets/screenshots/firmware.png)
 
-## Firmware version
+## What the screen shows
 
-When the machine is connected and responding, its **firmware version** is shown
-here (and in the status bar). If it shows nothing, the firmware isn't responding —
-see [Troubleshooting](troubleshooting.md).
+| Row | Meaning |
+|---|---|
+| **Installed** | The version the connected firmware reports. *— connect to read* when nothing is connected. |
+| **Protocol** | The protocol version the firmware speaks, and the one this app speaks |
+| **Recommended** | The newest published firmware release that speaks this app's protocol, with a link to its release notes |
+| **Will flash** | What a flash would write: the recommended release, or a local file |
+| **Programming port** | The port the flash goes through; **Change** picks another |
 
-## Updating the firmware
+Without a machine connected the screen still shows the recommended release and
+can flash it, which is how a blank board gets its first firmware:
 
-The app programs the Propeller 2 straight from the browser. There is nothing
-to install.
+![The Firmware screen with nothing connected](../assets/screenshots/firmware-disconnected.png)
 
-### Two ports: control and programming
+## How the app decides the firmware is compatible
 
-The machine has two serial ports with separate jobs, and the app uses each for
-one thing only:
+Every build of the firmware and of the app is generated from one protocol
+definition, which carries a **protocol version**. That number changes whenever
+the messages change in a way the other side could misread.
 
-| Port | What plugs in | Used for |
+Each time the app connects it asks the firmware for its protocol version, and
+until the answer matches its own it **refuses to move the machine**: enable
+motion, jog, home, calibration and running a test are all blocked, and a banner
+on every screen says why. **STOP** and **Disable motion** always work.
+
+| Verdict | Banner | Motion |
 |---|---|---|
-| **Control port** | A USB-serial adapter on the controller's secondary serial, P30/P32. On the Edge carrier v0.3 that is header **J4**, through the isolator; on a P2-EVAL bench, an FTDI adapter with its TX on P30 and its RX on P32. | The **Connect** page: live data, jogging, tests. Opening it never resets the machine, so connecting, refreshing the page and auto-reconnect are all safe mid-test. |
-| **Programming port** | A Prop Plug on the **Debug/Programming header (J1)**, wired pin 1→4 as `P62 / P63 / RESn / GND`, or the P2-EVAL's own USB. | The **Firmware** page only. Its adapter drives RESn from DTR, so **opening it resets the machine**. It also carries the firmware's debug log. |
+| Still asking | *Checking which protocol the machine's firmware speaks…* | Blocked until it answers |
+| Same protocol | none | Allowed |
+| Firmware older | *The machine's firmware is too old for this version of MaD Control…* | Blocked: update the firmware |
+| Firmware newer | *The machine's firmware is newer than this version of MaD Control…* | Blocked: open the app release the banner names, or install this app's firmware |
+| No answer | *The machine's firmware did not say which protocol it speaks…* | Blocked: reconnect, or update the firmware |
+| Same protocol, older than a fix this app knows about | *A firmware update is recommended…* | Allowed |
 
-Both are usually plugged in at once. The firmware never talks the protocol on
-J1, so connecting the app there finds no machine (and restarts it). The
-control port has no reset line, so it cannot program the board.
+[Firmware problems](../troubleshooting/firmware.md) shows each banner and what
+to do.
 
-### What flashing does
+## Updating
 
-The Propeller 2 boots from its SPI flash, so an update writes there and takes
-effect immediately: the board reboots into the new firmware and stays on it
-through power cycles.
+1. Plug the Prop Plug into **J1** (or the P2-EVAL USB) alongside the control
+   port.
+2. Check **Programming port** names it. The app never offers the control port
+   it is connected through.
+3. Click **Install recommended firmware**, check the file and port named in the
+   prompt, and confirm.
 
-This is the only mode the app offers. The chip can also run firmware straight
-from RAM without writing it, which is useful when bringing up a board, but that
-copy disappears at the next reset — as an update it would look like it worked
-and then silently revert. That path lives in the `hw:flash` developer CLI
-instead.
+![The Firmware screen when an update is needed](../assets/screenshots/firmware-update-needed.png)
 
-### When the app asks you to update
+The app stops the control session, resets the controller into its boot loader
+through the Prop Plug, uploads the image, and waits while the controller writes
+it to its SPI flash. The controller then boots the new firmware, and the app
+reconnects on the control port and checks the protocol again.
 
-Each version of MaD Control speaks one version of the serial protocol, and
-on connect it asks the firmware which one it speaks. Until the firmware
-answers with this app's protocol, the app refuses to move the machine
-(enable motion, jog, home, run a test), and a banner under the status bar
-says why on every screen.
-**STOP** and disabling motion always work.
+The update is permanent: the controller boots from that flash on every
+power-up.
 
-- **Firmware too old**: the firmware speaks an older protocol, or is from
-  before the app could ask. Click **Update firmware**, then **Install
-  recommended firmware** on the Firmware screen.
-- **Firmware newer than this app**: when a released MaD Control speaks the
-  firmware's protocol, the banner names it: click **Open MaD Control X.Y.Z**
-  to open that release on the same screen. When none does, the firmware is
-  probably a development build: click **Install firmware for this app**, then
-  **Install recommended firmware** on the Firmware screen. If the list of
-  releases can't be loaded (offline, say), the banner says so and offers
-  **Open the latest MaD Control** instead. MaD Control 0.4.3 and older always
-  offer **Open the latest MaD Control**.
-- **Firmware update recommended**: the protocols match, but this app version
-  recommends a newer firmware release for a fix. The machine still moves;
-  update when convenient.
-- **Checking which protocol the firmware speaks**: shown for a moment after
-  connecting. Motion stays disabled until the firmware answers.
-- **Firmware did not say which protocol it speaks**: the firmware never
-  answered, so the app can't tell whether it is safe to drive. Motion stays
-  disabled: check the cable and reconnect, or update the firmware.
+### A local file
 
-### Doing the update
+**Use a local file…** picks any image (a development build, for example).
+**Write to flash** then writes that file. **Install recommended firmware**
+always writes the recommended release, whatever file is picked.
 
-1. **Connect to the machine** on the control port as usual. The **Firmware**
-   screen shows the **Installed** version, the **Protocol** it speaks next to
-   the one this app speaks, and the **Recommended** release: the newest
-   firmware release that speaks this app's protocol.
-2. **Will flash** shows the recommended release. Each release has one image,
-   `MaD-Firmware-<version>.bin`, fetched by the app — there is nothing to
-   download. To flash any other image, or a local build, click **Use a local
-   file…** and pick it.
-3. Check the **Programming port** shown is the Prop Plug on J1 (or the
-   P2-EVAL USB) of the machine you mean to program. The app never offers the
-   control port it is connected through. Then click **Install recommended
-   firmware** (or **Write to flash** for a local file; with none picked it
-   writes the recommended release too). The prompt names the file it will
-   write: check it is `MaD-Firmware-<version>.bin` (or the local file you
-   picked), then confirm.
-4. The app stops the control session, then the status line walks through
-   *Resetting the board…*, *Uploading… n%*, then *Finishing…*.
-5. When it completes, the app reconnects on the **control port** (never the
-   programming port) and asks the protocol again, and the banner clears.
-   Confirm **Installed** shows the version you just flashed.
+### Choosing the programming port
 
-!!! tip "Choosing the programming port"
-    The browser only sees USB vendor and product IDs, and the Prop Plug and a
-    control adapter can be identical FTDI parts. If more than one port could
-    be the programming port, the app refuses to guess and asks you to choose.
-    **Change** sets it explicitly, and the choice is remembered; the Connect
-    page then marks that port as the Firmware page's programming port so you
-    don't connect to it by mistake.
+The browser identifies a port only by its USB vendor and product id, and the
+Prop Plug and the control adapter can be the same part. If more than one port
+could be the programming port, the app asks instead of guessing. **Change**
+sets it, and the choice is remembered; the Connect screen then labels that port
+so you don't connect to it by mistake.
 
-!!! note "Machines still on firmware 0.14 or earlier"
-    Releases up to 0.14 talk the protocol on J1 itself, so a machine on one of
-    those connects over J1. The app never recommends those releases, and any
-    newer one moves the protocol to P30/P32: don't install it on a machine
-    with nothing wired there, or the app can no longer talk to it (flashing
-    0.14 back over J1 as a local file recovers it). The real machine stays on
-    0.14 until its Edge carrier v0.3 (the one with the isolated J4 link) is
-    built.
+## Restarting the machine
 
-    To move a P2-EVAL bench from 0.14 to the two-port firmware:
+After you write the machine configuration, the app offers **Reboot now**,
+which tells the machine to restart and reconnects once it has booted. Otherwise,
+to restart it, power-cycle it.
 
-    1. On the **Connect** page, **Disconnect**. The app is connected over J1
-       (the P2-EVAL USB), and it never flashes the port it is connected
-       through.
-    2. On the **Firmware** page, choose the P2-EVAL USB as the **Programming
-       port** and **Install recommended firmware**. Stay disconnected: the
-       new firmware no longer answers on J1.
-    3. Rewire the FTDI adapter from P53/P55 to **P30** (adapter TX → P2 RX)
-       and **P32** (adapter RX ← P2 TX), with its ground to the board's.
-    4. On the **Connect** page, connect to the FTDI adapter: that is the
-       control port from now on.
+## Updating the app
 
-### Rebooting the machine
+The app updates separately from the firmware. When a new version has been
+downloaded the status bar shows **Update ready**. It is applied only when you
+click it while disconnected, so the app never reloads during a test.
 
-Reconnecting on the control port does not restart the machine. When a restart
-is needed (to clear a latched fault, or to apply a saved machine
-configuration), power-cycle the machine.
+![Status bar offering an app update](../assets/screenshots/status-update-ready.png)
 
-### If it doesn't work
+**About** shows the version you are running and lets you open another
+published version.
 
-- **Nothing happens, or it fails while resetting** — the programming port
-  isn't the Prop Plug on J1 (or the P2-EVAL USB), or the adapter isn't driving
-  RESn from DTR. Check **Programming port** and use **Change**.
-- **It fails partway through the upload** — retry. The board holds the previous
-  firmware until a write completes, so a failed attempt leaves it as it was.
-  If it keeps failing, power-cycle the machine and try again.
-- **The version doesn't change after a flash** — the machine may have rebooted
-  into the previous image. Power-cycle it, reconnect, and check again.
-- **Connected, but never Responding** — the app is probably on the wrong
-  port. On firmware newer than 0.14 the protocol is only on the control port
-  (P30/P32): connect there, not to J1. Programming doesn't need the firmware
-  to answer, so the machine can still be flashed from the Firmware page.
+## Reporting a bug
 
-## Diagnostics export
+**About → Report a bug** packages what the app has been doing into a file for
+a GitHub issue.
 
-Click **Download diagnostics** to save a file recording what the app has been
-doing — connections, errors, timeouts, and rejected commands — plus some
-performance counters. It contains **no test data**, so it's safe to attach when
-reporting a problem.
+![The About screen](../assets/screenshots/about.png)
 
-!!! info "Updating the app"
-    The app and the firmware update separately. When a new version of the **app**
-    is published, the status bar shows an **Update ready** button. It is applied
-    only when you click it **and** are idle and disconnected — the app will never
-    reload itself mid-test.
+1. Describe what went wrong (and, if you can, the steps).
+2. Click **Review report**. The app shows exactly what will be sent.
+3. Click **Download and open issue**: the session log is saved to your
+   computer and a pre-filled GitHub issue opens. Attach the file to it.
+
+The log holds connection events, protocol traffic, errors and timings. It has
+no sample values, no file contents and no folder paths. Tick **Include the raw
+serial window** for protocol problems.
+
+If you connect a GitHub token under **Settings → GitHub (optional)**, the
+button becomes **File issue on GitHub** and attaches the log for you.

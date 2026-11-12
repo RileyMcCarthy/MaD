@@ -23,7 +23,7 @@ dive into any layer:
 
 <div class="grid cards" markdown>
 
--   [:material-engine: **The machine**](the-machine.md) — power-up, operating modes, and the safety state machine
+-   [:material-engine: **Theory of operation**](the-machine.md) — how the machine moves, measures, runs a test and keeps itself safe
 -   [:material-chip: **Firmware**](firmware.md) — layered C on the 8-core Propeller 2
 -   [:material-transit-connection-variant: **Communication protocol**](protocol.md) — the ProtoEmb binary wire format
 -   [:material-web: **The control app**](control-app.md) — Web Serial + WASM in a worker

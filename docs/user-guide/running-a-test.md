@@ -1,11 +1,10 @@
 # Running a test
 
-You run tests from the **Control** screen, so the live readouts and charts are
-in view while the test runs. The **New test** card combines a sample profile
-with a motion profile and starts the run, and says when the machine finishes.
-Every run is recorded in the **History** table on the **Test runs** screen.
+You run tests from the **New test** panel on the **Control** screen. It
+combines a sample profile with a motion profile and starts the run. The
+**History** table on the **Test runs** screen tracks every run.
 
-![The New test card](../assets/screenshots/06-test-runs.png)
+![The Control screen with the New test panel](../assets/screenshots/test-runs.png)
 
 ## Before you run
 
@@ -24,15 +23,16 @@ You'll want:
 2. Optionally click **Preview G-code** to review the exact motion.
 3. Click **Run test**.
 
-Before anything is sent, the app checks the test against the machine
-configuration and the sample profile: speed, acceleration (including short moves
-that cannot reach their speed), travel and force. If the test goes beyond any of
-them, a warning lists each one, such as *Motion profile speed of 60 mm/s exceeds
-machine limit of 50 mm/s*. **Cancel**, or **Run anyway** if that is intended.
+Before it runs, the app checks the test against the
+[machine configuration](machine-configuration.md) and the sample profile:
+speed, acceleration (including short moves too short to reach their speed),
+travel and force. Each problem is listed under the profiles, for example
+*Motion profile speed of 60 mm/s exceeds machine limit of 50 mm/s*. With any
+listed, **Run test** asks again: **Cancel** to change the profiles, or **Run
+anyway**.
 
-A motion profile saved in the old format (relative moves, or waveforms with a
-cycle count, holds or a triangle shape) can't be run; the card says why. Rebuild
-it on **Motion profiles**.
+A motion profile in the old format can't be run; the panel names the move to
+rebuild (see [Motion profiles](motion-profiles.md)).
 
 When you run, the app:
 
@@ -44,28 +44,28 @@ When you run, the app:
 - generates the G-code and **uploads** it to the machine's SD card,
 - enables motion and **starts** the test.
 
-The run appears in **History** on **Test runs** with a *running* badge.
+The run appears in **History** with a *running* badge.
 
 ## While it runs
 
-The machine executes the motion **autonomously from its SD card**, and the
-readouts and charts on **Control** follow it live. The **Run** button reflects
-the firmware's `testRunning` state. When the firmware reports it has finished,
-the card says so and the run is marked **completed**. The app tracks the run
-wherever you are in it, so you can leave **Control** while the test runs; a run
-still showing *running* when you reconnect after the machine finished is
-completed automatically.
+The machine executes the motion **autonomously from its SD card**. The **Run**
+button reflects the firmware's `testRunning` state, and the run is marked
+**completed** when the machine reports it has finished, whichever screen you
+are on.
 
 !!! warning "Losing the UI doesn't stop the test"
     The test keeps running even if you close the tab or unplug USB — the app just
-    reconnects to keep monitoring. If the link is lost mid-test the run is marked
-    **error** (its data may still be downloadable after reconnecting). For runs
-    that get stuck in *running*, the history row offers **Mark done / Mark
-    failed** actions, and a watchdog warns if the firmware never reports
-    completion.
+    reconnects to keep monitoring. A run still marked *running* when the app
+    reconnects to an idle machine is marked **completed**, so its data can be
+    downloaded. If the machine runs well past the profile's expected time, the
+    panel warns that the firmware may be stuck; the history row's **Mark done /
+    Mark failed** resolve it.
 
-If the sample hits its **Max force** or **Max displacement**, the firmware stops
-the test and raises a warning notification (you'll see a toast).
+If the sample reaches its **Max force** or **Max displacement**, the machine
+stops the test and the app shows a warning toast (*Test stopped: sample limit
+exceeded*). Disabling motion, with **STOP** or **Disable motion**, also ends
+the test (*Test aborted: motion disabled*), and so does any
+[fault](../troubleshooting/faults.md).
 
 ## After it finishes
 
