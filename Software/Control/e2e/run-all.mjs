@@ -45,12 +45,13 @@
  * meet them.
  *
  * Without CDP_URL only the board-free scenarios run: A1, FW1/2/3/5/6/7/8/9/10/11
- * and COMPAT-reconnect/-silent/-update-loop launch a host Chrome against
- * in-page fakes and need no emulator at all (FW1 flashes a board when one is
- * attached, below), which is what ci.yml's per-PR `control-e2e-boardless` job
- * runs:
+ * and COMPAT-reconnect/-silent/-update-loop/-app-release/-app-firmware launch
+ * a host Chrome against in-page fakes and need no emulator at all (FW1
+ * flashes a board when one is attached, below; COMPAT-app-release starts a
+ * second dev server of its own, at a release's base), which is what ci.yml's
+ * per-PR `control-e2e-boardless` job runs:
  *   npm run dev
- *   SCENARIOS=A1,FW1,FW2,FW3,FW5,FW6,FW7,FW8,FW9,FW10,FW11,COMPAT-reconnect,COMPAT-silent,COMPAT-update-loop npm run e2e
+ *   SCENARIOS=A1,FW1,FW2,FW3,FW5,FW6,FW7,FW8,FW9,FW10,FW11,COMPAT-reconnect,COMPAT-silent,COMPAT-update-loop,COMPAT-app-release,COMPAT-app-firmware npm run e2e
  * Naming a board scenario without CDP_URL is refused.
  *
  * COMPAT-app-too-old needs firmware the app cannot drive in the module's
@@ -145,7 +146,7 @@ const MATRIX = JSON.parse(
 // board (`boardFree`, below).
 const BOARD_FREE = new Set([
   'A1', 'FW1', 'FW2', 'FW3', 'FW5', 'FW6', 'FW7', 'FW8', 'FW9', 'FW10', 'FW11',
-  'COMPAT-reconnect', 'COMPAT-silent', 'COMPAT-update-loop',
+  'COMPAT-reconnect', 'COMPAT-silent', 'COMPAT-update-loop', 'COMPAT-app-release', 'COMPAT-app-firmware',
 ]);
 
 // The firmware in the board's flash (make e2e-compat sets it): 'future', this tree's firmware generated one protocol_version ahead; unset,
@@ -198,7 +199,7 @@ const boardFree = (id) => BOARD_FREE.has(id) && !(id === 'FW1' && (BOARD || REFL
 // a test that runs while the carriage follows its setpoint.
 const MOVES = new Set([
   'G2+G3+H2+I', 'G-limit', 'TC1-multiset', 'M13-jog-endpoint', 'M13-home-endpoint',
-  ...MATRIX.M12_linear_um.map((cell) => cell.id), 'M12-dwell', 'M12-wave-hold', 'M12-wave-skew',
+  ...MATRIX.M12_linear_um.map((cell) => cell.id), 'M12-dwell', 'M12-sigmoid',
   ...MATRIX.M10_waveform.map((wf) => wf.id), 'TC4-dwell', 'TC6-disable-stops', 'TC11-velocity',
   'VT-linear', 'TC14-jog', ...MATRIX.M8_jog.map((cell) => cell.id), 'M11-mid-test-drop',
   'D2-settled-jog', 'D3+SR-slack', ...MATRIX.M9_force_slack.map((cell) => cell.id),
@@ -505,16 +506,15 @@ async function describeNewestRun(page) {
 // Returns the run row locator. Assumes profiles are seeded + selected by the caller.
 async function runAndDownload(page, { completeTimeout = RUN_WAIT_MS } = {}) {
   const runner = page.locator('.panel', { hasText: 'New Test' });
-  await press(page.getByTestId('run-test'));
+  await startRun(page);
   await runner.getByText(/started/i).waitFor({ timeout: DEVICE_WAIT_MS });
-  const row = page.locator('tbody tr').first();
-  // A run the firmware abandons never gets a completed badge, so waiting for
-  // one burns the whole budget and then reports "timeout" instead of the
-  // reason. The firmware does say why, as a warning notification the app
-  // surfaces as a toast — race the badge against it and fail immediately with
+  // A run the firmware abandons never finishes, so waiting for that burns the
+  // whole budget and then reports "timeout" instead of the reason. The
+  // firmware does say why, as a warning notification the app surfaces as a
+  // toast — race the runner's "finished" against it and fail immediately with
   // the board's own words.
   const abortToast = page.locator('.toast').getByText(/Test aborted/i).first();
-  const completed = row.locator('.badge.completed').waitFor({ timeout: completeTimeout });
+  const completed = runner.getByText(/finished/i).waitFor({ timeout: completeTimeout });
   const abortReason = abortToast.waitFor({ timeout: completeTimeout }).then(
     async () => `the firmware ended the run early: ${((await abortToast.textContent()) ?? '').trim()}`,
     // No abort inside the budget: let the completion wait decide the outcome.
@@ -528,6 +528,9 @@ async function runAndDownload(page, { completeTimeout = RUN_WAIT_MS } = {}) {
   }
   if (early) throw new Error(early);
   await completed;
+  await openHistory(page);
+  const row = page.locator('tbody tr').first();
+  await row.locator('.badge.completed').waitFor({ timeout: DEVICE_WAIT_MS });
   await press(row.getByRole('button', { name: /Download data/i }));
   await row.locator('.badge.downloaded').waitFor({ timeout: RUN_WAIT_MS });
   return row;
@@ -578,7 +581,7 @@ async function settleMotion(page, opts = {}) {
   if (setpointWas !== null) {
     const cmdBudget = Math.min(timeoutMs, 10_000);
     while ((await clock.elapsed()) < cmdBudget) {
-      const set = await num('Machine Setpoint');
+      const set = await num('Machine Target');
       if (Number.isFinite(set) && Math.abs(set - setpointWas) > tolMm) break;
       await waitPageTime(page, pollMs);
     }
@@ -591,7 +594,7 @@ async function settleMotion(page, opts = {}) {
   let set = NaN;
   while ((await clock.elapsed()) < timeoutMs) {
     pos = await num('Machine Position');
-    set = await num('Machine Setpoint');
+    set = await num('Machine Target');
     const arrived = Number.isFinite(pos) && Number.isFinite(set) && Math.abs(pos - set) <= tolMm;
     const still = Number.isFinite(last) && Math.abs(pos - last) <= stillMm;
     if (arrived && still) {
@@ -622,7 +625,7 @@ async function settleMotion(page, opts = {}) {
 // actually manages on a CI runner it has not. Waiting on the machine's state
 // makes the scenario independent of both the host speed and what ran before.
 //
-// Call after navigating to /live and before enabling motion — stopping a run
+// Call after navigating to /control and before enabling motion — stopping a run
 // disables motion, which the callers' own "Enable motion" step then restores.
 async function ensureTestIdle(page, { graceMs = 25_000, timeoutMs = 50_000 } = {}) {
   const idle = page.getByText('Test: idle');
@@ -751,7 +754,7 @@ async function clickReconnect(page, { timeoutMs = DEVICE_WAIT_MS } = {}) {
 }
 
 async function prepareManualControl(page) {
-  await page.goto(`${APP_URL}#/live`);
+  await page.goto(`${APP_URL}#/control`);
   await page.getByRole('button', { name: /Home/ }).waitFor({ timeout: DEVICE_WAIT_MS });
   await page.getByText(/Motion: (enabled|disabled)/).waitFor({ timeout: DEVICE_WAIT_MS });
   await ensureTestIdle(page);
@@ -779,7 +782,7 @@ async function zeroLength(page) {
   for (let i = 0; i < 4 && Number.isFinite(p) && Math.abs(p) > 0.5; i++) {
     await jog.fill(Math.abs(p).toFixed(2));
     const setWas = parseFloat(
-      await page.locator('.readout', { hasText: 'Machine Setpoint' }).locator('.value').first().innerText(),
+      await page.locator('.readout', { hasText: 'Machine Target' }).locator('.value').first().innerText(),
     );
     await press(page.getByRole('button', { name: p > 0 ? '− Jog down' : '+ Jog up' }));
     await settleMotion(page, { setpointWas: Number.isFinite(setWas) ? setWas : null });
@@ -793,12 +796,33 @@ async function zeroLength(page) {
   return p;
 }
 
-// Go to Runs and pick the (only) seeded sample + motion profile in the runner.
+// Go to Control and pick the (only) seeded sample + motion profile in the runner.
 async function selectSeeded(page) {
-  await page.goto(`${APP_URL}#/runs`);
+  await page.goto(`${APP_URL}#/control`);
   const runner = page.locator('.panel', { hasText: 'New Test' });
   await runner.locator('select').nth(0).selectOption({ index: 1 });
   await runner.locator('select').nth(1).selectOption({ index: 1 });
+}
+
+// Press Run test, accepting the limit warning when the profiles go beyond the
+// machine's or sample's limits (several scenarios do, on purpose).
+async function startRun(page) {
+  await press(page.getByTestId('run-test'));
+  const anyway = page.getByTestId('run-anyway');
+  const asked = await anyway.waitFor({ timeout: 1500 }).then(() => true, () => false);
+  if (asked) await press(anyway);
+}
+
+// Wait on Control until the runner reports the run finished. The store marks
+// the run record completed wherever the app is; this only waits for the end.
+async function awaitRunFinished(page, { timeout = RUN_WAIT_MS } = {}) {
+  await page.locator('.panel', { hasText: 'New Test' }).getByText(/finished/i).waitFor({ timeout });
+}
+
+// Open the run history on Test runs.
+async function openHistory(page) {
+  await page.goto(`${APP_URL}#/runs`);
+  await page.locator('tbody tr').first().waitFor({ timeout: DEVICE_WAIT_MS });
 }
 
 // Read the single downloaded run CSV from OPFS and summarise its position column.
@@ -1148,6 +1172,50 @@ async function fakeBoardWrites(page) {
   return page.evaluate(() => window.__bootRom.writes.map((w) => [w.cmd, w.data[0] ?? null]));
 }
 
+/**
+ * One release in the firmware manifest the Firmware screen reads
+ * (firmware/manifest.json): firmware `version` for protocol `proto`, whose
+ * image is `image`.
+ */
+function manifestEntry(version, proto, image) {
+  return {
+    tag: `firmware-v${version}`,
+    version,
+    assetName: `MaD-Firmware-${version}.bin`,
+    size: image.length,
+    sha256: createHash('sha256').update(image).digest('hex'),
+    path: `firmware/MaD-Firmware-${version}.bin`,
+    publishedAt: '2026-11-01T00:00:00Z',
+    htmlUrl: 'https://example.invalid/release',
+    protocolVersion: proto,
+  };
+}
+
+/**
+ * The app served the way a hosted release is: a second dev server whose base
+ * is the release's folder, /MaD/app/v<version>/, so the app finds the release
+ * list (/MaD/app/versions.json) beside it. It keeps its own dependency cache,
+ * so the main dev server's is never rewritten under it. Close it when done.
+ */
+async function releaseAppServer(version) {
+  const { createServer } = await import('vite');
+  const server = await createServer({
+    root: join(dirname(fileURLToPath(import.meta.url)), '..'),
+    base: `/MaD/app/v${version}/`,
+    cacheDir: 'node_modules/.vite-e2e-release',
+    server: { host: '127.0.0.1', port: 0 },
+    logLevel: 'warn',
+    clearScreen: false,
+  });
+  await server.listen();
+  const url = server.resolvedUrls?.local[0];
+  if (!url) {
+    await server.close();
+    throw new Error('the release dev server reported no address');
+  }
+  return { url, close: () => server.close() };
+}
+
 // Write command ids the fake board records (Protocol/MaDProtocol.yaml).
 const WRITE_MOTION_ENABLE = 1;
 const WRITE_TEST_RUN = 2;
@@ -1160,32 +1228,31 @@ const WRITE_TEST_MOVE = 4;
  * with a toast saying why.
  */
 async function pressRefusedLiveControls(page, base = APP_URL) {
-  await page.goto(`${base}#/live`);
+  await page.goto(`${base}#/control`);
   await page.getByText(/Motion: (enabled|disabled)/).waitFor({ timeout: DEVICE_WAIT_MS });
   const enable = page.getByRole('button', { name: 'Enable motion' });
   await enable.waitFor({ timeout: DEVICE_WAIT_MS });
   await press(enable);
   await page.locator('.toast').getByText(/too old|newer than this version|did not say which protocol/).first()
     .waitFor({ timeout: DEVICE_WAIT_MS });
-  await press(page.getByRole('button', { name: '+ Jog up' }));
-  await press(page.getByRole('button', { name: 'Home' }));
-  await awaitLogged(page, 'store', 'home-refused');
-  const entries = await appLogEntries(page);
-  for (const tag of ['motion-enable-refused', 'jog-refused', 'home-refused']) {
-    assert(logged(entries, 'store', tag).length > 0, `the app did not refuse (${tag} not logged)`);
+  // Motion stays off, so Control locks Jog and Home before the store is asked.
+  for (const name of ['+ Jog up', 'Home']) {
+    assert(await page.getByRole('button', { name }).isDisabled(), `${name} is not locked while motion is off`);
   }
+  const entries = await appLogEntries(page);
+  assert(logged(entries, 'store', 'motion-enable-refused').length > 0, 'the app did not refuse (motion-enable-refused not logged)');
   assert(
     (await page.getByText('Motion: enabled').count()) === 0,
     'motion was enabled on firmware the app cannot drive',
   );
 }
 
-/** Start a seeded test from the Runs screen; on firmware the app cannot drive it is refused. */
+/** Start a seeded test from Control; on firmware the app cannot drive it is refused. */
 async function startRefusedTest(page) {
   await seedProfiles(page, {
     sample: { serial: 'Compat-Sample', maxForce: 500, maxVelocity: 25, maxDisplacement: 100, sampleWidth: 4, sampleThickness: 1.5 },
     motion: { name: 'Compat-Motion', moves: [
-      { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 5, distance: 2, time: 0, circularOffset: 0 } },
+      { moveType: 'linear', moveParameters: { position: 2, velocity: 5, time: 0 } },
     ] },
   });
   await selectSeeded(page);
@@ -1237,7 +1304,7 @@ const scenarios = [
       const { browser, page, errors } = await newSilPage();
       try {
         await connectToSil(page);
-        await page.goto(`${APP_URL}#/live`);
+        await page.goto(`${APP_URL}#/control`);
         await awaitResponding(page);
         const forceText = (await page.locator('.readout', { hasText: 'Machine Force' }).locator('.value').textContent())?.trim() || '';
         assert(/^-?\d/.test(forceText), `live readout never populated (got ${forceText})`);
@@ -1277,7 +1344,7 @@ const scenarios = [
         await fieldInput(page, 'Max force (N)').fill('500');
         await fieldInput(page, 'Sample name').fill('E2E-Sample');
         await press(page.getByRole('button', { name: 'Save sample profile' }));
-        await page.getByText(/Saved to data folder/i).waitFor({ timeout: DEVICE_WAIT_MS });
+        await page.getByText(/Sample profile "E2E-Sample" saved/i).waitFor({ timeout: DEVICE_WAIT_MS });
         await page
           .locator('.panel', { hasText: 'Saved sample profiles' })
           .getByText('E2E-Sample')
@@ -1327,7 +1394,7 @@ const scenarios = [
       const { browser, page, errors } = await newSilPage();
       try {
         await connectToSil(page);
-        await page.goto(`${APP_URL}#/live`);
+        await page.goto(`${APP_URL}#/control`);
         const combined = page.locator('[data-testid="live-combined-chart"]');
         await combined.locator('canvas').first().waitFor({ timeout: DEVICE_WAIT_MS });
         // Coordinate toggle: switch to Sample and back; chart must survive.
@@ -1545,7 +1612,7 @@ const scenarios = [
       const { browser, page, errors } = await newSilPage();
       try {
         await connectToSil(page);
-        await page.goto(`${APP_URL}#/live`);
+        await page.goto(`${APP_URL}#/control`);
         // Confirm the Live controls are present (i.e. connected).
         await page.getByRole('button', { name: /Home/ }).waitFor({ timeout: DEVICE_WAIT_MS });
         // Wait for the state to be KNOWN before touching the toggle. It is not
@@ -1761,26 +1828,28 @@ const scenarios = [
             id: 'gm', name: 'G-Motion', description: 'dwell', createdAt: new Date().toISOString(),
             profile: { name: 'G-Motion', description: 'dwell', sets: [
               { name: 'S', executions: 1, moves: [
-                { moveType: 'dwell', absoluteOrRelative: 'absolute', moveParameters: { position: 0, velocity: 0, distance: 0, time: 2000, circularOffset: 0 } },
+                { moveType: 'dwell', moveParameters: { position: 0, velocity: 0, time: 2000 } },
               ] },
             ] },
           });
         });
 
-        await page.goto(`${APP_URL}#/runs`);
+        await page.goto(`${APP_URL}#/control`);
         const runnerPanel = page.locator('.panel', { hasText: 'New Test' });
         await runnerPanel.locator('select').nth(0).selectOption({ index: 1 });
         await runnerPanel.locator('select').nth(1).selectOption({ index: 1 });
-        await press(page.getByTestId('run-test'));
+        await startRun(page);
 
         // The run record is created and the device accepts the test (status running).
         await page.locator('.panel', { hasText: 'New Test' }).getByText(/started/i).waitFor({ timeout: DEVICE_WAIT_MS });
-        await page.locator('tbody .badge', { hasText: 'running' }).first().waitFor({ timeout: DEVICE_WAIT_MS });
+        await page.getByText('Test: running').waitFor({ timeout: DEVICE_WAIT_MS });
         // Leave the machine idle: let the 2 s dwell finish. On the board route
         // the next scenario starts a few milliseconds of the board's time after
         // this one ends, and a run still going makes the firmware refuse the
         // next scenario's TEST_RUN as busy.
-        await page.locator('tbody .badge.completed').first().waitFor({ timeout: RUN_WAIT_MS });
+        await awaitRunFinished(page);
+        await openHistory(page);
+        await page.locator('tbody .badge.completed').first().waitFor({ timeout: DEVICE_WAIT_MS });
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
       } finally {
         await browser.close();
@@ -1800,17 +1869,19 @@ const scenarios = [
         await seedProfiles(page, {
           sample: { serial: 'Life-Sample', maxForce: 500, maxVelocity: 25, maxDisplacement: 100, sampleWidth: 4, sampleThickness: 1.5 },
           motion: { name: 'Life-Motion', moves: [
-            { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 5, distance: PEAK_MM, time: 0, circularOffset: 0 } },
-            { moveType: 'dwell', absoluteOrRelative: 'absolute', moveParameters: { position: 0, velocity: 0, distance: 0, time: 300, circularOffset: 0 } },
-            { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 10, distance: -PEAK_MM, time: 0, circularOffset: 0 } },
+            { moveType: 'linear', moveParameters: { position: PEAK_MM, velocity: 5, time: 0 } },
+            { moveType: 'dwell', moveParameters: { position: 0, velocity: 0, time: 300 } },
+            { moveType: 'linear', moveParameters: { position: 0, velocity: 10, time: 0 } },
           ] },
         });
-        await page.goto(`${APP_URL}#/runs`);
+        await page.goto(`${APP_URL}#/control`);
         const runner = page.locator('.panel', { hasText: 'New Test' });
         await runner.locator('select').nth(0).selectOption({ index: 1 });
         await runner.locator('select').nth(1).selectOption({ index: 1 });
-        await press(page.getByTestId('run-test'));
+        await startRun(page);
         await runner.getByText(/started/i).waitFor({ timeout: DEVICE_WAIT_MS });
+        await awaitRunFinished(page);
+        await openHistory(page);
         const row = page.locator('tbody tr').first();
         // G3: firmware runs the test and testRunning toggles → run auto-marks completed.
         await row.locator('.badge.completed').waitFor({ timeout: RUN_WAIT_MS });
@@ -1847,7 +1918,7 @@ const scenarios = [
         // Zero the gauge length so sample displacement starts at 0 — prior scenarios
         // may leave the gantry past the 8 mm limit, which would trip the limit instantly
         // (sub-1 s test → the 1 s testRunning poll misses it → no completion detected).
-        await page.goto(`${APP_URL}#/live`);
+        await page.goto(`${APP_URL}#/control`);
         await press(page.getByRole('button', { name: 'Zero length' }));
         await awaitReadoutNear(page, 'Sample Position', 0, { eps: 1 });
         const LIMIT_MM = 8;
@@ -1857,15 +1928,17 @@ const scenarios = [
         await seedProfiles(page, {
           sample: { serial: 'Limit-Sample', maxForce: 500, maxVelocity: 25, maxDisplacement: LIMIT_MM, sampleWidth: 4, sampleThickness: 1.5 },
           motion: { name: 'Over-Motion', moves: [
-            { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 4, distance: 20, time: 0, circularOffset: 0 } },
+            { moveType: 'linear', moveParameters: { position: 20, velocity: 4, time: 0 } },
           ] },
         });
-        await page.goto(`${APP_URL}#/runs`);
+        await page.goto(`${APP_URL}#/control`);
         const runner = page.locator('.panel', { hasText: 'New Test' });
         await runner.locator('select').nth(0).selectOption({ index: 1 });
         await runner.locator('select').nth(1).selectOption({ index: 1 });
-        await press(page.getByTestId('run-test'));
+        await startRun(page);
         await runner.getByText(/started/i).waitFor({ timeout: DEVICE_WAIT_MS });
+        await awaitRunFinished(page);
+        await openHistory(page);
         const row = page.locator('tbody tr').first();
         await row.locator('.badge.completed').waitFor({ timeout: RUN_WAIT_MS });
         await press(row.getByRole('button', { name: /Download data/i }));
@@ -1898,12 +1971,12 @@ const scenarios = [
           sample: { serial: 'MS-Sample', maxForce: 500, maxVelocity: 25, maxDisplacement: 100, sampleWidth: 4, sampleThickness: 1.5 },
           motion: { name: 'MultiSet', sets: [
             { name: 'A', executions: 2, moves: [
-              { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 10, distance: 8, time: 0, circularOffset: 0 } },
-              { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 10, distance: -8, time: 0, circularOffset: 0 } },
+              { moveType: 'linear', moveParameters: { position: 8, velocity: 10, time: 0 } },
+              { moveType: 'linear', moveParameters: { position: 0, velocity: 10, time: 0 } },
             ] },
             { name: 'B', executions: 1, moves: [
-              { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 10, distance: 5, time: 0, circularOffset: 0 } },
-              { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 10, distance: -5, time: 0, circularOffset: 0 } },
+              { moveType: 'linear', moveParameters: { position: 5, velocity: 10, time: 0 } },
+              { moveType: 'linear', moveParameters: { position: 0, velocity: 10, time: 0 } },
             ] },
           ] },
         });
@@ -1934,7 +2007,7 @@ const scenarios = [
       const { browser, page, errors } = await newSilPage();
       try {
         await connectToSil(page);
-        await page.goto(`${APP_URL}#/live`);
+        await page.goto(`${APP_URL}#/control`);
         await page.getByRole('button', { name: /Home/ }).waitFor({ timeout: DEVICE_WAIT_MS });
         await page.getByText(/Motion: (enabled|disabled)/).waitFor({ timeout: DEVICE_WAIT_MS });
         await enableMotion(page);
@@ -2014,7 +2087,7 @@ const scenarios = [
       const { browser, page, errors } = await newSilPage();
       try {
         await connectToSil(page);
-        await page.goto(`${APP_URL}#/live`);
+        await page.goto(`${APP_URL}#/control`);
         await page.getByRole('button', { name: /Home/ }).waitFor({ timeout: DEVICE_WAIT_MS });
         await page.getByText(/Motion: (enabled|disabled)/).waitFor({ timeout: DEVICE_WAIT_MS });
         await enableMotion(page);
@@ -2129,7 +2202,7 @@ const scenarios = [
             .fill(String(Math.abs(cell.setupJogMm)));
           await page.locator('label.field', { hasText: 'Speed (mm/s)' }).locator('input').fill('20');
           const setWas = parseFloat(
-            await page.locator('.readout', { hasText: 'Machine Setpoint' }).locator('.value').first().innerText(),
+            await page.locator('.readout', { hasText: 'Machine Target' }).locator('.value').first().innerText(),
           );
           await press(page.getByRole('button', {
             name: cell.setupJogMm > 0 ? '+ Jog up' : '− Jog down',
@@ -2138,11 +2211,11 @@ const scenarios = [
         }
         const maxDisp = cell.maxDisplacement
           ?? Math.max(40, Math.abs(cell.distanceMm ?? cell.targetMm ?? 0) + Math.abs(cell.setupJogMm ?? 0) + 10);
-        const moves = cell.absolute
-          ? [{ moveType: 'linear', absoluteOrRelative: 'absolute',
-               moveParameters: { position: cell.targetMm, velocity: cell.velocityMmS, distance: 0, time: 0 } }]
-          : [{ moveType: 'linear', absoluteOrRelative: 'relative',
-               moveParameters: { position: 0, velocity: cell.velocityMmS, distance: cell.distanceMm, time: 0 } }];
+        // Positions are absolute from zero length; a cell given as a distance
+        // moves that far from where its setup jog left the gantry.
+        const target = cell.absolute ? cell.targetMm : (cell.setupJogMm ?? 0) + cell.distanceMm;
+        const moves = [{ moveType: 'linear',
+                         moveParameters: { position: target, velocity: cell.velocityMmS, time: 0 } }];
         await seedProfiles(page, {
           sample: { serial: `Rec-${cell.id}`, maxForce: 500, maxVelocity: 60, maxDisplacement: maxDisp,
                     sampleWidth: 4, sampleThickness: 1.5 },
@@ -2168,29 +2241,20 @@ const scenarios = [
       label: 'linear then dwell then linear',
       expectMotion: true,
       moves: [
-        { moveType: 'linear', absoluteOrRelative: 'absolute',
-          moveParameters: { position: 5, velocity: 5, distance: 0, time: 0 } },
-        { moveType: 'dwell', absoluteOrRelative: 'absolute',
-          moveParameters: { position: 0, velocity: 0, distance: 0, time: 400 } },
-        { moveType: 'linear', absoluteOrRelative: 'absolute',
-          moveParameters: { position: 9, velocity: 5, distance: 0, time: 0 } },
+        { moveType: 'linear',
+          moveParameters: { position: 5, velocity: 5, time: 0 } },
+        { moveType: 'dwell',
+          moveParameters: { position: 0, velocity: 0, time: 400 } },
+        { moveType: 'linear',
+          moveParameters: { position: 9, velocity: 5, time: 0 } },
       ],
     },
     {
-      id: 'M12-wave-hold',
-      label: 'waveform holding at peak tension only',
-      moves: [{ moveType: 'math', absoluteOrRelative: 'relative',
-                moveParameters: { position: 0, velocity: 0, distance: 6, time: 0,
-                                  waveform: 'sine', amplitude: 4, frequency: 0.5, cycles: 2,
-                                  dwellHigh: 0.6, dwellLow: 0 } }],
-    },
-    {
-      id: 'M12-wave-skew',
-      label: 'waveform loading slower than it unloads',
-      moves: [{ moveType: 'math', absoluteOrRelative: 'relative',
-                moveParameters: { position: 0, velocity: 0, distance: 6, time: 0,
-                                  waveform: 'sine', amplitude: 4, frequency: 0.5, cycles: 2,
-                                  skew: 0.75 } }],
+      id: 'M12-sigmoid',
+      label: 'sigmoid step',
+      moves: [{ moveType: 'math',
+                moveParameters: { position: 6, velocity: 4, time: 0,
+                                  waveform: 'sigmoid', acceleration: 20 } }],
     },
   ].map((mv) => ({
     id: mv.id,
@@ -2216,7 +2280,7 @@ const scenarios = [
     },
   })),
 
-  // M10 — firmware-native G123 waveform matrix (sine + triangle from catalog).
+  // M10 — firmware-native G123 sine waveform matrix (from catalog).
   ...MATRIX.M10_waveform.map((wf) => ({
     id: wf.id,
     name: `M10 waveform G123 — ${wf.shape} (${wf.label})`,
@@ -2229,8 +2293,16 @@ const scenarios = [
         await zeroLength(page);
         await seedProfiles(page, {
           sample: { serial: `Wave-${wf.id}`, maxForce: 500, maxVelocity: 60, maxDisplacement: wf.maxDisp, sampleWidth: 4, sampleThickness: 1.5 },
-          motion: { name: wf.id, moves: [
-            { moveType: 'math', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 0, distance: wf.distance, time: 0, waveform: wf.shape, amplitude: wf.amplitude, frequency: wf.frequency, cycles: wf.cycles } },
+          // A wave starts at rest where the gantry is, its lower peak for a
+          // positive amplitude, one cycle per execution: move to the bottom of
+          // the stroke first, so it swings about wf.distance.
+          motion: { name: wf.id, sets: [
+            { name: 'Start', executions: 1, moves: [
+              { moveType: 'linear', moveParameters: { position: wf.distance - wf.amplitude, velocity: 10, time: 0 } },
+            ] },
+            { name: 'Wave', executions: wf.cycles, moves: [
+              { moveType: 'math', moveParameters: { position: 0, velocity: 0, time: 0, waveform: wf.shape, amplitude: wf.amplitude, frequency: wf.frequency } },
+            ] },
           ] },
         });
         await selectSeeded(page);
@@ -2263,9 +2335,9 @@ const scenarios = [
         await seedProfiles(page, {
           sample: { serial: 'Dwell-Sample', maxForce: 500, maxVelocity: 25, maxDisplacement: 100, sampleWidth: 4, sampleThickness: 1.5 },
           motion: { name: 'Dwell', moves: [
-            { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 10, distance: 10, time: 0, circularOffset: 0 } },
-            { moveType: 'dwell', absoluteOrRelative: 'absolute', moveParameters: { position: 0, velocity: 0, distance: 0, time: 2000, circularOffset: 0 } },
-            { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 10, distance: -10, time: 0, circularOffset: 0 } },
+            { moveType: 'linear', moveParameters: { position: 10, velocity: 10, time: 0 } },
+            { moveType: 'dwell', moveParameters: { position: 0, velocity: 0, time: 2000 } },
+            { moveType: 'linear', moveParameters: { position: 0, velocity: 10, time: 0 } },
           ] },
         });
         await selectSeeded(page);
@@ -2293,15 +2365,15 @@ const scenarios = [
         await seedProfiles(page, {
           sample: { serial: 'Stop-Sample', maxForce: 500, maxVelocity: 25, maxDisplacement: 100, sampleWidth: 4, sampleThickness: 1.5 },
           motion: { name: 'Long', moves: [
-            { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 3, distance: 30, time: 0, circularOffset: 0 } },
+            { moveType: 'linear', moveParameters: { position: 30, velocity: 3, time: 0 } },
           ] },
         });
         await selectSeeded(page);
         const runner = page.locator('.panel', { hasText: 'New Test' });
-        await press(page.getByTestId('run-test'));
+        await startRun(page);
         await runner.getByText(/started/i).waitFor({ timeout: DEVICE_WAIT_MS });
         // Observe the firmware actually running, then disable motion.
-        await page.goto(`${APP_URL}#/live`);
+        await page.goto(`${APP_URL}#/control`);
         await page.getByText('Test: running').waitFor({ timeout: DEVICE_WAIT_MS });
         await press(page.getByRole('button', { name: 'Disable motion' }));
         // The firmware aborts the test (END_MOTION_DISABLED) → Test goes idle.
@@ -2324,7 +2396,7 @@ const scenarios = [
         await seedProfiles(page, {
           sample: { serial: 'Vel-Sample', maxForce: 500, maxVelocity: 25, maxDisplacement: 100, sampleWidth: 4, sampleThickness: 1.5 },
           motion: { name: 'Ramp', moves: [
-            { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: V, distance: 15, time: 0, circularOffset: 0 } },
+            { moveType: 'linear', moveParameters: { position: 15, velocity: V, time: 0 } },
           ] },
         });
         await selectSeeded(page);
@@ -2365,7 +2437,7 @@ const scenarios = [
         await seedProfiles(page, {
           sample: { serial: 'VT-Sample', maxForce: 500, maxVelocity: 25, maxDisplacement: 100, sampleWidth: 4, sampleThickness: 1.5 },
           motion: { name: 'VT-Ramp', moves: [
-            { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: V, distance: DIST_MM, time: 0, circularOffset: 0 } },
+            { moveType: 'linear', moveParameters: { position: DIST_MM, velocity: V, time: 0 } },
           ] },
         });
         await selectSeeded(page);
@@ -2418,7 +2490,7 @@ const scenarios = [
         const before = parseFloat(await posValue());
         await page.locator('label.field', { hasText: 'Jog (mm)' }).locator('input').fill('5');
         const setWas = parseFloat(
-          await page.locator('.readout', { hasText: 'Machine Setpoint' }).locator('.value').first().innerText(),
+          await page.locator('.readout', { hasText: 'Machine Target' }).locator('.value').first().innerText(),
         );
         await press(page.getByRole('button', { name: '+ Jog up' }));
         await settleMotion(page, { setpointWas: Number.isFinite(setWas) ? setWas : null });
@@ -2443,15 +2515,15 @@ const scenarios = [
         const start = await num('Machine Position');
         await page.locator('label.field', { hasText: 'Jog (mm)' }).locator('input').fill(String(cell.mm));
         await page.locator('label.field', { hasText: 'Speed (mm/s)' }).locator('input').fill(String(cell.speed));
-        const setBefore = await num('Machine Setpoint');
+        const setBefore = await num('Machine Target');
         await press(page.getByRole('button', { name: '+ Jog up' }));
         await settleMotion(page, { setpointWas: setBefore });
         const up = await num('Machine Position');
-        const upSet = await num('Machine Setpoint');
+        const upSet = await num('Machine Target');
         assert(Math.abs(up - start - cell.mm) < cell.epsMm, `jog +${cell.mm}mm (Δ ${(up - start).toFixed(3)})`);
         assert(Math.abs(up - upSet) < 0.15, `settled onto setpoint (|Δ| ${Math.abs(up - upSet).toFixed(3)})`);
         if (cell.roundTrip) {
-          const setBeforeDown = await num('Machine Setpoint');
+          const setBeforeDown = await num('Machine Target');
           await press(page.getByRole('button', { name: '− Jog down' }));
           await settleMotion(page, { setpointWas: setBeforeDown });
           const end = await num('Machine Position');
@@ -2468,7 +2540,7 @@ const scenarios = [
       const { browser, page, errors } = await newSilPage();
       try {
         await connectToSil(page);
-        for (const route of ['live', 'config', 'profiles', 'create', 'runs', 'about', 'settings', 'connect']) {
+        for (const route of ['control', 'config', 'profiles', 'create', 'runs', 'about', 'settings', 'connect']) {
           // eslint-disable-next-line no-await-in-loop
           await page.goto(`${APP_URL}#/${route}`);
           // eslint-disable-next-line no-await-in-loop
@@ -2486,7 +2558,7 @@ const scenarios = [
       const { browser, page, errors } = await newSilPage();
       try {
         await connectToSil(page);
-        await page.goto(`${APP_URL}#/live`);
+        await page.goto(`${APP_URL}#/control`);
         await awaitResponding(page);
         // Sever the link (simulates USB unplug / emulator death).
         await dropLink(page);
@@ -2524,7 +2596,7 @@ const scenarios = [
           }
         });
         await connectToSil(page);
-        await page.goto(`${APP_URL}#/live`);
+        await page.goto(`${APP_URL}#/control`);
         // Samples, and the opening handshake's firmware version.
         await awaitResponding(page);
         const forceText = (await page.locator('.readout', { hasText: 'Machine Force' }).locator('.value').textContent())?.trim() || '';
@@ -2556,7 +2628,7 @@ const scenarios = [
       const { browser, page, errors } = await newSilPage();
       try {
         await connectToSil(page);
-        await page.goto(`${APP_URL}#/live`);
+        await page.goto(`${APP_URL}#/control`);
         await awaitResponding(page);
         await dropLink(page);
         await page.locator('.dot.disconnected').waitFor({ timeout: DEVICE_WAIT_MS });
@@ -2579,13 +2651,13 @@ const scenarios = [
         await seedProfiles(page, {
           sample: { serial: 'M11-Drop', maxForce: 500, maxVelocity: 25, maxDisplacement: 100, sampleWidth: 4, sampleThickness: 1.5 },
           motion: { name: 'LongDrop', moves: [
-            { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 2, distance: 40, time: 0, circularOffset: 0 } },
+            { moveType: 'linear', moveParameters: { position: 40, velocity: 2, time: 0 } },
           ] },
         });
         await selectSeeded(page);
-        await press(page.getByTestId('run-test'));
+        await startRun(page);
         await page.locator('.panel', { hasText: 'New Test' }).getByText(/started/i).waitFor({ timeout: DEVICE_WAIT_MS });
-        await page.goto(`${APP_URL}#/live`);
+        await page.goto(`${APP_URL}#/control`);
         await page.getByText('Test: running').waitFor({ timeout: DEVICE_WAIT_MS });
         // Drop link while test is running — UI must not throw; machine keeps going.
         await dropLink(page);
@@ -2615,18 +2687,18 @@ const scenarios = [
         const startPos = await num('Machine Position');
         await page.locator('label.field', { hasText: 'Jog (mm)' }).locator('input').fill('4');
         await page.locator('label.field', { hasText: 'Speed (mm/s)' }).locator('input').fill('20');
-        const upSetWas = await num('Machine Setpoint');
+        const upSetWas = await num('Machine Target');
         await press(page.getByRole('button', { name: '+ Jog up' }));
         await settleMotion(page, { setpointWas: upSetWas });
         const upPos = await num('Machine Position');
-        const upSet = await num('Machine Setpoint');
+        const upSet = await num('Machine Target');
         assert(Math.abs(upPos - startPos - 4) < 0.2, `jog +4mm landed (Δ ${(upPos - startPos).toFixed(3)}mm)`);
         assert(Math.abs(upPos - upSet) < 0.12, `position settles onto setpoint (|Δ| ${Math.abs(upPos - upSet).toFixed(3)}mm)`);
-        const downSetWas = await num('Machine Setpoint');
+        const downSetWas = await num('Machine Target');
         await press(page.getByRole('button', { name: '− Jog down' }));
         await settleMotion(page, { setpointWas: downSetWas });
         const endPos = await num('Machine Position');
-        const endSet = await num('Machine Setpoint');
+        const endSet = await num('Machine Target');
         assert(Math.abs(endPos - endSet) < 0.12, `position settles after down-jog (|Δ| ${Math.abs(endPos - endSet).toFixed(3)}mm)`);
         assert(Math.abs(endPos - startPos) < 0.2, `round trip returns to start (Δ ${(endPos - startPos).toFixed(3)}mm)`);
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
@@ -2657,7 +2729,7 @@ const scenarios = [
         for (const cell of MATRIX.M9_force_slack) {
           await jog.fill(String(cell.jogMm));
           // Return near zero between cells when needed.
-          const cellSetWas = await num('Machine Setpoint');
+          const cellSetWas = await num('Machine Target');
           if (cell.jogMm >= 18) {
             // cumulative: we may already be at ~10 from prior cell — go absolute via extra jog
             await press(page.getByRole('button', { name: '+ Jog up' }));
@@ -2676,7 +2748,7 @@ const scenarios = [
         }
         // Return so later scenarios start near zero.
         await jog.fill('25');
-        const returnSetWas = await num('Machine Setpoint');
+        const returnSetWas = await num('Machine Target');
         await press(page.getByRole('button', { name: '− Jog down' }));
         await settleMotion(page, { setpointWas: returnSetWas });
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
@@ -2700,10 +2772,10 @@ const scenarios = [
         // Two jogs of half if past slack so we don't overshoot from boot.
         const half = cell.jogMm / 2;
         await jog.fill(String(half));
-        const firstSetWas = await num('Machine Setpoint');
+        const firstSetWas = await num('Machine Target');
         await press(page.getByRole('button', { name: '+ Jog up' }));
         await settleMotion(page, { setpointWas: firstSetWas });
-        const secondSetWas = await num('Machine Setpoint');
+        const secondSetWas = await num('Machine Target');
         await press(page.getByRole('button', { name: '+ Jog up' }));
         await settleMotion(page, { setpointWas: secondSetWas });
         const pos = await num('Sample Position');
@@ -2732,9 +2804,9 @@ const scenarios = [
         await seedProfiles(page, {
           sample: { serial: 'Frac-Sample', maxForce: 500, maxVelocity: 25, maxDisplacement: 100, sampleWidth: 4, sampleThickness: 1.5 },
           motion: { name: 'Frac', moves: [
-            { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 8, distance: TARGET_MM, time: 0, circularOffset: 0 } },
-            { moveType: 'dwell', absoluteOrRelative: 'absolute', moveParameters: { position: 0, velocity: 0, distance: 0, time: 300, circularOffset: 0 } },
-            { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 8, distance: -TARGET_MM, time: 0, circularOffset: 0 } },
+            { moveType: 'linear', moveParameters: { position: TARGET_MM, velocity: 8, time: 0 } },
+            { moveType: 'dwell', moveParameters: { position: 0, velocity: 0, time: 300 } },
+            { moveType: 'linear', moveParameters: { position: 0, velocity: 8, time: 0 } },
           ] },
         });
         await selectSeeded(page);
@@ -2779,18 +2851,22 @@ const scenarios = [
         await seedProfiles(page, {
           sample: { serial: 'BB-Sample', maxForce: 500, maxVelocity: 25, maxDisplacement: 100, sampleWidth: 4, sampleThickness: 1.5 },
           motion: { name: 'BB', moves: [
-            { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 10, distance: 6, time: 0, circularOffset: 0 } },
-            { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 10, distance: -6, time: 0, circularOffset: 0 } },
+            { moveType: 'linear', moveParameters: { position: 6, velocity: 10, time: 0 } },
+            { moveType: 'linear', moveParameters: { position: 0, velocity: 10, time: 0 } },
           ] },
         });
         await selectSeeded(page);
+        const runner = page.locator('.panel', { hasText: 'New Test' });
         // Run #1.
-        await press(page.getByTestId('run-test'));
-        await page.locator('tbody tr').first().locator('.badge.completed').waitFor({ timeout: RUN_WAIT_MS });
+        await startRun(page);
+        await runner.getByText(/started/i).waitFor({ timeout: DEVICE_WAIT_MS });
+        await awaitRunFinished(page);
         // Run #2 — same profiles, immediately after (newest run is prepended).
-        await press(page.getByTestId('run-test'));
+        await startRun(page);
+        await runner.getByText(/started/i).waitFor({ timeout: DEVICE_WAIT_MS });
+        await awaitRunFinished(page);
+        await openHistory(page);
         await page.locator('tbody tr').nth(1).waitFor({ timeout: DEVICE_WAIT_MS });
-        await page.locator('tbody tr').first().locator('.badge.completed').waitFor({ timeout: RUN_WAIT_MS });
         const names = await page.locator('tbody tr td:first-child').allTextContents();
         assert(new Set(names.slice(0, 2)).size === 2, `two distinct runs recorded (${names.slice(0, 2).join(', ')})`);
         const completed = await page.locator('tbody .badge.completed').count();
@@ -2814,13 +2890,13 @@ const scenarios = [
         await seedProfiles(page, {
           sample: { serial: 'TM-Restart', maxForce: 500, maxVelocity: 25, maxDisplacement: 100, sampleWidth: 4, sampleThickness: 1.5 },
           motion: { name: 'Long-TM', moves: [
-            { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 3, distance: 30, time: 0, circularOffset: 0 } },
+            { moveType: 'linear', moveParameters: { position: 30, velocity: 3, time: 0 } },
           ] },
         });
         await selectSeeded(page);
-        await press(page.getByTestId('run-test'));
+        await startRun(page);
         await page.locator('.panel', { hasText: 'New Test' }).getByText(/started/i).waitFor({ timeout: DEVICE_WAIT_MS });
-        await page.goto(`${APP_URL}#/live`);
+        await page.goto(`${APP_URL}#/control`);
         await page.getByText('Test: running').waitFor({ timeout: DEVICE_WAIT_MS });
         await press(page.getByRole('button', { name: 'Disable motion' }));
         await page.getByText('Test: idle').waitFor({ timeout: DEVICE_WAIT_MS });
@@ -2830,14 +2906,14 @@ const scenarios = [
         await seedProfiles(page, {
           sample: { serial: 'TM-Restart2', maxForce: 500, maxVelocity: 25, maxDisplacement: 100, sampleWidth: 4, sampleThickness: 1.5 },
           motion: { name: 'Short-TM', moves: [
-            { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 10, distance: 5, time: 0, circularOffset: 0 } },
-            { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 10, distance: -5, time: 0, circularOffset: 0 } },
+            { moveType: 'linear', moveParameters: { position: 5, velocity: 10, time: 0 } },
+            { moveType: 'linear', moveParameters: { position: 0, velocity: 10, time: 0 } },
           ] },
         });
         await selectSeeded(page);
-        await press(page.getByTestId('run-test'));
+        await startRun(page);
         await page.locator('.panel', { hasText: 'New Test' }).getByText(/started/i).waitFor({ timeout: DEVICE_WAIT_MS });
-        await page.goto(`${APP_URL}#/live`);
+        await page.goto(`${APP_URL}#/control`);
         await page.getByText('Test: running').waitFor({ timeout: 20_000 });
         await page.getByText('Test: idle').waitFor({ timeout: RUN_WAIT_MS });
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
@@ -2862,13 +2938,13 @@ const scenarios = [
         await seedProfiles(page, {
           sample: { serial: 'TM-Gate', maxForce: 500, maxVelocity: 25, maxDisplacement: 100, sampleWidth: 4, sampleThickness: 1.5 },
           motion: { name: 'Gate-Long', moves: [
-            { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 3, distance: 25, time: 0, circularOffset: 0 } },
+            { moveType: 'linear', moveParameters: { position: 25, velocity: 3, time: 0 } },
           ] },
         });
         await selectSeeded(page);
-        await press(page.getByTestId('run-test'));
+        await startRun(page);
         await page.locator('.panel', { hasText: 'New Test' }).getByText(/started/i).waitFor({ timeout: DEVICE_WAIT_MS });
-        await page.goto(`${APP_URL}#/live`);
+        await page.goto(`${APP_URL}#/control`);
         await page.getByText('Test: running').waitFor({ timeout: DEVICE_WAIT_MS });
         assert(await jogUp.isDisabled(), 'jog disabled while test running');
         await page.getByText('Test: idle').waitFor({ timeout: RUN_WAIT_MS });
@@ -3426,7 +3502,7 @@ const scenarios = [
         assert(!(await row.getAttribute('class'))?.includes('error'), 'the Protocol row is marked as a mismatch');
         assert((await compatBanner(page).count()) === 0, 'a firmware banner is shown for matching firmware');
         // The gate lets a good board's motion through: enable, then disable.
-        await page.goto(`${APP_URL}#/live`);
+        await page.goto(`${APP_URL}#/control`);
         await page.getByText(/Motion: (enabled|disabled)/).waitFor({ timeout: DEVICE_WAIT_MS });
         await press(page.getByRole('button', { name: 'Enable motion' }));
         await page.getByText('Motion: enabled').waitFor({ timeout: DEVICE_WAIT_MS });
@@ -3452,7 +3528,7 @@ const scenarios = [
         // Enable motion and jog to machine zero (zeroLength jogs and settles).
         await zeroLength(page);
         await page.locator('label.field', { hasText: 'Jog (mm)' }).locator('input').fill('2');
-        const setWas = await readoutNum(page, 'Machine Setpoint');
+        const setWas = await readoutNum(page, 'Machine Target');
         await press(page.getByRole('button', { name: '+ Jog up' }));
         const at = await settleMotion(page, { setpointWas: setWas });
         assert(Math.abs(at - 2) < 0.25, `the 2 mm jog landed at ${at} mm`);
@@ -3460,15 +3536,16 @@ const scenarios = [
         await seedProfiles(page, {
           sample: { serial: 'Compat-OK', maxForce: 500, maxVelocity: 25, maxDisplacement: 100, sampleWidth: 4, sampleThickness: 1.5 },
           motion: { name: 'Compat-OK-Motion', moves: [
-            { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 5, distance: 3, time: 0, circularOffset: 0 } },
-            { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 5, distance: -3, time: 0, circularOffset: 0 } },
+            // Out 3 mm from the jog's 2 mm and back: moves are absolute extensions.
+            { moveType: 'linear', moveParameters: { position: 5, velocity: 5, time: 0 } },
+            { moveType: 'linear', moveParameters: { position: 2, velocity: 5, time: 0 } },
           ] },
         });
         await selectSeeded(page);
         const runner = page.locator('.panel', { hasText: 'New Test' });
         await press(page.getByTestId('run-test'));
         await runner.getByText(/started/i).waitFor({ timeout: DEVICE_WAIT_MS });
-        await page.locator('tbody tr').first().locator('.badge.completed').waitFor({ timeout: RUN_WAIT_MS });
+        await awaitRunFinished(page);
         // Home: the seek starts moving the gantry. Disabling motion stops it,
         // since a full seek to the endstop is M13-home-endpoint's to measure.
         await prepareManualControl(page);
@@ -3495,7 +3572,7 @@ const scenarios = [
   },
   {
     id: 'COMPAT-app-too-old',
-    name: 'Firmware compat: firmware a protocol ahead gets the app-too-old banner; motion refused; it links to the latest app',
+    name: 'Firmware compat: firmware a protocol ahead gets the app-too-old banner; motion refused; with no release to offer, it leads to firmware for this app',
     async run() {
       const { protocol } = protocolFacts();
       const { browser, page, errors } = await newSilPage();
@@ -3508,15 +3585,133 @@ const scenarios = [
           `verdict ${JSON.stringify(verdict?.data)}, expected appTooOld at protocol ${protocol + 1}`,
         );
         await pressRefusedLiveControls(page);
-        // The way out: the latest app. On an unversioned copy that is a
-        // reload, after disconnecting.
+        // This copy is not a release (the dev server), so it has no release
+        // to offer: the way out is this app's firmware, on the Firmware screen.
+        await compatBanner(page).filter({ hasText: `No released MaD Control speaks protocol ${protocol + 1}` })
+          .waitFor({ timeout: DEVICE_WAIT_MS });
+        assert((await page.getByTestId('open-app-release').count()) === 0, 'a MaD Control release was offered');
+        await press(page.getByTestId('install-app-firmware'));
+        await page.getByRole('heading', { name: 'Firmware', exact: true }).waitFor({ timeout: DEVICE_WAIT_MS });
+        const row = page.getByTestId('fw-protocol');
+        await row.filter({ hasText: `${protocol + 1} · this app speaks ${protocol}` }).waitFor({ timeout: DEVICE_WAIT_MS });
+        assert((await row.getAttribute('class'))?.includes('error'), 'the Protocol row is not marked as a mismatch');
+        assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
+      } finally {
+        await browser.close();
+      }
+    },
+  },
+  {
+    id: 'COMPAT-app-release',
+    name: 'Firmware compat (fake board): a hosted release facing firmware a protocol ahead offers the latest while its release list cannot be read, then the newest release that speaks the protocol, opened on the same screen after letting the port go',
+    async run() {
+      const { protocol } = protocolFacts();
+      const ahead = protocol + 1;
+      const server = await releaseAppServer('0.0.1');
+      const { browser, page, errors } = await fakeBoardPage({ firmware: { version: '0.99', protocol: ahead } });
+      try {
+        // The release list beside this release: the newest speaks a protocol
+        // further ahead, two speak the firmware's, and the oldest is from
+        // before the list recorded protocols.
+        const list = {
+          latest: '0.7.0',
+          versions: [
+            { version: '0.7.0', publishedAt: null, protocolVersion: ahead + 1 },
+            { version: '0.6.1', publishedAt: null, protocolVersion: ahead },
+            { version: '0.6.0', publishedAt: null, protocolVersion: ahead },
+            { version: '0.0.1', publishedAt: null, protocolVersion: protocol },
+            { version: '0.0.0', publishedAt: null },
+          ],
+        };
+        // The list cannot be read at first (the site unreachable, say).
+        let listServed = false;
+        await page.route('**/MaD/app/versions.json', (route) =>
+          listServed
+            ? route.fulfill({ contentType: 'application/json', body: JSON.stringify(list) })
+            : route.fulfill({ status: 503, body: '' }));
+        await page.route('**/MaD/app/v0.6.1/**', (route) =>
+          route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>MaD Control 0.6.1</title>' }));
+        await page.goto(`${server.url}#/connect`);
+        await press(page.getByTestId('connect-device'));
+        await page.locator('.dot.connected').waitFor({ timeout: DEVICE_WAIT_MS });
+        // Which release speaks the protocol is unknown: the latest is offered,
+        // and reflashing the board is not urged.
+        await compatBanner(page).filter({ hasText: 'The list of MaD Control releases could not be loaded' })
+          .waitFor({ timeout: DEVICE_WAIT_MS });
+        assert(
+          !(await compatBanner(page).textContent())?.includes('development firmware'),
+          'an unread release list was reported as development firmware',
+        );
+        const latest = page.getByTestId('open-latest-app');
+        assert((await latest.getAttribute('class'))?.includes('primary'), 'Open the latest MaD Control does not lead');
+        const install = page.getByTestId('install-app-firmware');
+        assert(!(await install.getAttribute('class'))?.includes('primary'), 'installing firmware leads with the release list unread');
+        // The list is asked for again on the next connection, and now it is there.
+        listServed = true;
+        await page.goto(`${server.url}#/connect`);
+        await press(page.getByRole('button', { name: 'Disconnect' }));
+        await page.locator('.dot.disconnected').waitFor({ timeout: DEVICE_WAIT_MS });
+        await press(page.getByTestId('connect-device'));
+        await page.locator('.dot.connected').waitFor({ timeout: DEVICE_WAIT_MS });
+        await compatBanner(page).filter({ hasText: `MaD Control 0.6.1 speaks protocol ${ahead}.` })
+          .waitFor({ timeout: DEVICE_WAIT_MS });
+        assert((await page.getByTestId('open-latest-app').count()) === 0, 'the latest is still offered beside the release');
+        await pressRefusedLiveControls(page, server.url);
+        // Firmware for this app stays on offer, behind the release.
+        await install.waitFor({ timeout: DEVICE_WAIT_MS });
+        assert(!(await install.getAttribute('class'))?.includes('primary'), 'installing firmware leads while a release speaks the protocol');
+        // The port's state as the page goes, kept where the next page can read it.
         await page.evaluate(() => {
-          window.__beforeLatest = true;
+          addEventListener('pagehide', () => {
+            sessionStorage.setItem('mad-e2e-port-closed', String(window.__bootRom.closedAt !== null));
+          });
         });
-        await press(page.getByTestId('open-latest-app'));
-        await page.waitForFunction(() => window.__beforeLatest === undefined, null, { timeout: DEVICE_WAIT_MS });
-        await page.locator('.statusbar').waitFor({ timeout: DEVICE_WAIT_MS });
-        assert((await page.locator('.dot.connected').count()) === 0, 'the app stayed connected after opening the latest version');
+        await press(page.getByTestId('open-app-release'));
+        await page.waitForURL(/\/MaD\/app\/v0\.6\.1\/#\/control$/, { timeout: DEVICE_WAIT_MS });
+        const closed = await page.evaluate(() => sessionStorage.getItem('mad-e2e-port-closed'));
+        assert(closed === 'true', `the port was ${closed === 'false' ? 'still open' : 'never seen'} as the release opened`);
+        assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
+      } finally {
+        await browser.close();
+        await server.close();
+      }
+    },
+  },
+  {
+    id: 'COMPAT-app-firmware',
+    name: 'Firmware compat (fake board): firmware a protocol ahead with no release to offer → Install firmware for this app → Install recommended firmware → flashed → reconnected → ok',
+    async run() {
+      const { protocol } = protocolFacts();
+      const IMAGE = Buffer.from(Array.from({ length: 3000 }, (_, i) => (i * 7 + 3) & 0xff));
+      // The release for this app's protocol, and one for the board's that
+      // this app must not offer.
+      const manifest = { releases: [manifestEntry('0.99', protocol + 1, IMAGE), manifestEntry('0.15', protocol, IMAGE)] };
+      const { browser, page, errors } = await fakeBoardPage({
+        firmware: { version: '0.99', protocol: protocol + 1 },
+        afterFlash: { version: '0.15', protocol },
+      });
+      try {
+        await page.route('**/firmware/manifest.json', (route) =>
+          route.fulfill({ contentType: 'application/json', body: JSON.stringify(manifest) }));
+        await page.route('**/firmware/MaD-Firmware-0.15.bin', (route) =>
+          route.fulfill({ contentType: 'application/octet-stream', body: IMAGE }));
+        await connectFakeBoard(page);
+        // An unversioned copy (this dev server) has no release to offer.
+        await compatBanner(page).filter({ hasText: `No released MaD Control speaks protocol ${protocol + 1}` })
+          .waitFor({ timeout: DEVICE_WAIT_MS });
+        assert((await page.getByTestId('open-app-release').count()) === 0, 'a MaD Control release was offered');
+        await press(page.getByTestId('install-app-firmware'));
+        const install = page.getByTestId('install-recommended');
+        await install.filter({ hasText: 'Install recommended firmware (0.15)' }).waitFor({ timeout: DEVICE_WAIT_MS });
+        assert((await install.getAttribute('class'))?.includes('primary'), 'Install recommended firmware does not lead');
+        await press(install);
+        await page.getByTestId('flash-status').filter({ hasText: /Wrote .* bytes to flash/ }).waitFor({ timeout: 60_000 });
+        const payload = await page.evaluate(() => window.__bootRom.image.slice(496));
+        assert(Buffer.from(payload).equals(IMAGE), 'the flashed payload is not the recommended release image');
+        await page.locator('.dot.connected').waitFor({ timeout: DEVICE_WAIT_MS });
+        await compatBanner(page).waitFor({ state: 'detached', timeout: DEVICE_WAIT_MS });
+        await page.getByTestId('fw-protocol').filter({ hasText: `${protocol} · this app speaks ${protocol}` })
+          .waitFor({ timeout: DEVICE_WAIT_MS });
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
       } finally {
         await browser.close();
@@ -3571,7 +3766,7 @@ const scenarios = [
         await connectFakeBoard(page);
         // Fail closed: blocked from the moment the connection opens, saying so.
         await compatBanner(page).and(page.locator('[data-kind="checking"]')).waitFor({ timeout: DEVICE_WAIT_MS });
-        await page.goto(`${APP_URL_HOST}#/live`);
+        await page.goto(`${APP_URL_HOST}#/control`);
         await page.getByText(/Motion: (enabled|disabled)/).waitFor({ timeout: DEVICE_WAIT_MS });
         await press(page.getByRole('button', { name: 'Enable motion' }));
         await page.locator('.toast').getByText(/^Checking which protocol/).first().waitFor({ timeout: DEVICE_WAIT_MS });
@@ -3603,18 +3798,7 @@ const scenarios = [
     async run() {
       const { protocol } = protocolFacts();
       const IMAGE = Buffer.from(Array.from({ length: 3000 }, (_, i) => (i * 13 + 5) & 0xff));
-      const sha256 = createHash('sha256').update(IMAGE).digest('hex');
-      const entry = (version, proto) => ({
-        tag: `firmware-v${version}`,
-        version,
-        assetName: `MaD-Firmware-${version}.bin`,
-        size: IMAGE.length,
-        sha256,
-        path: `firmware/MaD-Firmware-${version}.bin`,
-        publishedAt: '2026-11-01T00:00:00Z',
-        htmlUrl: 'https://example.invalid/release',
-        protocolVersion: proto,
-      });
+      const entry = (version, proto) => manifestEntry(version, proto, IMAGE);
       // The release for this app's protocol, and a newer one for the next
       // protocol that this app must not offer.
       const manifest = { releases: [entry('0.99', protocol + 1), entry('0.15', protocol)] };
@@ -3701,7 +3885,7 @@ const scenarios = [
         assert(opens.programming === 1, `the programming port was opened ${opens.programming} times; once, for the flash`);
         assert(opens.control === 2, `the control port was opened ${opens.control} times; expected the connect and the reconnect`);
         // Motion works on the new firmware, in the same page: no reload.
-        await page.goto(`${APP_URL_HOST}#/live`);
+        await page.goto(`${APP_URL_HOST}#/control`);
         await press(page.getByRole('button', { name: 'Enable motion' }));
         await page.getByText('Motion: enabled').waitFor({ timeout: DEVICE_WAIT_MS });
         assert(await page.evaluate(() => window.__sameApp === true), 'the app was reloaded');

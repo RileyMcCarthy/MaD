@@ -95,16 +95,15 @@ export function resampledPathMm(timeUs, posUm, { dtUs = 50_000, minDeltaUm = 500
 // This is the end-to-end proof that the firmware-native waveform = f(t).
 // Narrow a recorded run down to the COMMANDED WAVEFORM.
 //
-// A waveform run records three segments, and only the middle one is the wave.
-// The program moves to the UPPER PEAK (the firmware starts a wave at rest where
-// the carriage stands, which is a peak), runs the whole cycles peak-to-peak
-// falling first, then moves back to the centre. After that sits a flat tail
-// until teardown.
+// A waveform run records more than the wave. The wave starts at rest where the
+// gantry is (a peak) and each whole cycle ends at rest back at that peak; around
+// it sit any moves the program makes before and after, and a flat tail until
+// teardown.
 //
-// None of that is the commanded shape, and it is not a small effect: for
-// WAVE-tri the approach is 5 mm against an 8 mm peak-to-peak, and a properly
-// homed gantry once reported 14.49 mm of "waveform" — failing the assertion
-// precisely BECAUSE homing had worked.
+// None of that is the commanded shape, and it is not a small effect: a move
+// before the wave can be as large as the wave itself, and a properly homed
+// gantry once reported 14.49 mm of "waveform" — failing the assertion precisely
+// BECAUSE homing had worked.
 //
 // E2E_WAVE_DUMP=1 writes the raw recorded series beside the artifacts, so the
 // windowing and the fit can be worked on offline instead of by re-running the
@@ -174,14 +173,15 @@ export function waveformWindow(posMm, tS, { cycles, frequencyHz, amplitudeMm }) 
 
   // Most travel alone cannot tell the wave from an approach that runs into a
   // park. The machine runs a G123 from REST on a peak and whole cycles bring it
-  // back there, so a window shifted earlier by x swaps the wave's final rise
+  // back there, so a window shifted earlier by x swaps the wave's final run
   // into that peak (slow: it is braking) for the last stretch of the approach
   // (moving at whatever speed the program chose) and the park between them.
   // When the approach is at least as fast as the wave's own peak speed, the
-  // swap can GAIN travel. WAVE-sine-small measured exactly that: the window
-  // took 1.45 s of approach and park in place of the wave's last 1.45 s, fit
-  // R² 0.776 where the wave itself fits 1.000, and its mean sat 0.245 mm off
-  // a centre the wave hit to the micrometre.
+  // swap can GAIN travel. WAVE-sine-small measured exactly that on the board
+  // with a program that approached the top at the wave's peak speed: the
+  // window took 1.45 s of approach and park in place of the wave's last
+  // 1.45 s, fit R² 0.776 where the wave itself fits 1.000, and its mean sat
+  // 0.245 mm off a centre the wave hit to the micrometre.
   //
   // So prefer the window shaped like whole cycles from rest: it STARTS with the
   // gantry still, ENDS where it started, and carries at least half the travel
@@ -235,8 +235,8 @@ export function assertSineMatch(series, { amplitudeMm, frequencyHz, cycles, cent
   dumpWaveSeries(label, posMm, tS, { amplitudeMm, frequencyHz, cycles, centreMm });
 
   // Fit exactly the WAVEFORM, not the whole record. The record also contains the
-  // leading approach to the top and — after the return to the centre parks the
-  // gantry — a flat tail that lasts until the run is torn down. Neither is the commanded
+  // program's moves before and after the wave, and a flat tail that lasts
+  // until the run is torn down. Neither is the commanded
   // sine, and the tail's length is teardown timing (0.1–0.4 s observed), so
   // including it penalises a perfectly tracked wave in proportion to how slow
   // the shutdown happened to be. That is what made the short 2 Hz case flaky:

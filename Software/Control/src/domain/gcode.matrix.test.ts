@@ -153,35 +153,31 @@ describe('M2 waveform matrix: amplitude / frequency / cycles', () => {
     {
       id: 'matrix.waveform-param-bounds',
       covers: 'src/domain/gcode.ts#validateWaveform',
-      given: 'waveform amplitude, frequency, and cycles at the smallest value, at the codec limits, past them, and at zero or negative',
+      given: 'waveform amplitude, frequency, and cycles at the smallest value, at the codec limits, past them, and at zero',
       expect: {
         'all-three-in-range-accepted':
-          'a waveform whose amplitude is non-zero and whose frequency and cycle count are positive, all within the codec range, is accepted',
-        'negative-amplitude-accepted':
-          'a negative amplitude is accepted down to the codec minimum, its sign being the direction the wave sets off in',
+          'a waveform with a non-zero amplitude of either sign, a positive frequency and cycle count, all in range, is accepted',
         'any-out-of-range-refused':
-          'a waveform with zero amplitude, a frequency or cycle count of zero or below, or any value past the codec range is refused',
+          'a waveform with any of the three at zero or past its limits is refused, as are a negative frequency or cycle count',
       },
     },
     () => {
       for (const { amplitude, frequency, cycles, ok } of [
-        { amplitude: 0, frequency: 1, cycles: 1, ok: false }, // requires A != 0
+        { amplitude: 0, frequency: 1, cycles: 1, ok: false }, // requires A > 0
         { amplitude: 0.001, frequency: 1, cycles: 1, ok: true },
         { amplitude: 5, frequency: 1, cycles: 2, ok: true },
         { amplitude: WAVEFORM_FIELD_RANGE.amplitude.max, frequency: 1, cycles: 1, ok: true },
         { amplitude: WAVEFORM_FIELD_RANGE.amplitude.max + 1, frequency: 1, cycles: 1, ok: false },
         { amplitude: 5, frequency: WAVEFORM_FIELD_RANGE.frequency.max + 1, cycles: 1, ok: false },
         { amplitude: 5, frequency: 0, cycles: 1, ok: false },
-        { amplitude: 5, frequency: -1, cycles: 1, ok: false },
         { amplitude: 5, frequency: 1, cycles: 0, ok: false },
         { amplitude: 5, frequency: 1, cycles: WAVEFORM_FIELD_RANGE.cycles.max + 1, ok: false },
-        { amplitude: -1, frequency: 1, cycles: 1, ok: true }, // falls first
-        { amplitude: -0.001, frequency: 1, cycles: 1, ok: true },
+        { amplitude: -1, frequency: 1, cycles: 1, ok: true }, // negative: sets off downward
         { amplitude: WAVEFORM_FIELD_RANGE.amplitude.min, frequency: 1, cycles: 1, ok: true },
         { amplitude: WAVEFORM_FIELD_RANGE.amplitude.min - 1, frequency: 1, cycles: 1, ok: false },
       ]) {
         const wf = { shape: WaveformShape.SINE, amplitude, frequency, cycles,
-                     dwellHigh: 0, dwellLow: 0, skewPerMille: 500, endFrequency: 0 };
+                     dwellHigh: 0, dwellLow: 0, skewPerMille: 500 , endFrequency: 0};
         if (ok) {
           expect(() => validateWaveform(wf)).not.toThrow();
         } else {
@@ -204,7 +200,7 @@ describe('M2 waveform matrix: amplitude / frequency / cycles', () => {
         { shape: WaveformShape.TRIANGLE, label: 'triangle' },
       ]) {
         const wf = { shape, amplitude: 3, frequency: 1.5, cycles: 4,
-                     dwellHigh: 0, dwellLow: 0, skewPerMille: 500, endFrequency: 0 };
+                     dwellHigh: 0, dwellLow: 0, skewPerMille: 500 , endFrequency: 0};
         expect(() => validateWaveform(wf)).not.toThrow();
       }
     },

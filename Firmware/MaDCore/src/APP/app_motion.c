@@ -75,10 +75,9 @@
  * one peak of it, for whole cycles back to that peak; the sign of the amplitude
  * says which way it sets off, so the centre is the start plus the amplitude.
  * There is no approach or return move: a program that wants the wave centred
- * somewhere moves the carriage onto a peak first (the app's waveform move goes
- * to the top and runs it falling). Every instant is inside the acceleration
- * budget, so there is no lag to correct and nothing for an anchor to do. What
- * is left here is unit conversion and a completion check. */
+ * somewhere moves the carriage onto a peak first. Every instant is inside the
+ * acceleration budget, so there is no lag to correct and nothing for an anchor
+ * to do. What is left here is unit conversion and a completion check. */
 
 /**********************************************************************
  * Typedefs

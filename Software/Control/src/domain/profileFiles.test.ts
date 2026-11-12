@@ -15,8 +15,7 @@ const SET: MotionSet = {
   moves: [
     {
       moveType: 'linear',
-      absoluteOrRelative: 'relative',
-      moveParameters: { position: 0, velocity: 5, distance: 10, time: 0 },
+      moveParameters: { position: 10, velocity: 5, time: 0 },
     },
   ],
 };

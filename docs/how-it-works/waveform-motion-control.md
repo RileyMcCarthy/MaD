@@ -13,8 +13,8 @@ way it is.
 
 ## Why not just send G-code segments?
 
-A waveform used to be expanded **on the host** into ~32 short `G1` segments per
-cycle. That works, but:
+The alternative is to expand a waveform **on the host** into ~32 short `G1`
+segments per cycle. Compared with generating it in the firmware:
 
 | Concern | Host segment expansion | Firmware-native waveform |
 | --- | --- | --- |
@@ -240,16 +240,15 @@ needs one. Holds take their time from the traverses, not from the period, so
 adding a hold never silently changes a fatigue test's frequency.
 
 A wave starts where the carriage stands, so a program that wants it centred
-somewhere puts the carriage on a peak first. The app's waveform move goes to the
-**top** of the stroke, runs the cycles falling first (a negative `A`), and
-returns to the centre:
+somewhere puts the carriage on a peak first. Here that is the bottom of a wave
+centred on 12.5 mm, and a positive `A` rises from it; each wave ends back on
+the bottom, where the next one starts:
 
 ```gcode
-G1 X17.5 F31.4                    ; to the top of a wave centred on 12.5 mm
-G123 A-5 F1 C1000 W0              ; sine, 5 mm, 1 Hz, 1000 cycles, falling first
-G123 A-5 F0.25 C200 W1 H2.0 L0    ; triangle, 2 s hold at peak tension only
-G123 A-5 F0.2 C50 W0 S0.8         ; 80% of the cycle loading, 20% unloading
-G1 X12.5 F31.4                    ; back to the centre
+G1 X7.5 F31.4                     ; to the bottom of a wave centred on 12.5 mm
+G123 A5 F1 C1000 W0               ; sine, 5 mm, 1 Hz, 1000 cycles, rising first
+G123 A5 F0.25 C200 W1 H2.0 L0     ; triangle, 2 s hold at peak tension only
+G123 A5 F0.2 C50 W0 S0.8          ; 80% of the cycle loading, 20% unloading
 G122                              ; signal test complete
 ```
 

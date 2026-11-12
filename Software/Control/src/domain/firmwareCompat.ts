@@ -123,8 +123,39 @@ export function describeFirmwareCompat(compat: FirmwareCompat): string {
         ? `The machine's firmware is too old for this version of MaD Control (it does not report a protocol; this app needs protocol ${compat.appProtocol}). Motion is disabled until the firmware is updated.`
         : `The machine's firmware is too old for this version of MaD Control (protocol ${compat.deviceProtocol}; this app needs ${compat.appProtocol}). Motion is disabled until the firmware is updated.`;
     case 'appTooOld':
-      return `The machine's firmware is newer than this version of MaD Control (protocol ${compat.deviceProtocol}; this app speaks ${compat.appProtocol}). Motion is disabled; open the latest MaD Control.`;
+      return `The machine's firmware is newer than this version of MaD Control (protocol ${compat.deviceProtocol}; this app speaks ${compat.appProtocol}). Motion is disabled: open a MaD Control that speaks protocol ${compat.deviceProtocol}, or install firmware for this app.`;
     case 'belowMinFirmware':
       return `A firmware update is recommended: ${compat.firmwareVersion} is older than ${compat.minFirmware}, the oldest this version of MaD Control recommends.`;
+  }
+}
+
+/**
+ * Where an app too old for its firmware can send the operator:
+ *   looking   the release list beside this release is on its way
+ *   release   `version` is the newest released MaD Control that speaks the
+ *             firmware's protocol
+ *   none      no release speaks it (or this copy is not a release, with no
+ *             list beside it): the firmware is built from ahead of every
+ *             release, so the way out is this app's firmware
+ *   unknown   the release list could not be read, so which release speaks
+ *             it is not known
+ */
+export type AppForFirmware =
+  | { kind: 'looking' }
+  | { kind: 'release'; version: string }
+  | { kind: 'none' }
+  | { kind: 'unknown' };
+
+/** The sentence that follows the verdict, naming the way out; null while still looking. */
+export function describeAppForFirmware(deviceProtocol: number, app: AppForFirmware): string | null {
+  switch (app.kind) {
+    case 'looking':
+      return null;
+    case 'release':
+      return `MaD Control ${app.version} speaks protocol ${deviceProtocol}.`;
+    case 'none':
+      return `No released MaD Control speaks protocol ${deviceProtocol}, so the machine is probably running a development firmware build.`;
+    case 'unknown':
+      return `The list of MaD Control releases could not be loaded, so this app cannot tell which release speaks protocol ${deviceProtocol}.`;
   }
 }

@@ -4,7 +4,7 @@ import { useStore } from '@/store/useStore';
 import { deviceClient } from '@/device/session';
 import { dataStore, TestRunIndexRow } from '@/storage/DataStore';
 import { buildExportCsv, NotificationType } from '@/domain';
-import TestRunner from '@/ui/components/TestRunner';
+import { classifyDownload } from '@/domain/runDownload';
 import Modal from '@/ui/components/Modal';
 import { FileDownloadProgress } from '@/device/events';
 
@@ -23,6 +23,9 @@ function downloadBlob(filename: string, content: string) {
 export default function Runs() {
   const connected = useStore((s) => s.connection === 'connected');
   const folderReady = useStore((s) => s.dataFolderReady);
+  // Run records also change off this screen (a run finishing, stale runs
+  // cleaned up on connect), so reload when the store says so.
+  const runsChangedAt = useStore((s) => s.runsChangedAt);
   const navigate = useNavigate();
 
   const [rows, setRows] = useState<TestRunIndexRow[]>([]);
@@ -30,26 +33,32 @@ export default function Runs() {
   const [progress, setProgress] = useState<FileDownloadProgress | null>(null);
   const [downloadingName, setDownloadingName] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const loadRows = async () => {
     if (dataStore.connected) setRows(await dataStore.getTestRunIndex());
   };
   useEffect(() => {
     void loadRows();
-  }, [folderReady]);
+  }, [folderReady, runsChangedAt]);
 
   const download = async (testName: string) => {
     setDownloadingName(testName);
     setProgress({ fileName: testName, bytesDownloaded: 0, totalBytes: 0, status: 'downloading' });
     try {
-      const result = await deviceClient.downloadTestFile(testName, (p) => setProgress(p));
-      if (!result.success || result.csv === undefined) {
-        throw new Error(result.error ?? 'download failed');
+      const outcome = classifyDownload(await deviceClient.downloadTestFile(testName, (p) => setProgress(p)));
+      if (outcome.kind === 'failed') throw new Error(outcome.message);
+      if (outcome.kind === 'empty') {
+        await dataStore.updateTestRun(testName, { status: 'error', errorMessage: outcome.message });
+        setProgress({ fileName: testName, bytesDownloaded: 0, totalBytes: 0, status: 'error', error: 'no data recorded' });
+        useStore.getState().notify(NotificationType.ERROR, `Test ${testName}: ${outcome.message}`);
+        await loadRows();
+        return;
       }
       // A storage failure here (quota, permission revoked) must not strand the
       // run as "not downloaded" silently — surface it and keep it re-downloadable.
-      const path = await dataStore.saveTestCsv(testName, result.csv);
-      const saved = await dataStore.updateTestRun(testName, { status: 'downloaded', dataFilePath: path });
+      const path = await dataStore.saveTestCsv(testName, outcome.csv);
+      const saved = await dataStore.updateTestRun(testName, { status: 'downloaded', dataFilePath: path, errorMessage: undefined });
       if (!saved) {
         useStore
           .getState()
@@ -72,11 +81,21 @@ export default function Runs() {
     if (run && csv) downloadBlob(`${testName}_export.csv`, buildExportCsv(run, csv));
   };
 
+  // Deleting rewrites files in the data folder, which can take seconds; the
+  // dialog stays open with a spinner until it is done.
   const confirmDelete = async () => {
-    if (!deleteTarget) return;
-    await dataStore.deleteTestRun(deleteTarget);
-    setDeleteTarget(null);
-    await loadRows();
+    if (!deleteTarget || deleting) return;
+    setDeleting(true);
+    try {
+      await dataStore.deleteTestRun(deleteTarget);
+      await loadRows();
+      setDeleteTarget(null);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      useStore.getState().notify(NotificationType.ERROR, `Could not delete ${deleteTarget}: ${message}`);
+    } finally {
+      setDeleting(false);
+    }
   };
 
   // Manual resolution for runs stuck in "running" (firmware hang, app reload
@@ -99,8 +118,7 @@ export default function Runs() {
   return (
     <div>
       <h1>Test runs</h1>
-
-      <TestRunner onChanged={loadRows} />
+      <p className="muted">Start a new test from the Control page.</p>
 
       <div className="panel">
         <div className="row" style={{ justifyContent: 'space-between' }}>
@@ -155,7 +173,14 @@ export default function Runs() {
                     <td className="muted">{r.motionProfileName || '—'}</td>
                     <td className="muted">{new Date(r.startedAt).toLocaleString()}</td>
                     <td>
-                      <span className={`badge ${r.status}`}>{r.status}</span>
+                      <span className={`badge ${r.status}`} title={r.errorMessage}>
+                        {r.status}
+                      </span>
+                      {r.errorMessage && (
+                        <div className="run-error" data-testid="run-error">
+                          {r.errorMessage}
+                        </div>
+                      )}
                     </td>
                     <td className="row">
                       {r.status === 'downloaded' ? (
@@ -210,14 +235,29 @@ export default function Runs() {
         )}
       </div>
 
-      <Modal open={deleteTarget !== null} title="Delete test run?" onClose={() => setDeleteTarget(null)} width={420}>
+      <Modal
+        open={deleteTarget !== null}
+        title="Delete test run?"
+        onClose={() => {
+          if (!deleting) setDeleteTarget(null);
+        }}
+        width={420}
+      >
         <p>
           Permanently delete <strong>{deleteTarget}</strong> and its data file? This cannot be undone.
         </p>
         <div className="row" style={{ justifyContent: 'flex-end' }}>
-          <button onClick={() => setDeleteTarget(null)}>Cancel</button>
-          <button className="danger" onClick={confirmDelete} data-testid="confirm-delete">
-            Delete
+          <button onClick={() => setDeleteTarget(null)} disabled={deleting}>
+            Cancel
+          </button>
+          <button className="danger" onClick={confirmDelete} disabled={deleting} aria-busy={deleting} data-testid="confirm-delete">
+            {deleting ? (
+              <>
+                <span className="spinner" aria-hidden="true" /> Deleting…
+              </>
+            ) : (
+              'Delete'
+            )}
           </button>
         </div>
       </Modal>
