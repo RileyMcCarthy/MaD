@@ -83,7 +83,7 @@ Header template (`src/template.ch:1`) is the same minus the External Variables /
 - Use Doxygen `@brief/@param/@return` on non-trivial public header functions (`src/IO/IO_SDCard.h:88`, `src/HAL/Include/HAL_lock.h:16`).
 
 **Don't**
-- Don't add new `.cx`/`.hx` files. Those are legacy (`src/DEV/Config/dev_nvram_machineProfile.cx`); use `.c`/`.h`.
+- Don't add new `.cx`/`.hx` files. The extension is for the templates only (`src/template.cx` / `src/template.ch`) and is not compiled; use `.c`/`.h`.
 - Don't reorder or drop the section banners in `APP/`/`DEV/`/`IO/` modules — they are how reviewers navigate every file.
 
 ### Include ordering (as practiced)
