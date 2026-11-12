@@ -75,9 +75,15 @@ name with *(local file)* so you can see what is about to be written.
 ## When the app is the one out of date
 
 If the banner says the firmware is **newer** than this version of MaD Control,
-there is nothing to flash. Click **Open the latest MaD Control**:
+the banner names the way out. When a released app speaks the firmware's
+protocol, click **Open MaD Control X.Y.Z**. When none does (a development
+firmware build), click **Install firmware for this app** and flash the
+recommended release:
 
 ![Banner: firmware newer than the app](../assets/screenshots/banner-app-too-old.png)
+
+[Firmware problems](../troubleshooting/firmware.md#the-machines-firmware-is-newer-than-this-version-of-mad-control)
+covers each case.
 
 ## If it fails
 

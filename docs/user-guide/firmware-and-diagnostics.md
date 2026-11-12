@@ -37,7 +37,7 @@ on every screen says why. **STOP** and **Disable motion** always work.
 | Still asking | *Checking which protocol the machine's firmware speaks…* | Blocked until it answers |
 | Same protocol | none | Allowed |
 | Firmware older | *The machine's firmware is too old for this version of MaD Control…* | Blocked: update the firmware |
-| Firmware newer | *The machine's firmware is newer than this version of MaD Control…* | Blocked: open the latest app |
+| Firmware newer | *The machine's firmware is newer than this version of MaD Control…* | Blocked: open the app release the banner names, or install this app's firmware |
 | No answer | *The machine's firmware did not say which protocol it speaks…* | Blocked: reconnect, or update the firmware |
 | Same protocol, older than a fix this app knows about | *A firmware update is recommended…* | Allowed |
 

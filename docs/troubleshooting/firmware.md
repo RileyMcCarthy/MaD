@@ -41,12 +41,17 @@ enabling motion and jogging are refused:
 
 ![Banner: firmware newer than the app](../assets/screenshots/banner-app-too-old.png)
 
-The firmware is ahead of the app. Nothing needs flashing.
+The firmware is ahead of the app. The banner's second sentence says which way
+out applies, and its buttons follow:
 
-**Fix:** click **Open the latest MaD Control**. If you opened a pinned older
-version of the app on purpose, either use the latest app or flash the firmware
-release that matches that app version (the Firmware screen's **Recommended**
-row names it).
+| The banner adds | Meaning | Fix |
+|---|---|---|
+| *MaD Control X.Y.Z speaks protocol n.* | A released app matches this firmware | Click **Open MaD Control X.Y.Z**. It opens that release on the same screen. |
+| *No released MaD Control speaks protocol n, so the machine is probably running a development firmware build.* | Nothing released matches (the case in the screenshot) | Click **Install firmware for this app**, then **Install recommended firmware** on the Firmware screen. |
+| *The list of MaD Control releases could not be loaded…* | The app is offline or the list didn't load | Click **Open the latest MaD Control**, or reload with a network connection. |
+
+**Install firmware for this app** is always offered as the alternative: it
+puts the firmware this app recommends back on the machine.
 
 ## The machine's firmware did not say which protocol it speaks
 
