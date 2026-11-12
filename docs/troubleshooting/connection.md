@@ -26,7 +26,7 @@ The port opened and nothing is answering.
 | **The machine is powered** | Follow the [power-up sequence](../how-it-works/the-machine.md#power-up-sequence). |
 | **TX and RX aren't swapped** (bench wiring) | Adapter TX → P30, adapter RX ← P32, grounds joined. |
 
-On the Live screen this state leaves the badges at **—** and the controls
+On the Control screen this state leaves the badges at **—** and the controls
 locked:
 
 ![State unknown](../assets/screenshots/live-waiting-for-state.png)

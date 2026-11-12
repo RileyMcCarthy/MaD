@@ -1,7 +1,8 @@
 # Faults
 
-A **fault** switches motion off. The **Fault** badge on the Live screen turns
-red, the machine refuses to enable motion, and a running test is ended.
+A **fault** switches motion off. The **Fault** badge on the Control screen turns
+red, the status banner turns red with the fault's remedy, the machine refuses
+to enable motion, and a running test is ended.
 
 The machine re-checks every fault condition continuously:
 

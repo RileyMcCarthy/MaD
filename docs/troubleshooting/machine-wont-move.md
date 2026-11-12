@@ -23,10 +23,10 @@ flowchart TD
 
 ## Not connected, or not responding
 
-The Live screen says *Connect a device to see live data*, or the status bar
+The Control screen says *Connect a device to see live data*, or the status bar
 says **Not responding**. See [Connection problems](connection.md).
 
-![Live with nothing connected](../assets/screenshots/live-disconnected.png){ width=640 }
+![Control with nothing connected](../assets/screenshots/live-disconnected.png){ width=640 }
 
 ## A red banner is showing
 
@@ -51,16 +51,17 @@ as [Connected but not responding](connection.md#connected-but-not-responding).
 
 ![A fault: emergency stop](../assets/screenshots/fault-esd-switch.png)
 
-The **Fault** badge is red and the button offers **Disable motion**, because
-the machine refuses to enable motion while faulted. The line under the controls
-says what the fault is. Find it in [Faults](faults.md).
+The **Fault** badge and the status banner are red, Jog and Home are locked,
+and the button offers **Disable motion**, because the machine refuses to enable
+motion while faulted. The banner says what the fault is and what to do. Find it in [Faults](faults.md).
 
 ## Motion is disabled
 
 ![Motion disabled, nothing wrong](../assets/screenshots/state-disabled.png)
 
-`Fault: NONE`, **Motion: disabled**. This is how the machine starts, and where
-**STOP** leaves it. Click **Enable motion**.
+`Fault: NONE`, **Motion: disabled**, and the banner reads **Motion is off**.
+This is how the machine starts, and where **STOP** leaves it. Jog and Home are
+locked until motion is on. Click **Enable motion**.
 
 If clicking it changes nothing, the machine turned the request down: a fault
 appeared at that moment (watch the Fault badge).
@@ -93,7 +94,7 @@ inputs; the drive isn't acting on it.
 
 | Check | Why |
 |---|---|
-| **Drive enable** in [Machine configuration](../user-guide/machine-configuration.md) | With the wrong polarity the drive is held off whenever motion is enabled. Flip it, **Write to device**, power-cycle. |
+| **Drive enable** in [Machine configuration](../user-guide/machine-configuration.md) | With the wrong polarity the drive is held off whenever motion is enabled. Flip it, **Write to device**, **Reboot now**. |
 | The drive has power | The emergency stop circuit switches the drive's supply. Follow the [power-up sequence](../how-it-works/the-machine.md#power-up-sequence). |
 | Step, direction and enable wiring | Run the [drive and encoder check](../user-guide/motor-calibration.md): *The encoder did not count in either direction* points here. |
 | Wait a moment | If the drive really isn't moving the carriage, the machine raises [`SERVO_STALL`](faults.md#servo_stall) once it has sent about 1 mm of pulses with no matching encoder travel. |

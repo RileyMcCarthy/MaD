@@ -14,7 +14,7 @@ describe('markRunCompleted', () => {
   behaviour(
     {
       id: 'test-runner.completion-without-record-warns',
-      covers: 'src/ui/components/markRunCompleted.ts#markRunCompleted',
+      covers: 'src/storage/markRunCompleted.ts#markRunCompleted',
       given: 'the firmware finishes a test whose run record is missing from the data folder',
       expect: {
         'operator-warned-once': 'the operator is warned once, with a warning that names the test',
@@ -37,7 +37,7 @@ describe('markRunCompleted', () => {
   behaviour(
     {
       id: 'test-runner.completion-saved',
-      covers: 'src/ui/components/markRunCompleted.ts#markRunCompleted',
+      covers: 'src/storage/markRunCompleted.ts#markRunCompleted',
       given: 'the firmware finishes a test whose run record exists',
       expect: {
         'marked-completed': 'the run is marked completed with the time it finished',

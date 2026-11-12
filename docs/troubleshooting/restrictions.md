@@ -2,7 +2,8 @@
 
 A **restriction** is a condition the machine wants you to get out of: an end
 stop, an open door, a force or length limit. It shows in the **Restriction**
-badge on the Live screen.
+badge on the Control screen and, while motion is on, in the amber status
+banner with its remedy.
 
 What a restriction does:
 

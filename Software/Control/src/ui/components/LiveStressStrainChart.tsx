@@ -3,7 +3,7 @@ import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
 import { useStore } from '@/store/useStore';
 import { deviceClient } from '@/device/session';
-import { fixedDecimals, growingZeroRange, refLinesPlugin, RefLine } from './uplotRef';
+import { cursorTooltipPlugin, fixedDecimals, growingZeroRange, refLinesPlugin, RefLine } from './uplotRef';
 
 const MAX_POINTS = 1000;
 
@@ -108,7 +108,11 @@ export default function LiveStressStrainChart({ active }: { active: boolean }) {
         { value: fixedDecimals(3) },
         { label: 'Stress', stroke: '#4ea1ff', fill: '#4ea1ff', paths: () => null, points: { show: true, size: 4 }, value: fixedDecimals(3) },
       ],
-      plugins: refs.length || xRefs.length ? [refLinesPlugin({ y: refs, x: xRefs })] : [],
+      cursor: { y: false },
+      plugins: [
+        ...(refs.length || xRefs.length ? [refLinesPlugin({ y: refs, x: xRefs })] : []),
+        cursorTooltipPlugin({ xLabel: 'Strain (%)', xDecimals: 3 }),
+      ],
     };
     const plot = new uPlot(opts, [new Float64Array(0), new Float64Array(0)], container);
     plotRef.current = plot;

@@ -6,11 +6,17 @@ This assumes the machine is [connected](connect.md), on the
 
 ## 1. Position the carriage
 
-Open **Live**. This is where you watch the machine and move it by hand.
+Open **Control**. This is where you watch the machine, move it by hand and
+start tests.
 
-![The Live screen](../assets/screenshots/live.png)
+![The Control screen](../assets/screenshots/live.png)
 
-1. Click **Enable motion**. The **Motion** badge changes to *enabled*.
+The coloured banner under **State** says what the machine is doing and what to
+do next.
+
+1. Click **Enable motion**. The banner turns green (**Ready**) and the
+   **Motion** badge changes to *enabled*. Jog and Home stay locked until
+   motion is on.
 2. Pick a jog distance (type it, or use the **0.1 / 1 / 5 / 10 mm** presets),
    set **Speed (mm/s)**, and use **+ Jog up** / **− Jog down** to bring the
    grips to your sample's length.
@@ -59,17 +65,19 @@ before anything runs:
 
 ## 5. Run
 
-Open **Test runs**. In **New test**, pick the sample profile and the motion
-profile, then click **Run test**.
+Back on **Control**, in **New test**, pick the sample profile and the motion
+profile, then click **Run test**. If the test goes beyond the machine's or the
+sample's limits, the app lists each problem first: **Cancel** to fix the
+profiles, or **Run anyway**.
 
 ![New test: a sample profile and a motion profile selected](../assets/screenshots/test-runs-new-test.png)
 
 The app sends the limits, uploads the program to the machine's SD card and
-starts it. From then on the machine runs the test by itself. On **Live** the
-**Test** badge reads *running*, the manual controls lock, and the charts follow
-the test:
+starts it. From then on the machine runs the test by itself. The banner reads
+**Test running**, the **Test** badge reads *running*, the manual controls lock,
+and the charts follow the test:
 
-![Live state while a test runs](../assets/screenshots/state-test.png)
+![Control state while a test runs](../assets/screenshots/state-test.png)
 
 !!! warning "Stopping a test"
     The red **STOP** button disables motion, which ends the test. Closing the
@@ -79,9 +87,9 @@ the test:
 
 ## 6. Get the results
 
-When the machine finishes, the run's status changes to *completed*. In
-**History**, click **Download data** to copy the recording off the machine,
-then **View**:
+When the machine finishes, the run's status changes to *completed*, whichever
+screen you are on. Open **Test runs**, and in **History** click **Download
+data** to copy the recording off the machine, then **View**:
 
 ![The History table](../assets/screenshots/test-runs-history.png)
 

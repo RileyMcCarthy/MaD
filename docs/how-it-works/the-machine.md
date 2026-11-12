@@ -65,9 +65,10 @@ The gap between where the trajectory is and where the encoder is, the
 little encoder travel for the pulses sent, and it raises
 [`SERVO_STALL`](../troubleshooting/faults.md#servo_stall).
 
-The Live screen shows three of these quantities: **Machine Position** (the
-encoder), **Machine Setpoint** (where the current move ends), and on the chart
-the path between them.
+The Control screen shows these quantities: **Machine Position** (the
+encoder), **Machine Setpoint** (the trajectory, where the gantry should be
+right now), **Machine Target** (where the current move ends), and on the chart
+the **Expected** path, a straight line at the commanded speed.
 
 ## How force is measured
 
@@ -131,7 +132,7 @@ The controller decides the state afresh on every pass, in this order:
 4. A test running → TEST, otherwise MANUAL.
 
 The app doesn't show the state by name. It shows the four inputs to it, as the
-badges on the Live screen:
+badges on the Control screen:
 
 ![The State badges](../assets/screenshots/state-manual.png)
 
@@ -229,9 +230,9 @@ a known order:
 
 To power down, reverse the order.
 
-The controller reads its configuration at power-up, so a power cycle is also
-how a changed [machine configuration](../user-guide/machine-configuration.md)
-takes effect.
+The controller reads its configuration at power-up, so a changed
+[machine configuration](../user-guide/machine-configuration.md) takes effect
+after a restart: the app's **Reboot now**, or a power cycle.
 
 ## Safety model
 
