@@ -1,6 +1,6 @@
 //! Every live-data request the firmware receives at 2 Mbaud is answered, on
 //! the P2-EC32MB module with the instruction-set simulator inside its P2
-//! package: the package route's twin of `protocol_rx_overrun.rs`.
+//! package.
 //!
 //! The module of `ec32mb_flash_boot.rs` — the vendor netlist, powered from
 //! its `J203` fingers, `S301` set to boot from flash, [`P2IssCore`] inside

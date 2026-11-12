@@ -11,7 +11,7 @@
 //! (240 Ω), the card's MISO. Every pulse of the card's clock selects the
 //! flash, and the flash's own clock does not move.
 //!
-//! The oracle is the firmware's own FatFs, as in `sd_mount.rs`: flexspin's
+//! The oracle is the firmware's own FatFs: flexspin's
 //! `_vfs_open_sdcard()` runs the card's SPI initialisation through the
 //! smart pins and `mount()` reports what it decided, which the firmware
 //! narrates on its debug console. The card's own log says what crossed the
@@ -59,7 +59,7 @@ const STALL_WALL: Duration = Duration::from_secs(300);
 const CARD_BYTES: usize = 32 * 1024 * 1024;
 
 /// The root directory's block on that card: 1 reserved sector, then two
-/// 64-sector FATs (`sd_mount.rs`).
+/// 64-sector FATs (the layout `sdimage::mad_card` computes).
 const ROOT_DIR_BLOCK: u32 = 129;
 
 fn ep(endpoint: &str) -> EndpointRef {

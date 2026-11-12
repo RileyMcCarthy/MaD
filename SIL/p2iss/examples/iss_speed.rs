@@ -1,29 +1,22 @@
 //! How much host time does a second of board time cost the ISS?
 //!
-//! Every mode runs **stepped**: virtual time advances as fast as the host
-//! can process the guest and its nets, so what the run takes is its cost.
-//! Each prints, for the phases it times, host seconds per board second —
-//! wall time, and the process's CPU time (user and system, every thread),
-//! which a loaded host inflates less — and the wall figure's inverse, the
-//! rate against real time.
+//! The run is **stepped**: virtual time advances as fast as the host can
+//! process the guest and its nets, so what the run takes is its cost. It
+//! prints, for the phases it times, host seconds per board second — wall
+//! time, and the process's CPU time (user and system, every thread), which a
+//! loaded host inflates less — and the wall figure's inverse, the rate
+//! against real time.
 //!
 //! ```text
-//! # P2Iss on no board, the image put straight into hub RAM, the protocol
-//! # link's two pins on nets (what mad-emulator ran before the package).
-//! cargo run --release -p p2iss --example iss_speed
-//!
-//! # The same with fourteen of the firmware's GPIO pins on nets as levels.
-//! cargo run --release -p p2iss --example iss_speed -- levels
-//!
 //! # P2IssCore in the P2-EC32MB's package, powered from its fingers: the
 //! # ROM boots stage-1 and the firmware off the module's flash (the boot,
 //! # timed to the firmware's first console line), then the firmware runs
 //! # with every pad on the module's nets for SECONDS of board time (2).
-//! cargo run --release -p p2iss --example iss_speed -- ec32mb [SECONDS]
+//! cargo run --release -p p2iss --example iss_speed -- [SECONDS]
 //! ```
 //!
-//! Needs the `MaD` image (`make p2image`); the `ec32mb` mode
-//! also the boot ROM and stage-1 in `p2iss/rom/`.
+//! Needs the `MaD` image (`make p2image`), and the boot ROM and stage-1 in
+//! `p2iss/rom/`.
 
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -33,13 +26,7 @@ use embsim_board::{Component, EndpointRef, Harness, JumperState, Scenario, Syste
 use embsim_boards::ec32mb::{Ec32mb, FLASH_SELECT_POLE, FLASH_SELECT_SWITCH, P59_PULL_DOWN_POLE};
 use embsim_boards::p2::P2Package;
 use embsim_core::virtual_clock;
-use p2iss::{P2Iss, P2IssCore, P2IssHandle, SerialLink};
-
-const PROTO: SerialLink = SerialLink {
-    tx_pin: p2core::board::PIN_PROTO_TX,
-    rx_pin: p2core::board::PIN_PROTO_RX,
-    nominal_baud: 2_000_000,
-};
+use p2iss::{P2IssCore, P2IssHandle};
 
 /// The firmware's system clock once its PLL is set: flexspin's `_clkfreq`.
 const FIRMWARE_CLOCK_HZ: u64 = 160_000_000;
@@ -141,30 +128,6 @@ fn mark(h: &P2IssHandle) -> Mark {
         cpu_s: cpu_s(),
         board_ns: h.guest_now_ns(),
     }
-}
-
-/// P2Iss on no board: today's route, the image straight into hub RAM.
-fn bare(level_pins: &[u8], label: &str) {
-    let image = image();
-    virtual_clock::init(0.0, 160_000_000);
-    let iss = P2Iss::new(&image, p2core::SdCard::blank(32 * 1024 * 1024), &[PROTO])
-        .with_level_pins(level_pins);
-    let h = iss.handle();
-    let _sys = System::new()
-        .component("P2", Box::new(iss))
-        .harness(Harness::new())
-        .start()
-        .expect("starts");
-    println!("P2Iss, the image in hub RAM, {label}");
-    let start = mark(&h);
-    let lined = wait_until(&h, |h| h.console_lines() > 0, Duration::from_secs(60));
-    let line = mark(&h);
-    if lined {
-        Span::between("boot to the first console line", start, line).print();
-    }
-    let until = line.board_ns + 2_000_000_000;
-    wait_until(&h, |h| h.guest_now_ns() >= until, Duration::from_secs(60));
-    Span::between("running, 2 s of board time", line, mark(&h)).print();
 }
 
 /// P2IssCore in the P2-EC32MB's package, booting off the module's flash.
@@ -272,12 +235,5 @@ fn main() {
             std::thread::available_parallelism().map_or(0, |n| n.get())
         );
     }
-    match args.first().map(String::as_str) {
-        Some("ec32mb") => ec32mb(args.get(1).and_then(|s| s.parse().ok()).unwrap_or(2)),
-        Some(_) => bare(
-            &[5, 6, 7, 9, 10, 11, 16, 17, 18, 19, 20, 21, 22, 28],
-            "the protocol link and 14 level pins on nets",
-        ),
-        None => bare(&[], "the protocol link on nets"),
-    }
+    ec32mb(args.first().and_then(|s| s.parse().ok()).unwrap_or(2));
 }

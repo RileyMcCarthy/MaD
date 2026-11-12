@@ -1,8 +1,8 @@
 //! The firmware boots off the P2-EC32MB's own flash, on the ISS inside the
 //! module's P2 package, and says so on its debug pin.
 //!
-//! The chain `rom_boot_net.rs` proves on four bare nets, on the module as it
-//! is built: the vendor netlist, every part a node, powered the way a
+//! The boot chain, the ROM reading stage-1 off the flash and stage-1 the
+//! program, on the module as it is built: the vendor netlist, every part a node, powered the way a
 //! carrier powers it — 5 V and 0 V on its `J203` fingers, nothing stuck.
 //! `U100` is [`P2IssCore`] inside [`P2Package`]: the package holds it until
 //! the module's reset has released and the datasheet's 3 ms restart delay
