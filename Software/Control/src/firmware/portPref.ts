@@ -1,5 +1,6 @@
 /**
- * Choosing and remembering which serial port to program through.
+ * Choosing and remembering which serial port to program through: the
+ * programming port (J1), never the control port the app connects through.
  *
  * Programming is the one destructive thing this app does, and Web Serial gives
  * us almost nothing to identify a port with: `getInfo()` returns only USB
@@ -10,6 +11,8 @@
  * choice is unambiguous, otherwise make the user pick, and always hand back a
  * label the UI can show so a wrong guess is visible before anything is written.
  */
+
+import { portMatchesUsbId } from '@/device/controlPort';
 
 const FLASH_PORT_KEY = 'mad.flashPort';
 
@@ -70,25 +73,27 @@ export type PortResolution =
 
 /**
  * Work out which granted port to program, without ever picking arbitrarily.
+ * The control port the session holds (`controlPort`) is never a candidate:
+ * the machine is programmed through J1, never through the control port.
  *
- * - exactly one granted port  → use it
- * - a remembered pref matching exactly one granted port → use it
+ * - exactly one other granted port  → use it
+ * - a remembered pref matching exactly one of them → use it
  * - anything else → report ambiguity so the UI asks
  *
  * Deliberately does NOT fall back to "the first one", which is how you flash
  * the wrong device on a bench with two adapters plugged in.
  */
-export function resolveFlashPort(ports: SerialPort[], pref = readFlashPortPref()): PortResolution {
-  if (ports.length === 0) return { kind: 'none' };
-  if (ports.length === 1) return { kind: 'resolved', port: ports[0], index: 0, reason: 'only-port' };
+export function resolveFlashPort(
+  ports: SerialPort[],
+  pref = readFlashPortPref(),
+  controlPort: SerialPort | null = null,
+): PortResolution {
+  const candidates = ports.map((port, index) => ({ port, index })).filter(({ port }) => port !== controlPort);
+  if (candidates.length === 0) return { kind: 'none' };
+  if (candidates.length === 1) return { kind: 'resolved', ...candidates[0], reason: 'only-port' };
 
   if (pref?.vendorId !== undefined) {
-    const matches = ports
-      .map((port, index) => ({ port, index }))
-      .filter(({ port }) => {
-        const info = port.getInfo();
-        return info.usbVendorId === pref.vendorId && info.usbProductId === pref.productId;
-      });
+    const matches = candidates.filter(({ port }) => portMatchesUsbId(port, pref));
     if (matches.length === 1) {
       return { kind: 'resolved', ...matches[0], reason: 'remembered' };
     }
@@ -98,7 +103,7 @@ export function resolveFlashPort(ports: SerialPort[], pref = readFlashPortPref()
     if (bySlot) return { kind: 'resolved', ...bySlot, reason: 'remembered' };
   }
 
-  return { kind: 'ambiguous', ports };
+  return { kind: 'ambiguous', ports: candidates.map(({ port }) => port) };
 }
 
 /** The P2 has 512 KiB of hub RAM; an image larger than that cannot be loaded. */

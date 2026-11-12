@@ -19,7 +19,7 @@ Phase 0. Artefacts and how to re-run: [`README.md`](README.md).
 > 8-vCPU result, the fast-forward multiplier — stands.
 
 Measured 2026-09-20, M2, load 3.7–4.2, patched `qemu-system-riscv32` v10.1.0,
-real MaD firmware (`MaDEdge/program`) through an instrumented `p2core`.
+real MaD firmware (`MaD/program`) through an instrumented `p2core`.
 
 ---
 

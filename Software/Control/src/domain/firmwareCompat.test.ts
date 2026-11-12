@@ -34,14 +34,14 @@ describe('checkFirmwareCompat', () => {
     {
       id: 'firmware-compat.protocol-not-reported',
       covers: 'src/domain/firmwareCompat.ts#checkFirmwareCompat',
-      given: 'firmware that refuses to say which protocol it speaks, as firmware from before the app could ask does',
+      given: 'firmware that refuses, with a reason the app can read, to say which protocol it speaks',
       expect: {
         'too-old': 'the firmware is reported as too old for the app',
         'motion-blocked': 'the app refuses to move the machine',
       },
       why: {
         'too-old':
-          'every firmware that can answer the question reports its protocol, so one that refuses predates the check and cannot be trusted to match',
+          'firmware that will not name its protocol cannot be trusted to match the app, so it is treated as needing an update',
       },
     },
     () => {

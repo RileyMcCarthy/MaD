@@ -6,7 +6,7 @@ Phase 0. Artefacts and how to re-run: [`README.md`](README.md).
 **Verdict: PASS — but only via the hybrid, and Option A is dead by 20x.**
 
 Measured 2026-09-20, M2, load 3–4.5, patched `qemu-system-riscv32` v10.1.0
-from Spike 0a, and the real MaD firmware (`MaDEdge/program`,
+from Spike 0a, and the real MaD firmware (`MaD/program`,
 200 M instructions) through an instrumented copy of `p2core`.
 
 ---

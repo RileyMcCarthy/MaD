@@ -8,24 +8,20 @@ Chrome, every page and worker held to the board's clock by embsim's
 `chrome-cdp` node; or a PTY, for a serial console. The control app connects to
 the virtual serial port exactly as it would to a real board.
 
-Two systems run it:
+One system runs it:
 
 - **The machine's project files** (`SIL/mad.toml` and the others, under
   `embsim run`): the Edge carrier and the P2-EC32MB module from their
-  netlists, the ISS as the module's processor booting the production image
-  (`pio run -e P2Eval`) off the module's flash, the DS2 add-on and the
-  machine on the carrier's connectors, the host on the carrier's debug header
-  `J1`. The e2e suite runs here (`make e2e`, on `mad-cosim.toml`); so do the
+  netlists, the ISS as the module's processor booting the firmware image
+  (`pio run -e MaD`) off the module's flash, the DS2 add-on and the
+  machine on the carrier's connectors, the host on the carrier's control port
+  `J4` (or, on the serial-boot files that flash it, the debug header `J1`). The e2e suite runs here (`make e2e`, on `mad-cosim.toml`); so do the
   scenarios that move the carriage, on the same file (`make e2e-motion`),
   SERVO-stall, on that file with a hard stop on its carriage,
   `mad-hard-stop-cosim.toml` (`make e2e-stall`, MaD #298), FW-ISS, the
   app's flasher against the mask ROM, on `mad-serial-boot-cosim.toml`
   (`make e2e-rom`), the playgrounds, on headed copies (`make playground`,
   `playground-rom`), and `mad-catalog`'s tests.
-- **`mad-emulator`** (`SIL/MaDSim`): the debug image (`MaDEdge`) on
-  the bare chip, the bench wired by hand, the host on `P30`/`P32`. No make
-  target or CI job runs it since SERVO-stall moved onto a project, and it
-  retires (MaD #298; embsim `MIGRATING-MAD.md` step 11).
 
 !!! info "This is not a mock"
     The firmware under test is the image you flash. The ISS executes its
@@ -41,7 +37,6 @@ crates carry no MaD protocol and no gantry geometry.
 
 ```mermaid
 flowchart TB
-    consumer["<b>MaDSim</b> — mad-emulator"]
     catalog["<b>mad-catalog</b> / <b>mad-runner</b><br/>MaD's kinds; runs the project files"]
     iss["<b>p2iss</b> / <b>p2core</b><br/>the P2 image, instruction by instruction"]
     board["<b>embsim-board</b><br/>nets, drives, host PTY"]
@@ -49,10 +44,7 @@ flowchart TB
     core["<b>embsim-core</b> — virtual clock · serial PTY"]
     madmodels["<b>models</b><br/>gantry · sample · strain gauge"]
 
-    consumer --> iss --> board
-    consumer --> models
-    consumer --> madmodels
-    catalog --> iss
+    catalog --> iss --> board
     catalog --> models
     catalog --> madmodels
     board --> core
@@ -61,7 +53,7 @@ flowchart TB
 ```
 
 The dependency graph is acyclic — **no generic crate depends on a project crate**.
-MaD-specific code lives in `MaDSim/`, `mad-catalog/`, `mad-runner/`,
+MaD-specific code lives in `mad-catalog/`, `mad-runner/`,
 `p2iss/`, `p2core/`, `models/`, and the `protocol` crate (`Protocol/rust/`). See the
 [embsim README](https://github.com/RileyMcCarthy/embsim/blob/main/README.md).
 
@@ -86,21 +78,21 @@ flowchart TB
 
 The ADC, stepper, encoder, and end switch are **generic** (`embsim-models`).
 The gantry, sample, and strain gauge are **MaD-specific** (`SIL/models/`).
-Pin numbers are the firmware's, named in `iss_description::pins` from
-`HW_pins.h`.
+Pin numbers are the firmware's (`HW_pins.h`); the project files reach them
+through the carrier's netlist (`mad-catalog/netlists/mad_edge.net`).
 
 ## The virtual serial port
 
 The host end sits on the protocol nets at 2,000,000 baud 8N1: on the project,
-the carrier's debug header `J1` (`P63`/`P62`), where the machine's Prop Plug
-sits; on `mad-emulator`, the bare chip's `P30`/`P32`. It is one of two
-components:
+the carrier's control port `J4`, through the isolator `IC2` to `P30`/`P32`,
+as on the machine (the serial-boot files and the reflash file put it on the
+debug header `J1`, `P63`/`P62`, where the Prop Plug sits, to flash). It is
+one of two components:
 
 - **Chrome on the board's clock** (`chrome-cdp`: `mad-cosim.toml`'s `HOST`,
-  `make e2e`; `mad-playground.toml`'s, headed, `make playground`;
-  `mad-emulator --chrome`). Every page's
-  `navigator.serial` is the node's shim, whose one port is this line (USB
-  `0403:6015` on the project, `0403:6001` on `mad-emulator`), by Chrome's own
+  `make e2e`; `mad-playground.toml`'s, headed, `make playground`). Every
+  page's `navigator.serial` is the node's shim, whose one port is this line
+  (USB `0403:6001` on `J4`, `0403:6015` on `J1`), by Chrome's own
   rules; every page and dedicated worker lives the board's time, a 1 ms
   quantum at a time over DevTools, so the app's 2 s response timeout is 2 s
   of the board's time. Its rail pins are wired to a 3.3 V rail and the

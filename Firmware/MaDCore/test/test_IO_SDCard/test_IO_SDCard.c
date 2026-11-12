@@ -28,7 +28,7 @@
 // mock_propeller2.c provides these (test root, auto-linked):
 extern void HAL_lock_mock_reset(void);
 
-// IO_Debug.h (ENABLE_DEBUG_SERIAL=1) emits DEBUG_* output guarded by _stdio_debug_lock.
+// IO_Debug.h emits DEBUG_* output guarded by _stdio_debug_lock.
 // mock_propeller2.c does NOT define it; the suite owns it.
 extern int _stdio_debug_lock; /* shared in mock_propeller2.c */
 

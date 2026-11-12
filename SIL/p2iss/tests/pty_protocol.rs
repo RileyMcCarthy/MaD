@@ -1,9 +1,9 @@
 //! The whole SIL path on the ISS: a host opens a PTY, and the firmware answers.
 //!
 //! `protocol_on_levels.rs` proves the wire. This proves the *product*: the
-//! surface `mad-emulator` exposes — a PTY at `/tmp/tty.…` that host software
-//! opens and speaks the MaD protocol over — served by `p2core` executing the
-//! real flexcc image, with every byte crossing a net as edges.
+//! surface the retired `mad-emulator` exposed — a PTY at `/tmp/tty.…` that
+//! host software opens and speaks the MaD protocol over — served by `p2core`
+//! executing the real flexcc image, with every byte crossing a net as edges.
 //!
 //! The native backend hands the PTY master straight to a peripheral serial
 //! channel, so the bytes never touch a net. Here the same descriptor sits
@@ -53,11 +53,11 @@ fn image_path() -> PathBuf {
     // MAD_REQUIRE_P2_IMAGE turns the skip into a failure wherever the image is
     // supposed to exist.
     let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../Firmware/MaDCore/.pio/build/MaDEdge/program");
+        .join("../../Firmware/MaDCore/.pio/build/MaD/program");
     if !p.exists() && std::env::var_os("MAD_REQUIRE_P2_IMAGE").is_some() {
         panic!(
             "MAD_REQUIRE_P2_IMAGE is set but the P2 image is missing at {}. \
-             Build it with `make p2image` (or `cd Firmware/MaDCore && pio run -e MaDEdge`).",
+             Build it with `make p2image` (or `cd Firmware/MaDCore && pio run -e MaD`).",
             p.display()
         );
     }
@@ -95,7 +95,7 @@ fn open_host_end(path: &str) -> std::fs::File {
 fn a_host_on_the_pty_gets_an_answer_from_the_iss() {
     let Some(image) = firmware_image() else {
         eprintln!(
-            "\n*** SKIPPED: {} needs the P2 image at\n***   {}\n*** Build it with `make p2image` (or `cd ../Firmware/MaDCore && pio run -e MaDEdge`).\n*** This test asserted NOTHING.\n",
+            "\n*** SKIPPED: {} needs the P2 image at\n***   {}\n*** Build it with `make p2image` (or `cd ../Firmware/MaDCore && pio run -e MaD`).\n*** This test asserted NOTHING.\n",
             module_path!(),
             image_path().display()
         );

@@ -6,7 +6,9 @@
 # Protocol/scripts/check_protocol_compat.py fails CI on such a change without a
 # bump. After a bump, release firmware before MaD Control: the app's release
 # check refuses to publish until a firmware release speaks its protocol.
-protocol_version: 2
+# 3: a NACK carries a reason byte ([0x55][0x00][CMD][REASON]).
+# 4: WaveformMove gains endFrequency (chirp).
+protocol_version: 4
 
 nodes:
   - ui
@@ -234,8 +236,8 @@ structs:
         unit: mm
         scale: 10000       # struct stores 0.1 um; one encoder count is 0.122 um,
         raw_storage: true  # so the wire is no longer the coarsest step in the chain
-        min: 0
-        max: 3000
+        min: -3000         # the sign is the direction: the wave starts at rest where the
+        max: 3000          # carriage is and rises first (+) or falls first (-)
 
       - name: frequency
         type: int32
@@ -286,6 +288,18 @@ structs:
         scale: 1
         min: 1
         max: 999
+
+      # A CHIRP: the frequency sweeps linearly from `frequency` to this over the
+      # wave, keeping its phase continuous; `cycles` whole cycles still fit it
+      # exactly, so it still ends at rest where it started. 0 = no sweep, the
+      # plain fixed-frequency wave. Plain sine traverse only (no holds, skew).
+      - name: endFrequency
+        type: int32
+        unit: Hz
+        scale: 1000000     # uHz, as `frequency`
+        raw_storage: true
+        min: 0
+        max: 100
 
   # ── Storage struct (packed for faster serial download) ──
 
@@ -470,6 +484,29 @@ structs:
         max_length: 100
 
 # ============================================================
+# NACK reasons
+# ============================================================
+# Why the firmware refused a request: the fourth byte of a NACK. ProtoEmb
+# owns 0x00-0x1F (REFUSED, UNKNOWN_COMMAND, BAD_CRC, BAD_SIZE, UNAVAILABLE);
+# these are numbered from 0x20 in order. Append only: a code a released app
+# knows must keep its meaning.
+nack_reasons:
+  - name: MOTION_DISABLED
+    description: "Motion is off. Turn motion on first."
+  - name: FAULTED
+    description: "The machine has a fault. Clear it before turning motion on."
+  - name: BUSY
+    description: "A test is running, or earlier moves have not been taken up yet."
+  - name: SD_QUEUE_FULL
+    description: "The SD card has not caught up with the upload; its write queue is full."
+  - name: SD_READ_FAILED
+    description: "The test's data file could not be opened or read on the SD card."
+  - name: SD_BUSY
+    description: "The test's data file is still being written. Try again once the test has finished saving."
+  - name: SD_OPEN_FAILED
+    description: "The program file could not be opened for writing on the SD card."
+
+# ============================================================
 # Messages — routing table with timing
 # ============================================================
 messages:
@@ -508,8 +545,10 @@ messages:
     response: SampleProfile
 
   # FROZEN: the compatibility handshake (see DeviceInfo). Its command_id and
-  # response never change. Firmware from before it NACKs the read, which the
-  # app treats as too old to drive.
+  # response never change. Firmware from before it NACKs the read. A NACK
+  # with a reason (protocol 3 on) reads as too old to drive; the 3-byte NACK
+  # of firmware from before protocol 3 cannot be read by an app from protocol
+  # 3 on, which reports that firmware as not answering.
   device_info:
     tx_node: ui
     command_id: 5
@@ -580,6 +619,17 @@ messages:
     request: raw
     note: "Binary request: testName(16) + sampleIndex(u32) + sampleCount(u32)"
     response: StoredSample
+
+  # The machine reboots: ACKed, then the firmware restarts once the ACK has
+  # left. NACKed while a test runs. The control port (the secondary serial)
+  # has no reset line, so this is how MaD Control applies a saved machine
+  # configuration. A new message, so no protocol_version bump: firmware
+  # from before it NACKs the request.
+  reboot:
+    tx_node: ui
+    command_id: 10
+    priority: high
+    request: none
 
   # ── Async (madcore transmits unsolicited) ──
   notification:

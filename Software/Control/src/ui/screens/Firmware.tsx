@@ -6,6 +6,7 @@ import { LOADER_BAUD_RATE } from '@/firmware/webSerialTransport';
 import { programPort, type ProgramProgress } from '@/firmware/program';
 import { closeFlashPort } from '@/firmware/closeFlashPort';
 import { flashWithSession } from '@/firmware/flashWithSession';
+import { PROGRAMMING_PORT_HINT } from '@/device/controlPort';
 import { logger } from '@/diagnostics/log';
 import {
   describePort,
@@ -14,13 +15,9 @@ import {
   validateFirmwareFile,
 } from '@/firmware/portPref';
 import {
-  BOARDS,
-  boardImage,
   fetchFirmwareManifest,
   fetchReleaseImage,
   recommendedRelease,
-  releaseImageLabel,
-  type Board,
   type FirmwareManifestEntry,
 } from '@/firmware/release';
 import { hostingRoot } from '@/hosting';
@@ -61,27 +58,25 @@ export default function Firmware() {
   const disconnect = useStore((s) => s.disconnect);
 
   const [release, setRelease] = useState<Release>({ kind: 'loading' });
-  // Which board's build to take from the release.
-  const [board, setBoard] = useState<Board>('P2Eval');
   // A local file, when chosen, replaces the release until it is cleared.
   const [file, setFile] = useState<File | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
   const [target, setTarget] = useState<{ port: SerialPort; label: string } | null>(null);
   const [needsChoice, setNeedsChoice] = useState(false);
+  // The only granted port is the one the session is connected through: a
+  // machine on 0.14 or earlier, whose protocol is still on J1.
+  const [heldOnly, setHeldOnly] = useState(false);
   const [status, setStatus] = useState<Status>({ kind: 'idle' });
   const fileInput = useRef<HTMLInputElement>(null);
 
   const connected = connection === 'connected';
   const busy = status.kind === 'running' || status.kind === 'downloading';
   const manifest = release.kind === 'ready' ? release.manifest : null;
-  // The boards this release has an image for; P2Eval always, when ready.
-  const offeredBoards = manifest ? BOARDS.filter((b) => boardImage(manifest, b)) : [];
-  const releaseImage = manifest ? boardImage(manifest, board) : null;
   // What "Write to flash" would program: the chosen file, else the release.
   const source = file
     ? { name: file.name, size: file.size }
-    : manifest && releaseImage
-      ? { name: `${releaseImage.assetName} (${manifest.tag})`, size: releaseImage.size }
+    : manifest
+      ? { name: `${manifest.assetName} (${manifest.tag})`, size: manifest.size }
       : null;
 
   useEffect(() => {
@@ -116,7 +111,8 @@ export default function Firmware() {
 
   /**
    * Work out which port we'd program, so it can be shown before anything is
-   * written. Never picks arbitrarily — an ambiguous set asks the user instead.
+   * written. Never the control port the session holds, and never picked
+   * arbitrarily — an ambiguous set asks the user instead.
    */
   const refreshTarget = useCallback(async () => {
     let ports: SerialPort[] = [];
@@ -125,7 +121,9 @@ export default function Firmware() {
     } catch {
       ports = [];
     }
-    const resolution = resolveFlashPort(ports);
+    const held = deviceClient.heldPort();
+    const resolution = resolveFlashPort(ports, undefined, held);
+    setHeldOnly(resolution.kind === 'none' && held !== null && ports.includes(held));
     if (resolution.kind === 'resolved') {
       setTarget({ port: resolution.port, label: describePort(resolution.port, resolution.index) });
       setNeedsChoice(false);
@@ -156,15 +154,14 @@ export default function Firmware() {
 
   /**
    * Program the chosen source, or (`recommended`) the recommended release
-   * whatever file is chosen: the one-click update. A release is flashed as the
-   * Board choice's image.
+   * whatever file is chosen: the one-click update.
    */
   const program = async (use: 'chosen' | 'recommended' = 'chosen') => {
     const local = use === 'chosen' ? file : null;
     const chosen = local
       ? { name: local.name, size: local.size }
-      : manifest && releaseImage
-        ? { name: `${releaseImage.assetName} (${manifest.tag})`, size: releaseImage.size }
+      : manifest
+        ? { name: `${manifest.assetName} (${manifest.tag})`, size: manifest.size }
         : null;
     if (!chosen || !target) return;
     // Name the port in the prompt: a wrong target is the expensive mistake, and
@@ -184,9 +181,9 @@ export default function Firmware() {
     try {
       if (local) {
         firmware = new Uint8Array(await local.arrayBuffer());
-      } else if (manifest && releaseImage) {
-        setStatus({ kind: 'downloading', name: releaseImage.assetName });
-        firmware = await fetchReleaseImage(hostingRoot(import.meta.env.BASE_URL), manifest, undefined, board);
+      } else if (manifest) {
+        setStatus({ kind: 'downloading', name: manifest.assetName });
+        firmware = await fetchReleaseImage(hostingRoot(import.meta.env.BASE_URL), manifest);
       } else {
         return;
       }
@@ -195,11 +192,8 @@ export default function Firmware() {
       return;
     }
 
-    // The MaDEdge build moves the protocol to the Edge carrier's Pi link, so
-    // nothing answers on the flash port once it is written.
-    const answersOnFlashPort = local !== null || board === 'P2Eval';
     setStatus({ kind: 'running', progress: { phase: 'resetting' } });
-    // Hands the main session's port over (only when it is the target) and back.
+    // Stops the control session for the flash and reconnects it to the control port.
     await flashWithSession({
       heldPort,
       target: target.port,
@@ -215,15 +209,12 @@ export default function Firmware() {
         }),
       closePort: closeFlashPort,
       connect: (port) => connect({ port }),
-      answersOnFlashPort,
       wait: (ms) => new Promise((r) => setTimeout(r, ms)),
       log: logger('flash'),
       onDone: (result) =>
         setStatus({
           kind: 'done',
-          message:
-            `Wrote ${result.imageBytes.toLocaleString()} bytes to flash. The board has rebooted into the new firmware.` +
-            (answersOnFlashPort ? '' : " It now answers only over the Edge carrier's Pi link: connect over that link."),
+          message: `Wrote ${result.imageBytes.toLocaleString()} bytes to flash. The board has rebooted into the new firmware. MaD Control talks to it through the control port (the Connect page).`,
         }),
       onError: (err) => setStatus({ kind: 'error', message: err instanceof Error ? err.message : String(err) }),
     });
@@ -299,10 +290,9 @@ export default function Firmware() {
                   <>
                     <strong>{file.name}</strong> <span className="muted">(local file)</span>
                   </>
-                ) : manifest && releaseImage ? (
+                ) : manifest ? (
                   <>
-                    <strong>{manifest.version}</strong>{' '}
-                    <span className="muted">({releaseImageLabel(releaseImage.assetName)}, recommended release)</span>
+                    <strong>{manifest.version}</strong> <span className="muted">(recommended release)</span>
                   </>
                 ) : (
                   <span className="muted">
@@ -316,7 +306,7 @@ export default function Firmware() {
                 )}
               </td>
               <td style={{ textAlign: 'right' }}>
-                {manifest && releaseImage && (
+                {manifest && (
                   <button
                     type="button"
                     className={installWanted ? 'primary' : undefined}
@@ -324,8 +314,7 @@ export default function Firmware() {
                     disabled={busy || !target}
                     data-testid="install-recommended"
                   >
-                    Install recommended firmware ({manifest.version}
-                    {board === 'P2Eval' ? '' : `, ${board}`})
+                    Install recommended firmware ({manifest.version})
                   </button>
                 )}{' '}
                 <button
@@ -353,44 +342,16 @@ export default function Firmware() {
                 />
               </td>
             </tr>
-            {!file && offeredBoards.length > 1 && (
-              <tr>
-                <td>Board</td>
-                <td data-testid="firmware-board">
-                  {offeredBoards.map((b) => (
-                    <label key={b} style={{ marginRight: 16 }}>
-                      <input
-                        type="radio"
-                        name="firmware-board"
-                        value={b}
-                        checked={board === b}
-                        disabled={busy}
-                        data-testid={`board-${b}`}
-                        onChange={() => {
-                          setBoard(b);
-                          setStatus({ kind: 'idle' });
-                        }}
-                      />{' '}
-                      {b}
-                    </label>
-                  ))}
-                  <div className="muted">
-                    {board === 'P2Eval'
-                      ? 'Production build: control and programming share header J1.'
-                      : "Debug build: control moves to the Edge carrier's Pi link and J1 carries a debug log. Reconnect over that link after flashing."}
-                  </div>
-                </td>
-                <td />
-              </tr>
-            )}
             <tr>
-              <td>Port</td>
+              <td>Programming port</td>
               <td data-testid="flash-target" className={target ? undefined : 'error'}>
                 {target
                   ? target.label
                   : needsChoice
-                    ? 'Several serial devices — choose which one to program.'
-                    : 'No serial device yet — choose one.'}
+                    ? 'Several serial devices — choose which one is the programming port (J1).'
+                    : heldOnly
+                      ? 'MaD Control is connected through the only serial device: disconnect on the Connect page, then flash it (a machine on firmware 0.14 or earlier).'
+                      : 'No serial device yet — choose the programming port: the Prop Plug on J1 or the P2-EVAL USB.'}
               </td>
               <td style={{ textAlign: 'right' }}>
                 <button onClick={() => void choosePort()} disabled={busy} data-testid="choose-flash-port">
@@ -449,8 +410,8 @@ export default function Firmware() {
           </p>
         )}
 
-        <p className="muted" style={{ marginTop: 16 }}>
-          Needs a Prop Plug on header J1, which resets the board through DTR.
+        <p className="muted" style={{ marginTop: 16 }} data-testid="programming-port-hint">
+          {PROGRAMMING_PORT_HINT}
         </p>
       </div>
     </div>

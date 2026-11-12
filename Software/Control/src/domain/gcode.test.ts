@@ -212,7 +212,7 @@ describe('waveform (G123) canned cycle', () => {
       },
     },
     () => {
-      const ok = { shape: 0, amplitude: 5, frequency: 1, cycles: 10, dwellHigh: 0, dwellLow: 0, skewPerMille: 500 };
+      const ok = { shape: 0, amplitude: 5, frequency: 1, cycles: 10, dwellHigh: 0, dwellLow: 0, skewPerMille: 500, endFrequency: 0 };
       expect(() => validateWaveform(ok)).not.toThrow();
 
       // A profile this firmware does not implement must not be run as a sine.
@@ -228,8 +228,8 @@ describe('waveform (G123) canned cycle', () => {
       ).not.toThrow();
 
       // A traverse of zero duration is an infinite rate at either end.
-      expect(() => validateWaveform({ ...ok, skewPerMille: 0 })).toThrow(MoveValidationError);
-      expect(() => validateWaveform({ ...ok, skewPerMille: 1000 })).toThrow(MoveValidationError);
+      expect(() => validateWaveform({ ...ok, skewPerMille: 0, endFrequency: 0 })).toThrow(MoveValidationError);
+      expect(() => validateWaveform({ ...ok, skewPerMille: 1000, endFrequency: 0 })).toThrow(MoveValidationError);
     },
   );
 
@@ -253,6 +253,7 @@ describe('waveform (G123) canned cycle', () => {
         dwellHigh: 0,
         dwellLow: 0,
         skewPerMille: 500,
+        endFrequency: 0,
       });
       expect(parseGcodeWaveform('G123 A3 F1 C2 W1')).toEqual({
         shape: WaveformShape.TRIANGLE,
@@ -262,6 +263,7 @@ describe('waveform (G123) canned cycle', () => {
         dwellHigh: 0,
         dwellLow: 0,
         skewPerMille: 500,
+        endFrequency: 0,
       });
       // The cycle template: a hold at the upper peak only, and a skewed
       // traverse. H and L mean the same thing whatever W is.
@@ -273,6 +275,7 @@ describe('waveform (G123) canned cycle', () => {
         dwellHigh: 1.5,
         dwellLow: 0.25,
         skewPerMille: 800,
+        endFrequency: 0,
       });
     },
   );
@@ -302,10 +305,10 @@ describe('waveform (G123) canned cycle', () => {
       why: { 'refused': 'a value past the packed field width wraps to a different waveform' },
     },
     () => {
-      expect(() => validateWaveform({ shape: 0, amplitude: WAVEFORM_FIELD_RANGE.amplitude.max + 1, frequency: 1, cycles: 1, dwellHigh: 0, dwellLow: 0, skewPerMille: 500 })).toThrow(MoveValidationError);
-      expect(() => validateWaveform({ shape: 0, amplitude: 5, frequency: WAVEFORM_FIELD_RANGE.frequency.max + 1, cycles: 1, dwellHigh: 0, dwellLow: 0, skewPerMille: 500 })).toThrow(MoveValidationError);
-      expect(() => validateWaveform({ shape: 0, amplitude: 5, frequency: 1, cycles: WAVEFORM_FIELD_RANGE.cycles.max + 1, dwellHigh: 0, dwellLow: 0, skewPerMille: 500 })).toThrow(MoveValidationError);
-      expect(() => validateWaveform({ shape: 0, amplitude: 5, frequency: 1, cycles: 0, dwellHigh: 0, dwellLow: 0, skewPerMille: 500 })).toThrow(MoveValidationError); // min 1
+      expect(() => validateWaveform({ shape: 0, amplitude: WAVEFORM_FIELD_RANGE.amplitude.max + 1, frequency: 1, cycles: 1, dwellHigh: 0, dwellLow: 0, skewPerMille: 500, endFrequency: 0 })).toThrow(MoveValidationError);
+      expect(() => validateWaveform({ shape: 0, amplitude: 5, frequency: WAVEFORM_FIELD_RANGE.frequency.max + 1, cycles: 1, dwellHigh: 0, dwellLow: 0, skewPerMille: 500, endFrequency: 0 })).toThrow(MoveValidationError);
+      expect(() => validateWaveform({ shape: 0, amplitude: 5, frequency: 1, cycles: WAVEFORM_FIELD_RANGE.cycles.max + 1, dwellHigh: 0, dwellLow: 0, skewPerMille: 500, endFrequency: 0 })).toThrow(MoveValidationError);
+      expect(() => validateWaveform({ shape: 0, amplitude: 5, frequency: 1, cycles: 0, dwellHigh: 0, dwellLow: 0, skewPerMille: 500, endFrequency: 0 })).toThrow(MoveValidationError); // min 1
     },
   );
 
@@ -324,7 +327,7 @@ describe('waveform (G123) canned cycle', () => {
       const ops = gcodeLinesToProgram(['G90', 'G1 X10 F5', 'G123 A5 F1 C2 W0', 'G1 X0 F5'], 0);
       expect(ops.map((o) => o.kind)).toEqual(['move', 'move', 'waveform', 'move']);
       const wf = ops.find((o) => o.kind === 'waveform');
-      expect(wf?.buf.length).toBe(18); // 18-byte WaveformMove (was 9 before dwell/skew)
+      expect(wf?.buf.length).toBe(21); // 21-byte WaveformMove
     },
   );
 

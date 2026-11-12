@@ -11,7 +11,7 @@ use p2core::{Board, Machine, SdCard};
 fn main() {
     let image = std::fs::read(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../Firmware/MaDCore/.pio/build/MaDEdge/program"
+        "/../../Firmware/MaDCore/.pio/build/MaD/program"
     ))
     .expect("image; run `make p2image`");
 

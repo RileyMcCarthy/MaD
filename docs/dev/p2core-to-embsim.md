@@ -17,7 +17,8 @@ home.
 for exactly this, and embsim already carries `embsim-cpu-oracle` as the generic
 half of the silicon-golden method. The silicon, ROM and pure tests replay from
 committed assets, so they gate embsim CI with no board and no MaD firmware.
-The acceptance tests that need MaD's `MaDEdge/program` stay in MaD.
+The acceptance tests that need MaD's `MaD/program` (the firmware image;
+`MaDEdge/program` when this was scoped) stay in MaD.
 Three things need untangling first: the MaD-specific bits inside the crates,
 the flash test that borrows its stub from the PWA, and the Vibes path
 dependency.
@@ -168,7 +169,7 @@ value strings onto those models go to MaD.
 | P2 boot ROM only | `rom_boot_chain`, `rom_serial` | `rom_boot_net`, `rom_serial_net` | **yes** |
 | P2 boot ROM + loadp2's `flash_loader.bin`, read today from `Software/Control/src/firmware/image.ts` | `flash_program` | | no, stays in MaD; superseded upstream by the bootloader test |
 | Nothing | `poll_fast_forward`, `sd_block_write` | | **yes** |
-| MaD `MaDEdge/program` | `block_fill`, `boot`, `per_cog_dir`, `sd_spi_words` | `level_pins`, `protocol_on_levels`, `pty_protocol`, `sd_mount`, `sd_node` | no, stays in MaD |
+| MaD `MaD/program` | `block_fill`, `boot`, `per_cog_dir`, `sd_spi_words` | `level_pins`, `protocol_on_levels`, `pty_protocol`, `sd_mount`, `sd_node` | no, stays in MaD |
 | MaD image **and** its flexcc `.p2asm` listing | `decoder_golden` | | no, stays in MaD |
 
 The silicon rows are the point of the move: `probe.txt` holds 1550
@@ -340,8 +341,9 @@ Gates checked 2026-09-18 on this branch:
 ## Outside the move, worth knowing
 
 - The ten acceptance tests **already skip in MaD CI**: `sil-rust` builds only
-  `native_emulator`, and the tests skip when `MaDEdge/program` is
-  absent. The release job builds `MaDEdge` on ubuntu without trouble,
+  `native_emulator`, and the tests skip when `MaDEdge/program` (now
+  `MaD/program`) is absent. The release job built `MaDEdge` (now the one
+  `MaD` image) on ubuntu without trouble,
   so un-skipping them is a cheap follow-up once they live in MaDSim.
 - On this WIP branch `silicon_probe` ran locally for over seven minutes at low
   CPU before being stopped, against 53 s on `main` in CI. Look before the WIP

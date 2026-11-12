@@ -30,7 +30,7 @@ If you change behavior in a matrix cell, **add or update a test** that would hav
 
 ## Motion
 
-- [ ] Motion change: `test_dev_servo` / `test_app_motion` and the motion e2e on `mad-emulator` (or why not)
+- [ ] Motion change: `test_dev_servo` / `test_app_motion` and the motion e2e, `make e2e-motion` (or why not)
 
 ## Test plan
 

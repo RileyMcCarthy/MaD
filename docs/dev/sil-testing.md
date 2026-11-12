@@ -11,37 +11,37 @@ you can test the whole stack — firmware, protocol, app — without hardware. A
 cd SIL
 git submodule update --init --recursive   # first time: embsim + ProtoEmb submodules
 make emulator     # Rust protocol types, then cargo build
-make p2image      # the MaDEdge image the emulator executes
+make p2image      # the MaD image the ISS executes
 ```
 
 `make emulator` generates the Rust codec into `Protocol/rust/src/generated`
 (`make protocol`) and then `cargo build`. The image is a runtime input, built
-by `make p2image` (`pio run -e MaDEdge`). The `playground*`, `e2e*`
-and `check` targets build the production image and lay out the module's
+by `make p2image` (`pio run -e MaD`), the one firmware image, the same one
+the hardware runs. The `playground*`, `e2e*` and `check` targets build it and
+lay out the module's
 flash and card (`make flash-image sd-image`), and the embsim tool builds
-`mad-runner`. No target runs `mad-emulator` any more: SERVO-stall
-(`e2e-stall`) runs on `mad-hard-stop-cosim.toml` (MaD #298).
+`mad-runner`. SERVO-stall (`e2e-stall`) runs on `mad-hard-stop-cosim.toml`
+(MaD #298).
 
 | Target | What it does |
 |---|---|
-| `make p2image` | Build the debug P2 image the ISS executes on the board route (`pio run -e MaDEdge`) |
-| `make p2image-production` | Build the production image (`pio run -e P2Eval`), the one the project files' flash holds |
+| `make p2image` | Build the P2 image the ISS executes (`pio run -e MaD`), the one the project files' flash holds |
 | `make protocol` | Regenerate the Rust protocol types for SIL |
 | `make emulator` | Protocol + the Rust workspace |
 | `make playground` | `mad-playground.toml` under `embsim run`: the machine's project, MaD Control in a **Chrome window on the board's clock**, the app served by its dev server on 5174 (started for you). For a person. |
 | `make playground-iss` | The same target, under the name it had beside the native playground. |
 | `make playground-rom` | `mad-serial-boot-playground.toml`: the ROM's serial boot on `J1` (USB `0403:6015`), the app's flasher in a Chrome window on the board's clock. The flasher writes the flash, as FW-ISS does; a RAM load's reply is garbled until MaD #295 is fixed. |
 | `make playground-pty` | `mad.toml` under `embsim run`, its host a PTY at `/tmp/tty.iss`, for a serial console. No browser belongs behind it (below). |
-| `make e2e-emulator` | The machine's project with the host's Chrome on `J1`, `mad-cosim.toml`, under `embsim run`: a **headless** Chrome on the board's clock, DevTools on 9222, nothing open, until Ctrl-C; attach the e2e suite to it |
+| `make e2e-emulator` | The machine's project with the host's Chrome on the control port `J4`, `mad-cosim.toml`, under `embsim run`: a **headless** Chrome on the board's clock, DevTools on 9222, nothing open, until Ctrl-C; attach the e2e suite to it |
 | `make e2e` | The dev server, `e2e-emulator`'s board and the suite against it, then everything stopped (`SCENARIOS=…` selects) |
 | `make e2e-rom` | FW-ISS: the app's flasher in a headless Chrome on the board's clock, against the ISS booting the mask ROM on the project's serial boot (`mad-serial-boot-cosim.toml`) |
 | `make e2e-bundle` | BUNDLE-live on `e2e-emulator`'s board: the app as it ships (built as `pages.yml` builds it, served by `vite preview`): connect, samples, machine state, unplug, and replug with the app reconnecting by itself |
 | `make e2e-motion` | The scenarios that move the carriage (`node e2e/run-all.mjs --list --moves`), on `mad-cosim.toml` (`SCENARIOS=…` narrows the set; `MOTION_SHARD=K/N` runs every N-th of it from the K-th); SERVO-stall is skipped there, since nothing stops that board's carriage |
 | `make e2e-stall` | SERVO-stall on `mad-hard-stop-cosim.toml`, `mad-cosim.toml` with a hard stop 3 mm above the carriage's start (MaD #298): a jog into the stop latches the stall, Live clears it and re-enables motion, and a jog takes the carriage off the stop |
-| `make flash-image` | `build/flash.bin`: stage-1 and the production image, the module's boot flash |
+| `make flash-image` | `build/flash.bin`: stage-1 and the `MaD` image, the module's boot flash |
 | `make sd-image` | `build/sd.img`: a 32 MiB FAT16 card mirroring `./sd` |
-| `make check` | `embsim check` on the seven project files (`mad*.toml`), after `flash-image` and `sd-image` |
-| `make test` | Build both images + protocol, then `cargo test` (includes `mad-catalog`'s PTY round trip on `mad.toml` — no Chrome) |
+| `make check` | `embsim check` on the eight project files (`mad*.toml`), after `flash-image` and `sd-image` |
+| `make test` | Build the image + protocol, then `cargo test` (includes `mad-catalog`'s PTY round trip on `mad.toml` — no Chrome) |
 | `make clean` | Remove build artifacts and `cargo clean` |
 
 ## The machine's project files
@@ -49,32 +49,39 @@ flash and card (`make flash-image sd-image`), and the embsim tool builds
 `SIL/mad.toml` is the machine as an embsim project: the Edge carrier as
 drawn (v0.3), the P2-EC32MB module in its socket with the ISS as its
 processor (`mad-p2iss`), the module's flash and card, the DS2 add-on and the machine on
-the carrier's connectors (embsim `MIGRATING-MAD.md` §1 and §4). Its host is on
-the carrier's **debug header `J1`** (`P62`, `P63` and `GND`; `RESn`, `J1.3`,
-unwired), where the machine's Prop Plug sits, and the module's flash holds the
-**production build** (`pio run -e P2Eval`), as the user decided
-(2026-10-21). That build's MAIN channel receives on `P63` and transmits on
-`P62` at 2,000,000 baud (`HW_pins.h`, `HAL_serial_config.c`), the pins `J1`
-carries; the app flashes over `J1` (`Software/Control/README.md`, "Firmware
-flashing"). **Open:** which image the machine runs. By default the app flashes
-a release's MaDEdge image, the `MaDEdge` build, whose protocol is on
-`P53`/`P55` in every release so far (`Software/Control/src/firmware/release.ts`,
-`pickFirmwareAsset`; the build has it on `P30`/`P32` since the Edge v0.3 pin
-move);
-the production build is the release's `-P2Eval.bin`, flashed only as a local
-file. Nothing sits on the Pi's connector `J4`: its line goes through
-`IC2` to the carrier's `P29`–`P32` (Edge v0.3, MaD #309)
+the carrier's connectors (embsim `MIGRATING-MAD.md` §1 and §4). The module's
+flash holds the one firmware build (`pio run -e MaD`), whose MAIN channel is
+on `P30`/`P32` at 2,000,000 baud (`HW_pins.h`, `HAL_serial_config.c`). The
+flash-boot files put the host on the carrier's **control port `J4`**, through
+`IC2` to `P30`/`P32` (Edge v0.3, MaD #309), USB `0403:6001`, as the app
+connects on the machine. The serial-boot files put it on the **debug header
+`J1`** (`P62`, `P63` and `GND`; `RESn`, `J1.3`, unwired), where the machine's
+Prop Plug sits, USB `0403:6015`, because the app flashes over `J1`
+(`Software/Control/docs/FLASHING.md`); `P62` also carries the firmware's
+debug log. Until 2026-11-01 the flash-boot files had the host on `J1` with
+the single-port production build (`P2Eval`) in the flash, and nothing on `J4`
 ([board design](sil-board-simulation-design.md#the-p2-edge-module-gap)).
 
 | File | The module boots | The host |
 |---|---|---|
-| `mad.toml` | the production firmware, off the flash | `host-serial` on `J1` |
-| `mad-cosim.toml` | the same | `chrome-cdp` on `J1`, USB `0403:6015` |
+| `mad.toml` | the firmware, off the flash | `host-serial` on `J4` |
+| `mad-cosim.toml` | the same | `chrome-cdp` on `J4`, USB `0403:6001` |
 | `mad-serial-boot.toml` | the ROM's serial boot, the flash erased | `host-serial` on `J1` |
 | `mad-serial-boot-cosim.toml` | the same | `chrome-cdp` on `J1`, USB `0403:6015` |
 | `mad-playground.toml` | `mad-cosim.toml` | its Chrome headed, a window on the app |
-| `mad-hard-stop-cosim.toml` | `mad-cosim.toml` with a hard stop on the carriage, 3 mm above its start (the machine's `hard_stop_mm`) | `chrome-cdp` on `J1` |
+| `mad-hard-stop-cosim.toml` | `mad-cosim.toml` with a hard stop on the carriage, 3 mm above its start (the machine's `hard_stop_mm`) | `chrome-cdp` on `J4` |
 | `mad-serial-boot-playground.toml` | `mad-serial-boot-cosim.toml` | its Chrome headed, a window on the app's Firmware page |
+| `mad-reflash-cosim.toml` | `mad-cosim.toml`'s flash boot, `S301`'s `P59` pulls open so the ROM listens 100 ms after a reset | `chrome-cdp` on `J1`, USB `0403:6015`, DTR inverted into a Prop Plug reset stage on `J1.3` (`make e2e-reflash`: FW1, COMPAT-reflash) |
+
+The reflash board's host is on `J1`, the programming port, because that is
+where the app flashes; the firmware it writes answers on `J4`, which that
+board's one Chrome port does not reach. FW1 and COMPAT-reflash therefore
+end with the flash written and the new firmware's boot line,
+`Starting MaD Board <version>`, in the board's log on `P62`
+(`E2E_BOARD_LOG`, exported by `SIL/scripts/board-route.sh`); the app opens
+nothing after the flash, having held no control port. Reconnecting to the
+new firmware on that board waits on embsim's `chrome-cdp` carrying two
+ports, so a board can have the host on `J1` and `J4`.
 
 Every file takes the carrier as the current drawing has it, not the
 boards as built (the user's decision, 2026-11-01): `mad_edge.net` was
@@ -96,12 +103,12 @@ confirmed.
 
 ```bash
 cd SIL
-make flash-image sd-image check    # the production image, both images laid out, all seven files checked
+make flash-image sd-image check    # the image, the flash and card laid out, all eight files checked
 MAD_REQUIRE_P2_IMAGE=1 cargo test -p mad-catalog --test mad --test projects
 ```
 
 `mad-catalog/tests/mad.rs` runs `mad.toml` stepped: the inputs at rest; the
-firmware booted off the flash and answering the host over `J1` (its version
+firmware booted off the flash and answering the host over `J4` (its version
 and the machine's state, framed by ProtoEmb's framing crate and decoded with
 the generated Rust codec, then the machine reading unfaulted and taking the
 host's request to enable motion); the encoder's pairs with the chip held
@@ -112,31 +119,27 @@ deadband, the drive enabled and `P5` reading the drive's ready line.
 `tests/pty_protocol.rs` runs `mad.toml` live, the command `embsim run
 mad.toml --pty PATH` hands `mad-runner` run in its own process, and reads the
 firmware's version on the PTY before the run's 2 s of board time end.
-`tests/projects.rs` holds the seven files to one another. The debug image
-(`make p2image`) stays where a run needs its log on `P62` or its MAIN channel
-on the bare chip's `P30`/`P32`: `mad-emulator`, the `p2core` and `p2iss`
-suites, and `mad-catalog/tests/boot.rs`.
+`tests/projects.rs` holds the eight files to one another. The same image
+(`make p2image`) runs where a run needs its log on `P62` or its MAIN channel
+on the bare chip's `P30`/`P32`: the `p2core` and `p2iss` suites, and
+`mad-catalog/tests/boot.rs`.
 
 ## The board route: the app in Chrome on the board's clock
 
 There is **one** configuration a browser belongs in: the P2 image on the ISS,
 with MaD Control in the host's Chrome held to the board's clock by embsim's
-`chrome-cdp` node (embsim `PROJECTS.md` §5). Two boards carry it:
+`chrome-cdp` node (embsim `PROJECTS.md` §5). One board carries it:
 
 - **The machine's project**, under `embsim run`: the e2e on `mad-cosim.toml`
   (`make e2e-emulator`, embsim `MIGRATING-MAD.md` step 10), the carrier and
-  the module as drawn, the production firmware booted off the module's flash,
-  and the node on the carrier's debug header `J1`; the scenarios that move
+  the module as drawn, the firmware booted off the module's flash,
+  and the node on the carrier's control port `J4`; the scenarios that move
   the carriage on the same file (`make e2e-motion`); SERVO-stall on
   `mad-hard-stop-cosim.toml`, that file with a hard stop on its carriage
   (`make e2e-stall`, MaD #298); FW-ISS on the ROM's serial boot,
   `mad-serial-boot-cosim.toml` (`make e2e-rom`); and the playgrounds on
   headed copies, `mad-playground.toml` and `mad-serial-boot-playground.toml`
   (step 11).
-- **`mad-emulator --chrome`** (step 1b): the debug firmware on the bare chip,
-  the node on `P30`/`P32` (`BOARD_ROUTE=emulator`). No make target or CI job
-  runs it since SERVO-stall moved onto a project; it retires with
-  `mad-emulator` (MaD #298; embsim `MIGRATING-MAD.md` step 11).
 
 - **Time.** Every page and dedicated worker in that Chrome lives the board's
   time, a 1 ms quantum at a time over DevTools
@@ -146,15 +149,20 @@ with MaD Control in the host's Chrome held to the board's clock by embsim's
   2 s of the **board's** time, however slowly the ISS runs on the host.
 - **Serial.** Every page's `navigator.serial` is the node's shim, whose one
   port is the board's protocol line, 2,000,000 baud 8N1, granted to every
-  origin: on the project the line on `J1` (`P63`/`P62`), USB `0403:6015`, an
-  FTDI FT231X, the chip in the Prop Plug; on `mad-emulator` `P30`/`P32`, USB
-  `0403:6001`. It follows Chrome's rules: a `close()` refused while a stream
+  origin: on the flash-boot project files the control port `J4` (through
+  `IC2` to `P30`/`P32`), USB `0403:6001`; on the serial-boot files and the
+  reflash file `J1` (`P63`/`P62`), USB `0403:6015`, an FTDI FT231X, the chip
+  in the Prop Plug. It follows Chrome's rules: a `close()` refused while a stream
   is locked, `NetworkError` on an unplug, a new `SerialPort` and `connect` on
-  a replug. The line has no modem pins: DTR, RTS and a break reach nothing.
-- **The host's pins.** On the project, the file's wires: `HOST.TX` to
+  a replug. DTR is the line's one modem pin: `open()` asserts it and
+  `setSignals()` moves it, and only the reflash file wires it, through the
+  Prop Plug's reset stage onto `J1.3`, so there it resets the P2. RTS and a
+  break reach nothing.
+- **The host's pins.** On the project, the file's wires: on the flash-boot
+  files to `J4`'s receive and transmit lines (through `IC2` to `P30`/`P32`)
+  and its ground; on the serial-boot files and the reflash file `HOST.TX` to
   `EDGE.J1.2` (`P63`), `EDGE.J1.1` (`P62`) to `HOST.RX`, `HOST.GND` on
-  `J1.4`, `HOST.VIO` on the adapter's 3.3 V. On `mad-emulator`, the
-  harness's host pins (`HOST.TX` to `P2.P30`, `P2.P32` to `HOST.RX`).
+  `J1.4`; `HOST.VIO` on the adapter's 3.3 V.
 - **What it costs.** The ISS runs at a few percent of real time, so a second
   of the board's time is tens of seconds of the host's. On the project
   (measured, Apple M2, 2026-10-21): each board first boots the firmware off

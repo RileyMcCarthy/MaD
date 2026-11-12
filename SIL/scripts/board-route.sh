@@ -11,46 +11,35 @@
 #                                       (SCENARIOS selects, as for `npm run e2e`),
 #                                       then stops it all; exits with the suite's status
 #
-# Two boards, BOARD_ROUTE picking (embsim MIGRATING-MAD.md steps 10 and 11):
+# The board is a machine's project file under `$EMBSIM run` (embsim
+# MIGRATING-MAD.md steps 10 and 11), the host's Chrome on the carrier's
+# control port J4 (USB 0403:6001) for a flash boot, on its debug header J1
+# (USB 0403:6015) for the ROM's serial boot and the reflash board. The e2e
+# runs E2E_PROJECT (mad-cosim.toml,
+# the firmware booted off the module's flash, headless, make
+# e2e-motion's file as well; make e2e-stall names mad-hard-stop-cosim.toml,
+# that file with a hard stop on its carriage (MaD #298), make e2e-rom
+# mad-serial-boot-cosim.toml, the ROM's serial boot with the flash erased,
+# and make e2e-reflash mad-reflash-cosim.toml, the Prop Plug's reset on J1.3
+# for FW1's real flash, MaD #134). The playground runs PLAYGROUND_PROJECT
+# (mad-playground.toml, a headed copy of mad-cosim.toml; make playground-rom
+# names mad-serial-boot-playground.toml), its Chrome a window opened on the
+# app at the file's url, the dev server on 5174. The files fix Chrome's
+# DevTools port (9222) and grant the port; `make flash-image sd-image` writes
+# the images they name.
 #
-#   project   the default: a machine's project file under `$EMBSIM run`, the
-#             host's Chrome on the carrier's debug header J1 (USB 0403:6015).
-#             The e2e runs E2E_PROJECT (mad-cosim.toml, the production
-#             firmware booted off the module's flash, headless, make
-#             e2e-motion's file as well; make e2e-stall names
-#             mad-hard-stop-cosim.toml, that file with a hard stop on its
-#             carriage (MaD #298), make e2e-rom
-#             mad-serial-boot-cosim.toml, the ROM's serial boot with the
-#             flash erased, and make e2e-reflash mad-reflash-cosim.toml, the
-#             Prop Plug's reset on J1.3 for FW1's real flash, MaD #134). The
-#             playground runs
-#             PLAYGROUND_PROJECT (mad-playground.toml, a headed copy of
-#             mad-cosim.toml; make playground-rom names
-#             mad-serial-boot-playground.toml), its Chrome a window opened on
-#             the app at the file's url, the dev server on 5174. The files fix
-#             Chrome's DevTools port (9222) and grant the port; `make
-#             flash-image sd-image` writes the images they name.
-#   emulator  `mad-emulator --chrome`, the debug image P2_IMAGE on the bare
-#             chip, the host on P30/P32 (USB 0403:6001), headless. No make
-#             target or CI job runs it: SERVO-stall, the last scenario it
-#             carried, runs on mad-hard-stop-cosim.toml (MaD #298), and the
-#             route retires with mad-emulator (embsim MIGRATING-MAD.md step
-#             11). The e2e only: every playground is a project's.
-#
-# Environment: BOARD_ROUTE, EMBSIM (the embsim command; by default the
+# Environment: EMBSIM (the embsim command; by default the
 # pinned submodule's, through cargo), E2E_PROJECT (mad-cosim.toml, relative
 # to SIL/; exported to the suite), PLAYGROUND_PROJECT
-# (mad-playground.toml), P2_IMAGE and EMULATOR (the mad-emulator binary),
-# APP_PORT (5174),
-# DEVTOOLS_PORT (the emulator's: 9222; empty for one Chrome picks),
-# BOARD_LOGS (where the board's and the dev server's logs go), BOARD_ARGS
-# (more mad-emulator arguments), E2E_TIMINGS (a JSON file of per-scenario
-# host and board times), E2E_JAM_FILE (the emulator's: the file whose
-# presence jams the board's carriage, passed to mad-emulator as --jam-file;
-# default $BOARD_LOGS/jam; no scenario creates it), and
+# (mad-playground.toml), APP_PORT (5174),
+# BOARD_LOGS (where the board's and the dev server's logs go), E2E_TIMINGS
+# (a JSON file of per-scenario host and board times), and
 # BOARD_PER_SCENARIO=1: a fresh board for each
 # scenario, so a board that stops (the node's worker-boot stall) costs that
-# scenario alone.
+# scenario alone. The suite is told where the running board's log is
+# (E2E_BOARD_LOG): the reflash board's scenarios read the firmware's boot
+# line on P62 there, the only word the new firmware sends that board's
+# host (make e2e-reflash).
 #
 # APP_DIST=DIR serves a built bundle (`vite build --base=APP_BASE --outDir
 # DIR`) with `vite preview` in place of the dev server: the code the app ships
@@ -75,16 +64,6 @@ esac
 
 sil=$(cd "$(dirname "$0")/.." && pwd)
 control="$sil/../Software/Control"
-route=${BOARD_ROUTE:-project}
-case "$route" in
-  project | emulator) ;;
-  *)
-    echo "board-route: BOARD_ROUTE is project or emulator, not $route" >&2
-    exit 2
-    ;;
-esac
-image=${P2_IMAGE:-$sil/../Firmware/MaDCore/.pio/build/MaDEdge/program}
-emulator=${EMULATOR:-$sil/target/release/mad-emulator}
 embsim=${EMBSIM:-cargo run --release --quiet --manifest-path $sil/embsim/Cargo.toml -p embsim-cli --}
 if [ "$mode" = playground ]; then
   project=${PLAYGROUND_PROJECT:-mad-playground.toml}
@@ -101,7 +80,7 @@ if [ -n "${APP_DIST:-}" ]; then
 fi
 app_base=${APP_BASE:-/}
 app_port=${APP_PORT:-$([ -n "$app_dist" ] && echo 4173 || echo 5174)}
-if [ "$mode" = playground ] && [ "$route" = project ]; then
+if [ "$mode" = playground ]; then
   # A playground file opens the app at its HOST's url (a project's options
   # come from its file alone): serve the app on that url's port.
   file_port=$(sed -n 's|^url = "http://127\.0\.0\.1:\([0-9]*\)/.*|\1|p' "$sil/$project" | head -1)
@@ -114,46 +93,23 @@ fi
 app_url="http://127.0.0.1:$app_port$app_base"
 logs=${BOARD_LOGS:-$sil/target/board-route}
 mkdir -p "$logs"
-if [ "$route" = emulator ]; then
-  # Every playground is a project's (embsim MIGRATING-MAD.md step 11).
-  if [ "$mode" = playground ]; then
-    echo "board-route: mad-emulator runs no playground; a playground runs a project (make playground)" >&2
-    exit 2
-  fi
-  # mad-emulator jams its carriage while this file exists.
-  export E2E_JAM_FILE=${E2E_JAM_FILE:-$logs/jam}
-  # mad-emulator's port is the FT232R's, unless BOARD_ARGS names another.
-  case " ${BOARD_ARGS:-} " in
-    *" --usb-product-id 0x6015 "*) export E2E_PORT_USB=${E2E_PORT_USB:-0403:6015} ;;
-    *) export E2E_PORT_USB=${E2E_PORT_USB:-0403:6001} ;;
-  esac
-  export E2E_BOARD_ROUTE=emulator
-  for need in "$image" "$emulator"; do
-    [ -f "$need" ] || {
-      echo "board-route: missing $need (make p2image; cargo build --release --bin mad-emulator)" >&2
-      exit 2
-    }
-  done
-else
-  # The suite skips by the file (run-all.mjs, PROJECT_CANNOT): SERVO-stall
-  # runs on the file with a hard stop on its carriage, which skips the other
-  # scenarios that move the carriage.
-  unset E2E_JAM_FILE
-  export E2E_BOARD_ROUTE=project
-  export E2E_PROJECT=$project
-  [ -f "$sil/$project" ] || {
-    echo "board-route: missing $sil/$project" >&2
+# The suite skips by the file (run-all.mjs, PROJECT_CANNOT): SERVO-stall
+# runs on the file with a hard stop on its carriage, which skips the other
+# scenarios that move the carriage. E2E_PROJECT tells its `--list` which
+# file it lists for, before any board is up.
+export E2E_PROJECT=$project
+[ -f "$sil/$project" ] || {
+  echo "board-route: missing $sil/$project" >&2
+  exit 2
+}
+# The images the file names (its `image = "..."` options): the flash boot's
+# flash and card, the serial boot's card alone.
+for named in $(sed -n 's/^image = "\(.*\)"$/\1/p' "$sil/$project"); do
+  [ -f "$sil/$named" ] || {
+    echo "board-route: missing $sil/$named, which $project names (make flash-image sd-image)" >&2
     exit 2
   }
-  # The images the file names (its `image = "..."` options): the flash boot's
-  # flash and card, the serial boot's card alone.
-  for named in $(sed -n 's/^image = "\(.*\)"$/\1/p' "$sil/$project"); do
-    [ -f "$sil/$named" ] || {
-      echo "board-route: missing $sil/$named, which $project names (make flash-image sd-image)" >&2
-      exit 2
-    }
-  done
-fi
+done
 
 # Only what this script started is stopped on the way out.
 server_pid=''
@@ -161,7 +117,7 @@ board_pid=''
 tail_pid=''
 stop_board() {
   if [ -n "$board_pid" ] && kill -0 "$board_pid" 2>/dev/null; then
-    # SIGTERM: the emulator stops the system in order, its chrome-cdp closes
+    # SIGTERM: the run stops the system in order, its chrome-cdp closes
     # the Chrome it launched, and the run's summary is printed.
     kill -TERM "$board_pid" 2>/dev/null || true
     for _ in $(seq 1 60); do kill -0 "$board_pid" 2>/dev/null || break; sleep 0.5; done
@@ -236,31 +192,20 @@ fi
 cdp_url=''
 start_board() {
   local log=$1
-  if [ "$route" = project ]; then
-    # The file fixes the DevTools port. A Chrome already answering there
-    # would be some other run's, and the suite would attach to it.
-    if curl -sf http://127.0.0.1:9222/json/version >/dev/null 2>&1; then
-      echo "board-route: something already answers DevTools at http://127.0.0.1:9222, the port $project fixes" >&2
-      return 1
-    fi
-    # `exec`: cargo runs the tool in its place, and the tool the runner in
-    # its, so $board_pid is the run itself, which SIGTERM ends with its
-    # summary.
-    # shellcheck disable=SC2086 # EMBSIM is a command and its arguments
-    (cd "$sil" && exec $embsim run "$project") >"$log" 2>&1 &
-    board_pid=$!
-    echo "board-route: $embsim run $project (pid $board_pid, log: $log)"
-  else
-    # shellcheck disable=SC2086 # BOARD_ARGS is a list of arguments
-    local args=("$image" --sd-path "$sil/sd" --chrome --granted --log-level info
-      --jam-file "$E2E_JAM_FILE" ${BOARD_ARGS:-})
-    local devtools_port=${DEVTOOLS_PORT-9222}
-    if [ -n "$devtools_port" ]; then args+=(--devtools-port "$devtools_port"); fi
-    args+=(--headless)
-    "$emulator" "${args[@]}" >"$log" 2>&1 &
-    board_pid=$!
-    echo "board-route: mad-emulator ${args[*]} (pid $board_pid, log: $log)"
+  export E2E_BOARD_LOG=$log
+  # The file fixes the DevTools port. A Chrome already answering there
+  # would be some other run's, and the suite would attach to it.
+  if curl -sf http://127.0.0.1:9222/json/version >/dev/null 2>&1; then
+    echo "board-route: something already answers DevTools at http://127.0.0.1:9222, the port $project fixes" >&2
+    return 1
   fi
+  # `exec`: cargo runs the tool in its place, and the tool the runner in
+  # its, so $board_pid is the run itself, which SIGTERM ends with its
+  # summary.
+  # shellcheck disable=SC2086 # EMBSIM is a command and its arguments
+  (cd "$sil" && exec $embsim run "$project") >"$log" 2>&1 &
+  board_pid=$!
+  echo "board-route: $embsim run $project (pid $board_pid, log: $log)"
   cdp_url=''
   # A bound on a hang, in host time: the project's run builds nothing here
   # (`make e2e` checks the file first, which builds the runner) and reaches
@@ -278,7 +223,7 @@ start_board() {
     return 1
   fi
   echo "board-route: Chrome is on the board's clock; DevTools at $cdp_url"
-  if [ "$route" = project ] && [ "$mode" = e2e ] && [ "${E2E_BOARD:-}" != rom ]; then
+  if [ "$mode" = e2e ] && [ "${E2E_BOARD:-}" != rom ]; then
     # Pacing, not a check: the scenario starts once the firmware is up, as
     # a person finds the machine powered, and its connect is what checks
     # that the firmware answers (fixtures.mjs, connectToSil: samples and a
@@ -288,7 +233,7 @@ start_board() {
     # board with nothing to answer it, the rest queued behind it
     # (src/device/DeviceSession.worker.ts, runOp): 2252 ms of board time
     # until the response timeout, measured on a silent board. The hint is the
-    # production firmware's first line on P62 (Firmware/MaDCore/src/Main/
+    # firmware's first line on P62, its debug log (Firmware/MaDCore/src/Main/
     # main.c), which the run prints as the core's console. Without it the
     # scenario starts anyway once the bound passes (300 s of host time, a
     # hang's bound only), and its connect decides. The line comes before the

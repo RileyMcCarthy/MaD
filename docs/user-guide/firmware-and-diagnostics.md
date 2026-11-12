@@ -14,24 +14,22 @@ see [Troubleshooting](troubleshooting.md).
 
 ## Updating the firmware
 
-The app programs the Propeller 2 over the same USB connection it uses for
-control. There is nothing to install.
+The app programs the Propeller 2 straight from the browser. There is nothing
+to install.
 
-### What you need
+### Two ports: control and programming
 
-- A cable to the board's **Debug/Programming header (J1)** — the 4-pin header
-  fitted to every EdgeBoard, wired pin 1→4 as `P62 / P63 / RESn / GND`.
-- A USB-serial adapter that **drives RESn from DTR**, such as a Parallax Prop
-  Plug. The app resets the chip that way to reach its boot ROM.
+The machine has two serial ports with separate jobs, and the app uses each for
+one thing only:
 
-On production hardware the control link and the programming link are the same
-connection, so if you can already talk to the machine, you can already program it.
+| Port | What plugs in | Used for |
+|---|---|---|
+| **Control port** | A USB-serial adapter on the controller's secondary serial, P30/P32. On the Edge carrier v0.3 that is header **J4**, through the isolator; on a P2-EVAL bench, an FTDI adapter with its TX on P30 and its RX on P32. | The **Connect** page: live data, jogging, tests. Opening it never resets the machine, so connecting, refreshing the page and auto-reconnect are all safe mid-test. |
+| **Programming port** | A Prop Plug on the **Debug/Programming header (J1)**, wired pin 1→4 as `P62 / P63 / RESn / GND`, or the P2-EVAL's own USB. | The **Firmware** page only. Its adapter drives RESn from DTR, so **opening it resets the machine**. It also carries the firmware's debug log. |
 
-!!! danger "The isolated Raspberry Pi link cannot program the board"
-    On the machine's P2-EC32MB module, that link isn't connected to the chip:
-    its pins (P52–P55) go to the module's own memory. Where a bench brings
-    P53/P55 out, the link still has **no reset line**. Either way, flashing over
-    it won't work. Use the J1 header.
+Both are usually plugged in at once. The firmware never talks the protocol on
+J1, so connecting the app there finds no machine (and restarts it). The
+control port has no reset line, so it cannot program the board.
 
 ### What flashing does
 
@@ -76,60 +74,77 @@ says why on every screen.
 
 ### Doing the update
 
-1. **Connect to the machine** as usual. The **Firmware** screen shows the
-   **Installed** version, the **Protocol** it speaks next to the one this app
-   speaks, and the **Recommended** release: the newest firmware release that
-   speaks this app's protocol.
-2. **Will flash** shows the recommended release. The app writes that release's
-   P2Eval production build (`MaD-Firmware-<version>-P2Eval.bin`), fetched by
-   the app — there is nothing to download. It puts the protocol on J1, so the
-   app reaches the new firmware on the port it just programmed. MaD Control
-   0.4.2 and earlier label this row "MadEdge" whatever the image is; the prompt
-   in step 3 names the real file.
-   When the release also carries a MaDEdge build, a **Board** choice appears:
-   **P2Eval** (the default) or **MaDEdge**, and **Install recommended
-   firmware** flashes the chosen one. The MaDEdge debug build moves the
-   protocol to the Edge carrier's Pi link and puts a debug log on J1, so after
-   flashing it the app reaches the firmware only over that link. Don't pick it
-   for a machine whose carrier does not bring that link out. To flash any
-   other image, or a local build, click **Use a local file…** and pick it.
-3. Check the **Port** shown is the machine you mean to program, then click
-   **Install recommended firmware** (or **Write to flash** for a local file;
-   with none picked it writes the recommended release too). The prompt names
-   the file it will write: check it is
-   `MaD-Firmware-<version>-P2Eval.bin` (or the local file you picked), then
-   confirm.
-4. The status line walks through *Resetting the board…*, then *Uploading… n%*,
-   then *Finishing…*.
-5. When it completes, confirm **Installed** shows the version you just
-   flashed. The app reconnects and asks the protocol again, and the banner
-   clears.
+1. **Connect to the machine** on the control port as usual. The **Firmware**
+   screen shows the **Installed** version, the **Protocol** it speaks next to
+   the one this app speaks, and the **Recommended** release: the newest
+   firmware release that speaks this app's protocol.
+2. **Will flash** shows the recommended release. Each release has one image,
+   `MaD-Firmware-<version>.bin`, fetched by the app — there is nothing to
+   download. To flash any other image, or a local build, click **Use a local
+   file…** and pick it.
+3. Check the **Programming port** shown is the Prop Plug on J1 (or the
+   P2-EVAL USB) of the machine you mean to program. The app never offers the
+   control port it is connected through. Then click **Install recommended
+   firmware** (or **Write to flash** for a local file; with none picked it
+   writes the recommended release too). The prompt names the file it will
+   write: check it is `MaD-Firmware-<version>.bin` (or the local file you
+   picked), then confirm.
+4. The app stops the control session, then the status line walks through
+   *Resetting the board…*, *Uploading… n%*, then *Finishing…*.
+5. When it completes, the app reconnects on the **control port** (never the
+   programming port) and asks the protocol again, and the banner clears.
+   Confirm **Installed** shows the version you just flashed.
 
-!!! tip "Bench setups with two adapters"
-    The **Port** line names the port that will be programmed. On production
-    hardware there is only one and the app picks it. If several serial devices
-    are attached it will refuse to guess and ask you to choose, because the
-    browser only sees USB vendor and product IDs — two identical adapters are
-    indistinguishable to it. **Change** lets you set it explicitly,
-    and the choice is remembered.
+!!! tip "Choosing the programming port"
+    The browser only sees USB vendor and product IDs, and the Prop Plug and a
+    control adapter can be identical FTDI parts. If more than one port could
+    be the programming port, the app refuses to guess and asks you to choose.
+    **Change** sets it explicitly, and the choice is remembered; the Connect
+    page then marks that port as the Firmware page's programming port so you
+    don't connect to it by mistake.
+
+!!! note "Machines still on firmware 0.14 or earlier"
+    Releases up to 0.14 talk the protocol on J1 itself, so a machine on one of
+    those connects over J1. The app never recommends those releases, and any
+    newer one moves the protocol to P30/P32: don't install it on a machine
+    with nothing wired there, or the app can no longer talk to it (flashing
+    0.14 back over J1 as a local file recovers it). The real machine stays on
+    0.14 until its Edge carrier v0.3 (the one with the isolated J4 link) is
+    built.
+
+    To move a P2-EVAL bench from 0.14 to the two-port firmware:
+
+    1. On the **Connect** page, **Disconnect**. The app is connected over J1
+       (the P2-EVAL USB), and it never flashes the port it is connected
+       through.
+    2. On the **Firmware** page, choose the P2-EVAL USB as the **Programming
+       port** and **Install recommended firmware**. Stay disconnected: the
+       new firmware no longer answers on J1.
+    3. Rewire the FTDI adapter from P53/P55 to **P30** (adapter TX → P2 RX)
+       and **P32** (adapter RX ← P2 TX), with its ground to the board's.
+    4. On the **Connect** page, connect to the FTDI adapter: that is the
+       control port from now on.
+
+### Rebooting the machine
+
+Reconnecting on the control port does not restart the machine. When a restart
+is needed (to clear a latched fault, or to apply a saved machine
+configuration), power-cycle the machine.
 
 ### If it doesn't work
 
-- **Nothing happens, or it fails while resetting** — the adapter probably isn't
-  driving RESn from DTR, or it isn't on J1. Check you're on J1 with a Prop Plug
-  or equivalent.
+- **Nothing happens, or it fails while resetting** — the programming port
+  isn't the Prop Plug on J1 (or the P2-EVAL USB), or the adapter isn't driving
+  RESn from DTR. Check **Programming port** and use **Change**.
 - **It fails partway through the upload** — retry. The board holds the previous
   firmware until a write completes, so a failed attempt leaves it as it was.
   If it keeps failing, power-cycle the machine and try again.
 - **The version doesn't change after a flash** — the machine may have rebooted
   into the previous image. Power-cycle it, reconnect, and check again.
-- **Connected, but never Responding, after flashing a `-MaDEdge.bin`** — that
-  build talks on P53/P55, which don't reach the machine's chip. Programming
-  doesn't need the firmware, so the machine can still be flashed: on the
-  **Firmware** screen pick the J1 port, click **Write to flash**, and check the
-  prompt names `MaD-Firmware-<version>-P2Eval.bin` before you confirm. If the
-  app was connected on J1, it reconnects there afterwards and the machine
-  answers; otherwise connect to J1.
+- **Connected, but never Responding** — the app is probably on the wrong
+  port. On firmware newer than 0.14 the protocol is only on the control port
+  (P30/P32): connect there, not to J1. Programming doesn't need the firmware
+  to answer, so the machine can still be flashed from the Firmware page.
 
 ## Diagnostics export
 

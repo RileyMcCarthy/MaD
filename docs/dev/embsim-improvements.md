@@ -1,6 +1,6 @@
 # embsim improvement backlog
 
-Living TODO for the SIL framework (`SIL/embsim`) and the MaD consumer (`SIL/MaDSim`).
+Living TODO for the SIL framework (`SIL/embsim`) and MaD's crates on it (`SIL/p2iss`, `SIL/mad-catalog`).
 Inspired by what Renode gets right as an ISS **without** turning embsim into a Renode remake.
 
 **Order is dependency order.** Native SIL stays the default (fast PR CI). ISS is an option on the same pin/time fabric.
@@ -64,7 +64,7 @@ Do this **after P0**. Same pin graph and time counter as native. CLI: `--backend
 - [ ] **Do not** make QEMU or Renode the kernel. Optional later: Renode/Unicorn **behind `IssCore`** for Cortex-M / RISC-V.
 - [ ] Crate name: **`embsim-p2-iss`** (sibling of `embsim-p2` HAL trampolines). Spike may live in MaD `SIL/p2core/` then promote.
 
-### P2 core (must-work from MaD `MaDEdge/program`)
+### P2 core (must-work from MaD `MaD/program`)
 
 - [ ] Load raw FlexC hub image at `$000`; boot `coginit` to `$404` / `entry`.
 - [ ] `HUBSET` (record clkfreq at hub `$14`; ignore PLL).
@@ -76,9 +76,9 @@ Do this **after P0**. Same pin graph and time counter as native. CLI: `--backend
 - [ ] `COGINIT`/`COGSTOP`/`COGID` + FlexC `entry`/`ptra` worker ABI (7 MaD cogs).
 - [ ] Pin ops: `WRPIN`/`WXPIN`/`WYPIN`/`RDPIN`, `DIR*`/`DRV*`/`FLT*`, `TESTP`.
 
-### Smartpin modes (MaD debug image)
+### Smartpin modes (MaD image)
 
-Use `MaDEdge` so MAIN is hardware UART (pins 30/32), not FlexC `_txraw`.
+The `MaD` image's MAIN is a hardware UART on pins 30/32, not FlexC `_txraw` (it was the old `MaDEdge` debug build's until that became the only build).
 
 - [ ] `P_ASYNC_TX` / `P_ASYNC_RX` — 2 Mbaud on 30/32 → host PTY; 115200 on 0/2 → ADS122U04.
 - [ ] `P_QUADRATURE` — encoder A/B (9/10).
@@ -87,9 +87,9 @@ Use `MaDEdge` so MAIN is hardware UART (pins 30/32), not FlexC `_txraw`.
 - [ ] GPIO IN/OUT/DIR — enable, dir, endstops, ESD.
 - [ ] **v1 skip:** SD SPI (58–61), I2C navkey (bit-bang). Mount-fail is already a firmware path.
 
-### MaD consumer
+### MaD consumer (superseded: the project files run the ISS, and `mad-emulator` retired with MaD #298)
 
-- [ ] `mad-emulator --backend iss --firmware …/MaDEdge/program`
+- [ ] `mad-emulator --backend iss --firmware …/MaD/program`
 - [ ] `make playground-iss` (or `playground-p2bin`) — same PTY `/tmp/tty.rpi` as native.
 - [ ] Pin map from `HW_pins.h`, not gcc DWARF.
 - [ ] E2E unchanged except which playground is running. PR CI = native; nightly = ISS smoke IDs.
