@@ -21,7 +21,7 @@
 //! fixture play; frame compliance, ballscrew backlash/pitch error, and
 //! belt stretch are not modeled. Limit switches are ideal position
 //! comparators at the configured thresholds — see the provenance notes in
-//! `embsim_models::limit_switch` for the switch behavior contract.
+//! `embsim_models::machine::end_switch` for the switch behavior contract.
 //!
 //! Parameter sources: thresholds and slack come from the machine that
 //! configures the gantry (`GANTRY_SLACK_MM` and the parked thresholds in

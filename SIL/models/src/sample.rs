@@ -27,7 +27,7 @@
 //! Has no knowledge of MCU peripherals or drivers.
 
 use embsim_core::event::Observers;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tracing::trace;
 
 // ============================================================
@@ -77,8 +77,6 @@ impl Default for Config {
 
 pub struct Sample {
     config: Config,
-    /// Legacy support only: used by `on_position`.
-    baseline_position_mm: Mutex<Option<f64>>,
     on_change: Observers<f64>,
 }
 
@@ -87,7 +85,6 @@ impl Sample {
     pub fn new(config: Config) -> Arc<Self> {
         Arc::new(Self {
             config,
-            baseline_position_mm: Mutex::new(None),
             on_change: Observers::new(),
         })
     }
@@ -107,35 +104,6 @@ impl Sample {
         );
 
         self.on_change.emit(force_n);
-    }
-
-    /// Legacy convenience path: convert absolute position to extension and forward
-    /// to `on_extension`. New code should compute extension in a gantry model.
-    pub fn on_position(&self, position_mm: f64) {
-        // Capture the first observed position as the zero-force baseline.
-        let baseline = {
-            let mut guard = self.baseline_position_mm.lock().unwrap();
-            match *guard {
-                Some(v) => v,
-                None => {
-                    *guard = Some(position_mm);
-                    position_mm
-                }
-            }
-        };
-
-        let extension_mm = if self.config.tension_on_decreasing_position {
-            baseline - position_mm
-        } else {
-            position_mm - baseline
-        };
-        trace!(
-            "sample(legacy): pos={:.3}mm baseline={:.3}mm ext={:.3}mm",
-            position_mm,
-            baseline,
-            extension_mm
-        );
-        self.on_extension(extension_mm.max(0.0));
     }
 }
 
