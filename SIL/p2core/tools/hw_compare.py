@@ -207,7 +207,7 @@ def run_hw(binary: Path, port: str, timeout_s: float = 20.0) -> list[str]:
     ]
     print("+", " ".join(cmd), flush=True)
     # loadp2's terminal talks through a real tty; a pipe gets the banner and
-    # never the UART bytes (see Software/Control/tools/hw_loadp2_pty.py).
+    # never the UART bytes.
     master, slave = pty.openpty()
     proc = subprocess.Popen(
         cmd,
