@@ -14,7 +14,7 @@ import * as nu from './generated/protoemb';
 const bytes = (b: Uint8Array): number[] => Array.from(b);
 
 // Golden vectors captured from the verified codec. Regenerate intentionally only
-// when the schema/template changes (and update docs/PARITY.md).
+// when the schema/template changes.
 const GOLD = {
   state: [178, 0],
   // 19 bytes. Grew from 16 when machineCommanded was appended; the first 16

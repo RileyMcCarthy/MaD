@@ -1,6 +1,5 @@
 /**
- * Build + download a diagnostics bundle for triaging a field issue without a
- * backend.
+ * Build a diagnostics bundle for triaging a field issue without a backend.
  *
  * The bundle is the session log (merged main + worker), the worker's throughput
  * counters, and — when asked for — the raw serial tail. Sample values are not
@@ -122,17 +121,4 @@ export async function buildDiagnosticsBundle(
     ...(serialTail ? { serialTail } : {}),
     ...(previousSession ? { previousSession } : {}),
   };
-}
-
-export async function downloadDiagnostics(opts: BundleOptions = {}): Promise<void> {
-  const bundle = await buildDiagnosticsBundle(opts);
-  const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `mad-diagnostics-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
 }
