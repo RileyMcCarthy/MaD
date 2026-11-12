@@ -130,7 +130,8 @@ DEV_COGMANAGER_CHANNEL_CREATE_INIT(FORCEGAUGE, 2048)
 
 DEV_COGMANAGER_CHANNEL_CREATE_RUN(FORCEGAUGE)
 {
-    // Run forcegauge as fast as possible, we use IO_serial to handle timing
+    // Unpaced (0 Hz in the config below): each pass waits on the ADC's serial
+    // link for a conversion, and that wait sets the rate.
     dev_forceGauge_run();
 }
 
