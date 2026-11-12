@@ -76,7 +76,8 @@ fresh worker), a deferred PWA update flow (a new version is announced and applie
 only when idle and disconnected, never a silent reload mid-test), serialized +
 rebuildable file-storage (`index.json` is a cache rebuilt from the per-run
 files), and a **bug report** form on the About page that attaches the
-diagnostics bundle (session log and worker counters, no sample values).
+diagnostics bundle (this session's log, the previous session's log, and worker
+counters; the raw serial window unless you untick it; no sample values).
 
 ### Real hardware vs. the SIL emulator
 
