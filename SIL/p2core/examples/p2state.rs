@@ -28,15 +28,15 @@ fn trace<P: PinBus>(m: &mut Machine<P>, n: u64) {
             "P2STATE cog=0 pc={:05X} c={} z={} sp={} clk={}",
             c.pc, c.c as u32, c.z as u32, c.sp, c.clocks
         );
-        for i in 0..32 {
-            print!(" {:08X}", c.regs[i]);
+        for reg in &c.regs[..32] {
+            print!(" {reg:08X}");
         }
         // PA/PB/PTRA/PTRB and the rest of the special block: CALLPA writes PA
         // and every PTR expression writes PTRA/PTRB, so without these a whole
         // class of divergence is invisible to the diff.
         print!(" |");
-        for i in 0x1F0..0x200 {
-            print!(" {:08X}", c.regs[i]);
+        for reg in &c.regs[0x1F0..0x200] {
+            print!(" {reg:08X}");
         }
         println!();
         if m.step(1).unwrap_or(0) == 0 {
