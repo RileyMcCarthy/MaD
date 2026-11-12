@@ -1,157 +1,100 @@
-# For operators — your first test
+# Run your first test
 
-This is a guided walkthrough for someone with a MaD machine who wants to connect
-and run a test for the first time. It uses the browser control app — there is
-nothing to install.
+This assumes the machine is [connected](connect.md), on the
+[recommended firmware](flashing-firmware.md), and
+[calibrated](machine-setup.md).
 
-!!! tip "Just exploring?"
-    You can open the app and click through every screen without a machine
-    connected. To see live data and run tests you'll need a MaD machine (or the
-    [SIL emulator](../dev/sil-testing.md), which is how the screenshots below were
-    produced).
+## 1. Position the carriage
 
-## 1. Open the app
+Open **Live**. This is where you watch the machine and move it by hand.
 
-In **Chrome or Edge**, go to:
+![The Live screen](../assets/screenshots/live.png)
 
-**<https://rileymccarthy.github.io/MaD/app/>**
+1. Click **Enable motion**. The **Motion** badge changes to *enabled*.
+2. Pick a jog distance (type it, or use the **0.1 / 1 / 5 / 10 mm** presets),
+   set **Speed (mm/s)**, and use **+ Jog up** / **− Jog down** to bring the
+   grips to your sample's length.
+3. Mount the sample.
 
-If you see an "unsupported browser" message, you are not in a Chromium browser —
-see [requirements](requirements.md).
+If the buttons are greyed out or a jog is refused, see
+[The machine won't move](../troubleshooting/machine-wont-move.md).
 
-## 2. Power on and connect
+## 2. Zero
 
-1. Power the machine on (see the
-   [power-up sequence](../how-it-works/the-machine.md#power-up-sequence)) and
-   plug its **control port** into your computer over USB: the USB-serial
-   adapter on the controller's P30/P32 (header **J4** on the Edge carrier v0.3;
-   on a P2-EVAL bench, an FTDI adapter with its TX on P30 and its RX on P32).
-2. In the app, open **Connect** in the sidebar.
-3. Leave the **baud rate** at the default (**2,000,000**) and click **Connect
-   device**. Your browser shows a serial-port chooser — pick the control port.
+With the sample mounted and just slack:
 
-Opening the control port never restarts the machine, so refreshing the page or
-reconnecting mid-test is safe. Don't connect to the Prop Plug on header **J1**:
-that is the programming port, the Firmware page's alone, and opening it
-restarts the machine.
+- **Zero force** makes the current load the origin of **Sample Force**.
+- **Zero length** makes the current position the origin of **Sample
+  Position**. This is the gauge length the test's strain is measured from.
 
-When connected, the status bar turns green and shows **Connected** with a
-**Responding** badge once the firmware starts streaming data:
+**Machine Force** and **Machine Position** are unaffected: those are always
+absolute.
 
-![Connected state on the Connect screen](../assets/screenshots/01b-connect-connected.png)
+## 3. Create a sample profile
 
-[:octicons-arrow-right-24: More on connecting](../user-guide/connecting.md)
+Open **Sample profiles**. A sample profile holds the specimen's dimensions and
+the limits the machine enforces during the test.
 
-## 3. Check the firmware
+![The Sample profiles screen](../assets/screenshots/sample-profiles.png)
 
-Open **Firmware** in the sidebar. **Installed** is what the machine is running;
-**Recommended** is the newest published firmware that speaks this app's
-protocol. If the firmware cannot work with this app, a banner under the status
-bar says so on every screen and the app will not move the machine until it is
-updated.
+Enter the width and thickness (used for stress), and **Max force** / **Max
+displacement**. If the sample reaches either limit the machine stops the test.
+Save it.
 
-- If they match and there is no banner, you're done — go to step 4.
-- If it's older, the banner asks for an update, or the status bar says
-  **Connected** but never **Responding** (a new board that has never been
-  programmed), update it now, before your first test.
+[:octicons-arrow-right-24: Sample profiles](../user-guide/sample-profiles.md)
 
-To update, plug a Prop Plug into the **Debug/Programming header (J1)** (or,
-on a P2-EVAL bench, its own USB) as well — that is the **programming port**,
-and its adapter resets the chip from DTR to reach the boot ROM. The control
-port has no reset line and cannot program the board.
+## 4. Create a motion profile
 
-1. Check **Will flash** shows the recommended release. The app fetches that
-   [GitHub release](https://github.com/RileyMcCarthy/MaD/releases)'s one
-   image, `MaD-Firmware-<version>.bin`, by itself; there is nothing to
-   download.
-2. Check the **Programming port** is the Prop Plug on J1 of the machine you
-   mean to program (the app never offers the control port it is connected
-   through), then click **Install recommended firmware**. Check the prompt
-   names `MaD-Firmware-<version>.bin`, then confirm.
+Open **Motion profiles**. A motion profile is what the machine does: moves
+(linear pulls, dwells, waveforms) grouped into sets that can repeat.
 
-The app stops the control session, and the status line runs through
-*Resetting the board…*, *Uploading… n%*, then *Finishing…*. The board reboots
-into the new firmware, the app reconnects on the control port, and
-**Installed** updates.
+![The Motion profiles builder](../assets/screenshots/motion-profiles.png)
 
-A machine still on firmware 0.14 or earlier talks to the app on J1 and has
-nothing on P30/P32 until its Edge carrier v0.3 is built: keep it on 0.14
-rather than installing a newer release. See
-[the two ports](../user-guide/firmware-and-diagnostics.md#two-ports-control-and-programming).
+**Preview G-code** shows the exact program and its position-against-time plot
+before anything runs:
 
-[:octicons-arrow-right-24: Full firmware guide](../user-guide/firmware-and-diagnostics.md)
+![The G-code preview](../assets/screenshots/gcode-preview.png)
 
-## 4. Watch live data
+[:octicons-arrow-right-24: Motion profiles](../user-guide/motion-profiles.md)
 
-Open **Live**. You'll see real-time readouts (machine and sample force/position),
-the machine **state** (faults, restrictions, motion, test), manual **controls**,
-and a live **force & position** chart:
+## 5. Run
 
-![The Live monitoring screen](../assets/screenshots/02-live.png)
+Open **Test runs**. In **New test**, pick the sample profile and the motion
+profile, then click **Run test**.
 
-To move the gantry by hand, click **Enable motion**, set a jog distance and
-speed, and use **+ Jog up** / **− Jog down**. You can also **Home**, **Zero
-force**, and **Zero length** here.
+![New test: a sample profile and a motion profile selected](../assets/screenshots/test-runs-new-test.png)
 
-[:octicons-arrow-right-24: Live monitoring](../user-guide/live-monitoring.md) ·
-[Manual control](../user-guide/manual-control.md)
+The app sends the limits, uploads the program to the machine's SD card and
+starts it. From then on the machine runs the test by itself. On **Live** the
+**Test** badge reads *running*, the manual controls lock, and the charts follow
+the test:
 
-## 5. Set up a test
+![Live state while a test runs](../assets/screenshots/state-test.png)
 
-A test combines two things:
+!!! warning "Stopping a test"
+    The red **STOP** button disables motion, which ends the test. Closing the
+    tab or unplugging USB does **not** stop it: the machine keeps running from
+    its SD card and the app reconnects to watch. STOP is a software stop, not
+    the hardware emergency stop.
 
-1. A **sample profile** — your material's dimensions and safety limits
-   (max force, max displacement, width, thickness). Create it on the **Sample profiles**
-   screen. [:octicons-arrow-right-24: Sample profiles](../user-guide/sample-profiles.md)
-2. A **motion profile** — what the machine should *do*: a sequence of moves
-   (linear pulls, dwells, cyclic waveforms) grouped into repeatable sets. Build it
-   on the **Motion profiles** screen.
-   [:octicons-arrow-right-24: Motion profiles](../user-guide/motion-profiles.md)
+## 6. Get the results
 
-!!! note "The data folder"
-    The first time you open the app it asks for a data folder: click
-    **Choose data folder** and pick a folder on your computer. Profiles, results
-    and settings are saved there. You only do this once.
-    [:octicons-arrow-right-24: Settings & data](../user-guide/settings-and-data.md)
+When the machine finishes, the run's status changes to *completed*. In
+**History**, click **Download data** to copy the recording off the machine,
+then **View**:
 
-## 6. Run it
+![The History table](../assets/screenshots/test-runs-history.png)
 
-Open **Test runs**. In the **New test** card, pick your saved sample and motion
-profiles, optionally **Preview G-code**, then click **Run test**. The run appears
-in the **History** table and updates to *completed* on its own when the machine
-finishes:
+![The run viewer](../assets/screenshots/run-viewer.png)
 
-![The Test runs screen with history](../assets/screenshots/06-test-runs.png)
-
-!!! warning "The machine is the safety authority"
-    MaD runs tests **autonomously from its SD card** and is protected by its own
-    **hardware e-stop and sensors**. Closing the browser tab or losing the USB
-    link does **not** stop a running test — the app simply reconnects to keep
-    monitoring it. The red **STOP** button in the app is a convenience that
-    disables motion; it is *not* a substitute for the hardware e-stop.
-
-## 7. Review the results
-
-Back in **Test runs**, click **Download data** on a finished run to pull the CSV
-off the machine, then **View** to see the analysis — force vs time, position
-(actual / setpoint / expected), and a stress–strain curve:
+**Export CSV** saves the data for a spreadsheet or your own analysis.
 
 [:octicons-arrow-right-24: Test history & analysis](../user-guide/test-history-and-analysis.md)
 
-## Keeping the firmware up to date
+## Where next
 
-The machine runs its own firmware, updated separately from the app. Updating it
-is the same **Install recommended firmware** operation as
-[step 3](#3-check-the-firmware).
-
-The app checks on every connect: when a newer app needs newer firmware, the
-banner appears and **Update firmware** takes you to the Firmware screen. It
-also recommends an update, without stopping the machine, when this app version
-knows of a firmware fix you don't have yet.
-
-[:octicons-arrow-right-24: Full firmware & diagnostics guide](../user-guide/firmware-and-diagnostics.md)
-
----
-
-That's the full loop: **connect → check firmware → profile → run → analyse**.
-The [User Guide](../user-guide/index.md) covers every screen in detail.
+- The [User Guide](../user-guide/index.md) covers every screen.
+- [Troubleshooting](../troubleshooting/index.md) is organised by what you see
+  on screen.
+- [Theory of operation](../how-it-works/the-machine.md) explains what the
+  machine is doing and why.

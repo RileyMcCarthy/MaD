@@ -4,7 +4,7 @@ A **sample profile** describes the material you're testing: its dimensions and
 the safety limits the machine must respect. You manage sample profiles on the
 **Sample profiles** screen.
 
-![The Samples screen](../assets/screenshots/03-samples.png)
+![The Samples screen](../assets/screenshots/sample-profiles.png)
 
 A sample profile is one half of a test — the other half is a
 [motion profile](motion-profiles.md). They're combined when you

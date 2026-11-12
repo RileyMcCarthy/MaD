@@ -3,3 +3,4 @@
 #   mkdocs serve      # local preview at http://127.0.0.1:8000
 #   mkdocs build      # static site → ./site
 mkdocs-material==9.5.39
+mkdocs-redirects==1.2.2

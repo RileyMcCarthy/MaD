@@ -3,7 +3,7 @@
 Every run is recorded in the **History** table on the **Test runs** screen, and
 each finished run can be opened in the **run viewer** for analysis.
 
-![Test runs history](../assets/screenshots/06-test-runs.png)
+![The History table](../assets/screenshots/test-runs-history.png)
 
 ## The history table
 
@@ -33,7 +33,7 @@ history.
 
 Click **View** to open the analysis for a run:
 
-![The run viewer](../assets/screenshots/07-run-viewer.png)
+![The run viewer](../assets/screenshots/run-viewer.png)
 
 It shows:
 

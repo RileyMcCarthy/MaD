@@ -1,17 +1,23 @@
 # Settings & data
 
-The **Settings** screen is where you choose where the app stores your data, and
-where you read/write the [machine configuration](machine-configuration.md).
+The **Settings** screen holds the data folder, the
+[machine configuration](machine-configuration.md), the
+[motor](motor-calibration.md) and [load cell](load-cell-calibration.md)
+calibration, and the optional GitHub connection for
+[bug reports](firmware-and-diagnostics.md#reporting-a-bug).
 
-![The Settings screen](../assets/screenshots/08-settings.png)
+![The Data folder panel](../assets/screenshots/settings-data-folder.png)
 
 ## The data folder
 
 The app saves sample profiles, motion profiles, sets, and test results to a
 **folder on your computer** that you choose.
 
-- The app asks for the folder when it opens: click **Choose data folder** and pick
-  (or create) one. The app remembers it across reloads — you grant access once.
+- The app asks for the folder when it first opens: click **Choose data folder**
+  and pick (or create) one. The app remembers it across reloads.
+
+    ![The data folder prompt](../assets/screenshots/data-folder-gate.png){ width=520 }
+
 - The current folder is shown as **Current: …**. Use **Change data folder** to switch.
 - If the browser needs you to re-confirm access after a restart, the app asks again
   when it opens — click **Allow access to “…”**.
@@ -38,10 +44,12 @@ overwrite earlier results.
     has access to the folder you explicitly granted. That's a browser security
     boundary, not a missing feature.
 
-## Machine configuration
+## The rest of the screen
 
-The lower part of Settings reads and writes the machine's stored calibration and
-limits — covered in [Machine configuration](machine-configuration.md).
+With a machine connected, Settings continues with the machine configuration and
+the two calibration panels:
+
+![The whole Settings screen with a machine connected](../assets/screenshots/settings.png){ width=520 }
 
 ## Keeping your data safe
 
