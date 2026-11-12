@@ -56,13 +56,6 @@ static HAL_encoder_channelData_S HAL_encoder_channelData[HAL_ENCODER_CHANNEL_COU
  * Public Function Definitions
  **********************************************************************/
 
-void HAL_encoder_init(void)
-{
-    // Initialize all encoder channel data to zero
-    // Use memset to avoid SROA bug in p2llvm that mistyping int32_t fields as i1
-    memset(HAL_encoder_channelData, 0, sizeof(HAL_encoder_channelData));
-}
-
 void HAL_encoder_start(HAL_encoder_channel_E channel)
 {
     if (channel >= HAL_ENCODER_CHANNEL_COUNT)

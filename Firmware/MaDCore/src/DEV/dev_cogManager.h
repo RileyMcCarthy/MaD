@@ -56,7 +56,7 @@ typedef struct
 #define DEV_COGMANAGER_CHANNEL_CREATE_RUN(channel) \
     void dev_cogManager_taskRun##channel(void *arg)
 
-#if PROPELLER_FRAMEWORK == FLEXCC
+#ifdef __FLEXC__
 // flexc compiler does not support nested designated initializers
 #define DEV_COGMANAGER_CHANNEL_CONFIG_CREATE(channel, frequency)           \
     {                                                           \
