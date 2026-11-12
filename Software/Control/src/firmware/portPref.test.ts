@@ -175,6 +175,27 @@ describe('resolveFlashPort', () => {
       expect(resolveFlashPort(ports, { index: 0 }).kind).toBe('ambiguous');
     },
   );
+
+  behaviour(
+    {
+      id: 'flash.port-control-port-skipped',
+      covers: 'src/firmware/portPref.ts#resolveFlashPort',
+      given: 'two granted serial ports, one of them the control port the app is connected through',
+      expect: { 'other-port-used': 'the other port is the one to program, as the only candidate' },
+      why: { 'other-port-used': 'the machine is programmed through J1, never through the control port' },
+    },
+    () => {
+      const control = fakePort(...FTDI);
+      const programming = fakePort(...FTDI);
+      expect(resolveFlashPort([control, programming], null, control)).toMatchObject({
+        kind: 'resolved',
+        port: programming,
+        index: 1,
+        reason: 'only-port',
+      });
+      expect(resolveFlashPort([control], null, control)).toEqual({ kind: 'none' });
+    },
+  );
 });
 
 describe('flash port preference storage', () => {

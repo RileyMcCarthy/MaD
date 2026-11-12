@@ -57,6 +57,9 @@
 #define actuator_getPosition() dev_servo_getPosition(ACTUATOR_CH)
 #define actuator_getTarget() dev_servo_getTarget(ACTUATOR_CH)
 #define actuator_atTarget() dev_servo_atTarget(ACTUATOR_CH)
+#define actuator_stageNext(target, feedrate) dev_servo_stageNext(ACTUATOR_CH, (target), (feedrate))
+#define actuator_capStaged(feedrate) dev_servo_capStaged(ACTUATOR_CH, (feedrate))
+#define actuator_getHandovers() dev_servo_getHandovers(ACTUATOR_CH)
 #define actuator_getSetpoint() dev_servo_getSetpoint(ACTUATOR_CH)
 #define actuator_startWaveform(wf) dev_servo_startWaveform(ACTUATOR_CH, (wf))
 
@@ -87,6 +90,7 @@ typedef struct
     bool limitSpeed;
     int32_t positionSteps;
     bool atTarget;
+    uint32_t handovers;  /* staged moves the servo has switched to (dev_servo_getHandovers) */
     int32_t gaugeSetpointSteps;   /* where the move ENDS                */
     int32_t gaugeCommandedSteps;  /* where the trajectory is RIGHT NOW  */     /* actuator_getTarget() — commanded target */
     bool endstopUpperActive;        /* HAL_GPIO_getActive(ENDSTOP_UPPER)      */
@@ -105,6 +109,15 @@ typedef struct
     lib_staticQueue_S queue;
 
     bool absoluteMode;
+    /* Look-ahead (app_motion_private_stageNext): the straight move that follows
+     * the running one, already handed to the servo so it can carry the
+     * running move's speed straight into it. */
+    bool staged;
+    app_motion_move_t stagedMove;
+    int32_t stagedEntries;  /* queue entries it takes up, mode changes included */
+    bool stagedAbsolute;    /* the positioning mode once those entries have run */
+    uint32_t handoversSeen; /* inputs.handovers when it was staged */
+    int32_t stagedFeedrate; /* counts/s it was staged at, after any RESTRICTED cap */
     lib_timer_S dwellTimer;
     lib_timer_S endstopTimer;
     int32_t stepsPerMM; /* actuator units per mm: encoder counts (servo) or drive steps (stepper) */
@@ -151,6 +164,11 @@ static void app_motion_private_processOutputs(void);
 static app_motion_state_E app_motion_private_getDesiredState(void);
 static void app_motion_private_moveManager_start(void);
 static bool app_motion_private_moveManager_run(void);
+static bool app_motion_private_linearMove(const app_motion_move_t *move, bool absolute, int32_t from,
+                                         int32_t *steps, int32_t *feedrate);
+static void app_motion_private_stageNext(void);
+static void app_motion_private_takeHandover(void);
+static void app_motion_private_capStaged(void);
 static bool app_motion_private_waveform_run(void);
 
 /**********************************************************************
@@ -163,6 +181,7 @@ static void app_motion_private_processInputs(void)
     app_motion_data.inputs.limitSpeed = app_control_speedLimited();
     app_motion_data.inputs.positionSteps = actuator_getPosition();
     app_motion_data.inputs.atTarget = actuator_atTarget();
+    app_motion_data.inputs.handovers = actuator_getHandovers();
     /* TWO different quantities, and conflating them is why a recorded G1 used
      * to carry a flat line through the middle of its own ramp.
      *
@@ -203,6 +222,7 @@ static app_motion_state_E app_motion_private_getDesiredState(void)
         lib_staticQueue_empty(&app_motion_data.queue);
         actuator_stop();
         actuator_enable(false);
+        app_motion_data.staged = false;
         desiredState = APP_MOTION_DISABLED;
     }
     else
@@ -307,38 +327,17 @@ static void app_motion_private_moveManager_start(void)
         }
         else
         {
-            /* move.x on SD is machine µm (host converts sample G-code at upload). */
-            const int32_t moveTargetUm = app_motion_data.currentMove.x;
-            int32_t steps = (int32_t)(((int64_t)moveTargetUm * app_motion_data.stepsPerMM) / 1000LL);
-            int32_t feedrate = (int32_t)(((int64_t)app_motion_data.currentMove.f * app_motion_data.stepsPerMM) / 1000LL);
-            /* RESTRICTED is entered on an endstop, an open door, or a sample or
-             * frame over its tension limit -- conditions where the machine may
-             * still be moved, deliberately and slowly, to get out of them. The
-             * state machine has always computed a speed cap for it and nothing
-             * has ever read it, so until now the only difference between
-             * RESTRICTED and MANUAL was the badge in the UI: a carriage sitting
-             * on an endstop could be commanded at the full 50 mm/s.
-             *
-             * Clamped rather than refused, because refusing motion in
-             * RESTRICTED is what would strand a specimen under load with no way
-             * to back off. */
-            if (app_motion_data.inputs.limitSpeed && (app_motion_data.restrictedFeedrate > 0) &&
-                (feedrate > app_motion_data.restrictedFeedrate))
-            {
-                DEBUG_INFO("RESTRICTED: feedrate %d -> %d steps/s\n", feedrate,
-                           app_motion_data.restrictedFeedrate);
-                feedrate = app_motion_data.restrictedFeedrate;
-            }
             const bool openLoop = (app_motion_data.currentMove.g == G124_OPEN_LOOP_MOVE);
-            if (app_motion_data.absoluteMode == false)
-            {
-                /* Relative to where the machine IS -- except open loop, which
-                 * has no encoder truth: its moves chain from where the last one
-                 * was COMMANDED, so a G124 out and a G124 back send equal pulse
-                 * counts however far the encoder disagreed. */
-                steps += openLoop ? app_motion_data.inputs.gaugeCommandedSteps
-                                  : app_motion_data.inputs.positionSteps;
-            }
+            /* Relative to where the machine IS -- except open loop, which has
+             * no encoder truth: its moves chain from where the last one was
+             * COMMANDED, so a G124 out and a G124 back send equal pulse counts
+             * however far the encoder disagreed. */
+            const int32_t from = openLoop ? app_motion_data.inputs.gaugeCommandedSteps
+                                          : app_motion_data.inputs.positionSteps;
+            int32_t steps = 0;
+            int32_t feedrate = 0;
+            (void)app_motion_private_linearMove(&app_motion_data.currentMove, app_motion_data.absoluteMode, from,
+                                                &steps, &feedrate);
             DEBUG_INFO("G0 command moving to steps %d at %d steps/s\n", steps, feedrate);
             DEBUG_INFO("moving from position (mm) %d to setpoint (mm) %d\n", app_motion_data.inputs.positionSteps / app_motion_data.stepsPerMM, steps / app_motion_data.stepsPerMM);
             if (openLoop)
@@ -357,10 +356,12 @@ static void app_motion_private_moveManager_start(void)
         DEBUG_INFO("G4 command pausing for %u ms", app_motion_data.currentMove.p);
         lib_timer_init(&app_motion_data.dwellTimer, app_motion_data.currentMove.p);
         lib_timer_start(&app_motion_data.dwellTimer);
+        app_motion_data.staged = false;
         break;
     case G28_HOME:
         DEBUG_INFO("%s", "Homing\n");
         app_motion_data.homeState = APP_MOTION_HOME_START;
+        app_motion_data.staged = false;
         break;
     case G90_ABSOLUTE:
         DEBUG_INFO("%s", "Setting absolute mode\n");
@@ -376,21 +377,25 @@ static void app_motion_private_moveManager_start(void)
         break;
     case G123_WAVEFORM:
     {
-        /* The wave swings about wherever the carriage is right now, which is
-         * also the point it is returned to at the end. */
+        /* A cosine from rest where the carriage is: that point is a peak of the
+         * wave and where it ends. A positive amplitude rises from it first, so
+         * the centre is above it; a negative one falls first. */
         const app_motion_waveform_t *const req = &app_motion_data.currentMove.wave;
         dev_servo_waveform_S wf;
         memset(&wf, 0, sizeof(wf));
-        wf.centreCounts = app_motion_data.inputs.positionSteps;
         /* 0.1 um units on the wire -> encoder counts. int64 intermediate: at
          * 3000 mm and 8192 steps/mm this is 2.4e11 before the divide. */
-        wf.amplitudeCounts =
+        const int32_t amplitude =
             (int32_t)(((int64_t)req->amplitudeTenthUm * app_motion_data.stepsPerMM) / 10000LL);
+        wf.centreCounts = app_motion_data.inputs.positionSteps + amplitude;
+        wf.amplitudeCounts = (amplitude < 0) ? -amplitude : amplitude;
+        wf.startHigh = (amplitude < 0);
         wf.freqMicroHz = req->freqMicroHz;
         wf.cycles = req->cycles;
         wf.dwellHighUs = req->dwellHighMs * 1000U;
         wf.dwellLowUs = req->dwellLowMs * 1000U;
         wf.skewPerMille = req->skewPerMille;
+        wf.endFreqMicroHz = req->endFreqMicroHz;
 
         /* An unrecognised traverse profile is REFUSED, not defaulted. The wire
          * carries a whole byte and only 0 and 1 are defined, so a newer host
@@ -455,6 +460,104 @@ static bool app_motion_private_waveform_run(void)
     return app_motion_data.inputs.atTarget;
 }
 
+/* Target (counts) and feedrate (counts/s) of a straight move, in `absolute`
+ * or relative positioning; relative moves are measured from `from`. False for
+ * a move with no feedrate, which must not be sent to the drive. */
+static bool app_motion_private_linearMove(const app_motion_move_t *move, bool absolute, int32_t from,
+                                         int32_t *steps, int32_t *feedrate)
+{
+    /* move.x on SD is machine µm (host converts sample G-code at upload). */
+    *steps = (int32_t)(((int64_t)move->x * app_motion_data.stepsPerMM) / 1000LL);
+    *feedrate = (int32_t)(((int64_t)move->f * app_motion_data.stepsPerMM) / 1000LL);
+    /* RESTRICTED is entered on an endstop, an open door, or a sample or frame
+     * over its tension limit -- conditions where the machine may still be
+     * moved, deliberately and slowly, to get out of them. Clamped rather than
+     * refused, because refusing motion in RESTRICTED is what would strand a
+     * specimen under load with no way to back off. */
+    if (app_motion_data.inputs.limitSpeed && (app_motion_data.restrictedFeedrate > 0) &&
+        (*feedrate > app_motion_data.restrictedFeedrate))
+    {
+        DEBUG_INFO("RESTRICTED: feedrate %d -> %d steps/s\n", *feedrate, app_motion_data.restrictedFeedrate);
+        *feedrate = app_motion_data.restrictedFeedrate;
+    }
+    if (absolute == false)
+    {
+        *steps += from;
+    }
+    return move->f != 0U;
+}
+
+/* Look-ahead: when the next move to run (past any G90/G91, which take no time)
+ * is another straight move, hand it to the servo now. The servo then switches
+ * to it the moment the running move's trajectory arrives, carrying its speed
+ * through when both go the same way, instead of stopping at every junction of
+ * a program. A relative move continues from where the running one was SENT,
+ * which is exactly where its trajectory ends. The queue is CONTROL-cog-only,
+ * as in app_motion_isIdle, so it is read here without the lock. */
+static void app_motion_private_stageNext(void)
+{
+    bool absolute = app_motion_data.absoluteMode;
+    app_motion_move_t next;
+    for (int32_t i = 0; lib_staticQueue_peek(&app_motion_data.queue, i, &next); i++)
+    {
+        if ((next.g == G90_ABSOLUTE) || (next.g == G91_INCREMENTAL))
+        {
+            absolute = (next.g == G90_ABSOLUTE);
+            continue;
+        }
+        int32_t steps = 0;
+        int32_t feedrate = 0;
+        if (((next.g == G0_RAPID_MOVE) || (next.g == G1_LINEAR_MOVE)) &&
+            app_motion_private_linearMove(&next, absolute, app_motion_data.inputs.gaugeSetpointSteps, &steps,
+                                          &feedrate))
+        {
+            actuator_stageNext(steps, feedrate);
+            app_motion_data.staged = true;
+            app_motion_data.stagedMove = next;
+            app_motion_data.stagedEntries = i + 1;
+            app_motion_data.stagedAbsolute = absolute;
+            app_motion_data.handoversSeen = app_motion_data.inputs.handovers;
+            app_motion_data.stagedFeedrate = feedrate;
+        }
+        break;
+    }
+}
+
+/* The RESTRICTED cap is applied when a move is converted, and a staged move was
+ * converted while the one before it started running. If the machine has turned
+ * RESTRICTED since (an endstop, an open door, a sample or frame over its
+ * tension limit), the staged copy the servo holds is lowered to the cap before
+ * the servo switches to it, so the move that runs is the capped one. Only the
+ * staged move: the running move's own speed is not changed here. */
+static void app_motion_private_capStaged(void)
+{
+    if (app_motion_data.inputs.limitSpeed && (app_motion_data.restrictedFeedrate > 0) &&
+        (app_motion_data.stagedFeedrate > app_motion_data.restrictedFeedrate))
+    {
+        /* False only if the servo switched to it after this tick's inputs were
+         * read; the handover is then taken next tick, as for any other. */
+        if (actuator_capStaged(app_motion_data.restrictedFeedrate))
+        {
+            DEBUG_INFO("RESTRICTED: staged feedrate %d -> %d steps/s\n", app_motion_data.stagedFeedrate,
+                       app_motion_data.restrictedFeedrate);
+        }
+        app_motion_data.stagedFeedrate = app_motion_data.restrictedFeedrate;
+    }
+}
+
+/* The servo has switched to the staged move: it is now the running one. */
+static void app_motion_private_takeHandover(void)
+{
+    for (int32_t i = 0; i < app_motion_data.stagedEntries; i++)
+    {
+        (void)lib_staticQueue_pop(&app_motion_data.queue, NULL);
+    }
+    app_motion_data.absoluteMode = app_motion_data.stagedAbsolute;
+    app_motion_data.currentMove = app_motion_data.stagedMove;
+    app_motion_data.staged = false;
+    DEBUG_INFO("Handed over to move: %d\n", app_motion_data.currentMove.g);
+}
+
 static bool app_motion_private_moveManager_run(void)
 {
     bool moveComplete = false;
@@ -462,6 +565,29 @@ static bool app_motion_private_moveManager_run(void)
     {
     case G0_RAPID_MOVE:
     case G1_LINEAR_MOVE:
+        if (app_motion_data.staged)
+        {
+            if (app_motion_data.inputs.handovers != app_motion_data.handoversSeen)
+            {
+                app_motion_private_takeHandover();
+                app_motion_private_stageNext();
+            }
+            else
+            {
+                app_motion_private_capStaged();
+            }
+        }
+        else if (app_motion_data.inputs.atTarget)
+        {
+            /* The last straight move before anything else (a dwell, homing, a
+             * waveform, the end of a program or a jog) waits to be settled. */
+            moveComplete = true;
+        }
+        else
+        {
+            app_motion_private_stageNext();
+        }
+        break;
     case G124_OPEN_LOOP_MOVE:
         moveComplete = app_motion_data.inputs.atTarget;
         break;
@@ -495,6 +621,7 @@ void app_motion_init(int lock)
 {
     app_motion_data.lock = lock;
     app_motion_data.absoluteMode = true; // Default absolute cordinates
+    app_motion_data.staged = false;
     MachineProfile machineProfile;
     memset(&machineProfile, 0, sizeof(machineProfile));
     const bool profileRead =
@@ -568,6 +695,7 @@ bool app_motion_addMove(const app_motion_move_t *move)
 void app_motion_abortAndClear(void)
 {
     actuator_stop();
+    app_motion_data.staged = false;
     lib_staticQueue_empty(&app_motion_data.queue);
     if (app_motion_data.state == APP_MOTION_MOVING)
     {

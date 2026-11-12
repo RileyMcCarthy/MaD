@@ -10,9 +10,10 @@ Run the gate(s) for the area you touched (see
 [CI/CD](ci-cd-and-releases.md#running-the-gates-locally)). At minimum:
 
 - **App:** `npm run verify` in `Software/Control`.
-- **Firmware:** `pio check` + `pio test -e native_test`, and build `P2Eval`.
-  The SIL's project files boot the `P2Eval` image (`make flash-image`), and
-  the `p2core`/`p2iss` suites run `MaDEdge` (`make p2image`).
+- **Firmware:** `pio check` + `pio test -e native_test`, and build `MaD`.
+  The SIL's project files boot that same image off the module's flash
+  (`make flash-image`), and the `p2core`/`p2iss` suites run it too
+  (`make p2image`).
 - **Protocol:** regenerate all consumers and run `./examples/verify.sh`.
 - **Anything user-facing:** `mkdocs build --strict` if you changed docs.
 
@@ -57,7 +58,7 @@ hard-to-debug failures:
   File System Access. Test-only fakes (SIL serial, OPFS) live in `e2e/`, never in
   `src/`.
 - **Native *and* P2** — always exercise both the host (`native_*`) and the real
-  `P2Eval` builds; pointer sizes and timing differ.
+  `MaD` build; pointer sizes and timing differ.
 - **embsim stays generic** — no generic embsim crate may depend on MaD-specific
   code. MaD specifics live in `models/`, `p2core/`, `p2iss/`, `mad-catalog/`, `mad-runner/`, and the `protocol` crate (`Protocol/rust/`).
 - **The app is not a safety device** — never make the UI halt the machine on link

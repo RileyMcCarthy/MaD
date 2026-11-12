@@ -73,6 +73,7 @@ typedef struct __attribute__((packed))
     uint32_t dwellHighMs;     /* hold at the upper peak                        */
     uint32_t dwellLowMs;      /* hold at the lower peak                        */
     uint16_t skewPerMille;    /* share of the traversing time spent descending */
+    uint32_t endFreqMicroHz;  /* chirp: frequency it sweeps to; 0 = no sweep    */
     uint8_t shape;            /* traverse profile: 0 sine, 1 triangle          */
 } app_motion_waveform_t;
 

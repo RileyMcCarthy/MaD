@@ -179,7 +179,7 @@ describe('codec golden byte vectors (frozen — guards the wire format)', () => 
     },
     () => {
       expect(
-        bytes(nu.encodeWaveformMove({ shape: nu.WaveformShape.SINE, amplitude: 5, frequency: 2, cycles: 100, dwellHigh: 0, dwellLow: 0, skewPerMille: 500 , endFrequency: 0})),
+        bytes(nu.encodeWaveformMove({ shape: nu.WaveformShape.SINE, amplitude: 5, frequency: 2, cycles: 100, dwellHigh: 0, dwellLow: 0, skewPerMille: 500, endFrequency: 0 })),
       ).toEqual(GOLD.waveform);
     },
   );
@@ -248,7 +248,7 @@ describe('round-trip within scale precision', () => {
       },
     },
     () => {
-      const v = { shape: nu.WaveformShape.TRIANGLE, amplitude: 12.345, frequency: 0.5, cycles: 1000, dwellHigh: 0, dwellLow: 0, skewPerMille: 500 , endFrequency: 0};
+      const v = { shape: nu.WaveformShape.TRIANGLE, amplitude: 12.345, frequency: 0.5, cycles: 1000, dwellHigh: 0, dwellLow: 0, skewPerMille: 500, endFrequency: 0 };
       const out = nu.decodeWaveformMove(nu.encodeWaveformMove(v));
       expect(out.shape).toBe(nu.WaveformShape.TRIANGLE);
       expect(out.amplitude).toBeCloseTo(12.345, 3);

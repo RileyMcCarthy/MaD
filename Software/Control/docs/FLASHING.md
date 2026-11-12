@@ -53,41 +53,57 @@ pin 1: P62    pin 2: P63    pin 3: RESn    pin 4: GND
 (Confirmed against the pad-to-net assignments in `MaD_Edge.kicad_pcb`; an earlier
 revision of this document listed the four nets in reverse pin order.)
 
-P62/P63 is also where a
-production firmware build puts the protocol UART, at 2,000,000 baud
-(`HAL/Config/HAL_serial_config.c`, with `ENABLE_DEBUG_SERIAL` off). So on
-production hardware **one connection serves both control and programming** —
-the app defaults to reusing the port it is already connected to, and after a
-flash it reconnects to that port at that rate. That is why the Firmware screen's
-default image is a release's production build
-(`MaD-Firmware-<version>-P2Eval.bin`; `pickFirmwareAsset` in
-`src/firmware/release.ts`). The release is the recommended one: the newest
-that speaks this app's protocol version (`recommendedRelease`, read from
-`firmware/manifest.json`). A release without a production build offers
-nothing, and one without `firmware-info.json` predates the protocol
-handshake, so it is never recommended. When that release also carries a
-MaDEdge build, the screen offers a **Board** choice between the two, and
-**Install recommended firmware** flashes the chosen board's build; P2Eval
-stays the default. The served folder holds `firmware/manifest.json` with each
-listed release's images beside it, plus `firmware/latest.json`,
-`firmware/latest.bin` (P2Eval, the path every deployed app version reads)
-and `firmware/latest-MaDEdge.bin` for app versions from before the manifest.
+J1 is the **programming port** only. The firmware's protocol (its MAIN
+channel) is on the secondary serial, P30 (P2 RX) / P32 (P2 TX) at 2,000,000
+baud (`HAL/Include/HW_pins.h`, `HAL/Config/HAL_serial_config.c`): on the Edge
+carrier v0.3 that is the isolated link J4 through IC2; on a P2-EVAL bench, an
+FTDI adapter with its TX on P30 and its RX on P32. P62/P63 carry the debug log.
+The split exists because the programming adapter's DTR is wired to `RESn`:
+when the protocol shared J1, every connect, page refresh and auto-reconnect
+rebooted the machine, aborting tests and briefly floating the pins (the bench
+drive treats a floating ENA as enabled). The control port has no reset line,
+so opening it restarts nothing. The protocol has a `reboot` write for that:
+the firmware ACKs, disables motion and reboots ~100 ms later (NACK while a
+test runs). The worker sends it (`DeviceSession.reboot`); no screen does yet,
+so until one does, the operator power-cycles the machine.
+
+So the app holds two ports with distinct roles. The **control port** is the
+Connect page's: live data and tests. The **programming port** is used only by
+the Firmware page. For a flash, `flashWithSession` stops the control session,
+programs the programming port, and afterwards reconnects the session to the
+control port, never to the programming port. Flashing the port the control
+session holds is refused (`resolveFlashPort` excludes it), and auto-reconnect
+refuses to guess when two granted ports share the remembered USB id
+(`matchControlPort` in `src/device/controlPort.ts`), since the wrong guess
+resets the machine.
+
+Upgrading a machine from 0.14 or earlier, whose protocol is still on J1: the
+app is connected over the programming port, so the Firmware page offers no
+port to flash and refuses that one ("MaD Control is connected through this
+port; disconnect, then flash"). Disconnect on the Connect page, flash over J1
+from the Firmware page while disconnected, rewire the bench's FTDI adapter to
+P30 (adapter TX) / P32 (adapter RX), then connect on that adapter. The user
+guide has the same steps (`docs/user-guide/firmware-and-diagnostics.md`,
+"Machines still on firmware 0.14 or earlier").
+
+Each release carries one image, `MaD-Firmware-<version>.bin`
+(`pickFirmwareAsset` in `src/firmware/release.ts`). The Firmware screen
+writes the recommended release's image: the newest release that speaks this
+app's protocol version (`recommendedRelease`, read from
+`firmware/manifest.json`). A release without that image (every release up to
+0.14, whose single-port builds were `-P2Eval.bin`/`-release.bin` and
+`-MaDEdge.bin`/`-madEdge.bin`/`-debug.bin`) or without `firmware-info.json`
+is never recommended. The served folder holds `firmware/manifest.json` with
+each listed release's image beside it, plus `firmware/latest.json` and
+`firmware/latest.bin` for app versions from before the manifest: the newest
+release with the one image, falling back to the newest old production build
+(`-P2Eval.bin`/`-release.bin`) until one exists.
 
 Two things this does *not* work over:
 
-- The EdgeBoard's **isolated Raspberry Pi link** (J4/IC2, P52–P55). On the
-  machine's P2-EC32MB those pins go to the module's PSRAM and are not on its
-  edge fingers, so the link never reaches the chip. Where a bench brings
-  P53/P55 out, the link has no reset line.
+- The **control port** (J4/IC2 on the Edge carrier, or the bench FTDI on
+  P30/P32). It has no reset line, so it cannot reach the boot ROM.
 - Any USB-serial cable that does not drive `RESn` from DTR.
-
-A debug firmware build (`MaDEdge`, released as `-MaDEdge.bin`) moves
-the protocol UART to P53/P55 and puts a debug log on P62/P63, so on a
-two-adapter bench setup the programming port and the control port differ. That
-is what the **Port** control on the Firmware screen is for. The machine itself
-cannot run that build: its P2-EC32MB module uses P40–P57 for its PSRAM and does
-not bring them out, so the EdgeBoard's J4/IC2 link on P52–P55 never reaches the
-chip. Flash it as a local file, on a bench only.
 
 Web Serial exposes only USB vendor/product IDs — no serial number, no device
 path — so two identical adapters cannot be told apart programmatically. The app
@@ -101,6 +117,9 @@ Run the CLI harness first. It drives the same `src/firmware/` code over Node's
 `serialport`, so a failure there is a wiring or protocol problem rather than a
 Web Serial one:
 
+`MAD_SERIAL` is the programming port (the Prop Plug on J1, or the P2-EVAL
+USB).
+
 ```bash
 MAD_SERIAL=/dev/cu.usbserial-XXXX npm run hw:flash -- --detect
 ```
@@ -110,31 +129,43 @@ Seeing `Prop_Ver G` proves the DTR reset and the autobaud window both work.
 Then:
 
 ```bash
-MAD_SERIAL=/dev/cu.usbserial-XXXX npm run hw:flash -- --ram   ../../Firmware/MaDCore/.pio/build/P2Eval/program
-MAD_SERIAL=/dev/cu.usbserial-XXXX npm run hw:flash -- --flash ../../Firmware/MaDCore/.pio/build/P2Eval/program
+MAD_SERIAL=/dev/cu.usbserial-XXXX npm run hw:flash -- --ram   ../../Firmware/MaDCore/.pio/build/MaD/program
+MAD_SERIAL=/dev/cu.usbserial-XXXX npm run hw:flash -- --flash ../../Firmware/MaDCore/.pio/build/MaD/program
 ```
 
 Note the firmware build artifact is named `program` with no extension; CI
-renames it to `MaD-Firmware-<version>-<board>.bin` for release assets:
-`-P2Eval.bin` and `-MaDEdge.bin`, after the PlatformIO env. Releases up to
-0.14 named them `-release.bin` and `-madEdge.bin` (`-debug.bin` before 0.13);
-the app recognises both namings. The file picker in the UI accepts all of them.
+renames it to `MaD-Firmware-<version>.bin` for release assets. Releases up to
+0.14 carried one single-port build per board instead (`-P2Eval.bin` and
+`-MaDEdge.bin`; `-release.bin` and `-madEdge.bin` before, `-debug.bin` before
+0.13). The file picker in the UI accepts any of them as a local file; flashing
+an old one puts the protocol back on J1 (or on pins the app can't reach).
 
 ## In SIL
 
-The whole update runs in SIL, on the ISS, with nothing faked: e2e scenarios FW1
-and COMPAT-reflash on `SIL/mad-reflash-cosim.toml` (`cd SIL && make e2e-reflash`, MaD #134). The
-app connects to the machine's project with the firmware booted off the module's
-flash; the Firmware page resets the chip with its DTR pulse, which crosses
-embsim's `chrome-cdp` DTR pin and a Prop Plug reset stage onto J1.3 and the
-chip's `RESN`; the ROM, back in its serial window, takes the stub and the image;
-the stub writes the module's simulated flash; and the reconnected session finds
-the image's own version stamp. Scenario COMPAT-reflash runs the same chain from
-the other end: the board boots the release from before the protocol handshake,
-the too-old banner offers the recommended firmware, Install recommended firmware
-writes it, and the reconnected session reports an `ok` verdict with motion
-enabled. The board differs from the machine's default
-project in two places, both open questions for the real machine: the Prop Plug
+The update runs in SIL, on the ISS, with nothing faked: e2e scenarios FW1 and
+COMPAT-reflash on `SIL/mad-reflash-cosim.toml` (`cd SIL && make e2e-reflash`,
+MaD #134). That board's host is on the programming port J1, the Prop Plug's
+(USB 0403:6015), and the module boots the firmware off its flash. With no
+session held, the Firmware page resets the chip with its DTR pulse, which
+crosses embsim's `chrome-cdp` DTR pin and a Prop Plug reset stage onto J1.3 and
+the chip's `RESN`; the ROM, back in its serial window, takes the stub and the
+image; the stub writes the module's simulated flash; and the new firmware's
+boot line on J1 (P62), `Starting MaD Board <version>`, names the image's own
+stamp in the board's log. The app opens nothing afterwards, having held no
+control port. Scenario COMPAT-reflash runs the same chain from the other end:
+the board boots the release from before the protocol handshake, which answers
+on J1, the too-old banner offers the recommended firmware, the operator
+disconnects (the app never flashes the port its session holds), and Install
+recommended firmware writes it.
+
+What SIL does not run yet is the reconnect to the new firmware: it answers on
+the control port J4, and embsim's `chrome-cdp` gives a board one port. A board
+with the host on both J1 and J4 is the follow-up; until then the reconnect, the
+`ok` verdict and motion on the new firmware are held by COMPAT-update-loop on
+the in-page fake board.
+
+The board differs from the machine's default project, beyond where its host
+sits, in two places, both open questions for the real machine: the Prop Plug
 is taken to reset on DTR assert (`invert_dtr`), and S301's P59 pull-down is
 open, without which the ROM boots the flash at once after a reset and no
 flasher finds it (`SIL/mad-reflash-cosim.toml` says why for each).

@@ -293,6 +293,13 @@ const SANITIZE_STACK_LINES = 5;
  */
 export const SANITIZE_STACK_MAX = 4000;
 const STACK_KEY = /stack$/i;
+/**
+ * Longest retained value for a key named like a byte dump (`payloadHex`). A
+ * failed command's bytes are the evidence a protocol fault turns on, and a
+ * 32-move batch is ~800 characters of hex; 1536 holds 512 bytes.
+ */
+export const SANITIZE_HEX_MAX = 1536;
+const HEX_KEY = /hex$/i;
 
 /** Sentinel: this key is not representable and should be omitted entirely. */
 const DROP = Symbol('drop');
@@ -362,7 +369,10 @@ function sanitizeString(key: string, value: string): string {
   if (!value.includes('://') && (isPathKey(key) || /^(?:[A-Za-z]:)?[\\/].*[\\/]/.test(value))) {
     return truncate(redactCredentials(basename(value)));
   }
-  return truncate(redactCredentials(value), STACK_KEY.test(key) ? SANITIZE_STACK_MAX : SANITIZE_STRING_MAX);
+  let max = SANITIZE_STRING_MAX;
+  if (STACK_KEY.test(key)) max = SANITIZE_STACK_MAX;
+  else if (HEX_KEY.test(key)) max = SANITIZE_HEX_MAX;
+  return truncate(redactCredentials(value), max);
 }
 
 function sanitizeValue(key: string, value: unknown): unknown | typeof DROP {

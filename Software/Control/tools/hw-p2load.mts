@@ -90,7 +90,7 @@ async function main() {
     process.exit(2);
   }
   if (mode !== 'detect' && !file) {
-    console.error(`Pass a firmware image, e.g. --${mode} ../../Firmware/MaDCore/.pio/build/P2Eval/program`);
+    console.error(`Pass a firmware image, e.g. --${mode} ../../Firmware/MaDCore/.pio/build/MaD/program`);
     process.exit(2);
   }
 

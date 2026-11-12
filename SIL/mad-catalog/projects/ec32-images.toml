@@ -1,7 +1,7 @@
 # The P2-EC32MB module holding the two images MaD's SIL makefile writes, on
 # the supplies a carrier gives its fingers (embsim's
 # boards/projects/ec32-carrier.toml): its flash holding embsim's stage-1 and
-# the MaDEdge firmware, and the card in its socket J301 a FAT16
+# the MaD firmware, and the card in its socket J301 a FAT16
 # image of SIL/sd. These are the two image entries of the machine's project
 # (embsim MIGRATING-MAD.md section 4). `embsim check` here shows that the two
 # paths resolve and that the module's flash and card kinds take the files; it
@@ -30,7 +30,7 @@ kind = "p2"
 [board.model.options]
 core = "mad-p2iss"
 
-# Stage-1 and the MaDEdge program, laid out by `make flash-image`.
+# Stage-1 and the MaD program, laid out by `make flash-image`.
 [[board.model]]
 value = "SPI Flash 16MB (128Mb)"
 kind = "w25q128jv"

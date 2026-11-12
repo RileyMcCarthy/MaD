@@ -10,8 +10,8 @@
 # to it:
 #
 #   file                             the module boots        the host
-#   mad.toml                         the firmware off flash  host-serial on J1
-#   mad-cosim.toml                   the firmware off flash  chrome-cdp on J1
+#   mad.toml                         the firmware off flash  host-serial on J4
+#   mad-cosim.toml                   the firmware off flash  chrome-cdp on J4
 #   mad-playground.toml              that file, its Chrome headed on the app
 #   mad-hard-stop-cosim.toml         mad-cosim.toml with a hard stop, one
 #                                    option of the machine's
@@ -19,32 +19,34 @@
 #                                    its flash erased
 #   mad-serial-boot-cosim.toml       the ROM's serial boot   chrome-cdp on J1
 #   mad-serial-boot-playground.toml  that file, its Chrome headed on the app
-#   mad-reflash-cosim.toml           mad-cosim.toml with the Prop Plug's
-#                                    reset on J1.3 and the ROM's serial
-#                                    window open after a reset
+#   mad-reflash-cosim.toml           the firmware off flash  chrome-cdp on J1,
+#                                    with the Prop Plug's reset on J1.3 and
+#                                    the ROM's serial window open after a
+#                                    reset
 #
 # Every file takes the carrier as drawn: the Edge carrier v0.3 schematic
 # (mad-catalog/netlists/mad_edge.net, its header says what it holds). The
 # e2e runs mad-cosim.toml, the scenarios that move the carriage with the
 # rest, mad-hard-stop-cosim.toml for SERVO-stall, which drives the
-# carriage into its stop, and mad-reflash-cosim.toml for FW1, the app
-# flashing the firmware over J1; the playgrounds are for a person
-# (SIL/makefile).
+# carriage into its stop, and mad-reflash-cosim.toml for FW1 and
+# COMPAT-reflash, the app flashing the firmware over J1; the playgrounds are
+# for a person (SIL/makefile).
 #
-# J1 is the carrier's debug header, where the machine's Prop Plug sits. The
-# route is the user's decision (2026-10-21): the host on J1 and the
-# production build (pio env P2Eval), whose MAIN channel, the protocol,
-# is on P62/P63, the pins J1 carries. The app flashes the firmware over J1
-# (Software/Control/README.md, "Firmware flashing").
-#
-# Open, for the user: which image the machine runs. By default the app
-# flashes a release's MaDEdge image, the MaDEdge build, whose
-# protocol is on P53/P55, pins the P2-EC32MB has no finger for, in every
-# release so far (the build has it on P30/P32 since the Edge v0.3 pin
-# move) (read:
-# Software/Control/src/firmware/release.ts, pickFirmwareAsset; .github/
-# workflows/ci.yml, the release's two images). The production build is the
-# release's -P2Eval.bin, which the app flashes only as a local file.
+# The machine has two serial ports, and each file puts its host on the one
+# its boot talks on. The firmware, one image (pio env MaD), has its
+# protocol, the MAIN channel, on P30/P32 at 2 000 000 baud, which the
+# isolator IC2 carries to and from the carrier's control port J4, where the
+# machine's FTDI adapter sits: the flash-boot files' host is there. J1, the
+# carrier's debug header, is the programming port, where the Prop Plug
+# sits: the chip's P62/P63, where the ROM's serial loader listens and the
+# firmware writes its log. The serial-boot files' host is there, as the
+# app's flasher is, and so is mad-reflash-cosim.toml's: it boots the
+# firmware off flash, and its host flashes a new one and reads the log, the
+# firmware's protocol out of its reach on J4. The protocol stays off J1
+# because the Prop Plug's DTR resets the chip whenever a port is opened on
+# it (read: Firmware/MaDCore/platformio.ini, env MaD; src/HAL/Include/
+# HW_pins.h, HW_PIN_MAIN_RX/TX and HW_PIN_DEBUG_RX/TX; mad_edge.net, IC2 on
+# P29-P32 and J4).
 #
 #   cd SIL && make flash-image sd-image check
 #
@@ -78,10 +80,10 @@ kind = "p2"
 core = "mad-p2iss"
 
 # The module's flash, erased: no image. The app's flasher writes the
-# production firmware (pio env P2Eval) into it through the ROM's serial
-# loader; that build's MAIN channel receives on P63 and transmits on P62
-# (Firmware/MaDCore/src/HAL/Include/HW_pins.h, HW_PIN_MAIN_RX/TX), the
-# pins J1 carries.
+# firmware (pio env MaD) into it through the ROM's serial loader, which
+# receives on P63 and transmits on P62, the pins J1 carries. The firmware
+# it writes has its protocol on P30/P32, J4's (Firmware/MaDCore/src/HAL/
+# Include/HW_pins.h, HW_PIN_MAIN_RX/TX; the header, above).
 [[board.model]]
 value = "SPI Flash 16MB (128Mb)"
 kind = "w25q128jv"
@@ -130,10 +132,10 @@ encoder_output = "rs422"
 # slice and prints where its DevTools are. The DevTools port is fixed so the
 # e2e's CDP_URL holds; the port is granted to every origin, as the board
 # route grants it today (--granted, SIL/scripts/board-route.sh). Its USB
-# ids, 0403:6015, are an FTDI FT231X's, the chip in Parallax's USB adapters
-# (inferred; the P2-EVAL's own Parallax FT231X reports them), as the ROM
-# route names them today (`--usb-product-id 0x6015`, SIL/makefile
-# playground-rom and e2e-rom).
+# ids, 0403:6015, are an FTDI FT231X's, the chip in Parallax's USB adapters,
+# the Prop Plug on J1 (inferred; the P2-EVAL's own Parallax FT231X reports
+# them): the ids the e2e expects on the ROM board (read:
+# Software/Control/e2e/fixtures.mjs, E2E_PORT_USB).
 [[component]]
 name = "HOST"
 kind = "chrome-cdp"
@@ -233,29 +235,34 @@ from = "BENCH.AGND"
 to = "DS2.J2.2"
 volts = 0.0
 
-# Nothing on J4, the Raspberry Pi's connector: no supply and no wire. The
-# host is on J1 (below). J4's RPI_RX and RPI_TX go only to the isolator
-# IC2, whose carrier side is on P29-P32 (read: mad_edge.net); the
-# production firmware does not use those pins, the debug build's MAIN
-# channel does (HAL_serial_config.c). IC2's Pi side (RPI_3V3, RPI_GND) is
-# left unpowered, as it is with no Pi seated.
+# No bench supply on J4, the control port: IC2's side on it (RPI_3V3, its
+# VCC2, and RPI_GND, its GND2) takes its power from whatever is plugged into
+# J4, a Raspberry Pi or a USB adapter, and nothing on the carrier ties
+# RPI_GND to a voltage (read: mad_edge.net, IC2's note). Each file's host's
+# wires (below) power that side where its host sits on J4, and leave it
+# unpowered, as with nothing plugged in, where its host sits on J1.
 
 # ---- The host's wires -------------------------------------------------------
 
-# The host on the carrier's debug header J1, the Prop Plug's: J1.1 is P62
-# (the chip's transmit: the firmware's answers, and the ROM's), J1.2 is P63
-# (its receive), J1.4 the carrier's GND. J1.1 and J1.2 go straight to the
+# The host on the carrier's debug header J1, the programming port, where the
+# Prop Plug sits: J1.1 is P62 (the chip's transmit: the ROM's answers, then
+# the firmware's log), J1.2 is P63 (its receive: what the app's flasher
+# sends the ROM), J1.4 the carrier's GND. J1.1 and J1.2 go straight to the
 # socket's fingers 50 and 49, and on to the chip's P62 and P63 (read:
 # mad_edge.net, nets P62 and P63; embsim boards/netlists/p2_ec32mb.net).
-# J1.3, RESn, stays unwired, and the host's DTR with it: neither boot needs
-# a reset. The flash boot runs from power-up, and the ROM's serial boot
-# answers without a reset, P59's pull-up (R302, the serial boot's scenario)
-# selecting it. The app's flasher resets the chip with DTR before its probe
-# (Software/Control/README.md); on the serial boot, with nothing on J1.3,
-# the probe finds the ROM still listening, as it does for 90 s of board time
-# from the chip's start (FW-ISS, make e2e-rom). The board whose J1.3 the
-# flasher's DTR reaches, through the Prop Plug's reset stage, is
-# mad-reflash-cosim.toml (FW1, make e2e-reflash).
+# J1.3, RESn, stays unwired, and so does the host's DTR, so
+# nothing pulses the reset, and the ROM's serial boot answers without one,
+# P59's pull-up (R302, the scenario) selecting it. The app's flasher resets
+# the chip with DTR before its probe (Software/Control/README.md, "Firmware
+# flashing"); with nothing on J1.3 the probe finds the ROM still listening,
+# as it does for 90 s of board time from the chip's start (FW-ISS, make
+# e2e-rom). The board whose J1.3 the flasher's DTR reaches, through the
+# Prop Plug's reset stage, is mad-reflash-cosim.toml (FW1, make
+# e2e-reflash).
+#
+# The control port J4 stays unwired, and IC2's side on it unpowered, as with
+# nothing plugged in: the firmware the flasher writes answers there once it
+# runs (the header, above), and these files end with the flash written.
 
 # The adapter's I/O rail: the chip's P62/P63 bank (VIO_56_63) is 3.3 V.
 [[wire]]

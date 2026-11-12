@@ -49,7 +49,7 @@ mad-runner (bin) ──► embsim-cli
            └──► models ──► embsim-models ──► embsim-core
 ```
 
-The project files' runs execute the firmware's P2 image on the ISS. It does not link a host-compiled firmware library.
+The project files' runs execute the firmware's P2 image (the `MaD` image the hardware runs) on the ISS. It does not link a host-compiled firmware library.
 
 > `protocol` is a workspace member but **no crate in the workspace depends on it** (not even `mad-catalog`). It is a standalone leaf with an empty `[dependencies]` table, built/tested on its own so its generated roundtrip tests stay compiled (`Protocol/rust/Cargo.toml`, `Protocol/rust/src/lib.rs:3-7`). Don't draw a dependency edge into it that doesn't exist.
 
@@ -226,7 +226,7 @@ A component's `on_sense` callback runs on the engine thread. Anything that callb
   ```
   (`embsim/models/src/edge.rs:44-57`). Other inline test modules: `peripherals/src/pulse_out.rs`, `tools/memory-inspect/src/{runtime,types}.rs`.
 - **Doctests double as documentation.** Public primitives carry a runnable ` ``` ` example in their `//!`/`///` docs (`event.rs:13-25`). Mark non-runnable examples ` ```rust,ignore ` (`build-support/src/lib.rs:10`, `runtime/src/lib.rs:16`).
-- **The project files have a Chrome-free PTY round trip** at `mad-catalog/tests/pty_protocol.rs`: `SIL/mad.toml` run live, the command `embsim run mad.toml --pty PATH` hands `mad-runner` run in the test's own process (`embsim_cli::run`, over the same kinds, on a scratch copy of the file beside images the test lays out), a `firmware_version` READ on the PTY from the run's start, a DATA frame back before the run's virtual end. It skips when the production (`P2Eval`) image is absent. Product behaviour still lives in `Software/Control/e2e/`.
+- **The project files have a Chrome-free PTY round trip** at `mad-catalog/tests/pty_protocol.rs`: `SIL/mad.toml` run live, the command `embsim run mad.toml --pty PATH` hands `mad-runner` run in the test's own process (`embsim_cli::run`, over the same kinds, on a scratch copy of the file beside images the test lays out), a `firmware_version` READ on the PTY from the run's start, a DATA frame back before the run's virtual end. It skips when the `MaD` image is absent. Product behaviour still lives in `Software/Control/e2e/`.
 - The SIL is single-instance — don't run two of `make playground`, `playground-rom`, `playground-pty`, `e2e-emulator` or `e2e` at the same time (the project's Chrome takes DevTools port 9222). The PTY round trip uses a scratch path and can run beside other `cargo test`s.
 - Run Rust tests with `cargo test` from `SIL/` (MaD-side crates) or from `SIL/embsim/` (the framework submodule's own workspace). CI runs both: the `sil-rust` job gates fmt + clippy `-D warnings` + `cargo test` on `SIL/`; the embsim repo's own CI (mirrored by `embsim-ci` / `embsim-pin-ci`) gates the submodule (see §10).
 
@@ -235,7 +235,7 @@ A component's `on_sense` callback runs on the engine thread. Anything that callb
 ## 10. Linting & passing checks
 
 > **CI reality check:**
-> - The `sil-rust` job in `.github/workflows/ci.yml` builds the `MaDEdge` image + `make protocol`, then **gates** `cargo fmt -p models -p mad-catalog -p mad-runner --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace --all-targets`.
+> - The `sil-rust` job in `.github/workflows/ci.yml` builds the `MaD` image + `make protocol`, then **gates** `cargo fmt -p models -p mad-catalog -p mad-runner --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace --all-targets`.
 > - The generated `protocol` crate is **excluded from rustfmt** (`make protocol` rewrites it every build). Clippy allows for template-style lints are scoped to `Protocol/rust/src/lib.rs`, never crate-wide.
 > - The `SIL/embsim` submodule is re-tested here by `embsim-ci` (build/test/doc). Pin bumps also run `embsim-pin-ci`: rustfmt, clippy `-D warnings`, `cargo doc -D warnings`, 5× determinism goldens, cargo-deny, MSRV. Upstream: [RileyMcCarthy/embsim](https://github.com/RileyMcCarthy/embsim).
 
@@ -246,7 +246,7 @@ A component's `on_sense` callback runs on the engine thread. Anything that callb
    cargo build            # the workspace. The P2 image is a runtime input, not a link input.
    cargo test             # runs unit + doctests; ISS tests skip when the image is absent
    ```
-   `make test` builds the image first (`pio run -e MaDEdge`) so those tests actually run:
+   `make test` builds the image first (`pio run -e MaD`) so those tests actually run:
    ```bash
    make test              # = make p2image + make protocol + cargo test
    ```

@@ -29,12 +29,10 @@ Per-language coding standards (grounded in this codebase, with the exact lint/ch
 
 ### Firmware (from `Firmware/MaDCore/`)
 ```bash
-pio run -e P2Eval           # Build for hardware
-pio run -e MaDEdge     # Build with debug serial
-pio run -e P2Eval -t upload # Upload to board
-pio run -e MaDEdge    # the debug P2 image the p2core/p2iss suites execute (`make p2image`); the project files' flash holds P2Eval
-pio test -e native_test         # Run Unity unit tests
-pio check -e P2Eval --fail-on-defect=medium --fail-on-defect=high  # MISRA/cppcheck (low disabled)
+pio run -e MaD                  # The firmware: one build, for the machine, the bench and the SIL (`make p2image`)
+pio run -e MaD -t upload        # Upload to board (over J1, the programming port)
+pio test -e native_test         # Run Unity unit tests (native_test_noasan on macOS)
+pio check -e MaD --fail-on-defect=medium --fail-on-defect=high  # MISRA/cppcheck (low disabled)
 ```
 
 ### Software (from `Software/Control/`) — the shipped app
@@ -53,11 +51,10 @@ npm run e2e            # node e2e/run-all.mjs — drives the SIL emulator (fakes
 
 ### SIL Testing (from `SIL/`)
 ```bash
-make p2image      # the debug P2 image (MaDEdge): the p2core/p2iss suites'
-make p2image-production  # the production image (P2Eval), the one the project files' flash holds
+make p2image      # the P2 image (pio env MaD): the project files' flash, the mad-catalog/p2core/p2iss suites'
 make protocol     # Regenerate the Rust codec into ../Protocol/rust/src/generated
 make emulator     # protocol, then cargo build workspace
-make test         # emulator + both images, then `cargo test`
+make test         # emulator + the image, then `cargo test`
 make playground   # mad-playground.toml (mad-cosim.toml, headed) under embsim run: MaD Control in a Chrome window on the board's clock
 make check        # flash + card images, then `embsim check` on the eight project files (mad*.toml)
 make e2e          # the e2e suite on the machine's project, mad-cosim.toml, headless (SCENARIOS=… selects); e2e-emulator for the board alone
@@ -120,7 +117,7 @@ Frontend-only browser PWA — the browser talks straight to the Propeller 2 over
 ### SIL Emulator Architecture
 Rust **Cargo workspace** under `SIL/` (see `SIL/Cargo.toml`; members are the MaD-side crates — `mad-catalog`, `mad-runner`, `models`, `p2core`, `p2iss`, and `protocol` (an out-of-tree member living at `Protocol/rust/`, next to its schema). The `embsim/*` crates below live in the `SIL/embsim` submodule, which is its own workspace, and are consumed as path deps):
 
-- **The project files** (`SIL/mad.toml`, `mad-cosim.toml`, `mad-hard-stop-cosim.toml` (`mad-cosim.toml` plus a hard stop, for SERVO-stall), `mad-serial-boot.toml`, `mad-serial-boot-cosim.toml`, `mad-reflash-cosim.toml` (`mad-cosim.toml` with the Prop Plug's reset on `J1.3`, for FW1), and the playgrounds `mad-playground.toml`, `mad-serial-boot-playground.toml`) — the machine as embsim projects: the Edge carrier as drawn (v0.3, `mad-catalog/netlists/mad_edge.net`), the P2-EC32MB module with the ISS as its core booting the production image (pio env `P2Eval`) off its flash, the DS2 add-on, the machine, and the host on the carrier's debug header `J1`. `embsim run` hands them to `mad-runner`; `mad-catalog/tests/projects.rs` holds them to one another. The e2e suite runs on `mad-cosim.toml` (the host's Chrome on the board's clock, `make e2e`); the scenarios that move the carriage run there too (`make e2e-motion`), since the drawing grounds `IC14`'s drive side (MaD #299). FW-ISS runs on `mad-serial-boot-cosim.toml` (`make e2e-rom`). The playgrounds are headed copies of `mad-cosim.toml` and of the serial boot's.
+- **The project files** (`SIL/mad.toml`, `mad-cosim.toml`, `mad-hard-stop-cosim.toml` (`mad-cosim.toml` plus a hard stop, for SERVO-stall), `mad-serial-boot.toml`, `mad-serial-boot-cosim.toml`, `mad-reflash-cosim.toml` (`mad-cosim.toml` with the host on `J1` and the Prop Plug's reset on `J1.3`, for FW1 and COMPAT-reflash, `make e2e-reflash`), and the playgrounds `mad-playground.toml`, `mad-serial-boot-playground.toml`) — the machine as embsim projects: the Edge carrier as drawn (v0.3, `mad-catalog/netlists/mad_edge.net`), the P2-EC32MB module with the ISS as its core booting the firmware (pio env `MaD`) off its flash, the DS2 add-on, the machine, and one host: on the control port `J4` (through the isolator `IC2` to P30/P32) in the flash-boot files, on the programming port, the debug header `J1`, in the serial-boot files and the reflash file. `embsim run` hands them to `mad-runner`; `mad-catalog/tests/projects.rs` holds them to one another. The e2e suite runs on `mad-cosim.toml` (the host's Chrome on the board's clock, `make e2e`); the scenarios that move the carriage run there too (`make e2e-motion`), since the drawing grounds `IC14`'s drive side (MaD #299). FW-ISS runs on `mad-serial-boot-cosim.toml` (`make e2e-rom`). The playgrounds are headed copies of `mad-cosim.toml` and of the serial boot's.
 - **`mad-catalog/`** — MaD's kinds (`mad-edge`, `mad-ds2`, `mad-p2iss`, `mad-machine`) and the project files' tests; **`mad-runner/`** — the embsim command over them.
 - **`p2core/`** — the Propeller 2 instruction-set simulator (ISS); **`p2iss/`** — the ISS as an embsim component, in the P2 package the project files' module holds (`mad-p2iss`).
 - **`embsim/cdp`** — `chrome-cdp`: the host's Chrome on a host's serial pins, metered over DevTools, its Web Serial a shim on the line.
@@ -134,7 +131,7 @@ Rust **Cargo workspace** under `SIL/` (see `SIL/Cargo.toml`; members are the MaD
 End-to-end coverage lives with the app it exercises: `Software/Control/e2e/` drives the shipped app against the project's board (`SIL/scripts/board-route.sh`).
 
 ### Communication Protocol
-Firmware ↔ UI communicates over serial (2,000,000 baud on hardware) using the generated protocol from `Protocol/MaDProtocol.yaml`. Motion profiles become G-code (`G0`, `G1`, `G4`, `G28`, `G90`, `G91`, `G122`) and are streamed line-by-line.
+Firmware ↔ UI communicates over serial (2,000,000 baud on hardware) using the generated protocol from `Protocol/MaDProtocol.yaml`. Two ports, two roles: the protocol runs on the **control port**, the secondary serial P30/P32 (the Edge carrier's J4 through isolator IC2; an FTDI adapter on a P2-EVAL bench), which never resets the chip. **J1** (P62/P63, the Prop Plug / P2-EVAL USB) is the **programming port** only — its adapter's DTR resets the P2 — and carries the debug log. MaD Control connects on the control port and flashes on J1; it reboots the machine with the protocol's `reboot` command. Motion profiles become G-code (`G0`, `G1`, `G4`, `G28`, `G90`, `G91`, `G122`) and are streamed line-by-line.
 
 ## Firmware Naming & File Conventions
 
@@ -170,7 +167,7 @@ on a closing keyword (`Fixes` / `Closes` / `Resolves`), never on prose like
 - **Firmware layer violations**: Do not include or call low-level MCU headers from APP/DEV/IO — go through HAL (and appropriate HW headers only where HAL already depends on them).
 - **Thread safety**: `IO_protocol` and shared protocol/JSON buffers are not casually thread-safe from multiple cogs — use the project locking patterns where applicable.
 - **Locking rules**: `lib_staticQueue` (and Library data structures generally) are unsynchronized — the owning module wraps ops in its own HAL lock when its topology needs one (SPSC use is lock-free by contract). HAL locks are **not reentrant**, and a module must **never call another module's API while holding its own lock** (prevents both self-deadlock and cross-cog ABBA deadlocks).
-- **Native vs P2**: `pio test -e native_test` is the host Unity suite. The SIL runs P2 images on the ISS (`P2Eval` off the project files' flash, `MaDEdge` in the p2core/p2iss suites), not a host-compiled firmware library. Pointer sizes still differ; a host unit test does not stand in for a P2 build.
+- **Native vs P2**: `pio test -e native_test` is the host Unity suite. The SIL runs the `MaD` image on the ISS (off the project files' flash, and in the mad-catalog/p2core/p2iss suites), not a host-compiled firmware library. Pointer sizes still differ; a host unit test does not stand in for a P2 build.
 - **SIL concurrency**: Treat the emulator as single-instance — don't run two emulator-backed suites at once.
 - **G-code**: Profiles/tests that must signal completion to firmware should end appropriately (e.g. **`G122`** where the firmware contract requires it).
 - **Generated code**: Do not hand-edit `Firmware/MaDCore/src/Generated/`, `Software/Control/src/protocol/generated/`, or `Protocol/rust/src/generated/` — change `Protocol/MaDProtocol.yaml` (or templates) and regenerate.

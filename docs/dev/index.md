@@ -72,8 +72,8 @@ running SIL; PlatformIO only if you're building firmware.
 
     ```bash
     cd Firmware/MaDCore
-    pio run -e P2Eval          # build
-    pio run -e P2Eval -t upload  # flash
+    pio run -e MaD             # build
+    pio run -e MaD -t upload   # flash through J1, the programming port
     ```
 
 ## Deep dives

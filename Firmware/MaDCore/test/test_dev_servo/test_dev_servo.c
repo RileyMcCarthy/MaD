@@ -1232,7 +1232,7 @@ void test_dev_servo_encoderStoppingDuringAWaveformStalls(void)
 {
     VIBES_TEST("servo.stall-when-encoder-stops-during-a-waveform",
                "src/DEV/dev_servo.c#dev_servo_private_stallGuard",
-               "an enabled motor drive running a 0.25 mm, 1 Hz sine whose encoder stops counting three seconds in while the carriage goes on following the step pulses through a 20 ms lag");
+               "an enabled motor drive running a 0.25 mm, 1 Hz sine whose encoder stops counting three seconds in, at a peak, while the carriage goes on following the step pulses through a 20 ms lag");
     VIBES_EXPECT_WHY("stall-reported",
                      "the drive reports a stall within a second",
                      "the loop corrects toward the frozen reading on every cycle, so the carriage drifts further from the centre with each one");
@@ -1242,6 +1242,8 @@ void test_dev_servo_encoderStoppingDuringAWaveformStalls(void)
     dev_servo_enable(CH, true);
     TEST_ASSERT_TRUE(dev_servo_startWaveform(CH, WF(0, counts_from_mm(0.25), 1000000U, 1000U,
                                                     DEV_SERVO_WAVE_SINE)));
+    /* On a whole cycle: the wave starts at a peak, so that is where the
+     * reading freezes, and the loop's pull toward it is one-sided. */
     for (int i = 0; i < 3000; i++)
     {
         tick_with_lag(TWIN_DRIVE_LAG_S);
@@ -1540,6 +1542,151 @@ void test_dev_servo_moveAtProfileScaleArrivesWithoutStall(void)
 
 
 /**********************************************************************
+ * Look-ahead: handing over to a staged move
+ **********************************************************************/
+
+/* Run on the ideal carriage until the loop has switched to the staged move
+ * (or give up), and report the slowest commanded speed seen in the last
+ * `windowTicks` before it and the first `windowTicks` after it (counts/s). */
+static double junction_min_speed(int windowTicks, int maxTicks, bool *handedOver)
+{
+    const uint32_t before = dev_servo_getHandovers(CH);
+    int32_t last = dev_servo_getSetpoint(CH);
+    double ring[64];
+    int n = 0;
+    double minAfter = 1e18;
+    int after = -1;
+    for (int i = 0; i < maxTicks; i++)
+    {
+        tick_with_motion();
+        const int32_t now = dev_servo_getSetpoint(CH);
+        const double v = fabs((double)(now - last)) / SERVO_DT_S;
+        last = now;
+        if (after < 0)
+        {
+            ring[n % windowTicks] = v;
+            n++;
+            if (dev_servo_getHandovers(CH) != before) { after = 0; }
+        }
+        else
+        {
+            if (v < minAfter) { minAfter = v; }
+            if (++after >= windowTicks) { break; }
+        }
+    }
+    *handedOver = (after >= 0);
+    double minBefore = 1e18;
+    for (int k = 0; (k < windowTicks) && (k < n); k++)
+    {
+        if (ring[k] < minBefore) { minBefore = ring[k]; }
+    }
+    return (minBefore < minAfter) ? minBefore : minAfter;
+}
+
+void test_dev_servo_stagedMoveTheSameWayCarriesTheSpeedThrough(void)
+{
+    VIBES_TEST("servo.junction-keeps-speed",
+               "src/DEV/dev_servo.c#dev_servo_run",
+               "a 10 mm move at 10 mm/s with a second 10 mm move at 10 mm/s staged after it, the same way");
+    VIBES_EXPECT_WHY("no-dip",
+                     "the commanded speed stays within 2 percent of 10 mm/s through the junction",
+                     "a program of moves in one direction runs as one smooth motion through every line");
+    VIBES_EXPECT("second-arrives", "the second move then arrives at its own target");
+    servo_init();
+    dev_servo_enable(CH, true);
+    dev_servo_moveTo(CH, counts_from_mm(10.0), counts_from_mm(10.0));
+    dev_servo_stageNext(CH, counts_from_mm(20.0), counts_from_mm(10.0));
+    bool handedOver = false;
+    const double vMin = junction_min_speed(40, 20000, &handedOver);
+    TEST_ASSERT_TRUE(handedOver);
+    TEST_ASSERT_TRUE(vMin >= 0.98 * counts_from_mm(10.0));
+    (void)settle(20000);
+    TEST_ASSERT_TRUE(dev_servo_atTarget(CH));
+    TEST_ASSERT_INT32_WITHIN(8, counts_from_mm(20.0), d_encoderValue);
+}
+
+void test_dev_servo_stagedMoveTheOtherWayStopsFirst(void)
+{
+    VIBES_TEST("servo.junction-reversal-stops",
+               "src/DEV/dev_servo.c#dev_servo_run",
+               "a 10 mm move with a move back to the start staged after it");
+    VIBES_EXPECT("turns-at-rest", "the commanded speed comes down to rest at the junction before it turns");
+    VIBES_EXPECT("hands-over", "the loop switches to the staged move without waiting for the gantry to settle");
+    VIBES_EXPECT("back-home", "the gantry arrives back at the start");
+    servo_init();
+    dev_servo_enable(CH, true);
+    dev_servo_moveTo(CH, counts_from_mm(10.0), counts_from_mm(10.0));
+    dev_servo_stageNext(CH, 0, counts_from_mm(10.0));
+    bool handedOver = false;
+    const double vMin = junction_min_speed(40, 20000, &handedOver);
+    TEST_ASSERT_TRUE(handedOver);
+    TEST_ASSERT_TRUE(vMin <= 0.05 * counts_from_mm(10.0));
+    (void)settle(20000);
+    TEST_ASSERT_TRUE(dev_servo_atTarget(CH));
+    TEST_ASSERT_INT32_WITHIN(8, 0, d_encoderValue);
+}
+
+void test_dev_servo_arrivalSpeedLetsAShortNextMoveStop(void)
+{
+    VIBES_TEST("servo.junction-capped-by-next-length",
+               "src/DEV/dev_servo.c#dev_servo_run",
+               "a 10 mm move at 40 mm/s with a 0.1 mm move at 40 mm/s staged after it, the same way, on a machine allowed 600 mm/s squared");
+    VIBES_EXPECT_WHY("stops-on-target",
+                     "the short move still stops on its target, its commanded position never more than 50 micrometres past it",
+                     "the running move arrives no faster than the next one could stop from within its own length, since nothing may follow it; arriving at the full 40 mm/s would carry it about a millimetre past");
+    servo_init();
+    dev_servo_enable(CH, true);
+    const int32_t end = counts_from_mm(10.1);
+    dev_servo_moveTo(CH, counts_from_mm(10.0), counts_from_mm(40.0));
+    dev_servo_stageNext(CH, end, counts_from_mm(40.0));
+    double past = 0.0;
+    for (int i = 0; (i < 20000) && !((dev_servo_getHandovers(CH) > 0U) && dev_servo_atTarget(CH)); i++)
+    {
+        tick_with_motion();
+        const double over = (double)(dev_servo_getSetpoint(CH) - end);
+        if (over > past) { past = over; }
+    }
+    TEST_ASSERT_TRUE(dev_servo_atTarget(CH));
+    TEST_ASSERT_TRUE(past <= 0.050 * COUNTS_PER_MM);
+}
+
+void test_dev_servo_stopClearsTheStagedMove(void)
+{
+    VIBES_TEST("servo.stop-clears-staged",
+               "src/DEV/dev_servo.c#dev_servo_stop",
+               "a move with another staged after it, stopped partway");
+    VIBES_EXPECT("no-hand-over", "the loop never switches to the staged move");
+    servo_init();
+    dev_servo_enable(CH, true);
+    dev_servo_moveTo(CH, counts_from_mm(5.0), counts_from_mm(10.0));
+    dev_servo_stageNext(CH, counts_from_mm(10.0), counts_from_mm(10.0));
+    for (int i = 0; i < 100; i++) { tick_with_motion(); }
+    dev_servo_stop(CH);
+    for (int i = 0; i < 3000; i++) { tick_with_motion(); }
+    TEST_ASSERT_EQUAL_UINT32(0U, dev_servo_getHandovers(CH));
+}
+
+void test_dev_servo_capStagedLowersOnlyAPendingStagedMove(void)
+{
+    VIBES_TEST("servo.cap-staged",
+               "src/DEV/dev_servo.c#dev_servo_capStaged",
+               "a 10 mm move with a second 10 mm move at 40 mm/s staged after it, then a cap of 5 mm/s on the staged move");
+    VIBES_EXPECT_WHY("pending-capped",
+                     "the cap is accepted and, once the loop switches, the second move runs at no more than 5 mm/s",
+                     "the motion planner lowers a move it staged before the machine turned restricted, and only a move not yet running can be lowered this way");
+    VIBES_EXPECT("nothing-pending", "after the switch a second cap is refused, since nothing is staged any more");
+    servo_init();
+    dev_servo_enable(CH, true);
+    dev_servo_moveTo(CH, counts_from_mm(10.0), counts_from_mm(10.0));
+    dev_servo_stageNext(CH, counts_from_mm(20.0), counts_from_mm(40.0));
+    TEST_ASSERT_TRUE(dev_servo_capStaged(CH, counts_from_mm(5.0)));
+    for (int i = 0; (i < 40000) && (dev_servo_getHandovers(CH) == 0U); i++) { tick_with_motion(); }
+    TEST_ASSERT_EQUAL_UINT32(1U, dev_servo_getHandovers(CH));
+    TEST_ASSERT_EQUAL_INT32(counts_from_mm(5.0), dev_servo_data.channel[CH].req.feedrate);
+    TEST_ASSERT_FALSE(dev_servo_capStaged(CH, counts_from_mm(5.0)));
+}
+
+/**********************************************************************
  * Liveness — what APP gates the machine on
  **********************************************************************/
 
@@ -1836,9 +1983,12 @@ static double run_oscillate(double amplitudeCounts, uint32_t freqMicroHz,
                             uint32_t cycles, dev_servo_wave_E shape)
 {
     dev_servo_enable(CH, true);
-    TEST_ASSERT_TRUE(dev_servo_startWaveform(CH, WF(0, (int32_t)amplitudeCounts, freqMicroHz, cycles, shape)));
+    /* As app_motion builds it: the wave starts at rest where the carriage is,
+     * the lower peak, so its centre is one amplitude above. */
+    const int32_t centre = dev_servo_getPosition(CH) + (int32_t)amplitudeCounts;
+    TEST_ASSERT_TRUE(dev_servo_startWaveform(CH, WF(centre, (int32_t)amplitudeCounts, freqMicroHz, cycles, shape)));
     const double freqHz = (double)freqMicroHz / 1000000.0;
-    /* The cycles, plus a generous allowance for the two profiled segments. */
+    /* The cycles, plus a generous allowance for settling at the end. */
     const unsigned cap = (unsigned)((double)cycles / freqHz / 0.001) + 4000U;
     unsigned i = 0U;
     while ((i < cap) && !dev_servo_atTarget(CH))
@@ -1857,7 +2007,7 @@ void test_oscillate_returns_to_its_centre_after_whole_cycles(void)
                "src/DEV/dev_servo.c#dev_servo_run",
                "the driver runs a waveform for a whole number of cycles");
     VIBES_EXPECT_WHY("ends-where-it-started",
-                     "the carriage ends a whole number of cycles back at its centre",
+                     "the carriage ends a whole number of cycles back where it started",
                      "the setpoint is evaluated from phase, with no integrated rate, so there is no accumulator that can fall behind and stay behind");
     VIBES_EXPECT_WHY("residual-does-not-grow-with-cycles",
                      "running four times as many cycles leaves exactly the same residual as one",
@@ -1876,7 +2026,7 @@ void test_oscillate_returns_to_its_centre_after_whole_cycles(void)
         (void)run_oscillate(10000.0, 1000000U, n, DEV_SERVO_WAVE_SINE);
         residual[i] = dev_servo_getPosition(CH);
         TEST_ASSERT_INT32_WITHIN_MESSAGE(deadband, 0, residual[i],
-                                         "a whole number of cycles must come back to the centre");
+                                         "a whole number of cycles must come back to where it started");
         n *= 2U;
     }
     TEST_ASSERT_EQUAL_INT32_MESSAGE(residual[0], residual[2],
@@ -1969,7 +2119,7 @@ void test_an_infeasible_waveform_is_rejected_not_approximated(void)
 static double run_oscillate_rateFullness(uint32_t freqMicroHz, dev_servo_wave_E shape)
 {
     servo_init();
-    dev_servo_setPosition(CH, 0);
+    dev_servo_setPosition(CH, -(10000)); /* the lower peak: the wave starts there */
     dev_servo_enable(CH, true);
     TEST_ASSERT_TRUE(dev_servo_startWaveform(CH, WF(0, 10000, freqMicroHz, 2U, shape)));
 
@@ -1979,7 +2129,8 @@ static double run_oscillate_rateFullness(uint32_t freqMicroHz, dev_servo_wave_E 
     for (unsigned i = 0U; (i < 12000U) && !dev_servo_atTarget(CH); i++)
     {
         tick_with_motion();
-        if (dev_servo_data.channel[CH].waveSegment == (uint8_t)DEV_SERVO_WAVE_RUN)
+        if ((dev_servo_data.channel[CH].waveSegment == (uint8_t)DEV_SERVO_WAVE_RUN) &&
+            dev_servo_data.channel[CH].waveLocked)
         {
             const double v = fabs((double)dev_servo_data.channel[CH].setpointVel);
             sum += v;
@@ -2020,14 +2171,13 @@ void test_the_shape_bit_selects_a_genuinely_different_rate_profile(void)
  * a wrong generator completely invisible. The measurement is the ENCODER --
  * where the machine actually went -- not the commanded velocity.
  *
- * Sampling starts at the first tick of the cycles and includes it. The
- * approach's residual is the error the waveform inherits at t=0, and excluding
- * it would hide exactly the defect that `waveformStartTolerance` exists to
- * prevent. */
+ * The wave starts at rest at its lower peak, so the reference is a cosine
+ * rising from it. It is measured from the tick the driver is on the wave,
+ * which for a cosine from rest is the first. */
 static double worst_sine_deviation_at(int32_t centre, double amplitude, uint32_t freqMicroHz, uint32_t cycles)
 {
     servo_init();
-    dev_servo_setPosition(CH, centre);
+    dev_servo_setPosition(CH, centre - (int32_t)amplitude); /* the lower peak: the wave starts there */
     dev_servo_enable(CH, true);
     TEST_ASSERT_TRUE_MESSAGE(dev_servo_startWaveform(CH, WF(centre, (int32_t)amplitude, freqMicroHz, cycles, DEV_SERVO_WAVE_SINE)),
                              "the probe's own waveform must be feasible");
@@ -2053,14 +2203,187 @@ static double worst_sine_deviation_at(int32_t centre, double amplitude, uint32_t
             continue;
         }
         runTicks++;
+        if (!dev_servo_data.channel[CH].waveLocked) { continue; }
         const double t = (double)runTicks * 0.001;
-        /* Phase 0 is the positive peak, so the trajectory is a cosine. */
-        const double ideal = (double)centre + (amplitude * cos(2.0 * 3.14159265358979 * freqHz * t));
+        const double ideal = (double)centre - (amplitude * cos(2.0 * 3.14159265358979 * freqHz * t));
         const double err = fabs((double)d_encoderValue - ideal);
         if (err > worst) { worst = err; }
     }
     TEST_ASSERT_TRUE_MESSAGE(runTicks > 100U, "the cycles must actually have run");
     return worst;
+}
+
+/* Run a 1.22 mm, 1 Hz wave of two cycles from rest at 0 on the shipped
+ * profile, rising first (startHigh false) or falling first, and report how it
+ * started and ended against the ideal cosine. */
+typedef struct
+{
+    double worstFromStart; /* worst |ideal - encoder| over the whole run, counts */
+    unsigned firstLockTick;
+    double furthestBeyond; /* furthest past the starting point, away from the wave */
+    double extreme;        /* furthest point reached in the wave's direction */
+    unsigned totalTicks;
+    int32_t endEncoder;
+} wave_ends_S;
+
+static wave_ends_S run_wave_ends(bool startHigh)
+{
+    wave_ends_S r;
+    memset(&r, 0, sizeof(r));
+    const double dir = startHigh ? -1.0 : 1.0;
+    servo_init();
+    dev_servo_setPosition(CH, 0);
+    dev_servo_enable(CH, true);
+    dev_servo_waveform_S wf = *WF((int32_t)(dir * 10000.0), 10000, 1000000U, 2U, DEV_SERVO_WAVE_SINE);
+    wf.startHigh = startHigh;
+    TEST_ASSERT_TRUE(dev_servo_startWaveform(CH, &wf));
+    for (unsigned i = 1U; (i < 10000U) && !dev_servo_atTarget(CH); i++)
+    {
+        tick_with_motion();
+        r.totalTicks = i;
+        if ((r.firstLockTick == 0U) && dev_servo_data.channel[CH].waveLocked) { r.firstLockTick = i; }
+        const double enc = (double)d_encoderValue;
+        if (i <= 2000U)
+        {
+            const double ideal = dir * 10000.0 * (1.0 - cos(2.0 * 3.14159265358979 * (double)i * SERVO_DT_S));
+            const double err = fabs(enc - ideal);
+            if (err > r.worstFromStart) { r.worstFromStart = err; }
+        }
+        if ((-dir * enc) > r.furthestBeyond) { r.furthestBeyond = -dir * enc; }
+        if ((dir * enc) > r.extreme) { r.extreme = dir * enc; }
+    }
+    r.endEncoder = d_encoderValue;
+    return r;
+}
+
+void test_a_waveform_starts_on_the_wave_from_rest(void)
+{
+    VIBES_TEST("servo.waveform-starts-from-rest",
+               "src/DEV/dev_servo.c#dev_servo_private_follow",
+               "a 1.22 mm, 1 Hz wave started from rest where the carriage is");
+    VIBES_EXPECT_WHY("on-the-wave-at-once",
+                     "it is on the wave from the first tick, and stays within 0.001 mm of a cosine rising from the starting point",
+                     "a cosine starts at rest, so the carriage can follow it from the start without any catching up");
+    VIBES_EXPECT("full-stroke", "it rises the full two amplitudes, to 2.44 mm above where it started");
+    const wave_ends_S r = run_wave_ends(false);
+    TEST_ASSERT_EQUAL_UINT32(1U, r.firstLockTick);
+    TEST_ASSERT_TRUE(r.worstFromStart <= ONE_MICRON_COUNTS);
+    TEST_ASSERT_INT32_WITHIN(8, 20000, (int32_t)r.extreme);
+}
+
+void test_a_waveform_ends_at_rest_where_it_started(void)
+{
+    VIBES_TEST("servo.waveform-ends-where-it-started",
+               "src/DEV/dev_servo.c#dev_servo_run",
+               "a 1.22 mm, 1 Hz wave of two cycles started from rest where the carriage is");
+    VIBES_EXPECT("arrives-at-start", "it reports arrival with the carriage within the parking deadband of where it started");
+    VIBES_EXPECT("never-beyond", "it never goes past the starting point, away from the wave");
+    VIBES_EXPECT("no-extra-moves", "it takes the two seconds of its cycles and very little more");
+    const wave_ends_S r = run_wave_ends(false);
+    TEST_ASSERT_TRUE(dev_servo_atTarget(CH));
+    TEST_ASSERT_INT32_WITHIN(8, 0, r.endEncoder);
+    TEST_ASSERT_TRUE(r.furthestBeyond <= ONE_MICRON_COUNTS);
+    TEST_ASSERT_TRUE(r.totalTicks >= 2000U);
+    TEST_ASSERT_TRUE(r.totalTicks <= 2100U);
+}
+
+void test_a_waveform_that_starts_high_falls_first(void)
+{
+    VIBES_TEST("servo.waveform-falls-first",
+               "src/DEV/dev_servo.c#dev_servo_startWaveform",
+               "a 1.22 mm, 1 Hz wave asked to start at its upper peak, where the carriage is");
+    VIBES_EXPECT("falls-first", "it stays within 0.001 mm of a cosine falling from the starting point, down 2.44 mm");
+    VIBES_EXPECT("ends-at-start", "it ends at rest where it started");
+    const wave_ends_S r = run_wave_ends(true);
+    TEST_ASSERT_TRUE(r.worstFromStart <= ONE_MICRON_COUNTS);
+    TEST_ASSERT_INT32_WITHIN(8, 20000, (int32_t)r.extreme);
+    TEST_ASSERT_INT32_WITHIN(8, 0, r.endEncoder);
+}
+
+/* A chirp of `cycles` whole cycles from f0 to f1 (uHz), amplitude A counts,
+ * started from rest at 0 rising first. Reports the worst |encoder - ideal|,
+ * the ticks until arrival and where it ended. */
+typedef struct
+{
+    double worst;
+    unsigned ticks;
+    int32_t endEncoder;
+} chirp_run_S;
+
+static chirp_run_S run_chirp(int32_t amplitude, uint32_t f0, uint32_t f1, uint32_t cycles)
+{
+    chirp_run_S r;
+    memset(&r, 0, sizeof(r));
+    servo_init();
+    dev_servo_setPosition(CH, 0);
+    dev_servo_enable(CH, true);
+    dev_servo_waveform_S wf = *WF(amplitude, amplitude, f0, cycles, DEV_SERVO_WAVE_SINE);
+    wf.endFreqMicroHz = f1;
+    TEST_ASSERT_TRUE_MESSAGE(dev_servo_startWaveform(CH, &wf), "the chirp must be feasible");
+    const double a0 = (double)f0 / 1e6;
+    const double a1 = (double)f1 / 1e6;
+    const double span = (2.0 * (double)cycles) / (a0 + a1);
+    for (unsigned i = 1U; (i < 200000U) && !dev_servo_atTarget(CH); i++)
+    {
+        tick_with_motion();
+        r.ticks = i;
+        const double t = (double)i * SERVO_DT_S;
+        if (t <= span)
+        {
+            const double phase = 2.0 * 3.14159265358979 * ((a0 * t) + (((a1 - a0) * t * t) / (2.0 * span)));
+            const double ideal = (double)amplitude * (1.0 - cos(phase));
+            const double err = fabs((double)d_encoderValue - ideal);
+            if (err > r.worst) { r.worst = err; }
+        }
+    }
+    r.endEncoder = d_encoderValue;
+    return r;
+}
+
+void test_a_chirp_sweeps_its_frequency_and_ends_where_it_started(void)
+{
+    VIBES_TEST("servo.chirp-sweeps",
+               "src/DEV/dev_servo.c#dev_servo_private_oscillate",
+               "a 0.24 mm chirp of five cycles sweeping from 0.5 Hz to 2 Hz, started from rest");
+    VIBES_EXPECT_WHY("tracks-the-sweep",
+                     "the carriage stays within 0.001 mm of a cosine whose frequency rises linearly from 0.5 Hz to 2 Hz",
+                     "a chirp measures how a material responds across a range of loading rates in one run, so it is only useful if each moment of it is at the frequency the analysis assumes");
+    VIBES_EXPECT_WHY("whole-cycles-span",
+                     "the five cycles take two seconds times five over the sum of the two frequencies, four seconds",
+                     "a linear sweep's average frequency is the mean of its ends");
+    VIBES_EXPECT("ends-at-rest", "it ends at rest where it started");
+    const chirp_run_S r = run_chirp(2000, 500000U, 2000000U, 5U);
+    TEST_ASSERT_TRUE(r.worst <= ONE_MICRON_COUNTS);
+    TEST_ASSERT_UINT32_WITHIN(20U, 4000U, r.ticks);
+    TEST_ASSERT_INT32_WITHIN(8, 0, r.endEncoder);
+}
+
+void test_a_chirp_too_fast_at_its_end_is_refused(void)
+{
+    VIBES_TEST("servo.chirp-judged-at-its-top",
+               "src/DEV/dev_servo.c#dev_servo_private_planWaveform",
+               "a 1.22 mm chirp that starts at 1 Hz, which the machine could run, and sweeps up to 20 Hz, which it could not");
+    VIBES_EXPECT_WHY("refused",
+                     "it is refused",
+                     "the acceleration a sine needs grows with the square of its frequency, so a sweep is judged at its fastest end");
+    servo_init();
+    dev_servo_waveform_S wf = *WF(10000, 10000, 1000000U, 10U, DEV_SERVO_WAVE_SINE);
+    wf.endFreqMicroHz = 20000000U;
+    TEST_ASSERT_FALSE(dev_servo_startWaveform(CH, &wf));
+}
+
+void test_a_chirp_with_holds_is_refused(void)
+{
+    VIBES_TEST("servo.chirp-plain-sine-only",
+               "src/DEV/dev_servo.c#dev_servo_private_planWaveform",
+               "a chirp asked to hold at its upper peak");
+    VIBES_EXPECT_WHY("refused", "it is refused",
+                     "holds are laid out as a share of a period, which a sweeping frequency would stretch unevenly");
+    servo_init();
+    dev_servo_waveform_S wf = *WF(2000, 2000, 500000U, 5U, DEV_SERVO_WAVE_SINE);
+    wf.endFreqMicroHz = 1000000U;
+    wf.dwellHighUs = 100000U;
+    TEST_ASSERT_FALSE(dev_servo_startWaveform(CH, &wf));
 }
 
 void test_the_machine_reproduces_the_commanded_waveform_to_one_micron(void)
@@ -2105,7 +2428,7 @@ void test_the_machine_reproduces_the_commanded_waveform_to_one_micron(void)
 static unsigned run_segment_ticks(uint32_t freqMicroHz, uint32_t cycles, uint32_t *endPhase)
 {
     servo_init();
-    dev_servo_setPosition(CH, 0);
+    dev_servo_setPosition(CH, -(10000)); /* the lower peak: the wave starts there */
     dev_servo_enable(CH, true);
     TEST_ASSERT_TRUE(dev_servo_startWaveform(CH, WF(0, 10000, freqMicroHz, cycles, DEV_SERVO_WAVE_SINE)));
     unsigned runTicks = 0U;
@@ -2249,6 +2572,7 @@ static uint32_t highest_feasible_freq(int32_t amplitude, dev_servo_wave_E shape)
 typedef struct
 {
     unsigned runTicks;
+    unsigned catchUpTicks; /* running, but still accelerating onto the wave */
     unsigned highTicks;    /* commanded hold at +A            */
     unsigned lowTicks;     /* commanded hold at -A            */
     unsigned downTicks;    /* traversing +A -> -A             */
@@ -2261,7 +2585,7 @@ static wave_geometry_S measure_geometry(const dev_servo_waveform_S *wf)
     wave_geometry_S g;
     memset(&g, 0, sizeof(g));
     servo_init();
-    dev_servo_setPosition(CH, wf->centreCounts);
+    dev_servo_setPosition(CH, wf->centreCounts - wf->amplitudeCounts); /* the lower peak */
     dev_servo_enable(CH, true);
     TEST_ASSERT_TRUE_MESSAGE(dev_servo_startWaveform(CH, wf), "the probe's waveform must be feasible");
 
@@ -2280,6 +2604,11 @@ static wave_geometry_S measure_geometry(const dev_servo_waveform_S *wf)
         tick_with_motion();
         if (!running) { continue; }
         g.runTicks++;
+        if (!dev_servo_data.channel[CH].waveLocked)
+        {
+            g.catchUpTicks++; /* still accelerating onto the rising traverse */
+            continue;
+        }
 
         const bool atPeak = (sp == peak);
         const bool atTrough = (sp == trough);
@@ -2366,10 +2695,24 @@ static double template_ideal(const dev_servo_waveform_S *wf, double phase)
     return (double)wf->centreCounts - A + (2.0 * A * traverse_share(wf->shape, rUp, u));
 }
 
+/* Where in the cycle template the wave starts: at rest at the lower peak, the
+ * start of the rising traverse. */
+static double template_start_phase(const dev_servo_waveform_S *wf)
+{
+    const double period = 1e6 / (double)wf->freqMicroHz;
+    const double fHigh = ((double)wf->dwellHighUs / 1e6) / period;
+    const double fLow = ((double)wf->dwellLowUs / 1e6) / period;
+    const double fTrav = 1.0 - fHigh - fLow;
+    const double fDown = fTrav * ((double)wf->skewPerMille / 1000.0);
+    const double fUp = fTrav - fDown;
+    (void)fUp;
+    return fmod(fHigh + fDown + fLow, 1.0);
+}
+
 static double worst_template_deviation(const dev_servo_waveform_S *wf)
 {
     servo_init();
-    dev_servo_setPosition(CH, wf->centreCounts);
+    dev_servo_setPosition(CH, wf->centreCounts - wf->amplitudeCounts); /* the lower peak */
     dev_servo_enable(CH, true);
     TEST_ASSERT_TRUE_MESSAGE(dev_servo_startWaveform(CH, wf), "the probe's waveform must be feasible");
 
@@ -2383,7 +2726,8 @@ static double worst_template_deviation(const dev_servo_waveform_S *wf)
         tick_with_motion();
         if (!running) { continue; }
         runTicks++;
-        const double phase = fmod((double)runTicks * 0.001 * freqHz, 1.0);
+        if (!dev_servo_data.channel[CH].waveLocked) { continue; }
+        const double phase = fmod(template_start_phase(wf) + ((double)runTicks * 0.001 * freqHz), 1.0);
         const double err = fabs((double)d_encoderValue - template_ideal(wf, phase));
         if (err > worst) { worst = err; }
     }
@@ -2540,9 +2884,11 @@ void test_skew_splits_the_traverse_time_as_asked(void)
     wf.skewPerMille = 800U; /* 80% of the traverse spent going down */
     const wave_geometry_S g = measure_geometry(&wf);
 
-    /* 2 cycles x 2000 ticks: 1600 down, 400 up per cycle. */
+    /* 2 cycles x 2000 ticks: 1600 down, 400 up per cycle. The wave starts on
+     * the rising traverse, so the ticks spent accelerating onto it at the
+     * start are up ticks too. */
     TEST_ASSERT_INT_WITHIN_MESSAGE(8, 3200, (int)g.downTicks, "the down traverse must take 80%");
-    TEST_ASSERT_INT_WITHIN_MESSAGE(8, 800, (int)g.upTicks, "the up traverse must take 20%");
+    TEST_ASSERT_INT_WITHIN_MESSAGE(8, 800, (int)(g.upTicks + g.catchUpTicks), "the up traverse must take 20%");
 }
 
 void test_a_cycle_whose_holds_leave_no_time_to_move_is_refused(void)
@@ -2618,7 +2964,7 @@ void test_a_triangle_is_a_trapezoidal_rate_not_an_infinite_corner(void)
     (void)run_oscillate(10000.0, 1000000U, 2U, DEV_SERVO_WAVE_TRIANGLE);
     TEST_ASSERT_INT32_WITHIN_MESSAGE(dev_servo_channelConfig[CH].positionDeadband, 0,
                                      dev_servo_getPosition(CH),
-                                     "a whole number of triangle cycles must also return to centre");
+                                     "a whole number of triangle cycles must also return to where it started");
 }
 
 /* Two deadbands. The last few counts of a point-to-point move are the park
@@ -2717,7 +3063,7 @@ static pos_dev_S measure_position_move(int32_t start, int32_t target, int32_t fe
 
 static double worst_cycle_on_current_machine(const dev_servo_waveform_S *wf)
 {
-    dev_servo_setPosition(CH, wf->centreCounts);
+    dev_servo_setPosition(CH, wf->centreCounts - wf->amplitudeCounts); /* the lower peak */
     dev_servo_enable(CH, true);
     TEST_ASSERT_TRUE_MESSAGE(dev_servo_startWaveform(CH, wf),
                              "the envelope case must be feasible on this machine");
@@ -2736,7 +3082,8 @@ static double worst_cycle_on_current_machine(const dev_servo_waveform_S *wf)
             continue;
         }
         runTicks++;
-        const double phase = fmod((double)runTicks * SERVO_DT_S * freqHz, 1.0);
+        if (!dev_servo_data.channel[CH].waveLocked) { continue; }
+        const double phase = fmod(template_start_phase(wf) + ((double)runTicks * SERVO_DT_S * freqHz), 1.0);
         const double err = fabs((double)d_encoderValue - template_ideal(wf, phase));
         if (err > worst) { worst = err; }
     }
@@ -3292,6 +3639,11 @@ int main(void)
     RUN_TEST(test_dev_servo_isReadyRejectsOutOfRangeChannel);
 
     RUN_TEST(test_dev_servo_newMoveClearsPreviousArrivalBeforeAnyTick);
+    RUN_TEST(test_dev_servo_stagedMoveTheSameWayCarriesTheSpeedThrough);
+    RUN_TEST(test_dev_servo_stagedMoveTheOtherWayStopsFirst);
+    RUN_TEST(test_dev_servo_arrivalSpeedLetsAShortNextMoveStop);
+    RUN_TEST(test_dev_servo_stopClearsTheStagedMove);
+    RUN_TEST(test_dev_servo_capStagedLowersOnlyAPendingStagedMove);
     RUN_TEST(test_dev_servo_commandLandingMidtickIsNotReportedAsArrival);
     RUN_TEST(test_dev_servo_setVelocityClearsArrival);
     RUN_TEST(test_dev_servo_stopClearsArrival);
@@ -3304,6 +3656,12 @@ int main(void)
     RUN_TEST(test_an_infeasible_waveform_is_rejected_not_approximated);
     RUN_TEST(test_a_triangle_is_a_trapezoidal_rate_not_an_infinite_corner);
     RUN_TEST(test_the_shape_bit_selects_a_genuinely_different_rate_profile);
+    RUN_TEST(test_a_waveform_starts_on_the_wave_from_rest);
+    RUN_TEST(test_a_waveform_ends_at_rest_where_it_started);
+    RUN_TEST(test_a_waveform_that_starts_high_falls_first);
+    RUN_TEST(test_a_chirp_sweeps_its_frequency_and_ends_where_it_started);
+    RUN_TEST(test_a_chirp_too_fast_at_its_end_is_refused);
+    RUN_TEST(test_a_chirp_with_holds_is_refused);
     RUN_TEST(test_the_machine_reproduces_the_commanded_waveform_to_one_micron);
     RUN_TEST(test_the_phase_accumulator_loses_nothing_over_whole_cycles);
     RUN_TEST(test_tracking_does_not_degrade_along_the_machine);

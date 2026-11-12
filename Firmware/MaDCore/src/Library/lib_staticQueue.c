@@ -64,6 +64,21 @@ bool lib_staticQueue_pop(lib_staticQueue_S *queue, void *data)
     return true;
 }
 
+bool lib_staticQueue_peek(lib_staticQueue_S *queue, int32_t index, void *data)
+{
+    if ((data == NULL) || (index < 0) || (index >= lib_staticQueue_count(queue)))
+    {
+        return false;
+    }
+    int slot = queue->front + (int)index;
+    if (slot >= queue->max_size)
+    {
+        slot -= queue->max_size;
+    }
+    memcpy(data, &(queue->buf[queue->item_size * slot]), queue->item_size);
+    return true;
+}
+
 bool lib_staticQueue_isempty(lib_staticQueue_S *queue)
 {
     return queue->rear == queue->front;

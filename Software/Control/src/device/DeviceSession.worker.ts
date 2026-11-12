@@ -17,8 +17,9 @@
 import init, { WasmClient } from '@/wasm/protoemb_runtime.js';
 import wasmUrl from '@/wasm/protoemb_runtime_bg.wasm?url';
 import { logger, setLogSink, flushLog, nowMs, type LogBatchSink } from '@/diagnostics/log';
-import { byteRing } from '@/diagnostics/byteRing';
+import { byteRing, failedPayload } from '@/diagnostics/byteRing';
 import { commandName, isPeriodicCommand, requestOf, summariseGcode, type CommandDir } from './commandNames';
+import { nackReasonName, nackReasonText } from './nackReason';
 import {
   decodeSample,
   decodeMachineState,
@@ -47,6 +48,7 @@ import {
   MSG_WRITE_SAMPLE_PROFILE_WRITE,
   MSG_WRITE_GAUGE_LENGTH,
   MSG_WRITE_GAUGE_FORCE,
+  MSG_WRITE_REBOOT,
   MSG_WRITE_FILE_DOWNLOAD,
   MSG_SAMPLE_PERIOD_MS,
   MSG_STATE_PERIOD_MS,
@@ -133,6 +135,8 @@ interface Waiter {
 interface RawEvent {
   event: 'ack' | 'nack' | 'data' | 'notification' | 'timeout' | 'error';
   command?: number;
+  /** Present on `nack`: the device's reason code (see nackReason.ts). */
+  reason?: number;
   payload?: number[] | Uint8Array;
   message?: string;
   /** Present on `timeout`: the framed request that timed out
@@ -761,6 +765,15 @@ export class DeviceSession {
     this.client?.write(MSG_WRITE_GAUGE_LENGTH, new Uint8Array(0));
   }
 
+  /**
+   * Ask the machine to reboot; resolves whether it acknowledged. It restarts
+   * shortly after its ACK, so the caller reconnects to read the new boot. The
+   * control port has no reset line: this is the only way the app restarts it.
+   */
+  async reboot(): Promise<boolean> {
+    return this.runOp(() => this.writeAndAck(MSG_WRITE_REBOOT, new Uint8Array(0), 2000), 'reboot');
+  }
+
   // ── Test run: upload binary moves, then start ──
 
   /**
@@ -1190,7 +1203,11 @@ export class DeviceSession {
         logProto.info('ack', commandName(command, 'write'), this.opTag(command));
         break;
       case 'nack':
-        logProto.warn('nack', commandName(command, 'write'), { command, ...this.opTag(command) });
+        logProto.warn('nack', commandName(command, 'write'), {
+          command,
+          reason: nackReasonName(ev.reason),
+          ...this.opTag(command),
+        });
         break;
       case 'timeout': {
         // The frame says which request was lost; the in-flight op does not
@@ -1247,7 +1264,7 @@ export class DeviceSession {
       case 'ack':
         return [{ kind: 'ack', command: ev.command ?? -1, success: true }];
       case 'nack':
-        return [{ kind: 'ack', command: ev.command ?? -1, success: false }];
+        return [{ kind: 'ack', command: ev.command ?? -1, success: false, reason: ev.reason }];
       case 'notification':
         return [{ kind: 'notification', data: notificationToShared(decodeNotification(u8(ev.payload))) }];
       case 'timeout':
@@ -1480,10 +1497,10 @@ export class DeviceSession {
       // Round-trip time is the cheapest early warning there is: a link that is
       // about to fail usually gets slow before it stops answering.
       logProto.debug('rtt', commandName(command, 'write'), {
-      ...this.opTag(),
         ...this.opTag(),
         durMs: Math.round(nowMs() - started),
         success: e.success,
+        ...(e.success ? {} : failedPayload(data)),
       });
       return e.success;
     } catch (err) {
@@ -1491,6 +1508,7 @@ export class DeviceSession {
         ...this.opTag(),
         durMs: Math.round(nowMs() - started),
         reason: err instanceof Error ? err.message : String(err),
+        ...failedPayload(data),
       });
       return false;
     }
@@ -1507,8 +1525,9 @@ export class DeviceSession {
       ...this.opTag(),
       durMs: Math.round(nowMs() - started),
       success: e.success,
+      ...(e.success ? {} : failedPayload(data)),
     });
-    if (!e.success) throw new Error(`device NACKed command ${command}`);
+    if (!e.success) throw new Error(`device NACKed command ${command}: ${nackReasonText(e.reason)}`);
   }
 
   private async uploadWithRetry(command: number, data: Uint8Array, maxRetries: number): Promise<void> {
@@ -1523,7 +1542,12 @@ export class DeviceSession {
         attempt += 1;
         const reason = err instanceof Error ? err.message : String(err);
         if (!shouldRetryUpload(attempt, maxRetries)) {
-          logProto.error('upload-failed', commandName(command, 'write'), { attempt, reason, ...this.opTag() });
+          logProto.error('upload-failed', commandName(command, 'write'), {
+            attempt,
+            reason,
+            ...this.opTag(),
+            ...failedPayload(data),
+          });
           throw err;
         }
         logProto.warn('upload-retry', commandName(command, 'write'), { attempt, maxRetries, reason, ...this.opTag() });

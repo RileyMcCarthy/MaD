@@ -8,7 +8,7 @@
  * DEBUG_* macros from IO_Debug.h; it calls no peer-module functions. */
 #include "../../src/IO/IO_gcode.c"
 
-/* IO_gcode emits DEBUG_INFO (ENABLE_DEBUG_SERIAL=1 in native_test), which
+/* IO_gcode emits DEBUG_INFO, which
  * acquires this lock via the mock HAL. Created fresh in setUp(). */
 extern int _stdio_debug_lock; /* shared in mock_propeller2.c */
 

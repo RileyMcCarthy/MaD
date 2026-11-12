@@ -42,8 +42,6 @@ static const dev_servo_channelConfig_S dev_servo_channelConfigDefault[DEV_SERVO_
         8,                           /* positionDeadband — fallback only; dev_servo_init
                                       *   sets it to DEV_SERVO_DEADBAND_NM of the
                                       *   profile's encoder scale (8 at 8192 counts/mm) */
-        2,                           /* waveformStartTolerance — ~0.25 um, so the first
-                                      *   cycle starts inside the 1 um contract */
         8,                           /* kpNum            — cmd += 8*err; ~just under maxAccel/maxVel~=10 edge */
         1,                           /* kpDen */
         0,                           /* kiNum            — integral OFF: unloaded motion needs none;
@@ -123,6 +121,14 @@ typedef struct
     int32_t target;    /* counts (POSITION mode) */
     int32_t feedrate;  /* counts/s cruise speed (POSITION mode), 1..maxVelocity */
     int32_t targetVel; /* counts/s (VELOCITY mode) */
+    /* The move that follows the running one (dev_servo_stageNext). When the
+     * trajectory reaches `target` the loop switches to it in the same tick,
+     * carrying its speed through when both go the same way. Cleared by every
+     * other command. */
+    bool nextValid;
+    int32_t nextTarget;
+    int32_t nextFeedrate;
+    uint32_t handovers; /* bumped at each switch to the staged move */
     /* POSITION mode with the feedback stage off (dev_servo_moveToOpenLoop):
      * the trajectory is fed straight to the drive and the encoder is only
      * watched. Cleared by every other command. */
@@ -149,6 +155,7 @@ typedef struct
     int32_t velocity;
     int32_t followingError;
     bool atTarget;
+    uint32_t handovers; /* switches to a staged move (dev_servo_getHandovers) */
     bool stalled;
     bool ready; /* the control loop has ticked (see dev_servo_isReady) */
 } dev_servo_output_S;
@@ -189,7 +196,18 @@ typedef struct
      * elapsed-microsecond counter means no 32-bit duration ceiling -- the old
      * APP-side version capped at 3600 s and silently truncated longer runs --
      * and no float phase to lose precision over a long fatigue test. */
-    uint32_t wavePhase;
+    uint32_t wavePhase;  /* phase run since the wave started; each wrap is one whole cycle */
+    uint32_t waveOffset; /* phase of the cycle template where the wave starts (the centre, heading up) */
+    bool waveLocked;     /* the follower has caught up with the wave and is passing it through */
+    /* Chirp (req.wave.endFreqMicroHz != 0): time into the sweep, its length and
+     * its rate of change of frequency, so each tick knows its frequency. */
+    float chirpElapsedS;
+    float chirpSpanS;
+    float chirpSlopeMicroHzPerS;
+    /* The follower passed last tick's trajectory through, which sets the
+     * setpoint at the START of that tick; it reached `followEnd` by its end. */
+    bool followPassed;
+    float followEnd;
     uint32_t phaseRemainder; /* sub-LSB carry; see dev_servo_private_phaseStep */
     uint32_t waveCyclesDone;
     /* Cycle geometry as fractions of one period, worked out once when the
@@ -617,21 +635,20 @@ void dev_servo_init(int lock, int32_t maxVelocityCounts, int32_t maxAccelCounts,
 /* One cycle of phase, as a wrapping 32-bit accumulator. */
 #define DEV_SERVO_PHASE_ONE_CYCLE 4294967296.0f
 
-/* A waveform is three segments, and only the middle one is a waveform.
+/* A waveform runs in two segments, both through the shared follower
+ * (dev_servo_private_follow), which passes the desired trajectory through
+ * unchanged wherever the machine's speed and acceleration allow it and catches
+ * up at the acceleration limit wherever they do not.
  *
- * The reason is that a sinusoid's velocity is `wA*cos`, so at its CENTRE the
- * velocity is maximal: a machine standing at rest at the centre cannot begin
- * one without an infinite acceleration. The only phases at which a sinusoid
- * can be joined or left at rest are its PEAKS. So the driver approaches the
- * peak as an ordinary profiled move, runs whole cycles peak-to-peak, and
- * returns to the centre as another ordinary move. Every instant of all three
- * is within the acceleration budget, which is what makes the delivered
- * trajectory equal to the requested one instead of a lagged copy of it. */
+ * It starts at rest at a PEAK -- where the carriage is -- and ends there after
+ * whole cycles: a cosine, which asks for no jump in speed at either end, so a
+ * feasible wave is followed exactly from its first tick. (Started at its
+ * centre, a sinusoid would ask a carriage at rest for its full speed at once.)
+ * After the last cycle the desired position is that peak at rest. */
 typedef enum
 {
-    DEV_SERVO_WAVE_APPROACH = 0, /* profiled move from wherever we are to the peak */
-    DEV_SERVO_WAVE_RUN,          /* the cycles themselves, evaluated from phase     */
-    DEV_SERVO_WAVE_RETURN        /* profiled move back to the centre                */
+    DEV_SERVO_WAVE_RUN = 0, /* the cycles, evaluated from phase                 */
+    DEV_SERVO_WAVE_SETTLE   /* after the last cycle: rest where it started */
 } dev_servo_waveSegment_E;
 #define DEV_SERVO_PI 3.14159265358979f
 #define DEV_SERVO_TWO_PI 6.283185307179586f
@@ -705,8 +722,19 @@ static bool dev_servo_private_planWaveform(const dev_servo_channelConfig_S *cfg,
     {
         return false;
     }
+    /* A chirp is a plain sine: holds and skew are laid out in fractions of a
+     * period, which a sweeping frequency would stretch and squeeze unevenly. */
+    if ((wf->endFreqMicroHz != 0U) &&
+        ((wf->shape != DEV_SERVO_WAVE_SINE) || (wf->dwellHighUs != 0U) || (wf->dwellLowUs != 0U) ||
+         (wf->skewPerMille != 500U)))
+    {
+        return false;
+    }
 
-    const float periodS = 1000000.0f / (float)wf->freqMicroHz;
+    /* Judged at the highest frequency it reaches, where its speed and
+     * acceleration peak -- for a chirp, whichever end that is. */
+    const uint32_t planFreq = (wf->endFreqMicroHz > wf->freqMicroHz) ? wf->endFreqMicroHz : wf->freqMicroHz;
+    const float periodS = 1000000.0f / (float)planFreq;
     const float highS = (float)wf->dwellHighUs / 1000000.0f;
     const float lowS = (float)wf->dwellLowUs / 1000000.0f;
     const float traverseS = periodS - highS - lowS;
@@ -847,7 +875,8 @@ static float dev_servo_private_waveExcursion(const dev_servo_channelData_S *d, f
 #define DEV_SERVO_PHASE_NUM 1048576U  /* 2^20 */
 #define DEV_SERVO_PHASE_DEN 244140625U /* 5^12 */
 
-static uint32_t dev_servo_private_phaseStep(dev_servo_channelData_S *d, uint32_t elapsedUs)
+static uint32_t dev_servo_private_phaseStep(dev_servo_channelData_S *d, uint32_t freqMicroHz,
+                                            uint32_t elapsedUs)
 {
     /* Split so that every intermediate OUTSIDE the 64-bit helper fits in 32
      * bits, which is not a style preference: FlexC cannot compile a NAMED
@@ -860,7 +889,7 @@ static uint32_t dev_servo_private_phaseStep(dev_servo_channelData_S *d, uint32_t
      *     n * 2^20 / 5^12               = q * 2^20 + (r * 2^20 + carry) / 5^12
      */
     uint32_t r = 0U;
-    const uint32_t q = lib_utility_muldivmod64_unsigned(d->req.wave.freqMicroHz, elapsedUs,
+    const uint32_t q = lib_utility_muldivmod64_unsigned(freqMicroHz, elapsedUs,
                                                         DEV_SERVO_PHASE_DEN, &r);
     uint32_t rem = 0U;
     uint32_t qFrac = lib_utility_muldivmod64_unsigned(r, DEV_SERVO_PHASE_NUM,
@@ -895,14 +924,27 @@ static uint32_t dev_servo_private_phaseStep(dev_servo_channelData_S *d, uint32_t
 static void dev_servo_private_oscillate(dev_servo_channelData_S *d, float dt, uint32_t elapsedUs,
                                         float *pos, float *vel)
 {
-    const float phase = (float)d->wavePhase / DEV_SERVO_PHASE_ONE_CYCLE; /* [0,1) */
+    /* The template is evaluated `waveOffset` in, so the wave starts at its
+     * centre; the wrap of wavePhase itself still marks each whole cycle. */
+    const float phase = (float)(d->wavePhase + d->waveOffset) / DEV_SERVO_PHASE_ONE_CYCLE; /* [0,1) */
 
     /* Advance first, so the tick's END phase is known and the velocity below
      * can be the interval's true average. The wrap IS the cycle boundary --
      * no modulo, no elapsed counter. */
-    const uint32_t step = dev_servo_private_phaseStep(d, elapsedUs);
+    /* A chirp's frequency at the MIDDLE of this tick: the phase it gains is
+     * then exact to second order, so the sweep's whole cycles still end it at
+     * rest where it started. */
+    uint32_t freq = d->req.wave.freqMicroHz;
+    if (d->req.wave.endFreqMicroHz != 0U)
+    {
+        float t = d->chirpElapsedS + (0.5f * dt);
+        if (t > d->chirpSpanS) { t = d->chirpSpanS; }
+        freq = (uint32_t)(((float)d->req.wave.freqMicroHz + (d->chirpSlopeMicroHzPerS * t)) + 0.5f);
+        d->chirpElapsedS += dt;
+    }
+    const uint32_t step = dev_servo_private_phaseStep(d, freq, elapsedUs);
     const uint32_t next = d->wavePhase + step;
-    const float nextPhase = (float)next / DEV_SERVO_PHASE_ONE_CYCLE;
+    const float nextPhase = (float)(next + d->waveOffset) / DEV_SERVO_PHASE_ONE_CYCLE;
 
     const float excursion = dev_servo_private_waveExcursion(d, phase);
     *pos = (float)d->req.wave.centreCounts + excursion;
@@ -927,6 +969,65 @@ static void dev_servo_private_oscillate(dev_servo_channelData_S *d, float dt, ui
     d->wavePhase = next;
 }
 
+/* The shared follower: turn a DESIRED trajectory -- `want` at the start of
+ * this tick, moving at `wantVel` across it -- into the commanded setpoint, so
+ * the machine is never asked for more than its speed and acceleration limits.
+ *
+ * Where the desired trajectory is within them the follower passes it through
+ * unchanged, so a feasible trajectory is followed exactly. Where it is not --
+ * a sinusoid joined at its centre from rest -- it asks for the desired speed
+ * plus a correction that closes the gap no faster than half the acceleration
+ * budget could brake it again, and leaves the caller's accel-limited profiler
+ * to deliver that. The other half of the budget is left for following the
+ * trajectory's own changes of speed while it catches up.
+ *
+ * Returns true when it passed the trajectory through (the setpoint is set);
+ * false when the caller must profile toward `*desiredVel`. */
+static bool dev_servo_private_follow(dev_servo_channelData_S *d, const dev_servo_channelConfig_S *cfg,
+                                     float want, float wantVel, float dt, float *desiredVel)
+{
+    const float maxVel = (float)cfg->maxVelocity;
+    const float maxDv = (float)cfg->maxAccel * dt;
+    /* Where the commanded setpoint is at the start of this tick. A passed
+     * through tick sets it at its own start and moves it no further, so it
+     * ended where that tick's trajectory did. */
+    const float here = d->followPassed
+                           ? d->followEnd
+                           : ((float)d->setpointCounts + ((float)d->setpointNano * 1.0e-9f));
+    const float gap = want - here;
+    /* "Within the limits" with room for rounding: to join, within half a
+     * count, plus one float step of the position far down the machine where a
+     * float is coarser than a count; and 5% on the change of speed, which a trajectory planned
+     * right at the acceleration limit meets exactly and float noise crosses. */
+    const float onTrack = 0.5f + (fabsf(want) * 1.2e-7f);
+    /* Once passing through, the setpoint IS the trajectory every tick, so only
+     * its speed can leave the limits; the position check is for joining. */
+    const bool onIt = d->followPassed || (fabsf(gap) <= onTrack);
+    if (onIt && (fabsf(wantVel - d->setpointVel) <= (maxDv * 1.05f)) && (fabsf(wantVel) <= maxVel))
+    {
+        dev_servo_private_loadSetpoint(d, want);
+        d->setpointVel = wantVel;
+        d->followPassed = true;
+        d->followEnd = want + (wantVel * dt);
+        return true;
+    }
+    if (d->followPassed)
+    {
+        /* Leaving pass-through: put the setpoint where that tick ended, so
+         * the profiler continues from there rather than from its start. */
+        dev_servo_private_loadSetpoint(d, here);
+        d->followPassed = false;
+    }
+    float close = sqrtf((float)cfg->maxAccel * fabsf(gap)); /* sqrt(2 * (a/2) * |gap|) */
+    const float landing = fabsf(gap) / dt;
+    if (landing < close) { close = landing; }
+    float v = wantVel + ((gap >= 0.0f) ? close : -close);
+    if (v > maxVel) { v = maxVel; }
+    if (v < -maxVel) { v = -maxVel; }
+    *desiredVel = v;
+    return false;
+}
+
 void dev_servo_run(void)
 {
     for (dev_servo_channel_E ch = (dev_servo_channel_E)0; ch < DEV_SERVO_CHANNEL_COUNT; ch++)
@@ -938,11 +1039,14 @@ void dev_servo_run(void)
         DEV_SERVO_LOCK_REQ_BLOCK();
         const bool enabled = d->req.enabled;
         const dev_servo_mode_E mode = d->req.mode;
-        const int32_t target = d->req.target;
-        const int32_t feedrate = d->req.feedrate;
+        int32_t target = d->req.target;
+        int32_t feedrate = d->req.feedrate;
         const int32_t targetVel = d->req.targetVel;
         const bool openLoop = (mode == DEV_SERVO_MODE_POSITION) && d->req.openLoop;
-        const uint32_t seq = d->req.seq;
+        uint32_t seq = d->req.seq;
+        bool nextValid = d->req.nextValid && (mode == DEV_SERVO_MODE_POSITION) && (openLoop == false);
+        const int32_t nextTarget = d->req.nextTarget;
+        const int32_t nextFeedrate = d->req.nextFeedrate;
         const uint32_t frame = d->req.frame;
         DEV_SERVO_LOCK_REL();
 
@@ -999,49 +1103,74 @@ void dev_servo_run(void)
          * this tick is what the integral gate asks (see _integrate). */
         const float spVelBefore = d->setpointVel;
 
+        /* ---- Handover to a staged move ----
+         * Once this tick would carry the trajectory onto (or past) the running
+         * move's target -- or it has come to rest there -- the staged move
+         * becomes the running one before anything else is computed, so the
+         * setpoint carries on toward the new target with its speed intact. A
+         * new seq keeps the old target's arrival from being reported for it. */
+        if (nextValid)
+        {
+            const float here = (float)d->setpointCounts + ((float)d->setpointNano * 1.0e-9f);
+            const float remaining = (float)target - here;
+            const bool reachesThisTick =
+                ((remaining * d->setpointVel) >= 0.0f) && (fabsf(remaining) <= (fabsf(d->setpointVel) * dt));
+            const bool restsThere =
+                (fabsf(remaining) <= (float)cfg->positionDeadband) && (fabsf(d->setpointVel) < 1.0f);
+            if (reachesThisTick || restsThere)
+            {
+                DEV_SERVO_LOCK_REQ_BLOCK();
+                if ((d->req.seq == seq) && d->req.nextValid)
+                {
+                    d->req.target = d->req.nextTarget;
+                    d->req.feedrate = d->req.nextFeedrate;
+                    d->req.nextValid = false;
+                    d->req.seq++;
+                    d->req.handovers++;
+                    target = d->req.target;
+                    feedrate = d->req.feedrate;
+                    seq = d->req.seq;
+                }
+                DEV_SERVO_LOCK_REL();
+                nextValid = false;
+            }
+        }
+
         /* ---- Stage 1: trajectory generator -> (setpointVel, setpointPos) ---- */
         float desiredSpVel = 0.0f;
         bool atTarget = false;
-        /* Where the profiler aims, and whether it runs at all. A waveform's
-         * outer segments are ordinary position moves, so they reuse the
-         * profiler rather than duplicating it; only its RUN segment writes the
-         * setpoint directly, and that is the one case the limiter must not
-         * touch (an evaluated setpoint is already within budget by
-         * construction, and re-limiting it would reintroduce the lag). */
+        /* Whether this tick's setpoint was written directly (a trajectory the
+         * follower passed through) rather than profiled toward a speed. */
         bool evaluated = false;
         int32_t profileTarget = target;
         float profileCruise = (float)feedrate;
 
         if (mode == DEV_SERVO_MODE_OSCILLATE)
         {
-            const int32_t peak = d->req.wave.centreCounts + d->req.wave.amplitudeCounts;
-            profileCruise = maxVel;
-            profileTarget =
-                (d->waveSegment == (uint8_t)DEV_SERVO_WAVE_APPROACH) ? peak : d->req.wave.centreCounts;
-
+            /* What the wave wants this tick: the cycles, evaluated from phase
+             * (so there is no accumulator to drift), then rest where it began. */
+            float want = (float)target;
+            float wantVel = 0.0f;
             if (d->waveSegment == (uint8_t)DEV_SERVO_WAVE_RUN)
             {
-                /* The setpoint is EVALUATED, never integrated: position comes
-                 * from the phase, so there is no accumulator to drift and the
-                 * ramp-in deficit that velocity mode leaves behind cannot
-                 * arise. */
-                dev_servo_private_oscillate(d, dt, elapsedUs, &d->setpointPos, &d->setpointVel);
-                dev_servo_private_loadSetpoint(d, d->setpointPos);
-                evaluated = true;
+                dev_servo_private_oscillate(d, dt, elapsedUs, &want, &wantVel);
                 if (d->waveCyclesDone >= d->req.wave.cycles)
                 {
-                    /* Whole cycles done, so the carriage is back at the peak
-                     * with its velocity through zero. Stop evaluating HERE:
-                     * letting the phase run on past the last cycle leaves a
-                     * phantom setpoint walking away from a machine that has
-                     * parked, and the following error it opens up is both
-                     * published and a fault input. */
-                    d->waveSegment = (uint8_t)DEV_SERVO_WAVE_RETURN;
-                    dev_servo_private_snapSetpoint(d, peak);
-                    d->setpointVel = 0.0f;
-                    profileTarget = d->req.wave.centreCounts;
-                    evaluated = false;
+                    /* Whole cycles done, back at the starting peak. Stop
+                     * evaluating HERE: letting the phase run on leaves a phantom
+                     * setpoint walking away from a machine that should be parking. */
+                    d->waveSegment = (uint8_t)DEV_SERVO_WAVE_SETTLE;
                 }
+            }
+            evaluated = dev_servo_private_follow(d, cfg, want, wantVel, dt, &desiredSpVel);
+            if (evaluated && (d->waveSegment == (uint8_t)DEV_SERVO_WAVE_RUN))
+            {
+                d->waveLocked = true;
+            }
+            if ((d->waveSegment == (uint8_t)DEV_SERVO_WAVE_SETTLE) && evaluated &&
+                (dev_servo_private_iabs(target - pos) <= cfg->positionDeadband))
+            {
+                atTarget = true; /* the waveform is done: at rest where it started */
             }
         }
 
@@ -1051,36 +1180,47 @@ void dev_servo_run(void)
             if (desiredSpVel > maxVel) { desiredSpVel = maxVel; }
             if (desiredSpVel < -maxVel) { desiredSpVel = -maxVel; }
         }
-        else if (!evaluated)
+        else if ((!evaluated) && (mode != DEV_SERVO_MODE_OSCILLATE))
         {
             const float posNow =
                 (float)d->setpointCounts + ((float)d->setpointNano * 1.0e-9f);
             const float dist = (float)profileTarget - posNow; /* remaining (setpoint frame) */
             const float adist = fabsf(dist);
             const float cruise = profileCruise; /* moveTo clamps to 1..maxVelocity */
-            /* Fastest speed from which we can still brake to rest at the target. */
-            const float vStop = sqrtf(2.0f * (float)cfg->maxAccel * adist);
+            const float accel = (float)cfg->maxAccel;
+            /* The speed to arrive at. Zero unless a staged move follows in the
+             * same direction: then the slower of the two feedrates, and no more
+             * than the next move could still stop from within its own length,
+             * since nothing may follow it. */
+            float exitVel = 0.0f;
+            if (nextValid && (mode == DEV_SERVO_MODE_POSITION))
+            {
+                const float after = (float)nextTarget - (float)target;
+                if ((after != 0.0f) && ((after > 0.0f) == (dist >= 0.0f)))
+                {
+                    exitVel = (cruise < (float)nextFeedrate) ? cruise : (float)nextFeedrate;
+                    const float vNextStop = sqrtf(2.0f * accel * fabsf(after));
+                    if (vNextStop < exitVel) { exitVel = vNextStop; }
+                }
+            }
+            /* Fastest speed from which we can still brake to the exit speed at
+             * the target. */
+            const float vStop = sqrtf((exitVel * exitVel) + (2.0f * accel * adist));
             float speed = (cruise < vStop) ? cruise : vStop;
-            /* ...and never faster than "cover what is left in one tick". The
-             * braking law alone is singular at the target: for a sub-count
-             * remainder it still demands hundreds of counts/s, so the setpoint
-             * steps clean over the target, flips sign, and hunts forever — the
-             * profile never winds down, so the move never reports arrival even
-             * with the encoder sitting inside the deadband. Capping by the
-             * one-tick reach lands the setpoint exactly on the target instead. */
-            const float vReach = adist / dt;
-            if (vReach < speed) { speed = vReach; }
+            /* ...and, arriving to stop, never faster than "cover what is left in
+             * one tick". The braking law alone is singular at the target: for a
+             * sub-count remainder it still demands hundreds of counts/s, so the
+             * setpoint steps clean over the target, flips sign, and hunts
+             * forever. Capping by the one-tick reach lands it exactly on the
+             * target instead. Arriving at speed hands over first (above). */
+            if (exitVel <= 0.0f)
+            {
+                const float vReach = adist / dt;
+                if (vReach < speed) { speed = vReach; }
+            }
             desiredSpVel = (dist >= 0.0f) ? speed : -speed;
 
-            /* Arriving to START a waveform is held to a tighter tolerance than
-             * arriving to PARK; see waveformStartTolerance. Until it is met the
-             * park below stays disengaged, so the proportional term keeps
-             * creeping the axis in rather than freezing it one deadband out. */
-            const int32_t arriveWithin =
-                ((mode == DEV_SERVO_MODE_OSCILLATE) &&
-                 (d->waveSegment == (uint8_t)DEV_SERVO_WAVE_APPROACH))
-                    ? cfg->waveformStartTolerance
-                    : cfg->positionDeadband;
+            const int32_t arriveWithin = cfg->positionDeadband;
             /* Open loop has no encoder truth to arrive by: it has arrived when
              * its own trajectory has. */
             const int32_t arriveFrom = openLoop ? d->setpointCounts : pos;
@@ -1111,18 +1251,6 @@ void dev_servo_run(void)
              * START, leaving it one tick of travel AHEAD of its own trajectory
              * -- 5 um at 5 mm/s, 24 um at 25 mm/s. */
             feedVel = 0.5f * (vStart + d->setpointVel);
-        }
-
-        if ((mode == DEV_SERVO_MODE_OSCILLATE) &&
-            (d->waveSegment == (uint8_t)DEV_SERVO_WAVE_APPROACH) && atTarget)
-        {
-            /* Standing at the peak at rest: join the sinusoid here, where its
-             * own velocity is zero, so there is no step to absorb. The waveform
-             * is not finished, so this arrival must NOT be reported as one. */
-            d->waveSegment = (uint8_t)DEV_SERVO_WAVE_RUN;
-            d->wavePhase = 0U;
-            d->waveCyclesDone = 0U;
-            atTarget = false;
         }
 
         /* ---- Stage 2: feedback = feedforward + Kp*err + Ki*∫err ---- */
@@ -1226,6 +1354,7 @@ void dev_servo_run(void)
          * command that landed after the snapshot above changed the goalposts, so
          * report "not there yet" and let the next tick judge the new target. */
         d->out.atTarget = atTarget && (d->req.seq == seq);
+        d->out.handovers = d->req.handovers;
         d->out.stalled = stalled;
         d->out.ready = true;
         DEV_SERVO_LOCK_REL();
@@ -1262,6 +1391,11 @@ void dev_servo_enable(dev_servo_channel_E ch, bool enable)
     if (ch >= DEV_SERVO_CHANNEL_COUNT) { return; }
     DEV_SERVO_LOCK_REQ_BLOCK();
     dev_servo_data.channel[ch].req.enabled = enable;
+    if (enable == false)
+    {
+        /* Nothing may carry on into a staged move after the drive comes back. */
+        dev_servo_data.channel[ch].req.nextValid = false;
+    }
     DEV_SERVO_LOCK_REL();
 }
 
@@ -1287,6 +1421,7 @@ static void dev_servo_private_move(dev_servo_channel_E ch, int32_t targetCounts,
      * done (that would retire every move the instant it is issued). */
     dev_servo_data.channel[ch].req.seq++;
     dev_servo_data.channel[ch].out.atTarget = false;
+    dev_servo_data.channel[ch].req.nextValid = false;
     DEV_SERVO_LOCK_REL();
 }
 
@@ -1310,6 +1445,7 @@ void dev_servo_setVelocity(dev_servo_channel_E ch, int32_t velCountsPerSec)
      * anything the caller can act on. */
     dev_servo_data.channel[ch].req.seq++;
     dev_servo_data.channel[ch].out.atTarget = false;
+    dev_servo_data.channel[ch].req.nextValid = false;
     DEV_SERVO_LOCK_REL();
 }
 
@@ -1360,17 +1496,41 @@ bool dev_servo_startWaveform(dev_servo_channel_E ch, const dev_servo_waveform_S 
     dev_servo_data.channel[ch].waveFracUp = fracUp;
     dev_servo_data.channel[ch].waveRampDown = rampDown;
     dev_servo_data.channel[ch].waveRampUp = rampUp;
-    /* The driver owns the whole manoeuvre: move to the peak, cycle, come back
-     * to the centre. So the caller does not have to pre-position the machine,
-     * and `atTarget` means the WAVEFORM is done rather than some segment of
-     * it -- one completion concept for the whole command. */
-    dev_servo_data.channel[ch].req.target = waveform->centreCounts;
-    dev_servo_data.channel[ch].waveSegment = (uint8_t)DEV_SERVO_WAVE_APPROACH;
+    /* The wave starts at rest at a peak: in the cycle template ([hold +A]
+     * [down][hold -A][up]) the start of the rising traverse, or of the falling
+     * one when it starts high. Whole cycles from there end back there, so
+     * `atTarget` means the WAVEFORM is done -- one completion concept for the
+     * command -- and the target is that peak. */
+    float startPhase = waveform->startHigh ? fracHigh : (fracHigh + fracDown + fracLow);
+    if (startPhase >= 1.0f) { startPhase -= 1.0f; }
+    float offset = startPhase * DEV_SERVO_PHASE_ONE_CYCLE;
+    if (offset >= 4294967040.0f) { offset = 0.0f; } /* within a float ulp of a whole cycle */
+    dev_servo_data.channel[ch].req.target = waveform->startHigh
+                                                ? (waveform->centreCounts + waveform->amplitudeCounts)
+                                                : (waveform->centreCounts - waveform->amplitudeCounts);
+    dev_servo_data.channel[ch].waveSegment = (uint8_t)DEV_SERVO_WAVE_RUN;
+    dev_servo_data.channel[ch].waveOffset = (uint32_t)offset;
+    dev_servo_data.channel[ch].waveLocked = false;
+    /* A chirp's sweep: its whole cycles span 2N / (f0 + f1) seconds, the
+     * frequency rising (or falling) linearly across it. */
+    dev_servo_data.channel[ch].chirpElapsedS = 0.0f;
+    dev_servo_data.channel[ch].chirpSpanS = 0.0f;
+    dev_servo_data.channel[ch].chirpSlopeMicroHzPerS = 0.0f;
+    if (waveform->endFreqMicroHz != 0U)
+    {
+        const float sumHz = ((float)waveform->freqMicroHz + (float)waveform->endFreqMicroHz) / 1000000.0f;
+        const float span = (2.0f * (float)waveform->cycles) / sumHz;
+        dev_servo_data.channel[ch].chirpSpanS = span;
+        dev_servo_data.channel[ch].chirpSlopeMicroHzPerS =
+            ((float)waveform->endFreqMicroHz - (float)waveform->freqMicroHz) / span;
+    }
+    dev_servo_data.channel[ch].followPassed = false;
     dev_servo_data.channel[ch].wavePhase = 0U;
     dev_servo_data.channel[ch].phaseRemainder = 0U;
     dev_servo_data.channel[ch].waveCyclesDone = 0U;
     dev_servo_data.channel[ch].req.seq++;
     dev_servo_data.channel[ch].out.atTarget = false;
+    dev_servo_data.channel[ch].req.nextValid = false;
     DEV_SERVO_LOCK_REL();
     return true;
 }
@@ -1393,6 +1553,7 @@ void dev_servo_stop(dev_servo_channel_E ch)
     dev_servo_data.channel[ch].req.targetVel = 0;
     dev_servo_data.channel[ch].req.seq++;
     dev_servo_data.channel[ch].out.atTarget = false;
+    dev_servo_data.channel[ch].req.nextValid = false;
     DEV_SERVO_LOCK_REL();
 }
 
@@ -1414,6 +1575,7 @@ void dev_servo_setPosition(dev_servo_channel_E ch, int32_t counts)
     /* Re-defining the coordinate frame moves the target with it; re-judge. */
     dev_servo_data.channel[ch].req.seq++;
     dev_servo_data.channel[ch].out.atTarget = false;
+    dev_servo_data.channel[ch].req.nextValid = false;
     DEV_SERVO_LOCK_REL();
 }
 
@@ -1460,6 +1622,51 @@ int32_t dev_servo_getTarget(dev_servo_channel_E ch)
     const int32_t target = dev_servo_data.channel[ch].req.target;
     DEV_SERVO_LOCK_REL();
     return target;
+}
+
+void dev_servo_stageNext(dev_servo_channel_E ch, int32_t targetCounts, int32_t feedrateCountsPerSec)
+{
+    if (ch >= DEV_SERVO_CHANNEL_COUNT) { return; }
+    const int32_t maxVel = dev_servo_channelConfig[ch].maxVelocity;
+    if ((feedrateCountsPerSec <= 0) || (feedrateCountsPerSec > maxVel))
+    {
+        feedrateCountsPerSec = maxVel; /* 0/invalid => full speed, as moveTo */
+    }
+    DEV_SERVO_LOCK_REQ_BLOCK();
+    dev_servo_channelData_S *const d = &dev_servo_data.channel[ch];
+    /* Only a closed-loop position move hands over; anything else ignores it. */
+    if ((d->req.mode == DEV_SERVO_MODE_POSITION) && (d->req.openLoop == false))
+    {
+        d->req.nextTarget = targetCounts;
+        d->req.nextFeedrate = feedrateCountsPerSec;
+        d->req.nextValid = true;
+    }
+    DEV_SERVO_LOCK_REL();
+}
+
+bool dev_servo_capStaged(dev_servo_channel_E ch, int32_t maxFeedrateCountsPerSec)
+{
+    if ((ch >= DEV_SERVO_CHANNEL_COUNT) || (maxFeedrateCountsPerSec <= 0)) { return false; }
+    DEV_SERVO_LOCK_REQ_BLOCK();
+    dev_servo_channelData_S *const d = &dev_servo_data.channel[ch];
+    /* Under the same lock as the handover, so the cap lands on the staged move
+     * or not at all: never on the move after it, and never on a stale copy. */
+    const bool pending = d->req.nextValid;
+    if (pending && (d->req.nextFeedrate > maxFeedrateCountsPerSec))
+    {
+        d->req.nextFeedrate = maxFeedrateCountsPerSec;
+    }
+    DEV_SERVO_LOCK_REL();
+    return pending;
+}
+
+uint32_t dev_servo_getHandovers(dev_servo_channel_E ch)
+{
+    if (ch >= DEV_SERVO_CHANNEL_COUNT) { return 0U; }
+    DEV_SERVO_LOCK_REQ_BLOCK();
+    const uint32_t n = dev_servo_data.channel[ch].out.handovers;
+    DEV_SERVO_LOCK_REL();
+    return n;
 }
 
 bool dev_servo_atTarget(dev_servo_channel_E ch)

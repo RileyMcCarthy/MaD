@@ -27,7 +27,7 @@ import sys
 from pathlib import Path
 
 CRATE = Path(__file__).resolve().parent.parent
-DEFAULT_LST = CRATE / "../../Firmware/MaDCore/.pio/build/MaDEdge/program.p2asm"
+DEFAULT_LST = CRATE / "../../Firmware/MaDCore/.pio/build/MaD/program.p2asm"
 OUT = CRATE / "tests" / "golden" / "hub_mnemonics.txt"
 
 COND = re.compile(r"^(?:if_[a-z_]+|_ret_)\s+")
@@ -112,7 +112,7 @@ def extract(lines):
 def main() -> int:
     lst = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_LST
     if not lst.exists():
-        print(f"missing {lst}; build with: pio run -e MaDEdge", file=sys.stderr)
+        print(f"missing {lst}; build with: pio run -e MaD", file=sys.stderr)
         return 1
     rows = extract(lst.read_text(encoding="utf-8", errors="replace").splitlines())
     OUT.parent.mkdir(parents=True, exist_ok=True)
