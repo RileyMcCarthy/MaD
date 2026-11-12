@@ -233,7 +233,7 @@ python3 ./Protocol/ProtoEmb/core/generate.py --schema ./Protocol/MaDProtocol.yam
 python3 ./Protocol/ProtoEmb/core/generate.py --schema ./Protocol/MaDProtocol.yaml --target rs --output ./Protocol/rust/src/generated      --templates ./Protocol/ProtoEmb/core/templates
 ```
 
-   - **Rust output path:** the live `SIL/makefile:33` generates into `./Protocol/rust/src/generated`, and `Protocol/rust/src/generated/protoemb.rs` is the file that exists on disk. There is **no** `SIL/embsim/peripherals/src/generated/` directory. From `SIL/`, just run `make protocol` (which also runs as part of `make emulator` / `make test`, `SIL/makefile:40,44`).
+   - **Rust output path:** the `protocol` target in `SIL/makefile` generates into `./Protocol/rust/src/generated`, and `Protocol/rust/src/generated/protoemb.rs` is the file that exists on disk. There is **no** `SIL/embsim/peripherals/src/generated/` directory. From `SIL/`, just run `make protocol` (which also runs as part of `make emulator` / `make test`).
    - **Firmware C is also generated automatically** by the PlatformIO **pre-build hook** `extra_scripts/generate_protocol.py`, wired in via `platformio.ini:2` (`extra_scripts = pre:extra_scripts/generate_protocol.py`). So `pio run`/`pio test` regenerate `src/Generated/` from the YAML on every build (`generate_protocol.py:35-48`). The explicit C command above is still useful for a quick check without a full build.
 
 3. **Generator deps** (one-time): `pip install -r Protocol/ProtoEmb/core/requirements.txt` (pyyaml ≥ 6.0, jinja2 ≥ 3.1 — verified contents). The firmware pre-hook installs these into PlatformIO's Python automatically (`generate_protocol.py:28-33`).
