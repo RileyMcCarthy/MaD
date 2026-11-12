@@ -1,7 +1,7 @@
 [workspace]
 members = [
     # Out-of-tree member: the generated Rust protocol codec lives next to the
-    # schema it comes from (see Protocol/Cargo.toml's `workspace` back-pointer).
+    # schema it comes from (see Protocol/rust/Cargo.toml's `workspace` back-pointer).
     "../Protocol/rust",
     "models",
     "p2core",
@@ -33,9 +33,6 @@ repository = "https://github.com/rileymccarthy/MaD"
 [workspace.dependencies]
 tracing = "0.1"
 rstest = "0.26"
-serde_json = "1"
-axum = { version = "0.8", features = ["ws"] }
-tokio = { version = "1", features = ["rt-multi-thread", "net", "sync", "macros", "time"] }
 
 # The ISS interprets hundreds of millions of guest instructions in every test
 # that boots the firmware, on embsim's engine, and unoptimized both are several
