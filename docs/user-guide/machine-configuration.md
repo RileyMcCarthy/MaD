@@ -11,13 +11,21 @@ folder.
 
 - The configuration is read from the machine when you connect.
 - Edit a field, then **Write to device**. The machine stores it and keeps it
-  through power cycles.
+  through power cycles. The button shows **Saved ✓** when the write worked.
 - **Read from device** re-reads it, discarding unsaved edits.
+- Leaving **Settings** with unsaved edits asks first.
 
-!!! info "Power-cycle after writing"
+!!! info "Reboot after writing"
     The machine loads its configuration when it starts, so a written value
-    takes effect at the next power-up. Reconnecting the app does not restart
-    the machine.
+    takes effect after a reboot. After a write the app asks:
+
+    - **Reboot now** tells the machine to restart, then reconnects once it has
+      booted. It is unavailable while a test is running.
+    - **Do it later** keeps the machine running on its old values until it
+      next restarts (power-cycle it, for example).
+
+    If the app can't reconnect after the reboot, reconnect from **Connect** or
+    power-cycle the machine.
 
 !!! warning "These values calibrate the machine"
     Wrong steps/mm or load cell values make every measurement wrong, and wrong

@@ -103,7 +103,7 @@ nav:
   - User Guide:
       - user-guide/index.md
       - Connecting: user-guide/connecting.md
-      - Live monitoring: user-guide/live-monitoring.md
+      - Control screen: user-guide/live-monitoring.md
       - Manual control: user-guide/manual-control.md
       - Sample profiles: user-guide/sample-profiles.md
       - Motion profiles: user-guide/motion-profiles.md

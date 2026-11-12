@@ -15,10 +15,18 @@ export const FAULT_HINTS: Record<FaultedReason, string> = {
   // stopped. Do not reword this toward the motor sense.
   [FaultedReason.COG]: 'A processor core in the machine controller stopped running. Reboot the machine.',
   [FaultedReason.WATCHDOG]: 'Watchdog timer triggered.',
-  [FaultedReason.ESD_POWER]: 'ESD power fault detected.',
-  [FaultedReason.ESD_SWITCH]: 'ESD switch fault detected.',
-  [FaultedReason.ESD_UPPER]: 'Upper ESD fault detected.',
-  [FaultedReason.ESD_LOWER]: 'Lower ESD fault detected.',
+  // The four emergency-stop faults latch in the firmware when they stop a
+  // machine that had motion enabled (app_control.c): they stay after their
+  // cause has gone until a motion-off request acknowledges them, so each hint
+  // ends with that step.
+  [FaultedReason.ESD_POWER]:
+    'The emergency stop circuit has no power. Restore it, then disable and re-enable motion.',
+  [FaultedReason.ESD_SWITCH]:
+    'The emergency stop was pressed. Release it and reset the circuit, then disable and re-enable motion.',
+  [FaultedReason.ESD_UPPER]:
+    'The upper end-of-travel emergency switch tripped. Move the gantry off it by hand and reset the circuit, then disable and re-enable motion.',
+  [FaultedReason.ESD_LOWER]:
+    'The lower end-of-travel emergency switch tripped. Move the gantry off it by hand and reset the circuit, then disable and re-enable motion.',
   [FaultedReason.SERVO_COMMUNICATION]: 'Servo communication fault detected.',
   [FaultedReason.FORCE_GAUGE_COMMUNICATION]: 'Force gauge communication fault detected.',
   [FaultedReason.SERVO_STALL]:

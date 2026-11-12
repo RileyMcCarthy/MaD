@@ -63,12 +63,13 @@ export const MOVE_FIELD_RANGE = {
 // widened field that is not reflected here is caught only when a value wraps on
 // the wire, which looks like a wrong test rather than a bug.
 export const WAVEFORM_FIELD_RANGE = {
-  amplitude: packedFieldRange(25, 0, 10000), // mm    → 0.1 µm steps
+  amplitude: packedFieldRange(26, -3000, 10000), // mm → 0.1 µm steps; signed: the direction it sets off in
   frequency: packedFieldRange(27, 0, 1000000), // Hz  → µHz steps
   cycles: packedFieldRange(24, 1, 1), //        count
   dwellHigh: packedFieldRange(22, 0, 1000), //  s     → ms steps
   dwellLow: packedFieldRange(22, 0, 1000), //   s     → ms steps
   skewPerMille: packedFieldRange(10, 1, 1), //  per mille of the traverse
+  endFrequency: packedFieldRange(27, 0, 1000000), // Hz → µHz steps; 0 = no sweep
 } as const;
 
 function assertFieldInRange(
@@ -112,7 +113,7 @@ export function validateAndEncodeMove(move: ProtoMove): Uint8Array {
 /**
  * Parse a `G123` waveform canned-cycle line into a WaveformMove.
  *
- *   G123 A<mm> F<Hz> C<cycles> [W<shape>] [H<s>] [L<s>] [S<skew>]
+ *   G123 A<mm> F<Hz> C<cycles> [W<shape>] [H<s>] [L<s>] [S<skew>] [E<Hz>]
  *
  * One cycle is four segments in phase order:
  *
@@ -126,6 +127,8 @@ export function validateAndEncodeMove(move: ProtoMove): Uint8Array {
  *   H  hold at the upper peak, seconds (default 0)
  *   L  hold at the lower peak, seconds (default 0)
  *   S  of the traversing time, the share spent descending; 0.5 symmetric
+ *   E  chirp: the frequency it sweeps to, linearly across the C cycles
+ *      (default 0, no sweep); a plain sine only — no W1, H, L or S
  *
  * `W` names only the TRAVERSE — how the carriage gets from one peak to the
  * other — so H, L and S apply to every shape. That is what stops the shape list
@@ -148,6 +151,7 @@ export function parseGcodeWaveform(line: string): ProtoWaveformMove | null {
   let dwellHigh = 0; // s
   let dwellLow = 0; // s
   let skewPerMille = 500; // share of the traverse spent descending, per mille
+  let endFrequency = 0; // Hz; 0 = no sweep
 
   for (const token of tokens) {
     if (token.length === 0) continue;
@@ -180,21 +184,25 @@ export function parseGcodeWaveform(line: string): ProtoWaveformMove | null {
         // field is integral.
         skewPerMille = Math.round(value * 1000);
         break;
+      case 'E':
+        endFrequency = value;
+        break;
       default:
         break;
     }
   }
 
-  return { shape, amplitude, frequency, cycles, dwellHigh, dwellLow, skewPerMille, endFrequency: 0 };
+  return { shape, amplitude, frequency, cycles, dwellHigh, dwellLow, skewPerMille, endFrequency };
 }
 
 /** Validate a WaveformMove against the codec's encodable ranges (prevents bit-wrap). */
 export function validateWaveform(wf: ProtoWaveformMove): void {
   // A waveform with zero amplitude or frequency is physically meaningless
   // (no motion / infinite period); reject rather than emit a no-op record.
-  if (!(wf.amplitude > 0) || !(wf.frequency > 0)) {
+  // The amplitude's sign is the direction the wave sets off in.
+  if (!(Math.abs(wf.amplitude) > 0) || !(wf.frequency > 0)) {
     throw new MoveValidationError(
-      `Waveform requires amplitude > 0 and frequency > 0 (got A=${wf.amplitude} mm, f=${wf.frequency} Hz).`,
+      `Waveform requires a non-zero amplitude and frequency > 0 (got A=${wf.amplitude} mm, f=${wf.frequency} Hz).`,
     );
   }
   assertFieldInRange('amplitude', wf.amplitude, WAVEFORM_FIELD_RANGE.amplitude, 'mm');
@@ -202,6 +210,16 @@ export function validateWaveform(wf: ProtoWaveformMove): void {
   assertFieldInRange('cycles', wf.cycles, WAVEFORM_FIELD_RANGE.cycles, 'cycles');
   assertFieldInRange('dwellHigh', wf.dwellHigh, WAVEFORM_FIELD_RANGE.dwellHigh, 's');
   assertFieldInRange('dwellLow', wf.dwellLow, WAVEFORM_FIELD_RANGE.dwellLow, 's');
+  assertFieldInRange('endFrequency', wf.endFrequency, WAVEFORM_FIELD_RANGE.endFrequency, 'Hz');
+  // A chirp is a plain sine: holds and skew are laid out as a share of a
+  // period, which a sweeping frequency would stretch unevenly. Firmware refuses
+  // it too.
+  if (
+    wf.endFrequency > 0 &&
+    (wf.shape !== WaveformShape.SINE || wf.dwellHigh > 0 || wf.dwellLow > 0 || wf.skewPerMille !== 500)
+  ) {
+    throw new MoveValidationError('A chirp (E) must be a plain sine: no W1, H, L or S.');
+  }
 
   // An unknown traverse profile is refused rather than run as a sine. Firmware
   // refuses it too; catching it here means the author finds out at authoring

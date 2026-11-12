@@ -20,10 +20,10 @@ there is no banner under it:
 
 ![Status bar: connected and responding](../assets/screenshots/status-connected.png)
 
-and the **Live** screen shows `Fault: NONE` and `Restriction: NONE`, with
+and the **Control** screen shows `Fault: NONE` and `Restriction: NONE`, with
 **Enable motion** available:
 
-![Live screen state and controls, motion disabled, nothing wrong](../assets/screenshots/state-disabled.png)
+![Control screen state and controls, motion disabled, nothing wrong](../assets/screenshots/state-disabled.png)
 
 If yours looks different, [Troubleshooting](../troubleshooting/index.md) is
 organised by what you see on screen.

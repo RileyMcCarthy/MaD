@@ -11,13 +11,16 @@ Find what you see on screen, and follow the link.
 | ![A firmware banner](../assets/screenshots/banner-firmware-too-old.png){ width=360 }<br>A banner under the status bar | [Firmware problems](firmware.md) |
 | ![Connected and responding](../assets/screenshots/status-connected.png){ width=360 }<br>Green, **Responding**, no banner, but something else is wrong | Keep going |
 
-## Then the Live screen
+## Then the Control screen
+
+The coloured status banner says what the machine is doing and the next step.
 
 | You see | Go to |
 |---|---|
-| Badges showing **—**, controls greyed out | [The machine won't move](machine-wont-move.md#the-state-badges-show) |
+| **Waiting for the machine**, badges showing **—**, controls greyed out | [The machine won't move](machine-wont-move.md#the-state-badges-show) |
 | **Fault:** anything but `NONE` (the badge is red) | [Faults](faults.md) |
 | **Restriction:** anything but `NONE` | [Restrictions](restrictions.md) |
+| **Motion is off**, Jog and Home greyed out | [The machine won't move → Motion is disabled](machine-wont-move.md#motion-is-disabled) |
 | Everything reads `NONE` but a jog does nothing | [The machine won't move](machine-wont-move.md) |
 
 ## Or by task

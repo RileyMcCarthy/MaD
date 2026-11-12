@@ -1,6 +1,6 @@
 # Manual control
 
-The **Controls** panel on the [Live](live-monitoring.md) screen positions the
+The **Controls** panel on the [Control](live-monitoring.md) screen positions the
 carriage, homes the axis, and zeroes force and length before a test.
 
 ![The Controls panel](../assets/screenshots/live-controls.png)
@@ -24,6 +24,14 @@ The button changes with the machine's state:
 
 If the button does nothing or a banner is showing, see
 [The machine won't move](../troubleshooting/machine-wont-move.md).
+
+## When the controls are locked
+
+**Jog** and **Home** are greyed out while motion is off, while the machine has
+not reported its state, while it is faulted, and while a test is running.
+Hover a locked button for the reason. **Zero force** and **Zero length** don't
+move the carriage, so they work with motion off; they lock only while the
+state is unknown or a test is running.
 
 ## Jog
 
@@ -55,7 +63,7 @@ was.
 
 ## During a test
 
-Jog, home and zero are disabled while a test is running. **Disable motion**
+Jog, home and zero are locked while a test is running. **Disable motion**
 and the status bar's **STOP** stay available: either one disables motion,
 which ends the test.
 

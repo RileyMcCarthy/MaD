@@ -9,10 +9,10 @@ The app is a sidebar of screens:
 | Screen | What it's for | Guide |
 |---|---|---|
 | **Connect** | Open the serial link to the machine | [Connecting](connecting.md) |
-| **Live** | Readouts, machine state, manual controls, live charts | [Live monitoring](live-monitoring.md) · [Manual control](manual-control.md) |
+| **Control** | Readouts, machine state, manual controls, starting a test, live charts | [Control screen](live-monitoring.md) · [Manual control](manual-control.md) · [Running a test](running-a-test.md) |
 | **Sample profiles** | Specimen dimensions and test limits | [Sample profiles](sample-profiles.md) |
 | **Motion profiles** | The move sequence a test runs | [Motion profiles](motion-profiles.md) |
-| **Test runs** | Start a test; history; results | [Running a test](running-a-test.md) · [Test history & analysis](test-history-and-analysis.md) |
+| **Test runs** | History and results | [Test history & analysis](test-history-and-analysis.md) |
 | **Firmware** | Installed and recommended firmware; flashing | [Firmware](firmware-and-diagnostics.md) |
 | **About** | App version, documentation links, bug reports | [Reporting a bug](firmware-and-diagnostics.md#reporting-a-bug) |
 | **Settings** | Data folder, machine configuration, calibration | [Settings & data](settings-and-data.md) · [Machine configuration](machine-configuration.md) · [Motor calibration](motor-calibration.md) · [Load cell calibration](load-cell-calibration.md) |

@@ -1,7 +1,8 @@
 # Test history & analysis
 
 Every run is recorded in the **History** table on the **Test runs** screen, and
-each finished run can be opened in the **run viewer** for analysis.
+each finished run can be opened in the **run viewer** for analysis. Runs start
+from the **New test** panel on the [Control](running-a-test.md) screen.
 
 ![The History table](../assets/screenshots/test-runs-history.png)
 
@@ -15,7 +16,7 @@ start time, and a **status** badge:
 | `running` | The test is in progress |
 | `completed` | The motion finished; data is on the machine but not yet downloaded |
 | `downloaded` | The CSV has been pulled to your data folder and can be viewed |
-| `error` | The run was interrupted (e.g. the link dropped mid-test) |
+| `error` | The run failed to start, was marked failed, or recorded no data. The reason shows under the badge. |
 
 Row actions:
 
@@ -25,6 +26,8 @@ Row actions:
 - **Export CSV** — save the CSV (with a metadata header) to a file.
 - **Delete** — remove the run (with a confirmation dialog).
 - **Mark done / Mark failed** — resolve a run stuck in *running*.
+
+A run that finishes while you are on another screen updates here by itself.
 
 Use **Refresh** to reload the table, and **load older runs** to page through
 history.
@@ -46,6 +49,10 @@ It shows:
   quickest way to spot a slipping grip or a limit being hit.
 - **Stress–strain** — stress (σ = |F| / (width·thickness), MPa) against strain
   (ΔL / gauge length, %), with **Max Stress / Max Strain** limit lines.
+
+The Y axes fit the recorded data. Drag across a chart to zoom into that stretch,
+hover to read the values under the cursor, and use the reset button to zoom back
+out. A run that finished without any data shows why instead of the charts.
 
 ## The data
 

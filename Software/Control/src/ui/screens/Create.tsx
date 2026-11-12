@@ -4,27 +4,35 @@ import {
   MotionProfile,
   MotionProfileEntry,
   Move,
+  NotificationType,
   Set as MotionSet,
   TestProfile,
   WaveformFn,
   replaceSetAt,
-  waveformPeakVelocity,
-  waveformPeakAcceleration,
+  chirpCycles,
+  planSigmoid,
+  sinePeakVelocity,
+  sinePeakAcceleration,
 } from '@/domain';
 import { dataStore } from '@/storage/DataStore';
+import { legacyProfileProblem } from '@/domain/legacyProfile';
 import { useStore } from '@/store/useStore';
 import SortableList, { reorder } from '@/ui/components/SortableList';
 import Modal from '@/ui/components/Modal';
 import GcodePreview from '@/ui/components/GcodePreview';
 import NumberField from '@/ui/components/NumberField';
+import { useSavedFlash, useUnsavedWork } from '@/ui/useUnsavedWork';
 
 /* The G-code generator/preview only reads sets; sample limits are applied at
  * run time by the Test Runner (sample profiles live on the Samples page). */
 const newMove = (): Move => ({
   moveType: 'linear',
-  absoluteOrRelative: 'absolute',
-  moveParameters: { position: 0, velocity: 0, distance: 0, time: 0 },
+  moveParameters: { position: 0, velocity: 0, time: 0 },
 });
+
+/** What counts as the editor's content, for telling saved from unsaved. */
+const profileFingerprint = (profile: MotionProfile, sets: MotionSet[]): string =>
+  JSON.stringify({ name: profile.name, description: profile.description, sets });
 
 const newSet = (name: string): MotionSet => ({
   name,
@@ -46,7 +54,16 @@ export default function Create() {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [loadSetTarget, setLoadSetTarget] = useState<number | null>(null);
   const [savedSets, setSavedSets] = useState<MotionSet[]>([]);
-  const [message, setMessage] = useState<string | null>(null);
+  const [message, setMessage] = useState<{ text: string; tone: 'ok' | 'error' | 'muted' } | null>(null);
+  const say = (text: string, tone: 'ok' | 'error' | 'muted' = 'muted') => setMessage({ text, tone });
+  /* What the editor held when it was last saved or loaded. Anything else on
+   * screen is unsaved, which the page shows and the app asks about before you
+   * leave. A blank new profile counts as saved: there is nothing to lose. */
+  const [savedSnapshot, setSavedSnapshot] = useState(() =>
+    profileFingerprint({ name: '', description: '', sets: [] }, [newSet('Set 1')]),
+  );
+  const [justSaved, flashSaved] = useSavedFlash();
+  const notify = useStore((s) => s.notify);
 
   // Reactive: re-renders + reloads once the folder is restored at startup.
   const folderReady = useStore((s) => s.dataFolderReady);
@@ -64,7 +81,7 @@ export default function Create() {
 
   const requireFolder = (): boolean => {
     if (!dataStore.connected) {
-      setMessage('Choose a data folder in Settings first.');
+      say('Choose a data folder in Settings first.', 'error');
       return false;
     }
     return true;
@@ -74,7 +91,7 @@ export default function Create() {
   const saveMotionProfile = async () => {
     if (!requireFolder()) return;
     if (!motionProfile.name) {
-      setMessage('Enter a motion profile name before saving.');
+      say('Enter a motion profile name before saving.', 'error');
       return;
     }
     const entry: MotionProfileEntry = {
@@ -84,19 +101,42 @@ export default function Create() {
       createdAt: new Date().toISOString(),
       profile: { ...motionProfile, sets },
     };
-    const ok = await dataStore.saveMotionProfile(entry, false);
-    if (!ok && !window.confirm(`A motion profile "${motionProfile.name}" exists. Replace it?`)) return;
-    if (!ok) await dataStore.saveMotionProfile(entry, true);
-    setMessage(`Motion profile "${motionProfile.name}" saved.`);
+    try {
+      const ok = await dataStore.saveMotionProfile(entry, false);
+      if (!ok && !window.confirm(`A motion profile "${motionProfile.name}" exists. Replace it?`)) return;
+      if (!ok) await dataStore.saveMotionProfile(entry, true);
+    } catch (err) {
+      const why = err instanceof Error ? err.message : String(err);
+      say(`Not saved: ${why}`, 'error');
+      notify(NotificationType.ERROR, `Motion profile "${motionProfile.name}" was not saved: ${why}`);
+      return;
+    }
+    setSavedSnapshot(profileFingerprint(motionProfile, sets));
+    flashSaved();
+    say(`Saved "${motionProfile.name}" at ${new Date().toLocaleTimeString()}.`, 'ok');
+    notify(NotificationType.SUCCESS, `Motion profile "${motionProfile.name}" saved.`);
     await loadSaved();
   };
 
+  // Unsaved work: shown here, and asked about by the app before leaving.
+  const unsaved = profileFingerprint(motionProfile, sets) !== savedSnapshot;
+  const { confirmDiscard: discardOk } = useUnsavedWork(`motion profile "${motionProfile.name || 'untitled'}"`, unsaved);
+
   const loadMotionProfile = (id: string) => {
-    setSelectedMotionId(id);
+    if (!discardOk()) return;
     const entry = savedMotions.find((p) => p.id === id);
+    const legacy = entry ? legacyProfileProblem(entry.profile) : null;
+    if (legacy) {
+      say(`Motion profile not opened: ${legacy}`, 'error');
+      return;
+    }
+    setSelectedMotionId(id);
     if (entry) {
+      const loadedSets = entry.profile.sets.length > 0 ? entry.profile.sets : [newSet('Set 1')];
       setMotionProfile(entry.profile);
-      setSets(entry.profile.sets.length > 0 ? entry.profile.sets : [newSet('Set 1')]);
+      setSets(loadedSets);
+      setSavedSnapshot(profileFingerprint(entry.profile, loadedSets));
+      setMessage(null);
     }
   };
 
@@ -104,13 +144,20 @@ export default function Create() {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
+    if (!discardOk()) return;
     try {
-      const parsed = JSON.parse(await file.text()) as MotionProfile;
+      const raw: unknown = JSON.parse(await file.text());
+      const legacy = legacyProfileProblem(raw);
+      if (legacy) {
+        say(`Motion profile not imported: ${legacy}`, 'error');
+        return;
+      }
+      const parsed = raw as MotionProfile;
       setMotionProfile(parsed);
       setSets(parsed.sets.length > 0 ? parsed.sets : [newSet('Set 1')]);
-      setMessage('Motion profile imported (not yet saved).');
+      say('Motion profile imported (not yet saved).');
     } catch {
-      setMessage('Failed to import motion profile.');
+      say('Failed to import motion profile.', 'error');
     }
   };
 
@@ -142,7 +189,29 @@ export default function Create() {
   const setWaveformFn = (si: number, mi: number, fn: WaveformFn) =>
     updateSet(si, {
       moves: sets[si].moves.map((m, idx) =>
-        idx === mi ? { ...m, moveParameters: { ...m.moveParameters, waveform: fn } } : m,
+        idx === mi
+          ? {
+              ...m,
+              moveParameters: {
+                ...m.moveParameters,
+                waveform: fn,
+                // Start a sigmoid from usable numbers rather than a zero-length step.
+                ...(fn === 'sigmoid'
+                  ? {
+                      velocity: m.moveParameters.velocity || 5,
+                      acceleration: m.moveParameters.acceleration || 50,
+                    }
+                  : {}),
+                ...(fn === 'chirp'
+                  ? {
+                      frequency: m.moveParameters.frequency || 0.1,
+                      endFrequency: m.moveParameters.endFrequency || 1,
+                      duration: m.moveParameters.duration || 30,
+                    }
+                  : {}),
+              },
+            }
+          : m,
       ),
     });
 
@@ -150,13 +219,13 @@ export default function Create() {
     if (!requireFolder()) return;
     const set = sets[i];
     if (!set.name) {
-      setMessage('Enter a set name before saving.');
+      say('Enter a set name before saving.', 'error');
       return;
     }
     const ok = await dataStore.saveSet(set, false);
     if (!ok && !window.confirm(`A set "${set.name}" exists. Replace it?`)) return;
     if (!ok) await dataStore.saveSet(set, true);
-    setMessage(`Set "${set.name}" saved.`);
+    say(`Set "${set.name}" saved.`, 'ok');
   };
 
   const openLoadSet = async (i: number) => {
@@ -183,78 +252,72 @@ export default function Create() {
     );
     if (m.moveType === 'dwell') return field('Time (ms)', 'time');
     if (m.moveType === 'math') {
-      // The traverse profile now reaches the driver and is honoured there, so
-      // this offers the shapes the firmware actually implements rather than
-      // pinning to sine. It was pinned because app_motion masked the shape bit
-      // off and evaluated sinf regardless, so offering "triangle" would have
-      // promised one and delivered a sine.
-      //
-      // Dwell (H/L) and skew (S) exist in the G-code grammar and in the
-      // firmware, but are not authorable here yet; a hand-written program can
-      // use them.
-      const fn: WaveformFn = p.waveform === 'triangle' ? 'triangle' : 'sine';
-      const peakV = waveformPeakVelocity(fn, p.amplitude ?? 0, p.frequency ?? 0);
-      const peakA = waveformPeakAcceleration(fn, p.amplitude ?? 0, p.frequency ?? 0);
-      const durationS = (p.frequency ?? 0) > 0 ? (p.cycles ?? 0) / (p.frequency ?? 1) : 0;
-      const tooFast = peakV > 3000; // schema Move.f max (mm/s)
-      // The firmware's closed-loop servo enforces the machine profile: a wave
-      // demanding more than the machine is rated for is not rejected, it is
-      // tracked at the limit and comes out attenuated with nothing to show for
-      // it. Flag it here, where the numbers are still editable. Only when the
-      // machine has told us its limits — offline, we cannot know them.
+      const fn: WaveformFn = p.waveform === 'sigmoid' || p.waveform === 'chirp' ? p.waveform : 'sine';
+      // What the wave asks of the machine, against the machine's own limits
+      // (the servo enforces them, so a wave over them runs clipped rather than
+      // failing). Only when the machine has told us its limits. A sigmoid's
+      // distance depends on where the gantry starts, so its peak speed here
+      // assumes a start from zero length.
+      const plan = fn === 'sigmoid' ? planSigmoid(p.position ?? 0, p.velocity ?? 0, p.acceleration ?? 0) : null;
+      // A chirp peaks at its faster end, and runs whole cycles.
+      const topFreq = fn === 'chirp' ? Math.max(p.frequency ?? 0, p.endFrequency ?? 0) : (p.frequency ?? 0);
+      const sweep = chirpCycles(p.frequency ?? 0, p.endFrequency ?? 0, p.duration ?? 0);
+      const peakV = fn === 'sigmoid' ? (plan?.peakVelocity ?? 0) : sinePeakVelocity(p.amplitude ?? 0, topFreq);
+      const peakA = fn === 'sigmoid' ? (p.acceleration ?? 0) : sinePeakAcceleration(p.amplitude ?? 0, topFreq);
+      const durationS =
+        fn === 'sigmoid'
+          ? (plan?.duration ?? 0)
+          : fn === 'chirp'
+            ? sweep.duration
+            : (p.frequency ?? 0) > 0
+              ? 1 / (p.frequency ?? 1)
+              : 0;
       const machineMaxV = machine?.['Velocity Max (mm/s)'] ?? 0;
       const machineMaxA = machine?.['Acceleration Max (mm/s^2)'] ?? 0;
       const overV = machineMaxV > 0 && peakV > machineMaxV;
       const overA = machineMaxA > 0 && peakA > machineMaxA;
-      const overEnvelope = overV || overA;
       return (
         <>
-          {m.absoluteOrRelative === 'absolute'
-            ? field('Centre (mm)', 'position')
-            : field('Centre offset (mm)', 'distance')}
           <label className="field">
             Waveform
             <select value={fn} onChange={(e) => setWaveformFn(si, mi, e.target.value as WaveformFn)}>
               <option value="sine">Sine</option>
-              <option value="triangle">Triangle</option>
+              <option value="sigmoid">Sigmoid</option>
+              <option value="chirp">Chirp</option>
             </select>
           </label>
-          {field('Amplitude (mm)', 'amplitude')}
-          {field('Frequency (Hz)', 'frequency')}
-          {field('Cycles', 'cycles')}
-          {/* Hold is PER PEAK: creep-fatigue holds at peak tension and not in
-              compression, which a single symmetric dwell cannot express. The
-              holds take their time from the traverses, so one cycle still lasts
-              1/frequency whatever they are. */}
-          {field('Hold at top (s)', 'dwellHigh')}
-          {field('Hold at bottom (s)', 'dwellLow')}
-          {field('Skew (0.5 = even)', 'skew')}
-          <span
-            className={`muted${tooFast || overEnvelope ? ' fault' : ''}`}
-            style={{ alignSelf: 'flex-end' }}
-            title={
-              overEnvelope
-                ? `This machine is rated ${machineMaxV} mm/s and ${machineMaxA} mm/s². ` +
-                  'The servo enforces those limits, so the gantry would track a clipped, ' +
-                  'lower-amplitude wave rather than the one commanded.'
-                : undefined
-            }
-          >
-            ~{peakV.toFixed(1)} mm/s · {peakA.toFixed(0)} mm/s² peak · {durationS.toFixed(1)} s
-            {tooFast ? ' · exceeds 3000 mm/s limit' : ''}
-            {!tooFast && overV ? ` · over machine max ${machineMaxV} mm/s` : ''}
-            {!tooFast && overA ? ` · over machine max ${machineMaxA} mm/s²` : ''}
+          {fn === 'sine' ? (
+            <>
+              {field('Amplitude (mm)', 'amplitude')}
+              {field('Frequency (Hz)', 'frequency')}
+            </>
+          ) : fn === 'chirp' ? (
+            <>
+              {field('Amplitude (mm)', 'amplitude')}
+              {field('Start (Hz)', 'frequency')}
+              {field('End (Hz)', 'endFrequency')}
+              {field('Duration (s)', 'duration')}
+            </>
+          ) : (
+            <>
+              {field('Position (mm)', 'position')}
+              {field('Velocity (mm/s)', 'velocity')}
+              {field('Acceleration (mm/s²)', 'acceleration')}
+            </>
+          )}
+          <span className={`muted${overV || overA ? ' fault' : ''}`} style={{ alignSelf: 'flex-end' }}>
+            ~{peakV.toFixed(1)} mm/s · {peakA.toFixed(0)} mm/s² peak · {durationS.toFixed(2)} s
+            {fn === 'sine' ? ' per cycle' : ''}
+            {fn === 'chirp' && sweep.cycles > 0 ? ` · ${sweep.cycles} cycles` : ''}
+            {overV ? ` · over machine max ${machineMaxV} mm/s` : ''}
+            {overA ? ` · over machine max ${machineMaxA} mm/s²` : ''}
           </span>
         </>
       );
     }
-    const posOrDist =
-      m.absoluteOrRelative === 'absolute'
-        ? field('Position (mm)', 'position')
-        : field('Distance (mm)', 'distance');
     return (
       <>
-        {posOrDist}
+        {field('Position (mm)', 'position')}
         {field('Velocity (mm/s)', 'velocity')}
       </>
     );
@@ -343,19 +406,6 @@ export default function Create() {
                         <option value="dwell">Dwell</option>
                         <option value="math">Waveform</option>
                       </select>
-                      {move.moveType !== 'dwell' && (
-                        <select
-                          value={move.absoluteOrRelative}
-                          onChange={(e) =>
-                            updateMove(si, mi, {
-                              absoluteOrRelative: e.target.value as Move['absoluteOrRelative'],
-                            })
-                          }
-                        >
-                          <option value="absolute">Absolute</option>
-                          <option value="relative">Relative</option>
-                        </select>
-                      )}
                       {moveParamInputs(move, si, mi)}
                       <button
                         className="danger"
@@ -404,16 +454,29 @@ export default function Create() {
               Delete
             </button>
           )}
-          <button className="primary" onClick={saveMotionProfile}>
-            Save motion profile
+          <button
+            className={justSaved ? 'ok' : 'primary'}
+            onClick={saveMotionProfile}
+            data-testid="save-motion-profile"
+          >
+            {justSaved ? 'Saved ✓' : 'Save motion profile'}
           </button>
+          {unsaved && (
+            <span className="badge tone-warn" data-testid="unsaved-badge" title="Save to keep these changes">
+              Unsaved changes
+            </span>
+          )}
           <label className="filebtn">
             Import .mp
             <input type="file" accept=".mp,application/json" hidden onChange={importMotion} />
           </label>
           <button onClick={() => setPreviewOpen(true)}>Preview G-code</button>
         </div>
-        {message && <p className="muted">{message}</p>}
+        {message && (
+          <p className={message.tone === 'ok' ? 'save-ok' : message.tone === 'error' ? 'run-error' : 'muted'} data-testid="create-message">
+            {message.text}
+          </p>
+        )}
       </div>
 
       <Modal open={previewOpen} title="Generated G-code & Motion" onClose={() => setPreviewOpen(false)}>

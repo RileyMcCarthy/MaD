@@ -32,10 +32,10 @@ disagree, and the install button is highlighted:
 
 ![The Firmware screen when an update is needed](../assets/screenshots/firmware-update-needed.png)
 
-While this banner is up, the Live screen still shows data it can read, but
+While this banner is up, the Control screen still shows data it can read, but
 enabling motion and jogging are refused:
 
-![Live while the firmware is too old](../assets/screenshots/live-firmware-too-old.png){ width=640 }
+![Control while the firmware is too old](../assets/screenshots/live-firmware-too-old.png){ width=640 }
 
 ## The machine's firmware is newer than this version of MaD Control
 

@@ -117,3 +117,60 @@ describe('computeStressStrain', () => {
     },
   );
 });
+
+describe('generateExpectedMotion — sine', () => {
+  behaviour(
+    {
+      id: 'analysis.expected-wave-from-rest',
+      covers: 'src/domain/analysis.ts#generateExpectedMotion',
+      given: 'a program running a 5 mm, 1 Hz wave of two cycles from 10 mm, and one of minus 5 mm',
+      expect: {
+        'rises-from-start': 'the expected curve starts at rest at 10 mm and rises, reaching 20 mm half a cycle in',
+        'full-stroke': 'it swings between 10 mm and 20 mm',
+        'two-seconds': 'it lasts the two seconds of its cycles and ends back at 10 mm',
+        'negative-falls': 'with a negative amplitude it falls to 0 mm instead',
+      },
+      why: { 'rises-from-start': 'the machine starts a wave at rest where the carriage is and sets off in the direction of the amplitude' },
+    },
+    () => {
+      const { time, position } = generateExpectedMotion(['G90', 'G123 A5 F1 C2 W0 ; sine'], 10);
+      const at = (t: number) => position[time.findIndex((x) => Math.abs(x - t) < 1e-9)];
+      expect(position[0]).toBe(10);
+      expect(at(0.5)).toBeCloseTo(20, 6);
+      expect(Math.min(...position)).toBeCloseTo(10, 6);
+      expect(Math.max(...position)).toBeCloseTo(20, 6);
+      const down = generateExpectedMotion(['G123 A-5 F1 C1 W0'], 10).position;
+      expect(Math.min(...down)).toBeCloseTo(0, 6);
+      expect(time[time.length - 1]).toBeCloseTo(2, 9);
+      expect(position[position.length - 1]).toBeCloseTo(10, 6);
+    },
+  );
+});
+
+describe('generateExpectedMotion — chirp', () => {
+  behaviour(
+    {
+      id: 'analysis.expected-chirp',
+      covers: 'src/domain/analysis.ts#generateExpectedMotion',
+      given: 'a program running a 1 mm chirp of three cycles sweeping from 1 Hz to 2 Hz, from 0 mm',
+      expect: {
+        'span': 'the expected curve lasts two seconds, three cycles at the 1.5 Hz mean',
+        'speeds-up': 'its second half holds more of the motion than its first, as the frequency rises',
+        'ends-at-rest': 'it ends back at 0 mm',
+      },
+    },
+    () => {
+      const { time, position } = generateExpectedMotion(['G123 A1 F1 C3 W0 E2'], 0);
+      expect(time[time.length - 1]).toBeCloseTo(2, 9);
+      expect(position[position.length - 1]).toBeCloseTo(0, 6);
+      const travel = (from: number, to: number) => {
+        let sum = 0;
+        for (let i = 1; i < time.length; i++) {
+          if (time[i] > from && time[i] <= to) sum += Math.abs(position[i] - position[i - 1]);
+        }
+        return sum;
+      };
+      expect(travel(1, 2)).toBeGreaterThan(travel(0, 1));
+    },
+  );
+});

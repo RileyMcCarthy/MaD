@@ -1,10 +1,10 @@
 # Running a test
 
-You run tests from the **Test runs** screen. The **New test** card at the top
-combines a sample profile with a motion profile and starts the run; the
-**History** table below tracks every run.
+You run tests from the **New test** panel on the **Control** screen. It
+combines a sample profile with a motion profile and starts the run. The
+**History** table on the **Test runs** screen tracks every run.
 
-![The Test runs screen](../assets/screenshots/test-runs.png)
+![The Control screen with the New test panel](../assets/screenshots/test-runs.png)
 
 ## Before you run
 
@@ -23,6 +23,17 @@ You'll want:
 2. Optionally click **Preview G-code** to review the exact motion.
 3. Click **Run test**.
 
+Before it runs, the app checks the test against the
+[machine configuration](machine-configuration.md) and the sample profile:
+speed, acceleration (including short moves too short to reach their speed),
+travel and force. Each problem is listed under the profiles, for example
+*Motion profile speed of 60 mm/s exceeds machine limit of 50 mm/s*. With any
+listed, **Run test** asks again: **Cancel** to change the profiles, or **Run
+anyway**.
+
+A motion profile in the old format can't be run; the panel names the move to
+rebuild (see [Motion profiles](motion-profiles.md)).
+
 When you run, the app:
 
 - pushes the selected **sample profile** to the firmware (so its limits are
@@ -38,16 +49,17 @@ The run appears in **History** with a *running* badge.
 ## While it runs
 
 The machine executes the motion **autonomously from its SD card**. The **Run**
-button reflects the firmware's `testRunning` state, and the run auto-marks
-**completed** when the firmware reports it has finished.
+button reflects the firmware's `testRunning` state, and the run is marked
+**completed** when the machine reports it has finished, whichever screen you
+are on.
 
 !!! warning "Losing the UI doesn't stop the test"
     The test keeps running even if you close the tab or unplug USB — the app just
-    reconnects to keep monitoring. If the link is lost mid-test the run is marked
-    **error** (its data may still be downloadable after reconnecting). For runs
-    that get stuck in *running*, the history row offers **Mark done / Mark
-    failed** actions, and a watchdog warns if the firmware never reports
-    completion.
+    reconnects to keep monitoring. A run still marked *running* when the app
+    reconnects to an idle machine is marked **completed**, so its data can be
+    downloaded. If the machine runs well past the profile's expected time, the
+    panel warns that the firmware may be stuck; the history row's **Mark done /
+    Mark failed** resolve it.
 
 If the sample reaches its **Max force** or **Max displacement**, the machine
 stops the test and the app shows a warning toast (*Test stopped: sample limit

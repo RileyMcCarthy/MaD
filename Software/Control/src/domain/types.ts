@@ -102,42 +102,43 @@ export interface DeviceInfo {
   protocolVersion: number;
 }
 
-/** Position-vs-time waveform shapes for a "math" move (host-expanded to G1
- *  segments). Both are continuous and start/end at the centre over whole cycles
- *  (so they begin smoothly from the current position). */
-export type WaveformFn = 'sine' | 'triangle';
+/**
+ * The waveform a `math` move runs:
+ *  - `sine`: a cosine from rest where the gantry is (amplitude, frequency): it
+ *    swings out twice the amplitude, in the direction of the amplitude's sign,
+ *    and back. One move is one cycle; repeat it with the set's executions.
+ *  - `sigmoid`: an S-curve move to a position: like a linear move, but its
+ *    acceleration rises and falls smoothly instead of switching on and off.
+ *  - `chirp`: a sine whose frequency sweeps linearly from `frequency` to
+ *    `endFrequency` over `duration`, from rest where the gantry is.
+ */
+export type WaveformFn = 'sine' | 'sigmoid' | 'chirp';
 
+/** Every position is absolute: sample extension, mm, from zero length. */
 export interface MoveParameters {
+  /** Linear, sigmoid: where the move ends, mm. */
   position: number;
+  /** Linear, sigmoid: cruise speed, mm/s. */
   velocity: number;
-  distance: number;
+  /** Dwell time, ms. */
   time: number;
-  // ── Waveform ("math") move parameters. Optional so older .mp files round-trip. ──
-  /** Waveform shape; defaults to 'sine' when absent. */
+  // ── Waveform ("math") move parameters ──
+  /** Waveform type; `sine` when absent. */
   waveform?: WaveformFn;
-  /** Peak deviation from the centre, mm. */
+  /** Sine, chirp: peak deviation, mm; its sign is the direction it sets off in. */
   amplitude?: number;
-  /** Cycles per second, Hz. */
+  /** Sine: cycles per second, Hz. Chirp: the frequency it starts at. */
   frequency?: number;
-  /** Number of full cycles. */
-  cycles?: number;
-  /** Starting phase, degrees. */
-  phase?: number;
-  /** Hold at the UPPER peak, seconds. Creep-fatigue holds at peak tension. */
-  dwellHigh?: number;
-  /** Hold at the LOWER peak, seconds. */
-  dwellLow?: number;
-  /** Share of the traversing time spent descending; 0.5 symmetric, 0.8 is
-   *  slow-load / fast-unload. */
-  skew?: number;
+  /** Chirp: the frequency it sweeps to, Hz. */
+  endFrequency?: number;
+  /** Chirp: how long the sweep takes, s (rounded to whole cycles). */
+  duration?: number;
+  /** Sigmoid: peak acceleration, mm/s². */
+  acceleration?: number;
 }
 
 export interface Move {
-  /** `math` = a position-vs-time waveform (see WaveformFn), expanded host-side.
-   *  (Arc/G2 was removed — the waveform replaces it; G2/G3 remain valid wire
-   *  codes but the app no longer generates them.) */
   moveType: 'linear' | 'dwell' | 'math';
-  absoluteOrRelative: 'absolute' | 'relative';
   moveParameters: MoveParameters;
 }
 
@@ -199,4 +200,6 @@ export interface TestRunEntry {
   status: 'running' | 'completed' | 'downloaded' | 'error';
   /** Relative path of the CSV inside the data folder (e.g. `testRuns/000123.csv`). */
   dataFilePath?: string;
+  /** Why the run is in error, shown in the history. */
+  errorMessage?: string;
 }
