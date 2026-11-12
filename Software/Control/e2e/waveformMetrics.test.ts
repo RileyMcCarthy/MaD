@@ -12,6 +12,7 @@ import {
   resampledPathMm,
   assertSineMatch,
   assertWaveformExcursion,
+  sineFollowWindow,
 } from './waveformMetrics.mjs';
 
 /** WAVE-sine-fast catalog geometry (M10). */
@@ -328,6 +329,64 @@ describe('waveformWindow, a wave run from rest at the top', () => {
         expect(Math.abs(win.t[0] - FROM_TOP_WAVE_START_S)).toBeLessThan(tolS);
         expect(Math.abs(win.t[win.t.length - 1] - FROM_TOP_WAVE_END_S)).toBeLessThan(tolS);
         expect(() => assertSineMatch(series, FROM_TOP, 'from-top')).not.toThrow();
+      }
+    },
+  );
+});
+
+/** WAVE-sine catalog geometry (M10), for the commanded setpoint. */
+const FOLLOW = { amplitudeMm: 5, frequencyHz: 1, cycles: 2, centreMm: 6 } as const;
+
+/**
+ * The commanded setpoint of a waveform move, 1 kHz: rest at 0, a 10 mm/s
+ * approach to the peak the wave sets off from (the bottom, or the top when
+ * `fromTop`), a 0.4 s park, the cosine away from that peak for whole cycles,
+ * then rest on it.
+ */
+function synthSetpoint(fromTop: boolean) {
+  const { amplitudeMm: A, frequencyHz: f, cycles, centreMm } = FOLLOW;
+  const startPeak = fromTop ? centreMm + A : centreMm - A;
+  const approachEndS = 0.2 + startPeak / 10;
+  const waveStartS = approachEndS + 0.4;
+  const waveEndS = waveStartS + cycles / f;
+  const at = (s: number): number => {
+    if (s < 0.2) return 0;
+    if (s < approachEndS) return 10 * (s - 0.2);
+    if (s < waveStartS) return startPeak;
+    if (s < waveEndS) return centreMm + (fromTop ? A : -A) * Math.cos(2 * Math.PI * f * (s - waveStartS));
+    return startPeak;
+  };
+  const time: number[] = [];
+  const setpoint: number[] = [];
+  for (let t = 0; t <= (waveEndS + 0.5) * 1e6; t += 1000) {
+    time.push(t);
+    setpoint.push(at(t / 1e6) * 1000);
+  }
+  return { time, setpoint, waveStartS, waveEndS };
+}
+
+describe('sineFollowWindow', () => {
+  behaviour(
+    {
+      id: 'motion.sine-follow-window-inside-the-wave',
+      covers: 'e2e/waveformMetrics.mjs#sineFollowWindow',
+      given:
+        'a commanded 5 mm, 1 Hz, two-cycle sine set off from rest at the bottom of the stroke, and the same wave set off from the top',
+      expect: {
+        'starts-after-leaving-peak':
+          'the comparison starts once the wave has moved a fifth of its swing away from the peak it set off from',
+        'ends-inside-wave': 'the comparison ends half a cycle before the wave does, give or take where it started',
+      },
+    },
+    () => {
+      // A cosine is 0.4·A from its peak 0.1476 of a cycle in.
+      const leaveS = Math.acos(0.6) / (2 * Math.PI * FOLLOW.frequencyHz);
+      for (const fromTop of [false, true]) {
+        const { time, setpoint, waveStartS, waveEndS } = synthSetpoint(fromTop);
+        const { tMinS, tMaxS } = sineFollowWindow(time, setpoint, FOLLOW);
+        expect(Math.abs(tMinS - (waveStartS + leaveS))).toBeLessThan(0.02);
+        expect(Math.abs(tMaxS - (waveEndS - 0.5 / FOLLOW.frequencyHz + leaveS))).toBeLessThan(0.02);
+        expect(tMaxS).toBeLessThan(waveEndS);
       }
     },
   );

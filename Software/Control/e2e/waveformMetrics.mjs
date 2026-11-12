@@ -367,6 +367,37 @@ export function assertSineMatch(series, { amplitudeMm, frequencyHz, cycles, cent
   }
 }
 
+/** Where to hold a recorded setpoint to the commanded sine.
+ *
+ * From once the wave has LEFT the peak it set off from, for all but its last
+ * half cycle. A wave starts at rest where the gantry stands and sets off in
+ * the direction of its amplitude's sign, so that peak is the bottom of the
+ * stroke for a positive amplitude and the top for a negative one. The approach
+ * parks on it, and a cosine fitted through that plateau lands 180° out; past
+ * the wave's end the setpoint rests while the ideal cosine carries on.
+ *
+ * The wave is found in the commanded setpoint, which carries no encoder noise,
+ * by the same window the shape checks use. Timing the start from the record's
+ * highest point instead put a bottom-start wave's window half a cycle late, so
+ * it ran past the end of the wave: WAVE-sine "worst 2078 um" at t=2.890 s,
+ * with the setpoint at rest on the bottom (1.0 mm) and the ideal at 3.1 mm. */
+export function sineFollowWindow(timeUs, setpointUm, { cycles, frequencyHz, amplitudeMm }) {
+  const tS = [];
+  const spMm = [];
+  for (let i = 0; i < timeUs.length; i++) {
+    if (Number.isFinite(setpointUm[i])) {
+      tS.push(timeUs[i] / 1e6);
+      spMm.push(setpointUm[i] / 1000);
+    }
+  }
+  const { p, t } = waveformWindow(spMm, tS, { cycles, frequencyHz, amplitudeMm });
+  // Left the peak: a fifth of the swing (2A) away from where the wave began.
+  let i = 0;
+  while (i < p.length - 1 && Math.abs(p[i] - p[0]) < 0.4 * amplitudeMm) i += 1;
+  const tMinS = t[i];
+  return { tMinS, tMaxS: tMinS + (cycles - 0.5) / frequencyHz };
+}
+
 /** Peak-to-peak + cycle count for triangle (and other non-sine) waveforms. */
 export function assertWaveformExcursion(series, { amplitudeMm, cycles, frequencyHz }, label) {
   assert(series && series.pos.length > 40, `${label}: enough samples (${series?.pos.length})`);
