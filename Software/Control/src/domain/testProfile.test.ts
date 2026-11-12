@@ -214,6 +214,42 @@ describe('waveform helpers', () => {
   );
 });
 
+/**
+ * Replays a generated program the way the firmware runs it, tracking where the
+ * gantry is. A G123 starts at rest where the gantry stands: that point is one
+ * peak, and the wave sets off in the direction of A's sign, so its centre is
+ * the start plus A (Protocol/MaDProtocol.yaml, WaveformMove.amplitude; the
+ * firmware's G123_WAVEFORM case in app_motion.c). Whole cycles end back on the
+ * start.
+ */
+function runAsTheMachineDoes(gcode: string[]): {
+  waves: { start: number; amplitude: number; centre: number }[];
+  end: number;
+} {
+  let at = 0;
+  let absolute = true;
+  const waves: { start: number; amplitude: number; centre: number }[] = [];
+  for (const raw of gcode) {
+    const line = raw.split(';')[0].trim();
+    if (line === '') continue;
+    const [code, ...words] = line.split(/\s+/);
+    const word = (letter: string): number | undefined => {
+      const w = words.find((t) => t.toUpperCase().startsWith(letter));
+      return w === undefined ? undefined : parseFloat(w.substring(1));
+    };
+    if (code === 'G90') absolute = true;
+    else if (code === 'G91') absolute = false;
+    else if (code === 'G1' || code === 'G0') {
+      const x = word('X');
+      if (x !== undefined) at = absolute ? x : at + x;
+    } else if (code === 'G123') {
+      const amplitude = word('A') ?? 0;
+      waves.push({ start: at, amplitude, centre: at + amplitude });
+    }
+  }
+  return { waves, end: at };
+}
+
 function waveformProfile(params: Partial<MoveParameters>): TestProfile {
   return {
     name: 'W',
@@ -242,8 +278,8 @@ describe('generateTestGcode — waveform (math) move', () => {
       covers: 'src/domain/testProfile.ts#generateTestGcode',
       given: 'a relative sine of 5 mm, 1 Hz, two cycles, already centred on the start',
       expect: {
-        'one-waveform': 'exactly one waveform command is emitted, carrying the authored amplitude, frequency and cycle count',
-        'no-ramp-in': 'no ramp-in move is emitted',
+        'one-waveform': 'exactly one waveform command is emitted, carrying the authored frequency and cycle count, and the authored amplitude as the size of its swing',
+        'no-expansion': 'the oscillation is sent whole: the only straight moves are the one onto the wave and the one back off it',
         'preview-swings-full-amplitude': 'the preview swings the full amplitude either side of the centre',
         'preview-time-moves-forward': 'preview time only moves forward',
         'ends-with-stop': 'the program ends with the completion stop',
@@ -258,14 +294,42 @@ describe('generateTestGcode — waveform (math) move', () => {
       // Exactly one G123 line; NO per-segment G1s for the oscillation.
       const g123 = gcode.filter((l) => /^G123 /.test(l));
       expect(g123.length).toBe(1);
-      expect(g123[0]).toMatch(/^G123 A5 F1 C2 W0\b/);
-      // Centre == start (relative, 0) ⇒ no ramp-in G1 needed.
-      expect(gcode.some((l) => /^G1 /.test(l))).toBe(false);
+      expect(g123[0]).toMatch(/^G123 A-5 F1 C2 W0\b/);
+      // To the top and back to the centre: two straight moves, whatever the cycle count.
+      expect(gcode.filter((l) => /^G1 /.test(l)).length).toBe(2);
       // Preview series still oscillates ±amplitude about the centre, monotonic in time.
       expect(Math.max(...distance)).toBeCloseTo(amplitude, 1);
       expect(Math.min(...distance)).toBeCloseTo(-amplitude, 1);
       for (let i = 1; i < time.length; i++) expect(time[i]).toBeGreaterThanOrEqual(time[i - 1]);
       expect(gcode[gcode.length - 1]).toBe('G122 ; Stop - signal test complete');
+    },
+  );
+
+  behaviour(
+    {
+      id: 'profile.waveform-swings-about-authored-centre',
+      covers: 'src/domain/testProfile.ts#generateTestGcode',
+      given: 'a relative sine of 5 mm, 1 Hz, two cycles, whose centre is 6 mm from where the gantry starts',
+      expect: {
+        'centred': 'the wave the machine runs is centred on the authored centre',
+        'starts-at-top': 'the gantry is moved to the top of the wave before the first cycle, so the wave falls first, as the preview draws it',
+        'ends-on-centre': 'after the last cycle the gantry is returned to the centre, where the next move starts from',
+      },
+      why: {
+        'centred':
+          'the machine starts a wave at rest where the gantry stands, which becomes one of its peaks, and sets off in the direction of the sign of its amplitude; the program has to put the gantry on a peak first',
+      },
+    },
+    () => {
+      const { gcode } = generateTestGcode(
+        waveformProfile({ waveform: 'sine', amplitude: 5, frequency: 1, cycles: 2, distance: 6 }),
+      );
+      const run = runAsTheMachineDoes(gcode);
+      expect(run.waves.length).toBe(1);
+      expect(run.waves[0].centre).toBeCloseTo(6, 6);
+      expect(run.waves[0].start).toBeCloseTo(11, 6);
+      expect(run.waves[0].amplitude).toBeCloseTo(-5, 6);
+      expect(run.end).toBeCloseTo(6, 6);
     },
   );
 
@@ -351,7 +415,7 @@ describe('generateTestGcode — waveform (math) move', () => {
         'one-waveform': 'the program carries exactly one waveform',
         'wire-size': 'the waveform takes the agreed 21 bytes on the wire',
         'sine-shape': 'the waveform carries the sine shape',
-        'authored-values': 'the waveform carries the authored amplitude, frequency, and cycle count',
+        'authored-values': 'the waveform carries the authored frequency and cycle count, and the authored amplitude with the sign that sets it falling first',
       },
     },
     () => {
@@ -365,7 +429,7 @@ describe('generateTestGcode — waveform (math) move', () => {
       expect(waveforms[0].buf.length).toBe(21); // 21-byte WaveformMove wire size
       const wf = decodeWaveformMove(waveforms[0].buf);
       expect(wf.shape).toBe(WaveformShape.SINE); // v1 is sine-only
-      expect(wf.amplitude).toBeCloseTo(4, 3);
+      expect(wf.amplitude).toBeCloseTo(-4, 3);
       expect(wf.frequency).toBeCloseTo(1, 3);
       expect(wf.cycles).toBe(3);
     },

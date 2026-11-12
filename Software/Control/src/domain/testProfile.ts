@@ -142,9 +142,16 @@ export function generateTestGcode(profile: TestProfile): GeneratedGcode {
           case 'math': {
             // Firmware-native waveform: emit ONE G123 canned cycle. The firmware
             // segments f(t) itself and runs it unattended from SD (no host G1
-            // expansion). The wave oscillates about the *current* position, so we
-            // ramp to the mean first. Centre = absolute target, or current
-            // position (+ any relative offset).
+            // expansion). Centre = absolute target, or current position (+ any
+            // relative offset).
+            //
+            // The machine starts a G123 at rest WHERE THE GANTRY IS, as one
+            // peak of the wave, and sets off in the direction of A's sign; it
+            // ends back on that peak after whole cycles (MaDProtocol.yaml,
+            // WaveformMove.amplitude). So the program does what the operator
+            // is told happens: move to the TOP of the stroke, run the cycles
+            // falling first (a negative A), and return to the centre. Starting
+            // at the top is also where the preview's phase 0 is.
             // The shape now reaches the driver and is honoured there, so emit
             // what was authored. It was pinned to sine while app_motion masked
             // the shape bit off and evaluated sinf regardless — emitting W1 then
@@ -160,10 +167,14 @@ export function generateTestGcode(profile: TestProfile): GeneratedGcode {
                 gcode.push('G90 ; Set absolute positioning');
                 currentMode = 'absolute';
               }
-              // Ramp to the mean (the firmware waveform oscillates about it).
-              if (Math.abs(mean - currentPosition) > 1e-6) {
-                const rampV = waveformPeakVelocity(fn, amplitude, frequency) || 1;
-                gcode.push(`G1 X${round3(mean)} F${round3(rampV)}`);
+              const rampV = waveformPeakVelocity(fn, amplitude, frequency) || 1;
+              const top = mean + amplitude;
+              // To the top of the stroke: the wave's first peak.
+              if (Math.abs(top - currentPosition) > 1e-6) {
+                gcode.push(`G1 X${round3(top)} F${round3(rampV)} ; to the top of the wave`);
+                distance.push(round3(currentPosition));
+                time.push(round3(currentTime));
+                currentTime += Math.abs(top - currentPosition) / rampV;
               }
               const shape = fn === 'triangle' ? 1 : 0; // WaveformShape
               // Hold and skew are appended ONLY when they differ from a plain
@@ -176,9 +187,10 @@ export function generateTestGcode(profile: TestProfile): GeneratedGcode {
               if (dwellHigh > 0) extra += ` H${round3(dwellHigh)}`;
               if (dwellLow > 0) extra += ` L${round3(dwellLow)}`;
               if (Math.abs(skew - 0.5) > 1e-9) extra += ` S${round3(skew)}`;
+              // Negative A: from the top, falling first, about `mean`.
               gcode.push(
-                `G123 A${round4(amplitude)} F${round6(frequency)} C${Math.round(cycles)} W${shape}${extra}` +
-                  ` ; ${fn} A=${amplitude}mm f=${frequency}Hz x${cycles} cycle(s)`,
+                `G123 A${round4(-amplitude)} F${round6(frequency)} C${Math.round(cycles)} W${shape}${extra}` +
+                  ` ; ${fn} A=${amplitude}mm f=${frequency}Hz x${cycles} cycle(s) about ${round3(mean)}mm`,
               );
               // Preview chart only: sample f(t) for display (not emitted as motion).
               const previewSteps = Math.min(
@@ -186,14 +198,20 @@ export function generateTestGcode(profile: TestProfile): GeneratedGcode {
                 Math.max(8, Math.round(cycles * WAVEFORM_SEGMENTS_PER_CYCLE)),
               );
               const totalSec = cycles / frequency;
-              distance.push(round3(mean));
+              distance.push(round3(top));
               time.push(round3(currentTime));
               for (let k = 1; k <= previewSteps; k++) {
                 distance.push(round3(mean + amplitude * waveformSample(fn, (k / previewSteps) * cycles)));
                 time.push(round3(currentTime + (k / previewSteps) * totalSec));
               }
               currentTime += totalSec;
-              currentPosition = mean; // whole cycles end at the mean
+              // Whole cycles end back on the top; return to the centre, where
+              // the next move (and a relative one's offset) starts from.
+              gcode.push(`G1 X${round3(mean)} F${round3(rampV)} ; back to the centre`);
+              currentTime += amplitude / rampV;
+              distance.push(round3(mean));
+              time.push(round3(currentTime));
+              currentPosition = mean;
             }
             break;
           }

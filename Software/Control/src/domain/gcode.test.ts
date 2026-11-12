@@ -306,6 +306,7 @@ describe('waveform (G123) canned cycle', () => {
     },
     () => {
       expect(() => validateWaveform({ shape: 0, amplitude: WAVEFORM_FIELD_RANGE.amplitude.max + 1, frequency: 1, cycles: 1, dwellHigh: 0, dwellLow: 0, skewPerMille: 500, endFrequency: 0 })).toThrow(MoveValidationError);
+      expect(() => validateWaveform({ shape: 0, amplitude: WAVEFORM_FIELD_RANGE.amplitude.min - 1, frequency: 1, cycles: 1, dwellHigh: 0, dwellLow: 0, skewPerMille: 500, endFrequency: 0 })).toThrow(MoveValidationError);
       expect(() => validateWaveform({ shape: 0, amplitude: 5, frequency: WAVEFORM_FIELD_RANGE.frequency.max + 1, cycles: 1, dwellHigh: 0, dwellLow: 0, skewPerMille: 500, endFrequency: 0 })).toThrow(MoveValidationError);
       expect(() => validateWaveform({ shape: 0, amplitude: 5, frequency: 1, cycles: WAVEFORM_FIELD_RANGE.cycles.max + 1, dwellHigh: 0, dwellLow: 0, skewPerMille: 500, endFrequency: 0 })).toThrow(MoveValidationError);
       expect(() => validateWaveform({ shape: 0, amplitude: 5, frequency: 1, cycles: 0, dwellHigh: 0, dwellLow: 0, skewPerMille: 500, endFrequency: 0 })).toThrow(MoveValidationError); // min 1

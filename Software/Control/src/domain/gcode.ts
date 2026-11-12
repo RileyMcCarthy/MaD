@@ -63,7 +63,7 @@ export const MOVE_FIELD_RANGE = {
 // widened field that is not reflected here is caught only when a value wraps on
 // the wire, which looks like a wrong test rather than a bug.
 export const WAVEFORM_FIELD_RANGE = {
-  amplitude: packedFieldRange(25, 0, 10000), // mm    → 0.1 µm steps
+  amplitude: packedFieldRange(26, -3000, 10000), // mm → 0.1 µm steps; signed: the sign is the direction
   frequency: packedFieldRange(27, 0, 1000000), // Hz  → µHz steps
   cycles: packedFieldRange(24, 1, 1), //        count
   dwellHigh: packedFieldRange(22, 0, 1000), //  s     → ms steps
@@ -133,9 +133,12 @@ export function validateAndEncodeMove(move: ProtoMove): Uint8Array {
  * sine"); it also means `H` means the same thing on every line, rather than
  * being a polymorphic knob whose meaning depends on W.
  *
- * Returns null if the line is not a G123. The waveform oscillates about the
- * machine's current position (the program ramps to the mean with a preceding
- * G1) and is returned there at the end.
+ * Returns null if the line is not a G123. The wave starts at rest where the
+ * carriage stands, which is one of its peaks, and sets off in the direction of
+ * A's sign: + rises first (the centre is A above the start), - falls first. It
+ * ends back on that peak after whole cycles. A program that wants a wave
+ * centred somewhere moves onto a peak first (generateTestGcode goes to the top
+ * and runs it falling).
  */
 export function parseGcodeWaveform(line: string): ProtoWaveformMove | null {
   const tokens = line.trim().split(/\s+/);
@@ -192,9 +195,11 @@ export function parseGcodeWaveform(line: string): ProtoWaveformMove | null {
 export function validateWaveform(wf: ProtoWaveformMove): void {
   // A waveform with zero amplitude or frequency is physically meaningless
   // (no motion / infinite period); reject rather than emit a no-op record.
-  if (!(wf.amplitude > 0) || !(wf.frequency > 0)) {
+  // The amplitude's SIGN is the direction the wave sets off in from where the
+  // carriage stands (+ rises first, - falls first), so either sign is a wave.
+  if (!(Math.abs(wf.amplitude) > 0) || !(wf.frequency > 0)) {
     throw new MoveValidationError(
-      `Waveform requires amplitude > 0 and frequency > 0 (got A=${wf.amplitude} mm, f=${wf.frequency} Hz).`,
+      `Waveform requires a non-zero amplitude and frequency > 0 (got A=${wf.amplitude} mm, f=${wf.frequency} Hz).`,
     );
   }
   assertFieldInRange('amplitude', wf.amplitude, WAVEFORM_FIELD_RANGE.amplitude, 'mm');

@@ -71,8 +71,12 @@
  * sinusoid started from its own centre demands v(0) = 2*pi*f*A instantly, which
  * no accel-limited machine can deliver.
  *
- * dev_servo now runs the waveform as approach-to-peak, whole cycles peak to
- * peak, return to centre -- every instant of which is inside the acceleration
+ * dev_servo now runs the waveform from rest where the carriage is, which is
+ * one peak of it, for whole cycles back to that peak; the sign of the amplitude
+ * says which way it sets off, so the centre is the start plus the amplitude.
+ * There is no approach or return move: a program that wants the wave centred
+ * somewhere moves the carriage onto a peak first (the app's waveform move goes
+ * to the top and runs it falling). Every instant is inside the acceleration
  * budget, so there is no lag to correct and nothing for an anchor to do. What
  * is left here is unit conversion and a completion check. */
 
@@ -447,10 +451,10 @@ static void app_motion_private_moveManager_start(void)
 /* A waveform is complete when the DRIVER says so.
  *
  * There is nothing to step here. dev_servo owns the phase, counts the cycles,
- * and runs the closing move back to the centre, so this layer neither knows nor
- * needs to know how far through the run it is -- and a waveform that was
- * refused must end the move rather than wait forever for a run that never
- * started. */
+ * and brings the wave to rest on the peak it started from, so this layer
+ * neither knows nor needs to know how far through the run it is -- and a
+ * waveform that was refused must end the move rather than wait forever for a
+ * run that never started. */
 static bool app_motion_private_waveform_run(void)
 {
     if (app_motion_data.waveformRunning == false)
