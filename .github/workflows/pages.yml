@@ -111,6 +111,9 @@ jobs:
         run: |
           npx tsc -b
           npx vite build --base="/${{ github.event.repository.name }}/app/v${{ steps.ver.outputs.VERSION }}/"
+          # The protocol this release speaks, which the assembly lists in
+          # versions.json for apps facing newer firmware.
+          node -e "const i = require('./dist/app-info.json'); if (!Number.isInteger(i.protocolVersion)) { console.error('dist/app-info.json has no protocolVersion'); process.exit(1); }"
           (cd dist && zip -qr "../mad-control-v${{ steps.ver.outputs.VERSION }}.zip" .)
 
       - uses: softprops/action-gh-release@v3

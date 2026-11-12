@@ -4,11 +4,13 @@
  * The public site serves every MaD Control release side by side:
  *   /<repo>/app/v0.4.0/   one release, frozen as it shipped
  *   /<repo>/app/          redirects to the latest release, keeping the route
- *   /<repo>/app/versions.json   the releases on offer, newest first
+ *   /<repo>/app/versions.json   the releases on offer, newest first, with the protocol each speaks
  *   /<repo>/app/firmware/       the latest firmware release, shared by all
  * (assembled by tools/assemble-pages-app.mts). A dev server or any other
  * unversioned build has none of this: its base is the hosting root itself.
  */
+
+import type { AppForFirmware } from '@/domain';
 
 /** The release this copy is, from its base path; null when not a versioned build. */
 export function hostedVersion(baseUrl: string): string | null {
@@ -28,7 +30,8 @@ export function versionUrl(baseUrl: string, version: string, hash = ''): string 
 
 export interface HostedVersions {
   latest: string;
-  versions: { version: string; publishedAt: string | null }[];
+  /** Newest first. `protocolVersion` is missing for releases built before it was recorded. */
+  versions: { version: string; publishedAt: string | null; protocolVersion?: number }[];
 }
 
 function isHostedVersions(value: unknown): value is HostedVersions {
@@ -57,4 +60,30 @@ export async function fetchHostedVersions(
   } catch {
     return null;
   }
+}
+
+/**
+ * The newest release that speaks `protocol`, or null when none on the list is
+ * known to: a release built before the protocol was recorded never matches.
+ */
+export function appForProtocol(list: HostedVersions, protocol: number): string | null {
+  return list.versions.find((v) => v.protocolVersion === protocol)?.version ?? null;
+}
+
+/**
+ * Where an app too old for firmware on `protocol` can send the operator.
+ * `list` is the release list beside this release: undefined while it is on
+ * its way, null when it could not be read. An unversioned copy (`hosted`
+ * false) has no list beside it and no release to offer.
+ */
+export function appForFirmware(
+  hosted: boolean,
+  list: HostedVersions | null | undefined,
+  protocol: number,
+): AppForFirmware {
+  if (!hosted) return { kind: 'none' };
+  if (list === undefined) return { kind: 'looking' };
+  if (list === null) return { kind: 'unknown' };
+  const version = appForProtocol(list, protocol);
+  return version === null ? { kind: 'none' } : { kind: 'release', version };
 }
