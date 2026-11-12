@@ -23,6 +23,8 @@ export const FAULT_HINTS: Record<FaultedReason, string> = {
   [FaultedReason.FORCE_GAUGE_COMMUNICATION]: 'Force gauge communication fault detected.',
   [FaultedReason.SERVO_STALL]:
     'The carriage stopped moving while the drive was still pushing it. Clear the obstruction, then disable and re-enable motion.',
+  [FaultedReason.FORCE_OVERLOAD]:
+    'The force passed 120% of the load cell\'s rated capacity. Relieve the load by hand, then disable and re-enable motion.',
   [FaultedReason.USER_REQUEST]: 'User requested to disable the machine.',
 };
 
