@@ -1,7 +1,6 @@
 /**
  * Dev-only WebSocket ↔ real-serial bridge for driving the web app against
- * ACTUAL P2 hardware (sibling of tools/sil-ws-bridge.mjs, which targets the SIL
- * emulator PTY).
+ * ACTUAL P2 hardware.
  *
  * The browser's Web Serial API can't be auto-selected under Playwright, so the
  * e2e fixtures install a fake `navigator.serial` whose port dials this relay
@@ -9,7 +8,7 @@
  * `serialport` library (which sets non-standard bauds correctly on macOS via
  * IOSSIOSPEED — plain `stty` does not) and pipe raw bytes both ways.
  *
- *   MAD_SERIAL=/dev/cu.usbserial-XXXX npm run hw:bridge   # or: node tools/hw-ws-bridge.mjs
+ *   MAD_SERIAL=/dev/cu.usbserial-XXXX node tools/hw-ws-bridge.mjs
  *
  * Binary frames are serial data. Text frames are a small control channel, so
  * the app's firmware loader can reset the board through the fake port:
