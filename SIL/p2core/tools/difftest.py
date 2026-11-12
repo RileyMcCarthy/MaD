@@ -13,7 +13,9 @@ import random
 import struct
 import sys
 
-# Real PNut-TS encodings -- taken from generated/insn.decode, never guessed.
+# Real PNut-TS encodings -- taken from the generated insn.decode (embsim's
+# p2-qemu/qemu-target/target-p2/insn.decode, or `gen_decoder.py --decodetree`),
+# never guessed.
 # (Guessing these is exactly how the first skeleton test silently did nothing.)
 OPS = {
     "add": 0x08, "sub": 0x0C, "and": 0x28, "or": 0x2A, "xor": 0x2B,
