@@ -3666,7 +3666,7 @@ const scenarios = [
           });
         });
         await press(page.getByTestId('open-app-release'));
-        await page.waitForURL(/\/MaD\/app\/v0\.6\.1\/#\/live$/, { timeout: DEVICE_WAIT_MS });
+        await page.waitForURL(/\/MaD\/app\/v0\.6\.1\/#\/control$/, { timeout: DEVICE_WAIT_MS });
         const closed = await page.evaluate(() => sessionStorage.getItem('mad-e2e-port-closed'));
         assert(closed === 'true', `the port was ${closed === 'false' ? 'still open' : 'never seen'} as the release opened`);
         assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
