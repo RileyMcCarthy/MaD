@@ -122,7 +122,7 @@ function dumpWaveSeries(label, posMm, tS, meta) {
 // The wave's extent is known rather than guessed: it lasts cycles/frequency
 // seconds. Which stretch of the record holds it is found by excursion, not by
 // hunting for where the gantry stopped — see waveformWindow.
-export function waveformWindow(posMm, tS, { cycles, frequencyHz }) {
+export function waveformWindow(posMm, tS, { cycles, frequencyHz, amplitudeMm }) {
   // Pick the waveDurS-wide window containing the most OSCILLATION — the largest
   // total variation (summed |Δposition|) on a fixed time grid.
   //
@@ -172,12 +172,48 @@ export function waveformWindow(posMm, tS, { cycles, frequencyHz }) {
   const tv = [0];
   for (let i = 1; i < gval.length; i++) tv.push(tv[i - 1] + Math.abs(gval[i] - gval[i - 1]));
 
+  // Most travel alone cannot tell the wave from an approach that runs into a
+  // park. The machine runs a G123 from REST on a peak and whole cycles bring it
+  // back there, so a window shifted earlier by x swaps the wave's final rise
+  // into that peak (slow: it is braking) for the last stretch of the approach
+  // (moving at whatever speed the program chose) and the park between them.
+  // When the approach is at least as fast as the wave's own peak speed, the
+  // swap can GAIN travel. WAVE-sine-small measured exactly that: the window
+  // took 1.45 s of approach and park in place of the wave's last 1.45 s, fit
+  // R² 0.776 where the wave itself fits 1.000, and its mean sat 0.245 mm off
+  // a centre the wave hit to the micrometre.
+  //
+  // So prefer the window shaped like whole cycles from rest: it STARTS with the
+  // gantry still, ENDS where it started, and carries at least half the travel
+  // the commanded cycles make (4·A per cycle, whatever the shape, holds or
+  // skew). The approach is moving, so no window starts inside it; a window from
+  // the rest before the approach ends partway up the wave, nowhere near where
+  // it began; a parked tail carries almost no travel. All three are measured on
+  // the same fixed grid as the travel, so this stays density-independent. A
+  // record with no such window (no rest before the wave, as in an oscillation
+  // started from its centre) falls back to the most travel anywhere.
   const steps = Math.round(waveDurS / dt);
+  // "Still": under 1% of the amplitude per grid step, about a sixth of a sine's
+  // peak speed (2πfA·dt = 0.063A per step), which a sine is slower than only
+  // within a grid step or two of its peak.
+  const stillMm = typeof amplitudeMm === 'number' && amplitudeMm > 0 ? 0.01 * amplitudeMm : undefined;
+  const closeMm = stillMm === undefined ? undefined : 0.2 * amplitudeMm;
+  const minTvMm = stillMm === undefined ? undefined : 0.5 * 4 * amplitudeMm * cycles;
   let bestStart = 0;
   let bestTv = -1;
-  for (let i = 0; i + steps < tv.length; i++) {
-    const v = tv[i + steps] - tv[i];
-    if (v > bestTv) { bestTv = v; bestStart = i; }
+  if (stillMm !== undefined) {
+    for (let i = 0; i + steps < tv.length; i++) {
+      const still = Math.abs(gval[i + 1] - gval[i]) < stillMm;
+      const closes = Math.abs(gval[i + steps] - gval[i]) < closeMm;
+      const v = tv[i + steps] - tv[i];
+      if (still && closes && v >= minTvMm && v > bestTv) { bestTv = v; bestStart = i; }
+    }
+  }
+  if (bestTv < 0) {
+    for (let i = 0; i + steps < tv.length; i++) {
+      const v = tv[i + steps] - tv[i];
+      if (v > bestTv) { bestTv = v; bestStart = i; }
+    }
   }
   // Record shorter than the wave itself: hand back everything and let the
   // caller's duration assertion report it.
@@ -199,8 +235,8 @@ export function assertSineMatch(series, { amplitudeMm, frequencyHz, cycles, cent
   dumpWaveSeries(label, posMm, tS, { amplitudeMm, frequencyHz, cycles, centreMm });
 
   // Fit exactly the WAVEFORM, not the whole record. The record also contains the
-  // leading ramp-to-centre and — after the closing settle move parks the gantry —
-  // a flat tail that lasts until the run is torn down. Neither is the commanded
+  // leading approach to the top and — after the return to the centre parks the
+  // gantry — a flat tail that lasts until the run is torn down. Neither is the commanded
   // sine, and the tail's length is teardown timing (0.1–0.4 s observed), so
   // including it penalises a perfectly tracked wave in proportion to how slow
   // the shutdown happened to be. That is what made the short 2 Hz case flaky:
@@ -208,9 +244,9 @@ export function assertSineMatch(series, { amplitudeMm, frequencyHz, cycles, cent
   // that measured 2.85 mm of the commanded 3 mm at exactly 2 Hz every run.
   //
   // The wave's extent is known, not guessed: it runs for cycles/frequency
-  // seconds and ends where the gantry stops moving (whole cycles end on the
-  // centre, so the settle move is negligible). Take that window.
-  const { p, t, waveDurS } = waveformWindow(posMm, tS, { cycles, frequencyHz });
+  // seconds, starting and ending at rest on the peak it set off from (whole
+  // cycles end where they began). Take that window.
+  const { p, t, waveDurS } = waveformWindow(posMm, tS, { cycles, frequencyHz, amplitudeMm });
   // A run where the gantry never moved collapses this window — it must still be
   // long enough to hold the commanded cycles, or the fit below is meaningless.
   assert(
@@ -338,7 +374,7 @@ export function assertWaveformExcursion(series, { amplitudeMm, cycles, frequency
   const tS = series.time.map((v) => v / 1e6);
   dumpWaveSeries(label, allPosMm, tS, { amplitudeMm, frequencyHz, cycles });
   // Same window as the sine case: measure the wave, not the approach to it.
-  const { p: posMm, t, waveDurS } = waveformWindow(allPosMm, tS, { cycles, frequencyHz });
+  const { p: posMm, t, waveDurS } = waveformWindow(allPosMm, tS, { cycles, frequencyHz, amplitudeMm });
   assert(
     posMm.length > 40 && t[t.length - 1] - t[0] > waveDurS * 0.8,
     `${label}: recorded a full ${waveDurS.toFixed(2)}s of waveform motion ` +

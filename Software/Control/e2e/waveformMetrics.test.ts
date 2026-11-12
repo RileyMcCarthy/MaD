@@ -193,6 +193,44 @@ function synthMultiSetPath(sampleHz: number, { idleTailS = 0 } = {}): Series {
   return { time, pos };
 }
 
+/** WAVE-sine-small catalog geometry (M10), run the way the program runs it now. */
+const FROM_TOP = { amplitudeMm: 2, frequencyHz: 0.5, cycles: 2, centreMm: 4 } as const;
+/** Where the synthetic record below leaves the top, and returns to it. */
+const FROM_TOP_WAVE_START_S = 0.2 + (FROM_TOP.centreMm + FROM_TOP.amplitudeMm) /
+  (2 * Math.PI * FROM_TOP.frequencyHz * FROM_TOP.amplitudeMm) + 0.4;
+const FROM_TOP_WAVE_END_S = FROM_TOP_WAVE_START_S + FROM_TOP.cycles / FROM_TOP.frequencyHz;
+
+/**
+ * A waveform move as the board records it: rest at 0, a straight approach to
+ * the TOP of the stroke at the wave's own peak speed, a 0.4 s park while that
+ * move settles, the cosine falling first from rest for whole cycles, a park,
+ * and the return to the centre. A micrometre of servo jitter throughout.
+ */
+function synthWaveFromTop(sampleHz: number): Series {
+  const dtUs = Math.round(1e6 / sampleHz);
+  const { amplitudeMm: A, frequencyHz: f, cycles, centreMm } = FROM_TOP;
+  const top = centreMm + A;
+  const speed = 2 * Math.PI * f * A; // mm/s
+  const approachEnd = 0.2 + top / speed;
+  const returnEnd = FROM_TOP_WAVE_END_S + 0.4 + A / speed;
+  const at = (s: number): number => {
+    if (s < 0.2) return 0;
+    if (s < approachEnd) return speed * (s - 0.2);
+    if (s < FROM_TOP_WAVE_START_S) return top;
+    if (s < FROM_TOP_WAVE_END_S) return centreMm + A * Math.cos(2 * Math.PI * f * (s - FROM_TOP_WAVE_START_S));
+    if (s < FROM_TOP_WAVE_END_S + 0.4) return top;
+    if (s < returnEnd) return top - speed * (s - FROM_TOP_WAVE_END_S - 0.4);
+    return centreMm;
+  };
+  const time: number[] = [];
+  const pos: number[] = [];
+  for (let t = 0, k = 0; t <= (returnEnd + 0.5) * 1e6; t += dtUs, k++) {
+    time.push(t);
+    pos.push(at(t / 1e6) * 1000 + (k % 2 === 0 ? 1 : -1));
+  }
+  return { time, pos };
+}
+
 function toMmSeries(series: Series) {
   return {
     posMm: series.pos.map((p) => p / 1000),
@@ -261,6 +299,36 @@ describe('waveformWindow', () => {
       // Window mean should sit near the approach base, not near zero (ramp).
       const mean = win.p.reduce((a, b) => a + b, 0) / win.p.length;
       expect(mean).toBeGreaterThan(WAVE.approachMm - 1);
+    },
+  );
+});
+
+describe('waveformWindow, a wave run from rest at the top', () => {
+  behaviour(
+    {
+      id: 'motion.window-skips-approach-into-park',
+      covers: 'e2e/waveformMetrics.mjs#waveformWindow',
+      given:
+        'a 2 mm, 0.5 Hz, two-cycle sine from rest at the top, approached at its peak speed with a 0.4 s park, sampled at 600 Hz and 40 Hz',
+      expect: {
+        'window-on-wave': 'the measured stretch starts and ends within a twentieth of a cycle of the wave itself',
+        'sine-check-passes': 'the sine check accepts the record as the commanded wave about its commanded centre',
+      },
+      why: {
+        'window-on-wave':
+          'an approach as fast as the wave carries more travel per second than the final rise of the wave as it brakes into the top, so the stretch with the most travel can begin inside the approach; whole cycles start at rest and end where they began, and the approach does neither',
+      },
+    },
+    () => {
+      const dense = synthWaveFromTop(600);
+      const tolS = 0.05 / FROM_TOP.frequencyHz;
+      for (const series of [dense, decimate(dense, 40)]) {
+        const { posMm, tS } = toMmSeries(series);
+        const win = waveformWindow(posMm, tS, FROM_TOP);
+        expect(Math.abs(win.t[0] - FROM_TOP_WAVE_START_S)).toBeLessThan(tolS);
+        expect(Math.abs(win.t[win.t.length - 1] - FROM_TOP_WAVE_END_S)).toBeLessThan(tolS);
+        expect(() => assertSineMatch(series, FROM_TOP, 'from-top')).not.toThrow();
+      }
     },
   );
 });
