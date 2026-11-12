@@ -571,16 +571,6 @@ bool IO_SDCard_push(IO_SDCard_channel_E channel, void *data, uint32_t size)
     return success;
 }
 
-bool IO_SDCard_pop(IO_SDCard_channel_E channel, void *data)
-{
-    bool success = false;
-    if (channel < IO_SDCARD_CHANNEL_COUNT)
-    {
-        success = IO_SDCard_private_lockedPop(channel, data);
-    }
-    return success;
-}
-
 uint32_t IO_SDCard_popMultiple(IO_SDCard_channel_E channel, void *buffer, uint32_t maxCount)
 {
     uint32_t count = 0U;

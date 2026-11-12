@@ -51,7 +51,6 @@
 #define actuator_enable(en) dev_servo_enable(ACTUATOR_CH, (en))
 #define actuator_move(target, feedrate) dev_servo_moveTo(ACTUATOR_CH, (target), (feedrate))
 #define actuator_moveOpenLoop(target, feedrate) dev_servo_moveToOpenLoop(ACTUATOR_CH, (target), (feedrate))
-#define actuator_setVelocity(v) dev_servo_setVelocity(ACTUATOR_CH, (v))
 #define actuator_stop() dev_servo_stop(ACTUATOR_CH)
 #define actuator_setPosition(p) dev_servo_setPosition(ACTUATOR_CH, (p))
 #define actuator_getPosition() dev_servo_getPosition(ACTUATOR_CH)

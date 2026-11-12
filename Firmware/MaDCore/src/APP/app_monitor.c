@@ -88,7 +88,6 @@ Definitions
 #include "dev_nvram.h"
 #include "IO_SDCard.h"
 #include "dev_forceGauge.h"
-#include "IO_positionFeedback.h"
 #include "IO_Debug.h"
 #include "lib_utility.h"
 #include "lib_timer.h"
@@ -125,8 +124,6 @@ typedef struct
 
 typedef struct
 {
-    bool setPositionFeedback;
-    int32_t setPositionValue;
     bool setSampleProfile;
     app_monitor_sampleProfile_S sampleProfileValue;
 } app_monitor_requestData_t;
@@ -195,11 +192,6 @@ void app_monitor_private_processInputs()
 void app_monitor_private_processRequests()
 {
     APP_MONITOR_LOCK_REQ_BLOCK();
-    if (app_monitor_data.request.setPositionFeedback)
-    {
-        IO_positionFeedback_setValue(IO_POSITION_FEEDBACK_CHANNEL_SERVO_FEEDBACK, app_monitor_data.request.setPositionValue);
-        app_monitor_data.request.setPositionFeedback = false;
-    }
     if (app_monitor_data.request.setSampleProfile)
     {
         memcpy(&app_monitor_data.sampleProfile, &app_monitor_data.request.sampleProfileValue, sizeof(app_monitor_sampleProfile_S));
@@ -410,22 +402,6 @@ void app_monitor_run()
     app_monitor_private_processLogging();
     app_monitor_private_setOutput();
     app_monitor_private_checkStacks();
-}
-
-void app_monitor_zeroPosition()
-{
-    APP_MONITOR_LOCK_REQ_BLOCK();
-    app_monitor_data.request.setPositionFeedback = true;
-    app_monitor_data.request.setPositionValue = 0;
-    APP_MONITOR_LOCK_REL();
-}
-
-void app_monitor_setPosition(int32_t positionUM)
-{
-    APP_MONITOR_LOCK_REQ_BLOCK();
-    app_monitor_data.request.setPositionFeedback = true;
-    app_monitor_data.request.setPositionValue = positionUM;
-    APP_MONITOR_LOCK_REL();
 }
 
 void app_monitor_setTestName(const char *testName)

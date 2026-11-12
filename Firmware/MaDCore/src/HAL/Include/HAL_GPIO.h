@@ -59,7 +59,6 @@ extern const HAL_GPIO_channelConfig_S HAL_GPIO_channelConfig[HAL_GPIO_COUNT];
 
 void HAL_GPIO_setActive(HAL_GPIO_channel_E channel, bool active);
 bool HAL_GPIO_getActive(HAL_GPIO_channel_E channel);
-void HAL_GPIO_toggleActive(HAL_GPIO_channel_E channel);
 /**********************************************************************
  * End of File
  **********************************************************************/

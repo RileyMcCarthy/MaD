@@ -120,12 +120,6 @@ void IO_SDCard_clearLastOpenFailed(IO_SDCard_channel_E channel);
 bool IO_SDCard_push(IO_SDCard_channel_E channel, void *data, uint32_t size);
 
 /**
- * @brief Pop a struct from a READ-mode channel's queue.
- * @param data Pointer to receive the struct.
- */
-bool IO_SDCard_pop(IO_SDCard_channel_E channel, void *data);
-
-/**
  * @brief Pop up to maxCount structs from a channel's queue into a contiguous buffer.
  * @param buffer Destination buffer (must hold at least maxCount * itemSize bytes).
  * @param maxCount Maximum number of items to pop.
