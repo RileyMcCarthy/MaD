@@ -45,7 +45,7 @@ function protocolLabel(deviceProtocol: number | null, compat: FirmwareCompat | n
   if (compat === null) return '—';
   if (compat.kind === 'checking') return 'checking…';
   if (compat.kind === 'unanswered') return 'no answer';
-  return deviceProtocol === null ? 'not reported (firmware from before the protocol check)' : String(deviceProtocol);
+  return deviceProtocol === null ? 'not reported' : String(deviceProtocol);
 }
 
 export default function Firmware() {
@@ -63,8 +63,7 @@ export default function Firmware() {
   const [fileError, setFileError] = useState<string | null>(null);
   const [target, setTarget] = useState<{ port: SerialPort; label: string } | null>(null);
   const [needsChoice, setNeedsChoice] = useState(false);
-  // The only granted port is the one the session is connected through: a
-  // machine on 0.14 or earlier, whose protocol is still on J1.
+  // The only granted port is the one the session is connected through.
   const [heldOnly, setHeldOnly] = useState(false);
   const [status, setStatus] = useState<Status>({ kind: 'idle' });
   const fileInput = useRef<HTMLInputElement>(null);
@@ -350,7 +349,7 @@ export default function Firmware() {
                   : needsChoice
                     ? 'Several serial devices — choose which one is the programming port (J1).'
                     : heldOnly
-                      ? 'MaD Control is connected through the only serial device: disconnect on the Connect page, then flash it (a machine on firmware 0.14 or earlier).'
+                      ? 'MaD Control is connected through the only serial device. Choose the programming port (the Prop Plug on J1 or the P2-EVAL USB), or disconnect on the Connect page to flash through this one.'
                       : 'No serial device yet — choose the programming port: the Prop Plug on J1 or the P2-EVAL USB.'}
               </td>
               <td style={{ textAlign: 'right' }}>
