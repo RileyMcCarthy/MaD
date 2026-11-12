@@ -25,13 +25,6 @@
 *.bak
 *.backup
 
-# Emulation files
-emulation/sd/
-emulation/__pycache__/
-emulation/venv/
-Emulation/MaDSim.log
-Emulation/MaDSim/__pycache__/
-
 # Build artifacts
 *.bin
 *.hex
