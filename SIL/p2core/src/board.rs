@@ -404,11 +404,11 @@ impl Board {
     /// The bulk form exists because an adapter republishes every net it owns
     /// on every slice, and per-pin calls would put a loop on the hot path.
     pub fn set_input_levels(&mut self, mask: u64, levels: u64) {
-        for bank in 0..2 {
+        for (bank, word) in self.in_ext.iter_mut().enumerate() {
             let shift = bank * 32;
             let m = (mask >> shift) as u32;
             let v = (levels >> shift) as u32;
-            self.in_ext[bank] = (self.in_ext[bank] & !m) | (v & m);
+            *word = (*word & !m) | (v & m);
         }
         self.step_quadrature();
     }

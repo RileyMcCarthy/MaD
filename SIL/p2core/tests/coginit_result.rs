@@ -89,14 +89,14 @@ fn coginit_picks_the_next_free_cog_and_reports_it() {
         "cog 5 starts and the register holds 5"
     );
     let mut m = Machine::new(&image(ANY_FREE, true, false), SmartPins::default());
-    for i in 1..=4 {
-        m.cogs[i].running = true;
+    for cog in &mut m.cogs[1..=4] {
+        cog.running = true;
     }
     // Step cog 0 only up to the COGINIT; the other "running" cogs are idle
     // zero-filled RAM, so keep them from executing.
     m.step(1).unwrap();
-    for i in 1..=4 {
-        m.cogs[i].clocks = u64::MAX / 2;
+    for cog in &mut m.cogs[1..=4] {
+        cog.clocks = u64::MAX / 2;
     }
     m.step(1).expect("coginit runs");
 
@@ -121,9 +121,9 @@ fn coginit_wc_sets_c_when_no_cog_is_free() {
         "the request register keeps its value, since no cog started"
     );
     let mut m = Machine::new(&image(ANY_FREE, true, false), SmartPins::default());
-    for i in 1..8 {
-        m.cogs[i].running = true;
-        m.cogs[i].clocks = u64::MAX / 2;
+    for cog in &mut m.cogs[1..8] {
+        cog.running = true;
+        cog.clocks = u64::MAX / 2;
     }
     m.step(2).expect("a full machine reports via C, not a trap");
 
@@ -147,9 +147,9 @@ fn coginit_without_wc_still_traps_when_no_cog_is_free() {
         "with no carry flag to read, nothing in the program would notice the failure"
     );
     let mut m = Machine::new(&image(ANY_FREE, false, false), SmartPins::default());
-    for i in 1..8 {
-        m.cogs[i].running = true;
-        m.cogs[i].clocks = u64::MAX / 2;
+    for cog in &mut m.cogs[1..8] {
+        cog.running = true;
+        cog.clocks = u64::MAX / 2;
     }
     m.step(1).unwrap();
     assert!(matches!(m.step(1), Err(Trap::NoFreeCog { cog: 0, .. })));
