@@ -1,6 +1,16 @@
 # Design: Netlist-grounded board simulation for SIL
 
-**Status:** design accepted (2026-07-11, revised after adversarial review); Phase 0 implemented
+> **Status (2026-11-11): landed.** The engine is embsim's `board` crate, and
+> MaD's side of it is `SIL/mad-catalog` (the carrier, add-on, ISS and machine
+> kinds) plus the `SIL/mad*.toml` project files, run by `SIL/mad-runner`
+> (`embsim run`). The firmware under test is the `MaD` P2 image on the ISS
+> (`SIL/p2core`, `SIL/p2iss`); nothing links a host-compiled firmware library.
+> This page is the design as written: its references to `SIL/MaDSim`,
+> `wiring.rs`, `libfirmware.a` / `pio run -e native_emulator`, HAL trampolines
+> and the Electron app are of the tree at the time. For the tree as it is, see
+> [SIL testing](sil-testing.md) and [The SIL emulator](../how-it-works/sil-emulator.md).
+
+**Status at the time of writing:** design accepted (2026-07-11, revised after adversarial review); Phase 0 implemented
 **Scope:** MaD-side view — system architecture, decision record, integration and phasing. The generic engine design lives upstream in [`SIL/embsim/BOARD_ENGINE.md`](https://github.com/RileyMcCarthy/embsim).
 
 ## Motivation

@@ -18,16 +18,18 @@ MaD/
 │       └── docs/            wire-format.md
 ├── SIL/                     Software-in-the-loop test rig (Rust workspace)
 │   ├── embsim/              ⎘ submodule → github.com/RileyMcCarthy/embsim
-│   │                        (core, peripherals, models, runtime, p2, tools)
+│   │                        (core, board, boards, models, cdp, cli, tools)
 │   ├── models/              MaD-specific physics (gantry, sample, strain gauge)
 │   ├── p2core/              The Propeller 2 instruction-set simulator (ISS)
 │   ├── p2iss/               The ISS as an embsim component, in the P2 package
 │   ├── mad-catalog/         MaD's embsim kinds; mad*.toml are the machine's projects
 │   ├── mad-runner/          The embsim command over MaD's kinds
 │   └── test-fixtures/       Sample/motion profiles
+├── Vibes/                   ⎘ submodule → github.com/RileyMcCarthy/vibes (behaviour ledger tool)
+├── behaviours.jsonl         The behaviour ledger: what the tests claim
 ├── Hardware/                KiCad PCBs (EdgeBoard, DS2Addon)
 ├── docs/  +  mkdocs.yml     This documentation site
-└── .github/workflows/       CI (ci.yml) and Pages deploy (pages.yml)
+└── .github/workflows/       CI (ci.yml), nightly e2e (e2e-nightly.yml), Pages deploy (pages.yml)
 ```
 
 ## The protocol code generator and its outputs

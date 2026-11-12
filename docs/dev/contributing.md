@@ -19,9 +19,10 @@ Run the gate(s) for the area you touched (see
 
 ### Submodule changes go upstream first
 
-`Protocol/ProtoEmb` and `SIL/embsim` are git submodules of standalone repos
+`Protocol/ProtoEmb`, `SIL/embsim` and `Vibes` are git submodules of standalone repos
 ([protoemb](https://github.com/RileyMcCarthy/protoemb),
-[embsim](https://github.com/RileyMcCarthy/embsim)). To change code inside them:
+[embsim](https://github.com/RileyMcCarthy/embsim),
+[vibes](https://github.com/RileyMcCarthy/vibes)). To change code inside them:
 commit + push in the library repo (its own CI gates it), then bump the pinned
 commit here in a MaD PR. Never open a MaD PR whose gitlink points at a commit
 that isn't pushed upstream.
@@ -69,7 +70,8 @@ hard-to-debug failures:
 Detailed, language-specific coding standards — grounded in how the code is
 actually written and gated — live in
 [**Coding guidelines**](../coding-guidelines/README.md): C/firmware (MISRA + CERT),
-Rust/SIL, Python (the generator), TypeScript, and the protocol-YAML schema.
+Rust/SIL, Python (the build hooks and the generator), the protocol-YAML schema,
+and Vibes behaviour declarations.
 Contributors (and AI assistants) are expected to follow them.
 
 ## Conventions

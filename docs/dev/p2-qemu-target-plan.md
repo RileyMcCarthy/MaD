@@ -1,5 +1,12 @@
 # Plan: move the P2 ISS onto QEMU
 
+> **Status (2026-11-11): in progress, not the ISS yet.** The spikes live under
+> `SIL/spikes/` and the target copy under `SIL/qemu-p2/`; the suites and the
+> project files still run the interpreter (`SIL/p2core`). Since this was
+> scoped, `SIL/MaDSim` and `mad-emulator` retired (MaD #298) in favour of
+> `SIL/mad-catalog` and `SIL/mad-runner`: read the `MaDSim` references below
+> as the tree at the time.
+
 Scoped 2026-09-19 against `feat/iss-rom-serial-flash`, after measuring the
 current interpreter. Decision taken: **build a QEMU TCG target for the
 Propeller 2 and make it the ISS.** This document is the plan, its design

@@ -33,15 +33,16 @@ Everything you need to build, run, test, and extend MaD.
 | [`wasm-pack`](https://rustwasm.github.io/wasm-pack/) | latest | Building the app's WASM core |
 | [Python](https://www.python.org/) | 3.8+ | The protocol generator and the docs site |
 | [PlatformIO](https://platformio.org/) | 6.x+ | Building the firmware |
-| [KiCad](https://www.kicad.org/) | 8+ | Hardware (optional) |
+| [KiCad](https://www.kicad.org/) | 9+ | Hardware (optional) |
 
 Rust, `wasm-pack`, and Python are only needed if you're building the app or
 running SIL; PlatformIO only if you're building firmware.
 
 !!! note "Initialize the submodules first"
-    Two components are git submodules: [`Protocol/ProtoEmb`](https://github.com/RileyMcCarthy/protoemb)
-    (protocol codegen + runtime) and [`SIL/embsim`](https://github.com/RileyMcCarthy/embsim)
-    (the emulator framework). Every fast path below needs them:
+    Three components are git submodules: [`Protocol/ProtoEmb`](https://github.com/RileyMcCarthy/protoemb)
+    (protocol codegen + runtime), [`SIL/embsim`](https://github.com/RileyMcCarthy/embsim)
+    (the emulator framework) and [`Vibes`](https://github.com/RileyMcCarthy/vibes)
+    (the behaviour ledger tool). Every fast path below needs them:
 
     ```bash
     git clone --recurse-submodules https://github.com/RileyMcCarthy/MaD.git

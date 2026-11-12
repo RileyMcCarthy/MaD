@@ -3,7 +3,16 @@
 Living TODO for the SIL framework (`SIL/embsim`) and MaD's crates on it (`SIL/p2iss`, `SIL/mad-catalog`).
 Inspired by what Renode gets right as an ISS **without** turning embsim into a Renode remake.
 
-**Order is dependency order.** Native SIL stays the default (fast PR CI). ISS is an option on the same pin/time fabric.
+> **Status (2026-11-11): partly historical.** This backlog was written while the
+> native-HAL SIL (host-compiled firmware behind Rust trampolines) was the default
+> and the ISS was an option beside it. The native path is gone: the project
+> files (`SIL/mad*.toml`, run by `SIL/mad-runner`) boot the `MaD` P2 image on
+> the ISS, and `mad-emulator` / `SIL/MaDSim` retired with MaD #298 (its kinds
+> are `SIL/mad-catalog`). Items that name `mad-emulator`, `--backend iss`,
+> `embsim-p2` trampolines or "PR CI = native" describe the tree at the time;
+> unchecked boxes under a heading marked superseded are not open work.
+
+**Order is dependency order.** When this was written, native SIL was the default (fast PR CI) and the ISS an option on the same pin/time fabric; the ISS is now the only firmware backend.
 
 Non-goals (unchanged from [BOARD_ENGINE.md](https://github.com/RileyMcCarthy/embsim/blob/main/BOARD_ENGINE.md)): cycle-accurate silicon, PCB parasitics, remaking tlib/QEMU, using Renode as embsim’s kernel.
 
