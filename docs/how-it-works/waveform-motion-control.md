@@ -13,8 +13,8 @@ way it is.
 
 ## Why not just send G-code segments?
 
-A waveform used to be expanded **on the host** into ~32 short `G1` segments per
-cycle. That works, but:
+The alternative is to expand a waveform **on the host** into ~32 short `G1`
+segments per cycle. Compared with generating it in the firmware:
 
 | Concern | Host segment expansion | Firmware-native waveform |
 | --- | --- | --- |

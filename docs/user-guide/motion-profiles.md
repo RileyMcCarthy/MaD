@@ -4,7 +4,7 @@ A **motion profile** defines what the machine *does* during a test — a sequenc
 of moves, grouped into repeatable **sets**. You build it on the **Motion
 Profiles** screen.
 
-![The Motion profiles builder](../assets/screenshots/04-motion-profiles.png)
+![The Motion profiles builder](../assets/screenshots/motion-profiles.png)
 
 ## Structure
 
@@ -50,7 +50,7 @@ at either peak and load faster than it unloads; see
 Click **Preview G-code** to see a distance-vs-time chart of exactly what the
 machine will do, along with the instructions that will be sent:
 
-![G-code preview](../assets/screenshots/05-gcode-preview.png)
+![G-code preview](../assets/screenshots/gcode-preview.png)
 
 This is a good habit before running an unfamiliar profile — the chart makes an
 accidental over-long pull or an inverted direction obvious at a glance.

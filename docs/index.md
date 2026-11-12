@@ -41,9 +41,9 @@ is a Progressive Web App that talks straight to the machine over the
 
     ---
 
-    Open the app, connect to a machine, and run your first test.
+    Connect, flash the firmware, calibrate, and run your first test.
 
-    [:octicons-arrow-right-24: For operators](getting-started/operators.md)
+    [:octicons-arrow-right-24: Getting started](getting-started/index.md)
 
 -   :material-book-open-variant: **Day-to-day use**
 
@@ -53,6 +53,15 @@ is a Progressive Web App that talks straight to the machine over the
     screen, with screenshots.
 
     [:octicons-arrow-right-24: User guide](user-guide/index.md)
+
+-   :material-lifebuoy: **Something isn't working**
+
+    ---
+
+    Organised by what you see on screen: every banner, fault and restriction,
+    with a screenshot and the fix.
+
+    [:octicons-arrow-right-24: Troubleshooting](troubleshooting/index.md)
 
 -   :material-cog-outline: **Under the hood**
 

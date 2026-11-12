@@ -1,42 +1,39 @@
 # Getting Started
 
-There are two ways to get going with MaD, depending on who you are.
+Setting up a MaD machine takes five steps. Do them in order the first time;
+after that, day-to-day use is just steps 2 and 5.
 
-<div class="grid cards" markdown>
+| | Step | What you do | How long |
+|---|---|---|---|
+| 1 | [What you need](requirements.md) | A Chromium browser, two USB serial adapters, a folder for your data | — |
+| 2 | [Power up and connect](connect.md) | Open the app, choose the data folder, connect on the control port | 2 min |
+| 3 | [Flash the firmware](flashing-firmware.md) | Install the recommended firmware through the programming port | 2 min |
+| 4 | [Configure and calibrate](machine-setup.md) | Enter the machine's mechanics, check the motor, calibrate the load cell | 20 min, once per machine |
+| 5 | [Run your first test](operators.md) | Jog, zero, build profiles, run, review | 10 min |
 
--   :material-account-wrench: **I want to run tests**
+[:rocket: Open MaD Control](https://rileymccarthy.github.io/MaD/app/){ .md-button .md-button--primary }
 
-    ---
+## What a working setup looks like
 
-    You have a MaD machine (or just want to explore the app). No installation —
-    everything runs in the browser.
+When everything is right, the status bar is green, says **Responding**, and
+there is no banner under it:
 
-    [:octicons-arrow-right-24: For operators](operators.md)
+![Status bar: connected and responding](../assets/screenshots/status-connected.png)
 
--   :material-laptop: **I want to build / develop**
+and the **Live** screen shows `Fault: NONE` and `Restriction: NONE`, with
+**Enable motion** available:
 
-    ---
+![Live screen state and controls, motion disabled, nothing wrong](../assets/screenshots/state-disabled.png)
 
-    Build the firmware, run the app from source, or run the simulation test rig.
+If yours looks different, [Troubleshooting](../troubleshooting/index.md) is
+organised by what you see on screen.
 
-    [:octicons-arrow-right-24: Developer guide](../dev/index.md)
+## Just exploring?
 
-</div>
+You can open the app and click through every screen without a machine. Live
+data, calibration and tests need a machine connected.
 
-## Before you start
+## Building from source
 
-The control app is **Chromium-only** (Chrome or Edge on desktop) because it
-relies on the Web Serial and File System Access browser APIs. Check the
-[requirements & browser support](requirements.md) page first if you are unsure.
-
-## The 60-second version
-
-1. Open the app: **<https://rileymccarthy.github.io/MaD/app/>** in Chrome or Edge.
-2. Plug the machine into your computer over USB and power it on.
-3. Go to **Connect**, click **Connect device**, and pick the serial port.
-4. Open **Firmware** and check the version. A board that has never been
-   programmed shows **Connected** but never **Responding** — flash it here
-   first.
-5. Watch live data on the **Live** screen, or build and run a test.
-
-The full, screenshot-led walkthrough is in [For operators](operators.md).
+To build the firmware, run the app from source or run the simulation rig, see
+the [Developer guide](../dev/index.md).
