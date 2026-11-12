@@ -624,7 +624,7 @@ async function settleMotion(page, opts = {}) {
 // actually manages on a CI runner it has not. Waiting on the machine's state
 // makes the scenario independent of both the host speed and what ran before.
 //
-// Call after navigating to /live and before enabling motion — stopping a run
+// Call after navigating to /control and before enabling motion — stopping a run
 // disables motion, which the callers' own "Enable motion" step then restores.
 async function ensureTestIdle(page, { graceMs = 25_000, timeoutMs = 50_000 } = {}) {
   const idle = page.getByText('Test: idle');
@@ -1183,20 +1183,19 @@ const WRITE_TEST_MOVE = 4;
  * with a toast saying why.
  */
 async function pressRefusedLiveControls(page, base = APP_URL) {
-  await page.goto(`${base}#/live`);
+  await page.goto(`${base}#/control`);
   await page.getByText(/Motion: (enabled|disabled)/).waitFor({ timeout: DEVICE_WAIT_MS });
   const enable = page.getByRole('button', { name: 'Enable motion' });
   await enable.waitFor({ timeout: DEVICE_WAIT_MS });
   await press(enable);
   await page.locator('.toast').getByText(/too old|newer than this version|did not say which protocol/).first()
     .waitFor({ timeout: DEVICE_WAIT_MS });
-  await press(page.getByRole('button', { name: '+ Jog up' }));
-  await press(page.getByRole('button', { name: 'Home' }));
-  await awaitLogged(page, 'store', 'home-refused');
-  const entries = await appLogEntries(page);
-  for (const tag of ['motion-enable-refused', 'jog-refused', 'home-refused']) {
-    assert(logged(entries, 'store', tag).length > 0, `the app did not refuse (${tag} not logged)`);
+  // Motion stays off, so Control locks Jog and Home before the store is asked.
+  for (const name of ['+ Jog up', 'Home']) {
+    assert(await page.getByRole('button', { name }).isDisabled(), `${name} is not locked while motion is off`);
   }
+  const entries = await appLogEntries(page);
+  assert(logged(entries, 'store', 'motion-enable-refused').length > 0, 'the app did not refuse (motion-enable-refused not logged)');
   assert(
     (await page.getByText('Motion: enabled').count()) === 0,
     'motion was enabled on firmware the app cannot drive',
@@ -1300,7 +1299,7 @@ const scenarios = [
         await fieldInput(page, 'Max force (N)').fill('500');
         await fieldInput(page, 'Sample name').fill('E2E-Sample');
         await press(page.getByRole('button', { name: 'Save sample profile' }));
-        await page.getByText(/Saved to data folder/i).waitFor({ timeout: DEVICE_WAIT_MS });
+        await page.getByText(/Sample profile "E2E-Sample" saved/i).waitFor({ timeout: DEVICE_WAIT_MS });
         await page
           .locator('.panel', { hasText: 'Saved sample profiles' })
           .getByText('E2E-Sample')
@@ -2496,7 +2495,7 @@ const scenarios = [
       const { browser, page, errors } = await newSilPage();
       try {
         await connectToSil(page);
-        for (const route of ['live', 'config', 'profiles', 'create', 'runs', 'about', 'settings', 'connect']) {
+        for (const route of ['control', 'config', 'profiles', 'create', 'runs', 'about', 'settings', 'connect']) {
           // eslint-disable-next-line no-await-in-loop
           await page.goto(`${APP_URL}#/${route}`);
           // eslint-disable-next-line no-await-in-loop
@@ -3458,7 +3457,7 @@ const scenarios = [
         assert(!(await row.getAttribute('class'))?.includes('error'), 'the Protocol row is marked as a mismatch');
         assert((await compatBanner(page).count()) === 0, 'a firmware banner is shown for matching firmware');
         // The gate lets a good board's motion through: enable, then disable.
-        await page.goto(`${APP_URL}#/live`);
+        await page.goto(`${APP_URL}#/control`);
         await page.getByText(/Motion: (enabled|disabled)/).waitFor({ timeout: DEVICE_WAIT_MS });
         await press(page.getByRole('button', { name: 'Enable motion' }));
         await page.getByText('Motion: enabled').waitFor({ timeout: DEVICE_WAIT_MS });
@@ -3603,7 +3602,7 @@ const scenarios = [
         await connectFakeBoard(page);
         // Fail closed: blocked from the moment the connection opens, saying so.
         await compatBanner(page).and(page.locator('[data-kind="checking"]')).waitFor({ timeout: DEVICE_WAIT_MS });
-        await page.goto(`${APP_URL_HOST}#/live`);
+        await page.goto(`${APP_URL_HOST}#/control`);
         await page.getByText(/Motion: (enabled|disabled)/).waitFor({ timeout: DEVICE_WAIT_MS });
         await press(page.getByRole('button', { name: 'Enable motion' }));
         await page.locator('.toast').getByText(/^Checking which protocol/).first().waitFor({ timeout: DEVICE_WAIT_MS });
@@ -3733,7 +3732,7 @@ const scenarios = [
         assert(opens.programming === 1, `the programming port was opened ${opens.programming} times; once, for the flash`);
         assert(opens.control === 2, `the control port was opened ${opens.control} times; expected the connect and the reconnect`);
         // Motion works on the new firmware, in the same page: no reload.
-        await page.goto(`${APP_URL_HOST}#/live`);
+        await page.goto(`${APP_URL_HOST}#/control`);
         await press(page.getByRole('button', { name: 'Enable motion' }));
         await page.getByText('Motion: enabled').waitFor({ timeout: DEVICE_WAIT_MS });
         assert(await page.evaluate(() => window.__sameApp === true), 'the app was reloaded');
