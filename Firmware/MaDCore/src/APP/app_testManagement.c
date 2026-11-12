@@ -42,6 +42,8 @@ typedef enum
     APP_TESTMANAGEMENT_END_MOTION_DISABLED,
     APP_TESTMANAGEMENT_END_LIMIT_EXCEEDED,
     APP_TESTMANAGEMENT_END_WAVEFORM_REFUSED,
+    APP_TESTMANAGEMENT_END_TRAVEL_LIMIT,
+    APP_TESTMANAGEMENT_END_HOMING_FAILED,
 } app_testManagement_endReason_E;
 
 typedef struct
@@ -51,6 +53,10 @@ typedef struct
     bool sdGcodeLastOpenFailed;
     bool sdGcodeReadDone;
     bool limitExceeded;  /* sample force/displacement limit tripped (app_monitor) */
+    /* Why app_motion dropped its move and its queue since the last cycle, if
+     * it did (a travel limit, a failed homing). Taken every cycle whether or
+     * not a test is running, so one from a jog never ends a later test. */
+    app_motion_abort_E motionAbort;
 } app_testManagement_inputs_t;
 
 /* Manual moves accepted from the COMMUNICATION cog, awaiting enqueue by the
@@ -120,6 +126,7 @@ static void app_testManagement_private_processInputs(void)
      * against the loaded sample profile. Tripping one ends the test immediately. */
     app_testManagement_data.inputs.limitExceeded =
         app_monitor_isForceExceeded() || app_monitor_isDisplacementExceeded();
+    app_testManagement_data.inputs.motionAbort = app_motion_takeAbort();
 }
 
 static void app_testManagement_private_processRequests(void)
@@ -197,6 +204,13 @@ static void app_testManagement_private_enterEnding(app_testManagement_endReason_
         /* The refusal reason is already in the debug log (app_motion); the
          * operator only needs to know the waveform never ran. */
         app_notification_send(APP_NOTIFICATION_TYPE_WARNING, "%s", "Test aborted: waveform refused");
+        break;
+    case APP_TESTMANAGEMENT_END_TRAVEL_LIMIT:
+        /* Which limit is in app_motion's own notification. */
+        app_notification_send(APP_NOTIFICATION_TYPE_WARNING, "%s", "Test stopped: travel limit reached");
+        break;
+    case APP_TESTMANAGEMENT_END_HOMING_FAILED:
+        app_notification_send(APP_NOTIFICATION_TYPE_WARNING, "%s", "Test aborted: homing failed");
         break;
     case APP_TESTMANAGEMENT_END_OPEN_FAILED:
     case APP_TESTMANAGEMENT_END_USER:
@@ -334,6 +348,16 @@ static void app_testManagement_private_runState(void)
             /* Sample exceeded its force/displacement limit — stop the test now
              * (abort the queued moves) rather than drive past the safe envelope. */
             app_testManagement_private_enterEnding(APP_TESTMANAGEMENT_END_LIMIT_EXCEEDED);
+        }
+        else if (app_testManagement_data.inputs.motionAbort != APP_MOTION_ABORT_NONE)
+        {
+            /* Motion dropped a move of this program and the rest of its queue.
+             * The program can no longer run as written, so the test ends here
+             * instead of feeding the moves that came after the lost one. */
+            app_testManagement_private_enterEnding(
+                (app_testManagement_data.inputs.motionAbort == APP_MOTION_ABORT_HOMING_FAILED)
+                    ? APP_TESTMANAGEMENT_END_HOMING_FAILED
+                    : APP_TESTMANAGEMENT_END_TRAVEL_LIMIT);
         }
         else
         {

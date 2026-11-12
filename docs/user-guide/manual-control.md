@@ -48,7 +48,7 @@ outside the machine's encodable range is blocked before it's sent.
 
 | Button | Action |
 |---|---|
-| **Home** | Homes the motion axis to its reference. |
+| **Home** | Homes the motion axis to its reference: the gantry seeks the upper travel limit switch and the position is defined where the switch goes active. If the switch is already active, the gantry first moves off it and then approaches again. If the switch does not release, or is never found, homing fails with an error and the position is left unchanged. |
 | **Zero force** | Zeroes the force-gauge reading at the current load — establishes the sample-force origin. |
 | **Zero length** | Zeroes the position/encoder at the current position — establishes the gauge-length origin. |
 

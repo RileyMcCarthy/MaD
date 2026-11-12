@@ -54,6 +54,7 @@ static bool d_dispExceeded;
 static bool d_motionIdle;
 static bool d_addMoveReturn;     /* what app_motion_addMove reports (queue accept) */
 static bool d_waveformRefused;   /* app_motion's refused-G123 latch */
+static app_motion_abort_E d_motionAbort; /* app_motion's dropped-its-move latch */
 static uint32_t d_takeRefusedCount;
 
 static uint32_t d_addMoveCount;
@@ -83,6 +84,7 @@ static void doubles_reset(void)
     d_motionIdle = false;
     d_addMoveReturn = true;
     d_waveformRefused = false;
+    d_motionAbort = APP_MOTION_ABORT_NONE;
     d_takeRefusedCount = 0U;
 
     d_addMoveCount = 0U;
@@ -117,6 +119,14 @@ bool app_motion_takeWaveformRefused(void)
     d_waveformRefused = false;
     d_takeRefusedCount++;
     return refused;
+}
+
+/* Read-and-clear, as the real latch is. */
+app_motion_abort_E app_motion_takeAbort(void)
+{
+    const app_motion_abort_E reason = d_motionAbort;
+    d_motionAbort = APP_MOTION_ABORT_NONE;
+    return reason;
 }
 
 /* --- app_notification --- */
@@ -570,6 +580,67 @@ void test_app_testManagement_sampleLimitAbortsRun(void)
     TEST_ASSERT_FALSE(app_testManagement_isRunning());
     TEST_ASSERT_EQUAL_UINT32(1U, d_abortCount);
     TEST_ASSERT_EQUAL_INT(APP_NOTIFICATION_TYPE_WARNING, d_lastNotifyType);
+}
+
+void test_app_testManagement_travelLimitEndsRun(void)
+{
+    VIBES_TEST("test-run.travel-limit-ends-the-test",
+               "src/APP/app_testManagement.c#app_testManagement_private_runState",
+               "a running test, then motion reporting that it dropped a move at a travel limit");
+    VIBES_EXPECT_WHY("test-ends",
+                     "the test stops and no further moves of its program are sent",
+                     "a program that has lost one of its moves is no longer the test that was asked for");
+    VIBES_EXPECT("operator-warned", "the operator is warned that the test stopped at a travel limit");
+    tm_init();
+    tm_driveToRunning();
+    d_popBuf[0].g = (uint8_t)G1_LINEAR_MOVE;
+    d_popCount = 1U;
+
+    d_motionAbort = APP_MOTION_ABORT_TRAVEL_LIMIT;
+    app_testManagement_run();
+    TEST_ASSERT_FALSE(app_testManagement_isRunning());
+    TEST_ASSERT_EQUAL_UINT32(1U, d_abortCount);
+    TEST_ASSERT_EQUAL_UINT32(0U, d_addMoveCount);
+    TEST_ASSERT_EQUAL_INT(APP_NOTIFICATION_TYPE_WARNING, d_lastNotifyType);
+    TEST_ASSERT_NOT_NULL(strstr(d_lastNotifyText, "travel limit"));
+}
+
+void test_app_testManagement_failedHomingEndsRun(void)
+{
+    VIBES_TEST("test-run.failed-homing-ends-the-test",
+               "src/APP/app_testManagement.c#app_testManagement_private_runState",
+               "a running test, then motion reporting that homing failed");
+    VIBES_EXPECT_WHY("test-ends",
+                     "the test stops and the operator is warned that homing failed",
+                     "every later move of the program would be measured from a position that was never established");
+    tm_init();
+    tm_driveToRunning();
+
+    d_motionAbort = APP_MOTION_ABORT_HOMING_FAILED;
+    app_testManagement_run();
+    TEST_ASSERT_FALSE(app_testManagement_isRunning());
+    TEST_ASSERT_EQUAL_UINT32(1U, d_abortCount);
+    TEST_ASSERT_EQUAL_INT(APP_NOTIFICATION_TYPE_WARNING, d_lastNotifyType);
+    TEST_ASSERT_NOT_NULL(strstr(d_lastNotifyText, "homing"));
+}
+
+void test_app_testManagement_limitStopBeforeATestDoesNotEndIt(void)
+{
+    VIBES_TEST("test-run.earlier-limit-stop-forgotten",
+               "src/APP/app_testManagement.c#app_testManagement_private_processInputs",
+               "a jog stopped at a travel limit while no test is running, then a test started");
+    VIBES_EXPECT_WHY("test-runs",
+                     "the test reaches running and keeps running",
+                     "the stop belonged to the jog; a test is ended only by a stop that happens during it");
+    tm_init();
+
+    d_motionAbort = APP_MOTION_ABORT_TRAVEL_LIMIT;
+    app_testManagement_run(); /* idle: the report is read and dropped */
+
+    tm_driveToRunning();
+    app_testManagement_run();
+    TEST_ASSERT_TRUE(app_testManagement_isRunning());
+    TEST_ASSERT_EQUAL_UINT32(0U, d_abortCount);
 }
 
 void test_app_testManagement_openFailureEndsStart(void)

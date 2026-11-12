@@ -111,13 +111,18 @@ int32_t dev_servo_getSetpoint(dev_servo_channel_E ch)
     return d_setpoint;
 }
 
-/* --- HAL_GPIO inputs --- */
+/* --- HAL_GPIO inputs: the two travel-limit switches, and nothing else --- */
 static bool d_endstopUpperActive; // HAL_GPIO_getActive(ENDSTOP_UPPER)
+static bool d_endstopLowerActive; // HAL_GPIO_getActive(ENDSTOP_LOWER)
 
 bool HAL_GPIO_getActive(HAL_GPIO_channel_E channel)
 {
-    TEST_ASSERT_EQUAL_INT(HAL_GPIO_ENDSTOP_UPPER, channel);
-    return d_endstopUpperActive;
+    if (channel == HAL_GPIO_ENDSTOP_UPPER)
+    {
+        return d_endstopUpperActive;
+    }
+    TEST_ASSERT_EQUAL_INT(HAL_GPIO_ENDSTOP_LOWER, channel);
+    return d_endstopLowerActive;
 }
 
 /* --- dev_servo outputs (record the last call + counts) --- */
@@ -302,7 +307,9 @@ static void doubles_reset(void)
     d_stagePending = false;
     d_capStagedCount = 0U;
     d_target = 0;
+    d_setpoint = 0;
     d_endstopUpperActive = false;
+    d_endstopLowerActive = false;
 
     d_moveCount = 0U;
     d_lastMoveTarget = 0;
@@ -871,39 +878,491 @@ void test_homing_full_sequence(void)
     TEST_ASSERT_TRUE(app_motion_isIdle());
 }
 
-/* Homing failure: if atTarget is reached while in MOVING(home) with no endstop,
- * the homing FSM jumps straight to COMPLETE (no encoder set, no backoff move)
- * and the G28 move then completes. */
+/* Homing failure: atTarget reached while seeking with no endstop. Nothing
+ * defines the position, so none is written, and homing ends as a failure: the
+ * operator is told, the queue behind it is dropped, and the reason is latched
+ * for app_testManagement. */
 void test_homing_fails_when_target_reached_without_endstop(void)
 {
     VIBES_TEST("motion.homing-completes-if-endstop-missed",
                "src/APP/app_motion.c#app_motion_private_homing_run",
-               "a home command whose approach reaches its target with the upper endstop still open");
+               "a home command whose approach covers the whole travel with the upper endstop still open, and a move queued behind it");
     VIBES_EXPECT_WHY("no-origin-no-backoff",
                      "no coordinate origin is written and no backoff move is commanded",
                      "with no endstop there is no origin to write");
-    VIBES_EXPECT_WHY("homing-finishes",
-                     "homing finishes, leaving the motion planner idle",
-                     "finishing lets the motion planner accept the next move");
+    VIBES_EXPECT("operator-told", "the operator is sent an error saying the upper limit switch was not found");
+    VIBES_EXPECT_WHY("queue-dropped",
+                     "the move queued behind it is dropped and the motion planner is left idle",
+                     "a move measured from a position that was never established goes somewhere nobody chose");
+    VIBES_EXPECT("failure-latched", "the failure is reported once to whoever asks why motion stopped");
     motion_driveToWaiting();
 
     d_steps = 0;
     app_motion_move_t g28 = make_move((uint8_t)G28_HOME, 0, 0, 0);
+    app_motion_move_t after = make_move((uint8_t)G1_LINEAR_MOVE, 10000, 1000, 0);
     TEST_ASSERT_TRUE(app_motion_addMove(&g28));
+    TEST_ASSERT_TRUE(app_motion_addMove(&after));
 
     app_motion_run(); /* WAITING pops G28 -> MOVING, homeState=START */
     app_motion_run(); /* START -> issue approach move, homeState=MOVING(home) */
 
-    /* No endstop, but target reached -> COMPLETE (failure path). */
+    /* No endstop, but target reached -> failure. */
     d_endstopUpperActive = false;
     d_atTarget = true;
     d_setValueCount = 0U;
-    app_motion_run(); /* MOVING(home) -> COMPLETE */
-    TEST_ASSERT_EQUAL_UINT32(0U, d_setValueCount); /* no backoff/coord set */
+    d_moveCount = 0U;
+    d_stopCount = 0U;
+    d_notify_calls = 0;
+    app_motion_run();
+    TEST_ASSERT_EQUAL_UINT32(0U, d_setValueCount);
+    TEST_ASSERT_EQUAL_UINT32(0U, d_setPositionCount);
+    TEST_ASSERT_EQUAL_UINT32(0U, d_moveCount);
+    TEST_ASSERT_EQUAL_INT(1, d_notify_calls);
+    TEST_ASSERT_EQUAL_INT(APP_NOTIFICATION_TYPE_ERROR, d_notify_lastType);
+    TEST_ASSERT_EQUAL_UINT32(1U, d_stopCount);
+    TEST_ASSERT_TRUE(app_motion_isIdle());
+
+    app_motion_run(); /* nothing left to start */
+    TEST_ASSERT_EQUAL_UINT32(0U, d_moveCount);
+    TEST_ASSERT_EQUAL_INT(APP_MOTION_ABORT_HOMING_FAILED, app_motion_takeAbort());
+    TEST_ASSERT_EQUAL_INT(APP_MOTION_ABORT_NONE, app_motion_takeAbort());
+}
+
+/* Homing asked for with the upper endstop ALREADY active. The carriage is
+ * moved off the switch first (twice the homing offset at most), and only once
+ * the switch has released does the seek start:
+ *   run 1 : WAITING pops G28 -> MOVING, homeState=START
+ *   run 2 : START, endstop active -> release move (+2*homingOffset) -> RELEASE
+ *   run 3 : RELEASE, endstop still active -> keeps moving off
+ *   run 4 : RELEASE, endstop released -> seek move -> MOVING(home)
+ *   run 5 : MOVING(home), endstop active -> stop, 1 s pause -> ENDSTOP
+ *   run 6 : ENDSTOP, pause over -> origin written, backoff -> BACKOFF */
+void test_homing_moves_off_an_endstop_that_is_already_active(void)
+{
+    VIBES_TEST("motion.homing-releases-active-endstop-first",
+               "src/APP/app_motion.c#app_motion_private_homing_run",
+               "a home command with the gantry at 50 millimetres and the upper endstop already active, the endstop then releasing, and going active again on the approach");
+    VIBES_EXPECT_WHY("moves-off-first",
+                     "the gantry is first commanded away from the endstop, by twice the homing offset at the homing speed",
+                     "an endstop that is already active marks no position: the gantry may be anywhere inside the switch's travel, or the switch's wiring may be open");
+    VIBES_EXPECT("no-origin-while-active", "no coordinate origin is written while the endstop has yet to release");
+    VIBES_EXPECT("seeks-after-release",
+                 "once the endstop releases, the gantry is commanded a full travel limit back toward it at the homing speed");
+    VIBES_EXPECT_WHY("origin-on-the-approach",
+                     "the jaw offset becomes the coordinate origin after the endstop goes active on that approach and the pause has passed",
+                     "the reference is the point where the switch goes active as the gantry arrives");
+    motion_driveToWaiting();
+
+    /* stepsPerMM 100, homingOffset 10 mm, homingVelocity 5 mm/s, maxPosition 200 mm. */
+    d_steps = 5000;
+    d_endstopUpperActive = true;
+    d_moveCount = 0U;
+    global_timeus = 0U;
+    app_motion_move_t g28 = make_move((uint8_t)G28_HOME, 0, 0, 0);
+    TEST_ASSERT_TRUE(app_motion_addMove(&g28));
+
+    app_motion_run(); /* run 1 */
+    app_motion_run(); /* run 2: release move = 5000 + 100*(2*10) = 7000 */
+    TEST_ASSERT_EQUAL_UINT32(1U, d_moveCount);
+    TEST_ASSERT_EQUAL_INT32(7000, d_lastMoveTarget);
+    TEST_ASSERT_EQUAL_UINT32(500U, d_lastMoveStepsPerSecond);
+
+    d_steps = 5300;
+    app_motion_run(); /* run 3: still on the switch */
+    TEST_ASSERT_EQUAL_UINT32(1U, d_moveCount);
+    TEST_ASSERT_EQUAL_UINT32(0U, d_setPositionCount);
+    TEST_ASSERT_EQUAL_UINT32(0U, d_setValueCount);
+
+    d_steps = 5600;
+    d_endstopUpperActive = false;
+    app_motion_run(); /* run 4: released -> seek = 5600 - 100*200 = -14400 */
+    TEST_ASSERT_EQUAL_UINT32(2U, d_moveCount);
+    TEST_ASSERT_EQUAL_INT32(-14400, d_lastMoveTarget);
+    TEST_ASSERT_EQUAL_UINT32(500U, d_lastMoveStepsPerSecond);
+    TEST_ASSERT_EQUAL_UINT32(0U, d_setPositionCount);
+
+    d_steps = 5450;
+    d_endstopUpperActive = true;
+    app_motion_run(); /* run 5: found on the approach */
+    TEST_ASSERT_EQUAL_UINT32(0U, d_setPositionCount);
+
+    global_timeus = 1500U * 1000U;
+    app_motion_run(); /* run 6: origin = jawOffset 3 mm = 300 steps */
+    TEST_ASSERT_EQUAL_UINT32(1U, d_setPositionCount);
+    TEST_ASSERT_EQUAL_INT32(300, d_lastSetPosition);
+    TEST_ASSERT_EQUAL_INT(APP_MOTION_ABORT_NONE, app_motion_takeAbort());
+}
+
+void test_homing_fails_when_an_active_endstop_never_releases(void)
+{
+    VIBES_TEST("motion.homing-fails-if-endstop-stays-active",
+               "src/APP/app_motion.c#app_motion_private_homing_run",
+               "a home command with the upper endstop already active, which stays active for the whole of the move away from it");
+    VIBES_EXPECT_WHY("no-origin",
+                     "no coordinate origin is written and the gantry is not sent toward the endstop",
+                     "a switch that reads active wherever the gantry stands gives no position to home to, and would put the origin up to a full travel away from the truth");
+    VIBES_EXPECT("operator-told", "the operator is sent an error saying the upper limit switch stayed active");
+    VIBES_EXPECT("planner-idle", "the motion planner is left idle with the drive stopped");
+    VIBES_EXPECT("failure-latched", "the failure is reported once to whoever asks why motion stopped");
+    motion_driveToWaiting();
+
+    d_steps = 5000;
+    d_endstopUpperActive = true;
+    d_moveCount = 0U;
+    app_motion_move_t g28 = make_move((uint8_t)G28_HOME, 0, 0, 0);
+    TEST_ASSERT_TRUE(app_motion_addMove(&g28));
+
+    app_motion_run(); /* pops G28 */
+    app_motion_run(); /* release move issued */
+    TEST_ASSERT_EQUAL_UINT32(1U, d_moveCount);
+
+    d_steps = 7000;
+    d_atTarget = true; /* the move away has run its length; the switch has not let go */
+    d_stopCount = 0U;
+    d_notify_calls = 0;
+    app_motion_run();
+    TEST_ASSERT_EQUAL_UINT32(1U, d_moveCount);
+    TEST_ASSERT_EQUAL_UINT32(0U, d_setPositionCount);
+    TEST_ASSERT_EQUAL_UINT32(0U, d_setValueCount);
+    TEST_ASSERT_EQUAL_INT(1, d_notify_calls);
+    TEST_ASSERT_EQUAL_INT(APP_NOTIFICATION_TYPE_ERROR, d_notify_lastType);
+    TEST_ASSERT_EQUAL_UINT32(1U, d_stopCount);
+    TEST_ASSERT_TRUE(app_motion_isIdle());
+    TEST_ASSERT_EQUAL_INT(APP_MOTION_ABORT_HOMING_FAILED, app_motion_takeAbort());
+    TEST_ASSERT_EQUAL_INT(APP_MOTION_ABORT_NONE, app_motion_takeAbort());
+}
+
+/**********************************************************************
+ * Tests: travel limits
+ *
+ * Position is the distance between the jaws: it DECREASES toward the upper
+ * limit switch and INCREASES toward the lower one. stepsPerMM is 100, so a
+ * move's x in micrometres is a tenth of that many steps.
+ **********************************************************************/
+
+/* Queue a relative move of `um` from a gantry standing at 5000 steps, with a
+ * second move behind it, and run the cycle that takes the first one up. */
+static void limits_startRelativeMove(int32_t um)
+{
+    motion_driveToWaiting();
+    d_steps = 5000;
+    d_target = 5000;
+    d_setpoint = 5000;
+    app_motion_move_t rel = make_move((uint8_t)G91_INCREMENTAL, 0, 0, 0);
+    app_motion_move_t mv = make_move((uint8_t)G1_LINEAR_MOVE, um, 1000, 0);
+    app_motion_move_t behind = make_move((uint8_t)G1_LINEAR_MOVE, um, 1000, 0);
+    TEST_ASSERT_TRUE(app_motion_addMove(&rel));
+    TEST_ASSERT_TRUE(app_motion_addMove(&mv));
+    TEST_ASSERT_TRUE(app_motion_addMove(&behind));
+    d_moveCount = 0U;
+    d_stopCount = 0U;
+    d_notify_calls = 0;
+    app_motion_run(); /* G91 */
+    app_motion_run(); /* G91 done -> WAITING */
+    app_motion_run(); /* the move is taken up */
+}
+
+void test_a_move_toward_the_active_upper_limit_is_refused(void)
+{
+    VIBES_TEST("motion.upper-limit-refuses-move-toward-it",
+               "src/APP/app_motion.c#app_motion_private_moveManager_start",
+               "the upper travel limit active, and a queued move that would bring the jaws closer together, with another move behind it");
+    VIBES_EXPECT_WHY("not-sent-to-drive",
+                     "the move is never sent to the drive",
+                     "the limit switch sits ahead of the emergency switch that cuts motor power, and stopping here is what keeps the gantry from reaching it");
+    VIBES_EXPECT("queue-dropped", "the move behind it is dropped and the motion planner is left idle");
+    VIBES_EXPECT("operator-warned", "the operator is sent a warning naming the upper travel limit");
+    VIBES_EXPECT("reason-latched", "a travel-limit stop is reported once to whoever asks why motion stopped");
+    d_endstopUpperActive = true;
+    limits_startRelativeMove(-2000);
+
+    TEST_ASSERT_EQUAL_UINT32(0U, d_moveCount);
+    TEST_ASSERT_TRUE(app_motion_isIdle());
+    TEST_ASSERT_EQUAL_INT(1, d_notify_calls);
+    TEST_ASSERT_EQUAL_INT(APP_NOTIFICATION_TYPE_WARNING, d_notify_lastType);
+    app_motion_run();
+    TEST_ASSERT_EQUAL_UINT32(0U, d_moveCount);
+    TEST_ASSERT_EQUAL_INT(APP_MOTION_ABORT_TRAVEL_LIMIT, app_motion_takeAbort());
+    TEST_ASSERT_EQUAL_INT(APP_MOTION_ABORT_NONE, app_motion_takeAbort());
+}
+
+void test_a_move_away_from_the_active_upper_limit_runs(void)
+{
+    VIBES_TEST("motion.upper-limit-allows-move-away",
+               "src/APP/app_motion.c#app_motion_private_moveManager_start",
+               "the upper travel limit active, and a queued move that would take the jaws further apart");
+    VIBES_EXPECT_WHY("sent-to-drive",
+                     "the move is sent to the drive at the speed it asked for",
+                     "moving away is the only way off a limit, so a machine that refused it would be stranded there");
+    VIBES_EXPECT("no-stop-reported", "no travel-limit stop is reported");
+    d_endstopUpperActive = true;
+    limits_startRelativeMove(2000);
+
+    TEST_ASSERT_EQUAL_UINT32(1U, d_moveCount);
+    TEST_ASSERT_EQUAL_INT32(5200, d_lastMoveTarget);
+    TEST_ASSERT_EQUAL_INT32(100, d_lastMoveStepsPerSecond);
+    TEST_ASSERT_EQUAL_INT(0, d_notify_calls);
+    TEST_ASSERT_EQUAL_INT(APP_MOTION_ABORT_NONE, app_motion_takeAbort());
+}
+
+void test_a_move_toward_the_active_lower_limit_is_refused(void)
+{
+    VIBES_TEST("motion.lower-limit-refuses-move-toward-it",
+               "src/APP/app_motion.c#app_motion_private_moveManager_start",
+               "the lower travel limit active, and a queued move that would take the jaws further apart");
+    VIBES_EXPECT("not-sent-to-drive", "the move is never sent to the drive");
+    VIBES_EXPECT("operator-warned", "the operator is sent a warning naming the lower travel limit");
+    VIBES_EXPECT("reason-latched", "a travel-limit stop is reported to whoever asks why motion stopped");
+    d_endstopLowerActive = true;
+    limits_startRelativeMove(2000);
+
+    TEST_ASSERT_EQUAL_UINT32(0U, d_moveCount);
+    TEST_ASSERT_TRUE(app_motion_isIdle());
+    TEST_ASSERT_EQUAL_INT(1, d_notify_calls);
+    TEST_ASSERT_EQUAL_INT(APP_NOTIFICATION_TYPE_WARNING, d_notify_lastType);
+    TEST_ASSERT_EQUAL_INT(APP_MOTION_ABORT_TRAVEL_LIMIT, app_motion_takeAbort());
+}
+
+void test_a_move_away_from_the_active_lower_limit_runs(void)
+{
+    VIBES_TEST("motion.lower-limit-allows-move-away",
+               "src/APP/app_motion.c#app_motion_private_moveManager_start",
+               "the lower travel limit active, and a queued move that would bring the jaws closer together");
+    VIBES_EXPECT("sent-to-drive", "the move is sent to the drive");
+    d_endstopLowerActive = true;
+    limits_startRelativeMove(-2000);
+
+    TEST_ASSERT_EQUAL_UINT32(1U, d_moveCount);
+    TEST_ASSERT_EQUAL_INT32(4800, d_lastMoveTarget);
+    TEST_ASSERT_EQUAL_INT(APP_MOTION_ABORT_NONE, app_motion_takeAbort());
+}
+
+void test_a_running_move_stops_when_the_limit_ahead_of_it_goes_active(void)
+{
+    VIBES_TEST("motion.limit-stops-running-move",
+               "src/APP/app_motion.c#app_motion_private_stopAtLimit",
+               "a move bringing the jaws closer together, under way with more of it still to travel, when the upper travel limit goes active, and another move queued behind it");
+    VIBES_EXPECT_WHY("drive-stopped",
+                     "the drive is told to stop",
+                     "a jog or a test that reaches the end of travel has to stop there by itself, with the operator's hand nowhere near the emergency stop");
+    VIBES_EXPECT("queue-dropped", "the move behind it is dropped and the motion planner is left idle");
+    VIBES_EXPECT("reason-latched", "a travel-limit stop is reported to whoever asks why motion stopped");
+    limits_startRelativeMove(-2000);
+    TEST_ASSERT_EQUAL_UINT32(1U, d_moveCount);
+    TEST_ASSERT_EQUAL_INT32(4800, d_lastMoveTarget);
+
+    /* Half way: the trajectory and the gantry both still have to travel down
+     * in position. */
+    d_target = 4800;
+    d_setpoint = 4900;
+    d_steps = 4905;
+    app_motion_run();
+    TEST_ASSERT_EQUAL_UINT32(0U, d_stopCount);
+
+    d_endstopUpperActive = true;
+    app_motion_run();
+    TEST_ASSERT_EQUAL_UINT32(1U, d_stopCount);
+    TEST_ASSERT_TRUE(app_motion_isIdle());
+    TEST_ASSERT_EQUAL_INT(APP_MOTION_ABORT_TRAVEL_LIMIT, app_motion_takeAbort());
+
+    app_motion_run();
+    TEST_ASSERT_EQUAL_UINT32(1U, d_moveCount); /* the move behind it never started */
+}
+
+void test_a_move_off_a_limit_is_not_stopped_for_settling_a_count_past_its_target(void)
+{
+    VIBES_TEST("motion.limit-ignores-settling-past-target",
+               "src/APP/app_motion.c#app_motion_private_stopAtLimit",
+               "a move away from the upper travel limit whose trajectory has arrived, the gantry resting one encoder count beyond its target, and the limit still active");
+    VIBES_EXPECT_WHY("not-stopped",
+                     "the move is left to finish and no travel-limit stop is reported",
+                     "only travel the move still has to make can carry the gantry further onto the limit, and a short move off a limit ends with the switch still pressed");
+    VIBES_EXPECT("completes-on-arrival", "the move completes when the drive reports arrival");
+    d_endstopUpperActive = true;
+    motion_driveToWaiting();
+    d_steps = 5000;
+    d_target = 5000;
+    d_setpoint = 5000;
+    app_motion_move_t mv = make_move((uint8_t)G1_LINEAR_MOVE, 50100, 1000, 0); /* absolute 50.1 mm = 5010 steps */
+    TEST_ASSERT_TRUE(app_motion_addMove(&mv));
+    d_stopCount = 0U;
+    app_motion_run();
+    TEST_ASSERT_EQUAL_INT32(5010, d_lastMoveTarget);
+
+    d_target = 5010;
+    d_setpoint = 5010;
+    d_steps = 5011;
+    app_motion_run();
+    TEST_ASSERT_EQUAL_UINT32(0U, d_stopCount);
+    TEST_ASSERT_FALSE(app_motion_isIdle());
+    TEST_ASSERT_EQUAL_INT(APP_MOTION_ABORT_NONE, app_motion_takeAbort());
+
+    d_atTarget = true;
+    app_motion_run();
+    TEST_ASSERT_TRUE(app_motion_isIdle());
+    TEST_ASSERT_EQUAL_UINT32(0U, d_stopCount);
+}
+
+void test_a_move_into_an_active_limit_is_not_handed_to_the_drive_ahead_of_time(void)
+{
+    VIBES_TEST("motion.limit-blocks-look-ahead",
+               "src/APP/app_motion.c#app_motion_private_stageNext",
+               "a move away from the active upper travel limit under way, with the next queued move heading back toward that limit");
+    VIBES_EXPECT_WHY("not-staged",
+                     "the next move is not handed to the drive while the first one runs",
+                     "a move handed over ahead of time starts the instant the one before it arrives, with nothing left to refuse it");
+    d_endstopUpperActive = true;
+    motion_driveToWaiting();
+    d_steps = 5000;
+    d_target = 5000;
+    d_setpoint = 5000;
+    app_motion_move_t away = make_move((uint8_t)G1_LINEAR_MOVE, 60000, 1000, 0); /* absolute 60 mm = 6000 steps */
+    app_motion_move_t back = make_move((uint8_t)G1_LINEAR_MOVE, 40000, 1000, 0); /* absolute 40 mm = 4000 steps */
+    TEST_ASSERT_TRUE(app_motion_addMove(&away));
+    TEST_ASSERT_TRUE(app_motion_addMove(&back));
+    app_motion_run();
+    TEST_ASSERT_EQUAL_INT32(6000, d_lastMoveTarget);
+
+    d_target = 6000;
+    d_setpoint = 5400;
+    d_steps = 5390;
+    app_motion_run();
+    TEST_ASSERT_EQUAL_UINT32(0U, d_stageCount);
+}
+
+void test_a_waveform_does_not_start_on_an_active_travel_limit(void)
+{
+    VIBES_TEST("motion.waveform-refused-on-travel-limit",
+               "src/APP/app_motion.c#app_motion_private_moveManager_start",
+               "a queued waveform with the lower travel limit active");
+    VIBES_EXPECT_WHY("not-started",
+                     "the waveform is never sent to the drive",
+                     "a wave returns to where it started on every cycle, so one started on a limit comes back onto it for as long as it runs");
+    VIBES_EXPECT("reason-latched", "a travel-limit stop is reported to whoever asks why motion stopped");
+    d_endstopLowerActive = true;
+    motion_driveToWaiting();
+    d_waveformCount = 0U;
+    app_motion_move_t wave = make_waveform(10000, 1000000U, 2U, 0U);
+    TEST_ASSERT_TRUE(app_motion_addMove(&wave));
+    app_motion_run();
+
+    TEST_ASSERT_EQUAL_UINT32(0U, d_waveformCount);
+    TEST_ASSERT_TRUE(app_motion_isIdle());
+    TEST_ASSERT_EQUAL_INT(APP_MOTION_ABORT_TRAVEL_LIMIT, app_motion_takeAbort());
+    TEST_ASSERT_FALSE(app_motion_takeWaveformRefused());
+}
+
+void test_a_running_waveform_stops_when_a_travel_limit_goes_active(void)
+{
+    VIBES_TEST("motion.limit-stops-running-waveform",
+               "src/APP/app_motion.c#app_motion_private_waveform_run",
+               "a waveform under way when the upper travel limit goes active");
+    VIBES_EXPECT_WHY("drive-stopped",
+                     "the drive is told to stop and the motion planner is left idle",
+                     "the wave's next cycle would carry the gantry onto the limit again");
+    VIBES_EXPECT("reason-latched", "a travel-limit stop is reported to whoever asks why motion stopped");
+    motion_driveToWaiting();
+    d_waveformAccepted = true;
+    app_motion_move_t wave = make_waveform(10000, 1000000U, 2U, 0U);
+    TEST_ASSERT_TRUE(app_motion_addMove(&wave));
+    app_motion_run();
+    app_motion_run();
     TEST_ASSERT_FALSE(app_motion_isIdle());
 
-    app_motion_run(); /* COMPLETE -> done -> WAITING */
+    d_stopCount = 0U;
+    d_endstopUpperActive = true;
+    app_motion_run();
+    TEST_ASSERT_EQUAL_UINT32(1U, d_stopCount);
     TEST_ASSERT_TRUE(app_motion_isIdle());
+    TEST_ASSERT_EQUAL_INT(APP_MOTION_ABORT_TRAVEL_LIMIT, app_motion_takeAbort());
+}
+
+void test_an_open_loop_move_stops_at_the_limit_its_pulses_head_for(void)
+{
+    VIBES_TEST("motion.limit-stops-open-loop-move",
+               "src/APP/app_motion.c#app_motion_private_stopAtLimit",
+               "an open-loop move commanding the jaws further apart, under way when the lower travel limit goes active, on a machine whose encoder reads the opposite way");
+    VIBES_EXPECT_WHY("drive-stopped",
+                     "the drive is told to stop",
+                     "an open-loop move is how a reversed or dead encoder is found, so the direction it is judged by is the one its pulses are sent in");
+    motion_driveToWaiting();
+    d_steps = 5000;
+    d_target = 5000;
+    d_setpoint = 5000;
+    app_motion_move_t rel = make_move((uint8_t)G91_INCREMENTAL, 0, 0, 0);
+    app_motion_move_t mv = make_move((uint8_t)G124_OPEN_LOOP_MOVE, 2000, 1000, 0);
+    TEST_ASSERT_TRUE(app_motion_addMove(&rel));
+    TEST_ASSERT_TRUE(app_motion_addMove(&mv));
+    app_motion_run();
+    app_motion_run();
+    app_motion_run();
+    TEST_ASSERT_EQUAL_UINT32(1U, d_openLoopMoveCount);
+
+    d_target = 5200;
+    d_setpoint = 5100;
+    d_steps = 4900; /* the encoder ran the other way */
+    d_stopCount = 0U;
+    d_endstopLowerActive = true;
+    app_motion_run();
+    TEST_ASSERT_EQUAL_UINT32(1U, d_stopCount);
+    TEST_ASSERT_EQUAL_INT(APP_MOTION_ABORT_TRAVEL_LIMIT, app_motion_takeAbort());
+}
+
+void test_a_limit_is_announced_once_for_as_long_as_it_stays_active(void)
+{
+    VIBES_TEST("motion.limit-warned-once-per-activation",
+               "src/APP/app_motion.c#app_motion_private_limitStop",
+               "three jogs toward the upper travel limit, refused in turn: two while it stays active, and one after it has released and gone active again");
+    VIBES_EXPECT_WHY("one-warning-while-active",
+                     "the two refusals while the limit stays active send one warning between them",
+                     "a jog button held against a limit is refused many times a second");
+    VIBES_EXPECT("warned-again-after-release", "the refusal after the limit released and went active again sends a second warning");
+    d_endstopUpperActive = true;
+    limits_startRelativeMove(-2000);
+    TEST_ASSERT_EQUAL_INT(1, d_notify_calls);
+
+    app_motion_move_t mv = make_move((uint8_t)G1_LINEAR_MOVE, -2000, 1000, 0);
+    TEST_ASSERT_TRUE(app_motion_addMove(&mv));
+    app_motion_run();
+    TEST_ASSERT_EQUAL_UINT32(0U, d_moveCount);
+    TEST_ASSERT_EQUAL_INT(1, d_notify_calls);
+
+    d_endstopUpperActive = false;
+    app_motion_run();
+    d_endstopUpperActive = true;
+    TEST_ASSERT_TRUE(app_motion_addMove(&mv));
+    app_motion_run();
+    TEST_ASSERT_EQUAL_UINT32(0U, d_moveCount);
+    TEST_ASSERT_EQUAL_INT(2, d_notify_calls);
+}
+
+void test_homing_backoff_stops_at_the_lower_limit(void)
+{
+    VIBES_TEST("motion.homing-backoff-obeys-lower-limit",
+               "src/APP/app_motion.c#app_motion_private_homing_run",
+               "homing that has found the upper endstop and is backing off it when the lower travel limit goes active");
+    VIBES_EXPECT_WHY("drive-stopped",
+                     "the drive is told to stop and a travel-limit stop is reported",
+                     "only the approach to the upper endstop is allowed to run onto a limit; the moves away from it obey the lower one like any other move");
+    motion_driveToWaiting();
+    d_steps = 5000;
+    global_timeus = 0U;
+    app_motion_move_t g28 = make_move((uint8_t)G28_HOME, 0, 0, 0);
+    TEST_ASSERT_TRUE(app_motion_addMove(&g28));
+    app_motion_run();
+    app_motion_run();              /* seek */
+    d_endstopUpperActive = true;
+    app_motion_run();              /* found */
+    global_timeus = 1500U * 1000U;
+    app_motion_run();              /* origin written, backing off */
+    TEST_ASSERT_EQUAL_UINT32(1U, d_setPositionCount);
+
+    d_stopCount = 0U;
+    d_endstopLowerActive = true;
+    app_motion_run();
+    TEST_ASSERT_EQUAL_UINT32(1U, d_stopCount);
+    TEST_ASSERT_TRUE(app_motion_isIdle());
+    TEST_ASSERT_EQUAL_INT(APP_MOTION_ABORT_TRAVEL_LIMIT, app_motion_takeAbort());
 }
 
 /**********************************************************************
@@ -1586,6 +2045,22 @@ int main(void)
 
     RUN_TEST(test_homing_full_sequence);
     RUN_TEST(test_homing_fails_when_target_reached_without_endstop);
+
+    RUN_TEST(test_homing_moves_off_an_endstop_that_is_already_active);
+    RUN_TEST(test_homing_fails_when_an_active_endstop_never_releases);
+    RUN_TEST(test_homing_backoff_stops_at_the_lower_limit);
+
+    RUN_TEST(test_a_move_toward_the_active_upper_limit_is_refused);
+    RUN_TEST(test_a_move_away_from_the_active_upper_limit_runs);
+    RUN_TEST(test_a_move_toward_the_active_lower_limit_is_refused);
+    RUN_TEST(test_a_move_away_from_the_active_lower_limit_runs);
+    RUN_TEST(test_a_running_move_stops_when_the_limit_ahead_of_it_goes_active);
+    RUN_TEST(test_a_move_off_a_limit_is_not_stopped_for_settling_a_count_past_its_target);
+    RUN_TEST(test_a_move_into_an_active_limit_is_not_handed_to_the_drive_ahead_of_time);
+    RUN_TEST(test_a_waveform_does_not_start_on_an_active_travel_limit);
+    RUN_TEST(test_a_running_waveform_stops_when_a_travel_limit_goes_active);
+    RUN_TEST(test_an_open_loop_move_stops_at_the_limit_its_pulses_head_for);
+    RUN_TEST(test_a_limit_is_announced_once_for_as_long_as_it_stays_active);
 
     RUN_TEST(test_getSetpoint_scales_target_steps_to_nm);
     RUN_TEST(test_getPosition_scales_steps_to_nm);
