@@ -1,9 +1,0 @@
-EESchema-DOCLIB  Version 2.0
-#
-$CMP ISO6740FDWR
-D General-purpose, quad-channel, 4/0 digital isolator
-K
-F https://www.ti.com/lit/gpn/iso6740
-$ENDCMP
-#
-#End Doc Library

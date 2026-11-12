@@ -1,9 +1,0 @@
-EESchema-DOCLIB  Version 2.0
-#
-$CMP ISO6741DWR
-D ISO674x General Purpose Quad Channel Digital Isolators with Robust EMC
-K
-F https://www.ti.com/lit/ds/symlink/iso6741.pdf?ts=1612957387403&ref_url=https%253A%252F%252Fwww.mouser.co.uk%252F
-$ENDCMP
-#
-#End Doc Library
