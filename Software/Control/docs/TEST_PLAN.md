@@ -16,8 +16,8 @@ abstractions (SIL serial, OPFS data folder) live in the harness — never in `sr
 > make e2e-motion`). Nothing stops that board's carriage, so the suite skips
 > SERVO-stall there, saying why (`PROJECT_CANNOT`), and runs it on that file with
 > a hard stop, `SIL/mad-hard-stop-cosim.toml` (`cd SIL && make e2e-stall`). Do not run the
-> suite against the ISS behind the WS bridge (the bridge's `MAD_PTY` on
-> `make playground-pty`'s `/tmp/tty.iss`): that measures the host, not the
+> suite against the ISS on a PTY (`make playground-pty`'s `/tmp/tty.iss`) behind
+> a bridge to a browser on the host's clock: that measures the host, not the
 > machine.
 
 ---
@@ -29,8 +29,8 @@ abstractions (SIL serial, OPFS data folder) live in the harness — never in `sr
 | Rust unit | `cargo test` | protocol core (framing, queue, storage, client) | `cd Protocol/ProtoEmb/runtime && cargo test` |
 | Project PTY round trip | `cargo test -p mad-catalog --test pty_protocol` | `SIL/mad.toml` run live on a PTY, one `firmware_version` round trip, no Chrome | `cd SIL && make test` |
 | TS unit | `vitest` (`src/**/*.test.ts`) | domain, codec, device policy, storage, firmware loader, diagnostics | `npm test` |
-| E2E smoke | Playwright | 20 IDs in `e2e/smoke-ids.txt` | `npm run e2e:smoke` |
-| E2E full | Playwright | 50 scenarios in `e2e/run-all.mjs` (parity + matrices M8–M11 + FW*) | `npm run e2e` |
+| E2E smoke | Playwright | the IDs in `e2e/smoke-ids.txt` | `npm run e2e:smoke` |
+| E2E full | Playwright | every scenario in `e2e/run-all.mjs` (parity + matrices M8–M11 + FW*) | `npm run e2e` |
 
 `npm run verify` is the offline Control gate (tsc + eslint + vitest + coverage + production build). Coverage thresholds apply only to `src/firmware/**`.
 
@@ -83,20 +83,18 @@ The runner (`e2e/run-all.mjs`) asserts the dev server (5174) is reachable and re
 the OPFS test dir between runs, and prints each scenario's host and board time
 (`E2E_TIMINGS=<file>` writes them as JSON). Without `CDP_URL` only the board-free
 scenarios run (`SCENARIOS=A1,FW1,FW2,FW3,FW5,FW6,FW7,FW8,FW9 npm run e2e`, no
-emulator); naming a board scenario without it is refused. The WS↔PTY fake serial
-stays for the real-hardware harness (`hw-read-save-config.mjs`).
+emulator); naming a board scenario without it is refused. The WebSocket fake
+serial stays for the real-hardware harness (`hw-read-save-config.mjs` over
+`tools/hw-ws-bridge.mjs`).
 
 ```
 e2e/
   fixtures.mjs            # board mode (CDP_URL) + OPFS picker + newSilPage/connectToSil, press, pageClock
-  run-all.mjs             # 49 scenarios, serial, system Chrome
+  run-all.mjs             # every scenario, serial, system Chrome
   run-smoke.mjs           # SCENARIOS= from smoke-ids.txt → run-all.mjs
-  smoke-ids.txt           # 20-ID CI/nightly subset (must match matrix-catalog.json)
+  smoke-ids.txt           # CI/nightly subset (must match matrix-catalog.json)
   matrix-catalog.json     # M8–M11 cells + smoke_ids
   diagnostics-smoke.mjs   # logging capture (no SIL; wasm-control-ci)
-  sil-smoke.mjs / sil-playground.mjs
-tools/
-  sil-ws-bridge.mjs       # ws://localhost:9999 ↔ /tmp/tty.rpi
 ```
 
 SIL is single-instance: scenarios run serially against one long-lived emulator.
@@ -104,7 +102,7 @@ SIL is single-instance: scenarios run serially against one long-lived emulator.
 Motion waits use `settleMotion` (position vs setpoint). Sample stream and
 calibrate waits use `awaitResponding` (Responding **and** `fw <version>` in
 the status bar — handshake done, not the first sample) / `awaitReadoutNear`.
-Reconnect retries until the PTY is free (`clickReconnect`). Remaining
+Reconnect retries until the port opens (`clickReconnect`). Remaining
 `waitForTimeout`s are poll
 intervals inside those helpers, plus a few UI ticks (chart toggle, form settle).
 
@@ -116,7 +114,8 @@ scenarios start from absolute machine zero via `zeroLength(page)`.
 
 ## 4. E2E acceptance scenarios (the parity suite)
 
-Each maps to a desktop feature (PARITY § in parentheses). A scenario is "green" when it
+Each maps to a feature of the retired desktop app (its parity-list section in
+parentheses). A scenario is "green" when it
 runs against the live SIL emulator with no page errors and the listed assertions pass.
 
 ### A. Capability gate (§1)
@@ -194,10 +193,8 @@ Machine configuration, and a 1 kg weight that never went on is refused by name),
 clears it and re-enables motion, and a jog takes the carriage off the stop;
 needs the board with the stop, `make e2e-stall`, which CI runs on every PR).
 
-Smoke subset (`e2e/smoke-ids.txt`, 20 IDs): A1, B1+C1, D1, E1, G1, G2+G3+H2+I,
-TM-busy-restart, TM-manual-gate, P1-precision, VT-linear, BB-back-to-back,
-M8-jog-1mm-20, M8-jog-4mm-20, M8-jog-roundtrip-5, M9-mid-slack, WAVE-sine, WAVE-tri,
-M11-idle-drop, B5-reconnect, FW1.
+The smoke subset is the list in `e2e/smoke-ids.txt` (kept in lockstep with
+`e2e/matrix-catalog.json` by `e2eMatrixCatalog.test.ts`).
 
 ---
 
@@ -209,9 +206,9 @@ On a clean checkout after `npm run build:wasm && npm run generate:proto && npm i
 2. `npm test` — green (includes the unit targets in §2).
 3. `npm run build` — green, no type errors.
 4. `npm run e2e` — every scenario in `run-all.mjs` green against live SIL, zero page errors.
-5. [PARITY.md](./PARITY.md) — every section ✅ (or explicitly marked N/A for the browser).
 
-`npm run verify` runs 1–3 (offline) and **gates** `wasm-control-ci`.
+`npm run verify` runs 2–3 plus ESLint (offline); `wasm-control-ci` runs 1 as its
+own step and then `npm run verify`, and **gates** on both.
 `npm run e2e` runs 4 (needs the board route: `cd SIL && make e2e`). Its
 board-free scenarios **gate** `control-e2e-boardless`, a subset of its board
 scenarios **gates** `control-e2e-board`, and the nightly runs all of it.

@@ -64,13 +64,19 @@ monitor/controller, so **closing or losing the UI is a non-event**: the test
 keeps running and the UI reconnects to monitor it. The UI never halts the machine
 on its own.
 
-Robustness/convenience features (see [docs/HARDENING.md](./docs/HARDENING.md)): a
+By design there is **no host-link watchdog**: a UI or host that drops out must
+not stop a run.
+
+Robustness/convenience features: a
 global **disable-motion** control in the status bar (a convenience, user-initiated
 only — not the safety stop), move-range/G-code validation before any motion
 command (a correctness guard on the wire bytes), React error boundaries +
-automatic recovery from a crashed worker/WASM instance, a deferred PWA update
-flow (no surprise reload mid-session), serialized + rebuildable file-storage, and
-a one-click **diagnostics export** on the About page.
+automatic recovery from a crashed worker/WASM instance (each connect starts a
+fresh worker), a deferred PWA update flow (a new version is announced and applied
+only when idle and disconnected, never a silent reload mid-test), serialized +
+rebuildable file-storage (`index.json` is a cache rebuilt from the per-run
+files), and a **bug report** form on the About page that attaches the
+diagnostics bundle (session log and worker counters, no sample values).
 
 ### Real hardware vs. the SIL emulator
 

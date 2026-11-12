@@ -82,9 +82,9 @@ Design records kept alongside the code rather than duplicated here.
 
 **Control app** —
 [TEST_PLAN.md](https://github.com/RileyMcCarthy/MaD/blob/main/Software/Control/docs/TEST_PLAN.md)
-(Rust unit, vitest, and live-SIL E2E layers) and
-[HARDENING.md](https://github.com/RileyMcCarthy/MaD/blob/main/Software/Control/docs/HARDENING.md)
-(safety model, failure recovery, data integrity, performance).
+(Rust unit, vitest, and live-SIL E2E layers) and the
+[README's reliability section](https://github.com/RileyMcCarthy/MaD/blob/main/Software/Control/README.md#reliability-features)
+(safety model, failure recovery, data integrity).
 
 **Protocol** —
 [ProtoEmb README](https://github.com/RileyMcCarthy/protoemb/blob/main/README.md)
