@@ -18,7 +18,7 @@ MaD/
 │       └── docs/            wire-format.md
 ├── SIL/                     Software-in-the-loop test rig (Rust workspace)
 │   ├── embsim/              ⎘ submodule → github.com/RileyMcCarthy/embsim
-│   │                        (core, board, boards, models, cdp, cli, tools)
+│   │                        (core, board, boards, models, cdp, cli, p2-qemu, cpu-oracle, tools)
 │   ├── models/              MaD-specific physics (gantry, sample, strain gauge)
 │   ├── p2core/              The Propeller 2 instruction-set simulator (ISS)
 │   ├── p2iss/               The ISS as an embsim component, in the P2 package
