@@ -315,17 +315,28 @@ into "motion is off."
 
 ## The control state machine
 
-`app_control` owns the machine state (`DISABLED → RESTRICTED → MANUAL → TEST`)
-and gates all motion through `app_control_motionEnabled()`. See
-[the machine](the-machine.md#the-state-machine) for the diagram and
-[the reference](../user-guide/machine-states.md) for the full fault/restriction
-list.
+`app_control` owns the machine state (`DISABLED`, `RESTRICTED`, `MANUAL`,
+`TEST`) and gates all motion through `app_control_motionEnabled()`. See the
+[theory of operation](the-machine.md#the-state-machine) for the diagram, and
+[Faults](../troubleshooting/faults.md) and
+[Restrictions](../troubleshooting/restrictions.md) for the full lists.
 
-- **Faults** latch and (generally) require a reboot: cog failure, watchdog
-  timeout, ESD power/switch/upper/lower, servo or force-gauge communication loss.
-- **Restrictions** clear automatically when resolved: machine tension,
-  upper/lower endstop, door interlock. (Per-sample force/length limits are
-  enforced separately, by `app_monitor`'s limit flags aborting the test.)
+- **Faults** force `DISABLED`. They are recomputed from live inputs every tick
+  (cog liveness, watchdog, the ESD inputs, the servo loop and force gauge being
+  alive, the force against 120% of the load cell's capacity). The four ESD
+  faults, `FORCE_OVERLOAD` and `SERVO_STALL` latch: one seen while motion is
+  enabled stands until a motion-disable request clears it. The rest clear when
+  the cause does. Simultaneous faults are reported cause first, from a table in
+  `app_control.c`, so an ESD input is named ahead of the ESD power it cuts.
+- **Restrictions** select `RESTRICTED`, where `app_motion` caps the feedrate at
+  the profile's restricted velocity: machine tension, the end stops, the door
+  and, while a test runs, the sample's force and length limits mirrored from
+  `app_monitor` (whose flags also make `app_testManagement` stop the test).
+- **Travel limits** are enforced by `app_motion` itself: a move heading into an
+  active end stop is refused or stopped, and its queue dropped, which ends a
+  running test. `ENDSTOP_UPPER` guards decreasing position, `ENDSTOP_LOWER`
+  increasing position. G28 moves off an upper end stop that is already active
+  before it seeks it.
 
 ## Tests run from SD, host-free
 

@@ -100,5 +100,5 @@ Any other refusal is `REFUSED` (`0x00`). The codes and descriptions are
   v1; the app pins triangle to sine)
 - **`NotificationType`**, **`LoggingState`**
 
-See [States, faults & restrictions](../user-guide/machine-states.md) for what each
+See [Faults](../troubleshooting/faults.md) and [Restrictions](../troubleshooting/restrictions.md) for what each
 fault and restriction means.

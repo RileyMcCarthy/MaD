@@ -1,64 +1,74 @@
 # Manual control
 
-Manual motion controls live in the **Controls** card on the
-[Live](live-monitoring.md) screen. Use them to position the gantry, home the
-axis, and zero the force gauge and encoder before a test.
+The **Controls** panel on the [Live](live-monitoring.md) screen positions the
+carriage, homes the axis, and zeroes force and length before a test.
 
-![Controls on the Live screen](../assets/screenshots/02-live.png)
+![The Controls panel](../assets/screenshots/live-controls.png)
 
 ## Enable motion
 
-Motion is gated for safety. Click **Enable motion** to allow the machine to move;
-the **Motion** state badge switches to *enabled*. Click **Disable motion** to
-stop allowing motion.
+The machine starts with motion disabled. Click **Enable motion**; the
+**Motion** badge changes to *enabled* and the button becomes **Disable
+motion**.
 
-While a fault is showing, the machine refuses to enable motion, so the button
-offers a disable instead: **Disable motion** for most faults, or
-**Clear stall (disable motion)** for a `SERVO_STALL`. The fault's hint appears
-under the controls.
+Enabling motion permits movement. It does not move anything.
 
-### Clear a servo stall
+The button changes with the machine's state:
 
-A servo stall (`SERVO_STALL`) means the carriage stopped moving while the drive
-was still pushing it. It stays set until motion is disabled, but it doesn't need
-a reboot:
+| Button | When |
+|---|---|
+| **Enable motion** | Motion is off and nothing is wrong |
+| **Disable motion** | Motion is on, **or** a fault is showing (the machine refuses to enable while faulted, so the button offers the disable) |
+| **Clear stall (disable motion)** | A `SERVO_STALL` fault is showing |
+| **Motion …** (greyed out) | The machine has not reported its state yet |
 
-1. Clear the obstruction.
-2. Click **Clear stall (disable motion)**. The **Fault** badge returns to `NONE`.
-3. Click **Enable motion**.
-
-!!! warning
-    Enabling motion only *permits* movement — it doesn't move anything by itself.
-    Motion is still subject to the machine's restrictions (endstops, door
-    interlock, tension limits). If a restriction is active, commands are limited
-    or ignored until it clears.
+If the button does nothing or a banner is showing, see
+[The machine won't move](../troubleshooting/machine-wont-move.md).
 
 ## Jog
 
-To move the gantry incrementally:
-
-1. Set **Jog (mm)** — the distance to move.
-2. Set **Speed (mm/s)** — the feed rate.
+1. Set **Jog (mm)**: type a distance or pick **0.1 / 1 / 5 / 10 mm**.
+2. Set **Speed (mm/s)**.
 3. Click **+ Jog up** or **− Jog down**.
 
-Invalid inputs (zero or non-numeric) are rejected with feedback, and any move
-outside the machine's encodable range is blocked before it's sent.
+A blank or zero distance or speed is refused with a message. If the machine
+turns a jog down, a toast says so:
+
+![Toast: jog rejected by the machine](../assets/screenshots/toast-jog-rejected.png)
 
 ## Home, Zero force, Zero length
 
 | Button | Action |
 |---|---|
-| **Home** | Homes the motion axis to its reference: the gantry seeks the upper travel limit switch and the position is defined where the switch goes active. If the switch is already active, the gantry first moves off it and then approaches again. If the switch does not release, or is never found, homing fails with an error and the position is left unchanged. |
-| **Zero force** | Zeroes the force-gauge reading at the current load — establishes the sample-force origin. |
-| **Zero length** | Zeroes the position/encoder at the current position — establishes the gauge-length origin. |
+| **Home** | Homes the axis to its reference: the upper end stop |
+| **Zero force** | Makes the current load the origin of **Sample Force** |
+| **Zero length** | Makes the current position the origin of **Sample Position** (the gauge length) |
 
-Zeroing is how **sample coordinates** are defined: after zeroing, *Sample Force*
-and *Sample Position* are measured relative to that point, which is what a test
-records.
+Zeroing defines the **sample** coordinates a test records. **Machine Force**
+and **Machine Position** stay absolute.
+
+Homing drives the carriage toward the upper end stop and defines the position
+where the switch goes active. If the switch is already active, the carriage
+first moves off it and then approaches again. If the switch does not release,
+or is never found, homing fails with an error and the position is left as it
+was.
 
 ## During a test
 
-Manual controls (jog, home, zero) are **disabled while a test is running** — the
-machine is executing its motion profile autonomously and shouldn't be perturbed.
-The global **STOP** control remains available; it disables motion immediately
-(a software convenience, not the hardware e-stop).
+Jog, home and zero are disabled while a test is running. **Disable motion**
+and the status bar's **STOP** stay available: either one disables motion,
+which ends the test.
+
+![Controls while a test is running](../assets/screenshots/state-test.png)
+
+## Clearing a servo stall
+
+A stall means the carriage stopped following the drive. It stays set until you
+acknowledge it:
+
+1. Clear whatever is blocking the carriage.
+2. Click **Clear stall (disable motion)**.
+3. Click **Enable motion**.
+
+[Faults → SERVO_STALL](../troubleshooting/faults.md#servo_stall) has the
+details.

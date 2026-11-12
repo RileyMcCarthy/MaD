@@ -4,7 +4,7 @@ You run tests from the **Test runs** screen. The **New test** card at the top
 combines a sample profile with a motion profile and starts the run; the
 **History** table below tracks every run.
 
-![The Test runs screen](../assets/screenshots/06-test-runs.png)
+![The Test runs screen](../assets/screenshots/test-runs.png)
 
 ## Before you run
 
@@ -49,8 +49,11 @@ button reflects the firmware's `testRunning` state, and the run auto-marks
     failed** actions, and a watchdog warns if the firmware never reports
     completion.
 
-If the sample hits its **Max force** or **Max displacement**, the firmware stops
-the test and raises a warning notification (you'll see a toast).
+If the sample reaches its **Max force** or **Max displacement**, the machine
+stops the test and the app shows a warning toast (*Test stopped: sample limit
+exceeded*). Disabling motion, with **STOP** or **Disable motion**, also ends
+the test (*Test aborted: motion disabled*), and so does any
+[fault](../troubleshooting/faults.md).
 
 ## After it finishes
 
