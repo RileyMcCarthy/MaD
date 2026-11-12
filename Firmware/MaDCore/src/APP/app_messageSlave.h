@@ -1,5 +1,5 @@
-#ifndef app_message_slave_RX_H
-#define app_message_slave_RX_H
+#ifndef APP_MESSAGESLAVE_H
+#define APP_MESSAGESLAVE_H
 //
 // Created by Riley McCarthy on 25/04/24.
 // @brief Handles the reception of messages from the serial port, can trigger TX messages
@@ -32,4 +32,4 @@ bool app_messageSlave_sendNotification(const ProtoEmb_Notification_t *notificati
 /**********************************************************************
  * End of File
  **********************************************************************/
-#endif /* app_message_slave_RX_H */
+#endif /* APP_MESSAGESLAVE_H */

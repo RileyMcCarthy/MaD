@@ -1,5 +1,5 @@
-#ifndef IO_CRC_H
-#define IO_CRC_H
+#ifndef LIB_UTILITY_H
+#define LIB_UTILITY_H
 //
 // Created by Riley McCarthy on 25/04/24.
 //
@@ -119,4 +119,4 @@ bool lib_utility_elapsed_gt(uint32_t now, uint32_t start, uint32_t period);
 /**********************************************************************
  * End of File
  **********************************************************************/
-#endif /* IO_CRC_H */
+#endif /* LIB_UTILITY_H */

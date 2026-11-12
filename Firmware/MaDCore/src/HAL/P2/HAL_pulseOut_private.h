@@ -1,5 +1,5 @@
-#ifndef HAL_PULSE_OUT_CONFIG_H
-#define HAL_PULSE_OUT_CONFIG_H
+#ifndef HAL_PULSE_OUT_PRIVATE_H
+#define HAL_PULSE_OUT_PRIVATE_H
 //
 // Created by Riley McCarthy on 25/04/24.
 // @brief Non threadsafe implementation of hardware PWM out
@@ -27,4 +27,4 @@
 /**********************************************************************
  * End of File
  **********************************************************************/
-#endif /* HAL_PULSE_OUT_CONFIG_H */
+#endif /* HAL_PULSE_OUT_PRIVATE_H */

@@ -59,7 +59,7 @@ The literal template has **only** the `// Created by ...` line; real modules add
 
 > Section banners are a strong convention, not a byte-exact rule. The wording drifts between files (e.g. `src/APP/app_motion.c` uses `Variable Definitions` / `Private Functions` / `Function Definitions`, while `src/APP/app_control.c` uses the template's `Private Variable Definitions` / `Private Function Definitions` / `Public Function Definitions`). Small `Library/` and utility files are lighter still — `src/Library/lib_staticQueue.h` and `src/IO/IO_Debug.h` carry no `// Created by` block and no banners at all. Keep the canonical sections in order for `APP/`/`DEV/`/`IO/` modules; don't bother padding tiny headers.
 
-Header template (`src/template.ch:1`) is the same minus the External Variables / Private Variable / Private Function sections, **wrapped in an include guard** and ending with `#endif /* GUARD */`. Note the template ships with a stale `DEV_COGMANAGER_H` guard — **rename it** to match your new file. Real example `src/APP/app_motion.h:1`:
+Header template (`src/template.ch:1`) is the same minus the External Variables / Private Variable / Private Function sections, **wrapped in an include guard** and ending with `#endif /* GUARD */`. The template's guard is the placeholder `TEMPLATE_H` — **rename it** to match your new file. Real example `src/APP/app_motion.h:1`:
 
 ```c
 #ifndef APP_MOTION_H
