@@ -111,7 +111,7 @@ uint32_t lib_utility_muldivmod64_unsigned(uint32_t a, uint32_t b, uint32_t c,
  *
  * Returns true when `(now - start) > period`. Prefer this over
  * `(now - period) > start`, which underflows when `now < period` and can
- * report a spurious expiry (see IO_protocol receive timeout, 86b657ec).
+ * report a spurious expiry.
  * Unsigned wrap of `now` past UINT32_MAX is handled correctly by the
  * modular subtraction.
  */
