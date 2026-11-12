@@ -1,63 +1,97 @@
-# Live monitoring
+# Control screen
 
-The **Live** screen is the hub: real-time readouts, machine state, manual
-controls, and live charts, all updating continuously while you're connected.
+The **Control** screen is the hub: readouts, machine state, manual controls,
+the **New test** runner and live charts, all updating while you're connected.
 
-![The Live screen](../assets/screenshots/02-live.png)
+![The Control screen](../assets/screenshots/live.png)
 
 ## Readouts
 
-The top row shows live numeric values. Each has a tooltip explaining it (hover to
-read):
+![The readouts](../assets/screenshots/live-readouts.png)
 
 | Readout | Meaning |
 |---|---|
-| **Machine Force** | Force measured at the gauge, in machine coordinates |
-| **Machine Position** | Gantry position from the encoder |
-| **Machine Setpoint** | The position the motion controller is targeting |
-| **Sample Force** | Force in sample coordinates (zeroed at the gauge) |
-| **Sample Position** | Extension of the sample relative to its gauge length |
+| **Machine Force** | The absolute force at the load cell |
+| **Machine Position** | Jaw separation, from the encoder |
+| **Machine Setpoint** | Where the motion trajectory says the gantry should be right now, acceleration included. **Machine Position** follows it, and a test run records it as the setpoint. |
+| **Machine Target** | Where the current move ends. It changes in one step when a move starts. |
+| **Sample Force** | Force since **Zero force** |
+| **Sample Position** | Extension since **Zero length** |
 
-Forces are shown in **N**, positions in **mm**.
+Forces are in **N**, positions in **mm**. The numbers refresh four times a
+second so they stay readable; the charts draw every sample. Hover a readout for
+its description.
 
-## Machine state
+## State
 
-The **State** badges summarise what the machine is doing:
+A coloured **status banner** says what the machine is doing and what to do
+next:
 
-- **Motion** — whether motion is enabled.
-- **Test** — whether a test is running.
-- **Fault** — something needs attention. A fault stops motion and usually needs a
-  machine reboot to clear. A servo stall is the exception: it clears when you
-  disable motion (see [Clear a servo stall](manual-control.md#clear-a-servo-stall)).
-- **Restriction** — something is currently *limiting* motion, such as an endstop
-  or an open door. Restrictions clear on their own once the cause is resolved.
+| Banner | Colour | Next step |
+|---|---|---|
+| **Ready** | Green | Motion is on. Jog, home, or start a test. |
+| **Motion is off** | Amber | Press **Enable motion** to jog or home. |
+| **Restricted:** the reason | Amber | The restriction's remedy. The gantry moves at reduced speed until it clears. |
+| **Faulted:** the reason | Red | The fault's remedy. Motion stays off until the fault clears. |
+| **Test running** | Blue | Manual controls are locked. Use **STOP** to halt. |
+| **Waiting for the machine** | Grey | Controls unlock once the machine reports its state. |
 
-Hover any fault or restriction badge for a plain-language explanation of that
-specific code. While a fault is showing, its explanation also appears under the
-controls. [States, faults & restrictions](machine-states.md) lists them all.
+Below it, four badges show the state in detail:
 
-## Live charts
+![State badges with nothing wrong](../assets/screenshots/state-manual.png)
 
-### Force & Position
+| Badge | Values |
+|---|---|
+| **Motion** | *enabled* or *disabled*: whether the machine will act on a move |
+| **Test** | *running* or *idle* |
+| **Fault** | `NONE`, or the reason motion is switched off. Turns red. See [Faults](../troubleshooting/faults.md). |
+| **Restriction** | `NONE`, or a condition limiting motion. See [Restrictions](../troubleshooting/restrictions.md). |
 
-A dual-axis, 60-second rolling chart plots **position** (left axis) and **force**
-(right axis) together. You can:
+Hover a fault or restriction badge for a one-line explanation. While a fault
+or restriction is showing, the banner gives the same explanation.
 
-- Toggle between **Machine** and **Sample** coordinates.
-- See **limit reference lines** (max force / max position) drawn from the machine
-  configuration and the loaded sample profile.
-- **Pause** the sweep to inspect a moment without losing the connection.
+A badge showing **—** means the machine has not reported its state yet. The
+controls stay locked until it does:
 
-When you connect, the chart is pre-filled with the machine's most recent
-readings, so you see recent history straight away rather than an empty plot.
+![State unknown: waiting for the machine](../assets/screenshots/live-waiting-for-state.png)
 
-### Stress–strain
+How these badges relate to the machine's internal state (DISABLED, RESTRICTED,
+MANUAL, TEST) is in the
+[theory of operation](../how-it-works/the-machine.md#the-state-machine).
 
-A live stress–strain scatter accumulates **only while a test is running** and
-clears at the start of each test, with max-stress / max-strain limit lines from
-the sample profile.
+## Force & Position chart
 
-## Controls
+![The Force & Position chart](../assets/screenshots/live-chart.png)
 
-The manual **controls** (Enable motion, Home, Zero, Jog) also live on this
-screen — see [Manual control](manual-control.md).
+A 60-second rolling chart of **Position**, **Setpoint** and **Expected**
+(left axis) and **Force** (right axis).
+
+- **Setpoint** is the machine's trajectory, acceleration included.
+- **Expected** (dashed) is the ideal path a jog or test asks for: a straight
+  line at exactly the commanded speed, with no acceleration. The gap between
+  Expected, Setpoint and Position shows how closely the machine follows the
+  commands.
+- **Machine / Sample** switches between absolute values and values since
+  zeroing. **Sample** shows position and force only.
+- The dashed lines are the limits: **Max Position** and **Max Force** from the
+  machine configuration, and the sample profile's limits once one is selected
+  for a run.
+- **Pause** freezes the sweep so you can inspect a moment. The connection and
+  recording are unaffected.
+- Hover the chart for a vertical line and a tooltip with every series' value
+  at that moment.
+
+When you connect, the chart is filled with the machine's most recent readings
+rather than starting empty.
+
+## Stress–strain chart
+
+Plots stress against strain **only while a test is running**, and clears at
+the start of each test. It needs the sample's width and thickness from the
+[sample profile](sample-profiles.md).
+
+## Controls and New test
+
+Enable motion, home, zero and jog are covered in
+[Manual control](manual-control.md). The **New test** panel is covered in
+[Running a test](running-a-test.md).

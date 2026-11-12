@@ -9,8 +9,7 @@ BOM, 3D models) for each board.
 The **EdgeBoard** is the heart of the machine. It hosts the **Propeller 2**
 microcontroller, the servo/stepper driver interface, and all I/O: encoder,
 endstops, the door interlock and ESD safety chain, the SD card, and two host
-serial ports: the isolated **control port** J4 (through IC2 to P30/P32, from
-carrier v0.3), which carries the protocol, and the **Debug/Programming header
+serial ports: the isolated **control port** J4 (through IC2 to P30/P32), which carries the protocol, and the **Debug/Programming header
 J1** (P62/P63/RESn), which flashes the firmware and carries its debug log.
 
 ![The MaD EdgeBoard](../assets/img/edgeboard.png){ width=560 }
