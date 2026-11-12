@@ -2,14 +2,13 @@
  * Pre-run check: where a test asks for more than the machine or the sample
  * profile allows.
  *
- * The machine does not refuse such a test. It quietly holds the motion to its
- * own limits: moves above the machine's velocity limit run at that limit, a
- * move too short to reach its speed at the machine's acceleration peaks
- * lower, a waveform demanding more acceleration
- * than the machine allows comes out smaller, and the sample profile's limits
- * stop the motion during the run. Each of those looks like a machine fault
- * unless the operator was told beforehand, so the runner lists them and asks
- * before running anyway.
+ * The machine does not refuse such a test up front. Straight and sigmoid moves
+ * above its velocity limit run at that limit, and a move too short to reach its
+ * speed at the machine's acceleration peaks lower; a sine or chirp beyond its
+ * speed or acceleration limits is refused by the machine when the run reaches
+ * it; and the sample profile's limits stop the motion during the run. Each of
+ * those looks like a machine fault unless the operator was told beforehand, so
+ * the runner lists them and asks before running anyway.
  *
  * Positions follow the test G-code's frame: sample extension in mm, measured
  * from zero length; a sine sets off from wherever the sample is when it

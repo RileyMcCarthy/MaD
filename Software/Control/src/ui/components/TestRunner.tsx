@@ -10,6 +10,7 @@ import {
   RestrictedReason,
 } from '@/domain';
 import { checkTestLimits } from '@/domain/testLimits';
+import { legacyProfileProblem } from '@/domain/legacyProfile';
 import { dataStore } from '@/storage/DataStore';
 import { deviceClient } from '@/device/session';
 import { useStore } from '@/store/useStore';
@@ -74,6 +75,8 @@ export default function TestRunner({ onChanged }: TestRunnerProps) {
 
   const selectedSample = samples.find((s) => s.id === sampleId)?.profile;
   const selectedMotion = motions.find((m) => m.id === motionId)?.profile;
+  // An old-format profile would run as something else; it is refused, with why.
+  const legacyMotion = selectedMotion ? legacyProfileProblem(selectedMotion) : null;
 
   // Reflect the chosen sample as the active profile so the live charts show its
   // force/displacement (and stress/strain) limit lines as soon as it's selected.
@@ -132,6 +135,11 @@ export default function TestRunner({ onChanged }: TestRunnerProps) {
     if (!file || !dataStore.connected) return;
     try {
       const profile = JSON.parse(await file.text());
+      const legacy = legacyProfileProblem(profile);
+      if (legacy) {
+        setMessage(`Motion profile not imported: ${legacy}`);
+        return;
+      }
       const entry: MotionProfileEntry = {
         id: crypto.randomUUID(),
         name: profile.name || file.name.replace(/\.mp$/i, '') || 'imported',
@@ -148,7 +156,7 @@ export default function TestRunner({ onChanged }: TestRunnerProps) {
   };
 
   const run = async () => {
-    if (!selectedSample || !selectedMotion) return;
+    if (!selectedSample || !selectedMotion || legacyMotion) return;
     if (!dataStore.connected) {
       setMessage('Choose a data folder in Settings first.');
       return;
@@ -249,11 +257,11 @@ export default function TestRunner({ onChanged }: TestRunnerProps) {
   };
 
   const previewProfile: TestProfile | null =
-    selectedSample && selectedMotion
+    selectedSample && selectedMotion && !legacyMotion
       ? { ...selectedMotion, sampleProfile: selectedSample }
       : null;
 
-  const runDisabled = !connected || busy || testRunning || !selectedSample || !selectedMotion;
+  const runDisabled = !connected || busy || testRunning || !selectedSample || !selectedMotion || legacyMotion !== null;
 
   // Where the test asks for more than the machine or the sample allows. Checked
   // against the machine's live configuration and state, so it updates as they do.
@@ -332,7 +340,14 @@ export default function TestRunner({ onChanged }: TestRunnerProps) {
         </div>
       </div>
 
-      {limitIssues.length > 0 && (
+      {legacyMotion && (
+        <div className="limit-warnings" data-testid="legacy-profile">
+          <div className="limit-warnings-title">This motion profile can't be run</div>
+          <p>{legacyMotion}</p>
+        </div>
+      )}
+
+      {!legacyMotion && limitIssues.length > 0 && (
         <div className="limit-warnings" data-testid="limit-warnings">
           <div className="limit-warnings-title">This test goes beyond the machine or sample limits</div>
           <ul>

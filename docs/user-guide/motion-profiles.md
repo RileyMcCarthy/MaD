@@ -50,8 +50,12 @@ smooth motion. It takes a little longer than a linear move at the same velocity
 and acceleration, because its acceleration builds up gradually.
 
 A waveform the machine cannot physically deliver — too fast for its amplitude,
-say — is **refused** rather than run at a reduced amplitude, so a specimen never
-sees a gentler loading than the report claims. Hand-written G-code can also hold
+say — is **refused** by the machine rather than run at a reduced amplitude, so a
+specimen never sees a gentler loading than the report claims. The app warns
+before the run when a waveform, or any other move, goes beyond the machine's
+limits (see [Running a test](running-a-test.md#start-a-run)). Straight and
+sigmoid moves faster than the machine allows are not refused: they run at its
+speed and acceleration limits, so they take longer than written. Hand-written G-code can also hold
 at either peak and load faster than it unloads; see
 [Waveform motion control](../how-it-works/waveform-motion-control.md).
 
@@ -72,3 +76,12 @@ accidental over-long pull or an inverted direction obvious at a glance.
 - You can also **Save / Load individual Sets**, so a reusable set (e.g. a cyclic
   block) can be shared across profiles.
 - **Import** loads a profile from a `.mp` file — see [file formats](file-formats.md).
+- The save button shows **Saved ✓** when it worked, and leaving with unsaved
+  changes asks first.
+
+!!! warning "Old motion profiles must be rebuilt"
+    Profiles saved before this format (relative moves; waveforms with a cycle
+    count, centre, holds, skew, phase or a triangle shape) are **refused** on
+    load, import and run, with a message naming the move. They are not
+    converted: read as the current format they would mean something else (a
+    relative +10 mm move would drive to 0 mm), so rebuild them.

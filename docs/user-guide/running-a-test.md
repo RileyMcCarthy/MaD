@@ -24,6 +24,16 @@ You'll want:
 2. Optionally click **Preview G-code** to review the exact motion.
 3. Click **Run test**.
 
+Before anything is sent, the app checks the test against the machine
+configuration and the sample profile: speed, acceleration (including short moves
+that cannot reach their speed), travel and force. If the test goes beyond any of
+them, a warning lists each one, such as *Motion profile speed of 60 mm/s exceeds
+machine limit of 50 mm/s*. **Cancel**, or **Run anyway** if that is intended.
+
+A motion profile saved in the old format (relative moves, or waveforms with a
+cycle count, holds or a triangle shape) can't be run; the card says why. Rebuild
+it on **Motion profiles**.
+
 When you run, the app:
 
 - pushes the selected **sample profile** to the firmware (so its limits are
@@ -41,8 +51,10 @@ The run appears in **History** on **Test runs** with a *running* badge.
 The machine executes the motion **autonomously from its SD card**, and the
 readouts and charts on **Control** follow it live. The **Run** button reflects
 the firmware's `testRunning` state. When the firmware reports it has finished,
-the card says so and the run is marked **completed**. Stay on **Control** until
-then; if you leave, use **Mark done** in History afterwards.
+the card says so and the run is marked **completed**. The app tracks the run
+wherever you are in it, so you can leave **Control** while the test runs; a run
+still showing *running* when you reconnect after the machine finished is
+completed automatically.
 
 !!! warning "Losing the UI doesn't stop the test"
     The test keeps running even if you close the tab or unplug USB — the app just

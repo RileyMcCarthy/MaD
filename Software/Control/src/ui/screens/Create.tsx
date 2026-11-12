@@ -15,6 +15,7 @@ import {
   sinePeakAcceleration,
 } from '@/domain';
 import { dataStore } from '@/storage/DataStore';
+import { legacyProfileProblem } from '@/domain/legacyProfile';
 import { useStore } from '@/store/useStore';
 import SortableList, { reorder } from '@/ui/components/SortableList';
 import Modal from '@/ui/components/Modal';
@@ -123,8 +124,13 @@ export default function Create() {
 
   const loadMotionProfile = (id: string) => {
     if (!discardOk()) return;
-    setSelectedMotionId(id);
     const entry = savedMotions.find((p) => p.id === id);
+    const legacy = entry ? legacyProfileProblem(entry.profile) : null;
+    if (legacy) {
+      say(`Motion profile not opened: ${legacy}`, 'error');
+      return;
+    }
+    setSelectedMotionId(id);
     if (entry) {
       const loadedSets = entry.profile.sets.length > 0 ? entry.profile.sets : [newSet('Set 1')];
       setMotionProfile(entry.profile);
@@ -140,7 +146,13 @@ export default function Create() {
     if (!file) return;
     if (!discardOk()) return;
     try {
-      const parsed = JSON.parse(await file.text()) as MotionProfile;
+      const raw: unknown = JSON.parse(await file.text());
+      const legacy = legacyProfileProblem(raw);
+      if (legacy) {
+        say(`Motion profile not imported: ${legacy}`, 'error');
+        return;
+      }
+      const parsed = raw as MotionProfile;
       setMotionProfile(parsed);
       setSets(parsed.sets.length > 0 ? parsed.sets : [newSet('Set 1')]);
       say('Motion profile imported (not yet saved).');

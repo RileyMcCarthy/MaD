@@ -804,7 +804,6 @@ async function selectSeeded(page) {
   await runner.locator('select').nth(1).selectOption({ index: 1 });
 }
 
-// Read the single downloaded run CSV from OPFS and summarise its position column.
 // Press Run test, accepting the limit warning when the profiles go beyond the
 // machine's or sample's limits (several scenarios do, on purpose).
 async function startRun(page) {
@@ -814,8 +813,8 @@ async function startRun(page) {
   if (asked) await press(anyway);
 }
 
-// Wait on Control until the runner reports the run finished (the runner marks
-// the run record completed, so it must stay on screen until then).
+// Wait on Control until the runner reports the run finished. The store marks
+// the run record completed wherever the app is; this only waits for the end.
 async function awaitRunFinished(page, { timeout = RUN_WAIT_MS } = {}) {
   await page.locator('.panel', { hasText: 'New Test' }).getByText(/finished/i).waitFor({ timeout });
 }
@@ -826,6 +825,7 @@ async function openHistory(page) {
   await page.locator('tbody tr').first().waitFor({ timeout: DEVICE_WAIT_MS });
 }
 
+// Read the single downloaded run CSV from OPFS and summarise its position column.
 async function readDownloadedCsvStats(page) {
   return page.evaluate(async () => {
     const root = await navigator.storage.getDirectory();
@@ -1247,12 +1247,12 @@ async function pressRefusedLiveControls(page, base = APP_URL) {
   );
 }
 
-/** Start a seeded test from the Runs screen; on firmware the app cannot drive it is refused. */
+/** Start a seeded test from Control; on firmware the app cannot drive it is refused. */
 async function startRefusedTest(page) {
   await seedProfiles(page, {
     sample: { serial: 'Compat-Sample', maxForce: 500, maxVelocity: 25, maxDisplacement: 100, sampleWidth: 4, sampleThickness: 1.5 },
     motion: { name: 'Compat-Motion', moves: [
-      { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 5, distance: 2, time: 0, circularOffset: 0 } },
+      { moveType: 'linear', moveParameters: { position: 2, velocity: 5, time: 0 } },
     ] },
   });
   await selectSeeded(page);
@@ -3528,7 +3528,7 @@ const scenarios = [
         // Enable motion and jog to machine zero (zeroLength jogs and settles).
         await zeroLength(page);
         await page.locator('label.field', { hasText: 'Jog (mm)' }).locator('input').fill('2');
-        const setWas = await readoutNum(page, 'Machine Setpoint');
+        const setWas = await readoutNum(page, 'Machine Target');
         await press(page.getByRole('button', { name: '+ Jog up' }));
         const at = await settleMotion(page, { setpointWas: setWas });
         assert(Math.abs(at - 2) < 0.25, `the 2 mm jog landed at ${at} mm`);
@@ -3536,15 +3536,16 @@ const scenarios = [
         await seedProfiles(page, {
           sample: { serial: 'Compat-OK', maxForce: 500, maxVelocity: 25, maxDisplacement: 100, sampleWidth: 4, sampleThickness: 1.5 },
           motion: { name: 'Compat-OK-Motion', moves: [
-            { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 5, distance: 3, time: 0, circularOffset: 0 } },
-            { moveType: 'linear', absoluteOrRelative: 'relative', moveParameters: { position: 0, velocity: 5, distance: -3, time: 0, circularOffset: 0 } },
+            // Out 3 mm from the jog's 2 mm and back: moves are absolute extensions.
+            { moveType: 'linear', moveParameters: { position: 5, velocity: 5, time: 0 } },
+            { moveType: 'linear', moveParameters: { position: 2, velocity: 5, time: 0 } },
           ] },
         });
         await selectSeeded(page);
         const runner = page.locator('.panel', { hasText: 'New Test' });
         await press(page.getByTestId('run-test'));
         await runner.getByText(/started/i).waitFor({ timeout: DEVICE_WAIT_MS });
-        await page.locator('tbody tr').first().locator('.badge.completed').waitFor({ timeout: RUN_WAIT_MS });
+        await awaitRunFinished(page);
         // Home: the seek starts moving the gantry. Disabling motion stops it,
         // since a full seek to the endstop is M13-home-endpoint's to measure.
         await prepareManualControl(page);

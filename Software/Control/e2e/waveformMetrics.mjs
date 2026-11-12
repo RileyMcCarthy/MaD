@@ -95,16 +95,15 @@ export function resampledPathMm(timeUs, posUm, { dtUs = 50_000, minDeltaUm = 500
 // This is the end-to-end proof that the firmware-native waveform = f(t).
 // Narrow a recorded run down to the COMMANDED WAVEFORM.
 //
-// A waveform run records more than the wave. The driver starts the cycles at
-// the centre, catching up with them at its acceleration limit and locking on
-// within a quarter cycle, and brakes onto the centre after the last one.
-// Around that sits the program's own leading G1 to the centre and a flat tail
-// until teardown.
+// A waveform run records more than the wave. The wave starts at rest where the
+// gantry is (a peak) and each whole cycle ends at rest back at that peak; around
+// it sit any moves the program makes before and after, and a flat tail until
+// teardown.
 //
-// None of that is the commanded shape, and it is not a small effect: for
-// WAVE-tri the approach is 5 mm against an 8 mm peak-to-peak, and a properly
-// homed gantry once reported 14.49 mm of "waveform" — failing the assertion
-// precisely BECAUSE homing had worked.
+// None of that is the commanded shape, and it is not a small effect: a move
+// before the wave can be as large as the wave itself, and a properly homed
+// gantry once reported 14.49 mm of "waveform" — failing the assertion precisely
+// BECAUSE homing had worked.
 //
 // E2E_WAVE_DUMP=1 writes the raw recorded series beside the artifacts, so the
 // windowing and the fit can be worked on offline instead of by re-running the

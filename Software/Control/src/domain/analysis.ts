@@ -12,16 +12,16 @@ export interface ExpectedMotion {
   position: number[];
 }
 
-/**
- * Reconstruct the expected position-vs-time curve from a run's G-code (sample
- * frame), anchored at `initialPositionMm`. Mirrors the generator's kinematics.
- */
 /** A numeric G-code word's value (e.g. `num('G123 A5 F1', 'F')` → 1), or null. */
 function num(line: string, letter: string): number | null {
   const m = new RegExp(`(?:^|\\s)${letter}(-?[\\d.]+)`, 'i').exec(line.split(';')[0]);
   return m ? Number(m[1]) : null;
 }
 
+/**
+ * Reconstruct the expected position-vs-time curve from a run's G-code (sample
+ * frame), anchored at `initialPositionMm`. Mirrors the generator's kinematics.
+ */
 export function generateExpectedMotion(
   gcode: string[],
   initialPositionMm: number,

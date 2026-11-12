@@ -218,7 +218,7 @@ describe('generateTestGcode — sine', () => {
       },
       why: {
         'one-wave':
-          'the machine starts a wave at a peak and ends it back at the centre, both at rest, so separate one-cycle waves would stop at the centre between every cycle',
+          'a wave starts at rest at a peak and each whole cycle ends at rest back at that peak, so separate one-cycle waves would stop at that peak between every cycle',
       },
     },
     () => {

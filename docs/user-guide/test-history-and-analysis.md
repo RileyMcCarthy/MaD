@@ -47,6 +47,10 @@ It shows:
 - **Stress–strain** — stress (σ = |F| / (width·thickness), MPa) against strain
   (ΔL / gauge length, %), with **Max Stress / Max Strain** limit lines.
 
+The Y axes fit the recorded data. Drag across a chart to zoom into that stretch,
+hover to read the values under the cursor, and use the reset button to zoom back
+out. A run that finished without any data shows why instead of the charts.
+
 ## The data
 
 Results are stored as **CSV** in your [data folder](settings-and-data.md), so you

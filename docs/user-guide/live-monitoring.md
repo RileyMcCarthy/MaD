@@ -23,7 +23,14 @@ Forces are shown in **N**, positions in **mm**.
 
 ## Machine state
 
-The **State** badges summarise what the machine is doing:
+A coloured **status banner** at the top says what the machine is doing and what
+to do next: green when it's ready, amber when motion is off or the machine is
+restricted (with the step that fixes it, such as **Enable motion**), red for a
+fault with its remedy, and the accent colour while a test runs (press **STOP** to end it).
+**Jog** and **Home** are locked while motion is off, faulted or a test is
+running; hover them for the reason.
+
+Beneath it, the **State** badges summarise the details:
 
 - **Motion** — whether motion is enabled.
 - **Test** — whether a test is running.
@@ -48,6 +55,11 @@ A dual-axis, 60-second rolling chart plots **position** (left axis) and **force*
 - See **limit reference lines** (max force / max position) drawn from the machine
   configuration and the loaded sample profile.
 - **Pause** the sweep to inspect a moment without losing the connection.
+- Compare the **Setpoint** (the machine's trajectory) with **Expected**, the
+  ideal path a jog or test asks for: a straight line at exactly the commanded
+  speed, with no acceleration. The gap between them is the machine's
+  acceleration; the gap between Setpoint and Position is how well it follows.
+- Hover to read every series at that moment, with a vertical line marking it.
 
 When you connect, the chart is pre-filled with the machine's most recent
 readings, so you see recent history straight away rather than an empty plot.

@@ -13,6 +13,10 @@ changes. You read and edit it on the **Settings** screen.
 - Edit a field, then **Write to device** to write it back to the machine, where it
   persists across power cycles.
 - **Read from device** re-reads the configuration, discarding unsaved edits.
+- Most settings take effect after a reboot. After a write, the app offers
+  **Reboot now** (it closes and reopens the port, which resets the board) or
+  **Do it later**.
+- Leaving with unsaved edits asks first, here and on the profile screens.
 
 !!! warning "These values calibrate the machine"
     Getting the steps-per-mm or force calibration wrong will make every

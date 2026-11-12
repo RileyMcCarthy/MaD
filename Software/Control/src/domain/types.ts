@@ -103,8 +103,9 @@ export interface DeviceInfo {
 
 /**
  * The waveform a `math` move runs:
- *  - `sine`: a cyclic sine around wherever the gantry is (amplitude,
- *    frequency). One move is one cycle; repeat it with the set's executions.
+ *  - `sine`: a cosine from rest where the gantry is (amplitude, frequency): it
+ *    swings out twice the amplitude, in the direction of the amplitude's sign,
+ *    and back. One move is one cycle; repeat it with the set's executions.
  *  - `sigmoid`: an S-curve move to a position: like a linear move, but its
  *    acceleration rises and falls smoothly instead of switching on and off.
  *  - `chirp`: a sine whose frequency sweeps linearly from `frequency` to
