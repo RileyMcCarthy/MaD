@@ -15,7 +15,7 @@
 #   make e2e-bundle     - BUNDLE-live: the built bundle (as pages.yml builds it) on e2e-emulator's board
 #   make e2e-motion     - The scenarios that move the carriage, on mad-cosim.toml (MOTION_SHARD splits them)
 #   make e2e-stall      - SERVO-stall on mad-hard-stop-cosim.toml: the carriage jogged into a hard stop
-#   make e2e-compat     - The compatibility scenarios on e2e-emulator's board, on this tree's firmware one protocol_version ahead and on a release behind
+#   make e2e-compat     - COMPAT-app-too-old on e2e-emulator's board, on this tree's firmware built one protocol_version ahead
 #   make e2e-reflash    - FW1 and COMPAT-reflash: the app flashing the firmware for real over J1, DTR resetting the chip, on mad-reflash-cosim.toml
 #   make reflash-image  - build/reflash.bin: the firmware's image stamped with a version of its own, FW1's
 #   make flash-image    - build/flash.bin: stage-1 and the firmware's image, the module's boot flash

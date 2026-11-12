@@ -43,6 +43,9 @@ pub struct Config {
     /// `E * A / L0` and this field is ignored.
     pub stiffness_n_per_mm: f64,
     /// If true, tensile motion is toward decreasing machine position (moving up).
+    ///
+    /// The sample itself no longer reads this: it takes extension, and the
+    /// gantry's own `tension_on_decreasing_position` picks the sign.
     pub tension_on_decreasing_position: bool,
     /// Optional physically-meaningful material definition.
     pub material: Option<MaterialProperties>,

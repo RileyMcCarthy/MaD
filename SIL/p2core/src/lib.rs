@@ -3,8 +3,8 @@
 //! This is the CPU only. It executes the real flexcc-produced P2 image rather
 //! than host-compiled C, which is the whole reason it exists: the native SIL
 //! backend (since retired) compiled the firmware with clang and substituted
-//! the HAL, so it structurally could not see flexcc codegen bugs, 32-bit pointer assumptions,
-//! cog stack overflow, or smart-pin misconfiguration.
+//! the HAL, so it structurally could not see flexcc codegen bugs, 32-bit
+//! pointer assumptions, cog stack overflow, or smart-pin misconfiguration.
 //!
 //! # Scope
 //!
