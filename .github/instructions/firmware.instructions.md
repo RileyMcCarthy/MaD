@@ -54,7 +54,7 @@ this shape.
 ## Thread safety / locks (multi-cog)
 
 - Each module that shares state across cogs owns a **HAL lock** and the usual macros:
-  `LOCK_REQ` / `LOCK_REQ_BLOCK` (spin + `EMULATION_YIELD_LOCK`) / `LOCK_REL`.
+  `LOCK_REQ` / `LOCK_REQ_BLOCK` (spin) / `LOCK_REL`.
 - Locks are **non-reentrant**. Hold the shortest critical section; touch only own `*_data`.
 - **ABBA rule:** never call another module’s API while holding your own lock.
 - `lib_staticQueue` is unsynchronized — owner documents SPSC or wraps compound ops in its lock.

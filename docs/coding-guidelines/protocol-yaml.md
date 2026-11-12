@@ -313,5 +313,5 @@ A **ProtoEmb gitlink** move additionally runs `protoemb-pin-ci`: `make verify` (
 - [ ] Breaking change (including an appended struct field) → `protocol_version` bumped; `python3 Protocol/scripts/check_protocol_compat.py` passes.
 - [ ] `device_info` / `DeviceInfo` untouched (or only appended to).
 - [ ] Ran all three `generate.py` commands — each printed "Schema validation passed".
-- [ ] Ran `verify.sh`; firmware builds (`MaD`/`native_test`), `cargo build` (SIL), `tsc`/lint (desktop) pass.
+- [ ] Ran `verify.sh`; firmware builds (`MaD`/`native_test`), `cargo build` (SIL), `tsc`/lint (`Software/Control`: `npm run verify`) pass.
 - [ ] Did **not** hand-edit generated code (it is gitignored; CI regenerates). No need to commit `Generated/` / `generated/` trees.

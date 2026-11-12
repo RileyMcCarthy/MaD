@@ -116,7 +116,7 @@ Headers are found via per-layer `-Isrc/...` flags in `platformio.ini` (`build_fl
 | `HAL/Include/` | `HAL_` (also `HW_` for board pin headers) | `HAL_lock.h`, `HAL_GPIO.h`, `HW_pins.h` |
 | Config | as-parent in a `Config/` subfolder | `dev_cogManager_config.c`, `IO_SDCard_config.c` |
 
-> Note: the `HW_` prefix exists, but `HW_pins.h` actually lives in `src/HAL/Include/`. Native SIL leaves the HAL undefined (Rust trampolines); P2 HAL lives in `src/HAL/P2/`.
+> Note: the `HW_` prefix exists, but `HW_pins.h` actually lives in `src/HAL/Include/`. The P2 HAL lives in `src/HAL/P2/`; the SIL runs the same P2 image, so there is no second HAL implementation.
 
 ### Functions: `module_action`, lowerCamel action
 
@@ -229,7 +229,7 @@ The P2 has 8 cogs; modules run on different cogs (`src/DEV/Config/dev_cogManager
 #define APP_MOTION_LOCK_REQ_BLOCK() while (APP_MOTION_LOCK_REQ() == false) {}
 #define APP_MOTION_LOCK_REL()       HAL_lock_release(app_motion_data.lock)
 ```
-(`src/APP/app_motion.c`. Same shape — different macro names — in `src/IO/IO_SDCard.c` (`IO_SDCARD_LOCK_*`) and `src/DEV/watchdog.c` (`SM_LOCK_*`).) On P2 this is `LOCKTRY`. Native SIL preempts at the HAL trampoline after a quantum of work, so these spins need no emulator yield macros.
+(`src/APP/app_motion.c`. Same shape — different macro names — in `src/IO/IO_SDCard.c` (`IO_SDCARD_LOCK_*`) and `src/DEV/watchdog.c` (`SM_LOCK_*`).) On P2 this is `LOCKTRY`. The SIL runs the P2 image, so `LOCKTRY` is the real instruction there too and these spins need no emulator yield macros.
 
 **Do**
 - Hold the lock for the **shortest critical section** — copy a value out under lock, then return it. `src/APP/app_motion.c:367`:

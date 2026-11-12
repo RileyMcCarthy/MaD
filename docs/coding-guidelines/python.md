@@ -1,6 +1,6 @@
 # Python Coding Guidelines — Build Hooks (and the ProtoEmb generator)
 
-This document governs the **Python** in `Firmware/MaDCore/extra_scripts/` (the PlatformIO SCons helper scripts). The ProtoEmb code generator (`Protocol/ProtoEmb/core/`) now lives in [its own repo](https://github.com/RileyMcCarthy/protoemb) as a git submodule — the same conventions apply there, and its lint/tests run in that repo's CI. This guide is derived from the actual code — follow it to write changes that match the existing style and that the build hooks (PlatformIO pre-build, SIL `Makefile`, Cargo `build.rs`) keep working.
+This document governs the **Python** in `Firmware/MaDCore/extra_scripts/` (the PlatformIO SCons helper scripts). The ProtoEmb code generator (`Protocol/ProtoEmb/core/`) now lives in [its own repo](https://github.com/RileyMcCarthy/protoemb) as a git submodule — the same conventions apply there, and its lint/tests run in that repo's CI. This guide is derived from the actual code — follow it to write changes that match the existing style and that the build hooks (PlatformIO pre-build, SIL `makefile`, Cargo `build.rs`) keep working.
 
 The Python here is small and dependency-light by design: it parses a YAML protocol schema, enriches it, validates it, and renders Jinja2 templates. Keep it that way.
 
@@ -47,7 +47,7 @@ CI lints with `ruff` (`python-lint` job; config in `ruff.toml`); there is no typ
 - **PlatformIO pre-build** runs `generate.py` to emit `src/Generated/` before the firmware compiles (`Firmware/MaDCore/extra_scripts/generate_protocol.py:36`). The hook is registered globally in `platformio.ini` (`extra_scripts = pre:extra_scripts/generate_protocol.py` at `platformio.ini:2`), so it runs for **every** environment. A non-zero generator exit fails the firmware build (`env.Exit(1)`, `generate_protocol.py:48`).
 - **In CI, the `build-firmware` job runs `pio run` under Python 3.9** (`.github/workflows/ci.yml:183`–`:185` pin `python-version: '3.9'`), so the generator is genuinely exercised on 3.9 in CI. Treat 3.9 syntax compatibility as a real (if implicit) gate, not just an aspiration.
 - **`wasm-control-ci`** and **`pages.yml`** install the generator's `requirements.txt` and regenerate the protocol as part of their builds. Runtime crate tests run in **`protoemb-ci`** (`make test`).
-- **SIL `make protocol`** runs `generate.py --target rs` (`SIL/Makefile:33`).
+- **SIL `make protocol`** runs `generate.py --target rs` (`SIL/makefile`).
 - **`examples/verify.sh`** regenerates the non-MaD `thermostat` protocol in all three targets and asserts C == Rust == TS wire bytes (`Protocol/ProtoEmb/examples/verify.sh:18`–`:60`). **`protoemb-pin-ci` runs `make verify`** (which is this script) when the ProtoEmb gitlink moves. Any Protocol tree change also runs `protoemb-ci` (`make test`: generator pytest + wire conformance + framing/runtime `cargo test`). Still run it locally after touching `generate.py` or a template.
 
 **Do / Don't:**

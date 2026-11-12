@@ -6,14 +6,15 @@ MaD is a low-cost open-source uniaxial tensile-testing machine. This monorepo ha
   `APP → DEV → IO → Library → HAL → HW` (each layer calls only *downward*).
 - **Web app** (`Software/Control/`) — the shipped React/Vite + WebAssembly
   browser control app (Web Serial + File System Access, Chromium-only).
-- **SIL** (`SIL/`) — a Rust software-in-the-loop emulator that links the firmware.
+- **SIL** (`SIL/`) — a Rust software-in-the-loop rig that runs the P2 firmware image on an
+  instruction-set simulator, on a board described by project files.
 - **Protocol** (`Protocol/`) — `MaDProtocol.yaml` → generated C / TS / Rust codec.
 
 ## How to review
 
 The authoritative coding standards live in
 [`docs/coding-guidelines/`](../docs/coding-guidelines/README.md) (one file per language)
-and [`CLAUDE.md`](../CLAUDE.md) / [`Claude.md`](../Claude.md). **Read the guideline for
+and [`CLAUDE.md`](../CLAUDE.md). **Read the guideline for
 the area you're reviewing and hold the change to it.** The path-scoped files in
 `.github/instructions/` point you at the right one per area.
 
@@ -31,7 +32,7 @@ If the PR changes behaviour, public APIs, G-code, protocol fields, build/dev com
 architecture, state machines, or operator-facing UX, flag missing doc updates. Name the
 file(s) that should change, for example:
 
-- `Claude.md` / `CLAUDE.md` (build, architecture, constraints)
+- `CLAUDE.md` (build, architecture, constraints)
 - `docs/coding-guidelines/*` (conventions for the touched language)
 - user-facing docs under `docs/` or package READMEs
 - protocol / release notes when wire or version contracts change
@@ -49,7 +50,7 @@ or clearly insufficient for the risk:
 | Protocol schema / codec | Generated targets + roundtrip; never hand-edit `Generated/` |
 | Control domain / protocol mapping | Vitest under `Software/Control` |
 | UI ↔ device / serial / sample stream | Worker/session tests or e2e notes; fakes only in `e2e/`, never `src/` |
-| SIL emulator / models / FFI | Rust tests; guard null/len on `unsafe` trampolines |
+| SIL models / ISS / board kinds | Rust tests (`cargo test` from `SIL/`); a new peripheral is a board component with pins, not a HAL symbol |
 
 ### 3. Suggest additional testing (actionable, optional follow-up)
 When risk is higher than the PR's tests cover, **suggest concrete follow-up tests** the
@@ -79,7 +80,7 @@ Do **not** demand large test matrices for pure docs, renames, or comment-only ch
 - **Protocol wire compatibility** — `Protocol/MaDProtocol.yaml` is **append-only**: never
   reorder or insert enum variants, struct fields, or union variants (it silently breaks
   firmware↔UI↔SIL). A breaking change must bump `protocol_version` and regenerate.
-- **Submodules** — `SIL/embsim` and `Protocol/ProtoEmb` are upstream pins; don't leave a
+- **Submodules** — `SIL/embsim`, `Protocol/ProtoEmb` and `Vibes` are upstream pins; don't leave a
   MaD PR pointing at an unpushed submodule commit.
 - **Reuse, don't duplicate** — prefer existing shared code (firmware `Library/`, app
   `src/domain` & `src/lib`, SIL `embsim` crates) over reimplementing utilities.
