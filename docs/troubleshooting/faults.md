@@ -119,6 +119,8 @@ The controller reads the load cell through an ADC on the force gauge board. It r
 
 ## FORCE_OVERLOAD
 
+![Fault: FORCE_OVERLOAD](../assets/screenshots/fault-force-overload.png)
+
 **The force passed 120% of the load cell's rated capacity.**
 
 **Machine Force** went past 120% of the **Load Cell Capacity** in the machine configuration, in tension or compression. It is checked all the time, in a jog as in a test, and it is separate from the sample's and the machine's force limits, which only restrict.
