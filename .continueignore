@@ -13,7 +13,6 @@ release/app/dist/
 **/build/
 
 # SIL artifacts
-SIL/test-results/
 SIL/playwright-report/
 SIL/sd/
 

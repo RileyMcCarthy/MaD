@@ -16,6 +16,7 @@ P2 adapter: FlexC/Spin programs, loadp2, encodings.
 | `cogs.c` | Two cogs, hub mailbox | `hw_compare.py --capture --prog cogs` | `--test silicon_reports` |
 | `timed.c` | GETCT/WAITX cycle deltas | `hw_compare.py --capture --prog timed` | `--test silicon_reports` / `--test op_coverage` |
 | `events.c` | Event flags (CT, SE pin/lock/LUT modes, PAT, ATN, QMT, FBW) and INT1-3: latency, hold-offs, flags, priority, nesting, RESI, WAITINT | `hw_compare.py --capture --prog events` | `--test silicon_reports` |
+| `pins.c` | Smart-pin measurements on P0..P5 in the four modes the firmware configures (`P_ASYNC_TX`, `P_ASYNC_RX`, `P_TRANSITION`, `P_NCO_FREQ`); known divergences in `pins-baseline.txt` | `hw_compare.py --capture --prog pins` | `--test silicon_reports` |
 
 `P2_PORT` overrides the default FTDI (`/dev/cu.usbserial-PLX6ZJLYQ`).
 
@@ -61,7 +62,8 @@ functional streamer and never raises XRO/XRL or companion LUT events.
 
 WAITX on silicon: `getct; waitx N; getct` delta is **N+4** (two GETCTs and
 the WAITX instruction at 2 clocks each, plus N extra). p2core matches that
-exactly. Pin/FIFO/CORDIC/control remain later programs.
+exactly. FIFO/CORDIC/control remain later programs (the pin
+surface is `pins.c`).
 
 **Open:** `LOC`, streamer (`XINIT`/`SETXFRQ`/`WAITXFI`), and transition-pin
 `WYPIN` now run the loadp2 flash stub on the ISS, but have no P2-EVAL golden.

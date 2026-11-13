@@ -100,11 +100,6 @@ impl SmartBus {
     }
 
     /// The TX pin's driven output level — the bit presented for this pulse.
-    /// Whether the TX pin is livened (diagnostics).
-    pub fn tx_livened(&self) -> bool {
-        self.shift.livened()
-    }
-
     pub fn tx_level(&self) -> bool {
         self.tx_out
     }

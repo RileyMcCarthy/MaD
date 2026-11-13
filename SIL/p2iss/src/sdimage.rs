@@ -1,8 +1,8 @@
 //! A FAT16 card image the firmware's own filesystem can mount.
 //!
-//! The native backend never needs this: it substitutes the HAL, so `fopen`
-//! lands on the host's filesystem and there is no card. The ISS executes the
-//! real image, which means the real `mount(SD_CARD_MOUNT_PATH,
+//! The retired native backend never needed this: it substituted the HAL, so
+//! `fopen` landed on the host's filesystem and there was no card. The ISS
+//! executes the real image, which means the real `mount(SD_CARD_MOUNT_PATH,
 //! _vfs_open_sdcard())` runs FlexC's FatFs against a real block device — and
 //! against a blank one it fails, which is why the ISS boots on failsafe
 //! records. This builds a device it can actually mount.
@@ -428,7 +428,7 @@ pub fn build(size_bytes: usize, root: &Dir) -> Result<Vec<u8>, ImageError> {
 /// it writes into.
 ///
 /// `host_dir`, when it exists, is mirrored on top — so `SIL/sd` populates the
-/// card exactly as it does for the native backend.
+/// card exactly as it did for the retired native backend.
 pub fn mad_card(size_bytes: usize, host_dir: Option<&Path>) -> Result<Vec<u8>, ImageError> {
     let mut root = host_dir.map(Dir::from_host_dir).unwrap_or_default();
     // The firmware opens files *inside* these and does not create the parent,
